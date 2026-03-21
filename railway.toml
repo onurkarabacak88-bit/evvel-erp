@@ -1,8 +1,8 @@
 [build]
 builder = "nixpacks"
-buildCommand = "pip3 install -r requirements.txt && npm install && npm run build"
+buildCommand = "npm install && npm run build && python3 -m pip install -r requirements.txt"
 
 [deploy]
-startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+startCommand = "python3 -m uvicorn main:app --host 0.0.0.0 --port $PORT"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3

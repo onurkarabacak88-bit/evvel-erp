@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["python311", "nodejs_20", "nodePackages_20.npm", "python311Packages.pip"]
+
+[phases.install]
+cmds = ["npm install", "python3 -m pip install -r requirements.txt"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "python3 -m uvicorn main:app --host 0.0.0.0 --port $PORT"

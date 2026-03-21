@@ -25,7 +25,7 @@ def audit(cur, tablo, kayit_id, islem, eski=None, yeni=None):
          json.dumps(dict(eski)) if eski else None,
          json.dumps(dict(yeni)) if yeni else None))
 
-def onay_kuyruğuna_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
+def onay_kuyruguna_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
     cur.execute("""INSERT INTO onay_kuyrugu (id,islem_turu,kaynak_tablo,kaynak_id,aciklama,tutar,tarih)
         VALUES (%s,%s,%s,%s,%s,%s,%s)""",
         (str(uuid.uuid4()), islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih))
@@ -196,7 +196,7 @@ def kart_hareket_ekle(h: KartHareket):
 
         if h.islem_turu == 'ODEME':
             # Onay kuyruğuna ekle
-            onay_kuyruğuna_ekle(cur, 'KART_ODEME', 'kart_hareketleri', hid,
+            onay_kuyruguna_ekle(cur, 'KART_ODEME', 'kart_hareketleri', hid,
                 f"Kart ödemesi: {h.aciklama or ''}", h.tutar, h.tarih)
 
         audit(cur, 'kart_hareketleri', hid, 'INSERT', yeni=h.dict())
@@ -240,7 +240,7 @@ def odeme_plani_ekle(o: OdemePlani):
         cur.execute("""INSERT INTO odeme_plani (id,kart_id,tarih,odenecek_tutar,asgari_tutar,aciklama)
             VALUES (%s,%s,%s,%s,%s,%s)""",
             (oid, o.kart_id, o.tarih, o.odenecek_tutar, asgari, o.aciklama))
-        onay_kuyruğuna_ekle(cur, 'ODEME_PLANI', 'odeme_plani', oid,
+        onay_kuyruguna_ekle(cur, 'ODEME_PLANI', 'odeme_plani', oid,
             f"Ödeme planı: {o.aciklama or ''}", o.odenecek_tutar, o.tarih)
         audit(cur, 'odeme_plani', oid, 'INSERT', yeni=o.dict())
     return {"id": oid, "success": True}
@@ -457,7 +457,7 @@ def sabit_gider_ekle(g: SabitGider):
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
             (gid, g.gider_adi, g.kategori, g.tutar, g.periyot, g.odeme_gunu, g.baslangic_tarihi, g.sube_id))
         # Onay kuyruğuna ekle
-        onay_kuyruğuna_ekle(cur, 'SABIT_GIDER', 'sabit_giderler', gid,
+        onay_kuyruguna_ekle(cur, 'SABIT_GIDER', 'sabit_giderler', gid,
             f"Sabit gider: {g.gider_adi}", g.tutar, date.today())
         audit(cur, 'sabit_giderler', gid, 'INSERT', yeni=g.dict())
     return {"id": gid, "success": True}
