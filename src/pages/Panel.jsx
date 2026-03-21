@@ -25,7 +25,7 @@ export default function Panel() {
   return (
     <div className="page">
 
-      {panel.aksiyonlar && panel.aksiyonlar.length > 0 && (
+      {panel && panel.aksiyonlar && panel.aksiyonlar.length > 0 && (
         <div style={{
           background:"#1a1a1a",
           padding:16,
@@ -33,6 +33,7 @@ export default function Panel() {
           marginBottom:20
         }}>
           <h3>📌 Bugün Yapılacaklar</h3>
+
           {panel.aksiyonlar.map((a,i)=>(
             <div key={i} style={{
               padding:10,
@@ -54,6 +55,7 @@ export default function Panel() {
         <button className="btn btn-secondary btn-sm" onClick={load}>↻ Yenile</button>
       </div>
 
+      {/* Sistem durumu bandı */}
       <div className={`alert-box ${durumRenk} mb-16`} style={{alignItems:'center'}}>
         <span style={{fontSize:20}}>{durum==='KRITIK'?'🚨':durum==='UYARI'?'⚠️':'✅'}</span>
         <div style={{flex:1}}>
@@ -67,6 +69,7 @@ export default function Panel() {
         )}
       </div>
 
+      {/* Ana KPI'lar */}
       <div className="metrics">
         <div className={`metric-card ${kasa>=0?'green':'red'}`} style={{borderTop:`3px solid var(--${kasa>=0?'green':'red'})`}}>
           <div className="metric-label">💰 Güncel Kasa</div>
@@ -97,6 +100,7 @@ export default function Panel() {
       </div>
 
       <div className="grid-2">
+        {/* Erken uyarı sistemi */}
         <div className="card">
           <h3 style={{fontSize:14,fontWeight:600,marginBottom:14}}>🧠 Erken Uyarı Sistemi</h3>
           {!panel.kararlar?.length ? (
@@ -117,6 +121,7 @@ export default function Panel() {
           )}
         </div>
 
+        {/* Kart risk paneli */}
         <div className="card">
           <h3 style={{fontSize:14,fontWeight:600,marginBottom:14}}>💳 Kart Risk Paneli</h3>
           {!panel.kart_analiz?.length ? (
@@ -158,17 +163,11 @@ export default function Panel() {
           <div className="chart-container">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={panel.simulasyon}>
-                <defs>
-                  <linearGradient id="cg" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#4caf84" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#4caf84" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2a2d35"/>
-                <XAxis dataKey="tarih" tick={{fill:'#6b6f7a',fontSize:10}} tickFormatter={d=>d?.slice(5)}/>
-                <YAxis tick={{fill:'#6b6f7a',fontSize:10}} tickFormatter={v=>(v/1000).toFixed(0)+'K'}/>
-                <Tooltip contentStyle={{background:'#1a1d24',border:'1px solid #2a2d35',borderRadius:6,fontSize:12}} formatter={v=>[fmt(v)]}/>
-                <Area type="monotone" dataKey="kasa_tahmini" stroke="#4caf84" fill="url(#cg)" strokeWidth={2} dot={false}/>
+                <XAxis dataKey="tarih"/>
+                <YAxis/>
+                <Tooltip/>
+                <Area dataKey="kasa_tahmini"/>
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -178,44 +177,17 @@ export default function Panel() {
           <h3 style={{fontSize:14,fontWeight:600,marginBottom:14}}>📊 Aylık Ciro</h3>
           <div className="chart-container">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={[...( panel.aylik_ciro||[])].reverse()}>
+              <BarChart data={[...(panel.aylik_ciro||[])].reverse()}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2a2d35"/>
-                <XAxis dataKey="ay" tick={{fill:'#6b6f7a',fontSize:10}}/>
-                <YAxis tick={{fill:'#6b6f7a',fontSize:10}} tickFormatter={v=>(v/1000).toFixed(0)+'K'}/>
-                <Tooltip contentStyle={{background:'#1a1d24',border:'1px solid #2a2d35',borderRadius:6,fontSize:12}} formatter={v=>[fmt(v)]}/>
-                <Bar dataKey="ciro" name="Ciro" fill="#4caf84" radius={[3,3,0,0]}/>
+                <XAxis dataKey="ay"/>
+                <YAxis/>
+                <Tooltip/>
+                <Bar dataKey="ciro" fill="#4caf84"/>
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
       </div>
-
-      {strateji?.oneriler?.length>0 && (
-        <div className="card" style={{borderTop:'2px solid var(--yellow)'}}>
-          <h3 style={{fontSize:14,fontWeight:600,marginBottom:12}}>🧠 Strateji Önerileri</h3>
-          <div style={{display:'flex',flexDirection:'column',gap:8}}>
-            {strateji.oneriler.slice(0,3).map((o,i)=>(
-              <div key={i} className={`alert-box ${o.renk==='KIRMIZI'?'red':o.renk==='SARI'?'yellow':'orange'} ${o.blink?'blink':''}`}
-                style={{justifyContent:'space-between',alignItems:'center'}}>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:600,fontSize:13}}>{o.baslik}</div>
-                  <div style={{fontSize:12,marginTop:2}}>{o.aciklama}</div>
-                </div>
-                {o.tavsiye_tutar>0&&<div className="mono" style={{fontWeight:700,marginLeft:16}}>{fmt(o.tavsiye_tutar)}</div>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {panel.kararlar?.filter(k=>k.kural===6).length>0&&(
-        <div className="card" style={{borderTop:'2px solid var(--yellow)'}}>
-          <h3 style={{fontSize:14,fontWeight:600,marginBottom:12}}>📦 Vadeli Alım Hatırlatmaları</h3>
-          {panel.kararlar.filter(k=>k.kural===6).map((k,i)=>(
-            <div key={i} className="alert-box orange">{k.mesaj}</div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
