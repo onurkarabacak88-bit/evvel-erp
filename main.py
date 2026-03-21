@@ -77,6 +77,30 @@ def panel():
 
         kart_analiz = kart_analiz_hesapla()
 
+        
+        aksiyonlar = []
+
+        if karar.get("kasa", 0) <= 0:
+            aksiyonlar.append({
+                "tip": "kritik",
+                "mesaj": "Kasa boş. Önce ciro gir.",
+                "aksiyon": "ciro"
+            })
+
+        if odeme_ozet.get("t7", 0) > 0:
+            aksiyonlar.append({
+                "tip": "uyari",
+                "mesaj": "7 gün içinde ödeme var",
+                "aksiyon": "odeme"
+            })
+
+        if toplam_gelir == 0:
+            aksiyonlar.append({
+                "tip": "bilgi",
+                "mesaj": "Henüz veri yok. Ciro girerek başla.",
+                "aksiyon": "ciro"
+            })
+
         return {
             **karar,
             "simulasyon": sim,
@@ -85,7 +109,8 @@ def panel():
             "odeme_ozet": odeme_ozet,
             "kart_analiz": kart_analiz,
             "toplam_gelir": toplam_gelir,
-            "toplam_gider": toplam_gider
+            "toplam_gider": toplam_gider,
+            "aksiyonlar": aksiyonlar
         }
 
     except Exception as e:
