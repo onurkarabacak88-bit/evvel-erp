@@ -23,37 +23,37 @@ export default function Panel() {
   const t7 = panel.odeme_ozet?.t7 || 0;
 
   return (
-    {panel?.aksiyonlar?.length > 0 && (
-  <div style={{
-    background:"#1a1a1a",
-    padding:16,
-    borderRadius:10,
-    marginBottom:20
-  }}>
-    <h3>📌 Bugün Yapılacaklar</h3>
-
-    {panel.aksiyonlar.map((a,i)=>(
-      <div key={i} style={{
-        padding:10,
-        marginTop:8,
-        borderRadius:6,
-        background:
-          a.tip==="kritik" ? "#3a0000" :
-          a.tip==="uyari" ? "#3a2a00" :
-          "#002a2a"
-      }}>
-        {a.mesaj}
-      </div>
-    ))}
-  </div>
-)}
     <div className="page">
+
+      {panel.aksiyonlar && panel.aksiyonlar.length > 0 && (
+        <div style={{
+          background:"#1a1a1a",
+          padding:16,
+          borderRadius:10,
+          marginBottom:20
+        }}>
+          <h3>📌 Bugün Yapılacaklar</h3>
+          {panel.aksiyonlar.map((a,i)=>(
+            <div key={i} style={{
+              padding:10,
+              marginTop:8,
+              borderRadius:6,
+              background:
+                a.tip==="kritik" ? "#3a0000" :
+                a.tip==="uyari" ? "#3a2a00" :
+                "#002a2a"
+            }}>
+              {a.mesaj}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="page-header flex items-center justify-between">
         <div><h2>CFO Kontrol Paneli</h2><p>EVVEL ERP V2 · {new Date().toLocaleDateString('tr-TR')}</p></div>
         <button className="btn btn-secondary btn-sm" onClick={load}>↻ Yenile</button>
       </div>
 
-      {/* Sistem durumu bandı */}
       <div className={`alert-box ${durumRenk} mb-16`} style={{alignItems:'center'}}>
         <span style={{fontSize:20}}>{durum==='KRITIK'?'🚨':durum==='UYARI'?'⚠️':'✅'}</span>
         <div style={{flex:1}}>
@@ -67,7 +67,6 @@ export default function Panel() {
         )}
       </div>
 
-      {/* Ana KPI'lar */}
       <div className="metrics">
         <div className={`metric-card ${kasa>=0?'green':'red'}`} style={{borderTop:`3px solid var(--${kasa>=0?'green':'red'})`}}>
           <div className="metric-label">💰 Güncel Kasa</div>
@@ -98,7 +97,6 @@ export default function Panel() {
       </div>
 
       <div className="grid-2">
-        {/* Erken uyarı sistemi */}
         <div className="card">
           <h3 style={{fontSize:14,fontWeight:600,marginBottom:14}}>🧠 Erken Uyarı Sistemi</h3>
           {!panel.kararlar?.length ? (
@@ -119,7 +117,6 @@ export default function Panel() {
           )}
         </div>
 
-        {/* Kart risk paneli */}
         <div className="card">
           <h3 style={{fontSize:14,fontWeight:600,marginBottom:14}}>💳 Kart Risk Paneli</h3>
           {!panel.kart_analiz?.length ? (
@@ -156,7 +153,6 @@ export default function Panel() {
       </div>
 
       <div className="grid-2">
-        {/* Simülasyon grafik */}
         <div className="card">
           <h3 style={{fontSize:14,fontWeight:600,marginBottom:14}}>📉 15 Günlük Kasa Projeksiyonu</h3>
           <div className="chart-container">
@@ -178,7 +174,6 @@ export default function Panel() {
           </div>
         </div>
 
-        {/* Aylık ciro */}
         <div className="card">
           <h3 style={{fontSize:14,fontWeight:600,marginBottom:14}}>📊 Aylık Ciro</h3>
           <div className="chart-container">
@@ -195,7 +190,6 @@ export default function Panel() {
         </div>
       </div>
 
-      {/* Strateji önerileri */}
       {strateji?.oneriler?.length>0 && (
         <div className="card" style={{borderTop:'2px solid var(--yellow)'}}>
           <h3 style={{fontSize:14,fontWeight:600,marginBottom:12}}>🧠 Strateji Önerileri</h3>
@@ -214,7 +208,6 @@ export default function Panel() {
         </div>
       )}
 
-      {/* Vadeli alım hatırlatmaları */}
       {panel.kararlar?.filter(k=>k.kural===6).length>0&&(
         <div className="card" style={{borderTop:'2px solid var(--yellow)'}}>
           <h3 style={{fontSize:14,fontWeight:600,marginBottom:12}}>📦 Vadeli Alım Hatırlatmaları</h3>
