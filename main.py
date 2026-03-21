@@ -34,7 +34,6 @@ def panel():
     try:
         karar = karar_motoru()
         sim = nakit_akis_simulasyon(15)
-
         with db() as (conn, cur):
             cur.execute("""
                 SELECT TO_CHAR(tarih,'YYYY-MM') as ay, SUM(toplam) as ciro
@@ -42,52 +41,52 @@ def panel():
                 GROUP BY TO_CHAR(tarih,'YYYY-MM') ORDER BY ay DESC LIMIT 6
             """)
             aylik_ciro = [dict(r) for r in cur.fetchall()]
-
-            cur.execute("""
-                SELECT COUNT(*) as sayi, COALESCE(SUM(tutar),0) as toplam 
-                FROM onay_kuyrugu WHERE durum='bekliyor'
-            """)
+            cur.execute("SELECT COUNT(*) as sayi, COALESCE(SUM(tutar),0) as toplam FROM onay_kuyrugu WHERE durum='bekliyor'")
             bekleyen = dict(cur.fetchone())
-
             cur.execute("""
-                SELECT 
-                    COALESCE(SUM(CASE WHEN tarih<=CURRENT_DATE+7 THEN odenecek_tutar ELSE 0 END),0) as t7,
+                SELECT COALESCE(SUM(CASE WHEN tarih<=CURRENT_DATE+7 THEN odenecek_tutar ELSE 0 END),0) as t7,
                     COALESCE(SUM(CASE WHEN tarih<=CURRENT_DATE+15 THEN odenecek_tutar ELSE 0 END),0) as t15,
                     COALESCE(SUM(CASE WHEN tarih<=CURRENT_DATE+30 THEN odenecek_tutar ELSE 0 END),0) as t30
-                FROM odeme_plani 
-                WHERE durum='bekliyor' 
-                AND tarih BETWEEN CURRENT_DATE AND CURRENT_DATE+30
+                FROM odeme_plani WHERE durum='bekliyor' AND tarih BETWEEN CURRENT_DATE AND CURRENT_DATE+30
             """)
             odeme_ozet = dict(cur.fetchone())
-
-            cur.execute("""
-                SELECT COALESCE(SUM(tutar),0) as t 
-                FROM kasa_hareketleri 
-                WHERE islem_turu='CIRO' AND durum='aktif'
-            """)
-            toplam_gelir = float(cur.fetchone()['t'])
-
-            cur.execute("""
-                SELECT COALESCE(SUM(tutar),0) as t 
-                FROM kasa_hareketleri 
-                WHERE islem_turu NOT IN ('CIRO','CIRO_IPTAL','ANLIK_GIDER_IPTAL') 
-                AND durum='aktif'
-            """)
-            toplam_gider = float(cur.fetchone()['t'])
-
+        # Kart analiz
         kart_analiz = kart_analiz_hesapla()
+        
+        # Toplam gelir/gider
+        cur.execute("SELECT COALESCE(SUM(tutar),0) as t FROM kasa_hareketleri WHERE islem_turu='CIRO' AND durum='aktif'")
+        toplam_gelir = float(cur.fetchone()['t'])
+        cur.execute("SELECT COALESCE(SUM(tutar),0) as t FROM kasa_hareketleri WHERE islem_turu NOT IN ('CIRO','CIRO_IPTAL','ANLIK_GIDER_IPTAL') AND durum='aktif'")
+        toplam_gider = float(cur.fetchone()['t'])
+        
+        
+        aksiyonlar = []
 
-        return {
-            **karar,
-            "simulasyon": sim,
-            "aylik_ciro": aylik_ciro,
-            "bekleyen_onay": bekleyen,
-            "odeme_ozet": odeme_ozet,
-            "kart_analiz": kart_analiz,
-            "toplam_gelir": toplam_gelir,
-            "toplam_gider": toplam_gider
-        }
+        if karar.get("kasa", 0) <= 0:
+            aksiyonlar.append({
+                "tip": "kritik",
+                "mesaj": "Kasa boş. Önce ciro gir.",
+                "aksiyon": "ciro"
+            })
 
+        if odeme_ozet.get("t7", 0) > 0:
+            aksiyonlar.append({
+                "tip": "uyari",
+                "mesaj": "Yaklaşan ödeme var",
+                "aksiyon": "odeme"
+            })
+
+        if toplam_gelir == 0:
+            aksiyonlar.append({
+                "tip": "bilgi",
+                "mesaj": "Henüz veri yok. Ciro girerek başla.",
+                "aksiyon": "ciro"
+            })
+
+        return {**karar, "simulasyon": sim, "aylik_ciro": aylik_ciro,
+                "bekleyen_onay": bekleyen, "odeme_ozet": odeme_ozet,
+                "kart_analiz": kart_analiz, "toplam_gelir": toplam_gelir, "toplam_gider": toplam_gider,
+            "aksiyonlar": aksiyonlar}
     except Exception as e:
         raise HTTPException(500, str(e))
 
