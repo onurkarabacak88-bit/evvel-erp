@@ -23,6 +23,30 @@ export default function Panel() {
   const t7 = panel.odeme_ozet?.t7 || 0;
 
   return (
+    {panel?.aksiyonlar?.length > 0 && (
+  <div style={{
+    background:"#1a1a1a",
+    padding:16,
+    borderRadius:10,
+    marginBottom:20
+  }}>
+    <h3>📌 Bugün Yapılacaklar</h3>
+
+    {panel.aksiyonlar.map((a,i)=>(
+      <div key={i} style={{
+        padding:10,
+        marginTop:8,
+        borderRadius:6,
+        background:
+          a.tip==="kritik" ? "#3a0000" :
+          a.tip==="uyari" ? "#3a2a00" :
+          "#002a2a"
+      }}>
+        {a.mesaj}
+      </div>
+    ))}
+  </div>
+)}
     <div className="page">
       <div className="page-header flex items-center justify-between">
         <div><h2>CFO Kontrol Paneli</h2><p>EVVEL ERP V2 · {new Date().toLocaleDateString('tr-TR')}</p></div>
