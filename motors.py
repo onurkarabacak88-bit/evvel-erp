@@ -306,3 +306,49 @@ def nakit_akis_simulasyon(gun_sayisi=15):
 def fmt(n):
     if n is None: return "---"
     return f"{int(n):,} ₺".replace(",", ".")
+
+def kart_analiz_hesapla():
+    """Panel için kart analizi — ekstre motoru dahil"""
+    from datetime import date
+    bugun = date.today()
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE ORDER BY banka")
+        kartlar = cur.fetchall()
+        sonuc = []
+        for k in kartlar:
+            cur.execute("""SELECT COALESCE(SUM(
+                CASE WHEN islem_turu='HARCAMA' THEN tutar ELSE -tutar END),0) as borc
+                FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'""", (k['id'],))
+            borc = float(cur.fetchone()['borc'])
+            limit = float(k['limit_tutar'])
+            son_odeme_gun = k['son_odeme_gunu']
+            son_odeme = date(bugun.year, bugun.month, son_odeme_gun)
+            if son_odeme < bugun:
+                if bugun.month == 12:
+                    son_odeme = date(bugun.year+1, 1, son_odeme_gun)
+                else:
+                    son_odeme = date(bugun.year, bugun.month+1, son_odeme_gun)
+            gun_kaldi = (son_odeme - bugun).days
+            cur.execute("""SELECT * FROM odeme_plani WHERE kart_id=%s AND durum='bekliyor' ORDER BY tarih ASC LIMIT 1""", (k['id'],))
+            yaklasan = cur.fetchone()
+            # Ekstre - banka mantığı
+            cur.execute("""SELECT COALESCE(SUM(tutar),0) as e FROM kart_hareketleri
+                WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA' AND taksit_sayisi=1
+                AND EXTRACT(DAY FROM tarih)<=%s""", (k['id'], k['kesim_gunu']))
+            tek_cekim = float(cur.fetchone()['e'])
+            cur.execute("""SELECT COALESCE(SUM(tutar::float/NULLIF(taksit_sayisi,0)),0) as t FROM kart_hareketleri
+                WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA' AND taksit_sayisi>1""", (k['id'],))
+            aylik_taksit = float(cur.fetchone()['t'])
+            bu_ekstre = tek_cekim + aylik_taksit
+            asgari = bu_ekstre * 0.4  # %40 asgari ödeme
+            sonuc.append({
+                'kart_adi': k['kart_adi'], 'banka': k['banka'],
+                'limit_tutar': limit, 'guncel_borc': borc,
+                'kalan_limit': limit - borc,
+                'limit_doluluk': borc/limit if limit > 0 else 0,
+                'bu_ekstre': bu_ekstre, 'aylik_taksit': aylik_taksit,
+                'asgari_odeme': asgari,
+                'gun_kaldi': gun_kaldi,
+                'blink': gun_kaldi <= 0 and yaklasan is not None,
+            })
+        return sonuc

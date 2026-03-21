@@ -50,8 +50,19 @@ def panel():
                 FROM odeme_plani WHERE durum='bekliyor' AND tarih BETWEEN CURRENT_DATE AND CURRENT_DATE+30
             """)
             odeme_ozet = dict(cur.fetchone())
+        # Kart analiz - ekstre, taksit, limit doluluk
+        from motors import kart_analiz_hesapla
+        kart_analiz = kart_analiz_hesapla()
+        
+        # Toplam gelir/gider
+        cur.execute("SELECT COALESCE(SUM(tutar),0) as t FROM kasa_hareketleri WHERE islem_turu='CIRO' AND durum='aktif'")
+        toplam_gelir = float(cur.fetchone()['t'])
+        cur.execute("SELECT COALESCE(SUM(tutar),0) as t FROM kasa_hareketleri WHERE islem_turu NOT IN ('CIRO','CIRO_IPTAL','ANLIK_GIDER_IPTAL') AND durum='aktif'")
+        toplam_gider = float(cur.fetchone()['t'])
+        
         return {**karar, "simulasyon": sim, "aylik_ciro": aylik_ciro,
-                "bekleyen_onay": bekleyen, "odeme_ozet": odeme_ozet}
+                "bekleyen_onay": bekleyen, "odeme_ozet": odeme_ozet,
+                "kart_analiz": kart_analiz, "toplam_gelir": toplam_gelir, "toplam_gider": toplam_gider}
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -140,25 +151,32 @@ def kartlar_listele():
                 FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'""", (k['id'],))
             borc = float(cur.fetchone()['borc'])
 
-            # Bu ekstre (kesim gününe kadar olan harcamalar)
+            # Bu ekstre = kesim gününe kadar tek çekim harcamalar + tüm taksitli harcamaların aylık taksiti
+            # BANKA MANTIĞI: Taksitli alışveriş her ay dönem borcuna girer
             cur.execute("""SELECT COALESCE(SUM(tutar),0) as ekstre
                 FROM kart_hareketleri
                 WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA'
+                AND taksit_sayisi=1
                 AND EXTRACT(DAY FROM tarih) <= %s""", (k['id'], k['kesim_gunu']))
-            bu_ekstre = float(cur.fetchone()['ekstre'])
+            tek_cekim_ekstre = float(cur.fetchone()['ekstre'])
 
-            # Gelecek ekstre (kesim gününden sonraki harcamalar)
-            cur.execute("""SELECT COALESCE(SUM(tutar),0) as gelecek
-                FROM kart_hareketleri
-                WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA'
-                AND EXTRACT(DAY FROM tarih) > %s""", (k['id'], k['kesim_gunu']))
-            gelecek_ekstre = float(cur.fetchone()['gelecek'])
-
-            # Taksit yükü (aylık)
+            # Taksitli harcamaların aylık taksit tutarı (banka mantığı: her ay dönem borcuna eklenir)
             cur.execute("""SELECT COALESCE(SUM(tutar::float / NULLIF(taksit_sayisi,0)),0) as aylik_taksit
                 FROM kart_hareketleri
                 WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA' AND taksit_sayisi > 1""", (k['id'],))
             aylik_taksit = float(cur.fetchone()['aylik_taksit'])
+
+            # Bu dönem ekstre = tek çekim + aylık taksit (banka gibi)
+            bu_ekstre = tek_cekim_ekstre + aylik_taksit
+
+            # Gelecek ekstre (kesim gününden sonraki tek çekim harcamalar + taksitler devam eder)
+            cur.execute("""SELECT COALESCE(SUM(tutar),0) as gelecek
+                FROM kart_hareketleri
+                WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA'
+                AND taksit_sayisi=1
+                AND EXTRACT(DAY FROM tarih) > %s""", (k['id'], k['kesim_gunu']))
+            gelecek_tek = float(cur.fetchone()['gelecek'])
+            gelecek_ekstre = gelecek_tek + aylik_taksit  # taksitler gelecek aya da girer
 
             limit = float(k['limit_tutar'])
             son_odeme_gun = k['son_odeme_gunu']
@@ -287,7 +305,7 @@ def odeme_plani_listele():
 def odeme_plani_ekle(o: OdemePlani):
     with db() as (conn, cur):
         oid = str(uuid.uuid4())
-        asgari = o.asgari_tutar or o.odenecek_tutar * 0.2
+        asgari = o.asgari_tutar or o.odenecek_tutar * 0.4
         cur.execute("""INSERT INTO odeme_plani (id,kart_id,tarih,odenecek_tutar,asgari_tutar,aciklama)
             VALUES (%s,%s,%s,%s,%s,%s)""",
             (oid, o.kart_id, o.tarih, o.odenecek_tutar, asgari, o.aciklama))
@@ -661,3 +679,151 @@ async def spa(full_path: str):
     if index.exists():
         return HTMLResponse(index.read_text())
     return {"error": "Frontend build edilmemiş"}
+
+# ── EXCEL IMPORT ───────────────────────────────────────────────
+from fastapi import UploadFile, File
+import io
+
+@app.post("/api/excel-import")
+async def excel_import(dosya: UploadFile = File(...)):
+    try:
+        import openpyxl
+        content = await dosya.read()
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+        
+        detay = {}
+        toplam = 0
+
+        with db() as (conn, cur):
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                rows = list(ws.iter_rows(values_only=True))
+                if len(rows) < 2: continue
+                
+                headers = [str(h).strip().lower() if h else '' for h in rows[0]]
+                eklenen = 0
+                hata = 0
+
+                for row in rows[1:]:
+                    if all(v is None for v in row): continue
+                    d = {headers[i]: row[i] for i in range(len(headers)) if i < len(row)}
+                    
+                    try:
+                        # Tarih düzelt
+                        def fix_date(v):
+                            if v is None: return None
+                            if hasattr(v, 'strftime'): return v.strftime('%Y-%m-%d')
+                            return str(v)[:10]
+
+                        sn = sheet_name.lower().strip()
+
+                        if sn == 'ciro':
+                            sube_id = 'sube-merkez'
+                            cur.execute("SELECT id FROM subeler WHERE LOWER(ad)=LOWER(%s)", (str(d.get('sube','MERKEZ')),))
+                            r = cur.fetchone()
+                            if r: sube_id = r['id']
+                            cid = str(uuid.uuid4())
+                            nakit = float(d.get('nakit') or 0)
+                            pos = float(d.get('pos') or 0)
+                            online = float(d.get('online') or 0)
+                            cur.execute("""INSERT INTO ciro (id,tarih,sube_id,nakit,pos,online,aciklama)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                                (cid, fix_date(d.get('tarih')), sube_id, nakit, pos, online, str(d.get('aciklama') or '')))
+                            if cur.rowcount > 0:
+                                toplam_ciro = nakit + pos + online
+                                cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
+                                    VALUES (%s,%s,'CIRO',%s,'Excel import','ciro',%s)""",
+                                    (str(uuid.uuid4()), fix_date(d.get('tarih')), toplam_ciro, cid))
+                                eklenen += 1
+
+                        elif sn == 'kartlar':
+                            cur.execute("""INSERT INTO kartlar (id,kart_adi,banka,limit_tutar,kesim_gunu,son_odeme_gunu,faiz_orani)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (kart_adi) DO NOTHING""",
+                                (str(uuid.uuid4()), str(d.get('kart_adi','')).upper(),
+                                 str(d.get('banka','')), float(d.get('limit_tutar') or 0),
+                                 int(d.get('kesim_gunu') or 15), int(d.get('son_odeme_gunu') or 25),
+                                 float(d.get('faiz_orani') or 0)))
+                            if cur.rowcount > 0: eklenen += 1
+
+                        elif sn == 'kart_hareketleri':
+                            kart_adi = str(d.get('kart_adi','')).upper()
+                            cur.execute("SELECT id FROM kartlar WHERE UPPER(kart_adi)=%s", (kart_adi,))
+                            k = cur.fetchone()
+                            if not k: continue
+                            islem = str(d.get('islem_turu','HARCAMA')).upper()
+                            hid = str(uuid.uuid4())
+                            cur.execute("""INSERT INTO kart_hareketleri (id,kart_id,tarih,islem_turu,tutar,taksit_sayisi,aciklama)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                                (hid, k['id'], fix_date(d.get('tarih')),
+                                 islem, float(d.get('tutar') or 0),
+                                 int(d.get('taksit_sayisi') or 1), str(d.get('aciklama') or '')))
+                            # HARCAMA kasayı etkilemez
+                            # ODEME -> onay kuyruğuna girer (kasadan düşmesi onay gerektirir)
+                            if islem == 'ODEME':
+                                cur.execute("""INSERT INTO onay_kuyrugu (id,islem_turu,kaynak_tablo,kaynak_id,aciklama,tutar,tarih)
+                                    VALUES (%s,'KART_ODEME','kart_hareketleri',%s,'Excel import kart ödemesi',%s,%s)""",
+                                    (str(uuid.uuid4()), hid, float(d.get('tutar') or 0), fix_date(d.get('tarih'))))
+                            eklenen += 1
+
+                        elif sn == 'borclar':
+                            cur.execute("""INSERT INTO borc_envanteri (id,kurum,borc_turu,toplam_borc,aylik_taksit,kalan_vade,odeme_gunu)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                                (str(uuid.uuid4()), str(d.get('kurum','')),
+                                 str(d.get('borc_turu','Kredi')),
+                                 float(d.get('toplam_borc') or 0),
+                                 float(d.get('aylik_taksit') or 0),
+                                 int(d.get('kalan_vade') or 0),
+                                 int(d.get('odeme_gunu') or 1)))
+                            eklenen += 1
+
+                        elif sn == 'personel':
+                            sube_id = None
+                            cur.execute("SELECT id FROM subeler WHERE LOWER(ad)=LOWER(%s)", (str(d.get('sube','MERKEZ')),))
+                            r = cur.fetchone()
+                            if r: sube_id = r['id']
+                            cur.execute("""INSERT INTO personel (id,ad_soyad,gorev,calisma_turu,maas,yemek_ucreti,yol_ucreti,odeme_gunu,sube_id)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                (str(uuid.uuid4()), str(d.get('ad_soyad','')),
+                                 str(d.get('gorev') or ''),
+                                 str(d.get('calisma_turu','surekli')),
+                                 float(d.get('maas') or 0),
+                                 float(d.get('yemek_ucreti') or 0),
+                                 float(d.get('yol_ucreti') or 0),
+                                 int(d.get('odeme_gunu') or 28), sube_id))
+                            eklenen += 1
+
+                        elif sn == 'sabit_giderler':
+                            sube_id = None
+                            cur.execute("SELECT id FROM subeler WHERE LOWER(ad)=LOWER(%s)", (str(d.get('sube','MERKEZ')),))
+                            r = cur.fetchone()
+                            if r: sube_id = r['id']
+                            cur.execute("""INSERT INTO sabit_giderler (id,gider_adi,kategori,tutar,periyot,odeme_gunu,sube_id)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                                (str(uuid.uuid4()), str(d.get('gider_adi','')),
+                                 str(d.get('kategori','Diğer')),
+                                 float(d.get('tutar') or 0),
+                                 str(d.get('periyot','aylik')),
+                                 int(d.get('odeme_gunu') or 1), sube_id))
+                            eklendi += 1
+
+                        elif sn == 'vadeli_alimlar':
+                            cur.execute("""INSERT INTO vadeli_alimlar (id,aciklama,tutar,vade_tarihi,tedarikci)
+                                VALUES (%s,%s,%s,%s,%s)""",
+                                (str(uuid.uuid4()), str(d.get('aciklama','')),
+                                 float(d.get('tutar') or 0),
+                                 fix_date(d.get('vade_tarihi')),
+                                 str(d.get('tedarikci') or '')))
+                            eklenen += 1
+
+                    except Exception as ex:
+                        hata += 1
+
+                if eklenen > 0 or hata > 0:
+                    detay[sheet_name] = {'eklenen': eklenen, 'hata': hata}
+                    toplam += eklenen
+
+        return {"success": True, "toplam": toplam, "detay": detay}
+    except ImportError:
+        raise HTTPException(500, "openpyxl kurulu değil")
+    except Exception as e:
+        raise HTTPException(500, str(e))
