@@ -2,51 +2,50 @@ import { useState } from 'react';
 import Panel from './pages/Panel';
 import Kartlar from './pages/Kartlar';
 import KartHareketleri from './pages/KartHareketleri';
+import KartAnaliz from './pages/KartAnaliz';
 import Personel from './pages/Personel';
 import Borclar from './pages/Borclar';
 import SabitGiderler from './pages/SabitGiderler';
+import AnlikGider from './pages/AnlikGider';
 import VadeliAlimlar from './pages/VadeliAlimlar';
 import OnayKuyrugu from './pages/OnayKuyrugu';
 import Ciro from './pages/Ciro';
 import Strateji from './pages/Strateji';
+import Ledger from './pages/Ledger';
 import './index.css';
 
 const NAV = [
   { group: 'Ana', items: [
-    { id: 'panel', label: 'Panel', icon: '⬛' },
+    { id: 'panel', label: 'CFO Panel', icon: '⬛' },
     { id: 'strateji', label: 'Strateji Motoru', icon: '🧠' },
-    { id: 'onay', label: 'Onay Kuyruğu', icon: '✅', badge: true },
+    { id: 'onay', label: 'Onay Kuyruğu', icon: '✅' },
+    { id: 'ledger', label: 'İşlem Defteri', icon: '📒' },
   ]},
   { group: 'Veri Girişi', items: [
     { id: 'ciro', label: 'Ciro Girişi', icon: '📈' },
     { id: 'kart-hareketleri', label: 'Kart Hareketi', icon: '💳' },
+    { id: 'anlik-gider', label: 'Anlık Gider', icon: '💸' },
     { id: 'vadeli', label: 'Vadeli Alım', icon: '📦' },
   ]},
   { group: 'Tanımlar', items: [
     { id: 'kartlar', label: 'Kartlar', icon: '💳' },
+    { id: 'kart-analiz', label: 'Kart Analiz', icon: '📊' },
     { id: 'personel', label: 'Personel', icon: '👥' },
     { id: 'borclar', label: 'Borç Envanteri', icon: '🏦' },
-    { id: 'sabit-giderler', label: 'Sabit Giderler', icon: '💸' },
+    { id: 'sabit-giderler', label: 'Sabit Giderler', icon: '🏠' },
   ]},
 ];
 
 const PAGES = {
-  panel: Panel,
-  strateji: Strateji,
-  onay: OnayKuyrugu,
-  ciro: Ciro,
-  'kart-hareketleri': KartHareketleri,
-  vadeli: VadeliAlimlar,
-  kartlar: Kartlar,
-  personel: Personel,
-  borclar: Borclar,
-  'sabit-giderler': SabitGiderler,
+  panel: Panel, strateji: Strateji, onay: OnayKuyrugu, ledger: Ledger,
+  ciro: Ciro, 'kart-hareketleri': KartHareketleri, 'anlik-gider': AnlikGider,
+  vadeli: VadeliAlimlar, kartlar: Kartlar, 'kart-analiz': KartAnaliz,
+  personel: Personel, borclar: Borclar, 'sabit-giderler': SabitGiderler,
 };
 
 export default function App() {
   const [page, setPage] = useState('panel');
   const Page = PAGES[page] || Panel;
-
   return (
     <div className="app">
       <aside className="sidebar">

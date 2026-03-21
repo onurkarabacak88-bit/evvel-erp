@@ -6,7 +6,8 @@ from contextlib import contextmanager
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 def get_conn():
-    conn = psycopg2.connect(DATABASE_URL, sslmode="require" if "railway" in DATABASE_URL else "disable")
+    conn = psycopg2.connect(DATABASE_URL,
+        sslmode="require" if "railway" in DATABASE_URL else "disable")
     conn.autocommit = False
     return conn
 
@@ -26,20 +27,18 @@ def db():
 def init_db():
     with db() as (conn, cur):
         cur.execute("""
-
-        -- 1. ŞUBELER
         CREATE TABLE IF NOT EXISTS subeler (
             id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
             ad TEXT NOT NULL UNIQUE,
             aktif BOOLEAN DEFAULT TRUE,
             olusturma TIMESTAMPTZ DEFAULT NOW()
         );
-        INSERT INTO subeler (id, ad) VALUES
+        INSERT INTO subeler (id,ad) VALUES
             ('sube-tema','TEMA'),('sube-zafer','ZAFER'),
-            ('sube-alsancak','ALSANCAK'),('sube-koycegiz','KOYCEGIZ')
+            ('sube-alsancak','ALSANCAK'),('sube-koycegiz','KOYCEGIZ'),
+            ('sube-merkez','MERKEZ')
         ON CONFLICT DO NOTHING;
 
-        -- 2. MERKEZ KASA HAREKETLERİ
         CREATE TABLE IF NOT EXISTS kasa_hareketleri (
             id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
             tarih DATE NOT NULL DEFAULT CURRENT_DATE,
@@ -48,12 +47,10 @@ def init_db():
             aciklama TEXT,
             kaynak_tablo TEXT,
             kaynak_id TEXT,
-            durum TEXT DEFAULT 'aktif' CHECK(durum IN ('aktif','iptal')),
-            iptal_nedeni TEXT,
+            durum TEXT DEFAULT 'aktif',
             olusturma TIMESTAMPTZ DEFAULT NOW()
         );
 
-        -- 3. CİRO
         CREATE TABLE IF NOT EXISTS ciro (
             id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
             tarih DATE NOT NULL,
@@ -67,7 +64,6 @@ def init_db():
             olusturma TIMESTAMPTZ DEFAULT NOW()
         );
 
-        -- 4. KARTLAR
         CREATE TABLE IF NOT EXISTS kartlar (
             id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
             kart_adi TEXT NOT NULL UNIQUE,
@@ -80,9 +76,6 @@ def init_db():
             olusturma TIMESTAMPTZ DEFAULT NOW()
         );
 
-        -- 5. KART HAREKETLERİ
-        -- ❗ HARCAMA kasayı ETKİLEMEZ — sadece kart borcu artar
-        -- ❗ ODEME kasadan düşer
         CREATE TABLE IF NOT EXISTS kart_hareketleri (
             id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
             kart_id TEXT NOT NULL REFERENCES kartlar(id),
@@ -91,26 +84,23 @@ def init_db():
             tutar NUMERIC(14,2) NOT NULL,
             taksit_sayisi INTEGER DEFAULT 1,
             aciklama TEXT,
-            durum TEXT DEFAULT 'aktif' CHECK(durum IN ('aktif','iptal')),
+            durum TEXT DEFAULT 'aktif',
             iptal_nedeni TEXT,
             olusturma TIMESTAMPTZ DEFAULT NOW()
         );
 
-        -- 6. ÖDEME PLANI (onay bekleyen ödemeler)
         CREATE TABLE IF NOT EXISTS odeme_plani (
             id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
             kart_id TEXT REFERENCES kartlar(id),
             tarih DATE NOT NULL,
             odenecek_tutar NUMERIC(14,2) NOT NULL,
             asgari_tutar NUMERIC(14,2),
-            faiz_tutari NUMERIC(14,2) DEFAULT 0,
-            durum TEXT DEFAULT 'bekliyor' CHECK(durum IN ('bekliyor','onaylandi','odendi','gecikti','iptal')),
+            durum TEXT DEFAULT 'bekliyor',
             odeme_tarihi DATE,
             aciklama TEXT,
             olusturma TIMESTAMPTZ DEFAULT NOW()
         );
 
-        -- 7. BORÇ ENVANTERİ
         CREATE TABLE IF NOT EXISTS borc_envanteri (
             id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
             kurum TEXT NOT NULL,
@@ -125,27 +115,35 @@ def init_db():
             olusturma TIMESTAMPTZ DEFAULT NOW()
         );
 
-        -- 8. SABİT GİDERLER (kira, abonelik vs)
         CREATE TABLE IF NOT EXISTS sabit_giderler (
             id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
             gider_adi TEXT NOT NULL,
             kategori TEXT NOT NULL,
             tutar NUMERIC(14,2) NOT NULL,
-            periyot TEXT DEFAULT 'aylik' CHECK(periyot IN ('aylik','yillik','haftalik')),
+            periyot TEXT DEFAULT 'aylik',
             odeme_gunu INTEGER DEFAULT 1,
             baslangic_tarihi DATE,
-            bitis_tarihi DATE,
             sube_id TEXT REFERENCES subeler(id),
             aktif BOOLEAN DEFAULT TRUE,
             olusturma TIMESTAMPTZ DEFAULT NOW()
         );
 
-        -- 9. PERSONEL
+        CREATE TABLE IF NOT EXISTS anlik_giderler (
+            id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+            tarih DATE NOT NULL DEFAULT CURRENT_DATE,
+            kategori TEXT NOT NULL,
+            tutar NUMERIC(14,2) NOT NULL,
+            aciklama TEXT,
+            sube TEXT DEFAULT 'MERKEZ',
+            durum TEXT DEFAULT 'aktif',
+            olusturma TIMESTAMPTZ DEFAULT NOW()
+        );
+
         CREATE TABLE IF NOT EXISTS personel (
             id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
             ad_soyad TEXT NOT NULL,
             gorev TEXT,
-            calisma_turu TEXT DEFAULT 'surekli' CHECK(calisma_turu IN ('surekli','part_time')),
+            calisma_turu TEXT DEFAULT 'surekli',
             maas NUMERIC(14,2) DEFAULT 0,
             saatlik_ucret NUMERIC(10,2) DEFAULT 0,
             yemek_ucreti NUMERIC(10,2) DEFAULT 0,
@@ -159,52 +157,16 @@ def init_db():
             olusturma TIMESTAMPTZ DEFAULT NOW()
         );
 
-        -- 10. PERSONEL ÇALIŞMA SAATLERİ (part-time)
-        CREATE TABLE IF NOT EXISTS calisma_saatleri (
-            id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-            personel_id TEXT NOT NULL REFERENCES personel(id),
-            tarih DATE NOT NULL,
-            normal_saat NUMERIC(5,2) DEFAULT 0,
-            mesai_saat NUMERIC(5,2) DEFAULT 0,
-            mesai_carpani NUMERIC(4,2) DEFAULT 1.5,
-            aciklama TEXT,
-            olusturma TIMESTAMPTZ DEFAULT NOW()
-        );
-
-        -- 11. VADELİ ALIMLAR
         CREATE TABLE IF NOT EXISTS vadeli_alimlar (
             id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
             aciklama TEXT NOT NULL,
             tutar NUMERIC(14,2) NOT NULL,
             vade_tarihi DATE NOT NULL,
             tedarikci TEXT,
-            hatirlatma_yapildi BOOLEAN DEFAULT FALSE,
-            durum TEXT DEFAULT 'bekliyor' CHECK(durum IN ('bekliyor','odendi','iptal')),
+            durum TEXT DEFAULT 'bekliyor',
             olusturma TIMESTAMPTZ DEFAULT NOW()
         );
 
-        -- 12. DÖNEM YÖNETİMİ
-        CREATE TABLE IF NOT EXISTS donemler (
-            id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-            yil INTEGER NOT NULL,
-            ay INTEGER NOT NULL,
-            durum TEXT DEFAULT 'acik' CHECK(durum IN ('acik','kapali')),
-            kapanma_tarihi TIMESTAMPTZ,
-            UNIQUE(yil, ay)
-        );
-
-        -- 13. KASA MUTABAKATI
-        CREATE TABLE IF NOT EXISTS kasa_mutabakat (
-            id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-            tarih DATE NOT NULL,
-            sistem_bakiye NUMERIC(14,2),
-            gercek_bakiye NUMERIC(14,2),
-            fark NUMERIC(14,2) GENERATED ALWAYS AS (gercek_bakiye - sistem_bakiye) STORED,
-            aciklama TEXT,
-            olusturma TIMESTAMPTZ DEFAULT NOW()
-        );
-
-        -- 14. ONAY KUYRUğU
         CREATE TABLE IF NOT EXISTS onay_kuyrugu (
             id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
             islem_turu TEXT NOT NULL,
@@ -213,12 +175,11 @@ def init_db():
             aciklama TEXT,
             tutar NUMERIC(14,2),
             tarih DATE,
-            durum TEXT DEFAULT 'bekliyor' CHECK(durum IN ('bekliyor','onaylandi','reddedildi')),
+            durum TEXT DEFAULT 'bekliyor',
             onay_tarihi TIMESTAMPTZ,
             olusturma TIMESTAMPTZ DEFAULT NOW()
         );
 
-        -- 15. AUDIT LOG (ters kayıt için)
         CREATE TABLE IF NOT EXISTS audit_log (
             id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
             tablo TEXT NOT NULL,
@@ -229,12 +190,11 @@ def init_db():
             tarih TIMESTAMPTZ DEFAULT NOW()
         );
 
-        -- İNDEKSLER
         CREATE INDEX IF NOT EXISTS idx_kasa_tarih ON kasa_hareketleri(tarih);
         CREATE INDEX IF NOT EXISTS idx_ciro_tarih ON ciro(tarih);
-        CREATE INDEX IF NOT EXISTS idx_kart_har_kart ON kart_hareketleri(kart_id);
+        CREATE INDEX IF NOT EXISTS idx_kart_har ON kart_hareketleri(kart_id);
         CREATE INDEX IF NOT EXISTS idx_odeme_tarih ON odeme_plani(tarih);
         CREATE INDEX IF NOT EXISTS idx_onay_durum ON onay_kuyrugu(durum);
-
+        CREATE INDEX IF NOT EXISTS idx_anlik_tarih ON anlik_giderler(tarih);
         """)
-    print("✓ EVVEL ERP — Veritabanı hazır (19 modül)")
+    print("✅ EVVEL ERP — Veritabanı hazır")
