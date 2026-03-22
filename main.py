@@ -816,6 +816,24 @@ async def excel_import(dosya: UploadFile = File(...)):
 def health():
     return {"status": "ok", "version": "EVVEL-ERP-2.0"}
 
-# Frontend
-if pathlib.Path("static/index.html").exists():
-    app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
+# ── FRONTEND (STATIC) ──────────────────────────────────────────
+STATIC_DIR = pathlib.Path("static")
+
+if STATIC_DIR.exists():
+    app.mount(
+        "/",
+        StaticFiles(directory=str(STATIC_DIR), html=True),
+        name="static"
+    )
+
+
+# ── SPA FALLBACK (EN SON) ──────────────────────────────────────
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    index_file = STATIC_DIR / "index.html"
+
+    if index_file.exists():
+        return HTMLResponse(index_file.read_text(encoding="utf-8"))
+
+    return {"error": "Frontend build bulunamadı"}
