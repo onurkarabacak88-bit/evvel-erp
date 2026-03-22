@@ -663,22 +663,6 @@ def ledger(limit: int = 200, islem_turu: Optional[str] = None):
         cur.execute(sql, params)
         return [dict(r) for r in cur.fetchall()]
 
-# ── HEALTH ─────────────────────────────────────────────────────
-@app.get("/api/health")
-def health():
-    return {"status": "ok", "version": "EVVEL-ERP-2.0"}
-
-# Frontend
-if pathlib.Path("static/index.html").exists():
-    app.mount("/", StaticFiles(directory="static", html=True), name="static")
-
-@app.get("/{full_path:path}")
-async def spa(full_path: str):
-    index = pathlib.Path("static/index.html")
-    if index.exists():
-        return HTMLResponse(index.read_text())
-    return {"error": "Frontend build edilmemiş"}
-
 # ── EXCEL IMPORT ───────────────────────────────────────────────
 from fastapi import UploadFile, File
 import io
@@ -826,3 +810,19 @@ async def excel_import(dosya: UploadFile = File(...)):
         raise HTTPException(500, "openpyxl kurulu değil")
     except Exception as e:
         raise HTTPException(500, str(e))
+
+# ── HEALTH ─────────────────────────────────────────────────────
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "version": "EVVEL-ERP-2.0"}
+
+# Frontend
+if pathlib.Path("static/index.html").exists():
+    app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
+@app.get("/{full_path:path}")
+async def spa(full_path: str):
+    index = pathlib.Path("static/index.html")
+    if index.exists():
+        return HTMLResponse(index.read_text())
+    return {"error": "Frontend build edilmemiş"}
