@@ -366,20 +366,26 @@ def odeme_plani_ekle(o: OdemePlani):
 
 @app.post("/api/odeme-plani/{oid}/ode")
 def odeme_yap(oid: str, tutar: Optional[float] = None):
+    """
+    TEK KASA KAPISI KURALI: Direkt kasa yazmaz.
+    Onay kuyruğuna ekler → /onay-kuyrugu/{id}/onayla üzerinden kasaya girer.
+    """
     with db() as (conn, cur):
         cur.execute("SELECT * FROM odeme_plani WHERE id=%s", (oid,))
         plan = cur.fetchone()
         if not plan: raise HTTPException(404)
         if plan['durum'] == 'odendi': raise HTTPException(400, "Zaten ödendi")
-        bugun = str(date.today())
+        
+        # Zaten onay kuyruğunda mı?
+        cur.execute("SELECT id FROM onay_kuyrugu WHERE kaynak_id=%s AND durum='bekliyor'", (oid,))
+        if cur.fetchone():
+            return {"success": True, "mesaj": "Zaten onay kuyruğunda"}
+        
         odenen = tutar or float(plan['odenecek_tutar'])
-        cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s WHERE id=%s", (bugun, oid))
-        cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
-            VALUES (%s,%s,'KART_ODEME',%s,'Kart ödemesi onaylandı','odeme_plani',%s)""",
-            (str(uuid.uuid4()), bugun, odenen, oid))
-        cur.execute("UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW() WHERE kaynak_id=%s", (oid,))
-        audit(cur, 'odeme_plani', oid, 'ODEME', eski=plan)
-    return {"success": True}
+        onay_ekle(cur, 'KART_ODEME', 'odeme_plani', oid,
+            f"Kart ödemesi: {plan.get('aciklama') or ''}", odenen, plan['tarih'])
+        audit(cur, 'odeme_plani', oid, 'ONAY_BEKLENIYOR', eski=plan)
+    return {"success": True, "mesaj": "Onay kuyruğuna alındı"}
 
 @app.delete("/api/odeme-plani/{oid}")
 def odeme_plani_sil(oid: str):
@@ -412,6 +418,13 @@ def onayla(oid: str):
             (str(uuid.uuid4()), tarih, onay['islem_turu'], tutar,
              f"Onaylandı: {onay['aciklama']}", onay['kaynak_tablo'], onay['kaynak_id']))
         cur.execute("UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW() WHERE id=%s", (oid,))
+        
+        # Kaynak tabloyu da güncelle
+        if onay['kaynak_tablo'] == 'vadeli_alimlar':
+            cur.execute("UPDATE vadeli_alimlar SET durum='odendi' WHERE id=%s", (onay['kaynak_id'],))
+        elif onay['kaynak_tablo'] == 'odeme_plani':
+            cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=NOW()::DATE WHERE id=%s", (onay['kaynak_id'],))
+            
         audit(cur, 'onay_kuyrugu', oid, 'ONAYLANDI', eski=onay)
     return {"success": True}
 
@@ -633,16 +646,33 @@ def vadeli_sil(vid: str):
 
 @app.post("/api/vadeli-alimlar/{vid}/ode")
 def vadeli_ode(vid: str):
+    """
+    Vadeli ödeme direkt kasaya YAZMAZ.
+    Onay kuyruğuna girer → onaylandığında kasadan düşer.
+    Kural: Vade tarihi gelmeden ödeme yapılamaz.
+    """
     with db() as (conn, cur):
         cur.execute("SELECT * FROM vadeli_alimlar WHERE id=%s", (vid,))
         v = cur.fetchone()
         if not v: raise HTTPException(404)
-        cur.execute("UPDATE vadeli_alimlar SET durum='odendi' WHERE id=%s", (vid,))
-        cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
-            VALUES (%s,%s,'VADELI_ODEME',%s,%s,'vadeli_alimlar',%s)""",
-            (str(uuid.uuid4()), str(date.today()), float(v['tutar']), f"Vadeli: {v['aciklama']}", vid))
-        audit(cur, 'vadeli_alimlar', vid, 'ODEME', eski=v)
-    return {"success": True}
+        
+        # Vade tarihi kontrolü — gelmeden ödeme yapılamaz
+        bugun = date.today()
+        if v['vade_tarihi'] > bugun:
+            gun_kaldi = (v['vade_tarihi'] - bugun).days
+            raise HTTPException(400, f"Vade tarihi henüz gelmedi. {gun_kaldi} gün kaldı.")
+        
+        # Zaten onay kuyruğunda mı?
+        cur.execute("SELECT id FROM onay_kuyrugu WHERE kaynak_id=%s AND durum='bekliyor'", (vid,))
+        if cur.fetchone():
+            raise HTTPException(400, "Bu vadeli alım zaten onay kuyruğunda")
+        
+        # Onay kuyruğuna ekle — kasaya dokunma
+        cur.execute("UPDATE vadeli_alimlar SET durum='onay_bekliyor' WHERE id=%s", (vid,))
+        onay_ekle(cur, 'VADELI_ODEME', 'vadeli_alimlar', vid,
+            f"Vadeli alım: {v['aciklama']}", v['tutar'], v['vade_tarihi'])
+        audit(cur, 'vadeli_alimlar', vid, 'ONAY_BEKLENIYOR', eski=v)
+    return {"success": True, "mesaj": "Onay kuyruğuna alındı. Onaylandığında kasadan düşülecek."}
 
 # ── BORÇLAR ────────────────────────────────────────────────────
 class BorcModel(BaseModel):
@@ -854,7 +884,7 @@ async def excel_import(dosya: UploadFile = File(...)):
                                  float(d.get('tutar') or 0),
                                  str(d.get('periyot','aylik')),
                                  int(d.get('odeme_gunu') or 1), sube_id))
-                            eklendi += 1
+                            eklenen += 1
 
                         elif sn == 'vadeli_alimlar':
                             cur.execute("""INSERT INTO vadeli_alimlar (id,aciklama,tutar,vade_tarihi,tedarikci)
@@ -875,5 +905,197 @@ async def excel_import(dosya: UploadFile = File(...)):
         return {"success": True, "toplam": toplam, "detay": detay}
     except ImportError:
         raise HTTPException(500, "openpyxl kurulu değil")
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ── AKSİYON MOTORU ────────────────────────────────────────────
+@app.post("/api/aksiyon")
+def aksiyon_calistir(tip: str, kaynak_id: Optional[str] = None, tutar: Optional[float] = None):
+    """Panel aksiyonlarını çalıştırır"""
+    try:
+        bugun = str(date.today())
+        with db() as (conn, cur):
+            if tip == "odeme_ertele" and kaynak_id:
+                cur.execute("UPDATE odeme_plani SET durum='iptal' WHERE id=%s AND durum='bekliyor'", (kaynak_id,))
+                cur.execute("UPDATE onay_kuyrugu SET durum='reddedildi' WHERE kaynak_id=%s", (kaynak_id,))
+                return {"success": True, "mesaj": "Ödeme ertelendi"}
+
+            elif tip == "hemen_ode" and kaynak_id:
+                # TEK KASA KAPISI: Direkt kasa yazmaz, onay kuyruğuna ekler
+                cur.execute("SELECT id FROM onay_kuyrugu WHERE kaynak_id=%s AND durum='bekliyor'", (kaynak_id,))
+                if cur.fetchone():
+                    return {"success": True, "mesaj": "Zaten onay kuyruğunda"}
+                cur.execute("SELECT * FROM odeme_plani WHERE id=%s", (kaynak_id,))
+                plan = cur.fetchone()
+                if not plan: raise HTTPException(404, "Plan bulunamadı")
+                odenen = float(plan['odenecek_tutar'])
+                onay_ekle(cur, 'KART_ODEME', 'odeme_plani', kaynak_id,
+                    f"Panel aksiyonu: {plan.get('aciklama') or ''}", odenen, plan['tarih'])
+                return {"success": True, "mesaj": "Onay kuyruğuna alındı — onaylandığında kasadan düşer"}
+
+            elif tip == "ciro_gir":
+                return {"success": True, "mesaj": "Ciro sayfasına yönlendir", "redirect": "/ciro"}
+
+            else:
+                raise HTTPException(400, f"Bilinmeyen aksiyon: {tip}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+# ── ONAY SİSTEMİ — ÖNCELİKLİ ─────────────────────────────────
+@app.get("/api/onay-kuyrugu/oncelikli")
+def onay_oncelikli():
+    """Bugün vadesi gelen ödemeleri önce gösterir"""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT ok.*, 
+                CASE WHEN ok.tarih <= CURRENT_DATE THEN 1
+                     WHEN ok.tarih <= CURRENT_DATE + 3 THEN 2
+                     ELSE 3 END as oncelik,
+                CASE WHEN ok.tarih <= CURRENT_DATE THEN 'KRITIK'
+                     WHEN ok.tarih <= CURRENT_DATE + 3 THEN 'UYARI'
+                     ELSE 'NORMAL' END as seviye
+            FROM onay_kuyrugu ok
+            WHERE ok.durum='bekliyor'
+            ORDER BY oncelik ASC, ok.tarih ASC, ok.tutar DESC
+        """)
+        return [dict(r) for r in cur.fetchall()]
+
+# ── KATEGORİ ANALİZİ ──────────────────────────────────────────
+@app.get("/api/gider-analiz")
+def gider_analiz():
+    """Giderleri kategoriye göre analiz eder"""
+    with db() as (conn, cur):
+        # Anlık giderler kategori bazlı
+        cur.execute("""
+            SELECT kategori, 
+                COUNT(*) as adet,
+                COALESCE(SUM(tutar),0) as toplam,
+                COALESCE(AVG(tutar),0) as ortalama
+            FROM anlik_giderler WHERE durum='aktif'
+            AND tarih >= CURRENT_DATE - INTERVAL '30 days'
+            GROUP BY kategori ORDER BY toplam DESC
+        """)
+        anlik = [dict(r) for r in cur.fetchall()]
+
+        # Sabit giderler kategori bazlı
+        cur.execute("""
+            SELECT kategori,
+                COUNT(*) as adet,
+                COALESCE(SUM(tutar),0) as toplam
+            FROM sabit_giderler WHERE aktif=TRUE
+            GROUP BY kategori ORDER BY toplam DESC
+        """)
+        sabit = [dict(r) for r in cur.fetchall()]
+
+        # Kasa hareketleri tip bazlı
+        cur.execute("""
+            SELECT islem_turu,
+                COUNT(*) as adet,
+                COALESCE(SUM(tutar),0) as toplam
+            FROM kasa_hareketleri WHERE durum='aktif'
+            AND tarih >= CURRENT_DATE - INTERVAL '30 days'
+            GROUP BY islem_turu ORDER BY toplam DESC
+        """)
+        kasa_tipler = [dict(r) for r in cur.fetchall()]
+
+        return {
+            "anlik_giderler": anlik,
+            "sabit_giderler": sabit,
+            "kasa_tipler": kasa_tipler,
+            "donem": "Son 30 gün"
+        }
+
+# ── VERİ AKIŞ KONTROLÜ ────────────────────────────────────────
+@app.get("/api/veri-kontrol")
+def veri_kontrol():
+    """Ledger tutarlılığını kontrol eder"""
+    with db() as (conn, cur):
+        hatalar = []
+
+        # Ciro ama ledger'da yok kontrolü
+        cur.execute("""
+            SELECT COUNT(*) as eksik FROM ciro c
+            WHERE c.durum='aktif'
+            AND NOT EXISTS (
+                SELECT 1 FROM kasa_hareketleri kh 
+                WHERE kh.kaynak_tablo='ciro' AND kh.kaynak_id=c.id AND kh.durum='aktif'
+            )
+        """)
+        eksik_ciro = int(cur.fetchone()['eksik'])
+        if eksik_ciro > 0:
+            hatalar.append({"tip": "UYARI", "mesaj": f"{eksik_ciro} ciro girişi ledger'da yok"})
+
+        # Onaylanan ödeme ama ledger'da yok
+        cur.execute("""
+            SELECT COUNT(*) as eksik FROM onay_kuyrugu ok
+            WHERE ok.durum='onaylandi'
+            AND NOT EXISTS (
+                SELECT 1 FROM kasa_hareketleri kh
+                WHERE kh.kaynak_id=ok.kaynak_id AND kh.durum='aktif'
+            )
+        """)
+        eksik_onay = int(cur.fetchone()['eksik'])
+        if eksik_onay > 0:
+            hatalar.append({"tip": "UYARI", "mesaj": f"{eksik_onay} onaylı ödeme ledger'da yok"})
+
+        # Kasa bakiyesi hesapla
+        cur.execute("""
+            SELECT COALESCE(SUM(
+                CASE WHEN islem_turu IN ('CIRO','KASA_GIRIS') THEN tutar ELSE -tutar END
+            ),0) as kasa FROM kasa_hareketleri WHERE durum='aktif'
+        """)
+        kasa = float(cur.fetchone()['kasa'])
+
+        return {
+            "tutarli": len(hatalar) == 0,
+            "hatalar": hatalar,
+            "guncel_kasa": kasa,
+            "kontrol_tarihi": str(date.today())
+        }
+
+# ── SENARYO MOTORU ─────────────────────────────────────────────
+@app.get("/api/senaryo")
+def senaryo(tutar: float, islem_turu: str = "odeme"):
+    """'Bu ödemeyi yaparsam ne olur?' sorusunun cevabı"""
+    try:
+        with db() as (conn, cur):
+            cur.execute("""
+                SELECT COALESCE(SUM(
+                    CASE WHEN islem_turu IN ('CIRO','KASA_GIRIS') THEN tutar ELSE -tutar END
+                ), 0) as kasa FROM kasa_hareketleri WHERE durum='aktif'
+            """)
+            kasa = float(cur.fetchone()['kasa'])
+            
+            kasa_sonrasi = kasa - tutar if islem_turu == 'odeme' else kasa + tutar
+            
+            # 7 günlük ödeme yükü
+            from datetime import date, timedelta
+            bugun = date.today()
+            cur.execute("""
+                SELECT COALESCE(SUM(odenecek_tutar),0) as t 
+                FROM odeme_plani WHERE durum='bekliyor'
+                AND tarih BETWEEN %s AND %s
+            """, (bugun, bugun + timedelta(days=7)))
+            odeme_7 = float(cur.fetchone()['t'])
+            
+            risk = "KRITIK" if kasa_sonrasi < 0 else "UYARI" if kasa_sonrasi < odeme_7 else "SAGLIKLI"
+            
+            return {
+                "kasa_oncesi": kasa,
+                "tutar": tutar,
+                "islem_turu": islem_turu,
+                "kasa_sonrasi": kasa_sonrasi,
+                "risk": risk,
+                "mesaj": (
+                    f"Kasa {int(kasa_sonrasi):,} ₺ olur — NEGATİF! RİSKLİ".replace(",",".")
+                    if kasa_sonrasi < 0 else
+                    f"Kasa {int(kasa_sonrasi):,} ₺ olur — 7 günlük ödeme yükü karşılanamaz!".replace(",",".")
+                    if kasa_sonrasi < odeme_7 else
+                    f"Kasa {int(kasa_sonrasi):,} ₺ olur — Güvenli".replace(",",".")
+                )
+            }
     except Exception as e:
         raise HTTPException(500, str(e))
