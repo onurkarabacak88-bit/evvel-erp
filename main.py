@@ -819,10 +819,3 @@ def health():
 # Frontend
 if pathlib.Path("static/index.html").exists():
     app.mount("/", StaticFiles(directory="static", html=True), name="static")
-
-@app.get("/{full_path:path}")
-async def spa(full_path: str):
-    index = pathlib.Path("static/index.html")
-    if index.exists():
-        return HTMLResponse(index.read_text())
-    return {"error": "Frontend build edilmemiş"}
