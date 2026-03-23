@@ -81,12 +81,31 @@ def panel():
             """)
             odeme_ozet = dict(cur.fetchone())
             cur.execute("""
-                SELECT
-                    COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END),0) as gelir,
-                    COALESCE(SUM(CASE WHEN tutar < 0 THEN tutar ELSE 0 END),0) as gider
-                FROM kasa_hareketleri
-                WHERE durum='aktif'
-            """)
+SELECT 
+    COALESCE(SUM(
+        CASE 
+            WHEN islem_turu IN ('CIRO', 'DIS_KAYNAK') THEN tutar
+            WHEN islem_turu IN ('CIRO_IPTAL', 'DIS_KAYNAK_IPTAL') THEN tutar
+            ELSE 0 
+        END
+    ),0) as gelir,
+
+    COALESCE(SUM(
+        CASE 
+            WHEN islem_turu IN (
+                'ANLIK_GIDER',
+                'KART_ODEME',
+                'VADELI_ODEME',
+                'PERSONEL_MAAS',
+                'SABIT_GIDER'
+            ) THEN ABS(tutar)
+            ELSE 0 
+        END
+    ),0) as gider
+
+FROM kasa_hareketleri
+WHERE durum='aktif'
+""")
             row = cur.fetchone() or {"gelir": 0, "gider": 0}
             toplam_gelir = float(row.get('gelir', 0) or 0)
             toplam_gider = float(row.get('gider', 0) or 0)  # negatif kalır — hata gizlenmez
