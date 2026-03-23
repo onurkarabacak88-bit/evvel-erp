@@ -191,10 +191,33 @@ def init_db():
         );
 
         CREATE INDEX IF NOT EXISTS idx_kasa_tarih ON kasa_hareketleri(tarih);
+        
+        -- ref_id ve ref_type kolonları (zaten varsa geç)
+        ALTER TABLE kasa_hareketleri ADD COLUMN IF NOT EXISTS ref_id TEXT;
+        ALTER TABLE kasa_hareketleri ADD COLUMN IF NOT EXISTS ref_type TEXT;
+        CREATE INDEX IF NOT EXISTS idx_kasa_ref ON kasa_hareketleri(ref_id);
         CREATE INDEX IF NOT EXISTS idx_ciro_tarih ON ciro(tarih);
         CREATE INDEX IF NOT EXISTS idx_kart_har ON kart_hareketleri(kart_id);
         CREATE INDEX IF NOT EXISTS idx_odeme_tarih ON odeme_plani(tarih);
         CREATE INDEX IF NOT EXISTS idx_onay_durum ON onay_kuyrugu(durum);
         CREATE INDEX IF NOT EXISTS idx_anlik_tarih ON anlik_giderler(tarih);
+
+        -- Import motor tabloları
+        CREATE TABLE IF NOT EXISTS import_log (
+            id TEXT PRIMARY KEY,
+            dosya_adi TEXT,
+            toplam_kayit INTEGER DEFAULT 0,
+            tarih TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        -- import_id kolonları (varsa ekle, yoksa geç)
+        ALTER TABLE ciro ADD COLUMN IF NOT EXISTS import_id TEXT;
+        ALTER TABLE kasa_hareketleri ADD COLUMN IF NOT EXISTS import_id TEXT;
+        ALTER TABLE kart_hareketleri ADD COLUMN IF NOT EXISTS import_id TEXT;
+        ALTER TABLE kartlar ADD COLUMN IF NOT EXISTS import_id TEXT;
+        ALTER TABLE borc_envanteri ADD COLUMN IF NOT EXISTS import_id TEXT;
+        ALTER TABLE personel ADD COLUMN IF NOT EXISTS import_id TEXT;
+        ALTER TABLE sabit_giderler ADD COLUMN IF NOT EXISTS import_id TEXT;
+        ALTER TABLE vadeli_alimlar ADD COLUMN IF NOT EXISTS import_id TEXT;
         """)
     print("✅ EVVEL ERP — Veritabanı hazır")
