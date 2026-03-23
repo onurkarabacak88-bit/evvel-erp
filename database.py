@@ -219,5 +219,12 @@ def init_db():
         ALTER TABLE personel ADD COLUMN IF NOT EXISTS import_id TEXT;
         ALTER TABLE sabit_giderler ADD COLUMN IF NOT EXISTS import_id TEXT;
         ALTER TABLE vadeli_alimlar ADD COLUMN IF NOT EXISTS import_id TEXT;
+
+        -- Audit log güçlendirme
+        ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS endpoint TEXT;
+        ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS ip_adresi TEXT;
+        ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS sure_ms INTEGER;
+        CREATE INDEX IF NOT EXISTS idx_audit_tarih ON audit_log(tarih);
+        CREATE INDEX IF NOT EXISTS idx_audit_tablo ON audit_log(tablo);
         """)
     print("✅ EVVEL ERP — Veritabanı hazır")
