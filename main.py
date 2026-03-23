@@ -80,11 +80,14 @@ def panel():
                 FROM odeme_plani WHERE durum='bekliyor' AND tarih BETWEEN CURRENT_DATE AND CURRENT_DATE+30
             """)
             odeme_ozet = dict(cur.fetchone())
-            # Toplam gelir/gider — with db() bloğu içinde
-            cur.execute("SELECT COALESCE(SUM(tutar),0) as t FROM kasa_hareketleri WHERE islem_turu='CIRO' AND durum='aktif'")
-            toplam_gelir = float(cur.fetchone()['t'])
-            cur.execute("SELECT COALESCE(SUM(tutar),0) as t FROM kasa_hareketleri WHERE islem_turu NOT IN ('CIRO','CIRO_IPTAL','ANLIK_GIDER_IPTAL') AND durum='aktif'")
-            toplam_gider = float(cur.fetchone()['t'])
+            # Toplam gelir/gider — sign tabanlı model (işlem türüne bağımlı değil, güvenli)
+            cur.execute("""SELECT 
+                COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END), 0) as gelir,
+                COALESCE(ABS(SUM(CASE WHEN tutar < 0 THEN tutar ELSE 0 END)), 0) as gider
+                FROM kasa_hareketleri WHERE durum='aktif'""")
+            gelir_gider = cur.fetchone()
+            toplam_gelir = float(gelir_gider['gelir'])
+            toplam_gider = float(gelir_gider['gider'])
 
             # Aksiyonlar
             aksiyonlar = []
@@ -148,7 +151,7 @@ def anlik_gider_ekle(g: AnlikGider):
         kasa = guncel_kasa()
         cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
             VALUES (%s,%s,'ANLIK_GIDER',%s,%s,'anlik_giderler',%s)""",
-            (str(uuid.uuid4()), str(g.tarih), g.tutar, f"Anlık gider: {g.aciklama or g.kategori}", gid))
+            (str(uuid.uuid4()), str(g.tarih), -abs(g.tutar), f"Anlık gider: {g.aciklama or g.kategori}", gid))
         audit(cur, 'anlik_giderler', gid, 'INSERT')
     return {"id": gid, "success": True}
 
@@ -162,7 +165,7 @@ def anlik_gider_sil(gid: str):
         # Ters kayıt
         cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
             VALUES (%s,%s,'ANLIK_GIDER_IPTAL',%s,'Gider iptali - ters kayıt','anlik_giderler',%s)""",
-            (str(uuid.uuid4()), str(date.today()), float(eski['tutar']), gid))
+            (str(uuid.uuid4()), str(date.today()), abs(float(eski['tutar'])), gid))
         audit(cur, 'anlik_giderler', gid, 'IPTAL', eski=eski)
     return {"success": True}
 
@@ -362,9 +365,10 @@ def odeme_yap(oid: str, tutar: Optional[float] = None):
         bugun = str(date.today())
         odenen = tutar or float(plan['odenecek_tutar'])
         cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s WHERE id=%s", (bugun, oid))
+        # Kart ödemesi kasadan çıkar → negatif
         cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
             VALUES (%s,%s,'KART_ODEME',%s,'Kart ödemesi onaylandı','odeme_plani',%s)""",
-            (str(uuid.uuid4()), bugun, odenen, oid))
+            (str(uuid.uuid4()), bugun, -abs(odenen), oid))
         cur.execute("UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW() WHERE kaynak_id=%s", (oid,))
         audit(cur, 'odeme_plani', oid, 'ODEME', eski=plan)
     return {"success": True}
@@ -395,9 +399,19 @@ def onayla(oid: str):
         if not onay: raise HTTPException(404)
         tutar = float(onay['tutar'])
         tarih = str(onay['tarih'])
+        # Sign modeli: işlem türüne göre işaret belirle
+        GIDER_TURLERI = {'KART_ODEME', 'ANLIK_GIDER', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER'}
+        GELIR_TURLERI = {'CIRO', 'CIRO_DUZELTME'}
+        islem_turu = onay['islem_turu']
+        if islem_turu in GIDER_TURLERI:
+            signed_tutar = -abs(tutar)
+        elif islem_turu in GELIR_TURLERI:
+            signed_tutar = abs(tutar)
+        else:
+            signed_tutar = -abs(tutar)  # bilinmeyen → güvenli taraf: gider say
         cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-            (str(uuid.uuid4()), tarih, onay['islem_turu'], tutar,
+            (str(uuid.uuid4()), tarih, islem_turu, signed_tutar,
              f"Onaylandı: {onay['aciklama']}", onay['kaynak_tablo'], onay['kaynak_id']))
         cur.execute("UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW() WHERE id=%s", (oid,))
         audit(cur, 'onay_kuyrugu', oid, 'ONAYLANDI', eski=onay)
@@ -435,10 +449,11 @@ def ciro_ekle(c: CiroModel):
             (cid, c.tarih, c.sube_id, c.nakit, c.pos, c.online, c.aciklama))
         # Manuel hesapla — GENERATED ALWAYS'e güvenme
         toplam = float(c.nakit or 0) + float(c.pos or 0) + float(c.online or 0)
+        # Ciro kasaya girer → pozitif
         cur.execute("""INSERT INTO kasa_hareketleri 
             (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
             VALUES (%s,%s,'CIRO',%s,'Ciro girişi','ciro',%s,%s,'CIRO')""",
-            (str(uuid.uuid4()), str(c.tarih), toplam, cid, cid))
+            (str(uuid.uuid4()), str(c.tarih), abs(toplam), cid, cid))
         audit(cur, 'ciro', cid, 'INSERT')
     return {"id": cid, "success": True}
 
@@ -450,24 +465,31 @@ def ciro_sil(cid: str):
         eski = cur.fetchone()
         if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten iptal edilmiş")
         
-        # Orijinal kasa hareketini bul (ref_id üzerinden)
-        cur.execute("""SELECT tutar FROM kasa_hareketleri 
-            WHERE ref_id=%s AND ref_type='CIRO' AND islem_turu='CIRO' LIMIT 1""", (cid,))
-        orijinal = cur.fetchone()
-        
-        # ref_id yoksa manuel hesapla (eski kayıtlar için)
-        toplam = float(orijinal['tutar']) if orijinal else (
-            float(eski['toplam'] or 0) or 
-            float(eski['nakit'] or 0) + float(eski['pos'] or 0) + float(eski['online'] or 0)
-        )
-        
+        # Tüm ilgili kasa hareketlerini bul (LIMIT yok — duplicate kayıtlar da terslensin)
+        cur.execute("""SELECT id, tutar FROM kasa_hareketleri 
+            WHERE ref_id=%s AND ref_type='CIRO' AND islem_turu='CIRO' AND durum='aktif'""", (cid,))
+        orijinaller = cur.fetchall()
+
         cur.execute("UPDATE ciro SET durum='iptal' WHERE id=%s", (cid,))
-        
-        if toplam > 0:
-            cur.execute("""INSERT INTO kasa_hareketleri 
-                (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
-                VALUES (%s,%s,'CIRO_IPTAL',%s,'Ciro iptali - ters kayıt','ciro',%s,%s,'CIRO')""",
-                (str(uuid.uuid4()), str(date.today()), toplam, cid, cid))
+
+        if orijinaller:
+            # Her kasa kaydını ayrı ayrı tersle
+            for kayit in orijinaller:
+                cur.execute("""UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s""", (kayit['id'],))
+                cur.execute("""INSERT INTO kasa_hareketleri 
+                    (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
+                    VALUES (%s,%s,'CIRO_IPTAL',%s,'Ciro iptali - ters kayıt','ciro',%s,%s,'CIRO')""",
+                    (str(uuid.uuid4()), str(date.today()), float(kayit['tutar']), cid, cid))
+        else:
+            # Eski kayıtlar için (ref_id olmayan) — ciro tablosundan hesapla
+            toplam = float(eski['toplam'] or 0) or (
+                float(eski['nakit'] or 0) + float(eski['pos'] or 0) + float(eski['online'] or 0)
+            )
+            if toplam > 0:
+                cur.execute("""INSERT INTO kasa_hareketleri 
+                    (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
+                    VALUES (%s,%s,'CIRO_IPTAL',%s,'Ciro iptali - ters kayıt','ciro',%s,%s,'CIRO')""",
+                    (str(uuid.uuid4()), str(date.today()), toplam, cid, cid))
         
         audit(cur, 'ciro', cid, 'IPTAL', eski=eski)
     return {"success": True}
@@ -645,9 +667,10 @@ def vadeli_ode(vid: str):
         v = cur.fetchone()
         if not v: raise HTTPException(404)
         cur.execute("UPDATE vadeli_alimlar SET durum='odendi' WHERE id=%s", (vid,))
+        # Vadeli ödeme kasadan çıkar → negatif
         cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
             VALUES (%s,%s,'VADELI_ODEME',%s,%s,'vadeli_alimlar',%s)""",
-            (str(uuid.uuid4()), str(date.today()), float(v['tutar']), f"Vadeli: {v['aciklama']}", vid))
+            (str(uuid.uuid4()), str(date.today()), -abs(float(v['tutar'])), f"Vadeli: {v['aciklama']}", vid))
         audit(cur, 'vadeli_alimlar', vid, 'ODEME', eski=v)
     return {"success": True}
 
@@ -772,9 +795,11 @@ async def excel_import(dosya: UploadFile = File(...)):
                                 (cid, fix_date(d.get('tarih')), sube_id, nakit, pos, online, str(d.get('aciklama') or '')))
                             if cur.rowcount > 0:
                                 toplam_ciro = nakit + pos + online
-                                cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
-                                    VALUES (%s,%s,'CIRO',%s,'Excel import','ciro',%s)""",
-                                    (str(uuid.uuid4()), fix_date(d.get('tarih')), toplam_ciro, cid))
+                                # ref_id + ref_type ile takip edilebilir, sign modeli: CIRO pozitif
+                                cur.execute("""INSERT INTO kasa_hareketleri
+                                    (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
+                                    VALUES (%s,%s,'CIRO',%s,'Excel import - ciro','ciro',%s,%s,'CIRO')""",
+                                    (str(uuid.uuid4()), fix_date(d.get('tarih')), abs(toplam_ciro), cid, cid))
                                 eklenen += 1
 
                         elif sn == 'kartlar':
