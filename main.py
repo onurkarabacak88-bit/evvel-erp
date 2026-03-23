@@ -80,18 +80,16 @@ def panel():
                 FROM odeme_plani WHERE durum='bekliyor' AND tarih BETWEEN CURRENT_DATE AND CURRENT_DATE+30
             """)
             odeme_ozet = dict(cur.fetchone())
-            # Toplam gelir: sadece gerçek gelir türleri (iptal kayıtları hariç)
-            GERCEK_GELIR = ('CIRO', 'KASA_GIRIS', 'DIS_KAYNAK')
-            GERCEK_GIDER = ('ANLIK_GIDER', 'KART_ODEME', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER')
-            cur.execute("""SELECT
-                COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END),0) as gelir,
-    COALESCE(SUM(CASE WHEN tutar < 0 THEN tutar ELSE 0 END),0) as gider
-FROM kasa_hareketleri
-WHERE durum='aktif'
-""")
-row = cur.fetchone()
-toplam_gelir = float(row['gelir'])
-toplam_gider = abs(float(row['gider']))
+            cur.execute("""
+                SELECT
+                    COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END),0) as gelir,
+                    COALESCE(SUM(CASE WHEN tutar < 0 THEN tutar ELSE 0 END),0) as gider
+                FROM kasa_hareketleri
+                WHERE durum='aktif'
+            """)
+            row = cur.fetchone() or {"gelir": 0, "gider": 0}
+            toplam_gelir = float(row.get('gelir', 0) or 0)
+            toplam_gider = float(row.get('gider', 0) or 0)  # negatif kalır — hata gizlenmez
 
             # Aksiyonlar
             aksiyonlar = []
@@ -454,7 +452,7 @@ def onayla(oid: str):
         elif islem_turu in GELIR_TURLERI:
             signed_tutar = abs(tutar)
         else:
-            signed_tutar = -abs(tutar)  # bilinmeyen → güvenli taraf: gider say
+            raise HTTPException(400, f"Bilinmeyen işlem türü: {islem_turu} — onay_kuyrugu'na eklemeden önce GIDER_TURLERI veya GELIR_TURLERI listesine tanımlayın")
         cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
             (str(uuid.uuid4()), tarih, islem_turu, signed_tutar,
@@ -916,7 +914,7 @@ async def excel_import(dosya: UploadFile = File(...)):
                                  float(d.get('tutar') or 0),
                                  str(d.get('periyot','aylik')),
                                  int(d.get('odeme_gunu') or 1), sube_id))
-                            eklendi += 1
+                            eklenen += 1
 
                         elif sn == 'vadeli_alimlar':
                             cur.execute("""INSERT INTO vadeli_alimlar (id,aciklama,tutar,vade_tarihi,tedarikci)
