@@ -11,7 +11,7 @@ from typing import Optional
 from datetime import date, timedelta
 import uuid, os, json, pathlib
 
-from motors import karar_motoru, odeme_strateji_motoru, nakit_akis_simulasyon, guncel_kasa, kart_analiz_hesapla
+
 
 app = FastAPI(title="EVVEL ERP", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
