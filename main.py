@@ -108,7 +108,7 @@ WHERE durum='aktif'
 """)
             row = cur.fetchone() or {"gelir": 0, "gider": 0}
             toplam_gelir = float(row.get('gelir', 0) or 0)
-            toplam_gider = float(row.get('gider', 0) or 0)  # negatif kalır — hata gizlenmez
+            toplam_gider = float(row.get('gider', 0) or 0)  # pozitif gelir (ABS kullanıldığı için)
 
             # Aksiyonlar
             aksiyonlar = []
