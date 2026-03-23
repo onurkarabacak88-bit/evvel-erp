@@ -1,7 +1,11 @@
+import logging
+import time
+import traceback
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import Request
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date, timedelta
@@ -11,6 +15,29 @@ from motors import karar_motoru, odeme_strateji_motoru, nakit_akis_simulasyon, g
 
 app = FastAPI(title="EVVEL ERP", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger("evvel-erp")
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    ms = round((time.time() - start) * 1000)
+    logger.info(f"{request.method} {request.url.path} → {response.status_code} ({ms}ms)")
+    return response
+
+@app.exception_handler(Exception)
+async def hata_yakala(request: Request, exc: Exception):
+    logger.error(f"HATA: {request.url.path}\n{traceback.format_exc()}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Bir hata oluştu. Railway loglarına bakın."}
+    )
 
 @app.on_event("startup")
 def startup():
