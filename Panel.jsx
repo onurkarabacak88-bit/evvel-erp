@@ -12,7 +12,7 @@ export default function Panel() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([api('/panel'), api('/onay-kuyrugu/oncelikli')])
+    Promise.all([api('/panel'), api('/onay-kuyrugu')])
       .then(([p, o]) => { setPanel(p); setOnaylar(o); setLoading(false); })
       .catch(() => setLoading(false));
   };
