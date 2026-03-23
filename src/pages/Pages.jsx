@@ -482,9 +482,14 @@ export function Ciro() {
     catch(e){toast(e.message,'red');}
   }
   async function sil(id){
-    if(!confirm('Ciro girişini iptal et? Kasadan düşülür.'))return;
-    try{await api(`/ciro/${id}`,{method:'DELETE'}); toast('İptal edildi, kasadan düşüldü','yellow'); load();}
-    catch(e){toast(e.message,'red');}
+    if(!confirm('Ciro girişini iptal et? Kasadan geri iade edilecek.'))return;
+    try{
+      await api(`/ciro/${id}`,{method:'DELETE'});
+      toast('İptal edildi, kasaya iade edildi','yellow');
+      setListe(prev => prev.filter(c => c.id !== id));
+      load();
+    }
+    catch(e){ toast(e.message||'Bir hata oluştu','red'); }
   }
 
   return (
