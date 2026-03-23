@@ -226,5 +226,11 @@ def init_db():
         ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS sure_ms INTEGER;
         CREATE INDEX IF NOT EXISTS idx_audit_tarih ON audit_log(tarih);
         CREATE INDEX IF NOT EXISTS idx_audit_tablo ON audit_log(tablo);
+
+        -- Veri düzeltme: Pozitif kaydedilmiş CIRO_IPTAL kayıtlarını negatife çevir
+        -- (Bir kez çalışır, zaten negatif olanları etkilemez)
+        UPDATE kasa_hareketleri 
+        SET tutar = -ABS(tutar)
+        WHERE islem_turu = 'CIRO_IPTAL' AND tutar > 0 AND durum = 'aktif';
         """)
     print("✅ EVVEL ERP — Veritabanı hazır")
