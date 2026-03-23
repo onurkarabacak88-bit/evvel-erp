@@ -17,11 +17,14 @@ def startup():
     init_db()
 
 def audit(cur, tablo, kayit_id, islem, eski=None, yeni=None):
+    def safe_json(d):
+        if not d: return None
+        return json.dumps({k: str(v) if not isinstance(v, (str, int, float, bool, type(None))) else v 
+                          for k, v in dict(d).items()})
     cur.execute("""INSERT INTO audit_log (id,tablo,kayit_id,islem,eski_deger,yeni_deger)
         VALUES (%s,%s,%s,%s,%s,%s)""",
         (str(uuid.uuid4()), tablo, kayit_id, islem,
-         json.dumps(dict(eski)) if eski else None,
-         json.dumps(dict(yeni)) if yeni else None))
+         safe_json(eski), safe_json(yeni)))
 
 def onay_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
     cur.execute("""INSERT INTO onay_kuyrugu (id,islem_turu,kaynak_tablo,kaynak_id,aciklama,tutar,tarih)
