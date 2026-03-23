@@ -473,15 +473,15 @@ def ciro_sil(cid: str):
         cur.execute("UPDATE ciro SET durum='iptal' WHERE id=%s", (cid,))
 
         if orijinaller:
-            # Her kasa kaydını ayrı ayrı tersle
+            # Her kasa kaydını ayrı ayrı tersle — orijinal iptal, ters kayıt negatif
             for kayit in orijinaller:
                 cur.execute("""UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s""", (kayit['id'],))
                 cur.execute("""INSERT INTO kasa_hareketleri 
                     (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
                     VALUES (%s,%s,'CIRO_IPTAL',%s,'Ciro iptali - ters kayıt','ciro',%s,%s,'CIRO')""",
-                    (str(uuid.uuid4()), str(date.today()), float(kayit['tutar']), cid, cid))
+                    (str(uuid.uuid4()), str(date.today()), -abs(float(kayit['tutar'])), cid, cid))
         else:
-            # Eski kayıtlar için (ref_id olmayan) — ciro tablosundan hesapla
+            # Eski kayıtlar için (ref_id olmayan) — ciro tablosundan hesapla, negatif yaz
             toplam = float(eski['toplam'] or 0) or (
                 float(eski['nakit'] or 0) + float(eski['pos'] or 0) + float(eski['online'] or 0)
             )
@@ -489,7 +489,7 @@ def ciro_sil(cid: str):
                 cur.execute("""INSERT INTO kasa_hareketleri 
                     (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
                     VALUES (%s,%s,'CIRO_IPTAL',%s,'Ciro iptali - ters kayıt','ciro',%s,%s,'CIRO')""",
-                    (str(uuid.uuid4()), str(date.today()), toplam, cid, cid))
+                    (str(uuid.uuid4()), str(date.today()), -abs(toplam), cid, cid))
         
         audit(cur, 'ciro', cid, 'IPTAL', eski=eski)
     return {"success": True}
