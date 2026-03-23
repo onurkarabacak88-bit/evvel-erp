@@ -8,14 +8,17 @@ export default function AnlikGider() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({tarih: new Date().toISOString().split('T')[0], kategori:'Diğer', tutar:'', aciklama:'', sube:'MERKEZ'});
   const [msg, setMsg] = useState(null);
+  const [dupUyari, setDupUyari] = useState(null);
 
   const load = () => api('/anlik-gider').then(setListe);
   useEffect(() => { load(); }, []);
   const toast = (m, t='green') => { setMsg({m,t}); setTimeout(()=>setMsg(null),3000); };
 
-  async function kaydet() {
+  async function kaydet(force=false) {
+    setDupUyari(null);
     try {
-      await api('/anlik-gider', { method:'POST', body: form });
+      const res = await api('/anlik-gider', { method:'POST', body: {...form, force} });
+      if (res.warning) { setDupUyari(res.mesaj); return; }
       toast('Gider kaydedildi, kasadan düşüldü');
       setShowModal(false);
       setForm({tarih: new Date().toISOString().split('T')[0], kategori:'Diğer', tutar:'', aciklama:'', sube:'MERKEZ'});
@@ -65,6 +68,15 @@ export default function AnlikGider() {
             <div className="modal-header"><h3>Anlık Gider Ekle</h3><button className="modal-close" onClick={()=>setShowModal(false)}>✕</button></div>
             <div className="modal-body">
               <div className="alert-box yellow mb-16">❗ Bu gider onay beklemez — direkt kasadan düşer.</div>
+              {dupUyari && (
+                <div className="alert-box red mb-16">
+                  <strong>⚠️ Benzer kayıt bulundu!</strong> {dupUyari}
+                  <div style={{marginTop:8,display:'flex',gap:8}}>
+                    <button className="btn btn-danger btn-sm" onClick={()=>kaydet(true)}>Yine de Kaydet</button>
+                    <button className="btn btn-secondary btn-sm" onClick={()=>setDupUyari(null)}>Vazgeç</button>
+                  </div>
+                </div>
+              )}
               <div className="form-row cols-2">
                 <div className="form-group"><label>Tarih</label><input type="date" value={form.tarih} onChange={e=>setForm({...form,tarih:e.target.value})}/></div>
                 <div className="form-group"><label>Kategori</label>
@@ -83,7 +95,7 @@ export default function AnlikGider() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={()=>setShowModal(false)}>İptal</button>
-              <button className="btn btn-primary" onClick={kaydet} disabled={!form.tutar}>Kaydet</button>
+              <button className="btn btn-primary" onClick={()=>kaydet(false)} disabled={!form.tutar}>Kaydet</button>
             </div>
           </div>
         </div>

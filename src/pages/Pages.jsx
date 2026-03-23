@@ -306,15 +306,21 @@ export function VadeliAlimlar() {
   const [form, setForm] = useState({aciklama:'',tutar:'',vade_tarihi:'',tedarikci:''});
   const [duzenleId, setDuzenleId] = useState(null);
   const [msg, setMsg] = useState(null);
+  const [dupUyari, setDupUyari] = useState(null);
 
   const load=()=>api('/vadeli-alimlar').then(setListe);
   useEffect(()=>{load();},[]);
   const toast=(m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
 
-  async function kaydet(){
+  async function kaydet(force=false){
+    setDupUyari(null);
     try{
-      if(duzenleId) await api(`/vadeli-alimlar/${duzenleId}`,{method:'PUT',body:form});
-      else await api('/vadeli-alimlar',{method:'POST',body:form});
+      if(duzenleId){
+        await api(`/vadeli-alimlar/${duzenleId}`,{method:'PUT',body:form});
+      } else {
+        const res = await api('/vadeli-alimlar',{method:'POST',body:{...form,force}});
+        if(res.warning){setDupUyari(res.mesaj);return;}
+      }
       toast('Kaydedildi'); setShowModal(false); setDuzenleId(null); load();
     }catch(e){toast(e.message,'red');}
   }
@@ -375,9 +381,18 @@ export function VadeliAlimlar() {
                 <div className="form-group"><label>Tedarikçi</label><input value={form.tedarikci} onChange={e=>setForm({...form,tedarikci:e.target.value})}/></div>
               </div>
             </div>
+            {dupUyari && (
+              <div className="alert-box red" style={{margin:'0 12px 12px'}}>
+                <strong>⚠️ Benzer kayıt var!</strong> {dupUyari}
+                <div style={{marginTop:8,display:'flex',gap:8}}>
+                  <button className="btn btn-danger btn-sm" onClick={()=>kaydet(true)}>Yine de Kaydet</button>
+                  <button className="btn btn-secondary btn-sm" onClick={()=>setDupUyari(null)}>Vazgeç</button>
+                </div>
+              </div>
+            )}
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={()=>setShowModal(false)}>İptal</button>
-              <button className="btn btn-primary" onClick={kaydet} disabled={!form.aciklama||!form.tutar||!form.vade_tarihi}>Kaydet</button>
+              <button className="btn btn-primary" onClick={()=>kaydet(false)} disabled={!form.aciklama||!form.tutar||!form.vade_tarihi}>Kaydet</button>
             </div>
           </div>
         </div>
@@ -472,14 +487,19 @@ export function Ciro() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({tarih:new Date().toISOString().split('T')[0],sube_id:'',nakit:0,pos:0,online:0,aciklama:''});
   const [msg, setMsg] = useState(null);
+  const [dupUyari, setDupUyari] = useState(null);
 
   const load=()=>{api('/ciro').then(setListe);api('/subeler').then(setSubeler);};
   useEffect(()=>{load();},[]);
   const toast=(m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
 
-  async function kaydet(){
-    try{await api('/ciro',{method:'POST',body:form}); toast('Ciro kaydedildi, kasaya eklendi'); setShowModal(false); load();}
-    catch(e){toast(e.message,'red');}
+  async function kaydet(force=false){
+    setDupUyari(null);
+    try{
+      const res = await api('/ciro',{method:'POST',body:{...form,force}});
+      if(res.warning){setDupUyari(res.mesaj);return;}
+      toast('Ciro kaydedildi, kasaya eklendi'); setShowModal(false); load();
+    }catch(e){toast(e.message,'red');}
   }
   async function sil(id){
     if(!confirm('Ciro girişini iptal et? Kasadan geri iade edilecek.'))return;
@@ -532,9 +552,27 @@ export function Ciro() {
                 <div className="form-group"><label>Açıklama</label><input value={form.aciklama} onChange={e=>setForm({...form,aciklama:e.target.value})}/></div>
               </div>
             </div>
+            {dupUyari && (
+              <div className="alert-box red" style={{margin:'0 12px 12px'}}>
+                <strong>⚠️ Benzer kayıt var!</strong> Son 7 günde aynı tutar ve şubede {dupUyari.length} kayıt bulundu.
+                <div style={{marginTop:8,display:'flex',gap:8}}>
+                  <button className="btn btn-danger btn-sm" onClick={()=>kaydet(true)}>Yine de Kaydet</button>
+                  <button className="btn btn-secondary btn-sm" onClick={()=>setDupUyari(null)}>Vazgeç</button>
+                </div>
+              </div>
+            )}
+            {dupUyari && (
+              <div className="alert-box red" style={{margin:'0 12px 12px'}}>
+                <strong>⚠️ Benzer kayıt var!</strong> {dupUyari}
+                <div style={{marginTop:8,display:'flex',gap:8}}>
+                  <button className="btn btn-danger btn-sm" onClick={()=>kaydet(true)}>Yine de Kaydet</button>
+                  <button className="btn btn-secondary btn-sm" onClick={()=>setDupUyari(null)}>Vazgeç</button>
+                </div>
+              </div>
+            )}
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={()=>setShowModal(false)}>İptal</button>
-              <button className="btn btn-primary" onClick={kaydet} disabled={!form.sube_id}>Kaydet</button>
+              <button className="btn btn-primary" onClick={()=>kaydet(false)} disabled={!form.sube_id}>Kaydet</button>
             </div>
           </div>
         </div>

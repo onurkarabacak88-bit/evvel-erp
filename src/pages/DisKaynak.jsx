@@ -20,14 +20,17 @@ export default function DisKaynak() {
     aciklama: '',
   });
   const [msg, setMsg] = useState(null);
+  const [dupUyari, setDupUyari] = useState(null);
 
   const load = () => api('/dis-kaynak').then(setListe);
   useEffect(() => { load(); }, []);
   const toast = (m, t = 'green') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 3000); };
 
-  async function kaydet() {
+  async function kaydet(force=false) {
+    setDupUyari(null);
     try {
-      await api('/dis-kaynak', { method: 'POST', body: form });
+      const res = await api('/dis-kaynak', { method: 'POST', body: {...form, force} });
+      if (res.warning) { setDupUyari(res.mesaj); return; }
       toast('Gelir kaydedildi, kasaya eklendi');
       setShowModal(false);
       setForm({ tarih: new Date().toISOString().split('T')[0], kategori: 'Aile Desteği', tutar: '', aciklama: '' });
@@ -114,9 +117,18 @@ export default function DisKaynak() {
                 </div>
               </div>
             </div>
+            {dupUyari && (
+              <div className="alert-box red mb-16" style={{margin:'0 0 12px'}}>
+                <strong>⚠️ Benzer kayıt bulundu!</strong> {dupUyari}
+                <div style={{marginTop:8,display:'flex',gap:8}}>
+                  <button className="btn btn-danger btn-sm" onClick={() => kaydet(true)}>Yine de Kaydet</button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => setDupUyari(null)}>Vazgeç</button>
+                </div>
+              </div>
+            )}
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowModal(false)}>İptal</button>
-              <button className="btn btn-primary" onClick={kaydet} disabled={!form.tutar}>Kaydet</button>
+              <button className="btn btn-primary" onClick={() => kaydet(false)} disabled={!form.tutar}>Kaydet</button>
             </div>
           </div>
         </div>
