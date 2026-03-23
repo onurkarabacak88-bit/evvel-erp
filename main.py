@@ -394,23 +394,42 @@ def ciro_ekle(c: CiroModel):
         cur.execute("""INSERT INTO ciro (id,tarih,sube_id,nakit,pos,online,aciklama)
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
             (cid, c.tarih, c.sube_id, c.nakit, c.pos, c.online, c.aciklama))
-        toplam = c.nakit + c.pos + c.online
-        cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
-            VALUES (%s,%s,'CIRO',%s,'Ciro girişi','ciro',%s)""",
-            (str(uuid.uuid4()), c.tarih, toplam, cid))
+        # Manuel hesapla — GENERATED ALWAYS'e güvenme
+        toplam = float(c.nakit or 0) + float(c.pos or 0) + float(c.online or 0)
+        cur.execute("""INSERT INTO kasa_hareketleri 
+            (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
+            VALUES (%s,%s,'CIRO',%s,'Ciro girişi','ciro',%s,%s,'CIRO')""",
+            (str(uuid.uuid4()), str(c.tarih), toplam, cid, cid))
         audit(cur, 'ciro', cid, 'INSERT')
     return {"id": cid, "success": True}
 
 @app.delete("/api/ciro/{cid}")
 def ciro_sil(cid: str):
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM ciro WHERE id=%s", (cid,))
+        # Sadece aktif kaydı sil
+        cur.execute("SELECT * FROM ciro WHERE id=%s AND durum='aktif'", (cid,))
         eski = cur.fetchone()
-        if not eski: raise HTTPException(404)
+        if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten iptal edilmiş")
+        
+        # Orijinal kasa hareketini bul (ref_id üzerinden)
+        cur.execute("""SELECT tutar FROM kasa_hareketleri 
+            WHERE ref_id=%s AND ref_type='CIRO' AND islem_turu='CIRO' LIMIT 1""", (cid,))
+        orijinal = cur.fetchone()
+        
+        # ref_id yoksa manuel hesapla (eski kayıtlar için)
+        toplam = float(orijinal['tutar']) if orijinal else (
+            float(eski['toplam'] or 0) or 
+            float(eski['nakit'] or 0) + float(eski['pos'] or 0) + float(eski['online'] or 0)
+        )
+        
         cur.execute("UPDATE ciro SET durum='iptal' WHERE id=%s", (cid,))
-        cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
-            VALUES (%s,%s,'CIRO_IPTAL',%s,'Ciro iptali - ters kayıt','ciro',%s)""",
-            (str(uuid.uuid4()), str(date.today()), float(eski['toplam']), cid))
+        
+        if toplam > 0:
+            cur.execute("""INSERT INTO kasa_hareketleri 
+                (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
+                VALUES (%s,%s,'CIRO_IPTAL',%s,'Ciro iptali - ters kayıt','ciro',%s,%s,'CIRO')""",
+                (str(uuid.uuid4()), str(date.today()), toplam, cid, cid))
+        
         audit(cur, 'ciro', cid, 'IPTAL', eski=eski)
     return {"success": True}
 
@@ -816,24 +835,6 @@ async def excel_import(dosya: UploadFile = File(...)):
 def health():
     return {"status": "ok", "version": "EVVEL-ERP-2.0"}
 
-
-# ── FRONTEND (STATIC) ──────────────────────────────────────────
-STATIC_DIR = pathlib.Path("static")
-
-if STATIC_DIR.exists():
-    app.mount(
-        "/",
-        StaticFiles(directory=str(STATIC_DIR), html=True),
-        name="static"
-    )
-
-
-# ── SPA FALLBACK (EN SON) ──────────────────────────────────────
-@app.get("/{full_path:path}")
-async def spa_fallback(full_path: str):
-    index_file = STATIC_DIR / "index.html"
-
-    if index_file.exists():
-        return HTMLResponse(index_file.read_text(encoding="utf-8"))
-
-    return {"error": "Frontend build bulunamadı"}
+# Frontend
+if pathlib.Path("static/index.html").exists():
+    app.mount("/", StaticFiles(directory="static", html=True), name="static")
