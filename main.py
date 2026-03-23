@@ -510,12 +510,12 @@ def ciro_ekle(c: CiroModel):
         cur.execute("""INSERT INTO ciro (id,tarih,sube_id,nakit,pos,online,aciklama)
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
             (cid, c.tarih, c.sube_id, c.nakit, c.pos, c.online, c.aciklama))
-        # Manuel hesapla — GENERATED ALWAYS'e güvenme
         toplam = float(c.nakit or 0) + float(c.pos or 0) + float(c.online or 0)
-        # Ciro kasaya girer → pozitif
-        cur.execute("""INSERT INTO kasa_hareketleri 
+        # ON CONFLICT DO NOTHING → çift tık / retry durumunda duplicate oluşmaz
+        cur.execute("""INSERT INTO kasa_hareketleri
             (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
-            VALUES (%s,%s,'CIRO',%s,'Ciro girişi','ciro',%s,%s,'CIRO')""",
+            VALUES (%s,%s,'CIRO',%s,'Ciro girişi','ciro',%s,%s,'CIRO')
+            ON CONFLICT (ref_id, ref_type, islem_turu) DO NOTHING""",
             (str(uuid.uuid4()), str(c.tarih), abs(toplam), cid, cid))
         audit(cur, 'ciro', cid, 'INSERT')
     return {"id": cid, "success": True}
@@ -523,37 +523,25 @@ def ciro_ekle(c: CiroModel):
 @app.delete("/api/ciro/{cid}")
 def ciro_sil(cid: str):
     with db() as (conn, cur):
-        # Sadece aktif kaydı sil
         cur.execute("SELECT * FROM ciro WHERE id=%s AND durum='aktif'", (cid,))
         eski = cur.fetchone()
         if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten iptal edilmiş")
-        
-        # Tüm ilgili kasa hareketlerini bul (LIMIT yok — duplicate kayıtlar da terslensin)
-        cur.execute("""SELECT id, tutar FROM kasa_hareketleri 
-            WHERE ref_id=%s AND ref_type='CIRO' AND islem_turu='CIRO' AND durum='aktif'""", (cid,))
-        orijinaller = cur.fetchall()
 
+        # Ciroyu iptal et
         cur.execute("UPDATE ciro SET durum='iptal' WHERE id=%s", (cid,))
 
-        if orijinaller:
-            # Her kasa kaydını ayrı ayrı tersle — orijinal iptal, ters kayıt negatif
-            for kayit in orijinaller:
-                cur.execute("""UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s""", (kayit['id'],))
-                cur.execute("""INSERT INTO kasa_hareketleri 
-                    (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
-                    VALUES (%s,%s,'CIRO_IPTAL',%s,'Ciro iptali - ters kayıt','ciro',%s,%s,'CIRO')""",
-                    (str(uuid.uuid4()), str(date.today()), -abs(float(kayit['tutar'])), cid, cid))
-        else:
-            # Eski kayıtlar için (ref_id olmayan) — ciro tablosundan hesapla, negatif yaz
-            toplam = float(eski['toplam'] or 0) or (
-                float(eski['nakit'] or 0) + float(eski['pos'] or 0) + float(eski['online'] or 0)
-            )
-            if toplam > 0:
-                cur.execute("""INSERT INTO kasa_hareketleri 
-                    (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
-                    VALUES (%s,%s,'CIRO_IPTAL',%s,'Ciro iptali - ters kayıt','ciro',%s,%s,'CIRO')""",
-                    (str(uuid.uuid4()), str(date.today()), -abs(toplam), cid, cid))
-        
+        # Tüm aktif kasa kayıtlarını (duplicate olsa bile) tek seferde pasifleştir
+        cur.execute("""UPDATE kasa_hareketleri SET durum='iptal'
+            WHERE ref_id=%s AND ref_type='CIRO' AND islem_turu='CIRO' AND durum='aktif'""", (cid,))
+
+        # Gerçek tutarı ciro tablosundan hesapla — kaç duplicate olursa olsun TEK ters kayıt
+        toplam = float(eski['nakit'] or 0) + float(eski['pos'] or 0) + float(eski['online'] or 0)
+        if toplam > 0:
+            cur.execute("""INSERT INTO kasa_hareketleri
+                (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
+                VALUES (%s,%s,'CIRO_IPTAL',%s,'Ciro iptali','ciro',%s,%s,'CIRO')""",
+                (str(uuid.uuid4()), str(date.today()), -abs(toplam), cid, cid))
+
         audit(cur, 'ciro', cid, 'IPTAL', eski=eski)
     return {"success": True}
 

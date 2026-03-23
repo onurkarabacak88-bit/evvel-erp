@@ -68,8 +68,22 @@ def init_db():
                 ref_id          TEXT,
                 ref_type        TEXT,
                 durum           TEXT NOT NULL DEFAULT 'aktif',
-                olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
+                olusturma       TIMESTAMP NOT NULL DEFAULT NOW(),
+                CONSTRAINT unique_ref UNIQUE (ref_id, ref_type, islem_turu)
             )
+        """)
+
+        # Mevcut DB'de constraint yoksa ekle (migration — yeni kurulumda zaten var)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'unique_ref'
+                ) THEN
+                    ALTER TABLE kasa_hareketleri
+                    ADD CONSTRAINT unique_ref UNIQUE (ref_id, ref_type, islem_turu);
+                END IF;
+            END $$;
         """)
 
         # ── CİRO ───────────────────────────────────────────────
