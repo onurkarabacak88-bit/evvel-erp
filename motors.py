@@ -14,7 +14,7 @@ def karar_motoru():
         # Kasa - iç içe bağlantı açmadan hesapla
         cur.execute("""
             SELECT COALESCE(SUM(
-                CASE WHEN islem_turu IN ('CIRO','KASA_GIRIS') THEN tutar ELSE -tutar END
+                tutar
             ), 0) as kasa FROM kasa_hareketleri WHERE durum='aktif'
         """)
         kasa = float(cur.fetchone()['kasa'])
@@ -131,7 +131,7 @@ def odeme_strateji_motoru():
         # Kasa
         cur.execute("""
             SELECT COALESCE(SUM(
-                CASE WHEN islem_turu IN ('CIRO','KASA_GIRIS') THEN tutar ELSE -tutar END
+                tutar
             ), 0) as kasa FROM kasa_hareketleri WHERE durum='aktif'
         """)
         kasa = float(cur.fetchone()['kasa'])
@@ -204,7 +204,7 @@ def nakit_akis_simulasyon(gun_sayisi=15):
     with db() as (conn, cur):
         cur.execute("""
             SELECT COALESCE(SUM(
-                CASE WHEN islem_turu IN ('CIRO','KASA_GIRIS') THEN tutar ELSE -tutar END
+                tutar
             ), 0) as kasa FROM kasa_hareketleri WHERE durum='aktif'
         """)
         kasa = float(cur.fetchone()['kasa'])
@@ -307,7 +307,7 @@ def guncel_kasa():
     with db() as (conn, cur):
         cur.execute("""
             SELECT COALESCE(SUM(
-                CASE WHEN islem_turu IN ('CIRO','KASA_GIRIS') THEN tutar ELSE -tutar END
+                tutar
             ), 0) as kasa FROM kasa_hareketleri WHERE durum='aktif'
         """)
         return float(cur.fetchone()['kasa'])
