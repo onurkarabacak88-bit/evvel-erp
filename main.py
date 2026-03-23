@@ -80,11 +80,14 @@ def panel():
                 FROM odeme_plani WHERE durum='bekliyor' AND tarih BETWEEN CURRENT_DATE AND CURRENT_DATE+30
             """)
             odeme_ozet = dict(cur.fetchone())
-            # Toplam gelir/gider — sign tabanlı model (işlem türüne bağımlı değil, güvenli)
-            cur.execute("""SELECT 
-                COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END), 0) as gelir,
-                COALESCE(ABS(SUM(CASE WHEN tutar < 0 THEN tutar ELSE 0 END)), 0) as gider
-                FROM kasa_hareketleri WHERE durum='aktif'""")
+            # Toplam gelir: sadece gerçek gelir türleri (iptal kayıtları hariç)
+            GERCEK_GELIR = ('CIRO', 'KASA_GIRIS', 'DIS_KAYNAK')
+            GERCEK_GIDER = ('ANLIK_GIDER', 'KART_ODEME', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER')
+            cur.execute("""SELECT
+                COALESCE(SUM(CASE WHEN islem_turu IN %s THEN ABS(tutar) ELSE 0 END), 0) as gelir,
+                COALESCE(SUM(CASE WHEN islem_turu IN %s THEN ABS(tutar) ELSE 0 END), 0) as gider
+                FROM kasa_hareketleri WHERE durum='aktif'""",
+                (GERCEK_GELIR, GERCEK_GIDER))
             gelir_gider = cur.fetchone()
             toplam_gelir = float(gelir_gider['gelir'])
             toplam_gider = float(gelir_gider['gider'])
@@ -125,6 +128,48 @@ def kasa_durumu():
         cur.execute("""SELECT * FROM kasa_hareketleri WHERE durum='aktif'
             ORDER BY tarih DESC, olusturma DESC LIMIT 100""")
         return {"guncel_bakiye": kasa, "hareketler": [dict(r) for r in cur.fetchall()]}
+
+# ── DIŞ KAYNAK GELİRİ (aile, kredi, ortak, vb.) ───────────────
+class DisKaynakGelir(BaseModel):
+    tarih: date
+    kategori: str          # örn: "Aile Desteği", "Banka Kredisi", "Ortak Sermayesi"
+    tutar: float
+    aciklama: Optional[str] = None
+
+@app.get("/api/dis-kaynak")
+def dis_kaynak_listele():
+    with db() as (conn, cur):
+        cur.execute("""SELECT * FROM kasa_hareketleri
+            WHERE islem_turu='DIS_KAYNAK' AND durum='aktif'
+            ORDER BY tarih DESC LIMIT 200""")
+        return [dict(r) for r in cur.fetchall()]
+
+@app.post("/api/dis-kaynak")
+def dis_kaynak_ekle(g: DisKaynakGelir):
+    with db() as (conn, cur):
+        gid = str(uuid.uuid4())
+        cur.execute("""INSERT INTO kasa_hareketleri
+            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id)
+            VALUES (%s, %s, 'DIS_KAYNAK', %s, %s, 'dis_kaynak', %s)""",
+            (gid, g.tarih, abs(g.tutar),
+             f"{g.kategori}: {g.aciklama or ''}", gid))
+        audit(cur, 'kasa_hareketleri', gid, 'DIS_KAYNAK')
+    return {"id": gid, "success": True}
+
+@app.delete("/api/dis-kaynak/{gid}")
+def dis_kaynak_sil(gid: str):
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM kasa_hareketleri WHERE id=%s AND islem_turu='DIS_KAYNAK'", (gid,))
+        eski = cur.fetchone()
+        if not eski: raise HTTPException(404)
+        cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s", (gid,))
+        # Ters kayıt — kasadan çıkar
+        cur.execute("""INSERT INTO kasa_hareketleri
+            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id)
+            VALUES (%s, %s, 'DIS_KAYNAK_IPTAL', %s, 'Dış kaynak iptali', 'dis_kaynak', %s)""",
+            (str(uuid.uuid4()), str(date.today()), -abs(float(eski['tutar'])), gid))
+        audit(cur, 'kasa_hareketleri', gid, 'DIS_KAYNAK_IPTAL', eski=eski)
+    return {"success": True}
 
 # ── ANLIQ GİDER (beklenmeyen giderler) ────────────────────────
 class AnlikGider(BaseModel):
