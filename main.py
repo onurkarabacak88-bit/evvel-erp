@@ -50,18 +50,27 @@ def panel():
                 FROM odeme_plani WHERE durum='bekliyor' AND tarih BETWEEN CURRENT_DATE AND CURRENT_DATE+30
             """)
             odeme_ozet = dict(cur.fetchone())
-        # Kart analiz
+            # Toplam gelir/gider — with db() bloğu içinde
+            cur.execute("SELECT COALESCE(SUM(tutar),0) as t FROM kasa_hareketleri WHERE islem_turu='CIRO' AND durum='aktif'")
+            toplam_gelir = float(cur.fetchone()['t'])
+            cur.execute("SELECT COALESCE(SUM(tutar),0) as t FROM kasa_hareketleri WHERE islem_turu NOT IN ('CIRO','CIRO_IPTAL','ANLIK_GIDER_IPTAL') AND durum='aktif'")
+            toplam_gider = float(cur.fetchone()['t'])
+
+            # Aksiyonlar
+            aksiyonlar = []
+            kasa_val = karar.get("kasa", 0)
+            if kasa_val <= 0:
+                aksiyonlar.append({"tip":"kritik","mesaj":"Kasa boş. Önce ciro gir.","aksiyon":"ciro"})
+            if odeme_ozet.get("t7", 0) > 0:
+                aksiyonlar.append({"tip":"uyari","mesaj":"7 gün içinde ödeme var","aksiyon":"odeme"})
+
+        # Kart analiz — with db() dışında ayrı bağlantıyla
         kart_analiz = kart_analiz_hesapla()
-        
-        # Toplam gelir/gider
-        cur.execute("SELECT COALESCE(SUM(tutar),0) as t FROM kasa_hareketleri WHERE islem_turu='CIRO' AND durum='aktif'")
-        toplam_gelir = float(cur.fetchone()['t'])
-        cur.execute("SELECT COALESCE(SUM(tutar),0) as t FROM kasa_hareketleri WHERE islem_turu NOT IN ('CIRO','CIRO_IPTAL','ANLIK_GIDER_IPTAL') AND durum='aktif'")
-        toplam_gider = float(cur.fetchone()['t'])
-        
+
         return {**karar, "simulasyon": sim, "aylik_ciro": aylik_ciro,
                 "bekleyen_onay": bekleyen, "odeme_ozet": odeme_ozet,
-                "kart_analiz": kart_analiz, "toplam_gelir": toplam_gelir, "toplam_gider": toplam_gider}
+                "kart_analiz": kart_analiz, "toplam_gelir": toplam_gelir,
+                "toplam_gider": toplam_gider, "aksiyonlar": aksiyonlar}
     except Exception as e:
         raise HTTPException(500, str(e))
 
