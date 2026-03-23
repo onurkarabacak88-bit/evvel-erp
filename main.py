@@ -81,34 +81,15 @@ def panel():
             """)
             odeme_ozet = dict(cur.fetchone())
             cur.execute("""
-SELECT 
-    COALESCE(SUM(
-        CASE 
-            WHEN islem_turu IN ('CIRO', 'DIS_KAYNAK') THEN tutar
-            WHEN islem_turu IN ('CIRO_IPTAL', 'DIS_KAYNAK_IPTAL') THEN tutar
-            ELSE 0 
-        END
-    ),0) as gelir,
-
-    COALESCE(SUM(
-        CASE 
-            WHEN islem_turu IN (
-                'ANLIK_GIDER',
-                'KART_ODEME',
-                'VADELI_ODEME',
-                'PERSONEL_MAAS',
-                'SABIT_GIDER'
-            ) THEN ABS(tutar)
-            ELSE 0 
-        END
-    ),0) as gider
-
+SELECT
+    COALESCE(SUM(CASE WHEN islem_turu IN ('CIRO','DIS_KAYNAK','KASA_GIRIS','KASA_DUZELTME') AND tutar > 0 THEN tutar ELSE 0 END), 0) as gelir,
+    COALESCE(SUM(CASE WHEN islem_turu IN ('ANLIK_GIDER','KART_ODEME','VADELI_ODEME','PERSONEL_MAAS','SABIT_GIDER') THEN ABS(tutar) ELSE 0 END), 0) as gider
 FROM kasa_hareketleri
 WHERE durum='aktif'
 """)
             row = cur.fetchone() or {"gelir": 0, "gider": 0}
             toplam_gelir = float(row.get('gelir', 0) or 0)
-            toplam_gider = float(row.get('gider', 0) or 0)  # pozitif gelir (ABS kullanıldığı için)
+            toplam_gider = float(row.get('gider', 0) or 0)
 
             # Aksiyonlar
             aksiyonlar = []
@@ -150,9 +131,10 @@ def kasa_durumu():
 # ── DIŞ KAYNAK GELİRİ (aile, kredi, ortak, vb.) ───────────────
 class DisKaynakGelir(BaseModel):
     tarih: date
-    kategori: str          # örn: "Aile Desteği", "Banka Kredisi", "Ortak Sermayesi"
+    kategori: str
     tutar: float
     aciklama: Optional[str] = None
+    force: bool = False
 
 @app.get("/api/dis-kaynak")
 def dis_kaynak_listele():
@@ -165,28 +147,32 @@ def dis_kaynak_listele():
 @app.post("/api/dis-kaynak")
 def dis_kaynak_ekle(g: DisKaynakGelir):
     with db() as (conn, cur):
+        if not g.force:
+            cur.execute("""
+                SELECT id FROM kasa_hareketleri WHERE islem_turu='DIS_KAYNAK' AND durum='aktif'
+                AND tarih BETWEEN %s::date - INTERVAL '7 days' AND %s::date + INTERVAL '7 days'
+                AND ABS(tutar - %s) < 1 AND aciklama LIKE %s
+            """, (str(g.tarih), str(g.tarih), g.tutar, f"{g.kategori}%"))
+            benzer = cur.fetchall()
+            if benzer:
+                return {"warning": True, "mesaj": f"Son 7 günde benzer kayıt var ({len(benzer)} adet). Yine de kaydetmek için force=true gönderin."}
         gid = str(uuid.uuid4())
         cur.execute("""INSERT INTO kasa_hareketleri
             (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id)
             VALUES (%s, %s, 'DIS_KAYNAK', %s, %s, 'dis_kaynak', %s)""",
-            (gid, g.tarih, abs(g.tutar),
-             f"{g.kategori}: {g.aciklama or ''}", gid))
+            (gid, g.tarih, abs(g.tutar), f"{g.kategori}: {g.aciklama or ''}", gid))
         audit(cur, 'kasa_hareketleri', gid, 'DIS_KAYNAK')
     return {"id": gid, "success": True}
 
 @app.delete("/api/dis-kaynak/{gid}")
 def dis_kaynak_sil(gid: str):
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM kasa_hareketleri WHERE id=%s AND islem_turu='DIS_KAYNAK'", (gid,))
+        cur.execute("SELECT * FROM kasa_hareketleri WHERE id=%s AND islem_turu='DIS_KAYNAK' AND durum='aktif'", (gid,))
         eski = cur.fetchone()
-        if not eski: raise HTTPException(404)
+        if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten iptal edilmiş")
+        # Kasa kaydını pasifleştir — ters kayıt YOK
         cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s", (gid,))
-        # Ters kayıt — kasadan çıkar
-        cur.execute("""INSERT INTO kasa_hareketleri
-            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id)
-            VALUES (%s, %s, 'DIS_KAYNAK_IPTAL', %s, 'Dış kaynak iptali', 'dis_kaynak', %s)""",
-            (str(uuid.uuid4()), str(date.today()), -abs(float(eski['tutar'])), gid))
-        audit(cur, 'kasa_hareketleri', gid, 'DIS_KAYNAK_IPTAL', eski=eski)
+        audit(cur, 'kasa_hareketleri', gid, 'IPTAL', eski=eski)
     return {"success": True}
 
 # ── ANLIQ GİDER (beklenmeyen giderler) ────────────────────────
@@ -196,6 +182,7 @@ class AnlikGider(BaseModel):
     tutar: float
     aciklama: Optional[str] = None
     sube: Optional[str] = "MERKEZ"
+    force: bool = False
 
 @app.get("/api/anlik-gider")
 def anlik_gider_listele():
@@ -206,12 +193,19 @@ def anlik_gider_listele():
 @app.post("/api/anlik-gider")
 def anlik_gider_ekle(g: AnlikGider):
     with db() as (conn, cur):
+        if not g.force:
+            cur.execute("""
+                SELECT id FROM anlik_giderler WHERE durum='aktif'
+                AND tarih BETWEEN %s::date - INTERVAL '7 days' AND %s::date + INTERVAL '7 days'
+                AND ABS(tutar - %s) < 1 AND kategori = %s
+            """, (str(g.tarih), str(g.tarih), g.tutar, g.kategori))
+            benzer = cur.fetchall()
+            if benzer:
+                return {"warning": True, "mesaj": f"Son 7 günde benzer kayıt var ({len(benzer)} adet). Yine de kaydetmek için force=true gönderin."}
         gid = str(uuid.uuid4())
         cur.execute("""INSERT INTO anlik_giderler (id,tarih,kategori,tutar,aciklama,sube)
             VALUES (%s,%s,%s,%s,%s,%s)""",
             (gid, g.tarih, g.kategori, g.tutar, g.aciklama, g.sube))
-        # Direkt kasadan düş
-        kasa = guncel_kasa()
         cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
             VALUES (%s,%s,'ANLIK_GIDER',%s,%s,'anlik_giderler',%s)""",
             (str(uuid.uuid4()), str(g.tarih), -abs(g.tutar), f"Anlık gider: {g.aciklama or g.kategori}", gid))
@@ -221,14 +215,13 @@ def anlik_gider_ekle(g: AnlikGider):
 @app.delete("/api/anlik-gider/{gid}")
 def anlik_gider_sil(gid: str):
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM anlik_giderler WHERE id=%s", (gid,))
+        cur.execute("SELECT * FROM anlik_giderler WHERE id=%s AND durum='aktif'", (gid,))
         eski = cur.fetchone()
-        if not eski: raise HTTPException(404)
+        if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten iptal edilmiş")
+        # Gideri pasifleştir
         cur.execute("UPDATE anlik_giderler SET durum='iptal' WHERE id=%s", (gid,))
-        # Ters kayıt
-        cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
-            VALUES (%s,%s,'ANLIK_GIDER_IPTAL',%s,'Gider iptali - ters kayıt','anlik_giderler',%s)""",
-            (str(uuid.uuid4()), str(date.today()), abs(float(eski['tutar'])), gid))
+        # İlgili kasa kaydını da pasifleştir — ters kayıt YOK
+        cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE kaynak_id=%s AND islem_turu='ANLIK_GIDER' AND durum='aktif'", (gid,))
         audit(cur, 'anlik_giderler', gid, 'IPTAL', eski=eski)
     return {"success": True}
 
@@ -381,10 +374,12 @@ def kart_hareket_ekle(h: KartHareket):
 @app.delete("/api/kart-hareketleri/{hid}")
 def kart_hareket_iptal(hid: str):
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM kart_hareketleri WHERE id=%s", (hid,))
+        cur.execute("SELECT * FROM kart_hareketleri WHERE id=%s AND durum='aktif'", (hid,))
         eski = cur.fetchone()
-        if not eski: raise HTTPException(404)
-        cur.execute("UPDATE kart_hareketleri SET durum='iptal', iptal_nedeni='Manuel iptal' WHERE id=%s", (hid,))
+        if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten iptal edilmiş")
+        cur.execute("UPDATE kart_hareketleri SET durum='iptal' WHERE id=%s", (hid,))
+        # İlgili kasa kaydı varsa onu da pasifleştir
+        cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE kaynak_id=%s AND durum='aktif'", (hid,))
         audit(cur, 'kart_hareketleri', hid, 'IPTAL', eski=eski)
     return {"success": True}
 
@@ -463,8 +458,8 @@ def onayla(oid: str):
         tutar = float(onay['tutar'])
         tarih = str(onay['tarih'])
         # Sign modeli: işlem türüne göre işaret belirle
-        GIDER_TURLERI = {'KART_ODEME', 'ANLIK_GIDER', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER'}
-        GELIR_TURLERI = {'CIRO', 'CIRO_DUZELTME'}
+        GIDER_TURLERI = {'KART_ODEME', 'ANLIK_GIDER', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER', 'ODEME_PLANI'}
+        GELIR_TURLERI = {'CIRO', 'CIRO_DUZELTME', 'DIS_KAYNAK', 'KASA_GIRIS', 'KASA_DUZELTME'}
         islem_turu = onay['islem_turu']
         if islem_turu in GIDER_TURLERI:
             signed_tutar = -abs(tutar)
@@ -494,6 +489,7 @@ class CiroModel(BaseModel):
     pos: float = 0
     online: float = 0
     aciklama: Optional[str] = None
+    force: bool = False
 
 @app.get("/api/ciro")
 def ciro_listele(limit: int = 200):
@@ -505,13 +501,23 @@ def ciro_listele(limit: int = 200):
 
 @app.post("/api/ciro")
 def ciro_ekle(c: CiroModel):
+    toplam = float(c.nakit or 0) + float(c.pos or 0) + float(c.online or 0)
     with db() as (conn, cur):
+        # Backend duplicate kontrolü — force=False ise benzer kayıt varsa uyar
+        if not c.force:
+            cur.execute("""
+                SELECT id FROM ciro WHERE durum='aktif'
+                AND tarih BETWEEN %s::date - INTERVAL '7 days' AND %s::date + INTERVAL '7 days'
+                AND ABS((nakit+pos+online) - %s) < 1
+                AND sube_id = %s
+            """, (str(c.tarih), str(c.tarih), toplam, c.sube_id))
+            benzer = cur.fetchall()
+            if benzer:
+                return {"warning": True, "mesaj": f"Son 7 günde benzer kayıt var ({len(benzer)} adet). Yine de kaydetmek için force=true gönderin."}
         cid = str(uuid.uuid4())
         cur.execute("""INSERT INTO ciro (id,tarih,sube_id,nakit,pos,online,aciklama)
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
             (cid, c.tarih, c.sube_id, c.nakit, c.pos, c.online, c.aciklama))
-        toplam = float(c.nakit or 0) + float(c.pos or 0) + float(c.online or 0)
-        # ON CONFLICT DO NOTHING → çift tık / retry durumunda duplicate oluşmaz
         cur.execute("""INSERT INTO kasa_hareketleri
             (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
             VALUES (%s,%s,'CIRO',%s,'Ciro girişi','ciro',%s,%s,'CIRO')
@@ -659,9 +665,9 @@ def sabit_gider_guncelle(gid: str, g: SabitGider):
 @app.delete("/api/sabit-giderler/{gid}")
 def sabit_gider_sil(gid: str):
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM sabit_giderler WHERE id=%s", (gid,))
+        cur.execute("SELECT * FROM sabit_giderler WHERE id=%s AND aktif=TRUE", (gid,))
         eski = cur.fetchone()
-        if not eski: raise HTTPException(404)
+        if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten pasif")
         cur.execute("UPDATE sabit_giderler SET aktif=FALSE WHERE id=%s", (gid,))
         audit(cur, 'sabit_giderler', gid, 'PASIF', eski=eski)
     return {"success": True}
@@ -672,6 +678,7 @@ class VadeliAlim(BaseModel):
     tutar: float
     vade_tarihi: date
     tedarikci: Optional[str] = None
+    force: bool = False
 
 @app.get("/api/vadeli-alimlar")
 def vadeli_listele():
@@ -683,6 +690,15 @@ def vadeli_listele():
 @app.post("/api/vadeli-alimlar")
 def vadeli_ekle(v: VadeliAlim):
     with db() as (conn, cur):
+        if not v.force:
+            cur.execute("""
+                SELECT id FROM vadeli_alimlar WHERE durum='bekliyor'
+                AND vade_tarihi BETWEEN %s::date - INTERVAL '7 days' AND %s::date + INTERVAL '7 days'
+                AND ABS(tutar - %s) < 1
+            """, (str(v.vade_tarihi), str(v.vade_tarihi), v.tutar))
+            benzer = cur.fetchall()
+            if benzer:
+                return {"warning": True, "mesaj": f"Son 7 günde benzer kayıt var ({len(benzer)} adet). Yine de kaydetmek için force=true gönderin."}
         vid = str(uuid.uuid4())
         cur.execute("""INSERT INTO vadeli_alimlar (id,aciklama,tutar,vade_tarihi,tedarikci)
             VALUES (%s,%s,%s,%s,%s)""",
@@ -704,10 +720,12 @@ def vadeli_guncelle(vid: str, v: VadeliAlim):
 @app.delete("/api/vadeli-alimlar/{vid}")
 def vadeli_sil(vid: str):
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM vadeli_alimlar WHERE id=%s", (vid,))
+        cur.execute("SELECT * FROM vadeli_alimlar WHERE id=%s AND durum='bekliyor'", (vid,))
         eski = cur.fetchone()
-        if not eski: raise HTTPException(404)
+        if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten ödenmiş/iptal edilmiş")
         cur.execute("UPDATE vadeli_alimlar SET durum='iptal' WHERE id=%s", (vid,))
+        # İlgili kasa kaydı varsa pasifleştir
+        cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE kaynak_id=%s AND durum='aktif'", (vid,))
         audit(cur, 'vadeli_alimlar', vid, 'IPTAL', eski=eski)
     return {"success": True}
 
@@ -849,7 +867,8 @@ async def excel_import(dosya: UploadFile = File(...)):
                                 # ref_id + ref_type ile takip edilebilir, sign modeli: CIRO pozitif
                                 cur.execute("""INSERT INTO kasa_hareketleri
                                     (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
-                                    VALUES (%s,%s,'CIRO',%s,'Excel import - ciro','ciro',%s,%s,'CIRO')""",
+                                    VALUES (%s,%s,'CIRO',%s,'Excel import - ciro','ciro',%s,%s,'CIRO')
+                                    ON CONFLICT (ref_id, ref_type, islem_turu) DO NOTHING""",
                                     (str(uuid.uuid4()), fix_date(d.get('tarih')), abs(toplam_ciro), cid, cid))
                                 eklenen += 1
 
@@ -944,6 +963,60 @@ async def excel_import(dosya: UploadFile = File(...)):
         raise HTTPException(500, "openpyxl kurulu değil")
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+# ── ÇIFT KAYIT KONTROL ENDPOINTLERİ ───────────────────────────
+
+@app.get("/api/ciro/kontrol")
+def ciro_kontrol(tarih: str, tutar: float, sube_id: str = None):
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT id, tarih, nakit+pos+online as toplam, sube_id FROM ciro
+            WHERE durum='aktif'
+            AND tarih BETWEEN %s::date - INTERVAL '7 days' AND %s::date + INTERVAL '7 days'
+            AND ABS((nakit+pos+online) - %s) < 1
+            AND (%s IS NULL OR sube_id = %s)
+        """, (tarih, tarih, tutar, sube_id, sube_id))
+        benzer = [dict(r) for r in cur.fetchall()]
+        return {"benzer": benzer, "var": len(benzer) > 0}
+
+@app.get("/api/anlik-gider/kontrol")
+def anlik_gider_kontrol(tarih: str, tutar: float, kategori: str = None):
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT id, tarih, tutar, kategori FROM anlik_giderler
+            WHERE durum='aktif'
+            AND tarih BETWEEN %s::date - INTERVAL '7 days' AND %s::date + INTERVAL '7 days'
+            AND ABS(tutar - %s) < 1
+            AND (%s IS NULL OR kategori = %s)
+        """, (tarih, tarih, tutar, kategori, kategori))
+        benzer = [dict(r) for r in cur.fetchall()]
+        return {"benzer": benzer, "var": len(benzer) > 0}
+
+@app.get("/api/dis-kaynak/kontrol")
+def dis_kaynak_kontrol(tarih: str, tutar: float, kategori: str = None):
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT id, tarih, tutar, aciklama FROM kasa_hareketleri
+            WHERE islem_turu='DIS_KAYNAK' AND durum='aktif'
+            AND tarih BETWEEN %s::date - INTERVAL '7 days' AND %s::date + INTERVAL '7 days'
+            AND ABS(tutar - %s) < 1
+            AND (%s IS NULL OR aciklama LIKE %s)
+        """, (tarih, tarih, tutar, kategori, f"{kategori}%"))
+        benzer = [dict(r) for r in cur.fetchall()]
+        return {"benzer": benzer, "var": len(benzer) > 0}
+
+@app.get("/api/vadeli-alimlar/kontrol")
+def vadeli_kontrol(vade_tarihi: str, tutar: float):
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT id, aciklama, tutar, vade_tarihi FROM vadeli_alimlar
+            WHERE durum='bekliyor'
+            AND vade_tarihi BETWEEN %s::date - INTERVAL '7 days' AND %s::date + INTERVAL '7 days'
+            AND ABS(tutar - %s) < 1
+        """, (vade_tarihi, vade_tarihi, tutar))
+        benzer = [dict(r) for r in cur.fetchall()]
+        return {"benzer": benzer, "var": len(benzer) > 0}
 
 # ── HEALTH ─────────────────────────────────────────────────────
 @app.get("/api/health")
