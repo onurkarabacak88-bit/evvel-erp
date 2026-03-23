@@ -84,13 +84,14 @@ def panel():
             GERCEK_GELIR = ('CIRO', 'KASA_GIRIS', 'DIS_KAYNAK')
             GERCEK_GIDER = ('ANLIK_GIDER', 'KART_ODEME', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER')
             cur.execute("""SELECT
-                COALESCE(SUM(CASE WHEN islem_turu IN %s THEN ABS(tutar) ELSE 0 END), 0) as gelir,
-                COALESCE(SUM(CASE WHEN islem_turu IN %s THEN ABS(tutar) ELSE 0 END), 0) as gider
-                FROM kasa_hareketleri WHERE durum='aktif'""",
-                (GERCEK_GELIR, GERCEK_GIDER))
-            gelir_gider = cur.fetchone()
-            toplam_gelir = float(gelir_gider['gelir'])
-            toplam_gider = float(gelir_gider['gider'])
+                COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END),0) as gelir,
+    COALESCE(SUM(CASE WHEN tutar < 0 THEN tutar ELSE 0 END),0) as gider
+FROM kasa_hareketleri
+WHERE durum='aktif'
+""")
+row = cur.fetchone()
+toplam_gelir = float(row['gelir'])
+toplam_gider = abs(float(row['gider']))
 
             # Aksiyonlar
             aksiyonlar = []
