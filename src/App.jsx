@@ -14,11 +14,13 @@ import Strateji from './pages/Strateji';
 import Ledger from './pages/Ledger';
 import ExcelImport from './pages/ExcelImport';
 import DisKaynak from './pages/DisKaynak';
+import Rapor from './pages/Rapor';
 import './index.css';
 
 const NAV = [
   { group: 'Ana', items: [
     { id: 'panel', label: 'CFO Panel', icon: '⬛' },
+    { id: 'rapor', label: 'Aylık Rapor', icon: '📊' },
     { id: 'strateji', label: 'Strateji Motoru', icon: '🧠' },
     { id: 'onay', label: 'Onay Kuyruğu', icon: '✅' },
     { id: 'ledger', label: 'İşlem Defteri', icon: '📒' },
@@ -43,7 +45,7 @@ const NAV = [
 const PAGES = {
   panel: Panel, strateji: Strateji, onay: OnayKuyrugu, ledger: Ledger,
   ciro: Ciro, 'kart-hareketleri': KartHareketleri, 'anlik-gider': AnlikGider,
-  'dis-kaynak': DisKaynak, vadeli: VadeliAlimlar, excel: ExcelImport, kartlar: Kartlar, 'kart-analiz': KartAnaliz,
+  rapor: Rapor, 'dis-kaynak': DisKaynak, vadeli: VadeliAlimlar, excel: ExcelImport, kartlar: Kartlar, 'kart-analiz': KartAnaliz,
   personel: Personel, borclar: Borclar, 'sabit-giderler': SabitGiderler,
 };
 
