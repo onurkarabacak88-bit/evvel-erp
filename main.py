@@ -1186,6 +1186,42 @@ def kasa_kontrol():
             "anomaliler": anomaliler
         }
 
+# ── TOPLU ÖDEME (tek transaction) ──────────────────────────────
+@app.post("/api/toplu-odeme")
+def toplu_odeme(payload: dict):
+    """
+    Birden fazla ödemeyi tek transaction'da uygular.
+    Biri başarısız olursa hepsi rollback.
+    payload: { odemeler: [{odeme_id, tutar}] }
+    """
+    odemeler = payload.get('odemeler', [])
+    if not odemeler:
+        raise HTTPException(400, "Ödeme listesi boş")
+    
+    with db() as (conn, cur):
+        basarili = []
+        for item in odemeler:
+            oid = item.get('odeme_id')
+            tutar = item.get('tutar')
+            if not oid:
+                continue
+            cur.execute("SELECT * FROM odeme_plani WHERE id=%s", (oid,))
+            plan = cur.fetchone()
+            if not plan:
+                raise HTTPException(404, f"Ödeme bulunamadı: {oid}")
+            if plan['durum'] == 'odendi':
+                continue  # Zaten ödendi, atla
+            odenen = tutar or float(plan['odenecek_tutar'])
+            bugun = str(date.today())
+            cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s WHERE id=%s", (bugun, oid))
+            insert_kasa_hareketi(cur, bugun, 'KART_ODEME', -abs(odenen),
+                f"Toplu ödeme: {plan['aciklama']}", 'odeme_plani', oid, oid, 'ODEME_PLANI')
+            cur.execute("UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW() WHERE kaynak_id=%s", (oid,))
+            audit(cur, 'odeme_plani', oid, 'TOPLU_ODEME', eski=plan)
+            basarili.append(oid)
+        # Hepsi başarılıysa commit (with db() otomatik commit eder)
+    return {"success": True, "uygulanan": len(basarili), "odemeler": basarili}
+
 # ── HEALTH ─────────────────────────────────────────────────────
 @app.get("/api/health")
 def health():
