@@ -275,6 +275,17 @@ def init_db():
             )
         """)
 
+        # ── AY DEVIR LOG ───────────────────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ay_devir_log (
+                id          TEXT PRIMARY KEY,
+                ay          TEXT NOT NULL,  -- '2024-03'
+                devir_tutar NUMERIC(14,2) NOT NULL,
+                olusturma   TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (ay)
+            )
+        """)
+
         # ── AUDIT LOG ──────────────────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS audit_log (

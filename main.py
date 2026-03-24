@@ -50,6 +50,15 @@ def startup():
             logger.info(f"Aylık ödeme planı üretildi: {sonuc['toplam']} kayıt")
         except Exception as e:
             logger.error(f"Ödeme planı üretim hatası: {e}")
+    # Otomatik ay devri — ay başında çalışır
+    try:
+        if bugun.day == 1:
+            sonuc = ay_devir_hesapla_ve_aktar()
+            if sonuc.get('devir_yapildi'):
+                logger.info(f"✅ Ay deviri yapıldı: {sonuc['devir_tutar']:,.2f} ₺ → {sonuc['ay']}")
+    except Exception as e:
+        logger.warning(f"Ay deviri yapılamadı: {e}")
+
     # Kasa tutarlılık kontrolü — hata vermez, sadece uyarı loglar
     try:
         with db() as (conn, cur):
@@ -128,7 +137,28 @@ def onay_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
 @app.get("/api/panel")
 def panel():
     try:
-        return finans_ozet_motoru()
+        ozet = finans_ozet_motoru()
+        # Devir bilgisi
+        with db() as (conn, cur):
+            bu_ay = date.today().strftime('%Y-%m')
+            cur.execute("SELECT devir_tutar FROM ay_devir_log WHERE ay=%s", (bu_ay,))
+            devir = cur.fetchone()
+            ozet['bu_ay_devir'] = float(devir['devir_tutar']) if devir else 0
+
+            # Ciro dışı kaynak toplamı (bu ay)
+            cur.execute("""
+                SELECT
+                    COALESCE(SUM(CASE WHEN islem_turu='DIS_KAYNAK' THEN tutar ELSE 0 END), 0) as dis_kaynak,
+                    COALESCE(SUM(CASE WHEN islem_turu='DEVIR' THEN tutar ELSE 0 END), 0) as devir_toplam
+                FROM kasa_hareketleri
+                WHERE durum='aktif'
+                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+            """)
+            row = cur.fetchone()
+            ozet['bu_ay_dis_kaynak'] = float(row['dis_kaynak'])
+            ozet['bu_ay_devir_toplam'] = float(row['devir_toplam'])
+        return ozet
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -1186,6 +1216,93 @@ def kasa_kontrol():
             "anomaliler": anomaliler
         }
 
+# ── AY DEVIR SİSTEMİ ───────────────────────────────────────────
+def ay_devir_hesapla_ve_aktar(hedef_ay: str = None):
+    """
+    Geçen ayın kapanış kasasını bu aya DEVIR olarak aktarır.
+    hedef_ay: 'YYYY-MM' formatında. Boş bırakılırsa bu ay.
+    Aynı ay için 2 kez çalıştırılsa bile UNIQUE constraint korur.
+    """
+    from datetime import date
+    import calendar
+
+    bugun = date.today()
+    if not hedef_ay:
+        hedef_ay = bugun.strftime('%Y-%m')
+
+    yil, ay = map(int, hedef_ay.split('-'))
+
+    # Geçen ayın son günü
+    if ay == 1:
+        gecen_yil, gecen_ay = yil - 1, 12
+    else:
+        gecen_yil, gecen_ay = yil, ay - 1
+
+    gecen_ay_son = date(gecen_yil, gecen_ay,
+                        calendar.monthrange(gecen_yil, gecen_ay)[1])
+    bu_ay_ilk = date(yil, ay, 1)
+
+    with db() as (conn, cur):
+        # Zaten devir yapılmış mı?
+        cur.execute("SELECT id FROM ay_devir_log WHERE ay=%s", (hedef_ay,))
+        if cur.fetchone():
+            return {"devir_yapildi": False, "sebep": "Bu ay için devir zaten yapılmış"}
+
+        # Geçen ayın kapanış kasası
+        cur.execute("""
+            SELECT COALESCE(SUM(tutar), 0) as kapanis
+            FROM kasa_hareketleri
+            WHERE durum='aktif'
+            AND tarih <= %s
+        """, (gecen_ay_son,))
+        kapanis_kasa = float(cur.fetchone()['kapanis'])
+
+        if kapanis_kasa == 0:
+            return {"devir_yapildi": False, "sebep": "Geçen ay kapanış kasası sıfır, devir yapılmadı"}
+
+        # Devir kaydı yaz
+        devir_id = str(uuid.uuid4())
+        insert_kasa_hareketi(
+            cur, bu_ay_ilk, 'DEVIR', kapanis_kasa,
+            f"{gecen_yil}-{gecen_ay:02d} ay deviri",
+            'ay_devir_log', devir_id,
+            ref_id=devir_id, ref_type='DEVIR'
+        )
+
+        # Devir log kaydet
+        cur.execute("""
+            INSERT INTO ay_devir_log (id, ay, devir_tutar)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (ay) DO NOTHING
+        """, (devir_id, hedef_ay, kapanis_kasa))
+
+        return {
+            "devir_yapildi": True,
+            "ay": hedef_ay,
+            "devir_tutar": kapanis_kasa,
+            "gecen_ay": f"{gecen_yil}-{gecen_ay:02d}"
+        }
+
+@app.post("/api/devir")
+def devir_yap(ay: str = None):
+    """Manuel devir tetikleyici. ay='2024-03' formatında."""
+    try:
+        return ay_devir_hesapla_ve_aktar(ay)
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.get("/api/devir")
+def devir_listele():
+    """Geçmiş devir kayıtlarını listele."""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT d.*, k.tutar as kasa_tutari
+            FROM ay_devir_log d
+            LEFT JOIN kasa_hareketleri k ON k.ref_id = d.id AND k.durum='aktif'
+            ORDER BY d.ay DESC LIMIT 24
+        """)
+        return [dict(r) for r in cur.fetchall()]
+
 # ── TOPLU ÖDEME (tek transaction) ──────────────────────────────
 @app.post("/api/toplu-odeme")
 def toplu_odeme(payload: dict):
@@ -1221,6 +1338,267 @@ def toplu_odeme(payload: dict):
             basarili.append(oid)
         # Hepsi başarılıysa commit (with db() otomatik commit eder)
     return {"success": True, "uygulanan": len(basarili), "odemeler": basarili}
+
+# ── AY SONU RAPOR (Excel) ──────────────────────────────────────
+@app.get("/api/rapor/aylik")
+def aylik_rapor(yil: int = None, ay: int = None):
+    """
+    Aylık finansal rapor verisi — Excel için hazırlanmış.
+    yil/ay boş bırakılırsa bu ay.
+    """
+    from datetime import date
+    bugun = date.today()
+    yil = yil or bugun.year
+    ay = ay or bugun.month
+
+    with db() as (conn, cur):
+        # 1. Özet
+        cur.execute("""
+            SELECT
+                COALESCE(SUM(CASE WHEN tutar > 0 AND islem_turu NOT IN ('DEVIR') THEN tutar ELSE 0 END), 0) as toplam_gelir,
+                COALESCE(SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END), 0) as toplam_gider,
+                COALESCE(SUM(CASE WHEN islem_turu='CIRO' THEN tutar ELSE 0 END), 0) as ciro_toplam,
+                COALESCE(SUM(CASE WHEN islem_turu='DIS_KAYNAK' THEN tutar ELSE 0 END), 0) as dis_kaynak_toplam,
+                COALESCE(SUM(CASE WHEN islem_turu='DEVIR' THEN tutar ELSE 0 END), 0) as devir_toplam,
+                COALESCE(SUM(CASE WHEN islem_turu='KART_ODEME' THEN ABS(tutar) ELSE 0 END), 0) as kart_odeme_toplam,
+                COALESCE(SUM(CASE WHEN islem_turu='ANLIK_GIDER' THEN ABS(tutar) ELSE 0 END), 0) as anlik_gider_toplam,
+                COALESCE(SUM(CASE WHEN islem_turu='VADELI_ODEME' THEN ABS(tutar) ELSE 0 END), 0) as vadeli_toplam,
+                COALESCE(SUM(CASE WHEN islem_turu='PERSONEL_MAAS' THEN ABS(tutar) ELSE 0 END), 0) as maas_toplam,
+                COALESCE(SUM(CASE WHEN islem_turu='SABIT_GIDER' THEN ABS(tutar) ELSE 0 END), 0) as sabit_toplam,
+                COALESCE(SUM(tutar), 0) as net_kasa
+            FROM kasa_hareketleri
+            WHERE durum='aktif'
+            AND EXTRACT(YEAR FROM tarih) = %s
+            AND EXTRACT(MONTH FROM tarih) = %s
+        """, (yil, ay))
+        ozet = dict(cur.fetchone())
+
+        # 2. Şube bazlı ciro
+        cur.execute("""
+            SELECT s.ad as sube, COALESCE(SUM(c.toplam), 0) as ciro,
+                   COALESCE(SUM(c.nakit), 0) as nakit,
+                   COALESCE(SUM(c.pos), 0) as pos,
+                   COALESCE(SUM(c.online), 0) as online,
+                   COUNT(*) as islem_sayisi
+            FROM ciro c
+            LEFT JOIN subeler s ON s.id = c.sube_id
+            WHERE c.durum='aktif'
+            AND EXTRACT(YEAR FROM c.tarih) = %s
+            AND EXTRACT(MONTH FROM c.tarih) = %s
+            GROUP BY s.ad ORDER BY ciro DESC
+        """, (yil, ay))
+        sube_ciro = [dict(r) for r in cur.fetchall()]
+
+        # 3. Günlük kasa hareketi
+        cur.execute("""
+            SELECT tarih, islem_turu,
+                   COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END), 0) as giris,
+                   COALESCE(SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END), 0) as cikis,
+                   SUM(tutar) as net
+            FROM kasa_hareketleri
+            WHERE durum='aktif'
+            AND EXTRACT(YEAR FROM tarih) = %s
+            AND EXTRACT(MONTH FROM tarih) = %s
+            AND islem_turu NOT LIKE '%IPTAL%'
+            GROUP BY tarih, islem_turu
+            ORDER BY tarih, islem_turu
+        """, (yil, ay))
+        gunluk = [dict(r) for r in cur.fetchall()]
+
+        # 4. Kategori bazlı giderler
+        cur.execute("""
+            SELECT ag.kategori,
+                   COUNT(*) as adet,
+                   COALESCE(SUM(ag.tutar), 0) as toplam
+            FROM anlik_giderler ag
+            WHERE ag.durum='aktif'
+            AND EXTRACT(YEAR FROM ag.tarih) = %s
+            AND EXTRACT(MONTH FROM ag.tarih) = %s
+            GROUP BY ag.kategori ORDER BY toplam DESC
+        """, (yil, ay))
+        gider_kategori = [dict(r) for r in cur.fetchall()]
+
+        # 5. Kart ödemeleri
+        cur.execute("""
+            SELECT k.kart_adi, k.banka,
+                   COALESCE(SUM(op.odenen_tutar), 0) as odenen,
+                   COUNT(*) as adet
+            FROM odeme_plani op
+            JOIN kartlar k ON k.id = op.kart_id
+            WHERE op.durum='odendi'
+            AND EXTRACT(YEAR FROM op.odeme_tarihi) = %s
+            AND EXTRACT(MONTH FROM op.odeme_tarihi) = %s
+            GROUP BY k.kart_adi, k.banka ORDER BY odenen DESC
+        """, (yil, ay))
+        kart_odemeler = [dict(r) for r in cur.fetchall()]
+
+        # 6. En karlı / zararlı şube
+        en_karli = max(sube_ciro, key=lambda x: x['ciro']) if sube_ciro else None
+        en_az = min(sube_ciro, key=lambda x: x['ciro']) if sube_ciro else None
+
+        return {
+            "donem": f"{yil}-{ay:02d}",
+            "ozet": ozet,
+            "sube_ciro": sube_ciro,
+            "gunluk_hareketler": gunluk,
+            "gider_kategoriler": gider_kategori,
+            "kart_odemeler": kart_odemeler,
+            "en_karli_sube": en_karli,
+            "en_az_sube": en_az,
+        }
+
+@app.get("/api/rapor/aylik/excel")
+def aylik_rapor_excel(yil: int = None, ay: int = None):
+    """Aylık raporu Excel dosyası olarak indir."""
+    import io
+    from datetime import date
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    except ImportError:
+        raise HTTPException(500, "openpyxl kurulu değil")
+
+    bugun = date.today()
+    yil = yil or bugun.year
+    ay = ay or bugun.month
+    veri = aylik_rapor(yil, ay)
+
+    wb = openpyxl.Workbook()
+
+    # Yardımcı stiller
+    BASLIK = Font(bold=True, size=12, color="FFFFFF")
+    BASLIK_FILL = PatternFill("solid", fgColor="1a2744")
+    ALBASLIK = Font(bold=True, size=10)
+    ALBASLIK_FILL = PatternFill("solid", fgColor="2d4a8a")
+    ALBASLIK_FONT = Font(bold=True, color="FFFFFF")
+    PARA = '#,##0.00 ₺'
+    YUMUSAK = PatternFill("solid", fgColor="f0f4ff")
+
+    def baslik_satiri(ws, row, cols, text, fill=None):
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=cols)
+        c = ws.cell(row=row, column=1, value=text)
+        c.font = BASLIK
+        c.fill = fill or BASLIK_FILL
+        c.alignment = Alignment(horizontal='center')
+
+    def sutun_baslik(ws, row, headers):
+        for i, h in enumerate(headers, 1):
+            c = ws.cell(row=row, column=i, value=h)
+            c.font = ALBASLIK_FONT
+            c.fill = ALBASLIK_FILL
+            c.alignment = Alignment(horizontal='center')
+
+    # ── SAYFA 1: ÖZET ──
+    ws1 = wb.active
+    ws1.title = "Özet"
+    ws1.column_dimensions['A'].width = 30
+    ws1.column_dimensions['B'].width = 20
+
+    baslik_satiri(ws1, 1, 2, f"EVVEL ERP — {veri['donem']} AY SONU RAPORU")
+    ozet = veri['ozet']
+    satirlar = [
+        ("", ""),
+        ("GELİRLER", ""),
+        ("Ciro Toplamı", ozet['ciro_toplam']),
+        ("Dış Kaynak", ozet['dis_kaynak_toplam']),
+        ("Devir (Önceki Aydan)", ozet['devir_toplam']),
+        ("TOPLAM GELİR", ozet['toplam_gelir']),
+        ("", ""),
+        ("GİDERLER", ""),
+        ("Kart Ödemeleri", ozet['kart_odeme_toplam']),
+        ("Anlık Giderler", ozet['anlik_gider_toplam']),
+        ("Vadeli Ödemeler", ozet['vadeli_toplam']),
+        ("Personel Maaşları", ozet['maas_toplam']),
+        ("Sabit Giderler", ozet['sabit_toplam']),
+        ("TOPLAM GİDER", ozet['toplam_gider']),
+        ("", ""),
+        ("NET KAR / ZARAR", ozet['toplam_gelir'] - ozet['toplam_gider']),
+        ("AY SONU KASA", ozet['net_kasa']),
+    ]
+    for r, (k, v) in enumerate(satirlar, 3):
+        c1 = ws1.cell(row=r, column=1, value=k)
+        c2 = ws1.cell(row=r, column=2, value=v if isinstance(v, (int, float)) else v)
+        if k in ("TOPLAM GELİR", "TOPLAM GİDER", "NET KAR / ZARAR", "AY SONU KASA"):
+            c1.font = Font(bold=True)
+            c2.font = Font(bold=True)
+            c2.fill = PatternFill("solid", fgColor="e8f5e9" if k != "TOPLAM GİDER" else "ffebee")
+        if isinstance(v, (int, float)):
+            c2.number_format = PARA
+        if k in ("GELİRLER", "GİDERLER"):
+            c1.font = Font(bold=True, size=11)
+            c1.fill = YUMUSAK
+
+    # ── SAYFA 2: ŞUBE CİRO ──
+    ws2 = wb.create_sheet("Şube Ciro")
+    ws2.column_dimensions['A'].width = 25
+    for col in ['B','C','D','E','F']: ws2.column_dimensions[col].width = 18
+    baslik_satiri(ws2, 1, 6, "ŞUBE BAZLI CİRO RAPORU")
+    sutun_baslik(ws2, 2, ["Şube", "Toplam Ciro", "Nakit", "POS", "Online", "İşlem Sayısı"])
+    for r, s in enumerate(veri['sube_ciro'], 3):
+        ws2.cell(row=r, column=1, value=s['sube'])
+        for ci, k in enumerate(['ciro','nakit','pos','online'], 2):
+            c = ws2.cell(row=r, column=ci, value=float(s[k]))
+            c.number_format = PARA
+        ws2.cell(row=r, column=6, value=s['islem_sayisi'])
+        if r % 2 == 0:
+            for ci in range(1, 7): ws2.cell(row=r, column=ci).fill = YUMUSAK
+
+    # ── SAYFA 3: GİDER KATEGORİLER ──
+    ws3 = wb.create_sheet("Gider Analizi")
+    ws3.column_dimensions['A'].width = 25
+    ws3.column_dimensions['B'].width = 18
+    ws3.column_dimensions['C'].width = 12
+    baslik_satiri(ws3, 1, 3, "GİDER KATEGORİ ANALİZİ")
+    sutun_baslik(ws3, 2, ["Kategori", "Toplam", "Adet"])
+    for r, g in enumerate(veri['gider_kategoriler'], 3):
+        ws3.cell(row=r, column=1, value=g['kategori'])
+        c = ws3.cell(row=r, column=2, value=float(g['toplam']))
+        c.number_format = PARA
+        ws3.cell(row=r, column=3, value=g['adet'])
+
+    # ── SAYFA 4: KART ÖDEMELERİ ──
+    ws4 = wb.create_sheet("Kart Ödemeleri")
+    ws4.column_dimensions['A'].width = 25
+    ws4.column_dimensions['B'].width = 20
+    ws4.column_dimensions['C'].width = 18
+    ws4.column_dimensions['D'].width = 12
+    baslik_satiri(ws4, 1, 4, "KART ÖDEMELERİ")
+    sutun_baslik(ws4, 2, ["Kart", "Banka", "Ödenen", "Adet"])
+    for r, k in enumerate(veri['kart_odemeler'], 3):
+        ws4.cell(row=r, column=1, value=k['kart_adi'])
+        ws4.cell(row=r, column=2, value=k['banka'])
+        c = ws4.cell(row=r, column=3, value=float(k['odenen']))
+        c.number_format = PARA
+        ws4.cell(row=r, column=4, value=k['adet'])
+
+    # ── SAYFA 5: GÜNLÜK HAREKETLER ──
+    ws5 = wb.create_sheet("Günlük Hareketler")
+    ws5.column_dimensions['A'].width = 14
+    ws5.column_dimensions['B'].width = 22
+    ws5.column_dimensions['C'].width = 18
+    ws5.column_dimensions['D'].width = 18
+    ws5.column_dimensions['E'].width = 18
+    baslik_satiri(ws5, 1, 5, "GÜNLÜK KASA HAREKETLERİ")
+    sutun_baslik(ws5, 2, ["Tarih", "İşlem Türü", "Giriş", "Çıkış", "Net"])
+    for r, g in enumerate(veri['gunluk_hareketler'], 3):
+        ws5.cell(row=r, column=1, value=str(g['tarih']))
+        ws5.cell(row=r, column=2, value=g['islem_turu'])
+        for ci, k in enumerate(['giris','cikis','net'], 3):
+            c = ws5.cell(row=r, column=ci, value=float(g[k]))
+            c.number_format = PARA
+            if k == 'net':
+                c.font = Font(color="00aa44" if float(g[k]) >= 0 else "cc0000")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    from fastapi.responses import StreamingResponse
+    donem = f"{yil}-{ay:02d}"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="evvel-rapor-{donem}.xlsx"'}
+    )
 
 # ── HEALTH ─────────────────────────────────────────────────────
 @app.get("/api/health")
