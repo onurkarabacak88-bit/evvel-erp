@@ -74,7 +74,9 @@ export default function App() {
         </nav>
         <div className="sidebar-footer">EVVEL V2 · {new Date().getFullYear()}</div>
       </aside>
-      <main className="main"><Page /></main>
+      <main className="main">
+        <Page onNavigate={setPage} />
+      </main>
     </div>
   );
 }
