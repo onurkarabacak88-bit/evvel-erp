@@ -19,34 +19,58 @@ def karar_motoru():
         """)
         kasa = float(cur.fetchone()['kasa'])
 
-        # 7 günlük ödemeler
+        # 7 / 15 / 30 günlük ödemeler — master motor ile tutarlı
         cur.execute("""
-            SELECT COALESCE(SUM(odenecek_tutar),0) as t7,
-                   COALESCE(SUM(asgari_tutar),0) as asgari
+            SELECT
+                COALESCE(SUM(CASE WHEN tarih <= %s + INTERVAL '7 days'  THEN odenecek_tutar ELSE 0 END),0) as t7,
+                COALESCE(SUM(CASE WHEN tarih <= %s + INTERVAL '15 days' THEN odenecek_tutar ELSE 0 END),0) as t15,
+                COALESCE(SUM(CASE WHEN tarih <= %s + INTERVAL '30 days' THEN odenecek_tutar ELSE 0 END),0) as t30,
+                COALESCE(SUM(CASE WHEN tarih <= %s + INTERVAL '7 days'  THEN asgari_tutar  ELSE 0 END),0) as asgari
             FROM odeme_plani WHERE durum='bekliyor'
-            AND tarih BETWEEN %s AND %s
-        """, (bugun, bugun + timedelta(days=7)))
+            AND tarih BETWEEN %s AND %s + INTERVAL '30 days'
+        """, (bugun, bugun, bugun, bugun, bugun, bugun))
         row = cur.fetchone()
-        odeme_7 = float(row['t7'])
+        odeme_7  = float(row['t7'])
+        odeme_15 = float(row['t15'])
+        odeme_30 = float(row['t30'])
         asgari_7 = float(row['asgari'])
 
-        # KURAL 1: Ödeme riski
+        # KURAL 1: Kritik — 7 gün
         if kasa < odeme_7:
             kararlar.append({
                 "kural": 1, "seviye": "KRITIK", "renk": "KIRMIZI",
-                "baslik": "Ödeme Riski",
+                "baslik": "Ödeme Riski — 7 Gün",
                 "mesaj": f"Kasa ({fmt(kasa)}) 7 günlük ödeme yükünü ({fmt(odeme_7)}) karşılamıyor.",
                 "aksiyon": "Acil nakit girişi veya ödeme erteleme gerekli",
                 "blink": True
             })
-        elif kasa >= asgari_7 and asgari_7 > 0:
+        elif kasa < odeme_15:
+            kararlar.append({
+                "kural": 1, "seviye": "KRITIK", "renk": "KIRMIZI",
+                "baslik": "Ödeme Riski — 15 Gün",
+                "mesaj": f"Kasa ({fmt(kasa)}) 15 günlük ödeme yükünü ({fmt(odeme_15)}) karşılamıyor.",
+                "aksiyon": "Nakit girişi planlanmalı",
+                "blink": True
+            })
+        elif kasa < odeme_30:
+            oran = kasa / odeme_30 if odeme_30 > 0 else 999
             kararlar.append({
                 "kural": 2, "seviye": "UYARI", "renk": "SARI",
-                "baslik": "Asgari Ödeme Yapılabilir",
-                "mesaj": f"Kasa asgari ödemeyi ({fmt(asgari_7)}) karşılıyor.",
-                "aksiyon": "Asgari ödeme yapılabilir",
+                "baslik": "30 Gün Nakit Baskısı",
+                "mesaj": f"Kasa ({fmt(kasa)}) 30 günlük yükü ({fmt(odeme_30)}) karşılamıyor. Oran: {oran:.1f}x",
+                "aksiyon": "Nakit akışını izle",
                 "blink": False
             })
+        elif asgari_7 > 0:
+            oran = kasa / odeme_7 if odeme_7 > 0 else 999
+            if oran < 1.5:
+                kararlar.append({
+                    "kural": 2, "seviye": "UYARI", "renk": "SARI",
+                    "baslik": "Nakit Baskısı Var",
+                    "mesaj": f"Kasa ({fmt(kasa)}) 7 günlük yükün {oran:.1f}x katı. Dikkatli harcayın.",
+                    "aksiyon": "Asgari ödeme yapılabilir ama nakit azalıyor",
+                    "blink": False
+                })
 
         # KURAL 3: Bugün son ödeme günü
         cur.execute("""
@@ -117,6 +141,8 @@ def karar_motoru():
             "genel_durum": genel,
             "kasa": kasa,
             "odeme_7_gun": odeme_7,
+            "odeme_15_gun": odeme_15,
+            "odeme_30_gun": odeme_30,
             "asgari_7_gun": asgari_7,
             "kararlar": kararlar,
             "ozet": {"kritik": kritik, "uyari": uyari}
@@ -136,14 +162,20 @@ def odeme_strateji_motoru():
         """)
         kasa = float(cur.fetchone()['kasa'])
 
-        # Zorunlu giderler
+        # Zorunlu giderler — önümüzdeki 30 gün içindeki bekleyen ödemeler
+        cur.execute("""
+            SELECT COALESCE(SUM(odenecek_tutar),0) as t
+            FROM odeme_plani WHERE durum='bekliyor'
+            AND tarih BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'
+        """)
+        zorunlu_30gun = float(cur.fetchone()['t'])
         cur.execute("SELECT COALESCE(SUM(tutar),0) as t FROM sabit_giderler WHERE aktif=TRUE")
         sabit = float(cur.fetchone()['t'])
         cur.execute("SELECT COALESCE(SUM(aylik_taksit),0) as t FROM borc_envanteri WHERE aktif=TRUE")
         borc = float(cur.fetchone()['t'])
         cur.execute("SELECT COALESCE(SUM(maas+yemek_ucreti+yol_ucreti),0) as t FROM personel WHERE aktif=TRUE AND calisma_turu='surekli'")
         personel = float(cur.fetchone()['t'])
-        zorunlu = sabit + borc + personel
+        zorunlu = zorunlu_30gun if zorunlu_30gun > 0 else (sabit + borc + personel)
         kullanilabilir = kasa - zorunlu
 
         # Bekleyen ödemeler
@@ -160,11 +192,24 @@ def odeme_strateji_motoru():
             faiz = float(o['faiz_orani'] or 0)
 
             if gun_kaldi == 0:
-                tavsiye = asgari if kullanilabilir < tam else tam
-                oneri = {"oneri_turu": "HEMEN_ODE", "renk": "KIRMIZI",
-                    "baslik": f"🔴 {o['banka']} — BUGÜN ÖDE",
-                    "aciklama": f"Son gün bugün. Asgari: {fmt(asgari)}",
-                    "tavsiye_tutar": tavsiye, "blink": True}
+                if kullanilabilir < asgari:
+                    tavsiye = 0
+                    oneri = {"oneri_turu": "KRITIK_NAKIT", "renk": "KIRMIZI",
+                        "baslik": f"🔴 {o['banka']} — NAKİT YETERSİZ",
+                        "aciklama": f"Kasada asgari ödeme için bile yeterli nakit yok! Asgari: {fmt(asgari)}",
+                        "tavsiye_tutar": 0, "blink": True}
+                elif kullanilabilir < tam:
+                    tavsiye = asgari
+                    oneri = {"oneri_turu": "HEMEN_ODE", "renk": "KIRMIZI",
+                        "baslik": f"🔴 {o['banka']} — BUGÜN ASGARİ ÖDE",
+                        "aciklama": f"Son gün bugün. Tam ödeme için nakit yetersiz. Asgari: {fmt(asgari)}",
+                        "tavsiye_tutar": tavsiye, "blink": True}
+                else:
+                    tavsiye = tam
+                    oneri = {"oneri_turu": "HEMEN_ODE", "renk": "KIRMIZI",
+                        "baslik": f"🔴 {o['banka']} — BUGÜN TAM ÖDE",
+                        "aciklama": f"Son gün bugün. Tam ödeme yapabilirsiniz.",
+                        "tavsiye_tutar": tavsiye, "blink": True}
                 kullanilabilir -= tavsiye
             elif kullanilabilir >= tam and faiz > 2:
                 oneri = {"oneri_turu": "TAM_ODE", "renk": "TURUNCU",
@@ -188,7 +233,8 @@ def odeme_strateji_motoru():
                 "kart_id": str(o['kart_id']),
                 "odeme_id": str(o['id']),
                 "kart_adi": o['kart_adi'],
-                "banka": o['banka']
+                "banka": o['banka'],
+                "tarih": str(o['tarih'])  # Simülasyon geri beslemesi için
             })
             oneriler.append(oneri)
 
@@ -210,13 +256,19 @@ def nakit_akis_simulasyon(gun_sayisi=15):
         kasa = float(cur.fetchone()['kasa'])
 
         cur.execute("""
-            SELECT COALESCE(AVG(gunluk),0) as ort FROM (
+            SELECT
+                COALESCE(AVG(CASE WHEN tarih >= CURRENT_DATE - INTERVAL '7 days' THEN gunluk END), 0) as haftalik,
+                COALESCE(AVG(CASE WHEN tarih >= CURRENT_DATE - INTERVAL '30 days' THEN gunluk END), 0) as aylik
+            FROM (
                 SELECT tarih, SUM(toplam) as gunluk FROM ciro
-                WHERE tarih >= CURRENT_DATE - INTERVAL '30 days'
+                WHERE tarih >= CURRENT_DATE - INTERVAL '30 days' AND durum='aktif'
                 GROUP BY tarih
             ) t
         """)
-        gunluk_ciro = float(cur.fetchone()['ort'])
+        trend = cur.fetchone()
+        haftalik = float(trend['haftalik'] or 0)
+        aylik = float(trend['aylik'] or 0)
+        gunluk_ciro = (haftalik * 0.7 + aylik * 0.3) if haftalik > 0 else aylik
 
         cur.execute("""
             SELECT tarih::TEXT, SUM(odenecek_tutar) as toplam
@@ -296,7 +348,7 @@ def kart_analiz_hesapla():
                 'limit_doluluk': borc/limit if limit > 0 else 0,
                 'bu_ekstre': bu_ekstre,
                 'aylik_taksit': aylik_taksit,
-                'asgari_odeme': bu_ekstre * 0.4,
+                'asgari_odeme': bu_ekstre * (float(k['asgari_oran']) / 100 if 'asgari_oran' in k else 0.4),
                 'gun_kaldi': gun_kaldi,
                 'blink': gun_kaldi <= 0 and yaklasan is not None,
             })
@@ -459,7 +511,8 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                 atlanan.append(f"Kart atlandı (borç yok): {k['kart_adi']}")
                 continue
 
-            asgari = round(borc * 0.4, 2)
+            asgari_oran_pct = float(k['asgari_oran']) / 100 if 'asgari_oran' in k else 0.4
+            asgari = round(borc * asgari_oran_pct, 2)
 
             pid = str(_uuid.uuid4())
             cur.execute("""
@@ -561,3 +614,216 @@ def guncel_kasa():
             ), 0) as kasa FROM kasa_hareketleri WHERE durum='aktif'
         """)
         return float(cur.fetchone()['kasa'])
+
+# ── MASTER FİNANS MOTORU ───────────────────────────────────────
+def finans_ozet_motoru():
+    """
+    Tüm motorları birleştirir, çelişkileri çözer, tek karar üretir.
+    Panel bu fonksiyonu çağırır — başka bir şey çağırmaz.
+    """
+    bugun = date.today()
+
+    # Tüm motorları çalıştır
+    karar = karar_motoru()
+    strateji = odeme_strateji_motoru()
+    uyarilar = uyari_motoru()
+    sim = nakit_akis_simulasyon(30)
+    kart_analiz = kart_analiz_hesapla()
+
+    kasa = karar['kasa']
+    kullanilabilir_strateji = strateji.get('kullanilabilir_nakit', kasa)
+    zorunlu = strateji['zorunlu_giderler']
+
+    # ── SERBEST NAKİT (Gün bazlı - 7 günlük baskı düşülür) ──────
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT
+                COALESCE(SUM(CASE WHEN tarih <= CURRENT_DATE + INTERVAL '7 days'  THEN odenecek_tutar ELSE 0 END),0) as yuk_7,
+                COALESCE(SUM(CASE WHEN tarih <= CURRENT_DATE + INTERVAL '15 days' THEN odenecek_tutar ELSE 0 END),0) as yuk_15,
+                COALESCE(SUM(CASE WHEN tarih <= CURRENT_DATE + INTERVAL '30 days' THEN odenecek_tutar ELSE 0 END),0) as yuk_30
+            FROM odeme_plani WHERE durum='bekliyor'
+            AND tarih BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'
+        """)
+        row = cur.fetchone()
+        yuk_7  = float(row['yuk_7'])
+        yuk_15 = float(row['yuk_15'])
+        yuk_30 = float(row['yuk_30'])
+    # Serbest nakit = kasa - en büyük kısa vadeli baskı (7/15/30 içinden max)
+    # Böylece "8. günde 500K ödeme var" durumu da yakalanır
+    max_yakin_yuk = max(yuk_7, yuk_15 * 0.7, yuk_30 * 0.4)
+    serbest_nakit = kasa - max_yakin_yuk
+    # Strateji motorunun kademeli düşüşü korunur — reset olmaz
+    kullanilabilir = min(serbest_nakit, kullanilabilir_strateji)
+
+    # ── ÇELİŞKİ ÇÖZÜMÜ (kullanilabilir tanımlı olduktan sonra) ──
+    cozulmus_oneriler = []
+    for oneri in strateji['oneriler']:
+        tavsiye = oneri['tavsiye_tutar']
+        if tavsiye > 0 and tavsiye > kullanilabilir:
+            oneri = {**oneri,
+                'oneri_turu': 'KRITIK_NAKIT',
+                'renk': 'KIRMIZI',
+                'baslik': f"⛔ {oneri.get('banka','')} — NAKİT YETERSİZ",
+                'aciklama': f"Strateji {tavsiye:,.0f}₺ öneriyor ama kasada yeterli nakit yok.",
+                'tavsiye_tutar': 0,
+                'blink': True
+            }
+        else:
+            kullanilabilir -= tavsiye
+        cozulmus_oneriler.append(oneri)
+
+    # ── NET AKIŞ (Son 30 gün) ───────────────────────────────────
+    with db() as (conn, cur):
+        # Yön bazlı net akış — kategori hatası toleranslı
+        cur.execute("""
+            SELECT
+                COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END), 0) as gelir,
+                COALESCE(SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END), 0) as gider
+            FROM kasa_hareketleri
+            WHERE durum='aktif'
+            AND tarih >= CURRENT_DATE - INTERVAL '30 days'
+            AND islem_turu NOT LIKE '%IPTAL%'
+            AND islem_turu NOT LIKE '%DUZELTME%'
+        """)
+        row = cur.fetchone()
+        son_30_gelir = float(row['gelir'])
+        son_30_gider = float(row['gider'])
+        net_akis_30 = son_30_gelir - son_30_gider
+
+        # ── BU AYIN CİROSU ──────────────────────────────────────
+        cur.execute("""
+            SELECT COALESCE(SUM(toplam), 0) as ciro
+            FROM ciro
+            WHERE durum='aktif'
+            AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+            AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+        """)
+        bu_ay_ciro = float(cur.fetchone()['ciro'])
+
+        # ── KAÇ GÜN DAYANIR ─────────────────────────────────────
+        cur.execute("""
+            SELECT COALESCE(AVG(gunluk),0) as ort FROM (
+                SELECT tarih, SUM(ABS(tutar)) as gunluk FROM kasa_hareketleri
+                WHERE durum='aktif' AND tutar < 0
+                AND tarih >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY tarih
+            ) t
+        """)
+        gunluk_gider = float(cur.fetchone()['ort'])
+        kac_gun_dayanir = int(kasa / gunluk_gider) if gunluk_gider > 0 else 999
+
+        # ── 30 GÜN ÖDEME BASKISI ────────────────────────────────
+        cur.execute("""
+            SELECT
+                COALESCE(SUM(CASE WHEN tarih <= CURRENT_DATE+7 THEN odenecek_tutar ELSE 0 END),0) as t7,
+                COALESCE(SUM(CASE WHEN tarih <= CURRENT_DATE+15 THEN odenecek_tutar ELSE 0 END),0) as t15,
+                COALESCE(SUM(CASE WHEN tarih <= CURRENT_DATE+30 THEN odenecek_tutar ELSE 0 END),0) as t30
+            FROM odeme_plani WHERE durum='bekliyor'
+            AND tarih BETWEEN CURRENT_DATE AND CURRENT_DATE+30
+        """)
+        odeme_ozet = dict(cur.fetchone())
+
+        # ── EN RİSKLİ KART ──────────────────────────────────────
+        en_riskli_kart = None
+        if kart_analiz:
+            en_riskli_kart = max(kart_analiz, key=lambda x: x['limit_doluluk'])
+
+        # ── SİMÜLASYON GERİ BESLEMESİ + RİSK GÜNÜ ─────────────
+        # Önerilen ödemeler simülasyona yansıtılır
+        onerilen_odemeler = {}
+        for oneri in cozulmus_oneriler:
+            if oneri['tavsiye_tutar'] > 0:
+                tarih_str = oneri.get('tarih')
+                # Tarihi olmayan öneriler simülasyona dahil edilmez
+                # (hepsini bugüne atarak simülasyonu bozmamak için)
+                if not tarih_str or tarih_str == str(bugun):
+                    continue
+                onerilen_odemeler[tarih_str] = onerilen_odemeler.get(tarih_str, 0) + oneri['tavsiye_tutar']
+
+        sim_guncellenmis = []
+        for gun in sim:
+            ekstra = onerilen_odemeler.get(gun['tarih'], 0)
+            yeni_kasa = gun['kasa_tahmini'] - ekstra
+            sim_guncellenmis.append({**gun,
+                'kasa_tahmini_onerili': yeni_kasa,
+                'risk_onerili': yeni_kasa < 0
+            })
+        sim = sim_guncellenmis
+
+        risk_gunu = None
+        risk_gunu_onerili = None
+        for gun in sim:
+            # Önce orijinal simülasyona bak
+            if gun['risk'] and not risk_gunu:
+                risk_gunu = gun['tarih']
+            # Sonra önerili simülasyona bak (ödemeler yapılırsa ne olur)
+            if gun.get('risk_onerili') and not risk_gunu_onerili:
+                risk_gunu_onerili = gun['tarih']
+
+        # ── GENEL DURUM (MASTER KARAR) ──────────────────────────
+        # Tüm sinyalleri değerlendirerek tek genel durum üret
+        kritik_sayisi = len([u for u in uyarilar if u['seviye'] == 'KRITIK'])
+        kritik_sayisi += len([o for o in cozulmus_oneriler if o['oneri_turu'] == 'KRITIK_NAKIT'])
+        kritik_sayisi += karar['ozet']['kritik']
+
+        uyari_sayisi = len([u for u in uyarilar if u['seviye'] == 'UYARI'])
+        uyari_sayisi += karar['ozet']['uyari']
+
+        # Ağırlıklı skor sistemi — 1 küçük uyarı tüm sistemi KRİTİK yapmamalı
+        skor = 0
+        skor += kritik_sayisi * 30
+        skor += uyari_sayisi * 10
+        skor += (30 if kasa < 0 else 0)
+        skor += (20 if serbest_nakit < 0 else 0)
+        skor += (15 if risk_gunu else 0)
+        if en_riskli_kart and en_riskli_kart.get('limit_doluluk', 0) > 0.85:
+            skor += 20
+        elif en_riskli_kart and en_riskli_kart.get('limit_doluluk', 0) > 0.65:
+            skor += 10
+
+        if skor >= 40:
+            genel_durum = 'KRITIK'
+        elif skor >= 15:
+            genel_durum = 'UYARI'
+        else:
+            genel_durum = 'SAGLIKLI' 
+
+    return {
+        # Temel göstergeler
+        'kasa': kasa,
+        'serbest_nakit': serbest_nakit,
+        'yuk_7': yuk_7,
+        'yuk_15': yuk_15,
+        'yuk_30': yuk_30,
+        'zorunlu_giderler': zorunlu,
+        'kac_gun_dayanir': kac_gun_dayanir,
+
+        # Dönem analizi
+        'bu_ay_ciro': bu_ay_ciro,
+        'net_akis_30': net_akis_30,
+        'son_30_gelir': son_30_gelir,
+        'son_30_gider': son_30_gider,
+
+        # Ödeme baskısı
+        'odeme_ozet': odeme_ozet,
+
+        # Master karar
+        'genel_durum': genel_durum,
+        'ozet': {'kritik': kritik_sayisi, 'uyari': uyari_sayisi},
+
+        # Uyarılar (birleştirilmiş)
+        'uyarilar': uyarilar,
+        'kararlar': karar['kararlar'],
+
+        # Strateji (çelişki çözülmüş)
+        'oneriler': cozulmus_oneriler,
+
+        # Kart analiz
+        'kart_analiz': kart_analiz,
+        'en_riskli_kart': en_riskli_kart,
+
+        # Simülasyon
+        'simulasyon': sim,
+        'risk_gunu': risk_gunu,
+        'risk_gunu_onerili': risk_gunu_onerili,
+    }
