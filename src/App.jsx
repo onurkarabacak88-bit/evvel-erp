@@ -45,7 +45,7 @@ const NAV = [
 const PAGES = {
   panel: Panel, strateji: Strateji, onay: OnayKuyrugu, ledger: Ledger,
   ciro: Ciro, 'kart-hareketleri': KartHareketleri, 'anlik-gider': AnlikGider,
-  rapor: Rapor, 'kart-merkez': KartMerkez, 'dis-kaynak': DisKaynak, vadeli: VadeliAlimlar, excel: ExcelImport, kartlar: Kartlar, 'kart-analiz': KartAnaliz,
+  rapor: Rapor, 'kart-merkez': KartMerkez, 'dis-kaynak': DisKaynak, vadeli: VadeliAlimlar, excel: ExcelImport, kartlar: Kartlar, 'kart-analiz': KartMerkez,
   personel: Personel, borclar: Borclar, 'sabit-giderler': SabitGiderler,
 };
 
