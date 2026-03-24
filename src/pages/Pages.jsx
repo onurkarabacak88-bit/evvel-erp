@@ -554,15 +554,6 @@ export function Ciro() {
             </div>
             {dupUyari && (
               <div className="alert-box red" style={{margin:'0 12px 12px'}}>
-                <strong>⚠️ Benzer kayıt var!</strong> Son 7 günde aynı tutar ve şubede {dupUyari.length} kayıt bulundu.
-                <div style={{marginTop:8,display:'flex',gap:8}}>
-                  <button className="btn btn-danger btn-sm" onClick={()=>kaydet(true)}>Yine de Kaydet</button>
-                  <button className="btn btn-secondary btn-sm" onClick={()=>setDupUyari(null)}>Vazgeç</button>
-                </div>
-              </div>
-            )}
-            {dupUyari && (
-              <div className="alert-box red" style={{margin:'0 12px 12px'}}>
                 <strong>⚠️ Benzer kayıt var!</strong> {dupUyari}
                 <div style={{marginTop:8,display:'flex',gap:8}}>
                   <button className="btn btn-danger btn-sm" onClick={()=>kaydet(true)}>Yine de Kaydet</button>
