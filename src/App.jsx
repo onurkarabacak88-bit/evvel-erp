@@ -15,6 +15,7 @@ import Ledger from './pages/Ledger';
 import ExcelImport from './pages/ExcelImport';
 import DisKaynak from './pages/DisKaynak';
 import Rapor from './pages/Rapor';
+import KartMerkez from './pages/KartMerkez';
 import './index.css';
 
 const NAV = [
@@ -35,6 +36,7 @@ const NAV = [
   ]},
   { group: 'Tanımlar', items: [
     { id: 'kartlar', label: 'Kartlar', icon: '💳' },
+    { id: 'kart-merkez', label: 'Kart Merkezi', icon: '💳' },
     { id: 'kart-analiz', label: 'Kart Analiz', icon: '📊' },
     { id: 'personel', label: 'Personel', icon: '👥' },
     { id: 'borclar', label: 'Borç Envanteri', icon: '🏦' },
@@ -45,7 +47,7 @@ const NAV = [
 const PAGES = {
   panel: Panel, strateji: Strateji, onay: OnayKuyrugu, ledger: Ledger,
   ciro: Ciro, 'kart-hareketleri': KartHareketleri, 'anlik-gider': AnlikGider,
-  rapor: Rapor, 'dis-kaynak': DisKaynak, vadeli: VadeliAlimlar, excel: ExcelImport, kartlar: Kartlar, 'kart-analiz': KartAnaliz,
+  rapor: Rapor, 'kart-merkez': KartMerkez, 'dis-kaynak': DisKaynak, vadeli: VadeliAlimlar, excel: ExcelImport, kartlar: Kartlar, 'kart-analiz': KartAnaliz,
   personel: Personel, borclar: Borclar, 'sabit-giderler': SabitGiderler,
 };
 
