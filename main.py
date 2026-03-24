@@ -11,7 +11,7 @@ from typing import Optional
 from datetime import date, timedelta
 import uuid, os, json, pathlib
 from database import db, init_db
-from motors import karar_motoru, odeme_strateji_motoru, nakit_akis_simulasyon, guncel_kasa, kart_analiz_hesapla
+from motors import karar_motoru, odeme_strateji_motoru, nakit_akis_simulasyon, guncel_kasa, kart_analiz_hesapla, aylik_odeme_plani_uret, uyari_motoru, finans_ozet_motoru
 
 app = FastAPI(title="EVVEL ERP", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -42,6 +42,14 @@ async def hata_yakala(request: Request, exc: Exception):
 @app.on_event("startup")
 def startup():
     init_db()
+    # Her ay 1'inde otomatik ödeme planı üret
+    bugun = date.today()
+    if bugun.day == 1:
+        try:
+            sonuc = aylik_odeme_plani_uret(bugun.year, bugun.month)
+            logger.info(f"Aylık ödeme planı üretildi: {sonuc['toplam']} kayıt")
+        except Exception as e:
+            logger.error(f"Ödeme planı üretim hatası: {e}")
 
 def audit(cur, tablo, kayit_id, islem, eski=None, yeni=None):
     def safe_json(d):
@@ -61,6 +69,14 @@ def onay_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
 # ── PANEL ──────────────────────────────────────────────────────
 @app.get("/api/panel")
 def panel():
+    try:
+        return finans_ozet_motoru()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.get("/api/panel/detay")
+def panel_detay():
+    """Eski panel endpoint'i — geriye dönük uyumluluk için."""
     try:
         karar = karar_motoru()
         sim = nakit_akis_simulasyon(15)
@@ -108,6 +124,8 @@ WHERE durum='aktif'
                 "toplam_gider": toplam_gider, "aksiyonlar": aksiyonlar}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
 
 @app.get("/api/strateji")
 def strateji():
@@ -233,6 +251,7 @@ class KartModel(BaseModel):
     kesim_gunu: int
     son_odeme_gunu: int
     faiz_orani: float = 0.0
+    asgari_oran: float = 40.0  # Bankanın asgari ödeme oranı (%)
 
 @app.get("/api/kartlar")
 def kartlar_listele():
@@ -308,9 +327,9 @@ def kartlar_listele():
 def kart_ekle(k: KartModel):
     with db() as (conn, cur):
         kid = str(uuid.uuid4())
-        cur.execute("""INSERT INTO kartlar (id,kart_adi,banka,limit_tutar,kesim_gunu,son_odeme_gunu,faiz_orani)
-            VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-            (kid, k.kart_adi, k.banka, k.limit_tutar, k.kesim_gunu, k.son_odeme_gunu, k.faiz_orani))
+        cur.execute("""INSERT INTO kartlar (id,kart_adi,banka,limit_tutar,kesim_gunu,son_odeme_gunu,faiz_orani,asgari_oran)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (kid, k.kart_adi, k.banka, k.limit_tutar, k.kesim_gunu, k.son_odeme_gunu, k.faiz_orani, k.asgari_oran))
         audit(cur, 'kartlar', kid, 'INSERT')
     return {"id": kid, "success": True}
 
@@ -466,7 +485,9 @@ def onayla(oid: str):
         elif islem_turu in GELIR_TURLERI:
             signed_tutar = abs(tutar)
         else:
-            raise HTTPException(400, f"Bilinmeyen işlem türü: {islem_turu} — onay_kuyrugu'na eklemeden önce GIDER_TURLERI veya GELIR_TURLERI listesine tanımlayın")
+            # Bilinmeyen tür: tutarın işaretini koru (pozitif gelir, negatif gider)
+            signed_tutar = tutar
+            logger.warning(f"Bilinmeyen işlem türü onaylandı: {islem_turu}, tutar={tutar}")
         cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
             (str(uuid.uuid4()), tarih, islem_turu, signed_tutar,
@@ -515,6 +536,18 @@ def ciro_ekle(c: CiroModel):
             if benzer:
                 return {"warning": True, "mesaj": f"Son 7 günde benzer kayıt var ({len(benzer)} adet). Yine de kaydetmek için force=true gönderin."}
         cid = str(uuid.uuid4())
+        # Teknik duplicate koruması: son 5 saniye içinde birebir aynı istek geldi mi?
+        # (double click, network retry) — force=True bu kontrolü atlar
+        if not c.force:
+            cur.execute("""
+                SELECT id FROM ciro WHERE durum='aktif'
+                AND tarih=%s AND sube_id=%s
+                AND nakit=%s AND pos=%s AND online=%s
+                AND olusturma >= NOW() - INTERVAL '5 seconds'
+            """, (c.tarih, c.sube_id, c.nakit, c.pos, c.online))
+            if cur.fetchone():
+                return {"id": None, "success": False, "duplicate": True,
+                        "mesaj": "Aynı istek son 5 saniye içinde zaten gönderildi."}
         cur.execute("""INSERT INTO ciro (id,tarih,sube_id,nakit,pos,online,aciklama)
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
             (cid, c.tarih, c.sube_id, c.nakit, c.pos, c.online, c.aciklama))
@@ -836,8 +869,11 @@ async def excel_import(dosya: UploadFile = File(...)):
                 headers = [str(h).strip().lower() if h else '' for h in rows[0]]
                 eklenen = 0
                 hata = 0
+                atlanan = []
+                satir_no = 1  # header=0, veri=1'den başlar
 
                 for row in rows[1:]:
+                    satir_no += 1
                     if all(v is None for v in row): continue
                     d = {headers[i]: row[i] for i in range(len(headers)) if i < len(row)}
                     
@@ -864,13 +900,14 @@ async def excel_import(dosya: UploadFile = File(...)):
                                 (cid, fix_date(d.get('tarih')), sube_id, nakit, pos, online, str(d.get('aciklama') or '')))
                             if cur.rowcount > 0:
                                 toplam_ciro = nakit + pos + online
-                                # ref_id + ref_type ile takip edilebilir, sign modeli: CIRO pozitif
                                 cur.execute("""INSERT INTO kasa_hareketleri
                                     (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
                                     VALUES (%s,%s,'CIRO',%s,'Excel import - ciro','ciro',%s,%s,'CIRO')
                                     ON CONFLICT (ref_id, ref_type, islem_turu) DO NOTHING""",
                                     (str(uuid.uuid4()), fix_date(d.get('tarih')), abs(toplam_ciro), cid, cid))
                                 eklenen += 1
+                            else:
+                                atlanan.append({"satir": satir_no, "sebep": "duplicate", "veri": f"{d.get('tarih')} / {d.get('sube','')}"})
 
                         elif sn == 'kartlar':
                             cur.execute("""INSERT INTO kartlar (id,kart_adi,banka,limit_tutar,kesim_gunu,son_odeme_gunu,faiz_orani)
@@ -879,7 +916,10 @@ async def excel_import(dosya: UploadFile = File(...)):
                                  str(d.get('banka','')), float(d.get('limit_tutar') or 0),
                                  int(d.get('kesim_gunu') or 15), int(d.get('son_odeme_gunu') or 25),
                                  float(d.get('faiz_orani') or 0)))
-                            if cur.rowcount > 0: eklenen += 1
+                            if cur.rowcount > 0:
+                                eklenen += 1
+                            else:
+                                atlanan.append({"satir": satir_no, "sebep": "duplicate", "veri": str(d.get('kart_adi',''))})
 
                         elif sn == 'kart_hareketleri':
                             kart_adi = str(d.get('kart_adi','')).upper()
@@ -953,9 +993,10 @@ async def excel_import(dosya: UploadFile = File(...)):
 
                     except Exception as ex:
                         hata += 1
+                        atlanan.append({"satir": satir_no, "sebep": str(ex)[:100], "veri": str(list(d.values())[:3])})
 
-                if eklenen > 0 or hata > 0:
-                    detay[sheet_name] = {'eklenen': eklenen, 'hata': hata}
+                if eklenen > 0 or hata > 0 or atlanan:
+                    detay[sheet_name] = {'eklenen': eklenen, 'hata': hata, 'atlanan': atlanan}
                     toplam += eklenen
 
         return {"success": True, "toplam": toplam, "detay": detay}
@@ -1017,6 +1058,83 @@ def vadeli_kontrol(vade_tarihi: str, tutar: float):
         """, (vade_tarihi, vade_tarihi, tutar))
         benzer = [dict(r) for r in cur.fetchall()]
         return {"benzer": benzer, "var": len(benzer) > 0}
+
+
+# ── ÖDEME PLANI MOTOR ENDPOINTLERİ ────────────────────────────
+
+@app.post("/api/odeme-plani/uret")
+def odeme_plani_manuel_uret(yil: Optional[int] = None, ay: Optional[int] = None):
+    """Manuel ödeme planı üretimi — butona basınca çalışır."""
+    try:
+        sonuc = aylik_odeme_plani_uret(yil, ay)
+        return sonuc
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.get("/api/uyarilar")
+def uyarilari_listele():
+    """Yaklaşan ödemelerin uyarılarını döner."""
+    try:
+        return uyari_motoru()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.post("/api/odeme-plani/{oid}/odendi")
+def odeme_odendi(oid: str, manuel_tutar: Optional[float] = None):
+    """
+    Ödeme onaylandı — kasadan düşür.
+    manuel_tutar verilirse o tutar kullanılır (asgari üzeri ödeme).
+    Verilmezse tam tutar kullanılır.
+    """
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM odeme_plani WHERE id=%s AND durum='bekliyor'", (oid,))
+        o = cur.fetchone()
+        if not o: raise HTTPException(404, "Ödeme bulunamadı veya zaten işlendi")
+
+        odenen = manuel_tutar if manuel_tutar else float(o['odenecek_tutar'])
+        odenen = min(odenen, float(o['odenecek_tutar']))  # fazla ödeme engeli
+
+        # Ödeme planını güncelle
+        cur.execute("""
+            UPDATE odeme_plani
+            SET durum='odendi', odenen_tutar=%s, odeme_tarihi=CURRENT_DATE
+            WHERE id=%s
+        """, (odenen, oid))
+
+        # Kasadan düş
+        cur.execute("""
+            INSERT INTO kasa_hareketleri
+            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id)
+            VALUES (%s, CURRENT_DATE, %s, %s, %s, 'odeme_plani', %s)
+        """, (str(uuid.uuid4()),
+              'KART_ODEME' if o['kart_id'] else 'ODEME',
+              -abs(odenen),
+              f"Ödendi: {o['aciklama']}",
+              oid))
+
+        audit(cur, 'odeme_plani', oid, 'ODENDI')
+
+        # Kart ödemesiyse kart borcunu düşür
+        if o['kart_id']:
+            cur.execute("""
+                INSERT INTO kart_hareketleri
+                (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama)
+                VALUES (%s, %s, CURRENT_DATE, 'ODEME', %s, 1, %s)
+            """, (str(uuid.uuid4()), o['kart_id'], odenen, f"Ödeme: {o['aciklama']}"))
+
+    return {"success": True, "odenen": odenen}
+
+@app.post("/api/odeme-plani/{oid}/ertele")
+def odeme_ertele(oid: str, yeni_tarih: date = None):
+    """Ödemeyi ertele — yeni tarih verilmezse 7 gün sonraya atar."""
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM odeme_plani WHERE id=%s AND durum='bekliyor'", (oid,))
+        o = cur.fetchone()
+        if not o: raise HTTPException(404)
+        yeni = yeni_tarih or (o['tarih'] + timedelta(days=7))
+        cur.execute("UPDATE odeme_plani SET tarih=%s WHERE id=%s", (yeni, oid))
+        audit(cur, 'odeme_plani', oid, 'ERTELE')
+    return {"success": True, "yeni_tarih": str(yeni)}
 
 # ── HEALTH ─────────────────────────────────────────────────────
 @app.get("/api/health")
