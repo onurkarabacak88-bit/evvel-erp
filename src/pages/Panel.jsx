@@ -1,53 +1,135 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
 
-export default function Panel() {
+export default function Panel({ onNavigate }) {
+  const nav = onNavigate || (() => {});
+
   const [panel, setPanel] = useState(null);
   const [uyarilar, setUyarilar] = useState([]);
+  const [onaylar, setOnaylar] = useState([]);
+  const [anomali, setAnomali] = useState(null);
   const [loading, setLoading] = useState(true);
   const [odemeModal, setOdemeModal] = useState(null);
+  const [hizliModal, setHizliModal] = useState(null);
+  const [gecmisOverlay, setGecmisOverlay] = useState(null); // {baslik, endpoint}
+  const [gecmisData, setGecmisData] = useState([]);
+  const [topluUygula, setTopluUygula] = useState(false);
+  const [loadingBtn, setLoadingBtn] = useState(false);
   const [manuelTutar, setManuelTutar] = useState('');
   const [msg, setMsg] = useState(null);
 
   const load = () => {
     setLoading(true);
-    Promise.all([api('/panel'), api('/uyarilar')])
-      .then(([p, u]) => { setPanel(p); setUyarilar(u || []); setLoading(false); })
-      .catch(() => setLoading(false));
+    Promise.all([
+      api('/panel'),
+      api('/uyarilar'),
+      api('/onay-kuyrugu'),
+      api('/kasa-kontrol').catch(() => null),
+    ]).then(([p, u, o, a]) => {
+      setPanel(p); setUyarilar(u || []); setOnaylar(o || []); setAnomali(a);
+      setLoading(false);
+    }).catch(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, []);
 
-  const toast = (m, t = 'green') => {
-    setMsg({ m, t });
-    setTimeout(() => setMsg(null), 3500);
-  };
+  const toast = (m, t = 'green') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 3500); };
 
   async function odemeOnayla(odemeId, tutar) {
+    if (loadingBtn) return;
+    setLoadingBtn(true);
     try {
-      const params = tutar ? `?manuel_tutar=${tutar}` : '';
-      await api(`/odeme-plani/${odemeId}/odendi${params}`, { method: 'POST' });
-      toast('✓ Ödeme onaylandı — kasadan düşüldü');
-      setOdemeModal(null);
-      setManuelTutar('');
-      load();
+      const params = tutar ? `?tutar=${tutar}` : '';
+      await api(`/odeme-plani/${odemeId}/ode${params}`, { method: 'POST' });
+      const gosterilenTutar = tutar || odemeModal?.tutar;
+      toast(`✓ Ödeme onaylandı${gosterilenTutar ? ` (${parseFloat(gosterilenTutar).toLocaleString('tr-TR')} ₺)` : ''} — kasadan düşüldü`);
+      setOdemeModal(null); setManuelTutar(''); load();
     } catch (e) { toast(e.message, 'red'); }
+    finally { setLoadingBtn(false); }
   }
 
   async function odemeErtele(odemeId) {
+    if (loadingBtn) return;
+    setLoadingBtn(true);
     try {
       await api(`/odeme-plani/${odemeId}/ertele`, { method: 'POST' });
-      toast('Ödeme 7 gün ertelendi');
-      load();
+      toast('Ödeme 7 gün ertelendi'); load();
     } catch (e) { toast(e.message, 'red'); }
+    finally { setLoadingBtn(false); }
+  }
+
+  async function onayKuyrukOnayla(oid) {
+    if (loadingBtn) return;
+    setLoadingBtn(true);
+    try {
+      await api(`/onay-kuyrugu/${oid}/onayla`, { method: 'POST' });
+      toast('✓ Onaylandı — kasadan düşüldü'); load();
+    } catch (e) { toast(e.message, 'red'); }
+    finally { setLoadingBtn(false); }
+  }
+
+  async function onayKuyrukReddet(oid) {
+    if (loadingBtn) return;
+    setLoadingBtn(true);
+    try {
+      await api(`/onay-kuyrugu/${oid}/reddet`, { method: 'POST' });
+      toast('Reddedildi', 'yellow'); load();
+    } catch (e) { toast(e.message, 'red'); }
+    finally { setLoadingBtn(false); }
   }
 
   async function planUret() {
     try {
       const r = await api('/odeme-plani/uret', { method: 'POST' });
-      toast(`✓ ${r.toplam} ödeme planı üretildi`);
+      toast(`✓ ${r.toplam} ödeme planı üretildi`); load();
+    } catch (e) { toast(e.message, 'red'); }
+  }
+
+  async function gecmisAc(baslik, endpoint) {
+    setGecmisOverlay({ baslik, endpoint });
+    try {
+      const data = await api(endpoint);
+      setGecmisData(Array.isArray(data) ? data.slice(0, 20) : []);
+    } catch { setGecmisData([]); }
+  }
+
+  async function topluOnerUygula() {
+    const uygulanabilir = (panel.oneriler || []).filter(o => o.odeme_id && o.tavsiye_tutar > 0);
+    if (!uygulanabilir.length) return;
+    const toplamTutar = uygulanabilir.reduce((s, o) => s + o.tavsiye_tutar, 0);
+    const kasaSonrasi = kasa - toplamTutar;
+    const uyari = kasaSonrasi < 0 ? `\n⚠️ UYARI: Kasa eksiye düşecek! (${kasaSonrasi.toLocaleString('tr-TR')} ₺)` : '';
+    if (!confirm(`${uygulanabilir.length} ödeme tek seferde uygulanacak.\nToplam: ${toplamTutar.toLocaleString('tr-TR')} ₺\nİşlem sonrası kasa: ${kasaSonrasi.toLocaleString('tr-TR')} ₺${uyari}\n\nOnaylıyor musunuz?`)) return;
+    setTopluUygula(true);
+    try {
+      // Tek transaction — biri başarısız olursa hepsi rollback
+      const r = await api('/toplu-odeme', {
+        method: 'POST',
+        body: JSON.stringify({
+          odemeler: uygulanabilir.map(o => ({ odeme_id: o.odeme_id, tutar: o.tavsiye_tutar }))
+        })
+      });
+      toast(`✓ ${r.uygulanan}/${uygulanabilir.length} ödeme uygulandı`);
       load();
+    } catch (e) {
+      toast(`Toplu ödeme başarısız: ${e.message}`, 'red');
+    } finally {
+      setTopluUygula(false);
+    }
+  }
+
+  async function hizliKaydet(tip, form) {
+    try {
+      const endpointMap = { ciro: '/ciro', gider: '/anlik-gider', dis_kaynak: '/dis-kaynak' };
+      await api(endpointMap[tip], { method: 'POST', body: JSON.stringify(form) });
+      const mesajMap = {
+        ciro: `✓ Ciro kaydedildi (${((form.nakit||0)+(form.pos||0)+(form.online||0)).toLocaleString('tr-TR')} ₺)`,
+        gider: `✓ Gider eklendi: ${form.aciklama || form.kategori} (${(form.tutar||0).toLocaleString('tr-TR')} ₺)`,
+        dis_kaynak: `✓ Gelir kaydedildi (${(form.tutar||0).toLocaleString('tr-TR')} ₺)`,
+      };
+      toast(mesajMap[tip] || '✓ Kaydedildi');
+      setHizliModal(null); load();
     } catch (e) { toast(e.message, 'red'); }
   }
 
@@ -75,11 +157,13 @@ export default function Panel() {
   const kasDayan = parseInt(panel.kac_gun_dayanir) || 999;
   const buAyCiro = parseFloat(panel.bu_ay_ciro) || 0;
   const riskGunu = panel.risk_gunu;
+  const gelir30 = parseFloat(panel.son_30_gelir) || 0;
+  const gider30 = parseFloat(panel.son_30_gider) || 0;
 
   const DC = {
-    KRITIK: { renk: 'var(--red)', bg: 'rgba(220,50,50,0.08)', ikon: '🚨', label: 'KRİTİK' },
-    UYARI:  { renk: 'var(--yellow)', bg: 'rgba(220,160,0,0.08)', ikon: '⚠️', label: 'UYARI' },
-    SAGLIKLI: { renk: 'var(--green)', bg: 'rgba(76,175,132,0.08)', ikon: '✅', label: 'SAĞLIKLI' },
+    KRITIK:   { renk: 'var(--red)',    bg: 'rgba(220,50,50,0.08)',  ikon: '🚨', label: 'KRİTİK' },
+    UYARI:    { renk: 'var(--yellow)', bg: 'rgba(220,160,0,0.08)', ikon: '⚠️', label: 'UYARI' },
+    SAGLIKLI: { renk: 'var(--green)',  bg: 'rgba(76,175,132,0.08)', ikon: '✅', label: 'SAĞLIKLI' },
   };
   const dc = DC[durum] || DC.SAGLIKLI;
 
@@ -89,45 +173,60 @@ export default function Panel() {
 
   const simData = (panel.simulasyon || []).map(g => ({
     tarih: String(g.tarih || '').slice(5),
+    tarihFull: g.tarih,
     mevcut: parseFloat(g.kasa_tahmini) || 0,
     onerili: parseFloat(g.kasa_tahmini_onerili) || 0,
+    risk: g.risk,
   }));
+
+  // Risk günü simülasyonda işaretle
+  const riskDot = simData.find(g => g.risk);
 
   const riskBar = Math.min(100, yuk30 > 0 ? (yuk30 / Math.max(kasa, 1)) * 100 : 0);
   const riskRenk = kasa < yuk7 ? 'var(--red)' : kasa < yuk30 ? 'var(--yellow)' : 'var(--green)';
 
   return (
     <div className="page">
-      {/* TOAST */}
       {msg && (
         <div className={`alert-box ${msg.t}`} style={{ position: 'sticky', top: 0, zIndex: 20, marginBottom: 12 }}>
           {msg.m}
         </div>
       )}
 
-      {/* ── 1. DURUM BAŞLIĞI ── */}
+      {/* ── KATMAN 1: DURUM & ALARM ── */}
       <div style={{
         background: dc.bg, border: `1px solid ${dc.renk}`,
         borderRadius: 10, padding: '14px 18px', marginBottom: 16,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 24 }}>{dc.ikon}</span>
+          <span style={{ fontSize: 28 }}>{dc.ikon}</span>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 16, color: dc.renk }}>{dc.label}</div>
+            <div style={{ fontWeight: 700, fontSize: 17, color: dc.renk }}>{dc.label}</div>
             <div style={{ fontSize: 12, color: 'var(--text3)' }}>
               {panel.ozet?.kritik > 0 ? `${panel.ozet.kritik} kritik · ` : ''}
+              {panel.ozet?.uyari > 0 ? `${panel.ozet.uyari} uyarı · ` : ''}
               {new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })}
             </div>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {onaylar.length > 0 && (
+            <span className="badge badge-yellow" style={{ cursor: 'pointer' }} onClick={() => nav('onay')}>
+              🔔 {onaylar.length} onay bekliyor
+            </span>
+          )}
+          {anomali?.sorunlu > 0 && (
+            <span className="badge badge-red" style={{ cursor: 'pointer' }} onClick={() => nav('ledger')}>
+              ⚠️ {anomali.sorunlu} kasa anomalisi
+            </span>
+          )}
           <button className="btn btn-secondary btn-sm" onClick={planUret}>⚙️ Plan Üret</button>
           <button className="btn btn-secondary btn-sm" onClick={load}>↻ Yenile</button>
         </div>
       </div>
 
-      {/* ── 2. KRİTİK UYARILAR ── */}
+      {/* Kritik uyarılar */}
       {kritikler.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
           {kritikler.map((u, i) => (
@@ -137,66 +236,62 @@ export default function Panel() {
               display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12
             }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--red)' }}>
-                  🚨 {u.aciklama}
-                </div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--red)' }}>🚨 {u.aciklama}</div>
                 <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 2 }}>{u.mesaj}</div>
                 <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
                   {fmtDate(u.tarih)} · Tam: <strong>{fmt(u.tutar)}</strong> · Asgari: <strong>{fmt(u.asgari)}</strong>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
-                <button className="btn btn-primary btn-sm" onClick={() => { setOdemeModal(u); setManuelTutar(''); }}>✓ Ödendi</button>
-                <button className="btn btn-secondary btn-sm" onClick={() => odemeErtele(u.odeme_id)}>⏳ Ertele</button>
+                <button className="btn btn-primary btn-sm" disabled={loadingBtn} onClick={() => { setOdemeModal(u); setManuelTutar(''); }}>✓ Ödendi</button>
+                <button className="btn btn-secondary btn-sm" disabled={loadingBtn} onClick={() => odemeErtele(u.odeme_id)}>⏳ Ertele</button>
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* ── 3. 4 ANA METRİK ── */}
+      {/* ── KATMAN 2: ÇEKİRDEK METRİKLER (drill-down) ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
         {[
-          {
-            label: '💰 Güncel Kasa',
-            value: fmt(kasa),
-            sub: kasDayan < 999 ? `${kasDayan} gün dayanır` : 'Stabil',
-            renk: kasa >= 0 ? 'var(--green)' : 'var(--red)',
-          },
-          {
-            label: '🆓 Serbest Nakit',
-            value: fmt(serbest),
-            sub: '7 günlük yük düşülmüş',
-            renk: serbest >= 0 ? 'var(--green)' : 'var(--red)',
-          },
-          {
-            label: '📊 Net Akış (30 gün)',
-            value: fmt(netAkis),
-            sub: netAkis >= 0 ? 'Pozitif ✓' : '⚠️ Negatif akış',
-            renk: netAkis >= 0 ? 'var(--green)' : 'var(--red)',
-          },
-          {
-            label: '📈 Bu Ay Ciro',
-            value: fmt(buAyCiro),
-            sub: new Date().toLocaleDateString('tr-TR', { month: 'long' }),
-            renk: 'var(--text1)',
-          },
-        ].map(({ label, value, sub, renk }) => (
-          <div key={label} className="metric-card" style={{ borderTop: `3px solid ${renk}` }}>
+          { label: '💰 Güncel Kasa', value: fmt(kasa), sub: kasDayan < 999 ? `${kasDayan} gün dayanır` : 'Stabil', renk: kasa >= 0 ? 'var(--green)' : 'var(--red)', page: 'ledger', overlay: { baslik: 'Son Kasa Hareketleri', endpoint: '/kasa?limit=20' } },
+          { label: '🆓 Serbest Nakit', value: fmt(serbest), sub: '7 günlük yük düşülmüş', renk: serbest >= 0 ? 'var(--green)' : 'var(--red)', page: 'ledger' },
+          { label: '📊 Net Akış (30 gün)', value: fmt(netAkis), sub: netAkis >= 0 ? 'Pozitif ✓' : '⚠️ Negatif akış', renk: netAkis >= 0 ? 'var(--green)' : 'var(--red)', page: 'ledger' },
+          { label: '📈 Bu Ay Ciro', value: fmt(buAyCiro), sub: new Date().toLocaleDateString('tr-TR', { month: 'long' }), renk: 'var(--text1)', page: 'ciro' },
+        ].map(({ label, value, sub, renk, page, overlay }) => (
+          <div key={label} className="metric-card" style={{ borderTop: `3px solid ${renk}`, cursor: 'pointer' }}
+            onClick={() => overlay ? gecmisAc(overlay.baslik, overlay.endpoint) : nav(page)}
+            onContextMenu={e => { e.preventDefault(); nav(page); }}
+            title={overlay ? 'Tıkla: son hareketler | Sağ tık: sayfa' : 'Detaya git →'}>
             <div className="metric-label">{label}</div>
             <div className="metric-value" style={{ fontSize: 24, color: renk }}>{value}</div>
-            <div className="metric-sub">{sub}</div>
+            <div className="metric-sub">{sub} <span style={{ color: 'var(--text3)', fontSize: 10 }}>→</span></div>
           </div>
         ))}
       </div>
 
-      {/* ── 4. ÖDEME BASKISI ── */}
+      {/* ── HIZLI AKSİYON BARI ── */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, padding: '10px 14px', background: 'var(--bg2)', borderRadius: 8, border: '1px solid var(--border)', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'center', marginRight: 4 }}>Hızlı:</span>
+        <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('ciro')}>➕ Ciro Gir</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('gider')}>➖ Gider Gir</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => nav('kart-hareketleri')}>💳 Kart Hareketi</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => nav('dis-kaynak')}>💰 Dış Kaynak</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => nav('onay')}>✅ Onay Kuyruğu</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => nav('ledger')}>📒 Ledger</button>
+      </div>
+
+      {/* ── KATMAN 3: RİSK & BASKI ── */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <h3 style={{ fontSize: 13, fontWeight: 600 }}>⚡ Ödeme Baskısı</h3>
           {riskGunu && (
-            <span style={{ fontSize: 11, color: 'var(--red)', background: 'rgba(220,50,50,0.1)', padding: '3px 8px', borderRadius: 4 }}>
-              ⚠️ Risk günü: {fmtDate(riskGunu)}
+            <span style={{
+              fontSize: 11, color: 'var(--red)',
+              background: 'rgba(220,50,50,0.12)', padding: '4px 10px',
+              borderRadius: 4, fontWeight: 700, cursor: 'pointer'
+            }} onClick={() => nav('ledger')}>
+              💣 {riskGunu} — kasa sıfır
             </span>
           )}
         </div>
@@ -213,22 +308,16 @@ export default function Panel() {
                 borderLeft: `3px solid ${yetersiz ? 'var(--red)' : 'var(--border)'}`
               }}>
                 <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{gun}</div>
-                <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--font-mono)', color: yetersiz ? 'var(--red)' : 'var(--text1)' }}>
-                  {fmt(tutar)}
-                </div>
+                <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--font-mono)', color: yetersiz ? 'var(--red)' : 'var(--text1)' }}>{fmt(tutar)}</div>
                 <div style={{ fontSize: 10, color: yetersiz ? 'var(--red)' : 'var(--text3)', marginTop: 3 }}>
-                  {yetersiz ? '⚠️ Yetersiz kasa' : tutar > 0 ? `${((tutar / Math.max(kasa, 1)) * 100).toFixed(0)}% kasa` : '—'}
+                  {yetersiz ? '⚠️ Yetersiz' : tutar > 0 ? `%${((tutar / Math.max(kasa, 1)) * 100).toFixed(0)} kasa` : '—'}
                 </div>
               </div>
             );
           })}
         </div>
         <div style={{ height: 8, background: 'var(--bg3)', borderRadius: 4, overflow: 'hidden' }}>
-          <div style={{
-            height: '100%', borderRadius: 4, transition: 'width 0.6s ease',
-            width: `${Math.min(100, riskBar)}%`,
-            background: riskRenk,
-          }} />
+          <div style={{ height: '100%', borderRadius: 4, width: `${Math.min(100, riskBar)}%`, background: riskRenk, transition: 'width 0.6s' }} />
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text3)', marginTop: 5 }}>
           <span>Kasa: <strong style={{ color: riskRenk }}>{fmt(kasa)}</strong></span>
@@ -237,7 +326,7 @@ export default function Panel() {
         </div>
       </div>
 
-      {/* ── 5. ANA GÖVDE: ÖDEMELER + KARTLAR ── */}
+      {/* ── KATMAN 4: KARAR ALANI ── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
 
         {/* SOL: ÖDEMELER */}
@@ -267,13 +356,9 @@ export default function Panel() {
                   </div>
                   <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
                     <button className="btn btn-primary btn-sm" style={{ flex: 1, fontSize: 11 }}
-                      onClick={() => { setOdemeModal(u); setManuelTutar(''); }}>
-                      ✓ Ödendi
-                    </button>
+                      onClick={() => { setOdemeModal(u); setManuelTutar(''); }}>✓ Ödendi</button>
                     <button className="btn btn-secondary btn-sm" style={{ flex: 1, fontSize: 11 }}
-                      onClick={() => odemeErtele(u.odeme_id)}>
-                      ⏳ Ertele
-                    </button>
+                      onClick={() => odemeErtele(u.odeme_id)}>⏳ Ertele</button>
                   </div>
                 </div>
               ))}
@@ -283,9 +368,14 @@ export default function Panel() {
 
         {/* SAĞ: KART RİSK */}
         <div className="card">
-          <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>💳 Kart Riskleri</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 600 }}>💳 Kart Riskleri</h3>
+            <button className="btn btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => nav('kart-analiz')}>Detay →</button>
+          </div>
           {!panel.kart_analiz?.length ? (
-            <div className="empty"><p>Kart tanımlanmamış</p></div>
+            <div className="empty"><p>Kart tanımlanmamış</p>
+              <button className="btn btn-primary btn-sm" onClick={() => nav('kartlar')}>Kart Ekle</button>
+            </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {panel.kart_analiz.map(k => {
@@ -294,30 +384,23 @@ export default function Panel() {
                 return (
                   <div key={k.kart_adi} className={k.blink ? 'blink' : ''} style={{
                     background: 'var(--bg3)', borderRadius: 8, padding: '12px 14px',
-                    borderLeft: `3px solid ${renk}`
-                  }}>
+                    borderLeft: `3px solid ${renk}`, cursor: 'pointer'
+                  }} onClick={() => nav('kart-analiz')}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                       <div>
                         <span style={{ fontWeight: 700, fontSize: 13 }}>{k.kart_adi}</span>
                         <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 6 }}>{k.banka}</span>
                         {k.blink && <span className="badge badge-red" style={{ marginLeft: 6, fontSize: 10 }}>SON GÜN</span>}
                       </div>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 700, color: renk }}>
-                        {fmt(k.guncel_borc)}
-                      </span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 700, color: renk }}>{fmt(k.guncel_borc)}</span>
                     </div>
                     <div className="progress-bar" style={{ marginBottom: 6 }}>
-                      <div className={`progress-fill ${d > 0.85 ? 'red' : d > 0.65 ? 'yellow' : 'green'}`}
-                        style={{ width: `${Math.min(100, d * 100)}%` }} />
+                      <div className={`progress-fill ${d > 0.85 ? 'red' : d > 0.65 ? 'yellow' : 'green'}`} style={{ width: `${Math.min(100, d * 100)}%` }} />
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text3)' }}>
-                      <span>Limit: {fmt(k.limit_tutar)}</span>
-                      <span style={{ color: renk, fontWeight: 700 }}>{(d * 100).toFixed(0)}% dolu</span>
-                      <span>{k.gun_kaldi <= 0 ? '🔴 BUGÜN SON GÜN' : `${k.gun_kaldi} gün kaldı`}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 6, color: 'var(--text3)' }}>
-                      <span>Ekstre: {fmt(k.bu_ekstre)}</span>
                       <span>Asgari: <strong style={{ color: renk }}>{fmt(k.asgari_odeme)}</strong></span>
+                      <span style={{ color: renk, fontWeight: 700 }}>{(d * 100).toFixed(0)}% dolu</span>
+                      <span>{k.gun_kaldi <= 0 ? '🔴 BUGÜN' : `${k.gun_kaldi} gün`}</span>
                     </div>
                   </div>
                 );
@@ -327,13 +410,13 @@ export default function Panel() {
         </div>
       </div>
 
-      {/* ── 6. SİMÜLASYON GRAFİĞİ ── */}
+      {/* ── SİMÜLASYON GRAFİĞİ ── */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <h3 style={{ fontSize: 13, fontWeight: 600 }}>📉 30 Günlük Kasa Projeksiyonu</h3>
+          <h3 style={{ fontSize: 13, fontWeight: 600 }}>📉 30 Günlük Kasa Projeksiyonu — Ne zaman batıyorum?</h3>
           <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--text3)' }}>
-            <span><span style={{ color: 'var(--green)' }}>━</span> Mevcut seyir</span>
-            <span><span style={{ color: 'var(--yellow)' }}>╌</span> Önerili ödemelerle</span>
+            <span><span style={{ color: 'var(--green)' }}>━</span> Mevcut</span>
+            <span><span style={{ color: 'var(--yellow)' }}>╌</span> Önerili</span>
             <span><span style={{ color: 'var(--red)' }}>╌</span> Sıfır hattı</span>
           </div>
         </div>
@@ -350,43 +433,67 @@ export default function Panel() {
               <YAxis tick={{ fill: 'var(--text3)', fontSize: 10 }} tickFormatter={v => (v / 1000).toFixed(0) + 'K'} width={45} />
               <Tooltip
                 contentStyle={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11 }}
-                formatter={(v, n) => [fmt(v), n === 'mevcut' ? 'Mevcut seyir' : 'Önerili']}
+                formatter={(v, n) => [fmt(v), n === 'mevcut' ? 'Mevcut' : 'Önerili']}
+                labelFormatter={l => `📅 ${l}`}
               />
-              <ReferenceLine y={0} stroke="var(--red)" strokeDasharray="3 3" strokeOpacity={0.6} />
+              <ReferenceLine y={0} stroke="var(--red)" strokeDasharray="3 3" strokeOpacity={0.7} label={{ value: 'Sıfır', fill: 'var(--red)', fontSize: 10 }} />
               <Area type="monotone" dataKey="mevcut" stroke="#4caf84" fill="url(#kasaGrad)" strokeWidth={2} dot={false} name="mevcut" />
               <Area type="monotone" dataKey="onerili" stroke="#f0c040" fill="none" strokeWidth={1.5} strokeDasharray="5 4" dot={false} name="onerili" />
+              {riskDot && (
+                <ReferenceDot x={riskDot.tarih} y={riskDot.mevcut} r={5} fill="var(--red)" stroke="none" label={{ value: '⚠️', position: 'top', fontSize: 12 }} />
+              )}
             </AreaChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* ── 7. STRATEJİ ÖNERİLERİ ── */}
-      {panel.oneriler?.filter(o => o.tavsiye_tutar > 0 || o.oneri_turu === 'KRITIK_NAKIT').length > 0 && (
+      {/* ── STRATEJİ ÖNERİLERİ ── */}
+      {panel.oneriler?.length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>🧠 Motor Önerileri</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 600 }}>🧠 Strateji Motoru</h3>
+            {panel.oneriler.filter(o => o.odeme_id && o.tavsiye_tutar > 0).length > 1 && (
+              <button className="btn btn-primary btn-sm" disabled={topluUygula}
+                onClick={topluOnerUygula}
+                title="Tüm önerileri tek tıkla uygula">
+                {topluUygula ? '⏳ Uygulanıyor...' : `⚡ Tümünü Uygula (${panel.oneriler.filter(o => o.odeme_id && o.tavsiye_tutar > 0).length})`}
+              </button>
+            )}
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {panel.oneriler.map((o, i) => {
               const renk = o.renk === 'KIRMIZI' ? 'var(--red)' : o.renk === 'TURUNCU' ? '#f07040' : o.renk === 'SARI' ? 'var(--yellow)' : 'var(--text3)';
+              // Kasa etkisi hesapla
+              const kasaEtkisi = o.tavsiye_tutar > 0 ? -(o.tavsiye_tutar) : null;
+              const kasaSonrasi = kasaEtkisi ? kasa + kasaEtkisi : null;
               return (
                 <div key={i} style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '10px 14px', borderRadius: 6, background: 'var(--bg3)',
                   borderLeft: `3px solid ${renk}`
                 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: renk }}>{o.baslik}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{o.aciklama}</div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {o.tavsiye_tutar > 0 && (
-                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 700 }}>{fmt(o.tavsiye_tutar)}</span>
-                    )}
-                    {o.odeme_id && o.tavsiye_tutar > 0 && (
-                      <button className="btn btn-primary btn-sm"
-                        onClick={() => { setOdemeModal({ ...o, tutar: o.tavsiye_tutar, asgari: o.tavsiye_tutar * 0.4 }); setManuelTutar(''); }}>
-                        Uygula
-                      </button>
-                    )}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: renk }}>{o.baslik}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{o.aciklama}</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                      {o.tavsiye_tutar > 0 && (
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700 }}>{fmt(o.tavsiye_tutar)}</div>
+                          {kasaSonrasi !== null && (
+                            <div style={{ fontSize: 10, color: kasaSonrasi >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                              Kasa → {fmt(kasaSonrasi)}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {o.odeme_id && o.tavsiye_tutar > 0 && (
+                        <button className="btn btn-primary btn-sm"
+                          onClick={() => { setOdemeModal({ ...o, tutar: o.tavsiye_tutar, asgari: o.tavsiye_tutar * 0.4 }); setManuelTutar(''); }}>
+                          Uygula
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -395,7 +502,70 @@ export default function Panel() {
         </div>
       )}
 
-      {/* ── 8. ÖDEME ONAY MODALI ── */}
+      {/* ── ONAY MERKEZİ ── */}
+      {onaylar.length > 0 && (
+        <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--yellow)' }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--yellow)', marginBottom: 12 }}>
+            🔔 Onay Merkezi — {onaylar.length} bekleyen işlem
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {onaylar.map(o => (
+              <div key={o.id} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '10px 14px', borderRadius: 6,
+                background: o.seviye === 'KRITIK' ? 'rgba(220,50,50,0.07)' : 'var(--bg3)',
+                borderLeft: `3px solid ${o.seviye === 'KRITIK' ? 'var(--red)' : o.seviye === 'UYARI' ? 'var(--yellow)' : 'var(--border)'}`
+              }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600 }}>{o.islem_turu}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{o.aciklama} · {fmtDate(o.tarih)}</div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 700 }}>{fmt(o.tutar)}</span>
+                  <button className="btn btn-primary btn-sm" onClick={() => onayKuyrukOnayla(o.id)}>✓ Onayla</button>
+                  <button className="btn btn-danger btn-sm" onClick={() => onayKuyrukReddet(o.id)}>✕ Reddet</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── KASA DETAY ── */}
+      {(gelir30 > 0 || gider30 > 0) && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 600 }}>🔍 Kasa Detay (30 gün)</h3>
+            <button className="btn btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => nav('ledger')}>Ledger →</button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+            {[
+              { label: '↑ Toplam Gelir', value: gelir30, renk: 'var(--green)' },
+              { label: '↓ Toplam Gider', value: gider30, renk: 'var(--red)' },
+              { label: '= Net', value: netAkis, renk: netAkis >= 0 ? 'var(--green)' : 'var(--red)' },
+            ].map(({ label, value, renk }) => (
+              <div key={label} style={{ background: 'var(--bg3)', borderRadius: 6, padding: '10px 14px', textAlign: 'center' }}>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{label}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--font-mono)', color: renk }}>{fmt(value)}</div>
+              </div>
+            ))}
+          </div>
+          {anomali?.sorunlu > 0 && (
+            <div style={{
+              marginTop: 10, padding: '10px 14px',
+              background: 'rgba(220,50,50,0.1)', border: '1px solid var(--red)',
+              borderRadius: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+            }}>
+              <span style={{ fontSize: 12, color: 'var(--red)', fontWeight: 600 }}>
+                🚨 {anomali.sorunlu} ciro kaydının kasa karşılığı eksik!
+              </span>
+              <button className="btn btn-danger btn-sm" onClick={() => nav('ledger')}>İncele →</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── ÖDEME ONAY MODALI ── */}
       {odemeModal && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setOdemeModal(null)}>
           <div className="modal">
@@ -406,31 +576,30 @@ export default function Panel() {
             <div className="modal-body">
               <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '12px 14px', marginBottom: 16 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{odemeModal.aciklama}</div>
-                <div style={{ display: 'flex', gap: 24, fontSize: 12, color: 'var(--text3)' }}>
+                <div style={{ display: 'flex', gap: 20, fontSize: 12, color: 'var(--text3)', flexWrap: 'wrap' }}>
                   <span>Son gün: <strong style={{ color: 'var(--text1)' }}>{fmtDate(odemeModal.tarih)}</strong></span>
-                  <span>Tam tutar: <strong style={{ color: 'var(--text1)' }}>{fmt(odemeModal.tutar)}</strong></span>
+                  <span>Tam: <strong style={{ color: 'var(--text1)' }}>{fmt(odemeModal.tutar)}</strong></span>
                   <span>Asgari: <strong style={{ color: 'var(--yellow)' }}>{fmt(odemeModal.asgari)}</strong></span>
                 </div>
               </div>
               <div className="form-group">
-                <label>Ödenen Tutar (₺)</label>
-                <input
-                  type="number"
-                  value={manuelTutar}
+                <label>Ödenen Tutar (₺) — boş bırakırsan tam tutar</label>
+                <input type="number" value={manuelTutar}
                   onChange={e => setManuelTutar(e.target.value)}
-                  placeholder={`Boş bırakırsan tam tutar: ${odemeModal.tutar}`}
-                  autoFocus
-                />
+                  placeholder={`Tam tutar: ${odemeModal.tutar}`} autoFocus />
                 {manuelTutar && parseFloat(manuelTutar) < (odemeModal.asgari || 0) && (
                   <div style={{ fontSize: 11, color: 'var(--yellow)', marginTop: 4 }}>
-                    ⚠️ Girilen tutar asgari ödemenin altında ({fmt(odemeModal.asgari)})
+                    ⚠️ Asgari ödemenin altında ({fmt(odemeModal.asgari)})
                   </div>
                 )}
               </div>
               <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 8 }}>
-                Kasadan düşülecek: <strong style={{ color: 'var(--red)', fontSize: 14 }}>
+                Kasadan düşülecek: <strong style={{ color: 'var(--red)', fontSize: 15 }}>
                   {fmt(parseFloat(manuelTutar) || odemeModal.tutar)}
                 </strong>
+                {kasa - (parseFloat(manuelTutar) || odemeModal.tutar) < 0 && (
+                  <span style={{ color: 'var(--red)', fontSize: 11, marginLeft: 8 }}>⚠️ Kasa eksiye düşer!</span>
+                )}
               </div>
             </div>
             <div className="modal-footer">
@@ -442,6 +611,142 @@ export default function Panel() {
           </div>
         </div>
       )}
+
+      {/* ── HIZLI AKSİYON MODALİ ── */}
+      {hizliModal && (
+        <HizliAksiyonModal tip={hizliModal} onKapat={() => setHizliModal(null)} onKaydet={hizliKaydet} />
+      )}
+
+      {/* ── GEÇMİŞ OVERLAY ── */}
+      {gecmisOverlay && (
+        <GecmisOverlay baslik={gecmisOverlay.baslik} data={gecmisData}
+          onKapat={() => { setGecmisOverlay(null); setGecmisData([]); }} />
+      )}
+    </div>
+  );
+}
+
+// İşlem geçmişi overlay
+function GecmisOverlay({ baslik, data, onKapat }) {
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onKapat()}>
+      <div className="modal" style={{ maxWidth: 520 }}>
+        <div className="modal-header">
+          <h3>📋 {baslik}</h3>
+          <button className="modal-close" onClick={onKapat}>✕</button>
+        </div>
+        <div className="modal-body" style={{ padding: 0 }}>
+          {data.length === 0 ? (
+            <div className="empty" style={{ padding: 32 }}><p>Kayıt yok</p></div>
+          ) : (
+            <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+              {data.map((r, i) => (
+                <div key={i} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '10px 16px', borderBottom: '1px solid var(--border)'
+                }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600 }}>{r.islem_turu || r.aciklama || r.kategori || '—'}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{r.tarih} {r.aciklama && r.islem_turu ? `· ${r.aciklama}` : ''}</div>
+                  </div>
+                  <div style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 700,
+                    color: (parseFloat(r.tutar) || parseFloat(r.toplam) || 0) >= 0 ? 'var(--green)' : 'var(--red)'
+                  }}>
+                    {r.tutar !== undefined
+                      ? ((parseFloat(r.tutar) >= 0 ? '+' : '') + parseFloat(r.tutar).toLocaleString('tr-TR') + ' ₺')
+                      : r.toplam
+                        ? ('+' + parseFloat(r.toplam).toLocaleString('tr-TR') + ' ₺')
+                        : '—'
+                    }
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Hızlı aksiyon modal bileşeni
+function HizliAksiyonModal({ tip, onKapat, onKaydet }) {
+  const bugun = new Date().toISOString().slice(0, 10);
+  const [form, setForm] = useState({
+    tarih: bugun, tutar: '', aciklama: '', kategori: 'Genel',
+    nakit: '', pos: '', online: '', sube_id: 'sube-merkez'
+  });
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const tipConfig = {
+    ciro: { title: '📈 Hızlı Ciro Girişi', label: 'Nakit / POS / Online' },
+    gider: { title: '💸 Hızlı Gider Girişi', label: 'Tutar' },
+  };
+  const cfg = tipConfig[tip] || { title: 'Kayıt', label: 'Tutar' };
+
+  function handleKaydet() {
+    if (tip === 'ciro') {
+      const nakit = parseFloat(form.nakit) || 0;
+      const pos = parseFloat(form.pos) || 0;
+      const online = parseFloat(form.online) || 0;
+      if (nakit + pos + online <= 0) { alert('En az bir tutar girilmeli'); return; }
+      const toplam = nakit + pos + online;
+      onKaydet('ciro', { tarih: form.tarih, nakit, pos, online, aciklama: form.aciklama || `Ciro ${toplam.toLocaleString('tr-TR')} ₺`, sube_id: form.sube_id });
+    } else if (tip === 'gider') {
+      const tutar = parseFloat(form.tutar);
+      if (!tutar || tutar <= 0) { alert('Geçerli bir tutar girin'); return; }
+      if (!form.aciklama?.trim() && form.kategori === 'Genel') { alert('Açıklama veya kategori girin'); return; }
+      onKaydet('gider', { tarih: form.tarih, tutar, aciklama: form.aciklama || form.kategori, kategori: form.kategori });
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onKapat()}>
+      <div className="modal">
+        <div className="modal-header">
+          <h3>{cfg.title}</h3>
+          <button className="modal-close" onClick={onKapat}>✕</button>
+        </div>
+        <div className="modal-body">
+          <div className="form-group">
+            <label>Tarih</label>
+            <input type="date" value={form.tarih} onChange={e => set('tarih', e.target.value)} />
+          </div>
+          {tip === 'ciro' ? (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                {['nakit', 'pos', 'online'].map(k => (
+                  <div className="form-group" key={k}>
+                    <label style={{ textTransform: 'capitalize' }}>{k} (₺)</label>
+                    <input type="number" value={form[k]} onChange={e => set(k, e.target.value)} placeholder="0" />
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="form-group">
+                <label>Tutar (₺)</label>
+                <input type="number" value={form.tutar} onChange={e => set('tutar', e.target.value)} placeholder="0" autoFocus />
+              </div>
+              <div className="form-group">
+                <label>Kategori</label>
+                <input value={form.kategori} onChange={e => set('kategori', e.target.value)} placeholder="Genel" />
+              </div>
+            </>
+          )}
+          <div className="form-group">
+            <label>Açıklama</label>
+            <input value={form.aciklama} onChange={e => set('aciklama', e.target.value)} placeholder="İsteğe bağlı" />
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onKapat}>Vazgeç</button>
+          <button className="btn btn-primary" onClick={handleKaydet}>✓ Kaydet</button>
+        </div>
+      </div>
     </div>
   );
 }
