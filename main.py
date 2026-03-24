@@ -11,7 +11,7 @@ from typing import Optional
 from datetime import date, timedelta
 import uuid, os, json, pathlib
 from database import db, init_db
-from motors import karar_motoru, odeme_strateji_motoru, nakit_akis_simulasyon, guncel_kasa, kart_analiz_hesapla, aylik_odeme_plani_uret, uyari_motoru, finans_ozet_motoru
+from motors import karar_motoru, odeme_strateji_motoru, nakit_akis_simulasyon, guncel_kasa, kasa_detay, kart_analiz_hesapla, aylik_odeme_plani_uret, uyari_motoru, finans_ozet_motoru
 
 app = FastAPI(title="EVVEL ERP", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -50,6 +50,60 @@ def startup():
             logger.info(f"Aylık ödeme planı üretildi: {sonuc['toplam']} kayıt")
         except Exception as e:
             logger.error(f"Ödeme planı üretim hatası: {e}")
+    # Kasa tutarlılık kontrolü — hata vermez, sadece uyarı loglar
+    try:
+        with db() as (conn, cur):
+            cur.execute("SELECT COUNT(*) as sorunlu FROM v_kasa_anomali WHERE durum != 'OK'")
+            sorunlu = cur.fetchone()['sorunlu']
+            if sorunlu > 0:
+                logger.warning(f"⚠️ KASA ANOMALİ: {sorunlu} ciro kaydının kasa karşılığı eksik. /api/kasa-kontrol ile kontrol et.")
+            else:
+                logger.info("✅ Kasa tutarlılık kontrolü: Tüm ciro kayıtları kasa'ya yansımış.")
+    except Exception as e:
+        logger.warning(f"Kasa kontrol yapılamadı: {e}")
+
+def insert_kasa_hareketi(cur, tarih, islem_turu, tutar, aciklama,
+                        kaynak_tablo=None, kaynak_id=None, ref_id=None, ref_type=None):
+    """
+    Merkezi kasa yazma fonksiyonu — tüm kasa insertleri buradan geçer.
+    ref_id + ref_type zorunlu tutulur, eksikse kaynak_id kullanılır.
+    """
+    _ref_id = ref_id or kaynak_id
+    _ref_type = ref_type or (kaynak_tablo.upper() if kaynak_tablo else 'GENEL')
+    cur.execute("""
+        INSERT INTO kasa_hareketleri
+            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (ref_id, ref_type, islem_turu) DO NOTHING
+    """, (str(uuid.uuid4()), str(tarih), islem_turu, tutar, aciklama,
+          kaynak_tablo, kaynak_id, _ref_id, _ref_type))
+
+def iptal_kasa_hareketi(cur, kaynak_id, kaynak_tablo, islem_turu,
+                        iptal_turu, aciklama):
+    """
+    Merkezi kasa iptal fonksiyonu.
+    Mevcut aktif kaydı pasifleştirir + ters kayıt yazar (immutable model).
+    """
+    # Aktif kasa kaydını bul
+    cur.execute("""
+        SELECT id, tutar FROM kasa_hareketleri
+        WHERE kaynak_id=%s AND islem_turu=%s AND durum='aktif'
+        LIMIT 1
+    """, (kaynak_id, islem_turu))
+    mevcut = cur.fetchone()
+    if not mevcut:
+        return  # Kasa kaydı zaten yok
+
+    # Pasifleştir (UPDATE — bu tek izin verilen UPDATE)
+    cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s", (mevcut['id'],))
+
+    # Ters kayıt yaz — immutable ledger
+    cur.execute("""
+        INSERT INTO kasa_hareketleri
+            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type)
+        VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s, %s, %s)
+    """, (str(uuid.uuid4()), iptal_turu, -float(mevcut['tutar']), aciklama,
+          kaynak_tablo, kaynak_id, kaynak_id, kaynak_tablo.upper()))
 
 def audit(cur, tablo, kayit_id, islem, eski=None, yeni=None):
     def safe_json(d):
@@ -188,8 +242,8 @@ def dis_kaynak_sil(gid: str):
         cur.execute("SELECT * FROM kasa_hareketleri WHERE id=%s AND islem_turu='DIS_KAYNAK' AND durum='aktif'", (gid,))
         eski = cur.fetchone()
         if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten iptal edilmiş")
-        # Kasa kaydını pasifleştir — ters kayıt YOK
-        cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s", (gid,))
+        # Immutable model: pasifleştir + ters kayıt
+        iptal_kasa_hareketi(cur, gid, 'dis_kaynak', 'DIS_KAYNAK', 'DIS_KAYNAK_IPTAL', 'Dış kaynak iptali')
         audit(cur, 'kasa_hareketleri', gid, 'IPTAL', eski=eski)
     return {"success": True}
 
@@ -224,9 +278,8 @@ def anlik_gider_ekle(g: AnlikGider):
         cur.execute("""INSERT INTO anlik_giderler (id,tarih,kategori,tutar,aciklama,sube)
             VALUES (%s,%s,%s,%s,%s,%s)""",
             (gid, g.tarih, g.kategori, g.tutar, g.aciklama, g.sube))
-        cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
-            VALUES (%s,%s,'ANLIK_GIDER',%s,%s,'anlik_giderler',%s)""",
-            (str(uuid.uuid4()), str(g.tarih), -abs(g.tutar), f"Anlık gider: {g.aciklama or g.kategori}", gid))
+        insert_kasa_hareketi(cur, g.tarih, 'ANLIK_GIDER', -abs(g.tutar),
+            f"Anlık gider: {g.aciklama or g.kategori}", 'anlik_giderler', gid)
         audit(cur, 'anlik_giderler', gid, 'INSERT')
     return {"id": gid, "success": True}
 
@@ -238,8 +291,8 @@ def anlik_gider_sil(gid: str):
         if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten iptal edilmiş")
         # Gideri pasifleştir
         cur.execute("UPDATE anlik_giderler SET durum='iptal' WHERE id=%s", (gid,))
-        # İlgili kasa kaydını da pasifleştir — ters kayıt YOK
-        cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE kaynak_id=%s AND islem_turu='ANLIK_GIDER' AND durum='aktif'", (gid,))
+        # Immutable model: pasifleştir + ters kayıt
+        iptal_kasa_hareketi(cur, gid, 'anlik_giderler', 'ANLIK_GIDER', 'ANLIK_GIDER_IPTAL', 'Anlık gider iptali')
         audit(cur, 'anlik_giderler', gid, 'IPTAL', eski=eski)
     return {"success": True}
 
@@ -397,8 +450,8 @@ def kart_hareket_iptal(hid: str):
         eski = cur.fetchone()
         if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten iptal edilmiş")
         cur.execute("UPDATE kart_hareketleri SET durum='iptal' WHERE id=%s", (hid,))
-        # İlgili kasa kaydı varsa onu da pasifleştir
-        cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE kaynak_id=%s AND durum='aktif'", (hid,))
+        # Immutable model: pasifleştir + ters kayıt (kart ödeme varsa)
+        iptal_kasa_hareketi(cur, hid, 'kart_hareketleri', 'KART_ODEME', 'KART_ODEME_IPTAL', 'Kart hareketi iptali')
         audit(cur, 'kart_hareketleri', hid, 'IPTAL', eski=eski)
     return {"success": True}
 
@@ -474,9 +527,11 @@ def onayla(oid: str):
         cur.execute("SELECT * FROM onay_kuyrugu WHERE id=%s", (oid,))
         onay = cur.fetchone()
         if not onay: raise HTTPException(404)
+        # Zaten onaylanmış — çift onay engeli
+        if onay['durum'] != 'bekliyor':
+            raise HTTPException(400, f"Bu işlem zaten '{onay['durum']}' durumunda, tekrar onaylanamaz.")
         tutar = float(onay['tutar'])
         tarih = str(onay['tarih'])
-        # Sign modeli: işlem türüne göre işaret belirle
         GIDER_TURLERI = {'KART_ODEME', 'ANLIK_GIDER', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER', 'ODEME_PLANI'}
         GELIR_TURLERI = {'CIRO', 'CIRO_DUZELTME', 'DIS_KAYNAK', 'KASA_GIRIS', 'KASA_DUZELTME'}
         islem_turu = onay['islem_turu']
@@ -485,14 +540,19 @@ def onayla(oid: str):
         elif islem_turu in GELIR_TURLERI:
             signed_tutar = abs(tutar)
         else:
-            # Bilinmeyen tür: tutarın işaretini koru (pozitif gelir, negatif gider)
             signed_tutar = tutar
             logger.warning(f"Bilinmeyen işlem türü onaylandı: {islem_turu}, tutar={tutar}")
-        cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
-            VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+        # ref_id = onay id — duplicate kasa kaydı imkansız
+        cur.execute("""INSERT INTO kasa_hareketleri
+            (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'ONAY')
+            ON CONFLICT (ref_id, ref_type, islem_turu) DO NOTHING""",
             (str(uuid.uuid4()), tarih, islem_turu, signed_tutar,
-             f"Onaylandı: {onay['aciklama']}", onay['kaynak_tablo'], onay['kaynak_id']))
-        cur.execute("UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW() WHERE id=%s", (oid,))
+             f"Onaylandı: {onay['aciklama']}", onay['kaynak_tablo'], onay['kaynak_id'], oid))
+        # Onay durumunu güncelle — atomic (kasa yazılmazsa bu da çalışmaz)
+        cur.execute("UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW() WHERE id=%s AND durum='bekliyor'", (oid,))
+        if cur.rowcount == 0:
+            raise HTTPException(409, "Eş zamanlı onay çakışması — işlem zaten onaylandı.")
         audit(cur, 'onay_kuyrugu', oid, 'ONAYLANDI', eski=onay)
     return {"success": True}
 
@@ -548,14 +608,17 @@ def ciro_ekle(c: CiroModel):
             if cur.fetchone():
                 return {"id": None, "success": False, "duplicate": True,
                         "mesaj": "Aynı istek son 5 saniye içinde zaten gönderildi."}
+        # Ciro ve kasa aynı transaction içinde — biri başarısız olursa ikisi de rollback
         cur.execute("""INSERT INTO ciro (id,tarih,sube_id,nakit,pos,online,aciklama)
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
             (cid, c.tarih, c.sube_id, c.nakit, c.pos, c.online, c.aciklama))
-        cur.execute("""INSERT INTO kasa_hareketleri
+        # Kasa kaydı — DB trigger da yazacak ama backend de yazarak double garanti
+        cur.execute("""
+            INSERT INTO kasa_hareketleri
             (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
             VALUES (%s,%s,'CIRO',%s,'Ciro girişi','ciro',%s,%s,'CIRO')
-            ON CONFLICT (ref_id, ref_type, islem_turu) DO NOTHING""",
-            (str(uuid.uuid4()), str(c.tarih), abs(toplam), cid, cid))
+            ON CONFLICT (ref_id, ref_type, islem_turu) DO NOTHING
+        """, (str(uuid.uuid4()), str(c.tarih), abs(toplam), cid, cid))
         audit(cur, 'ciro', cid, 'INSERT')
     return {"id": cid, "success": True}
 
@@ -569,17 +632,25 @@ def ciro_sil(cid: str):
         # Ciroyu iptal et
         cur.execute("UPDATE ciro SET durum='iptal' WHERE id=%s", (cid,))
 
-        # Tüm aktif kasa kayıtlarını (duplicate olsa bile) tek seferde pasifleştir
+        # Tüm aktif kasa kayıtlarını pasifleştir (CIRO + CIRO_DUZELTME dahil)
         cur.execute("""UPDATE kasa_hareketleri SET durum='iptal'
-            WHERE ref_id=%s AND ref_type='CIRO' AND islem_turu='CIRO' AND durum='aktif'""", (cid,))
+            WHERE ref_id=%s AND ref_type='CIRO' AND durum='aktif'""", (cid,))
 
-        # Gerçek tutarı ciro tablosundan hesapla — kaç duplicate olursa olsun TEK ters kayıt
-        toplam = float(eski['nakit'] or 0) + float(eski['pos'] or 0) + float(eski['online'] or 0)
-        if toplam > 0:
+        # Gerçek net etkiyi kasa_hareketleri'nden hesapla (düzeltmeler dahil)
+        cur.execute("""
+            SELECT COALESCE(SUM(tutar), 0) as net
+            FROM kasa_hareketleri
+            WHERE ref_id=%s AND ref_type='CIRO'
+            AND islem_turu IN ('CIRO','CIRO_DUZELTME')
+            AND durum='iptal'
+        """, (cid,))
+        net_etki = float(cur.fetchone()['net'])
+        if abs(net_etki) > 0.01:
+            # Net etkiyi tam tersle — düzeltmeler dahil sıfırlanır
             cur.execute("""INSERT INTO kasa_hareketleri
                 (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
                 VALUES (%s,%s,'CIRO_IPTAL',%s,'Ciro iptali','ciro',%s,%s,'CIRO')""",
-                (str(uuid.uuid4()), str(date.today()), -abs(toplam), cid, cid))
+                (str(uuid.uuid4()), str(date.today()), -net_etki, cid, cid))
 
         audit(cur, 'ciro', cid, 'IPTAL', eski=eski)
     return {"success": True}
@@ -757,8 +828,8 @@ def vadeli_sil(vid: str):
         eski = cur.fetchone()
         if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten ödenmiş/iptal edilmiş")
         cur.execute("UPDATE vadeli_alimlar SET durum='iptal' WHERE id=%s", (vid,))
-        # İlgili kasa kaydı varsa pasifleştir
-        cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE kaynak_id=%s AND durum='aktif'", (vid,))
+        # Immutable model: pasifleştir + ters kayıt
+        iptal_kasa_hareketi(cur, vid, 'vadeli_alimlar', 'VADELI_ODEME', 'VADELI_IPTAL', 'Vadeli alım iptali')
         audit(cur, 'vadeli_alimlar', vid, 'IPTAL', eski=eski)
     return {"success": True}
 
@@ -770,9 +841,8 @@ def vadeli_ode(vid: str):
         if not v: raise HTTPException(404)
         cur.execute("UPDATE vadeli_alimlar SET durum='odendi' WHERE id=%s", (vid,))
         # Vadeli ödeme kasadan çıkar → negatif
-        cur.execute("""INSERT INTO kasa_hareketleri (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id)
-            VALUES (%s,%s,'VADELI_ODEME',%s,%s,'vadeli_alimlar',%s)""",
-            (str(uuid.uuid4()), str(date.today()), -abs(float(v['tutar'])), f"Vadeli: {v['aciklama']}", vid))
+        insert_kasa_hareketi(cur, date.today(), 'VADELI_ODEME', -abs(float(v['tutar'])),
+            f"Vadeli: {v['aciklama']}", 'vadeli_alimlar', vid)
         audit(cur, 'vadeli_alimlar', vid, 'ODEME', eski=v)
     return {"success": True}
 
@@ -900,11 +970,24 @@ async def excel_import(dosya: UploadFile = File(...)):
                                 (cid, fix_date(d.get('tarih')), sube_id, nakit, pos, online, str(d.get('aciklama') or '')))
                             if cur.rowcount > 0:
                                 toplam_ciro = nakit + pos + online
+                                # Delta sistemi — manuel ciro ile aynı model
+                                kasa_id = str(uuid.uuid4())
                                 cur.execute("""INSERT INTO kasa_hareketleri
                                     (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
                                     VALUES (%s,%s,'CIRO',%s,'Excel import - ciro','ciro',%s,%s,'CIRO')
                                     ON CONFLICT (ref_id, ref_type, islem_turu) DO NOTHING""",
-                                    (str(uuid.uuid4()), fix_date(d.get('tarih')), abs(toplam_ciro), cid, cid))
+                                    (kasa_id, fix_date(d.get('tarih')), abs(toplam_ciro), cid, cid))
+                                if cur.rowcount == 0:
+                                    # Fark kontrolü
+                                    cur.execute("SELECT tutar FROM kasa_hareketleri WHERE ref_id=%s AND islem_turu='CIRO' AND durum='aktif'", (cid,))
+                                    mevcut = cur.fetchone()
+                                    if mevcut:
+                                        fark = abs(toplam_ciro) - float(mevcut['tutar'])
+                                        if abs(fark) > 0.01:
+                                            cur.execute("""INSERT INTO kasa_hareketleri
+                                                (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
+                                                VALUES (%s,%s,'CIRO_DUZELTME',%s,'Excel import düzeltme','ciro',%s,%s,'CIRO')""",
+                                                (str(uuid.uuid4()), fix_date(d.get('tarih')), fark, cid, cid))
                                 eklenen += 1
                             else:
                                 atlanan.append({"satir": satir_no, "sebep": "duplicate", "veri": f"{d.get('tarih')} / {d.get('sube','')}"})
@@ -1135,6 +1218,36 @@ def odeme_ertele(oid: str, yeni_tarih: date = None):
         cur.execute("UPDATE odeme_plani SET tarih=%s WHERE id=%s", (yeni, oid))
         audit(cur, 'odeme_plani', oid, 'ERTELE')
     return {"success": True, "yeni_tarih": str(yeni)}
+
+@app.get("/api/kasa-detay")
+def kasa_detay_endpoint():
+    """Kasa'yı işlem türü bazında gösterir — her türün ne kadar etki yaptığını döker."""
+    try:
+        return kasa_detay()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+# ── KASA TUTARLILIK KONTROLÜ ──────────────────────────────────
+@app.get("/api/kasa-kontrol")
+def kasa_kontrol():
+    """Ciro kayıtlarında kasa anomalisi var mı? Varsa listeler."""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT * FROM v_kasa_anomali
+            WHERE durum != 'OK'
+            LIMIT 50
+        """)
+        anomaliler = [dict(r) for r in cur.fetchall()]
+        cur.execute("SELECT COUNT(*) as toplam FROM v_kasa_anomali")
+        toplam = cur.fetchone()['toplam']
+        cur.execute("SELECT COUNT(*) as sorunlu FROM v_kasa_anomali WHERE durum != 'OK'")
+        sorunlu = cur.fetchone()['sorunlu']
+        return {
+            "toplam_ciro": toplam,
+            "sorunlu": sorunlu,
+            "saglikli": toplam - sorunlu,
+            "anomaliler": anomaliler
+        }
 
 # ── HEALTH ─────────────────────────────────────────────────────
 @app.get("/api/health")

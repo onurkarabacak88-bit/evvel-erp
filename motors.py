@@ -609,11 +609,28 @@ def uyari_motoru():
 def guncel_kasa():
     with db() as (conn, cur):
         cur.execute("""
-            SELECT COALESCE(SUM(
-                tutar
-            ), 0) as kasa FROM kasa_hareketleri WHERE durum='aktif'
+            SELECT COALESCE(SUM(tutar), 0) as kasa
+            FROM kasa_hareketleri WHERE durum='aktif'
         """)
         return float(cur.fetchone()['kasa'])
+
+def kasa_detay():
+    """Kasa'yı işlem türü bazında döker — audit ve debug için."""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT islem_turu,
+                   COUNT(*) as adet,
+                   SUM(tutar) as toplam,
+                   SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END) as giris,
+                   SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END) as cikis
+            FROM kasa_hareketleri
+            WHERE durum='aktif'
+            GROUP BY islem_turu
+            ORDER BY toplam DESC
+        """)
+        satirlar = [dict(r) for r in cur.fetchall()]
+        net = sum(float(r['toplam']) for r in satirlar)
+        return {"net_kasa": net, "detay": satirlar}
 
 # ── MASTER FİNANS MOTORU ───────────────────────────────────────
 def finans_ozet_motoru():
