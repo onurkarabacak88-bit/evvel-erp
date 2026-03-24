@@ -638,21 +638,8 @@ def ciro_sil(cid: str):
         cur.execute("""UPDATE kasa_hareketleri SET durum='iptal'
             WHERE ref_id=%s AND ref_type='CIRO' AND durum='aktif'""", (cid,))
 
-        # Gerçek net etkiyi kasa_hareketleri'nden hesapla (düzeltmeler dahil)
-        cur.execute("""
-            SELECT COALESCE(SUM(tutar), 0) as net
-            FROM kasa_hareketleri
-            WHERE ref_id=%s AND ref_type='CIRO'
-            AND islem_turu IN ('CIRO','CIRO_DUZELTME')
-            AND durum='iptal'
-        """, (cid,))
-        net_etki = float(cur.fetchone()['net'])
-        if abs(net_etki) > 0.01:
-            # Net etkiyi tam tersle — düzeltmeler dahil sıfırlanır
-            cur.execute("""INSERT INTO kasa_hareketleri
-                (id,tarih,islem_turu,tutar,aciklama,kaynak_tablo,kaynak_id,ref_id,ref_type)
-                VALUES (%s,%s,'CIRO_IPTAL',%s,'Ciro iptali','ciro',%s,%s,'CIRO')""",
-                (str(uuid.uuid4()), str(date.today()), -net_etki, cid, cid))
+        # Kasa iptali → DB trigger (fn_ciro_iptal_garantisi) halleder
+        # Backend burada yazmaz — tek sorumlu trigger
 
         audit(cur, 'ciro', cid, 'IPTAL', eski=eski)
     return {"success": True}
