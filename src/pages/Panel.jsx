@@ -270,6 +270,35 @@ export default function Panel({ onNavigate }) {
             <div className="metric-sub">{sub} <span style={{ color: 'var(--text3)', fontSize: 10 }}>→</span></div>
           </div>
         ))}
+
+        {/* Ciro breakdown — nakit/POS/online */}
+        {(panel.bu_ay_nakit > 0 || panel.bu_ay_pos > 0 || panel.bu_ay_online > 0) && (
+          <div style={{
+            gridColumn: '1 / -1',
+            background: 'var(--bg2)', border: '1px solid var(--border)',
+            borderRadius: 8, padding: '10px 16px',
+            display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap'
+          }}>
+            <span style={{ fontSize: 12, color: 'var(--text3)', fontWeight: 600 }}>Bu Ay Ciro Dağılımı:</span>
+            {[
+              { label: '💵 Nakit', val: panel.bu_ay_nakit || 0, renk: 'var(--green)' },
+              { label: '💳 POS', val: panel.bu_ay_pos || 0, renk: '#4a9eff' },
+              { label: '🌐 Online', val: panel.bu_ay_online || 0, renk: 'var(--yellow)' },
+            ].map(({ label, val, renk }) => (
+              <div key={label} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <span style={{ fontSize: 12, color: 'var(--text3)' }}>{label}:</span>
+                <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)', color: renk }}>{fmt(val)}</span>
+                <span style={{ fontSize: 10, color: 'var(--text3)' }}>
+                  {(panel.bu_ay_nakit + panel.bu_ay_pos + panel.bu_ay_online) > 0
+                    ? `%${((val / (panel.bu_ay_nakit + panel.bu_ay_pos + panel.bu_ay_online)) * 100).toFixed(0)}`
+                    : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+
       </div>
 
       {/* ── HIZLI AKSİYON BARI ── */}
