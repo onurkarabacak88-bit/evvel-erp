@@ -2,7 +2,6 @@ import { useState } from 'react';
 import Panel from './pages/Panel';
 import Kartlar from './pages/Kartlar';
 import KartHareketleri from './pages/KartHareketleri';
-import KartAnaliz from './pages/KartAnaliz';
 import Personel from './pages/Personel';
 import Borclar from './pages/Borclar';
 import SabitGiderler from './pages/SabitGiderler';
@@ -37,7 +36,6 @@ const NAV = [
   { group: 'Tanımlar', items: [
     { id: 'kartlar', label: 'Kartlar', icon: '💳' },
     { id: 'kart-merkez', label: 'Kart Merkezi', icon: '💳' },
-    { id: 'kart-analiz', label: 'Kart Analiz', icon: '📊' },
     { id: 'personel', label: 'Personel', icon: '👥' },
     { id: 'borclar', label: 'Borç Envanteri', icon: '🏦' },
     { id: 'sabit-giderler', label: 'Sabit Giderler', icon: '🏠' },
