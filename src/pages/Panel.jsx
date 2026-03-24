@@ -401,14 +401,48 @@ export default function Panel({ onNavigate }) {
         <div className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <h3 style={{ fontSize: 13, fontWeight: 600 }}>💳 Kart Riskleri</h3>
-            <button className="btn btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => nav('kart-analiz')}>Detay →</button>
+            <button className="btn btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => nav('kart-merkez')}>Merkeze Git →</button>
           </div>
           {!panel.kart_analiz?.length ? (
             <div className="empty"><p>Kart tanımlanmamış</p>
               <button className="btn btn-primary btn-sm" onClick={() => nav('kartlar')}>Kart Ekle</button>
             </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          ) : (() => {
+            // Avalanche: faiz × bakiye skoru
+            const sirali = [...panel.kart_analiz]
+              .filter(k => (k.guncel_borc || 0) > 0)
+              .sort((a, b) => (b.faiz_orani * b.guncel_borc) - (a.faiz_orani * a.guncel_borc));
+            const oncelikli = sirali[0];
+            const toplamAylikFaiz = panel.kart_analiz.reduce((s, k) =>
+              s + (parseFloat(k.guncel_borc) || 0) * (parseFloat(k.faiz_orani) || 0) / 100 / 12, 0);
+            const enYakin = [...panel.kart_analiz]
+              .filter(k => (k.guncel_borc || 0) > 0)
+              .sort((a, b) => (a.gun_kaldi || 99) - (b.gun_kaldi || 99))[0];
+
+            return (
+              <div>
+                {/* Kart özet satırı */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
+                  <div style={{ background: 'rgba(220,50,50,0.08)', borderRadius: 6, padding: '8px 10px' }}>
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 2 }}>🎯 Önce Kapat</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--red)' }}>{oncelikli?.kart_adi || '—'}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)' }}>%{oncelikli?.faiz_orani} faiz</div>
+                  </div>
+                  <div style={{ background: 'rgba(220,50,50,0.08)', borderRadius: 6, padding: '8px 10px' }}>
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 2 }}>💸 Aylık Faiz</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--red)' }}>{fmt(toplamAylikFaiz)}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)' }}>tüm kartlar</div>
+                  </div>
+                  <div style={{ background: enYakin?.gun_kaldi <= 3 ? 'rgba(220,50,50,0.08)' : 'var(--bg3)', borderRadius: 6, padding: '8px 10px' }}>
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 2 }}>📅 En Yakın</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: enYakin?.gun_kaldi <= 3 ? 'var(--red)' : 'var(--text1)' }}>
+                      {enYakin ? (enYakin.gun_kaldi <= 0 ? 'BUGÜN' : `${enYakin.gun_kaldi} gün`) : '—'}
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)' }}>{enYakin?.kart_adi}</div>
+                  </div>
+                </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {panel.kart_analiz.map(k => {
                 const d = parseFloat(k.limit_doluluk) || 0;
                 const renk = d > 0.85 ? 'var(--red)' : d > 0.65 ? 'var(--yellow)' : 'var(--green)';
@@ -437,7 +471,9 @@ export default function Panel({ onNavigate }) {
                 );
               })}
             </div>
-          )}
+              </div>
+            );
+          })()}
         </div>
       </div>
 
