@@ -134,7 +134,7 @@ def panel():
         ozet['bu_ay_devir'] = devir_bilgi['devir_tutar']
         ozet['gecen_ay_adi'] = devir_bilgi['gecen_ay']
 
-        # Ciro dışı kaynak (bu ay) — operasyonel gelirden ayrı göster
+        # Bu ay gelir breakdown — nakit/pos/online/dış kaynak ayrı
         with db() as (conn, cur):
             cur.execute("""
                 SELECT
@@ -148,6 +148,22 @@ def panel():
             row = cur.fetchone()
             ozet['bu_ay_dis_kaynak'] = float(row['dis_kaynak'])
             ozet['bu_ay_sadece_ciro'] = float(row['sadece_ciro'])
+
+            # Nakit / POS / Online breakdown (bu ay ciro)
+            cur.execute("""
+                SELECT
+                    COALESCE(SUM(nakit), 0) as nakit,
+                    COALESCE(SUM(pos), 0) as pos,
+                    COALESCE(SUM(online), 0) as online
+                FROM ciro
+                WHERE durum='aktif'
+                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+            """)
+            breakdown = cur.fetchone()
+            ozet['bu_ay_nakit'] = float(breakdown['nakit'])
+            ozet['bu_ay_pos'] = float(breakdown['pos'])
+            ozet['bu_ay_online'] = float(breakdown['online'])
         return ozet
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -1306,6 +1322,18 @@ def aylik_rapor(yil: int = None, ay: int = None):
         """, (ay_basi,))
         baslangic_kasa = float(cur.fetchone()['baslangic'])
 
+        # 1a. Ciro nakit/pos/online breakdown
+        cur.execute("""
+            SELECT
+                COALESCE(SUM(nakit), 0) as nakit,
+                COALESCE(SUM(pos), 0) as pos,
+                COALESCE(SUM(online), 0) as online
+            FROM ciro WHERE durum='aktif'
+            AND EXTRACT(YEAR FROM tarih) = %s
+            AND EXTRACT(MONTH FROM tarih) = %s
+        """, (yil, ay))
+        ciro_breakdown = dict(cur.fetchone())
+
         # 1. Özet
         cur.execute("""
             SELECT
@@ -1395,6 +1423,10 @@ def aylik_rapor(yil: int = None, ay: int = None):
         ozet['baslangic_kasa'] = baslangic_kasa
         ozet['bitis_kasa'] = baslangic_kasa + float(ozet.get('net_kasa', 0))
 
+        ozet['ciro_nakit'] = float(ciro_breakdown['nakit'])
+        ozet['ciro_pos'] = float(ciro_breakdown['pos'])
+        ozet['ciro_online'] = float(ciro_breakdown['online'])
+
         return {
             "donem": f"{yil}-{ay:02d}",
             "ozet": ozet,
@@ -1459,6 +1491,9 @@ def aylik_rapor_excel(yil: int = None, ay: int = None):
         ("", ""),
         ("GELİRLER", ""),
         ("Ciro Toplamı", ozet['ciro_toplam']),
+        ("  └ Nakit", ozet.get('ciro_nakit', 0)),
+        ("  └ POS", ozet.get('ciro_pos', 0)),
+        ("  └ Online", ozet.get('ciro_online', 0)),
         ("Dış Kaynak", ozet['dis_kaynak_toplam']),
         ("Devir (Önceki Aydan)", ozet['devir_toplam']),
         ("TOPLAM GELİR", ozet['toplam_gelir']),
