@@ -50,15 +50,6 @@ def startup():
             logger.info(f"Aylık ödeme planı üretildi: {sonuc['toplam']} kayıt")
         except Exception as e:
             logger.error(f"Ödeme planı üretim hatası: {e}")
-    # Otomatik ay devri — ay başında çalışır
-    try:
-        if bugun.day == 1:
-            sonuc = ay_devir_hesapla_ve_aktar()
-            if sonuc.get('devir_yapildi'):
-                logger.info(f"✅ Ay deviri yapıldı: {sonuc['devir_tutar']:,.2f} ₺ → {sonuc['ay']}")
-    except Exception as e:
-        logger.warning(f"Ay deviri yapılamadı: {e}")
-
     # Kasa tutarlılık kontrolü — hata vermez, sadece uyarı loglar
     try:
         with db() as (conn, cur):
@@ -138,18 +129,17 @@ def onay_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
 def panel():
     try:
         ozet = finans_ozet_motoru()
-        # Devir bilgisi
-        with db() as (conn, cur):
-            bu_ay = date.today().strftime('%Y-%m')
-            cur.execute("SELECT devir_tutar FROM ay_devir_log WHERE ay=%s", (bu_ay,))
-            devir = cur.fetchone()
-            ozet['bu_ay_devir'] = float(devir['devir_tutar']) if devir else 0
+        # Devir: hesaplanır, ledger'a yazılmaz
+        devir_bilgi = devir_hesapla()
+        ozet['bu_ay_devir'] = devir_bilgi['devir_tutar']
+        ozet['gecen_ay_adi'] = devir_bilgi['gecen_ay']
 
-            # Ciro dışı kaynak toplamı (bu ay)
+        # Ciro dışı kaynak (bu ay) — operasyonel gelirden ayrı göster
+        with db() as (conn, cur):
             cur.execute("""
                 SELECT
                     COALESCE(SUM(CASE WHEN islem_turu='DIS_KAYNAK' THEN tutar ELSE 0 END), 0) as dis_kaynak,
-                    COALESCE(SUM(CASE WHEN islem_turu='DEVIR' THEN tutar ELSE 0 END), 0) as devir_toplam
+                    COALESCE(SUM(CASE WHEN islem_turu='CIRO' THEN tutar ELSE 0 END), 0) as sadece_ciro
                 FROM kasa_hareketleri
                 WHERE durum='aktif'
                 AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
@@ -157,7 +147,7 @@ def panel():
             """)
             row = cur.fetchone()
             ozet['bu_ay_dis_kaynak'] = float(row['dis_kaynak'])
-            ozet['bu_ay_devir_toplam'] = float(row['devir_toplam'])
+            ozet['bu_ay_sadece_ciro'] = float(row['sadece_ciro'])
         return ozet
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -1216,23 +1206,17 @@ def kasa_kontrol():
             "anomaliler": anomaliler
         }
 
-# ── AY DEVIR SİSTEMİ ───────────────────────────────────────────
-def ay_devir_hesapla_ve_aktar(hedef_ay: str = None):
+# ── AY DEVIR (HESAPLANAN — ledger'a yazılmaz) ──────────────────
+def devir_hesapla(yil: int = None, ay: int = None):
     """
-    Geçen ayın kapanış kasasını bu aya DEVIR olarak aktarır.
-    hedef_ay: 'YYYY-MM' formatında. Boş bırakılırsa bu ay.
-    Aynı ay için 2 kez çalıştırılsa bile UNIQUE constraint korur.
+    Geçen ayın kapanış kasasını SQL ile hesaplar.
+    Ledger'a hiçbir şey yazılmaz — immutable model korunur.
     """
-    from datetime import date
     import calendar
-
     bugun = date.today()
-    if not hedef_ay:
-        hedef_ay = bugun.strftime('%Y-%m')
+    yil = yil or bugun.year
+    ay = ay or bugun.month
 
-    yil, ay = map(int, hedef_ay.split('-'))
-
-    # Geçen ayın son günü
     if ay == 1:
         gecen_yil, gecen_ay = yil - 1, 12
     else:
@@ -1240,68 +1224,28 @@ def ay_devir_hesapla_ve_aktar(hedef_ay: str = None):
 
     gecen_ay_son = date(gecen_yil, gecen_ay,
                         calendar.monthrange(gecen_yil, gecen_ay)[1])
-    bu_ay_ilk = date(yil, ay, 1)
 
     with db() as (conn, cur):
-        # Zaten devir yapılmış mı?
-        cur.execute("SELECT id FROM ay_devir_log WHERE ay=%s", (hedef_ay,))
-        if cur.fetchone():
-            return {"devir_yapildi": False, "sebep": "Bu ay için devir zaten yapılmış"}
-
-        # Geçen ayın kapanış kasası
         cur.execute("""
-            SELECT COALESCE(SUM(tutar), 0) as kapanis
+            SELECT COALESCE(SUM(tutar), 0) as devir
             FROM kasa_hareketleri
-            WHERE durum='aktif'
-            AND tarih <= %s
+            WHERE durum='aktif' AND tarih <= %s
         """, (gecen_ay_son,))
-        kapanis_kasa = float(cur.fetchone()['kapanis'])
+        devir = float(cur.fetchone()['devir'])
 
-        if kapanis_kasa == 0:
-            return {"devir_yapildi": False, "sebep": "Geçen ay kapanış kasası sıfır, devir yapılmadı"}
-
-        # Devir kaydı yaz
-        devir_id = str(uuid.uuid4())
-        insert_kasa_hareketi(
-            cur, bu_ay_ilk, 'DEVIR', kapanis_kasa,
-            f"{gecen_yil}-{gecen_ay:02d} ay deviri",
-            'ay_devir_log', devir_id,
-            ref_id=devir_id, ref_type='DEVIR'
-        )
-
-        # Devir log kaydet
-        cur.execute("""
-            INSERT INTO ay_devir_log (id, ay, devir_tutar)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (ay) DO NOTHING
-        """, (devir_id, hedef_ay, kapanis_kasa))
-
-        return {
-            "devir_yapildi": True,
-            "ay": hedef_ay,
-            "devir_tutar": kapanis_kasa,
-            "gecen_ay": f"{gecen_yil}-{gecen_ay:02d}"
-        }
-
-@app.post("/api/devir")
-def devir_yap(ay: str = None):
-    """Manuel devir tetikleyici. ay='2024-03' formatında."""
-    try:
-        return ay_devir_hesapla_ve_aktar(ay)
-    except Exception as e:
-        raise HTTPException(500, str(e))
+    return {
+        "devir_tutar": devir,
+        "gecen_ay": f"{gecen_yil}-{gecen_ay:02d}",
+        "hesaplandi": True
+    }
 
 @app.get("/api/devir")
-def devir_listele():
-    """Geçmiş devir kayıtlarını listele."""
-    with db() as (conn, cur):
-        cur.execute("""
-            SELECT d.*, k.tutar as kasa_tutari
-            FROM ay_devir_log d
-            LEFT JOIN kasa_hareketleri k ON k.ref_id = d.id AND k.durum='aktif'
-            ORDER BY d.ay DESC LIMIT 24
-        """)
-        return [dict(r) for r in cur.fetchall()]
+def devir_goster(yil: int = None, ay: int = None):
+    """Geçen ay kapanış kasasını hesapla (ledger'a yazmaz)."""
+    try:
+        return devir_hesapla(yil, ay)
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 # ── TOPLU ÖDEME (tek transaction) ──────────────────────────────
 @app.post("/api/toplu-odeme")
@@ -1352,10 +1296,22 @@ def aylik_rapor(yil: int = None, ay: int = None):
     ay = ay or bugun.month
 
     with db() as (conn, cur):
+        # 0. Başlangıç kasası (ay başı devir)
+        import calendar
+        ay_basi = date(yil, ay, 1)
+        ay_son = date(yil, ay, calendar.monthrange(yil, ay)[1])
+        cur.execute("""
+            SELECT COALESCE(SUM(tutar), 0) as baslangic
+            FROM kasa_hareketleri WHERE durum='aktif' AND tarih < %s
+        """, (ay_basi,))
+        baslangic_kasa = float(cur.fetchone()['baslangic'])
+
         # 1. Özet
         cur.execute("""
             SELECT
-                COALESCE(SUM(CASE WHEN tutar > 0 AND islem_turu NOT IN ('DEVIR') THEN tutar ELSE 0 END), 0) as toplam_gelir,
+                COALESCE(SUM(CASE WHEN islem_turu='CIRO' THEN tutar ELSE 0 END), 0) as sadece_ciro,
+                COALESCE(SUM(CASE WHEN islem_turu='DIS_KAYNAK' THEN tutar ELSE 0 END), 0) as dis_kaynak,
+                COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END), 0) as toplam_gelir,
                 COALESCE(SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END), 0) as toplam_gider,
                 COALESCE(SUM(CASE WHEN islem_turu='CIRO' THEN tutar ELSE 0 END), 0) as ciro_toplam,
                 COALESCE(SUM(CASE WHEN islem_turu='DIS_KAYNAK' THEN tutar ELSE 0 END), 0) as dis_kaynak_toplam,
@@ -1399,7 +1355,7 @@ def aylik_rapor(yil: int = None, ay: int = None):
             WHERE durum='aktif'
             AND EXTRACT(YEAR FROM tarih) = %s
             AND EXTRACT(MONTH FROM tarih) = %s
-            AND islem_turu NOT LIKE '%IPTAL%'
+            AND islem_turu NOT LIKE '%%IPTAL%%'
             GROUP BY tarih, islem_turu
             ORDER BY tarih, islem_turu
         """, (yil, ay))
@@ -1435,6 +1391,9 @@ def aylik_rapor(yil: int = None, ay: int = None):
         # 6. En karlı / zararlı şube
         en_karli = max(sube_ciro, key=lambda x: x['ciro']) if sube_ciro else None
         en_az = min(sube_ciro, key=lambda x: x['ciro']) if sube_ciro else None
+
+        ozet['baslangic_kasa'] = baslangic_kasa
+        ozet['bitis_kasa'] = baslangic_kasa + float(ozet.get('net_kasa', 0))
 
         return {
             "donem": f"{yil}-{ay:02d}",
