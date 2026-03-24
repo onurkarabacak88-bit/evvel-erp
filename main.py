@@ -586,15 +586,17 @@ def ciro_ekle(c: CiroModel):
     with db() as (conn, cur):
         # Backend duplicate kontrolü — force=False ise benzer kayıt varsa uyar
         if not c.force:
+            # Güvenlik katmanı 1: Aynı tarih + aynı şube + aynı tutar → duplicate uyarısı
+            # (farklı tarihte aynı tutar normal olabilir, uyarı verme)
             cur.execute("""
                 SELECT id FROM ciro WHERE durum='aktif'
-                AND tarih BETWEEN %s::date - INTERVAL '7 days' AND %s::date + INTERVAL '7 days'
+                AND tarih = %s
                 AND ABS((nakit+pos+online) - %s) < 1
                 AND sube_id = %s
-            """, (str(c.tarih), str(c.tarih), toplam, c.sube_id))
+            """, (str(c.tarih), toplam, c.sube_id))
             benzer = cur.fetchall()
             if benzer:
-                return {"warning": True, "mesaj": f"Son 7 günde benzer kayıt var ({len(benzer)} adet). Yine de kaydetmek için force=true gönderin."}
+                return {"warning": True, "mesaj": f"Bu tarih ve şubede aynı tutarda kayıt zaten var ({len(benzer)} adet). Yine de kaydetmek için onaylayın."}
         cid = str(uuid.uuid4())
         # Teknik duplicate koruması: son 5 saniye içinde birebir aynı istek geldi mi?
         # (double click, network retry) — force=True bu kontrolü atlar
@@ -1097,10 +1099,10 @@ def ciro_kontrol(tarih: str, tutar: float, sube_id: str = None):
         cur.execute("""
             SELECT id, tarih, nakit+pos+online as toplam, sube_id FROM ciro
             WHERE durum='aktif'
-            AND tarih BETWEEN %s::date - INTERVAL '7 days' AND %s::date + INTERVAL '7 days'
+            AND tarih = %s
             AND ABS((nakit+pos+online) - %s) < 1
             AND (%s IS NULL OR sube_id = %s)
-        """, (tarih, tarih, tutar, sube_id, sube_id))
+        """, (tarih, tutar, sube_id, sube_id))
         benzer = [dict(r) for r in cur.fetchall()]
         return {"benzer": benzer, "var": len(benzer) > 0}
 
