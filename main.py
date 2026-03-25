@@ -1126,15 +1126,25 @@ def kasa_duzelt(sid: str, body: dict):
         toplam_fark = 0
 
         for k in kayitlar:
-            dogru_tutar = float(k['nakit']) + float(k['pos']) * (1 - pos_oran/100) + float(k['online']) * (1 - online_oran/100)
+            pos_tutari = float(k['pos'])
+            online_tutari = float(k['online'])
+            dogru_tutar = float(k['nakit']) + pos_tutari * (1 - pos_oran/100) + online_tutari * (1 - online_oran/100)
             mevcut_tutar = float(k['kasa_tutar'])
             fark = dogru_tutar - mevcut_tutar
 
             if abs(fark) < 0.01:
                 continue
 
+            # 1) Eski CIRO kaydını iptal et
             cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s", (k['kasa_id'],))
 
+            # 2) Eski POS_KESINTI kaydı varsa onu da iptal et
+            cur.execute("""
+                UPDATE kasa_hareketleri SET durum='iptal'
+                WHERE ref_id = %s AND islem_turu = 'POS_KESINTI' AND durum='aktif'
+            """, (k['ciro_id'],))
+
+            # 3) Doğru net tutarla yeni CIRO kaydı yaz
             cur.execute("""
                 INSERT INTO kasa_hareketleri
                     (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type)
@@ -1144,6 +1154,30 @@ def kasa_duzelt(sid: str, body: dict):
                 f'POS/Online kesinti düzeltmesi (pos:%{pos_oran}, online:%{online_oran})',
                 k['ciro_id'], k['ciro_id']
             ))
+
+            # 4) Yeni POS_KESINTI kaydı yaz — paneldeki finansman maliyeti buradan hesaplanır
+            pos_kesinti = pos_tutari * pos_oran / 100
+            online_kesinti = online_tutari * online_oran / 100
+            if pos_kesinti > 0.01:
+                cur.execute("""
+                    INSERT INTO kasa_hareketleri
+                        (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type)
+                    VALUES (%s, %s, 'POS_KESINTI', %s, %s, 'ciro', %s, %s, 'POS_KESINTI')
+                """, (
+                    str(uuid.uuid4()), k['tarih'], -pos_kesinti,
+                    f'POS komisyon kesintisi (%{pos_oran})',
+                    k['ciro_id'], k['ciro_id'] + '_pos'
+                ))
+            if online_kesinti > 0.01:
+                cur.execute("""
+                    INSERT INTO kasa_hareketleri
+                        (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type)
+                    VALUES (%s, %s, 'POS_KESINTI', %s, %s, 'ciro', %s, %s, 'POS_KESINTI')
+                """, (
+                    str(uuid.uuid4()), k['tarih'], -online_kesinti,
+                    f'Online komisyon kesintisi (%{online_oran})',
+                    k['ciro_id'], k['ciro_id'] + '_online'
+                ))
 
             audit(cur, 'kasa_hareketleri', k['kasa_id'], 'DUZELTME',
                   eski={'tutar': mevcut_tutar}, yeni={'tutar': dogru_tutar})
