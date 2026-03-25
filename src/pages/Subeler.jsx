@@ -53,9 +53,16 @@ export default function Subeler() {
         method: 'POST',
         body: { baslangic: data.baslangic, bitis: data.bitis }
       });
-      toast(`✓ ${res.duzeltilen} kayıt düzeltildi. Kasa etkisi: ${res.toplam_fark > 0 ? '-' : '+'}${fmt(Math.abs(res.toplam_fark))}`);
-      setOnizle(null);
-    } catch (e) { toast(e.message, 'red'); }
+      if (res.success) {
+        toast(`✓ ${res.duzeltilen} kayıt düzeltildi. Kasa etkisi: ${fmt(res.toplam_fark)}`, 'green');
+        setOnizle(null);
+        load(); // Şube listesini yenile
+      } else {
+        toast('⚠️ Düzeltme tamamlanamadı. Lütfen tekrar deneyin.', 'red');
+      }
+    } catch (e) {
+      toast(`❌ Hata: ${e.message}`, 'red');
+    }
     finally { setLoading(false); }
   }
 
