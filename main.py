@@ -1017,6 +1017,22 @@ def subeler():
         cur.execute("SELECT * FROM subeler ORDER BY ad")
         return [dict(r) for r in cur.fetchall()]
 
+@app.put("/api/subeler/{sid}")
+def sube_guncelle(sid: str, body: dict):
+    pos_oran = float(body.get("pos_oran", 0))
+    online_oran = float(body.get("online_oran", 0))
+    if not (0 <= pos_oran <= 100) or not (0 <= online_oran <= 100):
+        raise HTTPException(400, "Oran 0-100 arasında olmalı")
+    with db() as (conn, cur):
+        cur.execute("SELECT id FROM subeler WHERE id=%s", (sid,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Şube bulunamadı")
+        cur.execute(
+            "UPDATE subeler SET pos_oran=%s, online_oran=%s WHERE id=%s",
+            (pos_oran, online_oran, sid)
+        )
+    return {"success": True}
+
 # ── İŞLEM DEFTERİ (LEDGER) ─────────────────────────────────────
 @app.get("/api/ledger")
 def ledger(limit: int = 200, islem_turu: Optional[str] = None):
