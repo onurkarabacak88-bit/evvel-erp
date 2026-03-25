@@ -1033,6 +1033,126 @@ def sube_guncelle(sid: str, body: dict):
         )
     return {"success": True}
 
+@app.get("/api/subeler/{sid}/kasa-onizle")
+def kasa_onizle(sid: str, baslangic: date, bitis: date = None):
+    """
+    Seçilen tarih aralığındaki ciro kayıtları için kasa düzeltme önizlemesi.
+    Düzeltme yapmaz — sadece etki hesaplar.
+    """
+    bitis = bitis or date.today()
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM subeler WHERE id=%s", (sid,))
+        sube = cur.fetchone()
+        if not sube:
+            raise HTTPException(404, "Şube bulunamadı")
+        pos_oran = float(sube['pos_oran'] or 0)
+        online_oran = float(sube['online_oran'] or 0)
+
+        cur.execute("""
+            SELECT c.id, c.tarih, c.nakit, c.pos, c.online, c.toplam,
+                   kh.tutar as kasa_tutar, kh.id as kasa_id
+            FROM ciro c
+            JOIN kasa_hareketleri kh ON kh.ref_id = c.id
+                AND kh.ref_type = 'CIRO'
+                AND kh.islem_turu = 'CIRO'
+                AND kh.durum = 'aktif'
+            WHERE c.sube_id = %s AND c.durum = 'aktif'
+            AND c.tarih BETWEEN %s AND %s
+            ORDER BY c.tarih
+        """, (sid, baslangic, bitis))
+        kayitlar = cur.fetchall()
+
+        satirlar = []
+        toplam_fark = 0
+        for k in kayitlar:
+            dogru_tutar = float(k['nakit']) + float(k['pos']) * (1 - pos_oran/100) + float(k['online']) * (1 - online_oran/100)
+            mevcut_tutar = float(k['kasa_tutar'])
+            fark = dogru_tutar - mevcut_tutar
+            if abs(fark) > 0.01:
+                satirlar.append({
+                    "ciro_id": k['id'],
+                    "tarih": str(k['tarih']),
+                    "nakit": float(k['nakit']),
+                    "pos": float(k['pos']),
+                    "online": float(k['online']),
+                    "mevcut_kasa": mevcut_tutar,
+                    "dogru_kasa": dogru_tutar,
+                    "fark": fark
+                })
+                toplam_fark += fark
+
+        return {
+            "sube_adi": sube['ad'],
+            "pos_oran": pos_oran,
+            "online_oran": online_oran,
+            "baslangic": str(baslangic),
+            "bitis": str(bitis),
+            "etkilenen_kayit": len(satirlar),
+            "toplam_fark": toplam_fark,
+            "satirlar": satirlar
+        }
+
+@app.post("/api/subeler/{sid}/kasa-duzelt")
+def kasa_duzelt(sid: str, body: dict):
+    """
+    Onaylanan tarih aralığındaki kasa kayıtlarını düzeltir.
+    Her kayıt için: eski kasa kaydı iptal edilir + doğru tutarla yeni kayıt yazılır.
+    """
+    baslangic = date.fromisoformat(body.get("baslangic"))
+    bitis = date.fromisoformat(body.get("bitis", str(date.today())))
+
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM subeler WHERE id=%s", (sid,))
+        sube = cur.fetchone()
+        if not sube:
+            raise HTTPException(404, "Şube bulunamadı")
+        pos_oran = float(sube['pos_oran'] or 0)
+        online_oran = float(sube['online_oran'] or 0)
+
+        cur.execute("""
+            SELECT c.id as ciro_id, c.tarih, c.nakit, c.pos, c.online,
+                   kh.id as kasa_id, kh.tutar as kasa_tutar
+            FROM ciro c
+            JOIN kasa_hareketleri kh ON kh.ref_id = c.id
+                AND kh.ref_type = 'CIRO'
+                AND kh.islem_turu = 'CIRO'
+                AND kh.durum = 'aktif'
+            WHERE c.sube_id = %s AND c.durum = 'aktif'
+            AND c.tarih BETWEEN %s AND %s
+        """, (sid, baslangic, bitis))
+        kayitlar = cur.fetchall()
+
+        duzeltilen = 0
+        toplam_fark = 0
+
+        for k in kayitlar:
+            dogru_tutar = float(k['nakit']) + float(k['pos']) * (1 - pos_oran/100) + float(k['online']) * (1 - online_oran/100)
+            mevcut_tutar = float(k['kasa_tutar'])
+            fark = dogru_tutar - mevcut_tutar
+
+            if abs(fark) < 0.01:
+                continue
+
+            cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s", (k['kasa_id'],))
+
+            cur.execute("""
+                INSERT INTO kasa_hareketleri
+                    (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type)
+                VALUES (%s, %s, 'CIRO', %s, %s, 'ciro', %s, %s, 'CIRO')
+            """, (
+                str(uuid.uuid4()), k['tarih'], dogru_tutar,
+                f'POS/Online kesinti düzeltmesi (pos:%{pos_oran}, online:%{online_oran})',
+                k['ciro_id'], k['ciro_id']
+            ))
+
+            audit(cur, 'kasa_hareketleri', k['kasa_id'], 'DUZELTME',
+                  eski={'tutar': mevcut_tutar}, yeni={'tutar': dogru_tutar})
+
+            duzeltilen += 1
+            toplam_fark += fark
+
+    return {"success": True, "duzeltilen": duzeltilen, "toplam_fark": toplam_fark}
+
 # ── İŞLEM DEFTERİ (LEDGER) ─────────────────────────────────────
 @app.get("/api/ledger")
 def ledger(limit: int = 200, islem_turu: Optional[str] = None):
