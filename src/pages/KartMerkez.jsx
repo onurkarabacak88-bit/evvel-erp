@@ -7,8 +7,42 @@ export default function KartMerkez({ onNavigate }) {
   const [kasa, setKasa] = useState(0);
   const [aylikButce, setAylikButce] = useState('');
   const [plan, setPlan] = useState(null);
+  const [faizModal, setFaizModal] = useState(null);
+  const [faizTutar, setFaizTutar] = useState('');
+  const [faizDonem, setFaizDonem] = useState(new Date().toISOString().slice(0,7));
   const [loading, setLoading] = useState(true);
   const [aktifTab, setAktifTab] = useState('genel');
+  const [strateji, setStrateji] = useState(null);
+  const [stratejiLoading, setStratejiLoading] = useState(false);
+  const [faizMsg, setFaizMsg] = useState(null);
+
+  async function faizUret() {
+    try {
+      const r = await api('/kartlar/faiz-uret', { method: 'POST' });
+      const yazilan = r.kartlar?.filter(k => k.durum === 'yazildi') || [];
+      setFaizMsg(yazilan.length > 0
+        ? `✅ ${yazilan.length} karta faiz yazıldı`
+        : 'ℹ️ Faiz yazılacak kart yok (tam ödeme veya zaten yazılmış)');
+      setTimeout(() => setFaizMsg(null), 5000);
+    } catch (e) { setFaizMsg('Hata: ' + e.message); }
+  }
+
+  async function stratejiYukle() {
+    setStratejiLoading(true);
+    try {
+      const r = await api('/strateji');
+      setStrateji(r);
+    } catch(e) { console.error(e); }
+    finally { setStratejiLoading(false); }
+  }
+
+  async function faizKaydet() {
+    if (!faizTutar || parseFloat(faizTutar) <= 0) { alert('Tutar girin'); return; }
+    try {
+      await api('/kart-faiz', { method: 'POST', body: JSON.stringify({ kart_id: faizModal.id, tutar: parseFloat(faizTutar), donem: faizDonem }) });
+      setFaizModal(null); setFaizTutar(''); alert('✓ Faiz kaydedildi');
+    } catch (e) { alert(e.message); }
+  }
 
   useEffect(() => {
     Promise.all([api('/kartlar'), api('/kasa')])
@@ -84,6 +118,16 @@ export default function KartMerkez({ onNavigate }) {
     };
   }
 
+  async function topluFaizHesapla() {
+    try {
+      const r = await api('/kartlar/toplu-faiz-hesapla', { method: 'POST', body: JSON.stringify({}) });
+      const faizliSayisi = (r.sonuclar || []).filter(s => s.faiz_tutari > 0).length;
+      setFaizMsg(`✅ ${faizliSayisi} kart için faiz hesaplandı`);
+      setTimeout(() => setFaizMsg(null), 4000);
+      api('/kartlar').then(k => setKartlar(k.filter(x => x.aktif)));
+    } catch (e) { setFaizMsg('Hata: ' + e.message); }
+  }
+
   const toplamBorc = kartlar.reduce((s, k) => s + (parseFloat(k.guncel_borc) || 0), 0);
   const toplamLimit = kartlar.reduce((s, k) => s + (parseFloat(k.limit_tutar) || 0), 0);
   const toplamAsgari = kartlar.reduce((s, k) => s + (parseFloat(k.asgari_odeme) || 0), 0);
@@ -113,6 +157,7 @@ export default function KartMerkez({ onNavigate }) {
 
   const TABS = [
     { id: 'genel', label: '📊 Genel Durum' },
+    { id: 'strateji', label: '🤖 Strateji Motoru' },
     { id: 'oncelik', label: '🎯 Öncelik Sırası' },
     { id: 'takvim', label: '📅 Ödeme Takvimi' },
     { id: 'plan', label: '🗓 Kapanış Planı' },
@@ -125,8 +170,24 @@ export default function KartMerkez({ onNavigate }) {
           <h2>💳 Kart Kontrol Merkezi</h2>
           <p style={{ fontSize: 12, color: 'var(--text3)' }}>{kartlar.length} aktif kart · Toplam borç: <strong style={{ color: 'var(--red)' }}>{fmt(toplamBorc)}</strong></p>
         </div>
-        <button className="btn btn-secondary btn-sm" onClick={() => nav('kartlar')}>⚙️ Kart Tanımları</button>
+        <div style={{ display: 'flex', gap: 8, flexDirection: 'column', alignItems: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-secondary btn-sm" onClick={topluFaizHesapla}>📊 Ay Sonu Faiz Hesapla</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-primary btn-sm" onClick={faizUret}>💰 Ekstre Faizi Üret</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => nav('kartlar')}>⚙️ Kart Tanımları</button>
+        </div>
+          </div>
+          {faizMsg && <div style={{ fontSize: 11, color: 'var(--green)' }}>{faizMsg}</div>}
+        </div>
       </div>
+
+      {faizMsg && (
+        <div style={{ padding: '10px 16px', marginBottom: 12, borderRadius: 8,
+          background: faizMsg.startsWith('✅') ? 'rgba(76,175,132,0.1)' : 'rgba(220,160,0,0.1)',
+          border: `1px solid ${faizMsg.startsWith('✅') ? 'var(--green)' : 'var(--yellow)'}`,
+          fontSize: 13 }}>{faizMsg}</div>
+      )}
 
       {/* ÖZET METRİKLER */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 20 }}>
@@ -203,9 +264,77 @@ export default function KartMerkez({ onNavigate }) {
                     </div>
                   </div>
                 </div>
+                <div style={{ textAlign: 'right', marginTop: 8 }}>
+                  <button className="btn btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => { setFaizModal(k); setFaizTutar(''); }}>📈 Ekstre Faizi Gir</button>
+                </div>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* TAB: STRATEJİ MOTORU */}
+      {aktifTab === 'strateji' && (
+        <div>
+          <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '12px 16px', marginBottom: 16, fontSize: 12, color: 'var(--text2)' }}>
+            🤖 <strong>Gerçek Karar Motoru:</strong> Kasa, yaklaşan ödemeler ve faiz oranları birlikte değerlendirilerek optimal ödeme dağılımı üretilir.
+          </div>
+          {stratejiLoading && <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner" /></div>}
+          {!stratejiLoading && !strateji && (
+            <div className="empty">
+              <p>Strateji henüz yüklenmedi</p>
+              <button className="btn btn-primary btn-sm" onClick={stratejiYukle}>🤖 Strateji Üret</button>
+            </div>
+          )}
+          {strateji && (
+            <div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 16 }}>
+                {[
+                  { label: '💰 Kasa', val: strateji.kasa, renk: strateji.kasa >= 0 ? 'var(--green)' : 'var(--red)' },
+                  { label: '🆓 Kullanılabilir', val: strateji.kullanilabilir_nakit, renk: strateji.kullanilabilir_nakit >= 0 ? 'var(--green)' : 'var(--red)' },
+                  { label: '⚡ Toplam Öneri', val: strateji.toplam_oneri_tutari, renk: 'var(--yellow)' },
+                ].map(({ label, val, renk }) => (
+                  <div key={label} className="metric-card" style={{ borderTop: `3px solid ${renk}` }}>
+                    <div className="metric-label">{label}</div>
+                    <div className="metric-value" style={{ fontSize: 20, color: renk }}>{fmt(val)}</div>
+                  </div>
+                ))}
+              </div>
+              {strateji.oneriler?.length === 0 ? (
+                <div className="empty"><p>Bekleyen ödeme yok</p></div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {strateji.oneriler.map((o, i) => {
+                    const renk = o.renk === 'KIRMIZI' ? 'var(--red)' : o.renk === 'TURUNCU' ? '#f07040' : o.renk === 'SARI' ? 'var(--yellow)' : 'var(--text3)';
+                    return (
+                      <div key={i} style={{ padding: '12px 16px', borderRadius: 8, background: o.blink ? 'rgba(220,50,50,0.07)' : 'var(--bg2)', border: `1px solid ${renk}` }} className={o.blink ? 'blink' : ''}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 700, fontSize: 13, color: renk }}>{o.baslik}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 3 }}>{o.aciklama}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{o.kart_adi} · Son gün: {o.tarih}</div>
+                          </div>
+                          {o.tavsiye_tutar > 0 && (
+                            <div style={{ fontSize: 16, fontWeight: 700, fontFamily: 'var(--font-mono)', color: renk, flexShrink: 0 }}>
+                              {fmt(o.tavsiye_tutar)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div style={{ marginTop: 12, padding: '10px 14px', background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)' }}>
+                <strong>Motor Yorumu:</strong> {
+                  strateji.kullanilabilir_nakit < 0
+                    ? `⚠️ Kasa yetersiz. Toplam öneri ${fmt(strateji.toplam_oneri_tutari)}.`
+                    : `✅ Öneriler uygulanırsa ${fmt(strateji.kullanilabilir_nakit)} kullanılabilir kalır.`
+                }
+              </div>
+              <button className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} onClick={stratejiYukle}>↻ Yenile</button>
+            </div>
+          )}
         </div>
       )}
 
@@ -362,6 +491,26 @@ export default function KartMerkez({ onNavigate }) {
               </div>
             )
           )}
+        </div>
+      )}
+      {faizModal && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setFaizModal(null)}>
+          <div className="modal">
+            <div className="modal-header">
+              <h3>📈 Ekstre Faizi — {faizModal.kart_adi}</h3>
+              <button className="modal-close" onClick={() => setFaizModal(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group"><label>Dönem</label>
+                <input type="month" value={faizDonem} onChange={e => setFaizDonem(e.target.value)} /></div>
+              <div className="form-group"><label>Faiz Tutarı (₺)</label>
+                <input type="number" value={faizTutar} onChange={e => setFaizTutar(e.target.value)} placeholder="0.00" autoFocus /></div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setFaizModal(null)}>Vazgeç</button>
+              <button className="btn btn-primary" onClick={faizKaydet}>✓ Kaydet</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

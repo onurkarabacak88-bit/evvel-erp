@@ -301,6 +301,36 @@ export default function Panel({ onNavigate }) {
 
       </div>
 
+      {/* ── FİNANSMAN MALİYETİ ── */}
+      {(panel.bu_ay_finansman_maliyeti > 0) && (
+        <div style={{
+          display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap',
+          marginBottom: 16, padding: '12px 16px',
+          background: 'rgba(220,50,50,0.06)', border: '1px solid rgba(220,50,50,0.3)',
+          borderRadius: 8
+        }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--red)' }}>🔥 Bu Ay Finansman Maliyeti</span>
+          <div style={{ display: 'flex', gap: 20, flex: 1, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: 'var(--text2)' }}>
+              💳 POS Kesintisi: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(panel.bu_ay_pos_kesinti || 0)}</strong>
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--text2)' }}>
+              📈 Kart Faizi: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(panel.bu_ay_kart_faizi || 0)}</strong>
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--text2)' }}>
+              🔥 Toplam Yanan: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)', fontSize: 14 }}>{fmt(panel.bu_ay_finansman_maliyeti)}</strong>
+            </span>
+            {panel.bu_ay_sadece_ciro > 0 && (
+              <span style={{ fontSize: 12, color: 'var(--text3)' }}>
+                Ciroya oranı: <strong style={{ color: 'var(--yellow)' }}>
+                  %{((panel.bu_ay_finansman_maliyeti / panel.bu_ay_sadece_ciro) * 100).toFixed(1)}
+                </strong>
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── HIZLI AKSİYON BARI ── */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, padding: '10px 14px', background: 'var(--bg2)', borderRadius: 8, border: '1px solid var(--border)', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'center', marginRight: 4 }}>Hızlı:</span>
