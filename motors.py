@@ -238,6 +238,34 @@ def odeme_strateji_motoru():
             })
             oneriler.append(oneri)
 
+        # ── SMART DAĞITIM: Kalan parayı en pahalı faize at ────────
+        # Adım 1: Asgari ödenen kartların ID'lerini bul
+        asgari_ids = [o['odeme_id'] for o in oneriler if o['oneri_turu'] == 'ASGARI_ODE']
+        if kullanilabilir > 0 and asgari_ids:
+            cur.execute("""
+                SELECT op.id, op.odenecek_tutar, op.asgari_tutar, k.faiz_orani
+                FROM odeme_plani op JOIN kartlar k ON k.id=op.kart_id
+                WHERE op.id = ANY(%s)
+                ORDER BY k.faiz_orani DESC
+            """, (asgari_ids,))
+            ekstra_kartlar = cur.fetchall()
+            # Adım 2: Kalan kasayı yüksek faizden başlayarak dağıt
+            for ek in ekstra_kartlar:
+                if kullanilabilir <= 0:
+                    break
+                tam = float(ek['odenecek_tutar'])
+                asgari = float(ek['asgari_tutar'] or tam * 0.4)
+                ekstra = min(kullanilabilir, tam - asgari)
+                if ekstra > 1:
+                    for o in oneriler:
+                        if o.get('odeme_id') == str(ek['id']):
+                            o['tavsiye_tutar'] = round(o['tavsiye_tutar'] + ekstra, 2)
+                            o['oneri_turu'] = 'SMART_DAGITIM'
+                            o['renk'] = 'TURUNCU'
+                            o['aciklama'] += f" (+{fmt(ekstra)} ekstra, kalan kasadan)"
+                            break
+                    kullanilabilir -= ekstra
+
         return {
             "kasa": kasa, "kullanilabilir_nakit": kullanilabilir,
             "zorunlu_giderler": zorunlu, "oneriler": oneriler,
@@ -299,13 +327,25 @@ def kart_analiz_hesapla():
         kartlar = cur.fetchall()
         sonuc = []
         for k in kartlar:
-            # Güncel borç
+            # Güncel borç: HARCAMA ve FAIZ borcu artırır, ODEME düşürür
             cur.execute("""
                 SELECT COALESCE(SUM(
-                    CASE WHEN islem_turu='HARCAMA' THEN tutar ELSE -tutar END
+                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
+                         WHEN islem_turu = 'ODEME' THEN -tutar
+                         ELSE 0 END
                 ),0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
             """, (k['id'],))
             borc = float(cur.fetchone()['borc'])
+
+            # Bu aya yansıyan faiz (bir önceki dönemden)
+            cur.execute("""
+                SELECT COALESCE(SUM(tutar),0) as faiz
+                FROM kart_hareketleri
+                WHERE kart_id=%s AND durum='aktif' AND islem_turu='FAIZ'
+                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+            """, (k['id'],))
+            bu_ay_faiz = float(cur.fetchone()['faiz'])
 
             # Ekstre - banka mantığı: tek çekim + aylık taksit
             cur.execute("""
@@ -343,11 +383,13 @@ def kart_analiz_hesapla():
 
             sonuc.append({
                 'kart_adi': k['kart_adi'], 'banka': k['banka'],
+                'faiz_orani': float(k['faiz_orani']),
                 'limit_tutar': limit, 'guncel_borc': borc,
                 'kalan_limit': limit - borc,
                 'limit_doluluk': borc/limit if limit > 0 else 0,
                 'bu_ekstre': bu_ekstre,
                 'aylik_taksit': aylik_taksit,
+                'bu_ay_faiz': bu_ay_faiz,
                 'asgari_odeme': bu_ekstre * (float(k['asgari_oran']) / 100 if 'asgari_oran' in k else 0.4),
                 'gun_kaldi': gun_kaldi,
                 'blink': gun_kaldi <= 0 and yaklasan is not None,

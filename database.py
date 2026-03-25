@@ -44,8 +44,23 @@ def init_db():
                 ad          TEXT NOT NULL,
                 adres       TEXT,
                 aktif       BOOLEAN NOT NULL DEFAULT TRUE,
+                pos_oran    NUMERIC(5,2) NOT NULL DEFAULT 0,
+                online_oran NUMERIC(5,2) NOT NULL DEFAULT 0,
                 olusturma   TIMESTAMP NOT NULL DEFAULT NOW()
             )
+        """)
+        # Migration: pos/online oran kolonları
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='pos_oran')
+                THEN ALTER TABLE subeler ADD COLUMN pos_oran NUMERIC(5,2) NOT NULL DEFAULT 0;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='online_oran')
+                THEN ALTER TABLE subeler ADD COLUMN online_oran NUMERIC(5,2) NOT NULL DEFAULT 0;
+                END IF;
+            END $$;
         """)
 
         # Varsayılan merkez şube
@@ -142,10 +157,23 @@ def init_db():
                 islem_turu      TEXT NOT NULL DEFAULT 'HARCAMA',
                 tutar           NUMERIC(14,2) NOT NULL,
                 taksit_sayisi   INT NOT NULL DEFAULT 1,
+                faiz_tutari     NUMERIC(14,2) DEFAULT 0,
+                ana_para        NUMERIC(14,2) DEFAULT 0,
                 aciklama        TEXT,
                 durum           TEXT NOT NULL DEFAULT 'aktif',
                 olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
             )
+        """)
+        # Migration: faiz kolonları
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='kart_hareketleri' AND column_name='faiz_tutari')
+                THEN
+                    ALTER TABLE kart_hareketleri ADD COLUMN faiz_tutari NUMERIC(14,2) DEFAULT 0;
+                    ALTER TABLE kart_hareketleri ADD COLUMN ana_para NUMERIC(14,2) DEFAULT 0;
+                END IF;
+            END $$;
         """)
 
         # ── ÖDEME PLANI ────────────────────────────────────────
@@ -275,17 +303,6 @@ def init_db():
             )
         """)
 
-        # ── AY DEVIR LOG ───────────────────────────────────────
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS ay_devir_log (
-                id          TEXT PRIMARY KEY,
-                ay          TEXT NOT NULL,  -- '2024-03'
-                devir_tutar NUMERIC(14,2) NOT NULL,
-                olusturma   TIMESTAMP NOT NULL DEFAULT NOW(),
-                UNIQUE (ay)
-            )
-        """)
-
         # ── AUDIT LOG ──────────────────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS audit_log (
@@ -305,6 +322,9 @@ def init_db():
         cur.execute("""
             CREATE OR REPLACE FUNCTION fn_ciro_kasa_garantisi()
             RETURNS TRIGGER AS $$
+            DECLARE
+                v_pos_oran NUMERIC(5,2) := 0;
+                v_net_tutar NUMERIC(14,2);
             BEGIN
                 -- Kasa kaydı zaten varsa dokunma
                 IF EXISTS (
@@ -316,13 +336,28 @@ def init_db():
                 ) THEN
                     RETURN NEW;
                 END IF;
-                -- Kasa kaydı yoksa otomatik yaz
+                -- Şubenin POS oranını al
+                SELECT COALESCE(pos_oran, 0) INTO v_pos_oran
+                FROM subeler WHERE id = NEW.sube_id;
+                -- Net tutar: nakit + pos*(1-oran) + online
+                v_net_tutar := NEW.nakit + NEW.pos * (1 - v_pos_oran/100.0) + NEW.online;
+                -- Kasaya net tutar yaz
                 INSERT INTO kasa_hareketleri
                     (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type)
                 VALUES
                     (gen_random_uuid()::text, NEW.tarih, 'CIRO',
-                     NEW.nakit + NEW.pos + NEW.online,
+                     v_net_tutar,
                      'Ciro - trigger garantisi', 'ciro', NEW.id, NEW.id, 'CIRO');
+                -- POS kesintisini ayrı kayıt olarak logla (finansman maliyeti analizi)
+                IF NEW.pos > 0 AND v_pos_oran > 0 THEN
+                    INSERT INTO kasa_hareketleri
+                        (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type)
+                    VALUES
+                        (gen_random_uuid()::text, NEW.tarih, 'POS_KESINTI',
+                         -(NEW.pos * v_pos_oran / 100.0),
+                         'POS komisyon kesintisi', 'ciro', NEW.id,
+                         NEW.id || '_pos', 'POS_KESINTI');
+                END IF;
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;
