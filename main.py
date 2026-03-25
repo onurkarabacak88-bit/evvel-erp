@@ -177,16 +177,16 @@ def panel():
             ozet['bu_ay_pos'] = float(breakdown['pos'])
             ozet['bu_ay_online'] = float(breakdown['online'])
 
-            # Finansman maliyeti: POS + Online kesintisi (bu ay)
+            # Finansman maliyeti — ciro tablosundan hesapla (bilgi amaçlı, kasayı etkilemez)
             cur.execute("""
                 SELECT
-                    COALESCE(SUM(CASE WHEN islem_turu='POS_KESINTI'    THEN ABS(tutar) ELSE 0 END), 0) as pos_kesinti,
-                    COALESCE(SUM(CASE WHEN islem_turu='ONLINE_KESINTI' THEN ABS(tutar) ELSE 0 END), 0) as online_kesinti
-                FROM kasa_hareketleri
-                WHERE durum='aktif'
-                AND islem_turu IN ('POS_KESINTI','ONLINE_KESINTI')
-                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+                    COALESCE(SUM(c.pos * s.pos_oran / 100.0), 0) as pos_kesinti,
+                    COALESCE(SUM(c.online * s.online_oran / 100.0), 0) as online_kesinti
+                FROM ciro c
+                JOIN subeler s ON s.id = c.sube_id
+                WHERE c.durum='aktif'
+                AND EXTRACT(YEAR FROM c.tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM c.tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
             """)
             kesinti_row = cur.fetchone()
             ozet['bu_ay_pos_kesinti']    = float(kesinti_row['pos_kesinti'])
@@ -761,22 +761,12 @@ def ciro_ekle(c: CiroModel):
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
             (cid, c.tarih, c.sube_id, c.nakit, c.pos, c.online, c.aciklama))
 
-        # Kasaya NET tutar yaz (komisyon düşülmüş)
+        # Kasaya NET tutar yaz (komisyon zaten düşülmüş)
+        # POS/Online kesinti ayrıca yazılmıyor — net tutar içinde zaten yok
+        # Panel komisyon tutarını ciro tablosundan hesaplıyor (bilgi amaçlı)
         insert_kasa_hareketi(cur, c.tarih, 'CIRO', net_tutar,
             f'Ciro girişi (net) — pos:%{pos_oran} online:%{online_oran}',
             'ciro', cid, ref_id=cid, ref_type='CIRO')
-
-        # POS kesintisi — ayrı gider kaydı
-        if pos_kesinti > 0.001:
-            insert_kasa_hareketi(cur, c.tarih, 'POS_KESINTI', -pos_kesinti,
-                f'POS komisyon (%{pos_oran})',
-                'ciro', cid, ref_id=cid + '_pos', ref_type='POS_KESINTI')
-
-        # Online kesintisi — ayrı gider kaydı
-        if online_kesinti > 0.001:
-            insert_kasa_hareketi(cur, c.tarih, 'ONLINE_KESINTI', -online_kesinti,
-                f'Online komisyon (%{online_oran})',
-                'ciro', cid, ref_id=cid + '_online', ref_type='ONLINE_KESINTI')
 
         audit(cur, 'ciro', cid, 'INSERT')
     return {"id": cid, "success": True, "net_tutar": net_tutar,
@@ -796,11 +786,8 @@ def ciro_sil(cid: str):
         cur.execute("""UPDATE kasa_hareketleri SET durum='iptal'
             WHERE ref_id=%s AND ref_type='CIRO' AND durum='aktif'""", (cid,))
 
-        # POS ve Online kesinti kayıtlarını da iptal et
-        cur.execute("""UPDATE kasa_hareketleri SET durum='iptal'
-            WHERE kaynak_id=%s
-            AND islem_turu IN ('POS_KESINTI','ONLINE_KESINTI')
-            AND durum='aktif'""", (cid,))
+        # NOT: POS/ONLINE_KESINTI artık kasa_hareketleri'ne yazılmıyor
+        # Panel bu değerleri ciro tablosundan hesaplıyor
 
         audit(cur, 'ciro', cid, 'IPTAL', eski=eski)
     return {"success": True}
