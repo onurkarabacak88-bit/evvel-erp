@@ -195,6 +195,12 @@ def onay_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
 @app.get("/api/panel")
 def panel():
     try:
+        # Her panel yüklemesinde o ayın planını otomatik üret
+        try:
+            aylik_odeme_plani_uret()
+        except Exception as e:
+            logger.warning(f"Otomatik plan üretimi: {e}")
+
         ozet = finans_ozet_motoru()
         # Devir: hesaplanır, ledger'a yazılmaz
         devir_bilgi = devir_hesapla()
@@ -641,82 +647,23 @@ def odeme_yap(oid: str, tutar: Optional[float] = None):
         plan = cur.fetchone()
         if not plan: raise HTTPException(404)
         if plan['durum'] == 'odendi': raise HTTPException(400, "Zaten ödendi")
-        bugun = str(date.today())
         odenen = tutar or float(plan['odenecek_tutar'])
-        cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
+        bugun = date.today()
+        # Kaynak_tablo'ya göre doğru işlem türü
+        kaynak = plan.get('kaynak_tablo') or ''
+        if kaynak == 'sabit_giderler': islem_t = 'SABIT_GIDER'
+        elif kaynak == 'personel':     islem_t = 'PERSONEL_MAAS'
+        else:                          islem_t = 'KART_ODEME'
+        # Onay kuyruğuna ekle — kasaya direkt yazmıyor
+        cur.execute("""SELECT id FROM onay_kuyrugu
+            WHERE kaynak_id=%s AND kaynak_tablo='odeme_plani' AND durum='bekliyor' LIMIT 1""", (oid,))
+        if not cur.fetchone():
+            onay_ekle(cur, islem_t, 'odeme_plani', oid,
+                plan['aciklama'], odenen, bugun)
+        cur.execute("UPDATE odeme_plani SET durum='onay_bekliyor', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
             (bugun, odenen, oid))
-
-        # Ödemeyi parçala: bu karta ait birikmiş faiz var mı?
-        faiz_kismi = 0.0
-        if plan.get('kart_id'):
-            cur.execute("""
-                SELECT COALESCE(SUM(tutar), 0) as bekleyen_faiz
-                FROM kart_hareketleri
-                WHERE kart_id=%s AND islem_turu='FAIZ' AND durum='aktif'
-            """, (plan['kart_id'],))
-            bekleyen_faiz = float(cur.fetchone()['bekleyen_faiz'])
-            faiz_kismi = min(bekleyen_faiz, odenen)
-
-        ana_para_kismi = odenen - faiz_kismi
-
-        # Faiz kısmı → "yanan para" olarak ayrı kayıt
-        if faiz_kismi > 0:
-            insert_kasa_hareketi(cur, bugun, 'KART_FAIZ', -abs(faiz_kismi),
-                f"Kart faiz ödemesi: {plan['aciklama']}", 'odeme_plani', oid,
-                f"{oid}_faiz", 'KART_FAIZ')
-            # Faizi kısmi kapat — ödenen kadar düş, kalan borçta kalsın
-            kalan_faiz_kapatilacak = faiz_kismi
-            cur.execute("""
-                SELECT id, tutar FROM kart_hareketleri
-                WHERE kart_id=%s AND islem_turu='FAIZ' AND durum='aktif'
-                ORDER BY tarih ASC
-            """, (plan['kart_id'],))
-            faiz_kayitlari = cur.fetchall()
-            for fk in faiz_kayitlari:
-                if kalan_faiz_kapatilacak <= 0:
-                    break
-                fk_tutar = float(fk['tutar'])
-                if fk_tutar <= kalan_faiz_kapatilacak:
-                    # Tamamen kapat
-                    cur.execute("UPDATE kart_hareketleri SET durum='iptal' WHERE id=%s", (fk['id'],))
-                    kalan_faiz_kapatilacak -= fk_tutar
-                else:
-                    # Kısmi kapat → orijinali iptal, fark kaydı ekle
-                    cur.execute("UPDATE kart_hareketleri SET durum='iptal' WHERE id=%s", (fk['id'],))
-                    kalan_tutar = fk_tutar - kalan_faiz_kapatilacak
-                    cur.execute("""INSERT INTO kart_hareketleri
-                        (id, kart_id, tarih, islem_turu, tutar, aciklama)
-                        VALUES (%s, %s, %s, 'FAIZ', %s, 'Kısmi faiz bakiyesi')
-                    """, (str(uuid.uuid4()), plan['kart_id'], bugun, kalan_tutar))
-                    kalan_faiz_kapatilacak = 0
-
-        # Anapara kısmı — kaynak_tablo'ya göre doğru islem_turu
-        if ana_para_kismi > 0:
-            kaynak = plan.get('kaynak_tablo') or ''
-            if kaynak == 'sabit_giderler':
-                islem_t = 'SABIT_GIDER'
-                aciklama_t = plan['aciklama']  # zaten "Sabit Gider: xxx" formatında
-            elif kaynak == 'personel':
-                islem_t = 'PERSONEL_MAAS'
-                aciklama_t = plan['aciklama']  # zaten "Personel Maaş: xxx" formatında
-            else:
-                islem_t = 'KART_ODEME'
-                aciklama_t = plan['aciklama']
-            insert_kasa_hareketi(cur, bugun, islem_t, -abs(ana_para_kismi),
-                aciklama_t, 'odeme_plani', oid, oid, 'ODEME_PLANI')
-
-        # Onay kuyruğunu kapat — odeme_plani üzerinden sabit gider onayını da bul
-        cur.execute("""UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
-            WHERE durum='bekliyor'
-            AND (
-                kaynak_id = %s
-                OR kaynak_id = (SELECT kaynak_id FROM odeme_plani WHERE id=%s LIMIT 1)
-            )""", (oid, oid))
-        audit(cur, 'odeme_plani', oid, 'ODEME', eski=plan)
-
-        # Faiz üretimi: ekstre_bazli_faiz_uret() ay sonunda veya manuel tetiklenir
-
-    return {"success": True}
+        audit(cur, 'odeme_plani', oid, 'ONAY_BEKLIYOR', eski=plan)
+    return {"success": True, "mesaj": "Onay kuyruğuna alındı"}
 
 @app.delete("/api/odeme-plani/{oid}")
 def odeme_plani_sil(oid: str):
@@ -768,7 +715,17 @@ def onayla(oid: str):
         insert_kasa_hareketi(cur, tarih, islem_turu, signed_tutar,
             f"Onaylandı: {onay['aciklama']}", onay['kaynak_tablo'], onay['kaynak_id'],
             ref_id=oid, ref_type='ONAY')
-        # Onay durumunu güncelle — atomic (kasa yazılmazsa bu da çalışmaz)
+
+        # Kaynak tabloyu güncelle — onaylandı
+        kaynak_tablo = onay.get('kaynak_tablo') or ''
+        kaynak_id    = onay.get('kaynak_id') or ''
+        if kaynak_tablo == 'vadeli_alimlar' and kaynak_id:
+            cur.execute("UPDATE vadeli_alimlar SET durum='odendi' WHERE id=%s", (kaynak_id,))
+        elif kaynak_tablo == 'odeme_plani' and kaynak_id:
+            cur.execute("""UPDATE odeme_plani SET durum='odendi', odeme_tarihi=CURRENT_DATE
+                WHERE id=%s AND durum IN ('bekliyor','onay_bekliyor')""", (kaynak_id,))
+
+        # Onay durumunu güncelle — atomic
         cur.execute("UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW() WHERE id=%s AND durum='bekliyor'", (oid,))
         if cur.rowcount == 0:
             raise HTTPException(409, "Eş zamanlı onay çakışması — işlem zaten onaylandı.")
@@ -1303,6 +1260,8 @@ def vadeli_ekle(v: VadeliAlim):
         cur.execute("""INSERT INTO vadeli_alimlar (id,aciklama,tutar,vade_tarihi,tedarikci)
             VALUES (%s,%s,%s,%s,%s)""",
             (vid, v.aciklama, v.tutar, v.vade_tarihi, v.tedarikci))
+        onay_ekle(cur, 'VADELI_ODEME', 'vadeli_alimlar', vid,
+            f"Vadeli Alım: {v.aciklama}", v.tutar, v.vade_tarihi)
         audit(cur, 'vadeli_alimlar', vid, 'INSERT')
     return {"id": vid, "success": True}
 
@@ -1335,12 +1294,16 @@ def vadeli_ode(vid: str):
         cur.execute("SELECT * FROM vadeli_alimlar WHERE id=%s", (vid,))
         v = cur.fetchone()
         if not v: raise HTTPException(404)
-        cur.execute("UPDATE vadeli_alimlar SET durum='odendi' WHERE id=%s", (vid,))
-        # Vadeli ödeme kasadan çıkar → negatif
-        insert_kasa_hareketi(cur, date.today(), 'VADELI_ODEME', -abs(float(v['tutar'])),
-            f"Vadeli: {v['aciklama']}", 'vadeli_alimlar', vid)
-        audit(cur, 'vadeli_alimlar', vid, 'ODEME', eski=v)
-    return {"success": True}
+        if v['durum'] == 'odendi': raise HTTPException(400, "Zaten ödendi")
+        # Onay kuyruğunda bekleyen var mı?
+        cur.execute("""SELECT id FROM onay_kuyrugu
+            WHERE kaynak_id=%s AND durum='bekliyor' LIMIT 1""", (vid,))
+        onay = cur.fetchone()
+        if not onay:
+            onay_ekle(cur, 'VADELI_ODEME', 'vadeli_alimlar', vid,
+                f"Vadeli Ödeme: {v['aciklama']}", float(v['tutar']), date.today())
+        audit(cur, 'vadeli_alimlar', vid, 'ONAY_BEKLIYOR', eski=v)
+    return {"success": True, "mesaj": "Onay kuyruğuna alındı"}
 
 # ── BORÇLAR ────────────────────────────────────────────────────
 class BorcModel(BaseModel):
