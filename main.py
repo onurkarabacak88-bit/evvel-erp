@@ -1081,6 +1081,7 @@ def sabit_gider_uyarilar():
                     'tip': 'KIRA_ARTIS',
                     'seviye': 'KRITIK',
                     'durduruldu': True,        # plan üretimi durdu — sayaç için
+                    'blink': True,             # geçmiş = her zaman yanıp söner
                     'renk': 'red',
                     'gider_adi': r['gider_adi'],
                     'mesaj': (
@@ -1100,6 +1101,7 @@ def sabit_gider_uyarilar():
                     'tip': 'KIRA_ARTIS',
                     'seviye': 'UYARI',
                     'durduruldu': False,
+                    'blink': gun_kalan == 0,   # sadece son gün yanıp söner
                     'renk': 'yellow',
                     'gider_adi': r['gider_adi'],
                     'mesaj': f"⚠️ {r['gider_adi']} — kira artış tarihi {gun_kalan} gün sonra.",
@@ -1121,6 +1123,7 @@ def sabit_gider_uyarilar():
                     'tip': 'SOZLESME_BITIS',
                     'seviye': 'KRITIK',
                     'durduruldu': True,        # plan üretimi durdu — sayaç için
+                    'blink': True,             # geçmiş = her zaman yanıp söner
                     'renk': 'red',
                     'gider_adi': r['gider_adi'],
                     'mesaj': (
@@ -1140,6 +1143,7 @@ def sabit_gider_uyarilar():
                     'tip': 'SOZLESME_BITIS',
                     'seviye': 'UYARI',
                     'durduruldu': False,
+                    'blink': gun_kalan == 0,   # sadece son gün yanıp söner
                     'renk': 'yellow',
                     'gider_adi': r['gider_adi'],
                     'mesaj': f"📋 {r['gider_adi']} — sözleşme {gun_kalan} gün sonra bitiyor.",
