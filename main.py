@@ -1048,6 +1048,35 @@ def sabit_gider_sil(gid: str):
         audit(cur, 'sabit_giderler', gid, 'PASIF', eski=eski)
     return {"success": True}
 
+@app.get("/api/vadeli-alimlar/uyarilar")
+def vadeli_uyarilar():
+    """7 gün içinde vadesi gelen vadeli alımlar — panel uyarı kartı için."""
+    bugun = date.today()
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT * FROM vadeli_alimlar
+            WHERE durum = 'bekliyor'
+            AND vade_tarihi BETWEEN %s AND %s + INTERVAL '7 days'
+            ORDER BY vade_tarihi ASC
+        """, (bugun, bugun))
+        kayitlar = cur.fetchall()
+
+    uyarilar = []
+    for v in kayitlar:
+        gun_kalan = (v['vade_tarihi'] - bugun).days
+        kritik = gun_kalan <= 1  # bugün veya yarın = kritik
+        uyarilar.append({
+            'id': str(v['id']),
+            'aciklama': v['aciklama'],
+            'tedarikci': v.get('tedarikci') or '',
+            'tutar': float(v['tutar']),
+            'vade_tarihi': str(v['vade_tarihi']),
+            'gun_kalan': gun_kalan,
+            'seviye': 'KRITIK' if kritik else 'UYARI',
+            'blink': gun_kalan == 0,
+        })
+    return {"uyarilar": uyarilar, "adet": len(uyarilar)}
+
 @app.get("/api/sabit-giderler/uyarilar")
 def sabit_gider_uyarilar():
     """

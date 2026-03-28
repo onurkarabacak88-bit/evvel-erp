@@ -20,6 +20,7 @@ export default function Panel({ onNavigate }) {
   const [msg, setMsg] = useState(null);
   const [sabitGiderOzet, setSabitGiderOzet] = useState({});
   const [sabitGiderUyarilar, setSabitGiderUyarilar] = useState([]);
+  const [vadeliUyarilar, setVadeliUyarilar] = useState([]);
   const [kiraModal, setKiraModal] = useState(null);
   const [kiraForm, setKiraForm] = useState({});
   const [kiraLoading, setKiraLoading] = useState(false);
@@ -35,11 +36,13 @@ export default function Panel({ onNavigate }) {
       api('/sabit-giderler/odemeler').catch(() => null),
       api('/sabit-giderler/uyarilar').catch(() => null),
       api('/sabit-giderler/odenenler').catch(() => null),
-    ]).then(([p, u, o, a, sg, su, og]) => {
+      api('/vadeli-alimlar/uyarilar').catch(() => null),
+    ]).then(([p, u, o, a, sg, su, og, vu]) => {
       setPanel(p); setUyarilar(u || []); setOnaylar(o || []); setAnomali(a);
       setSabitGiderOzet(sg?.ozet || {});
       setSabitGiderUyarilar(su?.uyarilar || []);
       setOdenenGiderler(og || []);
+      setVadeliUyarilar(vu?.uyarilar || []);
       setLoading(false);
     }).catch(() => setLoading(false));
   };
@@ -444,6 +447,42 @@ export default function Panel({ onNavigate }) {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Vadeli Alım Uyarıları */}
+      {vadeliUyarilar.length > 0 && (
+        <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:16}}>
+          {vadeliUyarilar.map((v,i)=>{
+            const kritik = v.seviye === 'KRITIK';
+            const renk = kritik ? 'var(--red)' : 'var(--orange, #f07040)';
+            const bgRenk = kritik ? 'rgba(220,50,50,0.07)' : 'rgba(240,112,64,0.07)';
+            return (
+              <div key={i} className={v.blink ? 'blink' : ''} style={{
+                background: bgRenk, border: `1px solid ${renk}`,
+                borderRadius:8, padding:'12px 16px',
+                display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:12
+              }}>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:13,color:renk}}>
+                    🧾 {v.aciklama}{v.tedarikci ? ` — ${v.tedarikci}` : ''}
+                  </div>
+                  <div style={{fontSize:11,color:'var(--text2)',marginTop:4}}>
+                    {parseInt(v.tutar).toLocaleString('tr-TR')} ₺ vadeli ödeme
+                  </div>
+                  <div style={{fontSize:11,color:'var(--text3)',marginTop:4}}>
+                    📅 Vade: {v.vade_tarihi} ·{' '}
+                    {v.gun_kalan === 0
+                      ? <span style={{color:'var(--red)',fontWeight:700}}>BUGÜN!</span>
+                      : v.gun_kalan === 1
+                      ? <span style={{color:'var(--red)',fontWeight:600}}>Yarın son gün</span>
+                      : <span style={{color:renk}}>{v.gun_kalan} gün kaldı</span>
+                    }
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
