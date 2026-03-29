@@ -51,22 +51,6 @@ const PAGES = {
   personel: Personel, borclar: Borclar, 'sabit-giderler': SabitGiderler, subeler: Subeler,
 };
 
-class ErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(e) { return { error: e }; }
-  componentDidCatch(e, info) { console.error('PANEL CRASH:', e, info); }
-  render() {
-    if (this.state.error) return (
-      <div style={{ padding: 32, color: '#ff4444', fontFamily: 'monospace' }}>
-        <h2>⚠️ Render Hatası</h2>
-        <pre style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{this.state.error.toString()}</pre>
-        <button onClick={() => this.setState({ error: null })} style={{ marginTop: 16, padding: '8px 16px' }}>Tekrar Dene</button>
-      </div>
-    );
-    return this.props.children;
-  }
-}
-
 export default function App() {
   const [page, setPage] = useState('panel');
   const mainRef = useRef(null);
@@ -101,7 +85,7 @@ export default function App() {
         <div className="sidebar-footer">EVVEL v2.4 · 27.03.2026</div>
       </aside>
       <main className="main" ref={mainRef}>
-        <ErrorBoundary><Page onNavigate={setPage} /></ErrorBoundary>
+        <Page onNavigate={setPage} />
       </main>
     </div>
   );
