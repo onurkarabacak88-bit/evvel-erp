@@ -193,9 +193,8 @@ def onay_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
 @app.get("/api/panel")
 def panel():
     try:
-        # Tüm kaynaklar için bu ay plan var mı kontrol et — eksikse üret
+        # Her sabit gider için bu ay plan var mı kontrol et — eksikse üret
         with db() as (conn, cur):
-            # Sabit giderler
             cur.execute("""
                 SELECT COUNT(*) as eksik FROM sabit_giderler sg
                 WHERE sg.aktif = TRUE
@@ -208,39 +207,8 @@ def panel():
                     AND EXTRACT(MONTH FROM op.tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
                 )
             """)
-            eksik_sabit = cur.fetchone()['eksik']
-
-            # Personel maaşları
-            cur.execute("""
-                SELECT COUNT(*) as eksik FROM personel p
-                WHERE p.aktif = TRUE AND p.calisma_turu = 'surekli'
-                AND NOT EXISTS (
-                    SELECT 1 FROM odeme_plani op
-                    WHERE op.kaynak_tablo = 'personel'
-                    AND op.kaynak_id = p.id
-                    AND op.durum != 'iptal'
-                    AND EXTRACT(YEAR FROM op.tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                    AND EXTRACT(MONTH FROM op.tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-                )
-            """)
-            eksik_personel = cur.fetchone()['eksik']
-
-            # Borç taksitleri
-            cur.execute("""
-                SELECT COUNT(*) as eksik FROM borc_envanteri b
-                WHERE b.aktif = TRUE AND b.aylik_taksit > 0
-                AND (b.kalan_vade IS NULL OR b.kalan_vade > 0)
-                AND NOT EXISTS (
-                    SELECT 1 FROM odeme_plani op
-                    WHERE op.aciklama = 'Kredi/Borç: ' || b.kurum
-                    AND op.durum != 'iptal'
-                    AND EXTRACT(YEAR FROM op.tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                    AND EXTRACT(MONTH FROM op.tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-                )
-            """)
-            eksik_borc = cur.fetchone()['eksik']
-
-        if eksik_sabit + eksik_personel + eksik_borc > 0:
+            eksik_plan = cur.fetchone()['eksik']
+        if eksik_plan > 0:
             aylik_odeme_plani_uret()
 
         ozet = finans_ozet_motoru()
@@ -316,24 +284,6 @@ def panel():
             """)
             ozet['bu_ay_kart_faizi'] = float(cur.fetchone()['kart_faizi'])
             ozet['bu_ay_finansman_maliyeti'] = ozet['bu_ay_pos_kesinti'] + ozet['bu_ay_online_kesinti'] + ozet['bu_ay_kart_faizi']
-
-        # ── NULL-SAFETY GARANTISI ────────────────────────────────
-        # Frontend bu alanları .map() ile kullanır — asla None gelmemeli
-        ozet.setdefault('oneriler', [])
-        ozet.setdefault('simulasyon', [])
-        ozet.setdefault('kart_analiz', [])
-        ozet.setdefault('uyarilar', [])
-        ozet.setdefault('kararlar', [])
-        ozet.setdefault('bugun_odemeler', [])
-        ozet.setdefault('yaklasan_odemeler', [])
-        ozet.setdefault('odeme_ozet', {'t7': 0, 't15': 0, 't30': 0})
-        ozet.setdefault('genel_durum', 'SAGLIKLI')
-        ozet.setdefault('ozet', {'kritik': 0, 'uyari': 0})
-        # None gelirse boş listeye dönüştür (setdefault None'ı override etmez)
-        for alan in ('oneriler', 'simulasyon', 'kart_analiz', 'uyarilar', 'kararlar', 'bugun_odemeler', 'yaklasan_odemeler'):
-            if ozet.get(alan) is None:
-                ozet[alan] = []
-
         return ozet
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -2461,9 +2411,6 @@ if pathlib.Path("static/index.html").exists():
     from fastapi.responses import FileResponse
     from fastapi import Request as _Req
 
-    # Önce static dosyalar mount edilmeli — wildcard route bunları yakalamasın
-    app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
-
     @app.get("/")
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str = "", request: _Req = None):
@@ -2471,10 +2418,6 @@ if pathlib.Path("static/index.html").exists():
         import pathlib as _pl
         # API istekleri buraya düşmemeli ama güvenlik için kontrol
         if full_path.startswith("api/"):
-            from fastapi.responses import JSONResponse
-            return JSONResponse({"detail": "Not found"}, status_code=404)
-        # Static asset isteklerini geç — mount zaten halleder
-        if full_path.startswith("assets/"):
             from fastapi.responses import JSONResponse
             return JSONResponse({"detail": "Not found"}, status_code=404)
         index = _pl.Path("static/index.html")
@@ -2485,3 +2428,5 @@ if pathlib.Path("static/index.html").exists():
                          "Pragma": "no-cache", "Expires": "0"}
             )
         return JSONResponse({"detail": "Frontend not built"}, status_code=404)
+
+    app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
