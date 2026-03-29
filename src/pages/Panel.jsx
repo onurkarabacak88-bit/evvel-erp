@@ -32,26 +32,30 @@ export default function Panel({ onNavigate }) {
   const load = () => {
     setLoading(true);
     Promise.all([
-      api('/panel').catch(e => { console.error('Panel yuklenemedi:', e); return null; }),
-      api('/uyarilar').catch(() => []),
-      api('/onay-kuyrugu').catch(() => []),
+      api('/panel'),
+      api('/uyarilar'),
+      api('/onay-kuyrugu'),
       api('/kasa-kontrol').catch(() => null),
       api('/sabit-giderler/odemeler').catch(() => null),
       api('/sabit-giderler/uyarilar').catch(() => null),
       api('/sabit-giderler/odenenler').catch(() => null),
     ]).then(([p, u, o, a, sg, su, og]) => {
-      setPanel(p || null);
-      setUyarilar(u || []);
-      setOnaylar(o || []);
-      setAnomali(a);
+      setPanel(p); setUyarilar(u || []); setOnaylar(o || []); setAnomali(a);
       setSabitGiderOzet(sg?.ozet || {});
       setSabitGiderUyarilar(su?.uyarilar || []);
       setOdenenGiderler(og || []);
       setLoading(false);
-    }).catch(e => { console.error('Panel genel hata:', e); setLoading(false); });
+    }).catch(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    // Ticker animasyon CSS
+    const style = document.createElement('style');
+    style.innerHTML = '@keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }';
+    document.head.appendChild(style);
+    return () => document.head.removeChild(style);
+  }, []);
 
   const toast = (m, t = 'green') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 3500); };
 
@@ -116,8 +120,6 @@ export default function Panel({ onNavigate }) {
   }
 
   async function topluOnerUygula() {
-    if (!panel) return;
-    const kasa = parseFloat(panel?.kasa) || 0;
     const uygulanabilir = (panel.oneriler || []).filter(o => o.odeme_id && o.tavsiye_tutar > 0);
     if (!uygulanabilir.length) return;
     const toplamTutar = uygulanabilir.reduce((s, o) => s + o.tavsiye_tutar, 0);
@@ -163,26 +165,25 @@ export default function Panel({ onNavigate }) {
     </div>
   );
 
-  if (panel === null) return (
+  if (!panel) return (
     <div className="empty">
-      <p style={{ color: 'var(--red)' }}>Panel verisi yüklenemedi — tarayıcı konsolunu (F12) kontrol edin</p>
+      <p>Veri yüklenemedi</p>
       <button className="btn btn-primary" onClick={load}>Tekrar Dene</button>
     </div>
   );
 
-  const safePanel = panel || {};
-  const durum = safePanel.genel_durum || 'SAGLIKLI';
-  const kasa = parseFloat(safePanel.kasa) || 0;
-  const serbest = parseFloat(safePanel.serbest_nakit) || 0;
-  const yuk7 = parseFloat(safePanel.yuk_7) || 0;
-  const yuk15 = parseFloat(safePanel.yuk_15) || 0;
-  const yuk30 = parseFloat(safePanel.yuk_30) || 0;
-  const netAkis = parseFloat(safePanel.net_akis_30) || 0;
-  const kasDayan = parseInt(safePanel.kac_gun_dayanir) || 999;
-  const buAyCiro = parseFloat(safePanel.bu_ay_ciro) || 0;
-  const riskGunu = safePanel.risk_gunu;
-  const gelir30 = parseFloat(safePanel.son_30_gelir) || 0;
-  const gider30 = parseFloat(safePanel.son_30_gider) || 0;
+  const durum = panel.genel_durum || 'SAGLIKLI';
+  const kasa = parseFloat(panel.kasa) || 0;
+  const serbest = parseFloat(panel.serbest_nakit) || 0;
+  const yuk7 = parseFloat(panel.yuk_7) || 0;
+  const yuk15 = parseFloat(panel.yuk_15) || 0;
+  const yuk30 = parseFloat(panel.yuk_30) || 0;
+  const netAkis = parseFloat(panel.net_akis_30) || 0;
+  const kasDayan = parseInt(panel.kac_gun_dayanir) || 999;
+  const buAyCiro = parseFloat(panel.bu_ay_ciro) || 0;
+  const riskGunu = panel.risk_gunu;
+  const gelir30 = parseFloat(panel.son_30_gelir) || 0;
+  const gider30 = parseFloat(panel.son_30_gider) || 0;
 
   const DC = {
     KRITIK:   { renk: 'var(--red)',    bg: 'rgba(220,50,50,0.08)',  ikon: '🚨', label: 'KRİTİK' },
@@ -195,7 +196,7 @@ export default function Panel({ onNavigate }) {
   const diger = uyarilar.filter(u => u.seviye !== 'KRITIK');
   const tumUyarilar = [...kritikler, ...diger];
 
-  const simData = (safePanel.simulasyon || []).map(g => ({
+  const simData = (panel.simulasyon || []).map(g => ({
     tarih: String(g.tarih || '').slice(5),
     tarihFull: g.tarih,
     mevcut: parseFloat(g.kasa_tahmini) || 0,
@@ -228,8 +229,8 @@ export default function Panel({ onNavigate }) {
           <div>
             <div style={{ fontWeight: 700, fontSize: 17, color: dc.renk }}>{dc.label}</div>
             <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-              {safePanel.ozet?.kritik > 0 ? `${safePanel.ozet.kritik} kritik · ` : ''}
-              {safePanel.ozet?.uyari > 0 ? `${safePanel.ozet.uyari} uyarı · ` : ''}
+              {panel.ozet?.kritik > 0 ? `${panel.ozet.kritik} kritik · ` : ''}
+              {panel.ozet?.uyari > 0 ? `${panel.ozet.uyari} uyarı · ` : ''}
               {new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })}
             </div>
           </div>
@@ -450,9 +451,9 @@ export default function Panel({ onNavigate }) {
       )}
 
       {/* ── KRİTİK ALAN — bugün ve gecikmiş (gerçek veri, zorunlu aksiyon) ── */}
-      {safePanel.bugun_odemeler?.length > 0 && (
+      {panel.bugun_odemeler?.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
-          {(safePanel.bugun_odemeler || []).map((u, i) => {
+          {panel.bugun_odemeler.map((u, i) => {
             const gecikme = u.gun_farki < 0;
             const bg = gecikme ? 'rgba(180,20,20,0.12)' : 'rgba(220,50,50,0.07)';
             const border = gecikme ? '2px solid var(--red)' : '1px solid var(--red)';
@@ -485,11 +486,11 @@ export default function Panel({ onNavigate }) {
       )}
 
       {/* Karar motoru uyarıları — akan yazı (ticker) */}
-      {safePanel.kararlar?.filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI').length > 0 && (() => {
-        const kritikVar = (safePanel.kararlar || []).some(k => k.seviye === 'KRITIK');
+      {panel.kararlar?.filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI').length > 0 && (() => {
+        const kritikVar = panel.kararlar.some(k => k.seviye === 'KRITIK');
         const renk = kritikVar ? 'var(--red)' : 'var(--yellow)';
         const bg = kritikVar ? 'rgba(220,50,50,0.08)' : 'rgba(220,160,0,0.07)';
-        const mesajlar = (safePanel.kararlar || [])
+        const mesajlar = panel.kararlar
           .filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI')
           .map(k => `${k.seviye === 'KRITIK' ? '🚨' : '⚠️'} ${k.baslik}: ${k.mesaj}`)
           .join('     ·     ');
@@ -540,8 +541,8 @@ export default function Panel({ onNavigate }) {
       })()}
 
       {/* ── BU AY ÖDEMELER (akan bant) ── */}
-      {safePanel.yaklasan_odemeler?.length > 0 && (() => {
-        const liste = safePanel.yaklasan_odemeler || [];
+      {panel.yaklasan_odemeler?.length > 0 && (() => {
+        const liste = panel.yaklasan_odemeler;
         const odemeMetni = liste
           .filter(u => u.gun_farki > 0)
           .map(u => {
@@ -608,9 +609,9 @@ export default function Panel({ onNavigate }) {
           { label: '🆓 Serbest Nakit', value: fmt(serbest), sub: '7 günlük yük düşülmüş', renk: serbest >= 0 ? 'var(--green)' : 'var(--red)', page: 'ledger' },
           { label: '📊 Net Akış (30 gün)', value: fmt(netAkis), sub: netAkis >= 0 ? 'Pozitif ✓' : '⚠️ Negatif akış', renk: netAkis >= 0 ? 'var(--green)' : 'var(--red)', page: 'ledger' },
           { label: '📈 Bu Ay Ciro', value: fmt(buAyCiro), sub: new Date().toLocaleDateString('tr-TR', { month: 'long' }), renk: 'var(--text1)', page: 'ciro' },
-          { label: '🔄 Geçen Ay Devir', value: fmt(safePanel.bu_ay_devir || 0), sub: safePanel.bu_ay_devir > 0 ? 'Devir aktarıldı ✓' : 'Devir yok', renk: safePanel.bu_ay_devir > 0 ? 'var(--yellow)' : 'var(--text3)', page: 'ledger' },
-          { label: '💰 Dış Kaynak (Bu Ay)', value: fmt(safePanel.bu_ay_dis_kaynak || 0), sub: 'Ciro dışı gelir', renk: safePanel.bu_ay_dis_kaynak > 0 ? '#4a9eff' : 'var(--text3)', page: 'dis-kaynak' },
-          { label: '💸 Bu Ay Gider', value: fmt(safePanel.bu_ay_anlik_gider || 0), sub: 'Anlık giderler toplamı', renk: safePanel.bu_ay_anlik_gider > 0 ? 'var(--red)' : 'var(--text3)', page: 'anlik-gider' },
+          { label: '🔄 Geçen Ay Devir', value: fmt(panel.bu_ay_devir || 0), sub: panel.bu_ay_devir > 0 ? 'Devir aktarıldı ✓' : 'Devir yok', renk: panel.bu_ay_devir > 0 ? 'var(--yellow)' : 'var(--text3)', page: 'ledger' },
+          { label: '💰 Dış Kaynak (Bu Ay)', value: fmt(panel.bu_ay_dis_kaynak || 0), sub: 'Ciro dışı gelir', renk: panel.bu_ay_dis_kaynak > 0 ? '#4a9eff' : 'var(--text3)', page: 'dis-kaynak' },
+          { label: '💸 Bu Ay Gider', value: fmt(panel.bu_ay_anlik_gider || 0), sub: 'Anlık giderler toplamı', renk: panel.bu_ay_anlik_gider > 0 ? 'var(--red)' : 'var(--text3)', page: 'anlik-gider' },
           (() => {
             const durdurulmus = sabitGiderUyarilar.filter(u => u.durduruldu === true).length;
             const geciken = sabitGiderOzet.geciken_adet || 0;
@@ -635,7 +636,7 @@ export default function Panel({ onNavigate }) {
         ))}
 
         {/* Ciro breakdown — nakit/POS/online */}
-        {(safePanel.bu_ay_nakit > 0 || safePanel.bu_ay_pos > 0 || safePanel.bu_ay_online > 0) && (
+        {(panel.bu_ay_nakit > 0 || panel.bu_ay_pos > 0 || panel.bu_ay_online > 0) && (
           <div style={{
             gridColumn: '1 / -1',
             background: 'var(--bg2)', border: '1px solid var(--border)',
@@ -644,16 +645,16 @@ export default function Panel({ onNavigate }) {
           }}>
             <span style={{ fontSize: 12, color: 'var(--text3)', fontWeight: 600 }}>Bu Ay Ciro Dağılımı:</span>
             {[
-              { label: '💵 Nakit', val: safePanel.bu_ay_nakit || 0, renk: 'var(--green)' },
-              { label: '💳 POS', val: safePanel.bu_ay_pos || 0, renk: '#4a9eff' },
-              { label: '🌐 Online', val: safePanel.bu_ay_online || 0, renk: 'var(--yellow)' },
+              { label: '💵 Nakit', val: panel.bu_ay_nakit || 0, renk: 'var(--green)' },
+              { label: '💳 POS', val: panel.bu_ay_pos || 0, renk: '#4a9eff' },
+              { label: '🌐 Online', val: panel.bu_ay_online || 0, renk: 'var(--yellow)' },
             ].map(({ label, val, renk }) => (
               <div key={label} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <span style={{ fontSize: 12, color: 'var(--text3)' }}>{label}:</span>
                 <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)', color: renk }}>{fmt(val)}</span>
                 <span style={{ fontSize: 10, color: 'var(--text3)' }}>
-                  {(safePanel.bu_ay_nakit + safePanel.bu_ay_pos + safePanel.bu_ay_online) > 0
-                    ? `%${((val / (safePanel.bu_ay_nakit + safePanel.bu_ay_pos + safePanel.bu_ay_online)) * 100).toFixed(0)}`
+                  {(panel.bu_ay_nakit + panel.bu_ay_pos + panel.bu_ay_online) > 0
+                    ? `%${((val / (panel.bu_ay_nakit + panel.bu_ay_pos + panel.bu_ay_online)) * 100).toFixed(0)}`
                     : ''}
                 </span>
               </div>
@@ -665,7 +666,7 @@ export default function Panel({ onNavigate }) {
       </div>
 
       {/* ── FİNANSMAN MALİYETİ ── */}
-      {(safePanel.bu_ay_finansman_maliyeti > 0) && (
+      {(panel.bu_ay_finansman_maliyeti > 0) && (
         <div style={{
           display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap',
           marginBottom: 16, padding: '12px 16px',
@@ -675,23 +676,23 @@ export default function Panel({ onNavigate }) {
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--red)' }}>🔥 Bu Ay Finansman Maliyeti</span>
           <div style={{ display: 'flex', gap: 20, flex: 1, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12, color: 'var(--text2)' }}>
-              💳 POS Kesintisi: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(safePanel.bu_ay_pos_kesinti || 0)}</strong>
+              💳 POS Kesintisi: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(panel.bu_ay_pos_kesinti || 0)}</strong>
             </span>
-            {(safePanel.bu_ay_online_kesinti > 0) && (
+            {(panel.bu_ay_online_kesinti > 0) && (
             <span style={{ fontSize: 12, color: 'var(--text2)' }}>
-              🌐 Online Kesinti: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(safePanel.bu_ay_online_kesinti || 0)}</strong>
+              🌐 Online Kesinti: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(panel.bu_ay_online_kesinti || 0)}</strong>
             </span>
             )}
             <span style={{ fontSize: 12, color: 'var(--text2)' }}>
-              📈 Kart Faizi: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(safePanel.bu_ay_kart_faizi || 0)}</strong>
+              📈 Kart Faizi: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(panel.bu_ay_kart_faizi || 0)}</strong>
             </span>
             <span style={{ fontSize: 12, color: 'var(--text2)' }}>
-              🔥 Toplam Yanan: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)', fontSize: 14 }}>{fmt(safePanel.bu_ay_finansman_maliyeti)}</strong>
+              🔥 Toplam Yanan: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)', fontSize: 14 }}>{fmt(panel.bu_ay_finansman_maliyeti)}</strong>
             </span>
-            {safePanel.bu_ay_sadece_ciro > 0 && (
+            {panel.bu_ay_sadece_ciro > 0 && (
               <span style={{ fontSize: 12, color: 'var(--text3)' }}>
                 Ciroya oranı: <strong style={{ color: 'var(--yellow)' }}>
-                  %{((safePanel.bu_ay_finansman_maliyeti / safePanel.bu_ay_sadece_ciro) * 100).toFixed(1)}
+                  %{((panel.bu_ay_finansman_maliyeti / panel.bu_ay_sadece_ciro) * 100).toFixed(1)}
                 </strong>
               </span>
             )}
@@ -801,19 +802,19 @@ export default function Panel({ onNavigate }) {
             <h3 style={{ fontSize: 13, fontWeight: 600 }}>💳 Kart Riskleri</h3>
             <button className="btn btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => nav('kart-merkez')}>Merkeze Git →</button>
           </div>
-          {!safePanel.kart_analiz?.length ? (
+          {!panel.kart_analiz?.length ? (
             <div className="empty"><p>Kart tanımlanmamış</p>
               <button className="btn btn-primary btn-sm" onClick={() => nav('kartlar')}>Kart Ekle</button>
             </div>
           ) : (() => {
             // Avalanche: faiz × bakiye skoru
-            const sirali = [...(safePanel.kart_analiz || [])]
+            const sirali = [...panel.kart_analiz]
               .filter(k => (k.guncel_borc || 0) > 0)
               .sort((a, b) => (b.faiz_orani * b.guncel_borc) - (a.faiz_orani * a.guncel_borc));
             const oncelikli = sirali[0];
-            const toplamAylikFaiz = (safePanel.kart_analiz || []).reduce((s, k) =>
+            const toplamAylikFaiz = panel.kart_analiz.reduce((s, k) =>
               s + (parseFloat(k.guncel_borc) || 0) * (parseFloat(k.faiz_orani) || 0) / 100 / 12, 0);
-            const enYakin = [...(safePanel.kart_analiz || [])]
+            const enYakin = [...panel.kart_analiz]
               .filter(k => (k.guncel_borc || 0) > 0)
               .sort((a, b) => (a.gun_kaldi || 99) - (b.gun_kaldi || 99))[0];
 
@@ -841,7 +842,7 @@ export default function Panel({ onNavigate }) {
                 </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {(safePanel.kart_analiz || []).map(k => {
+              {panel.kart_analiz.map(k => {
                 const d = parseFloat(k.limit_doluluk) || 0;
                 const renk = d > 0.85 ? 'var(--red)' : d > 0.65 ? 'var(--yellow)' : 'var(--green)';
                 return (
@@ -943,20 +944,20 @@ export default function Panel({ onNavigate }) {
       </div>
 
       {/* ── STRATEJİ ÖNERİLERİ ── */}
-      {safePanel.oneriler?.length > 0 && (
+      {panel.oneriler?.length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <h3 style={{ fontSize: 13, fontWeight: 600 }}>🧠 Strateji Motoru</h3>
-            {(safePanel.oneriler || []).filter(o => o.odeme_id && o.tavsiye_tutar > 0).length > 1 && (
+            {panel.oneriler.filter(o => o.odeme_id && o.tavsiye_tutar > 0).length > 1 && (
               <button className="btn btn-primary btn-sm" disabled={topluUygula}
                 onClick={topluOnerUygula}
                 title="Tüm önerileri tek tıkla uygula">
-                {topluUygula ? '⏳ Uygulanıyor...' : `⚡ Tümünü Uygula (${(safePanel.oneriler || []).filter(o => o.odeme_id && o.tavsiye_tutar > 0).length})`}
+                {topluUygula ? '⏳ Uygulanıyor...' : `⚡ Tümünü Uygula (${panel.oneriler.filter(o => o.odeme_id && o.tavsiye_tutar > 0).length})`}
               </button>
             )}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {(safePanel.oneriler || []).map((o, i) => {
+            {panel.oneriler.map((o, i) => {
               const renk = o.renk === 'KIRMIZI' ? 'var(--red)' : o.renk === 'TURUNCU' ? '#f07040' : o.renk === 'SARI' ? 'var(--yellow)' : 'var(--text3)';
               // Kasa etkisi hesapla
               const kasaEtkisi = o.tavsiye_tutar > 0 ? -(o.tavsiye_tutar) : null;
