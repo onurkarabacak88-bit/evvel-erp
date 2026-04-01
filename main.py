@@ -333,6 +333,64 @@ def panel():
             row = cur.fetchone()
             ozet['plan_son_uretim'] = str(row['son_uretim'])[:16] if row['son_uretim'] else None
 
+        # ── NAKİT / KART KIRILIMLARI ───────────────────────────
+        # Her gider türünde bu ay nakit mi kart mı ödendiği
+        with db() as (conn, cur):
+            # ANLIK GİDER — kasa_hareketleri=nakit, kart_hareketleri=kart
+            cur.execute("""
+                SELECT
+                    COALESCE(SUM(CASE WHEN ag.odeme_yontemi='nakit' THEN ag.tutar ELSE 0 END), 0) as nakit,
+                    COALESCE(SUM(CASE WHEN ag.odeme_yontemi='kart'  THEN ag.tutar ELSE 0 END), 0) as kart
+                FROM anlik_giderler ag
+                WHERE ag.durum='aktif'
+                AND EXTRACT(YEAR FROM ag.tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM ag.tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+            """)
+            ag = cur.fetchone()
+            ozet['anlik_nakit'] = float(ag['nakit'])
+            ozet['anlik_kart']  = float(ag['kart'])
+
+            # SABİT GİDER — ödeme_plani üzerinden gerçekleşen ödemeler
+            # kart_id'li plan = kart talimat, kart_id=NULL ve kaynak=sabit = nakit
+            cur.execute("""
+                SELECT
+                    COALESCE(SUM(CASE WHEN op.kart_id IS NULL THEN op.odenen_tutar ELSE 0 END), 0) as nakit,
+                    COALESCE(SUM(CASE WHEN op.kart_id IS NOT NULL THEN op.odenen_tutar ELSE 0 END), 0) as kart
+                FROM odeme_plani op
+                WHERE op.kaynak_tablo = 'sabit_giderler'
+                AND op.durum = 'odendi'
+                AND EXTRACT(YEAR FROM op.odeme_tarihi) = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM op.odeme_tarihi) = EXTRACT(MONTH FROM CURRENT_DATE)
+            """)
+            sg = cur.fetchone()
+            ozet['sabit_nakit'] = float(sg['nakit'])
+            ozet['sabit_kart']  = float(sg['kart'])
+
+            # VADELİ ALIM — kasa_hareketleri VADELI_ODEME=nakit, kart_hareketleri HARCAMA+aciklama=kart
+            cur.execute("""
+                SELECT COALESCE(SUM(ABS(tutar)), 0) as nakit
+                FROM kasa_hareketleri
+                WHERE islem_turu = 'VADELI_ODEME' AND kasa_etkisi=true AND durum='aktif'
+                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+            """)
+            ozet['vadeli_nakit'] = float(cur.fetchone()['nakit'])
+
+            cur.execute("""
+                SELECT COALESCE(SUM(kh.tutar), 0) as kart
+                FROM kart_hareketleri kh
+                WHERE kh.islem_turu = 'HARCAMA'
+                AND kh.aciklama LIKE 'Vadeli alım:%'
+                AND kh.durum = 'aktif'
+                AND EXTRACT(YEAR FROM kh.tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM kh.tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+            """)
+            ozet['vadeli_kart'] = float(cur.fetchone()['kart'])
+
+            # GENEL TOPLAM
+            ozet['genel_nakit_toplam'] = ozet['anlik_nakit'] + ozet['sabit_nakit'] + ozet['vadeli_nakit']
+            ozet['genel_kart_toplam']  = ozet['anlik_kart']  + ozet['sabit_kart']  + ozet['vadeli_kart']
+
         return ozet
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -463,12 +521,19 @@ class AnlikGider(BaseModel):
     tutar: float
     aciklama: Optional[str] = None
     sube: Optional[str] = "MERKEZ"
+    odeme_yontemi: str = 'nakit'   # 'nakit' veya 'kart'
+    kart_id: Optional[str] = None
     force: bool = False
 
 @app.get("/api/anlik-gider")
 def anlik_gider_listele():
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM anlik_giderler WHERE durum='aktif' ORDER BY tarih DESC LIMIT 200")
+        cur.execute("""
+            SELECT ag.*, k.kart_adi, k.banka
+            FROM anlik_giderler ag
+            LEFT JOIN kartlar k ON k.id = ag.kart_id
+            WHERE ag.durum='aktif' ORDER BY ag.tarih DESC LIMIT 200
+        """)
         return [dict(r) for r in cur.fetchall()]
 
 @app.post("/api/anlik-gider")
@@ -483,12 +548,44 @@ def anlik_gider_ekle(g: AnlikGider):
             benzer = cur.fetchall()
             if benzer:
                 return {"warning": True, "mesaj": f"Son 7 günde benzer kayıt var ({len(benzer)} adet). Yine de kaydetmek için force=true gönderin."}
+
+        # KART ile ödeme — kart validasyon
+        if g.odeme_yontemi == 'kart':
+            if not g.kart_id:
+                raise HTTPException(400, "Kart seçimi zorunlu")
+            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (g.kart_id,))
+            kart = cur.fetchone()
+            if not kart: raise HTTPException(404, "Kart bulunamadı")
+            cur.execute("""
+                SELECT COALESCE(SUM(
+                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
+                         WHEN islem_turu='ODEME' THEN -tutar ELSE 0 END
+                ), 0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
+            """, (g.kart_id,))
+            borc = float(cur.fetchone()['borc'])
+            kalan_limit = float(kart['limit_tutar']) - borc
+            if kalan_limit < g.tutar:
+                raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
+
         gid = str(uuid.uuid4())
-        cur.execute("""INSERT INTO anlik_giderler (id,tarih,kategori,tutar,aciklama,sube)
-            VALUES (%s,%s,%s,%s,%s,%s)""",
-            (gid, g.tarih, g.kategori, g.tutar, g.aciklama, g.sube))
-        insert_kasa_hareketi(cur, g.tarih, 'ANLIK_GIDER', -abs(g.tutar),
-            f"Anlık gider: {g.aciklama or g.kategori}", 'anlik_giderler', gid)
+        cur.execute("""INSERT INTO anlik_giderler (id,tarih,kategori,tutar,aciklama,sube,odeme_yontemi,kart_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (gid, g.tarih, g.kategori, g.tutar, g.aciklama, g.sube, g.odeme_yontemi, g.kart_id))
+
+        if g.odeme_yontemi == 'kart':
+            # Karta HARCAMA yaz — kasaya yazma
+            hid = str(uuid.uuid4())
+            cur.execute("""
+                INSERT INTO kart_hareketleri
+                    (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama)
+                VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s)
+            """, (hid, g.kart_id, g.tarih, g.tutar,
+                  f"Anlık gider: {g.aciklama or g.kategori}"))
+        else:
+            # NAKİT — kasaya yaz
+            insert_kasa_hareketi(cur, g.tarih, 'ANLIK_GIDER', -abs(g.tutar),
+                f"Anlık gider: {g.aciklama or g.kategori}", 'anlik_giderler', gid)
+
         audit(cur, 'anlik_giderler', gid, 'INSERT')
     return {"id": gid, "success": True}
 
@@ -498,10 +595,18 @@ def anlik_gider_sil(gid: str):
         cur.execute("SELECT * FROM anlik_giderler WHERE id=%s AND durum='aktif'", (gid,))
         eski = cur.fetchone()
         if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten iptal edilmiş")
-        # Gideri pasifleştir
         cur.execute("UPDATE anlik_giderler SET durum='iptal' WHERE id=%s", (gid,))
-        # Immutable model: pasifleştir + ters kayıt
-        iptal_kasa_hareketi(cur, gid, 'anlik_giderler', 'ANLIK_GIDER', 'ANLIK_GIDER_IPTAL', 'Anlık gider iptali')
+        if eski.get('odeme_yontemi') == 'kart' and eski.get('kart_id'):
+            # Kart harcamasını iptal et
+            cur.execute("""
+                UPDATE kart_hareketleri SET durum='iptal'
+                WHERE kart_id=%s AND islem_turu='HARCAMA'
+                AND aciklama LIKE %s AND durum='aktif'
+                AND tarih=%s
+            """, (eski['kart_id'], f"%{eski.get('aciklama') or eski['kategori']}%", eski['tarih']))
+        else:
+            # NAKİT — ters kasa kaydı
+            iptal_kasa_hareketi(cur, gid, 'anlik_giderler', 'ANLIK_GIDER', 'ANLIK_GIDER_IPTAL', 'Anlık gider iptali')
         audit(cur, 'anlik_giderler', gid, 'IPTAL', eski=eski)
     return {"success": True}
 
@@ -1162,11 +1267,13 @@ class SabitGider(BaseModel):
     odeme_gunu: int = 1
     baslangic_tarihi: Optional[date] = None
     sube_id: Optional[str] = None
-    gecerlilik_tarihi: Optional[date] = None  # Güncelleme: hangi aydan itibaren
-    sozlesme_sure_ay: Optional[int] = None    # Kira/Abonelik: sözleşme süresi
-    kira_artis_periyot: Optional[str] = None  # 6ay,1yil,2yil,5yil — periyottan hesaplanır
-    kira_artis_tarihi: Optional[date] = None  # Otomatik hesaplanır
-    sozlesme_bitis_tarihi: Optional[date] = None  # Hesaplanmış bitiş
+    gecerlilik_tarihi: Optional[date] = None
+    sozlesme_sure_ay: Optional[int] = None
+    kira_artis_periyot: Optional[str] = None
+    kira_artis_tarihi: Optional[date] = None
+    sozlesme_bitis_tarihi: Optional[date] = None
+    odeme_yontemi: str = 'nakit'   # 'nakit' veya 'kart'
+    kart_id: Optional[str] = None  # Kart talimatı için
 
 KIRA_ARTIS_PERIYOT_MAP = {"6ay": 6, "1yil": 12, "2yil": 24, "5yil": 60}
 
@@ -1191,11 +1298,13 @@ def sabit_gider_ekle(g: SabitGider):
             sozlesme_bitis = ay_ekle(g.baslangic_tarihi, g.sozlesme_sure_ay)
         cur.execute("""INSERT INTO sabit_giderler
             (id,gider_adi,kategori,tutar,periyot,odeme_gunu,baslangic_tarihi,sube_id,
-             sozlesme_sure_ay,kira_artis_periyot,kira_artis_tarihi,sozlesme_bitis_tarihi)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+             sozlesme_sure_ay,kira_artis_periyot,kira_artis_tarihi,sozlesme_bitis_tarihi,
+             odeme_yontemi,kart_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (gid, g.gider_adi, g.kategori, g.tutar, g.periyot, g.odeme_gunu,
              g.baslangic_tarihi, g.sube_id or None,
-             g.sozlesme_sure_ay, g.kira_artis_periyot, kira_artis_tarihi, sozlesme_bitis))
+             g.sozlesme_sure_ay, g.kira_artis_periyot, kira_artis_tarihi, sozlesme_bitis,
+             g.odeme_yontemi, g.kart_id or None))
         onay_ekle(cur, 'SABIT_GIDER', 'sabit_giderler', gid,
             f"Sabit gider: {g.gider_adi}", g.tutar, date.today())
         audit(cur, 'sabit_giderler', gid, 'INSERT')
@@ -1211,9 +1320,11 @@ def sabit_gider_guncelle(gid: str, g: SabitGider):
         # Eksik alanları eski kayıttan tamamla — inline formdan gelen kısmi güncelleme desteği
         gider_adi   = g.gider_adi   or eski['gider_adi']
         kategori    = g.kategori    or eski['kategori']
-        periyot     = g.periyot     or eski['periyot'] or 'aylik'
-        odeme_gunu  = g.odeme_gunu  or eski['odeme_gunu'] or 1
-        sube_id     = g.sube_id     or eski['sube_id']
+        periyot       = g.periyot       or eski['periyot'] or 'aylik'
+        odeme_gunu    = g.odeme_gunu    or eski['odeme_gunu'] or 1
+        sube_id       = g.sube_id       or eski['sube_id']
+        odeme_yontemi = g.odeme_yontemi or eski.get('odeme_yontemi') or 'nakit'
+        kart_id       = g.kart_id       or eski.get('kart_id')
 
         # Eğer gecerlilik_tarihi belirtilmişse: eski kaydı kapat, yeni kayıt aç
         if g.gecerlilik_tarihi:
@@ -1236,7 +1347,6 @@ def sabit_gider_guncelle(gid: str, g: SabitGider):
             """, (gid,))
             # Yeni kayıt aç — gecerlilik_tarihi'nden itibaren
             yeni_id = str(uuid.uuid4())
-            # Kira artış tarihi: periyot seçildiyse gecerlilik_tarihi'nden hesapla
             kira_artis_tarihi_g = g.kira_artis_tarihi
             if g.gecerlilik_tarihi and g.kira_artis_periyot and g.kira_artis_periyot in KIRA_ARTIS_PERIYOT_MAP:
                 kira_artis_tarihi_g = ay_ekle(g.gecerlilik_tarihi, KIRA_ARTIS_PERIYOT_MAP[g.kira_artis_periyot])
@@ -1245,11 +1355,13 @@ def sabit_gider_guncelle(gid: str, g: SabitGider):
                 sozlesme_bitis = ay_ekle(g.gecerlilik_tarihi, g.sozlesme_sure_ay)
             cur.execute("""INSERT INTO sabit_giderler
                 (id,gider_adi,kategori,tutar,periyot,odeme_gunu,baslangic_tarihi,sube_id,
-                 sozlesme_sure_ay,kira_artis_periyot,kira_artis_tarihi,sozlesme_bitis_tarihi)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                 sozlesme_sure_ay,kira_artis_periyot,kira_artis_tarihi,sozlesme_bitis_tarihi,
+                 odeme_yontemi,kart_id)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (yeni_id, gider_adi, kategori, g.tutar, periyot,
                  odeme_gunu, g.gecerlilik_tarihi, sube_id,
-                 g.sozlesme_sure_ay, g.kira_artis_periyot, kira_artis_tarihi_g, sozlesme_bitis))
+                 g.sozlesme_sure_ay, g.kira_artis_periyot, kira_artis_tarihi_g, sozlesme_bitis,
+                 odeme_yontemi, kart_id or None))
             onay_ekle(cur, 'SABIT_GIDER', 'sabit_giderler', yeni_id,
                 f"Sabit gider güncellendi: {gider_adi}", g.tutar, g.gecerlilik_tarihi)
             audit(cur, 'sabit_giderler', yeni_id, 'INSERT_GUNCELLEME')
@@ -1257,9 +1369,10 @@ def sabit_gider_guncelle(gid: str, g: SabitGider):
         else:
             # Tarih belirtilmemişse — sadece bu kaydı güncelle
             cur.execute("""UPDATE sabit_giderler SET gider_adi=%s,kategori=%s,tutar=%s,
-                periyot=%s,odeme_gunu=%s,baslangic_tarihi=%s,sube_id=%s WHERE id=%s""",
+                periyot=%s,odeme_gunu=%s,baslangic_tarihi=%s,sube_id=%s,
+                odeme_yontemi=%s,kart_id=%s WHERE id=%s""",
                 (gider_adi, kategori, g.tutar, periyot, odeme_gunu,
-                 g.baslangic_tarihi, sube_id, gid))
+                 g.baslangic_tarihi, sube_id, odeme_yontemi, kart_id or None, gid))
             audit(cur, 'sabit_giderler', gid, 'UPDATE', eski=eski)
         return {"success": True}
 

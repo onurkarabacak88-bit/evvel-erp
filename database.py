@@ -193,19 +193,6 @@ def init_db():
                 olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """)
-        # Migration: odeme_yontemi kolonu kasa_hareketleri'ne ekle
-        cur.execute("""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name='kasa_hareketleri' AND column_name='odeme_yontemi'
-                ) THEN
-                    ALTER TABLE kasa_hareketleri ADD COLUMN odeme_yontemi TEXT DEFAULT 'nakit';
-                END IF;
-            END $$;
-        """)
-
         # Migration: mevcut tabloya eksik kolonları ekle
         cur.execute("""
             DO $$
@@ -307,9 +294,22 @@ def init_db():
                 odeme_gunu      INT NOT NULL DEFAULT 1,
                 baslangic_tarihi DATE,
                 sube_id         TEXT REFERENCES subeler(id),
+                odeme_yontemi   TEXT NOT NULL DEFAULT 'nakit',
+                kart_id         TEXT REFERENCES kartlar(id),
                 aktif           BOOLEAN NOT NULL DEFAULT TRUE,
                 olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
             )
+        """)
+        # Migration: mevcut sabit_giderler tablosuna kart kolonları ekle
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sabit_giderler' AND column_name='odeme_yontemi')
+                THEN ALTER TABLE sabit_giderler ADD COLUMN odeme_yontemi TEXT NOT NULL DEFAULT 'nakit'; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sabit_giderler' AND column_name='kart_id')
+                THEN ALTER TABLE sabit_giderler ADD COLUMN kart_id TEXT REFERENCES kartlar(id); END IF;
+            END $$;
         """)
 
         # ── VADELİ ALIMLAR ─────────────────────────────────────
@@ -345,15 +345,28 @@ def init_db():
         # ── ANLIK GİDERLER ─────────────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS anlik_giderler (
-                id          TEXT PRIMARY KEY,
-                tarih       DATE NOT NULL,
-                kategori    TEXT NOT NULL,
-                tutar       NUMERIC(14,2) NOT NULL,
-                aciklama    TEXT,
-                sube        TEXT,
-                durum       TEXT NOT NULL DEFAULT 'aktif',
-                olusturma   TIMESTAMP NOT NULL DEFAULT NOW()
+                id              TEXT PRIMARY KEY,
+                tarih           DATE NOT NULL,
+                kategori        TEXT NOT NULL,
+                tutar           NUMERIC(14,2) NOT NULL,
+                aciklama        TEXT,
+                sube            TEXT,
+                odeme_yontemi   TEXT NOT NULL DEFAULT 'nakit',
+                kart_id         TEXT REFERENCES kartlar(id),
+                durum           TEXT NOT NULL DEFAULT 'aktif',
+                olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
             )
+        """)
+        # Migration: mevcut anlik_giderler tablosuna kart kolonları ekle
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='anlik_giderler' AND column_name='odeme_yontemi')
+                THEN ALTER TABLE anlik_giderler ADD COLUMN odeme_yontemi TEXT NOT NULL DEFAULT 'nakit'; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='anlik_giderler' AND column_name='kart_id')
+                THEN ALTER TABLE anlik_giderler ADD COLUMN kart_id TEXT REFERENCES kartlar(id); END IF;
+            END $$;
         """)
 
         # ── AUDIT LOG ──────────────────────────────────────────

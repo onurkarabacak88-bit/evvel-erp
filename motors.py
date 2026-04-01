@@ -495,6 +495,86 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                     continue
 
             pid = str(_uuid.uuid4())
+
+            # KART TALİMAT KONTROLÜ — kart_id varsa otomatik çek
+            if g.get('odeme_yontemi') == 'kart' and g.get('kart_id'):
+                # Bu ay için zaten plan var mı?
+                cur.execute("""
+                    SELECT 1 FROM odeme_plani
+                    WHERE kaynak_id = %s
+                    AND referans_ay = DATE_TRUNC('month', %s::date)
+                    AND durum != 'iptal'
+                """, (g['id'], str(odeme_tarihi)))
+                if cur.fetchone():
+                    atlanan.append(f"Sabit gider zaten planlanmış: {g['gider_adi']}")
+                    continue
+
+                # Kart limit kontrolü
+                cur.execute("""
+                    SELECT k.limit_tutar,
+                        COALESCE(SUM(
+                            CASE WHEN kh.islem_turu IN ('HARCAMA','FAIZ') THEN kh.tutar
+                                 WHEN kh.islem_turu='ODEME' THEN -kh.tutar ELSE 0 END
+                        ), 0) as borc
+                    FROM kartlar k
+                    LEFT JOIN kart_hareketleri kh ON kh.kart_id = k.id AND kh.durum='aktif'
+                    WHERE k.id = %s
+                    GROUP BY k.limit_tutar
+                """, (g['kart_id'],))
+                kart_row = cur.fetchone()
+                limit = float(kart_row['limit_tutar']) if kart_row else 0
+                borc = float(kart_row['borc']) if kart_row else 0
+                kalan_limit = limit - borc
+                tutar = float(g['tutar'])
+                doluluk_pct = (borc / limit * 100) if limit > 0 else 0
+
+                if tutar > kalan_limit:
+                    # LİMİT DOLU — çekme, uyarı ver
+                    uretilen.append(
+                        f"🚨 KART LİMİT YETERSİZ: {g['gider_adi']} çekilemedi "
+                        f"(kalan limit: {kalan_limit:,.0f}₺ < {tutar:,.0f}₺) — manuel ödeme gerekli"
+                    )
+                    # Plan bekliyor'da açılsın, kullanıcı manuel ödesin
+                    cur.execute("""
+                        INSERT INTO odeme_plani
+                            (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum, kaynak_tablo, kaynak_id)
+                        VALUES (%s, NULL, %s, DATE_TRUNC('month', %s::date), %s, %s, %s, 'bekliyor', 'sabit_giderler', %s)
+                    """, (pid, odeme_tarihi, str(odeme_tarihi), tutar, tutar,
+                          f"⚠️ LİMİT YETERSİZ — Manuel Öde: {g['gider_adi']}", g['id']))
+                    continue
+
+                # Karta HARCAMA yaz
+                hid = str(_uuid.uuid4())
+                cur.execute("""
+                    INSERT INTO kart_hareketleri
+                        (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama)
+                    VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s)
+                """, (hid, g['kart_id'], odeme_tarihi, tutar,
+                      f"Otomatik talimat: {g['gider_adi']}"))
+
+                # Plan odendi olarak aç — kasa etkilenmez
+                cur.execute("""
+                    INSERT INTO odeme_plani
+                        (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar,
+                         odenen_tutar, odeme_tarihi, aciklama, durum, kaynak_tablo, kaynak_id)
+                    VALUES (%s, %s, %s, DATE_TRUNC('month', %s::date), %s, %s, %s, %s, %s, 'odendi', 'sabit_giderler', %s)
+                """, (pid, g['kart_id'], odeme_tarihi, str(odeme_tarihi),
+                      tutar, tutar, tutar, odeme_tarihi,
+                      f"Sabit Gider (Kart Talimat): {g['gider_adi']}", g['id']))
+
+                if doluluk_pct >= 80:
+                    uretilen.append(
+                        f"⚠️ KART KRİTİK: {g['gider_adi']} karta çekildi "
+                        f"({tutar:,.0f}₺) ama kart doluluk %{doluluk_pct:.0f}"
+                    )
+                else:
+                    uretilen.append(
+                        f"✅ Kart talimat: {g['gider_adi']} → {g['kart_id'][:8]}... "
+                        f"({tutar:,.0f}₺) — {odeme_tarihi}"
+                    )
+                continue
+
+            # NAKİT — mevcut akış
             cur.execute("""
                 INSERT INTO odeme_plani (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum, kaynak_tablo, kaynak_id)
                 SELECT %s, NULL, %s, DATE_TRUNC('month', %s::date), %s, %s, %s, 'bekliyor', 'sabit_giderler', %s
