@@ -1565,9 +1565,42 @@ class VadeliOdeModel(BaseModel):
 @app.get("/api/vadeli-alimlar")
 def vadeli_listele():
     with db() as (conn, cur):
+        # Bekleyen vadeli alımlar
         cur.execute("""SELECT *, (vade_tarihi - CURRENT_DATE) as gun_kaldi
             FROM vadeli_alimlar WHERE durum='bekliyor' ORDER BY vade_tarihi""")
-        return [dict(r) for r in cur.fetchall()]
+        liste = [dict(r) for r in cur.fetchall()]
+
+        # Her vadeli alım için bu aya ait ödeme geçmişini ekle (nakit + kart)
+        for v in liste:
+            vid = v['id']
+            # Nakit ödemeler (kasa_hareketleri)
+            cur.execute("""
+                SELECT ABS(tutar) as tutar, tarih, 'nakit' as yontem
+                FROM kasa_hareketleri
+                WHERE kaynak_id = %s AND islem_turu = 'VADELI_ODEME'
+                AND kasa_etkisi = true AND durum = 'aktif'
+                ORDER BY tarih DESC
+            """, (vid,))
+            nakit_odemeler = [dict(r) for r in cur.fetchall()]
+
+            # Kart ödemeleri (kart_hareketleri)
+            cur.execute("""
+                SELECT kh.tutar, kh.tarih, 'kart' as yontem,
+                       k.banka, k.kart_adi
+                FROM kart_hareketleri kh
+                JOIN kartlar k ON k.id = kh.kart_id
+                WHERE kh.aciklama ILIKE %s
+                AND kh.islem_turu = 'HARCAMA' AND kh.durum = 'aktif'
+                ORDER BY kh.tarih DESC
+            """, (f'%{v["aciklama"]}%',))
+            kart_odemeler = [dict(r) for r in cur.fetchall()]
+
+            v['odeme_gecmisi'] = nakit_odemeler + kart_odemeler
+            v['nakit_odenen'] = sum(float(r['tutar']) for r in nakit_odemeler)
+            v['kart_odenen'] = sum(float(r['tutar']) for r in kart_odemeler)
+            v['toplam_odenen'] = v['nakit_odenen'] + v['kart_odenen']
+
+        return liste
 
 @app.post("/api/vadeli-alimlar")
 def vadeli_ekle(v: VadeliAlim):
