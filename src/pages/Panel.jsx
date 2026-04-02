@@ -59,11 +59,14 @@ export default function Panel({ onNavigate }) {
       api('/vadeli-odeme-ozet').catch(() => null),
     ]).then(([p, u, o, a, sg, su, og, vo, vodeme]) => {
       setVadeliOzet(vodeme || {});
-      setPanel(p); setUyarilar(u || []); setOnaylar(o || []); setAnomali(a);
+      setPanel(p);
+      setUyarilar(u || []);
+      setOnaylar(o || []);
+      setAnomali(a);
       setSabitGiderOzet(sg?.ozet || {});
       setSabitGiderUyarilar(su?.uyarilar || []);
       setOdenenGiderler(og || []);
-      setVadeliOzet(vo || {});
+      
       setLoading(false);
     }).catch((e) => {
       console.error("PANEL LOAD ERROR:", e);
