@@ -20,6 +20,8 @@ export default function Panel({ onNavigate }) {
   const [msg, setMsg] = useState(null);
   const [sabitGiderOzet, setSabitGiderOzet] = useState({});
   const [vadeliOzet, setVadeliOzet] = useState({});
+  const [detay, setDetay] = useState([]);
+  const [detayAcik, setDetayAcik] = useState(false);
   const [sabitGiderUyarilar, setSabitGiderUyarilar] = useState([]);
   const [kiraModal, setKiraModal] = useState(null);
   const [kiraForm, setKiraForm] = useState({});
@@ -44,7 +46,15 @@ export default function Panel({ onNavigate }) {
   const [kartOneriYukleniyor, setKartOneriYukleniyor] = useState(false);
   const [seciliKartId, setSeciliKartId] = useState('');
   const [aktifOdemeVadeliMi, setAktifOdemeVadeliMi] = useState(false);
-
+  const detayGetir = (tip) => {
+    api(`/vadeli-odeme-detay?kaynak=${tip}`)
+      .then(res => {
+        console.log("DETAY:", res);
+        setDetay(res || []);
+        setDetayAcik(true);
+      })
+      .catch(err => console.error(err));
+  };
   const load = () => {
     setLoading(true);
     Promise.all([
@@ -817,7 +827,15 @@ export default function Panel({ onNavigate }) {
                 )}
                 {kart > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 10, color: 'var(--text3)' }}>💳 Kart</span>
+                    <span 
+                      style={{ fontSize: 10, color: 'var(--text3)', cursor: 'pointer' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        detayGetir('kart');
+                      }}
+                    >
+                      💳 Kart
+                    </span>
                     <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: '#4a9eff' }}>{fmt(kart)}</span>
                   </div>
                 )}
