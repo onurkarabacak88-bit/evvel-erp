@@ -3183,28 +3183,26 @@ def health():
     }
 @app.get("/api/vadeli-odeme-ozet")
 def vadeli_odeme_ozet():
-    conn = get_db_connection()
-    cur = conn.cursor()
+    with db() as (conn, cur):
 
-    cur.execute("""
-        SELECT odeme_yontemi, SUM(tutar)
-        FROM vadeli_odeme_log
-        WHERE DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
-        GROUP BY odeme_yontemi
-    """)
+        cur.execute("""
+            SELECT odeme_yontemi, SUM(tutar)
+            FROM vadeli_odeme_log
+            WHERE DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
+            GROUP BY odeme_yontemi
+        """)
 
-    rows = cur.fetchall()
+        rows = cur.fetchall()
 
-    result = {
-        "nakit": 0,
-        "kart": 0
-    }
+        result = {
+            "nakit": 0,
+            "kart": 0
+        }
 
-    for r in rows:
-        result[r[0]] = float(r[1])
+        for r in rows:
+            result[r[0]] = float(r[1])
 
-    conn.close()
-    return result
+        return result
 
 # Frontend
 if pathlib.Path("static/index.html").exists():
