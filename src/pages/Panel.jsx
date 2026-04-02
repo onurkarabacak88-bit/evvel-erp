@@ -56,7 +56,9 @@ export default function Panel({ onNavigate }) {
       api('/sabit-giderler/uyarilar').catch(() => null),
       api('/sabit-giderler/odenenler').catch(() => null),
       api('/vadeli-alimlar/ozet').catch(() => null),
-    ]).then(([p, u, o, a, sg, su, og, vo]) => {
+      api('/vadeli-odeme-ozet').catch(() => null),
+    ]).then(([p, u, o, a, sg, su, og, vo, vodeme]) => {
+      setVadeliOzet(vodeme || {});
       setPanel(p); setUyarilar(u || []); setOnaylar(o || []); setAnomali(a);
       setSabitGiderOzet(sg?.ozet || {});
       setSabitGiderUyarilar(su?.uyarilar || []);
@@ -740,8 +742,8 @@ export default function Panel({ onNavigate }) {
           { label: '🔄 Geçen Ay Devir', value: fmt(panel.bu_ay_devir || 0), sub: panel.bu_ay_devir > 0 ? 'Devir aktarıldı ✓' : 'Devir yok', renk: panel.bu_ay_devir > 0 ? 'var(--yellow)' : 'var(--text3)', page: 'ledger' },
           { label: '💰 Dış Kaynak (Bu Ay)', value: fmt(panel.bu_ay_dis_kaynak || 0), sub: 'Ciro dışı gelir', renk: panel.bu_ay_dis_kaynak > 0 ? '#4a9eff' : 'var(--text3)', page: 'dis-kaynak' },
           (() => {
-            const nakit = panel.anlik_nakit || 0;
-            const kart  = panel.anlik_kart  || 0;
+            const nakit = vadeliOzet.nakit || 0;
+            const kart  = vadeliOzet.kart  || 0;
             const toplam = nakit + kart;
             const durdurulmus = sabitGiderUyarilar.filter(u => u.durduruldu === true).length;
             const geciken = sabitGiderOzet.geciken_adet || 0;
