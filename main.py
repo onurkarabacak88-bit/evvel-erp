@@ -3213,7 +3213,7 @@ def vadeli_odeme_detay(kaynak: str):
         cur.execute("""
             SELECT v.aciklama, l.tutar, l.odeme_yontemi, l.tarih
             FROM vadeli_odeme_log l
-            JOIN vadeli_alimlar v ON v.id::text = l.vadeli_id
+            JOIN vadeli_alimlar v ON v.id = l.vadeli_id::uuid
             WHERE l.odeme_yontemi = %s
             ORDER BY l.tarih DESC
         """, (kaynak,))
