@@ -3200,7 +3200,10 @@ def vadeli_odeme_ozet():
         }
 
         for r in rows:
-            result[r[0]] = float(r[1])
+            key = r.get('odeme_yontemi')
+            val = r.get('sum') or 0
+            if key in result:
+                result[key] = float(val)
 
         return result
 @app.get("/api/vadeli-odeme-detay")
