@@ -852,6 +852,13 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
             # Kart harcaması ekle — kasaya yazma
             hid = str(uuid.uuid4())
             cur.execute("""
+                INSERT INTO vadeli_odeme_log (vadeli_id, tutar, odeme_yontemi)
+                VALUES (%s, %s, %s)
+            """, ( 
+                plan['kaynak_id'],
+                odeme_tutari,
+                'kart'
+            ))
                 INSERT INTO kart_hareketleri
                     (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama)
                 VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s)
