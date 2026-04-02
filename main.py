@@ -872,7 +872,7 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
                 WHERE kaynak_id=%s AND durum NOT IN ('onaylandi','reddedildi')""", (oid,))
             # vadeli_alimlar'ı da kapat
             if plan.get('kaynak_id'):
-    vadeli_alim_kapat(cur, plan['kaynak_id'], bugun)
+                vadeli_alim_kapat(cur, plan['kaynak_id'], bugun)
             audit(cur, 'odeme_plani', oid, 'ODENDI_KART')
             return {"success": True, "odeme_yontemi": "kart"}
 
