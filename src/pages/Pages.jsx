@@ -256,8 +256,9 @@ export function Borclar() {
 export function SabitGiderler() {
   const [liste, setListe] = useState([]);
   const [subeler, setSubeler] = useState([]);
+  const [kartlar, setKartlar] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({gider_adi:'',kategori:'Kira',tutar:'',periyot:'aylik',odeme_gunu:1,baslangic_tarihi:'',sube_id:'',gecerlilik_tarihi:'',sozlesme_sure_ay:'',kira_artis_periyot:''});
+  const [form, setForm] = useState({gider_adi:'',kategori:'Kira',tutar:'',periyot:'aylik',odeme_gunu:1,baslangic_tarihi:'',sube_id:'',gecerlilik_tarihi:'',sozlesme_sure_ay:'',kira_artis_periyot:'',odeme_yontemi:'nakit',kart_id:''});
   const [duzenleId, setDuzenleId] = useState(null);
   const [msg, setMsg] = useState(null);
   const [sekme, setSekme] = useState('tanimli');
@@ -268,6 +269,7 @@ export function SabitGiderler() {
   const load=()=>{
     api('/sabit-giderler').then(setListe);
     api('/subeler').then(setSubeler);
+    api('/kartlar').then(setKartlar);
     api('/sabit-giderler/odemeler').then(setOdemeler);
   };
   useEffect(()=>{
@@ -283,7 +285,8 @@ export function SabitGiderler() {
           setForm({gider_adi:g.gider_adi,kategori:g.kategori,tutar:g.tutar,periyot:g.periyot,
             odeme_gunu:g.odeme_gunu,baslangic_tarihi:g.baslangic_tarihi?.slice(0,10)||'',
             sube_id:g.sube_id||'',gecerlilik_tarihi:'',sozlesme_sure_ay:g.sozlesme_sure_ay||'',
-            kira_artis_periyot:g.kira_artis_periyot||''});
+            kira_artis_periyot:g.kira_artis_periyot||'',
+            odeme_yontemi:g.odeme_yontemi||'nakit',kart_id:g.kart_id||''});
           setDuzenleId(g.id);
           setHatalar({});
           setShowModal(true);
@@ -334,7 +337,7 @@ export function SabitGiderler() {
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
       <div className="page-header flex items-center justify-between">
         <div><h2>Sabit Giderler</h2><p>Aylık toplam: {fmt(toplamAylik)} ₺</p></div>
-        <button className="btn btn-primary" onClick={()=>{setForm({gider_adi:'',kategori:'Kira',tutar:'',periyot:'aylik',odeme_gunu:1,baslangic_tarihi:'',sube_id:'',sozlesme_sure_ay:'',kira_artis_periyot:''});setDuzenleId(null);setShowModal(true);}}>+ Gider Ekle</button>
+        <button className="btn btn-primary" onClick={()=>{setForm({gider_adi:'',kategori:'Kira',tutar:'',periyot:'aylik',odeme_gunu:1,baslangic_tarihi:'',sube_id:'',sozlesme_sure_ay:'',kira_artis_periyot:'',odeme_yontemi:'nakit',kart_id:''});setDuzenleId(null);setShowModal(true);}}>+ Gider Ekle</button>
       </div>
 
       {/* Özet Kartlar */}
@@ -363,7 +366,7 @@ export function SabitGiderler() {
       {/* Tanımlı Giderler Tablosu — orijinal */}
       {sekme==='tanimli' && <div className="table-wrap">
         <table>
-          <thead><tr><th>Gider Adı</th><th>Kategori</th><th style={{textAlign:'right'}}>Tutar</th><th>Periyot</th><th>Ödeme Günü</th><th>Artış Periyodu</th><th>Şube</th><th>Durum</th><th></th></tr></thead>
+          <thead><tr><th>Gider Adı</th><th>Kategori</th><th style={{textAlign:'right'}}>Tutar</th><th>Periyot</th><th>Ödeme Günü</th><th>Artış Periyodu</th><th>Ödeme Yöntemi</th><th>Şube</th><th>Durum</th><th></th></tr></thead>
           <tbody>
             {liste.map(g=>(
               <tr key={g.id}>
@@ -375,11 +378,17 @@ export function SabitGiderler() {
                 <td style={{fontSize:12,color:'var(--yellow)'}}>
                   {({'6ay':'6 Ay','1yil':'1 Yıl','2yil':'2 Yıl','5yil':'5 Yıl'})[g.kira_artis_periyot]||'—'}
                 </td>
+                <td>
+                  {g.odeme_yontemi === 'kart'
+                    ? <span className="badge badge-blue">💳 Kart</span>
+                    : <span className="badge badge-gray">💵 Nakit</span>
+                  }
+                </td>
                 <td style={{fontSize:12}}>{g.sube_adi||'---'}</td>
                 <td><span className={`badge ${g.aktif?'badge-green':'badge-gray'}`}>{g.aktif?'Aktif':'Pasif'}</span></td>
                 <td>
                   <div className="flex gap-8">
-                    <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({gider_adi:g.gider_adi,kategori:g.kategori,tutar:g.tutar,periyot:g.periyot,odeme_gunu:g.odeme_gunu,baslangic_tarihi:g.baslangic_tarihi?.slice(0,10)||'',sube_id:g.sube_id||'',gecerlilik_tarihi:'',sozlesme_sure_ay:g.sozlesme_sure_ay||'',kira_artis_periyot:g.kira_artis_periyot||''});setDuzenleId(g.id);setHatalar({});setShowModal(true);}}>✏️</button>
+                    <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({gider_adi:g.gider_adi,kategori:g.kategori,tutar:g.tutar,periyot:g.periyot,odeme_gunu:g.odeme_gunu,baslangic_tarihi:g.baslangic_tarihi?.slice(0,10)||'',sube_id:g.sube_id||'',gecerlilik_tarihi:'',sozlesme_sure_ay:g.sozlesme_sure_ay||'',kira_artis_periyot:g.kira_artis_periyot||'',odeme_yontemi:g.odeme_yontemi||'nakit',kart_id:g.kart_id||''});setDuzenleId(g.id);setHatalar({});setShowModal(true);}}>✏️</button>
                     <button className="btn btn-danger btn-sm" onClick={()=>sil(g.id)}>Kapat</button>
                   </div>
                 </td>
@@ -519,6 +528,47 @@ export function SabitGiderler() {
                     </div>
                   </>
                 )}
+
+                {/* ÖDEME YÖNTEMİ */}
+                <div className="form-group" style={{gridColumn:'1/-1'}}>
+                  <label>Ödeme Yöntemi</label>
+                  <div style={{display:'flex',gap:8,marginTop:4}}>
+                    <button type="button"
+                      className={`btn btn-sm ${form.odeme_yontemi==='nakit'?'btn-primary':'btn-ghost'}`}
+                      onClick={()=>setForm({...form,odeme_yontemi:'nakit',kart_id:''})}>
+                      💵 Nakit
+                    </button>
+                    <button type="button"
+                      className={`btn btn-sm ${form.odeme_yontemi==='kart'?'btn-primary':'btn-ghost'}`}
+                      onClick={()=>setForm({...form,odeme_yontemi:'kart'})}>
+                      💳 Kart Talimatı
+                    </button>
+                  </div>
+                  {form.odeme_yontemi === 'kart' && (
+                    <p style={{fontSize:11,color:'var(--text3)',marginTop:4}}>
+                      Her ay otomatik olarak seçilen karta harcama olarak işlenir.
+                    </p>
+                  )}
+                </div>
+
+                {/* KART SEÇİMİ */}
+                {form.odeme_yontemi === 'kart' && (
+                  <div className="form-group" style={{gridColumn:'1/-1'}}>
+                    <label>Kart Seç *</label>
+                    <select value={form.kart_id} onChange={e=>setForm({...form,kart_id:e.target.value})}
+                      style={{borderColor:!form.kart_id?'var(--yellow)':''}}>
+                      <option value="">-- Kart seçin --</option>
+                      {kartlar.map(k=>(
+                        <option key={k.id} value={k.id}>
+                          {k.banka} — {k.kart_adi} (Limit: {parseInt(k.limit_tutar||0).toLocaleString('tr-TR')} ₺)
+                        </option>
+                      ))}
+                    </select>
+                    <div style={{marginTop:6,padding:'8px 12px',background:'rgba(74,158,255,0.08)',border:'1px solid rgba(74,158,255,0.3)',borderRadius:6,fontSize:12}}>
+                      💳 Her ay ödeme günü geldiğinde bu karta otomatik HARCAMA yazılır. Limit yetersizse panel uyarı verir.
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
             <div className="modal-footer">
@@ -557,8 +607,7 @@ export function VadeliAlimlar() {
   const toast=(m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
 
   function odemeModalAc(v, tip) {
-    setOdemeModal({id:v.id, aciklama:v.aciklama, tutar:parseFloat(v.tutar), tip,
-      nakit_odenen: v.nakit_odenen || 0, kart_odenen: v.kart_odenen || 0, toplam_odenen: v.toplam_odenen || 0});
+    setOdemeModal({id:v.id, aciklama:v.aciklama, tutar:parseFloat(v.tutar), tip});
     setOdemeAdim(1);
     setOdemeYontemi('nakit');
     setKartOneri(null);
@@ -668,7 +717,7 @@ export function VadeliAlimlar() {
       </div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Açıklama</th><th>Tedarikçi</th><th style={{textAlign:'right'}}>Tutar</th><th>Vade Tarihi</th><th>Kalan</th><th>Ödeme</th><th></th></tr></thead>
+          <thead><tr><th>Açıklama</th><th>Tedarikçi</th><th style={{textAlign:'right'}}>Tutar</th><th>Vade Tarihi</th><th>Kalan</th><th></th></tr></thead>
           <tbody>
             {!liste.length?(<tr><td colSpan={6}><div className="empty"><p>Vadeli alım yok</p></div></td></tr>):
             liste.map(v=>{
@@ -681,14 +730,6 @@ export function VadeliAlimlar() {
                   <td style={{textAlign:'right'}} className="amount-neg">{parseInt(v.tutar).toLocaleString('tr-TR')} ₺</td>
                   <td className="mono" style={{fontSize:12}}>{v.vade_tarihi}</td>
                   <td><span className={`badge ${gun<=0?'badge-red':gun<=7?'badge-yellow':'badge-gray'}`}>{gun<=0?'BUGÜN':gun+' gün'}</span></td>
-                  <td>
-                    {v.toplam_odenen > 0 ? (
-                      <div style={{fontSize:11,display:'flex',flexDirection:'column',gap:3}}>
-                        {v.nakit_odenen > 0 && <span style={{color:'var(--green)'}}>💵 {parseInt(v.nakit_odenen).toLocaleString('tr-TR')} ₺</span>}
-                        {v.kart_odenen  > 0 && <span style={{color:'#4a9eff'}}>💳 {parseInt(v.kart_odenen).toLocaleString('tr-TR')} ₺</span>}
-                      </div>
-                    ) : <span style={{fontSize:11,color:'var(--text3)'}}>—</span>}
-                  </td>
                   <td>
                     <div className="flex gap-8">
                       <button className="btn btn-primary btn-sm" onClick={()=>odemeModalAc(v,'tam')}>Ödendi</button>
@@ -832,34 +873,13 @@ export function VadeliAlimlar() {
                   {/* Kısmi ödeme: tutar + tarih */}
                   {odemeModal.tip === 'kismi' && (
                     <>
-                      {/* Önceki ödemeler varsa göster */}
-                      {odemeModal.toplam_odenen > 0 && (
-                        <div style={{background:'var(--bg3)',borderRadius:8,padding:'10px 14px',marginBottom:12}}>
-                          <div style={{fontSize:11,color:'var(--text3)',fontWeight:600,marginBottom:4}}>Önceki Ödemeler</div>
-                          {odemeModal.nakit_odenen > 0 && (
-                            <div style={{display:'flex',justifyContent:'space-between',fontSize:12}}>
-                              <span>💵 Nakit</span><span style={{color:'var(--green)',fontWeight:600}}>{parseInt(odemeModal.nakit_odenen).toLocaleString('tr-TR')} ₺</span>
-                            </div>
-                          )}
-                          {odemeModal.kart_odenen > 0 && (
-                            <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginTop:3}}>
-                              <span>💳 Kart</span><span style={{color:'#4a9eff',fontWeight:600}}>{parseInt(odemeModal.kart_odenen).toLocaleString('tr-TR')} ₺</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
                       <div className="form-group">
                         <label>Şimdi Ödenecek Tutar (₺)</label>
                         <input type="number" value={kismiTutar} onChange={e=>setKismiTutar(e.target.value)}
                           placeholder={`0 - ${parseInt(odemeModal.tutar)} arası`} autoFocus/>
-                        {kismiTutar && (
-                          <div style={{fontSize:11,color:'var(--text3)',marginTop:4,display:'flex',gap:16}}>
-                            <span>Kalan borç: <strong>{(odemeModal.tutar - parseFloat(kismiTutar||0)).toLocaleString('tr-TR')} ₺</strong></span>
-                            {odemeModal.toplam_odenen > 0 && (
-                              <span style={{color:'var(--text3)'}}>Toplam ödenecek: <strong>{(parseFloat(kismiTutar||0) + odemeModal.toplam_odenen).toLocaleString('tr-TR')} ₺</strong></span>
-                            )}
-                          </div>
-                        )}
+                        {kismiTutar && <div style={{fontSize:11,color:'var(--text3)',marginTop:4}}>
+                          Kalan: <strong>{(odemeModal.tutar - parseFloat(kismiTutar||0)).toLocaleString('tr-TR')} ₺</strong>
+                        </div>}
                       </div>
                       <div className="form-group">
                         <label>Kalan Borcun Yeni Vadesi</label>
@@ -870,34 +890,14 @@ export function VadeliAlimlar() {
 
                   {/* Tam ödeme: sadece özet */}
                   {odemeModal.tip === 'tam' && (
-                    <div>
-                      {/* Önceki kısmi ödemeler varsa göster */}
-                      {odemeModal.toplam_odenen > 0 && (
-                        <div style={{background:'var(--bg3)',borderRadius:8,padding:'10px 14px',marginBottom:12}}>
-                          <div style={{fontSize:11,color:'var(--text3)',fontWeight:600,marginBottom:6}}>Önceki Ödemeler</div>
-                          {odemeModal.nakit_odenen > 0 && (
-                            <div style={{display:'flex',justifyContent:'space-between',fontSize:12}}>
-                              <span>💵 Nakit</span>
-                              <span style={{color:'var(--green)',fontWeight:600}}>{parseInt(odemeModal.nakit_odenen).toLocaleString('tr-TR')} ₺</span>
-                            </div>
-                          )}
-                          {odemeModal.kart_odenen > 0 && (
-                            <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginTop:4}}>
-                              <span>💳 Kart</span>
-                              <span style={{color:'#4a9eff',fontWeight:600}}>{parseInt(odemeModal.kart_odenen).toLocaleString('tr-TR')} ₺</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <div style={{textAlign:'center',padding:'8px 0 4px'}}>
-                        <div style={{fontSize:22,fontWeight:700,color:'var(--red)'}}>
-                          {parseInt(odemeModal.tutar).toLocaleString('tr-TR')} ₺
-                        </div>
-                        <div style={{fontSize:12,color:'var(--text3)',marginTop:4}}>
-                          {odemeYontemi==='kart'
-                            ? 'Bu tutar kart borcuna eklenecek, kasadan düşmeyecek.'
-                            : 'Bu tutar kasadan düşecek ve ledger\'a yansıyacak.'}
-                        </div>
+                    <div style={{textAlign:'center',padding:'8px 0 4px'}}>
+                      <div style={{fontSize:22,fontWeight:700,color:'var(--red)'}}>
+                        {parseInt(odemeModal.tutar).toLocaleString('tr-TR')} ₺
+                      </div>
+                      <div style={{fontSize:12,color:'var(--text3)',marginTop:4}}>
+                        {odemeYontemi==='kart'
+                          ? 'Bu tutar kart borcuna eklenecek, kasadan düşmeyecek.'
+                          : 'Bu tutar kasadan düşecek ve ledger\'a yansıyacak.'}
                       </div>
                     </div>
                   )}
