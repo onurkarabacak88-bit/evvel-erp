@@ -1305,8 +1305,10 @@ def sabit_gider_ekle(g: SabitGider):
              g.baslangic_tarihi, g.sube_id or None,
              g.sozlesme_sure_ay, g.kira_artis_periyot, kira_artis_tarihi, sozlesme_bitis,
              g.odeme_yontemi, g.kart_id or None))
-        onay_ekle(cur, 'SABIT_GIDER', 'sabit_giderler', gid,
-            f"Sabit gider: {g.gider_adi}", g.tutar, date.today())
+        # Kart talimatı varsa onay kuyruğuna girme — motor otomatik işler
+        if g.odeme_yontemi != 'kart':
+            onay_ekle(cur, 'SABIT_GIDER', 'sabit_giderler', gid,
+                f"Sabit gider: {g.gider_adi}", g.tutar, date.today())
         audit(cur, 'sabit_giderler', gid, 'INSERT')
     return {"id": gid, "success": True}
 
@@ -1362,8 +1364,9 @@ def sabit_gider_guncelle(gid: str, g: SabitGider):
                  odeme_gunu, g.gecerlilik_tarihi, sube_id,
                  g.sozlesme_sure_ay, g.kira_artis_periyot, kira_artis_tarihi_g, sozlesme_bitis,
                  odeme_yontemi, kart_id or None))
-            onay_ekle(cur, 'SABIT_GIDER', 'sabit_giderler', yeni_id,
-                f"Sabit gider güncellendi: {gider_adi}", g.tutar, g.gecerlilik_tarihi)
+            if odeme_yontemi != 'kart':
+                onay_ekle(cur, 'SABIT_GIDER', 'sabit_giderler', yeni_id,
+                    f"Sabit gider güncellendi: {gider_adi}", g.tutar, g.gecerlilik_tarihi)
             audit(cur, 'sabit_giderler', yeni_id, 'INSERT_GUNCELLEME')
             return {"success": True, "yeni_id": yeni_id}
         else:
@@ -2300,8 +2303,8 @@ async def excel_import(dosya: UploadFile = File(...)):
                             cur.execute("SELECT id FROM subeler WHERE LOWER(ad)=LOWER(%s)", (str(d.get('sube','MERKEZ')),))
                             r = cur.fetchone()
                             if r: sube_id = r['id']
-                            cur.execute("""INSERT INTO sabit_giderler (id,gider_adi,kategori,tutar,periyot,odeme_gunu,sube_id)
-                                VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                            cur.execute("""INSERT INTO sabit_giderler (id,gider_adi,kategori,tutar,periyot,odeme_gunu,sube_id,odeme_yontemi)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,'nakit')""",
                                 (str(uuid.uuid4()), str(d.get('gider_adi','')),
                                  str(d.get('kategori','Diğer')),
                                  float(d.get('tutar') or 0),
