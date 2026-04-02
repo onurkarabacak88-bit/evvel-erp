@@ -3203,6 +3203,21 @@ def vadeli_odeme_ozet():
             result[r[0]] = float(r[1])
 
         return result
+@app.get("/api/vadeli-odeme-detay")
+def vadeli_odeme_detay(kaynak: str):
+    with db() as (conn, cur):
+
+        cur.execute("""
+            SELECT v.aciklama, l.tutar, l.odeme_yontemi, l.tarih
+            FROM vadeli_odeme_log l
+            JOIN vadeli_alimlar v ON v.id = l.vadeli_id
+            WHERE l.odeme_yontemi = %s
+            ORDER BY l.tarih DESC
+        """, (kaynak,))
+
+        rows = cur.fetchall()
+
+        return rows
 
 # Frontend
 if pathlib.Path("static/index.html").exists():
