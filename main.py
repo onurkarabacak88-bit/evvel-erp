@@ -3181,6 +3181,30 @@ def health():
             "plan_iptal_on_stop",
         ]
     }
+@app.get("/api/vadeli-odeme-ozet")
+def vadeli_odeme_ozet():
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT odeme_yontemi, SUM(tutar)
+        FROM vadeli_odeme_log
+        WHERE DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
+        GROUP BY odeme_yontemi
+    """)
+
+    rows = cur.fetchall()
+
+    result = {
+        "nakit": 0,
+        "kart": 0
+    }
+
+    for r in rows:
+        result[r[0]] = float(r[1])
+
+    conn.close()
+    return result
 
 # Frontend
 if pathlib.Path("static/index.html").exists():
