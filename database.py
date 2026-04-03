@@ -375,18 +375,22 @@ def init_db():
         """)
 
         # Migration: anlik_giderler'e kaynak_id ve kaynak_tablo ekle
-        # Değişken sabit giderler ödendi işaretlenince bu alanlar dolar
+        # Her kolon ayrı kontrol — mevcut kolonlar crash'e yol açmaz
         cur.execute("""
             DO $$
             BEGIN
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='anlik_giderler' AND column_name='kaynak_id')
-                THEN
-                    ALTER TABLE anlik_giderler ADD COLUMN kaynak_id TEXT;
-                    ALTER TABLE anlik_giderler ADD COLUMN kaynak_tablo TEXT;
-                    ALTER TABLE anlik_giderler ADD COLUMN odeme_yontemi TEXT DEFAULT 'nakit';
-                    ALTER TABLE anlik_giderler ADD COLUMN kart_id TEXT;
-                END IF;
+                THEN ALTER TABLE anlik_giderler ADD COLUMN kaynak_id TEXT; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='anlik_giderler' AND column_name='kaynak_tablo')
+                THEN ALTER TABLE anlik_giderler ADD COLUMN kaynak_tablo TEXT; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='anlik_giderler' AND column_name='odeme_yontemi')
+                THEN ALTER TABLE anlik_giderler ADD COLUMN odeme_yontemi TEXT DEFAULT 'nakit'; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='anlik_giderler' AND column_name='kart_id')
+                THEN ALTER TABLE anlik_giderler ADD COLUMN kart_id TEXT; END IF;
             END $$;
         """)
 

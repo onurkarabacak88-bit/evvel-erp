@@ -177,7 +177,7 @@ def odeme_strateji_motoru():
             AND tarih BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'
         """)
         zorunlu_30gun = float(cur.fetchone()['t'])
-        cur.execute("SELECT COALESCE(SUM(tutar),0) as t FROM sabit_giderler WHERE aktif=TRUE")
+        cur.execute("SELECT COALESCE(SUM(tutar),0) as t FROM sabit_giderler WHERE aktif=TRUE AND (tip IS NULL OR tip='sabit')")
         sabit = float(cur.fetchone()['t'])
         cur.execute("SELECT COALESCE(SUM(aylik_taksit),0) as t FROM borc_envanteri WHERE aktif=TRUE")
         borc = float(cur.fetchone()['t'])
@@ -188,6 +188,7 @@ def odeme_strateji_motoru():
         cur.execute("""
             SELECT COALESCE(SUM(tutar),0) as t FROM sabit_giderler
             WHERE aktif=TRUE
+            AND (tip IS NULL OR tip='sabit')
             AND (
                 (kira_artis_tarihi IS NOT NULL AND kira_artis_tarihi < CURRENT_DATE)
                 OR (sozlesme_bitis_tarihi IS NOT NULL AND sozlesme_bitis_tarihi < CURRENT_DATE)
