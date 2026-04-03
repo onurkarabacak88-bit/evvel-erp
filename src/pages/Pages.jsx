@@ -307,6 +307,9 @@ export function SabitGiderler() {
   const [sekme, setSekme] = useState('tanimli');
   const [odemeler, setOdemeler] = useState({odenenler:[],bekleyenler:[],ozet:{}});
   const [hatalar, setHatalar] = useState({});
+  const [faturaModal, setFaturaModal] = useState(null); // {gider_id, gider_adi}
+  const [faturaForm, setFaturaForm] = useState({tutar:'', tarih: new Date().toISOString().split('T')[0], odeme_yontemi:'nakit', kart_id:''});
+  const [faturaGecmis, setFaturaGecmis] = useState([]);
   const ZORUNLU_KATEGORILER = ['Kira'];
 
   const load=()=>{
@@ -380,6 +383,30 @@ export function SabitGiderler() {
       toast('Kaydedildi'); setShowModal(false); setDuzenleId(null); setHatalar({}); load();
     }catch(e){toast(e.message,'red');}
   }
+  async function faturaOdeAc(g) {
+    setFaturaForm({tutar:'', tarih: new Date().toISOString().split('T')[0], odeme_yontemi:'nakit', kart_id:''});
+    setFaturaModal({gider_id: g.id, gider_adi: g.gider_adi});
+    api(`/fatura-gecmis/${g.id}`).then(setFaturaGecmis).catch(()=>setFaturaGecmis([]));
+  }
+
+  async function faturaOdeKaydet() {
+    if (!faturaForm.tutar || parseFloat(faturaForm.tutar) <= 0) { toast('Tutar giriniz', 'red'); return; }
+    if (faturaForm.odeme_yontemi === 'kart' && !faturaForm.kart_id) { toast('Kart seçiniz', 'red'); return; }
+    try {
+      await api('/fatura-ode', { method:'POST', body:{
+        sabit_gider_id: faturaModal.gider_id,
+        tutar: parseFloat(faturaForm.tutar),
+        tarih: faturaForm.tarih,
+        odeme_yontemi: faturaForm.odeme_yontemi,
+        kart_id: faturaForm.odeme_yontemi === 'kart' ? faturaForm.kart_id : null,
+        aciklama: `Fatura: ${faturaModal.gider_adi}`,
+      }});
+      toast(`${faturaModal.gider_adi} faturası ödendi`);
+      setFaturaModal(null);
+      load();
+    } catch(e) { toast(e.message, 'red'); }
+  }
+
   async function sil(id){
     if(!confirm('Bu gideri kapat? İlişkili TÜM bekleyen ödeme planları iptal edilecek ve simülasyondan çıkarılacaktır.'))return;
     try{
@@ -461,6 +488,9 @@ export function SabitGiderler() {
                 <td><span className={`badge ${g.aktif?'badge-green':'badge-gray'}`}>{g.aktif?'Aktif':'Pasif'}</span></td>
                 <td>
                   <div className="flex gap-8">
+                    {g.tip === 'degisken' && (
+                      <button className="btn btn-primary btn-sm" onClick={()=>faturaOdeAc(g)}>💰 Fatura Öde</button>
+                    )}
                     <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({gider_adi:g.gider_adi,kategori:g.kategori,tip:g.tip||'sabit',tutar:g.tutar,periyot:g.periyot,odeme_gunu:g.odeme_gunu,baslangic_tarihi:g.baslangic_tarihi?.slice(0,10)||'',sube_id:g.sube_id||'',gecerlilik_tarihi:'',sozlesme_sure_ay:g.sozlesme_sure_ay||'',kira_artis_periyot:g.kira_artis_periyot||'',odeme_yontemi:g.odeme_yontemi||'nakit',kart_id:g.kart_id||''});setDuzenleId(g.id);setHatalar({});setShowModal(true);}}>✏️</button>
                     <button className="btn btn-danger btn-sm" onClick={()=>sil(g.id)}>Kapat</button>
                   </div>
@@ -510,6 +540,78 @@ export function SabitGiderler() {
               {(odemeler.bekleyenler||[]).length===0 && <tr><td colSpan={5} style={{textAlign:'center',color:'var(--text3)',padding:24}}>Bekleyen ödeme yok</td></tr>}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* FATURA ÖDEME MODALI */}
+      {faturaModal && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setFaturaModal(null)}>
+          <div className="modal" style={{maxWidth:480}}>
+            <div className="modal-header">
+              <h3>💰 Fatura Öde — {faturaModal.gider_adi}</h3>
+              <button className="modal-close" onClick={()=>setFaturaModal(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-row cols-2">
+                <div className="form-group">
+                  <label>Fatura Tutarı (₺) *</label>
+                  <input type="number" value={faturaForm.tutar}
+                    onChange={e=>setFaturaForm({...faturaForm,tutar:e.target.value})}
+                    placeholder="0" autoFocus/>
+                </div>
+                <div className="form-group">
+                  <label>Ödeme Tarihi *</label>
+                  <input type="date" value={faturaForm.tarih}
+                    onChange={e=>setFaturaForm({...faturaForm,tarih:e.target.value})}/>
+                </div>
+                <div className="form-group" style={{gridColumn:'1/-1'}}>
+                  <label>Ödeme Yöntemi</label>
+                  <div style={{display:'flex',gap:8,marginTop:4}}>
+                    <button type="button"
+                      className={`btn btn-sm ${faturaForm.odeme_yontemi==='nakit'?'btn-primary':'btn-ghost'}`}
+                      onClick={()=>setFaturaForm({...faturaForm,odeme_yontemi:'nakit',kart_id:''})}>
+                      💵 Nakit
+                    </button>
+                    <button type="button"
+                      className={`btn btn-sm ${faturaForm.odeme_yontemi==='kart'?'btn-primary':'btn-ghost'}`}
+                      onClick={()=>setFaturaForm({...faturaForm,odeme_yontemi:'kart'})}>
+                      💳 Kart
+                    </button>
+                  </div>
+                </div>
+                {faturaForm.odeme_yontemi === 'kart' && (
+                  <div className="form-group" style={{gridColumn:'1/-1'}}>
+                    <label>Kart Seç *</label>
+                    <select value={faturaForm.kart_id}
+                      onChange={e=>setFaturaForm({...faturaForm,kart_id:e.target.value})}>
+                      <option value="">-- Kart seçin --</option>
+                      {kartlar.map(k=>(
+                        <option key={k.id} value={k.id}>
+                          {k.banka} — {k.kart_adi}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+              {faturaGecmis.length > 0 && (
+                <div style={{marginTop:12}}>
+                  <div style={{fontSize:11,color:'var(--text3)',marginBottom:6,fontWeight:600}}>SON ÖDEMELER</div>
+                  {faturaGecmis.slice(0,4).map((f,i)=>(
+                    <div key={i} style={{display:'flex',justifyContent:'space-between',fontSize:12,padding:'4px 0',borderBottom:'1px solid var(--border)'}}>
+                      <span>{f.tarih?.slice(0,10)}</span>
+                      <span style={{fontWeight:600}}>{parseInt(f.tutar).toLocaleString('tr-TR')} ₺</span>
+                      <span style={{color:'var(--text3)'}}>{f.yontem==='kart'?`💳 ${f.banka||''}`:'💵 Nakit'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={()=>setFaturaModal(null)}>İptal</button>
+              <button className="btn btn-primary" onClick={faturaOdeKaydet}>💰 Öde</button>
+            </div>
+          </div>
         </div>
       )}
 

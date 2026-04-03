@@ -862,6 +862,20 @@ export default function Panel({ onNavigate }) {
             };
           })(),
           (() => {
+            const nakit = panel.fatura_nakit || 0;
+            const kart  = panel.fatura_kart  || 0;
+            const toplam = nakit + kart;
+            return {
+              label: '🧾 Fatura Giderleri',
+              value: fmt(toplam),
+              sub: toplam > 0 ? 'Bu ay ödenen' : 'Bu ay ödeme yok',
+              renk: toplam > 0 ? 'var(--red)' : 'var(--text3)',
+              page: 'sabit-giderler',
+              nakit, kart, toplam,
+              kirılım: true,
+            };
+          })(),
+          (() => {
             const nakit = panel.vadeli_nakit || 0;
             const kart  = panel.vadeli_kart  || 0;
             const toplam = nakit + kart;
