@@ -403,6 +403,7 @@ def init_db():
                 ay              INT NOT NULL,
                 calisma_saati   NUMERIC(6,2) DEFAULT 0,
                 fazla_mesai_saat NUMERIC(6,2) DEFAULT 0,
+                bayram_mesai_saat NUMERIC(6,2) DEFAULT 0,
                 eksik_gun       NUMERIC(4,1) DEFAULT 0,
                 raporlu_gun     NUMERIC(4,1) DEFAULT 0,
                 rapor_kesinti   BOOLEAN DEFAULT FALSE,
@@ -414,6 +415,12 @@ def init_db():
                 UNIQUE(personel_id, yil, ay)
             )
         """)
+
+        # personel_aylik bayram_mesai_saat kolonu migration (varsa atlar)
+        try:
+            cur.execute("ALTER TABLE personel_aylik ADD COLUMN IF NOT EXISTS bayram_mesai_saat NUMERIC(6,2) DEFAULT 0")
+        except Exception:
+            pass
 
         # ── AUDIT LOG ──────────────────────────────────────────
         cur.execute("""

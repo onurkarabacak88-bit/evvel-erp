@@ -1547,6 +1547,7 @@ def personel_sil(pid: str):
 class PersonelAylikModel(BaseModel):
     calisma_saati: float = 0
     fazla_mesai_saat: float = 0
+    bayram_mesai_saat: float = 0
     eksik_gun: float = 0
     raporlu_gun: float = 0
     rapor_kesinti: bool = False
@@ -1556,30 +1557,51 @@ class PersonelAylikModel(BaseModel):
 def maas_hesapla(p: dict, kayit: dict) -> float:
     """
     Personelin aylık net maaşını hesaplar.
-    Sürekli: maaş - eksik gün kesintisi + fazla mesai + yemek + yol + manuel
-    Part-time: saat * ücret + fazla mesai * 1.5 * ücret + yemek + yol + manuel
+
+    SÜREKLİ:
+      - Günlük standart: 9.5 saat, haftada 1 izin → aylık 26 gün × 9.5 = 247 saat
+      - Saatlik ücret = maaş / 247
+      - Fazla mesai: 9.5 saat üstü çalışma, ×1 (maaş zaten 9.5h sistemi içeriyor)
+      - Bayram mesaisi: ×2
+      - Eksik gün kesintisi: saatlik × 9.5 × eksik_gün
+
+    PART-TIME:
+      - Saatlik ücret belirlenir
+      - Normal saat × saatlik
+      - Fazla mesai × saatlik × 1  (aynı mantık)
+      - Bayram mesaisi × saatlik × 2
+      - Yemek yok, yol var
     """
-    yemek = float(p.get('yemek_ucreti') or 0)
-    yol   = float(p.get('yol_ucreti') or 0)
+    GUNLUK_SAAT   = 9.5
+    AYLIK_GUN     = 26        # haftada 1 izin → 30 - 4 ≈ 26
+    AYLIK_SAAT    = GUNLUK_SAAT * AYLIK_GUN   # 247
+
+    yol    = float(p.get('yol_ucreti') or 0)
     manuel = float(kayit.get('manuel_duzeltme') or 0)
     eksik  = float(kayit.get('eksik_gun') or 0)
     raporlu = float(kayit.get('raporlu_gun') or 0)
-    fazla  = float(kayit.get('fazla_mesai_saat') or 0)
+    fazla_normal = float(kayit.get('fazla_mesai_saat') or 0)
+    fazla_bayram = float(kayit.get('bayram_mesai_saat') or 0)
     rapor_kesinti = kayit.get('rapor_kesinti', False)
 
     if p.get('calisma_turu') == 'surekli':
-        maas = float(p.get('maas') or 0)
-        gunluk = maas / 30
+        maas    = float(p.get('maas') or 0)
+        yemek   = float(p.get('yemek_ucreti') or 0)
+        saatlik = maas / AYLIK_SAAT if AYLIK_SAAT > 0 else 0
+
         kesinti_gun = eksik + (raporlu if rapor_kesinti else 0)
-        kesinti = gunluk * kesinti_gun
-        fazla_ucret = gunluk / 8 * 1.5 * fazla  # günlük 8 saat baz
+        kesinti     = saatlik * GUNLUK_SAAT * kesinti_gun  # tam gün kesintisi
+
+        fazla_ucret = (fazla_normal * saatlik) + (fazla_bayram * saatlik * 2)
         net = maas - kesinti + fazla_ucret + yemek + yol + manuel
     else:
+        # Part-time: saatlik ücret direkt
         saatlik = float(p.get('saatlik_ucret') or 0)
-        saat = float(kayit.get('calisma_saati') or 0)
-        normal = saat * saatlik
-        fazla_ucret = fazla * saatlik * 1.5
-        net = normal + fazla_ucret + yemek + yol + manuel
+        saat    = float(kayit.get('calisma_saati') or 0)
+        normal  = saat * saatlik
+        fazla_ucret = (fazla_normal * saatlik) + (fazla_bayram * saatlik * 2)
+        # Part-time: yemek yok, yol var
+        net = normal + fazla_ucret + yol + manuel
 
     return round(max(0, net), 2)
 
@@ -1624,6 +1646,7 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                 'kayit_id': kayit.get('id'),
                 'calisma_saati': float(kayit.get('calisma_saati') or 0),
                 'fazla_mesai_saat': float(kayit.get('fazla_mesai_saat') or 0),
+                'bayram_mesai_saat': float(kayit.get('bayram_mesai_saat') or 0),
                 'eksik_gun': float(kayit.get('eksik_gun') or 0),
                 'raporlu_gun': float(kayit.get('raporlu_gun') or 0),
                 'rapor_kesinti': kayit.get('rapor_kesinti', False),
@@ -1652,19 +1675,19 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
         kid = str(uuid.uuid4())
         cur.execute("""
             INSERT INTO personel_aylik
-                (id, personel_id, yil, ay, calisma_saati, fazla_mesai_saat,
+                (id, personel_id, yil, ay, calisma_saati, fazla_mesai_saat, bayram_mesai_saat,
                  eksik_gun, raporlu_gun, rapor_kesinti, manuel_duzeltme,
                  not_aciklama, hesaplanan_net, durum)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'taslak')
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'taslak')
             ON CONFLICT (personel_id, yil, ay) DO UPDATE SET
-                calisma_saati=%s, fazla_mesai_saat=%s, eksik_gun=%s,
-                raporlu_gun=%s, rapor_kesinti=%s, manuel_duzeltme=%s,
+                calisma_saati=%s, fazla_mesai_saat=%s, bayram_mesai_saat=%s,
+                eksik_gun=%s, raporlu_gun=%s, rapor_kesinti=%s, manuel_duzeltme=%s,
                 not_aciklama=%s, hesaplanan_net=%s, durum='taslak'
         """, (kid, pid, yil, ay,
-                body.calisma_saati, body.fazla_mesai_saat,
+                body.calisma_saati, body.fazla_mesai_saat, body.bayram_mesai_saat,
                 body.eksik_gun, body.raporlu_gun, body.rapor_kesinti,
                 body.manuel_duzeltme, body.not_aciklama, net,
-                body.calisma_saati, body.fazla_mesai_saat,
+                body.calisma_saati, body.fazla_mesai_saat, body.bayram_mesai_saat,
                 body.eksik_gun, body.raporlu_gun, body.rapor_kesinti,
                 body.manuel_duzeltme, body.not_aciklama, net))
 
@@ -1700,7 +1723,7 @@ def personel_aylik_gecmis(pid: str):
     with db() as (conn, cur):
         cur.execute("""
             SELECT yil, ay, hesaplanan_net, durum, calisma_saati,
-                   fazla_mesai_saat, eksik_gun, manuel_duzeltme
+                   fazla_mesai_saat, bayram_mesai_saat, eksik_gun, manuel_duzeltme
             FROM personel_aylik WHERE personel_id=%s
             ORDER BY yil DESC, ay DESC LIMIT 12
         """, (pid,))

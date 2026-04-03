@@ -629,15 +629,32 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
             if cur.rowcount > 0:
                 uretilen.append(f"Sabit gider: {g['gider_adi']} — {odeme_tarihi}")
 
-        # 2. PERSONEL MAAŞLARI
-        cur.execute("SELECT * FROM personel WHERE aktif=TRUE AND calisma_turu='surekli'")
+        # 2. PERSONEL MAAŞLARI (Sürekli + Part-time)
+        cur.execute("SELECT * FROM personel WHERE aktif=TRUE")
         for p in cur.fetchall():
             odeme_gun = p['odeme_gunu'] or 28
             import calendar
             son_gun = calendar.monthrange(yil, ay)[1]
             odeme_gun = min(odeme_gun, son_gun)
             odeme_tarihi = date(yil, ay, odeme_gun)
-            toplam_maas = float(p['maas'] or 0) + float(p['yemek_ucreti'] or 0) + float(p['yol_ucreti'] or 0)
+
+            # Bu ay personel_aylik kaydı var mı? Varsa gerçek tutarı kullan
+            cur.execute("""
+                SELECT hesaplanan_net FROM personel_aylik
+                WHERE personel_id=%s AND yil=%s AND ay=%s
+            """, (p['id'], yil, ay))
+            aylik_kayit = cur.fetchone()
+
+            if aylik_kayit:
+                toplam_maas = float(aylik_kayit['hesaplanan_net'] or 0)
+            elif p['calisma_turu'] == 'surekli':
+                # Tahmini: maaş + yan haklar
+                toplam_maas = float(p['maas'] or 0) + float(p['yemek_ucreti'] or 0) + float(p['yol_ucreti'] or 0)
+            else:
+                # Part-time: ay kaydı girilmeden plan üretme
+                atlanan.append(f"Part-time atlandı (kayıt bekleniyor): {p['ad_soyad']}")
+                continue
+
             if toplam_maas <= 0:
                 continue
 
