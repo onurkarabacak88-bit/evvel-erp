@@ -145,6 +145,15 @@ export default function Personel() {
     } catch(e) { toast(e.message, 'red'); }
   }
 
+  async function maasKayitSil(pid) {
+    if (!confirm('Bu aylık maaş kaydını silmek istiyor musunuz? Kayıt taslak durumuna dönecek.')) return;
+    try {
+      await api(`/personel-aylik/${pid}?yil=${aylikYil}&ay=${aylikAy}`, { method:'DELETE' });
+      toast('Kayıt silindi', 'yellow');
+      loadAylik();
+    } catch(e) { toast(e.message, 'red'); }
+  }
+
   async function gecmisAc(p) {
     setGecmisModal(p);
     const data = await api(`/personel-aylik/${p.personel_id}/gecmis`).catch(() => []);
@@ -394,18 +403,23 @@ export default function Personel() {
                         Net: {fmt(p.hesaplanan_net)}
                         {durum === 'tahmini' && <span style={{fontSize:10,color:'var(--text3)',marginLeft:4}}>TAHMİNİ</span>}
                       </div>
-                      {!onaylandi && (
-                        <div style={{display:'flex',gap:8}}>
+                      <div style={{display:'flex',gap:8}}>
+                        {!onaylandi && (
                           <button className="btn btn-primary btn-sm" onClick={()=>maasKaydet(p.personel_id)}>
                             💾 Kaydet
                           </button>
-                          {durum === 'taslak' && (
-                            <button className="btn btn-secondary btn-sm" onClick={()=>maasOnayla(p.personel_id)}>
-                              ✓ Onayla
-                            </button>
-                          )}
-                        </div>
-                      )}
+                        )}
+                        {durum === 'taslak' && (
+                          <button className="btn btn-secondary btn-sm" onClick={()=>maasOnayla(p.personel_id)}>
+                            ✓ Onayla
+                          </button>
+                        )}
+                        {durum === 'taslak' && (
+                          <button className="btn btn-danger btn-sm" onClick={()=>maasKayitSil(p.personel_id)}>
+                            🗑️ Sil
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
