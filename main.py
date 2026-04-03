@@ -425,7 +425,7 @@ def panel_detay():
             cur.execute("""
 SELECT
     COALESCE(SUM(CASE WHEN islem_turu IN ('CIRO','DIS_KAYNAK','KASA_GIRIS','KASA_DUZELTME') AND tutar > 0 THEN tutar ELSE 0 END), 0) as gelir,
-    COALESCE(SUM(CASE WHEN islem_turu IN ('ANLIK_GIDER','KART_ODEME','VADELI_ODEME','PERSONEL_MAAS','SABIT_GIDER') THEN ABS(tutar) ELSE 0 END), 0) as gider
+    COALESCE(SUM(CASE WHEN islem_turu IN ('ANLIK_GIDER','KART_ODEME','VADELI_ODEME','PERSONEL_MAAS','SABIT_GIDER','BORC_TAKSIT') THEN ABS(tutar) ELSE 0 END), 0) as gider
 FROM kasa_hareketleri
 WHERE durum='aktif'
 """)
@@ -1081,7 +1081,7 @@ def onayla(oid: str):
             raise HTTPException(400, f"Bu işlem zaten '{onay['durum']}' durumunda, tekrar onaylanamaz.")
         tutar = float(onay['tutar'])
         tarih = str(onay['tarih'])
-        GIDER_TURLERI = {'KART_ODEME', 'ANLIK_GIDER', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER', 'ODEME_PLANI'}
+        GIDER_TURLERI = {'KART_ODEME', 'ANLIK_GIDER', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER', 'BORC_TAKSIT', 'ODEME_PLANI'}
         GELIR_TURLERI = {'CIRO', 'CIRO_DUZELTME', 'DIS_KAYNAK', 'KASA_GIRIS', 'KASA_DUZELTME'}
         islem_turu = onay['islem_turu']
         if islem_turu in GIDER_TURLERI:
@@ -1106,6 +1106,8 @@ def onayla(oid: str):
                 kasa_islem_turu = 'PERSONEL_MAAS'
             elif kaynak_tablo == 'vadeli_alimlar':
                 kasa_islem_turu = 'VADELI_ODEME'
+            elif kaynak_tablo == 'borc_envanteri':
+                kasa_islem_turu = 'BORC_TAKSIT'
             else:
                 kasa_islem_turu = 'KART_ODEME'
             cur.execute("""
@@ -2132,6 +2134,17 @@ def borc_sil(bid: str):
         eski = cur.fetchone()
         if not eski: raise HTTPException(404)
         cur.execute("UPDATE borc_envanteri SET aktif=FALSE WHERE id=%s", (bid,))
+        # Bağlı bekleyen planları iptal et — panelde görünmesin
+        cur.execute("""
+            UPDATE odeme_plani SET durum='iptal'
+            WHERE kaynak_tablo='borc_envanteri' AND kaynak_id=%s
+            AND durum IN ('bekliyor','onay_bekliyor')
+        """, (bid,))
+        cur.execute("""
+            UPDATE onay_kuyrugu SET durum='reddedildi'
+            WHERE kaynak_tablo='borc_envanteri' AND kaynak_id=%s
+            AND durum='bekliyor'
+        """, (bid,))
         audit(cur, 'borc_envanteri', bid, 'PASIF', eski=eski)
     return {"success": True}
 

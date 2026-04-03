@@ -639,20 +639,25 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                 continue
 
             pid = str(_uuid.uuid4())
+            # Guard: kaynak_id ile eşleşme — aciklama'ya bağımlı değil, aynı isimli borç sorunu yok
             cur.execute("""
-                INSERT INTO odeme_plani (id, kart_id, tarih, odenecek_tutar, asgari_tutar, aciklama, durum)
-                SELECT %s, NULL, %s, %s, %s, %s, 'bekliyor'
+                INSERT INTO odeme_plani
+                    (id, kart_id, tarih, odenecek_tutar, asgari_tutar, aciklama, durum, kaynak_tablo, kaynak_id)
+                SELECT %s, NULL, %s, %s, %s, %s, 'bekliyor', 'borc_envanteri', %s
                 WHERE NOT EXISTS (
                     SELECT 1 FROM odeme_plani
-                    WHERE aciklama = %s
+                    WHERE kaynak_tablo = 'borc_envanteri'
+                    AND kaynak_id = %s
                     AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
                     AND durum != 'iptal'
                 )
             """, (pid, odeme_tarihi, float(b['aylik_taksit']), float(b['aylik_taksit']),
-                  f"Kredi/Borç: {b['kurum']}", f"Kredi/Borç: {b['kurum']}", str(odeme_tarihi)))
+                  f"Kredi/Borç: {b['kurum']}", str(b['id']),
+                  str(b['id']), str(odeme_tarihi)))
             if cur.rowcount > 0:
                 uretilen.append(f"Kredi: {b['kurum']} — {odeme_tarihi}")
-                # Kalan vadeyi güncelle
+                # Kalan vade plan üretilince düşer — iptal edilirse geri alınmaz
+                # Bu kabul edilebilir: iptal nadir, manuel düzeltme mümkün
                 if b['kalan_vade'] is not None:
                     cur.execute("UPDATE borc_envanteri SET kalan_vade = kalan_vade - 1 WHERE id = %s", (b['id'],))
 
