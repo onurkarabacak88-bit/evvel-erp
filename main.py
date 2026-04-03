@@ -3516,6 +3516,13 @@ def toplu_odeme(payload: dict):
         raise HTTPException(400, "Ödeme listesi boş")
     
     with db() as (conn, cur):
+        # Backend kasa kontrolü — toplam tutar kasayı eksiye düşürmesin
+        cur.execute("SELECT COALESCE(SUM(tutar),0) as kasa FROM kasa_hareketleri WHERE kasa_etkisi=true")
+        kasa = float(cur.fetchone()['kasa'])
+        toplam = sum(float(i.get('tutar', 0)) for i in odemeler if i.get('tutar'))
+        if toplam > 0 and kasa - toplam < -1:  # -1 tolerans (yuvarlama)
+            raise HTTPException(400, f"Kasa yetersiz. Kasa: {kasa:,.0f}₺ · Toplam ödeme: {toplam:,.0f}₺")
+
         basarili = []
         for item in odemeler:
             oid = item.get('odeme_id')
