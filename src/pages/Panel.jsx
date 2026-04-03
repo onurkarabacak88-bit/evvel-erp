@@ -160,7 +160,7 @@ export default function Panel({ onNavigate }) {
     setKartOneriData(null);
     setSeciliKartId('');
     // aciklama'da "Vadeli Alım:" geçiyorsa vadeli alım olarak işaretle
-    const vadeli = u.aciklama && u.aciklama.toLowerCase().includes('vadeli');
+    const vadeli = u.kaynak_tablo === 'vadeli_alimlar';
     setAktifOdemeVadeliMi(vadeli);
   }
 
@@ -170,7 +170,8 @@ export default function Panel({ onNavigate }) {
     try {
       // Önce plan detayını al, kaynak_id'yi bul
       const res = await api(`/odeme-plani/${odemeId}/kaynak`).catch(() => null);
-      const vadeliId = res?.kaynak_id || odemeId;
+      const vadeliId = res?.kaynak_id;
+      if (!vadeliId) throw new Error('Vadeli alım kaynağı bulunamadı');
       const data = await api(`/vadeli-alimlar/${vadeliId}/kart-oneri`);
       setKartOneriData(data);
       const oneri = data.kartlar.find(k => k.oneri && k.uygun);
@@ -204,7 +205,7 @@ export default function Panel({ onNavigate }) {
   async function kismiOdemeOnayla() {
     if (loadingBtn || !kismiTutar || !kismiTarih) return;
     const odenen = parseFloat(kismiTutar);
-    if (odenen <= 0 || odenen >= kismiModal.toplam) {
+    if (isNaN(odened) || odenen <= 0 || odenen >= kismiModal.toplam) {
       toast('Tutar 0 ile toplam borç arasında olmalı', 'red'); return;
     }
     setLoadingBtn(true);
@@ -232,7 +233,7 @@ export default function Panel({ onNavigate }) {
   }
 
   function kismiModalAc(u) {
-    setKismiModal({ odemeId: u.odeme_id, aciklama: u.aciklama, toplam: u.tutar, vadeli: u.aciklama?.toLowerCase().includes('vadeli') });
+    setKismiModal({ odemeId: u.odeme_id, aciklama: u.aciklama, toplam: u.tutar, vadeli: u.kaynak_tablo === 'vadeli_alimlar' });
     setKismiTutar(''); setKismiTarih('');
     setKismiAdim(1); setKismiYontemi('nakit');
     setKismiKartData(null); setKismiSeciliKartId('');
@@ -242,7 +243,8 @@ export default function Panel({ onNavigate }) {
     setKismiKartYukleniyor(true);
     try {
       const res = await api(`/odeme-plani/${odemeId}/kaynak`).catch(() => null);
-      const vadeliId = res?.kaynak_id || odemeId;
+      const vadeliId = res?.kaynak_id;
+      if (!vadeliId) throw new Error('Vadeli alım kaynağı bulunamadı');
       const data = await api(`/vadeli-alimlar/${vadeliId}/kart-oneri`);
       setKismiKartData(data);
       const oneri = data.kartlar.find(k => k.oneri && k.uygun);
