@@ -744,6 +744,7 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
             asgari = round(borc * asgari_oran_pct, 2)
 
             pid = str(_uuid.uuid4())
+            # Plan yoksa ekle, varsa borcu güncelle — harcama sonrası tutar değişebilir
             cur.execute("""
                 INSERT INTO odeme_plani (id, kart_id, tarih, odenecek_tutar, asgari_tutar, aciklama, durum)
                 SELECT %s, %s, %s, %s, %s, %s, 'bekliyor'
@@ -758,6 +759,17 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                   k['id'], str(odeme_tarihi)))
             if cur.rowcount > 0:
                 uretilen.append(f"Kart: {k['kart_adi']} asgari {fmt(asgari)} — {odeme_tarihi}")
+            else:
+                # Plan zaten var — güncel borçla tuta güncelle
+                cur.execute("""
+                    UPDATE odeme_plani
+                    SET odenecek_tutar = %s, asgari_tutar = %s
+                    WHERE kart_id = %s
+                    AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+                    AND durum IN ('bekliyor', 'onay_bekliyor')
+                """, (borc, asgari, k['id'], str(odeme_tarihi)))
+                if cur.rowcount > 0:
+                    uretilen.append(f"Kart güncellendi: {k['kart_adi']} yeni borç {fmt(borc)} — {odeme_tarihi}")
 
     return {
         "uretilen": uretilen,
