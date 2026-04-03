@@ -49,6 +49,7 @@ export default function Personel() {
           f[p.personel_id] = {
             calisma_saati: p.calisma_saati || '',
             fazla_mesai_saat: p.fazla_mesai_saat || '',
+            bayram_mesai_saat: p.bayram_mesai_saat || '',
             eksik_gun: p.eksik_gun || '',
             raporlu_gun: p.raporlu_gun || '',
             rapor_kesinti: p.rapor_kesinti || false,
@@ -79,7 +80,7 @@ export default function Personel() {
       yemek_ucreti: form.yemek_ucreti ? Number(form.yemek_ucreti) : 0,
       yol_ucreti: form.yol_ucreti ? Number(form.yol_ucreti) : 0,
       odeme_gunu: (gun >= 1 && gun <= 31) ? gun : 28,
-      sube_id: form.sube_id ? parseInt(form.sube_id) : null,
+      sube_id: form.sube_id || null,
       baslangic_tarihi: form.baslangic_tarihi ? form.baslangic_tarihi : null,
       notlar: form.notlar || null,
     };
@@ -121,6 +122,7 @@ export default function Personel() {
     const body = {
       calisma_saati: parseFloat(f.calisma_saati) || 0,
       fazla_mesai_saat: parseFloat(f.fazla_mesai_saat) || 0,
+      bayram_mesai_saat: parseFloat(f.bayram_mesai_saat) || 0,
       eksik_gun: parseFloat(f.eksik_gun) || 0,
       raporlu_gun: parseFloat(f.raporlu_gun) || 0,
       rapor_kesinti: f.rapor_kesinti || false,
@@ -344,7 +346,17 @@ export default function Personel() {
                           onChange={e=>setKayitForm(prev=>({...prev,[p.personel_id]:{...f,fazla_mesai_saat:e.target.value}}))}
                           style={{width:'100%',padding:'6px 8px',borderRadius:6,border:'1px solid var(--border)',
                             background:onaylandi?'var(--bg3)':'var(--bg1)',color:'var(--text1)'}}/>
-                        <span style={{fontSize:10,color:'var(--text3)'}}>×1.5 ücret</span>
+                        <span style={{fontSize:10,color:'var(--text3)'}}>×1 ücret (9.5h üstü)</span>
+                      </div>
+
+                      <div>
+                        <label style={{fontSize:11,color:'#f97316',display:'block',marginBottom:3}}>🎉 Bayram Mesaisi (saat)</label>
+                        <input type="number" min={0} step={0.5}
+                          value={f.bayram_mesai_saat ?? ''} disabled={onaylandi}
+                          onChange={e=>setKayitForm(prev=>({...prev,[p.personel_id]:{...f,bayram_mesai_saat:e.target.value}}))}
+                          style={{width:'100%',padding:'6px 8px',borderRadius:6,border:'1px solid var(--border)',
+                            background:onaylandi?'var(--bg3)':'var(--bg1)',color:'var(--text1)'}}/>
+                        <span style={{fontSize:10,color:'#f97316'}}>×2 ücret (dini bayram)</span>
                       </div>
 
                       <div>
@@ -520,6 +532,7 @@ export default function Personel() {
                       <th style={{padding:'6px 8px',textAlign:'left'}}>Dönem</th>
                       <th style={{padding:'6px 8px',textAlign:'right'}}>Net Maaş</th>
                       <th style={{padding:'6px 8px',textAlign:'center'}}>Fazla Mesai</th>
+                      <th style={{padding:'6px 8px',textAlign:'center'}}>Bayram</th>
                       <th style={{padding:'6px 8px',textAlign:'center'}}>Eksik</th>
                       <th style={{padding:'6px 8px',textAlign:'center'}}>Durum</th>
                     </tr>
@@ -533,6 +546,9 @@ export default function Personel() {
                         </td>
                         <td style={{padding:'6px 8px',textAlign:'center',color:'var(--text3)'}}>
                           {r.fazla_mesai_saat > 0 ? `${r.fazla_mesai_saat} saat` : '—'}
+                        </td>
+                        <td style={{padding:'6px 8px',textAlign:'center',color:'#f97316'}}>
+                          {r.bayram_mesai_saat > 0 ? `${r.bayram_mesai_saat} saat` : '—'}
                         </td>
                         <td style={{padding:'6px 8px',textAlign:'center',color:r.eksik_gun>0?'var(--red)':'var(--text3)'}}>
                           {r.eksik_gun > 0 ? `${r.eksik_gun} gün` : '—'}
