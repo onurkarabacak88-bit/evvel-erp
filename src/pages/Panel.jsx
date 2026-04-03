@@ -889,6 +889,20 @@ export default function Panel({ onNavigate }) {
             };
           })(),
           (() => {
+            const odenen = panel.borc_taksit_odenen || 0;
+            const bekleyen = panel.borc_taksit_bekleyen || 0;
+            const bekleyen_adet = panel.borc_taksit_bekleyen_adet || 0;
+            return {
+              label: '🏦 Kredi Taksitleri',
+              value: fmt(odenen),
+              sub: bekleyen_adet > 0 ? `${bekleyen_adet} bekleyen · ${fmt(bekleyen)}` : 'Tümü ödendi ✓',
+              renk: bekleyen_adet > 0 ? 'var(--yellow)' : odenen > 0 ? 'var(--red)' : 'var(--text3)',
+              page: 'borclar',
+              nakit: odenen, kart: 0, toplam: odenen,
+              kirılım: false,
+            };
+          })(),
+          (() => {
             const nakit = panel.vadeli_nakit || 0;
             const kart  = panel.vadeli_kart  || 0;
             const toplam = nakit + kart;
@@ -1458,6 +1472,11 @@ export default function Panel({ onNavigate }) {
                       <span>Vade: <strong style={{ color: 'var(--text1)' }}>{fmtDate(odemeModal.tarih)}</strong></span>
                     </div>
                   </div>
+                  {odemeModal.kaynak_tablo === 'borc_envanteri' && (
+                    <div style={{ fontSize: 11, color: '#4a9eff', background: 'rgba(74,158,255,0.08)', border: '1px solid rgba(74,158,255,0.3)', borderRadius: 6, padding: '8px 12px', marginBottom: 12 }}>
+                      🏦 Kredi/Borç taksiti — EFT veya havale ile ödendikten sonra buradan onaylayın. Kasadan düşülecek.
+                    </div>
+                  )}
                   <div style={{ textAlign: 'center', padding: '12px 0' }}>
                     <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>Kasadan düşülecek tutar</div>
                     <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--red)' }}>{fmt(odemeModal.tutar)}</div>
