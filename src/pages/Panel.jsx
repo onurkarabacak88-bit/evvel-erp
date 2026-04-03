@@ -656,21 +656,14 @@ export default function Panel({ onNavigate }) {
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                   {u.tip === 'degisken' ? (
-                    /* Değişken fatura: kasaya etki yok, anlık gidere yönlendir */
-                    <button className="btn btn-secondary btn-sm"
+                    /* Değişken fatura: Sabit Giderler sayfasına yönlendir — Fatura Öde butonu orada */
+                    <button className="btn btn-primary btn-sm"
                       onClick={() => {
-                        // kaynak_id ve gider adını sessionStorage'a bırak
-                        // AnlikGider sayfası okuyup formu otomatik doldurur
-                        sessionStorage.setItem('degisken_gider_kaynak', JSON.stringify({
-                          kaynak_id: u.kaynak_id,
-                          kaynak_tablo: 'sabit_giderler',
-                          aciklama: u.aciklama,
-                          kategori: u.kategori || 'Fatura',
-                        }));
-                        nav('anlik-gider');
+                        sessionStorage.setItem('sabit_gider_fatura_id', u.kaynak_id || '');
+                        nav('sabit-giderler');
                       }}
-                      title="Fatura tutarını Anlık Gider olarak girin">
-                      📝 Tutarı Gir
+                      title="Sabit Giderler sayfasında Fatura Öde butonunu kullanın">
+                      💰 Fatura Öde
                     </button>
                   ) : (
                     <>

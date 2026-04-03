@@ -322,13 +322,13 @@ export function SabitGiderler() {
     load();
     // Panel'den yönlendirme ile gelindiyse ilgili kaydı direkt düzenleme modunda aç
     const hedefId = sessionStorage.getItem('sabit_gider_duzenle');
+    const faturaId = sessionStorage.getItem('sabit_gider_fatura_id');
     if(hedefId){
       sessionStorage.removeItem('sabit_gider_duzenle');
-      // Veri yüklenince ilgili kaydı bul ve modalı aç
       api('/sabit-giderler').then(data=>{
         const g = data.find(x=>x.id===hedefId);
         if(g){
-          setForm({gider_adi:g.gider_adi,kategori:g.kategori,tutar:g.tutar,periyot:g.periyot,
+          setForm({gider_adi:g.gider_adi,kategori:g.kategori,tip:g.tip||'sabit',tutar:g.tutar,periyot:g.periyot,
             odeme_gunu:g.odeme_gunu,baslangic_tarihi:g.baslangic_tarihi?.slice(0,10)||'',
             sube_id:g.sube_id||'',gecerlilik_tarihi:'',sozlesme_sure_ay:g.sozlesme_sure_ay||'',
             kira_artis_periyot:g.kira_artis_periyot||'',
@@ -337,6 +337,14 @@ export function SabitGiderler() {
           setHatalar({});
           setShowModal(true);
         }
+      });
+    }
+    if(faturaId){
+      sessionStorage.removeItem('sabit_gider_fatura_id');
+      // Panel'den "Fatura Öde" ile gelindiyse ilgili giderin fatura modalını aç
+      api('/sabit-giderler').then(data=>{
+        const g = data.find(x=>x.id===faturaId && x.tip==='degisken');
+        if(g) faturaOdeAc(g);
       });
     }
   },[]);
