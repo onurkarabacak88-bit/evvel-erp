@@ -759,72 +759,102 @@ export default function Panel({ onNavigate }) {
         );
       })()}
 
-      {/* ── BU AY ÖDEMELER (akan bant) ── */}
+      {/* ── BU AY ÖDEMELER — 2 BANT ── */}
       {panel.yaklasan_odemeler?.length > 0 && (() => {
-        const liste = panel.yaklasan_odemeler;
-        const odemeMetni = liste
-          .filter(u => u.gun_farki > 0)
-          .map(u => {
-            const gun = u.gun_farki === 1
-              ? '🟡 yarın'
-              : u.gun_farki <= 3
-              ? `🟡 ${u.gun_farki} gün`
-              : u.gun_farki <= 7
-              ? `🟠 ${u.gun_farki} gün`
-              : `🔵 ${u.gun_farki} gün`;
-            const tip = u.kaynak_tablo === 'sabit_giderler' ? '🏠'
-                      : u.kaynak_tablo === 'personel'       ? '👤'
-                      : u.kaynak_tablo === 'vadeli_alimlar' ? '📦'
-                      : u.kaynak_tablo === 'borc_envanteri' ? '🏦'
-                      : '💳';
-            const tutar_goster = ['sabit_giderler','personel'].includes(u.kaynak_tablo)
-              ? fmt(u.tutar)
-              : `${fmt(u.tutar)} / asg ${fmt(u.asgari)}`;
-            return `${tip} ${u.aciklama}  ${tutar_goster}  [${gun}]`;
-          })
-          .join('     ·     ');
-        const tickerOdeme = odemeMetni + '          ·          ' + odemeMetni;
+        const liste = panel.yaklasan_odemeler.filter(u => u.gun_farki > 0);
+
+        // Renk ve ikon — borç tipine göre
+        const tipRenk = {
+          sabit_giderler: { ikon: '🏠', renk: '#f59e0b', etiket: 'Sabit' },
+          personel:       { ikon: '👤', renk: '#4a9eff', etiket: 'Maaş'  },
+          vadeli_alimlar: { ikon: '📦', renk: '#f97316', etiket: 'Vadeli' },
+          borc_envanteri: { ikon: '🏦', renk: '#e879f9', etiket: 'Kredi'  },
+        };
+        const getTip = kt => tipRenk[kt] || { ikon: '💳', renk: '#94a3b8', etiket: 'Kart' };
+
+        // Şerit 1: Bu ayın tüm ödemeleri (8+ gün)
+        const aylik = liste.filter(u => u.gun_farki > 7);
+        // Şerit 2: Son 7 gün (acil)
+        const acil = liste.filter(u => u.gun_farki <= 7);
+
+        // Tek renkli ticker yerine — her öğeye renkli span yazıyoruz
+        // Ama ticker div içinde HTML olamaz, bu yüzden rengi etiketle gösteriyoruz
+        const aylikMetni = aylik.map(u => {
+          const t = getTip(u.kaynak_tablo);
+          const tutar = ['sabit_giderler','personel'].includes(u.kaynak_tablo)
+            ? fmt(u.tutar) : `${fmt(u.tutar)} / asg ${fmt(u.asgari)}`;
+          return `${t.ikon} ${u.aciklama}  ${tutar}  [${u.gun_farki} gün]`;
+        }).join('     ·     ');
+
+        const acilMetni = acil.map(u => {
+          const t = getTip(u.kaynak_tablo);
+          const gun = u.gun_farki === 1 ? 'YARIN' : `${u.gun_farki} GÜN`;
+          const tutar = ['sabit_giderler','personel'].includes(u.kaynak_tablo)
+            ? fmt(u.tutar) : `${fmt(u.tutar)} / asg ${fmt(u.asgari)}`;
+          return `${t.ikon} ${u.aciklama}  ${tutar}  ⚡${gun}`;
+        }).join('     ·     ');
+
         return (
-          <div style={{
-            background: 'rgba(91,155,214,0.07)',
-            border: '1px solid rgba(91,155,214,0.3)',
-            borderLeft: '3px solid var(--blue)',
-            borderRadius: 8,
-            marginBottom: 14,
-            overflow: 'hidden',
-            display: 'flex',
-            alignItems: 'center',
-            height: 36,
-          }}>
-            <div style={{
-              flexShrink: 0,
-              padding: '0 12px',
-              fontSize: 10,
-              fontWeight: 700,
-              color: 'var(--blue)',
-              textTransform: 'uppercase',
-              letterSpacing: '1px',
-              borderRight: '1px solid rgba(91,155,214,0.3)',
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              whiteSpace: 'nowrap',
-            }}>
-              📅 {liste.length} YAKLAŞAN
-            </div>
-            <div style={{ overflow: 'hidden', flex: 1 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+
+            {/* Şerit 1 — Bu ay tüm ödemeler */}
+            {aylik.length > 0 && (
               <div style={{
-                display: 'inline-block',
-                whiteSpace: 'nowrap',
-                fontSize: 12,
-                fontWeight: 500,
-                color: 'var(--blue)',
-                animation: 'ticker 22s linear infinite',
-                paddingLeft: '100%',
+                background: 'rgba(91,155,214,0.07)',
+                border: '1px solid rgba(91,155,214,0.25)',
+                borderLeft: '3px solid var(--blue)',
+                borderRadius: 8, overflow: 'hidden',
+                display: 'flex', alignItems: 'center', height: 34,
               }}>
-                {tickerOdeme}
+                <div style={{
+                  flexShrink: 0, padding: '0 10px', fontSize: 9, fontWeight: 700,
+                  color: 'var(--blue)', textTransform: 'uppercase', letterSpacing: '1px',
+                  borderRight: '1px solid rgba(91,155,214,0.25)',
+                  height: '100%', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap',
+                }}>
+                  📅 BU AY · {aylik.length}
+                </div>
+                <div style={{ overflow: 'hidden', flex: 1 }}>
+                  <div style={{
+                    display: 'inline-block', whiteSpace: 'nowrap',
+                    fontSize: 11, fontWeight: 500, color: 'var(--blue)',
+                    animation: 'ticker 28s linear infinite', paddingLeft: '100%',
+                  }}>
+                    {aylikMetni + '          ·          ' + aylikMetni}
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* Şerit 2 — Son 7 gün acil */}
+            {acil.length > 0 && (
+              <div style={{
+                background: 'rgba(249,115,22,0.08)',
+                border: '1px solid rgba(249,115,22,0.35)',
+                borderLeft: '3px solid var(--orange, #f97316)',
+                borderRadius: 8, overflow: 'hidden',
+                display: 'flex', alignItems: 'center', height: 34,
+              }}>
+                <div style={{
+                  flexShrink: 0, padding: '0 10px', fontSize: 9, fontWeight: 700,
+                  color: '#f97316', textTransform: 'uppercase', letterSpacing: '1px',
+                  borderRight: '1px solid rgba(249,115,22,0.3)',
+                  height: '100%', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap',
+                }}>
+                  ⚡ 7 GÜN · {acil.length}
+                </div>
+                <div style={{ overflow: 'hidden', flex: 1 }}>
+                  <div style={{
+                    display: 'inline-block', whiteSpace: 'nowrap',
+                    fontSize: 11, fontWeight: 600, color: '#f97316',
+                    animation: 'ticker 18s linear infinite', paddingLeft: '100%',
+                  }}>
+                    {acilMetni + '          ·          ' + acilMetni}
+                  </div>
+                </div>
+              </div>
+            )}
+
           </div>
         );
       })()}
