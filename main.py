@@ -1462,9 +1462,18 @@ class PersonelModel(BaseModel):
     yemek_ucreti: float = 0
     yol_ucreti: float = 0
     odeme_gunu: int = 28
-    baslangic_tarihi: Optional[date] = None
+    baslangic_tarihi: Optional[str] = None  # string olarak alıp None/boş kontrolü yapılır
     sube_id: Optional[str] = None
     notlar: Optional[str] = None
+
+    def baslangic_date(self):
+        if not self.baslangic_tarihi or self.baslangic_tarihi.strip() == '':
+            return None
+        try:
+            from datetime import date as _date
+            return _date.fromisoformat(self.baslangic_tarihi)
+        except:
+            return None
 
 @app.get("/api/personel")
 def personel_listele(aktif: Optional[bool] = None):
@@ -1485,7 +1494,7 @@ def personel_ekle(p: PersonelModel):
             (id,ad_soyad,gorev,calisma_turu,maas,saatlik_ucret,yemek_ucreti,yol_ucreti,odeme_gunu,baslangic_tarihi,sube_id,notlar)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (pid, p.ad_soyad, p.gorev, p.calisma_turu, p.maas, p.saatlik_ucret,
-             p.yemek_ucreti, p.yol_ucreti, p.odeme_gunu, p.baslangic_tarihi, p.sube_id, p.notlar))
+             p.yemek_ucreti, p.yol_ucreti, p.odeme_gunu, p.baslangic_date(), p.sube_id, p.notlar))
         audit(cur, 'personel', pid, 'INSERT')
     return {"id": pid, "success": True}
 
@@ -1499,7 +1508,7 @@ def personel_guncelle(pid: str, p: PersonelModel):
             saatlik_ucret=%s,yemek_ucreti=%s,yol_ucreti=%s,odeme_gunu=%s,
             baslangic_tarihi=%s,sube_id=%s,notlar=%s WHERE id=%s""",
             (p.ad_soyad, p.gorev, p.calisma_turu, p.maas, p.saatlik_ucret,
-             p.yemek_ucreti, p.yol_ucreti, p.odeme_gunu, p.baslangic_tarihi,
+             p.yemek_ucreti, p.yol_ucreti, p.odeme_gunu, p.baslangic_date(),
              p.sube_id, p.notlar, pid))
         audit(cur, 'personel', pid, 'UPDATE', eski=eski)
     return {"success": True}
