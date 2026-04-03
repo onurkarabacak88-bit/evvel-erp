@@ -688,10 +688,7 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                   str(b['id']), str(odeme_tarihi)))
             if cur.rowcount > 0:
                 uretilen.append(f"Kredi: {b['kurum']} — {odeme_tarihi}")
-                # Kalan vade plan üretilince düşer — iptal edilirse geri alınmaz
-                # Bu kabul edilebilir: iptal nadir, manuel düzeltme mümkün
-                if b['kalan_vade'] is not None:
-                    cur.execute("UPDATE borc_envanteri SET kalan_vade = kalan_vade - 1 WHERE id = %s", (b['id'],))
+                # kalan_vade artık odeme_yap'ta ödeme onaylanınca düşüyor — burada düşürme
 
         # 4. VADELİ ALIMLAR (o ay vadesi gelenler)
         cur.execute("""

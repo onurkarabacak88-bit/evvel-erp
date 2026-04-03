@@ -413,6 +413,28 @@ def panel():
             """)
             ozet['vadeli_kart'] = float(cur.fetchone()['kart'])
 
+            # BORÇ TAKSİTLERİ — bu ay ödenen
+            cur.execute("""
+                SELECT COALESCE(SUM(ABS(tutar)), 0) as borc_odenen
+                FROM kasa_hareketleri
+                WHERE islem_turu = 'BORC_TAKSIT' AND kasa_etkisi = true AND durum = 'aktif'
+                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+            """)
+            ozet['borc_taksit_odenen'] = float(cur.fetchone()['borc_odenen'])
+
+            # Bekleyen borç taksitleri
+            cur.execute("""
+                SELECT COALESCE(SUM(odenecek_tutar), 0) as bekleyen,
+                       COUNT(*) as adet
+                FROM odeme_plani
+                WHERE kaynak_tablo = 'borc_envanteri'
+                AND durum IN ('bekliyor','onay_bekliyor')
+            """)
+            row = cur.fetchone()
+            ozet['borc_taksit_bekleyen'] = float(row['bekleyen'])
+            ozet['borc_taksit_bekleyen_adet'] = int(row['adet'])
+
             # GENEL TOPLAM
             ozet['genel_nakit_toplam'] = ozet['anlik_nakit'] + ozet['sabit_nakit'] + ozet['vadeli_nakit']
             ozet['genel_kart_toplam']  = ozet['anlik_kart']  + ozet['sabit_kart']  + ozet['vadeli_kart']
@@ -1048,6 +1070,9 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
             elif kaynak == 'vadeli_alimlar':
                 islem_t = 'VADELI_ODEME'
                 aciklama_t = plan['aciklama']
+            elif kaynak == 'borc_envanteri':
+                islem_t = 'BORC_TAKSIT'
+                aciklama_t = plan['aciklama']
             else:
                 islem_t = 'KART_ODEME'
                 aciklama_t = plan['aciklama']
@@ -1066,6 +1091,20 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
         # Kaynak vadeli_alimlar ise tüm bağlı kayıtları atomik kapat — çift düşme engeli
         if plan.get('kaynak_tablo') == 'vadeli_alimlar' and plan.get('kaynak_id'):
             vadeli_alim_kapat(cur, plan['kaynak_id'], bugun)
+
+        # Kaynak borc_envanteri ise kalan_vade ve toplam_borc güncelle
+        if plan.get('kaynak_tablo') == 'borc_envanteri' and plan.get('kaynak_id'):
+            cur.execute("SELECT * FROM borc_envanteri WHERE id=%s", (plan['kaynak_id'],))
+            borc = cur.fetchone()
+            if borc:
+                yeni_kalan = (borc['kalan_vade'] - 1) if borc['kalan_vade'] is not None else None
+                yeni_toplam = max(0, float(borc['toplam_borc'] or 0) - ana_para_kismi)
+                cur.execute("""
+                    UPDATE borc_envanteri
+                    SET kalan_vade = %s,
+                        toplam_borc = %s
+                    WHERE id = %s
+                """, (yeni_kalan, yeni_toplam, plan['kaynak_id']))
 
         # Faiz üretimi: ekstre_bazli_faiz_uret() ay sonunda veya manuel tetiklenir
 
