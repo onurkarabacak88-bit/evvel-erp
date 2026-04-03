@@ -69,18 +69,18 @@ export default function Personel() {
 
   async function kaydet() {
     const body = {
-      ad_soyad: form.ad_soyad,
+      ad_soyad: form.ad_soyad?.trim(),
       gorev: form.gorev || null,
       calisma_turu: form.calisma_turu,
-      maas: parseFloat(form.maas) || 0,
-      saatlik_ucret: parseFloat(form.saatlik_ucret) || 0,
-      yemek_ucreti: parseFloat(form.yemek_ucreti) || 0,
-      yol_ucreti: parseFloat(form.yol_ucreti) || 0,
-      odeme_gunu: parseInt(form.odeme_gunu) || 28,
+      maas: form.maas ? Number(form.maas) : 0,
+      saatlik_ucret: form.saatlik_ucret ? Number(form.saatlik_ucret) : 0,
+      yemek_ucreti: form.yemek_ucreti ? Number(form.yemek_ucreti) : 0,
+      yol_ucreti: form.yol_ucreti ? Number(form.yol_ucreti) : 0,
+      odeme_gunu: Number(form.odeme_gunu) || 28,
       sube_id: form.sube_id ? parseInt(form.sube_id) : null,
-      baslangic_tarihi: form.baslangic_tarihi || null,
+      baslangic_tarihi: form.baslangic_tarihi ? form.baslangic_tarihi : null,
       notlar: form.notlar || null,
-    };
+  };
     try {
       if (duzenleId) await api(`/personel/${duzenleId}`, { method:'PUT', body });
       else await api('/personel', { method:'POST', body });
