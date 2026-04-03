@@ -1717,6 +1717,36 @@ def personel_aylik_onayla(pid: str, yil: int = None, ay: int = None):
             raise HTTPException(400, "Kayıt bulunamadı veya zaten onaylandı")
     return {"success": True}
 
+@app.delete("/api/personel-aylik/{pid}")
+def personel_aylik_sil(pid: str, yil: int = None, ay: int = None):
+    """Personelin aylık maaş kaydını siler. Sadece taslak durumdakiler silinebilir."""
+    bugun = date.today()
+    yil = yil or bugun.year
+    ay  = ay  or bugun.month
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
+            (pid, yil, ay))
+        kayit = cur.fetchone()
+        if not kayit:
+            raise HTTPException(404, "Kayıt bulunamadı")
+        if kayit['durum'] == 'onaylandi':
+            raise HTTPException(400, "Onaylanmış kayıt silinemez")
+        cur.execute("DELETE FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
+            (pid, yil, ay))
+        # Ödeme planını tahmini tutara geri döndür
+        cur.execute("SELECT * FROM personel WHERE id=%s", (pid,))
+        p = cur.fetchone()
+        if p and p['calisma_turu'] == 'surekli':
+            tahmini = float(p['maas'] or 0) + float(p['yemek_ucreti'] or 0) + float(p['yol_ucreti'] or 0)
+            cur.execute("""
+                UPDATE odeme_plani SET odenecek_tutar=%s, asgari_tutar=%s
+                WHERE kaynak_tablo='personel' AND kaynak_id=%s
+                AND durum IN ('bekliyor','onay_bekliyor')
+                AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
+            """, (tahmini, tahmini, pid))
+        audit(cur, 'personel_aylik', str(kayit['id']), 'DELETE')
+    return {"success": True}
+
 @app.get("/api/personel-aylik/{pid}/gecmis")
 def personel_aylik_gecmis(pid: str):
     """Personelin son 12 aylık maaş geçmişini döner."""
