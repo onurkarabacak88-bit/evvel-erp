@@ -977,16 +977,24 @@ def finans_ozet_motoru():
                 odeme_tarihi = date(bugun.year, bugun.month,
                                     _cal.monthrange(bugun.year, bugun.month)[1])
             gun_farki = (odeme_tarihi - bugun).days
-            # Bu ay zaten anlik_gider olarak işlendi mi kontrol et — kaynak_id ile
+            # Bu ay fatura ödendi mi — kasa_hareketleri FATURA_ODEMESI ile kontrol
             cur.execute("""
-                SELECT 1 FROM anlik_giderler
+                SELECT 1 FROM kasa_hareketleri
                 WHERE kaynak_id = %s AND kaynak_tablo = 'sabit_giderler'
-                AND durum = 'aktif'
-                AND EXTRACT(YEAR FROM tarih) = %s
-                AND EXTRACT(MONTH FROM tarih) = %s
+                AND islem_turu = 'FATURA_ODEMESI' AND kasa_etkisi = true AND durum = 'aktif'
+                AND EXTRACT(YEAR FROM tarih) = %s AND EXTRACT(MONTH FROM tarih) = %s
             """, (str(g['id']), bugun.year, bugun.month))
             if cur.fetchone():
                 continue  # Bu ay zaten ödendi
+            # Kart ile ödendi mi kontrol et
+            cur.execute("""
+                SELECT 1 FROM kart_hareketleri
+                WHERE kaynak_id = %s AND kaynak_tablo = 'fatura_giderleri'
+                AND islem_turu = 'HARCAMA' AND durum = 'aktif'
+                AND EXTRACT(YEAR FROM tarih) = %s AND EXTRACT(MONTH FROM tarih) = %s
+            """, (str(g['id']), bugun.year, bugun.month))
+            if cur.fetchone():
+                continue  # Bu ay kart ile ödendi
             bugun_odemeler.append({
                 'odeme_id': None,
                 'aciklama': g['gider_adi'],
@@ -1022,11 +1030,18 @@ def finans_ozet_motoru():
             if gun_farki <= 0:
                 continue
             cur.execute("""
-                SELECT 1 FROM anlik_giderler
+                SELECT 1 FROM kasa_hareketleri
                 WHERE kaynak_id = %s AND kaynak_tablo = 'sabit_giderler'
-                AND durum = 'aktif'
-                AND EXTRACT(YEAR FROM tarih) = %s
-                AND EXTRACT(MONTH FROM tarih) = %s
+                AND islem_turu = 'FATURA_ODEMESI' AND kasa_etkisi = true AND durum = 'aktif'
+                AND EXTRACT(YEAR FROM tarih) = %s AND EXTRACT(MONTH FROM tarih) = %s
+            """, (str(g['id']), bugun.year, bugun.month))
+            if cur.fetchone():
+                continue
+            cur.execute("""
+                SELECT 1 FROM kart_hareketleri
+                WHERE kaynak_id = %s AND kaynak_tablo = 'fatura_giderleri'
+                AND islem_turu = 'HARCAMA' AND durum = 'aktif'
+                AND EXTRACT(YEAR FROM tarih) = %s AND EXTRACT(MONTH FROM tarih) = %s
             """, (str(g['id']), bugun.year, bugun.month))
             if cur.fetchone():
                 continue

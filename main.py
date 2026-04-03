@@ -371,6 +371,27 @@ def panel():
             """)
             ozet['sabit_kart'] = float(cur.fetchone()['kart'])
 
+            # FATURA GİDERİ nakit — kasa_hareketleri FATURA_ODEMESI
+            cur.execute("""
+                SELECT COALESCE(SUM(ABS(tutar)), 0) as nakit
+                FROM kasa_hareketleri
+                WHERE islem_turu = 'FATURA_ODEMESI' AND kasa_etkisi = true AND durum = 'aktif'
+                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+            """)
+            ozet['fatura_nakit'] = float(cur.fetchone()['nakit'])
+
+            # FATURA GİDERİ kart — kart_hareketleri kaynak_tablo=fatura_giderleri
+            cur.execute("""
+                SELECT COALESCE(SUM(tutar), 0) as kart
+                FROM kart_hareketleri
+                WHERE islem_turu = 'HARCAMA' AND durum = 'aktif'
+                AND kaynak_tablo = 'fatura_giderleri'
+                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+            """)
+            ozet['fatura_kart'] = float(cur.fetchone()['kart'])
+
             # VADELİ ALIM — kasa_hareketleri VADELI_ODEME=nakit, kart_hareketleri HARCAMA+aciklama=kart
             cur.execute("""
                 SELECT COALESCE(SUM(ABS(tutar)), 0) as nakit
@@ -425,7 +446,7 @@ def panel_detay():
             cur.execute("""
 SELECT
     COALESCE(SUM(CASE WHEN islem_turu IN ('CIRO','DIS_KAYNAK','KASA_GIRIS','KASA_DUZELTME') AND tutar > 0 THEN tutar ELSE 0 END), 0) as gelir,
-    COALESCE(SUM(CASE WHEN islem_turu IN ('ANLIK_GIDER','KART_ODEME','VADELI_ODEME','PERSONEL_MAAS','SABIT_GIDER','BORC_TAKSIT') THEN ABS(tutar) ELSE 0 END), 0) as gider
+    COALESCE(SUM(CASE WHEN islem_turu IN ('ANLIK_GIDER','KART_ODEME','VADELI_ODEME','PERSONEL_MAAS','SABIT_GIDER','BORC_TAKSIT','FATURA_ODEMESI') THEN ABS(tutar) ELSE 0 END), 0) as gider
 FROM kasa_hareketleri
 WHERE durum='aktif'
 """)
@@ -1081,7 +1102,7 @@ def onayla(oid: str):
             raise HTTPException(400, f"Bu işlem zaten '{onay['durum']}' durumunda, tekrar onaylanamaz.")
         tutar = float(onay['tutar'])
         tarih = str(onay['tarih'])
-        GIDER_TURLERI = {'KART_ODEME', 'ANLIK_GIDER', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER', 'BORC_TAKSIT', 'ODEME_PLANI'}
+        GIDER_TURLERI = {'KART_ODEME', 'ANLIK_GIDER', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER', 'BORC_TAKSIT', 'FATURA_ODEMESI', 'ODEME_PLANI'}
         GELIR_TURLERI = {'CIRO', 'CIRO_DUZELTME', 'DIS_KAYNAK', 'KASA_GIRIS', 'KASA_DUZELTME'}
         islem_turu = onay['islem_turu']
         if islem_turu in GIDER_TURLERI:
@@ -1731,6 +1752,96 @@ def sabit_gider_odemeler(ay: str = None):
                 "odenenler": odenenler
             }
         }
+
+# ── FATURA ÖDEMESİ ────────────────────────────────────────────
+
+class FaturaOdemeModel(BaseModel):
+    sabit_gider_id: str       # Hangi değişken gider ödeniyor
+    tutar: float              # Fatura tutarı
+    tarih: date               # Ödeme tarihi
+    odeme_yontemi: str = 'nakit'
+    kart_id: Optional[str] = None
+    aciklama: Optional[str] = None
+
+@app.post("/api/fatura-ode")
+def fatura_ode(body: FaturaOdemeModel):
+    """
+    Değişken sabit gider (elektrik, su vb.) fatura ödemesi.
+    Kasaya FATURA_ODEMESI olarak yazılır, kaynak sabit_giderler tablosuna bağlanır.
+    """
+    with db() as (conn, cur):
+        # Sabit gideri kontrol et
+        cur.execute("SELECT * FROM sabit_giderler WHERE id=%s AND aktif=TRUE", (body.sabit_gider_id,))
+        gider = cur.fetchone()
+        if not gider:
+            raise HTTPException(404, "Gider bulunamadı")
+        if gider.get('tip') != 'degisken':
+            raise HTTPException(400, "Bu endpoint sadece değişken giderler için kullanılır")
+
+        # Bu ay zaten ödendi mi?
+        cur.execute("""
+            SELECT 1 FROM kasa_hareketleri
+            WHERE kaynak_id=%s AND kaynak_tablo='sabit_giderler'
+            AND islem_turu='FATURA_ODEMESI' AND kasa_etkisi=true AND durum='aktif'
+            AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM %s::date)
+            AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM %s::date)
+        """, (body.sabit_gider_id, str(body.tarih), str(body.tarih)))
+        if cur.fetchone():
+            raise HTTPException(400, "Bu ay için zaten fatura ödemesi yapılmış")
+
+        aciklama = body.aciklama or f"Fatura: {gider['gider_adi']}"
+        fid = str(uuid.uuid4())
+
+        if body.odeme_yontemi == 'kart':
+            if not body.kart_id:
+                raise HTTPException(400, "Kart seçimi zorunlu")
+            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (body.kart_id,))
+            kart = cur.fetchone()
+            if not kart:
+                raise HTTPException(404, "Kart bulunamadı")
+            # Karta HARCAMA yaz — kaynak_tablo fatura_giderleri
+            hid = str(uuid.uuid4())
+            cur.execute("""
+                INSERT INTO kart_hareketleri
+                    (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama, kaynak_id, kaynak_tablo)
+                VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s, %s, 'fatura_giderleri')
+            """, (hid, body.kart_id, str(body.tarih), body.tutar, aciklama, body.sabit_gider_id))
+            audit(cur, 'kart_hareketleri', hid, 'FATURA_KART')
+        else:
+            # Kasaya yaz
+            insert_kasa_hareketi(cur, str(body.tarih), 'FATURA_ODEMESI', -abs(body.tutar),
+                aciklama, 'sabit_giderler', body.sabit_gider_id)
+
+        audit(cur, 'sabit_giderler', body.sabit_gider_id, 'FATURA_ODENDI',
+              yeni={'tutar': body.tutar, 'tarih': str(body.tarih)})
+    return {"success": True, "id": fid}
+
+@app.get("/api/fatura-gecmis/{gider_id}")
+def fatura_gecmis(gider_id: str):
+    """Bir değişken giderin geçmiş fatura ödemelerini döner."""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT tarih, ABS(tutar) as tutar, aciklama, 'nakit' as yontem
+            FROM kasa_hareketleri
+            WHERE kaynak_id=%s AND kaynak_tablo='sabit_giderler'
+            AND islem_turu='FATURA_ODEMESI' AND kasa_etkisi=true AND durum='aktif'
+            ORDER BY tarih DESC LIMIT 12
+        """, (gider_id,))
+        nakit = [dict(r) for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT kh.tarih, kh.tutar, kh.aciklama, 'kart' as yontem, k.banka, k.kart_adi
+            FROM kart_hareketleri kh
+            JOIN kartlar k ON k.id = kh.kart_id
+            WHERE kh.kaynak_id=%s AND kh.kaynak_tablo='fatura_giderleri'
+            AND kh.islem_turu='HARCAMA' AND kh.durum='aktif'
+            ORDER BY kh.tarih DESC LIMIT 12
+        """, (gider_id,))
+        kart = [dict(r) for r in cur.fetchall()]
+
+        gecmis = nakit + kart
+        gecmis.sort(key=lambda x: str(x['tarih']), reverse=True)
+        return gecmis
 
 # ── VADELİ ALIMLAR ─────────────────────────────────────────────
 class VadeliAlim(BaseModel):
