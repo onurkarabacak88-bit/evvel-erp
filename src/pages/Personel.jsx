@@ -77,7 +77,7 @@ export default function Personel() {
       yemek_ucreti: parseFloat(form.yemek_ucreti) || 0,
       yol_ucreti: parseFloat(form.yol_ucreti) || 0,
       odeme_gunu: parseInt(form.odeme_gunu) || 28,
-      sube_id: form.sube_id || null,
+      sube_id: form.sube_id ? parseInt(form.sube_id) : null,
       baslangic_tarihi: form.baslangic_tarihi || null,
       notlar: form.notlar || null,
     };
