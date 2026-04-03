@@ -612,6 +612,7 @@ export default function Panel({ onNavigate }) {
               sabit_giderler: { ikon: '🏠', etiket: 'Sabit Gider', renk: 'var(--yellow)' },
               personel:       { ikon: '👤', etiket: 'Maaş',        renk: '#4a9eff'        },
               vadeli_alimlar: { ikon: '📦', etiket: 'Vadeli Borç', renk: 'var(--orange)'  },
+              borc_envanteri: { ikon: '🏦', etiket: 'Kredi/Borç',  renk: '#e879f9'        },
             }[u.kaynak_tablo] || { ikon: '💳', etiket: 'Ödeme', renk: 'var(--text3)' };
 
             return (
@@ -759,6 +760,7 @@ export default function Panel({ onNavigate }) {
             const tip = u.kaynak_tablo === 'sabit_giderler' ? '🏠'
                       : u.kaynak_tablo === 'personel'       ? '👤'
                       : u.kaynak_tablo === 'vadeli_alimlar' ? '📦'
+                      : u.kaynak_tablo === 'borc_envanteri' ? '🏦'
                       : '💳';
             const tutar_goster = ['sabit_giderler','personel'].includes(u.kaynak_tablo)
               ? fmt(u.tutar)

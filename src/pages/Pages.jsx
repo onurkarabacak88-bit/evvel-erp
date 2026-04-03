@@ -175,15 +175,31 @@ export function Borclar() {
   const [form, setForm] = useState({kurum:'',borc_turu:'Kredi',toplam_borc:'',aylik_taksit:'',kalan_vade:'',toplam_vade:'',baslangic_tarihi:'',odeme_gunu:1});
   const [duzenleId, setDuzenleId] = useState(null);
   const [msg, setMsg] = useState(null);
+  const [hatalar, setHatalar] = useState({});
   const load = ()=>api('/borclar').then(setListe);
   useEffect(()=>{load();},[]);
   const toast=(m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
 
   async function kaydet(){
+    const yeniHatalar = {};
+    if(!form.kurum) yeniHatalar.kurum = 'Zorunlu';
+    if(!form.aylik_taksit || isNaN(parseFloat(form.aylik_taksit))) yeniHatalar.aylik_taksit = 'Geçerli tutar giriniz';
+    if(Object.keys(yeniHatalar).length > 0){ setHatalar(yeniHatalar); return; }
+    setHatalar({});
+    // Sayısal alanları dönüştür — backend float/int bekliyor
+    const body = {
+      ...form,
+      aylik_taksit: parseFloat(form.aylik_taksit),
+      toplam_borc: form.toplam_borc ? parseFloat(form.toplam_borc) : null,
+      kalan_vade: form.kalan_vade ? parseInt(form.kalan_vade) : null,
+      toplam_vade: form.toplam_vade ? parseInt(form.toplam_vade) : null,
+      odeme_gunu: parseInt(form.odeme_gunu) || 1,
+      baslangic_tarihi: form.baslangic_tarihi || null,
+    };
     try{
-      if(duzenleId) await api(`/borclar/${duzenleId}`,{method:'PUT',body:form});
-      else await api('/borclar',{method:'POST',body:form});
-      toast('Kaydedildi'); setShowModal(false); setDuzenleId(null); load();
+      if(duzenleId) await api(`/borclar/${duzenleId}`,{method:'PUT',body});
+      else await api('/borclar',{method:'POST',body});
+      toast('Kaydedildi'); setShowModal(false); setDuzenleId(null); setHatalar({}); load();
     }catch(e){toast(e.message,'red');}
   }
   async function sil(id){
@@ -232,13 +248,40 @@ export function Borclar() {
             <div className="modal-header"><h3>{duzenleId?'Borç Düzenle':'Yeni Borç'}</h3><button className="modal-close" onClick={()=>setShowModal(false)}>✕</button></div>
             <div className="modal-body">
               <div className="form-row cols-2">
-                <div className="form-group"><label>Kurum *</label><input value={form.kurum} onChange={e=>setForm({...form,kurum:e.target.value})}/></div>
-                <div className="form-group"><label>Tür</label><select value={form.borc_turu} onChange={e=>setForm({...form,borc_turu:e.target.value})}><option>Kredi</option><option>Mortgage</option><option>İşletme Kredisi</option><option>Diğer</option></select></div>
-                <div className="form-group"><label>Toplam Borç (₺)</label><input type="number" value={form.toplam_borc} onChange={e=>setForm({...form,toplam_borc:e.target.value})}/></div>
-                <div className="form-group"><label>Aylık Taksit (₺) *</label><input type="number" value={form.aylik_taksit} onChange={e=>setForm({...form,aylik_taksit:e.target.value})}/></div>
-                <div className="form-group"><label>Kalan Vade (Ay)</label><input type="number" value={form.kalan_vade} onChange={e=>setForm({...form,kalan_vade:e.target.value})}/></div>
-                <div className="form-group"><label>Ödeme Günü</label><input type="number" min={1} max={31} value={form.odeme_gunu} onChange={e=>setForm({...form,odeme_gunu:e.target.value})}/></div>
-                <div className="form-group"><label>Başlangıç Tarihi</label><input type="date" value={form.baslangic_tarihi} onChange={e=>setForm({...form,baslangic_tarihi:e.target.value})}/></div>
+                <div className="form-group">
+                  <label>Kurum *</label>
+                  <input value={form.kurum} onChange={e=>setForm({...form,kurum:e.target.value})}
+                    style={{borderColor:hatalar.kurum?'var(--red)':''}}/>
+                  {hatalar.kurum && <span style={{color:'var(--red)',fontSize:11}}>⚠️ {hatalar.kurum}</span>}
+                </div>
+                <div className="form-group">
+                  <label>Tür</label>
+                  <select value={form.borc_turu} onChange={e=>setForm({...form,borc_turu:e.target.value})}>
+                    <option>Kredi</option><option>Mortgage</option><option>İşletme Kredisi</option><option>Diğer</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Toplam Borç (₺)</label>
+                  <input type="number" value={form.toplam_borc} onChange={e=>setForm({...form,toplam_borc:e.target.value})}/>
+                </div>
+                <div className="form-group">
+                  <label>Aylık Taksit (₺) *</label>
+                  <input type="number" value={form.aylik_taksit} onChange={e=>setForm({...form,aylik_taksit:e.target.value})}
+                    style={{borderColor:hatalar.aylik_taksit?'var(--red)':''}}/>
+                  {hatalar.aylik_taksit && <span style={{color:'var(--red)',fontSize:11}}>⚠️ {hatalar.aylik_taksit}</span>}
+                </div>
+                <div className="form-group">
+                  <label>Kalan Vade (Ay)</label>
+                  <input type="number" value={form.kalan_vade} onChange={e=>setForm({...form,kalan_vade:e.target.value})}/>
+                </div>
+                <div className="form-group">
+                  <label>Ödeme Günü</label>
+                  <input type="number" min={1} max={31} value={form.odeme_gunu} onChange={e=>setForm({...form,odeme_gunu:e.target.value})}/>
+                </div>
+                <div className="form-group">
+                  <label>Başlangıç Tarihi</label>
+                  <input type="date" value={form.baslangic_tarihi} onChange={e=>setForm({...form,baslangic_tarihi:e.target.value})}/>
+                </div>
               </div>
             </div>
             <div className="modal-footer">
