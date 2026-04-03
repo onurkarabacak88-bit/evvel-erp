@@ -68,6 +68,8 @@ export default function Personel() {
   const toast = (m, t='green') => { setMsg({m,t}); setTimeout(()=>setMsg(null),3500); };
 
   async function kaydet() {
+    const gun = Number(form.odeme_gunu);
+
     const body = {
       ad_soyad: form.ad_soyad?.trim(),
       gorev: form.gorev || null,
@@ -76,10 +78,29 @@ export default function Personel() {
       saatlik_ucret: form.saatlik_ucret ? Number(form.saatlik_ucret) : 0,
       yemek_ucreti: form.yemek_ucreti ? Number(form.yemek_ucreti) : 0,
       yol_ucreti: form.yol_ucreti ? Number(form.yol_ucreti) : 0,
-      odeme_gunu: Number(form.odeme_gunu) || 28,
+      odeme_gunu: (gun >= 1 && gun <= 31) ? gun : 28,
       sube_id: form.sube_id ? parseInt(form.sube_id) : null,
       baslangic_tarihi: form.baslangic_tarihi ? form.baslangic_tarihi : null,
       notlar: form.notlar || null,
+    };
+
+  try {
+    if (duzenleId) {
+      await api(`/personel/${duzenleId}`, { method: 'PUT', body });
+    } else {
+      await api('/personel', { method: 'POST', body });
+    }
+
+    toast(duzenleId ? 'Güncellendi' : 'Personel eklendi');
+    setShowModal(false);
+    setForm(BOSH);
+    setDuzenleId(null);
+    load();
+
+  } catch (e) {
+    toast(e.message, 'red');
+  }
+}
   };
     try {
       if (duzenleId) await api(`/personel/${duzenleId}`, { method:'PUT', body });
