@@ -97,17 +97,9 @@ export default function Personel() {
     setDuzenleId(null);
     load();
 
-  } catch (e) {
-    toast(e.message, 'red');
-  }
-}
-  };
-    try {
-      if (duzenleId) await api(`/personel/${duzenleId}`, { method:'PUT', body });
-      else await api('/personel', { method:'POST', body });
-      toast(duzenleId ? 'Güncellendi' : 'Personel eklendi');
-      setShowModal(false); setForm(BOSH); setDuzenleId(null); load();
-    } catch(e) { toast(e.message,'red'); }
+    } catch (e) {
+      toast(e.message, 'red');
+    }
   }
 
   async function cikisYap() {
