@@ -175,15 +175,31 @@ export function Borclar() {
   const [form, setForm] = useState({kurum:'',borc_turu:'Kredi',toplam_borc:'',aylik_taksit:'',kalan_vade:'',toplam_vade:'',baslangic_tarihi:'',odeme_gunu:1});
   const [duzenleId, setDuzenleId] = useState(null);
   const [msg, setMsg] = useState(null);
+  const [hatalar, setHatalar] = useState({});
   const load = ()=>api('/borclar').then(setListe);
   useEffect(()=>{load();},[]);
   const toast=(m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
 
   async function kaydet(){
+    const yeniHatalar = {};
+    if(!form.kurum) yeniHatalar.kurum = 'Zorunlu';
+    if(!form.aylik_taksit || isNaN(parseFloat(form.aylik_taksit))) yeniHatalar.aylik_taksit = 'Geçerli tutar giriniz';
+    if(Object.keys(yeniHatalar).length > 0){ setHatalar(yeniHatalar); return; }
+    setHatalar({});
+    // Sayısal alanları dönüştür — backend float/int bekliyor
+    const body = {
+      ...form,
+      aylik_taksit: parseFloat(form.aylik_taksit),
+      toplam_borc: form.toplam_borc ? parseFloat(form.toplam_borc) : null,
+      kalan_vade: form.kalan_vade ? parseInt(form.kalan_vade) : null,
+      toplam_vade: form.toplam_vade ? parseInt(form.toplam_vade) : null,
+      odeme_gunu: parseInt(form.odeme_gunu) || 1,
+      baslangic_tarihi: form.baslangic_tarihi || null,
+    };
     try{
-      if(duzenleId) await api(`/borclar/${duzenleId}`,{method:'PUT',body:form});
-      else await api('/borclar',{method:'POST',body:form});
-      toast('Kaydedildi'); setShowModal(false); setDuzenleId(null); load();
+      if(duzenleId) await api(`/borclar/${duzenleId}`,{method:'PUT',body});
+      else await api('/borclar',{method:'POST',body});
+      toast('Kaydedildi'); setShowModal(false); setDuzenleId(null); setHatalar({}); load();
     }catch(e){toast(e.message,'red');}
   }
   async function sil(id){
@@ -232,13 +248,40 @@ export function Borclar() {
             <div className="modal-header"><h3>{duzenleId?'Borç Düzenle':'Yeni Borç'}</h3><button className="modal-close" onClick={()=>setShowModal(false)}>✕</button></div>
             <div className="modal-body">
               <div className="form-row cols-2">
-                <div className="form-group"><label>Kurum *</label><input value={form.kurum} onChange={e=>setForm({...form,kurum:e.target.value})}/></div>
-                <div className="form-group"><label>Tür</label><select value={form.borc_turu} onChange={e=>setForm({...form,borc_turu:e.target.value})}><option>Kredi</option><option>Mortgage</option><option>İşletme Kredisi</option><option>Diğer</option></select></div>
-                <div className="form-group"><label>Toplam Borç (₺)</label><input type="number" value={form.toplam_borc} onChange={e=>setForm({...form,toplam_borc:e.target.value})}/></div>
-                <div className="form-group"><label>Aylık Taksit (₺) *</label><input type="number" value={form.aylik_taksit} onChange={e=>setForm({...form,aylik_taksit:e.target.value})}/></div>
-                <div className="form-group"><label>Kalan Vade (Ay)</label><input type="number" value={form.kalan_vade} onChange={e=>setForm({...form,kalan_vade:e.target.value})}/></div>
-                <div className="form-group"><label>Ödeme Günü</label><input type="number" min={1} max={31} value={form.odeme_gunu} onChange={e=>setForm({...form,odeme_gunu:e.target.value})}/></div>
-                <div className="form-group"><label>Başlangıç Tarihi</label><input type="date" value={form.baslangic_tarihi} onChange={e=>setForm({...form,baslangic_tarihi:e.target.value})}/></div>
+                <div className="form-group">
+                  <label>Kurum *</label>
+                  <input value={form.kurum} onChange={e=>setForm({...form,kurum:e.target.value})}
+                    style={{borderColor:hatalar.kurum?'var(--red)':''}}/>
+                  {hatalar.kurum && <span style={{color:'var(--red)',fontSize:11}}>⚠️ {hatalar.kurum}</span>}
+                </div>
+                <div className="form-group">
+                  <label>Tür</label>
+                  <select value={form.borc_turu} onChange={e=>setForm({...form,borc_turu:e.target.value})}>
+                    <option>Kredi</option><option>Mortgage</option><option>İşletme Kredisi</option><option>Diğer</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Toplam Borç (₺)</label>
+                  <input type="number" value={form.toplam_borc} onChange={e=>setForm({...form,toplam_borc:e.target.value})}/>
+                </div>
+                <div className="form-group">
+                  <label>Aylık Taksit (₺) *</label>
+                  <input type="number" value={form.aylik_taksit} onChange={e=>setForm({...form,aylik_taksit:e.target.value})}
+                    style={{borderColor:hatalar.aylik_taksit?'var(--red)':''}}/>
+                  {hatalar.aylik_taksit && <span style={{color:'var(--red)',fontSize:11}}>⚠️ {hatalar.aylik_taksit}</span>}
+                </div>
+                <div className="form-group">
+                  <label>Kalan Vade (Ay)</label>
+                  <input type="number" value={form.kalan_vade} onChange={e=>setForm({...form,kalan_vade:e.target.value})}/>
+                </div>
+                <div className="form-group">
+                  <label>Ödeme Günü</label>
+                  <input type="number" min={1} max={31} value={form.odeme_gunu} onChange={e=>setForm({...form,odeme_gunu:e.target.value})}/>
+                </div>
+                <div className="form-group">
+                  <label>Başlangıç Tarihi</label>
+                  <input type="date" value={form.baslangic_tarihi} onChange={e=>setForm({...form,baslangic_tarihi:e.target.value})}/>
+                </div>
               </div>
             </div>
             <div className="modal-footer">
@@ -258,7 +301,7 @@ export function SabitGiderler() {
   const [subeler, setSubeler] = useState([]);
   const [kartlar, setKartlar] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({gider_adi:'',kategori:'Kira',tutar:'',periyot:'aylik',odeme_gunu:1,baslangic_tarihi:'',sube_id:'',gecerlilik_tarihi:'',sozlesme_sure_ay:'',kira_artis_periyot:'',odeme_yontemi:'nakit',kart_id:''});
+  const [form, setForm] = useState({gider_adi:'',kategori:'Kira',tip:'sabit',tutar:'',periyot:'aylik',odeme_gunu:1,baslangic_tarihi:'',sube_id:'',gecerlilik_tarihi:'',sozlesme_sure_ay:'',kira_artis_periyot:'',odeme_yontemi:'nakit',kart_id:''});
   const [duzenleId, setDuzenleId] = useState(null);
   const [msg, setMsg] = useState(null);
   const [sekme, setSekme] = useState('tanimli');
@@ -298,10 +341,12 @@ export function SabitGiderler() {
 
   function validateForm(){
     const yeniHatalar = {};
-    const zorunlu = ZORUNLU_KATEGORILER.includes(form.kategori);
+    // Degisken tipte sadece gider_adi ve odeme_gunu zorunlu
+    const degisken = form.tip === 'degisken';
+    const zorunlu = !degisken && ZORUNLU_KATEGORILER.includes(form.kategori);
     if(!form.gider_adi) yeniHatalar.gider_adi = 'Zorunlu';
-    if(!form.tutar) yeniHatalar.tutar = 'Zorunlu';
-    if(zorunlu && !form.odeme_gunu) yeniHatalar.odeme_gunu = 'Zorunlu';
+    if(!degisken && !form.tutar) yeniHatalar.tutar = 'Zorunlu';
+    if(!form.odeme_gunu) yeniHatalar.odeme_gunu = 'Zorunlu';
     if(zorunlu && !form.baslangic_tarihi && !duzenleId) yeniHatalar.baslangic_tarihi = 'Zorunlu';
     if(zorunlu && !form.sube_id) yeniHatalar.sube_id = 'Şube seçimi zorunlu';
     if(duzenleId && zorunlu && !form.gecerlilik_tarihi) yeniHatalar.gecerlilik_tarihi = 'Hangi aydan itibaren geçerli?';
@@ -312,8 +357,18 @@ export function SabitGiderler() {
   async function kaydet(){
     if(!validateForm()) return;
     try{
-      if(duzenleId) await api(`/sabit-giderler/${duzenleId}`,{method:'PUT',body:form});
-      else await api('/sabit-giderler',{method:'POST',body:{...form, sube_id: form.sube_id||null}});
+      // Degisken tip: tutar boşsa 0 gönder (backend float bekliyor)
+      const body = {
+        ...form,
+        sube_id: form.sube_id || null,
+        tutar: form.tip === 'degisken' ? (parseFloat(form.tutar) || 0) : parseFloat(form.tutar),
+        odeme_gunu: parseInt(form.odeme_gunu) || 1,
+        // Degisken tipte zorunlu olmayan alanları null'a çevir
+        kart_id: form.tip === 'degisken' ? null : (form.kart_id || null),
+        odeme_yontemi: form.tip === 'degisken' ? 'nakit' : form.odeme_yontemi,
+      };
+      if(duzenleId) await api(`/sabit-giderler/${duzenleId}`,{method:'PUT',body});
+      else await api('/sabit-giderler',{method:'POST',body});
       toast('Kaydedildi'); setShowModal(false); setDuzenleId(null); setHatalar({}); load();
     }catch(e){toast(e.message,'red');}
   }
@@ -366,29 +421,39 @@ export function SabitGiderler() {
       {/* Tanımlı Giderler Tablosu — orijinal */}
       {sekme==='tanimli' && <div className="table-wrap">
         <table>
-          <thead><tr><th>Gider Adı</th><th>Kategori</th><th style={{textAlign:'right'}}>Tutar</th><th>Periyot</th><th>Ödeme Günü</th><th>Artış Periyodu</th><th>Ödeme Yöntemi</th><th>Şube</th><th>Durum</th><th></th></tr></thead>
+          <thead><tr><th>Tip</th><th>Gider Adı</th><th>Kategori</th><th style={{textAlign:'right'}}>Tutar</th><th>Periyot</th><th>Ödeme Günü</th><th>Ödeme Yöntemi</th><th>Şube</th><th>Durum</th><th></th></tr></thead>
           <tbody>
             {liste.map(g=>(
               <tr key={g.id}>
+                <td>
+                  {g.tip === 'degisken'
+                    ? <span className="badge badge-yellow">📄 Değişken</span>
+                    : <span className="badge badge-blue">📌 Sabit</span>
+                  }
+                </td>
                 <td style={{fontWeight:500}}>{g.gider_adi}</td>
                 <td><span className="badge badge-gray">{g.kategori}</span></td>
-                <td style={{textAlign:'right'}} className="amount-neg">{parseInt(g.tutar).toLocaleString('tr-TR')} ₺</td>
+                <td style={{textAlign:'right'}} className={g.tip==='degisken'?'':'amount-neg'}>
+                  {g.tip==='degisken' && (!g.tutar || g.tutar==0)
+                    ? <span style={{color:'var(--text3)',fontSize:11}}>— bekleniyor</span>
+                    : parseInt(g.tutar).toLocaleString('tr-TR') + ' ₺'
+                  }
+                </td>
                 <td style={{fontSize:12}}>{g.periyot}</td>
                 <td style={{fontSize:12,color:'var(--text3)'}}>Her ayın {g.odeme_gunu}. günü</td>
-                <td style={{fontSize:12,color:'var(--yellow)'}}>
-                  {({'6ay':'6 Ay','1yil':'1 Yıl','2yil':'2 Yıl','5yil':'5 Yıl'})[g.kira_artis_periyot]||'—'}
-                </td>
                 <td>
-                  {g.odeme_yontemi === 'kart'
-                    ? <span className="badge badge-blue">💳 Kart</span>
-                    : <span className="badge badge-gray">💵 Nakit</span>
+                  {g.tip==='degisken'
+                    ? <span className="badge badge-gray">— hatırlatma</span>
+                    : g.odeme_yontemi === 'kart'
+                      ? <span className="badge badge-blue">💳 Kart</span>
+                      : <span className="badge badge-gray">💵 Nakit</span>
                   }
                 </td>
                 <td style={{fontSize:12}}>{g.sube_adi||'---'}</td>
                 <td><span className={`badge ${g.aktif?'badge-green':'badge-gray'}`}>{g.aktif?'Aktif':'Pasif'}</span></td>
                 <td>
                   <div className="flex gap-8">
-                    <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({gider_adi:g.gider_adi,kategori:g.kategori,tutar:g.tutar,periyot:g.periyot,odeme_gunu:g.odeme_gunu,baslangic_tarihi:g.baslangic_tarihi?.slice(0,10)||'',sube_id:g.sube_id||'',gecerlilik_tarihi:'',sozlesme_sure_ay:g.sozlesme_sure_ay||'',kira_artis_periyot:g.kira_artis_periyot||'',odeme_yontemi:g.odeme_yontemi||'nakit',kart_id:g.kart_id||''});setDuzenleId(g.id);setHatalar({});setShowModal(true);}}>✏️</button>
+                    <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({gider_adi:g.gider_adi,kategori:g.kategori,tip:g.tip||'sabit',tutar:g.tutar,periyot:g.periyot,odeme_gunu:g.odeme_gunu,baslangic_tarihi:g.baslangic_tarihi?.slice(0,10)||'',sube_id:g.sube_id||'',gecerlilik_tarihi:'',sozlesme_sure_ay:g.sozlesme_sure_ay||'',kira_artis_periyot:g.kira_artis_periyot||'',odeme_yontemi:g.odeme_yontemi||'nakit',kart_id:g.kart_id||''});setDuzenleId(g.id);setHatalar({});setShowModal(true);}}>✏️</button>
                     <button className="btn btn-danger btn-sm" onClick={()=>sil(g.id)}>Kapat</button>
                   </div>
                 </td>
@@ -450,6 +515,26 @@ export function SabitGiderler() {
                   <label>Gider Adı *</label>
                   <input value={form.gider_adi} onChange={e=>setForm({...form,gider_adi:e.target.value})} style={{borderColor:hatalar.gider_adi?'var(--red)':''}}/>
                   {hatalar.gider_adi && <span style={{color:'var(--red)',fontSize:11}}>{hatalar.gider_adi}</span>}
+                </div>
+                <div className="form-group" style={{gridColumn:'1/-1'}}>
+                  <label>Gider Tipi *</label>
+                  <div style={{display:'flex',gap:8,marginTop:4}}>
+                    <button
+                      className={`btn btn-sm ${form.tip==='sabit'?'btn-primary':'btn-ghost'}`}
+                      onClick={()=>setForm({...form,tip:'sabit'})}>
+                      📌 Sabit <span style={{fontSize:10,opacity:0.7}}>— tutar belli, her ay aynı</span>
+                    </button>
+                    <button
+                      className={`btn btn-sm ${form.tip==='degisken'?'btn-primary':'btn-ghost'}`}
+                      onClick={()=>setForm({...form,tip:'degisken',odeme_yontemi:'nakit',kart_id:''})}>
+                      📄 Değişken <span style={{fontSize:10,opacity:0.7}}>— elektrik, su, doğalgaz vb.</span>
+                    </button>
+                  </div>
+                  {form.tip==='degisken' && (
+                    <div style={{marginTop:6,fontSize:11,color:'var(--yellow)',background:'rgba(220,160,0,0.08)',padding:'6px 10px',borderRadius:6,border:'1px solid rgba(220,160,0,0.3)'}}>
+                      ⚡ Değişken gider hatırlatmadır — ödeme geldiğinde tutarı Anlık Gider olarak girersiniz. Kasaya etki etmez.
+                    </div>
+                  )}
                 </div>
                 <div className="form-group">
                   <label>Kategori</label>
@@ -529,8 +614,8 @@ export function SabitGiderler() {
                   </>
                 )}
 
-                {/* ÖDEME YÖNTEMİ */}
-                <div className="form-group" style={{gridColumn:'1/-1'}}>
+                {/* ÖDEME YÖNTEMİ — sadece sabit giderde göster */}
+                {form.tip !== 'degisken' && <div className="form-group" style={{gridColumn:'1/-1'}}>
                   <label>Ödeme Yöntemi</label>
                   <div style={{display:'flex',gap:8,marginTop:4}}>
                     <button type="button"
@@ -549,10 +634,10 @@ export function SabitGiderler() {
                       Her ay otomatik olarak seçilen karta harcama olarak işlenir.
                     </p>
                   )}
-                </div>
+                </div>}
 
-                {/* KART SEÇİMİ */}
-                {form.odeme_yontemi === 'kart' && (
+                {/* KART SEÇİMİ — sadece sabit tipte göster */}
+                {form.tip !== 'degisken' && form.odeme_yontemi === 'kart' && (
                   <div className="form-group" style={{gridColumn:'1/-1'}}>
                     <label>Kart Seç *</label>
                     <select value={form.kart_id} onChange={e=>setForm({...form,kart_id:e.target.value})}
@@ -573,7 +658,7 @@ export function SabitGiderler() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={()=>setShowModal(false)}>İptal</button>
-              <button className="btn btn-primary" onClick={kaydet} disabled={!form.gider_adi||!form.tutar}>Kaydet</button>
+              <button className="btn btn-primary" onClick={kaydet} disabled={!form.gider_adi||(form.tip!=='degisken'&&!form.tutar)}>Kaydet</button>
             </div>
           </div>
         </div>
@@ -752,10 +837,33 @@ export function VadeliAlimlar() {
             <div className="modal-header"><h3>{duzenleId?'Düzenle':'Vadeli Alım Ekle'}</h3><button className="modal-close" onClick={()=>setShowModal(false)}>✕</button></div>
             <div className="modal-body">
               <div className="form-row cols-2">
-                <div className="form-group" style={{gridColumn:'1/-1'}}><label>Açıklama *</label><input value={form.aciklama} onChange={e=>setForm({...form,aciklama:e.target.value})}/></div>
-                <div className="form-group"><label>Tutar (₺) *</label><input type="number" value={form.tutar} onChange={e=>setForm({...form,tutar:e.target.value})}/></div>
-                <div className="form-group"><label>Vade Tarihi *</label><input type="date" value={form.vade_tarihi} onChange={e=>setForm({...form,vade_tarihi:e.target.value})}/></div>
-                <div className="form-group"><label>Tedarikçi</label><input value={form.tedarikci} onChange={e=>setForm({...form,tedarikci:e.target.value})}/></div>
+                <div className="form-group" style={{gridColumn:'1/-1'}}>
+                  <label>Açıklama * <span style={{fontSize:11,color:'var(--text3)'}}>— kart ödemelerinde eşleştirme için kritik</span></label>
+                  <input value={form.aciklama} onChange={e=>setForm({...form,aciklama:e.target.value})}
+                    placeholder="Ör: Ahmet Tedarikçi Mal Alımı"
+                    style={{borderColor: !form.aciklama ? 'var(--yellow)' : ''}}/>
+                  {!form.aciklama && <span style={{fontSize:11,color:'var(--yellow)'}}>⚠️ Zorunlu alan</span>}
+                </div>
+                <div className="form-group">
+                  <label>Tutar (₺) *</label>
+                  <input type="number" value={form.tutar} onChange={e=>setForm({...form,tutar:e.target.value})}
+                    placeholder="0"
+                    style={{borderColor: !form.tutar ? 'var(--yellow)' : ''}}/>
+                  {!form.tutar && <span style={{fontSize:11,color:'var(--yellow)'}}>⚠️ Zorunlu alan</span>}
+                </div>
+                <div className="form-group">
+                  <label>Vade Tarihi *</label>
+                  <input type="date" value={form.vade_tarihi} onChange={e=>setForm({...form,vade_tarihi:e.target.value})}
+                    style={{borderColor: !form.vade_tarihi ? 'var(--yellow)' : ''}}/>
+                  {!form.vade_tarihi && <span style={{fontSize:11,color:'var(--yellow)'}}>⚠️ Zorunlu alan</span>}
+                </div>
+                <div className="form-group">
+                  <label>Tedarikçi * <span style={{fontSize:11,color:'var(--text3)'}}>— kart takibinde kullanılır</span></label>
+                  <input value={form.tedarikci} onChange={e=>setForm({...form,tedarikci:e.target.value})}
+                    placeholder="Tedarikçi adı"
+                    style={{borderColor: !form.tedarikci ? 'var(--yellow)' : ''}}/>
+                  {!form.tedarikci && <span style={{fontSize:11,color:'var(--yellow)'}}>⚠️ Zorunlu alan</span>}
+                </div>
               </div>
             </div>
             {dupUyari && (
@@ -769,7 +877,7 @@ export function VadeliAlimlar() {
             )}
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={()=>setShowModal(false)}>İptal</button>
-              <button className="btn btn-primary" onClick={()=>kaydet(false)} disabled={!form.aciklama||!form.tutar||!form.vade_tarihi}>Kaydet</button>
+              <button className="btn btn-primary" onClick={()=>kaydet(false)} disabled={!form.aciklama||!form.tutar||!form.vade_tarihi||!form.tedarikci}>Kaydet</button>
             </div>
           </div>
         </div>
