@@ -394,6 +394,27 @@ def init_db():
             END $$;
         """)
 
+        # ── PERSONEL AYLIK KAYIT ───────────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS personel_aylik (
+                id              TEXT PRIMARY KEY,
+                personel_id     TEXT NOT NULL REFERENCES personel(id),
+                yil             INT NOT NULL,
+                ay              INT NOT NULL,
+                calisma_saati   NUMERIC(6,2) DEFAULT 0,
+                fazla_mesai_saat NUMERIC(6,2) DEFAULT 0,
+                eksik_gun       NUMERIC(4,1) DEFAULT 0,
+                raporlu_gun     NUMERIC(4,1) DEFAULT 0,
+                rapor_kesinti   BOOLEAN DEFAULT FALSE,
+                manuel_duzeltme NUMERIC(14,2) DEFAULT 0,
+                not_aciklama    TEXT,
+                hesaplanan_net  NUMERIC(14,2),
+                durum           TEXT DEFAULT 'taslak',
+                olusturma       TIMESTAMP DEFAULT NOW(),
+                UNIQUE(personel_id, yil, ay)
+            )
+        """)
+
         # ── AUDIT LOG ──────────────────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS audit_log (

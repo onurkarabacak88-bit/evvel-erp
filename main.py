@@ -281,7 +281,20 @@ def panel():
                 )
             """)
             eksik_kart = cur.fetchone()['eksik']
-            eksik_plan = eksik_sabit + eksik_borc + eksik_kart
+            # Sürekli personel maaş planı eksik mi?
+            cur.execute("""
+                SELECT COUNT(*) as eksik FROM personel p
+                WHERE p.aktif=TRUE AND p.calisma_turu='surekli'
+                AND NOT EXISTS (
+                    SELECT 1 FROM odeme_plani op
+                    WHERE op.kaynak_tablo='personel'
+                    AND op.kaynak_id = p.id::text
+                    AND op.durum != 'iptal'
+                    AND DATE_TRUNC('month', op.tarih) = DATE_TRUNC('month', CURRENT_DATE)
+                )
+            """)
+            eksik_personel = cur.fetchone()['eksik']
+            eksik_plan = eksik_sabit + eksik_borc + eksik_kart + eksik_personel
 
         if eksik_plan > 0:
             aylik_odeme_plani_uret()
@@ -450,6 +463,35 @@ def panel():
                 AND EXTRACT(MONTH FROM kh.tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
             """)
             ozet['vadeli_kart'] = float(cur.fetchone()['kart'])
+
+            # PERSONEL MAAŞ — tahmini vs gerçekleşen
+            cur.execute("""
+                SELECT
+                    COALESCE(SUM(p.maas + p.yemek_ucreti + p.yol_ucreti), 0) as tahmini
+                FROM personel p WHERE p.aktif=TRUE AND p.calisma_turu='surekli'
+            """)
+            ozet['personel_tahmini'] = float(cur.fetchone()['tahmini'])
+
+            cur.execute("""
+                SELECT COALESCE(SUM(pa.hesaplanan_net), 0) as gercek
+                FROM personel_aylik pa
+                WHERE pa.yil = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND pa.ay  = EXTRACT(MONTH FROM CURRENT_DATE)
+            """)
+            ozet['personel_gercek'] = float(cur.fetchone()['gercek'])
+
+            cur.execute("""
+                SELECT COUNT(*) as bekleyen
+                FROM personel p
+                WHERE p.aktif=TRUE
+                AND NOT EXISTS (
+                    SELECT 1 FROM personel_aylik pa
+                    WHERE pa.personel_id = p.id
+                    AND pa.yil = EXTRACT(YEAR FROM CURRENT_DATE)
+                    AND pa.ay  = EXTRACT(MONTH FROM CURRENT_DATE)
+                )
+            """)
+            ozet['personel_kayit_bekleyen'] = int(cur.fetchone()['bekleyen'])
 
             # BORÇ TAKSİTLERİ — bu ay ödenen
             cur.execute("""
@@ -1467,6 +1509,17 @@ def personel_cikis(pid: str, neden: str = ""):
     with db() as (conn, cur):
         cur.execute("UPDATE personel SET aktif=FALSE, cikis_tarihi=%s WHERE id=%s",
             (str(date.today()), pid))
+        # Bekleyen maaş planlarını iptal et — simülasyondan çıksın
+        cur.execute("""
+            UPDATE odeme_plani SET durum='iptal'
+            WHERE kaynak_tablo='personel' AND kaynak_id=%s
+            AND durum IN ('bekliyor','onay_bekliyor')
+        """, (pid,))
+        cur.execute("""
+            UPDATE onay_kuyrugu SET durum='reddedildi'
+            WHERE kaynak_tablo='personel' AND kaynak_id=%s
+            AND durum='bekliyor'
+        """, (pid,))
         audit(cur, 'personel', pid, 'CIKIS')
     return {"success": True}
 
@@ -1479,6 +1532,170 @@ def personel_sil(pid: str):
         cur.execute("DELETE FROM personel WHERE id=%s", (pid,))
         audit(cur, 'personel', pid, 'DELETE', eski=eski)
     return {"success": True}
+
+# ── PERSONEL AYLIK KAYIT ──────────────────────────────────────
+
+class PersonelAylikModel(BaseModel):
+    calisma_saati: float = 0
+    fazla_mesai_saat: float = 0
+    eksik_gun: float = 0
+    raporlu_gun: float = 0
+    rapor_kesinti: bool = False
+    manuel_duzeltme: float = 0
+    not_aciklama: Optional[str] = None
+
+def maas_hesapla(p: dict, kayit: dict) -> float:
+    """
+    Personelin aylık net maaşını hesaplar.
+    Sürekli: maaş - eksik gün kesintisi + fazla mesai + yemek + yol + manuel
+    Part-time: saat * ücret + fazla mesai * 1.5 * ücret + yemek + yol + manuel
+    """
+    yemek = float(p.get('yemek_ucreti') or 0)
+    yol   = float(p.get('yol_ucreti') or 0)
+    manuel = float(kayit.get('manuel_duzeltme') or 0)
+    eksik  = float(kayit.get('eksik_gun') or 0)
+    raporlu = float(kayit.get('raporlu_gun') or 0)
+    fazla  = float(kayit.get('fazla_mesai_saat') or 0)
+    rapor_kesinti = kayit.get('rapor_kesinti', False)
+
+    if p.get('calisma_turu') == 'surekli':
+        maas = float(p.get('maas') or 0)
+        gunluk = maas / 30
+        kesinti_gun = eksik + (raporlu if rapor_kesinti else 0)
+        kesinti = gunluk * kesinti_gun
+        fazla_ucret = gunluk / 8 * 1.5 * fazla  # günlük 8 saat baz
+        net = maas - kesinti + fazla_ucret + yemek + yol + manuel
+    else:
+        saatlik = float(p.get('saatlik_ucret') or 0)
+        saat = float(kayit.get('calisma_saati') or 0)
+        normal = saat * saatlik
+        fazla_ucret = fazla * saatlik * 1.5
+        net = normal + fazla_ucret + yemek + yol + manuel
+
+    return round(max(0, net), 2)
+
+@app.get("/api/personel-aylik")
+def personel_aylik_listele(yil: int = None, ay: int = None):
+    """Bu ay için tüm personelin aylik kayıtlarını döner. Kayıt yoksa tahmini tutar ile döner."""
+    bugun = date.today()
+    yil = yil or bugun.year
+    ay  = ay  or bugun.month
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM personel WHERE aktif=TRUE ORDER BY ad_soyad")
+        personeller = cur.fetchall()
+        sonuc = []
+        for p in personeller:
+            cur.execute("""
+                SELECT * FROM personel_aylik
+                WHERE personel_id=%s AND yil=%s AND ay=%s
+            """, (p['id'], yil, ay))
+            kayit = cur.fetchone()
+            if kayit:
+                net = float(kayit['hesaplanan_net'] or 0)
+                durum = kayit['durum']
+            else:
+                # Tahmini hesap
+                if p['calisma_turu'] == 'surekli':
+                    net = float(p['maas'] or 0) + float(p['yemek_ucreti'] or 0) + float(p['yol_ucreti'] or 0)
+                else:
+                    net = 0  # Part-time saat girilmeden tahmin yapılamaz
+                durum = 'tahmini'
+                kayit = {}
+
+            sonuc.append({
+                'personel_id': p['id'],
+                'ad_soyad': p['ad_soyad'],
+                'gorev': p['gorev'],
+                'calisma_turu': p['calisma_turu'],
+                'maas': float(p['maas'] or 0),
+                'saatlik_ucret': float(p['saatlik_ucret'] or 0),
+                'yemek_ucreti': float(p['yemek_ucreti'] or 0),
+                'yol_ucreti': float(p['yol_ucreti'] or 0),
+                'sube_id': p['sube_id'],
+                'kayit_id': kayit.get('id'),
+                'calisma_saati': float(kayit.get('calisma_saati') or 0),
+                'fazla_mesai_saat': float(kayit.get('fazla_mesai_saat') or 0),
+                'eksik_gun': float(kayit.get('eksik_gun') or 0),
+                'raporlu_gun': float(kayit.get('raporlu_gun') or 0),
+                'rapor_kesinti': kayit.get('rapor_kesinti', False),
+                'manuel_duzeltme': float(kayit.get('manuel_duzeltme') or 0),
+                'not_aciklama': kayit.get('not_aciklama'),
+                'hesaplanan_net': net,
+                'durum': durum,
+            })
+        return {'yil': yil, 'ay': ay, 'personeller': sonuc,
+                'toplam_tahmini': sum(r['hesaplanan_net'] for r in sonuc)}
+
+@app.post("/api/personel-aylik/{pid}")
+def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, ay: int = None):
+    """Personel aylık kaydını girer/günceller ve maaşı hesaplar."""
+    bugun = date.today()
+    yil = yil or bugun.year
+    ay  = ay  or bugun.month
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM personel WHERE id=%s AND aktif=TRUE", (pid,))
+        p = cur.fetchone()
+        if not p: raise HTTPException(404, "Personel bulunamadı")
+
+        kayit_dict = body.dict()
+        net = maas_hesapla(dict(p), kayit_dict)
+
+        kid = str(uuid.uuid4())
+        cur.execute("""
+            INSERT INTO personel_aylik
+                (id, personel_id, yil, ay, calisma_saati, fazla_mesai_saat,
+                 eksik_gun, raporlu_gun, rapor_kesinti, manuel_duzeltme,
+                 not_aciklama, hesaplanan_net, durum)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'taslak')
+            ON CONFLICT (personel_id, yil, ay) DO UPDATE SET
+                calisma_saati=%s, fazla_mesai_saat=%s, eksik_gun=%s,
+                raporlu_gun=%s, rapor_kesinti=%s, manuel_duzeltme=%s,
+                not_aciklama=%s, hesaplanan_net=%s, durum='taslak'
+        """, (kid, pid, yil, ay,
+                body.calisma_saati, body.fazla_mesai_saat,
+                body.eksik_gun, body.raporlu_gun, body.rapor_kesinti,
+                body.manuel_duzeltme, body.not_aciklama, net,
+                body.calisma_saati, body.fazla_mesai_saat,
+                body.eksik_gun, body.raporlu_gun, body.rapor_kesinti,
+                body.manuel_duzeltme, body.not_aciklama, net))
+
+        # Bağlı ödeme planını gerçek tutarla güncelle
+        cur.execute("""
+            UPDATE odeme_plani SET odenecek_tutar=%s, asgari_tutar=%s
+            WHERE kaynak_tablo='personel' AND kaynak_id=%s
+            AND durum IN ('bekliyor','onay_bekliyor')
+            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
+        """, (net, net, pid))
+
+        audit(cur, 'personel_aylik', kid, 'KAYDET', yeni={'net': net, 'yil': yil, 'ay': ay})
+    return {"success": True, "hesaplanan_net": net}
+
+@app.post("/api/personel-aylik/{pid}/onayla")
+def personel_aylik_onayla(pid: str, yil: int = None, ay: int = None):
+    """Maaş kaydını onaylar — durum 'onaylandi' olur, geri alınamaz."""
+    bugun = date.today()
+    yil = yil or bugun.year
+    ay  = ay  or bugun.month
+    with db() as (conn, cur):
+        cur.execute("""
+            UPDATE personel_aylik SET durum='onaylandi'
+            WHERE personel_id=%s AND yil=%s AND ay=%s AND durum='taslak'
+        """, (pid, yil, ay))
+        if cur.rowcount == 0:
+            raise HTTPException(400, "Kayıt bulunamadı veya zaten onaylandı")
+    return {"success": True}
+
+@app.get("/api/personel-aylik/{pid}/gecmis")
+def personel_aylik_gecmis(pid: str):
+    """Personelin son 12 aylık maaş geçmişini döner."""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT yil, ay, hesaplanan_net, durum, calisma_saati,
+                   fazla_mesai_saat, eksik_gun, manuel_duzeltme
+            FROM personel_aylik WHERE personel_id=%s
+            ORDER BY yil DESC, ay DESC LIMIT 12
+        """, (pid,))
+        return [dict(r) for r in cur.fetchall()]
 
 # ── SABİT GİDERLER ─────────────────────────────────────────────
 class SabitGider(BaseModel):

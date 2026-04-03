@@ -1,0 +1,11 @@
+import psycopg2
+conn = psycopg2.connect("postgresql://postgres:ZvYmvyrsrZXctEknbuPMkpYLnHprbpQw@caboose.proxy.rlwy.net:55901/railway")
+cur = conn.cursor()
+cur.execute("TRUNCATE kasa_hareketleri")
+cur.execute("TRUNCATE ciro")
+cur.execute("TRUNCATE audit_log")
+cur.execute("TRUNCATE onay_kuyrugu")
+conn.commit()
+cur.execute("SELECT COUNT(*) FROM kasa_hareketleri")
+print("Kasa:", cur.fetchone())
+conn.close()
