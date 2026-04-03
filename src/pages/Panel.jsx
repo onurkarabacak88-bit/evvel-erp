@@ -921,6 +921,27 @@ export default function Panel({ onNavigate }) {
             };
           })(),
           (() => {
+            const tahmini = panel.personel_tahmini || 0;
+            const gercek  = panel.personel_gercek  || 0;
+            const bekleyen_kayit = panel.personel_kayit_bekleyen || 0;
+            const gosterilen = gercek > 0 ? gercek : tahmini;
+            const fark = gercek > 0 ? gercek - tahmini : 0;
+            const subText = bekleyen_kayit > 0
+              ? `⏳ ${bekleyen_kayit} kişi kaydı girilmedi`
+              : gercek > 0
+                ? fark !== 0 ? `Gerçek · ${fark > 0 ? '+' : ''}${parseInt(fark).toLocaleString('tr-TR')}₺ fark` : 'Gerçekleşen ✓'
+                : 'Tahmini · kayıt girilmedi';
+            return {
+              label: '👤 Personel Maaşları',
+              value: fmt(gosterilen),
+              sub: subText,
+              renk: bekleyen_kayit > 0 ? 'var(--yellow)' : gercek > 0 ? '#4a9eff' : 'var(--text3)',
+              page: 'personel',
+              nakit: gosterilen, kart: 0, toplam: gosterilen,
+              kirılım: false,
+            };
+          })(),
+          (() => {
             const odenen = panel.borc_taksit_odenen || 0;
             const bekleyen = panel.borc_taksit_bekleyen || 0;
             const bekleyen_adet = panel.borc_taksit_bekleyen_adet || 0;
