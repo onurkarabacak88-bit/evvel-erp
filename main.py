@@ -233,9 +233,10 @@ def panel():
     try:
         # Bu ay için referans_ay bazlı kontrol — ertele yapılsa bile aynı ay tekrar üretilmez
         with db() as (conn, cur):
+            # Sabit gider planı eksik mi?
             cur.execute("""
                 SELECT COUNT(*) as eksik FROM sabit_giderler sg
-                WHERE sg.aktif = TRUE
+                WHERE sg.aktif = TRUE AND (sg.tip IS NULL OR sg.tip = 'sabit')
                 AND NOT EXISTS (
                     SELECT 1 FROM odeme_plani op
                     WHERE op.kaynak_tablo = 'sabit_giderler'
@@ -244,7 +245,44 @@ def panel():
                     AND op.referans_ay = DATE_TRUNC('month', CURRENT_DATE)
                 )
             """)
-            eksik_plan = cur.fetchone()['eksik']
+            eksik_sabit = cur.fetchone()['eksik']
+
+            # Borç taksit planı eksik mi?
+            cur.execute("""
+                SELECT COUNT(*) as eksik FROM borc_envanteri b
+                WHERE b.aktif = TRUE AND b.aylik_taksit > 0
+                AND (b.kalan_vade IS NULL OR b.kalan_vade > 0)
+                AND NOT EXISTS (
+                    SELECT 1 FROM odeme_plani op
+                    WHERE op.kaynak_tablo = 'borc_envanteri'
+                    AND op.kaynak_id = b.id::text
+                    AND op.durum != 'iptal'
+                    AND DATE_TRUNC('month', op.tarih) = DATE_TRUNC('month', CURRENT_DATE)
+                )
+            """)
+            eksik_borc = cur.fetchone()['eksik']
+
+            # Kart asgari ödeme planı eksik mi? (borcu olan aktif kartlar)
+            cur.execute("""
+                SELECT COUNT(*) as eksik FROM kartlar k
+                WHERE k.aktif = TRUE
+                AND (
+                    SELECT COALESCE(SUM(
+                        CASE WHEN kh.islem_turu IN ('HARCAMA','FAIZ') THEN kh.tutar
+                             WHEN kh.islem_turu='ODEME' THEN -kh.tutar ELSE 0 END
+                    ), 0) FROM kart_hareketleri kh
+                    WHERE kh.kart_id = k.id AND kh.durum = 'aktif'
+                ) > 0
+                AND NOT EXISTS (
+                    SELECT 1 FROM odeme_plani op
+                    WHERE op.kart_id = k.id
+                    AND op.durum != 'iptal'
+                    AND DATE_TRUNC('month', op.tarih) = DATE_TRUNC('month', CURRENT_DATE)
+                )
+            """)
+            eksik_kart = cur.fetchone()['eksik']
+            eksik_plan = eksik_sabit + eksik_borc + eksik_kart
+
         if eksik_plan > 0:
             aylik_odeme_plani_uret()
 
