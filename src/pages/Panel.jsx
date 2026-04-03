@@ -98,7 +98,27 @@ export default function Panel({ onNavigate }) {
     const style = document.createElement('style');
     style.innerHTML = '@keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }';
     document.head.appendChild(style);
-    return () => document.head.removeChild(style);
+
+    // Başka sayfada işlem yapılınca (fatura ödeme, gider ekleme vb.) panel otomatik yenilenir
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        const flag = sessionStorage.getItem('panel_yenile');
+        if (flag) {
+          sessionStorage.removeItem('panel_yenile');
+          load();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    // 60 saniyede bir otomatik yenile
+    const interval = setInterval(load, 60000);
+
+    return () => {
+      document.head.removeChild(style);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      clearInterval(interval);
+    };
   }, []);
 
   const toast = (m, t = 'green') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 3500); };

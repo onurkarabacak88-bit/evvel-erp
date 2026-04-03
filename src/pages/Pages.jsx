@@ -411,6 +411,7 @@ export function SabitGiderler() {
       }});
       toast(`${faturaModal.gider_adi} faturası ödendi`);
       setFaturaModal(null);
+      sessionStorage.setItem('panel_yenile', '1'); // Panel bir sonraki görünümde yenilensin
       load();
     } catch(e) { toast(e.message, 'red'); }
   }
