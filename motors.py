@@ -141,6 +141,38 @@ def karar_motoru():
                 })
                 break
 
+        # KURAL 6: Kart limit uyarısı — anlık gider, fatura vb. kartla ödenince tetiklenir
+        cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE")
+        for k in cur.fetchall():
+            cur.execute("""
+                SELECT COALESCE(SUM(
+                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
+                         WHEN islem_turu='ODEME' THEN -tutar ELSE 0 END
+                ),0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
+            """, (k['id'],))
+            borc = float(cur.fetchone()['borc'])
+            limit = float(k['limit_tutar'])
+            if limit <= 0:
+                continue
+            doluluk = borc / limit
+            kalan = limit - borc
+            if doluluk >= 0.90:
+                kararlar.append({
+                    "kural": 7, "seviye": "KRITIK", "renk": "KIRMIZI",
+                    "baslik": f"Kart Limiti Kritik: {k['banka']}",
+                    "mesaj": f"{k['kart_adi']} limiti %{doluluk*100:.0f} dolu. Kalan: {fmt(kalan)}",
+                    "aksiyon": "Kart ödemesi yapın veya nakit kullanın",
+                    "blink": True
+                })
+            elif doluluk >= 0.75:
+                kararlar.append({
+                    "kural": 7, "seviye": "UYARI", "renk": "SARI",
+                    "baslik": f"Kart Limiti Dolmak Üzere: {k['banka']}",
+                    "mesaj": f"{k['kart_adi']} limiti %{doluluk*100:.0f} dolu. Kalan: {fmt(kalan)}",
+                    "aksiyon": "Kart limitini takip edin",
+                    "blink": False
+                })
+
         kritik = sum(1 for k in kararlar if k['seviye'] == 'KRITIK')
         uyari = sum(1 for k in kararlar if k['seviye'] == 'UYARI')
         genel = 'KRITIK' if kritik > 0 else 'UYARI' if uyari > 0 else 'SAGLIKLI'
