@@ -1799,6 +1799,17 @@ def fatura_ode(body: FaturaOdemeModel):
             kart = cur.fetchone()
             if not kart:
                 raise HTTPException(404, "Kart bulunamadı")
+            # Mevcut kart borcunu hesapla — limit kontrolü
+            cur.execute("""
+                SELECT COALESCE(SUM(
+                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
+                         WHEN islem_turu='ODEME' THEN -tutar ELSE 0 END
+                ), 0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
+            """, (body.kart_id,))
+            borc = float(cur.fetchone()['borc'])
+            kalan_limit = float(kart['limit_tutar']) - borc
+            if kalan_limit < body.tutar:
+                raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
             # Karta HARCAMA yaz — kaynak_tablo fatura_giderleri
             hid = str(uuid.uuid4())
             cur.execute("""
