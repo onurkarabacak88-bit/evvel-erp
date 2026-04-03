@@ -694,6 +694,8 @@ def anlik_gider_ekle(g: AnlikGider):
                 VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s)
             """, (hid, g.kart_id, g.tarih, g.tutar,
                   f"Anlık gider: {g.aciklama or g.kategori}"))
+            # Kart planını güncelle — ticker anında yansısın
+            kart_plan_guncelle()
         else:
             # NAKİT — kasaya yaz
             insert_kasa_hareketi(cur, g.tarih, 'ANLIK_GIDER', -abs(g.tutar),
@@ -873,6 +875,9 @@ def kart_hareket_ekle(h: KartHareket):
             onay_ekle(cur, 'KART_ODEME', 'kart_hareketleri', hid,
                 f"Kart ödemesi: {h.aciklama or ''}", h.tutar, h.tarih)
         audit(cur, 'kart_hareketleri', hid, 'INSERT')
+    # HARCAMA veya ODEME → borç değişti → plan güncelle
+    if h.islem_turu in ('HARCAMA', 'ODEME', 'FAIZ'):
+        kart_plan_guncelle()
     return {"id": hid, "success": True}
 
 @app.delete("/api/kart-hareketleri/{hid}")
@@ -1826,6 +1831,8 @@ def fatura_ode(body: FaturaOdemeModel):
                 VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s, %s, 'fatura_giderleri')
             """, (hid, body.kart_id, str(body.tarih), body.tutar, aciklama, body.sabit_gider_id))
             audit(cur, 'kart_hareketleri', hid, 'FATURA_KART')
+            # Kart planını güncelle — ticker anında yansısın
+            kart_plan_guncelle()
         else:
             # Kasaya yaz
             insert_kasa_hareketi(cur, str(body.tarih), 'FATURA_ODEMESI', -abs(body.tutar),
@@ -2155,6 +2162,7 @@ def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
                 VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s, %s, 'vadeli_alimlar')
             """, (hid, body.kart_id, bugun, tutar, f"Vadeli alım: {v['aciklama']}", vid))
             audit(cur, 'kart_hareketleri', hid, 'VADELI_KART')
+            kart_plan_guncelle()
             # Plan + vadeli alım + onay kuyruğu → atomik kapat
             cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
                 (bugun, tutar, plan['id']))
@@ -2873,6 +2881,64 @@ def vadeli_kontrol(vade_tarihi: str, tutar: float):
 
 
 # ── ÖDEME PLANI MOTOR ENDPOINTLERİ ────────────────────────────
+
+@app.post("/api/kart-plan-guncelle")
+def kart_plan_guncelle():
+    """Kart borçlarını hesaplayıp mevcut bekleyen planları günceller.
+    Anlık gider, fatura, vadeli alım kart ödemesi sonrası çağrılır.
+    """
+    from datetime import date
+    import uuid as _uuid
+    import calendar as _cal
+    bugun = date.today()
+    yil, ay = bugun.year, bugun.month
+    guncellenen = []
+
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE")
+        for k in cur.fetchall():
+            son_odeme_gun = k['son_odeme_gunu'] or 25
+            son_gun = _cal.monthrange(yil, ay)[1]
+            son_odeme_gun = min(son_odeme_gun, son_gun)
+            odeme_tarihi = date(yil, ay, son_odeme_gun)
+
+            # Güncel borç
+            cur.execute("""
+                SELECT COALESCE(SUM(
+                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
+                         WHEN islem_turu='ODEME' THEN -tutar ELSE 0 END
+                ), 0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
+            """, (k['id'],))
+            borc = float(cur.fetchone()['borc'])
+            if borc <= 0:
+                continue
+
+            asgari_oran_pct = float(k.get('asgari_oran', 40)) / 100
+            asgari = round(borc * asgari_oran_pct, 2)
+
+            # Plan varsa güncelle, yoksa ekle
+            cur.execute("""
+                UPDATE odeme_plani
+                SET odenecek_tutar=%s, asgari_tutar=%s
+                WHERE kart_id=%s
+                AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+                AND durum IN ('bekliyor','onay_bekliyor')
+            """, (borc, asgari, k['id'], str(odeme_tarihi)))
+
+            if cur.rowcount > 0:
+                guncellenen.append(f"{k['kart_adi']}: {borc:,.0f}₺")
+            else:
+                # Plan yok — oluştur
+                pid = str(uuid.uuid4())
+                cur.execute("""
+                    INSERT INTO odeme_plani
+                        (id, kart_id, tarih, odenecek_tutar, asgari_tutar, aciklama, durum)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'bekliyor')
+                """, (pid, k['id'], odeme_tarihi, borc, asgari,
+                       f"Kart: {k['kart_adi']} — {k['banka']}"))
+                guncellenen.append(f"{k['kart_adi']}: {borc:,.0f}₺ (yeni plan)")
+
+    return {"success": True, "guncellenen": guncellenen}
 
 @app.post("/api/odeme-plani/uret")
 def odeme_plani_manuel_uret(yil: Optional[int] = None, ay: Optional[int] = None):
