@@ -1273,6 +1273,36 @@ def onay_listele():
         cur.execute("SELECT * FROM onay_kuyrugu WHERE durum='bekliyor' ORDER BY tarih ASC")
         return [dict(r) for r in cur.fetchall()]
 
+
+@app.post("/api/onay-kuyrugu/toplu-onayla")
+def toplu_onayla(body: dict):
+    """
+    Seçili onayları tek seferde onayla.
+    body: { ids: [id1, id2, ...] }
+    Her onay kendi transaction'ında işlenir — biri başarısız olursa diğerleri etkilenmez.
+    """
+    ids = body.get('ids', [])
+    if not ids:
+        raise HTTPException(400, "Onay listesi boş")
+
+    sonuclar = []
+    for oid in ids:
+        try:
+            onayla(oid)
+            sonuclar.append({"id": oid, "durum": "onaylandi"})
+        except HTTPException as e:
+            sonuclar.append({"id": oid, "durum": "hata", "mesaj": str(e.detail)})
+        except Exception as e:
+            sonuclar.append({"id": oid, "durum": "hata", "mesaj": str(e)})
+
+    onaylanan = sum(1 for s in sonuclar if s["durum"] == "onaylandi")
+    return {
+        "toplam": len(ids),
+        "onaylanan": onaylanan,
+        "hata": len(ids) - onaylanan,
+        "sonuclar": sonuclar,
+    }
+
 @app.post("/api/onay-kuyrugu/{oid}/onayla")
 def onayla(oid: str):
     with db() as (conn, cur):
