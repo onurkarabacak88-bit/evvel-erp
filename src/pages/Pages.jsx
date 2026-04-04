@@ -88,14 +88,43 @@ export function Strateji() {
 export function OnayKuyrugu() {
   const [liste, setListe] = useState([]);
   const [msg, setMsg] = useState(null);
-  const [reddetModal, setReddetModal] = useState(null); // {id, aciklama}
-  const load = () => api('/onay-kuyrugu').then(setListe);
+  const [reddetModal, setReddetModal] = useState(null);
+  const [secili, setSecili] = useState(new Set());
+  const [topluYukleniyor, setTopluYukleniyor] = useState(false);
+  const load = () => { api('/onay-kuyrugu').then(d => { setListe(d); setSecili(new Set()); }); };
   useEffect(()=>{load();},[]);
   const toast = (m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
 
   async function onayla(id) {
     try { await api(`/onay-kuyrugu/${id}/onayla`,{method:'POST'}); toast('Onaylandı, kasadan düşüldü'); load(); }
     catch(e){toast(e.message,'red');}
+  }
+
+  function toggleSecim(id) {
+    setSecili(prev => {
+      const s = new Set(prev);
+      s.has(id) ? s.delete(id) : s.add(id);
+      return s;
+    });
+  }
+
+  function tumunuSec() {
+    if (secili.size === liste.length) setSecili(new Set());
+    else setSecili(new Set(liste.map(o => o.id)));
+  }
+
+  async function topluOnayla() {
+    if (!secili.size) return;
+    setTopluYukleniyor(true);
+    try {
+      const r = await api('/onay-kuyrugu/toplu-onayla', {
+        method: 'POST',
+        body: { ids: [...secili] }
+      });
+      toast(`✅ ${r.onaylanan}/${r.toplam} onaylandı${r.hata > 0 ? ` · ${r.hata} hata` : ''}`);
+      load();
+    } catch(e) { toast(e.message, 'red'); }
+    finally { setTopluYukleniyor(false); }
   }
 
   async function reddetGonder(neden) {
@@ -113,16 +142,43 @@ export function OnayKuyrugu() {
   return (
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
-      <div className="page-header"><h2>✅ Onay Kuyruğu</h2><p>{liste.length} bekleyen işlem</p></div>
+      <div className="page-header flex items-center justify-between">
+        <div><h2>✅ Onay Kuyruğu</h2><p>{liste.length} bekleyen işlem</p></div>
+        {liste.length > 0 && (
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            {secili.size > 0 && (
+              <span style={{fontSize:12,color:'var(--text3)'}}>{secili.size} seçili</span>
+            )}
+            <button className="btn btn-ghost btn-sm" onClick={tumunuSec}>
+              {secili.size === liste.length ? '☐ Seçimi Kaldır' : '☑ Tümünü Seç'}
+            </button>
+            {secili.size > 0 && (
+              <button className="btn btn-primary" onClick={topluOnayla} disabled={topluYukleniyor}>
+                {topluYukleniyor ? '⏳...' : `✓ ${secili.size} Onayla`}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
       {!liste.length ? (
         <div className="empty"><div className="icon">✅</div><p>Bekleyen onay yok</p></div>
       ) : (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>İşlem Türü</th><th>Açıklama</th><th style={{textAlign:'right'}}>Tutar</th><th>Tarih</th><th></th></tr></thead>
+            <thead><tr>
+              <th style={{width:36}}></th>
+              <th>İşlem Türü</th><th>Açıklama</th>
+              <th style={{textAlign:'right'}}>Tutar</th>
+              <th>Tarih</th><th></th>
+            </tr></thead>
             <tbody>
               {liste.map(o=>(
-                <tr key={o.id}>
+                <tr key={o.id} style={{background: secili.has(o.id) ? 'rgba(74,158,255,0.06)' : ''}}>
+                  <td style={{textAlign:'center'}}>
+                    <input type="checkbox" checked={secili.has(o.id)}
+                      onChange={()=>toggleSecim(o.id)}
+                      style={{cursor:'pointer',width:15,height:15}}/>
+                  </td>
                   <td><span className="badge badge-yellow">{o.islem_turu}</span></td>
                   <td>{o.aciklama}</td>
                   <td style={{textAlign:'right'}} className="amount-neg">{o.tutar ? `${parseInt(o.tutar).toLocaleString('tr-TR')} ₺` : '---'}</td>
