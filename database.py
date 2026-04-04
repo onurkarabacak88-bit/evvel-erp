@@ -1,21 +1,45 @@
 import os
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 from contextlib import contextmanager
+import threading
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+# ── CONNECTION POOL ────────────────────────────────────────────
+# min=2: her zaman 2 hazır bağlantı
+# max=15: Railway Postgres hobby planı 25 max_connections — 15 güvenli üst sınır
+_pool = None
+_pool_lock = threading.Lock()
+
+def _get_pool():
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                _pool = psycopg2.pool.ThreadedConnectionPool(
+                    minconn=2,
+                    maxconn=15,
+                    dsn=DATABASE_URL,
+                    cursor_factory=psycopg2.extras.RealDictCursor
+                )
+    return _pool
 
 
 @contextmanager
 def db():
     """
-    PostgreSQL bağlantı context manager.
+    PostgreSQL bağlantı context manager — pool'dan alır, işlem sonrası iade eder.
     Kullanım:
         with db() as (conn, cur):
             cur.execute(...)
     Başarılı çıkışta commit, hata durumunda rollback yapar.
     """
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+    pool = _get_pool()
+    conn = pool.getconn()
+    # cursor_factory pool seviyesinde ayarlanmış değil, bağlantıda set et
+    conn.cursor_factory = psycopg2.extras.RealDictCursor
     cur = conn.cursor()
     try:
         yield conn, cur
@@ -25,7 +49,7 @@ def db():
         raise
     finally:
         cur.close()
-        conn.close()
+        pool.putconn(conn)
 
 
 def init_db():
@@ -202,9 +226,26 @@ def init_db():
                 odenen_tutar    NUMERIC(14,2),
                 odeme_tarihi    DATE,
                 aciklama        TEXT,
-                durum           TEXT NOT NULL DEFAULT 'bekliyor',
+                durum           TEXT NOT NULL DEFAULT 'bekliyor'
+                    CHECK (durum IN ('bekliyor','onay_bekliyor','odendi','iptal')),
                 olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
             )
+        """)
+        # Migration: production DB'de eski constraint varsa düşür, yenisini ekle
+        cur.execute("""
+            DO $$
+            BEGIN
+                -- Eski constraint adlarını temizle (isim farklı olabilir)
+                IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'odeme_plani_durum_check')
+                THEN ALTER TABLE odeme_plani DROP CONSTRAINT odeme_plani_durum_check; END IF;
+                -- Yeni constraint: onay_bekliyor dahil
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'odeme_plani_durum_check2')
+                THEN
+                    ALTER TABLE odeme_plani ADD CONSTRAINT odeme_plani_durum_check2
+                    CHECK (durum IN ('bekliyor','onay_bekliyor','odendi','iptal'));
+                END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
         """)
         # Migration: odeme_yontemi kolonu kasa_hareketleri'ne ekle
         cur.execute("""
@@ -289,8 +330,18 @@ def init_db():
                 tutar           NUMERIC(14,2),
                 tarih           DATE,
                 durum           TEXT NOT NULL DEFAULT 'bekliyor',
+                onay_tarihi     TIMESTAMP,
                 olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
             )
+        """)
+        # Migration: onay_tarihi kolonu (eski kurulumlarda yok)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='onay_kuyrugu' AND column_name='onay_tarihi')
+                THEN ALTER TABLE onay_kuyrugu ADD COLUMN onay_tarihi TIMESTAMP; END IF;
+            END $$;
         """)
 
         # ── PERSONEL ───────────────────────────────────────────
@@ -326,8 +377,22 @@ def init_db():
                 baslangic_tarihi DATE,
                 sube_id         TEXT REFERENCES subeler(id),
                 aktif           BOOLEAN NOT NULL DEFAULT TRUE,
+                odeme_yontemi   TEXT NOT NULL DEFAULT 'nakit',
+                kart_id         TEXT,
                 olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
             )
+        """)
+        # Migration: odeme_yontemi ve kart_id (eski kurulumlarda yok)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sabit_giderler' AND column_name='odeme_yontemi')
+                THEN ALTER TABLE sabit_giderler ADD COLUMN odeme_yontemi TEXT NOT NULL DEFAULT 'nakit'; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sabit_giderler' AND column_name='kart_id')
+                THEN ALTER TABLE sabit_giderler ADD COLUMN kart_id TEXT; END IF;
+            END $$;
         """)
 
         # ── VADELİ ALIMLAR ─────────────────────────────────────

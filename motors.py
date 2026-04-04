@@ -1,5 +1,12 @@
 from database import db
 from datetime import date, timedelta
+from finans_core import (
+    kasa_bakiyesi, odeme_yuku, gunluk_ciro_ortalama,
+    nakit_akis_sim, kart_borc, tum_kart_borclari,
+    kart_ekstre, kart_bu_ay_odenen, kart_faiz_tahmini,
+    zorunlu_gider_tahmini, serbest_nakit, net_akis_30_gun,
+    kac_gun_dayanir, kasa_bakiyesi_tarihte,
+)
 
 def fmt(n):
     if n is None: return "---"
@@ -11,29 +18,13 @@ def karar_motoru():
     kararlar = []
 
     with db() as (conn, cur):
-        # Kasa - iç içe bağlantı açmadan hesapla
-        cur.execute("""
-            SELECT COALESCE(SUM(
-                tutar
-            ), 0) as kasa FROM kasa_hareketleri WHERE kasa_etkisi = true
-        """)
-        kasa = float(cur.fetchone()['kasa'])
-
-        # 7 / 15 / 30 günlük ödemeler — master motor ile tutarlı
-        cur.execute("""
-            SELECT
-                COALESCE(SUM(CASE WHEN tarih <= %s + INTERVAL '7 days'  THEN odenecek_tutar ELSE 0 END),0) as t7,
-                COALESCE(SUM(CASE WHEN tarih <= %s + INTERVAL '15 days' THEN odenecek_tutar ELSE 0 END),0) as t15,
-                COALESCE(SUM(CASE WHEN tarih <= %s + INTERVAL '30 days' THEN odenecek_tutar ELSE 0 END),0) as t30,
-                COALESCE(SUM(CASE WHEN tarih <= %s + INTERVAL '7 days'  THEN asgari_tutar  ELSE 0 END),0) as asgari
-            FROM odeme_plani WHERE durum IN ('bekliyor','onay_bekliyor')
-            AND tarih BETWEEN %s AND %s + INTERVAL '30 days'
-        """, (bugun, bugun, bugun, bugun, bugun, bugun))
-        row = cur.fetchone()
-        odeme_7  = float(row['t7'])
-        odeme_15 = float(row['t15'])
-        odeme_30 = float(row['t30'])
-        asgari_7 = float(row['asgari'])
+        # ── CORE HESAPLAR ──────────────────────────────────────
+        kasa     = kasa_bakiyesi(cur)
+        yuk      = odeme_yuku(cur, bugun)
+        odeme_7  = yuk["t7"]
+        odeme_15 = yuk["t15"]
+        odeme_30 = yuk["t30"]
+        asgari_7 = yuk["asgari7"]
 
         # KURAL 1: Kritik — 7 gün
         if kasa < odeme_7:
@@ -112,26 +103,10 @@ def karar_motoru():
                 "blink": False
             })
 
-        # KURAL 5: 10 gün nakit simülasyon
-        cur.execute("""
-            SELECT COALESCE(AVG(gunluk),0) as ort FROM (
-                SELECT tarih, SUM(toplam) as gunluk FROM ciro
-                WHERE tarih >= CURRENT_DATE - INTERVAL '30 days'
-                GROUP BY tarih
-            ) t
-        """)
-        gunluk_ciro = float(cur.fetchone()['ort'])
-
-        cur.execute("""
-            SELECT tarih, SUM(odenecek_tutar) as toplam
-            FROM odeme_plani WHERE durum IN ('bekliyor','onay_bekliyor')
-            AND tarih BETWEEN %s AND %s
-            GROUP BY tarih ORDER BY tarih
-        """, (bugun, bugun + timedelta(days=10)))
-        sim_kasa = kasa
-        for gun in cur.fetchall():
-            sim_kasa += gunluk_ciro - float(gun['toplam'])
-            if sim_kasa < 0:
+        # KURAL 5: 10 gün nakit simülasyon — core'dan al
+        sim_gunler = nakit_akis_sim(cur, gun_sayisi=10)
+        for gun in sim_gunler:
+            if gun['risk']:
                 kararlar.append({
                     "kural": 5, "seviye": "UYARI", "renk": "TURUNCU",
                     "baslik": "Nakit Akışı Bozulacak",
@@ -141,21 +116,15 @@ def karar_motoru():
                 })
                 break
 
-        # KURAL 6: Kart limit uyarısı — anlık gider, fatura vb. kartla ödenince tetiklenir
+        # KURAL 6: Kart limit uyarısı — core borç hesabı
         cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE")
         for k in cur.fetchall():
-            cur.execute("""
-                SELECT COALESCE(SUM(
-                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
-                         WHEN islem_turu='ODEME' THEN -tutar ELSE 0 END
-                ),0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
-            """, (k['id'],))
-            borc = float(cur.fetchone()['borc'])
             limit = float(k['limit_tutar'])
             if limit <= 0:
                 continue
+            borc   = kart_borc(cur, k['id'])
+            kalan  = limit - borc
             doluluk = borc / limit
-            kalan = limit - borc
             if doluluk >= 0.90:
                 kararlar.append({
                     "kural": 7, "seviye": "KRITIK", "renk": "KIRMIZI",
@@ -194,44 +163,11 @@ def odeme_strateji_motoru():
     oneriler = []
 
     with db() as (conn, cur):
-        # Kasa
-        cur.execute("""
-            SELECT COALESCE(SUM(
-                tutar
-            ), 0) as kasa FROM kasa_hareketleri WHERE kasa_etkisi = true
-        """)
-        kasa = float(cur.fetchone()['kasa'])
-
-        # Zorunlu giderler — önümüzdeki 30 gün içindeki bekleyen ödemeler
-        cur.execute("""
-            SELECT COALESCE(SUM(odenecek_tutar),0) as t
-            FROM odeme_plani WHERE durum IN ('bekliyor','onay_bekliyor')
-            AND tarih BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'
-        """)
-        zorunlu_30gun = float(cur.fetchone()['t'])
-        cur.execute("SELECT COALESCE(SUM(tutar),0) as t FROM sabit_giderler WHERE aktif=TRUE AND (tip IS NULL OR tip='sabit')")
-        sabit = float(cur.fetchone()['t'])
-        cur.execute("SELECT COALESCE(SUM(aylik_taksit),0) as t FROM borc_envanteri WHERE aktif=TRUE")
-        borc = float(cur.fetchone()['t'])
-        cur.execute("SELECT COALESCE(SUM(maas+yemek_ucreti+yol_ucreti),0) as t FROM personel WHERE aktif=TRUE AND calisma_turu='surekli'")
-        personel = float(cur.fetchone()['t'])
-        # Durdurulmuş sabit giderler — plan üretilmiyor ama gerçek yük var
-        # Artış tarihi geçmiş veya sözleşme bitmiş olanlar dahil
-        cur.execute("""
-            SELECT COALESCE(SUM(tutar),0) as t FROM sabit_giderler
-            WHERE aktif=TRUE
-            AND (tip IS NULL OR tip='sabit')
-            AND (
-                (kira_artis_tarihi IS NOT NULL AND kira_artis_tarihi < CURRENT_DATE)
-                OR (sozlesme_bitis_tarihi IS NOT NULL AND sozlesme_bitis_tarihi < CURRENT_DATE)
-            )
-        """)
-        durdurulmus_sabit = float(cur.fetchone()['t'])
-        # zorunlu_30gun plana yansımamış durdurulmuş giderleri içermiyor
-        # fallback: sabit hesaplar zaten tüm aktif giderleri kapsıyor, fark yok
-        # Ama eğer zorunlu_30gun kullanılıyorsa, durdurulmuş giderleri ona ekle
-        zorunlu = zorunlu_30gun + durdurulmus_sabit if zorunlu_30gun > 0 else (sabit + borc + personel)
-        kullanilabilir = kasa - zorunlu
+        # ── CORE HESAPLAR ──────────────────────────────────────
+        kasa            = kasa_bakiyesi(cur)
+        zorunlu_veri    = zorunlu_gider_tahmini(cur)
+        zorunlu         = zorunlu_veri["zorunlu"]
+        kullanilabilir  = kasa - zorunlu
 
         # Bekleyen ödemeler
         cur.execute("""
@@ -329,50 +265,9 @@ def odeme_strateji_motoru():
 
 # ── NAKİT AKIŞ SİMÜLASYON ─────────────────────────────────────
 def nakit_akis_simulasyon(gun_sayisi=15):
-    bugun = date.today()
+    """finans_core.nakit_akis_sim'in thin wrapper'ı — geriye dönük uyumluluk."""
     with db() as (conn, cur):
-        cur.execute("""
-            SELECT COALESCE(SUM(
-                tutar
-            ), 0) as kasa FROM kasa_hareketleri WHERE kasa_etkisi = true
-        """)
-        kasa = float(cur.fetchone()['kasa'])
-
-        cur.execute("""
-            SELECT
-                COALESCE(AVG(CASE WHEN tarih >= CURRENT_DATE - INTERVAL '7 days' THEN gunluk END), 0) as haftalik,
-                COALESCE(AVG(CASE WHEN tarih >= CURRENT_DATE - INTERVAL '30 days' THEN gunluk END), 0) as aylik
-            FROM (
-                SELECT tarih, SUM(toplam) as gunluk FROM ciro
-                WHERE tarih >= CURRENT_DATE - INTERVAL '30 days' AND durum='aktif'
-                GROUP BY tarih
-            ) t
-        """)
-        trend = cur.fetchone()
-        haftalik = float(trend['haftalik'] or 0)
-        aylik = float(trend['aylik'] or 0)
-        gunluk_ciro = (haftalik * 0.7 + aylik * 0.3) if haftalik > 0 else aylik
-
-        cur.execute("""
-            SELECT tarih::TEXT, SUM(odenecek_tutar) as toplam
-            FROM odeme_plani WHERE durum IN ('bekliyor','onay_bekliyor')
-            AND tarih BETWEEN %s AND %s GROUP BY tarih
-        """, (bugun, bugun + timedelta(days=gun_sayisi)))
-        odeme_map = {r['tarih']: float(r['toplam']) for r in cur.fetchall()}
-
-        gunler = []
-        for i in range(gun_sayisi):
-            tarih = str(bugun + timedelta(days=i))
-            odeme = odeme_map.get(tarih, 0)
-            kasa = kasa + gunluk_ciro - odeme
-            gunler.append({
-                "tarih": tarih,
-                "beklenen_gelir": gunluk_ciro,
-                "beklenen_gider": odeme,
-                "kasa_tahmini": kasa,
-                "risk": kasa < 0
-            })
-        return gunler
+        return nakit_akis_sim(cur, gun_sayisi=gun_sayisi)
 
 # ── KART ANALİZ (Panel için) ───────────────────────────────────
 def kart_analiz_hesapla():
@@ -382,15 +277,15 @@ def kart_analiz_hesapla():
         kartlar = cur.fetchall()
         sonuc = []
         for k in kartlar:
-            # Güncel borç: HARCAMA ve FAIZ borcu artırır, ODEME düşürür
-            cur.execute("""
-                SELECT COALESCE(SUM(
-                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
-                         WHEN islem_turu = 'ODEME' THEN -tutar
-                         ELSE 0 END
-                ),0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
-            """, (k['id'],))
-            borc = float(cur.fetchone()['borc'])
+            # ── CORE HESAPLAR ──────────────────────────
+            borc       = kart_borc(cur, k['id'])
+            ekstre_v   = kart_ekstre(cur, k['id'], k['kesim_gunu'])
+            bu_ay_odenen = kart_bu_ay_odenen(cur, k['id'])
+
+            bu_ekstre    = ekstre_v["ekstre_toplam"]
+            tek_cekim    = ekstre_v["tek_cekim"]
+            aylik_taksit = ekstre_v["aylik_taksit"]
+            limit        = float(k['limit_tutar'])
 
             # Bu aya yansıyan faiz (bir önceki dönemden)
             cur.execute("""
@@ -401,24 +296,6 @@ def kart_analiz_hesapla():
                 AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
             """, (k['id'],))
             bu_ay_faiz = float(cur.fetchone()['faiz'])
-
-            # Ekstre - banka mantığı: tek çekim + aylık taksit
-            cur.execute("""
-                SELECT COALESCE(SUM(tutar),0) as e FROM kart_hareketleri
-                WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA'
-                AND taksit_sayisi=1 AND EXTRACT(DAY FROM tarih)<=%s
-            """, (k['id'], k['kesim_gunu']))
-            tek_cekim = float(cur.fetchone()['e'])
-
-            cur.execute("""
-                SELECT COALESCE(SUM(tutar::float/NULLIF(taksit_sayisi,0)),0) as t
-                FROM kart_hareketleri
-                WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA' AND taksit_sayisi>1
-            """, (k['id'],))
-            aylik_taksit = float(cur.fetchone()['t'])
-
-            bu_ekstre = tek_cekim + aylik_taksit
-            limit = float(k['limit_tutar'])
 
             # Son ödeme tarihi
             son_odeme_gun = k['son_odeme_gunu']
@@ -487,7 +364,11 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
             # Periyot kontrolü
             if g['periyot'] == 'yillik':
                 baslangic = g['baslangic_tarihi']
-                if baslangic and baslangic.month != ay:
+                if not baslangic:
+                    # Başlangıç tarihi yoksa yıllık gider üretilemiyor — atla, uyar
+                    atlanan.append(f"Sabit gider atlandı (yıllık, başlangıç tarihi yok): {g['gider_adi']}")
+                    continue
+                if baslangic.month != ay:
                     atlanan.append(f"Sabit gider atlandı (yıllık): {g['gider_adi']}")
                     continue
 
@@ -729,8 +610,6 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                   f"Vadeli Alım: {v['aciklama']}", v['id'], v['id']))
             if cur.rowcount > 0:
                 uretilen.append(f"Vadeli: {v['aciklama']} — {v['vade_tarihi']}")
-            if cur.rowcount > 0:
-                uretilen.append(f"Vadeli: {v['aciklama']} — {v['vade_tarihi']}")
 
         # 5. KART ASGARİ ÖDEMELERİ
         cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE")
@@ -741,15 +620,8 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
             son_odeme_gun = min(son_odeme_gun, son_gun)
             odeme_tarihi = date(yil, ay, son_odeme_gun)
 
-            # Kart borcunu hesapla
-            cur.execute("""
-                SELECT COALESCE(SUM(
-                    CASE WHEN islem_turu='HARCAMA' THEN tutar ELSE -tutar END
-                ), 0) as borc
-                FROM kart_hareketleri
-                WHERE kart_id = %s AND durum = 'aktif'
-            """, (k['id'],))
-            borc = float(cur.fetchone()['borc'])
+            # Kart borcunu hesapla — core'dan
+            borc = kart_borc(cur, k['id'])
             if borc <= 0:
                 atlanan.append(f"Kart atlandı (borç yok): {k['kart_adi']}")
                 continue
@@ -862,30 +734,14 @@ def uyari_motoru():
 
 # ── GÜNCEL KASA ────────────────────────────────────────────────
 def guncel_kasa():
+    """finans_core.kasa_bakiyesi thin wrapper — geriye dönük uyumluluk."""
     with db() as (conn, cur):
-        cur.execute("""
-            SELECT COALESCE(SUM(tutar), 0) as kasa
-            FROM kasa_hareketleri WHERE kasa_etkisi = true
-        """)
-        return float(cur.fetchone()['kasa'])
+        return kasa_bakiyesi(cur)
 
 def kasa_detay():
-    """Kasa'yı işlem türü bazında döker — audit ve debug için."""
+    """finans_core.kasa_detay_breakdown thin wrapper — geriye dönük uyumluluk."""
     with db() as (conn, cur):
-        cur.execute("""
-            SELECT islem_turu,
-                   COUNT(*) as adet,
-                   SUM(tutar) as toplam,
-                   SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END) as giris,
-                   SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END) as cikis
-            FROM kasa_hareketleri
-            WHERE kasa_etkisi=true
-            GROUP BY islem_turu
-            ORDER BY toplam DESC
-        """)
-        satirlar = [dict(r) for r in cur.fetchall()]
-        net = sum(float(r['toplam']) for r in satirlar)
-        return {"net_kasa": net, "detay": satirlar}
+        return kasa_detay_breakdown(cur)
 
 # ── MASTER FİNANS MOTORU ───────────────────────────────────────
 def finans_ozet_motoru():
@@ -906,26 +762,14 @@ def finans_ozet_motoru():
     kullanilabilir_strateji = strateji.get('kullanilabilir_nakit', kasa)
     zorunlu = strateji['zorunlu_giderler']
 
-    # ── SERBEST NAKİT (Gün bazlı - 7 günlük baskı düşülür) ──────
+    # ── SERBEST NAKİT + YÜK — core'dan tek çağrı ────────────────
     with db() as (conn, cur):
-        cur.execute("""
-            SELECT
-                COALESCE(SUM(CASE WHEN tarih <= CURRENT_DATE + INTERVAL '7 days'  THEN odenecek_tutar ELSE 0 END),0) as yuk_7,
-                COALESCE(SUM(CASE WHEN tarih <= CURRENT_DATE + INTERVAL '15 days' THEN odenecek_tutar ELSE 0 END),0) as yuk_15,
-                COALESCE(SUM(CASE WHEN tarih <= CURRENT_DATE + INTERVAL '30 days' THEN odenecek_tutar ELSE 0 END),0) as yuk_30
-            FROM odeme_plani WHERE durum IN ('bekliyor','onay_bekliyor')
-            AND tarih BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'
-        """)
-        row = cur.fetchone()
-        yuk_7  = float(row['yuk_7'])
-        yuk_15 = float(row['yuk_15'])
-        yuk_30 = float(row['yuk_30'])
-    # Serbest nakit = kasa - en büyük kısa vadeli baskı (7/15/30 içinden max)
-    # Böylece "8. günde 500K ödeme var" durumu da yakalanır
-    max_yakin_yuk = yuk_7  # Sadece gerçek 7 günlük vade — risk çarpanları kaldırıldı
-    serbest_nakit = kasa - max_yakin_yuk
-    # Strateji motorunun kademeli düşüşü korunur — reset olmaz
-    kullanilabilir = min(serbest_nakit, kullanilabilir_strateji)
+        yuk_veri   = odeme_yuku(cur)
+        yuk_7      = yuk_veri["t7"]
+        yuk_15     = yuk_veri["t15"]
+        yuk_30     = yuk_veri["t30"]
+        serbest    = serbest_nakit(cur)
+    kullanilabilir = min(serbest, kullanilabilir_strateji)
 
     # ── ÇELİŞKİ ÇÖZÜMÜ (kullanilabilir tanımlı olduktan sonra) ──
     cozulmus_oneriler = []
@@ -944,23 +788,14 @@ def finans_ozet_motoru():
             kullanilabilir -= tavsiye
         cozulmus_oneriler.append(oneri)
 
-    # ── NET AKIŞ (Son 30 gün) ───────────────────────────────────
+    # ── NET AKIŞ + BU AYIN CİROSU — core'dan al ────────────────
     with db() as (conn, cur):
-        # Yön bazlı net akış — kategori hatası toleranslı
-        cur.execute("""
-            SELECT
-                COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END), 0) as gelir,
-                COALESCE(SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END), 0) as gider
-            FROM kasa_hareketleri
-            WHERE kasa_etkisi=true
-            AND tarih >= CURRENT_DATE - INTERVAL '30 days'
-        """)
-        row = cur.fetchone()
-        son_30_gelir = float(row['gelir'])
-        son_30_gider = float(row['gider'])
-        net_akis_30 = son_30_gelir - son_30_gider
+        akis    = net_akis_30_gun(cur)
+        son_30_gelir = akis["gelir"]
+        son_30_gider = akis["gider"]
+        net_akis_30  = akis["net"]
 
-        # ── BU AYIN CİROSU ──────────────────────────────────────
+        # Bu ayın cirosu (sadece ciro tablosundan — kasa'dan değil)
         cur.execute("""
             SELECT COALESCE(SUM(toplam), 0) as ciro
             FROM ciro
@@ -1119,28 +954,15 @@ def finans_ozet_motoru():
         # Geriye dönük uyumluluk için
         bu_ay_bekleyen = bugun_odemeler + yaklasan_odemeler
 
-        # ── KAÇ GÜN DAYANIR ─────────────────────────────────────
-        cur.execute("""
-            SELECT COALESCE(AVG(gunluk),0) as ort FROM (
-                SELECT tarih, SUM(ABS(tutar)) as gunluk FROM kasa_hareketleri
-                WHERE kasa_etkisi=true AND tutar < 0
-                AND tarih >= CURRENT_DATE - INTERVAL '30 days'
-                GROUP BY tarih
-            ) t
-        """)
-        gunluk_gider = float(cur.fetchone()['ort'])
-        kac_gun_dayanir = int(kasa / gunluk_gider) if gunluk_gider > 0 else 999
+        # ── KAÇ GÜN DAYANIR — core ──────────────────────────────
+        kac_gun = kac_gun_dayanir(cur)
 
-        # ── 30 GÜN ÖDEME BASKISI ────────────────────────────────
-        cur.execute("""
-            SELECT
-                COALESCE(SUM(CASE WHEN tarih <= CURRENT_DATE+7 THEN odenecek_tutar ELSE 0 END),0) as t7,
-                COALESCE(SUM(CASE WHEN tarih <= CURRENT_DATE+15 THEN odenecek_tutar ELSE 0 END),0) as t15,
-                COALESCE(SUM(CASE WHEN tarih <= CURRENT_DATE+30 THEN odenecek_tutar ELSE 0 END),0) as t30
-            FROM odeme_plani WHERE durum IN ('bekliyor','onay_bekliyor')
-            AND tarih BETWEEN CURRENT_DATE AND CURRENT_DATE+30
-        """)
-        odeme_ozet = dict(cur.fetchone())
+        # ── 30 GÜN ÖDEME BASKISI — core (zaten hesaplandı) ──────
+        odeme_ozet = {
+            "t7":  yuk_7,
+            "t15": yuk_15,
+            "t30": yuk_30,
+        }
 
         # ── EN RİSKLİ KART ──────────────────────────────────────
         en_riskli_kart = None
@@ -1193,7 +1015,7 @@ def finans_ozet_motoru():
         skor += kritik_sayisi * 30
         skor += uyari_sayisi * 10
         skor += (30 if kasa < 0 else 0)
-        skor += (20 if serbest_nakit < 0 else 0)
+        skor += (20 if serbest < 0 else 0)
         skor += (15 if risk_gunu else 0)
         if en_riskli_kart and en_riskli_kart.get('limit_doluluk', 0) > 0.85:
             skor += 20
@@ -1210,12 +1032,12 @@ def finans_ozet_motoru():
     return {
         # Temel göstergeler
         'kasa': kasa,
-        'serbest_nakit': serbest_nakit,
+        'serbest_nakit': serbest,
         'yuk_7': yuk_7,
         'yuk_15': yuk_15,
         'yuk_30': yuk_30,
         'zorunlu_giderler': zorunlu,
-        'kac_gun_dayanir': kac_gun_dayanir,
+        'kac_gun_dayanir': kac_gun,
 
         # Dönem analizi
         'bu_ay_ciro': bu_ay_ciro,

@@ -20,6 +20,10 @@ def ay_ekle(d: date, ay: int) -> date:
     gun = min(d.day, calendar.monthrange(yil, ay_no)[1])
     return date(yil, ay_no, gun)
 from motors import karar_motoru, odeme_strateji_motoru, nakit_akis_simulasyon, guncel_kasa, kasa_detay, kart_analiz_hesapla, aylik_odeme_plani_uret, uyari_motoru, finans_ozet_motoru
+from finans_core import (
+    kart_borc, kasa_bakiyesi, kasa_bakiyesi_tarihte,
+    kart_ekstre, kart_bu_ay_odenen, kart_faiz_tahmini,
+)
 
 app = FastAPI(title="EVVEL ERP", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -92,8 +96,10 @@ KASA_ETKISI_MAP = {
     'KART_ODEME': True, 'KART_ODEME_IPTAL': True, 'KART_FAIZ': True,
     'VADELI_ODEME': True, 'VADELI_IPTAL': True,
     'PERSONEL_MAAS': True, 'SABIT_GIDER': True,
+    'BORC_TAKSIT': True, 'FATURA_ODEMESI': True,
     'ODEME_PLANI': False, 'ODEME_IPTAL': False,
-    'KASA_GIRIS': True, 'KASA_DUZELTME': True, 'POS_KESINTI': True, 'KISMI_ODE': True,
+    'KASA_GIRIS': True, 'KASA_DUZELTME': True, 'POS_KESINTI': True,
+    'ONLINE_KESINTI': True, 'KISMI_ODE': True,
     'DEVIR': False,
 }
 
@@ -667,13 +673,7 @@ def anlik_gider_kart_oneri(tutar: float = 0):
         kartlar = cur.fetchall()
         sonuc = []
         for k in kartlar:
-            cur.execute("""
-                SELECT COALESCE(SUM(
-                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
-                         WHEN islem_turu='ODEME' THEN -tutar ELSE 0 END
-                ),0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
-            """, (k['id'],))
-            borc = float(cur.fetchone()['borc'])
+            borc = kart_borc(cur, k['id'])
             limit = float(k['limit_tutar'])
             kalan_limit = limit - borc
 
@@ -769,13 +769,7 @@ def anlik_gider_ekle(g: AnlikGider):
             cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (g.kart_id,))
             kart = cur.fetchone()
             if not kart: raise HTTPException(404, "Kart bulunamadı")
-            cur.execute("""
-                SELECT COALESCE(SUM(
-                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
-                         WHEN islem_turu='ODEME' THEN -tutar ELSE 0 END
-                ), 0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
-            """, (g.kart_id,))
-            borc = float(cur.fetchone()['borc'])
+            borc = kart_borc(cur, g.kart_id)
             kalan_limit = float(kart['limit_tutar']) - borc
             if kalan_limit < g.tutar:
                 raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
@@ -796,14 +790,17 @@ def anlik_gider_ekle(g: AnlikGider):
                 VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s)
             """, (hid, g.kart_id, g.tarih, g.tutar,
                   f"Anlık gider: {g.aciklama or g.kategori}"))
-            # Kart planını güncelle — ticker anında yansısın
-            kart_plan_guncelle()
         else:
             # NAKİT — kasaya yaz
             insert_kasa_hareketi(cur, g.tarih, 'ANLIK_GIDER', -abs(g.tutar),
                 f"Anlık gider: {g.aciklama or g.kategori}", 'anlik_giderler', gid)
 
         audit(cur, 'anlik_giderler', gid, 'INSERT')
+
+    # Transaction dışında — kendi bağlantısını açar
+    if g.odeme_yontemi == 'kart':
+        kart_plan_guncelle()
+
     return {"id": gid, "success": True}
 
 @app.delete("/api/anlik-gider/{gid}")
@@ -845,38 +842,20 @@ def kartlar_listele():
         sonuc = []
         bugun = date.today()
         for k in kartlar:
-            # Güncel borç (tüm hareketler)
-            cur.execute("""SELECT COALESCE(SUM(
-                CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar WHEN islem_turu='ODEME' THEN -tutar ELSE 0 END),0) as borc
-                FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'""", (k['id'],))
-            borc = float(cur.fetchone()['borc'])
+            # ── CORE HESAPLAR ──────────────────────────────────
+            borc     = kart_borc(cur, k['id'])
+            ekstre_v = kart_ekstre(cur, k['id'], k['kesim_gunu'])
+            bu_ekstre    = ekstre_v["ekstre_toplam"]
+            aylik_taksit = ekstre_v["aylik_taksit"]
 
-            # Bu ekstre = kesim gününe kadar tek çekim harcamalar + tüm taksitli harcamaların aylık taksiti
-            # BANKA MANTIĞI: Taksitli alışveriş her ay dönem borcuna girer
-            cur.execute("""SELECT COALESCE(SUM(tutar),0) as ekstre
-                FROM kart_hareketleri
-                WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA'
-                AND taksit_sayisi=1
-                AND EXTRACT(DAY FROM tarih) <= %s""", (k['id'], k['kesim_gunu']))
-            tek_cekim_ekstre = float(cur.fetchone()['ekstre'])
-
-            # Taksitli harcamaların aylık taksit tutarı (banka mantığı: her ay dönem borcuna eklenir)
-            cur.execute("""SELECT COALESCE(SUM(tutar::float / NULLIF(taksit_sayisi,0)),0) as aylik_taksit
-                FROM kart_hareketleri
-                WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA' AND taksit_sayisi > 1""", (k['id'],))
-            aylik_taksit = float(cur.fetchone()['aylik_taksit'])
-
-            # Bu dönem ekstre = tek çekim + aylık taksit (banka gibi)
-            bu_ekstre = tek_cekim_ekstre + aylik_taksit
-
-            # Gelecek ekstre (kesim gününden sonraki tek çekim harcamalar + taksitler devam eder)
+            # Gelecek ekstre: kesim gününden sonraki tek çekim + devam eden taksitler
             cur.execute("""SELECT COALESCE(SUM(tutar),0) as gelecek
                 FROM kart_hareketleri
                 WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA'
                 AND taksit_sayisi=1
                 AND EXTRACT(DAY FROM tarih) > %s""", (k['id'], k['kesim_gunu']))
             gelecek_tek = float(cur.fetchone()['gelecek'])
-            gelecek_ekstre = gelecek_tek + aylik_taksit  # taksitler gelecek aya da girer
+            gelecek_ekstre = gelecek_tek + aylik_taksit
 
             limit = float(k['limit_tutar'])
             son_odeme_gun = k['son_odeme_gunu']
@@ -1059,13 +1038,7 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
             cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (body.kart_id,))
             kart = cur.fetchone()
             if not kart: raise HTTPException(404, "Kart bulunamadı")
-            cur.execute("""
-                SELECT COALESCE(SUM(
-                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
-                         WHEN islem_turu='ODEME' THEN -tutar ELSE 0 END
-                ),0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
-            """, (body.kart_id,))
-            borc = float(cur.fetchone()['borc'])
+            borc = kart_borc(cur, body.kart_id)
             kalan_limit = float(kart['limit_tutar']) - borc
             if kalan_limit < odeme_tutari:
                 raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
@@ -1822,14 +1795,18 @@ def sabit_gider_guncelle(gid: str, g: SabitGider):
         eski = cur.fetchone()
         if not eski: raise HTTPException(404)
 
-        # Eksik alanları eski kayıttan tamamla — inline formdan gelen kısmi güncelleme desteği
-        gider_adi   = g.gider_adi   or eski['gider_adi']
-        kategori    = g.kategori    or eski['kategori']
-        periyot       = g.periyot       or eski['periyot'] or 'aylik'
-        odeme_gunu    = g.odeme_gunu    or eski['odeme_gunu'] or 1
-        sube_id       = g.sube_id       or eski['sube_id']
+        # Eksik alanları eski kayıttan tamamla — None kontrolü: 0 ve False korunmalı
+        def _pick(yeni, eski_val, default=None):
+            """Yeni değer None ise eskiyi al. 0 ve False geçerli değerlerdir."""
+            return yeni if yeni is not None else (eski_val if eski_val is not None else default)
+
+        gider_adi     = g.gider_adi   or eski['gider_adi']
+        kategori      = g.kategori    or eski['kategori']
+        periyot       = g.periyot     or eski['periyot'] or 'aylik'
+        odeme_gunu    = _pick(g.odeme_gunu, eski['odeme_gunu'], 1)
+        sube_id       = g.sube_id     or eski['sube_id']
         odeme_yontemi = g.odeme_yontemi or eski.get('odeme_yontemi') or 'nakit'
-        kart_id       = g.kart_id       or eski.get('kart_id')
+        kart_id       = g.kart_id     or eski.get('kart_id')
 
         # Eğer gecerlilik_tarihi belirtilmişse: eski kaydı kapat, yeni kayıt aç
         if g.gecerlilik_tarihi:
@@ -2159,7 +2136,6 @@ def fatura_ode(body: FaturaOdemeModel):
             raise HTTPException(400, "Bu ay için zaten fatura ödemesi yapılmış")
 
         aciklama = body.aciklama or f"Fatura: {gider['gider_adi']}"
-        fid = str(uuid.uuid4())
 
         if body.odeme_yontemi == 'kart':
             if not body.kart_id:
@@ -2169,30 +2145,26 @@ def fatura_ode(body: FaturaOdemeModel):
             if not kart:
                 raise HTTPException(404, "Kart bulunamadı")
             # Mevcut kart borcunu hesapla — limit kontrolü
-            cur.execute("""
-                SELECT COALESCE(SUM(
-                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
-                         WHEN islem_turu='ODEME' THEN -tutar ELSE 0 END
-                ), 0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
-            """, (body.kart_id,))
-            borc = float(cur.fetchone()['borc'])
+            borc = kart_borc(cur, body.kart_id)
             kalan_limit = float(kart['limit_tutar']) - borc
             if kalan_limit < body.tutar:
                 raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
             # Karta HARCAMA yaz — kaynak_tablo fatura_giderleri
-            hid = str(uuid.uuid4())
+            fid = str(uuid.uuid4())   # kart yolunda fid = kart_hareketleri kaydı
             cur.execute("""
                 INSERT INTO kart_hareketleri
                     (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama, kaynak_id, kaynak_tablo)
                 VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s, %s, 'fatura_giderleri')
-            """, (hid, body.kart_id, str(body.tarih), body.tutar, aciklama, body.sabit_gider_id))
-            audit(cur, 'kart_hareketleri', hid, 'FATURA_KART')
+            """, (fid, body.kart_id, str(body.tarih), body.tutar, aciklama, body.sabit_gider_id))
+            audit(cur, 'kart_hareketleri', fid, 'FATURA_KART')
             # Kart planını güncelle — ticker anında yansısın
             kart_plan_guncelle()
         else:
             # Kasaya yaz
+            fid = str(uuid.uuid4())   # nakit yolunda fid = kasa_hareketleri kaydı
             insert_kasa_hareketi(cur, str(body.tarih), 'FATURA_ODEMESI', -abs(body.tutar),
-                aciklama, 'sabit_giderler', body.sabit_gider_id)
+                aciklama, 'sabit_giderler', body.sabit_gider_id,
+                ref_id=fid, ref_type='FATURA_ODEMESI')
 
         audit(cur, 'sabit_giderler', body.sabit_gider_id, 'FATURA_ODENDI',
               yeni={'tutar': body.tutar, 'tarih': str(body.tarih)})
@@ -2339,13 +2311,7 @@ def vadeli_kart_oneri(vid: str):
         sonuc = []
         for k in kartlar:
             # Güncel borç
-            cur.execute("""
-                SELECT COALESCE(SUM(
-                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
-                         WHEN islem_turu='ODEME' THEN -tutar ELSE 0 END
-                ),0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
-            """, (k['id'],))
-            borc = float(cur.fetchone()['borc'])
+            borc = kart_borc(cur, k['id'])
             limit = float(k['limit_tutar'])
             kalan_limit = limit - borc
 
@@ -2464,13 +2430,7 @@ def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
             cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (body.kart_id,))
             kart = cur.fetchone()
             if not kart: raise HTTPException(404, "Kart bulunamadı")
-            cur.execute("""
-                SELECT COALESCE(SUM(
-                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
-                         WHEN islem_turu='ODEME' THEN -tutar ELSE 0 END
-                ),0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
-            """, (body.kart_id,))
-            borc = float(cur.fetchone()['borc'])
+            borc = kart_borc(cur, body.kart_id)
             kalan_limit = float(kart['limit_tutar']) - borc
             if kalan_limit < float(v['tutar']):
                 raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
@@ -2549,13 +2509,7 @@ def vadeli_kismi_ode(vid: str, body: KismiOdeModel):
             cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (body.kart_id,))
             kart = cur.fetchone()
             if not kart: raise HTTPException(404, "Kart bulunamadı")
-            cur.execute("""
-                SELECT COALESCE(SUM(
-                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
-                         WHEN islem_turu='ODEME' THEN -tutar ELSE 0 END
-                ),0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
-            """, (body.kart_id,))
-            borc = float(cur.fetchone()['borc'])
+            borc = kart_borc(cur, body.kart_id)
             kalan_limit = float(kart['limit_tutar']) - borc
             if kalan_limit < body.odenen_tutar:
                 raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
@@ -2874,22 +2828,33 @@ async def excel_import(dosya: UploadFile = File(...)):
 
                         if sn == 'ciro':
                             sube_id = 'sube-merkez'
-                            cur.execute("SELECT id FROM subeler WHERE LOWER(ad)=LOWER(%s)", (str(d.get('sube','MERKEZ')),))
-                            r = cur.fetchone()
-                            if r: sube_id = r['id']
-                            cid = str(uuid.uuid4())
-                            nakit = float(d.get('nakit') or 0)
-                            pos = float(d.get('pos') or 0)
-                            online = float(d.get('online') or 0)
+                            cur.execute("SELECT id, COALESCE(pos_oran,0) as pos_oran, COALESCE(online_oran,0) as online_oran FROM subeler WHERE LOWER(ad)=LOWER(%s)", (str(d.get('sube','MERKEZ')),))
+                            sube_row = cur.fetchone()
+                            if sube_row:
+                                sube_id     = sube_row['id']
+                                pos_oran_x  = float(sube_row['pos_oran'])
+                                online_oran_x = float(sube_row['online_oran'])
+                            else:
+                                cur.execute("SELECT COALESCE(pos_oran,0) as pos_oran, COALESCE(online_oran,0) as online_oran FROM subeler WHERE id='sube-merkez'")
+                                merkez = cur.fetchone()
+                                pos_oran_x    = float(merkez['pos_oran'])    if merkez else 0.0
+                                online_oran_x = float(merkez['online_oran']) if merkez else 0.0
+                            cid   = str(uuid.uuid4())
+                            nakit = float(d.get('nakit')  or 0)
+                            pos   = float(d.get('pos')    or 0)
+                            online= float(d.get('online') or 0)
+                            # Normal ciro girişiyle aynı prensip: komisyon düşülüp net kasaya
+                            pos_kesinti_x    = pos    * pos_oran_x    / 100.0
+                            online_kesinti_x = online * online_oran_x / 100.0
+                            net_tutar_x = nakit + (pos - pos_kesinti_x) + (online - online_kesinti_x)
                             cur.execute("""INSERT INTO ciro (id,tarih,sube_id,nakit,pos,online,aciklama)
                                 VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
                                 (cid, fix_date(d.get('tarih')), sube_id, nakit, pos, online, str(d.get('aciklama') or '')))
                             if cur.rowcount > 0:
-                                toplam_ciro = nakit + pos + online
-                                # Merkezi fonksiyon — manuel ciro ile aynı model
                                 insert_kasa_hareketi(cur, fix_date(d.get('tarih')), 'CIRO',
-                                    abs(toplam_ciro), 'Excel import - ciro', 'ciro', cid,
-                                    ref_id=cid, ref_type='CIRO')
+                                    net_tutar_x,
+                                    f'Excel import (net) — pos:%{pos_oran_x} online:%{online_oran_x}',
+                                    'ciro', cid, ref_id=cid, ref_type='CIRO')
                                 eklenen += 1
                             else:
                                 atlanan.append({"satir": satir_no, "sebep": "duplicate", "veri": f"{d.get('tarih')} / {d.get('sube','')}"})
@@ -3259,13 +3224,7 @@ def kart_plan_guncelle():
             odeme_tarihi = date(yil, ay, son_odeme_gun)
 
             # Güncel borç
-            cur.execute("""
-                SELECT COALESCE(SUM(
-                    CASE WHEN islem_turu IN ('HARCAMA','FAIZ') THEN tutar
-                         WHEN islem_turu='ODEME' THEN -tutar ELSE 0 END
-                ), 0) as borc FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'
-            """, (k['id'],))
-            borc = float(cur.fetchone()['borc'])
+            borc = kart_borc(cur, k['id'])
             if borc <= 0:
                 continue
 
@@ -3626,11 +3585,10 @@ def ekstre_bazli_faiz_uret(kart_id: str = None):
             """, (hid, kid, bugun, faiz_tutari, faiz_tutari,
                   f"{donem} ekstre faizi (kalan:{kalan:.2f})"))
             
-            # Kasaya da yaz (bu ay yanan para)
-            insert_kasa_hareketi(cur, bugun, 'KART_FAIZ', -faiz_tutari,
-                f"{k['kart_adi']} {donem} faizi", 'kart_hareketleri', hid,
-                hid, 'KART_FAIZ')
-            
+            # KASA'ya burada YAZILMAZ.
+            # Faiz kart borcuna eklenir; kasadan düşmesi sadece odeme_yap()
+            # anında KART_FAIZ olarak gerçekleşir. Eski kod çift yazıyordu.
+
             sonuclar.append({
                 'kart': k['kart_adi'],
                 'ekstre': bu_ekstre,
@@ -3670,12 +3628,7 @@ def devir_hesapla(yil: int = None, ay: int = None):
                         calendar.monthrange(gecen_yil, gecen_ay)[1])
 
     with db() as (conn, cur):
-        cur.execute("""
-            SELECT COALESCE(SUM(tutar), 0) as devir
-            FROM kasa_hareketleri
-            WHERE durum='aktif' AND tarih <= %s
-        """, (gecen_ay_son,))
-        devir = float(cur.fetchone()['devir'])
+        devir = kasa_bakiyesi_tarihte(cur, gecen_ay_son)
 
     return {
         "devir_tutar": devir,
@@ -3721,41 +3674,16 @@ def kart_faiz_hesapla(kid: str, body: dict = {}):
         if not k:
             raise HTTPException(404, "Kart bulunamadı")
 
-        # Bu dönemin ekstresini hesapla (tek çekim + taksit)
-        cur.execute("""
-            SELECT COALESCE(SUM(tutar), 0) as tek_cekim
-            FROM kart_hareketleri
-            WHERE kart_id=%s AND durum='aktif'
-            AND islem_turu='HARCAMA' AND taksit_sayisi=1
-            AND EXTRACT(YEAR FROM tarih)=%s AND EXTRACT(MONTH FROM tarih)=%s
-            AND EXTRACT(DAY FROM tarih) <= %s
-        """, (kid, yil, ay, k['kesim_gunu']))
-        tek_cekim = float(cur.fetchone()['tek_cekim'])
-
-        cur.execute("""
-            SELECT COALESCE(SUM(tutar::float / NULLIF(taksit_sayisi,0)), 0) as taksit
-            FROM kart_hareketleri
-            WHERE kart_id=%s AND durum='aktif'
-            AND islem_turu='HARCAMA' AND taksit_sayisi > 1
-        """, (kid,))
-        aylik_taksit = float(cur.fetchone()['taksit'])
-
-        bu_ekstre = tek_cekim + aylik_taksit
-
-        # Bu dönemde yapılan ödeme
-        cur.execute("""
-            SELECT COALESCE(SUM(odenen_tutar), 0) as odenen
-            FROM odeme_plani
-            WHERE kart_id=%s AND durum='odendi'
-            AND EXTRACT(YEAR FROM odeme_tarihi)=%s
-            AND EXTRACT(MONTH FROM odeme_tarihi)=%s
-        """, (kid, yil, ay))
-        odenen = float(cur.fetchone()['odenen'])
+        # ── CORE HESAPLAR ──────────────────────────────────────
+        ekstre_v  = kart_ekstre(cur, kid, k['kesim_gunu'])
+        bu_ekstre = ekstre_v["ekstre_toplam"]
+        odened_v  = kart_bu_ay_odenen(cur, kid)
+        odenen    = odened_v
 
         # Faiz tabanı: ödenmeyen ekstre bakiyesi
         faiz_tabani = max(0.0, bu_ekstre - odenen)
-        faiz_orani = float(k['faiz_orani'])
-        faiz_tutari = round(faiz_tabani * faiz_orani / 100, 2)
+        faiz_orani  = float(k['faiz_orani'])
+        faiz_tutari = kart_faiz_tahmini(faiz_orani, faiz_tabani)
 
         if faiz_tutari <= 0:
             return {
@@ -3833,11 +3761,10 @@ def toplu_odeme(payload: dict):
         raise HTTPException(400, "Ödeme listesi boş")
     
     with db() as (conn, cur):
-        # Backend kasa kontrolü — toplam tutar kasayı eksiye düşürmesin
-        cur.execute("SELECT COALESCE(SUM(tutar),0) as kasa FROM kasa_hareketleri WHERE kasa_etkisi=true")
-        kasa = float(cur.fetchone()['kasa'])
+        # Backend kasa kontrolü — core'dan
+        kasa = kasa_bakiyesi(cur)
         toplam = sum(float(i.get('tutar', 0)) for i in odemeler if i.get('tutar'))
-        if toplam > 0 and kasa - toplam < -1:  # -1 tolerans (yuvarlama)
+        if toplam > 0 and kasa - toplam < -1:
             raise HTTPException(400, f"Kasa yetersiz. Kasa: {kasa:,.0f}₺ · Toplam ödeme: {toplam:,.0f}₺")
 
         basarili = []
@@ -3864,7 +3791,19 @@ def toplu_odeme(payload: dict):
             if faiz_t > 0:
                 insert_kasa_hareketi(cur, bugun, 'KART_FAIZ', -abs(faiz_t), f"Toplu faiz: {plan['aciklama']}", 'odeme_plani', oid, f"{oid}_faiz", 'KART_FAIZ')
             if ana_t > 0:
-                insert_kasa_hareketi(cur, bugun, 'KART_ODEME', -abs(ana_t), f"Toplu anapara: {plan['aciklama']}", 'odeme_plani', oid, oid, 'ODEME_PLANI')
+                # Kaynak türüne göre doğru islem_turu — rapor doğruluğu için kritik
+                _kaynak = plan.get('kaynak_tablo') or ''
+                if _kaynak == 'sabit_giderler':
+                    _islem = 'SABIT_GIDER'
+                elif _kaynak == 'personel':
+                    _islem = 'PERSONEL_MAAS'
+                elif _kaynak == 'vadeli_alimlar':
+                    _islem = 'VADELI_ODEME'
+                elif _kaynak == 'borc_envanteri':
+                    _islem = 'BORC_TAKSIT'
+                else:
+                    _islem = 'KART_ODEME'
+                insert_kasa_hareketi(cur, bugun, _islem, -abs(ana_t), f"Toplu ödeme: {plan['aciklama']}", 'odeme_plani', oid, oid, 'ODEME_PLANI')
             # Onay kuyruğunu kapat — tüm açık durumlar hedeflenir
             cur.execute("""UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
                 WHERE durum NOT IN ('onaylandi','reddedildi')
@@ -3904,6 +3843,8 @@ def aylik_rapor(yil: int = None, ay: int = None):
                 COALESCE(SUM(CASE WHEN islem_turu='VADELI_ODEME'  THEN ABS(tutar) ELSE 0 END),0) as vadeli_toplam,
                 COALESCE(SUM(CASE WHEN islem_turu='PERSONEL_MAAS' THEN ABS(tutar) ELSE 0 END),0) as maas_toplam,
                 COALESCE(SUM(CASE WHEN islem_turu='SABIT_GIDER'   THEN ABS(tutar) ELSE 0 END),0) as sabit_toplam,
+                COALESCE(SUM(CASE WHEN islem_turu='BORC_TAKSIT'   THEN ABS(tutar) ELSE 0 END),0) as borc_taksit_toplam,
+                COALESCE(SUM(CASE WHEN islem_turu='FATURA_ODEMESI' THEN ABS(tutar) ELSE 0 END),0) as fatura_toplam,
                 COALESCE(SUM(CASE WHEN islem_turu='POS_KESINTI'   THEN ABS(tutar) ELSE 0 END),0) as pos_kesinti_toplam,
                 COALESCE(SUM(CASE WHEN tutar > 0 AND islem_turu != 'DEVIR' THEN tutar ELSE 0 END),0) as toplam_gelir,
                 COALESCE(SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END),0) as toplam_gider,
