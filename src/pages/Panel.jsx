@@ -205,7 +205,7 @@ export default function Panel({ onNavigate }) {
   async function kismiOdemeOnayla() {
     if (loadingBtn || !kismiTutar || !kismiTarih) return;
     const odenen = parseFloat(kismiTutar);
-    if (isNaN(odened) || odenen <= 0 || odenen >= kismiModal.toplam) {
+    if (isNaN(odenen) || odenen <= 0 || odenen >= kismiModal.toplam) {
       toast('Tutar 0 ile toplam borç arasında olmalı', 'red'); return;
     }
     setLoadingBtn(true);
@@ -968,7 +968,7 @@ export default function Panel({ onNavigate }) {
               value: fmt(toplam),
               sub: subText,
               renk: subRenk !== 'var(--text3)' ? subRenk : toplam > 0 ? 'var(--red)' : 'var(--text3)',
-              page: 'vadeli-alimlar',
+              page: 'vadeli',
               nakit, kart, toplam,
               kirılım: true,
               onKartClick: vadelihDetayGetir,

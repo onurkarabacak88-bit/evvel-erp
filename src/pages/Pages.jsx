@@ -12,15 +12,17 @@ export function Strateji() {
 
   async function tumunuUygula() {
     if (!data?.oneriler?.length) return;
-    const uygulanabilir = data.oneriler.filter(o=>o.oneri_turu!=='ERTELE'&&o.odeme_id);
-    let basarili = 0, hatali = 0;
-    for (const o of uygulanabilir) {
-      try { await api(`/odeme-plani/${o.odeme_id}/ode`, { method:'POST' }); basarili++; }
-      catch(e) { hatali++; console.warn('Ödeme hatası:', o.odeme_id, e.message); }
-    }
-    if (hatali > 0) toast(`⚠️ ${basarili} onaylandı, ${hatali} başarısız`, 'yellow');
-    else toast(`✓ ${basarili} ödeme uygulandı`);
-    load();
+    const uygulanabilir = data.oneriler.filter(o => o.oneri_turu !== 'ERTELE' && o.odeme_id && o.tavsiye_tutar > 0);
+    if (!uygulanabilir.length) { toast('Uygulanabilir öneri yok', 'yellow'); return; }
+    try {
+      // Tek transaction — biri başarısız olursa hepsi rollback
+      const r = await api('/toplu-odeme', {
+        method: 'POST',
+        body: { odemeler: uygulanabilir.map(o => ({ odeme_id: o.odeme_id, tutar: o.tavsiye_tutar })) }
+      });
+      toast(`✓ ${r.uygulanan}/${uygulanabilir.length} ödeme uygulandı`);
+      load();
+    } catch (e) { toast(e.message, 'red'); }
   }
 
   if (loading) return <div className="loading"><div className="spinner"/>Analiz ediliyor...</div>;
