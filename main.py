@@ -67,13 +67,14 @@ def startup():
             logger.info(f"ℹ️ Bu ay için ödeme planı zaten mevcut")
     except Exception as e:
         logger.error(f"Ödeme planı üretim hatası: {e}")
-    # Ay sonu faiz üretimi — ay son günü çalışır
+    # Ay sonu faiz üretimi — ay son günü çalışır (tek entry point: faiz_hesapla_ve_yaz)
     import calendar
     son_gun = calendar.monthrange(bugun.year, bugun.month)[1]
     if bugun.day == son_gun:
         try:
-            sonuc = ekstre_bazli_faiz_uret()
-            yazilan = sum(1 for k in sonuc['kartlar'] if k['durum'] == 'yazildi')
+            with db() as (conn, cur):
+                sonuclar = tum_kartlar_faiz_hesapla(cur)
+            yazilan = sum(1 for k in sonuclar if k.get('durum') == 'yazildi')
             if yazilan > 0:
                 logger.info(f"✅ Ekstre faizi üretildi: {yazilan} kart")
         except Exception as e:
@@ -1205,7 +1206,7 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
                     WHERE id = %s
                 """, (yeni_kalan, yeni_toplam, plan['kaynak_id']))
 
-        # Faiz üretimi: ekstre_bazli_faiz_uret() ay sonunda veya manuel tetiklenir
+        # Faiz üretimi: /api/kartlar/faiz-uret endpoint'i veya ay sonu startup ile otomatik
 
     return {"success": True}
 
