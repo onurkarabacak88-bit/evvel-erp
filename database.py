@@ -138,6 +138,18 @@ def init_db():
             EXCEPTION WHEN others THEN NULL;
             END $$;
         """)
+        # Migration: kesim tarihi modeli — son_kesim_tarihi + kesim_tolerans
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='kartlar' AND column_name='son_kesim_tarihi')
+                THEN
+                    ALTER TABLE kartlar ADD COLUMN son_kesim_tarihi DATE;
+                    ALTER TABLE kartlar ADD COLUMN kesim_tolerans   INT NOT NULL DEFAULT 0;
+                END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
         # ── CİRO ───────────────────────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS ciro (
@@ -211,6 +223,31 @@ def init_db():
                     ALTER TABLE kart_hareketleri ADD COLUMN faiz_tutari NUMERIC(14,2) DEFAULT 0;
                     ALTER TABLE kart_hareketleri ADD COLUMN ana_para NUMERIC(14,2) DEFAULT 0;
                 END IF;
+            END $$;
+        """)
+        # Migration: taksit başlangıç tarihi — kalan/geçen taksit hesabı için
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='kart_hareketleri' AND column_name='baslangic_tarihi')
+                THEN
+                    ALTER TABLE kart_hareketleri ADD COLUMN baslangic_tarihi DATE;
+                END IF;
+            END $$;
+        """)
+        # Migration: islem_turu CHECK constraint — geçersiz tip girişini engeller
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.constraint_column_usage
+                    WHERE table_name = 'kart_hareketleri'
+                    AND constraint_name = 'kart_hareketleri_islem_turu_check'
+                ) THEN
+                    ALTER TABLE kart_hareketleri
+                    ADD CONSTRAINT kart_hareketleri_islem_turu_check
+                    CHECK (islem_turu IN ('HARCAMA', 'ODEME', 'FAIZ'));
+                END IF;
+            EXCEPTION WHEN others THEN NULL;
             END $$;
         """)
 

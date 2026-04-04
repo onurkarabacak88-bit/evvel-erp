@@ -365,8 +365,250 @@ def nakit_akis_sim(cur, gun_sayisi: int = 15) -> list:
 
 
 # ══════════════════════════════════════════════════════════════
-# KAÇ GÜN DAYANIR
+# TAKSİT SİSTEMİ
 # ══════════════════════════════════════════════════════════════
+
+def taksit_detay(cur, kart_id: str) -> list:
+    """
+    Kartın tüm aktif taksitli harcamaları için:
+    - geçen_taksit: bugüne kadar kaç taksit geçti
+    - kalan_taksit: kaç taksit kaldı
+    - aylik_taksit: her ay düşen tutar
+    - kalan_tutar: toplam kalan borç
+    - bitis_tarihi: son taksit tarihi
+    """
+    bugun = date.today()
+    cur.execute("""
+        SELECT id, tarih, COALESCE(baslangic_tarihi, tarih) AS bas_tarih,
+               tutar, taksit_sayisi, aciklama
+        FROM kart_hareketleri
+        WHERE kart_id = %s AND durum = 'aktif'
+        AND islem_turu = 'HARCAMA' AND taksit_sayisi > 1
+        ORDER BY tarih DESC
+    """, (kart_id,))
+    satirlar = cur.fetchall()
+    sonuc = []
+    for r in satirlar:
+        bas = r['bas_tarih']
+        taksit_sayisi = int(r['taksit_sayisi'])
+        aylik_taksit = float(r['tutar']) / taksit_sayisi
+
+        # Kaç ay geçti?
+        gecen_ay = (bugun.year - bas.year) * 12 + (bugun.month - bas.month)
+        gecen_taksit = min(gecen_ay + 1, taksit_sayisi)  # en az 1 taksit geçmiştir
+        kalan_taksit = max(0, taksit_sayisi - gecen_taksit)
+
+        # Bitiş tarihi
+        bitis_ay = bas.month + taksit_sayisi - 1
+        bitis_yil = bas.year + (bitis_ay - 1) // 12
+        bitis_ay  = ((bitis_ay - 1) % 12) + 1
+        try:
+            import calendar as _cal
+            son_gun = _cal.monthrange(bitis_yil, bitis_ay)[1]
+            bitis_tarihi = date(bitis_yil, bitis_ay, min(bas.day, son_gun))
+        except Exception:
+            bitis_tarihi = None
+
+        sonuc.append({
+            "id":             str(r['id']),
+            "aciklama":       r['aciklama'] or '',
+            "tarih":          str(r['tarih']),
+            "toplam_tutar":   float(r['tutar']),
+            "taksit_sayisi":  taksit_sayisi,
+            "aylik_taksit":   round(aylik_taksit, 2),
+            "gecen_taksit":   gecen_taksit,
+            "kalan_taksit":   kalan_taksit,
+            "kalan_tutar":    round(aylik_taksit * kalan_taksit, 2),
+            "bitis_tarihi":   str(bitis_tarihi) if bitis_tarihi else None,
+            "aktif":          kalan_taksit > 0,
+        })
+    return sonuc
+
+
+def gelecek_taksit_yuku(cur, kart_id: str, ay_sayisi: int = 3) -> list:
+    """
+    Önümüzdeki N ay için kart taksit yükü dağılımı.
+    Her ay için o aya düşen toplam taksit tutarını döner.
+    Karar motoru ve simülasyon bunu kullanır.
+    """
+    bugun = date.today()
+    detaylar = taksit_detay(cur, kart_id)
+
+    aylar = []
+    for i in range(ay_sayisi):
+        hedef_ay   = bugun.month + i
+        hedef_yil  = bugun.year + (hedef_ay - 1) // 12
+        hedef_ay   = ((hedef_ay - 1) % 12) + 1
+        hedef_etki = 0.0
+
+        for t in detaylar:
+            if t['kalan_taksit'] <= 0:
+                continue
+            bas = date.fromisoformat(t['tarih'])
+            gecen_o_aya = (hedef_yil - bas.year) * 12 + (hedef_ay - bas.month)
+            if 0 <= gecen_o_aya < t['taksit_sayisi']:
+                hedef_etki += t['aylik_taksit']
+
+        aylar.append({
+            "ay":       f"{hedef_yil}-{hedef_ay:02d}",
+            "taksit_yuku": round(hedef_etki, 2),
+        })
+    return aylar
+
+
+def tum_kartlar_taksit_yuku(cur, ay_sayisi: int = 3) -> dict:
+    """
+    Tüm aktif kartların gelecek N ay taksit yükü.
+    {kart_id: [{"ay": "2026-05", "taksit_yuku": 1500}, ...]}
+    """
+    cur.execute("SELECT id FROM kartlar WHERE aktif = TRUE")
+    kartlar = [r['id'] for r in cur.fetchall()]
+    return {
+        str(kid): gelecek_taksit_yuku(cur, kid, ay_sayisi)
+        for kid in kartlar
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# KESİM TARİHİ MODELİ
+# ══════════════════════════════════════════════════════════════
+
+def aktif_kesim_gunu(kart: dict) -> int:
+    """
+    Kartın aktif kesim gününü döner.
+    Önce son_kesim_tarihi'ne bakar, yoksa varsayılan + tolerans.
+    """
+    import calendar as _cal
+    bugun = date.today()
+
+    # Önce son_kesim_tarihi
+    son_kesim = kart.get('son_kesim_tarihi')
+    if son_kesim:
+        if isinstance(son_kesim, str):
+            son_kesim = date.fromisoformat(son_kesim)
+        # son_kesim bu ay içindeyse onu kullan
+        if son_kesim.year == bugun.year and son_kesim.month == bugun.month:
+            return son_kesim.day
+
+    # Varsayılan kesim günü + tolerans
+    varsayilan = int(kart.get('kesim_gunu', 15))
+    tolerans   = int(kart.get('kesim_tolerans', 0))
+    return varsayilan + tolerans
+
+
+# ══════════════════════════════════════════════════════════════
+# OTOMATİK FAİZ HESABI (TEK KAYNAK)
+# ══════════════════════════════════════════════════════════════
+
+def faiz_hesapla_ve_yaz(cur, kart_id: str, donem: str = None) -> dict:
+    """
+    Tek kart için otomatik faiz hesabı ve yazımı.
+    donem: 'YYYY-MM' formatında. None ise bu ay.
+
+    Akış:
+    1. Ekstre hesapla (aktif kesim gününe göre)
+    2. Ödenen bul (odeme_plani üzerinden)
+    3. Kalan = ekstre - ödenen
+    4. Kalan > 0 ise → faiz = kalan × aylık_oran
+    5. Kart_hareketleri'ne FAIZ tipiyle yaz
+    6. Kasaya dokunma
+    7. Aynı dönem için 2 kez yazma (duplicate engel)
+    """
+    bugun = date.today()
+    if donem is None:
+        donem = bugun.strftime('%Y-%m')
+
+    cur.execute("SELECT * FROM kartlar WHERE id = %s AND aktif = TRUE", (kart_id,))
+    kart = cur.fetchone()
+    if not kart:
+        return {"hata": "Kart bulunamadı", "kart_id": kart_id}
+
+    # Duplicate kontrolü — bu dönem için faiz zaten var mı?
+    cur.execute("""
+        SELECT id FROM kart_hareketleri
+        WHERE kart_id = %s AND islem_turu = 'FAIZ'
+        AND aciklama LIKE %s AND durum = 'aktif'
+    """, (kart_id, f"%{donem}%"))
+    if cur.fetchone():
+        return {
+            "kart":   kart['kart_adi'],
+            "donem":  donem,
+            "durum":  "zaten_yazilmis",
+            "faiz":   0,
+        }
+
+    # Ekstre hesapla — aktif kesim gününe göre
+    kesim = aktif_kesim_gunu(dict(kart))
+    ekstre_v  = kart_ekstre(cur, kart_id, kesim)
+    bu_ekstre = ekstre_v["ekstre_toplam"]
+
+    if bu_ekstre <= 0:
+        return {
+            "kart":   kart['kart_adi'],
+            "donem":  donem,
+            "durum":  "ekstre_yok",
+            "faiz":   0,
+        }
+
+    # Bu dönem ödenen
+    odenen = kart_bu_ay_odenen(cur, kart_id)
+
+    # Faiz tabanı
+    kalan = max(0.0, bu_ekstre - odenen)
+    if kalan <= 0:
+        return {
+            "kart":       kart['kart_adi'],
+            "donem":      donem,
+            "durum":      "tam_odendi",
+            "bu_ekstre":  bu_ekstre,
+            "odenen":     odenen,
+            "faiz":       0,
+        }
+
+    # Faiz hesapla
+    faiz_orani = float(kart['faiz_orani'])
+    faiz_tutari = kart_faiz_tahmini(faiz_orani, kalan)
+
+    if faiz_tutari < 0.01:
+        return {
+            "kart":   kart['kart_adi'],
+            "donem":  donem,
+            "durum":  "faiz_cok_kucuk",
+            "faiz":   0,
+        }
+
+    # Yaz — kasaya dokunma
+    import uuid as _uuid
+    fid = str(_uuid.uuid4())
+    cur.execute("""
+        INSERT INTO kart_hareketleri
+            (id, kart_id, tarih, islem_turu, tutar, faiz_tutari, aciklama)
+        VALUES (%s, %s, %s, 'FAIZ', %s, %s, %s)
+    """, (fid, kart_id, str(bugun), faiz_tutari, faiz_tutari,
+          f"{donem} dönem faizi (kalan:{kalan:.2f})"))
+
+    return {
+        "id":         fid,
+        "kart":       kart['kart_adi'],
+        "donem":      donem,
+        "durum":      "yazildi",
+        "bu_ekstre":  bu_ekstre,
+        "odenen":     odenen,
+        "kalan":      kalan,
+        "faiz_orani": faiz_orani,
+        "faiz":       faiz_tutari,
+    }
+
+
+def tum_kartlar_faiz_hesapla(cur, donem: str = None) -> list:
+    """
+    Tüm aktif kartlar için faiz_hesapla_ve_yaz çağırır.
+    Tek entry point — başka faiz fonksiyonu yoktur.
+    """
+    cur.execute("SELECT id FROM kartlar WHERE aktif = TRUE")
+    kartlar = [r['id'] for r in cur.fetchall()]
+    return [faiz_hesapla_ve_yaz(cur, kid, donem) for kid in kartlar]
+
 
 def kac_gun_dayanir(cur) -> int:
     """

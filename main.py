@@ -23,6 +23,9 @@ from motors import karar_motoru, odeme_strateji_motoru, nakit_akis_simulasyon, g
 from finans_core import (
     kart_borc, kasa_bakiyesi, kasa_bakiyesi_tarihte,
     kart_ekstre, kart_bu_ay_odenen, kart_faiz_tahmini,
+    faiz_hesapla_ve_yaz, tum_kartlar_faiz_hesapla,
+    taksit_detay, gelecek_taksit_yuku, tum_kartlar_taksit_yuku,
+    aktif_kesim_gunu,
 )
 
 app = FastAPI(title="EVVEL ERP", version="2.0")
@@ -918,7 +921,46 @@ def kart_sil(kid: str):
         audit(cur, 'kartlar', kid, 'PASIF', eski=eski)
     return {"success": True}
 
-# ── KART HAREKETLERİ ───────────────────────────────────────────
+@app.get("/api/kartlar/{kid}/taksitler")
+def kart_taksitler(kid: str):
+    """
+    Kartın aktif taksitli harcamaları — kalan/geçen taksit dahil.
+    """
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (kid,))
+        if not cur.fetchone(): raise HTTPException(404, "Kart bulunamadı")
+        return {
+            "taksitler":      taksit_detay(cur, kid),
+            "gelecek_yukler": gelecek_taksit_yuku(cur, kid, ay_sayisi=3),
+        }
+
+@app.get("/api/kartlar/taksit-yuku")
+def tum_taksit_yuku():
+    """Tüm aktif kartların önümüzdeki 3 aylık taksit yükü."""
+    with db() as (conn, cur):
+        return tum_kartlar_taksit_yuku(cur, ay_sayisi=3)
+
+@app.put("/api/kartlar/{kid}/kesim-tarihi")
+def kart_kesim_tarihi_guncelle(kid: str, body: dict):
+    """
+    Kartın son kesim tarihini ve toleransını güncelle.
+    body: { son_kesim_tarihi: 'YYYY-MM-DD', kesim_tolerans: int }
+    """
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (kid,))
+        eski = cur.fetchone()
+        if not eski: raise HTTPException(404, "Kart bulunamadı")
+        son_kesim   = body.get('son_kesim_tarihi')
+        tolerans    = body.get('kesim_tolerans', 0)
+        cur.execute("""
+            UPDATE kartlar
+            SET son_kesim_tarihi = %s, kesim_tolerans = %s
+            WHERE id = %s
+        """, (son_kesim, tolerans, kid))
+        audit(cur, 'kartlar', kid, 'KESIM_GUNCELLE', eski=eski)
+    return {"success": True, "son_kesim_tarihi": son_kesim, "kesim_tolerans": tolerans}
+
+
 class KartHareket(BaseModel):
     kart_id: str
     tarih: date
@@ -928,6 +970,7 @@ class KartHareket(BaseModel):
     faiz_tutari: float = 0
     ana_para: float = 0
     aciklama: Optional[str] = None
+    baslangic_tarihi: Optional[date] = None  # taksitli alımlar için
 
 @app.get("/api/kart-hareketleri")
 def kart_hareketleri(kart_id: Optional[str] = None, limit: int = 200):
@@ -947,11 +990,14 @@ def kart_hareket_ekle(h: KartHareket):
     with db() as (conn, cur):
         hid = str(uuid.uuid4())
         faiz = abs(h.faiz_tutari) if h.faiz_tutari else 0
-        ana = abs(h.ana_para) if h.ana_para else 0
+        ana  = abs(h.ana_para)   if h.ana_para   else 0
+        # Taksitli alımda baslangic_tarihi = hareket tarihi (girilmemişse)
+        bas_tarih = h.baslangic_tarihi or (h.tarih if h.taksit_sayisi > 1 else None)
         cur.execute("""INSERT INTO kart_hareketleri
-            (id,kart_id,tarih,islem_turu,tutar,taksit_sayisi,faiz_tutari,ana_para,aciklama)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (hid, h.kart_id, h.tarih, h.islem_turu, h.tutar, h.taksit_sayisi, faiz, ana, h.aciklama))
+            (id,kart_id,tarih,islem_turu,tutar,taksit_sayisi,faiz_tutari,ana_para,aciklama,baslangic_tarihi)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (hid, h.kart_id, h.tarih, h.islem_turu, h.tutar,
+             h.taksit_sayisi, faiz, ana, h.aciklama, bas_tarih))
         if h.islem_turu == 'ODEME':
             onay_ekle(cur, 'KART_ODEME', 'kart_hareketleri', hid,
                 f"Kart ödemesi: {h.aciklama or ''}", h.tutar, h.tarih)
@@ -3423,32 +3469,65 @@ def kasa_detay_endpoint():
     except Exception as e:
         raise HTTPException(500, str(e))
 
-# ── EKSTRE FAİZİ ───────────────────────────────────────────────
-class EkstreFaiz(BaseModel):
-    kart_id: str
-    tutar: float
-    donem: str  # '2024-03' formatında
-    aciklama: Optional[str] = None
+# ── FAİZ SİSTEMİ (TEK ENTRY POINT) ────────────────────────────
+# Doküman: faiz otomatik çalışır, manuel giriş yoktur.
+# Tüm faiz hesabı finans_core.faiz_hesapla_ve_yaz üzerinden geçer.
+# Eski 5 endpoint → 1 endpoint.
 
-@app.post("/api/kart-faiz")
-def ekstre_faiz_ekle(f: EkstreFaiz):
-    """
-    Ekstre geldiğinde faizi borca kayıt et.
-    Bu nakit çıkışı değil — borca eklenen maliyet kaydı.
-    """
+@app.get("/api/kart-faiz")
+def kart_faiz_listele(kart_id: str = None):
+    """Kart bazlı faiz geçmişi."""
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM kartlar WHERE id=%s", (f.kart_id,))
-        kart = cur.fetchone()
-        if not kart: raise HTTPException(404, "Kart bulunamadı")
-        fid = str(uuid.uuid4())
-        # Kart hareketlerine FAİZ tipi olarak kayıt
-        cur.execute("""
-            INSERT INTO kart_hareketleri
-                (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama)
-            VALUES (%s, %s, CURRENT_DATE, 'FAIZ', %s, 1, %s)
-        """, (fid, f.kart_id, abs(f.tutar), f.aciklama or f"{f.donem} ekstre faizi"))
-        audit(cur, 'kart_hareketleri', fid, 'FAIZ_EKLENDI')
-    return {"id": fid, "success": True}
+        if kart_id:
+            cur.execute("""
+                SELECT kh.*, k.kart_adi, k.banka
+                FROM kart_hareketleri kh
+                JOIN kartlar k ON k.id = kh.kart_id
+                WHERE kh.kart_id = %s AND kh.islem_turu = 'FAIZ'
+                AND kh.durum = 'aktif'
+                ORDER BY kh.tarih DESC
+            """, (kart_id,))
+        else:
+            cur.execute("""
+                SELECT kh.*, k.kart_adi, k.banka
+                FROM kart_hareketleri kh
+                JOIN kartlar k ON k.id = kh.kart_id
+                WHERE kh.islem_turu = 'FAIZ' AND kh.durum = 'aktif'
+                ORDER BY kh.tarih DESC
+            """)
+        return [dict(r) for r in cur.fetchall()]
+
+@app.post("/api/kartlar/faiz-uret")
+def faiz_uret(body: dict = {}):
+    """
+    Faiz hesapla ve yaz — tek entry point.
+    body: { kart_id: str (opsiyonel), donem: 'YYYY-MM' (opsiyonel) }
+    kart_id verilmezse tüm aktif kartlar işlenir.
+    donem verilmezse bu ay işlenir.
+    """
+    kart_id = body.get('kart_id')
+    donem   = body.get('donem')
+    try:
+        with db() as (conn, cur):
+            if kart_id:
+                sonuc = faiz_hesapla_ve_yaz(cur, kart_id, donem)
+                audit(cur, 'kart_hareketleri',
+                      sonuc.get('id', kart_id), 'FAIZ_OTOMATIK')
+                return sonuc
+            else:
+                sonuclar = tum_kartlar_faiz_hesapla(cur, donem)
+                for s in sonuclar:
+                    if s.get('id'):
+                        audit(cur, 'kart_hareketleri', s['id'], 'FAIZ_OTOMATIK')
+                return {
+                    "donem":   donem or date.today().strftime('%Y-%m'),
+                    "kartlar": sonuclar,
+                    "yazilan": sum(1 for s in sonuclar if s.get('durum') == 'yazildi'),
+                }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 
 @app.get("/api/kart-faiz")
 def kart_faiz_listele(kart_id: str = None):
@@ -3493,260 +3572,6 @@ def kasa_kontrol():
             "saglikli": toplam - sorunlu,
             "anomaliler": anomaliler
         }
-
-# ── EKSTREBAZlı FAİZ MOTORU ────────────────────────────────────
-def ekstre_bazli_faiz_uret(kart_id: str = None):
-    """
-    Her kart için:
-    1. Bu dönem ekstre = bu_ekstre
-    2. Ödenen = ödeme planından odenen_tutar
-    3. Kalan = ekstre - ödenen
-    4. Kalan > 0 ise → faiz kaydı yaz
-    
-    Ay sonunda veya manuel tetiklenebilir.
-    Aynı dönem için 2 kez faiz yazılmaz (unique kontrol).
-    """
-    from datetime import date
-    bugun = date.today()
-    donem = bugun.strftime('%Y-%m')
-    
-    with db() as (conn, cur):
-        sorgu = "SELECT * FROM kartlar WHERE aktif=TRUE"
-        params = ()
-        if kart_id:
-            sorgu += " AND id=%s"
-            params = (kart_id,)
-        cur.execute(sorgu, params)
-        kartlar = cur.fetchall()
-        
-        sonuclar = []
-        for k in kartlar:
-            kid = k['id']
-            faiz_orani = float(k['faiz_orani']) / 100.0 / 12.0
-            
-            # Bu dönem ekstre (kesim gününe kadar tek çekim + taksitler)
-            cur.execute("""
-                SELECT COALESCE(SUM(tutar),0) as tek FROM kart_hareketleri
-                WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA'
-                AND taksit_sayisi=1
-                AND EXTRACT(YEAR FROM tarih) = %s
-                AND EXTRACT(MONTH FROM tarih) = %s
-            """, (kid, bugun.year, bugun.month))
-            tek_cekim = float(cur.fetchone()['tek'])
-            
-            cur.execute("""
-                SELECT COALESCE(SUM(tutar::float/NULLIF(taksit_sayisi,0)),0) as t
-                FROM kart_hareketleri
-                WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA' AND taksit_sayisi>1
-            """, (kid,))
-            taksit = float(cur.fetchone()['t'])
-            bu_ekstre = tek_cekim + taksit
-            
-            if bu_ekstre <= 0:
-                continue
-            
-            # Bu dönem ödenen (odeme_plani üzerinden)
-            cur.execute("""
-                SELECT COALESCE(SUM(odenen_tutar),0) as odenen
-                FROM odeme_plani
-                WHERE kart_id=%s AND durum='odendi'
-                AND EXTRACT(YEAR FROM odeme_tarihi) = %s
-                AND EXTRACT(MONTH FROM odeme_tarihi) = %s
-            """, (kid, bugun.year, bugun.month))
-            odenen = float(cur.fetchone()['odenen'])
-            
-            # Kalan ekstre borcu (revolving balance)
-            kalan = max(0.0, bu_ekstre - odenen)
-            
-            if kalan <= 0:
-                sonuclar.append({'kart': k['kart_adi'], 'durum': 'tam_odendi', 'faiz': 0})
-                continue
-            
-            # Bu dönem için faiz zaten yazılmış mı?
-            cur.execute("""
-                SELECT id FROM kart_hareketleri
-                WHERE kart_id=%s AND islem_turu='FAIZ'
-                AND aciklama LIKE %s AND durum='aktif'
-            """, (kid, f"%%{donem}%%"))
-            if cur.fetchone():
-                sonuclar.append({'kart': k['kart_adi'], 'durum': 'zaten_yazilmis', 'faiz': 0})
-                continue
-            
-            # Faiz hesapla ve yaz
-            faiz_tutari = round(kalan * faiz_orani, 2)
-            if faiz_tutari < 0.01:
-                continue
-            
-            hid = str(uuid.uuid4())
-            cur.execute("""
-                INSERT INTO kart_hareketleri
-                (id, kart_id, tarih, islem_turu, tutar, faiz_tutari, aciklama)
-                VALUES (%s, %s, %s, 'FAIZ', %s, %s, %s)
-            """, (hid, kid, bugun, faiz_tutari, faiz_tutari,
-                  f"{donem} ekstre faizi (kalan:{kalan:.2f})"))
-            
-            # KASA'ya burada YAZILMAZ.
-            # Faiz kart borcuna eklenir; kasadan düşmesi sadece odeme_yap()
-            # anında KART_FAIZ olarak gerçekleşir. Eski kod çift yazıyordu.
-
-            sonuclar.append({
-                'kart': k['kart_adi'],
-                'ekstre': bu_ekstre,
-                'odenen': odenen,
-                'kalan': kalan,
-                'faiz': faiz_tutari,
-                'durum': 'yazildi'
-            })
-        
-        return {'donem': donem, 'kartlar': sonuclar}
-
-@app.post("/api/kartlar/faiz-uret")
-def faiz_uret(kart_id: str = None):
-    """Ekstre bazlı faiz hesapla ve kart_hareketleri'ne yaz."""
-    try:
-        return ekstre_bazli_faiz_uret(kart_id)
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-# ── AY DEVIR (HESAPLANAN — ledger'a yazılmaz) ──────────────────
-def devir_hesapla(yil: int = None, ay: int = None):
-    """
-    Geçen ayın kapanış kasasını SQL ile hesaplar.
-    Ledger'a hiçbir şey yazılmaz — immutable model korunur.
-    """
-    import calendar
-    bugun = date.today()
-    yil = yil or bugun.year
-    ay = ay or bugun.month
-
-    if ay == 1:
-        gecen_yil, gecen_ay = yil - 1, 12
-    else:
-        gecen_yil, gecen_ay = yil, ay - 1
-
-    gecen_ay_son = date(gecen_yil, gecen_ay,
-                        calendar.monthrange(gecen_yil, gecen_ay)[1])
-
-    with db() as (conn, cur):
-        devir = kasa_bakiyesi_tarihte(cur, gecen_ay_son)
-
-    return {
-        "devir_tutar": devir,
-        "gecen_ay": f"{gecen_yil}-{gecen_ay:02d}",
-        "hesaplandi": True
-    }
-
-@app.get("/api/devir")
-def devir_goster(yil: int = None, ay: int = None):
-    """Geçen ay kapanış kasasını hesapla (ledger'a yazmaz)."""
-    try:
-        return devir_hesapla(yil, ay)
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-# ── KART FAİZ HESAPLAMA MOTORU ─────────────────────────────────
-@app.post("/api/kartlar/{kid}/faiz-hesapla")
-def kart_faiz_hesapla(kid: str, body: dict = {}):
-    """
-    Ay sonu faiz hesaplaması.
-    Doğru taban: bu_ekstre - odenen_tutar = ödenmeyen bakiye
-    Faiz bu bakiye üzerinden uygulanır.
-    body: { ay: 'YYYY-MM' }  (boş bırakılırsa geçen ay)
-    """
-    import calendar
-    bugun = date.today()
-    hedef_ay_str = body.get('ay')
-
-    if hedef_ay_str:
-        yil, ay = map(int, hedef_ay_str.split('-'))
-    else:
-        # Geçen ay
-        if bugun.month == 1:
-            yil, ay = bugun.year - 1, 12
-        else:
-            yil, ay = bugun.year, bugun.month - 1
-
-    ay_son = date(yil, ay, calendar.monthrange(yil, ay)[1])
-
-    with db() as (conn, cur):
-        cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (kid,))
-        k = cur.fetchone()
-        if not k:
-            raise HTTPException(404, "Kart bulunamadı")
-
-        # ── CORE HESAPLAR ──────────────────────────────────────
-        ekstre_v  = kart_ekstre(cur, kid, k['kesim_gunu'])
-        bu_ekstre = ekstre_v["ekstre_toplam"]
-        odened_v  = kart_bu_ay_odenen(cur, kid)
-        odenen    = odened_v
-
-        # Faiz tabanı: ödenmeyen ekstre bakiyesi
-        faiz_tabani = max(0.0, bu_ekstre - odenen)
-        faiz_orani  = float(k['faiz_orani'])
-        faiz_tutari = kart_faiz_tahmini(faiz_orani, faiz_tabani)
-
-        if faiz_tutari <= 0:
-            return {
-                "kart": k['kart_adi'],
-                "bu_ekstre": bu_ekstre,
-                "odenen": odenen,
-                "faiz_tabani": faiz_tabani,
-                "faiz_tutari": 0,
-                "mesaj": "Ekstre tam ödendi, faiz yok"
-            }
-
-        # Zaten bu ay için faiz kaydı var mı?
-        donem = f"{yil}-{ay:02d}"
-        cur.execute("""
-            SELECT id FROM kart_hareketleri
-            WHERE kart_id=%s AND islem_turu='FAIZ'
-            AND aciklama LIKE %s AND durum='aktif'
-        """, (kid, f"%%{donem}%%"))
-        if cur.fetchone():
-            return {
-                "kart": k['kart_adi'],
-                "faiz_tutari": faiz_tutari,
-                "mesaj": f"Bu dönem ({donem}) faizi zaten girilmiş"
-            }
-
-        # Faiz kaydı yaz
-        faiz_id = str(uuid.uuid4())
-        cur.execute("""
-            INSERT INTO kart_hareketleri
-                (id, kart_id, tarih, islem_turu, tutar, faiz_tutari, ana_para, aciklama)
-            VALUES (%s, %s, %s, 'FAIZ', %s, %s, 0, %s)
-        """, (faiz_id, kid, str(bugun), faiz_tutari, faiz_tutari,
-              f"{donem} dönem faizi ({k['kart_adi']})"))
-
-        audit(cur, 'kart_hareketleri', faiz_id, 'FAIZ_HESAPLA')
-
-    return {
-        "kart": k['kart_adi'],
-        "donem": donem,
-        "bu_ekstre": bu_ekstre,
-        "odenen": odenen,
-        "faiz_tabani": faiz_tabani,
-        "faiz_orani": faiz_orani,
-        "faiz_tutari": faiz_tutari,
-        "mesaj": f"Faiz hesaplandı ve kart hareketlerine eklendi"
-    }
-
-@app.post("/api/kartlar/toplu-faiz-hesapla")
-def toplu_faiz_hesapla(body: dict = {}):
-    """Tüm aktif kartlar için faiz hesapla."""
-    with db() as (conn, cur):
-        cur.execute("SELECT id FROM kartlar WHERE aktif=TRUE")
-        kartlar = [r['id'] for r in cur.fetchall()]
-
-    sonuclar = []
-    for kid in kartlar:
-        try:
-            r = kart_faiz_hesapla(kid, body)
-            sonuclar.append(r)
-        except Exception as e:
-            sonuclar.append({"kart_id": kid, "hata": str(e)})
-
-    return {"sonuclar": sonuclar, "toplam": len(sonuclar)}
 
 # ── TOPLU ÖDEME (tek transaction) ──────────────────────────────
 @app.post("/api/toplu-odeme")
