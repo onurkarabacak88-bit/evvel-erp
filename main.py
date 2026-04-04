@@ -9,7 +9,7 @@ from fastapi import Request
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date, timedelta
-import uuid, os, json, pathlib, calendar
+import uuid, os, json, pathlib, calendar, threading
 from database import db, init_db
 
 
@@ -54,6 +54,66 @@ async def hata_yakala(request: Request, exc: Exception):
         content={"detail": "Bir hata oluştu. Railway loglarına bakın."}
     )
 
+
+# ── GECE YARISI SCHEDULER ──────────────────────────────────────
+def _gece_yarisi_scheduler():
+    """
+    Her gece yarısı çalışır. Restart bağımlılığını kaldırır.
+    - Ay başı: aylık ödeme planı üret
+    - Ay sonu: faiz hesapla
+    - Her gece: kasa anomali kontrolü
+    """
+    import time as _time
+
+    logger.info("🕐 Scheduler thread aktif")
+
+    while True:
+        try:
+            simdi = date.today()
+
+            # Bir sonraki gece yarısına kadar bekle
+            import datetime as _dt
+            yarin = _dt.datetime.combine(simdi + timedelta(days=1), _dt.time.min)
+            bekle = (yarin - _dt.datetime.now()).total_seconds()
+            _time.sleep(max(bekle, 60))  # en az 60 saniye
+
+            bugun = date.today()
+            ay_son_gun = calendar.monthrange(bugun.year, bugun.month)[1]
+
+            # Ay başı — yeni ödeme planı
+            if bugun.day == 1:
+                try:
+                    sonuc = aylik_odeme_plani_uret(bugun.year, bugun.month)
+                    logger.info(f"⏰ Scheduler: Aylık plan üretildi — {sonuc.get('toplam', 0)} kayıt")
+                except Exception as e:
+                    logger.error(f"⏰ Scheduler plan hatası: {e}")
+
+            # Ay sonu — faiz hesapla
+            if bugun.day == ay_son_gun:
+                try:
+                    with db() as (conn, cur):
+                        sonuclar = tum_kartlar_faiz_hesapla(cur)
+                    yazilan = sum(1 for k in sonuclar if k.get('durum') == 'yazildi')
+                    if yazilan > 0:
+                        logger.info(f"⏰ Scheduler: Faiz üretildi — {yazilan} kart")
+                except Exception as e:
+                    logger.error(f"⏰ Scheduler faiz hatası: {e}")
+
+            # Her gece — kasa anomali kontrolü
+            try:
+                with db() as (conn, cur):
+                    cur.execute("SELECT COUNT(*) as sorunlu FROM v_kasa_anomali WHERE durum != 'OK'")
+                    sorunlu = cur.fetchone()['sorunlu']
+                    if sorunlu > 0:
+                        logger.warning(f"⏰ Scheduler: {sorunlu} kasa anomali tespit edildi")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler anomali kontrol hatası: {e}")
+
+        except Exception as e:
+            logger.error(f"⏰ Scheduler genel hata: {e}")
+            import time as _t
+            _t.sleep(300)  # hata olursa 5 dakika bekle, tekrar dene
+
 @app.on_event("startup")
 def startup():
     init_db()
@@ -91,6 +151,11 @@ def startup():
                 logger.info("✅ Kasa tutarlılık kontrolü: Tüm ciro kayıtları kasa'ya yansımış.")
     except Exception as e:
         logger.warning(f"Kasa kontrol yapılamadı: {e}")
+
+    # Scheduler başlat — restart bağımlılığını kaldırır
+    _scheduler_thread = threading.Thread(target=_gece_yarisi_scheduler, daemon=True)
+    _scheduler_thread.start()
+    logger.info("✅ Gece yarısı scheduler başlatıldı")
 
 # Tüm kasa işlem tipleri — bilinmeyen tip default true alır (güvenli)
 KASA_ETKISI_MAP = {
