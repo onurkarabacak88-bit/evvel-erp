@@ -4509,18 +4509,37 @@ def health():
 
 @app.post("/api/sistem-sifirla")
 def sistem_sifirla(body: dict = {}):
+    """Seçili tabloları siler. body: {onay: 'EVET_SIL', tablolar: [...]}"""
     if body.get('onay') != 'EVET_SIL':
         raise HTTPException(400, "Onay gerekli")
+
+    # İzin verilen tablolar — şubeler ve kartlar asla silinmez
+    IZINLI = {
+        'ciro':           'ciro',
+        'kasa':           'kasa_hareketleri',
+        'kart_hareketleri': 'kart_hareketleri',
+        'anlik_gider':    'anlik_giderler',
+        'vadeli_alim':    'vadeli_alimlar',
+        'personel':       'personel',
+        'personel_aylik': 'personel_aylik',
+        'sabit_gider':    'sabit_giderler',
+        'borc':           'borc_envanteri',
+        'odeme_plani':    'odeme_plani',
+        'onay_kuyrugu':   'onay_kuyrugu',
+        'audit_log':      'audit_log',
+    }
+
+    istenen = body.get('tablolar', list(IZINLI.keys()))  # boşsa hepsi
+    silincekler = [IZINLI[k] for k in istenen if k in IZINLI]
+
+    if not silincekler:
+        raise HTTPException(400, "Silinecek tablo seçilmedi")
+
     with db() as (conn, cur):
-        cur.execute("""
-            TRUNCATE TABLE 
-                audit_log, personel_aylik,
-                onay_kuyrugu, odeme_plani, kart_hareketleri,
-                kasa_hareketleri, anlik_giderler, sabit_giderler,
-                ciro, vadeli_alimlar, personel, borc_envanteri
-            CASCADE
-        """)
-    return {"basarili": True, "mesaj": "Tüm veriler silindi. Şubeler ve kartlar korundu."}
+        cur.execute(f"TRUNCATE TABLE {', '.join(silincekler)} CASCADE")
+
+    return {"basarili": True, "silinen": silincekler,
+            "mesaj": f"{len(silincekler)} tablo temizlendi."}
 
 # Frontend
 if pathlib.Path("static/index.html").exists():
