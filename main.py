@@ -630,6 +630,29 @@ def panel():
             ozet['genel_nakit_toplam'] = ozet['anlik_nakit'] + ozet['sabit_nakit'] + ozet['vadeli_nakit']
             ozet['genel_kart_toplam']  = ozet['anlik_kart']  + ozet['sabit_kart']  + ozet['vadeli_kart']
 
+            # BU AY TOPLAM KASA ÇIKIŞI — tüm negatif hareketlerin toplamı (tek kaynak)
+            cur.execute("""
+                SELECT COALESCE(SUM(ABS(tutar)), 0) as toplam_cikis
+                FROM kasa_hareketleri
+                WHERE kasa_etkisi = true AND durum = 'aktif' AND tutar < 0
+                AND EXTRACT(YEAR  FROM tarih) = EXTRACT(YEAR  FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+            """)
+            ozet['bu_ay_toplam_cikis'] = float(cur.fetchone()['toplam_cikis'])
+
+            # BU AY TOPLAM KASA GİRİŞİ — tüm pozitif hareketlerin toplamı
+            cur.execute("""
+                SELECT COALESCE(SUM(tutar), 0) as toplam_giris
+                FROM kasa_hareketleri
+                WHERE kasa_etkisi = true AND durum = 'aktif' AND tutar > 0
+                AND EXTRACT(YEAR  FROM tarih) = EXTRACT(YEAR  FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+            """)
+            ozet['bu_ay_toplam_giris'] = float(cur.fetchone()['toplam_giris'])
+
+            # NET (gelir - gider)
+            ozet['bu_ay_net'] = ozet['bu_ay_toplam_giris'] - ozet['bu_ay_toplam_cikis']
+
         return ozet
     except Exception as e:
         import traceback
@@ -1587,6 +1610,57 @@ def ciro_ekle(c: CiroModel):
 
         audit(cur, 'ciro', cid, 'INSERT')
     return {"id": cid, "success": True, "net_tutar": net_tutar,
+            "pos_kesinti": pos_kesinti, "online_kesinti": online_kesinti}
+
+
+@app.put("/api/ciro/{cid}")
+def ciro_guncelle(cid: str, c: CiroModel):
+    """
+    Ciro güncelleme — ledger immutable mantığı korunur:
+    1. Eski kasa hareketi ters kayıtla iptal edilir
+    2. Yeni tutarla yeni kasa hareketi yazılır
+    3. Ciro tablosu güncellenir
+    Audit trail eksiksiz kalır.
+    """
+    nakit  = float(c.nakit  or 0)
+    pos    = float(c.pos    or 0)
+    online = float(c.online or 0)
+
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM ciro WHERE id=%s AND durum='aktif'", (cid,))
+        eski = cur.fetchone()
+        if not eski:
+            raise HTTPException(404, "Ciro kaydı bulunamadı veya iptal edilmiş")
+
+        # Şube oranlarını çek — güncel oranla hesapla
+        sube_id = c.sube_id or eski['sube_id']
+        cur.execute("SELECT COALESCE(pos_oran,0) as pos_oran, COALESCE(online_oran,0) as online_oran FROM subeler WHERE id=%s", (sube_id,))
+        oran = cur.fetchone()
+        pos_oran    = float(oran['pos_oran'])    if oran else 0.0
+        online_oran = float(oran['online_oran']) if oran else 0.0
+
+        pos_kesinti    = pos    * pos_oran    / 100.0
+        online_kesinti = online * online_oran / 100.0
+        net_tutar      = nakit + (pos - pos_kesinti) + (online - online_kesinti)
+
+        # 1. Eski kasa hareketini iptal et (ters kayıt)
+        iptal_kasa_hareketi(cur, cid, 'ciro', 'CIRO', 'CIRO_DUZELTME',
+                            f'Ciro düzeltme — eski tutar iptal')
+
+        # 2. Ciro tablosunu güncelle
+        cur.execute("""
+            UPDATE ciro SET nakit=%s, pos=%s, online=%s, aciklama=%s, sube_id=%s
+            WHERE id=%s
+        """, (nakit, pos, online, c.aciklama, sube_id, cid))
+
+        # 3. Yeni net tutarla kasa hareketi yaz
+        insert_kasa_hareketi(cur, eski['tarih'], 'CIRO', net_tutar,
+            f'Ciro düzeltme (net) — pos:%{pos_oran} online:%{online_oran}',
+            'ciro', cid, ref_id=cid, ref_type='CIRO_GUNCELLEME')
+
+        audit(cur, 'ciro', cid, 'GUNCELLEME', eski=eski)
+
+    return {"success": True, "net_tutar": net_tutar,
             "pos_kesinti": pos_kesinti, "online_kesinti": online_kesinti}
 
 @app.delete("/api/ciro/{cid}")
