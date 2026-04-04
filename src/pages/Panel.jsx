@@ -867,6 +867,20 @@ export default function Panel({ onNavigate }) {
           { label: '📊 Net Akış (30 gün)', value: fmt(netAkis), sub: netAkis >= 0 ? 'Pozitif ✓' : '⚠️ Negatif akış', renk: netAkis >= 0 ? 'var(--green)' : 'var(--red)', page: 'ledger' },
           { label: '📈 Bu Ay Ciro', value: fmt(buAyCiro), sub: new Date().toLocaleDateString('tr-TR', { month: 'long' }), renk: 'var(--text1)', page: 'ciro' },
           { label: '🔄 Geçen Ay Devir', value: fmt(panel.bu_ay_devir || 0), sub: panel.bu_ay_devir > 0 ? 'Devir aktarıldı ✓' : 'Devir yok', renk: panel.bu_ay_devir > 0 ? 'var(--yellow)' : 'var(--text3)', page: 'ledger' },
+          (() => {
+            const cikis = parseFloat(panel.bu_ay_toplam_cikis) || 0;
+            const giris = parseFloat(panel.bu_ay_toplam_giris) || 0;
+            const net   = parseFloat(panel.bu_ay_net) || 0;
+            return {
+              label: '📉 Bu Ay Toplam Gider',
+              value: fmt(cikis),
+              sub: cikis > 0
+                ? (net >= 0 ? `Net: +${fmt(net)}` : `Net: -${fmt(Math.abs(net))}`)
+                : 'Bu ay gider yok',
+              renk: cikis > 0 ? 'var(--red)' : 'var(--text3)',
+              page: 'ledger',
+            };
+          })(),
           { label: '💰 Dış Kaynak (Bu Ay)', value: fmt(panel.bu_ay_dis_kaynak || 0), sub: 'Ciro dışı gelir', renk: panel.bu_ay_dis_kaynak > 0 ? '#4a9eff' : 'var(--text3)', page: 'dis-kaynak' },
           (() => {
             const nakit = panel.anlik_nakit || 0;
