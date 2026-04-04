@@ -4509,44 +4509,18 @@ def health():
 
 @app.post("/api/sistem-sifirla")
 def sistem_sifirla(body: dict = {}):
-    """
-    TÜM İŞLEM VERİLERİNİ SİLER.
-    Sadece subeler ve kartlar korunur.
-    Bu işlem geri alınamaz.
-    """
-    onay = body.get('onay')
-    if onay != 'EVET_SIL':
-        raise HTTPException(400, "Güvenlik onayı gerekli: { onay: 'EVET_SIL' }")
-
+    if body.get('onay') != 'EVET_SIL':
+        raise HTTPException(400, "Onay gerekli")
     with db() as (conn, cur):
-        tablolar = [
-            'audit_log',
-            'onay_kuyrugu',
-            'odeme_plani',
-            'kasa_hareketleri',
-            'kart_hareketleri',
-            'ciro',
-            'anlik_giderler',
-            'vadeli_alimlar',
-            'dis_kaynak',
-            'personel_aylik',
-            'personel',
-            'sabit_giderler',
-            'borc_envanteri',
-        ]
-        silinen = {}
-        for tablo in tablolar:
-            try:
-                cur.execute(f"DELETE FROM {tablo}")
-                silinen[tablo] = cur.rowcount
-            except Exception as e:
-                silinen[tablo] = f"HATA: {e}"
-
-    return {
-        "basarili": True,
-        "mesaj": "Tüm işlem verileri silindi. Şubeler ve kartlar korundu.",
-        "silinen": silinen,
-    }
+        cur.execute("""
+            TRUNCATE TABLE 
+                audit_log, personel_aylik, calisma_saatleri,
+                onay_kuyrugu, odeme_plani, kart_hareketleri,
+                kasa_hareketleri, anlik_giderler, sabit_giderler,
+                ciro, dis_kaynak, vadeli_alimlar, personel, borc_envanteri
+            CASCADE
+        """)
+    return {"basarili": True, "mesaj": "Tüm veriler silindi. Şubeler ve kartlar korundu."}
 
 # Frontend
 if pathlib.Path("static/index.html").exists():
