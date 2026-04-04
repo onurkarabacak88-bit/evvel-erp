@@ -2282,6 +2282,86 @@ def fatura_gecmis(gider_id: str):
         gecmis.sort(key=lambda x: str(x['tarih']), reverse=True)
         return gecmis
 
+@app.get("/api/sabit-giderler/{gid}/gecmis")
+def sabit_gider_gecmis(gid: str):
+    """Sabit giderin ödeme geçmişi — kasa_hareketleri + odeme_plani."""
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM sabit_giderler WHERE id=%s", (gid,))
+        gider = cur.fetchone()
+        if not gider: raise HTTPException(404, "Gider bulunamadı")
+
+        # Ödenen — kasa_hareketleri
+        cur.execute("""
+            SELECT tarih, ABS(tutar) as tutar, aciklama, islem_turu
+            FROM kasa_hareketleri
+            WHERE kaynak_id = %s AND kaynak_tablo = 'sabit_giderler'
+            AND kasa_etkisi = true AND durum = 'aktif' AND tutar < 0
+            ORDER BY tarih DESC
+        """, (gid,))
+        odenenler = [{"tarih": str(r['tarih']), "tutar": float(r['tutar']),
+                      "aciklama": r['aciklama'] or '', "durum": "odendi"} for r in cur.fetchall()]
+
+        # Bekleyen — odeme_plani
+        cur.execute("""
+            SELECT tarih, odenecek_tutar, durum, aciklama
+            FROM odeme_plani
+            WHERE kaynak_id = %s AND kaynak_tablo = 'sabit_giderler'
+            AND durum IN ('bekliyor','onay_bekliyor')
+            ORDER BY tarih ASC
+        """, (gid,))
+        bekleyenler = [{"tarih": str(r['tarih']), "tutar": float(r['odenecek_tutar']),
+                        "aciklama": r['aciklama'] or '', "durum": r['durum']} for r in cur.fetchall()]
+
+        toplam_odenen = sum(r['tutar'] for r in odenenler)
+        return {
+            "gider": {"id": str(gider['id']), "gider_adi": gider['gider_adi'],
+                      "kategori": gider['kategori'], "tutar": float(gider['tutar'])},
+            "ozet": {"toplam_odenen": round(toplam_odenen, 2),
+                     "odeme_adedi": len(odenenler)},
+            "odenenler": odenenler,
+            "bekleyenler": bekleyenler,
+        }
+
+@app.get("/api/anlik-gider/gecmis")
+def anlik_gider_gecmis(kategori: str = None, limit: int = 100):
+    """Anlık gider geçmişi — isteğe bağlı kategori filtresi."""
+    with db() as (conn, cur):
+        if kategori:
+            cur.execute("""
+                SELECT tarih, ABS(tutar) as tutar, aciklama, kategori, odeme_yontemi
+                FROM kasa_hareketleri
+                WHERE islem_turu = 'ANLIK_GIDER' AND durum = 'aktif' AND tutar < 0
+                AND aciklama ILIKE %s
+                ORDER BY tarih DESC LIMIT %s
+            """, (f"%{kategori}%", limit))
+        else:
+            cur.execute("""
+                SELECT tarih, ABS(tutar) as tutar, aciklama, islem_turu as kategori, odeme_yontemi
+                FROM kasa_hareketleri
+                WHERE islem_turu = 'ANLIK_GIDER' AND durum = 'aktif' AND tutar < 0
+                ORDER BY tarih DESC LIMIT %s
+            """, (limit,))
+        satirlar = [{"tarih": str(r['tarih']), "tutar": float(r['tutar']),
+                     "aciklama": r['aciklama'] or '', 
+                     "odeme_yontemi": r.get('odeme_yontemi', 'nakit')} for r in cur.fetchall()]
+
+        # Kategori özeti
+        cur.execute("""
+            SELECT
+                SPLIT_PART(aciklama, ' - ', 1) as kat,
+                COUNT(*) as adet,
+                SUM(ABS(tutar)) as toplam
+            FROM kasa_hareketleri
+            WHERE islem_turu = 'ANLIK_GIDER' AND durum = 'aktif' AND tutar < 0
+            GROUP BY kat ORDER BY toplam DESC LIMIT 10
+        """)
+        kategoriler = [{"kategori": r['kat'] or 'Diğer',
+                        "adet": int(r['adet']), "toplam": float(r['toplam'])} for r in cur.fetchall()]
+
+        return {"satirlar": satirlar, "kategoriler": kategoriler,
+                "toplam": sum(r['tutar'] for r in satirlar)}
+
+
 # ── VADELİ ALIMLAR ─────────────────────────────────────────────
 class VadeliAlim(BaseModel):
     aciklama: str
