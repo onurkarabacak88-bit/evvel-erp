@@ -2660,6 +2660,87 @@ def borc_guncelle(bid: str, b: BorcModel):
         audit(cur, 'borc_envanteri', bid, 'UPDATE', eski=eski)
     return {"success": True}
 
+
+@app.get("/api/borclar/{bid}/gecmis")
+def borc_gecmis(bid: str):
+    """
+    Bir borcun tüm ödeme geçmişi:
+    - Ödenen taksitler (kasa_hareketleri)
+    - Bekleyen / gelecek ödemeler (odeme_plani)
+    - Özet: toplam ödenen, kalan, ilerleme
+    """
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM borc_envanteri WHERE id=%s", (bid,))
+        borc = cur.fetchone()
+        if not borc: raise HTTPException(404, "Borç bulunamadı")
+
+        # Ödenen taksitler — kasa_hareketleri
+        cur.execute("""
+            SELECT tarih, tutar, aciklama, islem_turu, durum
+            FROM kasa_hareketleri
+            WHERE kaynak_tablo = 'borc_envanteri'
+            AND kaynak_id = %s AND kasa_etkisi = true
+            AND tutar < 0
+            ORDER BY tarih DESC
+        """, (bid,))
+        odenenler = [{
+            "tarih":    str(r['tarih']),
+            "tutar":    abs(float(r['tutar'])),
+            "aciklama": r['aciklama'] or '',
+            "durum":    "odendi",
+        } for r in cur.fetchall()]
+
+        # Bekleyen ödemeler — odeme_plani
+        cur.execute("""
+            SELECT id, tarih, odenecek_tutar, asgari_tutar, durum, aciklama
+            FROM odeme_plani
+            WHERE kaynak_tablo = 'borc_envanteri'
+            AND kaynak_id = %s
+            AND durum IN ('bekliyor', 'onay_bekliyor')
+            ORDER BY tarih ASC
+        """, (bid,))
+        bekleyenler = [{
+            "tarih":   str(r['tarih']),
+            "tutar":   float(r['odenecek_tutar']),
+            "aciklama": r['aciklama'] or '',
+            "durum":   r['durum'],
+            "plan_id": str(r['id']),
+        } for r in cur.fetchall()]
+
+        # Özet hesapla
+        toplam_odenen   = sum(r['tutar'] for r in odenenler)
+        toplam_beklenen = sum(r['tutar'] for r in bekleyenler)
+        toplam_borc     = float(borc['toplam_borc'] or 0)
+        aylik_taksit    = float(borc['aylik_taksit'] or 0)
+        kalan_vade      = int(borc['kalan_vade'] or 0)
+        toplam_vade     = int(borc['toplam_vade'] or 0)
+        gecen_taksit    = toplam_vade - kalan_vade if toplam_vade else len(odenenler)
+        ilerleme_pct    = round(gecen_taksit / toplam_vade * 100) if toplam_vade else 0
+
+        return {
+            "borc": {
+                "id":              str(borc['id']),
+                "kurum":           borc['kurum'],
+                "borc_turu":       borc['borc_turu'],
+                "toplam_borc":     toplam_borc,
+                "aylik_taksit":    aylik_taksit,
+                "kalan_vade":      kalan_vade,
+                "toplam_vade":     toplam_vade,
+                "baslangic":       str(borc['baslangic_tarihi']) if borc['baslangic_tarihi'] else None,
+                "aktif":           borc['aktif'],
+            },
+            "ozet": {
+                "toplam_odenen":   round(toplam_odenen, 2),
+                "toplam_beklenen": round(toplam_beklenen, 2),
+                "kalan_borc":      round(max(0, toplam_borc - toplam_odenen), 2),
+                "gecen_taksit":    gecen_taksit,
+                "kalan_taksit":    kalan_vade,
+                "ilerleme_pct":    ilerleme_pct,
+            },
+            "odenenler":   odenenler,
+            "bekleyenler": bekleyenler,
+        }
+
 @app.delete("/api/borclar/{bid}")
 def borc_sil(bid: str):
     with db() as (conn, cur):
