@@ -4514,10 +4514,10 @@ def sistem_sifirla(body: dict = {}):
     with db() as (conn, cur):
         cur.execute("""
             TRUNCATE TABLE 
-                audit_log, personel_aylik, calisma_saatleri,
+                audit_log, personel_aylik,
                 onay_kuyrugu, odeme_plani, kart_hareketleri,
                 kasa_hareketleri, anlik_giderler, sabit_giderler,
-                ciro, dis_kaynak, vadeli_alimlar, personel, borc_envanteri
+                ciro, vadeli_alimlar, personel, borc_envanteri
             CASCADE
         """)
     return {"basarili": True, "mesaj": "Tüm veriler silindi. Şubeler ve kartlar korundu."}
