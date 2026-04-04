@@ -178,9 +178,23 @@ export function Borclar() {
   const [duzenleId, setDuzenleId] = useState(null);
   const [msg, setMsg] = useState(null);
   const [hatalar, setHatalar] = useState({});
+  const [gecmisModal, setGecmisModal] = useState(null); // {borc} objesi
+  const [gecmisData, setGecmisData] = useState(null);
+  const [gecmisYukleniyor, setGecmisYukleniyor] = useState(false);
   const load = ()=>api('/borclar').then(setListe);
   useEffect(()=>{load();},[]);
   const toast=(m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
+
+  async function gecmisAc(borc) {
+    setGecmisModal(borc);
+    setGecmisData(null);
+    setGecmisYukleniyor(true);
+    try {
+      const r = await api(`/borclar/${borc.id}/gecmis`);
+      setGecmisData(r);
+    } catch(e) { toast(e.message, 'red'); setGecmisModal(null); }
+    finally { setGecmisYukleniyor(false); }
+  }
 
   async function kaydet(){
     const yeniHatalar = {};
@@ -234,6 +248,7 @@ export function Borclar() {
                 <td><span className={`badge ${b.aktif?'badge-green':'badge-gray'}`}>{b.aktif?'Aktif':'Kapandı'}</span></td>
                 <td>
                   <div className="flex gap-8">
+                    <button className="btn btn-ghost btn-sm" onClick={()=>gecmisAc(b)}>📋 Geçmiş</button>
                     <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({kurum:b.kurum,borc_turu:b.borc_turu,toplam_borc:b.toplam_borc,aylik_taksit:b.aylik_taksit,kalan_vade:b.kalan_vade,toplam_vade:b.toplam_vade,baslangic_tarihi:b.baslangic_tarihi?.slice(0,10)||'',odeme_gunu:b.odeme_gunu});setDuzenleId(b.id);setShowModal(true);}}>✏️</button>
                     <button className="btn btn-danger btn-sm" onClick={()=>sil(b.id)}>Kapat</button>
                   </div>
@@ -289,6 +304,97 @@ export function Borclar() {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={()=>setShowModal(false)}>İptal</button>
               <button className="btn btn-primary" onClick={kaydet} disabled={!form.kurum||!form.aylik_taksit}>Kaydet</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ÖDEME GEÇMİŞİ MODAL */}
+      {gecmisModal && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setGecmisModal(null)}>
+          <div className="modal" style={{maxWidth:680,width:'95%'}}>
+            <div className="modal-header">
+              <div>
+                <h3>📋 {gecmisModal.kurum} — Ödeme Geçmişi</h3>
+                <p style={{fontSize:12,color:'var(--text3)',marginTop:2}}>
+                  {gecmisModal.borc_turu} · Aylık {parseInt(gecmisModal.aylik_taksit).toLocaleString('tr-TR')} ₺
+                </p>
+              </div>
+              <button className="modal-close" onClick={()=>setGecmisModal(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              {gecmisYukleniyor && <div style={{textAlign:'center',padding:40}}><div className="spinner"/></div>}
+              {gecmisData && (<>
+                {/* ÖZET KARTLAR */}
+                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:16}}>
+                  {[
+                    {label:'Toplam Ödenen', val: gecmisData.ozet.toplam_odenen, renk:'var(--green)'},
+                    {label:'Kalan Borç',    val: gecmisData.ozet.kalan_borc,    renk:'var(--red)'},
+                    {label:'İlerleme',      val: null, extra: `${gecmisData.ozet.gecen_taksit}/${gecmisData.borc.toplam_vade||'?'} taksit · %${gecmisData.ozet.ilerleme_pct}`, renk:'var(--blue)'},
+                  ].map(({label,val,extra,renk})=>(
+                    <div key={label} style={{background:'var(--bg3)',borderRadius:8,padding:'10px 14px',borderTop:`3px solid ${renk}`}}>
+                      <div style={{fontSize:11,color:'var(--text3)',marginBottom:4}}>{label}</div>
+                      {val !== null
+                        ? <div style={{fontSize:18,fontWeight:700,color:renk,fontFamily:'var(--font-mono)'}}>{parseInt(val).toLocaleString('tr-TR')} ₺</div>
+                        : <div style={{fontSize:14,fontWeight:600,color:renk}}>{extra}</div>
+                      }
+                    </div>
+                  ))}
+                </div>
+
+                {/* İLERLEME ÇUBUĞU */}
+                <div style={{marginBottom:16}}>
+                  <div style={{height:8,background:'var(--bg3)',borderRadius:4,overflow:'hidden'}}>
+                    <div style={{height:'100%',width:`${gecmisData.ozet.ilerleme_pct}%`,background:'var(--green)',borderRadius:4,transition:'width .4s'}}/>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:11,color:'var(--text3)',marginTop:4}}>
+                    <span>Başlangıç: {gecmisData.borc.baslangic||'—'}</span>
+                    <span>%{gecmisData.ozet.ilerleme_pct} tamamlandı</span>
+                    <span>Kalan: {gecmisData.ozet.kalan_taksit} taksit</span>
+                  </div>
+                </div>
+
+                {/* BEKLEYEN ÖDEMELER */}
+                {gecmisData.bekleyenler.length > 0 && (<>
+                  <h4 style={{fontSize:12,fontWeight:600,color:'var(--text2)',marginBottom:8}}>⏳ Bekleyen Ödemeler ({gecmisData.bekleyenler.length})</h4>
+                  <div style={{display:'flex',flexDirection:'column',gap:4,marginBottom:14}}>
+                    {gecmisData.bekleyenler.map((o,i)=>(
+                      <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                        padding:'7px 12px',background:'rgba(255,200,0,0.08)',borderRadius:6,border:'1px solid rgba(255,200,0,0.2)'}}>
+                        <span style={{fontSize:12,color:'var(--text2)'}}>{o.tarih}</span>
+                        <span style={{fontSize:12,color:'var(--text3)'}}>{o.aciklama}</span>
+                        <span style={{fontFamily:'var(--font-mono)',fontWeight:600,color:'var(--yellow)'}}>
+                          {parseInt(o.tutar).toLocaleString('tr-TR')} ₺
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>)}
+
+                {/* ÖDENEN TAKSİTLER */}
+                {gecmisData.odenenler.length > 0 ? (<>
+                  <h4 style={{fontSize:12,fontWeight:600,color:'var(--text2)',marginBottom:8}}>✅ Ödenen Taksitler ({gecmisData.odenenler.length})</h4>
+                  <div style={{maxHeight:280,overflowY:'auto',display:'flex',flexDirection:'column',gap:4}}>
+                    {gecmisData.odenenler.map((o,i)=>(
+                      <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                        padding:'7px 12px',background:'var(--bg3)',borderRadius:6}}>
+                        <span style={{fontSize:12,color:'var(--text3)'}}>{o.tarih}</span>
+                        <span style={{fontSize:12,color:'var(--text3)',flex:1,marginLeft:12}}>{o.aciklama}</span>
+                        <span style={{fontFamily:'var(--font-mono)',fontWeight:600,color:'var(--green)'}}>
+                          {parseInt(o.tutar).toLocaleString('tr-TR')} ₺
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>) : (
+                  <div style={{textAlign:'center',padding:20,color:'var(--text3)',fontSize:13}}>
+                    Henüz ödeme kaydı yok
+                  </div>
+                )}
+              </>)}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={()=>setGecmisModal(null)}>Kapat</button>
             </div>
           </div>
         </div>
