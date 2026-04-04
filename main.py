@@ -4506,6 +4506,48 @@ def health():
         ]
     }
 
+
+@app.post("/api/sistem-sifirla")
+def sistem_sifirla(body: dict = {}):
+    """
+    TÜM İŞLEM VERİLERİNİ SİLER.
+    Sadece subeler ve kartlar korunur.
+    Bu işlem geri alınamaz.
+    """
+    onay = body.get('onay')
+    if onay != 'EVET_SIL':
+        raise HTTPException(400, "Güvenlik onayı gerekli: { onay: 'EVET_SIL' }")
+
+    with db() as (conn, cur):
+        tablolar = [
+            'audit_log',
+            'onay_kuyrugu',
+            'odeme_plani',
+            'kasa_hareketleri',
+            'kart_hareketleri',
+            'ciro',
+            'anlik_giderler',
+            'vadeli_alimlar',
+            'dis_kaynak',
+            'personel_aylik',
+            'personel',
+            'sabit_giderler',
+            'borc_envanteri',
+        ]
+        silinen = {}
+        for tablo in tablolar:
+            try:
+                cur.execute(f"DELETE FROM {tablo}")
+                silinen[tablo] = cur.rowcount
+            except Exception as e:
+                silinen[tablo] = f"HATA: {e}"
+
+    return {
+        "basarili": True,
+        "mesaj": "Tüm işlem verileri silindi. Şubeler ve kartlar korundu.",
+        "silinen": silinen,
+    }
+
 # Frontend
 if pathlib.Path("static/index.html").exists():
     from fastapi.responses import FileResponse
