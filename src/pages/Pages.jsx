@@ -418,6 +418,8 @@ export function SabitGiderler() {
   const [faturaModal, setFaturaModal] = useState(null); // {gider_id, gider_adi}
   const [faturaForm, setFaturaForm] = useState({tutar:'', tarih: new Date().toISOString().split('T')[0], odeme_yontemi:'nakit', kart_id:''});
   const [faturaGecmis, setFaturaGecmis] = useState([]);
+  const [sabitGecmisModal, setSabitGecmisModal] = useState(null);
+  const [sabitGecmisData, setSabitGecmisData] = useState(null);
   const [faturaKartOneri, setFaturaKartOneri] = useState(null);
   const [faturaKartYukleniyor, setFaturaKartYukleniyor] = useState(false);
   const ZORUNLU_KATEGORILER = ['Kira'];
@@ -611,6 +613,11 @@ export function SabitGiderler() {
                     {g.tip === 'degisken' && (
                       <button className="btn btn-primary btn-sm" onClick={()=>faturaOdeAc(g)}>💰 Fatura Öde</button>
                     )}
+                    <button className="btn btn-ghost btn-sm" onClick={async()=>{
+                      setSabitGecmisModal(g); setSabitGecmisData(null);
+                      const r = await api(`/sabit-giderler/${g.id}/gecmis`).catch(()=>null);
+                      setSabitGecmisData(r);
+                    }}>📋 Geçmiş</button>
                     <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({gider_adi:g.gider_adi,kategori:g.kategori,tip:g.tip||'sabit',tutar:g.tutar,periyot:g.periyot,odeme_gunu:g.odeme_gunu,baslangic_tarihi:g.baslangic_tarihi?.slice(0,10)||'',sube_id:g.sube_id||'',gecerlilik_tarihi:'',sozlesme_sure_ay:g.sozlesme_sure_ay||'',kira_artis_periyot:g.kira_artis_periyot||'',odeme_yontemi:g.odeme_yontemi||'nakit',kart_id:g.kart_id||''});setDuzenleId(g.id);setHatalar({});setShowModal(true);}}>✏️</button>
                     <button className="btn btn-danger btn-sm" onClick={()=>sil(g.id)}>Kapat</button>
                   </div>
@@ -1382,6 +1389,63 @@ export function KartHareketleri() {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={()=>setShowModal(false)}>İptal</button>
               <button className="btn btn-primary" onClick={kaydet} disabled={!form.kart_id||!form.tutar}>Kaydet</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SABİT GİDER GEÇMİŞ MODAL */}
+      {sabitGecmisModal && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setSabitGecmisModal(null)}>
+          <div className="modal" style={{maxWidth:580,width:'95%'}}>
+            <div className="modal-header">
+              <div>
+                <h3>📋 {sabitGecmisModal.gider_adi} — Ödeme Geçmişi</h3>
+                <p style={{fontSize:12,color:'var(--text3)',marginTop:2}}>{sabitGecmisModal.kategori} · {parseInt(sabitGecmisModal.tutar).toLocaleString('tr-TR')} ₺/ay</p>
+              </div>
+              <button className="modal-close" onClick={()=>setSabitGecmisModal(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              {!sabitGecmisData && <div style={{textAlign:'center',padding:40}}><div className="spinner"/></div>}
+              {sabitGecmisData && (<>
+                <div style={{display:'flex',gap:10,marginBottom:14}}>
+                  <div style={{flex:1,background:'var(--bg3)',borderRadius:8,padding:'10px 14px',borderTop:'3px solid var(--green)'}}>
+                    <div style={{fontSize:11,color:'var(--text3)'}}>Toplam Ödenen</div>
+                    <div style={{fontSize:18,fontWeight:700,color:'var(--green)',fontFamily:'var(--font-mono)'}}>{parseInt(sabitGecmisData.ozet.toplam_odenen).toLocaleString('tr-TR')} ₺</div>
+                  </div>
+                  <div style={{flex:1,background:'var(--bg3)',borderRadius:8,padding:'10px 14px',borderTop:'3px solid var(--blue)'}}>
+                    <div style={{fontSize:11,color:'var(--text3)'}}>Ödeme Adedi</div>
+                    <div style={{fontSize:18,fontWeight:700,color:'var(--blue)'}}>{sabitGecmisData.ozet.odeme_adedi} kez</div>
+                  </div>
+                </div>
+                {sabitGecmisData.bekleyenler.length > 0 && (
+                  <div style={{marginBottom:12}}>
+                    <div style={{fontSize:12,fontWeight:600,color:'var(--text2)',marginBottom:6}}>⏳ Bekleyen</div>
+                    {sabitGecmisData.bekleyenler.map((o,i)=>(
+                      <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'6px 10px',background:'rgba(255,200,0,0.08)',borderRadius:6,fontSize:12,marginBottom:3}}>
+                        <span style={{color:'var(--text3)'}}>{o.tarih}</span>
+                        <span style={{fontFamily:'var(--font-mono)',color:'var(--yellow)'}}>{parseInt(o.tutar).toLocaleString('tr-TR')} ₺</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{fontSize:12,fontWeight:600,color:'var(--text2)',marginBottom:6}}>✅ Ödenenler</div>
+                <div style={{maxHeight:300,overflowY:'auto',display:'flex',flexDirection:'column',gap:3}}>
+                  {sabitGecmisData.odenenler.length === 0
+                    ? <div style={{textAlign:'center',color:'var(--text3)',padding:16,fontSize:12}}>Kayıt yok</div>
+                    : sabitGecmisData.odenenler.map((o,i)=>(
+                      <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'6px 10px',background:'var(--bg3)',borderRadius:6,fontSize:12}}>
+                        <span style={{color:'var(--text3)'}}>{o.tarih}</span>
+                        <span style={{flex:1,marginLeft:10,color:'var(--text2)'}}>{o.aciklama}</span>
+                        <span style={{fontFamily:'var(--font-mono)',color:'var(--green)'}}>{parseInt(o.tutar).toLocaleString('tr-TR')} ₺</span>
+                      </div>
+                    ))
+                  }
+                </div>
+              </>)}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={()=>setSabitGecmisModal(null)}>Kapat</button>
             </div>
           </div>
         </div>

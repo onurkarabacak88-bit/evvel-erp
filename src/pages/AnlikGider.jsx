@@ -12,6 +12,8 @@ export default function AnlikGider() {
   const [dupUyari, setDupUyari] = useState(null);
   const [kartOneri, setKartOneri] = useState(null);       // backend'den gelen sıralı kart listesi
   const [kartOneriYukleniyor, setKartOneriYukleniyor] = useState(false);
+  const [gecmisModal, setGecmisModal] = useState(false);
+  const [gecmisData, setGecmisData] = useState(null);
 
   const load = () => api('/anlik-gider').then(setListe);
   useEffect(() => {
@@ -79,7 +81,14 @@ export default function AnlikGider() {
           <h2>Anlık Gider</h2>
           <p>Beklenmeyen giderler · Bugün: {fmt(toplamBugün)}</p>
         </div>
-        <button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ Gider Ekle</button>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn btn-ghost" onClick={async()=>{
+            setGecmisModal(true); setGecmisData(null);
+            const r = await api('/anlik-gider/gecmis').catch(()=>null);
+            setGecmisData(r);
+          }}>📋 Geçmiş</button>
+          <button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ Gider Ekle</button>
+        </div>
       </div>
       <div className="table-wrap">
         <table>
@@ -237,6 +246,58 @@ export default function AnlikGider() {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={()=>setShowModal(false)}>İptal</button>
               <button className="btn btn-primary" onClick={()=>kaydet(false)} disabled={!form.tutar || (form.odeme_yontemi==='kart' && !form.kart_id)}>Kaydet</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ANLIK GİDER GEÇMİŞ MODAL */}
+      {gecmisModal && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setGecmisModal(false)}>
+          <div className="modal" style={{maxWidth:620,width:'95%'}}>
+            <div className="modal-header">
+              <h3>📋 Anlık Gider Geçmişi</h3>
+              <button className="modal-close" onClick={()=>setGecmisModal(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              {!gecmisData && <div style={{textAlign:'center',padding:40}}><div className="spinner"/></div>}
+              {gecmisData && (<>
+                {/* Kategori özeti */}
+                {gecmisData.kategoriler?.length > 0 && (
+                  <div style={{marginBottom:14}}>
+                    <div style={{fontSize:12,fontWeight:600,color:'var(--text2)',marginBottom:8}}>Kategori Özeti</div>
+                    <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                      {gecmisData.kategoriler.map((k,i)=>(
+                        <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                          padding:'6px 10px',background:'var(--bg3)',borderRadius:6,fontSize:12}}>
+                          <span style={{fontWeight:500}}>{k.kategori}</span>
+                          <span style={{color:'var(--text3)'}}>{k.adet} işlem</span>
+                          <span style={{fontFamily:'var(--font-mono)',color:'var(--red)',fontWeight:600}}>{parseInt(k.toplam).toLocaleString('tr-TR')} ₺</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{display:'flex',justifyContent:'flex-end',marginTop:6,fontSize:12,fontWeight:700,color:'var(--red)'}}>
+                      Toplam: {parseInt(gecmisData.toplam).toLocaleString('tr-TR')} ₺
+                    </div>
+                  </div>
+                )}
+                {/* İşlem listesi */}
+                <div style={{fontSize:12,fontWeight:600,color:'var(--text2)',marginBottom:6}}>Son {gecmisData.satirlar?.length} İşlem</div>
+                <div style={{maxHeight:320,overflowY:'auto',display:'flex',flexDirection:'column',gap:3}}>
+                  {(gecmisData.satirlar||[]).map((r,i)=>(
+                    <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                      padding:'6px 10px',background:'var(--bg3)',borderRadius:6,fontSize:12}}>
+                      <span style={{color:'var(--text3)',minWidth:80}}>{r.tarih}</span>
+                      <span style={{flex:1,marginLeft:8,color:'var(--text2)'}}>{r.aciklama}</span>
+                      <span style={{color:'var(--text3)',marginRight:10}}>{r.odeme_yontemi==='kart'?'💳':'💵'}</span>
+                      <span style={{fontFamily:'var(--font-mono)',color:'var(--red)',fontWeight:600}}>{parseInt(r.tutar).toLocaleString('tr-TR')} ₺</span>
+                    </div>
+                  ))}
+                </div>
+              </>)}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={()=>setGecmisModal(false)}>Kapat</button>
             </div>
           </div>
         </div>
