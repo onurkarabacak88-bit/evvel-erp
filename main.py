@@ -238,6 +238,42 @@ def onay_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
         (str(uuid.uuid4()), islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih))
 
 # ── PANEL ──────────────────────────────────────────────────────
+
+# ── AY DEVİR (HESAPLANAN — ledger'a yazılmaz) ──────────────────
+def devir_hesapla(yil: int = None, ay: int = None):
+    """
+    Geçen ayın kapanış kasasını hesaplar.
+    Ledger'a hiçbir şey yazılmaz — immutable model korunur.
+    """
+    import calendar
+    bugun = date.today()
+    yil = yil or bugun.year
+    ay  = ay  or bugun.month
+
+    if ay == 1:
+        gecen_yil, gecen_ay = yil - 1, 12
+    else:
+        gecen_yil, gecen_ay = yil, ay - 1
+
+    gecen_ay_son = date(gecen_yil, gecen_ay,
+                        calendar.monthrange(gecen_yil, gecen_ay)[1])
+
+    with db() as (conn, cur):
+        devir = kasa_bakiyesi_tarihte(cur, gecen_ay_son)
+
+    return {
+        "devir_tutar": devir,
+        "gecen_ay": f"{gecen_yil}-{gecen_ay:02d}",
+        "hesaplandi": True
+    }
+
+@app.get("/api/devir")
+def devir_goster(yil: int = None, ay: int = None):
+    try:
+        return devir_hesapla(yil, ay)
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
 @app.get("/api/panel")
 def panel():
     try:
@@ -531,6 +567,8 @@ def panel():
 
         return ozet
     except Exception as e:
+        import traceback
+        logger.error(f"Panel hatası: {e}\n{traceback.format_exc()}")
         raise HTTPException(500, str(e))
 
 @app.get("/api/panel/detay")
