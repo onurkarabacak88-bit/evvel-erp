@@ -43,8 +43,9 @@ export default function Ledger() {
   const [rows, setRows] = useState([]);
   const [filtre, setFiltre] = useState('');
   const [kasa, setKasa] = useState(0);
-
   const [ozet, setOzet] = useState({});
+  const [sekme, setSekme] = useState('hareketler'); // 'hareketler' | 'breakdown'
+  const [breakdown, setBreakdown] = useState(null);
 
   useEffect(() => {
     api('/ledger?limit=500').then(data => {
@@ -52,6 +53,7 @@ export default function Ledger() {
       else { setRows(data.rows || []); setOzet(data.ozet || {}); }
     });
     api('/kasa').then(d => setKasa(d.guncel_bakiye));
+    api('/kasa-detay').then(setBreakdown).catch(() => {});
   }, []);
 
   const filtered = filtre ? rows.filter(r => r.islem_turu === filtre) : rows;
@@ -87,6 +89,14 @@ export default function Ledger() {
         ))}
       </div>
 
+      {/* Sekme seçici */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
+        <button className={`tab-pill ${sekme === 'hareketler' ? 'active' : ''}`} onClick={() => setSekme('hareketler')}>📒 Hareketler</button>
+        <button className={`tab-pill ${sekme === 'breakdown' ? 'active' : ''}`} onClick={() => setSekme('breakdown')}>📊 Kasa Breakdown</button>
+      </div>
+
+      {/* HAREKETLER SEKMESİ */}
+      {sekme === 'hareketler' && (<>
       {/* Filtre butonları */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         <button className={`tab-pill ${!filtre ? 'active' : ''}`} onClick={() => setFiltre('')}>Tümü</button>
@@ -127,6 +137,78 @@ export default function Ledger() {
           </tbody>
         </table>
       </div>
+      </>)}
+
+      {/* BREAKDOWN SEKMESİ */}
+      {sekme === 'breakdown' && (
+        <div>
+          {!breakdown ? (
+            <div style={{textAlign:'center',padding:40}}><div className="spinner"/></div>
+          ) : (<>
+            {/* Gelir / Gider özet */}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
+              {[
+                {
+                  label: '↑ Toplam Gelir Kalemleri',
+                  renk: 'var(--green)',
+                  satirlar: breakdown.detay.filter(r => parseFloat(r.toplam) > 0),
+                },
+                {
+                  label: '↓ Toplam Gider Kalemleri',
+                  renk: 'var(--red)',
+                  satirlar: breakdown.detay.filter(r => parseFloat(r.toplam) < 0),
+                },
+              ].map(({label, renk, satirlar}) => (
+                <div key={label} className="card">
+                  <h3 style={{fontSize:13,fontWeight:600,marginBottom:12,color:renk}}>{label}</h3>
+                  <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                    {satirlar.length === 0
+                      ? <div style={{color:'var(--text3)',fontSize:12}}>Kayıt yok</div>
+                      : satirlar.map((r,i) => {
+                          const toplam = Math.abs(parseFloat(r.toplam));
+                          const grubToplam = satirlar.reduce((s,x) => s + Math.abs(parseFloat(x.toplam)), 0);
+                          const pct = grubToplam > 0 ? Math.round(toplam / grubToplam * 100) : 0;
+                          return (
+                            <div key={i} style={{marginBottom:4}}>
+                              <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:2}}>
+                                <span style={{fontWeight:500}}>{TUR_ETIKET[r.islem_turu] || r.islem_turu}</span>
+                                <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                                  <span style={{color:'var(--text3)',fontSize:11}}>{r.adet} işlem · %{pct}</span>
+                                  <span style={{fontFamily:'var(--font-mono)',fontWeight:600,color:renk}}>
+                                    {parseInt(toplam).toLocaleString('tr-TR')} ₺
+                                  </span>
+                                </div>
+                              </div>
+                              <div style={{height:4,background:'var(--bg3)',borderRadius:2}}>
+                                <div style={{height:'100%',width:`${pct}%`,background:renk,borderRadius:2,opacity:0.7}}/>
+                              </div>
+                            </div>
+                          );
+                        })
+                    }
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Net kasa */}
+            <div style={{
+              padding:'14px 20px',borderRadius:10,
+              background: parseFloat(breakdown.net_kasa) >= 0 ? 'rgba(0,200,100,0.08)' : 'rgba(220,50,50,0.08)',
+              border: `1px solid ${parseFloat(breakdown.net_kasa) >= 0 ? 'rgba(0,200,100,0.2)' : 'rgba(220,50,50,0.2)'}`,
+              display:'flex',justifyContent:'space-between',alignItems:'center'
+            }}>
+              <span style={{fontWeight:600,fontSize:14}}>Net Kasa (Ledger Toplamı)</span>
+              <span style={{
+                fontFamily:'var(--font-mono)',fontWeight:700,fontSize:20,
+                color: parseFloat(breakdown.net_kasa) >= 0 ? 'var(--green)' : 'var(--red)'
+              }}>
+                {parseInt(breakdown.net_kasa).toLocaleString('tr-TR')} ₺
+              </span>
+            </div>
+          </>)}
+        </div>
+      )}
     </div>
   );
 }
