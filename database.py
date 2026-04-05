@@ -553,6 +553,115 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_vardiya_tarih ON vardiya (tarih)
         """)
 
+        # ── VARDİYA: İZİN, PERSONEL KISIT, ŞUBE CONFIG, BAĞLANTI ──
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS personel_izin (
+                id              TEXT PRIMARY KEY,
+                personel_id     TEXT NOT NULL REFERENCES personel(id),
+                baslangic_tarih DATE NOT NULL,
+                bitis_tarih     DATE NOT NULL,
+                tip             TEXT NOT NULL DEFAULT 'izin',
+                aciklama        TEXT,
+                durum           TEXT NOT NULL DEFAULT 'bekliyor',
+                olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS personel_kisit (
+                id                  TEXT PRIMARY KEY,
+                personel_id         TEXT NOT NULL REFERENCES personel(id) UNIQUE,
+                acilis_yapabilir    BOOLEAN NOT NULL DEFAULT TRUE,
+                ara_yapabilir       BOOLEAN NOT NULL DEFAULT TRUE,
+                kapanis_yapabilir   BOOLEAN NOT NULL DEFAULT TRUE,
+                sadece_tip          TEXT,
+                sube_degistirebilir BOOLEAN NOT NULL DEFAULT TRUE,
+                kapanis_bit_saat    TEXT,
+                guncelleme          TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_config (
+                id                   TEXT PRIMARY KEY,
+                sube_id              TEXT NOT NULL REFERENCES subeler(id) UNIQUE,
+                min_kapanis          INT NOT NULL DEFAULT 1,
+                tek_kapanis_izinli   BOOLEAN NOT NULL DEFAULT TRUE,
+                tek_acilis_izinli    BOOLEAN NOT NULL DEFAULT TRUE,
+                kaydirma_acik        BOOLEAN NOT NULL DEFAULT TRUE,
+                sadece_tam_kayabilir BOOLEAN NOT NULL DEFAULT FALSE,
+                hafta_sonu_min_kap   INT NOT NULL DEFAULT 1,
+                tam_part_zorunlu     BOOLEAN NOT NULL DEFAULT FALSE,
+                kapanis_dusurulemez  BOOLEAN NOT NULL DEFAULT FALSE,
+                guncelleme           TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_baglanti (
+                id          TEXT PRIMARY KEY,
+                kaynak_id   TEXT NOT NULL REFERENCES subeler(id),
+                hedef_id    TEXT NOT NULL REFERENCES subeler(id),
+                aktif       BOOLEAN NOT NULL DEFAULT TRUE,
+                olusturma   TIMESTAMP DEFAULT NOW(),
+                UNIQUE(kaynak_id, hedef_id)
+            )
+        """)
+        # Eski kurulumlar: yeni kolonlar
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_kisit' AND column_name='kapanis_bit_saat') THEN
+                    ALTER TABLE personel_kisit ADD COLUMN kapanis_bit_saat TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='tek_acilis_izinli') THEN
+                    ALTER TABLE sube_config ADD COLUMN tek_acilis_izinli BOOLEAN NOT NULL DEFAULT TRUE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='tam_part_zorunlu') THEN
+                    ALTER TABLE sube_config ADD COLUMN tam_part_zorunlu BOOLEAN NOT NULL DEFAULT FALSE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='kapanis_dusurulemez') THEN
+                    ALTER TABLE sube_config ADD COLUMN kapanis_dusurulemez BOOLEAN NOT NULL DEFAULT FALSE;
+                END IF;
+            END $$;
+        """)
+
+        # ── VARDİYA HAFTALIK (Tulipi tarzı tablo) ───────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS vardiya_hafta_hucre (
+                id                TEXT PRIMARY KEY,
+                hafta_baslangic   DATE NOT NULL,
+                tarih             DATE NOT NULL,
+                personel_id       TEXT NOT NULL REFERENCES personel(id),
+                icerik            TEXT NOT NULL DEFAULT '',
+                olusturma         TIMESTAMP NOT NULL DEFAULT NOW(),
+                guncelleme        TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (hafta_baslangic, personel_id, tarih)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_vardiya_hafta_hucre
+            ON vardiya_hafta_hucre (hafta_baslangic)
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS vardiya_hafta_satir (
+                hafta_baslangic DATE NOT NULL,
+                personel_id     TEXT NOT NULL REFERENCES personel(id),
+                kapanis_sayisi  TEXT,
+                alacak_saat     TEXT,
+                PRIMARY KEY (hafta_baslangic, personel_id)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS vardiya_hafta_meta (
+                hafta_baslangic DATE PRIMARY KEY,
+                baslik          TEXT,
+                not_metni       TEXT,
+                guncelleme      TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+
         # ── AUDIT LOG ──────────────────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS audit_log (

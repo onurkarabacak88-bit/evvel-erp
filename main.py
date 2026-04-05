@@ -11,6 +11,7 @@ from typing import Optional
 from datetime import date, timedelta
 import uuid, os, json, pathlib, calendar, threading
 from database import db, init_db
+from vardiya_motor import vardiya_motoru_calistir
 
 
 def ay_ekle(d: date, ay: int) -> date:
@@ -2010,17 +2011,19 @@ def personel_aylik_gecmis(pid: str):
         """, (pid,))
         return [dict(r) for r in cur.fetchall()]
 
-# ── VARDİYA PLANLAMA ───────────────────────────────────────────
-# Gün bazlı şablon: her aktif personel için ACILIS / ARA / KAPANIS
-VARDIYA_SAAT_SABLONU = (
-    ("ACILIS", "09:00:00", "13:00:00"),
-    ("ARA", "13:00:00", "17:00:00"),
-    ("KAPANIS", "17:00:00", "21:00:00"),
-)
+# ── VARDİYA PLANLAMA (config + motor) ──────────────────────────
 
 
 class VardiyaOlusturModel(BaseModel):
     tarih: date
+
+
+class PersonelIzinModel(BaseModel):
+    personel_id: str
+    baslangic_tarih: date
+    bitis_tarih: date
+    tip: str = "izin"
+    aciklama: Optional[str] = None
 
 
 def _saat_str(v) -> str:
@@ -2033,50 +2036,268 @@ def _saat_str(v) -> str:
     return s[:5] if len(s) >= 5 else s
 
 
+@app.post("/api/personel-izin")
+def personel_izin_ekle(body: PersonelIzinModel):
+    with db() as (conn, cur):
+        iid = str(uuid.uuid4())
+        cur.execute(
+            """
+            INSERT INTO personel_izin
+                (id, personel_id, baslangic_tarih, bitis_tarih, tip, aciklama, durum)
+            VALUES (%s, %s, %s, %s, %s, %s, 'bekliyor')
+            """,
+            (
+                iid,
+                body.personel_id,
+                body.baslangic_tarih,
+                body.bitis_tarih,
+                body.tip,
+                body.aciklama,
+            ),
+        )
+        audit(cur, "personel_izin", iid, "INSERT")
+    return {"id": iid, "success": True}
+
+
+@app.get("/api/personel-izin")
+def personel_izin_listele(
+    personel_id: Optional[str] = None, durum: Optional[str] = None
+):
+    with db() as (conn, cur):
+        q = """
+            SELECT pi.*, p.ad_soyad
+            FROM personel_izin pi
+            JOIN personel p ON p.id = pi.personel_id
+            WHERE 1=1
+        """
+        params = []
+        if personel_id:
+            q += " AND pi.personel_id = %s"
+            params.append(personel_id)
+        if durum:
+            q += " AND pi.durum = %s"
+            params.append(durum)
+        q += " ORDER BY pi.baslangic_tarih DESC"
+        cur.execute(q, params)
+        return [dict(r) for r in cur.fetchall()]
+
+
+@app.post("/api/personel-izin/{iid}/onayla")
+def personel_izin_onayla(iid: str):
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            UPDATE personel_izin SET durum='onaylandi'
+            WHERE id=%s AND durum='bekliyor'
+            """,
+            (iid,),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(400, "Kayıt bulunamadı veya zaten işlendi")
+        audit(cur, "personel_izin", iid, "ONAYLA")
+    return {"success": True}
+
+
+@app.post("/api/personel-izin/{iid}/reddet")
+def personel_izin_reddet(iid: str):
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            UPDATE personel_izin SET durum='reddedildi'
+            WHERE id=%s AND durum='bekliyor'
+            """,
+            (iid,),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(400, "Kayıt bulunamadı veya zaten işlendi")
+        audit(cur, "personel_izin", iid, "REDDET")
+    return {"success": True}
+
+
+@app.delete("/api/personel-izin/{iid}")
+def personel_izin_sil(iid: str):
+    with db() as (conn, cur):
+        cur.execute(
+            "DELETE FROM personel_izin WHERE id=%s AND durum='bekliyor'", (iid,)
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(400, "Onaylanmış izin silinemez")
+    return {"success": True}
+
+
+@app.get("/api/personel-kisit/{pid}")
+def personel_kisit_getir(pid: str):
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM personel_kisit WHERE personel_id=%s", (pid,))
+        row = cur.fetchone()
+        if row:
+            return dict(row)
+        return {
+            "personel_id": pid,
+            "acilis_yapabilir": True,
+            "ara_yapabilir": True,
+            "kapanis_yapabilir": True,
+            "sadece_tip": None,
+            "sube_degistirebilir": True,
+            "kapanis_bit_saat": None,
+        }
+
+
+@app.put("/api/personel-kisit/{pid}")
+def personel_kisit_guncelle(pid: str, body: dict):
+    st = body.get("sadece_tip")
+    if st == "":
+        st = None
+    kb = body.get("kapanis_bit_saat")
+    if kb == "":
+        kb = None
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            INSERT INTO personel_kisit
+                (id, personel_id, acilis_yapabilir, ara_yapabilir, kapanis_yapabilir,
+                 sadece_tip, sube_degistirebilir, kapanis_bit_saat)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (personel_id) DO UPDATE SET
+                acilis_yapabilir    = EXCLUDED.acilis_yapabilir,
+                ara_yapabilir       = EXCLUDED.ara_yapabilir,
+                kapanis_yapabilir   = EXCLUDED.kapanis_yapabilir,
+                sadece_tip          = EXCLUDED.sadece_tip,
+                sube_degistirebilir = EXCLUDED.sube_degistirebilir,
+                kapanis_bit_saat    = EXCLUDED.kapanis_bit_saat,
+                guncelleme          = NOW()
+            """,
+            (
+                str(uuid.uuid4()),
+                pid,
+                body.get("acilis_yapabilir", True),
+                body.get("ara_yapabilir", True),
+                body.get("kapanis_yapabilir", True),
+                st,
+                body.get("sube_degistirebilir", True),
+                kb,
+            ),
+        )
+    return {"success": True}
+
+
+@app.get("/api/sube-config")
+def sube_config_listele():
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT sc.*, s.ad as sube_adi
+            FROM sube_config sc
+            JOIN subeler s ON s.id = sc.sube_id
+            ORDER BY s.ad
+            """
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+@app.get("/api/sube-config/{sid}")
+def sube_config_getir(sid: str):
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM sube_config WHERE sube_id=%s", (sid,))
+        row = cur.fetchone()
+        if row:
+            return dict(row)
+        return {
+            "sube_id": sid,
+            "min_kapanis": 1,
+            "tek_kapanis_izinli": True,
+            "tek_acilis_izinli": True,
+            "kaydirma_acik": True,
+            "sadece_tam_kayabilir": False,
+            "hafta_sonu_min_kap": 1,
+            "tam_part_zorunlu": False,
+            "kapanis_dusurulemez": False,
+        }
+
+
+@app.put("/api/sube-config/{sid}")
+def sube_config_guncelle(sid: str, body: dict):
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            INSERT INTO sube_config
+                (id, sube_id, min_kapanis, tek_kapanis_izinli, tek_acilis_izinli,
+                 kaydirma_acik, sadece_tam_kayabilir, hafta_sonu_min_kap,
+                 tam_part_zorunlu, kapanis_dusurulemez)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (sube_id) DO UPDATE SET
+                min_kapanis          = EXCLUDED.min_kapanis,
+                tek_kapanis_izinli   = EXCLUDED.tek_kapanis_izinli,
+                tek_acilis_izinli    = EXCLUDED.tek_acilis_izinli,
+                kaydirma_acik        = EXCLUDED.kaydirma_acik,
+                sadece_tam_kayabilir = EXCLUDED.sadece_tam_kayabilir,
+                hafta_sonu_min_kap   = EXCLUDED.hafta_sonu_min_kap,
+                tam_part_zorunlu     = EXCLUDED.tam_part_zorunlu,
+                kapanis_dusurulemez  = EXCLUDED.kapanis_dusurulemez,
+                guncelleme           = NOW()
+            """,
+            (
+                str(uuid.uuid4()),
+                sid,
+                int(body.get("min_kapanis", 1)),
+                bool(body.get("tek_kapanis_izinli", True)),
+                bool(body.get("tek_acilis_izinli", True)),
+                bool(body.get("kaydirma_acik", True)),
+                bool(body.get("sadece_tam_kayabilir", False)),
+                int(body.get("hafta_sonu_min_kap", 1)),
+                bool(body.get("tam_part_zorunlu", False)),
+                bool(body.get("kapanis_dusurulemez", False)),
+            ),
+        )
+    return {"success": True}
+
+
+@app.get("/api/sube-baglanti")
+def sube_baglanti_listele():
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT sb.*, s1.ad as kaynak_adi, s2.ad as hedef_adi
+            FROM sube_baglanti sb
+            JOIN subeler s1 ON s1.id = sb.kaynak_id
+            JOIN subeler s2 ON s2.id = sb.hedef_id
+            ORDER BY s1.ad, s2.ad
+            """
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+@app.post("/api/sube-baglanti")
+def sube_baglanti_ekle(body: dict):
+    with db() as (conn, cur):
+        bid = str(uuid.uuid4())
+        cur.execute(
+            """
+            INSERT INTO sube_baglanti (id, kaynak_id, hedef_id, aktif)
+            VALUES (%s,%s,%s,%s)
+            ON CONFLICT (kaynak_id, hedef_id) DO UPDATE SET aktif=EXCLUDED.aktif
+            """,
+            (bid, body["kaynak_id"], body["hedef_id"], body.get("aktif", True)),
+        )
+    return {"success": True}
+
+
+@app.delete("/api/sube-baglanti/{bid}")
+def sube_baglanti_sil(bid: str):
+    with db() as (conn, cur):
+        cur.execute("DELETE FROM sube_baglanti WHERE id=%s", (bid,))
+    return {"success": True}
+
+
 @app.post("/api/vardiya/olustur")
 def vardiya_olustur(body: VardiyaOlusturModel):
     """
-    Seçilen tarih için mevcut vardiya kayıtlarını siler, tüm aktif personel için
-    üç tip vardiya (ACILIS, ARA, KAPANIS) üretir. Şubesi yoksa MERKEZ atanır.
+    Şube / personel config + izin + kaydırma kurallarına göre günlük plan üretir.
     """
     t = body.tarih
     with db() as (conn, cur):
-        cur.execute(
-            "SELECT id, sube_id FROM personel WHERE aktif = TRUE ORDER BY ad_soyad"
-        )
-        personeller = cur.fetchall()
-        if not personeller:
-            return {
-                "success": True,
-                "tarih": str(t),
-                "olusturulan": 0,
-                "mesaj": "Aktif personel tanımlı değil; vardiya oluşturulmadı.",
-            }
-
-        cur.execute("DELETE FROM vardiya WHERE tarih = %s", (str(t),))
-        n = 0
-        for p in personeller:
-            sid = p["sube_id"] or "sube-merkez"
-            cur.execute("SELECT id FROM subeler WHERE id = %s", (sid,))
-            if not cur.fetchone():
-                sid = "sube-merkez"
-            for tip, bas, bit in VARDIYA_SAAT_SABLONU:
-                vid = str(uuid.uuid4())
-                cur.execute(
-                    """
-                    INSERT INTO vardiya (id, tarih, personel_id, sube_id, tip, bas_saat, bit_saat)
-                    VALUES (%s, %s, %s, %s, %s, %s::time, %s::time)
-                    """,
-                    (vid, str(t), p["id"], sid, tip, bas, bit),
-                )
-                n += 1
-
-    return {
-        "success": True,
-        "tarih": str(t),
-        "olusturulan": n,
-        "mesaj": f"{len(personeller)} personel × 3 vardiya = {n} kayıt oluşturuldu.",
-    }
+        sonuc = vardiya_motoru_calistir(cur, t)
+    return sonuc
 
 
 @app.get("/api/vardiya")
@@ -2120,6 +2341,226 @@ def vardiya_listele(tarih: Optional[date] = None):
                 }
             )
     return {"tarih": str(gun), "vardiyalar": rows}
+
+
+_GUNLER_TR = (
+    "PAZARTESİ",
+    "SALI",
+    "ÇARŞAMBA",
+    "PERŞEMBE",
+    "CUMA",
+    "CUMARTESİ",
+    "PAZAR",
+)
+_AYLAR_KISA = (
+    "Oca",
+    "Şub",
+    "Mar",
+    "Nis",
+    "May",
+    "Haz",
+    "Tem",
+    "Ağu",
+    "Eyl",
+    "Eki",
+    "Kas",
+    "Ara",
+)
+
+
+def _pazartesi(d: date) -> date:
+    return d - timedelta(days=d.weekday())
+
+
+def _gun_kisa_tr(d: date) -> str:
+    return f"{d.day}-{_AYLAR_KISA[d.month - 1]}"
+
+
+@app.get("/api/vardiya/haftalik")
+def vardiya_haftalik_get(tarih: Optional[date] = None):
+    """
+    Tulipi tarzı haftalık tablo: Pazartesi–Pazar sütunları, personel satırları.
+    `tarih` haftanın herhangi bir günü olabilir; pazartesi normalize edilir.
+    """
+    d0 = tarih or date.today()
+    pzt = _pazartesi(d0)
+    gunler = []
+    for i in range(7):
+        g = pzt + timedelta(days=i)
+        gunler.append(
+            {
+                "tarih": str(g),
+                "kisa": _gun_kisa_tr(g),
+                "hafta_gunu": _GUNLER_TR[i],
+            }
+        )
+    pazar = pzt + timedelta(days=6)
+
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT baslik, not_metni FROM vardiya_hafta_meta WHERE hafta_baslangic=%s",
+            (str(pzt),),
+        )
+        meta = cur.fetchone()
+        baslik = (meta and meta.get("baslik")) or "Tulipi Haftalık Vardiya Listesi"
+        not_metni = (meta and meta.get("not_metni")) or ""
+
+        cur.execute(
+            """
+            SELECT h.* FROM vardiya_hafta_hucre h
+            WHERE h.hafta_baslangic = %s
+            """,
+            (str(pzt),),
+        )
+        hucre_map = {}
+        for r in cur.fetchall():
+            key = (r["personel_id"], str(r["tarih"]))
+            hucre_map[key] = (r["icerik"] or "").strip()
+
+        cur.execute(
+            """
+            SELECT * FROM vardiya_hafta_satir WHERE hafta_baslangic=%s
+            """,
+            (str(pzt),),
+        )
+        satir_x = {(r["personel_id"]): dict(r) for r in cur.fetchall()}
+
+        cur.execute(
+            """
+            SELECT p.id, p.ad_soyad, p.gorev, p.sube_id, COALESCE(s.ad, '—') AS sube_adi
+            FROM personel p
+            LEFT JOIN subeler s ON s.id = p.sube_id
+            WHERE p.aktif = TRUE
+            ORDER BY COALESCE(s.ad, ''), p.ad_soyad
+            """
+        )
+        satirlar = []
+        for p in cur.fetchall():
+            pid = p["id"]
+            hx = satir_x.get(pid) or {}
+            hucreler = {}
+            for i in range(7):
+                g = pzt + timedelta(days=i)
+                ts = str(g)
+                hucreler[ts] = hucre_map.get((pid, ts), "")
+            satirlar.append(
+                {
+                    "personel_id": pid,
+                    "ad_soyad": p["ad_soyad"] or "",
+                    "gorev": p["gorev"] or "",
+                    "sube_id": p["sube_id"],
+                    "sube_adi": p["sube_adi"] or "—",
+                    "hucreler": hucreler,
+                    "kapanis_sayisi": (hx.get("kapanis_sayisi") or "") or "",
+                    "alacak_saat": (hx.get("alacak_saat") or "") or "",
+                }
+            )
+
+    return {
+        "hafta_baslangic": str(pzt),
+        "hafta_bitis": str(pazar),
+        "baslik": baslik,
+        "not_metni": not_metni,
+        "gunler": gunler,
+        "satirlar": satirlar,
+    }
+
+
+@app.put("/api/vardiya/haftalik")
+def vardiya_haftalik_kaydet(body: dict):
+    """Haftalık hücreleri ve satır eklerini kaydeder; boş içerik satırı siler."""
+    try:
+        pzt_s = body.get("hafta_baslangic")
+        if not pzt_s:
+            raise HTTPException(400, "hafta_baslangic gerekli (Pazartesi YYYY-MM-DD)")
+        pzt = date.fromisoformat(str(pzt_s)[:10])
+    except ValueError:
+        raise HTTPException(400, "Geçersiz hafta_baslangic")
+    if pzt.weekday() != 0:
+        raise HTTPException(400, "hafta_baslangic Pazartesi olmalı")
+
+    not_metni = body.get("not_metni")
+    baslik = body.get("baslik")
+
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            INSERT INTO vardiya_hafta_meta (hafta_baslangic, baslik, not_metni)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (hafta_baslangic) DO UPDATE SET
+                baslik = EXCLUDED.baslik,
+                not_metni = EXCLUDED.not_metni,
+                guncelleme = NOW()
+            """,
+            (
+                str(pzt),
+                baslik or "Tulipi Haftalık Vardiya Listesi",
+                not_metni if not_metni is not None else "",
+            ),
+        )
+
+        for row in body.get("satir_extra") or []:
+            pid = row.get("personel_id")
+            if not pid:
+                continue
+            cur.execute("SELECT id FROM personel WHERE id=%s", (pid,))
+            if not cur.fetchone():
+                continue
+            cur.execute(
+                """
+                INSERT INTO vardiya_hafta_satir
+                    (hafta_baslangic, personel_id, kapanis_sayisi, alacak_saat)
+                VALUES (%s,%s,%s,%s)
+                ON CONFLICT (hafta_baslangic, personel_id) DO UPDATE SET
+                    kapanis_sayisi = EXCLUDED.kapanis_sayisi,
+                    alacak_saat = EXCLUDED.alacak_saat
+                """,
+                (
+                    str(pzt),
+                    pid,
+                    row.get("kapanis_sayisi") or None,
+                    row.get("alacak_saat") or None,
+                ),
+            )
+
+        for h in body.get("hucreler") or []:
+            pid = h.get("personel_id")
+            ts = h.get("tarih")
+            if not pid or not ts:
+                continue
+            try:
+                td = date.fromisoformat(str(ts)[:10])
+            except ValueError:
+                continue
+            if td < pzt or td > pzt + timedelta(days=6):
+                continue
+            cur.execute("SELECT id FROM personel WHERE id=%s", (pid,))
+            if not cur.fetchone():
+                continue
+            icerik = (h.get("icerik") or "").strip()
+            if not icerik:
+                cur.execute(
+                    """
+                    DELETE FROM vardiya_hafta_hucre
+                    WHERE hafta_baslangic=%s AND personel_id=%s AND tarih=%s
+                    """,
+                    (str(pzt), pid, str(td)),
+                )
+                continue
+            hid = str(uuid.uuid4())
+            cur.execute(
+                """
+                INSERT INTO vardiya_hafta_hucre
+                    (id, hafta_baslangic, tarih, personel_id, icerik)
+                VALUES (%s,%s,%s,%s,%s)
+                ON CONFLICT (hafta_baslangic, personel_id, tarih) DO UPDATE SET
+                    icerik = EXCLUDED.icerik,
+                    guncelleme = NOW()
+                """,
+                (hid, str(pzt), str(td), pid, icerik),
+            )
+
+    return {"success": True}
 
 
 # ── SABİT GİDERLER ─────────────────────────────────────────────
