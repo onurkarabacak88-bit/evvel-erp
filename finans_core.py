@@ -1,9 +1,9 @@
 """
 finans_core.py — EVVEL ERP Hesap Merkezi
 ==========================================
-KURAL: Finansal hesaplar SADECE buradadir.
-SQL veri getirir, bu modul hesap yapar.
-Diger modüller bu fonksiyonlari cagirır, kendi SQL hesabi YAZMAZ.
+Bu modül: okuma ağırlıklı finansal ÖZET ve TAHMİN hesapları (kasa, kart, plan, simülasyon).
+Kalıcı kayıt (INSERT/UPDATE) yalnızca faiz_hesapla_ve_yaz içindedir; iş akışı ve kasa
+hareketlerinin üretimi main.py vb. katmanda kalır — bilinçli ayrım.
 
 Kapsam:
   - Kasa bakiyesi
@@ -17,7 +17,28 @@ Kapsam:
   - Faiz tahmini
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+
+
+def _row_tarih_to_date(v) -> date:
+    """PostgreSQL date/datetime veya ISO string → date (taksit / ekstre yardımcısı)."""
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, date):
+        return v
+    if isinstance(v, str):
+        s = v.strip().split("T", 1)[0][:10]
+        return date.fromisoformat(s)
+    if hasattr(v, "year") and hasattr(v, "month") and hasattr(v, "day"):
+        return date(int(v.year), int(v.month), int(v.day))
+    raise TypeError(f"tarih tipi desteklenmiyor: {type(v)!r}")
+
+
+def _clamp_gun_ay_icinde(yil: int, ay: int, gun: int) -> int:
+    """Kesim günü 1..ayın son günü (ekstre sorgusu ile uyum)."""
+    import calendar as _cal
+    son = _cal.monthrange(yil, ay)[1]
+    return max(1, min(int(gun), son))
 
 
 # ══════════════════════════════════════════════════════════════
@@ -53,7 +74,7 @@ def kasa_bakiyesi_tarihte(cur, tarih: date) -> float:
 
 def kasa_detay_breakdown(cur) -> dict:
     """
-    Kasa'yı işlem türü bazında döker — audit ve debug için.
+    Kasa'yı işlem türü bazında döker — kasa_bakiyesi ile aynı filtre (aktif).
     """
     cur.execute("""
         SELECT islem_turu,
@@ -62,13 +83,42 @@ def kasa_detay_breakdown(cur) -> dict:
                SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END) AS giris,
                SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END) AS cikis
         FROM kasa_hareketleri
-        WHERE kasa_etkisi = true
+        WHERE kasa_etkisi = true AND durum = 'aktif'
         GROUP BY islem_turu
         ORDER BY toplam DESC
     """)
     satirlar = [dict(r) for r in cur.fetchall()]
     net = sum(float(r['toplam']) for r in satirlar)
     return {"net_kasa": net, "detay": satirlar}
+
+
+def kasa_detay_breakdown_debug(cur) -> dict:
+    """
+    Debug: kasa_etkisi=true için islem_turu + durum kırılımı (iptal satırları dahil).
+    net_kasa_aktif, kasa_bakiyesi ile uyumlu; net_kasa_tum tüm durumların cebri toplamı.
+    """
+    cur.execute("""
+        SELECT islem_turu, durum,
+               COUNT(*) AS adet,
+               SUM(tutar) AS toplam,
+               SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END) AS giris,
+               SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END) AS cikis
+        FROM kasa_hareketleri
+        WHERE kasa_etkisi = true
+        GROUP BY islem_turu, durum
+        ORDER BY islem_turu, durum
+    """)
+    satirlar = [dict(r) for r in cur.fetchall()]
+    net_aktif = sum(
+        float(r['toplam']) for r in satirlar
+        if (r.get('durum') or '').strip() == 'aktif'
+    )
+    net_tum = sum(float(r['toplam']) for r in satirlar)
+    return {
+        "net_kasa_aktif": net_aktif,
+        "net_kasa_tum": net_tum,
+        "detay": satirlar,
+    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -80,6 +130,8 @@ def kart_borc(cur, kart_id: str) -> float:
     Tek bir kartın guncel borcu.
     HARCAMA + FAIZ borcu artırır, ODEME düşürür.
     Bu formül sistemin tek kart borç kaynağıdır.
+    Not: Aktif satırlarda başka islem_turu varsa burada 0 sayılır; yeni kart hareket türü
+    eklenecekse bilinçli olarak CASE'e dahil edilmelidir (iş kuralı değişikliği).
     """
     cur.execute("""
         SELECT COALESCE(SUM(
@@ -249,6 +301,9 @@ def zorunlu_gider_tahmini(cur) -> dict:
     """)
     bekleyen_30 = float(cur.fetchone()['bekleyen'])
 
+    # Plan > 0 ise sadece plan kullanılır (çift sayımı önlemek için); plan yok/0 ise fallback.
+    # Bu ayrım kasıtlı — erteleme/kısmi ödeme/kart nakit ayrımı plan üzerinden yürür.
+
     # Fallback: sabit gider + borç + maaş toplamı (plan henüz üretilmemişse)
     cur.execute("""
         SELECT COALESCE(SUM(tutar), 0) AS t
@@ -271,7 +326,6 @@ def zorunlu_gider_tahmini(cur) -> dict:
     personel = float(cur.fetchone()['t'])
 
     fallback = sabit + borc + personel
-    # Plan varsa onu kullan, yoksa fallback
     zorunlu = bekleyen_30 if bekleyen_30 > 0 else fallback
 
     return {
@@ -389,7 +443,13 @@ def taksit_detay(cur, kart_id: str) -> list:
     satirlar = cur.fetchall()
     sonuc = []
     for r in satirlar:
-        bas = r['bas_tarih']
+        try:
+            bas = _row_tarih_to_date(r['bas_tarih'])
+        except (TypeError, ValueError):
+            try:
+                bas = _row_tarih_to_date(r['tarih'])
+            except (TypeError, ValueError):
+                continue
         taksit_sayisi = int(r['taksit_sayisi'])
         aylik_taksit = float(r['tutar']) / taksit_sayisi
 
@@ -444,7 +504,10 @@ def gelecek_taksit_yuku(cur, kart_id: str, ay_sayisi: int = 3) -> list:
         for t in detaylar:
             if t['kalan_taksit'] <= 0:
                 continue
-            bas = date.fromisoformat(t['tarih'])
+            try:
+                bas = _row_tarih_to_date(t['tarih'])
+            except (TypeError, ValueError):
+                continue
             gecen_o_aya = (hedef_yil - bas.year) * 12 + (hedef_ay - bas.month)
             if 0 <= gecen_o_aya < t['taksit_sayisi']:
                 hedef_etki += t['aylik_taksit']
@@ -477,23 +540,26 @@ def aktif_kesim_gunu(kart: dict) -> int:
     """
     Kartın aktif kesim gününü döner.
     Önce son_kesim_tarihi'ne bakar, yoksa varsayılan + tolerans.
+    Gün, içinde bulunulan ayın son gününe sıkıştırılır (şubat / 31+31 gibi taşmalar).
     """
-    import calendar as _cal
     bugun = date.today()
 
     # Önce son_kesim_tarihi
     son_kesim = kart.get('son_kesim_tarihi')
     if son_kesim:
         if isinstance(son_kesim, str):
-            son_kesim = date.fromisoformat(son_kesim)
+            son_kesim = date.fromisoformat(son_kesim.split("T", 1)[0][:10])
+        elif isinstance(son_kesim, datetime):
+            son_kesim = son_kesim.date()
         # son_kesim bu ay içindeyse onu kullan
         if son_kesim.year == bugun.year and son_kesim.month == bugun.month:
-            return son_kesim.day
+            return _clamp_gun_ay_icinde(bugun.year, bugun.month, son_kesim.day)
 
     # Varsayılan kesim günü + tolerans
     varsayilan = int(kart.get('kesim_gunu', 15))
     tolerans   = int(kart.get('kesim_tolerans', 0))
-    return varsayilan + tolerans
+    ham = varsayilan + tolerans
+    return _clamp_gun_ay_icinde(bugun.year, bugun.month, ham)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -523,12 +589,13 @@ def faiz_hesapla_ve_yaz(cur, kart_id: str, donem: str = None) -> dict:
     if not kart:
         return {"hata": "Kart bulunamadı", "kart_id": kart_id}
 
-    # Duplicate kontrolü — bu dönem için faiz zaten var mı?
+    # Duplicate kontrolü — yazılan aciklama formatı ile uyumlu önek (rastgele %donem% eşleşmesi önlenir)
+    _faiz_aciklama_on = f"{donem} dönem%"
     cur.execute("""
         SELECT id FROM kart_hareketleri
         WHERE kart_id = %s AND islem_turu = 'FAIZ'
         AND aciklama LIKE %s AND durum = 'aktif'
-    """, (kart_id, f"%{donem}%"))
+    """, (kart_id, _faiz_aciklama_on + "%"))
     if cur.fetchone():
         return {
             "kart":   kart['kart_adi'],
@@ -624,7 +691,7 @@ def kac_gun_dayanir(cur) -> int:
         FROM (
             SELECT tarih, SUM(ABS(tutar)) AS gunluk
             FROM kasa_hareketleri
-            WHERE kasa_etkisi = true AND tutar < 0
+            WHERE kasa_etkisi = true AND durum = 'aktif' AND tutar < 0
             AND tarih >= CURRENT_DATE - INTERVAL '30 days'
             GROUP BY tarih
         ) t

@@ -461,6 +461,17 @@ def init_db():
                 olusturma        TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """)
+        # Migration: kredi ödemesiz dönem (kampanya) — ay sayısı, baslangic_tarihi sonrası taksit planı üretilmez
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='borc_envanteri' AND column_name='odemesiz_ay')
+                THEN
+                    ALTER TABLE borc_envanteri ADD COLUMN odemesiz_ay INT NOT NULL DEFAULT 0;
+                END IF;
+            END $$;
+        """)
 
         # ── ANLIK GİDERLER ─────────────────────────────────────
         cur.execute("""
@@ -523,6 +534,24 @@ def init_db():
             cur.execute("ALTER TABLE personel_aylik ADD COLUMN IF NOT EXISTS bayram_mesai_saat NUMERIC(6,2) DEFAULT 0")
         except Exception:
             pass
+
+        # ── VARDİYA PLANLAMA ───────────────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS vardiya (
+                id           TEXT PRIMARY KEY,
+                tarih        DATE NOT NULL,
+                personel_id  TEXT NOT NULL REFERENCES personel(id),
+                sube_id      TEXT NOT NULL REFERENCES subeler(id),
+                tip          TEXT NOT NULL
+                    CHECK (tip IN ('ACILIS','ARA','KAPANIS')),
+                bas_saat     TIME NOT NULL,
+                bit_saat     TIME NOT NULL,
+                olusturma    TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_vardiya_tarih ON vardiya (tarih)
+        """)
 
         # ── AUDIT LOG ──────────────────────────────────────────
         cur.execute("""

@@ -6,11 +6,39 @@ from finans_core import (
     kart_ekstre, kart_bu_ay_odenen, kart_faiz_tahmini,
     zorunlu_gider_tahmini, serbest_nakit, net_akis_30_gun,
     kac_gun_dayanir, kasa_bakiyesi_tarihte,
+    kasa_detay_breakdown, kasa_detay_breakdown_debug,
 )
 
 def fmt(n):
     if n is None: return "---"
     return f"{int(n):,} ₺".replace(",", ".")
+
+
+def _borc_taksit_plani_uretilebilir(baslangic, odemesiz_ay, plan_yil: int, plan_ay: int) -> bool:
+    """
+    baslangic + odemesiz_ay takvim ayı geçmeden bu (plan_yil, plan_ay) için plan üretilmez.
+    odemesiz_ay<=0 veya baslangic yok: mevcut davranış (kısıt yok).
+    """
+    try:
+        oa = int(odemesiz_ay or 0)
+    except (TypeError, ValueError):
+        oa = 0
+    if oa <= 0 or baslangic is None:
+        return True
+    if isinstance(baslangic, str):
+        baslangic = date.fromisoformat(str(baslangic)[:10])
+    elif hasattr(baslangic, "date") and callable(getattr(baslangic, "date", None)):
+        baslangic = baslangic.date()
+    y0, m0 = baslangic.year, baslangic.month
+    m_first = m0 + oa
+    y_first = y0 + (m_first - 1) // 12
+    m_first = (m_first - 1) % 12 + 1
+    if plan_yil < y_first:
+        return False
+    if plan_yil == y_first and plan_ay < m_first:
+        return False
+    return True
+
 
 # ── KARAR MOTORU ───────────────────────────────────────────────
 def karar_motoru():
@@ -563,6 +591,15 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
             odeme_gun = min(odeme_gun, son_gun)
             odeme_tarihi = date(yil, ay, odeme_gun)
 
+            if not _borc_taksit_plani_uretilebilir(
+                b.get('baslangic_tarihi'), b.get('odemesiz_ay'), yil, ay
+            ):
+                oa = int(b.get('odemesiz_ay') or 0)
+                atlanan.append(
+                    f"Borç ödemesiz dönemde ({oa} ay): {b['kurum']} — taksit planı henüz başlamadı"
+                )
+                continue
+
             # Kalan vade kontrolü
             if b['kalan_vade'] is not None and b['kalan_vade'] <= 0:
                 atlanan.append(f"Borç atlandı (bitti): {b['kurum']}")
@@ -742,6 +779,11 @@ def kasa_detay():
     """finans_core.kasa_detay_breakdown thin wrapper — geriye dönük uyumluluk."""
     with db() as (conn, cur):
         return kasa_detay_breakdown(cur)
+
+def kasa_detay_debug():
+    """finans_core.kasa_detay_breakdown_debug — iptal dahil kırılım."""
+    with db() as (conn, cur):
+        return kasa_detay_breakdown_debug(cur)
 
 # ── MASTER FİNANS MOTORU ───────────────────────────────────────
 def finans_ozet_motoru():

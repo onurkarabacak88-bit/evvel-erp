@@ -19,7 +19,7 @@ def ay_ekle(d: date, ay: int) -> date:
     ay_no = (d.month - 1 + ay) % 12 + 1
     gun = min(d.day, calendar.monthrange(yil, ay_no)[1])
     return date(yil, ay_no, gun)
-from motors import karar_motoru, odeme_strateji_motoru, nakit_akis_simulasyon, guncel_kasa, kasa_detay, kart_analiz_hesapla, aylik_odeme_plani_uret, uyari_motoru, finans_ozet_motoru
+from motors import karar_motoru, odeme_strateji_motoru, nakit_akis_simulasyon, guncel_kasa, kasa_detay, kasa_detay_debug, kart_analiz_hesapla, aylik_odeme_plani_uret, uyari_motoru, finans_ozet_motoru
 from finans_core import (
     kart_borc, kasa_bakiyesi, kasa_bakiyesi_tarihte,
     kart_ekstre, kart_bu_ay_odenen, kart_faiz_tahmini,
@@ -1525,6 +1525,35 @@ def reddet(oid: str, body: ReddetModel = ReddetModel()):
     return {"success": True}
 
 # ── CİRO ───────────────────────────────────────────────────────
+# Oluşturulma zamanından sonra bu süre içinde güncelleme/silme; sonrası kilit (kasa tutarlılığı).
+CIRO_DEGISIKLIK_PENCERE_DAKIKA = 10
+
+
+def _ciro_degistirilebilir_getir(cur, cid: str):
+    """
+    Aktif ciro satırını döner; yalnızca olusturma + CIRO_DEGISIKLIK_PENCERE_DAKIKA içindeyse.
+    Süre dolmuş veya yok: 404 / 403.
+    """
+    cur.execute(
+        """
+        SELECT * FROM ciro WHERE id=%s AND durum='aktif'
+          AND olusturma >= NOW() - (%s * INTERVAL '1 minute')
+        """,
+        (cid, CIRO_DEGISIKLIK_PENCERE_DAKIKA),
+    )
+    row = cur.fetchone()
+    if row:
+        return row
+    cur.execute("SELECT 1 FROM ciro WHERE id=%s AND durum='aktif'", (cid,))
+    if not cur.fetchone():
+        raise HTTPException(404, "Ciro kaydı bulunamadı veya iptal edilmiş")
+    raise HTTPException(
+        403,
+        f"Bu ciro kaydı oluşturulduktan sonra {CIRO_DEGISIKLIK_PENCERE_DAKIKA} dakika geçti; güncelleme veya silme yapılamaz. "
+        "POS/online kesinti düzeltmesi için Şube Ayarları → kasa düzeltme kullanılabilir.",
+    )
+
+
 class CiroModel(BaseModel):
     tarih: date
     sube_id: str
@@ -1627,10 +1656,7 @@ def ciro_guncelle(cid: str, c: CiroModel):
     online = float(c.online or 0)
 
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM ciro WHERE id=%s AND durum='aktif'", (cid,))
-        eski = cur.fetchone()
-        if not eski:
-            raise HTTPException(404, "Ciro kaydı bulunamadı veya iptal edilmiş")
+        eski = _ciro_degistirilebilir_getir(cur, cid)
 
         # Şube oranlarını çek — güncel oranla hesapla
         sube_id = c.sube_id or eski['sube_id']
@@ -1666,9 +1692,7 @@ def ciro_guncelle(cid: str, c: CiroModel):
 @app.delete("/api/ciro/{cid}")
 def ciro_sil(cid: str):
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM ciro WHERE id=%s AND durum='aktif'", (cid,))
-        eski = cur.fetchone()
-        if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten iptal edilmiş")
+        eski = _ciro_degistirilebilir_getir(cur, cid)
 
         # Ciroyu iptal et
         cur.execute("UPDATE ciro SET durum='iptal' WHERE id=%s", (cid,))
@@ -1985,6 +2009,118 @@ def personel_aylik_gecmis(pid: str):
             ORDER BY yil DESC, ay DESC LIMIT 12
         """, (pid,))
         return [dict(r) for r in cur.fetchall()]
+
+# ── VARDİYA PLANLAMA ───────────────────────────────────────────
+# Gün bazlı şablon: her aktif personel için ACILIS / ARA / KAPANIS
+VARDIYA_SAAT_SABLONU = (
+    ("ACILIS", "09:00:00", "13:00:00"),
+    ("ARA", "13:00:00", "17:00:00"),
+    ("KAPANIS", "17:00:00", "21:00:00"),
+)
+
+
+class VardiyaOlusturModel(BaseModel):
+    tarih: date
+
+
+def _saat_str(v) -> str:
+    """TIME / string → HH:MM"""
+    if v is None:
+        return ""
+    if hasattr(v, "strftime"):
+        return v.strftime("%H:%M")
+    s = str(v)
+    return s[:5] if len(s) >= 5 else s
+
+
+@app.post("/api/vardiya/olustur")
+def vardiya_olustur(body: VardiyaOlusturModel):
+    """
+    Seçilen tarih için mevcut vardiya kayıtlarını siler, tüm aktif personel için
+    üç tip vardiya (ACILIS, ARA, KAPANIS) üretir. Şubesi yoksa MERKEZ atanır.
+    """
+    t = body.tarih
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT id, sube_id FROM personel WHERE aktif = TRUE ORDER BY ad_soyad"
+        )
+        personeller = cur.fetchall()
+        if not personeller:
+            return {
+                "success": True,
+                "tarih": str(t),
+                "olusturulan": 0,
+                "mesaj": "Aktif personel tanımlı değil; vardiya oluşturulmadı.",
+            }
+
+        cur.execute("DELETE FROM vardiya WHERE tarih = %s", (str(t),))
+        n = 0
+        for p in personeller:
+            sid = p["sube_id"] or "sube-merkez"
+            cur.execute("SELECT id FROM subeler WHERE id = %s", (sid,))
+            if not cur.fetchone():
+                sid = "sube-merkez"
+            for tip, bas, bit in VARDIYA_SAAT_SABLONU:
+                vid = str(uuid.uuid4())
+                cur.execute(
+                    """
+                    INSERT INTO vardiya (id, tarih, personel_id, sube_id, tip, bas_saat, bit_saat)
+                    VALUES (%s, %s, %s, %s, %s, %s::time, %s::time)
+                    """,
+                    (vid, str(t), p["id"], sid, tip, bas, bit),
+                )
+                n += 1
+
+    return {
+        "success": True,
+        "tarih": str(t),
+        "olusturulan": n,
+        "mesaj": f"{len(personeller)} personel × 3 vardiya = {n} kayıt oluşturuldu.",
+    }
+
+
+@app.get("/api/vardiya")
+def vardiya_listele(tarih: Optional[date] = None):
+    """Tarihe göre vardiya listesi (personel + şube adı ile)."""
+    gun = tarih or date.today()
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT v.id, v.tarih, v.tip, v.bas_saat, v.bit_saat,
+                   p.ad_soyad AS personel_adi,
+                   COALESCE(s.ad, '—') AS sube_adi
+            FROM vardiya v
+            JOIN personel p ON p.id = v.personel_id
+            LEFT JOIN subeler s ON s.id = v.sube_id
+            WHERE v.tarih = %s
+            ORDER BY COALESCE(s.ad, ''), p.ad_soyad,
+                CASE v.tip
+                    WHEN 'ACILIS' THEN 1
+                    WHEN 'ARA' THEN 2
+                    WHEN 'KAPANIS' THEN 3
+                    ELSE 4
+                END
+            """,
+            (str(gun),),
+        )
+        rows = []
+        for r in cur.fetchall():
+            bas = _saat_str(r["bas_saat"])
+            bit = _saat_str(r["bit_saat"])
+            rows.append(
+                {
+                    "id": str(r["id"]),
+                    "tarih": str(r["tarih"]),
+                    "personel_adi": r["personel_adi"] or "",
+                    "sube_adi": r["sube_adi"] or "—",
+                    "tip": r["tip"],
+                    "bas_saat": bas,
+                    "bit_saat": bit,
+                    "saat_araligi": f"{bas}–{bit}",
+                }
+            )
+    return {"tarih": str(gun), "vardiyalar": rows}
+
 
 # ── SABİT GİDERLER ─────────────────────────────────────────────
 class SabitGider(BaseModel):
@@ -2872,6 +3008,8 @@ class BorcModel(BaseModel):
     toplam_vade: Optional[int] = None
     baslangic_tarihi: Optional[date] = None
     odeme_gunu: int = 1
+    # Kampanya: başlangıçtan sonra bu kadar tam ay taksit planı üretilmez (0 = yok)
+    odemesiz_ay: int = 0
 
 class SubeGuncelleModel(BaseModel):
     pos_oran: float = 0
@@ -2889,23 +3027,33 @@ def borclar_listele():
 
 @app.post("/api/borclar")
 def borc_ekle(b: BorcModel):
+    oa = int(b.odemesiz_ay or 0)
+    if oa < 0 or oa > 360:
+        raise HTTPException(400, "Ödemesiz ay 0–360 arasında olmalı")
+    if oa > 0 and not b.baslangic_tarihi:
+        raise HTTPException(400, "Ödemesiz dönem için başlangıç tarihi zorunlu")
     with db() as (conn, cur):
         bid = str(uuid.uuid4())
-        cur.execute("""INSERT INTO borc_envanteri (id,kurum,borc_turu,toplam_borc,aylik_taksit,kalan_vade,toplam_vade,baslangic_tarihi,odeme_gunu)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (bid, b.kurum, b.borc_turu, b.toplam_borc, b.aylik_taksit, b.kalan_vade, b.toplam_vade, b.baslangic_tarihi, b.odeme_gunu))
+        cur.execute("""INSERT INTO borc_envanteri (id,kurum,borc_turu,toplam_borc,aylik_taksit,kalan_vade,toplam_vade,baslangic_tarihi,odeme_gunu,odemesiz_ay)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (bid, b.kurum, b.borc_turu, b.toplam_borc, b.aylik_taksit, b.kalan_vade, b.toplam_vade, b.baslangic_tarihi, b.odeme_gunu, oa))
         audit(cur, 'borc_envanteri', bid, 'INSERT')
     return {"id": bid, "success": True}
 
 @app.put("/api/borclar/{bid}")
 def borc_guncelle(bid: str, b: BorcModel):
+    oa = int(b.odemesiz_ay or 0)
+    if oa < 0 or oa > 360:
+        raise HTTPException(400, "Ödemesiz ay 0–360 arasında olmalı")
+    if oa > 0 and not b.baslangic_tarihi:
+        raise HTTPException(400, "Ödemesiz dönem için başlangıç tarihi zorunlu")
     with db() as (conn, cur):
         cur.execute("SELECT * FROM borc_envanteri WHERE id=%s", (bid,))
         eski = cur.fetchone()
         if not eski: raise HTTPException(404)
         cur.execute("""UPDATE borc_envanteri SET kurum=%s,borc_turu=%s,toplam_borc=%s,aylik_taksit=%s,
-            kalan_vade=%s,toplam_vade=%s,baslangic_tarihi=%s,odeme_gunu=%s WHERE id=%s""",
-            (b.kurum, b.borc_turu, b.toplam_borc, b.aylik_taksit, b.kalan_vade, b.toplam_vade, b.baslangic_tarihi, b.odeme_gunu, bid))
+            kalan_vade=%s,toplam_vade=%s,baslangic_tarihi=%s,odeme_gunu=%s,odemesiz_ay=%s WHERE id=%s""",
+            (b.kurum, b.borc_turu, b.toplam_borc, b.aylik_taksit, b.kalan_vade, b.toplam_vade, b.baslangic_tarihi, b.odeme_gunu, oa, bid))
         audit(cur, 'borc_envanteri', bid, 'UPDATE', eski=eski)
     return {"success": True}
 
@@ -2966,6 +3114,7 @@ def borc_gecmis(bid: str):
         gecen_taksit    = toplam_vade - kalan_vade if toplam_vade else len(odenenler)
         ilerleme_pct    = round(gecen_taksit / toplam_vade * 100) if toplam_vade else 0
 
+        odemesiz = int(borc.get('odemesiz_ay') or 0)
         return {
             "borc": {
                 "id":              str(borc['id']),
@@ -2976,6 +3125,7 @@ def borc_gecmis(bid: str):
                 "kalan_vade":      kalan_vade,
                 "toplam_vade":     toplam_vade,
                 "baslangic":       str(borc['baslangic_tarihi']) if borc['baslangic_tarihi'] else None,
+                "odemesiz_ay":     odemesiz,
                 "aktif":           borc['aktif'],
             },
             "ozet": {
@@ -3307,14 +3457,22 @@ async def excel_import(dosya: UploadFile = File(...)):
                             eklenen += 1
 
                         elif sn == 'borclar':
-                            cur.execute("""INSERT INTO borc_envanteri (id,kurum,borc_turu,toplam_borc,aylik_taksit,kalan_vade,odeme_gunu)
-                                VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                            _tv = d.get('toplam_vade')
+                            _bs = fix_date(d.get('baslangic_tarihi')) if d.get('baslangic_tarihi') else None
+                            _oa = int(d.get('odemesiz_ay') or 0)
+                            if _oa > 0 and not _bs:
+                                _oa = 0
+                            cur.execute("""INSERT INTO borc_envanteri (id,kurum,borc_turu,toplam_borc,aylik_taksit,kalan_vade,toplam_vade,baslangic_tarihi,odeme_gunu,odemesiz_ay)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                                 (str(uuid.uuid4()), str(d.get('kurum','')),
                                  str(d.get('borc_turu','Kredi')),
                                  float(d.get('toplam_borc') or 0),
                                  float(d.get('aylik_taksit') or 0),
                                  int(d.get('kalan_vade') or 0),
-                                 int(d.get('odeme_gunu') or 1)))
+                                 int(_tv) if _tv is not None and str(_tv).strip() != '' else None,
+                                 _bs,
+                                 int(d.get('odeme_gunu') or 1),
+                                 max(0, min(360, _oa))))
                             eklenen += 1
 
                         elif sn == 'personel':
@@ -3835,6 +3993,14 @@ def kasa_detay_endpoint():
     """Kasa'yı işlem türü bazında gösterir — her türün ne kadar etki yaptığını döker."""
     try:
         return kasa_detay()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.get("/api/kasa-detay-debug")
+def kasa_detay_debug_endpoint():
+    """Debug: işlem türü + durum kırılımı; iptal satırları dahil."""
+    try:
+        return kasa_detay_debug()
     except Exception as e:
         raise HTTPException(500, str(e))
 
