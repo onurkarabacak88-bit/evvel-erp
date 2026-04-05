@@ -1,0 +1,69 @@
+/* Vardiya modülü — EVVEL ERP tema değişkenleriyle uyumlu */
+.vardiya-module .page-header {
+  margin-bottom: 20px;
+}
+.vardiya-layout {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 960px) {
+  .vardiya-layout {
+    grid-template-columns: 1fr;
+  }
+}
+.vardiya-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+  min-height: 120px;
+}
+.vardiya-card h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--text);
+}
+.vardiya-card .sub {
+  font-size: 12px;
+  color: var(--text3);
+  margin-bottom: 14px;
+}
+.vardiya-date-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.vardiya-date-bar .form-group {
+  margin-bottom: 0;
+  min-width: 180px;
+}
+.vardiya-tip-acilis {
+  background: rgba(76, 175, 132, 0.12);
+  color: var(--green);
+}
+.vardiya-tip-ara {
+  background: rgba(232, 197, 71, 0.12);
+  color: var(--yellow);
+}
+.vardiya-tip-kapanis {
+  background: rgba(91, 155, 214, 0.12);
+  color: var(--blue);
+}
+.vardiya-spinner-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.vardiya-spinner-inline .spinner {
+  width: 16px;
+  height: 16px;
+}
