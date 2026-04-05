@@ -67,3 +67,190 @@
   width: 16px;
   height: 16px;
 }
+
+.vardiya-izin-uyari {
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  background: rgba(220, 50, 50, 0.07);
+  border: 1px solid rgba(220, 50, 50, 0.22);
+}
+.vardiya-izin-baslik {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--red, #c44);
+  margin-bottom: 8px;
+}
+.vardiya-izin-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.vardiya-izin-chip {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(220, 50, 50, 0.1);
+  color: var(--red, #a33);
+  font-weight: 500;
+}
+
+.vardiya-motor-log {
+  margin-top: 20px;
+  padding: 16px 18px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.vardiya-motor-log h4 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: var(--text);
+}
+.vardiya-motor-log ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.5;
+}
+.vardiya-motor-log li {
+  margin-bottom: 4px;
+}
+
+/* ── Haftalık Tulipi tablosu ─────────────────────────────── */
+.vardiya-haftalik-header {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.vardiya-haftalik-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.vardiya-haftalik-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.vardiya-haftalik-baslik-print h1 {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.vardiya-haftalik-tarih {
+  font-size: 13px;
+  color: var(--text2);
+  margin-bottom: 12px;
+}
+.vardiya-haftalik-scroll {
+  overflow-x: auto;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg2);
+}
+.vardiya-haftalik-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  min-width: 900px;
+}
+.vardiya-haftalik-table th,
+.vardiya-haftalik-table td {
+  border: 1px solid var(--border);
+  padding: 4px 6px;
+  vertical-align: middle;
+}
+.vardiya-haftalik-table thead th {
+  background: var(--bg3);
+  font-weight: 600;
+  text-align: center;
+  font-size: 10px;
+}
+.vardiya-haftalik-daydate {
+  font-weight: 400;
+  color: var(--text2);
+  font-size: 9px;
+}
+.vardiya-haftalik-sub {
+  font-size: 9px;
+  color: var(--text3);
+}
+.vardiya-haftalik-sube {
+  font-weight: 600;
+  white-space: nowrap;
+  background: rgba(76, 175, 132, 0.06);
+}
+.vardiya-haftalik-ad {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.vardiya-haftalik-cell {
+  min-width: 88px;
+  padding: 2px !important;
+}
+.vardiya-haftalik-input {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 5px;
+  font-size: 10px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+.vardiya-haftalik-input:focus {
+  border-color: var(--green);
+  outline: none;
+}
+.vardiya-haftalik-input-sm {
+  max-width: 72px;
+}
+.vardiya-haftalik-empty {
+  text-align: center;
+  padding: 24px !important;
+  color: var(--text3);
+}
+.vardiya-haftalik-not-print {
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--bg3);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.vardiya-haftalik-not-pre {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+@media print {
+  .no-print,
+  .sidebar,
+  .sidebar-nav,
+  .sidebar-footer,
+  .sidebar-logo {
+    display: none !important;
+  }
+  .main {
+    margin: 0 !important;
+    padding: 12px !important;
+  }
+  .vardiya-haftalik-input {
+    border: none;
+    background: transparent;
+  }
+  .vardiya-haftalik-scroll {
+    border: none;
+  }
+}

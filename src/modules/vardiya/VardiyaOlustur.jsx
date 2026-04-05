@@ -5,7 +5,7 @@ import { api } from '../../utils/api';
  * Seçilen tarih için vardiya üretir (POST /api/vardiya/olustur).
  * @param {Object} props
  * @param {string} props.tarih - YYYY-MM-DD
- * @param {() => void} [props.onSuccess] - Başarılı olunca (liste yenileme vb.)
+ * @param {(res?: object) => void} [props.onSuccess] - API yanıtı ile (liste + motor logu)
  */
 export default function VardiyaOlustur({ tarih, onSuccess }) {
   const [loading, setLoading] = useState(false);
@@ -27,7 +27,7 @@ export default function VardiyaOlustur({ tarih, onSuccess }) {
         tur: 'ok',
         metin: res.mesaj || `${res.olusturulan ?? 0} vardiya kaydı oluşturuldu.`,
       });
-      if (onSuccess) onSuccess();
+      if (onSuccess) onSuccess(res);
     } catch (e) {
       setMesaj({
         tur: 'hata',
@@ -42,8 +42,8 @@ export default function VardiyaOlustur({ tarih, onSuccess }) {
     <div className="vardiya-card">
       <h3>Vardiya oluştur</h3>
       <p className="sub">
-        Seçili gün için tüm aktif personel üzerinde mevcut plan silinir; ACILIS / ARA /
-        KAPANIS şablonu yeniden yazılır.
+        Seçili günün planı silinir; şube ve personel kuralları, izinler ve şube bağlantılarına
+        göre motor yeni ACILIS / ARA / KAPANIS atar.
       </p>
 
       {mesaj && (
