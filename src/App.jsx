@@ -17,6 +17,8 @@ import Rapor from './pages/Rapor';
 import KartMerkez from './pages/KartMerkez';
 import Subeler from './pages/Subeler';
 import VardiyaPanel from './modules/vardiya/VardiyaPanel';
+import VardiyaAyar from './modules/vardiya/VardiyaAyar';
+import VardiyaHaftalik from './modules/vardiya/VardiyaHaftalik';
 import './index.css';
 
 const NAV = [
@@ -40,6 +42,8 @@ const NAV = [
     { id: 'kart-merkez', label: 'Kart Merkezi', icon: '💳' },
     { id: 'personel', label: 'Personel', icon: '👥' },
     { id: 'vardiya', label: 'Vardiya Planlama', icon: '🕐' },
+    { id: 'vardiya-haftalik', label: 'Haftalık Vardiya', icon: '📅' },
+    { id: 'vardiya-ayar', label: 'Vardiya Kuralları', icon: '⚙️' },
     { id: 'borclar', label: 'Borç Envanteri', icon: '🏦' },
     { id: 'sabit-giderler', label: 'Sabit Giderler', icon: '🏠' },
     { id: 'subeler', label: 'Şube Ayarları', icon: '🏪' },
@@ -50,7 +54,13 @@ const PAGES = {
   panel: Panel, strateji: Strateji, onay: OnayKuyrugu, ledger: Ledger,
   ciro: Ciro, 'kart-hareketleri': KartHareketleri, 'anlik-gider': AnlikGider,
   rapor: Rapor, 'kart-merkez': KartMerkez, 'dis-kaynak': DisKaynak, vadeli: VadeliAlimlar, excel: ExcelImport, kartlar: Kartlar, 'kart-analiz': KartMerkez,
-  personel: Personel, vardiya: VardiyaPanel, borclar: Borclar, 'sabit-giderler': SabitGiderler, subeler: Subeler,
+  personel: Personel,
+  vardiya: VardiyaPanel,
+  'vardiya-haftalik': VardiyaHaftalik,
+  'vardiya-ayar': VardiyaAyar,
+  borclar: Borclar,
+  'sabit-giderler': SabitGiderler,
+  subeler: Subeler,
 };
 
 export default function App() {
