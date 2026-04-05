@@ -83,7 +83,7 @@ export default function ExcelImport() {
             <div>✦ <strong style={{color:'var(--text2)'}}>ciro</strong> — tarih, sube, nakit, pos, online, aciklama</div>
             <div>✦ <strong style={{color:'var(--text2)'}}>kartlar</strong> — kart_adi, banka, limit_tutar, kesim_gunu, son_odeme_gunu, faiz_orani</div>
             <div>✦ <strong style={{color:'var(--text2)'}}>kart_hareketleri</strong> — kart_adi, tarih, islem_turu (HARCAMA/ODEME), tutar, taksit_sayisi</div>
-            <div>✦ <strong style={{color:'var(--text2)'}}>borclar</strong> — kurum, borc_turu, toplam_borc, aylik_taksit, kalan_vade, odeme_gunu</div>
+            <div>✦ <strong style={{color:'var(--text2)'}}>borclar</strong> — kurum, borc_turu, toplam_borc, aylik_taksit, kalan_vade, toplam_vade, baslangic_tarihi, odeme_gunu, odemesiz_ay (0/3/12/24 veya özel ay; başlangıç yoksa ödemesiz yok sayılır)</div>
             <div>✦ <strong style={{color:'var(--text2)'}}>personel</strong> — ad_soyad, gorev, calisma_turu, maas, yemek_ucreti, yol_ucreti, odeme_gunu, sube</div>
             <div>✦ <strong style={{color:'var(--text2)'}}>sabit_giderler</strong> — gider_adi, kategori, tutar, periyot, odeme_gunu, sube</div>
             <div>✦ <strong style={{color:'var(--text2)'}}>vadeli_alimlar</strong> — aciklama, tutar, vade_tarihi, tedarikci</div>
