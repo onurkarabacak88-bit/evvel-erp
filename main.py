@@ -2190,6 +2190,7 @@ def personel_kisit_getir(pid: str):
             "min_baslangic_saat": None,
             "max_cikis_saat": None,
             "izinli_sube_ids": None,
+            "calisma_profili": None,
         }
 
 
@@ -2239,6 +2240,9 @@ def personel_kisit_guncelle(pid: str, body: dict):
     cr = body.get("calisan_rol")
     if cr == "":
         cr = None
+    cprof = body.get("calisma_profili")
+    if cprof == "":
+        cprof = None
     mbs = _kisit_opt_time_str(body.get("min_baslangic_saat"))
     mcs = _kisit_opt_time_str(body.get("max_cikis_saat"))
     with db() as (conn, cur):
@@ -2248,8 +2252,8 @@ def personel_kisit_guncelle(pid: str, body: dict):
                 (id, personel_id, acilis_yapabilir, ara_yapabilir, kapanis_yapabilir,
                  sadece_tip, sube_degistirebilir, kapanis_bit_saat,
                  calisan_rol, hafta_max_gun, gunluk_max_saat, haftalik_max_saat,
-                 min_baslangic_saat, max_cikis_saat, izinli_sube_ids)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 min_baslangic_saat, max_cikis_saat, izinli_sube_ids, calisma_profili)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (personel_id) DO UPDATE SET
                 acilis_yapabilir    = EXCLUDED.acilis_yapabilir,
                 ara_yapabilir       = EXCLUDED.ara_yapabilir,
@@ -2264,6 +2268,7 @@ def personel_kisit_guncelle(pid: str, body: dict):
                 min_baslangic_saat  = EXCLUDED.min_baslangic_saat,
                 max_cikis_saat      = EXCLUDED.max_cikis_saat,
                 izinli_sube_ids     = EXCLUDED.izinli_sube_ids,
+                calisma_profili     = EXCLUDED.calisma_profili,
                 guncelleme          = NOW()
             """,
             (
@@ -2282,6 +2287,7 @@ def personel_kisit_guncelle(pid: str, body: dict):
                 mbs,
                 mcs,
                 _kisit_izinli_sube_ids(body.get("izinli_sube_ids")),
+                cprof,
             ),
         )
     return {"success": True}
@@ -2319,7 +2325,22 @@ def personel_gunluk_kisit_kaydet(pid: str, body: dict):
                 raise HTTPException(400, "Her satırda hafta_gunu (0–6) gerekli")
             if hg < 0 or hg > 6:
                 raise HTTPException(400, "hafta_gunu 0 (Pzt) … 6 (Paz) olmalı")
-            calis = bool(it.get("calisamaz", False))
+            if "calisabilir" in it:
+                calisabilir = bool(it.get("calisabilir"))
+                calisamaz = not calisabilir
+            else:
+                calisamaz = bool(it.get("calisamaz", False))
+                calisabilir = not calisamaz
+            gst = it.get("sadece_tip")
+            if gst is None or gst == "":
+                gst_sql = None
+            else:
+                gst_sql = str(gst).strip().upper()
+                if gst_sql not in ("ACILIS", "ARA", "KAPANIS"):
+                    raise HTTPException(400, "sadece_tip ACILIS, ARA veya KAPANIS olmalı")
+            mnb = _kisit_opt_time_str(it.get("min_baslangic"))
+            mxc = _kisit_opt_time_str(it.get("max_cikis"))
+            mxs = _kisit_opt_float(it.get("max_saat"))
             izt = it.get("izinli_tipler")
             if izt is None or izt == "":
                 izt_sql = None
@@ -2331,10 +2352,22 @@ def personel_gunluk_kisit_kaydet(pid: str, body: dict):
             cur.execute(
                 """
                 INSERT INTO personel_gunluk_kisit
-                    (id, personel_id, hafta_gunu, calisamaz, izinli_tipler)
-                VALUES (%s,%s,%s,%s,%s)
+                    (id, personel_id, hafta_gunu, calisabilir, sadece_tip,
+                     min_baslangic, max_cikis, max_saat, calisamaz, izinli_tipler)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
-                (str(uuid.uuid4()), pid, hg, calis, izt_sql),
+                (
+                    str(uuid.uuid4()),
+                    pid,
+                    hg,
+                    calisabilir,
+                    gst_sql,
+                    mnb,
+                    mxc,
+                    mxs,
+                    calisamaz,
+                    izt_sql,
+                ),
             )
     return {"success": True}
 

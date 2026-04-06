@@ -584,6 +584,11 @@ def init_db():
                 id              TEXT PRIMARY KEY,
                 personel_id     TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
                 hafta_gunu      SMALLINT NOT NULL CHECK (hafta_gunu >= 0 AND hafta_gunu <= 6),
+                calisabilir     BOOLEAN NOT NULL DEFAULT TRUE,
+                sadece_tip      TEXT,
+                min_baslangic   TEXT,
+                max_cikis       TEXT,
+                max_saat        NUMERIC(5,2),
                 calisamaz       BOOLEAN NOT NULL DEFAULT FALSE,
                 izinli_tipler   TEXT,
                 guncelleme      TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -681,6 +686,31 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='personel_kisit' AND column_name='izinli_sube_ids') THEN
                     ALTER TABLE personel_kisit ADD COLUMN izinli_sube_ids TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_kisit' AND column_name='calisma_profili') THEN
+                    ALTER TABLE personel_kisit ADD COLUMN calisma_profili TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_gunluk_kisit' AND column_name='calisabilir') THEN
+                    ALTER TABLE personel_gunluk_kisit ADD COLUMN calisabilir BOOLEAN NOT NULL DEFAULT TRUE;
+                    UPDATE personel_gunluk_kisit SET calisabilir = NOT COALESCE(calisamaz, FALSE);
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_gunluk_kisit' AND column_name='sadece_tip') THEN
+                    ALTER TABLE personel_gunluk_kisit ADD COLUMN sadece_tip TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_gunluk_kisit' AND column_name='min_baslangic') THEN
+                    ALTER TABLE personel_gunluk_kisit ADD COLUMN min_baslangic TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_gunluk_kisit' AND column_name='max_cikis') THEN
+                    ALTER TABLE personel_gunluk_kisit ADD COLUMN max_cikis TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_gunluk_kisit' AND column_name='max_saat') THEN
+                    ALTER TABLE personel_gunluk_kisit ADD COLUMN max_saat NUMERIC(5,2);
                 END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='sube_config' AND column_name='tek_acilis_izinli') THEN
