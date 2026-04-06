@@ -28,13 +28,14 @@ def _get_pool():
 
 
 @contextmanager
-def db():
+def db(commit: bool = True):
     """
     PostgreSQL bağlantı context manager — pool'dan alır, işlem sonrası iade eder.
     Kullanım:
         with db() as (conn, cur):
             cur.execute(...)
-    Başarılı çıkışta commit, hata durumunda rollback yapar.
+    Başarılı çıkışta commit (varsayılan), hata durumunda rollback yapar.
+    commit=False: başarılı çıkışta rollback (simülasyon / dry-run).
     """
     pool = _get_pool()
     conn = pool.getconn()
@@ -43,7 +44,10 @@ def db():
     cur = conn.cursor()
     try:
         yield conn, cur
-        conn.commit()
+        if commit:
+            conn.commit()
+        else:
+            conn.rollback()
     except Exception:
         conn.rollback()
         raise
@@ -546,6 +550,9 @@ def init_db():
                     CHECK (tip IN ('ACILIS','ARA','KAPANIS')),
                 bas_saat     TIME NOT NULL,
                 bit_saat     TIME NOT NULL,
+                kaynak       TEXT NOT NULL DEFAULT 'motor'
+                    CHECK (kaynak IN ('motor', 'manuel')),
+                secim_nedeni TEXT,
                 olusturma    TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """)
@@ -600,6 +607,24 @@ def init_db():
             ON personel_gunluk_kisit (personel_id)
         """)
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS personel_gunluk_durum (
+                id           TEXT PRIMARY KEY,
+                personel_id  TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
+                tarih        DATE NOT NULL,
+                calisabilir  BOOLEAN NOT NULL DEFAULT TRUE,
+                tur          TEXT,
+                en_erken     TEXT,
+                en_gec       TEXT,
+                guncelleme   TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (personel_id, tarih),
+                CHECK (tur IS NULL OR tur IN ('tam', 'part'))
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_personel_gunluk_durum_pid_tarih
+            ON personel_gunluk_durum (personel_id, tarih)
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS personel_tercih (
                 id           TEXT PRIMARY KEY,
                 personel_id  TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
@@ -619,6 +644,20 @@ def init_db():
                 vardiyaya_dahil BOOLEAN NOT NULL DEFAULT TRUE,
                 guncelleme      TIMESTAMP NOT NULL DEFAULT NOW()
             )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS personel_sube_yasak (
+                id           TEXT PRIMARY KEY,
+                personel_id  TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
+                sube_id      TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                yasak        BOOLEAN NOT NULL DEFAULT TRUE,
+                guncelleme   TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (personel_id, sube_id)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_personel_sube_yasak_pid
+            ON personel_sube_yasak (personel_id)
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS sube_config (
@@ -641,7 +680,21 @@ def init_db():
                 ara_bit_saat         TEXT,
                 kapanis_bas_saat     TEXT,
                 kapanis_bit_saat     TEXT,
+                default_acilis_saati TEXT,
+                default_kapanis_saati TEXT,
+                vardiya_girdileri    JSONB,
                 guncelleme           TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_saat_gunluk (
+                id              TEXT PRIMARY KEY,
+                sube_id         TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                tarih           DATE NOT NULL,
+                acilis_saati    TEXT,
+                kapanis_saati   TEXT,
+                guncelleme      TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (sube_id, tarih)
             )
         """)
         cur.execute("""
@@ -716,6 +769,22 @@ def init_db():
                     ALTER TABLE personel_gunluk_kisit ADD COLUMN max_saat NUMERIC(5,2);
                 END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_gunluk_durum' AND column_name='en_erken') THEN
+                    ALTER TABLE personel_gunluk_durum ADD COLUMN en_erken TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_gunluk_durum' AND column_name='en_gec') THEN
+                    ALTER TABLE personel_gunluk_durum ADD COLUMN en_gec TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='vardiya' AND column_name='kaynak') THEN
+                    ALTER TABLE vardiya ADD COLUMN kaynak TEXT NOT NULL DEFAULT 'motor';
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='vardiya' AND column_name='secim_nedeni') THEN
+                    ALTER TABLE vardiya ADD COLUMN secim_nedeni TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='sube_config' AND column_name='vardiyaya_dahil') THEN
                     ALTER TABLE sube_config ADD COLUMN vardiyaya_dahil BOOLEAN NOT NULL DEFAULT TRUE;
                 END IF;
@@ -774,6 +843,22 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='personel_kisit' AND column_name='gunluk_mesai_fazlasi_saat') THEN
                     ALTER TABLE personel_kisit ADD COLUMN gunluk_mesai_fazlasi_saat NUMERIC(5,2);
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_kisit' AND column_name='kaydirma_izin_ciftleri') THEN
+                    ALTER TABLE personel_kisit ADD COLUMN kaydirma_izin_ciftleri TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='default_acilis_saati') THEN
+                    ALTER TABLE sube_config ADD COLUMN default_acilis_saati TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='default_kapanis_saati') THEN
+                    ALTER TABLE sube_config ADD COLUMN default_kapanis_saati TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='vardiya_girdileri') THEN
+                    ALTER TABLE sube_config ADD COLUMN vardiya_girdileri JSONB;
                 END IF;
             END $$;
         """)

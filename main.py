@@ -7,11 +7,19 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi import Request
 from pydantic import BaseModel
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 from datetime import date, timedelta
 import uuid, os, json, pathlib, calendar, threading, io, re
 from database import db, init_db
-from vardiya_motor import vardiya_motoru_calistir, vardiya_motoru_hafta_calistir
+from vardiya_motor import (
+    vardiya_motoru_calistir,
+    vardiya_motoru_hafta_calistir,
+    _default_sube_cfg,
+    _sube_cfg_gunluk_saatleri,
+    _vardiya_sube_ozet_hesapla,
+    sube_tip_saatleri,
+)
+from vardiya_planlama import normalize_vardiya_girdileri
 
 
 def ay_ekle(d: date, ay: int) -> date:
@@ -2061,6 +2069,43 @@ class VardiyaOlusturModel(BaseModel):
     tarih: date
 
 
+class VardiyaSenaryoItem(BaseModel):
+    id: str
+    personel_id: Optional[str] = None
+    tip: Optional[str] = None
+    sube_id: Optional[str] = None
+
+
+class VardiyaSenaryoBody(BaseModel):
+    tarih: date
+    senaryo: List[VardiyaSenaryoItem]
+
+
+def _vardiya_body_tarih_date(val) -> date:
+    """Vardiya satırı / API gövdesi tarih alanını `date` yapar."""
+    if isinstance(val, date):
+        return val
+    return date.fromisoformat(str(val)[:10])
+
+
+def _vardiya_optimize_koru_manuel_safe(t: date) -> Dict[str, Any]:
+    """Manuel kayıtları koruyarak günü yeniden planlar; istisnada yine JSON döner (PATCH kaybı olmaz)."""
+    try:
+        with db() as (conn, cur):
+            return vardiya_motoru_calistir(cur, t, koru_manuel=True)
+    except Exception as e:
+        logging.exception("vardiya optimize (koru_manuel)")
+        return {
+            "success": False,
+            "tarih": str(t),
+            "olusturulan": 0,
+            "korunan_manuel": 0,
+            "izinli_sayisi": 0,
+            "log": [{"kural": "HATA", "detay": str(e)}],
+            "mesaj": f"Yeniden optimize edilemedi: {e}",
+        }
+
+
 class PersonelIzinModel(BaseModel):
     personel_id: str
     baslangic_tarih: date
@@ -2168,33 +2213,116 @@ def personel_izin_sil(iid: str):
     return {"success": True}
 
 
+def _kisit_vardiya_yetkisi_from_row(d: dict) -> dict:
+    """Bölüm 2 kontratı: { acilis, ara, kapanis } — motor hâlâ *_yapabilir kolonlarını kullanır."""
+    return {
+        "acilis": bool(d.get("acilis_yapabilir", True)),
+        "ara": bool(d.get("ara_yapabilir", True)),
+        "kapanis": bool(d.get("kapanis_yapabilir", True)),
+    }
+
+
+def _personel_sube_yasak_item_sube_id(it: Any) -> Optional[str]:
+    """Kontrat: branch_id veya sube_id (şube tablosundaki id ile aynı)."""
+    if not isinstance(it, dict):
+        return None
+    for key in ("sube_id", "branch_id"):
+        v = it.get(key)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return None
+
+
+def _personel_kisit_sube_yasaklari(cur, pid: str) -> List[dict]:
+    """Kayıt yok = o şube için serbest; yalnızca yasak=TRUE satırlar döner."""
+    cur.execute(
+        """
+        SELECT sube_id, yasak FROM personel_sube_yasak
+        WHERE personel_id = %s AND yasak = TRUE
+        ORDER BY sube_id
+        """,
+        (pid,),
+    )
+    out: List[dict] = []
+    for r in cur.fetchall():
+        sid = r["sube_id"]
+        out.append({"branch_id": sid, "sube_id": sid, "yasak": True})
+    return out
+
+
+def _personel_sube_yasak_sync(cur, pid: str, items: Any) -> None:
+    """sube_yasaklari: [{ branch_id|sube_id, yasak }]; liste boş = tüm yasaklar kalkar."""
+    cur.execute("DELETE FROM personel_sube_yasak WHERE personel_id = %s", (pid,))
+    if not isinstance(items, list):
+        return
+    seen: Set[str] = set()
+    for it in items:
+        sid = _personel_sube_yasak_item_sube_id(it)
+        if not sid or sid in seen:
+            continue
+        if not bool(it.get("yasak", True)):
+            continue
+        seen.add(sid)
+        cur.execute("SELECT 1 FROM subeler WHERE id=%s", (sid,))
+        if not cur.fetchone():
+            continue
+        cur.execute(
+            """
+            INSERT INTO personel_sube_yasak (id, personel_id, sube_id, yasak)
+            VALUES (%s, %s, %s, TRUE)
+            """,
+            (str(uuid.uuid4()), pid, sid),
+        )
+
+
+def _kisit_vardiya_yetkisi_resolve(body: dict) -> Tuple[bool, bool, bool]:
+    """PUT: önce vardiya_yetkisi; yoksa acilis_yapabilir / ara_yapabilir / kapanis_yapabilir."""
+    vy = body.get("vardiya_yetkisi")
+    if isinstance(vy, dict):
+        return (
+            bool(vy.get("acilis", True)),
+            bool(vy.get("ara", True)),
+            bool(vy.get("kapanis", True)),
+        )
+    return (
+        bool(body.get("acilis_yapabilir", True)),
+        bool(body.get("ara_yapabilir", True)),
+        bool(body.get("kapanis_yapabilir", True)),
+    )
+
+
 @app.get("/api/personel-kisit/{pid}")
 def personel_kisit_getir(pid: str):
     with db() as (conn, cur):
         cur.execute("SELECT * FROM personel_kisit WHERE personel_id=%s", (pid,))
         row = cur.fetchone()
         if row:
-            return dict(row)
-        return {
-            "personel_id": pid,
-            "acilis_yapabilir": True,
-            "ara_yapabilir": True,
-            "kapanis_yapabilir": True,
-            "sadece_tip": None,
-            "sube_degistirebilir": True,
-            "kapanis_bit_saat": None,
-            "calisan_rol": None,
-            "hafta_max_gun": None,
-            "gunluk_max_saat": None,
-            "haftalik_max_saat": None,
-            "min_baslangic_saat": None,
-            "max_cikis_saat": None,
-            "izinli_sube_ids": None,
-            "calisma_profili": None,
-            "part_gunluk_min_saat": None,
-            "part_gunluk_max_saat": None,
-            "gunluk_mesai_fazlasi_saat": None,
-        }
+            d = dict(row)
+        else:
+            d = {
+                "personel_id": pid,
+                "acilis_yapabilir": True,
+                "ara_yapabilir": True,
+                "kapanis_yapabilir": True,
+                "sadece_tip": None,
+                "sube_degistirebilir": True,
+                "kapanis_bit_saat": None,
+                "calisan_rol": None,
+                "hafta_max_gun": None,
+                "gunluk_max_saat": None,
+                "haftalik_max_saat": None,
+                "min_baslangic_saat": None,
+                "max_cikis_saat": None,
+                "izinli_sube_ids": None,
+                "calisma_profili": None,
+                "part_gunluk_min_saat": None,
+                "part_gunluk_max_saat": None,
+                "gunluk_mesai_fazlasi_saat": None,
+                "kaydirma_izin_ciftleri": None,
+            }
+        d["vardiya_yetkisi"] = _kisit_vardiya_yetkisi_from_row(d)
+        d["sube_yasaklari"] = _personel_kisit_sube_yasaklari(cur, pid)
+        return d
 
 
 def _kisit_opt_int(v: Any) -> Optional[int]:
@@ -2232,6 +2360,13 @@ def _kisit_izinli_sube_ids(v: Any) -> Optional[str]:
     return s or None
 
 
+def _kisit_kaydirma_ciftleri_str(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
 @app.put("/api/personel-kisit/{pid}")
 def personel_kisit_guncelle(pid: str, body: dict):
     st = body.get("sadece_tip")
@@ -2248,6 +2383,7 @@ def personel_kisit_guncelle(pid: str, body: dict):
         cprof = None
     mbs = _kisit_opt_time_str(body.get("min_baslangic_saat"))
     mcs = _kisit_opt_time_str(body.get("max_cikis_saat"))
+    ac_y, ar_y, kap_y = _kisit_vardiya_yetkisi_resolve(body)
     with db() as (conn, cur):
         cur.execute(
             """
@@ -2256,8 +2392,9 @@ def personel_kisit_guncelle(pid: str, body: dict):
                  sadece_tip, sube_degistirebilir, kapanis_bit_saat,
                  calisan_rol, hafta_max_gun, gunluk_max_saat, haftalik_max_saat,
                  min_baslangic_saat, max_cikis_saat, izinli_sube_ids, calisma_profili,
-                 part_gunluk_min_saat, part_gunluk_max_saat, gunluk_mesai_fazlasi_saat)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 part_gunluk_min_saat, part_gunluk_max_saat, gunluk_mesai_fazlasi_saat,
+                 kaydirma_izin_ciftleri)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (personel_id) DO UPDATE SET
                 acilis_yapabilir    = EXCLUDED.acilis_yapabilir,
                 ara_yapabilir       = EXCLUDED.ara_yapabilir,
@@ -2276,14 +2413,15 @@ def personel_kisit_guncelle(pid: str, body: dict):
                 part_gunluk_min_saat = EXCLUDED.part_gunluk_min_saat,
                 part_gunluk_max_saat = EXCLUDED.part_gunluk_max_saat,
                 gunluk_mesai_fazlasi_saat = EXCLUDED.gunluk_mesai_fazlasi_saat,
+                kaydirma_izin_ciftleri = EXCLUDED.kaydirma_izin_ciftleri,
                 guncelleme          = NOW()
             """,
             (
                 str(uuid.uuid4()),
                 pid,
-                body.get("acilis_yapabilir", True),
-                body.get("ara_yapabilir", True),
-                body.get("kapanis_yapabilir", True),
+                ac_y,
+                ar_y,
+                kap_y,
                 st,
                 body.get("sube_degistirebilir", True),
                 kb,
@@ -2298,8 +2436,11 @@ def personel_kisit_guncelle(pid: str, body: dict):
                 _kisit_opt_float(body.get("part_gunluk_min_saat")),
                 _kisit_opt_float(body.get("part_gunluk_max_saat")),
                 _kisit_opt_float(body.get("gunluk_mesai_fazlasi_saat")),
+                _kisit_kaydirma_ciftleri_str(body.get("kaydirma_izin_ciftleri")),
             ),
         )
+        if "sube_yasaklari" in body:
+            _personel_sube_yasak_sync(cur, pid, body.get("sube_yasaklari"))
     return {"success": True}
 
 
@@ -2382,6 +2523,112 @@ def personel_gunluk_kisit_kaydet(pid: str, body: dict):
     return {"success": True}
 
 
+def _gunluk_durum_tarih_iso(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    if isinstance(v, date):
+        return v.isoformat()
+    s = str(v).strip()
+    return s[:10] if len(s) >= 10 else (s if s else None)
+
+
+def _gunluk_durum_tur_sql(v: Any) -> Optional[str]:
+    """Kontrat: tam | part; boş = NULL (o gün için tur override yok)."""
+    if v is None or v == "":
+        return None
+    t = str(v).strip().lower()
+    if t in ("tam", "full_time", "surekli"):
+        return "tam"
+    if t in ("part", "part_time", "yari", "yarı"):
+        return "part"
+    raise HTTPException(400, "tur yalnızca tam, part veya boş olabilir")
+
+
+def _gunluk_durum_saat_str(v: Any) -> Optional[str]:
+    """HH:MM veya HH:MM:SS → kayıt için kısa metin; boş = None."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    return s[:8] if len(s) >= 8 else (s[:5] if len(s) >= 5 else s)
+
+
+@app.get("/api/personel-gunluk-durum/{pid}")
+def personel_gunluk_durum_listele(
+    pid: str,
+    from_tarih: Optional[date] = None,
+    to_tarih: Optional[date] = None,
+):
+    """Tarih bazlı günlük durum; kayıt yoksa o gün için şablon + personel kartı geçerli."""
+    fd = from_tarih or date.today()
+    td = to_tarih or (fd + timedelta(days=120))
+    if td < fd:
+        fd, td = td, fd
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT tarih, calisabilir, tur, en_erken, en_gec FROM personel_gunluk_durum
+            WHERE personel_id = %s AND tarih >= %s AND tarih <= %s
+            ORDER BY tarih
+            """,
+            (pid, fd, td),
+        )
+        out = []
+        for r in cur.fetchall():
+            td0 = r["tarih"]
+            ts = td0.isoformat() if hasattr(td0, "isoformat") else str(td0)[:10]
+            ee = r.get("en_erken")
+            eg = r.get("en_gec")
+            ee_s = str(ee).strip()[:5] if ee is not None and str(ee).strip() else None
+            eg_s = str(eg).strip()[:5] if eg is not None and str(eg).strip() else None
+            row = {
+                "tarih": ts,
+                "calisabilir": bool(r["calisabilir"]),
+                "tur": r.get("tur"),
+                "saat_kisiti": {"en_erken": ee_s, "en_gec": eg_s},
+            }
+            out.append(row)
+        return out
+
+
+@app.put("/api/personel-gunluk-durum/{pid}")
+def personel_gunluk_durum_kaydet(pid: str, body: dict):
+    """Tüm listeyi yazar; gönderilmeyen tarihler serbest sayılır (satır silinmiş)."""
+    items = body.get("gunluk_durumlar")
+    if items is None:
+        items = body.get("items") or []
+    if not isinstance(items, list):
+        raise HTTPException(400, "gunluk_durumlar bir liste olmalı")
+    with db() as (conn, cur):
+        cur.execute("DELETE FROM personel_gunluk_durum WHERE personel_id = %s", (pid,))
+        for it in items:
+            ts = _gunluk_durum_tarih_iso(it.get("tarih"))
+            if not ts:
+                continue
+            cal = bool(it.get("calisabilir", True))
+            tr_raw = it.get("tur")
+            tr_sql = _gunluk_durum_tur_sql(tr_raw) if tr_raw is not None and str(tr_raw).strip() != "" else None
+            ee_raw = it.get("en_erken")
+            eg_raw = it.get("en_gec")
+            sk = it.get("saat_kisiti")
+            if isinstance(sk, dict):
+                if ee_raw is None:
+                    ee_raw = sk.get("en_erken")
+                if eg_raw is None:
+                    eg_raw = sk.get("en_gec")
+            en_erken_sql = _gunluk_durum_saat_str(ee_raw)
+            en_gec_sql = _gunluk_durum_saat_str(eg_raw)
+            cur.execute(
+                """
+                INSERT INTO personel_gunluk_durum (id, personel_id, tarih, calisabilir, tur, en_erken, en_gec)
+                VALUES (%s, %s, %s::date, %s, %s, %s, %s)
+                """,
+                (str(uuid.uuid4()), pid, ts, cal, tr_sql, en_erken_sql, en_gec_sql),
+            )
+    return {"success": True}
+
+
 @app.get("/api/personel-tercih/{pid}")
 def personel_tercih_listele(pid: str):
     with db() as (conn, cur):
@@ -2445,7 +2692,10 @@ def sube_config_getir(sid: str):
         cur.execute("SELECT * FROM sube_config WHERE sube_id=%s", (sid,))
         row = cur.fetchone()
         if row:
-            return dict(row)
+            d = dict(row)
+            d["acilis_saati"] = d.get("default_acilis_saati")
+            d["kapanis_saati"] = d.get("default_kapanis_saati")
+            return d
         return {
             "sube_id": sid,
             "vardiyaya_dahil": True,
@@ -2465,7 +2715,172 @@ def sube_config_getir(sid: str):
             "ara_bit_saat": None,
             "kapanis_bas_saat": None,
             "kapanis_bit_saat": None,
+            "default_acilis_saati": None,
+            "default_kapanis_saati": None,
+            "acilis_saati": None,
+            "kapanis_saati": None,
+            "vardiya_girdileri": None,
         }
+
+
+def _planlama_saat_str(v: Any) -> Optional[str]:
+    if v is None or v == "":
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+def _planlama_put_default_saatleri(body: dict) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Kontrat: kök seviyede acilis_saati / kapanis_saati (override satırlarıyla aynı isimler).
+    Geriye dönük: default_acilis_saati / default_kapanis_saati.
+    """
+    if "acilis_saati" in body:
+        dac = _planlama_saat_str(body.get("acilis_saati"))
+    elif "default_acilis_saati" in body:
+        dac = _planlama_saat_str(body.get("default_acilis_saati"))
+    else:
+        dac = None
+    if "kapanis_saati" in body:
+        dkc = _planlama_saat_str(body.get("kapanis_saati"))
+    elif "default_kapanis_saati" in body:
+        dkc = _planlama_saat_str(body.get("default_kapanis_saati"))
+    else:
+        dkc = None
+    return dac, dkc
+
+
+def _planlama_tarih_str(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    if isinstance(v, date):
+        return v.isoformat()
+    s = str(v).strip()
+    return s[:10] if s else None
+
+
+@app.get("/api/sube-planlama/{sid}")
+def sube_planlama_getir(
+    sid: str,
+    from_tarih: Optional[date] = None,
+    to_tarih: Optional[date] = None,
+):
+    """Şube planlama modeli: aktif_mi, varsayılan saatler, vardiya girdileri, günlük override aralığı."""
+    from_d = from_tarih or date.today()
+    to_d = to_tarih or (from_d + timedelta(days=30))
+    if to_d < from_d:
+        from_d, to_d = to_d, from_d
+    with db() as (conn, cur):
+        cur.execute("SELECT id, ad, aktif FROM subeler WHERE id=%s", (sid,))
+        sube = cur.fetchone()
+        if not sube:
+            raise HTTPException(404, "Şube bulunamadı")
+        cur.execute("SELECT * FROM sube_config WHERE sube_id=%s", (sid,))
+        sc = cur.fetchone()
+        scd = dict(sc) if sc else {}
+        vraw = scd.get("vardiya_girdileri")
+        vg = normalize_vardiya_girdileri(vraw)
+        cur.execute(
+            """
+            SELECT tarih, acilis_saati, kapanis_saati
+            FROM sube_saat_gunluk
+            WHERE sube_id=%s AND tarih >= %s AND tarih <= %s
+            ORDER BY tarih
+            """,
+            (sid, from_d, to_d),
+        )
+        ows = []
+        for r in cur.fetchall():
+            ows.append(
+                {
+                    "tarih": str(r["tarih"]),
+                    "acilis_saati": r.get("acilis_saati"),
+                    "kapanis_saati": r.get("kapanis_saati"),
+                }
+            )
+    dac = scd.get("default_acilis_saati")
+    dkc = scd.get("default_kapanis_saati")
+    return {
+        "sube_id": sid,
+        "ad": sube["ad"],
+        "aktif_mi": bool(sube["aktif"]),
+        "acilis_saati": dac,
+        "kapanis_saati": dkc,
+        "vardiya_girdileri": vg,
+        "gunluk_overrides": ows,
+    }
+
+
+@app.put("/api/sube-planlama/{sid}")
+def sube_planlama_kaydet(sid: str, body: dict):
+    """Planlama kaydı: aktif_mi, varsayılan saatler, normalize vardiya girdileri, günlük override."""
+    with db() as (conn, cur):
+        cur.execute("SELECT id FROM subeler WHERE id=%s", (sid,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Şube bulunamadı")
+        if "aktif_mi" in body:
+            cur.execute(
+                "UPDATE subeler SET aktif=%s WHERE id=%s",
+                (bool(body["aktif_mi"]), sid),
+            )
+        vg = normalize_vardiya_girdileri(body.get("vardiya_girdileri"))
+        dac, dkc = _planlama_put_default_saatleri(body)
+        vg_json = json.dumps(vg, ensure_ascii=False)
+        cur.execute("SELECT id FROM sube_config WHERE sube_id=%s", (sid,))
+        if cur.fetchone():
+            cur.execute(
+                """
+                UPDATE sube_config SET
+                    default_acilis_saati = %s,
+                    default_kapanis_saati = %s,
+                    vardiya_girdileri = %s::jsonb,
+                    guncelleme = NOW()
+                WHERE sube_id = %s
+                """,
+                (dac, dkc, vg_json, sid),
+            )
+        else:
+            nid = str(uuid.uuid4())
+            cur.execute(
+                """
+                INSERT INTO sube_config (
+                    id, sube_id, vardiyaya_dahil, min_kapanis, tek_kapanis_izinli, tek_acilis_izinli,
+                    kaydirma_acik, sadece_tam_kayabilir, hafta_sonu_min_kap, tam_part_zorunlu,
+                    kapanis_dusurulemez, planla_acilis, planla_kapanis,
+                    default_acilis_saati, default_kapanis_saati, vardiya_girdileri)
+                VALUES (
+                    %s,%s,TRUE,1,TRUE,TRUE,TRUE,FALSE,1,FALSE,FALSE,TRUE,TRUE,
+                    %s,%s,%s::jsonb)
+                """,
+                (nid, sid, dac, dkc, vg_json),
+            )
+        for ow in body.get("gunluk_overrides") or []:
+            ts = _planlama_tarih_str(ow.get("tarih"))
+            if not ts:
+                continue
+            ac = ow.get("acilis_saati")
+            kc = ow.get("kapanis_saati")
+            acs = _planlama_saat_str(ac) if ac is not None else None
+            kcs = _planlama_saat_str(kc) if kc is not None else None
+            if acs is None and kcs is None:
+                cur.execute(
+                    "DELETE FROM sube_saat_gunluk WHERE sube_id=%s AND tarih=%s",
+                    (sid, ts),
+                )
+                continue
+            oid = str(uuid.uuid4())
+            cur.execute(
+                """
+                INSERT INTO sube_saat_gunluk (id, sube_id, tarih, acilis_saati, kapanis_saati)
+                VALUES (%s,%s,%s,%s,%s)
+                ON CONFLICT (sube_id, tarih) DO UPDATE SET
+                    acilis_saati = EXCLUDED.acilis_saati,
+                    kapanis_saati = EXCLUDED.kapanis_saati,
+                    guncelleme = NOW()
+                """,
+                (oid, sid, ts, acs, kcs),
+            )
+    return {"success": True, "vardiya_girdileri": vg}
 
 
 @app.put("/api/sube-config/{sid}")
@@ -2590,47 +3005,248 @@ def vardiya_olustur_hafta(body: VardiyaOlusturModel):
     return sonuc
 
 
+@app.post("/api/vardiya/optimize-gun")
+def vardiya_optimize_gun(body: VardiyaOlusturModel):
+    """Manuel satırları silmeden o gün için motoru yeniden çalıştırır (tam sil + doldur değil)."""
+    return _vardiya_optimize_koru_manuel_safe(body.tarih)
+
+
+def _vardiya_saatleri_tip_icin(cur, sube_id: str, tarih_str: str, tip: str) -> Tuple[str, str]:
+    tip_u = str(tip or "").strip().upper()
+    if tip_u not in ("ACILIS", "ARA", "KAPANIS"):
+        raise HTTPException(400, "Geçersiz vardiya tipi")
+    cur.execute("SELECT * FROM sube_config WHERE sube_id = %s", (sube_id,))
+    row = cur.fetchone()
+    cfg = {**_default_sube_cfg(sube_id), **(dict(row) if row else {})}
+    cfg = _sube_cfg_gunluk_saatleri(cur, sube_id, tarih_str, cfg)
+    smap = sube_tip_saatleri(cfg)
+    if tip_u not in smap:
+        raise HTTPException(400, "Şube için bu tip saat tanımı yok")
+    return smap[tip_u]
+
+
+def _vardiya_listele_pack(cur, ts: str) -> Dict[str, Any]:
+    """Aynı gün vardiya satırlarını GET /api/vardiya ile aynı şemada döndürür."""
+    cur.execute(
+        """
+        SELECT v.id, v.tarih, v.tip, v.bas_saat, v.bit_saat,
+               v.personel_id, v.sube_id,
+               p.sube_id AS personel_ana_sube_id,
+               v.secim_nedeni,
+               COALESCE(v.kaynak, 'motor') AS kaynak,
+               p.ad_soyad AS personel_adi,
+               p.calisma_turu AS personel_calisma_turu,
+               COALESCE(s.ad, '—') AS sube_adi
+        FROM vardiya v
+        JOIN personel p ON p.id = v.personel_id
+        LEFT JOIN subeler s ON s.id = v.sube_id
+        WHERE v.tarih = %s
+        ORDER BY COALESCE(s.ad, ''), p.ad_soyad,
+            CASE v.tip
+                WHEN 'ACILIS' THEN 1
+                WHEN 'ARA' THEN 2
+                WHEN 'KAPANIS' THEN 3
+                ELSE 4
+            END
+        """,
+        (ts,),
+    )
+    rows: List[dict] = []
+    ham: List[dict] = []
+    for r in cur.fetchall():
+        bas = _saat_str(r["bas_saat"])
+        bit = _saat_str(r["bit_saat"])
+        kr = str(r.get("kaynak") or "motor")
+        pas = r.get("personel_ana_sube_id")
+        item = {
+            "id": str(r["id"]),
+            "tarih": str(r["tarih"]),
+            "personel_id": str(r["personel_id"]),
+            "sube_id": str(r["sube_id"]),
+            "personel_ana_sube_id": str(pas).strip() if pas is not None else "",
+            "secim_nedeni": (r.get("secim_nedeni") or "").strip() or None,
+            "kaynak": kr,
+            "personel_adi": r["personel_adi"] or "",
+            "personel_calisma_turu": r.get("personel_calisma_turu") or "",
+            "sube_adi": r["sube_adi"] or "—",
+            "tip": r["tip"],
+            "bas_saat": bas,
+            "bit_saat": bit,
+            "saat_araligi": f"{bas}–{bit}",
+        }
+        rows.append(item)
+        ham.append(dict(item))
+    sube_ozet = _vardiya_sube_ozet_hesapla(cur, ts, ham) if ham else []
+    return {
+        "tarih": ts,
+        "vardiyalar": rows,
+        "sube_ozet": sube_ozet,
+    }
+
+
+def _vardiya_row_patch_execute(
+    cur,
+    vid: str,
+    body: dict,
+    gun: Optional[date] = None,
+) -> date:
+    """
+    Tek vardiya satırını PATCH kurallarıyla günceller (cursor aynı transaction).
+    gun verilirse satırın tarihi bu güne eşit olmalı (senaryo çoklu adım).
+    """
+    pid = body.get("personel_id")
+    tip = body.get("tip")
+    sid = body.get("sube_id")
+    if pid is None and tip is None and sid is None:
+        raise HTTPException(400, "En az bir alan gerekli: personel_id, tip, sube_id")
+    cur.execute(
+        """
+        SELECT id, tarih, personel_id, sube_id, tip, bas_saat, bit_saat
+        FROM vardiya WHERE id = %s
+        """,
+        (vid,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Vardiya bulunamadı")
+    r = dict(row)
+    row_tarih = _vardiya_body_tarih_date(r["tarih"])
+    if gun is not None and row_tarih != gun:
+        raise HTTPException(400, "Vardiya tarihi istek tarihi ile uyumsuz")
+    tarih_str = str(r["tarih"])
+    new_pid = str(pid) if pid is not None else str(r["personel_id"])
+    new_tip = str(tip).strip().upper() if tip is not None else str(r["tip"])
+    new_sid = str(sid) if sid is not None else str(r["sube_id"])
+    if new_tip not in ("ACILIS", "ARA", "KAPANIS"):
+        raise HTTPException(400, "tip ACILIS, ARA veya KAPANIS olmalı")
+    cur.execute(
+        "SELECT 1 FROM personel WHERE id = %s AND COALESCE(aktif, TRUE) = TRUE",
+        (new_pid,),
+    )
+    if not cur.fetchone():
+        raise HTTPException(400, "Personel bulunamadı veya pasif")
+    cur.execute(
+        "SELECT 1 FROM subeler WHERE id = %s AND COALESCE(aktif, TRUE) = TRUE",
+        (new_sid,),
+    )
+    if not cur.fetchone():
+        raise HTTPException(400, "Şube bulunamadı veya pasif")
+    bas, bit = _vardiya_saatleri_tip_icin(cur, new_sid, tarih_str, new_tip)
+    cur.execute(
+        """
+        UPDATE vardiya
+        SET personel_id = %s, sube_id = %s, tip = %s,
+            bas_saat = %s::time, bit_saat = %s::time, kaynak = 'manuel',
+            secim_nedeni = NULL
+        WHERE id = %s
+        """,
+        (new_pid, new_sid, new_tip, bas, bit, vid),
+    )
+    return row_tarih
+
+
 @app.get("/api/vardiya")
 def vardiya_listele(tarih: Optional[date] = None):
-    """Tarihe göre vardiya listesi (personel + şube adı ile)."""
+    """Tarihe göre vardiya listesi (personel + şube adı + kaynak + şube özeti)."""
     gun = tarih or date.today()
+    ts = str(gun)
+    with db() as (conn, cur):
+        return _vardiya_listele_pack(cur, ts)
+
+
+@app.post("/api/vardiya/senaryo-dene")
+def vardiya_senaryo_dene(body: VardiyaSenaryoBody):
+    """
+    Kişi değişikliklerini ve ardından koru_manuel motorunu transaction içinde çalıştırır;
+    sonunda rollback — veritabanı değişmez. Önizleme + motor logu döner.
+    """
+    if not body.senaryo:
+        raise HTTPException(400, "senaryo en az bir adım içermeli")
+    gun = body.tarih
+    with db(commit=False) as (conn, cur):
+        for it in body.senaryo:
+            parca = it.model_dump(exclude={"id"}, exclude_none=True)
+            if not parca:
+                raise HTTPException(
+                    400,
+                    "Her senaryo adımında personel_id, tip veya sube_id gerekli",
+                )
+            _vardiya_row_patch_execute(cur, it.id, parca, gun=gun)
+        opt = vardiya_motoru_calistir(cur, gun, koru_manuel=True)
+        out = _vardiya_listele_pack(cur, str(gun))
+    return {"success": True, "simulasyon": True, "optimize": opt, **out}
+
+
+@app.post("/api/vardiya/senaryo-uygula")
+def vardiya_senaryo_uygula(body: VardiyaSenaryoBody):
+    """Senaryo adımlarını ve motoru tek transaction’da kalıcı yazar."""
+    if not body.senaryo:
+        raise HTTPException(400, "senaryo en az bir adım içermeli")
+    gun = body.tarih
+    with db() as (conn, cur):
+        for it in body.senaryo:
+            parca = it.model_dump(exclude={"id"}, exclude_none=True)
+            if not parca:
+                raise HTTPException(
+                    400,
+                    "Her senaryo adımında personel_id, tip veya sube_id gerekli",
+                )
+            _vardiya_row_patch_execute(cur, it.id, parca, gun=gun)
+        opt = vardiya_motoru_calistir(cur, gun, koru_manuel=True)
+        out = _vardiya_listele_pack(cur, str(gun))
+    return {"success": True, "optimize": opt, **out}
+
+
+@app.patch("/api/vardiya/{vid}")
+def vardiya_guncelle(vid: str, body: dict):
+    """Manuel düzenleme: personel ve/veya tip ve/veya şube; saatler şube şemasından yeniden üretilir."""
+    with db() as (conn, cur):
+        tarih_plan = _vardiya_row_patch_execute(cur, vid, body, gun=None)
+    opt = _vardiya_optimize_koru_manuel_safe(tarih_plan)
+    return {"success": True, "optimize": opt}
+
+
+@app.post("/api/vardiya/takas")
+def vardiya_takas(body: dict):
+    """İki satırın personellerini değiştir (aynı gün); her iki satır da manuel işaretlenir."""
+    a = body.get("id_a")
+    b = body.get("id_b")
+    if not a or not b or str(a) == str(b):
+        raise HTTPException(400, "id_a ve id_b farklı olmalı")
     with db() as (conn, cur):
         cur.execute(
-            """
-            SELECT v.id, v.tarih, v.tip, v.bas_saat, v.bit_saat,
-                   p.ad_soyad AS personel_adi,
-                   COALESCE(s.ad, '—') AS sube_adi
-            FROM vardiya v
-            JOIN personel p ON p.id = v.personel_id
-            LEFT JOIN subeler s ON s.id = v.sube_id
-            WHERE v.tarih = %s
-            ORDER BY COALESCE(s.ad, ''), p.ad_soyad,
-                CASE v.tip
-                    WHEN 'ACILIS' THEN 1
-                    WHEN 'ARA' THEN 2
-                    WHEN 'KAPANIS' THEN 3
-                    ELSE 4
-                END
-            """,
-            (str(gun),),
+            "SELECT id, tarih, personel_id FROM vardiya WHERE id = %s",
+            (str(a),),
         )
-        rows = []
-        for r in cur.fetchall():
-            bas = _saat_str(r["bas_saat"])
-            bit = _saat_str(r["bit_saat"])
-            rows.append(
-                {
-                    "id": str(r["id"]),
-                    "tarih": str(r["tarih"]),
-                    "personel_adi": r["personel_adi"] or "",
-                    "sube_adi": r["sube_adi"] or "—",
-                    "tip": r["tip"],
-                    "bas_saat": bas,
-                    "bit_saat": bit,
-                    "saat_araligi": f"{bas}–{bit}",
-                }
-            )
-    return {"tarih": str(gun), "vardiyalar": rows}
+        ra = cur.fetchone()
+        cur.execute(
+            "SELECT id, tarih, personel_id FROM vardiya WHERE id = %s",
+            (str(b),),
+        )
+        rb = cur.fetchone()
+        if not ra or not rb:
+            raise HTTPException(404, "Vardiya satırı bulunamadı")
+        da, db = dict(ra), dict(rb)
+        if str(da["tarih"]) != str(db["tarih"]):
+            raise HTTPException(400, "Aynı güne ait iki satır seçilmeli")
+        pa, pb = da["personel_id"], db["personel_id"]
+        cur.execute(
+            """
+            UPDATE vardiya SET personel_id = %s, kaynak = 'manuel', secim_nedeni = NULL
+            WHERE id = %s
+            """,
+            (pb, str(a)),
+        )
+        cur.execute(
+            """
+            UPDATE vardiya SET personel_id = %s, kaynak = 'manuel', secim_nedeni = NULL
+            WHERE id = %s
+            """,
+            (pa, str(b)),
+        )
+        tarih_plan = _vardiya_body_tarih_date(da["tarih"])
+    opt = _vardiya_optimize_koru_manuel_safe(tarih_plan)
+    return {"success": True, "optimize": opt}
 
 
 @app.delete("/api/vardiya")
