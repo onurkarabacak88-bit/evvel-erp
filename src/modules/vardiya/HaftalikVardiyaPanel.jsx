@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import html2pdf from 'html2pdf.js';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -48,8 +49,6 @@ function hucreSinifi(val, subeAds) {
 /**
  * Haftalık vardiya raporu: tablo, PDF (html2pdf.js), Excel (GET /api/vardiya/excel).
  * Veri: GET /api/vardiya/haftalik?grup=1
- *
- * Not: Günlük plan `VardiyaPanel.jsx`, düzenlenebilir haftalık liste `VardiyaHaftalik.jsx`.
  */
 export default function HaftalikVardiyaPanel({ onNavigate }) {
   const [tarihSecim, setTarihSecim] = useState(bugunISO);
@@ -128,8 +127,6 @@ export default function HaftalikVardiyaPanel({ onNavigate }) {
     setPdfBusy(true);
     setHata(null);
     try {
-      const mod = await import('html2pdf.js');
-      const html2pdf = mod.default;
       await html2pdf()
         .set({
           margin: [3, 3, 3, 3],

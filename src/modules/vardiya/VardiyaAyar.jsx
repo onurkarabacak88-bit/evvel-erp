@@ -48,7 +48,58 @@ const VARSAYILAN_KISIT = {
   sadece_tip: '',
   sube_degistirebilir: true,
   kapanis_bit_saat: '',
+  calisma_profili: '',
+  hafta_max_gun: '',
+  gunluk_max_saat: '',
+  haftalik_max_saat: '',
+  min_baslangic_saat: '',
+  max_cikis_saat: '',
+  izinli_sube_ids: '',
 };
+
+const HAFTA_GUNU_ADLARI = [
+  'Pazartesi',
+  'Salı',
+  'Çarşamba',
+  'Perşembe',
+  'Cuma',
+  'Cumartesi',
+  'Pazar',
+];
+
+function bosGunlukSatirlari() {
+  return [0, 1, 2, 3, 4, 5, 6].map((hg) => ({
+    hafta_gunu: hg,
+    calisabilir: true,
+    sadece_tip: '',
+    min_baslangic: '',
+    max_cikis: '',
+    max_saat: '',
+  }));
+}
+
+function apiGunlukBirlestir(apiRows) {
+  const byHg = {};
+  (apiRows || []).forEach((r) => {
+    byHg[Number(r.hafta_gunu)] = r;
+  });
+  return bosGunlukSatirlari().map((b) => {
+    const r = byHg[b.hafta_gunu];
+    if (!r) return b;
+    const cal =
+      r.calisabilir !== undefined && r.calisabilir !== null
+        ? !!r.calisabilir
+        : !r.calisamaz;
+    return {
+      hafta_gunu: b.hafta_gunu,
+      calisabilir: cal,
+      sadece_tip: r.sadece_tip || '',
+      min_baslangic: saatInputVal(r.min_baslangic),
+      max_cikis: saatInputVal(r.max_cikis),
+      max_saat: r.max_saat != null && r.max_saat !== '' ? String(r.max_saat) : '',
+    };
+  });
+}
 
 const SUBE_KURAL_SATIRLARI = [
   { field: 'min_kapanis', label: 'Minimum kapanış personeli (hafta içi)', tip: 'number', min: 1, max: 5 },
@@ -80,6 +131,10 @@ export default function VardiyaAyar() {
     bitis_tarih: '',
     aciklama: '',
   });
+  const [gunlukPid, setGunlukPid] = useState('');
+  const [gunlukSatirlar, setGunlukSatirlar] = useState(bosGunlukSatirlari);
+  const [gunlukYukleniyor, setGunlukYukleniyor] = useState(false);
+  const [gunlukKaydediliyor, setGunlukKaydediliyor] = useState(false);
 
   const toast = (m, t = 'green') => {
     setMsg({ m, t });
@@ -142,6 +197,22 @@ export default function VardiyaAyar() {
               kapanis_bit_saat: k.kapanis_bit_saat
                 ? String(k.kapanis_bit_saat).slice(0, 5)
                 : '',
+              calisma_profili: k.calisma_profili || '',
+              hafta_max_gun: k.hafta_max_gun != null ? String(k.hafta_max_gun) : '',
+              gunluk_max_saat:
+                k.gunluk_max_saat != null && k.gunluk_max_saat !== ''
+                  ? String(k.gunluk_max_saat)
+                  : '',
+              haftalik_max_saat:
+                k.haftalik_max_saat != null && k.haftalik_max_saat !== ''
+                  ? String(k.haftalik_max_saat)
+                  : '',
+              min_baslangic_saat: saatInputVal(k.min_baslangic_saat),
+              max_cikis_saat: saatInputVal(k.max_cikis_saat),
+              izinli_sube_ids:
+                k.izinli_sube_ids != null && k.izinli_sube_ids !== ''
+                  ? String(k.izinli_sube_ids)
+                  : '',
             };
           });
           setKisitlar(m);
@@ -155,6 +226,27 @@ export default function VardiyaAyar() {
 
     yukleIzinler();
   }, []);
+
+  useEffect(() => {
+    if (tab !== 'gunluk' || !gunlukPid) {
+      return undefined;
+    }
+    let cancel = false;
+    setGunlukYukleniyor(true);
+    api(`/personel-gunluk-kisit/${gunlukPid}`)
+      .then((rows) => {
+        if (!cancel) setGunlukSatirlar(apiGunlukBirlestir(rows));
+      })
+      .catch(() => {
+        if (!cancel) setGunlukSatirlar(bosGunlukSatirlari());
+      })
+      .finally(() => {
+        if (!cancel) setGunlukYukleniyor(false);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [tab, gunlukPid]);
 
   const setSubeCfgVal = (sid, field, val) =>
     setSubeCfg((prev) => ({
@@ -194,6 +286,31 @@ export default function VardiyaAyar() {
           sadece_tip: k.sadece_tip || null,
           sube_degistirebilir: !!k.sube_degistirebilir,
           kapanis_bit_saat: k.kapanis_bit_saat || null,
+          calisma_profili: k.calisma_profili || null,
+          hafta_max_gun:
+            k.hafta_max_gun === '' || k.hafta_max_gun == null
+              ? null
+              : (() => {
+                  const n = parseInt(k.hafta_max_gun, 10);
+                  return Number.isFinite(n) ? n : null;
+                })(),
+          gunluk_max_saat:
+            k.gunluk_max_saat === '' || k.gunluk_max_saat == null
+              ? null
+              : (() => {
+                  const n = parseFloat(k.gunluk_max_saat);
+                  return Number.isFinite(n) ? n : null;
+                })(),
+          haftalik_max_saat:
+            k.haftalik_max_saat === '' || k.haftalik_max_saat == null
+              ? null
+              : (() => {
+                  const n = parseFloat(k.haftalik_max_saat);
+                  return Number.isFinite(n) ? n : null;
+                })(),
+          min_baslangic_saat: k.min_baslangic_saat || null,
+          max_cikis_saat: k.max_cikis_saat || null,
+          izinli_sube_ids: k.izinli_sube_ids || null,
         },
       });
       toast('Personel kısıtı kaydedildi');
@@ -201,6 +318,45 @@ export default function VardiyaAyar() {
       toast(e.message, 'red');
     } finally {
       setKayitLoading((l) => ({ ...l, [pid]: false }));
+    }
+  }
+
+  function setGunlukSatir(hg, field, val) {
+    setGunlukSatirlar((prev) =>
+      prev.map((row) => (row.hafta_gunu === hg ? { ...row, [field]: val } : row)),
+    );
+  }
+
+  async function gunlukKaydet() {
+    if (!gunlukPid) {
+      toast('Önce personel seçin', 'red');
+      return;
+    }
+    setGunlukKaydediliyor(true);
+    try {
+      const satirlar = gunlukSatirlar.map((r) => ({
+        hafta_gunu: r.hafta_gunu,
+        calisabilir: !!r.calisabilir,
+        sadece_tip: r.sadece_tip || null,
+        min_baslangic: r.min_baslangic || null,
+        max_cikis: r.max_cikis || null,
+        max_saat:
+          r.max_saat === '' || r.max_saat == null
+            ? null
+            : (() => {
+                const n = parseFloat(r.max_saat);
+                return Number.isFinite(n) ? n : null;
+              })(),
+      }));
+      await api(`/personel-gunluk-kisit/${gunlukPid}`, {
+        method: 'PUT',
+        body: { satirlar },
+      });
+      toast('Günlük kısıtlar kaydedildi');
+    } catch (e) {
+      toast(e.message, 'red');
+    } finally {
+      setGunlukKaydediliyor(false);
     }
   }
 
@@ -286,6 +442,13 @@ export default function VardiyaAyar() {
           role="presentation"
         >
           Personel kısıtları
+        </div>
+        <div
+          className={`tab ${tab === 'gunluk' ? 'active' : ''}`}
+          onClick={() => setTab('gunluk')}
+          role="presentation"
+        >
+          Haftalık gün kısıtı
         </div>
         <div
           className={`tab ${tab === 'baglanti' ? 'active' : ''}`}
@@ -551,6 +714,141 @@ export default function VardiyaAyar() {
                       }}
                     />
                   </label>
+
+                  <select
+                    value={k.calisma_profili || ''}
+                    onChange={(e) => setKisitVal(p.id, 'calisma_profili', e.target.value)}
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: 6,
+                      border: '1px solid var(--border)',
+                      background: 'var(--bg3)',
+                      color: 'var(--text)',
+                      fontSize: 12,
+                    }}
+                  >
+                    <option value="">Çalışma profili (yok)</option>
+                    <option value="full_time">Tam zamanlı</option>
+                    <option value="part_time">Yarı zamanlı (varsayılan haftalık 45 saat)</option>
+                    <option value="ogrenci">Öğrenci (varsayılan 30 saat / 4 gün)</option>
+                  </select>
+
+                  <input
+                    type="number"
+                    min={1}
+                    max={7}
+                    placeholder="Hafta max gün"
+                    title="Haftada en fazla kaç gün"
+                    value={k.hafta_max_gun}
+                    onChange={(e) => setKisitVal(p.id, 'hafta_max_gun', e.target.value)}
+                    style={{
+                      width: 110,
+                      padding: '6px 8px',
+                      borderRadius: 6,
+                      border: '1px solid var(--border)',
+                      background: 'var(--bg3)',
+                      color: 'var(--text)',
+                      fontSize: 12,
+                    }}
+                  />
+                  <input
+                    type="number"
+                    step="0.5"
+                    min={0}
+                    placeholder="Günlük max saat"
+                    value={k.gunluk_max_saat}
+                    onChange={(e) => setKisitVal(p.id, 'gunluk_max_saat', e.target.value)}
+                    style={{
+                      width: 120,
+                      padding: '6px 8px',
+                      borderRadius: 6,
+                      border: '1px solid var(--border)',
+                      background: 'var(--bg3)',
+                      color: 'var(--text)',
+                      fontSize: 12,
+                    }}
+                  />
+                  <input
+                    type="number"
+                    step="0.5"
+                    min={0}
+                    placeholder="Haftalık max saat"
+                    value={k.haftalik_max_saat}
+                    onChange={(e) => setKisitVal(p.id, 'haftalik_max_saat', e.target.value)}
+                    style={{
+                      width: 120,
+                      padding: '6px 8px',
+                      borderRadius: 6,
+                      border: '1px solid var(--border)',
+                      background: 'var(--bg3)',
+                      color: 'var(--text)',
+                      fontSize: 12,
+                    }}
+                  />
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      fontSize: 11,
+                      color: 'var(--text3)',
+                    }}
+                  >
+                    Min başlangıç
+                    <input
+                      type="time"
+                      value={k.min_baslangic_saat || ''}
+                      onChange={(e) =>
+                        setKisitVal(p.id, 'min_baslangic_saat', e.target.value)
+                      }
+                      style={{
+                        padding: '4px 8px',
+                        borderRadius: 6,
+                        border: '1px solid var(--border)',
+                        background: 'var(--bg2)',
+                        color: 'var(--text)',
+                      }}
+                    />
+                  </label>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      fontSize: 11,
+                      color: 'var(--text3)',
+                    }}
+                  >
+                    Max çıkış
+                    <input
+                      type="time"
+                      value={k.max_cikis_saat || ''}
+                      onChange={(e) => setKisitVal(p.id, 'max_cikis_saat', e.target.value)}
+                      style={{
+                        padding: '4px 8px',
+                        borderRadius: 6,
+                        border: '1px solid var(--border)',
+                        background: 'var(--bg2)',
+                        color: 'var(--text)',
+                      }}
+                    />
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="İzinli şube id (virgülle)"
+                    value={k.izinli_sube_ids}
+                    onChange={(e) => setKisitVal(p.id, 'izinli_sube_ids', e.target.value)}
+                    style={{
+                      minWidth: 160,
+                      flex: 1,
+                      padding: '6px 8px',
+                      borderRadius: 6,
+                      border: '1px solid var(--border)',
+                      background: 'var(--bg3)',
+                      color: 'var(--text)',
+                      fontSize: 12,
+                    }}
+                  />
                 </div>
 
                 <button
@@ -564,6 +862,128 @@ export default function VardiyaAyar() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {tab === 'gunluk' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <p style={{ fontSize: 12, color: 'var(--text3)' }}>
+            Haftanın günü başına: çalışılabilirlik, yalnızca belirli vardiya tipi, o güne özel min
+            başlangıç / max çıkış ve günlük max saat. Motor önce genel personel kısıtıyla birleştirir.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+            <label style={{ fontSize: 13 }}>
+              Personel
+              <select
+                value={gunlukPid}
+                onChange={(e) => setGunlukPid(e.target.value)}
+                style={{
+                  marginLeft: 8,
+                  padding: '8px 12px',
+                  borderRadius: 8,
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg2)',
+                  color: 'var(--text)',
+                  minWidth: 200,
+                }}
+              >
+                <option value="">— Seçin —</option>
+                {personeller.map((per) => (
+                  <option key={per.id} value={per.id}>
+                    {per.ad_soyad}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              disabled={!gunlukPid || gunlukKaydediliyor || gunlukYukleniyor}
+              onClick={() => gunlukKaydet()}
+            >
+              {gunlukKaydediliyor ? 'Kaydediliyor…' : 'Gün kısıtlarını kaydet'}
+            </button>
+            {gunlukYukleniyor && (
+              <span style={{ fontSize: 12, color: 'var(--text3)' }}>Yükleniyor…</span>
+            )}
+          </div>
+          {gunlukPid && (
+            <div style={{ overflowX: 'auto' }}>
+              <table className="data-table" style={{ minWidth: 720, fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <th>Gün</th>
+                    <th>Çalışabilir</th>
+                    <th>Sadece tip</th>
+                    <th>Min başlangıç</th>
+                    <th>Max çıkış</th>
+                    <th>Max saat</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gunlukSatirlar.map((r) => (
+                    <tr key={r.hafta_gunu}>
+                      <td>{HAFTA_GUNU_ADLARI[r.hafta_gunu]}</td>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={!!r.calisabilir}
+                          onChange={(e) =>
+                            setGunlukSatir(r.hafta_gunu, 'calisabilir', e.target.checked)
+                          }
+                        />
+                      </td>
+                      <td>
+                        <select
+                          value={r.sadece_tip || ''}
+                          onChange={(e) =>
+                            setGunlukSatir(r.hafta_gunu, 'sadece_tip', e.target.value)
+                          }
+                          style={{ padding: 4, fontSize: 12 }}
+                        >
+                          <option value="">—</option>
+                          <option value="ACILIS">ACILIS</option>
+                          <option value="ARA">ARA</option>
+                          <option value="KAPANIS">KAPANIS</option>
+                        </select>
+                      </td>
+                      <td>
+                        <input
+                          type="time"
+                          value={r.min_baslangic || ''}
+                          onChange={(e) =>
+                            setGunlukSatir(r.hafta_gunu, 'min_baslangic', e.target.value)
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="time"
+                          value={r.max_cikis || ''}
+                          onChange={(e) =>
+                            setGunlukSatir(r.hafta_gunu, 'max_cikis', e.target.value)
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min={0}
+                          placeholder="—"
+                          value={r.max_saat}
+                          onChange={(e) =>
+                            setGunlukSatir(r.hafta_gunu, 'max_saat', e.target.value)
+                          }
+                          style={{ width: 72 }}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
