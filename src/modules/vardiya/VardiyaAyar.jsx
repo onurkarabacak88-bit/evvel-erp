@@ -10,6 +10,8 @@ function saatInputVal(v) {
 
 const VARSAYILAN_SUBE = {
   vardiyaya_dahil: true,
+  planla_acilis: true,
+  planla_kapanis: true,
   min_kapanis: 1,
   tek_kapanis_izinli: true,
   tek_acilis_izinli: true,
@@ -56,6 +58,9 @@ const VARSAYILAN_KISIT = {
   min_baslangic_saat: '',
   max_cikis_saat: '',
   izinli_sube_ids: '',
+  part_gunluk_min_saat: '',
+  part_gunluk_max_saat: '',
+  gunluk_mesai_fazlasi_saat: '',
 };
 
 const HAFTA_GUNU_ADLARI = [
@@ -104,8 +109,13 @@ function apiGunlukBirlestir(apiRows) {
 
 const SUBE_KURAL_SATIRLARI = [
   {
-    field: 'vardiyaya_dahil',
-    label: 'Otomatik vardiya planına dahil (kapalıysa motor bu şubeyi atlar)',
+    field: 'planla_acilis',
+    label: 'Bu şubede açılış (ACILIS) vardiyası otomatik planda atansın',
+    tip: 'bool',
+  },
+  {
+    field: 'planla_kapanis',
+    label: 'Bu şubede kapanış (KAPANIS) vardiyası otomatik planda atansın',
     tip: 'bool',
   },
   { field: 'min_kapanis', label: 'Minimum kapanış personeli (hafta içi)', tip: 'number', min: 1, max: 5 },
@@ -220,6 +230,18 @@ export default function VardiyaAyar() {
               izinli_sube_ids:
                 k.izinli_sube_ids != null && k.izinli_sube_ids !== ''
                   ? String(k.izinli_sube_ids)
+                  : '',
+              part_gunluk_min_saat:
+                k.part_gunluk_min_saat != null && k.part_gunluk_min_saat !== ''
+                  ? String(k.part_gunluk_min_saat)
+                  : '',
+              part_gunluk_max_saat:
+                k.part_gunluk_max_saat != null && k.part_gunluk_max_saat !== ''
+                  ? String(k.part_gunluk_max_saat)
+                  : '',
+              gunluk_mesai_fazlasi_saat:
+                k.gunluk_mesai_fazlasi_saat != null && k.gunluk_mesai_fazlasi_saat !== ''
+                  ? String(k.gunluk_mesai_fazlasi_saat)
                   : '',
             };
           });
@@ -344,6 +366,27 @@ export default function VardiyaAyar() {
           min_baslangic_saat: k.min_baslangic_saat || null,
           max_cikis_saat: k.max_cikis_saat || null,
           izinli_sube_ids: k.izinli_sube_ids || null,
+          part_gunluk_min_saat:
+            k.part_gunluk_min_saat === '' || k.part_gunluk_min_saat == null
+              ? null
+              : (() => {
+                  const n = parseFloat(k.part_gunluk_min_saat);
+                  return Number.isFinite(n) ? n : null;
+                })(),
+          part_gunluk_max_saat:
+            k.part_gunluk_max_saat === '' || k.part_gunluk_max_saat == null
+              ? null
+              : (() => {
+                  const n = parseFloat(k.part_gunluk_max_saat);
+                  return Number.isFinite(n) ? n : null;
+                })(),
+          gunluk_mesai_fazlasi_saat:
+            k.gunluk_mesai_fazlasi_saat === '' || k.gunluk_mesai_fazlasi_saat == null
+              ? null
+              : (() => {
+                  const n = parseFloat(k.gunluk_mesai_fazlasi_saat);
+                  return Number.isFinite(n) ? n : null;
+                })(),
         },
       });
       toast('Personel kısıtı kaydedildi');
@@ -456,8 +499,11 @@ export default function VardiyaAyar() {
       <div className="page-header">
         <h2>Vardiya kuralları</h2>
         <p>
-          Her şube için vardiya saat aralıklarını (açılış / ara / kapanış) tanımlayın; boş bırakılan
-          değerler sistem varsayılanını kullanır. Kurallar ve kaydırma ayarları aynı ekranda.
+          Her şube için saat aralıklarını ve açılış/kapanışın planda olup olmayacağını seçin.
+          Personelde yarı zamanlı günlük min–max saat ve mesai fazlası tavanı motor kotasına girer.
+          Haftalık izin günleri <strong>Haftalık gün kısıtı</strong> sekmesinde; onaylı tarihsel izinler{' '}
+          <strong>İzinler</strong> sekmesindedir. İki şubede bölünmüş part vardiyası (kaydırmalı tek
+          gün) henüz tek satırda üretilmez — motor şimdilik şube başına tam slot atar.
         </p>
       </div>
 
@@ -514,6 +560,37 @@ export default function VardiyaAyar() {
                 }}
               >
                 <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 14 }}>{s.ad}</div>
+                <div
+                  style={{
+                    marginBottom: 14,
+                    padding: '12px 14px',
+                    background: 'var(--bg3)',
+                    borderRadius: 8,
+                    border: '1px solid var(--border)',
+                  }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
+                    Bu şubeyi otomatik vardiya planına ekleyelim mi?
+                  </div>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      cursor: 'pointer',
+                      fontSize: 13,
+                      color: 'var(--text)',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!cfg.vardiyaya_dahil}
+                      onChange={(e) => setSubeCfgVal(s.id, 'vardiyaya_dahil', e.target.checked)}
+                    />
+                    Evet, bu şube otomatik planda yer alsın (işareti kaldırırsanız motor bu şubeyi tamamen
+                    atlar)
+                  </label>
+                </div>
                 <div
                   style={{
                     display: 'grid',
@@ -696,9 +773,9 @@ export default function VardiyaAyar() {
 
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, flex: 1 }}>
                   {[
-                    { field: 'acilis_yapabilir', label: 'Açılış' },
-                    { field: 'ara_yapabilir', label: 'Ara' },
-                    { field: 'kapanis_yapabilir', label: 'Kapanış' },
+                    { field: 'acilis_yapabilir', label: 'Açılış vardiyası' },
+                    { field: 'ara_yapabilir', label: 'Ara vardiyası' },
+                    { field: 'kapanis_yapabilir', label: 'Kapanış vardiyası' },
                     { field: 'sube_degistirebilir', label: 'Kaydırılabilir' },
                   ].map((x) => (
                     <label
@@ -837,6 +914,80 @@ export default function VardiyaAyar() {
                       fontSize: 12,
                     }}
                   />
+                  <div
+                    style={{
+                      width: '100%',
+                      flexBasis: '100%',
+                      marginTop: 4,
+                      padding: '8px 10px',
+                      background: 'var(--bg3)',
+                      borderRadius: 8,
+                      border: '1px dashed var(--border)',
+                    }}
+                  >
+                    <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 6, color: 'var(--text2)' }}>
+                      Part / yarı zamanlı günlük hedef (personel kartı sürekli değilse veya profil part ise
+                      motor uygular)
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min={0}
+                        placeholder="Günlük min saat (hedef)"
+                        title="Çalıştığı günlerde en az bu kadar süre atanması beklenir; altında kalırsa motor uyarı yazar"
+                        value={k.part_gunluk_min_saat}
+                        onChange={(e) => setKisitVal(p.id, 'part_gunluk_min_saat', e.target.value)}
+                        style={{
+                          width: 148,
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          border: '1px solid var(--border)',
+                          background: 'var(--bg2)',
+                          color: 'var(--text)',
+                          fontSize: 12,
+                        }}
+                      />
+                      <input
+                        type="number"
+                        step="0.5"
+                        min={0}
+                        placeholder="Part günlük max saat"
+                        title="Günlük üst sınırı daraltır (boşsa sadece günlük max saat geçer)"
+                        value={k.part_gunluk_max_saat}
+                        onChange={(e) => setKisitVal(p.id, 'part_gunluk_max_saat', e.target.value)}
+                        style={{
+                          width: 148,
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          border: '1px solid var(--border)',
+                          background: 'var(--bg2)',
+                          color: 'var(--text)',
+                          fontSize: 12,
+                        }}
+                      />
+                      <input
+                        type="number"
+                        step="0.5"
+                        min={0}
+                        placeholder="Mesai fazlası (+saat)"
+                        title="Zorunlu hallerde günlük tavana eklenecek ekstra saat"
+                        value={k.gunluk_mesai_fazlasi_saat}
+                        onChange={(e) =>
+                          setKisitVal(p.id, 'gunluk_mesai_fazlasi_saat', e.target.value)
+                        }
+                        style={{
+                          width: 148,
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          border: '1px solid var(--border)',
+                          background: 'var(--bg2)',
+                          color: 'var(--text)',
+                          fontSize: 12,
+                        }}
+                      />
+                    </div>
+                  </div>
                   <label
                     style={{
                       display: 'flex',
