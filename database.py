@@ -580,6 +580,42 @@ def init_db():
             )
         """)
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS personel_gunluk_kisit (
+                id              TEXT PRIMARY KEY,
+                personel_id     TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
+                hafta_gunu      SMALLINT NOT NULL CHECK (hafta_gunu >= 0 AND hafta_gunu <= 6),
+                calisamaz       BOOLEAN NOT NULL DEFAULT FALSE,
+                izinli_tipler   TEXT,
+                guncelleme      TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (personel_id, hafta_gunu)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_personel_gunluk_kisit_pid
+            ON personel_gunluk_kisit (personel_id)
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS personel_tercih (
+                id           TEXT PRIMARY KEY,
+                personel_id  TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
+                tercih_tip   TEXT NOT NULL CHECK (tercih_tip IN ('ACILIS','ARA','KAPANIS')),
+                oncelik      SMALLINT NOT NULL DEFAULT 1,
+                guncelleme   TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (personel_id, tercih_tip)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_personel_tercih_pid ON personel_tercih (personel_id)
+        """)
+        # Vardiya ön seçim: yalnızca vardiyaya_dahil=TRUE olanlar otomatik planda
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS personel_config (
+                personel_id     TEXT PRIMARY KEY REFERENCES personel(id) ON DELETE CASCADE,
+                vardiyaya_dahil BOOLEAN NOT NULL DEFAULT TRUE,
+                guncelleme      TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS sube_config (
                 id                   TEXT PRIMARY KEY,
                 sube_id              TEXT NOT NULL REFERENCES subeler(id) UNIQUE,
@@ -591,6 +627,12 @@ def init_db():
                 hafta_sonu_min_kap   INT NOT NULL DEFAULT 1,
                 tam_part_zorunlu     BOOLEAN NOT NULL DEFAULT FALSE,
                 kapanis_dusurulemez  BOOLEAN NOT NULL DEFAULT FALSE,
+                acilis_bas_saat      TEXT,
+                acilis_bit_saat      TEXT,
+                ara_bas_saat         TEXT,
+                ara_bit_saat         TEXT,
+                kapanis_bas_saat     TEXT,
+                kapanis_bit_saat     TEXT,
                 guncelleme           TIMESTAMP DEFAULT NOW()
             )
         """)
@@ -613,6 +655,34 @@ def init_db():
                     ALTER TABLE personel_kisit ADD COLUMN kapanis_bit_saat TEXT;
                 END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_kisit' AND column_name='calisan_rol') THEN
+                    ALTER TABLE personel_kisit ADD COLUMN calisan_rol TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_kisit' AND column_name='hafta_max_gun') THEN
+                    ALTER TABLE personel_kisit ADD COLUMN hafta_max_gun INT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_kisit' AND column_name='gunluk_max_saat') THEN
+                    ALTER TABLE personel_kisit ADD COLUMN gunluk_max_saat NUMERIC(5,2);
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_kisit' AND column_name='haftalik_max_saat') THEN
+                    ALTER TABLE personel_kisit ADD COLUMN haftalik_max_saat NUMERIC(6,2);
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_kisit' AND column_name='min_baslangic_saat') THEN
+                    ALTER TABLE personel_kisit ADD COLUMN min_baslangic_saat TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_kisit' AND column_name='max_cikis_saat') THEN
+                    ALTER TABLE personel_kisit ADD COLUMN max_cikis_saat TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_kisit' AND column_name='izinli_sube_ids') THEN
+                    ALTER TABLE personel_kisit ADD COLUMN izinli_sube_ids TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='sube_config' AND column_name='tek_acilis_izinli') THEN
                     ALTER TABLE sube_config ADD COLUMN tek_acilis_izinli BOOLEAN NOT NULL DEFAULT TRUE;
                 END IF;
@@ -623,6 +693,30 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='sube_config' AND column_name='kapanis_dusurulemez') THEN
                     ALTER TABLE sube_config ADD COLUMN kapanis_dusurulemez BOOLEAN NOT NULL DEFAULT FALSE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='acilis_bas_saat') THEN
+                    ALTER TABLE sube_config ADD COLUMN acilis_bas_saat TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='acilis_bit_saat') THEN
+                    ALTER TABLE sube_config ADD COLUMN acilis_bit_saat TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='ara_bas_saat') THEN
+                    ALTER TABLE sube_config ADD COLUMN ara_bas_saat TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='ara_bit_saat') THEN
+                    ALTER TABLE sube_config ADD COLUMN ara_bit_saat TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='kapanis_bas_saat') THEN
+                    ALTER TABLE sube_config ADD COLUMN kapanis_bas_saat TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='kapanis_bit_saat') THEN
+                    ALTER TABLE sube_config ADD COLUMN kapanis_bit_saat TEXT;
                 END IF;
             END $$;
         """)

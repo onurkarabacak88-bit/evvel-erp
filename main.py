@@ -1,15 +1,15 @@
 import logging
 import time
 import traceback
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi import Request
 from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from datetime import date, timedelta
-import uuid, os, json, pathlib, calendar, threading
+import uuid, os, json, pathlib, calendar, threading, io, re
 from database import db, init_db
 from vardiya_motor import vardiya_motoru_calistir
 
@@ -1794,6 +1794,49 @@ def personel_sil(pid: str):
         audit(cur, 'personel', pid, 'DELETE', eski=eski)
     return {"success": True}
 
+# ── PERSONEL CONFIG (vardiya ön seçim) ─────────────────────────
+
+class PersonelConfigModel(BaseModel):
+    vardiyaya_dahil: bool = True
+
+
+@app.get("/api/personel-config")
+def personel_config_list():
+    """Aktif personel + vardiyaya_dahil (satır yoksa varsayılan true)."""
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT p.id AS personel_id, p.ad_soyad,
+                   COALESCE(pc.vardiyaya_dahil, TRUE) AS vardiyaya_dahil
+            FROM personel p
+            LEFT JOIN personel_config pc ON pc.personel_id = p.id
+            WHERE p.aktif = TRUE
+            ORDER BY p.ad_soyad
+            """
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+@app.put("/api/personel-config/{pid}")
+def personel_config_kaydet(pid: str, body: PersonelConfigModel):
+    with db() as (conn, cur):
+        cur.execute("SELECT id FROM personel WHERE id=%s", (pid,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Personel bulunamadı")
+        cur.execute(
+            """
+            INSERT INTO personel_config (personel_id, vardiyaya_dahil, guncelleme)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (personel_id) DO UPDATE SET
+                vardiyaya_dahil = EXCLUDED.vardiyaya_dahil,
+                guncelleme = NOW()
+            """,
+            (pid, body.vardiyaya_dahil),
+        )
+        audit(cur, "personel_config", pid, "UPSERT")
+    return {"success": True, "personel_id": pid, "vardiyaya_dahil": body.vardiyaya_dahil}
+
+
 # ── PERSONEL AYLIK KAYIT ──────────────────────────────────────
 
 class PersonelAylikModel(BaseModel):
@@ -2140,7 +2183,49 @@ def personel_kisit_getir(pid: str):
             "sadece_tip": None,
             "sube_degistirebilir": True,
             "kapanis_bit_saat": None,
+            "calisan_rol": None,
+            "hafta_max_gun": None,
+            "gunluk_max_saat": None,
+            "haftalik_max_saat": None,
+            "min_baslangic_saat": None,
+            "max_cikis_saat": None,
+            "izinli_sube_ids": None,
         }
+
+
+def _kisit_opt_int(v: Any) -> Optional[int]:
+    if v is None or v == "":
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _kisit_opt_float(v: Any) -> Optional[float]:
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _kisit_opt_time_str(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+def _kisit_izinli_sube_ids(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    if isinstance(v, list):
+        parts = [str(x).strip() for x in v if str(x).strip()]
+        return ",".join(parts) if parts else None
+    s = str(v).strip()
+    return s or None
 
 
 @app.put("/api/personel-kisit/{pid}")
@@ -2151,13 +2236,20 @@ def personel_kisit_guncelle(pid: str, body: dict):
     kb = body.get("kapanis_bit_saat")
     if kb == "":
         kb = None
+    cr = body.get("calisan_rol")
+    if cr == "":
+        cr = None
+    mbs = _kisit_opt_time_str(body.get("min_baslangic_saat"))
+    mcs = _kisit_opt_time_str(body.get("max_cikis_saat"))
     with db() as (conn, cur):
         cur.execute(
             """
             INSERT INTO personel_kisit
                 (id, personel_id, acilis_yapabilir, ara_yapabilir, kapanis_yapabilir,
-                 sadece_tip, sube_degistirebilir, kapanis_bit_saat)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                 sadece_tip, sube_degistirebilir, kapanis_bit_saat,
+                 calisan_rol, hafta_max_gun, gunluk_max_saat, haftalik_max_saat,
+                 min_baslangic_saat, max_cikis_saat, izinli_sube_ids)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (personel_id) DO UPDATE SET
                 acilis_yapabilir    = EXCLUDED.acilis_yapabilir,
                 ara_yapabilir       = EXCLUDED.ara_yapabilir,
@@ -2165,6 +2257,13 @@ def personel_kisit_guncelle(pid: str, body: dict):
                 sadece_tip          = EXCLUDED.sadece_tip,
                 sube_degistirebilir = EXCLUDED.sube_degistirebilir,
                 kapanis_bit_saat    = EXCLUDED.kapanis_bit_saat,
+                calisan_rol         = EXCLUDED.calisan_rol,
+                hafta_max_gun       = EXCLUDED.hafta_max_gun,
+                gunluk_max_saat     = EXCLUDED.gunluk_max_saat,
+                haftalik_max_saat   = EXCLUDED.haftalik_max_saat,
+                min_baslangic_saat  = EXCLUDED.min_baslangic_saat,
+                max_cikis_saat      = EXCLUDED.max_cikis_saat,
+                izinli_sube_ids     = EXCLUDED.izinli_sube_ids,
                 guncelleme          = NOW()
             """,
             (
@@ -2176,8 +2275,110 @@ def personel_kisit_guncelle(pid: str, body: dict):
                 st,
                 body.get("sube_degistirebilir", True),
                 kb,
+                cr,
+                _kisit_opt_int(body.get("hafta_max_gun")),
+                _kisit_opt_float(body.get("gunluk_max_saat")),
+                _kisit_opt_float(body.get("haftalik_max_saat")),
+                mbs,
+                mcs,
+                _kisit_izinli_sube_ids(body.get("izinli_sube_ids")),
             ),
         )
+    return {"success": True}
+
+
+@app.get("/api/personel-gunluk-kisit/{pid}")
+def personel_gunluk_kisit_listele(pid: str):
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT * FROM personel_gunluk_kisit
+            WHERE personel_id=%s
+            ORDER BY hafta_gunu
+            """,
+            (pid,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+@app.put("/api/personel-gunluk-kisit/{pid}")
+def personel_gunluk_kisit_kaydet(pid: str, body: dict):
+    satirlar = body.get("satirlar")
+    if satirlar is None:
+        satirlar = body.get("items") or []
+    if not isinstance(satirlar, list):
+        raise HTTPException(400, "satirlar bir liste olmalı")
+    with db() as (conn, cur):
+        cur.execute(
+            "DELETE FROM personel_gunluk_kisit WHERE personel_id=%s", (pid,)
+        )
+        for it in satirlar:
+            try:
+                hg = int(it["hafta_gunu"])
+            except (KeyError, TypeError, ValueError):
+                raise HTTPException(400, "Her satırda hafta_gunu (0–6) gerekli")
+            if hg < 0 or hg > 6:
+                raise HTTPException(400, "hafta_gunu 0 (Pzt) … 6 (Paz) olmalı")
+            calis = bool(it.get("calisamaz", False))
+            izt = it.get("izinli_tipler")
+            if izt is None or izt == "":
+                izt_sql = None
+            elif isinstance(izt, list):
+                parts = [str(x).strip().upper() for x in izt if str(x).strip()]
+                izt_sql = ",".join(parts) if parts else None
+            else:
+                izt_sql = str(izt).strip() or None
+            cur.execute(
+                """
+                INSERT INTO personel_gunluk_kisit
+                    (id, personel_id, hafta_gunu, calisamaz, izinli_tipler)
+                VALUES (%s,%s,%s,%s,%s)
+                """,
+                (str(uuid.uuid4()), pid, hg, calis, izt_sql),
+            )
+    return {"success": True}
+
+
+@app.get("/api/personel-tercih/{pid}")
+def personel_tercih_listele(pid: str):
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT * FROM personel_tercih
+            WHERE personel_id=%s
+            ORDER BY oncelik, tercih_tip
+            """,
+            (pid,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+@app.put("/api/personel-tercih/{pid}")
+def personel_tercih_kaydet(pid: str, body: dict):
+    satirlar = body.get("satirlar")
+    if satirlar is None:
+        satirlar = body.get("items") or []
+    if not isinstance(satirlar, list):
+        raise HTTPException(400, "satirlar bir liste olmalı")
+    izinli = {"ACILIS", "ARA", "KAPANIS"}
+    with db() as (conn, cur):
+        cur.execute("DELETE FROM personel_tercih WHERE personel_id=%s", (pid,))
+        for it in satirlar:
+            tip = str(it.get("tercih_tip", "")).strip().upper()
+            if tip not in izinli:
+                raise HTTPException(400, "tercih_tip ACILIS, ARA veya KAPANIS olmalı")
+            try:
+                oncelik = int(it.get("oncelik", 1))
+            except (TypeError, ValueError):
+                raise HTTPException(400, "oncelik sayı olmalı")
+            cur.execute(
+                """
+                INSERT INTO personel_tercih
+                    (id, personel_id, tercih_tip, oncelik)
+                VALUES (%s,%s,%s,%s)
+                """,
+                (str(uuid.uuid4()), pid, tip, oncelik),
+            )
     return {"success": True}
 
 
@@ -2212,19 +2413,32 @@ def sube_config_getir(sid: str):
             "hafta_sonu_min_kap": 1,
             "tam_part_zorunlu": False,
             "kapanis_dusurulemez": False,
+            "acilis_bas_saat": None,
+            "acilis_bit_saat": None,
+            "ara_bas_saat": None,
+            "ara_bit_saat": None,
+            "kapanis_bas_saat": None,
+            "kapanis_bit_saat": None,
         }
 
 
 @app.put("/api/sube-config/{sid}")
 def sube_config_guncelle(sid: str, body: dict):
     with db() as (conn, cur):
+        def _t(v):
+            if v is None or v == "":
+                return None
+            return str(v).strip() or None
+
         cur.execute(
             """
             INSERT INTO sube_config
                 (id, sube_id, min_kapanis, tek_kapanis_izinli, tek_acilis_izinli,
                  kaydirma_acik, sadece_tam_kayabilir, hafta_sonu_min_kap,
-                 tam_part_zorunlu, kapanis_dusurulemez)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 tam_part_zorunlu, kapanis_dusurulemez,
+                 acilis_bas_saat, acilis_bit_saat, ara_bas_saat, ara_bit_saat,
+                 kapanis_bas_saat, kapanis_bit_saat)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (sube_id) DO UPDATE SET
                 min_kapanis          = EXCLUDED.min_kapanis,
                 tek_kapanis_izinli   = EXCLUDED.tek_kapanis_izinli,
@@ -2234,6 +2448,12 @@ def sube_config_guncelle(sid: str, body: dict):
                 hafta_sonu_min_kap   = EXCLUDED.hafta_sonu_min_kap,
                 tam_part_zorunlu     = EXCLUDED.tam_part_zorunlu,
                 kapanis_dusurulemez  = EXCLUDED.kapanis_dusurulemez,
+                acilis_bas_saat      = EXCLUDED.acilis_bas_saat,
+                acilis_bit_saat      = EXCLUDED.acilis_bit_saat,
+                ara_bas_saat         = EXCLUDED.ara_bas_saat,
+                ara_bit_saat         = EXCLUDED.ara_bit_saat,
+                kapanis_bas_saat     = EXCLUDED.kapanis_bas_saat,
+                kapanis_bit_saat     = EXCLUDED.kapanis_bit_saat,
                 guncelleme           = NOW()
             """,
             (
@@ -2247,6 +2467,12 @@ def sube_config_guncelle(sid: str, body: dict):
                 int(body.get("hafta_sonu_min_kap", 1)),
                 bool(body.get("tam_part_zorunlu", False)),
                 bool(body.get("kapanis_dusurulemez", False)),
+                _t(body.get("acilis_bas_saat")),
+                _t(body.get("acilis_bit_saat")),
+                _t(body.get("ara_bas_saat")),
+                _t(body.get("ara_bit_saat")),
+                _t(body.get("kapanis_bas_saat")),
+                _t(body.get("kapanis_bit_saat")),
             ),
         )
     return {"success": True}
@@ -2343,6 +2569,34 @@ def vardiya_listele(tarih: Optional[date] = None):
     return {"tarih": str(gun), "vardiyalar": rows}
 
 
+@app.delete("/api/vardiya")
+def vardiya_sil(
+    kayit_id: Optional[str] = Query(None, alias="id"),
+    tarih: Optional[date] = None,
+):
+    """
+    Tek kayıt: query `id` (vardiya satırı uuid).
+    Tüm gün: yalnızca `tarih` (o güne ait tüm vardiyalar silinir; motoru yeniden çalıştırmadan önce temizlik için).
+    """
+    if kayit_id:
+        with db() as (conn, cur):
+            cur.execute("DELETE FROM vardiya WHERE id = %s RETURNING id", (kayit_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Vardiya kaydı bulunamadı")
+        return {"success": True, "silinen": 1}
+    if tarih is not None:
+        ts = str(tarih)
+        with db() as (conn, cur):
+            cur.execute("DELETE FROM vardiya WHERE tarih = %s", (ts,))
+            n = cur.rowcount
+        return {"success": True, "silinen": n, "tarih": ts}
+    raise HTTPException(
+        400,
+        "Silme için `id` (tek satır) veya `tarih` (günün tamamı) query parametresi gerekli.",
+    )
+
+
 _GUNLER_TR = (
     "PAZARTESİ",
     "SALI",
@@ -2376,14 +2630,11 @@ def _gun_kisa_tr(d: date) -> str:
     return f"{d.day}-{_AYLAR_KISA[d.month - 1]}"
 
 
-@app.get("/api/vardiya/haftalik")
-def vardiya_haftalik_get(tarih: Optional[date] = None):
-    """
-    Tulipi tarzı haftalık tablo: Pazartesi–Pazar sütunları, personel satırları.
-    `tarih` haftanın herhangi bir günü olabilir; pazartesi normalize edilir.
-    """
-    d0 = tarih or date.today()
-    pzt = _pazartesi(d0)
+_VARDIYA_GUN_KOLON = ("Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz")
+
+
+def _vardiya_haftalik_veri_yukle(cur, pzt: date) -> Dict[str, Any]:
+    """Pazartesi `pzt` için haftalık vardiya ham verisi (cursor açık)."""
     gunler = []
     for i in range(7):
         g = pzt + timedelta(days=i)
@@ -2395,75 +2646,259 @@ def vardiya_haftalik_get(tarih: Optional[date] = None):
             }
         )
     pazar = pzt + timedelta(days=6)
+    tarihler = [str(pzt + timedelta(days=i)) for i in range(7)]
 
-    with db() as (conn, cur):
-        cur.execute(
-            "SELECT baslik, not_metni FROM vardiya_hafta_meta WHERE hafta_baslangic=%s",
-            (str(pzt),),
-        )
-        meta = cur.fetchone()
-        baslik = (meta and meta.get("baslik")) or "Tulipi Haftalık Vardiya Listesi"
-        not_metni = (meta and meta.get("not_metni")) or ""
+    cur.execute(
+        "SELECT baslik, not_metni FROM vardiya_hafta_meta WHERE hafta_baslangic=%s",
+        (str(pzt),),
+    )
+    meta = cur.fetchone()
+    baslik = (meta and meta.get("baslik")) or "Tulipi Haftalık Vardiya Listesi"
+    not_metni = (meta and meta.get("not_metni")) or ""
 
-        cur.execute(
-            """
-            SELECT h.* FROM vardiya_hafta_hucre h
-            WHERE h.hafta_baslangic = %s
-            """,
-            (str(pzt),),
-        )
-        hucre_map = {}
-        for r in cur.fetchall():
-            key = (r["personel_id"], str(r["tarih"]))
-            hucre_map[key] = (r["icerik"] or "").strip()
+    cur.execute(
+        """
+        SELECT h.* FROM vardiya_hafta_hucre h
+        WHERE h.hafta_baslangic = %s
+        """,
+        (str(pzt),),
+    )
+    hucre_map = {}
+    for r in cur.fetchall():
+        key = (r["personel_id"], str(r["tarih"]))
+        hucre_map[key] = (r["icerik"] or "").strip()
 
-        cur.execute(
-            """
-            SELECT * FROM vardiya_hafta_satir WHERE hafta_baslangic=%s
-            """,
-            (str(pzt),),
-        )
-        satir_x = {(r["personel_id"]): dict(r) for r in cur.fetchall()}
+    cur.execute(
+        """
+        SELECT * FROM vardiya_hafta_satir WHERE hafta_baslangic=%s
+        """,
+        (str(pzt),),
+    )
+    satir_x = {(r["personel_id"]): dict(r) for r in cur.fetchall()}
 
-        cur.execute(
-            """
-            SELECT p.id, p.ad_soyad, p.gorev, p.sube_id, COALESCE(s.ad, '—') AS sube_adi
-            FROM personel p
-            LEFT JOIN subeler s ON s.id = p.sube_id
-            WHERE p.aktif = TRUE
-            ORDER BY COALESCE(s.ad, ''), p.ad_soyad
-            """
+    cur.execute(
+        """
+        SELECT p.id, p.ad_soyad, p.gorev, p.sube_id, COALESCE(s.ad, '—') AS sube_adi
+        FROM personel p
+        LEFT JOIN subeler s ON s.id = p.sube_id
+        WHERE p.aktif = TRUE
+        ORDER BY COALESCE(s.ad, ''), p.ad_soyad
+        """
+    )
+    satirlar = []
+    for p in cur.fetchall():
+        pid = p["id"]
+        hx = satir_x.get(pid) or {}
+        hucreler = {}
+        for ts in tarihler:
+            hucreler[ts] = hucre_map.get((pid, ts), "")
+        satirlar.append(
+            {
+                "personel_id": pid,
+                "ad_soyad": p["ad_soyad"] or "",
+                "gorev": p["gorev"] or "",
+                "sube_id": p["sube_id"],
+                "sube_adi": p["sube_adi"] or "—",
+                "hucreler": hucreler,
+                "kapanis_sayisi": (hx.get("kapanis_sayisi") or "") or "",
+                "alacak_saat": (hx.get("alacak_saat") or "") or "",
+            }
         )
-        satirlar = []
-        for p in cur.fetchall():
-            pid = p["id"]
-            hx = satir_x.get(pid) or {}
-            hucreler = {}
-            for i in range(7):
-                g = pzt + timedelta(days=i)
-                ts = str(g)
-                hucreler[ts] = hucre_map.get((pid, ts), "")
-            satirlar.append(
-                {
-                    "personel_id": pid,
-                    "ad_soyad": p["ad_soyad"] or "",
-                    "gorev": p["gorev"] or "",
-                    "sube_id": p["sube_id"],
-                    "sube_adi": p["sube_adi"] or "—",
-                    "hucreler": hucreler,
-                    "kapanis_sayisi": (hx.get("kapanis_sayisi") or "") or "",
-                    "alacak_saat": (hx.get("alacak_saat") or "") or "",
-                }
-            )
+
+    cur.execute("SELECT id, ad FROM subeler WHERE aktif = TRUE ORDER BY ad")
+    sube_rehber = [
+        {"id": r["id"], "ad": (r["ad"] or "").strip()} for r in cur.fetchall()
+    ]
 
     return {
-        "hafta_baslangic": str(pzt),
+        "gunler": gunler,
+        "tarihler": tarihler,
         "hafta_bitis": str(pazar),
         "baslik": baslik,
         "not_metni": not_metni,
-        "gunler": gunler,
         "satirlar": satirlar,
+        "sube_rehber": sube_rehber,
     }
+
+
+def _vardiya_haftalik_grupla(
+    satirlar: List[dict], tarihler: List[str]
+) -> Dict[str, List[dict]]:
+    grouped: Dict[str, List[dict]] = {}
+    for s in satirlar:
+        sube_key = (s.get("sube_adi") or "—").strip() or "—"
+        grouped.setdefault(sube_key, [])
+        row = {"isim": s.get("ad_soyad") or ""}
+        for i, col in enumerate(_VARDIYA_GUN_KOLON):
+            row[col] = (s.get("hucreler") or {}).get(tarihler[i], "") or ""
+        grouped[sube_key].append(row)
+    return grouped
+
+
+def _vardiya_haftalik_grup_cevap(pzt: date, data: Dict[str, Any]) -> Dict[str, Any]:
+    """Şube adı → personel satırları (Pzt…Paz); meta alanları + rapor başlığı."""
+    grouped = _vardiya_haftalik_grupla(data["satirlar"], data["tarihler"])
+    out: Dict[str, Any] = {
+        "baslik": "TULİPİ COFFEE HAFTALIK VARDİYA",
+        "hafta_baslangic": str(pzt),
+        "hafta_bitis": data["hafta_bitis"],
+        "sube_rehber": data["sube_rehber"],
+    }
+    for k in sorted(grouped.keys(), key=lambda x: (x or "").upper()):
+        out[k] = grouped[k]
+    return out
+
+
+def _vardiya_hucre_saat_mi(val: str) -> bool:
+    t = (val or "").strip()
+    if not t:
+        return False
+    if re.search(
+        r"\d{1,2}\s*[.:]\s*\d{2}\s*[-–]\s*\d{1,2}\s*[.:]\s*\d{2}", t
+    ):
+        return True
+    compact = re.sub(r"\s+", "", t)
+    return bool(re.match(r"^\d{1,2}[.:]\d{2}([.:]\d{2})+$", compact))
+
+
+def _vardiya_hucre_sube_mi(val: str, sube_adlari: List[str]) -> bool:
+    t = (val or "").strip()
+    if not t:
+        return False
+    u = t.upper()
+    for ad in sube_adlari:
+        a = (ad or "").strip()
+        if not a:
+            continue
+        au = a.upper()
+        if u == au:
+            return True
+        if len(au) >= 3 and au in u:
+            return True
+    return False
+
+
+@app.get("/api/vardiya/haftalik")
+def vardiya_haftalik_get(
+    tarih: Optional[date] = None,
+    grup: bool = Query(False, description="True: şube gruplu tablo JSON (Pzt…Paz)"),
+):
+    """
+    Tulipi tarzı haftalık tablo: Pazartesi–Pazar sütunları, personel satırları.
+    `tarih` haftanın herhangi bir günü olabilir; pazartesi normalize edilir.
+    `grup=1`: { baslik, hafta_baslangic, sube_rehber, ZAFER: [{isim,Pzt,…}], … }
+    """
+    d0 = tarih or date.today()
+    pzt = _pazartesi(d0)
+
+    with db() as (conn, cur):
+        data = _vardiya_haftalik_veri_yukle(cur, pzt)
+
+    if grup:
+        return _vardiya_haftalik_grup_cevap(pzt, data)
+
+    return {
+        "hafta_baslangic": str(pzt),
+        "hafta_bitis": data["hafta_bitis"],
+        "baslik": data["baslik"],
+        "not_metni": data["not_metni"],
+        "gunler": data["gunler"],
+        "satirlar": data["satirlar"],
+        "sube_rehber": data["sube_rehber"],
+    }
+
+
+@app.get("/api/vardiya/excel")
+def vardiya_haftalik_excel(tarih: Optional[date] = None):
+    """Haftalık vardiya tablosunu .xlsx olarak indirir."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    d0 = tarih or date.today()
+    pzt = _pazartesi(d0)
+
+    with db() as (conn, cur):
+        data = _vardiya_haftalik_veri_yukle(cur, pzt)
+
+    grouped = _vardiya_haftalik_grupla(data["satirlar"], data["tarihler"])
+    sube_adlari = [r["ad"] for r in data["sube_rehber"] if r.get("ad")]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Haftalık"
+
+    thin = Side(style="thin", color="888888")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    fill_header = PatternFill("solid", fgColor="D9D9D9")
+    fill_izin = PatternFill("solid", fgColor="C6EFCE")
+    fill_sube = PatternFill("solid", fgColor="DDD0F0")
+
+    r = 1
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+    c0 = ws.cell(r, 1, "TULİPİ COFFEE HAFTALIK VARDİYA")
+    c0.font = Font(bold=True, size=14)
+    c0.alignment = center
+    r += 1
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+    c1 = ws.cell(
+        r,
+        1,
+        f"Hafta: {pzt.isoformat()} – {data['hafta_bitis']}",
+    )
+    c1.alignment = center
+    r += 2
+
+    headers = ["Personel", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"]
+
+    for sube_name in sorted(grouped.keys(), key=lambda x: (x or "").upper()):
+        rows = grouped[sube_name]
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+        sh = ws.cell(r, 1, sube_name)
+        sh.font = Font(bold=True, size=11)
+        sh.alignment = Alignment(horizontal="left", vertical="center")
+        r += 1
+        for col, h in enumerate(headers, 1):
+            cell = ws.cell(r, col, h)
+            cell.fill = fill_header
+            cell.font = Font(bold=True)
+            cell.alignment = center
+            cell.border = border
+        r += 1
+        for pr in rows:
+            ws.cell(r, 1, pr.get("isim") or "")
+            ws.cell(r, 1).border = border
+            ws.cell(r, 1).alignment = center
+            for ci, hk in enumerate(_VARDIYA_GUN_KOLON, start=2):
+                val = pr.get(hk) or ""
+                cell = ws.cell(r, ci, val)
+                cell.alignment = center
+                cell.border = border
+                vs = str(val).strip().upper()
+                if "İZİN" in vs or vs == "IZINLI":
+                    cell.fill = fill_izin
+                elif _vardiya_hucre_saat_mi(str(val)):
+                    pass
+                elif _vardiya_hucre_sube_mi(str(val), sube_adlari):
+                    cell.fill = fill_sube
+            r += 1
+        r += 1
+
+    for col in range(1, 9):
+        ws.column_dimensions[get_column_letter(col)].width = 14
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"vardiya_haftalik_{pzt.isoformat()}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{fname}"',
+        },
+    )
 
 
 @app.put("/api/vardiya/haftalik")
