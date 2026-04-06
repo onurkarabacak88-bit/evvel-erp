@@ -633,6 +633,8 @@ def init_db():
                 hafta_sonu_min_kap   INT NOT NULL DEFAULT 1,
                 tam_part_zorunlu     BOOLEAN NOT NULL DEFAULT FALSE,
                 kapanis_dusurulemez  BOOLEAN NOT NULL DEFAULT FALSE,
+                planla_acilis        BOOLEAN NOT NULL DEFAULT TRUE,
+                planla_kapanis       BOOLEAN NOT NULL DEFAULT TRUE,
                 acilis_bas_saat      TEXT,
                 acilis_bit_saat      TEXT,
                 ara_bas_saat         TEXT,
@@ -752,6 +754,26 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='sube_config' AND column_name='kapanis_bit_saat') THEN
                     ALTER TABLE sube_config ADD COLUMN kapanis_bit_saat TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='planla_acilis') THEN
+                    ALTER TABLE sube_config ADD COLUMN planla_acilis BOOLEAN NOT NULL DEFAULT TRUE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='planla_kapanis') THEN
+                    ALTER TABLE sube_config ADD COLUMN planla_kapanis BOOLEAN NOT NULL DEFAULT TRUE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_kisit' AND column_name='part_gunluk_min_saat') THEN
+                    ALTER TABLE personel_kisit ADD COLUMN part_gunluk_min_saat NUMERIC(5,2);
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_kisit' AND column_name='part_gunluk_max_saat') THEN
+                    ALTER TABLE personel_kisit ADD COLUMN part_gunluk_max_saat NUMERIC(5,2);
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_kisit' AND column_name='gunluk_mesai_fazlasi_saat') THEN
+                    ALTER TABLE personel_kisit ADD COLUMN gunluk_mesai_fazlasi_saat NUMERIC(5,2);
                 END IF;
             END $$;
         """)

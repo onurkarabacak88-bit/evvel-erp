@@ -2191,6 +2191,9 @@ def personel_kisit_getir(pid: str):
             "max_cikis_saat": None,
             "izinli_sube_ids": None,
             "calisma_profili": None,
+            "part_gunluk_min_saat": None,
+            "part_gunluk_max_saat": None,
+            "gunluk_mesai_fazlasi_saat": None,
         }
 
 
@@ -2252,8 +2255,9 @@ def personel_kisit_guncelle(pid: str, body: dict):
                 (id, personel_id, acilis_yapabilir, ara_yapabilir, kapanis_yapabilir,
                  sadece_tip, sube_degistirebilir, kapanis_bit_saat,
                  calisan_rol, hafta_max_gun, gunluk_max_saat, haftalik_max_saat,
-                 min_baslangic_saat, max_cikis_saat, izinli_sube_ids, calisma_profili)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 min_baslangic_saat, max_cikis_saat, izinli_sube_ids, calisma_profili,
+                 part_gunluk_min_saat, part_gunluk_max_saat, gunluk_mesai_fazlasi_saat)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (personel_id) DO UPDATE SET
                 acilis_yapabilir    = EXCLUDED.acilis_yapabilir,
                 ara_yapabilir       = EXCLUDED.ara_yapabilir,
@@ -2269,6 +2273,9 @@ def personel_kisit_guncelle(pid: str, body: dict):
                 max_cikis_saat      = EXCLUDED.max_cikis_saat,
                 izinli_sube_ids     = EXCLUDED.izinli_sube_ids,
                 calisma_profili     = EXCLUDED.calisma_profili,
+                part_gunluk_min_saat = EXCLUDED.part_gunluk_min_saat,
+                part_gunluk_max_saat = EXCLUDED.part_gunluk_max_saat,
+                gunluk_mesai_fazlasi_saat = EXCLUDED.gunluk_mesai_fazlasi_saat,
                 guncelleme          = NOW()
             """,
             (
@@ -2288,6 +2295,9 @@ def personel_kisit_guncelle(pid: str, body: dict):
                 mcs,
                 _kisit_izinli_sube_ids(body.get("izinli_sube_ids")),
                 cprof,
+                _kisit_opt_float(body.get("part_gunluk_min_saat")),
+                _kisit_opt_float(body.get("part_gunluk_max_saat")),
+                _kisit_opt_float(body.get("gunluk_mesai_fazlasi_saat")),
             ),
         )
     return {"success": True}
@@ -2447,6 +2457,8 @@ def sube_config_getir(sid: str):
             "hafta_sonu_min_kap": 1,
             "tam_part_zorunlu": False,
             "kapanis_dusurulemez": False,
+            "planla_acilis": True,
+            "planla_kapanis": True,
             "acilis_bas_saat": None,
             "acilis_bit_saat": None,
             "ara_bas_saat": None,
@@ -2469,10 +2481,10 @@ def sube_config_guncelle(sid: str, body: dict):
             INSERT INTO sube_config
                 (id, sube_id, vardiyaya_dahil, min_kapanis, tek_kapanis_izinli, tek_acilis_izinli,
                  kaydirma_acik, sadece_tam_kayabilir, hafta_sonu_min_kap,
-                 tam_part_zorunlu, kapanis_dusurulemez,
+                 tam_part_zorunlu, kapanis_dusurulemez, planla_acilis, planla_kapanis,
                  acilis_bas_saat, acilis_bit_saat, ara_bas_saat, ara_bit_saat,
                  kapanis_bas_saat, kapanis_bit_saat)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (sube_id) DO UPDATE SET
                 vardiyaya_dahil      = EXCLUDED.vardiyaya_dahil,
                 min_kapanis          = EXCLUDED.min_kapanis,
@@ -2483,6 +2495,8 @@ def sube_config_guncelle(sid: str, body: dict):
                 hafta_sonu_min_kap   = EXCLUDED.hafta_sonu_min_kap,
                 tam_part_zorunlu     = EXCLUDED.tam_part_zorunlu,
                 kapanis_dusurulemez  = EXCLUDED.kapanis_dusurulemez,
+                planla_acilis        = EXCLUDED.planla_acilis,
+                planla_kapanis       = EXCLUDED.planla_kapanis,
                 acilis_bas_saat      = EXCLUDED.acilis_bas_saat,
                 acilis_bit_saat      = EXCLUDED.acilis_bit_saat,
                 ara_bas_saat         = EXCLUDED.ara_bas_saat,
@@ -2503,6 +2517,8 @@ def sube_config_guncelle(sid: str, body: dict):
                 int(body.get("hafta_sonu_min_kap", 1)),
                 bool(body.get("tam_part_zorunlu", False)),
                 bool(body.get("kapanis_dusurulemez", False)),
+                bool(body.get("planla_acilis", True)),
+                bool(body.get("planla_kapanis", True)),
                 _t(body.get("acilis_bas_saat")),
                 _t(body.get("acilis_bit_saat")),
                 _t(body.get("ara_bas_saat")),

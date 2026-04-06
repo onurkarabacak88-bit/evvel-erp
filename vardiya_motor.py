@@ -3,6 +3,11 @@ Günlük vardiya: ön seçim (aktif şubeler + personel_config.vardiyaya_dahil),
 şube_config + personel_kisit; havuz atama (kart şubesi yalnızca kota sayımı).
 Şube veya personel zorla doldurulmaz (ek kapanış kaydırması ve yetim satırı yok).
 
+Şube bazında planla_acilis / planla_kapanis kapalıysa o şubede ilgili tip atanmaz.
+Part/yarı zamanlı için part_gunluk_max_saat ve gunluk_mesai_fazlasi_saat günlük üst sınırı
+birleştirir. Çapraz şubede tek vardiyayı ikiye bölme (part mesai A’da, kalan B’de) henüz yok;
+şema tek satır / tek şube ile kalır.
+
 Mimari notlar (Tulipi / çapraz şube):
 - A şubede gündüz + B şubede kapanış → iki ayrı vardiya satırı (iki sube_id, aynı gün).
   İleride tek satırda baslangic_sube / bitis_sube eklenirse şema genişletilir.
@@ -210,21 +215,55 @@ def _vardiya_saat_sinirlari_uygun(
     return True
 
 
+def _gunluk_saat_limit_max(k: Dict[str, Any], personel: Dict[str, Any]) -> Optional[float]:
+    """Günlük üst sınır + mesai fazlası. None = günlük tavan tanımlı değil."""
+    gmx = k.get("gunluk_max_saat")
+    try:
+        gmax_f = float(gmx) if gmx is not None and str(gmx).strip() != "" else None
+    except (TypeError, ValueError):
+        gmax_f = None
+    profil = _calisma_profili_normalize(k.get("calisma_profili"))
+    ct = (personel.get("calisma_turu") or "").strip().lower()
+    part_time = ct != "surekli" or profil == "part_time"
+    pmx = k.get("part_gunluk_max_saat")
+    if part_time and pmx is not None and str(pmx).strip() != "":
+        try:
+            pmax = float(pmx)
+            gmax_f = pmax if gmax_f is None else min(gmax_f, pmax)
+        except (TypeError, ValueError):
+            pass
+    faz = k.get("gunluk_mesai_fazlasi_saat")
+    try:
+        fz = float(faz) if faz is not None and str(faz).strip() != "" else 0.0
+    except (TypeError, ValueError):
+        fz = 0.0
+    fz = max(0.0, fz)
+    if gmax_f is None:
+        return None
+    return gmax_f + fz
+
+
 def _atama_kisit_saat_limitleri(
     pid: str,
     k: Dict[str, Any],
     yeni_saat: float,
     bugun_atanan: Dict[str, float],
     hafta_onceki: Dict[str, Dict[str, float]],
+    personel: Optional[Dict[str, Any]] = None,
 ) -> bool:
-    gmax = k.get("gunluk_max_saat")
-    if gmax is not None:
-        try:
-            gmx = float(gmax)
-            if bugun_atanan.get(pid, 0.0) + yeni_saat > gmx + 1e-6:
-                return False
-        except (TypeError, ValueError):
-            pass
+    if personel is not None:
+        cap = _gunluk_saat_limit_max(k, personel)
+    else:
+        cap = None
+        gmax = k.get("gunluk_max_saat")
+        if gmax is not None and str(gmax).strip() != "":
+            try:
+                cap = float(gmax)
+            except (TypeError, ValueError):
+                cap = None
+    if cap is not None:
+        if bugun_atanan.get(pid, 0.0) + yeni_saat > cap + 1e-6:
+            return False
     hmax = k.get("haftalik_max_saat")
     if hmax is not None:
         try:
@@ -294,7 +333,13 @@ def _atamalar_min_kapanis_yukselt(
         for p in personeller
         if personel_tip_yapabilir(p, "KAPANIS", kisitlar, gunluk_map, hafta_gunu)
     )
-    hedef = min(max(int(min_kap or 1), 1), n, max(yapabilen, 0))
+    try:
+        mk = int(min_kap) if min_kap is not None else 1
+    except (TypeError, ValueError):
+        mk = 1
+    if mk < 0:
+        mk = 0
+    hedef = min(mk, n, max(yapabilen, 0)) if mk > 0 else 0
     liste = list(atamalar)
     cur_k = sum(1 for _, t, _ in liste if t == "KAPANIS")
     if tek_kap_izinli and n == 1:
@@ -353,6 +398,8 @@ def _default_sube_cfg(sube_id: str) -> Dict[str, Any]:
         "hafta_sonu_min_kap": 1,
         "tam_part_zorunlu": False,
         "kapanis_dusurulemez": False,
+        "planla_acilis": True,
+        "planla_kapanis": True,
         "acilis_bas_saat": None,
         "acilis_bit_saat": None,
         "ara_bas_saat": None,
@@ -379,6 +426,9 @@ def _default_kisit(pid: str) -> Dict[str, Any]:
         "max_cikis_saat": None,
         "izinli_sube_ids": None,
         "calisma_profili": None,
+        "part_gunluk_min_saat": None,
+        "part_gunluk_max_saat": None,
+        "gunluk_mesai_fazlasi_saat": None,
     }
 
 
@@ -650,6 +700,10 @@ def _sube_icin_skorlu_ata(
         if hafta_sonu
         else int(cfg.get("min_kapanis") or 1)
     )
+    planla_acilis = bool(cfg.get("planla_acilis", True))
+    planla_kapanis = bool(cfg.get("planla_kapanis", True))
+    if not planla_kapanis:
+        min_kap = 0
     tek_kap_izinli = bool(cfg.get("tek_kapanis_izinli", True))
     tek_acilis_izinli = bool(cfg.get("tek_acilis_izinli", True))
     kapanis_dusurulemez = bool(cfg.get("kapanis_dusurulemez", False))
@@ -693,12 +747,52 @@ def _sube_icin_skorlu_ata(
     acilis_sayisi = 0
 
     for p, tip in sabit:
-        sonuc.append((p, tip, "Kısıt: sadece_tip"))
+        ned = "Kısıt: sadece_tip"
+        eff_tip = tip
+        if tip == "ACILIS" and not planla_acilis:
+            if personel_tip_yapabilir(p, "ARA", kisitlar, gunluk_map, hafta_gunu):
+                eff_tip = "ARA"
+                ned = "Kısıt: sadece_tip (ACILIS) → ARA; bu şubede açılış planı kapalı"
+            elif planla_kapanis and personel_tip_yapabilir(
+                p, "KAPANIS", kisitlar, gunluk_map, hafta_gunu
+            ):
+                eff_tip = "KAPANIS"
+                ned = "Kısıt: sadece_tip (ACILIS) → KAPANIS; açılış planı kapalı"
+            else:
+                log.append(
+                    {
+                        "kural": "KISIT",
+                        "personel": p["ad_soyad"],
+                        "sube": sube_ad,
+                        "detay": "sadece_tip=ACILIS ama şubede açılış kapalı; ARA/KAPANIS uygun değil",
+                    }
+                )
+                continue
+        elif tip == "KAPANIS" and not planla_kapanis:
+            if personel_tip_yapabilir(p, "ARA", kisitlar, gunluk_map, hafta_gunu):
+                eff_tip = "ARA"
+                ned = "Kısıt: sadece_tip (KAPANIS) → ARA; bu şubede kapanış planı kapalı"
+            elif planla_acilis and personel_tip_yapabilir(
+                p, "ACILIS", kisitlar, gunluk_map, hafta_gunu
+            ):
+                eff_tip = "ACILIS"
+                ned = "Kısıt: sadece_tip (KAPANIS) → ACILIS; kapanış planı kapalı"
+            else:
+                log.append(
+                    {
+                        "kural": "KISIT",
+                        "personel": p["ad_soyad"],
+                        "sube": sube_ad,
+                        "detay": "sadece_tip=KAPANIS ama şubede kapanış kapalı",
+                    }
+                )
+                continue
+        sonuc.append((p, eff_tip, ned))
         kullanilan.add(p["id"])
         atanan_ids.add(p["id"])
-        if tip == "KAPANIS":
+        if eff_tip == "KAPANIS":
             kapanis_sayisi += 1
-        if tip == "ACILIS":
+        if eff_tip == "ACILIS":
             acilis_sayisi += 1
 
     kalan = [p for p in esnek if p["id"] not in kullanilan]
@@ -726,6 +820,8 @@ def _sube_icin_skorlu_ata(
         hedef_kap = 1 if len(kap_yapabilen) >= 1 else 0
     elif nk == 1 and tek_kap_izinli:
         hedef_kap = 1 if len(kap_yapabilen) >= 1 else 0
+    if not planla_kapanis:
+        hedef_kap = 0
 
     kap_atanan: Set[str] = set()
     for p in kap_yapabilen:
@@ -739,68 +835,74 @@ def _sube_icin_skorlu_ata(
         atanan_ids.add(p["id"])
         kapanis_sayisi += 1
 
-    # 3) Kalanlara ACILIS önceliği (tek açılış uyarısı için mümkün olduğunca çok açılış)
-    hala = [p for p in kalan if p["id"] not in kullanilan]
-    acilis_aday = [
-        p
-        for p in hala
-        if personel_tip_yapabilir(p, "ACILIS", kisitlar, gunluk_map, hafta_gunu)
-    ]
-    acilis_aday.sort(
-        key=lambda p: (
-            _atama_skoru_detay(
-                p,
-                "ACILIS",
-                _efektif_personel_kisit(p, kisitlar),
-                tm,
-                ho,
-                ba,
-                stm,
-            )[0],
-            1 if p.get("calisma_turu") == "surekli" else 0,
-            p.get("ad_soyad") or "",
-        ),
-        reverse=True,
-    )
+    # 3) Kalanlara ACILIS önceliği (şubede açılış planı açıksa)
+    if planla_acilis:
+        hala = [p for p in kalan if p["id"] not in kullanilan]
+        acilis_aday = [
+            p
+            for p in hala
+            if personel_tip_yapabilir(p, "ACILIS", kisitlar, gunluk_map, hafta_gunu)
+        ]
+        acilis_aday.sort(
+            key=lambda p: (
+                _atama_skoru_detay(
+                    p,
+                    "ACILIS",
+                    _efektif_personel_kisit(p, kisitlar),
+                    tm,
+                    ho,
+                    ba,
+                    stm,
+                )[0],
+                1 if p.get("calisma_turu") == "surekli" else 0,
+                p.get("ad_soyad") or "",
+            ),
+            reverse=True,
+        )
 
-    # En az 2 açılış hedefi: tek_acilis_izinli False ise iki kişiye ACILIS dene
-    hedef_ac = 2 if (not tek_acilis_izinli and len(hala) >= 2) else 0
-    ac_atanan = 0
-    for p in acilis_aday:
-        if hedef_ac <= 0 or ac_atanan >= hedef_ac:
-            break
-        if p["id"] in kullanilan:
-            continue
-        sonuc.append((p, "ACILIS", "Skor: min açılış çeşitliliği"))
-        kullanilan.add(p["id"])
-        atanan_ids.add(p["id"])
-        acilis_sayisi += 1
-        ac_atanan += 1
+        # En az 2 açılış hedefi: tek_acilis_izinli False ise iki kişiye ACILIS dene
+        hedef_ac = 2 if (not tek_acilis_izinli and len(hala) >= 2) else 0
+        ac_atanan = 0
+        for p in acilis_aday:
+            if hedef_ac <= 0 or ac_atanan >= hedef_ac:
+                break
+            if p["id"] in kullanilan:
+                continue
+            sonuc.append((p, "ACILIS", "Skor: min açılış çeşitliliği"))
+            kullanilan.add(p["id"])
+            atanan_ids.add(p["id"])
+            acilis_sayisi += 1
+            ac_atanan += 1
 
-    # 4) Geri kalan: ACILIS / ARA sırayla (sıra: atanacak ilk tipe göre skor)
+    # 4) Geri kalan: ACILIS / ARA / KAPANIS (şube plan bayraklarına göre)
     hala = [p for p in kalan if p["id"] not in kullanilan]
 
     def _ilk_atanacak_tip_skoru(pp: Dict[str, Any]) -> float:
         k_e = _efektif_personel_kisit(pp, kisitlar)
-        if personel_tip_yapabilir(pp, "ACILIS", kisitlar, gm, hg):
-            return _atama_skoru_detay(pp, "ACILIS", k_e, tm, ho, ba, stm)[0]
+        skorlar: List[float] = []
+        if planla_acilis and personel_tip_yapabilir(pp, "ACILIS", kisitlar, gm, hg):
+            skorlar.append(_atama_skoru_detay(pp, "ACILIS", k_e, tm, ho, ba, stm)[0])
         if personel_tip_yapabilir(pp, "ARA", kisitlar, gm, hg):
-            return _atama_skoru_detay(pp, "ARA", k_e, tm, ho, ba, stm)[0]
-        if personel_tip_yapabilir(pp, "KAPANIS", kisitlar, gm, hg):
-            return _atama_skoru_detay(pp, "KAPANIS", k_e, tm, ho, ba, stm)[0]
-        return -1e18
+            skorlar.append(_atama_skoru_detay(pp, "ARA", k_e, tm, ho, ba, stm)[0])
+        if planla_kapanis and personel_tip_yapabilir(pp, "KAPANIS", kisitlar, gm, hg):
+            skorlar.append(_atama_skoru_detay(pp, "KAPANIS", k_e, tm, ho, ba, stm)[0])
+        return max(skorlar) if skorlar else -1e18
 
     for p in sorted(
         hala,
         key=lambda x: (-_ilk_atanacak_tip_skoru(x), x.get("ad_soyad") or ""),
     ):
-        if personel_tip_yapabilir(p, "ACILIS", kisitlar, gunluk_map, hafta_gunu):
+        if planla_acilis and personel_tip_yapabilir(
+            p, "ACILIS", kisitlar, gunluk_map, hafta_gunu
+        ):
             t = "ACILIS"
             ned = "Kalan slot: açılış"
         elif personel_tip_yapabilir(p, "ARA", kisitlar, gunluk_map, hafta_gunu):
             t = "ARA"
             ned = "Kalan slot: ara"
-        elif personel_tip_yapabilir(p, "KAPANIS", kisitlar, gunluk_map, hafta_gunu):
+        elif planla_kapanis and personel_tip_yapabilir(
+            p, "KAPANIS", kisitlar, gunluk_map, hafta_gunu
+        ):
             t = "KAPANIS"
             ned = "Kalan slot: kapanış"
             kapanis_sayisi += 1
@@ -837,7 +939,12 @@ def _sube_icin_skorlu_ata(
                     )
                 break
 
-    if not tek_acilis_izinli and acilis_sayisi < 2 and nk >= 2:
+    if (
+        planla_acilis
+        and not tek_acilis_izinli
+        and acilis_sayisi < 2
+        and nk >= 2
+    ):
         log.append(
             {
                 "kural": "MIN_ACILIS_UYARI",
@@ -1046,7 +1153,7 @@ def vardiya_motoru_calistir(cur, tarih: date) -> Dict[str, Any]:
             return
         h_saat = _vardiya_aralik_saat(bas, bit)
         if not _atama_kisit_saat_limitleri(
-            pid, k_merged, h_saat, bugun_atanan_saat, hafta_onceki
+            pid, k_merged, h_saat, bugun_atanan_saat, hafta_onceki, personel
         ):
             log.append(
                 {
@@ -1089,10 +1196,14 @@ def vardiya_motoru_calistir(cur, tarih: date) -> Dict[str, Any]:
         cfg_row = sube_cfg.get(sube_id)
         cfg = {**_default_sube_cfg(sube_id), **(cfg_row or {})}
         tam_part_zorunlu = bool(cfg.get("tam_part_zorunlu", False))
-        min_kap = (
-            int(cfg.get("hafta_sonu_min_kap") or 1)
-            if hafta_sonu
-            else int(cfg.get("min_kapanis") or 1)
+        min_kap_eff = (
+            0
+            if not bool(cfg.get("planla_kapanis", True))
+            else (
+                int(cfg.get("hafta_sonu_min_kap") or 1)
+                if hafta_sonu
+                else int(cfg.get("min_kapanis") or 1)
+            )
         )
         tek_kap_izinli = bool(cfg.get("tek_kapanis_izinli", True))
 
@@ -1164,7 +1275,7 @@ def vardiya_motoru_calistir(cur, tarih: date) -> Dict[str, Any]:
         )
         atamalar, kapanis_sayisi = _atamalar_min_kapanis_yukselt(
             atamalar,
-            min_kap,
+            min_kap_eff,
             tek_kap_izinli,
             secilen,
             kisitlar,
@@ -1205,6 +1316,38 @@ def vardiya_motoru_calistir(cur, tarih: date) -> Dict[str, Any]:
                     )
 
     # Eksik kapanış için ek kaydırma ve “yetim” satırı yok: şube/personel zorla doldurulmaz.
+
+    pid_to_p = {p["id"]: p for p in musait}
+    for pid, saat in bugun_atanan_saat.items():
+        if saat <= 1e-6:
+            continue
+        p = pid_to_p.get(pid)
+        if not p:
+            continue
+        k_e = _efektif_personel_kisit(p, kisitlar)
+        pmn = k_e.get("part_gunluk_min_saat")
+        if pmn is None or str(pmn).strip() == "":
+            continue
+        try:
+            mn = float(pmn)
+        except (TypeError, ValueError):
+            continue
+        profil = _calisma_profili_normalize(k_e.get("calisma_profili"))
+        ct = (p.get("calisma_turu") or "").strip().lower()
+        part_like = ct != "surekli" or profil == "part_time"
+        if not part_like:
+            continue
+        if saat + 1e-6 < mn:
+            log.append(
+                {
+                    "kural": "PART_GUN_MIN_UYARI",
+                    "personel": p.get("ad_soyad"),
+                    "detay": (
+                        f"Bugün atanan toplam {saat:.2f} saat; "
+                        f"yarı zamanlı günlük hedef minimum {mn} saat altında (izin günü / kota kontrol edin)"
+                    ),
+                }
+            )
 
     mesaj = (
         f"{olusturulan} vardiya oluşturuldu. "
