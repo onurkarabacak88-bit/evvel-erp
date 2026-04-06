@@ -9,6 +9,7 @@ function saatInputVal(v) {
 }
 
 const VARSAYILAN_SUBE = {
+  vardiyaya_dahil: true,
   min_kapanis: 1,
   tek_kapanis_izinli: true,
   tek_acilis_izinli: true,
@@ -102,6 +103,11 @@ function apiGunlukBirlestir(apiRows) {
 }
 
 const SUBE_KURAL_SATIRLARI = [
+  {
+    field: 'vardiyaya_dahil',
+    label: 'Otomatik vardiya planına dahil (kapalıysa motor bu şubeyi atlar)',
+    tip: 'bool',
+  },
   { field: 'min_kapanis', label: 'Minimum kapanış personeli (hafta içi)', tip: 'number', min: 1, max: 5 },
   { field: 'hafta_sonu_min_kap', label: 'Hafta sonu minimum kapanış', tip: 'number', min: 1, max: 5 },
   { field: 'tek_kapanis_izinli', label: 'Tek kişi ile kapanış yapılabilir', tip: 'bool' },
@@ -135,6 +141,8 @@ export default function VardiyaAyar() {
   const [gunlukSatirlar, setGunlukSatirlar] = useState(bosGunlukSatirlari);
   const [gunlukYukleniyor, setGunlukYukleniyor] = useState(false);
   const [gunlukKaydediliyor, setGunlukKaydediliyor] = useState(false);
+  /** personel_id → otomatik vardiya havuzunda mı */
+  const [pcVardiyaDahil, setPcVardiyaDahil] = useState({});
 
   const toast = (m, t = 'green') => {
     setMsg({ m, t });
@@ -225,6 +233,16 @@ export default function VardiyaAyar() {
       .catch(() => setBaglantilar([]));
 
     yukleIzinler();
+
+    api('/personel-config')
+      .then((rows) => {
+        const m = {};
+        (rows || []).forEach((r) => {
+          m[r.personel_id] = r.vardiyaya_dahil !== false;
+        });
+        setPcVardiyaDahil(m);
+      })
+      .catch(() => setPcVardiyaDahil({}));
   }, []);
 
   useEffect(() => {
@@ -259,6 +277,21 @@ export default function VardiyaAyar() {
       ...prev,
       [pid]: { ...(prev[pid] || VARSAYILAN_KISIT), [field]: val },
     }));
+
+  async function personelVardiyaDahilToggle(pid, checked) {
+    const prev = pcVardiyaDahil[pid] !== false;
+    setPcVardiyaDahil((m) => ({ ...m, [pid]: checked }));
+    try {
+      await api(`/personel-config/${pid}`, {
+        method: 'PUT',
+        body: { vardiyaya_dahil: checked },
+      });
+      toast('Vardiya havuzu güncellendi');
+    } catch (e) {
+      toast(e.message, 'red');
+      setPcVardiyaDahil((m) => ({ ...m, [pid]: prev }));
+    }
+  }
 
   async function subeKaydet(sid) {
     setKayitLoading((l) => ({ ...l, [sid]: true }));
@@ -640,6 +673,25 @@ export default function VardiyaAyar() {
                 <div style={{ minWidth: 160 }}>
                   <div style={{ fontWeight: 600, fontSize: 13 }}>{p.ad_soyad}</div>
                   <div style={{ fontSize: 11, color: 'var(--text3)' }}>{p.gorev || '—'}</div>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      marginTop: 8,
+                      fontSize: 11,
+                      color: 'var(--text2)',
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={pcVardiyaDahil[p.id] !== false}
+                      onChange={(e) => personelVardiyaDahilToggle(p.id, e.target.checked)}
+                    />
+                    Otomatik vardiya planına dahil
+                  </label>
                 </div>
 
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, flex: 1 }}>

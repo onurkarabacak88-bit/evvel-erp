@@ -16,8 +16,34 @@ export default function VardiyaPanel({ onNavigate }) {
 
   const handleOlusturSuccess = useCallback((res) => {
     setRefreshTrigger((n) => n + 1);
-    if (res && Array.isArray(res.log)) setMotorLog(res.log);
-    else setMotorLog([]);
+    if (!res) {
+      setMotorLog([]);
+      return;
+    }
+    if (Array.isArray(res.log)) {
+      setMotorLog(res.log);
+      return;
+    }
+    if (Array.isArray(res.gunler)) {
+      const ozet =
+        res.mesaj ||
+        `Haftalık: ${res.toplam_olusturulan ?? 0} kayıt (${res.hafta_baslangic ?? ''} – ${res.hafta_bitis ?? ''})`;
+      setMotorLog([
+        { kural: 'HAFTA', detay: ozet },
+        ...res.gunler.map((g) => ({
+          kural: g.tarih,
+          detay: [
+            `${g.olusturulan ?? 0} kayıt`,
+            g.log_ozet != null ? `${g.log_ozet} log satırı` : null,
+            g.mesaj || null,
+          ]
+            .filter(Boolean)
+            .join(' · '),
+        })),
+      ]);
+      return;
+    }
+    setMotorLog([]);
   }, []);
 
   useEffect(() => {
