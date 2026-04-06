@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from datetime import date, timedelta
 import uuid, os, json, pathlib, calendar, threading, io, re
 from database import db, init_db
-from vardiya_motor import vardiya_motoru_calistir
+from vardiya_motor import vardiya_motoru_calistir, vardiya_motoru_hafta_calistir
 
 
 def ay_ekle(d: date, ay: int) -> date:
@@ -2438,6 +2438,7 @@ def sube_config_getir(sid: str):
             return dict(row)
         return {
             "sube_id": sid,
+            "vardiyaya_dahil": True,
             "min_kapanis": 1,
             "tek_kapanis_izinli": True,
             "tek_acilis_izinli": True,
@@ -2466,13 +2467,14 @@ def sube_config_guncelle(sid: str, body: dict):
         cur.execute(
             """
             INSERT INTO sube_config
-                (id, sube_id, min_kapanis, tek_kapanis_izinli, tek_acilis_izinli,
+                (id, sube_id, vardiyaya_dahil, min_kapanis, tek_kapanis_izinli, tek_acilis_izinli,
                  kaydirma_acik, sadece_tam_kayabilir, hafta_sonu_min_kap,
                  tam_part_zorunlu, kapanis_dusurulemez,
                  acilis_bas_saat, acilis_bit_saat, ara_bas_saat, ara_bit_saat,
                  kapanis_bas_saat, kapanis_bit_saat)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (sube_id) DO UPDATE SET
+                vardiyaya_dahil      = EXCLUDED.vardiyaya_dahil,
                 min_kapanis          = EXCLUDED.min_kapanis,
                 tek_kapanis_izinli   = EXCLUDED.tek_kapanis_izinli,
                 tek_acilis_izinli    = EXCLUDED.tek_acilis_izinli,
@@ -2492,6 +2494,7 @@ def sube_config_guncelle(sid: str, body: dict):
             (
                 str(uuid.uuid4()),
                 sid,
+                bool(body.get("vardiyaya_dahil", True)),
                 int(body.get("min_kapanis", 1)),
                 bool(body.get("tek_kapanis_izinli", True)),
                 bool(body.get("tek_acilis_izinli", True)),
@@ -2556,6 +2559,18 @@ def vardiya_olustur(body: VardiyaOlusturModel):
     t = body.tarih
     with db() as (conn, cur):
         sonuc = vardiya_motoru_calistir(cur, t)
+    return sonuc
+
+
+@app.post("/api/vardiya/olustur-hafta")
+def vardiya_olustur_hafta(body: VardiyaOlusturModel):
+    """
+    `tarih` hangi haftaya ait olduğunu belirler (içinde bulunduğu haftanın pazartesisinden
+    pazara kadar 7 gün sırayla günlük motor çalışır).
+    """
+    t = body.tarih
+    with db() as (conn, cur):
+        sonuc = vardiya_motoru_hafta_calistir(cur, t)
     return sonuc
 
 

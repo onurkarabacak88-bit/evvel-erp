@@ -344,6 +344,7 @@ def _time_hhmmss(s: Optional[str], fallback: str) -> str:
 def _default_sube_cfg(sube_id: str) -> Dict[str, Any]:
     return {
         "sube_id": sube_id,
+        "vardiyaya_dahil": True,
         "min_kapanis": 1,
         "tek_kapanis_izinli": True,
         "tek_acilis_izinli": True,
@@ -914,19 +915,33 @@ def vardiya_motoru_calistir(cur, tarih: date) -> Dict[str, Any]:
 
     cur.execute("SELECT * FROM subeler WHERE aktif = TRUE ORDER BY ad")
     subeler_raw = cur.fetchall()
-    subeler: Dict[str, Dict[str, Any]] = {s["id"]: dict(s) for s in subeler_raw}
+
+    cur.execute("SELECT * FROM sube_config")
+    sube_cfg: Dict[str, Dict[str, Any]] = {r["sube_id"]: dict(r) for r in cur.fetchall()}
+
+    # Otomatik planda olmayan şubeler (aktif kalır; motor bu şubeyi atlar)
+    subeler: Dict[str, Dict[str, Any]] = {}
+    for s in subeler_raw:
+        sid = s["id"]
+        merged = {**_default_sube_cfg(sid), **(sube_cfg.get(sid) or {})}
+        if merged.get("vardiyaya_dahil", True) is False:
+            continue
+        subeler[sid] = dict(s)
+
     if not subeler:
         return {
             "success": True,
             "tarih": tarih_str,
             "olusturulan": 0,
             "izinli_sayisi": 0,
-            "log": [{"kural": "HATA", "detay": "Aktif şube yok"}],
-            "mesaj": "Aktif şube tanımlı değil.",
+            "log": [
+                {
+                    "kural": "HATA",
+                    "detay": "Vardiyaya dahil aktif şube yok (tüm şubeler devre dışı veya pasif).",
+                }
+            ],
+            "mesaj": "Vardiyaya dahil şube tanımlı değil.",
         }
-
-    cur.execute("SELECT * FROM sube_config")
-    sube_cfg: Dict[str, Dict[str, Any]] = {r["sube_id"]: dict(r) for r in cur.fetchall()}
 
     cur.execute("SELECT * FROM personel_kisit")
     kisitlar: Dict[str, Dict[str, Any]] = {r["personel_id"]: dict(r) for r in cur.fetchall()}
@@ -1202,4 +1217,36 @@ def vardiya_motoru_calistir(cur, tarih: date) -> Dict[str, Any]:
         "izinli_sayisi": len(izinliler),
         "log": log,
         "mesaj": mesaj,
+    }
+
+
+def vardiya_motoru_hafta_calistir(cur, referans_tarih: date) -> Dict[str, Any]:
+    """
+    Pazartesi–pazar 7 gün için sırayla günlük motoru çalıştırır.
+    Haftalık kota / önceki gün istatistikleri her gün için doğru kümülatif kalır.
+    """
+    pzt = _pazartesi_hafta(referans_tarih)
+    gunler: List[Dict[str, Any]] = []
+    toplam = 0
+    for i in range(7):
+        g = pzt + timedelta(days=i)
+        r = vardiya_motoru_calistir(cur, g)
+        n = int(r.get("olusturulan") or 0)
+        toplam += n
+        gunler.append(
+            {
+                "tarih": r.get("tarih") or str(g),
+                "olusturulan": n,
+                "izinli_sayisi": r.get("izinli_sayisi", 0),
+                "mesaj": r.get("mesaj", ""),
+                "log_ozet": len(r.get("log") or []),
+            }
+        )
+    return {
+        "success": True,
+        "hafta_baslangic": str(pzt),
+        "hafta_bitis": str(pzt + timedelta(days=6)),
+        "toplam_olusturulan": toplam,
+        "gunler": gunler,
+        "mesaj": f"Haftalık plan: {toplam} vardiya kaydı (7 gün).",
     }

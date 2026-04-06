@@ -624,6 +624,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS sube_config (
                 id                   TEXT PRIMARY KEY,
                 sube_id              TEXT NOT NULL REFERENCES subeler(id) UNIQUE,
+                vardiyaya_dahil      BOOLEAN NOT NULL DEFAULT TRUE,
                 min_kapanis          INT NOT NULL DEFAULT 1,
                 tek_kapanis_izinli   BOOLEAN NOT NULL DEFAULT TRUE,
                 tek_acilis_izinli    BOOLEAN NOT NULL DEFAULT TRUE,
@@ -711,6 +712,10 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='personel_gunluk_kisit' AND column_name='max_saat') THEN
                     ALTER TABLE personel_gunluk_kisit ADD COLUMN max_saat NUMERIC(5,2);
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_config' AND column_name='vardiyaya_dahil') THEN
+                    ALTER TABLE sube_config ADD COLUMN vardiyaya_dahil BOOLEAN NOT NULL DEFAULT TRUE;
                 END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='sube_config' AND column_name='tek_acilis_izinli') THEN
