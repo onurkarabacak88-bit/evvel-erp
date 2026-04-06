@@ -16,10 +16,10 @@ import DisKaynak from './pages/DisKaynak';
 import Rapor from './pages/Rapor';
 import KartMerkez from './pages/KartMerkez';
 import Subeler from './pages/Subeler';
-import VardiyaPanel from './modules/vardiya/VardiyaPanel';
-import VardiyaAyar from './modules/vardiya/VardiyaAyar';
-import VardiyaHaftalik from './modules/vardiya/VardiyaHaftalik';
-import HaftalikVardiyaPanel from './modules/vardiya/HaftalikVardiyaPanel';
+import VardiyaPanel from './modules/vardiya/VardiyaPanel.jsx';
+import VardiyaAyar from './modules/vardiya/VardiyaAyar.jsx';
+import VardiyaHaftalik from './modules/vardiya/VardiyaHaftalik.jsx';
+import HaftalikVardiyaPanel from './modules/vardiya/HaftalikVardiyaPanel.jsx';
 import './index.css';
 
 const NAV = [
