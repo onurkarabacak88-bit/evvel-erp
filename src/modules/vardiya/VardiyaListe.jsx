@@ -11,43 +11,62 @@ function tipBadgeClass(tip) {
 /**
  * @param {Object} props
  * @param {string} props.tarih - YYYY-MM-DD
- * @param {number} props.refreshTrigger - artınca yeniden yükler
- * @param {() => void} [props.onListeDegisti] - silme sonrası üst bileşen yenilemesi
+ * @param {Array} [props.vardiyalar] - üst bileşenden (tek GET); verilmezse kendi yükler
+ * @param {boolean} [props.listeLoading] - üst yükleme durumu
+ * @param {() => void} [props.onListeYenile] - silme sonrası üstün listeyi tekrar çekmesi için
+ * @param {number} [props.refreshTrigger] - vardiyalar verilmediğinde yenileme tetikleyici
+ * @param {() => void} [props.onListeDegisti] - silme sonrası üst bileşen (ör. motor log temizliği)
  */
-export default function VardiyaListe({ tarih, refreshTrigger = 0, onListeDegisti }) {
-  const [loading, setLoading] = useState(true);
+export default function VardiyaListe({
+  tarih,
+  vardiyalar: vardiyalarDis,
+  listeLoading: listeLoadingDis,
+  onListeYenile,
+  refreshTrigger = 0,
+  onListeDegisti,
+}) {
+  const [loadingIc, setLoadingIc] = useState(true);
   const [hata, setHata] = useState(null);
-  const [vardiyalar, setVardiyalar] = useState([]);
+  const [vardiyalarIc, setVardiyalarIc] = useState([]);
   const [silinenId, setSilinenId] = useState(null);
   const [gunSiliniyor, setGunSiliniyor] = useState(false);
 
+  const disaridan = Array.isArray(vardiyalarDis);
+  const vardiyalar = disaridan ? vardiyalarDis : vardiyalarIc;
+  const loading = disaridan ? !!listeLoadingDis : loadingIc;
+
   const yukle = useCallback(async () => {
     if (!tarih) {
-      setVardiyalar([]);
-      setLoading(false);
+      setVardiyalarIc([]);
+      setLoadingIc(false);
       return;
     }
-    setLoading(true);
+    setLoadingIc(true);
     setHata(null);
     try {
       const res = await api(`/vardiya?tarih=${encodeURIComponent(tarih)}`);
-      setVardiyalar(Array.isArray(res.vardiyalar) ? res.vardiyalar : []);
+      setVardiyalarIc(Array.isArray(res.vardiyalar) ? res.vardiyalar : []);
     } catch (e) {
       setHata(e.message || 'Liste alınamadı.');
-      setVardiyalar([]);
+      setVardiyalarIc([]);
     } finally {
-      setLoading(false);
+      setLoadingIc(false);
     }
   }, [tarih]);
 
   useEffect(() => {
+    if (disaridan) return;
     yukle();
-  }, [yukle, refreshTrigger]);
+  }, [yukle, refreshTrigger, disaridan]);
 
   const yenile = useCallback(() => {
-    yukle();
+    if (typeof onListeYenile === 'function') {
+      onListeYenile();
+    } else {
+      yukle();
+    }
     if (typeof onListeDegisti === 'function') onListeDegisti();
-  }, [yukle, onListeDegisti]);
+  }, [yukle, onListeYenile, onListeDegisti]);
 
   const tekSil = async (vid) => {
     if (!window.confirm('Bu vardiya satırını silmek istiyor musunuz?')) return;
@@ -87,10 +106,10 @@ export default function VardiyaListe({ tarih, refreshTrigger = 0, onListeDegisti
     <div className="vardiya-card">
       <div className="vardiya-liste-baslik">
         <div>
-          <h3>Vardiya listesi</h3>
+          <h3>{disaridan ? 'Detaylı liste' : 'Vardiya listesi'}</h3>
           <p className="sub">
             {tarih
-              ? `${tarih} tarihli kayıtlar`
+              ? `${tarih} tarihli kayıtlar — satır silme`
               : 'Tarih seçin'}
           </p>
         </div>
@@ -118,7 +137,7 @@ export default function VardiyaListe({ tarih, refreshTrigger = 0, onListeDegisti
           <div className="icon">📋</div>
           <p>Bu tarih için vardiya kaydı yok.</p>
           <p style={{ fontSize: 12, marginTop: 8, color: 'var(--text3)' }}>
-            Sol taraftan &quot;Vardiya Oluştur&quot; ile üretebilirsiniz.
+            Üstteki &quot;Plan oluştur&quot; ile üretebilirsiniz.
           </p>
         </div>
       ) : (

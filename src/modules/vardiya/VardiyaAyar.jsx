@@ -1,11 +1,33 @@
 import { useState, useEffect } from 'react';
-import { api } from '../../utils/api';
+import { api, today } from '../../utils/api';
 
 /** API TIME / string → time input HH:MM */
 function saatInputVal(v) {
   if (v == null || v === '') return '';
   const s = String(v);
   return s.length >= 5 ? s.slice(0, 5) : s;
+}
+
+/** GET personel-kisit → form: şube yasakları (kayıt yok = serbest) */
+function normalizeSubeYasaklariFromApi(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((x) => ({
+      sube_id: String(x.sube_id || x.branch_id || '').trim(),
+      yasak: x.yasak !== false,
+    }))
+    .filter((x) => x.sube_id);
+}
+
+/** PUT personel-kisit: kontrat { branch_id, sube_id, yasak } */
+function subeYasaklariToApiPayload(rows) {
+  const a = Array.isArray(rows) ? rows : [];
+  return a
+    .filter((r) => r && String(r.sube_id || '').trim())
+    .map((r) => {
+      const id = String(r.sube_id).trim();
+      return { branch_id: id, sube_id: id, yasak: r.yasak !== false };
+    });
 }
 
 const VARSAYILAN_SUBE = {
@@ -44,6 +66,16 @@ const SUBE_VARDIYA_SAAT = [
   },
 ];
 
+/**
+ * Personel API kontratı (Bölüm 2): GET/PUT `vardiya_yetkisi: { acilis, ara, kapanis }`.
+ * Form state kolon adlarıyla (`*_yapabilir`) senkron tutulur.
+ */
+const VARDIYA_YETKISI_KEYS = [
+  { kontrat: 'acilis', state: 'acilis_yapabilir', label: 'Açılış' },
+  { kontrat: 'ara', state: 'ara_yapabilir', label: 'Ara' },
+  { kontrat: 'kapanis', state: 'kapanis_yapabilir', label: 'Kapanış' },
+];
+
 const VARSAYILAN_KISIT = {
   acilis_yapabilir: true,
   ara_yapabilir: true,
@@ -58,9 +90,12 @@ const VARSAYILAN_KISIT = {
   min_baslangic_saat: '',
   max_cikis_saat: '',
   izinli_sube_ids: '',
+  kaydirma_izin_ciftleri: '',
   part_gunluk_min_saat: '',
   part_gunluk_max_saat: '',
   gunluk_mesai_fazlasi_saat: '',
+  /** { sube_id, yasak }[] — API sube_yasaklari ile aynı mantık */
+  sube_yasaklari: [],
 };
 
 const HAFTA_GUNU_ADLARI = [
@@ -84,6 +119,13 @@ function bosGunlukSatirlari() {
   }));
 }
 
+function parseIzinliSubeCsv(s) {
+  return (s || '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
 function apiGunlukBirlestir(apiRows) {
   const byHg = {};
   (apiRows || []).forEach((r) => {
@@ -103,6 +145,62 @@ function apiGunlukBirlestir(apiRows) {
       min_baslangic: saatInputVal(r.min_baslangic),
       max_cikis: saatInputVal(r.max_cikis),
       max_saat: r.max_saat != null && r.max_saat !== '' ? String(r.max_saat) : '',
+    };
+  });
+}
+
+const VPLAN_TIP_FROM_API = { ACILIS: 'acilis', ARA: 'ara', KAPANIS: 'kapanis' };
+
+const DEFAULT_PLAN_VARDIYA = [
+  { tip: 'acilis', aktif: true, kisi_sayisi: 1, personel_turu: 'farketmez', oncelik: 'normal' },
+  { tip: 'ara', aktif: true, kisi_sayisi: 1, personel_turu: 'farketmez', oncelik: 'normal' },
+  { tip: 'kapanis', aktif: true, kisi_sayisi: 1, personel_turu: 'farketmez', oncelik: 'normal' },
+];
+
+function tarihPlusGun(isoYmd, gun) {
+  const d = new Date(`${isoYmd}T12:00:00`);
+  d.setDate(d.getDate() + gun);
+  return d.toISOString().split('T')[0];
+}
+
+/** Planlama API kök varsayılan saat (override ile aynı anahtar adları) */
+function planlamaDefaultSaat(d, alan) {
+  if (alan === 'acilis')
+    return d.acilis_saati != null ? d.acilis_saati : d.default_acilis_saati;
+  return d.kapanis_saati != null ? d.kapanis_saati : d.default_kapanis_saati;
+}
+
+function apiGirdiToFormPlan(vg) {
+  const raw =
+    !vg || vg.length === 0
+      ? DEFAULT_PLAN_VARDIYA.map((x) => ({ ...x }))
+      : vg.map((r) => ({
+          tip: VPLAN_TIP_FROM_API[r.tip] || String(r.tip || 'acilis').toLowerCase(),
+          aktif: !!r.aktif,
+          kisi_sayisi: Number(r.kisi_sayisi) || 0,
+          personel_turu: r.personel_turu || 'farketmez',
+          oncelik: r.oncelik || 'normal',
+        }));
+  return raw.map((row) => patchPlanGirdiRow(row, {}));
+}
+
+function patchPlanGirdiRow(row, patch) {
+  const next = { ...row, ...patch };
+  const ks = Math.max(0, parseInt(String(next.kisi_sayisi), 10) || 0);
+  next.kisi_sayisi = ks;
+  next.aktif = !!next.aktif && ks > 0;
+  return next;
+}
+
+function planGirdiToPayload(rows) {
+  return rows.map((r) => {
+    const ks = Math.max(0, parseInt(String(r.kisi_sayisi), 10) || 0);
+    return {
+      tip: r.tip,
+      aktif: !!r.aktif && ks > 0,
+      kisi_sayisi: ks,
+      personel_turu: r.personel_turu || 'farketmez',
+      oncelik: r.oncelik || 'normal',
     };
   });
 }
@@ -151,8 +249,25 @@ export default function VardiyaAyar() {
   const [gunlukSatirlar, setGunlukSatirlar] = useState(bosGunlukSatirlari);
   const [gunlukYukleniyor, setGunlukYukleniyor] = useState(false);
   const [gunlukKaydediliyor, setGunlukKaydediliyor] = useState(false);
+  /** Bölüm 3: `personel_gunluk_durum` — { tarih, calisabilir, tur } (tam|part|'') */
+  const [durumSatirlar, setDurumSatirlar] = useState([]);
+  const [durumKaydediliyor, setDurumKaydediliyor] = useState(false);
+  const [subeKisitPid, setSubeKisitPid] = useState('');
+  const [hatKaynakSel, setHatKaynakSel] = useState('');
+  const [hatHedefSel, setHatHedefSel] = useState('');
   /** personel_id → otomatik vardiya havuzunda mı */
   const [pcVardiyaDahil, setPcVardiyaDahil] = useState({});
+  /** GET/PUT /api/sube-planlama — şube aktif, varsayılan saat, günlük override, vardiya girdileri */
+  const [planlamaSid, setPlanlamaSid] = useState('');
+  const [planYukleniyor, setPlanYukleniyor] = useState(false);
+  const [planKaydediliyor, setPlanKaydediliyor] = useState(false);
+  const [planAktif, setPlanAktif] = useState(true);
+  const [planAcilis, setPlanAcilis] = useState('');
+  const [planKapanis, setPlanKapanis] = useState('');
+  const [planGirdi, setPlanGirdi] = useState(() => DEFAULT_PLAN_VARDIYA.map((x) => ({ ...x })));
+  const [planOverrides, setPlanOverrides] = useState([]);
+  /** Sunucudan silinecek günlük override tarihleri (PUT ile çift null gönderilir) */
+  const [planOverrideDeletes, setPlanOverrideDeletes] = useState([]);
 
   const toast = (m, t = 'green') => {
     setMsg({ m, t });
@@ -208,9 +323,21 @@ export default function VardiyaAyar() {
         ).then((ks) => {
           const m = {};
           ks.forEach((k) => {
+            const vy = k.vardiya_yetkisi;
+            let ac = k.acilis_yapabilir !== false;
+            let ar = k.ara_yapabilir !== false;
+            let kap = k.kapanis_yapabilir !== false;
+            if (vy && typeof vy === 'object') {
+              if ('acilis' in vy) ac = !!vy.acilis;
+              if ('ara' in vy) ar = !!vy.ara;
+              if ('kapanis' in vy) kap = !!vy.kapanis;
+            }
             m[k.personel_id] = {
               ...VARSAYILAN_KISIT,
               ...k,
+              acilis_yapabilir: ac,
+              ara_yapabilir: ar,
+              kapanis_yapabilir: kap,
               sadece_tip: k.sadece_tip || '',
               kapanis_bit_saat: k.kapanis_bit_saat
                 ? String(k.kapanis_bit_saat).slice(0, 5)
@@ -243,6 +370,11 @@ export default function VardiyaAyar() {
                 k.gunluk_mesai_fazlasi_saat != null && k.gunluk_mesai_fazlasi_saat !== ''
                   ? String(k.gunluk_mesai_fazlasi_saat)
                   : '',
+              kaydirma_izin_ciftleri:
+                k.kaydirma_izin_ciftleri != null && k.kaydirma_izin_ciftleri !== ''
+                  ? String(k.kaydirma_izin_ciftleri)
+                  : '',
+              sube_yasaklari: normalizeSubeYasaklariFromApi(k.sube_yasaklari),
             };
           });
           setKisitlar(m);
@@ -268,25 +400,96 @@ export default function VardiyaAyar() {
   }, []);
 
   useEffect(() => {
+    if (subeler.length > 0 && !planlamaSid) {
+      setPlanlamaSid(String(subeler[0].id));
+    }
+  }, [subeler, planlamaSid]);
+
+  useEffect(() => {
+    if (tab !== 'plan-model' || !planlamaSid) {
+      return undefined;
+    }
+    let cancel = false;
+    setPlanYukleniyor(true);
+    const fromD = today();
+    const toD = tarihPlusGun(fromD, 60);
+    api(`/sube-planlama/${planlamaSid}?from_tarih=${fromD}&to_tarih=${toD}`)
+      .then((d) => {
+        if (cancel) return;
+        setPlanAktif(!!d.aktif_mi);
+        setPlanAcilis(saatInputVal(planlamaDefaultSaat(d, 'acilis')));
+        setPlanKapanis(saatInputVal(planlamaDefaultSaat(d, 'kapanis')));
+        setPlanGirdi(apiGirdiToFormPlan(d.vardiya_girdileri));
+        setPlanOverrides(
+          (d.gunluk_overrides || []).map((o) => ({
+            tarih: o.tarih || '',
+            acilis_saati: saatInputVal(o.acilis_saati),
+            kapanis_saati: saatInputVal(o.kapanis_saati),
+          })),
+        );
+        setPlanOverrideDeletes([]);
+      })
+      .catch((e) => {
+        if (!cancel) toast(e.message, 'red');
+      })
+      .finally(() => {
+        if (!cancel) setPlanYukleniyor(false);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [tab, planlamaSid]);
+
+  useEffect(() => {
     if (tab !== 'gunluk' || !gunlukPid) {
       return undefined;
     }
     let cancel = false;
     setGunlukYukleniyor(true);
-    api(`/personel-gunluk-kisit/${gunlukPid}`)
-      .then((rows) => {
-        if (!cancel) setGunlukSatirlar(apiGunlukBirlestir(rows));
-      })
-      .catch(() => {
-        if (!cancel) setGunlukSatirlar(bosGunlukSatirlari());
-      })
-      .finally(() => {
-        if (!cancel) setGunlukYukleniyor(false);
-      });
+    const fromD = today();
+    const toD = tarihPlusGun(fromD, 120);
+    Promise.all([
+      api(`/personel-gunluk-kisit/${gunlukPid}`)
+        .then((rows) => {
+          if (!cancel) setGunlukSatirlar(apiGunlukBirlestir(rows));
+        })
+        .catch(() => {
+          if (!cancel) setGunlukSatirlar(bosGunlukSatirlari());
+        }),
+      api(
+        `/personel-gunluk-durum/${gunlukPid}?from_tarih=${fromD}&to_tarih=${toD}`,
+      )
+        .then((rows) => {
+          if (!cancel) {
+            setDurumSatirlar(
+              (Array.isArray(rows) ? rows : []).map((r) => {
+                const sk = r.saat_kisiti && typeof r.saat_kisiti === 'object' ? r.saat_kisiti : {};
+                return {
+                  tarih: String(r.tarih || '').slice(0, 10),
+                  calisabilir: r.calisabilir !== false,
+                  tur: r.tur === 'tam' || r.tur === 'part' ? r.tur : '',
+                  en_erken: saatInputVal(sk.en_erken),
+                  en_gec: saatInputVal(sk.en_gec),
+                };
+              }),
+            );
+          }
+        })
+        .catch(() => {
+          if (!cancel) setDurumSatirlar([]);
+        }),
+    ]).finally(() => {
+      if (!cancel) setGunlukYukleniyor(false);
+    });
     return () => {
       cancel = true;
     };
   }, [tab, gunlukPid]);
+
+  useEffect(() => {
+    setHatKaynakSel('');
+    setHatHedefSel('');
+  }, [subeKisitPid]);
 
   const setSubeCfgVal = (sid, field, val) =>
     setSubeCfg((prev) => ({
@@ -299,6 +502,83 @@ export default function VardiyaAyar() {
       ...prev,
       [pid]: { ...(prev[pid] || VARSAYILAN_KISIT), [field]: val },
     }));
+
+  const setKisitSubeYasaklari = (pid, updater) => {
+    setKisitlar((prev) => {
+      const base = { ...(prev[pid] || VARSAYILAN_KISIT) };
+      const cur = Array.isArray(base.sube_yasaklari) ? base.sube_yasaklari : [];
+      const next = typeof updater === 'function' ? updater(cur) : updater;
+      return { ...prev, [pid]: { ...base, sube_yasaklari: next } };
+    });
+  };
+
+  function toggleSubeIzin(pid, sid, checked) {
+    const k = kisitlar[pid] || VARSAYILAN_KISIT;
+    const set = new Set(parseIzinliSubeCsv(k.izinli_sube_ids));
+    if (checked) set.add(sid);
+    else set.delete(sid);
+    if (set.size === 0) {
+      toast(
+        'En az bir şube seçili olmalı. Tüm şubeler için üstte “tüm şubeler” seçeneğini kullanın.',
+        'red',
+      );
+      return;
+    }
+    setKisitVal(pid, 'izinli_sube_ids', [...set].join(','));
+  }
+
+  function setIzinliTumu(pid) {
+    setKisitVal(pid, 'izinli_sube_ids', '');
+  }
+
+  function setIzinliSeciliBaslat(pid) {
+    if (!subeler.length) return;
+    setKisitVal(pid, 'izinli_sube_ids', subeler.map((s) => s.id).join(','));
+  }
+
+  function addKaydirmaHat(pid, kaynakId, hedefId) {
+    if (!kaynakId || !hedefId || kaynakId === hedefId) return;
+    const k = kisitlar[pid] || VARSAYILAN_KISIT;
+    const parts = (k.kaydirma_izin_ciftleri || '')
+      .split(',')
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const tok = `${kaynakId}>${hedefId}`;
+    if (!parts.includes(tok)) parts.push(tok);
+    setKisitVal(pid, 'kaydirma_izin_ciftleri', parts.join(','));
+  }
+
+  function removeKaydirmaHat(pid, rawToken) {
+    const k = kisitlar[pid] || VARSAYILAN_KISIT;
+    const parts = (k.kaydirma_izin_ciftleri || '')
+      .split(',')
+      .map((x) => x.trim())
+      .filter(Boolean);
+    setKisitVal(
+      pid,
+      'kaydirma_izin_ciftleri',
+      parts.filter((p) => p !== rawToken).join(','),
+    );
+  }
+
+  async function subeKisitFormKaydet() {
+    if (!subeKisitPid) {
+      toast('Önce personel seçin', 'red');
+      return;
+    }
+    const k = kisitlar[subeKisitPid] || VARSAYILAN_KISIT;
+    const izinliStr = (k.izinli_sube_ids || '').trim();
+    const ids = parseIzinliSubeCsv(izinliStr);
+    if (izinliStr !== '' && ids.length === 0) {
+      toast('Geçersiz şube seçimi', 'red');
+      return;
+    }
+    if ((k.kaydirma_izin_ciftleri || '').trim() && !k.sube_degistirebilir) {
+      toast('Kaydırma hattı tanımlıysa “başka şubede çalışabilir” işaretli olmalı', 'red');
+      return;
+    }
+    await kisitKaydet(subeKisitPid);
+  }
 
   async function personelVardiyaDahilToggle(pid, checked) {
     const prev = pcVardiyaDahil[pid] !== false;
@@ -335,6 +615,11 @@ export default function VardiyaAyar() {
       await api(`/personel-kisit/${pid}`, {
         method: 'PUT',
         body: {
+          vardiya_yetkisi: {
+            acilis: !!k.acilis_yapabilir,
+            ara: !!k.ara_yapabilir,
+            kapanis: !!k.kapanis_yapabilir,
+          },
           acilis_yapabilir: !!k.acilis_yapabilir,
           ara_yapabilir: !!k.ara_yapabilir,
           kapanis_yapabilir: !!k.kapanis_yapabilir,
@@ -366,6 +651,11 @@ export default function VardiyaAyar() {
           min_baslangic_saat: k.min_baslangic_saat || null,
           max_cikis_saat: k.max_cikis_saat || null,
           izinli_sube_ids: k.izinli_sube_ids || null,
+          kaydirma_izin_ciftleri: !k.sube_degistirebilir
+            ? null
+            : k.kaydirma_izin_ciftleri && String(k.kaydirma_izin_ciftleri).trim()
+              ? String(k.kaydirma_izin_ciftleri).trim()
+              : null,
           part_gunluk_min_saat:
             k.part_gunluk_min_saat === '' || k.part_gunluk_min_saat == null
               ? null
@@ -387,6 +677,7 @@ export default function VardiyaAyar() {
                   const n = parseFloat(k.gunluk_mesai_fazlasi_saat);
                   return Number.isFinite(n) ? n : null;
                 })(),
+          sube_yasaklari: subeYasaklariToApiPayload(k.sube_yasaklari),
         },
       });
       toast('Personel kısıtı kaydedildi');
@@ -433,6 +724,49 @@ export default function VardiyaAyar() {
       toast(e.message, 'red');
     } finally {
       setGunlukKaydediliyor(false);
+    }
+  }
+
+  function setDurumSatirIx(i, patch) {
+    setDurumSatirlar((rows) =>
+      rows.map((row, j) => (j === i ? { ...row, ...patch } : row)),
+    );
+  }
+
+  async function gunlukDurumKaydet() {
+    if (!gunlukPid) {
+      toast('Önce personel seçin', 'red');
+      return;
+    }
+    setDurumKaydediliyor(true);
+    try {
+      const gunluk_durumlar = durumSatirlar
+        .filter((r) => r.tarih && String(r.tarih).trim())
+        .map((r) => {
+          const t = String(r.tarih).slice(0, 10);
+          const tu = r.tur === 'tam' || r.tur === 'part' ? r.tur : null;
+          const eer = saatInputVal(r.en_erken);
+          const ege = saatInputVal(r.en_gec);
+          const row = {
+            tarih: t,
+            calisabilir: !!r.calisabilir,
+          };
+          if (tu) row.tur = tu;
+          const sk = {};
+          if (eer) sk.en_erken = eer;
+          if (ege) sk.en_gec = ege;
+          if (Object.keys(sk).length) row.saat_kisiti = sk;
+          return row;
+        });
+      await api(`/personel-gunluk-durum/${gunlukPid}`, {
+        method: 'PUT',
+        body: { gunluk_durumlar },
+      });
+      toast('Günlük durum kaydedildi (liste tamamen değiştirildi)');
+    } catch (e) {
+      toast(e.message, 'red');
+    } finally {
+      setDurumKaydediliyor(false);
     }
   }
 
@@ -492,6 +826,110 @@ export default function VardiyaAyar() {
     }
   }
 
+  function setPlanGirdiIx(i, patch) {
+    setPlanGirdi((rows) =>
+      rows.map((row, j) => (j === i ? patchPlanGirdiRow(row, patch) : row)),
+    );
+  }
+
+  function planOverrideSil(i) {
+    setPlanOverrides((rows) => {
+      const row = rows[i];
+      const next = rows.filter((_, j) => j !== i);
+      if (row?.tarih) {
+        const t = String(row.tarih).slice(0, 10);
+        setPlanOverrideDeletes((d) => (d.includes(t) ? d : [...d, t]));
+      }
+      return next;
+    });
+  }
+
+  async function planlamaKaydet() {
+    if (!planlamaSid) {
+      toast('Şube seçin', 'red');
+      return;
+    }
+    setPlanKaydediliyor(true);
+    const fromD = today();
+    const toD = tarihPlusGun(fromD, 60);
+    try {
+      const ovsFromForm = planOverrides
+        .filter((o) => o.tarih && String(o.tarih).trim())
+        .map((o) => {
+          const t = String(o.tarih).slice(0, 10);
+          const ac = saatInputVal(o.acilis_saati);
+          const kc = saatInputVal(o.kapanis_saati);
+          const row = { tarih: t };
+          if (ac) row.acilis_saati = ac;
+          if (kc) row.kapanis_saati = kc;
+          return row;
+        });
+      const delPayload = planOverrideDeletes.map((t) => ({
+        tarih: t,
+        acilis_saati: null,
+        kapanis_saati: null,
+      }));
+      await api(`/sube-planlama/${planlamaSid}`, {
+        method: 'PUT',
+        body: {
+          aktif_mi: planAktif,
+          acilis_saati: planAcilis || null,
+          kapanis_saati: planKapanis || null,
+          vardiya_girdileri: planGirdiToPayload(planGirdi),
+          gunluk_overrides: [...ovsFromForm, ...delPayload],
+        },
+      });
+      toast('Planlama modeli kaydedildi');
+      setPlanOverrideDeletes([]);
+      const d = await api(
+        `/sube-planlama/${planlamaSid}?from_tarih=${fromD}&to_tarih=${toD}`,
+      );
+      setPlanAktif(!!d.aktif_mi);
+      setPlanAcilis(saatInputVal(planlamaDefaultSaat(d, 'acilis')));
+      setPlanKapanis(saatInputVal(planlamaDefaultSaat(d, 'kapanis')));
+      setPlanGirdi(apiGirdiToFormPlan(d.vardiya_girdileri));
+      setPlanOverrides(
+        (d.gunluk_overrides || []).map((o) => ({
+          tarih: o.tarih || '',
+          acilis_saati: saatInputVal(o.acilis_saati),
+          kapanis_saati: saatInputVal(o.kapanis_saati),
+        })),
+      );
+    } catch (e) {
+      toast(e.message, 'red');
+    } finally {
+      setPlanKaydediliyor(false);
+    }
+  }
+
+  async function planlamaYenile() {
+    if (!planlamaSid) return;
+    setPlanYukleniyor(true);
+    const fromD = today();
+    const toD = tarihPlusGun(fromD, 60);
+    try {
+      const d = await api(
+        `/sube-planlama/${planlamaSid}?from_tarih=${fromD}&to_tarih=${toD}`,
+      );
+      setPlanAktif(!!d.aktif_mi);
+      setPlanAcilis(saatInputVal(planlamaDefaultSaat(d, 'acilis')));
+      setPlanKapanis(saatInputVal(planlamaDefaultSaat(d, 'kapanis')));
+      setPlanGirdi(apiGirdiToFormPlan(d.vardiya_girdileri));
+      setPlanOverrides(
+        (d.gunluk_overrides || []).map((o) => ({
+          tarih: o.tarih || '',
+          acilis_saati: saatInputVal(o.acilis_saati),
+          kapanis_saati: saatInputVal(o.kapanis_saati),
+        })),
+      );
+      setPlanOverrideDeletes([]);
+    } catch (e) {
+      toast(e.message, 'red');
+    } finally {
+      setPlanYukleniyor(false);
+    }
+  }
+
   return (
     <div className="page vardiya-module">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
@@ -502,8 +940,8 @@ export default function VardiyaAyar() {
           Her şube için saat aralıklarını ve açılış/kapanışın planda olup olmayacağını seçin.
           Personelde yarı zamanlı günlük min–max saat ve mesai fazlası tavanı motor kotasına girer.
           Haftalık izin günleri <strong>Haftalık gün kısıtı</strong> sekmesinde; onaylı tarihsel izinler{' '}
-          <strong>İzinler</strong> sekmesindedir. İki şubede bölünmüş part vardiyası (kaydırmalı tek
-          gün) henüz tek satırda üretilmez — motor şimdilik şube başına tam slot atar.
+          <strong>İzinler</strong> sekmesindedir. Hangi şubelerde çalışılabileceği ve kaydırma hatları{' '}
+          <strong>Şubeler &amp; kaydırma</strong> sekmesindedir.
         </p>
       </div>
 
@@ -516,11 +954,25 @@ export default function VardiyaAyar() {
           Şube kuralları
         </div>
         <div
+          className={`tab ${tab === 'plan-model' ? 'active' : ''}`}
+          onClick={() => setTab('plan-model')}
+          role="presentation"
+        >
+          Plan modeli
+        </div>
+        <div
           className={`tab ${tab === 'personel' ? 'active' : ''}`}
           onClick={() => setTab('personel')}
           role="presentation"
         >
           Personel kısıtları
+        </div>
+        <div
+          className={`tab ${tab === 'sube-kaydir' ? 'active' : ''}`}
+          onClick={() => setTab('sube-kaydir')}
+          role="presentation"
+        >
+          Şubeler &amp; kaydırma
         </div>
         <div
           className={`tab ${tab === 'gunluk' ? 'active' : ''}`}
@@ -544,6 +996,288 @@ export default function VardiyaAyar() {
           İzinler
         </div>
       </div>
+
+      {tab === 'plan-model' && (
+        <div
+          style={{
+            background: 'var(--bg2)',
+            border: '1px solid var(--border)',
+            borderRadius: 10,
+            padding: '18px 20px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16,
+          }}
+        >
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--text2)', lineHeight: 1.5 }}>
+            <strong>Şube aktif</strong> kapalıysa motor bu şubeyi yok sayar. Varsayılan açılış/kapanış saatleri günlük
+            kayıt yoksa kullanılır; tarih bazlı kayıt varsa o gün için override geçerlidir.{' '}
+            <strong>Kişi sayısı 0</strong> olan vardiya satırı her zaman pasif sayılır (aktif işareti otomatik düşer).
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
+            <div className="form-group" style={{ marginBottom: 0, minWidth: 200 }}>
+              <label>Şube</label>
+              <select
+                value={planlamaSid}
+                onChange={(e) => setPlanlamaSid(e.target.value)}
+                disabled={!subeler.length}
+              >
+                {subeler.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.ad}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: 14,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={planAktif}
+                onChange={(e) => setPlanAktif(e.target.checked)}
+              />
+              Şube aktif (planlamaya dahil)
+            </label>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label>
+                Varsayılan açılış <span className="mono">(acilis_saati)</span>
+              </label>
+              <input
+                type="time"
+                value={planAcilis}
+                onChange={(e) => setPlanAcilis(e.target.value)}
+              />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label>
+                Varsayılan kapanış <span className="mono">(kapanis_saati)</span>
+              </label>
+              <input
+                type="time"
+                value={planKapanis}
+                onChange={(e) => setPlanKapanis(e.target.value)}
+              />
+            </div>
+            <button
+              type="button"
+              className="btn"
+              onClick={planlamaYenile}
+              disabled={!planlamaSid || planYukleniyor}
+            >
+              {planYukleniyor ? 'Yükleniyor…' : 'Yenile'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={planlamaKaydet}
+              disabled={!planlamaSid || planKaydediliyor || planYukleniyor}
+            >
+              {planKaydediliyor ? 'Kaydediliyor…' : 'Kaydet'}
+            </button>
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 14 }}>Vardiya girdileri</div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tip</th>
+                    <th>Aktif</th>
+                    <th>Kişi</th>
+                    <th>Personel türü</th>
+                    <th>Öncelik</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {planGirdi.map((row, i) => (
+                    <tr key={i}>
+                      <td>
+                        <select
+                          value={row.tip}
+                          onChange={(e) => setPlanGirdiIx(i, { tip: e.target.value })}
+                        >
+                          <option value="acilis">Açılış</option>
+                          <option value="ara">Ara</option>
+                          <option value="kapanis">Kapanış</option>
+                        </select>
+                      </td>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={row.aktif}
+                          onChange={(e) => setPlanGirdiIx(i, { aktif: e.target.checked })}
+                        />
+                      </td>
+                      <td style={{ width: 88 }}>
+                        <input
+                          type="number"
+                          min={0}
+                          max={99}
+                          value={row.kisi_sayisi}
+                          onChange={(e) =>
+                            setPlanGirdiIx(i, { kisi_sayisi: e.target.value })
+                          }
+                          style={{ width: '100%' }}
+                        />
+                      </td>
+                      <td>
+                        <select
+                          value={row.personel_turu}
+                          onChange={(e) => setPlanGirdiIx(i, { personel_turu: e.target.value })}
+                        >
+                          <option value="tam">Tam</option>
+                          <option value="part">Part</option>
+                          <option value="farketmez">Farketmez</option>
+                        </select>
+                      </td>
+                      <td>
+                        <select
+                          value={row.oncelik}
+                          onChange={(e) => setPlanGirdiIx(i, { oncelik: e.target.value })}
+                        >
+                          <option value="kritik">Kritik</option>
+                          <option value="normal">Normal</option>
+                          <option value="dusuk">Düşük</option>
+                        </select>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() =>
+                            setPlanGirdi((rows) => rows.filter((_, j) => j !== i))
+                          }
+                        >
+                          Sil
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{ marginTop: 10 }}
+              onClick={() =>
+                setPlanGirdi((r) => [
+                  ...r,
+                  {
+                    tip: 'ara',
+                    aktif: true,
+                    kisi_sayisi: 1,
+                    personel_turu: 'farketmez',
+                    oncelik: 'normal',
+                  },
+                ])
+              }
+            >
+              Satır ekle
+            </button>
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 14 }}>
+              Günlük saat override (60 gün)
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tarih</th>
+                    <th>Açılış</th>
+                    <th>Kapanış</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {planOverrides.map((row, i) => (
+                    <tr key={i}>
+                      <td>
+                        <input
+                          type="date"
+                          value={String(row.tarih || '').slice(0, 10)}
+                          onChange={(e) =>
+                            setPlanOverrides((rows) =>
+                              rows.map((x, j) =>
+                                j === i ? { ...x, tarih: e.target.value } : x,
+                              ),
+                            )
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="time"
+                          value={row.acilis_saati || ''}
+                          onChange={(e) =>
+                            setPlanOverrides((rows) =>
+                              rows.map((x, j) =>
+                                j === i ? { ...x, acilis_saati: e.target.value } : x,
+                              ),
+                            )
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="time"
+                          value={row.kapanis_saati || ''}
+                          onChange={(e) =>
+                            setPlanOverrides((rows) =>
+                              rows.map((x, j) =>
+                                j === i ? { ...x, kapanis_saati: e.target.value } : x,
+                              ),
+                            )
+                          }
+                        />
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => planOverrideSil(i)}
+                        >
+                          Sil
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {planOverrides.length === 0 && (
+                <p style={{ padding: 12, color: 'var(--text3)', fontSize: 13, margin: 0 }}>
+                  Kayıt yok. Boş bırakılan günlerde varsayılan saatler kullanılır.
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{ marginTop: 10 }}
+              onClick={() =>
+                setPlanOverrides((r) => [
+                  ...r,
+                  { tarih: '', acilis_saati: '', kapanis_saati: '' },
+                ])
+              }
+            >
+              Günlük satır ekle
+            </button>
+          </div>
+        </div>
+      )}
 
       {tab === 'subeler' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -771,22 +1505,35 @@ export default function VardiyaAyar() {
                   </label>
                 </div>
 
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, flex: 1 }}>
-                  {[
-                    { field: 'acilis_yapabilir', label: 'Açılış vardiyası' },
-                    { field: 'ara_yapabilir', label: 'Ara vardiyası' },
-                    { field: 'kapanis_yapabilir', label: 'Kapanış vardiyası' },
-                    { field: 'sube_degistirebilir', label: 'Kaydırılabilir' },
-                  ].map((x) => (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, flex: 1, alignItems: 'center' }}>
+                  <div
+                    style={{
+                      flexBasis: '100%',
+                      fontWeight: 700,
+                      fontSize: 12,
+                      color: 'var(--text2)',
+                      marginBottom: 2,
+                    }}
+                  >
+                    Vardiya yetkisi{' '}
+                    <span style={{ fontWeight: 400, color: 'var(--text3)', fontSize: 11 }}>
+                      (kontrat:{' '}
+                      <span className="mono">
+                        {'{'} acilis, ara, kapanis {'}'}
+                      </span>
+                      )
+                    </span>
+                  </div>
+                  {VARDIYA_YETKISI_KEYS.map((x) => (
                     <label
-                      key={x.field}
+                      key={x.state}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: 6,
                         padding: '6px 10px',
-                        background: k[x.field] ? 'rgba(76,175,132,0.1)' : 'var(--bg3)',
-                        border: `1px solid ${k[x.field] ? 'var(--green)' : 'var(--border)'}`,
+                        background: k[x.state] ? 'rgba(76,175,132,0.1)' : 'var(--bg3)',
+                        border: `1px solid ${k[x.state] ? 'var(--green)' : 'var(--border)'}`,
                         borderRadius: 6,
                         cursor: 'pointer',
                         fontSize: 12,
@@ -795,10 +1542,14 @@ export default function VardiyaAyar() {
                     >
                       <input
                         type="checkbox"
-                        checked={!!k[x.field]}
-                        onChange={(e) => setKisitVal(p.id, x.field, e.target.checked)}
+                        checked={!!k[x.state]}
+                        onChange={(e) => setKisitVal(p.id, x.state, e.target.checked)}
                       />
-                      {x.label}
+                      <span className="mono" style={{ fontSize: 11 }}>
+                        {x.kontrat}
+                      </span>
+                      <span style={{ color: 'var(--text3)' }}>·</span>
+                      <span>{x.label}</span>
                     </label>
                   ))}
 
@@ -1036,22 +1787,6 @@ export default function VardiyaAyar() {
                       }}
                     />
                   </label>
-                  <input
-                    type="text"
-                    placeholder="İzinli şube id (virgülle)"
-                    value={k.izinli_sube_ids}
-                    onChange={(e) => setKisitVal(p.id, 'izinli_sube_ids', e.target.value)}
-                    style={{
-                      minWidth: 160,
-                      flex: 1,
-                      padding: '6px 8px',
-                      borderRadius: 6,
-                      border: '1px solid var(--border)',
-                      background: 'var(--bg3)',
-                      color: 'var(--text)',
-                      fontSize: 12,
-                    }}
-                  />
                 </div>
 
                 <button
@@ -1068,11 +1803,379 @@ export default function VardiyaAyar() {
         </div>
       )}
 
+      {tab === 'sube-kaydir' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <p style={{ fontSize: 12, color: 'var(--text3)' }}>
+            Gidebilecek şubeleri tikleyin; yalnızca bir şube işaretliyse motor o personeli yalnızca o
+            şubede kullanır. Kaydırma kapalıysa yalnızca ana (kart) şubesinde atanır. Kaydırma açıkken
+            hat listesi <strong>boş</strong> ise işaretli şubelerin tamamına atanabilir; hat
+            <strong> dolu</strong> ise yalnızca kaynak → hedef yönünde kaydırma serbesttir (ters yön
+            için ayrı satır ekleyin).
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+            <label style={{ fontSize: 13 }}>
+              Personel
+              <select
+                value={subeKisitPid}
+                onChange={(e) => setSubeKisitPid(e.target.value)}
+                style={{
+                  marginLeft: 8,
+                  padding: '8px 12px',
+                  borderRadius: 8,
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg2)',
+                  color: 'var(--text)',
+                  minWidth: 220,
+                }}
+              >
+                <option value="">— Seçin —</option>
+                {personeller.map((per) => (
+                  <option key={per.id} value={per.id}>
+                    {per.ad_soyad}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              disabled={!subeKisitPid || kayitLoading[subeKisitPid]}
+              onClick={() => subeKisitFormKaydet()}
+            >
+              {kayitLoading[subeKisitPid] ? 'Kaydediliyor…' : 'Şube & kaydırma kaydet'}
+            </button>
+          </div>
+
+          {subeKisitPid && (() => {
+            const k = { ...VARSAYILAN_KISIT, ...(kisitlar[subeKisitPid] || {}) };
+            const izinliTumu = !(k.izinli_sube_ids || '').trim();
+            const izinSet = new Set(parseIzinliSubeCsv(k.izinli_sube_ids));
+            const hatParcalari = (k.kaydirma_izin_ciftleri || '')
+              .split(',')
+              .map((x) => x.trim())
+              .filter(Boolean)
+              .map((raw) => {
+                const [a, b] = raw.split('>').map((x) => x.trim());
+                return { a, b, raw };
+              })
+              .filter((x) => x.a && x.b);
+            const subeAd = (id) => subeler.find((s) => s.id === id)?.ad || id;
+
+            return (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 20,
+                  background: 'var(--bg2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 10,
+                  padding: '18px 20px',
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10 }}>
+                    Gidebileceği şubeler
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name={`izinli-mod-${subeKisitPid}`}
+                        checked={izinliTumu}
+                        onChange={() => setIzinliTumu(subeKisitPid)}
+                      />
+                      <span style={{ fontSize: 13 }}>Tüm şubeler (kısıt yok)</span>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name={`izinli-mod-${subeKisitPid}`}
+                        checked={!izinliTumu}
+                        onChange={() => setIzinliSeciliBaslat(subeKisitPid)}
+                      />
+                      <span style={{ fontSize: 13 }}>Yalnızca aşağıda işaretli şubeler</span>
+                    </label>
+                  </div>
+                  {!izinliTumu && (
+                    <div
+                      style={{
+                        marginTop: 12,
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                        gap: 8,
+                      }}
+                    >
+                      {subeler.map((s) => (
+                        <label
+                          key={s.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            padding: '8px 10px',
+                            background: 'var(--bg3)',
+                            borderRadius: 6,
+                            border: '1px solid var(--border)',
+                            cursor: 'pointer',
+                            fontSize: 12,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={izinSet.has(s.id)}
+                            onChange={(e) => toggleSubeIzin(subeKisitPid, s.id, e.target.checked)}
+                          />
+                          {s.ad}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 8,
+                    paddingTop: 16,
+                    borderTop: '1px solid var(--border)',
+                  }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Şube yasakları</div>
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 10, lineHeight: 1.45 }}>
+                    Kontrat:{' '}
+                    <span className="mono">
+                      {'{'} branch_id, yasak {'}'}
+                    </span>
+                    . <strong>Kayıt yok = o şube için serbest</strong>; yalnızca listede ve yasak işaretli
+                    şubeler plana atanmaz (beyaz liste ile birlikte her iki kural da uygulanır).
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {(Array.isArray(k.sube_yasaklari) ? k.sube_yasaklari : []).map((row, yi) => (
+                      <div
+                        key={yi}
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
+                          gap: 8,
+                        }}
+                      >
+                        <select
+                          value={row.sube_id || ''}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setKisitSubeYasaklari(subeKisitPid, (rows) =>
+                              rows.map((r, j) => (j === yi ? { ...r, sube_id: v } : r)),
+                            );
+                          }}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 6,
+                            border: '1px solid var(--border)',
+                            background: 'var(--bg3)',
+                            color: 'var(--text)',
+                            fontSize: 12,
+                            minWidth: 200,
+                          }}
+                        >
+                          <option value="">Şube seçin</option>
+                          {subeler.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.ad}
+                            </option>
+                          ))}
+                        </select>
+                        <label
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            fontSize: 12,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={row.yasak !== false}
+                            onChange={(e) => {
+                              const on = e.target.checked;
+                              setKisitSubeYasaklari(subeKisitPid, (rows) =>
+                                rows.map((r, j) => (j === yi ? { ...r, yasak: on } : r)),
+                              );
+                            }}
+                          />
+                          <span className="mono">yasak</span>
+                        </label>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() =>
+                            setKisitSubeYasaklari(subeKisitPid, (rows) =>
+                              rows.filter((_, j) => j !== yi),
+                            )
+                          }
+                        >
+                          Sil
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      style={{ alignSelf: 'flex-start' }}
+                      onClick={() =>
+                        setKisitSubeYasaklari(subeKisitPid, (rows) => [
+                          ...rows,
+                          { sube_id: subeler[0]?.id || '', yasak: true },
+                        ])
+                      }
+                    >
+                      Yasak satırı ekle
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10 }}>Kaydırma</div>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      marginBottom: 12,
+                      cursor: 'pointer',
+                      fontSize: 13,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!k.sube_degistirebilir}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setKisitVal(subeKisitPid, 'sube_degistirebilir', on);
+                        if (!on) setKisitVal(subeKisitPid, 'kaydirma_izin_ciftleri', '');
+                      }}
+                    />
+                    Ana şubesi dışında başka şubede çalışabilir (kaydırma)
+                  </label>
+
+                  {k.sube_degistirebilir && (
+                    <>
+                      <p style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 10 }}>
+                        Hat listesi boş: izinli şubeler arasında serbest. Dolu: yalnızca seçilen
+                        kaynak→hedef çiftleri (A→B ile B→A aynı değildir).
+                      </p>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                        <select
+                          value={hatKaynakSel}
+                          onChange={(e) => setHatKaynakSel(e.target.value)}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 6,
+                            border: '1px solid var(--border)',
+                            background: 'var(--bg3)',
+                            color: 'var(--text)',
+                            fontSize: 12,
+                          }}
+                        >
+                          <option value="">Kaynak şube</option>
+                          {subeler.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.ad}
+                            </option>
+                          ))}
+                        </select>
+                        <span style={{ color: 'var(--text3)' }}>→</span>
+                        <select
+                          value={hatHedefSel}
+                          onChange={(e) => setHatHedefSel(e.target.value)}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 6,
+                            border: '1px solid var(--border)',
+                            background: 'var(--bg3)',
+                            color: 'var(--text)',
+                            fontSize: 12,
+                          }}
+                        >
+                          <option value="">Hedef şube</option>
+                          {subeler.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.ad}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => {
+                            addKaydirmaHat(subeKisitPid, hatKaynakSel, hatHedefSel);
+                            setHatKaynakSel('');
+                            setHatHedefSel('');
+                          }}
+                        >
+                          Hat ekle
+                        </button>
+                      </div>
+                      {baglantilar.filter((b) => b.aktif !== false).length > 0 && (
+                        <div style={{ marginTop: 10 }}>
+                          <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                            Şube bağlantılarından hızlı ekle:{' '}
+                          </span>
+                          <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 6 }}>
+                            {baglantilar
+                              .filter((b) => b.aktif !== false)
+                              .map((b) => (
+                                <button
+                                  key={b.id}
+                                  type="button"
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ fontSize: 11 }}
+                                  onClick={() =>
+                                    addKaydirmaHat(subeKisitPid, b.kaynak_id, b.hedef_id)
+                                  }
+                                >
+                                  {b.kaynak_adi || b.kaynak_id} → {b.hedef_adi || b.hedef_id}
+                                </button>
+                              ))}
+                          </span>
+                        </div>
+                      )}
+                      <ul style={{ marginTop: 12, paddingLeft: 18, fontSize: 12 }}>
+                        {hatParcalari.length === 0 && (
+                          <li style={{ color: 'var(--text3)' }}>Tanımlı hat yok (tüm izinli şubelere serbest)</li>
+                        )}
+                        {hatParcalari.map((h) => (
+                          <li key={h.raw} style={{ marginBottom: 4 }}>
+                            {subeAd(h.a)} → {subeAd(h.b)}
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              style={{ marginLeft: 8, padding: '2px 8px', fontSize: 11 }}
+                              onClick={() => removeKaydirmaHat(subeKisitPid, h.raw)}
+                            >
+                              Kaldır
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
       {tab === 'gunluk' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <p style={{ fontSize: 12, color: 'var(--text3)' }}>
-            Haftanın günü başına: çalışılabilirlik, yalnızca belirli vardiya tipi, o güne özel min
-            başlangıç / max çıkış ve günlük max saat. Motor önce genel personel kısıtıyla birleştirir.
+            <strong>Haftalık şablon</strong> (hafta günü başına): çalışılabilirlik, sadece tip, min
+            başlangıç / max çıkış, max saat — genel kısıtla birleşir.{' '}
+            <strong>Günlük durum</strong> (takvim tarihi): o güne özel çalışabilir ve tam/part
+            override; kayıt yoksa şablon + personel kartı geçerlidir. Kayıt kaydedince liste sunucuda
+            tamamen değişir (silinen tarihler override kalkar).
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
             <label style={{ fontSize: 13 }}>
@@ -1185,6 +2288,133 @@ export default function VardiyaAyar() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {gunlukPid && (
+            <div
+              style={{
+                marginTop: 8,
+                paddingTop: 20,
+                borderTop: '1px solid var(--border)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: 14 }}>Günlük durum (tarih bazlı)</div>
+              <p style={{ fontSize: 12, color: 'var(--text3)', margin: 0, lineHeight: 1.5 }}>
+                Her satır: <span className="mono">tarih</span>, çalışabilir, tür; isteğe bağlı{' '}
+                <span className="mono">saat_kisiti: {'{'} en_erken, en_gec {'}'}</span>. Boş saat =
+                o uçta günlük override yok. Dolu saat, haftalık gün şablonu ve personel kartındaki
+                min/max ile kesişir (başlangıç için daha geç, çıkış için daha erken kazanır). Tür
+                boşsa kart + şablon geçerli kalır.
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() =>
+                    setDurumSatirlar((r) => [
+                      ...r,
+                      { tarih: today(), calisabilir: true, tur: '', en_erken: '', en_gec: '' },
+                    ])
+                  }
+                >
+                  Tarih satırı ekle
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={durumKaydediliyor || gunlukYukleniyor}
+                  onClick={() => gunlukDurumKaydet()}
+                >
+                  {durumKaydediliyor ? 'Kaydediliyor…' : 'Günlük durumu kaydet'}
+                </button>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="data-table" style={{ minWidth: 720, fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      <th>Tarih</th>
+                      <th>Çalışabilir</th>
+                      <th>Tür</th>
+                      <th title="Boş = bu uçta ek saat kısıtı yok">En erken</th>
+                      <th title="Boş = bu uçta ek saat kısıtı yok">En geç çıkış</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {durumSatirlar.map((r, i) => (
+                      <tr key={`${r.tarih}-${i}`}>
+                        <td>
+                          <input
+                            type="date"
+                            value={String(r.tarih || '').slice(0, 10)}
+                            onChange={(e) => setDurumSatirIx(i, { tarih: e.target.value })}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={!!r.calisabilir}
+                            onChange={(e) =>
+                              setDurumSatirIx(i, { calisabilir: e.target.checked })
+                            }
+                          />
+                        </td>
+                        <td>
+                          <select
+                            value={r.tur === 'tam' || r.tur === 'part' ? r.tur : ''}
+                            onChange={(e) => setDurumSatirIx(i, { tur: e.target.value })}
+                            style={{ padding: 4, fontSize: 12 }}
+                          >
+                            <option value="">(şablona bırak)</option>
+                            <option value="tam">tam</option>
+                            <option value="part">part</option>
+                          </select>
+                        </td>
+                        <td>
+                          <input
+                            type="time"
+                            value={r.en_erken || ''}
+                            onChange={(e) => setDurumSatirIx(i, { en_erken: e.target.value })}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="time"
+                            value={r.en_gec || ''}
+                            onChange={(e) => setDurumSatirIx(i, { en_gec: e.target.value })}
+                          />
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() =>
+                              setDurumSatirlar((rows) => rows.filter((_, j) => j !== i))
+                            }
+                          >
+                            Sil
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {durumSatirlar.length > 0 && (
+                  <p style={{ margin: '8px 0 0', fontSize: 11, color: 'var(--text3)' }}>
+                    Boş saat alanı = o uç için kısıt yok. Tür &quot;şablona bırak&quot; = tür override
+                    yok.
+                  </p>
+                )}
+                {durumSatirlar.length === 0 && (
+                  <p style={{ padding: 12, color: 'var(--text3)', fontSize: 12, margin: 0 }}>
+                    Bu aralıkta kayıt yok. Kayıt eklemeden bırakırsanız motor şablonu kullanır.
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </div>
