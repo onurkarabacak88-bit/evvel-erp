@@ -1,5 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api, today } from '../../utils/api';
+import {
+  SUBE_PALETTES,
+  hucreTdProps,
+  mirrorHucreTdProps,
+  subeSatirStili,
+} from './vardiyaHaftalikRenk';
+import { buildHaftalikGorunumSirasi } from './vardiyaHaftalikYansima';
 import './vardiya.css';
 
 /** Verilen tarihin bulunduğu haftanın pazartesisini YYYY-MM-DD döner (yerel saat). */
@@ -25,6 +32,7 @@ export default function VardiyaHaftalik({ onNavigate }) {
   const [notMetni, setNotMetni] = useState('');
   const [gunler, setGunler] = useState([]);
   const [satirlar, setSatirlar] = useState([]);
+  const [subeRehber, setSubeRehber] = useState([]);
 
   const yukle = useCallback(async () => {
     setLoading(true);
@@ -40,10 +48,12 @@ export default function VardiyaHaftalik({ onNavigate }) {
           hucreler: { ...s.hucreler },
         })),
       );
+      setSubeRehber(Array.isArray(res.sube_rehber) ? res.sube_rehber : []);
     } catch (e) {
       setErr(e.message || 'Yüklenemedi');
       setSatirlar([]);
       setGunler([]);
+      setSubeRehber([]);
     } finally {
       setLoading(false);
     }
@@ -57,6 +67,14 @@ export default function VardiyaHaftalik({ onNavigate }) {
     if (!gunler.length) return '';
     return `${gunler[0].kisa} – ${gunler[6].kisa}`;
   }, [gunler]);
+
+  const gorunumSirasi = useMemo(
+    () => buildHaftalikGorunumSirasi(satirlar, gunler, subeRehber),
+    [satirlar, gunler, subeRehber],
+  );
+
+  const gorunumSube = (entry) =>
+    entry.kind === 'native' ? entry.row.sube_adi : entry.mirror.hedefAd;
 
   const hucreDegistir = (personelId, tarih, val) => {
     setSatirlar((rows) =>
@@ -134,7 +152,11 @@ export default function VardiyaHaftalik({ onNavigate }) {
           <h2>Haftalık vardiya listesi</h2>
           <p>
             Tulipi PDF formatı: her hücrede saat aralığı (ör. 09.00-18.30),{' '}
-            <strong>İZİNLİ</strong> veya o gün çalışılacak <strong>şube adı</strong>.
+            <strong>İZİNLİ</strong> veya başka şubede çalışma için o şubenin{' '}
+            <strong>adı</strong> (ör. ZAFER, TEMAŞEHİR). Şube sütunu ve şube adı
+            yazan hücreler aynı renk paletiyle vurgulanır. Başka şubede çalışanlar,
+            o şubenin bloğunda otomatik <strong>yansıma satırı</strong> olarak da listelenir
+            (kaynak şube ← ile); yazdırırken renkler korunur.
           </p>
         </div>
         <div className="vardiya-haftalik-header-actions">
@@ -214,7 +236,14 @@ export default function VardiyaHaftalik({ onNavigate }) {
                   <th rowSpan={2}>Görev</th>
                   <th rowSpan={2}>Ad Soyad</th>
                   {gunler.map((g) => (
-                    <th key={g.tarih} className="vardiya-haftalik-day">
+                    <th
+                      key={g.tarih}
+                      className={`vardiya-haftalik-day ${
+                        g.hafta_gunu === 'CUMARTESİ' || g.hafta_gunu === 'PAZAR'
+                          ? 'vardiya-haftalik-day--son'
+                          : ''
+                      }`}
+                    >
                       <div>{g.hafta_gunu}</div>
                       <div className="vardiya-haftalik-daydate">{g.kisa}</div>
                     </th>
@@ -224,7 +253,14 @@ export default function VardiyaHaftalik({ onNavigate }) {
                 </tr>
                 <tr>
                   {gunler.map((g) => (
-                    <th key={`d-${g.tarih}`} className="vardiya-haftalik-sub">
+                    <th
+                      key={`d-${g.tarih}`}
+                      className={`vardiya-haftalik-sub ${
+                        g.hafta_gunu === 'CUMARTESİ' || g.hafta_gunu === 'PAZAR'
+                          ? 'vardiya-haftalik-day--son'
+                          : ''
+                      }`}
+                    >
                       {g.tarih.slice(8, 10)}.{g.tarih.slice(5, 7)}
                     </th>
                   ))}
@@ -238,48 +274,161 @@ export default function VardiyaHaftalik({ onNavigate }) {
                     </td>
                   </tr>
                 ) : (
-                  satirlar.map((s) => (
-                    <tr key={s.personel_id}>
-                      <td className="vardiya-haftalik-sube">{s.sube_adi}</td>
-                      <td>{s.gorev || '—'}</td>
-                      <td className="vardiya-haftalik-ad">{s.ad_soyad}</td>
-                      {gunler.map((g) => (
-                        <td key={g.tarih} className="vardiya-haftalik-cell">
-                          <input
-                            type="text"
-                            className="vardiya-haftalik-input"
-                            value={s.hucreler[g.tarih] ?? ''}
-                            onChange={(e) => hucreDegistir(s.personel_id, g.tarih, e.target.value)}
-                            placeholder="09.00-18.30 / İZİNLİ / şube"
-                          />
+                  gorunumSirasi.map((entry, idx) => {
+                    const prevSube =
+                      idx > 0 ? gorunumSube(gorunumSirasi[idx - 1]) : null;
+                    const thisSube = gorunumSube(entry);
+                    const grupBas = idx === 0 || prevSube !== thisSube;
+
+                    if (entry.kind === 'native') {
+                      const s = entry.row;
+                      const subeTd = subeSatirStili(s.sube_adi, subeRehber);
+                      return (
+                        <tr
+                          key={s.personel_id}
+                          className={grupBas ? 'vardiya-haftalik-grup-bas' : undefined}
+                        >
+                          <td className={subeTd.className} style={subeTd.style}>
+                            {s.sube_adi}
+                          </td>
+                          <td>{s.gorev || '—'}</td>
+                          <td className="vardiya-haftalik-ad">{s.ad_soyad}</td>
+                          {gunler.map((g) => {
+                            const raw = s.hucreler[g.tarih] ?? '';
+                            const hp = hucreTdProps(raw, subeRehber);
+                            const hs =
+                              g.hafta_gunu === 'CUMARTESİ' ||
+                              g.hafta_gunu === 'PAZAR';
+                            return (
+                              <td
+                                key={g.tarih}
+                                className={`${hp.className}${hs ? ' vardiya-haftalik-col-hs' : ''}`}
+                                style={hp.style}
+                              >
+                                <input
+                                  type="text"
+                                  className="vardiya-haftalik-input"
+                                  value={raw}
+                                  onChange={(e) =>
+                                    hucreDegistir(s.personel_id, g.tarih, e.target.value)
+                                  }
+                                  placeholder="09.00-18.30 / İZİNLİ / şube"
+                                />
+                              </td>
+                            );
+                          })}
+                          <td>
+                            <input
+                              type="text"
+                              className="vardiya-haftalik-input vardiya-haftalik-input-sm"
+                              value={s.kapanis_sayisi ?? ''}
+                              onChange={(e) =>
+                                satirExtraDegistir(
+                                  s.personel_id,
+                                  'kapanis_sayisi',
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="text"
+                              className="vardiya-haftalik-input vardiya-haftalik-input-sm"
+                              value={s.alacak_saat ?? ''}
+                              onChange={(e) =>
+                                satirExtraDegistir(
+                                  s.personel_id,
+                                  'alacak_saat',
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    const m = entry.mirror;
+                    const subeTd = subeSatirStili(m.hedefAd, subeRehber);
+                    const ykey = `yansima-${m.home.personel_id}-${m.hedefAd}`;
+                    return (
+                      <tr
+                        key={ykey}
+                        className={`vardiya-haftalik-row-mirror${grupBas ? ' vardiya-haftalik-grup-bas' : ''}`}
+                        title={`Yansıma: kart şubesi ${m.home.sube_adi}; bu blokta ${m.hedefAd}`}
+                      >
+                        <td className={subeTd.className} style={subeTd.style}>
+                          {m.hedefAd}
                         </td>
-                      ))}
-                      <td>
-                        <input
-                          type="text"
-                          className="vardiya-haftalik-input vardiya-haftalik-input-sm"
-                          value={s.kapanis_sayisi ?? ''}
-                          onChange={(e) =>
-                            satirExtraDegistir(s.personel_id, 'kapanis_sayisi', e.target.value)
-                          }
-                        />
-                      </td>
-                      <td>
-                        <input
-                          type="text"
-                          className="vardiya-haftalik-input vardiya-haftalik-input-sm"
-                          value={s.alacak_saat ?? ''}
-                          onChange={(e) =>
-                            satirExtraDegistir(s.personel_id, 'alacak_saat', e.target.value)
-                          }
-                        />
-                      </td>
-                    </tr>
-                  ))
+                        <td>
+                          <span className="vardiya-yansima-gorev">{m.home.gorev || '—'}</span>
+                        </td>
+                        <td className="vardiya-haftalik-ad">
+                          <span className="vardiya-yansima-ad">{m.home.ad_soyad}</span>
+                          <span className="vardiya-yansima-rozet">← {m.home.sube_adi}</span>
+                        </td>
+                        {gunler.map((g) => {
+                          const txt = m.hucreler[g.tarih] || '';
+                          const hs =
+                            g.hafta_gunu === 'CUMARTESİ' || g.hafta_gunu === 'PAZAR';
+                          const hp = txt
+                            ? mirrorHucreTdProps(m.home.sube_adi, subeRehber)
+                            : {
+                                className:
+                                  'vardiya-haftalik-cell vardiya-hucre vardiya-hucre--bos',
+                              };
+                          return (
+                            <td
+                              key={g.tarih}
+                              className={`${hp.className}${hs ? ' vardiya-haftalik-col-hs' : ''}`}
+                              style={hp.style}
+                            >
+                              {txt ? (
+                                <span className="vardiya-yansima-hucre-text">{txt}</span>
+                              ) : null}
+                            </td>
+                          );
+                        })}
+                        <td className="vardiya-yansima-dash">—</td>
+                        <td className="vardiya-yansima-dash">—</td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
           </div>
+
+          {subeRehber.length > 0 && (
+            <div className="vardiya-haftalik-legend no-print">
+              <span className="vardiya-haftalik-legend-title">Şube renkleri (aktif şubeler)</span>
+              <div className="vardiya-haftalik-legend-chips">
+                {subeRehber.map((s, i) => {
+                  const p = SUBE_PALETTES[i % SUBE_PALETTES.length];
+                  return (
+                    <span
+                      key={s.id}
+                      className="vardiya-legend-chip"
+                      style={{
+                        backgroundColor: p.bg,
+                        borderColor: p.accent,
+                        color: 'var(--text)',
+                      }}
+                    >
+                      {s.ad}
+                    </span>
+                  );
+                })}
+              </div>
+              <span className="vardiya-haftalik-legend-hint">
+                Satırın şube sütunu = personelin kart şubesi. Hücrede yalnız başka şubenin adı
+                yazıyorsa o şubenin rengi uygulanır; aynı kişi hedef şubenin altında yansıma
+                satırında görünür (← kart şubesi). Saat yeşilimsi, İZİNLİ pembe, hafta sonu sütunları
+                hafif gri.
+              </span>
+            </div>
+          )}
 
           <div className="form-group no-print" style={{ marginTop: 20 }}>
             <label>Not (PDF’deki gibi: yemek molası vb.)</label>

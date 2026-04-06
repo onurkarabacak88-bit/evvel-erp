@@ -120,7 +120,11 @@ export default function VardiyaPanel({ onNavigate }) {
 
       <div className="vardiya-layout">
         <VardiyaOlustur tarih={tarih} onSuccess={handleOlusturSuccess} />
-        <VardiyaListe tarih={tarih} refreshTrigger={refreshTrigger} />
+        <VardiyaListe
+          tarih={tarih}
+          refreshTrigger={refreshTrigger}
+          onListeDegisti={() => setMotorLog([])}
+        />
       </div>
 
       {motorLog.length > 0 && (

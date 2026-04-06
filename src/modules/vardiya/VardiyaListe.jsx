@@ -12,11 +12,14 @@ function tipBadgeClass(tip) {
  * @param {Object} props
  * @param {string} props.tarih - YYYY-MM-DD
  * @param {number} props.refreshTrigger - artınca yeniden yükler
+ * @param {() => void} [props.onListeDegisti] - silme sonrası üst bileşen yenilemesi
  */
-export default function VardiyaListe({ tarih, refreshTrigger = 0 }) {
+export default function VardiyaListe({ tarih, refreshTrigger = 0, onListeDegisti }) {
   const [loading, setLoading] = useState(true);
   const [hata, setHata] = useState(null);
   const [vardiyalar, setVardiyalar] = useState([]);
+  const [silinenId, setSilinenId] = useState(null);
+  const [gunSiliniyor, setGunSiliniyor] = useState(false);
 
   const yukle = useCallback(async () => {
     if (!tarih) {
@@ -41,14 +44,67 @@ export default function VardiyaListe({ tarih, refreshTrigger = 0 }) {
     yukle();
   }, [yukle, refreshTrigger]);
 
+  const yenile = useCallback(() => {
+    yukle();
+    if (typeof onListeDegisti === 'function') onListeDegisti();
+  }, [yukle, onListeDegisti]);
+
+  const tekSil = async (vid) => {
+    if (!window.confirm('Bu vardiya satırını silmek istiyor musunuz?')) return;
+    setHata(null);
+    setSilinenId(vid);
+    try {
+      await api(`/vardiya?id=${encodeURIComponent(vid)}`, { method: 'DELETE' });
+      yenile();
+    } catch (e) {
+      setHata(e.message || 'Silinemedi.');
+    } finally {
+      setSilinenId(null);
+    }
+  };
+
+  const gunuBosalt = async () => {
+    if (!tarih) return;
+    if (
+      !window.confirm(
+        `${tarih} tarihindeki tüm vardiya kayıtları silinecek. Emin misiniz?`,
+      )
+    )
+      return;
+    setHata(null);
+    setGunSiliniyor(true);
+    try {
+      await api(`/vardiya?tarih=${encodeURIComponent(tarih)}`, { method: 'DELETE' });
+      yenile();
+    } catch (e) {
+      setHata(e.message || 'Gün silinemedi.');
+    } finally {
+      setGunSiliniyor(false);
+    }
+  };
+
   return (
     <div className="vardiya-card">
-      <h3>Vardiya listesi</h3>
-      <p className="sub">
-        {tarih
-          ? `${tarih} tarihli kayıtlar`
-          : 'Tarih seçin'}
-      </p>
+      <div className="vardiya-liste-baslik">
+        <div>
+          <h3>Vardiya listesi</h3>
+          <p className="sub">
+            {tarih
+              ? `${tarih} tarihli kayıtlar`
+              : 'Tarih seçin'}
+          </p>
+        </div>
+        {tarih && vardiyalar.length > 0 && (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm vardiya-btn-gun-sil"
+            disabled={gunSiliniyor || loading}
+            onClick={gunuBosalt}
+          >
+            {gunSiliniyor ? 'Siliniyor…' : 'Bu günü temizle'}
+          </button>
+        )}
+      </div>
 
       {hata && <div className="alert-box red mb-16">{hata}</div>}
 
@@ -74,6 +130,7 @@ export default function VardiyaListe({ tarih, refreshTrigger = 0 }) {
                 <th>Şube</th>
                 <th>Tip</th>
                 <th>Saat aralığı</th>
+                <th style={{ width: 88 }}> </th>
               </tr>
             </thead>
             <tbody>
@@ -86,6 +143,17 @@ export default function VardiyaListe({ tarih, refreshTrigger = 0 }) {
                   </td>
                   <td className="mono" style={{ fontSize: 13 }}>
                     {v.saat_araligi || `${v.bas_saat}–${v.bit_saat}`}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="vardiya-btn-sil"
+                      disabled={silinenId === v.id || gunSiliniyor}
+                      onClick={() => tekSil(v.id)}
+                      title="Satırı sil"
+                    >
+                      {silinenId === v.id ? '…' : 'Sil'}
+                    </button>
                   </td>
                 </tr>
               ))}

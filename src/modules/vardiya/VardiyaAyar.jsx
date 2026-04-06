@@ -1,6 +1,13 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../utils/api';
 
+/** API TIME / string → time input HH:MM */
+function saatInputVal(v) {
+  if (v == null || v === '') return '';
+  const s = String(v);
+  return s.length >= 5 ? s.slice(0, 5) : s;
+}
+
 const VARSAYILAN_SUBE = {
   min_kapanis: 1,
   tek_kapanis_izinli: true,
@@ -10,7 +17,29 @@ const VARSAYILAN_SUBE = {
   hafta_sonu_min_kap: 1,
   tam_part_zorunlu: false,
   kapanis_dusurulemez: false,
+  acilis_bas_saat: '',
+  acilis_bit_saat: '',
+  ara_bas_saat: '',
+  ara_bit_saat: '',
+  kapanis_bas_saat: '',
+  kapanis_bit_saat: '',
 };
+
+const SUBE_VARDIYA_SAAT = [
+  {
+    tip: 'ACILIS',
+    label: 'Açılış (ACILIS)',
+    bas: 'acilis_bas_saat',
+    bit: 'acilis_bit_saat',
+  },
+  { tip: 'ARA', label: 'Ara (ARA)', bas: 'ara_bas_saat', bit: 'ara_bit_saat' },
+  {
+    tip: 'KAPANIS',
+    label: 'Kapanış (KAPANIS)',
+    bas: 'kapanis_bas_saat',
+    bit: 'kapanis_bit_saat',
+  },
+];
 
 const VARSAYILAN_KISIT = {
   acilis_yapabilir: true,
@@ -77,7 +106,16 @@ export default function VardiyaAyar() {
         ).then((cfgs) => {
           const m = {};
           cfgs.forEach((c) => {
-            m[c.sube_id] = { ...VARSAYILAN_SUBE, ...c };
+            m[c.sube_id] = {
+              ...VARSAYILAN_SUBE,
+              ...c,
+              acilis_bas_saat: saatInputVal(c.acilis_bas_saat),
+              acilis_bit_saat: saatInputVal(c.acilis_bit_saat),
+              ara_bas_saat: saatInputVal(c.ara_bas_saat),
+              ara_bit_saat: saatInputVal(c.ara_bit_saat),
+              kapanis_bas_saat: saatInputVal(c.kapanis_bas_saat),
+              kapanis_bit_saat: saatInputVal(c.kapanis_bit_saat),
+            };
           });
           setSubeCfg(m);
         });
@@ -229,8 +267,8 @@ export default function VardiyaAyar() {
       <div className="page-header">
         <h2>Vardiya kuralları</h2>
         <p>
-          Kuralları bir kez tanımlayın; günlük planda motor bu ayarlara uyar. Şart değişince
-          sadece tikleri güncelleyin.
+          Her şube için vardiya saat aralıklarını (açılış / ara / kapanış) tanımlayın; boş bırakılan
+          değerler sistem varsayılanını kullanır. Kurallar ve kaydırma ayarları aynı ekranda.
         </p>
       </div>
 
@@ -330,6 +368,78 @@ export default function VardiyaAyar() {
                       )}
                     </label>
                   ))}
+                </div>
+                <div style={{ marginTop: 16 }}>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      marginBottom: 10,
+                      color: 'var(--text2)',
+                    }}
+                  >
+                    Bu şubenin vardiya saatleri (motor buna göre yazar)
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 8,
+                    }}
+                  >
+                    {SUBE_VARDIYA_SAAT.map((row) => (
+                      <div
+                        key={row.tip}
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '8px 10px',
+                          background: 'var(--bg3)',
+                          borderRadius: 8,
+                          border: '1px solid var(--border)',
+                        }}
+                      >
+                        <span style={{ minWidth: 140, fontSize: 12 }}>{row.label}</span>
+                        <label style={{ fontSize: 11, color: 'var(--text3)' }}>
+                          Başlangıç
+                          <input
+                            type="time"
+                            value={cfg[row.bas] || ''}
+                            onChange={(e) => setSubeCfgVal(s.id, row.bas, e.target.value)}
+                            style={{
+                              marginLeft: 6,
+                              padding: '4px 8px',
+                              borderRadius: 6,
+                              border: '1px solid var(--border)',
+                              background: 'var(--bg2)',
+                              color: 'var(--text)',
+                            }}
+                          />
+                        </label>
+                        <label style={{ fontSize: 11, color: 'var(--text3)' }}>
+                          Bitiş
+                          <input
+                            type="time"
+                            value={cfg[row.bit] || ''}
+                            onChange={(e) => setSubeCfgVal(s.id, row.bit, e.target.value)}
+                            style={{
+                              marginLeft: 6,
+                              padding: '4px 8px',
+                              borderRadius: 6,
+                              border: '1px solid var(--border)',
+                              background: 'var(--bg2)',
+                              color: 'var(--text)',
+                            }}
+                          />
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>
+                    Boş alanlar: varsayılan 09:00–13:00 / 13:00–17:00 / 17:00–21:00
+                  </p>
                 </div>
                 <button
                   type="button"
