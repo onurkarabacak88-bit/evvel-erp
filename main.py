@@ -19,7 +19,7 @@ from vardiya_motor import (
     _vardiya_sube_ozet_hesapla,
     sube_tip_saatleri,
 )
-from vardiya_planlama import normalize_vardiya_girdileri
+from vardiya_planlama import normalize_vardiya_girdileri, girdilerden_need_ve_minler
 
 
 def ay_ekle(d: date, ay: int) -> date:
@@ -2067,6 +2067,7 @@ def personel_aylik_gecmis(pid: str):
 
 class VardiyaOlusturModel(BaseModel):
     tarih: date
+    otomatik_izin_dengeleme: Optional[bool] = True
 
 
 class VardiyaSenaryoItem(BaseModel):
@@ -2275,6 +2276,61 @@ def _personel_sube_yasak_sync(cur, pid: str, items: Any) -> None:
         )
 
 
+def _personel_kisit_sube_tip_yetkileri(cur, pid: str) -> List[dict]:
+    cur.execute(
+        """
+        SELECT sube_id, acilis_yapabilir, ara_yapabilir, kapanis_yapabilir
+        FROM personel_sube_tip_yetki
+        WHERE personel_id = %s
+        ORDER BY sube_id
+        """,
+        (pid,),
+    )
+    out: List[dict] = []
+    for r in cur.fetchall():
+        sid = r["sube_id"]
+        out.append(
+            {
+                "branch_id": sid,
+                "sube_id": sid,
+                "acilis_yapabilir": bool(r.get("acilis_yapabilir", True)),
+                "ara_yapabilir": bool(r.get("ara_yapabilir", True)),
+                "kapanis_yapabilir": bool(r.get("kapanis_yapabilir", True)),
+            }
+        )
+    return out
+
+
+def _personel_sube_tip_yetki_sync(cur, pid: str, items: Any) -> None:
+    """sube_tip_yetkileri: [{sube_id|branch_id, acilis_yapabilir, ara_yapabilir, kapanis_yapabilir}]"""
+    cur.execute("DELETE FROM personel_sube_tip_yetki WHERE personel_id = %s", (pid,))
+    if not isinstance(items, list):
+        return
+    seen: Set[str] = set()
+    for it in items:
+        sid = _personel_sube_yasak_item_sube_id(it)
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        cur.execute("SELECT 1 FROM subeler WHERE id=%s", (sid,))
+        if not cur.fetchone():
+            continue
+        ac = bool(it.get("acilis_yapabilir", True))
+        ar = bool(it.get("ara_yapabilir", True))
+        kap = bool(it.get("kapanis_yapabilir", True))
+        # Tam serbest kayıtlarını yazmıyoruz (kayıt yok = tüm tipler serbest)
+        if ac and ar and kap:
+            continue
+        cur.execute(
+            """
+            INSERT INTO personel_sube_tip_yetki
+                (id, personel_id, sube_id, acilis_yapabilir, ara_yapabilir, kapanis_yapabilir)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (str(uuid.uuid4()), pid, sid, ac, ar, kap),
+        )
+
+
 def _kisit_vardiya_yetkisi_resolve(body: dict) -> Tuple[bool, bool, bool]:
     """PUT: önce vardiya_yetkisi; yoksa acilis_yapabilir / ara_yapabilir / kapanis_yapabilir."""
     vy = body.get("vardiya_yetkisi")
@@ -2322,6 +2378,7 @@ def personel_kisit_getir(pid: str):
             }
         d["vardiya_yetkisi"] = _kisit_vardiya_yetkisi_from_row(d)
         d["sube_yasaklari"] = _personel_kisit_sube_yasaklari(cur, pid)
+        d["sube_tip_yetkileri"] = _personel_kisit_sube_tip_yetkileri(cur, pid)
         return d
 
 
@@ -2441,6 +2498,8 @@ def personel_kisit_guncelle(pid: str, body: dict):
         )
         if "sube_yasaklari" in body:
             _personel_sube_yasak_sync(cur, pid, body.get("sube_yasaklari"))
+        if "sube_tip_yetkileri" in body:
+            _personel_sube_tip_yetki_sync(cur, pid, body.get("sube_tip_yetkileri"))
     return {"success": True}
 
 
@@ -2489,6 +2548,17 @@ def personel_gunluk_kisit_kaydet(pid: str, body: dict):
                 gst_sql = str(gst).strip().upper()
                 if gst_sql not in ("ACILIS", "ARA", "KAPANIS"):
                     raise HTTPException(400, "sadece_tip ACILIS, ARA veya KAPANIS olmalı")
+            gt_raw = it.get("gunluk_tur")
+            if gt_raw is None or str(gt_raw).strip() == "":
+                gt_sql = None
+            else:
+                gt = str(gt_raw).strip().lower()
+                if gt in ("tam", "full_time", "surekli"):
+                    gt_sql = "tam"
+                elif gt in ("part", "part_time", "yari", "yarı"):
+                    gt_sql = "part"
+                else:
+                    raise HTTPException(400, "gunluk_tur yalnızca tam, part veya boş olabilir")
             mnb = _kisit_opt_time_str(it.get("min_baslangic"))
             mxc = _kisit_opt_time_str(it.get("max_cikis"))
             mxs = _kisit_opt_float(it.get("max_saat"))
@@ -2503,15 +2573,16 @@ def personel_gunluk_kisit_kaydet(pid: str, body: dict):
             cur.execute(
                 """
                 INSERT INTO personel_gunluk_kisit
-                    (id, personel_id, hafta_gunu, calisabilir, sadece_tip,
+                    (id, personel_id, hafta_gunu, calisabilir, gunluk_tur, sadece_tip,
                      min_baslangic, max_cikis, max_saat, calisamaz, izinli_tipler)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
                 (
                     str(uuid.uuid4()),
                     pid,
                     hg,
                     calisabilir,
+                    gt_sql,
                     gst_sql,
                     mnb,
                     mxc,
@@ -2700,11 +2771,13 @@ def sube_config_getir(sid: str):
             "sube_id": sid,
             "vardiyaya_dahil": True,
             "min_kapanis": 1,
+            "min_acilis": 1,
             "tek_kapanis_izinli": True,
             "tek_acilis_izinli": True,
             "kaydirma_acik": True,
             "sadece_tam_kayabilir": False,
             "hafta_sonu_min_kap": 1,
+            "hafta_sonu_min_acilis": 1,
             "tam_part_zorunlu": False,
             "kapanis_dusurulemez": False,
             "planla_acilis": True,
@@ -2717,6 +2790,8 @@ def sube_config_getir(sid: str):
             "kapanis_bit_saat": None,
             "default_acilis_saati": None,
             "default_kapanis_saati": None,
+            "hafta_sonu_default_acilis_saati": None,
+            "hafta_sonu_default_kapanis_saati": None,
             "acilis_saati": None,
             "kapanis_saati": None,
             "vardiya_girdileri": None,
@@ -2757,6 +2832,28 @@ def _planlama_tarih_str(v: Any) -> Optional[str]:
         return v.isoformat()
     s = str(v).strip()
     return s[:10] if s else None
+
+
+def _planlama_legacy_kural_sync(vg: List[Dict[str, Any]], mevcut: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Tek kaynak ilkesi:
+    - vardiya_girdileri varsa, legacy min/planla alanları bu girdiden türetilir.
+    - girdi yoksa mevcut değerler korunur (geriye dönük davranış).
+    """
+    out = {
+        "min_kapanis": int(mevcut.get("min_kapanis") or 1),
+        "hafta_sonu_min_kap": int(mevcut.get("hafta_sonu_min_kap") or 1),
+        "planla_acilis": bool(mevcut.get("planla_acilis", True)),
+        "planla_kapanis": bool(mevcut.get("planla_kapanis", True)),
+    }
+    if not vg:
+        return out
+    _, min_acilis, _, min_kapanis = girdilerden_need_ve_minler(vg)
+    out["min_kapanis"] = max(0, int(min_kapanis))
+    out["hafta_sonu_min_kap"] = max(0, int(min_kapanis))
+    out["planla_acilis"] = min_acilis > 0
+    out["planla_kapanis"] = min_kapanis > 0
+    return out
 
 
 @app.get("/api/sube-planlama/{sid}")
@@ -2800,6 +2897,7 @@ def sube_planlama_getir(
             )
     dac = scd.get("default_acilis_saati")
     dkc = scd.get("default_kapanis_saati")
+    legacy_sync = _planlama_legacy_kural_sync(vg, scd)
     return {
         "sube_id": sid,
         "ad": sube["ad"],
@@ -2807,6 +2905,10 @@ def sube_planlama_getir(
         "acilis_saati": dac,
         "kapanis_saati": dkc,
         "vardiya_girdileri": vg,
+        "min_kapanis": legacy_sync["min_kapanis"],
+        "hafta_sonu_min_kap": legacy_sync["hafta_sonu_min_kap"],
+        "planla_acilis": legacy_sync["planla_acilis"],
+        "planla_kapanis": legacy_sync["planla_kapanis"],
         "gunluk_overrides": ows,
     }
 
@@ -2826,18 +2928,34 @@ def sube_planlama_kaydet(sid: str, body: dict):
         vg = normalize_vardiya_girdileri(body.get("vardiya_girdileri"))
         dac, dkc = _planlama_put_default_saatleri(body)
         vg_json = json.dumps(vg, ensure_ascii=False)
-        cur.execute("SELECT id FROM sube_config WHERE sube_id=%s", (sid,))
-        if cur.fetchone():
+        cur.execute("SELECT * FROM sube_config WHERE sube_id=%s", (sid,))
+        mevcut_row = cur.fetchone()
+        mevcut_cfg = dict(mevcut_row) if mevcut_row else {}
+        legacy_sync = _planlama_legacy_kural_sync(vg, mevcut_cfg)
+        if mevcut_row:
             cur.execute(
                 """
                 UPDATE sube_config SET
                     default_acilis_saati = %s,
                     default_kapanis_saati = %s,
                     vardiya_girdileri = %s::jsonb,
+                    min_kapanis = %s,
+                    hafta_sonu_min_kap = %s,
+                    planla_acilis = %s,
+                    planla_kapanis = %s,
                     guncelleme = NOW()
                 WHERE sube_id = %s
                 """,
-                (dac, dkc, vg_json, sid),
+                (
+                    dac,
+                    dkc,
+                    vg_json,
+                    legacy_sync["min_kapanis"],
+                    legacy_sync["hafta_sonu_min_kap"],
+                    legacy_sync["planla_acilis"],
+                    legacy_sync["planla_kapanis"],
+                    sid,
+                ),
             )
         else:
             nid = str(uuid.uuid4())
@@ -2853,6 +2971,24 @@ def sube_planlama_kaydet(sid: str, body: dict):
                     %s,%s,%s::jsonb)
                 """,
                 (nid, sid, dac, dkc, vg_json),
+            )
+            cur.execute(
+                """
+                UPDATE sube_config SET
+                    min_kapanis = %s,
+                    hafta_sonu_min_kap = %s,
+                    planla_acilis = %s,
+                    planla_kapanis = %s,
+                    guncelleme = NOW()
+                WHERE sube_id = %s
+                """,
+                (
+                    legacy_sync["min_kapanis"],
+                    legacy_sync["hafta_sonu_min_kap"],
+                    legacy_sync["planla_acilis"],
+                    legacy_sync["planla_kapanis"],
+                    sid,
+                ),
             )
         for ow in body.get("gunluk_overrides") or []:
             ts = _planlama_tarih_str(ow.get("tarih"))
@@ -2894,20 +3030,23 @@ def sube_config_guncelle(sid: str, body: dict):
         cur.execute(
             """
             INSERT INTO sube_config
-                (id, sube_id, vardiyaya_dahil, min_kapanis, tek_kapanis_izinli, tek_acilis_izinli,
-                 kaydirma_acik, sadece_tam_kayabilir, hafta_sonu_min_kap,
+                (id, sube_id, vardiyaya_dahil, min_kapanis, min_acilis, tek_kapanis_izinli, tek_acilis_izinli,
+                 kaydirma_acik, sadece_tam_kayabilir, hafta_sonu_min_kap, hafta_sonu_min_acilis,
                  tam_part_zorunlu, kapanis_dusurulemez, planla_acilis, planla_kapanis,
                  acilis_bas_saat, acilis_bit_saat, ara_bas_saat, ara_bit_saat,
-                 kapanis_bas_saat, kapanis_bit_saat)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 kapanis_bas_saat, kapanis_bit_saat, default_acilis_saati, default_kapanis_saati,
+                 hafta_sonu_default_acilis_saati, hafta_sonu_default_kapanis_saati)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (sube_id) DO UPDATE SET
                 vardiyaya_dahil      = EXCLUDED.vardiyaya_dahil,
                 min_kapanis          = EXCLUDED.min_kapanis,
+                min_acilis           = EXCLUDED.min_acilis,
                 tek_kapanis_izinli   = EXCLUDED.tek_kapanis_izinli,
                 tek_acilis_izinli    = EXCLUDED.tek_acilis_izinli,
                 kaydirma_acik        = EXCLUDED.kaydirma_acik,
                 sadece_tam_kayabilir = EXCLUDED.sadece_tam_kayabilir,
                 hafta_sonu_min_kap   = EXCLUDED.hafta_sonu_min_kap,
+                hafta_sonu_min_acilis = EXCLUDED.hafta_sonu_min_acilis,
                 tam_part_zorunlu     = EXCLUDED.tam_part_zorunlu,
                 kapanis_dusurulemez  = EXCLUDED.kapanis_dusurulemez,
                 planla_acilis        = EXCLUDED.planla_acilis,
@@ -2918,6 +3057,10 @@ def sube_config_guncelle(sid: str, body: dict):
                 ara_bit_saat         = EXCLUDED.ara_bit_saat,
                 kapanis_bas_saat     = EXCLUDED.kapanis_bas_saat,
                 kapanis_bit_saat     = EXCLUDED.kapanis_bit_saat,
+                default_acilis_saati = EXCLUDED.default_acilis_saati,
+                default_kapanis_saati = EXCLUDED.default_kapanis_saati,
+                hafta_sonu_default_acilis_saati = EXCLUDED.hafta_sonu_default_acilis_saati,
+                hafta_sonu_default_kapanis_saati = EXCLUDED.hafta_sonu_default_kapanis_saati,
                 guncelleme           = NOW()
             """,
             (
@@ -2925,11 +3068,13 @@ def sube_config_guncelle(sid: str, body: dict):
                 sid,
                 bool(body.get("vardiyaya_dahil", True)),
                 int(body.get("min_kapanis", 1)),
+                int(body.get("min_acilis", 1)),
                 bool(body.get("tek_kapanis_izinli", True)),
                 bool(body.get("tek_acilis_izinli", True)),
                 bool(body.get("kaydirma_acik", True)),
                 bool(body.get("sadece_tam_kayabilir", False)),
                 int(body.get("hafta_sonu_min_kap", 1)),
+                int(body.get("hafta_sonu_min_acilis", 1)),
                 bool(body.get("tam_part_zorunlu", False)),
                 bool(body.get("kapanis_dusurulemez", False)),
                 bool(body.get("planla_acilis", True)),
@@ -2940,6 +3085,10 @@ def sube_config_guncelle(sid: str, body: dict):
                 _t(body.get("ara_bit_saat")),
                 _t(body.get("kapanis_bas_saat")),
                 _t(body.get("kapanis_bit_saat")),
+                _t(body.get("default_acilis_saati")),
+                _t(body.get("default_kapanis_saati")),
+                _t(body.get("hafta_sonu_default_acilis_saati")),
+                _t(body.get("hafta_sonu_default_kapanis_saati")),
             ),
         )
     return {"success": True}
@@ -3000,8 +3149,9 @@ def vardiya_olustur_hafta(body: VardiyaOlusturModel):
     pazara kadar 7 gün sırayla günlük motor çalışır).
     """
     t = body.tarih
+    oto_izin = bool(body.otomatik_izin_dengeleme if body.otomatik_izin_dengeleme is not None else True)
     with db() as (conn, cur):
-        sonuc = vardiya_motoru_hafta_calistir(cur, t)
+        sonuc = vardiya_motoru_hafta_calistir(cur, t, otomatik_izin_dengeleme=oto_izin)
     return sonuc
 
 
