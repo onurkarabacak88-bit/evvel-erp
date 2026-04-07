@@ -16,4 +16,4 @@ COPY --from=frontend /app/static ./static
 COPY main.py database.py motors.py finans_core.py vardiya_motor.py ./
 
 EXPOSE 8080
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]  
