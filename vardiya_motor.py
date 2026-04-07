@@ -18,7 +18,9 @@ Pipeline (günlük çalıştırma — `vardiya_motoru_calistir`):
 1. Şube verisini al — aktif şubeler + `sube_config`, vardiyaya dahil filtre
 2. Personel filtrele — izin / kısıt / günlük durum sonrası havuz (`musait`)
 3. **Generate** — mevcut `vardiya` silmeden (koru_manuel dışında) kota eksiklerine göre yalnızca yeni
-   `kaynak='motor'` satırı INSERT; o gün zaten kaydı olan personel Faz 1’e alınmaz (çift atama yok)
+   `kaynak='motor'` satırı INSERT; sıralama `_vardiya_skor_bilesenleri` (maliyet / fazla mesai cezası /
+   şube uyumu / denge) + Faz sonrası `GLOBAL_OPT` ile sınırlı karşılıklı şube takası; o gün kaydı olan
+   personel Faz 1’e alınmaz (çift atama yok)
 4. **Fix** — eksik / fazla şubeleri tek tek; şubeler arası kaydırma, ARA indirme, güvenli silme
    (`FIX_*` kuralları); bir dalgada ardışık tetiklenen düzeltme en fazla `VARDIYA_FIX_ZINCIR_MAX_DERINLIK`
 5. **Stabilize** — global kontrol tam olana veya ilerleme bitene kadar dalgalar (`VARDIYA_STABILIZE_MAX_TUR`)
@@ -58,6 +60,11 @@ VARDIYA_STABILIZE_MAX_TUR = 48
 
 # Eski mesajlarda geçen üst sınır ile uyum (artık stabilize tur sayısı)
 VARDIYA_FIX_CHAIN_MAX = VARDIYA_STABILIZE_MAX_TUR
+
+# Global dağılım cilası: aynı gün motor satırlarında şube takası (skor artışı varsa)
+VARDIYA_GLOBAL_OPT_TUR = 4
+VARDIYA_GLOBAL_OPT_MIN_KAZANC = 0.75
+VARDIYA_GLOBAL_OPT_CIFT_UST = 400
 
 
 def _cfg_saat_degeri(raw: Any, fallback: str) -> str:
@@ -160,6 +167,51 @@ def _dakika_time_str(m: int) -> str:
     return f"{m // 60:02d}:{m % 60:02d}:00"
 
 
+def _time_plus_minutes(hhmmss: str, minutes: int) -> str:
+    base = _saat_metni_dakika(hhmmss)
+    if base is None:
+        base = 0
+    return _dakika_time_str(base + int(minutes))
+
+
+def _apply_transfer_break(
+    cur, tarih_str: str, pid: str, bas: str, bit: str
+) -> Optional[Tuple[str, str]]:
+    """
+    Kaydırmada ikinci mesai:
+    - Son bitiş + 90 dk dinlenme sağlanmalı.
+    - Hedef vardiya saatini kaydırmayız; kişi slot başlangıcında başlayabilmeli.
+    - İkinci vardiya süresi 4 saatin altındaysa kaydırma yapılmaz.
+    """
+    bit_m = _saat_metni_dakika(bit) or 0
+    bas_m = _saat_metni_dakika(bas) or 0
+    dur = max(bit_m - bas_m, 0)
+    if dur <= 0:
+        dur = max(int(round(_vardiya_aralik_saat(bas, bit) * 60)), 60)
+    if dur < 240:
+        return None
+    cur.execute(
+        """
+        SELECT bit_saat FROM vardiya
+        WHERE tarih = %s AND personel_id = %s
+        ORDER BY bit_saat DESC
+        LIMIT 1
+        """,
+        (tarih_str, pid),
+    )
+    last = cur.fetchone()
+    if not last:
+        return bas, bit
+    prev_bit = _vardiya_db_saat_str(last.get("bit_saat"))
+    min_start = _saat_metni_dakika(_time_plus_minutes(prev_bit, 90)) or 0
+    slot_start = _saat_metni_dakika(bas) or 0
+    if min_start > slot_start:
+        return None
+    new_bas = _dakika_time_str(slot_start)
+    new_bit = _time_plus_minutes(new_bas, dur)
+    return new_bas, new_bit
+
+
 def _ikili_pencereden_uc_vardiya_slot(
     acilis_uç: str, kapanis_uç: str
 ) -> Optional[Dict[str, str]]:
@@ -186,8 +238,21 @@ def _sube_cfg_gunluk_saatleri(
 ) -> Dict[str, Any]:
     """Şube varsayılan açılış/kapanış (DB: default_*; kontrat alias: acilis_saati/kapanis_saati) + günlük override → üç slot."""
     out = dict(cfg_m)
-    ac = out.get("default_acilis_saati") or out.get("acilis_saati")
-    kc = out.get("default_kapanis_saati") or out.get("kapanis_saati")
+    hafta_sonu = date.fromisoformat(str(tarih_str)).weekday() >= 5
+    if hafta_sonu:
+        ac = (
+            out.get("hafta_sonu_default_acilis_saati")
+            or out.get("default_acilis_saati")
+            or out.get("acilis_saati")
+        )
+        kc = (
+            out.get("hafta_sonu_default_kapanis_saati")
+            or out.get("default_kapanis_saati")
+            or out.get("kapanis_saati")
+        )
+    else:
+        ac = out.get("default_acilis_saati") or out.get("acilis_saati")
+        kc = out.get("default_kapanis_saati") or out.get("kapanis_saati")
     cur.execute(
         """
         SELECT acilis_saati, kapanis_saati
@@ -569,6 +634,11 @@ def _atamalar_min_kapanis_yukselt(
     son_tip_map: Optional[Dict[str, Optional[str]]] = None,
     durum_map: Optional[Dict[Tuple[str, str], Dict[str, Any]]] = None,
     tarih_str: Optional[str] = None,
+    *,
+    hedef_sube_id: Optional[str] = None,
+    ana_sube_map: Optional[Dict[str, str]] = None,
+    sube_saat_map: Optional[Dict[str, Dict[str, Tuple[str, str]]]] = None,
+    denge_bonus: float = 0.0,
 ) -> Tuple[List[Tuple[Dict[str, Any], str, str]], int]:
     """tek_kapanis_izinli=False iken çoklu personelde yerelde yeterli kapanış sayısına yaklaş."""
     n = len(personeller)
@@ -605,7 +675,27 @@ def _atamalar_min_kapanis_yukselt(
                 p, "KAPANIS", kisitlar, gm, hg, durum_map, tarih_str
             ):
                 k_e = _efektif_personel_kisit(p, kisitlar)
-                sc = _atama_skoru_detay(p, "KAPANIS", k_e, tm, ho, ba, stm)[0]
+                slot = 0.0
+                if hedef_sube_id and sube_saat_map is not None:
+                    slot = _vardiya_tip_slot_saat_subede(
+                        sube_saat_map, hedef_sube_id, "KAPANIS", k_e
+                    )
+                sc = _atama_skoru_detay(
+                    p,
+                    "KAPANIS",
+                    k_e,
+                    tm,
+                    ho,
+                    ba,
+                    stm,
+                    hedef_sube_id=hedef_sube_id,
+                    ana_sube_id=(ana_sube_map or {}).get(p["id"])
+                    if ana_sube_map
+                    else None,
+                    kisitlar=kisitlar,
+                    denge_bonus=denge_bonus,
+                    slot_saat_tahmini=slot,
+                )[0]
                 adaylar.append((i, sc, p, tip, ned))
         if not adaylar:
             break
@@ -644,6 +734,8 @@ def _default_sube_cfg(sube_id: str) -> Dict[str, Any]:
         "kaydirma_acik": True,
         "sadece_tam_kayabilir": False,
         "hafta_sonu_min_kap": 1,
+        "min_acilis": 1,
+        "hafta_sonu_min_acilis": 1,
         "tam_part_zorunlu": False,
         "kapanis_dusurulemez": False,
         "planla_acilis": True,
@@ -656,6 +748,8 @@ def _default_sube_cfg(sube_id: str) -> Dict[str, Any]:
         "kapanis_bit_saat": None,
         "default_acilis_saati": None,
         "default_kapanis_saati": None,
+        "hafta_sonu_default_acilis_saati": None,
+        "hafta_sonu_default_kapanis_saati": None,
         "vardiya_girdileri": None,
     }
 
@@ -682,6 +776,7 @@ def _default_kisit(pid: str) -> Dict[str, Any]:
         "gunluk_mesai_fazlasi_saat": None,
         "kaydirma_izin_ciftleri": None,
         "sube_yasak_ids": None,
+        "sube_tip_yetki_map": None,
     }
 
 
@@ -699,6 +794,32 @@ def _kisitlar_merge_sube_yasaklari(
         if pid not in kisitlar:
             kisitlar[pid] = _default_kisit(pid)
         kisitlar[pid]["sube_yasak_ids"] = set(subs)
+
+
+def _kisitlar_merge_sube_tip_yetkileri(
+    cur, kisitlar: Dict[str, Dict[str, Any]]
+) -> None:
+    """
+    personel_sube_tip_yetki → kisit satırına sube_tip_yetki_map.
+    Kayıt yok = o şube için genel tip yetkisi geçerli.
+    """
+    cur.execute(
+        """
+        SELECT personel_id, sube_id, acilis_yapabilir, ara_yapabilir, kapanis_yapabilir
+        FROM personel_sube_tip_yetki
+        """
+    )
+    by_pid: Dict[str, Dict[str, Dict[str, bool]]] = defaultdict(dict)
+    for r in cur.fetchall():
+        by_pid[r["personel_id"]][r["sube_id"]] = {
+            "ACILIS": bool(r.get("acilis_yapabilir", True)),
+            "ARA": bool(r.get("ara_yapabilir", True)),
+            "KAPANIS": bool(r.get("kapanis_yapabilir", True)),
+        }
+    for pid, mp in by_pid.items():
+        if pid not in kisitlar:
+            kisitlar[pid] = _default_kisit(pid)
+        kisitlar[pid]["sube_tip_yetki_map"] = mp
 
 
 def _kisit_of(
@@ -821,6 +942,7 @@ def personel_tip_yapabilir(
     hafta_gunu: Optional[int] = None,
     durum_map: Optional[Dict[Tuple[str, str], Dict[str, Any]]] = None,
     tarih_str: Optional[str] = None,
+    sube_id: Optional[str] = None,
 ) -> bool:
     """personel_kisit + haftalık şablon + tarih bazlı personel_gunluk_durum."""
     hg = hafta_gunu if hafta_gunu is not None else 0
@@ -849,7 +971,14 @@ def personel_tip_yapabilir(
         "ARA": k.get("ara_yapabilir", True),
         "KAPANIS": k.get("kapanis_yapabilir", True),
     }
-    return bool(m.get(tip, True))
+    if not bool(m.get(tip, True)):
+        return False
+    if sube_id:
+        mp = k.get("sube_tip_yetki_map") or {}
+        sb = mp.get(sube_id)
+        if isinstance(sb, dict):
+            return bool(sb.get(tip, True))
+    return True
 
 
 def _tercih_skoru(
@@ -889,6 +1018,106 @@ def _son_vardiya_tipi_map(
     return out
 
 
+def _vardiya_tip_slot_saat_subede(
+    sube_saat_map: Optional[Dict[str, Dict[str, Tuple[str, str]]]],
+    sube_id: str,
+    tip: str,
+    k_efektif: Dict[str, Any],
+) -> float:
+    """Şube tip aralığı + kişisel kapanış bit sınırına göre yaklaşık vardiya süresi (saat)."""
+    smap = (
+        (sube_saat_map or {}).get(sube_id)
+        or sube_tip_saatleri(_default_sube_cfg(sube_id))
+    )
+    bas, bit = smap[tip]
+    if tip == "KAPANIS" and k_efektif.get("kapanis_bit_saat"):
+        bit = _time_hhmmss(k_efektif.get("kapanis_bit_saat"), bit)
+    return _vardiya_aralik_saat(bas, bit)
+
+
+def _vardiya_skor_bilesenleri(
+    p: Dict[str, Any],
+    tip: str,
+    k_efektif: Dict[str, Any],
+    tercih_map: Dict[str, List[Tuple[str, int]]],
+    hafta_onceki: Dict[str, Dict[str, float]],
+    bugun_atanan: Dict[str, float],
+    son_tip_map: Dict[str, Optional[str]],
+    *,
+    hedef_sube_id: Optional[str] = None,
+    ana_sube_id: Optional[str] = None,
+    kisitlar: Optional[Dict[str, Dict[str, Any]]] = None,
+    denge_bonus: float = 0.0,
+    slot_saat_tahmini: float = 0.0,
+) -> Dict[str, float]:
+    """
+    Atama kalitesi bileşenleri (yüksek toplam = daha iyi):
+    - maliyet: haftalık kota altında kalan çalışma payı (düşük yüklü personele öncelik)
+    - fazla_mesai_cezasi: günlük/haftalık limite yaklaşım cezası (≤0)
+    - sube_uyumu: ana şube / kaydırma çifti / vardiya tercihi / geçiş cezaları
+    - denge_puani: şube doluluk denge bonusu (dışarıdan verilir)
+    """
+    pid = p["id"]
+    mevcut_h = float(hafta_onceki.get(pid, {}).get("saat_toplam", 0)) + float(
+        bugun_atanan.get(pid, 0)
+    )
+    hmax = k_efektif.get("haftalik_max_saat")
+    try:
+        hedef = float(hmax) if hmax is not None and str(hmax).strip() != "" else 80.0
+    except (TypeError, ValueError):
+        hedef = 80.0
+    maliyet = max(0.0, hedef - mevcut_h)
+
+    fazla_ceza = 0.0
+    cap = _gunluk_saat_limit_max(k_efektif, p)
+    if cap is not None and slot_saat_tahmini > 1e-6:
+        after = float(bugun_atanan.get(pid, 0)) + slot_saat_tahmini
+        if after > cap + 1e-6:
+            fazla_ceza -= (after - cap) * 22.0
+        elif cap > 1e-6 and after > cap * 0.88:
+            fazla_ceza -= (after / cap - 0.88) * 12.0
+    try:
+        if hmax is not None and str(hmax).strip() != "":
+            hmx = float(hmax)
+            if hmx > 1e-6 and mevcut_h + slot_saat_tahmini > hmx * 0.90:
+                fazla_ceza -= (mevcut_h + slot_saat_tahmini - hmx * 0.90) * 6.0
+    except (TypeError, ValueError):
+        pass
+
+    sube_u = 0.0
+    if hedef_sube_id and ana_sube_id and kisitlar is not None:
+        if hedef_sube_id == ana_sube_id:
+            sube_u += 18.0
+        elif _vardiya_hedef_subede_calisabilir(
+            p, hedef_sube_id, ana_sube_id, kisitlar
+        ):
+            k = _kisit_of(p, kisitlar)
+            ciftler = _kaydirma_cift_kumesi(k)
+            if ciftler and (ana_sube_id, hedef_sube_id) in ciftler:
+                sube_u += 12.0
+            elif k.get("sube_degistirebilir", True):
+                sube_u += 6.0
+            else:
+                sube_u -= 4.0
+    if _tercih_eslesir(pid, tip, tercih_map):
+        sube_u += 10.0
+    if son_tip_map.get(pid) == "KAPANIS":
+        sube_u -= 5.0
+    profil = _calisma_profili_normalize(k_efektif.get("calisma_profili"))
+    if profil == "ogrenci" and tip == "KAPANIS":
+        sube_u += 3.0
+
+    denge = float(denge_bonus)
+    toplam = maliyet + fazla_ceza + sube_u + denge
+    return {
+        "maliyet": maliyet,
+        "fazla_mesai_cezasi": fazla_ceza,
+        "sube_uyumu": sube_u,
+        "denge_puani": denge,
+        "toplam": toplam,
+    }
+
+
 def _atama_skoru_detay(
     p: Dict[str, Any],
     tip: str,
@@ -897,30 +1126,28 @@ def _atama_skoru_detay(
     hafta_onceki: Dict[str, Dict[str, float]],
     bugun_atanan: Dict[str, float],
     son_tip_map: Dict[str, Optional[str]],
+    *,
+    hedef_sube_id: Optional[str] = None,
+    ana_sube_id: Optional[str] = None,
+    kisitlar: Optional[Dict[str, Dict[str, Any]]] = None,
+    denge_bonus: float = 0.0,
+    slot_saat_tahmini: float = 0.0,
 ) -> Tuple[float, str]:
-    """
-    En uygun atama sıralaması: tercih (+10), kota altında kalan saat payı,
-    son vardiya kapanış ise -5, öğrenci+kapanış +3.
-    """
-    pid = p["id"]
-    mevcut = float(hafta_onceki.get(pid, {}).get("saat_toplam", 0)) + float(
-        bugun_atanan.get(pid, 0)
+    c = _vardiya_skor_bilesenleri(
+        p,
+        tip,
+        k_efektif,
+        tercih_map,
+        hafta_onceki,
+        bugun_atanan,
+        son_tip_map,
+        hedef_sube_id=hedef_sube_id,
+        ana_sube_id=ana_sube_id,
+        kisitlar=kisitlar,
+        denge_bonus=denge_bonus,
+        slot_saat_tahmini=slot_saat_tahmini,
     )
-    hmax = k_efektif.get("haftalik_max_saat")
-    try:
-        hedef = float(hmax) if hmax is not None else 80.0
-    except (TypeError, ValueError):
-        hedef = 80.0
-    score = 0.0
-    if _tercih_eslesir(pid, tip, tercih_map):
-        score += 10.0
-    score += max(0.0, hedef - mevcut)
-    if son_tip_map.get(pid) == "KAPANIS":
-        score -= 5.0
-    profil = _calisma_profili_normalize(k_efektif.get("calisma_profili"))
-    if profil == "ogrenci" and tip == "KAPANIS":
-        score += 3.0
-    return score, p.get("ad_soyad") or ""
+    return c["toplam"], p.get("ad_soyad") or ""
 
 
 def _faz1_aday_skoru(
@@ -934,15 +1161,37 @@ def _faz1_aday_skoru(
     son_tip_map: Dict[str, Optional[str]],
     durum_map: Optional[Dict[Tuple[str, str], Dict[str, Any]]] = None,
     tarih_str: Optional[str] = None,
+    *,
+    hedef_sube_id: Optional[str] = None,
+    ana_sube_map: Optional[Dict[str, str]] = None,
+    sube_saat_map: Optional[Dict[str, Dict[str, Tuple[str, str]]]] = None,
+    denge_bonus: float = 0.0,
 ) -> float:
     k_e = _efektif_personel_kisit(p, kisitlar)
+    aid = (ana_sube_map or {}).get(p["id"])
     best = -1e18
     for t in TIPLER:
         if personel_tip_yapabilir(
-            p, t, kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str
+            p, t, kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str, sube_id=hedef_sube_id
         ):
+            slot = 0.0
+            if hedef_sube_id and sube_saat_map is not None:
+                slot = _vardiya_tip_slot_saat_subede(
+                    sube_saat_map, hedef_sube_id, t, k_e
+                )
             s, _ = _atama_skoru_detay(
-                p, t, k_e, tercih_map, hafta_onceki, bugun_atanan, son_tip_map
+                p,
+                t,
+                k_e,
+                tercih_map,
+                hafta_onceki,
+                bugun_atanan,
+                son_tip_map,
+                hedef_sube_id=hedef_sube_id,
+                ana_sube_id=aid,
+                kisitlar=kisitlar,
+                denge_bonus=denge_bonus,
+                slot_saat_tahmini=slot,
             )
             best = max(best, s)
     return best
@@ -959,6 +1208,11 @@ def _skor_kapanis_adayi(
     hafta_gunu: Optional[int] = None,
     durum_map: Optional[Dict[Tuple[str, str], Dict[str, Any]]] = None,
     tarih_str: Optional[str] = None,
+    *,
+    hedef_sube_id: Optional[str] = None,
+    ana_sube_map: Optional[Dict[str, str]] = None,
+    sube_saat_map: Optional[Dict[str, Dict[str, Tuple[str, str]]]] = None,
+    denge_bonus: float = 0.0,
 ) -> Tuple[float, str]:
     """Geriye dönük imza; yeni skor formülü (KAPANIS için)."""
     tm = tercih_map or {}
@@ -971,10 +1225,29 @@ def _skor_kapanis_adayi(
     hg = hafta_gunu if hafta_gunu is not None else 0
     gm = gunluk_map or {}
     if not personel_tip_yapabilir(
-        p, "KAPANIS", kisitlar, gm, hg, durum_map, tarih_str
+        p, "KAPANIS", kisitlar, gm, hg, durum_map, tarih_str, sube_id=hedef_sube_id
     ):
         return (-1e18, p.get("ad_soyad") or "")
-    return _atama_skoru_detay(p, "KAPANIS", k_e, tm, ho, ba, stm)
+    aid = (ana_sube_map or {}).get(p["id"])
+    slot = 0.0
+    if hedef_sube_id and sube_saat_map is not None:
+        slot = _vardiya_tip_slot_saat_subede(
+            sube_saat_map, hedef_sube_id, "KAPANIS", k_e
+        )
+    return _atama_skoru_detay(
+        p,
+        "KAPANIS",
+        k_e,
+        tm,
+        ho,
+        ba,
+        stm,
+        hedef_sube_id=hedef_sube_id,
+        ana_sube_id=aid,
+        kisitlar=kisitlar,
+        denge_bonus=denge_bonus,
+        slot_saat_tahmini=slot,
+    )
 
 
 def _sube_icin_skorlu_ata(
@@ -992,6 +1265,11 @@ def _sube_icin_skorlu_ata(
     son_tip_map: Optional[Dict[str, Optional[str]]] = None,
     durum_map: Optional[Dict[Tuple[str, str], Dict[str, Any]]] = None,
     tarih_str: Optional[str] = None,
+    *,
+    sube_id: Optional[str] = None,
+    ana_sube_map: Optional[Dict[str, str]] = None,
+    sube_saat_map: Optional[Dict[str, Dict[str, Tuple[str, str]]]] = None,
+    denge_bonus: float = 0.0,
 ) -> Tuple[List[Tuple[Dict[str, Any], str, str]], int, int, Set[str]]:
     """
     Her personele tam bir tip atar.
@@ -1010,7 +1288,11 @@ def _sube_icin_skorlu_ata(
     tek_acilis_izinli = bool(cfg.get("tek_acilis_izinli", True))
     kapanis_dusurulemez = bool(cfg.get("kapanis_dusurulemez", False))
     girdi_ma = int(cfg.get("girdi_min_acilis") or 0)
-    girdi_mara = int(cfg.get("girdi_min_ara") or 0)
+    if girdi_ma <= 0:
+        girdi_ma = int(
+            cfg.get("hafta_sonu_min_acilis" if hafta_sonu else "min_acilis") or 1
+        )
+    girdi_mara = 0
 
     n = len(personeller)
     atanan_ids: Set[str] = set()
@@ -1032,7 +1314,9 @@ def _sube_icin_skorlu_ata(
     for p in personeller:
         st = _personel_efektif_sadece_tip(p, kisitlar, gm, hg, durum_map, tarih_str)
         if st and st in TIPLER:
-            if personel_tip_yapabilir(p, st, kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str):
+            if personel_tip_yapabilir(
+                p, st, kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str, sube_id=sube_id
+            ):
                 sabit.append((p, st))
             else:
                 log.append(
@@ -1054,11 +1338,8 @@ def _sube_icin_skorlu_ata(
         ned = "Kısıt: sadece_tip"
         eff_tip = tip
         if tip == "ACILIS" and not planla_acilis:
-            if personel_tip_yapabilir(p, "ARA", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str):
-                eff_tip = "ARA"
-                ned = "Kısıt: sadece_tip (ACILIS) → ARA; bu şubede açılış planı kapalı"
-            elif planla_kapanis and personel_tip_yapabilir(
-                p, "KAPANIS", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str
+            if planla_kapanis and personel_tip_yapabilir(
+                p, "KAPANIS", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str, sube_id=sube_id
             ):
                 eff_tip = "KAPANIS"
                 ned = "Kısıt: sadece_tip (ACILIS) → KAPANIS; açılış planı kapalı"
@@ -1068,16 +1349,13 @@ def _sube_icin_skorlu_ata(
                         "kural": "KISIT",
                         "personel": p["ad_soyad"],
                         "sube": sube_ad,
-                        "detay": "sadece_tip=ACILIS ama şubede açılış kapalı; ARA/KAPANIS uygun değil",
+                        "detay": "sadece_tip=ACILIS ama şubede açılış kapalı; KAPANIS uygun değil",
                     }
                 )
                 continue
         elif tip == "KAPANIS" and not planla_kapanis:
-            if personel_tip_yapabilir(p, "ARA", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str):
-                eff_tip = "ARA"
-                ned = "Kısıt: sadece_tip (KAPANIS) → ARA; bu şubede kapanış planı kapalı"
-            elif planla_acilis and personel_tip_yapabilir(
-                p, "ACILIS", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str
+            if planla_acilis and personel_tip_yapabilir(
+                p, "ACILIS", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str, sube_id=sube_id
             ):
                 eff_tip = "ACILIS"
                 ned = "Kısıt: sadece_tip (KAPANIS) → ACILIS; kapanış planı kapalı"
@@ -1109,12 +1387,25 @@ def _sube_icin_skorlu_ata(
         p
         for p in kalan
         if personel_tip_yapabilir(
-            p, "KAPANIS", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str
+            p, "KAPANIS", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str, sube_id=sube_id
         )
     ]
     kap_yapabilen.sort(
         key=lambda p: _skor_kapanis_adayi(
-            p, kisitlar, tm, ho, ba, stm, gm, hg, durum_map, tarih_str
+            p,
+            kisitlar,
+            tm,
+            ho,
+            ba,
+            stm,
+            gm,
+            hg,
+            durum_map,
+            tarih_str,
+            hedef_sube_id=sube_id,
+            ana_sube_map=ana_sube_map,
+            sube_saat_map=sube_saat_map,
+            denge_bonus=denge_bonus,
         ),
         reverse=True,
     )
@@ -1148,7 +1439,7 @@ def _sube_icin_skorlu_ata(
             p
             for p in hala
             if personel_tip_yapabilir(
-                p, "ACILIS", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str
+                p, "ACILIS", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str, sube_id=sube_id
             )
         ]
         acilis_aday.sort(
@@ -1161,6 +1452,22 @@ def _sube_icin_skorlu_ata(
                     ho,
                     ba,
                     stm,
+                    hedef_sube_id=sube_id,
+                    ana_sube_id=(ana_sube_map or {}).get(p["id"])
+                    if ana_sube_map
+                    else None,
+                    kisitlar=kisitlar,
+                    denge_bonus=denge_bonus,
+                    slot_saat_tahmini=(
+                        _vardiya_tip_slot_saat_subede(
+                            sube_saat_map or {},
+                            sube_id or "",
+                            "ACILIS",
+                            _efektif_personel_kisit(p, kisitlar),
+                        )
+                        if sube_id and sube_saat_map
+                        else 0.0
+                    ),
                 )[0],
                 1 if p.get("calisma_turu") == "surekli" else 0,
                 p.get("ad_soyad") or "",
@@ -1188,17 +1495,54 @@ def _sube_icin_skorlu_ata(
 
     def _ilk_atanacak_tip_skoru(pp: Dict[str, Any]) -> float:
         k_e = _efektif_personel_kisit(pp, kisitlar)
+        aid = (ana_sube_map or {}).get(pp["id"]) if ana_sube_map else None
+
+        def _sl(tip: str) -> float:
+            if sube_id and sube_saat_map:
+                return _vardiya_tip_slot_saat_subede(
+                    sube_saat_map, sube_id, tip, k_e
+                )
+            return 0.0
+
         skorlar: List[float] = []
         if planla_acilis and personel_tip_yapabilir(
-            pp, "ACILIS", kisitlar, gm, hg, durum_map, tarih_str
+            pp, "ACILIS", kisitlar, gm, hg, durum_map, tarih_str, sube_id=sube_id
         ):
-            skorlar.append(_atama_skoru_detay(pp, "ACILIS", k_e, tm, ho, ba, stm)[0])
-        if personel_tip_yapabilir(pp, "ARA", kisitlar, gm, hg, durum_map, tarih_str):
-            skorlar.append(_atama_skoru_detay(pp, "ARA", k_e, tm, ho, ba, stm)[0])
+            skorlar.append(
+                _atama_skoru_detay(
+                    pp,
+                    "ACILIS",
+                    k_e,
+                    tm,
+                    ho,
+                    ba,
+                    stm,
+                    hedef_sube_id=sube_id,
+                    ana_sube_id=aid,
+                    kisitlar=kisitlar,
+                    denge_bonus=denge_bonus,
+                    slot_saat_tahmini=_sl("ACILIS"),
+                )[0]
+            )
         if planla_kapanis and personel_tip_yapabilir(
-            pp, "KAPANIS", kisitlar, gm, hg, durum_map, tarih_str
+            pp, "KAPANIS", kisitlar, gm, hg, durum_map, tarih_str, sube_id=sube_id
         ):
-            skorlar.append(_atama_skoru_detay(pp, "KAPANIS", k_e, tm, ho, ba, stm)[0])
+            skorlar.append(
+                _atama_skoru_detay(
+                    pp,
+                    "KAPANIS",
+                    k_e,
+                    tm,
+                    ho,
+                    ba,
+                    stm,
+                    hedef_sube_id=sube_id,
+                    ana_sube_id=aid,
+                    kisitlar=kisitlar,
+                    denge_bonus=denge_bonus,
+                    slot_saat_tahmini=_sl("KAPANIS"),
+                )[0]
+            )
         return max(skorlar) if skorlar else -1e18
 
     for p in sorted(
@@ -1206,15 +1550,12 @@ def _sube_icin_skorlu_ata(
         key=lambda x: (-_ilk_atanacak_tip_skoru(x), x.get("ad_soyad") or ""),
     ):
         if planla_acilis and personel_tip_yapabilir(
-            p, "ACILIS", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str
+            p, "ACILIS", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str, sube_id=sube_id
         ):
             t = "ACILIS"
             ned = "Kalan slot: açılış"
-        elif personel_tip_yapabilir(p, "ARA", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str):
-            t = "ARA"
-            ned = "Kalan slot: ara"
         elif planla_kapanis and personel_tip_yapabilir(
-            p, "KAPANIS", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str
+            p, "KAPANIS", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str, sube_id=sube_id
         ):
             t = "KAPANIS"
             ned = "Kalan slot: kapanış"
@@ -1239,15 +1580,18 @@ def _sube_icin_skorlu_ata(
         p = kalan[0]
         for i, (pp, tip, ned) in enumerate(sonuc):
             if pp["id"] == p["id"] and tip == "KAPANIS":
-                if personel_tip_yapabilir(p, "ARA", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str):
-                    sonuc[i] = (p, "ARA", "Tek kapanış yasak → ARA")
+                if planla_acilis and personel_tip_yapabilir(
+                    p, "ACILIS", kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str, sube_id=sube_id
+                ):
+                    sonuc[i] = (p, "ACILIS", "Tek kapanış yasak → ACILIS")
                     kapanis_sayisi = max(0, kapanis_sayisi - 1)
+                    acilis_sayisi += 1
                     log.append(
                         {
                             "kural": "TEK_KAP_YASAK",
                             "personel": p["ad_soyad"],
                             "sube": sube_ad,
-                            "detay": "Tek personel; kapanış yerine ARA",
+                            "detay": "Tek personel; kapanış yerine ACILIS",
                         }
                     )
                 break
@@ -1263,16 +1607,6 @@ def _sube_icin_skorlu_ata(
                 "kural": "MIN_ACILIS_UYARI",
                 "sube": sube_ad,
                 "detay": "Tek açılış yasak hedefi tam karşılanmadı; personel/kısıt kontrol edin",
-            }
-        )
-
-    ara_n = sum(1 for _, t, _ in sonuc if t == "ARA")
-    if girdi_mara > ara_n:
-        log.append(
-            {
-                "kural": "GIRDI_ARA_UYARI",
-                "sube": sube_ad,
-                "detay": f"Ara vardiya hedefi {girdi_mara}, oluşan {ara_n}",
             }
         )
 
@@ -1628,8 +1962,6 @@ def _fix_eksik_tips_ordered(
         out.append("KAPANIS")
     if c["ACILIS"] < meta["ma"]:
         out.append("ACILIS")
-    if c["ARA"] < meta["mara"]:
-        out.append("ARA")
     return out
 
 
@@ -1669,6 +2001,7 @@ def _vardiya_fix_ctx_yukle(cur, tarih: date) -> Optional[Dict[str, Any]]:
         r["personel_id"]: dict(r) for r in cur.fetchall()
     }
     _kisitlar_merge_sube_yasaklari(cur, kisitlar)
+    _kisitlar_merge_sube_tip_yetkileri(cur, kisitlar)
     gunluk_map = _gunluk_kisit_map_yukle(cur)
     durum_map = _gunluk_durum_map_gun(cur, tarih_str)
     tercih_map = _tercih_map_yukle(cur)
@@ -1741,6 +2074,7 @@ def _fix_can_assign(
         ctx["hafta_gunu"],
         ctx["durum_map"],
         ctx["tarih_str"],
+        sube_id=sube_id,
     ):
         return False
     if not _vardiya_hedef_subede_calisabilir(
@@ -1770,7 +2104,11 @@ def _fix_can_assign(
 
 
 def _fix_candidate_score(
-    ctx: Dict[str, Any], p: Dict[str, Any], need_tip: str, old_h_subtract: float
+    ctx: Dict[str, Any],
+    p: Dict[str, Any],
+    need_tip: str,
+    old_h_subtract: float,
+    hedef_sube_id: str,
 ) -> float:
     k_e = _efektif_personel_kisit(p, ctx["kisitlar"])
     pid = p["id"]
@@ -1779,8 +2117,23 @@ def _fix_candidate_score(
     if prev < 0:
         prev = 0.0
     ba[pid] = prev
+    slot = 0.0
+    sm = ctx.get("sube_saat_map")
+    if sm is not None:
+        slot = _vardiya_tip_slot_saat_subede(sm, hedef_sube_id, need_tip, k_e)
     s, _ = _atama_skoru_detay(
-        p, need_tip, k_e, ctx["tercih_map"], ctx["hafta_onceki"], ba, ctx["son_tip_map"]
+        p,
+        need_tip,
+        k_e,
+        ctx["tercih_map"],
+        ctx["hafta_onceki"],
+        ba,
+        ctx["son_tip_map"],
+        hedef_sube_id=hedef_sube_id,
+        ana_sube_id=ctx["ana_sube_map"].get(pid),
+        kisitlar=ctx["kisitlar"],
+        denge_bonus=0.0,
+        slot_saat_tahmini=slot,
     )
     return s
 
@@ -1801,6 +2154,12 @@ def _fix_apply_update(
     old_h = _vardiya_aralik_saat(
         _vardiya_db_saat_str(r["bas_saat"]), _vardiya_db_saat_str(r["bit_saat"])
     )
+    if "kaydırma" in str(neden).lower() or "kaydirma" in str(neden).lower():
+        transfer_saat = _apply_transfer_break(cur, ctx["tarih_str"], pid, new_bas, new_bit)
+        if not transfer_saat:
+            return False
+        new_bas, new_bit = transfer_saat
+        neden = f"{neden} [transfer +90dk]"
     new_h = _vardiya_aralik_saat(new_bas, new_bit)
     cur.execute(
         """
@@ -1856,7 +2215,7 @@ def _fix_pass_eksik(
                 )
                 if not _fix_can_assign(ctx, p, sid, need_tip, old_h):
                     continue
-                sc = _fix_candidate_score(ctx, p, need_tip, old_h)
+                sc = _fix_candidate_score(ctx, p, need_tip, old_h, sid)
                 src_meta = _fix_sube_meta(cur, ctx["tarih_str"], r["sube_id"], ham_by_sube[r["sube_id"]])
                 if _fix_row_surplus(src_meta, r["tip"]) <= 0:
                     sc -= 300.0
@@ -1923,6 +2282,8 @@ def _fix_try_demote_ara(
     meta: Dict[str, Any],
     fix_log: List[Dict[str, Any]],
 ) -> bool:
+    # ARA tanımı kaldırıldı: fix aşamasında ARA'ya düşürme yapılmaz.
+    return False
     if str(r.get("kaynak") or "motor") != "motor" or r["tip"] == "ARA":
         return False
     p = ctx["pid_to_p"].get(r["personel_id"])
@@ -1939,6 +2300,7 @@ def _fix_try_demote_ara(
         ctx["hafta_gunu"],
         ctx["durum_map"],
         ctx["tarih_str"],
+        sube_id=str(r["sube_id"]),
     ):
         return False
     old_h = _vardiya_aralik_saat(
@@ -2091,6 +2453,229 @@ def _vardiya_stabilize_run(
     return stab, mutations, neden_snapshot
 
 
+def _vardiya_global_dagilim_polish(
+    cur,
+    tarih_str: str,
+    musait: List[Dict[str, Any]],
+    kisitlar: Dict[str, Dict[str, Any]],
+    gunluk_map: Dict[Tuple[str, int], Dict[str, Any]],
+    hafta_gunu: int,
+    durum_map: Dict[Tuple[str, str], Dict[str, Any]],
+    tercih_map: Dict[str, List[Tuple[str, int]]],
+    hafta_onceki: Dict[str, Dict[str, float]],
+    son_tip_map: Dict[str, Optional[str]],
+    ana_sube_map: Dict[str, str],
+    sube_saat_map: Dict[str, Dict[str, Tuple[str, str]]],
+    bugun_atanan_saat: Dict[str, float],
+    log: List[Dict[str, Any]],
+) -> int:
+    """
+    Aynı gün iki motor satırında (aynı tip, farklı şube) şube takası — toplam skor artıyorsa uygula.
+    Kısıt / günlük saat tavanı yeniden doğrulanır (global dağılım cilası).
+    """
+    pid_to_p = {p["id"]: p for p in musait}
+    swaps = 0
+    for _tur in range(VARDIYA_GLOBAL_OPT_TUR):
+        iyilesti = False
+        cur.execute(
+            """
+            SELECT id, personel_id, sube_id, tip, bas_saat, bit_saat
+            FROM vardiya
+            WHERE tarih = %s AND COALESCE(kaynak, 'motor') = 'motor'
+            """,
+            (tarih_str,),
+        )
+        ham: List[Dict[str, Any]] = [dict(r) for r in cur.fetchall()]
+        cift = 0
+        for i, r1 in enumerate(ham):
+            if cift >= VARDIYA_GLOBAL_OPT_CIFT_UST:
+                break
+            for r2 in ham[i + 1 :]:
+                cift += 1
+                if cift > VARDIYA_GLOBAL_OPT_CIFT_UST:
+                    break
+                if r1["tip"] != r2["tip"] or r1["sube_id"] == r2["sube_id"]:
+                    continue
+                t = str(r1["tip"])
+                p1 = pid_to_p.get(r1["personel_id"])
+                p2 = pid_to_p.get(r2["personel_id"])
+                if not p1 or not p2:
+                    continue
+                s1, s2 = str(r1["sube_id"]), str(r2["sube_id"])
+                if not _vardiya_hedef_subede_calisabilir(
+                    p1, s2, ana_sube_map[p1["id"]], kisitlar
+                ) or not _vardiya_hedef_subede_calisabilir(
+                    p2, s1, ana_sube_map[p2["id"]], kisitlar
+                ):
+                    continue
+                if not personel_tip_yapabilir(
+                    p1, t, kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str, sube_id=s2
+                ) or not personel_tip_yapabilir(
+                    p2, t, kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str, sube_id=s1
+                ):
+                    continue
+                k1 = _efektif_personel_kisit(p1, kisitlar)
+                k2 = _efektif_personel_kisit(p2, kisitlar)
+                slot1_s1 = _vardiya_tip_slot_saat_subede(sube_saat_map, s1, t, k1)
+                slot2_s2 = _vardiya_tip_slot_saat_subede(sube_saat_map, s2, t, k2)
+                slot1_s2 = _vardiya_tip_slot_saat_subede(sube_saat_map, s2, t, k1)
+                slot2_s1 = _vardiya_tip_slot_saat_subede(sube_saat_map, s1, t, k2)
+                sc_a = (
+                    _vardiya_skor_bilesenleri(
+                        p1,
+                        t,
+                        k1,
+                        tercih_map,
+                        hafta_onceki,
+                        bugun_atanan_saat,
+                        son_tip_map,
+                        hedef_sube_id=s1,
+                        ana_sube_id=ana_sube_map[p1["id"]],
+                        kisitlar=kisitlar,
+                        denge_bonus=0.0,
+                        slot_saat_tahmini=slot1_s1,
+                    )["toplam"]
+                    + _vardiya_skor_bilesenleri(
+                        p2,
+                        t,
+                        k2,
+                        tercih_map,
+                        hafta_onceki,
+                        bugun_atanan_saat,
+                        son_tip_map,
+                        hedef_sube_id=s2,
+                        ana_sube_id=ana_sube_map[p2["id"]],
+                        kisitlar=kisitlar,
+                        denge_bonus=0.0,
+                        slot_saat_tahmini=slot2_s2,
+                    )["toplam"]
+                )
+                sc_b = (
+                    _vardiya_skor_bilesenleri(
+                        p1,
+                        t,
+                        k1,
+                        tercih_map,
+                        hafta_onceki,
+                        bugun_atanan_saat,
+                        son_tip_map,
+                        hedef_sube_id=s2,
+                        ana_sube_id=ana_sube_map[p1["id"]],
+                        kisitlar=kisitlar,
+                        denge_bonus=0.0,
+                        slot_saat_tahmini=slot1_s2,
+                    )["toplam"]
+                    + _vardiya_skor_bilesenleri(
+                        p2,
+                        t,
+                        k2,
+                        tercih_map,
+                        hafta_onceki,
+                        bugun_atanan_saat,
+                        son_tip_map,
+                        hedef_sube_id=s1,
+                        ana_sube_id=ana_sube_map[p2["id"]],
+                        kisitlar=kisitlar,
+                        denge_bonus=0.0,
+                        slot_saat_tahmini=slot2_s1,
+                    )["toplam"]
+                )
+                if sc_b <= sc_a + VARDIYA_GLOBAL_OPT_MIN_KAZANC:
+                    continue
+                h1_old = _vardiya_aralik_saat(
+                    _vardiya_db_saat_str(r1["bas_saat"]),
+                    _vardiya_db_saat_str(r1["bit_saat"]),
+                )
+                h2_old = _vardiya_aralik_saat(
+                    _vardiya_db_saat_str(r2["bas_saat"]),
+                    _vardiya_db_saat_str(r2["bit_saat"]),
+                )
+                pid1, pid2 = p1["id"], p2["id"]
+                gk1 = _gunluk_efektif_gun_satir(
+                    pid1, hafta_gunu, tarih_str, gunluk_map, durum_map
+                )
+                gk2 = _gunluk_efektif_gun_satir(
+                    pid2, hafta_gunu, tarih_str, gunluk_map, durum_map
+                )
+                km1 = _birlesik_kisit_gunluk(k1, gk1)
+                km2 = _birlesik_kisit_gunluk(k2, gk2)
+                sm1 = sube_saat_map.get(s2) or sube_tip_saatleri(_default_sube_cfg(s2))
+                sm2 = sube_saat_map.get(s1) or sube_tip_saatleri(_default_sube_cfg(s1))
+                bas1_2, bit1_2 = sm1[t]
+                bas2_1, bit2_1 = sm2[t]
+                if t == "KAPANIS" and k1.get("kapanis_bit_saat"):
+                    bit1_2 = _time_hhmmss(k1.get("kapanis_bit_saat"), bit1_2)
+                if t == "KAPANIS" and k2.get("kapanis_bit_saat"):
+                    bit2_1 = _time_hhmmss(k2.get("kapanis_bit_saat"), bit2_1)
+                if not _vardiya_saat_sinirlari_uygun(km1, bas1_2, bit1_2, t):
+                    continue
+                if not _vardiya_saat_sinirlari_uygun(km2, bas2_1, bit2_1, t):
+                    continue
+                ba_pri: Dict[str, float] = {
+                    k: float(v) for k, v in bugun_atanan_saat.items()
+                }
+                ba_pri[pid1] = max(0.0, ba_pri.get(pid1, 0.0) - h1_old)
+                ba_pri[pid2] = max(0.0, ba_pri.get(pid2, 0.0) - h2_old)
+                if not _hafta_max_gun_izin(pid1, k1, ba_pri, hafta_onceki):
+                    continue
+                if not _hafta_max_gun_izin(pid2, k2, ba_pri, hafta_onceki):
+                    continue
+                if not _atama_kisit_saat_limitleri(
+                    pid1, km1, slot1_s2, ba_pri, hafta_onceki, p1
+                ):
+                    continue
+                ba_mid = {k: float(v) for k, v in ba_pri.items()}
+                ba_mid[pid1] = ba_mid.get(pid1, 0.0) + slot1_s2
+                if not _atama_kisit_saat_limitleri(
+                    pid2, km2, slot2_s1, ba_mid, hafta_onceki, p2
+                ):
+                    continue
+                ned = (
+                    f"GLOBAL_OPT: şube takası (skor {sc_a:.2f}→{sc_b:.2f}) "
+                    f"{p1.get('ad_soyad')}↔{p2.get('ad_soyad')}"
+                )
+                cur.execute(
+                    """
+                    UPDATE vardiya
+                    SET sube_id = %s, bas_saat = %s::time, bit_saat = %s::time, secim_nedeni = %s
+                    WHERE id = %s AND COALESCE(kaynak, 'motor') = 'motor'
+                    """,
+                    (s2, bas1_2, bit1_2, ned, r1["id"]),
+                )
+                if cur.rowcount != 1:
+                    continue
+                cur.execute(
+                    """
+                    UPDATE vardiya
+                    SET sube_id = %s, bas_saat = %s::time, bit_saat = %s::time, secim_nedeni = %s
+                    WHERE id = %s AND COALESCE(kaynak, 'motor') = 'motor'
+                    """,
+                    (s1, bas2_1, bit2_1, ned, r2["id"]),
+                )
+                if cur.rowcount != 1:
+                    continue
+                bugun_atanan_saat[pid1] = (
+                    bugun_atanan_saat.get(pid1, 0.0) - h1_old + slot1_s2
+                )
+                bugun_atanan_saat[pid2] = (
+                    bugun_atanan_saat.get(pid2, 0.0) - h2_old + slot2_s1
+                )
+                swaps += 1
+                iyilesti = True
+                log.append(
+                    {
+                        "kural": "GLOBAL_OPT_SWAP",
+                        "detay": ned,
+                    }
+                )
+                break
+            if iyilesti:
+                break
+        if not iyilesti:
+            break
+    return swaps
+
+
 def _vardiya_motoru_calistir_once(
     cur, tarih: date, *, koru_manuel: bool = False, sube_round_seed: int = 0
 ) -> Dict[str, Any]:
@@ -2189,6 +2774,7 @@ def _vardiya_motoru_calistir_once(
     cur.execute("SELECT * FROM personel_kisit")
     kisitlar: Dict[str, Dict[str, Any]] = {r["personel_id"]: dict(r) for r in cur.fetchall()}
     _kisitlar_merge_sube_yasaklari(cur, kisitlar)
+    _kisitlar_merge_sube_tip_yetkileri(cur, kisitlar)
     gunluk_map = _gunluk_kisit_map_yukle(cur)
     durum_map = _gunluk_durum_map_gun(cur, tarih_str)
     tercih_map = _tercih_map_yukle(cur)
@@ -2262,7 +2848,9 @@ def _vardiya_motoru_calistir_once(
             pid, hafta_gunu, tarih_str, gunluk_map, durum_map
         )
         k_merged = _birlesik_kisit_gunluk(k_base, gk_row)
-        if not personel_tip_yapabilir(personel, tip, kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str):
+        if not personel_tip_yapabilir(
+            personel, tip, kisitlar, gunluk_map, hafta_gunu, durum_map, tarih_str, sube_id=sube_id
+        ):
             log.append(
                 {
                     "kural": "KISIT_MOTORU",
@@ -2291,6 +2879,19 @@ def _vardiya_motoru_calistir_once(
             return
         smap = sube_saat_map.get(sube_id) or sube_tip_saatleri(_default_sube_cfg(sube_id))
         bas, bit = smap[tip]
+        if "kaydırma" in str(neden).lower() or "kaydirma" in str(neden).lower():
+            transfer_saat = _apply_transfer_break(cur, tarih_str, pid, bas, bit)
+            if not transfer_saat:
+                log.append(
+                    {
+                        "kural": "KAYDIRMA_MIN_MESAI",
+                        "personel": personel["ad_soyad"],
+                        "detay": "Kaydırma sonrası vardiya 4 saatin altında kaldığı için atama yapılmadı",
+                    }
+                )
+                return
+            bas, bit = transfer_saat
+            neden = f"{neden} [transfer +90dk]"
         if tip == "KAPANIS" and k_base.get("kapanis_bit_saat"):
             bit = _time_hhmmss(k_base.get("kapanis_bit_saat"), bit)
             neden = f"{neden} [kapanış bitiş: {bit[:5]}]"
@@ -2389,6 +2990,19 @@ def _vardiya_motoru_calistir_once(
 
         cur.execute(
             """
+            SELECT sube_id, COUNT(*)::int AS c FROM vardiya
+            WHERE tarih = %s AND COALESCE(kaynak, 'motor') = 'motor'
+            GROUP BY sube_id
+            """,
+            (tarih_str,),
+        )
+        mcounts_denge = {str(r["sube_id"]): int(r["c"]) for r in cur.fetchall()}
+        mv_list = [float(mcounts_denge.get(s, 0)) for s in subeler.keys()]
+        avg_motor = sum(mv_list) / max(len(mv_list), 1)
+        denge_b = max(0.0, avg_motor - float(mcounts_denge.get(sube_id, 0))) * 2.5
+
+        cur.execute(
+            """
             SELECT tip FROM vardiya
             WHERE tarih = %s AND sube_id = %s
             """,
@@ -2448,6 +3062,10 @@ def _vardiya_motoru_calistir_once(
                     son_tip_map,
                     durum_map,
                     tarih_str,
+                    hedef_sube_id=sube_id,
+                    ana_sube_map=ana_sube_map,
+                    sube_saat_map=sube_saat_map,
+                    denge_bonus=denge_b,
                 ),
                 p.get("ad_soyad") or "",
             ),
@@ -2529,6 +3147,10 @@ def _vardiya_motoru_calistir_once(
             son_tip_map,
             durum_map,
             tarih_str,
+            sube_id=sube_id,
+            ana_sube_map=ana_sube_map,
+            sube_saat_map=sube_saat_map,
+            denge_bonus=denge_b,
         )
         atamalar, kapanis_sayisi = _atamalar_min_kapanis_yukselt(
             atamalar,
@@ -2546,6 +3168,10 @@ def _vardiya_motoru_calistir_once(
             son_tip_map,
             durum_map,
             tarih_str,
+            hedef_sube_id=sube_id,
+            ana_sube_map=ana_sube_map,
+            sube_saat_map=sube_saat_map,
+            denge_bonus=denge_b,
         )
 
         for p, tip, ned in atamalar:
@@ -2576,19 +3202,51 @@ def _vardiya_motoru_calistir_once(
 
     # Eksik kapanış için ek kaydırma ve “yetim” satırı yok: şube/personel zorla doldurulmaz.
 
+    # ── ADIM 5b: Küresel skor cilası (isteğe bağlı karşılıklı şube takası) ───
+    n_go = _vardiya_global_dagilim_polish(
+        cur,
+        tarih_str,
+        musait,
+        kisitlar,
+        gunluk_map,
+        hafta_gunu,
+        durum_map,
+        tercih_map,
+        hafta_onceki,
+        son_tip_map,
+        ana_sube_map,
+        sube_saat_map,
+        bugun_atanan_saat,
+        log,
+    )
+    if n_go:
+        log.append(
+            {
+                "kural": "GLOBAL_OPT",
+                "detay": f"Toplamda {n_go} şube takası ile skor iyileştirildi (GLOBAL_OPT).",
+            }
+        )
+
     # ── ADIM 6: Optimize (yerel uyarılar) ─────────────────────────────────
     _pipeline_adim6_optimize_uyarilar(log, musait, bugun_atanan_saat, kisitlar)
+
+    havuz_sayisi, atanan_personel_sayisi, bos_personeller = _ozet_bos_personel_listesi(
+        cur, tarih_str, musait
+    )
+    bos_personel_sayisi = len(bos_personeller)
 
     korunan_manuel = sum(manuel_sube_need_dusur.values())
     if korunan_manuel:
         mesaj = (
             f"{olusturulan} vardiya motorla eklendi; {korunan_manuel} manuel kayıt korundu. "
-            f"{len(izinliler)} personel izinli olduğu için dışarıda bırakıldı."
+            f"{len(izinliler)} personel izinli olduğu için dışarıda bırakıldı. "
+            f"Havuz {havuz_sayisi}, atanan {atanan_personel_sayisi}, boşta {bos_personel_sayisi}."
         )
     else:
         mesaj = (
             f"{olusturulan} vardiya oluşturuldu. "
-            f"{len(izinliler)} personel izinli olduğu için dışarıda bırakıldı."
+            f"{len(izinliler)} personel izinli olduğu için dışarıda bırakıldı. "
+            f"Havuz {havuz_sayisi}, atanan {atanan_personel_sayisi}, boşta {bos_personel_sayisi}."
         )
     return {
         "success": True,
@@ -2596,6 +3254,10 @@ def _vardiya_motoru_calistir_once(
         "olusturulan": olusturulan,
         "korunan_manuel": korunan_manuel,
         "izinli_sayisi": len(izinliler),
+        "havuz_sayisi": havuz_sayisi,
+        "atanan_personel_sayisi": atanan_personel_sayisi,
+        "bos_personel_sayisi": bos_personel_sayisi,
+        "bos_personeller": bos_personeller,
         "log": log,
         "mesaj": mesaj,
     }
@@ -2671,16 +3333,138 @@ def vardiya_motoru_calistir(
     return last
 
 
-def vardiya_motoru_hafta_calistir(cur, referans_tarih: date) -> Dict[str, Any]:
+def vardiya_motoru_hafta_calistir(
+    cur, referans_tarih: date, otomatik_izin_dengeleme: bool = True
+) -> Dict[str, Any]:
     """
     Pazartesi–pazar 7 gün için sırayla günlük motoru çalıştırır.
     Haftalık kota / önceki gün istatistikleri her gün için doğru kümülatif kalır.
     """
+    def _otomatik_izin_hedefi(aktif_sayi: int, hafta_sonu: bool) -> int:
+        if aktif_sayi <= 0:
+            return 0
+        oran = 0.12 if hafta_sonu else 0.18
+        hedef = int(round(aktif_sayi * oran))
+        return max(1, hedef)
+
+    def _saat_metni_gec_baslangic(s: Any) -> bool:
+        m = _saat_metni_dakika(s)
+        return bool(m is not None and m >= 16 * 60)
+
+    def _otomatik_izin_planla(gun: date) -> int:
+        """O gün için personel sayısına göre otomatik izin planı ekler."""
+        gun_str = str(gun)
+        hafta_sonu = gun.weekday() >= 5
+        cur.execute(
+            """
+            SELECT p.id, p.ad_soyad
+            FROM personel p
+            WHERE p.aktif = TRUE
+            """
+        )
+        aktifler = [dict(r) for r in cur.fetchall()]
+        hedef = _otomatik_izin_hedefi(len(aktifler), hafta_sonu)
+        if hedef <= 0 or not aktifler:
+            return 0
+
+        cur.execute(
+            """
+            SELECT DISTINCT personel_id
+            FROM personel_izin
+            WHERE baslangic_tarih <= %s AND bitis_tarih >= %s
+            """,
+            (gun_str, gun_str),
+        )
+        zaten_izinli = {str(r["personel_id"]) for r in cur.fetchall()}
+        kalan_hedef = max(0, hedef - len(zaten_izinli))
+        if kalan_hedef <= 0:
+            return 0
+
+        hafta_bas = _pazartesi_hafta(gun)
+        hafta_bit = hafta_bas + timedelta(days=6)
+        cur.execute(
+            """
+            SELECT personel_id, COUNT(DISTINCT tarih)::int AS gun_sayisi
+            FROM vardiya
+            WHERE tarih >= %s AND tarih <= %s
+            GROUP BY personel_id
+            """,
+            (str(hafta_bas), str(hafta_bit)),
+        )
+        calisma_map = {str(r["personel_id"]): int(r["gun_sayisi"] or 0) for r in cur.fetchall()}
+
+        cur.execute(
+            """
+            SELECT personel_id, COUNT(*)::int AS izin_sayisi
+            FROM personel_izin
+            WHERE baslangic_tarih >= %s AND bitis_tarih <= %s
+            GROUP BY personel_id
+            """,
+            (str(hafta_bas), str(hafta_bit)),
+        )
+        hafta_izin_map = {str(r["personel_id"]): int(r["izin_sayisi"] or 0) for r in cur.fetchall()}
+
+        cur.execute(
+            """
+            SELECT personel_id, hafta_gunu, min_baslangic
+            FROM personel_gunluk_kisit
+            WHERE hafta_gunu = %s
+            """,
+            (int(gun.weekday()),),
+        )
+        gk_map: Dict[str, Dict[str, Any]] = {}
+        for r in cur.fetchall():
+            gk_map[str(r["personel_id"])] = dict(r)
+
+        adaylar: List[Tuple[int, int, int, str]] = []
+        for p in aktifler:
+            pid = str(p["id"])
+            if pid in zaten_izinli:
+                continue
+            gk = gk_map.get(pid) or {}
+            gec_baslar = 1 if _saat_metni_gec_baslangic(gk.get("min_baslangic")) else 0
+            cal_gun = int(calisma_map.get(pid, 0))
+            hafta_izin = int(hafta_izin_map.get(pid, 0))
+            # Öncelik: geç başlayan/uyumsuz + çok çalışmış + henüz izin kullanmamış
+            adaylar.append((gec_baslar, cal_gun, hafta_izin, pid))
+
+        adaylar.sort(key=lambda x: (-x[0], -x[1], x[2], x[3]))
+        secilen = [pid for _, _, _, pid in adaylar[:kalan_hedef]]
+        eklenen = 0
+        for pid in secilen:
+            cur.execute(
+                """
+                INSERT INTO personel_izin
+                (id, personel_id, baslangic_tarih, bitis_tarih, tip, aciklama, durum)
+                VALUES (%s, %s, %s, %s, 'izin', %s, 'onayli')
+                """,
+                (
+                    str(uuid.uuid4()),
+                    pid,
+                    gun_str,
+                    gun_str,
+                    "motor-otomatik-izin-dengeleme",
+                ),
+            )
+            eklenen += 1
+        return eklenen
+
     pzt = _pazartesi_hafta(referans_tarih)
+    if otomatik_izin_dengeleme:
+        # Önceki otomatik izinleri temizle; her senaryo haftalık yeniden dengelensin.
+        cur.execute(
+            """
+            DELETE FROM personel_izin
+            WHERE aciklama = %s AND baslangic_tarih >= %s AND bitis_tarih <= %s
+            """,
+            ("motor-otomatik-izin-dengeleme", str(pzt), str(pzt + timedelta(days=6))),
+        )
     gunler: List[Dict[str, Any]] = []
     toplam = 0
     for i in range(7):
         g = pzt + timedelta(days=i)
+        if otomatik_izin_dengeleme:
+            _otomatik_izin_planla(g)
         r = vardiya_motoru_calistir(cur, g, koru_manuel=False)
         n = int(r.get("olusturulan") or 0)
         toplam += n
@@ -2693,11 +3477,90 @@ def vardiya_motoru_hafta_calistir(cur, referans_tarih: date) -> Dict[str, Any]:
                 "log_ozet": len(r.get("log") or []),
             }
         )
+    # Final politika kilidi:
+    # - hafta_max_gun >= 6 olanlarda haftada en az 1 gün izin hedefi (<=6 çalışma günü)
+    # - hafta_max_gun <= 5 olanlarda zorunlu izin yok (5'i 4'e düşürmeyi zorlamaz)
+    cur.execute(
+        """
+        SELECT p.id, p.ad_soyad, pk.hafta_max_gun
+        FROM personel p
+        LEFT JOIN personel_kisit pk ON pk.personel_id = p.id
+        WHERE p.aktif = TRUE
+        """
+    )
+    kisiler = [dict(r) for r in cur.fetchall()]
+    cur.execute(
+        """
+        SELECT personel_id, COUNT(DISTINCT tarih)::int AS gun_sayisi
+        FROM vardiya
+        WHERE tarih >= %s AND tarih <= %s
+        GROUP BY personel_id
+        """,
+        (str(pzt), str(pzt + timedelta(days=6))),
+    )
+    calisma_map = {str(r["personel_id"]): int(r["gun_sayisi"] or 0) for r in cur.fetchall()}
+    izin_politika_ihlalleri: List[Dict[str, Any]] = []
+    for p in kisiler:
+        hmg_raw = p.get("hafta_max_gun")
+        try:
+            hmg = int(hmg_raw) if hmg_raw is not None else None
+        except (TypeError, ValueError):
+            hmg = None
+        if hmg is None or hmg < 6:
+            # Haftada 6 gün altı çalışan personelde zorunlu izin yok
+            continue
+        cal_gun = int(calisma_map.get(str(p["id"]), 0))
+        if cal_gun >= 7:
+            izin_politika_ihlalleri.append(
+                {
+                    "personel_id": str(p["id"]),
+                    "ad_soyad": str(p.get("ad_soyad") or p["id"]),
+                    "calisma_gunu": cal_gun,
+                    "hafta_max_gun": hmg,
+                    "detay": "Haftada en az 1 izin günü hedefi karşılanmadı.",
+                }
+            )
     return {
         "success": True,
         "hafta_baslangic": str(pzt),
         "hafta_bitis": str(pzt + timedelta(days=6)),
         "toplam_olusturulan": toplam,
         "gunler": gunler,
-        "mesaj": f"Haftalık plan: {toplam} vardiya kaydı (7 gün).",
+        "izin_politika_ihlal_sayisi": len(izin_politika_ihlalleri),
+        "izin_politika_ihlalleri": izin_politika_ihlalleri,
+        "mesaj": (
+            f"Haftalık plan: {toplam} vardiya kaydı (7 gün). "
+            f"İzin politikası: hafta_max_gun>=6 için zorunlu, <=5 için zorunlu değil. "
+            + (
+                f"İhlal: {len(izin_politika_ihlalleri)}"
+                if izin_politika_ihlalleri
+                else "İhlal yok"
+            )
+        ),
     }
+
+
+def _ozet_bos_personel_listesi(
+    cur,
+    tarih_str: str,
+    musait: List[Dict[str, Any]],
+) -> Tuple[int, int, List[Dict[str, str]]]:
+    """O gün havuzdaki personelden atanmayanları özetler."""
+    havuz_ids = [str(p["id"]) for p in musait]
+    if not havuz_ids:
+        return 0, 0, []
+    cur.execute(
+        """
+        SELECT DISTINCT personel_id
+        FROM vardiya
+        WHERE tarih = %s
+        """,
+        (tarih_str,),
+    )
+    atanmis = {str(r["personel_id"]) for r in cur.fetchall()}
+    bos = [
+        {"id": str(p["id"]), "ad_soyad": str(p.get("ad_soyad") or p["id"])}
+        for p in musait
+        if str(p["id"]) not in atanmis
+    ]
+    return len(havuz_ids), len(atanmis), bos
