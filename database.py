@@ -28,14 +28,13 @@ def _get_pool():
 
 
 @contextmanager
-def db(commit: bool = True):
+def db():
     """
     PostgreSQL bağlantı context manager — pool'dan alır, işlem sonrası iade eder.
     Kullanım:
         with db() as (conn, cur):
             cur.execute(...)
-    Başarılı çıkışta commit (varsayılan), hata durumunda rollback yapar.
-    commit=False: başarılı çıkışta rollback (simülasyon / dry-run).
+    Başarılı çıkışta commit, hata durumunda rollback yapar.
     """
     pool = _get_pool()
     conn = pool.getconn()
@@ -44,10 +43,7 @@ def db(commit: bool = True):
     cur = conn.cursor()
     try:
         yield conn, cur
-        if commit:
-            conn.commit()
-        else:
-            conn.rollback()
+        conn.commit()
     except Exception:
         conn.rollback()
         raise
@@ -74,6 +70,16 @@ def init_db():
                 aktif       BOOLEAN NOT NULL DEFAULT TRUE,
                 pos_oran    NUMERIC(5,2) NOT NULL DEFAULT 0,
                 online_oran NUMERIC(5,2) NOT NULL DEFAULT 0,
+                vardiya_yazilsin BOOLEAN NOT NULL DEFAULT TRUE,
+                acilis_sadece_part BOOLEAN NOT NULL DEFAULT FALSE,
+                kapanis_sadece_part BOOLEAN NOT NULL DEFAULT FALSE,
+                acilis_saati TEXT,
+                kapanis_saati TEXT,
+                yogun_saat_baslangic TEXT,
+                yogun_saat_bitis TEXT,
+                ortusme_gerekli BOOLEAN NOT NULL DEFAULT FALSE,
+                min_personel SMALLINT NOT NULL DEFAULT 1,
+                yogun_saat_ek_personel SMALLINT NOT NULL DEFAULT 0,
                 olusturma   TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """)
@@ -88,6 +94,39 @@ def init_db():
                     WHERE table_name='subeler' AND column_name='online_oran')
                 THEN ALTER TABLE subeler ADD COLUMN online_oran NUMERIC(5,2) NOT NULL DEFAULT 0;
                 END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='vardiya_yazilsin')
+                THEN ALTER TABLE subeler ADD COLUMN vardiya_yazilsin BOOLEAN NOT NULL DEFAULT TRUE; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='acilis_saati')
+                THEN ALTER TABLE subeler ADD COLUMN acilis_saati TEXT; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='kapanis_saati')
+                THEN ALTER TABLE subeler ADD COLUMN kapanis_saati TEXT; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='yogun_saat_baslangic')
+                THEN ALTER TABLE subeler ADD COLUMN yogun_saat_baslangic TEXT; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='yogun_saat_bitis')
+                THEN ALTER TABLE subeler ADD COLUMN yogun_saat_bitis TEXT; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='ortusme_gerekli')
+                THEN ALTER TABLE subeler ADD COLUMN ortusme_gerekli BOOLEAN NOT NULL DEFAULT FALSE; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='vardiya_yazilsin')
+                THEN ALTER TABLE subeler ADD COLUMN vardiya_yazilsin BOOLEAN NOT NULL DEFAULT TRUE; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='min_personel')
+                THEN ALTER TABLE subeler ADD COLUMN min_personel SMALLINT NOT NULL DEFAULT 1; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='yogun_saat_ek_personel')
+                THEN ALTER TABLE subeler ADD COLUMN yogun_saat_ek_personel SMALLINT NOT NULL DEFAULT 0; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='acilis_sadece_part')
+                THEN ALTER TABLE subeler ADD COLUMN acilis_sadece_part BOOLEAN NOT NULL DEFAULT FALSE; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='kapanis_sadece_part')
+                THEN ALTER TABLE subeler ADD COLUMN kapanis_sadece_part BOOLEAN NOT NULL DEFAULT FALSE; END IF;
             END $$;
         """)
 
@@ -96,6 +135,88 @@ def init_db():
             INSERT INTO subeler (id, ad)
             VALUES ('sube-merkez', 'MERKEZ')
             ON CONFLICT (id) DO NOTHING
+        """)
+
+        # ── ŞUBE VARDİYA İHTİYAÇLARI ───────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_vardiya_ihtiyac (
+                id              TEXT PRIMARY KEY,
+                sube_id         TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                gun_tipi        TEXT NOT NULL DEFAULT 'hergun'
+                    CHECK (gun_tipi IN ('hergun','hafta_ici','hafta_sonu','pazartesi','sali','carsamba','persembe','cuma','cumartesi','pazar')),
+                rol             TEXT NOT NULL DEFAULT 'genel'
+                    CHECK (rol IN ('genel','acilis','kapanis','yogunluk','araci')),
+                bas_saat        TEXT NOT NULL,
+                bit_saat        TEXT NOT NULL,
+                gereken_kisi    SMALLINT NOT NULL DEFAULT 1, -- ideal
+                minimum_kisi    SMALLINT NOT NULL DEFAULT 1, -- şube ayakta kalsın diye
+                gereken_tur     TEXT NOT NULL DEFAULT 'farketmez'
+                    CHECK (gereken_tur IN ('farketmez','tam','part')),
+                kritik          BOOLEAN NOT NULL DEFAULT FALSE,
+                olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sube_vardiya_ihtiyac_sube
+            ON sube_vardiya_ihtiyac (sube_id, gun_tipi)
+        """)
+
+        # Migration: yeni kolonları ekle (eski DB)
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_vardiya_ihtiyac' AND column_name='rol')
+                THEN
+                    ALTER TABLE sube_vardiya_ihtiyac ADD COLUMN rol TEXT NOT NULL DEFAULT 'genel';
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_vardiya_ihtiyac' AND column_name='minimum_kisi')
+                THEN
+                    ALTER TABLE sube_vardiya_ihtiyac ADD COLUMN minimum_kisi SMALLINT NOT NULL DEFAULT 1;
+                END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
+
+        # Şube bazlı alternatif kurallar (ideal tutmazsa minimum/alternatif)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_vardiya_alternatif_kural (
+                id              TEXT PRIMARY KEY,
+                sube_id         TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                rol             TEXT NOT NULL DEFAULT 'genel'
+                    CHECK (rol IN ('genel','acilis','kapanis','yogunluk','araci')),
+                gun_tipi        TEXT NOT NULL DEFAULT 'hergun'
+                    CHECK (gun_tipi IN ('hergun','hafta_ici','hafta_sonu','pazartesi','sali','carsamba','persembe','cuma','cumartesi','pazar')),
+                minimum_kisi    SMALLINT NOT NULL DEFAULT 1,
+                ideal_kisi      SMALLINT NOT NULL DEFAULT 1,
+                izinli_tam      BOOLEAN NOT NULL DEFAULT TRUE,
+                izinli_part     BOOLEAN NOT NULL DEFAULT TRUE,
+                mesai_izinli    BOOLEAN NOT NULL DEFAULT FALSE,
+                notlar          TEXT,
+                olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sube_vardiya_alt_kural
+            ON sube_vardiya_alternatif_kural (sube_id, rol, gun_tipi)
+        """)
+
+        # Şube bazlı otomatik izin kuralı (tek sefer tanımlanır, motor kullanır)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_izin_kural (
+                sube_id                  TEXT PRIMARY KEY REFERENCES subeler(id) ON DELETE CASCADE,
+                max_izin_pzt             SMALLINT NOT NULL DEFAULT 3,
+                max_izin_sal             SMALLINT NOT NULL DEFAULT 3,
+                max_izin_car             SMALLINT NOT NULL DEFAULT 3,
+                max_izin_per             SMALLINT NOT NULL DEFAULT 2,
+                max_izin_cum             SMALLINT NOT NULL DEFAULT 2,
+                max_izin_cmt             SMALLINT NOT NULL DEFAULT 1,
+                max_izin_paz             SMALLINT NOT NULL DEFAULT 2,
+                cumartesi_part_oncelik   BOOLEAN NOT NULL DEFAULT TRUE,
+                cumartesi_ikinci_istisna BOOLEAN NOT NULL DEFAULT TRUE,
+                olusturma                TIMESTAMP NOT NULL DEFAULT NOW(),
+                guncelleme               TIMESTAMP NOT NULL DEFAULT NOW()
+            )
         """)
 
         # ── KASA HAREKETLERİ ───────────────────────────────────
@@ -402,8 +523,223 @@ def init_db():
                 sube_id         TEXT REFERENCES subeler(id),
                 notlar          TEXT,
                 aktif           BOOLEAN NOT NULL DEFAULT TRUE,
+                include_in_planning BOOLEAN NOT NULL DEFAULT TRUE,
+                vardiya_tipi    TEXT,
+                vardiya_max_weekly_hours NUMERIC(6,2),
                 olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
             )
+        """)
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel' AND column_name='include_in_planning')
+                THEN ALTER TABLE personel ADD COLUMN include_in_planning BOOLEAN NOT NULL DEFAULT TRUE; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel' AND column_name='vardiya_tipi')
+                THEN ALTER TABLE personel ADD COLUMN vardiya_tipi TEXT; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel' AND column_name='vardiya_max_weekly_hours')
+                THEN ALTER TABLE personel ADD COLUMN vardiya_max_weekly_hours NUMERIC(6,2); END IF;
+            END $$;
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS personel_sube_vardiya_yetki (
+                id           TEXT PRIMARY KEY,
+                personel_id  TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
+                sube_id      TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                opening      BOOLEAN NOT NULL DEFAULT FALSE,
+                closing      BOOLEAN NOT NULL DEFAULT FALSE,
+                guncelleme   TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (personel_id, sube_id)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS personel_gun_musaitlik (
+                id               TEXT PRIMARY KEY,
+                personel_id      TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
+                hafta_gunu       SMALLINT NOT NULL CHECK (hafta_gunu >= 0 AND hafta_gunu <= 6),
+                is_active        BOOLEAN NOT NULL DEFAULT TRUE,
+                available_from   TEXT,
+                available_to     TEXT,
+                guncelleme       TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (personel_id, hafta_gunu)
+            )
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'personel_gun_uygunluk'
+                ) THEN
+                    INSERT INTO personel_gun_musaitlik
+                        (id, personel_id, hafta_gunu, is_active, available_from, available_to)
+                    SELECT gen_random_uuid()::text, u.personel_id, u.hafta_gunu, u.calisabilir,
+                           s.saat_bas, s.saat_bit
+                    FROM personel_gun_uygunluk u
+                    LEFT JOIN personel_gun_saat_kisit s
+                      ON s.personel_id = u.personel_id AND s.hafta_gunu = u.hafta_gunu
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM personel_gun_musaitlik m
+                        WHERE m.personel_id = u.personel_id AND m.hafta_gunu = u.hafta_gunu
+                    );
+                    INSERT INTO personel_gun_musaitlik
+                        (id, personel_id, hafta_gunu, is_active, available_from, available_to)
+                    SELECT gen_random_uuid()::text, s.personel_id, s.hafta_gunu, TRUE,
+                           s.saat_bas, s.saat_bit
+                    FROM personel_gun_saat_kisit s
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM personel_gun_musaitlik m
+                        WHERE m.personel_id = s.personel_id AND m.hafta_gunu = s.hafta_gunu
+                    );
+                    DROP TABLE IF EXISTS personel_gun_saat_kisit;
+                    DROP TABLE IF EXISTS personel_gun_uygunluk;
+                END IF;
+            END $$;
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS personel_hafta_izin (
+                id               TEXT PRIMARY KEY,
+                personel_id      TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
+                hafta_baslangic  DATE NOT NULL,
+                izin_pzt         BOOLEAN NOT NULL DEFAULT FALSE,
+                izin_sal         BOOLEAN NOT NULL DEFAULT FALSE,
+                izin_car         BOOLEAN NOT NULL DEFAULT FALSE,
+                izin_per         BOOLEAN NOT NULL DEFAULT FALSE,
+                izin_cum         BOOLEAN NOT NULL DEFAULT FALSE,
+                izin_cmt         BOOLEAN NOT NULL DEFAULT FALSE,
+                izin_paz         BOOLEAN NOT NULL DEFAULT FALSE,
+                guncelleme       TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (personel_id, hafta_baslangic)
+            )
+        """)
+
+        # Personelin o gün hangi şubelerde çalışabileceği (kaydırma / çoklu şube)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS personel_vardiya_sube_erisim (
+                id              TEXT PRIMARY KEY,
+                personel_id     TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
+                sube_id         TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                guncelleme      TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (personel_id, sube_id)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_pvs_erisim_personel
+            ON personel_vardiya_sube_erisim (personel_id)
+        """)
+
+        # Motor: şubeler arası minimum süre (dakika), vb.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS vardiya_motor_ayar (
+                anahtar     TEXT PRIMARY KEY,
+                deger_int   INT,
+                deger_text  TEXT
+            )
+        """)
+        cur.execute("""
+            INSERT INTO vardiya_motor_ayar (anahtar, deger_int)
+            SELECT 'subeler_arasi_min_dakika', 90
+            WHERE NOT EXISTS (
+                SELECT 1 FROM vardiya_motor_ayar WHERE anahtar = 'subeler_arasi_min_dakika'
+            )
+        """)
+        cur.execute("""
+            INSERT INTO vardiya_motor_ayar (anahtar, deger_int)
+            SELECT 'mesai_ek_limit_saat', 4
+            WHERE NOT EXISTS (
+                SELECT 1 FROM vardiya_motor_ayar WHERE anahtar = 'mesai_ek_limit_saat'
+            )
+        """)
+
+        # Haftalık plan taslağı (motor çıktılarını kaydetmek için altyapı)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS vardiya_atama_taslak (
+                id              TEXT PRIMARY KEY,
+                hafta_baslangic DATE NOT NULL,
+                tarih           DATE NOT NULL,
+                sube_id         TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                personel_id     TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
+                bas_saat        TEXT NOT NULL,
+                bit_saat        TEXT NOT NULL,
+                rol             TEXT NOT NULL DEFAULT 'aralik'
+                    CHECK (rol IN ('acilis','kapanis','aralik')),
+                senaryo_id      TEXT,
+                kritik          BOOLEAN NOT NULL DEFAULT FALSE,
+                izin_ihlali     BOOLEAN NOT NULL DEFAULT FALSE,
+                rol_ihlali      BOOLEAN NOT NULL DEFAULT FALSE,
+                mesai_ihlali    BOOLEAN NOT NULL DEFAULT FALSE,
+                aciklama        TEXT,
+                durum           TEXT NOT NULL DEFAULT 'taslak'
+                    CHECK (durum IN ('taslak','kilitli','iptal')),
+                olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_vardiya_atama_taslak_hafta
+            ON vardiya_atama_taslak (hafta_baslangic, sube_id, tarih)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_vardiya_atama_taslak_personel
+            ON vardiya_atama_taslak (hafta_baslangic, personel_id, tarih)
+        """)
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='vardiya_atama_taslak' AND column_name='izin_ihlali')
+                THEN ALTER TABLE vardiya_atama_taslak ADD COLUMN izin_ihlali BOOLEAN NOT NULL DEFAULT FALSE; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='vardiya_atama_taslak' AND column_name='rol_ihlali')
+                THEN ALTER TABLE vardiya_atama_taslak ADD COLUMN rol_ihlali BOOLEAN NOT NULL DEFAULT FALSE; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='vardiya_atama_taslak' AND column_name='mesai_ihlali')
+                THEN ALTER TABLE vardiya_atama_taslak ADD COLUMN mesai_ihlali BOOLEAN NOT NULL DEFAULT FALSE; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='vardiya_atama_taslak' AND column_name='aciklama')
+                THEN ALTER TABLE vardiya_atama_taslak ADD COLUMN aciklama TEXT; END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
+
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel' AND column_name='vardiya_kapanis_atanabilir')
+                THEN
+                    ALTER TABLE personel ADD COLUMN vardiya_kapanis_atanabilir BOOLEAN NOT NULL DEFAULT TRUE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel' AND column_name='vardiya_araci_atanabilir')
+                THEN
+                    ALTER TABLE personel ADD COLUMN vardiya_araci_atanabilir BOOLEAN NOT NULL DEFAULT TRUE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel' AND column_name='vardiya_gun_icinde_cok_subeye_gidebilir')
+                THEN
+                    ALTER TABLE personel ADD COLUMN vardiya_gun_icinde_cok_subeye_gidebilir BOOLEAN NOT NULL DEFAULT TRUE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel' AND column_name='vardiya_ana_sube_oncelikli')
+                THEN
+                    ALTER TABLE personel ADD COLUMN vardiya_ana_sube_oncelikli BOOLEAN NOT NULL DEFAULT FALSE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel' AND column_name='vardiya_ana_sube_id')
+                THEN
+                    ALTER TABLE personel ADD COLUMN vardiya_ana_sube_id TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel' AND column_name='vardiya_oncelikli_sube_id')
+                THEN
+                    ALTER TABLE personel ADD COLUMN vardiya_oncelikli_sube_id TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='acilis_max_kisi')
+                THEN
+                    ALTER TABLE subeler ADD COLUMN acilis_max_kisi SMALLINT;
+                END IF;
+            END $$;
         """)
 
         # ── SABİT GİDERLER ─────────────────────────────────────
@@ -464,17 +800,6 @@ def init_db():
                 aktif            BOOLEAN NOT NULL DEFAULT TRUE,
                 olusturma        TIMESTAMP NOT NULL DEFAULT NOW()
             )
-        """)
-        # Migration: kredi ödemesiz dönem (kampanya) — ay sayısı, baslangic_tarihi sonrası taksit planı üretilmez
-        cur.execute("""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='borc_envanteri' AND column_name='odemesiz_ay')
-                THEN
-                    ALTER TABLE borc_envanteri ADD COLUMN odemesiz_ay INT NOT NULL DEFAULT 0;
-                END IF;
-            END $$;
         """)
 
         # ── ANLIK GİDERLER ─────────────────────────────────────
@@ -538,365 +863,6 @@ def init_db():
             cur.execute("ALTER TABLE personel_aylik ADD COLUMN IF NOT EXISTS bayram_mesai_saat NUMERIC(6,2) DEFAULT 0")
         except Exception:
             pass
-
-        # ── VARDİYA PLANLAMA ───────────────────────────────────
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS vardiya (
-                id           TEXT PRIMARY KEY,
-                tarih        DATE NOT NULL,
-                personel_id  TEXT NOT NULL REFERENCES personel(id),
-                sube_id      TEXT NOT NULL REFERENCES subeler(id),
-                tip          TEXT NOT NULL
-                    CHECK (tip IN ('ACILIS','ARA','KAPANIS')),
-                bas_saat     TIME NOT NULL,
-                bit_saat     TIME NOT NULL,
-                kaynak       TEXT NOT NULL DEFAULT 'motor'
-                    CHECK (kaynak IN ('motor', 'manuel')),
-                secim_nedeni TEXT,
-                olusturma    TIMESTAMP NOT NULL DEFAULT NOW()
-            )
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_vardiya_tarih ON vardiya (tarih)
-        """)
-
-        # ── VARDİYA: İZİN, PERSONEL KISIT, ŞUBE CONFIG, BAĞLANTI ──
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS personel_izin (
-                id              TEXT PRIMARY KEY,
-                personel_id     TEXT NOT NULL REFERENCES personel(id),
-                baslangic_tarih DATE NOT NULL,
-                bitis_tarih     DATE NOT NULL,
-                tip             TEXT NOT NULL DEFAULT 'izin',
-                aciklama        TEXT,
-                durum           TEXT NOT NULL DEFAULT 'bekliyor',
-                olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS personel_kisit (
-                id                  TEXT PRIMARY KEY,
-                personel_id         TEXT NOT NULL REFERENCES personel(id) UNIQUE,
-                acilis_yapabilir    BOOLEAN NOT NULL DEFAULT TRUE,
-                ara_yapabilir       BOOLEAN NOT NULL DEFAULT TRUE,
-                kapanis_yapabilir   BOOLEAN NOT NULL DEFAULT TRUE,
-                sadece_tip          TEXT,
-                sube_degistirebilir BOOLEAN NOT NULL DEFAULT TRUE,
-                kapanis_bit_saat    TEXT,
-                guncelleme          TIMESTAMP DEFAULT NOW()
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS personel_gunluk_kisit (
-                id              TEXT PRIMARY KEY,
-                personel_id     TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
-                hafta_gunu      SMALLINT NOT NULL CHECK (hafta_gunu >= 0 AND hafta_gunu <= 6),
-                calisabilir     BOOLEAN NOT NULL DEFAULT TRUE,
-                sadece_tip      TEXT,
-                min_baslangic   TEXT,
-                max_cikis       TEXT,
-                max_saat        NUMERIC(5,2),
-                calisamaz       BOOLEAN NOT NULL DEFAULT FALSE,
-                izinli_tipler   TEXT,
-                guncelleme      TIMESTAMP NOT NULL DEFAULT NOW(),
-                UNIQUE (personel_id, hafta_gunu)
-            )
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_personel_gunluk_kisit_pid
-            ON personel_gunluk_kisit (personel_id)
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS personel_gunluk_durum (
-                id           TEXT PRIMARY KEY,
-                personel_id  TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
-                tarih        DATE NOT NULL,
-                calisabilir  BOOLEAN NOT NULL DEFAULT TRUE,
-                tur          TEXT,
-                en_erken     TEXT,
-                en_gec       TEXT,
-                guncelleme   TIMESTAMP NOT NULL DEFAULT NOW(),
-                UNIQUE (personel_id, tarih),
-                CHECK (tur IS NULL OR tur IN ('tam', 'part'))
-            )
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_personel_gunluk_durum_pid_tarih
-            ON personel_gunluk_durum (personel_id, tarih)
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS personel_tercih (
-                id           TEXT PRIMARY KEY,
-                personel_id  TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
-                tercih_tip   TEXT NOT NULL CHECK (tercih_tip IN ('ACILIS','ARA','KAPANIS')),
-                oncelik      SMALLINT NOT NULL DEFAULT 1,
-                guncelleme   TIMESTAMP NOT NULL DEFAULT NOW(),
-                UNIQUE (personel_id, tercih_tip)
-            )
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_personel_tercih_pid ON personel_tercih (personel_id)
-        """)
-        # Vardiya ön seçim: yalnızca vardiyaya_dahil=TRUE olanlar otomatik planda
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS personel_config (
-                personel_id     TEXT PRIMARY KEY REFERENCES personel(id) ON DELETE CASCADE,
-                vardiyaya_dahil BOOLEAN NOT NULL DEFAULT TRUE,
-                guncelleme      TIMESTAMP NOT NULL DEFAULT NOW()
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS personel_sube_yasak (
-                id           TEXT PRIMARY KEY,
-                personel_id  TEXT NOT NULL REFERENCES personel(id) ON DELETE CASCADE,
-                sube_id      TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
-                yasak        BOOLEAN NOT NULL DEFAULT TRUE,
-                guncelleme   TIMESTAMP NOT NULL DEFAULT NOW(),
-                UNIQUE (personel_id, sube_id)
-            )
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_personel_sube_yasak_pid
-            ON personel_sube_yasak (personel_id)
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS sube_config (
-                id                   TEXT PRIMARY KEY,
-                sube_id              TEXT NOT NULL REFERENCES subeler(id) UNIQUE,
-                vardiyaya_dahil      BOOLEAN NOT NULL DEFAULT TRUE,
-                min_kapanis          INT NOT NULL DEFAULT 1,
-                tek_kapanis_izinli   BOOLEAN NOT NULL DEFAULT TRUE,
-                tek_acilis_izinli    BOOLEAN NOT NULL DEFAULT TRUE,
-                kaydirma_acik        BOOLEAN NOT NULL DEFAULT TRUE,
-                sadece_tam_kayabilir BOOLEAN NOT NULL DEFAULT FALSE,
-                hafta_sonu_min_kap   INT NOT NULL DEFAULT 1,
-                tam_part_zorunlu     BOOLEAN NOT NULL DEFAULT FALSE,
-                kapanis_dusurulemez  BOOLEAN NOT NULL DEFAULT FALSE,
-                planla_acilis        BOOLEAN NOT NULL DEFAULT TRUE,
-                planla_kapanis       BOOLEAN NOT NULL DEFAULT TRUE,
-                acilis_bas_saat      TEXT,
-                acilis_bit_saat      TEXT,
-                ara_bas_saat         TEXT,
-                ara_bit_saat         TEXT,
-                kapanis_bas_saat     TEXT,
-                kapanis_bit_saat     TEXT,
-                default_acilis_saati TEXT,
-                default_kapanis_saati TEXT,
-                vardiya_girdileri    JSONB,
-                guncelleme           TIMESTAMP DEFAULT NOW()
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS sube_saat_gunluk (
-                id              TEXT PRIMARY KEY,
-                sube_id         TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
-                tarih           DATE NOT NULL,
-                acilis_saati    TEXT,
-                kapanis_saati   TEXT,
-                guncelleme      TIMESTAMP NOT NULL DEFAULT NOW(),
-                UNIQUE (sube_id, tarih)
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS sube_baglanti (
-                id          TEXT PRIMARY KEY,
-                kaynak_id   TEXT NOT NULL REFERENCES subeler(id),
-                hedef_id    TEXT NOT NULL REFERENCES subeler(id),
-                aktif       BOOLEAN NOT NULL DEFAULT TRUE,
-                olusturma   TIMESTAMP DEFAULT NOW(),
-                UNIQUE(kaynak_id, hedef_id)
-            )
-        """)
-        # Eski kurulumlar: yeni kolonlar
-        cur.execute("""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_kisit' AND column_name='kapanis_bit_saat') THEN
-                    ALTER TABLE personel_kisit ADD COLUMN kapanis_bit_saat TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_kisit' AND column_name='calisan_rol') THEN
-                    ALTER TABLE personel_kisit ADD COLUMN calisan_rol TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_kisit' AND column_name='hafta_max_gun') THEN
-                    ALTER TABLE personel_kisit ADD COLUMN hafta_max_gun INT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_kisit' AND column_name='gunluk_max_saat') THEN
-                    ALTER TABLE personel_kisit ADD COLUMN gunluk_max_saat NUMERIC(5,2);
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_kisit' AND column_name='haftalik_max_saat') THEN
-                    ALTER TABLE personel_kisit ADD COLUMN haftalik_max_saat NUMERIC(6,2);
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_kisit' AND column_name='min_baslangic_saat') THEN
-                    ALTER TABLE personel_kisit ADD COLUMN min_baslangic_saat TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_kisit' AND column_name='max_cikis_saat') THEN
-                    ALTER TABLE personel_kisit ADD COLUMN max_cikis_saat TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_kisit' AND column_name='izinli_sube_ids') THEN
-                    ALTER TABLE personel_kisit ADD COLUMN izinli_sube_ids TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_kisit' AND column_name='calisma_profili') THEN
-                    ALTER TABLE personel_kisit ADD COLUMN calisma_profili TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_gunluk_kisit' AND column_name='calisabilir') THEN
-                    ALTER TABLE personel_gunluk_kisit ADD COLUMN calisabilir BOOLEAN NOT NULL DEFAULT TRUE;
-                    UPDATE personel_gunluk_kisit SET calisabilir = NOT COALESCE(calisamaz, FALSE);
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_gunluk_kisit' AND column_name='sadece_tip') THEN
-                    ALTER TABLE personel_gunluk_kisit ADD COLUMN sadece_tip TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_gunluk_kisit' AND column_name='min_baslangic') THEN
-                    ALTER TABLE personel_gunluk_kisit ADD COLUMN min_baslangic TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_gunluk_kisit' AND column_name='max_cikis') THEN
-                    ALTER TABLE personel_gunluk_kisit ADD COLUMN max_cikis TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_gunluk_kisit' AND column_name='max_saat') THEN
-                    ALTER TABLE personel_gunluk_kisit ADD COLUMN max_saat NUMERIC(5,2);
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_gunluk_durum' AND column_name='en_erken') THEN
-                    ALTER TABLE personel_gunluk_durum ADD COLUMN en_erken TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_gunluk_durum' AND column_name='en_gec') THEN
-                    ALTER TABLE personel_gunluk_durum ADD COLUMN en_gec TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='vardiya' AND column_name='kaynak') THEN
-                    ALTER TABLE vardiya ADD COLUMN kaynak TEXT NOT NULL DEFAULT 'motor';
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='vardiya' AND column_name='secim_nedeni') THEN
-                    ALTER TABLE vardiya ADD COLUMN secim_nedeni TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='vardiyaya_dahil') THEN
-                    ALTER TABLE sube_config ADD COLUMN vardiyaya_dahil BOOLEAN NOT NULL DEFAULT TRUE;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='tek_acilis_izinli') THEN
-                    ALTER TABLE sube_config ADD COLUMN tek_acilis_izinli BOOLEAN NOT NULL DEFAULT TRUE;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='tam_part_zorunlu') THEN
-                    ALTER TABLE sube_config ADD COLUMN tam_part_zorunlu BOOLEAN NOT NULL DEFAULT FALSE;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='kapanis_dusurulemez') THEN
-                    ALTER TABLE sube_config ADD COLUMN kapanis_dusurulemez BOOLEAN NOT NULL DEFAULT FALSE;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='acilis_bas_saat') THEN
-                    ALTER TABLE sube_config ADD COLUMN acilis_bas_saat TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='acilis_bit_saat') THEN
-                    ALTER TABLE sube_config ADD COLUMN acilis_bit_saat TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='ara_bas_saat') THEN
-                    ALTER TABLE sube_config ADD COLUMN ara_bas_saat TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='ara_bit_saat') THEN
-                    ALTER TABLE sube_config ADD COLUMN ara_bit_saat TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='kapanis_bas_saat') THEN
-                    ALTER TABLE sube_config ADD COLUMN kapanis_bas_saat TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='kapanis_bit_saat') THEN
-                    ALTER TABLE sube_config ADD COLUMN kapanis_bit_saat TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='planla_acilis') THEN
-                    ALTER TABLE sube_config ADD COLUMN planla_acilis BOOLEAN NOT NULL DEFAULT TRUE;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='planla_kapanis') THEN
-                    ALTER TABLE sube_config ADD COLUMN planla_kapanis BOOLEAN NOT NULL DEFAULT TRUE;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_kisit' AND column_name='part_gunluk_min_saat') THEN
-                    ALTER TABLE personel_kisit ADD COLUMN part_gunluk_min_saat NUMERIC(5,2);
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_kisit' AND column_name='part_gunluk_max_saat') THEN
-                    ALTER TABLE personel_kisit ADD COLUMN part_gunluk_max_saat NUMERIC(5,2);
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_kisit' AND column_name='gunluk_mesai_fazlasi_saat') THEN
-                    ALTER TABLE personel_kisit ADD COLUMN gunluk_mesai_fazlasi_saat NUMERIC(5,2);
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='personel_kisit' AND column_name='kaydirma_izin_ciftleri') THEN
-                    ALTER TABLE personel_kisit ADD COLUMN kaydirma_izin_ciftleri TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='default_acilis_saati') THEN
-                    ALTER TABLE sube_config ADD COLUMN default_acilis_saati TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='default_kapanis_saati') THEN
-                    ALTER TABLE sube_config ADD COLUMN default_kapanis_saati TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='sube_config' AND column_name='vardiya_girdileri') THEN
-                    ALTER TABLE sube_config ADD COLUMN vardiya_girdileri JSONB;
-                END IF;
-            END $$;
-        """)
-
-        # ── VARDİYA HAFTALIK (Tulipi tarzı tablo) ───────────────
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS vardiya_hafta_hucre (
-                id                TEXT PRIMARY KEY,
-                hafta_baslangic   DATE NOT NULL,
-                tarih             DATE NOT NULL,
-                personel_id       TEXT NOT NULL REFERENCES personel(id),
-                icerik            TEXT NOT NULL DEFAULT '',
-                olusturma         TIMESTAMP NOT NULL DEFAULT NOW(),
-                guncelleme        TIMESTAMP NOT NULL DEFAULT NOW(),
-                UNIQUE (hafta_baslangic, personel_id, tarih)
-            )
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_vardiya_hafta_hucre
-            ON vardiya_hafta_hucre (hafta_baslangic)
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS vardiya_hafta_satir (
-                hafta_baslangic DATE NOT NULL,
-                personel_id     TEXT NOT NULL REFERENCES personel(id),
-                kapanis_sayisi  TEXT,
-                alacak_saat     TEXT,
-                PRIMARY KEY (hafta_baslangic, personel_id)
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS vardiya_hafta_meta (
-                hafta_baslangic DATE PRIMARY KEY,
-                baslik          TEXT,
-                not_metni       TEXT,
-                guncelleme      TIMESTAMP NOT NULL DEFAULT NOW()
-            )
-        """)
 
         # ── AUDIT LOG ──────────────────────────────────────────
         cur.execute("""
