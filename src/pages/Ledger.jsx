@@ -92,7 +92,7 @@ export default function Ledger() {
       {/* Sekme seçici */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
         <button className={`tab-pill ${sekme === 'hareketler' ? 'active' : ''}`} onClick={() => setSekme('hareketler')}>📒 Hareketler</button>
-        <button className={`tab-pill ${sekme === 'breakdown' ? 'active' : ''}`} onClick={() => setSekme('breakdown')}>📊 Kasa Breakdown</button>
+        <button className={`tab-pill ${sekme === 'breakdown' ? 'active' : ''}`} onClick={() => setSekme('breakdown')}>📊 Kasa dağılımı</button>
       </div>
 
       {/* HAREKETLER SEKMESİ */}

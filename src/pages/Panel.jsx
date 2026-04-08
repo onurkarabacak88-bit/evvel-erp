@@ -27,7 +27,6 @@ export default function Panel({ onNavigate }) {
   const [odenenGiderler, setOdenenGiderler] = useState([]);
   const [erteleModal, setErteleModal] = useState(null); // {odemeId, aciklama, mevcutTarih}
   const [acikOdemeler, setAcikOdemeler] = useState(new Set());
-  const [yaklaşanAcik, setYaklaşanAcik] = useState(false);
   const [erteleTarih, setErteleTarih] = useState('');
   const [kismiModal, setKismiModal] = useState(null);
   const [kismiTutar, setKismiTutar] = useState('');
@@ -774,8 +773,9 @@ export default function Panel({ onNavigate }) {
 
         // Şerit 1: Bu ayın tüm ödemeleri (8+ gün)
         const aylik = liste.filter(u => u.gun_farki > 7);
-        // Şerit 2: Son 7 gün (acil)
-        const acil = liste.filter(u => u.gun_farki <= 7);
+        // Şerit 2: Son 7 gün (acil) -> son 3 gün kırmızı ayrı bant
+        const son3 = liste.filter(u => u.gun_farki <= 3);
+        const acil = liste.filter(u => u.gun_farki > 3 && u.gun_farki <= 7);
 
         // Tek renkli ticker yerine — her öğeye renkli span yazıyoruz
         // Ama ticker div içinde HTML olamaz, bu yüzden rengi etiketle gösteriyoruz
@@ -792,6 +792,14 @@ export default function Panel({ onNavigate }) {
           const tutar = ['sabit_giderler','personel'].includes(u.kaynak_tablo)
             ? fmt(u.tutar) : `${fmt(u.tutar)} / asg ${fmt(u.asgari)}`;
           return `${t.ikon} ${u.aciklama}  ${tutar}  ⚡${gun}`;
+        }).join('     ·     ');
+
+        const son3Metni = son3.map(u => {
+          const t = getTip(u.kaynak_tablo);
+          const gun = u.gun_farki <= 1 ? 'ACİL' : `${u.gun_farki} GÜN`;
+          const tutar = ['sabit_giderler','personel'].includes(u.kaynak_tablo)
+            ? fmt(u.tutar) : `${fmt(u.tutar)} / asg ${fmt(u.asgari)}`;
+          return `${t.ikon} ${u.aciklama}  ${tutar}  🔴${gun}`;
         }).join('     ·     ');
 
         return (
@@ -818,7 +826,7 @@ export default function Panel({ onNavigate }) {
                   <div style={{
                     display: 'inline-block', whiteSpace: 'nowrap',
                     fontSize: 11, fontWeight: 500, color: 'var(--blue)',
-                    animation: 'ticker 28s linear infinite', paddingLeft: '100%',
+                    animation: 'ticker 42s linear infinite', paddingLeft: '100%',
                   }}>
                     {aylikMetni + '          ·          ' + aylikMetni}
                   </div>
@@ -847,9 +855,38 @@ export default function Panel({ onNavigate }) {
                   <div style={{
                     display: 'inline-block', whiteSpace: 'nowrap',
                     fontSize: 11, fontWeight: 600, color: '#f97316',
-                    animation: 'ticker 18s linear infinite', paddingLeft: '100%',
+                    animation: 'ticker 30s linear infinite', paddingLeft: '100%',
                   }}>
                     {acilMetni + '          ·          ' + acilMetni}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Şerit 3 — Son 3 gün kritik (kırmızı, daha yavaş) */}
+            {son3.length > 0 && (
+              <div style={{
+                background: 'rgba(220,38,38,0.12)',
+                border: '1px solid rgba(220,38,38,0.45)',
+                borderLeft: '3px solid var(--red)',
+                borderRadius: 8, overflow: 'hidden',
+                display: 'flex', alignItems: 'center', height: 36,
+              }}>
+                <div style={{
+                  flexShrink: 0, padding: '0 10px', fontSize: 9, fontWeight: 800,
+                  color: 'var(--red)', textTransform: 'uppercase', letterSpacing: '1px',
+                  borderRight: '1px solid rgba(220,38,38,0.35)',
+                  height: '100%', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap',
+                }}>
+                  🚨 SON 3 GÜN · {son3.length}
+                </div>
+                <div style={{ overflow: 'hidden', flex: 1 }}>
+                  <div style={{
+                    display: 'inline-block', whiteSpace: 'nowrap',
+                    fontSize: 11, fontWeight: 700, color: 'var(--red)',
+                    animation: 'ticker 38s linear infinite', paddingLeft: '100%',
+                  }}>
+                    {son3Metni + '          ·          ' + son3Metni}
                   </div>
                 </div>
               </div>
@@ -858,6 +895,37 @@ export default function Panel({ onNavigate }) {
           </div>
         );
       })()}
+
+      {/* Son 7 günde ciro girilmeyen günler — panel ortası belirgin uyarı */}
+      {Array.isArray(panel.ciro_eksik_gunler) && panel.ciro_eksik_gunler.length > 0 && (
+        <div style={{
+          marginBottom: 16,
+          borderRadius: 10,
+          border: '2px solid rgba(239,68,68,0.45)',
+          background: 'rgba(239,68,68,0.10)',
+          boxShadow: '0 0 0 1px rgba(239,68,68,0.12) inset',
+          padding: '12px 14px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--red)', marginBottom: 4 }}>
+                ⚠️ Son 7 günde ciro girilmeyen günler var ({panel.ciro_eksik_gunler.length})
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text2)' }}>
+                {panel.ciro_eksik_gunler.map(g => `${g.tarih}${g.kritik ? ' (son 3 gün)' : ''}`).join(' · ')}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-primary btn-sm" onClick={() => nav('ciro')}>
+                📈 Ciro Girişi Sayfasına Git
+              </button>
+              <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('ciro')}>
+                ➕ Hızlı Ciro Gir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── KATMAN 2: ÇEKİRDEK METRİKLER (drill-down) ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>

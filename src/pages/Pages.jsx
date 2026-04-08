@@ -230,7 +230,7 @@ export function OnayKuyrugu() {
 export function Borclar() {
   const [liste, setListe] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({kurum:'',borc_turu:'Kredi',toplam_borc:'',aylik_taksit:'',kalan_vade:'',toplam_vade:'',baslangic_tarihi:'',odeme_gunu:1,odemesiz_ay:0});
+  const [form, setForm] = useState({kurum:'',borc_turu:'Kredi',toplam_borc:'',aylik_taksit:'',kalan_vade:'',toplam_vade:'',baslangic_tarihi:'',odeme_gunu:1});
   const [duzenleId, setDuzenleId] = useState(null);
   const [msg, setMsg] = useState(null);
   const [hatalar, setHatalar] = useState({});
@@ -259,7 +259,6 @@ export function Borclar() {
     if(Object.keys(yeniHatalar).length > 0){ setHatalar(yeniHatalar); return; }
     setHatalar({});
     // Sayısal alanları dönüştür — backend float/int bekliyor
-    const oa = Math.max(0, Math.min(360, parseInt(form.odemesiz_ay, 10) || 0));
     const body = {
       ...form,
       aylik_taksit: parseFloat(form.aylik_taksit),
@@ -268,7 +267,6 @@ export function Borclar() {
       toplam_vade: form.toplam_vade ? parseInt(form.toplam_vade) : null,
       odeme_gunu: parseInt(form.odeme_gunu) || 1,
       baslangic_tarihi: form.baslangic_tarihi || null,
-      odemesiz_ay: oa,
     };
     try{
       if(duzenleId) await api(`/borclar/${duzenleId}`,{method:'PUT',body});
@@ -290,11 +288,11 @@ export function Borclar() {
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
       <div className="page-header flex items-center justify-between">
         <div><h2>Borç Envanteri</h2><p>Aylık taksit: {parseInt(toplamTaksit).toLocaleString('tr-TR')} ₺</p></div>
-        <button className="btn btn-primary" onClick={()=>{setForm({kurum:'',borc_turu:'Kredi',toplam_borc:'',aylik_taksit:'',kalan_vade:'',toplam_vade:'',baslangic_tarihi:'',odeme_gunu:1,odemesiz_ay:0});setDuzenleId(null);setShowModal(true);}}>+ Borç Ekle</button>
+        <button className="btn btn-primary" onClick={()=>{setForm({kurum:'',borc_turu:'Kredi',toplam_borc:'',aylik_taksit:'',kalan_vade:'',toplam_vade:'',baslangic_tarihi:'',odeme_gunu:1});setDuzenleId(null);setShowModal(true);}}>+ Borç Ekle</button>
       </div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Kurum</th><th>Tür</th><th style={{textAlign:'right'}}>Aylık Taksit</th><th>Vade</th><th>Ödemesiz</th><th>Ödeme Günü</th><th>Durum</th><th></th></tr></thead>
+          <thead><tr><th>Kurum</th><th>Tür</th><th style={{textAlign:'right'}}>Aylık Taksit</th><th>Vade</th><th>Ödeme Günü</th><th>Durum</th><th></th></tr></thead>
           <tbody>
             {liste.map(b=>(
               <tr key={b.id}>
@@ -302,13 +300,12 @@ export function Borclar() {
                 <td><span className="badge badge-blue">{b.borc_turu}</span></td>
                 <td style={{textAlign:'right'}} className="amount-neg">{parseInt(b.aylik_taksit).toLocaleString('tr-TR')} ₺</td>
                 <td style={{fontSize:12}}>{b.kalan_vade||'?'} / {b.toplam_vade||'?'} ay</td>
-                <td style={{fontSize:12}}>{(b.odemesiz_ay||0) > 0 ? <span className="badge badge-yellow">{b.odemesiz_ay} ay</span> : <span style={{color:'var(--text3)'}}>—</span>}</td>
                 <td style={{fontSize:12,color:'var(--text3)'}}>Her ayın {b.odeme_gunu}. günü</td>
                 <td><span className={`badge ${b.aktif?'badge-green':'badge-gray'}`}>{b.aktif?'Aktif':'Kapandı'}</span></td>
                 <td>
                   <div className="flex gap-8">
                     <button className="btn btn-ghost btn-sm" onClick={()=>gecmisAc(b)}>📋 Geçmiş</button>
-                    <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({kurum:b.kurum,borc_turu:b.borc_turu,toplam_borc:b.toplam_borc,aylik_taksit:b.aylik_taksit,kalan_vade:b.kalan_vade,toplam_vade:b.toplam_vade,baslangic_tarihi:b.baslangic_tarihi?.slice(0,10)||'',odeme_gunu:b.odeme_gunu,odemesiz_ay:b.odemesiz_ay??0});setDuzenleId(b.id);setShowModal(true);}}>✏️</button>
+                    <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({kurum:b.kurum,borc_turu:b.borc_turu,toplam_borc:b.toplam_borc,aylik_taksit:b.aylik_taksit,kalan_vade:b.kalan_vade,toplam_vade:b.toplam_vade,baslangic_tarihi:b.baslangic_tarihi?.slice(0,10)||'',odeme_gunu:b.odeme_gunu});setDuzenleId(b.id);setShowModal(true);}}>✏️</button>
                     <button className="btn btn-danger btn-sm" onClick={()=>sil(b.id)}>Kapat</button>
                   </div>
                 </td>
@@ -355,31 +352,8 @@ export function Borclar() {
                   <input type="number" min={1} max={31} value={form.odeme_gunu} onChange={e=>setForm({...form,odeme_gunu:e.target.value})}/>
                 </div>
                 <div className="form-group">
-                  <label>Başlangıç Tarihi <span style={{fontSize:10,color:'var(--text3)'}}>(ödemesiz kampanya için zorunlu)</span></label>
+                  <label>Başlangıç Tarihi</label>
                   <input type="date" value={form.baslangic_tarihi} onChange={e=>setForm({...form,baslangic_tarihi:e.target.value})}/>
-                </div>
-                <div className="form-group" style={{gridColumn:'1/-1'}}>
-                  <label>Ödemesiz dönem (kampanya)</label>
-                  <p style={{fontSize:11,color:'var(--text3)',margin:'0 0 8px'}}>
-                    Başlangıç ayından itibaren seçilen süre boyunca aylık taksit <strong>ödeme planına düşmez</strong>; süre bitince motor taksit üretir.
-                  </p>
-                  <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:8}}>
-                    {[
-                      {v:0,l:'Yok'},
-                      {v:3,l:'3 ay'},
-                      {v:12,l:'1 yıl'},
-                      {v:24,l:'2 yıl'},
-                    ].map(({v,l})=>(
-                      <button key={v} type="button" className={`btn btn-sm ${Number(form.odemesiz_ay)===v?'btn-primary':'btn-ghost'}`}
-                        onClick={()=>setForm({...form,odemesiz_ay:v})}>{l}</button>
-                    ))}
-                  </div>
-                  <div style={{display:'flex',alignItems:'center',gap:8}}>
-                    <span style={{fontSize:12,color:'var(--text3)'}}>Özel (ay):</span>
-                    <input type="number" min={0} max={360} style={{width:90}}
-                      value={form.odemesiz_ay}
-                      onChange={e=>setForm({...form,odemesiz_ay:Math.max(0,Math.min(360,parseInt(e.target.value,10)||0))})}/>
-                  </div>
                 </div>
               </div>
             </div>
@@ -400,7 +374,6 @@ export function Borclar() {
                 <h3>📋 {gecmisModal.kurum} — Ödeme Geçmişi</h3>
                 <p style={{fontSize:12,color:'var(--text3)',marginTop:2}}>
                   {gecmisModal.borc_turu} · Aylık {parseInt(gecmisModal.aylik_taksit).toLocaleString('tr-TR')} ₺
-                  {(gecmisModal.odemesiz_ay||0) > 0 && <span> · Ödemesiz: <strong>{gecmisModal.odemesiz_ay} ay</strong></span>}
                 </p>
               </div>
               <button className="modal-close" onClick={()=>setGecmisModal(null)}>✕</button>
@@ -1477,75 +1450,11 @@ export function KartHareketleri() {
         </div>
       )}
 
-      {/* SABİT GİDER GEÇMİŞ MODAL */}
-      {sabitGecmisModal && (
-        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setSabitGecmisModal(null)}>
-          <div className="modal" style={{maxWidth:580,width:'95%'}}>
-            <div className="modal-header">
-              <div>
-                <h3>📋 {sabitGecmisModal.gider_adi} — Ödeme Geçmişi</h3>
-                <p style={{fontSize:12,color:'var(--text3)',marginTop:2}}>{sabitGecmisModal.kategori} · {parseInt(sabitGecmisModal.tutar).toLocaleString('tr-TR')} ₺/ay</p>
-              </div>
-              <button className="modal-close" onClick={()=>setSabitGecmisModal(null)}>✕</button>
-            </div>
-            <div className="modal-body">
-              {!sabitGecmisData && <div style={{textAlign:'center',padding:40}}><div className="spinner"/></div>}
-              {sabitGecmisData && (<>
-                <div style={{display:'flex',gap:10,marginBottom:14}}>
-                  <div style={{flex:1,background:'var(--bg3)',borderRadius:8,padding:'10px 14px',borderTop:'3px solid var(--green)'}}>
-                    <div style={{fontSize:11,color:'var(--text3)'}}>Toplam Ödenen</div>
-                    <div style={{fontSize:18,fontWeight:700,color:'var(--green)',fontFamily:'var(--font-mono)'}}>{parseInt(sabitGecmisData.ozet.toplam_odenen).toLocaleString('tr-TR')} ₺</div>
-                  </div>
-                  <div style={{flex:1,background:'var(--bg3)',borderRadius:8,padding:'10px 14px',borderTop:'3px solid var(--blue)'}}>
-                    <div style={{fontSize:11,color:'var(--text3)'}}>Ödeme Adedi</div>
-                    <div style={{fontSize:18,fontWeight:700,color:'var(--blue)'}}>{sabitGecmisData.ozet.odeme_adedi} kez</div>
-                  </div>
-                </div>
-                {sabitGecmisData.bekleyenler.length > 0 && (
-                  <div style={{marginBottom:12}}>
-                    <div style={{fontSize:12,fontWeight:600,color:'var(--text2)',marginBottom:6}}>⏳ Bekleyen</div>
-                    {sabitGecmisData.bekleyenler.map((o,i)=>(
-                      <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'6px 10px',background:'rgba(255,200,0,0.08)',borderRadius:6,fontSize:12,marginBottom:3}}>
-                        <span style={{color:'var(--text3)'}}>{o.tarih}</span>
-                        <span style={{fontFamily:'var(--font-mono)',color:'var(--yellow)'}}>{parseInt(o.tutar).toLocaleString('tr-TR')} ₺</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div style={{fontSize:12,fontWeight:600,color:'var(--text2)',marginBottom:6}}>✅ Ödenenler</div>
-                <div style={{maxHeight:300,overflowY:'auto',display:'flex',flexDirection:'column',gap:3}}>
-                  {sabitGecmisData.odenenler.length === 0
-                    ? <div style={{textAlign:'center',color:'var(--text3)',padding:16,fontSize:12}}>Kayıt yok</div>
-                    : sabitGecmisData.odenenler.map((o,i)=>(
-                      <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'6px 10px',background:'var(--bg3)',borderRadius:6,fontSize:12}}>
-                        <span style={{color:'var(--text3)'}}>{o.tarih}</span>
-                        <span style={{flex:1,marginLeft:10,color:'var(--text2)'}}>{o.aciklama}</span>
-                        <span style={{fontFamily:'var(--font-mono)',color:'var(--green)'}}>{parseInt(o.tutar).toLocaleString('tr-TR')} ₺</span>
-                      </div>
-                    ))
-                  }
-                </div>
-              </>)}
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={()=>setSabitGecmisModal(null)}>Kapat</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
-// Ciro.jsx — backend ile aynı pencere (main.CIRO_DEGISIKLIK_PENCERE_DAKIKA)
-const CIRO_DUZENLEME_DK = 10;
-function ciroDegistirilebilir(olusturma) {
-  if (!olusturma) return false;
-  const t = new Date(olusturma).getTime();
-  if (Number.isNaN(t)) return false;
-  return Date.now() - t < CIRO_DUZENLEME_DK * 60 * 1000;
-}
-
+// Ciro.jsx
 export function Ciro() {
   const [liste, setListe] = useState([]);
   const [subeler, setSubeler] = useState([]);
@@ -1581,13 +1490,7 @@ export function Ciro() {
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
       <div className="page-header flex items-center justify-between">
-        <div>
-          <h2>Ciro Girişi</h2>
-          <p>Ciro girildiğinde otomatik merkez kasaya eklenir</p>
-          <p style={{fontSize:12,color:'var(--text3)',marginTop:4}}>
-            İptal yalnızca kayıt oluşturulduktan sonraki {CIRO_DUZENLEME_DK} dakika içinde yapılabilir; sonrası için kasa düzeltme (şube ayarları) kullanılır.
-          </p>
-        </div>
+        <div><h2>Ciro Girişi</h2><p>Ciro girildiğinde otomatik merkez kasaya eklenir</p></div>
         <button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ Ciro Gir</button>
       </div>
       <div className="table-wrap">
@@ -1610,16 +1513,7 @@ export function Ciro() {
                       </span>
                     : <span style={{color:'var(--text3)',fontSize:11}}>—</span>
                 }</td>
-                <td>
-                  <button
-                    className="btn btn-danger btn-sm"
-                    disabled={!ciroDegistirilebilir(c.olusturma)}
-                    title={ciroDegistirilebilir(c.olusturma)
-                      ? 'Kaydı iptal et (kasaya iade)'
-                      : `İptal süresi doldu (${CIRO_DUZENLEME_DK} dk) — şube kasa düzeltme kullanın`}
-                    onClick={()=>sil(c.id)}
-                  >İptal</button>
-                </td>
+                <td><button className="btn btn-danger btn-sm" onClick={()=>sil(c.id)}>İptal</button></td>
               </tr>
             ))}
           </tbody>
