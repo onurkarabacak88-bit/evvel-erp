@@ -16,10 +16,6 @@ import DisKaynak from './pages/DisKaynak';
 import Rapor from './pages/Rapor';
 import KartMerkez from './pages/KartMerkez';
 import Subeler from './pages/Subeler';
-import VardiyaPanel from './modules/vardiya/VardiyaPanel.jsx';
-import VardiyaAyar from './modules/vardiya/VardiyaAyar.jsx';
-import VardiyaHaftalik from './modules/vardiya/VardiyaHaftalik.jsx';
-import HaftalikVardiyaPanel from './modules/vardiya/HaftalikVardiyaPanel.jsx';
 import './index.css';
 
 const NAV = [
@@ -42,13 +38,9 @@ const NAV = [
     { id: 'kartlar', label: 'Kartlar', icon: '💳' },
     { id: 'kart-merkez', label: 'Kart Merkezi', icon: '💳' },
     { id: 'personel', label: 'Personel', icon: '👥' },
-    { id: 'vardiya', label: 'Vardiya Planlama', icon: '🕐' },
-    { id: 'vardiya-haftalik', label: 'Haftalık Vardiya', icon: '📅' },
-    { id: 'vardiya-haftalik-rapor', label: 'Haftalık Vardiya Rapor', icon: '📋' },
-    { id: 'vardiya-ayar', label: 'Vardiya Kuralları', icon: '⚙️' },
     { id: 'borclar', label: 'Borç Envanteri', icon: '🏦' },
     { id: 'sabit-giderler', label: 'Sabit Giderler', icon: '🏠' },
-    { id: 'subeler', label: 'Şube Ayarları', icon: '🏪' },
+    { id: 'vardiya-planlamasi', label: 'Vardiya Planlaması', icon: '🗓️' },
   ]},
 ];
 
@@ -56,14 +48,7 @@ const PAGES = {
   panel: Panel, strateji: Strateji, onay: OnayKuyrugu, ledger: Ledger,
   ciro: Ciro, 'kart-hareketleri': KartHareketleri, 'anlik-gider': AnlikGider,
   rapor: Rapor, 'kart-merkez': KartMerkez, 'dis-kaynak': DisKaynak, vadeli: VadeliAlimlar, excel: ExcelImport, kartlar: Kartlar, 'kart-analiz': KartMerkez,
-  personel: Personel,
-  vardiya: VardiyaPanel,
-  'vardiya-haftalik': VardiyaHaftalik,
-  'vardiya-haftalik-rapor': HaftalikVardiyaPanel,
-  'vardiya-ayar': VardiyaAyar,
-  borclar: Borclar,
-  'sabit-giderler': SabitGiderler,
-  subeler: Subeler,
+  personel: Personel, borclar: Borclar, 'sabit-giderler': SabitGiderler, 'vardiya-planlamasi': Subeler,
 };
 
 export default function App() {
