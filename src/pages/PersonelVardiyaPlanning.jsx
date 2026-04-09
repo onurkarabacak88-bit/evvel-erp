@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api, today } from '../utils/api';
 
 const GUN_ADLARI = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar'];
@@ -133,6 +133,96 @@ function fixed(text, len) {
   return s.padEnd(len, ' ');
 }
 
+/** Motor / taslak rol kodu → Türkçe kısa görev (yazdırılabilir liste) */
+function vardiyaRolEtiket(rol) {
+  const r = String(rol || 'aralik').toLowerCase();
+  if (r === 'acilis') return 'Açılış';
+  if (r === 'kapanis') return 'Kapanış';
+  return 'Vardiya';
+}
+
+function saatHucre(bas, bit) {
+  const b = String(bas || '').slice(0, 5);
+  const e = String(bit || '').slice(0, 5);
+  return `${b}-${e}`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * PDF’deki gibi: Şube | Görev | Ad | Pzt…Paz | Kapanış
+ * Kutucukta: ana şubede saat aralığı; başka şubede büyük harf şube adı.
+ */
+function buildHaftalikListeSatirlari(taslak, haftaIzinMap, haftaKolonlari) {
+  if (!Array.isArray(taslak) || taslak.length === 0) return [];
+  const byPerson = new Map();
+  for (const t of taslak) {
+    const pid = t.personel_id;
+    if (!byPerson.has(pid)) byPerson.set(pid, []);
+    byPerson.get(pid).push(t);
+  }
+  const out = [];
+  for (const [pid, items] of byPerson.entries()) {
+    const ad = items[0].ad_soyad || pid;
+    const subeCount = {};
+    const rolCount = {};
+    for (const t of items) {
+      const sa = t.sube_ad || '—';
+      subeCount[sa] = (subeCount[sa] || 0) + 1;
+      const ro = String(t.rol || 'aralik').toLowerCase();
+      rolCount[ro] = (rolCount[ro] || 0) + 1;
+    }
+    const anaSube = Object.keys(subeCount).sort(
+      (a, b) => subeCount[b] - subeCount[a] || a.localeCompare(b, 'tr'),
+    )[0];
+    const anaRol = Object.keys(rolCount).sort(
+      (a, b) => rolCount[b] - rolCount[a] || a.localeCompare(b),
+    )[0];
+    const gorev = vardiyaRolEtiket(anaRol);
+    const kapanisSayisi = items.filter((x) => String(x.rol || '').toLowerCase() === 'kapanis').length;
+
+    const gunHucreleri = haftaKolonlari.map((g, ix) => {
+      const ymd = g.tarih;
+      const gunItems = items.filter((x) => String(x.tarih).slice(0, 10) === ymd);
+      const izinli = !!(haftaIzinMap[pid] && haftaIzinMap[pid][ix]);
+      if (gunItems.length === 0) {
+        return {
+          text: izinli ? 'İZİNLİ' : '—',
+          izinOnly: izinli,
+          bos: !izinli,
+          hasIhlal: false,
+        };
+      }
+      const parts = gunItems.map((it) => {
+        const sube = it.sube_ad || '';
+        if (sube === anaSube) return saatHucre(it.bas_saat, it.bit_saat);
+        return sube.toLocaleUpperCase('tr-TR');
+      });
+      const hasIhlal = gunItems.some((it) => it.izin_ihlali || it.rol_ihlali || it.mesai_ihlali);
+      return {
+        text: parts.join(' / '),
+        izinOnly: false,
+        bos: false,
+        hasIhlal,
+      };
+    });
+
+    out.push({ pid, ad, anaSube, gorev, kapanisSayisi, gunHucreleri });
+  }
+  out.sort((a, b) => {
+    const s = a.anaSube.localeCompare(b.anaSube, 'tr');
+    if (s !== 0) return s;
+    return a.ad.localeCompare(b.ad, 'tr');
+  });
+  return out;
+}
+
 export default function PersonelVardiyaPlanning() {
   const [liste, setListe] = useState([]);
   const [seciliId, setSeciliId] = useState(null);
@@ -156,6 +246,8 @@ export default function PersonelVardiyaPlanning() {
   const [haftaIzinMap, setHaftaIzinMap] = useState({});
   const [izinOneri, setIzinOneri] = useState(null);
   const [izinYukleniyor, setIzinYukleniyor] = useState(false);
+  /** hafta sekmesi: kart düzenleme tablosu mu, yazdırım tarzı liste mi */
+  const [haftaPlanGorunum, setHaftaPlanGorunum] = useState('liste');
 
   const toast = (m, t = 'green') => {
     setMsg({ m, t });
@@ -476,6 +568,77 @@ export default function PersonelVardiyaPlanning() {
     indirBlob(`haftalik-vardiya-${haftaBas}.pdf`, pdf, 'application/pdf');
   }
 
+  /** Tulipi tarzı tablo — Excel’e uygun HTML */
+  function exportExcelListe() {
+    if (!taslak.length) {
+      toast('İndirilecek taslak bulunamadı', 'yellow');
+      return;
+    }
+    const kolonlar = GUN_ADLARI.map((ad, i) => ({ ad, tarih: tarihEkle(haftaBas, i) }));
+    const satirlar = buildHaftalikListeSatirlari(taslak, haftaIzinMap, kolonlar);
+    const gunTh = kolonlar
+      .map(
+        (g) =>
+          `<th style="text-align:center;min-width:88px;font-size:11px"><div>${escapeHtml(g.ad)}</div><div style="font-weight:400;font-size:10px">${escapeHtml(g.tarih)}</div></th>`,
+      )
+      .join('');
+    const body = satirlar
+      .map(
+        (r) => `<tr>
+        <td>${escapeHtml(r.anaSube)}</td>
+        <td>${escapeHtml(r.gorev)}</td>
+        <td>${escapeHtml(r.ad)}</td>
+        ${r.gunHucreleri
+          .map(
+            (c) =>
+              `<td style="text-align:center;font-size:11px;${c.hasIhlal ? 'background:#fff3cd;' : ''}">${escapeHtml(c.text)}</td>`,
+          )
+          .join('')}
+        <td style="text-align:center">${r.kapanisSayisi}</td>
+      </tr>`,
+      )
+      .join('');
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8" />
+<style>
+  body { font-family: Arial, sans-serif; margin: 12px; }
+  h1 { font-size: 15px; margin: 0 0 6px 0; }
+  .sub { font-size: 12px; color: #444; margin-bottom: 10px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #888; padding: 5px 6px; }
+  th { background: #e8e8e8; font-size: 11px; }
+</style></head><body>
+  <h1>Haftalık vardiya listesi</h1>
+  <div class="sub">Hafta (${escapeHtml(haftaBas)} başlangıç) · ${satirlar.length} personel</div>
+  <table>
+    <thead><tr>
+      <th>Şube</th><th>Görev</th><th>Ad ve soyad</th>${gunTh}<th>Kapanış sayısı</th>
+    </tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+  <p style="font-size:10px;color:#666;margin-top:10px">Not: Ana şubede saat aralığı; başka şubede şube adı (büyük harf). İhlal varsa hücre sarı vurgulu.</p>
+</body></html>`;
+    indirBlob(`haftalik-vardiya-liste-${haftaBas}.xls`, html, 'application/vnd.ms-excel;charset=utf-8;');
+  }
+
+  function exportCsvListe() {
+    if (!taslak.length) {
+      toast('İndirilecek taslak bulunamadı', 'yellow');
+      return;
+    }
+    const kolonlar = GUN_ADLARI.map((ad, i) => ({ ad, tarih: tarihEkle(haftaBas, i) }));
+    const satirlar = buildHaftalikListeSatirlari(taslak, haftaIzinMap, kolonlar);
+    const esc = (x) => `"${String(x ?? '').replace(/"/g, '""')}"`;
+    const header = ['Şube', 'Görev', 'Ad ve soyad', ...kolonlar.map((g) => `${g.ad} ${g.tarih}`), 'Kapanış sayısı'];
+    const lines = [
+      header.map(esc).join(';'),
+      ...satirlar.map((r) =>
+        [r.anaSube, r.gorev, r.ad, ...r.gunHucreleri.map((c) => c.text), r.kapanisSayisi].map(esc).join(';'),
+      ),
+    ];
+    indirBlob(`haftalik-vardiya-liste-${haftaBas}.csv`, lines.join('\n'), 'text/csv;charset=utf-8;');
+  }
+
   function subeErisimToggle(subeId, checked) {
     setForm((f) => {
       if (!f) return f;
@@ -488,6 +651,10 @@ export default function PersonelVardiyaPlanning() {
 
   const haftaBas = pazartesiBuHafta(haftaRef);
   const haftaKolonlari = GUN_ADLARI.map((ad, i) => ({ ad, tarih: tarihEkle(haftaBas, i) }));
+  const listeOnizlemeSatirlari = useMemo(
+    () => buildHaftalikListeSatirlari(taslak, haftaIzinMap, haftaKolonlari),
+    [taslak, haftaIzinMap, haftaBas],
+  );
   const taslakPersoneller = Array.from(
     new Map((taslak || []).map((t) => [t.personel_id, { id: t.personel_id, ad: t.ad_soyad }])).values(),
   ).sort((a, b) => a.ad.localeCompare(b.ad, 'tr'));
@@ -499,8 +666,14 @@ export default function PersonelVardiyaPlanning() {
     haftaIzinYukle();
   }, [ustSekme, haftaBas]);
 
+  useEffect(() => {
+    if (ustSekme !== 'hafta') return;
+    taslakYukle();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- taslakYukle haftaRef ile senkron
+  }, [ustSekme, haftaRef]);
+
   return (
-    <div style={{ maxWidth: 1100 }}>
+    <div style={{ maxWidth: 1280 }}>
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
       <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text2)', marginBottom: 8 }}>
         Personel yönetim ve planlama
@@ -633,6 +806,12 @@ export default function PersonelVardiyaPlanning() {
             <button type="button" className="btn btn-secondary btn-sm" onClick={exportPdf}>
               PDF indir
             </button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={exportExcelListe} title="Şube / görev / haftalık tablo">
+              Excel (yazdırım tablosu)
+            </button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={exportCsvListe} title="Excel; ayırıcı ;">
+              CSV (tablo)
+            </button>
           </div>
 
           {izinOneri && (
@@ -692,90 +871,183 @@ export default function PersonelVardiyaPlanning() {
             </div>
           )}
 
-          <div style={{ fontWeight: 700, fontSize: 13, margin: '10px 0' }}>
-            Kilitli taslak (haftalık görünüm · kartı sürükleyip diğer kartın üstüne bırak = swap)
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', margin: '12px 0 8px' }}>
+            <span style={{ fontWeight: 700, fontSize: 13 }}>Haftalık plan çıktısı</span>
+            <button
+              type="button"
+              className={`btn btn-sm ${haftaPlanGorunum === 'liste' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setHaftaPlanGorunum('liste')}
+            >
+              Tablo önizleme (PDF stili)
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${haftaPlanGorunum === 'duzenle' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setHaftaPlanGorunum('duzenle')}
+            >
+              Kartla düzenle (sürükle-bırak)
+            </button>
           </div>
           {!taslak.length ? (
-            <div style={{ fontSize: 12, color: 'var(--text3)' }}>Henüz taslak yok. Senaryoyu kaydedip taslağı yükleyin.</div>
-          ) : (
-            <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
+            <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+              Henüz taslak yok. Senaryoyu taslağa kaydedin; hafta sekmesine girince taslak otomatik yeniden yüklenir. İsterseniz
+              {' '}
+              <button type="button" className="btn btn-ghost btn-sm" onClick={taslakYukle} disabled={taslakYukleniyor}>
+                yenileyin
+              </button>
+              .
+            </div>
+          ) : haftaPlanGorunum === 'liste' ? (
+            <div
+              style={{
+                overflow: 'auto',
+                maxHeight: 'min(70vh, 720px)',
+                border: '1px solid var(--border)',
+                borderRadius: 8,
+                background: 'var(--bg2)',
+              }}
+            >
+              <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', fontSize: 12, color: 'var(--text2)' }}>
+                <strong>Haftalık vardiya listesi</strong>
+                {' · '}
+                {(() => {
+                  const a = new Date(`${haftaKolonlari[0].tarih}T12:00:00`);
+                  const b = new Date(`${haftaKolonlari[6].tarih}T12:00:00`);
+                  const f = (d) => d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' });
+                  return `${f(a)} – ${f(b)}`;
+                })()}
+                <span style={{ color: 'var(--text3)', marginLeft: 8 }}>
+                  Ana şubede saat; başka şubede şube adı. Boş gün + izin → İZİNLİ.
+                </span>
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100, fontSize: 11 }}>
                 <thead>
-                  <tr style={{ background: 'var(--bg2)' }}>
-                    <th style={{ textAlign: 'left', padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>Personel</th>
+                  <tr style={{ background: 'var(--bg3)' }}>
+                    <th style={{ textAlign: 'left', padding: '6px 8px', border: '1px solid var(--border)', position: 'sticky', left: 0, background: 'var(--bg3)', zIndex: 1 }}>Şube</th>
+                    <th style={{ textAlign: 'left', padding: '6px 8px', border: '1px solid var(--border)', minWidth: 72 }}>Görev</th>
+                    <th style={{ textAlign: 'left', padding: '6px 8px', border: '1px solid var(--border)', minWidth: 120 }}>Ad ve soyad</th>
                     {haftaKolonlari.map((g) => (
-                      <th
-                        key={g.tarih}
-                        style={{ textAlign: 'left', padding: '8px 10px', borderBottom: '1px solid var(--border)', minWidth: 135 }}
-                      >
+                      <th key={g.tarih} style={{ textAlign: 'center', padding: '6px 4px', border: '1px solid var(--border)', minWidth: 84 }}>
                         <div>{g.ad}</div>
-                        <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>{g.tarih}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>{g.tarih.slice(5)}</div>
                       </th>
                     ))}
+                    <th style={{ textAlign: 'center', padding: '6px 6px', border: '1px solid var(--border)', whiteSpace: 'nowrap' }}>Kapanış</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {taslakPersoneller.map((p) => (
-                    <tr key={p.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '8px 10px', fontWeight: 600, verticalAlign: 'top' }}>{p.ad}</td>
-                      {haftaKolonlari.map((g) => {
-                        const satirlar = hucreSatirlari(p.id, g.tarih);
-                        const izinli = !!(haftaIzinMap[p.id] && haftaIzinMap[p.id][haftaKolonlari.findIndex((x) => x.tarih === g.tarih)]);
-                        return (
-                          <td key={`${p.id}_${g.tarih}`} style={{ padding: '8px 6px', verticalAlign: 'top' }}>
-                            {satirlar.length === 0 ? (
-                              <div
-                                style={{
-                                  fontSize: 11,
-                                  color: izinli ? 'var(--yellow)' : 'var(--text3)',
-                                  opacity: izinli ? 1 : 0.5,
-                                  fontWeight: izinli ? 700 : 400,
-                                }}
-                              >
-                                {izinli ? 'İzinli' : '—'}
-                              </div>
-                            ) : (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                {satirlar.map((t) => (
-                                  <div
-                                    key={t.id}
-                                    draggable
-                                    onDragStart={() => setDragId(t.id)}
-                                    onDragOver={(e) => e.preventDefault()}
-                                    onDrop={() => { swapYap(dragId, t.id); setDragId(null); }}
-                                    title="Başka bir kartı bunun üstüne bırak: personeller swap olur"
-                                    style={{
-                                      border: '1px solid var(--border)',
-                                      borderRadius: 6,
-                                      padding: '6px 7px',
-                                      fontSize: 11,
-                                      cursor: 'grab',
-                                      background: (t.izin_ihlali || t.rol_ihlali || t.mesai_ihlali)
-                                        ? 'rgba(250,200,0,0.12)'
-                                        : 'var(--bg2)',
-                                    }}
-                                  >
-                                    <div style={{ fontWeight: 600 }}>{t.sube_ad}</div>
-                                    <div style={{ color: 'var(--text3)' }}>{t.bas_saat}–{t.bit_saat}</div>
-                                    {(t.izin_ihlali || t.rol_ihlali || t.mesai_ihlali) && (
-                                      <div style={{ marginTop: 2, color: 'var(--yellow)', fontWeight: 700 }}>
-                                        {t.izin_ihlali ? 'İZİN ' : ''}
-                                        {t.rol_ihlali ? 'ROL ' : ''}
-                                        {t.mesai_ihlali ? 'MESAİ' : ''}
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </td>
-                        );
-                      })}
+                  {listeOnizlemeSatirlari.map((r) => (
+                    <tr key={r.pid}>
+                      <td style={{ padding: '6px 8px', border: '1px solid var(--border)', fontWeight: 600, position: 'sticky', left: 0, background: 'var(--bg2)', zIndex: 1 }}>{r.anaSube}</td>
+                      <td style={{ padding: '6px 8px', border: '1px solid var(--border)', color: 'var(--text2)' }}>{r.gorev}</td>
+                      <td style={{ padding: '6px 8px', border: '1px solid var(--border)' }}>{r.ad}</td>
+                      {r.gunHucreleri.map((c, j) => (
+                        <td
+                          key={j}
+                          style={{
+                            textAlign: 'center',
+                            padding: '6px 4px',
+                            border: '1px solid var(--border)',
+                            background: c.hasIhlal ? 'rgba(250,200,0,0.18)' : 'transparent',
+                            color: c.izinOnly ? 'var(--yellow)' : !c.bos ? 'var(--text1)' : 'var(--text3)',
+                            fontWeight: c.izinOnly ? 700 : 500,
+                            whiteSpace: 'normal',
+                            maxWidth: 120,
+                          }}
+                        >
+                          {c.text}
+                        </td>
+                      ))}
+                      <td style={{ textAlign: 'center', padding: '6px 6px', border: '1px solid var(--border)' }}>{r.kapanisSayisi}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+          ) : (
+            <>
+              <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8, color: 'var(--text3)' }}>
+                Kartları sürükleyip başka kartın üstüne bırakarak iki personelin yerlerini değiştirin (aynı taslak satırları).
+              </div>
+              <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg2)' }}>
+                      <th style={{ textAlign: 'left', padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>Personel</th>
+                      {haftaKolonlari.map((g) => (
+                        <th
+                          key={g.tarih}
+                          style={{ textAlign: 'left', padding: '8px 10px', borderBottom: '1px solid var(--border)', minWidth: 135 }}
+                        >
+                          <div>{g.ad}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>{g.tarih}</div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {taslakPersoneller.map((p) => (
+                      <tr key={p.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '8px 10px', fontWeight: 600, verticalAlign: 'top' }}>{p.ad}</td>
+                        {haftaKolonlari.map((g) => {
+                          const satirlar = hucreSatirlari(p.id, g.tarih);
+                          const izinli = !!(haftaIzinMap[p.id] && haftaIzinMap[p.id][haftaKolonlari.findIndex((x) => x.tarih === g.tarih)]);
+                          return (
+                            <td key={`${p.id}_${g.tarih}`} style={{ padding: '8px 6px', verticalAlign: 'top' }}>
+                              {satirlar.length === 0 ? (
+                                <div
+                                  style={{
+                                    fontSize: 11,
+                                    color: izinli ? 'var(--yellow)' : 'var(--text3)',
+                                    opacity: izinli ? 1 : 0.5,
+                                    fontWeight: izinli ? 700 : 400,
+                                  }}
+                                >
+                                  {izinli ? 'İzinli' : '—'}
+                                </div>
+                              ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {satirlar.map((t) => (
+                                    <div
+                                      key={t.id}
+                                      draggable
+                                      onDragStart={() => setDragId(t.id)}
+                                      onDragOver={(e) => e.preventDefault()}
+                                      onDrop={() => { swapYap(dragId, t.id); setDragId(null); }}
+                                      title="Başka bir kartı bunun üstüne bırak: personeller swap olur"
+                                      style={{
+                                        border: '1px solid var(--border)',
+                                        borderRadius: 6,
+                                        padding: '6px 7px',
+                                        fontSize: 11,
+                                        cursor: 'grab',
+                                        background: (t.izin_ihlali || t.rol_ihlali || t.mesai_ihlali)
+                                          ? 'rgba(250,200,0,0.12)'
+                                          : 'var(--bg2)',
+                                      }}
+                                    >
+                                      <div style={{ fontWeight: 600 }}>{t.sube_ad}</div>
+                                      <div style={{ color: 'var(--text3)' }}>{t.bas_saat}–{t.bit_saat}</div>
+                                      {(t.izin_ihlali || t.rol_ihlali || t.mesai_ihlali) && (
+                                        <div style={{ marginTop: 2, color: 'var(--yellow)', fontWeight: 700 }}>
+                                          {t.izin_ihlali ? 'İZİN ' : ''}
+                                          {t.rol_ihlali ? 'ROL ' : ''}
+                                          {t.mesai_ihlali ? 'MESAİ' : ''}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </div>
       )}
