@@ -322,23 +322,90 @@ def _personel_gun_musaitlik_map(cur, pid: str) -> Dict[int, Dict[str, Any]]:
     return {int(x["hafta_gunu"]): dict(x) for x in cur.fetchall()}
 
 
-def _personel_hafta_izin_map(cur, pid: str, hafta_baslangic: date) -> List[bool]:
+def _personel_hafta_izin_map(cur, pid: str, hafta_baslangic: date) -> Tuple[List[bool], bool]:
     cur.execute(
         "SELECT * FROM personel_hafta_izin WHERE personel_id=%s AND hafta_baslangic=%s",
         (pid, hafta_baslangic),
     )
     iz = cur.fetchone()
     if not iz:
-        return [False] * 7
-    return [
-        bool(iz["izin_pzt"]),
-        bool(iz["izin_sal"]),
-        bool(iz["izin_car"]),
-        bool(iz["izin_per"]),
-        bool(iz["izin_cum"]),
-        bool(iz["izin_cmt"]),
-        bool(iz["izin_paz"]),
-    ]
+        return [False] * 7, False
+    return (
+        [
+            bool(iz["izin_pzt"]),
+            bool(iz["izin_sal"]),
+            bool(iz["izin_car"]),
+            bool(iz["izin_per"]),
+            bool(iz["izin_cum"]),
+            bool(iz["izin_cmt"]),
+            bool(iz["izin_paz"]),
+        ],
+        True,
+    )
+
+
+def _otomatik_izin_atamalari(profil: List[Dict[str, Any]], ihtiyaclar: List[Dict[str, Any]]) -> int:
+    """
+    Personelde haftalık izin kaydı yoksa (manuel girilmemişse) otomatik 1 gün izin atar.
+    Kural:
+    - Sadece 6+ gün çalışabilecek personele izin yazılır.
+    - Günlük izin kotası personel sayısına göre hesaplanır.
+      * Hafta içi: ~%15  (20 personelde 3)
+      * Cumartesi: ~%10 (20 personelde 2)
+    - Talebi düşük günler önceliklidir (operasyonu bozmamak için).
+    """
+    if not profil:
+        return 0
+    gun_talep = {i: 0 for i in range(7)}
+    for ih in ihtiyaclar:
+        gi = int(ih.get("_gun_ix", 0))
+        gun_talep[gi] += int(ih.get("minimum_kisi") or 0)
+    n = len(profil)
+    # ceil(n * oran): tam sayılı, dış bağımlılıksız
+    hafta_ici_kota = max(1, (n * 15 + 99) // 100)  # 20 -> 3
+    cumartesi_kota = max(1, (n * 10 + 99) // 100)  # 20 -> 2
+    pazar_kota = max(1, (n * 8 + 99) // 100)       # 20 -> 2 (düşük öncelik)
+    gun_kota = {0: hafta_ici_kota, 1: hafta_ici_kota, 2: hafta_ici_kota, 3: hafta_ici_kota, 4: hafta_ici_kota, 5: cumartesi_kota, 6: pazar_kota}
+    gun_kullanim = {i: 0 for i in range(7)}
+    atanan = 0
+
+    for pr in profil:
+        if pr.get("izin_kaydi_var"):
+            continue
+        # Haftalık izni olanı tekrar elleme
+        if any(bool(x) for x in (pr.get("izin_hafta") or [])):
+            continue
+        mus_map = pr.get("mus_map") or {}
+        # 6 gün ve üzeri çalışabilecek personelde otomatik izin zorunluluğu
+        aktif_gun = 0
+        for d in range(7):
+            gm0 = mus_map.get(d) or {}
+            if gm0.get("is_active") is False:
+                continue
+            aktif_gun += 1
+        if aktif_gun < 6:
+            continue
+
+        aday = list(range(7))
+        # Önce hafta içi (özellikle Pzt-Sal-Çar), sonra cumartesi, en son pazar
+        oncelik = [0, 1, 2, 3, 4, 5, 6]
+        aday.sort(key=lambda d: (oncelik.index(d), gun_talep.get(d, 0), d))
+
+        sec = None
+        for d in aday:
+            gm = mus_map.get(d) or {}
+            if gm.get("is_active") is False:
+                continue
+            if gun_kullanim[d] >= int(gun_kota.get(d, 1)):
+                continue
+            sec = d
+            break
+        if sec is None:
+            continue
+        pr["izin_hafta"][sec] = True
+        gun_kullanim[sec] += 1
+        atanan += 1
+    return atanan
 
 
 def _dinamik_ihtiyac_katsayi(cur, sube_id: str, gun_tarih: date, cache: Dict[str, float]) -> float:
@@ -681,7 +748,7 @@ def hafta_senaryolari_uret(
             erisim = set(subeler.keys())
         yetki, permissive = _personel_yetki_map(cur, pid)
         mus_map = _personel_gun_musaitlik_map(cur, pid)
-        izin_map = _personel_hafta_izin_map(cur, pid, pzt)
+        izin_map, izin_kaydi_var = _personel_hafta_izin_map(cur, pid, pzt)
         profil.append(
             {
                 "p": p,
@@ -695,6 +762,7 @@ def hafta_senaryolari_uret(
                 "cok_sube": bool(p.get("vardiya_gun_icinde_cok_subeye_gidebilir", True)),
                 "mus_map": mus_map,
                 "izin_hafta": izin_map,
+                "izin_kaydi_var": bool(izin_kaydi_var),
                 "max_hafta_saat": _safe_float(p.get("vardiya_max_weekly_hours")),
                 "kisitlilik_bonusu": _kisitlilik_bonusu(mus_map, len(erisim)),
             }
@@ -742,7 +810,10 @@ def hafta_senaryolari_uret(
                 r["_dyn_katsayi"] = round(katsayi, 3)
                 ihtiyaclar.append(r)
 
-    def hafta_greedy(tohum: int, plist: List[Dict[str, Any]], kriz_modu: bool) -> Tuple[List[Dict[str, Any]], List[str]]:
+    # İzin kaydı olmayan personele otomatik 1 gün izin ataması (haftalık plan üretiminde).
+    auto_izin_say = _otomatik_izin_atamalari(profil, ihtiyaclar)
+
+    def hafta_greedy(tohum: int, plist: List[Dict[str, Any]], kriz_modu: bool, varyant_ix: int = 0) -> Tuple[List[Dict[str, Any]], List[str]]:
         rng = random.Random(tohum)
         uyarilar: List[str] = []
         atamalar: List[Dict[str, Any]] = []
@@ -754,9 +825,57 @@ def hafta_senaryolari_uret(
         calisilan_gunler: Dict[str, Set[int]] = {}
         gun_atama_adet: Dict[str, Dict[int, int]] = {}
 
+        # Aynı ihtiyaç grubundaki (gün+şube+rol+tür+minimum/ideal) saat alternatiflerinden
+        # her senaryoda sadece birini seç: ilk varyantta en olası saat, sonraki varyantlarda alternatif saat.
+        gruplar: Dict[Tuple[Any, ...], List[Dict[str, Any]]] = {}
+        for ih in ihtiyaclar:
+            k = (
+                int(ih.get("_gun_ix") or 0),
+                str(ih.get("_sid") or ""),
+                str(ih.get("rol") or "genel"),
+                str(ih.get("gereken_tur") or "farketmez"),
+                int(ih.get("minimum_kisi") or 0),
+                int(ih.get("_ideal_dyn") or ih.get("gereken_kisi") or 1),
+                bool(ih.get("kritik")),
+            )
+            gruplar.setdefault(k, []).append(ih)
+
+        secilen_ihtiyaclar: List[Dict[str, Any]] = []
+        for key, items in gruplar.items():
+            if len(items) <= 1:
+                secilen_ihtiyaclar.append(items[0])
+                continue
+            items_sorted = sorted(items, key=lambda x: str(x.get("bas_saat") or ""))
+            skorlu = []
+            for ih in items_sorted:
+                gi = int(ih.get("_gun_ix") or 0)
+                sid_ih = str(ih.get("_sid") or "")
+                bas_ih = str(ih.get("bas_saat") or "")
+                bit_ih = str(ih.get("bit_saat") or "")
+                gtur_ih = str(ih.get("gereken_tur") or "farketmez")
+                pot = 0
+                for pr in plist:
+                    p = pr["p"]
+                    if pr["izin_hafta"][gi]:
+                        continue
+                    if sid_ih not in pr["erisim"]:
+                        continue
+                    gm = pr["mus_map"].get(gi)
+                    if gm and gm.get("is_active") is False:
+                        continue
+                    if gm and not _aralik_icinde(bas_ih, bit_ih, gm.get("available_from"), gm.get("available_to")):
+                        continue
+                    if gtur_ih != "farketmez" and not _tur_uygun_personel(p, gtur_ih):
+                        continue
+                    pot += 1
+                skorlu.append((pot, ih))
+            skorlu.sort(key=lambda t: (-t[0], str(t[1].get("bas_saat") or "")))
+            sec_ix = min(max(0, varyant_ix), len(skorlu) - 1)
+            secilen_ihtiyaclar.append(skorlu[sec_ix][1])
+
         # İhtiyaç sırası: önce kritik, sonra gün, sonra şube adı, sonra saat
         sirali = sorted(
-            ihtiyaclar,
+            secilen_ihtiyaclar,
             key=lambda x: (
                 not bool(x.get("kritik")),
                 int(x["_gun_ix"]),
@@ -877,6 +996,20 @@ def hafta_senaryolari_uret(
                                 neden_say["saat_uygunsuz"] = int(neden_say.get("saat_uygunsuz", 0)) + 1
                             continue
 
+                    # Personel türü bayrakları
+                    vt = (p.get("vardiya_tipi") or "").strip().upper()
+                    ct = (p.get("calisma_turu") or "").strip().lower()
+                    is_part = (vt == "PART") or (ct == "part_time")
+                    is_tam = (vt == "FULL") or (ct == "surekli")
+
+                    # İş kuralı: PART personel şubeler arası kaydırılmaz.
+                    # Sadece TAM personel ihtiyaç halinde başka şubeye kaydırılabilir.
+                    ana_sube = str(p.get("sube_id") or "")
+                    if is_part and ana_sube and str(sid) != ana_sube:
+                        if neden_say is not None:
+                            neden_say["part_kaydirma_yasak"] = int(neden_say.get("part_kaydirma_yasak", 0)) + 1
+                        continue
+
                     # Tür (standartta satır türü; alternatife düşerse izinli_tam/part ile serbestleşir)
                     if cfg.get("gereken_tur") and cfg["gereken_tur"] != "farketmez":
                         if not _tur_uygun_personel(p, cfg["gereken_tur"]):
@@ -885,10 +1018,6 @@ def hafta_senaryolari_uret(
                             continue
                     else:
                         # izinli_tam/part filtresi
-                        vt = (p.get("vardiya_tipi") or "").strip().upper()
-                        ct = (p.get("calisma_turu") or "").strip().lower()
-                        is_part = (vt == "PART") or (ct == "part_time")
-                        is_tam = (vt == "FULL") or (ct == "surekli")
                         if is_part and not cfg.get("izinli_part", True):
                             if neden_say is not None:
                                 neden_say["part_yasak"] = int(neden_say.get("part_yasak", 0)) + 1
@@ -1145,7 +1274,12 @@ def hafta_senaryolari_uret(
                     16,
                 )
             )
-        atamalar, uyarilar = hafta_greedy(tohum + i * 991, plist, kriz_modu=kriz_modu)
+        atamalar, uyarilar = hafta_greedy(
+            tohum + i * 991,
+            plist,
+            kriz_modu=kriz_modu,
+            varyant_ix=i,
+        )
 
         imza = tuple(sorted((a["tarih"], a["sube_id"], a["bas_saat"], a["bit_saat"], a["personel_id"]) for a in atamalar))
         if imza in ozet_imza:
@@ -1189,6 +1323,7 @@ def hafta_senaryolari_uret(
         "kriz_modu": bool(kriz_modu),
         "toplam_ihtiyac_satiri": len(ihtiyaclar),
         "planlamaya_dahil_personel": len(profil),
+        "otomatik_izin_atanan_personel": int(auto_izin_say),
         "tek_mantikli_varyasyon_mu": tek_mi,
         "aciklama": aciklama,
         "senaryolar": senaryolar,
@@ -1241,7 +1376,7 @@ def hafta_senaryolari_expert_uret(
         return base
     ranked = sorted(sen, key=_senaryo_maliyet)
     best = ranked[0]
-    top = ranked[:5]
+    top = ranked[:4]
     return {
         **base,
         "planner": "expert",
