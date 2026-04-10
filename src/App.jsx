@@ -16,6 +16,7 @@ import DisKaynak from './pages/DisKaynak';
 import Rapor from './pages/Rapor';
 import KartMerkez from './pages/KartMerkez';
 import Subeler from './pages/Subeler';
+import TeslimKayit from './pages/TeslimKayit';
 import './index.css';
 
 const NAV = [
@@ -27,6 +28,7 @@ const NAV = [
     { id: 'ledger', label: 'İşlem Defteri', icon: '📒' },
   ]},
   { group: 'Veri Girişi', items: [
+    { id: 'teslim-kayit', label: 'El Teslim (bilgi)', icon: '🤝' },
     { id: 'ciro', label: 'Ciro Girişi', icon: '📈' },
     { id: 'kart-hareketleri', label: 'Kart Hareketi', icon: '💳' },
     { id: 'anlik-gider', label: 'Anlık Gider', icon: '💸' },
@@ -49,6 +51,7 @@ const PAGES = {
   ciro: Ciro, 'kart-hareketleri': KartHareketleri, 'anlik-gider': AnlikGider,
   rapor: Rapor, 'kart-merkez': KartMerkez, 'dis-kaynak': DisKaynak, vadeli: VadeliAlimlar, excel: ExcelImport, kartlar: Kartlar, 'kart-analiz': KartMerkez,
   personel: Personel, borclar: Borclar, 'sabit-giderler': SabitGiderler, 'vardiya-planlamasi': Subeler,
+  'teslim-kayit': TeslimKayit,
 };
 
 export default function App() {
