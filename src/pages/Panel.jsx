@@ -933,7 +933,28 @@ export default function Panel({ onNavigate }) {
             { label: '💰 Güncel Kasa', value: fmt(kasa), sub: kasDayan < 999 ? `${kasDayan} gün dayanır` : 'Stabil', renk: kasa >= 0 ? 'var(--green)' : 'var(--red)', page: 'ledger', overlay: { baslik: 'Son Kasa Hareketleri', endpoint: '/kasa?limit=20' } },
           { label: '🆓 Serbest Nakit', value: fmt(serbest), sub: '7 günlük yük düşülmüş', renk: serbest >= 0 ? 'var(--green)' : 'var(--red)', page: 'ledger' },
           { label: '📊 Net Akış (30 gün)', value: fmt(netAkis), sub: netAkis >= 0 ? 'Pozitif ✓' : '⚠️ Negatif akış', renk: netAkis >= 0 ? 'var(--green)' : 'var(--red)', page: 'ledger' },
-          { label: '📈 Bu Ay Ciro', value: fmt(buAyCiro), sub: new Date().toLocaleDateString('tr-TR', { month: 'long' }), renk: 'var(--text1)', page: 'ciro' },
+          (() => {
+            const cn = parseFloat(panel.bu_ay_nakit) || 0;
+            const cp = parseFloat(panel.bu_ay_pos) || 0;
+            const co = parseFloat(panel.bu_ay_online) || 0;
+            const toplam = buAyCiro;
+            const kiril = toplam > 0 && (cn > 0 || cp > 0 || co > 0);
+            return {
+              label: '📈 Bu Ay Ciro',
+              value: fmt(toplam),
+              sub: toplam > 0
+                ? new Date().toLocaleDateString('tr-TR', { month: 'long' })
+                : 'Bu ay ciro yok',
+              renk: 'var(--text1)',
+              page: 'ciro',
+              nakit: cn,
+              pos: cp,
+              online: co,
+              toplam,
+              kirılım: kiril,
+              ciroKirilim: true,
+            };
+          })(),
           { label: '🔄 Geçen Ay Devir', value: fmt(panel.bu_ay_devir || 0), sub: panel.bu_ay_devir > 0 ? 'Devir aktarıldı ✓' : 'Devir yok', renk: panel.bu_ay_devir > 0 ? 'var(--yellow)' : 'var(--text3)', page: 'ledger' },
           (() => {
             const cikis = parseFloat(panel.bu_ay_toplam_cikis) || 0;
@@ -1056,7 +1077,7 @@ export default function Panel({ onNavigate }) {
               onKartClick: vadelihDetayGetir,
             };
           })(),
-        ].map(({ label, value, sub, renk, page, overlay, nakit, kart, toplam, kirılım, onKartClick }) => (
+        ].map(({ label, value, sub, renk, page, overlay, nakit, kart, toplam, kirılım, onKartClick, ciroKirilim, pos, online }) => (
           <div key={label} className="metric-card" style={{ borderTop: `3px solid ${renk}`, cursor: 'pointer' }}
             onClick={() => onKartClick ? onKartClick() : overlay ? gecmisAc(overlay.baslik, overlay.endpoint) : nav(page)}
             onContextMenu={e => { e.preventDefault(); nav(page); }}
@@ -1065,26 +1086,64 @@ export default function Panel({ onNavigate }) {
             <div className="metric-value" style={{ fontSize: 24, color: renk }}>{value}</div>
             {kirılım && toplam > 0 ? (
               <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {nakit > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 10, color: 'var(--text3)' }}>💵 Nakit</span>
-                    <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--green)' }}>{fmt(nakit)}</span>
-                  </div>
-                )}
-                {kart > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span
-                      style={{ fontSize: 10, color: 'var(--text3)', cursor: 'pointer', textDecoration: 'underline dotted' }}
-                      onClick={e => { e.stopPropagation(); detayGetir('kart'); }}
-                      title="Kart ödemelerini gör"
-                    >💳 Kart</span>
-                    <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: '#4a9eff' }}>{fmt(kart)}</span>
-                  </div>
-                )}
-                {nakit > 0 && kart > 0 && (
-                  <div style={{ marginTop: 2, height: 4, borderRadius: 2, background: 'var(--bg3)', overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${(nakit/toplam*100).toFixed(0)}%`, background: 'var(--green)', borderRadius: 2 }} />
-                  </div>
+                {ciroKirilim ? (
+                  <>
+                    {nakit > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 10, color: 'var(--text3)' }}>💵 Nakit</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--green)' }}>{fmt(nakit)}</span>
+                      </div>
+                    )}
+                    {(pos || 0) > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 10, color: 'var(--text3)' }}>💳 POS</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: '#4a9eff' }}>{fmt(pos)}</span>
+                      </div>
+                    )}
+                    {(online || 0) > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 10, color: 'var(--text3)' }}>🌐 Online</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--yellow)' }}>{fmt(online)}</span>
+                      </div>
+                    )}
+                    {[nakit, pos || 0, online || 0].filter(x => x > 0).length >= 2 && (
+                      <div style={{ marginTop: 2, height: 4, borderRadius: 2, background: 'var(--bg3)', overflow: 'hidden', display: 'flex' }}>
+                        {nakit > 0 && (
+                          <div style={{ width: `${(nakit / toplam * 100).toFixed(1)}%`, minWidth: nakit > 0 ? 2 : 0, background: 'var(--green)' }} />
+                        )}
+                        {(pos || 0) > 0 && (
+                          <div style={{ width: `${(pos / toplam * 100).toFixed(1)}%`, minWidth: pos > 0 ? 2 : 0, background: '#4a9eff' }} />
+                        )}
+                        {(online || 0) > 0 && (
+                          <div style={{ width: `${(online / toplam * 100).toFixed(1)}%`, minWidth: online > 0 ? 2 : 0, background: 'var(--yellow)' }} />
+                        )}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {nakit > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 10, color: 'var(--text3)' }}>💵 Nakit</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--green)' }}>{fmt(nakit)}</span>
+                      </div>
+                    )}
+                    {kart > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span
+                          style={{ fontSize: 10, color: 'var(--text3)', cursor: 'pointer', textDecoration: 'underline dotted' }}
+                          onClick={e => { e.stopPropagation(); detayGetir('kart'); }}
+                          title="Kart ödemelerini gör"
+                        >💳 Kart</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: '#4a9eff' }}>{fmt(kart)}</span>
+                      </div>
+                    )}
+                    {nakit > 0 && kart > 0 && (
+                      <div style={{ marginTop: 2, height: 4, borderRadius: 2, background: 'var(--bg3)', overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${(nakit/toplam*100).toFixed(0)}%`, background: 'var(--green)', borderRadius: 2 }} />
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             ) : (
@@ -1092,33 +1151,6 @@ export default function Panel({ onNavigate }) {
             )}
           </div>
         ))}
-
-        {/* Ciro breakdown — nakit/POS/online */}
-        {(panel.bu_ay_nakit > 0 || panel.bu_ay_pos > 0 || panel.bu_ay_online > 0) && (
-          <div style={{
-            gridColumn: '1 / -1',
-            background: 'var(--bg2)', border: '1px solid var(--border)',
-            borderRadius: 8, padding: '10px 16px',
-            display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap'
-          }}>
-            <span style={{ fontSize: 12, color: 'var(--text3)', fontWeight: 600 }}>Bu Ay Ciro Dağılımı:</span>
-            {[
-              { label: '💵 Nakit', val: panel.bu_ay_nakit || 0, renk: 'var(--green)' },
-              { label: '💳 POS', val: panel.bu_ay_pos || 0, renk: '#4a9eff' },
-              { label: '🌐 Online', val: panel.bu_ay_online || 0, renk: 'var(--yellow)' },
-            ].map(({ label, val, renk }) => (
-              <div key={label} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <span style={{ fontSize: 12, color: 'var(--text3)' }}>{label}:</span>
-                <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)', color: renk }}>{fmt(val)}</span>
-                <span style={{ fontSize: 10, color: 'var(--text3)' }}>
-                  {(panel.bu_ay_nakit + panel.bu_ay_pos + panel.bu_ay_online) > 0
-                    ? `%${((val / (panel.bu_ay_nakit + panel.bu_ay_pos + panel.bu_ay_online)) * 100).toFixed(0)}`
-                    : ''}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
 
         {/* Genel Ödeme Yöntemi Özeti */}
         {(panel.genel_nakit_toplam > 0 || panel.genel_kart_toplam > 0) && (
