@@ -877,6 +877,23 @@ def init_db():
             )
         """)
 
+        # ── BİLGİ AMAÇLI EL TESLİM (kasa / motor / ledger etkilemez) ──
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS bilgi_teslim_kayitlari (
+                id              TEXT PRIMARY KEY,
+                kayit_tarihi    DATE NOT NULL,
+                teslim_eden     TEXT NOT NULL,
+                teslim_alan     TEXT NOT NULL,
+                tutar           NUMERIC(14,2) NOT NULL CHECK (tutar >= 0),
+                notlar          TEXT,
+                olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_bilgi_teslim_kayit_tarih
+            ON bilgi_teslim_kayitlari (kayit_tarihi)
+        """)
+
         # Trigger kaldırıldı — backend tek sorumlu
         # Eski trigger'ları temizle — mantık tamamen backend'de
         cur.execute("DROP TRIGGER IF EXISTS trg_ciro_kasa ON ciro")

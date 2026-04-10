@@ -460,6 +460,17 @@ def panel():
             ozet['bu_ay_pos'] = float(breakdown['pos'])
             ozet['bu_ay_online'] = float(breakdown['online'])
 
+            # Bilgi amaçlı el teslim — kasa / motor etkilemez
+            cur.execute("""
+                SELECT COALESCE(SUM(tutar), 0) AS toplam, COUNT(*)::int AS adet
+                FROM bilgi_teslim_kayitlari
+                WHERE EXTRACT(YEAR FROM kayit_tarihi) = EXTRACT(YEAR FROM CURRENT_DATE)
+                  AND EXTRACT(MONTH FROM kayit_tarihi) = EXTRACT(MONTH FROM CURRENT_DATE)
+            """)
+            _bt = cur.fetchone()
+            ozet['bu_ay_bilgi_teslim_toplam'] = float(_bt['toplam'] or 0)
+            ozet['bu_ay_bilgi_teslim_adet'] = int(_bt['adet'] or 0)
+
             # Finansman maliyeti — ciro tablosundan hesapla (bilgi amaçlı, kasayı etkilemez)
             cur.execute("""
                 SELECT
@@ -778,6 +789,65 @@ def dis_kaynak_sil(gid: str):
         kaynak_id = eski['kaynak_id'] or gid
         iptal_kasa_hareketi(cur, kaynak_id, 'dis_kaynak', 'DIS_KAYNAK', 'DIS_KAYNAK_IPTAL', 'Dış kaynak iptali')
         audit(cur, 'kasa_hareketleri', gid, 'IPTAL', eski=eski)
+    return {"success": True}
+
+# ── BİLGİ AMAÇLI EL TESLİM (kasa / motor / defter etkilemez) ──
+class BilgiTeslimKayitCreate(BaseModel):
+    kayit_tarihi: date
+    teslim_eden: str
+    teslim_alan: str
+    tutar: float = Field(ge=0)
+    notlar: Optional[str] = None
+
+@app.get("/api/bilgi-teslim-kayitlari")
+def bilgi_teslim_liste(yil: Optional[int] = None, ay: Optional[int] = None):
+    bugun = date.today()
+    y = yil if yil is not None else bugun.year
+    a = ay if ay is not None else bugun.month
+    if a < 1 or a > 12:
+        raise HTTPException(400, "Ay 1–12 arası olmalı")
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT id, kayit_tarihi::text, teslim_eden, teslim_alan, tutar, notlar, olusturma
+            FROM bilgi_teslim_kayitlari
+            WHERE EXTRACT(YEAR FROM kayit_tarihi) = %s AND EXTRACT(MONTH FROM kayit_tarihi) = %s
+            ORDER BY kayit_tarihi DESC, olusturma DESC
+        """, (y, a))
+        rows = cur.fetchall()
+        cur.execute("""
+            SELECT COALESCE(SUM(tutar), 0) AS toplam, COUNT(*)::int AS adet
+            FROM bilgi_teslim_kayitlari
+            WHERE EXTRACT(YEAR FROM kayit_tarihi) = %s AND EXTRACT(MONTH FROM kayit_tarihi) = %s
+        """, (y, a))
+        oz = cur.fetchone()
+    return {
+        "yil": y,
+        "ay": a,
+        "toplam": float(oz["toplam"] or 0),
+        "adet": int(oz["adet"] or 0),
+        "kayitlar": [dict(r) for r in rows],
+    }
+
+@app.post("/api/bilgi-teslim-kayitlari")
+def bilgi_teslim_ekle(body: BilgiTeslimKayitCreate):
+    te = (body.teslim_eden or "").strip()
+    ta = (body.teslim_alan or "").strip()
+    if not te or not ta:
+        raise HTTPException(400, "Teslim eden ve teslim alan zorunlu")
+    kid = str(uuid.uuid4())
+    with db() as (conn, cur):
+        cur.execute("""
+            INSERT INTO bilgi_teslim_kayitlari (id, kayit_tarihi, teslim_eden, teslim_alan, tutar, notlar)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (kid, str(body.kayit_tarihi), te, ta, body.tutar, body.notlar))
+    return {"id": kid, "success": True}
+
+@app.delete("/api/bilgi-teslim-kayitlari/{kid}")
+def bilgi_teslim_sil(kid: str):
+    with db() as (conn, cur):
+        cur.execute("DELETE FROM bilgi_teslim_kayitlari WHERE id=%s", (kid,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Kayıt bulunamadı")
     return {"success": True}
 
 # ── ANLIQ GİDER (beklenmeyen giderler) ────────────────────────
@@ -5540,6 +5610,7 @@ def sistem_sifirla(body: dict = {}):
         'odeme_plani':    'odeme_plani',
         'onay_kuyrugu':   'onay_kuyrugu',
         'audit_log':      'audit_log',
+        'bilgi_teslim':   'bilgi_teslim_kayitlari',
     }
 
     istenen = body.get('tablolar', list(IZINLI.keys()))  # boşsa hepsi
