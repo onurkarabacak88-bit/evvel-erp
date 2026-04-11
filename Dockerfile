@@ -5,7 +5,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY index.html vite.config.js ./
 COPY src ./src
-RUN npm run build
+RUN npm run build 
 
 FROM python:3.11-slim
 WORKDIR /app
