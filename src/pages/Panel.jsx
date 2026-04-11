@@ -998,8 +998,8 @@ export default function Panel({ onNavigate }) {
             };
           })(),
           (() => {
-            const nakit = panel.kira_gider_nakit ?? panel.sabit_nakit || 0;
-            const kart  = panel.kira_gider_kart ?? panel.sabit_kart || 0;
+            const nakit = panel.kira_gider_nakit ?? (panel.sabit_nakit || 0);
+            const kart  = panel.kira_gider_kart ?? (panel.sabit_kart || 0);
             const toplam = nakit + kart;
             const durdurulmus = sabitGiderUyarilar.filter(u => u.durduruldu === true).length;
             const geciken = sabitGiderOzet.geciken_adet || 0;
