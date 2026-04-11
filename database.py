@@ -785,6 +785,25 @@ def init_db():
             )
         """)
 
+        # Tedarikçi bazlı vadeli borç hareketleri (aylık trend + hesap özeti)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS vadeli_tedarikci_hareket (
+                id                TEXT PRIMARY KEY,
+                tedarikci_norm    TEXT NOT NULL,
+                tedarikci_etiket  TEXT NOT NULL,
+                vadeli_alim_id    TEXT,
+                hareket_tipi      TEXT NOT NULL,
+                tutar             NUMERIC(14,2) NOT NULL,
+                aciklama          TEXT,
+                islem_tarihi      DATE NOT NULL DEFAULT CURRENT_DATE,
+                olusturma         TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_vadeli_td_hareket_norm
+            ON vadeli_tedarikci_hareket (tedarikci_norm, islem_tarihi DESC)
+        """)
+
         # ── BORÇ ENVANTERİ ─────────────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS borc_envanteri (
