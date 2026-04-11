@@ -1,7 +1,7 @@
 import logging
 import time
 import traceback
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -12,6 +12,11 @@ from datetime import date, timedelta
 import uuid, os, json, pathlib, calendar, threading
 from collections import defaultdict
 from database import db, init_db
+from ledger_bakim import (
+    duzelt_yanlis_fatura_siniflandirma,
+    yanlis_fatura_siniflandirma_ozet,
+    ledger_fatura_sabit_otomatik_tamamla,
+)
 from kasa_service import (
     insert_kasa_hareketi,
     iptal_kasa_hareketi,
@@ -23,13 +28,30 @@ from kasa_service import (
 from vardiya_motor import senaryolar_uret, hafta_senaryolari_uret, hafta_senaryolari_expert_uret
 
 
+def _ledger_sonrasi_kart_plan() -> None:
+    """Ledger düzeltmesinden sonra kart ödeme planını güncelle (ayrı transaction)."""
+    with db() as (conn, cur):
+        kart_plan_guncelle_tx(cur)
+
+
 def ay_ekle(d: date, ay: int) -> date:
     """dateutil.relativedelta gerektirmeden tarihe ay ekler. Ay sonu taşmalarını düzeltir."""
     yil = d.year + (d.month - 1 + ay) // 12
     ay_no = (d.month - 1 + ay) % 12 + 1
     gun = min(d.day, calendar.monthrange(yil, ay_no)[1])
     return date(yil, ay_no, gun)
-from motors import karar_motoru, odeme_strateji_motoru, nakit_akis_simulasyon, guncel_kasa, kasa_detay, kart_analiz_hesapla, aylik_odeme_plani_uret, uyari_motoru, finans_ozet_motoru
+from motors import (
+    karar_motoru,
+    odeme_strateji_motoru,
+    nakit_akis_simulasyon,
+    guncel_kasa,
+    kasa_detay,
+    kart_analiz_hesapla,
+    aylik_odeme_plani_uret,
+    uyari_motoru,
+    finans_ozet_motoru,
+    degisken_bu_ay_odendi_mi,
+)
 from finans_core import (
     kart_borc, kasa_bakiyesi, kasa_bakiyesi_tarihte,
     kart_ekstre, kart_faiz_tahmini,
@@ -127,6 +149,14 @@ def _gece_yarisi_scheduler():
 @app.on_event("startup")
 def startup():
     init_db()
+    try:
+        ledger_fatura_sabit_otomatik_tamamla(
+            kart_plan_guncelle_fn=_ledger_sonrasi_kart_plan,
+            log_info=lambda m: logger.info(m),
+            log_warning=lambda m: logger.warning(m),
+        )
+    except Exception as e:
+        logger.warning("Ledger fatura/sabit otomatik sıra atlandı: %s", e)
     # Her başlatmada bu ay için plan üret (yoksa üretir, varsa atlar)
     bugun = date.today()
     try:
@@ -257,6 +287,69 @@ def devir_goster(yil: int = None, ay: int = None):
         return devir_hesapla(yil, ay)
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+def _bakim_token() -> str:
+    """
+    Railway / GitHub deploy ile aynı mantık: önce YAPALIM kendi sırrı, yoksa Evvel ile paylaşılan isim.
+    Örnek canlı taban: https://evvel-erp-production.up.railway.app/
+    """
+    t = (os.environ.get("YAPALIM_BAKIM_TOKEN") or "").strip()
+    if t:
+        return t
+    return (os.environ.get("EVVEL_BAKIM_TOKEN") or "").strip()
+
+
+def _bakim_token_kontrol(
+    x_yapalim_bakim: Optional[str],
+    x_evvel_bakim: Optional[str],
+) -> None:
+    token = _bakim_token()
+    if not token:
+        raise HTTPException(
+            503,
+            "Bakım ucu kapalı: Railway ortamında YAPALIM_BAKIM_TOKEN veya EVVEL_BAKIM_TOKEN tanımlayın; "
+            "veya yerelde `python scripts/duzelt_fatura_sabit_ledger.py` çalıştırın.",
+        )
+    hdr = (x_yapalim_bakim or x_evvel_bakim or "").strip()
+    if hdr != token:
+        raise HTTPException(
+            403,
+            "Geçersiz veya eksik bakım başlığı: X-Yapalim-Bakim veya X-Evvel-Bakim gönderin.",
+        )
+
+
+@app.get("/api/bakim/fatura-sabit-ozet")
+def bakim_fatura_sabit_ozet(
+    x_yapalim_bakim: Optional[str] = Header(default=None, alias="X-Yapalim-Bakim"),
+    x_evvel_bakim: Optional[str] = Header(default=None, alias="X-Evvel-Bakim"),
+):
+    """Yanlış fatura sınıfındaki kasa/kart satırı sayıları (dry-run öncesi)."""
+    _bakim_token_kontrol(x_yapalim_bakim, x_evvel_bakim)
+    with db() as (conn, cur):
+        return yanlis_fatura_siniflandirma_ozet(cur)
+
+
+@app.post("/api/bakim/duzelt-fatura-sabit-ledger")
+def bakim_duzelt_fatura_sabit_ledger(
+    dry_run: bool = False,
+    x_yapalim_bakim: Optional[str] = Header(default=None, alias="X-Yapalim-Bakim"),
+    x_evvel_bakim: Optional[str] = Header(default=None, alias="X-Evvel-Bakim"),
+):
+    """
+    Kira / sabit (tip≠degisken) giderlerin yanlışlıkla fatura kanalına yazılmış
+    eski kasa ve kart hareketlerini sabit gider havuzuna taşır. Panel özetleriyle uyumlu hale getirir.
+    """
+    _bakim_token_kontrol(x_yapalim_bakim, x_evvel_bakim)
+    if dry_run:
+        with db() as (conn, cur):
+            return duzelt_yanlis_fatura_siniflandirma(cur, dry_run=True)
+    return ledger_fatura_sabit_otomatik_tamamla(
+        kart_plan_guncelle_fn=_ledger_sonrasi_kart_plan,
+        log_info=lambda m: logger.info(m),
+        log_warning=lambda m: logger.warning(m),
+    )
+
 
 @app.get("/api/panel")
 def panel():
@@ -505,25 +598,31 @@ def panel():
             """)
             sabit_fatura_kart = float(cur.fetchone()['kart'])
 
-            # FATURA_ODEMESI nakit
+            # FATURA_ODEMESI nakit — yalnız değişken sabit; kira kalemi bu toplamda sayılmaz
             cur.execute("""
-                SELECT COALESCE(SUM(ABS(tutar)), 0) as nakit
-                FROM kasa_hareketleri
-                WHERE islem_turu = 'FATURA_ODEMESI' AND kasa_etkisi = true AND durum = 'aktif'
-                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+                SELECT COALESCE(SUM(ABS(kh.tutar)), 0) as nakit
+                FROM kasa_hareketleri kh
+                INNER JOIN sabit_giderler sg ON sg.id::text = kh.kaynak_id::text
+                WHERE kh.islem_turu = 'FATURA_ODEMESI' AND kh.kasa_etkisi = true AND kh.durum = 'aktif'
+                AND sg.tip = 'degisken'
+                AND LOWER(COALESCE(TRIM(sg.kategori), '')) <> 'kira'
+                AND EXTRACT(YEAR FROM kh.tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM kh.tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
             """)
             fatura_odeme_nakit = float(cur.fetchone()['nakit'])
             ozet['fatura_nakit'] = fatura_odeme_nakit + sabit_fatura_nakit
 
-            # FATURA GİDERİ kart — fatura_giderleri + sabit (kira/aidat dışı)
+            # FATURA GİDERİ kart — fatura_giderleri (degisken, kira hariç) + sabit talimat (kira/aidat dışı)
             cur.execute("""
-                SELECT COALESCE(SUM(tutar), 0) as kart
-                FROM kart_hareketleri
-                WHERE islem_turu = 'HARCAMA' AND durum = 'aktif'
-                AND kaynak_tablo = 'fatura_giderleri'
-                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+                SELECT COALESCE(SUM(kh.tutar), 0) as kart
+                FROM kart_hareketleri kh
+                INNER JOIN sabit_giderler sg ON sg.id::text = kh.kaynak_id::text
+                WHERE kh.islem_turu = 'HARCAMA' AND kh.durum = 'aktif'
+                AND kh.kaynak_tablo = 'fatura_giderleri'
+                AND sg.tip = 'degisken'
+                AND LOWER(COALESCE(TRIM(sg.kategori), '')) <> 'kira'
+                AND EXTRACT(YEAR FROM kh.tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM kh.tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
             """)
             ozet['fatura_kart'] = float(cur.fetchone()['kart']) + sabit_fatura_kart
 
@@ -2890,7 +2989,13 @@ def sabit_giderler_listele():
     with db() as (conn, cur):
         cur.execute("""SELECT sg.*, s.ad as sube_adi FROM sabit_giderler sg
             LEFT JOIN subeler s ON s.id=sg.sube_id ORDER BY sg.kategori, sg.gider_adi""")
-        return [dict(r) for r in cur.fetchall()]
+        rows = [dict(r) for r in cur.fetchall()]
+        for r in rows:
+            if (r.get("tip") or "") == "degisken":
+                r["bu_ay_odeme_tamam"] = degisken_bu_ay_odendi_mi(cur, str(r["id"]))
+            else:
+                r["bu_ay_odeme_tamam"] = None
+        return rows
 
 @app.post("/api/sabit-giderler")
 def sabit_gider_ekle(g: SabitGider):
@@ -3277,16 +3382,15 @@ def fatura_ode(body: FaturaOdemeModel):
             raise HTTPException(404, "Gider bulunamadı")
         if gider.get('tip') != 'degisken':
             raise HTTPException(400, "Bu endpoint sadece değişken giderler için kullanılır")
+        kat = (gider.get('kategori') or '').strip().lower()
+        if kat == 'kira':
+            raise HTTPException(
+                400,
+                "Kira bu ekrandan ödenmez. Kira sabit gider kaydı olarak ödeme planı veya onay akışıyla kapatılır.",
+            )
 
-        # Bu ay zaten ödendi mi?
-        cur.execute("""
-            SELECT 1 FROM kasa_hareketleri
-            WHERE kaynak_id=%s AND kaynak_tablo='sabit_giderler'
-            AND islem_turu='FATURA_ODEMESI' AND kasa_etkisi=true AND durum='aktif'
-            AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM %s::date)
-            AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM %s::date)
-        """, (body.sabit_gider_id, str(body.tarih), str(body.tarih)))
-        if cur.fetchone():
+        # Bu ay plan onayı / fatura / SABIT_GIDER ile kapatıldıysa tekrar ödeme engeli
+        if degisken_bu_ay_odendi_mi(cur, body.sabit_gider_id, body.tarih):
             raise HTTPException(400, "Bu ay için zaten fatura ödemesi yapılmış")
 
         aciklama = body.aciklama or f"Fatura: {gider['gider_adi']}"
@@ -4840,15 +4944,20 @@ def vadeli_panel_detay():
 @app.get("/api/vadeli-odeme-detay")
 def vadeli_odeme_detay(kaynak: str = 'kart'):
     """
-    Panel kart kırılımı detay — 💳 Kart tıklanınca açılır.
-    kaynak='kart' → bu ay kartla yapılan vadeli ödemeleri listeler.
-    kaynak='nakit' → bu ay nakitle yapılan vadeli ödemeleri listeler.
+    Panel kart / nakit kırılımı detay — metrik kartına göre doğru ledger dilimi.
+    kaynak:
+      - kart | vadeli_kart → vadeli alım kart harcaması
+      - fatura_kart → değişken fatura (kira hariç) + kira/aidat dışı sabit kart talimatı
+      - kira_kart → kira / aidat sabit gider kart talimatı
+      - sabit_kart → tüm sabit_giderler kart hareketleri (ham liste)
+      - anlik_kart → anlık gider tablosu, bu ay kart ile ödenenler
+      - nakit | vadeli_nakit → vadeli kasa ödemeleri
     """
     with db() as (conn, cur):
         bugun = __import__('datetime').date.today()
         yil, ay = bugun.year, bugun.month
 
-        if kaynak == 'kart':
+        if kaynak in ('kart', 'vadeli_kart'):
             cur.execute("""
                 SELECT
                     kh.tarih,
@@ -4865,7 +4974,85 @@ def vadeli_odeme_detay(kaynak: str = 'kart'):
                 AND EXTRACT(MONTH FROM kh.tarih) = %s
                 ORDER BY kh.tarih DESC
             """, (yil, ay))
-        else:
+        elif kaynak == 'fatura_kart':
+            cur.execute("""
+                SELECT
+                    kh.tarih,
+                    kh.tutar,
+                    COALESCE(sg.gider_adi, kh.aciklama) as aciklama,
+                    k.banka,
+                    k.kart_adi
+                FROM kart_hareketleri kh
+                JOIN kartlar k ON k.id = kh.kart_id
+                LEFT JOIN sabit_giderler sg ON sg.id::text = kh.kaynak_id::text
+                WHERE kh.islem_turu = 'HARCAMA'
+                AND kh.durum = 'aktif'
+                AND EXTRACT(YEAR FROM kh.tarih) = %s
+                AND EXTRACT(MONTH FROM kh.tarih) = %s
+                AND (
+                    (kh.kaynak_tablo = 'fatura_giderleri' AND sg.id IS NOT NULL
+                     AND sg.tip = 'degisken'
+                     AND LOWER(COALESCE(TRIM(sg.kategori), '')) <> 'kira')
+                    OR
+                    (kh.kaynak_tablo = 'sabit_giderler'
+                     AND (sg.id IS NULL OR COALESCE(sg.kategori, '') NOT IN ('Kira', 'Aidat')))
+                )
+                ORDER BY kh.tarih DESC
+            """, (yil, ay))
+        elif kaynak == 'kira_kart':
+            cur.execute("""
+                SELECT
+                    kh.tarih,
+                    kh.tutar,
+                    COALESCE(sg.gider_adi, kh.aciklama) as aciklama,
+                    k.banka,
+                    k.kart_adi
+                FROM kart_hareketleri kh
+                JOIN kartlar k ON k.id = kh.kart_id
+                LEFT JOIN sabit_giderler sg ON sg.id::text = kh.kaynak_id::text
+                WHERE kh.islem_turu = 'HARCAMA'
+                AND kh.durum = 'aktif'
+                AND kh.kaynak_tablo = 'sabit_giderler'
+                AND COALESCE(sg.kategori, '') IN ('Kira', 'Aidat')
+                AND EXTRACT(YEAR FROM kh.tarih) = %s
+                AND EXTRACT(MONTH FROM kh.tarih) = %s
+                ORDER BY kh.tarih DESC
+            """, (yil, ay))
+        elif kaynak == 'sabit_kart':
+            cur.execute("""
+                SELECT
+                    kh.tarih,
+                    kh.tutar,
+                    COALESCE(sg.gider_adi, kh.aciklama) as aciklama,
+                    k.banka,
+                    k.kart_adi
+                FROM kart_hareketleri kh
+                JOIN kartlar k ON k.id = kh.kart_id
+                LEFT JOIN sabit_giderler sg ON sg.id::text = kh.kaynak_id::text
+                WHERE kh.islem_turu = 'HARCAMA'
+                AND kh.durum = 'aktif'
+                AND kh.kaynak_tablo = 'sabit_giderler'
+                AND EXTRACT(YEAR FROM kh.tarih) = %s
+                AND EXTRACT(MONTH FROM kh.tarih) = %s
+                ORDER BY kh.tarih DESC
+            """, (yil, ay))
+        elif kaynak == 'anlik_kart':
+            cur.execute("""
+                SELECT
+                    ag.tarih,
+                    ag.tutar,
+                    COALESCE(ag.aciklama, ag.kategori, 'Anlık gider') as aciklama,
+                    k.banka,
+                    k.kart_adi
+                FROM anlik_giderler ag
+                LEFT JOIN kartlar k ON k.id = ag.kart_id
+                WHERE ag.durum = 'aktif'
+                AND ag.odeme_yontemi = 'kart'
+                AND EXTRACT(YEAR FROM ag.tarih) = %s
+                AND EXTRACT(MONTH FROM ag.tarih) = %s
+                ORDER BY ag.tarih DESC
+            """, (yil, ay))
+        elif kaynak in ('nakit', 'vadeli_nakit'):
             cur.execute("""
                 SELECT
                     kh.tarih,
@@ -4881,6 +5068,8 @@ def vadeli_odeme_detay(kaynak: str = 'kart'):
                 AND EXTRACT(MONTH FROM kh.tarih) = %s
                 ORDER BY kh.tarih DESC
             """, (yil, ay))
+        else:
+            return []
 
         return [dict(r) for r in cur.fetchall()]
 
