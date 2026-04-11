@@ -1,6 +1,6 @@
 # ── Frontend: yalnız gerekli dosyalar (COPY . . + host node_modules = kırık build önlenir) ──
 FROM node:20-slim AS frontend
-WORKDIR /app 
+WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY index.html vite.config.js ./
@@ -14,7 +14,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --from=frontend /app/static ./static
-COPY main.py database.py motors.py finans_core.py vardiya_motor.py ./
+COPY main.py database.py motors.py finans_core.py vardiya_motor.py kasa_service.py ./
 
 # Railway ve benzeri platformlar PORT atar; exec formunda env genişlemez → sh -c
 EXPOSE 8080
