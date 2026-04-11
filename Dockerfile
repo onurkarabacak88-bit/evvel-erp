@@ -5,7 +5,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY index.html vite.config.js ./
 COPY src ./src
-RUN npm run build 
+RUN npm run build
 
 FROM python:3.11-slim
 WORKDIR /app
@@ -14,7 +14,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --from=frontend /app/static ./static
-COPY main.py database.py motors.py finans_core.py vardiya_motor.py kasa_service.py ./
+COPY main.py database.py motors.py finans_core.py vardiya_motor.py kasa_service.py ledger_bakim.py ./
 
 # Railway ve benzeri platformlar PORT atar; exec formunda env genişlemez → sh -c
 EXPOSE 8080
