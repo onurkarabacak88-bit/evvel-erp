@@ -47,12 +47,23 @@ export default function Panel({ onNavigate }) {
   const [detay, setDetay] = useState([]);
   const [detayAcik, setDetayAcik] = useState(false);
   const [detayTip, setDetayTip] = useState('vadeli'); // 'vadeli' | 'kart_liste'
+  const [detayBaslik, setDetayBaslik] = useState('');
 
-  const detayGetir = (tip) => {
-    api(`/vadeli-odeme-detay?kaynak=${tip}`)
+  const KART_DETAY_BASLIK = {
+    vadeli_kart: '💳 Bu ay — vadeli alım (kart)',
+    fatura_kart: '🧾 Bu ay — fatura giderleri (kart)',
+    kira_kart: '🏠 Bu ay — kira / aidat (kart)',
+    sabit_kart: '🏠 Bu ay — sabit gider kart talimatı',
+    anlik_kart: '💸 Bu ay — anlık gider (kart)',
+  };
+
+  const detayGetir = (kaynak) => {
+    const k = kaynak === 'kart' ? 'vadeli_kart' : kaynak;
+    api(`/vadeli-odeme-detay?kaynak=${encodeURIComponent(k)}`)
       .then(res => {
         setDetay(res || []);
         setDetayTip('kart_liste');
+        setDetayBaslik(KART_DETAY_BASLIK[k] || '💳 Bu ay — kart hareketleri');
         setDetayAcik(true);
       })
       .catch(err => console.error('Detay yüklenemedi:', err));
@@ -131,6 +142,7 @@ export default function Panel({ onNavigate }) {
 
   async function odemeOnayla(odemeId, tutar) {
     if (loadingBtn) return;
+    const yenileSabitGider = odemeModal?.kaynak_tablo === 'sabit_giderler';
     setLoadingBtn(true);
     try {
       if (aktifOdemeVadeliMi && kartOneriYontemi === 'kart') {
@@ -152,6 +164,7 @@ export default function Panel({ onNavigate }) {
       setKartOneriAdim(1); setKartOneriYontemi('nakit');
       setKartOneriData(null); setSeciliKartId('');
       setAktifOdemeVadeliMi(false);
+      if (yenileSabitGider) sessionStorage.setItem('sabit_gider_yenile', '1');
       load();
     } catch (e) { toast(e.message, 'red'); }
     finally { setLoadingBtn(false); }
@@ -230,6 +243,7 @@ export default function Panel({ onNavigate }) {
         ? `${odenen.toLocaleString('tr-TR')} ₺ karta eklendi, ${kalan.toLocaleString('tr-TR')} ₺ yeni vadeye aktarıldı`
         : `${odenen.toLocaleString('tr-TR')} ₺ ödendi, ${kalan.toLocaleString('tr-TR')} ₺ ${new Date(kismiTarih).toLocaleDateString('tr-TR')} tarihine aktarıldı`;
       toast(mesaj);
+      if (kismiModal.kaynak_tablo === 'sabit_giderler') sessionStorage.setItem('sabit_gider_yenile', '1');
       setKismiModal(null); setKismiTutar(''); setKismiTarih('');
       setKismiAdim(1); setKismiYontemi('nakit');
       setKismiKartData(null); setKismiSeciliKartId('');
@@ -239,7 +253,13 @@ export default function Panel({ onNavigate }) {
   }
 
   function kismiModalAc(u) {
-    setKismiModal({ odemeId: u.odeme_id, aciklama: u.aciklama, toplam: u.tutar, vadeli: u.kaynak_tablo === 'vadeli_alimlar' });
+    setKismiModal({
+      odemeId: u.odeme_id,
+      aciklama: u.aciklama,
+      toplam: u.tutar,
+      vadeli: u.kaynak_tablo === 'vadeli_alimlar',
+      kaynak_tablo: u.kaynak_tablo || '',
+    });
     setKismiTutar(''); setKismiTarih('');
     setKismiAdim(1); setKismiYontemi('nakit');
     setKismiKartData(null); setKismiSeciliKartId('');
@@ -264,9 +284,16 @@ export default function Panel({ onNavigate }) {
 
   async function onayKuyrukOnayla(oid) {
     if (loadingBtn) return;
+    const row = onaylar.find(x => x.id === oid);
+    const sabitEtki = row && (
+      row.islem_turu === 'SABIT_GIDER'
+      || row.islem_turu === 'ODEME_PLANI'
+      || row.kaynak_tablo === 'sabit_giderler'
+    );
     setLoadingBtn(true);
     try {
       await api(`/onay-kuyrugu/${oid}/onayla`, { method: 'POST' });
+      if (sabitEtki) sessionStorage.setItem('sabit_gider_yenile', '1');
       toast('✓ Onaylandı — kasadan düşüldü'); load();
     } catch (e) { toast(e.message, 'red'); }
     finally { setLoadingBtn(false); }
@@ -308,6 +335,7 @@ export default function Panel({ onNavigate }) {
         }
       });
       toast(`✓ ${r.uygulanan}/${uygulanabilir.length} ödeme uygulandı`);
+      sessionStorage.setItem('sabit_gider_yenile', '1');
       load();
     } catch (e) {
       toast(`Toplu ödeme başarısız: ${e.message}`, 'red');
@@ -995,6 +1023,7 @@ export default function Panel({ onNavigate }) {
               page: 'anlik-gider',
               nakit, kart, toplam,
               kirılım: true,
+              kartDetayKaynak: 'anlik_kart',
             };
           })(),
           (() => {
@@ -1015,6 +1044,7 @@ export default function Panel({ onNavigate }) {
               page: 'sabit-giderler',
               nakit, kart, toplam,
               kirılım: true,
+              kartDetayKaynak: 'kira_kart',
             };
           })(),
           (() => {
@@ -1029,6 +1059,7 @@ export default function Panel({ onNavigate }) {
               page: 'sabit-giderler',
               nakit, kart, toplam,
               kirılım: true,
+              kartDetayKaynak: 'fatura_kart',
             };
           })(),
           (() => {
@@ -1083,9 +1114,10 @@ export default function Panel({ onNavigate }) {
               nakit, kart, toplam,
               kirılım: true,
               onKartClick: vadelihDetayGetir,
+              kartDetayKaynak: 'vadeli_kart',
             };
           })(),
-        ].map(({ label, value, sub, renk, page, overlay, nakit, kart, toplam, kirılım, onKartClick, ciroKirilim, pos, online }) => (
+        ].map(({ label, value, sub, renk, page, overlay, nakit, kart, toplam, kirılım, onKartClick, kartDetayKaynak, ciroKirilim, pos, online }) => (
           <div key={label} className="metric-card" style={{ borderTop: `3px solid ${renk}`, cursor: 'pointer' }}
             onClick={() => onKartClick ? onKartClick() : overlay ? gecmisAc(overlay.baslik, overlay.endpoint) : nav(page)}
             onContextMenu={e => { e.preventDefault(); nav(page); }}
@@ -1139,9 +1171,13 @@ export default function Panel({ onNavigate }) {
                     {kart > 0 && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span
-                          style={{ fontSize: 10, color: 'var(--text3)', cursor: 'pointer', textDecoration: 'underline dotted' }}
-                          onClick={e => { e.stopPropagation(); detayGetir('kart'); }}
-                          title="Kart ödemelerini gör"
+                          style={{ fontSize: 10, color: 'var(--text3)', cursor: onKartClick ? 'default' : 'pointer', textDecoration: onKartClick ? 'none' : 'underline dotted' }}
+                          onClick={e => {
+                            e.stopPropagation();
+                            if (onKartClick) onKartClick();
+                            else detayGetir(kartDetayKaynak || 'vadeli_kart');
+                          }}
+                          title={onKartClick ? 'Vadeli detayını aç' : 'Bu kategoriye ait kart ödemelerini gör'}
                         >💳 Kart</span>
                         <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: '#4a9eff' }}>{fmt(kart)}</span>
                       </div>
@@ -1968,7 +2004,7 @@ export default function Panel({ onNavigate }) {
         <div className="modal-overlay" onClick={() => setDetayAcik(false)}>
           <div className="modal" style={{ maxWidth: 520 }} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>{detayTip === 'vadeli' ? '🛒 Vadeli Borç Detayı' : '💳 Kart ile Vadeli Ödemeler'}</h3>
+              <h3>{detayTip === 'vadeli' ? '🛒 Vadeli Borç Detayı' : (detayBaslik || '💳 Kart ödemeleri')}</h3>
               <button className="modal-close" onClick={() => setDetayAcik(false)}>✕</button>
             </div>
             <div className="modal-body" style={{ maxHeight: '65vh', overflowY: 'auto' }}>

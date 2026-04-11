@@ -516,6 +516,21 @@ export function SabitGiderler() {
       });
     }
   },[]);
+
+  useEffect(() => {
+    const h = () => {
+      if (document.visibilityState === 'visible') {
+        const f = sessionStorage.getItem('sabit_gider_yenile');
+        if (f) {
+          sessionStorage.removeItem('sabit_gider_yenile');
+          load();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', h);
+    return () => document.removeEventListener('visibilitychange', h);
+  }, []);
+
   const toast=(m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
 
   function validateForm(){
@@ -651,9 +666,13 @@ export function SabitGiderler() {
                 <td style={{fontWeight:500}}>{g.gider_adi}</td>
                 <td><span className="badge badge-gray">{g.kategori}</span></td>
                 <td style={{textAlign:'right'}} className={g.tip==='degisken'?'':'amount-neg'}>
-                  {g.tip==='degisken' && (!g.tutar || g.tutar==0)
-                    ? <span style={{color:'var(--text3)',fontSize:11}}>— bekleniyor</span>
-                    : parseInt(g.tutar).toLocaleString('tr-TR') + ' ₺'
+                  {g.tip==='degisken'
+                    ? (g.bu_ay_odeme_tamam
+                        ? <span className="badge badge-green" style={{fontSize:11}}>✓ Bu ay ödendi</span>
+                        : (!g.tutar || g.tutar==0)
+                          ? <span style={{color:'var(--text3)',fontSize:11}}>— bekleniyor</span>
+                          : `${parseInt(g.tutar).toLocaleString('tr-TR')} ₺`)
+                    : `${parseInt(g.tutar||0).toLocaleString('tr-TR')} ₺`
                   }
                 </td>
                 <td style={{fontSize:12}}>{g.periyot}</td>
@@ -671,7 +690,9 @@ export function SabitGiderler() {
                 <td>
                   <div className="flex gap-8">
                     {g.tip === 'degisken' && (
-                      <button className="btn btn-primary btn-sm" onClick={()=>faturaOdeAc(g)}>💰 Fatura Öde</button>
+                      g.bu_ay_odeme_tamam
+                        ? <span className="badge badge-green" style={{alignSelf:'center'}}>✓ Bu ay ödendi</span>
+                        : <button className="btn btn-primary btn-sm" onClick={()=>faturaOdeAc(g)}>💰 Fatura Öde</button>
                     )}
                     <button className="btn btn-ghost btn-sm" onClick={async()=>{
                       setSabitGecmisModal(g); setSabitGecmisData(null);
