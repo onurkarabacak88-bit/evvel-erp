@@ -24,7 +24,8 @@ export default function Panel({ onNavigate }) {
   const [kiraModal, setKiraModal] = useState(null);
   const [kiraForm, setKiraForm] = useState({});
   const [kiraLoading, setKiraLoading] = useState(false);
-  const [odenenGiderler, setOdenenGiderler] = useState([]);
+  const [odenenKiraAidat, setOdenenKiraAidat] = useState([]);
+  const [odenenFaturaSabit, setOdenenFaturaSabit] = useState([]);
   const [erteleModal, setErteleModal] = useState(null); // {odemeId, aciklama, mevcutTarih}
   const [acikOdemeler, setAcikOdemeler] = useState(new Set());
   const [erteleTarih, setErteleTarih] = useState('');
@@ -82,7 +83,13 @@ export default function Panel({ onNavigate }) {
       setPanel(p); setUyarilar(u || []); setOnaylar(o || []); setAnomali(a);
       setSabitGiderOzet(sg?.ozet || {});
       setSabitGiderUyarilar(su?.uyarilar || []);
-      setOdenenGiderler(og || []);
+      if (og && typeof og === 'object' && !Array.isArray(og)) {
+        setOdenenKiraAidat(og.kira_aidat_odemeler || []);
+        setOdenenFaturaSabit(og.fatura_odemeler || []);
+      } else {
+        setOdenenKiraAidat(Array.isArray(og) ? og.filter(g => ['Kira', 'Aidat'].includes(g.kategori)) : []);
+        setOdenenFaturaSabit(Array.isArray(og) ? og.filter(g => !['Kira', 'Aidat'].includes(g.kategori)) : []);
+      }
       setVadeliOzet(vo || {});
       setLoading(false);
     }).catch((e) => {
@@ -594,9 +601,9 @@ export default function Panel({ onNavigate }) {
                         // Mevcut alanlar — gider_adi ve kategori backend'den bilinmiyor
                         // PUT endpoint tüm alanları bekliyor, eksik olanı gider kaydından al
                         gider_adi: kiraModal.gider_adi,
-                        kategori: kiraModal.tip === 'KIRA_ARTIS' ? 'Kira' : 'Abonelik',
+                        kategori: kiraModal.kategori || (kiraModal.tip === 'KIRA_ARTIS' ? 'Kira' : 'Abonelik'),
                         tutar: parseFloat(kiraForm.tutar),
-                        periyot: 'aylik',
+                        periyot: kiraModal.periyot || 'aylik',
                         odeme_gunu: 1,
                         gecerlilik_tarihi: kiraForm.gecerlilik_tarihi,
                         kira_artis_periyot: kiraForm.kira_artis_periyot || null,
@@ -630,7 +637,7 @@ export default function Panel({ onNavigate }) {
             const border = gecikme ? '2px solid var(--red)' : '1px solid var(--red)';
             // Sabit giderler için ikon ve etiket
             const kaynak_etiketi = {
-              sabit_giderler: { ikon: '🏠', etiket: 'Sabit Gider', renk: 'var(--yellow)' },
+              sabit_giderler: { ikon: '🏠', etiket: 'Kira / Aidat', renk: 'var(--yellow)' },
               personel:       { ikon: '👤', etiket: 'Maaş',        renk: '#4a9eff'        },
               vadeli_alimlar: { ikon: '📦', etiket: 'Vadeli Borç', renk: 'var(--orange)'  },
               borc_envanteri: { ikon: '🏦', etiket: 'Kredi/Borç',  renk: '#e879f9'        },
@@ -764,7 +771,7 @@ export default function Panel({ onNavigate }) {
 
         // Renk ve ikon — borç tipine göre
         const tipRenk = {
-          sabit_giderler: { ikon: '🏠', renk: '#f59e0b', etiket: 'Sabit' },
+          sabit_giderler: { ikon: '🏠', renk: '#f59e0b', etiket: 'Kira/Aidat' },
           personel:       { ikon: '👤', renk: '#4a9eff', etiket: 'Maaş'  },
           vadeli_alimlar: { ikon: '📦', renk: '#f97316', etiket: 'Vadeli' },
           borc_envanteri: { ikon: '🏦', renk: '#e879f9', etiket: 'Kredi'  },
@@ -991,8 +998,8 @@ export default function Panel({ onNavigate }) {
             };
           })(),
           (() => {
-            const nakit = panel.sabit_nakit || 0;
-            const kart  = panel.sabit_kart  || 0;
+            const nakit = panel.kira_gider_nakit ?? panel.sabit_nakit || 0;
+            const kart  = panel.kira_gider_kart ?? panel.sabit_kart || 0;
             const toplam = nakit + kart;
             const durdurulmus = sabitGiderUyarilar.filter(u => u.durduruldu === true).length;
             const geciken = sabitGiderOzet.geciken_adet || 0;
@@ -1001,7 +1008,7 @@ export default function Panel({ onNavigate }) {
               ? `⛔ ${durdurulmus} gider durduruldu`
               : geciken > 0 ? `⚠️ ${geciken} gecikmiş` : 'Tümü güncel ✓';
             return {
-              label: '🏠 Sabit Gider',
+              label: '🏠 Kira Giderleri',
               value: fmt(toplam),
               sub: subText,
               renk: subRenk !== 'var(--text3)' ? subRenk : toplam > 0 ? 'var(--red)' : 'var(--text3)',
@@ -1200,28 +1207,49 @@ export default function Panel({ onNavigate }) {
       </div>
 
       {/* ── FİNANSMAN MALİYETİ ── */}
-      {(panel.bu_ay_finansman_maliyeti > 0) && (
+      {(panel.bu_ay_finansman_maliyeti > 0) && (() => {
+        const ciroKes = panel.bu_ay_finansman_ciro_toplam != null
+          ? panel.bu_ay_finansman_ciro_toplam
+          : (parseFloat(panel.bu_ay_pos_kesinti) || 0) + (parseFloat(panel.bu_ay_online_kesinti) || 0);
+        const kartFz = parseFloat(panel.bu_ay_kart_faizi) || 0;
+        const toplam = parseFloat(panel.bu_ay_finansman_maliyeti) || 0;
+        return (
         <div style={{
           display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap',
           marginBottom: 16, padding: '12px 16px',
           background: 'rgba(220,50,50,0.06)', border: '1px solid rgba(220,50,50,0.3)',
           borderRadius: 8
         }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--red)' }}>🔥 Bu Ay Finansman Maliyeti</span>
+          <div style={{ minWidth: 200 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--red)' }}>🔥 Bu Ay Finansman Maliyeti</span>
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4, maxWidth: 280 }}>
+              Toplam = bu ayki ciro kesintileri (POS+online) + önceki ayın kart faizi
+            </div>
+          </div>
           <div style={{ display: 'flex', gap: 20, flex: 1, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12, color: 'var(--text2)' }}>
-              💳 POS Kesintisi: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(panel.bu_ay_pos_kesinti || 0)}</strong>
+              💳 POS: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(panel.bu_ay_pos_kesinti || 0)}</strong>
             </span>
             {(panel.bu_ay_online_kesinti > 0) && (
             <span style={{ fontSize: 12, color: 'var(--text2)' }}>
-              🌐 Online Kesinti: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(panel.bu_ay_online_kesinti || 0)}</strong>
+              🌐 Online: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(panel.bu_ay_online_kesinti || 0)}</strong>
             </span>
             )}
             <span style={{ fontSize: 12, color: 'var(--text2)' }}>
-              📈 Kart Faizi: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(panel.bu_ay_kart_faizi || 0)}</strong>
+              📊 Ciro kesintileri (bu ay): <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(ciroKes)}</strong>
             </span>
             <span style={{ fontSize: 12, color: 'var(--text2)' }}>
-              🔥 Toplam Yanan: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)', fontSize: 14 }}>{fmt(panel.bu_ay_finansman_maliyeti)}</strong>
+              📈 Kart faizi
+              {panel.kart_faizi_referans_etiket && (
+                <span style={{ color: 'var(--text3)', fontWeight: 500 }}> ({panel.kart_faizi_referans_etiket})</span>
+              )}
+              : <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(kartFz)}</strong>
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--text2)' }}>
+              🔥 Toplam yanan: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)', fontSize: 14 }}>{fmt(toplam)}</strong>
+              <span style={{ color: 'var(--text3)', fontWeight: 500, marginLeft: 6 }}>
+                (= {fmt(ciroKes)} + {fmt(kartFz)})
+              </span>
             </span>
             {panel.bu_ay_sadece_ciro > 0 && (
               <span style={{ fontSize: 12, color: 'var(--text3)' }}>
@@ -1232,7 +1260,8 @@ export default function Panel({ onNavigate }) {
             )}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ── HIZLI AKSİYON BARI ── */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, padding: '10px 14px', background: 'var(--bg2)', borderRadius: 8, border: '1px solid var(--border)', flexWrap: 'wrap' }}>
@@ -1412,25 +1441,55 @@ export default function Panel({ onNavigate }) {
         </div>
       </div>
 
-      {/* ── GERÇEKLEŞMİŞ SABİT GİDERLER ── */}
-      {odenenGiderler.length > 0 && (
+      {/* ── BU AY ÖDENEN KİRA / AİDAT ── */}
+      {odenenKiraAidat.length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <h3 style={{ fontSize: 13, fontWeight: 600 }}>✅ Bu Ay Ödenen Sabit Giderler</h3>
+            <h3 style={{ fontSize: 13, fontWeight: 600 }}>✅ Bu Ay Ödenen Kira Giderleri (Kira · Aidat)</h3>
             <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--red)' }}>
-              -{parseInt(odenenGiderler.reduce((s,g) => s + parseFloat(g.odenen_tutar||g.odenecek_tutar||0), 0)).toLocaleString('tr-TR')} ₺
+              -{parseInt(odenenKiraAidat.reduce((s,g) => s + parseFloat(g.odenen_tutar||g.odenecek_tutar||0), 0)).toLocaleString('tr-TR')} ₺
             </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 220, overflowY: 'auto' }}>
-            {odenenGiderler.map((g, i) => (
-              <div key={i} style={{
+            {odenenKiraAidat.map((g, i) => (
+              <div key={`k-${i}`} style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 padding: '7px 12px', borderRadius: 6, background: 'var(--bg3)'
               }}>
                 <div>
                   <div style={{ fontWeight: 500, fontSize: 12 }}>{g.gider_adi}</div>
                   <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-                    {g.kategori} · {g.odeme_tarihi?.slice(0,10) || '—'}
+                    {g.kategori}{g.periyot ? ` · ${({ aylik: 'aylık', yillik: 'yıllık', '3aylik': '3 aylık', '6aylik': '6 aylık', haftalik: 'haftalık' }[g.periyot] || g.periyot)}` : ''} · {g.odeme_tarihi?.slice(0,10) || '—'}
+                  </div>
+                </div>
+                <div style={{ fontWeight: 700, color: 'var(--red)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
+                  -{parseInt(g.odenen_tutar||g.odenecek_tutar||0).toLocaleString('tr-TR')} ₺
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── BU AY ÖDENEN FATURA (SABİT) ── */}
+      {odenenFaturaSabit.length > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 600 }}>🧾 Bu Ay Ödenen Fatura (Sabit Gider Planı)</h3>
+            <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--red)' }}>
+              -{parseInt(odenenFaturaSabit.reduce((s,g) => s + parseFloat(g.odenen_tutar||g.odenecek_tutar||0), 0)).toLocaleString('tr-TR')} ₺
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 220, overflowY: 'auto' }}>
+            {odenenFaturaSabit.map((g, i) => (
+              <div key={`f-${i}`} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '7px 12px', borderRadius: 6, background: 'var(--bg3)'
+              }}>
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: 12 }}>{g.gider_adi}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                    {g.kategori || 'Fatura'} · {g.odeme_tarihi?.slice(0,10) || '—'}
                   </div>
                 </div>
                 <div style={{ fontWeight: 700, color: 'var(--red)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
 
 export function Strateji() {
@@ -478,7 +478,7 @@ export function SabitGiderler() {
   const [sabitGecmisData, setSabitGecmisData] = useState(null);
   const [faturaKartOneri, setFaturaKartOneri] = useState(null);
   const [faturaKartYukleniyor, setFaturaKartYukleniyor] = useState(false);
-  const ZORUNLU_KATEGORILER = ['Kira'];
+  const ZORUNLU_KATEGORILER = ['Kira', 'Aidat'];
 
   const load=()=>{
     api('/sabit-giderler').then(setListe);
@@ -527,6 +527,10 @@ export function SabitGiderler() {
     if(!degisken && (!form.tutar || parseFloat(form.tutar) <= 0)) yeniHatalar.tutar = 'Geçerli bir tutar girin';
     if(!form.odeme_gunu) yeniHatalar.odeme_gunu = 'Zorunlu';
     if(zorunlu && !form.baslangic_tarihi && !duzenleId) yeniHatalar.baslangic_tarihi = 'Zorunlu';
+    if(!degisken && ['Kira','Aidat'].includes(form.kategori) && ['3aylik','6aylik','yillik'].includes(form.periyot||'aylik')
+      && !form.baslangic_tarihi && !duzenleId) {
+      yeniHatalar.baslangic_tarihi = 'Bu periyot için başlangıç tarihi zorunlu';
+    }
     if(zorunlu && !form.sube_id) yeniHatalar.sube_id = 'Şube seçimi zorunlu';
     if(duzenleId && zorunlu && !form.gecerlilik_tarihi) yeniHatalar.gecerlilik_tarihi = 'Hangi aydan itibaren geçerli?';
     setHatalar(yeniHatalar);
@@ -881,8 +885,19 @@ export function SabitGiderler() {
                 </div>
                 <div className="form-group">
                   <label>Kategori</label>
-                  <select value={form.kategori} onChange={e=>setForm({...form,kategori:e.target.value,hatalar:{}})}>
-                    <option>Kira</option><option>Fatura</option><option>Abonelik</option><option>Ulaşım</option><option>Diğer</option>
+                  <select value={form.kategori} onChange={e=>{
+                    const kat = e.target.value;
+                    const next = { ...form, kategori: kat, hatalar: {} };
+                    if (form.tip === 'sabit') {
+                      if (kat === 'Kira' || kat === 'Aidat') next.odeme_yontemi = 'nakit';
+                      else if (form.kart_id) next.odeme_yontemi = 'kart';
+                      if (!['Kira', 'Aidat'].includes(kat) && ['3aylik', '6aylik'].includes(String(form.periyot))) {
+                        next.periyot = 'aylik';
+                      }
+                    }
+                    setForm(next);
+                  }}>
+                    <option>Kira</option><option>Aidat</option><option>Fatura</option><option>Abonelik</option><option>Ulaşım</option><option>Diğer</option>
                   </select>
                   {ZORUNLU_KATEGORILER.includes(form.kategori) && <span style={{fontSize:10,color:'var(--yellow)'}}>⚠ Tüm alanlar zorunlu</span>}
                 </div>
@@ -892,10 +907,28 @@ export function SabitGiderler() {
                   {hatalar.tutar && <span style={{color:'var(--red)',fontSize:11}}>{hatalar.tutar}</span>}
                 </div>
                 <div className="form-group">
-                  <label>Periyot</label>
+                  <label>Ödeme periyodu</label>
                   <select value={form.periyot} onChange={e=>setForm({...form,periyot:e.target.value})}>
-                    <option value="aylik">Aylık</option><option value="yillik">Yıllık</option><option value="haftalik">Haftalık</option>
+                    {['Kira', 'Aidat'].includes(form.kategori) ? (
+                      <>
+                        <option value="aylik">Aylık</option>
+                        <option value="3aylik">3 Aylık</option>
+                        <option value="6aylik">6 Aylık</option>
+                        <option value="yillik">Yıllık</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="aylik">Aylık</option>
+                        <option value="yillik">Yıllık</option>
+                        <option value="haftalik">Haftalık</option>
+                      </>
+                    )}
                   </select>
+                  {['Kira', 'Aidat'].includes(form.kategori) && (
+                    <span style={{fontSize:10,color:'var(--text3)',display:'block',marginTop:4}}>
+                      3 / 6 aylık ve yıllık için <strong>başlangıç tarihi</strong> zorunludur.
+                    </span>
+                  )}
                 </div>
                 <div className="form-group">
                   <label>Ödeme Günü {ZORUNLU_KATEGORILER.includes(form.kategori)?'*':''}</label>
@@ -924,7 +957,7 @@ export function SabitGiderler() {
                     <p style={{fontSize:11,color:'var(--text3)',marginTop:4}}>Eski kayıt kapatılır, bu tarihten itibaren yeni tutar geçerli olur.</p>
                   </div>
                 )}
-                {['Kira','Abonelik'].includes(form.kategori) && (
+                {['Kira','Aidat','Abonelik'].includes(form.kategori) && (
                   <>
                     <div className="form-group">
                       <label>📋 Sözleşme Süresi (Ay)</label>
@@ -960,6 +993,11 @@ export function SabitGiderler() {
                 {/* ÖDEME YÖNTEMİ — sadece sabit giderde göster */}
                 {form.tip !== 'degisken' && <div className="form-group" style={{gridColumn:'1/-1'}}>
                   <label>Ödeme Yöntemi</label>
+                  {!['Kira', 'Aidat'].includes(form.kategori) && (
+                    <p style={{fontSize:11,color:'var(--text3)',marginBottom:6}}>
+                      Kira ve aidat dışı giderlerde kart seçtiğinizde kayıtta genelde <strong>otomatik talimat</strong> uygulanır (kasadan düşmez, karta harcama yazılır).
+                    </p>
+                  )}
                   <div style={{display:'flex',gap:8,marginTop:4}}>
                     <button type="button"
                       className={`btn btn-sm ${form.odeme_yontemi==='nakit'?'btn-primary':'btn-ghost'}`}
@@ -983,7 +1021,12 @@ export function SabitGiderler() {
                 {form.tip !== 'degisken' && form.odeme_yontemi === 'kart' && (
                   <div className="form-group" style={{gridColumn:'1/-1'}}>
                     <label>Kart Seç *</label>
-                    <select value={form.kart_id} onChange={e=>setForm({...form,kart_id:e.target.value})}
+                    <select value={form.kart_id} onChange={e=>{
+                      const kid = e.target.value;
+                      const next = { ...form, kart_id: kid };
+                      if (form.tip === 'sabit' && !['Kira', 'Aidat'].includes(form.kategori) && kid) next.odeme_yontemi = 'kart';
+                      setForm(next);
+                    }}
                       style={{borderColor:!form.kart_id?'var(--yellow)':''}}>
                       <option value="">-- Kart seçin --</option>
                       {kartlar.map(k=>(
@@ -1018,6 +1061,11 @@ export function VadeliAlimlar() {
   const [duzenleId, setDuzenleId] = useState(null);
   const [msg, setMsg] = useState(null);
   const [dupUyari, setDupUyari] = useState(null);
+  const [mergeTeklif, setMergeTeklif] = useState(null);
+  const [mergeHedefId, setMergeHedefId] = useState('');
+  const [hesapTd, setHesapTd] = useState('');
+  const [hesapHareket, setHesapHareket] = useState(null);
+  const [hesapAylik, setHesapAylik] = useState(null);
 
   // Ödeme modal state — hem "Ödendi" hem "Kısmi" için ortak
   // tip: 'tam' | 'kismi'
@@ -1033,6 +1081,22 @@ export function VadeliAlimlar() {
   const load=()=>api('/vadeli-alimlar').then(setListe);
   useEffect(()=>{load();},[]);
   const toast=(m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
+
+  const tedarikcilerUniq = [...new Set(liste.map(v => v.tedarikci).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'tr'));
+
+  useEffect(() => {
+    if (!hesapTd && tedarikcilerUniq.length) setHesapTd(tedarikcilerUniq[0]);
+  }, [liste]);
+
+  useEffect(() => {
+    if (!hesapTd) { setHesapHareket(null); setHesapAylik(null); return; }
+    const enc = encodeURIComponent(hesapTd);
+    Promise.all([
+      api(`/vadeli-alimlar/hesap-hareketleri?tedarikci=${enc}`),
+      api(`/vadeli-alimlar/hesap-aylik?tedarikci=${enc}`),
+    ]).then(([h, a]) => { setHesapHareket(h); setHesapAylik(a); })
+      .catch((e) => { toast(e.message, 'red'); setHesapHareket({ hareketler: [] }); setHesapAylik({ aylar: [] }); });
+  }, [hesapTd, liste]);
 
   function odemeModalAc(v, tip) {
     setOdemeModal({id:v.id, aciklama:v.aciklama, tutar:parseFloat(v.tutar), tip});
@@ -1111,16 +1175,52 @@ export function VadeliAlimlar() {
     } catch(e) { toast(e.message, 'red'); }
   }
 
-  async function kaydet(force=false){
+  function hareketTipEtiket(tip) {
+    const m = {
+      BORC_ARTIS: 'Borç girişi',
+      BIRLESTIRME: 'Birleştirme',
+      ODEME_NAKIT: 'Ödeme (nakit)',
+      ODEME_KART: 'Ödeme (kart)',
+      DUZELTME: 'Düzeltme',
+      IPTAL: 'İptal',
+    };
+    return m[tip] || tip;
+  }
+
+  async function kaydet(force=false, mergeOpt=null){
     setDupUyari(null);
     try{
       if(duzenleId){
-        await api(`/vadeli-alimlar/${duzenleId}`,{method:'PUT',body:form});
+        await api(`/vadeli-alimlar/${duzenleId}`,{method:'PUT',body:{
+          ...form,
+          tutar: parseFloat(form.tutar),
+          force,
+        }});
       } else {
-        const res = await api('/vadeli-alimlar',{method:'POST',body:{...form,force}});
+        const body = {
+          aciklama: form.aciklama,
+          tutar: parseFloat(form.tutar),
+          vade_tarihi: form.vade_tarihi,
+          tedarikci: form.tedarikci,
+          force,
+        };
+        if (mergeOpt) {
+          body.merge_karar = mergeOpt.karar;
+          if (mergeOpt.hedefId) body.merge_hedef_id = mergeOpt.hedefId;
+        }
+        const res = await api('/vadeli-alimlar',{method:'POST',body});
+        if (res.merge_sor) {
+          setMergeTeklif(res);
+          setMergeHedefId(res.adaylar?.[0]?.id || '');
+          return;
+        }
         if(res.warning){setDupUyari(res.mesaj);return;}
       }
-      toast('Kaydedildi'); setShowModal(false); setDuzenleId(null); load();
+      toast('Kaydedildi');
+      setShowModal(false);
+      setDuzenleId(null);
+      setMergeTeklif(null);
+      load();
     }catch(e){toast(e.message,'red');}
   }
   async function sil(id){
@@ -1141,8 +1241,75 @@ export function VadeliAlimlar() {
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
       <div className="page-header flex items-center justify-between">
         <div><h2>Vadeli Alımlar</h2><p>7 gün içinde yaklaşanlar panel'de gösterilir</p></div>
-        <button className="btn btn-primary" onClick={()=>{setForm({aciklama:'',tutar:'',vade_tarihi:'',tedarikci:''});setDuzenleId(null);setShowModal(true);}}>+ Vadeli Alım Ekle</button>
+        <button className="btn btn-primary" onClick={()=>{setForm({aciklama:'',tutar:'',vade_tarihi:'',tedarikci:''});setDuzenleId(null);setDupUyari(null);setMergeTeklif(null);setShowModal(true);}}>+ Vadeli Alım Ekle</button>
       </div>
+      <div className="card mb-16" style={{padding:16}}>
+        <h3 style={{margin:'0 0 12px',fontSize:15}}>Tedarikçi hesap özeti</h3>
+        <p style={{margin:'0 0 12px',fontSize:12,color:'var(--text3)'}}>
+          Bu tablo yalnızca bu özellik yayınlandıktan sonra yazılan hareketleri gösterir. Aylık sütun: o ay içindeki net borç değişimi; bakiye çizgisi kümülatif açık pozisyonu (hareketlerin toplamı) yansıtır.
+        </p>
+        <div className="form-row" style={{alignItems:'flex-end',gap:12,marginBottom:12}}>
+          <div className="form-group" style={{minWidth:220}}>
+            <label>Tedarikçi</label>
+            <select value={hesapTd} onChange={e=>setHesapTd(e.target.value)} style={{width:'100%',maxWidth:360,padding:8,borderRadius:6}}>
+              <option value="">— Seçin —</option>
+              {tedarikcilerUniq.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        </div>
+        {hesapAylik?.aylar?.length > 0 && (
+          <div style={{marginBottom:16,overflowX:'auto'}}>
+            <div style={{fontSize:12,color:'var(--text3)',marginBottom:8}}>Aylık net değişim (+ borç arttı, − ödeme / iptal)</div>
+            <div style={{display:'flex',gap:8,alignItems:'flex-end',minHeight:100}}>
+              {hesapAylik.aylar.map((row) => {
+                const n = row.net_degisim;
+                const h = Math.min(80, Math.abs(n) / (Math.max(...hesapAylik.aylar.map(x=>Math.abs(x.net_degisim)))||1) * 70 + 8);
+                return (
+                  <div key={row.ay} style={{display:'flex',flexDirection:'column',alignItems:'center',minWidth:72}}>
+                    <div style={{fontSize:11,fontWeight:600,color: n>=0 ? 'var(--red)' : 'var(--green)'}}>
+                      {n>=0?'+':''}{parseInt(n).toLocaleString('tr-TR')} ₺
+                    </div>
+                    <div style={{
+                      width:36, height:h, marginTop:4, borderRadius:4,
+                      background: n>=0 ? 'rgba(239,68,68,0.35)' : 'rgba(34,197,94,0.35)',
+                      border: `1px solid ${n>=0 ? 'var(--red)' : 'var(--green)'}`,
+                    }}/>
+                    <div style={{fontSize:10,color:'var(--text3)',marginTop:6,textAlign:'center'}}>
+                      {row.ay?.slice(0,7)}
+                    </div>
+                    <div style={{fontSize:9,color:'var(--text3)',marginTop:2}}>
+                      bakiye {parseInt(row.bakiye_sonu).toLocaleString('tr-TR')}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {hesapTd && (!hesapAylik?.aylar?.length) && (
+          <p style={{fontSize:12,color:'var(--text3)',marginBottom:12}}>Bu tedarikçi için henüz hareket kaydı yok (yeni kayıtlar otomatik düşer).</p>
+        )}
+        {hesapHareket?.hareketler?.length > 0 && (
+          <div className="table-wrap" style={{maxHeight:280,overflow:'auto'}}>
+            <table>
+              <thead><tr><th>Tarih</th><th>Tip</th><th style={{textAlign:'right'}}>Tutar</th><th>Açıklama</th></tr></thead>
+              <tbody>
+                {hesapHareket.hareketler.map((h) => (
+                  <tr key={h.id}>
+                    <td className="mono" style={{fontSize:12}}>{h.islem_tarihi}</td>
+                    <td style={{fontSize:12}}>{hareketTipEtiket(h.hareket_tipi)}</td>
+                    <td style={{textAlign:'right',fontSize:12,color: parseFloat(h.tutar)>=0 ? 'var(--red)' : 'var(--green)'}}>
+                      {parseFloat(h.tutar)>=0?'+':''}{parseInt(h.tutar).toLocaleString('tr-TR')} ₺
+                    </td>
+                    <td style={{fontSize:12,color:'var(--text3)'}}>{h.aciklama || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       <div className="table-wrap">
         <table>
           <thead><tr><th>Açıklama</th><th>Tedarikçi</th><th style={{textAlign:'right'}}>Tutar</th><th>Vade Tarihi</th><th>Kalan</th><th></th></tr></thead>
@@ -1162,7 +1329,7 @@ export function VadeliAlimlar() {
                     <div className="flex gap-8">
                       <button className="btn btn-primary btn-sm" onClick={()=>odemeModalAc(v,'tam')}>Ödendi</button>
                       <button className="btn btn-ghost btn-sm" onClick={()=>odemeModalAc(v,'kismi')}>✂ Kısmi</button>
-                      <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({aciklama:v.aciklama,tutar:v.tutar,vade_tarihi:v.vade_tarihi,tedarikci:v.tedarikci||''});setDuzenleId(v.id);setShowModal(true);}}>✏️</button>
+                      <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({aciklama:v.aciklama,tutar:v.tutar,vade_tarihi:v.vade_tarihi,tedarikci:v.tedarikci||''});setDuzenleId(v.id);setDupUyari(null);setMergeTeklif(null);setShowModal(true);}}>✏️</button>
                       <button className="btn btn-danger btn-sm" onClick={()=>sil(v.id)}>✕</button>
                     </div>
                   </td>
@@ -1215,6 +1382,33 @@ export function VadeliAlimlar() {
                 <div style={{marginTop:8,display:'flex',gap:8}}>
                   <button className="btn btn-danger btn-sm" onClick={()=>kaydet(true)}>Yine de Kaydet</button>
                   <button className="btn btn-secondary btn-sm" onClick={()=>setDupUyari(null)}>Vazgeç</button>
+                </div>
+              </div>
+            )}
+            {mergeTeklif && (
+              <div className="alert-box yellow" style={{margin:'0 12px 12px'}}>
+                <strong>Aynı tedarikçide açık borç var</strong>
+                <p style={{margin:'8px 0',fontSize:13}}>{mergeTeklif.mesaj}</p>
+                <p style={{margin:'0 0 8px',fontSize:12,color:'var(--text3)'}}>
+                  Birleşirse tahmini toplam: <b>{parseInt(mergeTeklif.onerilen_birlesik_tutar||0).toLocaleString('tr-TR')} ₺</b>
+                </p>
+                <div className="form-group" style={{marginBottom:10}}>
+                  <label style={{fontSize:12}}>Birleştirme hedefi (hangi satıra eklensin)</label>
+                  <select value={mergeHedefId} onChange={e=>setMergeHedefId(e.target.value)} style={{width:'100%',padding:8}}>
+                    {mergeTeklif.adaylar?.map(a => (
+                      <option key={a.id} value={a.id}>
+                        {parseInt(a.tutar).toLocaleString('tr-TR')} ₺ — {(a.aciklama||'').slice(0,40)}{(a.aciklama||'').length>40?'…':''} · vade {a.vade_tarihi}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={()=>{
+                    if (!mergeHedefId) { toast('Hedef satır seçin', 'red'); return; }
+                    kaydet(false, { karar: 'birlestir', hedefId: mergeHedefId });
+                  }}>Seçili satıra birleştir</button>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={()=>kaydet(false, { karar: 'ayri' })}>Ayrı satır olarak kaydet</button>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={()=>setMergeTeklif(null)}>Vazgeç</button>
                 </div>
               </div>
             )}
@@ -1457,14 +1651,34 @@ export function KartHareketleri() {
 // Ciro.jsx
 export function Ciro() {
   const [liste, setListe] = useState([]);
+  const [ozet, setOzet] = useState(null);
   const [subeler, setSubeler] = useState([]);
+  const [filtreSube, setFiltreSube] = useState('');
+  const [filtreAy, setFiltreAy] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({tarih:new Date().toISOString().split('T')[0],sube_id:'',nakit:0,pos:0,online:0,aciklama:''});
   const [msg, setMsg] = useState(null);
   const [dupUyari, setDupUyari] = useState(null);
 
-  const load=()=>{api('/ciro').then(setListe);api('/subeler').then(setSubeler);};
-  useEffect(()=>{load();},[]);
+  const load = useCallback(() => {
+    const qs = new URLSearchParams();
+    if (filtreSube) qs.set('sube_id', filtreSube);
+    if (filtreAy) {
+      const [y, m] = filtreAy.split('-');
+      if (y && m) {
+        qs.set('yil', y);
+        qs.set('ay', String(parseInt(m, 10)));
+      }
+    }
+    const q = qs.toString();
+    api(q ? `/ciro?${q}` : '/ciro').then((d) => {
+      setListe(Array.isArray(d) ? d : (d.kayitlar || []));
+      setOzet(d && !Array.isArray(d) ? d.ozet : null);
+    });
+    api('/subeler').then(setSubeler);
+  }, [filtreSube, filtreAy]);
+
+  useEffect(() => { load(); }, [load]);
   const toast=(m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
 
   async function kaydet(force=false){
@@ -1486,6 +1700,19 @@ export function Ciro() {
     catch(e){ toast(e.message||'Bir hata oluştu','red'); }
   }
 
+  const filtreOzetiBaslik = () => {
+    const par = [];
+    if (filtreSube) {
+      const ad = subeler.find((s) => s.id === filtreSube)?.ad || 'Şube';
+      par.push(ad);
+    }
+    if (filtreAy) {
+      const [y, m] = filtreAy.split('-');
+      if (y && m) par.push(`${m}/${y}`);
+    }
+    return par.length ? par.join(' · ') : '';
+  };
+
   return (
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
@@ -1493,11 +1720,74 @@ export function Ciro() {
         <div><h2>Ciro Girişi</h2><p>Ciro girildiğinde otomatik merkez kasaya eklenir</p></div>
         <button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ Ciro Gir</button>
       </div>
+
+      <div className="form-row cols-3 mb-16" style={{ alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+        <div className="form-group" style={{ minWidth: 200 }}>
+          <label>Şube</label>
+          <select value={filtreSube} onChange={(e) => setFiltreSube(e.target.value)}>
+            <option value="">Tüm şubeler</option>
+            {subeler.map((s) => (
+              <option key={s.id} value={s.id}>{s.ad}</option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group" style={{ minWidth: 180 }}>
+          <label>Takvim ayı</label>
+          <input type="month" value={filtreAy} onChange={(e) => setFiltreAy(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label style={{ visibility: 'hidden' }}>Temizle</label>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => { setFiltreSube(''); setFiltreAy(''); }}
+          >
+            Filtreleri temizle
+          </button>
+        </div>
+      </div>
+
+      {ozet && (
+        <div
+          className="mb-16"
+          style={{
+            padding: '14px 18px',
+            borderRadius: 10,
+            border: '1px solid var(--border)',
+            background: 'var(--bg2)',
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 10, color: 'var(--text2)' }}>
+            Filtreye göre ciro özeti{filtreOzetiBaslik() ? ` (${filtreOzetiBaslik()})` : ''}
+            <span style={{ fontWeight: 500, fontSize: 12, color: 'var(--text3)', marginLeft: 8 }}>
+              {ozet.kayit_sayisi} kayıt
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px 28px', fontSize: 14 }}>
+            <div>
+              <span style={{ color: 'var(--text3)', fontSize: 12 }}>Nakit</span>
+              <div className="mono" style={{ fontWeight: 700, color: 'var(--green)' }}>{fmt(ozet.nakit_toplam)}</div>
+            </div>
+            <div>
+              <span style={{ color: 'var(--text3)', fontSize: 12 }}>Kart (POS + Online)</span>
+              <div className="mono" style={{ fontWeight: 700, color: 'var(--blue)' }}>{fmt(ozet.kart_toplam)}</div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                POS {fmt(ozet.pos_toplam)} · Online {fmt(ozet.online_toplam)}
+              </div>
+            </div>
+            <div>
+              <span style={{ color: 'var(--text3)', fontSize: 12 }}>Brüt (nakit + POS + online)</span>
+              <div className="mono" style={{ fontWeight: 700 }}>{fmt(ozet.brut_toplam)}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="table-wrap">
         <table>
           <thead><tr><th>Tarih</th><th>Şube</th><th style={{textAlign:'right'}}>Nakit</th><th style={{textAlign:'right'}}>POS</th><th style={{textAlign:'right'}}>Online</th><th style={{textAlign:'right'}}>Toplam</th><th style={{textAlign:'right',color:'var(--red)'}}>🔥 Yanan</th><th></th></tr></thead>
           <tbody>
-            {!liste.length?(<tr><td colSpan={7}><div className="empty"><p>Ciro kaydı yok</p></div></td></tr>):
+            {!liste.length?(<tr><td colSpan={8}><div className="empty"><p>Ciro kaydı yok</p></div></td></tr>):
             liste.map(c=>(
               <tr key={c.id}>
                 <td className="mono" style={{fontSize:12}}>{c.tarih}</td>
