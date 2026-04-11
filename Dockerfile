@@ -1,6 +1,6 @@
 # ── Frontend: yalnız gerekli dosyalar (COPY . . + host node_modules = kırık build önlenir) ──
 FROM node:20-slim AS frontend
-WORKDIR /app
+WORKDIR /app 
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY index.html vite.config.js ./
