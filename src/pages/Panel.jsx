@@ -46,6 +46,9 @@ export default function Panel({ onNavigate }) {
   const [detay, setDetay] = useState([]);
   const [detayAcik, setDetayAcik] = useState(false);
   const [detayTip, setDetayTip] = useState('vadeli'); // 'vadeli' | 'kart_liste'
+  const [bankaYatirimModal, setBankaYatirimModal] = useState(false);
+  const [bankaYatirimListe, setBankaYatirimListe] = useState([]);
+  const [bankaYatirimYukleniyor, setBankaYatirimYukleniyor] = useState(false);
 
   const detayGetir = (tip) => {
     api(`/vadeli-odeme-detay?kaynak=${tip}`)
@@ -281,6 +284,32 @@ export default function Panel({ onNavigate }) {
       const data = await api(endpoint);
       setGecmisData(Array.isArray(data) ? data.slice(0, 20) : []);
     } catch { setGecmisData([]); }
+  }
+
+  async function bankaYatirimAc() {
+    setBankaYatirimModal(true);
+    setBankaYatirimYukleniyor(true);
+    try {
+      const res = await api('/banka-yatirimlari?limit=200');
+      setBankaYatirimListe(res.satirlar || []);
+    } catch {
+      setBankaYatirimListe([]);
+    } finally {
+      setBankaYatirimYukleniyor(false);
+    }
+  }
+
+  async function bankaYatirimYenile() {
+    setBankaYatirimYukleniyor(true);
+    try {
+      const res = await api('/banka-yatirimlari?limit=200');
+      setBankaYatirimListe(res.satirlar || []);
+      load();
+    } catch {
+      setBankaYatirimListe([]);
+    } finally {
+      setBankaYatirimYukleniyor(false);
+    }
   }
 
   async function topluOnerUygula() {
@@ -951,6 +980,18 @@ export default function Panel({ onNavigate }) {
           })(),
           { label: '💰 Dış Kaynak (Bu Ay)', value: fmt(panel.bu_ay_dis_kaynak || 0), sub: 'Ciro dışı gelir', renk: panel.bu_ay_dis_kaynak > 0 ? '#4a9eff' : 'var(--text3)', page: 'dis-kaynak' },
           (() => {
+            const b = parseFloat(panel.bu_ay_banka_yatirim) || 0;
+            const adet = parseInt(panel.bu_ay_banka_yatirim_adet, 10) || 0;
+            return {
+              label: '🏦 Bankaya yatırılan',
+              value: fmt(b),
+              sub: adet > 0 ? `${adet} yatırım · bu ay` : 'Bu ay kayıt yok · tıkla',
+              renk: b > 0 ? '#0ea5e9' : 'var(--text3)',
+              page: 'ledger',
+              bankaYatirim: true,
+            };
+          })(),
+          (() => {
             const nakit = panel.anlik_nakit || 0;
             const kart  = panel.anlik_kart  || 0;
             const toplam = nakit + kart;
@@ -1056,11 +1097,16 @@ export default function Panel({ onNavigate }) {
               onKartClick: vadelihDetayGetir,
             };
           })(),
-        ].map(({ label, value, sub, renk, page, overlay, nakit, kart, toplam, kirılım, onKartClick }) => (
+        ].map(({ label, value, sub, renk, page, overlay, nakit, kart, toplam, kirılım, onKartClick, bankaYatirim }) => (
           <div key={label} className="metric-card" style={{ borderTop: `3px solid ${renk}`, cursor: 'pointer' }}
-            onClick={() => onKartClick ? onKartClick() : overlay ? gecmisAc(overlay.baslik, overlay.endpoint) : nav(page)}
+            onClick={() => {
+              if (bankaYatirim) { bankaYatirimAc(); return; }
+              if (onKartClick) { onKartClick(); return; }
+              if (overlay) { gecmisAc(overlay.baslik, overlay.endpoint); return; }
+              nav(page);
+            }}
             onContextMenu={e => { e.preventDefault(); nav(page); }}
-            title={overlay ? 'Tıkla: son hareketler | Sağ tık: sayfa' : 'Detaya git →'}>
+            title={bankaYatirim ? 'Tıkla: yatırım listesi ve yeni kayıt' : overlay ? 'Tıkla: son hareketler | Sağ tık: sayfa' : 'Detaya git →'}>
             <div className="metric-label">{label}</div>
             <div className="metric-value" style={{ fontSize: 24, color: renk }}>{value}</div>
             {kirılım && toplam > 0 ? (
@@ -1989,11 +2035,135 @@ export default function Panel({ onNavigate }) {
         </div>
       )}
 
+      {/* ── BANKA YATIRIM MODAL ── */}
+      {bankaYatirimModal && (
+        <BankaYatirimModal
+          liste={bankaYatirimListe}
+          yukleniyor={bankaYatirimYukleniyor}
+          onKapat={() => { setBankaYatirimModal(false); setBankaYatirimListe([]); }}
+          onYenile={bankaYatirimYenile}
+          toast={toast}
+        />
+      )}
+
       {/* ── GEÇMİŞ OVERLAY ── */}
       {gecmisOverlay && (
         <GecmisOverlay baslik={gecmisOverlay.baslik} data={gecmisData}
           onKapat={() => { setGecmisOverlay(null); setGecmisData([]); }} />
       )}
+    </div>
+  );
+}
+
+function BankaYatirimModal({ liste, yukleniyor, onKapat, onYenile, toast }) {
+  const bugun = new Date().toISOString().slice(0, 10);
+  const [form, setForm] = useState({ tarih: bugun, tutar: '', yatiran_ad: '', aciklama: '' });
+  const [kaydediyor, setKaydediyor] = useState(false);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  async function kaydet(e) {
+    e?.preventDefault();
+    const tutar = parseFloat(String(form.tutar).replace(',', '.'));
+    if (!tutar || tutar <= 0) { toast('Geçerli tutar girin', 'red'); return; }
+    const ad = (form.yatiran_ad || '').trim();
+    if (!ad) { toast('Yatıran kişinin adını yazın', 'red'); return; }
+    setKaydediyor(true);
+    try {
+      await api('/banka-yatirimlari', {
+        method: 'POST',
+        body: {
+          tarih: form.tarih,
+          tutar,
+          yatiran_ad: ad,
+          aciklama: (form.aciklama || '').trim() || null,
+        },
+      });
+      toast('Banka yatırımı kaydedildi (takip)');
+      setForm({ tarih: bugun, tutar: '', yatiran_ad: '', aciklama: '' });
+      await onYenile();
+    } catch (err) {
+      toast(err.message || 'Kayıt hatası', 'red');
+    } finally {
+      setKaydediyor(false);
+    }
+  }
+
+  function fmtTs(s) {
+    if (!s) return '—';
+    const t = String(s).replace(' ', 'T');
+    const d = new Date(t);
+    return Number.isNaN(d.getTime()) ? s.slice(0, 16) : d.toLocaleString('tr-TR');
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onKapat()}>
+      <div className="modal" style={{ maxWidth: 520 }}>
+        <div className="modal-header">
+          <h3>🏦 Bankaya yatırılan</h3>
+          <button type="button" className="modal-close" onClick={onKapat}>✕</button>
+        </div>
+        <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+            Aşağıda son yatırımlar listelenir. Kayıtlar yalnızca takip içindir; kasa bakiyesini etkilemez.
+          </p>
+          <form onSubmit={kaydet} style={{
+            padding: 12, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg3)',
+            display: 'flex', flexDirection: 'column', gap: 10,
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)' }}>Yeni yatırım</div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label>Tarih</label>
+              <input type="date" value={form.tarih} onChange={e => set('tarih', e.target.value)} />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label>Tutar (₺)</label>
+              <input type="text" inputMode="decimal" value={form.tutar} onChange={e => set('tutar', e.target.value)} placeholder="0" />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label>Yatıran (ad soyad)</label>
+              <input type="text" value={form.yatiran_ad} onChange={e => set('yatiran_ad', e.target.value)} placeholder="Örn. Ayşe Yılmaz" autoComplete="off" />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label>Açıklama (isteğe bağlı)</label>
+              <input type="text" value={form.aciklama} onChange={e => set('aciklama', e.target.value)} placeholder="Şube / referans" />
+            </div>
+            <button type="submit" className="btn btn-primary btn-sm" disabled={kaydediyor}>
+              {kaydediyor ? 'Kaydediliyor…' : 'Kaydet'}
+            </button>
+          </form>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)' }}>Kayıtlar</div>
+          {yukleniyor ? (
+            <div className="loading" style={{ padding: 24 }}><div className="spinner" />Yükleniyor…</div>
+          ) : liste.length === 0 ? (
+            <div className="empty" style={{ padding: 20 }}><p>Henüz kayıt yok</p></div>
+          ) : (
+            <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+              {liste.map(r => (
+                <div key={r.id} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+                  gap: 12, padding: '10px 14px', borderBottom: '1px solid var(--border)',
+                }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{r.yatiran_ad}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                      İşlem tarihi: {fmtDate(r.tarih)} · Kayıt: {fmtTs(r.olusturma)}
+                    </div>
+                    {r.aciklama ? (
+                      <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 4 }}>{r.aciklama}</div>
+                    ) : null}
+                  </div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 700, color: '#0ea5e9', whiteSpace: 'nowrap' }}>
+                    {fmt(r.tutar)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button type="button" className="btn btn-secondary" onClick={onKapat}>Kapat</button>
+        </div>
+      </div>
     </div>
   );
 }

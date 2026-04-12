@@ -2,76 +2,31 @@ import { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 
 export default function SubePanelPinleri() {
-  const [subeler, setSubeler] = useState([]);
-  const [subeId, setSubeId] = useState('');
   const [liste, setListe] = useState([]);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState(null);
-  const [form, setForm] = useState({ ad: '', pin: '', personel_id: '' });
-  const [pinGuncelle, setPinGuncelle] = useState(null); // { id, ad }
+  const [pinGuncelle, setPinGuncelle] = useState(null);
   const [yeniPin, setYeniPin] = useState('');
-  const [personeller, setPersoneller] = useState([]);
 
   const toast = (m, t = 'green') => {
     setMsg({ m, t });
     setTimeout(() => setMsg(null), 4000);
   };
 
-  useEffect(() => {
-    api('/subeler')
-      .then((rows) => {
-        setSubeler(Array.isArray(rows) ? rows : []);
-        if (rows?.length && !subeId) setSubeId(rows[0].id);
-      })
-      .catch(() => toast('Şubeler yüklenemedi', 'red'));
-  }, []);
-
-  useEffect(() => {
-    if (!subeId) return;
+  const load = () => {
     setLoading(true);
-    api(`/sube-panel/merkez/${encodeURIComponent(subeId)}/panel-pin-kullanicilar`)
+    api('/sube-panel/merkez/personel-panel-pin')
       .then((rows) => setListe(Array.isArray(rows) ? rows : []))
       .catch(() => {
         setListe([]);
         toast('Liste alınamadı', 'red');
       })
       .finally(() => setLoading(false));
-  }, [subeId]);
+  };
 
   useEffect(() => {
-    api('/personel?aktif=true')
-      .then((p) => setPersoneller(Array.isArray(p) ? p : []))
-      .catch(() => setPersoneller([]));
+    load();
   }, []);
-
-  const personelBuSube = (p) => !p.sube_id || p.sube_id === subeId;
-
-  async function yeniKayit() {
-    const ad = (form.ad || '').trim();
-    const pin = (form.pin || '').trim();
-    if (!ad || pin.length !== 4 || !/^\d{4}$/.test(pin)) {
-      toast('Ad ve 4 haneli PIN girin', 'red');
-      return;
-    }
-    try {
-      await api(`/sube-panel/${encodeURIComponent(subeId)}/panel-kullanici`, {
-        method: 'POST',
-        body: {
-          ad,
-          pin,
-          personel_id: form.personel_id || null,
-        },
-      });
-      toast('Panel kullanıcısı eklendi');
-      setForm({ ad: '', pin: '', personel_id: '' });
-      const rows = await api(
-        `/sube-panel/merkez/${encodeURIComponent(subeId)}/panel-pin-kullanicilar`
-      );
-      setListe(Array.isArray(rows) ? rows : []);
-    } catch (e) {
-      toast(e.message || 'Kayıt başarısız', 'red');
-    }
-  }
 
   async function pinKaydet() {
     if (!pinGuncelle) return;
@@ -82,27 +37,37 @@ export default function SubePanelPinleri() {
     }
     try {
       await api(
-        `/sube-panel/merkez/${encodeURIComponent(subeId)}/panel-kullanici/${encodeURIComponent(pinGuncelle.id)}/pin`,
+        `/sube-panel/merkez/personel/${encodeURIComponent(pinGuncelle.id)}/panel-pin`,
         { method: 'PUT', body: { pin } }
       );
-      toast('PIN güncellendi');
+      toast('PIN kaydedildi — tüm şube panellerinde geçerlidir');
       setPinGuncelle(null);
       setYeniPin('');
-      const rows = await api(
-        `/sube-panel/merkez/${encodeURIComponent(subeId)}/panel-pin-kullanicilar`
-      );
-      setListe(Array.isArray(rows) ? rows : []);
+      load();
     } catch (e) {
-      toast(e.message || 'Güncelleme başarısız', 'red');
+      toast(e.message || 'Kayıt başarısız', 'red');
+    }
+  }
+
+  async function yoneticiToggle(p, yonetici) {
+    try {
+      await api(
+        `/sube-panel/merkez/personel/${encodeURIComponent(p.id)}/panel-yonetici`,
+        { method: 'PUT', body: { yonetici } }
+      );
+      toast(yonetici ? 'Yönetici işaretlendi' : 'Yönetici kaldırıldı');
+      load();
+    } catch (e) {
+      toast(e.message || 'İşlem başarısız', 'red');
     }
   }
 
   return (
     <div className="page" style={{ maxWidth: 920, margin: '0 auto', padding: '1rem' }}>
-      <h1 style={{ marginBottom: 8 }}>Şube panel PIN</h1>
+      <h1 style={{ marginBottom: 8 }}>Personel panel PIN</h1>
       <p style={{ color: '#64748b', marginBottom: 24, fontSize: 14 }}>
-        Şube açılışında günlük kasa kilidini açmak için kullanılan panel kullanıcıları ve 4 haneli PIN
-        buradan tanımlanır. Şube ekranında personel kendini seçip PIN girer.
+        Aynı PIN tüm şube panellerinde (kasa kilidi, kapanış onayı, vardiya devri) geçerlidir. Tanım
+        şube seçimine bağlı değildir; personel hangi şubede olursa olsun merkezden atanır.
       </p>
 
       {msg && (
@@ -119,103 +84,71 @@ export default function SubePanelPinleri() {
         </div>
       )}
 
-      <div style={{ marginBottom: 20, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-        <label>
-          Şube{' '}
-          <select
-            value={subeId}
-            onChange={(e) => setSubeId(e.target.value)}
-            style={{ marginLeft: 8, padding: '6px 10px' }}
-          >
-            {subeler.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.ad}
-              </option>
-            ))}
-          </select>
-        </label>
+      <div style={{ marginBottom: 16 }}>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={load} disabled={loading}>
+          ↻ Yenile
+        </button>
       </div>
 
-      <section
-        style={{
-          border: '1px solid #e2e8f0',
-          borderRadius: 12,
-          padding: 20,
-          marginBottom: 24,
-          background: '#fafafa',
-        }}
-      >
-        <h2 style={{ fontSize: 16, marginBottom: 12 }}>Yeni panel kullanıcısı</h2>
-        <div style={{ display: 'grid', gap: 10, maxWidth: 420 }}>
-          <input
-            placeholder="Görünen ad (örn. Sabah sorumlusu)"
-            value={form.ad}
-            onChange={(e) => setForm({ ...form, ad: e.target.value })}
-            style={{ padding: '8px 12px' }}
-          />
-          <select
-            value={form.personel_id}
-            onChange={(e) => setForm({ ...form, personel_id: e.target.value })}
-            style={{ padding: '8px 12px' }}
-          >
-            <option value="">Personel eşlemesi (isteğe bağlı)</option>
-            {personeller.filter(personelBuSube).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.ad_soyad}
-                {p.sube_id ? '' : ' (şubesiz)'}
-              </option>
-            ))}
-          </select>
-          <input
-            placeholder="4 haneli PIN"
-            maxLength={4}
-            inputMode="numeric"
-            value={form.pin}
-            onChange={(e) => setForm({ ...form, pin: e.target.value.replace(/\D/g, '').slice(0, 4) })}
-            style={{ padding: '8px 12px', letterSpacing: '0.2em' }}
-          />
-          <button type="button" onClick={yeniKayit} style={{ padding: '10px 16px', cursor: 'pointer' }}>
-            Kaydet
-          </button>
-        </div>
-      </section>
-
       <section>
-        <h2 style={{ fontSize: 16, marginBottom: 12 }}>Kayıtlı kullanıcılar</h2>
+        <h2 style={{ fontSize: 16, marginBottom: 12 }}>Aktif personel</h2>
         {loading ? (
           <p>Yükleniyor…</p>
         ) : liste.length === 0 ? (
-          <p style={{ color: '#64748b' }}>Bu şubede henüz panel kullanıcısı yok.</p>
+          <p style={{ color: '#64748b' }}>Aktif personel kaydı yok.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <thead>
               <tr style={{ textAlign: 'left', borderBottom: '2px solid #e2e8f0' }}>
-                <th style={{ padding: '8px 6px' }}>Ad</th>
-                <th style={{ padding: '8px 6px' }}>Personel</th>
-                <th style={{ padding: '8px 6px' }}>Durum</th>
+                <th style={{ padding: '8px 6px' }}>Ad soyad</th>
+                <th style={{ padding: '8px 6px' }}>Şube (kayıt)</th>
+                <th style={{ padding: '8px 6px' }}>PIN</th>
+                <th style={{ padding: '8px 6px' }}>Yönetici</th>
                 <th style={{ padding: '8px 6px' }} />
               </tr>
             </thead>
             <tbody>
-              {liste.map((u) => (
-                <tr key={u.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                  <td style={{ padding: '10px 6px' }}>{u.ad}</td>
+              {liste.map((p) => (
+                <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: '10px 6px' }}>{p.ad_soyad}</td>
+                  <td style={{ padding: '10px 6px' }}>{p.sube_adi || '—'}</td>
                   <td style={{ padding: '10px 6px' }}>
-                    {u.personel_ad_soyad || '—'}
+                    {p.panel_pin_tanimli ? (
+                      <span style={{ color: '#166534' }}>Tanımlı</span>
+                    ) : (
+                      <span style={{ color: '#94a3b8' }}>Yok</span>
+                    )}
                   </td>
-                  <td style={{ padding: '10px 6px' }}>{u.aktif ? 'Aktif' : 'Pasif'}</td>
-                  <td style={{ padding: '10px 6px' }}>
+                  <td style={{ padding: '10px 6px' }}>{p.yonetici ? 'Evet' : 'Hayır'}</td>
+                  <td style={{ padding: '10px 6px', whiteSpace: 'nowrap' }}>
                     <button
                       type="button"
-                      disabled={!u.aktif}
+                      className="btn btn-secondary btn-sm"
+                      style={{ marginRight: 8 }}
                       onClick={() => {
-                        setPinGuncelle({ id: u.id, ad: u.ad });
+                        setPinGuncelle({ id: p.id, ad: p.ad_soyad });
                         setYeniPin('');
                       }}
-                      style={{ padding: '6px 12px', cursor: u.aktif ? 'pointer' : 'not-allowed' }}
                     >
-                      PIN sıfırla
+                      PIN ata / değiştir
                     </button>
+                    {p.yonetici ? (
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => yoneticiToggle(p, false)}
+                      >
+                        Yönetici kaldır
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => yoneticiToggle(p, true)}
+                      >
+                        Yönetici yap
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -245,9 +178,10 @@ export default function SubePanelPinleri() {
               boxShadow: '0 20px 50px rgba(0,0,0,0.15)',
             }}
           >
-            <h3 style={{ marginTop: 0 }}>Yeni PIN — {pinGuncelle.ad}</h3>
+            <h3 style={{ marginTop: 0 }}>Panel PIN — {pinGuncelle.ad}</h3>
+            <p style={{ fontSize: 13, color: '#64748b' }}>Bu PIN tüm şubelerdeki panel işlemlerinde kullanılır.</p>
             <input
-              placeholder="4 haneli yeni PIN"
+              placeholder="4 haneli PIN"
               maxLength={4}
               inputMode="numeric"
               value={yeniPin}

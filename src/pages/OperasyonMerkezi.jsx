@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../utils/api';
+import { computeOpsKartVurgu } from '../utils/opsVurgu';
 
 const FILTRELER = [
   { id: 'all',     label: 'Tümü' },
@@ -13,6 +14,7 @@ function SubeKart({ k, onDetay }) {
   const o   = k.ozet || {};
   const op  = k.operasyon || {};
   const aktif = op.aktif;
+  const vurgu = computeOpsKartVurgu(k);
 
   // Kart rengi
   let borderColor = 'var(--border)';
@@ -21,12 +23,29 @@ function SubeKart({ k, onDetay }) {
 
   // Operasyon olaylarının durumu
   const tipIkon = { ACILIS: '🌅', KONTROL: '🔍', KAPANIS: '🌙', CIKIS: '🚪' };
-  const events  = (op.events || []).slice(0, 4);
+  const allEv = op.events || [];
+  const displayEv = allEv.slice(0, 5);
+  const acilisEv = allEv.filter(e => e.tip === 'ACILIS');
+  const digerDisplay = vurgu.mode === 'acilis'
+    ? displayEv.filter(e => e.tip !== 'ACILIS')
+    : displayEv;
 
   const uyarilar = (k.uyarilar || []).slice(0, 2);
 
+  const eventChip = e => {
+    const renk = e.durum === 'tamamlandi' ? 'var(--green)' : e.durum === 'gecikti' ? 'var(--red)' : 'var(--text3)';
+    return (
+      <span key={e.id} style={{ fontSize: 11, color: renk, display: 'flex', alignItems: 'center', gap: 3 }}>
+        {tipIkon[e.tip] || '○'} {e.tip}
+        {e.durum === 'gecikti' && op.aktif_gecikme_dk != null && e.id === aktif?.id
+          ? ` (${op.aktif_gecikme_dk}dk)` : ''}
+      </span>
+    );
+  };
+
   return (
     <div
+      className={vurgu.mode === 'card' ? 'ops-pulse-card' : undefined}
       style={{
         background: 'var(--bg2)',
         border: `1px solid ${borderColor}`,
@@ -59,24 +78,29 @@ function SubeKart({ k, onDetay }) {
         <span className={`badge ${k.sube_acik ? 'badge-green' : 'badge-gray'}`}>
           {k.sube_acik ? 'Şube açık' : 'Şube kapalı'}
         </span>
-        <span className={`badge ${k.ciro_girildi ? 'badge-green' : k.ciro_taslak_bekliyor ? 'badge-yellow' : 'badge-gray'}`}>
-          {k.ciro_girildi ? '✓ Ciro' : k.ciro_taslak_bekliyor ? '⏳ Onayda' : 'Ciro yok'}
-        </span>
+        {vurgu.mode === 'ciro_text' ? (
+          <span className="badge badge-yellow ops-pulse-text-only" title="Kapanış tamam; onaylı ciro veya bekleyen taslak yok">
+            Kapanış yapıldı — kanıt ciro yok
+          </span>
+        ) : (
+          <span className={`badge ${k.ciro_girildi ? 'badge-green' : k.ciro_taslak_bekliyor ? 'badge-yellow' : 'badge-gray'}`}>
+            {k.ciro_girildi ? '✓ Ciro' : k.ciro_taslak_bekliyor ? '⏳ Onayda' : 'Ciro yok'}
+          </span>
+        )}
       </div>
 
       {/* Operasyon events */}
-      {events.length > 0 && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {events.map(e => {
-            const renk = e.durum === 'tamamlandi' ? 'var(--green)' : e.durum === 'gecikti' ? 'var(--red)' : 'var(--text3)';
-            return (
-              <span key={e.id} style={{ fontSize: 11, color: renk, display: 'flex', alignItems: 'center', gap: 3 }}>
-                {tipIkon[e.tip] || '○'} {e.tip}
-                {e.durum === 'gecikti' && op.aktif_gecikme_dk != null && e.id === aktif?.id
-                  ? ` (${op.aktif_gecikme_dk}dk)` : ''}
-              </span>
-            );
-          })}
+      {displayEv.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {vurgu.mode === 'acilis' && acilisEv.length > 0 && (
+            <div className="ops-pulse-acilis-wrap" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ fontSize: 10, color: 'var(--text3)', width: '100%' }}>Açılış (gecikerek tamamlandı)</span>
+              {acilisEv.map(eventChip)}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {digerDisplay.map(eventChip)}
+          </div>
         </div>
       )}
 
