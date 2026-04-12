@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
 
-const BOSH = { kart_adi: '', banka: '', limit_tutar: '', kesim_gunu: 15, son_odeme_gunu: 25, faiz_orani: '', asgari_oran: 40 };
+const BOSH = { kart_adi: '', banka: '', limit_tutar: '', kesim_gunu: 15, son_odeme_gunu: 25, faiz_orani: '' };
 
 export default function Kartlar() {
   const [kartlar, setKartlar] = useState([]);
@@ -32,8 +32,7 @@ export default function Kartlar() {
 
   function duzenle(k) {
     setForm({ kart_adi: k.kart_adi, banka: k.banka, limit_tutar: k.limit_tutar,
-      kesim_gunu: k.kesim_gunu, son_odeme_gunu: k.son_odeme_gunu, faiz_orani: k.faiz_orani,
-      asgari_oran: k.asgari_oran != null ? k.asgari_oran : 40 });
+      kesim_gunu: k.kesim_gunu, son_odeme_gunu: k.son_odeme_gunu, faiz_orani: k.faiz_orani });
     setDuzenleId(k.id); setShowModal(true);
   }
 
@@ -50,11 +49,6 @@ export default function Kartlar() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(300px,1fr))', gap: 14 }}>
         {kartlar.filter(k => k.aktif).map(k => {
           const risk = riskClass(k.limit_doluluk || 0);
-          const donemAraligi = k.ekstre_donem_bas && k.ekstre_donem_bit
-            ? `${fmtDate(k.ekstre_donem_bas)} – ${fmtDate(k.ekstre_donem_bit)}`
-            : '---';
-          const kesimKalan = k.kapanisa_kalan_gun != null ? `${k.kapanisa_kalan_gun} gün` : '---';
-          const tahminiSonraki = k.gelecek_ekstre ?? k.tahmini_sonraki_kapanis_ekstre_simdi;
           return (
             <div key={k.id} className="card" style={{ borderTop: `3px solid var(--${risk})` }}>
               <div className="flex items-center justify-between mb-16">
@@ -88,17 +82,10 @@ export default function Kartlar() {
                 {[
                   ['Limit', fmt(k.limit_tutar)],
                   ['Kullanılabilir', fmt(k.kalan_limit)],
-                  ['Dönem borcu (faiz dahil)', fmt(k.donem_borcu ?? 0)],
-                  ['Asgari ödeme', fmt(k.asgari_odeme)],
-                  ['Bu dönem ekstre (harcama)', fmt(k.bu_ekstre ?? 0)],
-                  ['Taksit yükü (aylık)', fmt(k.aylik_taksit ?? 0)],
-                  ['Tahmini sonraki ekstre', fmt(tahminiSonraki ?? 0)],
-                  ['Açık dönem', donemAraligi],
-                  ['Kesime kalan', kesimKalan],
-                  ['Asgari oranı', `%${k.asgari_oran ?? 40}`],
-                  ['Faiz oranı', `%${k.faiz_orani}`],
-                  ['Kesim günü', `${k.kesim_gunu}. gün`],
-                  ['Son ödeme', `${k.son_odeme_gunu}. gün (${k.gun_kaldi} gün kaldı)`],
+                  ['Asgari Ödeme', fmt(k.asgari_odeme)],
+                  ['Faiz Oranı', `%${k.faiz_orani}`],
+                  ['Kesim Günü', `${k.kesim_gunu}. gün`],
+                  ['Son Ödeme', `${k.son_odeme_gunu}. gün (${k.gun_kaldi} gün kaldı)`],
                 ].map(([label, val]) => (
                   <div key={label} style={{ background: 'var(--bg3)', borderRadius: 6, padding: '7px 10px' }}>
                     <div style={{ color: 'var(--text3)', marginBottom: 2 }}>{label}</div>
@@ -147,17 +134,12 @@ export default function Kartlar() {
                   <label>Son Ödeme Günü</label>
                   <input type="number" min={1} max={31} value={form.son_odeme_gunu} onChange={e => setForm({ ...form, son_odeme_gunu: e.target.value })}/>
                 </div>
-                <div className="form-group">
-                  <label>Asgari ödeme oranı (%)</label>
-                  <input type="number" step="0.5" min={1} max={100} value={form.asgari_oran}
-                    onChange={e => setForm({ ...form, asgari_oran: e.target.value })}/>
-                </div>
                 <div className="form-group" style={{ gridColumn: '1/-1' }}>
-                  <label>Yıllık faiz oranı (% nominal)</label>
-                  <input type="number" step="0.1" placeholder="42" value={form.faiz_orani}
+                  <label>Aylık Faiz Oranı (%)</label>
+                  <input type="number" step="0.1" placeholder="3.5" value={form.faiz_orani}
                     onChange={e => setForm({ ...form, faiz_orani: e.target.value })}/>
                   <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-                    Ödenmeyen ekstre üzerinden aylık faiz tahmini (yıllık ÷ 12); banka tarifesi farklı olabilir
+                    Minimum ödeme yapılırsa kalan borça bu oran uygulanır
                   </div>
                 </div>
               </div>
