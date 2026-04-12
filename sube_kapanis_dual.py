@@ -120,13 +120,26 @@ def _bugun_acilis_kayitli_sabah_panel_id(cur, sube_id: str) -> Optional[str]:
 def _list_panel_kullanici(cur, sube_id: str) -> List[dict]:
     cur.execute(
         """
-        SELECT id, ad FROM sube_panel_kullanici
+        SELECT id, ad, yonetici, personel_id
+        FROM sube_panel_kullanici
         WHERE sube_id=%s AND aktif=TRUE
-        ORDER BY ad
+        ORDER BY yonetici DESC, ad
         """,
         (sube_id,),
     )
-    return [dict(x) for x in cur.fetchall()]
+    rows = [dict(x) for x in cur.fetchall()]
+    for r in rows:
+        r["yonetici"] = bool(r.get("yonetici"))
+    return rows
+
+
+def _dogrula_yonetici(cur, sube_id: str, kullanici_id: str, pin: str) -> dict:
+    u = _dogrula_pin(cur, kullanici_id, pin)
+    if str(u.get("sube_id") or "") != str(sube_id):
+        raise HTTPException(400, "Panel kullanıcısı bu şubeye ait değil")
+    if not u.get("yonetici"):
+        raise HTTPException(403, "Bu işlem için panel yöneticisi olmalısınız")
+    return u
 
 
 def vardiya_devir_panel_blob(cur, sube_id: str) -> Dict[str, Any]:
@@ -169,7 +182,20 @@ def get_kapanis_panel_blob(cur, sube_id: str) -> Dict[str, Any]:
     return vardiya_devir_panel_blob(cur, sube_id)
 
 
-def _upsert_ciro_taslak(cur, sube_id: str, nakit: float, pos: float, online: float, aciklama: str) -> None:
+def _upsert_ciro_taslak(
+    cur,
+    sube_id: str,
+    nakit: float,
+    pos: float,
+    online: float,
+    aciklama: str,
+    *,
+    personel_id: Optional[str] = None,
+    gonderen_ad: Optional[str] = None,
+    bildirim_saati: Optional[str] = None,
+    panel_kullanici_id: Optional[str] = None,
+    audit_etiket: str = "VARDIYA_DEVIR_TASLAK",
+) -> None:
     cur.execute(
         """
         SELECT id FROM ciro_taslak
@@ -180,31 +206,65 @@ def _upsert_ciro_taslak(cur, sube_id: str, nakit: float, pos: float, online: flo
     )
     ex = cur.fetchone()
     if ex:
+        sets = ["nakit=%s", "pos=%s", "online=%s", "aciklama=%s"]
+        vals: List[Any] = [nakit, pos, online, aciklama]
+        if personel_id is not None:
+            sets.append("personel_id=%s")
+            vals.append(personel_id)
+        if gonderen_ad is not None:
+            sets.append("gonderen_ad=%s")
+            vals.append(gonderen_ad)
+        if bildirim_saati is not None:
+            sets.append("bildirim_saati=%s")
+            vals.append(bildirim_saati)
+        if panel_kullanici_id is not None:
+            sets.append("panel_kullanici_id=%s")
+            vals.append(panel_kullanici_id)
+        vals.append(ex["id"])
         cur.execute(
-            """
-            UPDATE ciro_taslak
-            SET nakit=%s, pos=%s, online=%s, aciklama=%s
-            WHERE id=%s
-            """,
-            (nakit, pos, online, aciklama, ex["id"]),
+            f"UPDATE ciro_taslak SET {', '.join(sets)} WHERE id=%s",
+            tuple(vals),
         )
-        audit(cur, "ciro_taslak", ex["id"], "VARDIYA_DEVIR_TASLAK")
+        audit(cur, "ciro_taslak", ex["id"], audit_etiket)
         return
     tid = str(uuid.uuid4())
     cur.execute(
         """
         INSERT INTO ciro_taslak
-            (id, sube_id, tarih, nakit, pos, online, aciklama, personel_id, durum)
-        VALUES (%s, %s, CURRENT_DATE, %s, %s, %s, %s, NULL, 'bekliyor')
+            (id, sube_id, tarih, nakit, pos, online, aciklama, personel_id, durum,
+             gonderen_ad, bildirim_saati, panel_kullanici_id)
+        VALUES (%s, %s, CURRENT_DATE, %s, %s, %s, %s, %s, 'bekliyor', %s, %s, %s)
         """,
-        (tid, sube_id, nakit, pos, online, aciklama),
+        (
+            tid,
+            sube_id,
+            nakit,
+            pos,
+            online,
+            aciklama,
+            personel_id,
+            gonderen_ad,
+            bildirim_saati,
+            panel_kullanici_id,
+        ),
     )
-    audit(cur, "ciro_taslak", tid, "VARDIYA_DEVIR_TASLAK")
+    audit(cur, "ciro_taslak", tid, audit_etiket)
 
 
 class PanelKullaniciOlustur(BaseModel):
     ad: str
     pin: str
+    personel_id: Optional[str] = None
+    """Şubede zaten aktif panel kullanıcısı varsa zorunlu (yönetici PIN doğrulaması)."""
+    yetkili_panel_kullanici_id: Optional[str] = None
+    yetkili_pin: Optional[str] = None
+
+
+class PanelYoneticiAtamaBody(BaseModel):
+    yetkili_panel_kullanici_id: str
+    yetkili_pin: str
+    hedef_panel_kullanici_id: str
+    yonetici: bool = True
 
 
 class VardiyaDevirAdim1(BaseModel):
@@ -245,13 +305,90 @@ def panel_kullanici_ekle(sube_id: str, body: PanelKullaniciOlustur):
         _sube_getir(cur, sube_id)
         cur.execute(
             """
-            INSERT INTO sube_panel_kullanici (id, sube_id, ad, pin_salt, pin_hash, aktif)
-            VALUES (%s, %s, %s, %s, %s, TRUE)
+            SELECT COUNT(*) AS c FROM sube_panel_kullanici
+            WHERE sube_id=%s AND aktif=TRUE
             """,
-            (kid, sube_id, body.ad.strip(), salt, ph),
+            (sube_id,),
+        )
+        aktif_n = int(cur.fetchone()["c"])
+        ytid = (body.yetkili_panel_kullanici_id or "").strip()
+        ytp = (body.yetkili_pin or "").strip()
+        if aktif_n >= 1:
+            if not ytid or len(ytp) != 4 or not ytp.isdigit():
+                raise HTTPException(
+                    403,
+                    "Bu şubede kayıtlı panel kullanıcısı var: yeni eklemek için yönetici seçip PIN girin.",
+                )
+            _dogrula_yonetici(cur, sube_id, ytid, ytp)
+        ilk_kullanici = aktif_n == 0
+
+        pid = (body.personel_id or "").strip() or None
+        if pid:
+            cur.execute(
+                "SELECT id, sube_id FROM personel WHERE id=%s AND aktif=TRUE",
+                (pid,),
+            )
+            pr = cur.fetchone()
+            if not pr:
+                raise HTTPException(404, "Personel bulunamadı veya pasif")
+            ps = pr.get("sube_id")
+            if ps and str(ps) != str(sube_id):
+                raise HTTPException(400, "Personel kaydı bu şubeye bağlı değil")
+        cur.execute(
+            """
+            INSERT INTO sube_panel_kullanici
+                (id, sube_id, ad, pin_salt, pin_hash, aktif, personel_id, yonetici)
+            VALUES (%s, %s, %s, %s, %s, TRUE, %s, %s)
+            """,
+            (kid, sube_id, body.ad.strip(), salt, ph, pid, ilk_kullanici),
         )
         audit(cur, "sube_panel_kullanici", kid, "INSERT")
-    return {"success": True, "id": kid}
+    return {"success": True, "id": kid, "yonetici": ilk_kullanici}
+
+
+@router.post("/{sube_id}/panel-yonetici-atama")
+def panel_yonetici_atama(sube_id: str, body: PanelYoneticiAtamaBody):
+    hid = (body.hedef_panel_kullanici_id or "").strip()
+    if not hid:
+        raise HTTPException(400, "hedef_panel_kullanici_id gerekli")
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        _dogrula_yonetici(
+            cur,
+            sube_id,
+            (body.yetkili_panel_kullanici_id or "").strip(),
+            (body.yetkili_pin or "").strip(),
+        )
+        cur.execute(
+            """
+            SELECT id, yonetici FROM sube_panel_kullanici
+            WHERE id=%s AND sube_id=%s AND aktif=TRUE
+            """,
+            (hid, sube_id),
+        )
+        hedef = cur.fetchone()
+        if not hedef:
+            raise HTTPException(404, "Hedef panel kullanıcısı bulunamadı")
+        if not body.yonetici and hedef.get("yonetici"):
+            cur.execute(
+                """
+                SELECT COUNT(*) AS c FROM sube_panel_kullanici
+                WHERE sube_id=%s AND aktif=TRUE AND yonetici=TRUE AND id != %s
+                """,
+                (sube_id, hid),
+            )
+            if int(cur.fetchone()["c"]) < 1:
+                raise HTTPException(400, "En az bir panel yöneticisi kalmalıdır.")
+        cur.execute(
+            """
+            UPDATE sube_panel_kullanici
+            SET yonetici=%s
+            WHERE id=%s AND sube_id=%s
+            """,
+            (body.yonetici, hid, sube_id),
+        )
+        audit(cur, "sube_panel_kullanici", hid, "YONETICI_ATAMA" if body.yonetici else "YONETICI_KALDIR")
+    return {"success": True, "hedef_id": hid, "yonetici": body.yonetici}
 
 
 @router.post("/{sube_id}/vardiya-devri/adim1")

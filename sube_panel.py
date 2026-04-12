@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from database import db
 from finans_core import kasa_bakiyesi
 from kasa_service import insert_kasa_hareketi, audit
+from sube_kapanis_dual import _dogrula_pin, _list_panel_kullanici, _pin_hash
 
 router = APIRouter(prefix="/api/sube-panel", tags=["sube-panel"])
 
@@ -90,7 +91,8 @@ def _bugun_ciro_var_mi(cur, sube_id: str) -> bool:
 
 def _bugun_ciro_taslak_bekliyor(cur, sube_id: str) -> Optional[dict]:
     cur.execute("""
-        SELECT id, nakit, pos, online, olusturma, aciklama, personel_id
+        SELECT id, nakit, pos, online, olusturma, aciklama, personel_id,
+               gonderen_ad, bildirim_saati, panel_kullanici_id
         FROM ciro_taslak
         WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='bekliyor'
         ORDER BY olusturma DESC
@@ -170,6 +172,38 @@ def _bugun_sube_acildi_mi(cur, sube_id: str) -> bool:
     return cur.fetchone() is not None
 
 
+def _bugun_kasa_acildi_mi(cur, sube_id: str) -> bool:
+    cur.execute(
+        """
+        SELECT 1 FROM sube_kasa_gun_acma
+        WHERE sube_id=%s AND tarih=CURRENT_DATE
+        LIMIT 1
+        """,
+        (sube_id,),
+    )
+    return cur.fetchone() is not None
+
+
+def _bugun_kasa_acma_kaydi(cur, sube_id: str) -> Optional[dict]:
+    cur.execute(
+        """
+        SELECT k.panel_kullanici_id, k.olusturma, u.ad AS panel_kullanici_ad
+        FROM sube_kasa_gun_acma k
+        JOIN sube_panel_kullanici u ON u.id = k.panel_kullanici_id
+        WHERE k.sube_id=%s AND k.tarih=CURRENT_DATE
+        LIMIT 1
+        """,
+        (sube_id,),
+    )
+    r = cur.fetchone()
+    if not r:
+        return None
+    d = dict(r)
+    if d.get("olusturma"):
+        d["olusturma"] = str(d["olusturma"])
+    return d
+
+
 def _bugun_acilis_kaydi(cur, sube_id: str) -> Optional[dict]:
     cur.execute("""
         SELECT id, sube_id, tarih, acilis_saati, olusturma, personel_id, durum
@@ -194,8 +228,9 @@ def _gorev_listesi_uret(
     anlik_adet: int,
     sube_acildi_mi: bool,
     ciro_taslak_bekliyor: bool = False,
+    kasa_acildi_mi: bool = True,
 ) -> list:
-    """Günlük görev listesi. Açılış yalnızca sube_acilis kaydı ile tamamlanır (saat değil)."""
+    """Günlük görev listesi. Önce kasa PIN, sonra şube açılış (sube_acilis)."""
     _ = anlik_adet
     simdi = datetime.now().strftime("%H:%M")
     gorevler = []
@@ -204,13 +239,23 @@ def _gorev_listesi_uret(
     kapanis = sube.get("kapanis_saati") or "22:00"
 
     gorevler.append({
+        "id":       "kasa_kilit",
+        "baslik":   "Kasa kilidi",
+        "aciklama": "Günlük kasa kilitlidir. Sabah personel, kayıtlı PIN ile kilidi açmalıdır.",
+        "saat":     acilis,
+        "tur":      "kasa_kilit",
+        "tamamlandi": kasa_acildi_mi,
+        "aksiyon":  "kasa_ac" if not kasa_acildi_mi else None,
+    })
+
+    gorevler.append({
         "id":       "acilis",
         "baslik":   "Şube Açılışı",
         "aciklama": f"Planlanan açılış {acilis}. Kasa ve ekipman kontrolü — \"Şubeyi Aç\" ile kayıt oluşturun.",
         "saat":     acilis,
         "tur":      "acilis",
         "tamamlandi": sube_acildi_mi,
-        "aksiyon":  "sube_ac" if not sube_acildi_mi else None,
+        "aksiyon":  "sube_ac" if (kasa_acildi_mi and not sube_acildi_mi) else None,
     })
 
     if ciro_taslak_bekliyor and not ciro_girildi:
@@ -225,7 +270,7 @@ def _gorev_listesi_uret(
         ciro_baslik = "Günlük Ciro Girişi"
         ciro_aciklama = "Bugünkü nakit, POS ve online satışlarını girin — merkez onayından sonra ciroya işlenir."
         ciro_tamam = ciro_girildi
-        ciro_aksiyon = "ciro_gir" if (sube_acildi_mi and not ciro_girildi) else None
+        ciro_aksiyon = "ciro_gir" if (kasa_acildi_mi and sube_acildi_mi and not ciro_girildi) else None
 
     gorevler.append({
         "id":           "ciro",
@@ -262,6 +307,7 @@ def tum_subeler_durum():
             sid = s['id']
             ciro_girildi = _bugun_ciro_var_mi(cur, sid)
             sube_acik = _bugun_sube_acildi_mi(cur, sid)
+            kasa_acik = _bugun_kasa_acildi_mi(cur, sid)
 
             cur.execute("""
                 SELECT COALESCE(SUM(toplam), 0) as toplam
@@ -280,6 +326,8 @@ def tum_subeler_durum():
             taslak_bek = _bugun_ciro_taslak_bekliyor(cur, sid) is not None
             if sube_acik and ciro_girildi:
                 durum_txt = "✅ Tamamlandı"
+            elif not kasa_acik:
+                durum_txt = "🔒 Kasa kilidi (PIN)"
             elif not sube_acik:
                 durum_txt = "🌅 Açılış bekliyor"
             elif taslak_bek:
@@ -316,6 +364,7 @@ def tum_subeler_durum():
                 "sube_adi":       s['ad'],
                 "acilis_saati":   s.get('acilis_saati') or '09:00',
                 "kapanis_saati":  s.get('kapanis_saati') or '22:00',
+                "kasa_acik":      kasa_acik,
                 "sube_acik":      sube_acik,
                 "ciro_girildi":   ciro_girildi,
                 "ciro_taslak_bekliyor": taslak_bek,
@@ -339,6 +388,110 @@ class SubeAcilisModel(BaseModel):
     aciklama: Optional[str] = None
 
 
+class KasaKilitAcModel(BaseModel):
+    panel_kullanici_id: str
+    pin: str
+
+
+class PanelKullaniciPinGuncelle(BaseModel):
+    pin: str
+
+
+@router.post("/{sube_id}/kasa-kilit-ac")
+def kasa_kilit_ac(sube_id: str, body: KasaKilitAcModel):
+    """Günlük kasa kilidini kayıtlı panel kullanıcısı + 4 haneli PIN ile aç."""
+    uid = (body.panel_kullanici_id or "").strip()
+    pin = (body.pin or "").strip()
+    if not uid:
+        raise HTTPException(400, "panel_kullanici_id gerekli")
+    if len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "4 haneli PIN gerekli")
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        cur.execute(
+            "SELECT sube_id FROM sube_panel_kullanici WHERE id=%s AND aktif=TRUE",
+            (uid,),
+        )
+        row = cur.fetchone()
+        if not row or str(row["sube_id"]) != str(sube_id):
+            raise HTTPException(404, "Panel kullanıcısı bu şube için geçerli değil")
+        _dogrula_pin(cur, uid, pin)
+        cur.execute(
+            "SELECT 1 FROM sube_kasa_gun_acma WHERE sube_id=%s AND tarih=CURRENT_DATE",
+            (sube_id,),
+        )
+        if cur.fetchone():
+            return {
+                "success": True,
+                "idempotent": True,
+                "mesaj": "Kasa kilidi bugün zaten açılmış.",
+            }
+        cur.execute(
+            """
+            INSERT INTO sube_kasa_gun_acma (sube_id, tarih, panel_kullanici_id)
+            VALUES (%s, CURRENT_DATE, %s)
+            """,
+            (sube_id, uid),
+        )
+        audit(
+            cur,
+            "sube_kasa_gun_acma",
+            f"{sube_id}:{date.today()}",
+            "KASA_ACILDI",
+        )
+    return {"success": True, "idempotent": False}
+
+
+@router.get("/merkez/{sube_id}/panel-pin-kullanicilar")
+def merkez_panel_pin_kullanicilar(sube_id: str):
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        cur.execute(
+            """
+            SELECT u.id, u.ad, u.personel_id, u.aktif, u.yonetici,
+                   p.ad_soyad AS personel_ad_soyad
+            FROM sube_panel_kullanici u
+            LEFT JOIN personel p ON p.id = u.personel_id
+            WHERE u.sube_id=%s
+            ORDER BY u.yonetici DESC, u.aktif DESC, u.ad
+            """,
+            (sube_id,),
+        )
+        return [dict(x) for x in cur.fetchall()]
+
+
+@router.put("/merkez/{sube_id}/panel-kullanici/{kullanici_id}/pin")
+def merkez_panel_kullanici_pin_guncelle(
+    sube_id: str, kullanici_id: str, body: PanelKullaniciPinGuncelle
+):
+    p = (body.pin or "").strip()
+    if len(p) != 4 or not p.isdigit():
+        raise HTTPException(400, "4 haneli PIN gerekli")
+    salt = uuid.uuid4().hex[:12]
+    ph = _pin_hash(p, salt)
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        cur.execute(
+            """
+            SELECT id FROM sube_panel_kullanici
+            WHERE id=%s AND sube_id=%s
+            """,
+            (kullanici_id, sube_id),
+        )
+        if not cur.fetchone():
+            raise HTTPException(404, "Panel kullanıcısı bulunamadı")
+        cur.execute(
+            """
+            UPDATE sube_panel_kullanici
+            SET pin_salt=%s, pin_hash=%s
+            WHERE id=%s
+            """,
+            (salt, ph, kullanici_id),
+        )
+        audit(cur, "sube_panel_kullanici", kullanici_id, "PIN_GUNCELLE")
+    return {"success": True}
+
+
 @router.post("/{sube_id}/acilis")
 def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
     """
@@ -349,6 +502,11 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
     saat_str = simdi.strftime("%H:%M")
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
+        if not _bugun_kasa_acildi_mi(cur, sube_id):
+            raise HTTPException(
+                403,
+                "Önce günlük kasa kilidini PIN ile açmalısınız.",
+            )
         cur.execute("""
             SELECT id FROM sube_acilis
             WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='acildi'
@@ -502,6 +660,11 @@ Sadece geçerli bir JSON nesnesi döndür. Başka metin, markdown veya açıklam
         amounts = _x_extract_amounts(parsed)
 
         with db() as (conn, cur):
+            if not _bugun_kasa_acildi_mi(cur, sube_id):
+                raise HTTPException(
+                    403,
+                    "Önce kasa kilidini PIN ile açmalısınız.",
+                )
             if not _bugun_sube_acildi_mi(cur, sube_id):
                 raise HTTPException(
                     403,
@@ -567,47 +730,72 @@ Sadece geçerli bir JSON nesnesi döndür. Başka metin, markdown veya açıklam
         raise HTTPException(400, f"OCR işlenemedi: {e!s}") from e
 
 
-@router.get("/{sube_id}")
-def sube_panel_getir(sube_id: str):
-    with db() as (conn, cur):
-        sube = _sube_getir(cur, sube_id)
-        ciro_girildi = _bugun_ciro_var_mi(cur, sube_id)
-        taslak_row = _bugun_ciro_taslak_bekliyor(cur, sube_id)
-        ciro_taslak_bekliyor = taslak_row is not None
-        anlik_adet = _bugun_anlik_gider_sayisi(cur, sube_id)
-        sube_acildi_mi = _bugun_sube_acildi_mi(cur, sube_id)
-        acilis_kaydi = _bugun_acilis_kaydi(cur, sube_id)
+def _build_sube_panel_payload(cur, sube_id: str) -> dict:
+    """Şube panel tam JSON (CFO / tam yetki)."""
+    sube = _sube_getir(cur, sube_id)
+    ciro_girildi = _bugun_ciro_var_mi(cur, sube_id)
+    taslak_row = _bugun_ciro_taslak_bekliyor(cur, sube_id)
+    ciro_taslak_bekliyor = taslak_row is not None
+    anlik_adet = _bugun_anlik_gider_sayisi(cur, sube_id)
+    sube_acildi_mi = _bugun_sube_acildi_mi(cur, sube_id)
+    kasa_acildi_mi = _bugun_kasa_acildi_mi(cur, sube_id)
+    kasa_acma = _bugun_kasa_acma_kaydi(cur, sube_id)
+    acilis_kaydi = _bugun_acilis_kaydi(cur, sube_id)
 
-        cur.execute("""
-            SELECT
-                COALESCE(SUM(nakit), 0)  as nakit,
-                COALESCE(SUM(pos), 0)    as pos,
-                COALESCE(SUM(online), 0) as online,
-                COALESCE(SUM(toplam), 0) as toplam
-            FROM ciro
-            WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='aktif'
-        """, (sube_id,))
-        ciro_ozet = dict(cur.fetchone())
+    cur.execute("""
+        SELECT
+            COALESCE(SUM(nakit), 0)  as nakit,
+            COALESCE(SUM(pos), 0)    as pos,
+            COALESCE(SUM(online), 0) as online,
+            COALESCE(SUM(toplam), 0) as toplam
+        FROM ciro
+        WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='aktif'
+    """, (sube_id,))
+    ciro_ozet = dict(cur.fetchone())
 
-        gorevler = _gorev_listesi_uret(
-            sube, ciro_girildi, anlik_adet, sube_acildi_mi, ciro_taslak_bekliyor
-        )
-        tamamlanan = sum(1 for g in gorevler if g['tamamlandi'])
+    gorevler = _gorev_listesi_uret(
+        sube,
+        ciro_girildi,
+        anlik_adet,
+        sube_acildi_mi,
+        ciro_taslak_bekliyor,
+        kasa_acildi_mi=kasa_acildi_mi,
+    )
+    panel_pin_kullanicilar = _list_panel_kullanici(cur, sube_id)
+    cur.execute(
+        """
+        SELECT COUNT(*)::int AS c FROM sube_panel_kullanici
+        WHERE sube_id=%s AND aktif=TRUE AND yonetici=TRUE
+        """,
+        (sube_id,),
+    )
+    panel_yonetici_sayisi = int(cur.fetchone()["c"])
+    tamamlanan = sum(1 for g in gorevler if g["tamamlandi"])
 
-        from sube_operasyon import build_panel_operasyon_blob
-        from sube_kapanis_dual import vardiya_devir_panel_blob
+    from sube_operasyon import build_panel_operasyon_blob
+    from sube_kapanis_dual import vardiya_devir_panel_blob
 
-        operasyon = build_panel_operasyon_blob(cur, sube_id, sube)
-        vardiya_devir = vardiya_devir_panel_blob(cur, sube_id)
+    operasyon = build_panel_operasyon_blob(cur, sube_id, sube)
+    vardiya_devir = vardiya_devir_panel_blob(cur, sube_id)
+
+    kasa_kilitli = not kasa_acildi_mi
+    panel_blok = kasa_kilitli or (not sube_acildi_mi)
 
     return {
         "sube_id":        sube_id,
-        "sube_adi":       sube['ad'],
-        "acilis_saati":   sube.get('acilis_saati') or '09:00',
-        "kapanis_saati":  sube.get('kapanis_saati') or '22:00',
+        "sube_adi":       sube["ad"],
+        "acilis_saati":   sube.get("acilis_saati") or "09:00",
+        "kapanis_saati":  sube.get("kapanis_saati") or "22:00",
         "tarih":          str(date.today()),
+        "kasa_kilitli":   kasa_kilitli,
+        "kasa_acma":      kasa_acma,
         "sube_acik":      sube_acildi_mi,
-        "panel_kilitli":  not sube_acildi_mi,
+        "panel_kilitli":  panel_blok,
+        "panel_blok_asama": (
+            "kasa" if kasa_kilitli else ("acilis" if not sube_acildi_mi else None)
+        ),
+        "panel_pin_kullanicilar": panel_pin_kullanicilar,
+        "panel_yonetici_sayisi": panel_yonetici_sayisi,
         "acilis_kaydi":   acilis_kaydi,
         "gorevler":       gorevler,
         "tamamlanan":     tamamlanan,
@@ -620,6 +808,63 @@ def sube_panel_getir(sube_id: str):
         "operasyon":      operasyon,
         "vardiya_devir":  vardiya_devir,
     }
+
+
+def sube_personel_panel_public(payload: dict) -> dict:
+    """
+    Personel paneli: finansal sonuç / fark / detaylı vardiya nakitleri gösterilmez.
+    """
+    p = dict(payload)
+    p.pop("ciro_ozet", None)
+    p.pop("ciro_taslak", None)
+    p.pop("anlik_gider_adet", None)
+    vd = p.get("vardiya_devir")
+    if isinstance(vd, dict):
+        pk = vd.get("panel_kullanicilar")
+        p["vardiya_devir"] = {
+            "bilgi": "Vardiya / kasa detayı personel ekranında gösterilmez.",
+            "vardiya_devir_pin_zorunlu": vd.get("vardiya_devir_pin_zorunlu"),
+            "panel_kullanici_sayisi": len(pk) if isinstance(pk, list) else 0,
+        }
+    op = p.get("operasyon")
+    if isinstance(op, dict):
+        evs = op.get("events") or []
+        akt = op.get("aktif")
+        akt_kisa = None
+        if isinstance(akt, dict):
+            akt_kisa = {
+                k: akt.get(k)
+                for k in (
+                    "id",
+                    "tip",
+                    "durum",
+                    "sistem_slot_ts",
+                    "son_teslim_ts",
+                    "alarm_sayisi",
+                )
+            }
+        p["operasyon"] = {
+            "sunucu_saati": op.get("sunucu_saati"),
+            "sunucu_iso": op.get("sunucu_iso"),
+            "aktif": akt_kisa,
+            "aktif_gecikme_dk": op.get("aktif_gecikme_dk"),
+            "aktif_kritik": op.get("aktif_kritik"),
+            "aktif_suphe": op.get("aktif_suphe"),
+            "alarm_politikasi": op.get("alarm_politikasi"),
+            "events_ozet": [{"tip": e.get("tip"), "durum": e.get("durum")} for e in evs],
+            "esikler": op.get("esikler"),
+        }
+    p["uyari"] = (
+        "Bu ekran operasyon disiplini içindir; ciro toplamları ve kasa farkı yalnızca "
+        "merkez (CFO / operasyon) tarafında analiz edilir."
+    )
+    return p
+
+
+@router.get("/{sube_id}")
+def sube_panel_getir(sube_id: str):
+    with db() as (conn, cur):
+        return _build_sube_panel_payload(cur, sube_id)
 
 
 class SubeCiroModel(BaseModel):
@@ -647,6 +892,11 @@ def sube_ciro_gir(sube_id: str, body: SubeCiroModel):
 
     with db() as (conn, cur):
         sube = _sube_getir(cur, sube_id)
+        if not _bugun_kasa_acildi_mi(cur, sube_id):
+            raise HTTPException(
+                403,
+                "Önce günlük kasa kilidini PIN ile açmalısınız.",
+            )
         if not _bugun_sube_acildi_mi(cur, sube_id):
             raise HTTPException(
                 403,
@@ -717,6 +967,11 @@ def sube_anlik_gider_gir(sube_id: str, body: SubeAnlikGiderModel):
 
     with db() as (conn, cur):
         sube = _sube_getir(cur, sube_id)
+        if not _bugun_kasa_acildi_mi(cur, sube_id):
+            raise HTTPException(
+                403,
+                "Önce günlük kasa kilidini PIN ile açmalısınız.",
+            )
         if not _bugun_sube_acildi_mi(cur, sube_id):
             raise HTTPException(
                 403,

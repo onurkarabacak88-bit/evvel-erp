@@ -1,14 +1,14 @@
 FROM node:20-slim AS frontend
- 
+
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-# Vite build (outDir=static, emptyOutDir) tüm static/ siler — şube paneli HTML korunur
-RUN set -eux; \
-    if [ -f static/sube_panel.html ]; then cp static/sube_panel.html /tmp/sube_panel.html; fi; \
-    npm run build; \
-    if [ -f /tmp/sube_panel.html ]; then cp /tmp/sube_panel.html static/sube_panel.html; fi
+# Vite build (outDir=static, emptyOutDir) static/ içeriğini siler — kök HTML panelleri korunur
+RUN mkdir -p /tmp/evvel_static_html && \
+    (cp static/*.html /tmp/evvel_static_html/ 2>/dev/null || true) && \
+    npm run build && \
+    (cp /tmp/evvel_static_html/*.html static/ 2>/dev/null || true)
 
 FROM python:3.11-slim
 

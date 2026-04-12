@@ -2,8 +2,15 @@
 Merkezi kasa yazma ve audit — main.py ile döngüsel import olmaması için ayrı modül.
 sube_panel ve main aynı insert_kasa_hareketi / audit imzasını kullanır.
 """
+from __future__ import annotations
+
+import calendar
 import json
 import uuid
+from datetime import date
+from typing import List
+
+from finans_core import kart_borc
 
 
 KASA_ETKISI_MAP = {
@@ -54,3 +61,183 @@ def audit(cur, tablo, kayit_id, islem, eski=None, yeni=None):
         VALUES (%s,%s,%s,%s,%s,%s)""",
         (str(uuid.uuid4()), tablo, kayit_id, islem,
          safe_json(eski), safe_json(yeni)))
+
+
+KASA_IPTAL_MAP = {
+    "ANLIK_GIDER_IPTAL": True,
+    "CIRO_IPTAL": True,
+    "DIS_KAYNAK_IPTAL": True,
+    "KART_ODEME_IPTAL": True,
+    "VADELI_IPTAL": True,
+    "ODEME_IPTAL": True,
+}
+
+
+def iptal_kasa_hareketi(cur, kaynak_id, kaynak_tablo, islem_turu, iptal_turu, aciklama):
+    """
+    Merkezi kasa iptal fonksiyonu.
+    KURAL 1: Olmayan şey iptal edilemez (durum filtresi YOK — kasa_etkisi bazlı)
+    KURAL 2: Aynı şey iki kez iptal edilemez
+    KURAL 3: Her hareketin karşılığı vardır + kasa_etkisi zorunlu
+    """
+    cur.execute(
+        """
+        SELECT id, tutar FROM kasa_hareketleri
+        WHERE kaynak_id=%s AND islem_turu=%s AND kasa_etkisi=true AND durum='aktif'
+    """,
+        (kaynak_id, islem_turu),
+    )
+    mevcutlar = cur.fetchall()
+    if not mevcutlar:
+        raise Exception(f"İptal edilecek kayıt bulunamadı — {islem_turu} / {kaynak_id}")
+
+    cur.execute(
+        """
+        SELECT 1 FROM kasa_hareketleri
+        WHERE kaynak_id=%s AND islem_turu=%s
+        LIMIT 1
+    """,
+        (kaynak_id, iptal_turu),
+    )
+    if cur.fetchone():
+        raise Exception(f"Bu kayıt zaten iptal edilmiş — {iptal_turu} / {kaynak_id}")
+
+    for m in mevcutlar:
+        cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s", (m["id"],))
+
+    net_tutar = sum(float(m["tutar"]) for m in mevcutlar)
+    _kasa_etkisi = KASA_IPTAL_MAP.get(iptal_turu, True)
+    cur.execute(
+        """
+        INSERT INTO kasa_hareketleri
+            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type, kasa_etkisi)
+        VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s, %s, %s, %s)
+    """,
+        (
+            str(uuid.uuid4()),
+            iptal_turu,
+            -net_tutar,
+            aciklama,
+            kaynak_tablo,
+            kaynak_id,
+            str(uuid.uuid4()),
+            kaynak_tablo.upper(),
+            _kasa_etkisi,
+        ),
+    )
+
+    if cur.rowcount == 0:
+        raise Exception(f"İptal kaydı yazılamadı — {iptal_turu} / {kaynak_id}")
+
+
+def vadeli_alim_kapat(cur, vadeli_id: str, tarih: str):
+    """
+    Vadeli alım kapatma — 3 tabloyu atomik kapatır (çağıran transaction içinde çalışır).
+    Zaten 'odendi' ise idempotent (UPDATE 0 row).
+    """
+    cur.execute(
+        "UPDATE vadeli_alimlar SET durum='odendi' WHERE id=%s AND durum='bekliyor'",
+        (vadeli_id,),
+    )
+    cur.execute(
+        """
+        UPDATE odeme_plani
+        SET durum='odendi', odeme_tarihi=%s
+        WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+        AND durum IN ('bekliyor','onay_bekliyor')
+    """,
+        (tarih, vadeli_id),
+    )
+    cur.execute(
+        """
+        UPDATE onay_kuyrugu
+        SET durum='onaylandi', onay_tarihi=NOW()
+        WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+        AND durum='bekliyor'
+    """,
+        (vadeli_id,),
+    )
+    cur.execute(
+        """
+        UPDATE onay_kuyrugu
+        SET durum='onaylandi', onay_tarihi=NOW()
+        WHERE kaynak_id IN (
+            SELECT id FROM odeme_plani
+            WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+        )
+        AND durum='bekliyor'
+    """,
+        (vadeli_id,),
+    )
+
+
+def onay_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
+    cur.execute(
+        """INSERT INTO onay_kuyrugu (id,islem_turu,kaynak_tablo,kaynak_id,aciklama,tutar,tarih)
+        VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+        (
+            str(uuid.uuid4()),
+            islem_turu,
+            kaynak_tablo,
+            kaynak_id,
+            aciklama,
+            tutar,
+            tarih,
+        ),
+    )
+
+
+def kart_plan_guncelle_tx(cur) -> List[str]:
+    """
+    Mevcut cursor ile ödeme planlarını günceller — ayrı db() açmaz.
+    Kart harcama/fatura/vadeli ödemesi ile aynı transaction içinde çağrılmalıdır.
+    """
+    bugun = date.today()
+    yil, ay = bugun.year, bugun.month
+    guncellenen: List[str] = []
+    cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE")
+    for k in cur.fetchall():
+        son_odeme_gun = k["son_odeme_gunu"] or 25
+        son_gun = calendar.monthrange(yil, ay)[1]
+        son_odeme_gun = min(son_odeme_gun, son_gun)
+        odeme_tarihi = date(yil, ay, son_odeme_gun)
+
+        borc = kart_borc(cur, k["id"])
+        if borc <= 0:
+            continue
+
+        asgari_oran_pct = float(k.get("asgari_oran", 40)) / 100
+        asgari = round(borc * asgari_oran_pct, 2)
+
+        cur.execute(
+            """
+            UPDATE odeme_plani
+            SET odenecek_tutar=%s, asgari_tutar=%s
+            WHERE kart_id=%s
+            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+            AND durum IN ('bekliyor','onay_bekliyor')
+        """,
+            (borc, asgari, k["id"], str(odeme_tarihi)),
+        )
+
+        if cur.rowcount > 0:
+            guncellenen.append(f"{k['kart_adi']}: {borc:,.0f}₺")
+        else:
+            pid = str(uuid.uuid4())
+            cur.execute(
+                """
+                INSERT INTO odeme_plani
+                    (id, kart_id, tarih, odenecek_tutar, asgari_tutar, aciklama, durum)
+                VALUES (%s, %s, %s, %s, %s, %s, 'bekliyor')
+            """,
+                (
+                    pid,
+                    k["id"],
+                    odeme_tarihi,
+                    borc,
+                    asgari,
+                    f"Kart: {k['kart_adi']} — {k['banka']}",
+                ),
+            )
+            guncellenen.append(f"{k['kart_adi']}: {borc:,.0f}₺ (yeni plan)")
+    return guncellenen

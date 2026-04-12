@@ -5,7 +5,36 @@ import psycopg2.pool
 from contextlib import contextmanager
 import threading
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
+# Yerel geliştirme: kökte .env → Railway'deki DATABASE_URL (production'da Railway zaten env verir)
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
+
+def _normalize_postgres_dsn(url: str) -> str:
+    """Railway / bazı paneller postgres:// verir; libpq/psycopg2 için postgresql:// tercih edilir."""
+    u = (url or "").strip()
+    if u.startswith("postgres://"):
+        return "postgresql://" + u[len("postgres://") :]
+    return u
+
+
+def _resolve_database_url() -> str:
+    raw = (os.environ.get("DATABASE_URL") or "").strip()
+    if not raw:
+        raise RuntimeError(
+            "DATABASE_URL tanımlı değil. Railway: Postgres veya uygulama servisinizde "
+            '"Variables" → DATABASE_URL değerini kopyalayın.\n'
+            "  • Yerel: proje köküne .env dosyası oluşturup DATABASE_URL=... satırı ekleyin "
+            "(python-dotenv ile okunur).\n"
+            "  • PowerShell: $env:DATABASE_URL='postgresql://...'\n"
+            "Yerel PostgreSQL kurmanız gerekmez; bağlantı doğrudan Railway veritabanına gider."
+        )
+    return _normalize_postgres_dsn(raw)
+
 
 # ── CONNECTION POOL ────────────────────────────────────────────
 # min=2: her zaman 2 hazır bağlantı
@@ -13,16 +42,18 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 _pool = None
 _pool_lock = threading.Lock()
 
+
 def _get_pool():
     global _pool
     if _pool is None:
         with _pool_lock:
             if _pool is None:
+                dsn = _resolve_database_url()
                 _pool = psycopg2.pool.ThreadedConnectionPool(
                     minconn=2,
                     maxconn=15,
-                    dsn=DATABASE_URL,
-                    cursor_factory=psycopg2.extras.RealDictCursor
+                    dsn=dsn,
+                    cursor_factory=psycopg2.extras.RealDictCursor,
                 )
     return _pool
 
@@ -189,6 +220,60 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_sube_operasyon_sube_tarih
             ON sube_operasyon_event (sube_id, tarih)
         """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'sube_operasyon_event'
+                      AND column_name = 'alarm_sayisi'
+                ) THEN
+                    ALTER TABLE sube_operasyon_event
+                    ADD COLUMN alarm_sayisi INT NOT NULL DEFAULT 0;
+                END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
+
+        # ── Operasyon uyarıları (merkez/ops; açılış kasa farkı vb.) ─
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_operasyon_uyari (
+                id           TEXT PRIMARY KEY,
+                sube_id      TEXT NOT NULL REFERENCES subeler(id),
+                tarih        DATE NOT NULL DEFAULT CURRENT_DATE,
+                tip          TEXT NOT NULL,
+                seviye       TEXT NOT NULL DEFAULT 'normal'
+                    CHECK (seviye IN ('normal','uyari','kritik')),
+                beklenen_tl  NUMERIC(14,2),
+                gercek_tl    NUMERIC(14,2),
+                fark_tl      NUMERIC(14,2),
+                mesaj        TEXT,
+                okundu       BOOLEAN NOT NULL DEFAULT FALSE,
+                olusturma    TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sube_op_uyari_sube_tarih
+            ON sube_operasyon_uyari (sube_id, tarih)
+        """)
+
+        # ── Operasyon defteri (append-only; silme yok) ───────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS operasyon_defter (
+                id           TEXT PRIMARY KEY,
+                sube_id      TEXT NOT NULL REFERENCES subeler(id),
+                tarih        DATE NOT NULL DEFAULT CURRENT_DATE,
+                olay_ts      TIMESTAMP NOT NULL DEFAULT NOW(),
+                etiket       TEXT NOT NULL,
+                aciklama     TEXT,
+                ref_event_id TEXT,
+                olusturma    TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_operasyon_defter_sube_ts
+            ON operasyon_defter (sube_id, olay_ts DESC)
+        """)
 
         # ── ŞUBE PANEL KULLANICI (PIN — vardiya devri vb.) ───────
         cur.execute("""
@@ -199,12 +284,28 @@ def init_db():
                 pin_salt    TEXT NOT NULL,
                 pin_hash    TEXT NOT NULL,
                 aktif       BOOLEAN NOT NULL DEFAULT TRUE,
+                yonetici    BOOLEAN NOT NULL DEFAULT FALSE,
                 olusturma   TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_sube_panel_kul_sube
             ON sube_panel_kullanici (sube_id, aktif)
+        """)
+
+        # Günlük kasa kilidi: sabah PIN ile açılır (satır = o gün için açılmış).
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_kasa_gun_acma (
+                sube_id              TEXT NOT NULL REFERENCES subeler(id),
+                tarih                DATE NOT NULL DEFAULT CURRENT_DATE,
+                panel_kullanici_id   TEXT NOT NULL REFERENCES sube_panel_kullanici(id),
+                olusturma            TIMESTAMP NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (sube_id, tarih)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sube_kasa_gun_acma_tarih
+            ON sube_kasa_gun_acma (tarih)
         """)
 
         # Resmi vardiya devri (sabahçı → akşamcı): her şubede bu devir çift kişi.
@@ -469,6 +570,58 @@ def init_db():
             ON ciro_taslak (sube_id, tarih)
             WHERE durum = 'bekliyor'
         """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'ciro_taslak'
+                      AND column_name = 'gonderen_ad'
+                ) THEN
+                    ALTER TABLE ciro_taslak ADD COLUMN gonderen_ad TEXT;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'ciro_taslak'
+                      AND column_name = 'bildirim_saati'
+                ) THEN
+                    ALTER TABLE ciro_taslak ADD COLUMN bildirim_saati TEXT;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'ciro_taslak'
+                      AND column_name = 'panel_kullanici_id'
+                ) THEN
+                    ALTER TABLE ciro_taslak ADD COLUMN panel_kullanici_id TEXT;
+                END IF;
+            END $$;
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'operasyon_defter'
+                      AND column_name = 'personel_id'
+                ) THEN
+                    ALTER TABLE operasyon_defter ADD COLUMN personel_id TEXT;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'operasyon_defter'
+                      AND column_name = 'personel_ad'
+                ) THEN
+                    ALTER TABLE operasyon_defter ADD COLUMN personel_ad TEXT;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'operasyon_defter'
+                      AND column_name = 'bildirim_saati'
+                ) THEN
+                    ALTER TABLE operasyon_defter ADD COLUMN bildirim_saati TEXT;
+                END IF;
+            END $$;
+        """)
 
         # ── KARTLAR ────────────────────────────────────────────
         cur.execute("""
@@ -717,6 +870,50 @@ def init_db():
                     WHERE table_name='personel' AND column_name='vardiya_max_weekly_hours')
                 THEN ALTER TABLE personel ADD COLUMN vardiya_max_weekly_hours NUMERIC(6,2); END IF;
             END $$;
+        """)
+
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'sube_panel_kullanici'
+                      AND column_name = 'personel_id'
+                ) THEN
+                    ALTER TABLE sube_panel_kullanici
+                    ADD COLUMN personel_id TEXT REFERENCES personel(id);
+                END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'sube_panel_kullanici'
+                      AND column_name = 'yonetici'
+                ) THEN
+                    ALTER TABLE sube_panel_kullanici
+                    ADD COLUMN yonetici BOOLEAN NOT NULL DEFAULT FALSE;
+                END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
+        # Şubede hiç yönetici yoksa, en eski aktif panel kullanıcısını yönetici yap (tek seferlik denge).
+        cur.execute("""
+            UPDATE sube_panel_kullanici u SET yonetici = TRUE
+            WHERE u.aktif = TRUE
+              AND u.id = (
+                  SELECT x.id FROM sube_panel_kullanici x
+                  WHERE x.sube_id = u.sube_id AND x.aktif = TRUE
+                  ORDER BY x.olusturma ASC NULLS LAST
+                  LIMIT 1
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM sube_panel_kullanici y
+                  WHERE y.sube_id = u.sube_id AND y.yonetici = TRUE AND y.aktif = TRUE
+              );
         """)
 
         cur.execute("""

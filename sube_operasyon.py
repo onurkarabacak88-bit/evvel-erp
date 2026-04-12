@@ -249,9 +249,12 @@ def build_panel_operasyon_blob(cur, sube_id: str, sube: dict) -> Dict[str, Any]:
     if aktif:
         st = datetime.fromisoformat(aktif["sistem_slot_ts"].replace(" ", "T"))
         dk = max(0, int((simdi - st).total_seconds() // 60))
-        out["aktif_gecikme_dk"] = dk if aktif["durum"] == "gecikti" else None
+        out["aktif_gecikme_dk"] = dk
         out["aktif_kritik"] = aktif["durum"] == "gecikti" and dk >= 10
         out["aktif_suphe"] = aktif["durum"] == "gecikti" and dk >= 5
+        from operasyon_kurallar import alarm_politikasi
+
+        out["alarm_politikasi"] = alarm_politikasi(dk, str(aktif.get("durum") or ""))
     return out
 
 
@@ -265,9 +268,22 @@ class OperasyonTamamla(BaseModel):
     snap_online: Optional[float] = None
     x_raporu_gonderildi: bool = False
     ciro_gonderim_onay: bool = False
+    # KAPANIS: merkez ciro taslağı (nakit/POS/online) + PIN ile onaylayan
+    ciro_nakit: Optional[float] = None
+    ciro_pos: Optional[float] = None
+    ciro_online: Optional[float] = None
+    panel_kullanici_id: Optional[str] = None
+    pin: Optional[str] = None
 
 
 def _insert_acilis_if_needed(cur, sube_id: str, personel_id: Optional[str], aciklama: str) -> None:
+    from sube_panel import _bugun_kasa_acildi_mi
+
+    if not _bugun_kasa_acildi_mi(cur, sube_id):
+        raise HTTPException(
+            403,
+            "Önce günlük kasa kilidini şube panelinden PIN ile açmalısınız.",
+        )
     cur.execute(
         """
         SELECT id FROM sube_acilis
@@ -333,6 +349,39 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 (simdi, body.personel_saat, body.kasa_sayim, event_id),
             )
             audit(cur, "sube_operasyon_event", event_id, "ACILIS_TAMAMLANDI")
+            from operasyon_defter import operasyon_defter_ekle
+            from operasyon_kurallar import beklenen_dunku_kapanis_kasa, tolerans_seviyesi
+
+            bek = beklenen_dunku_kapanis_kasa(cur, sube_id)
+            ks = float(body.kasa_sayim or 0)
+            if bek is not None:
+                fark = round(ks - float(bek), 2)
+                if abs(fark) > 0.01:
+                    sev = tolerans_seviyesi(fark)
+                    uid = str(uuid.uuid4())
+                    cur.execute(
+                        """
+                        INSERT INTO sube_operasyon_uyari
+                            (id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj)
+                        VALUES (%s, %s, CURRENT_DATE, 'ACILIS_KASA_FARK', %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            uid,
+                            sube_id,
+                            sev,
+                            bek,
+                            ks,
+                            fark,
+                            f"Açılış kasası dün kapanışa göre fark: {fark:,.2f} TL ({sev})",
+                        ),
+                    )
+            operasyon_defter_ekle(
+                cur,
+                sube_id,
+                "ACILIS_TAMAM",
+                f"Operasyon ACILIS tamamlandı, kasa_sayim={ks}",
+                event_id,
+            )
 
         elif tip == "KONTROL":
             if body.kasa_sayim is None or body.kasa_sayim < 0:
@@ -356,21 +405,74 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 ),
             )
             audit(cur, "sube_operasyon_event", event_id, "KONTROL_TAMAMLANDI")
+            from operasyon_defter import operasyon_defter_ekle
+
+            operasyon_defter_ekle(
+                cur,
+                sube_id,
+                "KONTROL_TAMAM",
+                f"KONTROL tamamlandı kasa_sayim={body.kasa_sayim}",
+                event_id,
+            )
 
         elif tip == "KAPANIS":
+            from operasyon_kurallar import vardiya_devri_bugun_baslamis_mi
+            from sube_kapanis_dual import _dogrula_pin, _upsert_ciro_taslak, vardiya_devri_tamamlandi_mi
+
+            if vardiya_devri_bugun_baslamis_mi(
+                cur, sube_id
+            ) and not vardiya_devri_tamamlandi_mi(cur, sube_id):
+                raise HTTPException(
+                    403,
+                    "Kapanış için önce vardiya (sabah–akşam) devrinin tamamlanması gerekir.",
+                )
             if body.teslim is None or body.teslim < 0:
                 raise HTTPException(400, "Kapanış için teslim kasa tutarı girilmeli")
             if not body.x_raporu_gonderildi:
                 raise HTTPException(400, "Kapanış: X raporu gönderildi onayı gerekli.")
+            uid = (body.panel_kullanici_id or "").strip()
+            pin = (body.pin or "").replace(" ", "")
+            if not uid:
+                raise HTTPException(400, "Kapanış: onaylayan panel kullanıcısı seçilmeli.")
+            if len(pin) != 4 or not pin.isdigit():
+                raise HTTPException(400, "Kapanış: 4 haneli PIN gerekli.")
+            ku = _dogrula_pin(cur, uid, pin)
+            if str(ku.get("sube_id") or "") != str(sube_id):
+                raise HTTPException(400, "Panel kullanıcısı bu şubeye ait değil.")
+            onay_ad = (ku.get("ad") or "").strip() or "—"
+            raw_pid = ku.get("personel_id")
+            pid_panel = str(raw_pid).strip() if raw_pid else None
+            bildirim_saat = (body.personel_saat or "").strip() or simdi.strftime("%H:%M")
+
             import sube_panel as sp
+
+            cn = float(body.ciro_nakit or 0)
+            cp = float(body.ciro_pos or 0)
+            co = float(body.ciro_online or 0)
+            ciro_form_toplam = cn + cp + co
 
             ciro_gitti = sp._bugun_ciro_taslak_bekliyor(cur, sube_id) is not None or sp._bugun_ciro_var_mi(
                 cur, sube_id
             )
+            if ciro_form_toplam > 0:
+                _upsert_ciro_taslak(
+                    cur,
+                    sube_id,
+                    cn,
+                    cp,
+                    co,
+                    "Operasyon KAPANIS (X nakit/POS/online)",
+                    personel_id=pid_panel,
+                    gonderen_ad=onay_ad,
+                    bildirim_saati=bildirim_saat,
+                    panel_kullanici_id=uid,
+                    audit_etiket="KAPANIS_TASLAK",
+                )
+                ciro_gitti = True
             if not ciro_gitti and not body.ciro_gonderim_onay:
                 raise HTTPException(
                     400,
-                    "Kapanış: önce ciro taslağını gönderin veya «ciro gönderildi» onayını işaretleyin.",
+                    "Kapanış: X’ten nakit/POS/online tutarlarını girin, veya önce ciro taslağı gönderin / «ciro gönderildi» onayını işaretleyin.",
                 )
             ks = body.kasa_sayim if body.kasa_sayim is not None else body.teslim
             cur.execute(
@@ -391,6 +493,22 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 ),
             )
             audit(cur, "sube_operasyon_event", event_id, "KAPANIS_TAMAMLANDI")
+            from operasyon_defter import operasyon_defter_ekle
+
+            defter_satir = (
+                f"KAPANIS teslim={body.teslim} devir={body.devir} kasa_sayim={ks} | "
+                f"X ciro(nakit,pos,online)=({cn},{cp},{co}) | onaylayan={onay_ad} bildirim_saati={bildirim_saat}"
+            )
+            operasyon_defter_ekle(
+                cur,
+                sube_id,
+                "KAPANIS_TAMAM",
+                defter_satir,
+                event_id,
+                personel_id=pid_panel,
+                personel_ad=onay_ad,
+                bildirim_saati=bildirim_saat,
+            )
 
         elif tip == "CIKIS":
             if body.kasa_sayim is None or body.kasa_sayim < 0:
@@ -405,10 +523,41 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 (simdi, body.personel_saat, body.kasa_sayim, event_id),
             )
             audit(cur, "sube_operasyon_event", event_id, "CIKIS_TAMAMLANDI")
+            from operasyon_defter import operasyon_defter_ekle
+
+            operasyon_defter_ekle(
+                cur,
+                sube_id,
+                "CIKIS_TAMAM",
+                f"CIKIS tamamlandı kasa_sayim={body.kasa_sayim}",
+                event_id,
+            )
         else:
             raise HTTPException(400, "Bilinmeyen olay tipi")
 
     return {"success": True, "event_id": event_id}
+
+
+@router.post("/{sube_id}/operasyon/event/{event_id}/alarm-arttir")
+def operasyon_alarm_arttir(sube_id: str, event_id: str):
+    """Bekleyen/gecikmiş olay için alarm döngüsü sayacı (şube UI ses/tekrar ile eşleşir)."""
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        cur.execute(
+            """
+            UPDATE sube_operasyon_event
+            SET alarm_sayisi = COALESCE(alarm_sayisi, 0) + 1
+            WHERE id=%s AND sube_id=%s AND tarih=CURRENT_DATE
+              AND durum IN ('bekliyor', 'gecikti')
+            RETURNING alarm_sayisi
+            """,
+            (event_id, sube_id),
+        )
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Olay bulunamadı veya alarm artırılamaz durumda")
+        audit(cur, "sube_operasyon_event", event_id, "ALARM_ARTTIR")
+    return {"success": True, "alarm_sayisi": int(r["alarm_sayisi"])}
 
 
 @router.post("/{sube_id}/operasyon/cikis-baslat")
@@ -416,7 +565,14 @@ def operasyon_cikis_baslat(sube_id: str):
     """Anlık çıkış olayı (deadline birkaç dakika)."""
     simdi = datetime.now()
     with db() as (conn, cur):
-        _sube_getir(cur, sube_id)
+        sube = _sube_getir(cur, sube_id)
+        blob = build_panel_operasyon_blob(cur, sube_id, sube)
+        aktif = blob.get("aktif")
+        if aktif and aktif.get("tip") != "CIKIS":
+            raise HTTPException(
+                403,
+                f"Önce bekleyen operasyonu tamamlayın: {aktif.get('tip')}",
+            )
         cur.execute(
             """
             SELECT id FROM sube_operasyon_event

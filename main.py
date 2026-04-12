@@ -12,11 +12,20 @@ from datetime import date, timedelta
 import uuid, os, json, pathlib, calendar, threading
 from collections import defaultdict
 from database import db, init_db
-from kasa_service import insert_kasa_hareketi, audit
+from kasa_service import (
+    audit,
+    insert_kasa_hareketi,
+    iptal_kasa_hareketi,
+    kart_plan_guncelle_tx,
+    onay_ekle,
+    vadeli_alim_kapat,
+)
 from sube_panel import router as sube_panel_router
 from ciro_taslak_api import router as ciro_taslak_router
 from sube_operasyon import router as sube_operasyon_router
 from sube_kapanis_dual import router as sube_kapanis_dual_router
+from operasyon_merkez_api import router as operasyon_merkez_router
+from sube_personel_api import router as sube_personel_router
 from vardiya_motor import senaryolar_uret, hafta_senaryolari_uret, hafta_senaryolari_expert_uret
 
 
@@ -41,6 +50,8 @@ app.include_router(sube_panel_router)
 app.include_router(ciro_taslak_router)
 app.include_router(sube_operasyon_router)
 app.include_router(sube_kapanis_dual_router)
+app.include_router(operasyon_merkez_router)
+app.include_router(sube_personel_router)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -167,105 +178,6 @@ def startup():
     _scheduler_thread = threading.Thread(target=_gece_yarisi_scheduler, daemon=True)
     _scheduler_thread.start()
     logger.info("✅ Gece yarısı scheduler başlatıldı")
-
-# Kasa etkisi mapping — her iptal tipi dahil, bilinmeyen tip sistemi durdurur
-KASA_IPTAL_MAP = {
-    'ANLIK_GIDER_IPTAL':  True,
-    'CIRO_IPTAL':         True,
-    'DIS_KAYNAK_IPTAL':   True,
-    'KART_ODEME_IPTAL':   True,
-    'VADELI_IPTAL':       True,
-    'ODEME_IPTAL':        True,
-}
-
-def iptal_kasa_hareketi(cur, kaynak_id, kaynak_tablo, islem_turu,
-                        iptal_turu, aciklama):
-    """
-    Merkezi kasa iptal fonksiyonu.
-    KURAL 1: Olmayan şey iptal edilemez (durum filtresi YOK — kasa_etkisi bazlı)
-    KURAL 2: Aynı şey iki kez iptal edilemez
-    KURAL 3: Her hareketin karşılığı vardır + kasa_etkisi zorunlu
-    """
-    # KURAL 1: Sadece AKTİF kayıtları al — iptal edilmişleri tekrar işleme
-    cur.execute("""
-        SELECT id, tutar FROM kasa_hareketleri
-        WHERE kaynak_id=%s AND islem_turu=%s AND kasa_etkisi=true AND durum='aktif'
-    """, (kaynak_id, islem_turu))
-    mevcutlar = cur.fetchall()
-    if not mevcutlar:
-        raise Exception(f"İptal edilecek kayıt bulunamadı — {islem_turu} / {kaynak_id}")
-
-    # KURAL 2: Daha önce iptal edilmiş mi?
-    cur.execute("""
-        SELECT 1 FROM kasa_hareketleri
-        WHERE kaynak_id=%s AND islem_turu=%s
-        LIMIT 1
-    """, (kaynak_id, iptal_turu))
-    if cur.fetchone():
-        raise Exception(f"Bu kayıt zaten iptal edilmiş — {iptal_turu} / {kaynak_id}")
-
-    # UI için eski kayıtları pasifleştir (kasa hesabını etkilemez)
-    for m in mevcutlar:
-        cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s", (m['id'],))
-
-    # Net tutarı hesapla
-    net_tutar = sum(float(m['tutar']) for m in mevcutlar)
-
-    # KURAL 3: Ters kayıt yaz — kasa_etkisi zorunlu
-    _kasa_etkisi = KASA_IPTAL_MAP.get(iptal_turu, True)
-    cur.execute("""
-        INSERT INTO kasa_hareketleri
-            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type, kasa_etkisi)
-        VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s, %s, %s, %s)
-    """, (str(uuid.uuid4()), iptal_turu, -net_tutar, aciklama,
-          kaynak_tablo, kaynak_id, str(uuid.uuid4()), kaynak_tablo.upper(), _kasa_etkisi))
-
-    if cur.rowcount == 0:
-        raise Exception(f"İptal kaydı yazılamadı — {iptal_turu} / {kaynak_id}")
-
-def vadeli_alim_kapat(cur, vadeli_id: str, tarih: str):
-    """
-    Merkezi vadeli alım kapatma fonksiyonu.
-    Nereden onaylanırsa onaylansın (onay kuyruğu / vadeli alımlar / ödeme planı)
-    bu fonksiyon çağrılır — 3 tabloyu atomik kapatır, çift düşmeyi engeller.
-    KURAL: Zaten 'odendi' ise sessizce geçer (idempotent).
-    """
-    # 1. vadeli_alimlar → odendi
-    cur.execute(
-        "UPDATE vadeli_alimlar SET durum='odendi' WHERE id=%s AND durum='bekliyor'",
-        (vadeli_id,)
-    )
-    # 2. Tüm bağlı odeme_plani kayıtları → odendi
-    cur.execute("""
-        UPDATE odeme_plani
-        SET durum='odendi', odeme_tarihi=%s
-        WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
-        AND durum IN ('bekliyor','onay_bekliyor')
-    """, (tarih, vadeli_id))
-    # 3. Tüm bağlı onay_kuyrugu kayıtları → onaylandi
-    cur.execute("""
-        UPDATE onay_kuyrugu
-        SET durum='onaylandi', onay_tarihi=NOW()
-        WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
-        AND durum='bekliyor'
-    """, (vadeli_id,))
-    # 4. odeme_plani id'si üzerinden açık kalmış onay kayıtlarını da kapat
-    cur.execute("""
-        UPDATE onay_kuyrugu
-        SET durum='onaylandi', onay_tarihi=NOW()
-        WHERE kaynak_id IN (
-            SELECT id FROM odeme_plani
-            WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
-        )
-        AND durum='bekliyor'
-    """, (vadeli_id,))
-
-
-def onay_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
-    cur.execute("""INSERT INTO onay_kuyrugu (id,islem_turu,kaynak_tablo,kaynak_id,aciklama,tutar,tarih)
-        VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-        (str(uuid.uuid4()), islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih))
-
 
 def guncelle_borc_envanteri_odeme_plani_sonrasi(cur, plan: dict, ana_para_kismi: float):
     """Kaynak borc_envanteri ise kalan_vade ve toplam_borc güncelle (panel /ode ve onay kuyruğu ortak)."""
@@ -983,10 +895,8 @@ def anlik_gider_ekle(g: AnlikGider):
                 f"Anlık gider: {g.aciklama or g.kategori}", 'anlik_giderler', gid)
 
         audit(cur, 'anlik_giderler', gid, 'INSERT')
-
-    # Transaction dışında — kendi bağlantısını açar
-    if g.odeme_yontemi == 'kart':
-        kart_plan_guncelle()
+        if g.odeme_yontemi == 'kart':
+            kart_plan_guncelle_tx(cur)
 
     return {"id": gid, "success": True}
 
@@ -1186,9 +1096,8 @@ def kart_hareket_ekle(h: KartHareket):
             onay_ekle(cur, 'KART_ODEME', 'kart_hareketleri', hid,
                 f"Kart ödemesi: {h.aciklama or ''}", h.tutar, h.tarih)
         audit(cur, 'kart_hareketleri', hid, 'INSERT')
-    # HARCAMA veya ODEME → borç değişti → plan güncelle
-    if h.islem_turu in ('HARCAMA', 'ODEME', 'FAIZ'):
-        kart_plan_guncelle()
+        if h.islem_turu in ('HARCAMA', 'ODEME', 'FAIZ'):
+            kart_plan_guncelle_tx(cur)
     return {"id": hid, "success": True}
 
 @app.delete("/api/kart-hareketleri/{hid}")
@@ -3130,8 +3039,7 @@ def fatura_ode(body: FaturaOdemeModel):
                 VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s, %s, 'fatura_giderleri')
             """, (fid, body.kart_id, str(body.tarih), body.tutar, aciklama, body.sabit_gider_id))
             audit(cur, 'kart_hareketleri', fid, 'FATURA_KART')
-            # Kart planını güncelle — ticker anında yansısın
-            kart_plan_guncelle()
+            kart_plan_guncelle_tx(cur)
         else:
             # Kasaya yaz
             fid = str(uuid.uuid4())   # nakit yolunda fid = kasa_hareketleri kaydı
@@ -3531,7 +3439,7 @@ def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
                 VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s, %s, 'vadeli_alimlar')
             """, (hid, body.kart_id, bugun, tutar, f"Vadeli alım: {v['aciklama']}", vid))
             audit(cur, 'kart_hareketleri', hid, 'VADELI_KART')
-            kart_plan_guncelle()
+            kart_plan_guncelle_tx(cur)
             # Plan + vadeli alım + onay kuyruğu → atomik kapat
             cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
                 (bugun, tutar, plan['id']))
@@ -4599,55 +4507,10 @@ def vadeli_kontrol(vade_tarihi: str, tutar: float):
 # ── ÖDEME PLANI MOTOR ENDPOINTLERİ ────────────────────────────
 
 @app.post("/api/kart-plan-guncelle")
-def kart_plan_guncelle():
-    """Kart borçlarını hesaplayıp mevcut bekleyen planları günceller.
-    Anlık gider, fatura, vadeli alım kart ödemesi sonrası çağrılır.
-    """
-    from datetime import date
-    import uuid as _uuid
-    import calendar as _cal
-    bugun = date.today()
-    yil, ay = bugun.year, bugun.month
-    guncellenen = []
-
+def kart_plan_guncelle_api():
+    """Kart borçlarını hesaplayıp mevcut bekleyen planları günceller (tek transaction)."""
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE")
-        for k in cur.fetchall():
-            son_odeme_gun = k['son_odeme_gunu'] or 25
-            son_gun = _cal.monthrange(yil, ay)[1]
-            son_odeme_gun = min(son_odeme_gun, son_gun)
-            odeme_tarihi = date(yil, ay, son_odeme_gun)
-
-            # Güncel borç
-            borc = kart_borc(cur, k['id'])
-            if borc <= 0:
-                continue
-
-            asgari_oran_pct = float(k.get('asgari_oran', 40)) / 100
-            asgari = round(borc * asgari_oran_pct, 2)
-
-            # Plan varsa güncelle, yoksa ekle
-            cur.execute("""
-                UPDATE odeme_plani
-                SET odenecek_tutar=%s, asgari_tutar=%s
-                WHERE kart_id=%s
-                AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
-                AND durum IN ('bekliyor','onay_bekliyor')
-            """, (borc, asgari, k['id'], str(odeme_tarihi)))
-
-            if cur.rowcount > 0:
-                guncellenen.append(f"{k['kart_adi']}: {borc:,.0f}₺")
-            else:
-                # Plan yok — oluştur
-                pid = str(uuid.uuid4())
-                cur.execute("""
-                    INSERT INTO odeme_plani
-                        (id, kart_id, tarih, odenecek_tutar, asgari_tutar, aciklama, durum)
-                    VALUES (%s, %s, %s, %s, %s, %s, 'bekliyor')
-                """, (pid, k['id'], odeme_tarihi, borc, asgari,
-                       f"Kart: {k['kart_adi']} — {k['banka']}"))
-                guncellenen.append(f"{k['kart_adi']}: {borc:,.0f}₺ (yeni plan)")
-
+        guncellenen = kart_plan_guncelle_tx(cur)
     return {"success": True, "guncellenen": guncellenen}
 
 @app.post("/api/odeme-plani/uret")
@@ -5509,10 +5372,17 @@ def sistem_sifirla(body: dict = {}):
     return {"basarili": True, "silinen": silincekler,
             "mesaj": f"{len(silincekler)} tablo temizlendi."}
 
-# Şube personel paneli (SPA'dan önce kayıt — /{path} yutmasın)
+# Şube personel + operasyon merkez HTML (SPA catch-all'dan önce)
 _sube_panel_path = pathlib.Path("static/sube_panel.html")
+_ops_panel_path = pathlib.Path("static/ops_panel.html")
 if _sube_panel_path.exists():
     from fastapi.responses import FileResponse as _FileResponseSube
+
+    _sube_headers = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
 
     @app.get("/sube-panel")
     @app.get("/sube-panel/{sube_id:path}")
@@ -5521,8 +5391,32 @@ if _sube_panel_path.exists():
         return _FileResponseSube(
             str(_sube_panel_path),
             media_type="text/html",
-            headers={"Cache-Control": "no-cache, no-store, must-revalidate",
-                     "Pragma": "no-cache", "Expires": "0"},
+            headers=_sube_headers,
+        )
+
+    @app.get("/sube")
+    @app.get("/sube/{sube_id:path}")
+    async def serve_sube_personel_html(sube_id: str = ""):
+        _ = sube_id
+        return _FileResponseSube(
+            str(_sube_panel_path),
+            media_type="text/html",
+            headers=_sube_headers,
+        )
+
+if _ops_panel_path.exists():
+    from fastapi.responses import FileResponse as _FileResponseOps
+
+    @app.get("/ops")
+    async def serve_ops_merkez_html():
+        return _FileResponseOps(
+            str(_ops_panel_path),
+            media_type="text/html",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
         )
 
 # Frontend
@@ -5533,6 +5427,22 @@ if pathlib.Path("static/index.html").exists():
     # assets önce mount edilmeli — wildcard route kapmadan
     app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
 
+    _idx_path = pathlib.Path("static/index.html")
+    _spa_headers = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
+    @app.get("/admin")
+    @app.get("/admin/{admin_path:path}")
+    async def serve_admin_spa(admin_path: str = ""):
+        _ = admin_path
+        if _idx_path.exists():
+            return FileResponse(str(_idx_path), headers=_spa_headers)
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": "Frontend not built"}, status_code=404)
+
     @app.get("/")
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str = "", request: _Req = None):
@@ -5541,11 +5451,6 @@ if pathlib.Path("static/index.html").exists():
         if full_path.startswith("api/") or full_path.startswith("assets/"):
             from fastapi.responses import JSONResponse
             return JSONResponse({"detail": "Not found"}, status_code=404)
-        index = _pl.Path("static/index.html")
-        if index.exists():
-            return FileResponse(
-                str(index),
-                headers={"Cache-Control": "no-cache, no-store, must-revalidate",
-                         "Pragma": "no-cache", "Expires": "0"}
-            )
+        if _idx_path.exists():
+            return FileResponse(str(_idx_path), headers=_spa_headers)
         return JSONResponse({"detail": "Frontend not built"}, status_code=404)
