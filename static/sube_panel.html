@@ -1,0 +1,1229 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Şube Panel — EVVEL</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --bg:        #0a0c0f;
+  --bg2:       #111418;
+  --bg3:       #181c22;
+  --border:    #1e2430;
+  --text:      #e8eaf0;
+  --text2:     #8892a4;
+  --text3:     #454e5e;
+  --green:     #2dd4a0;
+  --green-dim: rgba(45,212,160,.12);
+  --yellow:    #f0c040;
+  --yellow-dim:rgba(240,192,64,.12);
+  --red:       #f05060;
+  --red-dim:   rgba(240,80,96,.12);
+  --blue:      #60a8f0;
+  --blue-dim:  rgba(96,168,240,.1);
+}
+
+html,body{
+  height:100%;
+  background:var(--bg);
+  color:var(--text);
+  font-family:'DM Sans',sans-serif;
+  font-size:16px;
+  overflow:hidden;
+  user-select:none;
+}
+
+/* ── LAYOUT ── */
+.shell{
+  display:grid;
+  grid-template-rows:auto 1fr auto;
+  height:100vh;
+  max-width:1400px;
+  margin:0 auto;
+  padding:28px 36px 20px;
+  gap:24px;
+}
+
+/* ── HEADER ── */
+.header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  border-bottom:1px solid var(--border);
+  padding-bottom:20px;
+}
+.header-left{display:flex;align-items:center;gap:16px}
+.logo{
+  font-family:'DM Mono',monospace;
+  font-size:13px;
+  font-weight:500;
+  color:var(--text3);
+  letter-spacing:3px;
+  text-transform:uppercase;
+}
+.sep{width:1px;height:28px;background:var(--border)}
+.sube-adi{
+  font-size:22px;
+  font-weight:600;
+  letter-spacing:-0.5px;
+}
+.header-right{display:flex;align-items:center;gap:20px}
+.saat-kutu{
+  font-family:'DM Mono',monospace;
+  font-size:32px;
+  font-weight:500;
+  color:var(--text);
+  letter-spacing:2px;
+}
+.tarih-kutu{
+  font-size:13px;
+  color:var(--text2);
+  text-align:right;
+  line-height:1.6;
+}
+.durum-dot{
+  width:10px;height:10px;
+  border-radius:50%;
+  background:var(--green);
+  box-shadow:0 0 8px var(--green);
+  animation:pulse 2s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.85)}}
+
+/* ── MAIN GRID ── */
+.main-grid{
+  display:grid;
+  grid-template-columns:1fr 380px;
+  gap:20px;
+  min-height:0;
+}
+
+/* ── GÖREVLER ── */
+.gorevler-panel{
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+  overflow-y:auto;
+}
+.panel-baslik{
+  font-size:11px;
+  font-weight:500;
+  color:var(--text3);
+  letter-spacing:2px;
+  text-transform:uppercase;
+  margin-bottom:4px;
+}
+.gorev-kart{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:20px 24px;
+  display:flex;
+  align-items:center;
+  gap:20px;
+  transition:border-color .2s, background .2s;
+  cursor:default;
+}
+.gorev-kart.tamamlandi{
+  border-color:rgba(45,212,160,.2);
+  background:rgba(45,212,160,.04);
+}
+.gorev-kart.aktif{
+  border-color:var(--yellow);
+  background:var(--yellow-dim);
+}
+.gorev-icon{
+  width:48px;height:48px;
+  border-radius:12px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:22px;
+  flex-shrink:0;
+  background:var(--bg3);
+}
+.gorev-kart.tamamlandi .gorev-icon{background:var(--green-dim)}
+.gorev-kart.aktif      .gorev-icon{background:var(--yellow-dim)}
+.gorev-bilgi{flex:1}
+.gorev-baslik{
+  font-size:17px;
+  font-weight:500;
+  margin-bottom:4px;
+}
+.gorev-aciklama{
+  font-size:13px;
+  color:var(--text2);
+  line-height:1.5;
+}
+.gorev-saat{
+  font-family:'DM Mono',monospace;
+  font-size:13px;
+  color:var(--text3);
+  margin-top:6px;
+}
+.gorev-sag{display:flex;align-items:center;gap:12px}
+.check-circle{
+  width:36px;height:36px;
+  border-radius:50%;
+  border:2px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+  color:var(--text3);
+  font-size:18px;
+  flex-shrink:0;
+}
+.gorev-kart.tamamlandi .check-circle{
+  border-color:var(--green);
+  background:var(--green-dim);
+  color:var(--green);
+}
+.btn-aksiyon{
+  padding:10px 20px;
+  border-radius:10px;
+  border:none;
+  background:var(--yellow);
+  color:#0a0c0f;
+  font-family:'DM Sans',sans-serif;
+  font-size:14px;
+  font-weight:600;
+  cursor:pointer;
+  transition:opacity .15s, transform .1s;
+}
+.btn-aksiyon:hover{opacity:.9;transform:translateY(-1px)}
+.btn-aksiyon:active{transform:translateY(0)}
+
+/* ── SAĞ PANEL ── */
+.sag-panel{
+  display:flex;
+  flex-direction:column;
+  gap:16px;
+  min-height:0;
+  overflow-y:auto;
+}
+.ilerleme-kart{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:20px;
+}
+.ilerleme-baslik{
+  font-size:13px;
+  color:var(--text2);
+  margin-bottom:14px;
+}
+.ilerleme-sayac{
+  font-family:'DM Mono',monospace;
+  font-size:40px;
+  font-weight:500;
+  line-height:1;
+  margin-bottom:12px;
+}
+.ilerleme-sayac span{
+  font-size:20px;
+  color:var(--text2);
+}
+.progress-bar{
+  height:6px;
+  background:var(--bg3);
+  border-radius:3px;
+  overflow:hidden;
+}
+.progress-fill{
+  height:100%;
+  background:var(--green);
+  border-radius:3px;
+  transition:width .6s ease;
+}
+
+.ciro-kart{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:20px;
+  flex:1;
+}
+.ciro-kart-baslik{
+  font-size:13px;
+  color:var(--text2);
+  margin-bottom:14px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.ciro-kart-baslik .badge{
+  font-size:11px;
+  padding:3px 8px;
+  border-radius:6px;
+  background:var(--green-dim);
+  color:var(--green);
+}
+.ciro-satir{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:8px 0;
+  border-bottom:1px solid var(--border);
+}
+.ciro-satir:last-child{border-bottom:none}
+.ciro-label{font-size:13px;color:var(--text2)}
+.ciro-deger{
+  font-family:'DM Mono',monospace;
+  font-size:14px;
+  font-weight:500;
+}
+.ciro-deger.toplam{
+  font-size:18px;
+  color:var(--green);
+}
+
+/* ── FOOTER ── */
+.footer{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  border-top:1px solid var(--border);
+  padding-top:16px;
+}
+.footer-sol{
+  font-size:12px;
+  color:var(--text3);
+  font-family:'DM Mono',monospace;
+}
+.bagli-dot{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size:12px;
+  color:var(--text3);
+}
+.bagli-dot::before{
+  content:'';
+  width:6px;height:6px;
+  border-radius:50%;
+  background:var(--green);
+}
+
+/* ── CİRO FORM MODAL ── */
+.overlay{
+  position:fixed;inset:0;
+  background:rgba(0,0,0,.75);
+  display:flex;align-items:center;justify-content:center;
+  z-index:100;
+  opacity:0;pointer-events:none;
+  transition:opacity .2s;
+}
+.overlay.acik{opacity:1;pointer-events:all}
+.modal{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:20px;
+  padding:32px;
+  width:100%;
+  max-width:480px;
+}
+.modal-baslik{
+  font-size:20px;
+  font-weight:600;
+  margin-bottom:24px;
+}
+.form-group{margin-bottom:18px}
+.form-label{
+  display:block;
+  font-size:12px;
+  color:var(--text2);
+  font-weight:500;
+  margin-bottom:8px;
+  letter-spacing:.5px;
+  text-transform:uppercase;
+}
+.form-input{
+  width:100%;
+  background:var(--bg3);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px 16px;
+  color:var(--text);
+  font-family:'DM Mono',monospace;
+  font-size:20px;
+  outline:none;
+  transition:border-color .15s;
+}
+.form-input:focus{border-color:var(--green)}
+.form-input::placeholder{color:var(--text3)}
+.form-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.toplam-preview{
+  background:var(--bg3);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px 16px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:24px;
+}
+.toplam-preview-label{font-size:13px;color:var(--text2)}
+.toplam-preview-deger{
+  font-family:'DM Mono',monospace;
+  font-size:22px;
+  font-weight:500;
+  color:var(--green);
+}
+.modal-butonlar{display:flex;gap:10px}
+.btn-iptal{
+  flex:1;padding:14px;border-radius:10px;
+  border:1px solid var(--border);
+  background:transparent;
+  color:var(--text2);
+  font-family:'DM Sans',sans-serif;
+  font-size:15px;cursor:pointer;
+}
+.btn-kaydet{
+  flex:2;padding:14px;border-radius:10px;
+  border:none;
+  background:var(--green);
+  color:#0a0c0f;
+  font-family:'DM Sans',sans-serif;
+  font-size:15px;font-weight:600;cursor:pointer;
+  transition:opacity .15s;
+}
+.btn-kaydet:hover{opacity:.9}
+.btn-kaydet:disabled{opacity:.4;cursor:not-allowed}
+
+/* ── UYARI TOAST ── */
+.toast-container{
+  position:fixed;
+  top:24px;left:50%;
+  transform:translateX(-50%);
+  z-index:200;
+  display:flex;flex-direction:column;gap:10px;
+  align-items:center;
+  pointer-events:none;
+}
+.toast{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:14px 24px;
+  font-size:14px;
+  font-weight:500;
+  display:flex;align-items:center;gap:10px;
+  pointer-events:none;
+  animation:toast-in .3s ease;
+  max-width:500px;
+  text-align:center;
+  box-shadow:0 8px 32px rgba(0,0,0,.4);
+}
+.toast.hata{border-color:var(--red);color:var(--red)}
+.toast.basari{border-color:var(--green);color:var(--green)}
+.toast.uyari{border-color:var(--yellow);color:var(--yellow)}
+@keyframes toast-in{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:translateY(0)}}
+
+/* ── HATIRLATICI POPUP ── */
+.hatirlatici{
+  position:fixed;inset:0;
+  background:rgba(0,0,0,.85);
+  display:flex;align-items:center;justify-content:center;
+  z-index:300;
+  opacity:0;pointer-events:none;
+  transition:opacity .3s;
+}
+.hatirlatici.acik{opacity:1;pointer-events:all}
+.hatirlatici-kutu{
+  background:var(--bg2);
+  border:2px solid var(--yellow);
+  border-radius:24px;
+  padding:48px;
+  text-align:center;
+  max-width:520px;
+  animation:hatirlatici-in .4s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes hatirlatici-in{
+  from{opacity:0;transform:scale(.85)}
+  to{opacity:1;transform:scale(1)}
+}
+.hatirlatici-ikon{font-size:56px;margin-bottom:20px}
+.hatirlatici-baslik{
+  font-size:26px;font-weight:600;
+  margin-bottom:12px;
+}
+.hatirlatici-mesaj{
+  font-size:16px;color:var(--text2);
+  margin-bottom:32px;line-height:1.6;
+}
+.btn-hatirlatici-kapat{
+  padding:14px 40px;
+  border-radius:12px;
+  border:none;
+  background:var(--yellow);
+  color:#0a0c0f;
+  font-family:'DM Sans',sans-serif;
+  font-size:16px;font-weight:600;cursor:pointer;
+}
+
+/* ── YÜKLENİYOR ── */
+.yukleniyor{
+  position:fixed;inset:0;
+  background:var(--bg);
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  gap:16px;
+  z-index:400;
+  transition:opacity .5s;
+}
+.yukleniyor.gizle{opacity:0;pointer-events:none}
+.spinner{
+  width:36px;height:36px;
+  border:3px solid var(--border);
+  border-top-color:var(--green);
+  border-radius:50%;
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.yukleniyor-metin{font-size:14px;color:var(--text3)}
+
+/* ── ŞUBE KİLİDİ (açılış öncesi) ── */
+.kilit-overlay{
+  position:fixed;inset:0;
+  background:rgba(10,12,15,.92);
+  display:none;
+  align-items:center;justify-content:center;
+  z-index:350;
+  padding:24px;
+}
+.kilit-overlay.acik{display:flex !important}
+.kilit-kutu{
+  background:var(--bg2);
+  border:2px solid var(--yellow);
+  border-radius:20px;
+  padding:40px 36px;
+  max-width:440px;
+  text-align:center;
+}
+.kilit-kutu h2{
+  font-size:22px;font-weight:600;margin-bottom:12px;
+}
+.kilit-kutu p{color:var(--text2);font-size:14px;line-height:1.55;margin-bottom:20px}
+.kilit-kutu .plan{font-family:'DM Mono',monospace;color:var(--yellow);font-size:16px;margin-bottom:24px}
+.btn-acilis{
+  width:100%;padding:16px;border-radius:12px;border:none;
+  background:var(--yellow);color:#0a0c0f;
+  font-family:'DM Sans',sans-serif;font-size:16px;font-weight:600;cursor:pointer;
+}
+.btn-acilis:hover{opacity:.92}
+.btn-acilis:disabled{opacity:.45;cursor:not-allowed}
+.kilit-not{font-size:12px;color:var(--text3);margin-top:16px}
+
+/* ── OPERASYON ZORUNLU (olay motoru) ── */
+.operasyon-overlay{
+  position:fixed;inset:0;
+  background:rgba(10,12,15,.97);
+  display:none;align-items:center;justify-content:center;
+  z-index:5000;padding:20px;
+}
+.operasyon-overlay.acik{display:flex !important}
+.operasyon-kutu{
+  background:var(--bg2);
+  border:2px solid var(--red);
+  border-radius:20px;
+  padding:28px 24px 24px;
+  max-width:480px;width:100%;
+  max-height:92vh;overflow-y:auto;
+}
+.operasyon-kutu.gecikti{border-color:var(--red);box-shadow:0 0 24px rgba(240,80,96,.25)}
+.operasyon-kutu.normal{border-color:var(--yellow)}
+.operasyon-baslik{font-size:20px;font-weight:700;margin-bottom:8px}
+.operasyon-alt{font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:18px}
+.operasyon-saat{font-family:'DM Mono',monospace;font-size:14px;color:var(--yellow);margin-bottom:14px}
+.operasyon-form .form-group{margin-bottom:12px}
+.operasyon-form label{display:block;font-size:12px;color:var(--text2);margin-bottom:4px}
+.operasyon-form input[type=number], .operasyon-form input[type=text]{
+  width:100%;padding:12px;border-radius:10px;border:1px solid var(--border);
+  background:var(--bg3);color:var(--text);font-family:'DM Sans',sans-serif;font-size:15px;
+}
+.operasyon-chk{display:flex;align-items:center;gap:10px;margin:10px 0;font-size:13px;color:var(--text2)}
+.operasyon-chk input{width:18px;height:18px}
+.btn-operasyon-tamam{
+  width:100%;margin-top:16px;padding:16px;border-radius:12px;border:none;
+  background:var(--green);color:#0a0c0f;font-weight:600;font-size:16px;cursor:pointer;font-family:'DM Sans',sans-serif;
+}
+.btn-operasyon-tamam:disabled{opacity:.5;cursor:not-allowed}
+.btn-cikis-kontrol{
+  margin-top:8px;padding:8px 12px;font-size:12px;border-radius:8px;
+  border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer;font-family:'DM Sans',sans-serif;
+}
+</style>
+</head>
+<body>
+
+<!-- Yükleniyor -->
+<div class="yukleniyor" id="yukleniyor">
+  <div class="spinner"></div>
+  <div class="yukleniyor-metin" id="yukleniyor-metin">Şube paneline bağlanıyor...</div>
+</div>
+
+<!-- Ana shell -->
+<div class="shell" id="shell" style="display:none">
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo">EVVEL</div>
+      <div class="sep"></div>
+      <div class="sube-adi" id="subeAdi">—</div>
+      <div class="durum-dot"></div>
+    </div>
+    <div class="header-right">
+      <div class="tarih-kutu" id="tarihKutu">—</div>
+      <div class="saat-kutu" id="saatKutu">00:00</div>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <div class="main-grid">
+
+    <!-- Görevler -->
+    <div class="gorevler-panel">
+      <div class="panel-baslik">Bugünün Görevleri</div>
+      <div id="gorevListesi"></div>
+    </div>
+
+    <!-- Sağ panel -->
+    <div class="sag-panel">
+      <!-- İlerleme -->
+      <div class="ilerleme-kart">
+        <div class="ilerleme-baslik">Günlük İlerleme</div>
+        <div class="ilerleme-sayac">
+          <span id="tamamlananSayi">0</span>
+          <span> / <span id="toplamSayi">0</span></span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill" style="width:0%"></div>
+        </div>
+      </div>
+
+      <!-- Bugünkü ciro -->
+      <div class="ciro-kart">
+        <div class="ciro-kart-baslik">
+          Bugünkü Ciro
+          <span class="badge" id="ciroGirilmeDurum">—</span>
+        </div>
+        <div id="ciroSatirlar">
+          <div class="ciro-satir">
+            <span class="ciro-label">Nakit</span>
+            <span class="ciro-deger" id="ciroNakit">—</span>
+          </div>
+          <div class="ciro-satir">
+            <span class="ciro-label">POS</span>
+            <span class="ciro-deger" id="ciroPos">—</span>
+          </div>
+          <div class="ciro-satir">
+            <span class="ciro-label">Online</span>
+            <span class="ciro-deger" id="ciroOnline">—</span>
+          </div>
+          <div class="ciro-satir">
+            <span class="ciro-label">Toplam</span>
+            <span class="ciro-deger toplam" id="ciroToplam">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-sol" id="footerSol">—</div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <button type="button" class="btn-cikis-kontrol" onclick="operasyonCikisBaslat()">Çıkış kasa kontrolü</button>
+      <div class="bagli-dot">Canlı bağlantı</div>
+    </div>
+  </footer>
+</div>
+
+<!-- Ciro Form Modal -->
+<div class="overlay" id="ciroOverlay">
+  <div class="modal">
+    <div class="modal-baslik">💰 Günlük Ciro Girişi</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Nakit ₺</label>
+        <input class="form-input" id="ciroNakitInput" type="number" min="0" placeholder="0" oninput="toplamHesapla()">
+      </div>
+      <div class="form-group">
+        <label class="form-label">POS ₺</label>
+        <input class="form-input" id="ciroPosInput" type="number" min="0" placeholder="0" oninput="toplamHesapla()">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Online ₺</label>
+        <input class="form-input" id="ciroOnlineInput" type="number" min="0" placeholder="0" oninput="toplamHesapla()">
+      </div>
+    </div>
+    <div class="toplam-preview">
+      <span class="toplam-preview-label">Toplam</span>
+      <span class="toplam-preview-deger" id="toplamPreview">0 ₺</span>
+    </div>
+    <div class="modal-butonlar">
+      <button class="btn-iptal" onclick="ciroModalKapat()">İptal</button>
+      <button class="btn-kaydet" id="ciroKaydetBtn" onclick="ciroKaydet()">Kaydet</button>
+    </div>
+  </div>
+</div>
+
+<!-- Hatırlatıcı Popup -->
+<div class="hatirlatici" id="hatirlatici">
+  <div class="hatirlatici-kutu">
+    <div class="hatirlatici-ikon" id="hatirlaticiIkon">🔔</div>
+    <div class="hatirlatici-baslik" id="hatirlaticiBaslik">Hatırlatma</div>
+    <div class="hatirlatici-mesaj" id="hatirlaticiMesaj"></div>
+    <button class="btn-hatirlatici-kapat" onclick="hatirlaticiKapat()">Tamam</button>
+  </div>
+</div>
+
+<!-- Şube açılmadan kilit -->
+<div class="kilit-overlay" id="kilitOverlay">
+  <div class="kilit-kutu">
+    <h2>Şube henüz açılmadı</h2>
+    <p>Ciro ve gider girişleri, şube açılış kaydı oluşturulduktan sonra aktif olur.</p>
+    <div class="plan">Planlanan açılış: <span id="kilitPlanSaat">—</span></div>
+    <button type="button" class="btn-acilis" id="btnSubeAc" onclick="subeAc()">Şubeyi Aç</button>
+    <p class="kilit-not">Açılış operasyonu açıldığında kasa sayımı buradan girilir. İsterseniz ayrıca «Şubeyi Aç» da kullanılabilir.</p>
+  </div>
+</div>
+
+<!-- Operasyon olayı (ACILIS / KONTROL / KAPANIS / CIKIS) -->
+<div class="operasyon-overlay" id="operasyonOverlay">
+  <div class="operasyon-kutu normal" id="operasyonKutu">
+    <div class="operasyon-baslik" id="operasyonBaslik">Operasyon</div>
+    <div class="operasyon-alt" id="operasyonAciklama"></div>
+    <div class="operasyon-saat" id="operasyonSaatSatir"></div>
+    <div class="operasyon-form" id="operasyonFormAlan"></div>
+    <button type="button" class="btn-operasyon-tamam" id="btnOperasyonTamam" onclick="operasyonKaydet()">Tamamla</button>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+// ── YAPILANDIRMA ──────────────────────────────────────────────
+
+// URL'den şube ID'sini al: /sube/alsancak → "alsancak"
+// Veya URL parametresinden: ?sube=alsancak
+const pathParts = window.location.pathname.split('/');
+const subeIdFromPath = pathParts[pathParts.length - 1];
+const subeIdFromParam = new URLSearchParams(window.location.search).get('sube');
+const SUBE_ID = subeIdFromParam || subeIdFromPath || 'sube-merkez';
+
+// Aynı origin (lokal veya Railway) — VITE ayrı değil
+const API_BASE = window.location.origin || '';
+
+// Yenileme aralığı (ms)
+const YENILEME_INTERVAL = 60 * 1000; // 1 dakika
+
+// Durum
+let panelVeri = null;
+let ciroForce = false;
+let hatirlaticiGosterildi = {};
+let aktifOperasyon = null;
+let operasyonSesIv = null;
+
+// ── YARDIMCI ─────────────────────────────────────────────────
+
+function fmt(n) {
+  if (n == null || isNaN(n)) return '—';
+  return new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 0 }).format(n) + ' ₺';
+}
+
+function gunAdi(d) {
+  const gunler = ['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi'];
+  return gunler[new Date(d).getDay()];
+}
+
+function ayAdi(d) {
+  const aylar = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran',
+                 'Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+  return aylar[new Date(d).getMonth()];
+}
+
+function toast(mesaj, tip='basari', sure=3500) {
+  const c = document.getElementById('toastContainer');
+  const t = document.createElement('div');
+  t.className = `toast ${tip}`;
+  t.textContent = mesaj;
+  c.appendChild(t);
+  setTimeout(() => { t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>t.remove(),300); }, sure);
+}
+
+function sesliUyari() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [440, 554, 659].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = freq;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0, ctx.currentTime + i * 0.18);
+      gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + i * 0.18 + 0.05);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + i * 0.18 + 0.25);
+      osc.start(ctx.currentTime + i * 0.18);
+      osc.stop(ctx.currentTime + i * 0.18 + 0.3);
+    });
+  } catch(e) {}
+}
+
+// ── SAAT ─────────────────────────────────────────────────────
+
+function saatGuncelle() {
+  const simdi = new Date();
+  const saat = simdi.getHours().toString().padStart(2,'0') + ':' +
+               simdi.getMinutes().toString().padStart(2,'0');
+  document.getElementById('saatKutu').textContent = saat;
+
+  const gun = simdi.getDate();
+  const ay = ayAdi(simdi);
+  const yil = simdi.getFullYear();
+  const gunAd = gunAdi(simdi);
+  document.getElementById('tarihKutu').textContent = `${gunAd}, ${gun} ${ay} ${yil}`;
+
+  // Hatırlatıcı kontrol
+  hatirlaticiKontrol(saat);
+}
+
+// ── HATIRLATICI ───────────────────────────────────────────────
+
+function hatirlaticiKontrol(saat) {
+  if (!panelVeri) return;
+
+  const acilis  = panelVeri.acilis_saati;
+  const kapanis = panelVeri.kapanis_saati;
+  const ciroGirildi = panelVeri.ciro_girildi;
+  const taslakBek = !!panelVeri.ciro_taslak_bekliyor;
+
+  const kontroller = [
+    {
+      key: `acilis_${panelVeri.tarih}`,
+      saat: acilis,
+      ikon: '🌅',
+      baslik: 'Açılış zamanı',
+      mesaj: `${panelVeri.sube_adi}: Planlanan saat geldi. «Şubeyi Aç» ile kayıt oluşturmayı unutmayın.`,
+      sadece_sube_kapali: true,
+    },
+    {
+      key: `ciro_gir_${panelVeri.tarih}`,
+      saat: kapanis,
+      ikon: '💰',
+      baslik: 'Ciro taslağı',
+      mesaj: 'Günlük ciro tutarlarını girin; kayıt merkez onayına gider. X raporu fotoğrafını WhatsApp ile yöneticiye iletmeyi unutmayın.',
+      goster: () => !ciroGirildi && !taslakBek,
+    },
+    {
+      key: `ciro_onay_${panelVeri.tarih}`,
+      saat: kapanis,
+      ikon: '📩',
+      baslik: 'Ciro merkezde',
+      mesaj: 'Ciro taslağınız gönderildi ve merkez onayı bekleniyor. X raporu fotoğrafını WhatsApp ile yöneticiye iletin; onaydan sonra ciro tamamlanır.',
+      goster: () => !ciroGirildi && taslakBek,
+    },
+  ];
+
+  for (const k of kontroller) {
+    if (hatirlaticiGosterildi[k.key]) continue;
+    if (saat !== k.saat) continue;
+    if (k.sadece_sube_kapali && panelVeri.sube_acik) continue;
+    if (typeof k.goster === 'function' && !k.goster()) continue;
+
+    hatirlaticiGosterildi[k.key] = true;
+    sesliUyari();
+    setTimeout(() => hatirlaticiGoster(k.ikon, k.baslik, k.mesaj), 300);
+    break;
+  }
+}
+
+function hatirlaticiGoster(ikon, baslik, mesaj) {
+  document.getElementById('hatirlaticiIkon').textContent = ikon;
+  document.getElementById('hatirlaticiBaslik').textContent = baslik;
+  document.getElementById('hatirlaticiMesaj').textContent = mesaj;
+  document.getElementById('hatirlatici').classList.add('acik');
+  sesliUyari();
+}
+
+function hatirlaticiKapat() {
+  document.getElementById('hatirlatici').classList.remove('acik');
+}
+
+// ── VERİ YÜKLEME ─────────────────────────────────────────────
+
+async function panelYukle() {
+  try {
+    const res = await fetch(`${API_BASE}/api/sube-panel/${SUBE_ID}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    panelVeri = await res.json();
+    panelRender(panelVeri);
+
+    // İlk yüklemede yükleniyor gizle
+    const y = document.getElementById('yukleniyor');
+    y.classList.add('gizle');
+    setTimeout(() => { y.style.display='none'; }, 500);
+    document.getElementById('shell').style.display = 'grid';
+
+  } catch(e) {
+    console.error(e);
+    const ym = document.getElementById('yukleniyor-metin');
+    if (ym) ym.textContent = 'Bağlantı hatası — yeniden deneniyor...';
+  }
+}
+
+// ── RENDER ───────────────────────────────────────────────────
+
+function panelRender(veri) {
+  document.getElementById('subeAdi').textContent = veri.sube_adi;
+  document.title = `${veri.sube_adi} — EVVEL Panel`;
+
+  // İlerleme
+  const pct = veri.toplam_gorev > 0
+    ? Math.round((veri.tamamlanan / veri.toplam_gorev) * 100)
+    : 0;
+  document.getElementById('tamamlananSayi').textContent = veri.tamamlanan;
+  document.getElementById('toplamSayi').textContent = veri.toplam_gorev;
+  document.getElementById('progressFill').style.width = pct + '%';
+
+  // Ciro özet
+  const co = veri.ciro_ozet;
+  document.getElementById('ciroNakit').textContent  = fmt(co.nakit);
+  document.getElementById('ciroPos').textContent    = fmt(co.pos);
+  document.getElementById('ciroOnline').textContent = fmt(co.online);
+  document.getElementById('ciroToplam').textContent = fmt(co.toplam);
+
+  const badge = document.getElementById('ciroGirilmeDurum');
+  if (veri.ciro_girildi) {
+    badge.textContent = '✓ Onaylı ciro';
+    badge.style.background = 'var(--green-dim)';
+    badge.style.color = 'var(--green)';
+  } else if (veri.ciro_taslak_bekliyor) {
+    badge.textContent = '📩 Merkez onayında';
+    badge.style.background = 'var(--yellow-dim)';
+    badge.style.color = 'var(--yellow)';
+  } else {
+    badge.textContent = '⏳ Taslak gönderilmedi';
+    badge.style.background = 'var(--yellow-dim)';
+    badge.style.color = 'var(--yellow)';
+  }
+
+  // Footer
+  document.getElementById('footerSol').textContent =
+    `SUBE: ${SUBE_ID.toUpperCase()} · Açılış: ${veri.acilis_saati} · Kapanış: ${veri.kapanis_saati}`;
+
+  // Şube kilidi
+  const kilit = document.getElementById('kilitOverlay');
+  const btnAc = document.getElementById('btnSubeAc');
+  if (veri.panel_kilitli) {
+    kilit.classList.add('acik');
+    document.getElementById('kilitPlanSaat').textContent = veri.acilis_saati || '—';
+    if (btnAc) btnAc.disabled = false;
+  } else {
+    kilit.classList.remove('acik');
+  }
+
+  // Görevler
+  gorevlerRender(veri.gorevler);
+
+  if (veri.operasyon) operasyonUygula(veri.operasyon);
+}
+
+function operasyonUygula(op) {
+  const ov = document.getElementById('operasyonOverlay');
+  if (!op || !op.aktif) {
+    ov.classList.remove('acik');
+    if (operasyonSesIv) { clearInterval(operasyonSesIv); operasyonSesIv = null; }
+    aktifOperasyon = null;
+    return;
+  }
+  aktifOperasyon = op.aktif;
+  const kut = document.getElementById('operasyonKutu');
+  kut.className = 'operasyon-kutu ' + (op.aktif.durum === 'gecikti' ? 'gecikti' : 'normal');
+  if (op.aktif.durum === 'gecikti' || op.aktif_suphe || op.aktif_kritik) {
+    if (!operasyonSesIv) operasyonSesIv = setInterval(() => sesliUyari(), 4000);
+  } else if (operasyonSesIv) {
+    clearInterval(operasyonSesIv);
+    operasyonSesIv = null;
+  }
+  const tip = op.aktif.tip;
+  document.getElementById('operasyonBaslik').textContent =
+    tip === 'ACILIS' ? '🔴 Açılış zorunlu' :
+    tip === 'KONTROL' ? '⚠️ Anlık kasa kontrolü' :
+    tip === 'KAPANIS' ? '🔴 Gün kapanışı' :
+    tip === 'CIKIS' ? '🚪 Çıkış — kasa' : 'Operasyon';
+  document.getElementById('operasyonAciklama').textContent =
+    tip === 'ACILIS' ? 'Kasayı sayın; tutar ve giriş saati olay kaydına yazılır (kasa hareketi oluşturmaz).'
+    : tip === 'KONTROL' ? 'Anlık denetim: kasa sayımı zorunlu. Nakit/POS/online alanları yalnızca kontrol kaydıdır — deftere gitmez.'
+    : tip === 'KAPANIS' ? 'X raporu, ciro taslağı ve kasa teslim/devir tamamlanmalıdır.'
+    : 'Çıkış öncesi kasa sayımı zorunludur.';
+  document.getElementById('operasyonSaatSatir').textContent =
+    'Sistem slot: ' + (op.aktif.sistem_slot_ts || '') + ' · Son teslim: ' + (op.aktif.son_teslim_ts || '');
+  const form = document.getElementById('operasyonFormAlan');
+  let h = '';
+  h += '<div class="form-group"><label>Personel giriş saati (HH:MM)</label><input type="text" id="opPersonelSaat" placeholder="örn. 08:04" maxlength="5" autocomplete="off"/></div>';
+  if (tip === 'ACILIS' || tip === 'KONTROL' || tip === 'CIKIS') {
+    h += '<div class="form-group"><label>Kasa sayımı (₺)</label><input type="number" id="opKasaSayim" min="0" step="1"/></div>';
+  }
+  if (tip === 'KONTROL') {
+    h += '<p style="font-size:12px;color:var(--text3);margin:8px 0">Anlık ciro (yalnızca kayıt)</p>';
+    h += '<div class="form-group"><label>Nakit</label><input type="number" id="opSnapN" min="0" step="1"/></div>';
+    h += '<div class="form-group"><label>POS</label><input type="number" id="opSnapP" min="0" step="1"/></div>';
+    h += '<div class="form-group"><label>Online</label><input type="number" id="opSnapO" min="0" step="1"/></div>';
+  }
+  if (tip === 'KAPANIS') {
+    h += '<div class="form-group"><label>Teslim kasa (₺)</label><input type="number" id="opTeslim" min="0" step="1"/></div>';
+    h += '<div class="form-group"><label>Devir kasa (₺)</label><input type="number" id="opDevir" min="0" step="1"/></div>';
+    h += '<div class="form-group"><label>Kasa sayım referans (₺, isteğe bağlı)</label><input type="number" id="opKasaSayimKap" min="0" step="1"/></div>';
+    const cr = panelVeri && panelVeri.ciro_taslak_bekliyor;
+    const cg = panelVeri && panelVeri.ciro_girildi;
+    h += '<div class="operasyon-chk"><input type="checkbox" id="opChkX"/><label for="opChkX">X raporu gönderildi</label></div>';
+    h += '<div class="operasyon-chk"><input type="checkbox" id="opChkCiro" ' + (cr || cg ? 'checked' : '') + '/><label for="opChkCiro">Ciro taslağı gönderildi veya onaylı ciro var</label></div>';
+  }
+  form.innerHTML = h;
+  ov.classList.add('acik');
+}
+
+async function operasyonKaydet() {
+  if (!aktifOperasyon) return;
+  const tip = aktifOperasyon.tip;
+  const eid = aktifOperasyon.id;
+  const psEl = document.getElementById('opPersonelSaat');
+  const ps = psEl && psEl.value ? psEl.value.trim() : null;
+  const body = { personel_saat: ps || null };
+  const num = (id) => {
+    const el = document.getElementById(id);
+    if (!el || el.value === '') return null;
+    const v = parseFloat(el.value);
+    return isNaN(v) ? null : v;
+  };
+  if (tip === 'ACILIS' || tip === 'KONTROL' || tip === 'CIKIS') {
+    body.kasa_sayim = num('opKasaSayim');
+  }
+  if (tip === 'KONTROL') {
+    body.snap_nakit = num('opSnapN');
+    body.snap_pos = num('opSnapP');
+    body.snap_online = num('opSnapO');
+  }
+  if (tip === 'KAPANIS') {
+    body.teslim = num('opTeslim');
+    body.devir = num('opDevir');
+    body.kasa_sayim = num('opKasaSayimKap');
+    const xEl = document.getElementById('opChkX');
+    const cEl = document.getElementById('opChkCiro');
+    body.x_raporu_gonderildi = !!(xEl && xEl.checked);
+    body.ciro_gonderim_onay = !!(cEl && cEl.checked);
+  }
+  const btn = document.getElementById('btnOperasyonTamam');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/sube-panel/${SUBE_ID}/operasyon/event/${eid}/tamamla`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const det = typeof data.detail === 'string' ? data.detail : (data.detail && JSON.stringify(data.detail));
+      throw new Error(det || 'Hata');
+    }
+    toast('Operasyon tamamlandı', 'basari');
+    document.getElementById('operasyonOverlay').classList.remove('acik');
+    if (operasyonSesIv) { clearInterval(operasyonSesIv); operasyonSesIv = null; }
+    aktifOperasyon = null;
+    await panelYukle();
+  } catch (e) {
+    toast(e.message || 'Hata', 'hata');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function operasyonCikisBaslat() {
+  try {
+    const res = await fetch(`${API_BASE}/api/sube-panel/${SUBE_ID}/operasyon/cikis-baslat`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const det = typeof data.detail === 'string' ? data.detail : (data.detail && JSON.stringify(data.detail));
+      throw new Error(det || 'Hata');
+    }
+    toast('Çıkış kontrolü oluşturuldu — formu doldurun', 'uyari', 5000);
+    await panelYukle();
+  } catch (e) { toast(e.message || 'Hata', 'hata'); }
+}
+
+function gorevIkon(tur) {
+  const map = { acilis:'🌅', ciro:'💰', kapanis:'🌙', anlik_gider:'🧾' };
+  return map[tur] || '📋';
+}
+
+function gorevlerRender(gorevler) {
+  const liste = document.getElementById('gorevListesi');
+  liste.innerHTML = '';
+
+  gorevler.forEach(g => {
+    const div = document.createElement('div');
+    div.className = 'gorev-kart' + (g.tamamlandi ? ' tamamlandi' : (g.aksiyon ? ' aktif' : ''));
+
+    let aksiyonHTML = '';
+    if (g.aksiyon === 'sube_ac') {
+      aksiyonHTML = `<button class="btn-aksiyon" onclick="subeAc()">Şubeyi Aç</button>`;
+    } else if (g.aksiyon === 'ciro_gir') {
+      aksiyonHTML = `<button class="btn-aksiyon" onclick="ciroModalAc()">Ciro Gir</button>`;
+    }
+
+    div.innerHTML = `
+      <div class="gorev-icon">${gorevIkon(g.tur)}</div>
+      <div class="gorev-bilgi">
+        <div class="gorev-baslik">${g.baslik}</div>
+        <div class="gorev-aciklama">${g.aciklama}</div>
+        <div class="gorev-saat">⏰ ${g.saat}</div>
+      </div>
+      <div class="gorev-sag">
+        ${aksiyonHTML}
+        <div class="check-circle">${g.tamamlandi ? '✓' : ''}</div>
+      </div>
+    `;
+    liste.appendChild(div);
+  });
+}
+
+// ── CİRO MODAL ───────────────────────────────────────────────
+
+function ciroModalAc() {
+  if (panelVeri && panelVeri.panel_kilitli) {
+    toast('Önce şubeyi açmalısınız', 'hata');
+    return;
+  }
+  const t = panelVeri && panelVeri.ciro_taslak;
+  if (t && panelVeri.ciro_taslak_bekliyor) {
+    document.getElementById('ciroNakitInput').value  = t.nakit != null ? String(Math.round(t.nakit)) : '';
+    document.getElementById('ciroPosInput').value    = t.pos != null ? String(Math.round(t.pos)) : '';
+    document.getElementById('ciroOnlineInput').value = t.online != null ? String(Math.round(t.online)) : '';
+    toplamHesapla();
+  } else {
+    document.getElementById('ciroNakitInput').value  = '';
+    document.getElementById('ciroPosInput').value    = '';
+    document.getElementById('ciroOnlineInput').value = '';
+    document.getElementById('toplamPreview').textContent = '0 ₺';
+  }
+  ciroForce = false;
+  document.getElementById('ciroOverlay').classList.add('acik');
+  setTimeout(() => document.getElementById('ciroNakitInput').focus(), 100);
+}
+
+function ciroModalKapat() {
+  document.getElementById('ciroOverlay').classList.remove('acik');
+}
+
+function toplamHesapla() {
+  const n = parseFloat(document.getElementById('ciroNakitInput').value) || 0;
+  const p = parseFloat(document.getElementById('ciroPosInput').value)   || 0;
+  const o = parseFloat(document.getElementById('ciroOnlineInput').value)|| 0;
+  const t = n + p + o;
+  document.getElementById('toplamPreview').textContent = fmt(t);
+}
+
+async function ciroKaydet() {
+  const nakit  = parseFloat(document.getElementById('ciroNakitInput').value)  || 0;
+  const pos    = parseFloat(document.getElementById('ciroPosInput').value)    || 0;
+  const online = parseFloat(document.getElementById('ciroOnlineInput').value) || 0;
+
+  if (nakit + pos + online <= 0) {
+    toast('En az bir tutar girilmeli', 'hata');
+    return;
+  }
+
+  const btn = document.getElementById('ciroKaydetBtn');
+  btn.disabled = true;
+  btn.textContent = 'Kaydediliyor...';
+
+  try {
+    const res = await fetch(`${API_BASE}/api/sube-panel/${SUBE_ID}/ciro`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nakit, pos, online, force: ciroForce }),
+    });
+    const data = await res.json();
+
+    if (data.warning) {
+      ciroForce = true;
+      btn.disabled = false;
+      btn.textContent = 'Yine de Kaydet';
+      toast(data.mesaj, 'uyari', 6000);
+      return;
+    }
+
+    if (!res.ok) {
+      const det = typeof data.detail === 'string' ? data.detail : (data.detail && JSON.stringify(data.detail));
+      throw new Error(det || 'Hata');
+    }
+
+    if (data.bekliyor) {
+      toast(data.mesaj || 'Merkez onayına gönderildi', 'basari', 5000);
+    } else {
+      toast(`✓ Ciro kaydedildi — ${fmt(nakit + pos + online)}`, 'basari');
+    }
+    ciroModalKapat();
+    await panelYukle(); // Yenile
+
+  } catch(e) {
+    toast('Kayıt hatası: ' + e.message, 'hata');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Kaydet';
+  }
+}
+
+async function subeAc() {
+  const btn = document.getElementById('btnSubeAc');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/sube-panel/${SUBE_ID}/acilis`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const det = typeof data.detail === 'string' ? data.detail : (data.detail && JSON.stringify(data.detail));
+      throw new Error(det || `HTTP ${res.status}`);
+    }
+    if (data.idempotent) toast(data.mesaj || 'Şube zaten açık', 'uyari');
+    else toast(`Şube açıldı — ${data.acilis_saati || ''}`, 'basari');
+    await panelYukle();
+  } catch (err) {
+    toast(err.message || 'Açılış kaydı oluşturulamadı', 'hata');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ── KLAVYE KISAYOLLARI ───────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    ciroModalKapat();
+    hatirlaticiKapat();
+  }
+  // F1 = ciro girişi kısayolu
+  if (e.key === 'F1') {
+    e.preventDefault();
+    if (panelVeri && panelVeri.panel_kilitli) { toast('Önce şubeyi açın', 'hata'); return; }
+    ciroModalAc();
+  }
+});
+
+// ── BAŞLAT ───────────────────────────────────────────────────
+
+// Saat her saniye güncelle
+setInterval(saatGuncelle, 1000);
+saatGuncelle();
+
+// Panel verisini yükle ve periyodik yenile
+panelYukle();
+setInterval(panelYukle, YENILEME_INTERVAL);
+</script>
+</body>
+</html>
