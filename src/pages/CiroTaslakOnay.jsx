@@ -115,6 +115,7 @@ export default function CiroTaslakOnay() {
               <tr>
                 <th>Şube</th>
                 <th>Tarih</th>
+                <th>Onaylayan / saat</th>
                 <th>Nakit</th>
                 <th>POS</th>
                 <th>Online</th>
@@ -127,10 +128,12 @@ export default function CiroTaslakOnay() {
                 const n = d.nakit !== undefined ? d.nakit : k.nakit;
                 const p = d.pos !== undefined ? d.pos : k.pos;
                 const o = d.online !== undefined ? d.online : k.online;
+                const kimSaat = [k.gonderen_ad, k.bildirim_saati].filter(Boolean).join(' · ') || (k.olusturma ? `Kayıt: ${k.olusturma}` : '—');
                 return (
                   <tr key={k.id}>
                     <td><strong>{k.sube_adi}</strong><div className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{k.id.slice(0, 8)}…</div></td>
                     <td className="mono" style={{ fontSize: 12 }}>{fmtDate(k.tarih)}</td>
+                    <td style={{ fontSize: 13, maxWidth: 160 }}>{kimSaat}</td>
                     <td>
                       <input className="form-input" style={{ width: 100, fontSize: 13 }} type="number" min="0" step="1"
                         value={n} onChange={(e) => tutarInput(k.id, 'nakit', e.target.value)} />
