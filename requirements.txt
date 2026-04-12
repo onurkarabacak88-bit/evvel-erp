@@ -4,3 +4,5 @@ psycopg2-binary
 pydantic
 openpyxl
 python-multipart
+openai>=1.40.0
+pillow

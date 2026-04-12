@@ -1,12 +1,11 @@
 from database import db
 from datetime import date, timedelta
-from typing import Optional
 from finans_core import (
     kasa_bakiyesi, odeme_yuku, gunluk_ciro_ortalama,
     nakit_akis_sim, kart_borc, tum_kart_borclari,
-    kart_ekstre, kart_faiz_tahmini, kart_odeme_uyari_metrikleri,
+    kart_ekstre, kart_bu_ay_odenen, kart_faiz_tahmini,
     zorunlu_gider_tahmini, serbest_nakit, net_akis_30_gun,
-    kac_gun_dayanir, kasa_bakiyesi_tarihte, kart_bankacilik_ozet,
+    kac_gun_dayanir, kasa_bakiyesi_tarihte,
 )
 
 def fmt(n):
@@ -68,7 +67,7 @@ def karar_motoru():
         cur.execute("""
             SELECT op.*, k.banka, k.kart_adi FROM odeme_plani op
             JOIN kartlar k ON k.id=op.kart_id
-            WHERE op.durum IN ('bekliyor','onay_bekliyor') AND op.tarih = %s
+            WHERE op.durum IN ('bekliyor','onay_bekliyor') AND op.tarih=%s
         """, (bugun,))
         for o in cur.fetchall():
             kararlar.append({
@@ -278,20 +277,41 @@ def kart_analiz_hesapla():
         kartlar = cur.fetchall()
         sonuc = []
         for k in kartlar:
-            kd = dict(k)
-            bio = kart_bankacilik_ozet(cur, k['id'], kd)
-            borc       = bio['toplam_borc']
-            ekstre_v   = kart_ekstre(cur, k['id'], bio['kesim_gunu_kullanilan'])
+            # ── CORE HESAPLAR ──────────────────────────
+            borc       = kart_borc(cur, k['id'])
+            ekstre_v   = kart_ekstre(cur, k['id'], k['kesim_gunu'])
+            bu_ay_odenen = kart_bu_ay_odenen(cur, k['id'])
 
             bu_ekstre    = ekstre_v["ekstre_toplam"]
             tek_cekim    = ekstre_v["tek_cekim"]
             aylik_taksit = ekstre_v["aylik_taksit"]
             limit        = float(k['limit_tutar'])
 
-            bu_ay_faiz = bio['faiz_bu_ay_kayitli']
+            # Bu aya yansıyan faiz (bir önceki dönemden)
+            cur.execute("""
+                SELECT COALESCE(SUM(tutar),0) as faiz
+                FROM kart_hareketleri
+                WHERE kart_id=%s AND durum='aktif' AND islem_turu='FAIZ'
+                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+            """, (k['id'],))
+            bu_ay_faiz = float(cur.fetchone()['faiz'])
 
-            uy = kart_odeme_uyari_metrikleri(cur, k['id'], k['son_odeme_gunu'], bugun)
-            gun_kaldi = uy['gun_kaldi']
+            # Son ödeme tarihi
+            son_odeme_gun = k['son_odeme_gunu']
+            son_odeme = date(bugun.year, bugun.month, son_odeme_gun)
+            if son_odeme < bugun:
+                if bugun.month == 12:
+                    son_odeme = date(bugun.year+1, 1, son_odeme_gun)
+                else:
+                    son_odeme = date(bugun.year, bugun.month+1, son_odeme_gun)
+            gun_kaldi = (son_odeme - bugun).days
+
+            cur.execute("""
+                SELECT id FROM odeme_plani WHERE kart_id=%s AND durum IN ('bekliyor','onay_bekliyor')
+                ORDER BY tarih ASC LIMIT 1
+            """, (k['id'],))
+            yaklasan = cur.fetchone()
 
             sonuc.append({
                 'kart_adi': k['kart_adi'], 'banka': k['banka'],
@@ -300,22 +320,11 @@ def kart_analiz_hesapla():
                 'kalan_limit': limit - borc,
                 'limit_doluluk': borc/limit if limit > 0 else 0,
                 'bu_ekstre': bu_ekstre,
-                'gelecek_ekstre': float(ekstre_v.get("tahmini_sonraki_kapanis_ekstre_simdi") or 0),
-                'donem_borcu': bio['donem_borcu'],
-                'ekstre_harcama_donemi': bio['ekstre_harcama_donemi'],
-                'ekstre_donem_bas': bio.get('ekstre_donem_bas'),
-                'ekstre_donem_bit': bio.get('ekstre_donem_bit'),
-                'kapanisa_kalan_gun': bio.get('kapanisa_kalan_gun'),
-                'sonraki_donem_bas': bio.get('sonraki_donem_bas'),
-                'sonraki_donem_bit': bio.get('sonraki_donem_bit'),
-                'sonraki_donem_simdiye_kadar_tek': bio.get('sonraki_donem_simdiye_kadar_tek', 0),
-                'tahmini_sonraki_kapanis_ekstre_simdi': bio.get('tahmini_sonraki_kapanis_ekstre_simdi', 0),
                 'aylik_taksit': aylik_taksit,
                 'bu_ay_faiz': bu_ay_faiz,
-                'asgari_odeme': bio['asgari_odeme'],
-                'asgari_taban_tutar': bio['asgari_taban_tutar'],
+                'asgari_odeme': bu_ekstre * (float(k['asgari_oran']) / 100 if 'asgari_oran' in k else 0.4),
                 'gun_kaldi': gun_kaldi,
-                'blink': uy['blink'],
+                'blink': gun_kaldi <= 0 and yaklasan is not None,
             })
         return sonuc
 
@@ -361,28 +370,6 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                     continue
                 if baslangic.month != ay:
                     atlanan.append(f"Sabit gider atlandı (yıllık): {g['gider_adi']}")
-                    continue
-
-            if g['periyot'] == '3aylik':
-                baslangic = g.get('baslangic_tarihi')
-                if not baslangic:
-                    atlanan.append(f"Sabit gider atlandı (3 aylık, başlangıç tarihi yok): {g['gider_adi']}")
-                    continue
-                b = baslangic if not isinstance(baslangic, str) else date.fromisoformat(str(baslangic)[:10])
-                months = (yil - b.year) * 12 + (ay - b.month)
-                if months < 0 or (months % 3) != 0:
-                    atlanan.append(f"Sabit gider atlandı (3 aylık döngü): {g['gider_adi']}")
-                    continue
-
-            if g['periyot'] == '6aylik':
-                baslangic = g.get('baslangic_tarihi')
-                if not baslangic:
-                    atlanan.append(f"Sabit gider atlandı (6 aylık, başlangıç tarihi yok): {g['gider_adi']}")
-                    continue
-                b = baslangic if not isinstance(baslangic, str) else date.fromisoformat(str(baslangic)[:10])
-                months = (yil - b.year) * 12 + (ay - b.month)
-                if months < 0 or (months % 6) != 0:
-                    atlanan.append(f"Sabit gider atlandı (6 aylık döngü): {g['gider_adi']}")
                     continue
 
             # KRİTİK: Artış tarihi geçmişse ödeme planı üretme — güncelleme zorunlu
@@ -639,8 +626,8 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                 atlanan.append(f"Kart atlandı (borç yok): {k['kart_adi']}")
                 continue
 
-            bio = kart_bankacilik_ozet(cur, k['id'], dict(k))
-            asgari = bio["asgari_odeme"]
+            asgari_oran_pct = float(k['asgari_oran']) / 100 if 'asgari_oran' in k else 0.4
+            asgari = round(borc * asgari_oran_pct, 2)
 
             pid = str(_uuid.uuid4())
             # Plan yoksa ekle, varsa borcu güncelle — harcama sonrası tutar değişebilir
@@ -695,7 +682,7 @@ def uyari_motoru():
                    k.kart_adi, k.banka
             FROM odeme_plani op
             LEFT JOIN kartlar k ON k.id = op.kart_id
-            WHERE op.durum IN ('bekliyor', 'onay_bekliyor')
+            WHERE op.durum = 'bekliyor'
             AND op.tarih BETWEEN %s AND %s
             ORDER BY op.tarih ASC
         """, (bugun - timedelta(days=3), bugun + timedelta(days=7)))
@@ -755,85 +742,6 @@ def kasa_detay():
     """finans_core.kasa_detay_breakdown thin wrapper — geriye dönük uyumluluk."""
     with db() as (conn, cur):
         return kasa_detay_breakdown(cur)
-
-
-def degisken_bu_ay_odendi_mi(cur, sabit_gider_id, referans_tarih=None):
-    """
-    Değişken sabit gider için referans ayında (varsayılan: bugünün ayı)
-    nakit/kart/plan/onay kanallarından biriyle ödeme kaydı var mı.
-    """
-    gid = str(sabit_gider_id)
-    if referans_tarih is None:
-        ref = date.today().isoformat()
-    elif isinstance(referans_tarih, date):
-        ref = referans_tarih.isoformat()
-    else:
-        ref = str(referans_tarih)
-
-    kontroller = [
-        (
-            """
-            SELECT 1 FROM kasa_hareketleri
-            WHERE kaynak_id = %s AND kaynak_tablo = 'sabit_giderler'
-            AND islem_turu = 'FATURA_ODEMESI' AND kasa_etkisi = true AND durum = 'aktif'
-            AND DATE_TRUNC('month', tarih::date) = DATE_TRUNC('month', %s::date)
-            """,
-            (gid, ref),
-        ),
-        (
-            """
-            SELECT 1 FROM kart_hareketleri
-            WHERE kaynak_id = %s AND kaynak_tablo = 'fatura_giderleri'
-            AND islem_turu = 'HARCAMA' AND durum = 'aktif'
-            AND DATE_TRUNC('month', tarih::date) = DATE_TRUNC('month', %s::date)
-            """,
-            (gid, ref),
-        ),
-        (
-            """
-            SELECT 1 FROM kart_hareketleri
-            WHERE kaynak_id = %s AND kaynak_tablo = 'sabit_giderler'
-            AND islem_turu = 'HARCAMA' AND durum = 'aktif'
-            AND DATE_TRUNC('month', tarih::date) = DATE_TRUNC('month', %s::date)
-            """,
-            (gid, ref),
-        ),
-        (
-            """
-            SELECT 1 FROM odeme_plani
-            WHERE kaynak_tablo = 'sabit_giderler' AND kaynak_id = %s AND durum = 'odendi'
-            AND DATE_TRUNC('month', COALESCE(odeme_tarihi, tarih)::date)
-                = DATE_TRUNC('month', %s::date)
-            """,
-            (gid, ref),
-        ),
-        (
-            """
-            SELECT 1 FROM kasa_hareketleri
-            WHERE kaynak_id = %s AND kaynak_tablo = 'sabit_giderler'
-            AND islem_turu = 'SABIT_GIDER' AND kasa_etkisi = true AND durum = 'aktif'
-            AND DATE_TRUNC('month', tarih::date) = DATE_TRUNC('month', %s::date)
-            """,
-            (gid, ref),
-        ),
-        (
-            """
-            SELECT 1 FROM kasa_hareketleri kh
-            INNER JOIN odeme_plani op ON op.id::text = kh.kaynak_id::text
-            WHERE kh.kaynak_tablo = 'odeme_plani'
-            AND kh.islem_turu = 'SABIT_GIDER' AND kh.kasa_etkisi = true AND kh.durum = 'aktif'
-            AND op.kaynak_tablo = 'sabit_giderler' AND op.kaynak_id::text = %s
-            AND DATE_TRUNC('month', kh.tarih::date) = DATE_TRUNC('month', %s::date)
-            """,
-            (gid, ref),
-        ),
-    ]
-    for sql, params in kontroller:
-        cur.execute(sql, params)
-        if cur.fetchone():
-            return True
-    return False
-
 
 # ── MASTER FİNANS MOTORU ───────────────────────────────────────
 def finans_ozet_motoru():
@@ -962,8 +870,24 @@ def finans_ozet_motoru():
                 odeme_tarihi = date(bugun.year, bugun.month,
                                     _cal.monthrange(bugun.year, bugun.month)[1])
             gun_farki = (odeme_tarihi - bugun).days
-            if degisken_bu_ay_odendi_mi(cur, str(g['id']), bugun):
-                continue
+            # Bu ay fatura ödendi mi — kasa_hareketleri FATURA_ODEMESI ile kontrol
+            cur.execute("""
+                SELECT 1 FROM kasa_hareketleri
+                WHERE kaynak_id = %s AND kaynak_tablo = 'sabit_giderler'
+                AND islem_turu = 'FATURA_ODEMESI' AND kasa_etkisi = true AND durum = 'aktif'
+                AND EXTRACT(YEAR FROM tarih) = %s AND EXTRACT(MONTH FROM tarih) = %s
+            """, (str(g['id']), bugun.year, bugun.month))
+            if cur.fetchone():
+                continue  # Bu ay zaten ödendi
+            # Kart ile ödendi mi kontrol et
+            cur.execute("""
+                SELECT 1 FROM kart_hareketleri
+                WHERE kaynak_id = %s AND kaynak_tablo = 'fatura_giderleri'
+                AND islem_turu = 'HARCAMA' AND durum = 'aktif'
+                AND EXTRACT(YEAR FROM tarih) = %s AND EXTRACT(MONTH FROM tarih) = %s
+            """, (str(g['id']), bugun.year, bugun.month))
+            if cur.fetchone():
+                continue  # Bu ay kart ile ödendi
             bugun_odemeler.append({
                 'odeme_id': None,
                 'aciklama': g['gider_adi'],
@@ -998,7 +922,21 @@ def finans_ozet_motoru():
             gun_farki = (odeme_tarihi - bugun).days
             if gun_farki <= 0:
                 continue
-            if degisken_bu_ay_odendi_mi(cur, str(g['id']), bugun):
+            cur.execute("""
+                SELECT 1 FROM kasa_hareketleri
+                WHERE kaynak_id = %s AND kaynak_tablo = 'sabit_giderler'
+                AND islem_turu = 'FATURA_ODEMESI' AND kasa_etkisi = true AND durum = 'aktif'
+                AND EXTRACT(YEAR FROM tarih) = %s AND EXTRACT(MONTH FROM tarih) = %s
+            """, (str(g['id']), bugun.year, bugun.month))
+            if cur.fetchone():
+                continue
+            cur.execute("""
+                SELECT 1 FROM kart_hareketleri
+                WHERE kaynak_id = %s AND kaynak_tablo = 'fatura_giderleri'
+                AND islem_turu = 'HARCAMA' AND durum = 'aktif'
+                AND EXTRACT(YEAR FROM tarih) = %s AND EXTRACT(MONTH FROM tarih) = %s
+            """, (str(g['id']), bugun.year, bugun.month))
+            if cur.fetchone():
                 continue
             yaklasan_odemeler.append({
                 'odeme_id': None,

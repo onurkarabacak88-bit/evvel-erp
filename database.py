@@ -137,6 +137,158 @@ def init_db():
             ON CONFLICT (id) DO NOTHING
         """)
 
+        # ── ŞUBE AÇILIŞ (manuel onay — saat geçti ≠ açıldı) ─────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_acilis (
+                id              TEXT PRIMARY KEY,
+                sube_id         TEXT NOT NULL REFERENCES subeler(id),
+                tarih           DATE NOT NULL,
+                acilis_saati    TEXT NOT NULL,
+                olusturma       TIMESTAMP NOT NULL DEFAULT NOW(),
+                personel_id     TEXT,
+                durum           TEXT NOT NULL DEFAULT 'acildi',
+                aciklama        TEXT,
+                CONSTRAINT chk_sube_acilis_durum CHECK (durum IN ('acildi', 'iptal'))
+            )
+        """)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_sube_acilis_bir_gun_acik
+            ON sube_acilis (sube_id, tarih)
+            WHERE durum = 'acildi'
+        """)
+
+        # ── ŞUBE OPERASYON OLAYLARI (zaman + davranış) ──────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_operasyon_event (
+                id                 TEXT PRIMARY KEY,
+                sube_id            TEXT NOT NULL REFERENCES subeler(id),
+                tarih              DATE NOT NULL,
+                tip                TEXT NOT NULL
+                    CHECK (tip IN ('ACILIS','KONTROL','CIKIS','KAPANIS')),
+                sira_no            INT NOT NULL DEFAULT 0,
+                sistem_slot_ts     TIMESTAMP NOT NULL,
+                son_teslim_ts      TIMESTAMP NOT NULL,
+                cevap_ts           TIMESTAMP,
+                durum              TEXT NOT NULL DEFAULT 'bekliyor'
+                    CHECK (durum IN ('bekliyor','tamamlandi','gecikti','iptal')),
+                personel_saat      TEXT,
+                kasa_sayim         NUMERIC(14,2),
+                teslim             NUMERIC(14,2),
+                devir              NUMERIC(14,2),
+                snap_nakit         NUMERIC(14,2),
+                snap_pos           NUMERIC(14,2),
+                snap_online        NUMERIC(14,2),
+                x_raporu_onay      BOOLEAN NOT NULL DEFAULT FALSE,
+                ciro_gonderim_onay BOOLEAN NOT NULL DEFAULT FALSE,
+                meta               TEXT,
+                olusturma          TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (sube_id, tarih, tip, sira_no)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sube_operasyon_sube_tarih
+            ON sube_operasyon_event (sube_id, tarih)
+        """)
+
+        # ── ŞUBE PANEL KULLANICI (PIN — vardiya devri vb.) ───────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_panel_kullanici (
+                id          TEXT PRIMARY KEY,
+                sube_id     TEXT NOT NULL REFERENCES subeler(id),
+                ad          TEXT NOT NULL,
+                pin_salt    TEXT NOT NULL,
+                pin_hash    TEXT NOT NULL,
+                aktif       BOOLEAN NOT NULL DEFAULT TRUE,
+                olusturma   TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sube_panel_kul_sube
+            ON sube_panel_kullanici (sube_id, aktif)
+        """)
+
+        # Resmi vardiya devri (sabahçı → akşamcı): her şubede bu devir çift kişi.
+        # Genel gün sonu / operasyon kapanışı tek kişi olabilir — bu tablo yalnızca devre aittir.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS kapanis_kayit (
+                id                    TEXT PRIMARY KEY,
+                sube_id               TEXT NOT NULL REFERENCES subeler(id),
+                tarih                 DATE NOT NULL,
+                olay                  TEXT NOT NULL DEFAULT 'vardiya_sabah_aksam_devri',
+                nakit                 NUMERIC(14,2) NOT NULL DEFAULT 0,
+                pos                   NUMERIC(14,2) NOT NULL DEFAULT 0,
+                online                NUMERIC(14,2) NOT NULL DEFAULT 0,
+                teslim                NUMERIC(14,2) NOT NULL,
+                devir                 NUMERIC(14,2) NOT NULL DEFAULT 0,
+                kapanisci_id          TEXT NOT NULL REFERENCES sube_panel_kullanici(id),
+                kapanisci_onay_ts     TIMESTAMP NOT NULL,
+                acilisci_id           TEXT REFERENCES sube_panel_kullanici(id),
+                acilisci_onay_ts      TIMESTAMP,
+                durum                 TEXT NOT NULL
+                    CHECK (durum IN ('acilis_bekliyor','tamamlandi','iptal')),
+                operasyon_event_id    TEXT,
+                x_raporu_onay         BOOLEAN NOT NULL DEFAULT FALSE,
+                ciro_gonderim_onay    BOOLEAN NOT NULL DEFAULT FALSE,
+                olusturma             TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (sube_id, tarih)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_kapanis_kayit_sube_tarih
+            ON kapanis_kayit (sube_id, tarih)
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema='public' AND table_name='kapanis_kayit'
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='kapanis_kayit' AND column_name='olay'
+                ) THEN
+                    ALTER TABLE kapanis_kayit
+                    ADD COLUMN olay TEXT NOT NULL DEFAULT 'vardiya_sabah_aksam_devri';
+                END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
+
+        import hashlib as _hmod
+
+        _s_a, _s_k = "spA1", "spK9"
+        h_a = _hmod.sha256(f"{_s_a}:1111".encode()).hexdigest()
+        h_k = _hmod.sha256(f"{_s_k}:2222".encode()).hexdigest()
+        cur.execute(
+            """
+            INSERT INTO sube_panel_kullanici (id, sube_id, ad, pin_salt, pin_hash, aktif)
+            VALUES
+                ('spk-sabah-demo', 'sube-merkez', 'Sabahçı Demo', %s, %s, TRUE),
+                ('spk-aksam-demo', 'sube-merkez', 'Akşamçı Demo', %s, %s, TRUE)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            (_s_a, h_a, _s_k, h_k),
+        )
+
+        # ── X RAPORU OCR (fiş görüntüsü + model çıktısı) ─────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS x_rapor_kayit (
+                id              TEXT PRIMARY KEY,
+                sube_id         TEXT NOT NULL REFERENCES subeler(id),
+                tarih           DATE NOT NULL,
+                personel_id     TEXT,
+                dosya_yolu      TEXT NOT NULL,
+                mime_type       TEXT,
+                ham_cevap       TEXT,
+                nakit           NUMERIC(14,2),
+                pos             NUMERIC(14,2),
+                online          NUMERIC(14,2),
+                toplam_ocr      NUMERIC(14,2),
+                kasa_snapshot   NUMERIC(14,2),
+                olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+
         # ── ŞUBE VARDİYA İHTİYAÇLARI ───────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS sube_vardiya_ihtiyac (
@@ -293,6 +445,30 @@ def init_db():
         # Ciro tablosunda unique constraint kasıtlı YOK:
         # Aynı gün aynı şubede aynı tutarda 2 ayrı ciro olabilir (sabah/akşam).
         # Duplicate koruması backend'de 5 saniyelik pencere ile yapılıyor.
+
+        # Şube personelinden gelen ciro — önce taslak (onay kuyruğundan ayrı)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ciro_taslak (
+                id            TEXT PRIMARY KEY,
+                sube_id       TEXT NOT NULL REFERENCES subeler(id),
+                tarih         DATE NOT NULL,
+                nakit         NUMERIC(14,2) NOT NULL DEFAULT 0,
+                pos           NUMERIC(14,2) NOT NULL DEFAULT 0,
+                online        NUMERIC(14,2) NOT NULL DEFAULT 0,
+                aciklama      TEXT,
+                personel_id   TEXT,
+                durum         TEXT NOT NULL DEFAULT 'bekliyor',
+                olusturma     TIMESTAMP NOT NULL DEFAULT NOW(),
+                onay_zamani   TIMESTAMP,
+                red_nedeni    TEXT,
+                ciro_id       TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_ciro_taslak_sube_gun_bekliyor
+            ON ciro_taslak (sube_id, tarih)
+            WHERE durum = 'bekliyor'
+        """)
 
         # ── KARTLAR ────────────────────────────────────────────
         cur.execute("""
@@ -785,25 +961,6 @@ def init_db():
             )
         """)
 
-        # Tedarikçi bazlı vadeli borç hareketleri (aylık trend + hesap özeti)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS vadeli_tedarikci_hareket (
-                id                TEXT PRIMARY KEY,
-                tedarikci_norm    TEXT NOT NULL,
-                tedarikci_etiket  TEXT NOT NULL,
-                vadeli_alim_id    TEXT,
-                hareket_tipi      TEXT NOT NULL,
-                tutar             NUMERIC(14,2) NOT NULL,
-                aciklama          TEXT,
-                islem_tarihi      DATE NOT NULL DEFAULT CURRENT_DATE,
-                olusturma         TIMESTAMP NOT NULL DEFAULT NOW()
-            )
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_vadeli_td_hareket_norm
-            ON vadeli_tedarikci_hareket (tedarikci_norm, islem_tarihi DESC)
-        """)
-
         # ── BORÇ ENVANTERİ ─────────────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS borc_envanteri (
@@ -894,23 +1051,6 @@ def init_db():
                 yeni_deger  TEXT,
                 olusturma   TIMESTAMP NOT NULL DEFAULT NOW()
             )
-        """)
-
-        # ── BİLGİ AMAÇLI EL TESLİM (kasa / motor / ledger etkilemez) ──
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS bilgi_teslim_kayitlari (
-                id              TEXT PRIMARY KEY,
-                kayit_tarihi    DATE NOT NULL,
-                teslim_eden     TEXT NOT NULL,
-                teslim_alan     TEXT NOT NULL,
-                tutar           NUMERIC(14,2) NOT NULL CHECK (tutar >= 0),
-                notlar          TEXT,
-                olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
-            )
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_bilgi_teslim_kayit_tarih
-            ON bilgi_teslim_kayitlari (kayit_tarihi)
         """)
 
         # Trigger kaldırıldı — backend tek sorumlu

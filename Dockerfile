@@ -1,21 +1,26 @@
-# ── Frontend: yalnız gerekli dosyalar (COPY . . + host node_modules = kırık build önlenir) ──
 FROM node:20-slim AS frontend
+
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
-COPY index.html vite.config.js ./
-COPY src ./src
-RUN npm run build
+COPY . .
+# Vite build (outDir=static, emptyOutDir) tüm static/ siler — şube paneli HTML korunur
+RUN set -eux; \
+    if [ -f static/sube_panel.html ]; then cp static/sube_panel.html /tmp/sube_panel.html; fi; \
+    npm run build; \
+    if [ -f /tmp/sube_panel.html ]; then cp /tmp/sube_panel.html static/sube_panel.html; fi
 
 FROM python:3.11-slim
+
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --from=frontend /app/static ./static
-COPY main.py database.py motors.py finans_core.py vardiya_motor.py kasa_service.py ledger_bakim.py ./
+# Kökteki tüm uygulama modülleri (yeni router / servis dosyaları dahil)
+COPY *.py ./
 
-# Railway ve benzeri platformlar PORT atar; exec formunda env genişlemez → sh -c
+RUN mkdir -p data/x_rapor_uploads
+
 EXPOSE 8080
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
