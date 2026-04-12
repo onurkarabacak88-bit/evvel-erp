@@ -8,6 +8,7 @@ import SabitGiderler from './pages/SabitGiderler';
 import AnlikGider from './pages/AnlikGider';
 import VadeliAlimlar from './pages/VadeliAlimlar';
 import OnayKuyrugu from './pages/OnayKuyrugu';
+import CiroTaslakOnay from './pages/CiroTaslakOnay';
 import Ciro from './pages/Ciro';
 import Strateji from './pages/Strateji';
 import Ledger from './pages/Ledger';
@@ -16,7 +17,6 @@ import DisKaynak from './pages/DisKaynak';
 import Rapor from './pages/Rapor';
 import KartMerkez from './pages/KartMerkez';
 import Subeler from './pages/Subeler';
-import TeslimKayit from './pages/TeslimKayit';
 import './index.css';
 
 const NAV = [
@@ -25,10 +25,10 @@ const NAV = [
     { id: 'rapor', label: 'Aylık Rapor', icon: '📊' },
     { id: 'strateji', label: 'Strateji Motoru', icon: '🧠' },
     { id: 'onay', label: 'Onay Kuyruğu', icon: '✅' },
+    { id: 'ciro-taslak-onay', label: 'Ciro Onayı', icon: '📋' },
     { id: 'ledger', label: 'İşlem Defteri', icon: '📒' },
   ]},
   { group: 'Veri Girişi', items: [
-    { id: 'teslim-kayit', label: 'El Teslim (bilgi)', icon: '🤝' },
     { id: 'ciro', label: 'Ciro Girişi', icon: '📈' },
     { id: 'kart-hareketleri', label: 'Kart Hareketi', icon: '💳' },
     { id: 'anlik-gider', label: 'Anlık Gider', icon: '💸' },
@@ -47,11 +47,10 @@ const NAV = [
 ];
 
 const PAGES = {
-  panel: Panel, strateji: Strateji, onay: OnayKuyrugu, ledger: Ledger,
+  panel: Panel, strateji: Strateji, onay: OnayKuyrugu, 'ciro-taslak-onay': CiroTaslakOnay, ledger: Ledger,
   ciro: Ciro, 'kart-hareketleri': KartHareketleri, 'anlik-gider': AnlikGider,
   rapor: Rapor, 'kart-merkez': KartMerkez, 'dis-kaynak': DisKaynak, vadeli: VadeliAlimlar, excel: ExcelImport, kartlar: Kartlar, 'kart-analiz': KartMerkez,
   personel: Personel, borclar: Borclar, 'sabit-giderler': SabitGiderler, 'vardiya-planlamasi': Subeler,
-  'teslim-kayit': TeslimKayit,
 };
 
 export default function App() {
