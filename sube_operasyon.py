@@ -272,7 +272,7 @@ class OperasyonTamamla(BaseModel):
     ciro_nakit: Optional[float] = None
     ciro_pos: Optional[float] = None
     ciro_online: Optional[float] = None
-    panel_kullanici_id: Optional[str] = None
+    personel_id: Optional[str] = None
     pin: Optional[str] = None
 
 
@@ -329,16 +329,24 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
 
         tip = ev["tip"]
         if tip == "ACILIS":
+            from personel_panel_auth import dogrula_personel_panel_pin
+
             if body.kasa_sayim is None or body.kasa_sayim < 0:
                 raise HTTPException(400, "Açılış için kasa sayımı girilmeli")
-            _insert_acilis_if_needed(
-                cur,
-                sube_id,
-                None,
-                body.personel_saat
-                and f"Operasyon ACILIS personel_saat={body.personel_saat} kasa={body.kasa_sayim}"
-                or f"Operasyon ACILIS kasa={body.kasa_sayim}",
+            pid_in = (body.personel_id or "").strip()
+            pin = (body.pin or "").replace(" ", "")
+            if not pid_in:
+                raise HTTPException(400, "Açılış onayı için personel seçilmeli.")
+            if len(pin) != 4 or not pin.isdigit():
+                raise HTTPException(400, "Açılış için 4 haneli panel PIN gerekli.")
+            ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+            onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+            pid_panel = str(ku.get("id") or "").strip() or None
+            saat_sistem = simdi.strftime("%H:%M")
+            aciklama_ins = (
+                f"Operasyon ACILIS — {onay_ad} — sistem_saati={saat_sistem} kasa={body.kasa_sayim}"
             )
+            _insert_acilis_if_needed(cur, sube_id, pid_panel, aciklama_ins)
             cur.execute(
                 """
                 UPDATE sube_operasyon_event
@@ -346,7 +354,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     personel_saat=%s, kasa_sayim=%s
                 WHERE id=%s
                 """,
-                (simdi, body.personel_saat, body.kasa_sayim, event_id),
+                (simdi, saat_sistem, body.kasa_sayim, event_id),
             )
             audit(cur, "sube_operasyon_event", event_id, "ACILIS_TAMAMLANDI")
             from operasyon_defter import operasyon_defter_ekle
@@ -379,8 +387,11 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 cur,
                 sube_id,
                 "ACILIS_TAMAM",
-                f"Operasyon ACILIS tamamlandı, kasa_sayim={ks}",
+                f"Operasyon ACILIS tamamlandı — {onay_ad} — saat={saat_sistem} kasa_sayim={ks}",
                 event_id,
+                personel_id=pid_panel,
+                personel_ad=onay_ad,
+                bildirim_saati=saat_sistem,
             )
 
         elif tip == "KONTROL":
@@ -417,7 +428,8 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
 
         elif tip == "KAPANIS":
             from operasyon_kurallar import vardiya_devri_bugun_baslamis_mi
-            from sube_kapanis_dual import _dogrula_pin, _upsert_ciro_taslak, vardiya_devri_tamamlandi_mi
+            from personel_panel_auth import dogrula_personel_panel_pin
+            from sube_kapanis_dual import _upsert_ciro_taslak, vardiya_devri_tamamlandi_mi
 
             if vardiya_devri_bugun_baslamis_mi(
                 cur, sube_id
@@ -430,18 +442,15 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 raise HTTPException(400, "Kapanış için teslim kasa tutarı girilmeli")
             if not body.x_raporu_gonderildi:
                 raise HTTPException(400, "Kapanış: X raporu gönderildi onayı gerekli.")
-            uid = (body.panel_kullanici_id or "").strip()
+            pid_in = (body.personel_id or "").strip()
             pin = (body.pin or "").replace(" ", "")
-            if not uid:
-                raise HTTPException(400, "Kapanış: onaylayan panel kullanıcısı seçilmeli.")
+            if not pid_in:
+                raise HTTPException(400, "Kapanış: onaylayan personel seçilmeli.")
             if len(pin) != 4 or not pin.isdigit():
                 raise HTTPException(400, "Kapanış: 4 haneli PIN gerekli.")
-            ku = _dogrula_pin(cur, uid, pin)
-            if str(ku.get("sube_id") or "") != str(sube_id):
-                raise HTTPException(400, "Panel kullanıcısı bu şubeye ait değil.")
-            onay_ad = (ku.get("ad") or "").strip() or "—"
-            raw_pid = ku.get("personel_id")
-            pid_panel = str(raw_pid).strip() if raw_pid else None
+            ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+            onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+            pid_panel = str(ku.get("id") or "").strip() or None
             bildirim_saat = (body.personel_saat or "").strip() or simdi.strftime("%H:%M")
 
             import sube_panel as sp
@@ -465,7 +474,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     personel_id=pid_panel,
                     gonderen_ad=onay_ad,
                     bildirim_saati=bildirim_saat,
-                    panel_kullanici_id=uid,
+                    panel_kullanici_id=None,
                     audit_etiket="KAPANIS_TASLAK",
                 )
                 ciro_gitti = True

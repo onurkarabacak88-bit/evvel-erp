@@ -1,17 +1,15 @@
 """
-Şube sabahçı → akşamcı vardiya devri (her şubede bu devir çift kişi; kimlik panel kullanıcı id).
+Şube sabahçı → akşamcı vardiya devri (çift imza; kimlik = personel_id).
 
-PIN: Vardiya adımlarında her imzacı kendi 4 haneli PIN’i ile onaylar (`VARDIYA_DEVIR_PIN_ZORUNLU`;
-False yapılırsa yalnızca kullanıcı/şube kontrolü kalır).
+PIN: Personel kaydındaki şirket geneli panel PIN (tüm şubelerde aynı).
+Eski şube bazlı `sube_panel_kullanici` uçları kaldırıldı — PIN merkezden personele atanır.
 
 Bu uçlar «genel kapanış» değildir: günlük operasyon / tek kişi kapanış ayrı kalır.
-DB sütun adları tarihsel: kapanisci_* = devreden (sabah), acilisci_* = devralan (akşam).
 
 Prefix: /api/sube-panel
 """
 from __future__ import annotations
 
-import hashlib
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -21,6 +19,7 @@ from pydantic import BaseModel
 
 from database import db
 from kasa_service import audit
+from personel_panel_auth import dogrula_personel_panel_pin, list_personel_panel_secim
 
 router = APIRouter(prefix="/api/sube-panel", tags=["sube-vardiya-devri"])
 
@@ -36,42 +35,18 @@ def _sube_getir(cur, sube_id: str) -> dict:
     return dict(row)
 
 
-def _pin_hash(pin: str, salt: str) -> str:
-    return hashlib.sha256(f"{salt}:{pin}".encode()).hexdigest()
-
-
-def _panel_kullanici_get(cur, kullanici_id: str) -> dict:
-    cur.execute(
-        """
-        SELECT * FROM sube_panel_kullanici
-        WHERE id=%s AND aktif=TRUE
-        """,
-        (kullanici_id,),
-    )
-    u = cur.fetchone()
-    if not u:
-        raise HTTPException(404, "Panel kullanıcısı bulunamadı")
-    return dict(u)
-
-
-def _dogrula_pin(cur, kullanici_id: str, pin: str) -> dict:
-    u = _panel_kullanici_get(cur, kullanici_id)
-    if _pin_hash(pin, u["pin_salt"]) != u["pin_hash"]:
-        raise HTTPException(403, "PIN hatalı")
-    return u
-
-
-def _vardiya_imza_kullanici_dogrula(cur, kullanici_id: str, pin: Optional[str]) -> dict:
-    """Vardiya adımı: PIN bayrağına göre sadece kayıt veya PIN+hash."""
-    u = _panel_kullanici_get(cur, kullanici_id)
+def _vardiya_imza_personel_dogrula(cur, personel_id: str, pin: Optional[str]) -> dict:
+    """Vardiya adımı: personel + şirket geneli panel PIN."""
     if not VARDIYA_DEVIR_PIN_ZORUNLU:
-        return u
-    p = (pin or "").strip()
-    if len(p) != 4 or not p.isdigit():
-        raise HTTPException(400, "Vardiya devrinde 4 haneli PIN gerekli")
-    if _pin_hash(p, u["pin_salt"]) != u["pin_hash"]:
-        raise HTTPException(403, "PIN hatalı")
-    return u
+        cur.execute(
+            "SELECT id, ad_soyad, aktif FROM personel WHERE id=%s",
+            (personel_id,),
+        )
+        r = cur.fetchone()
+        if not r or not dict(r).get("aktif"):
+            raise HTTPException(404, "Personel bulunamadı veya pasif")
+        return dict(r)
+    return dogrula_personel_panel_pin(cur, personel_id, pin or "")
 
 
 def vardiya_devri_tamamlandi_mi(cur, sube_id: str) -> bool:
@@ -93,53 +68,18 @@ def kapanis_cift_tamam_mi(cur, sube_id: str) -> bool:
     return vardiya_devri_tamamlandi_mi(cur, sube_id)
 
 
-def _bugun_acilis_kayitli_sabah_panel_id(cur, sube_id: str) -> Optional[str]:
-    """Açılışta kayıtlı panel kullanıcısı (sabah devreden için zorunlu eşleşme)."""
+def _bugun_acilis_kayitli_sabah_personel_id(cur, sube_id: str) -> Optional[str]:
+    """Açılış kaydındaki personel (sabah devreden için zorunlu eşleşme)."""
     cur.execute(
         """
         SELECT personel_id FROM sube_acilis
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='acildi'
+        WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='acildi' AND personel_id IS NOT NULL
         LIMIT 1
         """,
         (sube_id,),
     )
     r = cur.fetchone()
-    if not r or not r.get("personel_id"):
-        return None
-    pid = str(r["personel_id"])
-    cur.execute(
-        """
-        SELECT id FROM sube_panel_kullanici
-        WHERE id=%s AND sube_id=%s AND aktif=TRUE
-        """,
-        (pid, sube_id),
-    )
-    return pid if cur.fetchone() else None
-
-
-def _list_panel_kullanici(cur, sube_id: str) -> List[dict]:
-    cur.execute(
-        """
-        SELECT id, ad, yonetici, personel_id
-        FROM sube_panel_kullanici
-        WHERE sube_id=%s AND aktif=TRUE
-        ORDER BY yonetici DESC, ad
-        """,
-        (sube_id,),
-    )
-    rows = [dict(x) for x in cur.fetchall()]
-    for r in rows:
-        r["yonetici"] = bool(r.get("yonetici"))
-    return rows
-
-
-def _dogrula_yonetici(cur, sube_id: str, kullanici_id: str, pin: str) -> dict:
-    u = _dogrula_pin(cur, kullanici_id, pin)
-    if str(u.get("sube_id") or "") != str(sube_id):
-        raise HTTPException(400, "Panel kullanıcısı bu şubeye ait değil")
-    if not u.get("yonetici"):
-        raise HTTPException(403, "Bu işlem için panel yöneticisi olmalısınız")
-    return u
+    return str(r["personel_id"]) if r and r.get("personel_id") else None
 
 
 def vardiya_devir_panel_blob(cur, sube_id: str) -> Dict[str, Any]:
@@ -170,8 +110,8 @@ def vardiya_devir_panel_blob(cur, sube_id: str) -> Dict[str, Any]:
         )
     return {
         "vardiya_devir": row,
-        "panel_kullanicilar": _list_panel_kullanici(cur, sube_id),
-        "sabahci_zorunlu_id": _bugun_acilis_kayitli_sabah_panel_id(cur, sube_id),
+        "panel_kullanicilar": list_personel_panel_secim(cur),
+        "sabahci_zorunlu_id": _bugun_acilis_kayitli_sabah_personel_id(cur, sube_id),
         "vardiya_devir_pin_zorunlu": VARDIYA_DEVIR_PIN_ZORUNLU,
         "not": "Genel kapanış tek kişi olabilir; çift imza yalnızca sabah→akşam vardiya devrine aittir.",
     }
@@ -268,7 +208,7 @@ class PanelYoneticiAtamaBody(BaseModel):
 
 
 class VardiyaDevirAdim1(BaseModel):
-    """1. imza: sabahçı (devreden)."""
+    """1. imza: sabahçı (devreden) — `sabahci_devreden_id` = personel_id."""
     sabahci_devreden_id: str
     pin: str
     nakit: float = 0
@@ -282,7 +222,7 @@ class VardiyaDevirAdim1(BaseModel):
 
 
 class VardiyaDevirAdim2(BaseModel):
-    """2. imza: akşamçı (devralan)."""
+    """2. imza: akşamçı (devralan) — `aksamci_devralan_id` = personel_id."""
     aksamci_devralan_id: str
     pin: str
 
@@ -296,99 +236,19 @@ def vardiya_devri_durum(sube_id: str):
 
 @router.post("/{sube_id}/panel-kullanici")
 def panel_kullanici_ekle(sube_id: str, body: PanelKullaniciOlustur):
-    if not body.ad or not body.pin or len(body.pin) != 4 or not body.pin.isdigit():
-        raise HTTPException(400, "ad ve 4 haneli PIN gerekli")
-    salt = uuid.uuid4().hex[:12]
-    ph = _pin_hash(body.pin, salt)
-    kid = str(uuid.uuid4())
-    with db() as (conn, cur):
-        _sube_getir(cur, sube_id)
-        cur.execute(
-            """
-            SELECT COUNT(*) AS c FROM sube_panel_kullanici
-            WHERE sube_id=%s AND aktif=TRUE
-            """,
-            (sube_id,),
-        )
-        aktif_n = int(cur.fetchone()["c"])
-        ytid = (body.yetkili_panel_kullanici_id or "").strip()
-        ytp = (body.yetkili_pin or "").strip()
-        if aktif_n >= 1:
-            if not ytid or len(ytp) != 4 or not ytp.isdigit():
-                raise HTTPException(
-                    403,
-                    "Bu şubede kayıtlı panel kullanıcısı var: yeni eklemek için yönetici seçip PIN girin.",
-                )
-            _dogrula_yonetici(cur, sube_id, ytid, ytp)
-        ilk_kullanici = aktif_n == 0
-
-        pid = (body.personel_id or "").strip() or None
-        if pid:
-            cur.execute(
-                "SELECT id, sube_id FROM personel WHERE id=%s AND aktif=TRUE",
-                (pid,),
-            )
-            pr = cur.fetchone()
-            if not pr:
-                raise HTTPException(404, "Personel bulunamadı veya pasif")
-            ps = pr.get("sube_id")
-            if ps and str(ps) != str(sube_id):
-                raise HTTPException(400, "Personel kaydı bu şubeye bağlı değil")
-        cur.execute(
-            """
-            INSERT INTO sube_panel_kullanici
-                (id, sube_id, ad, pin_salt, pin_hash, aktif, personel_id, yonetici)
-            VALUES (%s, %s, %s, %s, %s, TRUE, %s, %s)
-            """,
-            (kid, sube_id, body.ad.strip(), salt, ph, pid, ilk_kullanici),
-        )
-        audit(cur, "sube_panel_kullanici", kid, "INSERT")
-    return {"success": True, "id": kid, "yonetici": ilk_kullanici}
+    raise HTTPException(
+        410,
+        "Şube bazlı panel kullanıcısı kaldırıldı. PIN ve yönetici: "
+        "GET/PUT /api/sube-panel/merkez/personel-panel-pin ve /merkez/personel/{id}/panel-pin",
+    )
 
 
 @router.post("/{sube_id}/panel-yonetici-atama")
 def panel_yonetici_atama(sube_id: str, body: PanelYoneticiAtamaBody):
-    hid = (body.hedef_panel_kullanici_id or "").strip()
-    if not hid:
-        raise HTTPException(400, "hedef_panel_kullanici_id gerekli")
-    with db() as (conn, cur):
-        _sube_getir(cur, sube_id)
-        _dogrula_yonetici(
-            cur,
-            sube_id,
-            (body.yetkili_panel_kullanici_id or "").strip(),
-            (body.yetkili_pin or "").strip(),
-        )
-        cur.execute(
-            """
-            SELECT id, yonetici FROM sube_panel_kullanici
-            WHERE id=%s AND sube_id=%s AND aktif=TRUE
-            """,
-            (hid, sube_id),
-        )
-        hedef = cur.fetchone()
-        if not hedef:
-            raise HTTPException(404, "Hedef panel kullanıcısı bulunamadı")
-        if not body.yonetici and hedef.get("yonetici"):
-            cur.execute(
-                """
-                SELECT COUNT(*) AS c FROM sube_panel_kullanici
-                WHERE sube_id=%s AND aktif=TRUE AND yonetici=TRUE AND id != %s
-                """,
-                (sube_id, hid),
-            )
-            if int(cur.fetchone()["c"]) < 1:
-                raise HTTPException(400, "En az bir panel yöneticisi kalmalıdır.")
-        cur.execute(
-            """
-            UPDATE sube_panel_kullanici
-            SET yonetici=%s
-            WHERE id=%s AND sube_id=%s
-            """,
-            (body.yonetici, hid, sube_id),
-        )
-        audit(cur, "sube_panel_kullanici", hid, "YONETICI_ATAMA" if body.yonetici else "YONETICI_KALDIR")
-    return {"success": True, "hedef_id": hid, "yonetici": body.yonetici}
+    raise HTTPException(
+        410,
+        "Şube bazlı yönetici ataması kaldırıldı. Personel için: PUT /api/sube-panel/merkez/personel/{id}/panel-yonetici",
+    )
 
 
 @router.post("/{sube_id}/vardiya-devri/adim1")
@@ -408,16 +268,14 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
         if not _bugun_sube_acildi_mi(cur, sube_id):
             raise HTTPException(403, "Şube açılış kaydı olmadan vardiya devri başlatılamaz")
 
-        zorunlu_sabah = _bugun_acilis_kayitli_sabah_panel_id(cur, sube_id)
+        zorunlu_sabah = _bugun_acilis_kayitli_sabah_personel_id(cur, sube_id)
         if zorunlu_sabah and body.sabahci_devreden_id != zorunlu_sabah:
             raise HTTPException(
                 400,
-                "Birinci imza, bugünkü açılış kaydında yazılı sabah panel kullanıcısı olmalıdır.",
+                "Birinci imza, bugünkü açılış kaydında yazılı personel ile aynı olmalıdır.",
             )
 
-        ku = _vardiya_imza_kullanici_dogrula(cur, body.sabahci_devreden_id, body.pin)
-        if ku["sube_id"] != sube_id:
-            raise HTTPException(400, "Kullanıcı bu şubeye ait değil")
+        _vardiya_imza_personel_dogrula(cur, body.sabahci_devreden_id, body.pin)
 
         cur.execute(
             """
@@ -435,8 +293,9 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
             INSERT INTO kapanis_kayit
                 (id, sube_id, tarih, olay, nakit, pos, online, teslim, devir,
                  kapanisci_id, kapanisci_onay_ts, durum,
-                 operasyon_event_id, x_raporu_onay, ciro_gonderim_onay)
-            VALUES (%s, %s, CURRENT_DATE, 'vardiya_sabah_aksam_devri', %s, %s, %s, %s, %s, %s, %s, 'acilis_bekliyor', %s, %s, %s)
+                 operasyon_event_id, x_raporu_onay, ciro_gonderim_onay,
+                 sabahci_personel_id, aksamci_personel_id)
+            VALUES (%s, %s, CURRENT_DATE, 'vardiya_sabah_aksam_devri', %s, %s, %s, %s, %s, NULL, %s, 'acilis_bekliyor', %s, %s, %s, %s, NULL)
             """,
             (
                 kid,
@@ -446,11 +305,11 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
                 body.online,
                 body.teslim,
                 body.devir,
-                body.sabahci_devreden_id,
                 simdi,
                 body.operasyon_event_id,
                 body.x_raporu_gonderildi,
                 body.ciro_gonderildi,
+                body.sabahci_devreden_id,
             ),
         )
         audit(cur, "kapanis_kayit", kid, "VARDIYA_DEVIR_ADIM1_SABAH")
@@ -493,23 +352,23 @@ def vardiya_devri_adim2(sube_id: str, body: VardiyaDevirAdim2):
         if kk["durum"] != "acilis_bekliyor":
             raise HTTPException(400, "Akşam imzası beklenmiyor veya kayıt tamamlanmış")
 
-        if body.aksamci_devralan_id == kk["kapanisci_id"]:
+        sabah_pid = kk.get("sabahci_personel_id") or kk.get("kapanisci_id")
+        if sabah_pid and str(body.aksamci_devralan_id) == str(sabah_pid):
             raise HTTPException(
                 400,
                 "Aynı kişi hem sabah devrini hem akşam kabulünü imzalayamaz — iki farklı kişi gerekir.",
             )
 
-        ku = _vardiya_imza_kullanici_dogrula(cur, body.aksamci_devralan_id, body.pin)
-        if ku["sube_id"] != sube_id:
-            raise HTTPException(400, "Kullanıcı bu şubeye ait değil")
+        _vardiya_imza_personel_dogrula(cur, body.aksamci_devralan_id, body.pin)
 
         cur.execute(
             """
             UPDATE kapanis_kayit
-            SET acilisci_id=%s, acilisci_onay_ts=%s, durum='tamamlandi'
+            SET acilisci_id=NULL, acilisci_onay_ts=%s,
+                aksamci_personel_id=%s, durum='tamamlandi'
             WHERE id=%s
             """,
-            (body.aksamci_devralan_id, simdi, kk["id"]),
+            (simdi, body.aksamci_devralan_id, kk["id"]),
         )
         audit(cur, "kapanis_kayit", kk["id"], "VARDIYA_DEVIR_ADIM2_AKSAM")
         kid_out = kk["id"]

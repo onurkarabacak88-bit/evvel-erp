@@ -21,7 +21,12 @@ from pydantic import BaseModel
 from database import db
 from finans_core import kasa_bakiyesi
 from kasa_service import insert_kasa_hareketi, audit
-from sube_kapanis_dual import _dogrula_pin, _list_panel_kullanici, _pin_hash
+from personel_panel_auth import (
+    count_personel_panel_yonetici,
+    dogrula_personel_panel_pin,
+    list_personel_panel_secim,
+    panel_pin_hash,
+)
 
 router = APIRouter(prefix="/api/sube-panel", tags=["sube-panel"])
 
@@ -187,9 +192,11 @@ def _bugun_kasa_acildi_mi(cur, sube_id: str) -> bool:
 def _bugun_kasa_acma_kaydi(cur, sube_id: str) -> Optional[dict]:
     cur.execute(
         """
-        SELECT k.panel_kullanici_id, k.olusturma, u.ad AS panel_kullanici_ad
+        SELECT k.personel_id, k.panel_kullanici_id, k.olusturma,
+               COALESCE(p.ad_soyad, u.ad) AS panel_kullanici_ad
         FROM sube_kasa_gun_acma k
-        JOIN sube_panel_kullanici u ON u.id = k.panel_kullanici_id
+        LEFT JOIN personel p ON p.id = k.personel_id
+        LEFT JOIN sube_panel_kullanici u ON u.id = k.panel_kullanici_id
         WHERE k.sube_id=%s AND k.tarih=CURRENT_DATE
         LIMIT 1
         """,
@@ -389,7 +396,8 @@ class SubeAcilisModel(BaseModel):
 
 
 class KasaKilitAcModel(BaseModel):
-    panel_kullanici_id: str
+    """Şube paneli: personel_id + şirket geneli panel PIN (tüm şubelerde geçerli)."""
+    personel_id: str
     pin: str
 
 
@@ -397,25 +405,22 @@ class PanelKullaniciPinGuncelle(BaseModel):
     pin: str
 
 
+class PersonelPanelYoneticiBody(BaseModel):
+    yonetici: bool = True
+
+
 @router.post("/{sube_id}/kasa-kilit-ac")
 def kasa_kilit_ac(sube_id: str, body: KasaKilitAcModel):
-    """Günlük kasa kilidini kayıtlı panel kullanıcısı + 4 haneli PIN ile aç."""
-    uid = (body.panel_kullanici_id or "").strip()
+    """Günlük kasa kilidini personel + şirket geneli panel PIN ile aç (tüm şubelerde aynı PIN)."""
+    pid = (body.personel_id or "").strip()
     pin = (body.pin or "").strip()
-    if not uid:
-        raise HTTPException(400, "panel_kullanici_id gerekli")
+    if not pid:
+        raise HTTPException(400, "personel_id gerekli")
     if len(pin) != 4 or not pin.isdigit():
         raise HTTPException(400, "4 haneli PIN gerekli")
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
-        cur.execute(
-            "SELECT sube_id FROM sube_panel_kullanici WHERE id=%s AND aktif=TRUE",
-            (uid,),
-        )
-        row = cur.fetchone()
-        if not row or str(row["sube_id"]) != str(sube_id):
-            raise HTTPException(404, "Panel kullanıcısı bu şube için geçerli değil")
-        _dogrula_pin(cur, uid, pin)
+        dogrula_personel_panel_pin(cur, pid, pin)
         cur.execute(
             "SELECT 1 FROM sube_kasa_gun_acma WHERE sube_id=%s AND tarih=CURRENT_DATE",
             (sube_id,),
@@ -428,10 +433,10 @@ def kasa_kilit_ac(sube_id: str, body: KasaKilitAcModel):
             }
         cur.execute(
             """
-            INSERT INTO sube_kasa_gun_acma (sube_id, tarih, panel_kullanici_id)
-            VALUES (%s, CURRENT_DATE, %s)
+            INSERT INTO sube_kasa_gun_acma (sube_id, tarih, personel_id, panel_kullanici_id)
+            VALUES (%s, CURRENT_DATE, %s, NULL)
             """,
-            (sube_id, uid),
+            (sube_id, pid),
         )
         audit(
             cur,
@@ -442,54 +447,77 @@ def kasa_kilit_ac(sube_id: str, body: KasaKilitAcModel):
     return {"success": True, "idempotent": False}
 
 
-@router.get("/merkez/{sube_id}/panel-pin-kullanicilar")
-def merkez_panel_pin_kullanicilar(sube_id: str):
+@router.get("/merkez/personel-panel-pin")
+def merkez_personel_panel_pin_liste():
+    """Tüm şubeler için geçerli personel panel PIN listesi (şube seçimi yok)."""
     with db() as (conn, cur):
-        _sube_getir(cur, sube_id)
         cur.execute(
             """
-            SELECT u.id, u.ad, u.personel_id, u.aktif, u.yonetici,
-                   p.ad_soyad AS personel_ad_soyad
-            FROM sube_panel_kullanici u
-            LEFT JOIN personel p ON p.id = u.personel_id
-            WHERE u.sube_id=%s
-            ORDER BY u.yonetici DESC, u.aktif DESC, u.ad
-            """,
-            (sube_id,),
+            SELECT p.id, p.ad_soyad, p.sube_id, s.ad AS sube_adi, p.aktif,
+                   COALESCE(p.panel_yonetici, FALSE) AS yonetici,
+                   (p.panel_pin_hash IS NOT NULL AND TRIM(COALESCE(p.panel_pin_hash,'')) <> '') AS panel_pin_tanimli
+            FROM personel p
+            LEFT JOIN subeler s ON s.id = p.sube_id
+            WHERE p.aktif = TRUE
+            ORDER BY p.ad_soyad
+            """
         )
-        return [dict(x) for x in cur.fetchall()]
+        rows = [dict(x) for x in cur.fetchall()]
+        for r in rows:
+            r["yonetici"] = bool(r.get("yonetici"))
+            r["panel_pin_tanimli"] = bool(r.get("panel_pin_tanimli"))
+        return rows
 
 
-@router.put("/merkez/{sube_id}/panel-kullanici/{kullanici_id}/pin")
-def merkez_panel_kullanici_pin_guncelle(
-    sube_id: str, kullanici_id: str, body: PanelKullaniciPinGuncelle
-):
+@router.put("/merkez/personel/{personel_id}/panel-pin")
+def merkez_personel_panel_pin_guncelle(personel_id: str, body: PanelKullaniciPinGuncelle):
+    """Personel panel PIN — tüm şube panellerinde aynı PIN ile geçerli olur."""
     p = (body.pin or "").strip()
     if len(p) != 4 or not p.isdigit():
         raise HTTPException(400, "4 haneli PIN gerekli")
     salt = uuid.uuid4().hex[:12]
-    ph = _pin_hash(p, salt)
+    ph = panel_pin_hash(p, salt)
     with db() as (conn, cur):
-        _sube_getir(cur, sube_id)
-        cur.execute(
-            """
-            SELECT id FROM sube_panel_kullanici
-            WHERE id=%s AND sube_id=%s
-            """,
-            (kullanici_id, sube_id),
-        )
+        cur.execute("SELECT id FROM personel WHERE id=%s", (personel_id,))
         if not cur.fetchone():
-            raise HTTPException(404, "Panel kullanıcısı bulunamadı")
+            raise HTTPException(404, "Personel bulunamadı")
         cur.execute(
             """
-            UPDATE sube_panel_kullanici
-            SET pin_salt=%s, pin_hash=%s
+            UPDATE personel
+            SET panel_pin_salt=%s, panel_pin_hash=%s
             WHERE id=%s
             """,
-            (salt, ph, kullanici_id),
+            (salt, ph, personel_id),
         )
-        audit(cur, "sube_panel_kullanici", kullanici_id, "PIN_GUNCELLE")
+        audit(cur, "personel", personel_id, "PANEL_PIN_GUNCELLE")
     return {"success": True}
+
+
+@router.put("/merkez/personel/{personel_id}/panel-yonetici")
+def merkez_personel_panel_yonetici(personel_id: str, body: PersonelPanelYoneticiBody):
+    """Panel yöneticisi (personel) — şube panelinde başka personele PIN atayabilen rol."""
+    yon = bool(body.yonetici)
+    with db() as (conn, cur):
+        cur.execute("SELECT id, aktif FROM personel WHERE id=%s", (personel_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Personel bulunamadı")
+        if not yon:
+            cur.execute(
+                """
+                SELECT COUNT(*)::int AS c FROM personel
+                WHERE aktif = TRUE AND COALESCE(panel_yonetici, FALSE) = TRUE AND id != %s
+                """,
+                (personel_id,),
+            )
+            if int(cur.fetchone()["c"]) < 1:
+                raise HTTPException(400, "En az bir panel yöneticisi (personel) kalmalıdır.")
+        cur.execute(
+            "UPDATE personel SET panel_yonetici=%s WHERE id=%s",
+            (yon, personel_id),
+        )
+        audit(cur, "personel", personel_id, "PANEL_YONETICI" if yon else "PANEL_YONETICI_KALDIR")
+    return {"success": True, "yonetici": yon}
 
 
 @router.post("/{sube_id}/acilis")
@@ -761,15 +789,8 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
         ciro_taslak_bekliyor,
         kasa_acildi_mi=kasa_acildi_mi,
     )
-    panel_pin_kullanicilar = _list_panel_kullanici(cur, sube_id)
-    cur.execute(
-        """
-        SELECT COUNT(*)::int AS c FROM sube_panel_kullanici
-        WHERE sube_id=%s AND aktif=TRUE AND yonetici=TRUE
-        """,
-        (sube_id,),
-    )
-    panel_yonetici_sayisi = int(cur.fetchone()["c"])
+    panel_pin_kullanicilar = list_personel_panel_secim(cur)
+    panel_yonetici_sayisi = count_personel_panel_yonetici(cur)
     tamamlanan = sum(1 for g in gorevler if g["tamamlandi"])
 
     from sube_operasyon import build_panel_operasyon_blob
@@ -777,6 +798,26 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
 
     operasyon = build_panel_operasyon_blob(cur, sube_id, sube)
     vardiya_devir = vardiya_devir_panel_blob(cur, sube_id)
+
+    personel_operasyon_secim: list = []
+    akt_op = operasyon.get("aktif") if isinstance(operasyon, dict) else None
+    if (
+        isinstance(akt_op, dict)
+        and akt_op.get("tip") == "ACILIS"
+        and akt_op.get("durum") in ("bekliyor", "gecikti")
+    ):
+        cur.execute(
+            """
+            SELECT id, ad_soyad
+            FROM personel
+            WHERE aktif = TRUE
+            ORDER BY ad_soyad
+            """
+        )
+        personel_operasyon_secim = [
+            {"id": str(r["id"]), "ad": (r["ad_soyad"] or "").strip()}
+            for r in cur.fetchall()
+        ]
 
     kasa_kilitli = not kasa_acildi_mi
     panel_blok = kasa_kilitli or (not sube_acildi_mi)
@@ -807,6 +848,7 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
         "anlik_gider_adet": anlik_adet,
         "operasyon":      operasyon,
         "vardiya_devir":  vardiya_devir,
+        "personel_operasyon_secim": personel_operasyon_secim,
     }
 
 
@@ -855,8 +897,8 @@ def sube_personel_panel_public(payload: dict) -> dict:
             "esikler": op.get("esikler"),
         }
     p["uyari"] = (
-        "Bu ekran operasyon disiplini içindir; ciro toplamları ve kasa farkı yalnızca "
-        "merkez (CFO / operasyon) tarafında analiz edilir."
+        "Bu ekranda yalnızca günlük görev ve operasyon özeti yer alır; "
+        "ciro toplamları ve kasa farkı burada gösterilmez."
     )
     return p
 

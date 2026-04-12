@@ -26,6 +26,7 @@ from sube_operasyon import router as sube_operasyon_router
 from sube_kapanis_dual import router as sube_kapanis_dual_router
 from operasyon_merkez_api import router as operasyon_merkez_router
 from sube_personel_api import router as sube_personel_router
+from banka_yatirim_api import router as banka_yatirim_router
 from vardiya_motor import senaryolar_uret, hafta_senaryolari_uret, hafta_senaryolari_expert_uret
 
 
@@ -52,6 +53,7 @@ app.include_router(sube_operasyon_router)
 app.include_router(sube_kapanis_dual_router)
 app.include_router(operasyon_merkez_router)
 app.include_router(sube_personel_router)
+app.include_router(banka_yatirim_router)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -410,6 +412,20 @@ def panel():
                 AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
             """)
             ozet['bu_ay_anlik_gider'] = float(cur.fetchone()['anlik_gider'])
+
+            # Bu ay bankaya yatırılan (takip tablosu)
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(tutar), 0) AS toplam,
+                       COUNT(*)::int AS adet
+                FROM banka_yatirimlari
+                WHERE EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                  AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+                """
+            )
+            _by = cur.fetchone()
+            ozet["bu_ay_banka_yatirim"] = float(_by["toplam"] or 0)
+            ozet["bu_ay_banka_yatirim_adet"] = int(_by["adet"] or 0)
 
             # Nakit / POS / Online breakdown (bu ay ciro)
             cur.execute("""
@@ -1580,6 +1596,16 @@ class PersonelModel(BaseModel):
         except:
             return None
 
+def _personel_api_row(r: dict) -> dict:
+    d = dict(r)
+    d["panel_pin_tanimli"] = bool((d.get("panel_pin_hash") or "").strip())
+    d.pop("panel_pin_salt", None)
+    d.pop("panel_pin_hash", None)
+    if "panel_yonetici" in d and d["panel_yonetici"] is not None:
+        d["panel_yonetici"] = bool(d["panel_yonetici"])
+    return d
+
+
 @app.get("/api/personel")
 def personel_listele(aktif: Optional[bool] = None):
     with db() as (conn, cur):
@@ -1589,7 +1615,7 @@ def personel_listele(aktif: Optional[bool] = None):
         else:
             cur.execute("""SELECT p.*, s.ad as sube_adi FROM personel p
                 LEFT JOIN subeler s ON s.id=p.sube_id ORDER BY p.ad_soyad""")
-        return [dict(r) for r in cur.fetchall()]
+        return [_personel_api_row(dict(r)) for r in cur.fetchall()]
 
 @app.post("/api/personel")
 def personel_ekle(p: PersonelModel):
@@ -5372,9 +5398,8 @@ def sistem_sifirla(body: dict = {}):
     return {"basarili": True, "silinen": silincekler,
             "mesaj": f"{len(silincekler)} tablo temizlendi."}
 
-# Şube personel + operasyon merkez HTML (SPA catch-all'dan önce)
+# Şube personel paneli HTML (SPA catch-all'dan önce)
 _sube_panel_path = pathlib.Path("static/sube_panel.html")
-_ops_panel_path = pathlib.Path("static/ops_panel.html")
 if _sube_panel_path.exists():
     from fastapi.responses import FileResponse as _FileResponseSube
 
@@ -5402,21 +5427,6 @@ if _sube_panel_path.exists():
             str(_sube_panel_path),
             media_type="text/html",
             headers=_sube_headers,
-        )
-
-if _ops_panel_path.exists():
-    from fastapi.responses import FileResponse as _FileResponseOps
-
-    @app.get("/ops")
-    async def serve_ops_merkez_html():
-        return _FileResponseOps(
-            str(_ops_panel_path),
-            media_type="text/html",
-            headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Pragma": "no-cache",
-                "Expires": "0",
-            },
         )
 
 # Frontend

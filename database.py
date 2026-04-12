@@ -506,6 +506,22 @@ def init_db():
             END $$;
         """)
 
+        # ── BANKA YATIRIMLARI (yalnızca CFO takip; kasa hareketine yazılmaz) ──
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS banka_yatirimlari (
+                id          TEXT PRIMARY KEY,
+                tarih       DATE NOT NULL,
+                tutar       NUMERIC(14,2) NOT NULL,
+                yatiran_ad  TEXT NOT NULL,
+                aciklama    TEXT,
+                olusturma   TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_banka_yatirimlari_tarih
+            ON banka_yatirimlari (tarih DESC)
+        """)
+
         # Migration: asgari_oran kolonu ekle
         cur.execute("""
             DO $$
@@ -855,6 +871,9 @@ def init_db():
                 include_in_planning BOOLEAN NOT NULL DEFAULT TRUE,
                 vardiya_tipi    TEXT,
                 vardiya_max_weekly_hours NUMERIC(6,2),
+                panel_pin_salt   TEXT,
+                panel_pin_hash   TEXT,
+                panel_yonetici   BOOLEAN NOT NULL DEFAULT FALSE,
                 olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """)
@@ -869,6 +888,103 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='personel' AND column_name='vardiya_max_weekly_hours')
                 THEN ALTER TABLE personel ADD COLUMN vardiya_max_weekly_hours NUMERIC(6,2); END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel' AND column_name='panel_pin_salt')
+                THEN ALTER TABLE personel ADD COLUMN panel_pin_salt TEXT; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel' AND column_name='panel_pin_hash')
+                THEN ALTER TABLE personel ADD COLUMN panel_pin_hash TEXT; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel' AND column_name='panel_yonetici')
+                THEN ALTER TABLE personel ADD COLUMN panel_yonetici BOOLEAN NOT NULL DEFAULT FALSE; END IF;
+            END $$;
+        """)
+
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'sube_kasa_gun_acma'
+                      AND column_name = 'personel_id'
+                ) THEN
+                    ALTER TABLE sube_kasa_gun_acma
+                    ADD COLUMN personel_id TEXT REFERENCES personel(id);
+                END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE sube_kasa_gun_acma
+                    DROP CONSTRAINT IF EXISTS sube_kasa_gun_acma_panel_kullanici_id_fkey;
+            EXCEPTION WHEN undefined_object THEN NULL;
+            END $$;
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE sube_kasa_gun_acma
+                    ALTER COLUMN panel_kullanici_id DROP NOT NULL;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
+        cur.execute("""
+            UPDATE sube_kasa_gun_acma k SET personel_id = u.personel_id
+            FROM sube_panel_kullanici u
+            WHERE u.id = k.panel_kullanici_id
+              AND k.personel_id IS NULL
+              AND u.personel_id IS NOT NULL;
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'kapanis_kayit'
+                      AND column_name = 'sabahci_personel_id'
+                ) THEN
+                    ALTER TABLE kapanis_kayit
+                    ADD COLUMN sabahci_personel_id TEXT REFERENCES personel(id);
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'kapanis_kayit'
+                      AND column_name = 'aksamci_personel_id'
+                ) THEN
+                    ALTER TABLE kapanis_kayit
+                    ADD COLUMN aksamci_personel_id TEXT REFERENCES personel(id);
+                END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE kapanis_kayit DROP CONSTRAINT IF EXISTS kapanis_kayit_kapanisci_id_fkey;
+            EXCEPTION WHEN undefined_object THEN NULL;
+            END $$;
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE kapanis_kayit DROP CONSTRAINT IF EXISTS kapanis_kayit_acilisci_id_fkey;
+            EXCEPTION WHEN undefined_object THEN NULL;
+            END $$;
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE kapanis_kayit ALTER COLUMN kapanisci_id DROP NOT NULL;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE kapanis_kayit ALTER COLUMN acilisci_id DROP NOT NULL;
+            EXCEPTION WHEN others THEN NULL;
             END $$;
         """)
 
