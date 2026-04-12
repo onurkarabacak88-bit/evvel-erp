@@ -40,6 +40,31 @@
     .op-badge.bekliyor { background: #334155; color: #e2e8f0; }
     .op-badge.gecikti { background: #9a3412; color: #ffedd5; }
     .chk { width: auto; margin-right: 8px; vertical-align: middle; }
+    /* Kasa / şube açılış / ACILIS operasyon — güçlü dikkat çekici yanıp sönme */
+    @keyframes evvelCtaPulse {
+      0%, 100% {
+        border-color: #ea580c;
+        box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.55), 0 0 20px rgba(234, 88, 12, 0.15);
+        filter: brightness(1);
+      }
+      50% {
+        border-color: #fb923c;
+        box-shadow: 0 0 0 6px rgba(251, 146, 60, 0.2), 0 0 36px rgba(251, 146, 60, 0.35);
+        filter: brightness(1.08);
+      }
+    }
+    .card.card--pulse-cta {
+      border-width: 2px;
+      border-style: solid;
+      animation: evvelCtaPulse 1.1s ease-in-out infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .card.card--pulse-cta {
+        animation: none;
+        border-color: #ea580c;
+        box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.25);
+      }
+    }
   </style>
 </head>
 <body>
@@ -59,7 +84,7 @@
   </div>
 
   <div id="kasaOverlay" class="overlay" style="display:none">
-    <div class="overlay-inner card">
+    <div class="overlay-inner card card--pulse-cta">
       <h1 style="margin-bottom:8px">Kasa kilitli</h1>
       <p class="muted">Günlük açılışta kasayı açmak için kendinizi seçin ve 4 haneli PIN girin.</p>
       <label>Personel</label>
@@ -72,7 +97,7 @@
   </div>
 
   <div id="acilisOverlay" class="overlay" style="display:none">
-    <div class="overlay-inner card">
+    <div class="overlay-inner card card--pulse-cta">
       <h1 style="margin-bottom:8px">Şube henüz açılmadı</h1>
       <p class="muted">Kasa açıldı. Şimdi günlük şube açılış kaydını oluşturun.</p>
       <p class="err" id="acilisErr"></p>
@@ -149,6 +174,11 @@
   const operasyonOverlay = document.getElementById('operasyonOverlay');
   /** Panel PIN kullanıcıları (kapanışta seçim için) */
   var lastPanelPinKullanicilar = [];
+  /** ACILIS adım 2: tüm aktif personel (merkez personel kartı) */
+  var lastPersonelOperasyonSecim = [];
+  var lastOperasyonBlob = null;
+  var opAcilisStep = 1;
+  var opAcilisKasaPending = null;
   const kasaUser = document.getElementById('kasaUser');
   const kasaPin = document.getElementById('kasaPin');
   const kasaBtn = document.getElementById('kasaBtn');
@@ -225,13 +255,75 @@
   function hideOperasyonZorunlu() {
     operasyonOverlay.style.display = 'none';
     operasyonOverlay.classList.remove('gecikti', 'kritik');
+    var oc = document.getElementById('operasyonCard');
+    if (oc) oc.classList.remove('card--pulse-cta');
     stopOperasyonAlarm();
     opAktifEvent = null;
+    opAcilisStep = 1;
+    opAcilisKasaPending = null;
+    lastOperasyonBlob = null;
+    if (opSubmit) opSubmit.textContent = 'Kaydet ve tamamla';
+  }
+
+  function escapeHtmlAttr(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;');
+  }
+
+  function buildAcilisAuthFields(personelList) {
+    var opts = '';
+    (personelList || []).forEach(function (p) {
+      var ad = (p.ad || '').trim();
+      if (!ad) return;
+      opts += '<option value="' + escapeHtmlAttr(ad) + '"></option>';
+    });
+    return (
+      '<p class="muted" style="margin-bottom:10px;font-size:0.88rem">Açılış onayı: personeli seçin veya ad soyadı yazın (tam eşleşme veya tek öneri), ardından size tanımlı <strong>panel PIN</strong> (4 hane) girin.</p>' +
+      '<label>Personel</label><input type="text" id="opAcilisPersonelAd" list="opAcilisPersList" autocomplete="off" placeholder="Örn. Ayşe Yılmaz" />' +
+      '<datalist id="opAcilisPersList">' + opts + '</datalist>' +
+      '<label style="margin-top:10px">Panel PIN</label><input type="password" id="opAcilisPin" class="pin" maxlength="4" inputmode="numeric" autocomplete="one-time-code" />' +
+      '<button type="button" id="opAcilisGeri" style="margin-top:14px;background:transparent;border:none;color:#94a3b8;cursor:pointer;text-decoration:underline;font-size:0.85rem">« Kasa sayımına dön</button>'
+    );
+  }
+
+  function resolvePersonelIdAcilis() {
+    var raw = (document.getElementById('opAcilisPersonelAd') && document.getElementById('opAcilisPersonelAd').value || '').trim();
+    if (!raw) return null;
+    var low = raw.toLowerCase();
+    var list = lastPersonelOperasyonSecim || [];
+    var exact = list.filter(function (p) { return (p.ad || '').trim().toLowerCase() === low; });
+    if (exact.length >= 1) return exact[0].id;
+    var pref = list.filter(function (p) { return (p.ad || '').trim().toLowerCase().indexOf(low) === 0; });
+    if (pref.length === 1) return pref[0].id;
+    var sub = list.filter(function (p) { return (p.ad || '').toLowerCase().indexOf(low) >= 0; });
+    if (sub.length === 1) return sub[0].id;
+    return null;
+  }
+
+  function wireAcilisGeri() {
+    var g = document.getElementById('opAcilisGeri');
+    if (!g) return;
+    g.onclick = function () {
+      opAcilisStep = 1;
+      opFields.innerHTML = buildOperasyonFields('ACILIS');
+      var inp = document.getElementById('opKasaSayim');
+      if (inp && opAcilisKasaPending != null) inp.value = String(opAcilisKasaPending);
+      opSubmit.textContent = 'Kaydet ve tamamla';
+    };
   }
 
   function buildOperasyonFields(tip) {
     const saatRow = '<label>Personel saati (isteğe bağlı, HH:MM)</label><input type="text" id="opPersonelSaat" placeholder="14:30" maxlength="5" />';
-    if (tip === 'ACILIS' || tip === 'KONTROL' || tip === 'CIKIS') {
+    if (tip === 'ACILIS') {
+      var sv = (lastOperasyonBlob && lastOperasyonBlob.sunucu_saati) ? lastOperasyonBlob.sunucu_saati : '—';
+      return (
+        '<label>Kasa sayımı (₺)</label><input type="text" id="opKasaSayim" inputmode="decimal" autocomplete="off" />' +
+        '<p class="muted" style="margin-top:10px;font-size:0.88rem">Kayıt saati: <strong>' + sv + '</strong> (sunucu). Personel saati istenmez; bir sonraki adımda personel + PIN doğrulanır.</p>'
+      );
+    }
+    if (tip === 'KONTROL' || tip === 'CIKIS') {
       let extra = '';
       if (tip === 'KONTROL') {
         extra =
@@ -251,10 +343,10 @@
         opts += '<option value="' + (u.id || '') + '">' + (u.ad || u.id) + '</option>';
       });
       if (!opts) {
-        opts = '<option value="">— Önce kasa için panel kullanıcısı tanımlayın —</option>';
+        opts = '<option value="">— Panel PIN tanımlı personel yok —</option>';
       }
       return (
-        '<label style="margin-top:2px">Kapanışı onaylayan (panel)</label><select id="opKapUser">' + opts + '</select>' +
+        '<label style="margin-top:2px">Kapanışı onaylayan (personel)</label><select id="opKapUser">' + opts + '</select>' +
         '<label style="margin-top:10px">PIN (4 hane)</label><input type="password" id="opKapPin" class="pin" maxlength="4" inputmode="numeric" autocomplete="one-time-code" />' +
         '<p class="muted" style="margin-top:10px">Merkez ciro onayına gidecek tutarlar (X):</p>' +
         '<label>X nakit (₺)</label><input type="text" id="opCiroN" inputmode="decimal" placeholder="0" />' +
@@ -268,7 +360,7 @@
         '<input type="checkbox" class="chk" id="opXRapor" /><span>X raporu WhatsApp ile gönderildi</span></label>' +
         '<label style="margin-top:8px;display:flex;align-items:center;cursor:pointer">' +
         '<input type="checkbox" class="chk" id="opCiroGon" /><span>Ciro zaten ayrı gönderildi / taslağa işlendi (yedek onay)</span></label>' +
-        '<p class="muted" style="margin-top:10px">Kapanış kuralları merkez politikasına göre doğrulanır. Ciro taslağında onaylayanın adı ve bildirim saati merkeze gider.</p>'
+        '<p class="muted" style="margin-top:10px">Kapanış bilgileri iş kurallarına göre doğrulanır; onaylayan ve bildirim saati kayıt altına alınır.</p>'
       );
     }
     return '<p class="muted">Bu olay tipi için form henüz tanımlı değil.</p>';
@@ -276,8 +368,14 @@
 
   function showOperasyonZorunlu(aktif, blob) {
     opAktifEvent = aktif;
+    lastOperasyonBlob = blob || null;
     const tip = aktif.tip || '';
     const durum = aktif.durum || '';
+    if (tip === 'ACILIS') {
+      opAcilisStep = 1;
+      opAcilisKasaPending = null;
+    }
+    opSubmit.textContent = 'Kaydet ve tamamla';
     opTitle.textContent = 'Zorunlu: ' + tip;
     opDesc.textContent =
       'Sistem bu adımı tamamlamanızı bekliyor. Cevap verene kadar ekran kilitlidir (sesli uyarı).';
@@ -290,12 +388,17 @@
     else if (blob && blob.aktif_suphe) operasyonOverlay.classList.add('gecikti');
     else if (durum === 'gecikti') operasyonOverlay.classList.add('gecikti');
     operasyonOverlay.style.display = 'flex';
+    var opCard = document.getElementById('operasyonCard');
+    if (opCard) {
+      if (tip === 'ACILIS') opCard.classList.add('card--pulse-cta');
+      else opCard.classList.remove('card--pulse-cta');
+    }
     startOperasyonAlarm(aktif.id, blob && blob.alarm_politikasi);
   }
 
   function collectOperasyonBody(tip) {
     const ps = (document.getElementById('opPersonelSaat') && document.getElementById('opPersonelSaat').value.trim()) || null;
-    if (tip === 'ACILIS' || tip === 'CIKIS') {
+    if (tip === 'CIKIS') {
       const ks = parseNum(document.getElementById('opKasaSayim').value);
       return { personel_saat: ps, kasa_sayim: ks };
     }
@@ -324,7 +427,7 @@
         devir: devir,
         x_raporu_gonderildi: document.getElementById('opXRapor').checked,
         ciro_gonderim_onay: document.getElementById('opCiroGon').checked,
-        panel_kullanici_id: kapUid || null,
+        personel_id: kapUid || null,
         pin: kapPin || null,
         ciro_nakit: parseNum(document.getElementById('opCiroN').value),
         ciro_pos: parseNum(document.getElementById('opCiroP').value),
@@ -340,15 +443,40 @@
     opSubmit.disabled = true;
     try {
       const tip = opAktifEvent.tip;
-      const body = collectOperasyonBody(tip);
-      if ((tip === 'ACILIS' || tip === 'KONTROL' || tip === 'CIKIS') && (body.kasa_sayim == null || body.kasa_sayim < 0)) {
+      if (tip === 'ACILIS' && opAcilisStep === 1) {
+        const ks = parseNum(document.getElementById('opKasaSayim') && document.getElementById('opKasaSayim').value);
+        if (ks == null || ks < 0) throw new Error('Geçerli kasa sayımı girin');
+        if (!(lastPersonelOperasyonSecim || []).length) {
+          throw new Error('Personel listesi boş — aktif personel kaydı bulunamadı.');
+        }
+        opAcilisKasaPending = ks;
+        opAcilisStep = 2;
+        opFields.innerHTML = buildAcilisAuthFields(lastPersonelOperasyonSecim);
+        wireAcilisGeri();
+        opSubmit.textContent = 'Onayla ve tamamla';
+        opSubmit.disabled = false;
+        return;
+      }
+      var body;
+      if (tip === 'ACILIS' && opAcilisStep === 2) {
+        var pid = resolvePersonelIdAcilis();
+        if (!pid) {
+          throw new Error('Personeli listeden seçin veya kayıtlı tam adı yazın (birden fazla eşleşmede netleştirin).');
+        }
+        var pinA = ((document.getElementById('opAcilisPin') && document.getElementById('opAcilisPin').value) || '').replace(/\D/g, '').slice(0, 4);
+        if (pinA.length !== 4) throw new Error('4 haneli panel PIN girin');
+        body = { kasa_sayim: opAcilisKasaPending, personel_id: pid, pin: pinA };
+      } else {
+        body = collectOperasyonBody(tip);
+      }
+      if ((tip === 'KONTROL' || tip === 'CIKIS') && (body.kasa_sayim == null || body.kasa_sayim < 0)) {
         throw new Error('Geçerli kasa sayımı girin');
       }
       if (tip === 'KAPANIS' && (body.teslim == null || body.teslim < 0)) {
         throw new Error('Teslim tutarı girin');
       }
       if (tip === 'KAPANIS') {
-        if (!body.panel_kullanici_id) throw new Error('Kapanış onayı için panel kullanıcısı seçin');
+        if (!body.personel_id) throw new Error('Kapanış onayı için personel seçin');
         if (!body.pin || body.pin.length !== 4) throw new Error('Kapanış için 4 haneli PIN girin');
       }
       await api(
@@ -394,7 +522,11 @@
   function renderMain(data) {
     subeTitle.textContent = data.sube_adi || 'Şube';
     tarihEl.textContent = 'Tarih: ' + (data.tarih || '');
-    var html = '<div class="card"><h2 style="font-size:1rem;margin:0 0 12px">Günlük görevler</h2>';
+    var acilisBekliyor = (data.gorevler || []).some(function (g) {
+      return g && g.id === 'acilis' && !g.tamamlandi;
+    });
+    var gorevCardCls = 'card' + (acilisBekliyor ? ' card--pulse-cta' : '');
+    var html = '<div class="' + gorevCardCls + '"><h2 style="font-size:1rem;margin:0 0 12px">Günlük görevler</h2>';
     (data.gorevler || []).forEach(function (g) {
       var cls = g.tamamlandi ? 'gorev done' : 'gorev';
       html += '<div class="' + cls + '"><strong>' + (g.baslik || '') + '</strong><br/><span class="muted">' + (g.aciklama || '') + '</span></div>';
@@ -414,121 +546,27 @@
       });
       html += '</div>';
     }
-    html += '<p class="muted" style="text-align:center">Ciro ve anlık gider: merkez onaylı CFO akışı · Operasyon merkezi: <a href="/ops" style="color:#38bdf8">/ops</a></p>';
-    html += buildPanelYonetimHtml(data);
+    html += '<p class="muted" style="text-align:center">Ciro ve gider kayıtları onay sürecine iletilir; bu ekranda yalnızca görev ve operasyon özetiniz görünür.</p>';
+    html += buildPanelPinBilgiHtml(data);
     mainContent.innerHTML = html;
-    wirePanelYonetim();
   }
 
-  function pkOptionsHtml(list, onlyYonetici) {
-    var arr = list || [];
-    if (onlyYonetici) arr = arr.filter(function (u) { return u.yonetici; });
-    var opts = '';
-    arr.forEach(function (u) {
-      opts += '<option value="' + (u.id || '') + '">' + (u.ad || u.id) + '</option>';
-    });
-    return opts || '<option value="">—</option>';
-  }
-
-  function buildPanelYonetimHtml(data) {
+  function buildPanelPinBilgiHtml(data) {
     if (data.panel_kilitli) return '';
     var pk = data.panel_pin_kullanicilar || [];
-    var ys = typeof data.panel_yonetici_sayisi === 'number' ? data.panel_yonetici_sayisi : 0;
-    var h = '<div class="card"><h2 style="font-size:1rem;margin:0 0 12px">Panel yönetimi (PIN)</h2>';
-    h += '<p class="muted" style="margin:0 0 10px">Kasa açıkken yeni PIN kullanıcısı ekleyebilir veya yönetici rolünü değiştirebilirsiniz. İlk eklenen kullanıcı otomatik yöneticidir; sonrakiler için mevcut yönetici PIN’i gerekir.</p>';
+    var h = '<div class="card"><h2 style="font-size:1rem;margin:0 0 12px">Panel PIN (personel)</h2>';
+    h += '<p class="muted" style="margin:0 0 10px">Panel PIN, personele yetkili tarafından atanır; aynı PIN <strong>tüm şubelerde</strong> geçerlidir. Bu listede yalnızca PIN’i tanımlı çalışanlar görünür.</p>';
     if (!pk.length) {
-      h += '<p class="muted" style="margin:0 0 10px">Henüz kullanıcı yok — aşağıdan ilk kaydı oluşturun.</p>';
+      h += '<p class="muted">PIN tanımlı personel yok — yetkiliye başvurun.</p>';
     } else {
-      h += '<div style="font-size:0.9rem;margin-bottom:12px">';
+      h += '<div style="font-size:0.9rem">';
       pk.forEach(function (u) {
         h += '<div class="gorev">' + (u.ad || '') + (u.yonetici ? ' <strong style="color:#38bdf8">(yönetici)</strong>' : '') + '</div>';
       });
       h += '</div>';
     }
-    h += '<label>Yeni kullanıcı adı</label><input type="text" id="pkYeniAd" autocomplete="name" />';
-    h += '<label style="margin-top:10px">Yeni PIN (4 hane)</label><input type="password" id="pkYeniPin" class="pin" maxlength="4" inputmode="numeric" autocomplete="new-password" />';
-    if (pk.length >= 1) {
-      var yonOpts = pkOptionsHtml(pk, true);
-      h += '<label style="margin-top:10px">Onay — yönetici</label><select id="pkYetkili">' + yonOpts + '</select>';
-      h += '<label style="margin-top:10px">Yönetici PIN</label><input type="password" id="pkYetkiliPin" class="pin" maxlength="4" inputmode="numeric" autocomplete="new-password" />';
-      if (ys < 1) {
-        h += '<p class="muted" style="margin:8px 0">Bu şubede henüz yönetici işaretli kullanıcı yok; sayfayı yenileyin veya merkezden kontrol edin.</p>';
-      }
-    }
-    h += '<button type="button" class="secondary" style="margin-top:12px;width:100%" id="pkEkleBtn">Panel kullanıcısı ekle</button>';
-    if (pk.length) {
-      h += '<hr style="margin:16px 0;border:none;border-top:1px solid #334155" />';
-      h += '<p class="muted" style="margin:0 0 8px"><strong>Yönetici rolü</strong></p>';
-      h += '<label>Hedef kullanıcı</label><select id="pkHedef">' + pkOptionsHtml(pk, false) + '</select>';
-      h += '<label style="margin-top:10px;display:flex;align-items:center;cursor:pointer"><input type="checkbox" class="chk" id="pkHedefYon" checked /><span>Yönetici olsun</span></label>';
-      h += '<label style="margin-top:10px">Yetkili yönetici</label><select id="pkAtaYetkili">' + pkOptionsHtml(pk, true) + '</select>';
-      h += '<label style="margin-top:10px">Yetkili PIN</label><input type="password" id="pkAtaPin" class="pin" maxlength="4" inputmode="numeric" />';
-      h += '<button type="button" class="secondary" style="margin-top:12px;width:100%" id="pkAtaBtn">Rolü kaydet</button>';
-    }
-    h += '<p class="err" id="pkYonErr" style="margin-top:10px"></p></div>';
+    h += '</div>';
     return h;
-  }
-
-  function wirePanelYonetim() {
-    var b = document.getElementById('pkEkleBtn');
-    if (b) b.onclick = pkEkleClick;
-    var b2 = document.getElementById('pkAtaBtn');
-    if (b2) b2.onclick = pkAtaClick;
-  }
-
-  async function pkEkleClick() {
-    var err = document.getElementById('pkYonErr');
-    if (err) err.textContent = '';
-    var ad = (document.getElementById('pkYeniAd') && document.getElementById('pkYeniAd').value || '').trim();
-    var pin = ((document.getElementById('pkYeniPin') && document.getElementById('pkYeniPin').value) || '').replace(/\D/g, '').slice(0, 4);
-    if (!ad) { if (err) err.textContent = 'Ad girin'; return; }
-    if (pin.length !== 4) { if (err) err.textContent = 'Yeni PIN 4 hane olmalı'; return; }
-    var body = { ad: ad, pin: pin };
-    var yt = document.getElementById('pkYetkili');
-    var yp = document.getElementById('pkYetkiliPin');
-    if (yt && yt.value && yp) {
-      var tpin = (yp.value || '').replace(/\D/g, '').slice(0, 4);
-      if (tpin.length !== 4) { if (err) err.textContent = 'Yönetici PIN girin'; return; }
-      body.yetkili_panel_kullanici_id = yt.value;
-      body.yetkili_pin = tpin;
-    }
-    try {
-      await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/panel-kullanici', { method: 'POST', body: body });
-      if (document.getElementById('pkYeniAd')) document.getElementById('pkYeniAd').value = '';
-      if (document.getElementById('pkYeniPin')) document.getElementById('pkYeniPin').value = '';
-      if (document.getElementById('pkYetkiliPin')) document.getElementById('pkYetkiliPin').value = '';
-      await refresh();
-    } catch (e) {
-      if (err) err.textContent = e.message || 'Hata';
-    }
-  }
-
-  async function pkAtaClick() {
-    var err = document.getElementById('pkYonErr');
-    if (err) err.textContent = '';
-    var hedef = document.getElementById('pkHedef');
-    var yet = document.getElementById('pkAtaYetkili');
-    var pinEl = document.getElementById('pkAtaPin');
-    var chk = document.getElementById('pkHedefYon');
-    if (!hedef || !hedef.value) { if (err) err.textContent = 'Hedef seçin'; return; }
-    if (!yet || !yet.value) { if (err) err.textContent = 'Yetkili yönetici seçin'; return; }
-    var pin = ((pinEl && pinEl.value) || '').replace(/\D/g, '').slice(0, 4);
-    if (pin.length !== 4) { if (err) err.textContent = 'Yetkili PIN girin'; return; }
-    try {
-      await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/panel-yonetici-atama', {
-        method: 'POST',
-        body: {
-          yetkili_panel_kullanici_id: yet.value,
-          yetkili_pin: pin,
-          hedef_panel_kullanici_id: hedef.value,
-          yonetici: !!(chk && chk.checked),
-        },
-      });
-      if (pinEl) pinEl.value = '';
-      await refresh();
-    } catch (e) {
-      if (err) err.textContent = e.message || 'Hata';
-    }
   }
 
   async function refresh() {
@@ -548,6 +586,7 @@
 
     const data = await api('/sube-personel/' + encodeURIComponent(SUBE_ID) + '/durum');
     lastPanelPinKullanicilar = data.panel_pin_kullanicilar || [];
+    lastPersonelOperasyonSecim = data.personel_operasyon_secim || [];
     fillKasaUsers(data.panel_pin_kullanicilar);
 
     if (data.kasa_kilitli) {
@@ -594,7 +633,7 @@
     try {
       await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/kasa-kilit-ac', {
         method: 'POST',
-        body: { panel_kullanici_id: uid, pin: pin },
+        body: { personel_id: uid, pin: pin },
       });
       kasaPin.value = '';
       await refresh();
