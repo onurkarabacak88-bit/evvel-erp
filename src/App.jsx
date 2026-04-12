@@ -46,7 +46,7 @@ const NAV = [
     { id: 'borclar',          label: 'Borç Envanteri',      icon: '🏦' },
     { id: 'sabit-giderler',   label: 'Sabit Giderler',      icon: '🏠' },
     { id: 'vardiya-planlamasi',label: 'Vardiya Planlaması', icon: '🗓️' },
-    { id: 'sube-panel-pin',   label: 'Şube Panel PIN',      icon: '🔐' },
+    { id: 'sube-panel-pin',   label: 'Personel panel PIN',  icon: '🔐' },
   ]},
 ];
 
@@ -74,14 +74,49 @@ const PAGES = {
   'sube-panel-pin':   SubePanelPinleri,
 };
 
+function readPageFromHash() {
+  try {
+    const raw = (window.location.hash || '').replace(/^#/, '').split('&')[0];
+    const h = decodeURIComponent(raw).trim();
+    if (h && Object.prototype.hasOwnProperty.call(PAGES, h)) return h;
+  } catch (_) {}
+  return null;
+}
+
+function syncHashForPage(pageId) {
+  try {
+    const path = window.location.pathname || '/admin';
+    if (!pageId || pageId === 'panel') {
+      window.history.replaceState(null, '', path);
+    } else {
+      window.history.replaceState(null, '', `${path}#${encodeURIComponent(pageId)}`);
+    }
+  } catch (_) {}
+}
+
 export default function App() {
-  const [page, setPage] = useState('panel');
+  const [page, setPage] = useState(() => readPageFromHash() ?? 'panel');
   const mainRef = useRef(null);
   const Page = PAGES[page] || Panel;
+
+  const navigate = (id) => {
+    const p = Object.prototype.hasOwnProperty.call(PAGES, id) ? id : 'panel';
+    setPage(p);
+    syncHashForPage(p);
+  };
 
   useEffect(() => {
     if (mainRef.current) mainRef.current.scrollTop = 0;
   }, [page]);
+
+  useEffect(() => {
+    const onHash = () => {
+      const p = readPageFromHash();
+      setPage(p ?? 'panel');
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
   return (
     <div className="app">
@@ -98,7 +133,7 @@ export default function App() {
                 <div
                   key={item.id}
                   className={`nav-item ${page === item.id ? 'active' : ''}`}
-                  onClick={() => setPage(item.id)}
+                  onClick={() => navigate(item.id)}
                 >
                   <span className="icon">{item.icon}</span>
                   {item.label}
@@ -110,7 +145,7 @@ export default function App() {
         <div className="sidebar-footer">EVVEL v2.4 · 27.03.2026</div>
       </aside>
       <main className="main" ref={mainRef}>
-        <Page onNavigate={setPage} />
+        <Page onNavigate={navigate} />
       </main>
     </div>
   );
