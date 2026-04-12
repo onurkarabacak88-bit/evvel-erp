@@ -17,40 +17,61 @@ import DisKaynak from './pages/DisKaynak';
 import Rapor from './pages/Rapor';
 import KartMerkez from './pages/KartMerkez';
 import Subeler from './pages/Subeler';
+import SubePanelPinleri from './pages/SubePanelPinleri';
+import OperasyonMerkezi from './pages/OperasyonMerkezi';
 import './index.css';
 
 const NAV = [
   { group: 'Ana', items: [
-    { id: 'panel', label: 'CFO Panel', icon: '⬛' },
-    { id: 'rapor', label: 'Aylık Rapor', icon: '📊' },
-    { id: 'strateji', label: 'Strateji Motoru', icon: '🧠' },
-    { id: 'onay', label: 'Onay Kuyruğu', icon: '✅' },
-    { id: 'ciro-taslak-onay', label: 'Ciro Onayı', icon: '📋' },
-    { id: 'ledger', label: 'İşlem Defteri', icon: '📒' },
+    { id: 'panel',            label: 'CFO Panel',           icon: '⬛' },
+    { id: 'ops-merkez',       label: 'Operasyon Merkezi',   icon: '📡' },
+    { id: 'rapor',            label: 'Aylık Rapor',         icon: '📊' },
+    { id: 'strateji',         label: 'Strateji Motoru',     icon: '🧠' },
+    { id: 'onay',             label: 'Onay Kuyruğu',        icon: '✅' },
+    { id: 'ciro-taslak-onay', label: 'Ciro Onayı',          icon: '📋' },
+    { id: 'ledger',           label: 'İşlem Defteri',       icon: '📒' },
   ]},
   { group: 'Veri Girişi', items: [
-    { id: 'ciro', label: 'Ciro Girişi', icon: '📈' },
-    { id: 'kart-hareketleri', label: 'Kart Hareketi', icon: '💳' },
-    { id: 'anlik-gider', label: 'Anlık Gider', icon: '💸' },
-    { id: 'dis-kaynak', label: 'Dış Kaynak Geliri', icon: '💰' },
-    { id: 'vadeli', label: 'Vadeli Alım', icon: '📦' },
-    { id: 'excel', label: 'Excel Import', icon: '📊' },
+    { id: 'ciro',             label: 'Ciro Girişi',         icon: '📈' },
+    { id: 'kart-hareketleri', label: 'Kart Hareketi',       icon: '💳' },
+    { id: 'anlik-gider',      label: 'Anlık Gider',         icon: '💸' },
+    { id: 'dis-kaynak',       label: 'Dış Kaynak Geliri',   icon: '💰' },
+    { id: 'vadeli',           label: 'Vadeli Alım',         icon: '📦' },
+    { id: 'excel',            label: 'Excel Import',        icon: '📊' },
   ]},
   { group: 'Tanımlar', items: [
-    { id: 'kartlar', label: 'Kartlar', icon: '💳' },
-    { id: 'kart-merkez', label: 'Kart Merkezi', icon: '💳' },
-    { id: 'personel', label: 'Personel', icon: '👥' },
-    { id: 'borclar', label: 'Borç Envanteri', icon: '🏦' },
-    { id: 'sabit-giderler', label: 'Sabit Giderler', icon: '🏠' },
-    { id: 'vardiya-planlamasi', label: 'Vardiya Planlaması', icon: '🗓️' },
+    { id: 'kartlar',          label: 'Kartlar',             icon: '💳' },
+    { id: 'kart-merkez',      label: 'Kart Merkezi',        icon: '💳' },
+    { id: 'personel',         label: 'Personel',            icon: '👥' },
+    { id: 'borclar',          label: 'Borç Envanteri',      icon: '🏦' },
+    { id: 'sabit-giderler',   label: 'Sabit Giderler',      icon: '🏠' },
+    { id: 'vardiya-planlamasi',label: 'Vardiya Planlaması', icon: '🗓️' },
+    { id: 'sube-panel-pin',   label: 'Şube Panel PIN',      icon: '🔐' },
   ]},
 ];
 
 const PAGES = {
-  panel: Panel, strateji: Strateji, onay: OnayKuyrugu, 'ciro-taslak-onay': CiroTaslakOnay, ledger: Ledger,
-  ciro: Ciro, 'kart-hareketleri': KartHareketleri, 'anlik-gider': AnlikGider,
-  rapor: Rapor, 'kart-merkez': KartMerkez, 'dis-kaynak': DisKaynak, vadeli: VadeliAlimlar, excel: ExcelImport, kartlar: Kartlar, 'kart-analiz': KartMerkez,
-  personel: Personel, borclar: Borclar, 'sabit-giderler': SabitGiderler, 'vardiya-planlamasi': Subeler,
+  panel:              Panel,
+  'ops-merkez':       OperasyonMerkezi,
+  strateji:           Strateji,
+  onay:               OnayKuyrugu,
+  'ciro-taslak-onay': CiroTaslakOnay,
+  ledger:             Ledger,
+  ciro:               Ciro,
+  'kart-hareketleri': KartHareketleri,
+  'anlik-gider':      AnlikGider,
+  rapor:              Rapor,
+  'kart-merkez':      KartMerkez,
+  'dis-kaynak':       DisKaynak,
+  vadeli:             VadeliAlimlar,
+  excel:              ExcelImport,
+  kartlar:            Kartlar,
+  'kart-analiz':      KartMerkez,
+  personel:           Personel,
+  borclar:            Borclar,
+  'sabit-giderler':   SabitGiderler,
+  'vardiya-planlamasi': Subeler,
+  'sube-panel-pin':   SubePanelPinleri,
 };
 
 export default function App() {
@@ -74,9 +95,11 @@ export default function App() {
             <div key={g.group} className="nav-group">
               <div className="nav-label">{g.group}</div>
               {g.items.map(item => (
-                <div key={item.id}
+                <div
+                  key={item.id}
                   className={`nav-item ${page === item.id ? 'active' : ''}`}
-                  onClick={() => setPage(item.id)}>
+                  onClick={() => setPage(item.id)}
+                >
                   <span className="icon">{item.icon}</span>
                   {item.label}
                 </div>
