@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Şube paneli</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    body.evvel-shake { animation: evvelShake 0.35s ease-in-out 2; }
+    @keyframes evvelShake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-6px); }
+      40% { transform: translateX(6px); }
+      60% { transform: translateX(-4px); }
+      80% { transform: translateX(4px); }
+    }
+    .wrap { max-width: 520px; margin: 0 auto; padding: 20px; }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }
+    .muted { color: #94a3b8; font-size: 0.875rem; margin-bottom: 20px; }
+    .card { background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 16px; border: 1px solid #334155; }
+    label { display: block; font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; }
+    select, input, button { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; font-size: 1rem; }
+    button { background: #3b82f6; border: none; font-weight: 600; cursor: pointer; margin-top: 12px; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.secondary { background: #475569; }
+    .err { color: #fca5a5; font-size: 0.875rem; margin-top: 8px; }
+    .overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.92); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+    .overlay-inner { width: 100%; max-width: 400px; }
+    .overlay.operasyon-zorunlu { z-index: 9500; background: rgba(15,23,42,0.97); }
+    .overlay.operasyon-zorunlu .overlay-inner { max-width: 440px; }
+    .overlay.operasyon-zorunlu.gecikti .overlay-inner { box-shadow: 0 0 0 2px #ea580c, 0 20px 50px rgba(0,0,0,0.5); }
+    .overlay.operasyon-zorunlu.kritik .overlay-inner { box-shadow: 0 0 0 2px #dc2626, 0 20px 50px rgba(220,38,38,0.25); }
+    .pin { letter-spacing: 0.35em; text-align: center; font-size: 1.25rem; }
+    .gorev { padding: 10px 0; border-bottom: 1px solid #334155; font-size: 0.9rem; }
+    .gorev.done { opacity: 0.55; }
+    .api-setup { background: #422006; border-color: #92400e; padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 0.85rem; }
+    .api-setup input { margin-top: 8px; }
+    .op-badge { display: inline-block; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px; }
+    .op-badge.bekliyor { background: #334155; color: #e2e8f0; }
+    .op-badge.gecikti { background: #9a3412; color: #ffedd5; }
+    .chk { width: auto; margin-right: 8px; vertical-align: middle; }
+    /* Kasa / şube açılış / ACILIS operasyon — güçlü dikkat çekici yanıp sönme */
+    @keyframes evvelCtaPulse {
+      0%, 100% {
+        border-color: #ea580c;
+        box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.55), 0 0 20px rgba(234, 88, 12, 0.15);
+        filter: brightness(1);
+      }
+      50% {
+        border-color: #fb923c;
+        box-shadow: 0 0 0 6px rgba(251, 146, 60, 0.2), 0 0 36px rgba(251, 146, 60, 0.35);
+        filter: brightness(1.08);
+      }
+    }
+    .card.card--pulse-cta {
+      border-width: 2px;
+      border-style: solid;
+      animation: evvelCtaPulse 1.1s ease-in-out infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .card.card--pulse-cta {
+        animation: none;
+        border-color: #ea580c;
+        box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.25);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="apiSetup" class="wrap" style="display:none">
+    <div class="api-setup">
+      <strong>API adresi</strong>
+      <p class="muted" style="margin:8px 0 0">Sayfa <code>file://</code> ile açıldıysa veya boş origin ise aşağıya sunucu kök URL yazın (örn. <code>https://sunucu.up.railway.app</code>), kaydet ve yenileyin.</p>
+      <input type="url" id="apiBaseInput" placeholder="https://..." />
+      <button type="button" id="apiBaseSave">Kaydet</button>
+    </div>
+  </div>
+
+  <div id="appRoot" class="wrap" style="display:none">
+    <h1 id="subeTitle">Şube</h1>
+    <p class="muted" id="tarihEl"></p>
+    <div id="mainContent"></div>
+  </div>
+
+  <div id="kasaOverlay" class="overlay" style="display:none">
+    <div class="overlay-inner card card--pulse-cta">
+      <h1 style="margin-bottom:8px">Kasa kilitli</h1>
+      <p class="muted">Günlük açılışta kasayı açmak için kendinizi seçin ve 4 haneli PIN girin.</p>
+      <p class="muted" id="kasaSaatBilgi" style="margin-top:-8px;font-size:0.82rem"></p>
+      <label>Personel</label>
+      <select id="kasaUser"></select>
+      <label style="margin-top:12px">PIN</label>
+      <input id="kasaPin" class="pin" maxlength="4" inputmode="numeric" autocomplete="one-time-code" />
+      <p class="err" id="kasaErr"></p>
+      <button type="button" id="kasaBtn">Kilidi aç</button>
+    </div>
+  </div>
+
+  <div id="acilisOverlay" class="overlay" style="display:none">
+    <div class="overlay-inner card card--pulse-cta">
+      <h1 id="acilisTitle" style="margin-bottom:8px">Şube henüz açılmadı</h1>
+      <p class="muted" id="acilisDesc">Kasa açıldı. Şimdi günlük şube açılış kaydını oluşturun.</p>
+      <p class="muted" id="acilisSaatBilgi" style="margin-top:-8px;font-size:0.82rem"></p>
+      <p class="err" id="acilisErr"></p>
+      <button type="button" id="acilisBtn">Şubeyi aç</button>
+    </div>
+  </div>
+
+  <div id="operasyonOverlay" class="overlay operasyon-zorunlu" style="display:none">
+    <div class="overlay-inner card" id="operasyonCard">
+      <div id="opBadge" class="op-badge bekliyor"></div>
+      <h1 style="margin-bottom:8px;font-size:1.1rem" id="opTitle">Operasyon</h1>
+      <p class="muted" id="opDesc"></p>
+      <div id="opFields"></div>
+      <p class="err" id="opErr"></p>
+      <button type="button" id="opSubmit">Kaydet ve tamamla</button>
+    </div>
+  </div>
+
+  <script>
+(function () {
+  const FILE_FALLBACK_KEY = 'sube_panel_api_base';
+
+  function subeIdFromPath() {
+    try {
+      var q = new URLSearchParams(window.location.search || '').get('sube');
+      if (q && String(q).trim()) return decodeURIComponent(String(q).trim());
+    } catch (e) {}
+    const path = window.location.pathname.replace(/\/+$/, '') || '';
+    const parts = path.split('/').filter(Boolean);
+    const iPanel = parts.indexOf('sube-panel');
+    if (iPanel >= 0 && parts[iPanel + 1]) return decodeURIComponent(parts[iPanel + 1]);
+    const iSube = parts.indexOf('sube');
+    if (iSube >= 0 && parts[iSube + 1]) return decodeURIComponent(parts[iSube + 1]);
+    return '';
+  }
+
+  function originBase() {
+    if (window.location.protocol === 'file:') return '';
+    return window.location.origin;
+  }
+
+  function getApiBase() {
+    try {
+      const s = sessionStorage.getItem(FILE_FALLBACK_KEY);
+      if (s && /^https?:\/\//i.test(s)) return s.replace(/\/+$/, '');
+    } catch (e) {}
+    const o = originBase();
+    return o || '';
+  }
+
+  function apiUrl(path) {
+    const base = getApiBase();
+    if (!base) return '';
+    return base + '/api' + path;
+  }
+
+  async function api(path, opts) {
+    const url = apiUrl(path);
+    if (!url) throw new Error('API adresi tanımlı değil');
+    const res = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', ...(opts && opts.headers) },
+      ...opts,
+      body: opts && opts.body != null ? JSON.stringify(opts.body) : undefined,
+    });
+    if (!res.ok) {
+      let d = {};
+      try { d = await res.json(); } catch (e) {}
+      throw new Error(d.detail || res.statusText || 'Hata');
+    }
+    return res.json();
+  }
+
+  const SUBE_ID = subeIdFromPath();
+  const apiSetupEl = document.getElementById('apiSetup');
+  const appRoot = document.getElementById('appRoot');
+  const kasaOverlay = document.getElementById('kasaOverlay');
+  const acilisOverlay = document.getElementById('acilisOverlay');
+  const operasyonOverlay = document.getElementById('operasyonOverlay');
+  /** Panel PIN kullanıcıları (kapanışta seçim için) */
+  var lastPanelPinKullanicilar = [];
+  /** ACILIS adım 2: tüm aktif personel (merkez personel kartı) */
+  var lastPersonelOperasyonSecim = [];
+  var lastOperasyonBlob = null;
+  var opAcilisStep = 1;
+  var opAcilisKasaPending = null;
+  var opAcilisStokPending = null;
+  const kasaUser = document.getElementById('kasaUser');
+  const kasaPin = document.getElementById('kasaPin');
+  const kasaBtn = document.getElementById('kasaBtn');
+  const kasaErr = document.getElementById('kasaErr');
+  const acilisBtn = document.getElementById('acilisBtn');
+  const acilisErr = document.getElementById('acilisErr');
+  const acilisTitle = document.getElementById('acilisTitle');
+  const acilisDesc = document.getElementById('acilisDesc');
+  const kasaSaatBilgi = document.getElementById('kasaSaatBilgi');
+  const acilisSaatBilgi = document.getElementById('acilisSaatBilgi');
+  const mainContent = document.getElementById('mainContent');
+  const subeTitle = document.getElementById('subeTitle');
+  const tarihEl = document.getElementById('tarihEl');
+  const opBadge = document.getElementById('opBadge');
+  const opTitle = document.getElementById('opTitle');
+  const opDesc = document.getElementById('opDesc');
+  const opFields = document.getElementById('opFields');
+  const opErr = document.getElementById('opErr');
+  const opSubmit = document.getElementById('opSubmit');
+
+  let opAktifEvent = null;
+  let alarmInterval = null;
+  let beepInterval = null;
+  let pollOperasyonTimer = null;
+  let panelPollTimer = null;
+  let lastSunucuZaman = '';
+  let lastKasaAcma = null;
+
+  function parseNum(v) {
+    if (v == null || v === '') return null;
+    const n = parseFloat(String(v).replace(',', '.'));
+    return isNaN(n) ? null : n;
+  }
+
+  function setSunucuZamanFromBlob(blob) {
+    var z = (blob && (blob.sunucu_iso || blob.sunucu_saati)) || '';
+    lastSunucuZaman = z || '';
+    var txt = lastSunucuZaman ? ('Sunucu zamanı: ' + lastSunucuZaman) : '';
+    if (kasaSaatBilgi) kasaSaatBilgi.textContent = txt;
+    if (acilisSaatBilgi) acilisSaatBilgi.textContent = txt;
+  }
+
+  function setAcilisMesaj(data) {
+    var k = (data && data.kasa_acma) || null;
+    lastKasaAcma = k;
+    if (!k || !k.personel_id) {
+      acilisTitle.textContent = 'Şube henüz açılmadı';
+      acilisDesc.textContent = 'Kasa açıldı. Şimdi günlük şube açılış kaydını oluşturun.';
+      return;
+    }
+    var ad = (k.panel_kullanici_ad || '').trim() || 'personel';
+    acilisTitle.textContent = 'Günaydın ' + ad;
+    acilisDesc.textContent = 'Kasa PIN onayınız alındı. Şubeyi açınız.';
+  }
+
+  function beep() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = 880;
+      o.connect(g);
+      g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.12, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+      o.start(ctx.currentTime);
+      o.stop(ctx.currentTime + 0.22);
+      setTimeout(function () { ctx.close().catch(function () {}); }, 400);
+    } catch (e) {}
+  }
+
+  function stopOperasyonAlarm() {
+    if (alarmInterval) { clearInterval(alarmInterval); alarmInterval = null; }
+    if (beepInterval) { clearInterval(beepInterval); beepInterval = null; }
+  }
+
+  function startOperasyonAlarm(eventId, politika) {
+    stopOperasyonAlarm();
+    const pol = politika || {};
+    var alarmSec = Math.max(20, parseInt(pol.alarm_arttir_s, 10) || 45);
+    var beepSec = Math.max(2, parseInt(pol.beep_s, 10) || 7);
+    const basePath = '/sube-panel/' + encodeURIComponent(SUBE_ID) + '/operasyon/event/' + encodeURIComponent(eventId) + '/alarm-arttir';
+    alarmInterval = setInterval(function () {
+      api(basePath, { method: 'POST' }).catch(function () {});
+    }, alarmSec * 1000);
+    beepInterval = setInterval(function () {
+      beep();
+      try {
+        if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
+      } catch (e) {}
+      document.body.classList.remove('evvel-shake');
+      void document.body.offsetWidth;
+      document.body.classList.add('evvel-shake');
+      setTimeout(function () { document.body.classList.remove('evvel-shake'); }, 800);
+    }, beepSec * 1000);
+  }
+
+  function hideOperasyonZorunlu() {
+    operasyonOverlay.style.display = 'none';
+    operasyonOverlay.classList.remove('gecikti', 'kritik');
+    var oc = document.getElementById('operasyonCard');
+    if (oc) oc.classList.remove('card--pulse-cta');
+    stopOperasyonAlarm();
+    opAktifEvent = null;
+    opAcilisStep = 1;
+    opAcilisKasaPending = null;
+    opAcilisStokPending = null;
+    lastOperasyonBlob = null;
+    if (opSubmit) opSubmit.textContent = 'Kaydet ve tamamla';
+  }
+
+  function escapeHtmlAttr(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;');
+  }
+
+  function buildAcilisAuthFields(personelList) {
+    var s = opAcilisStokPending || {};
+    var opts = '';
+    (personelList || []).forEach(function (p) {
+      var ad = (p.ad || '').trim();
+      if (!ad) return;
+      opts += '<option value="' + escapeHtmlAttr(ad) + '"></option>';
+    });
+    return (
+      '<p class="muted" style="margin-bottom:10px;font-size:0.88rem">Son adım: personel + PIN ile onay verin.</p>' +
+      '<p class="muted" style="margin-bottom:10px;font-size:0.82rem">Bardak (k/b/p): <strong>' + (s.bardak_kucuk || 0) + '/' + (s.bardak_buyuk || 0) + '/' + (s.bardak_plastik || 0) + '</strong> · Ürün (su/redbull/soda/cookie/pasta): <strong>' + (s.su_adet || 0) + '/' + (s.redbull_adet || 0) + '/' + (s.soda_adet || 0) + '/' + (s.cookie_adet || 0) + '/' + (s.pasta_adet || 0) + '</strong></p>' +
+      '<label>Personel</label><input type="text" id="opAcilisPersonelAd" list="opAcilisPersList" autocomplete="off" placeholder="Örn. Ayşe Yılmaz" />' +
+      '<datalist id="opAcilisPersList">' + opts + '</datalist>' +
+      '<label style="margin-top:10px">Panel PIN</label><input type="password" id="opAcilisPin" class="pin" maxlength="4" inputmode="numeric" autocomplete="one-time-code" />' +
+      '<button type="button" id="opAcilisGeri" style="margin-top:14px;background:transparent;border:none;color:#94a3b8;cursor:pointer;text-decoration:underline;font-size:0.85rem">« Ürün sayımına dön</button>'
+    );
+  }
+
+  function buildAcilisBardakFields() {
+    var s = opAcilisStokPending || {};
+    return (
+      '<p class="muted" style="margin-bottom:10px;font-size:0.88rem">2/4 · Bardak sayımlarını girin.</p>' +
+      '<label>Küçük bardak</label><input type="text" id="opBardakKucuk" inputmode="numeric" autocomplete="off" value="' + (s.bardak_kucuk || 0) + '" />' +
+      '<label style="margin-top:8px">Büyük bardak</label><input type="text" id="opBardakBuyuk" inputmode="numeric" autocomplete="off" value="' + (s.bardak_buyuk || 0) + '" />' +
+      '<label style="margin-top:8px">Plastik bardak</label><input type="text" id="opBardakPlastik" inputmode="numeric" autocomplete="off" value="' + (s.bardak_plastik || 0) + '" />' +
+      '<button type="button" id="opAcilisGeri" style="margin-top:14px;background:transparent;border:none;color:#94a3b8;cursor:pointer;text-decoration:underline;font-size:0.85rem">« Kasa sayımına dön</button>'
+    );
+  }
+
+  function buildAcilisUrunFields() {
+    var s = opAcilisStokPending || {};
+    return (
+      '<p class="muted" style="margin-bottom:10px;font-size:0.88rem">3/4 · Ürün sayılarını girin.</p>' +
+      '<label>Su sayısı</label><input type="text" id="opUrunSu" inputmode="numeric" autocomplete="off" value="' + (s.su_adet || 0) + '" />' +
+      '<label style="margin-top:8px">Redbull sayısı</label><input type="text" id="opUrunRedbull" inputmode="numeric" autocomplete="off" value="' + (s.redbull_adet || 0) + '" />' +
+      '<label style="margin-top:8px">Soda sayısı</label><input type="text" id="opUrunSoda" inputmode="numeric" autocomplete="off" value="' + (s.soda_adet || 0) + '" />' +
+      '<label style="margin-top:8px">Cookie sayısı</label><input type="text" id="opUrunCookie" inputmode="numeric" autocomplete="off" value="' + (s.cookie_adet || 0) + '" />' +
+      '<label style="margin-top:8px">Pasta sayısı</label><input type="text" id="opUrunPasta" inputmode="numeric" autocomplete="off" value="' + (s.pasta_adet || 0) + '" />' +
+      '<button type="button" id="opAcilisGeri" style="margin-top:14px;background:transparent;border:none;color:#94a3b8;cursor:pointer;text-decoration:underline;font-size:0.85rem">« Bardak sayımına dön</button>'
+    );
+  }
+
+  function resolvePersonelIdAcilis() {
+    var raw = (document.getElementById('opAcilisPersonelAd') && document.getElementById('opAcilisPersonelAd').value || '').trim();
+    if (!raw) return null;
+    var low = raw.toLowerCase();
+    var list = lastPersonelOperasyonSecim || [];
+    var exact = list.filter(function (p) { return (p.ad || '').trim().toLowerCase() === low; });
+    if (exact.length >= 1) return exact[0].id;
+    var pref = list.filter(function (p) { return (p.ad || '').trim().toLowerCase().indexOf(low) === 0; });
+    if (pref.length === 1) return pref[0].id;
+    var sub = list.filter(function (p) { return (p.ad || '').toLowerCase().indexOf(low) >= 0; });
+    if (sub.length === 1) return sub[0].id;
+    return null;
+  }
+
+  function wireAcilisGeri() {
+    var g = document.getElementById('opAcilisGeri');
+    if (!g) return;
+    g.onclick = function () {
+      if (opAcilisStep === 2) {
+        opAcilisStep = 1;
+        opFields.innerHTML = buildOperasyonFields('ACILIS');
+        var inp = document.getElementById('opKasaSayim');
+        if (inp && opAcilisKasaPending != null) inp.value = String(opAcilisKasaPending);
+        opSubmit.textContent = 'İleri';
+        return;
+      }
+      if (opAcilisStep === 3) {
+        opAcilisStep = 2;
+        opFields.innerHTML = buildAcilisBardakFields();
+        wireAcilisGeri();
+        opSubmit.textContent = 'İleri';
+        return;
+      }
+      if (opAcilisStep === 4) {
+        opAcilisStep = 3;
+        opFields.innerHTML = buildAcilisUrunFields();
+        wireAcilisGeri();
+        opSubmit.textContent = 'İleri';
+      }
+    };
+  }
+
+  function buildOperasyonFields(tip) {
+    const saatRow = '<label>Personel saati (isteğe bağlı, HH:MM)</label><input type="text" id="opPersonelSaat" placeholder="14:30" maxlength="5" />';
+    const sunucuRow = '<p class="muted" style="margin:0 0 10px;font-size:0.82rem">İşlem zamanı (sunucu): <strong>' + (lastSunucuZaman || '—') + '</strong></p>';
+    if (tip === 'ACILIS') {
+      var sv = (lastOperasyonBlob && lastOperasyonBlob.sunucu_saati) ? lastOperasyonBlob.sunucu_saati : '—';
+      return (
+        sunucuRow +
+        '<label>Kasa sayımı (₺)</label><input type="text" id="opKasaSayim" inputmode="decimal" autocomplete="off" />' +
+        '<p class="muted" style="margin-top:10px;font-size:0.88rem">Kayıt saati: <strong>' + sv + '</strong> (sunucu). Personel saati istenmez; bir sonraki adımda personel + PIN doğrulanır.</p>'
+      );
+    }
+    if (tip === 'KONTROL' || tip === 'CIKIS') {
+      let extra = '';
+      if (tip === 'KONTROL') {
+        extra =
+          '<label style="margin-top:10px">Nakit anlık (isteğe bağlı)</label><input type="text" id="opSnapN" inputmode="decimal" />' +
+          '<label style="margin-top:10px">POS anlık (isteğe bağlı)</label><input type="text" id="opSnapP" inputmode="decimal" />' +
+          '<label style="margin-top:10px">Online anlık (isteğe bağlı)</label><input type="text" id="opSnapO" inputmode="decimal" />';
+      }
+      return (
+        sunucuRow +
+        '<label>Kasa sayımı (₺)</label><input type="text" id="opKasaSayim" inputmode="decimal" autocomplete="off" />' +
+        saatRow +
+        extra
+      );
+    }
+    if (tip === 'KAPANIS') {
+      var opts = '';
+      (lastPanelPinKullanicilar || []).forEach(function (u) {
+        opts += '<option value="' + (u.id || '') + '">' + (u.ad || u.id) + '</option>';
+      });
+      if (!opts) {
+        opts = '<option value="">— Panel PIN tanımlı personel yok —</option>';
+      }
+      return (
+        sunucuRow +
+        '<label style="margin-top:2px">Kapanışı onaylayan (personel)</label><select id="opKapUser">' + opts + '</select>' +
+        '<label style="margin-top:10px">PIN (4 hane)</label><input type="password" id="opKapPin" class="pin" maxlength="4" inputmode="numeric" autocomplete="one-time-code" />' +
+        '<p class="muted" style="margin-top:10px">Merkez ciro onayına gidecek tutarlar (X):</p>' +
+        '<label>X nakit (₺)</label><input type="text" id="opCiroN" inputmode="decimal" placeholder="0" />' +
+        '<label style="margin-top:8px">X POS (₺)</label><input type="text" id="opCiroP" inputmode="decimal" placeholder="0" />' +
+        '<label style="margin-top:8px">X online (₺)</label><input type="text" id="opCiroO" inputmode="decimal" placeholder="0" />' +
+        '<label>Teslim kasa (₺) — zorunlu</label><input type="text" id="opTeslim" inputmode="decimal" />' +
+        '<label style="margin-top:10px">Devir (₺)</label><input type="text" id="opDevir" inputmode="decimal" placeholder="0" />' +
+        '<label style="margin-top:10px">Kasa sayımı (₺, boşsa teslim kullanılır)</label><input type="text" id="opKasaSayim" inputmode="decimal" />' +
+        saatRow +
+        '<label style="margin-top:14px;display:flex;align-items:center;cursor:pointer">' +
+        '<input type="checkbox" class="chk" id="opXRapor" /><span>X raporu WhatsApp ile gönderildi</span></label>' +
+        '<label style="margin-top:8px;display:flex;align-items:center;cursor:pointer">' +
+        '<input type="checkbox" class="chk" id="opCiroGon" /><span>Ciro zaten ayrı gönderildi / taslağa işlendi (yedek onay)</span></label>' +
+        '<p class="muted" style="margin-top:10px">Kapanış bilgileri iş kurallarına göre doğrulanır; onaylayan ve bildirim saati kayıt altına alınır.</p>'
+      );
+    }
+    return '<p class="muted">Bu olay tipi için form henüz tanımlı değil.</p>';
+  }
+
+  function showOperasyonZorunlu(aktif, blob) {
+    opAktifEvent = aktif;
+    lastOperasyonBlob = blob || null;
+    setSunucuZamanFromBlob(lastOperasyonBlob);
+    const tip = aktif.tip || '';
+    const durum = aktif.durum || '';
+    if (tip === 'ACILIS') {
+      opAcilisStep = 1;
+      opAcilisKasaPending = null;
+      opAcilisStokPending = {
+        bardak_kucuk: 0,
+        bardak_buyuk: 0,
+        bardak_plastik: 0,
+        su_adet: 0,
+        redbull_adet: 0,
+        soda_adet: 0,
+        cookie_adet: 0,
+        pasta_adet: 0,
+      };
+    }
+    opSubmit.textContent = tip === 'ACILIS' ? 'İleri' : 'Kaydet ve tamamla';
+    opTitle.textContent = 'Zorunlu: ' + tip;
+    opDesc.textContent =
+      'Sistem bu adımı tamamlamanızı bekliyor. Cevap verene kadar ekran kilitlidir (sesli uyarı).';
+    opFields.innerHTML = buildOperasyonFields(tip);
+    opErr.textContent = '';
+    opBadge.textContent = durum.toUpperCase();
+    opBadge.className = 'op-badge ' + (durum === 'gecikti' ? 'gecikti' : 'bekliyor');
+    operasyonOverlay.classList.remove('gecikti', 'kritik');
+    if (blob && blob.aktif_kritik) operasyonOverlay.classList.add('kritik');
+    else if (blob && blob.aktif_suphe) operasyonOverlay.classList.add('gecikti');
+    else if (durum === 'gecikti') operasyonOverlay.classList.add('gecikti');
+    operasyonOverlay.style.display = 'flex';
+    var opCard = document.getElementById('operasyonCard');
+    if (opCard) {
+      if (tip === 'ACILIS') opCard.classList.add('card--pulse-cta');
+      else opCard.classList.remove('card--pulse-cta');
+    }
+    startOperasyonAlarm(aktif.id, blob && blob.alarm_politikasi);
+  }
+
+  function collectOperasyonBody(tip) {
+    const ps = (document.getElementById('opPersonelSaat') && document.getElementById('opPersonelSaat').value.trim()) || null;
+    if (tip === 'CIKIS') {
+      const ks = parseNum(document.getElementById('opKasaSayim').value);
+      return { personel_saat: ps, kasa_sayim: ks };
+    }
+    if (tip === 'KONTROL') {
+      const ks = parseNum(document.getElementById('opKasaSayim').value);
+      return {
+        personel_saat: ps,
+        kasa_sayim: ks,
+        snap_nakit: parseNum(document.getElementById('opSnapN').value),
+        snap_pos: parseNum(document.getElementById('opSnapP').value),
+        snap_online: parseNum(document.getElementById('opSnapO').value),
+      };
+    }
+    if (tip === 'KAPANIS') {
+      const teslim = parseNum(document.getElementById('opTeslim').value);
+      const devir = parseNum(document.getElementById('opDevir').value) || 0;
+      const ksEl = document.getElementById('opKasaSayim');
+      const ksRaw = ksEl ? ksEl.value : '';
+      const ks = ksRaw ? parseNum(ksRaw) : null;
+      const kapUid = (document.getElementById('opKapUser') && document.getElementById('opKapUser').value) || '';
+      const kapPin = ((document.getElementById('opKapPin') && document.getElementById('opKapPin').value) || '').replace(/\D/g, '').slice(0, 4);
+      return {
+        personel_saat: ps,
+        kasa_sayim: ks,
+        teslim: teslim,
+        devir: devir,
+        x_raporu_gonderildi: document.getElementById('opXRapor').checked,
+        ciro_gonderim_onay: document.getElementById('opCiroGon').checked,
+        personel_id: kapUid || null,
+        pin: kapPin || null,
+        ciro_nakit: parseNum(document.getElementById('opCiroN').value),
+        ciro_pos: parseNum(document.getElementById('opCiroP').value),
+        ciro_online: parseNum(document.getElementById('opCiroO').value),
+      };
+    }
+    return {};
+  }
+
+  opSubmit.onclick = async function () {
+    if (!opAktifEvent) return;
+    opErr.textContent = '';
+    opSubmit.disabled = true;
+    try {
+      const tip = opAktifEvent.tip;
+      if (tip === 'ACILIS' && opAcilisStep === 1) {
+        const ks = parseNum(document.getElementById('opKasaSayim') && document.getElementById('opKasaSayim').value);
+        if (ks == null || ks < 0) throw new Error('Geçerli kasa sayımı girin');
+        if (!(lastPersonelOperasyonSecim || []).length) {
+          throw new Error('Personel listesi boş — aktif personel kaydı bulunamadı.');
+        }
+        opAcilisKasaPending = ks;
+        opAcilisStep = 2;
+        opFields.innerHTML = buildAcilisBardakFields();
+        wireAcilisGeri();
+        opSubmit.textContent = 'İleri';
+        opSubmit.disabled = false;
+        return;
+      }
+      if (tip === 'ACILIS' && opAcilisStep === 2) {
+        function pInt(id, label) {
+          var raw = ((document.getElementById(id) && document.getElementById(id).value) || '').trim();
+          if (!raw) return 0;
+          if (!/^\d+$/.test(raw)) throw new Error(label + ' için sayı girin');
+          return parseInt(raw, 10);
+        }
+        opAcilisStokPending = opAcilisStokPending || {};
+        opAcilisStokPending.bardak_kucuk = pInt('opBardakKucuk', 'Küçük bardak');
+        opAcilisStokPending.bardak_buyuk = pInt('opBardakBuyuk', 'Büyük bardak');
+        opAcilisStokPending.bardak_plastik = pInt('opBardakPlastik', 'Plastik bardak');
+        opAcilisStep = 3;
+        opFields.innerHTML = buildAcilisUrunFields();
+        wireAcilisGeri();
+        opSubmit.textContent = 'İleri';
+        opSubmit.disabled = false;
+        return;
+      }
+      if (tip === 'ACILIS' && opAcilisStep === 3) {
+        function pInt2(id, label) {
+          var raw = ((document.getElementById(id) && document.getElementById(id).value) || '').trim();
+          if (!raw) return 0;
+          if (!/^\d+$/.test(raw)) throw new Error(label + ' için sayı girin');
+          return parseInt(raw, 10);
+        }
+        opAcilisStokPending = opAcilisStokPending || {};
+        opAcilisStokPending.su_adet = pInt2('opUrunSu', 'Su');
+        opAcilisStokPending.redbull_adet = pInt2('opUrunRedbull', 'Redbull');
+        opAcilisStokPending.soda_adet = pInt2('opUrunSoda', 'Soda');
+        opAcilisStokPending.cookie_adet = pInt2('opUrunCookie', 'Cookie');
+        opAcilisStokPending.pasta_adet = pInt2('opUrunPasta', 'Pasta');
+        opAcilisStep = 4;
+        opFields.innerHTML = buildAcilisAuthFields(lastPersonelOperasyonSecim);
+        wireAcilisGeri();
+        opSubmit.textContent = 'Onayla ve tamamla';
+        opSubmit.disabled = false;
+        return;
+      }
+      var body;
+      if (tip === 'ACILIS' && opAcilisStep === 4) {
+        var pid = resolvePersonelIdAcilis();
+        if (!pid) {
+          throw new Error('Personeli listeden seçin veya kayıtlı tam adı yazın (birden fazla eşleşmede netleştirin).');
+        }
+        var pinA = ((document.getElementById('opAcilisPin') && document.getElementById('opAcilisPin').value) || '').replace(/\D/g, '').slice(0, 4);
+        if (pinA.length !== 4) throw new Error('4 haneli panel PIN girin');
+        var s = opAcilisStokPending || {};
+        body = {
+          kasa_sayim: opAcilisKasaPending,
+          personel_id: pid,
+          pin: pinA,
+          bardak_kucuk: s.bardak_kucuk || 0,
+          bardak_buyuk: s.bardak_buyuk || 0,
+          bardak_plastik: s.bardak_plastik || 0,
+          su_adet: s.su_adet || 0,
+          redbull_adet: s.redbull_adet || 0,
+          soda_adet: s.soda_adet || 0,
+          cookie_adet: s.cookie_adet || 0,
+          pasta_adet: s.pasta_adet || 0
+        };
+      } else {
+        body = collectOperasyonBody(tip);
+      }
+      if ((tip === 'KONTROL' || tip === 'CIKIS') && (body.kasa_sayim == null || body.kasa_sayim < 0)) {
+        throw new Error('Geçerli kasa sayımı girin');
+      }
+      if (tip === 'KAPANIS' && (body.teslim == null || body.teslim < 0)) {
+        throw new Error('Teslim tutarı girin');
+      }
+      if (tip === 'KAPANIS') {
+        if (!body.personel_id) throw new Error('Kapanış onayı için personel seçin');
+        if (!body.pin || body.pin.length !== 4) throw new Error('Kapanış için 4 haneli PIN girin');
+      }
+      await api(
+        '/sube-panel/' + encodeURIComponent(SUBE_ID) + '/operasyon/event/' + encodeURIComponent(opAktifEvent.id) + '/tamamla',
+        { method: 'POST', body: body }
+      );
+      hideOperasyonZorunlu();
+      await refresh();
+    } catch (e) {
+      opErr.textContent = e.message || 'Hata';
+    }
+    opSubmit.disabled = false;
+  };
+
+  document.getElementById('apiBaseSave').onclick = function () {
+    const v = (document.getElementById('apiBaseInput').value || '').trim().replace(/\/+$/, '');
+    if (!/^https?:\/\//i.test(v)) {
+      alert('Geçerli bir http(s) adresi girin');
+      return;
+    }
+    try { sessionStorage.setItem(FILE_FALLBACK_KEY, v); } catch (e) {}
+    location.reload();
+  };
+
+  function showApiSetup() {
+    apiSetupEl.style.display = 'block';
+    appRoot.style.display = 'none';
+    kasaOverlay.style.display = 'none';
+    acilisOverlay.style.display = 'none';
+    hideOperasyonZorunlu();
+  }
+
+  function fillKasaUsers(list) {
+    kasaUser.innerHTML = '';
+    (list || []).forEach(function (u) {
+      const o = document.createElement('option');
+      o.value = u.id;
+      o.textContent = u.ad;
+      kasaUser.appendChild(o);
+    });
+  }
+
+  function renderMain(data) {
+    subeTitle.textContent = data.sube_adi || 'Şube';
+    tarihEl.textContent = 'Tarih: ' + (data.tarih || '');
+    var acilisBekliyor = (data.gorevler || []).some(function (g) {
+      return g && g.id === 'acilis' && !g.tamamlandi;
+    });
+    var gorevCardCls = 'card' + (acilisBekliyor ? ' card--pulse-cta' : '');
+    var html = '<div class="' + gorevCardCls + '"><h2 style="font-size:1rem;margin:0 0 12px">Günlük görevler</h2>';
+    (data.gorevler || []).forEach(function (g) {
+      var cls = g.tamamlandi ? 'gorev done' : 'gorev';
+      html += '<div class="' + cls + '"><strong>' + (g.baslik || '') + '</strong><br/><span class="muted">' + (g.aciklama || '') + '</span></div>';
+    });
+    html += '</div>';
+    if (data.uyari) {
+      html += '<p class="muted" style="margin:12px 0">' + data.uyari + '</p>';
+    }
+    var op = data.operasyon || {};
+    var evList = op.events || op.events_ozet;
+    if (evList && evList.length) {
+      html += '<div class="card"><h2 style="font-size:1rem;margin:0 0 10px">Bugünkü operasyon</h2>';
+      html += '<p class="muted" style="margin:0 0 8px">Sunucu saati: ' + (op.sunucu_saati || '') + '</p>';
+      evList.forEach(function (ev) {
+        html += '<div class="gorev"><strong>' + ev.tip + '</strong> · ' + (ev.durum || '') +
+          (ev.sistem_slot_ts ? '<br/><span class="muted">Slot: ' + ev.sistem_slot_ts + '</span>' : '') + '</div>';
+      });
+      html += '</div>';
+    }
+    html += '<p class="muted" style="text-align:center">Ciro ve gider kayıtları onay sürecine iletilir; bu ekranda yalnızca görev ve operasyon özetiniz görünür.</p>';
+    html += buildPanelPinBilgiHtml(data);
+    mainContent.innerHTML = html;
+  }
+
+  function buildPanelPinBilgiHtml(data) {
+    if (data.panel_kilitli) return '';
+    var pk = data.panel_pin_kullanicilar || [];
+    var h = '<div class="card"><h2 style="font-size:1rem;margin:0 0 12px">Panel PIN (personel)</h2>';
+    h += '<p class="muted" style="margin:0 0 10px">Panel PIN, personele yetkili tarafından atanır; aynı PIN <strong>tüm şubelerde</strong> geçerlidir. Bu listede yalnızca PIN’i tanımlı çalışanlar görünür.</p>';
+    if (!pk.length) {
+      h += '<p class="muted">PIN tanımlı personel yok — yetkiliye başvurun.</p>';
+    } else {
+      h += '<div style="font-size:0.9rem">';
+      pk.forEach(function (u) {
+        h += '<div class="gorev">' + (u.ad || '') + (u.yonetici ? ' <strong style="color:#38bdf8">(yönetici)</strong>' : '') + '</div>';
+      });
+      h += '</div>';
+    }
+    h += '</div>';
+    return h;
+  }
+
+  async function refresh() {
+    if (!SUBE_ID) {
+      mainContent.innerHTML =
+        '<div class="card">URL\'de şube yok. Örnek: <code>/sube/sube-merkez</code> veya <code>/sube-panel/sube-merkez</code></div>';
+      appRoot.style.display = 'block';
+      return;
+    }
+    const base = getApiBase();
+    if (!base) {
+      showApiSetup();
+      return;
+    }
+    apiSetupEl.style.display = 'none';
+    appRoot.style.display = 'block';
+
+    const data = await api('/sube-personel/' + encodeURIComponent(SUBE_ID) + '/durum');
+    setSunucuZamanFromBlob(data.operasyon || null);
+    setAcilisMesaj(data);
+    lastPanelPinKullanicilar = data.panel_pin_kullanicilar || [];
+    lastPersonelOperasyonSecim = data.personel_operasyon_secim || [];
+    fillKasaUsers(data.panel_pin_kullanicilar);
+
+    if (data.kasa_kilitli) {
+      hideOperasyonZorunlu();
+      kasaOverlay.style.display = 'flex';
+      acilisOverlay.style.display = 'none';
+      kasaErr.textContent = '';
+      return;
+    }
+    kasaOverlay.style.display = 'none';
+
+    const op = data.operasyon || {};
+    const aktif = op.aktif;
+    if (!data.sube_acik) {
+      if (aktif && aktif.tip === 'ACILIS' && (aktif.durum === 'bekliyor' || aktif.durum === 'gecikti')) {
+        acilisOverlay.style.display = 'none';
+        renderMain(data);
+        if (!opAktifEvent || opAktifEvent.id !== aktif.id) {
+          showOperasyonZorunlu(aktif, op);
+        } else {
+          opBadge.textContent = (aktif.durum || '').toUpperCase();
+          if (op.aktif_kritik) operasyonOverlay.classList.add('kritik');
+        }
+        return;
+      }
+      hideOperasyonZorunlu();
+      acilisOverlay.style.display = 'flex';
+      acilisErr.textContent = '';
+      return;
+    }
+    acilisOverlay.style.display = 'none';
+
+    if (aktif && (aktif.durum === 'bekliyor' || aktif.durum === 'gecikti')) {
+      renderMain(data);
+      if (!opAktifEvent || opAktifEvent.id !== aktif.id) {
+        showOperasyonZorunlu(aktif, op);
+      } else {
+        opBadge.textContent = (aktif.durum || '').toUpperCase();
+        if (op.aktif_kritik) operasyonOverlay.classList.add('kritik');
+      }
+      return;
+    }
+
+    hideOperasyonZorunlu();
+    renderMain(data);
+  }
+
+  kasaBtn.onclick = async function () {
+    kasaErr.textContent = '';
+    const uid = kasaUser.value;
+    const pin = (kasaPin.value || '').replace(/\D/g, '').slice(0, 4);
+    if (!uid) { kasaErr.textContent = 'Personel seçin'; return; }
+    if (pin.length !== 4) { kasaErr.textContent = '4 haneli PIN girin'; return; }
+    kasaBtn.disabled = true;
+    try {
+      await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/kasa-kilit-ac', {
+        method: 'POST',
+        body: { personel_id: uid, pin: pin },
+      });
+      kasaPin.value = '';
+      await refresh();
+    } catch (e) {
+      kasaErr.textContent = e.message || 'Hata';
+    }
+    kasaBtn.disabled = false;
+  };
+
+  acilisBtn.onclick = async function () {
+    acilisErr.textContent = '';
+    acilisBtn.disabled = true;
+    try {
+      var body = {};
+      if (lastKasaAcma && lastKasaAcma.personel_id) {
+        body.personel_id = lastKasaAcma.personel_id;
+        var ad = (lastKasaAcma.panel_kullanici_ad || '').trim() || '—';
+        var ts = (lastKasaAcma.olusturma || '').trim();
+        var saat = (ts && ts.length >= 16) ? ts.substring(11, 16) : '';
+        body.aciklama = saat
+          ? ('Açılış onayı — PIN: ' + ad + ' (' + saat + ')')
+          : ('Açılış onayı — PIN: ' + ad);
+      }
+      await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/acilis', { method: 'POST', body: body });
+      await refresh();
+    } catch (e) {
+      acilisErr.textContent = e.message || 'Hata';
+    }
+    acilisBtn.disabled = false;
+  };
+
+  function startPanelPolling() {
+    if (panelPollTimer) clearInterval(panelPollTimer);
+    panelPollTimer = setInterval(function () {
+      if (operasyonOverlay.style.display === 'flex') return;
+      refresh().catch(function () {});
+    }, 28000);
+  }
+
+  if (!getApiBase() && window.location.protocol === 'file:') {
+    showApiSetup();
+  } else {
+    refresh()
+      .then(function () {
+        startPanelPolling();
+      })
+      .catch(function (e) {
+        if (!getApiBase()) showApiSetup();
+        else {
+          appRoot.style.display = 'block';
+          mainContent.innerHTML = '<div class="card err">' + (e.message || 'Yüklenemedi') + '</div>';
+        }
+      });
+  }
+})();
+  </script>
+</body>
+</html>
