@@ -9,6 +9,12 @@ const FILTRELER = [
   { id: 'fark',    label: '⚠️ Fark / Uyarı' },
 ];
 
+const UST_SEKMELER = [
+  { id: 'canli', label: 'Canlı Operasyon' },
+  { id: 'defter', label: 'Defter Kayıtları' },
+  { id: 'sayim', label: 'Açılış Sayımları' },
+];
+
 function SubeKart({ k, onDetay }) {
   const b   = k.bayraklar || {};
   const o   = k.ozet || {};
@@ -222,11 +228,16 @@ function DetayModal({ kart, onKapat }) {
 }
 
 export default function OperasyonMerkezi() {
+  const varsayilanAy = new Date().toISOString().slice(0, 7);
+  const [aktifSekme, setAktifSekme] = useState('canli');
   const [filtre,    setFiltre]    = useState('all');
   const [kartlar,   setKartlar]   = useState([]);
   const [defter,    setDefter]    = useState([]);
+  const [sayimlar,  setSayimlar]  = useState([]);
   const [skor,      setSkor]      = useState(null);
   const [ozet,      setOzet]      = useState(null);
+  const [ayFiltre,  setAyFiltre]  = useState(varsayilanAy);
+  const [gunFiltre, setGunFiltre] = useState('');
   const [yukleniyor,setYukleniyor]= useState(true);
   const [detay,     setDetay]     = useState(null);
   const [msg,       setMsg]       = useState(null);
@@ -236,24 +247,34 @@ export default function OperasyonMerkezi() {
 
   const yukle = useCallback(async (f = filtre) => {
     try {
-      const [dash, def, sk] = await Promise.all([
-        api(`/ops/dashboard?filtre=${f}`),
-        api('/ops/defter?limit=60'),
-        api('/ops/skor'),
-      ]);
+      const q = `year_month=${encodeURIComponent(ayFiltre)}${gunFiltre ? `&gun=${encodeURIComponent(gunFiltre)}` : ''}`;
+      const calls = [api(`/ops/dashboard?filtre=${f}`)];
+      if (aktifSekme === 'canli') {
+        calls.push(api('/ops/skor'));
+      } else if (aktifSekme === 'defter') {
+        calls.push(api(`/ops/defter?limit=300&${q}`));
+      } else {
+        calls.push(api(`/ops/sayimlar?limit=300&${q}`));
+      }
+      const [dash, extra] = await Promise.all(calls);
       setKartlar(dash.kartlar || []);
       setOzet(dash);
-      setDefter(def.satirlar || []);
-      setSkor(sk);
+      if (aktifSekme === 'canli') {
+        setSkor(extra);
+      } else if (aktifSekme === 'defter') {
+        setDefter(extra?.satirlar || []);
+      } else {
+        setSayimlar(extra?.satirlar || []);
+      }
       setSonYenileme(new Date().toLocaleTimeString('tr-TR'));
     } catch (e) {
       toast(e.message || 'Yükleme hatası');
     } finally {
       setYukleniyor(false);
     }
-  }, [filtre]);
+  }, [filtre, aktifSekme, ayFiltre, gunFiltre]);
 
-  useEffect(() => { yukle(filtre); }, [filtre]);
+  useEffect(() => { yukle(filtre); }, [filtre, aktifSekme, ayFiltre, gunFiltre]);
 
   // 25 saniyede bir otomatik yenile
   useEffect(() => {
@@ -284,65 +305,88 @@ export default function OperasyonMerkezi() {
         </button>
       </div>
 
-      {/* Özet metrikler */}
-      <div className="metrics" style={{ marginBottom: 16 }}>
-        <div className="metric-card">
-          <div className="metric-label">Aktif Şube</div>
-          <div className="metric-value">{kartlar.filter(k => k.sube_acik).length} / {kartlar.length}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Ciro Onaylı</div>
-          <div className="metric-value green">{kartlar.filter(k => k.ciro_girildi).length}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Ciro Onayda</div>
-          <div className="metric-value yellow">{kartlar.filter(k => k.ciro_taslak_bekliyor).length}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">30g Gecikme</div>
-          <div className="metric-value">{toplamGecikme}</div>
-          <div className="metric-sub">{skor?.uyari_sayisi_uyari_kritik || 0} uyarı/kritik kayıt</div>
-        </div>
-      </div>
-
-      {/* Filtreler */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
-        {FILTRELER.map(f => (
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        {UST_SEKMELER.map(s => (
           <button
-            key={f.id}
-            className={`tab-pill ${filtre === f.id ? 'active' : ''}`}
-            onClick={() => setFiltre(f.id)}
+            key={s.id}
+            className={`tab-pill ${aktifSekme === s.id ? 'active' : ''}`}
+            onClick={() => { setYukleniyor(true); setAktifSekme(s.id); }}
           >
-            {f.label}
+            {s.label}
           </button>
         ))}
       </div>
 
-      {/* Kartlar */}
-      {yukleniyor ? (
-        <div className="loading"><div className="spinner" />Yükleniyor…</div>
-      ) : kartlar.length === 0 ? (
-        <div className="empty">
-          <div className="icon">✅</div>
-          <p>Bu filtrede şube yok</p>
-        </div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12, marginBottom: 24 }}>
-          {kartlar.map(k => (
-            <SubeKart key={k.sube_id} k={k} onDetay={setDetay} />
-          ))}
+      {aktifSekme !== 'canli' && (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+          <label style={{ margin: 0 }}>
+            <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Ay</span>
+            <input type="month" value={ayFiltre} onChange={(e) => { setYukleniyor(true); setAyFiltre(e.target.value || varsayilanAy); }} />
+          </label>
+          <label style={{ margin: 0 }}>
+            <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Gün (opsiyonel)</span>
+            <input type="date" value={gunFiltre} onChange={(e) => { setYukleniyor(true); setGunFiltre(e.target.value || ''); }} />
+          </label>
         </div>
       )}
 
-      {/* Operasyon defteri */}
-      <div>
-        <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text2)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
-          Son Defter Kayıtları
-        </h3>
+      {aktifSekme === 'canli' && (
+        <>
+          <div className="metrics" style={{ marginBottom: 16 }}>
+            <div className="metric-card">
+              <div className="metric-label">Aktif Şube</div>
+              <div className="metric-value">{kartlar.filter(k => k.sube_acik).length} / {kartlar.length}</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-label">Ciro Onaylı</div>
+              <div className="metric-value green">{kartlar.filter(k => k.ciro_girildi).length}</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-label">Ciro Onayda</div>
+              <div className="metric-value yellow">{kartlar.filter(k => k.ciro_taslak_bekliyor).length}</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-label">30g Gecikme</div>
+              <div className="metric-value">{toplamGecikme}</div>
+              <div className="metric-sub">{skor?.uyari_sayisi_uyari_kritik || 0} uyarı/kritik kayıt</div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+            {FILTRELER.map(f => (
+              <button
+                key={f.id}
+                className={`tab-pill ${filtre === f.id ? 'active' : ''}`}
+                onClick={() => setFiltre(f.id)}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {yukleniyor ? (
+            <div className="loading"><div className="spinner" />Yükleniyor…</div>
+          ) : kartlar.length === 0 ? (
+            <div className="empty">
+              <div className="icon">✅</div>
+              <p>Bu filtrede şube yok</p>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12, marginBottom: 24 }}>
+              {kartlar.map(k => (
+                <SubeKart key={k.sube_id} k={k} onDetay={setDetay} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {aktifSekme === 'defter' && (
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
+                <th>Tarih</th>
                 <th>Saat</th>
                 <th>Şube</th>
                 <th>Etiket</th>
@@ -351,61 +395,52 @@ export default function OperasyonMerkezi() {
             </thead>
             <tbody>
               {defter.length === 0 ? (
-                <tr><td colSpan={4}><div className="empty"><p>Defter kaydı yok</p></div></td></tr>
+                <tr><td colSpan={5}><div className="empty"><p>Seçilen filtrede defter kaydı yok</p></div></td></tr>
               ) : defter.map(r => (
                 <tr key={r.id}>
+                  <td className="mono" style={{ fontSize: 11 }}>{(r.tarih || '').substring(0, 10)}</td>
                   <td className="mono" style={{ fontSize: 11 }}>{(r.olay_ts || '').substring(11, 19)}</td>
                   <td style={{ fontWeight: 500, fontSize: 13 }}>{r.sube_adi || r.sube_id}</td>
                   <td><span className="badge badge-blue">{r.etiket || '—'}</span></td>
-                  <td style={{ fontSize: 12, color: 'var(--text3)' }}>{(r.aciklama || '').slice(0, 100)}</td>
+                  <td style={{ fontSize: 12, color: 'var(--text3)' }}>{(r.aciklama || '').slice(0, 130)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      </div>
+      )}
 
-      {/* 30 günlük skor tablosu */}
-      {skor?.son_30_gun?.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text2)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
-            30 Günlük Şube Performansı
-          </h3>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Şube</th>
-                  <th style={{ textAlign: 'right' }}>Toplam Olay</th>
-                  <th style={{ textAlign: 'right' }}>Tamamlanan</th>
-                  <th style={{ textAlign: 'right' }}>Gecikme</th>
-                  <th>Başarı Oranı</th>
-                </tr>
-              </thead>
-              <tbody>
-                {skor.son_30_gun.map(r => {
-                  const oran = r.toplam_olay > 0 ? Math.round(r.tamam_adet / r.toplam_olay * 100) : 0;
-                  const renk = oran >= 90 ? 'var(--green)' : oran >= 70 ? 'var(--yellow)' : 'var(--red)';
-                  return (
-                    <tr key={r.sube_id}>
-                      <td style={{ fontWeight: 500 }}>{r.sube_adi || r.sube_id}</td>
-                      <td style={{ textAlign: 'right' }} className="mono">{r.toplam_olay}</td>
-                      <td style={{ textAlign: 'right', color: 'var(--green)' }} className="mono">{r.tamam_adet}</td>
-                      <td style={{ textAlign: 'right', color: r.gecikme_adet > 0 ? 'var(--red)' : 'var(--text3)' }} className="mono">{r.gecikme_adet}</td>
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <div className="progress-bar" style={{ width: 80 }}>
-                            <div style={{ height: '100%', width: `${oran}%`, background: renk, borderRadius: 3 }} />
-                          </div>
-                          <span style={{ fontSize: 12, color: renk }}>%{oran}</span>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+      {aktifSekme === 'sayim' && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Tarih</th>
+                <th>Saat</th>
+                <th>Şube</th>
+                <th>Personel</th>
+                <th>Bardaklar (K/B/P)</th>
+                <th>Ürünler (Su/Redbull/Soda/Cookie/Pasta)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sayimlar.length === 0 ? (
+                <tr><td colSpan={6}><div className="empty"><p>Seçilen filtrede açılış sayımı yok</p></div></td></tr>
+              ) : sayimlar.map(r => {
+                const s = r.stok_sayim || {};
+                return (
+                  <tr key={r.event_id}>
+                    <td className="mono" style={{ fontSize: 11 }}>{(r.tarih || '').substring(0, 10)}</td>
+                    <td className="mono" style={{ fontSize: 11 }}>{(r.cevap_ts || '').substring(11, 19) || (r.bildirim_saati || '')}</td>
+                    <td style={{ fontWeight: 500, fontSize: 13 }}>{r.sube_adi || r.sube_id}</td>
+                    <td style={{ fontSize: 12 }}>{r.personel_ad || r.personel_id || '—'}</td>
+                    <td className="mono" style={{ fontSize: 12 }}>{`${s.bardak_kucuk || 0}/${s.bardak_buyuk || 0}/${s.bardak_plastik || 0}`}</td>
+                    <td className="mono" style={{ fontSize: 12 }}>{`${s.su_adet || 0}/${s.redbull_adet || 0}/${s.soda_adet || 0}/${s.cookie_adet || 0}/${s.pasta_adet || 0}`}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 
