@@ -19,7 +19,12 @@ from pydantic import BaseModel
 
 from database import db
 from kasa_service import audit
-from personel_panel_auth import dogrula_personel_panel_pin, list_personel_panel_secim
+from personel_panel_auth import (
+    dogrula_personel_panel_pin,
+    dogrula_personel_panel_yonetici,
+    list_personel_panel_secim,
+    panel_pin_hash,
+)
 
 router = APIRouter(prefix="/api/sube-panel", tags=["sube-vardiya-devri"])
 
@@ -207,6 +212,36 @@ class PanelYoneticiAtamaBody(BaseModel):
     yonetici: bool = True
 
 
+def _legacy_personel_id_bul(cur, personel_id: Optional[str], ad: str) -> str:
+    pid = (personel_id or "").strip()
+    if pid:
+        cur.execute("SELECT id, aktif FROM personel WHERE id=%s", (pid,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Personel bulunamadı")
+        if not bool(dict(r).get("aktif")):
+            raise HTTPException(403, "Personel aktif değil")
+        return pid
+
+    nm = (ad or "").strip()
+    if not nm:
+        raise HTTPException(400, "Personel adı gerekli")
+    cur.execute(
+        """
+        SELECT id FROM personel
+        WHERE aktif=TRUE AND LOWER(TRIM(ad_soyad)) = LOWER(TRIM(%s))
+        ORDER BY ad_soyad
+        """,
+        (nm,),
+    )
+    rows = [dict(x) for x in cur.fetchall()]
+    if not rows:
+        raise HTTPException(404, "Bu adla aktif personel bulunamadı")
+    if len(rows) > 1:
+        raise HTTPException(409, "Aynı adda birden fazla personel var; personel_id ile tekrar deneyin.")
+    return str(rows[0]["id"])
+
+
 class VardiyaDevirAdim1(BaseModel):
     """1. imza: sabahçı (devreden) — `sabahci_devreden_id` = personel_id."""
     sabahci_devreden_id: str
@@ -236,11 +271,36 @@ def vardiya_devri_durum(sube_id: str):
 
 @router.post("/{sube_id}/panel-kullanici")
 def panel_kullanici_ekle(sube_id: str, body: PanelKullaniciOlustur):
-    raise HTTPException(
-        410,
-        "Şube bazlı panel kullanıcısı kaldırıldı. PIN ve yönetici: "
-        "GET/PUT /api/sube-panel/merkez/personel-panel-pin ve /merkez/personel/{id}/panel-pin",
-    )
+    # Legacy uyumluluk: eski endpoint çağrılarını personel bazlı yeni PIN modeline yönlendir.
+    p = (body.pin or "").strip()
+    if len(p) != 4 or not p.isdigit():
+        raise HTTPException(400, "4 haneli PIN gerekli")
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        yetkili_id = (body.yetkili_panel_kullanici_id or "").strip()
+        yetkili_pin = (body.yetkili_pin or "").strip()
+        if yetkili_id or yetkili_pin:
+            dogrula_personel_panel_yonetici(cur, yetkili_id, yetkili_pin)
+        hedef_pid = _legacy_personel_id_bul(cur, body.personel_id, body.ad)
+        salt = uuid.uuid4().hex[:12]
+        ph = panel_pin_hash(p, salt)
+        cur.execute(
+            """
+            UPDATE personel
+            SET panel_pin_salt=%s, panel_pin_hash=%s
+            WHERE id=%s
+            """,
+            (salt, ph, hedef_pid),
+        )
+        audit(cur, "personel", hedef_pid, "LEGACY_PANEL_KULLANICI_ENDPOINT_PIN_GUNCELLE")
+    return {"success": True, "legacy_compat": True, "personel_id": hedef_pid}
+
+
+@router.get("/{sube_id}/panel-kullanici")
+def panel_kullanici_liste_legacy(sube_id: str):
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        return list_personel_panel_secim(cur)
 
 
 @router.post("/{sube_id}/panel-yonetici-atama")
