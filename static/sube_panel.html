@@ -87,6 +87,7 @@
     <div class="overlay-inner card card--pulse-cta">
       <h1 style="margin-bottom:8px">Kasa kilitli</h1>
       <p class="muted">Günlük açılışta kasayı açmak için kendinizi seçin ve 4 haneli PIN girin.</p>
+      <p class="muted" id="kasaSaatBilgi" style="margin-top:-8px;font-size:0.82rem"></p>
       <label>Personel</label>
       <select id="kasaUser"></select>
       <label style="margin-top:12px">PIN</label>
@@ -98,8 +99,9 @@
 
   <div id="acilisOverlay" class="overlay" style="display:none">
     <div class="overlay-inner card card--pulse-cta">
-      <h1 style="margin-bottom:8px">Şube henüz açılmadı</h1>
-      <p class="muted">Kasa açıldı. Şimdi günlük şube açılış kaydını oluşturun.</p>
+      <h1 id="acilisTitle" style="margin-bottom:8px">Şube henüz açılmadı</h1>
+      <p class="muted" id="acilisDesc">Kasa açıldı. Şimdi günlük şube açılış kaydını oluşturun.</p>
+      <p class="muted" id="acilisSaatBilgi" style="margin-top:-8px;font-size:0.82rem"></p>
       <p class="err" id="acilisErr"></p>
       <button type="button" id="acilisBtn">Şubeyi aç</button>
     </div>
@@ -121,6 +123,10 @@
   const FILE_FALLBACK_KEY = 'sube_panel_api_base';
 
   function subeIdFromPath() {
+    try {
+      var q = new URLSearchParams(window.location.search || '').get('sube');
+      if (q && String(q).trim()) return decodeURIComponent(String(q).trim());
+    } catch (e) {}
     const path = window.location.pathname.replace(/\/+$/, '') || '';
     const parts = path.split('/').filter(Boolean);
     const iPanel = parts.indexOf('sube-panel');
@@ -179,12 +185,17 @@
   var lastOperasyonBlob = null;
   var opAcilisStep = 1;
   var opAcilisKasaPending = null;
+  var opAcilisStokPending = null;
   const kasaUser = document.getElementById('kasaUser');
   const kasaPin = document.getElementById('kasaPin');
   const kasaBtn = document.getElementById('kasaBtn');
   const kasaErr = document.getElementById('kasaErr');
   const acilisBtn = document.getElementById('acilisBtn');
   const acilisErr = document.getElementById('acilisErr');
+  const acilisTitle = document.getElementById('acilisTitle');
+  const acilisDesc = document.getElementById('acilisDesc');
+  const kasaSaatBilgi = document.getElementById('kasaSaatBilgi');
+  const acilisSaatBilgi = document.getElementById('acilisSaatBilgi');
   const mainContent = document.getElementById('mainContent');
   const subeTitle = document.getElementById('subeTitle');
   const tarihEl = document.getElementById('tarihEl');
@@ -200,11 +211,34 @@
   let beepInterval = null;
   let pollOperasyonTimer = null;
   let panelPollTimer = null;
+  let lastSunucuZaman = '';
+  let lastKasaAcma = null;
 
   function parseNum(v) {
     if (v == null || v === '') return null;
     const n = parseFloat(String(v).replace(',', '.'));
     return isNaN(n) ? null : n;
+  }
+
+  function setSunucuZamanFromBlob(blob) {
+    var z = (blob && (blob.sunucu_iso || blob.sunucu_saati)) || '';
+    lastSunucuZaman = z || '';
+    var txt = lastSunucuZaman ? ('Sunucu zamanı: ' + lastSunucuZaman) : '';
+    if (kasaSaatBilgi) kasaSaatBilgi.textContent = txt;
+    if (acilisSaatBilgi) acilisSaatBilgi.textContent = txt;
+  }
+
+  function setAcilisMesaj(data) {
+    var k = (data && data.kasa_acma) || null;
+    lastKasaAcma = k;
+    if (!k || !k.personel_id) {
+      acilisTitle.textContent = 'Şube henüz açılmadı';
+      acilisDesc.textContent = 'Kasa açıldı. Şimdi günlük şube açılış kaydını oluşturun.';
+      return;
+    }
+    var ad = (k.panel_kullanici_ad || '').trim() || 'personel';
+    acilisTitle.textContent = 'Günaydın ' + ad;
+    acilisDesc.textContent = 'Kasa PIN onayınız alındı. Şubeyi açınız.';
   }
 
   function beep() {
@@ -261,6 +295,7 @@
     opAktifEvent = null;
     opAcilisStep = 1;
     opAcilisKasaPending = null;
+    opAcilisStokPending = null;
     lastOperasyonBlob = null;
     if (opSubmit) opSubmit.textContent = 'Kaydet ve tamamla';
   }
@@ -273,6 +308,7 @@
   }
 
   function buildAcilisAuthFields(personelList) {
+    var s = opAcilisStokPending || {};
     var opts = '';
     (personelList || []).forEach(function (p) {
       var ad = (p.ad || '').trim();
@@ -280,11 +316,36 @@
       opts += '<option value="' + escapeHtmlAttr(ad) + '"></option>';
     });
     return (
-      '<p class="muted" style="margin-bottom:10px;font-size:0.88rem">Açılış onayı: personeli seçin veya ad soyadı yazın (tam eşleşme veya tek öneri), ardından size tanımlı <strong>panel PIN</strong> (4 hane) girin.</p>' +
+      '<p class="muted" style="margin-bottom:10px;font-size:0.88rem">Son adım: personel + PIN ile onay verin.</p>' +
+      '<p class="muted" style="margin-bottom:10px;font-size:0.82rem">Bardak (k/b/p): <strong>' + (s.bardak_kucuk || 0) + '/' + (s.bardak_buyuk || 0) + '/' + (s.bardak_plastik || 0) + '</strong> · Ürün (su/redbull/soda/cookie/pasta): <strong>' + (s.su_adet || 0) + '/' + (s.redbull_adet || 0) + '/' + (s.soda_adet || 0) + '/' + (s.cookie_adet || 0) + '/' + (s.pasta_adet || 0) + '</strong></p>' +
       '<label>Personel</label><input type="text" id="opAcilisPersonelAd" list="opAcilisPersList" autocomplete="off" placeholder="Örn. Ayşe Yılmaz" />' +
       '<datalist id="opAcilisPersList">' + opts + '</datalist>' +
       '<label style="margin-top:10px">Panel PIN</label><input type="password" id="opAcilisPin" class="pin" maxlength="4" inputmode="numeric" autocomplete="one-time-code" />' +
+      '<button type="button" id="opAcilisGeri" style="margin-top:14px;background:transparent;border:none;color:#94a3b8;cursor:pointer;text-decoration:underline;font-size:0.85rem">« Ürün sayımına dön</button>'
+    );
+  }
+
+  function buildAcilisBardakFields() {
+    var s = opAcilisStokPending || {};
+    return (
+      '<p class="muted" style="margin-bottom:10px;font-size:0.88rem">2/4 · Bardak sayımlarını girin.</p>' +
+      '<label>Küçük bardak</label><input type="text" id="opBardakKucuk" inputmode="numeric" autocomplete="off" value="' + (s.bardak_kucuk || 0) + '" />' +
+      '<label style="margin-top:8px">Büyük bardak</label><input type="text" id="opBardakBuyuk" inputmode="numeric" autocomplete="off" value="' + (s.bardak_buyuk || 0) + '" />' +
+      '<label style="margin-top:8px">Plastik bardak</label><input type="text" id="opBardakPlastik" inputmode="numeric" autocomplete="off" value="' + (s.bardak_plastik || 0) + '" />' +
       '<button type="button" id="opAcilisGeri" style="margin-top:14px;background:transparent;border:none;color:#94a3b8;cursor:pointer;text-decoration:underline;font-size:0.85rem">« Kasa sayımına dön</button>'
+    );
+  }
+
+  function buildAcilisUrunFields() {
+    var s = opAcilisStokPending || {};
+    return (
+      '<p class="muted" style="margin-bottom:10px;font-size:0.88rem">3/4 · Ürün sayılarını girin.</p>' +
+      '<label>Su sayısı</label><input type="text" id="opUrunSu" inputmode="numeric" autocomplete="off" value="' + (s.su_adet || 0) + '" />' +
+      '<label style="margin-top:8px">Redbull sayısı</label><input type="text" id="opUrunRedbull" inputmode="numeric" autocomplete="off" value="' + (s.redbull_adet || 0) + '" />' +
+      '<label style="margin-top:8px">Soda sayısı</label><input type="text" id="opUrunSoda" inputmode="numeric" autocomplete="off" value="' + (s.soda_adet || 0) + '" />' +
+      '<label style="margin-top:8px">Cookie sayısı</label><input type="text" id="opUrunCookie" inputmode="numeric" autocomplete="off" value="' + (s.cookie_adet || 0) + '" />' +
+      '<label style="margin-top:8px">Pasta sayısı</label><input type="text" id="opUrunPasta" inputmode="numeric" autocomplete="off" value="' + (s.pasta_adet || 0) + '" />' +
+      '<button type="button" id="opAcilisGeri" style="margin-top:14px;background:transparent;border:none;color:#94a3b8;cursor:pointer;text-decoration:underline;font-size:0.85rem">« Bardak sayımına dön</button>'
     );
   }
 
@@ -306,19 +367,37 @@
     var g = document.getElementById('opAcilisGeri');
     if (!g) return;
     g.onclick = function () {
-      opAcilisStep = 1;
-      opFields.innerHTML = buildOperasyonFields('ACILIS');
-      var inp = document.getElementById('opKasaSayim');
-      if (inp && opAcilisKasaPending != null) inp.value = String(opAcilisKasaPending);
-      opSubmit.textContent = 'Kaydet ve tamamla';
+      if (opAcilisStep === 2) {
+        opAcilisStep = 1;
+        opFields.innerHTML = buildOperasyonFields('ACILIS');
+        var inp = document.getElementById('opKasaSayim');
+        if (inp && opAcilisKasaPending != null) inp.value = String(opAcilisKasaPending);
+        opSubmit.textContent = 'İleri';
+        return;
+      }
+      if (opAcilisStep === 3) {
+        opAcilisStep = 2;
+        opFields.innerHTML = buildAcilisBardakFields();
+        wireAcilisGeri();
+        opSubmit.textContent = 'İleri';
+        return;
+      }
+      if (opAcilisStep === 4) {
+        opAcilisStep = 3;
+        opFields.innerHTML = buildAcilisUrunFields();
+        wireAcilisGeri();
+        opSubmit.textContent = 'İleri';
+      }
     };
   }
 
   function buildOperasyonFields(tip) {
     const saatRow = '<label>Personel saati (isteğe bağlı, HH:MM)</label><input type="text" id="opPersonelSaat" placeholder="14:30" maxlength="5" />';
+    const sunucuRow = '<p class="muted" style="margin:0 0 10px;font-size:0.82rem">İşlem zamanı (sunucu): <strong>' + (lastSunucuZaman || '—') + '</strong></p>';
     if (tip === 'ACILIS') {
       var sv = (lastOperasyonBlob && lastOperasyonBlob.sunucu_saati) ? lastOperasyonBlob.sunucu_saati : '—';
       return (
+        sunucuRow +
         '<label>Kasa sayımı (₺)</label><input type="text" id="opKasaSayim" inputmode="decimal" autocomplete="off" />' +
         '<p class="muted" style="margin-top:10px;font-size:0.88rem">Kayıt saati: <strong>' + sv + '</strong> (sunucu). Personel saati istenmez; bir sonraki adımda personel + PIN doğrulanır.</p>'
       );
@@ -332,6 +411,7 @@
           '<label style="margin-top:10px">Online anlık (isteğe bağlı)</label><input type="text" id="opSnapO" inputmode="decimal" />';
       }
       return (
+        sunucuRow +
         '<label>Kasa sayımı (₺)</label><input type="text" id="opKasaSayim" inputmode="decimal" autocomplete="off" />' +
         saatRow +
         extra
@@ -346,12 +426,22 @@
         opts = '<option value="">— Panel PIN tanımlı personel yok —</option>';
       }
       return (
+        sunucuRow +
         '<label style="margin-top:2px">Kapanışı onaylayan (personel)</label><select id="opKapUser">' + opts + '</select>' +
         '<label style="margin-top:10px">PIN (4 hane)</label><input type="password" id="opKapPin" class="pin" maxlength="4" inputmode="numeric" autocomplete="one-time-code" />' +
         '<p class="muted" style="margin-top:10px">Merkez ciro onayına gidecek tutarlar (X):</p>' +
         '<label>X nakit (₺)</label><input type="text" id="opCiroN" inputmode="decimal" placeholder="0" />' +
         '<label style="margin-top:8px">X POS (₺)</label><input type="text" id="opCiroP" inputmode="decimal" placeholder="0" />' +
         '<label style="margin-top:8px">X online (₺)</label><input type="text" id="opCiroO" inputmode="decimal" placeholder="0" />' +
+        '<p class="muted" style="margin-top:10px">Kapanış stok sayımı:</p>' +
+        '<label>Küçük bardak</label><input type="text" id="opKapBardakK" inputmode="numeric" placeholder="0" />' +
+        '<label style="margin-top:8px">Büyük bardak</label><input type="text" id="opKapBardakB" inputmode="numeric" placeholder="0" />' +
+        '<label style="margin-top:8px">Plastik bardak</label><input type="text" id="opKapBardakP" inputmode="numeric" placeholder="0" />' +
+        '<label style="margin-top:8px">Su sayısı</label><input type="text" id="opKapSu" inputmode="numeric" placeholder="0" />' +
+        '<label style="margin-top:8px">Redbull sayısı</label><input type="text" id="opKapRedbull" inputmode="numeric" placeholder="0" />' +
+        '<label style="margin-top:8px">Soda sayısı</label><input type="text" id="opKapSoda" inputmode="numeric" placeholder="0" />' +
+        '<label style="margin-top:8px">Cookie sayısı</label><input type="text" id="opKapCookie" inputmode="numeric" placeholder="0" />' +
+        '<label style="margin-top:8px">Pasta sayısı</label><input type="text" id="opKapPasta" inputmode="numeric" placeholder="0" />' +
         '<label>Teslim kasa (₺) — zorunlu</label><input type="text" id="opTeslim" inputmode="decimal" />' +
         '<label style="margin-top:10px">Devir (₺)</label><input type="text" id="opDevir" inputmode="decimal" placeholder="0" />' +
         '<label style="margin-top:10px">Kasa sayımı (₺, boşsa teslim kullanılır)</label><input type="text" id="opKasaSayim" inputmode="decimal" />' +
@@ -369,13 +459,24 @@
   function showOperasyonZorunlu(aktif, blob) {
     opAktifEvent = aktif;
     lastOperasyonBlob = blob || null;
+    setSunucuZamanFromBlob(lastOperasyonBlob);
     const tip = aktif.tip || '';
     const durum = aktif.durum || '';
     if (tip === 'ACILIS') {
       opAcilisStep = 1;
       opAcilisKasaPending = null;
+      opAcilisStokPending = {
+        bardak_kucuk: 0,
+        bardak_buyuk: 0,
+        bardak_plastik: 0,
+        su_adet: 0,
+        redbull_adet: 0,
+        soda_adet: 0,
+        cookie_adet: 0,
+        pasta_adet: 0,
+      };
     }
-    opSubmit.textContent = 'Kaydet ve tamamla';
+    opSubmit.textContent = tip === 'ACILIS' ? 'İleri' : 'Kaydet ve tamamla';
     opTitle.textContent = 'Zorunlu: ' + tip;
     opDesc.textContent =
       'Sistem bu adımı tamamlamanızı bekliyor. Cevap verene kadar ekran kilitlidir (sesli uyarı).';
@@ -413,6 +514,12 @@
       };
     }
     if (tip === 'KAPANIS') {
+      function pInt(id, label) {
+        var raw = ((document.getElementById(id) && document.getElementById(id).value) || '').trim();
+        if (!raw) return null;
+        if (!/^\d+$/.test(raw)) throw new Error(label + ' için sayı girin');
+        return parseInt(raw, 10);
+      }
       const teslim = parseNum(document.getElementById('opTeslim').value);
       const devir = parseNum(document.getElementById('opDevir').value) || 0;
       const ksEl = document.getElementById('opKasaSayim');
@@ -432,6 +539,14 @@
         ciro_nakit: parseNum(document.getElementById('opCiroN').value),
         ciro_pos: parseNum(document.getElementById('opCiroP').value),
         ciro_online: parseNum(document.getElementById('opCiroO').value),
+        bardak_kucuk: pInt('opKapBardakK', 'Küçük bardak'),
+        bardak_buyuk: pInt('opKapBardakB', 'Büyük bardak'),
+        bardak_plastik: pInt('opKapBardakP', 'Plastik bardak'),
+        su_adet: pInt('opKapSu', 'Su'),
+        redbull_adet: pInt('opKapRedbull', 'Redbull'),
+        soda_adet: pInt('opKapSoda', 'Soda'),
+        cookie_adet: pInt('opKapCookie', 'Cookie'),
+        pasta_adet: pInt('opKapPasta', 'Pasta'),
       };
     }
     return {};
@@ -451,6 +566,44 @@
         }
         opAcilisKasaPending = ks;
         opAcilisStep = 2;
+        opFields.innerHTML = buildAcilisBardakFields();
+        wireAcilisGeri();
+        opSubmit.textContent = 'İleri';
+        opSubmit.disabled = false;
+        return;
+      }
+      if (tip === 'ACILIS' && opAcilisStep === 2) {
+        function pInt(id, label) {
+          var raw = ((document.getElementById(id) && document.getElementById(id).value) || '').trim();
+          if (!raw) return 0;
+          if (!/^\d+$/.test(raw)) throw new Error(label + ' için sayı girin');
+          return parseInt(raw, 10);
+        }
+        opAcilisStokPending = opAcilisStokPending || {};
+        opAcilisStokPending.bardak_kucuk = pInt('opBardakKucuk', 'Küçük bardak');
+        opAcilisStokPending.bardak_buyuk = pInt('opBardakBuyuk', 'Büyük bardak');
+        opAcilisStokPending.bardak_plastik = pInt('opBardakPlastik', 'Plastik bardak');
+        opAcilisStep = 3;
+        opFields.innerHTML = buildAcilisUrunFields();
+        wireAcilisGeri();
+        opSubmit.textContent = 'İleri';
+        opSubmit.disabled = false;
+        return;
+      }
+      if (tip === 'ACILIS' && opAcilisStep === 3) {
+        function pInt2(id, label) {
+          var raw = ((document.getElementById(id) && document.getElementById(id).value) || '').trim();
+          if (!raw) return 0;
+          if (!/^\d+$/.test(raw)) throw new Error(label + ' için sayı girin');
+          return parseInt(raw, 10);
+        }
+        opAcilisStokPending = opAcilisStokPending || {};
+        opAcilisStokPending.su_adet = pInt2('opUrunSu', 'Su');
+        opAcilisStokPending.redbull_adet = pInt2('opUrunRedbull', 'Redbull');
+        opAcilisStokPending.soda_adet = pInt2('opUrunSoda', 'Soda');
+        opAcilisStokPending.cookie_adet = pInt2('opUrunCookie', 'Cookie');
+        opAcilisStokPending.pasta_adet = pInt2('opUrunPasta', 'Pasta');
+        opAcilisStep = 4;
         opFields.innerHTML = buildAcilisAuthFields(lastPersonelOperasyonSecim);
         wireAcilisGeri();
         opSubmit.textContent = 'Onayla ve tamamla';
@@ -458,14 +611,27 @@
         return;
       }
       var body;
-      if (tip === 'ACILIS' && opAcilisStep === 2) {
+      if (tip === 'ACILIS' && opAcilisStep === 4) {
         var pid = resolvePersonelIdAcilis();
         if (!pid) {
           throw new Error('Personeli listeden seçin veya kayıtlı tam adı yazın (birden fazla eşleşmede netleştirin).');
         }
         var pinA = ((document.getElementById('opAcilisPin') && document.getElementById('opAcilisPin').value) || '').replace(/\D/g, '').slice(0, 4);
         if (pinA.length !== 4) throw new Error('4 haneli panel PIN girin');
-        body = { kasa_sayim: opAcilisKasaPending, personel_id: pid, pin: pinA };
+        var s = opAcilisStokPending || {};
+        body = {
+          kasa_sayim: opAcilisKasaPending,
+          personel_id: pid,
+          pin: pinA,
+          bardak_kucuk: s.bardak_kucuk || 0,
+          bardak_buyuk: s.bardak_buyuk || 0,
+          bardak_plastik: s.bardak_plastik || 0,
+          su_adet: s.su_adet || 0,
+          redbull_adet: s.redbull_adet || 0,
+          soda_adet: s.soda_adet || 0,
+          cookie_adet: s.cookie_adet || 0,
+          pasta_adet: s.pasta_adet || 0
+        };
       } else {
         body = collectOperasyonBody(tip);
       }
@@ -546,9 +712,138 @@
       });
       html += '</div>';
     }
-    html += '<p class="muted" style="text-align:center">Ciro ve gider kayıtları onay sürecine iletilir; bu ekranda yalnızca görev ve operasyon özetiniz görünür.</p>';
+    html += '<p class="muted" style="text-align:center">Ciro ve gider kayıtları onay sürecine iletilir; aşağıdan anlık gider ve merkez notu gönderebilirsiniz.</p>';
+    html += '<div class="card" style="margin-top:14px"><h2 style="font-size:1rem;margin:0 0 10px">Anlık gider (merkez onayı)</h2>';
+    html += '<p class="muted" style="margin:0 0 10px">PIN ile imzalanır; onay sonrası kasaya düşer.</p>';
+    html += '<label>Kategori</label><input type="text" id="mgKategori" class="input" placeholder="ör. sarf" style="width:100%;margin-bottom:8px" />';
+    html += '<label>Tutar (₺)</label><input type="text" id="mgTutar" inputmode="decimal" class="input" style="width:100%;margin-bottom:8px" />';
+    html += '<label>Açıklama</label><input type="text" id="mgAcik" class="input" style="width:100%;margin-bottom:8px" />';
+    html += '<label>Personel</label><select id="mgPersonel" class="input" style="width:100%;margin-bottom:8px"></select>';
+    html += '<label>Panel PIN (4 hane)</label><input type="password" id="mgPin" maxlength="4" inputmode="numeric" class="input" style="width:100%;margin-bottom:10px" />';
+    html += '<button type="button" id="mgGonder">Merkeze gönder</button><p class="muted" id="mgMsg" style="margin-top:8px"></p></div>';
+    html += '<div class="card" style="margin-top:14px"><h2 style="font-size:1rem;margin:0 0 10px">Merkez notu</h2>';
+    html += '<p class="muted" style="margin:0 0 10px">İade, sorun vb. — operasyon merkezinde listelenir.</p>';
+    html += '<textarea id="mnMetin" class="input" rows="3" style="width:100%;margin-bottom:8px" placeholder="Kısa açıklama"></textarea>';
+    html += '<label>Personel</label><select id="mnPersonel" class="input" style="width:100%;margin-bottom:8px"></select>';
+    html += '<label>Panel PIN</label><input type="password" id="mnPin" maxlength="4" inputmode="numeric" class="input" style="width:100%;margin-bottom:10px" />';
+    html += '<button type="button" id="mnGonder">Notu gönder</button><p class="muted" id="mnMsg" style="margin-top:8px"></p></div>';
+    html += '<div class="card" style="margin-top:14px"><h2 style="font-size:1rem;margin:0 0 10px">Stok girişi (ürün / bardak ekleme)</h2>';
+    html += '<p class="muted" style="margin:0 0 10px">Açılış sayımına <strong>eklenen</strong> adetler (deftere yazılır). Kapanışta beklenen stok = açılış + buradaki eklemeler.</p>';
+    function nRow(id, lab) {
+      return '<label>' + lab + '</label><input type="text" id="' + id + '" inputmode="numeric" class="input" style="width:100%;margin-bottom:6px" placeholder="0" />';
+    }
+    html += nRow('stBk', 'Küçük bardak +') + nRow('stBb', 'Büyük bardak +') + nRow('stBp', 'Plastik bardak +');
+    html += nRow('stSu', 'Su +') + nRow('stRb', 'Redbull +') + nRow('stSo', 'Soda +') + nRow('stCk', 'Cookie +') + nRow('stPa', 'Pasta +');
+    html += '<label>Not (opsiyonel)</label><input type="text" id="stNot" class="input" style="width:100%;margin-bottom:8px" />';
+    html += '<label>Personel</label><select id="stPersonel" class="input" style="width:100%;margin-bottom:8px"></select>';
+    html += '<label>Panel PIN</label><input type="password" id="stPin" maxlength="4" inputmode="numeric" class="input" style="width:100%;margin-bottom:10px" />';
+    html += '<button type="button" id="stGonder">Deftere ekle</button><p class="muted" id="stMsg" style="margin-top:8px"></p></div>';
     html += buildPanelPinBilgiHtml(data);
     mainContent.innerHTML = html;
+    var pk = data.panel_pin_kullanicilar || [];
+    function fillSel(sel) {
+      if (!sel) return;
+      sel.innerHTML = '';
+      var ph = document.createElement('option');
+      ph.value = '';
+      ph.textContent = 'Seçin';
+      sel.appendChild(ph);
+      pk.forEach(function (u) {
+        var o = document.createElement('option');
+        o.value = u.id;
+        o.textContent = u.ad || u.id;
+        sel.appendChild(o);
+      });
+    }
+    fillSel(document.getElementById('mgPersonel'));
+    fillSel(document.getElementById('mnPersonel'));
+    fillSel(document.getElementById('stPersonel'));
+    document.getElementById('mgGonder').onclick = async function () {
+      var msg = document.getElementById('mgMsg');
+      msg.textContent = '';
+      try {
+        var kat = (document.getElementById('mgKategori').value || '').trim();
+        var tut = parseFloat(String(document.getElementById('mgTutar').value || '').replace(',', '.'));
+        if (!kat) throw new Error('Kategori girin');
+        if (!(tut > 0)) throw new Error('Geçerli tutar girin');
+        var pid = (document.getElementById('mgPersonel').value || '').trim();
+        var pin = (document.getElementById('mgPin').value || '').replace(/\D/g, '').slice(0, 4);
+        if (!pid) throw new Error('Personel seçin');
+        if (pin.length !== 4) throw new Error('4 haneli PIN');
+        await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/anlik-gider', {
+          method: 'POST',
+          body: {
+            kategori: kat,
+            tutar: tut,
+            aciklama: (document.getElementById('mgAcik').value || '').trim(),
+            personel_id: pid,
+            pin: pin
+          }
+        });
+        msg.textContent = 'Gönderildi — merkez onayı bekleniyor.';
+        document.getElementById('mgTutar').value = '';
+        document.getElementById('mgAcik').value = '';
+        document.getElementById('mgPin').value = '';
+      } catch (e) {
+        msg.textContent = e.message || 'Hata';
+      }
+    };
+    document.getElementById('mnGonder').onclick = async function () {
+      var msg = document.getElementById('mnMsg');
+      msg.textContent = '';
+      try {
+        var metin = (document.getElementById('mnMetin').value || '').trim();
+        if (metin.length < 3) throw new Error('Not en az 3 karakter');
+        var pid = (document.getElementById('mnPersonel').value || '').trim();
+        var pin = (document.getElementById('mnPin').value || '').replace(/\D/g, '').slice(0, 4);
+        if (!pid) throw new Error('Personel seçin');
+        if (pin.length !== 4) throw new Error('4 haneli PIN');
+        await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/merkez-not', {
+          method: 'POST',
+          body: { metin: metin, personel_id: pid, pin: pin }
+        });
+        msg.textContent = 'Not merkeze iletildi.';
+        document.getElementById('mnMetin').value = '';
+        document.getElementById('mnPin').value = '';
+      } catch (e) {
+        msg.textContent = e.message || 'Hata';
+      }
+    };
+    function stInt(id) {
+      var v = parseInt(String(document.getElementById(id).value || '').trim(), 10);
+      return isNaN(v) || v < 0 ? 0 : v;
+    }
+    document.getElementById('stGonder').onclick = async function () {
+      var msg = document.getElementById('stMsg');
+      msg.textContent = '';
+      try {
+        var body = {
+          bardak_kucuk: stInt('stBk'),
+          bardak_buyuk: stInt('stBb'),
+          bardak_plastik: stInt('stBp'),
+          su_adet: stInt('stSu'),
+          redbull_adet: stInt('stRb'),
+          soda_adet: stInt('stSo'),
+          cookie_adet: stInt('stCk'),
+          pasta_adet: stInt('stPa'),
+          not_aciklama: (document.getElementById('stNot').value || '').trim(),
+          personel_id: (document.getElementById('stPersonel').value || '').trim(),
+          pin: (document.getElementById('stPin').value || '').replace(/\D/g, '').slice(0, 4)
+        };
+        if (!body.personel_id) throw new Error('Personel seçin');
+        if (body.pin.length !== 4) throw new Error('4 haneli PIN');
+        var sum = body.bardak_kucuk + body.bardak_buyuk + body.bardak_plastik + body.su_adet + body.redbull_adet + body.soda_adet + body.cookie_adet + body.pasta_adet;
+        if (sum <= 0) throw new Error('En az bir kalemde pozitif adet girin');
+        await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/urun-stok-ekle', { method: 'POST', body: body });
+        msg.textContent = 'Deftere eklendi — operasyon merkezinde stok uyarıları güncellenir.';
+        ['stBk', 'stBb', 'stBp', 'stSu', 'stRb', 'stSo', 'stCk', 'stPa', 'stNot', 'stPin'].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.value = '';
+        });
+      } catch (e) {
+        msg.textContent = e.message || 'Hata';
+      }
+    };
   }
 
   function buildPanelPinBilgiHtml(data) {
@@ -585,6 +880,8 @@
     appRoot.style.display = 'block';
 
     const data = await api('/sube-personel/' + encodeURIComponent(SUBE_ID) + '/durum');
+    setSunucuZamanFromBlob(data.operasyon || null);
+    setAcilisMesaj(data);
     lastPanelPinKullanicilar = data.panel_pin_kullanicilar || [];
     lastPersonelOperasyonSecim = data.personel_operasyon_secim || [];
     fillKasaUsers(data.panel_pin_kullanicilar);
@@ -598,7 +895,20 @@
     }
     kasaOverlay.style.display = 'none';
 
+    const op = data.operasyon || {};
+    const aktif = op.aktif;
     if (!data.sube_acik) {
+      if (aktif && aktif.tip === 'ACILIS' && (aktif.durum === 'bekliyor' || aktif.durum === 'gecikti')) {
+        acilisOverlay.style.display = 'none';
+        renderMain(data);
+        if (!opAktifEvent || opAktifEvent.id !== aktif.id) {
+          showOperasyonZorunlu(aktif, op);
+        } else {
+          opBadge.textContent = (aktif.durum || '').toUpperCase();
+          if (op.aktif_kritik) operasyonOverlay.classList.add('kritik');
+        }
+        return;
+      }
       hideOperasyonZorunlu();
       acilisOverlay.style.display = 'flex';
       acilisErr.textContent = '';
@@ -606,8 +916,6 @@
     }
     acilisOverlay.style.display = 'none';
 
-    const op = data.operasyon || {};
-    const aktif = op.aktif;
     if (aktif && (aktif.durum === 'bekliyor' || aktif.durum === 'gecikti')) {
       renderMain(data);
       if (!opAktifEvent || opAktifEvent.id !== aktif.id) {
@@ -647,7 +955,17 @@
     acilisErr.textContent = '';
     acilisBtn.disabled = true;
     try {
-      await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/acilis', { method: 'POST', body: {} });
+      var body = {};
+      if (lastKasaAcma && lastKasaAcma.personel_id) {
+        body.personel_id = lastKasaAcma.personel_id;
+        var ad = (lastKasaAcma.panel_kullanici_ad || '').trim() || '—';
+        var ts = (lastKasaAcma.olusturma || '').trim();
+        var saat = (ts && ts.length >= 16) ? ts.substring(11, 16) : '';
+        body.aciklama = saat
+          ? ('Açılış onayı — PIN: ' + ad + ' (' + saat + ')')
+          : ('Açılış onayı — PIN: ' + ad);
+      }
+      await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/acilis', { method: 'POST', body: body });
       await refresh();
     } catch (e) {
       acilisErr.textContent = e.message || 'Hata';
