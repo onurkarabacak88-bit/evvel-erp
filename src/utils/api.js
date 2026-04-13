@@ -1,8 +1,21 @@
 const BASE = import.meta.env.VITE_API_URL || '';
 
 export async function api(path, opts = {}) {
+  const method = (opts.method || 'GET').toUpperCase();
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  try {
+    const mut =
+      typeof localStorage !== 'undefined'
+        ? (localStorage.getItem('evvelMerkezMutasyonKey') || '').trim()
+        : '';
+    if (mut && ['PUT', 'POST', 'PATCH', 'DELETE'].includes(method)) {
+      headers['X-Evvel-Merkez-Key'] = mut;
+    }
+  } catch {
+    /* ignore */
+  }
   const res = await fetch(`${BASE}/api${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(opts.headers||{}) },
+    headers,
     ...opts,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
