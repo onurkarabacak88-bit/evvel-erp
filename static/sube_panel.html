@@ -45,12 +45,13 @@
       80% { transform: translateX(4px); }
     }
     .wrap {
-      max-width: 560px;
+      max-width: 600px;
       margin: 0 auto;
-      padding: 16px 18px 32px;
+      padding: 16px max(18px, env(safe-area-inset-right)) 32px max(18px, env(safe-area-inset-left));
+      padding-bottom: max(32px, env(safe-area-inset-bottom));
     }
     @media (min-width: 480px) {
-      .wrap { padding: 20px 22px 40px; }
+      .wrap { padding: 20px max(22px, env(safe-area-inset-right)) 40px max(22px, env(safe-area-inset-left)); }
     }
     .app-header {
       margin-bottom: 20px;
@@ -95,8 +96,8 @@
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       border-radius: var(--radius);
-      padding: 18px 18px 16px;
-      margin-bottom: 14px;
+      padding: 20px 18px 18px;
+      margin-bottom: 16px;
       border: 1px solid var(--border);
       box-shadow: 0 2px 16px rgba(0, 0, 0, 0.2);
     }
@@ -279,6 +280,55 @@
       border: 1px solid rgba(56, 189, 248, 0.12);
       line-height: 1.5;
     }
+    .info-banner--warn {
+      border-color: rgba(251, 191, 36, 0.35);
+      background: rgba(251, 191, 36, 0.08);
+      color: #e2e8f0;
+    }
+    .intro-p {
+      margin: 0 0 14px;
+      line-height: 1.55;
+    }
+    .muted-tight {
+      margin: 0 0 12px;
+      font-size: 0.8125rem;
+      line-height: 1.45;
+      display: block;
+    }
+    .u-mb-8 { margin-bottom: 8px; }
+    .u-mb-10 { margin-bottom: 10px; }
+    .u-mb-12 { margin-bottom: 12px; }
+    .u-mt-10 { margin-top: 10px; }
+    .form-block + .form-block {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+    }
+    .subsection-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: #94a3b8;
+      margin: 0 0 12px;
+      line-height: 1.35;
+    }
+    .xr-pre {
+      display: none;
+      margin-top: 10px;
+      padding: 12px 14px;
+      border-radius: var(--radius-sm);
+      background: rgba(15, 23, 42, 0.55);
+      border: 1px solid var(--border);
+      white-space: pre-wrap;
+      font-size: 0.8125rem;
+      max-height: 240px;
+      overflow: auto;
+      color: var(--text);
+      line-height: 1.45;
+    }
+    .xr-pre.is-on { display: block; }
+    .pin-hint-tight { margin-top: -8px; font-size: 0.82rem; }
     .stok-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -347,6 +397,27 @@
       border-radius: 6px;
       background: rgba(0, 0, 0, 0.35);
     }
+    .muted--ok { color: var(--ok); font-weight: 500; }
+    .subsection-hint {
+      font-weight: 500;
+      text-transform: none;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+      font-size: 0.68rem;
+    }
+    label.chk-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      margin-bottom: 12px;
+      font-weight: 500;
+      font-size: 0.875rem;
+      color: var(--text);
+      text-transform: none;
+      letter-spacing: normal;
+    }
+    label.chk-row .chk { margin-right: 0; }
   </style>
 </head>
 <body>
@@ -376,7 +447,7 @@
     <div class="overlay-inner section-card card--pulse-cta">
       <h1>Kasa kilitli</h1>
       <p class="muted">Günlük açılışta kasayı açmak için kendinizi seçin ve 4 haneli PIN girin.</p>
-      <p class="muted" id="kasaSaatBilgi" style="margin-top:-8px;font-size:0.82rem"></p>
+      <p class="muted pin-hint-tight" id="kasaSaatBilgi"></p>
       <label>Personel</label>
       <select id="kasaUser"></select>
       <label style="margin-top:12px">PIN</label>
@@ -391,7 +462,7 @@
     <div class="overlay-inner section-card card--pulse-cta">
       <h1 id="acilisTitle">Şube henüz açılmadı</h1>
       <p class="muted" id="acilisDesc">Kasa açıldı. Şimdi günlük şube açılış kaydını oluşturun.</p>
-      <p class="muted" id="acilisSaatBilgi" style="margin-top:-8px;font-size:0.82rem"></p>
+      <p class="muted pin-hint-tight" id="acilisSaatBilgi"></p>
       <p class="err" id="acilisErr"></p>
       <button type="button" id="acilisBtn">Şubeyi aç</button>
     </div>
@@ -1089,13 +1160,13 @@
     });
     html += '</div>';
     if (data.uyari) {
-      html += '<div class="info-banner" style="border-color:rgba(251,191,36,0.35);background:rgba(251,191,36,0.08)">' + data.uyari + '</div>';
+      html += '<div class="info-banner info-banner--warn">' + data.uyari + '</div>';
     }
     var op = data.operasyon || {};
     var evList = op.events || op.events_ozet;
     if (evList && evList.length) {
       html += '<div class="section-card"><h2 class="section-title">Bugünkü operasyon</h2>';
-      html += '<p class="muted" style="margin:0 0 12px;font-size:0.8125rem">Sunucu saati: ' + (op.sunucu_saati || '') + '</p>';
+      html += '<p class="muted muted-tight">Sunucu saati: ' + (op.sunucu_saati || '') + '</p>';
       evList.forEach(function (ev) {
         html += '<div class="gorev-row"><strong>' + ev.tip + '</strong> · ' + (ev.durum || '') +
           (ev.sistem_slot_ts ? '<br/><span class="muted">Slot: ' + ev.sistem_slot_ts + '</span>' : '') + '</div>';
@@ -1107,44 +1178,44 @@
     if (data.ciro_girildi) {
       html += '<div class="ciro-durum-ok">Bugünkü ciro merkez tarafından onaylandı.</div>';
     } else {
-      html += '<p class="muted" style="margin:0 0 14px">Nakit, POS ve online tutarları panel PIN ile imzalanır; merkez onayından sonra ciroya işlenir.</p>';
+      html += '<p class="muted intro-p">Nakit, POS ve online tutarları panel PIN ile imzalanır; merkez onayından sonra ciroya işlenir.</p>';
       if (data.ciro_taslak_bekliyor) {
-        html += '<p class="muted" style="margin:0 0 12px;font-size:0.8125rem">Bekleyen ciro taslağınız var. Yeni gönderim mevcut taslağın üzerine yazar (onay sonrası onaylanır).</p>';
+        html += '<p class="muted muted-tight">Bekleyen ciro taslağınız var. Yeni gönderim mevcut taslağın üzerine yazar (onay sonrası onaylanır).</p>';
       }
       html += '<div class="stok-grid">';
       html += '<div class="stok-item"><label>Nakit (₺)</label><input type="text" id="ciroN" inputmode="decimal" placeholder="0" /></div>';
       html += '<div class="stok-item"><label>POS (₺)</label><input type="text" id="ciroP" inputmode="decimal" placeholder="0" /></div>';
       html += '<div class="stok-item" style="grid-column:1/-1"><label>Online (₺)</label><input type="text" id="ciroO" inputmode="decimal" placeholder="0" /></div>';
       html += '</div>';
-      html += '<label>Not (opsiyonel)</label><input type="text" id="ciroAcik" style="margin-bottom:10px" />';
-      html += '<label>Personel</label><select id="ciroPersonel" style="margin-bottom:10px"></select>';
-      html += '<label>Panel PIN</label><input type="password" id="ciroPin" maxlength="4" inputmode="numeric" style="margin-bottom:12px" />';
-      html += '<button type="button" id="ciroGonder">Merkeze gönder (taslak)</button><p class="muted" id="ciroMsg" style="margin-top:10px"></p>';
+      html += '<label>Not (opsiyonel)</label><input type="text" id="ciroAcik" class="u-mb-10" />';
+      html += '<label>Personel</label><select id="ciroPersonel" class="u-mb-10"></select>';
+      html += '<label>Panel PIN</label><input type="password" id="ciroPin" maxlength="4" inputmode="numeric" class="u-mb-12" />';
+      html += '<button type="button" id="ciroGonder">Merkeze gönder (taslak)</button><p class="muted u-mt-10" id="ciroMsg"></p>';
     }
     html += '</div>';
     html += '<div class="section-card"><h2 class="section-title">X raporu OCR</h2>';
-    html += '<p class="muted" style="margin:0 0 14px">Yazarkasa X raporu fotoğrafından tutarlar okunur (sunucuda OPENAI_API_KEY gerekir). Sonuçları mutlaka kontrol edip ciro taslağına işleyin.</p>';
-    html += '<label>Fiş görüntüsü</label><input type="file" id="xrFile" accept="image/*" capture="environment" style="margin-bottom:12px" />';
-    html += '<label>Personel (kayıt)</label><select id="xrPersonel" style="margin-bottom:10px"></select>';
+    html += '<p class="muted intro-p">Yazarkasa X raporu fotoğrafından tutarlar okunur (sunucuda OPENAI_API_KEY gerekir). Sonuçları mutlaka kontrol edip ciro taslağına işleyin.</p>';
+    html += '<label>Fiş görüntüsü</label><input type="file" id="xrFile" accept="image/*" capture="environment" class="u-mb-12" />';
+    html += '<label>Personel (kayıt)</label><select id="xrPersonel" class="u-mb-10"></select>';
     html += '<button type="button" id="xrGonder">Oku</button>';
-    html += '<p class="muted" id="xrMsg" style="margin-top:10px"></p>';
-    html += '<pre id="xrOut" style="display:none;margin-top:10px;padding:12px;border-radius:var(--radius-sm);background:rgba(15,23,42,0.5);border:1px solid var(--border);white-space:pre-wrap;font-size:0.8125rem;max-height:220px;overflow:auto;color:var(--text)"></pre></div>';
+    html += '<p class="muted u-mt-10" id="xrMsg"></p>';
+    html += '<pre id="xrOut" class="xr-pre"></pre></div>';
     html += '<div class="section-card"><h2 class="section-title">Anlık gider (merkez onayı)</h2>';
-    html += '<p class="muted" style="margin:0 0 14px">PIN ile imzalanır; onay sonrası kasaya düşer.</p>';
-    html += '<label>Kategori</label><input type="text" id="mgKategori" placeholder="ör. sarf" style="margin-bottom:10px" />';
-    html += '<label>Tutar (₺)</label><input type="text" id="mgTutar" inputmode="decimal" style="margin-bottom:10px" />';
-    html += '<label>Açıklama</label><input type="text" id="mgAcik" style="margin-bottom:10px" />';
-    html += '<label>Personel</label><select id="mgPersonel" style="margin-bottom:10px"></select>';
-    html += '<label>Panel PIN (4 hane)</label><input type="password" id="mgPin" maxlength="4" inputmode="numeric" style="margin-bottom:12px" />';
-    html += '<button type="button" id="mgGonder">Merkeze gönder</button><p class="muted" id="mgMsg" style="margin-top:10px"></p></div>';
+    html += '<p class="muted intro-p">PIN ile imzalanır; onay sonrası kasaya düşer.</p>';
+    html += '<label>Kategori</label><input type="text" id="mgKategori" placeholder="ör. sarf" class="u-mb-10" />';
+    html += '<label>Tutar (₺)</label><input type="text" id="mgTutar" inputmode="decimal" class="u-mb-10" />';
+    html += '<label>Açıklama</label><input type="text" id="mgAcik" class="u-mb-10" />';
+    html += '<label>Personel</label><select id="mgPersonel" class="u-mb-10"></select>';
+    html += '<label>Panel PIN (4 hane)</label><input type="password" id="mgPin" maxlength="4" inputmode="numeric" class="u-mb-12" />';
+    html += '<button type="button" id="mgGonder">Merkeze gönder</button><p class="muted u-mt-10" id="mgMsg"></p></div>';
     html += '<div class="section-card"><h2 class="section-title">Merkez notu</h2>';
-    html += '<p class="muted" style="margin:0 0 14px">İade, sorun vb. — operasyon merkezinde listelenir.</p>';
-    html += '<textarea id="mnMetin" rows="3" style="margin-bottom:10px" placeholder="Kısa açıklama"></textarea>';
-    html += '<label>Personel</label><select id="mnPersonel" style="margin-bottom:10px"></select>';
-    html += '<label>Panel PIN</label><input type="password" id="mnPin" maxlength="4" inputmode="numeric" style="margin-bottom:12px" />';
-    html += '<button type="button" id="mnGonder">Notu gönder</button><p class="muted" id="mnMsg" style="margin-top:10px"></p></div>';
+    html += '<p class="muted intro-p">İade, sorun vb. — operasyon merkezinde listelenir.</p>';
+    html += '<textarea id="mnMetin" rows="3" class="u-mb-10" placeholder="Kısa açıklama"></textarea>';
+    html += '<label>Personel</label><select id="mnPersonel" class="u-mb-10"></select>';
+    html += '<label>Panel PIN</label><input type="password" id="mnPin" maxlength="4" inputmode="numeric" class="u-mb-12" />';
+    html += '<button type="button" id="mnGonder">Notu gönder</button><p class="muted u-mt-10" id="mnMsg"></p></div>';
     html += '<div class="section-card"><h2 class="section-title">Stok girişi (ürün / bardak ekleme)</h2>';
-    html += '<p class="muted" style="margin:0 0 14px">Açılış sayımına <strong>eklenen</strong> adetler (deftere yazılır). Kapanışta beklenen stok = açılış + buradaki eklemeler.</p>';
+    html += '<p class="muted intro-p">Açılış sayımına <strong>eklenen</strong> adetler (deftere yazılır). Kapanışta beklenen stok = açılış + buradaki eklemeler.</p>';
     function nRow(id, lab, placeholder) {
       var ph = placeholder !== undefined ? placeholder : '0';
       return '<div class="stok-item"><label>' + lab + '</label><input type="text" id="' + id + '" inputmode="numeric" placeholder="' + ph + '" /></div>';
@@ -1153,48 +1224,54 @@
     html += nRow('stBk', 'Küçük bardak +') + nRow('stBb', 'Büyük bardak +') + nRow('stBp', 'Plastik bardak +');
     html += nRow('stSu', 'Su +') + nRow('stRb', 'Redbull +') + nRow('stSo', 'Soda +') + nRow('stCk', 'Cookie +') + nRow('stPa', 'Pasta +');
     html += '</div>';
-    html += '<p class="muted" style="margin:12px 0 8px;font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em">Sarf (opsiyonel)</p>';
+    html += '<p class="subsection-title" style="margin-top:14px">Sarf <span class="subsection-hint">(opsiyonel)</span></p>';
     html += '<div class="stok-grid">';
     html += nRow('stSut', 'Süt (L) +') + nRow('stSup', 'Şurup +') + nRow('stKhv', 'Kahve +') + nRow('stKtn', 'Karton bardak +');
     html += nRow('stKpk', 'Kapak +') + nRow('stPet', 'Peçete (pak.) +') + nRow('stDig', 'Diğer sarf +');
     html += '</div>';
-    html += '<label>Not (opsiyonel)</label><input type="text" id="stNot" style="margin-bottom:10px" />';
-    html += '<label>Personel</label><select id="stPersonel" style="margin-bottom:10px"></select>';
-    html += '<label>Panel PIN</label><input type="password" id="stPin" maxlength="4" inputmode="numeric" style="margin-bottom:12px" />';
-    html += '<button type="button" id="stGonder">Deftere ekle</button><p class="muted" id="stMsg" style="margin-top:10px"></p></div>';
+    html += '<label>Not (opsiyonel)</label><input type="text" id="stNot" class="u-mb-10" />';
+    html += '<label>Personel</label><select id="stPersonel" class="u-mb-10"></select>';
+    html += '<label>Panel PIN</label><input type="password" id="stPin" maxlength="4" inputmode="numeric" class="u-mb-12" />';
+    html += '<button type="button" id="stGonder">Deftere ekle</button><p class="muted u-mt-10" id="stMsg"></p></div>';
     var vd = data.vardiya_devir || {};
     var vdDurum = vd.vardiya_durum != null ? vd.vardiya_durum : null;
     var devirTamam = vdDurum === 'tamamlandi';
     var devirAdim2 = vdDurum === 'acilis_bekliyor';
     html += '<div class="section-card"><h2 class="section-title">Kasa devri (vardiya teslimi)</h2>';
     if (devirTamam) {
-      html += '<p class="muted" style="color:var(--ok)">Bugünkü vardiya devri tamamlandı.</p>';
+      html += '<p class="muted muted--ok">Bugünkü vardiya devri tamamlandı.</p>';
     } else if (devirAdim2) {
-      html += '<p class="muted" style="margin:0 0 14px">Sabahçı imzaladı. Akşamcı 2. imza bekleniyor.</p>';
-      html += '<label>Akşamcı (devralan)</label><select id="dvPersonel2" style="margin-bottom:10px"></select>';
-      html += '<label>Panel PIN</label><input type="password" id="dvPin2" maxlength="4" inputmode="numeric" style="margin-bottom:12px" />';
-      html += '<button type="button" id="dvAdim2Btn">2. imzayı onayla</button><p class="muted" id="dvMsg" style="margin-top:10px"></p>';
+      html += '<p class="muted intro-p">Sabahçı imzaladı. Akşamcı 2. imza bekleniyor.</p>';
+      html += '<label>Akşamcı (devralan)</label><select id="dvPersonel2" class="u-mb-10"></select>';
+      html += '<label>Panel PIN</label><input type="password" id="dvPin2" maxlength="4" inputmode="numeric" class="u-mb-12" />';
+      html += '<button type="button" id="dvAdim2Btn">2. imzayı onayla</button><p class="muted u-mt-10" id="dvMsg"></p>';
     } else {
-      html += '<p class="muted" style="margin:0 0 14px">Sabah personeli teslim ve ciro (X) tutarlarını girer; akşamcı ayrı PIN ile onaylar.</p>';
-      html += '<p class="muted" style="margin:0 0 8px;font-size:0.75rem;font-weight:600">Ciro (X raporu)</p>';
+      html += '<p class="muted intro-p">Sabah personeli teslim ve ciro (X) tutarlarını girer; akşamcı ayrı PIN ile onaylar.</p>';
+      html += '<div class="form-block">';
+      html += '<h3 class="subsection-title">Ciro (X raporu)</h3>';
       html += '<div class="stok-grid"><div class="stok-item"><label>Nakit (₺)</label><input type="text" id="dvNakit" inputmode="decimal" placeholder="0" /></div>';
       html += '<div class="stok-item"><label>POS (₺)</label><input type="text" id="dvPos" inputmode="decimal" placeholder="0" /></div>';
       html += '<div class="stok-item" style="grid-column:1/-1"><label>Online (₺)</label><input type="text" id="dvOnline" inputmode="decimal" placeholder="0" /></div></div>';
-      html += '<label>Elden teslim kasa (₺)</label><input type="text" id="dvTeslim" inputmode="decimal" style="margin-bottom:10px" />';
-      html += '<label>Devir (₺)</label><input type="text" id="dvDevir" inputmode="decimal" placeholder="0" style="margin-bottom:10px" />';
-      html += '<p class="muted" style="margin:8px 0 8px;font-size:0.75rem;font-weight:600">Bardak sayımı (tüm alanlar zorunlu, 0 geçerli)</p>';
+      html += '<label>Elden teslim kasa (₺)</label><input type="text" id="dvTeslim" inputmode="decimal" class="u-mb-10" />';
+      html += '<label>Devir (₺)</label><input type="text" id="dvDevir" inputmode="decimal" placeholder="0" class="u-mb-10" />';
+      html += '</div>';
+      html += '<div class="form-block">';
+      html += '<h3 class="subsection-title">Bardak sayımı <span class="subsection-hint">(zorunlu, 0 geçerli)</span></h3>';
       html += '<div class="stok-grid">';
       html += nRow('dvBk', 'Küçük bardak', '') + nRow('dvBb', 'Büyük bardak', '') + nRow('dvBp', 'Plastik bardak', '');
-      html += '</div>';
-      html += '<p class="muted" style="margin:8px 0 8px;font-size:0.75rem;font-weight:600">Ürün sayımı (tüm alanlar zorunlu, 0 geçerli)</p>';
+      html += '</div></div>';
+      html += '<div class="form-block">';
+      html += '<h3 class="subsection-title">Ürün sayımı <span class="subsection-hint">(zorunlu, 0 geçerli)</span></h3>';
       html += '<div class="stok-grid">';
       html += nRow('dvSu', 'Su', '') + nRow('dvRb', 'Redbull', '') + nRow('dvSo', 'Soda', '') + nRow('dvCk', 'Cookie', '') + nRow('dvPa', 'Pasta', '');
+      html += '</div></div>';
+      html += '<div class="form-block">';
+      html += '<h3 class="subsection-title">İmza (sabahçı)</h3>';
+      html += '<label>Devreden personel</label><select id="dvPersonel1" class="u-mb-10"></select>';
+      html += '<label>Panel PIN</label><input type="password" id="dvPin1" maxlength="4" inputmode="numeric" class="u-mb-10" />';
+      html += '<label class="chk-row"><input type="checkbox" class="chk" id="dvXRapor" /><span>X raporu gönderildi</span></label>';
+      html += '<button type="button" id="dvAdim1Btn">1. imza — devri başlat</button><p class="muted u-mt-10" id="dvMsg"></p>';
       html += '</div>';
-      html += '<p class="muted" style="margin:12px 0 8px;font-size:0.75rem;font-weight:600">İmza (sabahçı)</p>';
-      html += '<label>Devreden personel</label><select id="dvPersonel1" style="margin-bottom:10px"></select>';
-      html += '<label>Panel PIN</label><input type="password" id="dvPin1" maxlength="4" inputmode="numeric" style="margin-bottom:10px" />';
-      html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:12px"><input type="checkbox" class="chk" id="dvXRapor" /><span>X raporu gönderildi</span></label>';
-      html += '<button type="button" id="dvAdim1Btn">1. imza — devri başlat</button><p class="muted" id="dvMsg" style="margin-top:10px"></p>';
     }
     html += '</div>';
     html += buildPanelPinBilgiHtml(data);
@@ -1265,7 +1342,7 @@
         var msg = document.getElementById('xrMsg');
         var out = document.getElementById('xrOut');
         msg.textContent = '';
-        if (out) out.style.display = 'none';
+        if (out) out.classList.remove('is-on');
         try {
           var fEl = document.getElementById('xrFile');
           var file = fEl && fEl.files && fEl.files[0];
@@ -1291,7 +1368,7 @@
             if (d.kasa_uyari) lines.push('Uyarı: ' + d.kasa_uyari);
             if (d.foto_url) lines.push('Foto URL: ' + d.foto_url);
             out.textContent = lines.join('\n');
-            out.style.display = 'block';
+            out.classList.add('is-on');
           }
         } catch (e) {
           if (e.status === 429) handlePin429(msg, e);
