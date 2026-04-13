@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { api } from '../utils/api';
+import { api, fmt } from '../utils/api';
 import { computeOpsKartVurgu } from '../utils/opsVurgu';
 
 const FILTRELER = [
@@ -7,13 +7,30 @@ const FILTRELER = [
   { id: 'kritik',  label: '🔴 Kritik' },
   { id: 'geciken', label: '🟠 Geciken' },
   { id: 'fark',    label: '⚠️ Fark / Uyarı' },
+  { id: 'guvenlik', label: '🔐 Güvenlik alarmı' },
+  { id: 'stok', label: '📦 Stok / KONTROL' },
 ];
 
 const UST_SEKMELER = [
   { id: 'canli', label: 'Canlı Operasyon' },
+  { id: 'onay', label: 'Onay merkezi' },
   { id: 'defter', label: 'Defter Kayıtları' },
   { id: 'sayim', label: 'Açılış Sayımları' },
 ];
+
+const ONAY_TURU_LABEL = {
+  SABIT_GIDER: 'Sabit gider',
+  KART_ODEME: 'Kart ödemesi',
+  ANLIK_GIDER: 'Anlık gider',
+  PERSONEL_MAAS: 'Personel maaşı',
+  VADELI_ODEME: 'Vadeli ödeme',
+  DIS_KAYNAK: 'Dış kaynak',
+  CIRO: 'Ciro',
+  ODEME_PLANI: 'Ödeme planı',
+  KART_FAIZ: 'Kart faizi',
+  BORC_TAKSIT: 'Borç taksidi',
+  FATURA_ODEMESI: 'Fatura',
+};
 
 function SubeKart({ k, onDetay }) {
   const b   = k.bayraklar || {};
@@ -37,6 +54,8 @@ function SubeKart({ k, onDetay }) {
     : displayEv;
 
   const uyarilar = (k.uyarilar || []).slice(0, 2);
+  const g = k.guvenlik || {};
+  const ad = g.alarm_durum;
 
   const eventChip = e => {
     const renk = e.durum === 'tamamlandi' ? 'var(--green)' : e.durum === 'gecikti' ? 'var(--red)' : 'var(--text3)';
@@ -73,6 +92,7 @@ function SubeKart({ k, onDetay }) {
           {b.kritik   && <span className="badge badge-red">KRİTİK</span>}
           {!b.kritik && b.geciken && <span className="badge badge-yellow">Gecikme</span>}
           {b.fark_var && <span className="badge badge-yellow">Fark</span>}
+          {b.guvenlik_alarm && <span className="badge badge-red">Güvenlik</span>}
         </div>
       </div>
 
@@ -122,6 +142,21 @@ function SubeKart({ k, onDetay }) {
         </span>
       </div>
 
+      {(g.alarm || ad) && (
+        <div style={{ fontSize: 11, color: 'var(--text3)', padding: '6px 8px', background: 'var(--bg3)', borderRadius: 6 }}>
+          {g.mesaj && <div style={{ color: b.guvenlik_alarm ? 'var(--red)' : 'var(--text3)', marginBottom: 4 }}>{g.mesaj}</div>}
+          {ad && (
+            <div>
+              Son işlem: <strong>{ad.durum}</strong>
+              {ad.islem_ts && <span className="mono" style={{ marginLeft: 6 }}>{String(ad.islem_ts).replace('T', ' ').slice(0, 19)}</span>}
+              {ad.sustur_bitis_ts && (
+                <span style={{ display: 'block', marginTop: 2 }}>Susturma bitiş: {String(ad.sustur_bitis_ts).replace('T', ' ').slice(0, 19)}</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Uyarılar */}
       {uyarilar.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -143,11 +178,59 @@ function SubeKart({ k, onDetay }) {
   );
 }
 
-function DetayModal({ kart, onKapat }) {
+function DetayModal({ kart, onKapat, filtre, onYenileDetay }) {
   if (!kart) return null;
   const b  = kart.bayraklar || {};
   const o  = kart.ozet || {};
   const op = kart.operasyon || {};
+  const g  = kart.guvenlik || {};
+  const ad = g.alarm_durum;
+
+  const [alarmNot, setAlarmNot] = useState('');
+  const [alarmPid, setAlarmPid] = useState('');
+  const [susturDk, setSusturDk] = useState(120);
+  const [alarmBusy, setAlarmBusy] = useState(false);
+
+  const alarmBody = () => {
+    const notu = (alarmNot || '').trim();
+    const personel_id = (alarmPid || '').trim();
+    return {
+      ...(personel_id ? { personel_id } : {}),
+      ...(notu ? { notu } : {}),
+    };
+  };
+
+  const okundu = async (e) => {
+    e?.stopPropagation?.();
+    setAlarmBusy(true);
+    try {
+      await api(`/ops/guvenlik-alarmlar/${encodeURIComponent(kart.sube_id)}/okundu`, {
+        method: 'POST',
+        body: alarmBody(),
+      });
+      if (onYenileDetay) await onYenileDetay(kart.sube_id, filtre);
+    } catch (err) {
+      window.alert(err.message || 'İşlem başarısız');
+    } finally {
+      setAlarmBusy(false);
+    }
+  };
+
+  const sustur = async (e) => {
+    e?.stopPropagation?.();
+    setAlarmBusy(true);
+    try {
+      await api(`/ops/guvenlik-alarmlar/${encodeURIComponent(kart.sube_id)}/sustur`, {
+        method: 'POST',
+        body: { ...alarmBody(), sustur_dk: Math.max(5, Math.min(1440, Number(susturDk) || 120)) },
+      });
+      if (onYenileDetay) await onYenileDetay(kart.sube_id, filtre);
+    } catch (err) {
+      window.alert(err.message || 'İşlem başarısız');
+    } finally {
+      setAlarmBusy(false);
+    }
+  };
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onKapat()}>
@@ -218,6 +301,85 @@ function DetayModal({ kart, onKapat }) {
               ))}
             </div>
           )}
+
+          {/* Güvenlik alarmı (Faz 6–7) */}
+          {(g.alarm || ad || g.mesaj) && (
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+                Güvenlik alarmı
+              </div>
+              {g.mesaj && (
+                <div className="alert-box red" style={{ marginBottom: 10 }}>
+                  {g.mesaj}
+                  {g.seviye && <span style={{ marginLeft: 8, opacity: 0.85 }}>({g.seviye})</span>}
+                </div>
+              )}
+              {ad && (
+                <div style={{ fontSize: 13, background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
+                  <div><strong>Durum:</strong> {ad.durum}</div>
+                  {ad.islem_ts && (
+                    <div className="mono" style={{ marginTop: 4 }}>
+                      <strong>İşlem saati:</strong> {String(ad.islem_ts).replace('T', ' ').slice(0, 19)}
+                    </div>
+                  )}
+                  {ad.sustur_bitis_ts && (
+                    <div className="mono" style={{ marginTop: 4 }}>
+                      <strong>Susturma bitiş:</strong> {String(ad.sustur_bitis_ts).replace('T', ' ').slice(0, 19)}
+                    </div>
+                  )}
+                  {ad.islem_notu && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text3)' }}>Not: {ad.islem_notu}</div>}
+                  {ad.islem_personel_id && (
+                    <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text3)' }}>Personel: {ad.islem_personel_id}</div>
+                  )}
+                </div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+                <label style={{ fontSize: 12, color: 'var(--text3)' }}>
+                  İşlemi yapan personel ID (opsiyonel)
+                  <input
+                    className="input"
+                    style={{ width: '100%', marginTop: 4 }}
+                    value={alarmPid}
+                    onChange={(e) => setAlarmPid(e.target.value)}
+                    placeholder="personel uuid"
+                  />
+                </label>
+                <label style={{ fontSize: 12, color: 'var(--text3)' }}>
+                  Not (opsiyonel)
+                  <input
+                    className="input"
+                    style={{ width: '100%', marginTop: 4 }}
+                    value={alarmNot}
+                    onChange={(e) => setAlarmNot(e.target.value)}
+                    placeholder="Kısa açıklama"
+                  />
+                </label>
+                <label style={{ fontSize: 12, color: 'var(--text3)' }}>
+                  Susturma süresi (dk, 5–1440)
+                  <input
+                    type="number"
+                    className="input"
+                    style={{ width: 120, marginTop: 4, display: 'block' }}
+                    min={5}
+                    max={1440}
+                    value={susturDk}
+                    onChange={(e) => setSusturDk(Number(e.target.value))}
+                  />
+                </label>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-secondary btn-sm" disabled={alarmBusy} onClick={okundu}>
+                  Okundu
+                </button>
+                <button type="button" className="btn btn-sm" disabled={alarmBusy} onClick={sustur}>
+                  Sustur
+                </button>
+              </div>
+              <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 10, marginBottom: 0 }}>
+                Okundu: kayıt + işlem saati. Sustur: belirtilen süre boyunca alarm kartta gizlenir (bitiş saati yukarıda).
+              </p>
+            </div>
+          )}
         </div>
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onKapat}>Kapat</button>
@@ -242,8 +404,34 @@ export default function OperasyonMerkezi() {
   const [detay,     setDetay]     = useState(null);
   const [msg,       setMsg]       = useState(null);
   const [sonYenileme, setSonYenileme] = useState(null);
+  const [subeOnayFiltre, setSubeOnayFiltre] = useState('');
+  const [bekleyenPaket, setBekleyenPaket] = useState(null);
+  const [notlarListe, setNotlarListe] = useState([]);
+  const [subeListeAdmin, setSubeListeAdmin] = useState([]);
+  const [onayBusyId, setOnayBusyId] = useState(null);
 
   const toast = (m, t = 'red') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 4000); };
+
+  const yukleOnayMerkez = useCallback(async () => {
+    try {
+      const qs = `year_month=${encodeURIComponent(ayFiltre)}`;
+      const sq = subeOnayFiltre ? `&sube_id=${encodeURIComponent(subeOnayFiltre)}` : '';
+      const [b, n, subeler] = await Promise.all([
+        api(`/ops/bekleyen-merkez?${qs}${sq}`),
+        api(`/ops/sube-notlar?${qs}${sq}&limit=200`),
+        api('/subeler'),
+      ]);
+      setBekleyenPaket(b);
+      setNotlarListe(n?.satirlar || []);
+      if (Array.isArray(subeler)) {
+        setSubeListeAdmin(subeler.filter((s) => s.aktif !== false));
+      }
+    } catch (e) {
+      toast(e.message || 'Onay merkezi yüklenemedi');
+    } finally {
+      setYukleniyor(false);
+    }
+  }, [ayFiltre, subeOnayFiltre]);
 
   const yukle = useCallback(async (f = filtre) => {
     try {
@@ -267,24 +455,107 @@ export default function OperasyonMerkezi() {
         setSayimlar(extra?.satirlar || []);
       }
       setSonYenileme(new Date().toLocaleTimeString('tr-TR'));
+      return dash;
     } catch (e) {
       toast(e.message || 'Yükleme hatası');
+      return null;
     } finally {
       setYukleniyor(false);
     }
   }, [filtre, aktifSekme, ayFiltre, gunFiltre]);
 
-  useEffect(() => { yukle(filtre); }, [filtre, aktifSekme, ayFiltre, gunFiltre]);
+  const yenileDetayKart = useCallback(
+    async (subeId, f = filtre) => {
+      const dash = await yukle(f);
+      const guncel = (dash?.kartlar || []).find((k) => k.sube_id === subeId);
+      if (guncel) setDetay(guncel);
+      else setDetay(null);
+    },
+    [yukle, filtre],
+  );
+
+  useEffect(() => {
+    if (aktifSekme === 'onay') return;
+    yukle(filtre);
+  }, [filtre, aktifSekme, ayFiltre, gunFiltre, yukle]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'onay') return;
+    setYukleniyor(true);
+    yukleOnayMerkez();
+  }, [aktifSekme, ayFiltre, subeOnayFiltre, yukleOnayMerkez]);
 
   // 25 saniyede bir otomatik yenile
   useEffect(() => {
+    if (aktifSekme === 'onay') return undefined;
     const t = setInterval(() => yukle(filtre), 25000);
     return () => clearInterval(t);
-  }, [filtre, yukle]);
+  }, [filtre, yukle, aktifSekme]);
 
   const toplamGecikme = skor?.son_30_gun?.reduce((s, r) => s + (r.gecikme_adet || 0), 0) || 0;
   const kritikSayi    = kartlar.filter(k => k.bayraklar?.kritik).length;
   const gecikSayi     = kartlar.filter(k => k.bayraklar?.geciken).length;
+  const guvenlikSayi  = kartlar.filter(k => k.bayraklar?.guvenlik_alarm).length;
+
+  async function ciroTaslakOnayla(tid) {
+    setOnayBusyId(`c:${tid}`);
+    try {
+      await api(`/ciro-taslak/${encodeURIComponent(tid)}/onayla`, { method: 'POST', body: {} });
+      toast('Ciro taslağı onaylandı; kasa ve ciro girişine işlendi.', 'green');
+      await yukleOnayMerkez();
+    } catch (e) {
+      toast(e.message || 'Onay başarısız');
+    } finally {
+      setOnayBusyId(null);
+    }
+  }
+
+  async function ciroTaslakReddet(tid) {
+    const neden = window.prompt('Red nedeni (boş bırakılabilir):');
+    if (neden === null) return;
+    setOnayBusyId(`cr:${tid}`);
+    try {
+      await api(`/ciro-taslak/${encodeURIComponent(tid)}/reddet`, {
+        method: 'POST',
+        body: { neden: (neden || '').trim() || 'Reddedildi' },
+      });
+      toast('Ciro taslağı reddedildi.', 'green');
+      await yukleOnayMerkez();
+    } catch (e) {
+      toast(e.message || 'Red başarısız');
+    } finally {
+      setOnayBusyId(null);
+    }
+  }
+
+  async function kuyrukOnayla(oid) {
+    setOnayBusyId(`o:${oid}`);
+    try {
+      await api(`/onay-kuyrugu/${encodeURIComponent(oid)}/onayla`, { method: 'POST' });
+      toast('Kuyruk kaydı onaylandı.', 'green');
+      await yukleOnayMerkez();
+    } catch (e) {
+      toast(e.message || 'Onay başarısız');
+    } finally {
+      setOnayBusyId(null);
+    }
+  }
+
+  async function kuyrukReddet(oid) {
+    setOnayBusyId(`or:${oid}`);
+    try {
+      await api(`/onay-kuyrugu/${encodeURIComponent(oid)}/reddet`, {
+        method: 'POST',
+        body: { neden: 'hata' },
+      });
+      toast('Kuyruk kaydı reddedildi.', 'green');
+      await yukleOnayMerkez();
+    } catch (e) {
+      toast(e.message || 'Red başarısız');
+    } finally {
+      setOnayBusyId(null);
+    }
+  }
 
   return (
     <div className="page">
@@ -297,10 +568,19 @@ export default function OperasyonMerkezi() {
             {ozet?.tarih} · {kartlar.length} şube
             {kritikSayi > 0 && <span className="badge badge-red" style={{ marginLeft: 8 }}>{kritikSayi} kritik</span>}
             {gecikSayi  > 0 && <span className="badge badge-yellow" style={{ marginLeft: 6 }}>{gecikSayi} gecikmiş</span>}
+            {guvenlikSayi > 0 && <span className="badge badge-red" style={{ marginLeft: 6 }}>{guvenlikSayi} güvenlik</span>}
             {sonYenileme && <span style={{ color: 'var(--text3)', fontSize: 11, marginLeft: 10 }}>Son: {sonYenileme}</span>}
           </p>
         </div>
-        <button className="btn btn-secondary btn-sm" onClick={() => { setYukleniyor(true); yukle(filtre); }}>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={() => {
+            setYukleniyor(true);
+            if (aktifSekme === 'onay') yukleOnayMerkez();
+            else yukle(filtre);
+          }}
+        >
           ↻ Yenile
         </button>
       </div>
@@ -317,7 +597,7 @@ export default function OperasyonMerkezi() {
         ))}
       </div>
 
-      {aktifSekme !== 'canli' && (
+      {(aktifSekme === 'defter' || aktifSekme === 'sayim') && (
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
           <label style={{ margin: 0 }}>
             <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Ay</span>
@@ -327,6 +607,32 @@ export default function OperasyonMerkezi() {
             <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Gün (opsiyonel)</span>
             <input type="date" value={gunFiltre} onChange={(e) => { setYukleniyor(true); setGunFiltre(e.target.value || ''); }} />
           </label>
+        </div>
+      )}
+
+      {aktifSekme === 'onay' && (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+          <label style={{ margin: 0 }}>
+            <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Ay</span>
+            <input type="month" value={ayFiltre} onChange={(e) => { setYukleniyor(true); setAyFiltre(e.target.value || varsayilanAy); }} />
+          </label>
+          <label style={{ margin: 0 }}>
+            <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Şube (opsiyonel)</span>
+            <select
+              className="input"
+              style={{ minWidth: 200, padding: '8px 10px' }}
+              value={subeOnayFiltre}
+              onChange={(e) => { setYukleniyor(true); setSubeOnayFiltre(e.target.value); }}
+            >
+              <option value="">Tüm şubeler</option>
+              {subeListeAdmin.map((s) => (
+                <option key={s.id} value={s.id}>{s.ad || s.id}</option>
+              ))}
+            </select>
+          </label>
+          <button type="button" className="btn btn-secondary btn-sm" style={{ alignSelf: 'flex-end' }} onClick={() => { setYukleniyor(true); yukleOnayMerkez(); }}>
+            ↻ Yenile
+          </button>
         </div>
       )}
 
@@ -444,8 +750,161 @@ export default function OperasyonMerkezi() {
         </div>
       )}
 
+      {aktifSekme === 'onay' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
+            Şube panelinden gelen <strong>anlık gider</strong> artık doğrudan kasaya yazılmaz; burada veya CFO onay kuyruğunda onaylanınca <code>anlik_giderler</code> aktif olur ve kasaya düşer.
+            Ciro taslağı onayı sonrası kayıt resmi ciro + kasa akışına girer.
+          </p>
+
+          {yukleniyor && !bekleyenPaket ? (
+            <div className="loading"><div className="spinner" />Yükleniyor…</div>
+          ) : (
+            <>
+              <section>
+                <h3 style={{ fontSize: 14, marginBottom: 10 }}>Ciro taslağı (bekleyen) — {bekleyenPaket?.ozet?.ciro_taslak ?? 0}</h3>
+                {(bekleyenPaket?.ciro_taslaklari || []).length === 0 ? (
+                  <div className="empty"><p>Bekleyen ciro taslağı yok</p></div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {bekleyenPaket.ciro_taslaklari.map((t) => (
+                      <div
+                        key={t.id}
+                        className="card"
+                        style={{ padding: '12px 14px', borderLeft: '4px solid var(--yellow)' }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ fontWeight: 600 }}>{t.sube_adi || t.sube_id}</div>
+                            <div className="mono" style={{ fontSize: 12, color: 'var(--text3)' }}>
+                              {t.tarih} · Nakit {fmt(t.nakit)} · POS {fmt(t.pos)} · Online {fmt(t.online)}
+                            </div>
+                            {t.aciklama && <div style={{ fontSize: 12, marginTop: 4 }}>{t.aciklama}</div>}
+                          </div>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button
+                              type="button"
+                              className="btn btn-primary btn-sm"
+                              disabled={!!onayBusyId}
+                              onClick={() => ciroTaslakOnayla(t.id)}
+                            >
+                              {onayBusyId === `c:${t.id}` ? '…' : 'Onayla → ciro'}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-sm"
+                              disabled={!!onayBusyId}
+                              onClick={() => ciroTaslakReddet(t.id)}
+                            >
+                              {onayBusyId === `cr:${t.id}` ? '…' : 'Reddet'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h3 style={{ fontSize: 14, marginBottom: 10 }}>
+                  Onay kuyruğu (bekleyen)
+                  {subeOnayFiltre ? ' — sadece bu şubenin anlık gider talepleri' : ' — tüm türler'}
+                  {' · '}
+                  {bekleyenPaket?.ozet?.onay_satir ?? 0}
+                </h3>
+                {(bekleyenPaket?.onay_kuyrugu || []).length === 0 ? (
+                  <div className="empty"><p>Bekleyen kuyruk kaydı yok</p></div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {bekleyenPaket.onay_kuyrugu.map((o) => (
+                      <div
+                        key={o.id}
+                        className="card"
+                        style={{
+                          padding: '12px 14px',
+                          borderLeft: `4px solid ${o.islem_turu === 'ANLIK_GIDER' ? 'var(--yellow)' : 'var(--border)'}`,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ fontWeight: 600 }}>
+                              {ONAY_TURU_LABEL[o.islem_turu] || o.islem_turu}
+                              {o.sube_adi && (
+                                <span style={{ fontWeight: 500, color: 'var(--text3)', marginLeft: 8 }}>{o.sube_adi}</span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>{o.aciklama}</div>
+                            <div className="mono" style={{ fontSize: 13, marginTop: 4 }}>{fmt(o.tutar)} · {o.tarih}</div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button
+                              type="button"
+                              className="btn btn-primary btn-sm"
+                              disabled={!!onayBusyId}
+                              onClick={() => kuyrukOnayla(o.id)}
+                            >
+                              {onayBusyId === `o:${o.id}` ? '…' : 'Onayla'}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-sm"
+                              disabled={!!onayBusyId}
+                              onClick={() => kuyrukReddet(o.id)}
+                            >
+                              {onayBusyId === `or:${o.id}` ? '…' : 'Reddet'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h3 style={{ fontSize: 14, marginBottom: 10 }}>Şube notları (iade, sorun, bilgi)</h3>
+                {notlarListe.length === 0 ? (
+                  <div className="empty"><p>Bu filtrede not yok</p></div>
+                ) : (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Zaman</th>
+                          <th>Şube</th>
+                          <th>Personel</th>
+                          <th>Not</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {notlarListe.map((n) => (
+                          <tr key={n.id}>
+                            <td className="mono" style={{ fontSize: 11 }}>{(n.olusturma || '').replace('T', ' ').slice(0, 19)}</td>
+                            <td>{n.sube_adi || n.sube_id}</td>
+                            <td style={{ fontSize: 12 }}>{n.personel_ad || n.personel_id || '—'}</td>
+                            <td style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{n.metin}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Detay modal */}
-      {detay && <DetayModal kart={detay} onKapat={() => setDetay(null)} />}
+      {detay && (
+        <DetayModal
+          kart={detay}
+          filtre={filtre}
+          onKapat={() => setDetay(null)}
+          onYenileDetay={yenileDetayKart}
+        />
+      )}
     </div>
   );
 }

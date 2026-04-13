@@ -1018,6 +1018,9 @@ export function VadeliAlimlar() {
   const [duzenleId, setDuzenleId] = useState(null);
   const [msg, setMsg] = useState(null);
   const [dupUyari, setDupUyari] = useState(null);
+  /** Aynı tedarikçi açık borç — Kaydet sonrası Birleştir / Birleştirme seçimi */
+  const [borcKararModal, setBorcKararModal] = useState(null);
+  const [borcKararSecimId, setBorcKararSecimId] = useState('');
 
   // Ödeme modal state — hem "Ödendi" hem "Kısmi" için ortak
   // tip: 'tam' | 'kismi'
@@ -1115,13 +1118,68 @@ export function VadeliAlimlar() {
     setDupUyari(null);
     try{
       if(duzenleId){
-        await api(`/vadeli-alimlar/${duzenleId}`,{method:'PUT',body:form});
+        await api(`/vadeli-alimlar/${duzenleId}`,{method:'PUT',body:{
+          aciklama:form.aciklama,tutar:form.tutar,vade_tarihi:form.vade_tarihi,tedarikci:form.tedarikci
+        }});
+        toast('Kaydedildi');
       } else {
-        const res = await api('/vadeli-alimlar',{method:'POST',body:{...form,force}});
-        if(res.warning){setDupUyari(res.mesaj);return;}
+        const body = {...form, force};
+        const res = await api('/vadeli-alimlar',{method:'POST',body});
+        if (res.warning && res.kod === 'TEDARIKCI_ACIK_BAKIYE') {
+          const rows = res.mevcut_borc || [];
+          setBorcKararSecimId(rows[0]?.id || '');
+          setBorcKararModal({ mevcut_borc: rows, mesaj: res.mesaj });
+          return;
+        }
+        if (res.warning) { setDupUyari(res.mesaj); return; }
+        if(res.birlestirildi){
+          toast(`Birleştirildi — yeni toplam ${Number(res.yeni_toplam).toLocaleString('tr-TR')} ₺`);
+        } else toast('Kaydedildi');
       }
-      toast('Kaydedildi'); setShowModal(false); setDuzenleId(null); load();
+      setShowModal(false); setDuzenleId(null); load();
     }catch(e){toast(e.message,'red');}
+  }
+
+  async function borcKararUygula(mod) {
+    const rows = borcKararModal?.mevcut_borc || [];
+    try {
+      const base = { ...form, force: false };
+      let body = { ...base };
+      if (mod === 'ayri') {
+        body.tedarikci_karari = 'ayri';
+      } else {
+        if (rows.length === 1) {
+          body.tedarikci_karari = 'ilave';
+        } else {
+          if (!borcKararSecimId) {
+            toast('Hangi borca ekleneceğini seçin', 'red');
+            return;
+          }
+          body.birlestir_vadeli_id = borcKararSecimId;
+        }
+      }
+      const res = await api('/vadeli-alimlar', { method: 'POST', body });
+      if (res.warning && res.kod === 'TEDARIKCI_ACIK_BAKIYE') {
+        toast('İşlem tamamlanamadı — tekrar deneyin', 'red');
+        return;
+      }
+      if (res.warning) {
+        setDupUyari(res.mesaj);
+        setBorcKararModal(null);
+        return;
+      }
+      setBorcKararModal(null);
+      if (res.birlestirildi) {
+        toast(`Birleştirildi — yeni toplam ${Number(res.yeni_toplam).toLocaleString('tr-TR')} ₺`);
+      } else {
+        toast(mod === 'ayri' ? 'Ayrı borç satırı olarak kaydedildi' : 'Kaydedildi');
+      }
+      setShowModal(false);
+      setDuzenleId(null);
+      load();
+    } catch (e) {
+      toast(e.message, 'red');
+    }
   }
   async function sil(id){
     if(!confirm('İptal et?'))return;
@@ -1221,6 +1279,51 @@ export function VadeliAlimlar() {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={()=>setShowModal(false)}>İptal</button>
               <button className="btn btn-primary" onClick={()=>kaydet(false)} disabled={!form.aciklama||!form.tutar||!form.vade_tarihi||!form.tedarikci}>Kaydet</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {borcKararModal && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setBorcKararModal(null)}>
+          <div className="modal" style={{maxWidth:440}}>
+            <div className="modal-header">
+              <h3>Aynı tedarikçide açık borç</h3>
+              <button type="button" className="modal-close" onClick={()=>setBorcKararModal(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <p style={{fontSize:14,marginBottom:12,color:'var(--text2)'}}>
+                {borcKararModal.mesaj || 'Bu tutarı mevcut bakiyeye mi ekleyelim, yoksa ayrı bir vadeli satırı mı açılsın?'}
+              </p>
+              <ul style={{margin:0,paddingLeft:18,fontSize:13,color:'var(--text3)'}}>
+                {(borcKararModal.mevcut_borc||[]).map(r=>(
+                  <li key={r.id} style={{marginBottom:6}}>
+                    <strong>{parseInt(r.tutar).toLocaleString('tr-TR')} ₺</strong>
+                    {' · '}{r.aciklama||'—'}{' · vade '}{r.vade_tarihi}
+                  </li>
+                ))}
+              </ul>
+              {(borcKararModal.mevcut_borc||[]).length > 1 && (
+                <div className="form-group" style={{marginTop:14}}>
+                  <label style={{fontSize:12}}>Birleştirme: hangi satıra eklensin?</label>
+                  <select
+                    value={borcKararSecimId}
+                    onChange={e=>setBorcKararSecimId(e.target.value)}
+                    style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)'}}
+                  >
+                    {(borcKararModal.mevcut_borc||[]).map(r=>(
+                      <option key={r.id} value={r.id}>
+                        {parseInt(r.tutar).toLocaleString('tr-TR')} ₺ — {r.aciklama?.slice(0,36) || r.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer" style={{flexWrap:'wrap',gap:8}}>
+              <button type="button" className="btn btn-secondary" onClick={()=>setBorcKararModal(null)}>Vazgeç</button>
+              <button type="button" className="btn btn-ghost" onClick={()=>borcKararUygula('ayri')}>Birleştirme — ayrı borç</button>
+              <button type="button" className="btn btn-primary" onClick={()=>borcKararUygula('ilave')}>Birleştir</button>
             </div>
           </div>
         </div>
