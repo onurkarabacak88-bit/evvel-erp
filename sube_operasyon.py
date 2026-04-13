@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -290,6 +291,14 @@ class OperasyonTamamla(BaseModel):
     ciro_online: Optional[float] = None
     personel_id: Optional[str] = None
     pin: Optional[str] = None
+    bardak_kucuk: Optional[int] = None
+    bardak_buyuk: Optional[int] = None
+    bardak_plastik: Optional[int] = None
+    su_adet: Optional[int] = None
+    redbull_adet: Optional[int] = None
+    soda_adet: Optional[int] = None
+    cookie_adet: Optional[int] = None
+    pasta_adet: Optional[int] = None
 
 
 def _insert_acilis_if_needed(cur, sube_id: str, personel_id: Optional[str], aciklama: str) -> None:
@@ -359,18 +368,36 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
             pid_panel = str(ku.get("id") or "").strip() or None
             saat_sistem = simdi.strftime("%H:%M")
+            stok = {
+                "bardak_kucuk": int(body.bardak_kucuk or 0),
+                "bardak_buyuk": int(body.bardak_buyuk or 0),
+                "bardak_plastik": int(body.bardak_plastik or 0),
+                "su_adet": int(body.su_adet or 0),
+                "redbull_adet": int(body.redbull_adet or 0),
+                "soda_adet": int(body.soda_adet or 0),
+                "cookie_adet": int(body.cookie_adet or 0),
+                "pasta_adet": int(body.pasta_adet or 0),
+            }
+            if any(v < 0 for v in stok.values()):
+                raise HTTPException(400, "Açılış stok sayımında negatif değer olamaz")
             aciklama_ins = (
-                f"Operasyon ACILIS — {onay_ad} — sistem_saati={saat_sistem} kasa={body.kasa_sayim}"
+                f"Operasyon ACILIS — {onay_ad} — tarih={date.today()} saat={saat_sistem} kasa={body.kasa_sayim}"
             )
             _insert_acilis_if_needed(cur, sube_id, pid_panel, aciklama_ins)
             cur.execute(
                 """
                 UPDATE sube_operasyon_event
                 SET durum='tamamlandi', cevap_ts=%s,
-                    personel_saat=%s, kasa_sayim=%s
+                    personel_saat=%s, kasa_sayim=%s, meta=%s
                 WHERE id=%s
                 """,
-                (simdi, saat_sistem, body.kasa_sayim, event_id),
+                (
+                    simdi,
+                    saat_sistem,
+                    body.kasa_sayim,
+                    json.dumps({"acilis_stok_sayim": stok}, ensure_ascii=False),
+                    event_id,
+                ),
             )
             audit(cur, "sube_operasyon_event", event_id, "ACILIS_TAMAMLANDI")
             from operasyon_defter import operasyon_defter_ekle
@@ -403,7 +430,13 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 cur,
                 sube_id,
                 "ACILIS_TAMAM",
-                f"Operasyon ACILIS tamamlandı — {onay_ad} — saat={saat_sistem} kasa_sayim={ks}",
+                (
+                    f"Operasyon ACILIS tamamlandı — {onay_ad} — tarih={date.today()} saat={saat_sistem} "
+                    f"kasa_sayim={ks} | stok bardak(kucuk/buyuk/plastik)=({stok['bardak_kucuk']}/"
+                    f"{stok['bardak_buyuk']}/{stok['bardak_plastik']}) "
+                    f"urun(su/redbull/soda/cookie/pasta)=({stok['su_adet']}/{stok['redbull_adet']}/"
+                    f"{stok['soda_adet']}/{stok['cookie_adet']}/{stok['pasta_adet']})"
+                ),
                 event_id,
                 personel_id=pid_panel,
                 personel_ad=onay_ad,
@@ -522,7 +555,8 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
 
             defter_satir = (
                 f"KAPANIS teslim={body.teslim} devir={body.devir} kasa_sayim={ks} | "
-                f"X ciro(nakit,pos,online)=({cn},{cp},{co}) | onaylayan={onay_ad} bildirim_saati={bildirim_saat}"
+                f"X ciro(nakit,pos,online)=({cn},{cp},{co}) | "
+                f"onaylayan={onay_ad} tarih={date.today()} saat={bildirim_saat}"
             )
             operasyon_defter_ekle(
                 cur,

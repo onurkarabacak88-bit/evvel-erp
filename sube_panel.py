@@ -236,6 +236,7 @@ def _gorev_listesi_uret(
     sube_acildi_mi: bool,
     ciro_taslak_bekliyor: bool = False,
     kasa_acildi_mi: bool = True,
+    kasa_acma_kaydi: Optional[dict] = None,
 ) -> list:
     """Günlük görev listesi. Önce kasa PIN, sonra şube açılış (sube_acilis)."""
     _ = anlik_adet
@@ -245,10 +246,20 @@ def _gorev_listesi_uret(
     acilis = sube.get("acilis_saati") or "09:00"
     kapanis = sube.get("kapanis_saati") or "22:00"
 
+    kasa_aciklama = "Günlük kasa kilitlidir. Sabah personel, kayıtlı PIN ile kilidi açmalıdır."
+    if kasa_acildi_mi and kasa_acma_kaydi:
+        ad = str((kasa_acma_kaydi.get("panel_kullanici_ad") or "—")).strip() or "—"
+        ts = str(kasa_acma_kaydi.get("olusturma") or "").strip()
+        saat = ts[11:16] if len(ts) >= 16 else ""
+        if saat:
+            kasa_aciklama = f"Kasa kilidi açıldı. PIN onayı: {ad} ({saat})."
+        else:
+            kasa_aciklama = f"Kasa kilidi açıldı. PIN onayı: {ad}."
+
     gorevler.append({
         "id":       "kasa_kilit",
         "baslik":   "Kasa kilidi",
-        "aciklama": "Günlük kasa kilitlidir. Sabah personel, kayıtlı PIN ile kilidi açmalıdır.",
+        "aciklama": kasa_aciklama,
         "saat":     acilis,
         "tur":      "kasa_kilit",
         "tamamlandi": kasa_acildi_mi,
@@ -420,12 +431,29 @@ def kasa_kilit_ac(sube_id: str, body: KasaKilitAcModel):
         raise HTTPException(400, "4 haneli PIN gerekli")
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
-        dogrula_personel_panel_pin(cur, pid, pin)
+        ku = dogrula_personel_panel_pin(cur, pid, pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        tarih_sistem = str(date.today())
+        saat_sistem = datetime.now().strftime("%H:%M:%S")
+        from operasyon_defter import operasyon_defter_ekle
+
         cur.execute(
             "SELECT 1 FROM sube_kasa_gun_acma WHERE sube_id=%s AND tarih=CURRENT_DATE",
             (sube_id,),
         )
         if cur.fetchone():
+            operasyon_defter_ekle(
+                cur,
+                sube_id,
+                "KASA_KILIT_PIN_ONAY_IDEMPOTENT",
+                (
+                    f"PIN onayı tekrarlandı (idempotent) — personel={onay_ad} "
+                    f"tarih={tarih_sistem} saat={saat_sistem}"
+                ),
+                personel_id=pid,
+                personel_ad=onay_ad,
+                bildirim_saati=saat_sistem,
+            )
             return {
                 "success": True,
                 "idempotent": True,
@@ -443,6 +471,18 @@ def kasa_kilit_ac(sube_id: str, body: KasaKilitAcModel):
             "sube_kasa_gun_acma",
             f"{sube_id}:{date.today()}",
             "KASA_ACILDI",
+        )
+        operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "KASA_KILIT_PIN_ONAY",
+            (
+                f"Kasa kilidi PIN ile açıldı — personel={onay_ad} "
+                f"tarih={tarih_sistem} saat={saat_sistem}"
+            ),
+            personel_id=pid,
+            personel_ad=onay_ad,
+            bildirim_saati=saat_sistem,
         )
     return {"success": True, "idempotent": False}
 
@@ -795,6 +835,7 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
         sube_acildi_mi,
         ciro_taslak_bekliyor,
         kasa_acildi_mi=kasa_acildi_mi,
+        kasa_acma_kaydi=kasa_acma,
     )
     panel_pin_kullanicilar = list_personel_panel_secim(cur)
     panel_yonetici_sayisi = count_personel_panel_yonetici(cur)

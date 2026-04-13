@@ -4,6 +4,8 @@ Prefix: /api/ops
 """
 from __future__ import annotations
 
+import json
+import re
 from datetime import date
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +23,17 @@ from sube_panel import (
 )
 
 router = APIRouter(prefix="/api/ops", tags=["operasyon-merkez"])
+
+_YM_RE = re.compile(r"^\d{4}-\d{2}$")
+
+
+def _coerce_year_month(ym: Optional[str]) -> str:
+    v = (ym or "").strip()
+    if not v:
+        return date.today().strftime("%Y-%m")
+    if not _YM_RE.match(v):
+        return date.today().strftime("%Y-%m")
+    return v
 
 
 def _ozet_events(events: List[dict]) -> Dict[str, Any]:
@@ -166,8 +179,12 @@ def ops_dashboard(
 def ops_defter(
     sube_id: Optional[str] = None,
     limit: int = 300,
+    year_month: Optional[str] = None,
+    gun: Optional[str] = None,
 ):
     lim = max(10, min(800, int(limit)))
+    ym = _coerce_year_month(year_month)
+    gun_v = (gun or "").strip()
     with db() as (conn, cur):
         if sube_id:
             cur.execute(
@@ -176,10 +193,12 @@ def ops_defter(
                        personel_id, personel_ad, bildirim_saati
                 FROM operasyon_defter
                 WHERE sube_id=%s
+                  AND to_char(tarih, 'YYYY-MM') = %s
+                  AND (NULLIF(%s, '') IS NULL OR tarih = NULLIF(%s, '')::date)
                 ORDER BY olay_ts DESC
                 LIMIT %s
                 """,
-                (sube_id, lim),
+                (sube_id, ym, gun_v, gun_v, lim),
             )
         else:
             cur.execute(
@@ -188,10 +207,12 @@ def ops_defter(
                        d.personel_id, d.personel_ad, d.bildirim_saati
                 FROM operasyon_defter d
                 JOIN subeler s ON s.id = d.sube_id
+                WHERE to_char(d.tarih, 'YYYY-MM') = %s
+                  AND (NULLIF(%s, '') IS NULL OR d.tarih = NULLIF(%s, '')::date)
                 ORDER BY d.olay_ts DESC
                 LIMIT %s
                 """,
-                (lim,),
+                (ym, gun_v, gun_v, lim),
             )
         rows = [dict(x) for x in cur.fetchall()]
         for d in rows:
@@ -199,7 +220,102 @@ def ops_defter(
                 d["olay_ts"] = str(d["olay_ts"])
             if d.get("tarih"):
                 d["tarih"] = str(d["tarih"])
-    return {"satirlar": rows, "limit": lim}
+    return {"satirlar": rows, "limit": lim, "year_month": ym, "gun": gun_v or None}
+
+
+@router.get("/sayimlar")
+def ops_sayimlar(
+    sube_id: Optional[str] = None,
+    limit: int = 300,
+    year_month: Optional[str] = None,
+    gun: Optional[str] = None,
+):
+    lim = max(10, min(800, int(limit)))
+    ym = _coerce_year_month(year_month)
+    gun_v = (gun or "").strip()
+    with db() as (conn, cur):
+        if sube_id:
+            cur.execute(
+                """
+                SELECT e.id AS event_id, e.sube_id, s.ad AS sube_adi,
+                       e.tarih, e.cevap_ts, e.meta,
+                       d.personel_id, d.personel_ad, d.bildirim_saati
+                FROM sube_operasyon_event e
+                JOIN subeler s ON s.id = e.sube_id
+                LEFT JOIN LATERAL (
+                    SELECT x.personel_id, x.personel_ad, x.bildirim_saati
+                    FROM operasyon_defter x
+                    WHERE x.ref_event_id = e.id
+                      AND x.etiket = 'ACILIS_TAMAM'
+                    ORDER BY x.olay_ts DESC
+                    LIMIT 1
+                ) d ON TRUE
+                WHERE e.tip='ACILIS'
+                  AND e.durum='tamamlandi'
+                  AND e.sube_id=%s
+                  AND to_char(e.tarih, 'YYYY-MM') = %s
+                  AND (NULLIF(%s, '') IS NULL OR e.tarih = NULLIF(%s, '')::date)
+                ORDER BY e.cevap_ts DESC NULLS LAST
+                LIMIT %s
+                """,
+                (sube_id, ym, gun_v, gun_v, lim),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT e.id AS event_id, e.sube_id, s.ad AS sube_adi,
+                       e.tarih, e.cevap_ts, e.meta,
+                       d.personel_id, d.personel_ad, d.bildirim_saati
+                FROM sube_operasyon_event e
+                JOIN subeler s ON s.id = e.sube_id
+                LEFT JOIN LATERAL (
+                    SELECT x.personel_id, x.personel_ad, x.bildirim_saati
+                    FROM operasyon_defter x
+                    WHERE x.ref_event_id = e.id
+                      AND x.etiket = 'ACILIS_TAMAM'
+                    ORDER BY x.olay_ts DESC
+                    LIMIT 1
+                ) d ON TRUE
+                WHERE e.tip='ACILIS'
+                  AND e.durum='tamamlandi'
+                  AND to_char(e.tarih, 'YYYY-MM') = %s
+                  AND (NULLIF(%s, '') IS NULL OR e.tarih = NULLIF(%s, '')::date)
+                ORDER BY e.cevap_ts DESC NULLS LAST
+                LIMIT %s
+                """,
+                (ym, gun_v, gun_v, lim),
+            )
+
+        rows: List[dict] = []
+        for r in cur.fetchall():
+            d = dict(r)
+            if d.get("tarih"):
+                d["tarih"] = str(d["tarih"])
+            if d.get("cevap_ts"):
+                d["cevap_ts"] = str(d["cevap_ts"])
+            meta_raw = d.get("meta")
+            meta_obj: Dict[str, Any] = {}
+            if isinstance(meta_raw, str) and meta_raw.strip():
+                try:
+                    meta_obj = json.loads(meta_raw)
+                except Exception:
+                    meta_obj = {}
+            stok = meta_obj.get("acilis_stok_sayim") if isinstance(meta_obj, dict) else {}
+            if not isinstance(stok, dict):
+                stok = {}
+            d["stok_sayim"] = {
+                "bardak_kucuk": int(stok.get("bardak_kucuk") or 0),
+                "bardak_buyuk": int(stok.get("bardak_buyuk") or 0),
+                "bardak_plastik": int(stok.get("bardak_plastik") or 0),
+                "su_adet": int(stok.get("su_adet") or 0),
+                "redbull_adet": int(stok.get("redbull_adet") or 0),
+                "soda_adet": int(stok.get("soda_adet") or 0),
+                "cookie_adet": int(stok.get("cookie_adet") or 0),
+                "pasta_adet": int(stok.get("pasta_adet") or 0),
+            }
+            d.pop("meta", None)
+            rows.append(d)
+    return {"satirlar": rows, "limit": lim, "year_month": ym, "gun": gun_v or None}
 
 
 @router.get("/skor")
