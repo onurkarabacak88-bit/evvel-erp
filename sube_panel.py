@@ -469,6 +469,13 @@ def merkez_personel_panel_pin_liste():
         return rows
 
 
+@router.get("/merkez/{sube_id}/panel-pin-kullanicilar")
+def merkez_panel_pin_kullanicilar_legacy(sube_id: str):
+    """Legacy endpoint uyumluluğu: şube parametresi artık kullanılmıyor."""
+    with db() as (conn, cur):
+        return list_personel_panel_secim(cur)
+
+
 @router.put("/merkez/personel/{personel_id}/panel-pin")
 def merkez_personel_panel_pin_guncelle(personel_id: str, body: PanelKullaniciPinGuncelle):
     """Personel panel PIN — tüm şube panellerinde aynı PIN ile geçerli olur."""

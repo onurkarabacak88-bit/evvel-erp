@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -21,6 +22,13 @@ ACILIS_TOLERANS_DK = 10
 KONTROL_TOLERANS_DK = 5
 KAPANIS_TOLERANS_DK = 15
 CIKIS_TOLERANS_DK = 5
+
+_TR_TZ = ZoneInfo("Europe/Istanbul")
+
+
+def _display_now_tr() -> datetime:
+    """UI'da gösterilecek sunucu saatini TR saat diliminde üret."""
+    return datetime.now(timezone.utc).astimezone(_TR_TZ)
 
 
 def _sube_getir(cur, sube_id: str) -> dict:
@@ -237,11 +245,12 @@ def build_panel_operasyon_blob(cur, sube_id: str, sube: dict) -> Dict[str, Any]:
     _sync_acilis_event_if_acik(cur, sube_id)
     _refresh_durum(cur, sube_id)
     simdi = datetime.now()
+    simdi_display = _display_now_tr()
     rows = _list_events(cur, sube_id)
     aktif = _pick_aktif(rows, simdi)
     out = {
-        "sunucu_saati": simdi.strftime("%H:%M:%S"),
-        "sunucu_iso": simdi.isoformat(sep=" ", timespec="seconds"),
+        "sunucu_saati": simdi_display.strftime("%H:%M:%S"),
+        "sunucu_iso": simdi_display.isoformat(timespec="seconds"),
         "events": rows,
         "aktif": aktif,
         "esikler": {"suphe": 5, "kritik": 10},
