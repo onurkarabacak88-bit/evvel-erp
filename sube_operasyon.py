@@ -222,15 +222,22 @@ def _pick_aktif(rows: List[dict], simdi: datetime) -> Optional[dict]:
         return datetime.fromisoformat(s.replace(" ", "T"))
 
     cands: List[dict] = []
+    pending_all: List[dict] = []
     for e in rows:
         if e["durum"] not in ("bekliyor", "gecikti"):
             continue
+        pending_all.append(e)
         slot = parse_ts(e["sistem_slot_ts"])
         if simdi < slot:
             continue
         cands.append(e)
     if not cands:
-        return None
+        # Saat slotu henüz gelmemiş olsa da panel akışı (özellikle açılış)
+        # bugünün ilk bekleyen olayı üzerinden ilerleyebilsin.
+        if not pending_all:
+            return None
+        pending_all.sort(key=lambda x: parse_ts(x["sistem_slot_ts"]))
+        return pending_all[0]
     cands.sort(
         key=lambda x: (
             0 if x["durum"] == "gecikti" else 1,
