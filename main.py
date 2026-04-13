@@ -19,6 +19,7 @@ from kasa_service import (
     kart_plan_guncelle_tx,
     onay_ekle,
     vadeli_alim_kapat,
+    vadeli_kasadan_odenen_toplam,
 )
 from sube_panel import router as sube_panel_router
 from ciro_taslak_api import router as ciro_taslak_router
@@ -255,20 +256,33 @@ def kasa_ve_faiz_odeme_plani_tam_odeme(
         if kaynak == 'sabit_giderler':
             islem_t = 'SABIT_GIDER'
             aciklama_t = aciklama_ana
+            insert_kasa_hareketi(cur, tarih, islem_t, -abs(ana_para_kismi),
+                aciklama_t, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI')
         elif kaynak == 'personel':
             islem_t = 'PERSONEL_MAAS'
             aciklama_t = aciklama_ana
+            insert_kasa_hareketi(cur, tarih, islem_t, -abs(ana_para_kismi),
+                aciklama_t, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI')
         elif kaynak == 'vadeli_alimlar':
             islem_t = 'VADELI_ODEME'
             aciklama_t = aciklama_ana
+            vk = plan.get('kaynak_id')
+            kasa_kt = 'vadeli_alimlar' if vk else 'odeme_plani'
+            kasa_kid = vk or plan_id
+            insert_kasa_hareketi(
+                cur, tarih, islem_t, -abs(ana_para_kismi), aciklama_t,
+                kasa_kt, kasa_kid, plan_id, 'ODEME_PLANI',
+            )
         elif kaynak == 'borc_envanteri':
             islem_t = 'BORC_TAKSIT'
             aciklama_t = aciklama_ana
+            insert_kasa_hareketi(cur, tarih, islem_t, -abs(ana_para_kismi),
+                aciklama_t, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI')
         else:
             islem_t = 'KART_ODEME'
             aciklama_t = aciklama_ana
-        insert_kasa_hareketi(cur, tarih, islem_t, -abs(ana_para_kismi),
-            aciklama_t, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI')
+            insert_kasa_hareketi(cur, tarih, islem_t, -abs(ana_para_kismi),
+                aciklama_t, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI')
 
     return ana_para_kismi
 
@@ -866,6 +880,13 @@ def anlik_gider_listele():
 
 @app.post("/api/anlik-gider")
 def anlik_gider_ekle(g: AnlikGider):
+    sv = (g.sube or "").strip()
+    if sv and sv.upper() != "MERKEZ":
+        raise HTTPException(
+            400,
+            "Şube anlık gideri CFO ekranından doğrudan yazılamaz. "
+            "Şube personel panelinden girin; kayıt onay kuyruğuna düşer, onay sonrası kasaya işlenir.",
+        )
     with db() as (conn, cur):
         if not g.force:
             cur.execute("""
@@ -1345,14 +1366,8 @@ def onayla(oid: str):
                     vadeli_alim_kapat(cur, plan_dict['kaynak_id'], tarih)
                 guncelle_borc_envanteri_odeme_plani_sonrasi(cur, plan_dict, ana_onay)
         elif islem_turu == 'VADELI_ODEME':
-            # ÇİFT ÖDEME GUARD: Daha önce toplam tutar kadar kasa kaydı yazılmışsa tekrar yazma
-            # Kısmi ödeme sonrası kasa kaydı olabilir — toplam tutarla karşılaştır
-            cur.execute("""
-                SELECT COALESCE(SUM(ABS(tutar)), 0) as toplam_odenen
-                FROM kasa_hareketleri
-                WHERE kaynak_id=%s AND islem_turu='VADELI_ODEME' AND kasa_etkisi=true AND durum='aktif'
-            """, (onay['kaynak_id'],))
-            onceki_odenen = float(cur.fetchone()['toplam_odenen'])
+            # ÇİFT ÖDEME GUARD: Kısmi ödeme + tam ödeme farklı kaynak_id ile tutulabildi — tek yerden topla
+            onceki_odenen = vadeli_kasadan_odenen_toplam(cur, onay['kaynak_id'])
             if onceki_odenen >= abs(signed_tutar):
                 logger.warning(f"VADELI_ODEME çift ödeme engellendi — kaynak_id={onay['kaynak_id']}")
                 # Kasa zaten yazılmış, sadece onay kuyruğunu kapat ve tabloları güncelle
@@ -1363,6 +1378,52 @@ def onayla(oid: str):
                     ref_id=oid, ref_type='ONAY')
             # Tüm bağlı kayıtları atomik kapat — çift düşme engeli
             vadeli_alim_kapat(cur, onay['kaynak_id'], tarih)
+        elif (
+            islem_turu == "ANLIK_GIDER"
+            and (onay.get("kaynak_tablo") or "") == "anlik_giderler"
+            and onay.get("kaynak_id")
+        ):
+            kid = str(onay["kaynak_id"])
+            cur.execute(
+                "SELECT id, durum FROM anlik_giderler WHERE id=%s FOR UPDATE",
+                (kid,),
+            )
+            ag = cur.fetchone()
+            if not ag:
+                raise HTTPException(404, "Anlık gider kaydı bulunamadı")
+            st = ag["durum"]
+            if st == "onay_bekliyor":
+                cur.execute(
+                    "UPDATE anlik_giderler SET durum='aktif' WHERE id=%s",
+                    (kid,),
+                )
+            elif st != "aktif":
+                raise HTTPException(
+                    400,
+                    f"Anlık gider bu durumda onaylanamaz: {st}",
+                )
+            cur.execute(
+                """
+                SELECT COALESCE(COUNT(*), 0)::int AS n
+                FROM kasa_hareketleri
+                WHERE kaynak_id=%s AND islem_turu='ANLIK_GIDER'
+                  AND durum='aktif' AND kasa_etkisi=true
+                """,
+                (kid,),
+            )
+            n = int((cur.fetchone() or {}).get("n") or 0)
+            if n == 0:
+                insert_kasa_hareketi(
+                    cur,
+                    tarih,
+                    islem_turu,
+                    signed_tutar,
+                    f"Onaylandı: {onay['aciklama']}",
+                    "anlik_giderler",
+                    kid,
+                    ref_id=oid,
+                    ref_type="ONAY",
+                )
         else:
             insert_kasa_hareketi(cur, tarih, islem_turu, signed_tutar,
                 f"Onaylandı: {onay['aciklama']}", onay['kaynak_tablo'], onay['kaynak_id'],
@@ -1398,6 +1459,18 @@ def reddet(oid: str, body: ReddetModel = ReddetModel()):
         cur.execute("SELECT * FROM onay_kuyrugu WHERE id=%s", (oid,))
         onay = cur.fetchone()
         if onay:
+            if (
+                (onay.get("kaynak_tablo") or "") == "anlik_giderler"
+                and onay.get("kaynak_id")
+                and onay.get("islem_turu") == "ANLIK_GIDER"
+            ):
+                cur.execute(
+                    """
+                    UPDATE anlik_giderler SET durum='reddedildi'
+                    WHERE id=%s AND durum='onay_bekliyor'
+                    """,
+                    (onay["kaynak_id"],),
+                )
             # odeme_plani'nı bul ve iptal et
             cur.execute("""
                 UPDATE odeme_plani SET durum='iptal'
@@ -3191,6 +3264,153 @@ class VadeliAlim(BaseModel):
     vade_tarihi: date
     tedarikci: str          # Zorunlu — kart takibi ve raporlar için
     force: bool = False
+    # TEDARIKCI_ACIK_BAKIYE sonrası: ayri=yeni satır, ilave=mevcut bakiyeye ekle
+    tedarikci_karari: Optional[str] = None
+    # API/çoklu açık borçta ilave hedefi; tek satırda tedarikci_karari=ilave yeter
+    birlestir_vadeli_id: Optional[str] = None
+
+
+def _vadeli_tedarikci_norm(s: str) -> str:
+    return (s or "").strip().lower()
+
+
+def _vadeli_bekleyen_ayni_tedarikci(cur, tedarikci: str):
+    t = _vadeli_tedarikci_norm(tedarikci)
+    if not t:
+        return []
+    cur.execute(
+        """
+        SELECT id, aciklama, tutar, vade_tarihi, tedarikci
+        FROM vadeli_alimlar
+        WHERE durum = 'bekliyor'
+          AND LOWER(TRIM(COALESCE(tedarikci, ''))) = %s
+        ORDER BY vade_tarihi
+        """,
+        (t,),
+    )
+    return cur.fetchall()
+
+
+def _vadeli_borcla_birlestir(cur, hedef_id: str, v: VadeliAlim) -> dict:
+    cur.execute(
+        "SELECT * FROM vadeli_alimlar WHERE id=%s FOR UPDATE",
+        (hedef_id,),
+    )
+    eski = cur.fetchone()
+    if not eski:
+        raise HTTPException(404, "Birleştirilecek vadeli kaydı bulunamadı")
+    if eski["durum"] != "bekliyor":
+        raise HTTPException(
+            400,
+            "Sadece bekleyen vadeli borcuna eklenebilir — ödenmiş veya iptal satıra eklenemez.",
+        )
+    if _vadeli_tedarikci_norm(eski.get("tedarikci")) != _vadeli_tedarikci_norm(v.tedarikci):
+        raise HTTPException(400, "Tedarikçi eşleşmiyor — birleştirme yapılamaz.")
+    ek = float(v.tutar)
+    if ek <= 0:
+        raise HTTPException(400, "Eklenecek tutar sıfırdan büyük olmalı")
+    yeni_toplam = float(eski["tutar"]) + ek
+    a_eski = (eski.get("aciklama") or "").strip()
+    a_yeni = (v.aciklama or "").strip()
+    yeni_aciklama = (
+        f"{a_eski} + {a_yeni}" if a_eski and a_yeni else (a_yeni or a_eski or "Vadeli alım")
+    )
+    ted = (v.tedarikci or "").strip() or (eski.get("tedarikci") or "")
+    cur.execute(
+        """UPDATE vadeli_alimlar SET tutar=%s, vade_tarihi=%s, aciklama=%s, tedarikci=%s WHERE id=%s""",
+        (yeni_toplam, v.vade_tarihi, yeni_aciklama, ted, hedef_id),
+    )
+    cur.execute(
+        """
+        SELECT id FROM odeme_plani
+        WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+        AND durum IN ('bekliyor','onay_bekliyor')
+        LIMIT 1
+        """,
+        (hedef_id,),
+    )
+    prow = cur.fetchone()
+    if prow:
+        pid = prow["id"]
+        cur.execute(
+            """
+            UPDATE odeme_plani SET
+                tarih=%s,
+                referans_ay=DATE_TRUNC('month', %s::date),
+                odenecek_tutar=%s,
+                asgari_tutar=%s,
+                aciklama=%s
+            WHERE id=%s
+            """,
+            (
+                v.vade_tarihi,
+                str(v.vade_tarihi),
+                yeni_toplam,
+                yeni_toplam,
+                f"Vadeli Alım: {yeni_aciklama}",
+                pid,
+            ),
+        )
+    else:
+        pid = str(uuid.uuid4())
+        cur.execute(
+            """
+            INSERT INTO odeme_plani
+                (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum, kaynak_tablo, kaynak_id)
+            VALUES (%s, NULL, %s, DATE_TRUNC('month', %s::date), %s, %s, %s, 'bekliyor', 'vadeli_alimlar', %s)
+            """,
+            (
+                pid,
+                v.vade_tarihi,
+                str(v.vade_tarihi),
+                yeni_toplam,
+                yeni_toplam,
+                f"Vadeli Alım: {yeni_aciklama}",
+                hedef_id,
+            ),
+        )
+    cur.execute(
+        """
+        UPDATE onay_kuyrugu SET tutar=%s, tarih=%s
+        WHERE durum='bekliyor' AND islem_turu='VADELI_ODEME'
+        AND kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+        """,
+        (yeni_toplam, v.vade_tarihi, hedef_id),
+    )
+    cur.execute(
+        """
+        UPDATE onay_kuyrugu SET tutar=%s, tarih=%s
+        WHERE durum='bekliyor' AND islem_turu='ODEME_PLANI'
+        AND kaynak_tablo='odeme_plani'
+        AND kaynak_id IN (
+            SELECT id FROM odeme_plani
+            WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+            AND durum IN ('bekliyor','onay_bekliyor')
+        )
+        """,
+        (yeni_toplam, v.vade_tarihi, hedef_id),
+    )
+    audit(
+        cur,
+        "vadeli_alimlar",
+        hedef_id,
+        "BORC_EKLE",
+        eski=dict(eski),
+        yeni={
+            "tutar": yeni_toplam,
+            "vade_tarihi": str(v.vade_tarihi),
+            "aciklama": yeni_aciklama,
+        },
+    )
+    return {
+        "id": hedef_id,
+        "success": True,
+        "birlestirildi": True,
+        "onceki_tutar": float(eski["tutar"]),
+        "eklenen": ek,
+        "yeni_toplam": yeni_toplam,
+    }
+
 
 @app.get("/api/vadeli-alimlar")
 def vadeli_listele():
@@ -3202,6 +3422,34 @@ def vadeli_listele():
 @app.post("/api/vadeli-alimlar")
 def vadeli_ekle(v: VadeliAlim):
     with db() as (conn, cur):
+        birlestir = (v.birlestir_vadeli_id or "").strip()
+        karar = (v.tedarikci_karari or "").strip().lower()
+
+        if birlestir:
+            return _vadeli_borcla_birlestir(cur, birlestir, v)
+
+        acik = _vadeli_bekleyen_ayni_tedarikci(cur, v.tedarikci)
+        if acik and not v.force:
+            if karar == "ayri":
+                pass
+            elif karar == "ilave":
+                if len(acik) == 1:
+                    return _vadeli_borcla_birlestir(cur, acik[0]["id"], v)
+                raise HTTPException(
+                    400,
+                    "Bu tedarikçide birden fazla açık borç var — birlestir_vadeli_id ile hedef satırı gönderin.",
+                )
+            else:
+                return {
+                    "warning": True,
+                    "kod": "TEDARIKCI_ACIK_BAKIYE",
+                    "mesaj": (
+                        "Bu tedarikçi için zaten bekleyen vadeli borç var. "
+                        "Birleştirmek mi yoksa ayrı satır olarak mı kaydedilsin?"
+                    ),
+                    "mevcut_borc": [dict(r) for r in acik],
+                }
+
         if not v.force:
             cur.execute("""
                 SELECT id FROM vadeli_alimlar WHERE durum='bekliyor'
@@ -3252,6 +3500,22 @@ def vadeli_guncelle(vid: str, v: VadeliAlim):
             AND durum IN ('bekliyor','onay_bekliyor')
         """, (v.vade_tarihi, str(v.vade_tarihi), float(v.tutar), float(v.tutar),
               f"Vadeli Alım: {v.aciklama}", vid))
+        # Bekleyen onay tutarı planla aynı kalsın (düzenleme sonrası eski tutarla çift/eksik kasa olmasın)
+        cur.execute("""
+            UPDATE onay_kuyrugu SET tutar=%s, tarih=%s
+            WHERE durum='bekliyor' AND islem_turu='VADELI_ODEME'
+            AND kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+        """, (float(v.tutar), v.vade_tarihi, vid))
+        cur.execute("""
+            UPDATE onay_kuyrugu SET tutar=%s, tarih=%s
+            WHERE durum='bekliyor' AND islem_turu='ODEME_PLANI'
+            AND kaynak_tablo='odeme_plani'
+            AND kaynak_id IN (
+                SELECT id FROM odeme_plani
+                WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+                AND durum IN ('bekliyor','onay_bekliyor')
+            )
+        """, (float(v.tutar), v.vade_tarihi, vid))
         audit(cur, 'vadeli_alimlar', vid, 'UPDATE', eski=eski)
     return {"success": True}
 
@@ -3432,13 +3696,7 @@ def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
         """, (vid,))
         aktif_plan = cur.fetchone()
         if not aktif_plan:
-            # Aktif plan yok — önceki kasa kayıtlarına bak
-            cur.execute("""
-                SELECT COALESCE(SUM(ABS(tutar)), 0) as toplam_odenen
-                FROM kasa_hareketleri
-                WHERE kaynak_id=%s AND islem_turu='VADELI_ODEME' AND kasa_etkisi=true AND durum='aktif'
-            """, (vid,))
-            odenen = float(cur.fetchone()['toplam_odenen'])
+            odenen = vadeli_kasadan_odenen_toplam(cur, vid)
             if odenen >= float(v['tutar']):
                 raise HTTPException(400, "Bu vadeli alım zaten tam olarak kasaya işlenmiş, tekrar ödeme yapılamaz.")
 
@@ -4586,9 +4844,10 @@ def odeme_ertele(oid: str, yeni_tarih: date = None):
 def kismi_odeme_yap(oid: str, body: KismiOdeModel):
     """
     Kısmi ödeme — plan bölünür:
-    1. Eski plan → odendi (ödenen tutar kadar kasadan düşer)
-    2. Yeni plan → kalan tutar, yeni vade tarihi ile simülasyona girer
-    Kural: kasa sadece ödenen kadar etkilenir, kalan simülasyonda yaşar.
+    1. Ödenen kısım: nakitte kasadan (VADELI_ODEME), kartta kart harcamasına yazılır.
+    2. vadeli_alimlar.tutar = kalan borç; yeni vade ile tek satırda devam eder.
+    3. Kalan için yeni odeme_plani + gerekirse VADELI_ODEME onayı.
+    Sonradan yeni mal için ayrı satır yerine POST /vadeli-alimlar + birlestir_vadeli_id ile toplam borç artırılabilir.
     """
     with db() as (conn, cur):
         cur.execute("SELECT * FROM odeme_plani WHERE id=%s AND durum IN ('bekliyor','onay_bekliyor')", (oid,))
@@ -4634,9 +4893,6 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
         else:
             islem_t = 'KART_ODEME'
 
-        # vadeli_alimlar için kaynak_id = vadeli_alimlar.id — guard bu id'ye bakıyor
-        kasa_kaynak_id = plan['kaynak_id'] if kaynak == 'vadeli_alimlar' and plan.get('kaynak_id') else oid
-
         if kaynak == 'vadeli_alimlar' and getattr(body, 'odeme_yontemi', 'nakit') == 'kart' and getattr(body, 'kart_id', None):
             # KART: kasaya yazma — kart harcamasına ekle
             hid = str(uuid.uuid4())
@@ -4649,10 +4905,28 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
                   plan.get('kaynak_id')))
             audit(cur, 'kart_hareketleri', hid, 'VADELI_KART_KISMI')
         else:
-            # NAKİT: kasaya yaz
-            insert_kasa_hareketi(cur, bugun, islem_t, -abs(odenen),
+            # NAKİT: kasaya yaz — vadeli için kaynak vadeli_alimlar (tam ödeme / onay guard ile aynı anahtar)
+            kasa_kt = (
+                "vadeli_alimlar"
+                if kaynak == "vadeli_alimlar" and plan.get("kaynak_id")
+                else "odeme_plani"
+            )
+            kasa_kid = (
+                plan["kaynak_id"]
+                if kasa_kt == "vadeli_alimlar"
+                else oid
+            )
+            insert_kasa_hareketi(
+                cur,
+                bugun,
+                islem_t,
+                -abs(odenen),
                 f"Kısmi ödeme: {plan['aciklama']} ({int(odenen):,} / {int(toplam):,} ₺)",
-                'odeme_plani', kasa_kaynak_id, oid, 'KISMI_ODE')
+                kasa_kt,
+                kasa_kid,
+                oid,
+                "KISMI_ODE",
+            )
 
         # Kaynak vadeli_alimlar ise tutarı ve vadeyi güncelle (kapatma — kalan borç devam ediyor)
         if kaynak == 'vadeli_alimlar' and plan.get('kaynak_id'):

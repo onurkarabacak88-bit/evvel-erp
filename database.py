@@ -636,7 +636,99 @@ def init_db():
                 ) THEN
                     ALTER TABLE operasyon_defter ADD COLUMN bildirim_saati TEXT;
                 END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'operasyon_defter'
+                      AND column_name = 'imza_hmac'
+                ) THEN
+                    ALTER TABLE operasyon_defter ADD COLUMN imza_hmac TEXT;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'operasyon_defter'
+                      AND column_name = 'defter_onceki_id'
+                ) THEN
+                    ALTER TABLE operasyon_defter ADD COLUMN defter_onceki_id TEXT;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'operasyon_defter'
+                      AND column_name = 'defter_zincir_hmac'
+                ) THEN
+                    ALTER TABLE operasyon_defter ADD COLUMN defter_zincir_hmac TEXT;
+                END IF;
             END $$;
+        """)
+
+        # Faz 4: panel PIN yanlış deneme / geçici kilit (personel bazlı)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS panel_pin_guvenlik (
+                personel_id      TEXT PRIMARY KEY REFERENCES personel(id) ON DELETE CASCADE,
+                yanlis_sayaci    INT NOT NULL DEFAULT 0,
+                son_yanlis_ts    TIMESTAMPTZ,
+                kilit_bitis_ts   TIMESTAMPTZ
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_panel_pin_guvenlik_kilit
+            ON panel_pin_guvenlik (kilit_bitis_ts)
+            WHERE kilit_bitis_ts IS NOT NULL
+        """)
+
+        # Faz 5: güvenlik olayları (PIN kilit/hatalı deneme vb.)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS operasyon_guvenlik_olay (
+                id           TEXT PRIMARY KEY,
+                olay_ts      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                tip          TEXT NOT NULL,
+                personel_id  TEXT,
+                sube_id      TEXT,
+                detay        TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_op_guvenlik_olay_ts
+            ON operasyon_guvenlik_olay (olay_ts DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_op_guvenlik_olay_sube_ts
+            ON operasyon_guvenlik_olay (sube_id, olay_ts DESC)
+            WHERE sube_id IS NOT NULL
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS operasyon_guvenlik_alarm_durum (
+                sube_id            TEXT PRIMARY KEY REFERENCES subeler(id) ON DELETE CASCADE,
+                durum              TEXT NOT NULL CHECK (durum IN ('okundu','susturuldu')),
+                islem_ts           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                islem_personel_id  TEXT,
+                islem_notu         TEXT,
+                sustur_bitis_ts    TIMESTAMPTZ
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_op_guv_alarm_durum_sustur
+            ON operasyon_guvenlik_alarm_durum (sustur_bitis_ts)
+            WHERE sustur_bitis_ts IS NOT NULL
+        """)
+
+        # Faz 4: operasyon_defter yalnız INSERT (UPDATE/DELETE engeli)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION operasyon_defter_append_only_fn()
+            RETURNS trigger AS $$
+            BEGIN
+                IF TG_OP = 'UPDATE' OR TG_OP = 'DELETE' THEN
+                    RAISE EXCEPTION 'operasyon_defter append-only: % islemi yasak', TG_OP;
+                END IF;
+                RETURN NULL;
+            END;
+            $$ LANGUAGE plpgsql
+        """)
+        cur.execute("DROP TRIGGER IF EXISTS tr_operasyon_defter_append_only ON operasyon_defter")
+        # PG11+: EXECUTE PROCEDURE; PG14+ tercih: EXECUTE FUNCTION (ikisi de geçerli).
+        cur.execute("""
+            CREATE TRIGGER tr_operasyon_defter_append_only
+            BEFORE UPDATE OR DELETE ON operasyon_defter
+            FOR EACH ROW EXECUTE FUNCTION operasyon_defter_append_only_fn()
         """)
 
         # ── KARTLAR ────────────────────────────────────────────
@@ -1322,7 +1414,21 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='anlik_giderler' AND column_name='kart_id')
                 THEN ALTER TABLE anlik_giderler ADD COLUMN kart_id TEXT; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='anlik_giderler' AND column_name='personel_id')
+                THEN ALTER TABLE anlik_giderler ADD COLUMN personel_id TEXT; END IF;
             END $$;
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_merkez_not (
+                id           TEXT PRIMARY KEY,
+                sube_id      TEXT NOT NULL,
+                metin        TEXT NOT NULL,
+                personel_id  TEXT,
+                personel_ad  TEXT,
+                olusturma    TIMESTAMP NOT NULL DEFAULT NOW()
+            )
         """)
 
         # ── PERSONEL AYLIK KAYIT ───────────────────────────────

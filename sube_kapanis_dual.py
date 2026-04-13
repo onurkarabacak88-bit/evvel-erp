@@ -14,12 +14,14 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 
 from database import db
+from evvel_merkez_guard import merkez_mutasyon_korumasi
 from kasa_service import audit
 from personel_panel_auth import (
+    count_personel_panel_yonetici,
     dogrula_personel_panel_pin,
     dogrula_personel_panel_yonetici,
     list_personel_panel_secim,
@@ -269,7 +271,10 @@ def vardiya_devri_durum(sube_id: str):
         return vardiya_devir_panel_blob(cur, sube_id)
 
 
-@router.post("/{sube_id}/panel-kullanici")
+@router.post(
+    "/{sube_id}/panel-kullanici",
+    dependencies=[Depends(merkez_mutasyon_korumasi)],
+)
 def panel_kullanici_ekle(sube_id: str, body: PanelKullaniciOlustur):
     # Legacy uyumluluk: eski endpoint çağrılarını personel bazlı yeni PIN modeline yönlendir.
     p = (body.pin or "").strip()
@@ -278,8 +283,18 @@ def panel_kullanici_ekle(sube_id: str, body: PanelKullaniciOlustur):
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
         yetkili_id = (body.yetkili_panel_kullanici_id or "").strip()
-        yetkili_pin = (body.yetkili_pin or "").strip()
-        if yetkili_id or yetkili_pin:
+        yetkili_pin = (body.yetkili_pin or "").strip().replace(" ", "")
+        n_yon = count_personel_panel_yonetici(cur)
+        if n_yon >= 1:
+            if not yetkili_id or len(yetkili_pin) != 4 or not yetkili_pin.isdigit():
+                raise HTTPException(
+                    400,
+                    "Panel yöneticisi onayı gerekli: yetkili_panel_kullanici_id ve 4 haneli yetkili_pin.",
+                )
+            dogrula_personel_panel_yonetici(cur, yetkili_id, yetkili_pin)
+        elif yetkili_id or yetkili_pin:
+            if not yetkili_id or len(yetkili_pin) != 4 or not yetkili_pin.isdigit():
+                raise HTTPException(400, "Yetkili personel ve 4 haneli PIN eksik veya geçersiz.")
             dogrula_personel_panel_yonetici(cur, yetkili_id, yetkili_pin)
         hedef_pid = _legacy_personel_id_bul(cur, body.personel_id, body.ad)
         salt = uuid.uuid4().hex[:12]
@@ -335,7 +350,8 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
                 "Birinci imza, bugünkü açılış kaydında yazılı personel ile aynı olmalıdır.",
             )
 
-        _vardiya_imza_personel_dogrula(cur, body.sabahci_devreden_id, body.pin)
+        ku = _vardiya_imza_personel_dogrula(cur, body.sabahci_devreden_id, body.pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
 
         cur.execute(
             """
@@ -373,6 +389,21 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
             ),
         )
         audit(cur, "kapanis_kayit", kid, "VARDIYA_DEVIR_ADIM1_SABAH")
+        from operasyon_defter import operasyon_defter_ekle
+
+        operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "VARDIYA_DEVIR_IMZA1_PIN",
+            (
+                f"Vardiya devri 1. imza (PIN) — personel={onay_ad} "
+                f"tarih={date.today()} saat={simdi.strftime('%H:%M:%S')}"
+            ),
+            ref_event_id=body.operasyon_event_id,
+            personel_id=body.sabahci_devreden_id,
+            personel_ad=onay_ad,
+            bildirim_saati=simdi.strftime("%H:%M:%S"),
+        )
 
         _upsert_ciro_taslak(
             cur,
@@ -419,7 +450,8 @@ def vardiya_devri_adim2(sube_id: str, body: VardiyaDevirAdim2):
                 "Aynı kişi hem sabah devrini hem akşam kabulünü imzalayamaz — iki farklı kişi gerekir.",
             )
 
-        _vardiya_imza_personel_dogrula(cur, body.aksamci_devralan_id, body.pin)
+        ku = _vardiya_imza_personel_dogrula(cur, body.aksamci_devralan_id, body.pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
 
         cur.execute(
             """
@@ -431,6 +463,21 @@ def vardiya_devri_adim2(sube_id: str, body: VardiyaDevirAdim2):
             (simdi, body.aksamci_devralan_id, kk["id"]),
         )
         audit(cur, "kapanis_kayit", kk["id"], "VARDIYA_DEVIR_ADIM2_AKSAM")
+        from operasyon_defter import operasyon_defter_ekle
+
+        operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "VARDIYA_DEVIR_IMZA2_PIN",
+            (
+                f"Vardiya devri 2. imza (PIN) — personel={onay_ad} "
+                f"tarih={date.today()} saat={simdi.strftime('%H:%M:%S')}"
+            ),
+            ref_event_id=kk.get("operasyon_event_id"),
+            personel_id=body.aksamci_devralan_id,
+            personel_ad=onay_ad,
+            bildirim_saati=simdi.strftime("%H:%M:%S"),
+        )
         kid_out = kk["id"]
 
         eid = kk.get("operasyon_event_id")

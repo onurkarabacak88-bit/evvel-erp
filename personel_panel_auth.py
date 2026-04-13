@@ -8,13 +8,160 @@ PIN tanımı olmayan aktif personel ile de doğrulamayı geçirir.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import math
 import os
-from typing import Any, Dict, List
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 
 _log = logging.getLogger(__name__)
+
+
+def _panel_pin_limitleri() -> Tuple[int, int]:
+    """(max_yanlis, kilit_dakika) — ortamla sınırlı makul aralık."""
+    try:
+        my = int((os.environ.get("EVVEL_PANEL_PIN_MAX_YANLIS") or "5").strip())
+    except ValueError:
+        my = 5
+    try:
+        dk = int((os.environ.get("EVVEL_PANEL_PIN_KILIT_DK") or "15").strip())
+    except ValueError:
+        dk = 15
+    return max(3, min(my, 20)), max(5, min(dk, 120))
+
+
+def _ts_aware(ts: Any) -> datetime:
+    if ts is None:
+        return datetime.now(timezone.utc)
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            return ts.replace(tzinfo=timezone.utc)
+        return ts.astimezone(timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def _guvenlik_olay_yaz(
+    cur: Any,
+    *,
+    tip: str,
+    personel_id: Optional[str] = None,
+    sube_id: Optional[str] = None,
+    detay: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Faz 5: PIN güvenlik olayları (izleme/rapor)."""
+    try:
+        cur.execute(
+            """
+            INSERT INTO operasyon_guvenlik_olay
+                (id, olay_ts, tip, personel_id, sube_id, detay)
+            VALUES (%s, NOW(), %s, %s, %s, %s)
+            """,
+            (
+                str(uuid.uuid4()),
+                (tip or "")[:120],
+                personel_id,
+                sube_id,
+                json.dumps(detay or {}, ensure_ascii=False),
+            ),
+        )
+    except Exception:
+        _log.exception("operasyon_guvenlik_olay insert basarisiz")
+
+
+def panel_pin_guvenlik_kontrol(
+    cur: Any,
+    personel_id: str,
+    *,
+    sube_id: Optional[str] = None,
+) -> None:
+    """Kilit aktifse 429; süresi dolmuşsa sayaç sıfırlanır."""
+    cur.execute(
+        """
+        SELECT yanlis_sayaci, kilit_bitis_ts
+        FROM panel_pin_guvenlik
+        WHERE personel_id=%s
+        FOR UPDATE
+        """,
+        (personel_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return
+    r = dict(row)
+    kb = r.get("kilit_bitis_ts")
+    if not kb:
+        return
+    now = datetime.now(timezone.utc)
+    kb_a = _ts_aware(kb)
+    if now < kb_a:
+        kalan = max(1, math.ceil((kb_a - now).total_seconds() / 60.0))
+        _guvenlik_olay_yaz(
+            cur,
+            tip="PIN_KILITTE_DENEME",
+            personel_id=personel_id,
+            sube_id=sube_id,
+            detay={"kalan_dk": kalan},
+        )
+        raise HTTPException(
+            429,
+            f"PIN çok kez hatalı girildi. Yaklaşık {kalan} dakika sonra tekrar deneyin.",
+        )
+    cur.execute(
+        "UPDATE panel_pin_guvenlik SET yanlis_sayaci=0, kilit_bitis_ts=NULL WHERE personel_id=%s",
+        (personel_id,),
+    )
+
+
+def panel_pin_yanlis_isaretle(
+    cur: Any,
+    personel_id: str,
+    *,
+    sube_id: Optional[str] = None,
+) -> None:
+    my, dk = _panel_pin_limitleri()
+    cur.execute(
+        """
+        INSERT INTO panel_pin_guvenlik (personel_id, yanlis_sayaci, son_yanlis_ts)
+        VALUES (%s, 1, NOW())
+        ON CONFLICT (personel_id) DO UPDATE SET
+          yanlis_sayaci = panel_pin_guvenlik.yanlis_sayaci + 1,
+          son_yanlis_ts = EXCLUDED.son_yanlis_ts
+        RETURNING yanlis_sayaci
+        """,
+        (personel_id,),
+    )
+    c = int(cur.fetchone()["yanlis_sayaci"])
+    _guvenlik_olay_yaz(
+        cur,
+        tip="PIN_HATALI",
+        personel_id=personel_id,
+        sube_id=sube_id,
+        detay={"yanlis_sayac": c},
+    )
+    if c >= my:
+        cur.execute(
+            """
+            UPDATE panel_pin_guvenlik
+            SET kilit_bitis_ts = NOW() + (%s * INTERVAL '1 minute')
+            WHERE personel_id = %s
+            """,
+            (dk, personel_id),
+        )
+        _guvenlik_olay_yaz(
+            cur,
+            tip="PIN_KILIT",
+            personel_id=personel_id,
+            sube_id=sube_id,
+            detay={"kilit_dk": dk, "esik": my},
+        )
+
+
+def panel_pin_basarili_temizle(cur: Any, personel_id: str) -> None:
+    cur.execute("DELETE FROM panel_pin_guvenlik WHERE personel_id=%s", (personel_id,))
 
 
 def panel_pin_hash(pin: str, salt: str) -> str:
@@ -52,8 +199,12 @@ def dogrula_personel_panel_pin(cur: Any, personel_id: str, pin: str) -> Dict[str
     p = (pin or "").strip()
     if len(p) != 4 or not p.isdigit():
         raise HTTPException(400, "4 haneli PIN gerekli")
+    sube_id = (u.get("sube_id") or "").strip() or None
+    panel_pin_guvenlik_kontrol(cur, personel_id, sube_id=sube_id)
     if panel_pin_hash(p, salt) != ph:
+        panel_pin_yanlis_isaretle(cur, personel_id, sube_id=sube_id)
         raise HTTPException(403, "PIN hatalı")
+    panel_pin_basarili_temizle(cur, personel_id)
     u["yonetici"] = bool(u.get("panel_yonetici"))
     return u
 

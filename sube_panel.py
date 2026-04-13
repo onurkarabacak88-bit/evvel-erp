@@ -11,27 +11,54 @@ import os
 import pathlib
 import re
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from database import db
+from evvel_merkez_guard import merkez_mutasyon_korumasi
 from finans_core import kasa_bakiyesi
-from kasa_service import insert_kasa_hareketi, audit
+from kasa_service import insert_kasa_hareketi, audit, onay_ekle
 from personel_panel_auth import (
     count_personel_panel_yonetici,
     dogrula_personel_panel_pin,
+    dogrula_personel_panel_yonetici,
     list_personel_panel_secim,
     panel_pin_hash,
 )
 
 router = APIRouter(prefix="/api/sube-panel", tags=["sube-panel"])
 
+
+class MerkezPanelOnayBody(BaseModel):
+    """En az bir panel yöneticisi tanımlıyken PIN / yönetici rolü değişiminde zorunlu."""
+
+    onaylayan_personel_id: Optional[str] = None
+    onaylayan_pin: Optional[str] = None
+
+
+def _merkez_yonetici_onayla(cur: Any, body: MerkezPanelOnayBody) -> None:
+    oid = (body.onaylayan_personel_id or "").strip()
+    op = (body.onaylayan_pin or "").strip().replace(" ", "")
+    if not oid or len(op) != 4 or not op.isdigit():
+        raise HTTPException(
+            400,
+            "Panel yöneticisi onayı gerekli: onaylayan_personel_id ve 4 haneli onaylayan_pin gönderin.",
+        )
+    dogrula_personel_panel_yonetici(cur, oid, op)
+
+
 _X_RAPOR_MAX_BYTES = 8 * 1024 * 1024
 _X_UPLOAD_ROOT = pathlib.Path("data/x_rapor_uploads")
+_TR_TZ = ZoneInfo("Europe/Istanbul")
+
+
+def _now_tr() -> datetime:
+    return datetime.now(timezone.utc).astimezone(_TR_TZ)
 
 
 def _x_parse_model_json(raw: str) -> dict:
@@ -412,11 +439,11 @@ class KasaKilitAcModel(BaseModel):
     pin: str
 
 
-class PanelKullaniciPinGuncelle(BaseModel):
+class PanelKullaniciPinGuncelle(MerkezPanelOnayBody):
     pin: str
 
 
-class PersonelPanelYoneticiBody(BaseModel):
+class PersonelPanelYoneticiBody(MerkezPanelOnayBody):
     yonetici: bool = True
 
 
@@ -433,9 +460,27 @@ def kasa_kilit_ac(sube_id: str, body: KasaKilitAcModel):
         _sube_getir(cur, sube_id)
         ku = dogrula_personel_panel_pin(cur, pid, pin)
         onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
-        tarih_sistem = str(date.today())
-        saat_sistem = datetime.now().strftime("%H:%M:%S")
+        tr_now = _now_tr()
+        tarih_sistem = tr_now.strftime("%Y-%m-%d")
+        saat_sistem = tr_now.strftime("%H:%M:%S")
         from operasyon_defter import operasyon_defter_ekle
+
+        cur.execute(
+            """
+            SELECT k.sube_id, COALESCE(s.ad, k.sube_id) AS sube_adi
+            FROM sube_kasa_gun_acma k
+            LEFT JOIN subeler s ON s.id = k.sube_id
+            WHERE k.personel_id=%s AND k.tarih=CURRENT_DATE AND k.sube_id<>%s
+            LIMIT 1
+            """,
+            (pid, sube_id),
+        )
+        diger = cur.fetchone()
+        if diger:
+            raise HTTPException(
+                409,
+                f"Bu personel bugün başka şubede kasa açmış: {diger.get('sube_adi') or diger.get('sube_id')}",
+            )
 
         cur.execute(
             "SELECT 1 FROM sube_kasa_gun_acma WHERE sube_id=%s AND tarih=CURRENT_DATE",
@@ -516,7 +561,10 @@ def merkez_panel_pin_kullanicilar_legacy(sube_id: str):
         return list_personel_panel_secim(cur)
 
 
-@router.put("/merkez/personel/{personel_id}/panel-pin")
+@router.put(
+    "/merkez/personel/{personel_id}/panel-pin",
+    dependencies=[Depends(merkez_mutasyon_korumasi)],
+)
 def merkez_personel_panel_pin_guncelle(personel_id: str, body: PanelKullaniciPinGuncelle):
     """Personel panel PIN — tüm şube panellerinde aynı PIN ile geçerli olur."""
     p = (body.pin or "").strip()
@@ -525,9 +573,26 @@ def merkez_personel_panel_pin_guncelle(personel_id: str, body: PanelKullaniciPin
     salt = uuid.uuid4().hex[:12]
     ph = panel_pin_hash(p, salt)
     with db() as (conn, cur):
-        cur.execute("SELECT id FROM personel WHERE id=%s", (personel_id,))
-        if not cur.fetchone():
+        cur.execute(
+            "SELECT id, ad_soyad, sube_id FROM personel WHERE id=%s",
+            (personel_id,),
+        )
+        hedef = cur.fetchone()
+        if not hedef:
             raise HTTPException(404, "Personel bulunamadı")
+        hedef = dict(hedef)
+        hedef_ad = (hedef.get("ad_soyad") or "").strip() or "—"
+        sube_defter = (hedef.get("sube_id") or "").strip() or "sube-merkez"
+
+        n_yon = count_personel_panel_yonetici(cur)
+        onay_ad = ""
+        if n_yon >= 1:
+            _merkez_yonetici_onayla(cur, body)
+            oid = (body.onaylayan_personel_id or "").strip()
+            cur.execute("SELECT ad_soyad FROM personel WHERE id=%s", (oid,))
+            oa = cur.fetchone()
+            onay_ad = (dict(oa).get("ad_soyad") or "").strip() if oa else "—"
+
         cur.execute(
             """
             UPDATE personel
@@ -537,18 +602,55 @@ def merkez_personel_panel_pin_guncelle(personel_id: str, body: PanelKullaniciPin
             (salt, ph, personel_id),
         )
         audit(cur, "personel", personel_id, "PANEL_PIN_GUNCELLE")
+
+        from operasyon_defter import operasyon_defter_ekle
+
+        tr = _now_tr()
+        saat = tr.strftime("%H:%M:%S")
+        acik = (
+            f"Merkez panel PIN güncellendi — hedef={hedef_ad}"
+            + (f" — onaylayan={onay_ad}" if onay_ad else " — ilk kurulum (onaysız)")
+        )
+        operasyon_defter_ekle(
+            cur,
+            sube_defter,
+            "MERKEZ_PANEL_PIN_DEGISTI",
+            acik,
+            personel_id=(body.onaylayan_personel_id or "").strip() or personel_id,
+            personel_ad=onay_ad or hedef_ad,
+            bildirim_saati=saat,
+        )
     return {"success": True}
 
 
-@router.put("/merkez/personel/{personel_id}/panel-yonetici")
+@router.put(
+    "/merkez/personel/{personel_id}/panel-yonetici",
+    dependencies=[Depends(merkez_mutasyon_korumasi)],
+)
 def merkez_personel_panel_yonetici(personel_id: str, body: PersonelPanelYoneticiBody):
     """Panel yöneticisi (personel) — şube panelinde başka personele PIN atayabilen rol."""
     yon = bool(body.yonetici)
     with db() as (conn, cur):
-        cur.execute("SELECT id, aktif FROM personel WHERE id=%s", (personel_id,))
+        cur.execute(
+            "SELECT id, aktif, ad_soyad, sube_id FROM personel WHERE id=%s",
+            (personel_id,),
+        )
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "Personel bulunamadı")
+        row = dict(row)
+        hedef_ad = (row.get("ad_soyad") or "").strip() or "—"
+        sube_defter = (row.get("sube_id") or "").strip() or "sube-merkez"
+
+        n_yon = count_personel_panel_yonetici(cur)
+        onay_ad = ""
+        if n_yon >= 1:
+            _merkez_yonetici_onayla(cur, body)
+            oid = (body.onaylayan_personel_id or "").strip()
+            cur.execute("SELECT ad_soyad FROM personel WHERE id=%s", (oid,))
+            oa = cur.fetchone()
+            onay_ad = (dict(oa).get("ad_soyad") or "").strip() if oa else "—"
+
         if not yon:
             cur.execute(
                 """
@@ -564,6 +666,24 @@ def merkez_personel_panel_yonetici(personel_id: str, body: PersonelPanelYonetici
             (yon, personel_id),
         )
         audit(cur, "personel", personel_id, "PANEL_YONETICI" if yon else "PANEL_YONETICI_KALDIR")
+
+        from operasyon_defter import operasyon_defter_ekle
+
+        tr = _now_tr()
+        saat = tr.strftime("%H:%M:%S")
+        acik = (
+            f"Panel yöneticiliği={'evet' if yon else 'hayır'} — hedef={hedef_ad}"
+            + (f" — onaylayan={onay_ad}" if onay_ad else " — ilk kurulum (onaysız)")
+        )
+        operasyon_defter_ekle(
+            cur,
+            sube_defter,
+            "MERKEZ_PANEL_YONETICI_DEGISTI",
+            acik,
+            personel_id=(body.onaylayan_personel_id or "").strip() or personel_id,
+            personel_ad=onay_ad or hedef_ad,
+            bildirim_saati=saat,
+        )
     return {"success": True, "yonetici": yon}
 
 
@@ -573,7 +693,7 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
     Şubeyi aç — gün başına tek aktif kayıt (durum=acildi).
     Saat geçmiş olsa bile açılış, bu kayıt olmadan tamamlanmış sayılmaz.
     """
-    simdi = datetime.now()
+    simdi = _now_tr()
     saat_str = simdi.strftime("%H:%M")
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
@@ -582,6 +702,38 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                 403,
                 "Önce günlük kasa kilidini PIN ile açmalısınız.",
             )
+        cur.execute("""
+            SELECT personel_id, COALESCE(p.ad_soyad, '') AS ad_soyad
+            FROM sube_kasa_gun_acma k
+            LEFT JOIN personel p ON p.id = k.personel_id
+            WHERE k.sube_id=%s AND k.tarih=CURRENT_DATE
+            LIMIT 1
+        """, (sube_id,))
+        ka = cur.fetchone()
+        pid = (body.personel_id or "").strip() or str((ka or {}).get("personel_id") or "").strip()
+        if not pid:
+            raise HTTPException(400, "Açılış için PIN onaylayan personel bulunamadı.")
+        cur.execute("SELECT ad_soyad FROM personel WHERE id=%s", (pid,))
+        pr = cur.fetchone()
+        onay_ad = str((pr or {}).get("ad_soyad") or (ka or {}).get("ad_soyad") or "—").strip() or "—"
+
+        cur.execute(
+            """
+            SELECT a.sube_id, COALESCE(s.ad, a.sube_id) AS sube_adi
+            FROM sube_acilis a
+            LEFT JOIN subeler s ON s.id = a.sube_id
+            WHERE a.personel_id=%s AND a.tarih=CURRENT_DATE AND a.durum='acildi' AND a.sube_id<>%s
+            LIMIT 1
+            """,
+            (pid, sube_id),
+        )
+        diger_acilis = cur.fetchone()
+        if diger_acilis:
+            raise HTTPException(
+                409,
+                f"Bu personel bugün başka şubede açılış yapmış: {diger_acilis.get('sube_adi') or diger_acilis.get('sube_id')}",
+            )
+
         cur.execute("""
             SELECT id FROM sube_acilis
             WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='acildi'
@@ -604,10 +756,26 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
             aid,
             sube_id,
             saat_str,
-            body.personel_id,
-            body.aciklama,
+            pid,
+            (body.aciklama or f"Açılış onayı — {onay_ad} — {simdi.strftime('%Y-%m-%d %H:%M:%S')}"),
         ))
         audit(cur, "sube_acilis", aid, "ACILIS_PANEL")
+        tarih_sistem = simdi.strftime("%Y-%m-%d")
+        saat_sistem = simdi.strftime("%H:%M:%S")
+        from operasyon_defter import operasyon_defter_ekle
+
+        operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "ACILIS_PANEL_KAYIT",
+            (
+                f"Şube açılış kaydı — personel={onay_ad} "
+                f"tarih={tarih_sistem} saat={saat_sistem} acilis_id={aid}"
+            ),
+            personel_id=pid,
+            personel_ad=onay_ad,
+            bildirim_saati=saat_sistem,
+        )
     return {
         "success":       True,
         "id":            aid,
@@ -1045,15 +1213,24 @@ def sube_ciro_gir(sube_id: str, body: SubeCiroModel):
 
 
 class SubeAnlikGiderModel(BaseModel):
-    kategori:  str
-    tutar:     float
-    aciklama:  Optional[str] = None
+    kategori: str
+    tutar: float
+    aciklama: Optional[str] = None
+    personel_id: str
+    pin: str
 
 
 @router.post("/{sube_id}/anlik-gider")
 def sube_anlik_gider_gir(sube_id: str, body: SubeAnlikGiderModel):
     if body.tutar <= 0:
         raise HTTPException(400, "Tutar sıfırdan büyük olmalı")
+
+    pid_in = (body.personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    if not pid_in:
+        raise HTTPException(400, "personel_id gerekli")
+    if len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "4 haneli panel PIN gerekli")
 
     with db() as (conn, cur):
         sube = _sube_getir(cur, sube_id)
@@ -1068,19 +1245,167 @@ def sube_anlik_gider_gir(sube_id: str, body: SubeAnlikGiderModel):
                 "Önce şubeyi açmalısınız — panelde «Şubeyi Aç» ile kayıt oluşturun.",
             )
 
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        pid_panel = str(ku.get("id") or "").strip() or pid_in
+
         gid = str(uuid.uuid4())
-        cur.execute("""
+        acik = (body.aciklama or "").strip() or body.kategori
+        cur.execute(
+            """
             INSERT INTO anlik_giderler
-                (id, tarih, kategori, tutar, aciklama, sube, odeme_yontemi)
-            VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, 'nakit')
-        """, (gid, body.kategori, body.tutar,
-              body.aciklama or '', sube_id))
-
-        insert_kasa_hareketi(
-            cur, date.today(), 'ANLIK_GIDER', -abs(body.tutar),
-            f"Anlık gider: {body.aciklama or body.kategori} — {sube['ad']}",
-            'anlik_giderler', gid
+                (id, tarih, kategori, tutar, aciklama, sube, odeme_yontemi, durum, personel_id)
+            VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, 'nakit', 'onay_bekliyor', %s)
+            """,
+            (gid, body.kategori, body.tutar, acik, sube_id, pid_panel),
         )
-        audit(cur, 'anlik_giderler', gid, 'INSERT_PANEL')
+        onay_ekle(
+            cur,
+            "ANLIK_GIDER",
+            "anlik_giderler",
+            gid,
+            f"Şube anlık gider (bekliyor): {acik} — {sube.get('ad') or sube_id} — {onay_ad}",
+            float(body.tutar),
+            date.today(),
+        )
+        audit(cur, "anlik_giderler", gid, "INSERT_PANEL_ONAY_BEKLIYOR")
+        from operasyon_defter import operasyon_defter_ekle
 
-    return {"success": True, "id": gid}
+        tr_now = _now_tr()
+        saat_sistem = tr_now.strftime("%H:%M:%S")
+        operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "ANLIK_GIDER_ONAY_BEKLIYOR",
+            (
+                f"Anlık gider merkez onayına gönderildi — tutar={body.tutar} kategori={body.kategori} "
+                f"personel={onay_ad} anlik_id={gid}"
+            ),
+            personel_id=pid_panel,
+            personel_ad=onay_ad,
+            bildirim_saati=saat_sistem,
+        )
+
+    return {
+        "success": True,
+        "id": gid,
+        "bekliyor": True,
+        "mesaj": "Anlık gider merkez onayına iletildi. Onay sonrası kasaya işlenir.",
+    }
+
+
+class SubeMerkezNotBody(BaseModel):
+    metin: str
+    personel_id: str
+    pin: str
+
+
+@router.post("/{sube_id}/merkez-not")
+def sube_merkez_not_gonder(sube_id: str, body: SubeMerkezNotBody):
+    """Şube personeli: iade, sorun vb. metin — operasyon merkezinde listelenir."""
+    metin = (body.metin or "").strip()
+    if len(metin) < 3:
+        raise HTTPException(400, "Not metni en az 3 karakter olmalı")
+    if len(metin) > 4000:
+        raise HTTPException(400, "Not çok uzun (en fazla 4000 karakter)")
+    pid_in = (body.personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    if not pid_in:
+        raise HTTPException(400, "personel_id gerekli")
+    if len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "4 haneli panel PIN gerekli")
+
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        if not _bugun_kasa_acildi_mi(cur, sube_id):
+            raise HTTPException(403, "Önce günlük kasa kilidini PIN ile açmalısınız.")
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        pid_panel = str(ku.get("id") or "").strip() or pid_in
+        nid = str(uuid.uuid4())
+        cur.execute(
+            """
+            INSERT INTO sube_merkez_not (id, sube_id, metin, personel_id, personel_ad)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (nid, sube_id, metin, pid_panel, onay_ad),
+        )
+        audit(cur, "sube_merkez_not", nid, "INSERT")
+        from operasyon_defter import operasyon_defter_ekle
+
+        tr_now = _now_tr()
+        saat_sistem = tr_now.strftime("%H:%M:%S")
+        operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "SUBE_MERKEZ_NOT",
+            f"Merkez notu — personel={onay_ad} — {(metin[:200] + '…') if len(metin) > 200 else metin}",
+            personel_id=pid_panel,
+            personel_ad=onay_ad,
+            bildirim_saati=saat_sistem,
+        )
+
+    return {"success": True, "id": nid}
+
+
+class SubeUrunStokEkleBody(BaseModel):
+    """Şubeye gelen bardak/ürün (pozitif delta). PIN ile imzalanır; deftere URUN_STOK_EKLE."""
+
+    personel_id: str
+    pin: str
+    bardak_kucuk: Optional[int] = None
+    bardak_buyuk: Optional[int] = None
+    bardak_plastik: Optional[int] = None
+    su_adet: Optional[int] = None
+    redbull_adet: Optional[int] = None
+    soda_adet: Optional[int] = None
+    cookie_adet: Optional[int] = None
+    pasta_adet: Optional[int] = None
+    not_aciklama: Optional[str] = None
+
+
+@router.post("/{sube_id}/urun-stok-ekle")
+def sube_urun_stok_ekle(sube_id: str, body: SubeUrunStokEkleBody):
+    from operasyon_stok_motor import normalize_delta_body
+
+    pid_in = (body.personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    if not pid_in:
+        raise HTTPException(400, "personel_id gerekli")
+    if len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "4 haneli panel PIN gerekli")
+    try:
+        delta = normalize_delta_body(body.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        if not _bugun_kasa_acildi_mi(cur, sube_id):
+            raise HTTPException(403, "Önce günlük kasa kilidini PIN ile açmalısınız.")
+        if not _bugun_sube_acildi_mi(cur, sube_id):
+            raise HTTPException(403, "Önce şubeyi açmalısınız.")
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        pid_panel = str(ku.get("id") or "").strip() or pid_in
+        from operasyon_defter import operasyon_defter_ekle
+        import json as _json
+
+        tr_now = _now_tr()
+        saat_sistem = tr_now.strftime("%H:%M:%S")
+        payload = _json.dumps({"delta": delta}, ensure_ascii=False, separators=(",", ":"))
+        acik = "URUN_STOK_JSON:" + payload
+        if (body.not_aciklama or "").strip():
+            acik += " | " + (body.not_aciklama or "").strip()[:400]
+        rid = operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "URUN_STOK_EKLE",
+            acik,
+            personel_id=pid_panel,
+            personel_ad=onay_ad,
+            bildirim_saati=saat_sistem,
+        )
+        audit(cur, "operasyon_defter", rid, "URUN_STOK_EKLE")
+
+    return {"success": True, "defter_id": rid, "delta": delta}

@@ -4,7 +4,6 @@
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -20,7 +19,9 @@ from kasa_service import audit
 router = APIRouter(prefix="/api/sube-panel", tags=["sube-operasyon"])
 
 ACILIS_TOLERANS_DK = 10
-KONTROL_TOLERANS_DK = 5
+# KONTROL: açılış cevabından 30 dk sonra slot; slot açıldıktan sonra 30 dk içinde cevap (toplam ~60 dk hedef)
+KONTROL_SLOT_ACILIS_SONRASI_DK = 30
+KONTROL_CEVAP_PENCERE_DK = 30
 KAPANIS_TOLERANS_DK = 15
 CIKIS_TOLERANS_DK = 5
 
@@ -136,38 +137,56 @@ def _ensure_events(cur, sube_id: str, sube: dict) -> None:
             ),
         )
 
+    # KONTROL: yalnızca bugün ACILIS tamamlandıktan sonra oluşturulur (_sync_kontrol_slot_after_acilis)
+
+
+def _sync_kontrol_slot_after_acilis(cur, sube_id: str) -> None:
+    """ACILIS tamamlandıysa KONTROL satırını oluştur veya slotu cevap+30 dk (+30 dk cevap penceresi) yap."""
     cur.execute(
         """
-        SELECT 1 FROM sube_operasyon_event
-        WHERE sube_id=%s AND tarih=%s AND tip='KONTROL' AND sira_no=1
+        SELECT cevap_ts FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='ACILIS' AND durum='tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST
+        LIMIT 1
         """,
-        (sube_id, d),
+        (sube_id,),
     )
-    if not cur.fetchone():
-        ws = slot_ac + timedelta(hours=2)
-        we = slot_kap - timedelta(minutes=90)
-        if we <= ws:
-            kont_slot = ws + timedelta(minutes=30)
-        else:
-            span_min = max(1, int((we - ws).total_seconds() // 60))
-            h = int(hashlib.md5(f"{sube_id}{d}".encode()).hexdigest()[:8], 16)
-            off = h % span_min
-            kont_slot = ws + timedelta(minutes=off)
+    ra = cur.fetchone()
+    if not ra or not ra.get("cevap_ts"):
+        return
+    ac_cevap = ra["cevap_ts"]
+    slot = ac_cevap + timedelta(minutes=KONTROL_SLOT_ACILIS_SONRASI_DK)
+    deadline = slot + timedelta(minutes=KONTROL_CEVAP_PENCERE_DK)
+    cur.execute(
+        """
+        SELECT id, durum FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='KONTROL' AND sira_no=1
+        LIMIT 1
+        """,
+        (sube_id,),
+    )
+    rk = cur.fetchone()
+    if not rk:
         eid = str(uuid.uuid4())
         cur.execute(
             """
             INSERT INTO sube_operasyon_event
                 (id, sube_id, tarih, tip, sira_no, sistem_slot_ts, son_teslim_ts, durum)
-            VALUES (%s, %s, %s, 'KONTROL', 1, %s, %s, 'bekliyor')
+            VALUES (%s, %s, CURRENT_DATE, 'KONTROL', 1, %s, %s, 'bekliyor')
             """,
-            (
-                eid,
-                sube_id,
-                d,
-                kont_slot,
-                kont_slot + timedelta(minutes=KONTROL_TOLERANS_DK),
-            ),
+            (eid, sube_id, slot, deadline),
         )
+        return
+    if rk["durum"] not in ("bekliyor", "gecikti"):
+        return
+    cur.execute(
+        """
+        UPDATE sube_operasyon_event
+        SET sistem_slot_ts=%s, son_teslim_ts=%s
+        WHERE id=%s AND durum IN ('bekliyor','gecikti')
+        """,
+        (slot, deadline, rk["id"]),
+    )
 
 
 def _sync_acilis_event_if_acik(cur, sube_id: str) -> None:
@@ -251,6 +270,7 @@ def _pick_aktif(rows: List[dict], simdi: datetime) -> Optional[dict]:
 def build_panel_operasyon_blob(cur, sube_id: str, sube: dict) -> Dict[str, Any]:
     _ensure_events(cur, sube_id, sube)
     _sync_acilis_event_if_acik(cur, sube_id)
+    _sync_kontrol_slot_after_acilis(cur, sube_id)
     _refresh_durum(cur, sube_id)
     simdi = datetime.now()
     simdi_display = _display_now_tr()
@@ -309,6 +329,25 @@ def _insert_acilis_if_needed(cur, sube_id: str, personel_id: Optional[str], acik
             403,
             "Önce günlük kasa kilidini şube panelinden PIN ile açmalısınız.",
         )
+    pid = (personel_id or "").strip()
+    if not pid:
+        raise HTTPException(400, "Açılış için personel doğrulaması zorunlu.")
+    cur.execute(
+        """
+        SELECT a.sube_id, COALESCE(s.ad, a.sube_id) AS sube_adi
+        FROM sube_acilis a
+        LEFT JOIN subeler s ON s.id = a.sube_id
+        WHERE a.personel_id=%s AND a.tarih=CURRENT_DATE AND a.durum='acildi' AND a.sube_id<>%s
+        LIMIT 1
+        """,
+        (pid, sube_id),
+    )
+    diger = cur.fetchone()
+    if diger:
+        raise HTTPException(
+            409,
+            f"Bu personel bugün başka şubede açılış yapmış: {diger.get('sube_adi') or diger.get('sube_id')}",
+        )
     cur.execute(
         """
         SELECT id FROM sube_acilis
@@ -319,14 +358,14 @@ def _insert_acilis_if_needed(cur, sube_id: str, personel_id: Optional[str], acik
     if cur.fetchone():
         return
     aid = str(uuid.uuid4())
-    saat_str = datetime.now().strftime("%H:%M")
+    saat_str = _display_now_tr().strftime("%H:%M")
     cur.execute(
         """
         INSERT INTO sube_acilis
             (id, sube_id, tarih, acilis_saati, personel_id, durum, aciklama)
         VALUES (%s, %s, CURRENT_DATE, %s, %s, 'acildi', %s)
         """,
-        (aid, sube_id, saat_str, personel_id, aciklama),
+        (aid, sube_id, saat_str, pid, aciklama),
     )
     audit(cur, "sube_acilis", aid, "ACILIS_OPERASYON")
 
@@ -334,6 +373,7 @@ def _insert_acilis_if_needed(cur, sube_id: str, personel_id: Optional[str], acik
 @router.post("/{sube_id}/operasyon/event/{event_id}/tamamla")
 def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
     simdi = datetime.now()
+    simdi_tr = _display_now_tr()
     with db() as (conn, cur):
         sube = _sube_getir(cur, sube_id)
         cur.execute(
@@ -367,21 +407,34 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             ku = dogrula_personel_panel_pin(cur, pid_in, pin)
             onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
             pid_panel = str(ku.get("id") or "").strip() or None
-            saat_sistem = simdi.strftime("%H:%M")
+            zorunlu_int = (
+                ("bardak_kucuk", body.bardak_kucuk),
+                ("bardak_buyuk", body.bardak_buyuk),
+                ("bardak_plastik", body.bardak_plastik),
+                ("su_adet", body.su_adet),
+                ("redbull_adet", body.redbull_adet),
+                ("soda_adet", body.soda_adet),
+                ("cookie_adet", body.cookie_adet),
+                ("pasta_adet", body.pasta_adet),
+            )
+            for ad, deger in zorunlu_int:
+                if deger is None:
+                    raise HTTPException(400, f"Açılış için {ad} zorunlu")
+                if int(deger) < 0:
+                    raise HTTPException(400, f"Açılış için {ad} negatif olamaz")
+            saat_sistem = simdi_tr.strftime("%H:%M:%S")
             stok = {
-                "bardak_kucuk": int(body.bardak_kucuk or 0),
-                "bardak_buyuk": int(body.bardak_buyuk or 0),
-                "bardak_plastik": int(body.bardak_plastik or 0),
-                "su_adet": int(body.su_adet or 0),
-                "redbull_adet": int(body.redbull_adet or 0),
-                "soda_adet": int(body.soda_adet or 0),
-                "cookie_adet": int(body.cookie_adet or 0),
-                "pasta_adet": int(body.pasta_adet or 0),
+                "bardak_kucuk": int(body.bardak_kucuk),
+                "bardak_buyuk": int(body.bardak_buyuk),
+                "bardak_plastik": int(body.bardak_plastik),
+                "su_adet": int(body.su_adet),
+                "redbull_adet": int(body.redbull_adet),
+                "soda_adet": int(body.soda_adet),
+                "cookie_adet": int(body.cookie_adet),
+                "pasta_adet": int(body.pasta_adet),
             }
-            if any(v < 0 for v in stok.values()):
-                raise HTTPException(400, "Açılış stok sayımında negatif değer olamaz")
             aciklama_ins = (
-                f"Operasyon ACILIS — {onay_ad} — tarih={date.today()} saat={saat_sistem} kasa={body.kasa_sayim}"
+                f"Operasyon ACILIS — {onay_ad} — tarih={simdi_tr.strftime('%Y-%m-%d')} saat={saat_sistem} kasa={body.kasa_sayim}"
             )
             _insert_acilis_if_needed(cur, sube_id, pid_panel, aciklama_ins)
             cur.execute(
@@ -395,7 +448,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     simdi,
                     saat_sistem,
                     body.kasa_sayim,
-                    json.dumps({"acilis_stok_sayim": stok}, ensure_ascii=False),
+                    json.dumps({"acilis_stok_sayim": stok, "acilis_tr_ts": simdi_tr.isoformat(timespec="seconds")}, ensure_ascii=False),
                     event_id,
                 ),
             )
@@ -500,45 +553,59 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             ku = dogrula_personel_panel_pin(cur, pid_in, pin)
             onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
             pid_panel = str(ku.get("id") or "").strip() or None
-            bildirim_saat = (body.personel_saat or "").strip() or simdi.strftime("%H:%M")
+            bildirim_saat = (body.personel_saat or "").strip() or simdi_tr.strftime("%H:%M:%S")
 
-            import sube_panel as sp
+            for ad, deger in (
+                ("ciro_nakit", body.ciro_nakit),
+                ("ciro_pos", body.ciro_pos),
+                ("ciro_online", body.ciro_online),
+                ("bardak_kucuk", body.bardak_kucuk),
+                ("bardak_buyuk", body.bardak_buyuk),
+                ("bardak_plastik", body.bardak_plastik),
+                ("su_adet", body.su_adet),
+                ("redbull_adet", body.redbull_adet),
+                ("soda_adet", body.soda_adet),
+                ("cookie_adet", body.cookie_adet),
+                ("pasta_adet", body.pasta_adet),
+            ):
+                if deger is None:
+                    raise HTTPException(400, f"Kapanış için {ad} zorunlu")
+                if float(deger) < 0:
+                    raise HTTPException(400, f"Kapanış için {ad} negatif olamaz")
 
-            cn = float(body.ciro_nakit or 0)
-            cp = float(body.ciro_pos or 0)
-            co = float(body.ciro_online or 0)
-            ciro_form_toplam = cn + cp + co
-
-            ciro_gitti = sp._bugun_ciro_taslak_bekliyor(cur, sube_id) is not None or sp._bugun_ciro_var_mi(
-                cur, sube_id
+            cn = float(body.ciro_nakit)
+            cp = float(body.ciro_pos)
+            co = float(body.ciro_online)
+            k_stok = {
+                "bardak_kucuk": int(body.bardak_kucuk),
+                "bardak_buyuk": int(body.bardak_buyuk),
+                "bardak_plastik": int(body.bardak_plastik),
+                "su_adet": int(body.su_adet),
+                "redbull_adet": int(body.redbull_adet),
+                "soda_adet": int(body.soda_adet),
+                "cookie_adet": int(body.cookie_adet),
+                "pasta_adet": int(body.pasta_adet),
+            }
+            _upsert_ciro_taslak(
+                cur,
+                sube_id,
+                cn,
+                cp,
+                co,
+                "Operasyon KAPANIS (X nakit/POS/online)",
+                personel_id=pid_panel,
+                gonderen_ad=onay_ad,
+                bildirim_saati=bildirim_saat,
+                panel_kullanici_id=None,
+                audit_etiket="KAPANIS_TASLAK",
             )
-            if ciro_form_toplam > 0:
-                _upsert_ciro_taslak(
-                    cur,
-                    sube_id,
-                    cn,
-                    cp,
-                    co,
-                    "Operasyon KAPANIS (X nakit/POS/online)",
-                    personel_id=pid_panel,
-                    gonderen_ad=onay_ad,
-                    bildirim_saati=bildirim_saat,
-                    panel_kullanici_id=None,
-                    audit_etiket="KAPANIS_TASLAK",
-                )
-                ciro_gitti = True
-            if not ciro_gitti and not body.ciro_gonderim_onay:
-                raise HTTPException(
-                    400,
-                    "Kapanış: X’ten nakit/POS/online tutarlarını girin, veya önce ciro taslağı gönderin / «ciro gönderildi» onayını işaretleyin.",
-                )
             ks = body.kasa_sayim if body.kasa_sayim is not None else body.teslim
             cur.execute(
                 """
                 UPDATE sube_operasyon_event
                 SET durum='tamamlandi', cevap_ts=%s,
                     personel_saat=%s, kasa_sayim=%s, teslim=%s, devir=%s,
-                    x_raporu_onay=TRUE, ciro_gonderim_onay=TRUE
+                    x_raporu_onay=TRUE, ciro_gonderim_onay=TRUE, meta=%s
                 WHERE id=%s
                 """,
                 (
@@ -547,6 +614,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     ks,
                     body.teslim,
                     body.devir,
+                    json.dumps({"kapanis_stok_sayim": k_stok, "x_rapor": {"nakit": cn, "pos": cp, "online": co}}, ensure_ascii=False),
                     event_id,
                 ),
             )
@@ -556,7 +624,9 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             defter_satir = (
                 f"KAPANIS teslim={body.teslim} devir={body.devir} kasa_sayim={ks} | "
                 f"X ciro(nakit,pos,online)=({cn},{cp},{co}) | "
-                f"onaylayan={onay_ad} tarih={date.today()} saat={bildirim_saat}"
+                f"stok bardak(kucuk/buyuk/plastik)=({k_stok['bardak_kucuk']}/{k_stok['bardak_buyuk']}/{k_stok['bardak_plastik']}) "
+                f"urun(su/redbull/soda/cookie/pasta)=({k_stok['su_adet']}/{k_stok['redbull_adet']}/{k_stok['soda_adet']}/{k_stok['cookie_adet']}/{k_stok['pasta_adet']}) | "
+                f"onaylayan={onay_ad} tarih={simdi_tr.strftime('%Y-%m-%d')} saat={bildirim_saat}"
             )
             operasyon_defter_ekle(
                 cur,
@@ -568,6 +638,9 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 personel_ad=onay_ad,
                 bildirim_saati=bildirim_saat,
             )
+            from operasyon_stok_motor import kapanis_stok_uyarilari_yaz
+
+            kapanis_stok_uyarilari_yaz(cur, sube_id, k_stok)
 
         elif tip == "CIKIS":
             if body.kasa_sayim is None or body.kasa_sayim < 0:

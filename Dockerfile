@@ -1,5 +1,5 @@
 FROM node:20-slim AS frontend
- 
+
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -22,5 +22,7 @@ COPY *.py ./
 
 RUN mkdir -p data/x_rapor_uploads
 
+# Railway / Render / Fly: gerçek port $PORT ile gelir. Sabit 8080 = deploy kırılır.
+ENV PORT=8080
 EXPOSE 8080
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT}"]

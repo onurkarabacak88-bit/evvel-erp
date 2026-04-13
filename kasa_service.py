@@ -130,6 +130,29 @@ def iptal_kasa_hareketi(cur, kaynak_id, kaynak_tablo, islem_turu, iptal_turu, ac
         raise Exception(f"İptal kaydı yazılamadı — {iptal_turu} / {kaynak_id}")
 
 
+def vadeli_kasadan_odenen_toplam(cur, vadeli_id: str) -> float:
+    """
+    Vadeli alıma ait nakit VADELI_ODEME toplamı.
+    Eski kayıtlar odeme_plani.id ile, kısmi ödeme ve yeni tam ödeme vadeli_alimlar.id ile tutulabilir — ikisini de sayar.
+    """
+    cur.execute(
+        """
+        SELECT COALESCE(SUM(ABS(tutar)), 0) AS t
+        FROM kasa_hareketleri
+        WHERE islem_turu = 'VADELI_ODEME' AND kasa_etkisi = true AND durum = 'aktif'
+        AND (
+            (kaynak_tablo = 'vadeli_alimlar' AND kaynak_id = %s)
+            OR kaynak_id IN (
+                SELECT id FROM odeme_plani
+                WHERE kaynak_tablo = 'vadeli_alimlar' AND kaynak_id = %s
+            )
+        )
+        """,
+        (vadeli_id, vadeli_id),
+    )
+    return float(cur.fetchone()["t"])
+
+
 def vadeli_alim_kapat(cur, vadeli_id: str, tarih: str):
     """
     Vadeli alım kapatma — 3 tabloyu atomik kapatır (çağıran transaction içinde çalışır).
