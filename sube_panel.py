@@ -1079,10 +1079,16 @@ def sube_personel_panel_public(payload: dict) -> dict:
     vd = p.get("vardiya_devir")
     if isinstance(vd, dict):
         pk = vd.get("panel_kullanicilar")
+        row = vd.get("vardiya_devir")
+        vdur = None
+        if isinstance(row, dict):
+            vdur = row.get("durum")
         p["vardiya_devir"] = {
-            "bilgi": "Vardiya / kasa detayı personel ekranında gösterilmez.",
+            "bilgi": "Nakit/POS/online tutarları özetlenmez; imza adımları panelde.",
             "vardiya_devir_pin_zorunlu": vd.get("vardiya_devir_pin_zorunlu"),
             "panel_kullanici_sayisi": len(pk) if isinstance(pk, list) else 0,
+            "sabahci_zorunlu_id": vd.get("sabahci_zorunlu_id"),
+            "vardiya_durum": vdur,
         }
     op = p.get("operasyon")
     if isinstance(op, dict):
@@ -1126,12 +1132,13 @@ def sube_panel_getir(sube_id: str):
 
 
 class SubeCiroModel(BaseModel):
-    nakit:        float = 0
-    pos:          float = 0
-    online:       float = 0
-    aciklama:     Optional[str] = None
-    force:        bool = False
-    personel_id:  Optional[str] = None
+    nakit:       float = 0
+    pos:         float = 0
+    online:      float = 0
+    aciklama:    Optional[str] = None
+    force:       bool = False
+    personel_id: str
+    pin:         str
 
 
 @router.post("/{sube_id}/ciro")
@@ -1139,14 +1146,22 @@ def sube_ciro_gir(sube_id: str, body: SubeCiroModel):
     """
     Personel ciro girişi — doğrudan ciroya yazılmaz; ciro_taslak (bekliyor) oluşturur.
     Merkez «Ciro onayı» ekranından onaylanınca ciro + kasa işlenir.
+    Panel PIN zorunlu; gönderen adı ve bildirim saati merkez ekranına yazılır.
     """
-    nakit  = float(body.nakit  or 0)
-    pos    = float(body.pos    or 0)
+    nakit = float(body.nakit or 0)
+    pos = float(body.pos or 0)
     online = float(body.online or 0)
     toplam = nakit + pos + online
 
     if toplam <= 0:
         raise HTTPException(400, "En az bir tutar girilmeli")
+
+    pid_in = (body.personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    if not pid_in:
+        raise HTTPException(400, "personel_id gerekli")
+    if len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "4 haneli panel PIN gerekli")
 
     with db() as (conn, cur):
         sube = _sube_getir(cur, sube_id)
@@ -1160,6 +1175,12 @@ def sube_ciro_gir(sube_id: str, body: SubeCiroModel):
                 403,
                 "Önce şubeyi açmalısınız — panelde «Şubeyi Aç» ile kayıt oluşturun.",
             )
+
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        pid_panel = str(ku.get("id") or "").strip() or pid_in
+        tr_now = _now_tr()
+        saat_sistem = tr_now.strftime("%H:%M:%S")
 
         if _bugun_ciro_var_mi(cur, sube_id):
             raise HTTPException(
@@ -1189,8 +1210,9 @@ def sube_ciro_gir(sube_id: str, body: SubeCiroModel):
         cur.execute(
             """
             INSERT INTO ciro_taslak
-                (id, sube_id, tarih, nakit, pos, online, aciklama, personel_id, durum)
-            VALUES (%s, %s, CURRENT_DATE, %s, %s, %s, %s, %s, 'bekliyor')
+                (id, sube_id, tarih, nakit, pos, online, aciklama, personel_id, durum,
+                 gonderen_ad, bildirim_saati, panel_kullanici_id)
+            VALUES (%s, %s, CURRENT_DATE, %s, %s, %s, %s, %s, 'bekliyor', %s, %s, %s)
             """,
             (
                 tid,
@@ -1199,7 +1221,10 @@ def sube_ciro_gir(sube_id: str, body: SubeCiroModel):
                 pos,
                 online,
                 body.aciklama or "Şube panelinden",
-                body.personel_id or None,
+                pid_panel,
+                onay_ad,
+                saat_sistem,
+                pid_panel,
             ),
         )
         audit(cur, "ciro_taslak", tid, "TASLAK_BEKLIYOR")
@@ -1349,7 +1374,7 @@ def sube_merkez_not_gonder(sube_id: str, body: SubeMerkezNotBody):
 
 
 class SubeUrunStokEkleBody(BaseModel):
-    """Şubeye gelen bardak/ürün (pozitif delta). PIN ile imzalanır; deftere URUN_STOK_EKLE."""
+    """Şubeye gelen bardak/ürün/sarf (pozitif delta). PIN ile imzalanır; deftere URUN_STOK_EKLE."""
 
     personel_id: str
     pin: str
@@ -1361,6 +1386,13 @@ class SubeUrunStokEkleBody(BaseModel):
     soda_adet: Optional[int] = None
     cookie_adet: Optional[int] = None
     pasta_adet: Optional[int] = None
+    sut_litre: Optional[int] = None
+    surup_adet: Optional[int] = None
+    kahve_paket: Optional[int] = None
+    karton_bardak: Optional[int] = None
+    kapak_adet: Optional[int] = None
+    pecete_paket: Optional[int] = None
+    diger_sarf: Optional[int] = None
     not_aciklama: Optional[str] = None
 
 

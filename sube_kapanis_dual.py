@@ -10,12 +10,13 @@ Prefix: /api/sube-panel
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from database import db
 from evvel_merkez_guard import merkez_mutasyon_korumasi
@@ -245,7 +246,11 @@ def _legacy_personel_id_bul(cur, personel_id: Optional[str], ad: str) -> str:
 
 
 class VardiyaDevirAdim1(BaseModel):
-    """1. imza: sabahçı (devreden) — `sabahci_devreden_id` = personel_id."""
+    """1. imza: sabahçı (devreden) — `sabahci_devreden_id` = personel_id.
+
+    Bardak ve ürün sayımları zorunludur (açılış / devir tutarlılığı; >= 0 tam sayı).
+    """
+
     sabahci_devreden_id: str
     pin: str
     nakit: float = 0
@@ -256,6 +261,14 @@ class VardiyaDevirAdim1(BaseModel):
     x_raporu_gonderildi: bool = False
     ciro_gonderildi: bool = False
     operasyon_event_id: Optional[str] = None
+    bardak_kucuk: int = Field(..., ge=0)
+    bardak_buyuk: int = Field(..., ge=0)
+    bardak_plastik: int = Field(..., ge=0)
+    su_adet: int = Field(..., ge=0)
+    redbull_adet: int = Field(..., ge=0)
+    soda_adet: int = Field(..., ge=0)
+    cookie_adet: int = Field(..., ge=0)
+    pasta_adet: int = Field(..., ge=0)
 
 
 class VardiyaDevirAdim2(BaseModel):
@@ -363,6 +376,19 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
         if cur.fetchone():
             raise HTTPException(409, "Bugün için vardiya devri kaydı zaten başlatılmış")
 
+        stok_sayim = {
+            "bardak_kucuk": int(body.bardak_kucuk),
+            "bardak_buyuk": int(body.bardak_buyuk),
+            "bardak_plastik": int(body.bardak_plastik),
+            "su_adet": int(body.su_adet),
+            "redbull_adet": int(body.redbull_adet),
+            "soda_adet": int(body.soda_adet),
+            "cookie_adet": int(body.cookie_adet),
+            "pasta_adet": int(body.pasta_adet),
+        }
+        meta_obj = {"vardiya_devir_stok_sayim": stok_sayim}
+        meta_sql = json.dumps(meta_obj, ensure_ascii=False)
+
         kid = str(uuid.uuid4())
         cur.execute(
             """
@@ -370,8 +396,8 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
                 (id, sube_id, tarih, olay, nakit, pos, online, teslim, devir,
                  kapanisci_id, kapanisci_onay_ts, durum,
                  operasyon_event_id, x_raporu_onay, ciro_gonderim_onay,
-                 sabahci_personel_id, aksamci_personel_id)
-            VALUES (%s, %s, CURRENT_DATE, 'vardiya_sabah_aksam_devri', %s, %s, %s, %s, %s, NULL, %s, 'acilis_bekliyor', %s, %s, %s, %s, NULL)
+                 sabahci_personel_id, aksamci_personel_id, meta)
+            VALUES (%s, %s, CURRENT_DATE, 'vardiya_sabah_aksam_devri', %s, %s, %s, %s, %s, NULL, %s, 'acilis_bekliyor', %s, %s, %s, %s, NULL, %s::jsonb)
             """,
             (
                 kid,
@@ -386,6 +412,7 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
                 body.x_raporu_gonderildi,
                 body.ciro_gonderildi,
                 body.sabahci_devreden_id,
+                meta_sql,
             ),
         )
         audit(cur, "kapanis_kayit", kid, "VARDIYA_DEVIR_ADIM1_SABAH")
@@ -405,6 +432,7 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
             bildirim_saati=simdi.strftime("%H:%M:%S"),
         )
 
+        tr_s = simdi.strftime("%H:%M:%S")
         _upsert_ciro_taslak(
             cur,
             sube_id,
@@ -412,6 +440,10 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
             float(body.pos),
             float(body.online),
             "Sabahçı vardiya devri (adım-1)",
+            personel_id=str(body.sabahci_devreden_id),
+            gonderen_ad=onay_ad,
+            bildirim_saati=tr_s,
+            panel_kullanici_id=str(body.sabahci_devreden_id),
         )
 
     return {
@@ -515,6 +547,12 @@ def legacy_kapanis_adim1(sube_id: str, body: dict = Body(...)):
     sid = body.get("sabahci_devreden_id") or body.get("kapanisci_id")
     if not sid:
         raise HTTPException(400, "sabahci_devreden_id (veya eski kapanisci_id) gerekli")
+    def _zint(k: str) -> int:
+        v = body.get(k)
+        if v is None or (isinstance(v, str) and not str(v).strip()):
+            return 0
+        return int(v)
+
     mapped = VardiyaDevirAdim1(
         sabahci_devreden_id=sid,
         pin=body.get("pin", ""),
@@ -526,6 +564,14 @@ def legacy_kapanis_adim1(sube_id: str, body: dict = Body(...)):
         x_raporu_gonderildi=bool(body.get("x_raporu_gonderildi")),
         ciro_gonderildi=bool(body.get("ciro_gonderildi")),
         operasyon_event_id=body.get("operasyon_event_id"),
+        bardak_kucuk=_zint("bardak_kucuk"),
+        bardak_buyuk=_zint("bardak_buyuk"),
+        bardak_plastik=_zint("bardak_plastik"),
+        su_adet=_zint("su_adet"),
+        redbull_adet=_zint("redbull_adet"),
+        soda_adet=_zint("soda_adet"),
+        cookie_adet=_zint("cookie_adet"),
+        pasta_adet=_zint("pasta_adet"),
     )
     return vardiya_devri_adim1(sube_id, mapped)
 

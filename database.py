@@ -1048,6 +1048,13 @@ def init_db():
                     ALTER TABLE kapanis_kayit
                     ADD COLUMN aksamci_personel_id TEXT REFERENCES personel(id);
                 END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'kapanis_kayit'
+                      AND column_name = 'meta'
+                ) THEN
+                    ALTER TABLE kapanis_kayit ADD COLUMN meta JSONB;
+                END IF;
             EXCEPTION WHEN others THEN NULL;
             END $$;
         """)
