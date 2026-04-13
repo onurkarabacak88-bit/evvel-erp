@@ -4,9 +4,38 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Şube paneli</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
+    :root {
+      --bg0: #0c1222;
+      --bg1: #121a2e;
+      --surface: rgba(30, 41, 59, 0.72);
+      --surface-solid: #1e293b;
+      --border: rgba(148, 163, 184, 0.18);
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-dim: rgba(56, 189, 248, 0.15);
+      --ok: #34d399;
+      --warn: #fbbf24;
+      --danger: #f87171;
+      --radius: 14px;
+      --radius-sm: 10px;
+      --shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+    }
     * { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    body {
+      font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background: var(--bg0);
+      background-image:
+        radial-gradient(ellipse 120% 80% at 50% -20%, rgba(56, 189, 248, 0.12), transparent 50%),
+        radial-gradient(ellipse 80% 50% at 100% 100%, rgba(99, 102, 241, 0.08), transparent 45%);
+    }
     body.evvel-shake { animation: evvelShake 0.35s ease-in-out 2; }
     @keyframes evvelShake {
       0%, 100% { transform: translateX(0); }
@@ -15,55 +44,308 @@
       60% { transform: translateX(-4px); }
       80% { transform: translateX(4px); }
     }
-    .wrap { max-width: 520px; margin: 0 auto; padding: 20px; }
-    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }
-    .muted { color: #94a3b8; font-size: 0.875rem; margin-bottom: 20px; }
-    .card { background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 16px; border: 1px solid #334155; }
-    label { display: block; font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; }
-    select, input, button { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; font-size: 1rem; }
-    button { background: #3b82f6; border: none; font-weight: 600; cursor: pointer; margin-top: 12px; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    button.secondary { background: #475569; }
-    .err { color: #fca5a5; font-size: 0.875rem; margin-top: 8px; }
-    .overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.92); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+    .wrap {
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 16px 18px 32px;
+    }
+    @media (min-width: 480px) {
+      .wrap { padding: 20px 22px 40px; }
+    }
+    .app-header {
+      margin-bottom: 20px;
+      padding: 16px 18px;
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, var(--surface-solid) 0%, rgba(30, 41, 59, 0.85) 100%);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+    }
+    .app-header__row {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .app-header__mark {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: var(--accent-dim);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.35rem;
+      flex-shrink: 0;
+    }
+    h1 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      margin: 0 0 4px;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+    }
+    .app-header .muted {
+      margin: 0;
+      font-size: 0.8125rem;
+      color: var(--muted);
+    }
+    .muted { color: var(--muted); font-size: 0.875rem; }
+    .section-card {
+      background: var(--surface);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-radius: var(--radius);
+      padding: 18px 18px 16px;
+      margin-bottom: 14px;
+      border: 1px solid var(--border);
+      box-shadow: 0 2px 16px rgba(0, 0, 0, 0.2);
+    }
+    .card {
+      background: var(--surface);
+      backdrop-filter: blur(12px);
+      border-radius: var(--radius);
+      padding: 18px;
+      margin-bottom: 14px;
+      border: 1px solid var(--border);
+      box-shadow: 0 2px 16px rgba(0, 0, 0, 0.2);
+    }
+    .section-title {
+      font-size: 0.9375rem;
+      font-weight: 700;
+      margin: 0 0 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+      color: #e2e8f0;
+      letter-spacing: -0.01em;
+    }
+    label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    select, input, textarea {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: rgba(15, 23, 42, 0.65);
+      color: var(--text);
+      font-size: 1rem;
+      font-family: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    select:focus, input:focus, textarea:focus {
+      outline: none;
+      border-color: rgba(56, 189, 248, 0.55);
+      box-shadow: 0 0 0 3px var(--accent-dim);
+    }
+    textarea { resize: vertical; min-height: 88px; }
+    button {
+      width: 100%;
+      padding: 13px 16px;
+      border-radius: var(--radius-sm);
+      border: none;
+      background: linear-gradient(180deg, #0ea5e9 0%, #0284c7 100%);
+      color: #fff;
+      font-size: 0.9375rem;
+      font-weight: 700;
+      font-family: inherit;
+      cursor: pointer;
+      margin-top: 12px;
+      box-shadow: 0 2px 12px rgba(14, 165, 233, 0.35);
+      transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+    }
+    button:active:not(:disabled) { transform: scale(0.98); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+    button.secondary {
+      background: rgba(71, 85, 105, 0.9);
+      box-shadow: none;
+    }
+    .btn-link {
+      margin-top: 14px !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      color: var(--muted) !important;
+      font-weight: 500 !important;
+      font-size: 0.8125rem !important;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      text-align: left;
+      padding: 8px 0 !important;
+    }
+    .section-card.err {
+      border-color: rgba(248, 113, 113, 0.4);
+      color: var(--danger);
+      font-weight: 500;
+    }
+    .overlay-inner h1 {
+      font-size: 1.2rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin: 0 0 10px;
+    }
+    #opTitle {
+      font-size: 1.05rem;
+      line-height: 1.35;
+    }
+    .pin-user-row {
+      padding: 10px 14px;
+      margin-bottom: 8px;
+      background: rgba(15, 23, 42, 0.4);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      font-size: 0.875rem;
+    }
+    .pin-user-row:last-child { margin-bottom: 0; }
+    input[type="file"] {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: var(--radius-sm);
+      border: 1px dashed var(--border);
+      background: rgba(15, 23, 42, 0.45);
+      font-size: 0.8125rem;
+      font-family: inherit;
+      color: var(--muted);
+    }
+    .ciro-durum-ok {
+      padding: 12px 14px;
+      border-radius: var(--radius-sm);
+      background: rgba(52, 211, 153, 0.1);
+      border: 1px solid rgba(52, 211, 153, 0.35);
+      font-size: 0.875rem;
+      margin-bottom: 14px;
+    }
+    #kasaCooldown {
+      display: none;
+      margin-top: 8px;
+      font-size: 0.875rem;
+      color: var(--warn);
+      font-weight: 600;
+    }
+    #kasaCooldown.is-on {
+      display: block;
+    }
+    .err { color: var(--danger); font-size: 0.875rem; margin-top: 10px; font-weight: 500; }
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(8, 12, 22, 0.88);
+      backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 20px;
+    }
     .overlay-inner { width: 100%; max-width: 400px; }
-    .overlay.operasyon-zorunlu { z-index: 9500; background: rgba(15,23,42,0.97); }
+    .overlay.operasyon-zorunlu { z-index: 9500; background: rgba(8, 12, 22, 0.94); }
     .overlay.operasyon-zorunlu .overlay-inner { max-width: 440px; }
-    .overlay.operasyon-zorunlu.gecikti .overlay-inner { box-shadow: 0 0 0 2px #ea580c, 0 20px 50px rgba(0,0,0,0.5); }
-    .overlay.operasyon-zorunlu.kritik .overlay-inner { box-shadow: 0 0 0 2px #dc2626, 0 20px 50px rgba(220,38,38,0.25); }
-    .pin { letter-spacing: 0.35em; text-align: center; font-size: 1.25rem; }
-    .gorev { padding: 10px 0; border-bottom: 1px solid #334155; font-size: 0.9rem; }
+    .overlay.operasyon-zorunlu.gecikti .overlay-inner {
+      box-shadow: 0 0 0 2px #ea580c, 0 24px 48px rgba(0, 0, 0, 0.55);
+    }
+    .overlay.operasyon-zorunlu.kritik .overlay-inner {
+      box-shadow: 0 0 0 2px #dc2626, 0 24px 48px rgba(220, 38, 38, 0.2);
+    }
+    .pin { letter-spacing: 0.4em; text-align: center; font-size: 1.35rem; font-weight: 600; }
+    .gorev-row {
+      padding: 12px 0 12px 14px;
+      border-left: 3px solid var(--accent);
+      margin-bottom: 10px;
+      background: rgba(15, 23, 42, 0.35);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      font-size: 0.9rem;
+      line-height: 1.45;
+    }
+    .gorev-row.done {
+      opacity: 0.55;
+      border-left-color: var(--ok);
+    }
+    .gorev-row strong { display: block; margin-bottom: 2px; color: #f8fafc; }
+    .gorev-row > .muted { display: block; margin-top: 6px; font-size: 0.8125rem; line-height: 1.45; }
+    .gorev { padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
     .gorev.done { opacity: 0.55; }
-    .api-setup { background: #422006; border-color: #92400e; padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 0.85rem; }
-    .api-setup input { margin-top: 8px; }
-    .op-badge { display: inline-block; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px; }
-    .op-badge.bekliyor { background: #334155; color: #e2e8f0; }
-    .op-badge.gecikti { background: #9a3412; color: #ffedd5; }
-    .chk { width: auto; margin-right: 8px; vertical-align: middle; }
-    /* Kasa / şube açılış / ACILIS operasyon — güçlü dikkat çekici yanıp sönme */
+    .info-banner {
+      text-align: center;
+      font-size: 0.8125rem;
+      color: var(--muted);
+      margin: 16px 0;
+      padding: 12px 14px;
+      background: rgba(56, 189, 248, 0.06);
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(56, 189, 248, 0.12);
+      line-height: 1.5;
+    }
+    .stok-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px 14px;
+      margin-bottom: 14px;
+    }
+    .stok-item { min-width: 0; }
+    .stok-item input { margin-top: 0; }
+    @media (max-width: 380px) {
+      .stok-grid { grid-template-columns: 1fr; }
+    }
+    .api-setup {
+      background: linear-gradient(135deg, rgba(120, 53, 15, 0.5) 0%, rgba(69, 26, 3, 0.6) 100%);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      padding: 16px;
+      border-radius: var(--radius);
+      margin-bottom: 16px;
+      font-size: 0.875rem;
+    }
+    .api-setup input { margin-top: 10px; }
+    .op-badge {
+      display: inline-block;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      margin-bottom: 12px;
+    }
+    .op-badge.bekliyor { background: rgba(51, 65, 85, 0.9); color: #e2e8f0; }
+    .op-badge.gecikti { background: rgba(154, 52, 18, 0.95); color: #ffedd5; }
+    #opGecikmeGoster {
+      font-size: 0.8125rem;
+      color: #fb923c;
+      min-height: 1.25rem;
+      margin: 0 0 8px;
+    }
+    .chk { width: auto; margin-right: 10px; vertical-align: middle; accent-color: var(--accent); }
     @keyframes evvelCtaPulse {
       0%, 100% {
         border-color: #ea580c;
-        box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.55), 0 0 20px rgba(234, 88, 12, 0.15);
+        box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.45), 0 4px 28px rgba(234, 88, 12, 0.12);
         filter: brightness(1);
       }
       50% {
         border-color: #fb923c;
-        box-shadow: 0 0 0 6px rgba(251, 146, 60, 0.2), 0 0 36px rgba(251, 146, 60, 0.35);
-        filter: brightness(1.08);
+        box-shadow: 0 0 0 5px rgba(251, 146, 60, 0.18), 0 8px 36px rgba(251, 146, 60, 0.22);
+        filter: brightness(1.05);
       }
     }
-    .card.card--pulse-cta {
+    .card.card--pulse-cta, .section-card.card--pulse-cta {
       border-width: 2px;
       border-style: solid;
-      animation: evvelCtaPulse 1.1s ease-in-out infinite;
+      animation: evvelCtaPulse 1.15s ease-in-out infinite;
     }
     @media (prefers-reduced-motion: reduce) {
-      .card.card--pulse-cta {
+      .card.card--pulse-cta, .section-card.card--pulse-cta {
         animation: none;
         border-color: #ea580c;
-        box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.25);
+        box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.2);
       }
+    }
+    code {
+      font-size: 0.85em;
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.35);
     }
   </style>
 </head>
@@ -78,14 +360,21 @@
   </div>
 
   <div id="appRoot" class="wrap" style="display:none">
-    <h1 id="subeTitle">Şube</h1>
-    <p class="muted" id="tarihEl"></p>
+    <header class="app-header">
+      <div class="app-header__row">
+        <div class="app-header__mark" aria-hidden="true">🏪</div>
+        <div>
+          <h1 id="subeTitle">Şube</h1>
+          <p class="muted" id="tarihEl"></p>
+        </div>
+      </div>
+    </header>
     <div id="mainContent"></div>
   </div>
 
   <div id="kasaOverlay" class="overlay" style="display:none">
-    <div class="overlay-inner card card--pulse-cta">
-      <h1 style="margin-bottom:8px">Kasa kilitli</h1>
+    <div class="overlay-inner section-card card--pulse-cta">
+      <h1>Kasa kilitli</h1>
       <p class="muted">Günlük açılışta kasayı açmak için kendinizi seçin ve 4 haneli PIN girin.</p>
       <p class="muted" id="kasaSaatBilgi" style="margin-top:-8px;font-size:0.82rem"></p>
       <label>Personel</label>
@@ -93,13 +382,14 @@
       <label style="margin-top:12px">PIN</label>
       <input id="kasaPin" class="pin" maxlength="4" inputmode="numeric" autocomplete="one-time-code" />
       <p class="err" id="kasaErr"></p>
+      <p class="muted" id="kasaCooldown" aria-live="polite"></p>
       <button type="button" id="kasaBtn">Kilidi aç</button>
     </div>
   </div>
 
   <div id="acilisOverlay" class="overlay" style="display:none">
-    <div class="overlay-inner card card--pulse-cta">
-      <h1 id="acilisTitle" style="margin-bottom:8px">Şube henüz açılmadı</h1>
+    <div class="overlay-inner section-card card--pulse-cta">
+      <h1 id="acilisTitle">Şube henüz açılmadı</h1>
       <p class="muted" id="acilisDesc">Kasa açıldı. Şimdi günlük şube açılış kaydını oluşturun.</p>
       <p class="muted" id="acilisSaatBilgi" style="margin-top:-8px;font-size:0.82rem"></p>
       <p class="err" id="acilisErr"></p>
@@ -108,10 +398,11 @@
   </div>
 
   <div id="operasyonOverlay" class="overlay operasyon-zorunlu" style="display:none">
-    <div class="overlay-inner card" id="operasyonCard">
+    <div class="overlay-inner section-card" id="operasyonCard">
       <div id="opBadge" class="op-badge bekliyor"></div>
-      <h1 style="margin-bottom:8px;font-size:1.1rem" id="opTitle">Operasyon</h1>
+      <h1 id="opTitle">Operasyon</h1>
       <p class="muted" id="opDesc"></p>
+      <p id="opGecikmeGoster" aria-live="polite"></p>
       <div id="opFields"></div>
       <p class="err" id="opErr"></p>
       <button type="button" id="opSubmit">Kaydet ve tamamla</button>
@@ -167,9 +458,93 @@
     if (!res.ok) {
       let d = {};
       try { d = await res.json(); } catch (e) {}
-      throw new Error(d.detail || res.statusText || 'Hata');
+      const msg = typeof d.detail === 'string' ? d.detail : res.statusText || 'Hata';
+      const err = new Error(msg);
+      err.status = res.status;
+      err.detail = d.detail;
+      throw err;
     }
     return res.json();
+  }
+
+  /** PIN kilidi (429): mesajdaki «Yaklaşık N dakika» + geri sayım (mm:ss). */
+  var _pinCooldownTimer = null;
+  function clearPinCooldownTimer() {
+    if (_pinCooldownTimer) {
+      clearInterval(_pinCooldownTimer);
+      _pinCooldownTimer = null;
+    }
+  }
+  function parseKilitDakikaFromMessage(text) {
+    if (!text || typeof text !== 'string') return null;
+    var m = /Yaklaşık\s+(\d+)\s+dakika/i.exec(text);
+    if (m) return Math.max(1, parseInt(m[1], 10));
+    return null;
+  }
+  function startPinCooldownUI(targetEl, endMs, prefix) {
+    clearPinCooldownTimer();
+    if (!targetEl) return;
+    function tick() {
+      var left = Math.max(0, Math.ceil((endMs - Date.now()) / 1000));
+      if (left <= 0) {
+        clearPinCooldownTimer();
+        targetEl.textContent = '';
+        if (targetEl.id === 'kasaCooldown') targetEl.classList.remove('is-on');
+        return;
+      }
+      var mm = Math.floor(left / 60);
+      var ss = left % 60;
+      var pad = ss < 10 ? '0' + ss : String(ss);
+      targetEl.textContent = (prefix || '') + mm + ':' + pad + ' sonra tekrar deneyin';
+    }
+    tick();
+    _pinCooldownTimer = setInterval(tick, 1000);
+  }
+  function handlePin429(targetEl, err) {
+    var detail = (err && err.message) || '';
+    var dk = parseKilitDakikaFromMessage(detail);
+    if (targetEl && targetEl.id === 'kasaCooldown') targetEl.classList.add('is-on');
+    if (dk != null) {
+      startPinCooldownUI(targetEl, Date.now() + dk * 60 * 1000, 'PIN kilidi · ');
+    } else if (targetEl) {
+      targetEl.textContent = detail;
+      if (targetEl.id === 'kasaCooldown') targetEl.classList.add('is-on');
+    }
+  }
+
+  async function postMultipart(path, formData) {
+    const url = apiUrl(path);
+    if (!url) throw new Error('API adresi tanımlı değil');
+    const res = await fetch(url, { method: 'POST', body: formData });
+    let d = {};
+    try { d = await res.json(); } catch (e) {}
+    if (!res.ok) {
+      const msg = typeof d.detail === 'string' ? d.detail : res.statusText || 'Hata';
+      const err = new Error(msg);
+      err.status = res.status;
+      err.detail = d.detail;
+      throw err;
+    }
+    return d;
+  }
+
+  async function postCiroTaslak(body) {
+    const url = apiUrl('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/ciro');
+    if (!url) throw new Error('API adresi tanımlı değil');
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    let d = {};
+    try { d = await res.json(); } catch (e) {}
+    if (!res.ok) {
+      const msg = typeof d.detail === 'string' ? d.detail : res.statusText || 'Hata';
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
+    }
+    return d;
   }
 
   const SUBE_ID = subeIdFromPath();
@@ -298,6 +673,26 @@
     opAcilisStokPending = null;
     lastOperasyonBlob = null;
     if (opSubmit) opSubmit.textContent = 'Kaydet ve tamamla';
+    var gecEl = document.getElementById('opGecikmeGoster');
+    if (gecEl) gecEl.textContent = '';
+  }
+
+  function updateOperasyonDurumUI(op, aktif) {
+    if (!aktif) return;
+    opBadge.textContent = (aktif.durum || '').toUpperCase();
+    opBadge.className = 'op-badge ' + ((aktif.durum || '') === 'gecikti' ? 'gecikti' : 'bekliyor');
+    var gecEl = document.getElementById('opGecikmeGoster');
+    if (gecEl) {
+      if (op && op.aktif_gecikme_dk != null && op.aktif_gecikme_dk > 0) {
+        gecEl.textContent = op.aktif_gecikme_dk + ' dk gecikme';
+      } else {
+        gecEl.textContent = '';
+      }
+    }
+    operasyonOverlay.classList.remove('gecikti', 'kritik');
+    if (op && op.aktif_kritik) operasyonOverlay.classList.add('kritik');
+    else if (op && op.aktif_suphe) operasyonOverlay.classList.add('gecikti');
+    else if (aktif.durum === 'gecikti') operasyonOverlay.classList.add('gecikti');
   }
 
   function escapeHtmlAttr(s) {
@@ -321,7 +716,7 @@
       '<label>Personel</label><input type="text" id="opAcilisPersonelAd" list="opAcilisPersList" autocomplete="off" placeholder="Örn. Ayşe Yılmaz" />' +
       '<datalist id="opAcilisPersList">' + opts + '</datalist>' +
       '<label style="margin-top:10px">Panel PIN</label><input type="password" id="opAcilisPin" class="pin" maxlength="4" inputmode="numeric" autocomplete="one-time-code" />' +
-      '<button type="button" id="opAcilisGeri" style="margin-top:14px;background:transparent;border:none;color:#94a3b8;cursor:pointer;text-decoration:underline;font-size:0.85rem">« Ürün sayımına dön</button>'
+      '<button type="button" id="opAcilisGeri" class="btn-link">« Ürün sayımına dön</button>'
     );
   }
 
@@ -332,7 +727,7 @@
       '<label>Küçük bardak</label><input type="text" id="opBardakKucuk" inputmode="numeric" autocomplete="off" value="' + (s.bardak_kucuk || 0) + '" />' +
       '<label style="margin-top:8px">Büyük bardak</label><input type="text" id="opBardakBuyuk" inputmode="numeric" autocomplete="off" value="' + (s.bardak_buyuk || 0) + '" />' +
       '<label style="margin-top:8px">Plastik bardak</label><input type="text" id="opBardakPlastik" inputmode="numeric" autocomplete="off" value="' + (s.bardak_plastik || 0) + '" />' +
-      '<button type="button" id="opAcilisGeri" style="margin-top:14px;background:transparent;border:none;color:#94a3b8;cursor:pointer;text-decoration:underline;font-size:0.85rem">« Kasa sayımına dön</button>'
+      '<button type="button" id="opAcilisGeri" class="btn-link">« Kasa sayımına dön</button>'
     );
   }
 
@@ -345,7 +740,7 @@
       '<label style="margin-top:8px">Soda sayısı</label><input type="text" id="opUrunSoda" inputmode="numeric" autocomplete="off" value="' + (s.soda_adet || 0) + '" />' +
       '<label style="margin-top:8px">Cookie sayısı</label><input type="text" id="opUrunCookie" inputmode="numeric" autocomplete="off" value="' + (s.cookie_adet || 0) + '" />' +
       '<label style="margin-top:8px">Pasta sayısı</label><input type="text" id="opUrunPasta" inputmode="numeric" autocomplete="off" value="' + (s.pasta_adet || 0) + '" />' +
-      '<button type="button" id="opAcilisGeri" style="margin-top:14px;background:transparent;border:none;color:#94a3b8;cursor:pointer;text-decoration:underline;font-size:0.85rem">« Bardak sayımına dön</button>'
+      '<button type="button" id="opAcilisGeri" class="btn-link">« Bardak sayımına dön</button>'
     );
   }
 
@@ -482,12 +877,7 @@
       'Sistem bu adımı tamamlamanızı bekliyor. Cevap verene kadar ekran kilitlidir (sesli uyarı).';
     opFields.innerHTML = buildOperasyonFields(tip);
     opErr.textContent = '';
-    opBadge.textContent = durum.toUpperCase();
-    opBadge.className = 'op-badge ' + (durum === 'gecikti' ? 'gecikti' : 'bekliyor');
-    operasyonOverlay.classList.remove('gecikti', 'kritik');
-    if (blob && blob.aktif_kritik) operasyonOverlay.classList.add('kritik');
-    else if (blob && blob.aktif_suphe) operasyonOverlay.classList.add('gecikti');
-    else if (durum === 'gecikti') operasyonOverlay.classList.add('gecikti');
+    updateOperasyonDurumUI(blob, aktif);
     operasyonOverlay.style.display = 'flex';
     var opCard = document.getElementById('operasyonCard');
     if (opCard) {
@@ -691,53 +1081,122 @@
     var acilisBekliyor = (data.gorevler || []).some(function (g) {
       return g && g.id === 'acilis' && !g.tamamlandi;
     });
-    var gorevCardCls = 'card' + (acilisBekliyor ? ' card--pulse-cta' : '');
-    var html = '<div class="' + gorevCardCls + '"><h2 style="font-size:1rem;margin:0 0 12px">Günlük görevler</h2>';
+    var gorevCardCls = 'section-card' + (acilisBekliyor ? ' card--pulse-cta' : '');
+    var html = '<div class="' + gorevCardCls + '"><h2 class="section-title">Günlük görevler</h2>';
     (data.gorevler || []).forEach(function (g) {
-      var cls = g.tamamlandi ? 'gorev done' : 'gorev';
-      html += '<div class="' + cls + '"><strong>' + (g.baslik || '') + '</strong><br/><span class="muted">' + (g.aciklama || '') + '</span></div>';
+      var cls = g.tamamlandi ? 'gorev-row done' : 'gorev-row';
+      html += '<div class="' + cls + '"><strong>' + (g.baslik || '') + '</strong><span class="muted">' + (g.aciklama || '') + '</span></div>';
     });
     html += '</div>';
     if (data.uyari) {
-      html += '<p class="muted" style="margin:12px 0">' + data.uyari + '</p>';
+      html += '<div class="info-banner" style="border-color:rgba(251,191,36,0.35);background:rgba(251,191,36,0.08)">' + data.uyari + '</div>';
     }
     var op = data.operasyon || {};
     var evList = op.events || op.events_ozet;
     if (evList && evList.length) {
-      html += '<div class="card"><h2 style="font-size:1rem;margin:0 0 10px">Bugünkü operasyon</h2>';
-      html += '<p class="muted" style="margin:0 0 8px">Sunucu saati: ' + (op.sunucu_saati || '') + '</p>';
+      html += '<div class="section-card"><h2 class="section-title">Bugünkü operasyon</h2>';
+      html += '<p class="muted" style="margin:0 0 12px;font-size:0.8125rem">Sunucu saati: ' + (op.sunucu_saati || '') + '</p>';
       evList.forEach(function (ev) {
-        html += '<div class="gorev"><strong>' + ev.tip + '</strong> · ' + (ev.durum || '') +
+        html += '<div class="gorev-row"><strong>' + ev.tip + '</strong> · ' + (ev.durum || '') +
           (ev.sistem_slot_ts ? '<br/><span class="muted">Slot: ' + ev.sistem_slot_ts + '</span>' : '') + '</div>';
       });
       html += '</div>';
     }
-    html += '<p class="muted" style="text-align:center">Ciro ve gider kayıtları onay sürecine iletilir; aşağıdan anlık gider ve merkez notu gönderebilirsiniz.</p>';
-    html += '<div class="card" style="margin-top:14px"><h2 style="font-size:1rem;margin:0 0 10px">Anlık gider (merkez onayı)</h2>';
-    html += '<p class="muted" style="margin:0 0 10px">PIN ile imzalanır; onay sonrası kasaya düşer.</p>';
-    html += '<label>Kategori</label><input type="text" id="mgKategori" class="input" placeholder="ör. sarf" style="width:100%;margin-bottom:8px" />';
-    html += '<label>Tutar (₺)</label><input type="text" id="mgTutar" inputmode="decimal" class="input" style="width:100%;margin-bottom:8px" />';
-    html += '<label>Açıklama</label><input type="text" id="mgAcik" class="input" style="width:100%;margin-bottom:8px" />';
-    html += '<label>Personel</label><select id="mgPersonel" class="input" style="width:100%;margin-bottom:8px"></select>';
-    html += '<label>Panel PIN (4 hane)</label><input type="password" id="mgPin" maxlength="4" inputmode="numeric" class="input" style="width:100%;margin-bottom:10px" />';
-    html += '<button type="button" id="mgGonder">Merkeze gönder</button><p class="muted" id="mgMsg" style="margin-top:8px"></p></div>';
-    html += '<div class="card" style="margin-top:14px"><h2 style="font-size:1rem;margin:0 0 10px">Merkez notu</h2>';
-    html += '<p class="muted" style="margin:0 0 10px">İade, sorun vb. — operasyon merkezinde listelenir.</p>';
-    html += '<textarea id="mnMetin" class="input" rows="3" style="width:100%;margin-bottom:8px" placeholder="Kısa açıklama"></textarea>';
-    html += '<label>Personel</label><select id="mnPersonel" class="input" style="width:100%;margin-bottom:8px"></select>';
-    html += '<label>Panel PIN</label><input type="password" id="mnPin" maxlength="4" inputmode="numeric" class="input" style="width:100%;margin-bottom:10px" />';
-    html += '<button type="button" id="mnGonder">Notu gönder</button><p class="muted" id="mnMsg" style="margin-top:8px"></p></div>';
-    html += '<div class="card" style="margin-top:14px"><h2 style="font-size:1rem;margin:0 0 10px">Stok girişi (ürün / bardak ekleme)</h2>';
-    html += '<p class="muted" style="margin:0 0 10px">Açılış sayımına <strong>eklenen</strong> adetler (deftere yazılır). Kapanışta beklenen stok = açılış + buradaki eklemeler.</p>';
-    function nRow(id, lab) {
-      return '<label>' + lab + '</label><input type="text" id="' + id + '" inputmode="numeric" class="input" style="width:100%;margin-bottom:6px" placeholder="0" />';
+    html += '<div class="info-banner">Ciro, anlık gider ve merkez notu onay sürecine gider. X raporu fotoğrafını OCR ile okuyup tutarları aşağıdaki ciro taslağına aktarabilirsiniz.</div>';
+    html += '<div class="section-card"><h2 class="section-title">Günlük ciro (merkez onayı)</h2>';
+    if (data.ciro_girildi) {
+      html += '<div class="ciro-durum-ok">Bugünkü ciro merkez tarafından onaylandı.</div>';
+    } else {
+      html += '<p class="muted" style="margin:0 0 14px">Nakit, POS ve online tutarları panel PIN ile imzalanır; merkez onayından sonra ciroya işlenir.</p>';
+      if (data.ciro_taslak_bekliyor) {
+        html += '<p class="muted" style="margin:0 0 12px;font-size:0.8125rem">Bekleyen ciro taslağınız var. Yeni gönderim mevcut taslağın üzerine yazar (onay sonrası onaylanır).</p>';
+      }
+      html += '<div class="stok-grid">';
+      html += '<div class="stok-item"><label>Nakit (₺)</label><input type="text" id="ciroN" inputmode="decimal" placeholder="0" /></div>';
+      html += '<div class="stok-item"><label>POS (₺)</label><input type="text" id="ciroP" inputmode="decimal" placeholder="0" /></div>';
+      html += '<div class="stok-item" style="grid-column:1/-1"><label>Online (₺)</label><input type="text" id="ciroO" inputmode="decimal" placeholder="0" /></div>';
+      html += '</div>';
+      html += '<label>Not (opsiyonel)</label><input type="text" id="ciroAcik" style="margin-bottom:10px" />';
+      html += '<label>Personel</label><select id="ciroPersonel" style="margin-bottom:10px"></select>';
+      html += '<label>Panel PIN</label><input type="password" id="ciroPin" maxlength="4" inputmode="numeric" style="margin-bottom:12px" />';
+      html += '<button type="button" id="ciroGonder">Merkeze gönder (taslak)</button><p class="muted" id="ciroMsg" style="margin-top:10px"></p>';
     }
+    html += '</div>';
+    html += '<div class="section-card"><h2 class="section-title">X raporu OCR</h2>';
+    html += '<p class="muted" style="margin:0 0 14px">Yazarkasa X raporu fotoğrafından tutarlar okunur (sunucuda OPENAI_API_KEY gerekir). Sonuçları mutlaka kontrol edip ciro taslağına işleyin.</p>';
+    html += '<label>Fiş görüntüsü</label><input type="file" id="xrFile" accept="image/*" capture="environment" style="margin-bottom:12px" />';
+    html += '<label>Personel (kayıt)</label><select id="xrPersonel" style="margin-bottom:10px"></select>';
+    html += '<button type="button" id="xrGonder">Oku</button>';
+    html += '<p class="muted" id="xrMsg" style="margin-top:10px"></p>';
+    html += '<pre id="xrOut" style="display:none;margin-top:10px;padding:12px;border-radius:var(--radius-sm);background:rgba(15,23,42,0.5);border:1px solid var(--border);white-space:pre-wrap;font-size:0.8125rem;max-height:220px;overflow:auto;color:var(--text)"></pre></div>';
+    html += '<div class="section-card"><h2 class="section-title">Anlık gider (merkez onayı)</h2>';
+    html += '<p class="muted" style="margin:0 0 14px">PIN ile imzalanır; onay sonrası kasaya düşer.</p>';
+    html += '<label>Kategori</label><input type="text" id="mgKategori" placeholder="ör. sarf" style="margin-bottom:10px" />';
+    html += '<label>Tutar (₺)</label><input type="text" id="mgTutar" inputmode="decimal" style="margin-bottom:10px" />';
+    html += '<label>Açıklama</label><input type="text" id="mgAcik" style="margin-bottom:10px" />';
+    html += '<label>Personel</label><select id="mgPersonel" style="margin-bottom:10px"></select>';
+    html += '<label>Panel PIN (4 hane)</label><input type="password" id="mgPin" maxlength="4" inputmode="numeric" style="margin-bottom:12px" />';
+    html += '<button type="button" id="mgGonder">Merkeze gönder</button><p class="muted" id="mgMsg" style="margin-top:10px"></p></div>';
+    html += '<div class="section-card"><h2 class="section-title">Merkez notu</h2>';
+    html += '<p class="muted" style="margin:0 0 14px">İade, sorun vb. — operasyon merkezinde listelenir.</p>';
+    html += '<textarea id="mnMetin" rows="3" style="margin-bottom:10px" placeholder="Kısa açıklama"></textarea>';
+    html += '<label>Personel</label><select id="mnPersonel" style="margin-bottom:10px"></select>';
+    html += '<label>Panel PIN</label><input type="password" id="mnPin" maxlength="4" inputmode="numeric" style="margin-bottom:12px" />';
+    html += '<button type="button" id="mnGonder">Notu gönder</button><p class="muted" id="mnMsg" style="margin-top:10px"></p></div>';
+    html += '<div class="section-card"><h2 class="section-title">Stok girişi (ürün / bardak ekleme)</h2>';
+    html += '<p class="muted" style="margin:0 0 14px">Açılış sayımına <strong>eklenen</strong> adetler (deftere yazılır). Kapanışta beklenen stok = açılış + buradaki eklemeler.</p>';
+    function nRow(id, lab, placeholder) {
+      var ph = placeholder !== undefined ? placeholder : '0';
+      return '<div class="stok-item"><label>' + lab + '</label><input type="text" id="' + id + '" inputmode="numeric" placeholder="' + ph + '" /></div>';
+    }
+    html += '<div class="stok-grid">';
     html += nRow('stBk', 'Küçük bardak +') + nRow('stBb', 'Büyük bardak +') + nRow('stBp', 'Plastik bardak +');
     html += nRow('stSu', 'Su +') + nRow('stRb', 'Redbull +') + nRow('stSo', 'Soda +') + nRow('stCk', 'Cookie +') + nRow('stPa', 'Pasta +');
-    html += '<label>Not (opsiyonel)</label><input type="text" id="stNot" class="input" style="width:100%;margin-bottom:8px" />';
-    html += '<label>Personel</label><select id="stPersonel" class="input" style="width:100%;margin-bottom:8px"></select>';
-    html += '<label>Panel PIN</label><input type="password" id="stPin" maxlength="4" inputmode="numeric" class="input" style="width:100%;margin-bottom:10px" />';
-    html += '<button type="button" id="stGonder">Deftere ekle</button><p class="muted" id="stMsg" style="margin-top:8px"></p></div>';
+    html += '</div>';
+    html += '<p class="muted" style="margin:12px 0 8px;font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em">Sarf (opsiyonel)</p>';
+    html += '<div class="stok-grid">';
+    html += nRow('stSut', 'Süt (L) +') + nRow('stSup', 'Şurup +') + nRow('stKhv', 'Kahve +') + nRow('stKtn', 'Karton bardak +');
+    html += nRow('stKpk', 'Kapak +') + nRow('stPet', 'Peçete (pak.) +') + nRow('stDig', 'Diğer sarf +');
+    html += '</div>';
+    html += '<label>Not (opsiyonel)</label><input type="text" id="stNot" style="margin-bottom:10px" />';
+    html += '<label>Personel</label><select id="stPersonel" style="margin-bottom:10px"></select>';
+    html += '<label>Panel PIN</label><input type="password" id="stPin" maxlength="4" inputmode="numeric" style="margin-bottom:12px" />';
+    html += '<button type="button" id="stGonder">Deftere ekle</button><p class="muted" id="stMsg" style="margin-top:10px"></p></div>';
+    var vd = data.vardiya_devir || {};
+    var vdDurum = vd.vardiya_durum != null ? vd.vardiya_durum : null;
+    var devirTamam = vdDurum === 'tamamlandi';
+    var devirAdim2 = vdDurum === 'acilis_bekliyor';
+    html += '<div class="section-card"><h2 class="section-title">Kasa devri (vardiya teslimi)</h2>';
+    if (devirTamam) {
+      html += '<p class="muted" style="color:var(--ok)">Bugünkü vardiya devri tamamlandı.</p>';
+    } else if (devirAdim2) {
+      html += '<p class="muted" style="margin:0 0 14px">Sabahçı imzaladı. Akşamcı 2. imza bekleniyor.</p>';
+      html += '<label>Akşamcı (devralan)</label><select id="dvPersonel2" style="margin-bottom:10px"></select>';
+      html += '<label>Panel PIN</label><input type="password" id="dvPin2" maxlength="4" inputmode="numeric" style="margin-bottom:12px" />';
+      html += '<button type="button" id="dvAdim2Btn">2. imzayı onayla</button><p class="muted" id="dvMsg" style="margin-top:10px"></p>';
+    } else {
+      html += '<p class="muted" style="margin:0 0 14px">Sabah personeli teslim ve ciro (X) tutarlarını girer; akşamcı ayrı PIN ile onaylar.</p>';
+      html += '<p class="muted" style="margin:0 0 8px;font-size:0.75rem;font-weight:600">Ciro (X raporu)</p>';
+      html += '<div class="stok-grid"><div class="stok-item"><label>Nakit (₺)</label><input type="text" id="dvNakit" inputmode="decimal" placeholder="0" /></div>';
+      html += '<div class="stok-item"><label>POS (₺)</label><input type="text" id="dvPos" inputmode="decimal" placeholder="0" /></div>';
+      html += '<div class="stok-item" style="grid-column:1/-1"><label>Online (₺)</label><input type="text" id="dvOnline" inputmode="decimal" placeholder="0" /></div></div>';
+      html += '<label>Elden teslim kasa (₺)</label><input type="text" id="dvTeslim" inputmode="decimal" style="margin-bottom:10px" />';
+      html += '<label>Devir (₺)</label><input type="text" id="dvDevir" inputmode="decimal" placeholder="0" style="margin-bottom:10px" />';
+      html += '<p class="muted" style="margin:8px 0 8px;font-size:0.75rem;font-weight:600">Bardak sayımı (tüm alanlar zorunlu, 0 geçerli)</p>';
+      html += '<div class="stok-grid">';
+      html += nRow('dvBk', 'Küçük bardak', '') + nRow('dvBb', 'Büyük bardak', '') + nRow('dvBp', 'Plastik bardak', '');
+      html += '</div>';
+      html += '<p class="muted" style="margin:8px 0 8px;font-size:0.75rem;font-weight:600">Ürün sayımı (tüm alanlar zorunlu, 0 geçerli)</p>';
+      html += '<div class="stok-grid">';
+      html += nRow('dvSu', 'Su', '') + nRow('dvRb', 'Redbull', '') + nRow('dvSo', 'Soda', '') + nRow('dvCk', 'Cookie', '') + nRow('dvPa', 'Pasta', '');
+      html += '</div>';
+      html += '<p class="muted" style="margin:12px 0 8px;font-size:0.75rem;font-weight:600">İmza (sabahçı)</p>';
+      html += '<label>Devreden personel</label><select id="dvPersonel1" style="margin-bottom:10px"></select>';
+      html += '<label>Panel PIN</label><input type="password" id="dvPin1" maxlength="4" inputmode="numeric" style="margin-bottom:10px" />';
+      html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:12px"><input type="checkbox" class="chk" id="dvXRapor" /><span>X raporu gönderildi</span></label>';
+      html += '<button type="button" id="dvAdim1Btn">1. imza — devri başlat</button><p class="muted" id="dvMsg" style="margin-top:10px"></p>';
+    }
+    html += '</div>';
     html += buildPanelPinBilgiHtml(data);
     mainContent.innerHTML = html;
     var pk = data.panel_pin_kullanicilar || [];
@@ -758,6 +1217,89 @@
     fillSel(document.getElementById('mgPersonel'));
     fillSel(document.getElementById('mnPersonel'));
     fillSel(document.getElementById('stPersonel'));
+    fillSel(document.getElementById('ciroPersonel'));
+    fillSel(document.getElementById('xrPersonel'));
+    fillSel(document.getElementById('dvPersonel1'));
+    fillSel(document.getElementById('dvPersonel2'));
+    var ciroBtn = document.getElementById('ciroGonder');
+    if (ciroBtn) {
+      ciroBtn.onclick = async function () {
+        var msg = document.getElementById('ciroMsg');
+        msg.textContent = '';
+        try {
+          var n = parseNum(document.getElementById('ciroN').value) || 0;
+          var p = parseNum(document.getElementById('ciroP').value) || 0;
+          var o = parseNum(document.getElementById('ciroO').value) || 0;
+          if (n + p + o <= 0) throw new Error('En az bir tutar girin');
+          var pid = (document.getElementById('ciroPersonel').value || '').trim();
+          var pin = (document.getElementById('ciroPin').value || '').replace(/\D/g, '').slice(0, 4);
+          if (!pid) throw new Error('Personel seçin');
+          if (pin.length !== 4) throw new Error('4 haneli PIN');
+          var body = {
+            nakit: n,
+            pos: p,
+            online: o,
+            aciklama: (document.getElementById('ciroAcik').value || '').trim() || undefined,
+            personel_id: pid,
+            pin: pin,
+            force: false,
+          };
+          var r = await postCiroTaslak(body);
+          if (r.warning) {
+            if (!window.confirm((r.mesaj || 'Bekleyen taslak var') + '\n\nÜzerine yazılsın mı?')) return;
+            body.force = true;
+            r = await postCiroTaslak(body);
+          }
+          msg.textContent = r.mesaj || 'Gönderildi.';
+          document.getElementById('ciroPin').value = '';
+          await refresh();
+        } catch (e) {
+          if (e.status === 429) handlePin429(msg, e);
+          else msg.textContent = e.message || 'Hata';
+        }
+      };
+    }
+    var xrBtn = document.getElementById('xrGonder');
+    if (xrBtn) {
+      xrBtn.onclick = async function () {
+        var msg = document.getElementById('xrMsg');
+        var out = document.getElementById('xrOut');
+        msg.textContent = '';
+        if (out) out.style.display = 'none';
+        try {
+          var fEl = document.getElementById('xrFile');
+          var file = fEl && fEl.files && fEl.files[0];
+          if (!file) throw new Error('Görüntü seçin');
+          var pid = (document.getElementById('xrPersonel').value || '').trim();
+          var fd = new FormData();
+          fd.append('file', file);
+          if (pid) fd.append('personel_id', pid);
+          xrBtn.disabled = true;
+          var d = await postMultipart(
+            '/sube-panel/' + encodeURIComponent(SUBE_ID) + '/x-rapor-oku',
+            fd
+          );
+          msg.textContent = 'OCR tamamlandı — tutarları kontrol edin.';
+          if (out) {
+            var lines = [
+              'Nakit: ' + d.nakit + ' ₺',
+              'POS: ' + d.pos + ' ₺',
+              'Online: ' + d.online + ' ₺',
+              'Toplam (OCR): ' + d.toplam + ' ₺',
+              'Kasa bakiye: ' + d.kasa_bakiye + ' ₺',
+            ];
+            if (d.kasa_uyari) lines.push('Uyarı: ' + d.kasa_uyari);
+            if (d.foto_url) lines.push('Foto URL: ' + d.foto_url);
+            out.textContent = lines.join('\n');
+            out.style.display = 'block';
+          }
+        } catch (e) {
+          if (e.status === 429) handlePin429(msg, e);
+          else msg.textContent = e.message || 'Hata';
+        }
+        xrBtn.disabled = false;
+      };
+    }
     document.getElementById('mgGonder').onclick = async function () {
       var msg = document.getElementById('mgMsg');
       msg.textContent = '';
@@ -785,7 +1327,8 @@
         document.getElementById('mgAcik').value = '';
         document.getElementById('mgPin').value = '';
       } catch (e) {
-        msg.textContent = e.message || 'Hata';
+        if (e.status === 429) handlePin429(msg, e);
+        else msg.textContent = e.message || 'Hata';
       }
     };
     document.getElementById('mnGonder').onclick = async function () {
@@ -806,7 +1349,8 @@
         document.getElementById('mnMetin').value = '';
         document.getElementById('mnPin').value = '';
       } catch (e) {
-        msg.textContent = e.message || 'Hata';
+        if (e.status === 429) handlePin429(msg, e);
+        else msg.textContent = e.message || 'Hata';
       }
     };
     function stInt(id) {
@@ -826,37 +1370,129 @@
           soda_adet: stInt('stSo'),
           cookie_adet: stInt('stCk'),
           pasta_adet: stInt('stPa'),
+          sut_litre: stInt('stSut'),
+          surup_adet: stInt('stSup'),
+          kahve_paket: stInt('stKhv'),
+          karton_bardak: stInt('stKtn'),
+          kapak_adet: stInt('stKpk'),
+          pecete_paket: stInt('stPet'),
+          diger_sarf: stInt('stDig'),
           not_aciklama: (document.getElementById('stNot').value || '').trim(),
           personel_id: (document.getElementById('stPersonel').value || '').trim(),
           pin: (document.getElementById('stPin').value || '').replace(/\D/g, '').slice(0, 4)
         };
         if (!body.personel_id) throw new Error('Personel seçin');
         if (body.pin.length !== 4) throw new Error('4 haneli PIN');
-        var sum = body.bardak_kucuk + body.bardak_buyuk + body.bardak_plastik + body.su_adet + body.redbull_adet + body.soda_adet + body.cookie_adet + body.pasta_adet;
+        var sum = body.bardak_kucuk + body.bardak_buyuk + body.bardak_plastik + body.su_adet + body.redbull_adet + body.soda_adet + body.cookie_adet + body.pasta_adet +
+          body.sut_litre + body.surup_adet + body.kahve_paket + body.karton_bardak + body.kapak_adet + body.pecete_paket + body.diger_sarf;
         if (sum <= 0) throw new Error('En az bir kalemde pozitif adet girin');
         await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/urun-stok-ekle', { method: 'POST', body: body });
         msg.textContent = 'Deftere eklendi — operasyon merkezinde stok uyarıları güncellenir.';
-        ['stBk', 'stBb', 'stBp', 'stSu', 'stRb', 'stSo', 'stCk', 'stPa', 'stNot', 'stPin'].forEach(function (id) {
+        ['stBk', 'stBb', 'stBp', 'stSu', 'stRb', 'stSo', 'stCk', 'stPa', 'stSut', 'stSup', 'stKhv', 'stKtn', 'stKpk', 'stPet', 'stDig', 'stNot', 'stPin'].forEach(function (id) {
           var el = document.getElementById(id);
           if (el) el.value = '';
         });
       } catch (e) {
-        msg.textContent = e.message || 'Hata';
+        if (e.status === 429) handlePin429(msg, e);
+        else msg.textContent = e.message || 'Hata';
       }
     };
+
+    var dv1 = document.getElementById('dvAdim1Btn');
+    if (dv1) {
+      dv1.onclick = async function () {
+        var msg = document.getElementById('dvMsg');
+        msg.textContent = '';
+        dv1.disabled = true;
+        try {
+          function dvParse(id) {
+            var v = parseFloat(String((document.getElementById(id) && document.getElementById(id).value) || '0').replace(',', '.'));
+            return isNaN(v) || v < 0 ? 0 : v;
+          }
+          function dvReqInt(id, label) {
+            var raw = String((document.getElementById(id) && document.getElementById(id).value) || '').trim();
+            if (raw === '') throw new Error(label + ' adedini girin');
+            var v = parseInt(raw.replace(/\s/g, ''), 10);
+            if (isNaN(v) || v < 0) throw new Error(label + ' için 0 veya üzeri tam sayı girin');
+            return v;
+          }
+          var teslim = dvParse('dvTeslim');
+          if (!(teslim >= 0)) throw new Error('Teslim tutarı girin');
+          var xRapor = document.getElementById('dvXRapor') && document.getElementById('dvXRapor').checked;
+          if (!xRapor) throw new Error('X raporu gönderildi onayını işaretleyin');
+          var pid1 = (document.getElementById('dvPersonel1') && document.getElementById('dvPersonel1').value || '').trim();
+          var pin1 = ((document.getElementById('dvPin1') && document.getElementById('dvPin1').value) || '').replace(/\D/g, '').slice(0, 4);
+          if (!pid1) throw new Error('Devreden personeli seçin');
+          if (pin1.length !== 4) throw new Error('4 haneli PIN');
+          var opA = data.operasyon && data.operasyon.aktif;
+          var eid = opA && opA.id ? opA.id : null;
+          var body = {
+            sabahci_devreden_id: pid1,
+            pin: pin1,
+            nakit: dvParse('dvNakit'),
+            pos: dvParse('dvPos'),
+            online: dvParse('dvOnline'),
+            teslim: teslim,
+            devir: dvParse('dvDevir'),
+            x_raporu_gonderildi: true,
+            ciro_gonderildi: false,
+            operasyon_event_id: eid,
+            bardak_kucuk: dvReqInt('dvBk', 'Küçük bardak'),
+            bardak_buyuk: dvReqInt('dvBb', 'Büyük bardak'),
+            bardak_plastik: dvReqInt('dvBp', 'Plastik bardak'),
+            su_adet: dvReqInt('dvSu', 'Su'),
+            redbull_adet: dvReqInt('dvRb', 'Redbull'),
+            soda_adet: dvReqInt('dvSo', 'Soda'),
+            cookie_adet: dvReqInt('dvCk', 'Cookie'),
+            pasta_adet: dvReqInt('dvPa', 'Pasta'),
+          };
+          await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/vardiya-devri/adim1', { method: 'POST', body: body });
+          msg.textContent = '1. imza alındı — akşamcı onayı bekleniyor.';
+          await refresh();
+        } catch (e) {
+          if (e.status === 429) handlePin429(msg, e);
+          else msg.textContent = e.message || 'Hata';
+        }
+        dv1.disabled = false;
+      };
+    }
+    var dv2 = document.getElementById('dvAdim2Btn');
+    if (dv2) {
+      dv2.onclick = async function () {
+        var msg = document.getElementById('dvMsg');
+        msg.textContent = '';
+        dv2.disabled = true;
+        try {
+          var pid2 = (document.getElementById('dvPersonel2') && document.getElementById('dvPersonel2').value || '').trim();
+          var pin2 = ((document.getElementById('dvPin2') && document.getElementById('dvPin2').value) || '').replace(/\D/g, '').slice(0, 4);
+          if (!pid2) throw new Error('Devralan personeli seçin');
+          if (pin2.length !== 4) throw new Error('4 haneli PIN');
+          await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/vardiya-devri/adim2', {
+            method: 'POST',
+            body: { aksamci_devralan_id: pid2, pin: pin2 },
+          });
+          msg.textContent = 'Vardiya devri tamamlandı.';
+          await refresh();
+        } catch (e) {
+          if (e.status === 429) handlePin429(msg, e);
+          else msg.textContent = e.message || 'Hata';
+        }
+        dv2.disabled = false;
+      };
+    }
   }
 
   function buildPanelPinBilgiHtml(data) {
     if (data.panel_kilitli) return '';
     var pk = data.panel_pin_kullanicilar || [];
-    var h = '<div class="card"><h2 style="font-size:1rem;margin:0 0 12px">Panel PIN (personel)</h2>';
+    var h = '<div class="section-card"><h2 class="section-title">Panel PIN (personel)</h2>';
     h += '<p class="muted" style="margin:0 0 10px">Panel PIN, personele yetkili tarafından atanır; aynı PIN <strong>tüm şubelerde</strong> geçerlidir. Bu listede yalnızca PIN’i tanımlı çalışanlar görünür.</p>';
     if (!pk.length) {
       h += '<p class="muted">PIN tanımlı personel yok — yetkiliye başvurun.</p>';
     } else {
-      h += '<div style="font-size:0.9rem">';
+      h += '<div>';
       pk.forEach(function (u) {
-        h += '<div class="gorev">' + (u.ad || '') + (u.yonetici ? ' <strong style="color:#38bdf8">(yönetici)</strong>' : '') + '</div>';
+        h += '<div class="pin-user-row">' + (u.ad || '') + (u.yonetici ? ' <strong style="color:var(--accent)">(yönetici)</strong>' : '') + '</div>';
       });
       h += '</div>';
     }
@@ -867,7 +1503,7 @@
   async function refresh() {
     if (!SUBE_ID) {
       mainContent.innerHTML =
-        '<div class="card">URL\'de şube yok. Örnek: <code>/sube/sube-merkez</code> veya <code>/sube-panel/sube-merkez</code></div>';
+        '<div class="section-card">URL\'de şube yok. Örnek: <code>/sube/sube-merkez</code> veya <code>/sube-panel/sube-merkez</code></div>';
       appRoot.style.display = 'block';
       return;
     }
@@ -904,8 +1540,8 @@
         if (!opAktifEvent || opAktifEvent.id !== aktif.id) {
           showOperasyonZorunlu(aktif, op);
         } else {
-          opBadge.textContent = (aktif.durum || '').toUpperCase();
-          if (op.aktif_kritik) operasyonOverlay.classList.add('kritik');
+          lastOperasyonBlob = op;
+          updateOperasyonDurumUI(op, aktif);
         }
         return;
       }
@@ -921,8 +1557,8 @@
       if (!opAktifEvent || opAktifEvent.id !== aktif.id) {
         showOperasyonZorunlu(aktif, op);
       } else {
-        opBadge.textContent = (aktif.durum || '').toUpperCase();
-        if (op.aktif_kritik) operasyonOverlay.classList.add('kritik');
+        lastOperasyonBlob = op;
+        updateOperasyonDurumUI(op, aktif);
       }
       return;
     }
@@ -933,6 +1569,12 @@
 
   kasaBtn.onclick = async function () {
     kasaErr.textContent = '';
+    var kc = document.getElementById('kasaCooldown');
+    if (kc) {
+      kc.textContent = '';
+      kc.classList.remove('is-on');
+    }
+    clearPinCooldownTimer();
     const uid = kasaUser.value;
     const pin = (kasaPin.value || '').replace(/\D/g, '').slice(0, 4);
     if (!uid) { kasaErr.textContent = 'Personel seçin'; return; }
@@ -944,9 +1586,18 @@
         body: { personel_id: uid, pin: pin },
       });
       kasaPin.value = '';
+      if (kc) {
+        kc.textContent = '';
+        kc.classList.remove('is-on');
+      }
       await refresh();
     } catch (e) {
-      kasaErr.textContent = e.message || 'Hata';
+      if (e.status === 429 && kc) {
+        kasaErr.textContent = '';
+        handlePin429(kc, e);
+      } else {
+        kasaErr.textContent = e.message || 'Hata';
+      }
     }
     kasaBtn.disabled = false;
   };
@@ -976,7 +1627,6 @@
   function startPanelPolling() {
     if (panelPollTimer) clearInterval(panelPollTimer);
     panelPollTimer = setInterval(function () {
-      if (operasyonOverlay.style.display === 'flex') return;
       refresh().catch(function () {});
     }, 28000);
   }
@@ -992,7 +1642,7 @@
         if (!getApiBase()) showApiSetup();
         else {
           appRoot.style.display = 'block';
-          mainContent.innerHTML = '<div class="card err">' + (e.message || 'Yüklenemedi') + '</div>';
+          mainContent.innerHTML = '<div class="section-card err">' + (e.message || 'Yüklenemedi') + '</div>';
         }
       });
   }
