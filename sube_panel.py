@@ -12,7 +12,7 @@ import pathlib
 import re
 import uuid
 from datetime import date, datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, List, Dict
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -102,6 +102,22 @@ def _x_extract_amounts(obj: dict) -> dict:
     if toplam <= 0 and (nakit + pos + online) > 0:
         toplam = nakit + pos + online
     return {"nakit": nakit, "pos": pos, "online": online, "toplam": toplam}
+
+
+def _norm_ad_tr(v: str) -> str:
+    s = (v or "").strip().lower()
+    repl = (
+        ("ğ", "g"),
+        ("ü", "u"),
+        ("ş", "s"),
+        ("ı", "i"),
+        ("ö", "o"),
+        ("ç", "c"),
+    )
+    for a, b in repl:
+        s = s.replace(a, b)
+    s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+    return s
 
 
 def _sube_getir(cur, sube_id: str) -> dict:
@@ -1251,6 +1267,19 @@ def sube_ciro_gir(sube_id: str, body: SubeCiroModel):
             ),
         )
         audit(cur, "ciro_taslak", tid, "TASLAK_BEKLIYOR")
+        from operasyon_defter import operasyon_defter_ekle
+        operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "CIRO_TASLAK_PIN",
+            (
+                f"Ciro taslağı merkeze gönderildi — personel={onay_ad} "
+                f"saat={saat_sistem} nakit={nakit:.2f} pos={pos:.2f} online={online:.2f}"
+            ),
+            personel_id=pid_panel,
+            personel_ad=onay_ad,
+            bildirim_saati=saat_sistem,
+        )
 
     return {
         "success":     True,
@@ -1489,8 +1518,35 @@ class SubeSevkBody(BaseModel):
     kapak_adet: Optional[int] = None
     pecete_paket: Optional[int] = None
     diger_sarf: Optional[int] = None
+    tedarikci_id: Optional[str] = None
     tedarikci: Optional[str] = None
+    kalemler: Optional[List[Dict[str, Any]]] = None
     not_aciklama: Optional[str] = None
+
+
+def _stok_kalemleri_temizle(kalemler: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for k in (kalemler or []):
+        if not isinstance(k, dict):
+            continue
+        urun_ad = str(k.get("urun_ad") or "").strip()
+        kategori_id = str(k.get("kategori_id") or "").strip()
+        urun_id = str(k.get("urun_id") or "").strip()
+        try:
+            adet = int(k.get("adet") or 0)
+        except (TypeError, ValueError):
+            adet = 0
+        if not urun_ad or adet <= 0:
+            continue
+        out.append(
+            {
+                "kategori_id": kategori_id,
+                "urun_id": urun_id,
+                "urun_ad": urun_ad,
+                "adet": adet,
+            }
+        )
+    return out
 
 
 @router.post("/{sube_id}/urun-sevk")
@@ -1510,10 +1566,22 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
         raise HTTPException(400, "4 haneli panel PIN gerekli")
 
     delta_raw = body.model_dump()
+    kalemler = _stok_kalemleri_temizle(delta_raw.get("kalemler"))
     try:
         delta = normalize_delta_body(delta_raw)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    except ValueError:
+        delta = {
+            "bardak_kucuk": 0,
+            "bardak_buyuk": 0,
+            "bardak_plastik": 0,
+            "su_adet": 0,
+            "redbull_adet": 0,
+            "soda_adet": 0,
+            "cookie_adet": 0,
+            "pasta_adet": 0,
+        }
+    if sum(int(v or 0) for v in delta.values()) <= 0 and not kalemler:
+        raise HTTPException(400, "En az bir stok kaleminde pozitif adet girin")
 
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
@@ -1529,8 +1597,39 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
         tr_now = _now_tr()
         saat_sistem = tr_now.strftime("%H:%M:%S")
 
-        tedarikci = (body.tedarikci or "").strip()
-        payload = _json.dumps({"delta": delta, "tedarikci": tedarikci or None},
+        tedarikci_id = (body.tedarikci_id or "").strip()
+        tedarikci_ad = ""
+        if tedarikci_id:
+            cur.execute(
+                "SELECT id, ad FROM tedarikciler WHERE id=%s AND aktif=TRUE",
+                (tedarikci_id,),
+            )
+            trw = cur.fetchone()
+            if not trw:
+                raise HTTPException(400, "Geçerli bir tedarikçi seçin")
+            tedarikci_id = str(dict(trw)["id"])
+            tedarikci_ad = (dict(trw).get("ad") or "").strip()
+        else:
+            # Geriye dönük uyumluluk: id gelmezse ad ile eşleştir.
+            tedarikci_ad_in = (body.tedarikci or "").strip()
+            if not tedarikci_ad_in:
+                raise HTTPException(400, "Tedarikçi seçimi zorunlu")
+            cur.execute(
+                """
+                SELECT id, ad
+                FROM tedarikciler
+                WHERE aktif=TRUE AND LOWER(TRIM(ad)) = LOWER(TRIM(%s))
+                LIMIT 1
+                """,
+                (tedarikci_ad_in,),
+            )
+            trw = cur.fetchone()
+            if not trw:
+                raise HTTPException(400, "Geçerli bir tedarikçi seçin")
+            tedarikci_id = str(dict(trw)["id"])
+            tedarikci_ad = (dict(trw).get("ad") or "").strip()
+
+        payload = _json.dumps({"delta": delta, "kalemler": kalemler, "tedarikci_id": tedarikci_id, "tedarikci": tedarikci_ad},
                                ensure_ascii=False, separators=(",", ":"))
         acik = "URUN_SEVK_JSON:" + payload
         if (body.not_aciklama or "").strip():
@@ -1547,7 +1646,7 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
         )
         audit(cur, "operasyon_defter", rid, "URUN_SEVK")
 
-    return {"success": True, "defter_id": rid, "delta": delta, "tip": "SEVK"}
+    return {"success": True, "defter_id": rid, "delta": delta, "kalemler": kalemler, "tip": "SEVK"}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1573,6 +1672,7 @@ class SubeUrunAcBody(BaseModel):
     kapak_adet: Optional[int] = None
     pecete_paket: Optional[int] = None
     diger_sarf: Optional[int] = None
+    kalemler: Optional[List[Dict[str, Any]]] = None
     not_aciklama: Optional[str] = None
 
 
@@ -1591,10 +1691,23 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
     if len(pin) != 4 or not pin.isdigit():
         raise HTTPException(400, "4 haneli panel PIN gerekli")
 
+    body_raw = body.model_dump()
+    kalemler = _stok_kalemleri_temizle(body_raw.get("kalemler"))
     try:
-        delta = normalize_delta_body(body.model_dump())
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+        delta = normalize_delta_body(body_raw)
+    except ValueError:
+        delta = {
+            "bardak_kucuk": 0,
+            "bardak_buyuk": 0,
+            "bardak_plastik": 0,
+            "su_adet": 0,
+            "redbull_adet": 0,
+            "soda_adet": 0,
+            "cookie_adet": 0,
+            "pasta_adet": 0,
+        }
+    if sum(int(v or 0) for v in delta.values()) <= 0 and not kalemler:
+        raise HTTPException(400, "En az bir stok kaleminde pozitif adet girin")
 
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
@@ -1611,7 +1724,7 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
 
         tr_now = _now_tr()
         saat_sistem = tr_now.strftime("%H:%M:%S")
-        payload = _json.dumps({"delta": delta}, ensure_ascii=False, separators=(",", ":"))
+        payload = _json.dumps({"delta": delta, "kalemler": kalemler}, ensure_ascii=False, separators=(",", ":"))
         acik = "URUN_AC_JSON:" + payload
         if (body.not_aciklama or "").strip():
             acik += " | " + (body.not_aciklama or "").strip()[:400]
@@ -1627,7 +1740,7 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
         )
         audit(cur, "operasyon_defter", rid, "URUN_AC")
 
-    return {"success": True, "defter_id": rid, "delta": delta, "tip": "URUN_AC"}
+    return {"success": True, "defter_id": rid, "delta": delta, "kalemler": kalemler, "tip": "URUN_AC"}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1707,6 +1820,263 @@ def sube_merkez_mesaj_oku(sube_id: str, mesaj_id: str, body: MesajOkuBody):
         )
 
     return {"success": True, "okundu": True}
+
+
+class SiparisUrunEkleBody(BaseModel):
+    kategori_id: str
+    urun_adi: str
+    personel_id: str
+    pin: str
+
+
+class SiparisUrunDurumBody(BaseModel):
+    kategori_id: str
+    urun_id: str
+    aktif: bool
+    personel_id: str
+    pin: str
+
+
+class SiparisOnayKalem(BaseModel):
+    kategori_id: str
+    urun_id: str
+    urun_ad: str
+    adet: int
+
+
+class SiparisOnayBody(BaseModel):
+    kalemler: List[SiparisOnayKalem]
+    personel_id: str
+    pin: str
+    not_aciklama: Optional[str] = None
+
+
+def _siparis_katalog_getir(cur) -> List[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT id, kod, ad, emoji, sira
+        FROM siparis_kategori
+        WHERE aktif = TRUE
+        ORDER BY sira ASC, ad ASC
+        """
+    )
+    kats = [dict(r) for r in cur.fetchall()]
+    out: List[Dict[str, Any]] = []
+    for k in kats:
+        cur.execute(
+            """
+            SELECT id, ad, aktif, sira
+            FROM siparis_urun
+            WHERE kategori_id=%s
+            ORDER BY sira ASC, ad ASC
+            """,
+            (k["id"],),
+        )
+        items = [
+            {
+                "id": str(x["id"]),
+                "ad": x["ad"],
+                "aktif": bool(x["aktif"]),
+            }
+            for x in cur.fetchall()
+        ]
+        out.append(
+            {
+                "id": str(k["kod"]),
+                "db_kategori_id": str(k["id"]),
+                "label": f"{(k.get('emoji') or '').strip()} {k['ad']}".strip(),
+                "ad": k["ad"],
+                "emoji": k.get("emoji"),
+                "items": items,
+            }
+        )
+    return out
+
+
+@router.get("/{sube_id}/siparis-katalog")
+def sube_siparis_katalog_getir(sube_id: str):
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        return {"kategoriler": _siparis_katalog_getir(cur)}
+
+
+@router.post("/{sube_id}/siparis-urun-ekle")
+def sube_siparis_urun_ekle(sube_id: str, body: SiparisUrunEkleBody):
+    pid_in = (body.personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    kat_id = (body.kategori_id or "").strip()
+    ad = (body.urun_adi or "").strip()
+    if not kat_id:
+        raise HTTPException(400, "kategori_id gerekli")
+    if len(ad) < 2:
+        raise HTTPException(400, "Ürün adı en az 2 karakter olmalı")
+    if not pid_in or len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "personel_id ve 4 haneli PIN gerekli")
+
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        pid_panel = str(ku.get("id") or "").strip() or pid_in
+        cur.execute(
+            "SELECT id FROM siparis_kategori WHERE kod=%s AND aktif=TRUE",
+            (kat_id,),
+        )
+        kr = cur.fetchone()
+        if not kr:
+            raise HTTPException(404, "Kategori bulunamadı")
+        kategori_db_id = str(dict(kr)["id"])
+        norm = _norm_ad_tr(ad)
+        if not norm:
+            raise HTTPException(400, "Ürün adı geçersiz")
+
+        cur.execute(
+            """
+            INSERT INTO siparis_urun (kategori_id, ad, norm_ad, sira, aktif, guncelleme)
+            VALUES (
+                %s, %s, %s,
+                COALESCE((SELECT MAX(sira)+10 FROM siparis_urun WHERE kategori_id=%s), 10),
+                TRUE, NOW()
+            )
+            ON CONFLICT (kategori_id, norm_ad)
+            DO UPDATE SET ad=EXCLUDED.ad, aktif=TRUE, guncelleme=NOW()
+            RETURNING id, ad
+            """,
+            (kategori_db_id, ad, norm, kategori_db_id),
+        )
+        r = dict(cur.fetchone())
+        audit(cur, "siparis_urun", str(r["id"]), "SIPARIS_URUN_EKLE_VEYA_AKTIF_ET")
+        from operasyon_defter import operasyon_defter_ekle
+
+        tr_now = _now_tr()
+        saat = tr_now.strftime("%H:%M:%S")
+        operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "SIPARIS_URUN_EKLE",
+            f"Sipariş ürünü eklendi/aktif edildi — kategori={kat_id} urun={r['ad']} personel={onay_ad}",
+            personel_id=pid_panel,
+            personel_ad=onay_ad,
+            bildirim_saati=saat,
+        )
+        return {"success": True, "urun_id": str(r["id"]), "urun_ad": r["ad"]}
+
+
+@router.post("/{sube_id}/siparis-urun-durum")
+def sube_siparis_urun_durum(sube_id: str, body: SiparisUrunDurumBody):
+    pid_in = (body.personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    kat_id = (body.kategori_id or "").strip()
+    urun_id = (body.urun_id or "").strip()
+    if not kat_id or not urun_id:
+        raise HTTPException(400, "kategori_id ve urun_id gerekli")
+    if not pid_in or len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "personel_id ve 4 haneli PIN gerekli")
+
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        pid_panel = str(ku.get("id") or "").strip() or pid_in
+        cur.execute("SELECT id FROM siparis_kategori WHERE kod=%s", (kat_id,))
+        kr = cur.fetchone()
+        if not kr:
+            raise HTTPException(404, "Kategori bulunamadı")
+        kategori_db_id = str(dict(kr)["id"])
+        cur.execute(
+            """
+            UPDATE siparis_urun
+            SET aktif=%s, guncelleme=NOW()
+            WHERE id=%s AND kategori_id=%s
+            RETURNING id, ad, aktif
+            """,
+            (bool(body.aktif), urun_id, kategori_db_id),
+        )
+        ur = cur.fetchone()
+        if not ur:
+            raise HTTPException(404, "Ürün bulunamadı")
+        ud = dict(ur)
+        audit(cur, "siparis_urun", str(ud["id"]), "SIPARIS_URUN_DURUM")
+        from operasyon_defter import operasyon_defter_ekle
+
+        tr_now = _now_tr()
+        saat = tr_now.strftime("%H:%M:%S")
+        operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "SIPARIS_URUN_DURUM",
+            f"Sipariş ürün durumu güncellendi — kategori={kat_id} urun={ud['ad']} aktif={bool(ud['aktif'])} personel={onay_ad}",
+            personel_id=pid_panel,
+            personel_ad=onay_ad,
+            bildirim_saati=saat,
+        )
+        return {"success": True, "urun_id": str(ud["id"]), "aktif": bool(ud["aktif"])}
+
+
+@router.post("/{sube_id}/siparis-onay")
+def sube_siparis_onay(sube_id: str, body: SiparisOnayBody):
+    pid_in = (body.personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    if not pid_in or len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "personel_id ve 4 haneli PIN gerekli")
+    kalemler = body.kalemler or []
+    temiz: List[Dict[str, Any]] = []
+    for k in kalemler:
+        ad = (k.urun_ad or "").strip()
+        if not ad:
+            continue
+        adet = int(k.adet or 0)
+        if adet <= 0:
+            continue
+        temiz.append(
+            {
+                "kategori_id": (k.kategori_id or "").strip(),
+                "urun_id": (k.urun_id or "").strip(),
+                "urun_ad": ad,
+                "adet": adet,
+            }
+        )
+    if not temiz:
+        raise HTTPException(400, "Onay için en az bir kalemde adet girin")
+
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        pid_panel = str(ku.get("id") or "").strip() or pid_in
+        tr_now = _now_tr()
+        saat = tr_now.strftime("%H:%M:%S")
+        tid = str(uuid.uuid4())
+        cur.execute(
+            """
+            INSERT INTO siparis_talep
+                (id, sube_id, tarih, durum, personel_id, personel_ad, bildirim_saati, not_aciklama, kalemler)
+            VALUES (%s, %s, CURRENT_DATE, 'bekliyor', %s, %s, %s, %s, %s::jsonb)
+            """,
+            (
+                tid,
+                sube_id,
+                pid_panel,
+                onay_ad,
+                saat,
+                (body.not_aciklama or "").strip() or None,
+                json.dumps(temiz, ensure_ascii=False),
+            ),
+        )
+        audit(cur, "siparis_talep", tid, "SIPARIS_ONAY")
+        from operasyon_defter import operasyon_defter_ekle
+
+        toplam = sum(int(x.get("adet") or 0) for x in temiz)
+        operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "SIPARIS_ONAY_PIN",
+            f"Sipariş onaylandı — personel={onay_ad} kalem={len(temiz)} toplam_adet={toplam}",
+            personel_id=pid_panel,
+            personel_ad=onay_ad,
+            bildirim_saati=saat,
+        )
+        return {"success": True, "talep_id": tid, "kalem_sayisi": len(temiz), "toplam_adet": toplam}
 
 
 # ─────────────────────────────────────────────────────────────

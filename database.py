@@ -1475,6 +1475,88 @@ def init_db():
             WHERE aktif = TRUE
         """)
 
+        # ── MERKEZİ SİPARİŞ KATALOĞU (ŞUBE PANELİ) ─────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS siparis_kategori (
+                id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                kod         TEXT NOT NULL UNIQUE,
+                ad          TEXT NOT NULL,
+                emoji       TEXT,
+                sira        INT NOT NULL DEFAULT 0,
+                aktif       BOOLEAN NOT NULL DEFAULT TRUE,
+                olusturma   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                guncelleme  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS siparis_urun (
+                id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                kategori_id  TEXT NOT NULL REFERENCES siparis_kategori(id) ON DELETE CASCADE,
+                ad           TEXT NOT NULL,
+                norm_ad      TEXT NOT NULL,
+                sira         INT NOT NULL DEFAULT 0,
+                aktif        BOOLEAN NOT NULL DEFAULT TRUE,
+                olusturma    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                guncelleme   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (kategori_id, norm_ad)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_siparis_urun_kategori
+            ON siparis_urun (kategori_id, aktif, sira, ad)
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS siparis_talep (
+                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                sube_id         TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                tarih           DATE NOT NULL DEFAULT CURRENT_DATE,
+                durum           TEXT NOT NULL DEFAULT 'bekliyor',
+                personel_id     TEXT,
+                personel_ad     TEXT,
+                bildirim_saati  TEXT,
+                not_aciklama    TEXT,
+                kalemler        JSONB NOT NULL DEFAULT '[]'::jsonb,
+                olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_siparis_talep_sube_tarih
+            ON siparis_talep (sube_id, tarih, olusturma DESC)
+        """)
+        cur.execute("""
+            INSERT INTO siparis_kategori (kod, ad, emoji, sira)
+            VALUES
+                ('kahve', 'Kahveler', '☕', 10),
+                ('surup', 'Şuruplar', '🍯', 20),
+                ('sos', 'Soslar', '🍫', 30),
+                ('toz', 'Tozlar', '🥄', 40),
+                ('pure', 'Püreler', '🍓', 50),
+                ('icecek', 'İçecekler', '🥤', 60),
+                ('temizlik', 'Temizlik', '🧼', 70),
+                ('sarf', 'Sarf Malzemeler', '📦', 80),
+                ('bitki_cayi', 'Bitki Çayları', '🌿', 90)
+            ON CONFLICT (kod) DO UPDATE
+            SET ad = EXCLUDED.ad, emoji = EXCLUDED.emoji, sira = EXCLUDED.sira
+        """)
+        cur.execute("""
+            INSERT INTO siparis_urun (kategori_id, ad, norm_ad, sira)
+            SELECT k.id, v.ad, v.norm_ad, v.sira
+            FROM (
+                VALUES
+                    ('kahve','Espresso','espresso',10),('kahve','Filtre Kahve','filtre_kahve',20),('kahve','Granül Kahve','granul_kahve',30),('kahve','Türk Kahvesi','turk_kahvesi',40),('kahve','Dibek Kahvesi','dibek_kahvesi',50),('kahve','Menengiç Kahvesi','menengic_kahvesi',60),
+                    ('surup','Turunç','turunc',10),('surup','Bahçe Nane','bahce_nane',20),('surup','Böğürtlen','bogurtlen',30),('surup','Lime','lime',40),('surup','Çilek','cilek',50),('surup','Yeşil Elma','yesil_elma',60),('surup','Yaban Mersini','yaban_mersini',70),('surup','Ananas','ananas',80),('surup','Kivi','kivi',90),('surup','Cookie','cookie',100),('surup','Frambuaz','frambuaz',110),('surup','Muz','muz',120),('surup','Kavun','kavun',130),('surup','Irish Cream','irish_cream',140),('surup','Toffee Nut','toffee_nut',150),('surup','Vanilya','vanilya',160),('surup','Salted Karamel','salted_karamel',170),('surup','Pumpkin','pumpkin',180),
+                    ('sos','Çikolata Sos','cikolata_sos',10),('sos','Beyaz Çikolata Sos','beyaz_cikolata_sos',20),('sos','Karamel Sos','karamel_sos',30),
+                    ('toz','Çilek Tozu','cilek_tozu',10),('toz','Muz Tozu','muz_tozu',20),('toz','Orman Meyveli Toz','orman_meyveli_toz',30),('toz','Vanilya Toz','vanilya_toz',40),('toz','Çikolata Toz','cikolata_toz',50),('toz','Sıcak Çikolata','sicak_cikolata',60),('toz','Beyaz Sıcak Çikolata','beyaz_sicak_cikolata',70),('toz','Salep','salep',80),
+                    ('pure','Çilek','cilek',10),('pure','Muz','muz',20),('pure','Orman Meyvesi','orman_meyvesi',30),('pure','Frambuaz','frambuaz',40),('pure','Karpuz','karpuz',50),('pure','Mango','mango',60),('pure','Kavun','kavun',70),('pure','Ananas','ananas',80),('pure','Ejder Meyvesi','ejder_meyvesi',90),
+                    ('icecek','Redbull','redbull',10),('icecek','Portakal Suyu','portakal_suyu',20),('icecek','Ananas Suyu','ananas_suyu',30),('icecek','Sprite','sprite',40),('icecek','Power Up','power_up',50),('icecek','Limonata','limonata',60),('icecek','Su','su',70),('icecek','Bardak Su','bardak_su',80),('icecek','Sade Maden Suyu','sade_maden_suyu',90),('icecek','Limon Maden Suyu','limon_maden_suyu',100),('icecek','Çilek Maden Suyu','cilek_maden_suyu',110),('icecek','Elma Maden Suyu','elma_maden_suyu',120),
+                    ('temizlik','Köpük Sabun','kopuk_sabun',10),('temizlik','Sıvı Sabun','sivi_sabun',20),('temizlik','Yüzey Temizleyici','yuzey_temizleyici',30),('temizlik','Z Peçete','z_pecete',40),('temizlik','Tuvalet Kağıdı','tuvalet_kagidi',50),('temizlik','Oda Parfümü','oda_parfumu',60),('temizlik','Eldiven','eldiven',70),('temizlik','Sarı Güç','sari_guc',80),('temizlik','Porçöz','porcoz',90),('temizlik','Çöp Poşeti','cop_poseti',100),
+                    ('sarf','Pipet','pipet',10),('sarf','POS Kağıdı','pos_kagidi',20),('sarf','Kalem','kalem',30),('sarf','Filtre Kağıdı','filtre_kagidi',40),('sarf','14oz Bardak','14oz_bardak',50),('sarf','8oz Bardak','8oz_bardak',60),('sarf','Plastik Bardak','plastik_bardak',70),('sarf','Dido Trio','dido_trio',80),('sarf','Oreo','oreo',90),('sarf','Kese Kağıdı','kese_kagidi',100),('sarf','Streç Film','strec_film',110),('sarf','Baskılı Peçete','baskili_pecete',120),('sarf','Baskılı Şeker','baskili_seker',130),('sarf','Bardak Çantası','bardak_cantasi',140),('sarf','Islak Mendil','islak_mendil',150),('sarf','Cam Bezi','cam_bezi',160),('sarf','Zımba Teli','zimba_teli',170),('sarf','Ahşap Karıştırıcı','ahsap_karistirici',180),
+                    ('bitki_cayi','Papatya','papatya',10),('bitki_cayi','Kış Çayı','kis_cayi',20),('bitki_cayi','Yeşil Çay','yesil_cay',30),('bitki_cayi','Melisa','melisa',40),('bitki_cayi','Ihlamur','ihlamur',50)
+            ) AS v(kod, ad, norm_ad, sira)
+            JOIN siparis_kategori k ON k.kod = v.kod
+            ON CONFLICT (kategori_id, norm_ad) DO NOTHING
+        """)
+
         # ── PERSONEL AYLIK KAYIT ───────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS personel_aylik (
