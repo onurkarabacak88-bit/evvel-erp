@@ -472,6 +472,10 @@
 
     #kasaCooldown { color: var(--warn); font-size: 12px; font-weight: 600; margin-top: 6px; min-height: 18px; }
     .err-text { color: var(--danger); font-size: 12px; margin-top: 6px; font-weight: 500; }
+    /* Tik satırı hover */
+    .dv-tik-row:hover { border-color: var(--accent) !important; }
+    .dv-tik-row:has(input:checked) { background: rgba(34,197,94,.08) !important; border-color: rgba(34,197,94,.3) !important; }
+
   </style>
 </head>
 <body>
@@ -503,6 +507,10 @@
 
     <!-- SOL PANEL -->
     <div id="sol">
+      <button class="sol-btn active" id="solAnaBtn" onclick="solSekmeAc('ana')">
+        <span class="ico">🏠</span> Ana Sayfa
+      </button>
+      <div class="sol-divider"></div>
       <div class="panel-title">Stok İşlemleri</div>
       <button class="sol-btn" id="solSevkBtn" onclick="solSekmeAc('sevk')">
         <span class="ico">📦</span> Ürün Teslim Al
@@ -510,9 +518,7 @@
       <button class="sol-btn" id="solAcBtn" onclick="solSekmeAc('ac')">
         <span class="ico">🔓</span> Ürün Aç
       </button>
-      <button class="sol-btn" id="solStokBtn" onclick="solSekmeAc('stok')">
-        <span class="ico">➕</span> Stok Ekle
-      </button>
+
       <div class="sol-divider"></div>
       <div class="panel-title">Hızlı Erişim</div>
       <button class="sol-btn" id="solXrBtn" onclick="solSekmeAc('xr')">
@@ -527,23 +533,13 @@
     <div id="orta">
       <!-- Ana sekme -->
       <div class="sekme-icerik aktif" id="tab-ana">
-        <!-- Merkez mesajları — dinamik -->
-        <div id="mesajlarDiv"></div>
-
-        <!-- Günlük görevler -->
-        <div class="kart" id="gorevKart">
-          <div class="kart-baslik"><span class="ico">📋</span> Günlük Görevler</div>
-          <div id="gorevListesi"><div style="color:var(--muted);font-size:13px">Yükleniyor…</div></div>
-        </div>
-
-        <!-- Operasyon olayları -->
+        <!-- Operasyon timeline -->
         <div class="kart" id="opKart">
-          <div class="kart-baslik"><span class="ico">📡</span> Operasyon Durumu</div>
-          <div id="opOlaylar"></div>
+          <div id="opTimeline"><div style="color:var(--muted);font-size:13px">Yükleniyor…</div></div>
         </div>
 
-        <!-- Sol panel içerikleri (mobil + orta alanda da görünür) -->
-        <div id="solIcerikOrta"></div>
+        <!-- Merkez mesajları — dinamik (altta) -->
+        <div id="mesajlarDiv"></div>
       </div>
 
       <!-- Gider sekme -->
@@ -589,12 +585,6 @@
         </div>
       </div>
 
-      <div class="sekme-icerik" id="tab-stok">
-        <div class="kart">
-          <div class="kart-baslik"><span class="ico">➕</span> Stok Ekle</div>
-          <div id="stokForm"></div>
-        </div>
-      </div>
 
       <div class="sekme-icerik" id="tab-xr">
         <div class="kart">
@@ -623,14 +613,12 @@
     <!-- SAĞ PANEL -->
     <div id="sag">
       <div class="sag-tab-bar">
-        <button class="sag-tab active" id="sagTab-kasa" onclick="sagSekmeAc('kasa')">Kasa</button>
+        <button class="sag-tab active" id="sagTab-kasa" onclick="sagSekmeAc('kasa')">Kasa Devri</button>
         <button class="sag-tab" id="sagTab-kapanis" onclick="sagSekmeAc('kapanis')">Kapanış</button>
-        <button class="sag-tab" id="sagTab-eksik" onclick="sagSekmeAc('eksik')">Eksik</button>
       </div>
 
-      <!-- Kasa teslim -->
+      <!-- Kasa devri -->
       <div class="sag-content sekme-icerik aktif" id="sagTab-kasa-ic">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Kasa devri — sabahçı giriş verir, akşamcı onaylar.</div>
         <div id="kasaDevirDurum"></div>
         <div id="kasaDevirForm"></div>
       </div>
@@ -905,6 +893,14 @@ function altSekmeAc(id) {
   document.querySelectorAll('#orta .sekme-icerik').forEach(function(el){ el.classList.remove('aktif'); });
   var ic = document.getElementById('tab-' + id);
   if (ic) ic.classList.add('aktif');
+  // Sol panel senkronizasyonu
+  document.querySelectorAll('#sol .sol-btn').forEach(function(b){ b.classList.remove('active'); });
+  var solBtn = document.getElementById('sol' + id.charAt(0).toUpperCase() + id.slice(1) + 'Btn');
+  if (solBtn) solBtn.classList.add('active');
+  else if (id === 'ana') {
+    var anaBtn = document.getElementById('solAnaBtn');
+    if (anaBtn) anaBtn.classList.add('active');
+  }
   // Mobil: mesaj sekmesi için özel
   if (id === 'mesaj') renderMesajSekme();
 }
@@ -919,8 +915,17 @@ window.solSekmeAc = function(id) {
   document.querySelectorAll('#orta .sekme-icerik').forEach(function(el){ el.classList.remove('aktif'); });
   var ic = document.getElementById('tab-' + id);
   if (ic) ic.classList.add('aktif');
+  // Alt bar senkronizasyonu
+  document.querySelectorAll('.alt-tab').forEach(function(b){ b.classList.remove('active'); });
+  var altBtn = document.getElementById('altTab-' + id);
+  if (altBtn) altBtn.classList.add('active');
+  else {
+    // Ana sayfa için alt bar'da "Ana" aktif
+    var anaBtn = document.getElementById('altTab-ana');
+    if (anaBtn) anaBtn.classList.add('active');
+  }
   // Stok formlarını doldur
-  if (id === 'sevk' || id === 'ac' || id === 'stok') renderStokForms(id);
+  if (id === 'sevk' || id === 'ac') renderStokForms(id);
 };
 
 window.sagSekmeAc = function(id) {
@@ -931,7 +936,7 @@ window.sagSekmeAc = function(id) {
   document.querySelectorAll('.sag-content').forEach(function(el){ el.classList.remove('aktif'); });
   var ic = document.getElementById('sagTab-' + id + '-ic');
   if (ic) ic.classList.add('aktif');
-  if (id === 'eksik') renderEksikListesi();
+
 };
 
 // ─── FILL SEL ────────────────────────────────────────────────
@@ -992,32 +997,71 @@ function stokFormHTML(prefix, withPers, btnId, btnLabel, notId) {
   return h;
 }
 
+
+// Tedarikçi listesini API'den çek ve cache'le
+var _tedarikciler = null;
+async function tedarikcileriGetir() {
+  if (_tedarikciler) return _tedarikciler;
+  try {
+    var r = await api('/tedarikciler?aktif=true');
+    _tedarikciler = r.tedarikciler || [];
+  } catch(e) {
+    _tedarikciler = [];
+  }
+  return _tedarikciler;
+}
+
+function tedarikciSelectHTML(selectId) {
+  var opts = '<option value="">— Tedarikçi seçin (zorunlu) —</option>';
+  (_tedarikciler || []).forEach(function(t) {
+    opts += '<option value="' + escHtml(t.ad) + '">' + escHtml(t.ad) + (t.kategori ? ' · ' + escHtml(t.kategori) : '') + '</option>';
+  });
+  return '<div class="form-group"><label>Tedarikçi *</label><select id="' + selectId + '">' + opts + '</select></div>';
+}
+
 function renderStokForms(tip) {
   if (tip === 'sevk') {
     var el = document.getElementById('sevkForm');
     if (el && !el.dataset.built) {
-      el.innerHTML = stokFormHTML('sv', true, 'svGonder', 'Sevk Kaydını Kaydet', 'svNot');
       el.dataset.built = '1';
-      fillSels();
-      wireStokBtn('sv', '/urun-sevk', 'Deftere kaydedildi (depo).', function(body){
-        body.tedarikci = inpVal('svTedarikci') || null;
+      // Önce tedarikçileri çek, sonra formu doldur
+      tedarikcileriGetir().then(function() {
+        var h = '';
+        // Bilgilendirme notu
+        h += '<div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px;line-height:1.6;color:#93c5fd">';
+        h += '<strong>ℹ️ Ürün Teslim Al — Depo Kaydı</strong><br/>';
+        h += 'Bu form, tedarikçiden depoya gelen ürünleri kaydetmek içindir. ';
+        h += 'Girilen miktarlar <strong>aktif stoka girmez</strong> — depodaki potansiyel stok olarak izlenir. ';
+        h += 'Ürünü bardan/kullanıma açmak için <strong>Ürün Aç</strong> formunu kullanın.';
+        h += '</div>';
+        // Tedarikçi dropdown (zorunlu)
+        h += tedarikciSelectHTML('svTedarikci');
+        // Stok form
+        h += stokFormHTML('sv', true, 'svGonder', '📦 Depoya Teslim Aldım', 'svNot');
+        el.innerHTML = h;
+        fillSels();
+        wireStokBtn('sv', '/urun-sevk', '✅ Depoya teslim alındı — kayıt oluşturuldu.', function(body){
+          var td = selVal('svTedarikci');
+          if (!td) throw new Error('Tedarikçi seçin');
+          body.tedarikci = td;
+        });
       });
     }
   } else if (tip === 'ac') {
     var el = document.getElementById('acForm');
     if (el && !el.dataset.built) {
-      el.innerHTML = stokFormHTML('ac', true, 'acGonder', 'Aktif Stoka Ekle', 'acNot');
       el.dataset.built = '1';
+      var h = '';
+      h += '<div style="background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.2);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px;line-height:1.6;color:#86efac">';
+      h += '<strong>ℹ️ Ürün Aç — Aktif Kullanıma Al</strong><br/>';
+      h += 'Depodan bar veya aktif kullanım alanına çıkan ürünleri girin. ';
+      h += 'Bu kayıt teorik stok hesabına dahil edilir: ';
+      h += '<em>Açılış + Ürün Aç = Beklenen kapanış stoku</em>';
+      h += '</div>';
+      h += stokFormHTML('ac', true, 'acGonder', '🔓 Aktif Kullanıma Aldım', 'acNot');
+      el.innerHTML = h;
       fillSels();
-      wireStokBtn('ac', '/urun-ac', 'Aktif stoka eklendi.');
-    }
-  } else if (tip === 'stok') {
-    var el = document.getElementById('stokForm');
-    if (el && !el.dataset.built) {
-      el.innerHTML = stokFormHTML('st', true, 'stGonder', 'Deftere Ekle', 'stNot');
-      el.dataset.built = '1';
-      fillSels();
-      wireStokBtn('st', '/urun-stok-ekle', 'Deftere eklendi.');
+      wireStokBtn('ac', '/urun-ac', '✅ Aktif stoka eklendi.');
     }
   }
 }
@@ -1083,6 +1127,47 @@ function renderEksikListesi() {
 }
 
 // ─── KASA DEVRİ ──────────────────────────────────────────────
+// Sabahçının girdiği değerleri etiketli nesne olarak döner
+function dvRowLabel(key) {
+  var m = {
+    teslim:'Teslim kasa (₺)', nakit:'Nakit ciro (₺)', pos:'POS ciro (₺)', online:'Online ciro (₺)',
+    devir:'Devir (₺)', bardak_kucuk:'Küçük bardak', bardak_buyuk:'Büyük bardak',
+    bardak_plastik:'Plastik bardak', su_adet:'Su', redbull_adet:'Redbull',
+    soda_adet:'Soda', cookie_adet:'Cookie', pasta_adet:'Pasta'
+  };
+  return m[key] || key;
+}
+
+function fmt2(v) { return (v==null||v===undefined) ? '—' : String(v); }
+
+function renderAdim2(row) {
+  // row = kapanis_kayit satırı
+  var keys = ['teslim','nakit','pos','online','devir','bardak_kucuk','bardak_buyuk','bardak_plastik','su_adet','redbull_adet','soda_adet','cookie_adet','pasta_adet'];
+  var h = '<p style="font-size:12px;color:var(--muted);margin-bottom:12px">Sabahçının girdiği değerleri kontrol et. Her satırı gördüğünü tıklayarak onayla.</p>';
+  h += '<div id="dvTikListesi">';
+  keys.forEach(function(k, i){
+    var v = row[k];
+    if (v == null) return;
+    h += '<label class="dv-tik-row" id="dvTikRow_'+i+'" style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;margin-bottom:5px;background:var(--bg3);border:1px solid var(--border);cursor:pointer;font-size:13px">';
+    h += '<input type="checkbox" class="dv-tik" id="dvTik_'+i+'" data-key="'+k+'" style="width:18px;height:18px;accent-color:var(--ok);flex-shrink:0" />';
+    h += '<span style="flex:1"><strong>'+dvRowLabel(k)+'</strong></span>';
+    h += '<span style="font-family:monospace;font-weight:700;color:var(--text)">'+fmt2(v)+'</span>';
+    h += '</label>';
+  });
+  h += '</div>';
+  h += '<div class="divider"></div>';
+  // Açıklama alanı (başta gizli)
+  h += '<div id="dvAciklamaBlok" style="display:none">';
+  h += '<div style="padding:10px 12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px;margin-bottom:10px;font-size:12px;color:var(--warn)">⚠️ Bazı kalemler işaretlenmedi. Devir alıyorsun — neden kabul ediyorsun? Açıkla.</div>';
+  h += '<div class="form-group"><label>Açıklama (zorunlu)</label><textarea id="dvAciklama" rows="3" placeholder="Örn: Bardak sayısı eksik, anlaştık — gece teslim alacağım." style="font-size:13px"></textarea></div>';
+  h += '</div>';
+  h += '<div class="form-group"><label>Devralan (Akşamcı)</label><select id="dvPers2"></select></div>';
+  h += '<div class="form-group"><label>PIN</label><input id="dvPin2" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
+  h += '<button class="btn btn-success" id="dvAdim2Btn" style="margin-top:6px">Devri Kabul Et ve İmzala</button>';
+  h += '<div id="dvMsg"></div>';
+  return h;
+}
+
 function renderKasaDevir() {
   var vd = lastData && (lastData.vardiya_devir || {});
   var row = vd && vd.vardiya_devir;
@@ -1091,70 +1176,89 @@ function renderKasaDevir() {
   var frmEl = document.getElementById('kasaDevirForm');
   if (!durEl || !frmEl) return;
 
+  // TAMAMLANDI
   if (durum === 'tamamlandi') {
-    durEl.innerHTML = '<div class="badge badge-ok" style="margin-bottom:10px">✓ Bugünkü vardiya devri tamamlandı</div>';
+    durEl.innerHTML = '<div class="badge badge-ok" style="display:inline-flex;margin-bottom:10px;padding:8px 14px">✓ Bugünkü vardiya devri tamamlandı</div>' +
+      '<div style="font-size:12px;color:var(--muted);margin-top:6px">' +
+      (row.kapanisci_id ? 'Devreden kayıtlı.' : '') + '</div>';
     frmEl.innerHTML = '';
     return;
   }
+
+  // ADIM 2 — akşamcı tik tik onay
   if (durum === 'acilis_bekliyor') {
-    durEl.innerHTML = '<div class="badge badge-warn" style="margin-bottom:10px">⏳ Sabahçı imzaladı — akşamcı bekleniyor</div>';
-    frmEl.innerHTML = '<div class="form-group"><label>Akşamcı (Devralan)</label><select id="dvPers2"></select></div>' +
-      '<div class="form-group"><label>PIN</label><input id="dvPin2" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>' +
-      '<button class="btn btn-success" id="dvAdim2">2. İmzayı Onayla</button>' +
-      '<div id="dvMsg"></div>';
+    durEl.innerHTML = '<div class="badge badge-warn" style="display:inline-flex;margin-bottom:12px;padding:7px 14px">⏳ Sabahçı imzaladı — akşamcı onayı bekleniyor</div>';
+    frmEl.innerHTML = renderAdim2(row);
     fillSels();
-    var btn = document.getElementById('dvAdim2');
-    if (btn) btn.onclick = async function(){
-      setMsg('dvMsg','',''); btn.disabled=true;
+
+    // Tik değişince açıklama bloğunu göster/gizle
+    document.getElementById('dvTikListesi').addEventListener('change', function(){
+      var hepsi = Array.from(document.querySelectorAll('.dv-tik')).every(function(c){ return c.checked; });
+      document.getElementById('dvAciklamaBlok').style.display = hepsi ? 'none' : 'block';
+    });
+
+    // Adım 2 gönder
+    var btn2 = document.getElementById('dvAdim2Btn');
+    if (btn2) btn2.onclick = async function(){
+      setMsg('dvMsg','',''); btn2.disabled=true;
       try {
-        var pid = selVal('dvPers2'), pin = inpVal('dvPin2').replace(/\D/g,'').slice(0,4);
-        if (!pid) throw new Error('Personel seçin');
-        if (pin.length!==4) throw new Error('4 haneli PIN');
-        await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/vardiya-devri/adim2',{method:'POST',body:{aksamci_devralan_id:pid,pin:pin}});
+        var pid2 = selVal('dvPers2'), pin2 = inpVal('dvPin2').replace(/\D/g,'').slice(0,4);
+        if (!pid2) throw new Error('Personel seçin');
+        if (pin2.length!==4) throw new Error('4 haneli PIN girin');
+        var hepsi = Array.from(document.querySelectorAll('.dv-tik')).every(function(c){ return c.checked; });
+        var aciklama = '';
+        if (!hepsi) {
+          aciklama = (document.getElementById('dvAciklama') && document.getElementById('dvAciklama').value || '').trim();
+          if (aciklama.length < 10) throw new Error('Açıklama en az 10 karakter olmalı');
+        }
+        var body = { aksamci_devralan_id: pid2, pin: pin2 };
+        if (aciklama) body.aciklama = aciklama;
+        await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/vardiya-devri/adim2',{method:'POST',body:body});
         setMsg('dvMsg','Vardiya devri tamamlandı.','msg-ok');
         setTimeout(refresh, 800);
       } catch(e) {
         if (e.status===429) handle429(document.getElementById('dvMsg'),e);
         else setMsg('dvMsg',e.message||'Hata','msg-err');
       }
-      btn.disabled=false;
+      btn2.disabled=false;
     };
     return;
   }
 
-  // Adım 1
-  durEl.innerHTML = '';
+  // ADIM 1 — sabahçı form
+  durEl.innerHTML = '<p style="font-size:12px;color:var(--muted);margin-bottom:12px">Sabahçı kasa, stok ve ciro bilgilerini girer. Akşamcı ayrı PIN ile onaylar.</p>';
   frmEl.innerHTML =
     '<div class="sect-title">Ciro (X Raporu)</div>' +
     '<div class="grid2"><div class="form-group"><label>Nakit (₺)</label><input id="dvNakit" inputmode="decimal" placeholder="0" /></div><div class="form-group"><label>POS (₺)</label><input id="dvPos" inputmode="decimal" placeholder="0" /></div></div>' +
     '<div class="form-group"><label>Online (₺)</label><input id="dvOnline" inputmode="decimal" placeholder="0" /></div>' +
     '<div class="divider"></div>' +
-    '<div class="form-group"><label>Teslim Kasa (₺)</label><input id="dvTeslim" inputmode="decimal" /></div>' +
+    '<div class="sect-title">Kasa</div>' +
+    '<div class="form-group"><label>Teslim Kasa (₺) *</label><input id="dvTeslim" inputmode="decimal" /></div>' +
     '<div class="form-group"><label>Devir (₺)</label><input id="dvDevir" inputmode="decimal" placeholder="0" /></div>' +
     '<div class="divider"></div>' +
     '<div class="sect-title">Bardak Sayımı</div>' +
     '<div class="stok-grid">' +
-    '<div class="stok-item"><label>Küçük</label><input id="dvBk" inputmode="numeric" /></div>' +
-    '<div class="stok-item"><label>Büyük</label><input id="dvBb" inputmode="numeric" /></div>' +
-    '<div class="stok-item"><label>Plastik</label><input id="dvBp" inputmode="numeric" /></div>' +
+    '<div class="stok-item"><label>Küçük</label><input id="dvBk" inputmode="numeric" placeholder="0" /></div>' +
+    '<div class="stok-item"><label>Büyük</label><input id="dvBb" inputmode="numeric" placeholder="0" /></div>' +
+    '<div class="stok-item"><label>Plastik</label><input id="dvBp" inputmode="numeric" placeholder="0" /></div>' +
     '</div>' +
     '<div class="sect-title" style="margin-top:8px">Ürün Sayımı</div>' +
     '<div class="stok-grid">' +
-    '<div class="stok-item"><label>Su</label><input id="dvSu" inputmode="numeric" /></div>' +
-    '<div class="stok-item"><label>Redbull</label><input id="dvRb" inputmode="numeric" /></div>' +
-    '<div class="stok-item"><label>Soda</label><input id="dvSo" inputmode="numeric" /></div>' +
-    '<div class="stok-item"><label>Cookie</label><input id="dvCk" inputmode="numeric" /></div>' +
-    '<div class="stok-item"><label>Pasta</label><input id="dvPa" inputmode="numeric" /></div>' +
+    '<div class="stok-item"><label>Su</label><input id="dvSu" inputmode="numeric" placeholder="0" /></div>' +
+    '<div class="stok-item"><label>Redbull</label><input id="dvRb" inputmode="numeric" placeholder="0" /></div>' +
+    '<div class="stok-item"><label>Soda</label><input id="dvSo" inputmode="numeric" placeholder="0" /></div>' +
+    '<div class="stok-item"><label>Cookie</label><input id="dvCk" inputmode="numeric" placeholder="0" /></div>' +
+    '<div class="stok-item"><label>Pasta</label><input id="dvPa" inputmode="numeric" placeholder="0" /></div>' +
     '</div>' +
     '<div class="divider"></div>' +
     '<label class="chk-row"><input type="checkbox" id="dvXRapor" /><span>X raporu gönderildi</span></label>' +
     '<div class="form-group"><label>Devreden (Sabahçı)</label><select id="dvPers1"></select></div>' +
     '<div class="form-group"><label>PIN</label><input id="dvPin1" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>' +
-    '<button class="btn btn-warn" id="dvAdim1">1. İmza — Devri Başlat</button>' +
+    '<button class="btn btn-warn" id="dvAdim1Btn">1. İmza — Devri Başlat</button>' +
     '<div id="dvMsg"></div>';
 
   fillSels();
-  var btn1 = document.getElementById('dvAdim1');
+  var btn1 = document.getElementById('dvAdim1Btn');
   if (btn1) btn1.onclick = async function(){
     setMsg('dvMsg','',''); btn1.disabled=true;
     try {
@@ -1162,23 +1266,25 @@ function renderKasaDevir() {
       if (!pid1) throw new Error('Personel seçin');
       if (pin1.length!==4) throw new Error('4 haneli PIN');
       var teslim = parseNum(inpVal('dvTeslim'));
-      if (teslim == null || teslim < 0) throw new Error('Teslim tutarı girin');
+      if (teslim==null||teslim<0) throw new Error('Teslim tutarı girin');
       if (!document.getElementById('dvXRapor').checked) throw new Error('X raporu gönderildi onayı gerekli');
       var opAktif = lastData && lastData.operasyon && lastData.operasyon.aktif;
       var body = {
         sabahci_devreden_id: pid1, pin: pin1,
         nakit: parseNum(inpVal('dvNakit'))||0,
-        pos: parseNum(inpVal('dvPos'))||0,
-        online: parseNum(inpVal('dvOnline'))||0,
+        pos:   parseNum(inpVal('dvPos'))||0,
+        online:parseNum(inpVal('dvOnline'))||0,
         teslim: teslim, devir: parseNum(inpVal('dvDevir'))||0,
         x_raporu_gonderildi: true, ciro_gonderildi: false,
         operasyon_event_id: opAktif&&opAktif.id ? opAktif.id : null,
-        bardak_kucuk: pInt('dvBk','Küçük bardak'),
-        bardak_buyuk: pInt('dvBb','Büyük bardak'),
+        bardak_kucuk:   pInt('dvBk','Küçük bardak'),
+        bardak_buyuk:   pInt('dvBb','Büyük bardak'),
         bardak_plastik: pInt('dvBp','Plastik bardak'),
-        su_adet: pInt('dvSu','Su'), redbull_adet: pInt('dvRb','Redbull'),
-        soda_adet: pInt('dvSo','Soda'), cookie_adet: pInt('dvCk','Cookie'),
-        pasta_adet: pInt('dvPa','Pasta'),
+        su_adet:        pInt('dvSu','Su'),
+        redbull_adet:   pInt('dvRb','Redbull'),
+        soda_adet:      pInt('dvSo','Soda'),
+        cookie_adet:    pInt('dvCk','Cookie'),
+        pasta_adet:     pInt('dvPa','Pasta'),
       };
       await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/vardiya-devri/adim1',{method:'POST',body:body});
       setMsg('dvMsg','1. imza alındı — akşamcı onayı bekleniyor.','msg-ok');
@@ -1203,47 +1309,74 @@ function renderMain(data) {
   // Merkez mesajları
   renderMesajlariDiv(data.merkez_mesajlar || []);
 
-  // Görevler
-  var gorevEl = document.getElementById('gorevListesi');
-  if (gorevEl) {
-    var gh = '';
-    (data.gorevler || []).forEach(function(g){
-      var ico = g.tamamlandi ? '✅' : '⬜';
-      var cls = g.tamamlandi ? 'gorev-item done' : 'gorev-item';
-      gh += '<div class="' + cls + '">';
-      gh += '<span class="chk-ico">' + ico + '</span>';
-      gh += '<div class="gorev-text"><strong>' + (g.baslik||'') + '</strong><span>' + (g.aciklama||'') + '</span></div>';
-      gh += '</div>';
-    });
-    gorevEl.innerHTML = gh || '<div style="color:var(--muted);font-size:13px">Görev yok</div>';
-  }
-
-  // Operasyon olayları
-  var opEl = document.getElementById('opOlaylar');
-  if (opEl) {
+  // Operasyon timeline
+  var tlEl = document.getElementById('opTimeline');
+  if (tlEl) {
     var op = data.operasyon || {};
     var evs = op.events || op.events_ozet || [];
+    var sunucu = op.sunucu_saati || '';
+    var tipIco  = {ACILIS:'🌅', KONTROL:'🔍', KAPANIS:'🌙', CIKIS:'🚪'};
+    var tipLbl  = {ACILIS:'Açılış', KONTROL:'Kontrol', KAPANIS:'Kapanış', CIKIS:'Çıkış'};
+    var tl = '';
+    // Sunucu saati küçük, üstte
+    if (sunucu) tl += '<div style="font-size:11px;color:var(--muted);margin-bottom:14px;text-align:right">🕐 Sunucu: ' + sunucu + '</div>';
     if (!evs.length) {
-      opEl.innerHTML = '<div style="color:var(--muted);font-size:12px">Bugün olay yok</div>';
+      tl += '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px 0">Bugün operasyon eventi yok</div>';
     } else {
-      var oh = '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Sunucu: ' + (op.sunucu_saati||'—') + '</div>';
-      var tipIco = {ACILIS:'🌅',KONTROL:'🔍',KAPANIS:'🌙',CIKIS:'🚪'};
-      evs.forEach(function(e){
-        var dotCls = e.durum==='tamamlandi'?'tamam':e.durum==='gecikti'?'gec':'bekle';
-        oh += '<div class="ev-row">';
-        oh += '<span style="display:flex;align-items:center;gap:6px">';
-        oh += '<span class="ev-dot ' + dotCls + '"></span>';
-        oh += '<span>' + (tipIco[e.tip]||'○') + ' ' + (e.tip||'') + '</span>';
-        oh += '</span>';
-        oh += '<span class="badge ' + (e.durum==='tamamlandi'?'badge-ok':e.durum==='gecikti'?'badge-warn':'badge-info') + '">' + (e.durum||'') + '</span>';
-        oh += '</div>';
+      evs.forEach(function(ev, i){
+        var tamam  = ev.durum === 'tamamlandi';
+        var gecikti= ev.durum === 'gecikti';
+        var aktif  = ev.durum === 'bekliyor' || gecikti;
+        var ico = tipIco[ev.tip] || '○';
+        var lbl = tipLbl[ev.tip] || ev.tip;
+        // Zaman: sistem_slot_ts varsa saat kısmı
+        var saat = '';
+        if (ev.sistem_slot_ts) {
+          var ts = String(ev.sistem_slot_ts);
+          saat = ts.length >= 16 ? ts.substring(11,16) : ts;
+        }
+        // Personel
+        var kim = (ev.personel_ad || ev.personel_id || '');
+        // Cevap saati
+        var cevapSaat = '';
+        if (ev.cevap_ts) {
+          var cts = String(ev.cevap_ts);
+          cevapSaat = cts.length >= 16 ? cts.substring(11,16) : '';
+        }
+        // Renk ve ikon
+        var lineClr = tamam ? 'var(--ok)' : gecikti ? 'var(--danger)' : aktif ? 'var(--accent)' : 'var(--border)';
+        var cirklBg = tamam ? 'var(--ok)' : gecikti ? 'var(--danger)' : aktif ? 'var(--accent)' : 'var(--bg3)';
+        var cirklTxt= tamam ? '#fff' : gecikti ? '#fff' : aktif ? '#fff' : 'var(--muted)';
+        var durumTxt = tamam ? (cevapSaat ? cevapSaat : 'Tamamlandı') : gecikti ? 'Gecikti ⚠️' : aktif ? 'Bekleniyor…' : 'Bekliyor';
+        var durumRenk= tamam ? 'var(--ok)' : gecikti ? 'var(--danger)' : aktif ? 'var(--accent)' : 'var(--muted)';
+
+        tl += '<div style="display:flex;gap:14px;margin-bottom:' + (i<evs.length-1?'0':'0') + '">';
+        // Sol: dikey çizgi + daire
+        tl += '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0">';
+        tl += '<div style="width:36px;height:36px;border-radius:50%;background:'+cirklBg+';color:'+cirklTxt+';display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">' + ico + '</div>';
+        if (i < evs.length - 1) tl += '<div style="width:2px;flex:1;min-height:20px;background:' + lineClr + ';margin:4px 0;opacity:0.35"></div>';
+        tl += '</div>';
+        // Sağ: içerik
+        tl += '<div style="flex:1;padding-bottom:' + (i<evs.length-1?'18':'0') + 'px">';
+        tl += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px">';
+        tl += '<span style="font-weight:700;font-size:14px">' + lbl + '</span>';
+        tl += '<span style="font-size:12px;font-weight:600;color:'+durumRenk+'">' + durumTxt + '</span>';
+        tl += '</div>';
+        // Alt satır: saat + personel
+        tl += '<div style="font-size:12px;color:var(--muted)">';
+        if (saat) tl += '<span style="font-family:monospace">' + saat + '</span>';
+        if (kim)  tl += (saat?' · ':'') + kim;
+        if (gecikti && op.aktif_gecikme_dk) tl += ' · <span style="color:var(--danger);font-weight:600">' + op.aktif_gecikme_dk + ' dk gecikme</span>';
+        tl += '</div>';
+        tl += '</div>';
+        tl += '</div>';
       });
-      opEl.innerHTML = oh;
     }
+    tlEl.innerHTML = tl;
   }
 
-  // Eksik listesi (sağ panel)
-  if (aktifSagSekme === 'eksik') renderEksikListesi();
+  // (gorevler artık gösterilmiyor)
+
 
   // Kasa devri
   renderKasaDevir();
