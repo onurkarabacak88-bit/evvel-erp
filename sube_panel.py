@@ -1059,7 +1059,7 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
 
     okunmamis_mesaj_var = any(not m.get("okundu") for m in merkez_mesajlar)
 
-        return {
+    return {
         "sube_id":        sube_id,
         "sube_adi":       sube["ad"],
         "acilis_saati":   sube.get("acilis_saati") or "09:00",
