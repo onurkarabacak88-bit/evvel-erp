@@ -16,6 +16,8 @@ const UST_SEKMELER = [
   { id: 'onay', label: 'Onay merkezi' },
   { id: 'defter', label: 'Defter Kayıtları' },
   { id: 'sayim', label: 'Açılış Sayımları' },
+  { id: 'mesaj', label: '📩 Merkez Mesajı' },
+  { id: 'puan', label: '⭐ Personel Puan' },
 ];
 
 const ONAY_TURU_LABEL = {
@@ -409,6 +411,11 @@ export default function OperasyonMerkezi() {
   const [notlarListe, setNotlarListe] = useState([]);
   const [subeListeAdmin, setSubeListeAdmin] = useState([]);
   const [onayBusyId, setOnayBusyId] = useState(null);
+  const [mesajListe, setMesajListe] = useState([]);
+  const [mesajForm, setMesajForm] = useState({ sube_id: '', mesaj: '', oncelik: 'normal' });
+  const [mesajBusy, setMesajBusy] = useState(false);
+  const [puanListe, setPuanListe] = useState([]);
+  const [puanSubeFiltre, setPuanSubeFiltre] = useState('');
 
   const toast = (m, t = 'red') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 4000); };
 
@@ -484,6 +491,21 @@ export default function OperasyonMerkezi() {
     setYukleniyor(true);
     yukleOnayMerkez();
   }, [aktifSekme, ayFiltre, subeOnayFiltre, yukleOnayMerkez]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'mesaj') return;
+    api('/ops/merkez-mesajlar?limit=100')
+      .then(r => setMesajListe(r.satirlar || []))
+      .catch(() => {});
+  }, [aktifSekme]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'puan') return;
+    const q = puanSubeFiltre ? `?sube_id=${encodeURIComponent(puanSubeFiltre)}&gun=30` : '?gun=30';
+    api(`/ops/sube-personel-puan${q}`)
+      .then(r => setPuanListe(r.personeller || []))
+      .catch(() => {});
+  }, [aktifSekme, puanSubeFiltre]);
 
   // 25 saniyede bir otomatik yenile
   useEffect(() => {
@@ -893,6 +915,153 @@ export default function OperasyonMerkezi() {
               </section>
             </>
           )}
+        </div>
+      )}
+
+      {/* MERKEZ MESAJ SEKMESİ */}
+      {aktifSekme === 'mesaj' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <div className="card">
+            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Şubeye Mesaj Gönder</h3>
+            <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>
+              Gönderilen mesajlar şube panelinde yanıp söner. Personel PIN ile onaylayana kadar kapanış yapılamaz.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Şube *</label>
+                <select value={mesajForm.sube_id} onChange={e => setMesajForm({ ...mesajForm, sube_id: e.target.value })}>
+                  <option value="">Seçin</option>
+                  {subeListeAdmin.map(s => <option key={s.id} value={s.id}>{s.ad || s.id}</option>)}
+                </select>
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Öncelik</label>
+                <select value={mesajForm.oncelik} onChange={e => setMesajForm({ ...mesajForm, oncelik: e.target.value })}>
+                  <option value="normal">Normal</option>
+                  <option value="kritik">Kritik 🚨</option>
+                </select>
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Mesaj *</label>
+                <textarea rows={3} value={mesajForm.mesaj} onChange={e => setMesajForm({ ...mesajForm, mesaj: e.target.value })} placeholder="Şubeye iletmek istediğiniz mesaj..." style={{ width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 7, padding: '8px 12px', color: 'var(--text)', fontSize: 13 }} />
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={mesajBusy || !mesajForm.sube_id || !mesajForm.mesaj.trim()}
+                onClick={async () => {
+                  setMesajBusy(true);
+                  try {
+                    await api('/ops/merkez-mesaj-gonder', { method: 'POST', body: mesajForm });
+                    toast('Mesaj gönderildi', 'green');
+                    setMesajForm({ sube_id: '', mesaj: '', oncelik: 'normal' });
+                    const r = await api('/ops/merkez-mesajlar?limit=100');
+                    setMesajListe(r.satirlar || []);
+                  } catch (e) { toast(e.message || 'Hata'); }
+                  setMesajBusy(false);
+                }}
+              >
+                {mesajBusy ? '…' : 'Gönder'}
+              </button>
+            </div>
+          </div>
+
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Zaman</th>
+                  <th>Şube</th>
+                  <th>Öncelik</th>
+                  <th>Mesaj</th>
+                  <th>Durum</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {mesajListe.length === 0 ? (
+                  <tr><td colSpan={6}><div className="empty"><p>Henüz mesaj gönderilmedi</p></div></td></tr>
+                ) : mesajListe.map(m => (
+                  <tr key={m.id}>
+                    <td className="mono" style={{ fontSize: 11 }}>{(m.olusturma || '').slice(0, 16)}</td>
+                    <td style={{ fontWeight: 500 }}>{m.sube_adi || m.sube_id}</td>
+                    <td>{m.oncelik === 'kritik' ? <span className="badge badge-red">Kritik</span> : <span className="badge badge-gray">Normal</span>}</td>
+                    <td style={{ fontSize: 12, maxWidth: 300 }}>{m.mesaj}</td>
+                    <td>{m.okundu
+                      ? <span className="badge badge-green">✓ Okundu — {m.okuyan_ad || '?'}</span>
+                      : <span className="badge badge-yellow">Bekliyor</span>}
+                    </td>
+                    <td>
+                      <button type="button" className="btn btn-danger btn-sm" onClick={async () => {
+                        try {
+                          await api(`/ops/merkez-mesaj/${m.id}`, { method: 'DELETE' });
+                          const r = await api('/ops/merkez-mesajlar?limit=100');
+                          setMesajListe(r.satirlar || []);
+                        } catch (e) { toast(e.message || 'Silinemedi'); }
+                      }}>Kaldır</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* PERSONEL PUAN SEKMESİ */}
+      {aktifSekme === 'puan' && (
+        <div>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <label style={{ margin: 0 }}>
+              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Şube</span>
+              <select
+                style={{ padding: '8px 10px', minWidth: 200, background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 13 }}
+                value={puanSubeFiltre}
+                onChange={e => setPuanSubeFiltre(e.target.value)}
+              >
+                <option value="">Tüm şubeler</option>
+                {subeListeAdmin.map(s => <option key={s.id} value={s.id}>{s.ad || s.id}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Personel</th>
+                  <th>Şube</th>
+                  <th style={{ textAlign: 'center' }}>Puan</th>
+                  <th style={{ textAlign: 'center' }}>Zamanında</th>
+                  <th style={{ textAlign: 'center' }}>Gecikti</th>
+                </tr>
+              </thead>
+              <tbody>
+                {puanListe.length === 0 ? (
+                  <tr><td colSpan={6}><div className="empty"><p>Veri yok</p></div></td></tr>
+                ) : puanListe.map((p, i) => {
+                  const puan = p.puan;
+                  const renk = puan == null ? 'var(--text3)' : puan >= 90 ? 'var(--green)' : puan >= 75 ? 'var(--blue)' : puan >= 55 ? 'var(--yellow)' : 'var(--red)';
+                  return (
+                    <tr key={p.personel_id}>
+                      <td className="mono" style={{ fontSize: 12, color: 'var(--text3)' }}>{i + 1}</td>
+                      <td style={{ fontWeight: 500 }}>{p.ad_soyad}</td>
+                      <td style={{ fontSize: 12, color: 'var(--text3)' }}>{p.sube_id || '—'}</td>
+                      <td style={{ textAlign: 'center' }}>
+                        {puan != null
+                          ? <span style={{ fontWeight: 700, color: renk, fontFamily: 'var(--font-mono)' }}>{puan}</span>
+                          : <span style={{ color: 'var(--text3)', fontSize: 11 }}>—</span>}
+                      </td>
+                      <td style={{ textAlign: 'center' }} className="mono">{p.tamam}</td>
+                      <td style={{ textAlign: 'center' }}>
+                        <span className="mono" style={{ color: p.gecikti > 0 ? 'var(--red)' : 'var(--text3)' }}>{p.gecikti}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
