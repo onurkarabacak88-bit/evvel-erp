@@ -422,18 +422,7 @@
     }
     .shake { animation: shake .35s ease-in-out 2; }
 
-    #opGecikme { display: none; }
-    @keyframes opDelayPulse {
-      0%, 100% {
-        border-color: rgba(239, 68, 68, 0.75);
-        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.28), 0 12px 34px rgba(239, 68, 68, 0.12);
-      }
-      50% {
-        border-color: rgba(248, 113, 113, 1);
-        box-shadow: 0 0 0 6px rgba(248, 113, 113, 0.2), 0 16px 40px rgba(239, 68, 68, 0.22);
-      }
-    }
-    .overlay-kart.delay-pulse { animation: opDelayPulse .95s ease-in-out infinite; }
+    #opGecikme { color: var(--orange); font-size: 13px; font-weight: 700; margin-bottom: 8px; min-height: 20px; }
 
     /* Stok grid kompakt */
     .stok-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
@@ -899,7 +888,7 @@ function startAlarm(eid, pol) {
   var alarmS = (p.alarm_arttir_s||60) * 1000;
   var path = '/sube-panel/' + encodeURIComponent(SUBE_ID) + '/operasyon/event/' + encodeURIComponent(eid) + '/alarm-arttir';
   alarmTimer = setInterval(function(){ api(path,{method:'POST'}).catch(function(){}); }, alarmS);
-  beepTimer  = setInterval(function(){ beep(); }, beepS);
+  beepTimer  = setInterval(function(){ beep(); document.body.classList.add('shake'); setTimeout(function(){ document.body.classList.remove('shake'); }, 800); }, beepS);
   beep();
 }
 
@@ -1482,14 +1471,7 @@ var lastPersonelSecim=[];
 function hideOpOverlay() {
   stopAlarm();
   var el = document.getElementById('opOverlay');
-  if (el) {
-    el.style.display='none';
-    var kart = el.querySelector('.overlay-kart');
-    if (kart) {
-      kart.classList.remove('delay-pulse');
-      kart.style.borderColor = 'var(--border)';
-    }
-  }
+  if (el) el.style.display='none';
   opAktifEvent = null;
 }
 
@@ -1499,17 +1481,12 @@ function updateOpDurum(op, aktif) {
   if (!badge || !aktif) return;
   badge.textContent = (aktif.durum||'').toUpperCase();
   badge.className = 'op-badge ' + (aktif.durum==='gecikti'?'gec':aktif.durum==='tamamlandi'?'tamam':'bekle');
-  if (gec) gec.textContent = '';
+  if (op && op.aktif_gecikme_dk != null && gec) {
+    gec.textContent = op.aktif_gecikme_dk + ' dk gecikme';
+  } else if (gec) gec.textContent = '';
   var ov = document.getElementById('opOverlay');
   if (ov) {
-    var kart = ov.querySelector('.overlay-kart');
-    var isDelay = aktif.durum==='gecikti' || !!(op && (op.aktif_suphe || op.aktif_kritik));
-    if (kart) {
-      kart.style.borderColor = isDelay ? 'var(--danger)' : aktif.durum==='tamamlandi' ? 'var(--ok)' : 'var(--border)';
-      kart.classList.toggle('delay-pulse', isDelay);
-    }
-    if (isDelay) startAlarm(aktif.id, op&&op.alarm_politikasi);
-    else stopAlarm();
+    ov.querySelector('.overlay-kart').style.borderColor = aktif.durum==='gecikti' ? 'var(--orange)' : aktif.durum==='tamamlandi' ? 'var(--ok)' : 'var(--border)';
   }
 }
 
@@ -1592,7 +1569,7 @@ function showOpOverlay(aktif, blob) {
   if(acik) acik.textContent = 'Sistem bu adımı tamamlamanızı bekliyor. Cevap verene kadar ekran kilitlidir.';
   if(badge) { badge.textContent = durum.toUpperCase(); badge.className = 'op-badge '+(durum==='gecikti'?'gec':'bekle'); }
   if(err) err.textContent = '';
-  if(gec) gec.textContent = '';
+  if(gec) gec.textContent = blob&&blob.aktif_gecikme_dk ? blob.aktif_gecikme_dk+' dk gecikme' : '';
   if(submit) submit.textContent = tip==='ACILIS' ? 'İleri' : 'Kaydet ve Tamamla';
   if(fields) fields.innerHTML = buildOpFields(tip);
 
@@ -1601,7 +1578,7 @@ function showOpOverlay(aktif, blob) {
   var ov = document.getElementById('opOverlay');
   if (ov && tip !== 'KAPANIS') {
     ov.style.display = 'flex';
-    updateOpDurum(blob, aktif);
+    startAlarm(aktif.id, blob&&blob.alarm_politikasi);
   }
 }
 
@@ -1799,7 +1776,7 @@ async function refresh() {
     document.getElementById('acilisOverlay').style.display='none';
 
     // Aktif operasyon eventi
-    if (aktif && aktif.tip!=='KONTROL' && (aktif.durum==='bekliyor'||aktif.durum==='gecikti')) {
+    if (aktif && (aktif.durum==='bekliyor'||aktif.durum==='gecikti')) {
       renderMain(data);
       if (!opAktifEvent || opAktifEvent.id !== aktif.id) showOpOverlay(aktif, op);
       else updateOpDurum(op, aktif);
@@ -1823,12 +1800,7 @@ function startPolling() {
       // Overlay açıkken sadece badge güncelle
       var ov = document.getElementById('opOverlay');
       if (ov && ov.style.display==='flex') {
-        if (aktif && aktif.tip!=='KONTROL' && (aktif.durum==='bekliyor'||aktif.durum==='gecikti')) {
-          updateOpDurum(op, aktif);
-        } else {
-          hideOpOverlay();
-          renderMain(data);
-        }
+        if (aktif) updateOpDurum(op, aktif);
         return;
       }
       pk = data.panel_pin_kullanicilar || [];
@@ -1839,7 +1811,7 @@ function startPolling() {
         return;
       }
       renderMain(data);
-      if (aktif && aktif.tip!=='KONTROL' && (aktif.durum==='bekliyor'||aktif.durum==='gecikti')) {
+      if (aktif && (aktif.durum==='bekliyor'||aktif.durum==='gecikti')) {
         if (!opAktifEvent || opAktifEvent.id!==aktif.id) showOpOverlay(aktif, op);
       }
     } catch(e) {}
