@@ -1457,6 +1457,24 @@ def init_db():
             ON sube_merkez_mesaj (sube_id, aktif, okundu)
         """)
 
+        # ── TEDARİKÇİLER ──────────────────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS tedarikciler (
+                id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                ad          TEXT NOT NULL,
+                kategori    TEXT,
+                telefon     TEXT,
+                aciklama    TEXT,
+                aktif       BOOLEAN NOT NULL DEFAULT TRUE,
+                olusturma   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_tedarikciler_ad
+            ON tedarikciler (LOWER(TRIM(ad)))
+            WHERE aktif = TRUE
+        """)
+
         # ── PERSONEL AYLIK KAYIT ───────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS personel_aylik (

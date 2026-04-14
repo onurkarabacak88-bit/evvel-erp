@@ -56,6 +56,90 @@ app.include_router(operasyon_merkez_router)
 app.include_router(sube_personel_router)
 app.include_router(banka_yatirim_router)
 
+# ── TEDARİKÇİ CRUD ────────────────────────────────────────────
+from fastapi import Query as FQuery
+import uuid as _uuid
+
+@app.get("/api/tedarikciler")
+def tedarikci_liste(aktif: bool = True):
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT id, ad, kategori, telefon, aciklama, aktif, olusturma
+            FROM tedarikciler
+            WHERE (%s IS NULL OR aktif = %s)
+            ORDER BY ad
+            """,
+            (aktif, aktif),
+        )
+        rows = []
+        for r in cur.fetchall():
+            d = dict(r)
+            if d.get("olusturma"):
+                d["olusturma"] = str(d["olusturma"])
+            rows.append(d)
+    return {"tedarikciler": rows}
+
+from pydantic import BaseModel as _BM
+class TedarikciBody(_BM):
+    ad: str
+    kategori: str = ""
+    telefon: str = ""
+    aciklama: str = ""
+
+@app.post("/api/tedarikciler")
+def tedarikci_ekle(body: TedarikciBody):
+    from fastapi import HTTPException
+    ad = (body.ad or "").strip()
+    if len(ad) < 2:
+        raise HTTPException(400, "Tedarikçi adı en az 2 karakter olmalı")
+    tid = str(_uuid.uuid4())
+    with db() as (conn, cur):
+        try:
+            cur.execute(
+                """
+                INSERT INTO tedarikciler (id, ad, kategori, telefon, aciklama)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (tid, ad, (body.kategori or "").strip() or None,
+                 (body.telefon or "").strip() or None,
+                 (body.aciklama or "").strip() or None),
+            )
+        except Exception as e:
+            if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+                raise HTTPException(409, f"'{ad}' adında aktif tedarikçi zaten var")
+            raise
+    return {"success": True, "id": tid}
+
+@app.put("/api/tedarikciler/{tid}")
+def tedarikci_guncelle(tid: str, body: TedarikciBody):
+    from fastapi import HTTPException
+    ad = (body.ad or "").strip()
+    if len(ad) < 2:
+        raise HTTPException(400, "Tedarikçi adı en az 2 karakter olmalı")
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            UPDATE tedarikciler SET ad=%s, kategori=%s, telefon=%s, aciklama=%s
+            WHERE id=%s
+            """,
+            (ad, (body.kategori or "").strip() or None,
+             (body.telefon or "").strip() or None,
+             (body.aciklama or "").strip() or None, tid),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Tedarikçi bulunamadı")
+    return {"success": True}
+
+@app.delete("/api/tedarikciler/{tid}")
+def tedarikci_sil(tid: str):
+    from fastapi import HTTPException
+    with db() as (conn, cur):
+        cur.execute("UPDATE tedarikciler SET aktif=FALSE WHERE id=%s", (tid,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Tedarikçi bulunamadı")
+    return {"success": True}
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(levelname)s | %(message)s',
