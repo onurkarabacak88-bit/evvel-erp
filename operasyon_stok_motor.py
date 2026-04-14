@@ -122,7 +122,67 @@ def sum_urun_stok_ekle_bugun(cur: Any, sube_id: str) -> Dict[str, int]:
         if not raw.startswith("URUN_STOK_JSON:"):
             continue
         try:
-            j = json.loads(raw[len("URUN_STOK_JSON:") :])
+            j = json.loads(raw[len("URUN_STOK_JSON:"):])
+        except Exception:
+            continue
+        if not isinstance(j, dict):
+            continue
+        d = j.get("delta") or j
+        for k in STOK_KEYS:
+            try:
+                total[k] += max(0, int(d.get(k) or 0))
+            except (TypeError, ValueError):
+                pass
+    return total
+
+
+def sum_urun_ac_bugun(cur: Any, sube_id: str) -> Dict[str, int]:
+    """Bugün URUN_AC etiketiyle deftere yazılan (depodan aktif kullanıma açılan) toplamlar."""
+    cur.execute(
+        """
+        SELECT aciklama FROM operasyon_defter
+        WHERE sube_id=%s AND tarih=CURRENT_DATE AND etiket='URUN_AC'
+        ORDER BY olay_ts ASC
+        """,
+        (sube_id,),
+    )
+    total = _zero_stok()
+    for row in cur.fetchall():
+        raw = (row.get("aciklama") or "").strip()
+        if not raw.startswith("URUN_AC_JSON:"):
+            continue
+        try:
+            j = json.loads(raw[len("URUN_AC_JSON:"):])
+        except Exception:
+            continue
+        if not isinstance(j, dict):
+            continue
+        d = j.get("delta") or j
+        for k in STOK_KEYS:
+            try:
+                total[k] += max(0, int(d.get(k) or 0))
+            except (TypeError, ValueError):
+                pass
+    return total
+
+
+def sum_urun_sevk_bugun(cur: Any, sube_id: str) -> Dict[str, int]:
+    """Bugün URUN_SEVK etiketiyle teslim alınan (potansiyel depo stok) toplamlar."""
+    cur.execute(
+        """
+        SELECT aciklama FROM operasyon_defter
+        WHERE sube_id=%s AND tarih=CURRENT_DATE AND etiket='URUN_SEVK'
+        ORDER BY olay_ts ASC
+        """,
+        (sube_id,),
+    )
+    total = _zero_stok()
+    for row in cur.fetchall():
+        raw = (row.get("aciklama") or "").strip()
+        if not raw.startswith("URUN_SEVK_JSON:"):
+            continue
+        try:
+            j = json.loads(raw[len("URUN_SEVK_JSON:"):])
         except Exception:
             continue
         if not isinstance(j, dict):
@@ -137,11 +197,44 @@ def sum_urun_stok_ekle_bugun(cur: Any, sube_id: str) -> Dict[str, int]:
 
 
 def teorik_stok_bugun(cur: Any, sube_id: str) -> Optional[Dict[str, int]]:
+    """
+    Beklenen aktif stok:
+      açılış + URUN_STOK_EKLE (eski tip) + URUN_AC (depodan açılan)
+    SEVK (depo teslim) dahil değil — SEVK potansiyel, AC gerçek kullanım.
+    """
     ac = bugun_acilis_stok(cur, sube_id)
     if ac is None:
         return None
     ek = sum_urun_stok_ekle_bugun(cur, sube_id)
-    return {k: ac[k] + ek[k] for k in STOK_KEYS}
+    urun_ac = sum_urun_ac_bugun(cur, sube_id)
+    return {k: ac[k] + ek[k] + urun_ac[k] for k in STOK_KEYS}
+
+
+def sevk_vs_ac_uyarilari(cur: Any, sube_id: str) -> List[Dict[str, Any]]:
+    """
+    SEVK edilip AC edilmeyen kalemleri tespit eder.
+    Eğer sevk > ac ise ürün depoda bekliyor (uyarı değil, bilgi).
+    Eğer ac > sevk ise depoda olmayan açılmış (şüpheli).
+    """
+    sevk = sum_urun_sevk_bugun(cur, sube_id)
+    ac = sum_urun_ac_bugun(cur, sube_id)
+    out: List[Dict[str, Any]] = []
+    for k in STOK_KEYS:
+        s, a = sevk[k], ac[k]
+        if a > s and s > 0:
+            lab = STOK_LABEL_TR.get(k, k)
+            out.append({
+                "id": f"virt-sevk-ac-{sube_id}-{k}",
+                "tip": "SEVK_AC_UYUMSUZ",
+                "seviye": "uyari",
+                "mesaj": f"{lab}: {s} sevk edildi ama {a} açıldı — fazla açılmış olabilir",
+                "fark_tl": float(a - s),
+                "okundu": False, "olusturma": None, "kaynak": "stok_motor",
+                "beklenen_tl": None, "gercek_tl": None,
+            })
+    return out
+
+
 
 
 def acilis_vs_dunku_kapanis_uyarilari(cur: Any, sube_id: str) -> List[Dict[str, Any]]:

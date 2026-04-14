@@ -1438,6 +1438,25 @@ def init_db():
             )
         """)
 
+        # ── MERKEZ → ŞUBE PUSH MESAJI ─────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_merkez_mesaj (
+                id                  TEXT PRIMARY KEY,
+                sube_id             TEXT NOT NULL,
+                mesaj               TEXT NOT NULL,
+                oncelik             VARCHAR(20) NOT NULL DEFAULT 'normal',
+                okundu              BOOLEAN NOT NULL DEFAULT FALSE,
+                okundu_ts           TIMESTAMPTZ,
+                okuyan_personel_id  TEXT,
+                aktif               BOOLEAN NOT NULL DEFAULT TRUE,
+                olusturma           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sube_merkez_mesaj_sube
+            ON sube_merkez_mesaj (sube_id, aktif, okundu)
+        """)
+
         # ── PERSONEL AYLIK KAYIT ───────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS personel_aylik (

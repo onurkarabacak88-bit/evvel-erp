@@ -9,6 +9,7 @@ import io
 import json
 import os
 import re
+import uuid
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
@@ -947,3 +948,285 @@ def ops_sube_notlar(
                 d["olusturma"] = str(d["olusturma"])
             rows.append(d)
     return {"satirlar": rows, "year_month": ym, "limit": lim}
+
+
+# ─────────────────────────────────────────────────────────────
+# MERKEZ MESAJ — Merkezden şubeye zorunlu okunması gereken mesaj
+# ─────────────────────────────────────────────────────────────
+
+class MerkezMesajOlusturBody(BaseModel):
+    sube_id: str
+    mesaj: str
+    oncelik: str = "normal"  # normal | kritik
+
+
+@router.post("/merkez-mesaj-gonder")
+def ops_merkez_mesaj_gonder(body: MerkezMesajOlusturBody):
+    """
+    Merkezden şubeye zorunlu mesaj gönder.
+    Şube paneli mesaj okunmadan kapanmaz (panel bu kontrolü yapar).
+    """
+    mesaj = (body.mesaj or "").strip()
+    if len(mesaj) < 3:
+        raise HTTPException(400, "Mesaj en az 3 karakter olmalı")
+    if len(mesaj) > 2000:
+        raise HTTPException(400, "Mesaj çok uzun (max 2000 karakter)")
+    oncelik = (body.oncelik or "normal").strip()
+    if oncelik not in ("normal", "kritik"):
+        oncelik = "normal"
+
+    with db() as (conn, cur):
+        cur.execute("SELECT id FROM subeler WHERE id=%s AND aktif=TRUE", (body.sube_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Şube bulunamadı")
+        mid = str(uuid.uuid4())
+        cur.execute(
+            """
+            INSERT INTO sube_merkez_mesaj
+                (id, sube_id, mesaj, oncelik, okundu, aktif)
+            VALUES (%s, %s, %s, %s, FALSE, TRUE)
+            """,
+            (mid, body.sube_id, mesaj, oncelik),
+        )
+    return {"success": True, "id": mid, "oncelik": oncelik}
+
+
+@router.get("/merkez-mesajlar")
+def ops_merkez_mesajlar_liste(
+    sube_id: Optional[str] = None,
+    okunmamis: bool = False,
+    limit: int = 100,
+):
+    """Gönderilmiş merkez mesajları listesi (merkez paneli için)."""
+    lim = max(10, min(500, int(limit)))
+    sid_f = (sube_id or "").strip() or None
+    with db() as (conn, cur):
+        qp: list = []
+        q = """
+            SELECT m.id, m.sube_id, s.ad AS sube_adi, m.mesaj, m.oncelik,
+                   m.okundu, m.okundu_ts, m.olusturma, m.okuyan_personel_id,
+                   p.ad_soyad AS okuyan_ad
+            FROM sube_merkez_mesaj m
+            JOIN subeler s ON s.id = m.sube_id
+            LEFT JOIN personel p ON p.id = m.okuyan_personel_id
+            WHERE m.aktif = TRUE
+        """
+        if sid_f:
+            q += " AND m.sube_id = %s"
+            qp.append(sid_f)
+        if okunmamis:
+            q += " AND m.okundu = FALSE"
+        q += " ORDER BY m.olusturma DESC LIMIT %s"
+        qp.append(lim)
+        cur.execute(q, qp)
+        rows = []
+        for r in cur.fetchall():
+            d = dict(r)
+            for k in ("olusturma", "okundu_ts"):
+                if d.get(k):
+                    d[k] = str(d[k])
+            rows.append(d)
+    return {"satirlar": rows, "toplam": len(rows)}
+
+
+@router.delete("/merkez-mesaj/{mesaj_id}")
+def ops_merkez_mesaj_sil(mesaj_id: str):
+    """Merkez mesajını pasife al (silinmez, aktif=FALSE)."""
+    with db() as (conn, cur):
+        cur.execute(
+            "UPDATE sube_merkez_mesaj SET aktif=FALSE WHERE id=%s",
+            (mesaj_id,),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Mesaj bulunamadı")
+    return {"success": True}
+
+
+# ─────────────────────────────────────────────────────────────
+# PERSONEL PUANI
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/personel-puan/{personel_id}")
+def ops_personel_puan(personel_id: str, gun: int = 30):
+    """
+    Personel performans özeti:
+    - Zamanında tamamlanan açılış/kontrol/kapanış sayısı
+    - Geciken / kritik işlem sayısı
+    - Gönderilen not sayısı
+    - Hatalı PIN deneme sayısı
+    - Son işlem zamanı
+    """
+    gun_sayi = max(7, min(90, int(gun)))
+    with db() as (conn, cur):
+        cur.execute("SELECT id, ad_soyad, sube_id FROM personel WHERE id=%s", (personel_id,))
+        p = cur.fetchone()
+        if not p:
+            raise HTTPException(404, "Personel bulunamadı")
+        p = dict(p)
+
+        # Defter kayıtları — bu personelin son N günlük imzaları
+        cur.execute(
+            """
+            SELECT etiket, COUNT(*) AS adet,
+                   MAX(olay_ts) AS son_islem
+            FROM operasyon_defter
+            WHERE personel_id=%s
+              AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            GROUP BY etiket
+            ORDER BY adet DESC
+            """,
+            (personel_id, gun_sayi),
+        )
+        defter_ozet = [dict(r) for r in cur.fetchall()]
+        for d in defter_ozet:
+            if d.get("son_islem"):
+                d["son_islem"] = str(d["son_islem"])
+
+        # Operasyon eventleri — tamamlama hızı
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE durum='tamamlandi') AS tamam,
+                COUNT(*) FILTER (WHERE durum='gecikti') AS gecikti,
+                COUNT(*) FILTER (WHERE cevap_ts IS NOT NULL
+                    AND EXTRACT(EPOCH FROM (cevap_ts - son_teslim_ts)) > 0) AS geç_tamam,
+                ROUND(AVG(CASE WHEN cevap_ts IS NOT NULL AND sistem_slot_ts IS NOT NULL
+                    THEN EXTRACT(EPOCH FROM (cevap_ts - sistem_slot_ts)) / 60.0 END)::numeric, 1) AS ort_cevap_dk
+            FROM sube_operasyon_event e
+            JOIN operasyon_defter d ON d.ref_event_id = e.id
+            WHERE d.personel_id=%s
+              AND e.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            """,
+            (personel_id, gun_sayi),
+        )
+        op_row = cur.fetchone()
+        op_ozet = dict(op_row) if op_row else {}
+
+        # Güvenlik olayları
+        cur.execute(
+            """
+            SELECT tip, COUNT(*) AS adet
+            FROM operasyon_guvenlik_olay
+            WHERE personel_id=%s
+              AND olay_ts >= NOW() - (%s * INTERVAL '1 day')
+            GROUP BY tip
+            """,
+            (personel_id, gun_sayi),
+        )
+        guvenlik = {r["tip"]: r["adet"] for r in cur.fetchall()}
+
+        # Not sayısı
+        cur.execute(
+            """
+            SELECT COUNT(*) AS adet FROM sube_merkez_not
+            WHERE personel_id=%s
+              AND olusturma >= NOW() - (%s * INTERVAL '1 day')
+            """,
+            (personel_id, gun_sayi),
+        )
+        not_sayisi = int((cur.fetchone() or {}).get("adet") or 0)
+
+        # Puan hesabı (100 üzerinden)
+        tamam = int(op_ozet.get("tamam") or 0)
+        gecikti = int(op_ozet.get("gecikti") or 0)
+        gec_tamam = int(op_ozet.get("gec_tamam") or 0)
+        hatali_pin = int(guvenlik.get("PIN_HATALI") or 0)
+        kilit = int(guvenlik.get("PIN_KILIT") or 0)
+
+        toplam_op = tamam + gecikti
+        if toplam_op > 0:
+            temel_puan = round((tamam / toplam_op) * 80)
+        else:
+            temel_puan = 80
+
+        gecikme_ceza = min(20, gecikti * 3 + gec_tamam * 1)
+        pin_ceza = min(10, hatali_pin * 2 + kilit * 5)
+        not_bonus = min(5, not_sayisi)
+
+        puan = max(0, min(100, temel_puan - gecikme_ceza - pin_ceza + not_bonus))
+
+        # Seviye
+        if puan >= 90:
+            seviye = "Mükemmel"
+        elif puan >= 75:
+            seviye = "İyi"
+        elif puan >= 55:
+            seviye = "Orta"
+        else:
+            seviye = "Gelişmeli"
+
+    return {
+        "personel_id": personel_id,
+        "ad_soyad": p.get("ad_soyad"),
+        "sube_id": p.get("sube_id"),
+        "puan": puan,
+        "seviye": seviye,
+        "gun_sayi": gun_sayi,
+        "op_ozet": {
+            "tamam": tamam,
+            "gecikti": gecikti,
+            "gec_tamam": gec_tamam,
+            "ort_cevap_dk": float(op_ozet.get("ort_cevap_dk") or 0),
+        },
+        "guvenlik": guvenlik,
+        "not_sayisi": not_sayisi,
+        "defter_ozet": defter_ozet,
+        "puan_detay": {
+            "temel": temel_puan,
+            "gecikme_ceza": -gecikme_ceza,
+            "pin_ceza": -pin_ceza,
+            "not_bonus": not_bonus,
+        },
+    }
+
+
+@router.get("/sube-personel-puan")
+def ops_sube_personel_puan(sube_id: Optional[str] = None, gun: int = 30):
+    """Tüm aktif personelin puan özeti (merkez için)."""
+    gun_sayi = max(7, min(90, int(gun)))
+    with db() as (conn, cur):
+        q = "SELECT id, ad_soyad, sube_id FROM personel WHERE aktif=TRUE"
+        qp: list = []
+        if sube_id:
+            q += " AND sube_id=%s"
+            qp.append(sube_id)
+        q += " ORDER BY ad_soyad"
+        cur.execute(q, qp)
+        personeller = [dict(r) for r in cur.fetchall()]
+
+    sonuclar = []
+    for p in personeller:
+        try:
+            from fastapi.testclient import TestClient  # noqa – sadece import test
+        except Exception:
+            pass
+        # Basit puan hesabı — tam endpoint çağrısı yerine inline
+        with db() as (conn, cur):
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE e.durum='tamamlandi') AS tamam,
+                    COUNT(*) FILTER (WHERE e.durum='gecikti') AS gecikti
+                FROM sube_operasyon_event e
+                JOIN operasyon_defter d ON d.ref_event_id = e.id
+                WHERE d.personel_id=%s
+                  AND e.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                """,
+                (p["id"], gun_sayi),
+            )
+            row = dict(cur.fetchone() or {})
+            tamam = int(row.get("tamam") or 0)
+            gecikti = int(row.get("gecikti") or 0)
+            toplam = tamam + gecikti
+            puan = round((tamam / toplam) * 100) if toplam > 0 else None
+        sonuclar.append({
+            "personel_id": p["id"],
+            "ad_soyad": p["ad_soyad"],
+            "sube_id": p["sube_id"],
+            "puan": puan,
+            "tamam": tamam,
+            "gecikti": gecikti,
+        })
+
+    sonuclar.sort(key=lambda x: (x["puan"] or 0), reverse=True)
+    return {"personeller": sonuclar, "gun_sayi": gun_sayi}

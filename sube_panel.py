@@ -1038,7 +1038,28 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
     kasa_kilitli = not kasa_acildi_mi
     panel_blok = kasa_kilitli or (not sube_acildi_mi)
 
-    return {
+
+    # Merkez mesajları — okunmamış önce
+    cur.execute(
+        """
+        SELECT id, mesaj, oncelik, okundu, olusturma
+        FROM sube_merkez_mesaj
+        WHERE sube_id=%s AND aktif=TRUE
+        ORDER BY okundu ASC, olusturma DESC
+        LIMIT 20
+        """,
+        (sube_id,),
+    )
+    merkez_mesajlar = []
+    for mr in cur.fetchall():
+        md = dict(mr)
+        if md.get("olusturma"):
+            md["olusturma"] = str(md["olusturma"])
+        merkez_mesajlar.append(md)
+
+    okunmamis_mesaj_var = any(not m.get("okundu") for m in merkez_mesajlar)
+
+        return {
         "sube_id":        sube_id,
         "sube_adi":       sube["ad"],
         "acilis_saati":   sube.get("acilis_saati") or "09:00",
@@ -1065,6 +1086,8 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
         "operasyon":      operasyon,
         "vardiya_devir":  vardiya_devir,
         "personel_operasyon_secim": personel_operasyon_secim,
+        "merkez_mesajlar": merkez_mesajlar,
+        "okunmamis_mesaj_var": okunmamis_mesaj_var,
     }
 
 
@@ -1441,3 +1464,297 @@ def sube_urun_stok_ekle(sube_id: str, body: SubeUrunStokEkleBody):
         audit(cur, "operasyon_defter", rid, "URUN_STOK_EKLE")
 
     return {"success": True, "defter_id": rid, "delta": delta}
+
+
+# ─────────────────────────────────────────────────────────────
+# SEVK — Depoya teslim alınan ürün (potansiyel stok)
+# ─────────────────────────────────────────────────────────────
+
+class SubeSevkBody(BaseModel):
+    """Tedarikçiden/depodan gelen ürün teslim alımı. Aktif stoka girmez; SEVK defterine yazılır."""
+    personel_id: str
+    pin: str
+    bardak_kucuk: Optional[int] = None
+    bardak_buyuk: Optional[int] = None
+    bardak_plastik: Optional[int] = None
+    su_adet: Optional[int] = None
+    redbull_adet: Optional[int] = None
+    soda_adet: Optional[int] = None
+    cookie_adet: Optional[int] = None
+    pasta_adet: Optional[int] = None
+    sut_litre: Optional[int] = None
+    surup_adet: Optional[int] = None
+    kahve_paket: Optional[int] = None
+    karton_bardak: Optional[int] = None
+    kapak_adet: Optional[int] = None
+    pecete_paket: Optional[int] = None
+    diger_sarf: Optional[int] = None
+    tedarikci: Optional[str] = None
+    not_aciklama: Optional[str] = None
+
+
+@router.post("/{sube_id}/urun-sevk")
+def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
+    """
+    Depoya/şubeye teslim alınan ürün kaydı (SEVK = potansiyel stok).
+    Aktif stok sayımını değiştirmez — yalnızca deftere URUN_SEVK etiketiyle yazılır.
+    Merkez bu kaydı sevk listesinde izler.
+    """
+    from operasyon_stok_motor import normalize_delta_body
+
+    pid_in = (body.personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    if not pid_in:
+        raise HTTPException(400, "personel_id gerekli")
+    if len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "4 haneli panel PIN gerekli")
+
+    delta_raw = body.model_dump()
+    try:
+        delta = normalize_delta_body(delta_raw)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        if not _bugun_kasa_acildi_mi(cur, sube_id):
+            raise HTTPException(403, "Önce günlük kasa kilidini PIN ile açmalısınız.")
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        pid_panel = str(ku.get("id") or "").strip() or pid_in
+
+        from operasyon_defter import operasyon_defter_ekle
+        import json as _json
+
+        tr_now = _now_tr()
+        saat_sistem = tr_now.strftime("%H:%M:%S")
+
+        tedarikci = (body.tedarikci or "").strip()
+        payload = _json.dumps({"delta": delta, "tedarikci": tedarikci or None},
+                               ensure_ascii=False, separators=(",", ":"))
+        acik = "URUN_SEVK_JSON:" + payload
+        if (body.not_aciklama or "").strip():
+            acik += " | " + (body.not_aciklama or "").strip()[:400]
+
+        rid = operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "URUN_SEVK",
+            acik,
+            personel_id=pid_panel,
+            personel_ad=onay_ad,
+            bildirim_saati=saat_sistem,
+        )
+        audit(cur, "operasyon_defter", rid, "URUN_SEVK")
+
+    return {"success": True, "defter_id": rid, "delta": delta, "tip": "SEVK"}
+
+
+# ─────────────────────────────────────────────────────────────
+# ÜRÜN AÇ — Depodan aktif kullanıma alınan ürün
+# ─────────────────────────────────────────────────────────────
+
+class SubeUrunAcBody(BaseModel):
+    """Depodan aktif stoka açılan ürün. Teorik stok hesabına dahil edilir."""
+    personel_id: str
+    pin: str
+    bardak_kucuk: Optional[int] = None
+    bardak_buyuk: Optional[int] = None
+    bardak_plastik: Optional[int] = None
+    su_adet: Optional[int] = None
+    redbull_adet: Optional[int] = None
+    soda_adet: Optional[int] = None
+    cookie_adet: Optional[int] = None
+    pasta_adet: Optional[int] = None
+    sut_litre: Optional[int] = None
+    surup_adet: Optional[int] = None
+    kahve_paket: Optional[int] = None
+    karton_bardak: Optional[int] = None
+    kapak_adet: Optional[int] = None
+    pecete_paket: Optional[int] = None
+    diger_sarf: Optional[int] = None
+    not_aciklama: Optional[str] = None
+
+
+@router.post("/{sube_id}/urun-ac")
+def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
+    """
+    Depodan aktif kullanıma açılan ürün (URUN_AC).
+    Bu kayıt teorik stok hesabına girer: açılış + URUN_STOK_EKLE + URUN_AC = beklenen stok.
+    """
+    from operasyon_stok_motor import normalize_delta_body
+
+    pid_in = (body.personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    if not pid_in:
+        raise HTTPException(400, "personel_id gerekli")
+    if len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "4 haneli panel PIN gerekli")
+
+    try:
+        delta = normalize_delta_body(body.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        if not _bugun_kasa_acildi_mi(cur, sube_id):
+            raise HTTPException(403, "Önce günlük kasa kilidini PIN ile açmalısınız.")
+        if not _bugun_sube_acildi_mi(cur, sube_id):
+            raise HTTPException(403, "Önce şubeyi açmalısınız.")
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        pid_panel = str(ku.get("id") or "").strip() or pid_in
+
+        from operasyon_defter import operasyon_defter_ekle
+        import json as _json
+
+        tr_now = _now_tr()
+        saat_sistem = tr_now.strftime("%H:%M:%S")
+        payload = _json.dumps({"delta": delta}, ensure_ascii=False, separators=(",", ":"))
+        acik = "URUN_AC_JSON:" + payload
+        if (body.not_aciklama or "").strip():
+            acik += " | " + (body.not_aciklama or "").strip()[:400]
+
+        rid = operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "URUN_AC",
+            acik,
+            personel_id=pid_panel,
+            personel_ad=onay_ad,
+            bildirim_saati=saat_sistem,
+        )
+        audit(cur, "operasyon_defter", rid, "URUN_AC")
+
+    return {"success": True, "defter_id": rid, "delta": delta, "tip": "URUN_AC"}
+
+
+# ─────────────────────────────────────────────────────────────
+# MERKEZ MESAJI — Push mesaj okuma ve onaylama
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/{sube_id}/merkez-mesajlari")
+def sube_merkez_mesajlari_getir(sube_id: str):
+    """Şubeye gönderilmiş, okunmamış merkez mesajlarını listele."""
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        cur.execute(
+            """
+            SELECT id, mesaj, olusturma, okundu, okundu_ts, oncelik
+            FROM sube_merkez_mesaj
+            WHERE sube_id=%s AND aktif=TRUE
+            ORDER BY olusturma DESC
+            LIMIT 50
+            """,
+            (sube_id,),
+        )
+        rows = []
+        for r in cur.fetchall():
+            d = dict(r)
+            for k in ("olusturma", "okundu_ts"):
+                if d.get(k):
+                    d[k] = str(d[k])
+            rows.append(d)
+    return {"mesajlar": rows, "okunmamis": sum(1 for r in rows if not r.get("okundu"))}
+
+
+class MesajOkuBody(BaseModel):
+    personel_id: str
+    pin: str
+
+
+@router.post("/{sube_id}/merkez-mesaj/{mesaj_id}/oku")
+def sube_merkez_mesaj_oku(sube_id: str, mesaj_id: str, body: MesajOkuBody):
+    """Personel mesajı PIN ile onaylar → okundu işaretlenir, deftere yazılır."""
+    pid_in = (body.personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    if not pid_in or len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "personel_id ve 4 haneli PIN gerekli")
+
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        pid_panel = str(ku.get("id") or "").strip() or pid_in
+
+        cur.execute(
+            "SELECT id, mesaj, okundu FROM sube_merkez_mesaj WHERE id=%s AND sube_id=%s",
+            (mesaj_id, sube_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Mesaj bulunamadı")
+        row = dict(row)
+
+        cur.execute(
+            """
+            UPDATE sube_merkez_mesaj
+            SET okundu=TRUE, okundu_ts=NOW(), okuyan_personel_id=%s
+            WHERE id=%s
+            """,
+            (pid_panel, mesaj_id),
+        )
+        audit(cur, "sube_merkez_mesaj", mesaj_id, "OKUNDU")
+
+        from operasyon_defter import operasyon_defter_ekle
+        tr_now = _now_tr()
+        saat = tr_now.strftime("%H:%M:%S")
+        operasyon_defter_ekle(
+            cur, sube_id, "MERKEZ_MESAJ_OKUNDU",
+            f"Merkez mesajı okundu — personel={onay_ad} mesaj_id={mesaj_id}",
+            personel_id=pid_panel, personel_ad=onay_ad, bildirim_saati=saat,
+        )
+
+    return {"success": True, "okundu": True}
+
+
+# ─────────────────────────────────────────────────────────────
+# KASA FARKI ONAY KUYRUĞU
+# ─────────────────────────────────────────────────────────────
+
+def _kasa_farki_onay_kuyruguna_ekle(
+    cur,
+    sube_id: str,
+    tip: str,
+    beklenen: float,
+    gercek: float,
+    personel_id: Optional[str],
+    personel_ad: str,
+    aciklama: str,
+) -> Optional[str]:
+    """
+    Kasa / stok farkı varsa onay_kuyrugu'na KASA_FARKI kaydı ekler.
+    Aynı gün aynı şube için aynı tip zaten varsa tekrar eklemez (idempotent).
+    """
+    fark = round(gercek - beklenen, 2)
+    if fark == 0:
+        return None
+
+    # Aynı gün aynı tip zaten varsa atla
+    cur.execute(
+        """
+        SELECT 1 FROM onay_kuyrugu
+        WHERE kaynak_tablo='kasa_farki' AND islem_turu=%s
+          AND tarih=CURRENT_DATE
+          AND aciklama LIKE %s
+          AND durum='bekliyor'
+        LIMIT 1
+        """,
+        (tip, f"%{sube_id}%"),
+    )
+    if cur.fetchone():
+        return None
+
+    fark_id = str(uuid.uuid4())
+    tam_acik = f"[{sube_id}] {aciklama} | beklenen={beklenen:.2f} gerçek={gercek:.2f} fark={fark:+.2f}"
+    onay_ekle(
+        cur,
+        tip,
+        "kasa_farki",
+        fark_id,
+        tam_acik[:500],
+        fark,
+        date.today(),
+    )
+    return fark_id
