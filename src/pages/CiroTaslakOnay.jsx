@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
+import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
 
 export default function CiroTaslakOnay() {
   const [liste, setListe] = useState([]);
@@ -16,6 +17,10 @@ export default function CiroTaslakOnay() {
   };
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const unsub = subscribeGlobalDataRefresh(() => load());
+    return unsub;
+  }, []);
 
   const toast = (m, t = 'green') => {
     setMsg({ m, t });
@@ -68,6 +73,7 @@ export default function CiroTaslakOnay() {
         body: { nakit, pos, online },
       });
       toast(`Onaylandı — net kasa: ${fmt(r.net_tutar)}`);
+      publishGlobalDataRefresh('ciro-taslak-onay');
       load();
     } catch (e) {
       toast(e.message, 'red');
@@ -79,6 +85,7 @@ export default function CiroTaslakOnay() {
     try {
       await api(`/ciro-taslak/${kayit.id}/reddet`, { method: 'POST', body: { neden } });
       toast('Taslak reddedildi — şube yeni taslak gönderebilir', 'yellow');
+      publishGlobalDataRefresh('ciro-taslak-reddet');
       load();
     } catch (e) {
       toast(e.message, 'red');

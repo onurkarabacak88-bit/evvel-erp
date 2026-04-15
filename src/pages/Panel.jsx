@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
+import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
 
 export default function Panel({ onNavigate }) {
   const nav = onNavigate || (() => {});
@@ -113,12 +114,20 @@ export default function Panel({ onNavigate }) {
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
-    // 60 saniyede bir otomatik yenile
-    const interval = setInterval(load, 60000);
+    // Uygulamanın diğer sayfalarında işlem olursa paneli anında tazele.
+    const unsubGlobal = subscribeGlobalDataRefresh(() => load());
+
+    // Uzun süre açık panelde en azından onay sayacını sessizce güncel tut.
+    const interval = setInterval(() => {
+      api('/onay-kuyrugu')
+        .then((d) => setOnaylar(Array.isArray(d) ? d : []))
+        .catch(() => {});
+    }, 60000);
 
     return () => {
       document.head.removeChild(style);
       document.removeEventListener('visibilitychange', handleVisibility);
+      unsubGlobal();
       clearInterval(interval);
     };
   }, []);
@@ -263,7 +272,9 @@ export default function Panel({ onNavigate }) {
     setLoadingBtn(true);
     try {
       await api(`/onay-kuyrugu/${oid}/onayla`, { method: 'POST' });
-      toast('✓ Onaylandı — kasadan düşüldü'); load();
+      toast('✓ Onaylandı — kasadan düşüldü');
+      publishGlobalDataRefresh('panel-onay-kuyrugu');
+      load();
     } catch (e) { toast(e.message, 'red'); }
     finally { setLoadingBtn(false); }
   }
@@ -273,7 +284,9 @@ export default function Panel({ onNavigate }) {
     setLoadingBtn(true);
     try {
       await api(`/onay-kuyrugu/${oid}/reddet`, { method: 'POST' });
-      toast('Reddedildi', 'yellow'); load();
+      toast('Reddedildi', 'yellow');
+      publishGlobalDataRefresh('panel-onay-kuyrugu-reddet');
+      load();
     } catch (e) { toast(e.message, 'red'); }
     finally { setLoadingBtn(false); }
   }
@@ -448,6 +461,12 @@ export default function Panel({ onNavigate }) {
           )}
         </div>
       </div>
+
+      {(parseFloat(panel.bu_ay_banka_yatirim) || 0) > 0 && (
+        <div className="alert-box yellow mb-16">
+          Bu ay bankaya aktarılan <strong>{fmt(panel.bu_ay_banka_yatirim || 0)}</strong> kasadan ayrılmıştır ancak yatırım hesabında takip edilmektedir.
+        </div>
+      )}
 
       {/* Kira/Sözleşme Uyarıları */}
       {sabitGiderUyarilar.length > 0 && (

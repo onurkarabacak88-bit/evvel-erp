@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, fmt } from '../utils/api';
 import { computeOpsKartVurgu } from '../utils/opsVurgu';
+import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
 
 const FILTRELER = [
   { id: 'all',     label: 'Tümü' },
@@ -35,12 +36,40 @@ const ONAY_TURU_LABEL = {
   FATURA_ODEMESI: 'Fatura',
 };
 
-function SubeKart({ k, onDetay }) {
+function fmtHHMM(rawTs) {
+  if (!rawTs) return '—';
+  const s = String(rawTs);
+  const tPos = s.indexOf('T');
+  if (tPos >= 0 && s.length >= tPos + 6) return s.slice(tPos + 1, tPos + 6);
+  if (s.length >= 16 && s[10] === ' ') return s.slice(11, 16);
+  return '—';
+}
+
+function operasyonTipOzeti(kart, tip) {
+  const events = kart?.operasyon?.events || [];
+  const adaylar = events.filter((e) => String(e?.tip || '').toUpperCase() === tip);
+  if (!adaylar.length) return null;
+  const sirali = [...adaylar].sort((a, b) => {
+    const aTs = String(a?.cevap_ts || a?.sistem_slot_ts || '');
+    const bTs = String(b?.cevap_ts || b?.sistem_slot_ts || '');
+    return aTs.localeCompare(bTs);
+  });
+  const e = sirali[sirali.length - 1] || {};
+  const durum = String(e?.durum || '').toLowerCase();
+  const saat = fmtHHMM(e?.cevap_ts || e?.sistem_slot_ts);
+  if (durum === 'tamamlandi') return { text: `${saat} ✅`, badge: 'badge-green' };
+  if (durum === 'gecikti') return { text: `${saat} ⚠️`, badge: 'badge-red' };
+  if (durum === 'bekliyor' || durum === 'devam' || durum === 'aktif') return { text: '⏳', badge: 'badge-yellow' };
+  return { text: '—', badge: 'badge-gray' };
+}
+
+function SubeKart({ k, onDetay, personelRisk }) {
   const b   = k.bayraklar || {};
   const o   = k.ozet || {};
   const op  = k.operasyon || {};
   const aktif = op.aktif;
   const vurgu = computeOpsKartVurgu(k);
+  const satisTahminToplam = Number(k.satis_tahmin_toplam || 0);
 
   // Kart rengi
   let borderColor = 'var(--border)';
@@ -96,6 +125,11 @@ function SubeKart({ k, onDetay }) {
           {!b.kritik && b.geciken && <span className="badge badge-yellow">Gecikme</span>}
           {b.fark_var && <span className="badge badge-yellow">Fark</span>}
           {b.guvenlik_alarm && <span className="badge badge-red">Güvenlik</span>}
+          {!!personelRisk?.adet && (
+            <span className={`badge ${personelRisk.maxSkor >= 45 ? 'badge-red' : 'badge-yellow'}`}>
+              👤 Riskli personel: {personelRisk.adet}
+            </span>
+          )}
         </div>
       </div>
 
@@ -114,6 +148,23 @@ function SubeKart({ k, onDetay }) {
         ) : (
           <span className={`badge ${k.ciro_girildi ? 'badge-green' : k.ciro_taslak_bekliyor ? 'badge-yellow' : 'badge-gray'}`}>
             {k.ciro_girildi ? '✓ Ciro' : k.ciro_taslak_bekliyor ? '⏳ Onayda' : 'Ciro yok'}
+          </span>
+        )}
+        {(k.siparis_bekleyen || 0) > 0 && (
+          <span className="badge badge-yellow">🛒 Sipariş: {k.siparis_bekleyen}</span>
+        )}
+        {(k.siparis_ozel_bekleyen || 0) > 0 && (
+          <span className="badge badge-red">📦 Özel talep: {k.siparis_ozel_bekleyen}</span>
+        )}
+        {(k.anlik_gider_bekleyen || 0) > 0 && (
+          <span className="badge badge-yellow">💸 Gider bekliyor: {k.anlik_gider_bekleyen}</span>
+        )}
+        {(k.gunluk_not_adet || 0) > 0 && (
+          <span className="badge badge-gray">📝 Günlük not: {k.gunluk_not_adet}</span>
+        )}
+        {satisTahminToplam !== 0 && (
+          <span className={`badge ${satisTahminToplam > 0 ? 'badge-yellow' : 'badge-green'}`}>
+            📉 Tahmini açık: {satisTahminToplam > 0 ? '+' : ''}{fmt(satisTahminToplam)}
           </span>
         )}
       </div>
@@ -399,6 +450,9 @@ export default function OperasyonMerkezi() {
   const [kartlar,   setKartlar]   = useState([]);
   const [defter,    setDefter]    = useState([]);
   const [sayimlar,  setSayimlar]  = useState([]);
+  const [stokKayip, setStokKayip] = useState(null);
+  const [merkezStokKart, setMerkezStokKart] = useState(null);
+  const [personelDavranis, setPersonelDavranis] = useState(null);
   const [skor,      setSkor]      = useState(null);
   const [ozet,      setOzet]      = useState(null);
   const [ayFiltre,  setAyFiltre]  = useState(varsayilanAy);
@@ -419,6 +473,7 @@ export default function OperasyonMerkezi() {
   const [puanSubeFiltre, setPuanSubeFiltre] = useState('');
   const [sipOzel, setSipOzel] = useState([]);
   const [sipKat, setSipKat] = useState([]);
+  const [sipSevkEksik, setSipSevkEksik] = useState([]);
   const [sipBusyId, setSipBusyId] = useState(null);
   const [sipYeniUrun, setSipYeniUrun] = useState({ kategori_kod: '', urun_adi: '' });
   const [sipYeniKat, setSipYeniKat] = useState({ ad: '', emoji: '📦' });
@@ -427,12 +482,14 @@ export default function OperasyonMerkezi() {
 
   const yukleSiparisMerkez = useCallback(async () => {
     try {
-      const [oz, cat] = await Promise.all([
+      const [oz, cat, eksik] = await Promise.all([
         api('/ops/siparis/ozel-bekleyen'),
         api('/ops/siparis/katalog'),
+        api('/ops/siparis/sevk-eksik?gun=7'),
       ]);
       setSipOzel(oz.talepler || []);
       setSipKat(cat.kategoriler || []);
+      setSipSevkEksik(eksik.kayitlar || []);
     } catch (e) {
       toast(e.message || 'Sipariş verisi yüklenemedi');
     }
@@ -465,6 +522,9 @@ export default function OperasyonMerkezi() {
       const calls = [api(`/ops/dashboard?filtre=${f}`)];
       if (aktifSekme === 'canli') {
         calls.push(api('/ops/skor'));
+        calls.push(api('/ops/stok-kayip-analiz?gun=45'));
+        calls.push(api('/ops/personel-davranis-analiz?gun=45'));
+        calls.push(api('/ops/merkez-stok-kart'));
       } else if (aktifSekme === 'defter') {
         calls.push(api(`/ops/defter?limit=300&${q}`));
       } else if (aktifSekme === 'sayim') {
@@ -472,11 +532,14 @@ export default function OperasyonMerkezi() {
       } else {
         calls.push(Promise.resolve({ satirlar: [] }));
       }
-      const [dash, extra] = await Promise.all(calls);
+      const [dash, extra, extra2, extra3, extra4] = await Promise.all(calls);
       setKartlar(dash.kartlar || []);
       setOzet(dash);
       if (aktifSekme === 'canli') {
         setSkor(extra);
+        setStokKayip(extra2 || null);
+        setPersonelDavranis(extra3 || null);
+        setMerkezStokKart(extra4 || null);
       } else if (aktifSekme === 'defter') {
         setDefter(extra?.satirlar || []);
       } else if (aktifSekme === 'sayim') {
@@ -533,10 +596,22 @@ export default function OperasyonMerkezi() {
     yukleSiparisMerkez();
   }, [aktifSekme, yukleSiparisMerkez]);
 
-  // 25 saniyede bir otomatik yenile
+  useEffect(() => {
+    const unsub = subscribeGlobalDataRefresh(() => {
+      if (aktifSekme === 'onay') {
+        setYukleniyor(true);
+        yukleOnayMerkez();
+      } else {
+        yukle(filtre);
+      }
+    });
+    return unsub;
+  }, [aktifSekme, filtre, yukle, yukleOnayMerkez]);
+
+  // 30 saniyede bir otomatik yenile
   useEffect(() => {
     if (aktifSekme === 'onay') return undefined;
-    const t = setInterval(() => yukle(filtre), 25000);
+    const t = setInterval(() => yukle(filtre), 30000);
     return () => clearInterval(t);
   }, [filtre, yukle, aktifSekme]);
 
@@ -544,12 +619,23 @@ export default function OperasyonMerkezi() {
   const kritikSayi    = kartlar.filter(k => k.bayraklar?.kritik).length;
   const gecikSayi     = kartlar.filter(k => k.bayraklar?.geciken).length;
   const guvenlikSayi  = kartlar.filter(k => k.bayraklar?.guvenlik_alarm).length;
+  const karsilastirmaKartlar = [...kartlar].sort((a, b) => String(a?.sube_adi || '').localeCompare(String(b?.sube_adi || ''), 'tr'));
+  const riskliPersonelSubeMap = (personelDavranis?.surekli_riskli_personel || []).reduce((acc, p) => {
+    const sid = p?.sube_id || '';
+    if (!sid) return acc;
+    if (!acc[sid]) acc[sid] = { adet: 0, maxSkor: 0 };
+    acc[sid].adet += 1;
+    const rs = Number(p?.davranis_risk_skoru || 0);
+    if (rs > acc[sid].maxSkor) acc[sid].maxSkor = rs;
+    return acc;
+  }, {});
 
   async function ciroTaslakOnayla(tid) {
     setOnayBusyId(`c:${tid}`);
     try {
       await api(`/ciro-taslak/${encodeURIComponent(tid)}/onayla`, { method: 'POST', body: {} });
       toast('Ciro taslağı onaylandı; kasa ve ciro girişine işlendi.', 'green');
+      publishGlobalDataRefresh('ops-onay-ciro');
       await yukleOnayMerkez();
     } catch (e) {
       toast(e.message || 'Onay başarısız');
@@ -568,6 +654,7 @@ export default function OperasyonMerkezi() {
         body: { neden: (neden || '').trim() || 'Reddedildi' },
       });
       toast('Ciro taslağı reddedildi.', 'green');
+      publishGlobalDataRefresh('ops-onay-ciro-reddet');
       await yukleOnayMerkez();
     } catch (e) {
       toast(e.message || 'Red başarısız');
@@ -581,6 +668,7 @@ export default function OperasyonMerkezi() {
     try {
       await api(`/onay-kuyrugu/${encodeURIComponent(oid)}/onayla`, { method: 'POST' });
       toast('Kuyruk kaydı onaylandı.', 'green');
+      publishGlobalDataRefresh('ops-onay-kuyruk');
       await yukleOnayMerkez();
     } catch (e) {
       toast(e.message || 'Onay başarısız');
@@ -597,6 +685,7 @@ export default function OperasyonMerkezi() {
         body: { neden: 'hata' },
       });
       toast('Kuyruk kaydı reddedildi.', 'green');
+      publishGlobalDataRefresh('ops-onay-kuyruk-reddet');
       await yukleOnayMerkez();
     } catch (e) {
       toast(e.message || 'Red başarısız');
@@ -704,7 +793,113 @@ export default function OperasyonMerkezi() {
               <div className="metric-value">{toplamGecikme}</div>
               <div className="metric-sub">{skor?.uyari_sayisi_uyari_kritik || 0} uyarı/kritik kayıt</div>
             </div>
+            <div className="metric-card">
+              <div className="metric-label">Tahmini Satış</div>
+              <div className="metric-value green">{ozet?.satis_tahmin_toplam || 0}</div>
+              <div className="metric-sub">Kapanış formülü: teorik - gerçek</div>
+            </div>
           </div>
+
+          <div className="card" style={{ marginBottom: 16 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Şubeler arası canlı karşılaştırma</h3>
+            <div className="table-wrap" style={{ margin: 0 }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Şube</th>
+                    <th>Açılış</th>
+                    <th>Kontrol</th>
+                    <th>Kapanış</th>
+                    <th>Vardiya devri</th>
+                    <th>Ciro</th>
+                    <th>Not</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {karsilastirmaKartlar.map((k) => {
+                    const acilisDurum = operasyonTipOzeti(k, 'ACILIS') || { text: '—', badge: 'badge-gray' };
+                    const kontrolDurum = operasyonTipOzeti(k, 'KONTROL');
+                    const kapanisDurum = operasyonTipOzeti(k, 'KAPANIS');
+                    const vardiyaDurum = k?.vardiya_devri_tamam
+                      ? { text: 'Tamamlandı', badge: 'badge-green' }
+                      : k?.vardiya_devri_basladi
+                        ? { text: 'Devam ediyor', badge: 'badge-yellow' }
+                        : { text: '—', badge: 'badge-gray' };
+                    const gecikme = Number(k?.kontrol_gecikme_dk || 0);
+                    const kontrolCell = kontrolDurum
+                      ? (gecikme > 0
+                        ? { text: `⚠️ ${gecikme} dk geç`, badge: gecikme >= 30 ? 'badge-red' : 'badge-yellow' }
+                        : kontrolDurum)
+                      : { text: '⏳', badge: 'badge-yellow' };
+                    const kapanisCell = kapanisDurum || { text: '⏳', badge: 'badge-yellow' };
+                    const ciro = Number(k?.bugun_ciro_tutar || 0);
+                    const notAdet = Number(k?.gunluk_not_adet || 0);
+                    return (
+                      <tr
+                        key={`cmp-${k.sube_id}`}
+                        onClick={() => setDetay(k)}
+                        style={{ cursor: 'pointer' }}
+                        title="Detay için tıkla"
+                      >
+                        <td style={{ fontWeight: 500, fontSize: 13 }}>{k.sube_adi || k.sube_id || '—'}</td>
+                        <td><span className={`badge ${acilisDurum.badge}`}>{acilisDurum.text}</span></td>
+                        <td><span className={`badge ${kontrolCell.badge}`}>{kontrolCell.text}</span></td>
+                        <td><span className={`badge ${kapanisCell.badge}`}>{kapanisCell.text}</span></td>
+                        <td><span className={`badge ${vardiyaDurum.badge}`}>{vardiyaDurum.text}</span></td>
+                        <td className="mono">{fmt(ciro)}</td>
+                        <td className="mono">{notAdet}</td>
+                      </tr>
+                    );
+                  })}
+                  {karsilastirmaKartlar.length === 0 && (
+                    <tr><td colSpan={7}><div className="empty"><p>Karşılaştırma için şube verisi yok</p></div></td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {!!merkezStokKart && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Merkez stok kartı</h3>
+              <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
+                Sipariş + sevk + son kapanış kalanları birleştirilerek hesaplanır.
+              </p>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                <span className="badge badge-gray">Sipariş: {fmt(merkezStokKart?.ozet?.siparis_toplam || 0)}</span>
+                <span className="badge badge-blue">Sevk: {fmt(merkezStokKart?.ozet?.sevk_toplam || 0)}</span>
+                <span className="badge badge-yellow">Kullanılan: {fmt(merkezStokKart?.ozet?.kullanilan_toplam || 0)}</span>
+                <span className="badge badge-green">Kalan: {fmt(merkezStokKart?.ozet?.kalan_toplam || 0)}</span>
+              </div>
+              <div className="table-wrap" style={{ margin: 0 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Kalem</th>
+                      <th>Sipariş</th>
+                      <th>Sevk</th>
+                      <th>Kullanılan</th>
+                      <th>Kalan</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(merkezStokKart?.satirlar || []).map((r) => (
+                      <tr key={r.kalem_kodu}>
+                        <td>{r.kalem_adi || r.kalem_kodu}</td>
+                        <td className="mono">{fmt(r.siparis_adet || 0)}</td>
+                        <td className="mono">{fmt(r.sevk_adet || 0)}</td>
+                        <td className="mono">{fmt(r.kullanilan_adet || 0)}</td>
+                        <td className="mono">{fmt(r.kalan_adet || 0)}</td>
+                      </tr>
+                    ))}
+                    {(merkezStokKart?.satirlar || []).length === 0 && (
+                      <tr><td colSpan={5}><div className="empty"><p>Merkez stok kartı verisi yok</p></div></td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
             {FILTRELER.map(f => (
@@ -718,6 +913,104 @@ export default function OperasyonMerkezi() {
             ))}
           </div>
 
+          {!!stokKayip && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Stok kayıp tahmini (son {stokKayip.gun_sayi || 45} gün)</h3>
+              <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
+                Formül: Açılış + (Ürün Ekle + Ürün Aç) - Kapanış. Sürekli açık veren personeller ve şubeler aşağıda özetlenir.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 10 }}>
+                <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>Sürekli açık veren personel</div>
+                  {(stokKayip.surekli_acik_personel || []).slice(0, 6).map((p, i) => (
+                    <div key={`${p.personel_id || p.personel_ad}-${i}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '4px 0' }}>
+                      <span>{p.personel_ad || p.personel_id || '—'} <span style={{ color: 'var(--text3)' }}>({p.sube_adi || p.sube_id || '—'})</span></span>
+                      <strong style={{ color: 'var(--yellow)' }}>+{p.toplam_acik}</strong>
+                    </div>
+                  ))}
+                  {(stokKayip.surekli_acik_personel || []).length === 0 && (
+                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>Belirgin sürekli açık yok.</div>
+                  )}
+                </div>
+                <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>Şube bazlı toplam açık</div>
+                  {(stokKayip.sube_ozet || []).slice(0, 6).map((s, i) => (
+                    <div key={`${s.sube_id}-${i}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '4px 0' }}>
+                      <span>{s.sube_adi || s.sube_id} <span style={{ color: 'var(--text3)' }}>({s.acik_gun_sayisi} gün)</span></span>
+                      <strong style={{ color: 'var(--yellow)' }}>+{s.toplam_acik}</strong>
+                    </div>
+                  ))}
+                  {(stokKayip.sube_ozet || []).length === 0 && (
+                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>Şube açık verisi yok.</div>
+                  )}
+                </div>
+                <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>Haftalık tekrar paterni</div>
+                  {(stokKayip.haftalik_pattern || []).slice(0, 6).map((w, i) => (
+                    <div key={`${w.sube_id}-${w.urun}-${w.hafta_gun}-${i}`} style={{ fontSize: 12, padding: '4px 0' }}>
+                      <strong>{w.sube_adi || w.sube_id}</strong> · {w.urun_ad} · {w.hafta_gun}
+                      <span style={{ color: 'var(--yellow)', marginLeft: 6 }}>~{w.ortalama_acik}</span>
+                    </div>
+                  ))}
+                  {(stokKayip.haftalik_pattern || []).length === 0 && (
+                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>Patern verisi yok.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!!personelDavranis && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>
+                Personel açılış davranışı (son {personelDavranis.gun_sayi || 45} gün)
+              </h3>
+              <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
+                Kasa farkı, bardak düşük başlatma ve vardiya devrini adım-1'de bırakma metrikleriyle risk skoru.
+              </p>
+              <div className="table-wrap" style={{ margin: 0 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Personel</th>
+                      <th>Şube</th>
+                      <th>Açılış</th>
+                      <th>Kasa fark</th>
+                      <th>Bardak düşük</th>
+                      <th>Vardiya eksik</th>
+                      <th>Risk</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(personelDavranis.personel_ozet || []).slice(0, 10).map((p, i) => (
+                      <tr key={`${p.personel_id || p.personel_ad}-${i}`}>
+                        <td>{p.personel_ad || p.personel_id || '—'}</td>
+                        <td>{p.sube_adi || p.sube_id || '—'}</td>
+                        <td className="mono">{p.acilis_sayisi || 0}</td>
+                        <td className="mono">{p.acilis_kasa_fark_adet || 0} / {p.acilis_kasa_fark_toplam || 0}</td>
+                        <td className="mono">{p.bardak_dusuk_adet || 0} / {p.bardak_dusuk_toplam || 0}</td>
+                        <td className="mono">{p.vardiya_eksik_adet || 0}</td>
+                        <td>
+                          <span className={`badge ${Number(p.davranis_risk_skoru || 0) >= 35 ? 'badge-red' : Number(p.davranis_risk_skoru || 0) >= 20 ? 'badge-yellow' : 'badge-gray'}`}>
+                            {p.davranis_risk_skoru || 0}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    {(personelDavranis.personel_ozet || []).length === 0 && (
+                      <tr><td colSpan={7}><div className="empty"><p>Davranış analizi için yeterli veri yok</p></div></td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {(personelDavranis.surekli_riskli_personel || []).length > 0 && (
+                <div style={{ marginTop: 10, fontSize: 12, color: 'var(--yellow)' }}>
+                  Sürekli açık veren takip listesi: {(personelDavranis.surekli_riskli_personel || []).slice(0, 5).map((p) => p.personel_ad || p.personel_id).join(', ')}
+                </div>
+              )}
+            </div>
+          )}
+
           {yukleniyor ? (
             <div className="loading"><div className="spinner" />Yükleniyor…</div>
           ) : kartlar.length === 0 ? (
@@ -725,13 +1018,7 @@ export default function OperasyonMerkezi() {
               <div className="icon">✅</div>
               <p>Bu filtrede şube yok</p>
             </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12, marginBottom: 24 }}>
-              {kartlar.map(k => (
-                <SubeKart key={k.sube_id} k={k} onDetay={setDetay} />
-              ))}
-            </div>
-          )}
+          ) : null}
         </>
       )}
 
@@ -805,6 +1092,41 @@ export default function OperasyonMerkezi() {
             <strong> Kataloga al</strong> derseniz ürün tüm şubelerin sipariş / teslim / aç formlarında görünür;
             <strong> Tek sefer</strong> ile kataloga eklemeden yalnızca bir sipariş kaydı oluşur; <strong> Red</strong> talebi kapatır.
           </p>
+
+          <section className="card" style={{ padding: '14px 16px' }}>
+            <h3 style={{ fontSize: 14, marginBottom: 10 }}>Eksik teslim bildirimleri (son 7 gün)</h3>
+            {sipSevkEksik.length === 0 ? (
+              <div className="empty"><p>Eksik teslim bildirimi yok</p></div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflow: 'auto' }}>
+                {sipSevkEksik.map((r) => {
+                  const siparisteVardi = r.eksik_kategori === 'sipariste_vardi';
+                  return (
+                    <div key={r.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                        <div style={{ fontSize: 13 }}>
+                          <strong>{r.sube_adi || r.sube_id}</strong>
+                          <span style={{ color: 'var(--text3)', marginLeft: 8 }}>{r.tedarikci_ad || 'Tedarikçi yok'}</span>
+                        </div>
+                        <span className={`badge ${siparisteVardi ? 'badge-yellow' : 'badge-red'}`}>
+                          {siparisteVardi ? 'Siparişte vardı ama eksik geldi' : 'Siparişte yoktu / yazılmadı'}
+                        </span>
+                      </div>
+                      <div style={{ marginTop: 6, fontSize: 12 }}>{r.eksik_aciklama || '—'}</div>
+                      <div className="mono" style={{ marginTop: 6, fontSize: 11, color: 'var(--text3)' }}>
+                        Bildiren: {r.bildiren_personel_ad || '—'} · {String(r.olusturma || '').replace('T', ' ').slice(0, 16)}
+                      </div>
+                      {!siparisteVardi && (
+                        <div style={{ marginTop: 6, fontSize: 12, color: '#f87171', fontWeight: 700 }}>
+                          Son sipariş formu personeli: {r.siparis_personel_ad || 'Kayıt bulunamadı'}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
 
           <section className="card" style={{ padding: '14px 16px' }}>
             <h3 style={{ fontSize: 14, marginBottom: 10 }}>Bekleyen özel talepler ({sipOzel.length})</h3>
@@ -1105,6 +1427,46 @@ export default function OperasyonMerkezi() {
                             >
                               {onayBusyId === `or:${o.id}` ? '…' : 'Reddet'}
                             </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h3 style={{ fontSize: 14, marginBottom: 10 }}>
+                  Sipariş talepleri (bekleyen) · {bekleyenPaket?.ozet?.siparis_talep ?? 0}
+                </h3>
+                {(bekleyenPaket?.siparis_talepleri || []).length === 0 ? (
+                  <div className="empty"><p>Bekleyen sipariş talebi yok</p></div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {bekleyenPaket.siparis_talepleri.map((s) => (
+                      <div
+                        key={s.id}
+                        className="card"
+                        style={{ padding: '12px 14px', borderLeft: '4px solid var(--blue)' }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                          <div>
+                            <div style={{ fontWeight: 600 }}>
+                              {s.sube_adi || s.sube_id}
+                              <span style={{ fontWeight: 500, color: 'var(--text3)', marginLeft: 8 }}>
+                                {s.kalem_adet_toplam || 0} adet kalem
+                              </span>
+                            </div>
+                            <div className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>
+                              {s.tarih} · {(s.bildirim_saati || '—')} · {s.personel_ad || '—'}
+                            </div>
+                            {s.not_aciklama && <div style={{ fontSize: 12, marginTop: 6 }}>{s.not_aciklama}</div>}
+                            {(s.kalemler || []).length > 0 && (
+                              <div style={{ fontSize: 12, marginTop: 6, color: 'var(--text2)' }}>
+                                {(s.kalemler || []).slice(0, 6).map((k) => `${k?.urun_ad || 'Ürün'} x${k?.adet || 0}`).join(' · ')}
+                                {(s.kalemler || []).length > 6 ? ` · +${(s.kalemler || []).length - 6} kalem` : ''}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
+import { publishGlobalDataRefresh } from '../utils/globalDataRefresh';
 
 const BOSH = {
   ad_soyad:'', gorev:'', calisma_turu:'surekli', maas:'', saatlik_ucret:'',
@@ -132,15 +133,7 @@ export default function Personel() {
     try {
       const res = await api(`/personel-aylik/${pid}?yil=${aylikYil}&ay=${aylikAy}`, { method:'POST', body });
       toast(`Kaydedildi — Net: ${parseInt(res.hesaplanan_net).toLocaleString('tr-TR')} ₺`);
-      loadAylik();
-    } catch(e) { toast(e.message, 'red'); }
-  }
-
-  async function maasOnayla(pid) {
-    if (!confirm('Maaş kaydını onaylıyor musunuz? Onaylanan kayıt değiştirilemez.')) return;
-    try {
-      await api(`/personel-aylik/${pid}/onayla?yil=${aylikYil}&ay=${aylikAy}`, { method:'POST' });
-      toast('Onaylandı');
+      publishGlobalDataRefresh('personel-maas-kaydet');
       loadAylik();
     } catch(e) { toast(e.message, 'red'); }
   }
@@ -150,6 +143,7 @@ export default function Personel() {
     try {
       await api(`/personel-aylik/${pid}?yil=${aylikYil}&ay=${aylikAy}`, { method:'DELETE' });
       toast('Kayıt silindi', 'yellow');
+      publishGlobalDataRefresh('personel-maas-sil');
       loadAylik();
     } catch(e) { toast(e.message, 'red'); }
   }
@@ -208,15 +202,16 @@ export default function Personel() {
               <th style={{textAlign:'right'}}>Maaş / Saat</th>
               <th style={{textAlign:'right'}}>Yan Haklar</th>
               <th style={{textAlign:'right'}}>Toplam Yük</th>
-              <th>Ödeme Günü</th><th>Şube</th><th></th>
+              <th>Ödeme Günü</th><th>Bu Ay Ödeme</th><th>Şube</th><th></th>
             </tr></thead>
             <tbody>
               {liste.length === 0 ? (
-                <tr><td colSpan={9}><div className="empty"><p>Kayıt yok</p></div></td></tr>
+                <tr><td colSpan={10}><div className="empty"><p>Kayıt yok</p></div></td></tr>
               ) : liste.map(p => {
                 const yanHak = (parseFloat(p.yemek_ucreti)||0) + (parseFloat(p.yol_ucreti)||0);
                 const toplam = p.calisma_turu==='surekli'
                   ? (parseFloat(p.maas)||0) + yanHak : yanHak;
+                const odemeDurum = String(p.odeme_durumu || '');
                 return (
                   <tr key={p.id}>
                     <td style={{fontWeight:500}}>{p.ad_soyad}</td>
@@ -234,6 +229,17 @@ export default function Personel() {
                       {p.calisma_turu==='surekli' ? fmt(toplam) : <span style={{color:'var(--text3)',fontSize:11}}>Saat girilince</span>}
                     </td>
                     <td style={{fontSize:12,color:'var(--text3)'}}>Her ayın {p.odeme_gunu}. günü</td>
+                    <td>
+                      {!odemeDurum ? (
+                        <span className="badge badge-gray">— Plan yok</span>
+                      ) : odemeDurum === 'odendi' ? (
+                        <span className="badge badge-green">✓ Ödendi</span>
+                      ) : odemeDurum === 'onay_bekliyor' ? (
+                        <span className="badge badge-yellow">⏳ Onay bekliyor</span>
+                      ) : (
+                        <span className="badge badge-yellow">⏳ Ödenmedi</span>
+                      )}
+                    </td>
                     <td><span className="badge badge-blue">{p.sube_adi||'---'}</span></td>
                     <td>
                       <div className="flex gap-8">
@@ -284,6 +290,7 @@ export default function Personel() {
                 const f = kayitForm[p.personel_id] || {};
                 const durum = p.durum;
                 const onaylandi = durum === 'onaylandi';
+                const odemeDurum = String(p.odeme_durumu || '');
                 return (
                   <div key={p.personel_id} style={{
                     background:'var(--bg2)',border:`1px solid ${onaylandi?'var(--green)':'var(--border)'}`,
@@ -304,8 +311,17 @@ export default function Personel() {
                           background: onaylandi?'rgba(0,200,100,0.15)': durum==='taslak'?'rgba(250,200,0,0.15)':'rgba(150,150,150,0.15)',
                           color: onaylandi?'var(--green)': durum==='taslak'?'var(--yellow)':'var(--text3)'
                         }}>
-                          {onaylandi?'✓ Onaylandı': durum==='taslak'?'Kaydedildi':'Girilmedi'}
+                          {onaylandi?'✓ Hesap kilitli': durum==='taslak'?'Taslak kaydedildi':'Girilmedi'}
                         </span>
+                        {!odemeDurum ? (
+                          <span className="badge badge-gray">— Plan yok</span>
+                        ) : odemeDurum === 'odendi' ? (
+                          <span className="badge badge-green">✓ Ödendi</span>
+                        ) : odemeDurum === 'onay_bekliyor' ? (
+                          <span className="badge badge-yellow">⏳ Onay bekliyor</span>
+                        ) : (
+                          <span className="badge badge-yellow">⏳ Ödenmedi</span>
+                        )}
                         <button className="btn btn-ghost btn-sm" onClick={()=>gecmisAc(p)}>📋 Geçmiş</button>
                       </div>
                     </div>
@@ -407,11 +423,6 @@ export default function Personel() {
                         {!onaylandi && (
                           <button className="btn btn-primary btn-sm" onClick={()=>maasKaydet(p.personel_id)}>
                             💾 Kaydet
-                          </button>
-                        )}
-                        {durum === 'taslak' && (
-                          <button className="btn btn-secondary btn-sm" onClick={()=>maasOnayla(p.personel_id)}>
-                            ✓ Onayla
                           </button>
                         )}
                         {durum === 'taslak' && (

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
+import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
 
 export function Strateji() {
   const [data, setData] = useState(null);
@@ -89,14 +90,23 @@ export function OnayKuyrugu() {
   const [liste, setListe] = useState([]);
   const [msg, setMsg] = useState(null);
   const [reddetModal, setReddetModal] = useState(null);
+  const [gorunum, setGorunum] = useState('bekliyor'); // bekliyor | gecmis
   const [secili, setSecili] = useState(new Set());
   const [topluYukleniyor, setTopluYukleniyor] = useState(false);
-  const load = () => { api('/onay-kuyrugu').then(d => { setListe(d); setSecili(new Set()); }); };
-  useEffect(()=>{load();},[]);
+  const load = () => {
+    api(`/onay-kuyrugu?durum=${gorunum}&limit=400`).then(d => {
+      setListe(d || []);
+      if (gorunum !== 'bekliyor') setSecili(new Set());
+    });
+  };
+  useEffect(()=>{load();},[gorunum]);
+  useEffect(() => {
+    const unsub = subscribeGlobalDataRefresh(() => load());
+    return unsub;
+  }, [gorunum]);
   const toast = (m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
-
   async function onayla(id) {
-    try { await api(`/onay-kuyrugu/${id}/onayla`,{method:'POST'}); toast('Onaylandı, kasadan düşüldü'); load(); }
+    try { await api(`/onay-kuyrugu/${id}/onayla`,{method:'POST'}); toast('Onaylandı, kasadan düşüldü'); publishGlobalDataRefresh('onay-kuyrugu'); load(); }
     catch(e){toast(e.message,'red');}
   }
 
@@ -122,6 +132,7 @@ export function OnayKuyrugu() {
         body: { ids: [...secili] }
       });
       toast(`✅ ${r.onaylanan}/${r.toplam} onaylandı${r.hata > 0 ? ` · ${r.hata} hata` : ''}`);
+      if (r.onaylanan > 0) publishGlobalDataRefresh('onay-kuyrugu-toplu');
       load();
     } catch(e) { toast(e.message, 'red'); }
     finally { setTopluYukleniyor(false); }
@@ -134,6 +145,7 @@ export function OnayKuyrugu() {
         ? 'Reddedildi — kaynak kapatıldı, plan üretilmeyecek'
         : 'Reddedildi — bu plan iptal edildi, kaynak aktif';
       toast(mesaj, 'yellow');
+      publishGlobalDataRefresh('onay-kuyrugu-reddet');
       setReddetModal(null);
       load();
     } catch(e){toast(e.message,'red');}
@@ -143,8 +155,25 @@ export function OnayKuyrugu() {
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
       <div className="page-header flex items-center justify-between">
-        <div><h2>✅ Onay Kuyruğu</h2><p>{liste.length} bekleyen işlem</p></div>
-        {liste.length > 0 && (
+        <div>
+          <h2>✅ Onay Kuyruğu</h2>
+          <p>{liste.length} {gorunum === 'bekliyor' ? 'bekleyen işlem' : 'geçmiş işlem'}</p>
+        </div>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <button
+            className={`btn btn-sm ${gorunum==='bekliyor'?'btn-primary':'btn-ghost'}`}
+            onClick={()=>setGorunum('bekliyor')}
+          >
+            Bekleyen
+          </button>
+          <button
+            className={`btn btn-sm ${gorunum==='gecmis'?'btn-primary':'btn-ghost'}`}
+            onClick={()=>setGorunum('gecmis')}
+          >
+            Geçmiş
+          </button>
+        </div>
+        {gorunum === 'bekliyor' && liste.length > 0 && (
           <div style={{display:'flex',gap:8,alignItems:'center'}}>
             {secili.size > 0 && (
               <span style={{fontSize:12,color:'var(--text3)'}}>{secili.size} seçili</span>
@@ -161,33 +190,52 @@ export function OnayKuyrugu() {
         )}
       </div>
       {!liste.length ? (
-        <div className="empty"><div className="icon">✅</div><p>Bekleyen onay yok</p></div>
+        <div className="empty"><div className="icon">✅</div><p>{gorunum === 'bekliyor' ? 'Bekleyen onay yok' : 'Geçmiş kayıt yok'}</p></div>
       ) : (
         <div className="table-wrap">
           <table>
             <thead><tr>
-              <th style={{width:36}}></th>
+              {gorunum === 'bekliyor' && <th style={{width:36}}></th>}
               <th>İşlem Türü</th><th>Açıklama</th>
               <th style={{textAlign:'right'}}>Tutar</th>
-              <th>Tarih</th><th></th>
+              <th>Tarih</th>
+              {gorunum === 'gecmis' && <th>Durum</th>}
+              {gorunum === 'gecmis' && <th>İşlem Zamanı</th>}
+              <th></th>
             </tr></thead>
             <tbody>
               {liste.map(o=>(
                 <tr key={o.id} style={{background: secili.has(o.id) ? 'rgba(74,158,255,0.06)' : ''}}>
-                  <td style={{textAlign:'center'}}>
-                    <input type="checkbox" checked={secili.has(o.id)}
-                      onChange={()=>toggleSecim(o.id)}
-                      style={{cursor:'pointer',width:15,height:15}}/>
-                  </td>
+                  {gorunum === 'bekliyor' && (
+                    <td style={{textAlign:'center'}}>
+                      <input type="checkbox" checked={secili.has(o.id)}
+                        onChange={()=>toggleSecim(o.id)}
+                        style={{cursor:'pointer',width:15,height:15}}/>
+                    </td>
+                  )}
                   <td><span className="badge badge-yellow">{o.islem_turu}</span></td>
                   <td>{o.aciklama}</td>
                   <td style={{textAlign:'right'}} className="amount-neg">{o.tutar ? `${parseInt(o.tutar).toLocaleString('tr-TR')} ₺` : '---'}</td>
                   <td className="mono" style={{fontSize:12}}>{o.tarih}</td>
+                  {gorunum === 'gecmis' && (
+                    <td>
+                      <span className={`badge ${o.durum === 'onaylandi' ? 'badge-green' : 'badge-red'}`}>
+                        {o.durum === 'onaylandi' ? 'Onaylandı' : 'Reddedildi'}
+                      </span>
+                    </td>
+                  )}
+                  {gorunum === 'gecmis' && (
+                    <td className="mono" style={{fontSize:12}}>{String(o.onay_tarihi || '').slice(0, 19).replace('T', ' ') || '—'}</td>
+                  )}
                   <td>
-                    <div className="flex gap-8">
-                      <button className="btn btn-primary btn-sm" onClick={()=>onayla(o.id)}>✓ Onayla</button>
-                      <button className="btn btn-danger btn-sm" onClick={()=>setReddetModal({id:o.id, aciklama:o.aciklama})}>✕ Reddet</button>
-                    </div>
+                    {gorunum === 'bekliyor' ? (
+                      <div className="flex gap-8">
+                        <button className="btn btn-primary btn-sm" onClick={()=>onayla(o.id)}>✓ Onayla</button>
+                        <button className="btn btn-danger btn-sm" onClick={()=>setReddetModal({id:o.id, aciklama:o.aciklama})}>✕ Reddet</button>
+                      </div>
+                    ) : (
+                      <span style={{fontSize:11,color:'var(--text3)'}}>Tamamlandı</span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -1013,6 +1061,10 @@ export function SabitGiderler() {
 // VadeliAlimlar.jsx
 export function VadeliAlimlar() {
   const [liste, setListe] = useState([]);
+  const [gorunum, setGorunum] = useState('bekliyor'); // bekliyor | odendi
+  const [gecmisModal, setGecmisModal] = useState(false);
+  const [gecmisData, setGecmisData] = useState(null);
+  const [gecmisYukleniyor, setGecmisYukleniyor] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({aciklama:'',tutar:'',vade_tarihi:'',tedarikci:''});
   const [duzenleId, setDuzenleId] = useState(null);
@@ -1033,9 +1085,28 @@ export function VadeliAlimlar() {
   const [kismiTutar, setKismiTutar] = useState('');
   const [kismiTarih, setKismiTarih] = useState('');
 
-  const load=()=>api('/vadeli-alimlar').then(setListe);
-  useEffect(()=>{load();},[]);
+  const load=()=>api(`/vadeli-alimlar?durum=${gorunum}&gun=30`).then(setListe);
+  useEffect(()=>{load();},[gorunum]);
+  useEffect(() => {
+    const unsub = subscribeGlobalDataRefresh(() => load());
+    return unsub;
+  }, [gorunum]);
   const toast=(m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
+
+  async function vadeliGecmisAc() {
+    setGecmisModal(true);
+    setGecmisData(null);
+    setGecmisYukleniyor(true);
+    try {
+      const r = await api('/vadeli-alimlar/gecmis?limit=160');
+      setGecmisData(r);
+    } catch (e) {
+      toast(e.message, 'red');
+      setGecmisModal(false);
+    } finally {
+      setGecmisYukleniyor(false);
+    }
+  }
 
   function odemeModalAc(v, tip) {
     setOdemeModal({id:v.id, aciklama:v.aciklama, tutar:parseFloat(v.tutar), tip});
@@ -1198,12 +1269,34 @@ export function VadeliAlimlar() {
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
       <div className="page-header flex items-center justify-between">
-        <div><h2>Vadeli Alımlar</h2><p>7 gün içinde yaklaşanlar panel'de gösterilir</p></div>
-        <button className="btn btn-primary" onClick={()=>{setForm({aciklama:'',tutar:'',vade_tarihi:'',tedarikci:''});setDuzenleId(null);setShowModal(true);}}>+ Vadeli Alım Ekle</button>
+        <div>
+          <h2>Vadeli Alımlar</h2>
+          <p>{gorunum === 'bekliyor' ? '7 gün içinde yaklaşanlar panelde gösterilir' : 'Son 30 günde ödenen vadeli alımlar'}</p>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button
+            className={`btn btn-sm ${gorunum==='bekliyor'?'btn-primary':'btn-ghost'}`}
+            onClick={()=>setGorunum('bekliyor')}
+          >
+            Bekleyenler
+          </button>
+          <button
+            className={`btn btn-sm ${gorunum==='odendi'?'btn-primary':'btn-ghost'}`}
+            onClick={()=>setGorunum('odendi')}
+          >
+            Ödenenler (30 gün)
+          </button>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn btn-ghost" onClick={vadeliGecmisAc}>📋 Ödeme Geçmişi</button>
+          {gorunum === 'bekliyor' && (
+            <button className="btn btn-primary" onClick={()=>{setForm({aciklama:'',tutar:'',vade_tarihi:'',tedarikci:''});setDuzenleId(null);setShowModal(true);}}>+ Vadeli Alım Ekle</button>
+          )}
+        </div>
       </div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Açıklama</th><th>Tedarikçi</th><th style={{textAlign:'right'}}>Tutar</th><th>Vade Tarihi</th><th>Kalan</th><th></th></tr></thead>
+          <thead><tr><th>Açıklama</th><th>Tedarikçi</th><th style={{textAlign:'right'}}>Tutar</th><th>Vade Tarihi</th><th>{gorunum === 'bekliyor' ? 'Kalan' : 'Ödeme'}</th><th></th></tr></thead>
           <tbody>
             {!liste.length?(<tr><td colSpan={6}><div className="empty"><p>Vadeli alım yok</p></div></td></tr>):
             liste.map(v=>{
@@ -1215,14 +1308,26 @@ export function VadeliAlimlar() {
                   <td style={{fontSize:12,color:'var(--text3)'}}>{v.tedarikci||'---'}</td>
                   <td style={{textAlign:'right'}} className="amount-neg">{parseInt(v.tutar).toLocaleString('tr-TR')} ₺</td>
                   <td className="mono" style={{fontSize:12}}>{v.vade_tarihi}</td>
-                  <td><span className={`badge ${gun<=0?'badge-red':gun<=7?'badge-yellow':'badge-gray'}`}>{gun<=0?'BUGÜN':gun+' gün'}</span></td>
                   <td>
-                    <div className="flex gap-8">
-                      <button className="btn btn-primary btn-sm" onClick={()=>odemeModalAc(v,'tam')}>Ödendi</button>
-                      <button className="btn btn-ghost btn-sm" onClick={()=>odemeModalAc(v,'kismi')}>✂ Kısmi</button>
-                      <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({aciklama:v.aciklama,tutar:v.tutar,vade_tarihi:v.vade_tarihi,tedarikci:v.tedarikci||''});setDuzenleId(v.id);setShowModal(true);}}>✏️</button>
-                      <button className="btn btn-danger btn-sm" onClick={()=>sil(v.id)}>✕</button>
-                    </div>
+                    {gorunum === 'bekliyor' ? (
+                      <span className={`badge ${gun<=0?'badge-red':gun<=7?'badge-yellow':'badge-gray'}`}>{gun<=0?'BUGÜN':gun+' gün'}</span>
+                    ) : (
+                      <span className="badge badge-green">
+                        {v.odeme_tarihi ? fmtDate(v.odeme_tarihi) : 'Ödendi'}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    {gorunum === 'bekliyor' ? (
+                      <div className="flex gap-8">
+                        <button className="btn btn-primary btn-sm" onClick={()=>odemeModalAc(v,'tam')}>Ödendi</button>
+                        <button className="btn btn-ghost btn-sm" onClick={()=>odemeModalAc(v,'kismi')}>✂ Kısmi</button>
+                        <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({aciklama:v.aciklama,tutar:v.tutar,vade_tarihi:v.vade_tarihi,tedarikci:v.tedarikci||''});setDuzenleId(v.id);setShowModal(true);}}>✏️</button>
+                        <button className="btn btn-danger btn-sm" onClick={()=>sil(v.id)}>✕</button>
+                      </div>
+                    ) : (
+                      <span style={{fontSize:11,color:'var(--text3)'}}>Kapanmış kayıt</span>
+                    )}
                   </td>
                 </tr>
               );
@@ -1324,6 +1429,66 @@ export function VadeliAlimlar() {
               <button type="button" className="btn btn-secondary" onClick={()=>setBorcKararModal(null)}>Vazgeç</button>
               <button type="button" className="btn btn-ghost" onClick={()=>borcKararUygula('ayri')}>Birleştirme — ayrı borç</button>
               <button type="button" className="btn btn-primary" onClick={()=>borcKararUygula('ilave')}>Birleştir</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {gecmisModal && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setGecmisModal(false)}>
+          <div className="modal" style={{maxWidth:760,width:'95%'}}>
+            <div className="modal-header">
+              <div>
+                <h3>📋 Vadeli Ödeme Geçmişi</h3>
+                <p style={{fontSize:12,color:'var(--text3)',marginTop:2}}>
+                  Nakit + kart üzerinden kapanan vadeli ödemeler
+                </p>
+              </div>
+              <button className="modal-close" onClick={()=>setGecmisModal(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              {gecmisYukleniyor && <div style={{textAlign:'center',padding:40}}><div className="spinner"/></div>}
+              {gecmisData && (
+                <>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:10,marginBottom:14}}>
+                    <div style={{background:'var(--bg3)',borderRadius:8,padding:'10px 14px'}}>
+                      <div style={{fontSize:11,color:'var(--text3)',marginBottom:4}}>Kayıt</div>
+                      <div style={{fontSize:18,fontWeight:700,color:'var(--text1)'}}>{gecmisData?.ozet?.adet || 0}</div>
+                    </div>
+                    <div style={{background:'var(--bg3)',borderRadius:8,padding:'10px 14px'}}>
+                      <div style={{fontSize:11,color:'var(--text3)',marginBottom:4}}>Toplam Ödenen</div>
+                      <div style={{fontSize:18,fontWeight:700,color:'var(--green)'}}>{fmt(gecmisData?.ozet?.toplam || 0)}</div>
+                    </div>
+                  </div>
+                  {!gecmisData?.satirlar?.length ? (
+                    <div className="empty"><p>Ödeme geçmişi bulunamadı</p></div>
+                  ) : (
+                    <div className="table-wrap">
+                      <table>
+                        <thead><tr><th>Tarih</th><th>Açıklama</th><th>Tedarikçi</th><th>Yöntem</th><th style={{textAlign:'right'}}>Tutar</th></tr></thead>
+                        <tbody>
+                          {gecmisData.satirlar.map((r, i) => (
+                            <tr key={`${r.vadeli_id || 'yok'}-${r.tarih}-${i}`}>
+                              <td className="mono" style={{fontSize:12}}>{fmtDate(r.tarih)}</td>
+                              <td>{r.vadeli_aciklama || r.aciklama || '—'}</td>
+                              <td style={{fontSize:12,color:'var(--text3)'}}>{r.tedarikci || '—'}</td>
+                              <td>
+                                <span className={`badge ${r.odeme_yontemi === 'kart' ? 'badge-blue' : 'badge-gray'}`}>
+                                  {r.odeme_yontemi === 'kart' ? '💳 Kart' : '💵 Nakit'}
+                                </span>
+                              </td>
+                              <td style={{textAlign:'right'}} className="amount-neg">{fmt(r.tutar)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={()=>setGecmisModal(false)}>Kapat</button>
             </div>
           </div>
         </div>

@@ -1,10 +1,14 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
+import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
 
 const KATEGORILER = ['Nakit Alım','Market','Fatura','Kargo','Yemek','Yakıt','Bakım','Diğer'];
 
-export default function AnlikGider() {
+export default function AnlikGider({ onNavigate }) {
+  const nav = onNavigate || (() => {});
   const [liste, setListe] = useState([]);
+  const [subeBekleyenOzet, setSubeBekleyenOzet] = useState({ adet: 0, toplam: 0 });
+  const [durumFiltre, setDurumFiltre] = useState('hepsi'); // hepsi | aktif | onay_bekliyor
   const [kartlar, setKartlar] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({tarih: new Date().toISOString().split('T')[0], kategori:'Diğer', tutar:'', aciklama:'', sube:'MERKEZ', odeme_yontemi:'nakit', kart_id:'', kaynak_id:null, kaynak_tablo:null});
@@ -15,9 +19,21 @@ export default function AnlikGider() {
   const [gecmisModal, setGecmisModal] = useState(false);
   const [gecmisData, setGecmisData] = useState(null);
 
-  const load = () => api('/anlik-gider').then(setListe);
+  const load = () =>
+    api(`/anlik-gider?durum=${durumFiltre}&include_summary=true`).then((r) => {
+      if (Array.isArray(r)) {
+        setListe(r);
+        setSubeBekleyenOzet({ adet: 0, toplam: 0 });
+      } else {
+        setListe(r?.satirlar || []);
+        setSubeBekleyenOzet(r?.ozet?.sube_bekleyen || { adet: 0, toplam: 0 });
+      }
+    });
   useEffect(() => {
     load();
+  }, [durumFiltre]);
+
+  useEffect(() => {
     api('/kartlar').then(setKartlar);
     // Panel'den "Tutarı Gir" ile gelindiyse formu otomatik doldur
     const kaynak = sessionStorage.getItem('degisken_gider_kaynak');
@@ -35,6 +51,10 @@ export default function AnlikGider() {
       } catch(e) {}
     }
   }, []);
+  useEffect(() => {
+    const unsub = subscribeGlobalDataRefresh(() => load());
+    return unsub;
+  }, [durumFiltre]);
   const toast = (m, t='green') => { setMsg({m,t}); setTimeout(()=>setMsg(null),3000); };
 
   async function kaydet(force=false) {
@@ -54,6 +74,7 @@ export default function AnlikGider() {
       setShowModal(false);
       setKartOneri(null);
       setForm({tarih: new Date().toISOString().split('T')[0], kategori:'Diğer', tutar:'', aciklama:'', sube:'MERKEZ', odeme_yontemi:'nakit', kart_id:''});
+      publishGlobalDataRefresh('anlik-gider');
       load();
     } catch(e) { toast(e.message, 'red'); }
   }
@@ -67,11 +88,14 @@ export default function AnlikGider() {
     try {
       await api(`/anlik-gider/${id}`, { method:'DELETE' });
       toast(g?.odeme_yontemi === 'kart' ? 'İptal edildi — kart borcundan düşüldü' : 'İptal edildi — kasaya iade edildi', 'yellow');
+      publishGlobalDataRefresh('anlik-gider-iptal');
       load();
     } catch(e) { toast(e.message, 'red'); }
   }
 
-  const toplamBugün = liste.filter(g => g.tarih === new Date().toISOString().split('T')[0]).reduce((s,g)=>s+parseFloat(g.tutar),0);
+  const toplamBugün = liste
+    .filter(g => g.tarih === new Date().toISOString().split('T')[0] && g.durum === 'aktif')
+    .reduce((s,g)=>s+parseFloat(g.tutar),0);
 
   return (
     <div className="page">
@@ -81,7 +105,25 @@ export default function AnlikGider() {
           <h2>Anlık Gider</h2>
           <p>Beklenmeyen giderler · Bugün: {fmt(toplamBugün)}</p>
         </div>
-        <div style={{display:'flex',gap:8}}>
+        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}>
+          <button
+            className={`btn btn-sm ${durumFiltre==='hepsi'?'btn-primary':'btn-ghost'}`}
+            onClick={()=>setDurumFiltre('hepsi')}
+          >
+            Tümü
+          </button>
+          <button
+            className={`btn btn-sm ${durumFiltre==='onay_bekliyor'?'btn-primary':'btn-ghost'}`}
+            onClick={()=>setDurumFiltre('onay_bekliyor')}
+          >
+            ⏳ Onay Bekleyen
+          </button>
+          <button
+            className={`btn btn-sm ${durumFiltre==='aktif'?'btn-primary':'btn-ghost'}`}
+            onClick={()=>setDurumFiltre('aktif')}
+          >
+            ✓ Aktif
+          </button>
           <button className="btn btn-ghost" onClick={async()=>{
             setGecmisModal(true); setGecmisData(null);
             const r = await api('/anlik-gider/gecmis').catch(()=>null);
@@ -90,11 +132,21 @@ export default function AnlikGider() {
           <button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ Gider Ekle</button>
         </div>
       </div>
+      {(subeBekleyenOzet.adet || 0) > 0 && (
+        <div
+          className="alert-box yellow mb-16"
+          style={{ cursor: 'pointer' }}
+          onClick={() => nav('onay')}
+          title="Onay kuyruğuna git"
+        >
+          Şubeden bekleyen <strong>{subeBekleyenOzet.adet}</strong> gider var — toplam <strong>{fmt(subeBekleyenOzet.toplam || 0)}</strong>. Görmek için tıklayın.
+        </div>
+      )}
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Tarih</th><th>Kategori</th><th>Açıklama</th><th>Şube</th><th>Ödeme</th><th style={{textAlign:'right'}}>Tutar</th><th></th></tr></thead>
+          <thead><tr><th>Tarih</th><th>Kategori</th><th>Açıklama</th><th>Şube</th><th>Durum</th><th>Ödeme</th><th style={{textAlign:'right'}}>Tutar</th><th></th></tr></thead>
           <tbody>
-            {!liste.length ? (<tr><td colSpan={7}><div className="empty"><p>Anlık gider yok</p></div></td></tr>) :
+            {!liste.length ? (<tr><td colSpan={8}><div className="empty"><p>Anlık gider yok</p></div></td></tr>) :
             liste.map(g => (
               <tr key={g.id}>
                 <td className="mono" style={{fontSize:12}}>{fmtDate(g.tarih)}</td>
@@ -102,13 +154,22 @@ export default function AnlikGider() {
                 <td style={{fontSize:12,color:'var(--text3)'}}>{g.aciklama||'---'}</td>
                 <td style={{fontSize:12}}>{g.sube}</td>
                 <td>
+                  {g.durum === 'onay_bekliyor'
+                    ? <span className="badge badge-yellow">⏳ Onay bekliyor</span>
+                    : <span className="badge badge-green">✓ Aktif</span>}
+                </td>
+                <td>
                   {g.odeme_yontemi === 'kart'
                     ? <span className="badge badge-blue">💳 {g.kart_adi || 'Kart'}</span>
                     : <span className="badge badge-gray">💵 Nakit</span>
                   }
                 </td>
                 <td style={{textAlign:'right'}} className="amount-neg">{fmt(g.tutar)}</td>
-                <td><button className="btn btn-danger btn-sm" onClick={()=>sil(g.id)}>İptal</button></td>
+                <td>
+                  {g.durum === 'aktif'
+                    ? <button className="btn btn-danger btn-sm" onClick={()=>sil(g.id)}>İptal</button>
+                    : <span style={{fontSize:11,color:'var(--text3)'}}>Merkez onayı bekliyor</span>}
+                </td>
               </tr>
             ))}
           </tbody>
