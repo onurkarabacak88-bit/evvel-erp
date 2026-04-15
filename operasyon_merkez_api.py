@@ -7,6 +7,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import os
 import re
 import uuid
@@ -45,6 +46,7 @@ from sube_panel import (
 )
 
 router = APIRouter(prefix="/api/ops", tags=["operasyon-merkez"])
+logger = logging.getLogger(__name__)
 
 _YM_RE = re.compile(r"^\d{4}-\d{2}$")
 
@@ -544,8 +546,58 @@ def ops_dashboard(
         subeler = cur.fetchall()
         guvenlik_lim = _guvenlik_alarm_limitleri()
         kartlar: List[dict] = []
+        hatalar: List[dict] = []
         for s in subeler:
-            kartlar.append(_kart_uret(cur, dict(s), guvenlik_lim))
+            sdict = dict(s)
+            try:
+                kartlar.append(_kart_uret(cur, sdict, guvenlik_lim))
+            except Exception as e:
+                sid = str(sdict.get("id") or "")
+                sad = sdict.get("ad")
+                logger.exception("ops_dashboard kart üretim hatası: sube_id=%s", sid)
+                hatalar.append({"sube_id": sid, "sube_adi": sad, "hata": str(e)})
+                kartlar.append(
+                    {
+                        "sube_id": sid,
+                        "sube_adi": sad,
+                        "kasa_acik": False,
+                        "sube_acik": False,
+                        "ciro_girildi": False,
+                        "ciro_taslak_bekliyor": False,
+                        "operasyon": {"events": []},
+                        "ozet": {},
+                        "uyarilar": [
+                            {
+                                "tip": "OPS_DASHBOARD_HATA",
+                                "seviye": "kritik",
+                                "mesaj": f"Şube kartı üretilemedi: {e}",
+                            }
+                        ],
+                        "guvenlik": {},
+                        "vardiya_devri_basladi": False,
+                        "vardiya_devri_tamam": False,
+                        "vardiya_devri_durum": "—",
+                        "kontrol_gecikme_dk": 0,
+                        "siparis_bekleyen": 0,
+                        "siparis_ozel_bekleyen": 0,
+                        "anlik_gider_bekleyen": 0,
+                        "gunluk_not_adet": 0,
+                        "satis_tahmini_toplam": 0,
+                        "satis_tahmini_kalemler": {},
+                        "satis_tahmin_toplam": 0,
+                        "satis_tahmin_json": {},
+                        "teorik_stok_json": {},
+                        "kapanis_stok_json": {},
+                        "bayraklar": {
+                            "kritik": True,
+                            "geciken": True,
+                            "fark_var": False,
+                            "fark_tl": None,
+                            "guvenlik_alarm": False,
+                            "siparis_bekleyen": False,
+                        },
+                    }
+                )
 
     if f == "kritik":
         kartlar = [k for k in kartlar if k["bayraklar"]["kritik"]]
@@ -572,6 +624,7 @@ def ops_dashboard(
         "satis_tahmin_toplam": sum(int(k.get("satis_tahmin_toplam") or 0) for k in kartlar),
         "guvenlik_alarmli_sube_sayisi": sum(1 for k in kartlar if k["bayraklar"].get("guvenlik_alarm")),
         "kartlar": kartlar,
+        "hatalar": hatalar,
         "guvenlik_alarm_limitleri": _guvenlik_alarm_limitleri(),
         "tolerans": {
             "normal_tl": 50,
@@ -1443,10 +1496,10 @@ def ops_personel_davranis_analiz(
         u_rows = [dict(r) for r in cur.fetchall()]
 
         qv = """
-            SELECT k.sube_id, s.ad AS sube_adi, k.tarih, k.sabahci_personel_id, p.ad_soyad AS sabahci_ad
+            SELECT k.sube_id, s.ad AS sube_adi, k.tarih, k.kapanisci_id AS sabahci_personel_id, p.ad_soyad AS sabahci_ad
             FROM kapanis_kayit k
             JOIN subeler s ON s.id = k.sube_id
-            LEFT JOIN personel p ON p.id = k.sabahci_personel_id
+            LEFT JOIN personel p ON p.id = k.kapanisci_id
             WHERE k.olay='vardiya_sabah_aksam_devri'
               AND k.durum='acilis_bekliyor'
               AND k.tarih >= (CURRENT_DATE - (%s * INTERVAL '1 day'))
