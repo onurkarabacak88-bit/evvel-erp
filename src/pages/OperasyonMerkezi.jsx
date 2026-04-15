@@ -521,10 +521,10 @@ export default function OperasyonMerkezi() {
       const q = `year_month=${encodeURIComponent(ayFiltre)}${gunFiltre ? `&gun=${encodeURIComponent(gunFiltre)}` : ''}`;
       const calls = [api(`/ops/dashboard?filtre=${f}`)];
       if (aktifSekme === 'canli') {
-        calls.push(api('/ops/skor'));
-        calls.push(api('/ops/stok-kayip-analiz?gun=45'));
-        calls.push(api('/ops/personel-davranis-analiz?gun=45'));
-        calls.push(api('/ops/merkez-stok-kart'));
+        calls.push(api('/ops/skor').catch(() => null));
+        calls.push(api('/ops/stok-kayip-analiz?gun=45').catch(() => null));
+        calls.push(api('/ops/personel-davranis-analiz?gun=45').catch(() => null));
+        calls.push(api('/ops/merkez-stok-kart').catch(() => null));
       } else if (aktifSekme === 'defter') {
         calls.push(api(`/ops/defter?limit=300&${q}`));
       } else if (aktifSekme === 'sayim') {
