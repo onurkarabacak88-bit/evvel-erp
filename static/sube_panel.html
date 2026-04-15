@@ -205,6 +205,7 @@
       cursor: pointer;
     }
     .sip-mini-btn:hover { border-color: var(--accent); color: var(--text); }
+    .sip-mini-btn.is-active { border-color: var(--accent); color: var(--text); background: rgba(59,130,246,.18); }
     .siparis-kat-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -274,6 +275,33 @@
       cursor: pointer;
     }
     .sip-mini-btn:hover { border-color: var(--accent); color: var(--text); }
+    .sip-mini-btn.is-active { border-color: var(--accent); color: var(--text); background: rgba(59,130,246,.18); }
+    .sip-kat-kart { position: relative; overflow: hidden; border-width: 1.2px; }
+    .sip-kat-kart::before {
+      content: '';
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 100%;
+      height: 3px;
+      opacity: .9;
+    }
+    .sip-kat-kart.sip-tone-0::before { background: linear-gradient(90deg, #38bdf8, #3b82f6); }
+    .sip-kat-kart.sip-tone-1::before { background: linear-gradient(90deg, #34d399, #22c55e); }
+    .sip-kat-kart.sip-tone-2::before { background: linear-gradient(90deg, #f59e0b, #f97316); }
+    .sip-kat-kart.sip-tone-3::before { background: linear-gradient(90deg, #a78bfa, #8b5cf6); }
+    .sip-inner-panel { border-color: rgba(59,130,246,.35); box-shadow: inset 0 0 0 1px rgba(59,130,246,.12); }
+    .sip-close-btn {
+      width: 26px;
+      height: 26px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg2);
+      color: var(--muted);
+      cursor: pointer;
+      font-weight: 800;
+      line-height: 1;
+    }
+    .sip-close-btn:hover { border-color: rgba(239,68,68,.5); color: #fca5a5; }
 
     /* Orta alan */
     #orta {
@@ -1088,6 +1116,7 @@ var dvAdim1Step = 1;
 var acilisStep = 1, acilisKasa = null, acilisStok = {};
 var siparisOpenKat = null;
 var siparisShowPasif = false;
+var siparisOzelExpanded = false;
 var siparisDegerler = {};
 var siparisKatalogCache = null;
 
@@ -1332,36 +1361,9 @@ async function renderSiparisPanel() {
     root.innerHTML = '<div class="merkez-mesaj-bos">Kategori bulunamadı (merkez katalog boş).</div>';
     return;
   }
-  if (!siparisOpenKat || !data.some(function(k){ return k.id === siparisOpenKat; })) siparisOpenKat = data[0].id;
-  var acik = data.find(function(k){ return k.id === siparisOpenKat; }) || data[0];
+  if (siparisOpenKat && !data.some(function(k){ return k.id === siparisOpenKat; })) siparisOpenKat = null;
+  var acik = data.find(function(k){ return k.id === siparisOpenKat; }) || null;
   var h = '';
-  h += '<div class="siparis-detay" style="border-left:3px solid rgba(245,158,11,.6);padding-left:12px;margin-bottom:14px">';
-  h += '<div style="font-size:12px;font-weight:700;margin-bottom:6px">📌 Katalogda olmayan ürün talebi</div>';
-  h += '<p style="font-size:11px;color:var(--muted);margin:0 0 10px 0;line-height:1.45">Listede yoksa buradan yazın (ör. pil). Merkez <strong>kataloga alırsa</strong> sipariş ve <strong>Ürün Teslim Al / Ürün Aç</strong> formlarında görünür. <strong>Tek sefer</strong> veya <strong>red</strong> kararı operasyon merkezinden verilir.</p>';
-  h += '<div class="form-group"><label>Hedef kategori</label><select id="sipOzelKatSel">';
-  data.forEach(function(k){ h += '<option value="'+escHtml(k.id)+'">'+escHtml(k.label||k.ad)+'</option>'; });
-  h += '</select></div>';
-  h += '<div class="form-group"><label>Ürün adı</label><input id="sipOzelAd" placeholder="Örn: Pil" autocomplete="off" /></div>';
-  h += '<div class="form-group"><label>Adet</label><input id="sipOzelAdet" inputmode="numeric" value="1" style="max-width:100px" /></div>';
-  h += '<div class="form-group"><label>Not (opsiyonel)</label><input id="sipOzelNotInp" placeholder="Marka, ölçü vb." /></div>';
-  h += '<div class="form-group"><label>Personel</label><select id="sipOzelPers"></select></div>';
-  h += '<div class="form-group"><label>PIN</label><input id="sipOzelPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
-  h += '<button class="btn btn-warning btn-sm" id="sipOzelGonderBtn">Özel talebi gönder</button>';
-  h += '</div>';
-  if (ozelListe.length) {
-    h += '<div class="siparis-detay" style="margin-bottom:14px">';
-    h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Son özel talepleriniz</div>';
-    h += '<div style="font-size:12px;color:var(--muted);max-height:140px;overflow:auto">';
-    ozelListe.slice(0, 12).forEach(function(z){
-      var st = (z.durum || '');
-      var stCls = st === 'bekliyor' ? 'badge-warn' : (st === 'onaylandi' ? 'badge-ok' : (st === 'tek_sefer' ? 'badge-blue' : (st === 'reddedildi' ? 'badge-err' : 'badge-gray')));
-      h += '<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">';
-      h += '<span>'+escHtml(z.urun_adi||'')+' <span style="opacity:.75">×'+String(z.adet||1)+'</span> <span class="mono" style="font-size:10px">'+escHtml(z.kategori_kod||'')+'</span></span>';
-      h += '<span class="badge '+stCls+'" style="font-size:10px;text-transform:uppercase">'+escHtml(st)+'</span>';
-      h += '</div>';
-    });
-    h += '</div></div>';
-  }
   var tekSipler = bekListe.filter(function(b){ return b.tur === 'tek_sefer'; });
   if (tekSipler.length) {
     h += '<div class="siparis-detay" style="border-left:3px solid rgba(59,130,246,.55);padding-left:12px;margin-bottom:14px;background:rgba(59,130,246,.06)">';
@@ -1382,31 +1384,39 @@ async function renderSiparisPanel() {
   }
   h += '<div style="font-size:11px;font-weight:700;color:var(--muted);margin:10px 0 6px;text-transform:uppercase;letter-spacing:.04em">Standart sipariş (katalog)</div>';
   h += '<div class="siparis-kat-grid">';
-  data.forEach(function(k){
+  data.forEach(function(k, i){
     var p = siparisLabelParts(k.label || k.ad);
-    h += '<button class="sip-kat-kart' + (k.id===siparisOpenKat ? ' active' : '') + '" data-sip-kat="' + k.id + '">';
+    var tone = ' sip-tone-' + (i % 4);
+    h += '<button class="sip-kat-kart' + tone + (k.id===siparisOpenKat ? ' active' : '') + '" data-sip-kat="' + k.id + '">';
     h += '<span class="ico">' + p.ico + '</span>';
     h += '<span class="ttl">' + p.ttl + '</span>';
-    h += '<span class="sub">' + siparisAktifAdet(k) + ' aktif ürün • Dokun, alt başlıkları aç</span>';
+    h += '<span class="sub">' + siparisAktifAdet(k) + ' aktif ürün • Dokun, iç sekmede aç</span>';
     h += '</button>';
   });
   h += '</div>';
-  h += '<div class="siparis-detay">';
-  h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
-  h += '<strong style="font-size:12px">' + acik.label + '</strong>';
-  h += '<button class="sip-mini-btn" id="sipTogglePasif">' + (siparisShowPasif ? 'Pasifleri Gizle' : 'Pasifleri Göster') + '</button>';
-  h += '</div>';
-  var aktifRows = (acik.items || []).filter(function(it){ return it.aktif !== false; });
-  var pasifRows = (acik.items || []).filter(function(it){ return it.aktif === false; });
-  h += '<div class="sip-alt-baslik">Aktif Ürünler</div>';
-  h += siparisUrunRowsHTML(acik.id, aktifRows);
-  if (!aktifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride aktif ürün yok.</div>';
-  if (siparisShowPasif) {
-    h += '<div class="sip-alt-baslik">Pasif Ürünler</div>';
-    h += siparisUrunRowsHTML(acik.id, pasifRows);
-    if (!pasifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride pasif ürün yok.</div>';
+  if (acik) {
+    h += '<div class="siparis-detay sip-inner-panel">';
+    h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
+    h += '<strong style="font-size:12px">' + acik.label + '</strong>';
+    h += '<div style="display:flex;gap:8px;align-items:center">';
+    h += '<button class="sip-mini-btn" id="sipTogglePasif">' + (siparisShowPasif ? 'Pasifleri Gizle' : 'Pasifleri Göster') + '</button>';
+    h += '<button class="sip-close-btn" id="sipKatCloseBtn" type="button" title="Kapat">✕</button>';
+    h += '</div>';
+    h += '</div>';
+    var aktifRows = (acik.items || []).filter(function(it){ return it.aktif !== false; });
+    var pasifRows = (acik.items || []).filter(function(it){ return it.aktif === false; });
+    h += '<div class="sip-alt-baslik">Aktif Ürünler</div>';
+    h += siparisUrunRowsHTML(acik.id, aktifRows);
+    if (!aktifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride aktif ürün yok.</div>';
+    if (siparisShowPasif) {
+      h += '<div class="sip-alt-baslik">Pasif Ürünler</div>';
+      h += siparisUrunRowsHTML(acik.id, pasifRows);
+      if (!pasifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride pasif ürün yok.</div>';
+    }
+    h += '</div>';
+  } else {
+    h += '<div class="siparis-detay" style="font-size:12px;color:var(--muted)">Kategorilerden birine dokunun; ürünler iç sekmede açılacak.</div>';
   }
-  h += '</div>';
   h += '<div class="siparis-detay">';
   h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Seçimleri Onayla (PIN zorunlu)</div>';
   h += '<div class="form-group"><label>Not (opsiyonel)</label><input id="siparisOnayNot" placeholder="Kısa not" /></div>';
@@ -1414,13 +1424,49 @@ async function renderSiparisPanel() {
   h += '<div class="form-group"><label>PIN</label><input id="siparisOnayPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
   h += '<button class="btn btn-success btn-sm" id="siparisOnayBtn">Seçimleri Onayla</button>';
   h += '</div>';
+  h += '<div class="siparis-detay" style="border-left:3px solid rgba(245,158,11,.6);padding-left:12px;margin-bottom:14px">';
+  h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
+  h += '<div style="font-size:12px;font-weight:700">📌 Katalogda olmayan ürün talebi</div>';
+  h += '<button class="sip-mini-btn" id="sipOzelToggleBtn">' + (siparisOzelExpanded ? 'Kapat' : 'Aç') + '</button>';
+  h += '</div>';
+  if (siparisOzelExpanded) {
+    h += '<p style="font-size:11px;color:var(--muted);margin:8px 0 10px 0;line-height:1.45">Listede yoksa buradan yazın (ör. pil). Merkez <strong>kataloga alırsa</strong> sipariş ve <strong>Ürün Teslim Al / Ürün Aç</strong> formlarında görünür. <strong>Tek sefer</strong> veya <strong>red</strong> kararı operasyon merkezinden verilir.</p>';
+    h += '<div class="form-group"><label>Hedef kategori</label><select id="sipOzelKatSel">';
+    data.forEach(function(k){ h += '<option value="'+escHtml(k.id)+'">'+escHtml(k.label||k.ad)+'</option>'; });
+    h += '</select></div>';
+    h += '<div class="form-group"><label>Ürün adı</label><input id="sipOzelAd" placeholder="Örn: Pil" autocomplete="off" /></div>';
+    h += '<div class="form-group"><label>Adet</label><input id="sipOzelAdet" inputmode="numeric" value="1" style="max-width:100px" /></div>';
+    h += '<div class="form-group"><label>Not (opsiyonel)</label><input id="sipOzelNotInp" placeholder="Marka, ölçü vb." /></div>';
+    h += '<div class="form-group"><label>Personel</label><select id="sipOzelPers"></select></div>';
+    h += '<div class="form-group"><label>PIN</label><input id="sipOzelPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
+    h += '<button class="btn btn-warning btn-sm" id="sipOzelGonderBtn">Özel talebi gönder</button>';
+    if (ozelListe.length) {
+      h += '<div style="margin-top:10px">';
+      h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Son özel talepleriniz</div>';
+      h += '<div style="font-size:12px;color:var(--muted);max-height:140px;overflow:auto">';
+      ozelListe.slice(0, 12).forEach(function(z){
+        var st = (z.durum || '');
+        var stCls = st === 'bekliyor' ? 'badge-warn' : (st === 'onaylandi' ? 'badge-ok' : (st === 'tek_sefer' ? 'badge-blue' : (st === 'reddedildi' ? 'badge-err' : 'badge-gray')));
+        h += '<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">';
+        h += '<span>'+escHtml(z.urun_adi||'')+' <span style="opacity:.75">×'+String(z.adet||1)+'</span> <span class="mono" style="font-size:10px">'+escHtml(z.kategori_kod||'')+'</span></span>';
+        h += '<span class="badge '+stCls+'" style="font-size:10px;text-transform:uppercase">'+escHtml(st)+'</span>';
+        h += '</div>';
+      });
+      h += '</div></div>';
+    }
+  }
+  h += '</div>';
   root.innerHTML = h;
   fillSels();
   document.querySelectorAll('[data-sip-kat]').forEach(function(b){
     b.onclick = function(){ siparisOpenKat = this.getAttribute('data-sip-kat'); renderSiparisPanel(); };
   });
+  var cls = document.getElementById('sipKatCloseBtn');
+  if (cls) cls.onclick = function(){ siparisOpenKat = null; renderSiparisPanel(); };
   var tgl = document.getElementById('sipTogglePasif');
   if (tgl) tgl.onclick = function(){ siparisShowPasif = !siparisShowPasif; renderSiparisPanel(); };
+  var tglOz = document.getElementById('sipOzelToggleBtn');
+  if (tglOz) tglOz.onclick = function(){ siparisOzelExpanded = !siparisOzelExpanded; renderSiparisPanel(); };
   document.querySelectorAll('[data-sip-input]').forEach(function(inp){
     inp.oninput = function(){
       var k = this.getAttribute('data-sip-input');
@@ -1659,36 +1705,44 @@ function stokKatalogRowsHTML(prefix, katId, rows) {
 function stokKatalogKartBlockHTML(prefix, data) {
   if (!data || !data.length) return '<div class="merkez-mesaj-bos">Kategori bulunamadı.</div>';
   var st = stokKartState(prefix);
-  if (!st.openKat || !data.some(function(k){ return k.id === st.openKat; })) st.openKat = data[0].id;
-  var acik = data.find(function(k){ return k.id === st.openKat; }) || data[0];
-  var aktifRows = (acik.items || []).filter(function(it){ return it.aktif !== false; });
-  var pasifRows = (acik.items || []).filter(function(it){ return it.aktif === false; });
+  if (st.openKat && !data.some(function(k){ return k.id === st.openKat; })) st.openKat = null;
+  var acik = data.find(function(k){ return k.id === st.openKat; }) || null;
   var h = '';
   h += '<div class="siparis-kat-grid">';
-  data.forEach(function(k){
+  data.forEach(function(k, i){
     var p = siparisLabelParts(k.label || k.ad);
     var attrKat = escHtml(prefix) + '::' + escHtml(k.id);
-    h += '<button type="button" class="sip-kat-kart' + (k.id === st.openKat ? ' active' : '') + '" data-stok-kat="' + attrKat + '">';
+    var tone = ' sip-tone-' + (i % 4);
+    h += '<button type="button" class="sip-kat-kart' + tone + (k.id === st.openKat ? ' active' : '') + '" data-stok-kat="' + attrKat + '">';
     h += '<span class="ico">' + p.ico + '</span>';
     h += '<span class="ttl">' + p.ttl + '</span>';
-    h += '<span class="sub">' + siparisAktifAdet(k) + ' aktif ürün</span>';
+    h += '<span class="sub">' + siparisAktifAdet(k) + ' aktif ürün • Dokun, iç sekmede aç</span>';
     h += '</button>';
   });
   h += '</div>';
-  h += '<div class="siparis-detay">';
-  h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
-  h += '<strong style="font-size:12px">' + escHtml(acik.label || acik.ad || '') + '</strong>';
-  h += '<button type="button" class="sip-mini-btn" data-stok-toggle-pasif="' + escHtml(prefix) + '">' + (st.showPasif ? 'Pasifleri Gizle' : 'Pasifleri Göster') + '</button>';
-  h += '</div>';
-  h += '<div class="sip-alt-baslik">Aktif ürünler</div>';
-  h += stokKatalogRowsHTML(prefix, acik.id, aktifRows);
-  if (!aktifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride aktif ürün yok.</div>';
-  if (st.showPasif) {
-    h += '<div class="sip-alt-baslik">Pasif ürünler</div>';
-    h += stokKatalogRowsHTML(prefix, acik.id, pasifRows);
-    if (!pasifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride pasif ürün yok.</div>';
+  if (acik) {
+    var aktifRows = (acik.items || []).filter(function(it){ return it.aktif !== false; });
+    var pasifRows = (acik.items || []).filter(function(it){ return it.aktif === false; });
+    h += '<div class="siparis-detay sip-inner-panel">';
+    h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
+    h += '<strong style="font-size:12px">' + escHtml(acik.label || acik.ad || '') + '</strong>';
+    h += '<div style="display:flex;gap:8px;align-items:center">';
+    h += '<button type="button" class="sip-mini-btn" data-stok-toggle-pasif="' + escHtml(prefix) + '">' + (st.showPasif ? 'Pasifleri Gizle' : 'Pasifleri Göster') + '</button>';
+    h += '<button type="button" class="sip-close-btn" data-stok-close="' + escHtml(prefix) + '" title="Kapat">✕</button>';
+    h += '</div>';
+    h += '</div>';
+    h += '<div class="sip-alt-baslik">Aktif ürünler</div>';
+    h += stokKatalogRowsHTML(prefix, acik.id, aktifRows);
+    if (!aktifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride aktif ürün yok.</div>';
+    if (st.showPasif) {
+      h += '<div class="sip-alt-baslik">Pasif ürünler</div>';
+      h += stokKatalogRowsHTML(prefix, acik.id, pasifRows);
+      if (!pasifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride pasif ürün yok.</div>';
+    }
+    h += '</div>';
+  } else {
+    h += '<div class="siparis-detay" style="font-size:12px;color:var(--muted)">Kategorilerden birine dokunun; ürünler iç sekmede açılacak.</div>';
   }
-  h += '</div>';
   return h;
 }
 function refreshStokKatalogUI(prefix) {
@@ -1717,6 +1771,12 @@ function attachStokKatalogDelegatedHandlers(formEl, prefix) {
     var tgl = ev.target.closest('[data-stok-toggle-pasif]');
     if (tgl && formEl.contains(tgl) && (tgl.getAttribute('data-stok-toggle-pasif') || '') === prefix) {
       stokKartState(prefix).showPasif = !stokKartState(prefix).showPasif;
+      refreshStokKatalogUI(prefix);
+      return;
+    }
+    var cls = ev.target.closest('[data-stok-close]');
+    if (cls && formEl.contains(cls) && (cls.getAttribute('data-stok-close') || '') === prefix) {
+      stokKartState(prefix).openKat = null;
       refreshStokKatalogUI(prefix);
     }
   });
@@ -1784,6 +1844,97 @@ function tedarikciSelectHTML(selectId) {
   return '<div class="form-group"><label>Tedarikçi *</label><select id="' + selectId + '">' + opts + '</select></div>';
 }
 
+var _svKontrolSatirlari = [];
+
+async function svSiparisKontrolYukle() {
+  try {
+    var br = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-bekleyen-liste');
+    var bekleyen = (br && br.bekleyen) || [];
+    var acc = {};
+    bekleyen.forEach(function(s){
+      (s.kalemler_ozet || []).forEach(function(k){
+        var ad = String(k.urun_ad || '').trim();
+        var adet = parseInt(k.adet || 0, 10) || 0;
+        if (!ad || adet <= 0) return;
+        var norm = ad.toLocaleLowerCase('tr-TR');
+        if (!acc[norm]) acc[norm] = { urun_ad: ad, adet: 0 };
+        acc[norm].adet += adet;
+      });
+    });
+    _svKontrolSatirlari = Object.keys(acc).map(function(key){
+      return { key: key, urun_ad: acc[key].urun_ad, adet: acc[key].adet };
+    }).sort(function(a,b){
+      return a.urun_ad.localeCompare(b.urun_ad, 'tr');
+    });
+  } catch (e) {
+    _svKontrolSatirlari = [];
+  }
+}
+
+function renderSvSiparisKontrol() {
+  var wrap = document.getElementById('svSiparisKontrolWrap');
+  if (!wrap) return;
+  if (!_svKontrolSatirlari.length) {
+    wrap.innerHTML = '<div class="siparis-detay" style="font-size:12px;color:var(--muted)">Bugün onaylı siparişten gelen kontrol listesi bulunamadı.</div>';
+    return;
+  }
+  var h = '';
+  h += '<div class="siparis-detay sip-inner-panel" style="margin-bottom:10px">';
+  h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">';
+  h += '<div style="font-size:12px;font-weight:700">Sipariş kontrol listesi (tikleyin)</div>';
+  h += '<button type="button" class="sip-mini-btn" id="svKontrolTumBtn">Tümünü işaretle</button>';
+  h += '</div>';
+  h += '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Teslim alırken siparişte geçen kalemleri kontrol amaçlı tikleyin.</div>';
+  _svKontrolSatirlari.forEach(function(r, i){
+    h += '<label style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--border);font-size:12px">';
+    h += '<input type="checkbox" data-sv-kontrol="' + i + '" style="width:16px;height:16px;accent-color:var(--ok);flex-shrink:0" />';
+    h += '<span style="flex:1">' + escHtml(r.urun_ad) + '</span>';
+    h += '<span class="mono" style="font-size:11px">x' + String(r.adet || 0) + '</span>';
+    h += '</label>';
+  });
+  h += '</div>';
+  wrap.innerHTML = h;
+  var tumBtn = document.getElementById('svKontrolTumBtn');
+  if (tumBtn) {
+    tumBtn.onclick = function() {
+      wrap.querySelectorAll('input[data-sv-kontrol]').forEach(function(ch){ ch.checked = true; });
+    };
+  }
+}
+
+function svKontrolEksikSatirlar() {
+  var wrap = document.getElementById('svSiparisKontrolWrap');
+  if (!wrap || !_svKontrolSatirlari.length) return [];
+  var out = [];
+  _svKontrolSatirlari.forEach(function(r, i){
+    var ch = wrap.querySelector('input[data-sv-kontrol="' + i + '"]');
+    if (!ch || !ch.checked) out.push(r);
+  });
+  return out;
+}
+
+function wireSevkTeslimDurumuUI() {
+  var tamBtn = document.getElementById('svDurumTamBtn');
+  var eksikBtn = document.getElementById('svDurumEksikBtn');
+  var hid = document.getElementById('svTeslimDurumu');
+  var panel = document.getElementById('svEksikPanel');
+  if (!tamBtn || !eksikBtn || !hid || !panel) return;
+  function setDurum(v) {
+    hid.value = v;
+    tamBtn.classList.toggle('is-active', v === 'tam_geldi');
+    eksikBtn.classList.toggle('is-active', v === 'eksik_var');
+    panel.style.display = (v === 'eksik_var') ? '' : 'none';
+    if (v !== 'eksik_var') {
+      var eksikKat = document.getElementById('svEksikKategori');
+      var eksikAcik = document.getElementById('svEksikAciklama');
+      if (eksikKat) eksikKat.value = '';
+      if (eksikAcik) eksikAcik.value = '';
+    }
+  }
+  tamBtn.onclick = function(){ setDurum('tam_geldi'); };
+  eksikBtn.onclick = function(){ setDurum('eksik_var'); };
+}
+
 function renderStokForms(tip) {
   if (tip === 'sevk') {
     var el = document.getElementById('sevkForm');
@@ -1801,8 +1952,23 @@ function renderStokForms(tip) {
         h += '</div>';
         // Tedarikçi dropdown (zorunlu)
         h += tedarikciSelectHTML('svTedarikci');
+        h += '<div id="svSiparisKontrolWrap"></div>';
         h += '<div id="svKatalogWrap"></div>';
-        h += '<div class="form-group"><label>Not</label><input id="svNot" placeholder="Opsiyonel" /></div>';
+        h += '<div class="siparis-detay sip-inner-panel" style="margin-top:10px">';
+        h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Sipariş verilen ürünler geldi mi? <span style="color:#fda4af">*</span></div>';
+        h += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+        h += '<button type="button" class="sip-mini-btn" id="svDurumTamBtn" data-val="tam_geldi">✅ Tam geldi</button>';
+        h += '<button type="button" class="sip-mini-btn" id="svDurumEksikBtn" data-val="eksik_var">⚠️ Eksik var</button>';
+        h += '</div>';
+        h += '<input type="hidden" id="svTeslimDurumu" value="" />';
+        h += '<div id="svEksikPanel" class="siparis-detay sip-inner-panel" style="display:none;margin-top:10px">';
+        h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Eksik ürün bilgisi <span style="color:#fda4af">*</span></div>';
+        h += '<div class="form-group"><label>Eksik ürün sipariş formunda var mıydı? *</label>';
+        h += '<select id="svEksikKategori"><option value="">— Seçin —</option><option value="sipariste_vardi">Sipariş formunda vardı</option><option value="sipariste_yoktu">Sipariş formunda yoktu / yazılmadı</option></select></div>';
+        h += '<div class="form-group"><label>Gelmeyen ürünler açıklaması *</label><textarea id="svEksikAciklama" rows="3" placeholder="Örn: 2 koli soda, 1 koli su gelmedi."></textarea></div>';
+        h += '</div>';
+        h += '<div class="form-group"><label>Teslim açıklaması *</label><textarea id="svTeslimAciklama" rows="2" placeholder="Teslimin genel durumunu yazın."></textarea></div>';
+        h += '</div>';
         h += '<div class="form-group"><label>Personel</label><select id="svPers"></select></div>';
         h += '<div class="form-group"><label>PIN</label><input id="svPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
         h += '<button class="btn btn-primary" id="svGonder">✅ Seçimleri Onayla (PIN) ve Teslim Al</button><div id="svMsg"></div>';
@@ -1811,10 +1977,35 @@ function renderStokForms(tip) {
         stokKartState('sv').openKat = null;
         refreshStokKatalogUI('sv');
         fillSels();
+        wireSevkTeslimDurumuUI();
+        svSiparisKontrolYukle().then(renderSvSiparisKontrol);
         wireStokBtn('sv', katalog, '/urun-sevk', '✅ Depoya teslim alındı — kayıt oluşturuldu.', function(body){
           var td = selVal('svTedarikci');
           if (!td) throw new Error('Tedarikçi seçin');
+          var teslimDurumu = inpVal('svTeslimDurumu');
+          if (teslimDurumu !== 'tam_geldi' && teslimDurumu !== 'eksik_var') throw new Error('Teslim durumunu seçin');
+          var teslimAciklama = inpVal('svTeslimAciklama').trim();
+          if (teslimAciklama.length < 3) throw new Error('Teslim açıklaması zorunlu');
           body.tedarikci_id = td;
+          body.teslim_durumu = teslimDurumu;
+          body.teslim_aciklama = teslimAciklama;
+          var eksikSatirlar = svKontrolEksikSatirlar();
+          if (teslimDurumu === 'tam_geldi' && _svKontrolSatirlari.length && eksikSatirlar.length) {
+            throw new Error('Tam geldi için sipariş kontrol listesindeki tüm kalemleri tikleyin');
+          }
+          if (teslimDurumu === 'eksik_var') {
+            var eksikKategori = selVal('svEksikKategori');
+            if (eksikKategori !== 'sipariste_vardi' && eksikKategori !== 'sipariste_yoktu') throw new Error('Eksik ürün kategorisini seçin');
+            var eksikAciklama = inpVal('svEksikAciklama').trim();
+            if (eksikAciklama.length < 3) throw new Error('Gelmeyen ürünleri açıklamada yazın');
+            body.eksik_kategori = eksikKategori;
+            if (eksikSatirlar.length) {
+              var oto = eksikSatirlar.map(function(x){ return x.urun_ad + ' x' + x.adet; }).join(', ');
+              body.eksik_aciklama = (eksikAciklama + ' | Kontrol listesi gelmeyen: ' + oto).slice(0, 3900);
+            } else {
+              body.eksik_aciklama = eksikAciklama;
+            }
+          }
         });
       }).catch(function(e){
         setMsg('svMsg', e.message || 'Katalog yüklenemedi', 'msg-err');
@@ -1902,6 +2093,22 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
       if (prefix === 'sv') {
         var tdEl = document.getElementById('svTedarikci');
         if (tdEl) tdEl.value = '';
+        var dEl = document.getElementById('svTeslimDurumu');
+        if (dEl) dEl.value = '';
+        var tdAcik = document.getElementById('svTeslimAciklama');
+        if (tdAcik) tdAcik.value = '';
+        var eksikKat = document.getElementById('svEksikKategori');
+        if (eksikKat) eksikKat.value = '';
+        var eksikAcik = document.getElementById('svEksikAciklama');
+        if (eksikAcik) eksikAcik.value = '';
+        var eksikPanel = document.getElementById('svEksikPanel');
+        if (eksikPanel) eksikPanel.style.display = 'none';
+        var tamBtn = document.getElementById('svDurumTamBtn');
+        var eksikBtn = document.getElementById('svDurumEksikBtn');
+        if (tamBtn) tamBtn.classList.remove('is-active');
+        if (eksikBtn) eksikBtn.classList.remove('is-active');
+        document.querySelectorAll('#svSiparisKontrolWrap input[data-sv-kontrol]').forEach(function(ch){ ch.checked = false; });
+        svSiparisKontrolYukle().then(renderSvSiparisKontrol);
       }
     } catch(e) {
       if (e.status===429) handle429(document.getElementById(prefix+'Msg'), e);
@@ -2294,6 +2501,27 @@ function wireKapanisHandler() {
   var btn = document.getElementById('kapGonder');
   if (!btn || btn._wired) return;
   btn._wired = true;
+  function kapanisEventIdBul() {
+    var op = lastData && lastData.operasyon ? lastData.operasyon : null;
+    if (!op) return null;
+    var aktif = op.aktif || null;
+    if (aktif && String(aktif.tip || '').toUpperCase() === 'KAPANIS' && aktif.id) return aktif.id;
+    var adaylar = [];
+    if (Array.isArray(op.events)) adaylar = adaylar.concat(op.events);
+    if (Array.isArray(op.events_ozet)) adaylar = adaylar.concat(op.events_ozet);
+    for (var i = 0; i < adaylar.length; i++) {
+      var ev = adaylar[i] || {};
+      var tip = String(ev.tip || '').toUpperCase();
+      var durum = String(ev.durum || '').toLowerCase();
+      if (!ev.id || tip !== 'KAPANIS') continue;
+      if (durum === 'bekliyor' || durum === 'gecikti' || durum === 'devam' || durum === 'aktif') return ev.id;
+    }
+    for (var j = 0; j < adaylar.length; j++) {
+      var ev2 = adaylar[j] || {};
+      if (ev2.id && String(ev2.tip || '').toUpperCase() === 'KAPANIS') return ev2.id;
+    }
+    return null;
+  }
   btn.onclick = async function(){
     setMsg('kapMsg','',''); btn.disabled=true;
     try {
@@ -2307,8 +2535,7 @@ function wireKapanisHandler() {
       var n = parseNum(inpVal('kapN'))||0, p2 = parseNum(inpVal('kapP'))||0, o = parseNum(inpVal('kapO'))||0;
       if (n+p2+o <= 0) throw new Error('En az bir ciro tutarı girin');
       // Kapanış operasyon eventini tamamla
-      var opAktif = lastData && lastData.operasyon && lastData.operasyon.aktif;
-      var eid = opAktif && opAktif.tip === 'KAPANIS' ? opAktif.id : null;
+      var eid = kapanisEventIdBul();
       if (!eid) throw new Error('Aktif kapanış eventi bulunamadı — önce sistem kapanış adımını bekleyin');
       var body = {
         personel_id: pid, pin: pin,
