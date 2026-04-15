@@ -340,6 +340,13 @@ class OperasyonTamamla(BaseModel):
     soda_adet: Optional[int] = None
     cookie_adet: Optional[int] = None
     pasta_adet: Optional[int] = None
+    sut_litre: Optional[int] = None
+    surup_adet: Optional[int] = None
+    kahve_paket: Optional[int] = None
+    karton_bardak: Optional[int] = None
+    kapak_adet: Optional[int] = None
+    pecete_paket: Optional[int] = None
+    diger_sarf: Optional[int] = None
 
 
 def _insert_acilis_if_needed(cur, sube_id: str, personel_id: Optional[str], aciklama: str) -> None:
@@ -443,6 +450,17 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     raise HTTPException(400, f"Açılış için {ad} zorunlu")
                 if int(deger) < 0:
                     raise HTTPException(400, f"Açılış için {ad} negatif olamaz")
+            for ad, deger in (
+                ("sut_litre", body.sut_litre),
+                ("surup_adet", body.surup_adet),
+                ("kahve_paket", body.kahve_paket),
+                ("karton_bardak", body.karton_bardak),
+                ("kapak_adet", body.kapak_adet),
+                ("pecete_paket", body.pecete_paket),
+                ("diger_sarf", body.diger_sarf),
+            ):
+                if deger is not None and int(deger) < 0:
+                    raise HTTPException(400, f"Açılış için {ad} negatif olamaz")
             saat_sistem = simdi_tr.strftime("%H:%M:%S")
             stok = {
                 "bardak_kucuk": int(body.bardak_kucuk),
@@ -453,6 +471,13 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 "soda_adet": int(body.soda_adet),
                 "cookie_adet": int(body.cookie_adet),
                 "pasta_adet": int(body.pasta_adet),
+                "sut_litre": int(body.sut_litre or 0),
+                "surup_adet": int(body.surup_adet or 0),
+                "kahve_paket": int(body.kahve_paket or 0),
+                "karton_bardak": int(body.karton_bardak or 0),
+                "kapak_adet": int(body.kapak_adet or 0),
+                "pecete_paket": int(body.pecete_paket or 0),
+                "diger_sarf": int(body.diger_sarf or 0),
             }
             aciklama_ins = (
                 f"Operasyon ACILIS — {onay_ad} — tarih={simdi_tr.strftime('%Y-%m-%d')} saat={saat_sistem} kasa={body.kasa_sayim}"
@@ -691,6 +716,17 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     raise HTTPException(400, f"Kapanış için {ad} zorunlu")
                 if float(deger) < 0:
                     raise HTTPException(400, f"Kapanış için {ad} negatif olamaz")
+            for ad, deger in (
+                ("sut_litre", body.sut_litre),
+                ("surup_adet", body.surup_adet),
+                ("kahve_paket", body.kahve_paket),
+                ("karton_bardak", body.karton_bardak),
+                ("kapak_adet", body.kapak_adet),
+                ("pecete_paket", body.pecete_paket),
+                ("diger_sarf", body.diger_sarf),
+            ):
+                if deger is not None and int(deger) < 0:
+                    raise HTTPException(400, f"Kapanış için {ad} negatif olamaz")
 
             cn = float(body.ciro_nakit)
             cp = float(body.ciro_pos)
@@ -704,6 +740,13 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 "soda_adet": int(body.soda_adet),
                 "cookie_adet": int(body.cookie_adet),
                 "pasta_adet": int(body.pasta_adet),
+                "sut_litre": int(body.sut_litre or 0),
+                "surup_adet": int(body.surup_adet or 0),
+                "kahve_paket": int(body.kahve_paket or 0),
+                "karton_bardak": int(body.karton_bardak or 0),
+                "kapak_adet": int(body.kapak_adet or 0),
+                "pecete_paket": int(body.pecete_paket or 0),
+                "diger_sarf": int(body.diger_sarf or 0),
             }
             _upsert_ciro_taslak(
                 cur,
@@ -766,9 +809,10 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 personel_ad=onay_ad,
                 bildirim_saati=bildirim_saat,
             )
-            from operasyon_stok_motor import kapanis_stok_uyarilari_yaz
+            from operasyon_stok_motor import kapanis_stok_uyarilari_yaz, sube_operasyon_ozet_yaz
 
             kapanis_stok_uyarilari_yaz(cur, sube_id, k_stok)
+            sube_operasyon_ozet_yaz(cur, sube_id, k_stok)
 
         elif tip == "CIKIS":
             if body.kasa_sayim is None or body.kasa_sayim < 0:

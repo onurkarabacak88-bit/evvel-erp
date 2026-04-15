@@ -273,16 +273,73 @@ def zorunlu_gider_tahmini(cur) -> dict:
     personel = float(cur.fetchone()['t'])
 
     fallback = sabit + borc + personel
-    # Plan varsa onu kullan, yoksa fallback
-    zorunlu = bekleyen_30 if bekleyen_30 > 0 else fallback
+
+    # Çift sayımı önlemek için: planlananlar + sadece planda olmayan zorunlu kalemler.
+    # Böylece kısmi plan üretiminde de eksik kalan yük yakalanır.
+    cur.execute("""
+        SELECT COALESCE(SUM(g.tutar), 0) AS t
+        FROM sabit_giderler g
+        WHERE g.aktif = TRUE
+          AND (g.tip IS NULL OR g.tip = 'sabit')
+          AND NOT EXISTS (
+              SELECT 1
+              FROM odeme_plani op
+              WHERE op.kaynak_tablo = 'sabit_giderler'
+                AND op.kaynak_id = g.id
+                AND op.durum IN ('bekliyor','onay_bekliyor')
+                AND op.tarih BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'
+          )
+    """)
+    sabit_eksik = float(cur.fetchone()['t'] or 0)
+
+    cur.execute("""
+        SELECT COALESCE(SUM(b.aylik_taksit), 0) AS t
+        FROM borc_envanteri b
+        WHERE b.aktif = TRUE
+          AND b.aylik_taksit > 0
+          AND (b.kalan_vade IS NULL OR b.kalan_vade > 0)
+          AND NOT EXISTS (
+              SELECT 1
+              FROM odeme_plani op
+              WHERE op.kaynak_tablo = 'borc_envanteri'
+                AND op.kaynak_id = b.id
+                AND op.durum IN ('bekliyor','onay_bekliyor')
+                AND op.tarih BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'
+          )
+    """)
+    borc_eksik = float(cur.fetchone()['t'] or 0)
+
+    cur.execute("""
+        SELECT COALESCE(SUM(p.maas + p.yemek_ucreti + p.yol_ucreti), 0) AS t
+        FROM personel p
+        WHERE p.aktif = TRUE
+          AND p.calisma_turu = 'surekli'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM odeme_plani op
+              WHERE op.kaynak_tablo = 'personel'
+                AND op.kaynak_id = p.id
+                AND op.durum IN ('bekliyor','onay_bekliyor')
+                AND op.tarih BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'
+          )
+    """)
+    personel_eksik = float(cur.fetchone()['t'] or 0)
+
+    fallback_eksik = sabit_eksik + borc_eksik + personel_eksik
+    zorunlu = bekleyen_30 + fallback_eksik
 
     return {
         "zorunlu": zorunlu,
         "bekleyen_plan": bekleyen_30,
         "fallback": fallback,
+        "fallback_eksik": fallback_eksik,
         "sabit": sabit,
         "borc": borc,
         "personel": personel,
+        "sabit_eksik": sabit_eksik,
+        "borc_eksik": borc_eksik,
+        "personel_eksik": personel_eksik,
+        "hesap_modeli": "bekleyen_plan + fallback_eksik",
     }
 
 
@@ -296,31 +353,88 @@ def gunluk_ciro_ortalama(cur) -> dict:
     Simülasyon motoru bu fonksiyonu kullanır.
     Ağırlıklı tahmin: haftalık %70, aylık %30.
     """
+    # generate_series ile boş (0 ciro) günleri de hesaba kat.
+    # Bekleyen taslakları da dahil et; aynı şube+tarihte aktif ciro varsa taslak sayılmaz.
     cur.execute("""
-        SELECT
-            COALESCE(AVG(CASE WHEN tarih >= CURRENT_DATE - INTERVAL '7 days'
-                              THEN gunluk END), 0) AS haftalik,
-            COALESCE(AVG(CASE WHEN tarih >= CURRENT_DATE - INTERVAL '30 days'
-                              THEN gunluk END), 0) AS aylik
-        FROM (
-            SELECT tarih, SUM(toplam) AS gunluk
+        WITH gunler AS (
+            SELECT dd::date AS tarih
+            FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, INTERVAL '1 day') AS dd
+        ),
+        ciro_aktif AS (
+            SELECT tarih::date AS tarih, COALESCE(SUM(toplam), 0) AS gunluk
             FROM ciro
-            WHERE tarih >= CURRENT_DATE - INTERVAL '30 days'
-            AND durum = 'aktif'
-            GROUP BY tarih
-        ) t
+            WHERE tarih >= CURRENT_DATE - INTERVAL '29 days'
+              AND durum = 'aktif'
+            GROUP BY tarih::date
+        ),
+        ciro_taslak_bekleyen AS (
+            SELECT ct.tarih::date AS tarih,
+                   COALESCE(SUM(COALESCE(ct.nakit,0) + COALESCE(ct.pos,0) + COALESCE(ct.online,0)), 0) AS gunluk
+            FROM ciro_taslak ct
+            WHERE ct.durum = 'bekliyor'
+              AND ct.tarih >= CURRENT_DATE - INTERVAL '29 days'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM ciro c
+                  WHERE c.sube_id = ct.sube_id
+                    AND c.tarih = ct.tarih
+                    AND c.durum = 'aktif'
+              )
+            GROUP BY ct.tarih::date
+        ),
+        ciro_gunluk AS (
+            SELECT g.tarih,
+                   (COALESCE(ca.gunluk, 0) + COALESCE(ctb.gunluk, 0)) AS gunluk
+            FROM gunler g
+            LEFT JOIN ciro_aktif ca ON ca.tarih = g.tarih
+            LEFT JOIN ciro_taslak_bekleyen ctb ON ctb.tarih = g.tarih
+        ),
+        dow_avg AS (
+            SELECT EXTRACT(ISODOW FROM tarih)::int AS dow,
+                   COALESCE(AVG(gunluk), 0) AS ort
+            FROM ciro_gunluk
+            GROUP BY EXTRACT(ISODOW FROM tarih)::int
+        )
+        SELECT
+            COALESCE(AVG(CASE WHEN g.tarih >= CURRENT_DATE - INTERVAL '6 days'
+                              THEN COALESCE(cg.gunluk, 0) END), 0) AS haftalik,
+            COALESCE(AVG(COALESCE(cg.gunluk, 0)), 0) AS aylik,
+            COALESCE(
+                (SELECT jsonb_object_agg(dow::text, ort) FROM dow_avg),
+                '{}'::jsonb
+            ) AS dow_ort
+        FROM gunler g
+        LEFT JOIN ciro_gunluk cg ON cg.tarih = g.tarih
     """)
     r = cur.fetchone()
     haftalik = float(r['haftalik'] or 0)
     aylik    = float(r['aylik']    or 0)
+    dow_ort_raw = r.get('dow_ort') or {}
+    if isinstance(dow_ort_raw, str):
+        import json as _json
+        try:
+            dow_ort_raw = _json.loads(dow_ort_raw)
+        except Exception:
+            dow_ort_raw = {}
+    if not isinstance(dow_ort_raw, dict):
+        dow_ort_raw = {}
 
     # Ağırlıklı tahmin
     agirlikli = (haftalik * 0.7 + aylik * 0.3) if haftalik > 0 else aylik
+    base = max(agirlikli, 1.0)
+    gunluk_katsayi = {}
+    for dow in range(1, 8):
+        val = float(dow_ort_raw.get(str(dow), agirlikli) or 0)
+        k = val / base if base > 0 else 1.0
+        # Aşırı uçları kırp: simülasyonun stabil kalması için.
+        gunluk_katsayi[str(dow)] = round(max(0.0, min(1.5, k)), 3)
 
     return {
         "haftalik": haftalik,
         "aylik":    aylik,
         "tahmin":   agirlikli,
+        "gunluk_katsayi": gunluk_katsayi,
+        "taslak_dahil": True,
     }
 
 
@@ -337,6 +451,7 @@ def nakit_akis_sim(cur, gun_sayisi: int = 15) -> list:
     baslangic_kasa = kasa_bakiyesi(cur)
     ciro_veri = gunluk_ciro_ortalama(cur)
     gunluk_ciro = ciro_veri["tahmin"]
+    katsayi_map = ciro_veri.get("gunluk_katsayi") or {}
 
     # Planlanan ödemeleri tarihe göre map'e al
     cur.execute("""
@@ -354,10 +469,14 @@ def nakit_akis_sim(cur, gun_sayisi: int = 15) -> list:
         t = bugun + timedelta(days=i)
         t_str = str(t)
         odeme = odeme_map.get(t_str, 0)
-        kasa = kasa + gunluk_ciro - odeme
+        dow = str(t.isoweekday())
+        gelir_katsayi = float(katsayi_map.get(dow, 1.0) or 1.0)
+        beklenen_gelir = round(gunluk_ciro * gelir_katsayi, 2)
+        kasa = kasa + beklenen_gelir - odeme
         gunler.append({
             "tarih":          t_str,
-            "beklenen_gelir": gunluk_ciro,
+            "beklenen_gelir": beklenen_gelir,
+            "gelir_katsayi":  gelir_katsayi,
             "beklenen_gider": odeme,
             "kasa_tahmini":   round(kasa, 2),
             "risk":           kasa < 0,

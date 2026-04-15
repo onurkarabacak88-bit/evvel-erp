@@ -1,5 +1,5 @@
 from database import db
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 
 from tr_saat import bugun_tr
 from finans_core import (
@@ -13,6 +13,10 @@ from finans_core import (
 def fmt(n):
     if n is None: return "---"
     return f"{int(n):,} ₺".replace(",", ".")
+
+
+_UYARI_CACHE = {"ts": None, "data": []}
+_UYARI_CACHE_TTL_SN = 30
 
 # ── KARAR MOTORU ───────────────────────────────────────────────
 def karar_motoru():
@@ -675,6 +679,11 @@ def uyari_motoru():
     - Bugün: kırmızı, ödendi mi sorar
     - Geçmiş ve ödenmemiş: kritik
     """
+    now = datetime.utcnow()
+    cts = _UYARI_CACHE.get("ts")
+    if cts and (now - cts).total_seconds() < _UYARI_CACHE_TTL_SN:
+        return list(_UYARI_CACHE.get("data") or [])
+
     bugun = bugun_tr()
     uyarilar = []
 
@@ -684,7 +693,7 @@ def uyari_motoru():
                    k.kart_adi, k.banka
             FROM odeme_plani op
             LEFT JOIN kartlar k ON k.id = op.kart_id
-            WHERE op.durum = 'bekliyor'
+            WHERE op.durum IN ('bekliyor','onay_bekliyor')
             AND op.tarih BETWEEN %s AND %s
             ORDER BY op.tarih ASC
         """, (bugun - timedelta(days=3), bugun + timedelta(days=7)))
@@ -732,6 +741,119 @@ def uyari_motoru():
                 "banka": o['banka'],
             })
 
+        # Şubeden gelen ve merkez onayı bekleyen anlık giderler de uyarıya dahil.
+        cur.execute(
+            """
+            SELECT id, tarih, kategori, tutar, aciklama, sube, olusturma
+            FROM anlik_giderler
+            WHERE durum='onay_bekliyor'
+              AND tarih BETWEEN %s AND %s
+            ORDER BY tarih ASC, olusturma ASC
+            """,
+            (bugun - timedelta(days=3), bugun + timedelta(days=7)),
+        )
+        for g in cur.fetchall():
+            gun_farki = (g['tarih'] - bugun).days
+            if gun_farki < 0:
+                seviye = "KRITIK"
+                renk = "KIRMIZI"
+                mesaj = f"⛔ GECİKMİŞ ŞUBE GİDERİ! {abs(gun_farki)} gün önce girildi, merkez onayı bekliyor."
+                blink = True
+            elif gun_farki == 0:
+                seviye = "KRITIK"
+                renk = "KIRMIZI"
+                mesaj = "🔴 BUGÜN TARİHLİ ŞUBE GİDERİ merkez onayı bekliyor."
+                blink = True
+            elif gun_farki <= 2:
+                seviye = "UYARI"
+                renk = "TURUNCU"
+                mesaj = f"🟠 {gun_farki} gün içinde şube gideri var, onay bekliyor."
+                blink = False
+            else:
+                seviye = "BILGI"
+                renk = "SARI"
+                mesaj = f"🟡 Yaklaşan şube gideri ({gun_farki} gün), onay bekliyor."
+                blink = False
+
+            uyarilar.append({
+                "odeme_id": str(g['id']),
+                "aciklama": f"Şube Anlık Gideri: {g['kategori']} — {(g.get('aciklama') or '').strip() or 'Açıklama yok'}",
+                "tarih": str(g['tarih']),
+                "tutar": float(g['tutar'] or 0),
+                "asgari": float(g['tutar'] or 0),
+                "gun_farki": gun_farki,
+                "seviye": seviye,
+                "renk": renk,
+                "mesaj": mesaj,
+                "blink": blink,
+                "kart_adi": None,
+                "banka": None,
+                "kaynak_tablo": "anlik_giderler",
+                "kaynak_id": str(g['id']),
+                "sube": g.get('sube'),
+                "durum": "onay_bekliyor",
+            })
+
+        # Scheduler durduysa ve odeme_plani üretilmediyse, vadeli alımı doğrudan da uyar.
+        cur.execute(
+            """
+            SELECT v.id, v.aciklama, v.tutar, v.vade_tarihi, v.tedarikci
+            FROM vadeli_alimlar v
+            WHERE v.durum='bekliyor'
+              AND v.vade_tarihi BETWEEN %s AND %s
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM odeme_plani op
+                  WHERE op.kaynak_tablo='vadeli_alimlar'
+                    AND op.kaynak_id = v.id
+                    AND op.durum IN ('bekliyor','onay_bekliyor')
+              )
+            ORDER BY v.vade_tarihi ASC
+            """,
+            (bugun - timedelta(days=3), bugun + timedelta(days=7)),
+        )
+        for v in cur.fetchall():
+            gun_farki = (v['vade_tarihi'] - bugun).days
+            if gun_farki < 0:
+                seviye = "KRITIK"
+                renk = "KIRMIZI"
+                mesaj = f"⛔ VADELİ ALIM GECİKMİŞ! {abs(gun_farki)} gün geçti, plan kaydı eksik."
+                blink = True
+            elif gun_farki == 0:
+                seviye = "KRITIK"
+                renk = "KIRMIZI"
+                mesaj = "🔴 VADELİ ALIM SON GÜNÜ BUGÜN! Plan kaydı eksik."
+                blink = True
+            elif gun_farki <= 2:
+                seviye = "UYARI"
+                renk = "TURUNCU"
+                mesaj = f"🟠 {gun_farki} gün içinde vadeli alım vadesi var (plan kaydı yok)."
+                blink = False
+            else:
+                seviye = "BILGI"
+                renk = "SARI"
+                mesaj = f"🟡 Yaklaşan vadeli alım vadesi ({gun_farki} gün), plan kaydı eksik."
+                blink = False
+
+            uyarilar.append({
+                "odeme_id": None,
+                "aciklama": f"Vadeli Alım: {v['aciklama']}",
+                "tarih": str(v['vade_tarihi']),
+                "tutar": float(v['tutar'] or 0),
+                "asgari": float(v['tutar'] or 0),
+                "gun_farki": gun_farki,
+                "seviye": seviye,
+                "renk": renk,
+                "mesaj": mesaj,
+                "blink": blink,
+                "kart_adi": None,
+                "banka": v.get('tedarikci'),
+                "kaynak_tablo": "vadeli_alimlar",
+                "kaynak_id": str(v['id']),
+            })
+
+    _UYARI_CACHE["ts"] = now
+    _UYARI_CACHE["data"] = list(uyarilar)
     return uyarilar
 
 # ── GÜNCEL KASA ────────────────────────────────────────────────

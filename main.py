@@ -407,78 +407,171 @@ def devir_goster(yil: int = None, ay: int = None):
     except Exception as e:
         raise HTTPException(500, str(e))
 
+
+def odeme_plani_kontrol(referans_tarih: Optional[date] = None) -> dict:
+    """
+    Ay plan üretimi için lazy + idempotent koruma.
+    Panel çağrısında tetiklenir; eksik plan varsa üretmeyi dener.
+    """
+    bugun = referans_tarih or bugun_tr()
+    eksik_sabit = eksik_borc = eksik_kart = eksik_personel = 0
+    lock_ok = False
+
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS ok",
+            (f"odeme-plan-kontrol:{bugun.year}-{bugun.month}",),
+        )
+        lock_ok = bool((cur.fetchone() or {}).get("ok"))
+
+        # Sabit gider planı eksik mi?
+        cur.execute("""
+            SELECT COUNT(*) as eksik FROM sabit_giderler sg
+            WHERE sg.aktif = TRUE AND (sg.tip IS NULL OR sg.tip = 'sabit')
+            AND NOT EXISTS (
+                SELECT 1 FROM odeme_plani op
+                WHERE op.kaynak_tablo = 'sabit_giderler'
+                AND op.kaynak_id = sg.id
+                AND op.durum != 'iptal'
+                AND op.referans_ay = DATE_TRUNC('month', %s::date)
+            )
+        """, (bugun,))
+        eksik_sabit = int(cur.fetchone()['eksik'])
+
+        # Borç taksit planı eksik mi?
+        cur.execute("""
+            SELECT COUNT(*) as eksik FROM borc_envanteri b
+            WHERE b.aktif = TRUE AND b.aylik_taksit > 0
+            AND (b.kalan_vade IS NULL OR b.kalan_vade > 0)
+            AND NOT EXISTS (
+                SELECT 1 FROM odeme_plani op
+                WHERE op.kaynak_tablo = 'borc_envanteri'
+                AND op.kaynak_id = b.id::text
+                AND op.durum != 'iptal'
+                AND DATE_TRUNC('month', op.tarih) = DATE_TRUNC('month', %s::date)
+            )
+        """, (bugun,))
+        eksik_borc = int(cur.fetchone()['eksik'])
+
+        # Kart asgari ödeme planı eksik mi? (borcu olan aktif kartlar)
+        cur.execute("""
+            SELECT COUNT(*) as eksik FROM kartlar k
+            WHERE k.aktif = TRUE
+            AND (
+                SELECT COALESCE(SUM(
+                    CASE WHEN kh.islem_turu IN ('HARCAMA','FAIZ') THEN kh.tutar
+                         WHEN kh.islem_turu='ODEME' THEN -kh.tutar ELSE 0 END
+                ), 0) FROM kart_hareketleri kh
+                WHERE kh.kart_id = k.id AND kh.durum = 'aktif'
+            ) > 0
+            AND NOT EXISTS (
+                SELECT 1 FROM odeme_plani op
+                WHERE op.kart_id = k.id
+                AND op.durum != 'iptal'
+                AND DATE_TRUNC('month', op.tarih) = DATE_TRUNC('month', %s::date)
+            )
+        """, (bugun,))
+        eksik_kart = int(cur.fetchone()['eksik'])
+
+        # Sürekli personel maaş planı eksik mi?
+        cur.execute("""
+            SELECT COUNT(*) as eksik FROM personel p
+            WHERE p.aktif=TRUE AND p.calisma_turu='surekli'
+            AND NOT EXISTS (
+                SELECT 1 FROM odeme_plani op
+                WHERE op.kaynak_tablo='personel'
+                AND op.kaynak_id = p.id::text
+                AND op.durum != 'iptal'
+                AND DATE_TRUNC('month', op.tarih) = DATE_TRUNC('month', %s::date)
+            )
+        """, (bugun,))
+        eksik_personel = int(cur.fetchone()['eksik'])
+
+    eksik_plan = eksik_sabit + eksik_borc + eksik_kart + eksik_personel
+    uretim_denedi = False
+    uretilen_adet = 0
+    if eksik_plan > 0 and lock_ok:
+        uretim_denedi = True
+        try:
+            sonuc = aylik_odeme_plani_uret(bugun.year, bugun.month)
+            uretilen_adet = int(sonuc.get("toplam") or 0)
+        except Exception as e:
+            logger.warning(f"Lazy odeme_plani_kontrol üretim hatası: {e}")
+
+    return {
+        "eksik_toplam": eksik_plan,
+        "eksik": {
+            "sabit": eksik_sabit,
+            "borc": eksik_borc,
+            "kart": eksik_kart,
+            "personel": eksik_personel,
+        },
+        "kilit_alindi": lock_ok,
+        "uretim_denedi": uretim_denedi,
+        "uretilen_adet": uretilen_adet,
+    }
+
+
+def bu_ay_plan_var(referans_tarih: Optional[date] = None) -> bool:
+    bugun = referans_tarih or bugun_tr()
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT 1
+            FROM odeme_plani
+            WHERE referans_ay = DATE_TRUNC('month', %s::date)
+              AND durum != 'iptal'
+            LIMIT 1
+            """,
+            (bugun,),
+        )
+        return bool(cur.fetchone())
+
+
+def aylik_plan_lazy_init(referans_tarih: Optional[date] = None) -> dict:
+    """
+    Scheduler çalışmasa bile panel ilk açılışında bu ay planlarını üretir.
+    İdempotent tasarım: aynı ayda tekrar çağrılar güvenlidir.
+    """
+    bugun = referans_tarih or bugun_tr()
+    if bu_ay_plan_var(bugun):
+        return {"uretildi": False, "neden": "plan_mevcut"}
+
+    lock_ok = False
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS ok",
+            (f"aylik-plan-lazy-init:{bugun.year}-{bugun.month}",),
+        )
+        lock_ok = bool((cur.fetchone() or {}).get("ok"))
+
+    if not lock_ok:
+        return {"uretildi": False, "neden": "kilit_alinamadi"}
+
+    if bu_ay_plan_var(bugun):
+        return {"uretildi": False, "neden": "plan_mevcut"}
+
+    try:
+        sonuc = aylik_odeme_plani_uret(bugun.year, bugun.month)
+        return {
+            "uretildi": True,
+            "neden": "uretim",
+            "adet": int((sonuc or {}).get("toplam") or 0),
+        }
+    except Exception as e:
+        logger.warning(f"Lazy aylik plan init hatası: {e}")
+        return {"uretildi": False, "neden": "hata", "hata": str(e)}
+
+
 @app.get("/api/panel")
 def panel():
     try:
-        # Bu ay için referans_ay bazlı kontrol — ertele yapılsa bile aynı ay tekrar üretilmez
-        with db() as (conn, cur):
-            # Sabit gider planı eksik mi?
-            cur.execute("""
-                SELECT COUNT(*) as eksik FROM sabit_giderler sg
-                WHERE sg.aktif = TRUE AND (sg.tip IS NULL OR sg.tip = 'sabit')
-                AND NOT EXISTS (
-                    SELECT 1 FROM odeme_plani op
-                    WHERE op.kaynak_tablo = 'sabit_giderler'
-                    AND op.kaynak_id = sg.id
-                    AND op.durum != 'iptal'
-                    AND op.referans_ay = DATE_TRUNC('month', CURRENT_DATE)
-                )
-            """)
-            eksik_sabit = cur.fetchone()['eksik']
-
-            # Borç taksit planı eksik mi?
-            cur.execute("""
-                SELECT COUNT(*) as eksik FROM borc_envanteri b
-                WHERE b.aktif = TRUE AND b.aylik_taksit > 0
-                AND (b.kalan_vade IS NULL OR b.kalan_vade > 0)
-                AND NOT EXISTS (
-                    SELECT 1 FROM odeme_plani op
-                    WHERE op.kaynak_tablo = 'borc_envanteri'
-                    AND op.kaynak_id = b.id::text
-                    AND op.durum != 'iptal'
-                    AND DATE_TRUNC('month', op.tarih) = DATE_TRUNC('month', CURRENT_DATE)
-                )
-            """)
-            eksik_borc = cur.fetchone()['eksik']
-
-            # Kart asgari ödeme planı eksik mi? (borcu olan aktif kartlar)
-            cur.execute("""
-                SELECT COUNT(*) as eksik FROM kartlar k
-                WHERE k.aktif = TRUE
-                AND (
-                    SELECT COALESCE(SUM(
-                        CASE WHEN kh.islem_turu IN ('HARCAMA','FAIZ') THEN kh.tutar
-                             WHEN kh.islem_turu='ODEME' THEN -kh.tutar ELSE 0 END
-                    ), 0) FROM kart_hareketleri kh
-                    WHERE kh.kart_id = k.id AND kh.durum = 'aktif'
-                ) > 0
-                AND NOT EXISTS (
-                    SELECT 1 FROM odeme_plani op
-                    WHERE op.kart_id = k.id
-                    AND op.durum != 'iptal'
-                    AND DATE_TRUNC('month', op.tarih) = DATE_TRUNC('month', CURRENT_DATE)
-                )
-            """)
-            eksik_kart = cur.fetchone()['eksik']
-            # Sürekli personel maaş planı eksik mi?
-            cur.execute("""
-                SELECT COUNT(*) as eksik FROM personel p
-                WHERE p.aktif=TRUE AND p.calisma_turu='surekli'
-                AND NOT EXISTS (
-                    SELECT 1 FROM odeme_plani op
-                    WHERE op.kaynak_tablo='personel'
-                    AND op.kaynak_id = p.id::text
-                    AND op.durum != 'iptal'
-                    AND DATE_TRUNC('month', op.tarih) = DATE_TRUNC('month', CURRENT_DATE)
-                )
-            """)
-            eksik_personel = cur.fetchone()['eksik']
-            eksik_plan = eksik_sabit + eksik_borc + eksik_kart + eksik_personel
-
-        if eksik_plan > 0:
-            aylik_odeme_plani_uret()
+        lazy_plan = aylik_plan_lazy_init()
+        plan_kontrol = odeme_plani_kontrol()
+        plan_kontrol["lazy_init"] = lazy_plan
 
         ozet = finans_ozet_motoru()
+        ozet['plan_kontrol'] = plan_kontrol
         # Devir: hesaplanır, ledger'a yazılmaz
         devir_bilgi = devir_hesapla()
         ozet['bu_ay_devir'] = devir_bilgi['devir_tutar']
@@ -951,15 +1044,64 @@ def anlik_gider_kart_oneri(tutar: float = 0):
         return sonuc
 
 @app.get("/api/anlik-gider")
-def anlik_gider_listele():
+def anlik_gider_listele(durum: str = "aktif", include_pending: bool = False, include_summary: bool = False):
+    # Geriye uyum: eski include_pending=true => hepsi
+    d = (durum or "aktif").strip().lower()
+    if include_pending and d == "aktif":
+        d = "hepsi"
+    if d not in ("aktif", "onay_bekliyor", "hepsi"):
+        raise HTTPException(400, "durum: aktif | onay_bekliyor | hepsi")
+
     with db() as (conn, cur):
-        cur.execute("""
-            SELECT ag.*, k.kart_adi, k.banka
-            FROM anlik_giderler ag
-            LEFT JOIN kartlar k ON k.id = ag.kart_id
-            WHERE ag.durum='aktif' ORDER BY ag.tarih DESC LIMIT 200
-        """)
-        return [dict(r) for r in cur.fetchall()]
+        if d == "hepsi":
+            cur.execute("""
+                SELECT ag.*, k.kart_adi, k.banka
+                FROM anlik_giderler ag
+                LEFT JOIN kartlar k ON k.id = ag.kart_id
+                WHERE ag.durum IN ('aktif','onay_bekliyor')
+                ORDER BY ag.tarih DESC, ag.olusturma DESC
+                LIMIT 300
+            """)
+        elif d == "onay_bekliyor":
+            cur.execute("""
+                SELECT ag.*, k.kart_adi, k.banka
+                FROM anlik_giderler ag
+                LEFT JOIN kartlar k ON k.id = ag.kart_id
+                WHERE ag.durum='onay_bekliyor'
+                ORDER BY ag.tarih DESC, ag.olusturma DESC
+                LIMIT 300
+            """)
+        else:
+            cur.execute("""
+                SELECT ag.*, k.kart_adi, k.banka
+                FROM anlik_giderler ag
+                LEFT JOIN kartlar k ON k.id = ag.kart_id
+                WHERE ag.durum='aktif' ORDER BY ag.tarih DESC LIMIT 200
+            """)
+        satirlar = [dict(r) for r in cur.fetchall()]
+
+        if include_summary:
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(COUNT(*), 0)::int AS adet,
+                    COALESCE(SUM(tutar), 0) AS toplam
+                FROM anlik_giderler
+                WHERE durum='onay_bekliyor'
+                  AND COALESCE(TRIM(UPPER(sube)), '') NOT IN ('', 'MERKEZ')
+                """
+            )
+            rw = cur.fetchone() or {}
+            return {
+                "satirlar": satirlar,
+                "ozet": {
+                    "sube_bekleyen": {
+                        "adet": int(rw.get("adet") or 0),
+                        "toplam": float(rw.get("toplam") or 0),
+                    }
+                },
+            }
+        return satirlar
 
 @app.post("/api/anlik-gider")
 def anlik_gider_ekle(g: AnlikGider):
@@ -1366,10 +1508,214 @@ def odeme_plani_sil(oid: str):
 
 # ── ONAY KUYRUGU ───────────────────────────────────────────────
 @app.get("/api/onay-kuyrugu")
-def onay_listele():
+def onay_listele(durum: str = "bekliyor", limit: int = 300):
+    d = (durum or "bekliyor").strip().lower()
+    lim = max(1, min(int(limit or 300), 1000))
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM onay_kuyrugu WHERE durum='bekliyor' ORDER BY tarih ASC")
+        if d == "bekliyor":
+            cur.execute(
+                """
+                SELECT *
+                FROM onay_kuyrugu
+                WHERE durum='bekliyor'
+                ORDER BY tarih ASC, olusturma ASC
+                LIMIT %s
+                """,
+                (lim,),
+            )
+        elif d == "gecmis":
+            cur.execute(
+                """
+                SELECT *
+                FROM onay_kuyrugu
+                WHERE durum IN ('onaylandi','reddedildi')
+                ORDER BY COALESCE(onay_tarihi, olusturma) DESC
+                LIMIT %s
+                """,
+                (lim,),
+            )
+        elif d == "hepsi":
+            cur.execute(
+                """
+                SELECT *
+                FROM onay_kuyrugu
+                ORDER BY
+                    CASE WHEN durum='bekliyor' THEN 0 ELSE 1 END,
+                    COALESCE(onay_tarihi, olusturma) DESC
+                LIMIT %s
+                """,
+                (lim,),
+            )
+        else:
+            raise HTTPException(400, "durum: bekliyor | gecmis | hepsi")
         return [dict(r) for r in cur.fetchall()]
+
+
+def _onayla_tx(cur, oid: str):
+    cur.execute("SELECT * FROM onay_kuyrugu WHERE id=%s FOR UPDATE", (oid,))
+    onay = cur.fetchone()
+    if not onay:
+        raise HTTPException(404)
+    # Zaten onaylanmış — çift onay engeli
+    if onay['durum'] != 'bekliyor':
+        raise HTTPException(400, f"Bu işlem zaten '{onay['durum']}' durumunda, tekrar onaylanamaz.")
+    tutar = float(onay['tutar'])
+    tarih = str(onay['tarih'])
+    GIDER_TURLERI = {'KART_ODEME', 'ANLIK_GIDER', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER', 'BORC_TAKSIT', 'FATURA_ODEMESI', 'ODEME_PLANI'}
+    GELIR_TURLERI = {'CIRO', 'CIRO_DUZELTME', 'DIS_KAYNAK', 'KASA_GIRIS', 'KASA_DUZELTME'}
+    islem_turu = onay['islem_turu']
+    if islem_turu in GIDER_TURLERI:
+        signed_tutar = -abs(tutar)
+    elif islem_turu in GELIR_TURLERI:
+        signed_tutar = abs(tutar)
+    else:
+        signed_tutar = tutar
+        logger.warning(f"Bilinmeyen işlem türü onaylandı: {islem_turu}, tutar={tutar}")
+
+    # ODEME_PLANI onaylandığında kasa_etkisi True olmalı
+    # Plan oluşumu = niyet (False), onay = gerçekleşme (True)
+    # islem_turu değişmez — anlam korunur, sadece davranış eklenir
+    if islem_turu == 'ODEME_PLANI':
+        # Önce planı kapat; kasa yalnız plan gerçekten kapatıldıysa (/ode ile aynı — çift kasa önlemi)
+        cur.execute("SELECT * FROM odeme_plani WHERE id=%s", (onay['kaynak_id'],))
+        plan_row = cur.fetchone()
+        if not plan_row:
+            raise HTTPException(404, "Ödeme planı bulunamadı")
+        plan_dict = dict(plan_row)
+        kaynak_tablo = plan_dict.get('kaynak_tablo')
+        odenen_onay = float(onay['tutar'])
+        cur.execute("""
+            UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s
+            WHERE id=%s AND durum IN ('bekliyor','onay_bekliyor')
+        """, (tarih, odenen_onay, onay['kaynak_id']))
+        plan_odendi = cur.rowcount > 0
+        if plan_odendi:
+            ana_onay = kasa_ve_faiz_odeme_plani_tam_odeme(
+                cur, plan_dict, onay['kaynak_id'], odenen_onay, tarih,
+                anapara_aciklama=f"Onaylandı: {onay['aciklama']}",
+            )
+            if kaynak_tablo == 'vadeli_alimlar' and plan_dict.get('kaynak_id'):
+                vadeli_alim_kapat(cur, plan_dict['kaynak_id'], tarih)
+            guncelle_borc_envanteri_odeme_plani_sonrasi(cur, plan_dict, ana_onay)
+    elif islem_turu == 'VADELI_ODEME':
+        # Eşzamanlı iki onayın aynı vadeli kaydı çift düşmesini engelle.
+        cur.execute("SELECT id FROM vadeli_alimlar WHERE id=%s FOR UPDATE", (onay['kaynak_id'],))
+        if not cur.fetchone():
+            raise HTTPException(404, "Vadeli alım kaydı bulunamadı")
+        # ÇİFT ÖDEME GUARD: Kısmi ödeme + tam ödeme farklı kaynak_id ile tutulabildi — tek yerden topla
+        onceki_odenen = vadeli_kasadan_odenen_toplam(cur, onay['kaynak_id'])
+        if onceki_odenen >= abs(signed_tutar):
+            logger.warning(f"VADELI_ODEME çift ödeme engellendi — kaynak_id={onay['kaynak_id']}")
+            # Kasa zaten yazılmış, sadece onay kuyruğunu kapat ve tabloları güncelle
+        else:
+            # Kalan tutar kadar kasaya yaz
+            insert_kasa_hareketi(cur, tarih, islem_turu, signed_tutar,
+                f"Onaylandı: {onay['aciklama']}", onay['kaynak_tablo'], onay['kaynak_id'],
+                ref_id=oid, ref_type='ONAY')
+        # Tüm bağlı kayıtları atomik kapat — çift düşme engeli
+        vadeli_alim_kapat(cur, onay['kaynak_id'], tarih)
+    elif (
+        islem_turu == "ANLIK_GIDER"
+        and (onay.get("kaynak_tablo") or "") == "anlik_giderler"
+        and onay.get("kaynak_id")
+    ):
+        kid = str(onay["kaynak_id"])
+        cur.execute(
+            "SELECT id, durum FROM anlik_giderler WHERE id=%s FOR UPDATE",
+            (kid,),
+        )
+        ag = cur.fetchone()
+        if not ag:
+            raise HTTPException(404, "Anlık gider kaydı bulunamadı")
+        st = ag["durum"]
+        if st == "onay_bekliyor":
+            cur.execute(
+                "UPDATE anlik_giderler SET durum='aktif' WHERE id=%s",
+                (kid,),
+            )
+        elif st != "aktif":
+            raise HTTPException(
+                400,
+                f"Anlık gider bu durumda onaylanamaz: {st}",
+            )
+        cur.execute(
+            """
+            SELECT COALESCE(COUNT(*), 0)::int AS n
+            FROM kasa_hareketleri
+            WHERE kaynak_id=%s AND islem_turu='ANLIK_GIDER'
+              AND durum='aktif' AND kasa_etkisi=true
+            """,
+            (kid,),
+        )
+        n = int((cur.fetchone() or {}).get("n") or 0)
+        if n == 0:
+            insert_kasa_hareketi(
+                cur,
+                tarih,
+                islem_turu,
+                signed_tutar,
+                f"Onaylandı: {onay['aciklama']}",
+                "anlik_giderler",
+                kid,
+                ref_id=oid,
+                ref_type="ONAY",
+            )
+    elif islem_turu in ("CIRO", "CIRO_DUZELTME"):
+        # Ciro kaynak kaydı varsa satırı kilitleyerek eşzamanlı onay/yazım çakışmasını azalt.
+        if (onay.get("kaynak_tablo") or "") == "ciro" and onay.get("kaynak_id"):
+            cur.execute("SELECT id FROM ciro WHERE id=%s FOR UPDATE", (onay["kaynak_id"],))
+        insert_kasa_hareketi(cur, tarih, islem_turu, signed_tutar,
+            f"Onaylandı: {onay['aciklama']}", onay['kaynak_tablo'], onay['kaynak_id'],
+            ref_id=oid, ref_type='ONAY')
+    else:
+        # Maaş/sabit/borç taksit onayında çift ödeme riskini kapat:
+        # aynı kaynak için aynı ayda aktif kasa kaydı varsa tekrar yazma.
+        if islem_turu in ("SABIT_GIDER", "BORC_TAKSIT", "PERSONEL_MAAS") and onay.get("kaynak_id"):
+            kaynak_tablo = (onay.get("kaynak_tablo") or "").strip().lower()
+            kid = str(onay["kaynak_id"])
+            if kaynak_tablo == "personel":
+                cur.execute("SELECT id FROM personel WHERE id=%s FOR UPDATE", (kid,))
+            elif kaynak_tablo == "sabit_giderler":
+                cur.execute("SELECT id FROM sabit_giderler WHERE id=%s FOR UPDATE", (kid,))
+            elif kaynak_tablo == "borc_envanteri":
+                cur.execute("SELECT id FROM borc_envanteri WHERE id=%s FOR UPDATE", (kid,))
+
+            cur.execute(
+                """
+                SELECT COALESCE(COUNT(*), 0)::int AS n
+                FROM kasa_hareketleri
+                WHERE kaynak_id=%s
+                  AND islem_turu=%s
+                  AND durum='aktif'
+                  AND kasa_etkisi=true
+                  AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+                """,
+                (kid, islem_turu, tarih),
+            )
+            onceki = int((cur.fetchone() or {}).get("n") or 0)
+            if onceki > 0:
+                raise HTTPException(409, f"{islem_turu} için bu ay ödeme zaten işlenmiş.")
+
+        insert_kasa_hareketi(cur, tarih, islem_turu, signed_tutar,
+            f"Onaylandı: {onay['aciklama']}", onay['kaynak_tablo'], onay['kaynak_id'],
+            ref_id=oid, ref_type='ONAY')
+        # SABIT_GIDER / BORC_TAKSIT: bağlı odeme_plani'nı odendi yap — yuk_7'den çıksın
+        if islem_turu in ('SABIT_GIDER', 'BORC_TAKSIT', 'PERSONEL_MAAS'):
+            cur.execute("""
+                UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s
+                WHERE kaynak_tablo=%s AND kaynak_id=%s
+                AND durum IN ('bekliyor','onay_bekliyor')
+                AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+            """, (tarih, onay['kaynak_tablo'], onay['kaynak_id'], tarih))
+    # Onay durumunu güncelle — vadeli_alim_kapat bazı kayıtları önceden onaylanmış yapabilir
+    cur.execute("UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW() WHERE id=%s AND durum='bekliyor'", (oid,))
+    if cur.rowcount == 0:
+        cur.execute("SELECT durum FROM onay_kuyrugu WHERE id=%s", (oid,))
+        st = cur.fetchone()
+        if not st or st['durum'] != 'onaylandi':
+            raise HTTPException(409, "Eş zamanlı onay çakışması — işlem zaten onaylandı.")
+    audit(cur, 'onay_kuyrugu', oid, 'ONAYLANDI', eski=onay)
+    return {"success": True}
 
 
 @app.post("/api/onay-kuyrugu/toplu-onayla")
@@ -1384,14 +1730,22 @@ def toplu_onayla(body: dict):
         raise HTTPException(400, "Onay listesi boş")
 
     sonuclar = []
-    for oid in ids:
-        try:
-            onayla(oid)
-            sonuclar.append({"id": oid, "durum": "onaylandi"})
-        except HTTPException as e:
-            sonuclar.append({"id": oid, "durum": "hata", "mesaj": str(e.detail)})
-        except Exception as e:
-            sonuclar.append({"id": oid, "durum": "hata", "mesaj": str(e)})
+    with db() as (conn, cur):
+        for i, oid in enumerate(ids):
+            sp = f"sp_toplu_onay_{i}"
+            cur.execute(f"SAVEPOINT {sp}")
+            try:
+                _onayla_tx(cur, oid)
+                cur.execute(f"RELEASE SAVEPOINT {sp}")
+                sonuclar.append({"id": oid, "durum": "onaylandi"})
+            except HTTPException as e:
+                cur.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+                cur.execute(f"RELEASE SAVEPOINT {sp}")
+                sonuclar.append({"id": oid, "durum": "hata", "mesaj": str(e.detail)})
+            except Exception as e:
+                cur.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+                cur.execute(f"RELEASE SAVEPOINT {sp}")
+                sonuclar.append({"id": oid, "durum": "hata", "mesaj": str(e)})
 
     onaylanan = sum(1 for s in sonuclar if s["durum"] == "onaylandi")
     return {
@@ -1404,130 +1758,7 @@ def toplu_onayla(body: dict):
 @app.post("/api/onay-kuyrugu/{oid}/onayla")
 def onayla(oid: str):
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM onay_kuyrugu WHERE id=%s", (oid,))
-        onay = cur.fetchone()
-        if not onay: raise HTTPException(404)
-        # Zaten onaylanmış — çift onay engeli
-        if onay['durum'] != 'bekliyor':
-            raise HTTPException(400, f"Bu işlem zaten '{onay['durum']}' durumunda, tekrar onaylanamaz.")
-        tutar = float(onay['tutar'])
-        tarih = str(onay['tarih'])
-        GIDER_TURLERI = {'KART_ODEME', 'ANLIK_GIDER', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER', 'BORC_TAKSIT', 'FATURA_ODEMESI', 'ODEME_PLANI'}
-        GELIR_TURLERI = {'CIRO', 'CIRO_DUZELTME', 'DIS_KAYNAK', 'KASA_GIRIS', 'KASA_DUZELTME'}
-        islem_turu = onay['islem_turu']
-        if islem_turu in GIDER_TURLERI:
-            signed_tutar = -abs(tutar)
-        elif islem_turu in GELIR_TURLERI:
-            signed_tutar = abs(tutar)
-        else:
-            signed_tutar = tutar
-            logger.warning(f"Bilinmeyen işlem türü onaylandı: {islem_turu}, tutar={tutar}")
-
-        # ODEME_PLANI onaylandığında kasa_etkisi True olmalı
-        # Plan oluşumu = niyet (False), onay = gerçekleşme (True)
-        # islem_turu değişmez — anlam korunur, sadece davranış eklenir
-        if islem_turu == 'ODEME_PLANI':
-            # Önce planı kapat; kasa yalnız plan gerçekten kapatıldıysa (/ode ile aynı — çift kasa önlemi)
-            cur.execute("SELECT * FROM odeme_plani WHERE id=%s", (onay['kaynak_id'],))
-            plan_row = cur.fetchone()
-            if not plan_row:
-                raise HTTPException(404, "Ödeme planı bulunamadı")
-            plan_dict = dict(plan_row)
-            kaynak_tablo = plan_dict.get('kaynak_tablo')
-            odenen_onay = float(onay['tutar'])
-            cur.execute("""
-                UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s
-                WHERE id=%s AND durum IN ('bekliyor','onay_bekliyor')
-            """, (tarih, odenen_onay, onay['kaynak_id']))
-            plan_odendi = cur.rowcount > 0
-            if plan_odendi:
-                ana_onay = kasa_ve_faiz_odeme_plani_tam_odeme(
-                    cur, plan_dict, onay['kaynak_id'], odenen_onay, tarih,
-                    anapara_aciklama=f"Onaylandı: {onay['aciklama']}",
-                )
-                if kaynak_tablo == 'vadeli_alimlar' and plan_dict.get('kaynak_id'):
-                    vadeli_alim_kapat(cur, plan_dict['kaynak_id'], tarih)
-                guncelle_borc_envanteri_odeme_plani_sonrasi(cur, plan_dict, ana_onay)
-        elif islem_turu == 'VADELI_ODEME':
-            # ÇİFT ÖDEME GUARD: Kısmi ödeme + tam ödeme farklı kaynak_id ile tutulabildi — tek yerden topla
-            onceki_odenen = vadeli_kasadan_odenen_toplam(cur, onay['kaynak_id'])
-            if onceki_odenen >= abs(signed_tutar):
-                logger.warning(f"VADELI_ODEME çift ödeme engellendi — kaynak_id={onay['kaynak_id']}")
-                # Kasa zaten yazılmış, sadece onay kuyruğunu kapat ve tabloları güncelle
-            else:
-                # Kalan tutar kadar kasaya yaz
-                insert_kasa_hareketi(cur, tarih, islem_turu, signed_tutar,
-                    f"Onaylandı: {onay['aciklama']}", onay['kaynak_tablo'], onay['kaynak_id'],
-                    ref_id=oid, ref_type='ONAY')
-            # Tüm bağlı kayıtları atomik kapat — çift düşme engeli
-            vadeli_alim_kapat(cur, onay['kaynak_id'], tarih)
-        elif (
-            islem_turu == "ANLIK_GIDER"
-            and (onay.get("kaynak_tablo") or "") == "anlik_giderler"
-            and onay.get("kaynak_id")
-        ):
-            kid = str(onay["kaynak_id"])
-            cur.execute(
-                "SELECT id, durum FROM anlik_giderler WHERE id=%s FOR UPDATE",
-                (kid,),
-            )
-            ag = cur.fetchone()
-            if not ag:
-                raise HTTPException(404, "Anlık gider kaydı bulunamadı")
-            st = ag["durum"]
-            if st == "onay_bekliyor":
-                cur.execute(
-                    "UPDATE anlik_giderler SET durum='aktif' WHERE id=%s",
-                    (kid,),
-                )
-            elif st != "aktif":
-                raise HTTPException(
-                    400,
-                    f"Anlık gider bu durumda onaylanamaz: {st}",
-                )
-            cur.execute(
-                """
-                SELECT COALESCE(COUNT(*), 0)::int AS n
-                FROM kasa_hareketleri
-                WHERE kaynak_id=%s AND islem_turu='ANLIK_GIDER'
-                  AND durum='aktif' AND kasa_etkisi=true
-                """,
-                (kid,),
-            )
-            n = int((cur.fetchone() or {}).get("n") or 0)
-            if n == 0:
-                insert_kasa_hareketi(
-                    cur,
-                    tarih,
-                    islem_turu,
-                    signed_tutar,
-                    f"Onaylandı: {onay['aciklama']}",
-                    "anlik_giderler",
-                    kid,
-                    ref_id=oid,
-                    ref_type="ONAY",
-                )
-        else:
-            insert_kasa_hareketi(cur, tarih, islem_turu, signed_tutar,
-                f"Onaylandı: {onay['aciklama']}", onay['kaynak_tablo'], onay['kaynak_id'],
-                ref_id=oid, ref_type='ONAY')
-            # SABIT_GIDER / BORC_TAKSIT: bağlı odeme_plani'nı odendi yap — yuk_7'den çıksın
-            if islem_turu in ('SABIT_GIDER', 'BORC_TAKSIT', 'PERSONEL_MAAS'):
-                cur.execute("""
-                    UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s
-                    WHERE kaynak_tablo=%s AND kaynak_id=%s
-                    AND durum IN ('bekliyor','onay_bekliyor')
-                    AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
-                """, (tarih, onay['kaynak_tablo'], onay['kaynak_id'], tarih))
-        # Onay durumunu güncelle — vadeli_alim_kapat bazı kayıtları önceden onaylanmış yapabilir
-        cur.execute("UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW() WHERE id=%s AND durum='bekliyor'", (oid,))
-        if cur.rowcount == 0:
-            cur.execute("SELECT durum FROM onay_kuyrugu WHERE id=%s", (oid,))
-            st = cur.fetchone()
-            if not st or st['durum'] != 'onaylandi':
-                raise HTTPException(409, "Eş zamanlı onay çakışması — işlem zaten onaylandı.")
-        audit(cur, 'onay_kuyrugu', oid, 'ONAYLANDI', eski=onay)
-    return {"success": True}
+        return _onayla_tx(cur, oid)
 
 class ReddetModel(BaseModel):
     neden: str = 'hata'  # 'hata' veya 'surec_bitti'
@@ -1612,6 +1843,27 @@ def ciro_ekle(c: CiroModel):
     online = float(c.online or 0)
     toplam = nakit + pos + online
     with db() as (conn, cur):
+        # Aynı şube+tarih için ciro yazımlarını transaction bazında seri hale getir.
+        lock_key = f"ciro:{c.sube_id}:{c.tarih}"
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
+        # Sert koruma: aynı şube+tarih için aktif ciro birden fazla olamaz.
+        cur.execute(
+            """
+            SELECT id, (nakit+pos+online) AS toplam
+            FROM ciro
+            WHERE durum='aktif' AND tarih=%s AND sube_id=%s
+            FOR UPDATE
+            """,
+            (str(c.tarih), c.sube_id),
+        )
+        mevcut = cur.fetchone()
+        if mevcut:
+            mevcut_tutar = float(mevcut.get("toplam") or 0)
+            raise HTTPException(
+                409,
+                f"Bu şube için {c.tarih} tarihinde aktif ciro zaten var ({mevcut_tutar:,.0f} ₺).",
+            )
+
         # Şube oranlarını çek
         cur.execute("SELECT COALESCE(pos_oran,0) as pos_oran, COALESCE(online_oran,0) as online_oran FROM subeler WHERE id=%s", (c.sube_id,))
         oran = cur.fetchone()
@@ -1622,17 +1874,7 @@ def ciro_ekle(c: CiroModel):
         online_kesinti = online * online_oran / 100.0
         net_tutar      = nakit + (pos - pos_kesinti) + (online - online_kesinti)
 
-        # Backend duplicate kontrolü — aynı gün aynı şube yeterli, tutar farketmez
-        if not c.force:
-            cur.execute("""
-                SELECT id, (nakit+pos+online) as toplam FROM ciro WHERE durum='aktif'
-                AND tarih = %s
-                AND sube_id = %s
-            """, (str(c.tarih), c.sube_id))
-            benzer = cur.fetchall()
-            if benzer:
-                mevcut_tutar = float(benzer[0]['toplam'])
-                return {"warning": True, "mesaj": f"Bu tarih ve şubede zaten ciro kaydı var ({mevcut_tutar:,.0f} ₺). Yine de kaydetmek istiyorsanız onaylayın."}
+        # force sadece UX uyarılarını bypass eder; sert duplicate engeli yukarıda uygulanır.
         cid = str(uuid.uuid4())
         # Teknik duplicate koruması: son 5 saniye içinde birebir aynı istek geldi mi?
         if not c.force:
@@ -1766,11 +2008,59 @@ def _personel_api_row(r: dict) -> dict:
 def personel_listele(aktif: Optional[bool] = None):
     with db() as (conn, cur):
         if aktif is not None:
-            cur.execute("""SELECT p.*, s.ad as sube_adi FROM personel p
-                LEFT JOIN subeler s ON s.id=p.sube_id WHERE p.aktif=%s ORDER BY p.ad_soyad""", (aktif,))
+            cur.execute(
+                """
+                SELECT p.*, s.ad as sube_adi,
+                       opv.odeme_durumu, opv.odeme_tarihi, opv.odenecek_tutar, opv.odenen_tutar
+                FROM personel p
+                LEFT JOIN subeler s ON s.id = p.sube_id
+                LEFT JOIN LATERAL (
+                    SELECT
+                        op.durum AS odeme_durumu,
+                        op.tarih AS odeme_tarihi,
+                        op.odenecek_tutar,
+                        op.odenen_tutar
+                    FROM odeme_plani op
+                    WHERE op.kaynak_tablo='personel'
+                      AND op.kaynak_id = p.id
+                      AND op.durum != 'iptal'
+                      AND DATE_TRUNC('month', op.tarih) = DATE_TRUNC('month', CURRENT_DATE)
+                    ORDER BY
+                        CASE WHEN op.durum='odendi' THEN 0 WHEN op.durum='onay_bekliyor' THEN 1 ELSE 2 END,
+                        op.olusturma DESC
+                    LIMIT 1
+                ) opv ON TRUE
+                WHERE p.aktif=%s
+                ORDER BY p.ad_soyad
+                """,
+                (aktif,),
+            )
         else:
-            cur.execute("""SELECT p.*, s.ad as sube_adi FROM personel p
-                LEFT JOIN subeler s ON s.id=p.sube_id ORDER BY p.ad_soyad""")
+            cur.execute(
+                """
+                SELECT p.*, s.ad as sube_adi,
+                       opv.odeme_durumu, opv.odeme_tarihi, opv.odenecek_tutar, opv.odenen_tutar
+                FROM personel p
+                LEFT JOIN subeler s ON s.id = p.sube_id
+                LEFT JOIN LATERAL (
+                    SELECT
+                        op.durum AS odeme_durumu,
+                        op.tarih AS odeme_tarihi,
+                        op.odenecek_tutar,
+                        op.odenen_tutar
+                    FROM odeme_plani op
+                    WHERE op.kaynak_tablo='personel'
+                      AND op.kaynak_id = p.id
+                      AND op.durum != 'iptal'
+                      AND DATE_TRUNC('month', op.tarih) = DATE_TRUNC('month', CURRENT_DATE)
+                    ORDER BY
+                        CASE WHEN op.durum='odendi' THEN 0 WHEN op.durum='onay_bekliyor' THEN 1 ELSE 2 END,
+                        op.olusturma DESC
+                    LIMIT 1
+                ) opv ON TRUE
+                ORDER BY p.ad_soyad
+                """
+            )
         return [_personel_api_row(dict(r)) for r in cur.fetchall()]
 
 @app.post("/api/personel")
@@ -2658,6 +2948,26 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                 WHERE personel_id=%s AND yil=%s AND ay=%s
             """, (p['id'], yil, ay))
             kayit = cur.fetchone()
+            cur.execute(
+                """
+                SELECT
+                    op.durum AS odeme_durumu,
+                    op.tarih AS odeme_tarihi,
+                    op.odenecek_tutar,
+                    op.odenen_tutar
+                FROM odeme_plani op
+                WHERE op.kaynak_tablo='personel'
+                  AND op.kaynak_id=%s
+                  AND op.durum != 'iptal'
+                  AND DATE_TRUNC('month', op.tarih) = DATE_TRUNC('month', MAKE_DATE(%s, %s, 1))
+                ORDER BY
+                    CASE WHEN op.durum='odendi' THEN 0 WHEN op.durum='onay_bekliyor' THEN 1 ELSE 2 END,
+                    op.olusturma DESC
+                LIMIT 1
+                """,
+                (p['id'], yil, ay),
+            )
+            plan = cur.fetchone() or {}
             if kayit:
                 net = float(kayit['hesaplanan_net'] or 0)
                 durum = kayit['durum']
@@ -2691,6 +3001,10 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                 'not_aciklama': kayit.get('not_aciklama'),
                 'hesaplanan_net': net,
                 'durum': durum,
+                'odeme_durumu': plan.get('odeme_durumu'),
+                'odeme_tarihi': plan.get('odeme_tarihi'),
+                'odenecek_tutar': float(plan.get('odenecek_tutar') or 0),
+                'odenen_tutar': float(plan.get('odenen_tutar') or 0),
             })
         return {'yil': yil, 'ay': ay, 'personeller': sonuc,
                 'toplam_tahmini': sum(r['hesaplanan_net'] for r in sonuc)}
@@ -2741,7 +3055,7 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
 
 @app.post("/api/personel-aylik/{pid}/onayla")
 def personel_aylik_onayla(pid: str, yil: int = None, ay: int = None):
-    """Maaş kaydını onaylar — durum 'onaylandi' olur, geri alınamaz."""
+    """Maaş hesabını kilitler; ödeme yapmaz, kasa hareketi oluşturmaz."""
     bugun = bugun_tr()
     yil = yil or bugun.year
     ay  = ay  or bugun.month
@@ -2752,7 +3066,28 @@ def personel_aylik_onayla(pid: str, yil: int = None, ay: int = None):
         """, (pid, yil, ay))
         if cur.rowcount == 0:
             raise HTTPException(400, "Kayıt bulunamadı veya zaten onaylandı")
-    return {"success": True}
+        cur.execute(
+            """
+            SELECT durum
+            FROM odeme_plani
+            WHERE kaynak_tablo='personel'
+              AND kaynak_id=%s
+              AND durum != 'iptal'
+              AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', MAKE_DATE(%s, %s, 1))
+            ORDER BY
+              CASE WHEN durum='odendi' THEN 0 WHEN durum='onay_bekliyor' THEN 1 ELSE 2 END,
+              olusturma DESC
+            LIMIT 1
+            """,
+            (pid, yil, ay),
+        )
+        plan = cur.fetchone()
+    return {
+        "success": True,
+        "mesaj": "Maaş hesabı onaylandı. Ödeme paneldeki ödeme planından yapılır.",
+        "kasa_etkisi": False,
+        "odeme_durumu": (plan or {}).get("durum"),
+    }
 
 @app.delete("/api/personel-aylik/{pid}")
 def personel_aylik_sil(pid: str, yil: int = None, ay: int = None):
@@ -3496,11 +3831,92 @@ def _vadeli_borcla_birlestir(cur, hedef_id: str, v: VadeliAlim) -> dict:
 
 
 @app.get("/api/vadeli-alimlar")
-def vadeli_listele():
+def vadeli_listele(durum: str = "bekliyor", gun: int = 30):
+    d = (durum or "bekliyor").strip().lower()
+    g = max(1, min(int(gun or 30), 365))
     with db() as (conn, cur):
-        cur.execute("""SELECT *, (vade_tarihi - CURRENT_DATE) as gun_kaldi
-            FROM vadeli_alimlar WHERE durum='bekliyor' ORDER BY vade_tarihi""")
+        if d == "bekliyor":
+            cur.execute(
+                """
+                SELECT *, (vade_tarihi - CURRENT_DATE) as gun_kaldi
+                FROM vadeli_alimlar
+                WHERE durum='bekliyor'
+                ORDER BY vade_tarihi
+                """
+            )
+        elif d == "odendi":
+            cur.execute(
+                """
+                SELECT *, (vade_tarihi - CURRENT_DATE) as gun_kaldi
+                FROM vadeli_alimlar
+                WHERE durum='odendi'
+                  AND odeme_tarihi >= CURRENT_DATE - (%s || ' days')::interval
+                ORDER BY odeme_tarihi DESC NULLS LAST, vade_tarihi DESC
+                """,
+                (g,),
+            )
+        elif d == "hepsi":
+            cur.execute(
+                """
+                SELECT *, (vade_tarihi - CURRENT_DATE) as gun_kaldi
+                FROM vadeli_alimlar
+                ORDER BY
+                    CASE WHEN durum='bekliyor' THEN 0 WHEN durum='odendi' THEN 1 ELSE 2 END,
+                    COALESCE(odeme_tarihi, vade_tarihi) DESC
+                """
+            )
+        else:
+            raise HTTPException(400, "durum: bekliyor | odendi | hepsi")
         return [dict(r) for r in cur.fetchall()]
+
+
+@app.get("/api/vadeli-alimlar/gecmis")
+def vadeli_gecmis(limit: int = 120):
+    lim = max(1, min(int(limit or 120), 500))
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT *
+            FROM (
+                SELECT
+                    kh.tarih,
+                    ABS(kh.tutar) AS tutar,
+                    'nakit'::text AS odeme_yontemi,
+                    kh.aciklama,
+                    va.id AS vadeli_id,
+                    va.aciklama AS vadeli_aciklama,
+                    va.tedarikci
+                FROM kasa_hareketleri kh
+                LEFT JOIN vadeli_alimlar va ON va.id = kh.kaynak_id
+                WHERE kh.kaynak_tablo='vadeli_alimlar'
+                  AND kh.islem_turu='VADELI_ODEME'
+                  AND kh.kasa_etkisi=TRUE
+                  AND kh.durum='aktif'
+
+                UNION ALL
+
+                SELECT
+                    kht.tarih,
+                    kht.tutar,
+                    'kart'::text AS odeme_yontemi,
+                    kht.aciklama,
+                    va.id AS vadeli_id,
+                    va.aciklama AS vadeli_aciklama,
+                    va.tedarikci
+                FROM kart_hareketleri kht
+                LEFT JOIN vadeli_alimlar va ON va.id = kht.kaynak_id
+                WHERE kht.kaynak_tablo='vadeli_alimlar'
+                  AND kht.islem_turu='HARCAMA'
+                  AND kht.durum='aktif'
+            ) q
+            ORDER BY q.tarih DESC
+            LIMIT %s
+            """,
+            (lim,),
+        )
+        satirlar = [dict(r) for r in cur.fetchall()]
+        toplam = sum(float(r.get("tutar") or 0) for r in satirlar)
+        return {"satirlar": satirlar, "ozet": {"adet": len(satirlar), "toplam": toplam}}
 
 @app.post("/api/vadeli-alimlar")
 def vadeli_ekle(v: VadeliAlim):
@@ -4893,6 +5309,12 @@ def odeme_plani_manuel_uret(yil: Optional[int] = None, ay: Optional[int] = None)
 def uyarilari_listele():
     """Yaklaşan ödemelerin uyarılarını döner."""
     try:
+        # Scheduler durmuş olsa bile ayın planını istek anında garanti et.
+        try:
+            bugun = bugun_tr()
+            aylik_odeme_plani_uret(bugun.year, bugun.month)
+        except Exception as pe:
+            logger.warning(f"Uyarı öncesi plan üretim denemesi başarısız: {pe}")
         return uyari_motoru()
     except Exception as e:
         raise HTTPException(500, str(e))

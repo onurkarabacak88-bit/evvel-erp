@@ -5,6 +5,7 @@ sube_panel ve main aynı insert_kasa_hareketi / audit imzasını kullanır.
 from __future__ import annotations
 
 import calendar
+import hashlib
 import json
 import uuid
 from datetime import date
@@ -30,25 +31,46 @@ KASA_ETKISI_MAP = {
 
 
 def insert_kasa_hareketi(cur, tarih, islem_turu, tutar, aciklama,
-                        kaynak_tablo=None, kaynak_id=None, ref_id=None, ref_type=None):
+                        kaynak_tablo=None, kaynak_id=None, ref_id=None, ref_type=None, idempotency_key=None):
     """
     Merkezi kasa yazma fonksiyonu.
     - kaynak_id = business ID (gider_id, ciro_id vb.) — değişmez
     - ref_id    = ledger event ID — her yazımda benzersiz
     - kasa_etkisi = KASA_ETKISI_MAP'ten — DEVIR hariç hepsi true
+    - idempotency_key: verilmezse geriye uyumlu deterministic anahtar üretilir.
     """
+    def _norm(v):
+        return str(v).strip() if v is not None else ""
+
+    def _make_idem_key():
+        t = _norm(tarih)
+        tt = f"{float(tutar):.2f}"
+        if ref_id:
+            # Yeni yol: event bazlı anahtar (retry-safe)
+            raw = f"v2|ref|{_norm(islem_turu)}|{_norm(kaynak_tablo)}|{_norm(kaynak_id)}|{_norm(ref_id)}|{t}|{tt}"
+        else:
+            # Geriye uyum: eski çağrılar ref_id geçmese de temel business anahtarıyla dedupe.
+            raw = f"v2|legacy|{_norm(islem_turu)}|{_norm(kaynak_tablo)}|{_norm(kaynak_id)}|{t}|{tt}|{_norm(aciklama)}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
     _event_id = ref_id or str(uuid.uuid4())
     _ref_type = ref_type or (kaynak_tablo.upper() if kaynak_tablo else 'GENEL')
     _kasa_etkisi = KASA_ETKISI_MAP.get(islem_turu, True)
+    _idem = (idempotency_key or "").strip() or _make_idem_key()
 
     cur.execute("""
         INSERT INTO kasa_hareketleri
-            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type, kasa_etkisi)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type, kasa_etkisi, idempotency_key)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (idempotency_key) DO NOTHING
     """, (str(uuid.uuid4()), str(tarih), islem_turu, tutar, aciklama,
-          kaynak_tablo, kaynak_id, _event_id, _ref_type, _kasa_etkisi))
+          kaynak_tablo, kaynak_id, _event_id, _ref_type, _kasa_etkisi, _idem))
 
     if cur.rowcount == 0:
+        # Aynı anahtarla daha önce yazıldıysa idempotent başarı kabul edilir.
+        cur.execute("SELECT 1 FROM kasa_hareketleri WHERE idempotency_key=%s", (_idem,))
+        if cur.fetchone():
+            return
         raise Exception(f"KASA YAZILMADI — {islem_turu} / {kaynak_id}")
 
 

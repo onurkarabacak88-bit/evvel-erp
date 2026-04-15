@@ -137,6 +137,22 @@ def ciro_taslak_onayla(taslak_id: str, body: CiroTaslakOnayTutarlari = CiroTasla
             raise HTTPException(404, "Bekleyen taslak bulunamadı")
         t = dict(t)
         sube_id = t["sube_id"]
+        lock_key = f"ciro:{sube_id}:{t.get('tarih')}"
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
+        cur.execute(
+            """
+            SELECT id
+            FROM ciro
+            WHERE sube_id=%s AND tarih=%s AND durum='aktif'
+            FOR UPDATE
+            """,
+            (sube_id, t.get("tarih")),
+        )
+        if cur.fetchone():
+            raise HTTPException(
+                409,
+                "Bu şube için bugün onaylı ciro zaten var — taslak çakışıyor.",
+            )
 
         if _bugun_ciro_var_mi(cur, sube_id):
             raise HTTPException(

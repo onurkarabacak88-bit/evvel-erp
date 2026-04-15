@@ -1544,6 +1544,11 @@ class SubeSevkBody(BaseModel):
     tedarikci_id: Optional[str] = None
     tedarikci: Optional[str] = None
     kalemler: Optional[List[Dict[str, Any]]] = None
+    siparis_talep_id: Optional[str] = None
+    teslim_durumu: str = "tam_geldi"  # tam_geldi | eksik_var
+    eksik_kategori: Optional[str] = None  # sipariste_vardi | sipariste_yoktu
+    teslim_aciklama: Optional[str] = None
+    eksik_aciklama: Optional[str] = None
     not_aciklama: Optional[str] = None
 
 
@@ -1579,7 +1584,7 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
     Aktif stok sayımını değiştirmez — yalnızca deftere URUN_SEVK etiketiyle yazılır.
     Merkez bu kaydı sevk listesinde izler.
     """
-    from operasyon_stok_motor import normalize_delta_body
+    from operasyon_stok_motor import STOK_KEYS, normalize_delta_body, _stok_key_from_urun_ad
 
     pid_in = (body.personel_id or "").strip()
     pin = (body.pin or "").replace(" ", "")
@@ -1587,6 +1592,22 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
         raise HTTPException(400, "personel_id gerekli")
     if len(pin) != 4 or not pin.isdigit():
         raise HTTPException(400, "4 haneli panel PIN gerekli")
+    teslim_durumu = (body.teslim_durumu or "").strip().lower()
+    if teslim_durumu not in ("tam_geldi", "eksik_var"):
+        raise HTTPException(400, "teslim_durumu: tam_geldi | eksik_var")
+    teslim_acik = (body.teslim_aciklama or "").strip()
+    if len(teslim_acik) < 3:
+        raise HTTPException(400, "Teslim açıklaması zorunlu (en az 3 karakter)")
+    eksik_kat = (body.eksik_kategori or "").strip().lower() or None
+    eksik_acik = (body.eksik_aciklama or "").strip() or None
+    if teslim_durumu == "eksik_var":
+        if eksik_kat not in ("sipariste_vardi", "sipariste_yoktu"):
+            raise HTTPException(400, "eksik_kategori: sipariste_vardi | sipariste_yoktu")
+        if not eksik_acik or len(eksik_acik) < 3:
+            raise HTTPException(400, "Eksik ürün açıklaması zorunlu (gelmeyen ürünleri yazın)")
+    else:
+        eksik_kat = None
+        eksik_acik = None
 
     delta_raw = body.model_dump()
     kalemler = _stok_kalemleri_temizle(delta_raw.get("kalemler"))
@@ -1652,10 +1673,22 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             tedarikci_id = str(dict(trw)["id"])
             tedarikci_ad = (dict(trw).get("ad") or "").strip()
 
-        payload = _json.dumps({"delta": delta, "kalemler": kalemler, "tedarikci_id": tedarikci_id, "tedarikci": tedarikci_ad},
-                               ensure_ascii=False, separators=(",", ":"))
+        payload_obj = {
+            "delta": delta,
+            "kalemler": kalemler,
+            "tedarikci_id": tedarikci_id,
+            "tedarikci": tedarikci_ad,
+            "teslim_durumu": teslim_durumu,
+            "eksik_kategori": eksik_kat,
+            "teslim_aciklama": teslim_acik,
+            "eksik_aciklama": eksik_acik,
+        }
+        payload = _json.dumps(payload_obj, ensure_ascii=False, separators=(",", ":"))
         acik = "URUN_SEVK_JSON:" + payload
-        if (body.not_aciklama or "").strip():
+        acik += " | " + teslim_acik[:400]
+        if eksik_acik:
+            acik += " | EKSİK: " + eksik_acik[:400]
+        elif (body.not_aciklama or "").strip():
             acik += " | " + (body.not_aciklama or "").strip()[:400]
 
         rid = operasyon_defter_ekle(
@@ -1668,6 +1701,107 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             bildirim_saati=saat_sistem,
         )
         audit(cur, "operasyon_defter", rid, "URUN_SEVK")
+
+        siparis_talep_id = (body.siparis_talep_id or "").strip() or None
+        if siparis_talep_id:
+            cur.execute(
+                """
+                SELECT id
+                FROM siparis_talep
+                WHERE id=%s AND sube_id=%s
+                LIMIT 1
+                """,
+                (siparis_talep_id, sube_id),
+            )
+            if not cur.fetchone():
+                raise HTTPException(400, "Geçersiz siparis_talep_id (şube ile eşleşmiyor)")
+        else:
+            cur.execute(
+                """
+                SELECT id
+                FROM siparis_talep
+                WHERE sube_id=%s AND tarih=CURRENT_DATE
+                  AND durum='bekliyor'
+                ORDER BY olusturma DESC NULLS LAST
+                LIMIT 1
+                """,
+                (sube_id,),
+            )
+            rw = cur.fetchone()
+            siparis_talep_id = str((rw or {}).get("id") or "") or None
+
+        sevk_kalemleri = {k: max(0, int(delta.get(k) or 0)) for k in STOK_KEYS}
+        if sum(sevk_kalemleri.values()) <= 0 and kalemler:
+            for it in kalemler:
+                if not isinstance(it, dict):
+                    continue
+                key = _stok_key_from_urun_ad(it.get("urun_ad"))
+                if not key:
+                    continue
+                try:
+                    sevk_kalemleri[key] = sevk_kalemleri.get(key, 0) + max(0, int(it.get("adet") or 0))
+                except (TypeError, ValueError):
+                    continue
+
+        for kalem_kodu, adet in sevk_kalemleri.items():
+            adet_i = int(adet or 0)
+            if adet_i <= 0:
+                continue
+            cur.execute(
+                """
+                INSERT INTO merkez_stok_sevk
+                    (id, sube_id, kalem_kodu, adet, siparis_talep_id, tarih)
+                VALUES
+                    (%s, %s, %s, %s, %s, CURRENT_DATE)
+                """,
+                (str(uuid.uuid4()), sube_id, str(kalem_kodu), adet_i, siparis_talep_id),
+            )
+
+        if teslim_durumu == "eksik_var":
+            cur.execute(
+                """
+                SELECT id, personel_id, personel_ad
+                FROM siparis_talep
+                WHERE sube_id=%s AND tarih=CURRENT_DATE
+                ORDER BY olusturma DESC
+                LIMIT 1
+                """,
+                (sube_id,),
+            )
+            sr = cur.fetchone()
+            sip_tid = None
+            sip_pid = None
+            sip_pad = None
+            if sr:
+                sd = dict(sr)
+                sip_tid = sd.get("id")
+                sip_pid = sd.get("personel_id")
+                sip_pad = sd.get("personel_ad")
+            cur.execute(
+                """
+                INSERT INTO siparis_sevk_eksik
+                    (sube_id, tarih, tedarikci_id, tedarikci_ad, teslim_durumu,
+                     eksik_kategori, eksik_aciklama, siparis_talep_id, siparis_personel_id,
+                     siparis_personel_ad, bildiren_personel_id, bildiren_personel_ad)
+                VALUES
+                    (%s, CURRENT_DATE, %s, %s, %s,
+                     %s, %s, %s, %s,
+                     %s, %s, %s)
+                """,
+                (
+                    sube_id,
+                    tedarikci_id or None,
+                    tedarikci_ad or None,
+                    teslim_durumu,
+                    eksik_kat,
+                    eksik_acik,
+                    sip_tid,
+                    sip_pid,
+                    sip_pad,
+                    pid_panel,
+                    onay_ad,
+                ),
+            )
 
     return {"success": True, "defter_id": rid, "delta": delta, "kalemler": kalemler, "tip": "SEVK"}
 
