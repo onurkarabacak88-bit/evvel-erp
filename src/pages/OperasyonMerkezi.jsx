@@ -16,6 +16,7 @@ const UST_SEKMELER = [
   { id: 'onay', label: 'Onay merkezi' },
   { id: 'defter', label: 'Defter Kayıtları' },
   { id: 'sayim', label: 'Açılış Sayımları' },
+  { id: 'siparis', label: '📦 Sipariş katalog' },
   { id: 'mesaj', label: '📩 Merkez Mesajı' },
   { id: 'puan', label: '⭐ Personel Puan' },
 ];
@@ -412,12 +413,30 @@ export default function OperasyonMerkezi() {
   const [subeListeAdmin, setSubeListeAdmin] = useState([]);
   const [onayBusyId, setOnayBusyId] = useState(null);
   const [mesajListe, setMesajListe] = useState([]);
-  const [mesajForm, setMesajForm] = useState({ sube_id: '', mesaj: '', oncelik: 'normal' });
+  const [mesajForm, setMesajForm] = useState({ sube_id: '', mesaj: '', oncelik: 'normal', ttl_saat: 72 });
   const [mesajBusy, setMesajBusy] = useState(false);
   const [puanListe, setPuanListe] = useState([]);
   const [puanSubeFiltre, setPuanSubeFiltre] = useState('');
+  const [sipOzel, setSipOzel] = useState([]);
+  const [sipKat, setSipKat] = useState([]);
+  const [sipBusyId, setSipBusyId] = useState(null);
+  const [sipYeniUrun, setSipYeniUrun] = useState({ kategori_kod: '', urun_adi: '' });
+  const [sipYeniKat, setSipYeniKat] = useState({ ad: '', emoji: '📦' });
 
   const toast = (m, t = 'red') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 4000); };
+
+  const yukleSiparisMerkez = useCallback(async () => {
+    try {
+      const [oz, cat] = await Promise.all([
+        api('/ops/siparis/ozel-bekleyen'),
+        api('/ops/siparis/katalog'),
+      ]);
+      setSipOzel(oz.talepler || []);
+      setSipKat(cat.kategoriler || []);
+    } catch (e) {
+      toast(e.message || 'Sipariş verisi yüklenemedi');
+    }
+  }, []);
 
   const yukleOnayMerkez = useCallback(async () => {
     try {
@@ -448,8 +467,10 @@ export default function OperasyonMerkezi() {
         calls.push(api('/ops/skor'));
       } else if (aktifSekme === 'defter') {
         calls.push(api(`/ops/defter?limit=300&${q}`));
-      } else {
+      } else if (aktifSekme === 'sayim') {
         calls.push(api(`/ops/sayimlar?limit=300&${q}`));
+      } else {
+        calls.push(Promise.resolve({ satirlar: [] }));
       }
       const [dash, extra] = await Promise.all(calls);
       setKartlar(dash.kartlar || []);
@@ -458,7 +479,7 @@ export default function OperasyonMerkezi() {
         setSkor(extra);
       } else if (aktifSekme === 'defter') {
         setDefter(extra?.satirlar || []);
-      } else {
+      } else if (aktifSekme === 'sayim') {
         setSayimlar(extra?.satirlar || []);
       }
       setSonYenileme(new Date().toLocaleTimeString('tr-TR'));
@@ -506,6 +527,11 @@ export default function OperasyonMerkezi() {
       .then(r => setPuanListe(r.personeller || []))
       .catch(() => {});
   }, [aktifSekme, puanSubeFiltre]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'siparis') return;
+    yukleSiparisMerkez();
+  }, [aktifSekme, yukleSiparisMerkez]);
 
   // 25 saniyede bir otomatik yenile
   useEffect(() => {
@@ -772,6 +798,209 @@ export default function OperasyonMerkezi() {
         </div>
       )}
 
+      {aktifSekme === 'siparis' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
+            Şubelerden gelen <strong>özel ürün talepleri</strong> (katalogda olmayan) burada işlenir.
+            <strong> Kataloga al</strong> derseniz ürün tüm şubelerin sipariş / teslim / aç formlarında görünür;
+            <strong> Tek sefer</strong> ile kataloga eklemeden yalnızca bir sipariş kaydı oluşur; <strong> Red</strong> talebi kapatır.
+          </p>
+
+          <section className="card" style={{ padding: '14px 16px' }}>
+            <h3 style={{ fontSize: 14, marginBottom: 10 }}>Bekleyen özel talepler ({sipOzel.length})</h3>
+            {sipOzel.length === 0 ? (
+              <div className="empty"><p>Bekleyen özel ürün talebi yok</p></div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {sipOzel.map((t) => (
+                  <div
+                    key={t.id}
+                    style={{
+                      border: '1px solid var(--border)',
+                      borderRadius: 8,
+                      padding: '10px 12px',
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: 10,
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                    }}
+                  >
+                    <div style={{ fontSize: 13 }}>
+                      <strong>{t.sube_adi || t.sube_id}</strong>
+                      <span style={{ color: 'var(--text3)', marginLeft: 8 }}>{t.kategori_kod}</span>
+                      <div style={{ marginTop: 4 }}>
+                        <strong>{t.urun_adi}</strong> × {t.adet}
+                      </div>
+                      {t.not_aciklama && <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>{t.not_aciklama}</div>}
+                      <div className="mono" style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                        {t.personel_ad} · {t.olusturma?.replace('T', ' ').slice(0, 16)}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        disabled={!!sipBusyId}
+                        onClick={async () => {
+                          setSipBusyId(t.id);
+                          try {
+                            await api('/ops/siparis/ozel-islem', { method: 'POST', body: { talep_id: t.id, islem: 'katalog' } });
+                            toast('Ürün kataloga eklendi', 'green');
+                            await yukleSiparisMerkez();
+                          } catch (e) { toast(e.message || 'Hata'); }
+                          setSipBusyId(null);
+                        }}
+                      >Kataloga al</button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        disabled={!!sipBusyId}
+                        onClick={async () => {
+                          setSipBusyId(t.id);
+                          try {
+                            await api('/ops/siparis/ozel-islem', { method: 'POST', body: { talep_id: t.id, islem: 'tek_sefer' } });
+                            toast('Tek seferlik sipariş oluşturuldu', 'green');
+                            await yukleSiparisMerkez();
+                          } catch (e) { toast(e.message || 'Hata'); }
+                          setSipBusyId(null);
+                        }}
+                      >Tek sefer</button>
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm"
+                        disabled={!!sipBusyId}
+                        onClick={async () => {
+                          setSipBusyId(t.id);
+                          try {
+                            await api('/ops/siparis/ozel-islem', { method: 'POST', body: { talep_id: t.id, islem: 'red' } });
+                            toast('Talep reddedildi', 'green');
+                            await yukleSiparisMerkez();
+                          } catch (e) { toast(e.message || 'Hata'); }
+                          setSipBusyId(null);
+                        }}
+                      >Red</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+            <section className="card" style={{ padding: '14px 16px' }}>
+              <h3 style={{ fontSize: 14, marginBottom: 10 }}>Kataloga ürün ekle</h3>
+              <div className="form-group" style={{ marginBottom: 8 }}>
+                <label style={{ fontSize: 12 }}>Kategori (kod)</label>
+                <select
+                  className="input"
+                  style={{ width: '100%' }}
+                  value={sipYeniUrun.kategori_kod}
+                  onChange={(e) => setSipYeniUrun({ ...sipYeniUrun, kategori_kod: e.target.value })}
+                >
+                  <option value="">Seçin</option>
+                  {sipKat.map((k) => (
+                    <option key={k.id} value={k.id}>{k.label || k.ad}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group" style={{ marginBottom: 8 }}>
+                <label style={{ fontSize: 12 }}>Ürün adı</label>
+                <input
+                  className="input"
+                  style={{ width: '100%' }}
+                  value={sipYeniUrun.urun_adi}
+                  onChange={(e) => setSipYeniUrun({ ...sipYeniUrun, urun_adi: e.target.value })}
+                  placeholder="Örn: Pil"
+                />
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                disabled={!sipYeniUrun.kategori_kod || !sipYeniUrun.urun_adi.trim()}
+                onClick={async () => {
+                  try {
+                    await api('/ops/siparis/urun', { method: 'POST', body: sipYeniUrun });
+                    toast('Ürün eklendi', 'green');
+                    setSipYeniUrun({ kategori_kod: '', urun_adi: '' });
+                    await yukleSiparisMerkez();
+                  } catch (e) { toast(e.message || 'Hata'); }
+                }}
+              >Ekle / aktif et</button>
+            </section>
+
+            <section className="card" style={{ padding: '14px 16px' }}>
+              <h3 style={{ fontSize: 14, marginBottom: 10 }}>Yeni kategori</h3>
+              <div className="form-group" style={{ marginBottom: 8 }}>
+                <label style={{ fontSize: 12 }}>Kategori adı</label>
+                <input
+                  className="input"
+                  style={{ width: '100%' }}
+                  value={sipYeniKat.ad}
+                  onChange={(e) => setSipYeniKat({ ...sipYeniKat, ad: e.target.value })}
+                  placeholder="Örn: Elektronik"
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 8 }}>
+                <label style={{ fontSize: 12 }}>Emoji (opsiyonel)</label>
+                <input
+                  className="input"
+                  style={{ width: 100 }}
+                  value={sipYeniKat.emoji}
+                  onChange={(e) => setSipYeniKat({ ...sipYeniKat, emoji: e.target.value })}
+                />
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                disabled={!sipYeniKat.ad.trim()}
+                onClick={async () => {
+                  try {
+                    await api('/ops/siparis/kategori', { method: 'POST', body: sipYeniKat });
+                    toast('Kategori oluşturuldu', 'green');
+                    setSipYeniKat({ ad: '', emoji: '📦' });
+                    await yukleSiparisMerkez();
+                  } catch (e) { toast(e.message || 'Hata'); }
+                }}
+              >Kategori tanımla</button>
+            </section>
+          </div>
+
+          <section className="card" style={{ padding: '14px 16px' }}>
+            <h3 style={{ fontSize: 14, marginBottom: 10 }}>Ürün aktif / pasif</h3>
+            <p style={{ fontSize: 12, color: 'var(--text3)', marginTop: 0 }}>Kategori seçip ürün satırında durumu değiştirin.</p>
+            <div style={{ maxHeight: 360, overflow: 'auto' }}>
+              {sipKat.map((k) => (
+                <div key={k.id} style={{ marginBottom: 14 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>{k.label || k.ad}</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {(k.items || []).map((it) => (
+                      <div key={it.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
+                        <span>{it.ad} {it.aktif === false ? <span className="badge badge-gray">pasif</span> : <span className="badge badge-green">aktif</span>}</span>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={async () => {
+                            try {
+                              await api('/ops/siparis/urun-durum', {
+                                method: 'POST',
+                                body: { kategori_kod: k.id, urun_id: it.id, aktif: !it.aktif },
+                              });
+                              toast('Güncellendi', 'green');
+                              await yukleSiparisMerkez();
+                            } catch (e) { toast(e.message || 'Hata'); }
+                          }}
+                        >{it.aktif === false ? 'Aktif et' : 'Pasif et'}</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
+
       {aktifSekme === 'onay' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
@@ -925,6 +1154,7 @@ export default function OperasyonMerkezi() {
             <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Şubeye Mesaj Gönder</h3>
             <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>
               Gönderilen mesajlar şube panelinde yanıp söner. Personel PIN ile onaylayana kadar kapanış yapılamaz.
+              <strong> Gösterim süresi</strong> dolunca mesaj şube listesinden kalkar (kayıt silinmez).
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div className="form-group" style={{ margin: 0 }}>
@@ -942,6 +1172,18 @@ export default function OperasyonMerkezi() {
                 </select>
               </div>
               <div className="form-group" style={{ margin: 0 }}>
+                <label>Şubede listelenme süresi (saat)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={8760}
+                  value={mesajForm.ttl_saat}
+                  onChange={e => setMesajForm({ ...mesajForm, ttl_saat: Math.max(1, Math.min(8760, parseInt(e.target.value, 10) || 72)) })}
+                  style={{ width: 120, background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 7, padding: '8px 10px', color: 'var(--text)', fontSize: 13 }}
+                />
+                <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 8 }}>Oluşturulduktan sonra (varsayılan 72)</span>
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
                 <label>Mesaj *</label>
                 <textarea rows={3} value={mesajForm.mesaj} onChange={e => setMesajForm({ ...mesajForm, mesaj: e.target.value })} placeholder="Şubeye iletmek istediğiniz mesaj..." style={{ width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 7, padding: '8px 12px', color: 'var(--text)', fontSize: 13 }} />
               </div>
@@ -954,7 +1196,7 @@ export default function OperasyonMerkezi() {
                   try {
                     await api('/ops/merkez-mesaj-gonder', { method: 'POST', body: mesajForm });
                     toast('Mesaj gönderildi', 'green');
-                    setMesajForm({ sube_id: '', mesaj: '', oncelik: 'normal' });
+                    setMesajForm({ sube_id: '', mesaj: '', oncelik: 'normal', ttl_saat: 72 });
                     const r = await api('/ops/merkez-mesajlar?limit=100');
                     setMesajListe(r.satirlar || []);
                   } catch (e) { toast(e.message || 'Hata'); }
@@ -974,19 +1216,21 @@ export default function OperasyonMerkezi() {
                   <th>Şube</th>
                   <th>Öncelik</th>
                   <th>Mesaj</th>
+                  <th>Süre (sa)</th>
                   <th>Durum</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {mesajListe.length === 0 ? (
-                  <tr><td colSpan={6}><div className="empty"><p>Henüz mesaj gönderilmedi</p></div></td></tr>
+                  <tr><td colSpan={7}><div className="empty"><p>Henüz mesaj gönderilmedi</p></div></td></tr>
                 ) : mesajListe.map(m => (
                   <tr key={m.id}>
                     <td className="mono" style={{ fontSize: 11 }}>{(m.olusturma || '').slice(0, 16)}</td>
                     <td style={{ fontWeight: 500 }}>{m.sube_adi || m.sube_id}</td>
                     <td>{m.oncelik === 'kritik' ? <span className="badge badge-red">Kritik</span> : <span className="badge badge-gray">Normal</span>}</td>
                     <td style={{ fontSize: 12, maxWidth: 300 }}>{m.mesaj}</td>
+                    <td className="mono" style={{ fontSize: 11 }}>{m.ttl_saat != null ? m.ttl_saat : '—'}</td>
                     <td>{m.okundu
                       ? <span className="badge badge-green">✓ Okundu — {m.okuyan_ad || '?'}</span>
                       : <span className="badge badge-yellow">Bekliyor</span>}
