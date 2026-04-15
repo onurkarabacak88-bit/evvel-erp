@@ -34,6 +34,8 @@ from operasyon_stok_motor import (
     STOK_KEYS,
     STOK_LABEL_TR,
     merkez_stok_kart_guncelle,
+    teorik_stok_bugun,
+    stok_from_event_meta,
 )
 from kasa_service import audit
 from sube_panel import (
