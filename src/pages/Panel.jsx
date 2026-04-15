@@ -74,16 +74,17 @@ export default function Panel({ onNavigate }) {
   const load = () => {
     setLoading(true);
     Promise.all([
-      api('/panel'),
-      api('/uyarilar'),
-      api('/onay-kuyrugu'),
+      api('/panel').catch(() => null),
+      api('/uyarilar').catch(() => []),
+      api('/onay-kuyrugu').catch(() => []),
       api('/kasa-kontrol').catch(() => null),
       api('/sabit-giderler/odemeler').catch(() => null),
       api('/sabit-giderler/uyarilar').catch(() => null),
       api('/sabit-giderler/odenenler').catch(() => null),
       api('/vadeli-alimlar/ozet').catch(() => null),
     ]).then(([p, u, o, a, sg, su, og, vo]) => {
-      setPanel(p); setUyarilar(u || []); setOnaylar(o || []); setAnomali(a);
+      if (p) setPanel(p);
+      setUyarilar(u || []); setOnaylar(o || []); setAnomali(a);
       setSabitGiderOzet(sg?.ozet || {});
       setSabitGiderUyarilar(su?.uyarilar || []);
       setOdenenGiderler(og || []);
