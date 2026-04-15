@@ -1167,6 +1167,24 @@ def _ops_parse_defter_delta(raw_aciklama: str, prefix: str) -> Dict[str, int]:
     return out
 
 
+def _ops_int(v: Any, default: int = 0) -> int:
+    """Eski/yeni meta formatlarındaki sayıları güvenli int'e çevir."""
+    try:
+        if v is None:
+            return default
+        if isinstance(v, bool):
+            return int(v)
+        if isinstance(v, (int, float)):
+            return int(v)
+        s = str(v).strip()
+        if not s:
+            return default
+        s = s.replace(",", ".")
+        return int(float(s))
+    except Exception:
+        return default
+
+
 @router.get("/merkez-stok-kart")
 def ops_merkez_stok_kart():
     with db() as (conn, cur):
@@ -1265,7 +1283,7 @@ def ops_stok_kayip_analiz(
         blk = meta.get("acilis_stok_sayim")
         if not isinstance(blk, dict):
             blk = meta.get("stok_sayim")
-        vals = {k: int((blk or {}).get(k) or 0) for k in STOK_KEYS}
+        vals = {k: _ops_int((blk or {}).get(k), 0) for k in STOK_KEYS}
         acilis_map[key] = vals
 
     ek_map: Dict[tuple, Dict[str, int]] = {}
@@ -1307,9 +1325,9 @@ def ops_stok_kayip_analiz(
         for k in STOK_KEYS:
             if urun_f and k != urun_f:
                 continue
-            acilis_v = int(ac.get(k) or 0)
-            ek_v = int(ek.get(k) or 0)
-            kapanis_v = int((kap_blk or {}).get(k) or 0)
+            acilis_v = _ops_int(ac.get(k), 0)
+            ek_v = _ops_int(ek.get(k), 0)
+            kapanis_v = _ops_int((kap_blk or {}).get(k), 0)
             tahmini = acilis_v + ek_v - kapanis_v
             if tahmini == 0:
                 continue
@@ -1497,20 +1515,40 @@ def ops_personel_davranis_analiz(
         cur.execute(qu, qup)
         u_rows = [dict(r) for r in cur.fetchall()]
 
-        qv = """
-            SELECT k.sube_id, s.ad AS sube_adi, k.tarih, k.kapanisci_id AS sabahci_personel_id, p.ad_soyad AS sabahci_ad
-            FROM kapanis_kayit k
-            JOIN subeler s ON s.id = k.sube_id
-            LEFT JOIN personel p ON p.id = k.kapanisci_id
+        # Şema farkı toleransı: bazı ortamlarda kapanisci_id yerine sabahci_personel_id mevcut.
+        qvp: List[Any] = [gun_sayi]
+        qv_suffix = """
             WHERE k.olay='vardiya_sabah_aksam_devri'
               AND k.durum='acilis_bekliyor'
               AND k.tarih >= (CURRENT_DATE - (%s * INTERVAL '1 day'))
         """
-        qvp: List[Any] = [gun_sayi]
         if sube_id:
-            qv += " AND k.sube_id=%s"
+            qv_suffix += " AND k.sube_id=%s"
             qvp.append(sube_id)
-        cur.execute(qv, qvp)
+        try:
+            cur.execute(
+                """
+                SELECT k.sube_id, s.ad AS sube_adi, k.tarih,
+                       k.kapanisci_id AS sabahci_personel_id, p.ad_soyad AS sabahci_ad
+                FROM kapanis_kayit k
+                JOIN subeler s ON s.id = k.sube_id
+                LEFT JOIN personel p ON p.id = k.kapanisci_id
+                """
+                + qv_suffix,
+                qvp,
+            )
+        except Exception:
+            cur.execute(
+                """
+                SELECT k.sube_id, s.ad AS sube_adi, k.tarih,
+                       k.sabahci_personel_id AS sabahci_personel_id, p.ad_soyad AS sabahci_ad
+                FROM kapanis_kayit k
+                JOIN subeler s ON s.id = k.sube_id
+                LEFT JOIN personel p ON p.id = k.sabahci_personel_id
+                """
+                + qv_suffix,
+                qvp,
+            )
         v_rows = [dict(r) for r in cur.fetchall()]
 
     kapanis_map: Dict[tuple, Dict[str, int]] = {}
@@ -1521,9 +1559,9 @@ def ops_personel_davranis_analiz(
         if not isinstance(blk, dict):
             blk = {}
         kapanis_map[key] = {
-            "bardak_kucuk": int(blk.get("bardak_kucuk") or 0),
-            "bardak_buyuk": int(blk.get("bardak_buyuk") or 0),
-            "bardak_plastik": int(blk.get("bardak_plastik") or 0),
+            "bardak_kucuk": _ops_int(blk.get("bardak_kucuk"), 0),
+            "bardak_buyuk": _ops_int(blk.get("bardak_buyuk"), 0),
+            "bardak_plastik": _ops_int(blk.get("bardak_plastik"), 0),
         }
 
     uyari_map: Dict[tuple, float] = {}
@@ -1567,9 +1605,9 @@ def ops_personel_davranis_analiz(
         if not isinstance(ac_blk, dict):
             ac_blk = {}
         ac_b = {
-            "bardak_kucuk": int(ac_blk.get("bardak_kucuk") or 0),
-            "bardak_buyuk": int(ac_blk.get("bardak_buyuk") or 0),
-            "bardak_plastik": int(ac_blk.get("bardak_plastik") or 0),
+            "bardak_kucuk": _ops_int(ac_blk.get("bardak_kucuk"), 0),
+            "bardak_buyuk": _ops_int(ac_blk.get("bardak_buyuk"), 0),
+            "bardak_plastik": _ops_int(ac_blk.get("bardak_plastik"), 0),
         }
         try:
             prev_s = str(date.fromisoformat(tarih_s) - timedelta(days=1))
