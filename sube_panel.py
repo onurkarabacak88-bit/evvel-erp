@@ -11,15 +11,14 @@ import os
 import pathlib
 import re
 import uuid
-from datetime import date, datetime, timezone
 from typing import Any, Optional, List, Dict
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from database import db
+from tr_saat import bugun_tr, dt_now_tr as _now_tr
 from evvel_merkez_guard import merkez_mutasyon_korumasi
 from finans_core import kasa_bakiyesi
 from kasa_service import insert_kasa_hareketi, audit, onay_ekle
@@ -54,11 +53,6 @@ def _merkez_yonetici_onayla(cur: Any, body: MerkezPanelOnayBody) -> None:
 
 _X_RAPOR_MAX_BYTES = 8 * 1024 * 1024
 _X_UPLOAD_ROOT = pathlib.Path("data/x_rapor_uploads")
-_TR_TZ = ZoneInfo("Europe/Istanbul")
-
-
-def _now_tr() -> datetime:
-    return datetime.now(timezone.utc).astimezone(_TR_TZ)
 
 
 def _x_parse_model_json(raw: str) -> dict:
@@ -185,7 +179,7 @@ def _ciro_insert_aktif_ve_kasa(
     )
     insert_kasa_hareketi(
         cur,
-        date.today(),
+        bugun_tr(),
         "CIRO",
         net_tutar,
         f"Ciro — {sube['ad']} ({audit_etiket})",
@@ -283,7 +277,7 @@ def _gorev_listesi_uret(
 ) -> list:
     """Günlük görev listesi. Önce kasa PIN, sonra şube açılış (sube_acilis)."""
     _ = anlik_adet
-    simdi = datetime.now().strftime("%H:%M")
+    simdi = _now_tr().strftime("%H:%M")
     gorevler = []
 
     acilis = sube.get("acilis_saati") or "09:00"
@@ -436,7 +430,7 @@ def tum_subeler_durum():
             })
 
     return {
-        "tarih":   str(date.today()),
+        "tarih":   str(bugun_tr()),
         "subeler": sonuc,
         "tamamlanan": sum(1 for s in sonuc if s['sube_acik'] and s['ciro_girildi']),
         "toplam":     len(sonuc),
@@ -530,7 +524,7 @@ def kasa_kilit_ac(sube_id: str, body: KasaKilitAcModel):
         audit(
             cur,
             "sube_kasa_gun_acma",
-            f"{sube_id}:{date.today()}",
+            f"{sube_id}:{bugun_tr()}",
             "KASA_ACILDI",
         )
         operasyon_defter_ekle(
@@ -1058,9 +1052,10 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
     # Merkez mesajları — okunmamış önce
     cur.execute(
         """
-        SELECT id, mesaj, oncelik, okundu, olusturma
+        SELECT id, mesaj, oncelik, okundu, olusturma, ttl_saat
         FROM sube_merkez_mesaj
         WHERE sube_id=%s AND aktif=TRUE
+          AND olusturma + (COALESCE(ttl_saat, 72) * INTERVAL '1 hour') > NOW()
         ORDER BY okundu ASC, olusturma DESC
         LIMIT 20
         """,
@@ -1080,7 +1075,7 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
         "sube_adi":       sube["ad"],
         "acilis_saati":   sube.get("acilis_saati") or "09:00",
         "kapanis_saati":  sube.get("kapanis_saati") or "22:00",
-        "tarih":          str(date.today()),
+        "tarih":          str(bugun_tr()),
         "kasa_kilitli":   kasa_kilitli,
         "kasa_acma":      kasa_acma,
         "sube_acik":      sube_acildi_mi,
@@ -1143,9 +1138,27 @@ def sube_personel_panel_public(payload: dict) -> dict:
                     "durum",
                     "sistem_slot_ts",
                     "son_teslim_ts",
+                    "cevap_ts",
+                    "personel_ad",
+                    "personel_id",
                     "alarm_sayisi",
                 )
             }
+            # KONTROL formu (bardak_only / kasa_only / full) — rastgele slot meta verisini sızdırmadan yalnızca mod
+            if str(akt.get("tip") or "").upper() == "KONTROL":
+                raw_m = akt.get("meta")
+                dm = None
+                if isinstance(raw_m, dict):
+                    dm = raw_m.get("denetim_mod")
+                elif isinstance(raw_m, str) and raw_m.strip():
+                    try:
+                        md = json.loads(raw_m)
+                        if isinstance(md, dict):
+                            dm = md.get("denetim_mod")
+                    except Exception:
+                        dm = None
+                if dm:
+                    akt_kisa["meta"] = {"denetim_mod": str(dm).strip()}
         p["operasyon"] = {
             "sunucu_saati": op.get("sunucu_saati"),
             "sunucu_iso": op.get("sunucu_iso"),
@@ -1154,7 +1167,17 @@ def sube_personel_panel_public(payload: dict) -> dict:
             "aktif_kritik": op.get("aktif_kritik"),
             "aktif_suphe": op.get("aktif_suphe"),
             "alarm_politikasi": op.get("alarm_politikasi"),
-            "events_ozet": [{"tip": e.get("tip"), "durum": e.get("durum")} for e in evs],
+            "events_ozet": [
+                {
+                    "tip": e.get("tip"),
+                    "durum": e.get("durum"),
+                    "sistem_slot_ts": e.get("sistem_slot_ts"),
+                    "cevap_ts": e.get("cevap_ts"),
+                    "personel_ad": e.get("personel_ad"),
+                    "personel_id": e.get("personel_id"),
+                }
+                for e in evs
+            ],
             "esikler": op.get("esikler"),
         }
     p["uyari"] = (
@@ -1343,7 +1366,7 @@ def sube_anlik_gider_gir(sube_id: str, body: SubeAnlikGiderModel):
             gid,
             f"Şube anlık gider (bekliyor): {acik} — {sube.get('ad') or sube_id} — {onay_ad}",
             float(body.tutar),
-            date.today(),
+            bugun_tr(),
         )
         audit(cur, "anlik_giderler", gid, "INSERT_PANEL_ONAY_BEKLIYOR")
         from operasyon_defter import operasyon_defter_ekle
@@ -1754,9 +1777,10 @@ def sube_merkez_mesajlari_getir(sube_id: str):
         _sube_getir(cur, sube_id)
         cur.execute(
             """
-            SELECT id, mesaj, olusturma, okundu, okundu_ts, oncelik
+            SELECT id, mesaj, olusturma, okundu, okundu_ts, oncelik, ttl_saat
             FROM sube_merkez_mesaj
             WHERE sube_id=%s AND aktif=TRUE
+              AND olusturma + (COALESCE(ttl_saat, 72) * INTERVAL '1 hour') > NOW()
             ORDER BY olusturma DESC
             LIMIT 50
             """,
@@ -1822,17 +1846,13 @@ def sube_merkez_mesaj_oku(sube_id: str, mesaj_id: str, body: MesajOkuBody):
     return {"success": True, "okundu": True}
 
 
-class SiparisUrunEkleBody(BaseModel):
-    kategori_id: str
+class SiparisOzelTalepBody(BaseModel):
+    """Katalogda olmayan ürün — merkez onayından sonra kataloga alınır veya tek seferlik siparişe döner."""
+
     urun_adi: str
-    personel_id: str
-    pin: str
-
-
-class SiparisUrunDurumBody(BaseModel):
-    kategori_id: str
-    urun_id: str
-    aktif: bool
+    kategori_kod: str
+    adet: int = 1
+    not_aciklama: Optional[str] = None
     personel_id: str
     pin: str
 
@@ -1900,117 +1920,153 @@ def sube_siparis_katalog_getir(sube_id: str):
         return {"kategoriler": _siparis_katalog_getir(cur)}
 
 
-@router.post("/{sube_id}/siparis-urun-ekle")
-def sube_siparis_urun_ekle(sube_id: str, body: SiparisUrunEkleBody):
+@router.get("/{sube_id}/siparis-ozel-liste")
+def sube_siparis_ozel_liste(sube_id: str, limit: int = 40):
+    lim = max(1, min(200, int(limit)))
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        cur.execute(
+            """
+            SELECT id, tarih, urun_adi, kategori_kod, adet, not_aciklama, durum,
+                   bildirim_saati, olusturma, onaylayan_not, iliskili_talep_id
+            FROM siparis_ozel_talep
+            WHERE sube_id=%s
+            ORDER BY olusturma DESC
+            LIMIT %s
+            """,
+            (sube_id, lim),
+        )
+        rows = []
+        for r in cur.fetchall():
+            d = dict(r)
+            if d.get("olusturma"):
+                d["olusturma"] = str(d["olusturma"])
+            if d.get("tarih"):
+                d["tarih"] = str(d["tarih"])
+            rows.append(d)
+    return {"talepler": rows}
+
+
+@router.get("/{sube_id}/siparis-bekleyen-liste")
+def sube_siparis_bekleyen_liste(sube_id: str, limit: int = 30):
+    """Bugün bekleyen sipariş talepleri; tek seferlik (katalog dışı) kalemler ayrı işaretlenir."""
+    lim = max(1, min(100, int(limit)))
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        cur.execute(
+            """
+            SELECT id, durum, bildirim_saati, not_aciklama, personel_ad, kalemler, olusturma
+            FROM siparis_talep
+            WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='bekliyor'
+            ORDER BY olusturma DESC
+            LIMIT %s
+            """,
+            (sube_id, lim),
+        )
+        out: List[Dict[str, Any]] = []
+        for r in cur.fetchall():
+            d = dict(r)
+            kms = d.get("kalemler") or []
+            if isinstance(kms, str):
+                try:
+                    kms = json.loads(kms)
+                except Exception:
+                    kms = []
+            if not isinstance(kms, list):
+                kms = []
+            tek = any(bool(x.get("ozel_tek_sefer")) for x in kms if isinstance(x, dict))
+            ozet = []
+            for x in kms:
+                if not isinstance(x, dict):
+                    continue
+                ozet.append(
+                    {
+                        "urun_ad": (x.get("urun_ad") or "").strip(),
+                        "adet": int(x.get("adet") or 0),
+                        "tek_sefer": bool(x.get("ozel_tek_sefer")),
+                    }
+                )
+            out.append(
+                {
+                    "id": str(d["id"]),
+                    "tur": "tek_sefer" if tek else "standart",
+                    "bildirim_saati": d.get("bildirim_saati"),
+                    "not_aciklama": d.get("not_aciklama"),
+                    "personel_ad": d.get("personel_ad"),
+                    "kalemler_ozet": ozet,
+                }
+            )
+    return {"bekleyen": out}
+
+
+@router.post("/{sube_id}/siparis-ozel-talep")
+def sube_siparis_ozel_talep(sube_id: str, body: SiparisOzelTalepBody):
+    """Katalogda olmayan ürün talebi — yalnızca merkez onayı sonrası kataloga girer."""
     pid_in = (body.personel_id or "").strip()
     pin = (body.pin or "").replace(" ", "")
-    kat_id = (body.kategori_id or "").strip()
     ad = (body.urun_adi or "").strip()
-    if not kat_id:
-        raise HTTPException(400, "kategori_id gerekli")
+    kk = (body.kategori_kod or "").strip()
     if len(ad) < 2:
         raise HTTPException(400, "Ürün adı en az 2 karakter olmalı")
+    if not kk:
+        raise HTTPException(400, "Kategori seçilmeli")
+    try:
+        adet = int(body.adet or 0)
+    except (TypeError, ValueError):
+        adet = 0
+    if adet < 1:
+        raise HTTPException(400, "Adet en az 1 olmalı")
     if not pid_in or len(pin) != 4 or not pin.isdigit():
         raise HTTPException(400, "personel_id ve 4 haneli PIN gerekli")
 
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
+        if not _bugun_kasa_acildi_mi(cur, sube_id):
+            raise HTTPException(403, "Önce günlük kasa kilidini PIN ile açmalısınız.")
         ku = dogrula_personel_panel_pin(cur, pid_in, pin)
         onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
         pid_panel = str(ku.get("id") or "").strip() or pid_in
         cur.execute(
-            "SELECT id FROM siparis_kategori WHERE kod=%s AND aktif=TRUE",
-            (kat_id,),
+            "SELECT 1 FROM siparis_kategori WHERE kod=%s AND aktif=TRUE",
+            (kk,),
         )
-        kr = cur.fetchone()
-        if not kr:
-            raise HTTPException(404, "Kategori bulunamadı")
-        kategori_db_id = str(dict(kr)["id"])
-        norm = _norm_ad_tr(ad)
-        if not norm:
-            raise HTTPException(400, "Ürün adı geçersiz")
-
-        cur.execute(
-            """
-            INSERT INTO siparis_urun (kategori_id, ad, norm_ad, sira, aktif, guncelleme)
-            VALUES (
-                %s, %s, %s,
-                COALESCE((SELECT MAX(sira)+10 FROM siparis_urun WHERE kategori_id=%s), 10),
-                TRUE, NOW()
-            )
-            ON CONFLICT (kategori_id, norm_ad)
-            DO UPDATE SET ad=EXCLUDED.ad, aktif=TRUE, guncelleme=NOW()
-            RETURNING id, ad
-            """,
-            (kategori_db_id, ad, norm, kategori_db_id),
-        )
-        r = dict(cur.fetchone())
-        audit(cur, "siparis_urun", str(r["id"]), "SIPARIS_URUN_EKLE_VEYA_AKTIF_ET")
-        from operasyon_defter import operasyon_defter_ekle
-
+        if not cur.fetchone():
+            raise HTTPException(400, "Geçersiz kategori kodu")
         tr_now = _now_tr()
         saat = tr_now.strftime("%H:%M:%S")
+        tid = str(uuid.uuid4())
+        cur.execute(
+            """
+            INSERT INTO siparis_ozel_talep
+                (id, sube_id, tarih, urun_adi, kategori_kod, adet, not_aciklama,
+                 personel_id, personel_ad, bildirim_saati, durum)
+            VALUES (%s, %s, CURRENT_DATE, %s, %s, %s, %s, %s, %s, %s, 'bekliyor')
+            """,
+            (
+                tid,
+                sube_id,
+                ad,
+                kk,
+                adet,
+                (body.not_aciklama or "").strip() or None,
+                pid_panel,
+                onay_ad,
+                saat,
+            ),
+        )
+        audit(cur, "siparis_ozel_talep", tid, "OZEL_TALEP")
+        from operasyon_defter import operasyon_defter_ekle
+
         operasyon_defter_ekle(
             cur,
             sube_id,
-            "SIPARIS_URUN_EKLE",
-            f"Sipariş ürünü eklendi/aktif edildi — kategori={kat_id} urun={r['ad']} personel={onay_ad}",
+            "SIPARIS_OZEL_TALEP",
+            f"Özel ürün talebi — {ad} ×{adet} (kat:{kk}) — {onay_ad}",
             personel_id=pid_panel,
             personel_ad=onay_ad,
             bildirim_saati=saat,
         )
-        return {"success": True, "urun_id": str(r["id"]), "urun_ad": r["ad"]}
-
-
-@router.post("/{sube_id}/siparis-urun-durum")
-def sube_siparis_urun_durum(sube_id: str, body: SiparisUrunDurumBody):
-    pid_in = (body.personel_id or "").strip()
-    pin = (body.pin or "").replace(" ", "")
-    kat_id = (body.kategori_id or "").strip()
-    urun_id = (body.urun_id or "").strip()
-    if not kat_id or not urun_id:
-        raise HTTPException(400, "kategori_id ve urun_id gerekli")
-    if not pid_in or len(pin) != 4 or not pin.isdigit():
-        raise HTTPException(400, "personel_id ve 4 haneli PIN gerekli")
-
-    with db() as (conn, cur):
-        _sube_getir(cur, sube_id)
-        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
-        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
-        pid_panel = str(ku.get("id") or "").strip() or pid_in
-        cur.execute("SELECT id FROM siparis_kategori WHERE kod=%s", (kat_id,))
-        kr = cur.fetchone()
-        if not kr:
-            raise HTTPException(404, "Kategori bulunamadı")
-        kategori_db_id = str(dict(kr)["id"])
-        cur.execute(
-            """
-            UPDATE siparis_urun
-            SET aktif=%s, guncelleme=NOW()
-            WHERE id=%s AND kategori_id=%s
-            RETURNING id, ad, aktif
-            """,
-            (bool(body.aktif), urun_id, kategori_db_id),
-        )
-        ur = cur.fetchone()
-        if not ur:
-            raise HTTPException(404, "Ürün bulunamadı")
-        ud = dict(ur)
-        audit(cur, "siparis_urun", str(ud["id"]), "SIPARIS_URUN_DURUM")
-        from operasyon_defter import operasyon_defter_ekle
-
-        tr_now = _now_tr()
-        saat = tr_now.strftime("%H:%M:%S")
-        operasyon_defter_ekle(
-            cur,
-            sube_id,
-            "SIPARIS_URUN_DURUM",
-            f"Sipariş ürün durumu güncellendi — kategori={kat_id} urun={ud['ad']} aktif={bool(ud['aktif'])} personel={onay_ad}",
-            personel_id=pid_panel,
-            personel_ad=onay_ad,
-            bildirim_saati=saat,
-        )
-        return {"success": True, "urun_id": str(ud["id"]), "aktif": bool(ud["aktif"])}
+    return {"success": True, "talep_id": tid}
 
 
 @router.post("/{sube_id}/siparis-onay")
@@ -2125,6 +2181,6 @@ def _kasa_farki_onay_kuyruguna_ekle(
         fark_id,
         tam_acik[:500],
         fark,
-        date.today(),
+        bugun_tr(),
     )
     return fark_id

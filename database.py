@@ -1,3 +1,4 @@
+import logging
 import os
 import psycopg2
 import psycopg2.extras
@@ -73,6 +74,14 @@ def db():
     conn.cursor_factory = psycopg2.extras.RealDictCursor
     cur = conn.cursor()
     try:
+        # CURRENT_DATE / NOW() / CURRENT_TIMESTAMP — İstanbul iş günü ile hizalı
+        try:
+            cur.execute("SET TIME ZONE 'Europe/Istanbul'")
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "SET TIME ZONE Europe/Istanbul uygulanamadı; SQL tarihleri sunucu diliminde kalabilir.",
+                exc_info=True,
+            )
         yield conn, cur
         conn.commit()
     except Exception:
@@ -1449,12 +1458,17 @@ def init_db():
                 okundu_ts           TIMESTAMPTZ,
                 okuyan_personel_id  TEXT,
                 aktif               BOOLEAN NOT NULL DEFAULT TRUE,
+                ttl_saat            INT NOT NULL DEFAULT 72,
                 olusturma           TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_sube_merkez_mesaj_sube
             ON sube_merkez_mesaj (sube_id, aktif, okundu)
+        """)
+        cur.execute("""
+            ALTER TABLE sube_merkez_mesaj
+            ADD COLUMN IF NOT EXISTS ttl_saat INT NOT NULL DEFAULT 72
         """)
 
         # ── TEDARİKÇİLER ──────────────────────────────────────
@@ -1522,6 +1536,34 @@ def init_db():
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_siparis_talep_sube_tarih
             ON siparis_talep (sube_id, tarih, olusturma DESC)
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS siparis_ozel_talep (
+                id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                sube_id             TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                tarih               DATE NOT NULL DEFAULT CURRENT_DATE,
+                urun_adi            TEXT NOT NULL,
+                kategori_kod        TEXT NOT NULL,
+                adet                INT NOT NULL DEFAULT 1,
+                not_aciklama        TEXT,
+                personel_id         TEXT,
+                personel_ad         TEXT,
+                bildirim_saati      TEXT,
+                durum               TEXT NOT NULL DEFAULT 'bekliyor',
+                onaylayan_not       TEXT,
+                olusturulan_urun_id TEXT REFERENCES siparis_urun(id) ON DELETE SET NULL,
+                iliskili_talep_id   TEXT,
+                olusturma           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                islem_ts            TIMESTAMPTZ
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_siparis_ozel_sube_durum
+            ON siparis_ozel_talep (sube_id, durum, olusturma DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_siparis_ozel_bekleyen
+            ON siparis_ozel_talep (durum, olusturma DESC)
         """)
         cur.execute("""
             INSERT INTO siparis_kategori (kod, ad, emoji, sira)

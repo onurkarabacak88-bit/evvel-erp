@@ -8,10 +8,11 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi import Request
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any, Dict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import uuid, os, json, pathlib, calendar, threading
 from collections import defaultdict
 from database import db, init_db
+from tr_saat import bugun_tr, dt_now_tr_naive
 from kasa_service import (
     audit,
     insert_kasa_hareketi,
@@ -178,15 +179,13 @@ def _gece_yarisi_scheduler():
 
     while True:
         try:
-            simdi = date.today()
-
-            # Bir sonraki gece yarısına kadar bekle
-            import datetime as _dt
-            yarin = _dt.datetime.combine(simdi + timedelta(days=1), _dt.time.min)
-            bekle = (yarin - _dt.datetime.now()).total_seconds()
+            # Bir sonraki İstanbul gece yarısına kadar bekle
+            bugu = bugun_tr()
+            yarin = datetime.combine(bugu + timedelta(days=1), datetime.min.time())
+            bekle = (yarin - dt_now_tr_naive()).total_seconds()
             _time.sleep(max(bekle, 60))  # en az 60 saniye
 
-            bugun = date.today()
+            bugun = bugun_tr()
             ay_son_gun = calendar.monthrange(bugun.year, bugun.month)[1]
 
             # Ay başı — yeni ödeme planı
@@ -227,7 +226,7 @@ def _gece_yarisi_scheduler():
 def startup():
     init_db()
     # Her başlatmada bu ay için plan üret (yoksa üretir, varsa atlar)
-    bugun = date.today()
+    bugun = bugun_tr()
     try:
         sonuc = aylik_odeme_plani_uret(bugun.year, bugun.month)
         if sonuc['toplam'] > 0:
@@ -380,7 +379,7 @@ def devir_hesapla(yil: int = None, ay: int = None):
     Ledger'a hiçbir şey yazılmaz — immutable model korunur.
     """
     import calendar
-    bugun = date.today()
+    bugun = bugun_tr()
     yil = yil or bugun.year
     ay  = ay  or bugun.month
 
@@ -880,7 +879,7 @@ def anlik_gider_kart_oneri(tutar: float = 0):
     Anlık gider için kart önerisi — vadeli alımla aynı skorlama.
     Kesim günü uzaklığı, limit boşluğu, faiz oranına göre sıralar.
     """
-    bugun = __import__('datetime').date.today()
+    bugun = bugun_tr()
     with db() as (conn, cur):
         cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE ORDER BY banka")
         kartlar = cur.fetchall()
@@ -1058,7 +1057,7 @@ def kartlar_listele():
         cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE ORDER BY banka")
         kartlar = [dict(r) for r in cur.fetchall()]
         sonuc = []
-        bugun = date.today()
+        bugun = bugun_tr()
         for k in kartlar:
             # ── CORE HESAPLAR ──────────────────────────────────
             borc     = kart_borc(cur, k['id'])
@@ -1292,7 +1291,7 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
 
         # KART seçildiyse ve kaynak vadeli_alimlar ise kart akışına yönlendir
         if body.odeme_yontemi == 'kart' and body.kart_id and plan.get('kaynak_tablo') == 'vadeli_alimlar':
-            bugun = str(date.today())
+            bugun = str(bugun_tr())
             odeme_tutari = tutar or float(plan['odenecek_tutar'])
             # Kart validasyon
             cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (body.kart_id,))
@@ -1321,7 +1320,7 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
             audit(cur, 'odeme_plani', oid, 'ODENDI_KART')
             return {"success": True, "odeme_yontemi": "kart"}
 
-        bugun = str(date.today())
+        bugun = str(bugun_tr())
         odenen = tutar or float(plan['odenecek_tutar'])
         cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
             (bugun, odenen, oid))
@@ -1805,7 +1804,7 @@ def personel_guncelle(pid: str, p: PersonelModel):
 def personel_cikis(pid: str, neden: str = ""):
     with db() as (conn, cur):
         cur.execute("UPDATE personel SET aktif=FALSE, cikis_tarihi=%s WHERE id=%s",
-            (str(date.today()), pid))
+            (str(bugun_tr()), pid))
         # Bekleyen maaş planlarını iptal et — simülasyondan çıksın
         cur.execute("""
             UPDATE odeme_plani SET durum='iptal'
@@ -1919,7 +1918,7 @@ def personel_vardiya_planlamaya_dahil(pid: str, body: PersonelVardiyaPlanlamaDah
 
 @app.get("/api/personel-vardiya/{pid}/detay")
 def personel_vardiya_detay_get(pid: str, hafta_baslangic: Optional[date] = None):
-    ref = hafta_baslangic or date.today()
+    ref = hafta_baslangic or bugun_tr()
     pzt = _vardiya_pazartesi(ref)
     with db() as (conn, cur):
         cur.execute(
@@ -2129,7 +2128,7 @@ def personel_vardiya_detay_kaydet(pid: str, body: PersonelVardiyaDetayKayit):
 @app.get("/api/vardiya-motor/senaryolar")
 def vardiya_motor_senaryolar_get(tarih: Optional[date] = None):
     """Seçilen gün için kısıtlara göre birden fazla senaryo özeti (atama tablosu öncesi)."""
-    ref = tarih or date.today()
+    ref = tarih or bugun_tr()
     with db() as (conn, cur):
         return senaryolar_uret(cur, ref)
 
@@ -2137,7 +2136,7 @@ def vardiya_motor_senaryolar_get(tarih: Optional[date] = None):
 @app.get("/api/vardiya-motor/hafta-senaryolar")
 def vardiya_motor_hafta_senaryolar_get(hafta_baslangic: Optional[date] = None):
     """Seçilen hafta (Pzt) için haftalık senaryo özeti (atama tablosu öncesi)."""
-    ref = hafta_baslangic or date.today()
+    ref = hafta_baslangic or bugun_tr()
     with db() as (conn, cur):
         return hafta_senaryolari_uret(cur, ref, kriz_modu=False)
 
@@ -2145,7 +2144,7 @@ def vardiya_motor_hafta_senaryolar_get(hafta_baslangic: Optional[date] = None):
 @app.get("/api/vardiya-motor/hafta-senaryolar-kriz")
 def vardiya_motor_hafta_senaryolar_kriz_get(hafta_baslangic: Optional[date] = None):
     """Kriz modu: izin/rol ihlali gibi imkansıza yakın esnetmeleri de dahil eder (etiketli)."""
-    ref = hafta_baslangic or date.today()
+    ref = hafta_baslangic or bugun_tr()
     with db() as (conn, cur):
         return hafta_senaryolari_uret(cur, ref, kriz_modu=True)
 
@@ -2156,7 +2155,7 @@ def vardiya_motor_hafta_senaryolar_expert_get(
     kriz_modu: bool = False,
 ):
     """Uzman planner: geniş senaryo havuzu + maliyet tabanlı en iyi plan."""
-    ref = hafta_baslangic or date.today()
+    ref = hafta_baslangic or bugun_tr()
     with db() as (conn, cur):
         return hafta_senaryolari_expert_uret(cur, ref, kriz_modu=bool(kriz_modu))
 
@@ -2646,7 +2645,7 @@ def maas_hesapla(p: dict, kayit: dict) -> float:
 @app.get("/api/personel-aylik")
 def personel_aylik_listele(yil: int = None, ay: int = None):
     """Bu ay için tüm personelin aylik kayıtlarını döner. Kayıt yoksa tahmini tutar ile döner."""
-    bugun = date.today()
+    bugun = bugun_tr()
     yil = yil or bugun.year
     ay  = ay  or bugun.month
     with db() as (conn, cur):
@@ -2699,7 +2698,7 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
 @app.post("/api/personel-aylik/{pid}")
 def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, ay: int = None):
     """Personel aylık kaydını girer/günceller ve maaşı hesaplar."""
-    bugun = date.today()
+    bugun = bugun_tr()
     yil = yil or bugun.year
     ay  = ay  or bugun.month
     with db() as (conn, cur):
@@ -2743,7 +2742,7 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
 @app.post("/api/personel-aylik/{pid}/onayla")
 def personel_aylik_onayla(pid: str, yil: int = None, ay: int = None):
     """Maaş kaydını onaylar — durum 'onaylandi' olur, geri alınamaz."""
-    bugun = date.today()
+    bugun = bugun_tr()
     yil = yil or bugun.year
     ay  = ay  or bugun.month
     with db() as (conn, cur):
@@ -2758,7 +2757,7 @@ def personel_aylik_onayla(pid: str, yil: int = None, ay: int = None):
 @app.delete("/api/personel-aylik/{pid}")
 def personel_aylik_sil(pid: str, yil: int = None, ay: int = None):
     """Personelin aylık maaş kaydını siler. Sadece taslak durumdakiler silinebilir."""
-    bugun = date.today()
+    bugun = bugun_tr()
     yil = yil or bugun.year
     ay  = ay  or bugun.month
     with db() as (conn, cur):
@@ -2849,7 +2848,7 @@ def sabit_gider_ekle(g: SabitGider):
         # Kart talimatı: motor otomatik işler, onay kuyruğuna girme
         if g.tip == 'sabit' and g.odeme_yontemi != 'kart':
             onay_ekle(cur, 'SABIT_GIDER', 'sabit_giderler', gid,
-                f"Sabit gider: {g.gider_adi}", g.tutar, date.today())
+                f"Sabit gider: {g.gider_adi}", g.tutar, bugun_tr())
         audit(cur, 'sabit_giderler', gid, 'INSERT')
     return {"id": gid, "success": True}
 
@@ -2944,7 +2943,7 @@ def sabit_gider_uyarilar():
     KIRA_ARTIS   : artış tarihi yaklaşıyor veya geçti → ödeme planı DURDU, tutar güncellenmeli
     SOZLESME_BITIS: sözleşme bitiyor veya bitti → uzatma/yenileme gerekiyor
     """
-    bugun = date.today()
+    bugun = bugun_tr()
     with db() as (conn, cur):
         cur.execute("""
             SELECT id, gider_adi, kategori, tutar, kira_artis_tarihi,
@@ -3633,7 +3632,7 @@ def vadeli_kart_oneri(vid: str):
     Her aktif kartı skorlar: kesim günü uzaklığı, limit boşluğu, faiz oranı.
     En yüksek skor = en iyi kart.
     """
-    bugun = date.today()
+    bugun = bugun_tr()
     with db() as (conn, cur):
         cur.execute("SELECT * FROM vadeli_alimlar WHERE id=%s", (vid,))
         v = cur.fetchone()
@@ -3795,7 +3794,7 @@ def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
         if not plan:
             raise HTTPException(400, "Bu vadeli alım için ödeme planı bulunamadı")
 
-        bugun = str(date.today())
+        bugun = str(bugun_tr())
         tutar = float(plan['odenecek_tutar'])  # vadeli_alimlar.tutar değil, planın tutarı
 
         if body.odeme_yontemi == 'kart':
@@ -4296,7 +4295,7 @@ def kasa_onizle(sid: str, baslangic: date, bitis: date = None):
     Seçilen tarih aralığındaki ciro kayıtları için kasa düzeltme önizlemesi.
     Düzeltme yapmaz — sadece etki hesaplar.
     """
-    bitis = bitis or date.today()
+    bitis = bitis or bugun_tr()
     with db() as (conn, cur):
         cur.execute("SELECT * FROM subeler WHERE id=%s", (sid,))
         sube = cur.fetchone()
@@ -4356,7 +4355,7 @@ def kasa_duzelt(sid: str, body: KasaDuzeltModel):
     Her kayıt için: eski kasa kaydı iptal edilir + doğru tutarla yeni kayıt yazılır.
     """
     baslangic = body.baslangic
-    bitis = body.bitis or date.today()
+    bitis = body.bitis or bugun_tr()
 
     with db() as (conn, cur):
         cur.execute("SELECT * FROM subeler WHERE id=%s", (sid,))
@@ -4676,8 +4675,8 @@ def vadeli_panel_detay():
     SADECE kaynak_id ile çalışır — aciklama eşleşmesi yok, risk yok.
     """
     with db() as (conn, cur):
-        yil = __import__('datetime').date.today().year
-        ay  = __import__('datetime').date.today().month
+        yil = bugun_tr().year
+        ay = bugun_tr().month
 
         # Bu ay ödeme yapılan vadeli alımlar — SADECE kaynak_id ile
         cur.execute("""
@@ -4769,7 +4768,7 @@ def vadeli_odeme_detay(kaynak: str = 'kart'):
     kaynak='nakit' → bu ay nakitle yapılan vadeli ödemeleri listeler.
     """
     with db() as (conn, cur):
-        bugun = __import__('datetime').date.today()
+        bugun = bugun_tr()
         yil, ay = bugun.year, bugun.month
 
         if kaynak == 'kart':
@@ -4949,7 +4948,7 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
         if kalan <= 0:
             raise HTTPException(400, "Kalan tutar hesaplanamadı")
 
-        bugun = str(date.today())
+        bugun = str(bugun_tr())
 
         # 1. Eski planı odendi yap — sadece ödenen tutar kadar
         cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
@@ -5118,7 +5117,7 @@ def faiz_uret(body: dict = {}):
                     if s.get('id'):
                         audit(cur, 'kart_hareketleri', s['id'], 'FAIZ_OTOMATIK')
                 return {
-                    "donem":   donem or date.today().strftime('%Y-%m'),
+                    "donem":   donem or bugun_tr().strftime('%Y-%m'),
                     "kartlar": sonuclar,
                     "yazilan": sum(1 for s in sonuclar if s.get('durum') == 'yazildi'),
                 }
@@ -5203,7 +5202,7 @@ def toplu_odeme(payload: dict):
             if plan['durum'] == 'odendi':
                 continue  # Zaten ödendi, atla
             odenen = tutar or float(plan['odenecek_tutar'])
-            bugun = str(date.today())
+            bugun = str(bugun_tr())
             cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s", (bugun, odenen, oid))
             plan_d = dict(plan)
             ana_t = kasa_ve_faiz_odeme_plani_tam_odeme(
@@ -5229,7 +5228,7 @@ def toplu_odeme(payload: dict):
 @app.get("/api/rapor/aylik")
 def aylik_rapor(yil: int = None, ay: int = None):
     import calendar as cal
-    bugun = date.today()
+    bugun = bugun_tr()
     yil = yil or bugun.year
     ay  = ay  or bugun.month
     ay_basi = date(yil, ay, 1)

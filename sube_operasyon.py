@@ -5,32 +5,29 @@
 from __future__ import annotations
 
 import json
+import secrets
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from database import db
 from kasa_service import audit
+from tr_saat import (
+    bugun_tr,
+    dt_format_api_tr,
+    dt_now_tr as _display_now_tr,
+    dt_now_tr_naive,
+)
 
 router = APIRouter(prefix="/api/sube-panel", tags=["sube-operasyon"])
 
 ACILIS_TOLERANS_DK = 10
-# KONTROL: açılış cevabından 30 dk sonra slot; slot açıldıktan sonra 30 dk içinde cevap (toplam ~60 dk hedef)
-KONTROL_SLOT_ACILIS_SONRASI_DK = 30
-KONTROL_CEVAP_PENCERE_DK = 30
+# KONTROL: açılış sonrası sabit saat yok — rastgele gecikme + rastgele cevap penceresi (meta ile mod).
 KAPANIS_TOLERANS_DK = 15
 CIKIS_TOLERANS_DK = 5
-
-_TR_TZ = ZoneInfo("Europe/Istanbul")
-
-
-def _display_now_tr() -> datetime:
-    """UI'da gösterilecek sunucu saatini TR saat diliminde üret."""
-    return datetime.now(timezone.utc).astimezone(_TR_TZ)
 
 
 def _sube_getir(cur, sube_id: str) -> dict:
@@ -63,8 +60,8 @@ def _row_event(r) -> dict:
     ):
         v = d.get(k)
         if v is not None:
-            if hasattr(v, "isoformat"):
-                d[k] = v.isoformat(sep=" ", timespec="seconds")
+            if isinstance(v, datetime):
+                d[k] = dt_format_api_tr(v)
             else:
                 d[k] = str(v)
     for k in (
@@ -79,11 +76,22 @@ def _row_event(r) -> dict:
             d[k] = float(d[k])
     if d.get("tarih"):
         d["tarih"] = str(d["tarih"])
+    raw_meta = d.get("meta")
+    if raw_meta is not None and raw_meta != "":
+        if isinstance(raw_meta, dict):
+            d["meta"] = raw_meta
+        else:
+            try:
+                d["meta"] = json.loads(str(raw_meta))
+            except Exception:
+                d["meta"] = {}
+    else:
+        d["meta"] = {}
     return d
 
 
 def _ensure_events(cur, sube_id: str, sube: dict) -> None:
-    d = date.today()
+    d = bugun_tr()
     acilis_t = sube.get("acilis_saati") or "09:00"
     kapanis_t = sube.get("kapanis_saati") or "22:00"
     slot_ac = _dt(d, acilis_t)
@@ -141,7 +149,13 @@ def _ensure_events(cur, sube_id: str, sube: dict) -> None:
 
 
 def _sync_kontrol_slot_after_acilis(cur, sube_id: str) -> None:
-    """ACILIS tamamlandıysa KONTROL satırını oluştur veya slotu cevap+30 dk (+30 dk cevap penceresi) yap."""
+    """ACILIS tamamlandıysa tek bir KONTROL satırı oluşturur.
+
+    - Başlama zamanı sabit değildir: açılış cevabından sonra 15–150 dk arası rastgele.
+    - Cevap penceresi 18–55 dk arası rastgele.
+    - meta.denetim_mod: bazen yalnızca kasa, bazen yalnızca bardak, bazen ikisi (full).
+    Mevcut bekleyen satırın slotunu güncellemez (tahmin edilebilir kaymayı önler).
+    """
     cur.execute(
         """
         SELECT cevap_ts FROM sube_operasyon_event
@@ -155,8 +169,6 @@ def _sync_kontrol_slot_after_acilis(cur, sube_id: str) -> None:
     if not ra or not ra.get("cevap_ts"):
         return
     ac_cevap = ra["cevap_ts"]
-    slot = ac_cevap + timedelta(minutes=KONTROL_SLOT_ACILIS_SONRASI_DK)
-    deadline = slot + timedelta(minutes=KONTROL_CEVAP_PENCERE_DK)
     cur.execute(
         """
         SELECT id, durum FROM sube_operasyon_event
@@ -166,26 +178,34 @@ def _sync_kontrol_slot_after_acilis(cur, sube_id: str) -> None:
         (sube_id,),
     )
     rk = cur.fetchone()
-    if not rk:
-        eid = str(uuid.uuid4())
-        cur.execute(
-            """
-            INSERT INTO sube_operasyon_event
-                (id, sube_id, tarih, tip, sira_no, sistem_slot_ts, son_teslim_ts, durum)
-            VALUES (%s, %s, CURRENT_DATE, 'KONTROL', 1, %s, %s, 'bekliyor')
-            """,
-            (eid, sube_id, slot, deadline),
-        )
+    if rk:
         return
-    if rk["durum"] not in ("bekliyor", "gecikti"):
-        return
+    delay_min = secrets.randbelow(136) + 15  # 15–150
+    pencere_min = secrets.randbelow(38) + 18  # 18–55
+    slot = ac_cevap + timedelta(minutes=delay_min)
+    deadline = slot + timedelta(minutes=pencere_min)
+    r = secrets.randbelow(10)
+    if r < 4:
+        denetim_mod = "kasa_only"
+    elif r < 8:
+        denetim_mod = "bardak_only"
+    else:
+        denetim_mod = "full"
+    meta_obj = {
+        "denetim_mod": denetim_mod,
+        "rastgele_kontrol": True,
+        "acilis_sonrasi_dk": delay_min,
+        "cevap_penceresi_dk": pencere_min,
+    }
+    meta_sql = json.dumps(meta_obj, ensure_ascii=False)
+    eid = str(uuid.uuid4())
     cur.execute(
         """
-        UPDATE sube_operasyon_event
-        SET sistem_slot_ts=%s, son_teslim_ts=%s
-        WHERE id=%s AND durum IN ('bekliyor','gecikti')
+        INSERT INTO sube_operasyon_event
+            (id, sube_id, tarih, tip, sira_no, sistem_slot_ts, son_teslim_ts, durum, meta)
+        VALUES (%s, %s, CURRENT_DATE, 'KONTROL', 1, %s, %s, 'bekliyor', %s)
         """,
-        (slot, deadline, rk["id"]),
+        (eid, sube_id, slot, deadline, meta_sql),
     )
 
 
@@ -272,7 +292,7 @@ def build_panel_operasyon_blob(cur, sube_id: str, sube: dict) -> Dict[str, Any]:
     _sync_acilis_event_if_acik(cur, sube_id)
     _sync_kontrol_slot_after_acilis(cur, sube_id)
     _refresh_durum(cur, sube_id)
-    simdi = datetime.now()
+    simdi = dt_now_tr_naive()
     simdi_display = _display_now_tr()
     rows = _list_events(cur, sube_id)
     aktif = _pick_aktif(rows, simdi)
@@ -309,6 +329,7 @@ class OperasyonTamamla(BaseModel):
     ciro_nakit: Optional[float] = None
     ciro_pos: Optional[float] = None
     ciro_online: Optional[float] = None
+    kasa_kime_teslim: Optional[str] = None
     personel_id: Optional[str] = None
     pin: Optional[str] = None
     bardak_kucuk: Optional[int] = None
@@ -372,7 +393,7 @@ def _insert_acilis_if_needed(cur, sube_id: str, personel_id: Optional[str], acik
 
 @router.post("/{sube_id}/operasyon/event/{event_id}/tamamla")
 def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
-    simdi = datetime.now()
+    simdi = dt_now_tr_naive()
     simdi_tr = _display_now_tr()
     with db() as (conn, cur):
         sube = _sube_getir(cur, sube_id)
@@ -484,7 +505,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 sube_id,
                 "ACILIS_TAMAM",
                 (
-                    f"Operasyon ACILIS tamamlandı — {onay_ad} — tarih={date.today()} saat={saat_sistem} "
+                    f"Operasyon ACILIS tamamlandı — {onay_ad} — tarih={bugun_tr()} saat={saat_sistem} "
                     f"kasa_sayim={ks} | stok bardak(kucuk/buyuk/plastik)=({stok['bardak_kucuk']}/"
                     f"{stok['bardak_buyuk']}/{stok['bardak_plastik']}) "
                     f"urun(su/redbull/soda/cookie/pasta)=({stok['su_adet']}/{stok['redbull_adet']}/"
@@ -497,35 +518,131 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             )
 
         elif tip == "KONTROL":
-            if body.kasa_sayim is None or body.kasa_sayim < 0:
-                raise HTTPException(400, "Kontrol için kasa sayımı zorunlu")
+            from personel_panel_auth import dogrula_personel_panel_pin
+
+            meta_prev: Dict[str, Any] = {}
+            raw_m = ev.get("meta")
+            if raw_m:
+                if isinstance(raw_m, dict):
+                    meta_prev = dict(raw_m)
+                else:
+                    try:
+                        meta_prev = json.loads(str(raw_m))
+                    except Exception:
+                        meta_prev = {}
+            mod = str(meta_prev.get("denetim_mod") or "").strip() or "legacy_kasa_snap"
+
+            pid_in = (body.personel_id or "").strip()
+            pin = (body.pin or "").replace(" ", "")
+            if not pid_in or len(pin) != 4 or not pin.isdigit():
+                raise HTTPException(400, "Kontrol için personel ve 4 haneli PIN zorunlu")
+            ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+            onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+            pid_panel = str(ku.get("id") or "").strip() or pid_in
+            saat_kayit = simdi_tr.strftime("%H:%M:%S")
+            psaat = (body.personel_saat or "").strip() or saat_kayit
+
+            ks_out: Optional[float] = None
+            sn_out: Optional[float] = None
+            sp_out: Optional[float] = None
+            so_out: Optional[float] = None
+            bardak_out: Optional[Dict[str, int]] = None
+
+            if mod == "bardak_only":
+                for name, val in (
+                    ("bardak_kucuk", body.bardak_kucuk),
+                    ("bardak_buyuk", body.bardak_buyuk),
+                    ("bardak_plastik", body.bardak_plastik),
+                ):
+                    if val is None:
+                        raise HTTPException(400, f"Bardak denetimi: {name} zorunlu")
+                    if int(val) < 0:
+                        raise HTTPException(400, f"Bardak denetimi: {name} negatif olamaz")
+                bardak_out = {
+                    "bardak_kucuk": int(body.bardak_kucuk),
+                    "bardak_buyuk": int(body.bardak_buyuk),
+                    "bardak_plastik": int(body.bardak_plastik),
+                }
+            elif mod == "kasa_only":
+                if body.kasa_sayim is None or body.kasa_sayim < 0:
+                    raise HTTPException(400, "Kasa denetimi: kasa sayımı zorunlu")
+                ks_out = float(body.kasa_sayim)
+                sn_out = float(body.snap_nakit or 0)
+                sp_out = float(body.snap_pos or 0)
+                so_out = float(body.snap_online or 0)
+            elif mod == "full":
+                if body.kasa_sayim is None or body.kasa_sayim < 0:
+                    raise HTTPException(400, "Tam denetim: kasa sayımı zorunlu")
+                for name, val in (
+                    ("bardak_kucuk", body.bardak_kucuk),
+                    ("bardak_buyuk", body.bardak_buyuk),
+                    ("bardak_plastik", body.bardak_plastik),
+                ):
+                    if val is None:
+                        raise HTTPException(400, f"Tam denetim: {name} zorunlu")
+                    if int(val) < 0:
+                        raise HTTPException(400, f"Tam denetim: {name} negatif olamaz")
+                ks_out = float(body.kasa_sayim)
+                sn_out = float(body.snap_nakit or 0)
+                sp_out = float(body.snap_pos or 0)
+                so_out = float(body.snap_online or 0)
+                bardak_out = {
+                    "bardak_kucuk": int(body.bardak_kucuk),
+                    "bardak_buyuk": int(body.bardak_buyuk),
+                    "bardak_plastik": int(body.bardak_plastik),
+                }
+            else:
+                if body.kasa_sayim is None or body.kasa_sayim < 0:
+                    raise HTTPException(400, "Kontrol için kasa sayımı zorunlu")
+                ks_out = float(body.kasa_sayim)
+                sn_out = float(body.snap_nakit or 0)
+                sp_out = float(body.snap_pos or 0)
+                so_out = float(body.snap_online or 0)
+
+            meta_prev["kontrol_tamam"] = {
+                "mod": mod,
+                "saat": saat_kayit,
+                "personel_id": pid_panel,
+                "personel_ad": onay_ad,
+                "bardak": bardak_out,
+                "kasa_sayim": ks_out,
+                "snap": {"nakit": sn_out, "pos": sp_out, "online": so_out},
+            }
+            meta_sql = json.dumps(meta_prev, ensure_ascii=False)
+
             cur.execute(
                 """
                 UPDATE sube_operasyon_event
                 SET durum='tamamlandi', cevap_ts=%s,
                     personel_saat=%s, kasa_sayim=%s,
-                    snap_nakit=%s, snap_pos=%s, snap_online=%s
+                    snap_nakit=%s, snap_pos=%s, snap_online=%s,
+                    meta=%s
                 WHERE id=%s
                 """,
                 (
                     simdi,
-                    body.personel_saat,
-                    body.kasa_sayim,
-                    body.snap_nakit,
-                    body.snap_pos,
-                    body.snap_online,
+                    psaat,
+                    ks_out,
+                    sn_out,
+                    sp_out,
+                    so_out,
+                    meta_sql,
                     event_id,
                 ),
             )
             audit(cur, "sube_operasyon_event", event_id, "KONTROL_TAMAMLANDI")
             from operasyon_defter import operasyon_defter_ekle
 
+            ozet = f"mod={mod} kasa={ks_out} bardak={bardak_out}"
             operasyon_defter_ekle(
                 cur,
                 sube_id,
-                "KONTROL_TAMAM",
-                f"KONTROL tamamlandı kasa_sayim={body.kasa_sayim}",
+                "KONTROL_TAMAM_PIN",
+                f"KONTROL tamamlandı — {onay_ad} — {ozet}",
                 event_id,
+                personel_id=pid_panel,
+                personel_ad=onay_ad,
+                bildirim_saati=saat_kayit,
             )
 
         elif tip == "KAPANIS":
@@ -542,6 +659,8 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 )
             if body.teslim is None or body.teslim < 0:
                 raise HTTPException(400, "Kapanış için teslim kasa tutarı girilmeli")
+            if not (body.kasa_kime_teslim or "").strip():
+                raise HTTPException(400, "Kapanış için kasa kime teslim bilgisi zorunlu")
             if not body.x_raporu_gonderildi:
                 raise HTTPException(400, "Kapanış: X raporu gönderildi onayı gerekli.")
             pid_in = (body.personel_id or "").strip()
@@ -600,6 +719,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 audit_etiket="KAPANIS_TASLAK",
             )
             ks = body.kasa_sayim if body.kasa_sayim is not None else body.teslim
+            kasa_kime_teslim = (body.kasa_kime_teslim or "").strip()
             cur.execute(
                 """
                 UPDATE sube_operasyon_event
@@ -614,7 +734,14 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     ks,
                     body.teslim,
                     body.devir,
-                    json.dumps({"kapanis_stok_sayim": k_stok, "x_rapor": {"nakit": cn, "pos": cp, "online": co}}, ensure_ascii=False),
+                    json.dumps(
+                        {
+                            "kapanis_stok_sayim": k_stok,
+                            "x_rapor": {"nakit": cn, "pos": cp, "online": co},
+                            "kasa_kime_teslim": kasa_kime_teslim,
+                        },
+                        ensure_ascii=False,
+                    ),
                     event_id,
                 ),
             )
@@ -623,6 +750,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
 
             defter_satir = (
                 f"KAPANIS teslim={body.teslim} devir={body.devir} kasa_sayim={ks} | "
+                f"kasa_kime_teslim={kasa_kime_teslim} | "
                 f"X ciro(nakit,pos,online)=({cn},{cp},{co}) | "
                 f"stok bardak(kucuk/buyuk/plastik)=({k_stok['bardak_kucuk']}/{k_stok['bardak_buyuk']}/{k_stok['bardak_plastik']}) "
                 f"urun(su/redbull/soda/cookie/pasta)=({k_stok['su_adet']}/{k_stok['redbull_adet']}/{k_stok['soda_adet']}/{k_stok['cookie_adet']}/{k_stok['pasta_adet']}) | "
@@ -695,7 +823,7 @@ def operasyon_alarm_arttir(sube_id: str, event_id: str):
 @router.post("/{sube_id}/operasyon/cikis-baslat")
 def operasyon_cikis_baslat(sube_id: str):
     """Anlık çıkış olayı (deadline birkaç dakika)."""
-    simdi = datetime.now()
+    simdi = dt_now_tr_naive()
     with db() as (conn, cur):
         sube = _sube_getir(cur, sube_id)
         blob = build_panel_operasyon_blob(cur, sube_id, sube)

@@ -19,6 +19,8 @@ Kapsam:
 
 from datetime import date, timedelta
 
+from tr_saat import bugun_tr
+
 
 # ══════════════════════════════════════════════════════════════
 # KASA
@@ -205,7 +207,7 @@ def odeme_yuku(cur, bugun: date = None) -> dict:
     Karar motoru, strateji motoru ve panel bu fonksiyonu kullanır.
     """
     if bugun is None:
-        bugun = date.today()
+        bugun = bugun_tr()
 
     cur.execute("""
         SELECT
@@ -331,7 +333,7 @@ def nakit_akis_sim(cur, gun_sayisi: int = 15) -> list:
     gun_sayisi günlük kasa projeksiyonu.
     Mevcut kasa + günlük ciro tahmini - planlanan ödemeler.
     """
-    bugun = date.today()
+    bugun = bugun_tr()
     baslangic_kasa = kasa_bakiyesi(cur)
     ciro_veri = gunluk_ciro_ortalama(cur)
     gunluk_ciro = ciro_veri["tahmin"]
@@ -377,7 +379,7 @@ def taksit_detay(cur, kart_id: str) -> list:
     - kalan_tutar: toplam kalan borç
     - bitis_tarihi: son taksit tarihi
     """
-    bugun = date.today()
+    bugun = bugun_tr()
     cur.execute("""
         SELECT id, tarih, COALESCE(baslangic_tarihi, tarih) AS bas_tarih,
                tutar, taksit_sayisi, aciklama
@@ -431,7 +433,7 @@ def gelecek_taksit_yuku(cur, kart_id: str, ay_sayisi: int = 3) -> list:
     Her ay için o aya düşen toplam taksit tutarını döner.
     Karar motoru ve simülasyon bunu kullanır.
     """
-    bugun = date.today()
+    bugun = bugun_tr()
     detaylar = taksit_detay(cur, kart_id)
 
     aylar = []
@@ -479,7 +481,7 @@ def aktif_kesim_gunu(kart: dict) -> int:
     Önce son_kesim_tarihi'ne bakar, yoksa varsayılan + tolerans.
     """
     import calendar as _cal
-    bugun = date.today()
+    bugun = bugun_tr()
 
     # Önce son_kesim_tarihi
     son_kesim = kart.get('son_kesim_tarihi')
@@ -514,7 +516,7 @@ def faiz_hesapla_ve_yaz(cur, kart_id: str, donem: str = None) -> dict:
     6. Kasaya dokunma
     7. Aynı dönem için 2 kez yazma (duplicate engel)
     """
-    bugun = date.today()
+    bugun = bugun_tr()
     if donem is None:
         donem = bugun.strftime('%Y-%m')
 

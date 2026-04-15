@@ -1,5 +1,7 @@
 from database import db
 from datetime import date, timedelta
+
+from tr_saat import bugun_tr
 from finans_core import (
     kasa_bakiyesi, odeme_yuku, gunluk_ciro_ortalama,
     nakit_akis_sim, kart_borc, tum_kart_borclari,
@@ -14,7 +16,7 @@ def fmt(n):
 
 # ── KARAR MOTORU ───────────────────────────────────────────────
 def karar_motoru():
-    bugun = date.today()
+    bugun = bugun_tr()
     kararlar = []
 
     with db() as (conn, cur):
@@ -159,7 +161,7 @@ def karar_motoru():
 
 # ── STRATEJİ MOTORU ────────────────────────────────────────────
 def odeme_strateji_motoru():
-    bugun = date.today()
+    bugun = bugun_tr()
     oneriler = []
 
     with db() as (conn, cur):
@@ -271,7 +273,7 @@ def nakit_akis_simulasyon(gun_sayisi=15):
 
 # ── KART ANALİZ (Panel için) ───────────────────────────────────
 def kart_analiz_hesapla():
-    bugun = date.today()
+    bugun = bugun_tr()
     with db() as (conn, cur):
         cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE ORDER BY banka")
         kartlar = cur.fetchall()
@@ -342,7 +344,7 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
     """
     from datetime import date
     import uuid as _uuid
-    bugun = date.today()
+    bugun = bugun_tr()
     if yil is None: yil = bugun.year
     if ay is None: ay = bugun.month
 
@@ -673,7 +675,7 @@ def uyari_motoru():
     - Bugün: kırmızı, ödendi mi sorar
     - Geçmiş ve ödenmemiş: kritik
     """
-    bugun = date.today()
+    bugun = bugun_tr()
     uyarilar = []
 
     with db() as (conn, cur):
@@ -749,7 +751,7 @@ def finans_ozet_motoru():
     Tüm motorları birleştirir, çelişkileri çözer, tek karar üretir.
     Panel bu fonksiyonu çağırır — başka bir şey çağırmaz.
     """
-    bugun = date.today()
+    bugun = bugun_tr()
 
     # Tüm motorları çalıştır
     karar = karar_motoru()

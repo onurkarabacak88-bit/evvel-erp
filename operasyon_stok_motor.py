@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
+
+from tr_saat import dt_coerce_naive_tr, dt_now_tr_naive
 
 STOK_KEYS = (
     "bardak_kucuk",
@@ -286,10 +288,14 @@ def kontrol_gecikme_uyarilari(cur: Any, sube_id: str, simdi: Any) -> List[Dict[s
     if not r or r.get("durum") != "gecikti":
         return out
     st = r.get("son_teslim_ts")
-    if st is None or simdi is None:
+    if st is None:
+        return out
+    st_n = dt_coerce_naive_tr(st)
+    sim_n = dt_coerce_naive_tr(simdi) if isinstance(simdi, datetime) else dt_now_tr_naive()
+    if st_n is None or sim_n is None:
         return out
     try:
-        gec_dk = max(0, int((simdi - st).total_seconds() // 60))
+        gec_dk = max(0, int((sim_n - st_n).total_seconds() // 60))
     except Exception:
         return out
     if gec_dk <= 0:

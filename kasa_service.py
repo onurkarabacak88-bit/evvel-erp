@@ -11,6 +11,7 @@ from datetime import date
 from typing import List
 
 from finans_core import kart_borc
+from tr_saat import bugun_tr
 
 
 KASA_ETKISI_MAP = {
@@ -215,7 +216,7 @@ def kart_plan_guncelle_tx(cur) -> List[str]:
     Mevcut cursor ile ödeme planlarını günceller — ayrı db() açmaz.
     Kart harcama/fatura/vadeli ödemesi ile aynı transaction içinde çağrılmalıdır.
     """
-    bugun = date.today()
+    bugun = bugun_tr()
     yil, ay = bugun.year, bugun.month
     guncellenen: List[str] = []
     cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE")

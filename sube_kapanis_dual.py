@@ -19,6 +19,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from database import db
+from tr_saat import bugun_tr, dt_now_tr_naive
 from evvel_merkez_guard import merkez_mutasyon_korumasi
 from kasa_service import audit
 from personel_panel_auth import (
@@ -249,6 +250,7 @@ class VardiyaDevirAdim1(BaseModel):
     """1. imza: sabahçı (devreden) — `sabahci_devreden_id` = personel_id.
 
     Bardak ve ürün sayımları zorunludur (açılış / devir tutarlılığı; >= 0 tam sayı).
+    Nakit/POS/Online panelde zorunlu değildir (0 gönderilebilir); asıl vurgu teslim kasa + sayımlar.
     """
 
     sabahci_devreden_id: str
@@ -343,11 +345,10 @@ def panel_yonetici_atama(sube_id: str, body: PanelYoneticiAtamaBody):
 def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
     from sube_panel import _bugun_sube_acildi_mi
 
-    simdi = datetime.now()
+    simdi = dt_now_tr_naive()
     if body.teslim < 0 or body.devir < 0:
         raise HTTPException(400, "Teslim / devir geçersiz")
-    if body.nakit + body.pos + body.online <= 0:
-        raise HTTPException(400, "Ciro tutarlarından en az biri girilmeli")
+    # Panelde adım-1 yalnızca kasa sayımı; X nakit/POS/online isteğe bağlı (0 olabilir).
     if not body.x_raporu_gonderildi:
         raise HTTPException(400, "X raporu gönderildi onayı gerekli")
 
@@ -424,7 +425,7 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
             "VARDIYA_DEVIR_IMZA1_PIN",
             (
                 f"Vardiya devri 1. imza (PIN) — personel={onay_ad} "
-                f"tarih={date.today()} saat={simdi.strftime('%H:%M:%S')}"
+                f"tarih={bugun_tr()} saat={simdi.strftime('%H:%M:%S')}"
             ),
             ref_event_id=body.operasyon_event_id,
             personel_id=body.sabahci_devreden_id,
@@ -456,7 +457,7 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
 
 @router.post("/{sube_id}/vardiya-devri/adim2")
 def vardiya_devri_adim2(sube_id: str, body: VardiyaDevirAdim2):
-    simdi = datetime.now()
+    simdi = dt_now_tr_naive()
     kid_out = ""
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
@@ -503,7 +504,7 @@ def vardiya_devri_adim2(sube_id: str, body: VardiyaDevirAdim2):
             "VARDIYA_DEVIR_IMZA2_PIN",
             (
                 f"Vardiya devri 2. imza (PIN) — personel={onay_ad} "
-                f"tarih={date.today()} saat={simdi.strftime('%H:%M:%S')}"
+                f"tarih={bugun_tr()} saat={simdi.strftime('%H:%M:%S')}"
             ),
             ref_event_id=kk.get("operasyon_event_id"),
             personel_id=body.aksamci_devralan_id,
