@@ -261,6 +261,15 @@ def _pick_aktif(rows: List[dict], simdi: datetime) -> Optional[dict]:
     def parse_ts(s: str) -> datetime:
         return datetime.fromisoformat(s.replace(" ", "T"))
 
+    def slot_basladi(e: dict) -> bool:
+        """KONTROL/KAPANIS vb. rastgele slotlu olaylar — süre gelmeden zorunlu gösterilmez."""
+        tip = str(e.get("tip") or "").upper()
+        slot = parse_ts(e["sistem_slot_ts"])
+        # Açılış: iş günü başında kullanıcıya görev hazır olsun (slot saatinden önce de listelenebilir)
+        if tip == "ACILIS":
+            return True
+        return simdi >= slot
+
     cands: List[dict] = []
     pending_all: List[dict] = []
     for e in rows:
@@ -272,12 +281,15 @@ def _pick_aktif(rows: List[dict], simdi: datetime) -> Optional[dict]:
             continue
         cands.append(e)
     if not cands:
-        # Saat slotu henüz gelmemiş olsa da panel akışı (özellikle açılış)
-        # bugünün ilk bekleyen olayı üzerinden ilerleyebilsin.
+        # Slotu henüz gelmemiş KONTROL/KAPANIS vb. için zorunlu overlay açılmasın.
+        # Yalnızca ACILIS veya slotu geçmiş bekleyenler "sıradaki" sayılır.
         if not pending_all:
             return None
-        pending_all.sort(key=lambda x: parse_ts(x["sistem_slot_ts"]))
-        return pending_all[0]
+        erken = [e for e in pending_all if slot_basladi(e)]
+        if not erken:
+            return None
+        erken.sort(key=lambda x: parse_ts(x["sistem_slot_ts"]))
+        return erken[0]
     cands.sort(
         key=lambda x: (
             0 if x["durum"] == "gecikti" else 1,
