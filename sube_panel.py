@@ -2056,6 +2056,13 @@ class SiparisOnayBody(BaseModel):
     not_aciklama: Optional[str] = None
 
 
+class PanelPinDogrulaBody(BaseModel):
+    """Şube panelinde yalnızca PIN doğrulama (ör. sipariş modalını sıfırlayıp kapatma)."""
+
+    personel_id: str
+    pin: str
+
+
 def _siparis_katalog_getir(cur) -> List[Dict[str, Any]]:
     cur.execute(
         """
@@ -2318,6 +2325,20 @@ def sube_siparis_onay(sube_id: str, body: SiparisOnayBody):
             bildirim_saati=saat,
         )
         return {"success": True, "talep_id": tid, "kalem_sayisi": len(temiz), "toplam_adet": toplam}
+
+
+@router.post("/{sube_id}/panel-pin-dogrula")
+def sube_panel_pin_dogrula(sube_id: str, body: PanelPinDogrulaBody):
+    """Sipariş kategori modalında girilmiş adetleri silmeden önce PIN doğrular."""
+    pid_in = (body.personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    if not pid_in or len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "personel_id ve 4 haneli PIN gerekli")
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        ad = (ku.get("ad_soyad") or "").strip() or "—"
+        return {"success": True, "personel_id": str(ku.get("id") or pid_in), "ad_soyad": ad}
 
 
 # ─────────────────────────────────────────────────────────────
