@@ -13,7 +13,8 @@ from finans_core import (
 )
 
 def fmt(n):
-    if n is None: return "---"
+    if n is None:
+        return "---"
     return f"{int(n):,} ₺".replace(",", ".")
 
 
@@ -53,6 +54,12 @@ _UYARI_CACHE_TTL_SN = 30
 _FINANS_OZET_CACHE = {"ts": None, "data": None}
 _FINANS_OZET_CACHE_TTL_SN = 8
 _logger = logging.getLogger("evvel-erp")
+
+
+def uyari_cache_clear() -> None:
+    """Uyarı motoru önbelleğini elle temizler (ödeme/ertele sonrası)."""
+    _UYARI_CACHE["ts"] = None
+    _UYARI_CACHE["data"] = []
 
 # ── KARAR MOTORU ───────────────────────────────────────────────
 def karar_motoru():
@@ -794,6 +801,8 @@ def uyari_motoru():
                 "blink": blink,
                 "kart_adi": o['kart_adi'],
                 "banka": o['banka'],
+                "kaynak_tablo": o.get("kaynak_tablo"),
+                "kaynak_id": str(o["kaynak_id"]) if o.get("kaynak_id") else None,
             })
 
         # Şubeden gelen ve merkez onayı bekleyen anlık giderler de uyarıya dahil.
@@ -831,7 +840,8 @@ def uyari_motoru():
                 blink = False
 
             uyarilar.append({
-                "odeme_id": str(g['id']),
+                # anlik_giderler id — ödeme planı değil; odeme_id taşınmaz (panel yanlış API çağırmasın)
+                "odeme_id": None,
                 "aciklama": f"Şube Anlık Gideri: {g['kategori']} — {(g.get('aciklama') or '').strip() or 'Açıklama yok'}",
                 "tarih": str(g['tarih']),
                 "tutar": float(g['tutar'] or 0),

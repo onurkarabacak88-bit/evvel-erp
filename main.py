@@ -42,7 +42,18 @@ def ay_ekle(d: date, ay: int) -> date:
     ay_no = (d.month - 1 + ay) % 12 + 1
     gun = min(d.day, calendar.monthrange(yil, ay_no)[1])
     return date(yil, ay_no, gun)
-from motors import karar_motoru, odeme_strateji_motoru, nakit_akis_simulasyon, guncel_kasa, kasa_detay, kart_analiz_hesapla, aylik_odeme_plani_uret, uyari_motoru, finans_ozet_motoru
+from motors import (
+    karar_motoru,
+    odeme_strateji_motoru,
+    nakit_akis_simulasyon,
+    guncel_kasa,
+    kasa_detay,
+    kart_analiz_hesapla,
+    aylik_odeme_plani_uret,
+    uyari_motoru,
+    finans_ozet_motoru,
+    uyari_cache_clear,
+)
 from finans_core import (
     kart_borc, kasa_bakiyesi, kasa_bakiyesi_tarihte,
     kart_ekstre, kart_bu_ay_odenen, kart_faiz_tahmini,
@@ -1393,6 +1404,8 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
             if plan.get('kaynak_id'):
                 vadeli_alim_kapat(cur, plan['kaynak_id'], bugun)
             audit(cur, 'odeme_plani', oid, 'ODENDI_KART')
+            # Uyarı önbelleğini temizle — panelde uyarı hemen kalksın
+            uyari_cache_clear()
             return {"success": True, "odeme_yontemi": "kart"}
 
         bugun = str(bugun_tr())
@@ -1418,6 +1431,9 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
         guncelle_borc_envanteri_odeme_plani_sonrasi(cur, plan, ana_para_kismi)
 
         # Faiz üretimi: /api/kartlar/faiz-uret endpoint'i veya ay sonu startup ile otomatik
+
+        # Uyarı önbelleğini temizle — panelde uyarı hemen kalksın
+        uyari_cache_clear()
 
     return {"success": True}
 
@@ -5268,10 +5284,13 @@ def odeme_odendi(oid: str, manuel_tutar: Optional[float] = None):
 
 
 @app.post("/api/odeme-plani/{oid}/ertele")
-def odeme_ertele(oid: str, yeni_tarih: date = None):
+def odeme_ertele(oid: str, yeni_tarih: Optional[date] = None):
     """Ödemeyi ertele — sadece tarih güncellenir, yeni kayıt açılmaz."""
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM odeme_plani WHERE id=%s AND durum='bekliyor'", (oid,))
+        cur.execute(
+            "SELECT * FROM odeme_plani WHERE id=%s AND durum IN ('bekliyor','onay_bekliyor')",
+            (oid,),
+        )
         o = cur.fetchone()
         if not o: raise HTTPException(404)
         mevcut = o["tarih"]
@@ -5294,6 +5313,8 @@ def odeme_ertele(oid: str, yeni_tarih: date = None):
             AND (kaynak_id=%s OR kaynak_id=(SELECT kaynak_id FROM odeme_plani WHERE id=%s LIMIT 1))
         """, (yeni, oid, oid))
         audit(cur, 'odeme_plani', oid, 'ERTELE')
+        # Uyarı önbelleğini temizle — erteleme sonrası uyarı gizlensin
+        uyari_cache_clear()
     return {"success": True, "yeni_tarih": str(yeni)}
 
 
@@ -5429,6 +5450,9 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
 
         audit(cur, 'odeme_plani', oid, 'KISMI_ODE',
               eski={'tutar': toplam}, yeni={'odenen': odenen, 'kalan': kalan, 'yeni_plan': yeni_id})
+
+        # Uyarı önbelleğini temizle — kısmi ödeme sonrası uyarı güncellensin
+        uyari_cache_clear()
 
     return {"success": True, "odenen": odenen, "kalan": kalan, "yeni_plan_id": yeni_id}
 
