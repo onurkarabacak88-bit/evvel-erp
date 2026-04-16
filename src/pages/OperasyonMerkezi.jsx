@@ -14,6 +14,11 @@ const FILTRELER = [
 
 const UST_SEKMELER = [
   { id: 'canli', label: 'Canlı Operasyon' },
+  { id: 'kontrol', label: '🔍 Kontrol' },
+  { id: 'metrics', label: '📊 Metrikler' },
+  { id: 'stok-kayip', label: '📉 Stok Kayıp' },
+  { id: 'personel-davranis', label: '👤 Personel Davranış' },
+  { id: 'fis', label: '🧾 Fiş Kontrol' },
   { id: 'onay', label: 'Onay merkezi' },
   { id: 'defter', label: 'Defter Kayıtları' },
   { id: 'sayim', label: 'Açılış Sayımları' },
@@ -471,12 +476,22 @@ export default function OperasyonMerkezi() {
   const [mesajBusy, setMesajBusy] = useState(false);
   const [puanListe, setPuanListe] = useState([]);
   const [puanSubeFiltre, setPuanSubeFiltre] = useState('');
+  const [takipMap, setTakipMap] = useState({});
+  const [riskModal, setRiskModal] = useState(null);
   const [sipOzel, setSipOzel] = useState([]);
   const [sipKat, setSipKat] = useState([]);
   const [sipSevkEksik, setSipSevkEksik] = useState([]);
   const [sipBusyId, setSipBusyId] = useState(null);
   const [sipYeniUrun, setSipYeniUrun] = useState({ kategori_kod: '', urun_adi: '' });
   const [sipYeniKat, setSipYeniKat] = useState({ ad: '', emoji: '📦' });
+  const [sipSevkiyatHedef, setSipSevkiyatHedef] = useState({});
+  const [mPersonelVerimlilik, setMPersonelVerimlilik] = useState(null);
+  const [mSubeOperasyonKalite, setMSubeOperasyonKalite] = useState(null);
+  const [mFinansOzet, setMFinansOzet] = useState(null);
+  const [mStokTedarik, setMStokTedarik] = useState(null);
+  const [kontrolData, setKontrolData] = useState(null);
+  const [fisBekleyen, setFisBekleyen] = useState([]);
+  const [fisBusyId, setFisBusyId] = useState(null);
 
   const toast = (m, t = 'red') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 4000); };
 
@@ -516,6 +531,47 @@ export default function OperasyonMerkezi() {
     }
   }, [ayFiltre, subeOnayFiltre]);
 
+  const yukleMetrics = useCallback(async () => {
+    try {
+      const [pv, sk, fo, st] = await Promise.all([
+        api('/ops/metrics/personel-verimlilik?gun=30').catch(() => null),
+        api('/ops/metrics/sube-operasyon-kalite?gun=30').catch(() => null),
+        api('/ops/metrics/finans-ozet?gun=30').catch(() => null),
+        api('/ops/metrics/stok-tedarik?gun=30').catch(() => null),
+      ]);
+      setMPersonelVerimlilik(pv);
+      setMSubeOperasyonKalite(sk);
+      setMFinansOzet(fo);
+      setMStokTedarik(st);
+    } catch (_) {
+      // her endpoint kendi catch'inde izole edildi
+    } finally {
+      setYukleniyor(false);
+    }
+  }, []);
+
+  const yukleKontrolOzet = useCallback(async () => {
+    try {
+      const payload = await api('/ops/kontrol-ozet');
+      setKontrolData(payload || null);
+    } catch (e) {
+      toast(e.message || 'Kontrol özeti yüklenemedi');
+    } finally {
+      setYukleniyor(false);
+    }
+  }, []);
+
+  const yukleFisBekleyen = useCallback(async () => {
+    try {
+      const r = await api('/ops/gider-fis-bekleyen?gun=7');
+      setFisBekleyen(r?.satirlar || []);
+    } catch (e) {
+      toast(e.message || 'Fiş listesi yüklenemedi');
+    } finally {
+      setYukleniyor(false);
+    }
+  }, []);
+
   const yukle = useCallback(async (f = filtre) => {
     try {
       const q = `year_month=${encodeURIComponent(ayFiltre)}${gunFiltre ? `&gun=${encodeURIComponent(gunFiltre)}` : ''}`;
@@ -525,6 +581,10 @@ export default function OperasyonMerkezi() {
         calls.push(api('/ops/stok-kayip-analiz?gun=45').catch(() => null));
         calls.push(api('/ops/personel-davranis-analiz?gun=45').catch(() => null));
         calls.push(api('/ops/merkez-stok-kart').catch(() => null));
+      } else if (aktifSekme === 'stok-kayip') {
+        calls.push(api('/ops/stok-kayip-analiz?gun=45').catch(() => null));
+      } else if (aktifSekme === 'personel-davranis') {
+        calls.push(api('/ops/personel-davranis-analiz?gun=45').catch(() => null));
       } else if (aktifSekme === 'defter') {
         calls.push(api(`/ops/defter?limit=300&${q}`));
       } else if (aktifSekme === 'sayim') {
@@ -540,6 +600,10 @@ export default function OperasyonMerkezi() {
         setStokKayip(extra2 || null);
         setPersonelDavranis(extra3 || null);
         setMerkezStokKart(extra4 || null);
+      } else if (aktifSekme === 'stok-kayip') {
+        setStokKayip(extra || null);
+      } else if (aktifSekme === 'personel-davranis') {
+        setPersonelDavranis(extra || null);
       } else if (aktifSekme === 'defter') {
         setDefter(extra?.satirlar || []);
       } else if (aktifSekme === 'sayim') {
@@ -566,7 +630,7 @@ export default function OperasyonMerkezi() {
   );
 
   useEffect(() => {
-    if (aktifSekme === 'onay') return;
+    if (aktifSekme === 'onay' || aktifSekme === 'metrics' || aktifSekme === 'kontrol') return;
     yukle(filtre);
   }, [filtre, aktifSekme, ayFiltre, gunFiltre, yukle]);
 
@@ -589,6 +653,13 @@ export default function OperasyonMerkezi() {
     api(`/ops/sube-personel-puan${q}`)
       .then(r => setPuanListe(r.personeller || []))
       .catch(() => {});
+    api('/ops/personel-takip')
+      .then(r => {
+        const m = {};
+        (r?.satirlar || []).forEach((t) => { if (t?.personel_id) m[t.personel_id] = t; });
+        setTakipMap(m);
+      })
+      .catch(() => {});
   }, [aktifSekme, puanSubeFiltre]);
 
   useEffect(() => {
@@ -597,23 +668,62 @@ export default function OperasyonMerkezi() {
   }, [aktifSekme, yukleSiparisMerkez]);
 
   useEffect(() => {
+    if (aktifSekme !== 'metrics') return;
+    setYukleniyor(true);
+    yukleMetrics();
+  }, [aktifSekme, yukleMetrics]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'kontrol') return;
+    setYukleniyor(true);
+    yukleKontrolOzet();
+  }, [aktifSekme, yukleKontrolOzet]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'fis') return;
+    setYukleniyor(true);
+    yukleFisBekleyen();
+  }, [aktifSekme, yukleFisBekleyen]);
+
+  useEffect(() => {
     const unsub = subscribeGlobalDataRefresh(() => {
       if (aktifSekme === 'onay') {
         setYukleniyor(true);
         yukleOnayMerkez();
+      } else if (aktifSekme === 'metrics') {
+        setYukleniyor(true);
+        yukleMetrics();
+      } else if (aktifSekme === 'kontrol') {
+        setYukleniyor(true);
+        yukleKontrolOzet();
+      } else if (aktifSekme === 'fis') {
+        setYukleniyor(true);
+        yukleFisBekleyen();
       } else {
         yukle(filtre);
       }
     });
     return unsub;
-  }, [aktifSekme, filtre, yukle, yukleOnayMerkez]);
+  }, [aktifSekme, filtre, yukle, yukleOnayMerkez, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen]);
 
   // 30 saniyede bir otomatik yenile
   useEffect(() => {
     if (aktifSekme === 'onay') return undefined;
+    if (aktifSekme === 'metrics') {
+      const t = setInterval(() => yukleMetrics(), 30000);
+      return () => clearInterval(t);
+    }
+    if (aktifSekme === 'kontrol') {
+      const t = setInterval(() => yukleKontrolOzet(), 30000);
+      return () => clearInterval(t);
+    }
+    if (aktifSekme === 'fis') {
+      const t = setInterval(() => yukleFisBekleyen(), 30000);
+      return () => clearInterval(t);
+    }
     const t = setInterval(() => yukle(filtre), 30000);
     return () => clearInterval(t);
-  }, [filtre, yukle, aktifSekme]);
+  }, [filtre, yukle, aktifSekme, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen]);
 
   const toplamGecikme = skor?.son_30_gun?.reduce((s, r) => s + (r.gecikme_adet || 0), 0) || 0;
   const kritikSayi    = kartlar.filter(k => k.bayraklar?.kritik).length;
@@ -694,6 +804,60 @@ export default function OperasyonMerkezi() {
     }
   }
 
+  async function kasaUyumsuzlukCoz(uid) {
+    const neden = window.prompt('Çözüm notu (opsiyonel):') ?? '';
+    setOnayBusyId(`ku:${uid}`);
+    try {
+      await api(`/ops/kasa-uyumsuzluk/${encodeURIComponent(uid)}/coz`, {
+        method: 'POST',
+        body: { notu: (neden || '').trim() },
+      });
+      toast('Kasa uyumsuzluk kaydı çözüldü olarak işaretlendi.', 'green');
+      publishGlobalDataRefresh('ops-kasa-uyumsuzluk-cozuldu');
+      await yukleOnayMerkez();
+    } catch (e) {
+      toast(e.message || 'Kayıt çözülemedi');
+    } finally {
+      setOnayBusyId(null);
+    }
+  }
+
+  async function siparisSevkiyataGonder(talepId) {
+    const hedef = (sipSevkiyatHedef?.[talepId] || '').trim();
+    if (!hedef) {
+      toast('Önce sevkiyat şubesi seçin');
+      return;
+    }
+    setOnayBusyId(`sg:${talepId}`);
+    try {
+      await api('/ops/siparis/sevkiyata-gonder', {
+        method: 'POST',
+        body: { talep_id: talepId, hedef_depo_sube_id: hedef },
+      });
+      toast('Sipariş sevkiyat şubesine gönderildi.', 'green');
+      publishGlobalDataRefresh('ops-siparis-sevkiyata-gonder');
+      await yukleOnayMerkez();
+    } catch (e) {
+      toast(e.message || 'Sevkiyata gönderme başarısız');
+    } finally {
+      setOnayBusyId(null);
+    }
+  }
+
+  async function fisKontrolIsle(giderId, durum) {
+    const notu = window.prompt('Not (opsiyonel):') ?? '';
+    setFisBusyId(`${durum}:${giderId}`);
+    try {
+      await api('/ops/gider-fis-kontrol', { method: 'POST', body: { gider_id: giderId, durum, notu: (notu || '').trim() || null } });
+      toast('Fiş kontrol kaydedildi.', 'green');
+      await yukleFisBekleyen();
+    } catch (e) {
+      toast(e.message || 'İşlem başarısız');
+    } finally {
+      setFisBusyId(null);
+    }
+  }
+
   return (
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
@@ -715,6 +879,8 @@ export default function OperasyonMerkezi() {
           onClick={() => {
             setYukleniyor(true);
             if (aktifSekme === 'onay') yukleOnayMerkez();
+            else if (aktifSekme === 'metrics') yukleMetrics();
+            else if (aktifSekme === 'kontrol') yukleKontrolOzet();
             else yukle(filtre);
           }}
         >
@@ -770,6 +936,47 @@ export default function OperasyonMerkezi() {
           <button type="button" className="btn btn-secondary btn-sm" style={{ alignSelf: 'flex-end' }} onClick={() => { setYukleniyor(true); yukleOnayMerkez(); }}>
             ↻ Yenile
           </button>
+        </div>
+      )}
+
+      {aktifSekme === 'kontrol' && (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+          <label style={{ margin: 0 }}>
+            <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Kategori</span>
+            <select
+              className="input"
+              style={{ minWidth: 210, padding: '8px 10px' }}
+              value={kontrolKategori}
+              onChange={(e) => { setYukleniyor(true); setKontrolKategori(e.target.value); }}
+            >
+              <option value="">Tümü</option>
+              <option value="KASA">Kasa</option>
+              <option value="CIRO">Ciro</option>
+              <option value="ZAMAN">Zaman</option>
+              <option value="STOK">Stok</option>
+              <option value="GIDER">Gider</option>
+              <option value="GUVENLIK">Güvenlik</option>
+            </select>
+          </label>
+          <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center', alignSelf: 'flex-end', fontSize: 12 }}>
+            <input
+              type="checkbox"
+              checked={kontrolSadeceAlarmlar}
+              onChange={(e) => { setYukleniyor(true); setKontrolSadeceAlarmlar(e.target.checked); }}
+            />
+            Sadece alarmlar
+          </label>
+        </div>
+      )}
+
+      {aktifSekme === 'fis' && (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setYukleniyor(true); yukleFisBekleyen(); }}>
+            ↻ Yenile
+          </button>
+          <span style={{ fontSize: 12, color: 'var(--text3)' }}>
+            Fiş gönderilmedi işaretlenen giderler (kontrol bekliyor)
+          </span>
         </div>
       )}
 
@@ -1020,6 +1227,242 @@ export default function OperasyonMerkezi() {
             </div>
           ) : null}
         </>
+      )}
+
+      {aktifSekme === 'metrics' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 12 }}>
+          <div className="card">
+            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Personel verimlilik</h3>
+            <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+              Açılış sapma ort.: <strong>{Number(mPersonelVerimlilik?.acilis_sapma_ort_dk || 0).toFixed(2)} dk</strong><br />
+              Kontrol cevap ort.: <strong>{Number(mPersonelVerimlilik?.kontrol_cevap_ort_dk || 0).toFixed(2)} dk</strong><br />
+              Kasa fark frekansı: <strong>{Number(mPersonelVerimlilik?.kasa_fark_frekans || 0).toFixed(2)}%</strong>
+            </div>
+          </div>
+          <div className="card">
+            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Şube operasyon kalite</h3>
+            <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+              Vardiya eksik oranı: <strong>{Number(mSubeOperasyonKalite?.vardiya_eksik_oran || 0).toFixed(2)}%</strong><br />
+              Not/gün ort.: <strong>{Number(mSubeOperasyonKalite?.not_gonderim_gunluk_ort || 0).toFixed(2)}</strong><br />
+              Sipariş çevrim (gün): <strong>{Number(mSubeOperasyonKalite?.siparis_cevrim_sure_gun || 0).toFixed(2)}</strong>
+            </div>
+          </div>
+          <div className="card">
+            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Finans özet</h3>
+            <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+              Ciro / gider oranı: <strong>{Number(mFinansOzet?.ciro_gider_orani || 0).toFixed(3)}</strong><br />
+              Kart faiz yükü: <strong>{Number(mFinansOzet?.kart_faiz_yuku_orani || 0).toFixed(3)}</strong><br />
+              Nakit akış doğruluğu: <strong>{mFinansOzet?.nakit_akis_tahmin_dogrulugu ?? 'veri yok'}</strong>
+            </div>
+          </div>
+          <div className="card">
+            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Stok & tedarik</h3>
+            <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+              Bardak kullanım/gün: <strong>{Number(mStokTedarik?.gunluk_bardak_kullanim || 0).toFixed(2)}</strong><br />
+              Depo bekletme (gün): <strong>{Number(mStokTedarik?.depo_bekletme_sure_gun || 0).toFixed(2)}</strong><br />
+              Açıklanamayan eksilme: <strong>{Number(mStokTedarik?.aciklanamayan_stok_eksilmesi || 0).toFixed(2)}</strong>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {aktifSekme === 'kontrol' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="card" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span className="badge badge-red">Kritik: {Number(kontrolOzet?.kritik_toplam || 0)}</span>
+            <span className="badge badge-yellow">Uyarı: {Number(kontrolOzet?.uyari_toplam || 0)}</span>
+            <span className="badge badge-gray">Şube: {Number(kontrolOzet?.sube_sayisi || 0)}</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 12 }}>
+            {(kontrolOzet?.subeler || []).map((s) => {
+              const kritik = Number(s?.kritik_adet || 0);
+              const uyari = Number(s?.uyari_adet || 0);
+              const temiz = !!s?.temiz;
+              const borderColor = kritik > 0 ? 'var(--red)' : uyari > 0 ? 'var(--yellow)' : 'var(--green)';
+              return (
+                <button
+                  key={s.sube_id}
+                  type="button"
+                  className="card"
+                  style={{ textAlign: 'left', borderLeft: `4px solid ${borderColor}`, cursor: 'pointer' }}
+                  onClick={() => setKontrolDetaySube((p) => (p === s.sube_id ? '' : s.sube_id))}
+                >
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>{s.sube_adi || s.sube_id}</div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <span className={`badge ${temiz ? 'badge-green' : 'badge-gray'}`}>{temiz ? 'Temiz' : 'Kontrol var'}</span>
+                    <span className="badge badge-red">Kritik: {kritik}</span>
+                    <span className="badge badge-yellow">Uyarı: {uyari}</span>
+                  </div>
+                  {kontrolDetaySube === s.sube_id && (
+                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {(s.sonuclar || []).length === 0 ? (
+                        <div style={{ fontSize: 12, color: 'var(--text3)' }}>Açık kontrol bulunmuyor.</div>
+                      ) : (
+                        (s.sonuclar || []).map((k, i) => (
+                          <div key={`${k.kontrol}-${i}`} style={{ fontSize: 12, border: '1px solid var(--border)', borderRadius: 8, padding: '7px 9px' }}>
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 3 }}>
+                              <span className={`badge ${
+                                k.seviye === 'kritik' ? 'badge-red' : k.seviye === 'uyari' ? 'badge-yellow' : 'badge-green'
+                              }`}>{k.seviye}</span>
+                              <span className="mono" style={{ fontSize: 11 }}>{k.kontrol}</span>
+                            </div>
+                            <div>{k.mesaj}</div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {yukleniyor ? (
+            <div className="loading"><div className="spinner" />Yükleniyor…</div>
+          ) : (kontrolOzet?.subeler || []).length === 0 ? (
+            <div className="empty"><p>Kontrol sonucu yok.</p></div>
+          ) : null}
+        </div>
+      )}
+
+      {aktifSekme === 'fis' && (
+        <div className="card">
+          <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>
+            Bekleyen fiş kontrolleri ({fisBekleyen.length})
+          </h3>
+          {yukleniyor && fisBekleyen.length === 0 ? (
+            <div className="loading"><div className="spinner" />Yükleniyor…</div>
+          ) : fisBekleyen.length === 0 ? (
+            <div className="empty"><p>Bekleyen fiş kontrolü yok.</p></div>
+          ) : (
+            <div className="table-wrap" style={{ margin: 0 }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tarih</th>
+                    <th>Şube</th>
+                    <th>Personel</th>
+                    <th>Kategori</th>
+                    <th>Tutar</th>
+                    <th>Açıklama</th>
+                    <th>Fiş</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fisBekleyen.map((g) => (
+                    <tr key={g.id}>
+                      <td className="mono" style={{ fontSize: 11 }}>{g.tarih}</td>
+                      <td>{g.sube_adi || g.sube}</td>
+                      <td style={{ fontSize: 12 }}>{g.personel_ad || g.personel_id || '—'}</td>
+                      <td style={{ fontSize: 12 }}>{g.kategori}</td>
+                      <td className="mono" style={{ fontSize: 12 }}>{fmt(g.tutar || 0)}</td>
+                      <td style={{ fontSize: 12, maxWidth: 360, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {g.aciklama || '—'}
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            disabled={!!fisBusyId}
+                            onClick={() => fisKontrolIsle(g.id, 'geldi')}
+                          >
+                            {fisBusyId === `geldi:${g.id}` ? '…' : 'Geldi ✓'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-sm"
+                            disabled={!!fisBusyId}
+                            onClick={() => fisKontrolIsle(g.id, 'gelmedi')}
+                          >
+                            {fisBusyId === `gelmedi:${g.id}` ? '…' : 'Gelmedi ✗'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            disabled={!!fisBusyId}
+                            onClick={() => fisKontrolIsle(g.id, 'muaf')}
+                          >
+                            {fisBusyId === `muaf:${g.id}` ? '…' : 'Muaf'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {aktifSekme === 'stok-kayip' && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Stok kayıp tahmini (son {stokKayip?.gun_sayi || 45} gün)</h3>
+          <div className="table-wrap" style={{ margin: 0 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Şube</th>
+                  <th>Açık Toplam</th>
+                  <th>Açık Kalem</th>
+                  <th>Açık Gün</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(stokKayip?.sube_ozet || []).map((s, i) => (
+                  <tr key={`${s.sube_id}-${i}`}>
+                    <td>{s.sube_adi || s.sube_id}</td>
+                    <td className="mono">{s.toplam_acik || 0}</td>
+                    <td className="mono">{s.acik_kalem || 0}</td>
+                    <td className="mono">{s.acik_gun_sayisi || 0}</td>
+                  </tr>
+                ))}
+                {(stokKayip?.sube_ozet || []).length === 0 && (
+                  <tr><td colSpan={4}><div className="empty"><p>Stok kayıp verisi yok</p></div></td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {aktifSekme === 'personel-davranis' && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>
+            Personel açılış davranışı (son {personelDavranis?.gun_sayi || 45} gün)
+          </h3>
+          <div className="table-wrap" style={{ margin: 0 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Personel</th>
+                  <th>Şube</th>
+                  <th>Açılış</th>
+                  <th>Kasa Fark</th>
+                  <th>Bardak Düşük</th>
+                  <th>Vardiya Eksik</th>
+                  <th>Risk</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(personelDavranis?.personel_ozet || []).map((p, i) => (
+                  <tr key={`${p.personel_id || p.personel_ad}-${i}`}>
+                    <td>{p.personel_ad || p.personel_id || '—'}</td>
+                    <td>{p.sube_adi || p.sube_id || '—'}</td>
+                    <td className="mono">{p.acilis_sayisi || 0}</td>
+                    <td className="mono">{p.acilis_kasa_fark_adet || 0}</td>
+                    <td className="mono">{p.bardak_dusuk_toplam || 0}</td>
+                    <td className="mono">{p.vardiya_eksik_adet || 0}</td>
+                    <td className="mono">{p.davranis_risk_skoru || 0}</td>
+                  </tr>
+                ))}
+                {(personelDavranis?.personel_ozet || []).length === 0 && (
+                  <tr><td colSpan={7}><div className="empty"><p>Personel davranış verisi yok</p></div></td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
       {aktifSekme === 'defter' && (
@@ -1381,6 +1824,82 @@ export default function OperasyonMerkezi() {
 
               <section>
                 <h3 style={{ fontSize: 14, marginBottom: 10 }}>
+                  Kasa uyumsuzlukları (çözüm bekleyen) · {bekleyenPaket?.ozet?.kasa_uyumsuzluk ?? 0}
+                </h3>
+                {(bekleyenPaket?.kritik_kasa_personelleri || []).length > 0 && (
+                  <div className="alert-box red" style={{ marginBottom: 10 }}>
+                    Kritik personel izleme ({bekleyenPaket?.ozet?.kritik_kasa_personel ?? 0}):{' '}
+                    {(bekleyenPaket?.kritik_kasa_personelleri || [])
+                      .slice(0, 6)
+                      .map((p) => `${p.personel_ad || p.personel_id} (${p.aylik_hata_adet})`)
+                      .join(' · ')}
+                  </div>
+                )}
+                {(bekleyenPaket?.kasa_uyumsuzluklar || []).length === 0 ? (
+                  <div className="empty"><p>Çözüm bekleyen kasa uyumsuzluğu yok</p></div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {bekleyenPaket.kasa_uyumsuzluklar.map((u) => {
+                      const fark = Number(u.fark_tl || 0);
+                      const farkPozitif = fark >= 0;
+                      return (
+                        <div
+                          key={u.id}
+                          className="card"
+                          style={{ padding: '12px 14px', borderLeft: `4px solid ${Math.abs(fark) >= 200 ? 'var(--red)' : 'var(--yellow)'}` }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                            <div>
+                              <div style={{ fontWeight: 600 }}>
+                                {u.sube_adi || u.sube_id}
+                                <span style={{ marginLeft: 8 }} className={`badge ${Math.abs(fark) >= 200 ? 'badge-red' : 'badge-yellow'}`}>
+                                  {farkPozitif ? '+' : ''}{fmt(fark)}
+                                </span>
+                                {u.kritik_personel_var && (
+                                  <span style={{ marginLeft: 6 }} className="badge badge-red">Kritik personel</span>
+                                )}
+                              </div>
+                              <div className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>
+                                {u.tarih} · Beklenen: {fmt(u.beklenen_tl || 0)} · Açılış Sayım: {fmt(u.gercek_tl || 0)}
+                              </div>
+                              <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4 }}>
+                                Açılış: {u.acilis_personel_ad || u.acilis_personel_id || '—'}
+                                {!!u.acilis_personel_aylik_hata_adet && (
+                                  <span className={`badge ${u.acilis_personel_aylik_hata_adet >= 2 ? 'badge-red' : 'badge-gray'}`} style={{ marginLeft: 6 }}>
+                                    Ay içi hata: {u.acilis_personel_aylik_hata_adet}
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4 }}>
+                                Önceki kapanış: {u.kapanis_personel_ad || u.kapanis_personel_id || '—'}
+                                {!!u.kapanis_personel_aylik_hata_adet && (
+                                  <span className={`badge ${u.kapanis_personel_aylik_hata_adet >= 2 ? 'badge-red' : 'badge-gray'}`} style={{ marginLeft: 6 }}>
+                                    Ay içi hata: {u.kapanis_personel_aylik_hata_adet}
+                                  </span>
+                                )}
+                              </div>
+                              {u.mesaj && <div style={{ fontSize: 12, marginTop: 6 }}>{u.mesaj}</div>}
+                            </div>
+                            <div>
+                              <button
+                                type="button"
+                                className="btn btn-primary btn-sm"
+                                disabled={!!onayBusyId}
+                                onClick={() => kasaUyumsuzlukCoz(u.id)}
+                              >
+                                {onayBusyId === `ku:${u.id}` ? '…' : 'Çözüldü işaretle'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h3 style={{ fontSize: 14, marginBottom: 10 }}>
                   Onay kuyruğu (bekleyen)
                   {subeOnayFiltre ? ' — sadece bu şubenin anlık gider talepleri' : ' — tüm türler'}
                   {' · '}
@@ -1465,6 +1984,47 @@ export default function OperasyonMerkezi() {
                               <div style={{ fontSize: 12, marginTop: 6, color: 'var(--text2)' }}>
                                 {(s.kalemler || []).slice(0, 6).map((k) => `${k?.urun_ad || 'Ürün'} x${k?.adet || 0}`).join(' · ')}
                                 {(s.kalemler || []).length > 6 ? ` · +${(s.kalemler || []).length - 6} kalem` : ''}
+                              </div>
+                            )}
+                            {(s.sevkiyat_durum || '') !== 'bekliyor' && (
+                              <div style={{ marginTop: 6 }}>
+                                <span className={`badge ${
+                                  s.sevkiyat_durum === 'teslim_edildi' ? 'badge-green'
+                                    : s.sevkiyat_durum === 'gonderildi' ? 'badge-blue'
+                                      : 'badge-yellow'
+                                }`}>
+                                  Sevkiyat: {s.sevkiyat_durum}
+                                </span>
+                                {s.sevkiyat_sube_adi && (
+                                  <span style={{ marginLeft: 8, color: 'var(--text3)', fontSize: 12 }}>
+                                    Hedef: {s.sevkiyat_sube_adi}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            {(s.sevkiyat_durum || 'bekliyor') === 'bekliyor' && (
+                              <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                                <select
+                                  className="input"
+                                  style={{ minWidth: 220, padding: '6px 8px' }}
+                                  value={sipSevkiyatHedef[s.id] || ''}
+                                  onChange={(e) => setSipSevkiyatHedef((p) => ({ ...p, [s.id]: e.target.value }))}
+                                >
+                                  <option value="">Sevkiyat şubesi seç</option>
+                                  {subeListeAdmin
+                                    .filter((sb) => ['depo', 'karma', 'sevkiyat', 'merkez'].includes(String(sb?.sube_tipi || 'normal')))
+                                    .map((sb) => (
+                                      <option key={sb.id} value={sb.id}>{sb.ad || sb.id}</option>
+                                    ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  className="btn btn-primary btn-sm"
+                                  disabled={!!onayBusyId}
+                                  onClick={() => siparisSevkiyataGonder(s.id)}
+                                >
+                                  {onayBusyId === `sg:${s.id}` ? '…' : 'Sevkiyata Gönder'}
+                                </button>
                               </div>
                             )}
                           </div>
@@ -1648,10 +2208,28 @@ export default function OperasyonMerkezi() {
                 ) : puanListe.map((p, i) => {
                   const puan = p.puan;
                   const renk = puan == null ? 'var(--text3)' : puan >= 90 ? 'var(--green)' : puan >= 75 ? 'var(--blue)' : puan >= 55 ? 'var(--yellow)' : 'var(--red)';
+                  const takip = takipMap?.[p.personel_id];
                   return (
                     <tr key={p.personel_id}>
                       <td className="mono" style={{ fontSize: 12, color: 'var(--text3)' }}>{i + 1}</td>
-                      <td style={{ fontWeight: 500 }}>{p.ad_soyad}</td>
+                      <td style={{ fontWeight: 500 }}>
+                        {p.ad_soyad}
+                        {takip && (
+                          <button
+                            type="button"
+                            className={`badge ${takip.takip_seviyesi === 'kritik' ? 'badge-red' : takip.takip_seviyesi === 'uyari' ? 'badge-yellow' : 'badge-gray'}`}
+                            style={{ marginLeft: 8, cursor: 'pointer', border: 'none' }}
+                            onClick={async () => {
+                              try {
+                                const r = await api(`/ops/personel-risk-sinyal?personel_id=${encodeURIComponent(p.personel_id)}&gun=30`);
+                                setRiskModal(r);
+                              } catch (e) { toast(e.message || 'Sinyal geçmişi yüklenemedi'); }
+                            }}
+                          >
+                            Takip: {takip.takip_seviyesi}
+                          </button>
+                        )}
+                      </td>
                       <td style={{ fontSize: 12, color: 'var(--text3)' }}>{p.sube_id || '—'}</td>
                       <td style={{ textAlign: 'center' }}>
                         {puan != null
@@ -1667,6 +2245,55 @@ export default function OperasyonMerkezi() {
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {riskModal && (
+        <div className="modal-overlay" onClick={() => setRiskModal(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <div style={{ fontWeight: 800 }}>Personel risk sinyalleri</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                  {riskModal.personel_id} · son {riskModal.gun_sayi} gün
+                  {riskModal.takip?.takip_seviyesi && (
+                    <span className="badge badge-red" style={{ marginLeft: 8 }}>
+                      Takip: {riskModal.takip.takip_seviyesi}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button className="btn btn-secondary btn-sm" onClick={() => setRiskModal(null)}>Kapat</button>
+            </div>
+            <div className="modal-body">
+              {(riskModal.satirlar || []).length === 0 ? (
+                <div className="empty"><p>Sinyal yok</p></div>
+              ) : (
+                <div className="table-wrap" style={{ margin: 0 }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Tarih</th>
+                        <th>Tür</th>
+                        <th>Ağırlık</th>
+                        <th>Açıklama</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(riskModal.satirlar || []).map((s) => (
+                        <tr key={s.id}>
+                          <td className="mono" style={{ fontSize: 11 }}>{s.tarih}</td>
+                          <td className="mono" style={{ fontSize: 11 }}>{s.sinyal_turu}</td>
+                          <td className="mono" style={{ fontSize: 11 }}>{s.agirlik}</td>
+                          <td style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{s.aciklama}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

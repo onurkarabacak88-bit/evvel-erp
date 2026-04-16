@@ -196,9 +196,9 @@ export default function Panel({ onNavigate }) {
   }
 
   function odemeErteleAc(odemeId, aciklama, mevcutTarih) {
-    // 7 gün sonrasını default olarak göster
+    // Kısa ertelemelerde sistem varsayılan olarak mevcut +4 gün uygular
     const d = new Date(mevcutTarih || new Date());
-    d.setDate(d.getDate() + 7);
+    d.setDate(d.getDate() + 4);
     setErteleTarih(d.toISOString().split('T')[0]);
     setErteleModal({ odemeId, aciklama, mevcutTarih });
   }
@@ -207,8 +207,33 @@ export default function Panel({ onNavigate }) {
     if (loadingBtn || !erteleTarih) return;
     setLoadingBtn(true);
     try {
-      await api(`/odeme-plani/${erteleModal.odemeId}/ertele?yeni_tarih=${erteleTarih}`, { method: 'POST' });
-      toast(`Ödeme ${new Date(erteleTarih).toLocaleDateString('tr-TR')} tarihine ertelendi`);
+      const mevcut = new Date(erteleModal?.mevcutTarih);
+      const secilen = new Date(erteleTarih);
+      mevcut.setHours(12, 0, 0, 0);
+      secilen.setHours(12, 0, 0, 0);
+      const diffGun = Math.round((secilen.getTime() - mevcut.getTime()) / 86400000);
+
+      if (diffGun <= 0) {
+        toast('Aynı güne erteleme yapılamaz', 'red');
+        return;
+      }
+
+      let hedefTarih = erteleTarih;
+      if (diffGun <= 7) {
+        hedefTarih = new Date(erteleModal.mevcutTarih);
+        hedefTarih.setDate(hedefTarih.getDate() + 4);
+        hedefTarih = hedefTarih.toISOString().split('T')[0];
+
+        const ok = confirm('4 gün sonraya erteledin emin misin?');
+        if (!ok) return;
+      }
+
+      const res = await api(
+        `/odeme-plani/${erteleModal.odemeId}/ertele?yeni_tarih=${hedefTarih}`,
+        { method: 'POST' }
+      );
+      const yeni = res?.yeni_tarih || hedefTarih;
+      toast(`Ödeme ${new Date(yeni).toLocaleDateString('tr-TR')} tarihine ertelendi`);
       setErteleModal(null); setErteleTarih(''); load();
     } catch (e) { toast(e.message, 'red'); }
     finally { setLoadingBtn(false); }
@@ -1351,14 +1376,46 @@ export default function Panel({ onNavigate }) {
                       <div style={{ fontSize: 10, color: 'var(--text3)' }}>asgari: {fmt(u.asgari)}</div>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                    <button className="btn btn-primary btn-sm" style={{ flex: 1, fontSize: 11 }}
-                      onClick={() => odemeModalAcVadeliKontrol(u)}>✓ Ödendi</button>
-                    <button className="btn btn-secondary btn-sm" style={{ flex: 1, fontSize: 11 }}
-                      onClick={() => odemeErteleAc(u.odeme_id, u.aciklama, u.tarih)}>⏳ Ertele</button>
-                    <button className="btn btn-ghost btn-sm" style={{ flex: 1, fontSize: 11 }}
-                      onClick={() => kismiModalAc(u)}>✂ Kısmi</button>
-                  </div>
+                  {(() => {
+                    const buAyOd = parseFloat(u.bu_ay_odenen || 0);
+                    const asgari = parseFloat(u.asgari || 0);
+                    const asgariOdendi = asgari > 0 && buAyOd >= asgari * 0.999; // küçük yuvarlama toleransı
+
+                    if (asgariOdendi && u.kart_adi) {
+                      return (
+                        <div style={{ marginTop: 8 }}>
+                          <div style={{ fontSize: 12, color: 'var(--green)', marginBottom: 4 }}>
+                            ✅ Bu ay {fmt(buAyOd)} ödendi (asgari tamam).
+                          </div>
+                          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>
+                            Kalan borç {fmt(u.tutar)} — yeni ödeme yapmak ister misin?
+                          </div>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button className="btn btn-primary btn-sm" style={{ flex: 1, fontSize: 11 }}
+                              onClick={() => odemeModalAcVadeliKontrol(u)}>
+                              Evet, ödeme yap
+                            </button>
+                            <button className="btn btn-ghost btn-sm" style={{ flex: 1, fontSize: 11 }}
+                              onClick={() => odemeErteleAc(u.odeme_id, u.aciklama, u.tarih)}>
+                              Hayır, sonraki aya bırak
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // Varsayılan: asgari henüz ödenmemiş (veya kart dışı ödeme)
+                    return (
+                      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                        <button className="btn btn-primary btn-sm" style={{ flex: 1, fontSize: 11 }}
+                          onClick={() => odemeModalAcVadeliKontrol(u)}>✓ Ödendi</button>
+                        <button className="btn btn-secondary btn-sm" style={{ flex: 1, fontSize: 11 }}
+                          onClick={() => odemeErteleAc(u.odeme_id, u.aciklama, u.tarih)}>⏳ Ertele</button>
+                        <button className="btn btn-ghost btn-sm" style={{ flex: 1, fontSize: 11 }}
+                          onClick={() => kismiModalAc(u)}>✂ Kısmi</button>
+                      </div>
+                    );
+                  })()}
                 </div>
               ))}
             </div>
@@ -1796,7 +1853,16 @@ export default function Panel({ onNavigate }) {
                 <input
                   type="date"
                   value={erteleTarih}
-                  min={new Date().toISOString().split('T')[0]}
+                  min={(() => {
+                    try {
+                      if (!erteleModal?.mevcutTarih) return new Date().toISOString().split('T')[0];
+                      const d = new Date(erteleModal.mevcutTarih);
+                      d.setDate(d.getDate() + 1); // aynı gün seçimlerini UI'da da engelle
+                      return d.toISOString().split('T')[0];
+                    } catch {
+                      return new Date().toISOString().split('T')[0];
+                    }
+                  })()}
                   onChange={e => setErteleTarih(e.target.value)}
                   autoFocus
                 />

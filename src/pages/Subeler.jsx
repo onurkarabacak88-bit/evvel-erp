@@ -159,6 +159,7 @@ export default function Subeler() {
             const n = parseInt(raw, 10);
             return Number.isNaN(n) || n < 1 ? null : n;
           })(),
+          sube_tipi: (duzenle[s.id]?.sube_tipi ?? s.sube_tipi ?? 'normal'),
         },
       });
       toast('✓ Oranlar kaydedildi');
@@ -350,6 +351,21 @@ export default function Subeler() {
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>
+                    Şube tipi
+                  </label>
+                  <select
+                    defaultValue={s.sube_tipi || 'normal'}
+                    onChange={e => set(s.id, 'sube_tipi', e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text1)', fontSize: 14 }}
+                  >
+                    <option value="normal">Normal Şube</option>
+                    <option value="depo">Depo Şubesi</option>
+                    <option value="karma">Karma (Şube + Depo)</option>
+                  </select>
+                </div>
+                <div />
                 <div>
                   <label style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>
                     Açılış saati
