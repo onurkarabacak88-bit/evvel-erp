@@ -29,6 +29,10 @@ from sube_kapanis_dual import router as sube_kapanis_dual_router
 from operasyon_merkez_api import router as operasyon_merkez_router
 from sube_personel_api import router as sube_personel_router
 from banka_yatirim_api import router as banka_yatirim_router
+from kasa_teslim_api import router as kasa_teslim_router
+from tedarikci_api import router as tedarikci_router
+from odeme_plani_motor_api import router as odeme_plani_motor_router
+from odeme_plani_api import router as odeme_plani_read_router
 from vardiya_motor import senaryolar_uret, hafta_senaryolari_uret, hafta_senaryolari_expert_uret
 
 
@@ -56,90 +60,10 @@ app.include_router(sube_kapanis_dual_router)
 app.include_router(operasyon_merkez_router)
 app.include_router(sube_personel_router)
 app.include_router(banka_yatirim_router)
-
-# ── TEDARİKÇİ CRUD ────────────────────────────────────────────
-from fastapi import Query as FQuery
-import uuid as _uuid
-
-@app.get("/api/tedarikciler")
-def tedarikci_liste(aktif: bool = True):
-    with db() as (conn, cur):
-        cur.execute(
-            """
-            SELECT id, ad, kategori, telefon, aciklama, aktif, olusturma
-            FROM tedarikciler
-            WHERE (%s IS NULL OR aktif = %s)
-            ORDER BY ad
-            """,
-            (aktif, aktif),
-        )
-        rows = []
-        for r in cur.fetchall():
-            d = dict(r)
-            if d.get("olusturma"):
-                d["olusturma"] = str(d["olusturma"])
-            rows.append(d)
-    return {"tedarikciler": rows}
-
-from pydantic import BaseModel as _BM
-class TedarikciBody(_BM):
-    ad: str
-    kategori: str = ""
-    telefon: str = ""
-    aciklama: str = ""
-
-@app.post("/api/tedarikciler")
-def tedarikci_ekle(body: TedarikciBody):
-    from fastapi import HTTPException
-    ad = (body.ad or "").strip()
-    if len(ad) < 2:
-        raise HTTPException(400, "Tedarikçi adı en az 2 karakter olmalı")
-    tid = str(_uuid.uuid4())
-    with db() as (conn, cur):
-        try:
-            cur.execute(
-                """
-                INSERT INTO tedarikciler (id, ad, kategori, telefon, aciklama)
-                VALUES (%s, %s, %s, %s, %s)
-                """,
-                (tid, ad, (body.kategori or "").strip() or None,
-                 (body.telefon or "").strip() or None,
-                 (body.aciklama or "").strip() or None),
-            )
-        except Exception as e:
-            if "unique" in str(e).lower() or "duplicate" in str(e).lower():
-                raise HTTPException(409, f"'{ad}' adında aktif tedarikçi zaten var")
-            raise
-    return {"success": True, "id": tid}
-
-@app.put("/api/tedarikciler/{tid}")
-def tedarikci_guncelle(tid: str, body: TedarikciBody):
-    from fastapi import HTTPException
-    ad = (body.ad or "").strip()
-    if len(ad) < 2:
-        raise HTTPException(400, "Tedarikçi adı en az 2 karakter olmalı")
-    with db() as (conn, cur):
-        cur.execute(
-            """
-            UPDATE tedarikciler SET ad=%s, kategori=%s, telefon=%s, aciklama=%s
-            WHERE id=%s
-            """,
-            (ad, (body.kategori or "").strip() or None,
-             (body.telefon or "").strip() or None,
-             (body.aciklama or "").strip() or None, tid),
-        )
-        if cur.rowcount == 0:
-            raise HTTPException(404, "Tedarikçi bulunamadı")
-    return {"success": True}
-
-@app.delete("/api/tedarikciler/{tid}")
-def tedarikci_sil(tid: str):
-    from fastapi import HTTPException
-    with db() as (conn, cur):
-        cur.execute("UPDATE tedarikciler SET aktif=FALSE WHERE id=%s", (tid,))
-        if cur.rowcount == 0:
-            raise HTTPException(404, "Tedarikçi bulunamadı")
-    return {"success": True}
+app.include_router(kasa_teslim_router)
+app.include_router(tedarikci_router)
+app.include_router(odeme_plani_motor_router)
+app.include_router(odeme_plani_read_router)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -248,6 +172,30 @@ def startup():
         except Exception as e:
             logger.warning(f"Faiz üretim hatası: {e}")
 
+    # Kaçırılan ay sonu faiz telafisi — uygulama ay son günü kapalıysa
+    # 1. veya 2. gün başlarsa önceki ayın faizini üretmeye çalış.
+    if bugun.day in (1, 2):
+        try:
+            onceki_ay_son = bugun.replace(day=1) - timedelta(days=1)
+            with db() as (conn, cur):
+                cur.execute("""
+                    SELECT COUNT(*) AS adet FROM kart_hareketleri
+                    WHERE islem_turu='FAIZ'
+                      AND DATE_TRUNC('month', tarih::date) =
+                          DATE_TRUNC('month', %s::date)
+                      AND durum='aktif'
+                """, (onceki_ay_son,))
+                onceki_faiz_var = int((cur.fetchone() or {}).get('adet') or 0)
+            if onceki_faiz_var == 0:
+                onceki_donem = onceki_ay_son.strftime('%Y-%m')
+                logger.warning(f"⚠️ {onceki_donem} ayı faizi eksik, telafi hesaplanıyor...")
+                with db() as (conn, cur):
+                    sonuclar = tum_kartlar_faiz_hesapla(cur, donem=onceki_donem)
+                yazilan = sum(1 for k in sonuclar if k.get('durum') == 'yazildi')
+                logger.info(f"✅ Kaçırılan faiz telafi edildi: {yazilan} kart ({onceki_donem})")
+        except Exception as e:
+            logger.warning(f"Kaçırılan faiz telafi hatası: {e}")
+
     # Kasa tutarlılık kontrolü — hata vermez, sadece uyarı loglar
     try:
         with db() as (conn, cur):
@@ -311,10 +259,13 @@ def kasa_ve_faiz_odeme_plani_tam_odeme(
             f"Kart faiz ödemesi: {plan['aciklama']}", 'odeme_plani', plan_id,
             f"{plan_id}_faiz", 'KART_FAIZ')
         kalan_faiz_kapatilacak = faiz_kismi
+        # FOR UPDATE: eş zamanlı iki ödeme isteğinde aynı faiz satırlarının
+        # çakışmasını önler — satırlar bu transaction bitene kadar kilitlenir.
         cur.execute("""
             SELECT id, tutar FROM kart_hareketleri
             WHERE kart_id=%s AND islem_turu='FAIZ' AND durum='aktif'
             ORDER BY tarih ASC
+            FOR UPDATE
         """, (plan['kart_id'],))
         faiz_kayitlari = cur.fetchall()
         for fk in faiz_kayitlari:
@@ -1388,24 +1339,6 @@ class KismiOdeModel(BaseModel):
     odeme_yontemi: str = 'nakit'  # 'nakit' veya 'kart'
     kart_id: Optional[str] = None
 
-@app.get("/api/odeme-plani/{oid}/kaynak")
-def odeme_plani_kaynak(oid: str):
-    """Panel'in vadeli alım kart önerisi için kaynak_tablo ve kaynak_id döner."""
-    with db() as (conn, cur):
-        cur.execute("SELECT kaynak_tablo, kaynak_id FROM odeme_plani WHERE id=%s", (oid,))
-        row = cur.fetchone()
-        if not row: raise HTTPException(404)
-        return {"kaynak_tablo": row['kaynak_tablo'], "kaynak_id": row['kaynak_id']}
-
-@app.get("/api/odeme-plani")
-def odeme_plani_listele():
-    with db() as (conn, cur):
-        cur.execute("""SELECT op.*, k.banka, k.kart_adi, k.faiz_orani FROM odeme_plani op
-            JOIN kartlar k ON k.id=op.kart_id
-            WHERE op.tarih >= CURRENT_DATE - INTERVAL '30 days'
-            ORDER BY op.tarih ASC""")
-        return [dict(r) for r in cur.fetchall()]
-
 @app.post("/api/odeme-plani")
 def odeme_plani_ekle(o: OdemePlani):
     with db() as (conn, cur):
@@ -1991,7 +1924,7 @@ class PersonelModel(BaseModel):
         try:
             from datetime import date as _date
             return _date.fromisoformat(self.baslangic_tarihi)
-        except:
+        except ValueError:
             return None
 
 def _personel_api_row(r: dict) -> dict:
@@ -3675,6 +3608,37 @@ def anlik_gider_gecmis(kategori: str = None, limit: int = 100):
                 "toplam": sum(r['tutar'] for r in satirlar)}
 
 
+@app.get("/api/bilgi-teslim-kayitlari")
+def bilgi_teslim_kayitlari(sube_id: Optional[str] = None, gun: int = 30, limit: int = 300):
+    """
+    Şubelerden merkeze iletilen bilgi/not kayıtları.
+    """
+    gun_sayi = max(1, min(365, int(gun)))
+    lim = max(1, min(1000, int(limit)))
+    with db() as (conn, cur):
+        qp: List[Any] = [gun_sayi]
+        q = """
+            SELECT n.id, n.sube_id, s.ad AS sube_adi, n.metin,
+                   n.personel_id, n.personel_ad, n.olusturma
+            FROM sube_merkez_not n
+            LEFT JOIN subeler s ON s.id = n.sube_id
+            WHERE n.olusturma >= (NOW() - (%s * INTERVAL '1 day'))
+        """
+        if sube_id:
+            q += " AND n.sube_id=%s"
+            qp.append(sube_id)
+        q += " ORDER BY n.olusturma DESC LIMIT %s"
+        qp.append(lim)
+        cur.execute(q, qp)
+        satirlar = []
+        for r in cur.fetchall():
+            d = dict(r)
+            if d.get("olusturma"):
+                d["olusturma"] = str(d["olusturma"])
+            satirlar.append(d)
+        return {"gun_sayi": gun_sayi, "sube_id": sube_id, "limit": lim, "satirlar": satirlar}
+
+
 # ── VADELİ ALIMLAR ─────────────────────────────────────────────
 class VadeliAlim(BaseModel):
     aciklama: str
@@ -4298,6 +4262,7 @@ class SubeGuncelleModel(BaseModel):
     yogun_saat_ek_personel: int = 0
     # Aynı gün açılış slotuna yazılabilecek üst kişi sayısı (örn. Alsancak = 1); boş = sınır yok
     acilis_max_kisi: Optional[int] = None
+    sube_tipi: Optional[str] = None
 
 class SubeIhtiyacModel(BaseModel):
     gun_tipi: str = "hergun"
@@ -4664,6 +4629,13 @@ def sube_guncelle(sid: str, body: SubeGuncelleModel):
         raise HTTPException(400, "Minimum personel en az 1 olmalı")
     if body.yogun_saat_ek_personel < 0:
         raise HTTPException(400, "Yoğun saat ek personel 0 veya daha büyük olmalı")
+    sube_tipi = (body.sube_tipi or "").strip().lower() or None
+    if sube_tipi in ("sevkiyat",):
+        sube_tipi = "depo"
+    elif sube_tipi in ("merkez",):
+        sube_tipi = "karma"
+    if sube_tipi is not None and sube_tipi not in ("normal", "depo", "karma"):
+        raise HTTPException(400, "sube_tipi: normal | depo | karma")
     with db() as (conn, cur):
         cur.execute("SELECT id FROM subeler WHERE id=%s", (sid,))
         if not cur.fetchone():
@@ -4683,7 +4655,8 @@ def sube_guncelle(sid: str, body: SubeGuncelleModel):
                 kapanis_sadece_part=%s,
                 min_personel=%s,
                 yogun_saat_ek_personel=%s,
-                acilis_max_kisi=%s
+                acilis_max_kisi=%s,
+                sube_tipi=COALESCE(%s, sube_tipi)
             WHERE id=%s
             """,
             (
@@ -4700,6 +4673,7 @@ def sube_guncelle(sid: str, body: SubeGuncelleModel):
                 int(body.min_personel),
                 int(body.yogun_saat_ek_personel),
                 body.acilis_max_kisi,
+                sube_tipi,
                 sid,
             ),
         )
@@ -5287,38 +5261,6 @@ def vadeli_kontrol(vade_tarihi: str, tutar: float):
         return {"benzer": benzer, "var": len(benzer) > 0}
 
 
-# ── ÖDEME PLANI MOTOR ENDPOINTLERİ ────────────────────────────
-
-@app.post("/api/kart-plan-guncelle")
-def kart_plan_guncelle_api():
-    """Kart borçlarını hesaplayıp mevcut bekleyen planları günceller (tek transaction)."""
-    with db() as (conn, cur):
-        guncellenen = kart_plan_guncelle_tx(cur)
-    return {"success": True, "guncellenen": guncellenen}
-
-@app.post("/api/odeme-plani/uret")
-def odeme_plani_manuel_uret(yil: Optional[int] = None, ay: Optional[int] = None):
-    """Manuel ödeme planı üretimi — butona basınca çalışır."""
-    try:
-        sonuc = aylik_odeme_plani_uret(yil, ay)
-        return sonuc
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-@app.get("/api/uyarilar")
-def uyarilari_listele():
-    """Yaklaşan ödemelerin uyarılarını döner."""
-    try:
-        # Scheduler durmuş olsa bile ayın planını istek anında garanti et.
-        try:
-            bugun = bugun_tr()
-            aylik_odeme_plani_uret(bugun.year, bugun.month)
-        except Exception as pe:
-            logger.warning(f"Uyarı öncesi plan üretim denemesi başarısız: {pe}")
-        return uyari_motoru()
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
 @app.post("/api/odeme-plani/{oid}/odendi")
 def odeme_odendi(oid: str, manuel_tutar: Optional[float] = None):
     """Geriye dönük uyumluluk — /ode endpoint'ine yönlendirir."""
@@ -5332,7 +5274,17 @@ def odeme_ertele(oid: str, yeni_tarih: date = None):
         cur.execute("SELECT * FROM odeme_plani WHERE id=%s AND durum='bekliyor'", (oid,))
         o = cur.fetchone()
         if not o: raise HTTPException(404)
-        yeni = yeni_tarih or (o['tarih'] + timedelta(days=7))
+        mevcut = o["tarih"]
+        yeni = yeni_tarih or (mevcut + timedelta(days=4))
+
+        # Aynı gün / geçmişe erteleme engeli
+        diffGun = (yeni - mevcut).days
+        if diffGun <= 0:
+            raise HTTPException(400, "Aynı güne veya geçmişe erteleme yapılamaz")
+
+        # 1 haftaya kadar erteleme: sistem otomatik olarak +4 gün yapar
+        if diffGun <= 7:
+            yeni = mevcut + timedelta(days=4)
         # Ödeme planı tarihini güncelle
         cur.execute("UPDATE odeme_plani SET tarih=%s WHERE id=%s", (yeni, oid))
         # Onay kuyruğundaki tarihi de güncelle — yeni kayıt açma
@@ -5545,30 +5497,6 @@ def faiz_uret(body: dict = {}):
                 }
     except Exception as e:
         raise HTTPException(500, str(e))
-
-
-
-@app.get("/api/kart-faiz")
-def kart_faiz_listele(kart_id: str = None):
-    """Kart bazlı faiz geçmişi."""
-    with db() as (conn, cur):
-        if kart_id:
-            cur.execute("""
-                SELECT kh.*, k.kart_adi, k.banka
-                FROM kart_hareketleri kh
-                JOIN kartlar k ON k.id = kh.kart_id
-                WHERE kh.islem_turu = 'FAIZ' AND kh.kart_id = %s
-                ORDER BY kh.tarih DESC
-            """, (kart_id,))
-        else:
-            cur.execute("""
-                SELECT kh.*, k.kart_adi, k.banka
-                FROM kart_hareketleri kh
-                JOIN kartlar k ON k.id = kh.kart_id
-                WHERE kh.islem_turu = 'FAIZ'
-                ORDER BY kh.tarih DESC LIMIT 50
-            """)
-        return [dict(r) for r in cur.fetchall()]
 
 # ── KASA TUTARLILIK KONTROLÜ ──────────────────────────────────
 @app.get("/api/kasa-kontrol")

@@ -278,8 +278,19 @@ def sum_merkez_stok_sevk(cur: Any) -> Dict[str, int]:
     Fallback: tablo boş ise defterdeki URUN_SEVK kayıtlarını kullanır.
     """
     total = _zero_stok()
-    cur.execute("SELECT kalem_kodu, adet FROM merkez_stok_sevk")
-    rows = cur.fetchall() or []
+    cur.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema='public' AND table_name='merkez_stok_sevk'
+        ) AS var
+        """
+    )
+    var_mi = bool((cur.fetchone() or {}).get("var"))
+    rows = []
+    if var_mi:
+        cur.execute("SELECT kalem_kodu, adet FROM merkez_stok_sevk")
+        rows = cur.fetchall() or []
     if rows:
         for row in rows:
             key = str((row or {}).get("kalem_kodu") or "").strip()

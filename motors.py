@@ -1,3 +1,5 @@
+import logging
+import os
 from database import db
 from datetime import date, timedelta, datetime
 
@@ -15,8 +17,42 @@ def fmt(n):
     return f"{int(n):,} ₺".replace(",", ".")
 
 
+def _kart_esikleri() -> dict:
+    """
+    Kart doluluk uyarı eşikleri env'den okunur.
+    Env değişkenleri:
+      EVVEL_KART_ESIK_KRITIK  (varsayılan 0.90 → %90)
+      EVVEL_KART_ESIK_UYARI   (varsayılan 0.75 → %75)
+    """
+    def _float(key, default):
+        try:
+            v = float((os.environ.get(key) or str(default)).strip())
+            return max(0.5, min(v, 1.0))
+        except (ValueError, AttributeError):
+            return default
+    return {
+        "kritik": _float("EVVEL_KART_ESIK_KRITIK", 0.90),
+        "uyari":  _float("EVVEL_KART_ESIK_UYARI", 0.75),
+    }
+
+
+def _asgari_oran() -> float:
+    """
+    Kart asgari ödeme oranı env'den okunur.
+    Env: EVVEL_KART_ASGARI_ORAN (varsayılan 0.40 → %40)
+    """
+    try:
+        v = float((os.environ.get("EVVEL_KART_ASGARI_ORAN") or "0.40").strip())
+        return max(0.10, min(v, 1.0))
+    except (ValueError, AttributeError):
+        return 0.40
+
+
 _UYARI_CACHE = {"ts": None, "data": []}
 _UYARI_CACHE_TTL_SN = 30
+_FINANS_OZET_CACHE = {"ts": None, "data": None}
+_FINANS_OZET_CACHE_TTL_SN = 8
+_logger = logging.getLogger("evvel-erp")
 
 # ── KARAR MOTORU ───────────────────────────────────────────────
 def karar_motoru():
@@ -131,7 +167,8 @@ def karar_motoru():
             borc   = kart_borc(cur, k['id'])
             kalan  = limit - borc
             doluluk = borc / limit
-            if doluluk >= 0.90:
+            _ke = _kart_esikleri()
+            if doluluk >= _ke["kritik"]:
                 kararlar.append({
                     "kural": 7, "seviye": "KRITIK", "renk": "KIRMIZI",
                     "baslik": f"Kart Limiti Kritik: {k['banka']}",
@@ -139,7 +176,7 @@ def karar_motoru():
                     "aksiyon": "Kart ödemesi yapın veya nakit kullanın",
                     "blink": True
                 })
-            elif doluluk >= 0.75:
+            elif doluluk >= _ke["uyari"]:
                 kararlar.append({
                     "kural": 7, "seviye": "UYARI", "renk": "SARI",
                     "baslik": f"Kart Limiti Dolmak Üzere: {k['banka']}",
@@ -185,7 +222,7 @@ def odeme_strateji_motoru():
         for o in cur.fetchall():
             gun_kaldi = (o['tarih'] - bugun).days
             tam = float(o['odenecek_tutar'])
-            asgari = float(o['asgari_tutar'] or tam * 0.4)
+            asgari = float(o['asgari_tutar'] or tam * _asgari_oran())
             faiz = float(o['faiz_orani'] or 0)
 
             if gun_kaldi == 0:
@@ -251,7 +288,7 @@ def odeme_strateji_motoru():
                 if kullanilabilir <= 0:
                     break
                 tam = float(ek['odenecek_tutar'])
-                asgari = float(ek['asgari_tutar'] or tam * 0.4)
+                asgari = float(ek['asgari_tutar'] or tam * _asgari_oran())
                 ekstra = min(kullanilabilir, tam - asgari)
                 if ekstra > 1:
                     for o in oneriler:
@@ -298,8 +335,7 @@ def kart_analiz_hesapla():
                 SELECT COALESCE(SUM(tutar),0) as faiz
                 FROM kart_hareketleri
                 WHERE kart_id=%s AND durum='aktif' AND islem_turu='FAIZ'
-                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+                AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
             """, (k['id'],))
             bu_ay_faiz = float(cur.fetchone()['faiz'])
 
@@ -701,7 +737,15 @@ def uyari_motoru():
         for o in cur.fetchall():
             gun_farki = (o['tarih'] - bugun).days
             tutar = float(o['odenecek_tutar'])
-            asgari = float(o['asgari_tutar'] or tutar * 0.4)
+            asgari = float(o['asgari_tutar'] or tutar * _asgari_oran())
+
+            # Bu kart için içinde bulunulan ayda yapılan toplam ödeme (kasa + kart hareketleri üzerinden)
+            bu_ay_odenen = 0.0
+            if o['kart_id']:
+                try:
+                    bu_ay_odenen = float(kart_bu_ay_odenen(cur, o['kart_id']) or 0)
+                except Exception:
+                    bu_ay_odenen = 0.0
 
             if gun_farki < 0:
                 seviye = "KRITIK"
@@ -709,10 +753,20 @@ def uyari_motoru():
                 mesaj = f"⛔ GECİKMİŞ ÖDEME! {abs(gun_farki)} gün önce geçti."
                 blink = True
             elif gun_farki == 0:
-                seviye = "KRITIK"
-                renk = "KIRMIZI"
-                mesaj = f"🔴 BUGÜN SON GÜN! Ödendi mi?"
-                blink = True
+                if bu_ay_odenen >= asgari:
+                    # Asgari ödendi — kalan borç için daha yumuşak mesaj
+                    seviye = "BILGI"
+                    renk = "SARI"
+                    mesaj = (
+                        f"✅ Bu ay {fmt(bu_ay_odenen)} ödendi. "
+                        f"Kalan borç: {fmt(tutar)} — yeni ödeme yapacak mısın?"
+                    )
+                    blink = False
+                else:
+                    seviye = "KRITIK"
+                    renk = "KIRMIZI"
+                    mesaj = "🔴 BUGÜN SON GÜN! Henüz asgari tutar ödenmemiş görünüyor."
+                    blink = True
             elif gun_farki <= 2:
                 seviye = "UYARI"
                 renk = "TURUNCU"
@@ -732,6 +786,7 @@ def uyari_motoru():
                 "tarih": str(o['tarih']),
                 "tutar": tutar,
                 "asgari": asgari,
+                "bu_ay_odenen": bu_ay_odenen,
                 "gun_farki": gun_farki,
                 "seviye": seviye,
                 "renk": renk,
@@ -873,6 +928,12 @@ def finans_ozet_motoru():
     Tüm motorları birleştirir, çelişkileri çözer, tek karar üretir.
     Panel bu fonksiyonu çağırır — başka bir şey çağırmaz.
     """
+    now = datetime.now()
+    cache_ts = _FINANS_OZET_CACHE.get("ts")
+    cache_data = _FINANS_OZET_CACHE.get("data")
+    if cache_ts and cache_data and (now - cache_ts).total_seconds() < _FINANS_OZET_CACHE_TTL_SN:
+        return cache_data
+
     bugun = bugun_tr()
 
     # Tüm motorları çalıştır
@@ -924,8 +985,7 @@ def finans_ozet_motoru():
             SELECT COALESCE(SUM(toplam), 0) as ciro
             FROM ciro
             WHERE durum='aktif'
-            AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-            AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
         """)
         bu_ay_ciro = float(cur.fetchone()['ciro'])
 
@@ -944,7 +1004,7 @@ def finans_ozet_motoru():
                 'aciklama': r['aciklama'],
                 'tarih': r['tarih'],
                 'tutar': float(r['odenecek_tutar']),
-                'asgari': float(r['asgari_tutar'] or r['odenecek_tutar'] * 0.4),
+                'asgari': float(r['asgari_tutar'] or r['odenecek_tutar'] * _asgari_oran()),
                 'gun_farki': (date.fromisoformat(r['tarih']) - bugun).days,
                 'blink': True,
                 'seviye': 'KRITIK',
@@ -970,7 +1030,7 @@ def finans_ozet_motoru():
                 'aciklama': r['aciklama'],
                 'tarih': r['tarih'],
                 'tutar': float(r['odenecek_tutar']),
-                'asgari': float(r['asgari_tutar'] or r['odenecek_tutar'] * 0.4),
+                'asgari': float(r['asgari_tutar'] or r['odenecek_tutar'] * _asgari_oran()),
                 'gun_farki': (date.fromisoformat(r['tarih']) - bugun).days,
                 'kaynak_tablo': r['kaynak_tablo'] or '',
                 'kaynak_id': str(r['kaynak_id']) if r['kaynak_id'] else None,
@@ -1179,9 +1239,51 @@ def finans_ozet_motoru():
         elif skor >= 15:
             genel_durum = 'UYARI'
         else:
-            genel_durum = 'SAGLIKLI' 
+            genel_durum = 'SAGLIKLI'
 
-    return {
+        try:
+            from analitik_olay import analitik_olay_ekle
+
+            erk = None
+            if en_riskli_kart:
+                erk = {
+                    "banka": en_riskli_kart.get("banka"),
+                    "kart_adi": en_riskli_kart.get("kart_adi"),
+                    "limit_doluluk": round(float(en_riskli_kart.get("limit_doluluk") or 0), 4),
+                }
+            analitik_olay_ekle(
+                cur,
+                "FINANS_OZET_PAKET",
+                sube_id=None,
+                tutar_yok_bilgi=False,
+                hesap_surumu="basarili",
+                kaynak="finans_ozet_motoru",
+                throttle_sn=120,
+                payload={
+                    "tarih": str(bugun),
+                    "genel_durum": genel_durum,
+                    "skor": skor,
+                    "kasa": float(kasa),
+                    "serbest_nakit": float(serbest),
+                    "yuk_7": float(yuk_7),
+                    "yuk_15": float(yuk_15),
+                    "yuk_30": float(yuk_30),
+                    "kritik_sayisi": int(kritik_sayisi),
+                    "uyari_sayisi": int(uyari_sayisi),
+                    "uyari_kayit": len(uyarilar),
+                    "karar_kayit": len(karar.get("kararlar") or []),
+                    "oneri_kayit": len(cozulmus_oneriler),
+                    "risk_gunu": risk_gunu,
+                    "risk_gunu_onerili": risk_gunu_onerili,
+                    "kac_gun_dayanir": kac_gun,
+                    "en_riskli_kart_ozet": erk,
+                    "ciro_eksik_gun": len(ciro_eksik_gunler),
+                },
+            )
+        except Exception:
+            _logger.warning("FINANS_OZET analitik olayı atlandı", exc_info=True)
+
+    out = {
         # Temel göstergeler
         'kasa': kasa,
         'serbest_nakit': serbest,
@@ -1224,3 +1326,6 @@ def finans_ozet_motoru():
         'risk_gunu_onerili': risk_gunu_onerili,
         'ciro_eksik_gunler': ciro_eksik_gunler,
     }
+    _FINANS_OZET_CACHE["ts"] = now
+    _FINANS_OZET_CACHE["data"] = out
+    return out

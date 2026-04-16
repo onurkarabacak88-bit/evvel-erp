@@ -426,6 +426,8 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
 
             if body.kasa_sayim is None or body.kasa_sayim < 0:
                 raise HTTPException(400, "Açılış için kasa sayımı girilmeli")
+            if body.kasa_sayim > 9_999_999:
+                raise HTTPException(400, "Kasa sayımı geçersiz: 9.999.999₺ üstü kabul edilmez")
             pid_in = (body.personel_id or "").strip()
             pin = (body.pin or "").replace(" ", "")
             if not pid_in:
@@ -509,11 +511,33 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 if abs(fark) > 0.01:
                     sev = tolerans_seviyesi(fark)
                     uid = str(uuid.uuid4())
+                    kap_pid = None
+                    kap_pad = None
+                    cur.execute(
+                        """
+                        SELECT personel_id, personel_ad
+                        FROM sube_operasyon_event
+                        WHERE sube_id=%s
+                          AND tip='KAPANIS'
+                          AND durum='tamamlandi'
+                          AND tarih=(CURRENT_DATE - INTERVAL '1 day')
+                        ORDER BY cevap_ts DESC NULLS LAST, id DESC
+                        LIMIT 1
+                        """,
+                        (sube_id,),
+                    )
+                    prev_kap = cur.fetchone()
+                    if prev_kap:
+                        kap_pid = (prev_kap.get("personel_id") or "").strip() or None
+                        kap_pad = (prev_kap.get("personel_ad") or "").strip() or None
                     cur.execute(
                         """
                         INSERT INTO sube_operasyon_uyari
-                            (id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj)
-                        VALUES (%s, %s, CURRENT_DATE, 'ACILIS_KASA_FARK', %s, %s, %s, %s, %s)
+                            (
+                                id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj,
+                                acilis_personel_id, acilis_personel_ad, kapanis_personel_id, kapanis_personel_ad
+                            )
+                        VALUES (%s, %s, CURRENT_DATE, 'ACILIS_KASA_FARK', %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             uid,
@@ -523,6 +547,10 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                             ks,
                             fark,
                             f"Açılış kasası dün kapanışa göre fark: {fark:,.2f} TL ({sev})",
+                            pid_panel,
+                            onay_ad,
+                            kap_pid,
+                            kap_pad,
                         ),
                     )
             operasyon_defter_ekle(
@@ -591,6 +619,8 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             elif mod == "kasa_only":
                 if body.kasa_sayim is None or body.kasa_sayim < 0:
                     raise HTTPException(400, "Kasa denetimi: kasa sayımı zorunlu")
+                if body.kasa_sayim > 9_999_999:
+                    raise HTTPException(400, "Kasa sayımı geçersiz: 9.999.999₺ üstü kabul edilmez")
                 ks_out = float(body.kasa_sayim)
                 sn_out = float(body.snap_nakit or 0)
                 sp_out = float(body.snap_pos or 0)
@@ -598,6 +628,8 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             elif mod == "full":
                 if body.kasa_sayim is None or body.kasa_sayim < 0:
                     raise HTTPException(400, "Tam denetim: kasa sayımı zorunlu")
+                if body.kasa_sayim > 9_999_999:
+                    raise HTTPException(400, "Kasa sayımı geçersiz: 9.999.999₺ üstü kabul edilmez")
                 for name, val in (
                     ("bardak_kucuk", body.bardak_kucuk),
                     ("bardak_buyuk", body.bardak_buyuk),
@@ -607,6 +639,8 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                         raise HTTPException(400, f"Tam denetim: {name} zorunlu")
                     if int(val) < 0:
                         raise HTTPException(400, f"Tam denetim: {name} negatif olamaz")
+                    if int(val) > 99_999:
+                        raise HTTPException(400, f"Tam denetim: {name} geçersiz (max 99.999)")
                 ks_out = float(body.kasa_sayim)
                 sn_out = float(body.snap_nakit or 0)
                 sp_out = float(body.snap_pos or 0)
@@ -619,6 +653,8 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             else:
                 if body.kasa_sayim is None or body.kasa_sayim < 0:
                     raise HTTPException(400, "Kontrol için kasa sayımı zorunlu")
+                if body.kasa_sayim > 9_999_999:
+                    raise HTTPException(400, "Kasa sayımı geçersiz: 9.999.999₺ üstü kabul edilmez")
                 ks_out = float(body.kasa_sayim)
                 sn_out = float(body.snap_nakit or 0)
                 sp_out = float(body.snap_pos or 0)
@@ -817,6 +853,8 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
         elif tip == "CIKIS":
             if body.kasa_sayim is None or body.kasa_sayim < 0:
                 raise HTTPException(400, "Çıkış için kasa sayımı zorunlu")
+            if body.kasa_sayim > 9_999_999:
+                raise HTTPException(400, "Kasa sayımı geçersiz: 9.999.999₺ üstü kabul edilmez")
             cur.execute(
                 """
                 UPDATE sube_operasyon_event

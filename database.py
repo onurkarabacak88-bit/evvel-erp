@@ -266,6 +266,40 @@ def init_db():
             ON sube_operasyon_uyari (sube_id, tarih)
         """)
         cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'sube_operasyon_uyari'
+                      AND column_name = 'acilis_personel_id'
+                ) THEN
+                    ALTER TABLE sube_operasyon_uyari ADD COLUMN acilis_personel_id TEXT;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'sube_operasyon_uyari'
+                      AND column_name = 'acilis_personel_ad'
+                ) THEN
+                    ALTER TABLE sube_operasyon_uyari ADD COLUMN acilis_personel_ad TEXT;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'sube_operasyon_uyari'
+                      AND column_name = 'kapanis_personel_id'
+                ) THEN
+                    ALTER TABLE sube_operasyon_uyari ADD COLUMN kapanis_personel_id TEXT;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'sube_operasyon_uyari'
+                      AND column_name = 'kapanis_personel_ad'
+                ) THEN
+                    ALTER TABLE sube_operasyon_uyari ADD COLUMN kapanis_personel_ad TEXT;
+                END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS sube_operasyon_ozet (
                 id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
                 sube_id           TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
@@ -1508,7 +1542,112 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='anlik_giderler' AND column_name='personel_id')
                 THEN ALTER TABLE anlik_giderler ADD COLUMN personel_id TEXT; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='anlik_giderler' AND column_name='fis_gonderildi')
+                THEN ALTER TABLE anlik_giderler ADD COLUMN fis_gonderildi BOOLEAN NOT NULL DEFAULT FALSE; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='anlik_giderler' AND column_name='fis_kontrol_durumu')
+                THEN ALTER TABLE anlik_giderler ADD COLUMN fis_kontrol_durumu TEXT NOT NULL DEFAULT 'bekliyor'; END IF;
             END $$;
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='anlik_giderler'
+                      AND column_name='fis_kontrol_durumu'
+                ) THEN
+                    BEGIN
+                        ALTER TABLE anlik_giderler
+                        ADD CONSTRAINT chk_anlik_gider_fis_kontrol
+                        CHECK (fis_kontrol_durumu IN ('bekliyor','geldi','gelmedi','muaf'));
+                    EXCEPTION WHEN duplicate_object THEN
+                        NULL;
+                    END;
+                END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
+
+        # ── PERSONEL RİSK SİNYAL ───────────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS personel_risk_sinyal (
+                id            TEXT PRIMARY KEY,
+                personel_id   TEXT NOT NULL,
+                sube_id       TEXT,
+                tarih         DATE NOT NULL DEFAULT CURRENT_DATE,
+                sinyal_turu   TEXT NOT NULL,
+                agirlik       INT NOT NULL DEFAULT 0,
+                aciklama      TEXT,
+                referans_id   TEXT,
+                olusturma     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_prs_personel_tarih
+            ON personel_risk_sinyal (personel_id, tarih DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_prs_sube_tarih
+            ON personel_risk_sinyal (sube_id, tarih DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_prs_tur_tarih
+            ON personel_risk_sinyal (sinyal_turu, tarih DESC)
+        """)
+
+        # ── PERSONEL TAKİP ─────────────────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS personel_takip (
+                personel_id       TEXT PRIMARY KEY,
+                takip_baslangic   DATE NOT NULL DEFAULT CURRENT_DATE,
+                takip_seviyesi    TEXT NOT NULL DEFAULT 'izlemede'
+                    CHECK (takip_seviyesi IN ('izlemede','uyari','kritik')),
+                tetikleyen_sinyal TEXT,
+                notlar            TEXT,
+                guncelleme        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+
+        # ── KASA TESLİM (alıcı tanımı + hareket) ───────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS kasa_teslim_alici (
+                id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                ad          TEXT NOT NULL,
+                unvan       TEXT,
+                sube_id     TEXT REFERENCES subeler(id) ON DELETE CASCADE,
+                aktif       BOOLEAN NOT NULL DEFAULT TRUE,
+                olusturma   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_kasa_teslim_alici_sube
+            ON kasa_teslim_alici (sube_id, aktif)
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS kasa_teslim (
+                id                      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                sube_id                 TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                tarih                   DATE NOT NULL DEFAULT CURRENT_DATE,
+                tutar                   NUMERIC(14,2) NOT NULL CHECK (tutar > 0),
+                teslim_eden_personel_id TEXT,
+                teslim_eden_ad          TEXT,
+                teslim_alan_id          TEXT REFERENCES kasa_teslim_alici(id),
+                teslim_alan_ad          TEXT,
+                teslim_turu             TEXT NOT NULL DEFAULT 'ara',
+                aciklama                TEXT,
+                olusturma               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_kasa_teslim_sube_tarih
+            ON kasa_teslim (sube_id, tarih DESC, olusturma DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_kasa_teslim_tarih
+            ON kasa_teslim (tarih DESC, olusturma DESC)
         """)
 
         cur.execute("""
@@ -1666,6 +1805,109 @@ def init_db():
             ON siparis_talep (sube_id, tarih, olusturma DESC)
         """)
         cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'subeler'
+                      AND column_name = 'sube_tipi'
+                ) THEN
+                    ALTER TABLE subeler ADD COLUMN sube_tipi TEXT NOT NULL DEFAULT 'normal';
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'siparis_talep'
+                      AND column_name = 'hedef_depo_sube_id'
+                ) THEN
+                    ALTER TABLE siparis_talep ADD COLUMN hedef_depo_sube_id TEXT REFERENCES subeler(id) ON DELETE SET NULL;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'siparis_talep'
+                      AND column_name = 'sevkiyat_sube_id'
+                ) THEN
+                    ALTER TABLE siparis_talep ADD COLUMN sevkiyat_sube_id TEXT REFERENCES subeler(id) ON DELETE SET NULL;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'siparis_talep'
+                      AND column_name = 'sevkiyat_durum'
+                ) THEN
+                    ALTER TABLE siparis_talep ADD COLUMN sevkiyat_durum TEXT NOT NULL DEFAULT 'bekliyor';
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'siparis_talep'
+                      AND column_name = 'sevkiyat_durumu'
+                ) THEN
+                    ALTER TABLE siparis_talep ADD COLUMN sevkiyat_durumu TEXT NOT NULL DEFAULT 'bekliyor';
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'siparis_talep'
+                      AND column_name = 'sevkiyat_notlari'
+                ) THEN
+                    ALTER TABLE siparis_talep ADD COLUMN sevkiyat_notlari TEXT;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'siparis_talep'
+                      AND column_name = 'sevkiyat_notu'
+                ) THEN
+                    ALTER TABLE siparis_talep ADD COLUMN sevkiyat_notu TEXT;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'siparis_talep'
+                      AND column_name = 'sevkiyat_ts'
+                ) THEN
+                    ALTER TABLE siparis_talep ADD COLUMN sevkiyat_ts TIMESTAMPTZ;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'siparis_talep'
+                      AND column_name = 'sevkiyat_personel_ad'
+                ) THEN
+                    ALTER TABLE siparis_talep ADD COLUMN sevkiyat_personel_ad TEXT;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'siparis_talep'
+                      AND column_name = 'kalem_durumlari'
+                ) THEN
+                    ALTER TABLE siparis_talep ADD COLUMN kalem_durumlari JSONB NOT NULL DEFAULT '[]'::jsonb;
+                END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
+        cur.execute("""
+            UPDATE subeler
+            SET sube_tipi = CASE
+                WHEN id = 'sube-merkez' THEN 'karma'
+                WHEN COALESCE(NULLIF(TRIM(sube_tipi), ''), 'normal') = 'sevkiyat' THEN 'depo'
+                WHEN COALESCE(NULLIF(TRIM(sube_tipi), ''), 'normal') = 'merkez' THEN 'karma'
+                ELSE COALESCE(NULLIF(TRIM(sube_tipi), ''), 'normal')
+            END
+            WHERE COALESCE(TRIM(sube_tipi), '') IN ('', 'sevkiyat', 'merkez');
+        """)
+        cur.execute("""
+            UPDATE siparis_talep
+            SET hedef_depo_sube_id = COALESCE(hedef_depo_sube_id, sevkiyat_sube_id),
+                sevkiyat_durumu = COALESCE(NULLIF(TRIM(sevkiyat_durumu), ''), sevkiyat_durum, 'bekliyor'),
+                sevkiyat_notu = COALESCE(NULLIF(TRIM(sevkiyat_notu), ''), sevkiyat_notlari),
+                sevkiyat_notlari = COALESCE(NULLIF(TRIM(sevkiyat_notlari), ''), sevkiyat_notu),
+                sevkiyat_sube_id = COALESCE(sevkiyat_sube_id, hedef_depo_sube_id)
+            WHERE TRUE;
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sube_tipi_aktif
+            ON subeler (sube_tipi, aktif)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_siparis_talep_sevkiyat
+            ON siparis_talep (hedef_depo_sube_id, sevkiyat_durumu, tarih, olusturma DESC)
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS siparis_ozel_talep (
                 id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
                 sube_id             TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
@@ -1781,6 +2023,29 @@ def init_db():
         except Exception:
             pass
 
+        # ── MOTOR ANALİTİK OLAY (append-only, audit'ten ayrı) ───
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS motor_analitik_olay (
+                id               TEXT PRIMARY KEY,
+                olay_tipi        TEXT NOT NULL,
+                sube_id          TEXT,
+                tutar_yok_bilgi  BOOLEAN NOT NULL DEFAULT FALSE,
+                payload_json     JSONB NOT NULL DEFAULT '{}'::jsonb,
+                hesap_surumu     TEXT NOT NULL DEFAULT 'basarili',
+                kaynak           TEXT,
+                olusturma        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_motor_analitik_olay_tip_ts "
+            "ON motor_analitik_olay (olay_tipi, olusturma DESC)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_motor_analitik_olay_sube_ts "
+            "ON motor_analitik_olay (sube_id, olusturma DESC) "
+            "WHERE sube_id IS NOT NULL"
+        )
+
         # ── AUDIT LOG ──────────────────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS audit_log (
@@ -1837,3 +2102,46 @@ def init_db():
             END
 $$;
         """)
+
+        # ── PERFORMANS İNDEXLERİ ───────────────────────────────
+        # kasa_hareketleri: en sık sorgulanan kolonlar
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kasa_har_sube_tarih "
+            "ON kasa_hareketleri (tarih DESC) "
+            "WHERE durum='aktif' AND kasa_etkisi=TRUE"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kasa_har_ref "
+            "ON kasa_hareketleri (ref_id, ref_type, islem_turu) "
+            "WHERE durum='aktif'"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kasa_har_islem_turu "
+            "ON kasa_hareketleri (islem_turu, tarih DESC)"
+        )
+        # ciro: sube_id + tarih + durum kombinasyonu çok sık kullanılıyor
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ciro_sube_tarih "
+            "ON ciro (sube_id, tarih DESC) "
+            "WHERE durum='aktif'"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ciro_tarih "
+            "ON ciro (tarih DESC) "
+            "WHERE durum='aktif'"
+        )
+        # anlik_giderler: sube + tarih + durum
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_anlik_gider_sube_tarih "
+            "ON anlik_giderler (sube, tarih DESC)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_anlik_gider_tarih_durum "
+            "ON anlik_giderler (tarih DESC, durum)"
+        )
+        # odeme_plani: durum + vade_tarihi çok sık filtreleniyor
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_odeme_plani_bekliyor_vade "
+            "ON odeme_plani (vade_tarihi ASC) "
+            "WHERE durum='bekliyor'"
+        )

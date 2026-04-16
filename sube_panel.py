@@ -1019,6 +1019,18 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
     panel_yonetici_sayisi = count_personel_panel_yonetici(cur)
     tamamlanan = sum(1 for g in gorevler if g["tamamlandi"])
 
+    # Kasa teslim alıcıları
+    cur.execute(
+        """
+        SELECT id, ad, unvan
+        FROM kasa_teslim_alici
+        WHERE aktif=TRUE AND (sube_id=%s OR sube_id IS NULL)
+        ORDER BY ad
+        """,
+        (sube_id,),
+    )
+    kasa_teslim_alicilari = [dict(r) for r in cur.fetchall()]
+
     from sube_operasyon import build_panel_operasyon_blob
     from sube_kapanis_dual import vardiya_devir_panel_blob
 
@@ -1070,9 +1082,16 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
 
     okunmamis_mesaj_var = any(not m.get("okundu") for m in merkez_mesajlar)
 
+    sube_tipi = str(sube.get("sube_tipi") or "normal").strip().lower()
+    if sube_tipi == "sevkiyat":
+        sube_tipi = "depo"
+    elif sube_tipi == "merkez":
+        sube_tipi = "karma"
+
     return {
         "sube_id":        sube_id,
         "sube_adi":       sube["ad"],
+        "sube_tipi":      sube_tipi,
         "acilis_saati":   sube.get("acilis_saati") or "09:00",
         "kapanis_saati":  sube.get("kapanis_saati") or "22:00",
         "tarih":          str(bugun_tr()),
@@ -1085,6 +1104,7 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
         ),
         "panel_pin_kullanicilar": panel_pin_kullanicilar,
         "panel_yonetici_sayisi": panel_yonetici_sayisi,
+        "kasa_teslim_alicilari": kasa_teslim_alicilari,
         "acilis_kaydi":   acilis_kaydi,
         "gorevler":       gorevler,
         "tamamlanan":     tamamlanan,
@@ -1318,6 +1338,7 @@ class SubeAnlikGiderModel(BaseModel):
     aciklama: Optional[str] = None
     personel_id: str
     pin: str
+    fis_gonderildi: bool = False
 
 
 @router.post("/{sube_id}/anlik-gider")
@@ -1354,10 +1375,12 @@ def sube_anlik_gider_gir(sube_id: str, body: SubeAnlikGiderModel):
         cur.execute(
             """
             INSERT INTO anlik_giderler
-                (id, tarih, kategori, tutar, aciklama, sube, odeme_yontemi, durum, personel_id)
-            VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, 'nakit', 'onay_bekliyor', %s)
+                (id, tarih, kategori, tutar, aciklama, sube, odeme_yontemi, durum, personel_id,
+                 fis_gonderildi, fis_kontrol_durumu)
+            VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, 'nakit', 'onay_bekliyor', %s,
+                    %s, 'bekliyor')
             """,
-            (gid, body.kategori, body.tutar, acik, sube_id, pid_panel),
+            (gid, body.kategori, body.tutar, acik, sube_id, pid_panel, bool(body.fis_gonderildi)),
         )
         onay_ekle(
             cur,
@@ -1706,23 +1729,51 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
         if siparis_talep_id:
             cur.execute(
                 """
-                SELECT id
+                SELECT id, durum
                 FROM siparis_talep
                 WHERE id=%s AND sube_id=%s
                 LIMIT 1
                 """,
                 (siparis_talep_id, sube_id),
             )
-            if not cur.fetchone():
+            _st = cur.fetchone()
+            if not _st:
                 raise HTTPException(400, "Geçersiz siparis_talep_id (şube ile eşleşmiyor)")
+            st = str(dict(_st).get("durum") or "")
+            if st not in ("hazirlaniyor", "gonderildi", "bekliyor"):
+                raise HTTPException(409, "Sipariş talebi sevkiyat/teslim akışına uygun değil")
+            cur.execute(
+                """
+                UPDATE siparis_talep
+                SET durum='teslim_edildi',
+                    sevkiyat_durumu='teslim_edildi',
+                    sevkiyat_durum='teslim_edildi',
+                    sevkiyat_ts=NOW()
+                WHERE id=%s
+                """,
+                (siparis_talep_id,),
+            )
         else:
             cur.execute(
                 """
                 SELECT id
                 FROM siparis_talep
                 WHERE sube_id=%s AND tarih=CURRENT_DATE
-                  AND durum='bekliyor'
-                ORDER BY olusturma DESC NULLS LAST
+                  AND durum IN ('gonderildi','hazirlaniyor','bekliyor')
+                  AND COALESCE(NULLIF(TRIM(sevkiyat_durumu), ''), sevkiyat_durum, 'bekliyor')
+                      IN ('gonderildi', 'kismi_hazirlandi', 'depoda_hazirlaniyor', 'hazirlaniyor', 'bekliyor')
+                ORDER BY
+                  CASE durum
+                    WHEN 'gonderildi' THEN 0
+                    WHEN 'hazirlaniyor' THEN 1
+                    ELSE 2
+                  END,
+                  CASE
+                    WHEN COALESCE(NULLIF(TRIM(sevkiyat_durumu), ''), sevkiyat_durum, 'bekliyor')='gonderildi' THEN 0
+                    WHEN COALESCE(NULLIF(TRIM(sevkiyat_durumu), ''), sevkiyat_durum, 'bekliyor')='kismi_hazirlandi' THEN 1
+                    ELSE 2
+                  END,
+                  olusturma DESC NULLS LAST
                 LIMIT 1
                 """,
                 (sube_id,),

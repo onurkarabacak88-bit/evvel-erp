@@ -1,11 +1,11 @@
 """
-Operasyon disiplin kuralları — saf mantık (HTTP yok).
-Tolerans (kasa farkı), dün kapanış referansı, alarm periyotları (gecikme dk).
+Operasyon disiplin kuralları.
+Merkezi kontrol mantığı kontrol_motoru.py'de.
+Bu dosya geriye dönük uyumluluk için korunuyor.
 """
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
-
 
 def tolerans_seviyesi(fark_tl: float) -> str:
     """±50 normal, 50–200 uyarı, 200+ kritik (mutlak fark)."""
@@ -38,8 +38,12 @@ def beklenen_dunku_kapanis_kasa(cur: Any, sube_id: str) -> Optional[float]:
     return float(r["ref"])
 
 
+def beklened_dunku_kapanis_kasa(cur: Any, sube_id: str) -> Optional[float]:
+    """Eski/yanlış isim kullanan çağrılar için alias."""
+    return beklenen_dunku_kapanis_kasa(cur, sube_id)
+
+
 def vardiya_devri_bugun_baslamis_mi(cur: Any, sube_id: str) -> bool:
-    """Bugün için kapanis_kayit satırı varsa vardiya devri süreci başlamış sayılır."""
     cur.execute(
         """
         SELECT 1 FROM kapanis_kayit

@@ -149,9 +149,8 @@ def kart_ekstre(cur, kart_id: str, kesim_gunu: int) -> dict:
         FROM kart_hareketleri
         WHERE kart_id = %s AND durum = 'aktif'
         AND islem_turu = 'HARCAMA' AND taksit_sayisi = 1
-        AND EXTRACT(YEAR  FROM tarih) = EXTRACT(YEAR  FROM CURRENT_DATE)
-        AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-        AND EXTRACT(DAY   FROM tarih) <= %s
+        AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
+        AND EXTRACT(DAY FROM tarih) <= %s
     """, (kart_id, kesim_gunu))
     tek_cekim = float(cur.fetchone()['tek_cekim'])
 
@@ -180,8 +179,7 @@ def kart_bu_ay_odenen(cur, kart_id: str) -> float:
         SELECT COALESCE(SUM(odenen_tutar), 0) AS odenen
         FROM odeme_plani
         WHERE kart_id = %s AND durum = 'odendi'
-        AND EXTRACT(YEAR  FROM odeme_tarihi) = EXTRACT(YEAR  FROM CURRENT_DATE)
-        AND EXTRACT(MONTH FROM odeme_tarihi) = EXTRACT(MONTH FROM CURRENT_DATE)
+        AND DATE_TRUNC('month', odeme_tarihi) = DATE_TRUNC('month', CURRENT_DATE)
     """, (kart_id,))
     return float(cur.fetchone()['odenen'])
 
