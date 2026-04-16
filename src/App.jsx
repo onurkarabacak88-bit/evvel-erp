@@ -18,6 +18,7 @@ import Rapor from './pages/Rapor';
 import KartMerkez from './pages/KartMerkez';
 import Subeler from './pages/Subeler';
 import SubePanelPinleri from './pages/SubePanelPinleri';
+import Tedarikciler from './pages/Tedarikciler';
 import OperasyonMerkezi from './pages/OperasyonMerkezi';
 import TeslimKayit from './pages/TeslimKayit';
 import SevkiyatHazirlama from './pages/SevkiyatHazirlama';
@@ -53,6 +54,7 @@ const NAV = [
     { id: 'sabit-giderler',   label: 'Sabit Giderler',      icon: '🏠' },
     { id: 'vardiya-planlamasi',label: 'Vardiya Planlaması', icon: '🗓️' },
     { id: 'sube-panel-pin',   label: 'Personel panel PIN',  icon: '🔐' },
+    { id: 'tedarikciler',     label: 'Tedarikçiler',        icon: '🚚' },
   ]},
 ];
 
@@ -81,6 +83,7 @@ const PAGES = {
   'sabit-giderler':   SabitGiderler,
   'vardiya-planlamasi': Subeler,
   'sube-panel-pin':   SubePanelPinleri,
+  tedarikciler:       Tedarikciler,
 };
 
 function readPageFromHash() {
