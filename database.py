@@ -2139,9 +2139,9 @@ $$;
             "CREATE INDEX IF NOT EXISTS idx_anlik_gider_tarih_durum "
             "ON anlik_giderler (tarih DESC, durum)"
         )
-        # odeme_plani: durum + vade_tarihi çok sık filtreleniyor
+        # odeme_plani: bekleyen ödemeleri tarih sırasıyla çekmek için
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_odeme_plani_bekliyor_vade "
-            "ON odeme_plani (vade_tarihi ASC) "
+            "ON odeme_plani (tarih ASC) "
             "WHERE durum='bekliyor'"
         )
