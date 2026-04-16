@@ -19,12 +19,16 @@ import KartMerkez from './pages/KartMerkez';
 import Subeler from './pages/Subeler';
 import SubePanelPinleri from './pages/SubePanelPinleri';
 import OperasyonMerkezi from './pages/OperasyonMerkezi';
+import TeslimKayit from './pages/TeslimKayit';
+import SevkiyatHazirlama from './pages/SevkiyatHazirlama';
+import KasaTeslim from './pages/KasaTeslim';
 import './index.css';
 
 const NAV = [
   { group: 'Ana', items: [
     { id: 'panel',            label: 'CFO Panel',           icon: '⬛' },
     { id: 'ops-merkez',       label: 'Operasyon Merkezi',   icon: '📡' },
+    { id: 'kasa-teslim',      label: 'Kasa Teslim',         icon: '💰' },
     { id: 'rapor',            label: 'Aylık Rapor',         icon: '📊' },
     { id: 'strateji',         label: 'Strateji Motoru',     icon: '🧠' },
     { id: 'onay',             label: 'Onay Kuyruğu',        icon: '✅' },
@@ -38,6 +42,8 @@ const NAV = [
     { id: 'dis-kaynak',       label: 'Dış Kaynak Geliri',   icon: '💰' },
     { id: 'vadeli',           label: 'Vadeli Alım',         icon: '📦' },
     { id: 'excel',            label: 'Excel Import',        icon: '📊' },
+    { id: 'teslim-kayit',     label: 'Bilgi Teslim',        icon: '📦' },
+    { id: 'sevkiyat-hazirlama', label: 'Sevkiyat Hazırlama', icon: '🚚' },
   ]},
   { group: 'Tanımlar', items: [
     { id: 'kartlar',          label: 'Kartlar',             icon: '💳' },
@@ -53,6 +59,7 @@ const NAV = [
 const PAGES = {
   panel:              Panel,
   'ops-merkez':       OperasyonMerkezi,
+  'kasa-teslim':      KasaTeslim,
   strateji:           Strateji,
   onay:               OnayKuyrugu,
   'ciro-taslak-onay': CiroTaslakOnay,
@@ -65,6 +72,8 @@ const PAGES = {
   'dis-kaynak':       DisKaynak,
   vadeli:             VadeliAlimlar,
   excel:              ExcelImport,
+  'teslim-kayit':     TeslimKayit,
+  'sevkiyat-hazirlama': SevkiyatHazirlama,
   kartlar:            Kartlar,
   'kart-analiz':      KartMerkez,
   personel:           Personel,
