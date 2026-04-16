@@ -303,6 +303,86 @@
     }
     .sip-close-btn:hover { border-color: rgba(239,68,68,.5); color: #fca5a5; }
 
+    /* Sipariş kategori — tam ekran modal (ürün + adet yan yana) */
+    .sip-kat-modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 10050;
+      background: rgba(0, 0, 0, 0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      box-sizing: border-box;
+    }
+    .sip-kat-modal-dialog {
+      width: 100%;
+      max-width: 360px;
+      max-height: min(88vh, 520px);
+      display: flex;
+      flex-direction: column;
+      border-radius: var(--rs);
+      border: 1px solid var(--border);
+      background: var(--bg1);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+      overflow: hidden;
+    }
+    .sip-kat-modal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+      flex-shrink: 0;
+    }
+    .sip-kat-modal-title { font-size: 14px; font-weight: 800; }
+    .sip-kat-modal-body {
+      padding: 10px 12px 12px;
+      overflow-y: auto;
+      flex: 1;
+      min-height: 0;
+    }
+    .sip-modal-urun-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 56px;
+      gap: 6px 8px;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .sip-modal-urun-row.pasif { opacity: 0.55; }
+    .sip-modal-urun-row .sip-modal-nm {
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.25;
+    }
+    .sip-modal-urun-row input {
+      width: 100%;
+      max-width: 56px;
+      padding: 6px 4px;
+      text-align: center;
+      font-size: 14px;
+      font-weight: 700;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+    }
+    .sip-modal-pin-gate {
+      border-top: 1px solid var(--border);
+      margin: 10px -12px -12px;
+      padding: 10px 12px 12px;
+      background: rgba(245, 158, 11, 0.08);
+    }
+    .sip-modal-warn {
+      font-size: 12px;
+      color: var(--text);
+      line-height: 1.45;
+      margin-bottom: 10px;
+    }
+    .sip-modal-pin-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
     /* Orta alan */
     #orta {
       flex: 1;
@@ -1128,6 +1208,7 @@ var acilisStep = 1, acilisKasa = null, acilisStok = {};
 var siparisOpenKat = null;
 var siparisShowPasif = false;
 var siparisOzelExpanded = false;
+var siparisModalIptalAcik = false;
 var siparisDegerler = {};
 var siparisKatalogCache = null;
 var SUBE_TIPI = 'normal';
@@ -1344,16 +1425,87 @@ function siparisLabelParts(label) {
     ttl: hasIco ? (p.slice(1).join(' ') || t) : t
   };
 }
-function siparisUrunRowsHTML(katId, rows) {
+function siparisKategoriHasAdet(katId) {
+  if (!katId) return false;
+  var pref = String(katId) + '::';
+  for (var k in siparisDegerler) {
+    if (!Object.prototype.hasOwnProperty.call(siparisDegerler, k)) continue;
+    if (k.length < pref.length || k.substring(0, pref.length) !== pref) continue;
+    var n = parseInt(String(siparisDegerler[k]), 10);
+    if (!isNaN(n) && n > 0) return true;
+  }
+  return false;
+}
+function siparisKategoriAdetleriSifirla(katId) {
+  var pref = String(katId) + '::';
+  Object.keys(siparisDegerler).forEach(function(k){
+    if (k.substring(0, pref.length) === pref) delete siparisDegerler[k];
+  });
+}
+function siparisModalUrunRowsHTML(katId, rows) {
   var h = '';
   rows.forEach(function(it){
     var key = katId + '::' + it.id;
     var val = siparisDegerler[key] != null ? siparisDegerler[key] : 0;
-    h += '<div class="sip-urun-row' + (it.aktif===false ? ' pasif' : '') + '">';
-    h += '<span class="nm">' + it.ad + '</span>';
-    h += '<input type="text" inputmode="numeric" data-sip-input="' + key + '" value="' + val + '" />';
+    h += '<div class="sip-modal-urun-row' + (it.aktif === false ? ' pasif' : '') + '">';
+    h += '<span class="sip-modal-nm">' + escHtml(it.ad) + '</span>';
+    h += '<input type="text" inputmode="numeric" data-sip-input="' + escHtml(key) + '" value="' + String(val) + '" />';
     h += '</div>';
   });
+  return h;
+}
+function siparisModalTryClose() {
+  var kid = siparisOpenKat;
+  if (!kid) return;
+  if (siparisModalIptalAcik) {
+    siparisModalIptalAcik = false;
+    renderSiparisPanel();
+    return;
+  }
+  if (!siparisKategoriHasAdet(kid)) {
+    siparisOpenKat = null;
+    siparisModalIptalAcik = false;
+    renderSiparisPanel();
+    return;
+  }
+  siparisModalIptalAcik = true;
+  renderSiparisPanel();
+}
+function siparisKatModalHtml(acikKat) {
+  var kid = acikKat.id;
+  var lab = escHtml(acikKat.label || acikKat.ad || 'Kategori');
+  var aktifRows = (acikKat.items || []).filter(function(it){ return it.aktif !== false; });
+  var pasifRows = (acikKat.items || []).filter(function(it){ return it.aktif === false; });
+  var h = '';
+  h += '<div class="sip-kat-modal-overlay" id="sipKatModalOverlay" role="dialog" aria-modal="true" aria-labelledby="sipKatModalTitle">';
+  h += '<div class="sip-kat-modal-dialog">';
+  h += '<div class="sip-kat-modal-head">';
+  h += '<strong class="sip-kat-modal-title" id="sipKatModalTitle">' + lab + '</strong>';
+  h += '<button type="button" class="sip-close-btn" id="sipKatModalX" title="Kapat">✕</button>';
+  h += '</div>';
+  h += '<div class="sip-kat-modal-body">';
+  h += '<div style="display:flex;justify-content:flex-end;margin-bottom:8px">';
+  h += '<button type="button" class="sip-mini-btn" id="sipModalTogglePasif">' + (siparisShowPasif ? 'Pasifleri gizle' : 'Pasifleri göster') + '</button>';
+  h += '</div>';
+  h += '<div class="sip-alt-baslik" style="margin-top:0">Aktif ürünler</div>';
+  h += siparisModalUrunRowsHTML(kid, aktifRows);
+  if (!aktifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride aktif ürün yok.</div>';
+  if (siparisShowPasif) {
+    h += '<div class="sip-alt-baslik">Pasif ürünler</div>';
+    h += siparisModalUrunRowsHTML(kid, pasifRows);
+    if (!pasifRows.length) h += '<div class="merkez-mesaj-bos">Pasif ürün yok.</div>';
+  }
+  if (siparisModalIptalAcik) {
+    h += '<div class="sip-modal-pin-gate" id="sipModalPinGate">';
+    h += '<div class="sip-modal-warn">Bu kategoride girilmiş adet var. Pencereyi kapatmak için aynı personelin <strong>4 haneli PIN</strong>ini doğrulayın; onaylanınca bu kategorideki adetler sıfırlanır.</div>';
+    h += '<div class="form-group"><label>Personel</label><select id="sipModalIptalPers"><option value="">— Seçin —</option></select></div>';
+    h += '<div class="form-group"><label>PIN</label><input id="sipModalIptalPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
+    h += '<div class="sip-modal-pin-actions">';
+    h += '<button type="button" class="btn btn-ghost btn-sm" id="sipModalIptalVazgec">Vazgeç</button>';
+    h += '<button type="button" class="btn btn-warning btn-sm" id="sipModalIptalOnay">Sıfırla ve kapat</button>';
+    h += '</div></div>';
+  }
+  h += '</div></div></div>';
   return h;
 }
 function depoSiparisKalemRowsHTML(t) {
@@ -1406,13 +1558,19 @@ async function renderSiparisPanel() {
       depoBekleyen = (dr && dr.satirlar) || [];
     } catch (e) { depoBekleyen = []; }
   }
-  if (!data.length) {
-    root.innerHTML = '<div class="merkez-mesaj-bos">Kategori bulunamadı (merkez katalog boş).</div>';
-    return;
+  var katalogBos = !data.length;
+  if (katalogBos) {
+    siparisOpenKat = null;
+  } else if (siparisOpenKat && !data.some(function(k){ return k.id === siparisOpenKat; })) {
+    siparisOpenKat = null;
   }
-  if (siparisOpenKat && !data.some(function(k){ return k.id === siparisOpenKat; })) siparisOpenKat = null;
-  var acik = data.find(function(k){ return k.id === siparisOpenKat; }) || null;
+  var modalKat = (!katalogBos && siparisOpenKat) ? data.find(function(k){ return k.id === siparisOpenKat; }) : null;
   var h = '';
+  if (katalogBos) {
+    h += '<div class="siparis-detay" style="border-left:3px solid rgba(245,158,11,.65);padding:12px;margin-bottom:14px;background:rgba(245,158,11,.08);font-size:13px;line-height:1.5">';
+    h += '<strong>Merkez sipariş kataloğu boş.</strong> Standart ürün kartları listelenemez; operasyon merkezinden sipariş kategorisi ve ürün tanımlanmalı. Yine de aşağıdaki onay alanı ve (katalog açılınca) özel talep bölümü burada kalır.';
+    h += '</div>';
+  }
   if (IS_DEPO) {
     h += '<div class="siparis-detay" style="border-left:3px solid rgba(16,185,129,.55);padding-left:12px;margin-bottom:14px;background:rgba(16,185,129,.08)">';
     h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">📋 Hazırlanacak Siparişler</div>';
@@ -1462,32 +1620,15 @@ async function renderSiparisPanel() {
     h += '<button class="sip-kat-kart' + tone + (k.id===siparisOpenKat ? ' active' : '') + '" data-sip-kat="' + k.id + '">';
     h += '<span class="ico">' + p.ico + '</span>';
     h += '<span class="ttl">' + p.ttl + '</span>';
-    h += '<span class="sub">' + siparisAktifAdet(k) + ' aktif ürün • Dokun, iç sekmede aç</span>';
+    h += '<span class="sub">' + siparisAktifAdet(k) + ' aktif ürün • Dokun; adet penceresi</span>';
     h += '</button>';
   });
   h += '</div>';
-  if (acik) {
-    h += '<div class="siparis-detay sip-inner-panel">';
-    h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
-    h += '<strong style="font-size:12px">' + acik.label + '</strong>';
-    h += '<div style="display:flex;gap:8px;align-items:center">';
-    h += '<button class="sip-mini-btn" id="sipTogglePasif">' + (siparisShowPasif ? 'Pasifleri Gizle' : 'Pasifleri Göster') + '</button>';
-    h += '<button class="sip-close-btn" id="sipKatCloseBtn" type="button" title="Kapat">✕</button>';
-    h += '</div>';
-    h += '</div>';
-    var aktifRows = (acik.items || []).filter(function(it){ return it.aktif !== false; });
-    var pasifRows = (acik.items || []).filter(function(it){ return it.aktif === false; });
-    h += '<div class="sip-alt-baslik">Aktif Ürünler</div>';
-    h += siparisUrunRowsHTML(acik.id, aktifRows);
-    if (!aktifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride aktif ürün yok.</div>';
-    if (siparisShowPasif) {
-      h += '<div class="sip-alt-baslik">Pasif Ürünler</div>';
-      h += siparisUrunRowsHTML(acik.id, pasifRows);
-      if (!pasifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride pasif ürün yok.</div>';
-    }
-    h += '</div>';
-  } else {
-    h += '<div class="siparis-detay" style="font-size:12px;color:var(--muted)">Kategorilerden birine dokunun; ürünler iç sekmede açılacak.</div>';
+  if (!katalogBos) {
+    h += '<div class="siparis-detay sip-katalog-hint" style="font-size:12px;color:var(--muted);margin-top:2px;line-height:1.45">Kategori kartına dokunun — ürün ve adet aynı satırda, üstteki pencerede girilir. «Seçimleri Onayla» ile tüm kategoriler birlikte merkeze gider.</div>';
+  }
+  if (modalKat) {
+    h += siparisKatModalHtml(modalKat);
   }
   h += '<div class="siparis-detay">';
   h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Seçimleri Onayla (PIN zorunlu)</div>';
@@ -1503,15 +1644,19 @@ async function renderSiparisPanel() {
   h += '</div>';
   if (siparisOzelExpanded) {
     h += '<p style="font-size:11px;color:var(--muted);margin:8px 0 10px 0;line-height:1.45">Listede yoksa buradan yazın (ör. pil). Merkez <strong>kataloga alırsa</strong> sipariş ve <strong>Ürün Teslim Al / Ürün Aç</strong> formlarında görünür. <strong>Tek sefer</strong> veya <strong>red</strong> kararı operasyon merkezinden verilir.</p>';
-    h += '<div class="form-group"><label>Hedef kategori</label><select id="sipOzelKatSel">';
-    data.forEach(function(k){ h += '<option value="'+escHtml(k.id)+'">'+escHtml(k.label||k.ad)+'</option>'; });
-    h += '</select></div>';
-    h += '<div class="form-group"><label>Ürün adı</label><input id="sipOzelAd" placeholder="Örn: Pil" autocomplete="off" /></div>';
-    h += '<div class="form-group"><label>Adet</label><input id="sipOzelAdet" inputmode="numeric" value="1" style="max-width:100px" /></div>';
-    h += '<div class="form-group"><label>Not (opsiyonel)</label><input id="sipOzelNotInp" placeholder="Marka, ölçü vb." /></div>';
-    h += '<div class="form-group"><label>Personel</label><select id="sipOzelPers"></select></div>';
-    h += '<div class="form-group"><label>PIN</label><input id="sipOzelPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
-    h += '<button class="btn btn-warning btn-sm" id="sipOzelGonderBtn">Özel talebi gönder</button>';
+    if (data.length) {
+      h += '<div class="form-group"><label>Hedef kategori</label><select id="sipOzelKatSel">';
+      data.forEach(function(k){ h += '<option value="'+escHtml(k.id)+'">'+escHtml(k.label||k.ad)+'</option>'; });
+      h += '</select></div>';
+      h += '<div class="form-group"><label>Ürün adı</label><input id="sipOzelAd" placeholder="Örn: Pil" autocomplete="off" /></div>';
+      h += '<div class="form-group"><label>Adet</label><input id="sipOzelAdet" inputmode="numeric" value="1" style="max-width:100px" /></div>';
+      h += '<div class="form-group"><label>Not (opsiyonel)</label><input id="sipOzelNotInp" placeholder="Marka, ölçü vb." /></div>';
+      h += '<div class="form-group"><label>Personel</label><select id="sipOzelPers"></select></div>';
+      h += '<div class="form-group"><label>PIN</label><input id="sipOzelPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
+      h += '<button class="btn btn-warning btn-sm" id="sipOzelGonderBtn">Özel talebi gönder</button>';
+    } else {
+      h += '<p class="merkez-mesaj-bos" style="margin:8px 0 10px 0">Özel talep için en az bir sipariş kategorisi gerekir — önce merkez kataloğu doldurulmalı.</p>';
+    }
     if (ozelListe.length) {
       h += '<div style="margin-top:10px">';
       h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Son özel talepleriniz</div>';
@@ -1531,12 +1676,65 @@ async function renderSiparisPanel() {
   root.innerHTML = h;
   fillSels();
   document.querySelectorAll('[data-sip-kat]').forEach(function(b){
-    b.onclick = function(){ siparisOpenKat = this.getAttribute('data-sip-kat'); renderSiparisPanel(); };
+    b.onclick = function(){
+      var id = this.getAttribute('data-sip-kat');
+      if (siparisOpenKat === id) {
+        siparisModalTryClose();
+        return;
+      }
+      siparisModalIptalAcik = false;
+      siparisOpenKat = id;
+      renderSiparisPanel();
+    };
   });
-  var cls = document.getElementById('sipKatCloseBtn');
-  if (cls) cls.onclick = function(){ siparisOpenKat = null; renderSiparisPanel(); };
-  var tgl = document.getElementById('sipTogglePasif');
-  if (tgl) tgl.onclick = function(){ siparisShowPasif = !siparisShowPasif; renderSiparisPanel(); };
+  var ovr = document.getElementById('sipKatModalOverlay');
+  if (ovr) {
+    ovr.onclick = function(){ siparisModalTryClose(); };
+    var dlg = ovr.querySelector('.sip-kat-modal-dialog');
+    if (dlg) dlg.onclick = function(e){ e.stopPropagation(); };
+  }
+  var mx = document.getElementById('sipKatModalX');
+  if (mx) mx.onclick = function(e){ e.stopPropagation(); siparisModalTryClose(); };
+  var tglPas = document.getElementById('sipModalTogglePasif');
+  if (tglPas) tglPas.onclick = function(e){
+    e.stopPropagation();
+    siparisShowPasif = !siparisShowPasif;
+    renderSiparisPanel();
+  };
+  var sipIz = document.getElementById('sipModalIptalVazgec');
+  if (sipIz) sipIz.onclick = function(e){
+    e.stopPropagation();
+    siparisModalIptalAcik = false;
+    renderSiparisPanel();
+  };
+  var sipIo = document.getElementById('sipModalIptalOnay');
+  if (sipIo) sipIo.onclick = async function(e){
+    e.stopPropagation();
+    setMsg('siparisMsg', '', '');
+    sipIo.disabled = true;
+    try {
+      var kid = siparisOpenKat;
+      if (!kid) throw new Error('Kategori yok');
+      var pid = selVal('sipModalIptalPers');
+      var pin = inpVal('sipModalIptalPin').replace(/\D/g, '').slice(0, 4);
+      if (!pid) throw new Error('Personel seçin');
+      if (pin.length !== 4) throw new Error('4 haneli PIN girin');
+      await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/panel-pin-dogrula', {
+        method: 'POST',
+        body: { personel_id: pid, pin: pin }
+      });
+      siparisKategoriAdetleriSifirla(kid);
+      siparisOpenKat = null;
+      siparisModalIptalAcik = false;
+      setMsg('siparisMsg', 'Adetler sıfırlandı; pencere kapatıldı.', 'msg-ok');
+      renderSiparisPanel();
+    } catch (err) {
+      if (err.status === 429) handle429(document.getElementById('siparisMsg'), err);
+      else setMsg('siparisMsg', err.message || 'PIN doğrulanamadı', 'msg-err');
+    } finally {
+      sipIo.disabled = false;
+    }
+  };
   var tglOz = document.getElementById('sipOzelToggleBtn');
   if (tglOz) tglOz.onclick = function(){ siparisOzelExpanded = !siparisOzelExpanded; renderSiparisPanel(); };
   document.querySelectorAll('[data-sip-input]').forEach(function(inp){
@@ -1791,7 +1989,7 @@ window.sagSekmeAc = function(id) {
 function fillSels() {
   var ids = ['mgPers','mnPers','stPers','stPin',
              'svPers','acPers','xrPers','puanPers',
-             'dvPers1','dvPers2','kapPers','kapKimeTeslim','sipOzelPers','siparisOnayPers',
+             'dvPers1','dvPers2','kapPers','kapKimeTeslim','sipOzelPers','siparisOnayPers','sipModalIptalPers',
              'kasaUser','ktPers'];
   ids.forEach(function(id){
     var el = document.getElementById(id); if (!el || el.tagName !== 'SELECT') return;
