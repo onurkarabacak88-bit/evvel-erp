@@ -492,6 +492,7 @@ export default function OperasyonMerkezi() {
   const [kontrolData, setKontrolData] = useState(null);
   const [kontrolKategori, setKontrolKategori] = useState('');
   const [kontrolSadeceAlarmlar, setKontrolSadeceAlarmlar] = useState(false);
+  const [kontrolDetaySube, setKontrolDetaySube] = useState('');
   const [fisBekleyen, setFisBekleyen] = useState([]);
   const [fisBusyId, setFisBusyId] = useState(null);
 
