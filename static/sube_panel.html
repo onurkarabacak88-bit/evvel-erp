@@ -138,17 +138,17 @@
     .orta-kisa-kart.pasif:hover { border-color: var(--border); background: var(--bg2); }
     .siparis-kat-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-      margin-bottom: 12px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 7px;
+      margin-bottom: 10px;
     }
     .sip-kat-kart {
       border: 1px solid var(--border);
       border-radius: var(--rs);
       background: var(--bg2);
       color: var(--text);
-      min-height: 90px;
-      padding: 10px;
+      min-height: 64px;
+      padding: 8px 9px;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
@@ -159,15 +159,36 @@
     .sip-kat-kart:hover { border-color: var(--accent); background: rgba(59,130,246,.12); }
     .sip-kat-kart:active { transform: scale(0.98); }
     .sip-kat-kart.active { border-color: var(--accent); background: rgba(59,130,246,.12); }
-    .sip-kat-kart .ico { font-size: 16px; }
-    .sip-kat-kart .ttl { font-size: 12px; font-weight: 800; line-height: 1.2; }
-    .sip-kat-kart .sub { font-size: 10px; color: var(--muted); }
+    .sip-kat-kart .ico { font-size: 14px; }
+    .sip-kat-kart .ttl { font-size: 11px; font-weight: 800; line-height: 1.2; }
+    .sip-kat-kart .sub { font-size: 9px; color: var(--muted); }
     .siparis-detay {
       border: 1px solid var(--border);
       border-radius: var(--rs);
       padding: 12px;
       background: rgba(17,24,39,.45);
       margin-bottom: 12px;
+    }
+    .sip-ana-wrap {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+    }
+    .sip-kartlar-kolon {
+      flex: 1;
+      min-width: 0;
+    }
+    .sip-formlar-kolon {
+      width: 260px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    @media (max-width: 600px) {
+      .sip-ana-wrap { flex-direction: column; }
+      .sip-formlar-kolon { width: 100%; }
+      .siparis-kat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     .sip-urun-row {
       display: grid;
@@ -208,17 +229,17 @@
     .sip-mini-btn.is-active { border-color: var(--accent); color: var(--text); background: rgba(59,130,246,.18); }
     .siparis-kat-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-      margin-bottom: 12px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 7px;
+      margin-bottom: 10px;
     }
     .sip-kat-kart {
       border: 1px solid var(--border);
       border-radius: var(--rs);
       background: var(--bg2);
       color: var(--text);
-      min-height: 90px;
-      padding: 10px;
+      min-height: 64px;
+      padding: 8px 9px;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
@@ -229,15 +250,36 @@
     .sip-kat-kart:hover { border-color: var(--accent); background: rgba(59,130,246,.12); }
     .sip-kat-kart:active { transform: scale(0.98); }
     .sip-kat-kart.active { border-color: var(--accent); background: rgba(59,130,246,.12); }
-    .sip-kat-kart .ico { font-size: 16px; }
-    .sip-kat-kart .ttl { font-size: 12px; font-weight: 800; line-height: 1.2; }
-    .sip-kat-kart .sub { font-size: 10px; color: var(--muted); }
+    .sip-kat-kart .ico { font-size: 14px; }
+    .sip-kat-kart .ttl { font-size: 11px; font-weight: 800; line-height: 1.2; }
+    .sip-kat-kart .sub { font-size: 9px; color: var(--muted); }
     .siparis-detay {
       border: 1px solid var(--border);
       border-radius: var(--rs);
       padding: 12px;
       background: rgba(17,24,39,.45);
       margin-bottom: 12px;
+    }
+    .sip-ana-wrap {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+    }
+    .sip-kartlar-kolon {
+      flex: 1;
+      min-width: 0;
+    }
+    .sip-formlar-kolon {
+      width: 260px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    @media (max-width: 600px) {
+      .sip-ana-wrap { flex-direction: column; }
+      .sip-formlar-kolon { width: 100%; }
+      .siparis-kat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     .sip-urun-row {
       display: grid;
@@ -1602,7 +1644,12 @@ async function renderSiparisPanel() {
   if (stdBekSay > 0) {
     h += '<div class="siparis-detay" style="margin-bottom:12px;font-size:12px;color:var(--muted)">Bugün <strong>'+stdBekSay+'</strong> adet bekleyen <span style="text-transform:uppercase;letter-spacing:.03em;font-size:10px">katalog</span> sipariş talebiniz var (PIN ile onayladığınız).</div>';
   }
-  h += '<div style="font-size:11px;font-weight:700;color:var(--muted);margin:10px 0 6px;text-transform:uppercase;letter-spacing:.04em">Standart sipariş (katalog)</div>';
+  // ── Ana yan-yana kapsayıcı ──────────────────────────────────
+  h += '<div class="sip-ana-wrap">';
+
+  // SOL KOLON: Kategori kartları
+  h += '<div class="sip-kartlar-kolon">';
+  h += '<div style="font-size:11px;font-weight:700;color:var(--muted);margin:0 0 6px;text-transform:uppercase;letter-spacing:.04em">Standart sipariş (katalog)</div>';
   h += '<div class="siparis-kat-grid">';
   data.forEach(function(k, i){
     var p = siparisLabelParts(k.label || k.ad);
@@ -1610,59 +1657,70 @@ async function renderSiparisPanel() {
     h += '<button class="sip-kat-kart' + tone + (k.id===siparisOpenKat ? ' active' : '') + '" data-sip-kat="' + k.id + '">';
     h += '<span class="ico">' + p.ico + '</span>';
     h += '<span class="ttl">' + p.ttl + '</span>';
-    h += '<span class="sub">' + siparisAktifAdet(k) + ' aktif ürün • Dokun; adet penceresi</span>';
+    h += '<span class="sub">' + siparisAktifAdet(k) + ' ürün</span>';
     h += '</button>';
   });
   h += '</div>';
   if (!katalogBos) {
-    h += '<div class="siparis-detay sip-katalog-hint" style="font-size:12px;color:var(--muted);margin-top:2px;line-height:1.45">Kategori kartına dokunun — ürün ve adet aynı satırda, üstteki pencerede girilir. «Seçimleri Onayla» ile tüm kategoriler birlikte merkeze gider.</div>';
+    h += '<div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4">Karta dokun → adet gir → sağdaki «Onayla» ile gönder.</div>';
   }
   if (modalKat) {
     h += siparisKatModalHtml(modalKat);
   }
-  h += '<div class="siparis-detay">';
-  h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Seçimleri Onayla (PIN zorunlu)</div>';
+  h += '</div>'; // .sip-kartlar-kolon
+
+  // SAĞ KOLON: Seçimleri Onayla + Özel talep
+  h += '<div class="sip-formlar-kolon">';
+
+  // Seçimleri Onayla
+  h += '<div class="siparis-detay" style="margin-bottom:0">';
+  h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">✔ Seçimleri Onayla</div>';
   h += '<div class="form-group"><label>Not (opsiyonel)</label><input id="siparisOnayNot" placeholder="Kısa not" /></div>';
   h += '<div class="form-group"><label>Personel</label><select id="siparisOnayPers"></select></div>';
   h += '<div class="form-group"><label>PIN</label><input id="siparisOnayPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
-  h += '<button class="btn btn-success btn-sm" id="siparisOnayBtn">Seçimleri Onayla</button>';
+  h += '<button class="btn btn-success btn-sm" style="width:100%" id="siparisOnayBtn">Seçimleri Onayla</button>';
   h += '</div>';
-  h += '<div class="siparis-detay" style="border-left:3px solid rgba(245,158,11,.6);padding-left:12px;margin-bottom:14px">';
+
+  // Katalogda olmayan ürün talebi
+  h += '<div class="siparis-detay" style="border-left:3px solid rgba(245,158,11,.6);padding-left:12px;margin-bottom:0">';
   h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
-  h += '<div style="font-size:12px;font-weight:700">📌 Katalogda olmayan ürün talebi</div>';
-  h += '<button class="sip-mini-btn" id="sipOzelToggleBtn">' + (siparisOzelExpanded ? 'Kapat' : 'Aç') + '</button>';
+  h += '<div style="font-size:12px;font-weight:700">📌 Katalogda olmayan ürün</div>';
+  h += '<button class="sip-mini-btn" id="sipOzelToggleBtn">' + (siparisOzelExpanded ? '▲' : '▼') + '</button>';
   h += '</div>';
   if (siparisOzelExpanded) {
-    h += '<p style="font-size:11px;color:var(--muted);margin:8px 0 10px 0;line-height:1.45">Listede yoksa buradan yazın (ör. pil). Merkez <strong>kataloga alırsa</strong> sipariş ve <strong>Ürün Teslim Al / Ürün Aç</strong> formlarında görünür. <strong>Tek sefer</strong> veya <strong>red</strong> kararı operasyon merkezinden verilir.</p>';
+    h += '<p style="font-size:11px;color:var(--muted);margin:6px 0 8px 0;line-height:1.4">Katalogda yoksa buradan talep edin. Merkez onaylar veya tek seferlik gönderir.</p>';
     if (data.length) {
-      h += '<div class="form-group"><label>Hedef kategori</label><select id="sipOzelKatSel">';
+      h += '<div class="form-group"><label>Kategori</label><select id="sipOzelKatSel">';
       data.forEach(function(k){ h += '<option value="'+escHtml(k.id)+'">'+escHtml(k.label||k.ad)+'</option>'; });
       h += '</select></div>';
       h += '<div class="form-group"><label>Ürün adı</label><input id="sipOzelAd" placeholder="Örn: Pil" autocomplete="off" /></div>';
-      h += '<div class="form-group"><label>Adet</label><input id="sipOzelAdet" inputmode="numeric" value="1" style="max-width:100px" /></div>';
-      h += '<div class="form-group"><label>Not (opsiyonel)</label><input id="sipOzelNotInp" placeholder="Marka, ölçü vb." /></div>';
+      h += '<div class="form-group"><label>Adet</label><input id="sipOzelAdet" inputmode="numeric" value="1" style="max-width:80px" /></div>';
+      h += '<div class="form-group"><label>Not</label><input id="sipOzelNotInp" placeholder="Marka, ölçü vb." /></div>';
       h += '<div class="form-group"><label>Personel</label><select id="sipOzelPers"></select></div>';
       h += '<div class="form-group"><label>PIN</label><input id="sipOzelPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
-      h += '<button class="btn btn-warning btn-sm" id="sipOzelGonderBtn">Özel talebi gönder</button>';
+      h += '<button class="btn btn-warning btn-sm" style="width:100%" id="sipOzelGonderBtn">Talebi Gönder</button>';
     } else {
-      h += '<p class="merkez-mesaj-bos" style="margin:8px 0 10px 0">Özel talep için en az bir sipariş kategorisi gerekir — önce merkez kataloğu doldurulmalı.</p>';
+      h += '<p class="merkez-mesaj-bos" style="margin:8px 0 0 0">Önce merkez kataloğu tanımlamalı.</p>';
     }
     if (ozelListe.length) {
-      h += '<div style="margin-top:10px">';
-      h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Son özel talepleriniz</div>';
-      h += '<div style="font-size:12px;color:var(--muted);max-height:140px;overflow:auto">';
-      ozelListe.slice(0, 12).forEach(function(z){
+      h += '<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">';
+      h += '<div style="font-size:11px;font-weight:700;margin-bottom:6px">Son talepleriniz</div>';
+      h += '<div style="font-size:11px;color:var(--muted);max-height:120px;overflow:auto">';
+      ozelListe.slice(0, 8).forEach(function(z){
         var st = (z.durum || '');
         var stCls = st === 'bekliyor' ? 'badge-warn' : (st === 'onaylandi' ? 'badge-ok' : (st === 'tek_sefer' ? 'badge-blue' : (st === 'reddedildi' ? 'badge-err' : 'badge-gray')));
-        h += '<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">';
-        h += '<span>'+escHtml(z.urun_adi||'')+' <span style="opacity:.75">×'+String(z.adet||1)+'</span> <span class="mono" style="font-size:10px">'+escHtml(z.kategori_kod||'')+'</span></span>';
-        h += '<span class="badge '+stCls+'" style="font-size:10px;text-transform:uppercase">'+escHtml(st)+'</span>';
+        h += '<div style="display:flex;justify-content:space-between;gap:6px;padding:4px 0;border-bottom:1px solid var(--border)">';
+        h += '<span>'+escHtml(z.urun_adi||'')+' ×'+String(z.adet||1)+'</span>';
+        h += '<span class="badge '+stCls+'" style="font-size:9px;text-transform:uppercase">'+escHtml(st)+'</span>';
         h += '</div>';
       });
       h += '</div></div>';
     }
   }
-  h += '</div>';
+  h += '</div>'; // katalog olmayan
+
+  h += '</div>'; // .sip-formlar-kolon
+  h += '</div>'; // .sip-ana-wrap
   root.innerHTML = h;
   fillSels();
   document.querySelectorAll('[data-sip-kat]').forEach(function(b){
