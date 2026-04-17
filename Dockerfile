@@ -5,10 +5,8 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
 # Vite build (outDir=static, emptyOutDir) static/ içeriğini siler — kök HTML panelleri korunur
-RUN mkdir -p /tmp/evvel_static_html && \
-    (cp static/*.html /tmp/evvel_static_html/ 2>/dev/null || true) && \
-    npm run build && \
-    (cp /tmp/evvel_static_html/*.html static/ 2>/dev/null || true)
+RUN npm run build && \
+    (cp sube_panel.html static/ 2>/dev/null || true)
 
 FROM python:3.11-slim
 
