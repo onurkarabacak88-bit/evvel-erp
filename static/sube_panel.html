@@ -1208,7 +1208,6 @@ var acilisStep = 1, acilisKasa = null, acilisStok = {};
 var siparisOpenKat = null;
 var siparisShowPasif = false;
 var siparisOzelExpanded = false;
-var siparisModalIptalAcik = false;
 var siparisDegerler = {};
 var siparisKatalogCache = null;
 var SUBE_TIPI = 'normal';
@@ -1436,12 +1435,6 @@ function siparisKategoriHasAdet(katId) {
   }
   return false;
 }
-function siparisKategoriAdetleriSifirla(katId) {
-  var pref = String(katId) + '::';
-  Object.keys(siparisDegerler).forEach(function(k){
-    if (k.substring(0, pref.length) === pref) delete siparisDegerler[k];
-  });
-}
 function siparisModalUrunRowsHTML(katId, rows) {
   var h = '';
   rows.forEach(function(it){
@@ -1454,22 +1447,33 @@ function siparisModalUrunRowsHTML(katId, rows) {
   });
   return h;
 }
+/** Açık kategoride pozitif adet var mı — PIN şeridini göster/gizle (renderSiparisPanel çağırmadan, odak korunur). */
+function siparisModalSyncPinGate() {
+  var kid = siparisOpenKat;
+  var wrap = document.getElementById('sipModalPinGateWrap');
+  if (!wrap || !kid) return;
+  var dirty = siparisKategoriHasAdet(kid);
+  wrap.style.display = dirty ? 'block' : 'none';
+  wrap.setAttribute('aria-hidden', dirty ? 'false' : 'true');
+  if (!dirty) {
+    var p = document.getElementById('sipModalIptalPin');
+    if (p) p.value = '';
+    var s = document.getElementById('sipModalIptalPers');
+    if (s) s.value = '';
+  }
+}
 function siparisModalTryClose() {
   var kid = siparisOpenKat;
   if (!kid) return;
-  if (siparisModalIptalAcik) {
-    siparisModalIptalAcik = false;
-    renderSiparisPanel();
-    return;
-  }
   if (!siparisKategoriHasAdet(kid)) {
     siparisOpenKat = null;
-    siparisModalIptalAcik = false;
     renderSiparisPanel();
     return;
   }
-  siparisModalIptalAcik = true;
-  renderSiparisPanel();
+  siparisModalSyncPinGate();
+  setMsg('siparisMsg', 'Girilmiş adet var — şifre olmadan çıkılamaz. Alttan personel + PIN ile «PIN ile kapat» kullanın veya tüm adetleri 0 yapın.', 'msg-err');
+  var w = document.getElementById('sipModalPinGateWrap');
+  if (w && w.scrollIntoView) w.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 function siparisKatModalHtml(acikKat) {
   var kid = acikKat.id;
@@ -1495,16 +1499,13 @@ function siparisKatModalHtml(acikKat) {
     h += siparisModalUrunRowsHTML(kid, pasifRows);
     if (!pasifRows.length) h += '<div class="merkez-mesaj-bos">Pasif ürün yok.</div>';
   }
-  if (siparisModalIptalAcik) {
-    h += '<div class="sip-modal-pin-gate" id="sipModalPinGate">';
-    h += '<div class="sip-modal-warn">Bu kategoride girilmiş adet var. Pencereyi kapatmak için aynı personelin <strong>4 haneli PIN</strong>ini doğrulayın; onaylanınca bu kategorideki adetler sıfırlanır.</div>';
-    h += '<div class="form-group"><label>Personel</label><select id="sipModalIptalPers"><option value="">— Seçin —</option></select></div>';
-    h += '<div class="form-group"><label>PIN</label><input id="sipModalIptalPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
-    h += '<div class="sip-modal-pin-actions">';
-    h += '<button type="button" class="btn btn-ghost btn-sm" id="sipModalIptalVazgec">Vazgeç</button>';
-    h += '<button type="button" class="btn btn-warning btn-sm" id="sipModalIptalOnay">Sıfırla ve kapat</button>';
-    h += '</div></div>';
-  }
+  h += '<div class="sip-modal-pin-gate" id="sipModalPinGateWrap" style="display:none">';
+  h += '<div class="sip-modal-warn">Pozitif adet varken pencereyi <strong>şifre olmadan</strong> kapatamazsınız. Personel + PIN ile onaylayın; girilen adetler korunur (aşağıdaki «Seçimleri Onayla» ile gönderilir).</div>';
+  h += '<div class="form-group"><label>Personel</label><select id="sipModalIptalPers"><option value="">— Seçin —</option></select></div>';
+  h += '<div class="form-group"><label>PIN</label><input id="sipModalIptalPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
+  h += '<div class="sip-modal-pin-actions">';
+  h += '<button type="button" class="btn btn-primary btn-sm" id="sipModalPinKapatBtn">PIN ile pencereyi kapat</button>';
+  h += '</div></div>';
   h += '</div></div></div>';
   return h;
 }
@@ -1682,7 +1683,6 @@ async function renderSiparisPanel() {
         siparisModalTryClose();
         return;
       }
-      siparisModalIptalAcik = false;
       siparisOpenKat = id;
       renderSiparisPanel();
     };
@@ -1701,17 +1701,11 @@ async function renderSiparisPanel() {
     siparisShowPasif = !siparisShowPasif;
     renderSiparisPanel();
   };
-  var sipIz = document.getElementById('sipModalIptalVazgec');
-  if (sipIz) sipIz.onclick = function(e){
-    e.stopPropagation();
-    siparisModalIptalAcik = false;
-    renderSiparisPanel();
-  };
-  var sipIo = document.getElementById('sipModalIptalOnay');
-  if (sipIo) sipIo.onclick = async function(e){
+  var sipPk = document.getElementById('sipModalPinKapatBtn');
+  if (sipPk) sipPk.onclick = async function(e){
     e.stopPropagation();
     setMsg('siparisMsg', '', '');
-    sipIo.disabled = true;
+    sipPk.disabled = true;
     try {
       var kid = siparisOpenKat;
       if (!kid) throw new Error('Kategori yok');
@@ -1723,16 +1717,14 @@ async function renderSiparisPanel() {
         method: 'POST',
         body: { personel_id: pid, pin: pin }
       });
-      siparisKategoriAdetleriSifirla(kid);
       siparisOpenKat = null;
-      siparisModalIptalAcik = false;
-      setMsg('siparisMsg', 'Adetler sıfırlandı; pencere kapatıldı.', 'msg-ok');
+      setMsg('siparisMsg', 'PIN doğrulandı — kategori penceresi kapandı. Girdiğiniz adetler kaybolmadı; aşağıdan «Seçimleri Onayla» ile merkeze gönderebilirsiniz.', 'msg-ok');
       renderSiparisPanel();
     } catch (err) {
       if (err.status === 429) handle429(document.getElementById('siparisMsg'), err);
       else setMsg('siparisMsg', err.message || 'PIN doğrulanamadı', 'msg-err');
     } finally {
-      sipIo.disabled = false;
+      sipPk.disabled = false;
     }
   };
   var tglOz = document.getElementById('sipOzelToggleBtn');
@@ -1743,8 +1735,10 @@ async function renderSiparisPanel() {
       var n = parseInt(String(this.value||'').replace(/\D/g,''), 10);
       siparisDegerler[k] = isNaN(n) ? 0 : n;
       this.value = String(siparisDegerler[k]);
+      siparisModalSyncPinGate();
     };
   });
+  siparisModalSyncPinGate();
   var sipOzBtn = document.getElementById('sipOzelGonderBtn');
   if (sipOzBtn) sipOzBtn.onclick = async function(){
     setMsg('siparisMsg','','');
@@ -1810,7 +1804,10 @@ async function renderSiparisPanel() {
       siparisDegerler = {};
       document.getElementById('siparisOnayPin').value = '';
       document.getElementById('siparisOnayNot').value = '';
-      setMsg('siparisMsg', 'Sipariş onaylandı. Talep no: ' + (resp.talep_id || '—'), 'msg-ok');
+      var tn = (resp && resp.talep_id) ? String(resp.talep_id).slice(0, 8) : '—';
+      var ks = (resp && resp.kalem_sayisi != null) ? resp.kalem_sayisi : (kalemler && kalemler.length);
+      var ta = (resp && resp.toplam_adet != null) ? resp.toplam_adet : kalemler.reduce(function(s, x){ return s + (parseInt(x.adet, 10) || 0); }, 0);
+      setMsg('siparisMsg', 'Teşekkürler — sipariş kaydınız merkeze iletildi. Talep: ' + tn + '… · ' + ks + ' kalem, toplam ' + ta + ' adet. PIN ile onaylandı; operasyon tarafında işlenecek.', 'msg-ok');
       renderSiparisPanel();
     } catch(e) {
       if (e.status===429) handle429(document.getElementById('siparisMsg'), e);
@@ -1990,6 +1987,7 @@ function fillSels() {
   var ids = ['mgPers','mnPers','stPers','stPin',
              'svPers','acPers','xrPers','puanPers',
              'dvPers1','dvPers2','kapPers','kapKimeTeslim','sipOzelPers','siparisOnayPers','sipModalIptalPers',
+             'stokModalIptalPers_sv','stokModalIptalPers_ac',
              'kasaUser','ktPers'];
   ids.forEach(function(id){
     var el = document.getElementById(id); if (!el || el.tagName !== 'SELECT') return;
@@ -2023,24 +2021,145 @@ function stokKartState(prefix) {
   if (!stokKartUiState[prefix]) stokKartUiState[prefix] = { openKat: null, showPasif: false };
   return stokKartUiState[prefix];
 }
-function stokKatalogRowsHTML(prefix, katId, rows) {
+function stokKategoriHasAdet(prefix, katId) {
+  if (!katId || !prefix) return false;
+  var pref = prefix + '::' + katId + '::';
+  var d = stokKalemDeger[prefix];
+  if (!d) return false;
+  for (var k in d) {
+    if (!Object.prototype.hasOwnProperty.call(d, k)) continue;
+    if (k.length < pref.length || k.substring(0, pref.length) !== pref) continue;
+    var n = parseInt(String(d[k]), 10);
+    if (!isNaN(n) && n > 0) return true;
+  }
+  return false;
+}
+function stokModalUrunRowsHTML(prefix, katId, rows) {
   var h = '';
   rows.forEach(function(it){
     var key = prefix + '::' + katId + '::' + it.id;
     var val = (stokKalemDeger[prefix] && stokKalemDeger[prefix][key] != null)
       ? stokKalemDeger[prefix][key] : 0;
-    h += '<div class="stok-kat-urun-row' + (it.aktif === false ? ' pasif' : '') + '">';
-    h += '<span class="nm">' + escHtml(it.ad) + '</span>';
-    h += '<input type="text" inputmode="numeric" data-stok-input="' + escHtml(key) + '" value="' + val + '" />';
+    h += '<div class="sip-modal-urun-row' + (it.aktif === false ? ' pasif' : '') + '">';
+    h += '<span class="sip-modal-nm">' + escHtml(it.ad) + '</span>';
+    h += '<input type="text" inputmode="numeric" data-stok-input="' + escHtml(key) + '" value="' + String(val) + '" />';
     h += '</div>';
   });
   return h;
+}
+function stokModalSyncPinGate(prefix) {
+  var kid = stokKartState(prefix).openKat;
+  var wrap = document.getElementById('stokModalPinGateWrap_' + prefix);
+  if (!wrap || !kid) return;
+  var dirty = stokKategoriHasAdet(prefix, kid);
+  wrap.style.display = dirty ? 'block' : 'none';
+  wrap.setAttribute('aria-hidden', dirty ? 'false' : 'true');
+  if (!dirty) {
+    var p = document.getElementById('stokModalIptalPin_' + prefix);
+    if (p) p.value = '';
+    var s = document.getElementById('stokModalIptalPers_' + prefix);
+    if (s) s.value = '';
+  }
+}
+function stokModalTryClose(prefix) {
+  var kid = stokKartState(prefix).openKat;
+  if (!kid) return;
+  if (!stokKategoriHasAdet(prefix, kid)) {
+    stokKartState(prefix).openKat = null;
+    refreshStokKatalogUI(prefix);
+    return;
+  }
+  stokModalSyncPinGate(prefix);
+  setMsg(prefix + 'Msg', 'Girilmiş miktar var — şifre olmadan çıkılamaz. Personel + PIN ile «PIN ile pencereyi kapat» kullanın veya tüm adetleri 0 yapın.', 'msg-err');
+  var w = document.getElementById('stokModalPinGateWrap_' + prefix);
+  if (w && w.scrollIntoView) w.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function stokKatModalHtml(prefix, acikKat) {
+  var kid = acikKat.id;
+  var lab = escHtml(acikKat.label || acikKat.ad || 'Kategori');
+  var st = stokKartState(prefix);
+  var aktifRows = (acikKat.items || []).filter(function(it){ return it.aktif !== false; });
+  var pasifRows = (acikKat.items || []).filter(function(it){ return it.aktif === false; });
+  var h = '';
+  h += '<div class="sip-kat-modal-overlay" id="stokKatModalOverlay_' + prefix + '" role="dialog" aria-modal="true">';
+  h += '<div class="sip-kat-modal-dialog">';
+  h += '<div class="sip-kat-modal-head">';
+  h += '<strong class="sip-kat-modal-title">' + lab + '</strong>';
+  h += '<button type="button" class="sip-close-btn" id="stokKatModalX_' + prefix + '" title="Kapat">✕</button>';
+  h += '</div>';
+  h += '<div class="sip-kat-modal-body">';
+  h += '<div style="display:flex;justify-content:flex-end;margin-bottom:8px">';
+  h += '<button type="button" class="sip-mini-btn" id="stokModalTogglePasif_' + prefix + '">' + (st.showPasif ? 'Pasifleri gizle' : 'Pasifleri göster') + '</button>';
+  h += '</div>';
+  h += '<div class="sip-alt-baslik" style="margin-top:0">Aktif ürünler</div>';
+  h += stokModalUrunRowsHTML(prefix, kid, aktifRows);
+  if (!aktifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride aktif ürün yok.</div>';
+  if (st.showPasif) {
+    h += '<div class="sip-alt-baslik">Pasif ürünler</div>';
+    h += stokModalUrunRowsHTML(prefix, kid, pasifRows);
+    if (!pasifRows.length) h += '<div class="merkez-mesaj-bos">Pasif ürün yok.</div>';
+  }
+  h += '<div class="sip-modal-pin-gate" id="stokModalPinGateWrap_' + prefix + '" style="display:none" aria-hidden="true">';
+  h += '<div class="sip-modal-warn">Pozitif miktar varken pencereyi <strong>şifre olmadan</strong> kapatamazsınız. PIN onayından sonra pencere kapanır; miktarlar formda kalır (alttan toplu gönderim).</div>';
+  h += '<div class="form-group"><label>Personel</label><select id="stokModalIptalPers_' + prefix + '"><option value="">— Seçin —</option></select></div>';
+  h += '<div class="form-group"><label>PIN</label><input id="stokModalIptalPin_' + prefix + '" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
+  h += '<div class="sip-modal-pin-actions">';
+  h += '<button type="button" class="btn btn-primary btn-sm" id="stokModalPinKapatBtn_' + prefix + '">PIN ile pencereyi kapat</button>';
+  h += '</div></div>';
+  h += '</div></div></div>';
+  return h;
+}
+function wireStokModalHandlers(prefix) {
+  var ovr = document.getElementById('stokKatModalOverlay_' + prefix);
+  if (ovr) {
+    ovr.onclick = function(){ stokModalTryClose(prefix); };
+    var dlg = ovr.querySelector('.sip-kat-modal-dialog');
+    if (dlg) dlg.onclick = function(e){ e.stopPropagation(); };
+  }
+  var mx = document.getElementById('stokKatModalX_' + prefix);
+  if (mx) mx.onclick = function(e){ e.stopPropagation(); stokModalTryClose(prefix); };
+  var tglPas = document.getElementById('stokModalTogglePasif_' + prefix);
+  if (tglPas) {
+    tglPas.onclick = function(e){
+      e.stopPropagation();
+      stokKartState(prefix).showPasif = !stokKartState(prefix).showPasif;
+      refreshStokKatalogUI(prefix);
+    };
+  }
+  var pkBtn = document.getElementById('stokModalPinKapatBtn_' + prefix);
+  if (pkBtn) {
+    pkBtn.onclick = async function(e){
+      e.stopPropagation();
+      setMsg(prefix + 'Msg', '', '');
+      pkBtn.disabled = true;
+      try {
+        var kid = stokKartState(prefix).openKat;
+        if (!kid) throw new Error('Kategori yok');
+        var pid = selVal('stokModalIptalPers_' + prefix);
+        var pin = inpVal('stokModalIptalPin_' + prefix).replace(/\D/g, '').slice(0, 4);
+        if (!pid) throw new Error('Personel seçin');
+        if (pin.length !== 4) throw new Error('4 haneli PIN girin');
+        await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/panel-pin-dogrula', {
+          method: 'POST',
+          body: { personel_id: pid, pin: pin }
+        });
+        stokKartState(prefix).openKat = null;
+        setMsg(prefix + 'Msg', 'PIN doğrulandı — kategori penceresi kapandı. Girilen miktarlar kaybolmadı; alttan onayla merkeze iletebilirsiniz.', 'msg-ok');
+        refreshStokKatalogUI(prefix);
+      } catch (err) {
+        if (err.status === 429) handle429(document.getElementById(prefix + 'Msg'), err);
+        else setMsg(prefix + 'Msg', err.message || 'PIN doğrulanamadı', 'msg-err');
+      } finally {
+        pkBtn.disabled = false;
+      }
+    };
+  }
 }
 function stokKatalogKartBlockHTML(prefix, data) {
   if (!data || !data.length) return '<div class="merkez-mesaj-bos">Kategori bulunamadı.</div>';
   var st = stokKartState(prefix);
   if (st.openKat && !data.some(function(k){ return k.id === st.openKat; })) st.openKat = null;
-  var acik = data.find(function(k){ return k.id === st.openKat; }) || null;
+  var modalKat = st.openKat ? data.find(function(k){ return k.id === st.openKat; }) : null;
   var h = '';
   h += '<div class="siparis-kat-grid">';
   data.forEach(function(k, i){
@@ -2050,32 +2169,13 @@ function stokKatalogKartBlockHTML(prefix, data) {
     h += '<button type="button" class="sip-kat-kart' + tone + (k.id === st.openKat ? ' active' : '') + '" data-stok-kat="' + attrKat + '">';
     h += '<span class="ico">' + p.ico + '</span>';
     h += '<span class="ttl">' + p.ttl + '</span>';
-    h += '<span class="sub">' + siparisAktifAdet(k) + ' aktif ürün • Dokun, iç sekmede aç</span>';
+    h += '<span class="sub">' + siparisAktifAdet(k) + ' aktif ürün • Dokun; adet penceresi</span>';
     h += '</button>';
   });
   h += '</div>';
-  if (acik) {
-    var aktifRows = (acik.items || []).filter(function(it){ return it.aktif !== false; });
-    var pasifRows = (acik.items || []).filter(function(it){ return it.aktif === false; });
-    h += '<div class="siparis-detay sip-inner-panel">';
-    h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
-    h += '<strong style="font-size:12px">' + escHtml(acik.label || acik.ad || '') + '</strong>';
-    h += '<div style="display:flex;gap:8px;align-items:center">';
-    h += '<button type="button" class="sip-mini-btn" data-stok-toggle-pasif="' + escHtml(prefix) + '">' + (st.showPasif ? 'Pasifleri Gizle' : 'Pasifleri Göster') + '</button>';
-    h += '<button type="button" class="sip-close-btn" data-stok-close="' + escHtml(prefix) + '" title="Kapat">✕</button>';
-    h += '</div>';
-    h += '</div>';
-    h += '<div class="sip-alt-baslik">Aktif ürünler</div>';
-    h += stokKatalogRowsHTML(prefix, acik.id, aktifRows);
-    if (!aktifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride aktif ürün yok.</div>';
-    if (st.showPasif) {
-      h += '<div class="sip-alt-baslik">Pasif ürünler</div>';
-      h += stokKatalogRowsHTML(prefix, acik.id, pasifRows);
-      if (!pasifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride pasif ürün yok.</div>';
-    }
-    h += '</div>';
-  } else {
-    h += '<div class="siparis-detay" style="font-size:12px;color:var(--muted)">Kategorilerden birine dokunun; ürünler iç sekmede açılacak.</div>';
+  h += '<div class="siparis-detay sip-katalog-hint" style="font-size:12px;color:var(--muted);margin-top:2px;line-height:1.45">Kategori kartına dokunun — miktarlar üstteki pencerede girilir. Alttaki onay tüm kategorileri birlikte merkeze gönderir.</div>';
+  if (modalKat) {
+    h += stokKatModalHtml(prefix, modalKat);
   }
   return h;
 }
@@ -2088,6 +2188,9 @@ function refreshStokKatalogUI(prefix) {
     return;
   }
   wrap.innerHTML = stokKatalogKartBlockHTML(prefix, data);
+  wireStokModalHandlers(prefix);
+  fillSels();
+  stokModalSyncPinGate(prefix);
 }
 function attachStokKatalogDelegatedHandlers(formEl, prefix) {
   if (!formEl || formEl.dataset.stokKatClick === '1') return;
@@ -2098,20 +2201,14 @@ function attachStokKatalogDelegatedHandlers(formEl, prefix) {
       var raw = katBtn.getAttribute('data-stok-kat') || '';
       var parts = raw.split('::');
       if (parts[0] !== prefix) return;
-      stokKartState(prefix).openKat = parts.slice(1).join('::');
+      var kid = parts.slice(1).join('::');
+      if (stokKartState(prefix).openKat === kid) {
+        stokModalTryClose(prefix);
+        return;
+      }
+      stokKartState(prefix).openKat = kid;
       refreshStokKatalogUI(prefix);
       return;
-    }
-    var tgl = ev.target.closest('[data-stok-toggle-pasif]');
-    if (tgl && formEl.contains(tgl) && (tgl.getAttribute('data-stok-toggle-pasif') || '') === prefix) {
-      stokKartState(prefix).showPasif = !stokKartState(prefix).showPasif;
-      refreshStokKatalogUI(prefix);
-      return;
-    }
-    var cls = ev.target.closest('[data-stok-close]');
-    if (cls && formEl.contains(cls) && (cls.getAttribute('data-stok-close') || '') === prefix) {
-      stokKartState(prefix).openKat = null;
-      refreshStokKatalogUI(prefix);
     }
   });
 }
@@ -2127,6 +2224,8 @@ function wireStokInputDelegation(formEl, prefix) {
     if (!stokKalemDeger[prefix]) stokKalemDeger[prefix] = {};
     stokKalemDeger[prefix][k] = isNaN(n) ? 0 : n;
     inp.value = String(stokKalemDeger[prefix][k]);
+    var pref0 = (k || '').split('::')[0];
+    if (pref0 === 'sv' || pref0 === 'ac') stokModalSyncPinGate(pref0);
   });
 }
 function stokNormAd(v){
@@ -2313,7 +2412,7 @@ function renderStokForms(tip) {
         fillSels();
         wireSevkTeslimDurumuUI();
         svSiparisKontrolYukle().then(renderSvSiparisKontrol);
-        wireStokBtn('sv', katalog, '/urun-sevk', '✅ Depoya teslim alındı — kayıt oluşturuldu.', function(body){
+        wireStokBtn('sv', katalog, '/urun-sevk', 'Kayıt tamam — depo teslimi PIN ile onaylandı ve merkeze işlendi. Teşekkürler.', function(body){
           var td = selVal('svTedarikci');
           if (!td) throw new Error('Tedarikçi seçin');
           var teslimDurumu = inpVal('svTeslimDurumu');
@@ -2367,7 +2466,7 @@ function renderStokForms(tip) {
         stokKartState('ac').openKat = null;
         refreshStokKatalogUI('ac');
         fillSels();
-        wireStokBtn('ac', katalog || [], '/urun-ac', '✅ Aktif stoka eklendi.');
+        wireStokBtn('ac', katalog || [], '/urun-ac', 'Kayıt tamam — ürün açma PIN ile onaylandı; miktarlar aktif kullanıma işlendi. Teşekkürler.');
       }).catch(function(e){
         setMsg('acMsg', e.message || 'Katalog yüklenemedi', 'msg-err');
       });
@@ -2419,6 +2518,7 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
       if (extraFn) extraFn(body);
       await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + endpoint, {method:'POST', body:body});
       setMsg(prefix+'Msg', successMsg, 'msg-ok');
+      stokKartState(prefix).openKat = null;
       stokKalemDeger[prefix] = {};
       document.querySelectorAll('[data-stok-input^="' + prefix + '::"]').forEach(function(inp){ inp.value = '0'; });
       refreshStokKatalogUI(prefix);
