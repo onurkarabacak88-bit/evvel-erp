@@ -1269,12 +1269,12 @@ export default function OperasyonMerkezi() {
       {aktifSekme === 'kontrol' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div className="card" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span className="badge badge-red">Kritik: {Number(kontrolOzet?.kritik_toplam || 0)}</span>
-            <span className="badge badge-yellow">Uyarı: {Number(kontrolOzet?.uyari_toplam || 0)}</span>
-            <span className="badge badge-gray">Şube: {Number(kontrolOzet?.sube_sayisi || 0)}</span>
+            <span className="badge badge-red">Kritik: {Number(kontrolData?.kritik_toplam || 0)}</span>
+            <span className="badge badge-yellow">Uyarı: {Number(kontrolData?.uyari_toplam || 0)}</span>
+            <span className="badge badge-gray">Şube: {Number(kontrolData?.sube_sayisi || 0)}</span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 12 }}>
-            {(kontrolOzet?.subeler || []).map((s) => {
+            {(kontrolData?.subeler || []).map((s) => {
               const kritik = Number(s?.kritik_adet || 0);
               const uyari = Number(s?.uyari_adet || 0);
               const temiz = !!s?.temiz;
@@ -1318,7 +1318,7 @@ export default function OperasyonMerkezi() {
           </div>
           {yukleniyor ? (
             <div className="loading"><div className="spinner" />Yükleniyor…</div>
-          ) : (kontrolOzet?.subeler || []).length === 0 ? (
+          ) : (kontrolData?.subeler || []).length === 0 ? (
             <div className="empty"><p>Kontrol sonucu yok.</p></div>
           ) : null}
         </div>
@@ -1499,27 +1499,48 @@ export default function OperasyonMerkezi() {
           <table>
             <thead>
               <tr>
-                <th>Tarih</th>
-                <th>Saat</th>
-                <th>Şube</th>
-                <th>Personel</th>
-                <th>Bardaklar (K/B/P)</th>
-                <th>Ürünler (Su/Redbull/Soda/Cookie/Pasta)</th>
+                <th rowSpan={2}>Tarih</th>
+                <th rowSpan={2}>Saat</th>
+                <th rowSpan={2}>Şube</th>
+                <th rowSpan={2}>Personel</th>
+                <th colSpan={3} style={{ textAlign: 'center', borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>Bardaklar</th>
+                <th colSpan={5} style={{ textAlign: 'center', borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>Ürünler</th>
+              </tr>
+              <tr>
+                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Küçük</th>
+                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Büyük</th>
+                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Plastik</th>
+                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Su</th>
+                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Redbull</th>
+                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Soda</th>
+                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Cookie</th>
+                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Pasta</th>
               </tr>
             </thead>
             <tbody>
               {sayimlar.length === 0 ? (
-                <tr><td colSpan={6}><div className="empty"><p>Seçilen filtrede açılış sayımı yok</p></div></td></tr>
+                <tr><td colSpan={12}><div className="empty"><p>Seçilen filtrede açılış sayımı yok</p></div></td></tr>
               ) : sayimlar.map(r => {
                 const s = r.stok_sayim || {};
+                const cell = (val) => (
+                  <td className="mono" style={{ fontSize: 12, textAlign: 'center' }}>
+                    {val || 0}
+                  </td>
+                );
                 return (
                   <tr key={r.event_id}>
                     <td className="mono" style={{ fontSize: 11 }}>{(r.tarih || '').substring(0, 10)}</td>
                     <td className="mono" style={{ fontSize: 11 }}>{(r.cevap_ts || '').substring(11, 19) || (r.bildirim_saati || '')}</td>
                     <td style={{ fontWeight: 500, fontSize: 13 }}>{r.sube_adi || r.sube_id}</td>
                     <td style={{ fontSize: 12 }}>{r.personel_ad || r.personel_id || '—'}</td>
-                    <td className="mono" style={{ fontSize: 12 }}>{`${s.bardak_kucuk || 0}/${s.bardak_buyuk || 0}/${s.bardak_plastik || 0}`}</td>
-                    <td className="mono" style={{ fontSize: 12 }}>{`${s.su_adet || 0}/${s.redbull_adet || 0}/${s.soda_adet || 0}/${s.cookie_adet || 0}/${s.pasta_adet || 0}`}</td>
+                    {cell(s.bardak_kucuk)}
+                    {cell(s.bardak_buyuk)}
+                    {cell(s.bardak_plastik)}
+                    {cell(s.su_adet)}
+                    {cell(s.redbull_adet)}
+                    {cell(s.soda_adet)}
+                    {cell(s.cookie_adet)}
+                    {cell(s.pasta_adet)}
                   </tr>
                 );
               })}
