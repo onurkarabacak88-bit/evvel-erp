@@ -507,6 +507,7 @@ export default function OperasyonMerkezi() {
     if (typeof v === 'object') {
       const mesaj = String(v.mesaj || v.message || '').trim();
       const durum = String(v.durum || v.status || '').trim();
+      if (durum && (durum === 'tamam' || durum === 'ok') && mesaj) return mesaj;
       if (durum && mesaj) return `${durum}: ${mesaj}`;
       if (mesaj) return mesaj;
       if (durum) return durum;
