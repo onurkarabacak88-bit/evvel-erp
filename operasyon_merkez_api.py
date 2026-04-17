@@ -4294,3 +4294,94 @@ def ops_siparis_ozel_islem(body: OpsSiparisOzelIslemBody):
             bildirim_saati=saat,
         )
     return {"success": True, "durum": "tek_sefer", "siparis_talep_id": stid}
+
+
+@router.get("/panel-ozet")
+def ops_panel_ozet():
+    """Operasyon merkezi modül kartları için hafif sayısal özet."""
+    bugun = str(bugun_tr())
+    with db() as (conn, cur):
+        cur.execute("SELECT COUNT(*) FROM subeler WHERE aktif=TRUE")
+        aktif_sube = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM siparis_talep WHERE durum='bekliyor'")
+        siparis_bekleyen = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM siparis_ozel_talep WHERE durum='bekliyor'")
+        siparis_ozel = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM onay_kuyrugu WHERE durum='bekliyor'")
+        onay_bekleyen = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*) FROM anlik_giderler
+            WHERE tarih >= CURRENT_DATE - INTERVAL '7 days'
+              AND COALESCE(NULLIF(TRIM(fis_kontrol_durumu),''),'bekliyor') = 'bekliyor'
+              AND COALESCE(fis_gonderildi, FALSE) = FALSE
+        """)
+        fis_bekleyen = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM sube_merkez_mesaj WHERE aktif=TRUE")
+        mesaj_aktif = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM operasyon_defter WHERE tarih=%s::date", (bugun,))
+        defter_bugun = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*) FROM sube_operasyon_event
+            WHERE tip='ACILIS' AND durum='tamamlandi' AND tarih=%s::date
+        """, (bugun,))
+        sayim_bugun = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM merkez_stok_kart")
+        stok_kart_adet = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*) FROM sube_operasyon_event
+            WHERE tip='KONTROL' AND durum='gecikti' AND tarih=%s::date
+        """, (bugun,))
+        kontrol_gecikti = cur.fetchone()[0]
+
+        try:
+            cur.execute("""
+                SELECT COUNT(*) FROM sube_operasyon_uyari
+                WHERE tarih >= CURRENT_DATE - INTERVAL '30 days'
+                  AND seviye IN ('uyari','kritik')
+            """)
+            uyari_30d = cur.fetchone()[0]
+        except Exception:
+            conn.rollback()
+            uyari_30d = 0
+
+        cur.execute("""
+            SELECT COUNT(DISTINCT sube_id) FROM sube_operasyon_event
+            WHERE tip='KAPANIS' AND durum='tamamlandi'
+              AND tarih >= CURRENT_DATE - INTERVAL '7 days'
+        """)
+        stok_kayip_sube = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(DISTINCT personel_id) FROM sube_operasyon_event
+            WHERE tip='ACILIS' AND durum='tamamlandi'
+              AND tarih >= CURRENT_DATE - INTERVAL '30 days'
+              AND personel_id IS NOT NULL
+        """)
+        davranis_personel = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM personel WHERE aktif=TRUE")
+        aktif_personel = cur.fetchone()[0]
+
+    return {
+        "aktif_sube": aktif_sube,
+        "siparis_bekleyen": siparis_bekleyen + siparis_ozel,
+        "onay_bekleyen": onay_bekleyen,
+        "fis_bekleyen": fis_bekleyen,
+        "mesaj_aktif": mesaj_aktif,
+        "defter_bugun": defter_bugun,
+        "sayim_bugun": sayim_bugun,
+        "stok_kart_adet": stok_kart_adet,
+        "kontrol_gecikti": kontrol_gecikti,
+        "uyari_30d": uyari_30d,
+        "stok_kayip_sube": stok_kayip_sube,
+        "davranis_personel": davranis_personel,
+        "aktif_personel": aktif_personel,
+    }
