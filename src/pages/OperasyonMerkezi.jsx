@@ -490,6 +490,8 @@ export default function OperasyonMerkezi() {
   const [mFinansOzet, setMFinansOzet] = useState(null);
   const [mStokTedarik, setMStokTedarik] = useState(null);
   const [kontrolData, setKontrolData] = useState(null);
+  const [kontrolKategori, setKontrolKategori] = useState('');
+  const [kontrolSadeceAlarmlar, setKontrolSadeceAlarmlar] = useState(false);
   const [fisBekleyen, setFisBekleyen] = useState([]);
   const [fisBusyId, setFisBusyId] = useState(null);
 
@@ -552,14 +554,17 @@ export default function OperasyonMerkezi() {
 
   const yukleKontrolOzet = useCallback(async () => {
     try {
-      const payload = await api('/ops/kontrol-ozet');
+      const params = new URLSearchParams();
+      if (kontrolSadeceAlarmlar) params.set('sadece_alarmlar', 'true');
+      if (kontrolKategori) params.set('kategori', kontrolKategori);
+      const payload = await api('/ops/kontrol-ozet?' + params.toString());
       setKontrolData(payload || null);
     } catch (e) {
       toast(e.message || 'Kontrol özeti yüklenemedi');
     } finally {
       setYukleniyor(false);
     }
-  }, []);
+  }, [kontrolSadeceAlarmlar, kontrolKategori]);
 
   const yukleFisBekleyen = useCallback(async () => {
     try {
