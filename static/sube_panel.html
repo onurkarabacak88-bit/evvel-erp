@@ -1448,20 +1448,7 @@ function siparisModalUrunRowsHTML(katId, rows) {
   return h;
 }
 /** Açık kategoride pozitif adet var mı — PIN şeridini göster/gizle (renderSiparisPanel çağırmadan, odak korunur). */
-function siparisModalSyncPinGate() {
-  var kid = siparisOpenKat;
-  var wrap = document.getElementById('sipModalPinGateWrap');
-  if (!wrap || !kid) return;
-  var dirty = siparisKategoriHasAdet(kid);
-  wrap.style.display = dirty ? 'block' : 'none';
-  wrap.setAttribute('aria-hidden', dirty ? 'false' : 'true');
-  if (!dirty) {
-    var p = document.getElementById('sipModalIptalPin');
-    if (p) p.value = '';
-    var s = document.getElementById('sipModalIptalPers');
-    if (s) s.value = '';
-  }
-}
+function siparisModalSyncPinGate() { /* PIN gate kaldırıldı — artık Evet/Hayır onay kullanılıyor */ }
 function siparisModalTryClose() {
   var kid = siparisOpenKat;
   if (!kid) return;
@@ -1470,10 +1457,13 @@ function siparisModalTryClose() {
     renderSiparisPanel();
     return;
   }
-  siparisModalSyncPinGate();
-  setMsg('siparisMsg', 'Girilmiş adet var — şifre olmadan çıkılamaz. Alttan personel + PIN ile «PIN ile kapat» kullanın veya tüm adetleri 0 yapın.', 'msg-err');
-  var w = document.getElementById('sipModalPinGateWrap');
-  if (w && w.scrollIntoView) w.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // Adet girilmiş — Evet/Hayır onay kutusunu göster
+  var w = document.getElementById('sipModalConfirmWrap');
+  if (w) {
+    w.style.display = 'block';
+    if (w.scrollIntoView) w.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  setMsg('siparisMsg', '', '');
 }
 function siparisKatModalHtml(acikKat) {
   var kid = acikKat.id;
@@ -1499,12 +1489,11 @@ function siparisKatModalHtml(acikKat) {
     h += siparisModalUrunRowsHTML(kid, pasifRows);
     if (!pasifRows.length) h += '<div class="merkez-mesaj-bos">Pasif ürün yok.</div>';
   }
-  h += '<div class="sip-modal-pin-gate" id="sipModalPinGateWrap" style="display:none">';
-  h += '<div class="sip-modal-warn">Pozitif adet varken pencereyi <strong>şifre olmadan</strong> kapatamazsınız. Personel + PIN ile onaylayın; girilen adetler korunur (aşağıdaki «Seçimleri Onayla» ile gönderilir).</div>';
-  h += '<div class="form-group"><label>Personel</label><select id="sipModalIptalPers"><option value="">— Seçin —</option></select></div>';
-  h += '<div class="form-group"><label>PIN</label><input id="sipModalIptalPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
-  h += '<div class="sip-modal-pin-actions">';
-  h += '<button type="button" class="btn btn-primary btn-sm" id="sipModalPinKapatBtn">PIN ile pencereyi kapat</button>';
+  h += '<div class="sip-modal-pin-gate" id="sipModalConfirmWrap" style="display:none;padding:12px;background:rgba(245,158,11,.1);border-top:2px solid rgba(245,158,11,.5);margin-top:12px;border-radius:6px">';
+  h += '<div style="margin-bottom:10px;font-size:13px;font-weight:600">Girdiğiniz adetler sipariş listesine eklensin mi?</div>';
+  h += '<div style="display:flex;gap:10px">';
+  h += '<button type="button" class="btn btn-primary btn-sm" id="sipModalEvetBtn" style="flex:1">✔ Evet — Listeye Ekle</button>';
+  h += '<button type="button" class="btn btn-sm" id="sipModalHayirBtn" style="flex:1;background:var(--red,#ef4444);color:#fff">✕ Hayır — Sıfırla</button>';
   h += '</div></div>';
   h += '</div></div></div>';
   return h;
@@ -1701,31 +1690,29 @@ async function renderSiparisPanel() {
     siparisShowPasif = !siparisShowPasif;
     renderSiparisPanel();
   };
-  var sipPk = document.getElementById('sipModalPinKapatBtn');
-  if (sipPk) sipPk.onclick = async function(e){
+  var sipEvet = document.getElementById('sipModalEvetBtn');
+  if (sipEvet) sipEvet.onclick = function(e){
     e.stopPropagation();
-    setMsg('siparisMsg', '', '');
-    sipPk.disabled = true;
-    try {
-      var kid = siparisOpenKat;
-      if (!kid) throw new Error('Kategori yok');
-      var pid = selVal('sipModalIptalPers');
-      var pin = inpVal('sipModalIptalPin').replace(/\D/g, '').slice(0, 4);
-      if (!pid) throw new Error('Personel seçin');
-      if (pin.length !== 4) throw new Error('4 haneli PIN girin');
-      await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/panel-pin-dogrula', {
-        method: 'POST',
-        body: { personel_id: pid, pin: pin }
-      });
-      siparisOpenKat = null;
-      setMsg('siparisMsg', 'PIN doğrulandı — kategori penceresi kapandı. Girdiğiniz adetler kaybolmadı; aşağıdan «Seçimleri Onayla» ile merkeze gönderebilirsiniz.', 'msg-ok');
-      renderSiparisPanel();
-    } catch (err) {
-      if (err.status === 429) handle429(document.getElementById('siparisMsg'), err);
-      else setMsg('siparisMsg', err.message || 'PIN doğrulanamadı', 'msg-err');
-    } finally {
-      sipPk.disabled = false;
+    // Adetler siparisDegerler'de korunuyor — sadece modalı kapat
+    siparisOpenKat = null;
+    setMsg('siparisMsg', 'Adetler listeye eklendi. Aşağıdan «Seçimleri Onayla» ile merkeze gönderin.', 'msg-ok');
+    renderSiparisPanel();
+  };
+  var sipHayir = document.getElementById('sipModalHayirBtn');
+  if (sipHayir) sipHayir.onclick = function(e){
+    e.stopPropagation();
+    // Bu kategorideki tüm adetleri sıfırla ve kapat
+    var kid = siparisOpenKat;
+    if (kid) {
+      for (var k in siparisDegerler) {
+        if (Object.prototype.hasOwnProperty.call(siparisDegerler, k) && k.indexOf(kid + '::') === 0) {
+          siparisDegerler[k] = 0;
+        }
+      }
     }
+    siparisOpenKat = null;
+    setMsg('siparisMsg', '', '');
+    renderSiparisPanel();
   };
   var tglOz = document.getElementById('sipOzelToggleBtn');
   if (tglOz) tglOz.onclick = function(){ siparisOzelExpanded = !siparisOzelExpanded; renderSiparisPanel(); };
@@ -1986,7 +1973,7 @@ window.sagSekmeAc = function(id) {
 function fillSels() {
   var ids = ['mgPers','mnPers','stPers','stPin',
              'svPers','acPers','xrPers','puanPers',
-             'dvPers1','dvPers2','kapPers','kapKimeTeslim','sipOzelPers','siparisOnayPers','sipModalIptalPers',
+             'dvPers1','dvPers2','kapPers','kapKimeTeslim','sipOzelPers','siparisOnayPers',
              'stokModalIptalPers_sv','stokModalIptalPers_ac',
              'kasaUser','ktPers'];
   ids.forEach(function(id){
