@@ -49,6 +49,7 @@ from sube_panel import (
 )
 from kontrol_motoru import tum_subeler_kontrol, sube_kontrol_calistir
 from kontrol_motoru import kontrol_personel_risk_profili
+from finans_core import nakit_akis_tahmin_dogruluk
 
 router = APIRouter(prefix="/api/ops", tags=["operasyon-merkez"])
 logger = logging.getLogger(__name__)
@@ -2594,6 +2595,12 @@ def ops_metrics_finans_ozet(
             qp3.append(sid)
         cur.execute(q3, tuple(qp3))
         komisyon_ozet = dict(cur.fetchone() or {})
+        nakit_akis_tahmin_dogrulugu = nakit_akis_tahmin_dogruluk(
+            cur,
+            gun_sayisi=min(max(gun_sayi, 14), 60),
+            min_ornek=5,
+            sube_id=sid,
+        )
 
     toplam_ciro = sum(_safe_float(x.get("ciro")) for x in ciro_gider)
     toplam_gider = sum(_safe_float(x.get("gider")) for x in ciro_gider)
@@ -2622,8 +2629,8 @@ def ops_metrics_finans_ozet(
             "POS/online kesinti oranı hesaplandı." if pos_yanan_para_orani is not None else "Ciro verisi olmadığı için POS kesinti oranı hesaplanamadı.",
         ),
         "nakit_akis_tahmin_dogrulugu": _quality(
-            "yetersiz_veri",
-            "Projeksiyon snapshot'ı tarihsel saklanmadığı için tahmin-gerçekleşen karşılaştırması üretilemiyor.",
+            str(nakit_akis_tahmin_dogrulugu.get("durum") or "yetersiz_veri"),
+            str(nakit_akis_tahmin_dogrulugu.get("mesaj") or "Nakit akış doğruluğu hesaplanamadı."),
         ),
     }
 
@@ -2638,10 +2645,7 @@ def ops_metrics_finans_ozet(
         "ciro_gider_orani": ciro_gider[:1500],
         "anlik_gider_kategori_trend": kategori_trend[:600],
         "kart_faiz_yuku": faiz_yuku,
-        "nakit_akis_tahmin_dogrulugu": {
-            "durum": "yetersiz_veri",
-            "mesaj": "Projeksiyon snapshot'ı tarihsel saklanmadığı için tahmin-gerçekleşen karşılaştırması üretilemiyor.",
-        },
+        "nakit_akis_tahmin_dogrulugu": nakit_akis_tahmin_dogrulugu,
     }
 
 

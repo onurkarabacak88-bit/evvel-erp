@@ -483,6 +483,87 @@ def nakit_akis_sim(cur, gun_sayisi: int = 15) -> list:
     return gunler
 
 
+def nakit_akis_tahmin_dogruluk(cur, gun_sayisi: int = 30, min_ornek: int = 5, sube_id: str | None = None) -> dict:
+    """
+    CFO simülasyonunun ciro tahmin formülüyle (haftalık %70 + aylık %30, DOW katsayısı)
+    geçmiş günlerde backtest doğruluğu üretir.
+    """
+    gun_sayisi = max(7, min(120, int(gun_sayisi or 30)))
+    min_ornek = max(3, min(30, int(min_ornek or 5)))
+    bugun = bugun_tr()
+    baslangic = bugun - timedelta(days=gun_sayisi + 45)
+
+    qp = [baslangic, bugun]
+    q = """
+        SELECT tarih::date AS tarih, COALESCE(SUM(toplam), 0)::numeric AS ciro
+        FROM ciro
+        WHERE durum='aktif'
+          AND tarih BETWEEN %s AND %s
+    """
+    sid = (sube_id or "").strip() or None
+    if sid:
+        q += " AND sube_id=%s"
+        qp.append(sid)
+    q += " GROUP BY tarih::date ORDER BY tarih::date"
+    cur.execute(q, tuple(qp))
+    ciro_map = {r["tarih"]: float(r["ciro"] or 0.0) for r in cur.fetchall()}
+
+    satirlar = []
+    ilk_hedef = bugun - timedelta(days=gun_sayisi - 1)
+    for i in range(gun_sayisi):
+        hedef = ilk_hedef + timedelta(days=i)
+        onceki_30 = [hedef - timedelta(days=d) for d in range(30, 0, -1)]
+        onceki_7 = onceki_30[-7:]
+
+        aylik_vals = [float(ciro_map.get(g, 0.0)) for g in onceki_30]
+        haftalik_vals = aylik_vals[-7:]
+        aylik_ort = sum(aylik_vals) / 30.0
+        haftalik_ort = sum(haftalik_vals) / 7.0
+
+        agirlikli = (haftalik_ort * 0.7 + aylik_ort * 0.3) if haftalik_ort > 0 else aylik_ort
+        base = max(float(agirlikli), 1.0)
+
+        dow_hedef = hedef.isoweekday()
+        dow_vals = [float(ciro_map.get(g, 0.0)) for g in onceki_30 if g.isoweekday() == dow_hedef]
+        dow_ort = (sum(dow_vals) / float(len(dow_vals))) if dow_vals else agirlikli
+        katsayi = max(0.0, min(1.5, (dow_ort / base) if base > 0 else 1.0))
+
+        tahmin = round(float(agirlikli) * float(katsayi), 2)
+        gercek = float(ciro_map.get(hedef, 0.0))
+        if gercek <= 0:
+            continue
+        ape = abs(tahmin - gercek) / gercek
+        satirlar.append(
+            {
+                "tarih": str(hedef),
+                "tahmin": tahmin,
+                "gercek": round(gercek, 2),
+                "ape": round(ape, 6),
+            }
+        )
+
+    if len(satirlar) < min_ornek:
+        return {
+            "durum": "yetersiz_veri",
+            "mesaj": "Nakit akış doğruluğu için yeterli günlük ciro geçmişi yok.",
+            "dogruluk_pct": None,
+            "model": "finans_core.nakit_akis_sim_backtest",
+            "ornek_gun": len(satirlar),
+            "satirlar": satirlar,
+        }
+
+    mape = sum(float(x["ape"]) for x in satirlar) / float(len(satirlar))
+    dogruluk = max(0.0, min(100.0, (1.0 - mape) * 100.0))
+    return {
+        "durum": "tamam",
+        "mesaj": f"Son {len(satirlar)} gün CFO backtest doğruluğu %{round(dogruluk, 2)}",
+        "dogruluk_pct": round(dogruluk, 4),
+        "model": "finans_core.nakit_akis_sim_backtest",
+        "ornek_gun": len(satirlar),
+        "satirlar": satirlar[-30:],
+    }
+
+
 # ══════════════════════════════════════════════════════════════
 # TAKSİT SİSTEMİ
 # ══════════════════════════════════════════════════════════════
