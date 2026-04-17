@@ -537,17 +537,17 @@ export default function OperasyonMerkezi() {
   const yukleMetrics = useCallback(async () => {
     try {
       const [pv, sk, fo, st] = await Promise.all([
-        api('/ops/metrics/personel-verimlilik?gun=30').catch(() => null),
-        api('/ops/metrics/sube-operasyon-kalite?gun=30').catch(() => null),
-        api('/ops/metrics/finans-ozet?gun=30').catch(() => null),
-        api('/ops/metrics/stok-tedarik?gun=30').catch(() => null),
+        api('/ops/metrics/personel-verimlilik?gun=30').catch((e) => { console.warn('personel-verimlilik:', e?.message); return null; }),
+        api('/ops/metrics/sube-operasyon-kalite?gun=30').catch((e) => { console.warn('sube-operasyon-kalite:', e?.message); return null; }),
+        api('/ops/metrics/finans-ozet?gun=30').catch((e) => { console.warn('finans-ozet:', e?.message); return null; }),
+        api('/ops/metrics/stok-tedarik?gun=30').catch((e) => { console.warn('stok-tedarik:', e?.message); return null; }),
       ]);
       setMPersonelVerimlilik(pv);
       setMSubeOperasyonKalite(sk);
       setMFinansOzet(fo);
       setMStokTedarik(st);
-    } catch (_) {
-      // her endpoint kendi catch'inde izole edildi
+    } catch (e) {
+      console.error('yukleMetrics hata:', e);
     } finally {
       setYukleniyor(false);
     }
@@ -1236,40 +1236,52 @@ export default function OperasyonMerkezi() {
       )}
 
       {aktifSekme === 'metrics' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 12 }}>
-          <div className="card">
-            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Personel verimlilik</h3>
-            <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-              Açılış sapma ort.: <strong>{Number(mPersonelVerimlilik?.acilis_sapma_ort_dk || 0).toFixed(2)} dk</strong><br />
-              Kontrol cevap ort.: <strong>{Number(mPersonelVerimlilik?.kontrol_cevap_ort_dk || 0).toFixed(2)} dk</strong><br />
-              Kasa fark frekansı: <strong>{Number(mPersonelVerimlilik?.kasa_fark_frekans || 0).toFixed(2)}%</strong>
+        yukleniyor && !mPersonelVerimlilik && !mSubeOperasyonKalite && !mFinansOzet && !mStokTedarik
+          ? <div className="loading"><div className="spinner" />Metrik veriler yükleniyor…</div>
+          : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 12 }}>
+            <div className="card">
+              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Personel verimlilik</h3>
+              {mPersonelVerimlilik ? (
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                  Açılış sapma ort.: <strong>{Number(mPersonelVerimlilik.acilis_sapma_ort_dk || 0).toFixed(2)} dk</strong><br />
+                  Kontrol cevap ort.: <strong>{Number(mPersonelVerimlilik.kontrol_cevap_ort_dk || 0).toFixed(2)} dk</strong><br />
+                  Kasa fark frekansı: <strong>{Number(mPersonelVerimlilik.kasa_fark_frekans || 0).toFixed(2)}%</strong>
+                </div>
+              ) : <div style={{ fontSize: 12, color: 'var(--text3)' }}>Veri yüklenemedi veya yeterli kayıt yok.</div>}
+            </div>
+            <div className="card">
+              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Şube operasyon kalite</h3>
+              {mSubeOperasyonKalite ? (
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                  Vardiya eksik oranı: <strong>{Number(mSubeOperasyonKalite.vardiya_eksik_oran || 0).toFixed(2)}%</strong><br />
+                  Not/gün ort.: <strong>{Number(mSubeOperasyonKalite.not_gonderim_gunluk_ort || 0).toFixed(2)}</strong><br />
+                  Sipariş çevrim (gün): <strong>{Number(mSubeOperasyonKalite.siparis_cevrim_sure_gun || 0).toFixed(2)}</strong>
+                </div>
+              ) : <div style={{ fontSize: 12, color: 'var(--text3)' }}>Veri yüklenemedi veya yeterli kayıt yok.</div>}
+            </div>
+            <div className="card">
+              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Finans özet</h3>
+              {mFinansOzet ? (
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                  Ciro / gider oranı: <strong>{Number(mFinansOzet.ciro_gider_orani || 0).toFixed(3)}</strong><br />
+                  Kart faiz yükü: <strong>{Number(mFinansOzet.kart_faiz_yuku_orani || 0).toFixed(3)}</strong><br />
+                  Nakit akış doğruluğu: <strong>{mFinansOzet.nakit_akis_tahmin_dogrulugu ?? 'veri yok'}</strong>
+                </div>
+              ) : <div style={{ fontSize: 12, color: 'var(--text3)' }}>Veri yüklenemedi veya yeterli kayıt yok.</div>}
+            </div>
+            <div className="card">
+              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Stok & tedarik</h3>
+              {mStokTedarik ? (
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                  Bardak kullanım/gün: <strong>{Number(mStokTedarik.gunluk_bardak_kullanim || 0).toFixed(2)}</strong><br />
+                  Depo bekletme (gün): <strong>{Number(mStokTedarik.depo_bekletme_sure_gun || 0).toFixed(2)}</strong><br />
+                  Açıklanamayan eksilme: <strong>{Number(mStokTedarik.aciklanamayan_stok_eksilmesi || 0).toFixed(2)}</strong>
+                </div>
+              ) : <div style={{ fontSize: 12, color: 'var(--text3)' }}>Veri yüklenemedi veya yeterli kayıt yok.</div>}
             </div>
           </div>
-          <div className="card">
-            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Şube operasyon kalite</h3>
-            <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-              Vardiya eksik oranı: <strong>{Number(mSubeOperasyonKalite?.vardiya_eksik_oran || 0).toFixed(2)}%</strong><br />
-              Not/gün ort.: <strong>{Number(mSubeOperasyonKalite?.not_gonderim_gunluk_ort || 0).toFixed(2)}</strong><br />
-              Sipariş çevrim (gün): <strong>{Number(mSubeOperasyonKalite?.siparis_cevrim_sure_gun || 0).toFixed(2)}</strong>
-            </div>
-          </div>
-          <div className="card">
-            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Finans özet</h3>
-            <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-              Ciro / gider oranı: <strong>{Number(mFinansOzet?.ciro_gider_orani || 0).toFixed(3)}</strong><br />
-              Kart faiz yükü: <strong>{Number(mFinansOzet?.kart_faiz_yuku_orani || 0).toFixed(3)}</strong><br />
-              Nakit akış doğruluğu: <strong>{mFinansOzet?.nakit_akis_tahmin_dogrulugu ?? 'veri yok'}</strong>
-            </div>
-          </div>
-          <div className="card">
-            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Stok & tedarik</h3>
-            <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-              Bardak kullanım/gün: <strong>{Number(mStokTedarik?.gunluk_bardak_kullanim || 0).toFixed(2)}</strong><br />
-              Depo bekletme (gün): <strong>{Number(mStokTedarik?.depo_bekletme_sure_gun || 0).toFixed(2)}</strong><br />
-              Açıklanamayan eksilme: <strong>{Number(mStokTedarik?.aciklanamayan_stok_eksilmesi || 0).toFixed(2)}</strong>
-            </div>
-          </div>
-        </div>
+        )
       )}
 
       {aktifSekme === 'kontrol' && (
