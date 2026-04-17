@@ -2091,6 +2091,32 @@ def _trend_yonu(onceki: float, simdiki: float, esik_pct: float = 5.0) -> str:
     return "stabil"
 
 
+def _safe_float(v: Any) -> float:
+    try:
+        return float(v or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _weighted_avg(rows: List[Dict[str, Any]], value_key: str, weight_key: str) -> Optional[float]:
+    toplam_agirlik = 0.0
+    toplam_deger = 0.0
+    for r in rows:
+        w = _safe_float(r.get(weight_key))
+        v = _safe_float(r.get(value_key))
+        if w <= 0:
+            continue
+        toplam_agirlik += w
+        toplam_deger += (v * w)
+    if toplam_agirlik <= 0:
+        return None
+    return round(toplam_deger / toplam_agirlik, 4)
+
+
+def _quality(status: str, mesaj: str) -> Dict[str, str]:
+    return {"durum": status, "mesaj": mesaj}
+
+
 @router.get("/metrics/personel-verimlilik")
 def ops_metrics_personel_verimlilik(
     sube_id: Optional[str] = None,
@@ -2225,9 +2251,39 @@ def ops_metrics_personel_verimlilik(
         cur.execute(q_pin, tuple(qp4))
         pin_hata_saat_dagilimi = [dict(r) for r in cur.fetchall()]
 
+    acilis_ort = _weighted_avg(acilis_sapma, "ort_sapma_dk", "ornek_sayi")
+    kontrol_ort = _weighted_avg(kontrol_hizi, "ort_cevap_dk", "ornek_sayi")
+    toplam_stok_kapanis_uyari = sum(int(x.get("stok_kapanis_uyari_adet") or 0) for x in kasa_fark_frekansi)
+    aktif_personel_adet = max(
+        len({str(x.get("personel_id") or "") for x in acilis_sapma if x.get("personel_id")}),
+        len({str(x.get("personel_id") or "") for x in kontrol_hizi if x.get("personel_id")}),
+        len({str(x.get("personel_id") or "") for x in kasa_fark_frekansi if x.get("personel_id")}),
+        1,
+    )
+    kasa_fark_frekans = round((toplam_stok_kapanis_uyari * 100.0) / float(aktif_personel_adet * max(1, gun_sayi)), 4)
+
+    veri_kalite = {
+        "acilis_sapma": _quality(
+            "tamam" if acilis_ort is not None else "yetersiz_veri",
+            "Açılış sapma ortalaması hesaplandı." if acilis_ort is not None else "Açılış sapma ortalaması için örnek bulunamadı.",
+        ),
+        "kontrol_cevap": _quality(
+            "tamam" if kontrol_ort is not None else "yetersiz_veri",
+            "Kontrol cevap süresi hesaplandı." if kontrol_ort is not None else "Kontrol cevap süresi için örnek bulunamadı.",
+        ),
+        "kasa_fark_frekans": _quality(
+            "tamam" if kasa_fark_frekansi else "yetersiz_veri",
+            "Kasa fark frekansı hesaplandı." if kasa_fark_frekansi else "Kasa fark frekansı için kayıt bulunamadı.",
+        ),
+    }
+
     return {
         "gun_sayi": gun_sayi,
         "sube_id": sid,
+        "acilis_sapma_ort_dk": acilis_ort,
+        "kontrol_cevap_ort_dk": kontrol_ort,
+        "kasa_fark_frekans": kasa_fark_frekans,
+        "veri_kalite": veri_kalite,
         "acilis_saati_sapmasi": acilis_sapma,
         "kontrol_cevap_hizi": kontrol_hizi,
         "kasa_farki_frekansi": kasa_fark_frekansi,
@@ -2366,10 +2422,34 @@ def ops_metrics_sube_operasyon_kalite(
     onceki = float(kontrol_trend[-2]["ort_gecikme_dk"]) if len(kontrol_trend) >= 2 else 0.0
     simdiki = float(kontrol_trend[-1]["ort_gecikme_dk"]) if len(kontrol_trend) >= 1 else 0.0
     trend_yonu = _trend_yonu(onceki, simdiki) if len(kontrol_trend) >= 2 else "yetersiz_veri"
+    vardiya_eksik_oran = _weighted_avg(vardiya_oran, "eksik_tik_orani_pct", "toplam_devri")
+    toplam_not = sum(int(x.get("not_adet") or 0) for x in not_sikligi)
+    sube_adet = max(1, len({str(x.get("sube_id") or "") for x in not_sikligi if x.get("sube_id")}))
+    not_gonderim_gunluk_ort = round(float(toplam_not) / float(max(1, gun_sayi) * sube_adet), 4)
+    siparis_cevrim_sure_gun = ort_dongu
+
+    veri_kalite = {
+        "vardiya_eksik_oran": _quality(
+            "tamam" if vardiya_eksik_oran is not None else "yetersiz_veri",
+            "Vardiya devir verisi mevcut." if vardiya_eksik_oran is not None else "Vardiya devir kaydı bulunamadı.",
+        ),
+        "not_gonderim_gunluk_ort": _quality(
+            "tamam" if not_sikligi else "yetersiz_veri",
+            "Şube not verisi mevcut." if not_sikligi else "Şube not verisi bulunamadı.",
+        ),
+        "siparis_cevrim_sure_gun": _quality(
+            "tamam" if siparis_cevrim_sure_gun is not None else "yetersiz_veri",
+            "Sipariş talep->teslim çevrimi hesaplandı." if siparis_cevrim_sure_gun is not None else "Sipariş çevrim süresi için teslim verisi yok.",
+        ),
+    }
 
     return {
         "gun_sayi": gun_sayi,
         "sube_id": sid,
+        "vardiya_eksik_oran": vardiya_eksik_oran,
+        "not_gonderim_gunluk_ort": not_gonderim_gunluk_ort,
+        "siparis_cevrim_sure_gun": siparis_cevrim_sure_gun,
+        "veri_kalite": veri_kalite,
         "vardiya_devri_eksik_tik_orani": vardiya_oran,
         "not_gonderme_sikligi": not_sikligi,
         "siparis_dongusu": {
@@ -2496,9 +2576,65 @@ def ops_metrics_finans_ozet(
             r["ciro_toplam"] = ciro_v
             r["finansman_maliyeti_orani"] = round((faiz_v / ciro_v), 6) if ciro_v > 0 else None
 
+        qp3: List[Any] = [gun_sayi]
+        q3 = """
+            SELECT
+                COALESCE(SUM(c.toplam), 0)::numeric AS toplam_ciro,
+                COALESCE(SUM(c.pos), 0)::numeric AS toplam_pos,
+                COALESCE(SUM(c.online), 0)::numeric AS toplam_online,
+                COALESCE(SUM(c.pos * COALESCE(s.pos_oran, 0) / 100.0), 0)::numeric AS pos_kesinti,
+                COALESCE(SUM(c.online * COALESCE(s.online_oran, 0) / 100.0), 0)::numeric AS online_kesinti
+            FROM ciro c
+            LEFT JOIN subeler s ON s.id = c.sube_id
+            WHERE c.durum='aktif'
+              AND c.tarih >= (CURRENT_DATE - (%s * INTERVAL '1 day'))
+        """
+        if sid:
+            q3 += " AND c.sube_id=%s"
+            qp3.append(sid)
+        cur.execute(q3, tuple(qp3))
+        komisyon_ozet = dict(cur.fetchone() or {})
+
+    toplam_ciro = sum(_safe_float(x.get("ciro")) for x in ciro_gider)
+    toplam_gider = sum(_safe_float(x.get("gider")) for x in ciro_gider)
+    ciro_gider_orani_ozet = round(toplam_ciro / toplam_gider, 6) if toplam_gider > 0 else None
+
+    toplam_faiz = sum(_safe_float(x.get("faiz_toplam")) for x in faiz_yuku)
+    kart_faiz_yuku_orani = round(toplam_faiz / toplam_ciro, 6) if toplam_ciro > 0 else None
+
+    pos_kesinti = _safe_float(komisyon_ozet.get("pos_kesinti"))
+    online_kesinti = _safe_float(komisyon_ozet.get("online_kesinti"))
+    yanan_para_toplam = pos_kesinti + online_kesinti
+    pos_yanan_para_orani = round(yanan_para_toplam / toplam_ciro, 6) if toplam_ciro > 0 else None
+    toplam_kart_maliyeti_orani = round((toplam_faiz + yanan_para_toplam) / toplam_ciro, 6) if toplam_ciro > 0 else None
+
+    veri_kalite = {
+        "ciro_gider_orani_ozet": _quality(
+            "tamam" if ciro_gider_orani_ozet is not None else "yetersiz_veri",
+            "Ciro/gider oranı hesaplandı." if ciro_gider_orani_ozet is not None else "Gider toplamı sıfır veya kayıt yok.",
+        ),
+        "kart_faiz_yuku_orani": _quality(
+            "tamam" if kart_faiz_yuku_orani is not None else "yetersiz_veri",
+            "Kart faiz yükü oranı hesaplandı." if kart_faiz_yuku_orani is not None else "Ciro verisi olmadığı için faiz oranı hesaplanamadı.",
+        ),
+        "pos_yanan_para_orani": _quality(
+            "tamam" if pos_yanan_para_orani is not None else "yetersiz_veri",
+            "POS/online kesinti oranı hesaplandı." if pos_yanan_para_orani is not None else "Ciro verisi olmadığı için POS kesinti oranı hesaplanamadı.",
+        ),
+        "nakit_akis_tahmin_dogrulugu": _quality(
+            "yetersiz_veri",
+            "Projeksiyon snapshot'ı tarihsel saklanmadığı için tahmin-gerçekleşen karşılaştırması üretilemiyor.",
+        ),
+    }
+
     return {
         "gun_sayi": gun_sayi,
         "sube_id": sid,
+        "ciro_gider_orani_ozet": ciro_gider_orani_ozet,
+        "kart_faiz_yuku_orani": kart_faiz_yuku_orani,
+        "pos_yanan_para_orani": pos_yanan_para_orani,
+        "toplam_kart_maliyeti_orani": toplam_kart_maliyeti_orani,
+        "veri_kalite": veri_kalite,
         "ciro_gider_orani": ciro_gider[:1500],
         "anlik_gider_kategori_trend": kategori_trend[:600],
         "kart_faiz_yuku": faiz_yuku,
@@ -2701,9 +2837,49 @@ def ops_metrics_stok_tedarik(
         reverse=True,
     )
 
+    gunluk_bardak_kullanim = None
+    if gunluk_bardak:
+        toplam_teorik = sum(int(x.get("teorik_satis") or 0) for x in gunluk_bardak)
+        gun_adet = max(
+            1,
+            len({(str(x.get("sube_id") or ""), str(x.get("tarih") or "")) for x in gunluk_bardak}),
+        )
+        gunluk_bardak_kullanim = round(float(toplam_teorik) / float(gun_adet), 4)
+
+    depo_bekletme_sure_gun = None
+    if depo_bekletme:
+        toplam_sevk = sum(max(1, int(x.get("sevk_adet") or 0)) for x in depo_bekletme)
+        agirlikli = sum(_safe_float(x.get("ortalama_bekletme_gun_proxy")) * max(1, int(x.get("sevk_adet") or 0)) for x in depo_bekletme)
+        depo_bekletme_sure_gun = round(agirlikli / float(max(1, toplam_sevk)), 4)
+
+    aciklanamayan_stok_eksilmesi = None
+    if aciklanamayan_eksilme:
+        toplam_uyari = sum(int(x.get("stok_kapanis_uyari_adet") or 0) for x in aciklanamayan_eksilme)
+        sube_adet = max(1, len(aciklanamayan_eksilme))
+        aciklanamayan_stok_eksilmesi = round(float(toplam_uyari) / float(sube_adet), 4)
+
+    veri_kalite = {
+        "gunluk_bardak_kullanim": _quality(
+            "tamam" if gunluk_bardak_kullanim is not None else "yetersiz_veri",
+            "Günlük bardak kullanımı hesaplandı." if gunluk_bardak_kullanim is not None else "Bardak kullanımı için veri yok.",
+        ),
+        "depo_bekletme_sure_gun": _quality(
+            "tamam" if depo_bekletme_sure_gun is not None else "yetersiz_veri",
+            "Depo bekletme süresi hesaplandı." if depo_bekletme_sure_gun is not None else "Sevk->aç kayıt eşleşmesi yeterli değil.",
+        ),
+        "aciklanamayan_stok_eksilmesi": _quality(
+            "tamam" if aciklanamayan_stok_eksilmesi is not None else "yetersiz_veri",
+            "Açıklanamayan stok eksilmesi sinyali üretildi." if aciklanamayan_stok_eksilmesi is not None else "Stok uyarı verisi bulunamadı.",
+        ),
+    }
+
     return {
         "gun_sayi": gun_sayi,
         "sube_id": sid,
+        "gunluk_bardak_kullanim": gunluk_bardak_kullanim,
+        "depo_bekletme_sure_gun": depo_bekletme_sure_gun,
+        "aciklanamayan_stok_eksilmesi": aciklanamayan_stok_eksilmesi,
+        "veri_kalite": veri_kalite,
         "gunluk_bardak_kullanimi": gunluk_bardak[:1500],
         "sarf_malzeme_tuketim_hizi": sarf_tuketim_hizi,
         "depo_bekletme_suresi_proxy": depo_bekletme[:300],
