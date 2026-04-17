@@ -514,6 +514,11 @@ export default function OperasyonMerkezi() {
     }
     return String(v);
   };
+  const metricNum = (v, digits = 2, fallback = 'veri yok') => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return n.toFixed(digits);
+  };
 
   const yukleSiparisMerkez = useCallback(async () => {
     try {
@@ -1261,9 +1266,9 @@ export default function OperasyonMerkezi() {
               <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Personel verimlilik</h3>
               {mPersonelVerimlilik ? (
                 <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                  Açılış sapma ort.: <strong>{Number(mPersonelVerimlilik.acilis_sapma_ort_dk || 0).toFixed(2)} dk</strong><br />
-                  Kontrol cevap ort.: <strong>{Number(mPersonelVerimlilik.kontrol_cevap_ort_dk || 0).toFixed(2)} dk</strong><br />
-                  Kasa fark frekansı: <strong>{Number(mPersonelVerimlilik.kasa_fark_frekans || 0).toFixed(2)}%</strong>
+                  Açılış sapma ort.: <strong>{metricNum(mPersonelVerimlilik.acilis_sapma_ort_dk, 2)} dk</strong><br />
+                  Kontrol cevap ort.: <strong>{metricNum(mPersonelVerimlilik.kontrol_cevap_ort_dk, 2)} dk</strong><br />
+                  Kasa fark frekansı: <strong>{metricNum(mPersonelVerimlilik.kasa_fark_frekans, 2)}%</strong>
                 </div>
               ) : <div style={{ fontSize: 12, color: 'var(--text3)' }}>Veri yüklenemedi veya yeterli kayıt yok.</div>}
             </div>
@@ -1271,9 +1276,9 @@ export default function OperasyonMerkezi() {
               <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Şube operasyon kalite</h3>
               {mSubeOperasyonKalite ? (
                 <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                  Vardiya eksik oranı: <strong>{Number(mSubeOperasyonKalite.vardiya_eksik_oran || 0).toFixed(2)}%</strong><br />
-                  Not/gün ort.: <strong>{Number(mSubeOperasyonKalite.not_gonderim_gunluk_ort || 0).toFixed(2)}</strong><br />
-                  Sipariş çevrim (gün): <strong>{Number(mSubeOperasyonKalite.siparis_cevrim_sure_gun || 0).toFixed(2)}</strong>
+                  Vardiya eksik oranı: <strong>{metricNum(mSubeOperasyonKalite.vardiya_eksik_oran, 2)}%</strong><br />
+                  Not/gün ort.: <strong>{metricNum(mSubeOperasyonKalite.not_gonderim_gunluk_ort, 2)}</strong><br />
+                  Sipariş çevrim (gün): <strong>{metricNum(mSubeOperasyonKalite.siparis_cevrim_sure_gun, 2)}</strong>
                 </div>
               ) : <div style={{ fontSize: 12, color: 'var(--text3)' }}>Veri yüklenemedi veya yeterli kayıt yok.</div>}
             </div>
@@ -1281,8 +1286,10 @@ export default function OperasyonMerkezi() {
               <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Finans özet</h3>
               {mFinansOzet ? (
                 <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                  Ciro / gider oranı: <strong>{Number(mFinansOzet.ciro_gider_orani || 0).toFixed(3)}</strong><br />
-                  Kart faiz yükü: <strong>{Number(mFinansOzet.kart_faiz_yuku_orani || 0).toFixed(3)}</strong><br />
+                  Ciro / gider oranı: <strong>{metricNum(mFinansOzet.ciro_gider_orani_ozet, 3)}</strong><br />
+                  Kart faiz yükü: <strong>{metricNum(mFinansOzet.kart_faiz_yuku_orani, 3)}</strong><br />
+                  POS kaynaklı yanan para: <strong>{metricNum(mFinansOzet.pos_yanan_para_orani, 3)}</strong><br />
+                  Toplam kart maliyeti: <strong>{metricNum(mFinansOzet.toplam_kart_maliyeti_orani, 3)}</strong><br />
                   Nakit akış doğruluğu: <strong>{metricText(mFinansOzet.nakit_akis_tahmin_dogrulugu)}</strong>
                 </div>
               ) : <div style={{ fontSize: 12, color: 'var(--text3)' }}>Veri yüklenemedi veya yeterli kayıt yok.</div>}
@@ -1291,9 +1298,9 @@ export default function OperasyonMerkezi() {
               <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Stok & tedarik</h3>
               {mStokTedarik ? (
                 <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                  Bardak kullanım/gün: <strong>{Number(mStokTedarik.gunluk_bardak_kullanim || 0).toFixed(2)}</strong><br />
-                  Depo bekletme (gün): <strong>{Number(mStokTedarik.depo_bekletme_sure_gun || 0).toFixed(2)}</strong><br />
-                  Açıklanamayan eksilme: <strong>{Number(mStokTedarik.aciklanamayan_stok_eksilmesi || 0).toFixed(2)}</strong>
+                  Bardak kullanım/gün: <strong>{metricNum(mStokTedarik.gunluk_bardak_kullanim, 2)}</strong><br />
+                  Depo bekletme (gün): <strong>{metricNum(mStokTedarik.depo_bekletme_sure_gun, 2)}</strong><br />
+                  Açıklanamayan eksilme: <strong>{metricNum(mStokTedarik.aciklanamayan_stok_eksilmesi, 2)}</strong>
                 </div>
               ) : <div style={{ fontSize: 12, color: 'var(--text3)' }}>Veri yüklenemedi veya yeterli kayıt yok.</div>}
             </div>
