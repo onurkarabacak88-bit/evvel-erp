@@ -497,6 +497,23 @@ export default function OperasyonMerkezi() {
   const [fisBusyId, setFisBusyId] = useState(null);
 
   const toast = (m, t = 'red') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 4000); };
+  const metricText = (v, fallback = 'veri yok') => {
+    if (v == null) return fallback;
+    if (typeof v === 'string') {
+      const s = v.trim();
+      return s || fallback;
+    }
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    if (typeof v === 'object') {
+      const mesaj = String(v.mesaj || v.message || '').trim();
+      const durum = String(v.durum || v.status || '').trim();
+      if (durum && mesaj) return `${durum}: ${mesaj}`;
+      if (mesaj) return mesaj;
+      if (durum) return durum;
+      return fallback;
+    }
+    return String(v);
+  };
 
   const yukleSiparisMerkez = useCallback(async () => {
     try {
@@ -1266,7 +1283,7 @@ export default function OperasyonMerkezi() {
                 <div style={{ fontSize: 12, color: 'var(--text3)' }}>
                   Ciro / gider oranı: <strong>{Number(mFinansOzet.ciro_gider_orani || 0).toFixed(3)}</strong><br />
                   Kart faiz yükü: <strong>{Number(mFinansOzet.kart_faiz_yuku_orani || 0).toFixed(3)}</strong><br />
-                  Nakit akış doğruluğu: <strong>{mFinansOzet.nakit_akis_tahmin_dogrulugu ?? 'veri yok'}</strong>
+                  Nakit akış doğruluğu: <strong>{metricText(mFinansOzet.nakit_akis_tahmin_dogrulugu)}</strong>
                 </div>
               ) : <div style={{ fontSize: 12, color: 'var(--text3)' }}>Veri yüklenemedi veya yeterli kayıt yok.</div>}
             </div>
