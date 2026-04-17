@@ -337,10 +337,13 @@ def merkez_stok_kart_guncelle(cur: Any) -> List[Dict[str, Any]]:
       - sevk_adet: merkez_stok_sevk (merkez->şube gönderilen)
       - kullanilan_adet: operasyon_defter URUN_AC (şubenin kullandığı)
       - kalan_adet: sevk - kullanılan (şubede kalan/depo)
+
+    STOK_KEYS kalemlerine ek olarak siparis_katalog ürünleri de dahil edilir
+    (siparis_talep.kalemler'de görünen ancak STOK_KEYS'e map edilemeyen ürünler).
     """
     siparis = _zero_stok()
-    sevk = _zero_stok()
-    kullanilan = _zero_stok()
+    # Katalog ürünleri için: {norm_key: {ad, adet}}
+    katalog_siparis: Dict[str, Dict[str, Any]] = {}
 
     cur.execute("SELECT kalemler FROM siparis_talep WHERE durum!='iptal'")
     for r in cur.fetchall():
@@ -355,13 +358,65 @@ def merkez_stok_kart_guncelle(cur: Any) -> List[Dict[str, Any]]:
         for it in kal:
             if not isinstance(it, dict):
                 continue
-            key = _stok_key_from_urun_ad(it.get("urun_ad"))
-            if not key:
+            urun_ad = str(it.get("urun_ad") or "").strip()
+            if not urun_ad:
                 continue
-            try:
-                siparis[key] += max(0, int(it.get("adet") or 0))
-            except (TypeError, ValueError):
+            key = _stok_key_from_urun_ad(urun_ad)
+            if key:
+                try:
+                    siparis[key] += max(0, int(it.get("adet") or 0))
+                except (TypeError, ValueError):
+                    pass
+            else:
+                # Katalog ürünü — STOK_KEYS dışı, sadece siparis_adet takibi
+                norm = urun_ad.lower().replace(" ", "_").replace("ş", "s").replace(
+                    "ı", "i").replace("ğ", "g").replace("ü", "u").replace(
+                    "ö", "o").replace("ç", "c")
+                # Alfanümerik + _ karakterleri koru
+                norm = "".join(c if c.isalnum() or c == "_" else "_" for c in norm)
+                norm = f"katalog__{norm}"
+                if norm not in katalog_siparis:
+                    katalog_siparis[norm] = {"ad": urun_ad, "adet": 0}
+                try:
+                    katalog_siparis[norm]["adet"] += max(0, int(it.get("adet") or 0))
+                except (TypeError, ValueError):
+                    pass
+
+    # Aktif katalog ürünlerini de ekle (hiç sipariş edilmemiş olsa bile göster)
+    # Ayrıca siparis_talep'teki urun_ad eşleşmelerini katalog ID'siyle düzelt
+    try:
+        cur.execute(
+            """
+            SELECT k.kod AS kat_kod, u.norm_ad, u.ad
+            FROM siparis_urun u
+            JOIN siparis_kategori k ON k.id = u.kategori_id
+            WHERE u.aktif = TRUE
+            ORDER BY k.kod, u.sira, u.ad
+            """
+        )
+        for ru in cur.fetchall():
+            kat_kod = str(ru.get("kat_kod") or "").strip()
+            norm_ad = str(ru.get("norm_ad") or "").strip()
+            ad = str(ru.get("ad") or "").strip()
+            if not norm_ad or not ad or not kat_kod:
                 continue
+            # Kategori kodu + norm_ad ile unique key
+            norm_key = f"katalog__{kat_kod}__{norm_ad}"
+            if norm_key not in katalog_siparis:
+                # urun_ad bazlı eşleşmeyi katalog key'iyle güncelle
+                # (siparis_talep'ten oluşturulan basit norm ile üst üste gelebilir)
+                katalog_siparis[norm_key] = {"ad": ad, "adet": 0}
+                # Basit norm anahtarı varsa adetini aktar ve sil
+                simple_key = "katalog__" + "".join(
+                    c if c.isalnum() or c == "_" else "_"
+                    for c in ad.lower().replace(" ", "_").replace("ş", "s").replace(
+                        "ı", "i").replace("ğ", "g").replace("ü", "u").replace(
+                        "ö", "o").replace("ç", "c")
+                )
+                if simple_key in katalog_siparis and simple_key != norm_key:
+                    katalog_siparis[norm_key]["adet"] += katalog_siparis.pop(simple_key)["adet"]
+    except Exception:
+        pass
 
     sevk = sum_merkez_stok_sevk(cur)
     kullanilan = sum_urun_ac_genel(cur)
@@ -379,6 +434,18 @@ def merkez_stok_kart_guncelle(cur: Any) -> List[Dict[str, Any]]:
                 "sevk_adet": sev,
                 "kullanilan_adet": kull,
                 "kalan_adet": kal,
+            }
+        )
+
+    for norm_key, info in katalog_siparis.items():
+        rows.append(
+            {
+                "kalem_kodu": norm_key,
+                "kalem_adi": info["ad"],
+                "siparis_adet": int(info["adet"]),
+                "sevk_adet": 0,
+                "kullanilan_adet": 0,
+                "kalan_adet": 0,
             }
         )
 
