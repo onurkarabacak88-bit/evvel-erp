@@ -151,7 +151,10 @@ export default function Panel({ onNavigate }) {
       } else {
         // NAKİT — mevcut akış
         const params = tutar ? `?tutar=${tutar}` : '';
-        await api(`/odeme-plani/${odemeId}/ode${params}`, { method: 'POST' });
+        await api(`/odeme-plani/${odemeId}/ode${params}`, {
+          method: 'POST',
+          body: { odeme_yontemi: 'nakit' },
+        });
         toast(`✓ Ödeme onaylandı${tutar ? ` (${parseFloat(tutar).toLocaleString('tr-TR')} ₺)` : ''} — kasadan düşüldü`);
       }
       setOdemeModal(null); setManuelTutar('');
@@ -164,6 +167,10 @@ export default function Panel({ onNavigate }) {
   }
 
   async function odemeModalAcVadeliKontrol(u) {
+    if (!u?.odeme_id) {
+      toast('Bu uyarı için ödeme planı kimliği yok; önce plan oluşturun veya onay kuyruğunu kullanın.', 'red');
+      return;
+    }
     // odeme_plani kaydının vadeli alıma ait olup olmadığını belirle
     setOdemeModal(u);
     setManuelTutar('');
@@ -196,6 +203,10 @@ export default function Panel({ onNavigate }) {
   }
 
   function odemeErteleAc(odemeId, aciklama, mevcutTarih) {
+    if (!odemeId) {
+      toast('Erteleme için ödeme planı kimliği yok.', 'red');
+      return;
+    }
     // Kısa ertelemelerde sistem varsayılan olarak mevcut +4 gün uygular
     const d = new Date(mevcutTarih || new Date());
     d.setDate(d.getDate() + 4);
@@ -270,6 +281,10 @@ export default function Panel({ onNavigate }) {
   }
 
   function kismiModalAc(u) {
+    if (!u?.odeme_id) {
+      toast('Bu satır için ödeme planı kimliği yok; kısmi ödeme uygulanamaz.', 'red');
+      return;
+    }
     setKismiModal({ odemeId: u.odeme_id, aciklama: u.aciklama, toplam: u.tutar, vadeli: u.kaynak_tablo === 'vadeli_alimlar' });
     setKismiTutar(''); setKismiTarih('');
     setKismiAdim(1); setKismiYontemi('nakit');
@@ -1380,8 +1395,33 @@ export default function Panel({ onNavigate }) {
                     const buAyOd = parseFloat(u.bu_ay_odenen || 0);
                     const asgari = parseFloat(u.asgari || 0);
                     const asgariOdendi = asgari > 0 && buAyOd >= asgari * 0.999; // küçük yuvarlama toleransı
+                    const planIslem = !!u.odeme_id;
+                    const anlikUyari = u.kaynak_tablo === 'anlik_giderler';
+                    const vadeliPlansiz = u.kaynak_tablo === 'vadeli_alimlar' && u.kaynak_id && !u.odeme_id;
 
-                    if (asgariOdendi && u.kart_adi) {
+                    if (anlikUyari) {
+                      return (
+                        <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
+                          <button type="button" className="btn btn-primary btn-sm" style={{ flex: 1, fontSize: 11 }}
+                            onClick={() => nav('onay')}>
+                            Onay kuyruğu
+                          </button>
+                        </div>
+                      );
+                    }
+                    if (vadeliPlansiz) {
+                      return (
+                        <div style={{ marginTop: 8 }}>
+                          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>
+                            Ödeme planı satırı yok — önce vadeli kaydı plana bağlanmalı.
+                          </div>
+                          <button type="button" className="btn btn-secondary btn-sm" style={{ fontSize: 11 }}
+                            onClick={() => nav('vadeli')}>Vadeli alımlar →</button>
+                        </div>
+                      );
+                    }
+
+                    if (asgariOdendi && u.kart_adi && planIslem) {
                       return (
                         <div style={{ marginTop: 8 }}>
                           <div style={{ fontSize: 12, color: 'var(--green)', marginBottom: 4 }}>
@@ -1402,6 +1442,10 @@ export default function Panel({ onNavigate }) {
                           </div>
                         </div>
                       );
+                    }
+
+                    if (!planIslem) {
+                      return null;
                     }
 
                     // Varsayılan: asgari henüz ödenmemiş (veya kart dışı ödeme)
