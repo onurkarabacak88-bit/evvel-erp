@@ -240,6 +240,20 @@ def init_db():
                     ALTER TABLE sube_operasyon_event
                     ADD COLUMN alarm_sayisi INT NOT NULL DEFAULT 0;
                 END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'sube_operasyon_event'
+                      AND column_name = 'personel_id'
+                ) THEN
+                    ALTER TABLE sube_operasyon_event ADD COLUMN personel_id TEXT;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'sube_operasyon_event'
+                      AND column_name = 'personel_ad'
+                ) THEN
+                    ALTER TABLE sube_operasyon_event ADD COLUMN personel_ad TEXT;
+                END IF;
             EXCEPTION WHEN others THEN NULL;
             END $$;
         """)

@@ -756,6 +756,7 @@ def ops_dashboard(
 def ops_kontrol_ozet(
     sube_id: Optional[str] = None,
     sadece_alarmlar: bool = False,
+    kategori: Optional[str] = None,
 ):
     """
     Merkezi kontrol motoru.
@@ -763,6 +764,7 @@ def ops_kontrol_ozet(
     """
     bugun = str(bugun_tr())
     sid = (sube_id or "").strip() or None
+    kat = (kategori or "").strip().upper() or None
     if sid:
         with db() as (conn, cur):
             cur.execute(
@@ -772,10 +774,10 @@ def ops_kontrol_ozet(
             sube = cur.fetchone()
             if not sube:
                 raise HTTPException(404, "Şube bulunamadı")
-            ozet = sube_kontrol_calistir(cur, sid, dict(sube))
+            ozet = sube_kontrol_calistir(cur, sid, dict(sube), kategori=kat)
         return {"tarih": bugun, **ozet}
 
-    sonuclar = tum_subeler_kontrol(sadece_alarmlar=sadece_alarmlar)
+    sonuclar = tum_subeler_kontrol(sadece_alarmlar=sadece_alarmlar, kategori=kat)
     return {
         "tarih": bugun,
         "sube_sayisi": len(sonuclar),
@@ -1893,17 +1895,22 @@ def ops_personel_davranis_analiz(
                 qvp,
             )
         except Exception:
-            cur.execute(
-                """
-                SELECT k.sube_id, s.ad AS sube_adi, k.tarih,
-                       k.sabahci_personel_id AS sabahci_personel_id, p.ad_soyad AS sabahci_ad
-                FROM kapanis_kayit k
-                JOIN subeler s ON s.id = k.sube_id
-                LEFT JOIN personel p ON p.id = k.sabahci_personel_id
-                """
-                + qv_suffix,
-                qvp,
-            )
+            conn.rollback()  # aborted transaction temizle
+            try:
+                cur.execute(
+                    """
+                    SELECT k.sube_id, s.ad AS sube_adi, k.tarih,
+                           k.sabahci_personel_id AS sabahci_personel_id, p.ad_soyad AS sabahci_ad
+                    FROM kapanis_kayit k
+                    JOIN subeler s ON s.id = k.sube_id
+                    LEFT JOIN personel p ON p.id = k.sabahci_personel_id
+                    """
+                    + qv_suffix,
+                    qvp,
+                )
+            except Exception:
+                conn.rollback()
+                cur.execute("SELECT 1 WHERE FALSE")  # boş cursor
         v_rows = [dict(r) for r in cur.fetchall()]
 
     kapanis_map: Dict[tuple, Dict[str, int]] = {}
