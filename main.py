@@ -329,6 +329,24 @@ def kasa_ve_faiz_odeme_plani_tam_odeme(
             insert_kasa_hareketi(cur, tarih, islem_t, -abs(ana_para_kismi),
                 aciklama_t, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI')
 
+    # kart_borc() ODEME türündeki kart_hareketleri kaydına bakarak borcu düşürür.
+    # Nakit ödeme kasaya gider ama kart borcu bu kayıt olmadan hiç azalmaz.
+    # Her kart_id'li plan ödemesinde ODEME kaydı oluşturulmalı.
+    if plan.get('kart_id') and odenen > 0:
+        cur.execute("""
+            INSERT INTO kart_hareketleri
+                (id, kart_id, tarih, islem_turu, tutar, aciklama, kaynak_id, kaynak_tablo)
+            VALUES (%s, %s, %s, 'ODEME', %s, %s, %s, 'odeme_plani')
+            ON CONFLICT DO NOTHING
+        """, (
+            f"odm_{plan_id}",
+            plan['kart_id'],
+            tarih,
+            abs(odenen),
+            f"Ödeme planı: {plan.get('aciklama', '')}",
+            plan_id,
+        ))
+
     return ana_para_kismi
 
 
@@ -1370,7 +1388,8 @@ class VadeliOdeModel(BaseModel):
 @app.post("/api/odeme-plani/{oid}/ode")
 def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = VadeliOdeModel()):
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM odeme_plani WHERE id=%s", (oid,))
+        # FOR UPDATE: eş zamanlı iki ödeme isteğinin aynı planı çift işlemesini önler
+        cur.execute("SELECT * FROM odeme_plani WHERE id=%s FOR UPDATE", (oid,))
         plan = cur.fetchone()
         if not plan: raise HTTPException(404)
         if plan['durum'] == 'odendi': raise HTTPException(400, "Zaten ödendi")
@@ -5328,7 +5347,8 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
     Sonradan yeni mal için ayrı satır yerine POST /vadeli-alimlar + birlestir_vadeli_id ile toplam borç artırılabilir.
     """
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM odeme_plani WHERE id=%s AND durum IN ('bekliyor','onay_bekliyor')", (oid,))
+        # FOR UPDATE: eş zamanlı çift kısmi ödeme isteğini engeller
+        cur.execute("SELECT * FROM odeme_plani WHERE id=%s AND durum IN ('bekliyor','onay_bekliyor') FOR UPDATE", (oid,))
         plan = cur.fetchone()
         if not plan: raise HTTPException(404, "Plan bulunamadı veya zaten ödendi")
 
@@ -5436,6 +5456,25 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
             plan.get('kaynak_tablo'),
             plan.get('kaynak_id')
         ))
+
+        # Nakit kısmi ödeme kart_id'li planda ise kart borcunu düşür
+        if plan.get('kart_id') and odenen > 0 and not (
+            kaynak == 'vadeli_alimlar'
+            and getattr(body, 'odeme_yontemi', 'nakit') == 'kart'
+        ):
+            cur.execute("""
+                INSERT INTO kart_hareketleri
+                    (id, kart_id, tarih, islem_turu, tutar, aciklama, kaynak_id, kaynak_tablo)
+                VALUES (%s, %s, %s, 'ODEME', %s, %s, %s, 'odeme_plani')
+                ON CONFLICT DO NOTHING
+            """, (
+                f"kodm_{oid}",
+                plan['kart_id'],
+                bugun,
+                abs(odenen),
+                f"Kısmi ödeme: {plan.get('aciklama', '')}",
+                oid,
+            ))
 
         # Yeni plan için onay kuyruğuna gir — onaylandığında kasa yazılır
         # Kaynak vadeli_alimlar ise VADELI_ODEME tipiyle gir — raporlar ve vadeli alım tablosu doğru güncellensin

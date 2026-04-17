@@ -2057,7 +2057,7 @@ class SiparisOnayBody(BaseModel):
 
 
 class PanelPinDogrulaBody(BaseModel):
-    """Şube panelinde yalnızca PIN doğrulama (ör. sipariş modalını sıfırlayıp kapatma)."""
+    """Şube panelinde yalnızca PIN doğrulama (ör. adet girilmiş sipariş modalını kapatma)."""
 
     personel_id: str
     pin: str
@@ -2329,7 +2329,7 @@ def sube_siparis_onay(sube_id: str, body: SiparisOnayBody):
 
 @router.post("/{sube_id}/panel-pin-dogrula")
 def sube_panel_pin_dogrula(sube_id: str, body: PanelPinDogrulaBody):
-    """Sipariş kategori modalında girilmiş adetleri silmeden önce PIN doğrular."""
+    """Şube panelinde (sipariş / ürün teslim / ürün aç kategori modalında) pencereyi kapatmadan önce PIN doğrular; girilen miktarları silmez."""
     pid_in = (body.personel_id or "").strip()
     pin = (body.pin or "").replace(" ", "")
     if not pid_in or len(pin) != 4 or not pin.isdigit():
