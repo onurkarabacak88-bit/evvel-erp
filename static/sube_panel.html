@@ -1133,6 +1133,7 @@ const SUBE_ID = subeIdFromPath();
 // ─── STATE ──────────────────────────────────────────────────
 var lastData = null;
 var pk = [];     // panel_pin_kullanicilar
+var lastPersonelSecim = []; // personel_operasyon_secim — tüm aktif personel isimleri (PIN listesi ile birleştirilir)
 var pollTimer = null;
 var opAktifEvent = null;
 var alarmTimer = null, beepTimer = null;
@@ -1677,7 +1678,32 @@ window.sagSekmeAc = function(id) {
 };
 
 // ─── FILL SEL ────────────────────────────────────────────────
+/** PIN tanımlı personel + tüm aktif personel — tekrarsız; isim için önce PIN listesi (pk). */
+function panelDropdownPersonel() {
+  var byId = {};
+  var sec = lastPersonelSecim || [];
+  sec.forEach(function(u){
+    var id = String(u.id || '');
+    if (!id) return;
+    byId[id] = { id: id, ad: (u.ad || '').trim() || id };
+  });
+  (pk || []).forEach(function(u){
+    var id = String(u.id || '');
+    if (!id) return;
+    var ad = (u.ad || '').trim();
+    if (!byId[id]) byId[id] = { id: id, ad: ad || id };
+    else if (ad) byId[id].ad = ad;
+  });
+  var ids = Object.keys(byId).sort(function(a, b){
+    var na = (byId[a].ad || '').toLocaleLowerCase('tr');
+    var nb = (byId[b].ad || '').toLocaleLowerCase('tr');
+    return na.localeCompare(nb, 'tr');
+  });
+  return ids.map(function(id){ return byId[id]; });
+}
+
 function fillSels() {
+  var liste = panelDropdownPersonel();
   var ids = ['mgPers','mnPers','stPers','stPin',
              'svPers','acPers','xrPers','puanPers',
              'dvPers1','dvPers2','kapPers','kapKimeTeslim','sipOzelPers','siparisOnayPers',
@@ -1686,7 +1712,7 @@ function fillSels() {
     var el = document.getElementById(id); if (!el || el.tagName !== 'SELECT') return;
     var cur = el.value;
     el.innerHTML = '<option value="">— Seçin —</option>';
-    pk.forEach(function(u){
+    liste.forEach(function(u){
       var o = document.createElement('option');
       o.value = u.id; o.textContent = u.ad || u.id;
       el.appendChild(o);
@@ -1697,7 +1723,7 @@ function fillSels() {
   document.querySelectorAll('[id^="mmSel_"]').forEach(function(el){
     var cur = el.value;
     el.innerHTML = '<option value="">— Seçin —</option>';
-    pk.forEach(function(u){
+    liste.forEach(function(u){
       var o = document.createElement('option');
       o.value = u.id; o.textContent = u.ad || u.id;
       el.appendChild(o);
@@ -2709,7 +2735,6 @@ function wirePuanHandler() {
 
 // ─── OPERASyon OVERLAY ───────────────────────────────────────
 var opAcilisStep=1, opAcilisKasa=null, opAcilisStok={};
-var lastPersonelSecim=[];
 
 function hideOpOverlay() {
   stopAlarm();
