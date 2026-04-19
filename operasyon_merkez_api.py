@@ -4951,6 +4951,11 @@ def ops_hub_ozet(skip_alarms: bool = Query(False, description="True ise yalnızc
                 oz = _ops_panel_ozet_from_cur(cur, bugun)
             except Exception:
                 log.exception("hub-ozet: panel_ozet_from_cur")
+                # Deadlock vb. sonrası txn aborted kalır; rollback olmadan sonraki SQL patlar (InFailedSqlTransaction)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
                 oz = _hub_ozet_fallback_panel()
             if skip_alarms:
                 oz["alarm_satirlari"] = []
@@ -4959,6 +4964,10 @@ def ops_hub_ozet(skip_alarms: bool = Query(False, description="True ise yalnızc
                     oz["alarm_satirlari"] = _hub_alarm_satirlari(cur, ozet=oz)
                 except Exception:
                     log.exception("hub-ozet: alarm_satirlari hesaplanamadi")
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
                     oz["alarm_satirlari"] = []
             return oz
     except Exception:
