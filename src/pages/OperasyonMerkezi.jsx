@@ -3,6 +3,19 @@ import { api, fmt } from '../utils/api';
 import { computeOpsKartVurgu } from '../utils/opsVurgu';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
 
+/** Tam hub; başarısızsa alarm satırları hesaplanmayan hafif istek (ağır sorgu / proxy 502 sonrası). */
+async function fetchHubOzet() {
+  try {
+    return await api('/ops/hub-ozet');
+  } catch (firstErr) {
+    try {
+      return await api('/ops/hub-ozet?skip_alarms=1');
+    } catch {
+      throw firstErr;
+    }
+  }
+}
+
 const FILTRELER = [
   { id: 'all',     label: 'Tümü' },
   { id: 'kritik',  label: '🔴 Kritik' },
@@ -943,7 +956,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     const unsub = subscribeGlobalDataRefresh(() => {
-      api('/ops/hub-ozet').then((r) => hubOzetIsle(r)).catch(() => {});
+      fetchHubOzet().then((r) => hubOzetIsle(r)).catch(() => {});
       if (aktifSekme === 'onay') {
         setYukleniyor(true);
         yukleOnayMerkez();
@@ -990,7 +1003,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     const loadOzet = () =>
-      api('/ops/hub-ozet').then((r) => hubOzetIsle(r)).catch(() => {});
+      fetchHubOzet().then((r) => hubOzetIsle(r)).catch(() => {});
     loadOzet();
     const id = setInterval(loadOzet, 25000);
     const onVis = () => {
@@ -1222,7 +1235,7 @@ export default function OperasyonMerkezi() {
           className="btn btn-secondary btn-sm"
           onClick={() => {
             if (!opsMerkezPencere) {
-              api('/ops/hub-ozet').then((r) => hubOzetIsle(r)).catch(() => toast('Özet yenilenemedi', 'red'));
+              fetchHubOzet().then((r) => hubOzetIsle(r)).catch(() => toast('Özet yenilenemedi', 'red'));
               return;
             }
             if (!aktifSekme) {
@@ -1345,7 +1358,7 @@ export default function OperasyonMerkezi() {
                     style={{ fontSize: 11 }}
                     onClick={(e) => {
                       e.stopPropagation();
-                      api('/ops/hub-ozet').then((r) => hubOzetIsle(r)).catch(() => {});
+                      fetchHubOzet().then((r) => hubOzetIsle(r)).catch(() => {});
                     }}
                   >
                     ↻ Özet yenile
