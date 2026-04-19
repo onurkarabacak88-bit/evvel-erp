@@ -227,6 +227,8 @@ def list_personel_panel_secim(cur: Any) -> List[Dict[str, Any]]:
             """
         )
     else:
+        # Merkez (CFO) tarafında "PIN tanımlı" yalnızca hash ile işaretlenir; aynı kişiler şube
+        # panelinde görünmeli. PIN doğrulaması yine salt+hash ister (dogrula_personel_panel_pin).
         cur.execute(
             """
             SELECT id, ad_soyad AS ad, COALESCE(panel_yonetici, FALSE) AS yonetici
@@ -234,8 +236,6 @@ def list_personel_panel_secim(cur: Any) -> List[Dict[str, Any]]:
             WHERE aktif = TRUE
               AND panel_pin_hash IS NOT NULL
               AND TRIM(COALESCE(panel_pin_hash, '')) <> ''
-              AND panel_pin_salt IS NOT NULL
-              AND TRIM(COALESCE(panel_pin_salt, '')) <> ''
             ORDER BY ad_soyad
             """
         )
