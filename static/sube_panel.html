@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Depo kontrol</title>
+  <style>
+    :root {
+      --bg: #0c1220;
+      --card: #151d2e;
+      --border: #2a3a55;
+      --text: #e8edf5;
+      --muted: #8b9ab5;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --pink: #fb7185;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { min-height: 100%; min-height: 100dvh; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.45;
+      padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+    }
+    h1 {
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+    .bilgi {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 18px;
+      max-width: 36rem;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      margin-bottom: 14px;
+      max-width: 36rem;
+    }
+    .satir {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .satir:last-child { border-bottom: 0; }
+    .dot { flex-shrink: 0; font-size: 10px; line-height: 1.6; padding-top: 2px; }
+    .sev-KRIZ .dot { color: var(--danger); }
+    .sev-KRITIK .dot { color: var(--pink); }
+    .sev-DUSUK .dot { color: var(--warn); }
+    .mesaj { font-size: 13px; line-height: 1.5; word-break: break-word; }
+    .bos {
+      text-align: center;
+      color: var(--muted);
+      padding: 28px 16px;
+      font-size: 13px;
+      max-width: 36rem;
+    }
+    .bos span { display: block; margin-top: 8px; opacity: 0.85; font-size: 12px; }
+    .uyari-kutu {
+      max-width: 36rem;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      background: rgba(245, 158, 11, 0.07);
+      font-size: 13px;
+    }
+    .uyari-kutu strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: var(--warn);
+    }
+    .err { color: #fca5a5; font-size: 13px; max-width: 36rem; }
+    #yenile {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 14px;
+      max-width: 36rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Depo — bitmeye yakın ürünler</h1>
+  <p class="bilgi">
+    Bu ekranda yalnızca depo stok uyarıları gösterilir. Ciro, kasa, operasyon veya müşteri bilgisi yoktur.
+  </p>
+  <div id="root"></div>
+  <div id="yenile"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var POLL_MS = 60000;
+
+  function subeIdFromPath() {
+    try {
+      var q = new URLSearchParams(window.location.search || '').get('sube');
+      if (q && q.trim()) return decodeURIComponent(q.trim());
+    } catch (e) {}
+    var parts = (window.location.pathname || '').replace(/\/+$/, '').split('/').filter(Boolean);
+    var i = parts.indexOf('sube-panel');
+    if (i >= 0 && parts[i + 1]) return decodeURIComponent(parts[i + 1]);
+    i = parts.indexOf('sube');
+    if (i >= 0 && parts[i + 1]) return decodeURIComponent(parts[i + 1]);
+    return '';
+  }
+
+  function apiUrl(path) {
+    if (window.location.protocol === 'file:') return '';
+    return window.location.origin + '/api' + path;
+  }
+
+  function esc(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function sevClass(sv) {
+    var u = String(sv || 'DUSUK').toUpperCase();
+    if (u === 'KRIZ' || u === 'KRITIK' || u === 'DUSUK') return 'sev-' + u;
+    return 'sev-DUSUK';
+  }
+
+  function render(data) {
+    var el = document.getElementById('root');
+    var uy = (data && data.uyarilar) || [];
+    var h = '';
+    if (!uy.length) {
+      h +=
+        '<div class="bos">Şu an bekleyen depo uyarısı yok.' +
+        '<span>Yine de planlı depo kontrolünü yapın.</span></div>';
+    } else {
+      h += '<div class="card">';
+      uy.forEach(function (u) {
+        var cls = sevClass(u.seviye);
+        h +=
+          '<div class="satir ' +
+          cls +
+          '"><span class="dot">●</span><div class="mesaj">' +
+          esc(u.mesaj || '') +
+          '</div></div>';
+      });
+      h += '</div>';
+    }
+    h +=
+      '<div class="uyari-kutu" style="margin-top:4px">' +
+      '<strong>Kontrol et</strong>' +
+      'Listede yer alan ürünleri depoda fiziksel olarak doğrulayın. ' +
+      'Kritik kalemlerde operasyon merkezine bilgi verin.' +
+      '</div>';
+    el.innerHTML = h;
+  }
+
+  async function load() {
+    var sid = subeIdFromPath();
+    var root = document.getElementById('root');
+    var yEl = document.getElementById('yenile');
+    if (!sid) {
+      root.innerHTML =
+        '<p class="err">Adres eksik. Örnek: <code>/sube-panel/</code> sonrasına şube kimliği ekleyin veya <code>?sube=...</code> kullanın.</p>';
+      return;
+    }
+    var url = apiUrl('/sube-panel/' + encodeURIComponent(sid));
+    if (!url) {
+      root.innerHTML = '<p class="err">Bu sayfayı dosyadan açarken canlı veri çekilemez.</p>';
+      return;
+    }
+    try {
+      var res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error('Sunucu yanıtı: ' + res.status);
+      var data = await res.json();
+      render(data);
+      if (yEl) yEl.textContent = 'Yenileme: ' + new Date().toLocaleTimeString('tr-TR');
+    } catch (e) {
+      root.innerHTML = '<p class="err">Veri alınamadı: ' + esc(e.message || e) + '</p>';
+    }
+  }
+
+  load();
+  setInterval(load, POLL_MS);
+})();
+</script>
+</body>
+</html>
