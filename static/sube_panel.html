@@ -1024,25 +1024,16 @@
   </div>
 </div>
 
-<!-- ── OVERLAY: AÇILIŞ ──────────────────────── -->
+<!-- ── OVERLAY: AÇILIŞ (sayım → PIN) ──────────────────────── -->
 <div id="acilisOverlay" class="overlay" style="display:none">
   <div class="overlay-kart">
     <h2 id="acilisBaslik">🌅 Şube Henüz Açılmadı</h2>
-    <p id="acilisAcik">Şube günlük kaydı için önce günlük kasa kilidi PIN ile açılmış olmalı; ardından şubeyi açın.</p>
+    <p id="acilisAcik">Kasa sayımı → bardak → ürün → son adımda PIN ile onaylayın.</p>
     <div id="acilisErr" class="err-text"></div>
-
-    <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
-      <div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--muted)">1) Kasa kilidi</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.45">PIN alanı burada. «Önce kasa kilidini…» hatası alıyorsanız personeli seçip kilidi onaylayın.</p>
-      <div class="form-group"><label>Personel</label><select id="acilisKasaUser"></select></div>
-      <div class="form-group"><label>PIN</label><input id="acilisKasaPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>
-      <div id="acilisKasaErr" class="err-text"></div>
-      <button type="button" class="btn btn-primary" id="acilisKasaBtn" style="margin-top:6px">Kasa kilidini aç</button>
-    </div>
-
-    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
-      <div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--muted)">2) Şube kaydı</div>
-      <button class="btn btn-success" id="acilisBtn" type="button">Şubeyi Aç</button>
+    <div id="acilisWizBody" style="margin-top:12px"></div>
+    <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center">
+      <button type="button" class="btn btn-ghost" id="acilisWizGeri" style="display:none">« Geri</button>
+      <button type="button" class="btn btn-primary" id="acilisWizIleri">İleri</button>
     </div>
   </div>
 </div>
@@ -1140,6 +1131,9 @@ var alarmTimer = null, beepTimer = null;
 var kapStepAktif = 1;
 var dvAdim1Step = 1;
 var acilisStep = 1, acilisKasa = null, acilisStok = {};
+var acilisWizStep = 1;
+var acilisWizKasa = null;
+var acilisWizStok = {};
 var siparisOpenKat = null;
 var siparisShowPasif = false;
 var siparisOzelExpanded = false;
@@ -1707,7 +1701,7 @@ function fillSels() {
   var ids = ['mgPers','mnPers','stPers','stPin',
              'svPers','acPers','xrPers','puanPers',
              'dvPers1','dvPers2','kapPers','kapKimeTeslim','sipOzelPers','siparisOnayPers',
-             'kasaUser','acilisKasaUser'];
+             'kasaUser'];
   ids.forEach(function(id){
     var el = document.getElementById(id); if (!el || el.tagName !== 'SELECT') return;
     var cur = el.value;
@@ -1730,6 +1724,58 @@ function fillSels() {
     });
     if (cur) el.value = cur;
   });
+}
+
+function resetAcilisWiz() {
+  acilisWizStep = 1;
+  acilisWizKasa = null;
+  acilisWizStok = {};
+}
+
+function buildAcilisWizFields() {
+  var sunucu = lastData && lastData.operasyon ? (lastData.operasyon.sunucu_saati||'—') : '—';
+  var persOpts = panelDropdownPersonel().map(function(p){
+    return '<option value="'+escHtml(p.id)+'">'+escHtml(p.ad)+'</option>';
+  }).join('');
+  if (acilisWizStep===1) return (
+    '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">1 / 4 · Sunucu saati: <strong>'+escHtml(sunucu)+'</strong></p>' +
+    '<div class="form-group"><label>Kasa Sayımı (₺)</label><input id="awKasa" inputmode="decimal" autocomplete="off" placeholder="0" /></div>'
+  );
+  if (acilisWizStep===2) return (
+    '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">2 / 4 · Bardak sayımları</p>' +
+    '<div class="stok-grid">' +
+    '<div class="stok-item"><label>Küçük bardak</label><input id="awBardakK" inputmode="numeric" placeholder="0" /></div>' +
+    '<div class="stok-item"><label>Büyük bardak</label><input id="awBardakB" inputmode="numeric" placeholder="0" /></div>' +
+    '<div class="stok-item"><label>Plastik bardak</label><input id="awBardakP" inputmode="numeric" placeholder="0" /></div>' +
+    '</div>'
+  );
+  if (acilisWizStep===3) return (
+    '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">3 / 4 · Ürün sayımları</p>' +
+    '<div class="stok-grid">' +
+    '<div class="stok-item"><label>Su</label><input id="awSu" inputmode="numeric" placeholder="0" /></div>' +
+    '<div class="stok-item"><label>Redbull</label><input id="awRb" inputmode="numeric" placeholder="0" /></div>' +
+    '<div class="stok-item"><label>Soda</label><input id="awSo" inputmode="numeric" placeholder="0" /></div>' +
+    '<div class="stok-item"><label>Cookie</label><input id="awCk" inputmode="numeric" placeholder="0" /></div>' +
+    '<div class="stok-item"><label>Pasta</label><input id="awPa" inputmode="numeric" placeholder="0" /></div>' +
+    '</div>'
+  );
+  return (
+    '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">4 / 4 · Personel ve PIN onayı (kasa kilidi + şube kaydı)</p>' +
+    '<div class="form-group"><label>Personel</label><select id="awPers"><option value="">— Seçin —</option>'+persOpts+'</select></div>' +
+    '<div class="form-group"><label>PIN</label><input id="awPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>'
+  );
+}
+
+function renderAcilisWiz() {
+  var body = document.getElementById('acilisWizBody');
+  var geri = document.getElementById('acilisWizGeri');
+  var ileri = document.getElementById('acilisWizIleri');
+  if (body) body.innerHTML = buildAcilisWizFields();
+  if (geri) geri.style.display = acilisWizStep > 1 ? 'inline-block' : 'none';
+  if (ileri) {
+    ileri.textContent = acilisWizStep === 4 ? 'Onayla ve şubeyi aç' : 'İleri';
+    ileri.className = acilisWizStep === 4 ? 'btn btn-success' : 'btn btn-primary';
+  }
 }
 
 // ─── STOK FORMS (MERKEZI KATALOG ILE) ────────────────────────
@@ -3037,45 +3083,72 @@ document.getElementById('kasaBtn').onclick = async function(){
   this.disabled=false;
 };
 
-// ─── AÇILIŞ (şube kaydı — kasa PIN bu kartın 1. adımında) ──────
-document.getElementById('acilisKasaBtn').onclick = async function(){
-  var errEl = document.getElementById('acilisKasaErr');
-  var rootErr = document.getElementById('acilisErr');
-  if(errEl) errEl.textContent=''; if(rootErr) rootErr.textContent='';
-  var uid = selVal('acilisKasaUser');
-  var pin = inpVal('acilisKasaPin').replace(/\D/g,'').slice(0,4);
-  if (!uid) { if(errEl) errEl.textContent='Personel seçin'; return; }
-  if (pin.length!==4) { if(errEl) errEl.textContent='4 haneli PIN'; return; }
-  this.disabled=true;
+// ─── AÇILIŞ WİZARD (sayım → PIN → tek POST /acilis sayımlı) ─────
+document.getElementById('acilisWizGeri').onclick = function(){
+  var errEl = document.getElementById('acilisErr'); if(errEl) errEl.textContent='';
+  if (acilisWizStep<=1) return;
+  acilisWizStep--;
+  renderAcilisWiz();
+};
+
+document.getElementById('acilisWizIleri').onclick = async function(){
+  var errEl = document.getElementById('acilisErr'); if(errEl) errEl.textContent='';
+  var btn = this;
   try {
-    await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/kasa-kilit-ac',{method:'POST',body:{personel_id:uid,pin:pin}});
-    var pe = document.getElementById('acilisKasaPin'); if(pe) pe.value='';
+    if (acilisWizStep===1) {
+      var ks = parseNum(inpVal('awKasa'));
+      if (ks==null||ks<0) throw new Error('Geçerli kasa sayımı girin');
+      acilisWizKasa = ks;
+      acilisWizStep = 2;
+      renderAcilisWiz();
+      return;
+    }
+    if (acilisWizStep===2) {
+      acilisWizStok.bardak_kucuk = pIntOpt('awBardakK');
+      acilisWizStok.bardak_buyuk = pIntOpt('awBardakB');
+      acilisWizStok.bardak_plastik = pIntOpt('awBardakP');
+      acilisWizStep = 3;
+      renderAcilisWiz();
+      return;
+    }
+    if (acilisWizStep===3) {
+      acilisWizStok.su_adet = pIntOpt('awSu');
+      acilisWizStok.redbull_adet = pIntOpt('awRb');
+      acilisWizStok.soda_adet = pIntOpt('awSo');
+      acilisWizStok.cookie_adet = pIntOpt('awCk');
+      acilisWizStok.pasta_adet = pIntOpt('awPa');
+      acilisWizStep = 4;
+      renderAcilisWiz();
+      return;
+    }
+    var pid = selVal('awPers');
+    var pin = inpVal('awPin').replace(/\D/g,'').slice(0,4);
+    if (!pid) throw new Error('Personel seçin');
+    if (pin.length!==4) throw new Error('4 haneli PIN girin');
+    btn.disabled = true;
+    await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/acilis',{
+      method:'POST',
+      body:{
+        kasa_sayim: acilisWizKasa,
+        bardak_kucuk: acilisWizStok.bardak_kucuk,
+        bardak_buyuk: acilisWizStok.bardak_buyuk,
+        bardak_plastik: acilisWizStok.bardak_plastik,
+        su_adet: acilisWizStok.su_adet,
+        redbull_adet: acilisWizStok.redbull_adet,
+        soda_adet: acilisWizStok.soda_adet,
+        cookie_adet: acilisWizStok.cookie_adet,
+        pasta_adet: acilisWizStok.pasta_adet,
+        personel_id: pid,
+        pin: pin
+      }
+    });
+    var pe = document.getElementById('awPin'); if(pe) pe.value='';
+    resetAcilisWiz();
     await refresh();
   } catch(e) {
     if(errEl) errEl.textContent = e.message||'Hata';
   }
-  this.disabled=false;
-};
-
-document.getElementById('acilisBtn').onclick = async function(){
-  var errEl = document.getElementById('acilisErr'); if(errEl) errEl.textContent='';
-  var kasaInline = document.getElementById('acilisKasaErr'); if(kasaInline) kasaInline.textContent='';
-  this.disabled=true;
-  try {
-    var body = {};
-    if (lastData && lastData.kasa_acma && lastData.kasa_acma.personel_id) {
-      body.personel_id = lastData.kasa_acma.personel_id;
-    }
-    await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/acilis',{method:'POST',body:body});
-    await refresh();
-  } catch(e) {
-    var msg = e.message||'Hata';
-    if(errEl) errEl.textContent = msg;
-    if (msg.indexOf('kasa') !== -1 || msg.indexOf('Kasa') !== -1 || msg.indexOf('PIN') !== -1) {
-      if(errEl && errEl.textContent) errEl.textContent += ' Yukarıdaki «Kasa kilidini aç» adımını kullanın.';
-    }
-  }
-  this.disabled=false;
+  btn.disabled = false;
 };
 
 // ─── SAAT GÜNCELLE ───────────────────────────────────────────
@@ -3103,6 +3176,7 @@ async function refresh() {
 
   try {
     var data = await api('/sube-personel/'+encodeURIComponent(SUBE_ID)+'/durum');
+    lastData = data;
     pk = data.panel_pin_kullanicilar || [];
     lastPersonelSecim = data.personel_operasyon_secim || [];
     fillSels();
@@ -3133,10 +3207,10 @@ async function refresh() {
       var ab = document.getElementById('acilisBaslik');
       var aa = document.getElementById('acilisAcik');
       if(ab) ab.textContent = '🌅 Şube Henüz Açılmadı';
-      if(aa) aa.textContent = 'Şube günlük kaydı için önce günlük kasa kilidi PIN ile açılmış olmalı; ardından şubeyi açın.';
+      if(aa) aa.textContent = 'Kasa sayımı → bardak → ürün → son adımda PIN ile onaylayın (kasa kilidi + şube açılış).';
       fillSels();
-      var aks = document.getElementById('acilisKasaUser');
-      if (aks && data.kasa_acma && data.kasa_acma.personel_id) aks.value = String(data.kasa_acma.personel_id);
+      resetAcilisWiz();
+      renderAcilisWiz();
       return;
     }
     document.getElementById('acilisOverlay').style.display='none';
