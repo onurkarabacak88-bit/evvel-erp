@@ -131,6 +131,31 @@ tr:hover td{background:rgba(255,255,255,.02)}
   .ops-pulse-card{box-shadow:0 0 0 3px rgba(234,88,12,.25)}
   .ops-pulse-acilis-wrap{border-color:#ea580c;background:rgba(234,88,12,.1)}
 }
+
+/* Hub — gelen şube siparişleri (belirgin + nabız) */
+@keyframes opsHubGelenSiparisGlow{
+  0%,100%{
+    box-shadow:0 0 0 0 rgba(74,158,255,.38),0 6px 28px rgba(0,0,0,.14);
+    border-color:rgba(74,158,255,.55);
+  }
+  50%{
+    box-shadow:0 0 0 8px rgba(74,158,255,.16),0 10px 36px rgba(59,130,246,.28);
+    border-color:rgba(147,197,253,.95);
+  }
+}
+.ops-hub-gelen-siparis{
+  animation:opsHubGelenSiparisGlow 1.2s ease-in-out infinite;
+  transition:transform .15s ease;
+}
+.ops-hub-gelen-siparis:hover{
+  transform:translateY(-1px);
+}
+@media (prefers-reduced-motion:reduce){
+  .ops-hub-gelen-siparis{
+    animation:none;
+    box-shadow:0 0 0 3px rgba(74,158,255,.28),0 6px 24px rgba(0,0,0,.12);
+  }
+}
 .chart-container{height:200px;margin-top:8px}
 .risk-high{color:var(--red)}
 .risk-mid{color:var(--yellow)}
