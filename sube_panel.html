@@ -821,6 +821,64 @@
       #orta { padding: 10px; }
     }
 
+    /* Sipariş — bekleyen talep vurgusu + ana sayfa hatırlatma */
+    .sip-bekleyen-banner {
+      border-radius: var(--rs);
+      border: 1px solid rgba(251, 191, 36, 0.42);
+      background: linear-gradient(145deg, rgba(251, 191, 36, 0.16), rgba(245, 158, 11, 0.07));
+      padding: 14px 16px;
+      margin-bottom: 14px;
+      box-shadow: 0 6px 28px rgba(0, 0, 0, 0.18);
+    }
+    .sip-bekleyen-etiket {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #fef3c7;
+      background: rgba(146, 64, 14, 0.65);
+      padding: 5px 11px;
+      border-radius: 999px;
+      border: 1px solid rgba(251, 191, 36, 0.35);
+    }
+    .sip-bekleyen-baslik {
+      margin: 11px 0 7px;
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--text);
+      line-height: 1.35;
+      letter-spacing: -0.01em;
+    }
+    .sip-bekleyen-alt {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .sip-ana-sip-banner {
+      background: rgba(251, 191, 36, 0.08);
+      border: 1px solid rgba(251, 191, 36, 0.32);
+      border-left: 4px solid rgba(251, 191, 36, 0.95);
+      border-radius: var(--rs);
+      padding: 14px 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+    }
+    .sip-ana-sip-banner .sip-ana-sip-ttl {
+      font-size: 13px;
+      font-weight: 800;
+      color: #fcd34d;
+      margin-bottom: 8px;
+      letter-spacing: 0.02em;
+    }
+    .sip-ana-sip-banner .sip-ana-sip-txt {
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--text);
+      margin: 0;
+    }
+
     .divider { height: 1px; background: var(--border); margin: 14px 0; }
     .sect-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 10px; }
     .xr-out { display: none; background: var(--bg3); border-radius: var(--rs); padding: 10px 12px; font-size: 12px; margin-top: 8px; white-space: pre-wrap; max-height: 200px; overflow: auto; }
@@ -900,6 +958,8 @@
         <div class="kart" id="opKart">
           <div id="opTimeline"><div style="color:var(--muted);font-size:13px">Yükleniyor…</div></div>
         </div>
+
+        <div id="anaSiparisBilgiWrap" class="kart sip-ana-sip-banner" style="display:none" role="status" aria-live="polite"></div>
 
         <!-- Merkez mesajları — orta alan alt kutu -->
         <div class="kart merkez-mesaj-kutusu" id="merkezMesajKutusu">
@@ -1573,7 +1633,11 @@ async function renderSiparisPanel() {
   }
   var stdBekSay = bekListe.filter(function(b){ return b.tur === 'standart'; }).length;
   if (stdBekSay > 0) {
-    h += '<div class="siparis-detay" style="margin-bottom:12px;font-size:12px;color:var(--muted)">Bugün <strong>'+stdBekSay+'</strong> adet bekleyen <span style="text-transform:uppercase;letter-spacing:.03em;font-size:10px">katalog</span> sipariş talebiniz var (PIN ile onayladığınız).</div>';
+    h += '<div class="sip-bekleyen-banner">';
+    h += '<span class="sip-bekleyen-etiket">Merkez onayında bekliyor</span>';
+    h += '<div class="sip-bekleyen-baslik">Bugün <strong>' + stdBekSay + '</strong> adet bekleyen katalog sipariş talebiniz var</div>';
+    h += '<p class="sip-bekleyen-alt">PIN ile onayladığınız talepler operasyon sırasına alındı; sevkiyat / onay adımlarını bu ekrandan takip edebilirsiniz.</p>';
+    h += '</div>';
   }
   h += '<div style="font-size:11px;font-weight:700;color:var(--muted);margin:10px 0 6px;text-transform:uppercase;letter-spacing:.04em">Standart sipariş (katalog)</div>';
   h += '<div class="siparis-kat-grid">';
@@ -2741,6 +2805,27 @@ function renderKasaDevir() {
   };
 }
 
+function renderAnaSiparisHatirlat(data) {
+  var el = document.getElementById('anaSiparisBilgiWrap');
+  if (!el) return;
+  var n = parseInt(data && data.bekleyen_siparis_sayisi, 10) || 0;
+  if (n <= 0) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  el.style.display = 'block';
+  var adetTxt = n === 1 ? 'sipariş talebiniz' : n + ' sipariş talebiniz';
+  el.innerHTML =
+    '<div style="display:flex;align-items:flex-start;gap:12px">' +
+    '<span style="font-size:22px;line-height:1;flex-shrink:0" aria-hidden="true">⏳</span>' +
+    '<div style="flex:1;min-width:0">' +
+    '<div class="sip-ana-sip-ttl">Sipariş takibi — merkez sürecinde</div>' +
+    '<p class="sip-ana-sip-txt"><strong>' + adetTxt + '</strong> onay veya sevkiyat aşamasında olabilir (operasyon merkezi işlem sırası). Güncel özet ve durum için ' +
+    '<button type="button" class="btn btn-ghost btn-sm" onclick="solSekmeAc(\'siparis\')" style="padding:4px 12px;font-size:12px;font-weight:700">Sipariş Ver</button> sekmesine gidin.</p>' +
+    '</div></div>';
+}
+
 // ─── RENDER MAIN ─────────────────────────────────────────────
 function renderMain(data) {
   lastData = data;
@@ -2752,6 +2837,8 @@ function renderMain(data) {
 
   // Merkez mesajları (orta kutu: kompakt görünüm)
   renderMesajlariDiv(data.merkez_mesajlar || [], 'compact');
+
+  renderAnaSiparisHatirlat(data);
 
   renderDepoStokListe();
   renderEksikListesi();
