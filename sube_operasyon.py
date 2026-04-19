@@ -628,6 +628,13 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     "bardak_buyuk": int(body.bardak_buyuk),
                     "bardak_plastik": int(body.bardak_plastik),
                 }
+                if body.kasa_sayim is not None and body.kasa_sayim >= 0:
+                    if body.kasa_sayim > 9_999_999:
+                        raise HTTPException(400, "Kasa sayımı geçersiz: 9.999.999₺ üstü kabul edilmez")
+                    ks_out = float(body.kasa_sayim)
+                    sn_out = float(body.snap_nakit or 0)
+                    sp_out = float(body.snap_pos or 0)
+                    so_out = float(body.snap_online or 0)
             elif mod == "kasa_only":
                 if body.kasa_sayim is None or body.kasa_sayim < 0:
                     raise HTTPException(400, "Kasa denetimi: kasa sayımı zorunlu")
@@ -637,6 +644,23 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 sn_out = float(body.snap_nakit or 0)
                 sp_out = float(body.snap_pos or 0)
                 so_out = float(body.snap_online or 0)
+                if (
+                    body.bardak_kucuk is not None
+                    and body.bardak_buyuk is not None
+                    and body.bardak_plastik is not None
+                ):
+                    for name, val in (
+                        ("bardak_kucuk", body.bardak_kucuk),
+                        ("bardak_buyuk", body.bardak_buyuk),
+                        ("bardak_plastik", body.bardak_plastik),
+                    ):
+                        if int(val) < 0:
+                            raise HTTPException(400, f"Kasa denetimi: {name} negatif olamaz")
+                    bardak_out = {
+                        "bardak_kucuk": int(body.bardak_kucuk),
+                        "bardak_buyuk": int(body.bardak_buyuk),
+                        "bardak_plastik": int(body.bardak_plastik),
+                    }
             elif mod == "full":
                 if body.kasa_sayim is None or body.kasa_sayim < 0:
                     raise HTTPException(400, "Tam denetim: kasa sayımı zorunlu")
@@ -671,6 +695,23 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 sn_out = float(body.snap_nakit or 0)
                 sp_out = float(body.snap_pos or 0)
                 so_out = float(body.snap_online or 0)
+                if (
+                    body.bardak_kucuk is not None
+                    and body.bardak_buyuk is not None
+                    and body.bardak_plastik is not None
+                ):
+                    for name, val in (
+                        ("bardak_kucuk", body.bardak_kucuk),
+                        ("bardak_buyuk", body.bardak_buyuk),
+                        ("bardak_plastik", body.bardak_plastik),
+                    ):
+                        if int(val) < 0:
+                            raise HTTPException(400, f"Kontrol (klasik): {name} negatif olamaz")
+                    bardak_out = {
+                        "bardak_kucuk": int(body.bardak_kucuk),
+                        "bardak_buyuk": int(body.bardak_buyuk),
+                        "bardak_plastik": int(body.bardak_plastik),
+                    }
 
             meta_prev["kontrol_tamam"] = {
                 "mod": mod,

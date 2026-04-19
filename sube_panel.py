@@ -23,7 +23,7 @@ from tr_saat import bugun_tr, dt_now_tr as _now_tr
 from evvel_merkez_guard import merkez_mutasyon_korumasi
 from finans_core import kasa_bakiyesi
 from kasa_service import insert_kasa_hareketi, audit, onay_ekle
-from operasyon_stok_motor import sube_yeni_siparis_oncesi_cift_kontrol, sube_kabul_kaydet
+from operasyon_stok_motor import sube_kabul_kaydet, sube_yeni_siparis_oncesi_cift_kontrol
 from siparis_sevkiyat_islem import (
     sevkiyat_kalem_durumlari_normalize,
     siparis_sevkiyat_kalem_guncelle_execute,
@@ -1025,268 +1025,56 @@ Sadece geçerli bir JSON nesnesi döndür. Başka metin, markdown veya açıklam
 
 
 def _build_sube_panel_payload(cur, sube_id: str) -> dict:
-    """Şube panel tam JSON (CFO / tam yetki)."""
-    sube = _sube_getir(cur, sube_id)
-    ciro_girildi = _bugun_ciro_var_mi(cur, sube_id)
-    taslak_row = _bugun_ciro_taslak_bekliyor(cur, sube_id)
-    ciro_taslak_bekliyor = taslak_row is not None
-    anlik_adet = _bugun_anlik_gider_sayisi(cur, sube_id)
-    sube_acildi_mi = _bugun_sube_acildi_mi(cur, sube_id)
-    kasa_acildi_mi = _bugun_kasa_acildi_mi(cur, sube_id)
-    kasa_acma = _bugun_kasa_acma_kaydi(cur, sube_id)
-    acilis_kaydi = _bugun_acilis_kaydi(cur, sube_id)
-
-    cur.execute("""
-        SELECT
-            COALESCE(SUM(nakit), 0)  as nakit,
-            COALESCE(SUM(pos), 0)    as pos,
-            COALESCE(SUM(online), 0) as online,
-            COALESCE(SUM(toplam), 0) as toplam
-        FROM ciro
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='aktif'
-    """, (sube_id,))
-    ciro_ozet = dict(cur.fetchone())
-
-    gorevler = _gorev_listesi_uret(
-        sube,
-        ciro_girildi,
-        anlik_adet,
-        sube_acildi_mi,
-        ciro_taslak_bekliyor,
-        kasa_acildi_mi=kasa_acildi_mi,
-        kasa_acma_kaydi=kasa_acma,
-    )
-    panel_pin_kullanicilar = list_personel_panel_secim(cur)
-    panel_yonetici_sayisi = count_personel_panel_yonetici(cur)
-    tamamlanan = sum(1 for g in gorevler if g["tamamlandi"])
-
-    # Kasa teslim alıcıları
-    cur.execute(
-        """
-        SELECT id, ad, unvan
-        FROM kasa_teslim_alici
-        WHERE aktif=TRUE AND (sube_id=%s OR sube_id IS NULL)
-        ORDER BY ad
-        """,
-        (sube_id,),
-    )
-    kasa_teslim_alicilari = [dict(r) for r in cur.fetchall()]
-
-    from sube_operasyon import build_panel_operasyon_blob
-    from sube_kapanis_dual import vardiya_devir_panel_blob
-
-    operasyon = build_panel_operasyon_blob(cur, sube_id, sube)
-    vardiya_devir = vardiya_devir_panel_blob(cur, sube_id)
-
-    personel_operasyon_secim: list = []
-    akt_op = operasyon.get("aktif") if isinstance(operasyon, dict) else None
-    if (
-        isinstance(akt_op, dict)
-        and akt_op.get("tip") == "ACILIS"
-        and akt_op.get("durum") in ("bekliyor", "gecikti")
-    ):
-        cur.execute(
-            """
-            SELECT id, ad_soyad
-            FROM personel
-            WHERE aktif = TRUE
-            ORDER BY ad_soyad
-            """
-        )
-        personel_operasyon_secim = [
-            {"id": str(r["id"]), "ad": (r["ad_soyad"] or "").strip()}
-            for r in cur.fetchall()
-        ]
-
-    kasa_kilitli = not kasa_acildi_mi
-    panel_blok = kasa_kilitli or (not sube_acildi_mi)
-
-
-    # Merkez mesajları — okunmamış önce
-    cur.execute(
-        """
-        SELECT id, mesaj, oncelik, okundu, olusturma, ttl_saat
-        FROM sube_merkez_mesaj
-        WHERE sube_id=%s AND aktif=TRUE
-          AND olusturma + (COALESCE(ttl_saat, 72) * INTERVAL '1 hour') > NOW()
-        ORDER BY okundu ASC, olusturma DESC
-        LIMIT 20
-        """,
-        (sube_id,),
-    )
-    merkez_mesajlar = []
-    for mr in cur.fetchall():
-        md = dict(mr)
-        if md.get("olusturma"):
-            md["olusturma"] = str(md["olusturma"])
-        merkez_mesajlar.append(md)
-
-    okunmamis_mesaj_var = any(not m.get("okundu") for m in merkez_mesajlar)
-
-    # Stok alarm uyarıları — depoda azalan ürünler (branch panel için)
+    """
+    Şube paneli salt okunur tek ekran: yalnızca depoda bitmeye yakın ürün uyarıları.
+    Bunun dışında hiçbir finans, operasyon veya kişi bilgisi dönülmez (güvenlik).
+    """
+    _ = _sube_getir(cur, sube_id)
+    uyarılar: List[Dict[str, str]] = []
     try:
         cur.execute(
             """
-            SELECT id, tip, seviye, mesaj, tarih, okundu, kalem_kodu
+            SELECT seviye, mesaj
             FROM sube_operasyon_uyari
             WHERE sube_id=%s AND tip='STOK_ALARM' AND okundu=FALSE
               AND tarih >= CURRENT_DATE - INTERVAL '3 days'
-            ORDER BY tarih DESC, id
-            LIMIT 10
+            ORDER BY
+              CASE seviye
+                WHEN 'KRIZ' THEN 0
+                WHEN 'KRITIK' THEN 1
+                WHEN 'DUSUK' THEN 2
+                ELSE 3
+              END,
+              tarih DESC,
+              id
+            LIMIT 40
             """,
             (sube_id,),
         )
-        stok_alarmlari = []
-        for ar in cur.fetchall():
-            ad = dict(ar)
-            if ad.get("tarih"):
-                ad["tarih"] = str(ad["tarih"])
-            stok_alarmlari.append(ad)
+        for r in cur.fetchall():
+            msg = str((dict(r).get("mesaj") or "")).strip()
+            if not msg:
+                continue
+            sv = str((dict(r).get("seviye") or "DUSUK")).strip() or "DUSUK"
+            uyarılar.append({"mesaj": msg, "seviye": sv})
     except Exception:
-        stok_alarmlari = []
-
-    stok_alarm_var = len(stok_alarmlari) > 0
-
-    # Şubenin bekleyen sipariş sayısı (şube paneline sipariş bilgisi)
-    try:
-        cur.execute(
-            """
-            SELECT COUNT(*) FROM siparis_talep
-            WHERE sube_id=%s AND durum NOT IN ('teslim_edildi', 'iptal')
-              AND tarih >= CURRENT_DATE - INTERVAL '21 days'
-            """,
-            (sube_id,),
-        )
-        bekleyen_siparis_sayisi = int((cur.fetchone() or [0])[0])
-    except Exception:
-        bekleyen_siparis_sayisi = 0
-
-    sube_tipi = str(sube.get("sube_tipi") or "normal").strip().lower()
-    if sube_tipi == "sevkiyat":
-        sube_tipi = "depo"
-    elif sube_tipi == "merkez":
-        sube_tipi = "karma"
+        uyarılar = []
 
     return {
-        "sube_id":        sube_id,
-        "sube_adi":       sube["ad"],
-        "sube_tipi":      sube_tipi,
-        "acilis_saati":   sube.get("acilis_saati") or "09:00",
-        "kapanis_saati":  sube.get("kapanis_saati") or "22:00",
-        "tarih":          str(bugun_tr()),
-        "kasa_kilitli":   kasa_kilitli,
-        "kasa_acma":      kasa_acma,
-        "sube_acik":      sube_acildi_mi,
-        "panel_kilitli":  panel_blok,
-        "panel_blok_asama": (
-            "kasa" if kasa_kilitli else ("acilis" if not sube_acildi_mi else None)
-        ),
-        "panel_pin_kullanicilar": panel_pin_kullanicilar,
-        "panel_yonetici_sayisi": panel_yonetici_sayisi,
-        "kasa_teslim_alicilari": kasa_teslim_alicilari,
-        "acilis_kaydi":   acilis_kaydi,
-        "gorevler":       gorevler,
-        "tamamlanan":     tamamlanan,
-        "toplam_gorev":   len(gorevler),
-        "ciro_girildi":   ciro_girildi,
-        "ciro_taslak_bekliyor": ciro_taslak_bekliyor,
-        "ciro_taslak":    taslak_row,
-        "ciro_ozet":      {k: float(v) for k, v in ciro_ozet.items()},
-        "anlik_gider_adet": anlik_adet,
-        "operasyon":      operasyon,
-        "vardiya_devir":  vardiya_devir,
-        "personel_operasyon_secim": personel_operasyon_secim,
-        "merkez_mesajlar": merkez_mesajlar,
-        "okunmamis_mesaj_var": okunmamis_mesaj_var,
-        "stok_alarmlari": stok_alarmlari,
-        "stok_alarm_var": stok_alarm_var,
-        "bekleyen_siparis_sayisi": bekleyen_siparis_sayisi,
+        "panel": "depo_stok_uyari",
+        "kontrol_et": True,
+        "uyarilar": uyarılar,
     }
 
 
 def sube_personel_panel_public(payload: dict) -> dict:
-    """
-    Personel paneli: finansal sonuç / fark / detaylı vardiya nakitleri gösterilmez.
-    """
-    p = dict(payload)
-    p.pop("ciro_ozet", None)
-    p.pop("ciro_taslak", None)
-    p.pop("anlik_gider_adet", None)
-    vd = p.get("vardiya_devir")
-    if isinstance(vd, dict):
-        pk = vd.get("panel_kullanicilar")
-        row = vd.get("vardiya_devir")
-        vdur = None
-        if isinstance(row, dict):
-            vdur = row.get("durum")
-        p["vardiya_devir"] = {
-            "bilgi": "Nakit/POS/online tutarları özetlenmez; imza adımları panelde.",
-            "vardiya_devir_pin_zorunlu": vd.get("vardiya_devir_pin_zorunlu"),
-            "panel_kullanici_sayisi": len(pk) if isinstance(pk, list) else 0,
-            "sabahci_zorunlu_id": vd.get("sabahci_zorunlu_id"),
-            "vardiya_durum": vdur,
-        }
-    op = p.get("operasyon")
-    if isinstance(op, dict):
-        evs = op.get("events") or []
-        akt = op.get("aktif")
-        akt_kisa = None
-        if isinstance(akt, dict):
-            akt_kisa = {
-                k: akt.get(k)
-                for k in (
-                    "id",
-                    "tip",
-                    "durum",
-                    "sistem_slot_ts",
-                    "son_teslim_ts",
-                    "cevap_ts",
-                    "personel_ad",
-                    "personel_id",
-                    "alarm_sayisi",
-                )
-            }
-            # KONTROL formu (bardak_only / kasa_only / full) — rastgele slot meta verisini sızdırmadan yalnızca mod
-            if str(akt.get("tip") or "").upper() == "KONTROL":
-                raw_m = akt.get("meta")
-                dm = None
-                if isinstance(raw_m, dict):
-                    dm = raw_m.get("denetim_mod")
-                elif isinstance(raw_m, str) and raw_m.strip():
-                    try:
-                        md = json.loads(raw_m)
-                        if isinstance(md, dict):
-                            dm = md.get("denetim_mod")
-                    except Exception:
-                        dm = None
-                if dm:
-                    akt_kisa["meta"] = {"denetim_mod": str(dm).strip()}
-        p["operasyon"] = {
-            "sunucu_saati": op.get("sunucu_saati"),
-            "sunucu_iso": op.get("sunucu_iso"),
-            "aktif": akt_kisa,
-            "aktif_gecikme_dk": op.get("aktif_gecikme_dk"),
-            "aktif_kritik": op.get("aktif_kritik"),
-            "aktif_suphe": op.get("aktif_suphe"),
-            "alarm_politikasi": op.get("alarm_politikasi"),
-            "events_ozet": [
-                {
-                    "tip": e.get("tip"),
-                    "durum": e.get("durum"),
-                    "sistem_slot_ts": e.get("sistem_slot_ts"),
-                    "cevap_ts": e.get("cevap_ts"),
-                    "personel_ad": e.get("personel_ad"),
-                    "personel_id": e.get("personel_id"),
-                }
-                for e in evs
-            ],
-            "esikler": op.get("esikler"),
-        }
-    p["uyari"] = (
-        "Bu ekranda yalnızca günlük görev ve operasyon özeti yer alır; "
-        "ciro toplamları ve kasa farkı burada gösterilmez."
-    )
-    return p
+    """Şube personel uç noktası da aynı tek alan ile sınırlıdır (ek sızıntı yok)."""
+    u = payload.get("uyarilar") if isinstance(payload.get("uyarilar"), list) else []
+    return {
+        "panel": payload.get("panel") or "depo_stok_uyari",
+        "kontrol_et": True,
+        "uyarilar": u,
+    }
 
 
 @router.get("/{sube_id}")
