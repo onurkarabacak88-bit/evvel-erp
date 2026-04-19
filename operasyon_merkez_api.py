@@ -3192,6 +3192,27 @@ def ops_sube_satis_ozet(sube_id: str, tarih: Optional[date] = None):
     }
 
 
+def _fetch_int_count(cur: Any) -> int:
+    """
+    COUNT(*) sonucunu güvenle okur. RealDictCursor bazen sütun adıyla döner;
+    bazı psycopg sürümlerinde row[0] güvenilir olmayabilir.
+    """
+    row = cur.fetchone()
+    if row is None:
+        return 0
+    try:
+        vals = list(row.values())  # type: ignore[arg-type]
+        if vals:
+            return int(vals[0] or 0)
+    except Exception:
+        pass
+    try:
+        return int(row[0])  # type: ignore[index]
+    except Exception:
+        pass
+    return 0
+
+
 def _serialize_onay_row(r: dict) -> dict:
     d = dict(r)
     for k in ("tarih", "olusturma", "onay_tarihi"):
@@ -3203,49 +3224,56 @@ def _serialize_onay_row(r: dict) -> dict:
 def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
     """Operasyon hub sayıları — panel-ozet ile aynı (tek kaynak)."""
     cur.execute("SELECT COUNT(*) FROM subeler WHERE aktif=TRUE")
-    aktif_sube = cur.fetchone()[0]
+    aktif_sube = _fetch_int_count(cur)
 
     cur.execute("SELECT COUNT(*) FROM siparis_talep WHERE durum='bekliyor'")
-    siparis_bekleyen = cur.fetchone()[0]
+    siparis_bekleyen = _fetch_int_count(cur)
     cur.execute("SELECT COUNT(*) FROM siparis_ozel_talep WHERE durum='bekliyor'")
-    siparis_ozel = cur.fetchone()[0]
+    siparis_ozel = _fetch_int_count(cur)
     try:
         cur.execute("SELECT COUNT(*) FROM siparis_urun WHERE aktif=TRUE")
-        siparis_katalog_urun = int(cur.fetchone()[0])
+        siparis_katalog_urun = _fetch_int_count(cur)
     except Exception:
         siparis_katalog_urun = 0
 
     cur.execute("SELECT COUNT(*) FROM onay_kuyrugu WHERE durum='bekliyor'")
-    onay_bekleyen = cur.fetchone()[0]
+    onay_bekleyen = _fetch_int_count(cur)
 
-    cur.execute("""
-        SELECT COUNT(*) FROM anlik_giderler
-        WHERE tarih >= CURRENT_DATE - INTERVAL '7 days'
-          AND COALESCE(NULLIF(TRIM(fis_kontrol_durumu),''),'bekliyor') = 'bekliyor'
-          AND COALESCE(fis_gonderildi, FALSE) = FALSE
-    """)
-    fis_bekleyen = cur.fetchone()[0]
+    try:
+        cur.execute("""
+            SELECT COUNT(*) FROM anlik_giderler
+            WHERE tarih >= CURRENT_DATE - INTERVAL '7 days'
+              AND COALESCE(NULLIF(TRIM(fis_kontrol_durumu),''),'bekliyor') = 'bekliyor'
+              AND COALESCE(fis_gonderildi, FALSE) = FALSE
+        """)
+        fis_bekleyen = _fetch_int_count(cur)
+    except Exception:
+        try:
+            cur.connection.rollback()
+        except Exception:
+            pass
+        fis_bekleyen = 0
 
     cur.execute("SELECT COUNT(*) FROM sube_merkez_mesaj WHERE aktif=TRUE")
-    mesaj_aktif = cur.fetchone()[0]
+    mesaj_aktif = _fetch_int_count(cur)
 
     cur.execute("SELECT COUNT(*) FROM operasyon_defter WHERE tarih=%s::date", (bugun,))
-    defter_bugun = cur.fetchone()[0]
+    defter_bugun = _fetch_int_count(cur)
 
     cur.execute("""
         SELECT COUNT(*) FROM sube_operasyon_event
         WHERE tip='ACILIS' AND durum='tamamlandi' AND tarih=%s::date
     """, (bugun,))
-    sayim_bugun = cur.fetchone()[0]
+    sayim_bugun = _fetch_int_count(cur)
 
     cur.execute("SELECT COUNT(*) FROM merkez_stok_kart")
-    stok_kart_adet = cur.fetchone()[0]
+    stok_kart_adet = _fetch_int_count(cur)
 
     cur.execute("""
         SELECT COUNT(*) FROM sube_operasyon_event
         WHERE tip='KONTROL' AND durum='gecikti' AND tarih=%s::date
     """, (bugun,))
-    kontrol_gecikti = cur.fetchone()[0]
+    kontrol_gecikti = _fetch_int_count(cur)
 
     try:
         cur.execute("""
@@ -3253,7 +3281,7 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
             WHERE tarih >= CURRENT_DATE - INTERVAL '30 days'
               AND seviye IN ('uyari','kritik')
         """)
-        uyari_30d = cur.fetchone()[0]
+        uyari_30d = _fetch_int_count(cur)
     except Exception:
         try:
             cur.connection.rollback()
@@ -3266,7 +3294,7 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
         WHERE tip='KAPANIS' AND durum='tamamlandi'
           AND tarih >= CURRENT_DATE - INTERVAL '7 days'
     """)
-    stok_kayip_sube = cur.fetchone()[0]
+    stok_kayip_sube = _fetch_int_count(cur)
 
     cur.execute("""
         SELECT COUNT(DISTINCT personel_id) FROM sube_operasyon_event
@@ -3274,34 +3302,42 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
           AND tarih >= CURRENT_DATE - INTERVAL '30 days'
           AND personel_id IS NOT NULL
     """)
-    davranis_personel = cur.fetchone()[0]
+    davranis_personel = _fetch_int_count(cur)
 
     cur.execute("SELECT COUNT(*) FROM personel WHERE aktif=TRUE")
-    aktif_personel = cur.fetchone()[0]
+    aktif_personel = _fetch_int_count(cur)
 
-    cur.execute(
-        """
-        SELECT COUNT(*) FROM (
-          SELECT sube_id FROM siparis_talep
-          WHERE durum NOT IN ('teslim_edildi','iptal')
-          GROUP BY sube_id
-          HAVING COUNT(*) > 1
-        ) t
-        """
-    )
-    siparis_paralel_sube_sayisi = int(cur.fetchone()[0])
+    try:
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM (
+              SELECT sube_id FROM siparis_talep
+              WHERE durum NOT IN ('teslim_edildi','iptal')
+              GROUP BY sube_id
+              HAVING COUNT(*) > 1
+            ) t
+            """
+        )
+        siparis_paralel_sube_sayisi = _fetch_int_count(cur)
 
-    cur.execute(
-        """
-        SELECT COALESCE(SUM(cnt - 1), 0) FROM (
-          SELECT COUNT(*)::bigint AS cnt FROM siparis_talep
-          WHERE durum NOT IN ('teslim_edildi','iptal')
-          GROUP BY sube_id
-          HAVING COUNT(*) > 1
-        ) t
-        """
-    )
-    siparis_paralel_fazla_talep = int(cur.fetchone()[0])
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(cnt - 1), 0) FROM (
+              SELECT COUNT(*)::bigint AS cnt FROM siparis_talep
+              WHERE durum NOT IN ('teslim_edildi','iptal')
+              GROUP BY sube_id
+              HAVING COUNT(*) > 1
+            ) t
+            """
+        )
+        siparis_paralel_fazla_talep = _fetch_int_count(cur)
+    except Exception:
+        try:
+            cur.connection.rollback()
+        except Exception:
+            pass
+        siparis_paralel_sube_sayisi = 0
+        siparis_paralel_fazla_talep = 0
 
     try:
         cur.execute("""
@@ -3309,7 +3345,7 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
             WHERE tip='STOK_ALARM' AND okundu=FALSE
               AND tarih >= CURRENT_DATE - INTERVAL '3 days'
         """)
-        stok_alarm_bekleyen = int(cur.fetchone()[0])
+        stok_alarm_bekleyen = _fetch_int_count(cur)
     except Exception:
         stok_alarm_bekleyen = 0
 
@@ -3331,6 +3367,29 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
         "siparis_paralel_sube_sayisi": siparis_paralel_sube_sayisi,
         "siparis_paralel_fazla_talep": siparis_paralel_fazla_talep,
         "stok_alarm_bekleyen": stok_alarm_bekleyen,
+    }
+
+
+def _hub_ozet_fallback_panel() -> Dict[str, Any]:
+    """Özet sorguları tamamen patlarsa hub'un yanıt verebilmesi için sıfır gövde."""
+    return {
+        "aktif_sube": 0,
+        "siparis_bekleyen": 0,
+        "siparis_katalog_urun": 0,
+        "onay_bekleyen": 0,
+        "fis_bekleyen": 0,
+        "mesaj_aktif": 0,
+        "defter_bugun": 0,
+        "sayim_bugun": 0,
+        "stok_kart_adet": 0,
+        "kontrol_gecikti": 0,
+        "uyari_30d": 0,
+        "stok_kayip_sube": 0,
+        "davranis_personel": 0,
+        "aktif_personel": 0,
+        "siparis_paralel_sube_sayisi": 0,
+        "siparis_paralel_fazla_talep": 0,
+        "stok_alarm_bekleyen": 0,
     }
 
 
@@ -4891,10 +4950,26 @@ def ops_panel_ozet():
 def ops_hub_ozet():
     """Hub sayıları + operasyon alarm satırları (tek istek, panel-ozet ile uyumlu)."""
     bugun = str(bugun_tr())
-    with db() as (conn, cur):
-        oz = _ops_panel_ozet_from_cur(cur, bugun)
-        oz["alarm_satirlari"] = _hub_alarm_satirlari(cur, ozet=oz)
-        return oz
+    log = logging.getLogger(__name__)
+    try:
+        with db() as (conn, cur):
+            try:
+                oz = _ops_panel_ozet_from_cur(cur, bugun)
+            except Exception:
+                log.exception("hub-ozet: panel_ozet_from_cur")
+                oz = _hub_ozet_fallback_panel()
+            try:
+                oz["alarm_satirlari"] = _hub_alarm_satirlari(cur, ozet=oz)
+            except Exception:
+                log.exception("hub-ozet: alarm_satirlari hesaplanamadi")
+                oz["alarm_satirlari"] = []
+            return oz
+    except Exception:
+        # DATABASE_URL yok, pool hatası veya bağlantı reddi — arayüz tamamen kırılmasın
+        log.exception("hub-ozet: veritabani veya kritik hata")
+        out = _hub_ozet_fallback_panel()
+        out["alarm_satirlari"] = []
+        return out
 
 
 # ══════════════════════════════════════════════════════════════════
