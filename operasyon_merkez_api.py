@@ -37,6 +37,17 @@ from operasyon_stok_motor import (
     merkez_stok_kart_guncelle,
     teorik_stok_bugun,
     stok_from_event_meta,
+    merkez_stok_kart_haritasi,
+    enrich_siparis_kalemleri_stok_inplace,
+    siparis_cift_gonderim_bilgi_notu,
+    # disiplin motoru — sevkiyat adaptasyonu
+    OLAY_TAHSIS_TAM,
+    OLAY_SEVK_CIKTI,
+    sevk_cikti_kaydet as _disiplin_sevk_cikti,
+)
+from siparis_sevkiyat_islem import (
+    sevkiyat_kalem_durumlari_normalize,
+    siparis_sevkiyat_kalem_guncelle_execute,
 )
 from kasa_service import audit
 from sube_panel import (
@@ -1489,6 +1500,181 @@ def ops_sayimlar(
             d.pop("meta", None)
             rows.append(d)
     return {"satirlar": rows, "limit": lim, "year_month": ym, "gun": gun_v or None}
+
+
+# ── Bar Günlük Özet ───────────────────────────────────────────────────────────
+# Açılış + Ürün Aç + Kapanış → Satılan hesabı (kasa güvenliği için)
+# Formül: satılan = açılış + ürün_aç - kapanış  (negatif = fire/fark)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_BAR_KEYS = [
+    "bardak_kucuk", "bardak_buyuk", "bardak_plastik",
+    "su_adet", "redbull_adet", "soda_adet", "cookie_adet", "pasta_adet",
+]
+
+def _bar_stok_from_meta(meta_raw: Any, alan: str) -> Dict[str, int]:
+    """meta JSONB'den belirli alanı (acilis_stok_sayim / kapanis_stok_sayim) okur."""
+    if isinstance(meta_raw, str) and meta_raw.strip():
+        try:
+            meta_raw = json.loads(meta_raw)
+        except Exception:
+            return {}
+    if not isinstance(meta_raw, dict):
+        return {}
+    stok = meta_raw.get(alan) or {}
+    if not isinstance(stok, dict):
+        return {}
+    return {k: max(0, int(stok.get(k) or 0)) for k in _BAR_KEYS}
+
+
+def _urun_ac_delta_parse(aciklama: str) -> Dict[str, int]:
+    """operasyon_defter URUN_AC satırındaki delta JSON'unu ayrıştırır."""
+    if not aciklama:
+        return {}
+    raw = aciklama
+    # "URUN_AC_JSON:{...}" veya doğrudan JSON
+    if raw.startswith("URUN_AC_JSON:"):
+        raw = raw[len("URUN_AC_JSON:"):]
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(obj, dict):
+        return {}
+    delta = obj.get("delta") or {}
+    if not isinstance(delta, dict):
+        return {}
+    return {k: max(0, int(delta.get(k) or 0)) for k in _BAR_KEYS if (delta.get(k) or 0) > 0}
+
+
+@router.get("/bar-ozet")
+def ops_bar_ozet(
+    sube_id: Optional[str] = None,
+    year_month: Optional[str] = None,
+    gun: Optional[str] = None,
+    limit: int = Query(60, ge=1, le=365),
+):
+    """
+    Günlük bar özeti: Açılış + Ürün Aç − Kapanış = Satılan (kasa güvenliği).
+    Her şube+tarih için tek satır döner.
+    """
+    lim = max(1, min(365, int(limit)))
+    ym = _coerce_year_month(year_month)
+    gun_v = (gun or "").strip()
+
+    with db() as (conn, cur):
+        # ── 1. ACILIS eventleri ────────────────────────────────────────────
+        acilis_params: list = [ym, gun_v, gun_v]
+        acilis_sube_filter = ""
+        if sube_id:
+            acilis_sube_filter = "AND e.sube_id = %s"
+            acilis_params.append(sube_id)
+        acilis_params.append(lim)
+
+        cur.execute(
+            f"""
+            SELECT e.sube_id, s.ad AS sube_adi, e.tarih,
+                   e.cevap_ts AS acilis_ts, e.meta AS acilis_meta
+            FROM sube_operasyon_event e
+            JOIN subeler s ON s.id = e.sube_id
+            WHERE e.tip='ACILIS' AND e.durum='tamamlandi'
+              AND to_char(e.tarih, 'YYYY-MM') = %s
+              AND (NULLIF(%s, '') IS NULL OR e.tarih = NULLIF(%s, '')::date)
+              {acilis_sube_filter}
+            ORDER BY e.tarih DESC, s.ad
+            LIMIT %s
+            """,
+            acilis_params,
+        )
+        acilis_rows = {(str(r["sube_id"]), str(r["tarih"])): dict(r) for r in cur.fetchall()}
+
+        if not acilis_rows:
+            return {"satirlar": [], "year_month": ym, "gun": gun_v or None}
+
+        # ── 2. KAPANIS eventleri — aynı dönem ─────────────────────────────
+        kap_params: list = [ym, gun_v, gun_v]
+        kap_sube_filter = ""
+        if sube_id:
+            kap_sube_filter = "AND e.sube_id = %s"
+            kap_params.append(sube_id)
+
+        cur.execute(
+            f"""
+            SELECT e.sube_id, e.tarih, e.meta AS kapanis_meta
+            FROM sube_operasyon_event e
+            WHERE e.tip='KAPANIS' AND e.durum='tamamlandi'
+              AND to_char(e.tarih, 'YYYY-MM') = %s
+              AND (NULLIF(%s, '') IS NULL OR e.tarih = NULLIF(%s, '')::date)
+              {kap_sube_filter}
+            """,
+            kap_params,
+        )
+        kapanis_map: Dict[tuple, Dict[str, int]] = {}
+        for r in cur.fetchall():
+            key = (str(r["sube_id"]), str(r["tarih"]))
+            kapanis_map[key] = _bar_stok_from_meta(r["kapanis_meta"], "kapanis_stok_sayim")
+
+        # ── 3. URUN_AC gün toplamları ──────────────────────────────────────
+        urun_params: list = [ym, gun_v, gun_v]
+        urun_sube_filter = ""
+        if sube_id:
+            urun_sube_filter = "AND sube_id = %s"
+            urun_params.append(sube_id)
+
+        cur.execute(
+            f"""
+            SELECT sube_id, (olay_ts AT TIME ZONE 'Europe/Istanbul')::date AS tarih, aciklama
+            FROM operasyon_defter
+            WHERE etiket='URUN_AC'
+              AND to_char((olay_ts AT TIME ZONE 'Europe/Istanbul')::date, 'YYYY-MM') = %s
+              AND (NULLIF(%s, '') IS NULL
+                   OR (olay_ts AT TIME ZONE 'Europe/Istanbul')::date = NULLIF(%s,'')::date)
+              {urun_sube_filter}
+            """,
+            urun_params,
+        )
+        urun_ac_map: Dict[tuple, Dict[str, int]] = {}
+        for r in cur.fetchall():
+            key = (str(r["sube_id"]), str(r["tarih"]))
+            delta = _urun_ac_delta_parse(r["aciklama"] or "")
+            existing = urun_ac_map.setdefault(key, {k: 0 for k in _BAR_KEYS})
+            for k, v in delta.items():
+                existing[k] = existing.get(k, 0) + v
+
+        # ── 4. Birleştir ───────────────────────────────────────────────────
+        satirlar: List[Dict[str, Any]] = []
+        for (sid, tarih_str), ac_row in acilis_rows.items():
+            key = (sid, tarih_str)
+            acilis  = _bar_stok_from_meta(ac_row.get("acilis_meta"), "acilis_stok_sayim")
+            kapanis = kapanis_map.get(key, {})
+            urun_ac = urun_ac_map.get(key, {k: 0 for k in _BAR_KEYS})
+
+            satilan:  Dict[str, int] = {}
+            fark_var: bool = False
+            for k in _BAR_KEYS:
+                a = acilis.get(k, 0)
+                u = urun_ac.get(k, 0)
+                kap = kapanis.get(k, 0)
+                sat = a + u - kap
+                satilan[k] = sat
+                if sat < 0:
+                    fark_var = True
+
+            satirlar.append({
+                "sube_id":    sid,
+                "sube_adi":   ac_row.get("sube_adi") or sid,
+                "tarih":      tarih_str,
+                "acilis_ts":  str(ac_row.get("acilis_ts") or ""),
+                "kapanis_var": bool(kapanis),
+                "acilis":     acilis,
+                "urun_ac":    urun_ac,
+                "kapanis":    kapanis,
+                "satilan":    satilan,
+                "fark_var":   fark_var,
+            })
+
+        satirlar.sort(key=lambda x: (x["tarih"], x["sube_adi"]), reverse=True)
+        return {"satirlar": satirlar, "year_month": ym, "gun": gun_v or None}
 
 
 def _ops_parse_meta_obj(raw: Any) -> Dict[str, Any]:
@@ -3014,6 +3200,337 @@ def _serialize_onay_row(r: dict) -> dict:
     return d
 
 
+def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
+    """Operasyon hub sayıları — panel-ozet ile aynı (tek kaynak)."""
+    cur.execute("SELECT COUNT(*) FROM subeler WHERE aktif=TRUE")
+    aktif_sube = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM siparis_talep WHERE durum='bekliyor'")
+    siparis_bekleyen = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM siparis_ozel_talep WHERE durum='bekliyor'")
+    siparis_ozel = cur.fetchone()[0]
+    try:
+        cur.execute("SELECT COUNT(*) FROM siparis_urun WHERE aktif=TRUE")
+        siparis_katalog_urun = int(cur.fetchone()[0])
+    except Exception:
+        siparis_katalog_urun = 0
+
+    cur.execute("SELECT COUNT(*) FROM onay_kuyrugu WHERE durum='bekliyor'")
+    onay_bekleyen = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) FROM anlik_giderler
+        WHERE tarih >= CURRENT_DATE - INTERVAL '7 days'
+          AND COALESCE(NULLIF(TRIM(fis_kontrol_durumu),''),'bekliyor') = 'bekliyor'
+          AND COALESCE(fis_gonderildi, FALSE) = FALSE
+    """)
+    fis_bekleyen = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM sube_merkez_mesaj WHERE aktif=TRUE")
+    mesaj_aktif = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM operasyon_defter WHERE tarih=%s::date", (bugun,))
+    defter_bugun = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) FROM sube_operasyon_event
+        WHERE tip='ACILIS' AND durum='tamamlandi' AND tarih=%s::date
+    """, (bugun,))
+    sayim_bugun = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM merkez_stok_kart")
+    stok_kart_adet = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) FROM sube_operasyon_event
+        WHERE tip='KONTROL' AND durum='gecikti' AND tarih=%s::date
+    """, (bugun,))
+    kontrol_gecikti = cur.fetchone()[0]
+
+    try:
+        cur.execute("""
+            SELECT COUNT(*) FROM sube_operasyon_uyari
+            WHERE tarih >= CURRENT_DATE - INTERVAL '30 days'
+              AND seviye IN ('uyari','kritik')
+        """)
+        uyari_30d = cur.fetchone()[0]
+    except Exception:
+        try:
+            cur.connection.rollback()
+        except Exception:
+            pass
+        uyari_30d = 0
+
+    cur.execute("""
+        SELECT COUNT(DISTINCT sube_id) FROM sube_operasyon_event
+        WHERE tip='KAPANIS' AND durum='tamamlandi'
+          AND tarih >= CURRENT_DATE - INTERVAL '7 days'
+    """)
+    stok_kayip_sube = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(DISTINCT personel_id) FROM sube_operasyon_event
+        WHERE tip='ACILIS' AND durum='tamamlandi'
+          AND tarih >= CURRENT_DATE - INTERVAL '30 days'
+          AND personel_id IS NOT NULL
+    """)
+    davranis_personel = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM personel WHERE aktif=TRUE")
+    aktif_personel = cur.fetchone()[0]
+
+    cur.execute(
+        """
+        SELECT COUNT(*) FROM (
+          SELECT sube_id FROM siparis_talep
+          WHERE durum NOT IN ('teslim_edildi','iptal')
+          GROUP BY sube_id
+          HAVING COUNT(*) > 1
+        ) t
+        """
+    )
+    siparis_paralel_sube_sayisi = int(cur.fetchone()[0])
+
+    cur.execute(
+        """
+        SELECT COALESCE(SUM(cnt - 1), 0) FROM (
+          SELECT COUNT(*)::bigint AS cnt FROM siparis_talep
+          WHERE durum NOT IN ('teslim_edildi','iptal')
+          GROUP BY sube_id
+          HAVING COUNT(*) > 1
+        ) t
+        """
+    )
+    siparis_paralel_fazla_talep = int(cur.fetchone()[0])
+
+    try:
+        cur.execute("""
+            SELECT COUNT(*) FROM sube_operasyon_uyari
+            WHERE tip='STOK_ALARM' AND okundu=FALSE
+              AND tarih >= CURRENT_DATE - INTERVAL '3 days'
+        """)
+        stok_alarm_bekleyen = int(cur.fetchone()[0])
+    except Exception:
+        stok_alarm_bekleyen = 0
+
+    return {
+        "aktif_sube": aktif_sube,
+        "siparis_bekleyen": siparis_bekleyen + siparis_ozel,
+        "siparis_katalog_urun": siparis_katalog_urun,
+        "onay_bekleyen": onay_bekleyen,
+        "fis_bekleyen": fis_bekleyen,
+        "mesaj_aktif": mesaj_aktif,
+        "defter_bugun": defter_bugun,
+        "sayim_bugun": sayim_bugun,
+        "stok_kart_adet": stok_kart_adet,
+        "kontrol_gecikti": kontrol_gecikti,
+        "uyari_30d": uyari_30d,
+        "stok_kayip_sube": stok_kayip_sube,
+        "davranis_personel": davranis_personel,
+        "aktif_personel": aktif_personel,
+        "siparis_paralel_sube_sayisi": siparis_paralel_sube_sayisi,
+        "siparis_paralel_fazla_talep": siparis_paralel_fazla_talep,
+        "stok_alarm_bekleyen": stok_alarm_bekleyen,
+    }
+
+
+def _hub_alarm_satirlari(cur: Any, *, ozet: Optional[Dict[str, Any]] = None, limit: int = 18) -> List[Dict[str, Any]]:
+    """
+    Hub için okunaklı alarm satırları (sipariş + depo hattı + özet kuyruklar).
+    """
+    satirlar: List[Dict[str, Any]] = []
+    merkez_map = merkez_stok_kart_haritasi(cur)
+
+    cur.execute(
+        """
+        SELECT st.id, st.sube_id, s.ad AS sube_adi, st.tarih, st.olusturma,
+               st.personel_ad, st.not_aciklama, st.kalemler,
+               COALESCE(st.hedef_depo_sube_id, st.sevkiyat_sube_id) AS hedef_depo_sube_id
+        FROM siparis_talep st
+        JOIN subeler s ON s.id = st.sube_id
+        WHERE st.durum = 'bekliyor'
+          AND st.tarih >= CURRENT_DATE - INTERVAL '14 days'
+          AND COALESCE(NULLIF(TRIM(st.sevkiyat_durumu), ''), st.sevkiyat_durum, 'bekliyor') = 'bekliyor'
+        ORDER BY st.olusturma DESC NULLS LAST, st.id DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    for row in cur.fetchall() or []:
+        d = dict(row)
+        tid = str(d.get("id") or "")
+        sid = str(d.get("sube_id") or "")
+        kalemler = d.get("kalemler") or []
+        if isinstance(kalemler, str):
+            try:
+                kalemler = json.loads(kalemler)
+            except Exception:
+                kalemler = []
+        if not isinstance(kalemler, list):
+            kalemler = []
+        hedef_raw = str(d.get("hedef_depo_sube_id") or "").strip()
+        fl = enrich_siparis_kalemleri_stok_inplace(
+            cur,
+            sid,
+            kalemler,
+            merkez_map=merkez_map,
+            hedef_depo_sube_id=hedef_raw or None,
+        )
+        cur.execute(
+            """
+            SELECT kural, mesaj, puan FROM sube_operasyon_uyari
+            WHERE siparis_talep_id=%s AND tip='DAVRANIS' ORDER BY puan DESC
+            """,
+            (tid,),
+        )
+        davranis = [
+            {"kural": r.get("kural"), "mesaj": r.get("mesaj"), "puan": int(r.get("puan") or 0)}
+            for r in cur.fetchall()
+        ]
+        n_kalem = sum(
+            1 for x in kalemler
+            if isinstance(x, dict) and max(0, int((x or {}).get("adet") or 0)) > 0
+        )
+        parca: List[str] = []
+        hesap_dep = fl.get("stok_hesap_kaynagi") == "hedef_depo"
+        if fl.get("stok_alarm_var"):
+            parca.append(
+                "Sevkiyat deposunda yetersiz stok (veya sıfır)"
+                if hesap_dep
+                else "Merkez stoğu gönderimde yetmiyor veya sıfırlanır",
+            )
+        if fl.get("barem_risk_var"):
+            parca.append(
+                "Depo minimum (barem) altına düşme riski"
+                if hesap_dep
+                else "Merkez minimum stok (barem) altına iner",
+            )
+        if fl.get("gereksiz_var"):
+            parca.append("Şubede talep miktarı zaten depoda var (gereksiz talep riski)")
+        if fl.get("merkez_kayit_eksik_var"):
+            parca.append("Bazı kalemler merkez stok kartında tanımsız")
+        if davranis:
+            parca.append(f"{len(davranis)} davranış uyarısı")
+        cn_hub = siparis_cift_gonderim_bilgi_notu(
+            cur,
+            talep_id=tid,
+            sube_id=sid,
+            kalemler=kalemler,
+            olusturma=d.get("olusturma"),
+        )
+        if cn_hub:
+            parca.insert(0, "Önceki teslim bekleyen sipariş varken geldi — kalemleri karşılaştırın")
+        if fl.get("stok_alarm_var"):
+            sev = "kritik"
+        elif fl.get("barem_risk_var") or fl.get("gereksiz_var") or fl.get("merkez_kayit_eksik_var") or davranis or cn_hub:
+            sev = "uyari"
+        else:
+            sev = "bilgi"
+        meta_hub = {
+                "talep_id": tid,
+                "sube_id": sid,
+                "sube_adi": d.get("sube_adi"),
+                "tarih": str(d.get("tarih") or ""),
+                "olusturma": str(d.get("olusturma") or ""),
+                "personel_ad": d.get("personel_ad"),
+                "not_aciklama": d.get("not_aciklama"),
+                "kalemler": kalemler,
+                "davranis_uyarilari": davranis,
+                "bayraklar": fl,
+                "hedef_sekme": "siparis",
+                "stok_hesap_kaynagi": fl.get("stok_hesap_kaynagi"),
+                "hedef_depo_sube_id": fl.get("hedef_depo_sube_id"),
+            }
+        if cn_hub:
+            meta_hub["cift_siparis_bilgi_notu"] = cn_hub
+        satirlar.append({
+            "tip": "siparis_merkez_bekliyor",
+            "id": f"sip:{tid}",
+            "seviye": sev,
+            "baslik": f"{d.get('sube_adi') or sid} — sipariş (merkez onayı / sevkiyat öncesi)",
+            "ozet": " · ".join(parca) if parca else f"{n_kalem} kalem; ek stok uyarısı yok",
+            "meta": meta_hub,
+        })
+
+    cur.execute(
+        """
+        SELECT COUNT(*) AS c FROM siparis_talep st
+        WHERE st.durum = 'bekliyor'
+          AND COALESCE(NULLIF(TRIM(st.sevkiyat_durumu), ''), st.sevkiyat_durum, 'bekliyor') <> 'bekliyor'
+        """,
+    )
+    depo_c = int((cur.fetchone() or {}).get("c") or 0)
+    if depo_c > 0:
+        satirlar.append({
+            "tip": "depo_sevkiyat",
+            "id": "ozet:depo_hatti",
+            "seviye": "uyari",
+            "baslik": "Depo / sevkiyat hattı",
+            "ozet": f"{depo_c} sipariş depo veya sevkiyat aşamasında.",
+            "meta": {"hedef_sekme": "stok-disiplin", "hedef_panel": "kuyruk"},
+        })
+
+    oz = ozet or {}
+    if (oz.get("onay_bekleyen") or 0) > 0:
+        satirlar.append({
+            "tip": "onay_kuyrugu",
+            "id": "ozet:onay",
+            "seviye": "uyari",
+            "baslik": "Onay kuyruğu",
+            "ozet": f"{oz['onay_bekleyen']} kayıt bekliyor.",
+            "meta": {"hedef_sekme": "onay"},
+        })
+    if (oz.get("fis_bekleyen") or 0) > 0:
+        satirlar.append({
+            "tip": "fis_bekleyen",
+            "id": "ozet:fis",
+            "seviye": "uyari",
+            "baslik": "Fiş kontrol",
+            "ozet": f"{oz['fis_bekleyen']} anlık giderde fiş / kanıt bekleniyor.",
+            "meta": {"hedef_sekme": "fis"},
+        })
+
+    try:
+        cur.execute(
+            """
+            SELECT t.id, s.ad AS talep_sube_adi, d.ad AS depo_adi,
+                   t.depo_sevkiyat_rapor_metni, t.depo_sevkiyat_rapor_ts
+            FROM siparis_talep t
+            JOIN subeler s ON s.id = t.sube_id
+            LEFT JOIN subeler d ON d.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
+            WHERE t.depo_sevkiyat_rapor_ts IS NOT NULL
+              AND COALESCE(t.depo_sevkiyat_rapor_uyari, FALSE) = TRUE
+              AND t.depo_sevkiyat_rapor_ts >= NOW() - INTERVAL '96 hours'
+            ORDER BY t.depo_sevkiyat_rapor_ts DESC
+            LIMIT 8
+            """
+        )
+        for rr in cur.fetchall() or []:
+            dd = dict(rr)
+            tid = str(dd.get("id") or "")
+            oz_txt = (dd.get("depo_sevkiyat_rapor_metni") or "").strip()
+            if len(oz_txt) > 240:
+                oz_txt = oz_txt[:237] + "…"
+            satirlar.append({
+                "tip": "depo_sevkiyat_eksik",
+                "id": f"depo_rap:{tid}",
+                "seviye": "uyari",
+                "baslik": f"Depo kalem raporu — {dd.get('talep_sube_adi') or tid}",
+                "ozet": oz_txt or "Eksik / kısmi kalem bildirildi (son 96 saat).",
+                "meta": {
+                    "talep_id": tid,
+                    "hedef_sekme": "siparis",
+                    "depo_adi": dd.get("depo_adi"),
+                },
+            })
+    except Exception:
+        pass
+
+    skor = {"kritik": 0, "uyari": 1, "bilgi": 2}
+    satirlar.sort(key=lambda x: skor.get(x.get("seviye"), 5))
+    return satirlar
+
+
 @router.get("/bekleyen-merkez")
 def ops_bekleyen_merkez(
     year_month: Optional[str] = None,
@@ -3076,7 +3593,8 @@ def ops_bekleyen_merkez(
                    ss.ad AS hedef_depo_sube_adi,
                    COALESCE(NULLIF(TRIM(t.sevkiyat_durumu), ''), t.sevkiyat_durum, 'bekliyor') AS sevkiyat_durumu,
                    COALESCE(NULLIF(TRIM(t.sevkiyat_notu), ''), t.sevkiyat_notlari) AS sevkiyat_notu,
-                   t.kalem_durumlari
+                   t.kalem_durumlari,
+                   NULLIF(TRIM(t.operasyon_yonlendirme_talimati), '') AS operasyon_yonlendirme_talimati
             FROM siparis_talep t
             JOIN subeler s ON s.id = t.sube_id
             LEFT JOIN subeler ss ON ss.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
@@ -3089,6 +3607,7 @@ def ops_bekleyen_merkez(
         q3 += " ORDER BY t.olusturma ASC NULLS LAST, t.id"
         cur.execute(q3, qp3)
         siparis_talepleri: List[Dict[str, Any]] = []
+        merkez_harita_sip = merkez_stok_kart_haritasi(cur)
         for row in cur.fetchall():
             d = dict(row)
             if d.get("tarih"):
@@ -3118,6 +3637,37 @@ def ops_bekleyen_merkez(
             d["sevkiyat_durum"] = d.get("sevkiyat_durumu")
             d["sevkiyat_notlari"] = d.get("sevkiyat_notu")
             d["kalem_adet_toplam"] = sum(max(0, int((it or {}).get("adet") or 0)) for it in kalemler if isinstance(it, dict))
+            sube_id_talep = d.get("sube_id") or ""
+            hedef_dep = str(d.get("hedef_depo_sube_id") or "").strip() or None
+            fl = enrich_siparis_kalemleri_stok_inplace(
+                cur,
+                str(sube_id_talep),
+                kalemler,
+                merkez_map=merkez_harita_sip,
+                hedef_depo_sube_id=hedef_dep,
+            )
+            d["stok_hesap_kaynagi"] = fl.get("stok_hesap_kaynagi")
+            cur.execute(
+                "SELECT kural, mesaj, puan FROM sube_operasyon_uyari WHERE siparis_talep_id=%s AND tip='DAVRANIS'",
+                (d.get("id"),),
+            )
+            d["davranis_uyarilari"] = [
+                {"kural": r.get("kural"), "mesaj": r.get("mesaj"), "puan": int(r.get("puan") or 0)}
+                for r in cur.fetchall()
+            ]
+            d["stok_alarm_var"] = fl["stok_alarm_var"]
+            d["gereksiz_var"] = fl["gereksiz_var"]
+            d["barem_risk_var"] = fl["barem_risk_var"]
+            d["merkez_kayit_eksik_var"] = fl["merkez_kayit_eksik_var"]
+            cn = siparis_cift_gonderim_bilgi_notu(
+                cur,
+                talep_id=str(d.get("id") or ""),
+                sube_id=str(sube_id_talep),
+                kalemler=kalemler,
+                olusturma=d.get("olusturma"),
+            )
+            if cn:
+                d["cift_siparis_bilgi_notu"] = cn
             siparis_talepleri.append(d)
 
         qp4 = [ym]
@@ -3599,6 +4149,19 @@ def _ops_sube_anchor(cur) -> str:
     return str(dict(r)["id"])
 
 
+def _ops_defter_sube_sevkiyat_hedef(hedef_depo_sube_id: Optional[str], cur) -> str:
+    """
+    Operasyonun siparişi yönlendirdiği hedef depo şubesi (Tema, Zafer, …), o iş için
+    merkez depo ile aynı mantıkta «çıkış deposu»dur: stok ve operasyon_defter izi bu şube
+    üzerinden tutulur; rastgele ilk şubeye yazılmaz.
+    Hedef bilinmiyorsa geriye dönük uyumluluk için anchor kullanılır.
+    """
+    hid = (hedef_depo_sube_id or "").strip()
+    if hid:
+        return hid
+    return _ops_sube_anchor(cur)
+
+
 def _siparis_urun_insert(cur, kategori_kod: str, urun_adi: str) -> Dict[str, Any]:
     ad = (urun_adi or "").strip()
     if len(ad) < 2:
@@ -3719,6 +4282,8 @@ class OpsSiparisSevkiyataGonderBody(BaseModel):
     hedef_depo_sube_id: Optional[str] = None
     sevkiyat_sube_id: Optional[str] = None  # legacy compatibility
     not_aciklama: Optional[str] = None
+    # Dağıtım / öncelik talimatı — depo + talep şubesi panelinde gösterilir
+    operasyon_yonlendirme_talimati: Optional[str] = None
 
 
 class OpsSiparisSevkiyatKalemDurum(BaseModel):
@@ -3856,6 +4421,8 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
     if not tid or not sevk_sube_id:
         raise HTTPException(400, "talep_id ve hedef_depo_sube_id zorunlu")
     notu = (body.not_aciklama or "").strip() or None
+    _tal = body.operasyon_yonlendirme_talimati
+    talimat_param = (str(_tal).strip() if _tal is not None else None) or None
     with db() as (conn, cur):
         cur.execute("SELECT id, ad, sube_tipi, aktif FROM subeler WHERE id=%s", (sevk_sube_id,))
         sr = cur.fetchone()
@@ -3868,7 +4435,7 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
             raise HTTPException(400, "Seçilen şube depo/karma tipi değil")
         cur.execute(
             """
-            SELECT id, sube_id, durum, kalemler,
+            SELECT id, sube_id, durum, kalemler, kalem_durumlari,
                    COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS hedef_depo_sube_id,
                    COALESCE(NULLIF(TRIM(sevkiyat_durumu), ''), sevkiyat_durum, 'bekliyor') AS sevkiyat_durumu
             FROM siparis_talep
@@ -3891,21 +4458,48 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
                 kalemler = []
         if not isinstance(kalemler, list):
             kalemler = []
+        # Önceki tahsis kararlarını koru: merkez_tahsis_yap yeni format yazmış olabilir
+        # {kalem_kodu, talep_adet, tahsis_adet} → urun_id ile eşleştir
+        onceki_kd = t.get("kalem_durumlari")
+        if isinstance(onceki_kd, str):
+            try:
+                onceki_kd = json.loads(onceki_kd)
+            except Exception:
+                onceki_kd = []
+        if not isinstance(onceki_kd, list):
+            onceki_kd = []
+        # Tahsis bilgisini kalem_kodu'ya göre indeksle
+        tahsis_map: Dict[str, Dict[str, Any]] = {}
+        for kd in onceki_kd:
+            if not isinstance(kd, dict):
+                continue
+            kk = str(kd.get("kalem_kodu") or kd.get("urun_id") or "").strip()
+            if kk:
+                tahsis_map[kk] = kd
         kalem_durumlari: List[Dict[str, Any]] = []
         for k in kalemler:
             if not isinstance(k, dict):
                 continue
-            istenen = _ops_int(k.get("adet") or k.get("istenen_adet") or 0, 0)
-            kalem_durumlari.append(
-                {
-                    "urun_id": (k.get("urun_id") or "").strip() or None,
-                    "urun_ad": (k.get("urun_ad") or k.get("ad") or "").strip() or None,
-                    "istenen_adet": max(0, istenen),
-                    "gonderilen_adet": 0,
-                    "durum": "bekliyor",
-                    "not": None,
-                }
-            )
+            istenen = _ops_int(k.get("adet") or k.get("istened_adet") or k.get("istenen_adet") or 0, 0)
+            uid = (k.get("urun_id") or "").strip() or None
+            uad = (k.get("urun_ad") or k.get("ad") or "").strip() or None
+            # Tahsis verisini urun_id ile bul (kalem_kodu = urun_id varsayımı)
+            tahsis = tahsis_map.get(uid or "") if uid else {}
+            tahsis_adet = int((tahsis or {}).get("tahsis_adet") or 0)
+            tahsis_durum = str((tahsis or {}).get("durum") or "").strip() or None
+            entry: Dict[str, Any] = {
+                "urun_id": uid,
+                "urun_ad": uad,
+                "istenen_adet": max(0, istenen),
+                "gonderilen_adet": 0,
+                "durum": "bekliyor",
+                "not": None,
+            }
+            # Tahsis bilgisi varsa ekle — depo hazırlık aşaması için referans
+            if tahsis_adet > 0:
+                entry["tahsis_adet"] = tahsis_adet
+                entry["tahsis_durum"] = tahsis_durum
+            kalem_durumlari.append(entry)
         cur.execute(
             """
             UPDATE siparis_talep
@@ -3917,20 +4511,40 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
                 kalem_durumlari=%s::jsonb,
                 sevkiyat_notu=%s,
                 sevkiyat_notlari=%s,
+                operasyon_yonlendirme_talimati = COALESCE(NULLIF(TRIM(%s), ''), operasyon_yonlendirme_talimati),
                 sevkiyat_ts=NOW()
             WHERE id=%s
             """,
-            (sevk_sube_id, sevk_sube_id, json.dumps(kalem_durumlari, ensure_ascii=False), notu, notu, tid),
+            (sevk_sube_id, sevk_sube_id, json.dumps(kalem_durumlari, ensure_ascii=False), notu, notu, talimat_param, tid),
         )
-        sid = _ops_sube_anchor(cur)
+        defter_sube = _ops_defter_sube_sevkiyat_hedef(sevk_sube_id, cur)
         operasyon_defter_ekle(
             cur,
-            sid,
+            defter_sube,
             "SIPARIS_SEVKIYAT_BASLADI",
-            f"Sipariş sevkiyata gönderildi — talep={tid} hedef_sube={sevk_sube_id}" + (f" not={notu}" if notu else ""),
+            f"Sipariş sevkiyata gönderildi (depo hub hedef şube) — talep={tid} hedef_sube={sevk_sube_id}"
+            + (f" not={notu}" if notu else "")
+            + (
+                f" talimat={(talimat_param[:180] + '…')}"
+                if talimat_param and len(talimat_param) > 180
+                else (f" talimat={talimat_param}" if talimat_param else "")
+            ),
             bildirim_saati=dt_now_tr().strftime("%H:%M:%S"),
         )
         audit(cur, "siparis_talep", tid, "OPS_SIPARIS_SEVKIYATA_GONDER")
+        # Disiplin motoru: tahsis olayını deftere yaz (kalem_durumlari değiştirilmez — eski format korunur)
+        try:
+            talep_sube_id = str(t.get("sube_id") or "")
+            if talep_sube_id:
+                operasyon_defter_ekle(
+                    cur, talep_sube_id,
+                    OLAY_TAHSIS_TAM,
+                    json.dumps({"hedef_sube": sevk_sube_id, "kalem_sayisi": len(kalemler)},
+                               ensure_ascii=False),
+                    ref_event_id=tid,
+                )
+        except Exception:
+            pass
     return {
         "success": True,
         "talep_id": tid,
@@ -4081,6 +4695,45 @@ def ops_siparis_depo_bekleyen(sube_id: str, gun: int = 15):
     return {"satirlar": rows, "sube_id": sid, "gun_sayi": gun_sayi}
 
 
+@router.get("/siparis/depo-sevkiyat-raporlari")
+def ops_siparis_depo_sevkiyat_raporlari(gun: int = 21, limit: int = 40):
+    """Depo şubesinin işlediği kalem bazlı özet raporlar (isten / gönderilen / yok)."""
+    gun_i = max(1, min(90, int(gun or 21)))
+    lim = max(1, min(80, int(limit or 40)))
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT t.id, t.sube_id, s.ad AS talep_sube_adi, t.tarih, t.durum,
+                   COALESCE(NULLIF(TRIM(t.sevkiyat_durumu), ''), t.sevkiyat_durum, 'bekliyor')
+                     AS sevkiyat_durumu,
+                   COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS hedef_depo_sube_id,
+                   hd.ad AS hedef_depo_adi,
+                   t.depo_sevkiyat_rapor_metni, t.depo_sevkiyat_rapor_ts,
+                   t.depo_sevkiyat_rapor_uyari,
+                   COALESCE(NULLIF(TRIM(t.sevkiyat_personel_ad), ''), '') AS depo_personel_ad
+            FROM siparis_talep t
+            JOIN subeler s ON s.id = t.sube_id
+            LEFT JOIN subeler hd ON hd.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
+            WHERE t.depo_sevkiyat_rapor_metni IS NOT NULL
+              AND TRIM(t.depo_sevkiyat_rapor_metni) <> ''
+              AND t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            ORDER BY t.depo_sevkiyat_rapor_ts DESC NULLS LAST, t.olusturma DESC NULLS LAST
+            LIMIT %s
+            """,
+            (gun_i, lim),
+        )
+        raporlar: List[Dict[str, Any]] = []
+        for r in cur.fetchall() or []:
+            d = dict(r)
+            if d.get("tarih"):
+                d["tarih"] = str(d["tarih"])
+            if d.get("depo_sevkiyat_rapor_ts"):
+                d["depo_sevkiyat_rapor_ts"] = str(d["depo_sevkiyat_rapor_ts"])
+            d["id"] = str(d.get("id") or "")
+            raporlar.append(d)
+    return {"gun": gun_i, "limit": lim, "raporlar": raporlar}
+
+
 @router.post("/siparis/sevkiyat-guncelle")
 def ops_siparis_sevkiyat_guncelle(body: OpsSiparisSevkiyatGuncelleBody):
     tid = (body.talep_id or "").strip()
@@ -4090,92 +4743,22 @@ def ops_siparis_sevkiyat_guncelle(body: OpsSiparisSevkiyatGuncelleBody):
     pin = (body.pin or "").strip()
     if pin and (len(pin) != 4 or not pin.isdigit()):
         raise HTTPException(400, "pin 4 haneli sayı olmalı")
-    durumlar: List[Dict[str, Any]] = []
-    bekleyen_var = False
-    kismi_var = False
-    for it in body.kalem_durumlari or []:
-        dd = (it.durum or "").strip().lower()
-        if dd not in ("bekliyor", "var", "yok", "kismi"):
-            raise HTTPException(400, "kalem durumları: bekliyor | var | yok | kismi")
-        g_adet = int(it.gonderilen_adet or 0)
-        if dd == "kismi" and g_adet <= 0:
-            raise HTTPException(400, "kısmi için gonderilen_adet > 0 olmalı")
-        if dd == "bekliyor":
-            bekleyen_var = True
-        if dd == "kismi":
-            kismi_var = True
-        durumlar.append(
-            {
-                "urun_id": (it.urun_id or "").strip() or None,
-                "urun_ad": (it.urun_ad or "").strip() or None,
-                "istenen_adet": max(0, int(it.istenen_adet or 0)),
-                "durum": dd,
-                "gonderilen_adet": max(0, g_adet),
-                "not": (it.notu or it.not_aciklama or "").strip() or None,
-            }
-        )
+    durumlar, bekleyen_var, kismi_var = sevkiyat_kalem_durumlari_normalize(body.kalem_durumlari)
     notu = (body.sevkiyat_notu or body.not_aciklama or "").strip() or None
-    if bool(body.gonderildi) or (durumlar and not bekleyen_var):
-        yeni_durum = "gonderildi"
-    elif kismi_var:
-        yeni_durum = "kismi_hazirlandi"
-    else:
-        yeni_durum = "depoda_hazirlaniyor"
-    eski_durum_karsilik = "gonderildi" if yeni_durum == "gonderildi" else "hazirlaniyor"
     with db() as (conn, cur):
-        cur.execute(
-            """
-            SELECT id, COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS hedef_depo_sube_id,
-                   COALESCE(NULLIF(TRIM(sevkiyat_durumu), ''), sevkiyat_durum, 'bekliyor') AS sevkiyat_durumu,
-                   durum
-            FROM siparis_talep
-            WHERE id=%s
-            FOR UPDATE
-            """,
-            (tid,),
-        )
-        r = cur.fetchone()
-        if not r:
-            raise HTTPException(404, "Sipariş talebi bulunamadı")
-        row = dict(r)
-        if str(row.get("hedef_depo_sube_id") or "") != sevk_sid:
-            raise HTTPException(409, "Talep farklı sevkiyat şubesine atanmış")
-        if str(row.get("durum") or "") == "teslim_edildi":
-            raise HTTPException(409, "Talep zaten teslim edildi")
-        cur.execute(
-            """
-            UPDATE siparis_talep
-            SET sevkiyat_durumu=%s,
-                sevkiyat_durum=%s,
-                durum=CASE WHEN %s='gonderildi' THEN 'gonderildi' ELSE 'hazirlaniyor' END,
-                kalem_durumlari=%s::jsonb,
-                sevkiyat_notu=COALESCE(%s, sevkiyat_notu),
-                sevkiyat_notlari=COALESCE(%s, sevkiyat_notlari),
-                sevkiyat_personel_ad=COALESCE(%s, sevkiyat_personel_ad),
-                sevkiyat_ts=NOW()
-            WHERE id=%s
-            """,
-            (
-                yeni_durum,
-                eski_durum_karsilik,
-                yeni_durum,
-                json.dumps(durumlar, ensure_ascii=False),
-                notu,
-                notu,
-                (body.personel_ad or "").strip() or None,
-                tid,
-            ),
-        )
-        sid = _ops_sube_anchor(cur)
-        operasyon_defter_ekle(
+        defter_sube = _ops_defter_sube_sevkiyat_hedef(sevk_sid, cur)
+        return siparis_sevkiyat_kalem_guncelle_execute(
             cur,
-            sid,
-            "SIPARIS_SEVKIYAT_TAMAM" if yeni_durum == "gonderildi" else "OPS_SIPARIS_SEVKIYAT_GUNCELLE",
-            f"Sipariş sevkiyat güncellendi — talep={tid} sevkiyat_sube={sevk_sid} durum={yeni_durum}",
-            bildirim_saati=dt_now_tr().strftime("%H:%M:%S"),
+            talep_id=tid,
+            hedef_depo_sube_id=sevk_sid,
+            durumlar=durumlar,
+            bekleyen_var=bekleyen_var,
+            kismi_var=kismi_var,
+            notu=notu,
+            personel_ad=(body.personel_ad or "").strip() or None,
+            gonderildi=bool(body.gonderildi),
+            defter_sube_id=defter_sube,
         )
-        audit(cur, "siparis_talep", tid, "OPS_SIPARIS_SEVKIYAT_GUNCELLE")
-    return {"success": True, "talep_id": tid, "sevkiyat_durumu": yeni_durum, "sevkiyat_durum": eski_durum_karsilik}
 
 
 class OpsSiparisOzelIslemBody(BaseModel):
@@ -4294,3 +4877,567 @@ def ops_siparis_ozel_islem(body: OpsSiparisOzelIslemBody):
             bildirim_saati=saat,
         )
     return {"success": True, "durum": "tek_sefer", "siparis_talep_id": stid}
+
+
+@router.get("/panel-ozet")
+def ops_panel_ozet():
+    """Operasyon merkezi modül kartları için hafif sayısal özet."""
+    bugun = str(bugun_tr())
+    with db() as (conn, cur):
+        return _ops_panel_ozet_from_cur(cur, bugun)
+
+
+@router.get("/hub-ozet")
+def ops_hub_ozet():
+    """Hub sayıları + operasyon alarm satırları (tek istek, panel-ozet ile uyumlu)."""
+    bugun = str(bugun_tr())
+    with db() as (conn, cur):
+        oz = _ops_panel_ozet_from_cur(cur, bugun)
+        oz["alarm_satirlari"] = _hub_alarm_satirlari(cur, ozet=oz)
+        return oz
+
+
+# ══════════════════════════════════════════════════════════════════
+# STOK DİSİPLİN MOTORU v2  —  /ops/v2/...
+# ══════════════════════════════════════════════════════════════════
+from operasyon_stok_motor import (
+    siparis_olustu_kaydet,
+    merkez_tahsis_yap,
+    sevk_cikti_kaydet,
+    sube_kabul_kaydet,
+    kullanim_kaydet,
+    stok_alarm_kontrol,
+    eksik_kullanim_kontrol,
+    sube_skor_hesapla,
+    tum_subeler_skor_guncelle,
+    siparis_akis_ozet,
+)
+
+
+# ── Request modelleri ──────────────────────────────────────────────
+
+class TahsisItem(BaseModel):
+    kalem_kodu:  str
+    kalem_adi:   str = ""
+    talep_adet:  int = 0
+    tahsis_adet: int = 0
+
+
+class TahsisBody(BaseModel):
+    tahsis: List[TahsisItem]
+    yapan_id: Optional[str] = None
+    yapan_ad: Optional[str] = None
+
+
+class SevkItem(BaseModel):
+    kalem_kodu: str
+    kalem_adi:  str = ""
+    sevk_adet:  int = 0
+
+
+class SevkBody(BaseModel):
+    sevk: List[SevkItem]
+    yapan_id: Optional[str] = None
+    yapan_ad: Optional[str] = None
+
+
+class KabulItem(BaseModel):
+    kalem_kodu: str
+    kalem_adi:  str = ""
+    kabul_adet: int = 0
+
+
+class KabulBody(BaseModel):
+    kabul: List[KabulItem]
+    yapan_id: Optional[str] = None
+    yapan_ad: Optional[str] = None
+
+
+class KullanimItem(BaseModel):
+    kalem_kodu: str
+    adet:       int = 0
+
+
+class KullanimBody(BaseModel):
+    kullanim: List[KullanimItem]
+    yapan_id: Optional[str] = None
+    yapan_ad: Optional[str] = None
+
+
+class MerkezDepoGuncelle(BaseModel):
+    kalem_kodu:  str
+    kalem_adi:   str = ""
+    mevcut_adet: int = 0
+    min_stok:    int = 0
+
+
+# ── Aşama 2: Merkez tahsis ────────────────────────────────────────
+
+@router.post("/v2/siparis/{siparis_id}/tahsis")
+def ops_v2_tahsis(siparis_id: str, body: TahsisBody):
+    """
+    Merkez siparişi tahsis eder. Her kalem için talep_adet ve tahsis_adet girilir.
+    Sistem TAHSIS_TAM / KISMI / YOK kararını verir ve merkez deposunda rezerv ayırır.
+    """
+    with db() as (conn, cur):
+        sonuc = merkez_tahsis_yap(
+            cur, siparis_id,
+            [t.model_dump() for t in body.tahsis],
+            body.yapan_id, body.yapan_ad,
+        )
+        conn.commit()
+    return sonuc
+
+
+# ── Aşama 3: Sevk çıktı ───────────────────────────────────────────
+
+@router.post("/v2/siparis/{siparis_id}/sevk-cikti")
+def ops_v2_sevk_cikti(siparis_id: str, body: SevkBody):
+    """
+    Merkez depodan ürün çıktı, yola girdi.
+    Merkez stoğu azalır, stok_yolda kaydı açılır.
+    """
+    with db() as (conn, cur):
+        yolda_ids = sevk_cikti_kaydet(
+            cur, siparis_id,
+            [s.model_dump() for s in body.sevk],
+            body.yapan_id, body.yapan_ad,
+        )
+        conn.commit()
+    return {"success": True, "yolda_ids": yolda_ids}
+
+
+# ── Aşama 4: Şube kabul ───────────────────────────────────────────
+
+@router.post("/v2/siparis/{siparis_id}/kabul")
+def ops_v2_kabul(siparis_id: str, body: KabulBody):
+    """
+    Şube teslim aldı ve onayladı. Şube deposu artar.
+    Eksik teslimatta KABUL_FARKI davranış uyarısı üretilir.
+    """
+    with db() as (conn, cur):
+        cur.execute("SELECT sube_id FROM siparis_talep WHERE id=%s", (siparis_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Sipariş bulunamadı")
+        sube_id = row.get("sube_id") or row[0]
+        sonuc = sube_kabul_kaydet(
+            cur, siparis_id, sube_id,
+            [k.model_dump() for k in body.kabul],
+            body.yapan_id, body.yapan_ad,
+        )
+        conn.commit()
+    return sonuc
+
+
+# ── Aşama 5: Kullanım (bara açılan) ──────────────────────────────
+
+@router.post("/v2/sube/{sube_id}/kullanim")
+def ops_v2_kullanim(sube_id: str, body: KullanimBody):
+    """
+    Personel depodan bara ürün açtı. Şube depo stoğu azalır.
+    """
+    with db() as (conn, cur):
+        kullanim_kaydet(
+            cur, sube_id,
+            [k.model_dump() for k in body.kullanim],
+            body.yapan_id, body.yapan_ad,
+        )
+        conn.commit()
+    return {"success": True}
+
+
+# ── Panel: Kritik Stok ────────────────────────────────────────────
+
+@router.get("/v2/kritik-stok")
+def ops_v2_kritik_stok():
+    """
+    Merkez + tüm şube depolarında kritik stok alarmları.
+    Seviye: KRİZ (0 adet) | KRİTİK (1 adet) | DÜŞÜK (≤ min_stok)
+    """
+    with db() as (conn, cur):
+        alarmlar = stok_alarm_kontrol(cur)
+        # Bekleyen sipariş sayısı (hangi şubeler sipariş açmış)
+        cur.execute("""
+            SELECT sube_id, COUNT(*) as adet
+            FROM siparis_talep
+            WHERE durum IN ('bekliyor','onaylandi')
+            GROUP BY sube_id
+        """)
+        bekleyen = {r.get("sube_id"): int(r.get("adet") or 0) for r in cur.fetchall()}
+    # Alarmlara bekleyen sipariş sayısı ekle
+    for a in alarmlar:
+        a["bekleyen_siparis"] = bekleyen.get(a.get("sube_id"), 0)
+    return {"alarmlar": alarmlar, "toplam": len(alarmlar)}
+
+
+# ── Panel: Sipariş Akışı ──────────────────────────────────────────
+
+@router.get("/v2/siparis-akis")
+def ops_v2_siparis_akis(limit: int = Query(50, ge=1, le=200)):
+    """
+    Son N siparişin uçtan uca durumu.
+    Şube | Ürünler | Talep | Tahsis | Sevk | Kabul | Durum
+    """
+    with db() as (conn, cur):
+        akis = siparis_akis_ozet(cur, limit)
+    return {"siparis_akis": akis, "toplam": len(akis)}
+
+
+# ── Panel: Sipariş Timeline ───────────────────────────────────────
+
+@router.get("/v2/siparis/{siparis_id}/timeline")
+def ops_v2_siparis_timeline(siparis_id: str):
+    """
+    Tek siparişin olay zinciri: ne zaman oluştu, tahsis, sevk, kabul.
+    """
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM siparis_talep WHERE id=%s", (siparis_id,))
+        talep = cur.fetchone()
+        if not talep:
+            raise HTTPException(404, "Sipariş bulunamadı")
+
+        # Olay logu: operasyon_defter'dan ref_event_id ile oku
+        cur.execute("""
+            SELECT etiket AS olay, personel_ad AS yapan_ad, aciklama AS detay, olay_ts AS olusturma
+            FROM operasyon_defter
+            WHERE ref_event_id=%s
+            ORDER BY olay_ts ASC
+        """, (siparis_id,))
+        olaylar = []
+        for r in cur.fetchall():
+            olaylar.append({
+                "olay":     r.get("olay"),
+                "yapan_ad": r.get("yapan_ad"),
+                "detay":    r.get("detay"),
+                "zaman":    str(r.get("olusturma") or ""),
+            })
+
+        # Tahsis kararı: siparis_talep.kalem_durumlari JSONB'den oku
+        kd_raw = talep.get("kalem_durumlari") or []
+        if isinstance(kd_raw, str):
+            try:
+                kd_raw = json.loads(kd_raw)
+            except Exception:
+                kd_raw = []
+        tahsis = kd_raw if isinstance(kd_raw, list) else []
+
+        cur.execute("""
+            SELECT kalem_kodu, kalem_adi, sevk_adet, kabul_adet, durum
+            FROM stok_yolda WHERE siparis_talep_id=%s
+        """, (siparis_id,))
+        yolda = [dict(r) for r in cur.fetchall()]
+
+    kalemler = talep.get("kalemler") or []
+    if isinstance(kalemler, str):
+        try:
+            kalemler = json.loads(kalemler)
+        except Exception:
+            kalemler = []
+
+    return {
+        "siparis_id": siparis_id,
+        "sube_id":    talep.get("sube_id"),
+        "tarih":      str(talep.get("tarih") or ""),
+        "durum":      talep.get("durum"),
+        "kalemler":   kalemler,
+        "tahsis":     tahsis,
+        "yolda":      yolda,
+        "olaylar":    olaylar,
+    }
+
+
+# ── Panel: Şube Davranış ─────────────────────────────────────────
+
+@router.get("/v2/sube-davranis")
+def ops_v2_sube_davranis(gun: int = Query(30, ge=7, le=90)):
+    """
+    Son N günde tüm şubelerin davranış ihlalleri ve skorları.
+    """
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT
+                d.sube_id, s.ad AS sube_adi,
+                d.kural, COUNT(*) AS ihlal_sayisi, SUM(d.puan) AS toplam_puan
+            FROM sube_operasyon_uyari d
+            JOIN subeler s ON s.id = d.sube_id
+            WHERE d.tip = 'DAVRANIS'
+              AND d.olusturma >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            GROUP BY d.sube_id, s.ad, d.kural
+            ORDER BY toplam_puan DESC, s.ad
+        """, (gun,))
+        rows = cur.fetchall() or []
+
+        # Şube bazında grupla
+        subeler: Dict[str, Any] = {}
+        for r in rows:
+            sid = r.get("sube_id")
+            if sid not in subeler:
+                subeler[sid] = {
+                    "sube_id":    sid,
+                    "sube_adi":   r.get("sube_adi"),
+                    "toplam_puan": 0,
+                    "ihlaller":   [],
+                }
+            puan = int(r.get("toplam_puan") or 0)
+            subeler[sid]["toplam_puan"] += puan
+            subeler[sid]["ihlaller"].append({
+                "kural":        r.get("kural"),
+                "ihlal_sayisi": int(r.get("ihlal_sayisi") or 0),
+                "puan":         puan,
+            })
+
+        # Skor durumu ekle
+        for sid, v in subeler.items():
+            p = v["toplam_puan"]
+            v["durum"] = "normal" if p < 4 else ("dikkat" if p < 7 else "problemli")
+
+        # Güncel skor tablosundan da al
+        cur.execute("""
+            SELECT sube_id, toplam_puan, durum, detay
+            FROM sube_skor
+            WHERE yil = EXTRACT(YEAR FROM CURRENT_DATE)
+              AND ay  = EXTRACT(MONTH FROM CURRENT_DATE)
+        """)
+        for r in cur.fetchall():
+            sid = r.get("sube_id")
+            if sid in subeler:
+                subeler[sid]["skor_bu_ay"] = {
+                    "toplam_puan": int(r.get("toplam_puan") or 0),
+                    "durum":       r.get("durum"),
+                }
+
+    liste = sorted(subeler.values(), key=lambda x: x["toplam_puan"], reverse=True)
+    return {"subeler": liste, "gun": gun, "toplam_sube": len(liste)}
+
+
+# ── Panel: Skor tablosu ──────────────────────────────────────────
+
+@router.get("/v2/sube-skor")
+def ops_v2_sube_skor(yil: Optional[int] = None, ay: Optional[int] = None):
+    """
+    Tüm şubelerin skor tablosu (bu ay veya belirtilen dönem).
+    """
+    from datetime import date as _date
+    bugun = _date.today()
+    yil = yil or bugun.year
+    ay  = ay  or bugun.month
+
+    with db() as (conn, cur):
+        # Önce güncel hesapla
+        tum_subeler_skor_guncelle(cur)
+        conn.commit()
+
+        cur.execute("""
+            SELECT ss.sube_id, s.ad AS sube_adi,
+                   ss.toplam_puan, ss.durum, ss.detay, ss.guncelleme
+            FROM sube_skor ss
+            JOIN subeler s ON s.id = ss.sube_id
+            WHERE ss.yil=%s AND ss.ay=%s
+            ORDER BY ss.toplam_puan DESC, s.ad
+        """, (yil, ay))
+        rows = cur.fetchall() or []
+
+    sonuc = []
+    for r in rows:
+        detay = r.get("detay") or {}
+        if isinstance(detay, str):
+            try:
+                detay = json.loads(detay)
+            except Exception:
+                detay = {}
+        sonuc.append({
+            "sube_id":    r.get("sube_id"),
+            "sube_adi":   r.get("sube_adi"),
+            "toplam_puan": int(r.get("toplam_puan") or 0),
+            "durum":      r.get("durum"),
+            "detay":      detay,
+        })
+
+    return {"skorlar": sonuc, "yil": yil, "ay": ay}
+
+
+# ── Merkez depo stok yönetimi ─────────────────────────────────────
+
+@router.get("/v2/merkez-depo")
+def ops_v2_merkez_depo():
+    """Merkez depo anlık stok listesi."""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT kalem_kodu, kalem_adi,
+                   COALESCE(mevcut_adet, 0)  AS mevcut_adet,
+                   COALESCE(rezerve_adet, 0) AS rezerve_adet,
+                   COALESCE(min_stok, 0)     AS min_stok,
+                   guncelleme
+            FROM merkez_stok_kart
+            ORDER BY kalem_adi
+        """)
+        rows = [dict(r) for r in cur.fetchall()]
+    return {"stok": rows, "toplam": len(rows)}
+
+
+@router.post("/v2/merkez-depo/guncelle")
+def ops_v2_merkez_depo_guncelle(body: MerkezDepoGuncelle):
+    """Merkez depo stok girişi / düzeltme."""
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            INSERT INTO merkez_stok_kart (kalem_kodu, kalem_adi, mevcut_adet, min_stok)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (kalem_kodu) DO UPDATE
+            SET kalem_adi   = EXCLUDED.kalem_adi,
+                mevcut_adet = EXCLUDED.mevcut_adet,
+                min_stok    = EXCLUDED.min_stok,
+                guncelleme  = NOW()
+            """,
+            (body.kalem_kodu, body.kalem_adi or body.kalem_kodu,
+             body.mevcut_adet, body.min_stok),
+        )
+        conn.commit()
+    return {"success": True}
+
+
+# ── Şube depo görüntüle ───────────────────────────────────────────
+
+@router.get("/v2/sube/{sube_id}/depo")
+def ops_v2_sube_depo(sube_id: str):
+    """Şubenin depo stok listesi."""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT kalem_kodu, kalem_adi, mevcut_adet, min_stok, guncelleme
+            FROM sube_depo_stok
+            WHERE sube_id=%s
+            ORDER BY kalem_adi
+        """, (sube_id,))
+        rows = [dict(r) for r in cur.fetchall()]
+        # Alarm var mı?
+        alarmlar = [r for r in rows if r["mevcut_adet"] <= r["min_stok"]]
+    return {"sube_id": sube_id, "stok": rows, "alarm_sayisi": len(alarmlar)}
+
+
+# ── Sipariş Kuyruğu: bekleyen siparişler + stok etki bilgisi ─────
+
+@router.get("/v2/bekleyen-siparisler")
+def ops_v2_bekleyen_siparisler(gun: int = Query(7, ge=1, le=30)):
+    """
+    Merkez paneli için bekleyen sipariş kuyruğu.
+    Her sipariş için:
+      - Şubenin deposunda bu ürün var mı? (sube_depo_stok)
+      - Gönderirsek merkezde ne kalır? (merkez_stok_kart)
+      - Davranış uyarısı tetiklendi mi? (sube_operasyon_uyari)
+    """
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT st.id, st.sube_id, s.ad AS sube_adi,
+                   st.tarih, st.olusturma, st.personel_ad,
+                   st.not_aciklama, st.kalemler,
+                   COALESCE(st.hedef_depo_sube_id, st.sevkiyat_sube_id) AS hedef_depo_sube_id,
+                   st.tahsis_kaynak_depo_sube_id,
+                   NULLIF(TRIM(st.operasyon_yonlendirme_talimati), '') AS operasyon_yonlendirme_talimati
+            FROM siparis_talep st
+            JOIN subeler s ON s.id = st.sube_id
+            WHERE st.durum = 'bekliyor'
+              AND st.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            ORDER BY st.olusturma ASC NULLS LAST, st.id
+        """, (gun,))
+        talepler = cur.fetchall() or []
+        merkez_map = merkez_stok_kart_haritasi(cur)
+
+        sonuc = []
+        for talep in talepler:
+            tid = talep.get("id")
+            sube_id = talep.get("sube_id")
+            kalemler = talep.get("kalemler") or []
+            if isinstance(kalemler, str):
+                try:
+                    kalemler = json.loads(kalemler)
+                except Exception:
+                    kalemler = []
+            if not isinstance(kalemler, list):
+                kalemler = []
+
+            hedef_v2 = str(talep.get("hedef_depo_sube_id") or "").strip() or None
+            fl = enrich_siparis_kalemleri_stok_inplace(
+                cur,
+                str(sube_id or ""),
+                kalemler,
+                merkez_map=merkez_map,
+                hedef_depo_sube_id=hedef_v2,
+            )
+
+            cur.execute("""
+                SELECT kural, mesaj, puan
+                FROM sube_operasyon_uyari
+                WHERE siparis_talep_id=%s AND tip='DAVRANIS'
+                ORDER BY puan DESC
+            """, (tid,))
+            davranis = [
+                {"kural": r.get("kural"), "mesaj": r.get("mesaj"), "puan": int(r.get("puan") or 0)}
+                for r in cur.fetchall()
+            ]
+
+            kalem_detay: List[Dict[str, Any]] = []
+            for it in kalemler:
+                if not isinstance(it, dict):
+                    continue
+                kk = str(it.get("kalem_kodu") or "").strip()
+                urun_ad = str(it.get("urun_ad") or kk or "")
+                ist = max(0, int(it.get("adet") or 0))
+                kalem_detay.append({
+                    "kalem_kodu": kk,
+                    "urun_ad": urun_ad,
+                    "istenen_adet": ist,
+                    "merkez_mevcut": int(it.get("merkez_mevcut", -1)),
+                    "merkez_rezerve": int(it.get("merkez_rezerve") or 0),
+                    "merkez_min_stok": int(it.get("merkez_min_stok") or 0),
+                    "kaynak_kullanilabilir": it.get("kaynak_kullanilabilir"),
+                    "kalan_gonderince": it.get("kalan_gonderince"),
+                    "alarm_merkez": bool(it.get("alarm_merkez")),
+                    "merkez_barem_risk": bool(it.get("merkez_barem_risk")),
+                    "sube_depo_mevcut": int(it.get("sube_depo_mevcut") or 0),
+                    "sube_zaten_var": bool(it.get("sube_zaten_var")),
+                    "gonderim_kaynagi": it.get("gonderim_kaynagi"),
+                    "hedef_depo_mevcut": it.get("hedef_depo_mevcut"),
+                    "hedef_depo_rezerve": it.get("hedef_depo_rezerve"),
+                    "hedef_depo_min_stok": it.get("hedef_depo_min_stok"),
+                })
+
+            cn_v2 = siparis_cift_gonderim_bilgi_notu(
+                cur,
+                talep_id=str(tid),
+                sube_id=str(sube_id or ""),
+                kalemler=kalemler,
+                olusturma=talep.get("olusturma"),
+            )
+            row_v2: Dict[str, Any] = {
+                "id": tid,
+                "sube_id": sube_id,
+                "sube_adi": talep.get("sube_adi"),
+                "tarih": str(talep.get("tarih") or ""),
+                "olusturma": str(talep.get("olusturma") or ""),
+                "personel_ad": talep.get("personel_ad"),
+                "not_aciklama": talep.get("not_aciklama"),
+                "kalemler": kalem_detay,
+                "davranis_uyarilari": davranis,
+                "stok_alarm_var": fl["stok_alarm_var"],
+                "barem_risk_var": fl["barem_risk_var"],
+                "gereksiz_var": fl["gereksiz_var"],
+                "merkez_kayit_eksik_var": fl["merkez_kayit_eksik_var"],
+                "uyari_var": (
+                    len(davranis) > 0
+                    or fl["barem_risk_var"]
+                    or fl["merkez_kayit_eksik_var"]
+                    or fl["stok_alarm_var"]
+                    or fl["gereksiz_var"]
+                ),
+                "stok_hesap_kaynagi": fl.get("stok_hesap_kaynagi"),
+                "hedef_depo_sube_id": fl.get("hedef_depo_sube_id"),
+                "operasyon_yonlendirme_talimati": talep.get("operasyon_yonlendirme_talimati"),
+                "tahsis_kaynak_depo_sube_id": talep.get("tahsis_kaynak_depo_sube_id"),
+            }
+            if cn_v2:
+                row_v2["cift_siparis_bilgi_notu"] = cn_v2
+                row_v2["uyari_var"] = True
+            sonuc.append(row_v2)
+
+    return {"siparisler": sonuc, "toplam": len(sonuc)}
