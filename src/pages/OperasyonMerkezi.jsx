@@ -52,7 +52,10 @@ const OPS_MODUL_BOLUM = {
   fis: [{ id: 'icerik', label: 'Bekleyen fişler' }],
   onay: [{ id: 'icerik', label: 'Onay kuyruğu' }],
   defter: [{ id: 'icerik', label: 'Kayıtlar' }],
-  sayim: [{ id: 'icerik', label: 'Sayımlar' }],
+  sayim: [
+    { id: 'acilis', label: 'Açılış Sayımları' },
+    { id: 'bar-ozet', label: 'Bar Günlük Özet' },
+  ],
   siparis: [{ id: 'icerik', label: 'Katalog & talepler' }],
   mesaj: [{ id: 'icerik', label: 'Mesajlar' }],
   puan: [{ id: 'icerik', label: 'Puan listesi' }],
@@ -506,6 +509,7 @@ export default function OperasyonMerkezi() {
   const [kartlar,   setKartlar]   = useState([]);
   const [defter,    setDefter]    = useState([]);
   const [sayimlar,  setSayimlar]  = useState([]);
+  const [barOzet,   setBarOzet]   = useState([]);
   const [stokKayip, setStokKayip] = useState(null);
   const [merkezStokKart, setMerkezStokKart] = useState(null);
   const [stokKartSecim, setStokKartSecim] = useState('merkez');
@@ -805,7 +809,12 @@ export default function OperasyonMerkezi() {
       } else if (aktifSekme === 'defter') {
         calls.push(api(`/ops/defter?limit=300&${q}`));
       } else if (aktifSekme === 'sayim') {
-        calls.push(api(`/ops/sayimlar?limit=300&${q}`));
+        calls.push(
+          Promise.all([
+            api(`/ops/sayimlar?limit=300&${q}`).catch(() => ({ satirlar: [] })),
+            api(`/ops/bar-ozet?limit=120&${q}`).catch(() => ({ satirlar: [] })),
+          ])
+        );
       } else {
         calls.push(Promise.resolve({ satirlar: [] }));
       }
@@ -821,7 +830,9 @@ export default function OperasyonMerkezi() {
       } else if (aktifSekme === 'defter') {
         setDefter(extra?.satirlar || []);
       } else if (aktifSekme === 'sayim') {
-        setSayimlar(extra?.satirlar || []);
+        const [sayimRes, barRes] = Array.isArray(extra) ? extra : [extra, null];
+        setSayimlar(sayimRes?.satirlar || []);
+        setBarOzet(barRes?.satirlar || []);
       }
       setSonYenileme(new Date().toLocaleTimeString('tr-TR'));
       return dash;
@@ -1356,6 +1367,65 @@ export default function OperasyonMerkezi() {
             </section>
           )}
 
+          {(opsOzet?.siparis_bekleyen || 0) > 0 && (
+            <section
+              className="card ops-hub-gelen-siparis"
+              style={{
+                padding: '16px 18px',
+                marginBottom: 16,
+                borderRadius: 12,
+                border: '2px solid rgba(74, 158, 255, 0.55)',
+                background: 'linear-gradient(145deg, rgba(74, 158, 255, 0.14), rgba(30, 58, 138, 0.08))',
+                cursor: 'pointer',
+              }}
+              role="button"
+              tabIndex={0}
+              onClick={() => acOpsModul('siparis')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  acOpsModul('siparis');
+                }
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14 }}>
+                <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 800,
+                      letterSpacing: '0.07em',
+                      color: '#93c5fd',
+                      textTransform: 'uppercase',
+                      marginBottom: 8,
+                    }}
+                  >
+                    Gelen sipariş — şube talepleri
+                  </div>
+                  <div style={{ fontSize: 26, fontWeight: 800, color: 'var(--text1)', lineHeight: 1.15, letterSpacing: '-0.02em' }}>
+                    {opsOzet.siparis_bekleyen}{' '}
+                    <span style={{ fontSize: 17, fontWeight: 700, color: 'var(--text2)' }}>bekleyen talep</span>
+                  </div>
+                  <p style={{ margin: '10px 0 0', fontSize: 13, color: 'var(--text2)', lineHeight: 1.55, maxWidth: 620 }}>
+                    Şubeden düşen siparişler <strong style={{ color: 'var(--text1)' }}>merkez onayı / işlem sırasında</strong>. Kuyruk ve sevkiyat için{' '}
+                    <strong>Sipariş katalog</strong> modülünü açın — Stok Disiplin sayfasındaki kuyruk ile aynı veriye gider.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{ flexShrink: 0, alignSelf: 'center' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    acOpsModul('siparis');
+                  }}
+                >
+                  Sipariş ekranına git →
+                </button>
+              </div>
+            </section>
+          )}
+
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
           {UST_SEKMELER.map((s) => {
             const renk = OPS_HUB_RENK[s.id] || 'var(--border)';
@@ -1368,7 +1438,9 @@ export default function OperasyonMerkezi() {
                 sub = 'Aktif şube';
               } else if (s.id === 'siparis') {
                 val = opsOzet.siparis_katalog_urun ?? 0;
-                sub = 'Katalog ürün (aktif)';
+                sub = (opsOzet.siparis_bekleyen || 0) > 0
+                  ? `⏳ ${opsOzet.siparis_bekleyen} gelen talep (onayda / kuyrukta)`
+                  : 'Katalog ürün (aktif)';
               } else if (s.id === 'onay') {
                 val = opsOzet.onay_bekleyen;
                 sub = opsOzet.onay_bekleyen > 0 ? 'Onay bekliyor' : 'Kuyruk boş ✓';
@@ -2265,7 +2337,8 @@ export default function OperasyonMerkezi() {
         </div>
       )}
 
-      {aktifSekme === 'sayim' && (
+      {/* ── Sayım: Açılış Sayımları ── */}
+      {aktifSekme === 'sayim' && opsIcBolum === 'acilis' && (
         <div className="table-wrap">
           <table>
             <thead>
@@ -2278,14 +2351,9 @@ export default function OperasyonMerkezi() {
                 <th colSpan={5} style={{ textAlign: 'center', borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>Ürünler</th>
               </tr>
               <tr>
-                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Küçük</th>
-                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Büyük</th>
-                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Plastik</th>
-                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Su</th>
-                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Redbull</th>
-                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Soda</th>
-                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Cookie</th>
-                <th style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>Pasta</th>
+                {['Küçük','Büyük','Plastik','Su','Redbull','Soda','Cookie','Pasta'].map(l => (
+                  <th key={l} style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>{l}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -2293,30 +2361,93 @@ export default function OperasyonMerkezi() {
                 <tr><td colSpan={12}><div className="empty"><p>Seçilen filtrede açılış sayımı yok</p></div></td></tr>
               ) : sayimlar.map(r => {
                 const s = r.stok_sayim || {};
-                const cell = (val) => (
-                  <td className="mono" style={{ fontSize: 12, textAlign: 'center' }}>
-                    {val || 0}
-                  </td>
-                );
+                const cell = (val) => <td className="mono" style={{ fontSize: 12, textAlign: 'center' }}>{val || 0}</td>;
                 return (
                   <tr key={r.event_id}>
                     <td className="mono" style={{ fontSize: 11 }}>{(r.tarih || '').substring(0, 10)}</td>
                     <td className="mono" style={{ fontSize: 11 }}>{(r.cevap_ts || '').substring(11, 19) || (r.bildirim_saati || '')}</td>
                     <td style={{ fontWeight: 500, fontSize: 13 }}>{r.sube_adi || r.sube_id}</td>
                     <td style={{ fontSize: 12 }}>{r.personel_ad || r.personel_id || '—'}</td>
-                    {cell(s.bardak_kucuk)}
-                    {cell(s.bardak_buyuk)}
-                    {cell(s.bardak_plastik)}
-                    {cell(s.su_adet)}
-                    {cell(s.redbull_adet)}
-                    {cell(s.soda_adet)}
-                    {cell(s.cookie_adet)}
-                    {cell(s.pasta_adet)}
+                    {cell(s.bardak_kucuk)}{cell(s.bardak_buyuk)}{cell(s.bardak_plastik)}
+                    {cell(s.su_adet)}{cell(s.redbull_adet)}{cell(s.soda_adet)}{cell(s.cookie_adet)}{cell(s.pasta_adet)}
                   </tr>
                 );
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── Sayım: Bar Günlük Özet ── */}
+      {aktifSekme === 'sayim' && opsIcBolum === 'bar-ozet' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <p style={{ fontSize: 12, color: 'var(--text3)', margin: 0 }}>
+            Formül: <strong>Satılan = Açılış + Ürün Aç − Kapanış</strong> · Negatif satır = fire/eksiklik.
+            Kapanış yapılmamış günler açık görünür.
+          </p>
+          {barOzet.length === 0 ? (
+            <div className="empty"><p>Seçilen filtrede bar özeti yok</p></div>
+          ) : barOzet.map((r) => {
+            const keys = ['bardak_kucuk','bardak_buyuk','su_adet','soda_adet','redbull_adet','cookie_adet','pasta_adet'];
+            const labels = { bardak_kucuk:'K.Bardak', bardak_buyuk:'B.Bardak', su_adet:'Su', soda_adet:'Soda', redbull_adet:'Redbull', cookie_adet:'Cookie', pasta_adet:'Pasta' };
+            const hasFark = r.fark_var;
+            const kapanisYok = !r.kapanis_var;
+            return (
+              <div key={`${r.sube_id}-${r.tarih}`} className="card" style={{
+                borderLeft: `4px solid ${hasFark ? 'var(--red)' : kapanisYok ? 'var(--yellow)' : 'var(--green)'}`,
+                padding: '14px 16px',
+              }}>
+                {/* Başlık */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+                  <div>
+                    <span style={{ fontWeight: 700, fontSize: 14 }}>{r.sube_adi}</span>
+                    <span className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 10 }}>{r.tarih}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {hasFark && <span className="badge badge-red">Fark var</span>}
+                    {kapanisYok && <span className="badge badge-yellow">Kapanış yok</span>}
+                    {!hasFark && !kapanisYok && <span className="badge badge-green">Normal</span>}
+                  </div>
+                </div>
+                {/* Tablo */}
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg2)' }}>
+                        <th style={{ padding: '5px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600, fontSize: 11 }}>Ürün</th>
+                        <th style={{ padding: '5px 8px', textAlign: 'center', color: '#93c5fd', fontWeight: 600, fontSize: 11 }}>Açılış</th>
+                        <th style={{ padding: '5px 8px', textAlign: 'center', color: '#86efac', fontWeight: 600, fontSize: 11 }}>Ürün Aç</th>
+                        <th style={{ padding: '5px 8px', textAlign: 'center', color: '#fbbf24', fontWeight: 600, fontSize: 11 }}>Kapanış</th>
+                        <th style={{ padding: '5px 8px', textAlign: 'center', color: '#e2e8f0', fontWeight: 700, fontSize: 11 }}>Satılan</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {keys.map((k) => {
+                        const ac   = r.acilis?.[k]  ?? 0;
+                        const ua   = r.urun_ac?.[k] ?? 0;
+                        const kap  = r.kapanis?.[k] ?? 0;
+                        const sat  = r.satilan?.[k] ?? 0;
+                        const neg  = sat < 0;
+                        // Hiç hareket yoksa satırı gizle
+                        if (ac === 0 && ua === 0 && kap === 0) return null;
+                        return (
+                          <tr key={k} style={{ borderTop: '1px solid var(--border)' }}>
+                            <td style={{ padding: '5px 8px', color: 'var(--text2)' }}>{labels[k] || k}</td>
+                            <td className="mono" style={{ padding: '5px 8px', textAlign: 'center' }}>{ac}</td>
+                            <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', color: ua > 0 ? '#86efac' : 'var(--text3)' }}>{ua > 0 ? `+${ua}` : ua}</td>
+                            <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', color: kap > 0 ? '#fbbf24' : 'var(--text3)' }}>{kap > 0 ? `-${kap}` : '—'}</td>
+                            <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', fontWeight: 700, color: neg ? 'var(--red)' : sat > 0 ? '#86efac' : 'var(--text3)' }}>
+                              {neg ? sat : sat}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
