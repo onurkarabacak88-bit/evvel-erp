@@ -4941,7 +4941,7 @@ def ops_panel_ozet():
 
 
 @router.get("/hub-ozet")
-def ops_hub_ozet():
+def ops_hub_ozet(skip_alarms: bool = Query(False, description="True ise yalnızca sayılar; alarm satırları atlanır (proxy zaman aşımına karşı).")):
     """Hub sayıları + operasyon alarm satırları (tek istek, panel-ozet ile uyumlu)."""
     bugun = str(bugun_tr())
     log = logging.getLogger(__name__)
@@ -4952,11 +4952,14 @@ def ops_hub_ozet():
             except Exception:
                 log.exception("hub-ozet: panel_ozet_from_cur")
                 oz = _hub_ozet_fallback_panel()
-            try:
-                oz["alarm_satirlari"] = _hub_alarm_satirlari(cur, ozet=oz)
-            except Exception:
-                log.exception("hub-ozet: alarm_satirlari hesaplanamadi")
+            if skip_alarms:
                 oz["alarm_satirlari"] = []
+            else:
+                try:
+                    oz["alarm_satirlari"] = _hub_alarm_satirlari(cur, ozet=oz)
+                except Exception:
+                    log.exception("hub-ozet: alarm_satirlari hesaplanamadi")
+                    oz["alarm_satirlari"] = []
             return oz
     except Exception:
         # DATABASE_URL yok, pool hatası veya bağlantı reddi — arayüz tamamen kırılmasın

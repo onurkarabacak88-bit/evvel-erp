@@ -50,11 +50,13 @@ def _get_pool():
         with _pool_lock:
             if _pool is None:
                 dsn = _resolve_database_url()
+                _pg_ct = int(os.environ.get("PG_CONNECT_TIMEOUT", "15") or "15")
                 _pool = psycopg2.pool.ThreadedConnectionPool(
                     minconn=2,
                     maxconn=15,
                     dsn=dsn,
                     cursor_factory=psycopg2.extras.RealDictCursor,
+                    connect_timeout=max(3, min(_pg_ct, 120)),
                 )
     return _pool
 
@@ -82,6 +84,13 @@ def db():
                 "SET TIME ZONE Europe/Istanbul uygulanamadı; SQL tarihleri sunucu diliminde kalabilir.",
                 exc_info=True,
             )
+        # Uzun süren tek sorgu tüm worker'ı kilitlemesin (proxy 502 öncesi)
+        try:
+            _st_ms = int(os.environ.get("PG_STATEMENT_TIMEOUT_MS", "55000") or "55000")
+            if _st_ms > 0:
+                cur.execute("SET statement_timeout = %s", (_st_ms,))
+        except Exception:
+            pass
         yield conn, cur
         conn.commit()
     except Exception:
