@@ -1,12 +1,19 @@
-FROM node:20-slim AS frontend
+FROM node:20-bookworm-slim AS frontend
 
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-# Vite build (outDir=static, emptyOutDir) static/ içeriğini siler — kök HTML panelleri korunur
-RUN npm run build && \
-    (cp sube_panel.html static/ 2>/dev/null || true)
+
+# Küçük RAM’li builder’larda Rollup/Vite SIGKILL yerine çıkabilsin diye (Railway vb.)
+ENV NODE_OPTIONS=--max-old-space-size=4096
+
+# Vite build (outDir=static, emptyOutDir). Hata çıktısı için tek komut:
+RUN npm run build
+RUN test -f static/index.html
+
+# Kök HTML panelleri — build çıktısına kopyalanır (dosya yoksa sessiz geç)
+RUN cp -f sube_panel.html static/ 2>/dev/null || true
 
 FROM python:3.11-slim
 
