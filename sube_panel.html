@@ -1028,9 +1028,22 @@
 <div id="acilisOverlay" class="overlay" style="display:none">
   <div class="overlay-kart">
     <h2 id="acilisBaslik">🌅 Şube Henüz Açılmadı</h2>
-    <p id="acilisAcik">Kasa açıldı. Şube açılışını kaydedin.</p>
+    <p id="acilisAcik">Şube günlük kaydı için önce günlük kasa kilidi PIN ile açılmış olmalı; ardından şubeyi açın.</p>
     <div id="acilisErr" class="err-text"></div>
-    <button class="btn btn-success" id="acilisBtn" style="margin-top:14px">Şubeyi Aç</button>
+
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--muted)">1) Kasa kilidi</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.45">PIN alanı burada. «Önce kasa kilidini…» hatası alıyorsanız personeli seçip kilidi onaylayın.</p>
+      <div class="form-group"><label>Personel</label><select id="acilisKasaUser"></select></div>
+      <div class="form-group"><label>PIN</label><input id="acilisKasaPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>
+      <div id="acilisKasaErr" class="err-text"></div>
+      <button type="button" class="btn btn-primary" id="acilisKasaBtn" style="margin-top:6px">Kasa kilidini aç</button>
+    </div>
+
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--muted)">2) Şube kaydı</div>
+      <button class="btn btn-success" id="acilisBtn" type="button">Şubeyi Aç</button>
+    </div>
   </div>
 </div>
 
@@ -1668,7 +1681,7 @@ function fillSels() {
   var ids = ['mgPers','mnPers','stPers','stPin',
              'svPers','acPers','xrPers','puanPers',
              'dvPers1','dvPers2','kapPers','kapKimeTeslim','sipOzelPers','siparisOnayPers',
-             'kasaUser'];
+             'kasaUser','acilisKasaUser'];
   ids.forEach(function(id){
     var el = document.getElementById(id); if (!el || el.tagName !== 'SELECT') return;
     var cur = el.value;
@@ -2999,9 +3012,29 @@ document.getElementById('kasaBtn').onclick = async function(){
   this.disabled=false;
 };
 
-// ─── AÇILIŞ ──────────────────────────────────────────────────
+// ─── AÇILIŞ (şube kaydı — kasa PIN bu kartın 1. adımında) ──────
+document.getElementById('acilisKasaBtn').onclick = async function(){
+  var errEl = document.getElementById('acilisKasaErr');
+  var rootErr = document.getElementById('acilisErr');
+  if(errEl) errEl.textContent=''; if(rootErr) rootErr.textContent='';
+  var uid = selVal('acilisKasaUser');
+  var pin = inpVal('acilisKasaPin').replace(/\D/g,'').slice(0,4);
+  if (!uid) { if(errEl) errEl.textContent='Personel seçin'; return; }
+  if (pin.length!==4) { if(errEl) errEl.textContent='4 haneli PIN'; return; }
+  this.disabled=true;
+  try {
+    await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/kasa-kilit-ac',{method:'POST',body:{personel_id:uid,pin:pin}});
+    var pe = document.getElementById('acilisKasaPin'); if(pe) pe.value='';
+    await refresh();
+  } catch(e) {
+    if(errEl) errEl.textContent = e.message||'Hata';
+  }
+  this.disabled=false;
+};
+
 document.getElementById('acilisBtn').onclick = async function(){
   var errEl = document.getElementById('acilisErr'); if(errEl) errEl.textContent='';
+  var kasaInline = document.getElementById('acilisKasaErr'); if(kasaInline) kasaInline.textContent='';
   this.disabled=true;
   try {
     var body = {};
@@ -3011,7 +3044,11 @@ document.getElementById('acilisBtn').onclick = async function(){
     await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/acilis',{method:'POST',body:body});
     await refresh();
   } catch(e) {
-    if(errEl) errEl.textContent = e.message||'Hata';
+    var msg = e.message||'Hata';
+    if(errEl) errEl.textContent = msg;
+    if (msg.indexOf('kasa') !== -1 || msg.indexOf('Kasa') !== -1 || msg.indexOf('PIN') !== -1) {
+      if(errEl && errEl.textContent) errEl.textContent += ' Yukarıdaki «Kasa kilidini aç» adımını kullanın.';
+    }
   }
   this.disabled=false;
 };
@@ -3071,7 +3108,10 @@ async function refresh() {
       var ab = document.getElementById('acilisBaslik');
       var aa = document.getElementById('acilisAcik');
       if(ab) ab.textContent = '🌅 Şube Henüz Açılmadı';
-      if(aa) aa.textContent = 'Kasa kilidi açıldı. Şube açılışını kaydedin.';
+      if(aa) aa.textContent = 'Şube günlük kaydı için önce günlük kasa kilidi PIN ile açılmış olmalı; ardından şubeyi açın.';
+      fillSels();
+      var aks = document.getElementById('acilisKasaUser');
+      if (aks && data.kasa_acma && data.kasa_acma.personel_id) aks.value = String(data.kasa_acma.personel_id);
       return;
     }
     document.getElementById('acilisOverlay').style.display='none';
