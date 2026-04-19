@@ -167,7 +167,19 @@
     if (!res.ok) {
       let d = {};
       try { d = await res.json(); } catch (e) {}
-      throw new Error(d.detail || res.statusText || 'Hata');
+      var det = d.detail;
+      var msg =
+        typeof det === 'string'
+          ? det
+          : det && typeof det === 'object' && det.mesaj
+            ? det.mesaj
+            : typeof det === 'object' && det !== null
+              ? JSON.stringify(det)
+              : res.statusText || 'Hata';
+      var err = new Error(msg);
+      err.detail = det;
+      err.status = res.status;
+      throw err;
     }
     return res.json();
   }
@@ -305,6 +317,303 @@
       .replace(/&/g, '&amp;')
       .replace(/"/g, '&quot;')
       .replace(/</g, '&lt;');
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  var DEPO_KALEM_DURUM_OPTS = [
+    { id: 'bekliyor', label: 'Bekliyor' },
+    { id: 'var', label: 'Tam (var)' },
+    { id: 'yok', label: 'Yok' },
+    { id: 'kismi', label: 'Kısmi' },
+  ];
+
+  function collectDepoKalemlerFromRoot(root) {
+    var rows = root.querySelectorAll('[data-depo-kalem-row]');
+    var kalemler = [];
+    rows.forEach(function (row) {
+      var ist = parseInt(row.getAttribute('data-istenen') || '0', 10) || 0;
+      var durEl = row.querySelector('.depo-kdur');
+      var gonEl = row.querySelector('.depo-kgon');
+      var notEl = row.querySelector('.depo-knot');
+      kalemler.push({
+        urun_id: row.getAttribute('data-urun-id') || null,
+        urun_ad: row.getAttribute('data-urun-ad') || '',
+        istenen_adet: ist,
+        durum: durEl ? durEl.value : 'bekliyor',
+        gonderilen_adet: gonEl ? parseInt(gonEl.value || '0', 10) || 0 : 0,
+        not_aciklama: notEl ? String(notEl.value || '').trim() : '',
+      });
+    });
+    return kalemler;
+  }
+
+  function collectTeslimKabulFromRoot(root) {
+    var kabul = [];
+    if (!root) return kabul;
+    root.querySelectorAll('[data-teslim-kalem]').forEach(function (row) {
+      var kk = (row.getAttribute('data-kalem-kodu') || '').trim();
+      var kad = (row.getAttribute('data-kalem-adi') || '').trim();
+      var inp = row.querySelector('.teslim-kabul-adet');
+      var raw = inp ? String(inp.value || '').trim() : '0';
+      var n = parseInt(raw, 10);
+      if (isNaN(n) || n < 0) n = 0;
+      if (!kk) return;
+      kabul.push({ kalem_kodu: kk, kalem_adi: kad || kk, kabul_adet: n });
+    });
+    return kabul;
+  }
+
+  function fillDepoCardPersonelSelect() {
+    var ids = ['depoCardPersonel', 'siparisTeslimPersonel'];
+    ids.forEach(function (id) {
+      var ds = document.getElementById(id);
+      if (!ds) return;
+      ds.innerHTML = '';
+      (lastPanelPinKullanicilar || []).forEach(function (u) {
+        var o = document.createElement('option');
+        o.value = u.id;
+        o.textContent = u.ad || u.id;
+        ds.appendChild(o);
+      });
+    });
+  }
+
+  function buildDepoHazirlikHtml(paket) {
+    var list = (paket && paket.depo_hazirlik_talepleri) || [];
+    if (!list.length) return '';
+    var n = paket.depo_hazirlik_sayisi != null ? paket.depo_hazirlik_sayisi : list.length;
+    var h =
+      '<div class="card" style="border-color:#ea580c66;border-width:2px">' +
+      '<h2 style="font-size:1rem;margin:0 0 8px;color:#fdba74">📤 Depo hazırlık (' +
+      n +
+      ')</h2>';
+    h +=
+      '<p class="muted" style="margin:0 0 12px;font-size:0.82rem">Merkez bu siparişleri size yönlendirdi. Stok başka şubelerle paylaşılıyorsa veya eksikse kalem bazında <strong>kısmi adet</strong> veya <strong>yok</strong> seçin; kayıt merkez ve talep şubesiyle aynı kalır.</p>';
+    h +=
+      '<label style="margin-top:4px;font-size:0.8rem;color:#94a3b8">Depo işlemi — personel</label>' +
+      '<select id="depoCardPersonel"></select>';
+    h +=
+      '<label style="margin-top:10px;font-size:0.8rem;color:#94a3b8">PIN</label>' +
+      '<input type="password" id="depoCardPin" class="pin" maxlength="4" inputmode="numeric" autocomplete="one-time-code" />';
+
+    list.forEach(function (t) {
+      var talepAd = ((t.talep_sube_adi || '').trim() || 'Şube');
+      var km = (t.kalemler_ozet || [])
+        .map(function (x) {
+          return escapeHtml(x.urun_ad || 'Ürün') + ' ×' + (x.adet || 0);
+        })
+        .join(', ');
+      if (!km) km = '—';
+      var idK = t.id && String(t.id).length > 8 ? '…' + String(t.id).slice(-8) : t.id || '—';
+      var tid = String(t.id || '');
+      var canEdit = String(t.durum || '').toLowerCase() === 'hazirlaniyor';
+      h +=
+        '<div data-depo-talep-root="' +
+        escapeHtmlAttr(tid) +
+        '" style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #334155">';
+      h +=
+        '<div style="font-weight:600;margin-bottom:6px;color:#fed7aa">' +
+        escapeHtml(t.asama_metni || '—') +
+        '</div>';
+      h +=
+        '<div class="muted" style="font-size:0.8rem;margin-bottom:8px">Talep eden: <strong style="color:#fef3c7">' +
+        escapeHtml(talepAd) +
+        '</strong> · Tarih: ' +
+        escapeHtml(t.tarih || '') +
+        ' · No: ' +
+        escapeHtml(idK) +
+        '</div>';
+      if ((t.operasyon_yonlendirme_talimati || '').trim()) {
+        h +=
+          '<div style="margin:8px 0;padding:10px;background:#1e3a5f;border-radius:8px;border:1px solid #2563eb;font-size:0.85rem;white-space:pre-wrap;line-height:1.45">';
+        h +=
+          '<div style="color:#93c5fd;font-weight:600;margin-bottom:6px">Operasyon talimatı</div>';
+        h += escapeHtml(t.operasyon_yonlendirme_talimati) + '</div>';
+      }
+
+      if (!canEdit) {
+        h += '<div style="font-size:0.88rem">' + km + '</div>';
+        if (t.depo_sevkiyat_rapor_metni) {
+          h +=
+            '<div style="margin-top:10px;padding:10px;background:#0f172a;border-radius:8px;border:1px solid #475569;font-size:0.82rem;white-space:pre-wrap;line-height:1.45">';
+          if (t.depo_sevkiyat_rapor_uyari) {
+            h +=
+              '<div style="color:#fdba74;font-weight:600;margin-bottom:6px">📋 Depo raporu</div>';
+          } else {
+            h += '<div style="color:#86efac;font-weight:600;margin-bottom:6px">📋 Depo raporu</div>';
+          }
+          h += escapeHtml(t.depo_sevkiyat_rapor_metni) + '</div>';
+        }
+        if (t.sevkiyat_ts) {
+          h +=
+            '<div class="muted" style="font-size:0.75rem;margin-top:6px">Son güncelleme: ' +
+            escapeHtml(t.sevkiyat_ts) +
+            '</div>';
+        }
+        h += '</div>';
+        return;
+      }
+
+      var kalemler = t.kalem_duzenle || [];
+      kalemler.forEach(function (k) {
+        var uid = escapeHtmlAttr(k.urun_id || '');
+        var uadRaw = k.urun_ad || 'Ürün';
+        var ist = parseInt(k.istenen_adet || 0, 10) || 0;
+        var dur = (k.durum || 'bekliyor').toLowerCase();
+        var gon = k.gonderilen_adet != null ? parseInt(k.gonderilen_adet, 10) || 0 : ist;
+        h += '<div data-depo-kalem-row="1" data-urun-id="' + uid + '" data-urun-ad="' + escapeHtmlAttr(uadRaw) + '" data-istenen="' + ist + '" style="margin-bottom:10px;padding:10px;background:#0f172a;border-radius:8px;border:1px solid #334155">';
+        h += '<div style="font-size:0.85rem;margin-bottom:6px"><strong>' + escapeHtml(uadRaw) + '</strong> · İstenen: ' + ist + '</div>';
+        h += '<label style="font-size:0.72rem">Durum</label><select class="depo-kdur">';
+        DEPO_KALEM_DURUM_OPTS.forEach(function (o) {
+          h +=
+            '<option value="' +
+            escapeHtmlAttr(o.id) +
+            '"' +
+            (dur === o.id ? ' selected' : '') +
+            '>' +
+            escapeHtml(o.label) +
+            '</option>';
+        });
+        h += '</select>';
+        h +=
+          '<label style="margin-top:8px;font-size:0.72rem">Gönderilen adet</label><input type="number" class="depo-kgon" min="0" step="1" value="' +
+          gon +
+          '" />';
+        h +=
+          '<label style="margin-top:8px;font-size:0.72rem">Kalem notu</label><input type="text" class="depo-knot" value="' +
+          escapeHtmlAttr(k.not || '') +
+          '" placeholder="İsteğe bağlı" />';
+        h += '</div>';
+      });
+
+      h +=
+        '<label style="margin-top:6px;font-size:0.72rem">Sevkiyat notu (tüm sipariş)</label><textarea class="depo-sevk-not" rows="2" style="resize:vertical;min-height:44px">' +
+        escapeHtml(t.sevkiyat_notu || '') +
+        '</textarea>';
+      h +=
+        '<button type="button" class="secondary" style="margin-top:8px" data-depo-sevk data-talep-id="' +
+        escapeHtmlAttr(tid) +
+        '" data-gonderildi="0">Kaydet</button>';
+      h +=
+        '<button type="button" style="margin-top:8px" data-depo-sevk data-talep-id="' +
+        escapeHtmlAttr(tid) +
+        '" data-gonderildi="1">Gönderildi (çıkış)</button>';
+
+      if (t.sevkiyat_ts) {
+        h +=
+          '<div class="muted" style="font-size:0.75rem;margin-top:8px">Son güncelleme: ' +
+          escapeHtml(t.sevkiyat_ts) +
+          '</div>';
+      }
+      h += '</div>';
+    });
+    h += '</div>';
+    return h;
+  }
+
+  function buildSiparisAkisHtml(paket) {
+    var list = (paket && paket.talepler) || [];
+    var h = '<div class="card" style="border-color:#2563eb33"><h2 style="font-size:1rem;margin:0 0 8px">📦 Sipariş durumu</h2>';
+    h += '<p class="muted" style="margin:0 0 12px;font-size:0.82rem">Talep aynı kayıt üzerinden ilerler: merkez sırası → depo hazırlık → yola çıkış. "Merkez" ve "depo" aynı şube olabilir; önemli olan <strong>durum</strong> satırıdır.</p>';
+    var hasTeslim = list.some(function (t) {
+      return (t.teslim_bekleyen_kalemler || []).length > 0;
+    });
+    if (hasTeslim) {
+      h +=
+        '<div style="margin:0 0 14px;padding:12px;background:#0f172a;border-radius:8px;border:1px solid #334155">';
+      h += '<div style="font-size:0.82rem;color:#93c5fd;margin-bottom:8px"><strong>Paket teslim onayı</strong> — gönderilmiş ürünleri sayıp depoya işlemek için personel ve PIN girin.</div>';
+      h +=
+        '<label style="font-size:0.72rem;color:#94a3b8">Personel</label><select id="siparisTeslimPersonel"></select>';
+      h +=
+        '<label style="margin-top:8px;font-size:0.72rem;color:#94a3b8">PIN</label><input type="password" id="siparisTeslimPin" class="pin" maxlength="4" inputmode="numeric" autocomplete="one-time-code" />';
+      h += '</div>';
+    }
+    if (!list.length) {
+      h += '<p class="muted" style="margin:0">Açık katalog siparişi yok (veya tümü tamamlandı).</p></div>';
+      return h;
+    }
+    list.forEach(function (t) {
+      var depo = (t.hedef_depo_adi || '').trim() || '—';
+      var km = (t.kalemler_ozet || []).map(function (x) {
+        return escapeHtml(x.urun_ad || 'Ürün') + ' ×' + (x.adet || 0);
+      }).join(', ');
+      if (!km) km = '—';
+      var idK = (t.id && String(t.id).length > 8) ? ('…' + String(t.id).slice(-8)) : (t.id || '—');
+      h += '<div class="gorev" style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #334155">';
+      h += '<div style="font-weight:600;margin-bottom:6px;color:#93c5fd">' + escapeHtml(t.asama_metni || '—') + '</div>';
+      h += '<div class="muted" style="font-size:0.8rem;margin-bottom:4px">Tarih: ' + escapeHtml(t.tarih || '') + ' · No: ' + escapeHtml(idK) + '</div>';
+      h += '<div class="muted" style="font-size:0.8rem;margin-bottom:6px">Hazırlık / sevkiyat noktası: <strong style="color:#e2e8f0">' + escapeHtml(depo) + '</strong></div>';
+      if ((t.operasyon_yonlendirme_talimati || '').trim()) {
+        h +=
+          '<div style="margin:6px 0;padding:10px;background:#1e293b;border-radius:8px;border:1px solid #3b82f6;font-size:0.82rem;white-space:pre-wrap;line-height:1.45">';
+        h +=
+          '<div style="color:#93c5fd;font-weight:600;margin-bottom:4px">Operasyon talimatı</div>';
+        h += escapeHtml(t.operasyon_yonlendirme_talimati) + '</div>';
+      }
+      h += '<div style="font-size:0.88rem">' + km + '</div>';
+      if (t.depo_sevkiyat_rapor_metni) {
+        h +=
+          '<div style="margin-top:10px;padding:10px;background:#0f172a;border-radius:8px;border:1px solid #475569;font-size:0.82rem;white-space:pre-wrap;line-height:1.45">';
+        if (t.depo_sevkiyat_rapor_uyari) {
+          h +=
+            '<div style="color:#fdba74;font-weight:600;margin-bottom:6px">📋 Depo kalemleri (eksik/kısmi var)</div>';
+        } else {
+          h += '<div style="color:#86efac;font-weight:600;margin-bottom:6px">📋 Depo kalemleri özeti</div>';
+        }
+        h += escapeHtml(t.depo_sevkiyat_rapor_metni) + '</div>';
+      }
+      if (t.sevkiyat_ts) {
+        h += '<div class="muted" style="font-size:0.75rem;margin-top:6px">Son güncelleme: ' + escapeHtml(t.sevkiyat_ts) + '</div>';
+      }
+      var tb = t.teslim_bekleyen_kalemler || [];
+      if (tb.length) {
+        var tidStr = String(t.id || '');
+        h +=
+          '<div data-teslim-root="' +
+          escapeHtmlAttr(tidStr) +
+          '" style="margin-top:12px;padding:12px;background:#14532d33;border-radius:8px;border:1px solid #166534">';
+        h +=
+          '<div style="font-size:0.82rem;color:#86efac;margin-bottom:8px;font-weight:600">Teslim alınacak (yolda)</div>';
+        tb.forEach(function (row) {
+          var kk = String(row.kalem_kodu || '');
+          var ka = row.kalem_adi || kk || 'Ürün';
+          var sevk = parseInt(row.sevk_adet || 0, 10) || 0;
+          h +=
+            '<div style="margin-bottom:10px;padding:10px;background:#0f172a;border-radius:8px;border:1px solid #334155" data-teslim-kalem="1" data-kalem-kodu="' +
+            escapeHtmlAttr(kk) +
+            '" data-kalem-adi="' +
+            escapeHtmlAttr(ka) +
+            '">';
+          h +=
+            '<div style="font-size:0.85rem;margin-bottom:6px"><strong>' +
+            escapeHtml(ka) +
+            '</strong></div>';
+          h +=
+            '<div class="muted" style="font-size:0.78rem;margin-bottom:6px">Sevk edilen: ' +
+            sevk +
+            '</div>';
+          h +=
+            '<label style="font-size:0.72rem">Teslim aldığınız adet</label><input type="number" class="teslim-kabul-adet" min="0" step="1" value="' +
+            sevk +
+            '" />';
+          h += '</div>';
+        });
+        h +=
+          '<button type="button" style="margin-top:4px;width:100%" data-teslim-kabul data-talep-id="' +
+          escapeHtmlAttr(tidStr) +
+          '">Teslim alındı — depoya işle</button>';
+        h += '</div>';
+      }
+      h += '</div>';
+    });
+    h += '</div>';
+    return h;
   }
 
   function buildAcilisAuthFields(personelList) {
@@ -662,7 +971,7 @@
     });
   }
 
-  function renderMain(data) {
+  function renderMain(data, siparisPaket) {
     subeTitle.textContent = data.sube_adi || 'Şube';
     tarihEl.textContent = 'Tarih: ' + (data.tarih || '');
     var acilisBekliyor = (data.gorevler || []).some(function (g) {
@@ -678,6 +987,41 @@
     if (data.uyari) {
       html += '<p class="muted" style="margin:12px 0">' + data.uyari + '</p>';
     }
+    // Stok alarm uyarıları — depoda kritik seviyeye düşen ürünler
+    var alarmlar = data.stok_alarmlari || [];
+    if (alarmlar.length) {
+      html += '<div class="card" style="border-color:#f97316;border-width:2px">';
+      html += '<h2 style="font-size:1rem;margin:0 0 10px;color:#fdba74">⚠️ Depo Stok Uyarısı (' + alarmlar.length + ')</h2>';
+      html += '<p class="muted" style="margin:0 0 10px;font-size:0.82rem">Aşağıdaki ürünler minimum stok seviyesinin altına düştü. Sipariş vermeniz gerekebilir.</p>';
+      alarmlar.forEach(function (alarm) {
+        var seviye = (alarm.seviye || 'DIKKAT').toUpperCase();
+        var sevRenk = seviye === 'KRITIK' ? '#fca5a5' : '#fdba74';
+        html += '<div class="gorev" style="padding:10px 0;border-color:#431407">';
+        html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">';
+        html += '<span style="font-weight:700;color:' + sevRenk + '">' + escapeHtml(alarm.kalem_kodu || '—') + '</span>';
+        html += '<span style="font-size:0.72rem;background:#7c2d12;color:#fed7aa;padding:2px 6px;border-radius:4px">' + escapeHtml(seviye) + '</span>';
+        html += '</div>';
+        html += '<span class="muted" style="font-size:0.83rem">' + escapeHtml(alarm.mesaj || '') + '</span>';
+        if (alarm.tarih) {
+          html += '<div class="muted" style="font-size:0.75rem;margin-top:4px">' + escapeHtml(alarm.tarih) + '</div>';
+        }
+        html += '</div>';
+      });
+      html += '<p class="muted" style="margin:10px 0 0;font-size:0.82rem">Sipariş vermek için aşağıdaki "📦 Sipariş durumu" bölümüne bakın.</p>';
+      html += '</div>';
+    }
+    // Merkez mesajları okunmamışsa özet badge
+    if (data.okunmamis_mesaj_var) {
+      var mm = (data.merkez_mesajlar || []).filter(function(m){ return !m.okundu; });
+      html += '<div class="card" style="border-color:#3b82f6;border-width:2px">';
+      html += '<h2 style="font-size:1rem;margin:0 0 8px;color:#93c5fd">📬 Merkezden ' + mm.length + ' yeni mesaj</h2>';
+      mm.forEach(function(m) {
+        html += '<div class="gorev"><span class="muted" style="font-size:0.85rem">' + escapeHtml(m.mesaj || '') + '</span></div>';
+      });
+      html += '</div>';
+    }
+    html += buildDepoHazirlikHtml(siparisPaket || {});
+    html += buildSiparisAkisHtml(siparisPaket || { talepler: [] });
     var op = data.operasyon || {};
     var evList = op.events || op.events_ozet;
     if (evList && evList.length) {
@@ -692,7 +1036,109 @@
     html += '<p class="muted" style="text-align:center">Ciro ve gider kayıtları onay sürecine iletilir; bu ekranda yalnızca görev ve operasyon özetiniz görünür.</p>';
     html += buildPanelPinBilgiHtml(data);
     mainContent.innerHTML = html;
+    fillDepoCardPersonelSelect();
   }
+
+  appRoot.addEventListener('click', function (ev) {
+    var btnT = ev.target.closest('button[data-teslim-kabul]');
+    if (btnT && !btnT.disabled) {
+      var talepIdT = btnT.getAttribute('data-talep-id');
+      if (!talepIdT || !SUBE_ID) return;
+      var rootT = null;
+      appRoot.querySelectorAll('[data-teslim-root]').forEach(function (el) {
+        if (el.getAttribute('data-teslim-root') === talepIdT) rootT = el;
+      });
+      if (!rootT) return;
+      var pselT = document.getElementById('siparisTeslimPersonel');
+      var ppinT = document.getElementById('siparisTeslimPin');
+      var pidT = (pselT && pselT.value) || '';
+      var pinT = ((ppinT && ppinT.value) || '').replace(/\D/g, '').slice(0, 4);
+      if (!pidT) {
+        alert('Teslim onayı için personel seçin.');
+        return;
+      }
+      if (pinT.length !== 4) {
+        alert('4 haneli panel PIN girin.');
+        return;
+      }
+      var kabul = collectTeslimKabulFromRoot(rootT);
+      if (!kabul.length) {
+        alert('Teslim kalemi bulunamadı.');
+        return;
+      }
+      btnT.disabled = true;
+      api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-teslim-kabul', {
+        method: 'POST',
+        body: {
+          talep_id: talepIdT,
+          personel_id: pidT,
+          pin: pinT,
+          kabul: kabul,
+        },
+      })
+        .then(function () {
+          return refresh();
+        })
+        .catch(function (e) {
+          alert(e.message || 'Kayıt başarısız');
+        })
+        .finally(function () {
+          btnT.disabled = false;
+        });
+      return;
+    }
+
+    var btn = ev.target.closest('button[data-depo-sevk]');
+    if (!btn || btn.disabled) return;
+    var talepId = btn.getAttribute('data-talep-id');
+    if (!talepId || !SUBE_ID) return;
+    var root = null;
+    appRoot.querySelectorAll('[data-depo-talep-root]').forEach(function (el) {
+      if (el.getAttribute('data-depo-talep-root') === talepId) root = el;
+    });
+    if (!root) return;
+    var psel = document.getElementById('depoCardPersonel');
+    var ppin = document.getElementById('depoCardPin');
+    var pid = (psel && psel.value) || '';
+    var pin = ((ppin && ppin.value) || '').replace(/\D/g, '').slice(0, 4);
+    if (!pid) {
+      alert('Önce listeden personel seçin.');
+      return;
+    }
+    if (pin.length !== 4) {
+      alert('4 haneli panel PIN girin.');
+      return;
+    }
+    var kalemler = collectDepoKalemlerFromRoot(root);
+    if (!kalemler.length) {
+      alert('Bu siparişte düzenlenecek kalem bulunamadı.');
+      return;
+    }
+    var notEl = root.querySelector('.depo-sevk-not');
+    var sevkiyat_notu = notEl ? String(notEl.value || '').trim() : '';
+    var gonderildi = btn.getAttribute('data-gonderildi') === '1';
+    btn.disabled = true;
+    api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-depo-sevkiyat-kaydet', {
+      method: 'POST',
+      body: {
+        talep_id: talepId,
+        personel_id: pid,
+        pin: pin,
+        kalemler: kalemler,
+        sevkiyat_notu: sevkiyat_notu || null,
+        gonderildi: gonderildi,
+      },
+    })
+      .then(function () {
+        return refresh();
+      })
+      .catch(function (e) {
+        alert(e.message || 'Kayıt başarısız');
+      })
+      .finally(function () {
+        btn.disabled = false;
+      });
+  });
 
   function buildPanelPinBilgiHtml(data) {
     if (data.panel_kilitli) return '';
@@ -734,6 +1180,15 @@
     lastPersonelOperasyonSecim = data.personel_operasyon_secim || [];
     fillKasaUsers(data.panel_pin_kullanicilar);
 
+    var siparisPaket = { talepler: [], depo_hazirlik_talepleri: [] };
+    try {
+      siparisPaket = await api(
+        '/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-akisi?gun=21&limit=20'
+      );
+    } catch (e) {
+      siparisPaket = { talepler: [], depo_hazirlik_talepleri: [] };
+    }
+
     if (data.kasa_kilitli) {
       hideOperasyonZorunlu();
       kasaOverlay.style.display = 'flex';
@@ -748,7 +1203,7 @@
     if (!data.sube_acik) {
       if (aktif && aktif.tip === 'ACILIS' && (aktif.durum === 'bekliyor' || aktif.durum === 'gecikti')) {
         acilisOverlay.style.display = 'none';
-        renderMain(data);
+        renderMain(data, siparisPaket);
         if (!opAktifEvent || opAktifEvent.id !== aktif.id) {
           showOperasyonZorunlu(aktif, op);
         } else {
@@ -765,7 +1220,7 @@
     acilisOverlay.style.display = 'none';
 
     if (aktif && (aktif.durum === 'bekliyor' || aktif.durum === 'gecikti')) {
-      renderMain(data);
+      renderMain(data, siparisPaket);
       if (!opAktifEvent || opAktifEvent.id !== aktif.id) {
         showOperasyonZorunlu(aktif, op);
       } else {
@@ -776,7 +1231,7 @@
     }
 
     hideOperasyonZorunlu();
-    renderMain(data);
+    renderMain(data, siparisPaket);
   }
 
   kasaBtn.onclick = async function () {

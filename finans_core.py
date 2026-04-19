@@ -173,13 +173,16 @@ def kart_ekstre(cur, kart_id: str, kesim_gunu: int) -> dict:
 
 def kart_bu_ay_odenen(cur, kart_id: str) -> float:
     """
-    Bu ay odeme_plani üzerinden ödenen tutar — faiz tabanı için.
+    Bu takvim ayında karta yansıyan toplam ödeme (kart_hareketleri ODEME, aktif).
+    Panel asgari / borç ile aynı kaynak: plan dışı manuel ödemeler de dahil.
     """
     cur.execute("""
-        SELECT COALESCE(SUM(odenen_tutar), 0) AS odenen
-        FROM odeme_plani
-        WHERE kart_id = %s AND durum = 'odendi'
-        AND DATE_TRUNC('month', odeme_tarihi) = DATE_TRUNC('month', CURRENT_DATE)
+        SELECT COALESCE(SUM(tutar), 0) AS odenen
+        FROM kart_hareketleri
+        WHERE kart_id = %s
+          AND islem_turu = 'ODEME'
+          AND durum = 'aktif'
+          AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
     """, (kart_id,))
     return float(cur.fetchone()['odenen'])
 

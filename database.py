@@ -384,6 +384,11 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_operasyon_defter_sube_ts
             ON operasyon_defter (sube_id, olay_ts DESC)
         """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_operasyon_defter_ref_event
+            ON operasyon_defter (ref_event_id)
+            WHERE ref_event_id IS NOT NULL
+        """)
 
         # ── ŞUBE PANEL KULLANICI (PIN — vardiya devri vb.) ───────
         cur.execute("""
@@ -2159,3 +2164,169 @@ $$;
             "ON odeme_plani (tarih ASC) "
             "WHERE durum='bekliyor'"
         )
+
+        # ══════════════════════════════════════════════════════════
+        # STOK DİSİPLİN MOTORU — Mevcut tablolar genişletildi
+        # Yeni tablo sadece gerçekten yeni kavramlar için eklendi.
+        # ══════════════════════════════════════════════════════════
+
+        # ── merkez_stok_kart → canlı stok alanları ────────────
+        # Duplike tablo (merkez_depo_stok) yerine mevcut tabloya kolon eklendi.
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='merkez_stok_kart' AND column_name='mevcut_adet') THEN
+                    ALTER TABLE merkez_stok_kart
+                        ADD COLUMN mevcut_adet  INT NOT NULL DEFAULT 0,
+                        ADD COLUMN rezerve_adet INT NOT NULL DEFAULT 0,
+                        ADD COLUMN min_stok     INT NOT NULL DEFAULT 0;
+                END IF;
+            END $$;
+        """)
+
+        # ── siparis_talep → tahsis alanları ───────────────────
+        # Ayrı siparis_tahsis tablosu yerine mevcut kalem_durumlari JSONB
+        # kullanılır; sadece tahsis meta kolonları eklendi.
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='siparis_talep' AND column_name='tahsis_yapan_id') THEN
+                    ALTER TABLE siparis_talep
+                        ADD COLUMN tahsis_yapan_id TEXT,
+                        ADD COLUMN tahsis_yapan_ad TEXT,
+                        ADD COLUMN tahsis_ts       TIMESTAMPTZ,
+                        ADD COLUMN tahsis_durum    TEXT;
+                END IF;
+            END $$;
+        """)
+
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='siparis_talep' AND column_name='tahsis_kaynak_depo_sube_id') THEN
+                    ALTER TABLE siparis_talep
+                        ADD COLUMN tahsis_kaynak_depo_sube_id TEXT;
+                END IF;
+            END $$;
+        """)
+
+        # ── sube_operasyon_uyari → davranış kuralı alanları ───
+        # Ayrı sube_davranis_uyari tablosu yerine mevcut uyarı tablosu genişletildi.
+        # tip = 'DAVRANIS' olan satırlar disiplin uyarısıdır.
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='siparis_talep' AND column_name='depo_sevkiyat_rapor_metni') THEN
+                    ALTER TABLE siparis_talep
+                        ADD COLUMN depo_sevkiyat_rapor_metni  TEXT,
+                        ADD COLUMN depo_sevkiyat_rapor_ts     TIMESTAMPTZ,
+                        ADD COLUMN depo_sevkiyat_rapor_uyari  BOOLEAN NOT NULL DEFAULT FALSE;
+                END IF;
+            END $$;
+        """)
+
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='siparis_talep' AND column_name='operasyon_yonlendirme_talimati') THEN
+                    ALTER TABLE siparis_talep
+                        ADD COLUMN operasyon_yonlendirme_talimati TEXT;
+                END IF;
+            END $$;
+        """)
+
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_operasyon_uyari' AND column_name='kural') THEN
+                    ALTER TABLE sube_operasyon_uyari
+                        ADD COLUMN kural            TEXT,
+                        ADD COLUMN puan             INT NOT NULL DEFAULT 0,
+                        ADD COLUMN siparis_talep_id TEXT REFERENCES siparis_talep(id) ON DELETE SET NULL,
+                        ADD COLUMN kalem_kodu       TEXT,
+                        ADD COLUMN detay            JSONB;
+                END IF;
+            END $$;
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sube_op_uyari_kural
+            ON sube_operasyon_uyari (sube_id, kural, tarih DESC)
+            WHERE kural IS NOT NULL
+        """)
+
+        # ── YENİ: Şube depo canlı stoku ───────────────────────
+        # Gerçekten yeni kavram — mevcut hiçbir tabloda şube depo stoğu yok.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_depo_stok (
+                id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                sube_id      TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                kalem_kodu   TEXT NOT NULL,
+                kalem_adi    TEXT NOT NULL,
+                mevcut_adet  INT  NOT NULL DEFAULT 0 CHECK (mevcut_adet >= 0),
+                rezerve_adet INT  NOT NULL DEFAULT 0,
+                min_stok     INT  NOT NULL DEFAULT 0,
+                guncelleme   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (sube_id, kalem_kodu)
+            )
+        """)
+        # Eski kurulumlarda CREATE TABLE daha önce çalıştıysa rezerve_adet eksik olabilir
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='sube_depo_stok' AND column_name='rezerve_adet') THEN
+                    ALTER TABLE sube_depo_stok
+                        ADD COLUMN rezerve_adet INT NOT NULL DEFAULT 0;
+                END IF;
+            END $$;
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sube_depo_stok_sube
+            ON sube_depo_stok (sube_id, kalem_kodu)
+        """)
+
+        # ── YENİ: Yoldaki stok ────────────────────────────────
+        # Gerçekten yeni kavram — sevk edildi ama şube henüz kabul etmedi.
+        # merkez_stok_sevk sadece merkez perspektifini tutar, bu transit sürecini tutar.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS stok_yolda (
+                id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                siparis_talep_id  TEXT REFERENCES siparis_talep(id) ON DELETE SET NULL,
+                sube_id           TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                kalem_kodu        TEXT NOT NULL,
+                kalem_adi         TEXT NOT NULL,
+                sevk_adet         INT  NOT NULL DEFAULT 0,
+                sevk_ts           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                kabul_ts          TIMESTAMPTZ,
+                kabul_adet        INT,
+                durum             TEXT NOT NULL DEFAULT 'yolda',
+                olusturma         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_stok_yolda_sube_durum
+            ON stok_yolda (sube_id, durum, sevk_ts DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_stok_yolda_talep
+            ON stok_yolda (siparis_talep_id)
+        """)
+
+        # ── YENİ: Şube aylık skor ─────────────────────────────
+        # Gerçekten yeni kavram — aylık davranış puanı özeti.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_skor (
+                id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                sube_id      TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                yil          INT  NOT NULL,
+                ay           INT  NOT NULL,
+                toplam_puan  INT  NOT NULL DEFAULT 0,
+                durum        TEXT NOT NULL DEFAULT 'normal',
+                detay        JSONB,
+                guncelleme   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (sube_id, yil, ay)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sube_skor_sube_donem
+            ON sube_skor (sube_id, yil DESC, ay DESC)
+        """)

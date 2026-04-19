@@ -754,6 +754,11 @@ def uyari_motoru():
                 except Exception:
                     bu_ay_odenen = 0.0
 
+            asgari_kalan = max(0.0, asgari - bu_ay_odenen)
+            # Kredi kartı asgari bu ay kapanmışsa (Kart Hareketleri / plan) panel uyarı listesine alma
+            if o.get("kart_id") and asgari > 0 and bu_ay_odenen >= asgari * 0.999:
+                continue
+
             if gun_farki < 0:
                 seviye = "KRITIK"
                 renk = "KIRMIZI"
@@ -761,7 +766,7 @@ def uyari_motoru():
                 blink = True
             elif gun_farki == 0:
                 if bu_ay_odenen >= asgari:
-                    # Asgari ödendi — kalan borç için daha yumuşak mesaj
+                    # Üstte continue ile zaten elenir; güvenlik için BILGI dalı
                     seviye = "BILGI"
                     renk = "SARI"
                     mesaj = (
@@ -772,7 +777,10 @@ def uyari_motoru():
                 else:
                     seviye = "KRITIK"
                     renk = "KIRMIZI"
-                    mesaj = "🔴 BUGÜN SON GÜN! Henüz asgari tutar ödenmemiş görünüyor."
+                    mesaj = (
+                        "🔴 BUGÜN SON GÜN! Asgari için kalan: "
+                        f"{fmt(asgari_kalan)} (bu ay ödenen {fmt(bu_ay_odenen)} / asgari {fmt(asgari)})"
+                    )
                     blink = True
             elif gun_farki <= 2:
                 seviye = "UYARI"
@@ -793,12 +801,14 @@ def uyari_motoru():
                 "tarih": str(o['tarih']),
                 "tutar": tutar,
                 "asgari": asgari,
+                "asgari_kalan": asgari_kalan,
                 "bu_ay_odenen": bu_ay_odenen,
                 "gun_farki": gun_farki,
                 "seviye": seviye,
                 "renk": renk,
                 "mesaj": mesaj,
                 "blink": blink,
+                "kart_id": str(o["kart_id"]) if o.get("kart_id") else None,
                 "kart_adi": o['kart_adi'],
                 "banka": o['banka'],
                 "kaynak_tablo": o.get("kaynak_tablo"),
@@ -1002,51 +1012,76 @@ def finans_ozet_motoru():
         # ── BUGÜN VE GECİKMİŞ ÖDEMELER (gerçek veri — kırmızı alan) ──
         cur.execute("""
             SELECT id, aciklama, tarih::TEXT, odenecek_tutar, asgari_tutar,
-                   kaynak_tablo, kaynak_id
+                   kaynak_tablo, kaynak_id, kart_id
             FROM odeme_plani
             WHERE durum IN ('bekliyor','onay_bekliyor')
             AND tarih <= CURRENT_DATE
             ORDER BY tarih ASC
         """)
-        bugun_odemeler = [
-            {
+        bugun_odemeler = []
+        for r in cur.fetchall():
+            asg_f = float(r['asgari_tutar'] or r['odenecek_tutar'] * _asgari_oran())
+            kid = r.get('kart_id')
+            if kid:
+                try:
+                    if asg_f > 0 and float(kart_bu_ay_odenen(cur, str(kid))) >= asg_f * 0.999:
+                        continue
+                except Exception:
+                    pass
+            row_bo = {
                 'odeme_id': str(r['id']),
                 'aciklama': r['aciklama'],
                 'tarih': r['tarih'],
                 'tutar': float(r['odenecek_tutar']),
-                'asgari': float(r['asgari_tutar'] or r['odenecek_tutar'] * _asgari_oran()),
+                'asgari': asg_f,
                 'gun_farki': (date.fromisoformat(r['tarih']) - bugun).days,
                 'blink': True,
                 'seviye': 'KRITIK',
                 'kaynak_tablo': r['kaynak_tablo'] or '',
                 'kaynak_id': str(r['kaynak_id']) if r['kaynak_id'] else None,
+                'kart_id': str(kid) if kid else None,
             }
-            for r in cur.fetchall()
-        ]
+            if kid:
+                try:
+                    ob = float(kart_bu_ay_odenen(cur, str(kid)))
+                    row_bo['bu_ay_odenen'] = ob
+                    row_bo['asgari_kalan'] = max(0.0, asg_f - ob)
+                except Exception:
+                    row_bo['bu_ay_odenen'] = 0.0
+                    row_bo['asgari_kalan'] = asg_f
+            bugun_odemeler.append(row_bo)
 
         # ── YAKLAŞAN ÖDEMELER (yarın+ 30 gün — mavi bant) ──────
         cur.execute("""
             SELECT id, aciklama, tarih::TEXT, odenecek_tutar, asgari_tutar,
-                   kaynak_tablo, kaynak_id
+                   kaynak_tablo, kaynak_id, kart_id
             FROM odeme_plani
             WHERE durum IN ('bekliyor','onay_bekliyor')
             AND tarih BETWEEN CURRENT_DATE + INTERVAL '1 day'
                           AND CURRENT_DATE + INTERVAL '30 days'
             ORDER BY tarih ASC
         """)
-        yaklasan_odemeler = [
-            {
+        yaklasan_odemeler = []
+        for r in cur.fetchall():
+            asg_f = float(r['asgari_tutar'] or r['odenecek_tutar'] * _asgari_oran())
+            kid = r.get('kart_id')
+            if kid:
+                try:
+                    if asg_f > 0 and float(kart_bu_ay_odenen(cur, str(kid))) >= asg_f * 0.999:
+                        continue
+                except Exception:
+                    pass
+            yaklasan_odemeler.append({
                 'odeme_id': str(r['id']),
                 'aciklama': r['aciklama'],
                 'tarih': r['tarih'],
                 'tutar': float(r['odenecek_tutar']),
-                'asgari': float(r['asgari_tutar'] or r['odenecek_tutar'] * _asgari_oran()),
+                'asgari': asg_f,
                 'gun_farki': (date.fromisoformat(r['tarih']) - bugun).days,
                 'kaynak_tablo': r['kaynak_tablo'] or '',
                 'kaynak_id': str(r['kaynak_id']) if r['kaynak_id'] else None,
-            }
-            for r in cur.fetchall()
-        ]
+                'kart_id': str(kid) if kid else None,
+            })
 
         # ── DEĞİŞKEN GİDER HATIRLATMALARI — kasa etkilenmez, sadece uyarı ──
         cur.execute("""

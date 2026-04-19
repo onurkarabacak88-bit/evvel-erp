@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 import uuid, os, json, pathlib, calendar, threading
 from collections import defaultdict
 from database import db, init_db
+from operasyon_stok_motor import eksik_kullanim_kontrol, tum_subeler_skor_guncelle
 from tr_saat import bugun_tr, dt_now_tr_naive
 from kasa_service import (
     audit,
@@ -151,6 +152,16 @@ def _gece_yarisi_scheduler():
                         logger.warning(f"⏰ Scheduler: {sorunlu} kasa anomali tespit edildi")
             except Exception as e:
                 logger.warning(f"⏰ Scheduler anomali kontrol hatası: {e}")
+
+            try:
+                with db() as (conn, cur):
+                    eksik_kullanim_kontrol(cur)
+                    sk = tum_subeler_skor_guncelle(cur)
+                    conn.commit()
+                if sk:
+                    logger.info(f"⏰ Scheduler: eksik kullanım + şube skor güncellendi ({len(sk)} şube)")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler stok davranış / skor hatası: {e}")
 
         except Exception as e:
             logger.error(f"⏰ Scheduler genel hata: {e}")
