@@ -2567,6 +2567,8 @@ export default function OperasyonMerkezi() {
             </h3>
             <p style={{ fontSize: 12, color: 'var(--text3)', marginTop: 0, marginBottom: 10 }}>
               Şubeden gelen siparişler bu alanda ayrı listelenir. Ürünler tek tek görünür; sevkiyata gönderme akışı aynı şekilde devam eder.
+              {' '}
+              <strong>Bekleyen katalog talepleri</strong>, üstteki ay seçiminden bağımsızdır (hub’daki sipariş sayısıyla aynı kaynak).
             </p>
             {(sipTalepPaket?.siparis_talepleri || []).length === 0 ? (
               <div className="empty"><p>Bekleyen şube sipariş talebi yok</p></div>
