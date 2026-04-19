@@ -3530,15 +3530,7 @@ def _hub_alarm_satirlari(cur: Any, *, ozet: Optional[Dict[str, Any]] = None, lim
         })
 
     oz = ozet or {}
-    if (oz.get("onay_bekleyen") or 0) > 0:
-        satirlar.append({
-            "tip": "onay_kuyrugu",
-            "id": "ozet:onay",
-            "seviye": "uyari",
-            "baslik": "Onay kuyruğu",
-            "ozet": f"{oz['onay_bekleyen']} kayıt bekliyor.",
-            "meta": {"hedef_sekme": "onay"},
-        })
+    # Genel onay kuyruğu sayısı hub alarm satırlarında tekrarlanmasın (ayrı modül / API üzerinden).
     if (oz.get("fis_bekleyen") or 0) > 0:
         satirlar.append({
             "tip": "fis_bekleyen",
