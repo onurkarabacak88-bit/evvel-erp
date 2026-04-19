@@ -8,6 +8,10 @@ COPY package.json package-lock.json ./
 RUN NODE_ENV=development npm ci
 COPY . .
 
+# Önceki build çıktılarını temizle — taahhüt edilmiş static/ veya lokal artıklar
+# Vite’ın emptyOutDir:true ayarına rağmen eski index.html’in yeniden taranmasını önler.
+RUN rm -rf static/ dist/
+
 # Küçük RAM’li builder’larda Rollup/Vite SIGKILL yerine çıkabilsin diye (Railway vb.)
 ENV NODE_OPTIONS=--max-old-space-size=4096
 
