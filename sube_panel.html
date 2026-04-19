@@ -5,8 +5,40 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Şube paneli</title>
   <style>
+    /* ── Şube paneli tasarım dili (tek yerden tema) ─────────────────── */
+    :root {
+      --sp-bg: #0c1222;
+      --sp-bg-soft: #111b2e;
+      --sp-card: #141d31;
+      --sp-card-hover: #182237;
+      --sp-border: rgba(148, 163, 184, 0.14);
+      --sp-text: #e8edf5;
+      --sp-muted: #94a3b8;
+      --sp-accent: #3b82f6;
+      --sp-accent-glow: rgba(59, 130, 246, 0.12);
+      --sp-info-border: rgba(59, 130, 246, 0.35);
+      --sp-warn: #ea580c;
+      --sp-warn-soft: rgba(249, 115, 22, 0.35);
+      --sp-danger: #ef4444;
+      --sp-radius: 14px;
+      --sp-radius-sm: 10px;
+      --sp-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --sp-shadow: 0 8px 32px rgba(0, 0, 0, 0.38);
+      --sp-ring: 0 0 0 3px rgba(59, 130, 246, 0.35);
+    }
     * { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      font-family: var(--sp-font);
+      margin: 0;
+      color: var(--sp-text);
+      min-height: 100vh;
+      line-height: 1.45;
+      background:
+        radial-gradient(ellipse 120% 80% at 50% -30%, rgba(59, 130, 246, 0.14), transparent 55%),
+        radial-gradient(ellipse 90% 50% at 100% 50%, rgba(249, 115, 22, 0.06), transparent 45%),
+        var(--sp-bg);
+    }
     body.evvel-shake { animation: evvelShake 0.35s ease-in-out 2; }
     @keyframes evvelShake {
       0%, 100% { transform: translateX(0); }
@@ -15,17 +47,73 @@
       60% { transform: translateX(-4px); }
       80% { transform: translateX(4px); }
     }
-    .wrap { max-width: 520px; margin: 0 auto; padding: 20px; }
+    .wrap { max-width: 520px; margin: 0 auto; padding: 22px 18px 28px; }
+    #appRoot > h1 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin: 0 0 6px;
+      color: var(--sp-text);
+    }
+    #tarihEl.muted { margin-bottom: 18px; }
     h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }
-    .muted { color: #94a3b8; font-size: 0.875rem; margin-bottom: 20px; }
-    .card { background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 16px; border: 1px solid #334155; }
-    label { display: block; font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; }
-    select, input, button { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; font-size: 1rem; }
-    button { background: #3b82f6; border: none; font-weight: 600; cursor: pointer; margin-top: 12px; }
+    .muted { color: var(--sp-muted); font-size: 0.875rem; margin-bottom: 20px; }
+    .card {
+      background: var(--sp-card);
+      border-radius: var(--sp-radius);
+      padding: 18px 18px;
+      margin-bottom: 14px;
+      border: 1px solid var(--sp-border);
+      box-shadow: var(--sp-shadow);
+    }
+    .card--warn { border-color: var(--sp-warn-soft); border-width: 2px; padding: 17px 17px; }
+    .card--info { border-color: var(--sp-info-border); border-width: 2px; padding: 17px 17px; }
+    .sp-title {
+      font-size: 1rem;
+      font-weight: 600;
+      margin: 0 0 10px;
+      letter-spacing: -0.01em;
+      color: var(--sp-text);
+    }
+    .sp-title--warn { color: #fdba74; }
+    .sp-title--info { color: #93c5fd; }
+    code {
+      font-size: 0.85em;
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid var(--sp-border);
+    }
+    label { display: block; font-size: 0.8rem; color: var(--sp-muted); margin-bottom: 6px; }
+    select, input, textarea, button {
+      width: 100%;
+      padding: 11px 12px;
+      border-radius: var(--sp-radius-sm);
+      border: 1px solid rgba(71, 85, 105, 0.75);
+      background: var(--sp-bg-soft);
+      color: #f8fafc;
+      font-size: 1rem;
+      font-family: inherit;
+    }
+    select:focus, input:focus, textarea:focus, button:focus-visible {
+      outline: none;
+      border-color: var(--sp-accent);
+      box-shadow: var(--sp-ring);
+    }
+    button {
+      background: var(--sp-accent);
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 12px;
+      transition: background 0.15s ease, transform 0.08s ease;
+    }
+    button:active:not(:disabled) { transform: scale(0.99); }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     button.secondary { background: #475569; }
-    .err { color: #fca5a5; font-size: 0.875rem; margin-top: 8px; }
-    .overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.92); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+    button.secondary:hover:not(:disabled) { background: #52647a; }
+    .err { color: #fecaca; font-size: 0.875rem; margin-top: 8px; }
+    .overlay { position: fixed; inset: 0; background: rgba(8, 12, 22, 0.94); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
     .overlay-inner { width: 100%; max-width: 400px; }
     .overlay.operasyon-zorunlu { z-index: 9500; background: rgba(15,23,42,0.97); }
     .overlay.operasyon-zorunlu .overlay-inner { max-width: 440px; }
@@ -34,7 +122,14 @@
     .pin { letter-spacing: 0.35em; text-align: center; font-size: 1.25rem; }
     .gorev { padding: 10px 0; border-bottom: 1px solid #334155; font-size: 0.9rem; }
     .gorev.done { opacity: 0.55; }
-    .api-setup { background: #422006; border-color: #92400e; padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 0.85rem; }
+    .api-setup {
+      background: linear-gradient(145deg, #422006 0%, #291506 100%);
+      border: 1px solid #92400e;
+      padding: 14px;
+      border-radius: var(--sp-radius-sm);
+      margin-bottom: 16px;
+      font-size: 0.85rem;
+    }
     .api-setup input { margin-top: 8px; }
     .op-badge { display: inline-block; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px; }
     .op-badge.bekliyor { background: #334155; color: #e2e8f0; }
@@ -389,8 +484,8 @@
     if (!list.length) return '';
     var n = paket.depo_hazirlik_sayisi != null ? paket.depo_hazirlik_sayisi : list.length;
     var h =
-      '<div class="card" style="border-color:#ea580c66;border-width:2px">' +
-      '<h2 style="font-size:1rem;margin:0 0 8px;color:#fdba74">📤 Depo hazırlık (' +
+      '<div class="card card--warn">' +
+      '<h2 class="sp-title sp-title--warn">📤 Depo hazırlık (' +
       n +
       ')</h2>';
     h +=
@@ -519,7 +614,9 @@
 
   function buildSiparisAkisHtml(paket) {
     var list = (paket && paket.talepler) || [];
-    var h = '<div class="card" style="border-color:#2563eb33"><h2 style="font-size:1rem;margin:0 0 8px">📦 Sipariş durumu</h2>';
+    // Aktif sipariş yoksa kartı hiç gösterme — boş "sipariş yok" mesajı panel'i gereksiz uzatır
+    if (!list.length) return '';
+    var h = '<div class="card card--info"><h2 class="sp-title sp-title--info">📦 Sipariş durumu</h2>';
     h += '<p class="muted" style="margin:0 0 12px;font-size:0.82rem">Talep aynı kayıt üzerinden ilerler: merkez sırası → depo hazırlık → yola çıkış. "Merkez" ve "depo" aynı şube olabilir; önemli olan <strong>durum</strong> satırıdır.</p>';
     var hasTeslim = list.some(function (t) {
       return (t.teslim_bekleyen_kalemler || []).length > 0;
@@ -533,10 +630,6 @@
       h +=
         '<label style="margin-top:8px;font-size:0.72rem;color:#94a3b8">PIN</label><input type="password" id="siparisTeslimPin" class="pin" maxlength="4" inputmode="numeric" autocomplete="one-time-code" />';
       h += '</div>';
-    }
-    if (!list.length) {
-      h += '<p class="muted" style="margin:0">Açık katalog siparişi yok (veya tümü tamamlandı).</p></div>';
-      return h;
     }
     list.forEach(function (t) {
       var depo = (t.hedef_depo_adi || '').trim() || '—';
@@ -978,7 +1071,7 @@
       return g && g.id === 'acilis' && !g.tamamlandi;
     });
     var gorevCardCls = 'card' + (acilisBekliyor ? ' card--pulse-cta' : '');
-    var html = '<div class="' + gorevCardCls + '"><h2 style="font-size:1rem;margin:0 0 12px">Günlük görevler</h2>';
+    var html = '<div class="' + gorevCardCls + '"><h2 class="sp-title">Günlük görevler</h2>';
     (data.gorevler || []).forEach(function (g) {
       var cls = g.tamamlandi ? 'gorev done' : 'gorev';
       html += '<div class="' + cls + '"><strong>' + (g.baslik || '') + '</strong><br/><span class="muted">' + (g.aciklama || '') + '</span></div>';
@@ -990,8 +1083,8 @@
     // Stok alarm uyarıları — depoda kritik seviyeye düşen ürünler
     var alarmlar = data.stok_alarmlari || [];
     if (alarmlar.length) {
-      html += '<div class="card" style="border-color:#f97316;border-width:2px">';
-      html += '<h2 style="font-size:1rem;margin:0 0 10px;color:#fdba74">⚠️ Depo Stok Uyarısı (' + alarmlar.length + ')</h2>';
+      html += '<div class="card card--warn">';
+      html += '<h2 class="sp-title sp-title--warn">⚠️ Depo Stok Uyarısı (' + alarmlar.length + ')</h2>';
       html += '<p class="muted" style="margin:0 0 10px;font-size:0.82rem">Aşağıdaki ürünler minimum stok seviyesinin altına düştü. Sipariş vermeniz gerekebilir.</p>';
       alarmlar.forEach(function (alarm) {
         var seviye = (alarm.seviye || 'DIKKAT').toUpperCase();
@@ -1013,8 +1106,8 @@
     // Merkez mesajları okunmamışsa özet badge
     if (data.okunmamis_mesaj_var) {
       var mm = (data.merkez_mesajlar || []).filter(function(m){ return !m.okundu; });
-      html += '<div class="card" style="border-color:#3b82f6;border-width:2px">';
-      html += '<h2 style="font-size:1rem;margin:0 0 8px;color:#93c5fd">📬 Merkezden ' + mm.length + ' yeni mesaj</h2>';
+      html += '<div class="card card--info">';
+      html += '<h2 class="sp-title sp-title--info">📬 Merkezden ' + mm.length + ' yeni mesaj</h2>';
       mm.forEach(function(m) {
         html += '<div class="gorev"><span class="muted" style="font-size:0.85rem">' + escapeHtml(m.mesaj || '') + '</span></div>';
       });
@@ -1025,7 +1118,7 @@
     var op = data.operasyon || {};
     var evList = op.events || op.events_ozet;
     if (evList && evList.length) {
-      html += '<div class="card"><h2 style="font-size:1rem;margin:0 0 10px">Bugünkü operasyon</h2>';
+      html += '<div class="card"><h2 class="sp-title">Bugünkü operasyon</h2>';
       html += '<p class="muted" style="margin:0 0 8px">Sunucu saati: ' + (op.sunucu_saati || '') + '</p>';
       evList.forEach(function (ev) {
         html += '<div class="gorev"><strong>' + ev.tip + '</strong> · ' + (ev.durum || '') +
