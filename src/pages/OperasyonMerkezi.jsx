@@ -575,6 +575,8 @@ export default function OperasyonMerkezi() {
   const [opsOzet, setOpsOzet] = useState(null);
   /** hub-ozet alarm kartı genişletilmiş satır id */
   const [hubAlarmAcikId, setHubAlarmAcikId] = useState(null);
+  /** Hub: gelen sipariş kartında operasyon özet satırları (alarm listesi) */
+  const [hubOperasyonDetayAcik, setHubOperasyonDetayAcik] = useState(false);
 
   /** Yeni sipariş toast: gördüğümüz talep id'leri (tekrar uyarı yok) */
   const hubSiparisGorulduRef = useRef(new Set());
@@ -598,6 +600,7 @@ export default function OperasyonMerkezi() {
       sipAlarms.forEach((a) => seen.add(String(a.meta.talep_id)));
       hubOzetIlkYuklemeRef.current = false;
       hubOncekiBekleyenSayiRef.current = bek;
+      if (bek > 0) setHubOperasyonDetayAcik(true);
       return;
     }
 
@@ -618,6 +621,13 @@ export default function OperasyonMerkezi() {
         `📬 Bekleyen sipariş sayısı arttı (${hubOncekiBekleyenSayiRef.current} → ${bek}).`,
         'green',
       );
+    }
+    if (
+      hubOncekiBekleyenSayiRef.current !== null
+      && bek > 0
+      && hubOncekiBekleyenSayiRef.current === 0
+    ) {
+      setHubOperasyonDetayAcik(true);
     }
     hubOncekiBekleyenSayiRef.current = bek;
   }, [toast]);
@@ -1238,191 +1248,228 @@ export default function OperasyonMerkezi() {
 
       {!opsMerkezPencere && (
         <>
-          {(opsOzet?.alarm_satirlari || []).length > 0 && (
-            <section className="card" style={{ padding: '14px 16px', marginBottom: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>📌 Operasyon özeti</h3>
-                  <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text3)' }}>
-                    Bekleyen işler ve sipariş stok uyarıları — tıklayıp detay veya ilgili modüle geçin.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => api('/ops/hub-ozet').then((r) => hubOzetIsle(r)).catch(() => {})}
-                >
-                  ↻ Özet yenile
-                </button>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {(opsOzet.alarm_satirlari || []).map((a) => {
-                  const acik = hubAlarmAcikId === a.id;
-                  const sev = a.seviye === 'kritik' ? 'var(--red)' : a.seviye === 'uyari' ? 'var(--yellow)' : 'var(--text3)';
-                  const bg = a.seviye === 'kritik' ? 'rgba(220,50,50,0.08)' : a.seviye === 'uyari' ? 'rgba(220,160,0,0.07)' : 'var(--bg3)';
-                  return (
-                    <div
-                      key={a.id}
-                      style={{
-                        border: `1px solid ${sev}44`,
-                        borderLeft: `4px solid ${sev}`,
-                        borderRadius: 8,
-                        background: bg,
-                        overflow: 'hidden',
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setHubAlarmAcikId(acik ? null : a.id)}
-                        style={{
-                          width: '100%', textAlign: 'left', padding: '10px 12px',
-                          background: 'transparent', border: 'none', cursor: 'pointer',
-                          color: 'var(--text1)',
-                        }}
-                      >
-                        <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>{a.baslik}</div>
-                        <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.45 }}>{a.ozet}</div>
-                        <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
-                          {acik ? '▲ Daralt' : '▼ Detay'}
-                          {a.meta?.hedef_sekme && (
-                            <span style={{ marginLeft: 10 }}>
-                              → {UST_SEKMELER.find((x) => x.id === a.meta.hedef_sekme)?.label || a.meta.hedef_sekme}
-                            </span>
-                          )}
-                        </div>
-                      </button>
-                      {acik && (
-                        <div style={{ padding: '0 12px 12px', borderTop: '1px solid var(--border)' }}>
-                          {a.tip === 'siparis_merkez_bekliyor' && (a.meta?.kalemler || []).length > 0 && (
-                            <div className="table-wrap" style={{ marginTop: 8, fontSize: 11 }}>
-                              <table>
-                                <thead>
-                                  <tr>
-                                    <th>Ürün</th>
-                                    <th style={{ textAlign: 'center' }}>Adet</th>
-                                    <th style={{ textAlign: 'center' }}>Şube depo</th>
-                                    <th style={{ textAlign: 'center' }}>Merkez</th>
-                                    <th style={{ textAlign: 'center' }}>Min</th>
-                                    <th style={{ textAlign: 'center' }}>Kalır</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {(a.meta.kalemler || []).filter((k) => k && typeof k === 'object').map((k, i) => (
-                                    <tr key={i}>
-                                      <td>{k.urun_ad || k.kalem_kodu || '—'}</td>
-                                      <td className="mono" style={{ textAlign: 'center' }}>{k.adet ?? 0}</td>
-                                      <td style={{ textAlign: 'center' }}>{k.sube_depo_mevcut ?? 0}</td>
-                                      <td style={{ textAlign: 'center' }}>{k.merkez_mevcut < 0 ? '?' : k.merkez_mevcut}</td>
-                                      <td style={{ textAlign: 'center' }}>{k.merkez_min_stok ?? '—'}</td>
-                                      <td style={{ textAlign: 'center', fontWeight: 600, color: k.alarm_merkez ? 'var(--red)' : 'var(--green)' }}>
-                                        {k.kalan_gonderince == null ? '—' : k.kalan_gonderince}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          )}
-                          {(a.meta?.davranis_uyarilari || []).length > 0 && (
-                            <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text2)' }}>
-                              {(a.meta.davranis_uyarilari || []).map((u, ui) => (
-                                <div key={ui} style={{ marginBottom: 4 }}>
-                                  <strong>{u.kural}</strong> (+{u.puan}p): {u.mesaj}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          {a.meta?.cift_siparis_bilgi_notu && (
-                            <div
-                              style={{
-                                marginTop: 10,
-                                padding: '10px 12px',
-                                borderRadius: 8,
-                                fontSize: 11,
-                                lineHeight: 1.45,
-                                background: 'rgba(74, 158, 255, 0.08)',
-                                border: '1px solid rgba(74, 158, 255, 0.3)',
-                              }}
-                            >
-                              <strong style={{ color: 'var(--blue)' }}>Bilgi — çift sipariş:</strong>{' '}
-                              {a.meta.cift_siparis_bilgi_notu}
-                            </div>
-                          )}
-                          {a.meta?.hedef_sekme && (
-                            <button
-                              type="button"
-                              className="btn btn-primary btn-sm"
-                              style={{ marginTop: 10 }}
-                              onClick={() => alarmHedefeGit(a)}
-                            >
-                              İlgili modüle git →
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          )}
-
-          {(opsOzet?.siparis_bekleyen || 0) > 0 && (
+          {(((opsOzet?.siparis_bekleyen || 0) > 0) || ((opsOzet?.alarm_satirlari || []).length > 0)) && (
             <section
-              className="card ops-hub-gelen-siparis"
+              className="card"
               style={{
-                padding: '16px 18px',
+                padding: '14px 16px',
                 marginBottom: 16,
                 borderRadius: 12,
-                border: '2px solid rgba(74, 158, 255, 0.55)',
-                background: 'linear-gradient(145deg, rgba(74, 158, 255, 0.14), rgba(30, 58, 138, 0.08))',
-                cursor: 'pointer',
-              }}
-              role="button"
-              tabIndex={0}
-              onClick={() => acOpsModul('siparis')}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  acOpsModul('siparis');
-                }
+                border: (opsOzet?.siparis_bekleyen || 0) > 0 ? '2px solid rgba(74, 158, 255, 0.45)' : '1px solid var(--border)',
+                background: (opsOzet?.siparis_bekleyen || 0) > 0
+                  ? 'linear-gradient(145deg, rgba(74, 158, 255, 0.1), rgba(30, 58, 138, 0.06))'
+                  : 'var(--bg2)',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14 }}>
-                <div style={{ flex: '1 1 240px', minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 800,
-                      letterSpacing: '0.07em',
-                      color: '#93c5fd',
-                      textTransform: 'uppercase',
-                      marginBottom: 8,
-                    }}
-                  >
-                    Gelen sipariş — şube talepleri
-                  </div>
-                  <div style={{ fontSize: 26, fontWeight: 800, color: 'var(--text1)', lineHeight: 1.15, letterSpacing: '-0.02em' }}>
-                    {opsOzet.siparis_bekleyen}{' '}
-                    <span style={{ fontSize: 17, fontWeight: 700, color: 'var(--text2)' }}>bekleyen talep</span>
-                  </div>
-                  <p style={{ margin: '10px 0 0', fontSize: 13, color: 'var(--text2)', lineHeight: 1.55, maxWidth: 620 }}>
-                    Şubeden düşen siparişler <strong style={{ color: 'var(--text1)' }}>merkez onayı / işlem sırasında</strong>. Kuyruk ve sevkiyat için{' '}
-                    <strong>Sipariş katalog</strong> modülünü açın — Stok Disiplin sayfasındaki kuyruk ile aynı veriye gider.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  style={{ flexShrink: 0, alignSelf: 'center' }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    acOpsModul('siparis');
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: (opsOzet?.siparis_bekleyen || 0) > 0 ? 12 : 8 }}>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className={
+                    (opsOzet?.siparis_bekleyen || 0) > 0 && !hubOperasyonDetayAcik
+                      ? 'ops-hub-gelen-siparis'
+                      : ''
+                  }
+                  style={{
+                    flex: '1 1 220px',
+                    minWidth: 0,
+                    cursor: 'pointer',
+                    padding: '10px 12px',
+                    margin: '-10px -12px',
+                    borderRadius: 10,
+                    border:
+                      (opsOzet?.siparis_bekleyen || 0) > 0
+                        ? '1px solid rgba(74, 158, 255, 0.45)'
+                        : '1px dashed var(--border)',
+                    background:
+                      (opsOzet?.siparis_bekleyen || 0) > 0
+                        ? 'rgba(15, 23, 42, 0.35)'
+                        : 'transparent',
+                    outline: 'none',
+                  }}
+                  onClick={() => setHubOperasyonDetayAcik((v) => !v)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setHubOperasyonDetayAcik((v) => !v);
+                    }
                   }}
                 >
-                  Sipariş ekranına git →
-                </button>
+                  {(opsOzet?.siparis_bekleyen || 0) > 0 ? (
+                    <>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 800,
+                          letterSpacing: '0.07em',
+                          color: '#93c5fd',
+                          textTransform: 'uppercase',
+                          marginBottom: 6,
+                        }}
+                      >
+                        Gelen sipariş — şube talepleri
+                      </div>
+                      <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--text1)', lineHeight: 1.15 }}>
+                        {opsOzet.siparis_bekleyen}{' '}
+                        <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text2)' }}>bekleyen talep</span>
+                      </div>
+                      <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--text3)', lineHeight: 1.45 }}>
+                        {hubOperasyonDetayAcik ? '▼ Özet satırlarını gizlemek için tekrar tıklayın.' : '▶ Önceki «Operasyon özeti» ile aynı liste — detay için tıklayın.'}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>📌 Operasyon uyarıları</h3>
+                      <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text3)' }}>
+                        Bekleyen sipariş yok; özet uyarılar için {hubOperasyonDetayAcik ? 'tekrar tıklayıp daraltın' : 'tıklayın'}.
+                      </p>
+                    </>
+                  )}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'stretch', flexShrink: 0 }}>
+                  {(opsOzet?.siparis_bekleyen || 0) > 0 && (
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        acOpsModul('siparis');
+                      }}
+                    >
+                      Sipariş ekranına git →
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    style={{ fontSize: 11 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      api('/ops/hub-ozet').then((r) => hubOzetIsle(r)).catch(() => {});
+                    }}
+                  >
+                    ↻ Özet yenile
+                  </button>
+                </div>
               </div>
+
+              {hubOperasyonDetayAcik && (opsOzet?.alarm_satirlari || []).length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {(opsOzet.alarm_satirlari || []).map((a) => {
+                    const acik = hubAlarmAcikId === a.id;
+                    const sev = a.seviye === 'kritik' ? 'var(--red)' : a.seviye === 'uyari' ? 'var(--yellow)' : 'var(--text3)';
+                    const bg = a.seviye === 'kritik' ? 'rgba(220,50,50,0.08)' : a.seviye === 'uyari' ? 'rgba(220,160,0,0.07)' : 'var(--bg3)';
+                    return (
+                      <div
+                        key={a.id}
+                        style={{
+                          border: `1px solid ${sev}44`,
+                          borderLeft: `4px solid ${sev}`,
+                          borderRadius: 8,
+                          background: bg,
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setHubAlarmAcikId(acik ? null : a.id)}
+                          style={{
+                            width: '100%', textAlign: 'left', padding: '10px 12px',
+                            background: 'transparent', border: 'none', cursor: 'pointer',
+                            color: 'var(--text1)',
+                          }}
+                        >
+                          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>{a.baslik}</div>
+                          <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.45 }}>{a.ozet}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                            {acik ? '▲ Daralt' : '▼ Detay'}
+                            {a.meta?.hedef_sekme && (
+                              <span style={{ marginLeft: 10 }}>
+                                → {UST_SEKMELER.find((x) => x.id === a.meta.hedef_sekme)?.label || a.meta.hedef_sekme}
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                        {acik && (
+                          <div style={{ padding: '0 12px 12px', borderTop: '1px solid var(--border)' }}>
+                            {a.tip === 'siparis_merkez_bekliyor' && (a.meta?.kalemler || []).length > 0 && (
+                              <div className="table-wrap" style={{ marginTop: 8, fontSize: 11 }}>
+                                <table>
+                                  <thead>
+                                    <tr>
+                                      <th>Ürün</th>
+                                      <th style={{ textAlign: 'center' }}>Adet</th>
+                                      <th style={{ textAlign: 'center' }}>Şube depo</th>
+                                      <th style={{ textAlign: 'center' }}>Merkez</th>
+                                      <th style={{ textAlign: 'center' }}>Min</th>
+                                      <th style={{ textAlign: 'center' }}>Kalır</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(a.meta.kalemler || []).filter((k) => k && typeof k === 'object').map((k, i) => (
+                                      <tr key={i}>
+                                        <td>{k.urun_ad || k.kalem_kodu || '—'}</td>
+                                        <td className="mono" style={{ textAlign: 'center' }}>{k.adet ?? 0}</td>
+                                        <td style={{ textAlign: 'center' }}>{k.sube_depo_mevcut ?? 0}</td>
+                                        <td style={{ textAlign: 'center' }}>{k.merkez_mevcut < 0 ? '?' : k.merkez_mevcut}</td>
+                                        <td style={{ textAlign: 'center' }}>{k.merkez_min_stok ?? '—'}</td>
+                                        <td style={{ textAlign: 'center', fontWeight: 600, color: k.alarm_merkez ? 'var(--red)' : 'var(--green)' }}>
+                                          {k.kalan_gonderince == null ? '—' : k.kalan_gonderince}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                            {(a.meta?.davranis_uyarilari || []).length > 0 && (
+                              <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text2)' }}>
+                                {(a.meta.davranis_uyarilari || []).map((u, ui) => (
+                                  <div key={ui} style={{ marginBottom: 4 }}>
+                                    <strong>{u.kural}</strong> (+{u.puan}p): {u.mesaj}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {a.meta?.cift_siparis_bilgi_notu && (
+                              <div
+                                style={{
+                                  marginTop: 10,
+                                  padding: '10px 12px',
+                                  borderRadius: 8,
+                                  fontSize: 11,
+                                  lineHeight: 1.45,
+                                  background: 'rgba(74, 158, 255, 0.08)',
+                                  border: '1px solid rgba(74, 158, 255, 0.3)',
+                                }}
+                              >
+                                <strong style={{ color: 'var(--blue)' }}>Bilgi — çift sipariş:</strong>{' '}
+                                {a.meta.cift_siparis_bilgi_notu}
+                              </div>
+                            )}
+                            {a.meta?.hedef_sekme && (
+                              <button
+                                type="button"
+                                className="btn btn-primary btn-sm"
+                                style={{ marginTop: 10 }}
+                                onClick={() => alarmHedefeGit(a)}
+                              >
+                                İlgili modüle git →
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {hubOperasyonDetayAcik && (opsOzet?.alarm_satirlari || []).length === 0 && (
+                <p style={{ fontSize: 12, color: 'var(--text3)', margin: '8px 0 0' }}>
+                  Sunucu şu an özet satırı döndürmedi; sayıları görmek için «Özet yenile» deneyin veya Sipariş modülüne geçin.
+                </p>
+              )}
             </section>
           )}
 
