@@ -1677,12 +1677,12 @@ function panelDropdownPersonel() {
   var byId = {};
   var sec = lastPersonelSecim || [];
   sec.forEach(function(u){
-    var id = String(u.id || '');
+    var id = String(u.id != null ? u.id : '').trim();
     if (!id) return;
     byId[id] = { id: id, ad: (u.ad || '').trim() || id };
   });
   (pk || []).forEach(function(u){
-    var id = String(u.id || '');
+    var id = String(u.id != null ? u.id : '').trim();
     if (!id) return;
     var ad = (u.ad || '').trim();
     if (!byId[id]) byId[id] = { id: id, ad: ad || id };
@@ -1734,9 +1734,6 @@ function resetAcilisWiz() {
 
 function buildAcilisWizFields() {
   var sunucu = lastData && lastData.operasyon ? (lastData.operasyon.sunucu_saati||'—') : '—';
-  var persOpts = panelDropdownPersonel().map(function(p){
-    return '<option value="'+escHtml(p.id)+'">'+escHtml(p.ad)+'</option>';
-  }).join('');
   if (acilisWizStep===1) return (
     '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">1 / 4 · Sunucu saati: <strong>'+escHtml(sunucu)+'</strong></p>' +
     '<div class="form-group"><label>Kasa Sayımı (₺)</label><input id="awKasa" inputmode="decimal" autocomplete="off" placeholder="0" /></div>'
@@ -1759,8 +1756,14 @@ function buildAcilisWizFields() {
     '<div class="stok-item"><label>Pasta</label><input id="awPa" inputmode="numeric" placeholder="0" /></div>' +
     '</div>'
   );
+  var pel = panelDropdownPersonel();
+  var persOpts = pel.map(function(p){
+    return '<option value="'+escHtml(p.id)+'">'+escHtml(p.ad)+'</option>';
+  }).join('');
+  var bosUyari = pel.length ? '' : '<p class="err-text" style="margin-bottom:10px">Personel listesi boş. Merkezde ilgili personele panel PIN tanımlı mı kontrol edin; ardından bu sayfayı yenileyin (F5).</p>';
   return (
     '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">4 / 4 · Personel ve PIN onayı (kasa kilidi + şube kaydı)</p>' +
+    bosUyari +
     '<div class="form-group"><label>Personel</label><select id="awPers"><option value="">— Seçin —</option>'+persOpts+'</select></div>' +
     '<div class="form-group"><label>PIN</label><input id="awPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>'
   );
@@ -3236,16 +3239,27 @@ function startPolling() {
   pollTimer = setInterval(async function(){
     try {
       var data = await api('/sube-personel/'+encodeURIComponent(SUBE_ID)+'/durum');
+      lastData = data;
+      pk = data.panel_pin_kullanicilar || [];
+      lastPersonelSecim = data.personel_operasyon_secim || [];
       var op = data.operasyon||{}, aktif = op.aktif;
-      // Overlay açıkken sadece badge güncelle
       var ov = document.getElementById('opOverlay');
       if (ov && ov.style.display==='flex') {
         if (aktif) updateOpDurum(op, aktif);
+        fillSels();
         return;
       }
-      pk = data.panel_pin_kullanicilar || [];
+      var kasaOv = document.getElementById('kasaOverlay');
+      if (kasaOv && kasaOv.style.display==='flex') {
+        fillSels();
+        return;
+      }
+      var acilisOv = document.getElementById('acilisOverlay');
+      if (acilisOv && acilisOv.style.display==='flex') {
+        fillSels();
+        return;
+      }
       fillSels();
-      // Kasa kilitlendi mi?
       if (data.kasa_kilitli) {
         document.getElementById('kasaOverlay').style.display='flex';
         return;
