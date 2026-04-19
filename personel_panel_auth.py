@@ -242,6 +242,10 @@ def list_personel_panel_secim(cur: Any) -> List[Dict[str, Any]]:
     rows = [dict(x) for x in cur.fetchall()]
     for r in rows:
         r["yonetici"] = bool(r.get("yonetici"))
+        # Şube paneli birleştirme için tutarlı anahtar (uuid / text farkını kaldırır)
+        r["id"] = str(r.get("id") or "").strip()
+        if "ad" in r and r["ad"] is not None:
+            r["ad"] = str(r["ad"]).strip()
     return rows
 
 
