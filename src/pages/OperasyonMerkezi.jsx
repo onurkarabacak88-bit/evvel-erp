@@ -220,12 +220,6 @@ function SubeKart({ k, onDetay, personelRisk }) {
             {k.ciro_girildi ? '✓ Ciro' : k.ciro_taslak_bekliyor ? '⏳ Onayda' : 'Ciro yok'}
           </span>
         )}
-        {(k.siparis_bekleyen || 0) > 0 && (
-          <span className="badge badge-yellow">🛒 Sipariş: {k.siparis_bekleyen}</span>
-        )}
-        {(k.siparis_ozel_bekleyen || 0) > 0 && (
-          <span className="badge badge-red">📦 Özel talep: {k.siparis_ozel_bekleyen}</span>
-        )}
         {(k.anlik_gider_bekleyen || 0) > 0 && (
           <span className="badge badge-yellow">💸 Gider bekliyor: {k.anlik_gider_bekleyen}</span>
         )}
@@ -590,11 +584,14 @@ export default function OperasyonMerkezi() {
   const [hubAlarmAcikId, setHubAlarmAcikId] = useState(null);
   /** Hub: gelen sipariş kartında operasyon özet satırları (alarm listesi) */
   const [hubOperasyonDetayAcik, setHubOperasyonDetayAcik] = useState(false);
+  /** Yeni sipariş düştüğünde gelen kutusu + Sipariş katalog kutusu çerçeve vurgusu */
+  const [hubYeniSiparisVurgu, setHubYeniSiparisVurgu] = useState(false);
 
   /** Yeni sipariş toast: gördüğümüz talep id'leri (tekrar uyarı yok) */
   const hubSiparisGorulduRef = useRef(new Set());
   const hubOzetIlkYuklemeRef = useRef(true);
   const hubOncekiBekleyenSayiRef = useRef(null);
+  const hubVurguTimerRef = useRef(null);
 
   const toast = (m, t = 'red') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 4000); };
 
@@ -617,6 +614,7 @@ export default function OperasyonMerkezi() {
       return;
     }
 
+    const prevBek = hubOncekiBekleyenSayiRef.current;
     const yeniler = sipAlarms.filter((a) => !seen.has(String(a.meta.talep_id)));
     yeniler.forEach((a) => seen.add(String(a.meta.talep_id)));
 
@@ -627,23 +625,34 @@ export default function OperasyonMerkezi() {
     } else if (yeniler.length > 1) {
       toast(`📬 ${yeniler.length} yeni sipariş talebi — Operasyon özeti kartlarına bakın.`, 'green');
     } else if (
-      hubOncekiBekleyenSayiRef.current !== null
-      && bek > hubOncekiBekleyenSayiRef.current
+      prevBek !== null
+      && bek > prevBek
     ) {
       toast(
-        `📬 Bekleyen sipariş sayısı arttı (${hubOncekiBekleyenSayiRef.current} → ${bek}).`,
+        `📬 Bekleyen sipariş sayısı arttı (${prevBek} → ${bek}).`,
         'green',
       );
     }
     if (
-      hubOncekiBekleyenSayiRef.current !== null
+      prevBek !== null
       && bek > 0
-      && hubOncekiBekleyenSayiRef.current === 0
+      && prevBek === 0
     ) {
       setHubOperasyonDetayAcik(true);
     }
+    const vurguTetik = yeniler.length > 0 || (prevBek !== null && bek > prevBek);
+    if (vurguTetik) {
+      setHubYeniSiparisVurgu(true);
+      if (hubVurguTimerRef.current) window.clearTimeout(hubVurguTimerRef.current);
+      hubVurguTimerRef.current = window.setTimeout(() => setHubYeniSiparisVurgu(false), 4200);
+    }
     hubOncekiBekleyenSayiRef.current = bek;
   }, [toast]);
+
+  useEffect(() => () => {
+    if (hubVurguTimerRef.current) window.clearTimeout(hubVurguTimerRef.current);
+  }, []);
+
   const metricText = (v, fallback = 'veri yok') => {
     if (v == null) return fallback;
     if (typeof v === 'string') {
@@ -1263,7 +1272,7 @@ export default function OperasyonMerkezi() {
         <>
           {(((opsOzet?.siparis_bekleyen || 0) > 0) || ((opsOzet?.alarm_satirlari || []).length > 0)) && (
             <section
-              className="card"
+              className={`card${hubYeniSiparisVurgu ? ' ops-hub-yeni-siparis-flash' : ''}`}
               style={{
                 padding: '14px 16px',
                 marginBottom: 16,
@@ -1326,6 +1335,13 @@ export default function OperasyonMerkezi() {
                         {opsOzet.siparis_bekleyen}{' '}
                         <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text2)' }}>bekleyen talep</span>
                       </div>
+                      {(typeof opsOzet?.siparis_talep_bekleyen === 'number' || typeof opsOzet?.siparis_ozel_bekleyen === 'number') && (
+                        <p style={{ margin: '6px 0 0', fontSize: 11, color: 'var(--text3)', lineHeight: 1.4 }}>
+                          <strong>Katalog</strong> (Sipariş modülü üst liste): {opsOzet?.siparis_talep_bekleyen ?? '—'}
+                          {' · '}
+                          <strong>Özel ürün</strong> (aynı modülde ayrı blok): {opsOzet?.siparis_ozel_bekleyen ?? '—'}
+                        </p>
+                      )}
                       <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--text3)', lineHeight: 1.45 }}>
                         {hubOperasyonDetayAcik ? '▼ Özet satırlarını gizlemek için tekrar tıklayın.' : '▶ Önceki «Operasyon özeti» ile aynı liste — detay için tıklayın.'}
                       </p>
@@ -1349,7 +1365,7 @@ export default function OperasyonMerkezi() {
                         acOpsModul('siparis');
                       }}
                     >
-                      Sipariş ekranına git →
+                      Şube sipariş talepleri (katalog & özel) →
                     </button>
                   )}
                   <button
@@ -1498,9 +1514,7 @@ export default function OperasyonMerkezi() {
                 sub = 'Aktif şube';
               } else if (s.id === 'siparis') {
                 val = opsOzet.siparis_katalog_urun ?? 0;
-                sub = (opsOzet.siparis_bekleyen || 0) > 0
-                  ? `⏳ ${opsOzet.siparis_bekleyen} gelen talep (onayda / kuyrukta)`
-                  : 'Katalog ürün (aktif)';
+                sub = 'Katalog ürün sayısı · şube talepleri modül içinde';
               } else if (s.id === 'onay') {
                 val = opsOzet.onay_bekleyen;
                 sub = opsOzet.onay_bekleyen > 0 ? 'Onay bekliyor' : 'Kuyruk boş ✓';
@@ -1535,11 +1549,10 @@ export default function OperasyonMerkezi() {
                 val = opsOzet.aktif_personel;
                 sub = 'Aktif personel';
               } else if (s.id === 'stok-disiplin') {
-                const bekSipSayi = bekleyenSiparisler?.toplam ?? opsOzet.siparis_bekleyen ?? 0;
-                const alarmToplam = (opsOzet.stok_alarm_bekleyen || 0) + bekSipSayi;
-                val = alarmToplam > 0 ? alarmToplam : null;
-                sub = alarmToplam > 0
-                  ? `${opsOzet.stok_alarm_bekleyen || 0} depo alarm · ${bekSipSayi} bekleyen sipariş`
+                const sa = opsOzet.stok_alarm_bekleyen || 0;
+                val = sa > 0 ? sa : null;
+                sub = sa > 0
+                  ? `${sa} okunmamış depo alarmı`
                   : 'Stok & sipariş disiplin merkezi';
               }
             }
@@ -1547,7 +1560,7 @@ export default function OperasyonMerkezi() {
             return (
               <div
                 key={s.id}
-                className="metric-card"
+                className={`metric-card${hubYeniSiparisVurgu && s.id === 'siparis' ? ' ops-hub-yeni-siparis-flash' : ''}`}
                 style={{
                   borderTop: `3px solid ${renk}`,
                   cursor: 'pointer',
