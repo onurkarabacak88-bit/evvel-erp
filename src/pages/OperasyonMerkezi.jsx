@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api, fmt } from '../utils/api';
 import { computeOpsKartVurgu } from '../utils/opsVurgu';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
@@ -26,6 +26,7 @@ const UST_SEKMELER = [
   { id: 'siparis', label: '📦 Sipariş katalog' },
   { id: 'mesaj', label: '📩 Merkez Mesajı' },
   { id: 'puan', label: '⭐ Personel Puan' },
+  { id: 'stok-disiplin', label: '🔴 Stok Disiplin' },
 ];
 
 /** Modül penceresi içi başlık sekmeleri (CFO kart drill-down benzeri) */
@@ -55,6 +56,7 @@ const OPS_MODUL_BOLUM = {
   siparis: [{ id: 'icerik', label: 'Katalog & talepler' }],
   mesaj: [{ id: 'icerik', label: 'Mesajlar' }],
   puan: [{ id: 'icerik', label: 'Puan listesi' }],
+  'stok-disiplin': [{ id: 'icerik', label: 'Disiplin Merkezi' }],
 };
 
 const OPS_HUB_RENK = {
@@ -71,6 +73,7 @@ const OPS_HUB_RENK = {
   siparis: '#4a9eff',
   mesaj: '#8899aa',
   puan: '#ffc14d',
+  'stok-disiplin': '#e85d5d',
 };
 
 const ONAY_TURU_LABEL = {
@@ -511,6 +514,19 @@ export default function OperasyonMerkezi() {
   const [stokKartDrawerAcik, setStokKartDrawerAcik] = useState(false);
   const [stokArama, setStokArama] = useState('');
   const [acikKategoriler, setAcikKategoriler] = useState({});
+  // Stok Disiplin v2
+  const [disiplinPanel, setDisiplinPanel] = useState('kuyruk'); // kuyruk | kritik | akis | davranis | skor
+  const [kritikStok, setKritikStok] = useState(null);
+  const [siparisAkis, setSiparisAkis] = useState(null);
+  const [subeDavranis, setSubeDavranis] = useState(null);
+  const [subeSkor, setSubeSkor] = useState(null);
+  const [bekleyenSiparisler, setBekleyenSiparisler] = useState(null);
+  const [disiplinYukleniyor, setDisiplinYukleniyor] = useState(false);
+  const [timelineAcik, setTimelineAcik] = useState(null); // siparis_id
+  const [kuyrukDepoSecim, setKuyrukDepoSecim] = useState({}); // talep_id → depo_sube_id
+  const [kuyrukTalimat, setKuyrukTalimat] = useState({}); // talep_id → operasyon talimat metni
+  const [kuyrukDepolar, setKuyrukDepolar] = useState([]);
+  const [kuyrukBusy, setKuyrukBusy] = useState(null);
   const [personelDavranis, setPersonelDavranis] = useState(null);
   const [skor,      setSkor]      = useState(null);
   const [ozet,      setOzet]      = useState(null);
@@ -540,6 +556,8 @@ export default function OperasyonMerkezi() {
   const [sipYeniUrun, setSipYeniUrun] = useState({ kategori_kod: '', urun_adi: '' });
   const [sipYeniKat, setSipYeniKat] = useState({ ad: '', emoji: '📦' });
   const [sipSevkiyatHedef, setSipSevkiyatHedef] = useState({});
+  const [sipSevkiyatTalimat, setSipSevkiyatTalimat] = useState({});
+  const [depoSevkiyatRaporlari, setDepoSevkiyatRaporlari] = useState([]);
   const [mPersonelVerimlilik, setMPersonelVerimlilik] = useState(null);
   const [mSubeOperasyonKalite, setMSubeOperasyonKalite] = useState(null);
   const [mFinansOzet, setMFinansOzet] = useState(null);
@@ -551,8 +569,54 @@ export default function OperasyonMerkezi() {
   const [fisBekleyen, setFisBekleyen] = useState([]);
   const [fisBusyId, setFisBusyId] = useState(null);
   const [opsOzet, setOpsOzet] = useState(null);
+  /** hub-ozet alarm kartı genişletilmiş satır id */
+  const [hubAlarmAcikId, setHubAlarmAcikId] = useState(null);
+
+  /** Yeni sipariş toast: gördüğümüz talep id'leri (tekrar uyarı yok) */
+  const hubSiparisGorulduRef = useRef(new Set());
+  const hubOzetIlkYuklemeRef = useRef(true);
+  const hubOncekiBekleyenSayiRef = useRef(null);
 
   const toast = (m, t = 'red') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 4000); };
+
+  /** hub-ozet yanıtı: state + yeni sipariş geldiğinde bildirim */
+  const hubOzetIsle = useCallback((r) => {
+    if (!r) return;
+    setOpsOzet(r);
+    const bek = Number(r.siparis_bekleyen ?? 0);
+    const alarms = r.alarm_satirlari || [];
+    const sipAlarms = alarms.filter(
+      (a) => a?.tip === 'siparis_merkez_bekliyor' && a.meta?.talep_id,
+    );
+    const seen = hubSiparisGorulduRef.current;
+
+    if (hubOzetIlkYuklemeRef.current) {
+      sipAlarms.forEach((a) => seen.add(String(a.meta.talep_id)));
+      hubOzetIlkYuklemeRef.current = false;
+      hubOncekiBekleyenSayiRef.current = bek;
+      return;
+    }
+
+    const yeniler = sipAlarms.filter((a) => !seen.has(String(a.meta.talep_id)));
+    yeniler.forEach((a) => seen.add(String(a.meta.talep_id)));
+
+    if (yeniler.length === 1) {
+      const a = yeniler[0];
+      const txt = `${a.baslik || '📬 Yeni sipariş'}${a.ozet ? ` — ${a.ozet}` : ''}`.trim();
+      toast(txt.length > 320 ? `${txt.slice(0, 317)}…` : txt, 'green');
+    } else if (yeniler.length > 1) {
+      toast(`📬 ${yeniler.length} yeni sipariş talebi — Operasyon özeti kartlarına bakın.`, 'green');
+    } else if (
+      hubOncekiBekleyenSayiRef.current !== null
+      && bek > hubOncekiBekleyenSayiRef.current
+    ) {
+      toast(
+        `📬 Bekleyen sipariş sayısı arttı (${hubOncekiBekleyenSayiRef.current} → ${bek}).`,
+        'green',
+      );
+    }
+    hubOncekiBekleyenSayiRef.current = bek;
+  }, [toast]);
   const metricText = (v, fallback = 'veri yok') => {
     if (v == null) return fallback;
     if (typeof v === 'string') {
@@ -579,15 +643,17 @@ export default function OperasyonMerkezi() {
 
   const yukleSiparisMerkez = useCallback(async () => {
     try {
-      const [oz, cat, eksik, subeler] = await Promise.all([
+      const [oz, cat, eksik, subeler, dr] = await Promise.all([
         api('/ops/siparis/ozel-bekleyen'),
         api('/ops/siparis/katalog'),
         api('/ops/siparis/sevk-eksik?gun=7'),
         api('/subeler').catch(() => []),
+        api('/ops/siparis/depo-sevkiyat-raporlari?gun=21&limit=40').catch(() => ({ raporlar: [] })),
       ]);
       setSipOzel(oz.talepler || []);
       setSipKat(cat.kategoriler || []);
       setSipSevkEksik(eksik.kayitlar || []);
+      setDepoSevkiyatRaporlari(dr?.raporlar || []);
       if (Array.isArray(subeler)) {
         setSubeListeAdmin(subeler.filter((s) => s.aktif !== false));
       }
@@ -701,6 +767,31 @@ export default function OperasyonMerkezi() {
     }
   }, []);
 
+  const yukleDisiplin = useCallback(async () => {
+    setDisiplinYukleniyor(true);
+    try {
+      const [kr, ak, dav, sk, bek, dep] = await Promise.all([
+        api('/ops/v2/kritik-stok').catch(() => null),
+        api('/ops/v2/siparis-akis?limit=50').catch(() => null),
+        api('/ops/v2/sube-davranis?gun=30').catch(() => null),
+        api('/ops/v2/sube-skor').catch(() => null),
+        api('/ops/v2/bekleyen-siparisler?gun=7').catch(() => null),
+        api('/ops/subeler/depolar').catch(() => null),
+      ]);
+      if (kr)  setKritikStok(kr);
+      if (ak)  setSiparisAkis(ak);
+      if (dav) setSubeDavranis(dav);
+      if (sk)  setSubeSkor(sk);
+      if (bek) setBekleyenSiparisler(bek);
+      if (dep) setKuyrukDepolar(dep.satirlar || []);
+    } catch (e) {
+      toast(e.message || 'Disiplin verisi yüklenemedi');
+    } finally {
+      setDisiplinYukleniyor(false);
+      setYukleniyor(false);
+    }
+  }, []);
+
   const yukle = useCallback(async (f = filtre) => {
     try {
       const q = `year_month=${encodeURIComponent(ayFiltre)}${gunFiltre ? `&gun=${encodeURIComponent(gunFiltre)}` : ''}`;
@@ -754,7 +845,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     if (!aktifSekme) return;
-    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'stok-kart' || aktifSekme === 'metrics' || aktifSekme === 'kontrol') return;
+    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'stok-kart' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
     yukle(filtre);
   }, [filtre, aktifSekme, ayFiltre, gunFiltre, yukle]);
 
@@ -824,7 +915,14 @@ export default function OperasyonMerkezi() {
   }, [aktifSekme, yukleFisBekleyen]);
 
   useEffect(() => {
+    if (aktifSekme !== 'stok-disiplin') return;
+    setYukleniyor(true);
+    yukleDisiplin();
+  }, [aktifSekme, yukleDisiplin]);
+
+  useEffect(() => {
     const unsub = subscribeGlobalDataRefresh(() => {
+      api('/ops/hub-ozet').then((r) => hubOzetIsle(r)).catch(() => {});
       if (aktifSekme === 'onay') {
         setYukleniyor(true);
         yukleOnayMerkez();
@@ -848,7 +946,7 @@ export default function OperasyonMerkezi() {
       }
     });
     return unsub;
-  }, [aktifSekme, filtre, stokKartSecim, yukle, yukleOnayMerkez, yukleSiparisMerkez, yukleSiparisTalepMerkez, yukleStokKart, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen]);
+  }, [aktifSekme, filtre, stokKartSecim, hubOzetIsle, yukle, yukleOnayMerkez, yukleSiparisMerkez, yukleSiparisTalepMerkez, yukleStokKart, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen]);
 
 
   const toplamGecikme = skor?.son_30_gun?.reduce((s, r) => s + (r.gecikme_adet || 0), 0) || 0;
@@ -870,8 +968,19 @@ export default function OperasyonMerkezi() {
   );
 
   useEffect(() => {
-    api('/ops/panel-ozet').then(r => { if (r) setOpsOzet(r); }).catch(() => {});
-  }, []);
+    const loadOzet = () =>
+      api('/ops/hub-ozet').then((r) => hubOzetIsle(r)).catch(() => {});
+    loadOzet();
+    const id = setInterval(loadOzet, 25000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') loadOzet();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [hubOzetIsle]);
 
   const acOpsModul = useCallback((id) => {
     const bolumler = OPS_MODUL_BOLUM[id] || [{ id: 'icerik', label: 'İçerik' }];
@@ -880,6 +989,44 @@ export default function OperasyonMerkezi() {
     setOpsMerkezPencere(true);
     setYukleniyor(true);
   }, []);
+
+  /** Hub alarm kartından ilgili modüle git (stok disiplin alt panel dahil) */
+  const alarmHedefeGit = useCallback((a) => {
+    const m = a?.meta || {};
+    const sek = m.hedef_sekme;
+    if (!sek) return;
+    const bolumler = OPS_MODUL_BOLUM[sek] || [{ id: 'icerik', label: 'İçerik' }];
+    setAktifSekme(sek);
+    setOpsIcBolum(bolumler[0].id);
+    setOpsMerkezPencere(true);
+    setYukleniyor(true);
+    if (sek === 'stok-disiplin' && m.hedef_panel) {
+      setDisiplinPanel(String(m.hedef_panel));
+    }
+    if (sek === 'siparis' && m.talep_id) {
+      try {
+        sessionStorage.setItem('ops_siparis_vurgula_talep', String(m.talep_id));
+      } catch (_) {}
+    }
+    setHubAlarmAcikId(null);
+  }, []);
+
+  useEffect(() => {
+    if (aktifSekme !== 'siparis' || !opsMerkezPencere) return;
+    let tid;
+    try {
+      tid = sessionStorage.getItem('ops_siparis_vurgula_talep');
+      if (!tid) return;
+      sessionStorage.removeItem('ops_siparis_vurgula_talep');
+    } catch (_) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      const el = document.querySelector(`[data-ops-siparis-talep="${tid.replace(/"/g, '')}"]`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [aktifSekme, opsMerkezPencere, sipTalepPaket]);
 
   const kapatOpsModul = useCallback(() => {
     setOpsMerkezPencere(false);
@@ -987,11 +1134,14 @@ export default function OperasyonMerkezi() {
       toast('Önce sevkiyat şubesi seçin');
       return;
     }
+    const talimatRaw = (sipSevkiyatTalimat?.[talepId] || '').trim();
+    const body = { talep_id: talepId, hedef_depo_sube_id: hedef };
+    if (talimatRaw) body.operasyon_yonlendirme_talimati = talimatRaw;
     setOnayBusyId(`sg:${talepId}`);
     try {
       await api('/ops/siparis/sevkiyata-gonder', {
         method: 'POST',
-        body: { talep_id: talepId, hedef_depo_sube_id: hedef },
+        body,
       });
       toast('Sipariş sevkiyat şubesine gönderildi.', 'green');
       publishGlobalDataRefresh('ops-siparis-sevkiyata-gonder');
@@ -1050,8 +1200,12 @@ export default function OperasyonMerkezi() {
           type="button"
           className="btn btn-secondary btn-sm"
           onClick={() => {
-            if (!aktifSekme || !opsMerkezPencere) {
-              toast('Önce aşağıdan bir modül kartına tıklayın.', 'yellow');
+            if (!opsMerkezPencere) {
+              api('/ops/hub-ozet').then((r) => hubOzetIsle(r)).catch(() => toast('Özet yenilenemedi', 'red'));
+              return;
+            }
+            if (!aktifSekme) {
+              toast('Modül seçilmedi.', 'yellow');
               return;
             }
             setYukleniyor(true);
@@ -1063,6 +1217,7 @@ export default function OperasyonMerkezi() {
             else if (aktifSekme === 'metrics') yukleMetrics();
             else if (aktifSekme === 'kontrol') yukleKontrolOzet();
             else if (aktifSekme === 'fis') yukleFisBekleyen();
+            else if (aktifSekme === 'stok-disiplin') yukleDisiplin();
             else yukle(filtre);
           }}
         >
@@ -1071,6 +1226,136 @@ export default function OperasyonMerkezi() {
       </div>
 
       {!opsMerkezPencere && (
+        <>
+          {(opsOzet?.alarm_satirlari || []).length > 0 && (
+            <section className="card" style={{ padding: '14px 16px', marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>📌 Operasyon özeti</h3>
+                  <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text3)' }}>
+                    Bekleyen işler ve sipariş stok uyarıları — tıklayıp detay veya ilgili modüle geçin.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => api('/ops/hub-ozet').then((r) => hubOzetIsle(r)).catch(() => {})}
+                >
+                  ↻ Özet yenile
+                </button>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {(opsOzet.alarm_satirlari || []).map((a) => {
+                  const acik = hubAlarmAcikId === a.id;
+                  const sev = a.seviye === 'kritik' ? 'var(--red)' : a.seviye === 'uyari' ? 'var(--yellow)' : 'var(--text3)';
+                  const bg = a.seviye === 'kritik' ? 'rgba(220,50,50,0.08)' : a.seviye === 'uyari' ? 'rgba(220,160,0,0.07)' : 'var(--bg3)';
+                  return (
+                    <div
+                      key={a.id}
+                      style={{
+                        border: `1px solid ${sev}44`,
+                        borderLeft: `4px solid ${sev}`,
+                        borderRadius: 8,
+                        background: bg,
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setHubAlarmAcikId(acik ? null : a.id)}
+                        style={{
+                          width: '100%', textAlign: 'left', padding: '10px 12px',
+                          background: 'transparent', border: 'none', cursor: 'pointer',
+                          color: 'var(--text1)',
+                        }}
+                      >
+                        <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>{a.baslik}</div>
+                        <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.45 }}>{a.ozet}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                          {acik ? '▲ Daralt' : '▼ Detay'}
+                          {a.meta?.hedef_sekme && (
+                            <span style={{ marginLeft: 10 }}>
+                              → {UST_SEKMELER.find((x) => x.id === a.meta.hedef_sekme)?.label || a.meta.hedef_sekme}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                      {acik && (
+                        <div style={{ padding: '0 12px 12px', borderTop: '1px solid var(--border)' }}>
+                          {a.tip === 'siparis_merkez_bekliyor' && (a.meta?.kalemler || []).length > 0 && (
+                            <div className="table-wrap" style={{ marginTop: 8, fontSize: 11 }}>
+                              <table>
+                                <thead>
+                                  <tr>
+                                    <th>Ürün</th>
+                                    <th style={{ textAlign: 'center' }}>Adet</th>
+                                    <th style={{ textAlign: 'center' }}>Şube depo</th>
+                                    <th style={{ textAlign: 'center' }}>Merkez</th>
+                                    <th style={{ textAlign: 'center' }}>Min</th>
+                                    <th style={{ textAlign: 'center' }}>Kalır</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(a.meta.kalemler || []).filter((k) => k && typeof k === 'object').map((k, i) => (
+                                    <tr key={i}>
+                                      <td>{k.urun_ad || k.kalem_kodu || '—'}</td>
+                                      <td className="mono" style={{ textAlign: 'center' }}>{k.adet ?? 0}</td>
+                                      <td style={{ textAlign: 'center' }}>{k.sube_depo_mevcut ?? 0}</td>
+                                      <td style={{ textAlign: 'center' }}>{k.merkez_mevcut < 0 ? '?' : k.merkez_mevcut}</td>
+                                      <td style={{ textAlign: 'center' }}>{k.merkez_min_stok ?? '—'}</td>
+                                      <td style={{ textAlign: 'center', fontWeight: 600, color: k.alarm_merkez ? 'var(--red)' : 'var(--green)' }}>
+                                        {k.kalan_gonderince == null ? '—' : k.kalan_gonderince}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                          {(a.meta?.davranis_uyarilari || []).length > 0 && (
+                            <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text2)' }}>
+                              {(a.meta.davranis_uyarilari || []).map((u, ui) => (
+                                <div key={ui} style={{ marginBottom: 4 }}>
+                                  <strong>{u.kural}</strong> (+{u.puan}p): {u.mesaj}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {a.meta?.cift_siparis_bilgi_notu && (
+                            <div
+                              style={{
+                                marginTop: 10,
+                                padding: '10px 12px',
+                                borderRadius: 8,
+                                fontSize: 11,
+                                lineHeight: 1.45,
+                                background: 'rgba(74, 158, 255, 0.08)',
+                                border: '1px solid rgba(74, 158, 255, 0.3)',
+                              }}
+                            >
+                              <strong style={{ color: 'var(--blue)' }}>Bilgi — çift sipariş:</strong>{' '}
+                              {a.meta.cift_siparis_bilgi_notu}
+                            </div>
+                          )}
+                          {a.meta?.hedef_sekme && (
+                            <button
+                              type="button"
+                              className="btn btn-primary btn-sm"
+                              style={{ marginTop: 10 }}
+                              onClick={() => alarmHedefeGit(a)}
+                            >
+                              İlgili modüle git →
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
           {UST_SEKMELER.map((s) => {
             const renk = OPS_HUB_RENK[s.id] || 'var(--border)';
@@ -1082,8 +1367,8 @@ export default function OperasyonMerkezi() {
                 val = opsOzet.aktif_sube;
                 sub = 'Aktif şube';
               } else if (s.id === 'siparis') {
-                val = opsOzet.siparis_bekleyen;
-                sub = opsOzet.siparis_bekleyen > 0 ? 'Bekleyen sipariş' : 'Bekleyen yok ✓';
+                val = opsOzet.siparis_katalog_urun ?? 0;
+                sub = 'Katalog ürün (aktif)';
               } else if (s.id === 'onay') {
                 val = opsOzet.onay_bekleyen;
                 sub = opsOzet.onay_bekleyen > 0 ? 'Onay bekliyor' : 'Kuyruk boş ✓';
@@ -1117,6 +1402,13 @@ export default function OperasyonMerkezi() {
               } else if (s.id === 'puan') {
                 val = opsOzet.aktif_personel;
                 sub = 'Aktif personel';
+              } else if (s.id === 'stok-disiplin') {
+                const bekSipSayi = bekleyenSiparisler?.toplam ?? opsOzet.siparis_bekleyen ?? 0;
+                const alarmToplam = (opsOzet.stok_alarm_bekleyen || 0) + bekSipSayi;
+                val = alarmToplam > 0 ? alarmToplam : null;
+                sub = alarmToplam > 0
+                  ? `${opsOzet.stok_alarm_bekleyen || 0} depo alarm · ${bekSipSayi} bekleyen sipariş`
+                  : 'Stok & sipariş disiplin merkezi';
               }
             }
             const valRenk = val != null && val > 0 ? renk : 'var(--text3)';
@@ -1142,7 +1434,37 @@ export default function OperasyonMerkezi() {
               </div>
             );
           })}
+          {opsOzet && (
+            <div
+              key="siparis-paralel-ozet"
+              className="metric-card"
+              style={{
+                borderTop: `3px solid ${(Number(opsOzet.siparis_paralel_sube_sayisi) || 0) > 0 ? '#f08040' : 'var(--green)'}`,
+                cursor: 'pointer',
+              }}
+              onClick={() => acOpsModul('siparis')}
+              title="Aynı şubede teslim öncesi birden fazla katalog siparişi — kalemleri karşılaştırın"
+            >
+              <div className="metric-label">🔗 Paralel sipariş</div>
+              <div
+                className="metric-value"
+                style={{
+                  fontSize: 24,
+                  color: (Number(opsOzet.siparis_paralel_sube_sayisi) || 0) > 0 ? '#f08040' : 'var(--text3)',
+                }}
+              >
+                {Number(opsOzet.siparis_paralel_sube_sayisi) || 0}
+              </div>
+              <div className="metric-sub">
+                {(Number(opsOzet.siparis_paralel_sube_sayisi) || 0) > 0
+                  ? `${Number(opsOzet.siparis_paralel_fazla_talep) || 0} fazla paralel talep · kontrol edin`
+                  : 'Şube başına tek hat (veya teslim tamam) ✓'}
+                <span style={{ color: 'var(--text3)', fontSize: 10 }}> →</span>
+              </div>
+            </div>
+          )}
         </div>
+        </>
       )}
 
       {opsMerkezPencere && !!aktifSekme && (
@@ -2006,6 +2328,61 @@ export default function OperasyonMerkezi() {
             <strong> Tek sefer</strong> ile kataloga eklemeden yalnızca bir sipariş kaydı oluşur; <strong> Red</strong> talebi kapatır.
           </p>
 
+          {(depoSevkiyatRaporlari || []).length > 0 && (
+            <section
+              className="card"
+              style={{
+                padding: '14px 16px',
+                borderLeft: '4px solid #ea580c',
+                background: 'rgba(234, 88, 12, 0.06)',
+              }}
+            >
+              <h3 style={{ fontSize: 14, marginBottom: 8 }}>
+                📋 Depo kalem raporu (isten / gönderilen)
+              </h3>
+              <p style={{ fontSize: 12, color: 'var(--text3)', marginTop: 0, marginBottom: 12 }}>
+                Şube deposu kalemleri işlediğinde otomatik özet yazılır. Eksik veya kısmi satırlarda hub uyarısı da oluşur.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 320, overflow: 'auto' }}>
+                {(depoSevkiyatRaporlari || []).map((r) => (
+                  <div
+                    key={r.id}
+                    className="card"
+                    style={{
+                      padding: '10px 12px',
+                      border: '1px solid var(--border)',
+                      fontSize: 12,
+                      lineHeight: 1.45,
+                      whiteSpace: 'pre-wrap',
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                      {r.talep_sube_adi || r.sube_id}
+                      {r.depo_personel_ad ? (
+                        <span style={{ fontWeight: 500, color: 'var(--text3)', marginLeft: 8 }}>
+                          · {r.depo_personel_ad}
+                        </span>
+                      ) : null}
+                      <span style={{ fontWeight: 400, color: 'var(--text3)', marginLeft: 8 }}>
+                        {(r.depo_sevkiyat_rapor_ts || '').substring(0, 16)}
+                      </span>
+                      {r.depo_sevkiyat_rapor_uyari ? (
+                        <span className="badge badge-yellow" style={{ marginLeft: 8 }}>
+                          Eksik/kısmi
+                        </span>
+                      ) : (
+                        <span className="badge badge-green" style={{ marginLeft: 8 }}>
+                          Kayıtlı özet
+                        </span>
+                      )}
+                    </div>
+                    <div>{r.depo_sevkiyat_rapor_metni || '—'}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           <section className="card" style={{ padding: '14px 16px' }}>
             <h3 style={{ fontSize: 14, marginBottom: 10 }}>
               Şube sipariş talepleri (bekleyen) · {sipTalepPaket?.ozet?.siparis_talep ?? (sipTalepPaket?.siparis_talepleri || []).length}
@@ -2020,6 +2397,7 @@ export default function OperasyonMerkezi() {
                 {(sipTalepPaket?.siparis_talepleri || []).map((s) => (
                   <div
                     key={s.id}
+                    data-ops-siparis-talep={s.id}
                     className="card"
                     style={{ padding: '12px 14px', borderLeft: '4px solid var(--blue)' }}
                   >
@@ -2035,28 +2413,125 @@ export default function OperasyonMerkezi() {
                           {s.tarih} · {(s.bildirim_saati || '—')} · {s.personel_ad || '—'}
                         </div>
                         {s.not_aciklama && <div style={{ fontSize: 12, marginTop: 6 }}>{s.not_aciklama}</div>}
+                        {s.cift_siparis_bilgi_notu && (
+                          <div
+                            style={{
+                              marginTop: 10,
+                              padding: '10px 12px',
+                              borderRadius: 8,
+                              fontSize: 12,
+                              lineHeight: 1.45,
+                              background: 'rgba(74, 158, 255, 0.1)',
+                              border: '1px solid rgba(74, 158, 255, 0.35)',
+                              color: 'var(--text1)',
+                            }}
+                          >
+                            <strong style={{ color: 'var(--blue)' }}>Bilgi — çift sipariş:</strong>{' '}
+                            {s.cift_siparis_bilgi_notu}
+                          </div>
+                        )}
+
+                        {/* Uyarı badge'leri */}
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+                          {s.stok_alarm_var && (
+                            <span className="badge badge-red">
+                              {s.stok_hesap_kaynagi === 'hedef_depo' ? '⚠️ Sevkiyat deposu yetmez!' : '⚠️ Merkez stok biter!'}
+                            </span>
+                          )}
+                          {s.barem_risk_var && (
+                            <span className="badge badge-yellow">
+                              {s.stok_hesap_kaynagi === 'hedef_depo' ? '📊 Depo barem altı risk' : '📊 Barem altı risk'}
+                            </span>
+                          )}
+                          {s.merkez_kayit_eksik_var && <span className="badge badge-yellow">❓ Merkez kart eksik</span>}
+                          {s.gereksiz_var   && <span className="badge" style={{ background: '#3a2a0a', color: '#e8a03d' }}>⚠️ Şubede zaten var</span>}
+                          {(s.davranis_uyarilari || []).map((u, ui) => (
+                            <span key={ui} style={{ fontSize: 11, background: '#2a1a3a', color: '#c084fc', borderRadius: 6, padding: '2px 7px' }}>
+                              🚨 {u.kural} (+{u.puan}p)
+                            </span>
+                          ))}
+                        </div>
 
                         {(s.kalemler || []).length > 0 ? (
-                          <div className="table-wrap" style={{ marginTop: 10, border: '1px solid var(--border)', borderRadius: 8 }}>
+                          <div className="table-wrap" style={{ marginTop: 8, border: '1px solid var(--border)', borderRadius: 8 }}>
                             <table>
                               <thead>
                                 <tr>
                                   <th>Ürün</th>
-                                  <th style={{ width: 90, textAlign: 'right' }}>Adet</th>
+                                  <th style={{ textAlign: 'center' }}>İstenen</th>
+                                  <th style={{ textAlign: 'center' }}>Şube deposu</th>
+                                  <th style={{ textAlign: 'center' }}>
+                                    {s.stok_hesap_kaynagi === 'hedef_depo' ? 'Sevkiyat deposu' : 'Merkez mevcut'}
+                                  </th>
+                                  <th style={{ textAlign: 'center' }}>
+                                    {s.stok_hesap_kaynagi === 'hedef_depo' ? 'Depo min' : 'Merkez min'}
+                                  </th>
+                                  <th style={{ textAlign: 'center' }}>Göndersen kalır</th>
+                                  <th style={{ textAlign: 'center' }}>Barem</th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {(s.kalemler || []).map((k, idx) => (
-                                  <tr key={`${s.id}:${k?.urun_id || k?.urun_ad || idx}`}>
-                                    <td style={{ fontSize: 12 }}>{k?.urun_ad || 'Ürün'}</td>
-                                    <td className="mono" style={{ fontSize: 12, textAlign: 'right' }}>{k?.adet || 0}</td>
-                                  </tr>
-                                ))}
+                                {(s.kalemler || []).map((k, idx) => {
+                                  const kalanRenk = k?.alarm_merkez ? '#e85d5d' : (k?.kalan_gonderince != null && k?.kalan_gonderince <= 3) ? '#e8a03d' : 'var(--green)';
+                                  const depoHesap = s.stok_hesap_kaynagi === 'hedef_depo';
+                                  return (
+                                    <tr key={`${s.id}:${k?.urun_id || k?.urun_ad || idx}`}
+                                        style={{
+                                          background: k?.alarm_merkez ? 'rgba(232,93,93,0.05)'
+                                            : k?.merkez_barem_risk ? 'rgba(232,197,71,0.06)' : 'transparent',
+                                        }}>
+                                      <td style={{ fontSize: 12 }}>
+                                        {k?.urun_ad || 'Ürün'}
+                                        {k?.sube_zaten_var && (
+                                          <span style={{ marginLeft: 6, fontSize: 10, color: '#e8a03d' }}>⚠️ şubede {k.sube_depo_mevcut} var</span>
+                                        )}
+                                      </td>
+                                      <td className="mono" style={{ fontSize: 12, textAlign: 'center', fontWeight: 700 }}>{k?.adet || 0}</td>
+                                      <td style={{ fontSize: 12, textAlign: 'center', color: k?.sube_zaten_var ? '#e8a03d' : 'var(--text)' }}>
+                                        {(k?.sube_depo_mevcut > 0) ? `${k.sube_depo_mevcut} adet` : <span style={{ color: 'var(--text3)' }}>—</span>}
+                                      </td>
+                                      <td style={{ fontSize: 12, textAlign: 'center' }}>
+                                        {depoHesap ? (
+                                          <>
+                                            <span>{k?.hedef_depo_mevcut != null ? `${k.hedef_depo_mevcut} adet` : '—'}</span>
+                                            {(k?.hedef_depo_rezerve || 0) > 0 && (
+                                              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>Rez: {k.hedef_depo_rezerve}</div>
+                                            )}
+                                            {k?.merkez_mevcut != null && k.merkez_mevcut >= 0 && (
+                                              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>Kart: {k.merkez_mevcut}</div>
+                                            )}
+                                          </>
+                                        ) : (
+                                          <>
+                                            {k?.merkez_mevcut < 0 ? <span style={{ color: 'var(--text3)' }}>?</span> : `${k.merkez_mevcut} adet`}
+                                          </>
+                                        )}
+                                      </td>
+                                      <td style={{ fontSize: 12, textAlign: 'center', color: 'var(--text3)' }}>
+                                        {depoHesap
+                                          ? (k?.hedef_depo_min_stok != null ? k.hedef_depo_min_stok : '—')
+                                          : (k?.merkez_min_stok != null ? k.merkez_min_stok : '—')}
+                                      </td>
+                                      <td style={{ fontSize: 12, textAlign: 'center', fontWeight: 700, color: kalanRenk }}>
+                                        {k?.kalan_gonderince == null ? '—' : k.kalan_gonderince <= 0 ? `${k.kalan_gonderince} ❌` : `${k.kalan_gonderince}`}
+                                      </td>
+                                      <td style={{ fontSize: 12, textAlign: 'center' }}>
+                                        {k?.merkez_barem_risk ? <span style={{ color: '#e8a03d', fontWeight: 700 }}>Uyarı</span> : <span style={{ color: 'var(--text3)' }}>—</span>}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>
                         ) : (
                           <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 8 }}>Sipariş kalemi bulunamadı.</div>
+                        )}
+                        {s.stok_hesap_kaynagi === 'hedef_depo' && s.hedef_depo_sube_adi && (
+                          <p style={{ margin: '8px 0 0', fontSize: 11, color: 'var(--text3)' }}>
+                            Gönderim hesabı <strong>{s.hedef_depo_sube_adi}</strong> şubesinin <code style={{ fontSize: 10 }}>sube_depo_stok</code> kaydına göre;
+                            merkez stok kartı satırda referans olarak gösterilir.
+                          </p>
                         )}
 
                         {(s.sevkiyat_durum || '') !== 'bekliyor' && (
@@ -2092,6 +2567,15 @@ export default function OperasyonMerkezi() {
                                 <option key={sb.id} value={sb.id}>{sb.ad || sb.id}</option>
                               ))}
                           </select>
+                          <label style={{ fontSize: 11, color: 'var(--text3)', margin: 0 }}>Operasyon talimatı (isteğe bağlı)</label>
+                          <textarea
+                            className="input"
+                            rows={3}
+                            placeholder="Örn. İleride Alsancak’ta portakal suyu fazla — diğer şubelere dağıtılsın; öncelik Tema."
+                            style={{ minWidth: 220, resize: 'vertical', fontSize: 12 }}
+                            value={sipSevkiyatTalimat[s.id] || ''}
+                            onChange={(e) => setSipSevkiyatTalimat((p) => ({ ...p, [s.id]: e.target.value }))}
+                          />
                           <button
                             type="button"
                             className="btn btn-primary btn-sm"
@@ -2791,6 +3275,422 @@ export default function OperasyonMerkezi() {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ═══════════════ STOK DİSİPLİN PANELİ ═══════════════ */}
+      {aktifSekme === 'stok-disiplin' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+          {/* Alt panel seçici */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {[
+              { id: 'kuyruk',   label: `📬 Sipariş Kuyruğu${(bekleyenSiparisler?.toplam || 0) > 0 ? ` (${bekleyenSiparisler.toplam})` : ''}` },
+              { id: 'kritik',   label: '🔴 Kritik Stok' },
+              { id: 'akis',     label: '🟡 Sipariş Akışı' },
+              { id: 'davranis', label: '🔵 Şube Davranış' },
+              { id: 'skor',     label: '🟣 Skor Tablosu' },
+            ].map(p => (
+              <button
+                key={p.id}
+                type="button"
+                className={`btn btn-sm ${disiplinPanel === p.id ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setDisiplinPanel(p.id)}
+              >{p.label}</button>
+            ))}
+          </div>
+
+          {disiplinYukleniyor && <div className="loading"><div className="spinner" />Yükleniyor…</div>}
+
+          {/* 0. SİPARİŞ KUYRUĞU */}
+          {disiplinPanel === 'kuyruk' && !disiplinYukleniyor && (() => {
+            const siparisler = bekleyenSiparisler?.siparisler || [];
+            const gonderilenleIlgiliDepoyaGonder = async (talep_id) => {
+              const depo = kuyrukDepoSecim[talep_id] || '';
+              if (!depo) { toast('Önce bir depo şubesi seçin'); return; }
+              const talimatRaw = (kuyrukTalimat[talep_id] || '').trim();
+              const body = { talep_id, hedef_depo_sube_id: depo };
+              if (talimatRaw) body.operasyon_yonlendirme_talimati = talimatRaw;
+              setKuyrukBusy(talep_id);
+              try {
+                await api('/ops/siparis/sevkiyata-gonder', {
+                  method: 'POST',
+                  body,
+                });
+                toast('Sipariş depoya yönlendirildi ✓');
+                yukleDisiplin();
+              } catch (e) {
+                toast(e.message || 'Yönlendirme hatası');
+              } finally {
+                setKuyrukBusy(null);
+              }
+            };
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <span style={{ fontWeight: 700, fontSize: 15 }}>📬 Bekleyen Sipariş Kuyruğu</span>
+                    <span style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 10 }}>Son 7 gün — onay bekleyen talepler</span>
+                  </div>
+                  <button className="btn btn-sm btn-secondary" onClick={yukleDisiplin}>↺ Yenile</button>
+                </div>
+
+                {siparisler.length === 0 && (
+                  <div className="card empty" style={{ padding: 32 }}><p>Bekleyen sipariş yok ✓</p></div>
+                )}
+
+                {siparisler.map(sip => (
+                  <div key={sip.id} className="card" style={{
+                    padding: 0, overflow: 'hidden',
+                    border: sip.stok_alarm_var ? '1.5px solid #e85d5d'
+                      : sip.barem_risk_var ? '1.5px solid #c9a227'
+                      : sip.gereksiz_var ? '1.5px solid #e8a03d' : '1px solid var(--border)',
+                  }}>
+                    {/* Başlık */}
+                    <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                      <div>
+                        <span style={{ fontWeight: 700, fontSize: 14 }}>🏪 {sip.sube_adi}</span>
+                        <span style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 10 }}>{sip.tarih} · {sip.personel_ad || '—'}</span>
+                        {sip.not_aciklama && <span style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 8 }}>· {sip.not_aciklama}</span>}
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {sip.stok_alarm_var && (
+                          <span className="badge badge-red">
+                            {sip.stok_hesap_kaynagi === 'hedef_depo' ? '⚠️ Depo yetmez!' : '⚠️ Merkez biter!'}
+                          </span>
+                        )}
+                        {sip.barem_risk_var && (
+                          <span className="badge badge-yellow">
+                            {sip.stok_hesap_kaynagi === 'hedef_depo' ? '📊 Depo barem' : '📊 Barem risk'}
+                          </span>
+                        )}
+                        {sip.merkez_kayit_eksik_var && <span className="badge badge-yellow">❓ Kart eksik</span>}
+                        {sip.gereksiz_var    && <span className="badge" style={{ background: '#3a2a0a', color: '#e8a03d' }}>⚠️ Şubede var</span>}
+                        {sip.uyari_var       && <span className="badge" style={{ background: '#2a1a3a', color: '#c084fc' }}>🚨 Davranış uyarısı</span>}
+                      </div>
+                    </div>
+
+                    {/* Kalem tablosu */}
+                    <div className="table-wrap" style={{ margin: 0 }}>
+                      <table>
+                        <thead><tr>
+                          <th>Ürün</th>
+                          <th style={{ textAlign: 'center' }}>İstenen</th>
+                          <th style={{ textAlign: 'center' }}>Şube deposu</th>
+                          <th style={{ textAlign: 'center' }}>
+                            {sip.stok_hesap_kaynagi === 'hedef_depo' ? 'Sevkiyat deposu' : 'Merkez mevcut'}
+                          </th>
+                          <th style={{ textAlign: 'center' }}>
+                            {sip.stok_hesap_kaynagi === 'hedef_depo' ? 'Depo min' : 'Merkez min'}
+                          </th>
+                          <th style={{ textAlign: 'center' }}>Göndersen kalır</th>
+                          <th style={{ textAlign: 'center' }}>Barem</th>
+                        </tr></thead>
+                        <tbody>
+                          {(sip.kalemler || []).map((k, ki) => {
+                            const kg = k.kalan_gonderince;
+                            const kalanRenk = k.alarm_merkez ? '#e85d5d' : (kg != null && kg <= 3) ? '#e8a03d' : 'var(--green)';
+                            const depoHesap = sip.stok_hesap_kaynagi === 'hedef_depo';
+                            return (
+                              <tr key={ki} style={{
+                                background: k.alarm_merkez ? 'rgba(232,93,93,0.05)'
+                                  : k.merkez_barem_risk ? 'rgba(232,197,71,0.06)' : 'transparent',
+                              }}>
+                                <td>
+                                  <span style={{ fontWeight: 500 }}>{k.urun_ad}</span>
+                                  {k.sube_zaten_var && (
+                                    <span style={{ marginLeft: 6, fontSize: 11, color: '#e8a03d' }}>⚠️ şubede zaten {k.sube_depo_mevcut} adet var</span>
+                                  )}
+                                </td>
+                                <td style={{ textAlign: 'center', fontWeight: 700 }}>{k.istenen_adet}</td>
+                                <td style={{ textAlign: 'center', color: k.sube_zaten_var ? '#e8a03d' : 'var(--text)' }}>
+                                  {k.sube_depo_mevcut > 0 ? `${k.sube_depo_mevcut} adet` : <span style={{ color: 'var(--text3)' }}>—</span>}
+                                </td>
+                                <td style={{ textAlign: 'center' }}>
+                                  {depoHesap ? (
+                                          <>
+                                            <span>{k.hedef_depo_mevcut != null ? `${k.hedef_depo_mevcut} adet` : '—'}</span>
+                                            {(k.hedef_depo_rezerve || 0) > 0 && (
+                                              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>Rez: {k.hedef_depo_rezerve}</div>
+                                            )}
+                                      {k.merkez_mevcut != null && k.merkez_mevcut >= 0 && (
+                                        <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>Kart: {k.merkez_mevcut}</div>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <>
+                                      {k.merkez_mevcut < 0 ? (
+                                        <span style={{ color: 'var(--text3)' }}>kayıt yok</span>
+                                      ) : (
+                                        <>
+                                          {k.merkez_mevcut} adet
+                                          {(k.merkez_rezerve || 0) > 0 && (
+                                            <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text3)' }}>
+                                              (rez: {k.merkez_rezerve})
+                                            </span>
+                                          )}
+                                        </>
+                                      )}
+                                    </>
+                                  )}
+                                </td>
+                                <td style={{ textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>
+                                  {depoHesap
+                                    ? (k.hedef_depo_min_stok != null ? k.hedef_depo_min_stok : '—')
+                                    : (k.merkez_min_stok != null ? k.merkez_min_stok : '—')}
+                                </td>
+                                <td style={{ textAlign: 'center', fontWeight: 700, color: kalanRenk }}>
+                                  {k.kalan_gonderince === null ? '—' :
+                                   k.kalan_gonderince <= 0 ? `${k.kalan_gonderince} ❌` : `${k.kalan_gonderince} adet`}
+                                </td>
+                                <td style={{ textAlign: 'center', fontSize: 12 }}>
+                                  {k.merkez_barem_risk ? <span style={{ color: '#e8a03d', fontWeight: 700 }}>Uyarı</span> : <span style={{ color: 'var(--text3)' }}>—</span>}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Davranış uyarıları */}
+                    {(sip.davranis_uyarilari || []).length > 0 && (
+                      <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        {sip.davranis_uyarilari.map((u, ui) => (
+                          <span key={ui} style={{ fontSize: 12, background: '#2a1a3a', color: '#c084fc', borderRadius: 6, padding: '2px 8px' }}>
+                            {u.kural} (+{u.puan}p) — {u.mesaj}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Depo atama */}
+                    <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {sip.operasyon_yonlendirme_talimati && (
+                        <div style={{ fontSize: 12, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'rgba(59,130,246,0.08)', whiteSpace: 'pre-wrap' }}>
+                          <span style={{ color: 'var(--text3)', fontWeight: 600 }}>Kayıtlı operasyon talimatı: </span>
+                          {sip.operasyon_yonlendirme_talimati}
+                        </div>
+                      )}
+                      <label style={{ fontSize: 11, color: 'var(--text3)', margin: 0 }}>Operasyon talimatı (isteğe bağlı)</label>
+                      <textarea
+                        className="input"
+                        rows={2}
+                        placeholder="Dağıtım / öncelik notu — depo ve talep şubesi panelinde görünür."
+                        style={{ width: '100%', maxWidth: 520, resize: 'vertical', fontSize: 12 }}
+                        value={kuyrukTalimat[sip.id] || ''}
+                        onChange={(e) => setKuyrukTalimat((prev) => ({ ...prev, [sip.id]: e.target.value }))}
+                      />
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 13, color: 'var(--text3)' }}>Depoya yönlendir:</span>
+                        <select
+                          className="input"
+                          style={{ flex: 1, minWidth: 180, maxWidth: 280 }}
+                          value={kuyrukDepoSecim[sip.id] || ''}
+                          onChange={e => setKuyrukDepoSecim(prev => ({ ...prev, [sip.id]: e.target.value }))}
+                        >
+                          <option value="">— Depo seç —</option>
+                          {kuyrukDepolar.map(d => (
+                            <option key={d.id} value={d.id}>{d.ad} ({d.sube_tipi})</option>
+                          ))}
+                        </select>
+                        <button
+                          className="btn btn-sm btn-primary"
+                          disabled={!kuyrukDepoSecim[sip.id] || kuyrukBusy === sip.id}
+                          onClick={() => gonderilenleIlgiliDepoyaGonder(sip.id)}
+                        >
+                          {kuyrukBusy === sip.id ? '…' : '➤ Yönlendir'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* 1. KRİTİK STOK PANELİ */}
+          {disiplinPanel === 'kritik' && !disiplinYukleniyor && (
+            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>🔴 Kritik Stok</div>
+                  <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>Merkez ve şube depolarında alarm seviyesine düşen stoklar</div>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <span className="badge badge-red">KRİZ = 0 adet</span>
+                  <span className="badge" style={{ background: '#5a1a1a', color: '#ff8080' }}>KRİTİK = 1 adet</span>
+                  <span className="badge badge-gray">DÜŞÜK ≤ min</span>
+                </div>
+              </div>
+              {(kritikStok?.alarmlar || []).length === 0 ? (
+                <div className="empty" style={{ padding: 32 }}><p>Stok alarmı yok ✓</p></div>
+              ) : (
+                <div className="table-wrap" style={{ margin: 0 }}>
+                  <table>
+                    <thead><tr>
+                      <th>Kaynak</th><th>Ürün</th><th>Mevcut</th><th>Rezerve</th><th>Min Stok</th><th>Seviye</th><th>Bekleyen Sipariş</th>
+                    </tr></thead>
+                    <tbody>
+                      {(kritikStok?.alarmlar || []).map((a, i) => (
+                        <tr key={i} style={{ background: a.seviye === 'KRIZ' ? 'rgba(232,93,93,0.08)' : a.seviye === 'KRITIK' ? 'rgba(232,93,93,0.04)' : 'transparent' }}>
+                          <td><span className="badge" style={{ background: a.kaynak === 'merkez' ? '#1a3a5c' : '#1a3a2a', color: a.kaynak === 'merkez' ? '#4a9eff' : '#2db573', fontSize: 11 }}>{a.kaynak === 'merkez' ? '🏭 Merkez' : `🏪 ${a.sube_adi || a.sube_id}`}</span></td>
+                          <td style={{ fontWeight: 500 }}>{a.kalem_adi || a.kalem_kodu}</td>
+                          <td className="mono" style={{ color: a.mevcut === 0 ? '#e85d5d' : a.mevcut === 1 ? '#f08040' : 'var(--text)', fontWeight: 700 }}>{a.mevcut}</td>
+                          <td className="mono" style={{ color: 'var(--text3)' }}>{a.rezerve || 0}</td>
+                          <td className="mono" style={{ color: 'var(--text3)' }}>{a.min_stok}</td>
+                          <td><span className="badge" style={{ background: a.seviye === 'KRIZ' ? '#5a1a1a' : a.seviye === 'KRITIK' ? '#3a2a1a' : '#2a2a2a', color: a.seviye === 'KRIZ' ? '#ff6060' : a.seviye === 'KRITIK' ? '#f08040' : 'var(--text3)', fontSize: 11 }}>{a.seviye}</span></td>
+                          <td className="mono" style={{ color: a.bekleyen_siparis > 0 ? '#c9a227' : 'var(--text3)' }}>{a.bekleyen_siparis || 0}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 2. SİPARİŞ AKIŞ TABLOSU */}
+          {disiplinPanel === 'akis' && !disiplinYukleniyor && (
+            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>🟡 Sipariş Akışı</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>Şube → Tahsis → Sevk → Kabul zinciri</div>
+              </div>
+              {(siparisAkis?.siparis_akis || []).length === 0 ? (
+                <div className="empty" style={{ padding: 32 }}><p>Sipariş verisi yok</p></div>
+              ) : (
+                <div className="table-wrap" style={{ margin: 0 }}>
+                  <table>
+                    <thead><tr>
+                      <th>Şube</th><th>Tarih</th><th>Kalem</th><th>Son Olay</th><th>Durum</th><th>Timeline</th>
+                    </tr></thead>
+                    <tbody>
+                      {(siparisAkis?.siparis_akis || []).map(s => {
+                        const OLAY_RENK = { SIPARIS_OLUSTU: '#6b6f7a', TAHSIS_TAM: '#2db573', TAHSIS_KISMI: '#c9a227', TAHSIS_YOK: '#e85d5d', SEVK_CIKTI: '#4a9eff', KABUL_TAM: '#2db573', KABUL_EKSIK: '#f08040', KULLANIM: '#7c6fdc' };
+                        const DURUM_RENK = { bekliyor: '#c9a227', onaylandi: '#2db573', gonderildi: '#4a9eff', teslim_edildi: '#2db573', iptal: '#e85d5d' };
+                        return (
+                          <tr key={s.id}>
+                            <td style={{ fontWeight: 500 }}>{s.sube_adi || s.sube_id}</td>
+                            <td style={{ color: 'var(--text3)', fontSize: 12 }}>{s.tarih}</td>
+                            <td className="mono" style={{ color: 'var(--text3)' }}>{s.kalem_sayisi} kalem</td>
+                            <td><span style={{ fontSize: 11, color: OLAY_RENK[s.son_olay] || 'var(--text3)', fontWeight: 600 }}>{s.son_olay || '—'}</span><div style={{ fontSize: 10, color: 'var(--text3)' }}>{s.son_olay_ts ? s.son_olay_ts.slice(0, 16).replace('T', ' ') : ''}</div></td>
+                            <td><span className="badge" style={{ fontSize: 11, background: 'transparent', border: `1px solid ${DURUM_RENK[s.durum] || 'var(--border)'}`, color: DURUM_RENK[s.durum] || 'var(--text3)' }}>{s.durum}</span></td>
+                            <td><button type="button" className="btn btn-secondary btn-sm" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => setTimelineAcik(timelineAcik === s.id ? null : s.id)}>📋</button></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {/* Timeline detay */}
+              {timelineAcik && (() => {
+                const s = (siparisAkis?.siparis_akis || []).find(x => x.id === timelineAcik);
+                if (!s) return null;
+                const OLAY_IKON = { SIPARIS_OLUSTU: '📝', TAHSIS_TAM: '✅', TAHSIS_KISMI: '⚠️', TAHSIS_YOK: '❌', SEVK_CIKTI: '🚚', KABUL_TAM: '✅', KABUL_EKSIK: '⚠️', KULLANIM: '📦' };
+                return (
+                  <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', background: 'var(--bg)' }}>
+                    <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 13 }}>📋 {s.sube_adi} — {s.tarih}</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {(s.tahsis || []).map((t, i) => (
+                        <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12 }}>
+                          <span style={{ color: 'var(--text3)', minWidth: 120 }}>{t.kalem_adi || t.kalem_kodu}</span>
+                          <span className="mono">Talep: {t.talep_adet}</span>
+                          <span className="mono">Tahsis: {t.tahsis_adet}</span>
+                          <span className="badge" style={{ fontSize: 10 }}>{t.durum}</span>
+                          {(s.yolda || []).filter(y => y.kalem_kodu === t.kalem_kodu).map((y, j) => (
+                            <span key={j} className="mono" style={{ color: 'var(--text3)' }}>Sevk: {y.sevk_adet} | Kabul: {y.kabul_adet ?? '—'}</span>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* 3. ŞUBE DAVRANIŞ PANELİ */}
+          {disiplinPanel === 'davranis' && !disiplinYukleniyor && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ fontSize: 12, color: 'var(--text3)' }}>Son 30 günde şube ihlalleri. Kırmızı = acil müdahale.</div>
+              {(subeDavranis?.subeler || []).length === 0 ? (
+                <div className="empty"><p>İhlal kaydı yok ✓</p></div>
+              ) : (
+                (subeDavranis?.subeler || []).map(s => {
+                  const DURUM_RENK = { normal: '#2db573', dikkat: '#c9a227', problemli: '#e85d5d' };
+                  const renk = DURUM_RENK[s.durum] || 'var(--text3)';
+                  const KURAL_LABEL = { GEREKSIZ_SIPARIS: 'Gereksiz sipariş', EKSIK_KULLANIM: 'Eksik kullanım girişi', FAZLA_FREKANS: 'Fazla sipariş frekansı', KABUL_FARKI: 'Kabul / sevk farkı' };
+                  return (
+                    <div key={s.sube_id} className="card" style={{ padding: '14px 16px', borderLeft: `3px solid ${renk}` }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{s.sube_adi || s.sube_id}</div>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <span className="mono" style={{ fontSize: 20, fontWeight: 700, color: renk }}>{s.toplam_puan}</span>
+                          <span className="badge" style={{ background: 'transparent', border: `1px solid ${renk}`, color: renk, fontSize: 11 }}>{s.durum}</span>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        {(s.ihlaller || []).map((ih, i) => (
+                          <div key={i} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>
+                            <span style={{ color: 'var(--text3)' }}>{KURAL_LABEL[ih.kural] || ih.kural}</span>
+                            <span className="mono" style={{ color: renk, fontWeight: 700, marginLeft: 6 }}>+{ih.puan}p</span>
+                            <span style={{ color: 'var(--text3)', fontSize: 11, marginLeft: 4 }}>({ih.ihlal_sayisi}x)</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+
+          {/* 4. SKOR TABLOSU */}
+          {disiplinPanel === 'skor' && !disiplinYukleniyor && (
+            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>🟣 Şube Skor Tablosu</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>Bu ay kümülatif davranış puanları. 0–3 normal | 4–6 dikkat | 7+ problemli</div>
+              </div>
+              {(subeSkor?.skorlar || []).length === 0 ? (
+                <div className="empty" style={{ padding: 32 }}><p>Skor verisi yok henüz</p></div>
+              ) : (
+                <div className="table-wrap" style={{ margin: 0 }}>
+                  <table>
+                    <thead><tr>
+                      <th>#</th><th>Şube</th><th>Toplam Puan</th><th>Durum</th>
+                      <th style={{ color: 'var(--text3)', fontSize: 11 }}>Gereksiz Sip.</th>
+                      <th style={{ color: 'var(--text3)', fontSize: 11 }}>Eksik Kullanım</th>
+                      <th style={{ color: 'var(--text3)', fontSize: 11 }}>Fazla Frekans</th>
+                      <th style={{ color: 'var(--text3)', fontSize: 11 }}>Kabul Farkı</th>
+                    </tr></thead>
+                    <tbody>
+                      {(subeSkor?.skorlar || []).map((s, i) => {
+                        const DURUM_RENK = { normal: '#2db573', dikkat: '#c9a227', problemli: '#e85d5d' };
+                        const renk = DURUM_RENK[s.durum] || 'var(--text3)';
+                        const d = s.detay || {};
+                        return (
+                          <tr key={s.sube_id}>
+                            <td style={{ color: 'var(--text3)', width: 30 }}>{i + 1}</td>
+                            <td style={{ fontWeight: 500 }}>{s.sube_adi || s.sube_id}</td>
+                            <td className="mono" style={{ fontSize: 18, fontWeight: 700, color: renk }}>{s.toplam_puan}</td>
+                            <td><span className="badge" style={{ background: 'transparent', border: `1px solid ${renk}`, color: renk, fontSize: 11 }}>{s.durum}</span></td>
+                            <td className="mono" style={{ color: 'var(--text3)' }}>{d.GEREKSIZ_SIPARIS?.puan ?? 0}</td>
+                            <td className="mono" style={{ color: 'var(--text3)' }}>{d.EKSIK_KULLANIM?.puan ?? 0}</td>
+                            <td className="mono" style={{ color: 'var(--text3)' }}>{d.FAZLA_FREKANS?.puan ?? 0}</td>
+                            <td className="mono" style={{ color: 'var(--text3)' }}>{d.KABUL_FARKI?.puan ?? 0}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
         </div>
       )}
 

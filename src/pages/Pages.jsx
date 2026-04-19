@@ -1652,11 +1652,33 @@ export function KartHareketleri() {
 
   const load=()=>{api('/kart-hareketleri').then(setHareketler);api('/kartlar').then(setKartlar);};
   useEffect(()=>{load();},[]);
+
+  useEffect(() => {
+    try {
+      const kid = sessionStorage.getItem('kart_hareket_odeme_kart_id');
+      const open = sessionStorage.getItem('kart_hareket_odeme_modal');
+      if (!kid && open !== '1') return;
+      setForm((f) => ({
+        ...f,
+        ...(kid ? {
+          kart_id: kid,
+          islem_turu: 'ODEME',
+          tutar: '',
+          aciklama: 'Panel — asgari / kart borcu ödemesi',
+        } : {}),
+      }));
+      if (open === '1') setShowModal(true);
+      sessionStorage.removeItem('kart_hareket_odeme_kart_id');
+      sessionStorage.removeItem('kart_hareket_odeme_modal');
+    } catch (_) {}
+  }, []);
+
   const toast=(m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
 
   async function kaydet(){
     try{
       await api('/kart-hareketleri',{method:'POST',body:form});
+      publishGlobalDataRefresh('kart-hareketleri');
       toast(form.islem_turu==='ODEME'?'Ödeme onay kuyruğuna alındı':'Harcama kaydedildi');
       setShowModal(false); load();
     }catch(e){toast(e.message,'red');}

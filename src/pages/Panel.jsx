@@ -135,6 +135,15 @@ export default function Panel({ onNavigate }) {
 
   const toast = (m, t = 'green') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 3500); };
 
+  /** Kredi kartı uyarıları: panelden ödeme yok — Kart Hareketleri sayfasına (ödeme modalı ön seçimli) yönlendir */
+  function kartHareketleriOdemeSayfasi(kartId) {
+    try {
+      if (kartId) sessionStorage.setItem('kart_hareket_odeme_kart_id', kartId);
+      sessionStorage.setItem('kart_hareket_odeme_modal', '1');
+    } catch (_) {}
+    nav('kart-hareketleri');
+  }
+
   async function odemeOnayla(odemeId, tutar) {
     if (loadingBtn) return;
     setLoadingBtn(true);
@@ -760,6 +769,12 @@ export default function Panel({ onNavigate }) {
                       <>
                         <span>Tam: <strong>{fmt(u.tutar)}</strong></span>
                         <span>Asgari: <strong>{fmt(u.asgari)}</strong></span>
+                        {u.kart_id && (
+                          <>
+                            <span>Bu ay ödenen: <strong>{fmt(u.bu_ay_odenen || 0)}</strong></span>
+                            <span>Asgari için kalan: <strong style={{ color: 'var(--red)' }}>{fmt(u.asgari_kalan ?? u.asgari)}</strong></span>
+                          </>
+                        )}
                       </>
                     )}
                   </div>
@@ -775,6 +790,16 @@ export default function Panel({ onNavigate }) {
                       title="Sabit Giderler sayfasında Fatura Öde butonunu kullanın">
                       💰 Fatura Öde
                     </button>
+                  ) : u.kart_id ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+                      <span style={{ fontSize: 10, color: 'var(--text3)', maxWidth: 220, textAlign: 'right', lineHeight: 1.35 }}>
+                        Bilgilendirme: ödeme buradan yapılmaz; asgari ve borç güncellemesi için Kart Hareketleri üzerinden ödeme girin.
+                      </span>
+                      <button type="button" className="btn btn-primary btn-sm" disabled={loadingBtn}
+                        onClick={() => kartHareketleriOdemeSayfasi(u.kart_id)}>
+                        💳 Kart hareketleri
+                      </button>
+                    </div>
                   ) : (
                     <>
                       <button className="btn btn-primary btn-sm" disabled={loadingBtn}
@@ -1389,6 +1414,12 @@ export default function Panel({ onNavigate }) {
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
                       <div style={{ fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{fmt(u.tutar)}</div>
                       <div style={{ fontSize: 10, color: 'var(--text3)' }}>asgari: {fmt(u.asgari)}</div>
+                      {u.kart_id && (
+                        <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
+                          bu ay ödenen: {fmt(u.bu_ay_odenen || 0)} · asgari kalan:{' '}
+                          <strong style={{ color: 'var(--red)' }}>{fmt(u.asgari_kalan != null ? u.asgari_kalan : Math.max(0, (u.asgari || 0) - (u.bu_ay_odenen || 0)))}</strong>
+                        </div>
+                      )}
                     </div>
                   </div>
                   {(() => {
@@ -1398,6 +1429,7 @@ export default function Panel({ onNavigate }) {
                     const planIslem = !!u.odeme_id;
                     const anlikUyari = u.kaynak_tablo === 'anlik_giderler';
                     const vadeliPlansiz = u.kaynak_tablo === 'vadeli_alimlar' && u.kaynak_id && !u.odeme_id;
+                    const kartUyariOdemePlani = !!u.kart_id && planIslem;
 
                     if (anlikUyari) {
                       return (
@@ -1421,25 +1453,27 @@ export default function Panel({ onNavigate }) {
                       );
                     }
 
-                    if (asgariOdendi && u.kart_adi && planIslem) {
+                    if (kartUyariOdemePlani) {
+                      const kal = u.asgari_kalan != null ? parseFloat(u.asgari_kalan) : Math.max(0, asgari - buAyOd);
                       return (
                         <div style={{ marginTop: 8 }}>
-                          <div style={{ fontSize: 12, color: 'var(--green)', marginBottom: 4 }}>
-                            ✅ Bu ay {fmt(buAyOd)} ödendi (asgari tamam).
+                          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6, lineHeight: 1.4 }}>
+                            {asgariOdendi ? (
+                              <span style={{ color: 'var(--green)', fontWeight: 600 }}>Bu ay asgari ödemesi tamam görünüyor.</span>
+                            ) : (
+                              <>
+                                Bu ay kart ödemesi <strong>{fmt(buAyOd)}</strong>
+                                {' · '}Asgari için kalan: <strong style={{ color: 'var(--red)' }}>{fmt(kal)}</strong>
+                              </>
+                            )}
                           </div>
-                          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>
-                            Kalan borç {fmt(u.tutar)} — yeni ödeme yapmak ister misin?
+                          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
+                            CFO panelinden bu kart için kasa/plan ödemesi yapılmaz; tutar düşümü ve merkez borç güncellemesi Kart Hareketleri → ÖDEME ile yapılır.
                           </div>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <button className="btn btn-primary btn-sm" style={{ flex: 1, fontSize: 11 }}
-                              onClick={() => odemeModalAcVadeliKontrol(u)}>
-                              Evet, ödeme yap
-                            </button>
-                            <button className="btn btn-ghost btn-sm" style={{ flex: 1, fontSize: 11 }}
-                              onClick={() => odemeErteleAc(u.odeme_id, u.aciklama, u.tarih)}>
-                              Hayır, sonraki aya bırak
-                            </button>
-                          </div>
+                          <button type="button" className="btn btn-primary btn-sm" style={{ fontSize: 11 }}
+                            onClick={() => kartHareketleriOdemeSayfasi(u.kart_id)}>
+                            💳 Kart hareketleri
+                          </button>
                         </div>
                       );
                     }
