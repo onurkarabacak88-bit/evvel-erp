@@ -3588,8 +3588,9 @@ def ops_bekleyen_merkez(
     sube_id: Optional[str] = None,
 ):
     """
-    Ciro taslağı (bekleyen) + onay kuyruğu (bekleyen) — operasyon merkezi tek sekme.
-    Şube filtresi: ciro için sube_id; kuyruk için anlık gider satırının sube alanı.
+    Ciro taslağı + onay kuyruğu + kasa uyarıları: year_month ile süzülür.
+    Şube sipariş talepleri (siparis_talep, durum=bekliyor): ay filtresi uygulanmaz — hub /hub-ozet sayısı ile uyumlu kuyruk.
+    Şube filtresi: ciro için sube_id; kuyruk için anlık gider satırının sube alanı; sipariş talebi için sube_id.
     """
     ym = _coerce_year_month(year_month)
     sid_f = (sube_id or "").strip() or None
@@ -3635,7 +3636,9 @@ def ops_bekleyen_merkez(
             d.pop("sube_adi_from_anlik", None)
             onay_satirlar.append(d)
 
-        qp3 = [ym]
+        # Bekleyen katalog siparişleri: ay filtresi YOK — hub siparis_bekleyen ile aynı kuyruk olmalı
+        # (tarih başka ayda/null olsa bile merkez işlem sırasında görünür).
+        qp3: List[Any] = []
         q3 = """
             SELECT t.id, t.sube_id, s.ad AS sube_adi, t.tarih, t.durum,
                    t.personel_id, t.personel_ad, t.bildirim_saati,
@@ -3650,7 +3653,6 @@ def ops_bekleyen_merkez(
             JOIN subeler s ON s.id = t.sube_id
             LEFT JOIN subeler ss ON ss.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
             WHERE t.durum = 'bekliyor'
-              AND to_char(t.tarih, 'YYYY-MM') = %s
         """
         if sid_f:
             q3 += " AND t.sube_id = %s"
