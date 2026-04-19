@@ -2969,8 +2969,7 @@ document.getElementById('opSubmit').onclick = async function(){
     var tip = opAktifEvent && opAktifEvent.tip;
     // ─ AÇILIŞ adımları ─
     if (tip==='ACILIS' && opAcilisStep===1) {
-      var ks = parseNum(inpVal('opKasa'));
-      if (ks==null||ks<0) throw new Error('Geçerli kasa sayımı girin');
+      var ks = reqNum('opKasa', 'Kasa sayımı');
       opAcilisKasa = ks;
       opAcilisStep = 2;
       document.getElementById('opFields').innerHTML = buildOpFields('ACILIS', null);
@@ -2979,9 +2978,9 @@ document.getElementById('opSubmit').onclick = async function(){
       btn.disabled=false; return;
     }
     if (tip==='ACILIS' && opAcilisStep===2) {
-      opAcilisStok.bardak_kucuk  = pIntOpt('opBardakK');
-      opAcilisStok.bardak_buyuk  = pIntOpt('opBardakB');
-      opAcilisStok.bardak_plastik= pIntOpt('opBardakP');
+      opAcilisStok.bardak_kucuk  = reqInt('opBardakK', 'Küçük bardak');
+      opAcilisStok.bardak_buyuk  = reqInt('opBardakB', 'Büyük bardak');
+      opAcilisStok.bardak_plastik= reqInt('opBardakP', 'Plastik bardak');
       opAcilisStep=3;
       document.getElementById('opFields').innerHTML = buildOpFields('ACILIS', null);
       document.getElementById('opSubmit').textContent = 'İleri';
@@ -2989,11 +2988,11 @@ document.getElementById('opSubmit').onclick = async function(){
       btn.disabled=false; return;
     }
     if (tip==='ACILIS' && opAcilisStep===3) {
-      opAcilisStok.su_adet       = pIntOpt('opSu');
-      opAcilisStok.redbull_adet  = pIntOpt('opRb');
-      opAcilisStok.soda_adet     = pIntOpt('opSo');
-      opAcilisStok.cookie_adet   = pIntOpt('opCk');
-      opAcilisStok.pasta_adet    = pIntOpt('opPa');
+      opAcilisStok.su_adet       = reqInt('opSu', 'Su');
+      opAcilisStok.redbull_adet  = reqInt('opRb', 'Redbull');
+      opAcilisStok.soda_adet     = reqInt('opSo', 'Soda');
+      opAcilisStok.cookie_adet   = reqInt('opCk', 'Cookie');
+      opAcilisStok.pasta_adet    = reqInt('opPa', 'Pasta');
       opAcilisStep=4;
       document.getElementById('opFields').innerHTML = buildOpFields('ACILIS', null);
       document.getElementById('opSubmit').textContent = 'Onayla ve Tamamla';
@@ -3100,27 +3099,26 @@ document.getElementById('acilisWizIleri').onclick = async function(){
   var btn = this;
   try {
     if (acilisWizStep===1) {
-      var ks = parseNum(inpVal('awKasa'));
-      if (ks==null||ks<0) throw new Error('Geçerli kasa sayımı girin');
+      var ks = reqNum('awKasa', 'Kasa sayımı');
       acilisWizKasa = ks;
       acilisWizStep = 2;
       renderAcilisWiz();
       return;
     }
     if (acilisWizStep===2) {
-      acilisWizStok.bardak_kucuk = pIntOpt('awBardakK');
-      acilisWizStok.bardak_buyuk = pIntOpt('awBardakB');
-      acilisWizStok.bardak_plastik = pIntOpt('awBardakP');
+      acilisWizStok.bardak_kucuk = reqInt('awBardakK', 'Küçük bardak');
+      acilisWizStok.bardak_buyuk = reqInt('awBardakB', 'Büyük bardak');
+      acilisWizStok.bardak_plastik = reqInt('awBardakP', 'Plastik bardak');
       acilisWizStep = 3;
       renderAcilisWiz();
       return;
     }
     if (acilisWizStep===3) {
-      acilisWizStok.su_adet = pIntOpt('awSu');
-      acilisWizStok.redbull_adet = pIntOpt('awRb');
-      acilisWizStok.soda_adet = pIntOpt('awSo');
-      acilisWizStok.cookie_adet = pIntOpt('awCk');
-      acilisWizStok.pasta_adet = pIntOpt('awPa');
+      acilisWizStok.su_adet = reqInt('awSu', 'Su');
+      acilisWizStok.redbull_adet = reqInt('awRb', 'Redbull');
+      acilisWizStok.soda_adet = reqInt('awSo', 'Soda');
+      acilisWizStok.cookie_adet = reqInt('awCk', 'Cookie');
+      acilisWizStok.pasta_adet = reqInt('awPa', 'Pasta');
       acilisWizStep = 4;
       renderAcilisWiz();
       return;
