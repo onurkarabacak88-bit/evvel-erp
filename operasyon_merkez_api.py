@@ -3227,9 +3227,9 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
     aktif_sube = _fetch_int_count(cur)
 
     cur.execute("SELECT COUNT(*) FROM siparis_talep WHERE durum='bekliyor'")
-    siparis_bekleyen = _fetch_int_count(cur)
+    siparis_talep_bekleyen = _fetch_int_count(cur)
     cur.execute("SELECT COUNT(*) FROM siparis_ozel_talep WHERE durum='bekliyor'")
-    siparis_ozel = _fetch_int_count(cur)
+    siparis_ozel_bekleyen = _fetch_int_count(cur)
     try:
         cur.execute("SELECT COUNT(*) FROM siparis_urun WHERE aktif=TRUE")
         siparis_katalog_urun = _fetch_int_count(cur)
@@ -3351,7 +3351,10 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
 
     return {
         "aktif_sube": aktif_sube,
-        "siparis_bekleyen": siparis_bekleyen + siparis_ozel,
+        # Hub kartı toplamı (geri uyumluluk); ayrım: katalog siparis_talep vs özel talep
+        "siparis_bekleyen": siparis_talep_bekleyen + siparis_ozel_bekleyen,
+        "siparis_talep_bekleyen": siparis_talep_bekleyen,
+        "siparis_ozel_bekleyen": siparis_ozel_bekleyen,
         "siparis_katalog_urun": siparis_katalog_urun,
         "onay_bekleyen": onay_bekleyen,
         "fis_bekleyen": fis_bekleyen,
@@ -3375,6 +3378,8 @@ def _hub_ozet_fallback_panel() -> Dict[str, Any]:
     return {
         "aktif_sube": 0,
         "siparis_bekleyen": 0,
+        "siparis_talep_bekleyen": 0,
+        "siparis_ozel_bekleyen": 0,
         "siparis_katalog_urun": 0,
         "onay_bekleyen": 0,
         "fis_bekleyen": 0,
@@ -3393,23 +3398,32 @@ def _hub_ozet_fallback_panel() -> Dict[str, Any]:
     }
 
 
-def _hub_alarm_satirlari(cur: Any, *, ozet: Optional[Dict[str, Any]] = None, limit: int = 18) -> List[Dict[str, Any]]:
+def _hub_alarm_satirlari(cur: Any, *, ozet: Optional[Dict[str, Any]] = None, limit: int = 40) -> List[Dict[str, Any]]:
     """
     Hub için okunaklı alarm satırları (sipariş + depo hattı + özet kuyruklar).
+
+    Katalog siparişleri: yalnızca ``siparis_talep.durum = 'bekliyor'`` — ``/ops/bekleyen-merkez``
+    içindeki sipariş listesi ile aynı küme (tarih / sevkiyat öncesi süzme yok; hub sayısıyla tutarlı).
     """
     satirlar: List[Dict[str, Any]] = []
     merkez_map = merkez_stok_kart_haritasi(cur)
+    _sevk_baslik_tr = {
+        "bekliyor": "sıra · onay öncesi",
+        "depoda_hazirlaniyor": "depoda hazırlanıyor",
+        "kismi_hazirlandi": "kısmi hazırlandı",
+        "hazirlaniyor": "hazırlanıyor",
+        "gonderildi": "gönderildi",
+    }
 
     cur.execute(
         """
         SELECT st.id, st.sube_id, s.ad AS sube_adi, st.tarih, st.olusturma,
                st.personel_ad, st.not_aciklama, st.kalemler,
-               COALESCE(st.hedef_depo_sube_id, st.sevkiyat_sube_id) AS hedef_depo_sube_id
+               COALESCE(st.hedef_depo_sube_id, st.sevkiyat_sube_id) AS hedef_depo_sube_id,
+               COALESCE(NULLIF(TRIM(st.sevkiyat_durumu), ''), st.sevkiyat_durum, 'bekliyor') AS sevkiyat_durumu_norm
         FROM siparis_talep st
         JOIN subeler s ON s.id = st.sube_id
         WHERE st.durum = 'bekliyor'
-          AND st.tarih >= CURRENT_DATE - INTERVAL '14 days'
-          AND COALESCE(NULLIF(TRIM(st.sevkiyat_durumu), ''), st.sevkiyat_durum, 'bekliyor') = 'bekliyor'
         ORDER BY st.olusturma DESC NULLS LAST, st.id DESC
         LIMIT %s
         """,
@@ -3502,11 +3516,13 @@ def _hub_alarm_satirlari(cur: Any, *, ozet: Optional[Dict[str, Any]] = None, lim
             }
         if cn_hub:
             meta_hub["cift_siparis_bilgi_notu"] = cn_hub
+        sd_norm = str(d.get("sevkiyat_durumu_norm") or "bekliyor").strip().lower()
+        ev_label = _sevk_baslik_tr.get(sd_norm) or (sd_norm.replace("_", " ") if sd_norm else "bekliyor")
         satirlar.append({
             "tip": "siparis_merkez_bekliyor",
             "id": f"sip:{tid}",
             "seviye": sev,
-            "baslik": f"{d.get('sube_adi') or sid} — sipariş (merkez onayı / sevkiyat öncesi)",
+            "baslik": f"{d.get('sube_adi') or sid} — katalog sipariş ({ev_label})",
             "ozet": " · ".join(parca) if parca else f"{n_kalem} kalem; ek stok uyarısı yok",
             "meta": meta_hub,
         })
