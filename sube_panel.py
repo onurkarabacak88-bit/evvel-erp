@@ -568,6 +568,7 @@ class SubeAcilisModel(BaseModel):
     bardak_buyuk: Optional[int] = None
     bardak_plastik: Optional[int] = None
     su_adet: Optional[int] = None
+    sut_litre: Optional[int] = None
     redbull_adet: Optional[int] = None
     soda_adet: Optional[int] = None
     cookie_adet: Optional[int] = None
@@ -591,6 +592,7 @@ def _sayimli_panel_acilis_dogrula(body: SubeAcilisModel) -> None:
         ("bardak_buyuk", body.bardak_buyuk),
         ("bardak_plastik", body.bardak_plastik),
         ("su_adet", body.su_adet),
+        ("sut_litre", body.sut_litre),
         ("redbull_adet", body.redbull_adet),
         ("soda_adet", body.soda_adet),
         ("cookie_adet", body.cookie_adet),
@@ -864,11 +866,11 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                 "bardak_buyuk": int(body.bardak_buyuk),
                 "bardak_plastik": int(body.bardak_plastik),
                 "su_adet": int(body.su_adet),
+                "sut_litre": int(body.sut_litre),
                 "redbull_adet": int(body.redbull_adet),
                 "soda_adet": int(body.soda_adet),
                 "cookie_adet": int(body.cookie_adet),
                 "pasta_adet": int(body.pasta_adet),
-                "sut_litre": 0,
                 "surup_adet": 0,
                 "kahve_paket": 0,
                 "karton_bardak": 0,
@@ -961,8 +963,8 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                     f"Şube panel sayımlı açılış — {onay_ad} — tarih={bugun_tr()} saat={saat_sistem} "
                     f"kasa_sayim={ks} | bardak(k/b/p)=({stok['bardak_kucuk']}/"
                     f"{stok['bardak_buyuk']}/{stok['bardak_plastik']}) "
-                    f"urun(su/r/s/c/p)=({stok['su_adet']}/{stok['redbull_adet']}/"
-                    f"{stok['soda_adet']}/{stok['cookie_adet']}/{stok['pasta_adet']})"
+                    f"urun(su/sut/r/s/c/p)=({stok['su_adet']}/{stok['sut_litre']}/"
+                    f"{stok['redbull_adet']}/{stok['soda_adet']}/{stok['cookie_adet']}/{stok['pasta_adet']})"
                 ),
                 aid,
                 personel_id=pid,

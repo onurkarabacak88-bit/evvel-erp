@@ -454,6 +454,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 ("bardak_buyuk", body.bardak_buyuk),
                 ("bardak_plastik", body.bardak_plastik),
                 ("su_adet", body.su_adet),
+                ("sut_litre", body.sut_litre),
                 ("redbull_adet", body.redbull_adet),
                 ("soda_adet", body.soda_adet),
                 ("cookie_adet", body.cookie_adet),
@@ -573,7 +574,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     f"Operasyon ACILIS tamamlandı — {onay_ad} — tarih={bugun_tr()} saat={saat_sistem} "
                     f"kasa_sayim={ks} | stok bardak(kucuk/buyuk/plastik)=({stok['bardak_kucuk']}/"
                     f"{stok['bardak_buyuk']}/{stok['bardak_plastik']}) "
-                    f"urun(su/redbull/soda/cookie/pasta)=({stok['su_adet']}/{stok['redbull_adet']}/"
+                    f"urun(su/sut/redbull/soda/cookie/pasta)=({stok['su_adet']}/{stok['sut_litre']}/{stok['redbull_adet']}/"
                     f"{stok['soda_adet']}/{stok['cookie_adet']}/{stok['pasta_adet']})"
                 ),
                 event_id,
@@ -796,6 +797,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 ("bardak_buyuk", body.bardak_buyuk),
                 ("bardak_plastik", body.bardak_plastik),
                 ("su_adet", body.su_adet),
+                ("sut_litre", body.sut_litre),
                 ("redbull_adet", body.redbull_adet),
                 ("soda_adet", body.soda_adet),
                 ("cookie_adet", body.cookie_adet),
@@ -885,7 +887,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 f"kasa_kime_teslim={kasa_kime_teslim} | "
                 f"X ciro(nakit,pos,online)=({cn},{cp},{co}) | "
                 f"stok bardak(kucuk/buyuk/plastik)=({k_stok['bardak_kucuk']}/{k_stok['bardak_buyuk']}/{k_stok['bardak_plastik']}) "
-                f"urun(su/redbull/soda/cookie/pasta)=({k_stok['su_adet']}/{k_stok['redbull_adet']}/{k_stok['soda_adet']}/{k_stok['cookie_adet']}/{k_stok['pasta_adet']}) | "
+                f"urun(su/sut/redbull/soda/cookie/pasta)=({k_stok['su_adet']}/{k_stok['sut_litre']}/{k_stok['redbull_adet']}/{k_stok['soda_adet']}/{k_stok['cookie_adet']}/{k_stok['pasta_adet']}) | "
                 f"onaylayan={onay_ad} tarih={simdi_tr.strftime('%Y-%m-%d')} saat={bildirim_saat}"
             )
             operasyon_defter_ekle(

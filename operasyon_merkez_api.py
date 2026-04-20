@@ -1492,6 +1492,7 @@ def ops_sayimlar(
                 "bardak_buyuk": int(stok.get("bardak_buyuk") or 0),
                 "bardak_plastik": int(stok.get("bardak_plastik") or 0),
                 "su_adet": int(stok.get("su_adet") or 0),
+                "sut_litre": int(stok.get("sut_litre") or 0),
                 "redbull_adet": int(stok.get("redbull_adet") or 0),
                 "soda_adet": int(stok.get("soda_adet") or 0),
                 "cookie_adet": int(stok.get("cookie_adet") or 0),
@@ -1509,7 +1510,7 @@ def ops_sayimlar(
 
 _BAR_KEYS = [
     "bardak_kucuk", "bardak_buyuk", "bardak_plastik",
-    "su_adet", "redbull_adet", "soda_adet", "cookie_adet", "pasta_adet",
+    "su_adet", "sut_litre", "redbull_adet", "soda_adet", "cookie_adet", "pasta_adet",
 ]
 
 def _bar_stok_from_meta(meta_raw: Any, alan: str) -> Dict[str, int]:
