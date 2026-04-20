@@ -1648,6 +1648,145 @@ def ops_gec_acilan_subeler(
     }
 
 
+@router.get("/gec-kalan-personel")
+def ops_gec_kalan_personel(
+    year_month: Optional[str] = Query(None, description="YYYY-MM"),
+    kritik_dk: int = Query(30, ge=5, le=240),
+    limit: int = Query(300, ge=1, le=1000),
+):
+    """
+    Aylık personel bazlı geç açılış özeti.
+    Geç kalma kriteri: ACILIS eventinde cevap_ts > sistem_slot_ts.
+    """
+    ym = _coerce_year_month(year_month)
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT
+                e.id AS event_id,
+                e.sube_id,
+                COALESCE(s.ad, e.sube_id) AS sube_adi,
+                e.tarih,
+                e.sistem_slot_ts,
+                e.cevap_ts,
+                ROUND(EXTRACT(EPOCH FROM (e.cevap_ts - e.sistem_slot_ts)) / 60.0, 2) AS gecikme_dk,
+                x.personel_id,
+                x.personel_ad
+            FROM sube_operasyon_event e
+            LEFT JOIN subeler s ON s.id = e.sube_id
+            LEFT JOIN LATERAL (
+                SELECT
+                    d.personel_id,
+                    COALESCE(NULLIF(TRIM(d.personel_ad), ''), p.ad_soyad, d.personel_id) AS personel_ad
+                FROM operasyon_defter d
+                LEFT JOIN personel p ON p.id = d.personel_id
+                WHERE d.ref_event_id = e.id
+                ORDER BY d.olay_ts DESC NULLS LAST, d.id DESC
+                LIMIT 1
+            ) x ON TRUE
+            WHERE e.tip = 'ACILIS'
+              AND to_char(e.tarih, 'YYYY-MM') = %s
+              AND e.sistem_slot_ts IS NOT NULL
+              AND e.cevap_ts IS NOT NULL
+              AND EXTRACT(EPOCH FROM (e.cevap_ts - e.sistem_slot_ts)) > 0
+            ORDER BY e.tarih DESC, sube_adi ASC
+            LIMIT %s
+            """,
+            (ym, limit),
+        )
+        rows = cur.fetchall() or []
+
+    personel_map: Dict[str, Dict[str, Any]] = {}
+    toplam_gecikme = 0
+    for r in rows:
+        pid = str(r.get("personel_id") or "").strip()
+        pad = str(r.get("personel_ad") or "").strip()
+        if not pid and not pad:
+            pid = "anon"
+            pad = "Bilinmiyor"
+        elif not pad:
+            pad = pid
+        pkey = f"{pid}::{pad}"
+        try:
+            gecikme = float(r.get("gecikme_dk") or 0.0)
+        except (TypeError, ValueError):
+            gecikme = 0.0
+        gecikme = round(max(0.0, gecikme), 2)
+        plan_ts = r.get("sistem_slot_ts")
+        gercek_ts = r.get("cevap_ts")
+        agg = personel_map.setdefault(
+            pkey,
+            {
+                "personel_id": pid or None,
+                "personel_ad": pad,
+                "gecikme_adet": 0,
+                "toplam_gecikme_dk": 0.0,
+                "max_gecikme_dk": 0.0,
+                "detaylar": [],
+            },
+        )
+        agg["gecikme_adet"] += 1
+        agg["toplam_gecikme_dk"] += gecikme
+        if gecikme > float(agg["max_gecikme_dk"]):
+            agg["max_gecikme_dk"] = gecikme
+        agg["detaylar"].append(
+            {
+                "event_id": r.get("event_id"),
+                "tarih": str(r.get("tarih") or ""),
+                "sube_id": r.get("sube_id"),
+                "sube_adi": r.get("sube_adi"),
+                "planlanan_saat": plan_ts.strftime("%H:%M") if plan_ts else None,
+                "acilis_saat": gercek_ts.strftime("%H:%M") if gercek_ts else None,
+                "gecikme_dk": gecikme,
+            }
+        )
+        toplam_gecikme += 1
+
+    satirlar: List[Dict[str, Any]] = []
+    for v in personel_map.values():
+        adet = int(v["gecikme_adet"])
+        toplam_gecikme_dk = round(float(v["toplam_gecikme_dk"]), 2)
+        ort = round(toplam_gecikme_dk / float(max(1, adet)), 2)
+        detaylar = sorted(v["detaylar"], key=lambda x: (x.get("tarih") or "", x.get("sube_adi") or ""), reverse=True)
+        kritik_gecikme_adet = sum(1 for d in detaylar if float(d.get("gecikme_dk") or 0.0) >= float(kritik_dk))
+        # Skor: toplam gecikme yükü + kritik tekrar bonusu (kritik dakika üstü olaylar daha ağır).
+        skor = round(toplam_gecikme_dk + (kritik_gecikme_adet * float(kritik_dk)), 2)
+        satirlar.append(
+            {
+                "personel_id": v["personel_id"],
+                "personel_ad": v["personel_ad"],
+                "gecikme_adet": adet,
+                "toplam_gecikme_dk": toplam_gecikme_dk,
+                "ortalama_gecikme_dk": ort,
+                "max_gecikme_dk": round(float(v["max_gecikme_dk"]), 2),
+                "kritik": kritik_gecikme_adet > 0,
+                "kritik_gecikme_adet": kritik_gecikme_adet,
+                "skor": skor,
+                "detaylar": detaylar,
+            }
+        )
+
+    satirlar.sort(
+        key=lambda x: (
+            float(x.get("skor") or 0.0),
+            float(x.get("toplam_gecikme_dk") or 0.0),
+            int(x.get("gecikme_adet") or 0),
+            float(x.get("max_gecikme_dk") or 0.0),
+            str(x.get("personel_ad") or ""),
+        ),
+        reverse=True,
+    )
+    kritik_adet = sum(1 for x in satirlar if bool(x.get("kritik")))
+    return {
+        "year_month": ym,
+        "kritik_dk": int(kritik_dk),
+        "toplam_personel": len(satirlar),
+        "gecikme_toplam_adet": int(toplam_gecikme),
+        "kritik_personel_sayisi": int(kritik_adet),
+        "satirlar": satirlar,
+    }
+
+
 @router.get("/bar-ozet")
 def ops_bar_ozet(
     sube_id: Optional[str] = None,
