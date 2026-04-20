@@ -2,7 +2,46 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api, fmt } from '../utils/api';
 import { computeOpsKartVurgu } from '../utils/opsVurgu';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
-import { siparisKatalogLikeSubePanelNormalize, magazaAktifUrunSayisi } from '../utils/magazaDepoKatalog';
+
+/** Mağaza depo katalog — şube paneli `siparisNormalize` ile aynı mantık (ayrı dosya Docker’da eksik kalmasın diye burada). */
+function magazaDepoSlugifyTr(s) {
+  return String(s || '')
+    .toLocaleLowerCase('tr-TR')
+    .normalize('NFD')
+    .replace(/\u0307/g, '')
+    .replace(/[^a-z0-9]+/gi, '_')
+    .replace(/^_+|_+$/g, '') || 'urun';
+}
+
+function magazaAktifUrunSayisi(kat) {
+  const items = Array.isArray(kat?.items) ? kat.items : [];
+  return items.filter((it) => it && it.aktif !== false).length;
+}
+
+function siparisKatalogLikeSubePanelNormalize(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((k, ki) => {
+    const items = Array.isArray(k.items) ? k.items : [];
+    const nItems = items.map((it, i) => {
+      if (typeof it === 'string') {
+        const ad = it.trim();
+        return { id: `${magazaDepoSlugifyTr(ad)}_${i}`, ad, aktif: true };
+      }
+      const ad = String((it && it.ad) || '').trim() || `Ürün ${i + 1}`;
+      return {
+        id: String((it && it.id) || '').trim() || `${magazaDepoSlugifyTr(ad)}_${i}`,
+        ad,
+        aktif: it && it.aktif !== false,
+      };
+    });
+    return {
+      id: String(k.id || k.kod || '').trim() || `kat_${ki}`,
+      label: String(k.label || k.ad || '').trim() || 'Kategori',
+      ad: k.ad,
+      items: nItems,
+    };
+  });
+}
 
 /** Tam hub; başarısızsa alarm satırları hesaplanmayan hafif istek (ağır sorgu / proxy 502 sonrası). */
 async function fetchHubOzet() {
