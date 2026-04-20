@@ -5494,11 +5494,21 @@ class KullanimBody(BaseModel):
     yapan_ad: Optional[str] = None
 
 
-class MerkezDepoGuncelle(BaseModel):
+class SubeDepoGuncelle(BaseModel):
+    sube_id:     str
     kalem_kodu:  str
     kalem_adi:   str = ""
     mevcut_adet: int = 0
     min_stok:    int = 0
+    alis_fiyati_tl: float = 0.0
+    giris_nedeni: str = "sayim_duzeltme"
+
+
+class SubeDepoKalemTanimBody(BaseModel):
+    kalem_adi:   str
+    kalem_kodu:  str = ""
+    min_stok:    int = 0
+    alis_fiyati_tl: float = 0.0
 
 
 # ── Aşama 2: Merkez tahsis ────────────────────────────────────────
@@ -5789,6 +5799,15 @@ def ops_v2_sube_skor(yil: Optional[int] = None, ay: Optional[int] = None):
 
 # ── Merkez depo stok yönetimi ─────────────────────────────────────
 
+def _ensure_sube_depo_alis_fiyati_col(cur: Any) -> None:
+    """Eski ortamlarda yoksa şube depo alış fiyatı sütununu ekler."""
+    cur.execute(
+        """
+        ALTER TABLE sube_depo_stok
+        ADD COLUMN IF NOT EXISTS alis_fiyati_tl numeric(12,2) NOT NULL DEFAULT 0
+        """
+    )
+
 @router.get("/v2/merkez-depo")
 def ops_v2_merkez_depo():
     """Merkez depo anlık stok listesi."""
@@ -5806,25 +5825,143 @@ def ops_v2_merkez_depo():
     return {"stok": rows, "toplam": len(rows)}
 
 
-@router.post("/v2/merkez-depo/guncelle")
-def ops_v2_merkez_depo_guncelle(body: MerkezDepoGuncelle):
-    """Merkez depo stok girişi / düzeltme."""
+@router.post("/v2/sube-depo/guncelle")
+def ops_v2_sube_depo_guncelle(body: SubeDepoGuncelle):
+    """Şube depo stok girişi / düzeltme."""
+    sube_id = str(body.sube_id or "").strip()
+    kalem_kodu = str(body.kalem_kodu or "").strip()
+    if not sube_id:
+        raise HTTPException(400, "sube_id zorunlu")
+    if not kalem_kodu:
+        raise HTTPException(400, "kalem_kodu zorunlu")
+    if int(body.mevcut_adet or 0) < 0:
+        raise HTTPException(400, "mevcut_adet negatif olamaz")
+    if int(body.min_stok or 0) < 0:
+        raise HTTPException(400, "min_stok negatif olamaz")
+    alis_fiyat = float(body.alis_fiyati_tl or 0.0)
+    if alis_fiyat < 0:
+        raise HTTPException(400, "alis_fiyati_tl negatif olamaz")
+    neden = str(body.giris_nedeni or "sayim_duzeltme").strip().lower() or "sayim_duzeltme"
+    neden_map = {
+        "satinalma": "Satın alma",
+        "sayim_duzeltme": "Sayım düzeltme",
+        "iade": "İade",
+        "transfer_giris": "Transfer girişi",
+        "fire_zayi": "Fire / zayi",
+        "diger": "Diğer",
+    }
+    if neden not in neden_map:
+        raise HTTPException(400, "gecersiz giris_nedeni")
+
     with db() as (conn, cur):
+        _ensure_sube_depo_alis_fiyati_col(cur)
         cur.execute(
             """
-            INSERT INTO merkez_stok_kart (kalem_kodu, kalem_adi, mevcut_adet, min_stok)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (kalem_kodu) DO UPDATE
+            INSERT INTO sube_depo_stok
+                (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet, min_stok, alis_fiyati_tl)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (sube_id, kalem_kodu) DO UPDATE
             SET kalem_adi   = EXCLUDED.kalem_adi,
                 mevcut_adet = EXCLUDED.mevcut_adet,
                 min_stok    = EXCLUDED.min_stok,
+                alis_fiyati_tl = EXCLUDED.alis_fiyati_tl,
                 guncelleme  = NOW()
             """,
-            (body.kalem_kodu, body.kalem_adi or body.kalem_kodu,
-             body.mevcut_adet, body.min_stok),
+            (
+                str(uuid.uuid4()),
+                sube_id,
+                kalem_kodu,
+                body.kalem_adi or kalem_kodu,
+                int(body.mevcut_adet or 0),
+                int(body.min_stok or 0),
+                round(alis_fiyat, 2),
+            ),
+        )
+        saat = dt_now_tr().strftime("%H:%M:%S")
+        operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "SUBE_DEPO_MANUEL_GUNCELLE",
+            (
+                f"Şube depo manuel güncelleme — kalem={kalem_kodu} "
+                f"mevcut={int(body.mevcut_adet or 0)} min={int(body.min_stok or 0)} "
+                f"alis={round(alis_fiyat, 2)} "
+                f"neden={neden_map.get(neden, neden)}"
+            ),
+            bildirim_saati=saat,
         )
         conn.commit()
-    return {"success": True}
+    return {"success": True, "sube_id": sube_id, "kalem_kodu": kalem_kodu, "giris_nedeni": neden, "alis_fiyati_tl": round(alis_fiyat, 2)}
+
+
+@router.post("/v2/sube-depo/kalem-tanimla")
+def ops_v2_sube_depo_kalem_tanimla(body: SubeDepoKalemTanimBody):
+    """Yeni depo kalemini tüm aktif şube depolarına tanımlar."""
+    kalem_adi = str(body.kalem_adi or "").strip()
+    if not kalem_adi:
+        raise HTTPException(400, "kalem_adi zorunlu")
+    if int(body.min_stok or 0) < 0:
+        raise HTTPException(400, "min_stok negatif olamaz")
+    alis_fiyat = float(body.alis_fiyati_tl or 0.0)
+    if alis_fiyat < 0:
+        raise HTTPException(400, "alis_fiyati_tl negatif olamaz")
+
+    kod_raw = str(body.kalem_kodu or "").strip().lower()
+    if not kod_raw:
+        kod_raw = _norm_ad_tr(kalem_adi).lower()
+    kalem_kodu = re.sub(r"[^a-z0-9_]+", "_", kod_raw)
+    kalem_kodu = re.sub(r"_+", "_", kalem_kodu).strip("_")
+    if not kalem_kodu:
+        raise HTTPException(400, "gecerli bir kalem_kodu uretilemedi")
+
+    hedef_subeler: List[Dict[str, str]] = []
+    with db() as (conn, cur):
+        _ensure_sube_depo_alis_fiyati_col(cur)
+        cur.execute("SELECT id, ad, aktif FROM subeler ORDER BY ad")
+        for r in (cur.fetchall() or []):
+            sid = str(r.get("id") or "").strip()
+            if not sid:
+                continue
+            aktif = r.get("aktif")
+            if aktif is False:
+                continue
+            hedef_subeler.append({"id": sid, "ad": str(r.get("ad") or sid)})
+
+        if not hedef_subeler:
+            raise HTTPException(404, "aktif şube bulunamadı")
+
+        for s in hedef_subeler:
+            sid = s["id"]
+            cur.execute(
+                """
+                INSERT INTO sube_depo_stok
+                    (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet, min_stok, alis_fiyati_tl)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (sube_id, kalem_kodu) DO UPDATE
+                SET kalem_adi  = EXCLUDED.kalem_adi,
+                    min_stok   = EXCLUDED.min_stok,
+                    alis_fiyati_tl = EXCLUDED.alis_fiyati_tl,
+                    guncelleme = NOW()
+                """,
+                (str(uuid.uuid4()), sid, kalem_kodu, kalem_adi, 0, int(body.min_stok or 0), round(alis_fiyat, 2)),
+            )
+            operasyon_defter_ekle(
+                cur,
+                sid,
+                "SUBE_DEPO_KALEM_TANIM",
+                f"Depo kalemi tanımlandı — kalem={kalem_kodu} ad={kalem_adi} min={int(body.min_stok or 0)} alis={round(alis_fiyat, 2)}",
+                bildirim_saati=dt_now_tr().strftime("%H:%M:%S"),
+            )
+        conn.commit()
+
+    return {
+        "success": True,
+        "kalem_kodu": kalem_kodu,
+        "kalem_adi": kalem_adi,
+        "min_stok": int(body.min_stok or 0),
+        "alis_fiyati_tl": round(alis_fiyat, 2),
+        "hedef_sube_sayisi": len(hedef_subeler),
+    }
 
 
 # ── Şube depo görüntüle ───────────────────────────────────────────
@@ -5833,8 +5970,11 @@ def ops_v2_merkez_depo_guncelle(body: MerkezDepoGuncelle):
 def ops_v2_sube_depo(sube_id: str):
     """Şubenin depo stok listesi."""
     with db() as (conn, cur):
+        _ensure_sube_depo_alis_fiyati_col(cur)
         cur.execute("""
-            SELECT kalem_kodu, kalem_adi, mevcut_adet, min_stok, guncelleme
+            SELECT kalem_kodu, kalem_adi, mevcut_adet, min_stok,
+                   COALESCE(alis_fiyati_tl, 0) AS alis_fiyati_tl,
+                   guncelleme
             FROM sube_depo_stok
             WHERE sube_id=%s
             ORDER BY kalem_adi

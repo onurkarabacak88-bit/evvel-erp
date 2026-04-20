@@ -1829,6 +1829,39 @@ def sube_depo_stok_depo_cikis_dus(
     return cur.rowcount > 0
 
 
+def sube_depo_stok_depo_giris_ekle(
+    cur: Any,
+    sube_id: str,
+    kalem_kodu: str,
+    kalem_adi: Optional[str],
+    adet: int,
+) -> None:
+    """
+    Şube paneli «ürün stok ekle» (URUN_STOK_EKLE): fiziksel depo stoğu artar.
+
+    Defter kaydı append-only kalır; bu fonksiyon ``sube_depo_stok`` ile senkron tutar.
+    """
+    kk = (kalem_kodu or "").strip()
+    if not kk:
+        return
+    ad = max(0, int(adet))
+    if ad <= 0:
+        return
+    lab = (STOK_LABEL_TR.get(kk) or (kalem_adi or "") or kk).strip() or kk
+    cur.execute(
+        """
+        INSERT INTO sube_depo_stok
+            (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet, rezerve_adet, min_stok)
+        VALUES (%s, %s, %s, %s, %s, 0, 0)
+        ON CONFLICT (sube_id, kalem_kodu) DO UPDATE
+        SET mevcut_adet = COALESCE(sube_depo_stok.mevcut_adet, 0) + EXCLUDED.mevcut_adet,
+            kalem_adi = COALESCE(NULLIF(EXCLUDED.kalem_adi, ''), sube_depo_stok.kalem_adi),
+            guncelleme = NOW()
+        """,
+        (str(uuid.uuid4()), sube_id, kk, lab, ad),
+    )
+
+
 def kullanim_kaydet(cur: Any, sube_id: str,
                     kullanim_kalemleri: List[Dict[str, Any]],
                     yapan_id: Optional[str] = None,

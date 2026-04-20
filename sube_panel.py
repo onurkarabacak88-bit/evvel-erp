@@ -1823,7 +1823,11 @@ class SubeUrunStokEkleBody(BaseModel):
 
 @router.post("/{sube_id}/urun-stok-ekle")
 def sube_urun_stok_ekle(sube_id: str, body: SubeUrunStokEkleBody):
-    from operasyon_stok_motor import normalize_delta_body
+    from operasyon_stok_motor import (
+        normalize_delta_body,
+        STOK_KEYS,
+        sube_depo_stok_depo_giris_ekle,
+    )
 
     pid_in = (body.personel_id or "").strip()
     pin = (body.pin or "").replace(" ", "")
@@ -1864,6 +1868,13 @@ def sube_urun_stok_ekle(sube_id: str, body: SubeUrunStokEkleBody):
             bildirim_saati=saat_sistem,
         )
         audit(cur, "operasyon_defter", rid, "URUN_STOK_EKLE")
+
+        # Fiziksel şube deposu: defterle aynı miktarları ekle (Operasyon Merkezi depo listesi)
+        for kalem_kodu in STOK_KEYS:
+            miktar = int(delta.get(kalem_kodu) or 0)
+            if miktar <= 0:
+                continue
+            sube_depo_stok_depo_giris_ekle(cur, sube_id, kalem_kodu, None, miktar)
 
     return {"success": True, "defter_id": rid, "delta": delta}
 
