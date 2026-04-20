@@ -29,6 +29,7 @@ const UST_SEKMELER = [
   { id: 'canli', label: 'Canlı Operasyon' },
   { id: 'urun-ac', label: '🟢 Ürün Aç Akışı' },
   { id: 'kullanilan-urunler', label: '🟠 Kullanılan Ürünler' },
+  { id: 'kasa-uyumsuzluk', label: '🔴 Kasa Uyumsuzluğu' },
   { id: 'stok-kart', label: '📦 Stok Kartı' },
   { id: 'kontrol', label: '🔍 Kontrol' },
   { id: 'metrics', label: '📊 Metrikler' },
@@ -53,6 +54,7 @@ const OPS_MODUL_BOLUM = {
   ],
   'urun-ac': [{ id: 'icerik', label: 'Günlük akış' }],
   'kullanilan-urunler': [{ id: 'icerik', label: 'Günlük akış' }],
+  'kasa-uyumsuzluk': [{ id: 'icerik', label: 'Günlük akış' }],
   'stok-kart': [
     { id: 'secim', label: 'Kart seçimi' },
     { id: 'detay', label: 'Detay' },
@@ -83,6 +85,7 @@ const OPS_HUB_RENK = {
   canli: '#4a9eff',
   'urun-ac': '#2db573',
   'kullanilan-urunler': '#f59e0b',
+  'kasa-uyumsuzluk': '#e85d5d',
   'stok-kart': '#7c6fdc',
   kontrol: '#e85d5d',
   metrics: '#2db573',
@@ -693,6 +696,12 @@ export default function OperasyonMerkezi() {
   const [kullanilanAramaYukleniyor, setKullanilanAramaYukleniyor] = useState(false);
   const [kullanilanAramaSonuc, setKullanilanAramaSonuc] = useState({ tarih: '', toplam_islem: 0, toplam_adet: 0, satirlar: [] });
   const [kullanilanSeciliSubeKey, setKullanilanSeciliSubeKey] = useState('all');
+  const [kasaUyumBugun, setKasaUyumBugun] = useState({ tarih: '', toplam: 0, kayitlar: [] });
+  const [kasaUyumBugunYukleniyor, setKasaUyumBugunYukleniyor] = useState(false);
+  const [kasaUyumAramaTarih, setKasaUyumAramaTarih] = useState(bugunIsoTarih());
+  const [kasaUyumAramaYukleniyor, setKasaUyumAramaYukleniyor] = useState(false);
+  const [kasaUyumAramaSonuc, setKasaUyumAramaSonuc] = useState({ tarih: '', toplam: 0, kayitlar: [] });
+  const [kasaUyumSeciliSubeKey, setKasaUyumSeciliSubeKey] = useState('all');
 
   /** Yeni sipariş toast: gördüğümüz talep id'leri (tekrar uyarı yok) */
   const hubSiparisGorulduRef = useRef(new Set());
@@ -888,6 +897,51 @@ export default function OperasyonMerkezi() {
     }
   }, [kullanilanAramaTarih, kullanilanGunYukle, toast]);
 
+  const kasaUyumGunYukle = useCallback(async (tarih) => {
+    const hedef = (tarih || bugunIsoTarih()).trim();
+    const ym = hedef.slice(0, 7);
+    const r = await api(`/ops/bekleyen-merkez?year_month=${encodeURIComponent(ym)}`);
+    const tum = Array.isArray(r?.kasa_uyumsuzluklar) ? r.kasa_uyumsuzluklar : [];
+    const kayitlar = tum.filter((u) => String(u?.tarih || '').slice(0, 10) === hedef);
+    return {
+      tarih: hedef,
+      toplam: kayitlar.length,
+      kayitlar,
+    };
+  }, []);
+
+  const yukleKasaUyumBugun = useCallback(async (opts = {}) => {
+    const silent = !!opts.silent;
+    setKasaUyumBugunYukleniyor(true);
+    try {
+      const data = await kasaUyumGunYukle(bugunIsoTarih());
+      setKasaUyumBugun(data);
+      setKasaUyumAramaTarih(data.tarih || bugunIsoTarih());
+      setKasaUyumAramaSonuc(data);
+    } catch (e) {
+      if (!silent) toast(e.message || 'Kasa uyumsuzluk verisi yüklenemedi');
+    } finally {
+      setKasaUyumBugunYukleniyor(false);
+    }
+  }, [kasaUyumGunYukle, toast]);
+
+  const kasaUyumAramaYap = useCallback(async () => {
+    const hedef = (kasaUyumAramaTarih || bugunIsoTarih()).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(hedef)) {
+      toast('Tarih formatı YYYY-MM-DD olmalı');
+      return;
+    }
+    setKasaUyumAramaYukleniyor(true);
+    try {
+      const data = await kasaUyumGunYukle(hedef);
+      setKasaUyumAramaSonuc(data);
+    } catch (e) {
+      toast(e.message || 'Kasa uyumsuzluk araması yapılamadı');
+    } finally {
+      setKasaUyumAramaYukleniyor(false);
+    }
+  }, [kasaUyumAramaTarih, kasaUyumGunYukle, toast]);
+
   const yukleSiparisMerkez = useCallback(async () => {
     try {
       const [cat, subeler, dr] = await Promise.all([
@@ -1082,7 +1136,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     if (!aktifSekme) return;
-    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'urun-ac' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'stok-kart' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
+    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'urun-ac' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'stok-kart' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
     yukle(filtre);
   }, [filtre, aktifSekme, ayFiltre, gunFiltre, yukle]);
 
@@ -1145,6 +1199,18 @@ export default function OperasyonMerkezi() {
   }, [aktifSekme, toast, kullanilanGunYukle]);
 
   useEffect(() => {
+    if (aktifSekme !== 'kasa-uyumsuzluk') return;
+    setYukleniyor(true);
+    kasaUyumGunYukle(bugunIsoTarih())
+      .then((data) => {
+        setKasaUyumAramaTarih(data.tarih || bugunIsoTarih());
+        setKasaUyumAramaSonuc(data);
+      })
+      .catch((e) => toast(e.message || 'Kasa uyumsuzluk verisi yüklenemedi'))
+      .finally(() => setYukleniyor(false));
+  }, [aktifSekme, toast, kasaUyumGunYukle]);
+
+  useEffect(() => {
     if (aktifSekme !== 'stok-kart') return;
     setYukleniyor(true);
     yukleStokKart(stokKartSecim);
@@ -1192,6 +1258,9 @@ export default function OperasyonMerkezi() {
       } else if (aktifSekme === 'kullanilan-urunler') {
         setYukleniyor(true);
         kullanilanAramaYap().finally(() => setYukleniyor(false));
+      } else if (aktifSekme === 'kasa-uyumsuzluk') {
+        setYukleniyor(true);
+        kasaUyumAramaYap().finally(() => setYukleniyor(false));
       } else if (aktifSekme === 'siparis') {
         setYukleniyor(true);
         yukleSiparisMerkez().finally(() => setYukleniyor(false));
@@ -1215,7 +1284,7 @@ export default function OperasyonMerkezi() {
       }
     });
     return unsub;
-  }, [aktifSekme, filtre, stokKartSecim, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, kullanilanAramaYap, yukleSiparisMerkez, yukleStokKart, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
+  }, [aktifSekme, filtre, stokKartSecim, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, kullanilanAramaYap, kasaUyumAramaYap, yukleSiparisMerkez, yukleStokKart, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
 
 
   const toplamGecikme = skor?.son_30_gun?.reduce((s, r) => s + (r.gecikme_adet || 0), 0) || 0;
@@ -1292,6 +1361,28 @@ export default function OperasyonMerkezi() {
       const label = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
       return (urunAcSubeAnahtar(label) || label) === barOzetSeciliSubeKey;
     });
+  const kasaUyumSubeSekmeleri = (kasaUyumAramaSonuc?.kayitlar || []).reduce((acc, r) => {
+    const baslik = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
+    const key = urunAcSubeAnahtar(baslik) || baslik;
+    const bulunan = acc.find((x) => x.key === key);
+    if (bulunan) bulunan.adet += 1;
+    else acc.push({ key, baslik, adet: 1 });
+    return acc;
+  }, []);
+  kasaUyumSubeSekmeleri.sort((a, b) => {
+    const ai = URUN_AC_SUBE_ONCELIK.indexOf(a.key);
+    const bi = URUN_AC_SUBE_ONCELIK.indexOf(b.key);
+    const ao = ai >= 0 ? ai : 99;
+    const bo = bi >= 0 ? bi : 99;
+    if (ao !== bo) return ao - bo;
+    return a.baslik.localeCompare(b.baslik, 'tr');
+  });
+  const kasaUyumGorunenKayitlar = kasaUyumSeciliSubeKey === 'all'
+    ? (kasaUyumAramaSonuc?.kayitlar || [])
+    : (kasaUyumAramaSonuc?.kayitlar || []).filter((r) => {
+      const label = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
+      return (urunAcSubeAnahtar(label) || label) === kasaUyumSeciliSubeKey;
+    });
 
   useEffect(() => {
     if (!urunAcSubeBloklari.length) {
@@ -1316,6 +1407,17 @@ export default function OperasyonMerkezi() {
   }, [kullanilanSeciliSubeKey, kullanilanSubeSekmeleri]);
 
   useEffect(() => {
+    if (!kasaUyumSubeSekmeleri.length) {
+      if (kasaUyumSeciliSubeKey !== 'all') setKasaUyumSeciliSubeKey('all');
+      return;
+    }
+    if (kasaUyumSeciliSubeKey === 'all') return;
+    if (!kasaUyumSubeSekmeleri.some((s) => s.key === kasaUyumSeciliSubeKey)) {
+      setKasaUyumSeciliSubeKey('all');
+    }
+  }, [kasaUyumSeciliSubeKey, kasaUyumSubeSekmeleri]);
+
+  useEffect(() => {
     if (!barOzetSubeSekmeleri.length) {
       if (barOzetSeciliSubeKey !== 'all') setBarOzetSeciliSubeKey('all');
       return;
@@ -1332,6 +1434,7 @@ export default function OperasyonMerkezi() {
       if (!opsMerkezPencere) {
         yukleUrunAcBugun({ silent: true }).catch(() => {});
         yukleKullanilanBugun({ silent: true }).catch(() => {});
+        yukleKasaUyumBugun({ silent: true }).catch(() => {});
       }
     };
     loadOzet();
@@ -1344,7 +1447,7 @@ export default function OperasyonMerkezi() {
       clearInterval(id);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [hubOzetIsle, opsMerkezPencere, yukleUrunAcBugun, yukleKullanilanBugun]);
+  }, [hubOzetIsle, opsMerkezPencere, yukleUrunAcBugun, yukleKullanilanBugun, yukleKasaUyumBugun]);
 
   const acOpsModul = useCallback((id) => {
     const bolumler = OPS_MODUL_BOLUM[id] || [{ id: 'icerik', label: 'İçerik' }];
@@ -1553,6 +1656,7 @@ export default function OperasyonMerkezi() {
               fetchHubOzet().then((r) => hubOzetIsle(r)).catch(() => toast('Özet yenilenemedi', 'red'));
               yukleUrunAcBugun().catch(() => {});
               yukleKullanilanBugun().catch(() => {});
+              yukleKasaUyumBugun().catch(() => {});
               return;
             }
             if (!aktifSekme) {
@@ -1569,6 +1673,9 @@ export default function OperasyonMerkezi() {
             }
             else if (aktifSekme === 'kullanilan-urunler') {
               kullanilanAramaYap().finally(() => setYukleniyor(false));
+            }
+            else if (aktifSekme === 'kasa-uyumsuzluk') {
+              kasaUyumAramaYap().finally(() => setYukleniyor(false));
             }
             else if (aktifSekme === 'stok-kart') yukleStokKart(stokKartSecim);
             else if (aktifSekme === 'metrics') yukleMetrics();
@@ -1834,6 +1941,13 @@ export default function OperasyonMerkezi() {
                 : (kullanilanBugun?.toplam_islem || 0) > 0
                 ? `Bugün ${kullanilanBugun?.toplam_islem || 0} şube kaydı`
                 : 'Bugün kullanılan ürün kaydı yok';
+            } else if (s.id === 'kasa-uyumsuzluk') {
+              val = kasaUyumBugun?.toplam ?? 0;
+              sub = kasaUyumBugunYukleniyor
+                ? 'Güncel veri yükleniyor…'
+                : (kasaUyumBugun?.toplam || 0) > 0
+                ? `${kasaUyumBugun?.toplam || 0} uyumsuzluk var`
+                : 'Uyumsuzluk yok';
             }
             if (opsOzet) {
               if (s.id === 'canli') {
@@ -1901,6 +2015,9 @@ export default function OperasyonMerkezi() {
                     setKullanilanDetayAcik(true);
                     setKullanilanAramaTarih(bugunIsoTarih());
                     setKullanilanAramaSonuc(kullanilanBugun);
+                  } else if (s.id === 'kasa-uyumsuzluk') {
+                    setKasaUyumAramaTarih(bugunIsoTarih());
+                    setKasaUyumAramaSonuc(kasaUyumBugun);
                   }
                   acOpsModul(s.id);
                 }}
@@ -1981,6 +2098,9 @@ export default function OperasyonMerkezi() {
                   }
                   else if (aktifSekme === 'kullanilan-urunler') {
                     kullanilanAramaYap().finally(() => setYukleniyor(false));
+                  }
+                  else if (aktifSekme === 'kasa-uyumsuzluk') {
+                    kasaUyumAramaYap().finally(() => setYukleniyor(false));
                   }
                   else if (aktifSekme === 'stok-kart') yukleStokKart(stokKartSecim);
                   else if (aktifSekme === 'metrics') yukleMetrics();
@@ -3171,6 +3291,110 @@ export default function OperasyonMerkezi() {
                           })}
                         </tbody>
                       </table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {aktifSekme === 'kasa-uyumsuzluk' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
+            Dün kapanış kasası ile bugün açılış kasası farkları bu ekranda izlenir.
+          </p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ margin: 0 }}>
+              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Tarih</span>
+              <input
+                type="date"
+                className="input"
+                value={kasaUyumAramaTarih}
+                onChange={(e) => setKasaUyumAramaTarih(e.target.value || bugunIsoTarih())}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ alignSelf: 'flex-end' }}
+              onClick={() => kasaUyumAramaYap()}
+            >
+              {kasaUyumAramaYukleniyor ? '…' : 'Tarihi getir'}
+            </button>
+            <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'flex-end' }}>
+              {kasaUyumAramaSonuc?.tarih || kasaUyumAramaTarih} · {kasaUyumAramaSonuc?.toplam || 0} uyumsuzluk
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => setKasaUyumSeciliSubeKey('all')}
+              style={{
+                border: kasaUyumSeciliSubeKey === 'all' ? '1px solid #e85d5d' : '1px solid var(--border)',
+                background: kasaUyumSeciliSubeKey === 'all' ? 'rgba(232, 93, 93, 0.2)' : 'var(--bg2)',
+                color: kasaUyumSeciliSubeKey === 'all' ? '#fecaca' : 'var(--text2)',
+                padding: '6px 10px',
+                fontWeight: 700,
+              }}
+            >
+              Tümü
+            </button>
+            {kasaUyumSubeSekmeleri.map((s) => (
+              <button
+                key={`kasa-uyum-${s.key}`}
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setKasaUyumSeciliSubeKey(s.key)}
+                style={{
+                  border: kasaUyumSeciliSubeKey === s.key ? '1px solid #4a9eff' : '1px solid var(--border)',
+                  background: kasaUyumSeciliSubeKey === s.key ? 'rgba(74, 158, 255, 0.2)' : 'var(--bg2)',
+                  color: kasaUyumSeciliSubeKey === s.key ? '#e6f7ff' : 'var(--text2)',
+                  padding: '6px 10px',
+                  fontWeight: 700,
+                }}
+              >
+                {s.baslik} ({s.adet})
+              </button>
+            ))}
+          </div>
+
+          {kasaUyumGorunenKayitlar.length === 0 ? (
+            <div className="empty"><p>Seçilen tarihte kasa uyumsuzluğu yok</p></div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 480, overflow: 'auto' }}>
+              {kasaUyumGorunenKayitlar.map((u) => {
+                const fark = Number(u?.fark_tl || 0);
+                const absFark = Math.abs(fark);
+                const farkPozitif = fark >= 0;
+                return (
+                  <div key={u.id} className="card" style={{ padding: '12px 14px', borderLeft: `4px solid ${absFark >= 200 ? 'var(--red)' : 'var(--yellow)'}` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontWeight: 600 }}>
+                          {u.sube_adi || u.sube_id}
+                          <span style={{ marginLeft: 8 }} className={`badge ${absFark >= 200 ? 'badge-red' : 'badge-yellow'}`}>
+                            {farkPozitif ? '+' : ''}{fmt(fark)}
+                          </span>
+                        </div>
+                        <div className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>
+                          {u.tarih} · Dün kapanış: {fmt(u.beklenen_tl || 0)} · Bugün açılış: {fmt(u.gercek_tl || 0)}
+                        </div>
+                        {u.mesaj && <div style={{ fontSize: 12, marginTop: 6 }}>{u.mesaj}</div>}
+                      </div>
+                      <div>
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          disabled={!!onayBusyId}
+                          onClick={() => kasaUyumsuzlukCoz(u.id)}
+                        >
+                          {onayBusyId === `ku:${u.id}` ? '…' : 'Çözüldü işaretle'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
