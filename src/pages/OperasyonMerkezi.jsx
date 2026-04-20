@@ -671,6 +671,7 @@ export default function OperasyonMerkezi() {
   const [urunAcAramaTarih, setUrunAcAramaTarih] = useState(bugunIsoTarih());
   const [urunAcAramaYukleniyor, setUrunAcAramaYukleniyor] = useState(false);
   const [urunAcAramaSonuc, setUrunAcAramaSonuc] = useState({ tarih: '', toplam_islem: 0, toplam_adet: 0, kayitlar: [] });
+  const [urunAcSeciliSubeKey, setUrunAcSeciliSubeKey] = useState('all');
 
   /** Yeni sipariş toast: gördüğümüz talep id'leri (tekrar uyarı yok) */
   const hubSiparisGorulduRef = useRef(new Set());
@@ -1147,6 +1148,20 @@ export default function OperasyonMerkezi() {
   const urunAcBugunZirveSaat = urunAcZirveSaat(urunAcBugun);
   const urunAcAramaZirveSaat = urunAcZirveSaat(urunAcAramaSonuc);
   const urunAcSubeBloklari = urunAcSubeGruplari(urunAcAramaSonuc?.kayitlar || []);
+  const urunAcGorunenSubeBloklari = urunAcSeciliSubeKey === 'all'
+    ? urunAcSubeBloklari
+    : urunAcSubeBloklari.filter((g) => g.key === urunAcSeciliSubeKey);
+
+  useEffect(() => {
+    if (!urunAcSubeBloklari.length) {
+      if (urunAcSeciliSubeKey !== 'all') setUrunAcSeciliSubeKey('all');
+      return;
+    }
+    if (urunAcSeciliSubeKey === 'all') return;
+    if (!urunAcSubeBloklari.some((g) => g.key === urunAcSeciliSubeKey)) {
+      setUrunAcSeciliSubeKey('all');
+    }
+  }, [urunAcSeciliSubeKey, urunAcSubeBloklari]);
 
   useEffect(() => {
     const loadOzet = () => {
@@ -2706,13 +2721,39 @@ export default function OperasyonMerkezi() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 420, overflow: 'auto' }}>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => setUrunAcSeciliSubeKey('all')}
+                  style={{
+                    border: urunAcSeciliSubeKey === 'all' ? '1px solid #2db573' : '1px solid var(--border)',
+                    background: urunAcSeciliSubeKey === 'all' ? 'rgba(45, 181, 115, 0.2)' : 'var(--bg2)',
+                    color: urunAcSeciliSubeKey === 'all' ? '#86efac' : 'var(--text2)',
+                    padding: '6px 10px',
+                    fontWeight: 700,
+                  }}
+                >
+                  Tümü · {urunAcAramaSonuc?.toplam_islem || 0} işlem / {urunAcAramaSonuc?.toplam_adet || 0} adet
+                </button>
                 {urunAcSubeBloklari.map((g) => (
-                  <span key={`head-${g.key}`} className="badge badge-green">
-                    {g.baslik} · {g.toplamIslem} işlem / {g.toplamAdet} adet
-                  </span>
+                  <button
+                    key={`tab-${g.key}`}
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => setUrunAcSeciliSubeKey(g.key)}
+                    style={{
+                      border: urunAcSeciliSubeKey === g.key ? '1px solid #4a9eff' : '1px solid var(--border)',
+                      background: urunAcSeciliSubeKey === g.key ? 'rgba(74, 158, 255, 0.2)' : 'var(--bg2)',
+                      color: urunAcSeciliSubeKey === g.key ? '#e6f7ff' : 'var(--text2)',
+                      padding: '6px 10px',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {g.baslik} · {g.toplamIslem} / {g.toplamAdet}
+                  </button>
                 ))}
               </div>
-              {urunAcSubeBloklari.map((g) => (
+              {urunAcGorunenSubeBloklari.map((g) => (
                 <section key={g.key} className="card" style={{ padding: '10px 12px', borderLeft: '4px solid #2db573' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
                     <div style={{ fontSize: 13, fontWeight: 700 }}>{g.baslik}</div>
