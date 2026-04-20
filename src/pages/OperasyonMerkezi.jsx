@@ -28,6 +28,7 @@ const FILTRELER = [
 const UST_SEKMELER = [
   { id: 'canli', label: 'Canlı Operasyon' },
   { id: 'urun-ac', label: '🟢 Ürün Aç Akışı' },
+  { id: 'gec-acilan-subeler', label: '⏰ Geç Açılan Şubeler' },
   { id: 'kullanilan-urunler', label: '🟠 Kullanılan Ürünler' },
   { id: 'ciro-onay', label: '💳 Bekleyen Ciro Onayları' },
   { id: 'kasa-uyumsuzluk', label: '🔴 Kasa Uyumsuzluğu' },
@@ -54,6 +55,7 @@ const OPS_MODUL_BOLUM = {
     { id: 'karsilastirma', label: 'Karşılaştırma' },
   ],
   'urun-ac': [{ id: 'icerik', label: 'Günlük akış' }],
+  'gec-acilan-subeler': [{ id: 'icerik', label: 'Günlük akış' }],
   'kullanilan-urunler': [{ id: 'icerik', label: 'Günlük akış' }],
   'ciro-onay': [{ id: 'icerik', label: 'Onay akışı' }],
   'kasa-uyumsuzluk': [{ id: 'icerik', label: 'Günlük akış' }],
@@ -87,6 +89,7 @@ const OPS_MODUL_BOLUM = {
 const OPS_HUB_RENK = {
   canli: '#4a9eff',
   'urun-ac': '#2db573',
+  'gec-acilan-subeler': '#f97316',
   'kullanilan-urunler': '#f59e0b',
   'ciro-onay': '#d946b8',
   'kasa-uyumsuzluk': '#e85d5d',
@@ -694,6 +697,12 @@ export default function OperasyonMerkezi() {
   const [urunAcAramaYukleniyor, setUrunAcAramaYukleniyor] = useState(false);
   const [urunAcAramaSonuc, setUrunAcAramaSonuc] = useState({ tarih: '', toplam_islem: 0, toplam_adet: 0, kayitlar: [] });
   const [urunAcSeciliSubeKey, setUrunAcSeciliSubeKey] = useState('all');
+  const [gecAcilanBugun, setGecAcilanBugun] = useState({ tarih: '', toplam: 0, kayitlar: [] });
+  const [gecAcilanBugunYukleniyor, setGecAcilanBugunYukleniyor] = useState(false);
+  const [gecAcilanAramaTarih, setGecAcilanAramaTarih] = useState(bugunIsoTarih());
+  const [gecAcilanAramaYukleniyor, setGecAcilanAramaYukleniyor] = useState(false);
+  const [gecAcilanAramaSonuc, setGecAcilanAramaSonuc] = useState({ tarih: '', toplam: 0, kayitlar: [] });
+  const [gecAcilanSeciliSubeKey, setGecAcilanSeciliSubeKey] = useState('all');
   const [kullanilanBugun, setKullanilanBugun] = useState({ tarih: '', toplam_islem: 0, toplam_adet: 0, satirlar: [] });
   const [kullanilanBugunYukleniyor, setKullanilanBugunYukleniyor] = useState(false);
   const [kullanilanDetayAcik, setKullanilanDetayAcik] = useState(false);
@@ -859,6 +868,50 @@ export default function OperasyonMerkezi() {
       setUrunAcAramaYukleniyor(false);
     }
   }, [urunAcAramaTarih, urunAcGunYukle]);
+
+  const gecAcilanGunYukle = useCallback(async (tarih) => {
+    const hedef = (tarih || bugunIsoTarih()).trim();
+    const r = await api(`/ops/gec-acilan-subeler?tarih=${encodeURIComponent(hedef)}&limit=260`);
+    return {
+      tarih: String(r?.tarih || hedef),
+      toplam: Number(r?.toplam || 0),
+      kayitlar: Array.isArray(r?.kayitlar) ? r.kayitlar : [],
+    };
+  }, []);
+
+  const yukleGecAcilanBugun = useCallback(async (opts = {}) => {
+    const silent = !!opts.silent;
+    setGecAcilanBugunYukleniyor(true);
+    try {
+      const data = await gecAcilanGunYukle(bugunIsoTarih());
+      setGecAcilanBugun(data);
+      if (aktifSekme !== 'gec-acilan-subeler') {
+        setGecAcilanAramaTarih(data.tarih || bugunIsoTarih());
+        setGecAcilanAramaSonuc(data);
+      }
+    } catch (e) {
+      if (!silent) toast(e.message || 'Geç açılan şubeler yüklenemedi');
+    } finally {
+      setGecAcilanBugunYukleniyor(false);
+    }
+  }, [aktifSekme, gecAcilanGunYukle, toast]);
+
+  const gecAcilanAramaYap = useCallback(async () => {
+    const hedef = (gecAcilanAramaTarih || bugunIsoTarih()).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(hedef)) {
+      toast('Tarih formatı YYYY-MM-DD olmalı');
+      return;
+    }
+    setGecAcilanAramaYukleniyor(true);
+    try {
+      const data = await gecAcilanGunYukle(hedef);
+      setGecAcilanAramaSonuc(data);
+    } catch (e) {
+      toast(e.message || 'Geç açılan şubeler getirilemedi');
+    } finally {
+      setGecAcilanAramaYukleniyor(false);
+    }
+  }, [gecAcilanAramaTarih, gecAcilanGunYukle, toast]);
 
   const kullanilanGunYukle = useCallback(async (tarih) => {
     const hedef = (tarih || bugunIsoTarih()).trim();
@@ -1259,7 +1312,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     if (!aktifSekme) return;
-    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'urun-ac' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'stok-kart' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
+    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'urun-ac' || aktifSekme === 'gec-acilan-subeler' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'stok-kart' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
     yukle(filtre);
   }, [filtre, aktifSekme, ayFiltre, gunFiltre, yukle]);
 
@@ -1308,6 +1361,18 @@ export default function OperasyonMerkezi() {
       .catch((e) => toast(e.message || 'Ürün aç akışı yüklenemedi'))
       .finally(() => setYukleniyor(false));
   }, [aktifSekme, toast, urunAcGunYukle]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'gec-acilan-subeler') return;
+    setYukleniyor(true);
+    gecAcilanGunYukle(bugunIsoTarih())
+      .then((data) => {
+        setGecAcilanAramaTarih(data.tarih || bugunIsoTarih());
+        setGecAcilanAramaSonuc(data);
+      })
+      .catch((e) => toast(e.message || 'Geç açılan şubeler yüklenemedi'))
+      .finally(() => setYukleniyor(false));
+  }, [aktifSekme, toast, gecAcilanGunYukle]);
 
   useEffect(() => {
     if (aktifSekme !== 'kullanilan-urunler') return;
@@ -1402,6 +1467,9 @@ export default function OperasyonMerkezi() {
       } else if (aktifSekme === 'urun-ac') {
         setYukleniyor(true);
         urunAcAramaYap().finally(() => setYukleniyor(false));
+      } else if (aktifSekme === 'gec-acilan-subeler') {
+        setYukleniyor(true);
+        gecAcilanAramaYap().finally(() => setYukleniyor(false));
       } else if (aktifSekme === 'kullanilan-urunler') {
         setYukleniyor(true);
         kullanilanAramaYap().finally(() => setYukleniyor(false));
@@ -1437,7 +1505,7 @@ export default function OperasyonMerkezi() {
       }
     });
     return unsub;
-  }, [aktifSekme, filtre, stokKartSecim, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, kullanilanAramaYap, ciroOnayAramaYap, kasaUyumAramaYap, urunUyumAramaYap, yukleSiparisMerkez, yukleStokKart, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
+  }, [aktifSekme, filtre, stokKartSecim, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, gecAcilanAramaYap, kullanilanAramaYap, ciroOnayAramaYap, kasaUyumAramaYap, urunUyumAramaYap, yukleSiparisMerkez, yukleStokKart, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
 
 
   const toplamGecikme = skor?.son_30_gun?.reduce((s, r) => s + (r.gecikme_adet || 0), 0) || 0;
@@ -1463,6 +1531,28 @@ export default function OperasyonMerkezi() {
   const urunAcGorunenSubeBloklari = urunAcSeciliSubeKey === 'all'
     ? urunAcSubeBloklari
     : urunAcSubeBloklari.filter((g) => g.key === urunAcSeciliSubeKey);
+  const gecAcilanSubeSekmeleri = (gecAcilanAramaSonuc?.kayitlar || []).reduce((acc, r) => {
+    const baslik = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
+    const key = urunAcSubeAnahtar(baslik) || baslik;
+    const bulunan = acc.find((x) => x.key === key);
+    if (bulunan) bulunan.adet += 1;
+    else acc.push({ key, baslik, adet: 1 });
+    return acc;
+  }, []);
+  gecAcilanSubeSekmeleri.sort((a, b) => {
+    const ai = URUN_AC_SUBE_ONCELIK.indexOf(a.key);
+    const bi = URUN_AC_SUBE_ONCELIK.indexOf(b.key);
+    const ao = ai >= 0 ? ai : 99;
+    const bo = bi >= 0 ? bi : 99;
+    if (ao !== bo) return ao - bo;
+    return a.baslik.localeCompare(b.baslik, 'tr');
+  });
+  const gecAcilanGorunenKayitlar = gecAcilanSeciliSubeKey === 'all'
+    ? (gecAcilanAramaSonuc?.kayitlar || [])
+    : (gecAcilanAramaSonuc?.kayitlar || []).filter((r) => {
+      const label = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
+      return (urunAcSubeAnahtar(label) || label) === gecAcilanSeciliSubeKey;
+    });
   const kullanilanSubeSekmeleri = (kullanilanAramaSonuc?.satirlar || []).reduce((acc, r) => {
     const baslik = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
     const key = urunAcSubeAnahtar(baslik) || baslik;
@@ -1593,6 +1683,17 @@ export default function OperasyonMerkezi() {
   }, [urunAcSeciliSubeKey, urunAcSubeBloklari]);
 
   useEffect(() => {
+    if (!gecAcilanSubeSekmeleri.length) {
+      if (gecAcilanSeciliSubeKey !== 'all') setGecAcilanSeciliSubeKey('all');
+      return;
+    }
+    if (gecAcilanSeciliSubeKey === 'all') return;
+    if (!gecAcilanSubeSekmeleri.some((s) => s.key === gecAcilanSeciliSubeKey)) {
+      setGecAcilanSeciliSubeKey('all');
+    }
+  }, [gecAcilanSeciliSubeKey, gecAcilanSubeSekmeleri]);
+
+  useEffect(() => {
     if (!kullanilanSubeSekmeleri.length) {
       if (kullanilanSeciliSubeKey !== 'all') setKullanilanSeciliSubeKey('all');
       return;
@@ -1652,6 +1753,7 @@ export default function OperasyonMerkezi() {
       fetchHubOzet().then((r) => hubOzetIsle(r)).catch(() => {});
       if (!opsMerkezPencere) {
         yukleUrunAcBugun({ silent: true }).catch(() => {});
+        yukleGecAcilanBugun({ silent: true }).catch(() => {});
         yukleKullanilanBugun({ silent: true }).catch(() => {});
         yukleCiroOnayBugun({ silent: true }).catch(() => {});
         yukleKasaUyumBugun({ silent: true }).catch(() => {});
@@ -1668,7 +1770,7 @@ export default function OperasyonMerkezi() {
       clearInterval(id);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [hubOzetIsle, opsMerkezPencere, yukleUrunAcBugun, yukleKullanilanBugun, yukleCiroOnayBugun, yukleKasaUyumBugun, yukleUrunUyumBugun]);
+  }, [hubOzetIsle, opsMerkezPencere, yukleUrunAcBugun, yukleGecAcilanBugun, yukleKullanilanBugun, yukleCiroOnayBugun, yukleKasaUyumBugun, yukleUrunUyumBugun]);
 
   const acOpsModul = useCallback((id) => {
     const bolumler = OPS_MODUL_BOLUM[id] || [{ id: 'icerik', label: 'İçerik' }];
@@ -1893,6 +1995,7 @@ export default function OperasyonMerkezi() {
             if (!opsMerkezPencere) {
               fetchHubOzet().then((r) => hubOzetIsle(r)).catch(() => toast('Özet yenilenemedi', 'red'));
               yukleUrunAcBugun().catch(() => {});
+              yukleGecAcilanBugun().catch(() => {});
               yukleKullanilanBugun().catch(() => {});
               yukleKasaUyumBugun().catch(() => {});
               yukleUrunUyumBugun().catch(() => {});
@@ -1909,6 +2012,9 @@ export default function OperasyonMerkezi() {
             }
             else if (aktifSekme === 'urun-ac') {
               urunAcAramaYap().finally(() => setYukleniyor(false));
+            }
+            else if (aktifSekme === 'gec-acilan-subeler') {
+              gecAcilanAramaYap().finally(() => setYukleniyor(false));
             }
             else if (aktifSekme === 'kullanilan-urunler') {
               kullanilanAramaYap().finally(() => setYukleniyor(false));
@@ -2176,6 +2282,13 @@ export default function OperasyonMerkezi() {
               sub = urunAcBugunZirveSaat
                 ? `Bugün zirve ${urunAcBugunZirveSaat.saat} (${urunAcBugunZirveSaat.adet})`
                 : 'Bugün ürün aç kaydı yok';
+            } else if (s.id === 'gec-acilan-subeler') {
+              val = gecAcilanBugun?.toplam ?? 0;
+              sub = gecAcilanBugunYukleniyor
+                ? 'Güncel veri yükleniyor…'
+                : (gecAcilanBugun?.toplam || 0) > 0
+                ? `${gecAcilanBugun?.toplam || 0} şube geç açıldı`
+                : 'Geç açılan şube yok';
             } else if (s.id === 'kullanilan-urunler') {
               val = kullanilanBugun?.toplam_adet ?? 0;
               sub = kullanilanBugunYukleniyor
@@ -2267,6 +2380,9 @@ export default function OperasyonMerkezi() {
                     setUrunAcDetayAcik(true);
                     setUrunAcAramaTarih(bugunIsoTarih());
                     setUrunAcAramaSonuc(urunAcBugun);
+                  } else if (s.id === 'gec-acilan-subeler') {
+                    setGecAcilanAramaTarih(bugunIsoTarih());
+                    setGecAcilanAramaSonuc(gecAcilanBugun);
                   } else if (s.id === 'kullanilan-urunler') {
                     setKullanilanDetayAcik(true);
                     setKullanilanAramaTarih(bugunIsoTarih());
@@ -2357,6 +2473,9 @@ export default function OperasyonMerkezi() {
                   }
                   else if (aktifSekme === 'urun-ac') {
                     urunAcAramaYap().finally(() => setYukleniyor(false));
+                  }
+                  else if (aktifSekme === 'gec-acilan-subeler') {
+                    gecAcilanAramaYap().finally(() => setYukleniyor(false));
                   }
                   else if (aktifSekme === 'kullanilan-urunler') {
                     kullanilanAramaYap().finally(() => setYukleniyor(false));
@@ -3674,6 +3793,101 @@ export default function OperasyonMerkezi() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {aktifSekme === 'gec-acilan-subeler' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
+            Şubelerin plan saatine göre <strong>geç açılış</strong> kayıtları bu kartta izlenir.
+          </p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ margin: 0 }}>
+              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Tarih</span>
+              <input
+                type="date"
+                className="input"
+                value={gecAcilanAramaTarih}
+                onChange={(e) => setGecAcilanAramaTarih(e.target.value || bugunIsoTarih())}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ alignSelf: 'flex-end' }}
+              onClick={() => gecAcilanAramaYap()}
+            >
+              {gecAcilanAramaYukleniyor ? '…' : 'Tarihi getir'}
+            </button>
+            <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'flex-end' }}>
+              {gecAcilanAramaSonuc?.tarih || gecAcilanAramaTarih} · {gecAcilanAramaSonuc?.toplam || 0} geç açılış
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => setGecAcilanSeciliSubeKey('all')}
+              style={{
+                border: gecAcilanSeciliSubeKey === 'all' ? '1px solid #f97316' : '1px solid var(--border)',
+                background: gecAcilanSeciliSubeKey === 'all' ? 'rgba(249, 115, 22, 0.2)' : 'var(--bg2)',
+                color: gecAcilanSeciliSubeKey === 'all' ? '#fed7aa' : 'var(--text2)',
+                padding: '6px 10px',
+                fontWeight: 700,
+              }}
+            >
+              Tümü
+            </button>
+            {gecAcilanSubeSekmeleri.map((s) => (
+              <button
+                key={`gec-acilis-${s.key}`}
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setGecAcilanSeciliSubeKey(s.key)}
+                style={{
+                  border: gecAcilanSeciliSubeKey === s.key ? '1px solid #4a9eff' : '1px solid var(--border)',
+                  background: gecAcilanSeciliSubeKey === s.key ? 'rgba(74, 158, 255, 0.2)' : 'var(--bg2)',
+                  color: gecAcilanSeciliSubeKey === s.key ? '#e6f7ff' : 'var(--text2)',
+                  padding: '6px 10px',
+                  fontWeight: 700,
+                }}
+              >
+                {s.baslik} ({s.adet})
+              </button>
+            ))}
+          </div>
+
+          {gecAcilanGorunenKayitlar.length === 0 ? (
+            <div className="empty"><p>Seçilen tarihte geç açılan şube yok</p></div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: 'var(--bg2)' }}>
+                    <th style={{ padding: '7px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600 }}>Şube</th>
+                    <th style={{ padding: '7px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600 }}>Personel</th>
+                    <th style={{ padding: '7px 8px', textAlign: 'center', color: '#93c5fd', fontWeight: 600 }}>Planlanan</th>
+                    <th style={{ padding: '7px 8px', textAlign: 'center', color: '#fbbf24', fontWeight: 600 }}>Açılış</th>
+                    <th style={{ padding: '7px 8px', textAlign: 'center', color: '#fca5a5', fontWeight: 700 }}>Gecikme</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gecAcilanGorunenKayitlar.map((r, idx) => (
+                    <tr key={r.event_id || `${r.sube_id}-${r.tarih}-${idx}`} style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={{ padding: '7px 8px', fontWeight: 600 }}>{r.sube_adi || r.sube_id}</td>
+                      <td style={{ padding: '7px 8px', color: 'var(--text2)' }}>{r.personel_ad || r.personel_id || '—'}</td>
+                      <td className="mono" style={{ padding: '7px 8px', textAlign: 'center' }}>{r.planlanan_saat || '—'}</td>
+                      <td className="mono" style={{ padding: '7px 8px', textAlign: 'center' }}>{r.acilis_saat || '—'}</td>
+                      <td className="mono" style={{ padding: '7px 8px', textAlign: 'center', color: 'var(--red)', fontWeight: 700 }}>
+                        +{Number(r.gecikme_dk || 0).toFixed(1)} dk
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
