@@ -1651,6 +1651,7 @@ def ops_gec_acilan_subeler(
 @router.get("/gec-kalan-personel")
 def ops_gec_kalan_personel(
     year_month: Optional[str] = Query(None, description="YYYY-MM"),
+    gecikme_dk: int = Query(5, ge=1, le=120),
     kritik_dk: int = Query(30, ge=5, le=240),
     limit: int = Query(300, ge=1, le=1000),
 ):
@@ -1688,11 +1689,11 @@ def ops_gec_kalan_personel(
               AND to_char(e.tarih, 'YYYY-MM') = %s
               AND e.sistem_slot_ts IS NOT NULL
               AND e.cevap_ts IS NOT NULL
-              AND EXTRACT(EPOCH FROM (e.cevap_ts - e.sistem_slot_ts)) > 0
+              AND EXTRACT(EPOCH FROM (e.cevap_ts - e.sistem_slot_ts)) >= (%s * 60)
             ORDER BY e.tarih DESC, sube_adi ASC
             LIMIT %s
             """,
-            (ym, limit),
+            (ym, gecikme_dk, limit),
         )
         rows = cur.fetchall() or []
 
@@ -1779,6 +1780,7 @@ def ops_gec_kalan_personel(
     kritik_adet = sum(1 for x in satirlar if bool(x.get("kritik")))
     return {
         "year_month": ym,
+        "gecikme_dk": int(gecikme_dk),
         "kritik_dk": int(kritik_dk),
         "toplam_personel": len(satirlar),
         "gecikme_toplam_adet": int(toplam_gecikme),
@@ -4617,6 +4619,12 @@ class OpsSiparisSevkiyatGuncelleBody(BaseModel):
     gonderildi: bool = False
 
 
+class OpsSevkiyatUyumsuzlukCozBody(BaseModel):
+    stok_yolda_id: str
+    cozum_adet: int
+    notu: Optional[str] = None
+
+
 @router.post("/siparis/urun")
 def ops_siparis_urun_ekle(body: OpsSiparisUrunBody):
     """Merkez: katalog ürünü ekle veya (norm_ad çakışırsa) yeniden aktif et."""
@@ -5041,6 +5049,191 @@ def ops_siparis_depo_sevkiyat_raporlari(gun: int = 21, limit: int = 40):
             d["id"] = str(d.get("id") or "")
             raporlar.append(d)
     return {"gun": gun_i, "limit": lim, "raporlar": raporlar}
+
+
+@router.get("/siparis/sevkiyat-uyumsuzluklar")
+def ops_siparis_sevkiyat_uyumsuzluklar(gun: int = 30, limit: int = 100):
+    """Sevk ve kabul adedi farklı olan satırlar (merkez çözüm ekranı)."""
+    gun_i = max(1, min(120, int(gun or 30)))
+    lim = max(1, min(300, int(limit or 100)))
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT
+                y.id AS stok_yolda_id,
+                y.siparis_talep_id,
+                y.sube_id AS hedef_sube_id,
+                hs.ad AS hedef_sube_adi,
+                y.kalem_kodu,
+                y.kalem_adi,
+                COALESCE(y.sevk_adet, 0) AS sevk_adet,
+                COALESCE(y.kabul_adet, 0) AS kabul_adet,
+                y.durum,
+                y.sevk_ts,
+                y.kabul_ts,
+                t.tarih,
+                COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS kaynak_depo_sube_id,
+                ks.ad AS kaynak_depo_sube_adi
+            FROM stok_yolda y
+            JOIN siparis_talep t ON t.id = y.siparis_talep_id
+            LEFT JOIN subeler hs ON hs.id = y.sube_id
+            LEFT JOIN subeler ks ON ks.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
+            WHERE t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+              AND COALESCE(y.sevk_adet, 0) <> COALESCE(y.kabul_adet, 0)
+            ORDER BY t.tarih DESC, y.sevk_ts DESC NULLS LAST
+            LIMIT %s
+            """,
+            (gun_i, lim),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    for d in rows:
+        if d.get("sevk_ts"):
+            d["sevk_ts"] = str(d["sevk_ts"])
+        if d.get("kabul_ts"):
+            d["kabul_ts"] = str(d["kabul_ts"])
+        if d.get("tarih"):
+            d["tarih"] = str(d["tarih"])
+        d["fark_adet"] = int(d.get("sevk_adet") or 0) - int(d.get("kabul_adet") or 0)
+    return {"gun": gun_i, "limit": lim, "satirlar": rows}
+
+
+@router.post("/siparis/sevkiyat-uyumsuzluk-coz")
+def ops_siparis_sevkiyat_uyumsuzluk_coz(body: OpsSevkiyatUyumsuzlukCozBody):
+    """
+    Merkezden uyumsuz sevkiyat satırını tek adede uzlaştırır:
+    - kaynak depo sevk adedi uzlaşır (gerekirse iade/ek düşüm),
+    - hedef şube kabul adedi uzlaşır (gerekirse giriş/çıkış),
+    - stok_yolda satırı uzlaşma durumuna geçer.
+    """
+    yid = (body.stok_yolda_id or "").strip()
+    if not yid:
+        raise HTTPException(400, "stok_yolda_id zorunlu")
+    cozum = max(0, int(body.cozum_adet or 0))
+    notu = (body.notu or "").strip() or None
+
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT
+                y.id,
+                y.siparis_talep_id,
+                y.sube_id AS hedef_sube_id,
+                y.kalem_kodu,
+                y.kalem_adi,
+                COALESCE(y.sevk_adet, 0) AS sevk_adet,
+                COALESCE(y.kabul_adet, 0) AS kabul_adet,
+                COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS kaynak_depo_sube_id
+            FROM stok_yolda y
+            JOIN siparis_talep t ON t.id = y.siparis_talep_id
+            WHERE y.id = %s
+            FOR UPDATE
+            """,
+            (yid,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Uyumsuz sevkiyat satırı bulunamadı")
+        r = dict(row)
+        kk = str(r.get("kalem_kodu") or "").strip()
+        ka = str(r.get("kalem_adi") or kk).strip() or kk
+        hedef_sid = str(r.get("hedef_sube_id") or "").strip()
+        kaynak_sid = str(r.get("kaynak_depo_sube_id") or "").strip()
+        onceki_sevk = int(r.get("sevk_adet") or 0)
+        onceki_kabul = int(r.get("kabul_adet") or 0)
+
+        # Kaynak depoda sevk düzeltmesi: çözüm adedine göre farkı geri ekle / ek düş.
+        kaynak_delta = cozum - onceki_sevk
+        if kaynak_sid and kk and kaynak_delta != 0:
+            if kaynak_delta > 0:
+                # daha fazla sevk kabul edildi: kaynak depodan ek düş.
+                cur.execute(
+                    """
+                    UPDATE sube_depo_stok
+                    SET mevcut_adet = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
+                        guncelleme = NOW()
+                    WHERE sube_id=%s AND kalem_kodu=%s
+                    """,
+                    (kaynak_delta, kaynak_sid, kk),
+                )
+            else:
+                # daha az sevk uzlaşıldı: kaynak depoya iade ekle.
+                cur.execute(
+                    """
+                    INSERT INTO sube_depo_stok
+                        (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (sube_id, kalem_kodu) DO UPDATE
+                    SET mevcut_adet = COALESCE(sube_depo_stok.mevcut_adet, 0) + EXCLUDED.mevcut_adet,
+                        kalem_adi = COALESCE(NULLIF(EXCLUDED.kalem_adi, ''), sube_depo_stok.kalem_adi),
+                        guncelleme = NOW()
+                    """,
+                    (str(uuid.uuid4()), kaynak_sid, kk, ka, abs(kaynak_delta)),
+                )
+
+        # Hedef şubede kabul düzeltmesi: çözüm adedine göre giriş / geri düşüm.
+        hedef_delta = cozum - onceki_kabul
+        if hedef_sid and kk and hedef_delta != 0:
+            if hedef_delta > 0:
+                cur.execute(
+                    """
+                    INSERT INTO sube_depo_stok
+                        (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (sube_id, kalem_kodu) DO UPDATE
+                    SET mevcut_adet = COALESCE(sube_depo_stok.mevcut_adet, 0) + EXCLUDED.mevcut_adet,
+                        kalem_adi = COALESCE(NULLIF(EXCLUDED.kalem_adi, ''), sube_depo_stok.kalem_adi),
+                        guncelleme = NOW()
+                    """,
+                    (str(uuid.uuid4()), hedef_sid, kk, ka, hedef_delta),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE sube_depo_stok
+                    SET mevcut_adet = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
+                        guncelleme = NOW()
+                    WHERE sube_id=%s AND kalem_kodu=%s
+                    """,
+                    (abs(hedef_delta), hedef_sid, kk),
+                )
+
+        cur.execute(
+            """
+            UPDATE stok_yolda
+            SET sevk_adet = %s,
+                kabul_adet = %s,
+                durum = 'uzlasildi',
+                kabul_ts = COALESCE(kabul_ts, NOW())
+            WHERE id = %s
+            """,
+            (cozum, cozum, yid),
+        )
+
+        aciklama = (
+            f"Sevkiyat uyumsuzluk uzlaştırıldı — yolda_id={yid} kalem={kk} "
+            f"sevk:{onceki_sevk} kabul:{onceki_kabul} -> cozum:{cozum}"
+            + (f" | not={notu}" if notu else "")
+        )
+        try:
+            defter_sube = kaynak_sid or hedef_sid or _ops_sube_anchor(cur)
+            operasyon_defter_ekle(
+                cur,
+                defter_sube,
+                "OPS_SEVKIYAT_UYUSMAZLIK_COZ",
+                aciklama[:900],
+                bildirim_saati=dt_now_tr().strftime("%H:%M:%S"),
+            )
+        except Exception:
+            pass
+        conn.commit()
+
+    return {
+        "success": True,
+        "stok_yolda_id": yid,
+        "onceki_sevk_adet": onceki_sevk,
+        "onceki_kabul_adet": onceki_kabul,
+        "cozum_adet": cozum,
+    }
 
 
 @router.post("/siparis/sevkiyat-guncelle")
