@@ -1547,6 +1547,25 @@ def _urun_ac_delta_parse(aciklama: str) -> Dict[str, int]:
     return {k: max(0, int(delta.get(k) or 0)) for k in _BAR_KEYS if (delta.get(k) or 0) > 0}
 
 
+def _urun_ac_payload_parse(aciklama: str) -> Dict[str, Any]:
+    """
+    URUN_AC satırındaki JSON payload'ını güvenli parse eder.
+    Not metni varsa (' | ...') JSON kısmını ayırır.
+    """
+    s = (aciklama or "").strip()
+    if not s:
+        return {}
+    if s.startswith("URUN_AC_JSON:"):
+        s = s[len("URUN_AC_JSON:") :]
+    if " | " in s:
+        s = s.split(" | ", 1)[0].strip()
+    try:
+        obj = json.loads(s)
+    except Exception:
+        return {}
+    return obj if isinstance(obj, dict) else {}
+
+
 @router.get("/bar-ozet")
 def ops_bar_ozet(
     sube_id: Optional[str] = None,
@@ -5410,6 +5429,110 @@ def ops_v2_sube_depo(sube_id: str):
         # Alarm var mı?
         alarmlar = [r for r in rows if r["mevcut_adet"] <= r["min_stok"]]
     return {"sube_id": sube_id, "stok": rows, "alarm_sayisi": len(alarmlar)}
+
+
+@router.get("/v2/urun-ac-akis")
+def ops_v2_urun_ac_akis(
+    tarih: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    limit: int = Query(120, ge=1, le=500),
+):
+    """
+    Şubelerde «ürün aç» (URUN_AC) hareketlerini gün bazında listeler.
+    Varsayılan tarih: bugün.
+    """
+    hedef_tarih = (tarih or str(bugun_tr())).strip()
+    try:
+        hedef_tarih = str(datetime.strptime(hedef_tarih, "%Y-%m-%d").date())
+    except ValueError:
+        raise HTTPException(400, "tarih formatı YYYY-MM-DD olmalı")
+
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT
+                d.id,
+                d.sube_id,
+                COALESCE(s.ad, d.sube_id) AS sube_adi,
+                d.tarih,
+                d.bildirim_saati,
+                d.personel_id,
+                d.personel_ad,
+                d.olusturma,
+                d.aciklama
+            FROM operasyon_defter d
+            LEFT JOIN subeler s ON s.id = d.sube_id
+            WHERE d.etiket = 'URUN_AC'
+              AND d.tarih = %s::date
+            ORDER BY d.olusturma DESC NULLS LAST, d.bildirim_saati DESC NULLS LAST, d.id DESC
+            LIMIT %s
+            """,
+            (hedef_tarih, limit),
+        )
+        rows = cur.fetchall() or []
+
+    kayitlar: List[Dict[str, Any]] = []
+    toplam_adet = 0
+    for r in rows:
+        payload = _urun_ac_payload_parse(str(r.get("aciklama") or ""))
+        delta_raw = payload.get("delta") if isinstance(payload.get("delta"), dict) else {}
+        kalemler_raw = payload.get("kalemler") if isinstance(payload.get("kalemler"), list) else []
+
+        urun_map: Dict[str, int] = {}
+        for k, v in delta_raw.items():
+            try:
+                adet = max(0, int(v or 0))
+            except (TypeError, ValueError):
+                adet = 0
+            if adet <= 0:
+                continue
+            ad = STOK_LABEL_TR.get(str(k), str(k))
+            urun_map[ad] = urun_map.get(ad, 0) + adet
+
+        for it in kalemler_raw:
+            if not isinstance(it, dict):
+                continue
+            ad = (
+                str(it.get("urun_ad") or "").strip()
+                or str(it.get("kalem_adi") or "").strip()
+                or str(it.get("kalem_kodu") or "").strip()
+            )
+            if not ad:
+                continue
+            try:
+                adet = max(0, int(it.get("adet") or 0))
+            except (TypeError, ValueError):
+                adet = 0
+            if adet <= 0:
+                continue
+            urun_map[ad] = urun_map.get(ad, 0) + adet
+
+        urunler = [{"urun_ad": ad, "adet": int(adet)} for ad, adet in urun_map.items()]
+        urunler.sort(key=lambda x: (-int(x.get("adet") or 0), str(x.get("urun_ad") or "")))
+        adet_toplam = sum(int(u.get("adet") or 0) for u in urunler)
+        toplam_adet += adet_toplam
+
+        kayitlar.append(
+            {
+                "id": r.get("id"),
+                "sube_id": r.get("sube_id"),
+                "sube_adi": r.get("sube_adi"),
+                "tarih": str(r.get("tarih") or hedef_tarih),
+                "saat": str(r.get("bildirim_saati") or "")[:8],
+                "personel_id": r.get("personel_id"),
+                "personel_ad": r.get("personel_ad"),
+                "olusturma": str(r.get("olusturma") or ""),
+                "adet_toplam": int(adet_toplam),
+                "urunler": urunler,
+            }
+        )
+
+    return {
+        "tarih": hedef_tarih,
+        "toplam_islem": len(kayitlar),
+        "toplam_adet": int(toplam_adet),
+        "kayitlar": kayitlar,
+        "son_guncelleme": str(dt_now_tr()),
+    }
 
 
 # ── Sipariş Kuyruğu: bekleyen siparişler + stok etki bilgisi ─────
