@@ -148,6 +148,57 @@ function urunAcZirveSaat(akis) {
   return { saat, adet };
 }
 
+const URUN_AC_SUBE_ONCELIK = ['zafer', 'koycegiz', 'alsancak', 'tema'];
+
+function urunAcSubeAnahtar(raw) {
+  const s = String(raw || '')
+    .toLocaleLowerCase('tr')
+    .replace(/ı/g, 'i')
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ş/g, 's')
+    .replace(/ö/g, 'o')
+    .replace(/ç/g, 'c')
+    .trim();
+  for (const k of URUN_AC_SUBE_ONCELIK) {
+    if (s.includes(k)) return k;
+  }
+  return s;
+}
+
+function urunAcSubeGruplari(kayitlar) {
+  const rows = Array.isArray(kayitlar) ? kayitlar : [];
+  const map = new Map();
+  rows.forEach((k) => {
+    const label = String(k?.sube_adi || k?.sube_id || 'Diğer').trim() || 'Diğer';
+    const key = urunAcSubeAnahtar(label) || label;
+    const prev = map.get(key);
+    if (prev) {
+      prev.kayitlar.push(k);
+      prev.toplamIslem += 1;
+      prev.toplamAdet += Number(k?.adet_toplam || 0) || 0;
+    } else {
+      map.set(key, {
+        key,
+        baslik: label,
+        kayitlar: [k],
+        toplamIslem: 1,
+        toplamAdet: Number(k?.adet_toplam || 0) || 0,
+      });
+    }
+  });
+  const out = Array.from(map.values());
+  out.sort((a, b) => {
+    const ai = URUN_AC_SUBE_ONCELIK.indexOf(a.key);
+    const bi = URUN_AC_SUBE_ONCELIK.indexOf(b.key);
+    const ao = ai >= 0 ? ai : 99;
+    const bo = bi >= 0 ? bi : 99;
+    if (ao !== bo) return ao - bo;
+    return String(a.baslik || '').localeCompare(String(b.baslik || ''), 'tr');
+  });
+  return out;
+}
+
 function operasyonTipOzeti(kart, tip) {
   const events = kart?.operasyon?.events || [];
   const adaylar = events.filter((e) => String(e?.tip || '').toUpperCase() === tip);
@@ -1095,6 +1146,7 @@ export default function OperasyonMerkezi() {
   );
   const urunAcBugunZirveSaat = urunAcZirveSaat(urunAcBugun);
   const urunAcAramaZirveSaat = urunAcZirveSaat(urunAcAramaSonuc);
+  const urunAcSubeBloklari = urunAcSubeGruplari(urunAcAramaSonuc?.kayitlar || []);
 
   useEffect(() => {
     const loadOzet = () => {
@@ -2653,25 +2705,60 @@ export default function OperasyonMerkezi() {
             <div className="empty"><p>Bu tarihte ürün aç kaydı yok</p></div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 420, overflow: 'auto' }}>
-              {(urunAcAramaSonuc?.kayitlar || []).map((k) => (
-                <div key={k.id} className="card" style={{ padding: '10px 12px', borderLeft: '4px solid var(--green)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                    <div style={{ fontSize: 13 }}>
-                      <strong>{k.sube_adi || k.sube_id}</strong>
-                      <span style={{ color: 'var(--text3)', marginLeft: 8 }}>{k.personel_ad || '—'}</span>
-                    </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {urunAcSubeBloklari.map((g) => (
+                  <span key={`head-${g.key}`} className="badge badge-green">
+                    {g.baslik} · {g.toplamIslem} işlem / {g.toplamAdet} adet
+                  </span>
+                ))}
+              </div>
+              {urunAcSubeBloklari.map((g) => (
+                <section key={g.key} className="card" style={{ padding: '10px 12px', borderLeft: '4px solid #2db573' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{g.baslik}</div>
                     <div className="mono" style={{ fontSize: 12, color: 'var(--text3)' }}>
-                      {(k.saat || '—').slice(0, 5)} · {k.adet_toplam || 0} adet
+                      {g.toplamIslem} işlem · {g.toplamAdet} adet
                     </div>
                   </div>
-                  {(k.urunler || []).length > 0 && (
-                    <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {(k.urunler || []).map((u, ui) => (
-                        <span key={ui} className="badge badge-gray">{u.urun_ad}: {u.adet}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {g.kayitlar.map((k, gi) => (
+                      <div key={k.id || `${g.key}-${k.saat || '00:00'}-${gi}`} className="card" style={{ padding: '10px 12px', border: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                          <div style={{ fontSize: 13 }}>
+                            <strong>{k.personel_ad || '—'}</strong>
+                          </div>
+                          <div className="mono" style={{ fontSize: 12, color: 'var(--text3)' }}>
+                            {(k.saat || '—').slice(0, 5)} · {k.adet_toplam || 0} adet
+                          </div>
+                        </div>
+                        {(k.urunler || []).length > 0 && (
+                          <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {(k.urunler || []).map((u, ui) => (
+                              <span
+                                key={ui}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  padding: '4px 8px',
+                                  borderRadius: 999,
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  color: '#e6f7ff',
+                                  background: 'rgba(74, 158, 255, 0.2)',
+                                  border: '1px solid rgba(74, 158, 255, 0.45)',
+                                  boxShadow: '0 0 0 1px rgba(74, 158, 255, 0.15) inset',
+                                }}
+                              >
+                                {u.urun_ad}: {u.adet}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </section>
               ))}
             </div>
           )}
