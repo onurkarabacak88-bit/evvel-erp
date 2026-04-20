@@ -1567,6 +1567,87 @@ def _urun_ac_payload_parse(aciklama: str) -> Dict[str, Any]:
     return obj if isinstance(obj, dict) else {}
 
 
+@router.get("/gec-acilan-subeler")
+def ops_gec_acilan_subeler(
+    tarih: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    limit: int = Query(200, ge=1, le=500),
+):
+    """
+    Seçilen günde plan saatine göre geç açılan şubeleri döner.
+    Geç açılış kriteri: ACILIS cevap_ts > sistem_slot_ts.
+    """
+    hedef_tarih = (tarih or str(bugun_tr())).strip()
+    try:
+        hedef_tarih = str(datetime.strptime(hedef_tarih, "%Y-%m-%d").date())
+    except ValueError:
+        raise HTTPException(400, "tarih formatı YYYY-MM-DD olmalı")
+
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT
+                e.id AS event_id,
+                e.sube_id,
+                COALESCE(s.ad, e.sube_id) AS sube_adi,
+                e.tarih,
+                e.sistem_slot_ts,
+                e.cevap_ts,
+                ROUND(EXTRACT(EPOCH FROM (e.cevap_ts - e.sistem_slot_ts)) / 60.0, 2) AS gecikme_dk,
+                x.personel_id,
+                x.personel_ad
+            FROM sube_operasyon_event e
+            LEFT JOIN subeler s ON s.id = e.sube_id
+            LEFT JOIN LATERAL (
+                SELECT
+                    d.personel_id,
+                    COALESCE(NULLIF(TRIM(d.personel_ad), ''), p.ad_soyad, d.personel_id) AS personel_ad
+                FROM operasyon_defter d
+                LEFT JOIN personel p ON p.id = d.personel_id
+                WHERE d.ref_event_id = e.id
+                ORDER BY d.olay_ts DESC NULLS LAST, d.id DESC
+                LIMIT 1
+            ) x ON TRUE
+            WHERE e.tip = 'ACILIS'
+              AND e.tarih = %s::date
+              AND e.sistem_slot_ts IS NOT NULL
+              AND e.cevap_ts IS NOT NULL
+              AND EXTRACT(EPOCH FROM (e.cevap_ts - e.sistem_slot_ts)) > 0
+            ORDER BY gecikme_dk DESC, sube_adi ASC
+            LIMIT %s
+            """,
+            (hedef_tarih, limit),
+        )
+        rows = cur.fetchall() or []
+
+    kayitlar: List[Dict[str, Any]] = []
+    for r in rows:
+        plan_ts = r.get("sistem_slot_ts")
+        gercek_ts = r.get("cevap_ts")
+        try:
+            gecikme = float(r.get("gecikme_dk") or 0.0)
+        except (TypeError, ValueError):
+            gecikme = 0.0
+        kayitlar.append(
+            {
+                "event_id": r.get("event_id"),
+                "sube_id": r.get("sube_id"),
+                "sube_adi": r.get("sube_adi"),
+                "tarih": str(r.get("tarih") or hedef_tarih),
+                "planlanan_saat": plan_ts.strftime("%H:%M") if plan_ts else None,
+                "acilis_saat": gercek_ts.strftime("%H:%M") if gercek_ts else None,
+                "gecikme_dk": round(max(0.0, gecikme), 2),
+                "personel_id": r.get("personel_id"),
+                "personel_ad": r.get("personel_ad"),
+            }
+        )
+
+    return {
+        "tarih": hedef_tarih,
+        "toplam": len(kayitlar),
+        "kayitlar": kayitlar,
+    }
+
+
 @router.get("/bar-ozet")
 def ops_bar_ozet(
     sube_id: Optional[str] = None,
