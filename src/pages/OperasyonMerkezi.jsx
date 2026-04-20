@@ -34,7 +34,7 @@ const UST_SEKMELER = [
   { id: 'ciro-onay', label: '💳 Bekleyen Ciro Onayları' },
   { id: 'kasa-uyumsuzluk', label: '🔴 Kasa Uyumsuzluğu' },
   { id: 'urun-uyumsuzluk', label: '🧪 Ürün Uyumsuzlukları' },
-  { id: 'stok-kart', label: '📦 Stok Kartı' },
+  { id: 'stok-kart', label: '📦 Depo Stok & Transfer' },
   { id: 'kontrol', label: '🔍 Kontrol' },
   { id: 'metrics', label: '📊 Metrikler' },
   { id: 'stok-kayip', label: '📉 Stok Kayıp' },
@@ -631,11 +631,29 @@ export default function OperasyonMerkezi() {
   const [barOzetSeciliSubeKey, setBarOzetSeciliSubeKey] = useState('all');
   const [stokKayip, setStokKayip] = useState(null);
   const [merkezStokKart, setMerkezStokKart] = useState(null);
+  const [merkezDepoStok, setMerkezDepoStok] = useState({ stok: [], toplam: 0 });
   const [stokKartSecim, setStokKartSecim] = useState('merkez');
   const [stokKartDetay, setStokKartDetay] = useState(null);
+  const [stokKartSubeDepo, setStokKartSubeDepo] = useState({ stok: [], alarm_sayisi: 0 });
+  const [stokKartSevkiyatListe, setStokKartSevkiyatListe] = useState([]);
+  const [stokKartSevkiyatSeciliId, setStokKartSevkiyatSeciliId] = useState('');
+  const [stokKartSevkiyatKalemler, setStokKartSevkiyatKalemler] = useState([]);
+  const [stokKartSevkiyatBusy, setStokKartSevkiyatBusy] = useState(false);
+  const [stokKartUyumsuzluklar, setStokKartUyumsuzluklar] = useState([]);
+  const [stokKartUyumBusyId, setStokKartUyumBusyId] = useState('');
+  const [stokKartUyumCozumMap, setStokKartUyumCozumMap] = useState({});
+  const [stokKartUyumSonCozumler, setStokKartUyumSonCozumler] = useState([]);
   const [stokKartYukleniyor, setStokKartYukleniyor] = useState(false);
   const [stokKartDrawerAcik, setStokKartDrawerAcik] = useState(false);
   const [stokArama, setStokArama] = useState('');
+  const [stokKartManuelBusy, setStokKartManuelBusy] = useState(false);
+  const [stokKartManuelForm, setStokKartManuelForm] = useState({
+    kalem_kodu: '',
+    kalem_adi: '',
+    mevcut_adet: '',
+    min_stok: '',
+  });
+  const [stokKartSeciliKalemKodu, setStokKartSeciliKalemKodu] = useState('');
   const [acikKategoriler, setAcikKategoriler] = useState({});
   // Stok Disiplin v2
   const [disiplinPanel, setDisiplinPanel] = useState('kuyruk'); // kuyruk | kritik | akis | davranis | skor
@@ -708,6 +726,7 @@ export default function OperasyonMerkezi() {
   const [gecAcilanSeciliSubeKey, setGecAcilanSeciliSubeKey] = useState('all');
   const [gecKalanPersonelBugun, setGecKalanPersonelBugun] = useState({
     year_month: varsayilanAy,
+    gecikme_dk: 5,
     kritik_dk: 30,
     toplam_personel: 0,
     gecikme_toplam_adet: 0,
@@ -719,6 +738,7 @@ export default function OperasyonMerkezi() {
   const [gecKalanPersonelAramaYukleniyor, setGecKalanPersonelAramaYukleniyor] = useState(false);
   const [gecKalanPersonelAramaSonuc, setGecKalanPersonelAramaSonuc] = useState({
     year_month: varsayilanAy,
+    gecikme_dk: 5,
     kritik_dk: 30,
     toplam_personel: 0,
     gecikme_toplam_adet: 0,
@@ -938,9 +958,10 @@ export default function OperasyonMerkezi() {
 
   const gecKalanPersonelAyYukle = useCallback(async (ym) => {
     const hedefAy = String(ym || varsayilanAy).trim() || varsayilanAy;
-    const r = await api(`/ops/gec-kalan-personel?year_month=${encodeURIComponent(hedefAy)}&kritik_dk=30&limit=500`);
+    const r = await api(`/ops/gec-kalan-personel?year_month=${encodeURIComponent(hedefAy)}&gecikme_dk=5&kritik_dk=30&limit=500`);
     return {
       year_month: String(r?.year_month || hedefAy),
+      gecikme_dk: Number(r?.gecikme_dk || 5),
       kritik_dk: Number(r?.kritik_dk || 30),
       toplam_personel: Number(r?.toplam_personel || 0),
       gecikme_toplam_adet: Number(r?.gecikme_toplam_adet || 0),
@@ -1208,20 +1229,39 @@ export default function OperasyonMerkezi() {
   const yukleStokKart = useCallback(async (secim = stokKartSecim) => {
     setStokKartYukleniyor(true);
     try {
-      const [mk, subeler] = await Promise.all([
+      const [mk, mkv2, subeler, dr, sevkList, uyumsuz] = await Promise.all([
         api('/ops/merkez-stok-kart'),
+        api('/ops/v2/merkez-depo').catch(() => ({ stok: [], toplam: 0 })),
         api('/subeler').catch(() => []),
+        api('/ops/siparis/depo-sevkiyat-raporlari?gun=21&limit=40').catch(() => ({ raporlar: [] })),
+        api('/ops/siparis/sevkiyat-listesi?durum=all&gun=21').catch(() => ({ satirlar: [] })),
+        api('/ops/siparis/sevkiyat-uyumsuzluklar?gun=30&limit=120').catch(() => ({ satirlar: [] })),
       ]);
       setMerkezStokKart(mk || null);
+      setMerkezDepoStok({
+        stok: Array.isArray(mkv2?.stok) ? mkv2.stok : [],
+        toplam: Number(mkv2?.toplam || 0),
+      });
+      setDepoSevkiyatRaporlari(Array.isArray(dr?.raporlar) ? dr.raporlar : []);
+      setStokKartSevkiyatListe(Array.isArray(sevkList?.satirlar) ? sevkList.satirlar : []);
+      setStokKartUyumsuzluklar(Array.isArray(uyumsuz?.satirlar) ? uyumsuz.satirlar : []);
       if (Array.isArray(subeler)) {
         setSubeListeAdmin(subeler.filter((s) => s.aktif !== false));
       }
       const hedef = (secim || 'merkez').trim() || 'merkez';
       if (hedef === 'merkez') {
         setStokKartDetay(null);
+        setStokKartSubeDepo({ stok: [], alarm_sayisi: 0 });
       } else {
-        const detay = await api(`/ops/sube/${encodeURIComponent(hedef)}/satis-ozet`);
+        const [detay, depo] = await Promise.all([
+          api(`/ops/sube/${encodeURIComponent(hedef)}/satis-ozet`),
+          api(`/ops/v2/sube/${encodeURIComponent(hedef)}/depo`).catch(() => ({ stok: [], alarm_sayisi: 0 })),
+        ]);
         setStokKartDetay(detay || null);
+        setStokKartSubeDepo({
+          stok: Array.isArray(depo?.stok) ? depo.stok : [],
+          alarm_sayisi: Number(depo?.alarm_sayisi || 0),
+        });
       }
       setSonYenileme(new Date().toLocaleTimeString('tr-TR'));
     } catch (e) {
@@ -1231,6 +1271,163 @@ export default function OperasyonMerkezi() {
       setYukleniyor(false);
     }
   }, [stokKartSecim]);
+
+  const stokKartManuelGuncelle = useCallback(async () => {
+    const kalemKodu = String(stokKartManuelForm.kalem_kodu || '').trim();
+    const kalemAdi = String(stokKartManuelForm.kalem_adi || '').trim();
+    const mevcut = Number(stokKartManuelForm.mevcut_adet || 0);
+    const minStok = Number(stokKartManuelForm.min_stok || 0);
+    if (!kalemKodu) {
+      toast('Kalem kodu zorunlu');
+      return;
+    }
+    if (!Number.isFinite(mevcut) || mevcut < 0) {
+      toast('Mevcut adet 0 veya daha büyük olmalı');
+      return;
+    }
+    if (!Number.isFinite(minStok) || minStok < 0) {
+      toast('Minimum stok 0 veya daha büyük olmalı');
+      return;
+    }
+    setStokKartManuelBusy(true);
+    try {
+      await api('/ops/v2/merkez-depo/guncelle', {
+        method: 'POST',
+        body: {
+          kalem_kodu: kalemKodu,
+          kalem_adi: kalemAdi || kalemKodu,
+          mevcut_adet: Math.trunc(mevcut),
+          min_stok: Math.trunc(minStok),
+        },
+      });
+      toast('Ana depo stok kartı güncellendi.', 'green');
+      setStokKartManuelForm((prev) => ({ ...prev, mevcut_adet: '', min_stok: '' }));
+      setYukleniyor(true);
+      await yukleStokKart('merkez');
+    } catch (e) {
+      toast(e.message || 'Depo güncellemesi başarısız');
+    } finally {
+      setStokKartManuelBusy(false);
+    }
+  }, [stokKartManuelForm, toast, yukleStokKart]);
+
+  const stokKartSevkiyatSec = useCallback((satir) => {
+    const tid = String(satir?.id || '').trim();
+    setStokKartSevkiyatSeciliId(tid);
+    const kd = Array.isArray(satir?.kalem_durumlari) ? satir.kalem_durumlari : [];
+    const src = kd.length ? kd : (Array.isArray(satir?.kalemler) ? satir.kalemler : []);
+    const mapRows = src.map((r) => ({
+      urun_id: String(r?.urun_id || r?.kalem_kodu || '').trim(),
+      urun_ad: String(r?.urun_ad || r?.kalem_adi || '').trim(),
+      istenen_adet: Number(r?.istenen_adet ?? r?.adet ?? 0) || 0,
+      durum: String(r?.durum || 'bekliyor').trim().toLowerCase() || 'bekliyor',
+      gonderilen_adet: Number(r?.gonderilen_adet ?? 0) || 0,
+      notu: String(r?.notu || r?.not || '').trim(),
+    }));
+    setStokKartSevkiyatKalemler(mapRows);
+  }, []);
+
+  const stokKartSevkiyatKalemGuncelle = useCallback((index, key, value) => {
+    setStokKartSevkiyatKalemler((prev) => prev.map((r, i) => {
+      if (i !== index) return r;
+      if (key === 'istenen_adet' || key === 'gonderilen_adet') {
+        const n = Math.max(0, Number(value || 0) || 0);
+        return { ...r, [key]: n };
+      }
+      return { ...r, [key]: value };
+    }));
+  }, []);
+
+  const stokKartSevkiyatKaydet = useCallback(async (gonderildi = false) => {
+    const secili = (stokKartSevkiyatListe || []).find((x) => String(x?.id || '') === String(stokKartSevkiyatSeciliId || ''));
+    if (!secili) {
+      toast('Önce bir transfer satırı seçin');
+      return;
+    }
+    if (!stokKartSevkiyatKalemler.length) {
+      toast('Kalem listesi boş');
+      return;
+    }
+    setStokKartSevkiyatBusy(true);
+    try {
+      await api('/ops/siparis/sevkiyat-guncelle', {
+        method: 'POST',
+        body: {
+          talep_id: secili.id,
+          hedef_depo_sube_id: secili.hedef_depo_sube_id || secili.sevkiyat_sube_id,
+          kalem_durumlari: stokKartSevkiyatKalemler.map((r) => ({
+            urun_id: r.urun_id || null,
+            urun_ad: r.urun_ad || null,
+            istenen_adet: Math.max(0, Number(r.istenen_adet || 0)),
+            durum: String(r.durum || 'bekliyor'),
+            gonderilen_adet: Math.max(0, Number(r.gonderilen_adet || 0)),
+            notu: r.notu || null,
+          })),
+          personel_ad: 'Merkez Operasyon',
+          gonderildi: !!gonderildi,
+        },
+      });
+      toast(gonderildi ? 'Transfer sevkiyatı işlendi.' : 'Transfer satırları güncellendi.', 'green');
+      setYukleniyor(true);
+      await yukleStokKart(stokKartSecim);
+    } catch (e) {
+      toast(e.message || 'Transfer güncellemesi başarısız');
+    } finally {
+      setStokKartSevkiyatBusy(false);
+    }
+  }, [stokKartSevkiyatListe, stokKartSevkiyatSeciliId, stokKartSevkiyatKalemler, toast, yukleStokKart, stokKartSecim]);
+
+  const stokKartUyumsuzlukCoz = useCallback(async (row) => {
+    const yid = String(row?.stok_yolda_id || '').trim();
+    if (!yid) return;
+    const giris = stokKartUyumCozumMap[yid];
+    const cozum = Math.max(0, Number(giris != null && giris !== '' ? giris : row?.kabul_adet || 0) || 0);
+    setStokKartUyumBusyId(yid);
+    try {
+      const res = await api('/ops/siparis/sevkiyat-uyumsuzluk-coz', {
+        method: 'POST',
+        body: {
+          stok_yolda_id: yid,
+          cozum_adet: cozum,
+          notu: 'Merkez çözüm girişi',
+        },
+      });
+      setStokKartUyumSonCozumler((prev) => {
+        const yeni = [
+          {
+            id: yid,
+            kalem: row?.kalem_adi || row?.kalem_kodu || 'Kalem',
+            kaynak: row?.kaynak_depo_sube_adi || row?.kaynak_depo_sube_id || 'Kaynak',
+            hedef: row?.hedef_sube_adi || row?.hedef_sube_id || 'Hedef',
+            oncekiSevk: Number(res?.onceki_sevk_adet ?? row?.sevk_adet ?? 0),
+            oncekiKabul: Number(res?.onceki_kabul_adet ?? row?.kabul_adet ?? 0),
+            cozumAdet: Number(res?.cozum_adet ?? cozum ?? 0),
+          },
+          ...prev,
+        ];
+        return yeni.slice(0, 6);
+      });
+      toast('Sevkiyat uyumsuzluğu çözüldü ve depolar güncellendi.', 'green');
+      setYukleniyor(true);
+      await yukleStokKart(stokKartSecim);
+    } catch (e) {
+      toast(e.message || 'Uyumsuzluk çözülemedi');
+    } finally {
+      setStokKartUyumBusyId('');
+    }
+  }, [stokKartUyumCozumMap, toast, yukleStokKart, stokKartSecim]);
+
+  const stokKartKalemSec = useCallback((row) => {
+    const kk = String(row?.kalem_kodu || '').trim();
+    const ka = String(row?.kalem_adi || '').trim();
+    setStokKartSeciliKalemKodu(kk);
+    setStokKartManuelForm({
+      kalem_kodu: kk,
+      kalem_adi: ka,
+      mevcut_adet: String(Number(row?.mevcut_adet || 0)),
+      min_stok: String(Number(row?.min_stok || 0)),
+    });
+  }, []);
 
   const yukleOnayMerkez = useCallback(async () => {
     try {
@@ -2849,11 +3046,287 @@ export default function OperasyonMerkezi() {
 
       {aktifSekme === 'stok-kart' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="card" style={{ padding: '12px 14px', borderLeft: '4px solid #0ea5a4' }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Kalem bazlı manuel müdahale</div>
+            <p style={{ fontSize: 12, color: 'var(--text3)', margin: '0 0 10px' }}>
+              Koşulsuz açık: Listeden bir kaleme tıklayıp anında düzenleyebilirsiniz.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8, alignItems: 'end' }}>
+              <label style={{ margin: 0 }}>
+                <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Kalem kodu</span>
+                <input
+                  className="input"
+                  value={stokKartManuelForm.kalem_kodu}
+                  onChange={(e) => setStokKartManuelForm((p) => ({ ...p, kalem_kodu: e.target.value }))}
+                  placeholder="örn: su_adet"
+                />
+              </label>
+              <label style={{ margin: 0 }}>
+                <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Kalem adı</span>
+                <input
+                  className="input"
+                  value={stokKartManuelForm.kalem_adi}
+                  onChange={(e) => setStokKartManuelForm((p) => ({ ...p, kalem_adi: e.target.value }))}
+                  placeholder="örn: Su"
+                />
+              </label>
+              <label style={{ margin: 0 }}>
+                <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Mevcut adet</span>
+                <input
+                  className="input"
+                  inputMode="numeric"
+                  value={stokKartManuelForm.mevcut_adet}
+                  onChange={(e) => setStokKartManuelForm((p) => ({ ...p, mevcut_adet: e.target.value }))}
+                  placeholder="0"
+                />
+              </label>
+              <label style={{ margin: 0 }}>
+                <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Min stok</span>
+                <input
+                  className="input"
+                  inputMode="numeric"
+                  value={stokKartManuelForm.min_stok}
+                  onChange={(e) => setStokKartManuelForm((p) => ({ ...p, min_stok: e.target.value }))}
+                  placeholder="0"
+                />
+              </label>
+              <button type="button" className="btn btn-primary btn-sm" disabled={stokKartManuelBusy} onClick={stokKartManuelGuncelle}>
+                {stokKartManuelBusy ? 'Kaydediliyor…' : 'Stoğu güncelle'}
+              </button>
+            </div>
+            <div className="table-wrap" style={{ marginTop: 10 }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Kalem</th>
+                    <th>Mevcut</th>
+                    <th>Rezerve</th>
+                    <th>Min</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(merkezDepoStok?.stok || []).map((r) => {
+                    const secili = stokKartSeciliKalemKodu && stokKartSeciliKalemKodu === r.kalem_kodu;
+                    return (
+                      <tr
+                        key={`md-inline-${r.kalem_kodu}`}
+                        onClick={() => stokKartKalemSec(r)}
+                        style={{
+                          cursor: 'pointer',
+                          background: secili ? 'rgba(14, 165, 164, 0.12)' : 'transparent',
+                        }}
+                        title="Kaleme tıklayınca form dolar"
+                      >
+                        <td>{r.kalem_adi || r.kalem_kodu}</td>
+                        <td className="mono">{fmt(r.mevcut_adet || 0)}</td>
+                        <td className="mono">{fmt(r.rezerve_adet || 0)}</td>
+                        <td className="mono">{fmt(r.min_stok || 0)}</td>
+                      </tr>
+                    );
+                  })}
+                  {(merkezDepoStok?.stok || []).length === 0 && (
+                    <tr><td colSpan={4}><div className="empty"><p>Ana depo stok listesi boş</p></div></td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: '12px 14px', borderLeft: '4px solid #4a9eff' }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Şubeler arası transfer yönetimi</div>
+            {(stokKartSevkiyatListe || []).length === 0 ? (
+              <div className="empty"><p>Aktif transfer satırı bulunamadı</p></div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1fr) minmax(360px, 1.4fr)', gap: 10 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 220, overflow: 'auto' }}>
+                  {(stokKartSevkiyatListe || []).map((s) => {
+                    const sid = String(s?.id || '');
+                    const secili = sid && sid === stokKartSevkiyatSeciliId;
+                    return (
+                      <button
+                        key={`tr-${sid}`}
+                        type="button"
+                        className="card"
+                        onClick={() => stokKartSevkiyatSec(s)}
+                        style={{
+                          textAlign: 'left',
+                          padding: '8px 10px',
+                          border: secili ? '1px solid #4a9eff' : '1px solid var(--border)',
+                          background: secili ? 'rgba(74, 158, 255, 0.12)' : 'var(--bg2)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <div style={{ fontSize: 12, fontWeight: 700 }}>
+                          {s?.sube_adi || s?.sube_id} ← {s?.hedef_depo_sube_adi || s?.hedef_depo_sube_id}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                          {s?.tarih || '—'} · {s?.sevkiyat_durumu || 'bekliyor'}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div>
+                  {!stokKartSevkiyatSeciliId ? (
+                    <div className="empty"><p>Düzenlemek için soldan bir transfer seçin</p></div>
+                  ) : (
+                    <>
+                      <div className="table-wrap" style={{ margin: 0 }}>
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Kalem</th>
+                              <th>İstenen</th>
+                              <th>Durum</th>
+                              <th>Gönderilen</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {stokKartSevkiyatKalemler.map((k, i) => (
+                              <tr key={`trk-${i}`}>
+                                <td>{k.urun_ad || k.urun_id || '—'}</td>
+                                <td className="mono">{fmt(k.istenen_adet || 0)}</td>
+                                <td>
+                                  <select
+                                    className="input"
+                                    value={k.durum || 'bekliyor'}
+                                    onChange={(e) => stokKartSevkiyatKalemGuncelle(i, 'durum', e.target.value)}
+                                  >
+                                    <option value="bekliyor">bekliyor</option>
+                                    <option value="var">var</option>
+                                    <option value="kismi">kismi</option>
+                                    <option value="yok">yok</option>
+                                  </select>
+                                </td>
+                                <td>
+                                  <input
+                                    className="input"
+                                    inputMode="numeric"
+                                    value={k.gonderilen_adet}
+                                    onChange={(e) => stokKartSevkiyatKalemGuncelle(i, 'gonderilen_adet', e.target.value)}
+                                  />
+                                </td>
+                              </tr>
+                            ))}
+                            {stokKartSevkiyatKalemler.length === 0 && (
+                              <tr><td colSpan={4}><div className="empty"><p>Kalem satırı yok</p></div></td></tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={stokKartSevkiyatBusy}
+                          onClick={() => stokKartSevkiyatKaydet(false)}
+                        >
+                          {stokKartSevkiyatBusy ? 'Kaydediliyor…' : 'Transferi güncelle'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          disabled={stokKartSevkiyatBusy}
+                          onClick={() => stokKartSevkiyatKaydet(true)}
+                        >
+                          {stokKartSevkiyatBusy ? 'İşleniyor…' : 'Sevkiyatı işle'}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="card" style={{ padding: '12px 14px', borderLeft: '4px solid var(--red)' }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Sevkiyat uyumsuzluk çözümü (12/14 gibi)</div>
+            {stokKartUyumSonCozumler.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                {stokKartUyumSonCozumler.map((c) => (
+                  <div key={`coz-${c.id}`} className="card" style={{ padding: '7px 9px', border: '1px solid var(--border)' }}>
+                    <span style={{ fontSize: 12, fontWeight: 600 }}>{c.kalem}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 8 }}>
+                      {c.kaynak} → {c.hedef}
+                    </span>
+                    <span className="badge badge-green" style={{ marginLeft: 8 }}>
+                      Önce {c.oncekiSevk}/{c.oncekiKabul} → Sonra {c.cozumAdet}/{c.cozumAdet}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {(stokKartUyumsuzluklar || []).length === 0 ? (
+              <div className="empty"><p>Çözüm bekleyen sevkiyat uyumsuzluğu yok</p></div>
+            ) : (
+              <div className="table-wrap" style={{ margin: 0 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Talep / Depo</th>
+                      <th>Kalem</th>
+                      <th>Sevk</th>
+                      <th>Kabul</th>
+                      <th>Çözüm adet</th>
+                      <th>Fark</th>
+                      <th>İşlem</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(stokKartUyumsuzluklar || []).map((u) => {
+                      const yid = String(u?.stok_yolda_id || '');
+                      const val = stokKartUyumCozumMap[yid] ?? '';
+                      const farkAdet = Number(u?.fark_adet ?? (Number(u?.sevk_adet || 0) - Number(u?.kabul_adet || 0)));
+                      return (
+                        <tr key={`uy-${yid}`}>
+                          <td>
+                            {(u?.hedef_sube_adi || u?.hedef_sube_id || '—')}
+                            <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                              {u?.kaynak_depo_sube_adi || u?.kaynak_depo_sube_id || 'Kaynak depolama yok'}
+                            </div>
+                          </td>
+                          <td>{u?.kalem_adi || u?.kalem_kodu || '—'}</td>
+                          <td className="mono">{fmt(u?.sevk_adet || 0)}</td>
+                          <td className="mono">{fmt(u?.kabul_adet || 0)}</td>
+                          <td>
+                            <input
+                              className="input"
+                              inputMode="numeric"
+                              placeholder={`${u?.kabul_adet || 0}`}
+                              value={val}
+                              onChange={(e) => setStokKartUyumCozumMap((p) => ({ ...p, [yid]: e.target.value }))}
+                              style={{ minWidth: 80 }}
+                            />
+                          </td>
+                          <td>
+                            <span className={`badge ${farkAdet !== 0 ? 'badge-red' : 'badge-green'}`}>
+                              {farkAdet > 0 ? '+' : ''}{fmt(farkAdet)}
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-sm"
+                              disabled={stokKartUyumBusyId === yid}
+                              onClick={() => stokKartUyumsuzlukCoz(u)}
+                            >
+                              {stokKartUyumBusyId === yid ? '…' : 'Çözümü uygula'}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
           {opsIcBolum === 'secim' && (
           <div className="card" style={{ padding: '18px 20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
               <div>
-                <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Stok Kartı</h3>
+                <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Depo Stok & Transfer</h3>
                 <p style={{ fontSize: 12, color: 'var(--text3)', margin: 0 }}>
                   Üstte &quot;Detay&quot; sekmesine geçmeden önce bir kart seçin. Özet rozetler Merkez / şube stok durumunu gösterir.
                 </p>
@@ -2875,7 +3348,7 @@ export default function OperasyonMerkezi() {
                   style={{ textAlign: 'left', cursor: 'pointer', borderLeft: '4px solid var(--blue)', padding: '12px 14px' }}
                   onClick={() => stokKartDetayAc('merkez')}
                 >
-                  <div style={{ fontWeight: 700, marginBottom: 6 }}>Merkez Stok Kartı</div>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>Ana Depo Stok Özeti</div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <span className="badge badge-gray">Sipariş {fmt(merkezStokKart?.ozet?.siparis_toplam || 0)}</span>
                     <span className="badge badge-blue">Sevk {fmt(merkezStokKart?.ozet?.sevk_toplam || 0)}</span>
@@ -2906,7 +3379,7 @@ export default function OperasyonMerkezi() {
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
               <div>
                 <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>
-                  {stokKartSecim === 'merkez' ? 'Merkez Stok Kartı' : `${stokKartDetay?.sube_adi || stokKartSecim} · Stok Kartı`}
+                  {stokKartSecim === 'merkez' ? 'Ana Depo Stok Özeti' : `${stokKartDetay?.sube_adi || stokKartSecim} · Depo Kartı`}
                 </h3>
                 <p style={{ fontSize: 12, color: 'var(--text3)', margin: '6px 0 0' }}>Özet kutuları ve ürün tablosu aynı stok kartı mantığındadır.</p>
               </div>
@@ -3076,8 +3549,58 @@ export default function OperasyonMerkezi() {
                     </tbody>
                   </table>
                 </div>
+                <div className="table-wrap" style={{ marginTop: 12 }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Şube Depo Kalemi</th>
+                        <th>Mevcut</th>
+                        <th>Min</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(stokKartSubeDepo?.stok || []).map((r) => (
+                        <tr key={`sd-${r.kalem_kodu}`}>
+                          <td>{r.kalem_adi || r.kalem_kodu}</td>
+                          <td className="mono">{fmt(r.mevcut_adet || 0)}</td>
+                          <td className="mono">{fmt(r.min_stok || 0)}</td>
+                        </tr>
+                      ))}
+                      {(stokKartSubeDepo?.stok || []).length === 0 && (
+                        <tr><td colSpan={3}><div className="empty"><p>Bu şube için depo stoğu bulunamadı</p></div></td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {(Number(stokKartSubeDepo?.alarm_sayisi || 0) > 0) && (
+                  <p style={{ fontSize: 12, color: 'var(--yellow)', margin: '8px 0 0' }}>
+                    Bu şubede minimum seviyenin altında {stokKartSubeDepo.alarm_sayisi} depo kalemi var.
+                  </p>
+                )}
               </>
             )}
+            {(() => {
+              const uyumsuzRaporlar = (depoSevkiyatRaporlari || []).filter((r) => !!r?.depo_sevkiyat_rapor_uyari);
+              if (!uyumsuzRaporlar.length) return null;
+              return (
+                <div className="card" style={{ marginTop: 12, padding: '12px 14px', borderLeft: '4px solid var(--red)' }}>
+                  <div style={{ fontWeight: 700, marginBottom: 8 }}>Sevkiyat uyumsuzluk raporları (çözüm bekleyen)</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflow: 'auto' }}>
+                    {uyumsuzRaporlar.slice(0, 20).map((r) => (
+                      <div key={`rap-${r.id}`} className="card" style={{ padding: '8px 10px', border: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 12, fontWeight: 600 }}>
+                          {r.talep_sube_adi || r.sube_id} ← {r.hedef_depo_adi || r.hedef_depo_sube_id}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                          {r.tarih || '—'} · {r.sevkiyat_durumu || '—'}
+                        </div>
+                        <div style={{ fontSize: 12, marginTop: 4 }}>{r.depo_sevkiyat_rapor_metni || 'Uyumsuzluk raporu'}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
           )}
         </div>
@@ -4001,7 +4524,7 @@ export default function OperasyonMerkezi() {
       {aktifSekme === 'gec-kalan-personel' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
-            Aylık bazda personel geç açılış tekrarları burada izlenir. Kritik eşik: <strong>30 dk+</strong> tekil gecikme.
+            Aylık bazda personel geç açılış tekrarları burada izlenir. Geç açılış eşiği: <strong>5 dk+</strong>, kritik eşik: <strong>30 dk+</strong>.
           </p>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <label style={{ margin: 0 }}>
@@ -4050,8 +4573,7 @@ export default function OperasyonMerkezi() {
                           {kritik && <span className="badge badge-red" style={{ marginLeft: 6 }}>Kritik</span>}
                         </div>
                         <div className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>
-                          Skor: {Number(p?.skor || 0).toFixed(1)} · Toplam: {Number(p?.toplam_gecikme_dk || 0).toFixed(1)} dk · Ort: {Number(p?.ortalama_gecikme_dk || 0).toFixed(1)} dk · Max: {Number(p?.max_gecikme_dk || 0).toFixed(1)} dk
-                          {Number(p?.kritik_gecikme_adet || 0) > 0 ? ` · Kritik olay: ${Number(p?.kritik_gecikme_adet || 0)}` : ''}
+                          Toplam geç kalma: {Number(p?.gecikme_adet || 0)} · Kritik geç kalma: {Number(p?.kritik_gecikme_adet || 0)} · Toplam gecikme: {Number(p?.toplam_gecikme_dk || 0).toFixed(1)} dk · Olay sayısı: {Array.isArray(p?.detaylar) ? p.detaylar.length : 0}
                         </div>
                       </div>
                       <button
