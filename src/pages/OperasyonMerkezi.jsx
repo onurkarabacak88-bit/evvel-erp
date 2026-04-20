@@ -30,6 +30,7 @@ const UST_SEKMELER = [
   { id: 'urun-ac', label: '🟢 Ürün Aç Akışı' },
   { id: 'kullanilan-urunler', label: '🟠 Kullanılan Ürünler' },
   { id: 'kasa-uyumsuzluk', label: '🔴 Kasa Uyumsuzluğu' },
+  { id: 'urun-uyumsuzluk', label: '🧪 Ürün Uyumsuzlukları' },
   { id: 'stok-kart', label: '📦 Stok Kartı' },
   { id: 'kontrol', label: '🔍 Kontrol' },
   { id: 'metrics', label: '📊 Metrikler' },
@@ -55,6 +56,7 @@ const OPS_MODUL_BOLUM = {
   'urun-ac': [{ id: 'icerik', label: 'Günlük akış' }],
   'kullanilan-urunler': [{ id: 'icerik', label: 'Günlük akış' }],
   'kasa-uyumsuzluk': [{ id: 'icerik', label: 'Günlük akış' }],
+  'urun-uyumsuzluk': [{ id: 'icerik', label: 'Günlük akış' }],
   'stok-kart': [
     { id: 'secim', label: 'Kart seçimi' },
     { id: 'detay', label: 'Detay' },
@@ -86,6 +88,7 @@ const OPS_HUB_RENK = {
   'urun-ac': '#2db573',
   'kullanilan-urunler': '#f59e0b',
   'kasa-uyumsuzluk': '#e85d5d',
+  'urun-uyumsuzluk': '#8b5cf6',
   'stok-kart': '#7c6fdc',
   kontrol: '#e85d5d',
   metrics: '#2db573',
@@ -702,6 +705,12 @@ export default function OperasyonMerkezi() {
   const [kasaUyumAramaYukleniyor, setKasaUyumAramaYukleniyor] = useState(false);
   const [kasaUyumAramaSonuc, setKasaUyumAramaSonuc] = useState({ tarih: '', toplam: 0, kayitlar: [] });
   const [kasaUyumSeciliSubeKey, setKasaUyumSeciliSubeKey] = useState('all');
+  const [urunUyumBugun, setUrunUyumBugun] = useState({ tarih: '', toplam: 0, kayitlar: [] });
+  const [urunUyumBugunYukleniyor, setUrunUyumBugunYukleniyor] = useState(false);
+  const [urunUyumAramaTarih, setUrunUyumAramaTarih] = useState(bugunIsoTarih());
+  const [urunUyumAramaYukleniyor, setUrunUyumAramaYukleniyor] = useState(false);
+  const [urunUyumAramaSonuc, setUrunUyumAramaSonuc] = useState({ tarih: '', toplam: 0, kayitlar: [] });
+  const [urunUyumSeciliSubeKey, setUrunUyumSeciliSubeKey] = useState('all');
 
   /** Yeni sipariş toast: gördüğümüz talep id'leri (tekrar uyarı yok) */
   const hubSiparisGorulduRef = useRef(new Set());
@@ -942,6 +951,58 @@ export default function OperasyonMerkezi() {
     }
   }, [kasaUyumAramaTarih, kasaUyumGunYukle, toast]);
 
+  const urunUyumGunYukle = useCallback(async (tarih) => {
+    const hedef = (tarih || bugunIsoTarih()).trim();
+    const ym = hedef.slice(0, 7);
+    const r = await api(`/ops/bar-ozet?year_month=${encodeURIComponent(ym)}&gun=${encodeURIComponent(hedef)}&limit=180`);
+    const satirlar = Array.isArray(r?.satirlar) ? r.satirlar : [];
+    const keys = ['bardak_kucuk','bardak_buyuk','bardak_plastik','su_adet','sut_litre','redbull_adet','soda_adet','cookie_adet','pasta_adet'];
+    const kayitlar = satirlar
+      .map((x) => {
+        const sat = x?.satilan || {};
+        const uyumsuzlar = keys.filter((k) => Number(sat?.[k] || 0) < 0);
+        return {
+          ...x,
+          uyumsuz_urunler: uyumsuzlar,
+          uyumsuz_adet: uyumsuzlar.length,
+        };
+      })
+      .filter((x) => x.uyumsuz_adet > 0);
+    return { tarih: hedef, toplam: kayitlar.length, kayitlar };
+  }, []);
+
+  const yukleUrunUyumBugun = useCallback(async (opts = {}) => {
+    const silent = !!opts.silent;
+    setUrunUyumBugunYukleniyor(true);
+    try {
+      const data = await urunUyumGunYukle(bugunIsoTarih());
+      setUrunUyumBugun(data);
+      setUrunUyumAramaTarih(data.tarih || bugunIsoTarih());
+      setUrunUyumAramaSonuc(data);
+    } catch (e) {
+      if (!silent) toast(e.message || 'Ürün uyumsuzluk verisi yüklenemedi');
+    } finally {
+      setUrunUyumBugunYukleniyor(false);
+    }
+  }, [urunUyumGunYukle, toast]);
+
+  const urunUyumAramaYap = useCallback(async () => {
+    const hedef = (urunUyumAramaTarih || bugunIsoTarih()).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(hedef)) {
+      toast('Tarih formatı YYYY-MM-DD olmalı');
+      return;
+    }
+    setUrunUyumAramaYukleniyor(true);
+    try {
+      const data = await urunUyumGunYukle(hedef);
+      setUrunUyumAramaSonuc(data);
+    } catch (e) {
+      toast(e.message || 'Ürün uyumsuzluk araması yapılamadı');
+    } finally {
+      setUrunUyumAramaYukleniyor(false);
+    }
+  }, [urunUyumAramaTarih, urunUyumGunYukle, toast]);
+
   const yukleSiparisMerkez = useCallback(async () => {
     try {
       const [cat, subeler, dr] = await Promise.all([
@@ -1136,7 +1197,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     if (!aktifSekme) return;
-    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'urun-ac' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'stok-kart' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
+    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'urun-ac' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'stok-kart' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
     yukle(filtre);
   }, [filtre, aktifSekme, ayFiltre, gunFiltre, yukle]);
 
@@ -1211,6 +1272,18 @@ export default function OperasyonMerkezi() {
   }, [aktifSekme, toast, kasaUyumGunYukle]);
 
   useEffect(() => {
+    if (aktifSekme !== 'urun-uyumsuzluk') return;
+    setYukleniyor(true);
+    urunUyumGunYukle(bugunIsoTarih())
+      .then((data) => {
+        setUrunUyumAramaTarih(data.tarih || bugunIsoTarih());
+        setUrunUyumAramaSonuc(data);
+      })
+      .catch((e) => toast(e.message || 'Ürün uyumsuzluk verisi yüklenemedi'))
+      .finally(() => setYukleniyor(false));
+  }, [aktifSekme, toast, urunUyumGunYukle]);
+
+  useEffect(() => {
     if (aktifSekme !== 'stok-kart') return;
     setYukleniyor(true);
     yukleStokKart(stokKartSecim);
@@ -1261,6 +1334,9 @@ export default function OperasyonMerkezi() {
       } else if (aktifSekme === 'kasa-uyumsuzluk') {
         setYukleniyor(true);
         kasaUyumAramaYap().finally(() => setYukleniyor(false));
+      } else if (aktifSekme === 'urun-uyumsuzluk') {
+        setYukleniyor(true);
+        urunUyumAramaYap().finally(() => setYukleniyor(false));
       } else if (aktifSekme === 'siparis') {
         setYukleniyor(true);
         yukleSiparisMerkez().finally(() => setYukleniyor(false));
@@ -1284,7 +1360,7 @@ export default function OperasyonMerkezi() {
       }
     });
     return unsub;
-  }, [aktifSekme, filtre, stokKartSecim, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, kullanilanAramaYap, kasaUyumAramaYap, yukleSiparisMerkez, yukleStokKart, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
+  }, [aktifSekme, filtre, stokKartSecim, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, kullanilanAramaYap, kasaUyumAramaYap, urunUyumAramaYap, yukleSiparisMerkez, yukleStokKart, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
 
 
   const toplamGecikme = skor?.son_30_gun?.reduce((s, r) => s + (r.gecikme_adet || 0), 0) || 0;
@@ -1383,6 +1459,28 @@ export default function OperasyonMerkezi() {
       const label = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
       return (urunAcSubeAnahtar(label) || label) === kasaUyumSeciliSubeKey;
     });
+  const urunUyumSubeSekmeleri = (urunUyumAramaSonuc?.kayitlar || []).reduce((acc, r) => {
+    const baslik = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
+    const key = urunAcSubeAnahtar(baslik) || baslik;
+    const bulunan = acc.find((x) => x.key === key);
+    if (bulunan) bulunan.adet += 1;
+    else acc.push({ key, baslik, adet: 1 });
+    return acc;
+  }, []);
+  urunUyumSubeSekmeleri.sort((a, b) => {
+    const ai = URUN_AC_SUBE_ONCELIK.indexOf(a.key);
+    const bi = URUN_AC_SUBE_ONCELIK.indexOf(b.key);
+    const ao = ai >= 0 ? ai : 99;
+    const bo = bi >= 0 ? bi : 99;
+    if (ao !== bo) return ao - bo;
+    return a.baslik.localeCompare(b.baslik, 'tr');
+  });
+  const urunUyumGorunenKayitlar = urunUyumSeciliSubeKey === 'all'
+    ? (urunUyumAramaSonuc?.kayitlar || [])
+    : (urunUyumAramaSonuc?.kayitlar || []).filter((r) => {
+      const label = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
+      return (urunAcSubeAnahtar(label) || label) === urunUyumSeciliSubeKey;
+    });
 
   useEffect(() => {
     if (!urunAcSubeBloklari.length) {
@@ -1418,6 +1516,17 @@ export default function OperasyonMerkezi() {
   }, [kasaUyumSeciliSubeKey, kasaUyumSubeSekmeleri]);
 
   useEffect(() => {
+    if (!urunUyumSubeSekmeleri.length) {
+      if (urunUyumSeciliSubeKey !== 'all') setUrunUyumSeciliSubeKey('all');
+      return;
+    }
+    if (urunUyumSeciliSubeKey === 'all') return;
+    if (!urunUyumSubeSekmeleri.some((s) => s.key === urunUyumSeciliSubeKey)) {
+      setUrunUyumSeciliSubeKey('all');
+    }
+  }, [urunUyumSeciliSubeKey, urunUyumSubeSekmeleri]);
+
+  useEffect(() => {
     if (!barOzetSubeSekmeleri.length) {
       if (barOzetSeciliSubeKey !== 'all') setBarOzetSeciliSubeKey('all');
       return;
@@ -1435,6 +1544,7 @@ export default function OperasyonMerkezi() {
         yukleUrunAcBugun({ silent: true }).catch(() => {});
         yukleKullanilanBugun({ silent: true }).catch(() => {});
         yukleKasaUyumBugun({ silent: true }).catch(() => {});
+        yukleUrunUyumBugun({ silent: true }).catch(() => {});
       }
     };
     loadOzet();
@@ -1447,7 +1557,7 @@ export default function OperasyonMerkezi() {
       clearInterval(id);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [hubOzetIsle, opsMerkezPencere, yukleUrunAcBugun, yukleKullanilanBugun, yukleKasaUyumBugun]);
+  }, [hubOzetIsle, opsMerkezPencere, yukleUrunAcBugun, yukleKullanilanBugun, yukleKasaUyumBugun, yukleUrunUyumBugun]);
 
   const acOpsModul = useCallback((id) => {
     const bolumler = OPS_MODUL_BOLUM[id] || [{ id: 'icerik', label: 'İçerik' }];
@@ -1657,6 +1767,7 @@ export default function OperasyonMerkezi() {
               yukleUrunAcBugun().catch(() => {});
               yukleKullanilanBugun().catch(() => {});
               yukleKasaUyumBugun().catch(() => {});
+              yukleUrunUyumBugun().catch(() => {});
               return;
             }
             if (!aktifSekme) {
@@ -1676,6 +1787,9 @@ export default function OperasyonMerkezi() {
             }
             else if (aktifSekme === 'kasa-uyumsuzluk') {
               kasaUyumAramaYap().finally(() => setYukleniyor(false));
+            }
+            else if (aktifSekme === 'urun-uyumsuzluk') {
+              urunUyumAramaYap().finally(() => setYukleniyor(false));
             }
             else if (aktifSekme === 'stok-kart') yukleStokKart(stokKartSecim);
             else if (aktifSekme === 'metrics') yukleMetrics();
@@ -1948,6 +2062,13 @@ export default function OperasyonMerkezi() {
                 : (kasaUyumBugun?.toplam || 0) > 0
                 ? `${kasaUyumBugun?.toplam || 0} uyumsuzluk var`
                 : 'Uyumsuzluk yok';
+            } else if (s.id === 'urun-uyumsuzluk') {
+              val = urunUyumBugun?.toplam ?? 0;
+              sub = urunUyumBugunYukleniyor
+                ? 'Güncel veri yükleniyor…'
+                : (urunUyumBugun?.toplam || 0) > 0
+                ? `${urunUyumBugun?.toplam || 0} uyumsuzluk var`
+                : 'Uyumsuzluk yok';
             }
             if (opsOzet) {
               if (s.id === 'canli') {
@@ -2018,6 +2139,9 @@ export default function OperasyonMerkezi() {
                   } else if (s.id === 'kasa-uyumsuzluk') {
                     setKasaUyumAramaTarih(bugunIsoTarih());
                     setKasaUyumAramaSonuc(kasaUyumBugun);
+                  } else if (s.id === 'urun-uyumsuzluk') {
+                    setUrunUyumAramaTarih(bugunIsoTarih());
+                    setUrunUyumAramaSonuc(urunUyumBugun);
                   }
                   acOpsModul(s.id);
                 }}
@@ -2101,6 +2225,9 @@ export default function OperasyonMerkezi() {
                   }
                   else if (aktifSekme === 'kasa-uyumsuzluk') {
                     kasaUyumAramaYap().finally(() => setYukleniyor(false));
+                  }
+                  else if (aktifSekme === 'urun-uyumsuzluk') {
+                    urunUyumAramaYap().finally(() => setYukleniyor(false));
                   }
                   else if (aktifSekme === 'stok-kart') yukleStokKart(stokKartSecim);
                   else if (aktifSekme === 'metrics') yukleMetrics();
@@ -3395,6 +3522,128 @@ export default function OperasyonMerkezi() {
                           {onayBusyId === `ku:${u.id}` ? '…' : 'Çözüldü işaretle'}
                         </button>
                       </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {aktifSekme === 'urun-uyumsuzluk' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
+            Dün kapanış ile bugünkü tüketim/akış arasında ürün bazlı uyumsuzluklar izlenir.
+          </p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ margin: 0 }}>
+              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Tarih</span>
+              <input
+                type="date"
+                className="input"
+                value={urunUyumAramaTarih}
+                onChange={(e) => setUrunUyumAramaTarih(e.target.value || bugunIsoTarih())}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ alignSelf: 'flex-end' }}
+              onClick={() => urunUyumAramaYap()}
+            >
+              {urunUyumAramaYukleniyor ? '…' : 'Tarihi getir'}
+            </button>
+            <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'flex-end' }}>
+              {urunUyumAramaSonuc?.tarih || urunUyumAramaTarih} · {urunUyumAramaSonuc?.toplam || 0} uyumsuzluk
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => setUrunUyumSeciliSubeKey('all')}
+              style={{
+                border: urunUyumSeciliSubeKey === 'all' ? '1px solid #8b5cf6' : '1px solid var(--border)',
+                background: urunUyumSeciliSubeKey === 'all' ? 'rgba(139, 92, 246, 0.2)' : 'var(--bg2)',
+                color: urunUyumSeciliSubeKey === 'all' ? '#ddd6fe' : 'var(--text2)',
+                padding: '6px 10px',
+                fontWeight: 700,
+              }}
+            >
+              Tümü
+            </button>
+            {urunUyumSubeSekmeleri.map((s) => (
+              <button
+                key={`urun-uyum-${s.key}`}
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setUrunUyumSeciliSubeKey(s.key)}
+                style={{
+                  border: urunUyumSeciliSubeKey === s.key ? '1px solid #4a9eff' : '1px solid var(--border)',
+                  background: urunUyumSeciliSubeKey === s.key ? 'rgba(74, 158, 255, 0.2)' : 'var(--bg2)',
+                  color: urunUyumSeciliSubeKey === s.key ? '#e6f7ff' : 'var(--text2)',
+                  padding: '6px 10px',
+                  fontWeight: 700,
+                }}
+              >
+                {s.baslik} ({s.adet})
+              </button>
+            ))}
+          </div>
+
+          {urunUyumGorunenKayitlar.length === 0 ? (
+            <div className="empty"><p>Seçilen tarihte ürün uyumsuzluğu yok</p></div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 480, overflow: 'auto' }}>
+              {urunUyumGorunenKayitlar.map((r) => {
+                const keys = ['bardak_kucuk','bardak_buyuk','bardak_plastik','su_adet','sut_litre','redbull_adet','soda_adet','cookie_adet','pasta_adet'];
+                const labels = { bardak_kucuk:'K.Bardak', bardak_buyuk:'B.Bardak', bardak_plastik:'Plastik', su_adet:'Su', sut_litre:'Süt', redbull_adet:'Redbull', soda_adet:'Soda', cookie_adet:'Cookie', pasta_adet:'Pasta' };
+                return (
+                  <div key={`${r.sube_id}-${r.tarih}`} className="card" style={{ borderLeft: '4px solid #8b5cf6', padding: '14px 16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+                      <div>
+                        <span style={{ fontWeight: 700, fontSize: 14 }}>{r.sube_adi || r.sube_id}</span>
+                        <span className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 10 }}>{r.tarih}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <span className="badge badge-red">{r.uyumsuz_adet || 0} kalem uyumsuz</span>
+                        {!r.kapanis_var && <span className="badge badge-yellow">Kapanış yok</span>}
+                      </div>
+                    </div>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ background: 'var(--bg2)' }}>
+                            <th style={{ padding: '5px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600, fontSize: 11 }}>Ürün</th>
+                            <th style={{ padding: '5px 8px', textAlign: 'center', color: '#93c5fd', fontWeight: 600, fontSize: 11 }}>Açılış</th>
+                            <th style={{ padding: '5px 8px', textAlign: 'center', color: '#86efac', fontWeight: 600, fontSize: 11 }}>Ürün Aç</th>
+                            <th style={{ padding: '5px 8px', textAlign: 'center', color: '#fbbf24', fontWeight: 600, fontSize: 11 }}>Kapanış</th>
+                            <th style={{ padding: '5px 8px', textAlign: 'center', color: '#fca5a5', fontWeight: 700, fontSize: 11 }}>Fark</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {keys.map((k) => {
+                            const ac = Number(r?.acilis?.[k] || 0);
+                            const ua = Number(r?.urun_ac?.[k] || 0);
+                            const kap = Number(r?.kapanis?.[k] || 0);
+                            const fark = Number(r?.satilan?.[k] || 0);
+                            const uyumsuz = fark < 0;
+                            return (
+                              <tr key={k} style={{ borderTop: '1px solid var(--border)', background: uyumsuz ? 'rgba(220, 38, 38, 0.07)' : 'transparent' }}>
+                                <td style={{ padding: '5px 8px', color: uyumsuz ? '#fecaca' : 'var(--text2)' }}>{labels[k] || k}</td>
+                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center' }}>{ac}</td>
+                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', color: ua > 0 ? '#86efac' : 'var(--text3)' }}>{ua > 0 ? `+${ua}` : ua}</td>
+                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', color: kap > 0 ? '#fbbf24' : 'var(--text3)' }}>{kap > 0 ? `-${kap}` : '—'}</td>
+                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', fontWeight: 700, color: uyumsuz ? 'var(--red)' : 'var(--text3)' }}>
+                                  {fark}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 );
