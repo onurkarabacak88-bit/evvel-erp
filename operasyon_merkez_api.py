@@ -5434,7 +5434,7 @@ def ops_v2_sube_depo(sube_id: str):
 @router.get("/v2/urun-ac-akis")
 def ops_v2_urun_ac_akis(
     tarih: Optional[str] = Query(None, description="YYYY-MM-DD"),
-    limit: int = Query(120, ge=1, le=500),
+    limit: int = Query(80, ge=1, le=300),
 ):
     """
     Şubelerde «ürün aç» (URUN_AC) hareketlerini gün bazında listeler.
@@ -5446,29 +5446,58 @@ def ops_v2_urun_ac_akis(
     except ValueError:
         raise HTTPException(400, "tarih formatı YYYY-MM-DD olmalı")
 
-    with db() as (conn, cur):
-        cur.execute(
-            """
-            SELECT
-                d.id,
-                d.sube_id,
-                COALESCE(s.ad, d.sube_id) AS sube_adi,
-                d.tarih,
-                d.bildirim_saati,
-                d.personel_id,
-                d.personel_ad,
-                d.olusturma,
-                d.aciklama
-            FROM operasyon_defter d
-            LEFT JOIN subeler s ON s.id = d.sube_id
-            WHERE d.etiket = 'URUN_AC'
-              AND d.tarih = %s::date
-            ORDER BY d.olusturma DESC NULLS LAST, d.bildirim_saati DESC NULLS LAST, d.id DESC
-            LIMIT %s
-            """,
-            (hedef_tarih, limit),
-        )
-        rows = cur.fetchall() or []
+    try:
+        with db() as (conn, cur):
+            cur.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'operasyon_defter'
+                """
+            )
+            cols = {str(r.get("column_name") or "") for r in (cur.fetchall() or [])}
+            has_bildirim = "bildirim_saati" in cols
+            has_personel_ad = "personel_ad" in cols
+            has_personel_id = "personel_id" in cols
+            has_olusturma = "olusturma" in cols
+
+            select_personel_id = "d.personel_id" if has_personel_id else "NULL::text AS personel_id"
+            select_personel_ad = "d.personel_ad" if has_personel_ad else "NULL::text AS personel_ad"
+            select_bildirim = "d.bildirim_saati" if has_bildirim else "NULL::text AS bildirim_saati"
+            select_olusturma = "d.olusturma" if has_olusturma else "NULL::timestamp AS olusturma"
+            order_expr = "d.olusturma DESC NULLS LAST" if has_olusturma else "d.id DESC"
+
+            cur.execute(
+                f"""
+                SELECT
+                    d.id,
+                    d.sube_id,
+                    COALESCE(s.ad, d.sube_id) AS sube_adi,
+                    d.tarih,
+                    {select_bildirim},
+                    {select_personel_id},
+                    {select_personel_ad},
+                    {select_olusturma},
+                    d.aciklama
+                FROM operasyon_defter d
+                LEFT JOIN subeler s ON s.id = d.sube_id
+                WHERE d.etiket = 'URUN_AC'
+                  AND d.tarih = %s::date
+                ORDER BY {order_expr}, d.id DESC
+                LIMIT %s
+                """,
+                (hedef_tarih, limit),
+            )
+            rows = cur.fetchall() or []
+    except Exception as e:
+        logger.exception("ops_v2_urun_ac_akis hata: %s", e)
+        return {
+            "tarih": hedef_tarih,
+            "toplam_islem": 0,
+            "toplam_adet": 0,
+            "kayitlar": [],
+            "son_guncelleme": str(dt_now_tr()),
+        }
 
     kayitlar: List[Dict[str, Any]] = []
     toplam_adet = 0
