@@ -1848,6 +1848,13 @@ var aktifSolSekme = '';
 var aktifSagSekme = 'kasa';
 
 function altSekmeAc(id) {
+  if (aktifAltSekme === 'ac' && id !== 'ac') {
+    var acOz = stokSecimOzeti('ac', _stokKatalogByPrefix.ac || []);
+    if (acOz.kalem > 0) {
+      var ok = window.confirm('Ürün Aç sekmesinde ' + acOz.kalem + ' kalem seçili. Onaylamadan çıkarsan seçimler kalır ama işlem gönderilmez. Devam etmek istiyor musun?');
+      if (!ok) return;
+    }
+  }
   aktifAltSekme = id;
   document.querySelectorAll('.alt-tab').forEach(function(b){ b.classList.remove('active'); });
   var btn = document.getElementById('altTab-' + id);
@@ -1868,6 +1875,13 @@ function altSekmeAc(id) {
 }
 
 window.solSekmeAc = function(id) {
+  if (aktifAltSekme === 'ac' && id !== 'ac') {
+    var acOz = stokSecimOzeti('ac', _stokKatalogByPrefix.ac || []);
+    if (acOz.kalem > 0) {
+      var ok = window.confirm('Ürün Aç sekmesinde ' + acOz.kalem + ' kalem seçili. Onaylamadan çıkarsan seçimler kalır ama işlem gönderilmez. Devam etmek istiyor musun?');
+      if (!ok) return;
+    }
+  }
   aktifSolSekme = id;
   document.querySelectorAll('#sol .sol-btn').forEach(function(b){ b.classList.remove('active'); });
   var btn = document.getElementById('sol' + id.charAt(0).toUpperCase() + id.slice(1) + 'Btn');
@@ -2418,6 +2432,7 @@ function renderStokForms(tip) {
         h += '<div class="overlay-kart sip-kat-modal-kart" id="svKatModalKart" onclick="event.stopPropagation()">';
         h += '<div id="svKatModalInner"></div>';
         h += '</div></div>';
+        h += '<div id="svSecimOzet" class="siparis-detay" style="margin-top:10px;font-size:12px;color:var(--muted)">Henüz ürün seçilmedi.</div>';
         h += '<div class="siparis-detay sip-inner-panel" style="margin-top:10px">';
         h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Sipariş verilen ürünler geldi mi? <span style="color:#fda4af">*</span></div>';
         h += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
@@ -2434,7 +2449,7 @@ function renderStokForms(tip) {
         h += '<div class="form-group"><label>Teslim açıklaması *</label><textarea id="svTeslimAciklama" rows="2" placeholder="Teslimin genel durumunu yazın."></textarea></div>';
         h += '</div>';
         h += '<div class="form-group"><label>Personel</label><select id="svPers"></select></div>';
-        h += '<div class="form-group"><label>PIN</label><input id="svPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
+        h += '<div class="form-group"><label>PIN <span id="svPinBilgi" style="font-size:11px;color:var(--muted);font-weight:400;margin-left:6px">Onay için önce en az 1 ürün seçin.</span></label><input id="svPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
         h += '<button class="btn btn-primary" id="svGonder">✅ Seçimleri Onayla (PIN) ve Teslim Al</button><div id="svMsg"></div>';
         el.innerHTML = h;
         _stokKatalogByPrefix.sv = katalog;
@@ -2492,9 +2507,10 @@ function renderStokForms(tip) {
         h += '<div class="overlay-kart sip-kat-modal-kart" id="acKatModalKart" onclick="event.stopPropagation()">';
         h += '<div id="acKatModalInner"></div>';
         h += '</div></div>';
+        h += '<div id="acSecimOzet" class="siparis-detay" style="margin-top:10px;font-size:12px;color:var(--muted)">Henüz ürün seçilmedi.</div>';
         h += '<div class="form-group"><label>Not</label><input id="acNot" placeholder="Opsiyonel" /></div>';
         h += '<div class="form-group"><label>Personel</label><select id="acPers"></select></div>';
-        h += '<div class="form-group"><label>PIN</label><input id="acPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
+        h += '<div class="form-group"><label>PIN <span id="acPinBilgi" style="font-size:11px;color:var(--muted);font-weight:400;margin-left:6px">Onay için önce en az 1 ürün seçin.</span></label><input id="acPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
         h += '<button class="btn btn-primary" id="acGonder">🔓 Seçimleri Onayla (PIN) ve Aktif Kullanıma Al</button><div id="acMsg"></div>';
         el.innerHTML = h;
         _stokKatalogByPrefix.ac = katalog || [];
@@ -2533,6 +2549,41 @@ function stokBody(prefix, data) {
   return body;
 }
 
+function stokSecimOzeti(prefix, data) {
+  var body = stokBody(prefix, data || []);
+  var kalem = (body.kalemler || []).length;
+  var adet = (body.kalemler || []).reduce(function(s, x){ return s + (parseInt(x.adet || 0, 10) || 0); }, 0);
+  return { kalem: kalem, adet: adet };
+}
+
+function stokSecimBilgiYenile(prefix, data) {
+  var oz = stokSecimOzeti(prefix, data || _stokKatalogByPrefix[prefix] || []);
+  var ozetEl = document.getElementById(prefix + 'SecimOzet');
+  if (ozetEl) {
+    if (oz.kalem > 0) {
+      ozetEl.innerHTML = '✅ <strong>' + oz.kalem + ' kalem</strong> seçildi · toplam <strong>' + oz.adet + ' adet</strong>';
+      ozetEl.style.color = '#86efac';
+    } else {
+      ozetEl.textContent = 'Henüz ürün seçilmedi.';
+      ozetEl.style.color = 'var(--muted)';
+    }
+  }
+  var pinBilgi = document.getElementById(prefix + 'PinBilgi');
+  if (pinBilgi) {
+    pinBilgi.textContent = oz.kalem > 0
+      ? ('Onay için PIN girin — ' + oz.kalem + ' kalem / ' + oz.adet + ' adet seçtiniz')
+      : 'Onay için önce en az 1 ürün seçin.';
+  }
+  var btn = document.getElementById(prefix + 'Gonder');
+  if (btn) {
+    var asText = btn.getAttribute('data-btn-base') || btn.textContent || 'Onayla';
+    btn.textContent = oz.kalem > 0
+      ? (asText + ' (' + oz.kalem + ' kalem)')
+      : asText;
+    btn.disabled = oz.kalem <= 0;
+  }
+}
+
 function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
   var formEl = document.getElementById(prefix === 'sv' ? 'sevkForm' : 'acForm');
   if (formEl) {
@@ -2541,6 +2592,16 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
   }
   var btn = document.getElementById(prefix + 'Gonder');
   if (!btn) return;
+  if (!btn.getAttribute('data-btn-base')) {
+    btn.setAttribute('data-btn-base', (btn.textContent || '').replace(/\s+\(\d+\s+kalem\)$/,'').trim());
+  }
+  stokSecimBilgiYenile(prefix, data);
+  var formWatch = document.getElementById(prefix === 'sv' ? 'sevkForm' : 'acForm');
+  if (formWatch && formWatch.dataset['stokMeta_' + prefix] !== '1') {
+    formWatch.dataset['stokMeta_' + prefix] = '1';
+    formWatch.addEventListener('input', function(){ stokSecimBilgiYenile(prefix, data); });
+    formWatch.addEventListener('change', function(){ stokSecimBilgiYenile(prefix, data); });
+  }
   btn.onclick = async function() {
     setMsg(prefix+'Msg','','');
     btn.disabled = true;
@@ -2556,6 +2617,7 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
       stokKalemDeger[prefix] = {};
       document.querySelectorAll('[data-stok-input^="' + prefix + '::"]').forEach(function(inp){ inp.value = '0'; });
       refreshStokKatalogUI(prefix);
+      stokSecimBilgiYenile(prefix, data);
       var pinEl = document.getElementById(prefix + 'Pin'); if (pinEl) pinEl.value = '';
       var notEl = document.getElementById(prefix + 'Not'); if (notEl) notEl.value = '';
       if (prefix === 'sv') {
@@ -2582,7 +2644,7 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
       if (e.status===429) handle429(document.getElementById(prefix+'Msg'), e);
       else setMsg(prefix+'Msg', e.message||'Hata', 'msg-err');
     }
-    btn.disabled = false;
+    stokSecimBilgiYenile(prefix, data);
   };
 }
 
