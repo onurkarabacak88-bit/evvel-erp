@@ -27,6 +27,7 @@ const FILTRELER = [
 
 const UST_SEKMELER = [
   { id: 'canli', label: 'Canlı Operasyon' },
+  { id: 'urun-ac', label: '🟢 Ürün Aç Akışı' },
   { id: 'stok-kart', label: '📦 Stok Kartı' },
   { id: 'kontrol', label: '🔍 Kontrol' },
   { id: 'metrics', label: '📊 Metrikler' },
@@ -49,6 +50,7 @@ const OPS_MODUL_BOLUM = {
     { id: 'subeler', label: 'Şubeler' },
     { id: 'karsilastirma', label: 'Karşılaştırma' },
   ],
+  'urun-ac': [{ id: 'icerik', label: 'Günlük akış' }],
   'stok-kart': [
     { id: 'secim', label: 'Kart seçimi' },
     { id: 'detay', label: 'Detay' },
@@ -77,6 +79,7 @@ const OPS_MODUL_BOLUM = {
 
 const OPS_HUB_RENK = {
   canli: '#4a9eff',
+  'urun-ac': '#2db573',
   'stok-kart': '#7c6fdc',
   kontrol: '#e85d5d',
   metrics: '#2db573',
@@ -626,7 +629,10 @@ export default function OperasyonMerkezi() {
   /** Hub görünümünde (`!opsMerkezPencere`) şube sipariş listeleri yüklensin — interval/toast ile senkron */
   const opsHubGorunurRef = useRef(true);
 
-  const toast = (m, t = 'red') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 4000); };
+  const toast = useCallback((m, t = 'red') => {
+    setMsg({ m, t });
+    window.setTimeout(() => setMsg(null), 4000);
+  }, []);
 
   /** hub-ozet yanıtı: state + yeni sipariş geldiğinde bildirim */
   const hubOzetIsle = useCallback((r) => {
@@ -712,7 +718,7 @@ export default function OperasyonMerkezi() {
 
   const urunAcGunYukle = useCallback(async (tarih) => {
     const hedef = (tarih || bugunIsoTarih()).trim();
-    const r = await api(`/ops/v2/urun-ac-akis?tarih=${encodeURIComponent(hedef)}&limit=200`);
+    const r = await api(`/ops/v2/urun-ac-akis?tarih=${encodeURIComponent(hedef)}&limit=80`);
     return {
       tarih: String(r?.tarih || hedef),
       toplam_islem: Number(r?.toplam_islem || 0),
@@ -988,6 +994,18 @@ export default function OperasyonMerkezi() {
   }, [aktifSekme, yukleSiparisMerkez]);
 
   useEffect(() => {
+    if (aktifSekme !== 'urun-ac') return;
+    setYukleniyor(true);
+    urunAcGunYukle(bugunIsoTarih())
+      .then((data) => {
+        setUrunAcAramaTarih(data.tarih || bugunIsoTarih());
+        setUrunAcAramaSonuc(data);
+      })
+      .catch((e) => toast(e.message || 'Ürün aç akışı yüklenemedi'))
+      .finally(() => setYukleniyor(false));
+  }, [aktifSekme, toast, urunAcGunYukle]);
+
+  useEffect(() => {
     if (aktifSekme !== 'stok-kart') return;
     setYukleniyor(true);
     yukleStokKart(stokKartSecim);
@@ -1029,6 +1047,9 @@ export default function OperasyonMerkezi() {
       if (aktifSekme === 'onay') {
         setYukleniyor(true);
         yukleOnayMerkez();
+      } else if (aktifSekme === 'urun-ac') {
+        setYukleniyor(true);
+        urunAcAramaYap().finally(() => setYukleniyor(false));
       } else if (aktifSekme === 'siparis') {
         setYukleniyor(true);
         yukleSiparisMerkez().finally(() => setYukleniyor(false));
@@ -1052,7 +1073,7 @@ export default function OperasyonMerkezi() {
       }
     });
     return unsub;
-  }, [aktifSekme, filtre, stokKartSecim, hubOzetIsle, yukle, yukleOnayMerkez, yukleSiparisMerkez, yukleStokKart, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
+  }, [aktifSekme, filtre, stokKartSecim, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, yukleSiparisMerkez, yukleStokKart, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
 
 
   const toplamGecikme = skor?.son_30_gun?.reduce((s, r) => s + (r.gecikme_adet || 0), 0) || 0;
@@ -1309,6 +1330,9 @@ export default function OperasyonMerkezi() {
             else if (aktifSekme === 'siparis') {
               yukleSiparisMerkez().finally(() => setYukleniyor(false));
             }
+            else if (aktifSekme === 'urun-ac') {
+              urunAcAramaYap().finally(() => setYukleniyor(false));
+            }
             else if (aktifSekme === 'stok-kart') yukleStokKart(stokKartSecim);
             else if (aktifSekme === 'metrics') yukleMetrics();
             else if (aktifSekme === 'kontrol') yukleKontrolOzet();
@@ -1323,157 +1347,6 @@ export default function OperasyonMerkezi() {
 
       {!opsMerkezPencere && (
         <>
-          <section
-            className="card"
-            style={{
-              padding: '14px 16px',
-              marginBottom: 16,
-              borderRadius: 12,
-              border: '1px solid rgba(45, 181, 115, 0.45)',
-              background: 'linear-gradient(145deg, rgba(45, 181, 115, 0.12), rgba(5, 88, 55, 0.08))',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.07em', color: '#86efac', textTransform: 'uppercase' }}>
-                  Açılan ürünler · bugün
-                </div>
-                <div style={{ marginTop: 6, fontSize: 22, fontWeight: 800, lineHeight: 1.2 }}>
-                  {urunAcBugun?.toplam_islem || 0}
-                  <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text2)', marginLeft: 8 }}>işlem</span>
-                </div>
-                <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--text3)' }}>
-                  Toplam açılan adet: <strong>{urunAcBugun?.toplam_adet || 0}</strong>
-                </p>
-                {urunAcBugunZirveSaat && (
-                  <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text3)' }}>
-                    En yoğun saat: <strong>{urunAcBugunZirveSaat.saat}</strong> · {urunAcBugunZirveSaat.adet} adet
-                  </p>
-                )}
-              </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => yukleUrunAcBugun().catch(() => {})}
-                >
-                  {urunAcBugunYukleniyor ? '…' : '↻ Bugünü yenile'}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  onClick={() => {
-                    const bugun = bugunIsoTarih();
-                    setUrunAcAramaTarih(bugun);
-                    setUrunAcAramaSonuc(urunAcBugun);
-                    setUrunAcDetayAcik((v) => !v);
-                  }}
-                >
-                  {urunAcDetayAcik ? 'Detayı gizle' : 'Detay / tarih ara'}
-                </button>
-              </div>
-            </div>
-
-            {(urunAcBugun?.kayitlar || []).length === 0 ? (
-              <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text3)' }}>
-                Bugün ürün aç kaydı yok.
-              </div>
-            ) : (
-              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {(urunAcBugun?.kayitlar || []).slice(0, 6).map((k) => (
-                  <div
-                    key={k.id}
-                    style={{
-                      border: '1px solid var(--border)',
-                      borderRadius: 8,
-                      padding: '8px 10px',
-                      background: 'rgba(15,23,42,0.22)',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', fontSize: 12 }}>
-                      <div>
-                        <strong>{k.sube_adi || k.sube_id}</strong>
-                        <span style={{ color: 'var(--text3)', marginLeft: 8 }}>{k.personel_ad || '—'}</span>
-                      </div>
-                      <div className="mono" style={{ color: '#86efac' }}>
-                        {(k.saat || '—').slice(0, 5)} · {k.adet_toplam || 0} adet
-                      </div>
-                    </div>
-                    {(k.urunler || []).length > 0 && (
-                      <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        {(k.urunler || []).slice(0, 5).map((u, ui) => (
-                          <span key={ui} className="badge badge-gray">
-                            {u.urun_ad}: {u.adet}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-                {(urunAcBugun?.kayitlar || []).length > 6 && (
-                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-                    +{(urunAcBugun?.kayitlar || []).length - 6} kayıt daha (detaydan görünür)
-                  </div>
-                )}
-              </div>
-            )}
-
-            {urunAcDetayAcik && (
-              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
-                  <label style={{ margin: 0 }}>
-                    <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Tarih</span>
-                    <input
-                      type="date"
-                      className="input"
-                      value={urunAcAramaTarih}
-                      onChange={(e) => setUrunAcAramaTarih(e.target.value || bugunIsoTarih())}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    style={{ alignSelf: 'flex-end' }}
-                    onClick={() => urunAcAramaYap()}
-                  >
-                    {urunAcAramaYukleniyor ? '…' : 'Tarihi getir'}
-                  </button>
-                  <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'flex-end' }}>
-                    {urunAcAramaSonuc?.tarih || urunAcAramaTarih} · {urunAcAramaSonuc?.toplam_islem || 0} işlem · {urunAcAramaSonuc?.toplam_adet || 0} adet
-                    {urunAcAramaZirveSaat ? ` · zirve ${urunAcAramaZirveSaat.saat} (${urunAcAramaZirveSaat.adet})` : ''}
-                  </div>
-                </div>
-
-                {(urunAcAramaSonuc?.kayitlar || []).length === 0 ? (
-                  <div className="empty"><p>Bu tarihte ürün aç kaydı yok</p></div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 340, overflow: 'auto' }}>
-                    {(urunAcAramaSonuc?.kayitlar || []).map((k) => (
-                      <div key={k.id} className="card" style={{ padding: '10px 12px', borderLeft: '4px solid var(--green)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                          <div style={{ fontSize: 13 }}>
-                            <strong>{k.sube_adi || k.sube_id}</strong>
-                            <span style={{ color: 'var(--text3)', marginLeft: 8 }}>{k.personel_ad || '—'}</span>
-                          </div>
-                          <div className="mono" style={{ fontSize: 12, color: 'var(--text3)' }}>
-                            {(k.saat || '—').slice(0, 5)} · {k.adet_toplam || 0} adet
-                          </div>
-                        </div>
-                        {(k.urunler || []).length > 0 && (
-                          <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            {(k.urunler || []).map((u, ui) => (
-                              <span key={ui} className="badge badge-gray">{u.urun_ad}: {u.adet}</span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
-
           {(((opsOzet?.siparis_bekleyen || 0) > 0) || ((opsOzet?.alarm_satirlari || []).length > 0)) && (
             <section
               className={`card${hubYeniSiparisVurgu ? ' ops-hub-yeni-siparis-flash' : ''}`}
@@ -1712,6 +1585,12 @@ export default function OperasyonMerkezi() {
             // Her sekme için özet veri
             let val = null;
             let sub = 'Modülü aç';
+            if (s.id === 'urun-ac') {
+              val = urunAcBugun?.toplam_islem ?? 0;
+              sub = urunAcBugunZirveSaat
+                ? `Bugün zirve ${urunAcBugunZirveSaat.saat} (${urunAcBugunZirveSaat.adet})`
+                : 'Bugün ürün aç kaydı yok';
+            }
             if (opsOzet) {
               if (s.id === 'canli') {
                 val = opsOzet.aktif_sube;
@@ -1769,7 +1648,14 @@ export default function OperasyonMerkezi() {
                   borderTop: `3px solid ${renk}`,
                   cursor: 'pointer',
                 }}
-                onClick={() => acOpsModul(s.id)}
+                onClick={() => {
+                  if (s.id === 'urun-ac') {
+                    setUrunAcDetayAcik(true);
+                    setUrunAcAramaTarih(bugunIsoTarih());
+                    setUrunAcAramaSonuc(urunAcBugun);
+                  }
+                  acOpsModul(s.id);
+                }}
                 title={s.label + ' modülünü aç →'}
               >
                 <div className="metric-label">{s.label}</div>
@@ -1841,6 +1727,9 @@ export default function OperasyonMerkezi() {
                   if (aktifSekme === 'onay') yukleOnayMerkez();
                   else if (aktifSekme === 'siparis') {
                     yukleSiparisMerkez().finally(() => setYukleniyor(false));
+                  }
+                  else if (aktifSekme === 'urun-ac') {
+                    urunAcAramaYap().finally(() => setYukleniyor(false));
                   }
                   else if (aktifSekme === 'stok-kart') yukleStokKart(stokKartSecim);
                   else if (aktifSekme === 'metrics') yukleMetrics();
@@ -2729,6 +2618,63 @@ export default function OperasyonMerkezi() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {aktifSekme === 'urun-ac' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
+            Şube panelindeki <strong>Ürün Aç</strong> işlemleri saat/sorumlu bazında bu listede izlenir.
+          </p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ margin: 0 }}>
+              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Tarih</span>
+              <input
+                type="date"
+                className="input"
+                value={urunAcAramaTarih}
+                onChange={(e) => setUrunAcAramaTarih(e.target.value || bugunIsoTarih())}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ alignSelf: 'flex-end' }}
+              onClick={() => urunAcAramaYap()}
+            >
+              {urunAcAramaYukleniyor ? '…' : 'Tarihi getir'}
+            </button>
+            <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'flex-end' }}>
+              {urunAcAramaSonuc?.tarih || urunAcAramaTarih} · {urunAcAramaSonuc?.toplam_islem || 0} işlem · {urunAcAramaSonuc?.toplam_adet || 0} adet
+              {urunAcAramaZirveSaat ? ` · zirve ${urunAcAramaZirveSaat.saat} (${urunAcAramaZirveSaat.adet})` : ''}
+            </div>
+          </div>
+          {(urunAcAramaSonuc?.kayitlar || []).length === 0 ? (
+            <div className="empty"><p>Bu tarihte ürün aç kaydı yok</p></div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 420, overflow: 'auto' }}>
+              {(urunAcAramaSonuc?.kayitlar || []).map((k) => (
+                <div key={k.id} className="card" style={{ padding: '10px 12px', borderLeft: '4px solid var(--green)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: 13 }}>
+                      <strong>{k.sube_adi || k.sube_id}</strong>
+                      <span style={{ color: 'var(--text3)', marginLeft: 8 }}>{k.personel_ad || '—'}</span>
+                    </div>
+                    <div className="mono" style={{ fontSize: 12, color: 'var(--text3)' }}>
+                      {(k.saat || '—').slice(0, 5)} · {k.adet_toplam || 0} adet
+                    </div>
+                  </div>
+                  {(k.urunler || []).length > 0 && (
+                    <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {(k.urunler || []).map((u, ui) => (
+                        <span key={ui} className="badge badge-gray">{u.urun_ad}: {u.adet}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
