@@ -2585,17 +2585,17 @@ export default function OperasyonMerkezi() {
                 <th rowSpan={2}>Şube</th>
                 <th rowSpan={2}>Personel</th>
                 <th colSpan={3} style={{ textAlign: 'center', borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>Bardaklar</th>
-                <th colSpan={5} style={{ textAlign: 'center', borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>Ürünler</th>
+                <th colSpan={6} style={{ textAlign: 'center', borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>Ürünler</th>
               </tr>
               <tr>
-                {['Küçük','Büyük','Plastik','Su','Redbull','Soda','Cookie','Pasta'].map(l => (
+                {['Küçük','Büyük','Plastik','Su','Süt','Redbull','Soda','Cookie','Pasta'].map(l => (
                   <th key={l} style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>{l}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {sayimlar.length === 0 ? (
-                <tr><td colSpan={12}><div className="empty"><p>Seçilen filtrede açılış sayımı yok</p></div></td></tr>
+                <tr><td colSpan={13}><div className="empty"><p>Seçilen filtrede açılış sayımı yok</p></div></td></tr>
               ) : sayimlar.map(r => {
                 const s = r.stok_sayim || {};
                 const cell = (val) => <td className="mono" style={{ fontSize: 12, textAlign: 'center' }}>{val || 0}</td>;
@@ -2606,7 +2606,7 @@ export default function OperasyonMerkezi() {
                     <td style={{ fontWeight: 500, fontSize: 13 }}>{r.sube_adi || r.sube_id}</td>
                     <td style={{ fontSize: 12 }}>{r.personel_ad || r.personel_id || '—'}</td>
                     {cell(s.bardak_kucuk)}{cell(s.bardak_buyuk)}{cell(s.bardak_plastik)}
-                    {cell(s.su_adet)}{cell(s.redbull_adet)}{cell(s.soda_adet)}{cell(s.cookie_adet)}{cell(s.pasta_adet)}
+                    {cell(s.su_adet)}{cell(s.sut_litre)}{cell(s.redbull_adet)}{cell(s.soda_adet)}{cell(s.cookie_adet)}{cell(s.pasta_adet)}
                   </tr>
                 );
               })}
@@ -2625,8 +2625,8 @@ export default function OperasyonMerkezi() {
           {barOzet.length === 0 ? (
             <div className="empty"><p>Seçilen filtrede bar özeti yok</p></div>
           ) : barOzet.map((r) => {
-            const keys = ['bardak_kucuk','bardak_buyuk','su_adet','soda_adet','redbull_adet','cookie_adet','pasta_adet'];
-            const labels = { bardak_kucuk:'K.Bardak', bardak_buyuk:'B.Bardak', su_adet:'Su', soda_adet:'Soda', redbull_adet:'Redbull', cookie_adet:'Cookie', pasta_adet:'Pasta' };
+            const keys = ['bardak_kucuk','bardak_buyuk','su_adet','sut_litre','soda_adet','redbull_adet','cookie_adet','pasta_adet'];
+            const labels = { bardak_kucuk:'K.Bardak', bardak_buyuk:'B.Bardak', su_adet:'Su', sut_litre:'Süt', soda_adet:'Soda', redbull_adet:'Redbull', cookie_adet:'Cookie', pasta_adet:'Pasta' };
             const hasFark = r.fark_var;
             const kapanisYok = !r.kapanis_var;
             return (
