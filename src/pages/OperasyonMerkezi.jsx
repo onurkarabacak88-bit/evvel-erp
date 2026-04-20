@@ -29,6 +29,7 @@ const UST_SEKMELER = [
   { id: 'canli', label: 'Canlı Operasyon' },
   { id: 'urun-ac', label: '🟢 Ürün Aç Akışı' },
   { id: 'kullanilan-urunler', label: '🟠 Kullanılan Ürünler' },
+  { id: 'ciro-onay', label: '💳 Bekleyen Ciro Onayları' },
   { id: 'kasa-uyumsuzluk', label: '🔴 Kasa Uyumsuzluğu' },
   { id: 'urun-uyumsuzluk', label: '🧪 Ürün Uyumsuzlukları' },
   { id: 'stok-kart', label: '📦 Stok Kartı' },
@@ -37,7 +38,6 @@ const UST_SEKMELER = [
   { id: 'stok-kayip', label: '📉 Stok Kayıp' },
   { id: 'personel-davranis', label: '👤 Personel Davranış' },
   { id: 'fis', label: '🧾 Fiş Kontrol' },
-  { id: 'onay', label: 'Şube Onaylamaları' },
   { id: 'defter', label: 'Defter Kayıtları' },
   { id: 'sayim', label: 'Açılış Sayımları' },
   { id: 'siparis', label: '📦 Sipariş katalog' },
@@ -55,6 +55,7 @@ const OPS_MODUL_BOLUM = {
   ],
   'urun-ac': [{ id: 'icerik', label: 'Günlük akış' }],
   'kullanilan-urunler': [{ id: 'icerik', label: 'Günlük akış' }],
+  'ciro-onay': [{ id: 'icerik', label: 'Onay akışı' }],
   'kasa-uyumsuzluk': [{ id: 'icerik', label: 'Günlük akış' }],
   'urun-uyumsuzluk': [{ id: 'icerik', label: 'Günlük akış' }],
   'stok-kart': [
@@ -87,6 +88,7 @@ const OPS_HUB_RENK = {
   canli: '#4a9eff',
   'urun-ac': '#2db573',
   'kullanilan-urunler': '#f59e0b',
+  'ciro-onay': '#d946b8',
   'kasa-uyumsuzluk': '#e85d5d',
   'urun-uyumsuzluk': '#8b5cf6',
   'stok-kart': '#7c6fdc',
@@ -699,6 +701,12 @@ export default function OperasyonMerkezi() {
   const [kullanilanAramaYukleniyor, setKullanilanAramaYukleniyor] = useState(false);
   const [kullanilanAramaSonuc, setKullanilanAramaSonuc] = useState({ tarih: '', toplam_islem: 0, toplam_adet: 0, satirlar: [] });
   const [kullanilanSeciliSubeKey, setKullanilanSeciliSubeKey] = useState('all');
+  const [ciroOnayBugun, setCiroOnayBugun] = useState({ tarih: '', toplam: 0, toplam_tutar: 0, kayitlar: [] });
+  const [ciroOnayBugunYukleniyor, setCiroOnayBugunYukleniyor] = useState(false);
+  const [ciroOnayAramaTarih, setCiroOnayAramaTarih] = useState(bugunIsoTarih());
+  const [ciroOnayAramaYukleniyor, setCiroOnayAramaYukleniyor] = useState(false);
+  const [ciroOnayAramaSonuc, setCiroOnayAramaSonuc] = useState({ tarih: '', toplam: 0, toplam_tutar: 0, kayitlar: [] });
+  const [ciroOnaySeciliSubeKey, setCiroOnaySeciliSubeKey] = useState('all');
   const [kasaUyumBugun, setKasaUyumBugun] = useState({ tarih: '', toplam: 0, kayitlar: [] });
   const [kasaUyumBugunYukleniyor, setKasaUyumBugunYukleniyor] = useState(false);
   const [kasaUyumAramaTarih, setKasaUyumAramaTarih] = useState(bugunIsoTarih());
@@ -905,6 +913,60 @@ export default function OperasyonMerkezi() {
       setKullanilanAramaYukleniyor(false);
     }
   }, [kullanilanAramaTarih, kullanilanGunYukle, toast]);
+
+  const ciroOnayGunYukle = useCallback(async (tarih) => {
+    const hedef = (tarih || bugunIsoTarih()).trim();
+    const ym = hedef.slice(0, 7);
+    const r = await api(`/ops/bekleyen-merkez?year_month=${encodeURIComponent(ym)}`);
+    const satirlar = Array.isArray(r?.ciro_taslaklari) ? r.ciro_taslaklari : [];
+    const kayitlar = satirlar.filter((t) => String(t?.tarih || '').slice(0, 10) === hedef);
+    const toplamTutar = kayitlar.reduce((sum, t) => {
+      const nakit = Number(t?.nakit || 0);
+      const pos = Number(t?.pos || 0);
+      const online = Number(t?.online || 0);
+      return sum + (Number.isFinite(nakit) ? nakit : 0) + (Number.isFinite(pos) ? pos : 0) + (Number.isFinite(online) ? online : 0);
+    }, 0);
+    return {
+      tarih: hedef,
+      toplam: kayitlar.length,
+      toplam_tutar: toplamTutar,
+      kayitlar,
+    };
+  }, []);
+
+  const yukleCiroOnayBugun = useCallback(async (opts = {}) => {
+    const silent = !!opts.silent;
+    setCiroOnayBugunYukleniyor(true);
+    try {
+      const data = await ciroOnayGunYukle(bugunIsoTarih());
+      setCiroOnayBugun(data);
+      if (aktifSekme !== 'ciro-onay') {
+        setCiroOnayAramaTarih(data.tarih || bugunIsoTarih());
+        setCiroOnayAramaSonuc(data);
+      }
+    } catch (e) {
+      if (!silent) toast(e.message || 'Bekleyen ciro onayları yüklenemedi');
+    } finally {
+      setCiroOnayBugunYukleniyor(false);
+    }
+  }, [aktifSekme, ciroOnayGunYukle, toast]);
+
+  const ciroOnayAramaYap = useCallback(async () => {
+    const hedef = (ciroOnayAramaTarih || bugunIsoTarih()).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(hedef)) {
+      toast('Tarih formatı YYYY-MM-DD olmalı');
+      return;
+    }
+    setCiroOnayAramaYukleniyor(true);
+    try {
+      const data = await ciroOnayGunYukle(hedef);
+      setCiroOnayAramaSonuc(data);
+    } catch (e) {
+      toast(e.message || 'Bekleyen ciro onayları getirilemedi');
+    } finally {
+      setCiroOnayAramaYukleniyor(false);
+    }
+  }, [ciroOnayAramaTarih, ciroOnayGunYukle, toast]);
 
   const kasaUyumGunYukle = useCallback(async (tarih) => {
     const hedef = (tarih || bugunIsoTarih()).trim();
@@ -1197,7 +1259,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     if (!aktifSekme) return;
-    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'urun-ac' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'stok-kart' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
+    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'urun-ac' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'stok-kart' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
     yukle(filtre);
   }, [filtre, aktifSekme, ayFiltre, gunFiltre, yukle]);
 
@@ -1258,6 +1320,18 @@ export default function OperasyonMerkezi() {
       .catch((e) => toast(e.message || 'Kullanılan ürünler yüklenemedi'))
       .finally(() => setYukleniyor(false));
   }, [aktifSekme, toast, kullanilanGunYukle]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'ciro-onay') return;
+    setYukleniyor(true);
+    ciroOnayGunYukle(bugunIsoTarih())
+      .then((data) => {
+        setCiroOnayAramaTarih(data.tarih || bugunIsoTarih());
+        setCiroOnayAramaSonuc(data);
+      })
+      .catch((e) => toast(e.message || 'Bekleyen ciro onayları yüklenemedi'))
+      .finally(() => setYukleniyor(false));
+  }, [aktifSekme, ciroOnayGunYukle, toast]);
 
   useEffect(() => {
     if (aktifSekme !== 'kasa-uyumsuzluk') return;
@@ -1331,6 +1405,9 @@ export default function OperasyonMerkezi() {
       } else if (aktifSekme === 'kullanilan-urunler') {
         setYukleniyor(true);
         kullanilanAramaYap().finally(() => setYukleniyor(false));
+      } else if (aktifSekme === 'ciro-onay') {
+        setYukleniyor(true);
+        ciroOnayAramaYap().finally(() => setYukleniyor(false));
       } else if (aktifSekme === 'kasa-uyumsuzluk') {
         setYukleniyor(true);
         kasaUyumAramaYap().finally(() => setYukleniyor(false));
@@ -1360,7 +1437,7 @@ export default function OperasyonMerkezi() {
       }
     });
     return unsub;
-  }, [aktifSekme, filtre, stokKartSecim, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, kullanilanAramaYap, kasaUyumAramaYap, urunUyumAramaYap, yukleSiparisMerkez, yukleStokKart, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
+  }, [aktifSekme, filtre, stokKartSecim, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, kullanilanAramaYap, ciroOnayAramaYap, kasaUyumAramaYap, urunUyumAramaYap, yukleSiparisMerkez, yukleStokKart, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
 
 
   const toplamGecikme = skor?.son_30_gun?.reduce((s, r) => s + (r.gecikme_adet || 0), 0) || 0;
@@ -1410,6 +1487,28 @@ export default function OperasyonMerkezi() {
     : (kullanilanAramaSonuc?.satirlar || []).filter((r) => {
       const label = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
       return (urunAcSubeAnahtar(label) || label) === kullanilanSeciliSubeKey;
+    });
+  const ciroOnaySubeSekmeleri = (ciroOnayAramaSonuc?.kayitlar || []).reduce((acc, r) => {
+    const baslik = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
+    const key = urunAcSubeAnahtar(baslik) || baslik;
+    const bulunan = acc.find((x) => x.key === key);
+    if (bulunan) bulunan.adet += 1;
+    else acc.push({ key, baslik, adet: 1 });
+    return acc;
+  }, []);
+  ciroOnaySubeSekmeleri.sort((a, b) => {
+    const ai = URUN_AC_SUBE_ONCELIK.indexOf(a.key);
+    const bi = URUN_AC_SUBE_ONCELIK.indexOf(b.key);
+    const ao = ai >= 0 ? ai : 99;
+    const bo = bi >= 0 ? bi : 99;
+    if (ao !== bo) return ao - bo;
+    return a.baslik.localeCompare(b.baslik, 'tr');
+  });
+  const ciroOnayGorunenKayitlar = ciroOnaySeciliSubeKey === 'all'
+    ? (ciroOnayAramaSonuc?.kayitlar || [])
+    : (ciroOnayAramaSonuc?.kayitlar || []).filter((r) => {
+      const label = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
+      return (urunAcSubeAnahtar(label) || label) === ciroOnaySeciliSubeKey;
     });
   const barOzetTarihSatirlari = (barOzet || []).filter((r) => String(r?.tarih || '').slice(0, 10) === barOzetTarih);
   const barOzetSubeSekmeleri = barOzetTarihSatirlari.reduce((acc, r) => {
@@ -1505,6 +1604,17 @@ export default function OperasyonMerkezi() {
   }, [kullanilanSeciliSubeKey, kullanilanSubeSekmeleri]);
 
   useEffect(() => {
+    if (!ciroOnaySubeSekmeleri.length) {
+      if (ciroOnaySeciliSubeKey !== 'all') setCiroOnaySeciliSubeKey('all');
+      return;
+    }
+    if (ciroOnaySeciliSubeKey === 'all') return;
+    if (!ciroOnaySubeSekmeleri.some((s) => s.key === ciroOnaySeciliSubeKey)) {
+      setCiroOnaySeciliSubeKey('all');
+    }
+  }, [ciroOnaySeciliSubeKey, ciroOnaySubeSekmeleri]);
+
+  useEffect(() => {
     if (!kasaUyumSubeSekmeleri.length) {
       if (kasaUyumSeciliSubeKey !== 'all') setKasaUyumSeciliSubeKey('all');
       return;
@@ -1543,6 +1653,7 @@ export default function OperasyonMerkezi() {
       if (!opsMerkezPencere) {
         yukleUrunAcBugun({ silent: true }).catch(() => {});
         yukleKullanilanBugun({ silent: true }).catch(() => {});
+        yukleCiroOnayBugun({ silent: true }).catch(() => {});
         yukleKasaUyumBugun({ silent: true }).catch(() => {});
         yukleUrunUyumBugun({ silent: true }).catch(() => {});
       }
@@ -1557,7 +1668,7 @@ export default function OperasyonMerkezi() {
       clearInterval(id);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [hubOzetIsle, opsMerkezPencere, yukleUrunAcBugun, yukleKullanilanBugun, yukleKasaUyumBugun, yukleUrunUyumBugun]);
+  }, [hubOzetIsle, opsMerkezPencere, yukleUrunAcBugun, yukleKullanilanBugun, yukleCiroOnayBugun, yukleKasaUyumBugun, yukleUrunUyumBugun]);
 
   const acOpsModul = useCallback((id) => {
     const bolumler = OPS_MODUL_BOLUM[id] || [{ id: 'icerik', label: 'İçerik' }];
@@ -1580,6 +1691,9 @@ export default function OperasyonMerkezi() {
           sessionStorage.setItem('ops_siparis_vurgula_talep', String(m.talep_id));
         } catch (_) {}
       }
+    } else if (sek === 'onay') {
+      // Legacy hedefleri yeni tek onay kartına yönlendir.
+      sek = 'ciro-onay';
     }
     const bolumler = OPS_MODUL_BOLUM[sek] || [{ id: 'icerik', label: 'İçerik' }];
     setAktifSekme(sek);
@@ -1615,6 +1729,14 @@ export default function OperasyonMerkezi() {
     };
   }, [aktifSekme, opsMerkezPencere, disiplinPanel, bekleyenSiparisler]);
 
+  useEffect(() => {
+    if (aktifSekme !== 'onay') return;
+    // Eski sekme seçili geldiyse otomatik yeni karta taşı.
+    setAktifSekme('ciro-onay');
+    setOpsIcBolum('icerik');
+    setYukleniyor(true);
+  }, [aktifSekme]);
+
   const kapatOpsModul = useCallback(() => {
     setOpsMerkezPencere(false);
     setAktifSekme('');
@@ -1629,7 +1751,10 @@ export default function OperasyonMerkezi() {
       await api(`/ciro-taslak/${encodeURIComponent(tid)}/onayla`, { method: 'POST', body: {} });
       toast('Ciro taslağı onaylandı; kasa ve ciro girişine işlendi.', 'green');
       publishGlobalDataRefresh('ops-onay-ciro');
-      await yukleOnayMerkez();
+      await Promise.all([
+        ciroOnayAramaYap(),
+        yukleCiroOnayBugun({ silent: true }),
+      ]);
     } catch (e) {
       toast(e.message || 'Onay başarısız');
     } finally {
@@ -1648,7 +1773,10 @@ export default function OperasyonMerkezi() {
       });
       toast('Ciro taslağı reddedildi.', 'green');
       publishGlobalDataRefresh('ops-onay-ciro-reddet');
-      await yukleOnayMerkez();
+      await Promise.all([
+        ciroOnayAramaYap(),
+        yukleCiroOnayBugun({ silent: true }),
+      ]);
     } catch (e) {
       toast(e.message || 'Red başarısız');
     } finally {
@@ -2055,6 +2183,13 @@ export default function OperasyonMerkezi() {
                 : (kullanilanBugun?.toplam_islem || 0) > 0
                 ? `Bugün ${kullanilanBugun?.toplam_islem || 0} şube kaydı`
                 : 'Bugün kullanılan ürün kaydı yok';
+            } else if (s.id === 'ciro-onay') {
+              val = ciroOnayBugun?.toplam ?? 0;
+              sub = ciroOnayBugunYukleniyor
+                ? 'Güncel veri yükleniyor…'
+                : (ciroOnayBugun?.toplam || 0) > 0
+                ? `${ciroOnayBugun?.toplam || 0} bekleyen · ${fmt(ciroOnayBugun?.toplam_tutar || 0)}`
+                : 'Bugün bekleyen ciro onayı yok';
             } else if (s.id === 'kasa-uyumsuzluk') {
               val = kasaUyumBugun?.toplam ?? 0;
               sub = kasaUyumBugunYukleniyor
@@ -2136,6 +2271,9 @@ export default function OperasyonMerkezi() {
                     setKullanilanDetayAcik(true);
                     setKullanilanAramaTarih(bugunIsoTarih());
                     setKullanilanAramaSonuc(kullanilanBugun);
+                  } else if (s.id === 'ciro-onay') {
+                    setCiroOnayAramaTarih(bugunIsoTarih());
+                    setCiroOnayAramaSonuc(ciroOnayBugun);
                   } else if (s.id === 'kasa-uyumsuzluk') {
                     setKasaUyumAramaTarih(bugunIsoTarih());
                     setKasaUyumAramaSonuc(kasaUyumBugun);
@@ -2222,6 +2360,9 @@ export default function OperasyonMerkezi() {
                   }
                   else if (aktifSekme === 'kullanilan-urunler') {
                     kullanilanAramaYap().finally(() => setYukleniyor(false));
+                  }
+                  else if (aktifSekme === 'ciro-onay') {
+                    ciroOnayAramaYap().finally(() => setYukleniyor(false));
                   }
                   else if (aktifSekme === 'kasa-uyumsuzluk') {
                     kasaUyumAramaYap().finally(() => setYukleniyor(false));
@@ -3422,6 +3563,117 @@ export default function OperasyonMerkezi() {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {aktifSekme === 'ciro-onay' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
+            Akşam kapanıştan gelen <strong>ciro taslakları</strong> burada şube/tarih bazında doğrulanır. Onaylanan kayıt CFO panelindeki ciro girişine otomatik işlenir; reddedilen kayıt yazılmaz.
+          </p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ margin: 0 }}>
+              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Tarih</span>
+              <input
+                type="date"
+                className="input"
+                value={ciroOnayAramaTarih}
+                onChange={(e) => setCiroOnayAramaTarih(e.target.value || bugunIsoTarih())}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ alignSelf: 'flex-end' }}
+              onClick={() => ciroOnayAramaYap()}
+            >
+              {ciroOnayAramaYukleniyor ? '…' : 'Tarihi getir'}
+            </button>
+            <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'flex-end' }}>
+              {ciroOnayAramaSonuc?.tarih || ciroOnayAramaTarih} · {ciroOnayAramaSonuc?.toplam || 0} bekleyen · {fmt(ciroOnayAramaSonuc?.toplam_tutar || 0)}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => setCiroOnaySeciliSubeKey('all')}
+              style={{
+                border: ciroOnaySeciliSubeKey === 'all' ? '1px solid #d946b8' : '1px solid var(--border)',
+                background: ciroOnaySeciliSubeKey === 'all' ? 'rgba(217, 70, 184, 0.2)' : 'var(--bg2)',
+                color: ciroOnaySeciliSubeKey === 'all' ? '#f5d0fe' : 'var(--text2)',
+                padding: '6px 10px',
+                fontWeight: 700,
+              }}
+            >
+              Tümü
+            </button>
+            {ciroOnaySubeSekmeleri.map((s) => (
+              <button
+                key={`ciro-onay-${s.key}`}
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setCiroOnaySeciliSubeKey(s.key)}
+                style={{
+                  border: ciroOnaySeciliSubeKey === s.key ? '1px solid #4a9eff' : '1px solid var(--border)',
+                  background: ciroOnaySeciliSubeKey === s.key ? 'rgba(74, 158, 255, 0.2)' : 'var(--bg2)',
+                  color: ciroOnaySeciliSubeKey === s.key ? '#e6f7ff' : 'var(--text2)',
+                  padding: '6px 10px',
+                  fontWeight: 700,
+                }}
+              >
+                {s.baslik} ({s.adet})
+              </button>
+            ))}
+          </div>
+
+          {ciroOnayGorunenKayitlar.length === 0 ? (
+            <div className="empty"><p>Seçilen tarihte bekleyen ciro onayı yok</p></div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 460, overflow: 'auto' }}>
+              {ciroOnayGorunenKayitlar.map((t) => (
+                <div
+                  key={t.id}
+                  className="card"
+                  style={{ padding: '12px 14px', borderLeft: '4px solid #d946b8' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontWeight: 700 }}>
+                        {t.sube_adi || t.sube_id}
+                        <span className="badge" style={{ marginLeft: 8, background: 'rgba(217, 70, 184, 0.18)', color: '#f5d0fe', border: '1px solid rgba(217, 70, 184, 0.4)' }}>
+                          Toplam {fmt(Number(t?.nakit || 0) + Number(t?.pos || 0) + Number(t?.online || 0))}
+                        </span>
+                      </div>
+                      <div className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>
+                        {t.tarih} · Nakit {fmt(t.nakit)} · POS {fmt(t.pos)} · Online {fmt(t.online)}
+                      </div>
+                      {t.aciklama && <div style={{ fontSize: 12, marginTop: 6 }}>{t.aciklama}</div>}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        disabled={!!onayBusyId}
+                        onClick={() => ciroTaslakOnayla(t.id)}
+                      >
+                        {onayBusyId === `c:${t.id}` ? '…' : 'Onayla → ciro'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm"
+                        disabled={!!onayBusyId}
+                        onClick={() => ciroTaslakReddet(t.id)}
+                      >
+                        {onayBusyId === `cr:${t.id}` ? '…' : 'Reddet'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
