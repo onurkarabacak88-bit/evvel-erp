@@ -29,6 +29,7 @@ const UST_SEKMELER = [
   { id: 'canli', label: 'Canlı Operasyon' },
   { id: 'urun-ac', label: '🟢 Ürün Aç Akışı' },
   { id: 'gec-acilan-subeler', label: '⏰ Geç Açılan Şubeler' },
+  { id: 'gec-kalan-personel', label: '👤 Geç Kalan Personel' },
   { id: 'kullanilan-urunler', label: '🟠 Kullanılan Ürünler' },
   { id: 'ciro-onay', label: '💳 Bekleyen Ciro Onayları' },
   { id: 'kasa-uyumsuzluk', label: '🔴 Kasa Uyumsuzluğu' },
@@ -56,6 +57,7 @@ const OPS_MODUL_BOLUM = {
   ],
   'urun-ac': [{ id: 'icerik', label: 'Günlük akış' }],
   'gec-acilan-subeler': [{ id: 'icerik', label: 'Günlük akış' }],
+  'gec-kalan-personel': [{ id: 'icerik', label: 'Aylık analiz' }],
   'kullanilan-urunler': [{ id: 'icerik', label: 'Günlük akış' }],
   'ciro-onay': [{ id: 'icerik', label: 'Onay akışı' }],
   'kasa-uyumsuzluk': [{ id: 'icerik', label: 'Günlük akış' }],
@@ -90,6 +92,7 @@ const OPS_HUB_RENK = {
   canli: '#4a9eff',
   'urun-ac': '#2db573',
   'gec-acilan-subeler': '#f97316',
+  'gec-kalan-personel': '#0ea5a4',
   'kullanilan-urunler': '#f59e0b',
   'ciro-onay': '#d946b8',
   'kasa-uyumsuzluk': '#e85d5d',
@@ -703,6 +706,26 @@ export default function OperasyonMerkezi() {
   const [gecAcilanAramaYukleniyor, setGecAcilanAramaYukleniyor] = useState(false);
   const [gecAcilanAramaSonuc, setGecAcilanAramaSonuc] = useState({ tarih: '', toplam: 0, kayitlar: [] });
   const [gecAcilanSeciliSubeKey, setGecAcilanSeciliSubeKey] = useState('all');
+  const [gecKalanPersonelBugun, setGecKalanPersonelBugun] = useState({
+    year_month: varsayilanAy,
+    kritik_dk: 30,
+    toplam_personel: 0,
+    gecikme_toplam_adet: 0,
+    kritik_personel_sayisi: 0,
+    satirlar: [],
+  });
+  const [gecKalanPersonelBugunYukleniyor, setGecKalanPersonelBugunYukleniyor] = useState(false);
+  const [gecKalanPersonelAy, setGecKalanPersonelAy] = useState(varsayilanAy);
+  const [gecKalanPersonelAramaYukleniyor, setGecKalanPersonelAramaYukleniyor] = useState(false);
+  const [gecKalanPersonelAramaSonuc, setGecKalanPersonelAramaSonuc] = useState({
+    year_month: varsayilanAy,
+    kritik_dk: 30,
+    toplam_personel: 0,
+    gecikme_toplam_adet: 0,
+    kritik_personel_sayisi: 0,
+    satirlar: [],
+  });
+  const [gecKalanPersonelAcikKey, setGecKalanPersonelAcikKey] = useState('');
   const [kullanilanBugun, setKullanilanBugun] = useState({ tarih: '', toplam_islem: 0, toplam_adet: 0, satirlar: [] });
   const [kullanilanBugunYukleniyor, setKullanilanBugunYukleniyor] = useState(false);
   const [kullanilanDetayAcik, setKullanilanDetayAcik] = useState(false);
@@ -912,6 +935,53 @@ export default function OperasyonMerkezi() {
       setGecAcilanAramaYukleniyor(false);
     }
   }, [gecAcilanAramaTarih, gecAcilanGunYukle, toast]);
+
+  const gecKalanPersonelAyYukle = useCallback(async (ym) => {
+    const hedefAy = String(ym || varsayilanAy).trim() || varsayilanAy;
+    const r = await api(`/ops/gec-kalan-personel?year_month=${encodeURIComponent(hedefAy)}&kritik_dk=30&limit=500`);
+    return {
+      year_month: String(r?.year_month || hedefAy),
+      kritik_dk: Number(r?.kritik_dk || 30),
+      toplam_personel: Number(r?.toplam_personel || 0),
+      gecikme_toplam_adet: Number(r?.gecikme_toplam_adet || 0),
+      kritik_personel_sayisi: Number(r?.kritik_personel_sayisi || 0),
+      satirlar: Array.isArray(r?.satirlar) ? r.satirlar : [],
+    };
+  }, [varsayilanAy]);
+
+  const yukleGecKalanPersonelBugun = useCallback(async (opts = {}) => {
+    const silent = !!opts.silent;
+    setGecKalanPersonelBugunYukleniyor(true);
+    try {
+      const data = await gecKalanPersonelAyYukle(varsayilanAy);
+      setGecKalanPersonelBugun(data);
+      if (aktifSekme !== 'gec-kalan-personel') {
+        setGecKalanPersonelAy(data.year_month || varsayilanAy);
+        setGecKalanPersonelAramaSonuc(data);
+      }
+    } catch (e) {
+      if (!silent) toast(e.message || 'Geç kalan personel yüklenemedi');
+    } finally {
+      setGecKalanPersonelBugunYukleniyor(false);
+    }
+  }, [aktifSekme, gecKalanPersonelAyYukle, toast, varsayilanAy]);
+
+  const gecKalanPersonelAramaYap = useCallback(async () => {
+    const hedefAy = String(gecKalanPersonelAy || varsayilanAy).trim() || varsayilanAy;
+    if (!/^\d{4}-\d{2}$/.test(hedefAy)) {
+      toast('Ay formatı YYYY-MM olmalı');
+      return;
+    }
+    setGecKalanPersonelAramaYukleniyor(true);
+    try {
+      const data = await gecKalanPersonelAyYukle(hedefAy);
+      setGecKalanPersonelAramaSonuc(data);
+    } catch (e) {
+      toast(e.message || 'Geç kalan personel listesi getirilemedi');
+    } finally {
+      setGecKalanPersonelAramaYukleniyor(false);
+    }
+  }, [gecKalanPersonelAy, gecKalanPersonelAyYukle, toast, varsayilanAy]);
 
   const kullanilanGunYukle = useCallback(async (tarih) => {
     const hedef = (tarih || bugunIsoTarih()).trim();
@@ -1312,7 +1382,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     if (!aktifSekme) return;
-    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'urun-ac' || aktifSekme === 'gec-acilan-subeler' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'stok-kart' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
+    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'urun-ac' || aktifSekme === 'gec-acilan-subeler' || aktifSekme === 'gec-kalan-personel' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'stok-kart' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
     yukle(filtre);
   }, [filtre, aktifSekme, ayFiltre, gunFiltre, yukle]);
 
@@ -1373,6 +1443,18 @@ export default function OperasyonMerkezi() {
       .catch((e) => toast(e.message || 'Geç açılan şubeler yüklenemedi'))
       .finally(() => setYukleniyor(false));
   }, [aktifSekme, toast, gecAcilanGunYukle]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'gec-kalan-personel') return;
+    setYukleniyor(true);
+    gecKalanPersonelAyYukle(varsayilanAy)
+      .then((data) => {
+        setGecKalanPersonelAy(data.year_month || varsayilanAy);
+        setGecKalanPersonelAramaSonuc(data);
+      })
+      .catch((e) => toast(e.message || 'Geç kalan personel yüklenemedi'))
+      .finally(() => setYukleniyor(false));
+  }, [aktifSekme, toast, gecKalanPersonelAyYukle, varsayilanAy]);
 
   useEffect(() => {
     if (aktifSekme !== 'kullanilan-urunler') return;
@@ -1470,6 +1552,9 @@ export default function OperasyonMerkezi() {
       } else if (aktifSekme === 'gec-acilan-subeler') {
         setYukleniyor(true);
         gecAcilanAramaYap().finally(() => setYukleniyor(false));
+      } else if (aktifSekme === 'gec-kalan-personel') {
+        setYukleniyor(true);
+        gecKalanPersonelAramaYap().finally(() => setYukleniyor(false));
       } else if (aktifSekme === 'kullanilan-urunler') {
         setYukleniyor(true);
         kullanilanAramaYap().finally(() => setYukleniyor(false));
@@ -1505,7 +1590,7 @@ export default function OperasyonMerkezi() {
       }
     });
     return unsub;
-  }, [aktifSekme, filtre, stokKartSecim, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, gecAcilanAramaYap, kullanilanAramaYap, ciroOnayAramaYap, kasaUyumAramaYap, urunUyumAramaYap, yukleSiparisMerkez, yukleStokKart, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
+  }, [aktifSekme, filtre, stokKartSecim, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, gecAcilanAramaYap, gecKalanPersonelAramaYap, kullanilanAramaYap, ciroOnayAramaYap, kasaUyumAramaYap, urunUyumAramaYap, yukleSiparisMerkez, yukleStokKart, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
 
 
   const toplamGecikme = skor?.son_30_gun?.reduce((s, r) => s + (r.gecikme_adet || 0), 0) || 0;
@@ -1553,6 +1638,7 @@ export default function OperasyonMerkezi() {
       const label = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
       return (urunAcSubeAnahtar(label) || label) === gecAcilanSeciliSubeKey;
     });
+  const gecKalanPersonelSatirlari = Array.isArray(gecKalanPersonelAramaSonuc?.satirlar) ? gecKalanPersonelAramaSonuc.satirlar : [];
   const kullanilanSubeSekmeleri = (kullanilanAramaSonuc?.satirlar || []).reduce((acc, r) => {
     const baslik = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
     const key = urunAcSubeAnahtar(baslik) || baslik;
@@ -1754,6 +1840,7 @@ export default function OperasyonMerkezi() {
       if (!opsMerkezPencere) {
         yukleUrunAcBugun({ silent: true }).catch(() => {});
         yukleGecAcilanBugun({ silent: true }).catch(() => {});
+        yukleGecKalanPersonelBugun({ silent: true }).catch(() => {});
         yukleKullanilanBugun({ silent: true }).catch(() => {});
         yukleCiroOnayBugun({ silent: true }).catch(() => {});
         yukleKasaUyumBugun({ silent: true }).catch(() => {});
@@ -1770,7 +1857,7 @@ export default function OperasyonMerkezi() {
       clearInterval(id);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [hubOzetIsle, opsMerkezPencere, yukleUrunAcBugun, yukleGecAcilanBugun, yukleKullanilanBugun, yukleCiroOnayBugun, yukleKasaUyumBugun, yukleUrunUyumBugun]);
+  }, [hubOzetIsle, opsMerkezPencere, yukleUrunAcBugun, yukleGecAcilanBugun, yukleGecKalanPersonelBugun, yukleKullanilanBugun, yukleCiroOnayBugun, yukleKasaUyumBugun, yukleUrunUyumBugun]);
 
   const acOpsModul = useCallback((id) => {
     const bolumler = OPS_MODUL_BOLUM[id] || [{ id: 'icerik', label: 'İçerik' }];
@@ -1996,6 +2083,7 @@ export default function OperasyonMerkezi() {
               fetchHubOzet().then((r) => hubOzetIsle(r)).catch(() => toast('Özet yenilenemedi', 'red'));
               yukleUrunAcBugun().catch(() => {});
               yukleGecAcilanBugun().catch(() => {});
+              yukleGecKalanPersonelBugun().catch(() => {});
               yukleKullanilanBugun().catch(() => {});
               yukleKasaUyumBugun().catch(() => {});
               yukleUrunUyumBugun().catch(() => {});
@@ -2015,6 +2103,9 @@ export default function OperasyonMerkezi() {
             }
             else if (aktifSekme === 'gec-acilan-subeler') {
               gecAcilanAramaYap().finally(() => setYukleniyor(false));
+            }
+            else if (aktifSekme === 'gec-kalan-personel') {
+              gecKalanPersonelAramaYap().finally(() => setYukleniyor(false));
             }
             else if (aktifSekme === 'kullanilan-urunler') {
               kullanilanAramaYap().finally(() => setYukleniyor(false));
@@ -2289,6 +2380,13 @@ export default function OperasyonMerkezi() {
                 : (gecAcilanBugun?.toplam || 0) > 0
                 ? `${gecAcilanBugun?.toplam || 0} şube geç açıldı`
                 : 'Geç açılan şube yok';
+            } else if (s.id === 'gec-kalan-personel') {
+              val = gecKalanPersonelBugun?.kritik_personel_sayisi ?? 0;
+              sub = gecKalanPersonelBugunYukleniyor
+                ? 'Güncel veri yükleniyor…'
+                : (gecKalanPersonelBugun?.kritik_personel_sayisi || 0) > 0
+                ? `${gecKalanPersonelBugun?.kritik_personel_sayisi || 0} personel kritik`
+                : 'Kritik gecikme yok';
             } else if (s.id === 'kullanilan-urunler') {
               val = kullanilanBugun?.toplam_adet ?? 0;
               sub = kullanilanBugunYukleniyor
@@ -2383,6 +2481,10 @@ export default function OperasyonMerkezi() {
                   } else if (s.id === 'gec-acilan-subeler') {
                     setGecAcilanAramaTarih(bugunIsoTarih());
                     setGecAcilanAramaSonuc(gecAcilanBugun);
+                  } else if (s.id === 'gec-kalan-personel') {
+                    setGecKalanPersonelAy(varsayilanAy);
+                    setGecKalanPersonelAramaSonuc(gecKalanPersonelBugun);
+                    setGecKalanPersonelAcikKey('');
                   } else if (s.id === 'kullanilan-urunler') {
                     setKullanilanDetayAcik(true);
                     setKullanilanAramaTarih(bugunIsoTarih());
@@ -2476,6 +2578,9 @@ export default function OperasyonMerkezi() {
                   }
                   else if (aktifSekme === 'gec-acilan-subeler') {
                     gecAcilanAramaYap().finally(() => setYukleniyor(false));
+                  }
+                  else if (aktifSekme === 'gec-kalan-personel') {
+                    gecKalanPersonelAramaYap().finally(() => setYukleniyor(false));
                   }
                   else if (aktifSekme === 'kullanilan-urunler') {
                     kullanilanAramaYap().finally(() => setYukleniyor(false));
@@ -3888,6 +3993,107 @@ export default function OperasyonMerkezi() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {aktifSekme === 'gec-kalan-personel' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
+            Aylık bazda personel geç açılış tekrarları burada izlenir. Kritik eşik: <strong>30 dk+</strong> tekil gecikme.
+          </p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ margin: 0 }}>
+              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Ay</span>
+              <input
+                type="month"
+                className="input"
+                value={gecKalanPersonelAy}
+                onChange={(e) => setGecKalanPersonelAy(e.target.value || varsayilanAy)}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ alignSelf: 'flex-end' }}
+              onClick={() => gecKalanPersonelAramaYap()}
+            >
+              {gecKalanPersonelAramaYukleniyor ? '…' : 'Ayı getir'}
+            </button>
+            <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'flex-end' }}>
+              {gecKalanPersonelAramaSonuc?.year_month || gecKalanPersonelAy} · {gecKalanPersonelAramaSonuc?.toplam_personel || 0} personel · {gecKalanPersonelAramaSonuc?.kritik_personel_sayisi || 0} kritik
+            </div>
+          </div>
+
+          {gecKalanPersonelSatirlari.length === 0 ? (
+            <div className="empty"><p>Bu ay geç kalan personel kaydı yok</p></div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 520, overflow: 'auto' }}>
+              {gecKalanPersonelSatirlari.map((p, idx) => {
+                const pKey = `${p.personel_id || 'anon'}-${p.personel_ad || '—'}-${idx}`;
+                const acik = gecKalanPersonelAcikKey === pKey;
+                const detaylar = Array.isArray(p?.detaylar) ? p.detaylar : [];
+                const kritik = !!p?.kritik;
+                return (
+                  <div key={pKey} className="card" style={{ padding: '12px 14px', borderLeft: `4px solid ${kritik ? 'var(--red)' : '#0ea5a4'}` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div>
+                        <div style={{ fontWeight: 700 }}>
+                          {p.personel_ad || p.personel_id || 'Bilinmiyor'}
+                          <span
+                            className={`badge ${kritik ? 'badge-red' : ''}`}
+                            style={kritik ? { marginLeft: 8 } : { marginLeft: 8, background: 'rgba(14, 165, 164, 0.18)', color: '#99f6e4', border: '1px solid rgba(14, 165, 164, 0.35)' }}
+                          >
+                            {p.gecikme_adet || 0} gecikme
+                          </span>
+                          {kritik && <span className="badge badge-red" style={{ marginLeft: 6 }}>Kritik</span>}
+                        </div>
+                        <div className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>
+                          Skor: {Number(p?.skor || 0).toFixed(1)} · Toplam: {Number(p?.toplam_gecikme_dk || 0).toFixed(1)} dk · Ort: {Number(p?.ortalama_gecikme_dk || 0).toFixed(1)} dk · Max: {Number(p?.max_gecikme_dk || 0).toFixed(1)} dk
+                          {Number(p?.kritik_gecikme_adet || 0) > 0 ? ` · Kritik olay: ${Number(p?.kritik_gecikme_adet || 0)}` : ''}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setGecKalanPersonelAcikKey(acik ? '' : pKey)}
+                      >
+                        {acik ? 'Detayı gizle' : 'Detayı göster'}
+                      </button>
+                    </div>
+
+                    {acik && (
+                      <div style={{ marginTop: 10, overflowX: 'auto' }}>
+                        <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ background: 'var(--bg2)' }}>
+                              <th style={{ padding: '6px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600 }}>Tarih</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600 }}>Şube</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'center', color: '#93c5fd', fontWeight: 600 }}>Planlanan</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'center', color: '#fbbf24', fontWeight: 600 }}>Açılış</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'center', color: '#fca5a5', fontWeight: 700 }}>Gecikme</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {detaylar.map((d, di) => (
+                              <tr key={d.event_id || `${d.tarih}-${d.sube_id}-${di}`} style={{ borderTop: '1px solid var(--border)' }}>
+                                <td className="mono" style={{ padding: '6px 8px' }}>{d.tarih || '—'}</td>
+                                <td style={{ padding: '6px 8px' }}>{d.sube_adi || d.sube_id || '—'}</td>
+                                <td className="mono" style={{ padding: '6px 8px', textAlign: 'center' }}>{d.planlanan_saat || '—'}</td>
+                                <td className="mono" style={{ padding: '6px 8px', textAlign: 'center' }}>{d.acilis_saat || '—'}</td>
+                                <td className="mono" style={{ padding: '6px 8px', textAlign: 'center', color: 'var(--red)', fontWeight: 700 }}>
+                                  +{Number(d.gecikme_dk || 0).toFixed(1)} dk
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
