@@ -686,12 +686,12 @@ export default function OperasyonMerkezi() {
   const [urunAcAramaYukleniyor, setUrunAcAramaYukleniyor] = useState(false);
   const [urunAcAramaSonuc, setUrunAcAramaSonuc] = useState({ tarih: '', toplam_islem: 0, toplam_adet: 0, kayitlar: [] });
   const [urunAcSeciliSubeKey, setUrunAcSeciliSubeKey] = useState('all');
-  const [kullanilanBugun, setKullanilanBugun] = useState({ tarih: '', toplam_islem: 0, toplam_adet: 0, kayitlar: [] });
+  const [kullanilanBugun, setKullanilanBugun] = useState({ tarih: '', toplam_islem: 0, toplam_adet: 0, satirlar: [] });
   const [kullanilanBugunYukleniyor, setKullanilanBugunYukleniyor] = useState(false);
   const [kullanilanDetayAcik, setKullanilanDetayAcik] = useState(false);
   const [kullanilanAramaTarih, setKullanilanAramaTarih] = useState(bugunIsoTarih());
   const [kullanilanAramaYukleniyor, setKullanilanAramaYukleniyor] = useState(false);
-  const [kullanilanAramaSonuc, setKullanilanAramaSonuc] = useState({ tarih: '', toplam_islem: 0, toplam_adet: 0, kayitlar: [] });
+  const [kullanilanAramaSonuc, setKullanilanAramaSonuc] = useState({ tarih: '', toplam_islem: 0, toplam_adet: 0, satirlar: [] });
   const [kullanilanSeciliSubeKey, setKullanilanSeciliSubeKey] = useState('all');
 
   /** Yeni sipariş toast: gördüğümüz talep id'leri (tekrar uyarı yok) */
@@ -839,31 +839,18 @@ export default function OperasyonMerkezi() {
     const ym = hedef.slice(0, 7);
     const r = await api(`/ops/bar-ozet?year_month=${encodeURIComponent(ym)}&gun=${encodeURIComponent(hedef)}&limit=180`);
     const satirlar = Array.isArray(r?.satirlar) ? r.satirlar : [];
-    const kayitlar = satirlar
-      .map((row, idx) => {
-        const satilan = row?.satilan || {};
-        const urunler = KULLANILAN_URUN_KEYS
-          .map((k) => ({ urun_ad: KULLANILAN_URUN_LABEL[k] || k, adet: Number(satilan?.[k] || 0) }))
-          .filter((u) => u.adet > 0);
-        const adet_toplam = urunler.reduce((s, u) => s + (Number(u.adet || 0) || 0), 0);
-        return {
-          id: `${row?.sube_id || 'sube'}-${row?.tarih || hedef}-${idx}`,
-          sube_id: row?.sube_id || '',
-          sube_adi: row?.sube_adi || row?.sube_id || '—',
-          tarih: row?.tarih || hedef,
-          saat: String(row?.acilis_ts || '').slice(11, 16) || '—',
-          kapanis_var: !!row?.kapanis_var,
-          fark_var: !!row?.fark_var,
-          adet_toplam,
-          urunler,
-        };
-      })
-      .filter((k) => k.adet_toplam > 0);
+    const toplamAdet = satirlar.reduce((sum, row) => {
+      const satilan = row?.satilan || {};
+      return sum + KULLANILAN_URUN_KEYS.reduce((s, key) => {
+        const v = Number(satilan?.[key] || 0);
+        return s + (Number.isFinite(v) && v > 0 ? v : 0);
+      }, 0);
+    }, 0);
     return {
       tarih: hedef,
-      toplam_islem: kayitlar.length,
-      toplam_adet: kayitlar.reduce((s, k) => s + (Number(k?.adet_toplam || 0) || 0), 0),
-      kayitlar,
+      toplam_islem: satirlar.length,
+      toplam_adet: toplamAdet,
+      satirlar,
     };
   }, []);
 
@@ -1254,10 +1241,31 @@ export default function OperasyonMerkezi() {
   const urunAcGorunenSubeBloklari = urunAcSeciliSubeKey === 'all'
     ? urunAcSubeBloklari
     : urunAcSubeBloklari.filter((g) => g.key === urunAcSeciliSubeKey);
-  const kullanilanSubeBloklari = urunAcSubeGruplari(kullanilanAramaSonuc?.kayitlar || []);
-  const kullanilanGorunenSubeBloklari = kullanilanSeciliSubeKey === 'all'
-    ? kullanilanSubeBloklari
-    : kullanilanSubeBloklari.filter((g) => g.key === kullanilanSeciliSubeKey);
+  const kullanilanSubeSekmeleri = (kullanilanAramaSonuc?.satirlar || []).reduce((acc, r) => {
+    const baslik = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
+    const key = urunAcSubeAnahtar(baslik) || baslik;
+    const bulunan = acc.find((x) => x.key === key);
+    if (bulunan) {
+      bulunan.adet += 1;
+    } else {
+      acc.push({ key, baslik, adet: 1 });
+    }
+    return acc;
+  }, []);
+  kullanilanSubeSekmeleri.sort((a, b) => {
+    const ai = URUN_AC_SUBE_ONCELIK.indexOf(a.key);
+    const bi = URUN_AC_SUBE_ONCELIK.indexOf(b.key);
+    const ao = ai >= 0 ? ai : 99;
+    const bo = bi >= 0 ? bi : 99;
+    if (ao !== bo) return ao - bo;
+    return a.baslik.localeCompare(b.baslik, 'tr');
+  });
+  const kullanilanGorunenSatirlar = kullanilanSeciliSubeKey === 'all'
+    ? (kullanilanAramaSonuc?.satirlar || [])
+    : (kullanilanAramaSonuc?.satirlar || []).filter((r) => {
+      const label = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
+      return (urunAcSubeAnahtar(label) || label) === kullanilanSeciliSubeKey;
+    });
   const barOzetTarihSatirlari = (barOzet || []).filter((r) => String(r?.tarih || '').slice(0, 10) === barOzetTarih);
   const barOzetSubeSekmeleri = barOzetTarihSatirlari.reduce((acc, r) => {
     const baslik = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
@@ -1297,15 +1305,15 @@ export default function OperasyonMerkezi() {
   }, [urunAcSeciliSubeKey, urunAcSubeBloklari]);
 
   useEffect(() => {
-    if (!kullanilanSubeBloklari.length) {
+    if (!kullanilanSubeSekmeleri.length) {
       if (kullanilanSeciliSubeKey !== 'all') setKullanilanSeciliSubeKey('all');
       return;
     }
     if (kullanilanSeciliSubeKey === 'all') return;
-    if (!kullanilanSubeBloklari.some((g) => g.key === kullanilanSeciliSubeKey)) {
+    if (!kullanilanSubeSekmeleri.some((g) => g.key === kullanilanSeciliSubeKey)) {
       setKullanilanSeciliSubeKey('all');
     }
-  }, [kullanilanSeciliSubeKey, kullanilanSubeBloklari]);
+  }, [kullanilanSeciliSubeKey, kullanilanSubeSekmeleri]);
 
   useEffect(() => {
     if (!barOzetSubeSekmeleri.length) {
@@ -1809,7 +1817,7 @@ export default function OperasyonMerkezi() {
           )}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
-          {UST_SEKMELER.map((s) => {
+          {UST_SEKMELER.filter((s) => s.id !== 'sayim').map((s) => {
             const renk = OPS_HUB_RENK[s.id] || 'var(--border)';
             // Her sekme için özet veri
             let val = null;
@@ -3072,93 +3080,101 @@ export default function OperasyonMerkezi() {
               {kullanilanAramaSonuc?.tarih || kullanilanAramaTarih} · {kullanilanAramaSonuc?.toplam_islem || 0} şube · {kullanilanAramaSonuc?.toplam_adet || 0} adet
             </div>
           </div>
-          {(kullanilanAramaSonuc?.kayitlar || []).length === 0 ? (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => setKullanilanSeciliSubeKey('all')}
+              style={{
+                border: kullanilanSeciliSubeKey === 'all' ? '1px solid #2db573' : '1px solid var(--border)',
+                background: kullanilanSeciliSubeKey === 'all' ? 'rgba(45, 181, 115, 0.2)' : 'var(--bg2)',
+                color: kullanilanSeciliSubeKey === 'all' ? '#86efac' : 'var(--text2)',
+                padding: '6px 10px',
+                fontWeight: 700,
+              }}
+            >
+              Tümü
+            </button>
+            {kullanilanSubeSekmeleri.map((s) => (
+              <button
+                key={`kul-sekme-${s.key}`}
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setKullanilanSeciliSubeKey(s.key)}
+                style={{
+                  border: kullanilanSeciliSubeKey === s.key ? '1px solid #4a9eff' : '1px solid var(--border)',
+                  background: kullanilanSeciliSubeKey === s.key ? 'rgba(74, 158, 255, 0.2)' : 'var(--bg2)',
+                  color: kullanilanSeciliSubeKey === s.key ? '#e6f7ff' : 'var(--text2)',
+                  padding: '6px 10px',
+                  fontWeight: 700,
+                }}
+              >
+                {s.baslik} ({s.adet})
+              </button>
+            ))}
+          </div>
+          {kullanilanGorunenSatirlar.length === 0 ? (
             <div className="empty"><p>Bu tarihte kullanılan ürün kaydı yok</p></div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 420, overflow: 'auto' }}>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  onClick={() => setKullanilanSeciliSubeKey('all')}
-                  style={{
-                    border: kullanilanSeciliSubeKey === 'all' ? '1px solid #f59e0b' : '1px solid var(--border)',
-                    background: kullanilanSeciliSubeKey === 'all' ? 'rgba(245, 158, 11, 0.2)' : 'var(--bg2)',
-                    color: kullanilanSeciliSubeKey === 'all' ? '#ffd499' : 'var(--text2)',
-                    padding: '6px 10px',
-                    fontWeight: 700,
-                  }}
-                >
-                  Tümü · {kullanilanAramaSonuc?.toplam_adet || 0} adet
-                </button>
-                {kullanilanSubeBloklari.map((g) => (
-                  <button
-                    key={`kul-${g.key}`}
-                    type="button"
-                    className="btn btn-sm"
-                    onClick={() => setKullanilanSeciliSubeKey(g.key)}
-                    style={{
-                      border: kullanilanSeciliSubeKey === g.key ? '1px solid #f59e0b' : '1px solid var(--border)',
-                      background: kullanilanSeciliSubeKey === g.key ? 'rgba(245, 158, 11, 0.2)' : 'var(--bg2)',
-                      color: kullanilanSeciliSubeKey === g.key ? '#ffd499' : 'var(--text2)',
-                      padding: '6px 10px',
-                      fontWeight: 700,
-                    }}
-                  >
-                    {g.baslik} · {g.toplamAdet}
-                  </button>
-                ))}
-              </div>
-              {kullanilanGorunenSubeBloklari.map((g) => (
-                <section key={g.key} className="card" style={{ padding: '10px 12px', borderLeft: '4px solid #f59e0b' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700 }}>{g.baslik}</div>
-                    <div className="mono" style={{ fontSize: 12, color: 'var(--text3)' }}>
-                      {g.toplamAdet} adet
+              {kullanilanGorunenSatirlar.map((r) => {
+                const keys = ['bardak_kucuk','bardak_buyuk','su_adet','sut_litre','soda_adet','redbull_adet','cookie_adet','pasta_adet'];
+                const labels = { bardak_kucuk:'K.Bardak', bardak_buyuk:'B.Bardak', su_adet:'Su', sut_litre:'Süt', soda_adet:'Soda', redbull_adet:'Redbull', cookie_adet:'Cookie', pasta_adet:'Pasta' };
+                const hasFark = r.fark_var;
+                const kapanisYok = !r.kapanis_var;
+                return (
+                  <div key={`${r.sube_id}-${r.tarih}`} className="card" style={{
+                    borderLeft: `4px solid ${hasFark ? 'var(--red)' : kapanisYok ? 'var(--yellow)' : 'var(--green)'}`,
+                    padding: '14px 16px',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+                      <div>
+                        <span style={{ fontWeight: 700, fontSize: 14 }}>{r.sube_adi}</span>
+                        <span className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 10 }}>{r.tarih}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        {hasFark && <span className="badge badge-red">Fark var</span>}
+                        {kapanisYok && <span className="badge badge-yellow">Kapanış yok</span>}
+                        {!hasFark && !kapanisYok && <span className="badge badge-green">Normal</span>}
+                      </div>
+                    </div>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ background: 'var(--bg2)' }}>
+                            <th style={{ padding: '5px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600, fontSize: 11 }}>Ürün</th>
+                            <th style={{ padding: '5px 8px', textAlign: 'center', color: '#93c5fd', fontWeight: 600, fontSize: 11 }}>Açılış</th>
+                            <th style={{ padding: '5px 8px', textAlign: 'center', color: '#86efac', fontWeight: 600, fontSize: 11 }}>Ürün Aç</th>
+                            <th style={{ padding: '5px 8px', textAlign: 'center', color: '#fbbf24', fontWeight: 600, fontSize: 11 }}>Kapanış</th>
+                            <th style={{ padding: '5px 8px', textAlign: 'center', color: '#e2e8f0', fontWeight: 700, fontSize: 11 }}>Satılan</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {keys.map((k) => {
+                            const ac = r.acilis?.[k] ?? 0;
+                            const ua = r.urun_ac?.[k] ?? 0;
+                            const kap = r.kapanis?.[k] ?? 0;
+                            const sat = r.satilan?.[k] ?? 0;
+                            const neg = sat < 0;
+                            if (ac === 0 && ua === 0 && kap === 0) return null;
+                            return (
+                              <tr key={k} style={{ borderTop: '1px solid var(--border)' }}>
+                                <td style={{ padding: '5px 8px', color: 'var(--text2)' }}>{labels[k] || k}</td>
+                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center' }}>{ac}</td>
+                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', color: ua > 0 ? '#86efac' : 'var(--text3)' }}>{ua > 0 ? `+${ua}` : ua}</td>
+                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', color: kap > 0 ? '#fbbf24' : 'var(--text3)' }}>{kap > 0 ? `-${kap}` : '—'}</td>
+                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', fontWeight: 700, color: neg ? 'var(--red)' : sat > 0 ? '#86efac' : 'var(--text3)' }}>
+                                  {sat}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {g.kayitlar.map((k, gi) => (
-                      <div key={k.id || `${g.key}-${k.saat || '00:00'}-${gi}`} className="card" style={{ padding: '10px 12px', border: '1px solid var(--border)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                          <div style={{ fontSize: 13 }}>
-                            <strong>{k.sube_adi || k.sube_id || '—'}</strong>
-                            {!k.kapanis_var && <span className="badge badge-yellow" style={{ marginLeft: 8 }}>Kapanış yok</span>}
-                            {k.fark_var && <span className="badge badge-red" style={{ marginLeft: 6 }}>Fark var</span>}
-                          </div>
-                          <div className="mono" style={{ fontSize: 12, color: 'var(--text3)' }}>
-                            {k.saat || '—'} · {k.adet_toplam || 0} adet
-                          </div>
-                        </div>
-                        {(k.urunler || []).length > 0 && (
-                          <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            {(k.urunler || []).map((u, ui) => (
-                              <span
-                                key={ui}
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: 4,
-                                  padding: '4px 8px',
-                                  borderRadius: 999,
-                                  fontSize: 12,
-                                  fontWeight: 700,
-                                  color: '#fff4e6',
-                                  background: 'rgba(245, 158, 11, 0.2)',
-                                  border: '1px solid rgba(245, 158, 11, 0.45)',
-                                  boxShadow: '0 0 0 1px rgba(245, 158, 11, 0.15) inset',
-                                }}
-                              >
-                                {u.urun_ad}: {u.adet}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
