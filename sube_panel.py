@@ -2517,7 +2517,7 @@ def _siparis_katalog_getir(cur) -> List[Dict[str, Any]]:
     for k in kats:
         cur.execute(
             """
-            SELECT id, ad, aktif, sira
+            SELECT id, ad, aktif, sira, birim_fiyat_tl
             FROM siparis_urun
             WHERE kategori_id=%s
             ORDER BY sira ASC, ad ASC
@@ -2529,6 +2529,7 @@ def _siparis_katalog_getir(cur) -> List[Dict[str, Any]]:
                 "id": str(x["id"]),
                 "ad": x["ad"],
                 "aktif": bool(x["aktif"]),
+                "birim_fiyat_tl": (float(x["birim_fiyat_tl"]) if x.get("birim_fiyat_tl") is not None else None),
             }
             for x in cur.fetchall()
         ]

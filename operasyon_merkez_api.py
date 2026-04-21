@@ -4651,6 +4651,12 @@ class OpsSiparisUrunDurumBody(BaseModel):
     aktif: bool
 
 
+class OpsSiparisUrunFiyatBody(BaseModel):
+    kategori_kod: str
+    urun_id: str
+    birim_fiyat_tl: float
+
+
 @router.post("/siparis/urun-durum")
 def ops_siparis_urun_durum(body: OpsSiparisUrunDurumBody):
     with db() as (conn, cur):
@@ -4687,6 +4693,52 @@ def ops_siparis_urun_durum(body: OpsSiparisUrunDurumBody):
             bildirim_saati=saat,
         )
     return {"success": True, "urun_id": str(ud["id"]), "aktif": bool(ud["aktif"])}
+
+
+@router.post("/siparis/urun-fiyat")
+def ops_siparis_urun_fiyat(body: OpsSiparisUrunFiyatBody):
+    fiyat = float(body.birim_fiyat_tl or 0)
+    if fiyat < 0:
+        raise HTTPException(400, "Birim fiyat 0 veya daha büyük olmalı")
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT id FROM siparis_kategori WHERE kod=%s",
+            ((body.kategori_kod or "").strip(),),
+        )
+        kr = cur.fetchone()
+        if not kr:
+            raise HTTPException(404, "Kategori bulunamadı")
+        kid = str(dict(kr)["id"])
+        cur.execute(
+            """
+            UPDATE siparis_urun
+            SET birim_fiyat_tl=%s, guncelleme=NOW()
+            WHERE id=%s AND kategori_id=%s
+            RETURNING id, ad, birim_fiyat_tl
+            """,
+            (round(fiyat, 2), (body.urun_id or "").strip(), kid),
+        )
+        ur = cur.fetchone()
+        if not ur:
+            raise HTTPException(404, "Ürün bulunamadı")
+        ud = dict(ur)
+        audit(cur, "siparis_urun", str(ud["id"]), "OPS_SIPARIS_URUN_FIYAT")
+        from operasyon_defter import operasyon_defter_ekle
+
+        sid = _ops_sube_anchor(cur)
+        saat = dt_now_tr().strftime("%H:%M:%S")
+        operasyon_defter_ekle(
+            cur,
+            sid,
+            "OPS_SIPARIS_URUN_FIYAT",
+            f"Merkez — ürün fiyat güncelle: kategori={body.kategori_kod} urun={ud['ad']} fiyat={float(ud['birim_fiyat_tl'] or 0):.2f}",
+            bildirim_saati=saat,
+        )
+    return {
+        "success": True,
+        "urun_id": str(ud["id"]),
+        "birim_fiyat_tl": (float(ud["birim_fiyat_tl"]) if ud.get("birim_fiyat_tl") is not None else None),
+    }
 
 
 class OpsSiparisKategoriBody(BaseModel):

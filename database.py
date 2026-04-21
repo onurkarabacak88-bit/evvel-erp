@@ -1804,6 +1804,7 @@ def init_db():
                 ad           TEXT NOT NULL,
                 norm_ad      TEXT NOT NULL,
                 sira         INT NOT NULL DEFAULT 0,
+                birim_fiyat_tl NUMERIC(12,2),
                 aktif        BOOLEAN NOT NULL DEFAULT TRUE,
                 olusturma    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 guncelleme   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1835,6 +1836,13 @@ def init_db():
         cur.execute("""
             DO $$
             BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'siparis_urun'
+                      AND column_name = 'birim_fiyat_tl'
+                ) THEN
+                    ALTER TABLE siparis_urun ADD COLUMN birim_fiyat_tl NUMERIC(12,2);
+                END IF;
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
                     WHERE table_schema = 'public' AND table_name = 'subeler'
