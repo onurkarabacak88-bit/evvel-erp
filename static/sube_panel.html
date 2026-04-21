@@ -1295,8 +1295,16 @@ async function api(path, opts) {
   });
   if (!res.ok) {
     var d = {}; try { d = await res.json(); } catch(e) {}
-    var msg = typeof d.detail === 'string' ? d.detail : res.statusText || 'Hata';
-    var err = new Error(msg); err.status = res.status; throw err;
+    var detail = d && d.detail;
+    var msg = '';
+    if (typeof detail === 'string') msg = detail;
+    else if (detail && typeof detail === 'object' && typeof detail.mesaj === 'string') msg = detail.mesaj;
+    else msg = res.statusText || 'Hata';
+    var err = new Error(msg);
+    err.status = res.status;
+    err.detail = detail || null;
+    err.payload = d || null;
+    throw err;
   }
   return res.json();
 }
@@ -1612,6 +1620,26 @@ function siparisKatModalKapat() {
   }
   renderSiparisPanel();
 }
+/** Periyotik refresh: sipariş DOM'unu yeniden kurmayı atla (seçim / PIN / kategori modalı kaybolmasın). */
+function siparisPanelPeriyotikYenilemeAtla() {
+  var katOv = document.getElementById('sipKatOverlay');
+  if (katOv && katOv.style.display === 'flex') return true;
+  if (siparisOpenKat) return true;
+  for (var key in siparisDegerler) {
+    if (!Object.prototype.hasOwnProperty.call(siparisDegerler, key)) continue;
+    var n = parseInt(siparisDegerler[key] || 0, 10);
+    if (n > 0) return true;
+  }
+  var ae = document.activeElement;
+  if (ae && typeof ae.closest === 'function') {
+    var root = document.getElementById('siparisPanel');
+    if (root && root.contains(ae)) {
+      var tag = (ae.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    }
+  }
+  return false;
+}
 async function renderSiparisPanel() {
   var root = document.getElementById('siparisPanel');
   if (!root) return;
@@ -1905,15 +1933,37 @@ async function renderSiparisPanel() {
         });
       });
       if (!kalemler.length) throw new Error('Onay için en az bir üründe adet girin');
-      var resp = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-onay', {
-        method:'POST',
-        body:{
-          kalemler: kalemler,
-          personel_id: pid,
-          pin: pin,
-          not_aciklama: inpVal('siparisOnayNot') || null
+      var onayBody = {
+        kalemler: kalemler,
+        personel_id: pid,
+        pin: pin,
+        not_aciklama: inpVal('siparisOnayNot') || null
+      };
+      var resp = null;
+      try {
+        resp = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-onay', {
+          method:'POST',
+          body: onayBody
+        });
+      } catch (e) {
+        if (e && e.status === 409 && e.detail && e.detail.kod === 'CIFT_SIPARIS_UYARI') {
+          var onceki = parseInt(e.detail.onceki_acik_sayisi || 0, 10) || 0;
+          var ortak = Array.isArray(e.detail.ortak_urun_etiketleri) ? e.detail.ortak_urun_etiketleri : [];
+          var uyari = (e.detail.mesaj || 'Tamamlanmamış sipariş talebiniz var.');
+          if (ortak.length) uyari += '\nOrtak ürünler: ' + ortak.join(', ');
+          uyari += '\n\nYine de yeni sipariş açılsın mı?';
+          if (!window.confirm(uyari + (onceki > 0 ? ('\n(Açık talep: ' + onceki + ')') : ''))) {
+            throw new Error('İşlem iptal edildi.');
+          }
+          onayBody.force_cift_siparis = true;
+          resp = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-onay', {
+            method:'POST',
+            body: onayBody
+          });
+        } else {
+          throw e;
         }
-      });
+      }
       siparisDegerler = {};
       document.getElementById('siparisOnayPin').value = '';
       document.getElementById('siparisOnayNot').value = '';
@@ -3192,7 +3242,9 @@ function renderMain(data) {
   wireXrHandler();
   wirePuanHandler();
   if (aktifAltSekme === 'siparis' || aktifSolSekme === 'siparis') {
-    renderSiparisPanel().catch(function(e){ setMsg('siparisMsg', e.message || 'Hata', 'msg-err'); });
+    if (!siparisPanelPeriyotikYenilemeAtla()) {
+      renderSiparisPanel().catch(function(e){ setMsg('siparisMsg', e.message || 'Hata', 'msg-err'); });
+    }
   }
 }
 
