@@ -7,7 +7,19 @@ node_modules
 .env.*
 
 # Önceki Vite build çıktıları — Docker context'e girmemeli.
-# Dockerfile'da ayrıca `rmnode_modules
+# Dockerfile'da ayrıca `rmnode_modnode_modules
+.git
+.cursor
+**/__pycache__
+*.pyc
+.env
+.env.*
+
+# Önceki Vite build çıktıları — Docker context'e girmemeli.
+# Dockerfile'da ayrıca `rm -rf static/ dist/` ile de temizlenir (çift güvence).
+static/
+dist/
+ules
 .git
 .cursor
 **/__pycache__
