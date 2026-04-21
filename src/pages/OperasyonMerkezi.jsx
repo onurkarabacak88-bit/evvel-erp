@@ -173,6 +173,8 @@ const UST_SEKMELER = [
   { id: 'defter', label: 'Defter Kayıtları' },
   { id: 'sayim', label: 'Açılış Sayımları' },
   { id: 'siparis', label: '📦 Sipariş katalog' },
+  { id: 'siparis-kabul-takip', label: '📥 Sipariş kabul takibi' },
+  { id: 'toptanci-siparisleri', label: '🚚 Toptancı siparişleri' },
   { id: 'mesaj', label: '📩 Merkez Mesajı' },
   { id: 'puan', label: '⭐ Personel Puan' },
   { id: 'stok-disiplin', label: '🔴 Stok Disiplin' },
@@ -210,6 +212,8 @@ const OPS_MODUL_BOLUM = {
     { id: 'bar-ozet', label: 'Bar Günlük Özet' },
   ],
   siparis: [{ id: 'icerik', label: 'Sipariş katalogu' }],
+  'siparis-kabul-takip': [{ id: 'icerik', label: 'Kabul listesi' }],
+  'toptanci-siparisleri': [{ id: 'icerik', label: 'Liste' }],
   mesaj: [{ id: 'icerik', label: 'Mesajlar' }],
   puan: [{ id: 'icerik', label: 'Puan listesi' }],
   'stok-disiplin': [{ id: 'icerik', label: 'Disiplin Merkezi' }],
@@ -234,6 +238,8 @@ const OPS_HUB_RENK = {
   defter: 'var(--text3)',
   sayim: 'var(--green)',
   siparis: '#4a9eff',
+  'siparis-kabul-takip': '#2db573',
+  'toptanci-siparisleri': '#0ea5a4',
   mesaj: '#8899aa',
   puan: '#ffc14d',
   'stok-disiplin': '#e85d5d',
@@ -797,6 +803,12 @@ export default function OperasyonMerkezi() {
   const [kuyrukTalimat, setKuyrukTalimat] = useState({}); // talep_id → operasyon talimat metni
   const [kuyrukDepolar, setKuyrukDepolar] = useState([]);
   const [kuyrukBusy, setKuyrukBusy] = useState(null);
+  const [kuyrukAsama, setKuyrukAsama] = useState({}); // talep_id -> detay | depo | toptanci
+  const [kuyrukToptanciTedarikci, setKuyrukToptanciTedarikci] = useState({}); // talep_id -> tedarikci_ad
+  const [kuyrukToptanciNot, setKuyrukToptanciNot] = useState({}); // talep_id -> not
+  const [kuyrukToptanciKalemDeger, setKuyrukToptanciKalemDeger] = useState({}); // `${talep_id}::${kalem}` -> adet
+  const [toptanciSiparisListe, setToptanciSiparisListe] = useState({ gun: 30, toplam_kayit: 0, satirlar: [] });
+  const [toptanciSiparisGun, setToptanciSiparisGun] = useState(30);
   const [personelDavranis, setPersonelDavranis] = useState(null);
   const [skor,      setSkor]      = useState(null);
   const [ozet,      setOzet]      = useState(null);
@@ -822,6 +834,9 @@ export default function OperasyonMerkezi() {
   const [sipYeniUrun, setSipYeniUrun] = useState({ kategori_kod: '', urun_adi: '' });
   const [sipYeniKat, setSipYeniKat] = useState({ ad: '', emoji: '📦' });
   const [depoSevkiyatRaporlari, setDepoSevkiyatRaporlari] = useState([]);
+  const [siparisKabulTakip, setSiparisKabulTakip] = useState({ gun: 7, satirlar: [] });
+  const [siparisKabulTakipGun, setSiparisKabulTakipGun] = useState(14);
+  const [siparisKabulTakipSube, setSiparisKabulTakipSube] = useState('');
   /** Mağaza depo sekmesi: şube paneliyle aynı normalize edilmiş sipariş kataloğu (+ ileride fiyat/depo alanları) */
   const [magazaDepoKatalogState, setMagazaDepoKatalogState] = useState({ yukleniyor: false, kategoriler: [] });
   const [magazaDepoKatAcik, setMagazaDepoKatAcik] = useState({});
@@ -844,6 +859,10 @@ export default function OperasyonMerkezi() {
   const [magazaFiyatHizliTaslak, setMagazaFiyatHizliTaslak] = useState({});
   /** `${subeId|slug:slug}::${urunId}` → elle girilen stok metni (şube + katalog ürünü başına). */
   const [magazaSubeStokInput, setMagazaSubeStokInput] = useState({});
+  /** sube_id -> /ops/v2/sube/{id}/depo canlı depo stok satırları */
+  const [magazaDepoCanliStok, setMagazaDepoCanliStok] = useState({});
+  /** depo kartı -> uyarı paneli açık/kapalı */
+  const [magazaDepoUyariAcik, setMagazaDepoUyariAcik] = useState({});
   /** Şube anahtarı → katalog dışı manuel satırlar (yerel; API yok). */
   const [magazaManuelSatirlar, setMagazaManuelSatirlar] = useState({});
   const [mPersonelVerimlilik, setMPersonelVerimlilik] = useState(null);
@@ -1379,6 +1398,47 @@ export default function OperasyonMerkezi() {
     }
   }, []);
 
+  const yukleSiparisKabulTakip = useCallback(async () => {
+    try {
+      const q = new URLSearchParams();
+      q.set('gun', String(Math.max(1, Number(siparisKabulTakipGun || 14))));
+      q.set('limit', '180');
+      if (String(siparisKabulTakipSube || '').trim()) q.set('sube_id', String(siparisKabulTakipSube).trim());
+      const [r, subeler] = await Promise.all([
+        api('/ops/siparis/kabul-takip?' + q.toString()),
+        api('/subeler').catch(() => []),
+      ]);
+      setSiparisKabulTakip({ gun: Number(r?.gun || 14), satirlar: Array.isArray(r?.satirlar) ? r.satirlar : [] });
+      if (Array.isArray(subeler)) {
+        setSubeListeAdmin(subeler.filter((s) => s.aktif !== false));
+      }
+    } catch (e) {
+      toast(e.message || 'Sipariş kabul takibi yüklenemedi');
+    } finally {
+      setYukleniyor(false);
+    }
+  }, [siparisKabulTakipGun, siparisKabulTakipSube]);
+
+  const yukleToptanciSiparisleri = useCallback(async () => {
+    const seciliGun = Math.max(1, Number(toptanciSiparisGun || 30));
+    try {
+      const q = new URLSearchParams();
+      q.set('gun', String(seciliGun));
+      q.set('limit', '1200');
+      const r = await api('/ops/siparis/toptanci-listesi?' + q.toString());
+      setToptanciSiparisListe({
+        gun: Number(r?.gun || seciliGun),
+        toplam_kayit: Number(r?.toplam_kayit || 0),
+        satirlar: Array.isArray(r?.satirlar) ? r.satirlar : [],
+      });
+    } catch (e) {
+      toast(e.message || 'Toptancı sipariş listesi yüklenemedi');
+      setToptanciSiparisListe({ gun: seciliGun, toplam_kayit: 0, satirlar: [] });
+    } finally {
+      setYukleniyor(false);
+    }
+  }, [toast, toptanciSiparisGun]);
+
   const yukleOnayMerkez = useCallback(async () => {
     try {
       const qs = `year_month=${encodeURIComponent(ayFiltre)}`;
@@ -1521,14 +1581,32 @@ export default function OperasyonMerkezi() {
     setYukleniyor(true);
     setMagazaDepoKatalogState((s) => ({ ...s, yukleniyor: true }));
     try {
-      await yukle(filtre);
+      const dash = await yukle(filtre);
       const catRes = await api('/ops/siparis/katalog').catch(() => ({ kategoriler: [] }));
       setMagazaDepoKatalogState({
         yukleniyor: false,
         kategoriler: siparisKatalogLikeSubePanelNormalize(catRes?.kategoriler || []),
       });
+      const liveKartlar = Array.isArray(dash?.kartlar) ? dash.kartlar : [];
+      const canliReq = MAGAZA_DORT_SUBE.map(async (m) => {
+        const k = magazaKartBul(liveKartlar, m);
+        const sid = String(k?.sube_id || '').trim();
+        if (!sid) return [m.slug, []];
+        try {
+          const r = await api(`/ops/v2/sube/${encodeURIComponent(sid)}/depo`);
+          const stok = Array.isArray(r?.stok) ? r.stok : [];
+          return [m.slug, stok];
+        } catch {
+          return [m.slug, []];
+        }
+      });
+      const canliPairs = await Promise.all(canliReq);
+      const canliMap = {};
+      canliPairs.forEach(([slug, stok]) => { canliMap[slug] = stok; });
+      setMagazaDepoCanliStok(canliMap);
     } catch {
       setMagazaDepoKatalogState({ yukleniyor: false, kategoriler: [] });
+      setMagazaDepoCanliStok({});
     }
   }, [filtre, yukle]);
 
@@ -1544,7 +1622,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     if (!aktifSekme) return;
-    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'urun-ac' || aktifSekme === 'gec-acilan-subeler' || aktifSekme === 'gec-kalan-personel' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'magaza-kartlari' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
+    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'siparis-kabul-takip' || aktifSekme === 'toptanci-siparisleri' || aktifSekme === 'urun-ac' || aktifSekme === 'gec-acilan-subeler' || aktifSekme === 'gec-kalan-personel' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'magaza-kartlari' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
     yukle(filtre);
   }, [filtre, aktifSekme, ayFiltre, gunFiltre, yukle]);
 
@@ -1581,6 +1659,24 @@ export default function OperasyonMerkezi() {
     setYukleniyor(true);
     yukleSiparisMerkez().finally(() => setYukleniyor(false));
   }, [aktifSekme, yukleSiparisMerkez]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'siparis-kabul-takip') return;
+    setYukleniyor(true);
+    yukleSiparisKabulTakip();
+  }, [aktifSekme, yukleSiparisKabulTakip]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'toptanci-siparisleri') return;
+    setYukleniyor(true);
+    yukleToptanciSiparisleri();
+  }, [aktifSekme, yukleToptanciSiparisleri]);
+
+  useEffect(() => {
+    if (!opsMerkezPencere) return;
+    if ((toptanciSiparisListe?.satirlar || []).length > 0) return;
+    yukleToptanciSiparisleri();
+  }, [opsMerkezPencere, toptanciSiparisListe?.satirlar, yukleToptanciSiparisleri]);
 
   useEffect(() => {
     if (aktifSekme !== 'urun-ac') return;
@@ -1725,6 +1821,12 @@ export default function OperasyonMerkezi() {
       } else if (aktifSekme === 'siparis') {
         setYukleniyor(true);
         yukleSiparisMerkez().finally(() => setYukleniyor(false));
+      } else if (aktifSekme === 'siparis-kabul-takip') {
+        setYukleniyor(true);
+        yukleSiparisKabulTakip();
+      } else if (aktifSekme === 'toptanci-siparisleri') {
+        setYukleniyor(true);
+        yukleToptanciSiparisleri();
       } else if (aktifSekme === 'magaza-kartlari') {
         magazaDepoTamYenile();
       } else if (aktifSekme === 'metrics') {
@@ -1744,7 +1846,7 @@ export default function OperasyonMerkezi() {
       }
     });
     return unsub;
-  }, [aktifSekme, filtre, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, gecAcilanAramaYap, gecKalanPersonelAramaYap, kullanilanAramaYap, ciroOnayAramaYap, kasaUyumAramaYap, urunUyumAramaYap, yukleSiparisMerkez, magazaDepoTamYenile, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
+  }, [aktifSekme, filtre, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, gecAcilanAramaYap, gecKalanPersonelAramaYap, kullanilanAramaYap, ciroOnayAramaYap, kasaUyumAramaYap, urunUyumAramaYap, yukleSiparisMerkez, yukleSiparisKabulTakip, yukleToptanciSiparisleri, toptanciSiparisListe?.gun, magazaDepoTamYenile, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
 
 
   const toplamGecikme = skor?.son_30_gun?.reduce((s, r) => s + (r.gecikme_adet || 0), 0) || 0;
@@ -1764,6 +1866,33 @@ export default function OperasyonMerkezi() {
   const anlikGiderOnaylari = (bekleyenPaket?.onay_kuyrugu || []).filter(
     (o) => String(o?.islem_turu || '').toUpperCase() === 'ANLIK_GIDER',
   );
+  const depoYetersizBildirimler = ((siparisAkis?.siparis_akis || []).flatMap((s) => {
+    const satirlar = Array.isArray(s?.tahsis) ? s.tahsis : [];
+    return satirlar
+      .filter((t) => {
+        const d = String(t?.durum || '').trim().toLowerCase();
+        const ist = Number(t?.istenen_adet || t?.talep_adet || 0);
+        const gon = Number(t?.gonderilen_adet || 0);
+        if (d === 'yok' || d === 'kismi') return true;
+        return d === 'var' && ist > 0 && gon < ist;
+      })
+      .map((t) => {
+        const ist = Number(t?.istenen_adet || t?.talep_adet || 0);
+        const gon = Number(t?.gonderilen_adet || 0);
+        const eksik = Math.max(0, ist - gon);
+        return {
+          talep_id: String(s?.id || ''),
+          sube_adi: s?.sube_adi || s?.sube_id || '—',
+          urun_ad: t?.urun_ad || t?.kalem_adi || t?.urun_id || t?.kalem_kodu || 'Kalem',
+          istenen_adet: ist,
+          gonderilen_adet: gon,
+          eksik_adet: eksik,
+          sevkiyat_durum: s?.durum || '—',
+          kalem_durum: String(t?.durum || '').trim().toLowerCase(),
+        };
+      });
+  }) || []).sort((a, b) => b.eksik_adet - a.eksik_adet);
+  const depoYetersizAktifSayi = depoYetersizBildirimler.filter((x) => String(x?.sevkiyat_durum || '') !== 'teslim_edildi').length;
   const urunAcBugunZirveSaat = urunAcZirveSaat(urunAcBugun);
   const urunAcAramaZirveSaat = urunAcZirveSaat(urunAcAramaSonuc);
   const urunAcSubeBloklari = urunAcSubeGruplari(urunAcAramaSonuc?.kayitlar || []);
@@ -2239,6 +2368,12 @@ export default function OperasyonMerkezi() {
             else if (aktifSekme === 'siparis') {
               yukleSiparisMerkez().finally(() => setYukleniyor(false));
             }
+            else if (aktifSekme === 'siparis-kabul-takip') {
+              yukleSiparisKabulTakip();
+            }
+            else if (aktifSekme === 'toptanci-siparisleri') {
+              yukleToptanciSiparisleri();
+            }
             else if (aktifSekme === 'urun-ac') {
               urunAcAramaYap().finally(() => setYukleniyor(false));
             }
@@ -2604,6 +2739,9 @@ export default function OperasyonMerkezi() {
                 sub = sa > 0
                   ? `${sa} okunmamış depo alarmı`
                   : 'Stok & sipariş disiplin merkezi';
+              } else if (s.id === 'toptanci-siparisleri') {
+                val = Array.isArray(toptanciSiparisListe?.satirlar) ? toptanciSiparisListe.satirlar.length : 0;
+                sub = 'Kategori bazlı ürün listesi';
               }
             }
             const valRenk = val != null && val > 0 ? renk : 'var(--text3)';
@@ -2714,6 +2852,12 @@ export default function OperasyonMerkezi() {
                   if (aktifSekme === 'onay') yukleOnayMerkez();
                   else if (aktifSekme === 'siparis') {
                     yukleSiparisMerkez().finally(() => setYukleniyor(false));
+                  }
+                  else if (aktifSekme === 'siparis-kabul-takip') {
+                    yukleSiparisKabulTakip();
+                  }
+                  else if (aktifSekme === 'toptanci-siparisleri') {
+                    yukleToptanciSiparisleri();
                   }
                   else if (aktifSekme === 'urun-ac') {
                     urunAcAramaYap().finally(() => setYukleniyor(false));
@@ -3034,8 +3178,8 @@ export default function OperasyonMerkezi() {
             >
               <h4 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Kataloga ürün (ön form)</h4>
               <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 12px', lineHeight: 1.45 }}>
-                Sipariş sekmesindeki katalog alanlarıyla aynı mantık: kategori + ürün adı. Ek olarak <strong>birim fiyat (TL)</strong> ve <strong>adet</strong> alanları eklendi.
-                Kayıt henüz sunucuya bağlanmıyor; bağlantı sonraki adımda yapılacak.
+                Ürün merkez kataloga eklenir ve tüm şube depolarına aynı katalog ürünü olarak düşer.
+                Ek olarak <strong>birim fiyat (TL)</strong> kaydedilir; <strong>adet</strong> girerseniz depo kartlarında bu yeni ürün için başlangıç stokuna ön-yazım yapılır.
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10, alignItems: 'end' }}>
                 <label style={{ margin: 0 }}>
@@ -3097,14 +3241,49 @@ export default function OperasyonMerkezi() {
                       !String(magazaUrunEkleForm.kategori_kod || '').trim()
                       || !String(magazaUrunEkleForm.urun_adi || '').trim()
                     }
-                    onClick={() => {
-                      toast(
-                        'Form hazır; sunucu kaydı henüz yok. (Kategori, ürün adı, fiyat ve adet sonraya bağlanacak.)',
-                        'yellow',
-                      );
+                    onClick={async () => {
+                      const kategoriKod = String(magazaUrunEkleForm.kategori_kod || '').trim();
+                      const urunAdi = String(magazaUrunEkleForm.urun_adi || '').trim();
+                      if (!kategoriKod || !urunAdi) return;
+                      try {
+                        const r = await api('/ops/siparis/urun', {
+                          method: 'POST',
+                          body: { kategori_kod: kategoriKod, urun_adi: urunAdi },
+                        });
+                        const urunId = String(r?.urun_id || '').trim();
+                        const fiyatParsed = magazaKatalogSayi(magazaUrunEkleForm.fiyat_tl);
+                        if (urunId && fiyatParsed != null && fiyatParsed >= 0) {
+                          await api('/ops/siparis/urun-fiyat', {
+                            method: 'POST',
+                            body: {
+                              kategori_kod: kategoriKod,
+                              urun_id: urunId,
+                              birim_fiyat_tl: fiyatParsed,
+                            },
+                          });
+                          setMagazaGlobalFiyatMap((prev) => ({ ...prev, [urunId]: fiyatParsed }));
+                        }
+                        const adetText = String(magazaUrunEkleForm.adet || '').trim();
+                        if (urunId && adetText) {
+                          setMagazaSubeStokInput((prev) => {
+                            const next = { ...prev };
+                            MAGAZA_DORT_SUBE.forEach((m) => {
+                              const kk = magazaKartBul(kartlar, m);
+                              const sid = magazaSubeDepoAnahtar(kk, m);
+                              next[`${sid}::${urunId}`] = adetText;
+                            });
+                            return next;
+                          });
+                        }
+                        await magazaDepoTamYenile();
+                        toast('Ürün eklendi ve tüm şube depolarına tanımlandı.', 'green');
+                        setMagazaUrunEkleForm({ kategori_kod: '', urun_adi: '', fiyat_tl: '', adet: '' });
+                      } catch (e) {
+                        toast(`Ürün eklenemedi: ${e.message}`, 'red');
+                      }
                     }}
                   >
-                    Kaydet (bağlantı yok)
+                    Tüm depolara ekle
                   </button>
                 </div>
               </div>
@@ -3289,6 +3468,13 @@ export default function OperasyonMerkezi() {
               const katList = magazaDepoKatalogState.kategoriler || [];
               const subeDepoKey = magazaSubeDepoAnahtar(k, m);
               const manuelListe = Array.isArray(magazaManuelSatirlar[subeDepoKey]) ? magazaManuelSatirlar[subeDepoKey] : [];
+              const canliStokSatirlari = Array.isArray(magazaDepoCanliStok[m.slug]) ? magazaDepoCanliStok[m.slug] : [];
+              const canliUyarilar = canliStokSatirlari.filter((st) => {
+                const mevcut = Number(st?.mevcut_adet || 0);
+                const min = Number(st?.min_stok || 0);
+                return mevcut <= Math.max(1, min);
+              });
+              const uyariAcik = magazaDepoUyariAcik[m.slug] !== false;
               return (
                 <div
                   key={m.slug}
@@ -3551,6 +3737,105 @@ export default function OperasyonMerkezi() {
                       >
                         ＋ Manuel satır ekle
                       </button>
+                    </div>
+                    <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                      <button
+                        type="button"
+                        onClick={() => setMagazaDepoUyariAcik((prev) => ({ ...prev, [m.slug]: !uyariAcik }))}
+                        style={{
+                          width: '100%',
+                          background: 'var(--bg2)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 8,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '7px 10px',
+                          cursor: 'pointer',
+                          color: 'var(--text)',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          marginBottom: 8,
+                        }}
+                      >
+                        <span>Depo uyarıları</span>
+                        <span className={canliUyarilar.length > 0 ? 'badge badge-red' : 'badge badge-green'}>
+                          {canliUyarilar.length > 0 ? `${canliUyarilar.length} alarm` : 'Alarm yok'}
+                        </span>
+                      </button>
+                      {uyariAcik && (
+                        <>
+                          {canliUyarilar.length === 0 ? (
+                            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 10 }}>
+                              Bu depo kartında kritik/min altı stok alarmı yok.
+                            </div>
+                          ) : (
+                            <div style={{ display: 'grid', gap: 6, marginBottom: 10 }}>
+                              {canliUyarilar.map((st) => {
+                                const mevcut = Number(st?.mevcut_adet || 0);
+                                const min = Number(st?.min_stok || 0);
+                                const kriz = mevcut <= 0;
+                                return (
+                                  <div
+                                    key={`${m.slug}-uyari-${st.kalem_kodu}`}
+                                    style={{
+                                      border: `1px solid ${kriz ? 'rgba(239,68,68,.35)' : 'rgba(245,158,11,.35)'}`,
+                                      background: kriz ? 'rgba(239,68,68,.08)' : 'rgba(245,158,11,.08)',
+                                      borderRadius: 8,
+                                      padding: '6px 8px',
+                                      fontSize: 11,
+                                      lineHeight: 1.35,
+                                    }}
+                                  >
+                                    <div style={{ fontWeight: 700 }}>{st.kalem_adi || st.kalem_kodu}</div>
+                                    <div style={{ color: 'var(--text2)' }}>
+                                      Mevcut: {magazaFmtStok(mevcut)} · Min: {magazaFmtStok(min)}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>
+                        Canlı depo stok kaydı (şube paneli ürün kabul)
+                      </div>
+                      <p style={{ fontSize: 10, color: 'var(--text3)', margin: '0 0 8px', lineHeight: 1.4 }}>
+                        Şube panelinde <strong>ürün teslim/kabul</strong> ile depoya eklenen kalemler burada tutulur.
+                      </p>
+                      {canliStokSatirlari.length === 0 ? (
+                        <div style={{ fontSize: 11, color: 'var(--text3)' }}>Bu şube için depo kayıt satırı yok.</div>
+                      ) : (
+                        <div style={{ display: 'grid', gap: 4, maxHeight: 180, overflow: 'auto', paddingRight: 2 }}>
+                          {canliStokSatirlari.map((st) => (
+                            <div
+                              key={`${m.slug}-canli-${st.kalem_kodu}`}
+                              style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'minmax(0,1fr) auto',
+                                gap: 8,
+                                alignItems: 'center',
+                                padding: '4px 0',
+                                borderBottom: '1px dashed var(--border)',
+                                fontSize: 11,
+                              }}
+                            >
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={st.kalem_adi || st.kalem_kodu}>
+                                  {st.kalem_adi || st.kalem_kodu}
+                                </div>
+                                <div className="mono" style={{ fontSize: 9, color: 'var(--text3)' }}>{st.kalem_kodu}</div>
+                              </div>
+                              <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>
+                                {magazaFmtStok(st.mevcut_adet)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -4978,6 +5263,188 @@ export default function OperasyonMerkezi() {
         </div>
       )}
 
+      {aktifSekme === 'siparis-kabul-takip' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
+            Şube panelinde yapılan ürün teslim/kabul kayıtları burada izlenir. Satırlar operasyon defterindeki{' '}
+            <code style={{ fontSize: 11 }}>URUN_SEVK</code> kayıtlarından üretilir.
+          </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end' }}>
+            <label style={{ margin: 0 }}>
+              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Gün</span>
+              <select
+                className="input"
+                value={String(siparisKabulTakipGun)}
+                onChange={(e) => setSiparisKabulTakipGun(Number(e.target.value || 14))}
+              >
+                <option value="1">Son 1 gün</option>
+                <option value="3">Son 3 gün</option>
+                <option value="7">Son 7 gün</option>
+                <option value="14">Son 14 gün</option>
+                <option value="30">Son 30 gün</option>
+              </select>
+            </label>
+            <label style={{ margin: 0 }}>
+              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Şube</span>
+              <select
+                className="input"
+                value={siparisKabulTakipSube}
+                onChange={(e) => setSiparisKabulTakipSube(e.target.value)}
+              >
+                <option value="">Tümü</option>
+                {(subeListeAdmin || []).map((s) => (
+                  <option key={`sk-sub-${s.id}`} value={s.id}>{s.ad || s.id}</option>
+                ))}
+              </select>
+            </label>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setYukleniyor(true); yukleSiparisKabulTakip(); }}>
+              Filtreyi uygula
+            </button>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+            Son {Number(siparisKabulTakip?.gun || 14)} gün · {Array.isArray(siparisKabulTakip?.satirlar) ? siparisKabulTakip.satirlar.length : 0} kayıt
+          </div>
+          {!Array.isArray(siparisKabulTakip?.satirlar) || siparisKabulTakip.satirlar.length === 0 ? (
+            <div className="empty"><p>Kabul kaydı yok.</p></div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 520, overflow: 'auto' }}>
+              {siparisKabulTakip.satirlar.map((r) => (
+                <div
+                  key={r.id}
+                  className="card"
+                  style={{ padding: '12px 14px', borderLeft: '4px solid #2db573' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontWeight: 700 }}>
+                        {r.sube_adi || r.sube_id}
+                        <span className="badge badge-green" style={{ marginLeft: 8 }}>
+                          {Number(r?.toplam_adet || 0)} adet
+                        </span>
+                      </div>
+                      <div className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginTop: 3 }}>
+                        {(r.tarih || '—')} {(r.saat || '—')} · {r.personel_ad || r.personel_id || 'Personel ?'}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text2)', textAlign: 'right' }}>
+                      {r.ozet || '—'}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {aktifSekme === 'toptanci-siparisleri' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
+            Bu liste operasyon defterindeki <code style={{ fontSize: 11 }}>SIPARIS_TOPTANCI_YONLENDIRME</code> kayıtlarından üretilir ve kategori/ürün bazında gruplanır.
+          </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end' }}>
+            <label style={{ margin: 0 }}>
+              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Gün</span>
+              <select
+                className="input"
+                value={String(toptanciSiparisGun)}
+                onChange={(e) => setToptanciSiparisGun(Number(e.target.value || 30))}
+              >
+                <option value="7">Son 7 gün</option>
+                <option value="14">Son 14 gün</option>
+                <option value="30">Son 30 gün</option>
+                <option value="60">Son 60 gün</option>
+              </select>
+            </label>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setYukleniyor(true); yukleToptanciSiparisleri(); }}>
+              Filtreyi uygula
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                const rows = Array.isArray(toptanciSiparisListe?.satirlar) ? toptanciSiparisListe.satirlar : [];
+                const tsv = [
+                  ['Kategori', 'Ürün', 'Toplam adet'].join('\t'),
+                  ...rows.map((r) => [
+                    String(r?.kategori_kod || r?.kategori || r?.kat || r?.kategori_id || ''),
+                    String(r?.urun_ad || r?.urun || r?.ad || r?.urun_adi || ''),
+                    String(Number(r?.toplam_adet || r?.adet || r?.miktar || 0)),
+                  ].join('\t')),
+                ].join('\n');
+                const blob = new Blob([`﻿${tsv}`], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `toptanci_siparisleri_son_${Number(toptanciSiparisListe?.gun || toptanciSiparisGun || 30)}_gun.xls`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              Excel indir
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                const rows = Array.isArray(toptanciSiparisListe?.satirlar) ? toptanciSiparisListe.satirlar : [];
+                const w = window.open('', '_blank', 'noopener,noreferrer,width=900,height=700');
+                if (!w) {
+                  toast('PDF penceresi açılamadı.');
+                  return;
+                }
+                const esc = (v) => String(v ?? '')
+                  .replace(/&/g, '&amp;')
+                  .replace(/</g, '&lt;')
+                  .replace(/>/g, '&gt;')
+                  .replace(/"/g, '&quot;')
+                  .replace(/'/g, '&#39;');
+                const bodyRows = rows.map((r) => (
+                  `<tr><td>${esc(r?.kategori_kod || r?.kategori || r?.kat || r?.kategori_id || '')}</td><td>${esc(r?.urun_ad || r?.urun || r?.ad || r?.urun_adi || '')}</td><td style="text-align:right;">${esc(Number(r?.toplam_adet || r?.adet || r?.miktar || 0))}</td></tr>`
+                )).join('');
+                w.document.write(`<!doctype html><html><head><meta charset="utf-8" /><title>Toptancı Siparişleri</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#111}h1{font-size:18px;margin:0 0 12px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #d0d0d0;padding:8px;font-size:12px;text-align:left}th{background:#f5f5f5}</style></head><body><h1>Toptancı Siparişleri (Son ${esc(Number(toptanciSiparisListe?.gun || toptanciSiparisGun || 30))} gün)</h1><table><thead><tr><th>Kategori</th><th>Ürün</th><th>Toplam adet</th></tr></thead><tbody>${bodyRows || '<tr><td colspan="3">Kayıt yok</td></tr>'}</tbody></table></body></html>`);
+                w.document.close();
+                w.focus();
+                w.print();
+              }}
+            >
+              PDF indir
+            </button>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+            Son {Number(toptanciSiparisListe?.gun || toptanciSiparisGun || 30)} gün · {Number(toptanciSiparisListe?.toplam_kayit || 0)} kayıt · {Array.isArray(toptanciSiparisListe?.satirlar) ? toptanciSiparisListe.satirlar.length : 0} ürün satırı
+          </div>
+          {!Array.isArray(toptanciSiparisListe?.satirlar) || toptanciSiparisListe.satirlar.length === 0 ? (
+            <div className="empty"><p>Kategori bazlı toptancı sipariş satırı yok.</p></div>
+          ) : (
+            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              <div style={{ maxHeight: 520, overflow: 'auto' }}>
+                <table className="table" style={{ margin: 0 }}>
+                  <thead>
+                    <tr>
+                      <th>Kategori</th>
+                      <th>Ürün</th>
+                      <th style={{ textAlign: 'right' }}>Toplam adet</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {toptanciSiparisListe.satirlar.map((r, idx) => (
+                      <tr key={`${String(r?.kategori_kod || r?.kategori || r?.kat || r?.kategori_id || 'kat')}-${String(r?.urun_ad || r?.urun || r?.ad || r?.urun_adi || idx)}-${idx}`}>
+                        <td>{r?.kategori_kod || r?.kategori || r?.kat || r?.kategori_id || '—'}</td>
+                        <td>{r?.urun_ad || r?.urun || r?.ad || r?.urun_adi || '—'}</td>
+                        <td style={{ textAlign: 'right' }}>{Number(r?.toplam_adet || r?.adet || r?.miktar || 0)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {aktifSekme === 'onay' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
@@ -5480,6 +5947,45 @@ export default function OperasyonMerkezi() {
                 setKuyrukBusy(null);
               }
             };
+            const gonderilenleIlgiliToptanciyaYolla = async (sip) => {
+              const talepId = String(sip?.id || '').trim();
+              if (!talepId) return;
+              const rows = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
+              const kalemler = rows.map((k, i) => {
+                const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
+                const key = `${talepId}::${kk}`;
+                const adetRaw = kuyrukToptanciKalemDeger[key];
+                const adet = Math.max(0, parseInt(String(adetRaw ?? k?.istenen_adet ?? 0), 10) || 0);
+                return {
+                  urun_ad: String(k?.urun_ad || k?.ad || kk),
+                  adet,
+                  kalem_kodu: kk,
+                  kategori_kod: String(k?.kategori_kod || k?.kategori || k?.kategori_id || '').trim() || null,
+                };
+              }).filter((x) => x.adet > 0);
+              if (!kalemler.length) {
+                toast('Toptancı formunda en az 1 kalem için adet girin.');
+                return;
+              }
+              setKuyrukBusy(talepId);
+              try {
+                await api('/ops/siparis/toptanciya-yolla', {
+                  method: 'POST',
+                  body: {
+                    talep_id: talepId,
+                    tedarikci_ad: (kuyrukToptanciTedarikci[talepId] || '').trim() || null,
+                    not_aciklama: (kuyrukToptanciNot[talepId] || '').trim() || null,
+                    kalemler,
+                  },
+                });
+                toast('Talep toptancı formuna aktarıldı ✓', 'green');
+                yukleDisiplin();
+              } catch (e) {
+                toast(e.message || 'Toptancıya gönderim hatası');
+              } finally {
+                setKuyrukBusy(null);
+              }
+            };
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -5490,11 +5996,80 @@ export default function OperasyonMerkezi() {
                   <button className="btn btn-sm btn-secondary" onClick={yukleDisiplin}>↺ Yenile</button>
                 </div>
 
+                <div
+                  className="card"
+                  style={{
+                    padding: '10px 12px',
+                    border: depoYetersizAktifSayi > 0 ? '1.5px solid #e8a03d' : '1px solid var(--border)',
+                    background: depoYetersizAktifSayi > 0 ? 'rgba(232,160,61,0.08)' : 'var(--bg2)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>
+                      📦 Depo yetersiz / yok bildirimleri
+                    </div>
+                    <span className={`badge ${depoYetersizAktifSayi > 0 ? 'badge-yellow' : 'badge-green'}`}>
+                      {depoYetersizAktifSayi > 0 ? `${depoYetersizAktifSayi} aktif uyarı` : 'Aktif yetersizlik yok'}
+                    </span>
+                  </div>
+                  {depoYetersizBildirimler.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 6 }}>
+                      Depo şubelerden “kısmi / yok” bildirimi gelmedi.
+                    </div>
+                  ) : (
+                    <div className="table-wrap" style={{ marginTop: 8 }}>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Talep şube</th>
+                            <th>Ürün</th>
+                            <th style={{ textAlign: 'center' }}>İstenen</th>
+                            <th style={{ textAlign: 'center' }}>Gönderilen</th>
+                            <th style={{ textAlign: 'center' }}>Eksik</th>
+                            <th>Durum</th>
+                            <th className="mono">Talep</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {depoYetersizBildirimler.slice(0, 18).map((it, idx) => (
+                            <tr key={`${it.talep_id}-${it.urun_ad}-${idx}`}>
+                              <td>{it.sube_adi}</td>
+                              <td>{it.urun_ad}</td>
+                              <td style={{ textAlign: 'center' }}>{it.istenen_adet}</td>
+                              <td style={{ textAlign: 'center' }}>{it.gonderilen_adet}</td>
+                              <td style={{ textAlign: 'center', fontWeight: 700, color: it.eksik_adet > 0 ? '#e8a03d' : 'var(--text3)' }}>
+                                {it.eksik_adet}
+                              </td>
+                              <td>
+                                {it.kalem_durum === 'yok' ? (
+                                  <span className="badge badge-red">Yok</span>
+                                ) : (
+                                  <span className="badge badge-yellow">Kısmi</span>
+                                )}
+                              </td>
+                              <td className="mono">{String(it.talep_id || '').slice(0, 8)}…</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
                 {siparisler.length === 0 && (
                   <div className="card empty" style={{ padding: 32 }}><p>Bekleyen sipariş yok ✓</p></div>
                 )}
 
-                {siparisler.map(sip => (
+                {siparisler.map((sip) => {
+                  const talepId = String(sip?.id || '');
+                  const asama = kuyrukAsama[talepId] || 'detay';
+                  const detayRows = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
+                  const entegreDepolar = (kuyrukDepolar || []).filter((d) => {
+                    const adNorm = magazaAdNorm(d?.ad || '');
+                    return MAGAZA_DORT_SUBE.some((m) => m.keys.some((k) => adNorm.includes(magazaAdNorm(k))));
+                  });
+                  const depoOpsiyonlari = entegreDepolar.length > 0 ? entegreDepolar : (kuyrukDepolar || []);
+                  return (
                   <div key={sip.id} data-ops-siparis-talep={sip.id} className="card" style={{
                     padding: 0, overflow: 'hidden',
                     border: sip.stok_alarm_var ? '1.5px solid #e85d5d'
@@ -5525,7 +6100,43 @@ export default function OperasyonMerkezi() {
                       </div>
                     </div>
 
+                    <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {[
+                        { id: 'detay', label: 'Detay' },
+                        { id: 'depo', label: 'Depoya yönlendir' },
+                        { id: 'toptanci', label: 'Toptancıya yolla' },
+                      ].map((a) => (
+                        <button
+                          key={`${talepId}-asama-${a.id}`}
+                          type="button"
+                          className={`btn btn-sm ${asama === a.id ? 'btn-primary' : 'btn-secondary'}`}
+                          onClick={() => setKuyrukAsama((prev) => ({ ...prev, [talepId]: a.id }))}
+                        >
+                          {a.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {asama === 'detay' && (
+                      <div style={{ padding: '12px 16px' }}>
+                        <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>Şubenin talep detayı (ürün adı + adet)</div>
+                        {detayRows.length === 0 ? (
+                          <div style={{ fontSize: 12, color: 'var(--text3)' }}>Kalem bulunamadı.</div>
+                        ) : (
+                          <div style={{ display: 'grid', gap: 6 }}>
+                            {detayRows.map((k, ki) => (
+                              <div key={`${talepId}-det-${ki}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, borderBottom: '1px dashed var(--border)', paddingBottom: 4 }}>
+                                <span style={{ fontSize: 13 }}>{k.urun_ad || k.ad || k.kalem_kodu || 'Kalem'}</span>
+                                <span className="mono" style={{ fontSize: 13, fontWeight: 700 }}>{Number(k.istenen_adet || 0)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Kalem tablosu */}
+                    {asama === 'depo' && (
                     <div className="table-wrap" style={{ margin: 0 }}>
                       <table>
                         <thead><tr>
@@ -5607,59 +6218,124 @@ export default function OperasyonMerkezi() {
                         </tbody>
                       </table>
                     </div>
-
-                    {/* Davranış uyarıları */}
-                    {(sip.davranis_uyarilari || []).length > 0 && (
-                      <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        {sip.davranis_uyarilari.map((u, ui) => (
-                          <span key={ui} style={{ fontSize: 12, background: '#2a1a3a', color: '#c084fc', borderRadius: 6, padding: '2px 8px' }}>
-                            {u.kural} (+{u.puan}p) — {u.mesaj}
-                          </span>
-                        ))}
-                      </div>
                     )}
 
-                    {/* Depo atama */}
-                    <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {sip.operasyon_yonlendirme_talimati && (
-                        <div style={{ fontSize: 12, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'rgba(59,130,246,0.08)', whiteSpace: 'pre-wrap' }}>
-                          <span style={{ color: 'var(--text3)', fontWeight: 600 }}>Kayıtlı operasyon talimatı: </span>
-                          {sip.operasyon_yonlendirme_talimati}
+                    {asama === 'depo' && (
+                      <>
+                        {/* Davranış uyarıları */}
+                        {(sip.davranis_uyarilari || []).length > 0 && (
+                          <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            {sip.davranis_uyarilari.map((u, ui) => (
+                              <span key={ui} style={{ fontSize: 12, background: '#2a1a3a', color: '#c084fc', borderRadius: 6, padding: '2px 8px' }}>
+                                {u.kural} (+{u.puan}p) — {u.mesaj}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Depo atama */}
+                        <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {sip.operasyon_yonlendirme_talimati && (
+                            <div style={{ fontSize: 12, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'rgba(59,130,246,0.08)', whiteSpace: 'pre-wrap' }}>
+                              <span style={{ color: 'var(--text3)', fontWeight: 600 }}>Kayıtlı operasyon talimatı: </span>
+                              {sip.operasyon_yonlendirme_talimati}
+                            </div>
+                          )}
+                          <label style={{ fontSize: 11, color: 'var(--text3)', margin: 0 }}>Operasyon talimatı (isteğe bağlı)</label>
+                          <textarea
+                            className="input"
+                            rows={2}
+                            placeholder="Dağıtım / öncelik notu — depo ve talep şubesi panelinde görünür."
+                            style={{ width: '100%', maxWidth: 520, resize: 'vertical', fontSize: 12 }}
+                            value={kuyrukTalimat[sip.id] || ''}
+                            onChange={(e) => setKuyrukTalimat((prev) => ({ ...prev, [sip.id]: e.target.value }))}
+                          />
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 13, color: 'var(--text3)' }}>Depoya yönlendir:</span>
+                            <select
+                              className="input"
+                              style={{ flex: 1, minWidth: 180, maxWidth: 280 }}
+                              value={kuyrukDepoSecim[sip.id] || ''}
+                              onChange={e => setKuyrukDepoSecim(prev => ({ ...prev, [sip.id]: e.target.value }))}
+                            >
+                              <option value="">— Depo seç —</option>
+                              {depoOpsiyonlari.map(d => (
+                                <option key={d.id} value={d.id}>{d.ad} ({d.sube_tipi})</option>
+                              ))}
+                            </select>
+                            <button
+                              className="btn btn-sm btn-primary"
+                              disabled={!kuyrukDepoSecim[sip.id] || kuyrukBusy === sip.id}
+                              onClick={() => gonderilenleIlgiliDepoyaGonder(sip.id)}
+                            >
+                              {kuyrukBusy === sip.id ? '…' : '➤ Yönlendir'}
+                            </button>
+                          </div>
                         </div>
-                      )}
-                      <label style={{ fontSize: 11, color: 'var(--text3)', margin: 0 }}>Operasyon talimatı (isteğe bağlı)</label>
-                      <textarea
-                        className="input"
-                        rows={2}
-                        placeholder="Dağıtım / öncelik notu — depo ve talep şubesi panelinde görünür."
-                        style={{ width: '100%', maxWidth: 520, resize: 'vertical', fontSize: 12 }}
-                        value={kuyrukTalimat[sip.id] || ''}
-                        onChange={(e) => setKuyrukTalimat((prev) => ({ ...prev, [sip.id]: e.target.value }))}
-                      />
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 13, color: 'var(--text3)' }}>Depoya yönlendir:</span>
-                        <select
-                          className="input"
-                          style={{ flex: 1, minWidth: 180, maxWidth: 280 }}
-                          value={kuyrukDepoSecim[sip.id] || ''}
-                          onChange={e => setKuyrukDepoSecim(prev => ({ ...prev, [sip.id]: e.target.value }))}
-                        >
-                          <option value="">— Depo seç —</option>
-                          {kuyrukDepolar.map(d => (
-                            <option key={d.id} value={d.id}>{d.ad} ({d.sube_tipi})</option>
-                          ))}
-                        </select>
-                        <button
-                          className="btn btn-sm btn-primary"
-                          disabled={!kuyrukDepoSecim[sip.id] || kuyrukBusy === sip.id}
-                          onClick={() => gonderilenleIlgiliDepoyaGonder(sip.id)}
-                        >
-                          {kuyrukBusy === sip.id ? '…' : '➤ Yönlendir'}
-                        </button>
+                      </>
+                    )}
+
+                    {asama === 'toptanci' && (
+                      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                          Toptancı sipariş formu kartı — süt, kahve vb. kalemleri ayrı ayrı gönderebilirsiniz.
+                        </div>
+                        <label style={{ margin: 0 }}>
+                          <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Toptancı / tedarikçi</span>
+                          <input
+                            className="input"
+                            style={{ maxWidth: 320 }}
+                            placeholder="Örn: ABC Toptan Gıda"
+                            value={kuyrukToptanciTedarikci[sip.id] || ''}
+                            onChange={(e) => setKuyrukToptanciTedarikci((prev) => ({ ...prev, [sip.id]: e.target.value }))}
+                          />
+                        </label>
+                        <div style={{ display: 'grid', gap: 6, maxWidth: 560 }}>
+                          {detayRows.map((k, ki) => {
+                            const kk = String(k?.kalem_kodu || k?.urun_id || `k_${ki}`);
+                            const key = `${sip.id}::${kk}`;
+                            const val = kuyrukToptanciKalemDeger[key] ?? String(Number(k?.istenen_adet || 0));
+                            return (
+                              <div key={`${sip.id}-topf-${kk}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 110px', gap: 8, alignItems: 'center' }}>
+                                <div style={{ fontSize: 13 }}>{k.urun_ad || k.ad || kk}</div>
+                                <input
+                                  className="input"
+                                  inputMode="numeric"
+                                  value={val}
+                                  onChange={(e) => {
+                                    const v = String(e.target.value || '').replace(/[^\d]/g, '');
+                                    setKuyrukToptanciKalemDeger((prev) => ({ ...prev, [key]: v }));
+                                  }}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <label style={{ margin: 0 }}>
+                          <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Not</span>
+                          <textarea
+                            className="input"
+                            rows={2}
+                            style={{ width: '100%', maxWidth: 560, resize: 'vertical', fontSize: 12 }}
+                            placeholder="Toptancı sipariş notu..."
+                            value={kuyrukToptanciNot[sip.id] || ''}
+                            onChange={(e) => setKuyrukToptanciNot((prev) => ({ ...prev, [sip.id]: e.target.value }))}
+                          />
+                        </label>
+                        <div>
+                          <button
+                            className="btn btn-sm btn-primary"
+                            disabled={kuyrukBusy === sip.id}
+                            onClick={() => gonderilenleIlgiliToptanciyaYolla(sip)}
+                          >
+                            {kuyrukBusy === sip.id ? '…' : '⇢ Toptancıya yolla'}
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
-                ))}
+                );
+                })}
               </div>
             );
           })()}
@@ -5724,13 +6400,32 @@ export default function OperasyonMerkezi() {
                       {(siparisAkis?.siparis_akis || []).map(s => {
                         const OLAY_RENK = { SIPARIS_OLUSTU: '#6b6f7a', TAHSIS_TAM: '#2db573', TAHSIS_KISMI: '#c9a227', TAHSIS_YOK: '#e85d5d', SEVK_CIKTI: '#4a9eff', KABUL_TAM: '#2db573', KABUL_EKSIK: '#f08040', KULLANIM: '#7c6fdc' };
                         const DURUM_RENK = { bekliyor: '#c9a227', onaylandi: '#2db573', gonderildi: '#4a9eff', teslim_edildi: '#2db573', iptal: '#e85d5d' };
+                        const yoldaSatirlari = Array.isArray(s?.yolda) ? s.yolda : [];
+                        const aktifUyumsuzVar = yoldaSatirlari.some((y) => {
+                          const sevk = Number(y?.sevk_adet || 0);
+                          const kabul = y?.kabul_adet == null ? null : Number(y.kabul_adet || 0);
+                          const d = String(y?.durum || '').trim().toLowerCase();
+                          if (d === 'uzlasildi') return false;
+                          if (d === 'kabul_uyusmazlik') return true;
+                          return kabul != null && sevk !== kabul;
+                        });
+                        const uzlasiTamam = yoldaSatirlari.length > 0
+                          && yoldaSatirlari.every((y) => String(y?.durum || '').trim().toLowerCase() === 'uzlasildi');
                         return (
                           <tr key={s.id}>
                             <td style={{ fontWeight: 500 }}>{s.sube_adi || s.sube_id}</td>
                             <td style={{ color: 'var(--text3)', fontSize: 12 }}>{s.tarih}</td>
                             <td className="mono" style={{ color: 'var(--text3)' }}>{s.kalem_sayisi} kalem</td>
                             <td><span style={{ fontSize: 11, color: OLAY_RENK[s.son_olay] || 'var(--text3)', fontWeight: 600 }}>{s.son_olay || '—'}</span><div style={{ fontSize: 10, color: 'var(--text3)' }}>{s.son_olay_ts ? s.son_olay_ts.slice(0, 16).replace('T', ' ') : ''}</div></td>
-                            <td><span className="badge" style={{ fontSize: 11, background: 'transparent', border: `1px solid ${DURUM_RENK[s.durum] || 'var(--border)'}`, color: DURUM_RENK[s.durum] || 'var(--text3)' }}>{s.durum}</span></td>
+                            <td>
+                              <span className="badge" style={{ fontSize: 11, background: 'transparent', border: `1px solid ${DURUM_RENK[s.durum] || 'var(--border)'}`, color: DURUM_RENK[s.durum] || 'var(--text3)' }}>{s.durum}</span>
+                              {aktifUyumsuzVar && (
+                                <span className="badge badge-red" style={{ marginLeft: 6, fontSize: 10 }}>Sevkiyat blokajı</span>
+                              )}
+                              {uzlasiTamam && (
+                                <span className="badge badge-green" style={{ marginLeft: 6, fontSize: 10 }}>Uzlaşı tamam · blokaj kalktı</span>
+                              )}
+                            </td>
                             <td><button type="button" className="btn btn-secondary btn-sm" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => setTimelineAcik(timelineAcik === s.id ? null : s.id)}>📋</button></td>
                           </tr>
                         );
@@ -5755,7 +6450,15 @@ export default function OperasyonMerkezi() {
                           <span className="mono">Tahsis: {t.tahsis_adet}</span>
                           <span className="badge" style={{ fontSize: 10 }}>{t.durum}</span>
                           {(s.yolda || []).filter(y => y.kalem_kodu === t.kalem_kodu).map((y, j) => (
-                            <span key={j} className="mono" style={{ color: 'var(--text3)' }}>Sevk: {y.sevk_adet} | Kabul: {y.kabul_adet ?? '—'}</span>
+                            <span key={j} className="mono" style={{ color: 'var(--text3)' }}>
+                              Sevk: {y.sevk_adet} | Kabul: {y.kabul_adet ?? '—'}
+                              {String(y?.durum || '').trim().toLowerCase() === 'uzlasildi' && (
+                                <span className="badge badge-green" style={{ marginLeft: 6, fontSize: 10 }}>Uzlaşı tamam</span>
+                              )}
+                              {String(y?.durum || '').trim().toLowerCase() === 'kabul_uyusmazlik' && (
+                                <span className="badge badge-red" style={{ marginLeft: 6, fontSize: 10 }}>Uyumsuzluk</span>
+                              )}
+                            </span>
                           ))}
                         </div>
                       ))}
