@@ -1741,6 +1741,7 @@ async function renderSiparisPanel() {
   });
   h += '</div>';
   h += '<div class="siparis-detay" style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.45">Ürün adı ve adet kutusu <strong>aynı satırda</strong>; liste tam ekran pencerede açılır.</div>';
+  h += '<div id="sipSeciliOzet" class="siparis-detay" style="margin-bottom:10px;background:rgba(45,181,115,.08);border:1px solid rgba(45,181,115,.35);font-size:12px;font-weight:700">Seçili ürün: 0 kalem · toplam 0 adet</div>';
   h += '<div class="siparis-detay">';
   h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Seçimleri Onayla (PIN zorunlu)</div>';
   h += '<div class="form-group"><label>Not (opsiyonel)</label><input id="siparisOnayNot" placeholder="Kısa not" /></div>';
@@ -1815,8 +1816,42 @@ async function renderSiparisPanel() {
       var n = parseInt(String(this.value||'').replace(/\D/g,''), 10);
       siparisDegerler[k] = isNaN(n) ? 0 : n;
       this.value = String(siparisDegerler[k]);
+      siparisSeciliOzetGuncelle();
     };
   });
+  function siparisSeciliOzetGuncelle() {
+    var seciliKalem = 0;
+    var toplamAdet = 0;
+    data.forEach(function(k){
+      (k.items || []).forEach(function(it){
+        var key = k.id + '::' + it.id;
+        var adet = parseInt(siparisDegerler[key] || 0, 10);
+        if (!isNaN(adet) && adet > 0) {
+          seciliKalem += 1;
+          toplamAdet += adet;
+        }
+      });
+    });
+    var el = document.getElementById('sipSeciliOzet');
+    var onayBtnEl = document.getElementById('siparisOnayBtn');
+    if (onayBtnEl) {
+      var secimVar = seciliKalem > 0;
+      onayBtnEl.textContent = secimVar ? ('Seçimleri Onayla (' + seciliKalem + ' kalem)') : 'Seçimleri Onayla';
+      onayBtnEl.disabled = !secimVar;
+      onayBtnEl.style.opacity = secimVar ? '1' : '0.65';
+      onayBtnEl.title = secimVar ? '' : 'Önce en az bir ürün seçin';
+    }
+    if (!el) return;
+    el.textContent = 'Seçili ürün: ' + seciliKalem + ' kalem · toplam ' + toplamAdet + ' adet';
+    if (seciliKalem > 0) {
+      el.style.background = 'rgba(45,181,115,.12)';
+      el.style.borderColor = 'rgba(45,181,115,.45)';
+    } else {
+      el.style.background = 'rgba(245,158,11,.08)';
+      el.style.borderColor = 'rgba(245,158,11,.35)';
+    }
+  }
+  siparisSeciliOzetGuncelle();
   var sipOzBtn = document.getElementById('sipOzelGonderBtn');
   if (sipOzBtn) sipOzBtn.onclick = async function(){
     setMsg('siparisMsg','','');
