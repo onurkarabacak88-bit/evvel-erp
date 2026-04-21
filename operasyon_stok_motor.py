@@ -1668,6 +1668,7 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
                        yapan_ad: Optional[str] = None) -> Dict[str, Any]:
     """Şube depo stoğu artar. Eksik teslimatta KABUL_FARKI uyarısı üretilir."""
     tam_mi = True
+    uyumsuz_satirlar: List[Dict[str, Any]] = []
     for item in kabul_kalemleri:
         kalem_kodu = str(item.get("kalem_kodu") or item.get("urun_id") or "").strip()
         kalem_adi = str(item.get("kalem_adi") or item.get("urun_ad") or kalem_kodu).strip()
@@ -1688,9 +1689,10 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
         if yolda_row:
             sevk_adet = int((yolda_row.get("sevk_adet") or yolda_row[1]) or 0)
             yolda_id  = yolda_row.get("id") or yolda_row[0]
+            yolda_durum = "kabul_edildi" if sevk_adet == kabul_adet else "kabul_uyusmazlik"
             cur.execute(
-                "UPDATE stok_yolda SET durum='kabul_edildi', kabul_ts=NOW(), kabul_adet=%s WHERE id=%s",
-                (kabul_adet, yolda_id),
+                "UPDATE stok_yolda SET durum=%s, kabul_ts=NOW(), kabul_adet=%s WHERE id=%s",
+                (yolda_durum, kabul_adet, yolda_id),
             )
         # Şube deposu artar — SADECE BURAYA GELİNCE
         if kabul_adet > 0:
@@ -1706,18 +1708,48 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
                 (str(uuid.uuid4()), sube_id, kalem_kodu, kalem_adi, kabul_adet),
             )
         # Kabul farkı kontrolü
-        if sevk_adet > 0 and kabul_adet < sevk_adet:
+        if sevk_adet != kabul_adet:
             tam_mi = False
+            fark = sevk_adet - kabul_adet
+            uyumsuz_satirlar.append(
+                {
+                    "kalem_kodu": kalem_kodu,
+                    "kalem_adi": kalem_adi,
+                    "sevk_adet": sevk_adet,
+                    "kabul_adet": kabul_adet,
+                    "fark_adet": fark,
+                }
+            )
             _davranis_uyari_yaz(cur, sube_id, KURAL_KABUL_FARKI,
                                 siparis_talep_id, kalem_kodu,
                                 {"sevk": sevk_adet, "kabul": kabul_adet,
-                                 "fark": sevk_adet - kabul_adet})
+                                 "fark": fark})
 
     genel_olay = OLAY_KABUL_TAM if tam_mi else OLAY_KABUL_EKSIK
-    cur.execute("UPDATE siparis_talep SET durum='teslim_edildi' WHERE id=%s", (siparis_talep_id,))
+    sevk_durum = "teslim_edildi" if tam_mi else "uyumsuz_kabul"
+    cur.execute(
+        """
+        UPDATE siparis_talep
+        SET durum='teslim_edildi',
+            sevkiyat_durumu=%s,
+            sevkiyat_durum=%s
+        WHERE id=%s
+        """,
+        (sevk_durum, sevk_durum, siparis_talep_id),
+    )
+    if uyumsuz_satirlar:
+        _disiplin_olay_yaz(
+            cur,
+            siparis_talep_id,
+            sube_id,
+            "SEVKIYAT_UYUSMAZLIK",
+            yapan_id,
+            yapan_ad,
+            {"satirlar": uyumsuz_satirlar},
+        )
     _disiplin_olay_yaz(cur, siparis_talep_id, sube_id, genel_olay,
                         yapan_id, yapan_ad, {"tam_mi": tam_mi})
-    return {"durum": genel_olay, "tam_mi": tam_mi}
+    return {"durum": genel_olay, "tam_mi": tam_mi, "uyumsuz_satirlar": uyumsuz_satirlar}
 
 
 # ── Aşama 5: Kullanım ────────────────────────────────────────────

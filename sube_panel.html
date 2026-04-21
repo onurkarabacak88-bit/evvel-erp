@@ -980,6 +980,16 @@
           </div>
         </div>
 
+        <div class="kart merkez-mesaj-kutusu" id="kabulTakipKart">
+          <div class="kart-baslik"><span class="ico">📥</span> Sipariş Kabul Takibi</div>
+          <p style="font-size:11px;color:var(--muted);margin:0 0 10px;line-height:1.45">
+            Son ürün teslim/kabul kayıtları. Bu listede depo adet görünmez; sadece kim-ne kabul etti özeti gösterilir.
+          </p>
+          <div id="kabulTakipListesi" class="merkez-mesaj-icerik" style="max-height:220px">
+            <div class="merkez-mesaj-bos">Yükleniyor…</div>
+          </div>
+        </div>
+
         <div class="kart">
           <div class="kart-baslik"><span class="ico">🧭</span> Hızlı İşlem Kartları</div>
           <div class="orta-kart-grid">
@@ -1328,6 +1338,7 @@ var siparisShowPasif = false;
 var siparisOzelExpanded = false;
 var siparisDegerler = {};
 var siparisKatalogCache = null;
+var siparisAkisCache = null;
 
 // PIN cooldown
 var _cdTimer = null;
@@ -1526,6 +1537,12 @@ async function siparisLoad(force) {
   siparisKatalogCache = siparisNormalize(d && d.kategoriler);
   return siparisKatalogCache;
 }
+async function siparisAkisLoad(force) {
+  if (!force && siparisAkisCache && typeof siparisAkisCache === 'object') return siparisAkisCache;
+  var d = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-akisi?gun=21&limit=40');
+  siparisAkisCache = d || { talepler: [], depo_hazirlik_talepleri: [] };
+  return siparisAkisCache;
+}
 function siparisAktifAdet(kat) {
   return (kat.items || []).filter(function(it){ return it.aktif !== false; }).length;
 }
@@ -1599,6 +1616,12 @@ async function renderSiparisPanel() {
   var root = document.getElementById('siparisPanel');
   if (!root) return;
   var data = await siparisLoad(false);
+  var akis = { talepler: [], depo_hazirlik_talepleri: [] };
+  try {
+    akis = await siparisAkisLoad(false);
+  } catch (e) {
+    akis = { talepler: [], depo_hazirlik_talepleri: [] };
+  }
   var ozelListe = [];
   var bekListe = [];
   try {
@@ -1638,6 +1661,71 @@ async function renderSiparisPanel() {
     h += '<span class="sip-bekleyen-etiket">Merkez onayında bekliyor</span>';
     h += '<div class="sip-bekleyen-baslik">Bugün <strong>' + stdBekSay + '</strong> adet bekleyen katalog sipariş talebiniz var</div>';
     h += '<p class="sip-bekleyen-alt">PIN ile onayladığınız talepler operasyon sırasına alındı; sevkiyat / onay adımlarını bu ekrandan takip edebilirsiniz.</p>';
+    h += '</div>';
+  }
+  var kendiAkis = (akis && akis.talepler) || [];
+  if (kendiAkis.length) {
+    h += '<div class="siparis-detay" style="border-left:3px solid rgba(74,158,255,.55);padding-left:12px;margin-bottom:14px;background:rgba(74,158,255,.06)">';
+    h += '<div style="font-size:12px;font-weight:700;margin-bottom:6px">📬 Sipariş akış takibi (talep eden şube)</div>';
+    h += '<p style="font-size:11px;color:var(--muted);margin:0 0 8px 0;line-height:1.45">Depoya yönlendirilen siparişleriniz burada aşama aşama görünür. <strong>Sevk çıktı</strong> olup sizden kabul bekleyen kalemleri Ürün Teslim Al ekranından onaylayın.</p>';
+    kendiAkis.slice(0, 8).forEach(function(t){
+      var st = String(t.sevkiyat_durumu || t.durum || 'bekliyor');
+      var stCls = st === 'teslim_edildi' ? 'badge-ok' : (st === 'gonderildi' ? 'badge-blue' : (st === 'kismi_hazirlandi' ? 'badge-warn' : 'badge-gray'));
+      var hedefDepo = escHtml(t.hedef_depo_adi || t.hedef_depo_sube_id || '—');
+      h += '<div style="font-size:12px;padding:7px 0;border-top:1px solid var(--border)">';
+      h += '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">';
+      h += '<span><strong>#' + escHtml(String(t.id || '').slice(0,8)) + '…</strong> · ' + escHtml(t.asama_metni || st) + ' · Depo: ' + hedefDepo + '</span>';
+      h += '<span class="badge ' + stCls + '" style="font-size:10px;text-transform:uppercase">' + escHtml(st) + '</span>';
+      h += '</div>';
+      h += '</div>';
+    });
+    h += '</div>';
+  }
+  var depoHazirlik = (akis && akis.depo_hazirlik_talepleri) || [];
+  if (depoHazirlik.length) {
+    h += '<div class="siparis-detay" style="border-left:3px solid rgba(45,181,115,.7);padding-left:12px;margin-bottom:14px;background:rgba(45,181,115,.07)">';
+    h += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap">';
+    h += '<div style="font-size:12px;font-weight:700">🏪 Depoya yönlendirilen talepler (' + depoHazirlik.length + ')</div>';
+    h += '<span class="badge badge-ok" style="font-size:10px">Depo paneli</span>';
+    h += '</div>';
+    h += '<p style="font-size:11px;color:var(--muted);margin:6px 0 10px 0;line-height:1.45">Bu siparişler size depo olarak atandı. Her kalemi <strong>var / kısmi / yok</strong> seçip gönderilen adedi girin; depoda yetersizse kısmi gönderebilirsiniz.</p>';
+    depoHazirlik.forEach(function(d){
+      var tid = String(d.id || '');
+      var rows = Array.isArray(d.kalem_duzenle) ? d.kalem_duzenle : [];
+      h += '<div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:10px;background:var(--bg2)">';
+      h += '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">';
+      h += '<div style="font-size:12px"><strong>Talep şube:</strong> ' + escHtml(d.talep_sube_adi || d.talep_sube_id || '—') + ' · <span class="mono">#' + escHtml(tid.slice(0,8)) + '…</span></div>';
+      h += '<span class="badge badge-blue" style="font-size:10px">' + escHtml(d.sevkiyat_durumu || d.durum || 'hazirlaniyor') + '</span>';
+      h += '</div>';
+      if (d.operasyon_yonlendirme_talimati) {
+        h += '<div style="font-size:11px;color:var(--muted);margin-top:6px;border:1px dashed var(--border);border-radius:8px;padding:6px 8px"><strong>Talimat:</strong> ' + escHtml(d.operasyon_yonlendirme_talimati) + '</div>';
+      }
+      h += '<div style="margin-top:8px;display:grid;gap:6px">';
+      rows.forEach(function(k, i){
+        var rid = tid + '_' + i;
+        var ist = Number(k.istenen_adet || 0);
+        var gon = Number(k.gonderilen_adet || 0);
+        var d0 = String(k.durum || 'bekliyor');
+        h += '<div style="display:grid;grid-template-columns:minmax(0,1fr) 110px 120px 1fr;gap:6px;align-items:center">';
+        h += '<div style="font-size:12px">' + escHtml(k.urun_ad || k.urun_id || ('Kalem ' + (i+1))) + ' <span class="mono" style="opacity:.8">İstenen:' + ist + '</span></div>';
+        h += '<select id="depDur_'+escHtml(rid)+'"><option value="var"'+(d0==='var'?' selected':'')+'>var</option><option value="kismi"'+(d0==='kismi'?' selected':'')+'>kısmi</option><option value="yok"'+(d0==='yok'?' selected':'')+'>yok</option><option value="bekliyor"'+(d0==='bekliyor'?' selected':'')+'>bekliyor</option></select>';
+        h += '<input id="depAd_'+escHtml(rid)+'" inputmode="numeric" value="'+String(gon || 0)+'" placeholder="Gönderilen" />';
+        h += '<input id="depNt_'+escHtml(rid)+'" placeholder="Kalem notu (opsiyonel)" value="'+escHtml(k.not || '')+'" />';
+        h += '</div>';
+      });
+      h += '</div>';
+      h += '<div style="margin-top:8px;display:grid;grid-template-columns:repeat(3,minmax(140px,1fr));gap:8px">';
+      h += '<div class="form-group" style="margin:0"><label>Personel</label><select id="depPers_'+escHtml(tid)+'"></select></div>';
+      h += '<div class="form-group" style="margin:0"><label>PIN</label><input id="depPin_'+escHtml(tid)+'" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
+      h += '<div class="form-group" style="margin:0"><label>Sevkiyat notu</label><input id="depNot_'+escHtml(tid)+'" value="'+escHtml(d.sevkiyat_notu || '')+'" placeholder="Opsiyonel not" /></div>';
+      h += '</div>';
+      h += '<label class="chk-row" style="margin-top:8px"><input type="checkbox" id="depDone_'+escHtml(tid)+'" /><span>Sevkiyat tamamlandı (gönderildi)</span></label>';
+      h += '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">';
+      h += '<button class="btn btn-primary btn-sm" id="depKaydet_'+escHtml(tid)+'">Depo sevkiyatını kaydet</button>';
+      h += '</div>';
+      h += '<div id="depMsg_'+escHtml(tid)+'"></div>';
+      h += '</div>';
+    });
     h += '</div>';
   }
   h += '<div style="font-size:11px;font-weight:700;color:var(--muted);margin:10px 0 6px;text-transform:uppercase;letter-spacing:.04em">Standart sipariş (katalog)</div>';
@@ -1802,6 +1890,64 @@ async function renderSiparisPanel() {
     }
     onayBtn.disabled = false;
   };
+  document.querySelectorAll('[id^="depKaydet_"]').forEach(function(btn){
+    if (!btn || btn.dataset.wired === '1') return;
+    btn.dataset.wired = '1';
+    btn.onclick = async function(){
+      var tid = String(btn.id || '').replace('depKaydet_', '');
+      var msgId = 'depMsg_' + tid;
+      setMsg(msgId, '', '');
+      btn.disabled = true;
+      try {
+        var kart = (depoHazirlik || []).find(function(x){ return String(x.id || '') === tid; });
+        if (!kart) throw new Error('Talep kartı bulunamadı');
+        var pid = selVal('depPers_' + tid);
+        var pin = inpVal('depPin_' + tid).replace(/\D/g, '').slice(0, 4);
+        if (!pid) throw new Error('Personel seçin');
+        if (pin.length !== 4) throw new Error('4 haneli PIN girin');
+        var rows = Array.isArray(kart.kalem_duzenle) ? kart.kalem_duzenle : [];
+        var kalemler = rows.map(function(k, i){
+          var rid = tid + '_' + i;
+          var ist = Number(k.istenen_adet || 0);
+          var durum = inpVal('depDur_' + rid) || String(k.durum || 'bekliyor');
+          var gonRaw = parseInt(String(inpVal('depAd_' + rid) || '0').replace(/\D/g, ''), 10);
+          var gon = isNaN(gonRaw) ? 0 : gonRaw;
+          if (durum === 'var' && gon <= 0 && ist > 0) gon = ist;
+          if (durum === 'yok') gon = 0;
+          if (durum === 'kismi' && gon <= 0) throw new Error((k.urun_ad || 'Kalem') + ' için kısmi adedi girin');
+          if (ist > 0 && gon > ist) gon = ist;
+          return {
+            urun_id: k.urun_id || null,
+            urun_ad: k.urun_ad || null,
+            istenen_adet: ist,
+            durum: durum,
+            gonderilen_adet: gon,
+            not_aciklama: inpVal('depNt_' + rid) || null
+          };
+        });
+        if (!kalemler.length) throw new Error('En az bir kalem olmalı');
+        await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-depo-sevkiyat-kaydet', {
+          method: 'POST',
+          body: {
+            talep_id: tid,
+            personel_id: pid,
+            pin: pin,
+            kalemler: kalemler,
+            sevkiyat_notu: inpVal('depNot_' + tid) || null,
+            gonderildi: !!(document.getElementById('depDone_' + tid) && document.getElementById('depDone_' + tid).checked)
+          }
+        });
+        var pinEl = document.getElementById('depPin_' + tid); if (pinEl) pinEl.value = '';
+        setMsg(msgId, 'Depo sevkiyat kaydı işlendi. Talep akışı güncellendi.', 'msg-ok');
+        siparisAkisCache = null;
+        await renderSiparisPanel();
+      } catch(e) {
+        if (e.status === 429) handle429(document.getElementById(msgId), e);
+        else setMsg(msgId, e.message || 'Hata', 'msg-err');
+      }
+      btn.disabled = false;
+    };
+  });
 }
 
 function beep() {
@@ -1963,6 +2109,17 @@ function fillSels() {
   });
   // Merkez mesajı PIN selectleri
   document.querySelectorAll('[id^="mmSel_"]').forEach(function(el){
+    var cur = el.value;
+    el.innerHTML = '<option value="">— Seçin —</option>';
+    liste.forEach(function(u){
+      var o = document.createElement('option');
+      o.value = u.id; o.textContent = u.ad || u.id;
+      el.appendChild(o);
+    });
+    if (cur) el.value = cur;
+  });
+  // Depo sevkiyat kartı personel selectleri
+  document.querySelectorAll('[id^="depPers_"]').forEach(function(el){
     var cur = el.value;
     el.innerHTML = '<option value="">— Seçin —</option>';
     liste.forEach(function(u){
@@ -2674,6 +2831,24 @@ function renderDepoStokListe() {
   el.innerHTML = h;
 }
 
+function renderKabulTakipListe() {
+  var el = document.getElementById('kabulTakipListesi');
+  if (!el || !lastData) return;
+  var rows = lastData.son_kabul_kayitlari || [];
+  if (!rows.length) {
+    el.innerHTML = '<div class="merkez-mesaj-bos">Son 7 günde kabul kaydı yok.</div>';
+    return;
+  }
+  var h = '';
+  rows.forEach(function (r) {
+    h += '<div class="merkez-msg-kisa">';
+    h += '<div><strong>' + escHtml(String(r.personel || 'Personel ?')) + '</strong> · ' + escHtml(String(r.tarih || '—')) + ' ' + escHtml(String(r.saat || '—')) + '</div>';
+    h += '<div style="margin-top:4px">' + escHtml(String(r.ozet || 'Kayıt')) + '</div>';
+    h += '</div>';
+  });
+  el.innerHTML = h;
+}
+
 function renderEksikListesi() {
   var el = document.getElementById('eksikListesi');
   if (!el) return;
@@ -2905,6 +3080,7 @@ function renderMain(data) {
   renderAnaSiparisHatirlat(data);
 
   renderDepoStokListe();
+  renderKabulTakipListe();
   renderEksikListesi();
 
   // Operasyon timeline (kompakt 3 satır)

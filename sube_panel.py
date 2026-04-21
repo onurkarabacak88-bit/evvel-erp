@@ -23,7 +23,12 @@ from tr_saat import bugun_tr, dt_now_tr as _now_tr
 from evvel_merkez_guard import merkez_mutasyon_korumasi
 from finans_core import kasa_bakiyesi
 from kasa_service import insert_kasa_hareketi, audit, onay_ekle
-from operasyon_stok_motor import sube_kabul_kaydet, sube_yeni_siparis_oncesi_cift_kontrol
+from operasyon_stok_motor import (
+    STOK_KEYS,
+    STOK_LABEL_TR,
+    sube_kabul_kaydet,
+    sube_yeni_siparis_oncesi_cift_kontrol,
+)
 from siparis_sevkiyat_islem import (
     sevkiyat_kalem_durumlari_normalize,
     siparis_sevkiyat_kalem_guncelle_execute,
@@ -1374,22 +1379,24 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
 
     okunmamis_mesaj_var = any(not m.get("okundu") for m in merkez_mesajlar)
 
+    # Depo uyarısı doğrudan bu şubenin depo stokundan hesaplanır.
+    # Böylece panelde görülen alarm, ilgili şube deposunun anlık durumuyla birebir eşleşir.
     try:
         cur.execute(
             """
-            SELECT id, tip, seviye, mesaj, tarih, okundu, kalem_kodu
-            FROM sube_operasyon_uyari
-            WHERE sube_id=%s AND tip='STOK_ALARM' AND okundu=FALSE
-              AND tarih >= CURRENT_DATE - INTERVAL '3 days'
+            SELECT kalem_kodu, kalem_adi, COALESCE(mevcut_adet, 0) AS mevcut_adet,
+                   COALESCE(min_stok, 0) AS min_stok, guncelleme
+            FROM sube_depo_stok
+            WHERE sube_id=%s
+              AND COALESCE(mevcut_adet, 0) <= GREATEST(1, COALESCE(min_stok, 0))
             ORDER BY
-              CASE seviye
-                WHEN 'KRIZ' THEN 0
-                WHEN 'KRITIK' THEN 1
-                WHEN 'DUSUK' THEN 2
-                ELSE 3
+              CASE
+                WHEN COALESCE(mevcut_adet, 0) <= 0 THEN 0
+                WHEN COALESCE(mevcut_adet, 0) <= COALESCE(min_stok, 0) THEN 1
+                ELSE 2
               END,
-              tarih DESC,
-              id
+              COALESCE(mevcut_adet, 0) ASC,
+              kalem_adi ASC
             LIMIT 25
             """,
             (sube_id,),
@@ -1397,13 +1404,220 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
         stok_alarmlari = []
         for ar in cur.fetchall():
             ad = dict(ar)
-            if ad.get("tarih"):
-                ad["tarih"] = str(ad["tarih"])
-            stok_alarmlari.append(ad)
+            mevcut = int(ad.get("mevcut_adet") or 0)
+            min_s = int(ad.get("min_stok") or 0)
+            if mevcut <= 0:
+                seviye = "KRIZ"
+            elif mevcut <= min_s:
+                seviye = "KRITIK"
+            else:
+                seviye = "DUSUK"
+            mesaj = f"Depo stok azaldı: {(ad.get('kalem_adi') or ad.get('kalem_kodu') or 'Kalem')} — mevcut {mevcut} (min {min_s})"
+            stok_alarmlari.append(
+                {
+                    "id": f"live:{sube_id}:{ad.get('kalem_kodu')}",
+                    "tip": "STOK_ALARM",
+                    "seviye": seviye,
+                    "mesaj": mesaj,
+                    "tarih": str(ad.get("guncelleme") or bugun_tr()),
+                    "okundu": False,
+                    "kalem_kodu": ad.get("kalem_kodu"),
+                }
+            )
     except Exception:
         stok_alarmlari = []
 
+    # Sevkiyat akışı uyarıları:
+    # - Depodan çıkmış ama şube kabulü henüz girilmemiş satırlar
+    # - Kabul girilmiş ancak sevk/kabul adedi uyumsuz satırlar (uzlaşma bekler)
+    try:
+        cur.execute(
+            """
+            SELECT y.id, y.siparis_talep_id, y.kalem_kodu, y.kalem_adi,
+                   COALESCE(y.sevk_adet, 0) AS sevk_adet,
+                   y.sevk_ts, t.sube_id AS hedef_sube_id, hs.ad AS hedef_sube_adi,
+                   COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS kaynak_depo_sube_id,
+                   ks.ad AS kaynak_depo_sube_adi
+            FROM stok_yolda y
+            JOIN siparis_talep t ON t.id = y.siparis_talep_id
+            LEFT JOIN subeler hs ON hs.id = t.sube_id
+            LEFT JOIN subeler ks ON ks.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
+            WHERE (
+                    t.sube_id=%s
+                    OR COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)=%s
+                  )
+              AND y.durum='yolda'
+              AND y.sevk_ts >= NOW() - INTERVAL '7 days'
+            ORDER BY y.sevk_ts DESC
+            LIMIT 20
+            """,
+            (sube_id, sube_id),
+        )
+        for rr in cur.fetchall() or []:
+            rd = dict(rr)
+            hedef_sid = str(rd.get("hedef_sube_id") or "")
+            kaynak_sid = str(rd.get("kaynak_depo_sube_id") or "")
+            if hedef_sid == sube_id:
+                msg = (
+                    f"Sevkiyat kabul bekliyor: {(rd.get('kalem_adi') or rd.get('kalem_kodu') or 'Kalem')} "
+                    f"— depodan {int(rd.get('sevk_adet') or 0)} çıktı, şube kabulü bekleniyor."
+                )
+            elif kaynak_sid == sube_id:
+                msg = (
+                    f"Depodan çıkan sevkiyat henüz karşı şubede kabul edilmedi: "
+                    f"{(rd.get('kalem_adi') or rd.get('kalem_kodu') or 'Kalem')} "
+                    f"{int(rd.get('sevk_adet') or 0)} adet."
+                )
+            else:
+                msg = (
+                    f"Sevkiyat kabul bekliyor: {(rd.get('kalem_adi') or rd.get('kalem_kodu') or 'Kalem')} "
+                    f"{int(rd.get('sevk_adet') or 0)} adet."
+                )
+            stok_alarmlari.append(
+                {
+                    "id": f"yolda:{rd.get('id')}",
+                    "tip": "SEVKIYAT_KABUL_BEKLIYOR",
+                    "seviye": "KRITIK",
+                    "mesaj": msg,
+                    "tarih": str(rd.get("sevk_ts") or bugun_tr()),
+                    "okundu": False,
+                    "kalem_kodu": rd.get("kalem_kodu"),
+                    "siparis_talep_id": rd.get("siparis_talep_id"),
+                }
+            )
+    except Exception:
+        pass
+
+    try:
+        cur.execute(
+            """
+            SELECT
+                y.id, y.siparis_talep_id, y.kalem_kodu, y.kalem_adi,
+                COALESCE(y.sevk_adet, 0) AS sevk_adet,
+                COALESCE(y.kabul_adet, 0) AS kabul_adet,
+                y.kabul_ts,
+                t.sube_id AS hedef_sube_id,
+                hs.ad AS hedef_sube_adi,
+                COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS kaynak_depo_sube_id,
+                ks.ad AS kaynak_depo_sube_adi
+            FROM stok_yolda y
+            JOIN siparis_talep t ON t.id = y.siparis_talep_id
+            LEFT JOIN subeler hs ON hs.id = t.sube_id
+            LEFT JOIN subeler ks ON ks.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
+            WHERE (
+                    t.sube_id=%s
+                    OR COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)=%s
+                  )
+              AND (
+                    y.durum='kabul_uyusmazlik'
+                    OR (
+                      y.durum IN ('kabul_edildi', 'yolda')
+                      AND y.kabul_ts IS NOT NULL
+                      AND COALESCE(y.sevk_adet, 0) <> COALESCE(y.kabul_adet, 0)
+                    )
+                  )
+            ORDER BY y.kabul_ts DESC NULLS LAST, y.sevk_ts DESC
+            LIMIT 20
+            """,
+            (sube_id, sube_id),
+        )
+        for rr in cur.fetchall() or []:
+            rd = dict(rr)
+            sevk_ad = int(rd.get("sevk_adet") or 0)
+            kabul_ad = int(rd.get("kabul_adet") or 0)
+            fark = sevk_ad - kabul_ad
+            stok_alarmlari.append(
+                {
+                    "id": f"uyumsuz:{rd.get('id')}",
+                    "tip": "SEVKIYAT_UYUMSUZLUK",
+                    "seviye": "KRIZ",
+                    "mesaj": (
+                        f"Sevkiyat uyumsuzluğu: {(rd.get('kalem_adi') or rd.get('kalem_kodu') or 'Kalem')} "
+                        f"— sevk {sevk_ad}, kabul {kabul_ad}, fark {fark}."
+                    ),
+                    "tarih": str(rd.get("kabul_ts") or rd.get("sevk_ts") or bugun_tr()),
+                    "okundu": False,
+                    "kalem_kodu": rd.get("kalem_kodu"),
+                    "siparis_talep_id": rd.get("siparis_talep_id"),
+                    "kaynak_depo_sube_id": rd.get("kaynak_depo_sube_id"),
+                    "kaynak_depo_sube_adi": rd.get("kaynak_depo_sube_adi"),
+                    "hedef_sube_id": rd.get("hedef_sube_id"),
+                    "hedef_sube_adi": rd.get("hedef_sube_adi"),
+                    "fark_adet": fark,
+                }
+            )
+    except Exception:
+        pass
+
     stok_alarm_var = len(stok_alarmlari) > 0
+
+    # Şube paneli kabul defteri (URUN_SEVK) — sadece özet görüntü, depo adedi göstermez.
+    try:
+        cur.execute(
+            """
+            SELECT id, tarih, bildirim_saati, personel_ad, personel_id, aciklama
+            FROM operasyon_defter
+            WHERE sube_id=%s AND etiket='URUN_SEVK'
+              AND tarih >= CURRENT_DATE - INTERVAL '7 days'
+            ORDER BY tarih DESC, olay_ts DESC NULLS LAST, id DESC
+            LIMIT 20
+            """,
+            (sube_id,),
+        )
+        son_kabul_kayitlari = []
+        for rr in cur.fetchall():
+            rd = dict(rr)
+            acik = str(rd.get("aciklama") or "")
+            ozet = ""
+            toplam_adet = 0
+            if acik.startswith("URUN_SEVK_JSON:"):
+                body = acik[len("URUN_SEVK_JSON:") :]
+                if " | " in body:
+                    body = body.split(" | ", 1)[0]
+                try:
+                    payload = json.loads(body)
+                except Exception:
+                    payload = {}
+                if isinstance(payload, dict):
+                    delta = payload.get("delta") if isinstance(payload.get("delta"), dict) else {}
+                    parcalar = []
+                    for k in STOK_KEYS:
+                        try:
+                            n = max(0, int(delta.get(k) or 0))
+                        except Exception:
+                            n = 0
+                        if n <= 0:
+                            continue
+                        toplam_adet += n
+                        parcalar.append(f"{n} {STOK_LABEL_TR.get(k) or k}")
+                    kalemler = payload.get("kalemler") if isinstance(payload.get("kalemler"), list) else []
+                    for it in kalemler:
+                        if not isinstance(it, dict):
+                            continue
+                        ad = str(it.get("urun_ad") or "").strip()
+                        try:
+                            n = max(0, int(it.get("adet") or 0))
+                        except Exception:
+                            n = 0
+                        if not ad or n <= 0:
+                            continue
+                        toplam_adet += n
+                        parcalar.append(f"{n} {ad}")
+                    ozet = " · ".join(parcalar[:4])
+                    if len(parcalar) > 4:
+                        ozet += f" · +{len(parcalar) - 4} kalem"
+            son_kabul_kayitlari.append(
+                {
+                    "id": rd.get("id"),
+                    "tarih": str(rd.get("tarih") or ""),
+                    "saat": (str(rd.get("bildirim_saati") or "").strip() or "—"),
+                    "personel": rd.get("personel_ad") or rd.get("personel_id") or "Personel ?",
+                    "toplam_adet": toplam_adet,
+                    "ozet": ozet or "Kayıt",
+                }
+            )
+    except Exception:
+        son_kabul_kayitlari = []
 
     try:
         cur.execute(
@@ -1457,6 +1671,7 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
         "okunmamis_mesaj_var": okunmamis_mesaj_var,
         "stok_alarmlari": stok_alarmlari,
         "stok_alarm_var": stok_alarm_var,
+        "son_kabul_kayitlari": son_kabul_kayitlari,
         "bekleyen_siparis_sayisi": bekleyen_siparis_sayisi,
     }
 
@@ -1942,10 +2157,15 @@ def _stok_kalemleri_temizle(kalemler: Optional[List[Dict[str, Any]]]) -> List[Di
 def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
     """
     Depoya/şubeye teslim alınan ürün kaydı (SEVK = potansiyel stok).
-    Aktif stok sayımını değiştirmez — yalnızca deftere URUN_SEVK etiketiyle yazılır.
+    Teslim/kabul edilen kalemler şube deposuna +stok olarak yazılır ve deftere URUN_SEVK etiketiyle kaydedilir.
     Merkez bu kaydı sevk listesinde izler.
     """
-    from operasyon_stok_motor import STOK_KEYS, normalize_delta_body, _stok_key_from_urun_ad
+    from operasyon_stok_motor import (
+        STOK_KEYS,
+        normalize_delta_body,
+        _stok_key_from_urun_ad,
+        sube_depo_stok_depo_giris_ekle,
+    )
 
     pid_in = (body.personel_id or "").strip()
     pin = (body.pin or "").replace(" ", "")
@@ -2145,6 +2365,31 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 """,
                 (str(uuid.uuid4()), sube_id, str(kalem_kodu), adet_i, siparis_talep_id),
             )
+            # Şube paneli kabulü: depo stoğa doğrudan + yazılır.
+            sube_depo_stok_depo_giris_ekle(cur, sube_id, str(kalem_kodu), None, adet_i)
+
+        # STOK_KEYS dışındaki katalog/özel kalemleri de depoda iz olarak tut.
+        for it in kalemler:
+            if not isinstance(it, dict):
+                continue
+            urun_ad = str(it.get("urun_ad") or "").strip()
+            if not urun_ad:
+                continue
+            try:
+                adet_i = max(0, int(it.get("adet") or 0))
+            except (TypeError, ValueError):
+                adet_i = 0
+            if adet_i <= 0:
+                continue
+            stok_key = _stok_key_from_urun_ad(urun_ad)
+            if stok_key and int(sevk_kalemleri.get(stok_key) or 0) > 0:
+                continue
+            urun_id = str(it.get("urun_id") or "").strip()
+            if urun_id:
+                kalem_kodu = f"katalog__{urun_id}"
+            else:
+                kalem_kodu = f"ozel__{_norm_ad_tr(urun_ad)}"
+            sube_depo_stok_depo_giris_ekle(cur, sube_id, kalem_kodu, urun_ad, adet_i)
 
         if teslim_durumu == "eksik_var":
             cur.execute(

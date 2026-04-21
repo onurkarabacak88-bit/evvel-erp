@@ -4517,10 +4517,102 @@ def _siparis_kategori_kod_unique(cur, base: str) -> str:
         n += 1
 
 
+def _ops_json_prefix_parse(raw: Any, prefix: str) -> Dict[str, Any]:
+    txt = str(raw or "").strip()
+    if not txt.startswith(prefix):
+        return {}
+    body = txt[len(prefix):]
+    if " | " in body:
+        body = body.split(" | ", 1)[0]
+    body = body.strip()
+    if not body:
+        return {}
+    try:
+        j = json.loads(body)
+        return j if isinstance(j, dict) else {}
+    except Exception:
+        return {}
+
+
 @router.get("/siparis/katalog")
 def ops_siparis_katalog():
     with db() as (conn, cur):
         return {"kategoriler": _siparis_katalog_getir(cur)}
+
+
+@router.get("/siparis/kabul-takip")
+def ops_siparis_kabul_takip(gun: int = 7, limit: int = 120, sube_id: Optional[str] = None):
+    gun_i = max(1, min(31, int(gun or 7)))
+    lim_i = max(1, min(300, int(limit or 120)))
+    sid = (sube_id or "").strip() or None
+    with db() as (conn, cur):
+        q = """
+            SELECT d.id, d.sube_id, s.ad AS sube_adi, d.tarih, d.bildirim_saati,
+                   d.personel_id, d.personel_ad, d.olay_ts, d.aciklama
+            FROM operasyon_defter d
+            LEFT JOIN subeler s ON s.id = d.sube_id
+            WHERE d.etiket='URUN_SEVK'
+              AND d.tarih >= CURRENT_DATE - (%s::int || ' days')::interval
+        """
+        params: List[Any] = [gun_i]
+        if sid:
+            q += " AND d.sube_id=%s"
+            params.append(sid)
+        q += " ORDER BY d.tarih DESC, d.olay_ts DESC NULLS LAST, d.id DESC LIMIT %s"
+        params.append(lim_i)
+        cur.execute(q, tuple(params))
+        rows = [dict(r) for r in cur.fetchall()]
+
+    satirlar: List[Dict[str, Any]] = []
+    for r in rows:
+        payload = _ops_json_prefix_parse(r.get("aciklama"), "URUN_SEVK_JSON:")
+        delta = payload.get("delta") if isinstance(payload.get("delta"), dict) else {}
+        kalemler = payload.get("kalemler") if isinstance(payload.get("kalemler"), list) else []
+        kalem_ozet: List[Dict[str, Any]] = []
+
+        for k in STOK_KEYS:
+            try:
+                adet = max(0, int(delta.get(k) or 0))
+            except Exception:
+                adet = 0
+            if adet <= 0:
+                continue
+            kalem_ozet.append({"kalem_kodu": k, "kalem_adi": STOK_LABEL_TR.get(k) or k, "adet": adet})
+
+        for it in kalemler:
+            if not isinstance(it, dict):
+                continue
+            urun_ad = str(it.get("urun_ad") or "").strip()
+            try:
+                adet = max(0, int(it.get("adet") or 0))
+            except Exception:
+                adet = 0
+            if not urun_ad or adet <= 0:
+                continue
+            kalem_ozet.append({"kalem_kodu": str(it.get("urun_id") or ""), "kalem_adi": urun_ad, "adet": adet})
+
+        if not kalem_ozet:
+            continue
+
+        toplam_adet = sum(int(x.get("adet") or 0) for x in kalem_ozet)
+        ozet = " · ".join([f"{int(x['adet'])} {x['kalem_adi']}" for x in kalem_ozet[:4]])
+        if len(kalem_ozet) > 4:
+            ozet += f" · +{len(kalem_ozet) - 4} kalem"
+        satirlar.append(
+            {
+                "id": r.get("id"),
+                "sube_id": r.get("sube_id"),
+                "sube_adi": r.get("sube_adi"),
+                "tarih": str(r.get("tarih") or ""),
+                "saat": (str(r.get("bildirim_saati") or "").strip() or str(r.get("olay_ts") or "")[11:16] or "—"),
+                "personel_id": r.get("personel_id"),
+                "personel_ad": r.get("personel_ad"),
+                "toplam_adet": toplam_adet,
+                "ozet": ozet,
+                "kalemler": kalem_ozet,
+            }
+        )
+    return {"gun": gun_i, "sube_id": sid, "toplam": len(satirlar), "satirlar": satirlar}
 
 
 @router.get("/siparis/ozel-bekleyen")
@@ -4595,6 +4687,20 @@ class OpsSiparisSevkiyataGonderBody(BaseModel):
     not_aciklama: Optional[str] = None
     # Dağıtım / öncelik talimatı — depo + talep şubesi panelinde gösterilir
     operasyon_yonlendirme_talimati: Optional[str] = None
+
+
+class OpsSiparisToptanciKalemBody(BaseModel):
+    urun_ad: str
+    adet: int
+    kalem_kodu: Optional[str] = None
+    kategori_kod: Optional[str] = None
+
+
+class OpsSiparisToptanciyaYollaBody(BaseModel):
+    talep_id: str
+    tedarikci_ad: Optional[str] = None
+    not_aciklama: Optional[str] = None
+    kalemler: List[OpsSiparisToptanciKalemBody]
 
 
 class OpsSiparisSevkiyatKalemDurum(BaseModel):
@@ -4923,6 +5029,155 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
     }
 
 
+@router.post("/siparis/toptanciya-yolla")
+def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
+    tid = (body.talep_id or "").strip()
+    if not tid:
+        raise HTTPException(400, "talep_id zorunlu")
+    kalemler_in = body.kalemler or []
+    kalemler: List[Dict[str, Any]] = []
+    for k in kalemler_in:
+        ad = str(k.urun_ad or "").strip()
+        adet = max(0, int(k.adet or 0))
+        if not ad or adet <= 0:
+            continue
+        kalemler.append(
+            {
+                "urun_ad": ad,
+                "adet": adet,
+                "kalem_kodu": (str(k.kalem_kodu or "").strip() or None),
+                "kategori_kod": (str(k.kategori_kod or "").strip() or None),
+            }
+        )
+    if not kalemler:
+        raise HTTPException(400, "En az bir geçerli kalem girilmeli")
+    tedarikci_ad = (body.tedarikci_ad or "").strip() or None
+    notu = (body.not_aciklama or "").strip() or None
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT id, sube_id, durum
+            FROM siparis_talep
+            WHERE id=%s
+            FOR UPDATE
+            """,
+            (tid,),
+        )
+        tr = cur.fetchone()
+        if not tr:
+            raise HTTPException(404, "Sipariş talebi bulunamadı")
+        t = dict(tr)
+        if str(t.get("durum") or "") not in ("bekliyor", "hazirlaniyor", "gonderildi"):
+            raise HTTPException(409, "Talep toptancı yönlendirmesi için uygun durumda değil")
+
+        payload = {
+            "talep_id": tid,
+            "tedarikci_ad": tedarikci_ad,
+            "kalemler": kalemler,
+            "not_aciklama": notu,
+        }
+        defter_sube = str(t.get("sube_id") or "").strip() or _ops_sube_anchor(cur)
+        operasyon_defter_ekle(
+            cur,
+            defter_sube,
+            "SIPARIS_TOPTANCI_YONLENDIRME",
+            "TOPTANCI_SIPARIS_JSON:" + json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            bildirim_saati=dt_now_tr().strftime("%H:%M:%S"),
+            ref_event_id=tid,
+        )
+        audit(cur, "siparis_talep", tid, "OPS_SIPARIS_TOPTANCIYA_YOLLA")
+    return {"success": True, "talep_id": tid, "kalem_sayisi": len(kalemler), "toplam_adet": sum(int(k.get("adet") or 0) for k in kalemler)}
+
+
+@router.get("/siparis/toptanci-listesi")
+def ops_siparis_toptanci_listesi(
+    gun: int = 30,
+    limit: int = 800,
+    format: str = "json",  # json | csv
+):
+    gun_i = max(1, min(120, int(gun or 30)))
+    lim_i = max(1, min(5000, int(limit or 800)))
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT d.id, d.sube_id, s.ad AS sube_adi, d.tarih, d.bildirim_saati, d.aciklama
+            FROM operasyon_defter d
+            LEFT JOIN subeler s ON s.id = d.sube_id
+            WHERE d.etiket='SIPARIS_TOPTANCI_YONLENDIRME'
+              AND d.tarih >= CURRENT_DATE - (%s::int || ' days')::interval
+            ORDER BY d.tarih DESC, d.olay_ts DESC NULLS LAST, d.id DESC
+            LIMIT %s
+            """,
+            (gun_i, lim_i),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+
+    agregat: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        payload = _ops_json_prefix_parse(r.get("aciklama"), "TOPTANCI_SIPARIS_JSON:")
+        if not payload:
+            continue
+        kalemler = payload.get("kalemler") if isinstance(payload.get("kalemler"), list) else []
+        for it in kalemler:
+            if not isinstance(it, dict):
+                continue
+            urun_ad = str(it.get("urun_ad") or "").strip()
+            kategori_kod = str(it.get("kategori_kod") or "").strip()
+            if not kategori_kod:
+                kk = str(it.get("kalem_kodu") or "").strip()
+                if kk.startswith("katalog__") and "__" in kk:
+                    parts = kk.split("__")
+                    if len(parts) >= 3:
+                        kategori_kod = str(parts[1] or "").strip()
+            if not kategori_kod:
+                kategori_kod = "genel"
+            try:
+                adet = max(0, int(it.get("adet") or 0))
+            except Exception:
+                adet = 0
+            if not urun_ad or adet <= 0:
+                continue
+            key = f"{kategori_kod}::{urun_ad}"
+            if key not in agregat:
+                agregat[key] = {
+                    "kategori_kod": kategori_kod,
+                    "urun_ad": urun_ad,
+                    "toplam_adet": 0,
+                    "kayit_sayisi": 0,
+                    "son_tarih": str(r.get("tarih") or ""),
+                }
+            agregat[key]["toplam_adet"] += adet
+            agregat[key]["kayit_sayisi"] += 1
+            trh = str(r.get("tarih") or "")
+            if trh and trh > str(agregat[key].get("son_tarih") or ""):
+                agregat[key]["son_tarih"] = trh
+
+    satirlar = sorted(
+        agregat.values(),
+        key=lambda x: (str(x.get("kategori_kod") or ""), str(x.get("urun_ad") or "")),
+    )
+
+    if format.lower() == "csv":
+        sio = io.StringIO()
+        wr = csv.writer(sio)
+        wr.writerow(["kategori_kod", "urun_ad", "toplam_adet", "kayit_sayisi", "son_tarih"])
+        for s in satirlar:
+            wr.writerow([s.get("kategori_kod"), s.get("urun_ad"), s.get("toplam_adet"), s.get("kayit_sayisi"), s.get("son_tarih")])
+        csv_text = sio.getvalue()
+        return Response(
+            content="\ufeff" + csv_text,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="toptanci_siparisleri_{bugun_tr()}.csv"'},
+        )
+
+    return {
+        "gun": gun_i,
+        "toplam_kayit": len(rows),
+        "toplam_satir": len(satirlar),
+        "satirlar": satirlar,
+    }
+
+
 @router.get("/subeler/depolar")
 def ops_subeler_depolar():
     with db() as (conn, cur):
@@ -5131,7 +5386,9 @@ def ops_siparis_sevkiyat_uyumsuzluklar(gun: int = 30, limit: int = 100):
             LEFT JOIN subeler hs ON hs.id = y.sube_id
             LEFT JOIN subeler ks ON ks.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
             WHERE t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+              AND y.kabul_ts IS NOT NULL
               AND COALESCE(y.sevk_adet, 0) <> COALESCE(y.kabul_adet, 0)
+              AND y.durum IN ('kabul_uyusmazlik', 'kabul_edildi', 'yolda')
             ORDER BY t.tarih DESC, y.sevk_ts DESC NULLS LAST
             LIMIT %s
             """,
@@ -5260,6 +5517,29 @@ def ops_siparis_sevkiyat_uyumsuzluk_coz(body: OpsSevkiyatUyumsuzlukCozBody):
             """,
             (cozum, cozum, yid),
         )
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM stok_yolda
+            WHERE siparis_talep_id=%s
+              AND kabul_ts IS NOT NULL
+              AND COALESCE(sevk_adet, 0) <> COALESCE(kabul_adet, 0)
+              AND durum <> 'uzlasildi'
+            """,
+            (str(r.get("siparis_talep_id") or ""),),
+        )
+        kalan_uyumsuz = int((cur.fetchone() or [0])[0] or 0)
+        if kalan_uyumsuz <= 0:
+            cur.execute(
+                """
+                UPDATE siparis_talep
+                SET sevkiyat_durumu='teslim_edildi',
+                    sevkiyat_durum='teslim_edildi',
+                    durum='teslim_edildi'
+                WHERE id=%s
+                """,
+                (str(r.get("siparis_talep_id") or ""),),
+            )
 
         aciklama = (
             f"Sevkiyat uyumsuzluk uzlaştırıldı — yolda_id={yid} kalem={kk} "

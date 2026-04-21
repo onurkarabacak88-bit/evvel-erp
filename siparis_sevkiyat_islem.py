@@ -130,6 +130,33 @@ def build_depo_sevkiyat_rapor(
     return (bas + "\n".join(satirlar), uyari)
 
 
+def _kaynak_depo_aktif_uyumsuzluk_sayisi(cur: Any, kaynak_depo_sube_id: str, haric_talep_id: str) -> int:
+    """Çözülmemiş kabul uyumsuzluğu olan sevkiyat satırlarını sayar."""
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM stok_yolda y
+        JOIN siparis_talep t ON t.id = y.siparis_talep_id
+        WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) = %s
+          AND t.id <> %s
+          AND (
+            y.durum = 'kabul_uyusmazlik'
+            OR (
+              y.durum IN ('kabul_edildi', 'yolda')
+              AND y.kabul_ts IS NOT NULL
+              AND COALESCE(y.sevk_adet, 0) <> COALESCE(y.kabul_adet, 0)
+            )
+          )
+        """,
+        (kaynak_depo_sube_id, haric_talep_id),
+    )
+    rr = cur.fetchone()
+    try:
+        return int((rr or [0])[0] or 0)
+    except Exception:
+        return 0
+
+
 def siparis_sevkiyat_kalem_guncelle_execute(
     cur: Any,
     *,
@@ -171,6 +198,14 @@ def siparis_sevkiyat_kalem_guncelle_execute(
         raise HTTPException(409, "Talep farklı sevkiyat şubesine atanmış")
     if str(row.get("durum") or "") == "teslim_edildi":
         raise HTTPException(409, "Talep zaten teslim edildi")
+    if yeni_durum == "gonderildi":
+        uyumsuz_sayi = _kaynak_depo_aktif_uyumsuzluk_sayisi(cur, sevk_sid, tid)
+        if uyumsuz_sayi > 0:
+            raise HTTPException(
+                409,
+                f"Sevkiyat blokajı aktif: {uyumsuz_sayi} çözülmemiş kabul uyumsuzluğu var. "
+                "Önce Operasyon Merkezi > Sevkiyat uyumsuzlukları ekranından uzlaştırın.",
+            )
 
     rapor_metni, rapor_uyari = build_depo_sevkiyat_rapor(durumlar, personel_ad=personel_ad)
 
