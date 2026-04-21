@@ -18,6 +18,85 @@ function magazaAktifUrunSayisi(kat) {
   return items.filter((it) => it && it.aktif !== false).length;
 }
 
+/** Katalog API sayıları (JSON sayı veya "1.234,56" metni). */
+function magazaKatalogSayi(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  const s = String(v).trim().replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
+  if (!s) return null;
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function magazaIlkSayi(it, keys) {
+  if (!it || typeof it !== 'object') return null;
+  for (const key of keys) {
+    const n = magazaKatalogSayi(it[key]);
+    if (n != null) return n;
+  }
+  return null;
+}
+
+function magazaUrunStokVeFiyat(it) {
+  if (!it || typeof it !== 'object') {
+    return { stok: null, birim_fiyat: null, toplam_stok_degeri: null };
+  }
+  const stok = magazaIlkSayi(it, ['stok', 'depo_stok', 'miktar', 'stok_miktari']);
+  const birim_fiyat = magazaIlkSayi(it, ['birim_fiyat_tl', 'birim_fiyat', 'fiyat', 'fiyat_tl', 'alis_fiyat', 'unit_fiyat']);
+  const toplam = stok != null && birim_fiyat != null ? stok * birim_fiyat : null;
+  return { stok, birim_fiyat, toplam_stok_degeri: toplam };
+}
+
+function magazaFmtStok(n) {
+  if (n == null || Number.isNaN(n)) return '—';
+  return new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 2 }).format(n);
+}
+
+function magazaFmtBirimFiyat(n) {
+  if (n == null || Number.isNaN(n)) return '—';
+  return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 2 }).format(n);
+}
+
+/** Hub kartı varsa şube id; yoksa mağaza slug ile yerel anahtar (aynı depo ekranında elle stok). */
+function magazaSubeDepoAnahtar(k, m) {
+  const sid = k?.sube_id;
+  if (sid) return String(sid);
+  return `slug:${m.slug}`;
+}
+
+function magazaStokGirdiOku(stokMap, sid, urunId, apiStok) {
+  const key = `${sid}::${urunId}`;
+  if (stokMap && Object.prototype.hasOwnProperty.call(stokMap, key)) return stokMap[key];
+  if (apiStok != null) return String(apiStok);
+  return '';
+}
+
+function magazaUrunEfektifBirimFiyat(it, fiyatMap) {
+  if (!it || typeof it !== 'object') return null;
+  const urunId = String(it.id || '').trim();
+  if (urunId && fiyatMap && Object.prototype.hasOwnProperty.call(fiyatMap, urunId)) {
+    const overrideFiyat = magazaKatalogSayi(fiyatMap[urunId]);
+    if (overrideFiyat != null && overrideFiyat >= 0) return overrideFiyat;
+  }
+  return it.birim_fiyat != null && Number.isFinite(it.birim_fiyat) ? it.birim_fiyat : null;
+}
+
+function magazaKategoriStokDegerToplamSube(kat, sid, stokMap, fiyatMap) {
+  const items = Array.isArray(kat?.items) ? kat.items : [];
+  let t = 0;
+  let any = false;
+  for (const it of items) {
+    const raw = magazaStokGirdiOku(stokMap, sid, it.id, it.stok);
+    const stok = magazaKatalogSayi(raw);
+    const bp = magazaUrunEfektifBirimFiyat(it, fiyatMap);
+    if (stok != null && bp != null && Number.isFinite(bp)) {
+      t += stok * bp;
+      any = true;
+    }
+  }
+  return any ? t : null;
+}
+
 function siparisKatalogLikeSubePanelNormalize(raw) {
   if (!Array.isArray(raw)) return [];
   return raw.map((k, ki) => {
@@ -25,13 +104,24 @@ function siparisKatalogLikeSubePanelNormalize(raw) {
     const nItems = items.map((it, i) => {
       if (typeof it === 'string') {
         const ad = it.trim();
-        return { id: `${magazaDepoSlugifyTr(ad)}_${i}`, ad, aktif: true };
+        return {
+          id: `${magazaDepoSlugifyTr(ad)}_${i}`,
+          ad,
+          aktif: true,
+          stok: null,
+          birim_fiyat: null,
+          toplam_stok_degeri: null,
+        };
       }
       const ad = String((it && it.ad) || '').trim() || `Ürün ${i + 1}`;
+      const { stok, birim_fiyat, toplam_stok_degeri } = magazaUrunStokVeFiyat(it);
       return {
         id: String((it && it.id) || '').trim() || `${magazaDepoSlugifyTr(ad)}_${i}`,
         ad,
         aktif: it && it.aktif !== false,
+        stok,
+        birim_fiyat,
+        toplam_stok_degeri,
       };
     });
     return {
@@ -74,7 +164,7 @@ const UST_SEKMELER = [
   { id: 'ciro-onay', label: '💳 Bekleyen Ciro Onayları' },
   { id: 'kasa-uyumsuzluk', label: '🔴 Kasa Uyumsuzluğu' },
   { id: 'urun-uyumsuzluk', label: '🧪 Ürün Uyumsuzlukları' },
-  { id: 'magaza-kartlari', label: '🏪 Alsancak · Köyceğiz · Tema · Zafer' },
+  { id: 'magaza-kartlari', label: '🏪 Depo stokları' },
   { id: 'kontrol', label: '🔍 Kontrol' },
   { id: 'metrics', label: '📊 Metrikler' },
   { id: 'stok-kayip', label: '📉 Stok Kayıp' },
@@ -742,6 +832,20 @@ export default function OperasyonMerkezi() {
     fiyat_tl: '',
     adet: '',
   });
+  const [magazaFiyatGuncelleAcik, setMagazaFiyatGuncelleAcik] = useState(false);
+  const [magazaFiyatGuncelleForm, setMagazaFiyatGuncelleForm] = useState({
+    kategori_kod: '',
+    urun_id: '',
+    yeni_fiyat_tl: '',
+  });
+  /** ürün bazlı global override fiyat: urun_id -> birim fiyat */
+  const [magazaGlobalFiyatMap, setMagazaGlobalFiyatMap] = useState({});
+  /** kategori içi hızlı fiyat düzenleme taslakları: urun_id -> metin fiyat */
+  const [magazaFiyatHizliTaslak, setMagazaFiyatHizliTaslak] = useState({});
+  /** `${subeId|slug:slug}::${urunId}` → elle girilen stok metni (şube + katalog ürünü başına). */
+  const [magazaSubeStokInput, setMagazaSubeStokInput] = useState({});
+  /** Şube anahtarı → katalog dışı manuel satırlar (yerel; API yok). */
+  const [magazaManuelSatirlar, setMagazaManuelSatirlar] = useState({});
   const [mPersonelVerimlilik, setMPersonelVerimlilik] = useState(null);
   const [mSubeOperasyonKalite, setMSubeOperasyonKalite] = useState(null);
   const [mFinansOzet, setMFinansOzet] = useState(null);
@@ -2887,16 +2991,34 @@ export default function OperasyonMerkezi() {
 
       {aktifSekme === 'magaza-kartlari' && (
         <div className="card" style={{ padding: '18px 20px' }}>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
             <button
               type="button"
               className="btn btn-primary btn-sm"
               onClick={() => {
-                setMagazaUrunEkleAcik((a) => !a);
+                setMagazaUrunEkleAcik((a) => {
+                  const ac = !a;
+                  if (ac) setMagazaFiyatGuncelleAcik(false);
+                  return ac;
+                });
               }}
               style={magazaUrunEkleAcik ? { boxShadow: '0 0 0 1px rgba(45, 181, 115, 0.45)' } : undefined}
             >
               {magazaUrunEkleAcik ? 'Ürün eklemeyi kapat' : '＋ Ürün ekle'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                setMagazaFiyatGuncelleAcik((a) => {
+                  const ac = !a;
+                  if (ac) setMagazaUrunEkleAcik(false);
+                  return ac;
+                });
+              }}
+              style={magazaFiyatGuncelleAcik ? { boxShadow: '0 0 0 1px rgba(200, 124, 26, 0.55)' } : undefined}
+            >
+              {magazaFiyatGuncelleAcik ? 'Fiyat güncellemeyi kapat' : 'Fiyat güncelle'}
             </button>
           </div>
 
@@ -2989,12 +3111,175 @@ export default function OperasyonMerkezi() {
             </div>
           )}
 
+          {magazaFiyatGuncelleAcik && (
+            <div
+              className="card"
+              style={{
+                marginBottom: 16,
+                padding: '14px 16px',
+                borderLeft: '4px solid #c97c1a',
+                background: 'var(--bg2)',
+              }}
+            >
+              <h4 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Birim fiyat güncelle (hızlı düzenleme)</h4>
+              <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 12px', lineHeight: 1.45 }}>
+                Kategori ve ürün seçip fiyatı hızlıca güncelleyin. <strong>Uygula</strong> tıklanınca seçilen ürünün fiyatı aynı katalog kaynağını kullanan
+                <strong> tüm şube depo kartlarına</strong> anında yansıtılır.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, alignItems: 'end', marginBottom: 10 }}>
+                <label style={{ margin: 0 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Kategori</span>
+                  <select
+                    className="input"
+                    value={magazaFiyatGuncelleForm.kategori_kod}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const kat = (magazaDepoKatalogState.kategoriler || []).find((k) => k.id === v);
+                      const items = (Array.isArray(kat?.items) ? kat.items : []).filter((it) => it && it.aktif !== false);
+                      const taslak = {};
+                      items.forEach((it) => {
+                        const efektifFiyat = magazaUrunEfektifBirimFiyat(it, magazaGlobalFiyatMap);
+                        taslak[it.id] = efektifFiyat != null ? String(efektifFiyat) : '';
+                      });
+                      const seciliUrunId = items[0] ? String(items[0].id || '') : '';
+                      setMagazaFiyatGuncelleForm({
+                        kategori_kod: v,
+                        urun_id: seciliUrunId,
+                        yeni_fiyat_tl: seciliUrunId ? (taslak[seciliUrunId] ?? '') : '',
+                      });
+                      setMagazaFiyatHizliTaslak(taslak);
+                    }}
+                  >
+                    <option value="">Seçin</option>
+                    {(magazaDepoKatalogState.kategoriler || []).map((kat) => (
+                      <option key={`mag-fg-${kat.id}`} value={kat.id}>{kat.label || kat.ad || kat.id}</option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ margin: 0 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Ürün</span>
+                  <select
+                    className="input"
+                    value={magazaFiyatGuncelleForm.urun_id}
+                    onChange={(e) => {
+                      const urunId = e.target.value;
+                      setMagazaFiyatGuncelleForm((prev) => ({
+                        ...prev,
+                        urun_id: urunId,
+                        yeni_fiyat_tl: String(magazaFiyatHizliTaslak[urunId] ?? ''),
+                      }));
+                    }}
+                    disabled={!String(magazaFiyatGuncelleForm.kategori_kod || '').trim()}
+                  >
+                    <option value="">Seçin</option>
+                    {(() => {
+                      const kod = String(magazaFiyatGuncelleForm.kategori_kod || '').trim();
+                      const kat = (magazaDepoKatalogState.kategoriler || []).find((k) => k.id === kod);
+                      const items = (Array.isArray(kat?.items) ? kat.items : []).filter((it) => it && it.aktif !== false);
+                      return items.map((it) => (
+                        <option key={`mag-fg-urun-${it.id}`} value={it.id}>{it.ad || it.id}</option>
+                      ));
+                    })()}
+                  </select>
+                </label>
+                <label style={{ margin: 0 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Yeni fiyat (TL)</span>
+                  <input
+                    className="input"
+                    inputMode="decimal"
+                    value={magazaFiyatGuncelleForm.yeni_fiyat_tl}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const urunId = String(magazaFiyatGuncelleForm.urun_id || '').trim();
+                      setMagazaFiyatGuncelleForm((prev) => ({ ...prev, yeni_fiyat_tl: v }));
+                      if (!urunId) return;
+                      setMagazaFiyatHizliTaslak((prev) => ({ ...prev, [urunId]: v }));
+                    }}
+                    placeholder="0,00"
+                    disabled={!String(magazaFiyatGuncelleForm.urun_id || '').trim()}
+                  />
+                </label>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      setMagazaFiyatGuncelleForm({ kategori_kod: '', urun_id: '', yeni_fiyat_tl: '' });
+                      setMagazaFiyatHizliTaslak({});
+                    }}
+                  >
+                    Temizle
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    disabled={
+                      !String(magazaFiyatGuncelleForm.kategori_kod || '').trim()
+                      || !String(magazaFiyatGuncelleForm.urun_id || '').trim()
+                    }
+                    onClick={async () => {
+                      const urunId = String(magazaFiyatGuncelleForm.urun_id || '').trim();
+                      if (!urunId) {
+                        toast('Önce bir ürün seçin.', 'yellow');
+                        return;
+                      }
+                      const parsed = magazaKatalogSayi(magazaFiyatGuncelleForm.yeni_fiyat_tl);
+                      if (parsed == null || parsed < 0) {
+                        toast('Fiyat 0 veya daha büyük sayısal bir değer olmalı.', 'yellow');
+                        return;
+                      }
+                      try {
+                        await api('/ops/siparis/urun-fiyat', {
+                          method: 'POST',
+                          body: {
+                            kategori_kod: String(magazaFiyatGuncelleForm.kategori_kod || '').trim(),
+                            urun_id: urunId,
+                            birim_fiyat_tl: parsed,
+                          },
+                        });
+                        setMagazaGlobalFiyatMap((prev) => ({ ...prev, [urunId]: parsed }));
+                        await magazaDepoTamYenile();
+                        toast('Fiyat güncellendi ve tüm depo kartlarına yansıtıldı.', 'green');
+                      } catch (e) {
+                        toast(`Fiyat güncellenemedi: ${e.message}`, 'red');
+                      }
+                    }}
+                  >
+                    Seçili ürünü tüm depolara uygula
+                  </button>
+                </div>
+              </div>
+              {String(magazaFiyatGuncelleForm.kategori_kod || '').trim() && (
+                <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', background: 'var(--bg)' }}>
+                  {(() => {
+                    const kod = String(magazaFiyatGuncelleForm.kategori_kod || '').trim();
+                    const urunId = String(magazaFiyatGuncelleForm.urun_id || '').trim();
+                    const kat = (magazaDepoKatalogState.kategoriler || []).find((k) => k.id === kod);
+                    const items = (Array.isArray(kat?.items) ? kat.items : []).filter((it) => it && it.aktif !== false);
+                    const seciliUrun = items.find((it) => String(it.id || '') === urunId);
+                    if (!seciliUrun) {
+                      return <div style={{ fontSize: 12, color: 'var(--text3)' }}>Bu kategoride aktif ürün yok.</div>;
+                    }
+                    const sistemFiyat = seciliUrun.birim_fiyat;
+                    const efektifFiyat = magazaUrunEfektifBirimFiyat(seciliUrun, magazaGlobalFiyatMap);
+                    return (
+                      <div style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                        <strong style={{ fontSize: 13 }}>{seciliUrun.ad}</strong>
+                        <span style={{ color: 'var(--text3)' }}>Mevcut / Sistem fiyatı: {magazaFmtBirimFiyat(sistemFiyat)}</span>
+                        <span style={{ color: 'var(--text2)' }}>Geçerli efektif fiyat: {magazaFmtBirimFiyat(efektifFiyat)}</span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
+
           <div style={{ marginBottom: 14 }}>
             <h3 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 8px' }}>Dört mağaza deposu — hub + katalog iskeleti</h3>
             <p style={{ fontSize: 12, color: 'var(--text3)', margin: 0, lineHeight: 1.5 }}>
-              Kart başlıkları &quot;… Depo&quot; olarak gösterilir. Ürün adları şube panelindeki sipariş kataloğu ile aynı kaynaktan
-              (<code style={{ fontSize: 11 }}>/ops/siparis/katalog</code>) normalize edilir. İleride şube bazlı fiyat, diğer depolar ve
-              şube paneli ekranları bu kartların <code style={{ fontSize: 11 }}>data-magaza-slug</code> / <code style={{ fontSize: 11 }}>data-sube-id</code> alanları üzerinden bağlanacak.
+              Aynı katalog kaynağı (<code style={{ fontSize: 11 }}>/ops/siparis/katalog</code>). Her depo kartında, şube başına{' '}
+              <strong>elle stok</strong> alanı (uyumsuzluk / sayım farkı için) ve <strong>manuel ürün satırları</strong> vardır; değerler şimdilik yalnızca tarayıcıda kalır (sunucuya yazılmaz).
             </p>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 12 }}>
@@ -3002,6 +3287,8 @@ export default function OperasyonMerkezi() {
               const k = magazaKartBul(kartlar, m);
               const risk = k ? riskliPersonelSubeMap[k.sube_id] : null;
               const katList = magazaDepoKatalogState.kategoriler || [];
+              const subeDepoKey = magazaSubeDepoAnahtar(k, m);
+              const manuelListe = Array.isArray(magazaManuelSatirlar[subeDepoKey]) ? magazaManuelSatirlar[subeDepoKey] : [];
               return (
                 <div
                   key={m.slug}
@@ -3027,24 +3314,20 @@ export default function OperasyonMerkezi() {
                     </p>
                   )}
                   {k && (
-                    <>
-                      <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                        <span className="mono">{k.sube_id}</span>
-                        {' · '}
-                        {k.sube_adi || '—'}
-                        {risk ? <span className="badge badge-yellow" style={{ marginLeft: 8 }}>Personel riski</span> : null}
-                      </div>
-                      <button type="button" className="btn btn-primary btn-sm" onClick={() => setDetay(k)} style={{ alignSelf: 'flex-start' }}>
-                        Şube detayını aç
-                      </button>
-                    </>
+                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                      <span className="mono">{k.sube_id}</span>
+                      {' · '}
+                      {k.sube_adi || '—'}
+                      {risk ? <span className="badge badge-yellow" style={{ marginLeft: 8 }}>Personel riski</span> : null}
+                    </div>
                   )}
                   <div
                     data-magaza-depo-katalog-root
                     style={{ borderTop: '1px dashed var(--border)', paddingTop: 10, marginTop: 2 }}
                   >
                     <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', marginBottom: 6 }}>
-                      Sipariş kataloğu (şube paneli ile aynı ürün adları)
+                      Katalog + şube bazlı elle stok
+                      <span className="mono" style={{ fontWeight: 500, marginLeft: 6, fontSize: 10, color: 'var(--text3)' }}>{subeDepoKey}</span>
                     </div>
                     {magazaDepoKatalogState.yukleniyor && (
                       <div style={{ fontSize: 12, color: 'var(--text3)' }}>Katalog yükleniyor…</div>
@@ -3056,6 +3339,7 @@ export default function OperasyonMerkezi() {
                       const kk = `${m.slug}::${kat.id}`;
                       const acik = magazaDepoKatAcik[kk] === true;
                       const nAktif = magazaAktifUrunSayisi(kat);
+                      const katDeger = magazaKategoriStokDegerToplamSube(kat, subeDepoKey, magazaSubeStokInput, magazaGlobalFiyatMap);
                       return (
                         <div key={kk} style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', marginBottom: 6 }}>
                           <button
@@ -3076,30 +3360,198 @@ export default function OperasyonMerkezi() {
                             }}
                           >
                             <span style={{ textAlign: 'left' }}>{kat.label}</span>
-                            <span style={{ color: 'var(--text3)', fontSize: 10, flexShrink: 0, marginLeft: 8 }}>
-                              {nAktif} ürün {acik ? '▲' : '▼'}
+                            <span style={{ color: 'var(--text3)', fontSize: 10, flexShrink: 0, marginLeft: 8, textAlign: 'right' }}>
+                              <span>
+                                {nAktif} ürün {acik ? '▲' : '▼'}
+                              </span>
+                              {katDeger != null ? (
+                                <span style={{ display: 'block', marginTop: 2, color: 'var(--text2)' }}>
+                                  Kategori toplam: {magazaFmtBirimFiyat(katDeger)}
+                                </span>
+                              ) : null}
                             </span>
                           </button>
                           {acik && (
-                            <ul style={{ margin: 0, padding: '6px 10px 8px', listStyle: 'none', fontSize: 12, background: 'var(--bg)' }}>
-                              {(kat.items || []).map((it) => (
-                                <li
-                                  key={`${kk}-${it.id}`}
-                                  style={{
-                                    padding: '4px 0',
-                                    borderBottom: '1px solid var(--border)',
-                                    color: it.aktif === false ? 'var(--text3)' : 'var(--text)',
-                                    textDecoration: it.aktif === false ? 'line-through' : 'none',
-                                  }}
-                                >
-                                  {it.ad}
-                                </li>
-                              ))}
-                            </ul>
+                            <div style={{ background: 'var(--bg)' }}>
+                              <div
+                                style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: 'minmax(0,1fr) 92px 70px 78px',
+                                  gap: 6,
+                                  alignItems: 'center',
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  color: 'var(--text3)',
+                                  padding: '6px 10px 4px',
+                                  borderBottom: '1px solid var(--border)',
+                                }}
+                              >
+                                <span>Ürün</span>
+                                <span style={{ textAlign: 'center' }}>Elle stok</span>
+                                <span style={{ textAlign: 'right' }}>Fiyat</span>
+                                <span style={{ textAlign: 'right' }}>Toplam</span>
+                              </div>
+                              <ul style={{ margin: 0, padding: '0 10px 8px', listStyle: 'none', fontSize: 11, background: 'var(--bg)' }}>
+                                {(kat.items || []).map((it) => {
+                                  const stokRaw = magazaStokGirdiOku(magazaSubeStokInput, subeDepoKey, it.id, it.stok);
+                                  const stokSayi = String(stokRaw).trim() === '' ? null : magazaKatalogSayi(stokRaw);
+                                  const efektifBirimFiyat = magazaUrunEfektifBirimFiyat(it, magazaGlobalFiyatMap);
+                                  const satirToplam = stokSayi != null && efektifBirimFiyat != null && Number.isFinite(efektifBirimFiyat)
+                                    ? stokSayi * efektifBirimFiyat
+                                    : null;
+                                  return (
+                                    <li
+                                      key={`${kk}-${it.id}`}
+                                      style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: 'minmax(0,1fr) 92px 70px 78px',
+                                        gap: 6,
+                                        alignItems: 'center',
+                                        padding: '5px 0',
+                                        borderBottom: '1px solid var(--border)',
+                                        color: it.aktif === false ? 'var(--text3)' : 'var(--text)',
+                                        textDecoration: it.aktif === false ? 'line-through' : 'none',
+                                      }}
+                                    >
+                                      <div style={{ minWidth: 0 }}>
+                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={it.ad}>{it.ad}</span>
+                                        {it.stok != null ? (
+                                          <span style={{ fontSize: 9, color: 'var(--text3)' }}>Sistem: {magazaFmtStok(it.stok)}</span>
+                                        ) : (
+                                          <span style={{ fontSize: 9, color: 'var(--text3)' }}>Sistem verisi yok</span>
+                                        )}
+                                      </div>
+                                      <input
+                                        type="text"
+                                        className="input"
+                                        inputMode="decimal"
+                                        placeholder="Stok"
+                                        value={stokRaw}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          const mapKey = `${subeDepoKey}::${it.id}`;
+                                          setMagazaSubeStokInput((prev) => ({ ...prev, [mapKey]: v }));
+                                        }}
+                                        style={{ fontSize: 11, padding: '4px 6px', width: '100%', minWidth: 0 }}
+                                      />
+                                      <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{magazaFmtBirimFiyat(efektifBirimFiyat)}</span>
+                                      <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{magazaFmtBirimFiyat(satirToplam)}</span>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
                           )}
                         </div>
                       );
                     })}
+                    <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>Manuel ürün (katalog dışı)</div>
+                      <p style={{ fontSize: 10, color: 'var(--text3)', margin: '0 0 8px', lineHeight: 1.4 }}>
+                        Bu depo / şube anahtarı için ek satırlar. Uyumsuzluk veya katalogda olmayan ürünleri burada tutabilirsiniz; veri yalnızca tarayıcıda (yenileyince gider).
+                      </p>
+                      {manuelListe.map((row) => {
+                        const st = String(row.stok || '').trim() === '' ? null : magazaKatalogSayi(row.stok);
+                        const fp = String(row.fiyat || '').trim() === '' ? null : magazaKatalogSayi(row.fiyat);
+                        const lineTot = st != null && fp != null ? st * fp : null;
+                        return (
+                          <div
+                            key={row.lid}
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: 'minmax(0,1fr) 72px 72px 78px 34px',
+                              gap: 6,
+                              marginBottom: 6,
+                              alignItems: 'center',
+                            }}
+                          >
+                            <input
+                              type="text"
+                              className="input"
+                              placeholder="Ürün adı"
+                              value={row.ad}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setMagazaManuelSatirlar((prev) => {
+                                  const arr = [...(prev[subeDepoKey] || [])];
+                                  const i = arr.findIndex((r) => r.lid === row.lid);
+                                  if (i < 0) return prev;
+                                  arr[i] = { ...arr[i], ad: v };
+                                  return { ...prev, [subeDepoKey]: arr };
+                                });
+                              }}
+                              style={{ fontSize: 11, padding: '4px 6px', minWidth: 0 }}
+                            />
+                            <input
+                              type="text"
+                              className="input"
+                              inputMode="decimal"
+                              placeholder="Stok"
+                              value={row.stok}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setMagazaManuelSatirlar((prev) => {
+                                  const arr = [...(prev[subeDepoKey] || [])];
+                                  const i = arr.findIndex((r) => r.lid === row.lid);
+                                  if (i < 0) return prev;
+                                  arr[i] = { ...arr[i], stok: v };
+                                  return { ...prev, [subeDepoKey]: arr };
+                                });
+                              }}
+                              style={{ fontSize: 11, padding: '4px 6px', minWidth: 0 }}
+                            />
+                            <input
+                              type="text"
+                              className="input"
+                              inputMode="decimal"
+                              placeholder="Birim ₺"
+                              value={row.fiyat}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setMagazaManuelSatirlar((prev) => {
+                                  const arr = [...(prev[subeDepoKey] || [])];
+                                  const i = arr.findIndex((r) => r.lid === row.lid);
+                                  if (i < 0) return prev;
+                                  arr[i] = { ...arr[i], fiyat: v };
+                                  return { ...prev, [subeDepoKey]: arr };
+                                });
+                              }}
+                              style={{ fontSize: 11, padding: '4px 6px', minWidth: 0 }}
+                            />
+                            <span style={{ fontSize: 10, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--text2)' }}>
+                              {magazaFmtBirimFiyat(lineTot)}
+                            </span>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              title="Satırı sil"
+                              onClick={() => {
+                                setMagazaManuelSatirlar((prev) => ({
+                                  ...prev,
+                                  [subeDepoKey]: (prev[subeDepoKey] || []).filter((r) => r.lid !== row.lid),
+                                }));
+                              }}
+                              style={{ padding: '2px 6px', fontSize: 14, lineHeight: 1 }}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => {
+                          const lid = `m_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+                          setMagazaManuelSatirlar((prev) => ({
+                            ...prev,
+                            [subeDepoKey]: [...(prev[subeDepoKey] || []), { lid, ad: '', stok: '', fiyat: '' }],
+                          }));
+                        }}
+                      >
+                        ＋ Manuel satır ekle
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
