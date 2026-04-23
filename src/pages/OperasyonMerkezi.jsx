@@ -1055,7 +1055,7 @@ export default function OperasyonMerkezi() {
   const toast = useCallback((m, t = 'red') => {
     setMsg({ m, t });
     window.setTimeout(() => setMsg(null), 4000);
-  }, [toast]);
+  }, []);
 
   /** hub-ozet yanıtı: state + yeni sipariş geldiğinde bildirim */
   const hubOzetIsle = useCallback((r) => {
@@ -2660,7 +2660,7 @@ export default function OperasyonMerkezi() {
                         acOpsModul('siparis');
                       }}
                     >
-                      Siparis katalog - ozel talepler ->
+                      Siparis katalog - ozel talepler →
                     </button>
                   )}
                   <button
