@@ -1,6 +1,6 @@
 FROM node:20-bookworm-slim AS frontend 
 
-WORKDIR /app
+WORKDIR /app 
 COPY package.json package-lock.json ./
 # Birçok builder NODE_ENV=production ile çalışır; o durumda `npm ci` devDependencies
 # (vite, @vitejs/plugin-react) kurmaz ve `vite build` bulunamadığı için patlar.
