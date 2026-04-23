@@ -608,10 +608,18 @@ export function SabitGiderler() {
     }catch(e){toast(e.message,'red');}
   }
   async function faturaOdeAc(g) {
-    setFaturaForm({tutar:'', tarih: new Date().toISOString().split('T')[0], odeme_yontemi:'nakit', kart_id:''});
     setFaturaModal({gider_id: g.id, gider_adi: g.gider_adi});
     setFaturaKartOneri(null);
-    api(`/fatura-gecmis/${g.id}`).then(setFaturaGecmis).catch(()=>setFaturaGecmis([]));
+    // Geçmiş ödemeleri yükle — son tutarı otomatik öneri olarak kullan (tekrarlılık şablonu)
+    const gecmis = await api(`/fatura-gecmis/${g.id}`).catch(() => []);
+    setFaturaGecmis(gecmis);
+    const sonTutar = gecmis?.[0]?.tutar;
+    setFaturaForm({
+      tutar: sonTutar ? String(Math.round(Number(sonTutar))) : '',
+      tarih: new Date().toISOString().split('T')[0],
+      odeme_yontemi: 'nakit',
+      kart_id: '',
+    });
   }
 
   async function faturaOdeKaydet() {
@@ -789,6 +797,12 @@ export function SabitGiderler() {
                   <input type="number" value={faturaForm.tutar}
                     onChange={e=>setFaturaForm({...faturaForm,tutar:e.target.value})}
                     placeholder="0" autoFocus/>
+                  {faturaGecmis.length > 0 && (
+                    <div style={{fontSize:11,color:'var(--text3)',marginTop:3}}>
+                      📋 Son ödeme: {parseInt(faturaGecmis[0].tutar||0).toLocaleString('tr-TR')} ₺
+                      {faturaGecmis[0].tarih ? ` (${String(faturaGecmis[0].tarih).slice(0,10)})` : ''}
+                    </div>
+                  )}
                 </div>
                 <div className="form-group">
                   <label>Ödeme Tarihi *</label>
