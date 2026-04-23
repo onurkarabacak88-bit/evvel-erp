@@ -3525,15 +3525,6 @@ function updateOpDurum(op, aktif) {
   }
 }
 
-function opKontrolMod(ev) {
-  var m = ev && ev.meta;
-  if (!m) return 'legacy_kasa_snap';
-  if (typeof m === 'string') {
-    try { m = JSON.parse(m); } catch(e) { return 'legacy_kasa_snap'; }
-  }
-  return m.denetim_mod || 'legacy_kasa_snap';
-}
-
 function buildOpFields(tip, ev) {
   var sunucu = lastData && lastData.operasyon ? (lastData.operasyon.sunucu_saati||'—') : '—';
   var persOpts = (lastPersonelSecim||[]).map(function(p){ return '<option value="'+escHtml(p.id||'')+'">'+escHtml(p.ad||'')+'</option>'; }).join('');
@@ -3573,46 +3564,11 @@ function buildOpFields(tip, ev) {
     );
   }
   if (tip==='KONTROL') {
-    var km = opKontrolMod(ev);
     var pinBlok = '<div class="form-group"><label>Personel</label><select id="opKontrolPers"><option value="">— Seçin —</option>'+pkOpts+'</select></div>' +
       '<div class="form-group"><label>PIN</label><input id="opKontrolPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
-    if (km === 'bardak_only') {
-      return (
-        '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">Anlık denetim — <strong>sadece bardak sayımı</strong>. Sunucu: <strong>'+sunucu+'</strong></p>' +
-        '<div class="stok-grid">' +
-        '<div class="stok-item"><label>Küçük bardak</label><input id="opKdK" inputmode="numeric" placeholder="0" /></div>' +
-        '<div class="stok-item"><label>Büyük bardak</label><input id="opKdB" inputmode="numeric" placeholder="0" /></div>' +
-        '<div class="stok-item"><label>Plastik bardak</label><input id="opKdP" inputmode="numeric" placeholder="0" /></div>' +
-        '</div>' + pinBlok
-      );
-    }
-    if (km === 'kasa_only') {
-      return (
-        '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">Anlık denetim — <strong>sadece kasa sayımı</strong>. Sunucu: <strong>'+sunucu+'</strong></p>' +
-        '<div class="form-group"><label>Kasa Sayımı (₺)</label><input id="opKasa" inputmode="decimal" placeholder="0" autocomplete="off" /></div>' +
-        pinBlok
-      );
-    }
-    if (km === 'full') {
-      return (
-        '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">Anlık denetim — <strong>kasa + anlık ciro + bardak</strong>. Sunucu: <strong>'+sunucu+'</strong></p>' +
-        '<div class="form-group"><label>Kasa Sayımı (₺)</label><input id="opKasa" inputmode="decimal" placeholder="0" autocomplete="off" /></div>' +
-        '<div class="form-group"><label>Nakit Anlık (₺)</label><input id="opSnapN" inputmode="decimal" placeholder="0" /></div>' +
-        '<div class="form-group"><label>POS Anlık (₺)</label><input id="opSnapP" inputmode="decimal" placeholder="0" /></div>' +
-        '<div class="form-group"><label>Online Anlık (₺)</label><input id="opSnapO" inputmode="decimal" placeholder="0" /></div>' +
-        '<div class="stok-grid" style="margin-top:8px">' +
-        '<div class="stok-item"><label>Küçük bardak</label><input id="opKdK" inputmode="numeric" placeholder="0" /></div>' +
-        '<div class="stok-item"><label>Büyük bardak</label><input id="opKdB" inputmode="numeric" placeholder="0" /></div>' +
-        '<div class="stok-item"><label>Plastik bardak</label><input id="opKdP" inputmode="numeric" placeholder="0" /></div>' +
-        '</div>' + pinBlok
-      );
-    }
     return (
-      '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">Kasa denetimi (klasik). Sunucu: <strong>'+sunucu+'</strong></p>' +
+      '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">Zorunlu kontrol — <strong>yalnızca kasa sayımı</strong> ve PIN. Sunucu: <strong>'+sunucu+'</strong></p>' +
       '<div class="form-group"><label>Kasa Sayımı (₺)</label><input id="opKasa" inputmode="decimal" placeholder="0" autocomplete="off" /></div>' +
-      '<div class="form-group"><label>Nakit Anlık (₺)</label><input id="opSnapN" inputmode="decimal" placeholder="0" /></div>' +
-      '<div class="form-group"><label>POS Anlık (₺)</label><input id="opSnapP" inputmode="decimal" placeholder="0" /></div>' +
-      '<div class="form-group"><label>Online Anlık (₺)</label><input id="opSnapO" inputmode="decimal" placeholder="0" /></div>' +
       pinBlok
     );
   }
@@ -3646,7 +3602,9 @@ function showOpOverlay(aktif, blob) {
   var gec    = document.getElementById('opGecikme');
 
   if(baslik) baslik.textContent = 'Zorunlu: ' + tip;
-  if(acik) acik.textContent = 'Sistem bu adımı tamamlamanızı bekliyor. Cevap verene kadar ekran kilitlidir.';
+  if(acik) acik.textContent = tip==='KONTROL'
+    ? 'Kasa sayımınızı girin ve PIN ile onaylayın. Cevap verene kadar ekran kilitlidir.'
+    : 'Sistem bu adımı tamamlamanızı bekliyor. Cevap verene kadar ekran kilitlidir.';
   if(badge) { badge.textContent = durum.toUpperCase(); badge.className = 'op-badge '+(durum==='gecikti'?'gec':'bekle'); }
   if(err) err.textContent = '';
   if(gec) gec.textContent = blob&&blob.aktif_gecikme_dk ? blob.aktif_gecikme_dk+' dk gecikme' : '';
@@ -3743,34 +3701,9 @@ document.getElementById('opSubmit').onclick = async function(){
         if (ksC==null||ksC<0) throw new Error('Kasa sayımı girin');
         b2 = { kasa_sayim: ksC, personel_id: pid2, pin: pin2 };
       } else {
-        var kmK = opKontrolMod(opAktifEvent);
-        b2 = { personel_id: pid2, pin: pin2 };
-        if (kmK === 'bardak_only') {
-          b2.bardak_kucuk = pIntOpt('opKdK');
-          b2.bardak_buyuk = pIntOpt('opKdB');
-          b2.bardak_plastik = pIntOpt('opKdP');
-        } else if (kmK === 'kasa_only') {
-          var ksK = parseNum(inpVal('opKasa'));
-          if (ksK==null||ksK<0) throw new Error('Kasa sayımı girin');
-          b2.kasa_sayim = ksK;
-        } else if (kmK === 'full') {
-          var ksF = parseNum(inpVal('opKasa'));
-          if (ksF==null||ksF<0) throw new Error('Kasa sayımı girin');
-          b2.kasa_sayim = ksF;
-          b2.snap_nakit = parseNum(inpVal('opSnapN'))||0;
-          b2.snap_pos = parseNum(inpVal('opSnapP'))||0;
-          b2.snap_online = parseNum(inpVal('opSnapO'))||0;
-          b2.bardak_kucuk = pIntOpt('opKdK');
-          b2.bardak_buyuk = pIntOpt('opKdB');
-          b2.bardak_plastik = pIntOpt('opKdP');
-        } else {
-          var ksL = parseNum(inpVal('opKasa'));
-          if (ksL==null||ksL<0) throw new Error('Kasa sayımı girin');
-          b2.kasa_sayim = ksL;
-          b2.snap_nakit = parseNum(inpVal('opSnapN'))||0;
-          b2.snap_pos = parseNum(inpVal('opSnapP'))||0;
-          b2.snap_online = parseNum(inpVal('opSnapO'))||0;
-        }
+        var ksK = parseNum(inpVal('opKasa'));
+        if (ksK==null||ksK<0) throw new Error('Kasa sayımı girin');
+        b2 = { personel_id: pid2, pin: pin2, kasa_sayim: ksK };
       }
       await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/operasyon/event/'+encodeURIComponent(opAktifEvent.id)+'/tamamla',{method:'POST',body:b2});
       hideOpOverlay();
