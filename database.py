@@ -481,19 +481,26 @@ def init_db():
 
         import hashlib as _hmod
 
-        _s_a, _s_k = "spA1", "spK9"
-        h_a = _hmod.sha256(f"{_s_a}:1111".encode()).hexdigest()
-        h_k = _hmod.sha256(f"{_s_k}:2222".encode()).hexdigest()
-        cur.execute(
-            """
-            INSERT INTO sube_panel_kullanici (id, sube_id, ad, pin_salt, pin_hash, aktif)
-            VALUES
-                ('spk-sabah-demo', 'sube-merkez', 'Sabahçı Demo', %s, %s, TRUE),
-                ('spk-aksam-demo', 'sube-merkez', 'Akşamçı Demo', %s, %s, TRUE)
-            ON CONFLICT (id) DO NOTHING
-            """,
-            (_s_a, h_a, _s_k, h_k),
-        )
+        # Demo kullanıcı PIN'leri env'den okunur; üretimde bu kayıtlar oluşturulmaz.
+        _demo_pin_sabah = (os.environ.get("DEMO_PIN_SABAH") or "").strip()
+        _demo_pin_aksam = (os.environ.get("DEMO_PIN_AKSAM") or "").strip()
+        _evvel_env = (os.environ.get("EVVEL_ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower()
+        _is_prod = _evvel_env in ("production", "prod", "staging")
+
+        if _demo_pin_sabah and _demo_pin_aksam and not _is_prod:
+            _s_a, _s_k = "spA1", "spK9"
+            h_a = _hmod.sha256(f"{_s_a}:{_demo_pin_sabah}".encode()).hexdigest()
+            h_k = _hmod.sha256(f"{_s_k}:{_demo_pin_aksam}".encode()).hexdigest()
+            cur.execute(
+                """
+                INSERT INTO sube_panel_kullanici (id, sube_id, ad, pin_salt, pin_hash, aktif)
+                VALUES
+                    ('spk-sabah-demo', 'sube-merkez', 'Sabahçı Demo', %s, %s, TRUE),
+                    ('spk-aksam-demo', 'sube-merkez', 'Akşamçı Demo', %s, %s, TRUE)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (_s_a, h_a, _s_k, h_k),
+            )
 
         # ── X RAPORU OCR (fiş görüntüsü + model çıktısı) ─────────
         cur.execute("""
@@ -1432,6 +1439,39 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='vardiya_atama_taslak' AND column_name='aciklama')
                 THEN ALTER TABLE vardiya_atama_taslak ADD COLUMN aciklama TEXT; END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
+
+        # Vardiya onay sistemi — CHECK constraint'e 'onaylandi' ekle + yeni kolonlar
+        cur.execute("""
+            DO $$
+            DECLARE cname TEXT;
+            BEGIN
+                -- Mevcut durum CHECK constraint'ini bul ve düşür
+                SELECT tc.constraint_name INTO cname
+                FROM information_schema.table_constraints tc
+                WHERE tc.table_name = 'vardiya_atama_taslak'
+                  AND tc.constraint_type = 'CHECK'
+                  AND tc.constraint_name ILIKE '%durum%'
+                LIMIT 1;
+                IF cname IS NOT NULL THEN
+                    EXECUTE format('ALTER TABLE vardiya_atama_taslak DROP CONSTRAINT %I', cname);
+                END IF;
+                -- Yeni constraint — 'onaylandi' dahil
+                BEGIN
+                    ALTER TABLE vardiya_atama_taslak
+                    ADD CONSTRAINT vardiya_atama_taslak_durum_check
+                    CHECK (durum IN ('taslak','kilitli','iptal','onaylandi'));
+                EXCEPTION WHEN duplicate_object THEN NULL;
+                END;
+                -- Onay kolonları
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='vardiya_atama_taslak' AND column_name='onay_tarihi')
+                THEN ALTER TABLE vardiya_atama_taslak ADD COLUMN onay_tarihi TIMESTAMP; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='vardiya_atama_taslak' AND column_name='onaylayan')
+                THEN ALTER TABLE vardiya_atama_taslak ADD COLUMN onaylayan TEXT; END IF;
             EXCEPTION WHEN others THEN NULL;
             END $$;
         """)

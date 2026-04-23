@@ -60,7 +60,7 @@ from finans_core import (
     kart_ekstre, kart_bu_ay_odenen, kart_faiz_tahmini,
     faiz_hesapla_ve_yaz, tum_kartlar_faiz_hesapla,
     taksit_detay, gelecek_taksit_yuku, tum_kartlar_taksit_yuku,
-    aktif_kesim_gunu,
+    aktif_kesim_gunu, nakit_akis_sim, nakit_akis_tahmin_dogruluk,
 )
 
 app = FastAPI(title="EVVEL ERP", version="2.0")
@@ -888,6 +888,67 @@ def simulasyon(gun: int = 15):
     try: return nakit_akis_simulasyon(gun)
     except Exception as e: raise HTTPException(500, str(e))
 
+
+@app.get("/api/nakit-akis-projeksiyon")
+def nakit_akis_projeksiyon(gun: int = 30):
+    """
+    Gelişmiş nakit akış projeksiyonu — /api/simulasyon'un üst kümesi.
+
+    Farklar:
+    - Gecikmiş ödemeler (tarih < bugün, hâlâ bekliyor) gün 0'a dahil edilir.
+    - Her güne risk_seviye: 'NORMAL' / 'DIKKAT' / 'KRITIK' eklendi.
+    - Özet blok: başlangıç kasası, en düşük nokta, risk gün sayısı,
+      toplam tahmini gelir/gider, backtest tahmin doğruluğu.
+    - /api/simulasyon ile aynı finans_core çekirdeğini kullanır; tüm
+      mevcut çağrıcılar değişmez.
+
+    gun: 7–90 gün arası (varsayılan 30).
+    """
+    gun = max(7, min(90, int(gun)))
+    try:
+        with db() as (conn, cur):
+            baslangic_kasa = kasa_bakiyesi(cur)
+            gunler = nakit_akis_sim(cur, gun_sayisi=gun)
+            # Backtest doğruluğu aynı cursor ile çekilir — ekstra bağlantı yok.
+            dogruluk = nakit_akis_tahmin_dogruluk(cur, gun_sayisi=30)
+
+        # ── Özet istatistikler ──────────────────────────────────
+        kasa_degerler = [g['kasa_tahmini'] for g in gunler]
+        risk_gunler   = [g for g in gunler if g['risk']]
+        dikkat_gunler = [g for g in gunler if g.get('risk_seviye') == 'DIKKAT']
+        en_dusuk_kasa = min(kasa_degerler) if kasa_degerler else baslangic_kasa
+        en_dusuk_gun  = next(
+            (g for g in gunler if g['kasa_tahmini'] == en_dusuk_kasa), None
+        )
+        gecikmus = gunler[0].get('gecikmus_odeme', 0.0) if gunler else 0.0
+
+        ozet = {
+            "gun_sayisi":              gun,
+            "baslangic_kasa":          round(baslangic_kasa, 2),
+            "tahmini_gun_sonu_kasa":   gunler[-1]['kasa_tahmini'] if gunler else round(baslangic_kasa, 2),
+            "en_dusuk_kasa":           round(en_dusuk_kasa, 2),
+            "en_dusuk_tarih":          en_dusuk_gun['tarih'] if en_dusuk_gun else None,
+            "risk_gun_sayisi":         len(risk_gunler),
+            "dikkat_gun_sayisi":       len(dikkat_gunler),
+            "ilk_risk_gunu":           risk_gunler[0]['tarih'] if risk_gunler else None,
+            "toplam_tahmini_gelir":    round(sum(g['beklenen_gelir'] for g in gunler), 2),
+            "toplam_planlanan_gider":  round(sum(g['beklenen_gider'] for g in gunler), 2),
+            # Gecikmiş ödeme varsa gün 0'a yüklendiği miktar — kullanıcı bilgilensin.
+            "gecikmus_odeme_yuklendi": round(gecikmus, 2),
+            # Backtest doğruluğu — yeterli ciro geçmişi yoksa None döner.
+            "tahmin_dogruluk_pct":     dogruluk.get('dogruluk_pct'),
+            "tahmin_dogruluk_mesaj":   dogruluk.get('mesaj'),
+            "tahmin_dogruluk_durum":   dogruluk.get('durum'),
+        }
+
+        return {
+            "ozet":   ozet,
+            "gunler": gunler,
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 # ── KASA ───────────────────────────────────────────────────────
 @app.get("/api/kasa")
 def kasa_durumu():
@@ -1118,7 +1179,7 @@ def anlik_gider_ekle(g: AnlikGider):
         if g.odeme_yontemi == 'kart':
             if not g.kart_id:
                 raise HTTPException(400, "Kart seçimi zorunlu")
-            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (g.kart_id,))
+            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE FOR UPDATE", (g.kart_id,))
             kart = cur.fetchone()
             if not kart: raise HTTPException(404, "Kart bulunamadı")
             borc = kart_borc(cur, g.kart_id)
@@ -1409,8 +1470,8 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
         if body.odeme_yontemi == 'kart' and body.kart_id and plan.get('kaynak_tablo') == 'vadeli_alimlar':
             bugun = str(bugun_tr())
             odeme_tutari = tutar or float(plan['odenecek_tutar'])
-            # Kart validasyon
-            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (body.kart_id,))
+            # Kart validasyon — FOR UPDATE: eş zamanlı limit aşımını önler
+            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE FOR UPDATE", (body.kart_id,))
             kart = cur.fetchone()
             if not kart: raise HTTPException(404, "Kart bulunamadı")
             borc = kart_borc(cur, body.kart_id)
@@ -3065,7 +3126,7 @@ def personel_aylik_onayla(pid: str, yil: int = None, ay: int = None):
         "success": True,
         "mesaj": "Maaş hesabı onaylandı. Ödeme paneldeki ödeme planından yapılır.",
         "kasa_etkisi": False,
-        "odeme_durumu": (plan or {}).get("durum"),
+        "odeme_durumu": (plan or {}).get("odeme_durumu"),
     }
 
 @app.delete("/api/personel-aylik/{pid}")
@@ -3518,11 +3579,11 @@ def fatura_ode(body: FaturaOdemeModel):
         if body.odeme_yontemi == 'kart':
             if not body.kart_id:
                 raise HTTPException(400, "Kart seçimi zorunlu")
-            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (body.kart_id,))
+            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE FOR UPDATE", (body.kart_id,))
             kart = cur.fetchone()
             if not kart:
                 raise HTTPException(404, "Kart bulunamadı")
-            # Mevcut kart borcunu hesapla — limit kontrolü
+            # Mevcut kart borcunu hesapla — limit kontrolü, FOR UPDATE: eş zamanlı limit aşımını önler
             borc = kart_borc(cur, body.kart_id)
             kalan_limit = float(kart['limit_tutar']) - borc
             if kalan_limit < body.tutar:
@@ -3605,11 +3666,15 @@ def sabit_gider_gecmis(gid: str):
                         "aciklama": r['aciklama'] or '', "durum": r['durum']} for r in cur.fetchall()]
 
         toplam_odenen = sum(r['tutar'] for r in odenenler)
+        son_tutar = odenenler[0]['tutar'] if odenenler else None
         return {
             "gider": {"id": str(gider['id']), "gider_adi": gider['gider_adi'],
                       "kategori": gider['kategori'], "tutar": float(gider['tutar'])},
             "ozet": {"toplam_odenen": round(toplam_odenen, 2),
                      "odeme_adedi": len(odenenler)},
+            # son_tutar: son ödeme tutarı — fatura modalı otomatik öneri için
+            "son_tutar": round(son_tutar, 2) if son_tutar is not None else None,
+            "son_tarih": odenenler[0]['tarih'] if odenenler else None,
             "odenenler": odenenler,
             "bekleyenler": bekleyenler,
         }
@@ -4187,7 +4252,7 @@ def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
         if body.odeme_yontemi == 'kart':
             if not body.kart_id:
                 raise HTTPException(400, "Kart seçimi zorunlu")
-            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (body.kart_id,))
+            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE FOR UPDATE", (body.kart_id,))
             kart = cur.fetchone()
             if not kart: raise HTTPException(404, "Kart bulunamadı")
             borc = kart_borc(cur, body.kart_id)

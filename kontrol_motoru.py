@@ -64,23 +64,23 @@ def _sonuc(
 
 
 # ─── YARDIMCI ────────────────────────────────────────────────
-def _dun_kapanis_kasa_ref(cur, sube_id: str) -> Optional[dict]:
-    """Dün kapanış kasa tutarı + o kapanışı yapan personel."""
+def _kasa_event_ref(cur, sube_id: str, tarih_sql: str, tip: str) -> Optional[dict]:
+    """Belirtilen tarih ve tip için kasa tutarı + personel bilgisi."""
     cur.execute(
-        """
+        f"""
         SELECT
             COALESCE(kasa_sayim, teslim) AS tutar,
             personel_id,
             personel_saat
         FROM sube_operasyon_event
         WHERE sube_id = %s
-          AND tarih = CURRENT_DATE - INTERVAL '1 day'
-          AND tip = 'KAPANIS'
+          AND tarih = {tarih_sql}
+          AND tip = %s
           AND durum = 'tamamlandi'
         ORDER BY cevap_ts DESC NULLS LAST
         LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, tip),
     )
     r = cur.fetchone()
     if not r or r.get("tutar") is None:
@@ -89,33 +89,16 @@ def _dun_kapanis_kasa_ref(cur, sube_id: str) -> Optional[dict]:
         "tutar": float(r["tutar"]),
         "personel_id": r.get("personel_id"),
     }
+
+
+def _dun_kapanis_kasa_ref(cur, sube_id: str) -> Optional[dict]:
+    """Dün kapanış kasa tutarı + o kapanışı yapan personel."""
+    return _kasa_event_ref(cur, sube_id, "CURRENT_DATE - INTERVAL '1 day'", "KAPANIS")
 
 
 def _bugun_acilis_kasa_ref(cur, sube_id: str) -> Optional[dict]:
     """Bugün açılış kasa tutarı + açılışı yapan personel."""
-    cur.execute(
-        """
-        SELECT
-            COALESCE(kasa_sayim, teslim) AS tutar,
-            personel_id,
-            personel_saat
-        FROM sube_operasyon_event
-        WHERE sube_id = %s
-          AND tarih = CURRENT_DATE
-          AND tip = 'ACILIS'
-          AND durum = 'tamamlandi'
-        ORDER BY cevap_ts DESC NULLS LAST
-        LIMIT 1
-        """,
-        (sube_id,),
-    )
-    r = cur.fetchone()
-    if not r or r.get("tutar") is None:
-        return None
-    return {
-        "tutar": float(r["tutar"]),
-        "personel_id": r.get("personel_id"),
-    }
+    return _kasa_event_ref(cur, sube_id, "CURRENT_DATE", "ACILIS")
 
 
 # ─── KONTROL 1: KASA FARK ────────────────────────────────────
@@ -262,25 +245,19 @@ def kontrol_gunluk_gider_limit(cur, sube_id: str) -> List[dict]:
 
 
 def kontrol_fissiz_gider(cur, sube_id: str) -> Optional[dict]:
-    """
-    Son 30 günde fis_gonderildi=FALSE olan gider sayısı.
-    Fiş alanı yoksa kontrol atlanır.
-    """
-    try:
-        cur.execute(
-            """
-            SELECT COUNT(*) AS adet
-            FROM anlik_giderler
-            WHERE sube = %s
-              AND tarih >= CURRENT_DATE - INTERVAL '30 days'
-              AND fis_gonderildi = FALSE
-              AND durum IN ('aktif', 'onay_bekliyor')
-            """,
-            (sube_id,),
-        )
-        adet = int((cur.fetchone() or {}).get("adet") or 0)
-    except Exception:
-        return None  # fis_gonderildi kolonu henüz yoksa atla
+    """Son 30 günde fis_gonderildi=FALSE olan gider sayısı."""
+    cur.execute(
+        """
+        SELECT COUNT(*) AS adet
+        FROM anlik_giderler
+        WHERE sube = %s
+          AND tarih >= CURRENT_DATE - INTERVAL '30 days'
+          AND fis_gonderildi = FALSE
+          AND durum IN ('aktif', 'onay_bekliyor')
+        """,
+        (sube_id,),
+    )
+    adet = int((cur.fetchone() or {}).get("adet") or 0)
 
     if adet < 3:
         return None

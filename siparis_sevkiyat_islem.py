@@ -17,6 +17,11 @@ from kasa_service import audit
 from operasyon_defter import operasyon_defter_ekle
 from operasyon_stok_motor import sevk_cikti_kaydet as _disiplin_sevk_cikti
 from tr_saat import dt_now_tr
+from sevkiyat_helpers import (
+    sevkiyat_durumu_coz,
+    sevkiyat_durumu_sql_expr,
+    sevkiyat_durumu_guncelle_params,
+)
 
 
 def sevkiyat_kalem_durumlari_normalize(items: Any) -> Tuple[List[Dict[str, Any]], bool, bool]:
@@ -177,12 +182,14 @@ def siparis_sevkiyat_kalem_guncelle_execute(
         raise HTTPException(400, "talep_id ve hedef_depo_sube_id zorunlu")
 
     yeni_durum = hesapla_yeni_sevkiyat_durumu(durumlar, bekleyen_var, kismi_var, gonderildi)
-    eski_durum_karsilik = "gonderildi" if yeni_durum == "gonderildi" else "hazirlaniyor"
+    # Tek noktadan canonical → legacy çifti üret
+    _sevk_durum_yeni, _sevk_durum_eski = sevkiyat_durumu_guncelle_params(yeni_durum)
+    eski_durum_karsilik = _sevk_durum_eski
 
     cur.execute(
         """
         SELECT id, COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS hedef_depo_sube_id,
-               COALESCE(NULLIF(TRIM(sevkiyat_durumu), ''), sevkiyat_durum, 'bekliyor') AS sevkiyat_durumu,
+               {sevkiyat_durumu_sql_expr()} AS sevkiyat_durumu,
                durum
         FROM siparis_talep
         WHERE id=%s
@@ -226,8 +233,8 @@ def siparis_sevkiyat_kalem_guncelle_execute(
         WHERE id=%s
         """,
         (
-            yeni_durum,
-            eski_durum_karsilik,
+            _sevk_durum_yeni,
+            _sevk_durum_eski,
             yeni_durum,
             json.dumps(durumlar, ensure_ascii=False),
             notu,

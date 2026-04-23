@@ -12,7 +12,7 @@ import os
 import re
 import uuid
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query
@@ -36,6 +36,7 @@ from operasyon_stok_motor import (
     STOK_LABEL_TR,
     merkez_stok_kart_guncelle,
     teorik_stok_bugun,
+    satis_ozet_stok_bilesen,
     stok_from_event_meta,
     merkez_stok_kart_haritasi,
     enrich_siparis_kalemleri_stok_inplace,
@@ -61,9 +62,17 @@ from sube_panel import (
 from kontrol_motoru import tum_subeler_kontrol, sube_kontrol_calistir
 from kontrol_motoru import kontrol_personel_risk_profili
 from finans_core import nakit_akis_tahmin_dogruluk
+from sevkiyat_helpers import (
+    sevkiyat_durumu_coz,
+    sevkiyat_durumu_sql_expr,
+    sevkiyat_durumu_guncelle_params,
+    SD_T,
+    SD_ST,
+)
 
 router = APIRouter(prefix="/api/ops", tags=["operasyon-merkez"])
 logger = logging.getLogger(__name__)
+OPS_STOK_DISIPLIN_BEKLEYEN_GUN = 7
 
 
 class OpsGiderFisKontrolBody(BaseModel):
@@ -85,6 +94,69 @@ def _depoda_var_miydi(cur: Any, sube_id: str, tarih: str) -> bool:
         (sube_id, tarih),
     )
     return cur.fetchone() is not None
+
+
+def _son_kapanis_event_row(cur: Any, sube_id: str, tarih: Any) -> Any:
+    """Verilen gün için son tamamlanmış KAPANIS event (yalnızca meta sütunu)."""
+    cur.execute(
+        """
+        SELECT meta
+        FROM sube_operasyon_event
+        WHERE sube_id=%s
+          AND tarih=%s
+          AND tip='KAPANIS' AND durum='tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST, id DESC
+        LIMIT 1
+        """,
+        (sube_id, tarih),
+    )
+    return cur.fetchone()
+
+
+def _davranis_uyarilari_siparis_talep(
+    cur: Any, talep_id: str
+) -> List[Dict[str, Any]]:
+    """Aynı katalog siparişine bağlı kalıcı davranış (DAVRANIS) uyarı satırları."""
+    tid = (talep_id or "").strip()
+    if not tid:
+        return []
+    cur.execute(
+        """
+        SELECT kural, mesaj, puan
+        FROM sube_operasyon_uyari
+        WHERE siparis_talep_id=%s AND tip='DAVRANIS'
+        ORDER BY puan DESC
+        """,
+        (tid,),
+    )
+    return [
+        {"kural": r.get("kural"), "mesaj": r.get("mesaj"), "puan": int(r.get("puan") or 0)}
+        for r in cur.fetchall()
+    ]
+
+
+def _enrich_kalemler_ve_davranis(
+    cur: Any,
+    *,
+    sube_id: str,
+    kalemler: List[Any],
+    merkez_map: Any,
+    hedef_depo_sube_id: Optional[str],
+    talep_id: str,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """
+    Katalog sipariş satırı: stok zenginleştirme + aynı talep için davranış uyarıları.
+    (Hub alarm, operasyon ekranları, sevkiyat önizleme aynı mantığı paylaşır.)
+    """
+    fl = enrich_siparis_kalemleri_stok_inplace(
+        cur,
+        sube_id,
+        kalemler,
+        merkez_map=merkez_map,
+        hedef_depo_sube_id=hedef_depo_sube_id,
+    )
+    dvr = _davranis_uyarilari_siparis_talep(cur, talep_id)
+    return fl, dvr
 
 
 @router.get("/personel-takip")
@@ -316,7 +388,19 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
     ciro_girildi = _bugun_ciro_var_mi(cur, sid)
     sube_acik = _bugun_sube_acildi_mi(cur, sid)
     kasa_acik = _bugun_kasa_acildi_mi(cur, sid)
-    taslak_bek = _bugun_ciro_taslak_bekliyor(cur, sid) is not None
+    taslak_row   = _bugun_ciro_taslak_bekliyor(cur, sid)
+    taslak_bek   = taslak_row is not None
+    # Gecikmiş taslak: bekliyor + olusturma > 6 saat önce → operatör uyarısı.
+    taslak_gecikti = False
+    if taslak_row and taslak_row.get("olusturma"):
+        try:
+            _ol = str(taslak_row["olusturma"]).strip().replace("Z", "+00:00")
+            _ol_dt = datetime.fromisoformat(_ol)
+            if _ol_dt.tzinfo is not None:
+                _ol_dt = _ol_dt.astimezone().replace(tzinfo=None)
+            taslak_gecikti = (dt_now_tr_naive() - _ol_dt).total_seconds() > 6 * 3600
+        except Exception:
+            pass
     cur.execute(
         """
         SELECT COALESCE(SUM(toplam), 0) AS toplam
@@ -328,6 +412,35 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
         (sid,),
     )
     bugun_ciro_tutar = float((cur.fetchone() or {}).get("toplam") or 0)
+
+    # 7 günlük ciro trendi — hub kart sparkline için.
+    # generate_series boş günleri 0 ile doldurur; her zaman tam 7 satır döner.
+    # Birden fazla şube cirosunun aynı güne düşmesi (edge case) SUM ile toplanır.
+    cur.execute(
+        """
+        SELECT
+            gs.dt::text          AS tarih,
+            COALESCE(SUM(c.toplam), 0)::float AS ciro
+        FROM (
+            SELECT generate_series(
+                CURRENT_DATE - INTERVAL '6 days',
+                CURRENT_DATE,
+                INTERVAL '1 day'
+            )::date AS dt
+        ) gs
+        LEFT JOIN ciro c
+               ON c.tarih::date = gs.dt
+              AND c.sube_id = %s
+              AND c.durum = 'aktif'
+        GROUP BY gs.dt
+        ORDER BY gs.dt ASC
+        """,
+        (sid,),
+    )
+    ciro_trend = [
+        {"tarih": r["tarih"], "ciro": float(r["ciro"] or 0)}
+        for r in cur.fetchall()
+    ]
 
     kritik = bool(operasyon.get("aktif_kritik"))
     geciken = kritik or bool(operasyon.get("aktif_suphe")) or any(
@@ -357,7 +470,10 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
         uyarilar.append(d)
 
     virt = build_virtual_merkez_uyarilari(cur, sid, dt_now_tr_naive())
-    uyarilar = virt + uyarilar
+    # Sanal liste DB'ye yazıldıktan sonra aynı ID ikinci kez DB'den de gelebilir; dedup yap.
+    _db_ids = {u["id"] for u in uyarilar if u.get("id")}
+    virt_yeni = [v for v in virt if not (v.get("id") and v["id"] in _db_ids)]
+    uyarilar = virt_yeni + uyarilar
 
     fark_var = any(
         (u.get("fark_tl") is not None and abs(float(u["fark_tl"])) > 0.01)
@@ -496,18 +612,7 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
     satis_tahmini_toplam = 0
     satis_tahmini_kalemler: Dict[str, int] = {}
     teorik = teorik_stok_bugun(cur, sid)
-    cur.execute(
-        """
-        SELECT meta
-        FROM sube_operasyon_event
-        WHERE sube_id=%s AND tarih=CURRENT_DATE
-          AND tip='KAPANIS' AND durum='tamamlandi'
-        ORDER BY cevap_ts DESC NULLS LAST, id DESC
-        LIMIT 1
-        """,
-        (sid,),
-    )
-    kap_row = cur.fetchone()
+    kap_row = _son_kapanis_event_row(cur, sid, bugun_tr())
     if teorik is not None and kap_row:
         gercek = stok_from_event_meta((kap_row or {}).get("meta"), "kapanis_stok_sayim")
         for k in STOK_KEYS:
@@ -623,7 +728,9 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
         "sube_acik": sube_acik,
         "ciro_girildi": ciro_girildi,
         "ciro_taslak_bekliyor": taslak_bek,
+        "ciro_taslak_gecikti": taslak_gecikti,  # 6h+ bekliyorsa True — sarı uyarı
         "bugun_ciro_tutar": bugun_ciro_tutar,
+        "ciro_trend": ciro_trend,          # 7 günlük [{tarih, ciro}] — sparkline
         "operasyon": operasyon,
         "ozet": ozet,
         "uyarilar": uyarilar,
@@ -653,6 +760,7 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
             "fark_tl": fark_tl,
             "guvenlik_alarm": bool(guvenlik.get("alarm_goster")),
             "siparis_bekleyen": (sip_bek + sip_ozel_bek) > 0,
+            "taslak_gecikti": taslak_gecikti,
         },
     }
 
@@ -694,6 +802,7 @@ def ops_dashboard(
                         "sube_acik": False,
                         "ciro_girildi": False,
                         "ciro_taslak_bekliyor": False,
+                        "ciro_taslak_gecikti": False,
                         "operasyon": {"events": []},
                         "ozet": {},
                         "uyarilar": [
@@ -761,6 +870,95 @@ def ops_dashboard(
             "uyari_tl": 200,
             "aciklama": "Açılış kasa farkı: |fark|≤50 normal, <200 uyarı, ≥200 kritik.",
         },
+    }
+
+
+@router.get("/haftalik-karsilastirma")
+def ops_haftalik_karsilastirma():
+    """
+    Son 7 gün (bu hafta) vs önceki 7 gün: şube bazında ciro karşılaştırması + sıralama.
+    generate_series ile boş günler 0 olarak doldurulur — her zaman 14 satır/şube.
+    """
+    from collections import defaultdict
+
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT
+                s.id::text   AS sube_id,
+                s.ad         AS sube_adi,
+                gs.dt::text  AS tarih,
+                COALESCE(SUM(c.toplam), 0)::float AS ciro
+            FROM subeler s
+            CROSS JOIN (
+                SELECT generate_series(
+                    CURRENT_DATE - INTERVAL '13 days',
+                    CURRENT_DATE,
+                    INTERVAL '1 day'
+                )::date AS dt
+            ) gs
+            LEFT JOIN ciro c
+                   ON c.tarih::date = gs.dt
+                  AND c.sube_id = s.id
+                  AND c.durum = 'aktif'
+            WHERE s.aktif = TRUE
+            GROUP BY s.id, s.ad, gs.dt
+            ORDER BY s.ad, gs.dt ASC
+            """
+        )
+        rows = cur.fetchall()
+
+    branch_days: dict = defaultdict(lambda: {"sube_id": None, "sube_adi": None, "gunler": []})
+    for r in rows:
+        sid = str(r["sube_id"])
+        bd = branch_days[sid]
+        bd["sube_id"] = sid
+        bd["sube_adi"] = r["sube_adi"]
+        bd["gunler"].append({"tarih": r["tarih"], "ciro": float(r["ciro"])})
+
+    result: List[dict] = []
+    for sid, bd in branch_days.items():
+        gunler = bd["gunler"]  # 14 gün ASC sıralı
+        prev7 = gunler[:7]     # 14 gün önce — 8 gün önce
+        this7 = gunler[7:]     # 7 gün önce — bugün
+        prev_total = round(sum(g["ciro"] for g in prev7), 2)
+        this_total = round(sum(g["ciro"] for g in this7), 2)
+        degisim_pct = round((this_total - prev_total) / prev_total * 100, 1) if prev_total > 0 else None
+        result.append({
+            "sube_id":      sid,
+            "sube_adi":     bd["sube_adi"],
+            "bu_hafta":     this_total,
+            "gecen_hafta":  prev_total,
+            "degisim_pct":  degisim_pct,
+            "trend":        this7,   # son 7 gün sparkline [{tarih, ciro}]
+        })
+
+    result.sort(key=lambda x: x["bu_hafta"], reverse=True)
+    for i, r in enumerate(result):
+        r["sira"] = i + 1
+
+    # Tüm şubelerin günlük toplamı (genel sağlık sparkline)
+    daily_map: dict = defaultdict(float)
+    for bd in branch_days.values():
+        for g in bd["gunler"][7:]:  # sadece son 7 gün
+            daily_map[g["tarih"]] += g["ciro"]
+    genel_trend = sorted(
+        [{"tarih": t, "ciro": round(c, 2)} for t, c in daily_map.items()],
+        key=lambda x: x["tarih"],
+    )
+
+    toplam_bu_hafta    = round(sum(r["bu_hafta"]   for r in result), 2)
+    toplam_gecen_hafta = round(sum(r["gecen_hafta"] for r in result), 2)
+    genel_degisim_pct  = round(
+        (toplam_bu_hafta - toplam_gecen_hafta) / toplam_gecen_hafta * 100, 1
+    ) if toplam_gecen_hafta > 0 else None
+
+    return {
+        "subeler":             result,
+        "genel_trend":         genel_trend,
+        "toplam_bu_hafta":     toplam_bu_hafta,
+        "toplam_gecen_hafta":  toplam_gecen_hafta,
+        "genel_degisim_pct":   genel_degisim_pct,
     }
 
 
@@ -1477,27 +1675,7 @@ def ops_sayimlar(
                 d["tarih"] = str(d["tarih"])
             if d.get("cevap_ts"):
                 d["cevap_ts"] = str(d["cevap_ts"])
-            meta_raw = d.get("meta")
-            meta_obj: Dict[str, Any] = {}
-            if isinstance(meta_raw, str) and meta_raw.strip():
-                try:
-                    meta_obj = json.loads(meta_raw)
-                except Exception:
-                    meta_obj = {}
-            stok = meta_obj.get("acilis_stok_sayim") if isinstance(meta_obj, dict) else {}
-            if not isinstance(stok, dict):
-                stok = {}
-            d["stok_sayim"] = {
-                "bardak_kucuk": int(stok.get("bardak_kucuk") or 0),
-                "bardak_buyuk": int(stok.get("bardak_buyuk") or 0),
-                "bardak_plastik": int(stok.get("bardak_plastik") or 0),
-                "su_adet": int(stok.get("su_adet") or 0),
-                "sut_litre": int(stok.get("sut_litre") or 0),
-                "redbull_adet": int(stok.get("redbull_adet") or 0),
-                "soda_adet": int(stok.get("soda_adet") or 0),
-                "cookie_adet": int(stok.get("cookie_adet") or 0),
-                "pasta_adet": int(stok.get("pasta_adet") or 0),
-            }
+            d["stok_sayim"] = _stok_map_from_meta(d.get("meta"), "acilis_stok_sayim", _BAR_KEYS)
             d.pop("meta", None)
             rows.append(d)
     return {"satirlar": rows, "limit": lim, "year_month": ym, "gun": gun_v or None}
@@ -1513,19 +1691,20 @@ _BAR_KEYS = [
     "su_adet", "sut_litre", "redbull_adet", "soda_adet", "cookie_adet", "pasta_adet",
 ]
 
+
+def _stok_map_from_meta(meta_raw: Any, alan: str, keys: Optional[List[str]] = None) -> Dict[str, int]:
+    """
+    Event meta içindeki stok bloklarını tek bir normalizasyonla okur.
+    `stok_from_event_meta` ile (legacy fallback dahil) parse eder, istenen anahtarlara indirger.
+    """
+    src_keys = keys or list(STOK_KEYS)
+    base = stok_from_event_meta(meta_raw, alan)
+    return {k: max(0, int(base.get(k) or 0)) for k in src_keys}
+
+
 def _bar_stok_from_meta(meta_raw: Any, alan: str) -> Dict[str, int]:
     """meta JSONB'den belirli alanı (acilis_stok_sayim / kapanis_stok_sayim) okur."""
-    if isinstance(meta_raw, str) and meta_raw.strip():
-        try:
-            meta_raw = json.loads(meta_raw)
-        except Exception:
-            return {}
-    if not isinstance(meta_raw, dict):
-        return {}
-    stok = meta_raw.get(alan) or {}
-    if not isinstance(stok, dict):
-        return {}
-    return {k: max(0, int(stok.get(k) or 0)) for k in _BAR_KEYS}
+    return _stok_map_from_meta(meta_raw, alan, _BAR_KEYS)
 
 
 def _urun_ac_delta_parse(aciklama: str) -> Dict[str, int]:
@@ -1919,25 +2098,16 @@ def ops_bar_ozet(
         return {"satirlar": satirlar, "year_month": ym, "gun": gun_v or None}
 
 
-def _ops_parse_meta_obj(raw: Any) -> Dict[str, Any]:
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str) and raw.strip():
-        try:
-            o = json.loads(raw)
-            return o if isinstance(o, dict) else {}
-        except Exception:
-            return {}
-    return {}
-
-
 def _ops_parse_defter_delta(raw_aciklama: str, prefix: str) -> Dict[str, int]:
     out = {k: 0 for k in STOK_KEYS}
     s = (raw_aciklama or "").strip()
     if not s.startswith(prefix):
         return out
+    body = s[len(prefix):].strip()
+    if " | " in body:
+        body = body.split(" | ", 1)[0].strip()
     try:
-        obj = json.loads(s[len(prefix) :])
+        obj = json.loads(body)
     except Exception:
         return out
     if not isinstance(obj, dict):
@@ -2065,12 +2235,7 @@ def ops_stok_kayip_analiz(
     acilis_map: Dict[tuple, Dict[str, int]] = {}
     for r in acilis_rows:
         key = (str(r.get("sube_id") or ""), str(r.get("tarih") or ""))
-        meta = _ops_parse_meta_obj(r.get("meta"))
-        blk = meta.get("acilis_stok_sayim")
-        if not isinstance(blk, dict):
-            blk = meta.get("stok_sayim")
-        vals = {k: _ops_int((blk or {}).get(k), 0) for k in STOK_KEYS}
-        acilis_map[key] = vals
+        acilis_map[key] = _stok_map_from_meta(r.get("meta"), "acilis_stok_sayim")
 
     ek_map: Dict[tuple, Dict[str, int]] = {}
     for r in defter_rows:
@@ -2096,10 +2261,7 @@ def ops_stok_kayip_analiz(
         key = (sid, tarih_s)
         ac = acilis_map.get(key) or {k: 0 for k in STOK_KEYS}
         ek = ek_map.get(key) or {k: 0 for k in STOK_KEYS}
-        meta = _ops_parse_meta_obj(r.get("meta"))
-        kap_blk = meta.get("kapanis_stok_sayim")
-        if not isinstance(kap_blk, dict):
-            kap_blk = {}
+        kap_blk = _stok_map_from_meta(r.get("meta"), "kapanis_stok_sayim")
         try:
             dt_obj = datetime.strptime(tarih_s, "%Y-%m-%d")
             hafta_gun = gun_adlari[dt_obj.weekday()]
@@ -2113,7 +2275,7 @@ def ops_stok_kayip_analiz(
                 continue
             acilis_v = _ops_int(ac.get(k), 0)
             ek_v = _ops_int(ek.get(k), 0)
-            kapanis_v = _ops_int((kap_blk or {}).get(k), 0)
+            kapanis_v = int(kap_blk.get(k) or 0)
             tahmini = acilis_v + ek_v - kapanis_v
             if tahmini == 0:
                 continue
@@ -2345,14 +2507,11 @@ def ops_personel_davranis_analiz(
     kapanis_map: Dict[tuple, Dict[str, int]] = {}
     for r in kapanis_rows:
         key = (str(r.get("sube_id") or ""), str(r.get("tarih") or ""))
-        meta = _ops_parse_meta_obj(r.get("meta"))
-        blk = meta.get("kapanis_stok_sayim")
-        if not isinstance(blk, dict):
-            blk = {}
+        blk = _stok_map_from_meta(r.get("meta"), "kapanis_stok_sayim", _BAR_KEYS)
         kapanis_map[key] = {
-            "bardak_kucuk": _ops_int(blk.get("bardak_kucuk"), 0),
-            "bardak_buyuk": _ops_int(blk.get("bardak_buyuk"), 0),
-            "bardak_plastik": _ops_int(blk.get("bardak_plastik"), 0),
+            "bardak_kucuk": int(blk.get("bardak_kucuk") or 0),
+            "bardak_buyuk": int(blk.get("bardak_buyuk") or 0),
+            "bardak_plastik": int(blk.get("bardak_plastik") or 0),
         }
 
     uyari_map: Dict[tuple, float] = {}
@@ -2389,16 +2548,11 @@ def ops_personel_davranis_analiz(
             base["acilis_kasa_fark_adet"] += 1
             base["acilis_kasa_fark_toplam"] += kf
 
-        meta = _ops_parse_meta_obj(a.get("meta"))
-        ac_blk = meta.get("acilis_stok_sayim")
-        if not isinstance(ac_blk, dict):
-            ac_blk = meta.get("stok_sayim")
-        if not isinstance(ac_blk, dict):
-            ac_blk = {}
+        ac_blk = _stok_map_from_meta(a.get("meta"), "acilis_stok_sayim", _BAR_KEYS)
         ac_b = {
-            "bardak_kucuk": _ops_int(ac_blk.get("bardak_kucuk"), 0),
-            "bardak_buyuk": _ops_int(ac_blk.get("bardak_buyuk"), 0),
-            "bardak_plastik": _ops_int(ac_blk.get("bardak_plastik"), 0),
+            "bardak_kucuk": int(ac_blk.get("bardak_kucuk") or 0),
+            "bardak_buyuk": int(ac_blk.get("bardak_buyuk") or 0),
+            "bardak_plastik": int(ac_blk.get("bardak_plastik") or 0),
         }
         try:
             prev_s = str(date.fromisoformat(tarih_s) - timedelta(days=1))
@@ -3332,6 +3486,7 @@ def ops_sube_satis_ozet(sube_id: str, tarih: Optional[date] = None):
     """
     Şube günlük satış/tüketim özeti:
     teorik stok (açılış + gün içi ekleme/açma), kapanış stok ve fark.
+    Teorik ve eklenen operasyon_stok_motor.satis_ozet_stok_bilesen ile hesaplanır (merkez ile tek cebir).
     """
     hedef_tarih = tarih or bugun_tr()
     with db() as (conn, cur):
@@ -3339,79 +3494,39 @@ def ops_sube_satis_ozet(sube_id: str, tarih: Optional[date] = None):
 
         cur.execute(
             """
-            SELECT meta
+            SELECT 1 AS v
             FROM sube_operasyon_event
             WHERE sube_id=%s
               AND tarih=%s
               AND tip='ACILIS'
               AND durum='tamamlandi'
-            ORDER BY cevap_ts DESC NULLS LAST, id DESC
             LIMIT 1
             """,
             (sube_id, hedef_tarih),
         )
-        ac_row = cur.fetchone()
-        ac_meta = _ops_parse_meta_obj((ac_row or {}).get("meta")) if ac_row else {}
-        ac_blk = ac_meta.get("acilis_stok_sayim")
-        if not isinstance(ac_blk, dict):
-            ac_blk = ac_meta.get("stok_sayim")
-        if not isinstance(ac_blk, dict):
-            ac_blk = {}
-        acilis = {k: int(ac_blk.get(k) or 0) for k in STOK_KEYS}
+        acilis_var = cur.fetchone() is not None
 
-        cur.execute(
-            """
-            SELECT etiket, aciklama
-            FROM operasyon_defter
-            WHERE sube_id=%s
-              AND tarih=%s
-              AND etiket IN ('URUN_STOK_EKLE', 'URUN_AC')
-            """,
-            (sube_id, hedef_tarih),
-        )
-        eklenen = {k: 0 for k in STOK_KEYS}
-        for row in cur.fetchall():
-            etiket = str((row or {}).get("etiket") or "")
-            aciklama = str((row or {}).get("aciklama") or "")
-            if etiket == "URUN_STOK_EKLE":
-                delta = _ops_parse_defter_delta(aciklama, "URUN_STOK_JSON:")
-            else:
-                delta = _ops_parse_defter_delta(aciklama, "URUN_AC_JSON:")
-            for k in STOK_KEYS:
-                eklenen[k] += int(delta.get(k) or 0)
+        teo_map, acilis, eklenen = satis_ozet_stok_bilesen(cur, sube_id, hedef_tarih)
 
-        cur.execute(
-            """
-            SELECT meta
-            FROM sube_operasyon_event
-            WHERE sube_id=%s
-              AND tarih=%s
-              AND tip='KAPANIS'
-              AND durum='tamamlandi'
-            ORDER BY cevap_ts DESC NULLS LAST, id DESC
-            LIMIT 1
-            """,
-            (sube_id, hedef_tarih),
+        kap_row = _son_kapanis_event_row(cur, sube_id, hedef_tarih)
+        kapanis = (
+            _stok_map_from_meta((kap_row or {}).get("meta"), "kapanis_stok_sayim")
+            if kap_row
+            else {k: 0 for k in STOK_KEYS}
         )
-        kap_row = cur.fetchone()
-        kap_meta = _ops_parse_meta_obj((kap_row or {}).get("meta")) if kap_row else {}
-        kap_blk = kap_meta.get("kapanis_stok_sayim")
-        if not isinstance(kap_blk, dict):
-            kap_blk = {}
-        kapanis = {k: int(kap_blk.get(k) or 0) for k in STOK_KEYS}
 
     satirlar: List[Dict[str, Any]] = []
     for k in STOK_KEYS:
-        teorik = int(acilis.get(k) or 0) + int(eklenen.get(k) or 0)
+        t_stok = int(teo_map.get(k) or 0)
         kap = int(kapanis.get(k) or 0)
-        fark = teorik - kap
+        fark = t_stok - kap
         satirlar.append(
             {
                 "kalem_kodu": k,
                 "kalem_adi": STOK_LABEL_TR.get(k, k),
                 "acilis": int(acilis.get(k) or 0),
                 "eklenen": int(eklenen.get(k) or 0),
-                "teorik_stok": teorik,
+                "teorik_stok": t_stok,
                 "kapanis_stok": kap,
                 "fark": fark,
                 "satis_tahmini": max(0, fark),
@@ -3422,7 +3537,7 @@ def ops_sube_satis_ozet(sube_id: str, tarih: Optional[date] = None):
         "sube_id": sube_id,
         "sube_adi": sube.get("ad"),
         "tarih": str(hedef_tarih),
-        "acilis_var": bool(ac_row),
+        "acilis_var": acilis_var,
         "kapanis_var": bool(kap_row),
         "satirlar": satirlar,
         "ozet": {
@@ -3468,7 +3583,14 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
     cur.execute("SELECT COUNT(*) FROM subeler WHERE aktif=TRUE")
     aktif_sube = _fetch_int_count(cur)
 
-    cur.execute("SELECT COUNT(*) FROM siparis_talep WHERE durum='bekliyor'")
+    cur.execute(
+        """
+        SELECT COUNT(*) FROM siparis_talep
+        WHERE durum='bekliyor'
+          AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+        """,
+        (OPS_STOK_DISIPLIN_BEKLEYEN_GUN,),
+    )
     siparis_talep_bekleyen = _fetch_int_count(cur)
     cur.execute("SELECT COUNT(*) FROM siparis_ozel_talep WHERE durum='bekliyor'")
     siparis_ozel_bekleyen = _fetch_int_count(cur)
@@ -3552,27 +3674,22 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
     try:
         cur.execute(
             """
-            SELECT COUNT(*) FROM (
-              SELECT sube_id FROM siparis_talep
-              WHERE durum NOT IN ('teslim_edildi','iptal')
-              GROUP BY sube_id
-              HAVING COUNT(*) > 1
-            ) t
+            WITH grp AS (
+                SELECT sube_id, COUNT(*)::bigint AS cnt
+                FROM siparis_talep
+                WHERE durum NOT IN ('teslim_edildi', 'iptal')
+                GROUP BY sube_id
+                HAVING COUNT(*) > 1
+            )
+            SELECT
+                COUNT(*)::bigint AS sube_sayisi,
+                COALESCE(SUM(cnt - 1), 0)::bigint AS fazla_talep
+            FROM grp
             """
         )
-        siparis_paralel_sube_sayisi = _fetch_int_count(cur)
-
-        cur.execute(
-            """
-            SELECT COALESCE(SUM(cnt - 1), 0) FROM (
-              SELECT COUNT(*)::bigint AS cnt FROM siparis_talep
-              WHERE durum NOT IN ('teslim_edildi','iptal')
-              GROUP BY sube_id
-              HAVING COUNT(*) > 1
-            ) t
-            """
-        )
-        siparis_paralel_fazla_talep = _fetch_int_count(cur)
+        pr = dict(cur.fetchone() or {})
+        siparis_paralel_sube_sayisi = int(pr.get("sube_sayisi") or 0)
+        siparis_paralel_fazla_talep = int(pr.get("fazla_talep") or 0)
     except Exception:
         try:
             cur.connection.rollback()
@@ -3593,8 +3710,10 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
 
     return {
         "aktif_sube": aktif_sube,
-        # Hub kartı toplamı (geri uyumluluk); ayrım: katalog siparis_talep vs özel talep
-        "siparis_bekleyen": siparis_talep_bekleyen + siparis_ozel_bekleyen,
+        # Hub kartı, stok disiplin kuyruğuyla aynı kümeyi gösterir:
+        # yalnızca bekleyen katalog siparişleri ve son N gün.
+        "siparis_bekleyen": siparis_talep_bekleyen,
+        "siparis_bekleyen_gun_penceresi": OPS_STOK_DISIPLIN_BEKLEYEN_GUN,
         "siparis_talep_bekleyen": siparis_talep_bekleyen,
         "siparis_ozel_bekleyen": siparis_ozel_bekleyen,
         "siparis_katalog_urun": siparis_katalog_urun,
@@ -3620,6 +3739,7 @@ def _hub_ozet_fallback_panel() -> Dict[str, Any]:
     return {
         "aktif_sube": 0,
         "siparis_bekleyen": 0,
+        "siparis_bekleyen_gun_penceresi": OPS_STOK_DISIPLIN_BEKLEYEN_GUN,
         "siparis_talep_bekleyen": 0,
         "siparis_ozel_bekleyen": 0,
         "siparis_katalog_urun": 0,
@@ -3644,8 +3764,8 @@ def _hub_alarm_satirlari(cur: Any, *, ozet: Optional[Dict[str, Any]] = None, lim
     """
     Hub için okunaklı alarm satırları (sipariş + depo hattı + özet kuyruklar).
 
-    Katalog siparişleri: yalnızca ``siparis_talep.durum = 'bekliyor'`` — ``/ops/bekleyen-merkez``
-    içindeki sipariş listesi ile aynı küme (tarih / sevkiyat öncesi süzme yok; hub sayısıyla tutarlı).
+    Katalog siparişleri: stok disiplin kuyruğu ile aynı küme —
+    yalnızca ``siparis_talep.durum = 'bekliyor'`` ve son N gün.
     """
     satirlar: List[Dict[str, Any]] = []
     merkez_map = merkez_stok_kart_haritasi(cur)
@@ -3658,18 +3778,19 @@ def _hub_alarm_satirlari(cur: Any, *, ozet: Optional[Dict[str, Any]] = None, lim
     }
 
     cur.execute(
-        """
+        f"""
         SELECT st.id, st.sube_id, s.ad AS sube_adi, st.tarih, st.olusturma,
                st.personel_ad, st.not_aciklama, st.kalemler,
                COALESCE(st.hedef_depo_sube_id, st.sevkiyat_sube_id) AS hedef_depo_sube_id,
-               COALESCE(NULLIF(TRIM(st.sevkiyat_durumu), ''), st.sevkiyat_durum, 'bekliyor') AS sevkiyat_durumu_norm
+               {SD_ST} AS sevkiyat_durumu_norm
         FROM siparis_talep st
         JOIN subeler s ON s.id = st.sube_id
         WHERE st.durum = 'bekliyor'
+          AND st.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
         ORDER BY st.olusturma DESC NULLS LAST, st.id DESC
         LIMIT %s
         """,
-        (limit,),
+        (OPS_STOK_DISIPLIN_BEKLEYEN_GUN, limit),
     )
     for row in cur.fetchall() or []:
         d = dict(row)
@@ -3684,24 +3805,14 @@ def _hub_alarm_satirlari(cur: Any, *, ozet: Optional[Dict[str, Any]] = None, lim
         if not isinstance(kalemler, list):
             kalemler = []
         hedef_raw = str(d.get("hedef_depo_sube_id") or "").strip()
-        fl = enrich_siparis_kalemleri_stok_inplace(
+        fl, davranis = _enrich_kalemler_ve_davranis(
             cur,
-            sid,
-            kalemler,
+            sube_id=sid,
+            kalemler=kalemler,
             merkez_map=merkez_map,
             hedef_depo_sube_id=hedef_raw or None,
+            talep_id=tid,
         )
-        cur.execute(
-            """
-            SELECT kural, mesaj, puan FROM sube_operasyon_uyari
-            WHERE siparis_talep_id=%s AND tip='DAVRANIS' ORDER BY puan DESC
-            """,
-            (tid,),
-        )
-        davranis = [
-            {"kural": r.get("kural"), "mesaj": r.get("mesaj"), "puan": int(r.get("puan") or 0)}
-            for r in cur.fetchall()
-        ]
         n_kalem = sum(
             1 for x in kalemler
             if isinstance(x, dict) and max(0, int((x or {}).get("adet") or 0)) > 0
@@ -3770,10 +3881,9 @@ def _hub_alarm_satirlari(cur: Any, *, ozet: Optional[Dict[str, Any]] = None, lim
         })
 
     cur.execute(
-        """
+        f"""
         SELECT COUNT(*) AS c FROM siparis_talep st
-        WHERE st.durum = 'bekliyor'
-          AND COALESCE(NULLIF(TRIM(st.sevkiyat_durumu), ''), st.sevkiyat_durum, 'bekliyor') <> 'bekliyor'
+        WHERE {SD_ST} IN ('depoda_hazirlaniyor', 'kismi_hazirlandi', 'hazirlaniyor', 'gonderildi')
         """,
     )
     depo_c = int((cur.fetchone() or {}).get("c") or 0)
@@ -3801,7 +3911,7 @@ def _hub_alarm_satirlari(cur: Any, *, ozet: Optional[Dict[str, Any]] = None, lim
 
     try:
         cur.execute(
-            """
+            f"""
             SELECT t.id, s.ad AS talep_sube_adi, d.ad AS depo_adi,
                    t.depo_sevkiyat_rapor_metni, t.depo_sevkiyat_rapor_ts
             FROM siparis_talep t
@@ -3894,16 +4004,16 @@ def ops_bekleyen_merkez(
             d.pop("sube_adi_from_anlik", None)
             onay_satirlar.append(d)
 
-        # Bekleyen katalog siparişleri: ay filtresi YOK — hub siparis_bekleyen ile aynı kuyruk olmalı
-        # (tarih başka ayda/null olsa bile merkez işlem sırasında görünür).
+        # Bekleyen katalog siparişleri: ay filtresi YOK.
+        # Onay merkezi tam kuyruğu görür; hub / stok disiplin özeti ise son N gün ile sınırlıdır.
         qp3: List[Any] = []
-        q3 = """
+        q3 = f"""
             SELECT t.id, t.sube_id, s.ad AS sube_adi, t.tarih, t.durum,
                    t.personel_id, t.personel_ad, t.bildirim_saati,
                    t.not_aciklama, t.kalemler, t.olusturma,
                    COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS hedef_depo_sube_id,
                    ss.ad AS hedef_depo_sube_adi,
-                   COALESCE(NULLIF(TRIM(t.sevkiyat_durumu), ''), t.sevkiyat_durum, 'bekliyor') AS sevkiyat_durumu,
+                   {SD_T} AS sevkiyat_durumu,
                    COALESCE(NULLIF(TRIM(t.sevkiyat_notu), ''), t.sevkiyat_notlari) AS sevkiyat_notu,
                    t.kalem_durumlari,
                    NULLIF(TRIM(t.operasyon_yonlendirme_talimati), '') AS operasyon_yonlendirme_talimati
@@ -3950,22 +4060,16 @@ def ops_bekleyen_merkez(
             d["kalem_adet_toplam"] = sum(max(0, int((it or {}).get("adet") or 0)) for it in kalemler if isinstance(it, dict))
             sube_id_talep = d.get("sube_id") or ""
             hedef_dep = str(d.get("hedef_depo_sube_id") or "").strip() or None
-            fl = enrich_siparis_kalemleri_stok_inplace(
+            fl, davranis_rows = _enrich_kalemler_ve_davranis(
                 cur,
-                str(sube_id_talep),
-                kalemler,
+                sube_id=str(sube_id_talep),
+                kalemler=kalemler,
                 merkez_map=merkez_harita_sip,
                 hedef_depo_sube_id=hedef_dep,
+                talep_id=str(d.get("id") or ""),
             )
             d["stok_hesap_kaynagi"] = fl.get("stok_hesap_kaynagi")
-            cur.execute(
-                "SELECT kural, mesaj, puan FROM sube_operasyon_uyari WHERE siparis_talep_id=%s AND tip='DAVRANIS'",
-                (d.get("id"),),
-            )
-            d["davranis_uyarilari"] = [
-                {"kural": r.get("kural"), "mesaj": r.get("mesaj"), "puan": int(r.get("puan") or 0)}
-                for r in cur.fetchall()
-            ]
+            d["davranis_uyarilari"] = davranis_rows
             d["stok_alarm_var"] = fl["stok_alarm_var"]
             d["gereksiz_var"] = fl["gereksiz_var"]
             d["barem_risk_var"] = fl["barem_risk_var"]
@@ -4909,10 +5013,10 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
         if str(srow.get("sube_tipi") or "normal") not in ("depo", "karma", "sevkiyat", "merkez"):
             raise HTTPException(400, "Seçilen şube depo/karma tipi değil")
         cur.execute(
-            """
+            f"""
             SELECT id, sube_id, durum, kalemler, kalem_durumlari,
                    COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS hedef_depo_sube_id,
-                   COALESCE(NULLIF(TRIM(sevkiyat_durumu), ''), sevkiyat_durum, 'bekliyor') AS sevkiyat_durumu
+                   {SD_T} AS sevkiyat_durumu
             FROM siparis_talep
             WHERE id=%s
             FOR UPDATE
@@ -5218,13 +5322,13 @@ def ops_siparis_sevkiyat_listesi(
         raise HTTPException(400, "durum: hazirlaniyor | depoda_hazirlaniyor | kismi_hazirlandi | gonderildi | teslim_edildi | all")
     with db() as (conn, cur):
         qp: List[Any] = [gun_sayi]
-        q = """
+        q = f"""
             SELECT t.id, t.sube_id, s.ad AS sube_adi, t.tarih, t.durum,
                    t.personel_id, t.personel_ad, t.bildirim_saati, t.not_aciklama,
                    t.kalemler,
                    COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS hedef_depo_sube_id,
                    ss.ad AS hedef_depo_sube_adi,
-                   COALESCE(NULLIF(TRIM(t.sevkiyat_durumu), ''), t.sevkiyat_durum, 'bekliyor') AS sevkiyat_durumu,
+                   {SD_T} AS sevkiyat_durumu,
                    COALESCE(NULLIF(TRIM(t.sevkiyat_notu), ''), t.sevkiyat_notlari) AS sevkiyat_notu,
                    t.kalem_durumlari, t.olusturma, t.sevkiyat_ts, t.sevkiyat_personel_ad
             FROM siparis_talep t
@@ -5238,9 +5342,9 @@ def ops_siparis_sevkiyat_listesi(
             qp.append(sid)
         if durum_f != "all":
             if durum_f == "hazirlaniyor":
-                q += " AND COALESCE(NULLIF(TRIM(t.sevkiyat_durumu), ''), t.sevkiyat_durum, 'bekliyor') IN ('depoda_hazirlaniyor', 'kismi_hazirlandi', 'hazirlaniyor')"
+                q += f" AND {sevkiyat_durumu_sql_expr('t')} IN ('depoda_hazirlaniyor', 'kismi_hazirlandi', 'hazirlaniyor')"
             else:
-                q += " AND COALESCE(NULLIF(TRIM(t.sevkiyat_durumu), ''), t.sevkiyat_durum, 'bekliyor')=%s"
+                q += f" AND {sevkiyat_durumu_sql_expr('t')}=%s"
                 qp.append(durum_f)
         q += " ORDER BY t.tarih DESC, t.olusturma DESC NULLS LAST, t.id"
         cur.execute(q, qp)
@@ -5284,17 +5388,17 @@ def ops_siparis_depo_bekleyen(sube_id: str, gun: int = 15):
     gun_sayi = max(1, min(60, int(gun or 15)))
     with db() as (conn, cur):
         cur.execute(
-            """
+            f"""
             SELECT t.id, t.sube_id, s.ad AS sube_adi, t.tarih, t.durum,
                    t.kalemler, t.kalem_durumlari,
-                   COALESCE(NULLIF(TRIM(t.sevkiyat_durumu), ''), t.sevkiyat_durum, 'bekliyor') AS sevkiyat_durumu,
+                   {SD_T} AS sevkiyat_durumu,
                    COALESCE(NULLIF(TRIM(t.sevkiyat_notu), ''), t.sevkiyat_notlari) AS sevkiyat_notu,
                    t.olusturma
             FROM siparis_talep t
             JOIN subeler s ON s.id = t.sube_id
             WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)=%s
               AND t.tarih >= (CURRENT_DATE - (%s * INTERVAL '1 day'))
-              AND COALESCE(NULLIF(TRIM(t.sevkiyat_durumu), ''), t.sevkiyat_durum, 'bekliyor') IN ('depoda_hazirlaniyor', 'kismi_hazirlandi')
+              AND {SD_T} IN ('depoda_hazirlaniyor', 'kismi_hazirlandi')
             ORDER BY t.tarih DESC, t.olusturma DESC NULLS LAST, t.id
             """,
             (sid, gun_sayi),
@@ -5326,10 +5430,9 @@ def ops_siparis_depo_sevkiyat_raporlari(gun: int = 21, limit: int = 40):
     lim = max(1, min(80, int(limit or 40)))
     with db() as (conn, cur):
         cur.execute(
-            """
+            f"""
             SELECT t.id, t.sube_id, s.ad AS talep_sube_adi, t.tarih, t.durum,
-                   COALESCE(NULLIF(TRIM(t.sevkiyat_durumu), ''), t.sevkiyat_durum, 'bekliyor')
-                     AS sevkiyat_durumu,
+                   {SD_T} AS sevkiyat_durumu,
                    COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS hedef_depo_sube_id,
                    hd.ad AS hedef_depo_adi,
                    t.depo_sevkiyat_rapor_metni, t.depo_sevkiyat_rapor_ts,
@@ -5557,7 +5660,8 @@ def ops_siparis_sevkiyat_uyumsuzluk_coz(body: OpsSevkiyatUyumsuzlukCozBody):
             )
         except Exception:
             pass
-        conn.commit()
+        # NOT: conn.commit() kaldırıldı — db() context manager başarılı çıkışta
+        # otomatik commit yapar; buradaki explicit commit çift commit riskine yol açıyordu.
 
     return {
         "success": True,
@@ -5857,7 +5961,7 @@ def ops_v2_tahsis(siparis_id: str, body: TahsisBody):
             [t.model_dump() for t in body.tahsis],
             body.yapan_id, body.yapan_ad,
         )
-        conn.commit()
+        # commit() kaldırıldı — db() context manager başarılı çıkışta otomatik commit yapar
     return sonuc
 
 
@@ -5875,7 +5979,7 @@ def ops_v2_sevk_cikti(siparis_id: str, body: SevkBody):
             [s.model_dump() for s in body.sevk],
             body.yapan_id, body.yapan_ad,
         )
-        conn.commit()
+        # commit() kaldırıldı — db() context manager başarılı çıkışta otomatik commit yapar
     return {"success": True, "yolda_ids": yolda_ids}
 
 
@@ -5898,7 +6002,7 @@ def ops_v2_kabul(siparis_id: str, body: KabulBody):
             [k.model_dump() for k in body.kabul],
             body.yapan_id, body.yapan_ad,
         )
-        conn.commit()
+        # commit() kaldırıldı — db() context manager başarılı çıkışta otomatik commit yapar
     return sonuc
 
 
@@ -5915,7 +6019,7 @@ def ops_v2_kullanim(sube_id: str, body: KullanimBody):
             [k.model_dump() for k in body.kullanim],
             body.yapan_id, body.yapan_ad,
         )
-        conn.commit()
+        # commit() kaldırıldı — db() context manager başarılı çıkışta otomatik commit yapar
     return {"success": True}
 
 
@@ -6095,11 +6199,11 @@ def ops_v2_sube_skor(yil: Optional[int] = None, ay: Optional[int] = None):
     yil = yil or bugun.year
     ay  = ay  or bugun.month
 
+    # Skor güncelleme ayrı transaction'da — ardından SELECT ayrı db() bloğunda
+    with db() as (conn_skor, cur_skor):
+        tum_subeler_skor_guncelle(cur_skor)
+    # Güncel skor tablosunu oku
     with db() as (conn, cur):
-        # Önce güncel hesapla
-        tum_subeler_skor_guncelle(cur)
-        conn.commit()
-
         cur.execute("""
             SELECT ss.sube_id, s.ad AS sube_adi,
                    ss.toplam_puan, ss.durum, ss.detay, ss.guncelleme
@@ -6222,7 +6326,7 @@ def ops_v2_sube_depo_guncelle(body: SubeDepoGuncelle):
             ),
             bildirim_saati=saat,
         )
-        conn.commit()
+        # commit() kaldırıldı — db() context manager başarılı çıkışta otomatik commit yapar
     return {"success": True, "sube_id": sube_id, "kalem_kodu": kalem_kodu, "giris_nedeni": neden, "alis_fiyati_tl": round(alis_fiyat, 2)}
 
 
@@ -6284,8 +6388,7 @@ def ops_v2_sube_depo_kalem_tanimla(body: SubeDepoKalemTanimBody):
                 f"Depo kalemi tanımlandı — kalem={kalem_kodu} ad={kalem_adi} min={int(body.min_stok or 0)} alis={round(alis_fiyat, 2)}",
                 bildirim_saati=dt_now_tr().strftime("%H:%M:%S"),
             )
-        conn.commit()
-
+        # commit() kaldırıldı — db() context manager başarılı çıkışta otomatik commit yapar
     return {
         "success": True,
         "kalem_kodu": kalem_kodu,
@@ -6492,24 +6595,14 @@ def ops_v2_bekleyen_siparisler(gun: int = Query(7, ge=1, le=30)):
                 kalemler = []
 
             hedef_v2 = str(talep.get("hedef_depo_sube_id") or "").strip() or None
-            fl = enrich_siparis_kalemleri_stok_inplace(
+            fl, davranis = _enrich_kalemler_ve_davranis(
                 cur,
-                str(sube_id or ""),
-                kalemler,
+                sube_id=str(sube_id or ""),
+                kalemler=kalemler,
                 merkez_map=merkez_map,
                 hedef_depo_sube_id=hedef_v2,
+                talep_id=str(tid or ""),
             )
-
-            cur.execute("""
-                SELECT kural, mesaj, puan
-                FROM sube_operasyon_uyari
-                WHERE siparis_talep_id=%s AND tip='DAVRANIS'
-                ORDER BY puan DESC
-            """, (tid,))
-            davranis = [
-                {"kural": r.get("kural"), "mesaj": r.get("mesaj"), "puan": int(r.get("puan") or 0)}
-                for r in cur.fetchall()
-            ]
 
             kalem_detay: List[Dict[str, Any]] = []
             for it in kalemler:

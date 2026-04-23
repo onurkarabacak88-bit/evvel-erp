@@ -237,11 +237,12 @@ def kart_plan_guncelle_tx(cur) -> List[str]:
     """
     Mevcut cursor ile ödeme planlarını günceller — ayrı db() açmaz.
     Kart harcama/fatura/vadeli ödemesi ile aynı transaction içinde çağrılmalıdır.
+    FOR UPDATE: iki eş zamanlı işlem aynı kart için çift plan oluşturmasın.
     """
     bugun = bugun_tr()
     yil, ay = bugun.year, bugun.month
     guncellenen: List[str] = []
-    cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE")
+    cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE FOR UPDATE")
     for k in cur.fetchall():
         son_odeme_gun = k["son_odeme_gunu"] or 25
         son_gun = calendar.monthrange(yil, ay)[1]

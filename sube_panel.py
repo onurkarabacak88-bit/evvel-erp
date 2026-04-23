@@ -33,6 +33,12 @@ from siparis_sevkiyat_islem import (
     sevkiyat_kalem_durumlari_normalize,
     siparis_sevkiyat_kalem_guncelle_execute,
 )
+from sevkiyat_helpers import (
+    sevkiyat_durumu_coz,
+    sevkiyat_durumu_guncelle_params,
+    SD_T,
+    SD_NOALIAS,
+)
 from personel_panel_auth import (
     count_personel_panel_yonetici,
     dogrula_personel_panel_pin,
@@ -207,8 +213,23 @@ def _ciro_insert_aktif_ve_kasa(
     online: float,
     aciklama: Optional[str],
     audit_etiket: str = "INSERT_PANEL",
+    tarih=None,  # None → bugün; taslak onayında gerçek gelir tarihi geçilmeli
 ) -> dict:
-    """Onaylı ciro satırı + kasa hareketi (şube kesintileri dahil)."""
+    """Onaylı ciro satırı + kasa hareketi (şube kesintileri dahil).
+
+    tarih: cironun ait olduğu gün (YYYY-MM-DD str veya date).
+           None verilirse bugün kullanılır.
+           Taslak onayında mutlaka taslak.tarih geçirilmeli — aksi hâlde
+           geçmiş günün cirosu bugün tarihiyle yazılır.
+    """
+    from datetime import date as _date
+    gercek_tarih = tarih if tarih is not None else bugun_tr()
+    if isinstance(gercek_tarih, str):
+        try:
+            gercek_tarih = _date.fromisoformat(gercek_tarih)
+        except ValueError:
+            gercek_tarih = bugun_tr()
+
     pos_oran = float(sube.get("pos_oran") or 0)
     online_oran = float(sube.get("online_oran") or 0)
     pos_kesinti = pos * pos_oran / 100.0
@@ -219,13 +240,13 @@ def _ciro_insert_aktif_ve_kasa(
     cur.execute(
         """
         INSERT INTO ciro (id, tarih, sube_id, nakit, pos, online, aciklama)
-        VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         """,
-        (cid, sube_id, nakit, pos, online, aciklama or "Onaylı ciro"),
+        (cid, gercek_tarih, sube_id, nakit, pos, online, aciklama or "Onaylı ciro"),
     )
     insert_kasa_hareketi(
         cur,
-        bugun_tr(),
+        gercek_tarih,
         "CIRO",
         net_tutar,
         f"Ciro — {sube['ad']} ({audit_etiket})",
@@ -2291,6 +2312,7 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 FROM siparis_talep
                 WHERE id=%s AND sube_id=%s
                 LIMIT 1
+                FOR UPDATE
                 """,
                 (siparis_talep_id, sube_id),
             )
@@ -2312,13 +2334,14 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 (siparis_talep_id,),
             )
         else:
+            # FOR UPDATE: eş zamanlı sevk kaydı race condition'ını önler
             cur.execute(
                 """
                 SELECT id
                 FROM siparis_talep
                 WHERE sube_id=%s AND tarih=CURRENT_DATE
                   AND durum IN ('gonderildi','hazirlaniyor','bekliyor')
-                  AND COALESCE(NULLIF(TRIM(sevkiyat_durumu), ''), sevkiyat_durum, 'bekliyor')
+                  AND {SD_NOALIAS}
                       IN ('gonderildi', 'kismi_hazirlandi', 'depoda_hazirlaniyor', 'hazirlaniyor', 'bekliyor')
                 ORDER BY
                   CASE durum
@@ -2327,12 +2350,13 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                     ELSE 2
                   END,
                   CASE
-                    WHEN COALESCE(NULLIF(TRIM(sevkiyat_durumu), ''), sevkiyat_durum, 'bekliyor')='gonderildi' THEN 0
-                    WHEN COALESCE(NULLIF(TRIM(sevkiyat_durumu), ''), sevkiyat_durum, 'bekliyor')='kismi_hazirlandi' THEN 1
+                    WHEN {SD_NOALIAS}='gonderildi' THEN 0
+                    WHEN {SD_NOALIAS}='kismi_hazirlandi' THEN 1
                     ELSE 2
                   END,
                   olusturma DESC NULLS LAST
                 LIMIT 1
+                FOR UPDATE SKIP LOCKED
                 """,
                 (sube_id,),
             )
@@ -2882,7 +2906,7 @@ def _siparis_kalem_duzenle_panel(kalemler: Any, kalem_durumlari: Any) -> List[Di
 def _siparis_asama_metni_sube_panel(row: Dict[str, Any]) -> str:
     """Şube paneli için tek satır İngilizce kod değil, okunaklı Türkçe aşama."""
     durum = str(row.get("durum") or "").strip().lower()
-    sd = str(row.get("sevkiyat_durumu") or row.get("sevkiyat_durum") or "").strip().lower() or "bekliyor"
+    sd = sevkiyat_durumu_coz(row.get("sevkiyat_durumu"), row.get("sevkiyat_durum"))
     if durum == "iptal":
         return "İptal edildi"
     if durum == "teslim_edildi":
@@ -3026,10 +3050,10 @@ def sube_siparis_akisi(
     lim = max(1, min(80, int(limit)))
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
-        q = """
+        q = f"""
             SELECT t.id, t.tarih, t.durum, t.bildirim_saati, t.olusturma,
-                   COALESCE(NULLIF(TRIM(t.sevkiyat_durumu), ''), t.sevkiyat_durum, 'bekliyor')
-                     AS sevkiyat_durumu,
+                   {SD_T} AS sevkiyat_durumu,
+
                    COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS hedef_depo_sube_id,
                    hd.ad AS hedef_depo_adi,
                    t.kalemler,
@@ -3043,7 +3067,7 @@ def sube_siparis_akisi(
             WHERE t.sube_id=%s
               AND t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
               AND t.durum <> 'iptal'
-        """
+        f"""
         params: List[Any] = [sube_id, gun_i]
         if not tamamlanan_dahil:
             q += " AND t.durum <> 'teslim_edildi'"
@@ -3103,10 +3127,10 @@ def sube_siparis_akisi(
         for d in talepler:
             d["teslim_bekleyen_kalemler"] = yolda_map.get(str(d.get("id") or ""), [])
 
-        q_dep = """
+        q_dep = f"""
             SELECT t.id, t.tarih, t.durum, t.bildirim_saati, t.olusturma,
-                   COALESCE(NULLIF(TRIM(t.sevkiyat_durumu), ''), t.sevkiyat_durum, 'bekliyor')
-                     AS sevkiyat_durumu,
+                   {SD_T} AS sevkiyat_durumu,
+
                    t.sube_id AS talep_sube_id,
                    ts.ad AS talep_sube_adi,
                    t.kalemler,

@@ -177,6 +177,7 @@ def ciro_taslak_onayla(taslak_id: str, body: CiroTaslakOnayTutarlari = CiroTasla
             online,
             aciklama,
             audit_etiket="CIRO_TASLAK_ONAY",
+            tarih=t.get("tarih"),  # Taslağın gerçek gelir tarihi — bugün değil
         )
         cid = sonuc["id"]
 

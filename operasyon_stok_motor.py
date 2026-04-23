@@ -13,7 +13,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from tr_saat import dt_coerce_naive_tr, dt_now_tr_naive
+from tr_saat import bugun_tr, dt_coerce_naive_tr, dt_now_tr_naive
 
 STOK_KEYS = (
     "bardak_kucuk",
@@ -139,15 +139,16 @@ def stok_from_event_meta(meta_raw: Any, key: str = "acilis_stok_sayim") -> Dict[
     return out
 
 
-def bugun_acilis_stok(cur: Any, sube_id: str) -> Optional[Dict[str, int]]:
+def acilis_stok_tarih(cur: Any, sube_id: str, gun: date) -> Optional[Dict[str, int]]:
+    """Belirli gün için açılış (ACILIS) stok sayımı."""
     cur.execute(
         """
         SELECT meta FROM sube_operasyon_event
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='ACILIS' AND durum='tamamlandi'
+        WHERE sube_id=%s AND tarih=%s AND tip='ACILIS' AND durum='tamamlandi'
         ORDER BY cevap_ts DESC NULLS LAST
         LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, gun),
     )
     r = cur.fetchone()
     if not r:
@@ -156,6 +157,10 @@ def bugun_acilis_stok(cur: Any, sube_id: str) -> Optional[Dict[str, int]]:
     if "acilis_stok_sayim" not in m and "stok_sayim" not in m:
         return None
     return stok_from_event_meta(r.get("meta"), "acilis_stok_sayim")
+
+
+def bugun_acilis_stok(cur: Any, sube_id: str) -> Optional[Dict[str, int]]:
+    return acilis_stok_tarih(cur, sube_id, bugun_tr())
 
 
 def dun_kapanis_stok(cur: Any, sube_id: str) -> Optional[Dict[str, int]]:
@@ -178,14 +183,14 @@ def dun_kapanis_stok(cur: Any, sube_id: str) -> Optional[Dict[str, int]]:
     return stok_from_event_meta(r.get("meta"), "kapanis_stok_sayim")
 
 
-def sum_urun_stok_ekle_bugun(cur: Any, sube_id: str) -> Dict[str, int]:
+def sum_urun_stok_ekle_tarih(cur: Any, sube_id: str, gun: date) -> Dict[str, int]:
     cur.execute(
         """
         SELECT aciklama FROM operasyon_defter
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND etiket='URUN_STOK_EKLE'
+        WHERE sube_id=%s AND tarih=%s AND etiket='URUN_STOK_EKLE'
         ORDER BY olay_ts ASC
         """,
-        (sube_id,),
+        (sube_id, gun),
     )
     total = _zero_stok()
     for row in cur.fetchall():
@@ -200,16 +205,19 @@ def sum_urun_stok_ekle_bugun(cur: Any, sube_id: str) -> Dict[str, int]:
                 pass
     return total
 
+def sum_urun_stok_ekle_bugun(cur: Any, sube_id: str) -> Dict[str, int]:
+    return sum_urun_stok_ekle_tarih(cur, sube_id, bugun_tr())
 
-def sum_urun_ac_bugun(cur: Any, sube_id: str) -> Dict[str, int]:
-    """Bugün URUN_AC etiketiyle deftere yazılan (depodan aktif kullanıma açılan) toplamlar."""
+
+def sum_urun_ac_tarih(cur: Any, sube_id: str, gun: date) -> Dict[str, int]:
+    """URUN_AC etiketiyle deftere yazılan (o gün, depodan açılan) toplamlar."""
     cur.execute(
         """
         SELECT aciklama FROM operasyon_defter
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND etiket='URUN_AC'
+        WHERE sube_id=%s AND tarih=%s AND etiket='URUN_AC'
         ORDER BY olay_ts ASC
         """,
-        (sube_id,),
+        (sube_id, gun),
     )
     total = _zero_stok()
     for row in cur.fetchall():
@@ -223,6 +231,9 @@ def sum_urun_ac_bugun(cur: Any, sube_id: str) -> Dict[str, int]:
             except (TypeError, ValueError):
                 pass
     return total
+
+def sum_urun_ac_bugun(cur: Any, sube_id: str) -> Dict[str, int]:
+    return sum_urun_ac_tarih(cur, sube_id, bugun_tr())
 
 
 def sum_urun_sevk_bugun(cur: Any, sube_id: str) -> Dict[str, int]:
@@ -316,18 +327,48 @@ def sum_merkez_stok_sevk(cur: Any) -> Dict[str, int]:
     return total
 
 
+def teorik_stok_tarih(cur: Any, sube_id: str, gun: date) -> Optional[Dict[str, int]]:
+    """
+    Belirli gün için teorik (beklenen) stok: açılış + URUN_STOK_EKLE + URUN_AC.
+    Geçerli açılış yoksa None (merkez kartı / uyarı: veri yok).
+    """
+    ac = acilis_stok_tarih(cur, sube_id, gun)
+    if ac is None:
+        return None
+    ek = sum_urun_stok_ekle_tarih(cur, sube_id, gun)
+    urun_ac = sum_urun_ac_tarih(cur, sube_id, gun)
+    return {k: ac[k] + ek[k] + urun_ac[k] for k in STOK_KEYS}
+
+
+def satis_ozet_stok_bilesen(
+    cur: Any, sube_id: str, gun: date
+) -> Tuple[Dict[str, int], Dict[str, int], Dict[str, int]]:
+    """
+    (teorik, acilis, eklenen) — eklenen = URUN_STOK_EKLE + URUN_AC (gün içi hareket).
+    Tek açılış okuması; satış-özet API ile aynı cebir.
+    """
+    ac_o = acilis_stok_tarih(cur, sube_id, gun)
+    ac = ac_o if ac_o is not None else _zero_stok()
+    ek = sum_urun_stok_ekle_tarih(cur, sube_id, gun)
+    ur = sum_urun_ac_tarih(cur, sube_id, gun)
+    eklenen = {k: ek[k] + ur[k] for k in STOK_KEYS}
+    teo = {k: ac[k] + eklenen[k] for k in STOK_KEYS}
+    return teo, ac, eklenen
+
+
+def teorik_stok_tarih_sayim(cur: Any, sube_id: str, gun: date) -> Dict[str, int]:
+    """Açılış yokken sıfır kabul eder; sadece toplam teorik vektörü."""
+    teo, _, _ = satis_ozet_stok_bilesen(cur, sube_id, gun)
+    return teo
+
+
 def teorik_stok_bugun(cur: Any, sube_id: str) -> Optional[Dict[str, int]]:
     """
-    Beklenen aktif stok:
+    Beklenen aktif stok (bugün):
       açılış + URUN_STOK_EKLE (eski tip) + URUN_AC (depodan açılan)
     SEVK (depo teslim) dahil değil — SEVK potansiyel, AC gerçek kullanım.
     """
-    ac = bugun_acilis_stok(cur, sube_id)
-    if ac is None:
-        return None
-    ek = sum_urun_stok_ekle_bugun(cur, sube_id)
-    urun_ac = sum_urun_ac_bugun(cur, sube_id)
-    return {k: ac[k] + ek[k] + urun_ac[k] for k in STOK_KEYS}
+    return teorik_stok_tarih(cur, sube_id, bugun_tr())
 
 
 def merkez_stok_kart_guncelle(cur: Any) -> List[Dict[str, Any]]:
@@ -482,12 +523,16 @@ def sevk_vs_ac_uyarilari(cur: Any, sube_id: str) -> List[Dict[str, Any]]:
     SEVK edilip AC edilmeyen kalemleri tespit eder.
     Eğer sevk > ac ise ürün depoda bekliyor (uyarı değil, bilgi).
     Eğer ac > sevk ise depoda olmayan açılmış (şüpheli).
+    Tespit edilen uyarılar sube_operasyon_uyari tablosuna upsert edilir (audit trail).
     """
+    from datetime import date as _date
+    bugun = _date.today().isoformat()
     sevk = sum_urun_sevk_bugun(cur, sube_id)
     ac = sum_urun_ac_bugun(cur, sube_id)
     out: List[Dict[str, Any]] = []
     for k in STOK_KEYS:
         s, a = sevk[k], ac[k]
+        uid = f"sevk-ac-{sube_id}-{bugun}-{k}"
         if a > s:
             lab = STOK_LABEL_TR.get(k, k)
             msg = (
@@ -495,15 +540,39 @@ def sevk_vs_ac_uyarilari(cur: Any, sube_id: str) -> List[Dict[str, Any]]:
                 if s <= 0
                 else f"{lab}: {s} sevk edildi ama {a} açıldı — fazla açılmış olabilir"
             )
+            fark = float(a - s)
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO sube_operasyon_uyari (id, sube_id, tarih, tip, seviye, fark_tl, mesaj)
+                    VALUES (%s, %s, CURRENT_DATE, 'SEVK_AC_UYUMSUZ', 'uyari', %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        mesaj   = EXCLUDED.mesaj,
+                        fark_tl = EXCLUDED.fark_tl,
+                        okundu  = FALSE
+                    """,
+                    (uid, sube_id, fark, msg),
+                )
+            except Exception:
+                pass  # DB yazımı başarısız olsa da sanal liste dönmeye devam eder
             out.append({
-                "id": f"virt-sevk-ac-{sube_id}-{k}",
+                "id": uid,
                 "tip": "SEVK_AC_UYUMSUZ",
                 "seviye": "uyari",
                 "mesaj": msg,
-                "fark_tl": float(a - s),
+                "fark_tl": fark,
                 "okundu": False, "olusturma": None, "kaynak": "stok_motor",
                 "beklenen_tl": None, "gercek_tl": None,
             })
+        else:
+            # Uyumsuzluk giderildi — günün kaydını temizle
+            try:
+                cur.execute(
+                    "DELETE FROM sube_operasyon_uyari WHERE id=%s",
+                    (uid,),
+                )
+            except Exception:
+                pass
     return out
 
 
@@ -690,31 +759,30 @@ def sube_operasyon_ozet_yaz(cur: Any, sube_id: str, kapanis_stok: Dict[str, int]
         satis[k] = val
         toplam += val
 
-    oid = str(uuid.uuid4())
+    # database.py / operasyon_merkez_api ile aynı kolonlar: satis_tahmini_*
     cur.execute(
         """
         INSERT INTO sube_operasyon_ozet
-            (id, sube_id, tarih, satis_tahmin_toplam, satis_tahmin_json, teorik_stok_json, kapanis_stok_json, guncelleme)
+            (sube_id, tarih, satis_tahmini_toplam, satis_tahmini_kalemler, guncelleme)
         VALUES
-            (%s, %s, CURRENT_DATE, %s, %s, %s, %s, NOW())
+            (%s, CURRENT_DATE, %s, %s::jsonb, NOW())
         ON CONFLICT (sube_id, tarih)
         DO UPDATE SET
-            satis_tahmin_toplam = EXCLUDED.satis_tahmin_toplam,
-            satis_tahmin_json = EXCLUDED.satis_tahmin_json,
-            teorik_stok_json = EXCLUDED.teorik_stok_json,
-            kapanis_stok_json = EXCLUDED.kapanis_stok_json,
+            satis_tahmini_toplam = EXCLUDED.satis_tahmini_toplam,
+            satis_tahmini_kalemler = EXCLUDED.satis_tahmini_kalemler,
             guncelleme = NOW()
         """,
         (
-            oid,
             sube_id,
             int(toplam),
             json.dumps(satis, ensure_ascii=False, separators=(",", ":")),
-            json.dumps(teorik, ensure_ascii=False, separators=(",", ":")),
-            json.dumps(gercek, ensure_ascii=False, separators=(",", ":")),
         ),
     )
-    return {"yazildi": True, "satis_tahmin_toplam": int(toplam), "satis_tahmin_json": satis}
+    return {
+        "yazildi": True,
+        "satis_tahmini_toplam": int(toplam),
+        "satis_tahmini_kalemler": satis,
+    }
 
 
 def build_virtual_merkez_uyarilari(cur: Any, sube_id: str, simdi: Any) -> List[Dict[str, Any]]:
@@ -1667,6 +1735,15 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
                        yapan_id: Optional[str] = None,
                        yapan_ad: Optional[str] = None) -> Dict[str, Any]:
     """Şube depo stoğu artar. Eksik teslimatta KABUL_FARKI uyarısı üretilir."""
+    # İdempotency: sipariş zaten teslim edilmişse stok tekrar artırılmaz.
+    cur.execute(
+        "SELECT durum FROM siparis_talep WHERE id=%s FOR UPDATE",
+        (siparis_talep_id,),
+    )
+    mevcut = cur.fetchone()
+    if mevcut and (mevcut.get("durum") or mevcut[0]) in ("teslim_edildi", "uyumsuz_kabul"):
+        return {"success": True, "idempotent": True, "mesaj": "Kabul zaten işlendi"}
+
     tam_mi = True
     uyumsuz_satirlar: List[Dict[str, Any]] = []
     for item in kabul_kalemleri:

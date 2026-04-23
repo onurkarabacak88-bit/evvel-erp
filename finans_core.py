@@ -447,6 +447,13 @@ def nakit_akis_sim(cur, gun_sayisi: int = 15) -> list:
     """
     gun_sayisi günlük kasa projeksiyonu.
     Mevcut kasa + günlük ciro tahmini - planlanan ödemeler.
+
+    Değişiklikler (geriye uyumlu):
+    - Gecikmiş ödemeler (tarih < bugün, hâlâ bekliyor/onay_bekliyor) gün 0'a
+      eklenir. kasa_bakiyesi fiziksel parayı doğru gösterir; ancak ödenmemiş
+      yükümlülükleri görmezden gelirse projeksiyon yanıltıcı olur.
+    - Her güne 'risk_seviye' alanı eklendi: 'NORMAL' / 'DIKKAT' / 'KRITIK'.
+      Mevcut 'risk' bool alanı değişmedi — tüm çağrıcılar uyumlu kalır.
     """
     bugun = bugun_tr()
     baslangic_kasa = kasa_bakiyesi(cur)
@@ -454,7 +461,7 @@ def nakit_akis_sim(cur, gun_sayisi: int = 15) -> list:
     gunluk_ciro = ciro_veri["tahmin"]
     katsayi_map = ciro_veri.get("gunluk_katsayi") or {}
 
-    # Planlanan ödemeleri tarihe göre map'e al
+    # Planlanan ödemeleri tarihe göre map'e al (bugün dahil ileri tarihler)
     cur.execute("""
         SELECT tarih::TEXT, SUM(odenecek_tutar) AS toplam
         FROM odeme_plani
@@ -464,24 +471,53 @@ def nakit_akis_sim(cur, gun_sayisi: int = 15) -> list:
     """, (bugun, bugun + timedelta(days=gun_sayisi)))
     odeme_map = {r['tarih']: float(r['toplam']) for r in cur.fetchall()}
 
+    # Gecikmiş ödemeler — vadesi geçmiş ama ödenmemiş yükümlülükleri gün 0'a yükle.
+    # Bu para fiziksel kasada dursa da bugün ödenmesi gereken bir borçtur;
+    # projeksiyon bunu görmezden gelirse kasanın gerçekte ne kadar baskı altında
+    # olduğu anlaşılamaz.
+    cur.execute("""
+        SELECT COALESCE(SUM(odenecek_tutar), 0) AS toplam
+        FROM odeme_plani
+        WHERE durum IN ('bekliyor', 'onay_bekliyor')
+        AND tarih < %s
+    """, (bugun,))
+    gecikmus_toplam = float(cur.fetchone()['toplam'] or 0)
+    if gecikmus_toplam > 0:
+        bugun_str = str(bugun)
+        odeme_map[bugun_str] = odeme_map.get(bugun_str, 0.0) + gecikmus_toplam
+
     gunler = []
     kasa = baslangic_kasa
     for i in range(gun_sayisi):
         t = bugun + timedelta(days=i)
         t_str = str(t)
-        odeme = odeme_map.get(t_str, 0)
+        odeme = odeme_map.get(t_str, 0.0)
         dow = str(t.isoweekday())
         gelir_katsayi = float(katsayi_map.get(dow, 1.0) or 1.0)
         beklenen_gelir = round(gunluk_ciro * gelir_katsayi, 2)
         kasa = kasa + beklenen_gelir - odeme
-        gunler.append({
+        kasa_r = round(kasa, 2)
+        # Risk seviyesi: negatife düştüyse KRİTİK;
+        # başlangıç kasasının %20'sine inerse DİKKAT; aksi hâlde NORMAL.
+        if kasa_r < 0:
+            risk_seviye = 'KRITIK'
+        elif baslangic_kasa > 0 and kasa_r < baslangic_kasa * 0.20:
+            risk_seviye = 'DIKKAT'
+        else:
+            risk_seviye = 'NORMAL'
+        gun_veri: dict = {
             "tarih":          t_str,
             "beklenen_gelir": beklenen_gelir,
             "gelir_katsayi":  gelir_katsayi,
-            "beklenen_gider": odeme,
-            "kasa_tahmini":   round(kasa, 2),
-            "risk":           kasa < 0,
-        })
+            "beklenen_gider": round(odeme, 2),
+            "kasa_tahmini":   kasa_r,
+            "risk":           kasa_r < 0,       # geriye uyumlu bool — değişmedi
+            "risk_seviye":    risk_seviye,       # yeni alan — tüm çağrıcılar {**gun} ile yayar
+        }
+        # İlk gün gecikmiş ödeme yükü varsa ayrıca işaretle (panel / debug için).
+        if i == 0 and gecikmus_toplam > 0:
+            gun_veri["gecikmus_odeme"] = round(gecikmus_toplam, 2)
+        gunler.append(gun_veri)
 
     return gunler
 
@@ -721,7 +757,8 @@ def faiz_hesapla_ve_yaz(cur, kart_id: str, donem: str = None) -> dict:
     if donem is None:
         donem = bugun.strftime('%Y-%m')
 
-    cur.execute("SELECT * FROM kartlar WHERE id = %s AND aktif = TRUE", (kart_id,))
+    # FOR UPDATE: eş zamanlı iki faiz çağrısında aynı kart için çift yazımı önler.
+    cur.execute("SELECT * FROM kartlar WHERE id = %s AND aktif = TRUE FOR UPDATE", (kart_id,))
     kart = cur.fetchone()
     if not kart:
         return {"hata": "Kart bulunamadı", "kart_id": kart_id}
@@ -730,8 +767,10 @@ def faiz_hesapla_ve_yaz(cur, kart_id: str, donem: str = None) -> dict:
     cur.execute("""
         SELECT id FROM kart_hareketleri
         WHERE kart_id = %s AND islem_turu = 'FAIZ'
-        AND aciklama LIKE %s AND durum = 'aktif'
-    """, (kart_id, f"%{donem}%"))
+        AND tarih >= DATE_TRUNC('month', %s::date)
+        AND tarih <  DATE_TRUNC('month', %s::date) + INTERVAL '1 month'
+        AND durum = 'aktif'
+    """, (kart_id, f"{donem}-01", f"{donem}-01"))
     if cur.fetchone():
         return {
             "kart":   kart['kart_adi'],

@@ -25,7 +25,7 @@ from tr_saat import (
 router = APIRouter(prefix="/api/sube-panel", tags=["sube-operasyon"])
 
 ACILIS_TOLERANS_DK = 10
-# KONTROL: açılış sonrası sabit saat yok — rastgele gecikme + rastgele cevap penceresi (meta ile mod).
+# KONTROL: açılış sonrası sabit saat yok — rastgele gecikme + rastgele cevap penceresi; tamamlamada yalnızca kasa sayımı + PIN.
 KAPANIS_TOLERANS_DK = 15
 CIKIS_TOLERANS_DK = 5
 
@@ -153,7 +153,7 @@ def _sync_kontrol_slot_after_acilis(cur, sube_id: str) -> None:
 
     - Başlama zamanı sabit değildir: açılış cevabından sonra 15–150 dk arası rastgele.
     - Cevap penceresi 18–55 dk arası rastgele.
-    - meta.denetim_mod: bazen yalnızca kasa, bazen yalnızca bardak, bazen ikisi (full).
+    - meta.denetim_mod: her zaman kasa_only (yalnızca kasa sayımı + PIN).
     Mevcut bekleyen satırın slotunu güncellemez (tahmin edilebilir kaymayı önler).
     """
     cur.execute(
@@ -184,13 +184,7 @@ def _sync_kontrol_slot_after_acilis(cur, sube_id: str) -> None:
     pencere_min = secrets.randbelow(38) + 18  # 18–55
     slot = ac_cevap + timedelta(minutes=delay_min)
     deadline = slot + timedelta(minutes=pencere_min)
-    r = secrets.randbelow(10)
-    if r < 4:
-        denetim_mod = "kasa_only"
-    elif r < 8:
-        denetim_mod = "bardak_only"
-    else:
-        denetim_mod = "full"
+    denetim_mod = "kasa_only"
     meta_obj = {
         "denetim_mod": denetim_mod,
         "rastgele_kontrol": True,
@@ -596,7 +590,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                         meta_prev = json.loads(str(raw_m))
                     except Exception:
                         meta_prev = {}
-            mod = str(meta_prev.get("denetim_mod") or "").strip() or "legacy_kasa_snap"
+            _plan_mod = str(meta_prev.get("denetim_mod") or "").strip() or "legacy_kasa_snap"
 
             pid_in = (body.personel_id or "").strip()
             pin = (body.pin or "").replace(" ", "")
@@ -608,118 +602,22 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             saat_kayit = simdi_tr.strftime("%H:%M:%S")
             psaat = (body.personel_saat or "").strip() or saat_kayit
 
-            ks_out: Optional[float] = None
-            sn_out: Optional[float] = None
-            sp_out: Optional[float] = None
-            so_out: Optional[float] = None
-            bardak_out: Optional[Dict[str, int]] = None
-
-            if mod == "bardak_only":
-                for name, val in (
-                    ("bardak_kucuk", body.bardak_kucuk),
-                    ("bardak_buyuk", body.bardak_buyuk),
-                    ("bardak_plastik", body.bardak_plastik),
-                ):
-                    if val is None:
-                        raise HTTPException(400, f"Bardak denetimi: {name} zorunlu")
-                    if int(val) < 0:
-                        raise HTTPException(400, f"Bardak denetimi: {name} negatif olamaz")
-                bardak_out = {
-                    "bardak_kucuk": int(body.bardak_kucuk),
-                    "bardak_buyuk": int(body.bardak_buyuk),
-                    "bardak_plastik": int(body.bardak_plastik),
-                }
-                if body.kasa_sayim is not None and body.kasa_sayim >= 0:
-                    if body.kasa_sayim > 9_999_999:
-                        raise HTTPException(400, "Kasa sayımı geçersiz: 9.999.999₺ üstü kabul edilmez")
-                    ks_out = float(body.kasa_sayim)
-                    sn_out = float(body.snap_nakit or 0)
-                    sp_out = float(body.snap_pos or 0)
-                    so_out = float(body.snap_online or 0)
-            elif mod == "kasa_only":
-                if body.kasa_sayim is None or body.kasa_sayim < 0:
-                    raise HTTPException(400, "Kasa denetimi: kasa sayımı zorunlu")
-                if body.kasa_sayim > 9_999_999:
-                    raise HTTPException(400, "Kasa sayımı geçersiz: 9.999.999₺ üstü kabul edilmez")
-                ks_out = float(body.kasa_sayim)
-                sn_out = float(body.snap_nakit or 0)
-                sp_out = float(body.snap_pos or 0)
-                so_out = float(body.snap_online or 0)
-                if (
-                    body.bardak_kucuk is not None
-                    and body.bardak_buyuk is not None
-                    and body.bardak_plastik is not None
-                ):
-                    for name, val in (
-                        ("bardak_kucuk", body.bardak_kucuk),
-                        ("bardak_buyuk", body.bardak_buyuk),
-                        ("bardak_plastik", body.bardak_plastik),
-                    ):
-                        if int(val) < 0:
-                            raise HTTPException(400, f"Kasa denetimi: {name} negatif olamaz")
-                    bardak_out = {
-                        "bardak_kucuk": int(body.bardak_kucuk),
-                        "bardak_buyuk": int(body.bardak_buyuk),
-                        "bardak_plastik": int(body.bardak_plastik),
-                    }
-            elif mod == "full":
-                if body.kasa_sayim is None or body.kasa_sayim < 0:
-                    raise HTTPException(400, "Tam denetim: kasa sayımı zorunlu")
-                if body.kasa_sayim > 9_999_999:
-                    raise HTTPException(400, "Kasa sayımı geçersiz: 9.999.999₺ üstü kabul edilmez")
-                for name, val in (
-                    ("bardak_kucuk", body.bardak_kucuk),
-                    ("bardak_buyuk", body.bardak_buyuk),
-                    ("bardak_plastik", body.bardak_plastik),
-                ):
-                    if val is None:
-                        raise HTTPException(400, f"Tam denetim: {name} zorunlu")
-                    if int(val) < 0:
-                        raise HTTPException(400, f"Tam denetim: {name} negatif olamaz")
-                    if int(val) > 99_999:
-                        raise HTTPException(400, f"Tam denetim: {name} geçersiz (max 99.999)")
-                ks_out = float(body.kasa_sayim)
-                sn_out = float(body.snap_nakit or 0)
-                sp_out = float(body.snap_pos or 0)
-                so_out = float(body.snap_online or 0)
-                bardak_out = {
-                    "bardak_kucuk": int(body.bardak_kucuk),
-                    "bardak_buyuk": int(body.bardak_buyuk),
-                    "bardak_plastik": int(body.bardak_plastik),
-                }
-            else:
-                if body.kasa_sayim is None or body.kasa_sayim < 0:
-                    raise HTTPException(400, "Kontrol için kasa sayımı zorunlu")
-                if body.kasa_sayim > 9_999_999:
-                    raise HTTPException(400, "Kasa sayımı geçersiz: 9.999.999₺ üstü kabul edilmez")
-                ks_out = float(body.kasa_sayim)
-                sn_out = float(body.snap_nakit or 0)
-                sp_out = float(body.snap_pos or 0)
-                so_out = float(body.snap_online or 0)
-                if (
-                    body.bardak_kucuk is not None
-                    and body.bardak_buyuk is not None
-                    and body.bardak_plastik is not None
-                ):
-                    for name, val in (
-                        ("bardak_kucuk", body.bardak_kucuk),
-                        ("bardak_buyuk", body.bardak_buyuk),
-                        ("bardak_plastik", body.bardak_plastik),
-                    ):
-                        if int(val) < 0:
-                            raise HTTPException(400, f"Kontrol (klasik): {name} negatif olamaz")
-                    bardak_out = {
-                        "bardak_kucuk": int(body.bardak_kucuk),
-                        "bardak_buyuk": int(body.bardak_buyuk),
-                        "bardak_plastik": int(body.bardak_plastik),
-                    }
+            if body.kasa_sayim is None or body.kasa_sayim < 0:
+                raise HTTPException(400, "Kontrol için kasa sayımı zorunlu")
+            if body.kasa_sayim > 9_999_999:
+                raise HTTPException(400, "Kasa sayımı geçersiz: 9.999.999₺ üstü kabul edilmez")
+            ks_out = float(body.kasa_sayim)
+            sn_out = 0.0
+            sp_out = 0.0
+            so_out = 0.0
 
             meta_prev["kontrol_tamam"] = {
-                "mod": mod,
+                "mod": "kasa_only",
+                "plan_mod_arsiv": _plan_mod,
                 "saat": saat_kayit,
                 "personel_id": pid_panel,
                 "personel_ad": onay_ad,
-                "bardak": bardak_out,
+                "bardak": None,
                 "kasa_sayim": ks_out,
                 "snap": {"nakit": sn_out, "pos": sp_out, "online": so_out},
             }
@@ -748,7 +646,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             audit(cur, "sube_operasyon_event", event_id, "KONTROL_TAMAMLANDI")
             from operasyon_defter import operasyon_defter_ekle
 
-            ozet = f"mod={mod} kasa={ks_out} bardak={bardak_out}"
+            ozet = f"kasa_only kasa={ks_out}"
             operasyon_defter_ekle(
                 cur,
                 sube_id,

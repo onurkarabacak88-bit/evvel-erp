@@ -22,27 +22,40 @@ from typing import Any, Dict, List, Optional
 _log = logging.getLogger(__name__)
 
 _IMZA_UYARI_VERILDI = False
+_DEV_FALLBACK_KEY = "evvel-dev-imza-anahtari-degistir"
+
+
+def _imza_anahtari_oku() -> str:
+    """HMAC anahtarını env'den okur. Üretimde eksikse hata fırlatır."""
+    s = (os.environ.get("EVVEL_OPERASYON_DEFTER_IMZA_ANAHTARI") or "").strip()
+    if s:
+        return s
+    # EVVEL_ENV=production ise anahtarsız başlatmaya izin verme
+    env = (os.environ.get("EVVEL_ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower()
+    if env in ("production", "prod", "staging"):
+        raise RuntimeError(
+            "EVVEL_OPERASYON_DEFTER_IMZA_ANAHTARI tanımlı değil. "
+            f"Ortam '{env}' olarak algılandı — üretimde bu anahtar zorunludur. "
+            "Railway → Variables bölümünden güçlü bir değer tanımlayın."
+        )
+    global _IMZA_UYARI_VERILDI
+    if not _IMZA_UYARI_VERILDI:
+        _log.warning(
+            "EVVEL_OPERASYON_DEFTER_IMZA_ANAHTARI boş; geliştirme varsayılanı kullanılıyor. "
+            "Üretimde güçlü bir anahtar tanımlayın."
+        )
+        _IMZA_UYARI_VERILDI = True
+    return _DEV_FALLBACK_KEY
 
 
 def _imza_anahtar_baytlari() -> bytes:
     """HMAC anahtarı: env uzun dizgesi → SHA-256 türev (sabit 32 bayt)."""
-    global _IMZA_UYARI_VERILDI
-    s = (os.environ.get("EVVEL_OPERASYON_DEFTER_IMZA_ANAHTARI") or "").strip()
-    if not s:
-        if not _IMZA_UYARI_VERILDI:
-            _log.warning(
-                "EVVEL_OPERASYON_DEFTER_IMZA_ANAHTARI bos; gelistirme varsayilani kullaniliyor. "
-                "Uretimde guclu bir anahtar tanimlayin."
-            )
-            _IMZA_UYARI_VERILDI = True
-        s = "evvel-dev-imza-anahtari-degistir"
+    s = _imza_anahtari_oku()
     return hashlib.sha256(f"evvel-defter-hmac-v1:{s}".encode("utf-8")).digest()
 
 
 def _zincir_anahtar_baytlari() -> bytes:
-    s = (os.environ.get("EVVEL_OPERASYON_DEFTER_IMZA_ANAHTARI") or "").strip()
-    if not s:
-        s = "evvel-dev-imza-anahtari-degistir"
+    s = _imza_anahtari_oku()
     return hashlib.sha256(f"evvel-defter-zincir-v1:{s}".encode("utf-8")).digest()
 
 
