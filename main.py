@@ -4590,7 +4590,7 @@ def borc_ode(bid: str, body: BorcOdemeBody):
         cur.execute(
             """
             UPDATE odeme_plani
-            SET durum='odendi', odenen_tutar=%s, odenme_tarihi=%s
+            SET durum='odendi', odenen_tutar=%s, odeme_tarihi=%s
             WHERE kaynak_tablo='borc_envanteri' AND kaynak_id=%s
               AND durum IN ('bekliyor','onay_bekliyor')
               AND EXTRACT(YEAR FROM tarih)  = EXTRACT(YEAR FROM %s::date)
