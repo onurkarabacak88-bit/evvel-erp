@@ -2401,7 +2401,7 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
         else:
             # FOR UPDATE: eş zamanlı sevk kaydı race condition'ını önler
             cur.execute(
-                """
+                f"""
                 SELECT id
                 FROM siparis_talep
                 WHERE sube_id=%s AND tarih=CURRENT_DATE
