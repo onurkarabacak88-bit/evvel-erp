@@ -6334,20 +6334,54 @@ def sistem_sifirla(body: dict = {}):
     if body.get('onay') != 'EVET_SIL':
         raise HTTPException(400, "Onay gerekli")
 
-    # İzin verilen tablolar — şubeler ve kartlar asla silinmez
+    # İzin verilen tablolar — şubeler, kartlar, master katalog (merkez_stok_kart,
+    # siparis_kategori, siparis_urun, tedarikciler) ve vardiya kural tabloları asla silinmez.
     IZINLI = {
-        'ciro':           'ciro',
-        'kasa':           'kasa_hareketleri',
-        'kart_hareketleri': 'kart_hareketleri',
-        'anlik_gider':    'anlik_giderler',
-        'vadeli_alim':    'vadeli_alimlar',
-        'personel':       'personel',
-        'personel_aylik': 'personel_aylik',
-        'sabit_gider':    'sabit_giderler',
-        'borc':           'borc_envanteri',
-        'odeme_plani':    'odeme_plani',
-        'onay_kuyrugu':   'onay_kuyrugu',
-        'audit_log':      'audit_log',
+        # ── Finans / Muhasebe ─────────────────────────────────────────
+        'ciro':                 'ciro',
+        'ciro_taslak':          'ciro_taslak',
+        'kasa':                 'kasa_hareketleri',
+        'kart_hareketleri':     'kart_hareketleri',
+        'banka_yatirimlari':    'banka_yatirimlari',
+        'anlik_gider':          'anlik_giderler',
+        'vadeli_alim':          'vadeli_alimlar',
+        'sabit_gider':          'sabit_giderler',
+        'borc':                 'borc_envanteri',
+        'odeme_plani':          'odeme_plani',
+        'onay_kuyrugu':         'onay_kuyrugu',
+        'x_rapor_kayit':        'x_rapor_kayit',
+        # ── Personel (aylık + ataması; personel tanımı ayrı) ──────────
+        'personel':             'personel',
+        'personel_aylik':       'personel_aylik',
+        'personel_risk_sinyal': 'personel_risk_sinyal',
+        'personel_takip':       'personel_takip',
+        'vardiya_atama_taslak': 'vardiya_atama_taslak',
+        # ── Şube operasyon (test verileri için) ───────────────────────
+        'sube_acilis':          'sube_acilis',
+        'sube_operasyon_event': 'sube_operasyon_event',
+        'sube_operasyon_uyari': 'sube_operasyon_uyari',
+        'sube_operasyon_ozet':  'sube_operasyon_ozet',
+        'sube_fire_haftalik':   'sube_fire_haftalik',
+        'operasyon_defter':     'operasyon_defter',
+        'sube_kasa_gun_acma':   'sube_kasa_gun_acma',
+        'kapanis_kayit':        'kapanis_kayit',
+        'sube_depo_stok':       'sube_depo_stok',
+        'stok_yolda':           'stok_yolda',
+        'sube_skor':            'sube_skor',
+        'sube_merkez_mesaj':    'sube_merkez_mesaj',
+        'sube_merkez_not':      'sube_merkez_not',
+        'panel_pin_guvenlik':   'panel_pin_guvenlik',
+        'operasyon_guvenlik_olay':       'operasyon_guvenlik_olay',
+        'operasyon_guvenlik_alarm_durum':'operasyon_guvenlik_alarm_durum',
+        'motor_analitik_olay':  'motor_analitik_olay',
+        'kasa_teslim':          'kasa_teslim',
+        # ── Sipariş akışı ─────────────────────────────────────────────
+        'siparis_talep':        'siparis_talep',
+        'siparis_ozel_talep':   'siparis_ozel_talep',
+        'siparis_sevk_eksik':   'siparis_sevk_eksik',
+        'merkez_stok_sevk':     'merkez_stok_sevk',
+        # ── Denetim ──────────────────────────────────────────────────
+        'audit_log':            'audit_log',
     }
 
     istenen = body.get('tablolar', list(IZINLI.keys()))  # boşsa hepsi
