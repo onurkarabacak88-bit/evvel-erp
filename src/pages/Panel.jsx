@@ -144,6 +144,34 @@ export default function Panel({ onNavigate }) {
     nav('kart-hareketleri');
   }
 
+  /** Her uyarı türü için ilgili sayfaya yönlendir */
+  function yonlendir(u) {
+    if (u.kart_id) { kartHareketleriOdemeSayfasi(u.kart_id); return; }
+    const k = u.kaynak_tablo;
+    if (k === 'sabit_giderler') {
+      try { if (u.kaynak_id) sessionStorage.setItem('sabit_gider_fatura_id', u.kaynak_id); } catch (_) {}
+      nav('sabit-giderler');
+    } else if (k === 'personel') {
+      nav('personel');
+    } else if (k === 'borc_envanteri') {
+      nav('borclar');
+    } else if (k === 'vadeli_alimlar') {
+      nav('vadeli');
+    } else {
+      nav('onay');
+    }
+  }
+
+  function yonlendirLabel(u) {
+    if (u.kart_id) return '💳 Kart Hareketleri →';
+    const k = u.kaynak_tablo;
+    if (k === 'sabit_giderler') return '🏠 Sabit Giderler →';
+    if (k === 'personel')       return '👤 Personel →';
+    if (k === 'borc_envanteri') return '🏦 Borç Envanteri →';
+    if (k === 'vadeli_alimlar') return '📦 Vadeli Alımlar →';
+    return '✅ Onay Kuyruğu →';
+  }
+
   async function odemeOnayla(odemeId, tutar) {
     if (loadingBtn) return;
     setLoadingBtn(true);
@@ -790,25 +818,10 @@ export default function Panel({ onNavigate }) {
                       title="Sabit Giderler sayfasında Fatura Öde butonunu kullanın">
                       💰 Fatura Öde
                     </button>
-                  ) : u.kart_id ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
-                      <span style={{ fontSize: 10, color: 'var(--text3)', maxWidth: 220, textAlign: 'right', lineHeight: 1.35 }}>
-                        Bilgilendirme: ödeme buradan yapılmaz; asgari ve borç güncellemesi için Kart Hareketleri üzerinden ödeme girin.
-                      </span>
-                      <button type="button" className="btn btn-primary btn-sm" disabled={loadingBtn}
-                        onClick={() => kartHareketleriOdemeSayfasi(u.kart_id)}>
-                        💳 Kart hareketleri
-                      </button>
-                    </div>
                   ) : (
-                    <>
-                      <button className="btn btn-primary btn-sm" disabled={loadingBtn}
-                        onClick={() => odemeModalAcVadeliKontrol(u)}>✓ Ödendi</button>
-                      <button className="btn btn-secondary btn-sm" disabled={loadingBtn}
-                        onClick={() => odemeErteleAc(u.odeme_id, u.aciklama, u.tarih)}>⏳ Ertele</button>
-                      <button className="btn btn-ghost btn-sm" disabled={loadingBtn}
-                        onClick={() => kismiModalAc(u)}>✂ Kısmi</button>
-                    </>
+                    <button className="btn btn-primary btn-sm" onClick={() => yonlendir(u)}>
+                      {yonlendirLabel(u)}
+                    </button>
                   )}
                 </div>
               </div>
@@ -871,6 +884,31 @@ export default function Panel({ onNavigate }) {
           </div>
         );
       })()}
+
+      {/* ── RED BİLDİRİMLERİ (merkez_mesajlar — okunmamış) ── */}
+      {(panel.merkez_mesajlar || []).filter(m => !m.okundu && m.aktif !== false).length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          {(panel.merkez_mesajlar).filter(m => !m.okundu && m.aktif !== false).map((m, i) => (
+            <div key={m.id || i} style={{
+              display: 'flex', alignItems: 'flex-start', gap: 10,
+              background: 'rgba(239,68,68,0.08)',
+              border: '1px solid rgba(239,68,68,0.35)',
+              borderLeft: '3px solid var(--red)',
+              borderRadius: 8, padding: '10px 14px', marginBottom: 8,
+            }}>
+              <span style={{ fontSize: 18, flexShrink: 0 }}>❌</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, color: 'var(--text1)', fontWeight: 500, lineHeight: 1.4 }}>{m.mesaj}</div>
+                {m.olusturma && (
+                  <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                    {new Date(m.olusturma).toLocaleString('tr-TR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── BU AY ÖDEMELER — 2 BANT ── */}
       {panel.yaklasan_odemeler?.length > 0 && (() => {
@@ -1080,15 +1118,16 @@ export default function Panel({ onNavigate }) {
             const nakit = panel.anlik_nakit || 0;
             const kart  = panel.anlik_kart  || 0;
             const toplam = nakit + kart;
-            const durdurulmus = sabitGiderUyarilar.filter(u => u.durduruldu === true).length;
-            const geciken = sabitGiderOzet.geciken_adet || 0;
-            const sorunlu = durdurulmus + geciken;
-            const subRenk = sorunlu > 0 ? 'var(--red)' : 'var(--text3)';
+            const bekleyen = Number(panel.bekleyen_gider_sayisi || 0);
+            const subText = bekleyen > 0
+              ? `⏳ ${bekleyen} gider onay bekliyor`
+              : toplam === 0 ? 'Bu ay gider yok' : null;
+            const renk = bekleyen > 0 ? 'var(--yellow)' : toplam > 0 ? 'var(--red)' : 'var(--text3)';
             return {
               label: '💸 Anlık Gider',
               value: fmt(toplam),
-              sub: toplam === 0 ? 'Bu ay gider yok' : null,
-              renk: toplam > 0 ? 'var(--red)' : 'var(--text3)',
+              sub: subText,
+              renk,
               page: 'anlik-gider',
               nakit, kart, toplam,
               kirılım: true,
@@ -1336,7 +1375,21 @@ export default function Panel({ onNavigate }) {
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, padding: '10px 14px', background: 'var(--bg2)', borderRadius: 8, border: '1px solid var(--border)', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'center', marginRight: 4 }}>Hızlı:</span>
         <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('ciro')}>➕ Ciro Gir</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('gider')}>➖ Gider Gir</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('gider')} style={{ position: 'relative' }}>
+          ➖ Gider Gir
+          {Number(panel.bekleyen_gider_sayisi || 0) > 0 && (
+            <span style={{
+              position: 'absolute', top: -6, right: -6,
+              background: 'var(--yellow)', color: '#000',
+              borderRadius: '50%', width: 16, height: 16,
+              fontSize: 10, fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              lineHeight: 1,
+            }}>
+              {panel.bekleyen_gider_sayisi}
+            </span>
+          )}
+        </button>
         <button className="btn btn-secondary btn-sm" onClick={() => nav('kart-hareketleri')}>💳 Kart Hareketi</button>
         <button className="btn btn-secondary btn-sm" onClick={() => nav('dis-kaynak')}>💰 Dış Kaynak</button>
         <button className="btn btn-secondary btn-sm" onClick={() => nav('onay')}>✅ Onay Kuyruğu</button>
@@ -1482,15 +1535,13 @@ export default function Panel({ onNavigate }) {
                       return null;
                     }
 
-                    // Varsayılan: asgari henüz ödenmemiş (veya kart dışı ödeme)
+                    // Varsayılan: ilgili sayfaya yönlendir
                     return (
-                      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                        <button className="btn btn-primary btn-sm" style={{ flex: 1, fontSize: 11 }}
-                          onClick={() => odemeModalAcVadeliKontrol(u)}>✓ Ödendi</button>
-                        <button className="btn btn-secondary btn-sm" style={{ flex: 1, fontSize: 11 }}
-                          onClick={() => odemeErteleAc(u.odeme_id, u.aciklama, u.tarih)}>⏳ Ertele</button>
-                        <button className="btn btn-ghost btn-sm" style={{ flex: 1, fontSize: 11 }}
-                          onClick={() => kismiModalAc(u)}>✂ Kısmi</button>
+                      <div style={{ marginTop: 8 }}>
+                        <button className="btn btn-primary btn-sm" style={{ fontSize: 11, width: '100%' }}
+                          onClick={() => yonlendir(u)}>
+                          {yonlendirLabel(u)}
+                        </button>
                       </div>
                     );
                   })()}

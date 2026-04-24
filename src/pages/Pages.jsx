@@ -1693,7 +1693,7 @@ export function KartHareketleri() {
     try{
       await api('/kart-hareketleri',{method:'POST',body:form});
       publishGlobalDataRefresh('kart-hareketleri');
-      toast(form.islem_turu==='ODEME'?'Ödeme onay kuyruğuna alındı':'Harcama kaydedildi');
+      toast(form.islem_turu==='ODEME'?'Ödeme kaydedildi, kasa güncellendi':'Harcama kaydedildi');
       setShowModal(false); load();
     }catch(e){toast(e.message,'red');}
   }
@@ -1707,7 +1707,7 @@ export function KartHareketleri() {
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
       <div className="page-header flex items-center justify-between">
-        <div><h2>Kart Hareketleri</h2><p>❗ Harcama kasayı etkilemez · Ödeme onay bekler</p></div>
+        <div><h2>Kart Hareketleri</h2><p>❗ Harcama kasayı etkilemez · Ödeme anında kasadan düşer</p></div>
         <button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ Hareket Ekle</button>
       </div>
       <div className="table-wrap">
@@ -1735,7 +1735,7 @@ export function KartHareketleri() {
             <div className="modal-header"><h3>Kart Hareketi Ekle</h3><button className="modal-close" onClick={()=>setShowModal(false)}>✕</button></div>
             <div className="modal-body">
               <div className="alert-box yellow mb-16" style={{marginBottom:14}}>
-                ❗ HARCAMA kasayı etkilemez. ÖDEME onay kuyruğuna gider.
+                ❗ HARCAMA kasayı etkilemez. ÖDEME anında kasadan düşer.
               </div>
               <div className="form-row cols-2">
                 <div className="form-group"><label>Kart *</label><select value={form.kart_id} onChange={e=>setForm({...form,kart_id:e.target.value})}><option value="">Kart seçin</option>{kartlar.map(k=><option key={k.id} value={k.id}>{k.kart_adi}</option>)}</select></div>

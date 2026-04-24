@@ -564,6 +564,42 @@ function SubeKart({ k, onDetay, personelRisk }) {
         </div>
       )}
 
+      {/* Teorik / Gerçek Satış Verimliliği */}
+      {(() => {
+        const sv = k.satis_verimlilik;
+        if (!sv || !sv.yeterli_veri || sv.teorik_ciro == null) return null;
+        const yuzde = sv.yuzde != null ? Number(sv.yuzde) : null;
+        const renk = yuzde == null ? 'var(--text3)'
+          : yuzde >= 90 ? 'var(--green)'
+          : yuzde >= 70 ? '#f59e0b'
+          : 'var(--red)';
+        const etiket = yuzde == null ? '—'
+          : yuzde >= 90 ? 'Normal'
+          : yuzde >= 70 ? 'Düşük'
+          : 'Fire Riski';
+        return (
+          <div style={{ background: 'var(--bg3)', borderRadius: 7, padding: '6px 10px', fontSize: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <span style={{ color: 'var(--text3)', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Satış Verimliliği</span>
+              <span style={{ color: renk, fontWeight: 700, fontSize: 13 }}>
+                {yuzde != null ? `%${yuzde.toFixed(0)}` : '—'}
+                <span style={{ fontSize: 10, fontWeight: 400, marginLeft: 4, opacity: 0.8 }}>{etiket}</span>
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 8, fontSize: 11, color: 'var(--text2)' }}>
+              <span>Beklenen: <strong>{Number(sv.teorik_ciro).toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺</strong></span>
+              <span style={{ opacity: 0.5 }}>·</span>
+              <span>Gerçek: <strong style={{ color: renk }}>{Number(sv.gercek_ciro).toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺</strong></span>
+            </div>
+            {yuzde != null && yuzde < 90 && (
+              <div style={{ marginTop: 4, height: 4, borderRadius: 2, background: 'var(--bg2)', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${Math.min(100, yuzde)}%`, background: renk, borderRadius: 2, transition: 'width .4s' }} />
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Operasyon events */}
       {displayEv.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -741,16 +777,16 @@ function DetayModal({ kart, onKapat, filtre, onYenileDetay }) {
             ))}
           </div>
 
-          {/* Sevk / Açılış Uyumsuzluğu */}
-          {(kart.uyarilar || []).filter(u => u.tip === 'SEVK_AC_UYUMSUZ').length > 0 && (
+          {/* Ürün Açma Uyumsuzluğu */}
+          {(kart.uyarilar || []).filter(u => u.tip === 'URUN_AC_UYUMSUZLUK').length > 0 && (
             <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 12, color: '#c084fc', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>⚠️</span> Sevk / Açılış Uyumsuzluğu
+              <div style={{ fontSize: 12, color: '#f87171', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>🚨</span> Ürün Açma Uyumsuzluğu
               </div>
-              {(kart.uyarilar || []).filter(u => u.tip === 'SEVK_AC_UYUMSUZ').map((u, i) => (
+              {(kart.uyarilar || []).filter(u => u.tip === 'URUN_AC_UYUMSUZLUK').map((u, i) => (
                 <div key={i} style={{
-                  background: 'rgba(139,92,246,0.12)',
-                  border: '1px solid rgba(139,92,246,0.35)',
+                  background: 'rgba(239,68,68,0.12)',
+                  border: '1px solid rgba(239,68,68,0.4)',
                   borderRadius: 7,
                   padding: '7px 10px',
                   fontSize: 12,
@@ -763,7 +799,7 @@ function DetayModal({ kart, onKapat, filtre, onYenileDetay }) {
                 }}>
                   <span>{u.mesaj}</span>
                   {u.fark_tl != null && (
-                    <span style={{ whiteSpace: 'nowrap', color: '#f0abfc', fontWeight: 700 }}>
+                    <span style={{ whiteSpace: 'nowrap', color: '#fca5a5', fontWeight: 700 }}>
                       +{Number(u.fark_tl).toFixed(0)} adet
                     </span>
                   )}
@@ -772,11 +808,11 @@ function DetayModal({ kart, onKapat, filtre, onYenileDetay }) {
             </div>
           )}
 
-          {/* Genel Uyarılar (SEVK_AC_UYUMSUZ hariç) */}
-          {(kart.uyarilar || []).filter(u => u.tip !== 'SEVK_AC_UYUMSUZ').length > 0 && (
+          {/* Genel Uyarılar (URUN_AC_UYUMSUZLUK hariç) */}
+          {(kart.uyarilar || []).filter(u => u.tip !== 'URUN_AC_UYUMSUZLUK').length > 0 && (
             <div>
               <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Uyarılar</div>
-              {(kart.uyarilar || []).filter(u => u.tip !== 'SEVK_AC_UYUMSUZ').map((u, i) => (
+              {(kart.uyarilar || []).filter(u => u.tip !== 'URUN_AC_UYUMSUZLUK').map((u, i) => (
                 <div key={i} className={`alert-box ${u.seviye === 'kritik' ? 'red' : 'yellow'}`} style={{ marginBottom: 6 }}>
                   <strong>{u.seviye?.toUpperCase()}</strong> {u.mesaj}
                   {u.fark_tl != null && <span style={{ marginLeft: 6, opacity: .7 }}>Fark: {u.fark_tl?.toFixed(0)} ₺</span>}
@@ -960,8 +996,12 @@ export default function OperasyonMerkezi() {
   const [magazaSubeStokInput, setMagazaSubeStokInput] = useState({});
   /** sube_id -> /ops/v2/sube/{id}/depo canlı depo stok satırları */
   const [magazaDepoCanliStok, setMagazaDepoCanliStok] = useState({});
-  /** depo kartı -> uyarı paneli açık/kapalı */
-  const [magazaDepoUyariAcik, setMagazaDepoUyariAcik] = useState({});
+  /** depo kartı iç görünüm: katalog | uyari | canli */
+  const [magazaDepoAltSekme, setMagazaDepoAltSekme] = useState({});
+  /** `${subeKey}::${urunId}` -> onay bekleyen stok değişikliği */
+  const [magazaStokOnayBekleyen, setMagazaStokOnayBekleyen] = useState({});
+  /** `${subeKey}::${urunId}` -> onay API çağrısı in-flight */
+  const [magazaStokOnayBusy, setMagazaStokOnayBusy] = useState({});
   /** Şube anahtarı → katalog dışı manuel satırlar (yerel; API yok). */
   const [magazaManuelSatirlar, setMagazaManuelSatirlar] = useState({});
   const [mPersonelVerimlilik, setMPersonelVerimlilik] = useState(null);
@@ -1744,6 +1784,74 @@ export default function OperasyonMerkezi() {
     }
   }, [filtre, yukle]);
 
+  const magazaStokOnayBekleyenAdet = Object.keys(magazaStokOnayBekleyen || {}).length;
+  const oncekiSekmeRef = useRef(aktifSekme);
+
+  const magazaStokKalemOnayla = useCallback(async ({
+    slug,
+    subeDepoKey,
+    subeId,
+    kalemKodu,
+    kalemAdi,
+    mevcutAdet,
+    minStok,
+    alisFiyatiTl,
+  }) => {
+    const sid = String(subeId || '').trim();
+    const kk = String(kalemKodu || '').trim();
+    const draftKey = `${subeDepoKey}::${kk}`;
+    if (!sid || !kk) {
+      toast('Bu depo kartında şube/kalem bilgisi eksik.', 'red');
+      return;
+    }
+    setMagazaStokOnayBusy((prev) => ({ ...prev, [draftKey]: true }));
+    try {
+      await api('/ops/v2/sube-depo/guncelle', {
+        method: 'POST',
+        body: {
+          sube_id: sid,
+          kalem_kodu: kk,
+          kalem_adi: String(kalemAdi || kk),
+          mevcut_adet: Math.max(0, Number(mevcutAdet || 0)),
+          min_stok: Math.max(0, Number(minStok || 0)),
+          alis_fiyati_tl: Math.max(0, Number(alisFiyatiTl || 0)),
+          giris_nedeni: 'sayim_duzeltme',
+        },
+      });
+      setMagazaDepoCanliStok((prev) => {
+        const rows = Array.isArray(prev?.[slug]) ? [...prev[slug]] : [];
+        const i = rows.findIndex((r) => String(r?.kalem_kodu || '') === kk);
+        const nextRow = i >= 0 ? { ...rows[i] } : { kalem_kodu: kk, kalem_adi: String(kalemAdi || kk) };
+        nextRow.kalem_adi = String(kalemAdi || nextRow.kalem_adi || kk);
+        nextRow.mevcut_adet = Math.max(0, Number(mevcutAdet || 0));
+        nextRow.min_stok = Math.max(0, Number(minStok || 0));
+        nextRow.alis_fiyati_tl = Math.max(0, Number(alisFiyatiTl || 0));
+        if (i >= 0) rows[i] = nextRow;
+        else rows.push(nextRow);
+        return { ...prev, [slug]: rows };
+      });
+      setMagazaSubeStokInput((prev) => {
+        const n = { ...prev };
+        delete n[draftKey];
+        return n;
+      });
+      setMagazaStokOnayBekleyen((prev) => {
+        const n = { ...prev };
+        delete n[draftKey];
+        return n;
+      });
+      toast(`${String(kalemAdi || kk)} depoya işlendi ✓`, 'green');
+    } catch (e) {
+      toast(e?.message || 'Depo stok onayı başarısız.', 'red');
+    } finally {
+      setMagazaStokOnayBusy((prev) => {
+        const n = { ...prev };
+        delete n[draftKey];
+        return n;
+      });
+    }
+  }, [toast]);
+
   const yenileDetayKart = useCallback(
     async (subeId, f = filtre) => {
       const dash = await yukle(f);
@@ -1900,6 +2008,30 @@ export default function OperasyonMerkezi() {
     if (aktifSekme !== 'magaza-kartlari') return;
     magazaDepoTamYenile();
   }, [aktifSekme, filtre, magazaDepoTamYenile]);
+
+  useEffect(() => {
+    if (magazaStokOnayBekleyenAdet <= 0) return undefined;
+    const onBeforeUnload = (ev) => {
+      ev.preventDefault();
+      ev.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [magazaStokOnayBekleyenAdet]);
+
+  useEffect(() => {
+    const onceki = oncekiSekmeRef.current;
+    if (
+      onceki === 'magaza-kartlari'
+      && aktifSekme !== 'magaza-kartlari'
+      && magazaStokOnayBekleyenAdet > 0
+    ) {
+      toast('Depo stoklarında onay bekleyen değişiklik var. Onay yapmadan çıkıyorsunuz.', 'yellow');
+      setAktifSekme('magaza-kartlari');
+      return;
+    }
+    oncekiSekmeRef.current = aktifSekme;
+  }, [aktifSekme, magazaStokOnayBekleyenAdet, toast]);
 
   useEffect(() => {
     if (aktifSekme !== 'metrics') return;
@@ -3696,8 +3828,40 @@ export default function OperasyonMerkezi() {
             <h3 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 8px' }}>Dört mağaza deposu — hub + katalog iskeleti</h3>
             <p style={{ fontSize: 12, color: 'var(--text3)', margin: 0, lineHeight: 1.5 }}>
               Aynı katalog kaynağı (<code style={{ fontSize: 11 }}>/ops/siparis/katalog</code>). Her depo kartında, şube başına{' '}
-              <strong>elle stok</strong> alanı (uyumsuzluk / sayım farkı için) ve <strong>manuel ürün satırları</strong> vardır; değerler şimdilik yalnızca tarayıcıda kalır (sunucuya yazılmaz).
+              <strong>elle stok</strong> alanı ve satır bazlı <strong>Onay</strong> ile depo stoğuna işleme vardır.
+              Onaylanmayan satırlar bekleyen değişiklik olarak tutulur.
             </p>
+            {magazaStokOnayBekleyenAdet > 0 && (
+              <div style={{ marginTop: 8, fontSize: 11, color: '#e8a03d' }}>
+                ⚠️ {magazaStokOnayBekleyenAdet} stok satırı onay bekliyor.
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+            {MAGAZA_DORT_SUBE.map((m) => {
+              const k = magazaKartBul(kartlar, m);
+              const sidKey = magazaSubeDepoAnahtar(k, m);
+              const canli = Array.isArray(magazaDepoCanliStok[m.slug]) ? magazaDepoCanliStok[m.slug] : [];
+              const alarmAdet = canli.filter((st) => Number(st?.mevcut_adet || 0) <= Math.max(1, Number(st?.min_stok || 0))).length;
+              const bekleyen = Object.keys(magazaStokOnayBekleyen || {}).filter((kk) => kk.startsWith(`${sidKey}::`)).length;
+              return (
+                <button
+                  key={`ozet-${m.slug}`}
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    setMagazaDepoAltSekme((prev) => ({
+                      ...prev,
+                      [m.slug]: alarmAdet > 0 ? 'uyari' : 'katalog',
+                    }));
+                    const el = document.querySelector(`[data-magaza-slug="${m.slug}"]`);
+                    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }}
+                >
+                  {m.depoBaslik} · {alarmAdet} alarm · {bekleyen} onay
+                </button>
+              );
+            })}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 12 }}>
             {MAGAZA_DORT_SUBE.map((m) => {
@@ -3712,7 +3876,8 @@ export default function OperasyonMerkezi() {
                 const min = Number(st?.min_stok || 0);
                 return mevcut <= Math.max(1, min);
               });
-              const uyariAcik = magazaDepoUyariAcik[m.slug] !== false;
+              const panelSekme = magazaDepoAltSekme[m.slug] || 'katalog';
+              const bekleyenOnayAdet = Object.keys(magazaStokOnayBekleyen || {}).filter((kk) => kk.startsWith(`${subeDepoKey}::`)).length;
               return (
                 <div
                   key={m.slug}
@@ -3745,6 +3910,31 @@ export default function OperasyonMerkezi() {
                       {risk ? <span className="badge badge-yellow" style={{ marginLeft: 8 }}>Personel riski</span> : null}
                     </div>
                   )}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${panelSekme === 'katalog' ? 'btn-primary' : 'btn-secondary'}`}
+                      onClick={() => setMagazaDepoAltSekme((prev) => ({ ...prev, [m.slug]: 'katalog' }))}
+                    >
+                      Katalog
+                      {bekleyenOnayAdet > 0 ? ` (${bekleyenOnayAdet} onay)` : ''}
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${panelSekme === 'uyari' ? 'btn-primary' : 'btn-secondary'}`}
+                      onClick={() => setMagazaDepoAltSekme((prev) => ({ ...prev, [m.slug]: 'uyari' }))}
+                    >
+                      Depo uyarıları ({canliUyarilar.length})
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${panelSekme === 'canli' ? 'btn-primary' : 'btn-secondary'}`}
+                      onClick={() => setMagazaDepoAltSekme((prev) => ({ ...prev, [m.slug]: 'canli' }))}
+                    >
+                      Canlı depo kaydı ({canliStokSatirlari.length})
+                    </button>
+                  </div>
+                  {panelSekme === 'katalog' && (
                   <div
                     data-magaza-depo-katalog-root
                     style={{ borderTop: '1px dashed var(--border)', paddingTop: 10, marginTop: 2 }}
@@ -3800,7 +3990,7 @@ export default function OperasyonMerkezi() {
                               <div
                                 style={{
                                   display: 'grid',
-                                  gridTemplateColumns: 'minmax(0,1fr) 92px 70px 78px',
+                                  gridTemplateColumns: 'minmax(0,1fr) 92px 70px 78px 64px',
                                   gap: 6,
                                   alignItems: 'center',
                                   fontSize: 10,
@@ -3814,12 +4004,19 @@ export default function OperasyonMerkezi() {
                                 <span style={{ textAlign: 'center' }}>Elle stok</span>
                                 <span style={{ textAlign: 'right' }}>Fiyat</span>
                                 <span style={{ textAlign: 'right' }}>Toplam</span>
+                                <span style={{ textAlign: 'right' }}>Onay</span>
                               </div>
                               <ul style={{ margin: 0, padding: '0 10px 8px', listStyle: 'none', fontSize: 11, background: 'var(--bg)' }}>
                                 {(kat.items || []).map((it) => {
-                                  const stokRaw = magazaStokGirdiOku(magazaSubeStokInput, subeDepoKey, it.id, it.stok);
+                                  const mapKey = `${subeDepoKey}::${it.id}`;
+                                  const canliSatir = canliStokSatirlari.find((st) => String(st?.kalem_kodu || '') === String(it.id || ''));
+                                  const referansHam = canliSatir ? canliSatir.mevcut_adet : it.stok;
+                                  const referansSayi = String(referansHam ?? '').trim() === '' ? 0 : (magazaKatalogSayi(referansHam) ?? 0);
+                                  const stokRaw = magazaStokGirdiOku(magazaSubeStokInput, subeDepoKey, it.id, referansHam);
                                   const stokSayi = String(stokRaw).trim() === '' ? null : magazaKatalogSayi(stokRaw);
                                   const efektifBirimFiyat = magazaUrunEfektifBirimFiyat(it, magazaGlobalFiyatMap);
+                                  const onayGerekli = stokSayi != null && stokSayi !== referansSayi;
+                                  const onayBusy = !!magazaStokOnayBusy[mapKey];
                                   const satirToplam = stokSayi != null && efektifBirimFiyat != null && Number.isFinite(efektifBirimFiyat)
                                     ? stokSayi * efektifBirimFiyat
                                     : null;
@@ -3828,7 +4025,7 @@ export default function OperasyonMerkezi() {
                                       key={`${kk}-${it.id}`}
                                       style={{
                                         display: 'grid',
-                                        gridTemplateColumns: 'minmax(0,1fr) 92px 70px 78px',
+                                        gridTemplateColumns: 'minmax(0,1fr) 92px 70px 78px 64px',
                                         gap: 6,
                                         alignItems: 'center',
                                         padding: '5px 0',
@@ -3853,13 +4050,50 @@ export default function OperasyonMerkezi() {
                                         value={stokRaw}
                                         onChange={(e) => {
                                           const v = e.target.value;
-                                          const mapKey = `${subeDepoKey}::${it.id}`;
                                           setMagazaSubeStokInput((prev) => ({ ...prev, [mapKey]: v }));
+                                          const parsed = String(v).trim() === '' ? null : magazaKatalogSayi(v);
+                                          setMagazaStokOnayBekleyen((prev) => {
+                                            const n = { ...prev };
+                                            if (parsed == null || parsed === referansSayi) {
+                                              delete n[mapKey];
+                                            } else {
+                                              n[mapKey] = {
+                                                slug: m.slug,
+                                                sube_id: String(k?.sube_id || ''),
+                                                kalem_kodu: String(it.id || ''),
+                                                kalem_adi: it.ad,
+                                                mevcut_adet: parsed,
+                                              };
+                                            }
+                                            return n;
+                                          });
                                         }}
                                         style={{ fontSize: 11, padding: '4px 6px', width: '100%', minWidth: 0 }}
                                       />
                                       <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{magazaFmtBirimFiyat(efektifBirimFiyat)}</span>
                                       <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{magazaFmtBirimFiyat(satirToplam)}</span>
+                                      <button
+                                        type="button"
+                                        className={`btn btn-sm ${onayGerekli ? 'btn-primary' : 'btn-secondary'}`}
+                                        disabled={!k?.sube_id || stokSayi == null || !onayGerekli || onayBusy}
+                                        title={onayGerekli ? 'Bu satırı depoya işle' : 'Onay gerektiren değişiklik yok'}
+                                        onClick={() => {
+                                          if (!k?.sube_id || stokSayi == null) return;
+                                          magazaStokKalemOnayla({
+                                            slug: m.slug,
+                                            subeDepoKey,
+                                            subeId: String(k.sube_id || ''),
+                                            kalemKodu: String(it.id || ''),
+                                            kalemAdi: it.ad,
+                                            mevcutAdet: stokSayi,
+                                            minStok: Number(canliSatir?.min_stok || 0),
+                                            alisFiyatiTl: Number(efektifBirimFiyat || 0),
+                                          });
+                                        }}
+                                        style={{ padding: '3px 6px', fontSize: 11, minWidth: 58 }}
+                                      >
+                                        {onayBusy ? '…' : (onayGerekli ? 'Onay' : '✓')}
+                                      </button>
                                     </li>
                                   );
                                 })}
@@ -3976,67 +4210,48 @@ export default function OperasyonMerkezi() {
                         ＋ Manuel satır ekle
                       </button>
                     </div>
-                    <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                      <button
-                        type="button"
-                        onClick={() => setMagazaDepoUyariAcik((prev) => ({ ...prev, [m.slug]: !uyariAcik }))}
-                        style={{
-                          width: '100%',
-                          background: 'var(--bg2)',
-                          border: '1px solid var(--border)',
-                          borderRadius: 8,
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          padding: '7px 10px',
-                          cursor: 'pointer',
-                          color: 'var(--text)',
-                          fontSize: 11,
-                          fontWeight: 700,
-                          marginBottom: 8,
-                        }}
-                      >
-                        <span>Depo uyarıları</span>
-                        <span className={canliUyarilar.length > 0 ? 'badge badge-red' : 'badge badge-green'}>
-                          {canliUyarilar.length > 0 ? `${canliUyarilar.length} alarm` : 'Alarm yok'}
-                        </span>
-                      </button>
-                      {uyariAcik && (
-                        <>
-                          {canliUyarilar.length === 0 ? (
-                            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 10 }}>
-                              Bu depo kartında kritik/min altı stok alarmı yok.
-                            </div>
-                          ) : (
-                            <div style={{ display: 'grid', gap: 6, marginBottom: 10 }}>
-                              {canliUyarilar.map((st) => {
-                                const mevcut = Number(st?.mevcut_adet || 0);
-                                const min = Number(st?.min_stok || 0);
-                                const kriz = mevcut <= 0;
-                                return (
-                                  <div
-                                    key={`${m.slug}-uyari-${st.kalem_kodu}`}
-                                    style={{
-                                      border: `1px solid ${kriz ? 'rgba(239,68,68,.35)' : 'rgba(245,158,11,.35)'}`,
-                                      background: kriz ? 'rgba(239,68,68,.08)' : 'rgba(245,158,11,.08)',
-                                      borderRadius: 8,
-                                      padding: '6px 8px',
-                                      fontSize: 11,
-                                      lineHeight: 1.35,
-                                    }}
-                                  >
-                                    <div style={{ fontWeight: 700 }}>{st.kalem_adi || st.kalem_kodu}</div>
-                                    <div style={{ color: 'var(--text2)' }}>
-                                      Mevcut: {magazaFmtStok(mevcut)} · Min: {magazaFmtStok(min)}
-                                    </div>
+                    {panelSekme === 'uyari' && (
+                      <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>Depo uyarıları</span>
+                          <span className={canliUyarilar.length > 0 ? 'badge badge-red' : 'badge badge-green'}>
+                            {canliUyarilar.length > 0 ? `${canliUyarilar.length} alarm` : 'Alarm yok'}
+                          </span>
+                        </div>
+                        {canliUyarilar.length === 0 ? (
+                          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 10 }}>
+                            Bu depo kartında kritik/min altı stok alarmı yok.
+                          </div>
+                        ) : (
+                          <div style={{ display: 'grid', gap: 6, marginBottom: 10 }}>
+                            {canliUyarilar.map((st) => {
+                              const mevcut = Number(st?.mevcut_adet || 0);
+                              const min = Number(st?.min_stok || 0);
+                              const kriz = mevcut <= 0;
+                              return (
+                                <div
+                                  key={`${m.slug}-uyari-${st.kalem_kodu}`}
+                                  style={{
+                                    border: `1px solid ${kriz ? 'rgba(239,68,68,.35)' : 'rgba(245,158,11,.35)'}`,
+                                    background: kriz ? 'rgba(239,68,68,.08)' : 'rgba(245,158,11,.08)',
+                                    borderRadius: 8,
+                                    padding: '6px 8px',
+                                    fontSize: 11,
+                                    lineHeight: 1.35,
+                                  }}
+                                >
+                                  <div style={{ fontWeight: 700 }}>{st.kalem_adi || st.kalem_kodu}</div>
+                                  <div style={{ color: 'var(--text2)' }}>
+                                    Mevcut: {magazaFmtStok(mevcut)} · Min: {magazaFmtStok(min)}
                                   </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {panelSekme === 'canli' && (
                     <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
                       <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>
                         Canlı depo stok kaydı (şube paneli ürün kabul)
@@ -4075,7 +4290,9 @@ export default function OperasyonMerkezi() {
                         </div>
                       )}
                     </div>
+                    )}
                   </div>
+                  )}
                 </div>
               );
             })}
@@ -4210,11 +4427,37 @@ export default function OperasyonMerkezi() {
           ) : fisBekleyen.length === 0 ? (
             <div className="empty"><p>Bekleyen fiş kontrolü yok.</p></div>
           ) : (
+            {/* Şube bazlı özet */}
+            {fisBekleyen.length > 0 && (() => {
+              const subeOzet = {};
+              fisBekleyen.forEach(g => {
+                const k = g.sube || '';
+                if (!subeOzet[k]) subeOzet[k] = { sube_adi: g.sube_adi || k, toplam: 0, kritik: 0, tutar: 0 };
+                subeOzet[k].toplam++;
+                if (g.oncelik === 'kritik') subeOzet[k].kritik++;
+                subeOzet[k].tutar += Number(g.tutar || 0);
+              });
+              const ozList = Object.values(subeOzet).filter(o => o.toplam > 0).sort((a, b) => b.kritik - a.kritik);
+              return (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+                  {ozList.map(o => (
+                    <span key={o.sube_adi} style={{
+                      padding: '3px 10px', borderRadius: 12, fontSize: 12,
+                      background: o.kritik > 0 ? '#fee2e2' : '#f3f4f6',
+                      color: o.kritik > 0 ? '#b91c1c' : '#374151',
+                      border: `1px solid ${o.kritik > 0 ? '#fca5a5' : '#e5e7eb'}`
+                    }}>
+                      {o.sube_adi} · {o.toplam} kayıt{o.kritik > 0 ? ` · ${o.kritik} kritik` : ''} · {fmt(o.tutar)}
+                    </span>
+                  ))}
+                </div>
+              );
+            })()}
             <div className="table-wrap" style={{ margin: 0 }}>
               <table>
                 <thead>
                   <tr>
-                    <th>Tarih</th>
+                    <th>Tarih / SLA</th>
                     <th>Şube</th>
                     <th>Personel</th>
                     <th>Kategori</th>
@@ -4225,13 +4468,25 @@ export default function OperasyonMerkezi() {
                 </thead>
                 <tbody>
                   {fisBekleyen.map((g) => (
-                    <tr key={g.id}>
-                      <td className="mono" style={{ fontSize: 11 }}>{g.tarih}</td>
+                    <tr key={g.id} style={{ background: g.oncelik === 'kritik' ? '#fff5f5' : undefined }}>
+                      <td className="mono" style={{ fontSize: 11 }}>
+                        <div>{g.tarih}</div>
+                        {(g.gecikme_gun || 0) > 0 && (
+                          <span style={{
+                            display: 'inline-block', marginTop: 2,
+                            padding: '1px 6px', borderRadius: 8, fontSize: 10,
+                            background: g.oncelik === 'kritik' ? '#fee2e2' : '#fef9c3',
+                            color: g.oncelik === 'kritik' ? '#b91c1c' : '#92400e',
+                          }}>
+                            {g.gecikme_gun} gün geçti
+                          </span>
+                        )}
+                      </td>
                       <td>{g.sube_adi || g.sube}</td>
                       <td style={{ fontSize: 12 }}>{g.personel_ad || g.personel_id || '—'}</td>
                       <td style={{ fontSize: 12 }}>{g.kategori}</td>
                       <td className="mono" style={{ fontSize: 12 }}>{fmt(g.tutar || 0)}</td>
-                      <td style={{ fontSize: 12, maxWidth: 360, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <td style={{ fontSize: 12, maxWidth: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {g.aciklama || '—'}
                       </td>
                       <td>
@@ -6655,6 +6910,12 @@ export default function OperasyonMerkezi() {
                                 {kuyrukBusy === sip.id ? '…' : 'Talebi bu depoya yönlendir'}
                               </button>
                             </div>
+                            {depoOpsiyonlari.length === 0 && (
+                              <div style={{ fontSize: 11, color: '#e8a03d' }}>
+                                Aktif depo şubesi bulunamadı. Depo listesi `subeler` tablosunda
+                                `sube_tipi` (depo/karma/sevkiyat/merkez) ve `aktif=TRUE` kayıtlarından gelir.
+                              </div>
+                            )}
                             <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
                               Depo seçince ilgili şubenin paneli yeni sekmede açılır; talebi sıraya almak için <strong>Talebi bu depoya yönlendir</strong> kullanın.
                             </div>
@@ -6786,7 +7047,7 @@ export default function OperasyonMerkezi() {
                     </tr></thead>
                     <tbody>
                       {(siparisAkis?.siparis_akis || []).map(s => {
-                        const OLAY_RENK = { SIPARIS_OLUSTU: '#6b6f7a', TAHSIS_TAM: '#2db573', TAHSIS_KISMI: '#c9a227', TAHSIS_YOK: '#e85d5d', SEVK_CIKTI: '#4a9eff', KABUL_TAM: '#2db573', KABUL_EKSIK: '#f08040', KULLANIM: '#7c6fdc' };
+                        const OLAY_RENK = { SIPARIS_OLUSTU: '#6b6f7a', TAHSIS_TAM: '#2db573', TAHSIS_KISMI: '#c9a227', TAHSIS_YOK: '#e85d5d', SEVK_CIKTI: '#4a9eff', KABUL_TAM: '#2db573', KABUL_EKSIK: '#f08040', URUN_AC: '#a78bfa', KULLANIM: '#7c6fdc' };
                         const DURUM_RENK = { bekliyor: '#c9a227', onaylandi: '#2db573', gonderildi: '#4a9eff', teslim_edildi: '#2db573', iptal: '#e85d5d' };
                         const yoldaSatirlari = Array.isArray(s?.yolda) ? s.yolda : [];
                         const aktifUyumsuzVar = yoldaSatirlari.some((y) => {
@@ -6826,7 +7087,7 @@ export default function OperasyonMerkezi() {
               {timelineAcik && (() => {
                 const s = (siparisAkis?.siparis_akis || []).find(x => x.id === timelineAcik);
                 if (!s) return null;
-                const OLAY_IKON = { SIPARIS_OLUSTU: '📝', TAHSIS_TAM: '✅', TAHSIS_KISMI: '⚠️', TAHSIS_YOK: '❌', SEVK_CIKTI: '🚚', KABUL_TAM: '✅', KABUL_EKSIK: '⚠️', KULLANIM: '📦' };
+                const OLAY_IKON = { SIPARIS_OLUSTU: '📝', TAHSIS_TAM: '✅', TAHSIS_KISMI: '⚠️', TAHSIS_YOK: '❌', SEVK_CIKTI: '🚚', KABUL_TAM: '✅', KABUL_EKSIK: '⚠️', URUN_AC: '📤', KULLANIM: '📦' };
                 return (
                   <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', background: 'var(--bg)' }}>
                     <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 13 }}>📋 {s.sube_adi} — {s.tarih}</div>
