@@ -26,23 +26,21 @@ _DEV_FALLBACK_KEY = "evvel-dev-imza-anahtari-degistir"
 
 
 def _imza_anahtari_oku() -> str:
-    """HMAC anahtarını env'den okur. Üretimde eksikse hata fırlatır."""
+    """HMAC anahtarını env'den okur. Eksikse fallback anahtar ile devam eder (uyarı ile).
+
+    NOT: Üretimde güvenlik için `EVVEL_OPERASYON_DEFTER_IMZA_ANAHTARI` tanımlanmalıdır;
+    aksi halde defter imzaları tahmin edilebilir fallback anahtar ile üretilir.
+    """
     s = (os.environ.get("EVVEL_OPERASYON_DEFTER_IMZA_ANAHTARI") or "").strip()
     if s:
         return s
-    # EVVEL_ENV=production ise anahtarsız başlatmaya izin verme
-    env = (os.environ.get("EVVEL_ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower()
-    if env in ("production", "prod", "staging"):
-        raise RuntimeError(
-            "EVVEL_OPERASYON_DEFTER_IMZA_ANAHTARI tanımlı değil. "
-            f"Ortam '{env}' olarak algılandı — üretimde bu anahtar zorunludur. "
-            "Railway → Variables bölümünden güçlü bir değer tanımlayın."
-        )
     global _IMZA_UYARI_VERILDI
     if not _IMZA_UYARI_VERILDI:
+        env = (os.environ.get("EVVEL_ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower() or "unknown"
         _log.warning(
-            "EVVEL_OPERASYON_DEFTER_IMZA_ANAHTARI boş; geliştirme varsayılanı kullanılıyor. "
-            "Üretimde güçlü bir anahtar tanımlayın."
+            "EVVEL_OPERASYON_DEFTER_IMZA_ANAHTARI boş (ortam=%s); fallback anahtar kullanılıyor. "
+            "Üretimde Railway → Variables bölümünden güçlü bir değer tanımlamanız önerilir.",
+            env,
         )
         _IMZA_UYARI_VERILDI = True
     return _DEV_FALLBACK_KEY
