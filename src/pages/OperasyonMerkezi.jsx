@@ -4427,6 +4427,7 @@ export default function OperasyonMerkezi() {
           ) : fisBekleyen.length === 0 ? (
             <div className="empty"><p>Bekleyen fiş kontrolü yok.</p></div>
           ) : (
+            <>
             {/* Şube bazlı özet */}
             {fisBekleyen.length > 0 && (() => {
               const subeOzet = {};
@@ -4522,6 +4523,7 @@ export default function OperasyonMerkezi() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </div>
       )}
