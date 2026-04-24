@@ -4478,9 +4478,135 @@ class KasaDuzeltModel(BaseModel):
 
 @app.get("/api/borclar")
 def borclar_listele():
+    """
+    Borç listesi + her kayıt için bu ay ödenip ödenmediği (bu_ay_odendi) ve
+    son ödeme tarihi (son_odeme) bilgisi. Frontend bunlara göre "Öde / Ödendi"
+    butonunu yönetir.
+    """
     with db() as (conn, cur):
         cur.execute("SELECT * FROM borc_envanteri ORDER BY kurum")
-        return [dict(r) for r in cur.fetchall()]
+        borclar = [dict(r) for r in cur.fetchall()]
+        if not borclar:
+            return []
+        ids = [b['id'] for b in borclar]
+        cur.execute(
+            """
+            SELECT kaynak_id,
+                   MAX(tarih) AS son_odeme,
+                   BOOL_OR(
+                       EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
+                       AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+                   ) AS bu_ay_odendi
+            FROM kasa_hareketleri
+            WHERE kaynak_tablo='borc_envanteri'
+              AND kaynak_id = ANY(%s)
+              AND kasa_etkisi = TRUE
+              AND tutar < 0
+              AND durum='aktif'
+            GROUP BY kaynak_id
+            """,
+            (ids,),
+        )
+        odeme_map = {str(r['kaynak_id']): r for r in cur.fetchall()}
+        for b in borclar:
+            rec = odeme_map.get(str(b['id'])) or {}
+            b['bu_ay_odendi'] = bool(rec.get('bu_ay_odendi') or False)
+            b['son_odeme']    = str(rec['son_odeme']) if rec.get('son_odeme') else None
+        return borclar
+
+
+class BorcOdemeBody(BaseModel):
+    tutar: Optional[float] = None
+    tarih: Optional[str] = None
+    aciklama: Optional[str] = None
+
+
+@app.post("/api/borclar/{bid}/ode")
+def borc_ode(bid: str, body: BorcOdemeBody):
+    """
+    Manuel taksit ödemesi (nakit kasa düşümü):
+    - Kasadan düşülür (islem_turu=BORC_TAKSIT, tutar negatif).
+    - borc_envanteri: kalan_vade -= 1, toplam_borc -= ödenen (0'a kırpılır).
+    - Aynı ay tekrar ödeme engellenir (idempotency + bu_ay_odendi kontrolü).
+    - Frontend butonu "✓ Bu Ay Ödendi" olur.
+    """
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM borc_envanteri WHERE id=%s FOR UPDATE", (bid,))
+        borc = cur.fetchone()
+        if not borc:
+            raise HTTPException(404, "Borç bulunamadı")
+        if not borc['aktif']:
+            raise HTTPException(400, "Pasif borç için ödeme yapılamaz")
+        kalan_vade = int(borc['kalan_vade'] or 0)
+        if borc['kalan_vade'] is not None and kalan_vade <= 0:
+            raise HTTPException(400, "Bu borç için kalan taksit yok")
+
+        tutar = float(body.tutar) if body.tutar else float(borc['aylik_taksit'] or 0)
+        if tutar <= 0:
+            raise HTTPException(400, "Geçerli tutar girin")
+
+        tarih = (body.tarih or date.today().isoformat())[:10]
+
+        # Aynı ay için çift ödemeyi engelle
+        cur.execute(
+            """
+            SELECT 1 FROM kasa_hareketleri
+            WHERE kaynak_tablo='borc_envanteri' AND kaynak_id=%s
+              AND kasa_etkisi=TRUE AND tutar < 0 AND durum='aktif'
+              AND EXTRACT(YEAR FROM tarih)  = EXTRACT(YEAR FROM %s::date)
+              AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM %s::date)
+            LIMIT 1
+            """,
+            (bid, tarih, tarih),
+        )
+        if cur.fetchone():
+            raise HTTPException(409, "Bu ay için zaten ödeme kaydı var")
+
+        aciklama = (body.aciklama or f"{borc['kurum']} — {borc['borc_turu']} taksiti").strip()
+        ref_id = str(uuid.uuid4())
+        idem = f"borc-ode:{bid}:{tarih[:7]}"  # ay bazlı idempotent
+        insert_kasa_hareketi(
+            cur, tarih, 'BORC_TAKSIT', -abs(tutar), aciklama,
+            'borc_envanteri', bid, ref_id, 'BORC_TAKSIT', idempotency_key=idem,
+        )
+
+        # Borç kaydını güncelle
+        yeni_kalan = (kalan_vade - 1) if borc['kalan_vade'] is not None else None
+        yeni_toplam = max(0.0, float(borc['toplam_borc'] or 0) - tutar)
+        kapansin = (yeni_kalan is not None and yeni_kalan <= 0)
+        cur.execute(
+            """
+            UPDATE borc_envanteri
+            SET kalan_vade=%s,
+                toplam_borc=%s,
+                aktif = CASE WHEN %s THEN FALSE ELSE aktif END
+            WHERE id=%s
+            """,
+            (yeni_kalan, yeni_toplam, kapansin, bid),
+        )
+        audit(cur, 'borc_envanteri', bid, 'ODEME', eski=dict(borc))
+
+        # Bu ay için bekleyen bir odeme_plani varsa kapat (çift ödemeyi önler)
+        cur.execute(
+            """
+            UPDATE odeme_plani
+            SET durum='odendi', odenen_tutar=%s, odenme_tarihi=%s
+            WHERE kaynak_tablo='borc_envanteri' AND kaynak_id=%s
+              AND durum IN ('bekliyor','onay_bekliyor')
+              AND EXTRACT(YEAR FROM tarih)  = EXTRACT(YEAR FROM %s::date)
+              AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM %s::date)
+            """,
+            (tutar, tarih, bid, tarih, tarih),
+        )
+
+        return {
+            "success": True,
+            "odenen":     tutar,
+            "tarih":      tarih,
+            "kalan_vade": yeni_kalan,
+            "toplam_borc": yeni_toplam,
+            "kapandi":    kapansin,
+        }
 
 @app.post("/api/borclar")
 def borc_ekle(b: BorcModel):
