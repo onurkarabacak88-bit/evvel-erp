@@ -142,16 +142,21 @@ def kart_ekstre(cur, kart_id: str, kesim_gunu: int) -> dict:
     Kartın bu dönem ekstresi: tek çekim + taksit payı.
     Bu hesap sistemde tek tanımlıdır — panel, kart analiz, faiz motoru
     hepsi bunu kullanır.
+
+    Dönem: önceki kesim gününden (hariç) → bu kesim gününe (dahil).
+    Gerçek bankacılık mantığıyla örtüşür.
     """
-    # Tek çekim: bu ay, kesim gününe kadar
+    # Tek çekim: önceki kesim gününden sonra → bu kesim gününe kadar
     cur.execute("""
         SELECT COALESCE(SUM(tutar), 0) AS tek_cekim
         FROM kart_hareketleri
         WHERE kart_id = %s AND durum = 'aktif'
         AND islem_turu = 'HARCAMA' AND taksit_sayisi = 1
-        AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
-        AND EXTRACT(DAY FROM tarih) <= %s
-    """, (kart_id, kesim_gunu))
+        AND tarih > (DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+                     + (%s - 1) * INTERVAL '1 day')
+        AND tarih <= (DATE_TRUNC('month', CURRENT_DATE)
+                      + (%s - 1) * INTERVAL '1 day')
+    """, (kart_id, kesim_gunu, kesim_gunu))
     tek_cekim = float(cur.fetchone()['tek_cekim'])
 
     # Taksitli harcamalar: tüm zamanlardan aylık taksit payı
@@ -715,24 +720,34 @@ def tum_kartlar_taksit_yuku(cur, ay_sayisi: int = 3) -> dict:
 def aktif_kesim_gunu(kart: dict) -> int:
     """
     Kartın aktif kesim gününü döner.
-    Önce son_kesim_tarihi'ne bakar, yoksa varsayılan + tolerans.
+    Öncelik: son_kesim_tarihi → varsayılan + tolerans + hafta sonu kaydırması.
+    Hafta sonuna denk gelen kesim günleri otomatik olarak sonraki iş gününe taşınır.
     """
     import calendar as _cal
     bugun = bugun_tr()
 
-    # Önce son_kesim_tarihi
+    # Önce son_kesim_tarihi (manuel girilen gerçek tarih)
     son_kesim = kart.get('son_kesim_tarihi')
     if son_kesim:
         if isinstance(son_kesim, str):
             son_kesim = date.fromisoformat(son_kesim)
-        # son_kesim bu ay içindeyse onu kullan
         if son_kesim.year == bugun.year and son_kesim.month == bugun.month:
             return son_kesim.day
 
-    # Varsayılan kesim günü + tolerans
+    # Varsayılan + tolerans
     varsayilan = int(kart.get('kesim_gunu', 15))
     tolerans   = int(kart.get('kesim_tolerans', 0))
-    return varsayilan + tolerans
+    gunu = varsayilan + tolerans
+
+    # Hafta sonu kaydırması: Cmt(5) veya Paz(6) → sonraki Pzt
+    try:
+        son_gun = _cal.monthrange(bugun.year, bugun.month)[1]
+        kesim = date(bugun.year, bugun.month, min(gunu, son_gun))
+        while kesim.weekday() >= 5:
+            kesim += timedelta(days=1)
+        return kesim.day
+    except Exception:
+        return gunu
 
 
 # ══════════════════════════════════════════════════════════════

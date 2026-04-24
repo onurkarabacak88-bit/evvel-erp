@@ -798,10 +798,19 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 personel_ad=onay_ad,
                 bildirim_saati=bildirim_saat,
             )
-            from operasyon_stok_motor import kapanis_stok_uyarilari_yaz, sube_operasyon_ozet_yaz
+            from operasyon_stok_motor import (
+                kapanis_stok_uyarilari_yaz,
+                sube_operasyon_ozet_yaz,
+                satis_anomali_kontrol_yaz,
+                fire_tespiti_kontrol_yaz,
+                pattern_uyari_kontrol_yaz,
+            )
 
             kapanis_stok_uyarilari_yaz(cur, sube_id, k_stok)
             sube_operasyon_ozet_yaz(cur, sube_id, k_stok)
+            satis_anomali_kontrol_yaz(cur, sube_id)
+            fire_tespiti_kontrol_yaz(cur, sube_id)
+            pattern_uyari_kontrol_yaz(cur, sube_id)
 
         elif tip == "CIKIS":
             if body.kasa_sayim is None or body.kasa_sayim < 0:

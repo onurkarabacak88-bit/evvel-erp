@@ -694,6 +694,49 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
     satis_tahmin_toplam = rb_satis_tahmini_toplam
     satis_tahmin_json = rb_satis_tahmini_kalemler
 
+    # ── Teorik/Gerçek Satış Verimliliği ─────────────────────────
+    # 14 günlük ortalama (ciro ÷ tüketim_birimi) × bugünkü birim = teorik beklenen ciro
+    satis_verimlilik: Dict[str, Any] = {
+        "teorik_ciro": None,
+        "gercek_ciro": bugun_ciro_tutar,
+        "yuzde": None,
+        "tl_per_birim_ort": None,
+        "yeterli_veri": False,
+    }
+    try:
+        cur.execute(
+            """
+            SELECT
+                COALESCE(AVG(c.toplam / NULLIF(o.satis_tahmini_toplam, 0)), 0) AS tl_per_birim,
+                COUNT(*) AS gun_sayisi
+            FROM ciro c
+            JOIN sube_operasyon_ozet o
+                ON o.sube_id = c.sube_id AND o.tarih = c.tarih
+            WHERE c.sube_id = %s
+              AND c.durum = 'aktif'
+              AND c.tarih >= CURRENT_DATE - INTERVAL '14 days'
+              AND c.tarih  < CURRENT_DATE
+              AND o.satis_tahmini_toplam > 0
+              AND c.toplam > 0
+            """,
+            (sid,),
+        )
+        _sv = cur.fetchone() or {}
+        _tpb = float(_sv.get("tl_per_birim") or 0)
+        _gun = int(_sv.get("gun_sayisi") or 0)
+        if _tpb > 0 and _gun >= 3:
+            _teorik = round(_tpb * rb_satis_tahmini_toplam, 2)
+            _yuzde = round(bugun_ciro_tutar / _teorik * 100, 1) if _teorik > 0 else None
+            satis_verimlilik = {
+                "teorik_ciro": _teorik,
+                "gercek_ciro": bugun_ciro_tutar,
+                "yuzde": _yuzde,
+                "tl_per_birim_ort": round(_tpb, 2),
+                "yeterli_veri": True,
+            }
+    except Exception:
+        pass
+
     cur.execute(
         """
         SELECT personel_ad, bildirim_saati, olay_ts
@@ -751,6 +794,7 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
         "satis_tahmin_json": satis_tahmin_json,
         "teorik_stok_json": teorik_stok_json,
         "kapanis_stok_json": kapanis_stok_json,
+        "satis_verimlilik": satis_verimlilik,
         "acilis_personel_ad": acilis_personel_ad,
         "acilis_saat": acilis_saat,
         "bayraklar": {
@@ -1035,8 +1079,8 @@ def ops_motor_analitik_olay(olay_tipi: Optional[str] = None, limit: int = 80):
 
 
 @router.get("/gider-fis-bekleyen")
-def ops_gider_fis_bekleyen(gun: int = 7, sube_id: Optional[str] = None):
-    gun_sayi = max(1, min(60, int(gun or 7)))
+def ops_gider_fis_bekleyen(gun: int = 14, sube_id: Optional[str] = None):
+    gun_sayi = max(1, min(60, int(gun or 14)))
     sid = (sube_id or "").strip() or None
     with db() as (conn, cur):
         qp: List[Any] = [gun_sayi]
@@ -1048,7 +1092,10 @@ def ops_gider_fis_bekleyen(gun: int = 7, sube_id: Optional[str] = None):
                 COALESCE(p.ad_soyad, u.ad, g.personel_id) AS personel_ad,
                 COALESCE(g.fis_gonderildi, FALSE) AS fis_gonderildi,
                 COALESCE(NULLIF(TRIM(g.fis_kontrol_durumu), ''), 'bekliyor') AS fis_kontrol_durumu,
-                g.olusturma
+                g.fis_kontrol_tarihi,
+                g.fis_kontrol_notu,
+                g.olusturma,
+                (CURRENT_DATE - g.tarih)::int AS gecikme_gun
             FROM anlik_giderler g
             LEFT JOIN subeler s ON s.id = g.sube
             LEFT JOIN personel p ON p.id = g.personel_id
@@ -1060,7 +1107,7 @@ def ops_gider_fis_bekleyen(gun: int = 7, sube_id: Optional[str] = None):
         if sid:
             q += " AND g.sube=%s"
             qp.append(sid)
-        q += " ORDER BY g.tarih DESC, g.olusturma DESC NULLS LAST, g.id LIMIT 400"
+        q += " ORDER BY g.tarih ASC, g.olusturma ASC NULLS LAST, g.id LIMIT 400"
         cur.execute(q, tuple(qp))
         rows: List[Dict[str, Any]] = []
         for r in cur.fetchall():
@@ -1072,8 +1119,30 @@ def ops_gider_fis_bekleyen(gun: int = 7, sube_id: Optional[str] = None):
             if d.get("tutar") is not None:
                 d["tutar"] = float(d["tutar"])
             d["fis_gonderildi"] = bool(d.get("fis_gonderildi"))
+            if d.get("fis_kontrol_tarihi"):
+                d["fis_kontrol_tarihi"] = str(d["fis_kontrol_tarihi"])
+            gecikme = int(d.get("gecikme_gun") or 0)
+            d["gecikme_gun"] = gecikme
+            d["oncelik"] = "kritik" if gecikme >= 5 else ("uyari" if gecikme >= 2 else "normal")
             rows.append(d)
-    return {"gun_sayi": gun_sayi, "sube_id": sid, "satirlar": rows}
+        # Şube bazlı özet
+        from collections import defaultdict as _dd
+        ozet: Dict[str, Any] = _dd(lambda: {"sube_adi": "", "toplam": 0, "kritik": 0, "tutar_toplam": 0.0})
+        for r in rows:
+            sk = r.get("sube") or ""
+            ozet[sk]["sube_adi"] = r.get("sube_adi") or sk
+            ozet[sk]["toplam"] += 1
+            if r.get("oncelik") == "kritik":
+                ozet[sk]["kritik"] += 1
+            ozet[sk]["tutar_toplam"] = round(ozet[sk]["tutar_toplam"] + float(r.get("tutar") or 0), 2)
+    return {
+        "gun_sayi": gun_sayi,
+        "sube_id": sid,
+        "satirlar": rows,
+        "sube_ozet": [{"sube_id": k, **v} for k, v in ozet.items()],
+        "toplam": len(rows),
+        "kritik_adet": sum(1 for r in rows if r.get("oncelik") == "kritik"),
+    }
 
 
 @router.post("/gider-fis-kontrol")
@@ -1102,10 +1171,12 @@ def ops_gider_fis_kontrol(body: OpsGiderFisKontrolBody):
         cur.execute(
             """
             UPDATE anlik_giderler
-            SET fis_kontrol_durumu=%s
+            SET fis_kontrol_durumu=%s,
+                fis_kontrol_tarihi=NOW(),
+                fis_kontrol_notu=%s
             WHERE id=%s
             """,
-            (durum, gid),
+            (durum, notu, gid),
         )
         audit(cur, "anlik_giderler", gid, f"OPS_FIS_KONTROL_{durum.upper()}")
 
@@ -5743,13 +5814,29 @@ def ops_siparis_ozel_islem(body: OpsSiparisOzelIslemBody):
                 """,
                 (notu, tid),
             )
+            urun_adi = rd.get("urun_adi") or "—"
+            red_mesaj = f"Özel ürün talebi reddedildi — {urun_adi}"
+            if notu:
+                red_mesaj += f" | Neden: {notu}"
             operasyon_defter_ekle(
                 cur,
                 sube_id,
                 "SIPARIS_OZEL_RED",
-                f"Özel ürün talebi reddedildi — {rd.get('urun_adi')} (talep={tid})",
+                red_mesaj,
                 bildirim_saati=saat,
             )
+            # Şube uyarı listesine de bildirim düşür
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO sube_operasyon_uyari
+                        (id, sube_id, tarih, tip, seviye, mesaj)
+                    VALUES (%s, %s, CURRENT_DATE, 'SIPARIS_RED', 'uyari', %s)
+                    """,
+                    (str(uuid.uuid4()), sube_id, red_mesaj),
+                )
+            except Exception:
+                pass
             return {"success": True, "durum": "reddedildi"}
 
         if islem == "katalog":

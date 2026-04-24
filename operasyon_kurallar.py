@@ -17,6 +17,41 @@ def tolerans_seviyesi(fark_tl: float) -> str:
     return "kritik"
 
 
+def stok_tolerans_seviyesi(fark_adet: int) -> str:
+    """0-2 adet normal, 3-4 uyarı, 5+ kritik (mutlak fark)."""
+    a = abs(int(fark_adet or 0))
+    if a <= 2:
+        return "normal"
+    if a < 5:
+        return "uyari"
+    return "kritik"
+
+
+def beklenen_dunku_kapanis_stok(cur: Any, sube_id: str) -> Optional[dict]:
+    """Dün tamamlanmış KAPANIS olayındaki stok sayımını döner (meta.kapanis_stok_sayim)."""
+    cur.execute(
+        """
+        SELECT meta FROM sube_operasyon_event
+        WHERE sube_id=%s
+          AND tarih = (CURRENT_DATE - INTERVAL '1 day')
+          AND tip = 'KAPANIS'
+          AND durum = 'tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST
+        LIMIT 1
+        """,
+        (sube_id,),
+    )
+    r = cur.fetchone()
+    if not r or not r.get("meta"):
+        return None
+    import json as _json
+    try:
+        meta = _json.loads(r["meta"]) if isinstance(r["meta"], str) else r["meta"]
+        return meta.get("kapanis_stok_sayim") or None
+    except Exception:
+        return None
+
+
 def beklenen_dunku_kapanis_kasa(cur: Any, sube_id: str) -> Optional[float]:
     """Dün tamamlanmış KAPANIS olayındaki kasa/teslim referansı (yoksa None)."""
     cur.execute(

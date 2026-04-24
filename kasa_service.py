@@ -251,6 +251,25 @@ def kart_plan_guncelle_tx(cur) -> List[str]:
 
         borc = kart_borc(cur, k["id"])
         if borc <= 0:
+            # Planı kapat
+            cur.execute("""
+                UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s
+                WHERE kart_id=%s
+                AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+                AND durum IN ('bekliyor','onay_bekliyor')
+            """, (str(bugun), k["id"], str(odeme_tarihi)))
+            # Onay kuyruğundaki ODEME_PLANI girişlerini de iptal et — çift kasa riski engeli
+            cur.execute("""
+                UPDATE onay_kuyrugu SET durum='reddedildi'
+                WHERE islem_turu = 'ODEME_PLANI'
+                AND kaynak_id IN (
+                    SELECT id FROM odeme_plani
+                    WHERE kart_id = %s
+                    AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+                    AND durum = 'odendi'
+                )
+                AND durum = 'bekliyor'
+            """, (k["id"], str(odeme_tarihi)))
             continue
 
         asgari_oran_pct = float(k.get("asgari_oran", 40)) / 100
@@ -268,6 +287,18 @@ def kart_plan_guncelle_tx(cur) -> List[str]:
         )
 
         if cur.rowcount > 0:
+            # Onay kuyruğundaki tutarı da güncelle — kısmi ödeme durumunda çift yazma önlenir
+            cur.execute("""
+                UPDATE onay_kuyrugu SET tutar=%s
+                WHERE islem_turu = 'ODEME_PLANI'
+                AND kaynak_id IN (
+                    SELECT id FROM odeme_plani
+                    WHERE kart_id = %s
+                    AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+                    AND durum IN ('bekliyor','onay_bekliyor')
+                )
+                AND durum = 'bekliyor'
+            """, (borc, k["id"], str(odeme_tarihi)))
             guncellenen.append(f"{k['kart_adi']}: {borc:,.0f}₺")
         else:
             pid = str(uuid.uuid4())

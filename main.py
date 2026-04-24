@@ -163,6 +163,28 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler stok davranış / skor hatası: {e}")
 
+            # Pazartesi — geçen haftanın kalem bazlı fire raporu
+            if bugun.weekday() == 0:  # 0 = Pazartesi
+                try:
+                    from operasyon_stok_motor import haftalik_fire_hesapla
+                    gecen_hf_basi = bugun - timedelta(days=7)
+                    with db() as (conn, cur):
+                        cur.execute("SELECT id FROM subeler WHERE aktif=TRUE")
+                        sube_ids = [r["id"] for r in cur.fetchall()]
+                    yazilan = 0
+                    for sid in sube_ids:
+                        try:
+                            with db() as (conn, cur):
+                                r = haftalik_fire_hesapla(cur, sid, gecen_hf_basi)
+                                conn.commit()
+                            if r.get("yazildi"):
+                                yazilan += 1
+                        except Exception as _e:
+                            logger.warning(f"⏰ Fire haftalık {sid}: {_e}")
+                    logger.info(f"⏰ Scheduler: Haftalık fire hesaplandı — {yazilan}/{len(sube_ids)} şube")
+                except Exception as e:
+                    logger.warning(f"⏰ Scheduler haftalık fire hatası: {e}")
+
         except Exception as e:
             logger.error(f"⏰ Scheduler genel hata: {e}")
             import time as _t
@@ -1407,11 +1429,14 @@ def kart_hareket_ekle(h: KartHareket):
             (hid, h.kart_id, h.tarih, h.islem_turu, h.tutar,
              h.taksit_sayisi, faiz, ana, h.aciklama, bas_tarih))
         if h.islem_turu == 'ODEME':
-            onay_ekle(cur, 'KART_ODEME', 'kart_hareketleri', hid,
-                f"Kart ödemesi: {h.aciklama or ''}", h.tutar, h.tarih)
+            insert_kasa_hareketi(cur, str(h.tarih), 'KART_ODEME', -abs(h.tutar),
+                h.aciklama or 'Kart ödemesi',
+                'kart_hareketleri', hid, hid, 'KART_ODEME')
         audit(cur, 'kart_hareketleri', hid, 'INSERT')
         if h.islem_turu in ('HARCAMA', 'ODEME', 'FAIZ'):
             kart_plan_guncelle_tx(cur)
+    if h.islem_turu == 'ODEME':
+        uyari_cache_clear()
     return {"id": hid, "success": True}
 
 @app.delete("/api/kart-hareketleri/{hid}")
@@ -1421,8 +1446,8 @@ def kart_hareket_iptal(hid: str):
         eski = cur.fetchone()
         if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten iptal edilmiş")
         cur.execute("UPDATE kart_hareketleri SET durum='iptal' WHERE id=%s", (hid,))
-        # Immutable model: pasifleştir + ters kayıt (kart ödeme varsa)
-        iptal_kasa_hareketi(cur, hid, 'kart_hareketleri', 'KART_ODEME', 'KART_ODEME_IPTAL', 'Kart hareketi iptali')
+        if eski['islem_turu'] == 'ODEME':
+            iptal_kasa_hareketi(cur, hid, 'kart_hareketleri', 'KART_ODEME', 'KART_ODEME_IPTAL', 'Kart ödemesi iptali')
         audit(cur, 'kart_hareketleri', hid, 'IPTAL', eski=eski)
     return {"success": True}
 
@@ -1806,42 +1831,72 @@ class ReddetModel(BaseModel):
 @app.post("/api/onay-kuyrugu/{oid}/reddet")
 def reddet(oid: str, body: ReddetModel = ReddetModel()):
     with db() as (conn, cur):
-        # Mevcut davranış korunuyor — onay kuyruğunu kapat
         cur.execute("UPDATE onay_kuyrugu SET durum='reddedildi', onay_tarihi=NOW() WHERE id=%s", (oid,))
 
-        # YENİ: Bağlı odeme_plani'nı iptal et — simülasyondan çıkar
         cur.execute("SELECT * FROM onay_kuyrugu WHERE id=%s", (oid,))
         onay = cur.fetchone()
         if onay:
-            if (
-                (onay.get("kaynak_tablo") or "") == "anlik_giderler"
-                and onay.get("kaynak_id")
-                and onay.get("islem_turu") == "ANLIK_GIDER"
-            ):
+            kt  = onay.get("kaynak_tablo") or ""
+            kid = onay.get("kaynak_id") or ""
+
+            if kt == "anlik_giderler" and kid and onay.get("islem_turu") == "ANLIK_GIDER":
                 cur.execute(
-                    """
-                    UPDATE anlik_giderler SET durum='reddedildi'
-                    WHERE id=%s AND durum='onay_bekliyor'
-                    """,
-                    (onay["kaynak_id"],),
+                    "UPDATE anlik_giderler SET durum='reddedildi' WHERE id=%s AND durum='onay_bekliyor'",
+                    (kid,),
                 )
-            # odeme_plani'nı bul ve iptal et
             cur.execute("""
                 UPDATE odeme_plani SET durum='iptal'
-                WHERE (id=%s OR kaynak_id=%s)
-                AND durum IN ('bekliyor','onay_bekliyor')
-            """, (onay['kaynak_id'], onay['kaynak_id']))
+                WHERE (id=%s OR kaynak_id=%s) AND durum IN ('bekliyor','onay_bekliyor')
+            """, (kid, kid))
 
-            # SÜREÇ BİTTİ: kaynağı da kapat — bir daha plan üretilmez
-            if body.neden == 'surec_bitti' and onay.get('kaynak_tablo') and onay.get('kaynak_id'):
-                kt = onay['kaynak_tablo']
-                kid = onay['kaynak_id']
+            if body.neden == 'surec_bitti' and kt and kid:
                 if kt == 'sabit_giderler':
                     cur.execute("UPDATE sabit_giderler SET aktif=FALSE WHERE id=%s", (kid,))
                 elif kt == 'personel':
                     cur.execute("UPDATE personel SET aktif=FALSE WHERE id=%s", (kid,))
                 elif kt == 'borc_envanteri':
                     cur.execute("UPDATE borc_envanteri SET aktif=FALSE WHERE id=%s", (kid,))
+
+            # ── Şube bildirimi ─────────────────────────────────
+            # Kaynak tablodan sube_id'yi bul
+            _sube_id = None
+            _sube_lookup = {
+                "anlik_giderler":  "SELECT sube     AS sid FROM anlik_giderler WHERE id=%s",
+                "siparis_talep":   "SELECT sube_id  AS sid FROM siparis_talep  WHERE id=%s",
+                "ciro":            "SELECT sube_id  AS sid FROM ciro            WHERE id=%s",
+                "anlik_gider":     "SELECT sube     AS sid FROM anlik_giderler WHERE id=%s",
+                "odeme_plani":     "SELECT sube_id  AS sid FROM odeme_plani    WHERE id=%s",
+            }
+            _q = _sube_lookup.get(kt)
+            if _q and kid:
+                try:
+                    cur.execute(_q, (kid,))
+                    _r = cur.fetchone()
+                    _sube_id = str(_r["sid"]) if _r and _r.get("sid") else None
+                except Exception:
+                    pass
+
+            if _sube_id:
+                _aciklama = (onay.get("aciklama") or "").strip()
+                _tutar    = onay.get("tutar")
+                _neden    = (body.neden or "").strip() if body.neden else ""
+                _mesaj_parcalari = [f"❌ Onay reddedildi: {_aciklama}" if _aciklama else "❌ Onay talebiniz reddedildi."]
+                if _tutar:
+                    _mesaj_parcalari.append(f"Tutar: {float(_tutar):,.2f} ₺")
+                if _neden:
+                    _mesaj_parcalari.append(f"Neden: {_neden}")
+                _mesaj = " — ".join(_mesaj_parcalari)
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO sube_merkez_mesaj
+                            (id, sube_id, mesaj, oncelik, ttl_saat)
+                        VALUES (%s, %s, %s, 'yuksek', 48)
+                        """,
+                        (str(uuid.uuid4()), _sube_id, _mesaj),
+                    )
+                except Exception:
+                    pass
 
     return {"success": True}
 
@@ -4289,7 +4344,7 @@ def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
         tutar = float(plan['odenecek_tutar'])  # vadeli_alimlar.tutar değil, planın tutarı
 
         if body.odeme_yontemi == 'kart':
-            # KART: kasaya yazma — kart borcuna HARCAMA ekle
+            # KART: kart borcuna HARCAMA ekle — kasaya yazma yok
             hid = str(uuid.uuid4())
             cur.execute("""
                 INSERT INTO kart_hareketleri
@@ -4298,15 +4353,30 @@ def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
             """, (hid, body.kart_id, bugun, tutar, f"Vadeli alım: {v['aciklama']}", vid))
             audit(cur, 'kart_hareketleri', hid, 'VADELI_KART')
             kart_plan_guncelle_tx(cur)
-            # Plan + vadeli alım + onay kuyruğu → atomik kapat
             cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
                 (bugun, tutar, plan['id']))
             vadeli_alim_kapat(cur, vid, bugun)
             audit(cur, 'vadeli_alimlar', vid, 'ODENDI_KART')
+            uyari_cache_clear()
             return {"success": True, "odeme_yontemi": "kart", "kart_id": body.kart_id}
 
-    # NAKİT: odeme_yap kasaya VADELI_ODEME yazar; vadeli_alim_kapat zaten içinde çağrılıyor
-    odeme_yap(plan['id'])
+        # NAKİT: doğrudan kasaya yaz — onay kuyruğuna girmez
+        insert_kasa_hareketi(
+            cur, bugun, 'VADELI_ODEME', -abs(tutar),
+            f"Vadeli alım ödemesi: {v['aciklama']}",
+            'vadeli_alimlar', vid,
+            str(uuid.uuid4()), 'VADELI_ALIMLAR'
+        )
+        cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
+            (bugun, tutar, plan['id']))
+        cur.execute("""
+            UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
+            WHERE durum NOT IN ('onaylandi','reddedildi')
+            AND (kaynak_id=%s OR kaynak_id=%s)
+        """, (plan['id'], vid))
+        vadeli_alim_kapat(cur, vid, bugun)
+        audit(cur, 'vadeli_alimlar', vid, 'ODENDI_NAKIT')
+        uyari_cache_clear()
     return {"success": True, "odeme_yontemi": "nakit"}
 
 @app.post("/api/vadeli-alimlar/{vid}/kismi-ode")
@@ -5552,13 +5622,9 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
                 oid,
             ))
 
-        # Yeni plan için onay kuyruğuna gir — onaylandığında kasa yazılır
-        # Kaynak vadeli_alimlar ise VADELI_ODEME tipiyle gir — raporlar ve vadeli alım tablosu doğru güncellensin
-        if kaynak == 'vadeli_alimlar' and plan.get('kaynak_id'):
-            onay_ekle(cur, 'VADELI_ODEME', 'vadeli_alimlar', plan['kaynak_id'],
-                f"Kısmi vadeli kalan: {plan['aciklama']} ({int(kalan):,} ₺)",
-                kalan, body.kalan_vade_tarihi)
-        else:
+        # Vadeli alımlar kalanı odeme_plani'nda 'bekliyor' olarak bırakılır — onay kuyruğuna girmez
+        # Diğer kaynak türleri (sabit_giderler, personel vb.) onay akışını kullanmaya devam eder
+        if kaynak != 'vadeli_alimlar':
             onay_ekle(cur, 'ODEME_PLANI', 'odeme_plani', yeni_id,
                 f"Kısmi ödeme kalanı: {plan['aciklama']} ({int(kalan):,} ₺)",
                 kalan, body.kalan_vade_tarihi)
@@ -5636,6 +5702,52 @@ def faiz_uret(body: dict = {}):
                 }
     except Exception as e:
         raise HTTPException(500, str(e))
+
+# ── HAFTALIK FIRE RAPORU ──────────────────────────────────────
+@app.get("/api/fire-haftalik")
+def fire_haftalik_rapor(
+    sube_id: Optional[str] = None,
+    hafta_sayisi: int = 4,
+    yeniden_hesapla: bool = False,
+):
+    """
+    Kalem bazlı haftalık fire raporu.
+    yeniden_hesapla=true → geçen haftayı tekrar hesaplar (test/düzeltme).
+    """
+    from operasyon_stok_motor import haftalik_fire_hesapla as _hfh
+    from datetime import date as _date, timedelta as _td
+
+    hafta_sayisi = max(1, min(int(hafta_sayisi), 12))
+    with db() as (conn, cur):
+        if yeniden_hesapla and sube_id:
+            gecen_hf = _date.today() - _td(days=_date.today().weekday() + 7)
+            r = _hfh(cur, sube_id, gecen_hf)
+            conn.commit()
+
+        q = """
+            SELECT f.*, s.ad AS sube_adi
+            FROM sube_fire_haftalik f
+            JOIN subeler s ON s.id = f.sube_id
+            WHERE f.hafta_baslangic >= CURRENT_DATE - (%s * INTERVAL '7 days')
+        """
+        params: list = [hafta_sayisi]
+        if sube_id:
+            q += " AND f.sube_id = %s"
+            params.append(sube_id)
+        q += " ORDER BY f.sube_id, f.hafta_baslangic DESC"
+        cur.execute(q, tuple(params))
+        rows = []
+        for r in cur.fetchall():
+            d = dict(r)
+            if isinstance(d.get("kalemler"), str):
+                import json as _j
+                try:
+                    d["kalemler"] = _j.loads(d["kalemler"])
+                except Exception:
+                    pass
+            rows.append(d)
+    return {"raporlar": rows, "toplam": len(rows)}
+
 
 # ── KASA TUTARLILIK KONTROLÜ ──────────────────────────────────
 @app.get("/api/kasa-kontrol")

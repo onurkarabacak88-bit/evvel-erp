@@ -357,6 +357,28 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
         if not _bugun_sube_acildi_mi(cur, sube_id):
             raise HTTPException(403, "Şube açılış kaydı olmadan vardiya devri başlatılamaz")
 
+        # Bugünkü ara kontrol (KONTROL eventi) tamamlandı mı?
+        cur.execute(
+            """
+            SELECT durum FROM sube_operasyon_event
+            WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='KONTROL'
+            ORDER BY sira_no DESC
+            LIMIT 1
+            """,
+            (sube_id,),
+        )
+        kontrol_row = cur.fetchone()
+        if not kontrol_row:
+            raise HTTPException(
+                403,
+                "Vardiya devri başlatılamaz: bugün için ara kontrol henüz oluşturulmamış.",
+            )
+        if (kontrol_row.get("durum") or "") != "tamamlandi":
+            raise HTTPException(
+                403,
+                "Vardiya devri başlatılamaz: ara kontrol tamamlanmadan devir yapılamaz.",
+            )
+
         zorunlu_sabah = _bugun_acilis_kayitli_sabah_personel_id(cur, sube_id)
         if zorunlu_sabah and body.sabahci_devreden_id != zorunlu_sabah:
             raise HTTPException(

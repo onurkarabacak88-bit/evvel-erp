@@ -323,6 +323,24 @@ def init_db():
             END $$;
         """)
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_fire_haftalik (
+                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                sube_id         TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                hafta_baslangic DATE NOT NULL,
+                hafta_bitis     DATE NOT NULL,
+                kalemler        JSONB NOT NULL DEFAULT '{}'::jsonb,
+                toplam_fire     INT  NOT NULL DEFAULT 0,
+                toplam_teorik   INT  NOT NULL DEFAULT 0,
+                fire_oran       NUMERIC(6,2) NOT NULL DEFAULT 0,
+                guncelleme      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (sube_id, hafta_baslangic)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sube_fire_haftalik_sube
+            ON sube_fire_haftalik (sube_id, hafta_baslangic DESC)
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS sube_operasyon_ozet (
                 id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
                 sube_id           TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
@@ -1616,6 +1634,12 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='anlik_giderler' AND column_name='fis_kontrol_durumu')
                 THEN ALTER TABLE anlik_giderler ADD COLUMN fis_kontrol_durumu TEXT NOT NULL DEFAULT 'bekliyor'; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='anlik_giderler' AND column_name='fis_kontrol_tarihi')
+                THEN ALTER TABLE anlik_giderler ADD COLUMN fis_kontrol_tarihi TIMESTAMPTZ; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='anlik_giderler' AND column_name='fis_kontrol_notu')
+                THEN ALTER TABLE anlik_giderler ADD COLUMN fis_kontrol_notu TEXT; END IF;
             END $$;
         """)
         cur.execute("""

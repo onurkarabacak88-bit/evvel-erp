@@ -545,7 +545,7 @@ def sevk_vs_ac_uyarilari(cur: Any, sube_id: str) -> List[Dict[str, Any]]:
                 cur.execute(
                     """
                     INSERT INTO sube_operasyon_uyari (id, sube_id, tarih, tip, seviye, fark_tl, mesaj)
-                    VALUES (%s, %s, CURRENT_DATE, 'SEVK_AC_UYUMSUZ', 'uyari', %s, %s)
+                    VALUES (%s, %s, CURRENT_DATE, 'URUN_AC_UYUMSUZLUK', 'kritik', %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                         mesaj   = EXCLUDED.mesaj,
                         fark_tl = EXCLUDED.fark_tl,
@@ -557,8 +557,8 @@ def sevk_vs_ac_uyarilari(cur: Any, sube_id: str) -> List[Dict[str, Any]]:
                 pass  # DB yazımı başarısız olsa da sanal liste dönmeye devam eder
             out.append({
                 "id": uid,
-                "tip": "SEVK_AC_UYUMSUZ",
-                "seviye": "uyari",
+                "tip": "URUN_AC_UYUMSUZLUK",
+                "seviye": "kritik",
                 "mesaj": msg,
                 "fark_tl": fark,
                 "okundu": False, "olusturma": None, "kaynak": "stok_motor",
@@ -701,6 +701,380 @@ def teorik_vs_gercek_uyarilari(
             }
         )
     return out
+
+
+def haftalik_fire_hesapla(cur: Any, sube_id: str, hafta_baslangic: "date") -> Dict[str, Any]:
+    """
+    Kalem bazlı haftalık fire oranı hesapla → sube_fire_haftalik'e UPSERT.
+
+    Cebir (her kalem k için):
+      teorik_tuketim[k] = acilis[k] + hafta_ici_stok_ekle[k] - kapanis[k]
+      urun_ac[k]        = hafta içi URUN_AC toplamı
+      fire[k]           = teorik_tuketim[k] - urun_ac[k]   (+ → kayıp, - → fazla açma)
+      fire_oran[k]      = fire[k] / max(1, teorik_tuketim[k]) * 100
+
+    Hafta kapanışı: Pazar günü (veya bulunan son kapanış günü).
+    Uyarı eşiği: toplam fire_oran ≥ %10 ve en az bir kalem ≥ %15 → FIRE_HAFTALIK yazar.
+    """
+    from datetime import timedelta as _td
+    gunler = [hafta_baslangic + _td(days=i) for i in range(7)]
+    hafta_sonu = gunler[-1]
+
+    acilis = acilis_stok_tarih(cur, sube_id, hafta_baslangic)
+    if acilis is None:
+        return {"yazildi": False, "sebep": "acilis_yok"}
+
+    # En son kapanış stokunu bul (Pazar'dan Pazartesi'ye geriye)
+    kapanis = None
+    hafta_kapanis_gun = hafta_baslangic
+    for gun in reversed(gunler):
+        cur.execute(
+            """
+            SELECT meta FROM sube_operasyon_event
+            WHERE sube_id=%s AND tarih=%s AND tip='KAPANIS' AND durum='tamamlandi'
+            ORDER BY cevap_ts DESC LIMIT 1
+            """,
+            (sube_id, gun),
+        )
+        r = cur.fetchone()
+        if r:
+            kap = stok_from_event_meta(r.get("meta"), "kapanis_stok_sayim")
+            if kap is not None:
+                kapanis = kap
+                hafta_kapanis_gun = gun
+                break
+
+    if kapanis is None:
+        return {"yazildi": False, "sebep": "kapanis_yok"}
+
+    # Hafta içi toplamlar (Pazartesi'den hafta_kapanis_gun dahil)
+    toplam_ekle = _zero_stok()
+    toplam_ac = _zero_stok()
+    for gun in gunler:
+        ekle_gun = sum_urun_stok_ekle_tarih(cur, sube_id, gun)
+        ac_gun = sum_urun_ac_tarih(cur, sube_id, gun)
+        for k in STOK_KEYS:
+            toplam_ekle[k] += ekle_gun[k]
+            toplam_ac[k] += ac_gun[k]
+        if gun >= hafta_kapanis_gun:
+            break
+
+    # Kalem bazlı fire
+    fire_kalemler: Dict[str, Any] = {}
+    for k in STOK_KEYS:
+        teorik = acilis[k] + toplam_ekle[k] - kapanis[k]
+        ac = toplam_ac[k]
+        fire = teorik - ac
+        oran = round(fire / max(1, teorik) * 100, 1) if teorik > 0 else 0.0
+        fire_kalemler[k] = {
+            "acilis": acilis[k],
+            "kapanis": kapanis[k],
+            "girisler": toplam_ekle[k],
+            "teorik_tuketim": teorik,
+            "urun_ac": ac,
+            "fire": fire,
+            "fire_oran": oran,
+            "label": STOK_LABEL_TR.get(k, k),
+        }
+
+    toplam_teorik = sum(v["teorik_tuketim"] for v in fire_kalemler.values())
+    toplam_fire = sum(v["fire"] for v in fire_kalemler.values())
+    toplam_oran = round(toplam_fire / max(1, toplam_teorik) * 100, 2) if toplam_teorik > 0 else 0.0
+
+    cur.execute(
+        """
+        INSERT INTO sube_fire_haftalik
+            (id, sube_id, hafta_baslangic, hafta_bitis, kalemler,
+             toplam_fire, toplam_teorik, fire_oran, guncelleme)
+        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, NOW())
+        ON CONFLICT (sube_id, hafta_baslangic) DO UPDATE SET
+            kalemler      = EXCLUDED.kalemler,
+            toplam_fire   = EXCLUDED.toplam_fire,
+            toplam_teorik = EXCLUDED.toplam_teorik,
+            fire_oran     = EXCLUDED.fire_oran,
+            guncelleme    = NOW()
+        """,
+        (
+            str(uuid.uuid4()), sube_id, hafta_baslangic, hafta_sonu,
+            json.dumps(fire_kalemler, ensure_ascii=False),
+            toplam_fire, toplam_teorik, toplam_oran,
+        ),
+    )
+
+    # Yüksek fire varsa FIRE_HAFTALIK uyarısı
+    yuksek = [k for k, v in fire_kalemler.items() if v["teorik_tuketim"] > 0 and v["fire_oran"] >= 15]
+    if yuksek and toplam_oran >= 10:
+        cur.execute(
+            "SELECT 1 FROM sube_operasyon_uyari WHERE sube_id=%s AND tip='FIRE_HAFTALIK' AND tarih=%s LIMIT 1",
+            (sube_id, hafta_sonu),
+        )
+        if not cur.fetchone():
+            detay = "; ".join(
+                f"{fire_kalemler[k]['label']} %{fire_kalemler[k]['fire_oran']:.0f}"
+                for k in yuksek[:4]
+            )
+            seviye = "kritik" if toplam_oran >= 20 else "uyari"
+            cur.execute(
+                """
+                INSERT INTO sube_operasyon_uyari
+                    (id, sube_id, tarih, tip, seviye, fark_tl, mesaj)
+                VALUES (%s, %s, %s, 'FIRE_HAFTALIK', %s, %s, %s)
+                """,
+                (
+                    str(uuid.uuid4()), sube_id, hafta_sonu, seviye,
+                    float(toplam_fire),
+                    f"Haftalık fire %%{toplam_oran:.0f}: {detay}",
+                ),
+            )
+
+    return {
+        "yazildi": True,
+        "hafta_baslangic": str(hafta_baslangic),
+        "hafta_bitis": str(hafta_sonu),
+        "fire_oran": toplam_oran,
+        "toplam_fire": toplam_fire,
+        "toplam_teorik": toplam_teorik,
+        "kalemler": fire_kalemler,
+    }
+
+
+def fire_tespiti_kontrol_yaz(cur: Any, sube_id: str) -> None:
+    """
+    Kapanış sonrası POS/ciro × stok tüketimi çapraz cebiri.
+    Mantık: tarihsel (ciro / tüketim_birimi) oranı hesapla; bugün bu oran
+    %30+ düşükse → ürün tüketilmiş ama satış yansımamış (fire şüphesi).
+    Kaynak: ciro.toplam + sube_operasyon_ozet.satis_tahmini_toplam
+    Eşik: ≥%30 düşük → uyari; ≥%50 düşük → kritik
+    Veri: en az 5 günlük geçmiş (ciro + özet) çifti gerekli.
+    """
+    cur.execute(
+        "SELECT 1 FROM sube_operasyon_uyari WHERE sube_id=%s AND tip='FIRE_TESPITI' AND tarih=CURRENT_DATE LIMIT 1",
+        (sube_id,),
+    )
+    if cur.fetchone():
+        return
+
+    # Bugünkü ciro
+    cur.execute(
+        "SELECT COALESCE(SUM(toplam), 0) AS bugun FROM ciro WHERE sube_id=%s AND durum='aktif' AND tarih=CURRENT_DATE",
+        (sube_id,),
+    )
+    rb = cur.fetchone()
+    bugun_ciro = float(rb.get("bugun") or 0) if rb else 0.0
+    if bugun_ciro <= 0:
+        return
+
+    # Bugünkü tüketim tahmini (kapanışta sube_operasyon_ozet_yaz tarafından yazıldı)
+    cur.execute(
+        "SELECT COALESCE(satis_tahmini_toplam, 0) AS tuketim FROM sube_operasyon_ozet WHERE sube_id=%s AND tarih=CURRENT_DATE",
+        (sube_id,),
+    )
+    ro = cur.fetchone()
+    bugun_tuketim = int(ro.get("tuketim") or 0) if ro else 0
+    if bugun_tuketim <= 0:
+        # Fallback: URUN_AC toplamı (live)
+        ac_dict = sum_urun_ac_bugun(cur, sube_id)
+        bugun_tuketim = sum(ac_dict.values())
+    if bugun_tuketim <= 0:
+        return
+
+    # Geçmiş 14 gün: (ciro, tuketim) çiftleri — her ikisi de > 0 olan günler
+    cur.execute(
+        """
+        SELECT c.tarih,
+               COALESCE(SUM(c.toplam), 0)          AS ciro_toplam,
+               COALESCE(o.satis_tahmini_toplam, 0) AS tuketim_toplam
+        FROM ciro c
+        JOIN sube_operasyon_ozet o ON o.sube_id = c.sube_id AND o.tarih = c.tarih
+        WHERE c.sube_id = %s
+          AND c.durum   = 'aktif'
+          AND c.tarih  >= CURRENT_DATE - INTERVAL '14 days'
+          AND c.tarih   < CURRENT_DATE
+          AND o.satis_tahmini_toplam > 0
+        GROUP BY c.tarih, o.satis_tahmini_toplam
+        HAVING COALESCE(SUM(c.toplam), 0) > 0
+        """,
+        (sube_id,),
+    )
+    rows = cur.fetchall()
+    if len(rows) < 5:
+        return  # yetersiz geçmiş veri
+
+    oranlar = [
+        float(r["ciro_toplam"]) / float(r["tuketim_toplam"])
+        for r in rows
+        if float(r.get("tuketim_toplam") or 0) > 0
+    ]
+    if len(oranlar) < 5:
+        return
+
+    ort_oran = sum(oranlar) / len(oranlar)  # TL / birim
+    if ort_oran <= 0:
+        return
+
+    bugun_oran = bugun_ciro / bugun_tuketim
+    sapma = (bugun_oran - ort_oran) / ort_oran  # negatif → ciro düşük
+
+    if sapma >= -0.30:
+        return  # normal aralık
+
+    beklenen_ciro = round(ort_oran * bugun_tuketim, 2)
+    fark = round(bugun_ciro - beklenen_ciro, 2)  # negatif (kayıp)
+    seviye = "kritik" if sapma <= -0.50 else "uyari"
+    mesaj = (
+        f"Olası fire: {bugun_tuketim} birim tüketildi, "
+        f"beklenen ciro ~{beklenen_ciro:,.0f}₺ iken gerçek {bugun_ciro:,.0f}₺ "
+        f"(%{abs(sapma) * 100:.0f} düşük — açıklanamayan kayıp ~{abs(fark):,.0f}₺)"
+    )
+    cur.execute(
+        """
+        INSERT INTO sube_operasyon_uyari
+            (id, sube_id, tarih, tip, seviye, fark_tl, beklenen_tl, gercek_tl, mesaj)
+        VALUES (%s, %s, CURRENT_DATE, 'FIRE_TESPITI', %s, %s, %s, %s, %s)
+        """,
+        (str(uuid.uuid4()), sube_id, seviye, fark, beklenen_ciro, bugun_ciro, mesaj),
+    )
+
+
+_PATTERN_IZLE: frozenset = frozenset({
+    "STOK_ALARM",
+    "URUN_AC_UYUMSUZLUK",
+    "FIRE_TESPITI",
+    "ACILIS_KASA_FARK",
+    "ACILIS_STOK_FARK",
+    "SATIS_ANOMALI",
+    "SIPARIS_RED",
+})
+
+_PATTERN_ETIKET: Dict[str, str] = {
+    "STOK_ALARM":         "Depo stok alarmı",
+    "URUN_AC_UYUMSUZLUK": "Karşılıksız ürün açma",
+    "FIRE_TESPITI":       "Satış/tüketim firesi",
+    "ACILIS_KASA_FARK":   "Açılış kasa farkı",
+    "ACILIS_STOK_FARK":   "Açılış stok farkı",
+    "SATIS_ANOMALI":      "Satış anomalisi",
+    "SIPARIS_RED":        "Sipariş red bildirimi",
+}
+
+
+def pattern_uyari_kontrol_yaz(cur: Any, sube_id: str) -> None:
+    """
+    Son 7 günde (bugün hariç) aynı uyarı tipinden ≥3 farklı gün tespit varsa
+    PATTERN_UYARI yazar. Kapanışta çağrılır; günde bir kez, tip başına bir kayıt.
+    Eşik: ≥3 gün → uyari; ≥5 gün → kritik.
+    """
+    # Bugün bu kaynak tipler için zaten PATTERN_UYARI yazılmış mı?
+    cur.execute(
+        "SELECT mesaj FROM sube_operasyon_uyari WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='PATTERN_UYARI'",
+        (sube_id,),
+    )
+    yazili_mesajlar = [str(r.get("mesaj") or "") for r in cur.fetchall()]
+
+    cur.execute(
+        """
+        SELECT tip, COUNT(DISTINCT tarih) AS gun_sayisi
+        FROM sube_operasyon_uyari
+        WHERE sube_id = %s
+          AND tarih >= CURRENT_DATE - INTERVAL '7 days'
+          AND tarih  < CURRENT_DATE
+          AND tip    = ANY(%s)
+        GROUP BY tip
+        HAVING COUNT(DISTINCT tarih) >= 3
+        ORDER BY COUNT(DISTINCT tarih) DESC
+        """,
+        (sube_id, list(_PATTERN_IZLE)),
+    )
+    for r in cur.fetchall():
+        kaynak_tip = str(r.get("tip") or "")
+        gun = int(r.get("gun_sayisi") or 0)
+        if any(kaynak_tip in m for m in yazili_mesajlar):
+            continue
+        etiket = _PATTERN_ETIKET.get(kaynak_tip, kaynak_tip)
+        seviye = "kritik" if gun >= 5 else "uyari"
+        mesaj = (
+            f"Tekrarlayan uyarı [{kaynak_tip}]: {etiket} "
+            f"son 7 günde {gun} farklı günde tespit edildi — kök neden araştırılmalı."
+        )
+        cur.execute(
+            """
+            INSERT INTO sube_operasyon_uyari
+                (id, sube_id, tarih, tip, seviye, mesaj)
+            VALUES (%s, %s, CURRENT_DATE, 'PATTERN_UYARI', %s, %s)
+            """,
+            (str(uuid.uuid4()), sube_id, seviye, mesaj),
+        )
+
+
+def satis_anomali_kontrol_yaz(cur: Any, sube_id: str) -> None:
+    """
+    Kapanış sonrası: bugünkü ciro son 14 günün ortalamasından ±%30 sapıyorsa
+    SATIS_ANOMALI uyarısı yazar (günde bir kez, aynı gün varsa atlar).
+    En az 5 günlük geçmiş veri yoksa hesap yapılmaz.
+    """
+    # Zaten bugün yazılmış mı?
+    cur.execute(
+        "SELECT 1 FROM sube_operasyon_uyari WHERE sube_id=%s AND tip='SATIS_ANOMALI' AND tarih=CURRENT_DATE LIMIT 1",
+        (sube_id,),
+    )
+    if cur.fetchone():
+        return
+
+    # Geçmiş 14 gün ortalaması (bugün hariç, sıfır olmayan günler)
+    cur.execute(
+        """
+        SELECT COALESCE(AVG(toplam), 0) AS ortalama, COUNT(*) AS gun_sayisi
+        FROM ciro
+        WHERE sube_id = %s
+          AND durum = 'aktif'
+          AND tarih >= CURRENT_DATE - INTERVAL '14 days'
+          AND tarih < CURRENT_DATE
+          AND toplam > 0
+        """,
+        (sube_id,),
+    )
+    r = cur.fetchone()
+    if not r or int(r.get("gun_sayisi") or 0) < 5:
+        return  # yetersiz geçmiş veri
+
+    ortalama = float(r.get("ortalama") or 0)
+    if ortalama <= 0:
+        return
+
+    # Bugünkü ciro
+    cur.execute(
+        "SELECT COALESCE(SUM(toplam), 0) AS bugun FROM ciro WHERE sube_id=%s AND durum='aktif' AND tarih=CURRENT_DATE",
+        (sube_id,),
+    )
+    rb = cur.fetchone()
+    bugun_ciro = float(rb.get("bugun") or 0) if rb else 0.0
+    if bugun_ciro <= 0:
+        return
+
+    sapma_oran = (bugun_ciro - ortalama) / ortalama
+    if abs(sapma_oran) < 0.30:
+        return
+
+    yon = "yüksek" if sapma_oran > 0 else "düşük"
+    seviye = "kritik" if abs(sapma_oran) >= 0.50 else "uyari"
+    mesaj = (
+        f"Satış anomalisi: bugün {bugun_ciro:,.0f}₺, "
+        f"14 günlük ort. {ortalama:,.0f}₺ — "
+        f"%{abs(sapma_oran)*100:.0f} {yon} ({yon.upper()})"
+    )
+    cur.execute(
+        """
+        INSERT INTO sube_operasyon_uyari
+            (id, sube_id, tarih, tip, seviye, fark_tl, beklenen_tl, gercek_tl, mesaj)
+        VALUES (%s, %s, CURRENT_DATE, 'SATIS_ANOMALI', %s, %s, %s, %s, %s)
+        """,
+        (
+            str(uuid.uuid4()), sube_id, seviye,
+            round(bugun_ciro - ortalama, 2),
+            round(ortalama, 2),
+            round(bugun_ciro, 2),
+            mesaj,
+        ),
+    )
 
 
 def kapanis_stok_uyarilari_yaz(cur: Any, sube_id: str, kapanis_stok: Dict[str, int]) -> None:
@@ -1784,6 +2158,22 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
                 """,
                 (str(uuid.uuid4()), sube_id, kalem_kodu, kalem_adi, kabul_adet),
             )
+            # Stok geldi → bugün bu kalem için açık stok/bitti uyarılarını kapat
+            try:
+                cur.execute(
+                    """
+                    UPDATE sube_operasyon_uyari
+                    SET okundu = TRUE
+                    WHERE sube_id = %s
+                      AND tarih  = CURRENT_DATE
+                      AND tip    IN ('STOK_ALARM', 'STOK_BITTI', 'URUN_AC_UYUMSUZLUK')
+                      AND mesaj  ILIKE %s
+                      AND okundu = FALSE
+                    """,
+                    (sube_id, f"%{kalem_kodu}%"),
+                )
+            except Exception:
+                pass
         # Kabul farkı kontrolü
         if sevk_adet != kabul_adet:
             tam_mi = False
@@ -1896,11 +2286,11 @@ def sube_depo_stok_depo_cikis_dus(
     cur.execute(
         """
         UPDATE sube_depo_stok
-        SET mevcut_adet = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
-            rezerve_adet = LEAST(
+        SET mevcut_adet = COALESCE(mevcut_adet, 0) - %s,
+            rezerve_adet = GREATEST(0, LEAST(
                 COALESCE(rezerve_adet, 0),
-                GREATEST(0, COALESCE(mevcut_adet, 0) - %s)
-            ),
+                COALESCE(mevcut_adet, 0) - %s
+            )),
             guncelleme = NOW()
         WHERE sube_id = %s AND kalem_kodu = %s
         """,
@@ -1925,11 +2315,11 @@ def sube_depo_stok_depo_cikis_dus(
     cur.execute(
         """
         UPDATE sube_depo_stok
-        SET mevcut_adet = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
-            rezerve_adet = LEAST(
+        SET mevcut_adet = COALESCE(mevcut_adet, 0) - %s,
+            rezerve_adet = GREATEST(0, LEAST(
                 COALESCE(rezerve_adet, 0),
-                GREATEST(0, COALESCE(mevcut_adet, 0) - %s)
-            ),
+                COALESCE(mevcut_adet, 0) - %s
+            )),
             guncelleme = NOW()
         WHERE sube_id = %s AND kalem_kodu = %s
         """,
@@ -1968,6 +2358,22 @@ def sube_depo_stok_depo_giris_ekle(
             guncelleme = NOW()
         """,
         (str(uuid.uuid4()), sube_id, kk, lab, ad),
+    )
+    # Stok min_stok'u geçtiyse o kalem için bugünkü STOK_ALARM uyarısını sil
+    cur.execute(
+        """
+        DELETE FROM sube_operasyon_uyari
+        WHERE sube_id = %s
+          AND tip = 'STOK_ALARM'
+          AND tarih = CURRENT_DATE
+          AND mesaj LIKE %s
+          AND EXISTS (
+              SELECT 1 FROM sube_depo_stok
+              WHERE sube_id = %s AND kalem_kodu = %s
+                AND COALESCE(mevcut_adet, 0) > GREATEST(1, COALESCE(min_stok, 0))
+          )
+        """,
+        (sube_id, f"%{kk}%", sube_id, kk),
     )
 
 
