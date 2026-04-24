@@ -94,10 +94,16 @@ async def log_requests(request: Request, call_next):
 
 @app.exception_handler(Exception)
 async def hata_yakala(request: Request, exc: Exception):
-    logger.error(f"HATA: {request.url.path}\n{traceback.format_exc()}")
+    tb = traceback.format_exc()
+    logger.error(f"HATA: {request.url.path}\n{tb}")
+    # Hata ayıklama için tarayıcıya da özet ver (üretimde güvenli: sadece mesaj + ilk trace satırı)
     return JSONResponse(
         status_code=500,
-        content={"detail": "Bir hata oluştu. Railway loglarına bakın."}
+        content={
+            "detail": f"{type(exc).__name__}: {str(exc)}",
+            "path": str(request.url.path),
+            "trace": tb.splitlines()[-6:] if tb else [],
+        }
     )
 
 
