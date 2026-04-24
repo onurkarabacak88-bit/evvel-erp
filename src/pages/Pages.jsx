@@ -285,6 +285,9 @@ export function Borclar() {
   const [gecmisModal, setGecmisModal] = useState(null); // {borc} objesi
   const [gecmisData, setGecmisData] = useState(null);
   const [gecmisYukleniyor, setGecmisYukleniyor] = useState(false);
+  const [odeModal, setOdeModal] = useState(null); // borç objesi
+  const [odeForm, setOdeForm] = useState({tutar:'', tarih:'', aciklama:''});
+  const [odeKaydediliyor, setOdeKaydediliyor] = useState(false);
   const load = ()=>api('/borclar').then(setListe);
   useEffect(()=>{load();},[]);
   const toast=(m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
@@ -328,6 +331,31 @@ export function Borclar() {
     catch(e){toast(e.message,'red');}
   }
 
+  function odeAc(borc){
+    const bugun = new Date().toISOString().slice(0,10);
+    setOdeForm({
+      tutar: String(parseFloat(borc.aylik_taksit)||0),
+      tarih: bugun,
+      aciklama: '',
+    });
+    setOdeModal(borc);
+  }
+  async function odeKaydet(){
+    if(!odeModal) return;
+    const tutar = parseFloat(odeForm.tutar);
+    if(!tutar || tutar<=0){ toast('Geçerli tutar girin','red'); return; }
+    setOdeKaydediliyor(true);
+    try{
+      const r = await api(`/borclar/${odeModal.id}/ode`, {method:'POST', body:{
+        tutar, tarih: odeForm.tarih, aciklama: odeForm.aciklama || undefined,
+      }});
+      toast(r.kapandi ? '✓ Ödeme yapıldı — borç kapandı' : `✓ ${parseInt(tutar).toLocaleString('tr-TR')} ₺ kasadan düşüldü`);
+      setOdeModal(null);
+      load();
+    }catch(e){ toast(e.message,'red'); }
+    finally{ setOdeKaydediliyor(false); }
+  }
+
   const aktifler = liste.filter(b=>b.aktif);
   const toplamTaksit = aktifler.reduce((s,b)=>s+(parseFloat(b.aylik_taksit)||0),0);
 
@@ -352,6 +380,20 @@ export function Borclar() {
                 <td><span className={`badge ${b.aktif?'badge-green':'badge-gray'}`}>{b.aktif?'Aktif':'Kapandı'}</span></td>
                 <td>
                   <div className="flex gap-8">
+                    {b.aktif && (
+                      b.bu_ay_odendi ? (
+                        <button className="btn btn-sm" disabled
+                          style={{background:'rgba(40,180,99,0.15)',color:'var(--green)',cursor:'default',border:'1px solid rgba(40,180,99,0.3)'}}
+                          title={b.son_odeme ? `Son ödeme: ${b.son_odeme}` : 'Bu ay ödendi'}>
+                          ✓ Ödendi
+                        </button>
+                      ) : (
+                        <button className="btn btn-primary btn-sm" onClick={()=>odeAc(b)}
+                          title={b.son_odeme ? `Son ödeme: ${b.son_odeme}` : 'Bu ay için ödeme yap'}>
+                          💰 Öde
+                        </button>
+                      )
+                    )}
                     <button className="btn btn-ghost btn-sm" onClick={()=>gecmisAc(b)}>📋 Geçmiş</button>
                     <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({kurum:b.kurum,borc_turu:b.borc_turu,toplam_borc:b.toplam_borc,aylik_taksit:b.aylik_taksit,kalan_vade:b.kalan_vade,toplam_vade:b.toplam_vade,baslangic_tarihi:b.baslangic_tarihi?.slice(0,10)||'',odeme_gunu:b.odeme_gunu});setDuzenleId(b.id);setShowModal(true);}}>✏️</button>
                     <button className="btn btn-danger btn-sm" onClick={()=>sil(b.id)}>Kapat</button>
@@ -408,6 +450,62 @@ export function Borclar() {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={()=>setShowModal(false)}>İptal</button>
               <button className="btn btn-primary" onClick={kaydet} disabled={!form.kurum||!form.aylik_taksit}>Kaydet</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAKSİT ÖDEME MODAL */}
+      {odeModal && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setOdeModal(null)}>
+          <div className="modal" style={{maxWidth:480,width:'95%'}}>
+            <div className="modal-header">
+              <div>
+                <h3>💰 Taksit Ödemesi</h3>
+                <p style={{fontSize:12,color:'var(--text3)',marginTop:2}}>
+                  {odeModal.kurum} · {odeModal.borc_turu}
+                </p>
+              </div>
+              <button className="modal-close" onClick={()=>setOdeModal(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div style={{background:'rgba(255,180,0,0.08)',border:'1px solid rgba(255,180,0,0.3)',
+                borderRadius:8,padding:'10px 12px',fontSize:12,marginBottom:14}}>
+                ⚠️ Ödeme onaylandığında <strong>kasadan düşülür</strong> (BORC_TAKSIT) ve bu borcun kalan vadesi <strong>1 azalır</strong>. Aynı ay tekrar ödeme yapılamaz.
+              </div>
+              <div className="form-row cols-2">
+                <div className="form-group">
+                  <label>Tutar (₺) *</label>
+                  <input type="number" value={odeForm.tutar}
+                    onChange={e=>setOdeForm({...odeForm,tutar:e.target.value})}
+                    step="0.01" min="0"/>
+                  <span style={{fontSize:11,color:'var(--text3)'}}>
+                    Aylık taksit: {parseInt(odeModal.aylik_taksit).toLocaleString('tr-TR')} ₺
+                  </span>
+                </div>
+                <div className="form-group">
+                  <label>Ödeme Tarihi</label>
+                  <input type="date" value={odeForm.tarih}
+                    onChange={e=>setOdeForm({...odeForm,tarih:e.target.value})}/>
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Açıklama (opsiyonel)</label>
+                <input type="text" value={odeForm.aciklama}
+                  onChange={e=>setOdeForm({...odeForm,aciklama:e.target.value})}
+                  placeholder={`${odeModal.kurum} — ${odeModal.borc_turu} taksiti`}/>
+              </div>
+              <div style={{fontSize:12,color:'var(--text3)',marginTop:10}}>
+                Kalan vade: <strong>{odeModal.kalan_vade ?? '?'}</strong> ay
+                {odeModal.toplam_borc ? <> · Toplam borç: <strong>{parseInt(odeModal.toplam_borc).toLocaleString('tr-TR')} ₺</strong></> : null}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={()=>setOdeModal(null)} disabled={odeKaydediliyor}>İptal</button>
+              <button className="btn btn-primary" onClick={odeKaydet}
+                disabled={odeKaydediliyor || !parseFloat(odeForm.tutar)}>
+                {odeKaydediliyor ? '⏳ Ödeniyor...' : '✓ Onayla ve Öde'}
+              </button>
             </div>
           </div>
         </div>
