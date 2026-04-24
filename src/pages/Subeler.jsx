@@ -63,18 +63,55 @@ export default function Subeler() {
 
   // Sistem sıfırlama
   const TABLOLAR = [
-    { key: 'ciro',             label: 'Ciro Girişleri',         ikon: '📈', aciklama: 'Tüm ciro kayıtları' },
-    { key: 'kasa',             label: 'Kasa Hareketleri',        ikon: '💰', aciklama: 'Tüm kasa işlemleri' },
-    { key: 'kart_hareketleri', label: 'Kart Hareketleri',        ikon: '💳', aciklama: 'Tüm kart işlemleri' },
-    { key: 'anlik_gider',      label: 'Anlık Giderler',          ikon: '💸', aciklama: 'Anlık gider kayıtları' },
-    { key: 'vadeli_alim',      label: 'Vadeli Alımlar',          ikon: '📦', aciklama: 'Vadeli alım kayıtları' },
-    { key: 'personel',         label: 'Personel',                ikon: '👥', aciklama: 'Personel listesi' },
-    { key: 'personel_aylik',   label: 'Aylık Maaş Kayıtları',   ikon: '👤', aciklama: 'Maaş giriş kayıtları' },
-    { key: 'sabit_gider',      label: 'Sabit Giderler',          ikon: '🏠', aciklama: 'Sabit gider tanımları' },
-    { key: 'borc',             label: 'Borç Envanteri',          ikon: '🏦', aciklama: 'Kredi/borç kayıtları' },
-    { key: 'odeme_plani',      label: 'Ödeme Planları',          ikon: '📅', aciklama: 'Bekleyen ödeme planları' },
-    { key: 'onay_kuyrugu',     label: 'Onay Kuyruğu',            ikon: '✅', aciklama: 'Bekleyen onaylar' },
-    { key: 'audit_log',        label: 'Denetim günlüğü',        ikon: '📋', aciklama: 'İşlem geçmişi' },
+    // ── Finans / Muhasebe ─────────────────────────────────────────
+    { key: 'ciro',             label: 'Ciro Girişleri',          ikon: '📈', aciklama: 'Tüm ciro kayıtları',               grup: 'Finans' },
+    { key: 'ciro_taslak',      label: 'Ciro Taslakları',         ikon: '📝', aciklama: 'Günlük ciro taslakları',          grup: 'Finans' },
+    { key: 'kasa',             label: 'Kasa Hareketleri',        ikon: '💰', aciklama: 'Tüm kasa işlemleri',              grup: 'Finans' },
+    { key: 'kart_hareketleri', label: 'Kart Hareketleri',        ikon: '💳', aciklama: 'Tüm kart işlemleri',              grup: 'Finans' },
+    { key: 'banka_yatirimlari',label: 'Banka Yatırımları',       ikon: '🏧', aciklama: 'Banka yatırım kayıtları',         grup: 'Finans' },
+    { key: 'anlik_gider',      label: 'Anlık Giderler',          ikon: '💸', aciklama: 'Anlık gider kayıtları',           grup: 'Finans' },
+    { key: 'vadeli_alim',      label: 'Vadeli Alımlar',          ikon: '📦', aciklama: 'Vadeli alım kayıtları',           grup: 'Finans' },
+    { key: 'sabit_gider',      label: 'Sabit Giderler',          ikon: '🏠', aciklama: 'Sabit gider tanımları',           grup: 'Finans' },
+    { key: 'borc',             label: 'Borç Envanteri',          ikon: '🏦', aciklama: 'Kredi/borç kayıtları',            grup: 'Finans' },
+    { key: 'odeme_plani',      label: 'Ödeme Planları',          ikon: '📅', aciklama: 'Bekleyen ödeme planları',         grup: 'Finans' },
+    { key: 'onay_kuyrugu',     label: 'Onay Kuyruğu',            ikon: '✅', aciklama: 'Bekleyen onaylar',                grup: 'Finans' },
+    { key: 'x_rapor_kayit',    label: 'X Rapor Kayıtları',       ikon: '📊', aciklama: 'X rapor geçmişi',                 grup: 'Finans' },
+
+    // ── Personel ───────────────────────────────────────────────────
+    { key: 'personel',             label: 'Personel',            ikon: '👥', aciklama: 'Personel listesi',                grup: 'Personel' },
+    { key: 'personel_aylik',       label: 'Aylık Maaş Kayıtları',ikon: '👤', aciklama: 'Maaş giriş kayıtları',            grup: 'Personel' },
+    { key: 'personel_risk_sinyal', label: 'Personel Risk Sinyal',ikon: '⚠️', aciklama: 'Risk analiz sinyalleri',          grup: 'Personel' },
+    { key: 'personel_takip',       label: 'Personel Takip',      ikon: '🔎', aciklama: 'Takip kayıtları',                 grup: 'Personel' },
+    { key: 'vardiya_atama_taslak', label: 'Vardiya Atama Taslak',ikon: '🗓️', aciklama: 'Haftalık vardiya taslakları',     grup: 'Personel' },
+
+    // ── Şube Operasyon (test için en sık bunlar) ───────────────────
+    { key: 'sube_acilis',          label: 'Şube Açılış Kayıtları',     ikon: '🔓', aciklama: 'Günlük şube açılışları',       grup: 'Operasyon' },
+    { key: 'sube_operasyon_event', label: 'Şube Operasyon Olayları',   ikon: '⚡', aciklama: 'ACILIS/KAPANIS/KONTROL event', grup: 'Operasyon' },
+    { key: 'sube_operasyon_uyari', label: 'Şube Operasyon Uyarıları',  ikon: '🔔', aciklama: 'Stok/PIN/kontrol alarmları',   grup: 'Operasyon' },
+    { key: 'sube_operasyon_ozet',  label: 'Şube Operasyon Özeti',      ikon: '📋', aciklama: 'Günlük performans özeti',      grup: 'Operasyon' },
+    { key: 'sube_fire_haftalik',   label: 'Şube Fire (Haftalık)',      ikon: '🗑️', aciklama: 'Haftalık fire kayıtları',      grup: 'Operasyon' },
+    { key: 'operasyon_defter',     label: 'Operasyon Defteri',         ikon: '📓', aciklama: 'Append-only imzalı defter',    grup: 'Operasyon' },
+    { key: 'sube_kasa_gun_acma',   label: 'Şube Kasa Gün Açma',        ikon: '💵', aciklama: 'Günlük kasa kilidi',           grup: 'Operasyon' },
+    { key: 'kapanis_kayit',        label: 'Kapanış / Devir Kayıtları', ikon: '🔒', aciklama: 'Vardiya devri + kapanış',      grup: 'Operasyon' },
+    { key: 'sube_depo_stok',       label: 'Şube Depo Stok',            ikon: '📦', aciklama: 'Fiziksel depo sayımı',         grup: 'Operasyon' },
+    { key: 'stok_yolda',           label: 'Stok Yolda',                ikon: '🚚', aciklama: 'Sevk edilen yolda stok',       grup: 'Operasyon' },
+    { key: 'sube_skor',            label: 'Şube Skor',                 ikon: '⭐', aciklama: 'Günlük şube skorları',         grup: 'Operasyon' },
+    { key: 'sube_merkez_mesaj',    label: 'Merkez Mesajları',          ikon: '📨', aciklama: 'Merkez → şube push',           grup: 'Operasyon' },
+    { key: 'sube_merkez_not',      label: 'Merkez Notları',            ikon: '📌', aciklama: 'Şube hakkında notlar',         grup: 'Operasyon' },
+    { key: 'panel_pin_guvenlik',   label: 'Panel PIN Güvenlik',        ikon: '🔐', aciklama: 'PIN deneme/lock kayıtları',    grup: 'Operasyon' },
+    { key: 'operasyon_guvenlik_olay',        label: 'Güvenlik Olayları',     ikon: '🛡️', aciklama: 'Şüpheli hareket/alarm logu', grup: 'Operasyon' },
+    { key: 'operasyon_guvenlik_alarm_durum', label: 'Güvenlik Alarm Durumu', ikon: '🚨', aciklama: 'Aktif alarm durumları',      grup: 'Operasyon' },
+    { key: 'motor_analitik_olay',  label: 'Motor Analitik Olay',       ikon: '🧠', aciklama: 'Analitik motor event log',     grup: 'Operasyon' },
+    { key: 'kasa_teslim',          label: 'Kasa Teslim Kayıtları',     ikon: '🤝', aciklama: 'Kasa teslim/alıcı kayıtları',  grup: 'Operasyon' },
+
+    // ── Sipariş Akışı ──────────────────────────────────────────────
+    { key: 'siparis_talep',      label: 'Sipariş Talepleri',     ikon: '🛒', aciklama: 'Şube → merkez talepleri',  grup: 'Sipariş' },
+    { key: 'siparis_ozel_talep', label: 'Özel Sipariş Talepleri',ikon: '✨', aciklama: 'Özel talep kayıtları',     grup: 'Sipariş' },
+    { key: 'siparis_sevk_eksik', label: 'Sipariş Sevk Eksik',    ikon: '❗', aciklama: 'Eksik sevk kayıtları',     grup: 'Sipariş' },
+    { key: 'merkez_stok_sevk',   label: 'Merkez Stok Sevk',      ikon: '🚛', aciklama: 'Merkezden çıkış sevkleri', grup: 'Sipariş' },
+
+    // ── Denetim ────────────────────────────────────────────────────
+    { key: 'audit_log',        label: 'Denetim Günlüğü',        ikon: '📋', aciklama: 'Tüm işlem geçmişi',          grup: 'Denetim' },
   ];
   const [sifirlaModal, setSifirlaModal] = useState(false);
   const [seciliTablolar, setSeciliTablolar] = useState({});
@@ -807,26 +844,72 @@ export default function Subeler() {
               )}
             </div>
 
-            {/* Tablo listesi */}
-            <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:20 }}>
-              {TABLOLAR.map(t => (
-                <label key={t.key} style={{
-                  display:'flex', alignItems:'center', gap:10, padding:'10px 12px',
-                  background: seciliTablolar[t.key] ? 'rgba(220,50,50,0.08)' : 'var(--bg3)',
-                  border: `1px solid ${seciliTablolar[t.key] ? 'rgba(220,50,50,0.3)' : 'var(--border)'}`,
-                  borderRadius:8, cursor:'pointer'
-                }}>
-                  <input type="checkbox"
-                    checked={!!seciliTablolar[t.key]}
-                    onChange={e => setSeciliTablolar(prev => ({...prev, [t.key]: e.target.checked}))}
-                  />
-                  <span style={{ fontSize:16 }}>{t.ikon}</span>
-                  <div>
-                    <div style={{ fontSize:13, fontWeight:600 }}>{t.label}</div>
-                    <div style={{ fontSize:11, color:'var(--text3)' }}>{t.aciklama}</div>
-                  </div>
-                </label>
-              ))}
+            {/* Tablo listesi — gruplu */}
+            <div style={{ display:'flex', flexDirection:'column', gap:14, marginBottom:20, maxHeight:'55vh', overflowY:'auto', paddingRight:4 }}>
+              {(() => {
+                const gruplar = {};
+                TABLOLAR.forEach(t => {
+                  const g = t.grup || 'Diğer';
+                  (gruplar[g] = gruplar[g] || []).push(t);
+                });
+                const sira = ['Finans','Personel','Operasyon','Sipariş','Denetim','Diğer'];
+                return sira.filter(g => gruplar[g]).map(gAdi => {
+                  const grupItems = gruplar[gAdi];
+                  const grupSecili = grupItems.filter(t => seciliTablolar[t.key]).length;
+                  const grupHepsi = grupSecili === grupItems.length;
+                  const toggleGrup = () => {
+                    const yeni = { ...seciliTablolar };
+                    grupItems.forEach(t => { yeni[t.key] = !grupHepsi; });
+                    setSeciliTablolar(yeni);
+                  };
+                  return (
+                    <div key={gAdi}>
+                      <div style={{
+                        display:'flex', alignItems:'center', gap:8,
+                        fontSize:11, fontWeight:700, letterSpacing:0.5,
+                        color:'var(--text3)', textTransform:'uppercase',
+                        padding:'4px 2px', marginBottom:6, borderBottom:'1px solid var(--border)'
+                      }}>
+                        <span>{gAdi}</span>
+                        <span style={{ color:'var(--text3)', fontWeight:500 }}>
+                          ({grupSecili}/{grupItems.length})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={toggleGrup}
+                          style={{
+                            marginLeft:'auto', fontSize:10, padding:'2px 8px',
+                            borderRadius:4, border:'1px solid var(--border)',
+                            background:'transparent', color:'var(--text2)', cursor:'pointer'
+                          }}
+                        >
+                          {grupHepsi ? 'Grubu kaldır' : 'Grubu seç'}
+                        </button>
+                      </div>
+                      <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+                        {grupItems.map(t => (
+                          <label key={t.key} style={{
+                            display:'flex', alignItems:'center', gap:10, padding:'8px 10px',
+                            background: seciliTablolar[t.key] ? 'rgba(220,50,50,0.08)' : 'var(--bg3)',
+                            border: `1px solid ${seciliTablolar[t.key] ? 'rgba(220,50,50,0.3)' : 'var(--border)'}`,
+                            borderRadius:6, cursor:'pointer'
+                          }}>
+                            <input type="checkbox"
+                              checked={!!seciliTablolar[t.key]}
+                              onChange={e => setSeciliTablolar(prev => ({...prev, [t.key]: e.target.checked}))}
+                            />
+                            <span style={{ fontSize:15 }}>{t.ikon}</span>
+                            <div>
+                              <div style={{ fontSize:12, fontWeight:600 }}>{t.label}</div>
+                              <div style={{ fontSize:10, color:'var(--text3)' }}>{t.aciklama}</div>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
             </div>
 
             {/* Onay */}
