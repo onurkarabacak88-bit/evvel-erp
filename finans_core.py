@@ -978,6 +978,188 @@ def kart_ekstre_forecast(cur, kart_id: str, ay_sayisi: int = 6, asgari_senaryosu
     return sonuclar
 
 
+def kart_aktif_donem(cur, kart_id: str) -> dict:
+    """
+    Kartın AKTİF (önündeki / şu an açık) ekstre dönemini hesaplar.
+    Panel/listing için: "şu an müşterinin önünde duran ekstre nedir?"
+
+    Önemli fark (kart_ekstre_forecast'ten): bu fonksiyon önceki kapanmış
+    dönemin GERÇEK ödeme verisine bakar; varsayım yapmaz.
+      - Önceki ekstre tutarı  = (önceki kesim → bir önceki kesim) penceresindeki harcamalar
+      - Önceki ödenen tutar   = (önceki kesim → önceki son_odeme] arası ODEME hareketleri
+      - Asgari ödendiyse → akdi faiz, devreden anapara = ekstre - asgari
+      - Asgari ödenmediyse → gecikme faizi, devreden anapara = ekstre - odenen
+      - Faize KKDF (%15) + BSMV (%5) eklenir (×1,20)
+
+    Sonuçta dönen "aktif dönem":
+      ekstre_toplam = devreden_anapara + devreden_faiz + bu_donem_yeni_harcama + taksit_payi
+      asgari_tahmini = ekstre_toplam × kart.asgari_oran
+    """
+    bugun = bugun_tr()
+
+    cur.execute("""
+        SELECT id, kart_adi, kesim_gunu, son_odeme_gunu, faiz_orani,
+               asgari_oran, gecikme_faiz_orani
+        FROM kartlar
+        WHERE id = %s AND aktif = TRUE
+    """, (kart_id,))
+    kart = cur.fetchone()
+    if not kart:
+        return {}
+
+    kesim_gunu     = int(kart['kesim_gunu'])
+    son_odeme_gunu = int(kart['son_odeme_gunu'])
+    akdi_yillik    = float(kart['faiz_orani'] or 0)
+    asgari_oran    = kart_asgari_orani(kart)
+    gecikme_yillik = float(kart.get('gecikme_faiz_orani') or 0)
+    if gecikme_yillik <= 0:
+        gecikme_yillik = akdi_yillik * 1.3
+
+    aylik_akdi    = akdi_yillik    / 100.0 / 12.0
+    aylik_gecikme = gecikme_yillik / 100.0 / 12.0
+    VERGI_CARPANI = 1.20  # KKDF %15 + BSMV %5
+
+    # Aktif dönemin kesim tarihini bul: bu ayın kesimi açık mı, kapalı mı?
+    bu_ay_kesim = _safe_date(bugun.year, bugun.month, kesim_gunu)
+    bu_ay_son_odeme = son_odeme_tarihi_hesapla(bu_ay_kesim, son_odeme_gunu)
+    if bu_ay_son_odeme < bugun:
+        # Bu ayın kesimi tamamen kapanmış → aktif dönem bir sonraki kesim
+        if bugun.month == 12:
+            akt_y, akt_m = bugun.year + 1, 1
+        else:
+            akt_y, akt_m = bugun.year, bugun.month + 1
+        onceki_kesim = bu_ay_kesim  # az önce kapanan kesim
+    else:
+        # Bu ayın kesimi henüz açık (son_odeme geçmedi) → aktif dönem bu ay
+        akt_y, akt_m = bugun.year, bugun.month
+        # Önceki kesim = bir önceki ayın kesimi
+        if bugun.month == 1:
+            onceki_kesim = _safe_date(bugun.year - 1, 12, kesim_gunu)
+        else:
+            onceki_kesim = _safe_date(bugun.year, bugun.month - 1, kesim_gunu)
+
+    aktif_kesim     = _safe_date(akt_y, akt_m, kesim_gunu)
+    aktif_son_odeme = son_odeme_tarihi_hesapla(aktif_kesim, son_odeme_gunu)
+
+    # ── Önceki dönemin devir hesabı (gerçek ödeme verisiyle) ─────────
+    # 1) Önceki kesimin bir öncesi (önceki dönemin başlangıcı)
+    if onceki_kesim.month == 1:
+        onceki_oncesi = _safe_date(onceki_kesim.year - 1, 12, kesim_gunu)
+    else:
+        onceki_oncesi = _safe_date(onceki_kesim.year, onceki_kesim.month - 1, kesim_gunu)
+    onceki_son_odeme = son_odeme_tarihi_hesapla(onceki_kesim, son_odeme_gunu)
+
+    # 2) Önceki dönemin ekstresi (tek çekim + taksit payı)
+    cur.execute("""
+        SELECT COALESCE(SUM(tutar), 0) AS t
+        FROM kart_hareketleri
+        WHERE kart_id = %s AND durum = 'aktif'
+          AND islem_turu = 'HARCAMA' AND taksit_sayisi = 1
+          AND tarih >  %s::date AND tarih <= %s::date
+    """, (kart_id, onceki_oncesi, onceki_kesim))
+    onceki_tek = float(cur.fetchone()['t'])
+
+    cur.execute("""
+        SELECT COALESCE(baslangic_tarihi, tarih) AS bas, tutar, taksit_sayisi
+        FROM kart_hareketleri
+        WHERE kart_id = %s AND durum = 'aktif'
+          AND islem_turu = 'HARCAMA' AND taksit_sayisi > 1
+          AND COALESCE(baslangic_tarihi, tarih) <= %s::date
+    """, (kart_id, onceki_kesim))
+    onceki_taksit = 0.0
+    for r in cur.fetchall():
+        bas = r['bas']; ts = int(r['taksit_sayisi'])
+        aylik = float(r['tutar']) / ts if ts > 0 else 0.0
+        gecen = (onceki_kesim.year - bas.year) * 12 + (onceki_kesim.month - bas.month)
+        if 0 <= gecen < ts:
+            onceki_taksit += aylik
+
+    onceki_ekstre = onceki_tek + onceki_taksit
+
+    # 3) Önceki dönemde yapılan ödemeler (kesim → son_odeme arası)
+    devreden_anapara = 0.0
+    devreden_faiz    = 0.0
+    onceki_asgari    = 0.0
+    onceki_odenen    = 0.0
+    onceki_durum     = "yok"  # yok | tam | asgari_odendi | asgari_odenmedi
+    if onceki_ekstre > 0 and onceki_son_odeme < bugun:
+        # Önceki dönem kapanmış — devir hesabı yapılabilir
+        cur.execute("""
+            SELECT COALESCE(SUM(tutar), 0) AS odenen
+            FROM kart_hareketleri
+            WHERE kart_id = %s AND durum = 'aktif'
+              AND islem_turu = 'ODEME'
+              AND tarih >  %s::date
+              AND tarih <= %s::date
+        """, (kart_id, onceki_kesim, onceki_son_odeme))
+        onceki_odenen = float(cur.fetchone()['odenen'])
+        onceki_asgari = onceki_ekstre * asgari_oran
+
+        if onceki_odenen >= onceki_ekstre - 0.01:
+            # Tam ödendi — devir yok
+            onceki_durum = "tam"
+        elif onceki_odenen >= onceki_asgari * 0.999:
+            # Asgari ödendi — kalan akdi faizle döner
+            kalan = max(0.0, onceki_ekstre - onceki_odenen)
+            devreden_anapara = round(kalan, 2)
+            devreden_faiz    = round(kalan * aylik_akdi * VERGI_CARPANI, 2)
+            onceki_durum     = "asgari_odendi"
+        else:
+            # Asgari ödenmedi — kalan gecikme faizine döner
+            kalan = max(0.0, onceki_ekstre - onceki_odenen)
+            devreden_anapara = round(kalan, 2)
+            devreden_faiz    = round(kalan * aylik_gecikme * VERGI_CARPANI, 2)
+            onceki_durum     = "asgari_odenmedi"
+
+    # ── Aktif dönemin ekstresi ───────────────────────────────────────
+    # Bu döneme ait yeni harcamalar (önceki kesim → aktif kesim, bugüne kadar)
+    cur.execute("""
+        SELECT COALESCE(SUM(tutar), 0) AS t
+        FROM kart_hareketleri
+        WHERE kart_id = %s AND durum = 'aktif'
+          AND islem_turu = 'HARCAMA' AND taksit_sayisi = 1
+          AND tarih >  %s::date
+          AND tarih <= LEAST(%s::date, CURRENT_DATE)
+    """, (kart_id, onceki_kesim, aktif_kesim))
+    aktif_tek = float(cur.fetchone()['t'])
+
+    cur.execute("""
+        SELECT COALESCE(baslangic_tarihi, tarih) AS bas, tutar, taksit_sayisi
+        FROM kart_hareketleri
+        WHERE kart_id = %s AND durum = 'aktif'
+          AND islem_turu = 'HARCAMA' AND taksit_sayisi > 1
+          AND COALESCE(baslangic_tarihi, tarih) <= LEAST(%s::date, CURRENT_DATE)
+    """, (kart_id, aktif_kesim))
+    aktif_taksit = 0.0
+    for r in cur.fetchall():
+        bas = r['bas']; ts = int(r['taksit_sayisi'])
+        aylik = float(r['tutar']) / ts if ts > 0 else 0.0
+        gecen = (aktif_kesim.year - bas.year) * 12 + (aktif_kesim.month - bas.month)
+        if 0 <= gecen < ts:
+            aktif_taksit += aylik
+
+    ekstre = aktif_tek + aktif_taksit + devreden_anapara + devreden_faiz
+    asgari = ekstre * asgari_oran
+
+    return {
+        "ay":               f"{akt_y:04d}-{akt_m:02d}",
+        "kesim_tarihi":     str(aktif_kesim),
+        "son_odeme_tarihi": str(aktif_son_odeme),
+        "tek_cekim_bilinen": round(aktif_tek, 2),
+        "taksit_payi":      round(aktif_taksit, 2),
+        "devreden_anapara": round(devreden_anapara, 2),
+        "devreden_faiz":    round(devreden_faiz, 2),
+        "ekstre_toplam":    round(ekstre, 2),
+        "asgari_tahmini":   round(asgari, 2),
+        "onceki_kesim":     str(onceki_kesim),
+        "onceki_son_odeme": str(onceki_son_odeme),
+        "onceki_ekstre":    round(onceki_ekstre, 2),
+        "onceki_asgari":    round(onceki_asgari, 2),
+        "onceki_odenen":    round(onceki_odenen, 2),
+        "onceki_durum":     onceki_durum,
+    }
+
+
 def tum_kartlar_ekstre_forecast(cur, ay_sayisi: int = 6, asgari_senaryosu: str = "odenir") -> dict:
     """
     Tüm aktif kartlar için kart_ekstre_forecast — panel/analiz için tek seferlik çağrı.

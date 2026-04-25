@@ -61,7 +61,7 @@ from finans_core import (
     kart_asgari_orani,
     faiz_hesapla_ve_yaz, tum_kartlar_faiz_hesapla,
     taksit_detay, gelecek_taksit_yuku, tum_kartlar_taksit_yuku,
-    kart_ekstre_forecast, tum_kartlar_ekstre_forecast,
+    kart_ekstre_forecast, tum_kartlar_ekstre_forecast, kart_aktif_donem,
     aktif_kesim_gunu, nakit_akis_sim, nakit_akis_tahmin_dogruluk,
 )
 
@@ -1269,29 +1269,33 @@ def kartlar_listele():
             ekstre_v = kart_ekstre(cur, k['id'], k['kesim_gunu'])
             aylik_taksit = ekstre_v["aylik_taksit"]
 
-            # AKTİF/GELECEK DÖNEM forecast'i — son ödeme geçtiyse otomatik
-            # bir sonraki kesime sıçrar; devreden anapara + KKDF/BSMV dahil
-            # akdi faiz hesabını içerir. Panel "asgari" ve "bu_ekstre" buradan
-            # beslenir ki kullanıcı her zaman ÖNÜNDEKİ ekstreyi görsün.
+            # AKTİF DÖNEM hesabı — kart_aktif_donem önceki kapanmış dönemin
+            # GERÇEK ödeme verisinden devreden anapara + faizi (KKDF/BSMV dahil)
+            # hesaplar; aktif/önündeki ekstre buradan beslenir.
             try:
-                fc = kart_ekstre_forecast(cur, k['id'], 1, "odenir")
-                aktif = fc[0] if fc else None
+                aktif = kart_aktif_donem(cur, k['id'])
             except Exception:
                 aktif = None
             if aktif:
-                bu_ekstre     = float(aktif.get("ekstre_toplam") or 0)
-                asgari_odeme  = float(aktif.get("asgari_tahmini") or 0)
-                devreden_ana  = float(aktif.get("devreden_anapara") or 0)
-                devreden_fz   = float(aktif.get("devreden_faiz") or 0)
+                bu_ekstre        = float(aktif.get("ekstre_toplam") or 0)
+                asgari_odeme     = float(aktif.get("asgari_tahmini") or 0)
+                devreden_ana     = float(aktif.get("devreden_anapara") or 0)
+                devreden_fz      = float(aktif.get("devreden_faiz") or 0)
                 aktif_donem_ay   = aktif.get("ay")
                 aktif_kesim      = aktif.get("kesim_tarihi")
                 aktif_son_odeme  = aktif.get("son_odeme_tarihi")
+                onceki_ekstre    = float(aktif.get("onceki_ekstre") or 0)
+                onceki_asgari    = float(aktif.get("onceki_asgari") or 0)
+                onceki_odenen    = float(aktif.get("onceki_odenen") or 0)
+                onceki_durum     = aktif.get("onceki_durum") or "yok"
             else:
-                bu_ekstre     = ekstre_v["ekstre_toplam"]
-                asgari_odeme  = bu_ekstre * kart_asgari_orani(k)
-                devreden_ana  = 0.0
-                devreden_fz   = ekstre_v.get("devreden_faiz", 0)
+                bu_ekstre        = ekstre_v["ekstre_toplam"]
+                asgari_odeme     = bu_ekstre * kart_asgari_orani(k)
+                devreden_ana     = 0.0
+                devreden_fz      = ekstre_v.get("devreden_faiz", 0)
                 aktif_donem_ay = aktif_kesim = aktif_son_odeme = None
+                onceki_ekstre = onceki_asgari = onceki_odenen = 0.0
+                onceki_durum  = "yok"
 
             # Gelecek ekstre: kesim gününden sonraki tek çekim + devam eden taksitler
             cur.execute("""SELECT COALESCE(SUM(tutar),0) as gelecek
@@ -1332,6 +1336,10 @@ def kartlar_listele():
                 "aktif_donem":      aktif_donem_ay,
                 "aktif_kesim":      aktif_kesim,
                 "aktif_son_odeme":  aktif_son_odeme,
+                "onceki_ekstre":    onceki_ekstre,
+                "onceki_asgari":    onceki_asgari,
+                "onceki_odenen":    onceki_odenen,
+                "onceki_durum":     onceki_durum,
                 "blink": gun_kaldi <= 0 and yaklasan is not None,
                 "yaklasan_odeme": dict(yaklasan) if yaklasan else None
             })
