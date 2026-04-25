@@ -50,7 +50,7 @@ from motors import (
     guncel_kasa,
     kasa_detay,
     kart_analiz_hesapla,
-    aylik_odeme_plani_uret,
+    aylik_odeme_plani_uret, kart_kesim_plan_tetikle,
     uyari_motoru,
     finans_ozet_motoru,
     uyari_cache_clear,
@@ -132,13 +132,24 @@ def _gece_yarisi_scheduler():
             bugun = bugun_tr()
             ay_son_gun = calendar.monthrange(bugun.year, bugun.month)[1]
 
-            # Ay başı — yeni ödeme planı
+            # Ay başı — sabit gider, maaş, taksit vs. (kart asgarisi HARİÇ;
+            # kart asgarisi her kartın kendi kesim gününde tetiklenir)
             if bugun.day == 1:
                 try:
                     sonuc = aylik_odeme_plani_uret(bugun.year, bugun.month)
                     logger.info(f"⏰ Scheduler: Aylık plan üretildi — {sonuc.get('toplam', 0)} kayıt")
                 except Exception as e:
                     logger.error(f"⏰ Scheduler plan hatası: {e}")
+
+            # KART BAZLI KESİM TETİKLEYİCİ — her gece tüm kartları yokla,
+            # bugün kesim olan varsa o kart için ekstre planı üret/güncelle.
+            # Hafta sonu/tatil kayması motorun içindedir.
+            try:
+                ks = kart_kesim_plan_tetikle()
+                if ks.get("tetiklenen"):
+                    logger.info(f"⏰ Scheduler: Kart kesim tetiklendi — {len(ks['tetiklenen'])} kart")
+            except Exception as e:
+                logger.error(f"⏰ Scheduler kart kesim hatası: {e}")
 
             # FAİZ — her gece tüm kartlar yoklanır.
             # faiz_hesapla_ve_yaz her kart için kendi kesim/son_odeme döngüsünü

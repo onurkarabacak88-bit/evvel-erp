@@ -144,16 +144,74 @@ def _safe_date(y: int, m: int, d: int) -> date:
     return date(y, m, min(int(d), son))
 
 
+def _is_resmi_tatil(d: date) -> bool:
+    """
+    Türkiye sabit resmi tatil günleri (banka kapalı varsayılır).
+    Dini bayramlar (hareketli) burada yok — gerekirse env üzerinden eklenebilir.
+    """
+    sabit = {
+        (1, 1),   # Yılbaşı
+        (4, 23),  # Ulusal Egemenlik
+        (5, 1),   # Emek
+        (5, 19),  # Atatürk'ü Anma
+        (7, 15),  # Demokrasi
+        (8, 30),  # Zafer
+        (10, 29), # Cumhuriyet
+    }
+    return (d.month, d.day) in sabit
+
+
+def is_banka_acik(d: date) -> bool:
+    """Hafta içi (Pzt–Cum) ve resmi tatil değilse banka açık."""
+    return d.weekday() < 5 and not _is_resmi_tatil(d)
+
+
+def sonraki_is_gunu(d: date) -> date:
+    """Verilen tarihten itibaren ilk açık banka iş gününe kaydır."""
+    while not is_banka_acik(d):
+        d = d + timedelta(days=1)
+    return d
+
+
+def _onceki_is_gunu(d: date) -> date:
+    """Verilen tarihten geriye doğru ilk açık banka iş gününe kaydır."""
+    while not is_banka_acik(d):
+        d = d - timedelta(days=1)
+    return d
+
+
+def kesim_tarihi_hesapla(y: int, m: int, kesim_gunu: int) -> date:
+    """
+    Belirli bir yıl/ay için kesim tarihini döner — bankacılık kuralları:
+      - Ay sonunu aşan günler kırpılır (Şubat 30 → 28/29)
+      - Hafta sonu / resmi tatile denk gelirse SONRAKI iş gününe kaydırılır
+        (Türk bankalarının yaygın uygulaması; Garanti, YKB, Akbank vs.)
+      - AMA kayma sonraki aya taşıyorsa → ekstrenin ay tutarlılığı için
+        ÖNCEKI iş gününe çekilir (Şubat 28 Cmt → Şubat 27 Cum)
+    """
+    ham = _safe_date(y, m, kesim_gunu)
+    kaydir = sonraki_is_gunu(ham)
+    if kaydir.month != m:
+        # Sonraki aya geçti → ay tutarlılığı için geri çek
+        kaydir = _onceki_is_gunu(ham)
+    return kaydir
+
+
 def son_odeme_tarihi_hesapla(kesim_tarihi: date, son_odeme_gunu: int) -> date:
     """
     Verilen kesim tarihine ait son ödeme tarihini hesaplar.
     son_odeme_gunu kesim_gunu'ndan büyük/eşitse → aynı ay; değilse → bir sonraki ay.
+
+    BANKACILIK KURALI: Son ödeme tarihi hafta sonu/resmi tatile denk gelirse
+    bir sonraki iş gününe kaydırılır (Türk bankalarının standart uygulaması).
     """
     if son_odeme_gunu >= kesim_tarihi.day:
-        return _safe_date(kesim_tarihi.year, kesim_tarihi.month, son_odeme_gunu)
-    if kesim_tarihi.month == 12:
-        return _safe_date(kesim_tarihi.year + 1, 1, son_odeme_gunu)
-    return _safe_date(kesim_tarihi.year, kesim_tarihi.month + 1, son_odeme_gunu)
+        ham = _safe_date(kesim_tarihi.year, kesim_tarihi.month, son_odeme_gunu)
+    elif kesim_tarihi.month == 12:
+        ham = _safe_date(kesim_tarihi.year + 1, 1, son_odeme_gunu)
+    else:
+        ham = _safe_date(kesim_tarihi.year, kesim_tarihi.month + 1, son_odeme_gunu)
+    return sonraki_is_gunu(ham)
 
 
 def son_kapanan_kesim(kesim_gunu: int, son_odeme_gunu: int, as_of: date):
@@ -872,7 +930,7 @@ def kart_ekstre_forecast(cur, kart_id: str, ay_sayisi: int = 6, asgari_senaryosu
     # Yani tipik olarak ya "bu ayın kesimi" (kesim_gunu >= bugun.day) ya da "geçen ayın kesimi
     # ama son_odeme henüz geçmemiş" durumudur.
     # Basitleştirme: bu ayın kesimini ilk dönem yap; kapalıysa bir sonrakinden başla.
-    bu_ay_kesim = _safe_date(bugun.year, bugun.month, kesim_gunu)
+    bu_ay_kesim = kesim_tarihi_hesapla(bugun.year, bugun.month, kesim_gunu)
     bu_ay_son_odeme = son_odeme_tarihi_hesapla(bu_ay_kesim, son_odeme_gunu)
     if bu_ay_son_odeme < bugun:
         # Bu ayın kesimi tamamen kapanmış → bir sonraki aydan başla
@@ -894,13 +952,13 @@ def kart_ekstre_forecast(cur, kart_id: str, ay_sayisi: int = 6, asgari_senaryosu
         m = ilk_m + i
         y = ilk_y + (m - 1) // 12
         m = ((m - 1) % 12) + 1
-        bu_kesim   = _safe_date(y, m, kesim_gunu)
+        bu_kesim   = kesim_tarihi_hesapla(y, m, kesim_gunu)
         son_odeme  = son_odeme_tarihi_hesapla(bu_kesim, son_odeme_gunu)
         # Önceki kesim — dönem başlangıcı
         if m == 1:
-            onceki_kesim = _safe_date(y - 1, 12, kesim_gunu)
+            onceki_kesim = kesim_tarihi_hesapla(y - 1, 12, kesim_gunu)
         else:
-            onceki_kesim = _safe_date(y, m - 1, kesim_gunu)
+            onceki_kesim = kesim_tarihi_hesapla(y, m - 1, kesim_gunu)
 
         # Tek çekim — bu dönem penceresinde, BUGÜNE kadar gerçekleşmiş olanlar
         cur.execute("""
@@ -1020,7 +1078,8 @@ def kart_aktif_donem(cur, kart_id: str) -> dict:
     VERGI_CARPANI = 1.20  # KKDF %15 + BSMV %5
 
     # Aktif dönemin kesim tarihini bul: bu ayın kesimi açık mı, kapalı mı?
-    bu_ay_kesim = _safe_date(bugun.year, bugun.month, kesim_gunu)
+    # Hafta sonu/tatil kaydırmasını kesim_tarihi_hesapla yapar.
+    bu_ay_kesim = kesim_tarihi_hesapla(bugun.year, bugun.month, kesim_gunu)
     bu_ay_son_odeme = son_odeme_tarihi_hesapla(bu_ay_kesim, son_odeme_gunu)
     if bu_ay_son_odeme < bugun:
         # Bu ayın kesimi tamamen kapanmış → aktif dönem bir sonraki kesim
@@ -1034,19 +1093,19 @@ def kart_aktif_donem(cur, kart_id: str) -> dict:
         akt_y, akt_m = bugun.year, bugun.month
         # Önceki kesim = bir önceki ayın kesimi
         if bugun.month == 1:
-            onceki_kesim = _safe_date(bugun.year - 1, 12, kesim_gunu)
+            onceki_kesim = kesim_tarihi_hesapla(bugun.year - 1, 12, kesim_gunu)
         else:
-            onceki_kesim = _safe_date(bugun.year, bugun.month - 1, kesim_gunu)
+            onceki_kesim = kesim_tarihi_hesapla(bugun.year, bugun.month - 1, kesim_gunu)
 
-    aktif_kesim     = _safe_date(akt_y, akt_m, kesim_gunu)
+    aktif_kesim     = kesim_tarihi_hesapla(akt_y, akt_m, kesim_gunu)
     aktif_son_odeme = son_odeme_tarihi_hesapla(aktif_kesim, son_odeme_gunu)
 
     # ── Önceki dönemin devir hesabı (gerçek ödeme verisiyle) ─────────
     # 1) Önceki kesimin bir öncesi (önceki dönemin başlangıcı)
     if onceki_kesim.month == 1:
-        onceki_oncesi = _safe_date(onceki_kesim.year - 1, 12, kesim_gunu)
+        onceki_oncesi = kesim_tarihi_hesapla(onceki_kesim.year - 1, 12, kesim_gunu)
     else:
-        onceki_oncesi = _safe_date(onceki_kesim.year, onceki_kesim.month - 1, kesim_gunu)
+        onceki_oncesi = kesim_tarihi_hesapla(onceki_kesim.year, onceki_kesim.month - 1, kesim_gunu)
     onceki_son_odeme = son_odeme_tarihi_hesapla(onceki_kesim, son_odeme_gunu)
 
     # 2) Önceki dönemin ekstresi (tek çekim + taksit payı)
