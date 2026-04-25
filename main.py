@@ -1297,23 +1297,40 @@ def kartlar_listele():
                 onceki_ekstre = onceki_asgari = onceki_odenen = 0.0
                 onceki_durum  = "yok"
 
-            # Gelecek ekstre: kesim gününden sonraki tek çekim + devam eden taksitler
-            cur.execute("""SELECT COALESCE(SUM(tutar),0) as gelecek
-                FROM kart_hareketleri
-                WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA'
-                AND taksit_sayisi=1
-                AND EXTRACT(DAY FROM tarih) > %s""", (k['id'], k['kesim_gunu']))
-            gelecek_tek = float(cur.fetchone()['gelecek'])
+            # Gelecek ekstre = bir sonraki kesim için tek çekim + taksit payı.
+            # Aktif dönem zaten "şu an açık" olan ekstre; "gelecek" demek
+            # aktif dönemden BİR SONRAKİ kesim demek. Aralık:
+            # (aktif_kesim, aktif_kesim + 1 ay] içine düşen tek çekim harcamalar.
+            if aktif_kesim:
+                cur.execute("""
+                    SELECT COALESCE(SUM(tutar),0) AS gelecek
+                    FROM kart_hareketleri
+                    WHERE kart_id = %s AND durum = 'aktif' AND islem_turu = 'HARCAMA'
+                      AND taksit_sayisi = 1
+                      AND tarih >  %s::date
+                      AND tarih <= %s::date + INTERVAL '1 month'
+                """, (k['id'], aktif_kesim, aktif_kesim))
+                gelecek_tek = float(cur.fetchone()['gelecek'])
+            else:
+                gelecek_tek = 0.0
             gelecek_ekstre = gelecek_tek + aylik_taksit
 
             limit = float(k['limit_tutar'])
             son_odeme_gun = k['son_odeme_gunu']
-            son_odeme = date(bugun.year, bugun.month, son_odeme_gun)
-            if son_odeme < bugun:
-                if bugun.month == 12:
-                    son_odeme = date(bugun.year+1, 1, son_odeme_gun)
-                else:
-                    son_odeme = date(bugun.year, bugun.month+1, son_odeme_gun)
+            # AKTİF dönemin son ödeme tarihi varsa onu kullan (kart_aktif_donem'den);
+            # yoksa eski mantık (bu ayın son ödeme günü, geçmişse bir sonraki ay).
+            if aktif_son_odeme:
+                try:
+                    son_odeme = datetime.strptime(aktif_son_odeme, "%Y-%m-%d").date()
+                except Exception:
+                    son_odeme = date(bugun.year, bugun.month, son_odeme_gun)
+            else:
+                son_odeme = date(bugun.year, bugun.month, son_odeme_gun)
+                if son_odeme < bugun:
+                    if bugun.month == 12:
+                        son_odeme = date(bugun.year+1, 1, son_odeme_gun)
+                    else:
+                        son_odeme = date(bugun.year, bugun.month+1, son_odeme_gun)
             gun_kaldi = (son_odeme - bugun).days
 
             cur.execute("""SELECT * FROM odeme_plani WHERE kart_id=%s AND durum='bekliyor'
