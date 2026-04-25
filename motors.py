@@ -8,7 +8,7 @@ from finans_core import (
     kasa_bakiyesi, odeme_yuku, gunluk_ciro_ortalama,
     nakit_akis_sim, kart_borc, tum_kart_borclari,
     kart_ekstre, kart_bu_ay_odenen, kart_faiz_tahmini,
-    kart_asgari_orani,
+    kart_asgari_orani, son_odeme_tarihi_hesapla, _safe_date,
     zorunlu_gider_tahmini, serbest_nakit, net_akis_30_gun,
     kac_gun_dayanir, kasa_bakiyesi_tarihte,
 )
@@ -663,25 +663,77 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
             if cur.rowcount > 0:
                 uretilen.append(f"Vadeli: {v['aciklama']} — {v['vade_tarihi']}")
 
-        # 5. KART ASGARİ ÖDEMELERİ
+        # 5. KART ASGARİ ÖDEMELERİ — KESİM EKSTRESİ BAZLI
+        # ÖNEMLİ KURAL: Bu ay (yıl/ay) içinde son ödeme tarihi olan ekstre =
+        # bu ayın kesim tarihinde kapanmış olan ekstredir. Plan = O ekstrenin
+        # tutarı + asgarisi. Kesim sonrası harcamalar BU ay değil, BİR SONRAKİ
+        # ay planına dahil olur (sıradaki kesim → sıradaki son_odeme).
         cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE")
         for k in cur.fetchall():
-            son_odeme_gun = k['son_odeme_gunu'] or 25
-            import calendar
-            son_gun = calendar.monthrange(yil, ay)[1]
-            son_odeme_gun = min(son_odeme_gun, son_gun)
-            odeme_tarihi = date(yil, ay, son_odeme_gun)
+            kesim_gunu     = int(k['kesim_gunu'])
+            son_odeme_gunu = int(k['son_odeme_gunu'] or 25)
 
-            # Kart borcunu hesapla — core'dan
-            borc = kart_borc(cur, k['id'])
-            if borc <= 0:
-                atlanan.append(f"Kart atlandı (borç yok): {k['kart_adi']}")
+            # Bu ayın kesim tarihi
+            bu_ay_kesim = _safe_date(yil, ay, kesim_gunu)
+            son_odeme_tarihi = son_odeme_tarihi_hesapla(bu_ay_kesim, son_odeme_gunu)
+
+            # Bu ayın kesimine ait ekstre (önceki kesim → bu kesim arası harcamalar)
+            ekstre_v = kart_ekstre(cur, k['id'], kesim_gunu, kesim_tarihi=bu_ay_kesim)
+            bu_ekstre = ekstre_v["ekstre_toplam"]
+            if bu_ekstre <= 0:
+                atlanan.append(f"Kart atlandı (bu ay ekstre yok): {k['kart_adi']}")
                 continue
 
-            asgari = round(borc * kart_asgari_orani(k), 2)
+            asgari = round(bu_ekstre * kart_asgari_orani(k), 2)
+            odenecek = round(bu_ekstre, 2)
 
+            # Bu kesim için (kesim → son_odeme] arası ÖDEMELER
+            # Planı otomatik "ödendi" yapma kararı için.
+            cur.execute("""
+                SELECT COALESCE(SUM(tutar), 0) AS odenen
+                FROM kart_hareketleri
+                WHERE kart_id = %s AND durum = 'aktif' AND islem_turu = 'ODEME'
+                  AND tarih >  %s::date
+                  AND tarih <= %s::date
+            """, (k['id'], bu_ay_kesim, son_odeme_tarihi))
+            odenen_kesim = float(cur.fetchone()['odenen'])
+
+            # Tam ödendiyse → plan üretme/varsa "odendi" yap
+            if odenen_kesim >= odenecek - 0.01:
+                cur.execute("""
+                    UPDATE odeme_plani
+                       SET durum = 'odendi',
+                           odenen_tutar = %s,
+                           odeme_tarihi = COALESCE(odeme_tarihi, CURRENT_DATE)
+                     WHERE kart_id = %s
+                       AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+                       AND durum IN ('bekliyor', 'onay_bekliyor')
+                """, (odenen_kesim, k['id'], str(son_odeme_tarihi)))
+                atlanan.append(f"Kart atlandı (tam ödenmiş): {k['kart_adi']}")
+                continue
+
+            # Asgari ödendiyse → BU AY için ek ödeme yok; kalan SONRAKI aya devreder
+            # (kart_aktif_donem zaten devreden anapara+faiz olarak yansıtır)
+            if odenen_kesim >= asgari * 0.999:
+                # Var olan planı "asgari_odendi" işaretle (durum kolonu mevcut değerlere uyumlu)
+                cur.execute("""
+                    UPDATE odeme_plani
+                       SET durum = 'odendi',
+                           odenen_tutar = %s,
+                           odeme_tarihi = COALESCE(odeme_tarihi, CURRENT_DATE),
+                           aciklama = COALESCE(aciklama, '') ||
+                                      ' [ASGARİ ÖDENDİ — kalan ' ||
+                                      ROUND((%s - %s)::numeric, 2)::text ||
+                                      ' TL sonraki aya devretti]'
+                     WHERE kart_id = %s
+                       AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+                       AND durum IN ('bekliyor', 'onay_bekliyor')
+                """, (odenen_kesim, odenecek, odenen_kesim, k['id'], str(son_odeme_tarihi)))
+                atlanan.append(f"Kart atlandı (asgari ödenmiş): {k['kart_adi']}")
+                continue
+
+            # Asgari/tam ödenmemiş → planı oluştur veya güncelle
             pid = str(_uuid.uuid4())
-            # Plan yoksa ekle, varsa borcu güncelle — harcama sonrası tutar değişebilir
             cur.execute("""
                 INSERT INTO odeme_plani (id, kart_id, tarih, odenecek_tutar, asgari_tutar, aciklama, durum)
                 SELECT %s, %s, %s, %s, %s, %s, 'bekliyor'
@@ -691,22 +743,22 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                     AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
                     AND durum != 'iptal'
                 )
-            """, (pid, k['id'], odeme_tarihi, borc, asgari,
-                  f"Kart: {k['kart_adi']} — {k['banka']}",
-                  k['id'], str(odeme_tarihi)))
+            """, (pid, k['id'], son_odeme_tarihi, odenecek, asgari,
+                  f"Kart ekstre: {k['kart_adi']} — {k['banka']} (kesim {bu_ay_kesim})",
+                  k['id'], str(son_odeme_tarihi)))
             if cur.rowcount > 0:
-                uretilen.append(f"Kart: {k['kart_adi']} asgari {fmt(asgari)} — {odeme_tarihi}")
+                uretilen.append(f"Kart: {k['kart_adi']} ekstre {fmt(odenecek)} / asgari {fmt(asgari)} — {son_odeme_tarihi}")
             else:
-                # Plan zaten var — güncel borçla tuta güncelle
+                # Plan zaten var — güncel ekstre ile güncelle (kesim sonrası eklenmez)
                 cur.execute("""
                     UPDATE odeme_plani
-                    SET odenecek_tutar = %s, asgari_tutar = %s
-                    WHERE kart_id = %s
-                    AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
-                    AND durum IN ('bekliyor', 'onay_bekliyor')
-                """, (borc, asgari, k['id'], str(odeme_tarihi)))
+                       SET odenecek_tutar = %s, asgari_tutar = %s
+                     WHERE kart_id = %s
+                       AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+                       AND durum IN ('bekliyor', 'onay_bekliyor')
+                """, (odenecek, asgari, k['id'], str(son_odeme_tarihi)))
                 if cur.rowcount > 0:
-                    uretilen.append(f"Kart güncellendi: {k['kart_adi']} yeni borç {fmt(borc)} — {odeme_tarihi}")
+                    uretilen.append(f"Kart güncellendi: {k['kart_adi']} yeni ekstre {fmt(odenecek)} — {son_odeme_tarihi}")
 
     return {
         "uretilen": uretilen,
@@ -747,6 +799,66 @@ def uyari_motoru():
             gun_farki = (o['tarih'] - bugun).days
             tutar = float(o['odenecek_tutar'])
             asgari = float(o['asgari_tutar'] or tutar * _asgari_oran())
+
+            # ── KESİM BAZLI ASGARİ KONTROLÜ (kartlar için) ─────────────
+            # Eski planlar `kart_borc()` kullanılarak üretilmiş olabilir;
+            # `tutar` ve `asgari` kesim sonrası harcamaları da içerir.
+            # Burada: plan tarihinin ait olduğu KESİME ait GERÇEK ekstreyi
+            # ve o kesim için ödenen tutarı hesapla → asgari karşılandıysa
+            # planı uyarıdan düş, var olan kaydı da "odendi"ye çevir.
+            if o.get("kart_id"):
+                try:
+                    cur.execute("""
+                        SELECT kesim_gunu, son_odeme_gunu, asgari_oran, faiz_orani
+                        FROM kartlar WHERE id = %s
+                    """, (o['kart_id'],))
+                    krow = cur.fetchone()
+                    if krow:
+                        kg = int(krow['kesim_gunu'])
+                        sg = int(krow['son_odeme_gunu'])
+                        plan_tarih = o['tarih']
+                        # Plan tarihi son_odeme; bu ekstrenin kesim tarihi:
+                        if plan_tarih.day >= sg:
+                            kesim_y, kesim_m = plan_tarih.year, plan_tarih.month
+                        else:
+                            if plan_tarih.month == 1:
+                                kesim_y, kesim_m = plan_tarih.year - 1, 12
+                            else:
+                                kesim_y, kesim_m = plan_tarih.year, plan_tarih.month - 1
+                        from finans_core import _safe_date as _sd, kart_ekstre as _ke
+                        kesim_t = _sd(kesim_y, kesim_m, kg)
+                        son_odeme_t = o['tarih']
+
+                        # Bu kesime ait GERÇEK ekstre
+                        ek = _ke(cur, o['kart_id'], kg, kesim_tarihi=kesim_t)
+                        gercek_ekstre = float(ek.get('ekstre_toplam') or 0)
+                        gercek_asgari = round(gercek_ekstre * float(krow.get('asgari_oran') or 40) / 100.0, 2)
+
+                        # Bu kesim için (kesim, son_odeme] arası ödemeler
+                        cur.execute("""
+                            SELECT COALESCE(SUM(tutar), 0) AS odenen
+                            FROM kart_hareketleri
+                            WHERE kart_id = %s AND durum = 'aktif' AND islem_turu = 'ODEME'
+                              AND tarih >  %s::date AND tarih <= %s::date
+                        """, (o['kart_id'], kesim_t, son_odeme_t))
+                        kesim_odenen = float(cur.fetchone()['odenen'])
+
+                        if gercek_ekstre > 0 and kesim_odenen >= gercek_asgari * 0.999:
+                            # Asgari karşılanmış → planı kalıcı temizle, uyarıdan çıkar
+                            cur.execute("""
+                                UPDATE odeme_plani
+                                   SET durum = 'odendi',
+                                       odenen_tutar = %s,
+                                       odeme_tarihi = COALESCE(odeme_tarihi, CURRENT_DATE),
+                                       aciklama = COALESCE(aciklama, '') ||
+                                                  ' [AUTO: kesim ' || %s::text ||
+                                                  ' asgari ödendi]'
+                                 WHERE id = %s
+                                   AND durum IN ('bekliyor', 'onay_bekliyor')
+                            """, (kesim_odenen, str(kesim_t), o['id']))
+                            continue
+                except Exception:
+                    pass  # Hata olursa eski mantık devam etsin
 
             # Bu kart için içinde bulunulan ayda yapılan toplam ödeme (kasa + kart hareketleri üzerinden)
             bu_ay_odenen = 0.0
