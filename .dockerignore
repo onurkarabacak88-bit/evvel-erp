@@ -2,16 +2,7 @@ node_modules
 .git
 .cursor
 __pycache__/
-*.pycnode_modules
-.git
-.cursor
-__pycache__/
 *.pyc
-.env
-.env.*
-static/
-dist/
-
 .env
 .env.*
 static/
