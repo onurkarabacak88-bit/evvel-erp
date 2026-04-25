@@ -31,17 +31,18 @@ export default function KartAnaliz() {
 
   // Her ay için tüm kartları topla
   const aylikToplam = ayEtiketleri.map((ay, i) => {
-    let tek = 0, taksit = 0, faiz = 0, ekstre = 0, asgari = 0;
+    let tek = 0, taksit = 0, anapara = 0, faiz = 0, ekstre = 0, asgari = 0;
     Object.values(forecast).forEach(donemler => {
       const d = donemler[i];
       if (!d) return;
       tek += d.tek_cekim_bilinen || 0;
       taksit += d.taksit_payi || 0;
+      anapara += d.devreden_anapara || 0;
       faiz += d.devreden_faiz || 0;
       ekstre += d.ekstre_toplam || 0;
       asgari += d.asgari_tahmini || 0;
     });
-    return { ay, tek, taksit, faiz, ekstre, asgari };
+    return { ay, tek, taksit, anapara, faiz, ekstre, asgari };
   });
 
   return (
@@ -133,7 +134,8 @@ export default function KartAnaliz() {
               <div style={{fontSize:10,color:'var(--text3)',display:'grid',gap:2}}>
                 <div className="flex items-center justify-between"><span>Tek çekim:</span><span className="mono">{fmt(m.tek)}</span></div>
                 <div className="flex items-center justify-between"><span>Taksit:</span><span className="mono">{fmt(m.taksit)}</span></div>
-                <div className="flex items-center justify-between"><span>Devreden faiz:</span><span className="mono" style={{color:m.faiz>0?'var(--red)':'inherit'}}>{fmt(m.faiz)}</span></div>
+                <div className="flex items-center justify-between"><span>Devreden anapara:</span><span className="mono" style={{color:m.anapara>0?'var(--orange)':'inherit'}}>{fmt(m.anapara)}</span></div>
+                <div className="flex items-center justify-between"><span>Faiz (KKDF/BSMV dahil):</span><span className="mono" style={{color:m.faiz>0?'var(--red)':'inherit'}}>{fmt(m.faiz)}</span></div>
                 <div className="flex items-center justify-between" style={{borderTop:'1px dashed var(--border)',marginTop:4,paddingTop:4}}>
                   <span>Asgari:</span><span className="mono" style={{color:'var(--yellow)'}}>{fmt(m.asgari)}</span>
                 </div>
@@ -159,7 +161,7 @@ export default function KartAnaliz() {
                     <td style={{fontWeight:600}}>{k.kart_adi}<div style={{fontSize:10,color:'var(--text3)'}}>{k.banka}</div></td>
                     {donemler.map(d => (
                       <td key={d.ay} style={{textAlign:'right'}}
-                          title={`Kesim: ${d.kesim_tarihi}\nSon Ödeme: ${d.son_odeme_tarihi}\nTek çekim: ${fmt(d.tek_cekim_bilinen)}\nTaksit: ${fmt(d.taksit_payi)}\nDevreden faiz: ${fmt(d.devreden_faiz)}\nAsgari: ${fmt(d.asgari_tahmini)}`}>
+                          title={`Kesim: ${d.kesim_tarihi}\nSon Ödeme: ${d.son_odeme_tarihi}\nTek çekim: ${fmt(d.tek_cekim_bilinen)}\nTaksit: ${fmt(d.taksit_payi)}\nDevreden anapara: ${fmt(d.devreden_anapara)}\nDevreden faiz (KKDF/BSMV dahil): ${fmt(d.devreden_faiz)}\nAsgari: ${fmt(d.asgari_tahmini)}`}>
                         <div className="mono" style={{fontSize:13,color:d.ekstre_toplam>0?'var(--text)':'var(--text3)'}}>
                           {fmt(d.ekstre_toplam)}
                         </div>
@@ -179,7 +181,7 @@ export default function KartAnaliz() {
       )}
 
       <div style={{fontSize:11,color:'var(--text3)',marginTop:8,padding:'8px 12px',background:'var(--bg3)',borderRadius:6}}>
-        💡 <b>Forecast nasıl çalışır:</b> Bilinen geçmiş tek çekimler + aktif taksit kalemlerinin o aya düşen payı + seçili senaryoya göre devreden faiz tahmini.
+        💡 <b>Forecast nasıl çalışır:</b> Bilinen geçmiş tek çekimler + aktif taksit kalemlerinin o aya düşen payı + önceki dönemden devreden <b>anapara</b> + onun üzerinde işleyen <b>akdi/gecikme faizi (KKDF %15 + BSMV %5 dahil)</b>.
         Gelecek aylarda henüz yapılmamış tek çekimler bilinmez (0). Asgari/akdi/gecikme oranları her kartın kendi ayarından alınır.
       </div>
     </div>
