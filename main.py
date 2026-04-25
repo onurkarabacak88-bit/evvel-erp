@@ -1267,8 +1267,31 @@ def kartlar_listele():
             # ── CORE HESAPLAR ──────────────────────────────────
             borc     = kart_borc(cur, k['id'])
             ekstre_v = kart_ekstre(cur, k['id'], k['kesim_gunu'])
-            bu_ekstre    = ekstre_v["ekstre_toplam"]
             aylik_taksit = ekstre_v["aylik_taksit"]
+
+            # AKTİF/GELECEK DÖNEM forecast'i — son ödeme geçtiyse otomatik
+            # bir sonraki kesime sıçrar; devreden anapara + KKDF/BSMV dahil
+            # akdi faiz hesabını içerir. Panel "asgari" ve "bu_ekstre" buradan
+            # beslenir ki kullanıcı her zaman ÖNÜNDEKİ ekstreyi görsün.
+            try:
+                fc = kart_ekstre_forecast(cur, k['id'], 1, "odenir")
+                aktif = fc[0] if fc else None
+            except Exception:
+                aktif = None
+            if aktif:
+                bu_ekstre     = float(aktif.get("ekstre_toplam") or 0)
+                asgari_odeme  = float(aktif.get("asgari_tahmini") or 0)
+                devreden_ana  = float(aktif.get("devreden_anapara") or 0)
+                devreden_fz   = float(aktif.get("devreden_faiz") or 0)
+                aktif_donem_ay   = aktif.get("ay")
+                aktif_kesim      = aktif.get("kesim_tarihi")
+                aktif_son_odeme  = aktif.get("son_odeme_tarihi")
+            else:
+                bu_ekstre     = ekstre_v["ekstre_toplam"]
+                asgari_odeme  = bu_ekstre * kart_asgari_orani(k)
+                devreden_ana  = 0.0
+                devreden_fz   = ekstre_v.get("devreden_faiz", 0)
+                aktif_donem_ay = aktif_kesim = aktif_son_odeme = None
 
             # Gelecek ekstre: kesim gününden sonraki tek çekim + devam eden taksitler
             cur.execute("""SELECT COALESCE(SUM(tutar),0) as gelecek
@@ -1297,14 +1320,18 @@ def kartlar_listele():
                 "guncel_borc": borc,
                 "kalan_limit": limit - borc,
                 "limit_doluluk": borc/limit if limit > 0 else 0,
-                "asgari_odeme": bu_ekstre * kart_asgari_orani(k),
+                "asgari_odeme": asgari_odeme,
                 "bu_ekstre": bu_ekstre,
-                "devreden_faiz": ekstre_v.get("devreden_faiz", 0),
+                "devreden_anapara": devreden_ana,
+                "devreden_faiz": devreden_fz,
                 "tek_cekim": ekstre_v.get("tek_cekim", 0),
                 "gelecek_ekstre": gelecek_ekstre,
                 "aylik_taksit": aylik_taksit,
                 "gun_kaldi": gun_kaldi,
                 "son_odeme_tarihi": str(son_odeme),
+                "aktif_donem":      aktif_donem_ay,
+                "aktif_kesim":      aktif_kesim,
+                "aktif_son_odeme":  aktif_son_odeme,
                 "blink": gun_kaldi <= 0 and yaklasan is not None,
                 "yaklasan_odeme": dict(yaklasan) if yaklasan else None
             })
