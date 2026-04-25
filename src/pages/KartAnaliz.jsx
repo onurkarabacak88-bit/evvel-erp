@@ -3,11 +3,20 @@ import { api, fmt } from '../utils/api';
 
 export default function KartAnaliz() {
   const [kartlar, setKartlar] = useState([]);
+  const [forecast, setForecast] = useState({}); // {kart_id: [{ay, ekstre_toplam,...}]}
+  const [aylar, setAylar] = useState(6);
+  const [senaryo, setSenaryo] = useState('odenir');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api('/kartlar').then(d => { setKartlar(d); setLoading(false); });
   }, []);
+
+  useEffect(() => {
+    api(`/kartlar/ekstre-forecast?aylar=${aylar}&senaryo=${senaryo}`)
+      .then(r => setForecast(r.kartlar || {}))
+      .catch(() => setForecast({}));
+  }, [aylar, senaryo]);
 
   if (loading) return <div className="loading"><div className="spinner"/>Yükleniyor...</div>;
 
@@ -15,6 +24,25 @@ export default function KartAnaliz() {
   const toplamLimit = kartlar.reduce((s,k)=>s+(parseFloat(k.limit_tutar)||0),0);
   const toplamEkstre = kartlar.reduce((s,k)=>s+(k.bu_ekstre||0),0);
   const toplamTaksit = kartlar.reduce((s,k)=>s+(k.aylik_taksit||0),0);
+
+  // Aylık takvim — forecast'in ilk kart sırasından ay etiketlerini al
+  const sample = Object.values(forecast)[0] || [];
+  const ayEtiketleri = sample.map(d => d.ay);
+
+  // Her ay için tüm kartları topla
+  const aylikToplam = ayEtiketleri.map((ay, i) => {
+    let tek = 0, taksit = 0, faiz = 0, ekstre = 0, asgari = 0;
+    Object.values(forecast).forEach(donemler => {
+      const d = donemler[i];
+      if (!d) return;
+      tek += d.tek_cekim_bilinen || 0;
+      taksit += d.taksit_payi || 0;
+      faiz += d.devreden_faiz || 0;
+      ekstre += d.ekstre_toplam || 0;
+      asgari += d.asgari_tahmini || 0;
+    });
+    return { ay, tek, taksit, faiz, ekstre, asgari };
+  });
 
   return (
     <div className="page">
@@ -77,28 +105,82 @@ export default function KartAnaliz() {
         </table>
       </div>
 
-      {/* Kart Borç Takvimi - gelecek 6 ay */}
-      <h3 style={{fontSize:14,fontWeight:600,marginBottom:12,marginTop:24}}>📅 Kart Borç Takvimi (Gelecek 6 Ay)</h3>
-      <div style={{display:'flex',gap:10,overflowX:'auto',paddingBottom:8}}>
-        {Array.from({length:6},(_,i)=>{
-          const d = new Date();
-          d.setMonth(d.getMonth()+i);
-          const ay = d.toLocaleDateString('tr-TR',{month:'long',year:'numeric'});
-          const toplamYuk = kartlar.reduce((s,k)=>{
-            const ekstre = i===0 ? (k.bu_ekstre||0) : (k.gelecek_ekstre||0);
-            const taksit = k.aylik_taksit||0;
-            return s + (i===0 ? ekstre : taksit);
-          },0);
+      {/* Ekstre Forecast — gelecek N ay tahmini */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginTop:24,marginBottom:12,flexWrap:'wrap',gap:8}}>
+        <h3 style={{fontSize:14,fontWeight:600,margin:0}}>🔮 Ekstre Forecast — Banka Kesmeden Önce Tahmin</h3>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <label style={{fontSize:12,color:'var(--text3)'}}>Senaryo:</label>
+          <select value={senaryo} onChange={e=>setSenaryo(e.target.value)} style={{padding:'4px 8px',fontSize:12}}>
+            <option value="tam">Tam ödeme (faiz yok)</option>
+            <option value="odenir">Asgari ödenir (akdi faiz)</option>
+            <option value="odenmez">Hiç ödenmez (gecikme)</option>
+          </select>
+          <label style={{fontSize:12,color:'var(--text3)',marginLeft:8}}>Ay:</label>
+          <select value={aylar} onChange={e=>setAylar(parseInt(e.target.value))} style={{padding:'4px 8px',fontSize:12}}>
+            {[3,6,9,12].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Aylık özet kartları */}
+      <div style={{display:'flex',gap:10,overflowX:'auto',paddingBottom:8,marginBottom:16}}>
+        {aylikToplam.map((m, i) => {
+          const renk = m.ekstre > 500000 ? 'var(--red)' : m.ekstre > 200000 ? 'var(--yellow)' : 'var(--green)';
           return (
-            <div key={i} style={{minWidth:130,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px',textAlign:'center'}}>
-              <div style={{fontSize:11,color:'var(--text3)',marginBottom:4}}>{ay}</div>
-              <div style={{fontSize:16,fontWeight:700,color:toplamYuk>500000?'var(--red)':toplamYuk>200000?'var(--yellow)':'var(--green)'}}>
-                {fmt(toplamYuk)}
+            <div key={i} style={{minWidth:170,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+              <div style={{fontSize:11,color:'var(--text3)',marginBottom:6,textAlign:'center',fontWeight:600}}>{m.ay}</div>
+              <div style={{fontSize:18,fontWeight:700,color:renk,textAlign:'center',marginBottom:8}}>{fmt(m.ekstre)}</div>
+              <div style={{fontSize:10,color:'var(--text3)',display:'grid',gap:2}}>
+                <div className="flex items-center justify-between"><span>Tek çekim:</span><span className="mono">{fmt(m.tek)}</span></div>
+                <div className="flex items-center justify-between"><span>Taksit:</span><span className="mono">{fmt(m.taksit)}</span></div>
+                <div className="flex items-center justify-between"><span>Devreden faiz:</span><span className="mono" style={{color:m.faiz>0?'var(--red)':'inherit'}}>{fmt(m.faiz)}</span></div>
+                <div className="flex items-center justify-between" style={{borderTop:'1px dashed var(--border)',marginTop:4,paddingTop:4}}>
+                  <span>Asgari:</span><span className="mono" style={{color:'var(--yellow)'}}>{fmt(m.asgari)}</span>
+                </div>
               </div>
-              <div style={{fontSize:10,color:'var(--text3)',marginTop:2}}>{i===0?'Bu dönem ekstre':'Tahmini taksit'}</div>
             </div>
           );
         })}
+      </div>
+
+      {/* Kart başına detay tablo */}
+      {ayEtiketleri.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Kart</th>
+              {ayEtiketleri.map(ay => <th key={ay} style={{textAlign:'right'}}>{ay}</th>)}
+            </tr></thead>
+            <tbody>
+              {kartlar.map(k => {
+                const donemler = forecast[k.id] || [];
+                return (
+                  <tr key={k.id}>
+                    <td style={{fontWeight:600}}>{k.kart_adi}<div style={{fontSize:10,color:'var(--text3)'}}>{k.banka}</div></td>
+                    {donemler.map(d => (
+                      <td key={d.ay} style={{textAlign:'right'}}
+                          title={`Kesim: ${d.kesim_tarihi}\nSon Ödeme: ${d.son_odeme_tarihi}\nTek çekim: ${fmt(d.tek_cekim_bilinen)}\nTaksit: ${fmt(d.taksit_payi)}\nDevreden faiz: ${fmt(d.devreden_faiz)}\nAsgari: ${fmt(d.asgari_tahmini)}`}>
+                        <div className="mono" style={{fontSize:13,color:d.ekstre_toplam>0?'var(--text)':'var(--text3)'}}>
+                          {fmt(d.ekstre_toplam)}
+                        </div>
+                        <div style={{fontSize:9,color:'var(--text3)'}}>
+                          {d.durum === 'gecmis' && '✓ kapandı'}
+                          {d.durum === 'acik' && '⏳ açık'}
+                          {d.durum === 'gelecek' && '🔮 tahmin'}
+                        </div>
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div style={{fontSize:11,color:'var(--text3)',marginTop:8,padding:'8px 12px',background:'var(--bg3)',borderRadius:6}}>
+        💡 <b>Forecast nasıl çalışır:</b> Bilinen geçmiş tek çekimler + aktif taksit kalemlerinin o aya düşen payı + seçili senaryoya göre devreden faiz tahmini.
+        Gelecek aylarda henüz yapılmamış tek çekimler bilinmez (0). Asgari/akdi/gecikme oranları her kartın kendi ayarından alınır.
       </div>
     </div>
   );

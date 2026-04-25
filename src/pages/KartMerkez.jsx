@@ -7,9 +7,6 @@ export default function KartMerkez({ onNavigate }) {
   const [kasa, setKasa] = useState(0);
   const [aylikButce, setAylikButce] = useState('');
   const [plan, setPlan] = useState(null);
-  const [faizModal, setFaizModal] = useState(null);
-  const [faizTutar, setFaizTutar] = useState('');
-  const [faizDonem, setFaizDonem] = useState(new Date().toISOString().slice(0,7));
   const [loading, setLoading] = useState(true);
   const [aktifTab, setAktifTab] = useState('genel');
   const [strateji, setStrateji] = useState(null);
@@ -39,13 +36,9 @@ export default function KartMerkez({ onNavigate }) {
     finally { setStratejiLoading(false); }
   }
 
-  async function faizKaydet() {
-    if (!faizTutar || parseFloat(faizTutar) <= 0) { alert('Tutar girin'); return; }
-    try {
-      await api('/kart-faiz', { method: 'POST', body: JSON.stringify({ kart_id: faizModal.id, tutar: parseFloat(faizTutar), donem: faizDonem }) });
-      setFaizModal(null); setFaizTutar(''); alert('✓ Faiz kaydedildi');
-    } catch (e) { alert(e.message); }
-  }
+  // Manuel faiz girişi kaldırıldı — sistem her gece her kart için kesim/son_odeme
+  // döngüsüne göre faizi otomatik yazar (akdi vs gecikme ayrımıyla).
+  // Manuel tetikleme için yukarıdaki "Ekstre Faizi Üret" butonu yeterli.
 
   useEffect(() => {
     Promise.all([api('/kartlar'), api('/kasa')])
@@ -121,16 +114,6 @@ export default function KartMerkez({ onNavigate }) {
     };
   }
 
-  async function topluFaizHesapla() {
-    try {
-      const r = await api('/kartlar/faiz-uret', { method: 'POST', body: JSON.stringify({}) });
-      const faizliSayisi = (r.kartlar || []).filter(s => s.faiz > 0).length;
-      setFaizMsg(`✅ ${faizliSayisi} kart için faiz hesaplandı`);
-      setTimeout(() => setFaizMsg(null), 4000);
-      api('/kartlar').then(k => setKartlar(k.filter(x => x.aktif)));
-    } catch (e) { setFaizMsg('Hata: ' + e.message); }
-  }
-
   const toplamBorc = kartlar.reduce((s, k) => s + (parseFloat(k.guncel_borc) || 0), 0);
   const toplamLimit = kartlar.reduce((s, k) => s + (parseFloat(k.limit_tutar) || 0), 0);
   const toplamAsgari = kartlar.reduce((s, k) => s + (parseFloat(k.asgari_odeme) || 0), 0);
@@ -175,11 +158,8 @@ export default function KartMerkez({ onNavigate }) {
         </div>
         <div style={{ display: 'flex', gap: 8, flexDirection: 'column', alignItems: 'flex-end' }}>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-secondary btn-sm" onClick={topluFaizHesapla}>📊 Ay Sonu Faiz Hesapla</button>
-            <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-primary btn-sm" onClick={faizUret}>💰 Ekstre Faizi Üret</button>
-          <button className="btn btn-secondary btn-sm" onClick={() => nav('kartlar')}>⚙️ Kart Tanımları</button>
-        </div>
+            <button className="btn btn-primary btn-sm" onClick={faizUret} title="Manuel telafi (otomatik scheduler her gece çalışır)">💰 Faiz Yokla</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => nav('kartlar')}>⚙️ Kart Tanımları</button>
           </div>
           {faizMsg && <div style={{ fontSize: 11, color: 'var(--green)' }}>{faizMsg}</div>}
         </div>
@@ -252,8 +232,11 @@ export default function KartMerkez({ onNavigate }) {
                     <div style={{ color: 'var(--text3)' }}>Boş Limit</div>
                     <div style={{ fontWeight: 700, color: 'var(--green)' }}>{fmt(bos)}</div>
                   </div>
-                  <div style={{ background: 'var(--bg3)', borderRadius: 5, padding: '6px 8px', textAlign: 'center' }}>
-                    <div style={{ color: 'var(--text3)' }}>Bu Ekstre</div>
+                  <div style={{ background: 'var(--bg3)', borderRadius: 5, padding: '6px 8px', textAlign: 'center' }}
+                    title={k.devreden_faiz > 0
+                      ? `Tek çekim: ${fmt(k.tek_cekim)} + Taksit: ${fmt(k.aylik_taksit)} + Devreden faiz: ${fmt(k.devreden_faiz)}`
+                      : `Tek çekim: ${fmt(k.tek_cekim)} + Taksit: ${fmt(k.aylik_taksit)}`}>
+                    <div style={{ color: 'var(--text3)' }}>Bu Ekstre {k.devreden_faiz > 0 && <span style={{color:'var(--red)'}}>⚠</span>}</div>
                     <div style={{ fontWeight: 700, color: 'var(--yellow)' }}>{fmt(k.bu_ekstre)}</div>
                   </div>
                   <div style={{ background: 'var(--bg3)', borderRadius: 5, padding: '6px 8px', textAlign: 'center' }}>
@@ -266,9 +249,6 @@ export default function KartMerkez({ onNavigate }) {
                       {k.gun_kaldi <= 0 ? '🔴 BUGÜN' : `${k.gun_kaldi} gün`}
                     </div>
                   </div>
-                </div>
-                <div style={{ textAlign: 'right', marginTop: 8 }}>
-                  <button className="btn btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => { setFaizModal(k); setFaizTutar(''); }}>📈 Ekstre Faizi Gir</button>
                 </div>
               </div>
             );
@@ -494,26 +474,6 @@ export default function KartMerkez({ onNavigate }) {
               </div>
             )
           )}
-        </div>
-      )}
-      {faizModal && (
-        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setFaizModal(null)}>
-          <div className="modal">
-            <div className="modal-header">
-              <h3>📈 Ekstre Faizi — {faizModal.kart_adi}</h3>
-              <button className="modal-close" onClick={() => setFaizModal(null)}>✕</button>
-            </div>
-            <div className="modal-body">
-              <div className="form-group"><label>Dönem</label>
-                <input type="month" value={faizDonem} onChange={e => setFaizDonem(e.target.value)} /></div>
-              <div className="form-group"><label>Faiz Tutarı (₺)</label>
-                <input type="number" value={faizTutar} onChange={e => setFaizTutar(e.target.value)} placeholder="0.00" autoFocus /></div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setFaizModal(null)}>Vazgeç</button>
-              <button className="btn btn-primary" onClick={faizKaydet}>✓ Kaydet</button>
-            </div>
-          </div>
         </div>
       )}
     </div>

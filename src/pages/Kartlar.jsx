@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
 
-const BOSH = { kart_adi: '', banka: '', limit_tutar: '', kesim_gunu: 15, son_odeme_gunu: 25, faiz_orani: '' };
+const BOSH = { kart_adi: '', banka: '', limit_tutar: '', kesim_gunu: 15, son_odeme_gunu: 25,
+  faiz_orani: '', asgari_oran: 40, gecikme_faiz_orani: '' };
 
 export default function Kartlar() {
   const [kartlar, setKartlar] = useState([]);
@@ -32,7 +33,10 @@ export default function Kartlar() {
 
   function duzenle(k) {
     setForm({ kart_adi: k.kart_adi, banka: k.banka, limit_tutar: k.limit_tutar,
-      kesim_gunu: k.kesim_gunu, son_odeme_gunu: k.son_odeme_gunu, faiz_orani: k.faiz_orani });
+      kesim_gunu: k.kesim_gunu, son_odeme_gunu: k.son_odeme_gunu,
+      faiz_orani: k.faiz_orani,
+      asgari_oran: k.asgari_oran ?? 40,
+      gecikme_faiz_orani: k.gecikme_faiz_orani ?? 0 });
     setDuzenleId(k.id); setShowModal(true);
   }
 
@@ -134,12 +138,28 @@ export default function Kartlar() {
                   <label>Son Ödeme Günü</label>
                   <input type="number" min={1} max={31} value={form.son_odeme_gunu} onChange={e => setForm({ ...form, son_odeme_gunu: e.target.value })}/>
                 </div>
-                <div className="form-group" style={{ gridColumn: '1/-1' }}>
-                  <label>Aylık Faiz Oranı (%)</label>
-                  <input type="number" step="0.1" placeholder="3.5" value={form.faiz_orani}
+                <div className="form-group">
+                  <label>Akdi Faiz Oranı (yıllık %)</label>
+                  <input type="number" step="0.01" placeholder="54" value={form.faiz_orani}
                     onChange={e => setForm({ ...form, faiz_orani: e.target.value })}/>
                   <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-                    Minimum ödeme yapılırsa kalan borça bu oran uygulanır
+                    Asgari ÖDENİRSE kalan borca uygulanır (yıllık → /12 aylık)
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Asgari Ödeme Oranı (%)</label>
+                  <input type="number" step="1" min={20} max={100} placeholder="40" value={form.asgari_oran}
+                    onChange={e => setForm({ ...form, asgari_oran: e.target.value })}/>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                    TCMB minimum %40 — bankaya göre değişir (20–100)
+                  </div>
+                </div>
+                <div className="form-group" style={{ gridColumn: '1/-1' }}>
+                  <label>Gecikme Faiz Oranı (yıllık %) — opsiyonel</label>
+                  <input type="number" step="0.01" placeholder="0 → Akdi × 1.3 fallback" value={form.gecikme_faiz_orani}
+                    onChange={e => setForm({ ...form, gecikme_faiz_orani: e.target.value })}/>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                    Asgari ÖDENMEZSE kalan borca uygulanır. <b>0 girilirse</b> sistem akdi × 1.3 ile fallback yapar (TCMB ortalama gecikme farkı).
                   </div>
                 </div>
               </div>

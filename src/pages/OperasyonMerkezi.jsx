@@ -3505,35 +3505,50 @@ export default function OperasyonMerkezi() {
 
       {aktifSekme === 'magaza-kartlari' && (
         <div className="card" style={{ padding: '18px 20px' }}>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={() => {
-                setMagazaUrunEkleAcik((a) => {
-                  const ac = !a;
-                  if (ac) setMagazaFiyatGuncelleAcik(false);
-                  return ac;
-                });
-              }}
-              style={magazaUrunEkleAcik ? { boxShadow: '0 0 0 1px rgba(45, 181, 115, 0.45)' } : undefined}
-            >
-              {magazaUrunEkleAcik ? 'Ürün eklemeyi kapat' : '＋ Ürün ekle'}
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => {
-                setMagazaFiyatGuncelleAcik((a) => {
-                  const ac = !a;
-                  if (ac) setMagazaUrunEkleAcik(false);
-                  return ac;
-                });
-              }}
-              style={magazaFiyatGuncelleAcik ? { boxShadow: '0 0 0 1px rgba(200, 124, 26, 0.55)' } : undefined}
-            >
-              {magazaFiyatGuncelleAcik ? 'Fiyat güncellemeyi kapat' : 'Fiyat güncelle'}
-            </button>
+          {/* ════════ BÖLÜM 1: KATALOG YÖNETİMİ ════════ */}
+          <div style={{
+            marginBottom: 18,
+            paddingBottom: 14,
+            borderBottom: '2px solid var(--border)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, letterSpacing: 0.2 }}>🛠 Katalog Yönetimi</h3>
+                <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text3)' }}>
+                  Tüm şube depolarını etkileyen ürün/fiyat işlemleri
+                </p>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => {
+                    setMagazaUrunEkleAcik((a) => {
+                      const ac = !a;
+                      if (ac) setMagazaFiyatGuncelleAcik(false);
+                      return ac;
+                    });
+                  }}
+                  style={magazaUrunEkleAcik ? { boxShadow: '0 0 0 1px rgba(45, 181, 115, 0.45)' } : undefined}
+                >
+                  {magazaUrunEkleAcik ? 'Ürün eklemeyi kapat' : '＋ Ürün ekle'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    setMagazaFiyatGuncelleAcik((a) => {
+                      const ac = !a;
+                      if (ac) setMagazaUrunEkleAcik(false);
+                      return ac;
+                    });
+                  }}
+                  style={magazaFiyatGuncelleAcik ? { boxShadow: '0 0 0 1px rgba(200, 124, 26, 0.55)' } : undefined}
+                >
+                  {magazaFiyatGuncelleAcik ? 'Fiyat güncellemeyi kapat' : 'Fiyat güncelle'}
+                </button>
+              </div>
+            </div>
           </div>
 
           {magazaUrunEkleAcik && (
@@ -3824,20 +3839,34 @@ export default function OperasyonMerkezi() {
             </div>
           )}
 
-          <div style={{ marginBottom: 14 }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 8px' }}>Dört mağaza deposu — hub + katalog iskeleti</h3>
-            <p style={{ fontSize: 12, color: 'var(--text3)', margin: 0, lineHeight: 1.5 }}>
-              Aynı katalog kaynağı (<code style={{ fontSize: 11 }}>/ops/siparis/katalog</code>). Her depo kartında, şube başına{' '}
-              <strong>elle stok</strong> alanı ve satır bazlı <strong>Onay</strong> ile depo stoğuna işleme vardır.
-              Onaylanmayan satırlar bekleyen değişiklik olarak tutulur.
-            </p>
-            {magazaStokOnayBekleyenAdet > 0 && (
-              <div style={{ marginTop: 8, fontSize: 11, color: '#e8a03d' }}>
-                ⚠️ {magazaStokOnayBekleyenAdet} stok satırı onay bekliyor.
-              </div>
-            )}
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          {/* ════════ BÖLÜM 2: ŞUBE ERİŞİM ÖZETİ ════════ */}
+          <div style={{
+            marginBottom: 18,
+            paddingBottom: 14,
+            borderBottom: '2px solid var(--border)',
+          }}>
+            <div style={{ marginBottom: 10 }}>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, letterSpacing: 0.2 }}>⚡ Şube Erişim Özeti</h3>
+              <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text3)', lineHeight: 1.5 }}>
+                Her şubeye hızlı atla — alarm ve onay sayıları aşağıda.{' '}
+                Aynı katalog kaynağı (<code style={{ fontSize: 11 }}>/ops/siparis/katalog</code>) tüm depolarda paylaşılır;
+                satır bazlı <strong>Onay</strong> ile depo stoğuna işlenir.
+              </p>
+              {magazaStokOnayBekleyenAdet > 0 && (
+                <div style={{
+                  marginTop: 8,
+                  padding: '6px 10px',
+                  background: 'rgba(232, 160, 61, 0.12)',
+                  borderLeft: '3px solid #e8a03d',
+                  borderRadius: 4,
+                  fontSize: 11,
+                  color: '#e8a03d',
+                }}>
+                  ⚠️ {magazaStokOnayBekleyenAdet} stok satırı onay bekliyor.
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {MAGAZA_DORT_SUBE.map((m) => {
               const k = magazaKartBul(kartlar, m);
               const sidKey = magazaSubeDepoAnahtar(k, m);
@@ -3862,6 +3891,15 @@ export default function OperasyonMerkezi() {
                 </button>
               );
             })}
+            </div>
+          </div>
+
+          {/* ════════ BÖLÜM 3: ŞUBE DEPOLARI (DETAY) ════════ */}
+          <div style={{ marginBottom: 12 }}>
+            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, letterSpacing: 0.2 }}>🏪 Şube Depoları</h3>
+            <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text3)' }}>
+              Her şubenin canlı stok kartı — katalog / uyarı / canlı alt sekmeleri ile
+            </p>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 12 }}>
             {MAGAZA_DORT_SUBE.map((m) => {
