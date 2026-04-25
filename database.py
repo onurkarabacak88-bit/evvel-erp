@@ -2425,3 +2425,55 @@ $$;
             CREATE INDEX IF NOT EXISTS idx_sube_skor_sube_donem
             ON sube_skor (sube_id, yil DESC, ay DESC)
         """)
+
+        # ══════════════════════════════════════════════════════════════
+        # MIGRATION: Eski FAIZ kayıtlarına KKDF (%15) + BSMV (%5) ekle
+        # ══════════════════════════════════════════════════════════════
+        # faiz_hesapla_ve_yaz motoru bu commit'ten önce HAM faiz yazıyordu
+        # (KKDF/BSMV yoktu). Şimdi vergi dahil yazıyor. Geçmişte yazılmış
+        # ham FAIZ kayıtlarını ×1.20 ile güncelle.
+        #
+        # Tespit: aciklama içinde "kesim faizi" geçen ama "KKDF+BSMV:"
+        # geçmeyen FAIZ kayıtları → eski format (ham). Bunları güncelle.
+        # Idempotent: bir kez çalıştırıldıktan sonra "KKDF+BSMV:" işareti
+        # eklendiği için ikinci çalıştırmada hiçbir kayıt eşleşmez.
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS finans_migration_log (
+                    ad           TEXT PRIMARY KEY,
+                    calistirildi TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    detay        JSONB
+                )
+            """)
+            cur.execute(
+                "SELECT 1 FROM finans_migration_log WHERE ad = %s",
+                ('faiz_kkdf_bsmv_geriye_donuk_v1',)
+            )
+            if cur.fetchone() is None:
+                # Eski formatlı (ham) FAIZ kayıtlarını bul ve güncelle
+                cur.execute("""
+                    UPDATE kart_hareketleri
+                    SET tutar       = ROUND((tutar * 1.20)::numeric, 2),
+                        faiz_tutari = ROUND((COALESCE(faiz_tutari, tutar) * 1.20)::numeric, 2),
+                        aciklama    = COALESCE(aciklama, '') ||
+                                      ' [GERIYE_DONUK_KKDF+BSMV:%' ||
+                                      ROUND((tutar * 0.20)::numeric, 2)::text || ']'
+                    WHERE durum = 'aktif'
+                      AND islem_turu = 'FAIZ'
+                      AND aciklama LIKE '%kesim faizi%'
+                      AND aciklama NOT LIKE '%KKDF+BSMV%'
+                      AND aciklama NOT LIKE '%GERIYE_DONUK%'
+                """)
+                guncellenen = cur.rowcount
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay)
+                    VALUES (%s, %s::jsonb)
+                """, (
+                    'faiz_kkdf_bsmv_geriye_donuk_v1',
+                    f'{{"guncellenen_kayit": {guncellenen}, "vergi_carpani": 1.20}}'
+                ))
+                if guncellenen > 0:
+                    print(f"[MIGRATION] Geriye dönük KKDF+BSMV uygulandı: {guncellenen} FAIZ kaydı güncellendi.")
+        except Exception as _mig_e:
+            # Migration başarısız olursa init_db'yi düşürme — sadece logla
+            print(f"[MIGRATION WARN] faiz_kkdf_bsmv_geriye_donuk_v1: {_mig_e}")

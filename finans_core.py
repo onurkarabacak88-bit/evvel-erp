@@ -1082,6 +1082,7 @@ def kart_aktif_donem(cur, kart_id: str) -> dict:
     onceki_asgari    = 0.0
     onceki_odenen    = 0.0
     onceki_durum     = "yok"  # yok | tam | asgari_odendi | asgari_odenmedi
+    devreden_faiz_kaynak = "yok"  # yok | yazilmis_kayit | hesaplandi
     if onceki_ekstre > 0 and onceki_son_odeme < bugun:
         # Önceki dönem kapanmış — devir hesabı yapılabilir
         cur.execute("""
@@ -1098,18 +1099,39 @@ def kart_aktif_donem(cur, kart_id: str) -> dict:
         if onceki_odenen >= onceki_ekstre - 0.01:
             # Tam ödendi — devir yok
             onceki_durum = "tam"
-        elif onceki_odenen >= onceki_asgari * 0.999:
-            # Asgari ödendi — kalan akdi faizle döner
-            kalan = max(0.0, onceki_ekstre - onceki_odenen)
-            devreden_anapara = round(kalan, 2)
-            devreden_faiz    = round(kalan * aylik_akdi * VERGI_CARPANI, 2)
-            onceki_durum     = "asgari_odendi"
         else:
-            # Asgari ödenmedi — kalan gecikme faizine döner
+            # Anapara her durumda devreder
             kalan = max(0.0, onceki_ekstre - onceki_odenen)
             devreden_anapara = round(kalan, 2)
-            devreden_faiz    = round(kalan * aylik_gecikme * VERGI_CARPANI, 2)
-            onceki_durum     = "asgari_odenmedi"
+
+            if onceki_odenen >= onceki_asgari * 0.999:
+                onceki_durum = "asgari_odendi"
+                hesap_orani  = aylik_akdi
+            else:
+                onceki_durum = "asgari_odenmedi"
+                hesap_orani  = aylik_gecikme
+
+            # ÇİFT SAYMA KORUMASI:
+            # faiz_hesapla_ve_yaz motoru bu kesim için zaten FAIZ kaydı
+            # yazmış mı? (Aynı duplicate guard penceresi: (kesim, kesim+32g])
+            # Yazmışsa: kayıttaki tutarı doğrudan kullan (motor artık
+            #   KKDF+BSMV dahil yazıyor).
+            # Yazmamışsa: kalan × oran × VERGI ile hesapla.
+            cur.execute("""
+                SELECT COALESCE(SUM(tutar), 0) AS yazilmis
+                FROM kart_hareketleri
+                WHERE kart_id = %s AND durum = 'aktif'
+                  AND islem_turu = 'FAIZ'
+                  AND tarih >  %s::date
+                  AND tarih <= %s::date + INTERVAL '32 days'
+            """, (kart_id, onceki_kesim, onceki_kesim))
+            yazilmis_faiz = float(cur.fetchone()['yazilmis'])
+            if yazilmis_faiz > 0:
+                devreden_faiz = round(yazilmis_faiz, 2)
+                devreden_faiz_kaynak = "yazilmis_kayit"
+            else:
+                devreden_faiz = round(kalan * hesap_orani * VERGI_CARPANI, 2)
+                devreden_faiz_kaynak = "hesaplandi"
 
     # ── Aktif dönemin ekstresi ───────────────────────────────────────
     # Bu döneme ait yeni harcamalar (önceki kesim → aktif kesim, bugüne kadar)
@@ -1157,6 +1179,7 @@ def kart_aktif_donem(cur, kart_id: str) -> dict:
         "onceki_asgari":    round(onceki_asgari, 2),
         "onceki_odenen":    round(onceki_odenen, 2),
         "onceki_durum":     onceki_durum,
+        "devreden_faiz_kaynak": devreden_faiz_kaynak,
     }
 
 
@@ -1348,7 +1371,12 @@ def faiz_hesapla_ve_yaz(cur, kart_id: str, donem: str = None) -> dict:
         oran      = gecikme_oran
         faiz_turu = "gecikme"
 
-    faiz_tutari = kart_faiz_tahmini(oran, kalan)
+    # Ham faiz (banka akdi/gecikme oranı)
+    ham_faiz = kart_faiz_tahmini(oran, kalan)
+    # KKDF (%15) + BSMV (%5) = faiz üzerinde toplam %20 vergi
+    VERGI_CARPANI = 1.20
+    faiz_tutari = round(ham_faiz * VERGI_CARPANI, 2)
+    vergi_tutari = round(faiz_tutari - ham_faiz, 2)
     if faiz_tutari < 0.01:
         return {
             "kart":  kart['kart_adi'], "donem": donem_str,
@@ -1362,7 +1390,8 @@ def faiz_hesapla_ve_yaz(cur, kart_id: str, donem: str = None) -> dict:
         f"{donem_str} kesim faizi [{faiz_turu.upper()}] "
         f"(kesim:{kesim_tarihi}, son_odeme:{son_odeme_tarihi}, "
         f"ekstre:{bu_ekstre:.2f}, ödenen:{odenen:.2f}, "
-        f"asgari:{asgari:.2f}, kalan:{kalan:.2f}, oran:%{oran:.2f})"
+        f"asgari:{asgari:.2f}, kalan:{kalan:.2f}, oran:%{oran:.2f}, "
+        f"ham:{ham_faiz:.2f}, KKDF+BSMV:{vergi_tutari:.2f})"
     )
     cur.execute("""
         INSERT INTO kart_hareketleri
@@ -1385,7 +1414,9 @@ def faiz_hesapla_ve_yaz(cur, kart_id: str, donem: str = None) -> dict:
         "faiz_turu":        faiz_turu,
         "faiz_orani":       oran,
         "akdi_orani":       akdi_oran,
-        "faiz":             faiz_tutari,
+        "faiz":             faiz_tutari,       # KKDF+BSMV dahil
+        "ham_faiz":         ham_faiz,          # Sadece banka faizi
+        "vergi":            vergi_tutari,      # KKDF (%15) + BSMV (%5)
     }
 
 
