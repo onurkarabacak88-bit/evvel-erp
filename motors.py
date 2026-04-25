@@ -8,6 +8,7 @@ from finans_core import (
     kasa_bakiyesi, odeme_yuku, gunluk_ciro_ortalama,
     nakit_akis_sim, kart_borc, tum_kart_borclari,
     kart_ekstre, kart_bu_ay_odenen, kart_faiz_tahmini,
+    kart_asgari_orani,
     zorunlu_gider_tahmini, serbest_nakit, net_akis_30_gun,
     kac_gun_dayanir, kasa_bakiyesi_tarihte,
 )
@@ -369,9 +370,11 @@ def kart_analiz_hesapla():
                 'kalan_limit': limit - borc,
                 'limit_doluluk': borc/limit if limit > 0 else 0,
                 'bu_ekstre': bu_ekstre,
+                'tek_cekim': tek_cekim,
                 'aylik_taksit': aylik_taksit,
+                'devreden_faiz': ekstre_v.get('devreden_faiz', 0),
                 'bu_ay_faiz': bu_ay_faiz,
-                'asgari_odeme': bu_ekstre * (float(k['asgari_oran']) / 100 if 'asgari_oran' in k else 0.4),
+                'asgari_odeme': bu_ekstre * kart_asgari_orani(k),
                 'gun_kaldi': gun_kaldi,
                 'blink': gun_kaldi <= 0 and yaklasan is not None,
             })
@@ -675,8 +678,7 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                 atlanan.append(f"Kart atlandı (borç yok): {k['kart_adi']}")
                 continue
 
-            asgari_oran_pct = float(k['asgari_oran']) / 100 if 'asgari_oran' in k else 0.4
-            asgari = round(borc * asgari_oran_pct, 2)
+            asgari = round(borc * kart_asgari_orani(k), 2)
 
             pid = str(_uuid.uuid4())
             # Plan yoksa ekle, varsa borcu güncelle — harcama sonrası tutar değişebilir
@@ -755,8 +757,16 @@ def uyari_motoru():
                     bu_ay_odenen = 0.0
 
             asgari_kalan = max(0.0, asgari - bu_ay_odenen)
-            # Kredi kartı asgari bu ay kapanmışsa (Kart Hareketleri / plan) panel uyarı listesine alma
+            # Kredi kartı asgari bu ay TAM kapanmışsa panel uyarı listesinden düş.
+            # Asgari'nin altında kısmi ödeme yapılmışsa plan 'bekliyor' kalır ve burada görünmeye devam eder —
+            # kullanıcı kalan asgari miktarı (asgari - bu_ay_odenen) görür.
             if o.get("kart_id") and asgari > 0 and bu_ay_odenen >= asgari * 0.999:
+                continue
+
+            # Kart asgarisi — son ödeme tarihi geçtiyse paneli kirletme.
+            # Bu noktadan sonra borç bir sonraki ekstreye/faize aktarılır,
+            # "bu ay'ın asgari hatırlatıcısı" anlamını yitirir.
+            if o.get("kart_id") and gun_farki < 0:
                 continue
 
             if gun_farki < 0:
@@ -774,6 +784,15 @@ def uyari_motoru():
                         f"Kalan borç: {fmt(tutar)} — yeni ödeme yapacak mısın?"
                     )
                     blink = False
+                elif o.get("kart_id") and bu_ay_odenen > 0:
+                    # Asgari'nin altında kısmi ödeme yapılmış — eksik kısmı vurgula
+                    seviye = "KRITIK"
+                    renk = "KIRMIZI"
+                    mesaj = (
+                        f"🔴 BUGÜN SON GÜN! Asgari için EKSİK: {fmt(asgari_kalan)} "
+                        f"(ödenen {fmt(bu_ay_odenen)} / asgari {fmt(asgari)})"
+                    )
+                    blink = True
                 else:
                     seviye = "KRITIK"
                     renk = "KIRMIZI"
@@ -960,6 +979,10 @@ def finans_ozet_motoru():
     karar = karar_motoru()
     strateji = odeme_strateji_motoru()
     uyarilar = uyari_motoru()
+    # uyarilar'da görünen odeme_plani satırlarını set olarak hazırla — aşağıdaki
+    # bugun_odemeler / yaklasan_odemeler listelerinde DEDUP için kullanılacak.
+    # Aynı kira/fatura iki ayrı pencerede birden çok kez görünmesin.
+    _uyari_odeme_ids = {u.get('odeme_id') for u in uyarilar if u.get('odeme_id')}
     sim = nakit_akis_simulasyon(30)
     kart_analiz = kart_analiz_hesapla()
 
@@ -1020,6 +1043,9 @@ def finans_ozet_motoru():
         """)
         bugun_odemeler = []
         for r in cur.fetchall():
+            # Aynı plan zaten uyarilar listesindeyse burada tekrarlama
+            if str(r['id']) in _uyari_odeme_ids:
+                continue
             asg_f = float(r['asgari_tutar'] or r['odenecek_tutar'] * _asgari_oran())
             kid = r.get('kart_id')
             if kid:
@@ -1063,6 +1089,9 @@ def finans_ozet_motoru():
         """)
         yaklasan_odemeler = []
         for r in cur.fetchall():
+            # Aynı plan zaten uyarilar listesindeyse burada tekrarlama
+            if str(r['id']) in _uyari_odeme_ids:
+                continue
             asg_f = float(r['asgari_tutar'] or r['odenecek_tutar'] * _asgari_oran())
             kid = r.get('kart_id')
             if kid:

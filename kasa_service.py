@@ -11,7 +11,7 @@ import uuid
 from datetime import date
 from typing import List
 
-from finans_core import kart_borc
+from finans_core import kart_borc, kart_asgari_orani
 from tr_saat import bugun_tr
 
 
@@ -272,8 +272,7 @@ def kart_plan_guncelle_tx(cur) -> List[str]:
             """, (k["id"], str(odeme_tarihi)))
             continue
 
-        asgari_oran_pct = float(k.get("asgari_oran", 40)) / 100
-        asgari = round(borc * asgari_oran_pct, 2)
+        asgari = round(borc * kart_asgari_orani(k), 2)
 
         cur.execute(
             """

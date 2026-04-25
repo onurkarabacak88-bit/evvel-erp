@@ -58,8 +58,10 @@ from motors import (
 from finans_core import (
     kart_borc, kasa_bakiyesi, kasa_bakiyesi_tarihte,
     kart_ekstre, kart_bu_ay_odenen, kart_faiz_tahmini,
+    kart_asgari_orani,
     faiz_hesapla_ve_yaz, tum_kartlar_faiz_hesapla,
     taksit_detay, gelecek_taksit_yuku, tum_kartlar_taksit_yuku,
+    kart_ekstre_forecast, tum_kartlar_ekstre_forecast,
     aktif_kesim_gunu, nakit_akis_sim, nakit_akis_tahmin_dogruluk,
 )
 
@@ -138,16 +140,19 @@ def _gece_yarisi_scheduler():
                 except Exception as e:
                     logger.error(f"⏰ Scheduler plan hatası: {e}")
 
-            # Ay sonu — faiz hesapla
-            if bugun.day == ay_son_gun:
-                try:
-                    with db() as (conn, cur):
-                        sonuclar = tum_kartlar_faiz_hesapla(cur)
-                    yazilan = sum(1 for k in sonuclar if k.get('durum') == 'yazildi')
-                    if yazilan > 0:
-                        logger.info(f"⏰ Scheduler: Faiz üretildi — {yazilan} kart")
-                except Exception as e:
-                    logger.error(f"⏰ Scheduler faiz hatası: {e}")
+            # FAİZ — her gece tüm kartlar yoklanır.
+            # faiz_hesapla_ve_yaz her kart için kendi kesim/son_odeme döngüsünü
+            # değerlendirir. Son ödeme tarihi geçen ve faizi henüz yazılmamış
+            # kartlara faiz işler. Diğerleri 'henuz_kapanmis_kesim_yok' /
+            # 'zaten_yazilmis' / 'tam_odendi' döner ve atlanır.
+            try:
+                with db() as (conn, cur):
+                    sonuclar = tum_kartlar_faiz_hesapla(cur)
+                yazilan = sum(1 for k in sonuclar if k.get('durum') == 'yazildi')
+                if yazilan > 0:
+                    logger.info(f"⏰ Scheduler: Faiz üretildi — {yazilan} kart")
+            except Exception as e:
+                logger.error(f"⏰ Scheduler faiz hatası: {e}")
 
             # Her gece — kasa anomali kontrolü
             try:
@@ -209,42 +214,19 @@ def startup():
             logger.info(f"ℹ️ Bu ay için ödeme planı zaten mevcut")
     except Exception as e:
         logger.error(f"Ödeme planı üretim hatası: {e}")
-    # Ay sonu faiz üretimi — ay son günü çalışır (tek entry point: faiz_hesapla_ve_yaz)
-    import calendar
-    son_gun = calendar.monthrange(bugun.year, bugun.month)[1]
-    if bugun.day == son_gun:
-        try:
-            with db() as (conn, cur):
-                sonuclar = tum_kartlar_faiz_hesapla(cur)
-            yazilan = sum(1 for k in sonuclar if k.get('durum') == 'yazildi')
-            if yazilan > 0:
-                logger.info(f"✅ Ekstre faizi üretildi: {yazilan} kart")
-        except Exception as e:
-            logger.warning(f"Faiz üretim hatası: {e}")
-
-    # Kaçırılan ay sonu faiz telafisi — uygulama ay son günü kapalıysa
-    # 1. veya 2. gün başlarsa önceki ayın faizini üretmeye çalış.
-    if bugun.day in (1, 2):
-        try:
-            onceki_ay_son = bugun.replace(day=1) - timedelta(days=1)
-            with db() as (conn, cur):
-                cur.execute("""
-                    SELECT COUNT(*) AS adet FROM kart_hareketleri
-                    WHERE islem_turu='FAIZ'
-                      AND DATE_TRUNC('month', tarih::date) =
-                          DATE_TRUNC('month', %s::date)
-                      AND durum='aktif'
-                """, (onceki_ay_son,))
-                onceki_faiz_var = int((cur.fetchone() or {}).get('adet') or 0)
-            if onceki_faiz_var == 0:
-                onceki_donem = onceki_ay_son.strftime('%Y-%m')
-                logger.warning(f"⚠️ {onceki_donem} ayı faizi eksik, telafi hesaplanıyor...")
-                with db() as (conn, cur):
-                    sonuclar = tum_kartlar_faiz_hesapla(cur, donem=onceki_donem)
-                yazilan = sum(1 for k in sonuclar if k.get('durum') == 'yazildi')
-                logger.info(f"✅ Kaçırılan faiz telafi edildi: {yazilan} kart ({onceki_donem})")
-        except Exception as e:
-            logger.warning(f"Kaçırılan faiz telafi hatası: {e}")
+    # FAİZ — startup'ta da bir kez yokla. faiz_hesapla_ve_yaz her kart için
+    # kendi kesim/son_odeme döngüsünü değerlendirir, son ödeme tarihi geçen
+    # ve faizi henüz yazılmamış kartlara faiz işler. Ayrı "ay sonu" veya
+    # "kaçırılan telafi" bloklarına gerek yok — guard hem ileriye hem geriye
+    # bakar (downtime sonrası restart de telafi olur).
+    try:
+        with db() as (conn, cur):
+            sonuclar = tum_kartlar_faiz_hesapla(cur)
+        yazilan = sum(1 for k in sonuclar if k.get('durum') == 'yazildi')
+        if yazilan > 0:
+            logger.info(f"✅ Faiz yoklaması: {yazilan} kart için faiz yazıldı")
+    except Exception as e:
+        logger.warning(f"Faiz yoklama hatası: {e}")
 
     # Kasa tutarlılık kontrolü — hata vermez, sadece uyarı loglar
     try:
@@ -1270,8 +1252,9 @@ class KartModel(BaseModel):
     limit_tutar: float
     kesim_gunu: int
     son_odeme_gunu: int
-    faiz_orani: float = 0.0
-    asgari_oran: float = 40.0  # Bankanın asgari ödeme oranı (%)
+    faiz_orani: float = 0.0          # Akdi (yıllık) faiz oranı %
+    asgari_oran: float = 40.0        # Bankanın asgari ödeme oranı (%)
+    gecikme_faiz_orani: float = 0.0  # Asgari altı ödemede uygulanan yıllık % (0 → akdi×1.3 fallback)
 
 @app.get("/api/kartlar")
 def kartlar_listele():
@@ -1314,8 +1297,10 @@ def kartlar_listele():
                 "guncel_borc": borc,
                 "kalan_limit": limit - borc,
                 "limit_doluluk": borc/limit if limit > 0 else 0,
-                "asgari_odeme": bu_ekstre * 0.2,
+                "asgari_odeme": bu_ekstre * kart_asgari_orani(k),
                 "bu_ekstre": bu_ekstre,
+                "devreden_faiz": ekstre_v.get("devreden_faiz", 0),
+                "tek_cekim": ekstre_v.get("tek_cekim", 0),
                 "gelecek_ekstre": gelecek_ekstre,
                 "aylik_taksit": aylik_taksit,
                 "gun_kaldi": gun_kaldi,
@@ -1329,9 +1314,10 @@ def kartlar_listele():
 def kart_ekle(k: KartModel):
     with db() as (conn, cur):
         kid = str(uuid.uuid4())
-        cur.execute("""INSERT INTO kartlar (id,kart_adi,banka,limit_tutar,kesim_gunu,son_odeme_gunu,faiz_orani,asgari_oran)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (kid, k.kart_adi, k.banka, k.limit_tutar, k.kesim_gunu, k.son_odeme_gunu, k.faiz_orani, k.asgari_oran))
+        cur.execute("""INSERT INTO kartlar (id,kart_adi,banka,limit_tutar,kesim_gunu,son_odeme_gunu,faiz_orani,asgari_oran,gecikme_faiz_orani)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (kid, k.kart_adi, k.banka, k.limit_tutar, k.kesim_gunu, k.son_odeme_gunu,
+             k.faiz_orani, k.asgari_oran, k.gecikme_faiz_orani))
         audit(cur, 'kartlar', kid, 'INSERT')
     return {"id": kid, "success": True}
 
@@ -1342,8 +1328,10 @@ def kart_guncelle(kid: str, k: KartModel):
         eski = cur.fetchone()
         if not eski: raise HTTPException(404)
         cur.execute("""UPDATE kartlar SET kart_adi=%s,banka=%s,limit_tutar=%s,
-            kesim_gunu=%s,son_odeme_gunu=%s,faiz_orani=%s WHERE id=%s""",
-            (k.kart_adi, k.banka, k.limit_tutar, k.kesim_gunu, k.son_odeme_gunu, k.faiz_orani, kid))
+            kesim_gunu=%s,son_odeme_gunu=%s,faiz_orani=%s,asgari_oran=%s,gecikme_faiz_orani=%s
+            WHERE id=%s""",
+            (k.kart_adi, k.banka, k.limit_tutar, k.kesim_gunu, k.son_odeme_gunu,
+             k.faiz_orani, k.asgari_oran, k.gecikme_faiz_orani, kid))
         audit(cur, 'kartlar', kid, 'UPDATE', eski=eski)
     return {"success": True}
 
@@ -1375,6 +1363,38 @@ def tum_taksit_yuku():
     """Tüm aktif kartların önümüzdeki 3 aylık taksit yükü."""
     with db() as (conn, cur):
         return tum_kartlar_taksit_yuku(cur, ay_sayisi=3)
+
+@app.get("/api/kartlar/{kid}/ekstre-forecast")
+def kart_ekstre_forecast_endpoint(kid: str, aylar: int = 6, senaryo: str = "odenir"):
+    """
+    Kartın gelecek N ay ekstre tahmini — banka kesmeden önce.
+    senaryo: 'tam' | 'odenir' | 'odenmez' (zincirleme faiz varsayımı)
+    """
+    aylar = max(1, min(12, int(aylar or 6)))
+    if senaryo not in ("tam", "odenir", "odenmez"):
+        senaryo = "odenir"
+    with db() as (conn, cur):
+        cur.execute("SELECT 1 FROM kartlar WHERE id=%s AND aktif=TRUE", (kid,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Kart bulunamadı")
+        return {
+            "aylar": aylar,
+            "senaryo": senaryo,
+            "donemler": kart_ekstre_forecast(cur, kid, aylar, senaryo),
+        }
+
+@app.get("/api/kartlar/ekstre-forecast")
+def tum_kartlar_ekstre_forecast_endpoint(aylar: int = 6, senaryo: str = "odenir"):
+    """Tüm aktif kartların gelecek N ay ekstre forecast'i."""
+    aylar = max(1, min(12, int(aylar or 6)))
+    if senaryo not in ("tam", "odenir", "odenmez"):
+        senaryo = "odenir"
+    with db() as (conn, cur):
+        return {
+            "aylar": aylar,
+            "senaryo": senaryo,
+            "kartlar": tum_kartlar_ekstre_forecast(cur, aylar, senaryo),
+        }
 
 @app.put("/api/kartlar/{kid}/kesim-tarihi")
 def kart_kesim_tarihi_guncelle(kid: str, body: dict):
@@ -5643,9 +5663,32 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
 
         bugun = str(bugun_tr())
 
-        # 1. Eski planı odendi yap — sadece ödenen tutar kadar
-        cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
-            (bugun, odenen, oid))
+        # Kart kesim ödemesi (kaynak_tablo boş + kart_id dolu) ise plan kapanmaz —
+        # kullanıcı asgari tutara ulaşana kadar panel hatırlatıcısı devam eder.
+        is_kart_plan = (not plan.get('kaynak_tablo')) and plan.get('kart_id')
+
+        if is_kart_plan:
+            # Birikimli ödenen: eski odenen_tutar + bu ödeme
+            mevcut_odenen = float(plan.get('odenen_tutar') or 0)
+            yeni_total_odenen = mevcut_odenen + odenen
+            asgari = float(plan.get('asgari_tutar') or 0)
+            # Asgari karşılandıysa plan kapanır; değilse bekliyor kalır (uyarı devam eder).
+            asgari_tamam = (asgari > 0 and yeni_total_odenen >= asgari * 0.999)
+            if asgari_tamam:
+                cur.execute(
+                    "UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
+                    (bugun, yeni_total_odenen, oid)
+                )
+            else:
+                cur.execute(
+                    "UPDATE odeme_plani SET odenen_tutar=%s WHERE id=%s",
+                    (yeni_total_odenen, oid)
+                )
+        else:
+            # Diğer kaynaklar (sabit_gider, personel, vadeli, borc_envanteri) — eski davranış:
+            # Eski planı odendi yap, kalan için ayrı plan oluşturulur.
+            cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
+                (bugun, odenen, oid))
 
         # Eski plana ait TUM acik onaylari kapat
         # Hem plan_id hem de kaynağın id'si (sabit_gider, personel vb.) ile ara
@@ -5718,22 +5761,26 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
 
         # 3. Kalan için yeni plan oluştur
         # referans_ay: yeni vade tarihinin ayı — eski planın ay'ını kopyalama, motor o ayı tekrar üretmesin diye
-        yeni_referans_ay = str(body.kalan_vade_tarihi)  # DATE_TRUNC('month') DB'de yapılır
-        yeni_id = str(uuid.uuid4())
-        cur.execute("""
-            INSERT INTO odeme_plani
-                (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum, kaynak_tablo, kaynak_id)
-            VALUES (%s, %s, %s, DATE_TRUNC('month', %s::date), %s, %s, %s, 'bekliyor', %s, %s)
-        """, (
-            yeni_id,
-            plan.get('kart_id'),
-            str(body.kalan_vade_tarihi),
-            str(body.kalan_vade_tarihi),
-            kalan, kalan,
-            f"{plan['aciklama']} (kalan)",
-            plan.get('kaynak_tablo'),
-            plan.get('kaynak_id')
-        ))
+        # NOT: Kart kesim ödemesinde yeni plan oluşturulmaz — mevcut plan aynı ayın asgarisi için
+        # panelde 'bekliyor' olarak kalır (asgari-ödenen farkı uyarı olarak görünür).
+        yeni_id = None
+        if not is_kart_plan:
+            yeni_referans_ay = str(body.kalan_vade_tarihi)  # DATE_TRUNC('month') DB'de yapılır
+            yeni_id = str(uuid.uuid4())
+            cur.execute("""
+                INSERT INTO odeme_plani
+                    (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum, kaynak_tablo, kaynak_id)
+                VALUES (%s, %s, %s, DATE_TRUNC('month', %s::date), %s, %s, %s, 'bekliyor', %s, %s)
+            """, (
+                yeni_id,
+                plan.get('kart_id'),
+                str(body.kalan_vade_tarihi),
+                str(body.kalan_vade_tarihi),
+                kalan, kalan,
+                f"{plan['aciklama']} (kalan)",
+                plan.get('kaynak_tablo'),
+                plan.get('kaynak_id')
+            ))
 
         # Nakit kısmi ödeme kart_id'li planda ise kart borcunu düşür
         if plan.get('kart_id') and odenen > 0 and not (
@@ -5754,9 +5801,10 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
                 oid,
             ))
 
-        # Vadeli alımlar kalanı odeme_plani'nda 'bekliyor' olarak bırakılır — onay kuyruğuna girmez
-        # Diğer kaynak türleri (sabit_giderler, personel vb.) onay akışını kullanmaya devam eder
-        if kaynak != 'vadeli_alimlar':
+        # Vadeli alımlar kalanı odeme_plani'nda 'bekliyor' olarak bırakılır — onay kuyruğuna girmez.
+        # Kart kesim ödemesinde zaten yeni plan oluşmadığı için onay da yok.
+        # Diğer kaynak türleri (sabit_giderler, personel vb.) onay akışını kullanmaya devam eder.
+        if yeni_id and kaynak != 'vadeli_alimlar':
             onay_ekle(cur, 'ODEME_PLANI', 'odeme_plani', yeni_id,
                 f"Kısmi ödeme kalanı: {plan['aciklama']} ({int(kalan):,} ₺)",
                 kalan, body.kalan_vade_tarihi)

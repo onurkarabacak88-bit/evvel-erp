@@ -695,6 +695,17 @@ def init_db():
             EXCEPTION WHEN others THEN NULL;
             END $$;
         """)
+        # Migration: gecikme_faiz_orani — asgari altı ödemede uygulanan yıllık oran.
+        # 0 ise faiz motoru fallback olarak akdi × 1.3 kullanır (TCMB ortalama ceza farkı).
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='kartlar' AND column_name='gecikme_faiz_orani')
+                THEN ALTER TABLE kartlar ADD COLUMN gecikme_faiz_orani NUMERIC(5,2) NOT NULL DEFAULT 0; END IF;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+        """)
         # Migration: kesim tarihi modeli — son_kesim_tarihi + kesim_tolerans
         cur.execute("""
             DO $$ BEGIN
@@ -903,8 +914,9 @@ def init_db():
                 limit_tutar     NUMERIC(14,2) NOT NULL DEFAULT 0,
                 kesim_gunu      INT NOT NULL DEFAULT 15,
                 son_odeme_gunu  INT NOT NULL DEFAULT 25,
-                faiz_orani      NUMERIC(5,2) NOT NULL DEFAULT 0,
-                asgari_oran     NUMERIC(5,2) NOT NULL DEFAULT 40,
+                faiz_orani         NUMERIC(5,2) NOT NULL DEFAULT 0,
+                asgari_oran        NUMERIC(5,2) NOT NULL DEFAULT 40,
+                gecikme_faiz_orani NUMERIC(5,2) NOT NULL DEFAULT 0,
                 aktif           BOOLEAN NOT NULL DEFAULT TRUE,
                 olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
             )
@@ -2065,6 +2077,7 @@ def init_db():
             INSERT INTO siparis_kategori (kod, ad, emoji, sira)
             VALUES
                 ('kahve', 'Kahveler', '☕', 10),
+                ('sut', 'Sütler', '🥛', 15),
                 ('surup', 'Şuruplar', '🍯', 20),
                 ('sos', 'Soslar', '🍫', 30),
                 ('toz', 'Tozlar', '🥄', 40),
@@ -2082,6 +2095,7 @@ def init_db():
             FROM (
                 VALUES
                     ('kahve','Espresso','espresso',10),('kahve','Filtre Kahve','filtre_kahve',20),('kahve','Granül Kahve','granul_kahve',30),('kahve','Türk Kahvesi','turk_kahvesi',40),('kahve','Dibek Kahvesi','dibek_kahvesi',50),('kahve','Menengiç Kahvesi','menengic_kahvesi',60),
+                    ('sut','Tam Yağlı Süt','tam_yagli_sut',10),('sut','Yarım Yağlı Süt','yarim_yagli_sut',20),('sut','Yağsız Süt','yagsiz_sut',30),('sut','Laktozsuz Süt','laktozsuz_sut',40),('sut','Badem Sütü','badem_sutu',50),('sut','Soya Sütü','soya_sutu',60),('sut','Yulaf Sütü','yulaf_sutu',70),('sut','Hindistan Cevizi Sütü','hindistan_cevizi_sutu',80),('sut','Fındık Sütü','findik_sutu',90),
                     ('surup','Turunç','turunc',10),('surup','Bahçe Nane','bahce_nane',20),('surup','Böğürtlen','bogurtlen',30),('surup','Lime','lime',40),('surup','Çilek','cilek',50),('surup','Yeşil Elma','yesil_elma',60),('surup','Yaban Mersini','yaban_mersini',70),('surup','Ananas','ananas',80),('surup','Kivi','kivi',90),('surup','Cookie','cookie',100),('surup','Frambuaz','frambuaz',110),('surup','Muz','muz',120),('surup','Kavun','kavun',130),('surup','Irish Cream','irish_cream',140),('surup','Toffee Nut','toffee_nut',150),('surup','Vanilya','vanilya',160),('surup','Salted Karamel','salted_karamel',170),('surup','Pumpkin','pumpkin',180),
                     ('sos','Çikolata Sos','cikolata_sos',10),('sos','Beyaz Çikolata Sos','beyaz_cikolata_sos',20),('sos','Karamel Sos','karamel_sos',30),
                     ('toz','Çilek Tozu','cilek_tozu',10),('toz','Muz Tozu','muz_tozu',20),('toz','Orman Meyveli Toz','orman_meyveli_toz',30),('toz','Vanilya Toz','vanilya_toz',40),('toz','Çikolata Toz','cikolata_toz',50),('toz','Sıcak Çikolata','sicak_cikolata',60),('toz','Beyaz Sıcak Çikolata','beyaz_sicak_cikolata',70),('toz','Salep','salep',80),

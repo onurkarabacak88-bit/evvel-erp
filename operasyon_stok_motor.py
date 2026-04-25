@@ -2283,13 +2283,15 @@ def sube_depo_stok_depo_cikis_dus(
         return False
     lab = (STOK_LABEL_TR.get(kk) or (kalem_adi or "") or kk).strip() or kk
 
+    # CHECK constraint: mevcut_adet >= 0 — yetersiz stokta 0'a kırpılır (eksik miktar
+    # URUN_AC_UYUMSUZLUK uyarısı olarak sube_panel.py tarafında loglanır).
     cur.execute(
         """
         UPDATE sube_depo_stok
-        SET mevcut_adet = COALESCE(mevcut_adet, 0) - %s,
+        SET mevcut_adet = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
             rezerve_adet = GREATEST(0, LEAST(
                 COALESCE(rezerve_adet, 0),
-                COALESCE(mevcut_adet, 0) - %s
+                GREATEST(0, COALESCE(mevcut_adet, 0) - %s)
             )),
             guncelleme = NOW()
         WHERE sube_id = %s AND kalem_kodu = %s
@@ -2312,13 +2314,15 @@ def sube_depo_stok_depo_cikis_dus(
         """,
         (sube_id, kk, lab, baslangic),
     )
+    # CHECK constraint: mevcut_adet >= 0 — yetersiz stokta 0'a kırpılır (eksik miktar
+    # URUN_AC_UYUMSUZLUK uyarısı olarak sube_panel.py tarafında loglanır).
     cur.execute(
         """
         UPDATE sube_depo_stok
-        SET mevcut_adet = COALESCE(mevcut_adet, 0) - %s,
+        SET mevcut_adet = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
             rezerve_adet = GREATEST(0, LEAST(
                 COALESCE(rezerve_adet, 0),
-                COALESCE(mevcut_adet, 0) - %s
+                GREATEST(0, COALESCE(mevcut_adet, 0) - %s)
             )),
             guncelleme = NOW()
         WHERE sube_id = %s AND kalem_kodu = %s

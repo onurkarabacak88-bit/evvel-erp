@@ -6507,6 +6507,218 @@ def ops_v2_sube_depo(sube_id: str):
     return {"sube_id": sube_id, "stok": rows, "alarm_sayisi": len(alarmlar)}
 
 
+@router.get("/v2/depo-ozet")
+def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
+    """
+    Tüm aktif şubelerin depo stoğu — pivot özet + son N gün harcama.
+    UI: Operasyon Merkezi → "📊 Depo Genel Bakış" sekmesi.
+
+    Dönen veri:
+      - subeler: [{id, ad}, ...]
+      - urunler: her ürün için şube bazında mevcut, değer (TL),
+                 son N gün harcanan adet ve harcama değeri (TL)
+      - ozet: toplam stok değeri, toplam harcama, kritik/sıfır kalem sayıları,
+              şube başına özetler
+
+    Harcama kaynağı: operasyon_defter URUN_AC_JSON kalemler array'i
+    (yeni dinamik katalog — siparis_urun.id bazlı).
+    """
+    bugun = bugun_tr()
+    bas = bugun - timedelta(days=max(1, gun) - 1)
+
+    with db() as (conn, cur):
+        _ensure_sube_depo_alis_fiyati_col(cur)
+
+        cur.execute("SELECT id, ad FROM subeler WHERE aktif=TRUE ORDER BY ad")
+        subeler = [{"id": str(r["id"]), "ad": r["ad"]} for r in cur.fetchall()]
+        sube_ids = [s["id"] for s in subeler]
+        if not sube_ids:
+            return {
+                "gun": gun, "tarih_baslangic": str(bas), "tarih_bitis": str(bugun),
+                "subeler": [], "urunler": [],
+                "ozet": {"toplam_stok_deger": 0, "toplam_harcama_deger": 0,
+                         "kritik_kalem_sayisi": 0, "sifir_kalem_sayisi": 0,
+                         "urun_sayisi": 0, "sube_basi": {}},
+            }
+
+        # Tüm depo stokları
+        cur.execute("""
+            SELECT sube_id, kalem_kodu, kalem_adi, mevcut_adet, min_stok,
+                   COALESCE(alis_fiyati_tl, 0) AS birim_fiyat
+            FROM sube_depo_stok
+            WHERE sube_id = ANY(%s)
+        """, (sube_ids,))
+        stok_rows = cur.fetchall()
+
+        # Katalog fiyatları (siparis_urun) — sube_depo_stok'ta birim_fiyat 0 ise fallback
+        cur.execute("""
+            SELECT su.id, su.ad, COALESCE(su.birim_fiyat_tl, 0) AS f,
+                   sk.kod AS kategori_kod, sk.ad AS kategori_ad
+            FROM siparis_urun su
+            LEFT JOIN siparis_kategori sk ON sk.id = su.kategori_id
+        """)
+        global_fiyat = {}
+        urun_meta = {}
+        for r in cur.fetchall():
+            kid = str(r["id"])
+            global_fiyat[kid] = float(r["f"] or 0)
+            urun_meta[kid] = {
+                "ad": r["ad"],
+                "kategori_kod": r.get("kategori_kod") or "",
+                "kategori_ad": r.get("kategori_ad") or "",
+            }
+
+        # Son N gün URUN_AC olayları — kalem_kodu bazında topla
+        cur.execute("""
+            SELECT sube_id, aciklama
+            FROM operasyon_defter
+            WHERE etiket='URUN_AC'
+              AND tarih BETWEEN %s AND %s
+              AND sube_id = ANY(%s)
+        """, (bas, bugun, sube_ids))
+
+        # harcama[sid][kod] = adet
+        harcama: Dict[str, Dict[str, int]] = {sid: {} for sid in sube_ids}
+        for row in cur.fetchall():
+            ack = row.get("aciklama") or ""
+            if not ack.startswith("URUN_AC_JSON:"):
+                continue
+            body = ack[len("URUN_AC_JSON:"):]
+            if " | " in body:
+                body = body.split(" | ", 1)[0]
+            try:
+                j = json.loads(body.strip())
+            except Exception:
+                continue
+            kalemler = j.get("kalemler") if isinstance(j, dict) else None
+            if not isinstance(kalemler, list):
+                continue
+            sid = str(row["sube_id"])
+            for k in kalemler:
+                if not isinstance(k, dict):
+                    continue
+                kod = str(k.get("kalem_kodu") or "").strip()
+                if not kod:
+                    continue
+                try:
+                    adet = int(k.get("adet") or 0)
+                except (TypeError, ValueError):
+                    adet = 0
+                if adet > 0:
+                    harcama.setdefault(sid, {})
+                    harcama[sid][kod] = harcama[sid].get(kod, 0) + adet
+
+        # Pivot oluştur
+        def _bos_sube_blok():
+            return {sid: {"mevcut": 0, "deger": 0.0, "harcanan": 0,
+                          "harcanan_deger": 0.0, "min_stok": 0} for sid in sube_ids}
+
+        pivot: Dict[str, dict] = {}
+
+        def _ensure(kod: str, ad_fallback: str = "", fiyat_fallback: float = 0.0):
+            if kod in pivot:
+                return pivot[kod]
+            meta = urun_meta.get(kod, {})
+            pivot[kod] = {
+                "kalem_kodu": kod,
+                "kalem_adi": ad_fallback or meta.get("ad") or kod,
+                "kategori_kod": meta.get("kategori_kod", ""),
+                "kategori_ad": meta.get("kategori_ad", ""),
+                "birim_fiyat": float(fiyat_fallback or global_fiyat.get(kod, 0.0)),
+                "min_stok_max": 0,
+                "subeler": _bos_sube_blok(),
+                "toplam_adet": 0,
+                "toplam_deger": 0.0,
+                "toplam_harcanan": 0,
+                "toplam_harcanan_deger": 0.0,
+            }
+            return pivot[kod]
+
+        for r in stok_rows:
+            kod = str(r["kalem_kodu"])
+            sid = str(r["sube_id"])
+            mevcut = int(r["mevcut_adet"] or 0)
+            min_s = int(r["min_stok"] or 0)
+            row_fiyat = float(r["birim_fiyat"] or 0)
+            p = _ensure(kod, r["kalem_adi"] or "", row_fiyat or global_fiyat.get(kod, 0.0))
+            # Şube bazlı fiyatı pivot fiyatı olarak güncel tut (max)
+            if row_fiyat > p["birim_fiyat"]:
+                p["birim_fiyat"] = row_fiyat
+            fiyat = p["birim_fiyat"]
+            deger = mevcut * fiyat
+            p["subeler"].setdefault(sid, {"mevcut": 0, "deger": 0.0, "harcanan": 0,
+                                          "harcanan_deger": 0.0, "min_stok": 0})
+            p["subeler"][sid]["mevcut"] = mevcut
+            p["subeler"][sid]["min_stok"] = min_s
+            p["subeler"][sid]["deger"] = round(deger, 2)
+            p["toplam_adet"] += mevcut
+            p["toplam_deger"] += deger
+            if min_s > p["min_stok_max"]:
+                p["min_stok_max"] = min_s
+
+        # Harcama bilgisini ekle
+        for sid, kod_map in harcama.items():
+            for kod, adet in kod_map.items():
+                p = _ensure(kod)
+                fiyat = p["birim_fiyat"]
+                deger = adet * fiyat
+                p["subeler"].setdefault(sid, {"mevcut": 0, "deger": 0.0, "harcanan": 0,
+                                              "harcanan_deger": 0.0, "min_stok": 0})
+                p["subeler"][sid]["harcanan"] = adet
+                p["subeler"][sid]["harcanan_deger"] = round(deger, 2)
+                p["toplam_harcanan"] += adet
+                p["toplam_harcanan_deger"] += deger
+
+        # Yuvarla + sırala (toplam değer azalan)
+        for p in pivot.values():
+            p["toplam_deger"] = round(p["toplam_deger"], 2)
+            p["toplam_harcanan_deger"] = round(p["toplam_harcanan_deger"], 2)
+
+        urunler = sorted(pivot.values(),
+                         key=lambda x: (-x["toplam_deger"], -x["toplam_adet"], x["kalem_adi"]))
+
+        # Özet
+        sube_ozet = {sid: {"stok_deger": 0.0, "harcama_deger": 0.0,
+                           "kritik": 0, "sifir": 0} for sid in sube_ids}
+        toplam_stok = 0.0
+        toplam_harcama = 0.0
+        for p in urunler:
+            for sid, sd in p["subeler"].items():
+                if sid not in sube_ozet:
+                    continue
+                sube_ozet[sid]["stok_deger"] += sd["deger"]
+                sube_ozet[sid]["harcama_deger"] += sd["harcanan_deger"]
+                if sd["min_stok"] > 0:
+                    if sd["mevcut"] == 0:
+                        sube_ozet[sid]["sifir"] += 1
+                    elif sd["mevcut"] <= sd["min_stok"]:
+                        sube_ozet[sid]["kritik"] += 1
+            toplam_stok += p["toplam_deger"]
+            toplam_harcama += p["toplam_harcanan_deger"]
+
+        kritik_kalem = sum(so["kritik"] for so in sube_ozet.values())
+        sifir_kalem = sum(so["sifir"] for so in sube_ozet.values())
+        for so in sube_ozet.values():
+            so["stok_deger"] = round(so["stok_deger"], 2)
+            so["harcama_deger"] = round(so["harcama_deger"], 2)
+
+        return {
+            "gun": gun,
+            "tarih_baslangic": str(bas),
+            "tarih_bitis": str(bugun),
+            "subeler": subeler,
+            "urunler": urunler,
+            "ozet": {
+                "toplam_stok_deger": round(toplam_stok, 2),
+                "toplam_harcama_deger": round(toplam_harcama, 2),
+                "kritik_kalem_sayisi": kritik_kalem,
+                "sifir_kalem_sayisi": sifir_kalem,
+                "urun_sayisi": len(urunler),
+                "sube_basi": sube_ozet,
+            },
+        }
+
+
 @router.get("/v2/urun-ac-akis")
 def ops_v2_urun_ac_akis(
     tarih: Optional[str] = Query(None, description="YYYY-MM-DD"),
