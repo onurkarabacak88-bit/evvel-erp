@@ -827,9 +827,11 @@ def kart_ekstre_forecast(cur, kart_id: str, ay_sayisi: int = 6, asgari_senaryosu
       - tek_cekim_bilinen: o döneme ait, bugüne kadar yapılmış tek çekim harcamalar
         (gelecek dönemler için doğal olarak 0 — henüz çekilmedi)
       - taksit_payi: o ayda hâlâ aktif olan taksit kalemlerinin toplam payı
-      - devreden_faiz: önceki dönem ekstresinden bu döneme aktarılan faiz
-        (asgari_senaryosu'na göre tahmin)
-      - ekstre_toplam = tek_cekim_bilinen + taksit_payi + devreden_faiz
+      - devreden_anapara: önceki dönem ekstresinin ödenmeyen anapara kısmı
+        (asgari ödenmişse: önceki ekstre - önceki asgari)
+      - devreden_faiz: önceki dönemden devreden anapara üzerinde işleyen
+        akdi/gecikme faizi + KKDF (%15) + BSMV (%5)
+      - ekstre_toplam = tek_cekim_bilinen + taksit_payi + devreden_anapara + devreden_faiz
       - asgari_tahmini = ekstre × kart.asgari_oran
       - kapali (bool): son_odeme tarihi geçti mi (mevcut/geçmiş dönem)
       - durum: 'gecmis' | 'acik' | 'gelecek'
@@ -881,8 +883,12 @@ def kart_ekstre_forecast(cur, kart_id: str, ay_sayisi: int = 6, asgari_senaryosu
     else:
         ilk_y, ilk_m = bugun.year, bugun.month
 
+    # KKDF (%15) + BSMV (%5) = faiz üzerinde toplam %20 vergi yükü
+    VERGI_CARPANI = 1.20
+
     sonuclar = []
-    devreden_faiz = 0.0  # zincirleme — bir önceki dönemden bu döneme aktarım
+    devreden_anapara = 0.0  # önceki ekstrenin ödenmemiş ANAPARA kısmı
+    devreden_faiz    = 0.0  # önceki ekstrenin akdi/gecikme FAİZ kısmı (KKDF+BSMV dahil)
 
     for i in range(ay_sayisi):
         m = ilk_m + i
@@ -925,19 +931,25 @@ def kart_ekstre_forecast(cur, kart_id: str, ay_sayisi: int = 6, asgari_senaryosu
             if 0 <= gecen < ts:
                 taksit_payi += aylik
 
-        ekstre = tek_cekim_bilinen + taksit_payi + devreden_faiz
+        # Ekstre toplamı = bu döneme ait yeni harcamalar + taksit payı
+        #                + önceki dönemden devreden ANAPARA
+        #                + önceki dönemden devreden FAİZ (KKDF+BSMV dahil)
+        ekstre = tek_cekim_bilinen + taksit_payi + devreden_anapara + devreden_faiz
         asgari = ekstre * asgari_oran
 
-        # Sonraki dönem için zincirleme faiz hesabı (asgari_senaryosu'na göre)
+        # Sonraki dönem için: ödenmeyen anapara + onun üzerine işleyecek faiz
         if asgari_senaryosu == "tam" or ekstre <= 0:
-            sonraki_devreden = 0.0
+            sonraki_devreden_anapara = 0.0
+            sonraki_devreden_faiz    = 0.0
         elif asgari_senaryosu == "odenmez":
-            # Hiç ödenmez varsayımı — tüm ekstre gecikme faizine döner
-            sonraki_devreden = round(ekstre * aylik_gecikme, 2)
+            # Hiç ödenmez → tüm ekstre anapara olarak döner + GECİKME faizi (vergi dahil)
+            sonraki_devreden_anapara = round(ekstre, 2)
+            sonraki_devreden_faiz    = round(ekstre * aylik_gecikme * VERGI_CARPANI, 2)
         else:
-            # 'odenir' (default) — asgari ödenir, kalan akdi faizle döner
+            # 'odenir' (default) — asgari ödenir, kalan AKDİ faizle döner (vergi dahil)
             kalan = max(0.0, ekstre - asgari)
-            sonraki_devreden = round(kalan * aylik_akdi, 2)
+            sonraki_devreden_anapara = round(kalan, 2)
+            sonraki_devreden_faiz    = round(kalan * aylik_akdi * VERGI_CARPANI, 2)
 
         if son_odeme < bugun:
             durum = "gecmis"
@@ -952,6 +964,7 @@ def kart_ekstre_forecast(cur, kart_id: str, ay_sayisi: int = 6, asgari_senaryosu
             "son_odeme_tarihi": str(son_odeme),
             "tek_cekim_bilinen": round(tek_cekim_bilinen, 2),
             "taksit_payi":      round(taksit_payi, 2),
+            "devreden_anapara": round(devreden_anapara, 2),
             "devreden_faiz":    round(devreden_faiz, 2),
             "ekstre_toplam":    round(ekstre, 2),
             "asgari_tahmini":   round(asgari, 2),
@@ -959,7 +972,8 @@ def kart_ekstre_forecast(cur, kart_id: str, ay_sayisi: int = 6, asgari_senaryosu
             "durum":            durum,
         })
 
-        devreden_faiz = sonraki_devreden
+        devreden_anapara = sonraki_devreden_anapara
+        devreden_faiz    = sonraki_devreden_faiz
 
     return sonuclar
 
