@@ -5995,7 +5995,7 @@ def v2_izin_liste(personel_id: Optional[str] = None,
                   baslangic: Optional[str] = None,
                   bitis: Optional[str] = None):
     with db() as (conn, cur):
-        sql = "SELECT i.*, p.ad AS personel_ad, p.soyad AS personel_soyad FROM personel_izin i JOIN personel p ON p.id=i.personel_id WHERE 1=1"
+        sql = "SELECT i.*, p.ad_soyad AS personel_ad, '' AS personel_soyad FROM personel_izin i JOIN personel p ON p.id=i.personel_id WHERE 1=1"
         params: List = []
         if personel_id:
             sql += " AND i.personel_id = %s"; params.append(personel_id)
@@ -6074,7 +6074,7 @@ def v2_rapor_izinli_calisti(
 @app.get("/api/vardiya/v2/override-log")
 def v2_override_log_liste(limit: int = 100, personel_id: Optional[str] = None):
     with db() as (conn, cur):
-        sql = ("SELECT o.*, p.ad AS personel_ad, p.soyad AS personel_soyad "
+        sql = ("SELECT o.*, p.ad_soyad AS personel_ad, '' AS personel_soyad "
                "FROM vardiya_override_log o LEFT JOIN personel p ON p.id=o.personel_id "
                "WHERE 1=1")
         params: List = []

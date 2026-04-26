@@ -1055,7 +1055,7 @@ def gun_planini_getir(cur, tarih: date, sube_id: Optional[str] = None) -> Dict[s
 
     # Atamalar (bu tarih)
     cur.execute("""
-        SELECT a.*, p.ad AS personel_ad, p.soyad AS personel_soyad
+        SELECT a.*, p.ad_soyad AS personel_ad, '' AS personel_soyad
         FROM vardiya_atama a
         JOIN personel p ON p.id = a.personel_id
         WHERE a.tarih = %s::date AND a.durum != 'iptal'
@@ -1089,9 +1089,9 @@ def gun_planini_getir(cur, tarih: date, sube_id: Optional[str] = None) -> Dict[s
 
     # Personel havuzu
     cur.execute("""
-        SELECT id, ad, soyad, sube_id, calisma_turu
+        SELECT id, ad_soyad AS ad, '' AS soyad, sube_id, calisma_turu
         FROM personel WHERE aktif = TRUE
-        ORDER BY ad, soyad
+        ORDER BY ad_soyad
     """)
     personeller = []
     for p in cur.fetchall():
@@ -1129,7 +1129,7 @@ def rapor_fazla_mesai(
         """
         SELECT s.tarih, s.personel_id, s.toplam_saat, s.max_gunluk_saat,
                s.fazla_gunluk_saat, s.haftalik_saat, s.durum,
-               p.ad AS personel_ad, p.soyad AS personel_soyad
+               p.ad_soyad AS personel_ad, '' AS personel_soyad
         FROM personel_gun_state s
         JOIN personel p ON p.id = s.personel_id
         WHERE s.tarih BETWEEN %s AND %s
@@ -1143,7 +1143,7 @@ def rapor_fazla_mesai(
     cur.execute(
         """
         SELECT o.id, o.ts, o.personel_id, o.atama_id, o.tarih, o.payload_json,
-               o.aciklama, p.ad AS personel_ad, p.soyad AS personel_soyad
+               o.aciklama, p.ad_soyad AS personel_ad, '' AS personel_soyad
         FROM vardiya_override_log o
         JOIN personel p ON p.id = o.personel_id
         WHERE o.ihlal_tipi = 'saat_asimi'
@@ -1171,7 +1171,7 @@ def rapor_izinli_calisti(
     cur.execute(
         """
         SELECT o.id, o.ts, o.personel_id, o.atama_id, o.tarih, o.payload_json,
-               o.aciklama, p.ad AS personel_ad, p.soyad AS personel_soyad
+               o.aciklama, p.ad_soyad AS personel_ad, '' AS personel_soyad
         FROM vardiya_override_log o
         JOIN personel p ON p.id = o.personel_id
         WHERE o.ihlal_tipi = 'izinli_atandi'
