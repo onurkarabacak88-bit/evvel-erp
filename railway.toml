@@ -1,7 +1,0 @@
-[build]
-builder = "dockerfile"
-
-[deploy]
-# HTTP trafiği Railway'in verdiği PORT üzerinden gider; Dockerfile CMD bunu okur.
-restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 3
