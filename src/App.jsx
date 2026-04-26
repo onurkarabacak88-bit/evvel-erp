@@ -16,7 +16,7 @@ import ExcelImport from './pages/ExcelImport';
 import DisKaynak from './pages/DisKaynak';
 import Rapor from './pages/Rapor';
 import KartMerkez from './pages/KartMerkez';
-import Subeler from './pages/Subeler';
+import VardiyaPlanlamaV2 from './pages/VardiyaPlanlamaV2';
 import SubePanelPinleri from './pages/SubePanelPinleri';
 import Tedarikciler from './pages/Tedarikciler';
 import OperasyonMerkezi from './pages/OperasyonMerkezi';
@@ -81,7 +81,7 @@ const PAGES = {
   personel:           Personel,
   borclar:            Borclar,
   'sabit-giderler':   SabitGiderler,
-  'vardiya-planlamasi': Subeler,
+  'vardiya-planlamasi': VardiyaPlanlamaV2,
   'sube-panel-pin':   SubePanelPinleri,
   tedarikciler:       Tedarikciler,
 };
