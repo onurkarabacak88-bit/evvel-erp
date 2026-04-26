@@ -894,23 +894,34 @@ def init_db():
                 END IF;
             END $$;
         """)
-        # Migration: islem_turu CHECK constraint — eski hali silip yenile.
-        # Eski production DB'lerde 'FAIZ' kabul etmeyen versiyon olabilir;
-        # bu yüzden DROP + CREATE ile her seferinde güncel hale getiriyoruz.
+        # Migration: islem_turu CHECK — FAIZ dahil tek tanım (isim farklı eski constraint'leri pg_constraint ile düşürür).
         cur.execute("""
-            DO $$ BEGIN
+            DO $$
+            DECLARE
+                r RECORD;
+            BEGIN
                 IF EXISTS (
-                    SELECT 1 FROM information_schema.constraint_column_usage
-                    WHERE table_name = 'kart_hareketleri'
-                    AND constraint_name = 'kart_hareketleri_islem_turu_check'
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'kart_hareketleri'
                 ) THEN
-                    ALTER TABLE kart_hareketleri
-                    DROP CONSTRAINT kart_hareketleri_islem_turu_check;
+                    FOR r IN
+                        SELECT c.conname
+                        FROM pg_constraint c
+                        JOIN pg_class t ON c.conrelid = t.oid
+                        WHERE t.relname = 'kart_hareketleri'
+                          AND c.contype = 'c'
+                          AND pg_get_constraintdef(c.oid) ILIKE '%islem_turu%'
+                    LOOP
+                        EXECUTE format('ALTER TABLE kart_hareketleri DROP CONSTRAINT IF EXISTS %I', r.conname);
+                    END LOOP;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint WHERE conname = 'kart_hareketleri_islem_turu_check'
+                    ) THEN
+                        ALTER TABLE kart_hareketleri
+                            ADD CONSTRAINT kart_hareketleri_islem_turu_check
+                            CHECK (islem_turu IN ('HARCAMA', 'ODEME', 'FAIZ'));
+                    END IF;
                 END IF;
-                ALTER TABLE kart_hareketleri
-                ADD CONSTRAINT kart_hareketleri_islem_turu_check
-                CHECK (islem_turu IN ('HARCAMA', 'ODEME', 'FAIZ'));
-            EXCEPTION WHEN others THEN NULL;
             END $$;
         """)
 

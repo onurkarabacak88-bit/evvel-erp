@@ -35,6 +35,7 @@ from tedarikci_api import router as tedarikci_router
 from odeme_plani_motor_api import router as odeme_plani_motor_router
 from odeme_plani_api import router as odeme_plani_read_router
 import vardiya_v2 as _vv2
+from vardiya_v2 import _ad_soyad_split as _vardiya_personel_ad_split
 
 
 def ay_ekle(d: date, ay: int) -> date:
@@ -5887,6 +5888,16 @@ def v2_gun_planini_getir(tarih: str, sube_id: Optional[str] = None):
     with db() as (conn, cur):
         return _vv2.gun_planini_getir(cur, t, sube_id)
 
+
+@app.get("/api/vardiya/v2/hafta-personel-tablo")
+def v2_hafta_personel_tablo(pazartesi: str):
+    """Seçilen haftanın Pazartesi tarihi (veya hafta içi herhangi bir gün — sunucu Pazartesi’ye normalize eder)."""
+    from datetime import datetime as _dt
+    t = _dt.strptime(pazartesi[:10], "%Y-%m-%d").date()
+    with db() as (conn, cur):
+        return _vv2.hafta_personel_tablosu(cur, t)
+
+
 @app.post("/api/vardiya/v2/atama/check")
 def v2_atama_check(a: _V2AtamaIn):
     """Atama yapılmadan önce uyarıları döner — UI bunu çağırıp gösterir."""
@@ -5995,7 +6006,10 @@ def v2_izin_liste(personel_id: Optional[str] = None,
                   baslangic: Optional[str] = None,
                   bitis: Optional[str] = None):
     with db() as (conn, cur):
-        sql = "SELECT i.*, p.ad_soyad AS personel_ad, '' AS personel_soyad FROM personel_izin i JOIN personel p ON p.id=i.personel_id WHERE 1=1"
+        sql = (
+            "SELECT i.*, TRIM(COALESCE(p.ad_soyad, '')) AS _personel_full "
+            "FROM personel_izin i JOIN personel p ON p.id=i.personel_id WHERE 1=1"
+        )
         params: List = []
         if personel_id:
             sql += " AND i.personel_id = %s"; params.append(personel_id)
@@ -6005,7 +6019,14 @@ def v2_izin_liste(personel_id: Optional[str] = None,
             sql += " AND i.baslangic_tarih <= %s"; params.append(bitis)
         sql += " ORDER BY i.baslangic_tarih DESC"
         cur.execute(sql, tuple(params))
-        return {"izinler": [dict(r) for r in cur.fetchall()]}
+        izinler = []
+        for r in cur.fetchall():
+            d = dict(r)
+            a, s = _vardiya_personel_ad_split(d.pop("_personel_full", None))
+            d["personel_ad"] = a or "(isimsiz)"
+            d["personel_soyad"] = s
+            izinler.append(d)
+        return {"izinler": izinler}
 
 @app.post("/api/vardiya/v2/izin")
 def v2_izin_ekle(i: _V2IzinIn):
@@ -6074,16 +6095,25 @@ def v2_rapor_izinli_calisti(
 @app.get("/api/vardiya/v2/override-log")
 def v2_override_log_liste(limit: int = 100, personel_id: Optional[str] = None):
     with db() as (conn, cur):
-        sql = ("SELECT o.*, p.ad_soyad AS personel_ad, '' AS personel_soyad "
-               "FROM vardiya_override_log o LEFT JOIN personel p ON p.id=o.personel_id "
-               "WHERE 1=1")
+        sql = (
+            "SELECT o.*, TRIM(COALESCE(p.ad_soyad, '')) AS _personel_full "
+            "FROM vardiya_override_log o LEFT JOIN personel p ON p.id=o.personel_id "
+            "WHERE 1=1"
+        )
         params: List = []
         if personel_id:
             sql += " AND o.personel_id = %s"; params.append(personel_id)
         sql += " ORDER BY o.ts DESC LIMIT %s"
         params.append(min(max(int(limit), 1), 1000))
         cur.execute(sql, tuple(params))
-        return {"kayitlar": [dict(r) for r in cur.fetchall()]}
+        kayitlar = []
+        for r in cur.fetchall():
+            d = dict(r)
+            a, s = _vardiya_personel_ad_split(d.pop("_personel_full", None))
+            d["personel_ad"] = a or "(isimsiz)"
+            d["personel_soyad"] = s
+            kayitlar.append(d)
+        return {"kayitlar": kayitlar}
 
 
 # Frontend

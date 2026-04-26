@@ -22,6 +22,17 @@ from database import db
 from tr_saat import bugun_tr
 
 
+def _ad_soyad_split(full: Optional[str]) -> Tuple[str, str]:
+    """personel.ad_soyad → UI `ad` / `soyad` (avatar ve sıralama için)."""
+    t = (full or "").strip()
+    if not t:
+        return "", ""
+    parts = t.split(None, 1)
+    a = (parts[0] or "").strip()
+    s = (parts[1] or "").strip() if len(parts) > 1 else ""
+    return a, s
+
+
 # ═══════════════════════════════════════════════════════════════════
 # YARDIMCI — SAAT/SÜRE HESAPLARI
 # ═══════════════════════════════════════════════════════════════════
@@ -1055,13 +1066,19 @@ def gun_planini_getir(cur, tarih: date, sube_id: Optional[str] = None) -> Dict[s
 
     # Atamalar (bu tarih)
     cur.execute("""
-        SELECT a.*, p.ad_soyad AS personel_ad, '' AS personel_soyad
+        SELECT a.*, TRIM(COALESCE(p.ad_soyad, '')) AS _personel_full
         FROM vardiya_atama a
         JOIN personel p ON p.id = a.personel_id
         WHERE a.tarih = %s::date AND a.durum != 'iptal'
         ORDER BY a.baslangic_saat
     """, (tarih,))
-    tum_atamalar = [dict(r) for r in cur.fetchall()]
+    tum_atamalar = []
+    for r in cur.fetchall():
+        d = dict(r)
+        ad, soy = _ad_soyad_split(d.pop("_personel_full", None))
+        d["personel_ad"] = ad or "(isimsiz)"
+        d["personel_soyad"] = soy
+        tum_atamalar.append(d)
     atama_by_slot: Dict[str, List[Dict[str, Any]]] = {}
     for a in tum_atamalar:
         atama_by_slot.setdefault(a['slot_id'], []).append(a)
@@ -1089,13 +1106,17 @@ def gun_planini_getir(cur, tarih: date, sube_id: Optional[str] = None) -> Dict[s
 
     # Personel havuzu
     cur.execute("""
-        SELECT id, ad_soyad AS ad, '' AS soyad, sube_id, calisma_turu
+        SELECT id, ad_soyad, sube_id, calisma_turu, COALESCE(gorev, '') AS gorev
         FROM personel WHERE aktif = TRUE
-        ORDER BY ad_soyad
+        ORDER BY COALESCE(NULLIF(TRIM(ad_soyad), ''), id)
     """)
     personeller = []
     for p in cur.fetchall():
         p = dict(p)
+        ad, soy = _ad_soyad_split(p.get("ad_soyad"))
+        p["ad"] = ad or "(isimsiz)"
+        p["soyad"] = soy
+        p.pop("ad_soyad", None)
         gd = personel_gun_durumu(cur, p['id'], tarih)
         haf = personel_haftalik_saat(cur, p['id'], tarih)
         personeller.append({
@@ -1110,6 +1131,124 @@ def gun_planini_getir(cur, tarih: date, sube_id: Optional[str] = None) -> Dict[s
         "subeler":         sube_blocks,
         "personel_havuzu": personeller,
         "gun_kilitli":     gun_kilit_mi(cur, tarih),
+    }
+
+
+def _pazartesi_normalize(d: date) -> date:
+    """Verilen tarihin ait olduğu ISO haftasının Pazartesi günü."""
+    wd = d.weekday()  # 0=Pzt
+    return d - timedelta(days=wd)
+
+
+def hafta_personel_tablosu(cur, herhangi_bir_gun: date) -> Dict[str, Any]:
+    """
+    Personel × 7 gün özet tablosu (PDF/Excel).
+    Sol: şube · görev · ad | Orta: Pzt–Paz hücreleri | Sağ: kapanış sayısı · notlar
+    """
+    pzt = _pazartesi_normalize(herhangi_bir_gun)
+    gunler_dt = [pzt + timedelta(days=i) for i in range(7)]
+    gunler_iso = [str(x) for x in gunler_dt]
+    d0, d6 = gunler_dt[0], gunler_dt[6]
+
+    cur.execute(
+        """
+        SELECT p.id, TRIM(COALESCE(p.ad_soyad, '')) AS ad_soyad,
+               COALESCE(NULLIF(TRIM(p.gorev), ''), '—') AS gorev,
+               COALESCE(NULLIF(TRIM(p.notlar), ''), '') AS notlar,
+               p.sube_id, COALESCE(s.ad, '—') AS sube_ad
+        FROM personel p
+        LEFT JOIN subeler s ON s.id = p.sube_id
+        WHERE p.aktif = TRUE
+        ORDER BY COALESCE(NULLIF(TRIM(p.ad_soyad), ''), p.id)
+        """,
+    )
+    plist = [dict(r) for r in cur.fetchall()]
+
+    cur.execute(
+        """
+        SELECT personel_id, baslangic_tarih::text AS b0, bitis_tarih::text AS e0, tip
+        FROM personel_izin
+        WHERE baslangic_tarih <= %s::date AND bitis_tarih >= %s::date
+        """,
+        (d6, d0),
+    )
+    izinler = [dict(r) for r in cur.fetchall()]
+
+    def _izinli_mi(pid: str, gun: date) -> bool:
+        for iz in izinler:
+            if str(iz["personel_id"]) != str(pid):
+                continue
+            b = date.fromisoformat(str(iz["b0"])[:10])
+            e = date.fromisoformat(str(iz["e0"])[:10])
+            if b <= gun <= e:
+                return True
+        return False
+
+    cur.execute(
+        """
+        SELECT a.personel_id::text AS personel_id, a.tarih::text AS tarih,
+               to_char(a.baslangic_saat, 'HH24:MI') AS bas,
+               to_char(a.bitis_saat, 'HH24:MI') AS bit,
+               COALESCE(su.ad, '') AS sube_ad,
+               COALESCE(sl.tip, 'normal') AS slot_tip
+        FROM vardiya_atama a
+        JOIN vardiya_slot sl ON sl.id = a.slot_id
+        JOIN subeler su ON su.id = sl.sube_id
+        WHERE a.tarih >= %s::date AND a.tarih <= %s::date AND a.durum <> 'iptal'
+        ORDER BY a.personel_id, a.tarih, a.baslangic_saat
+        """,
+        (d0, d6),
+    )
+    raw_at = [dict(r) for r in cur.fetchall()]
+
+    by_pe_gun: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+    kapanis_n: Dict[str, int] = {}
+    for row in raw_at:
+        pid = str(row["personel_id"])
+        tiso = str(row["tarih"])[:10]
+        by_pe_gun.setdefault((pid, tiso), []).append(row)
+        if (row.get("slot_tip") or "").lower() == "kapanis":
+            kapanis_n[pid] = kapanis_n.get(pid, 0) + 1
+
+    satirlar: List[Dict[str, Any]] = []
+    for pr in plist:
+        pid = str(pr["id"])
+        ad, soy = _ad_soyad_split(pr.get("ad_soyad"))
+        gun_hucre: Dict[str, Any] = {}
+        for gd in gunler_dt:
+            giso = str(gd)
+            if _izinli_mi(pid, gd):
+                gun_hucre[giso] = {"metin": "İZİNLİ", "tip": "izinli"}
+                continue
+            rows = by_pe_gun.get((pid, giso), [])
+            if not rows:
+                gun_hucre[giso] = {"metin": "—", "tip": "bos"}
+                continue
+            lines: List[str] = []
+            for rw in rows:
+                bas = rw.get("bas") or ""
+                bit = rw.get("bit") or ""
+                sub = (rw.get("sube_ad") or "").strip()
+                line = f"{bas}-{bit}"
+                if sub:
+                    line = f"{line}\n{sub}"
+                lines.append(line)
+            gun_hucre[giso] = {"metin": "\n".join(lines), "tip": "vardiya"}
+        satirlar.append({
+            "personel_id": pid,
+            "sube_ad": pr.get("sube_ad") or "—",
+            "gorev": pr.get("gorev") or "—",
+            "ad": ad or "(isimsiz)",
+            "soyad": soy,
+            "gunler": gun_hucre,
+            "kapanis_sayisi": int(kapanis_n.get(pid, 0)),
+            "notlar": pr.get("notlar") or "",
+        })
+
+    return {
+        "pazartesi": str(pzt),
+        "gunler": gunler_iso,
+        "satirlar": satirlar,
     }
 
 
@@ -1129,7 +1268,7 @@ def rapor_fazla_mesai(
         """
         SELECT s.tarih, s.personel_id, s.toplam_saat, s.max_gunluk_saat,
                s.fazla_gunluk_saat, s.haftalik_saat, s.durum,
-               p.ad_soyad AS personel_ad, '' AS personel_soyad
+               TRIM(COALESCE(p.ad_soyad, '')) AS _personel_full
         FROM personel_gun_state s
         JOIN personel p ON p.id = s.personel_id
         WHERE s.tarih BETWEEN %s AND %s
@@ -1139,11 +1278,17 @@ def rapor_fazla_mesai(
         """,
         (baslangic, bitis, lim),
     )
-    gunluk = [dict(r) for r in cur.fetchall()]
+    gunluk = []
+    for r in cur.fetchall():
+        d = dict(r)
+        a, ss = _ad_soyad_split(d.pop("_personel_full", None))
+        d["personel_ad"] = a or "(isimsiz)"
+        d["personel_soyad"] = ss
+        gunluk.append(d)
     cur.execute(
         """
         SELECT o.id, o.ts, o.personel_id, o.atama_id, o.tarih, o.payload_json,
-               o.aciklama, p.ad_soyad AS personel_ad, '' AS personel_soyad
+               o.aciklama, TRIM(COALESCE(p.ad_soyad, '')) AS _personel_full
         FROM vardiya_override_log o
         JOIN personel p ON p.id = o.personel_id
         WHERE o.ihlal_tipi = 'saat_asimi'
@@ -1154,7 +1299,13 @@ def rapor_fazla_mesai(
         """,
         (baslangic, bitis, lim),
     )
-    override_saat = [dict(r) for r in cur.fetchall()]
+    override_saat = []
+    for r in cur.fetchall():
+        d = dict(r)
+        a, ss = _ad_soyad_split(d.pop("_personel_full", None))
+        d["personel_ad"] = a or "(isimsiz)"
+        d["personel_soyad"] = ss
+        override_saat.append(d)
     return {
         "baslangic": str(baslangic),
         "bitis": str(bitis),
@@ -1171,7 +1322,7 @@ def rapor_izinli_calisti(
     cur.execute(
         """
         SELECT o.id, o.ts, o.personel_id, o.atama_id, o.tarih, o.payload_json,
-               o.aciklama, p.ad_soyad AS personel_ad, '' AS personel_soyad
+               o.aciklama, TRIM(COALESCE(p.ad_soyad, '')) AS _personel_full
         FROM vardiya_override_log o
         JOIN personel p ON p.id = o.personel_id
         WHERE o.ihlal_tipi = 'izinli_atandi'
@@ -1182,8 +1333,15 @@ def rapor_izinli_calisti(
         """,
         (baslangic, bitis, lim),
     )
+    kayitlar = []
+    for r in cur.fetchall():
+        d = dict(r)
+        a, ss = _ad_soyad_split(d.pop("_personel_full", None))
+        d["personel_ad"] = a or "(isimsiz)"
+        d["personel_soyad"] = ss
+        kayitlar.append(d)
     return {
         "baslangic": str(baslangic),
         "bitis": str(bitis),
-        "kayitlar": [dict(r) for r in cur.fetchall()],
+        "kayitlar": kayitlar,
     }
