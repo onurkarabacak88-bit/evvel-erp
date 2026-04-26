@@ -1,9 +1,0 @@
-node_modules
-.git
-.cursor
-__pycache__/
-*.pyc
-.env
-.env.*
-static/
-dist/
