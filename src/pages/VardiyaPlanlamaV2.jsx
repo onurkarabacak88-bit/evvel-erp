@@ -8,6 +8,9 @@
  * - Şube filtresi yokken eksik slot 0 olunca gün otomatik kilitlenir
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import * as XLSX from 'xlsx';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { api } from '../utils/api';
 
 const TR_AYLAR = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
@@ -403,7 +406,9 @@ export default function VardiyaPlanlamaV2() {
   /** Eksik slot sayısı geçişi: >0 → 0 olunca (tüm şubeler) gün otomatik kilit */
   const eksikSlotOncekiRef = useRef(null);
 
-  const [gorunumModu, setGorunumModu] = useState('gun_matris'); // 'gun_matris' | 'sube_hafta'
+  const [gorunumModu, setGorunumModu] = useState('gun_matris'); // 'gun_matris' | 'sube_hafta' | 'personel_hafta'
+  const [personelHafta, setPersonelHafta] = useState(null);
+  const [personelHaftaYukleniyor, setPersonelHaftaYukleniyor] = useState(false);
   const [subeHaftaId, setSubeHaftaId] = useState('');
   const [haftaPlanCache, setHaftaPlanCache] = useState(null);
   const [haftaYukleniyor, setHaftaYukleniyor] = useState(false);
@@ -738,6 +743,26 @@ export default function VardiyaPlanlamaV2() {
   }, [gorunumModu, pazartesiSecili, subeHaftaId, gunPlani, subeler]);
 
   useEffect(() => {
+    if (gorunumModu !== 'personel_hafta') {
+      setPersonelHafta(null);
+      return;
+    }
+    let cancel = false;
+    (async () => {
+      setPersonelHaftaYukleniyor(true);
+      try {
+        const r = await api(`/vardiya/v2/hafta-personel-tablo?pazartesi=${encodeURIComponent(pazartesiSecili)}`);
+        if (!cancel) setPersonelHafta(r);
+      } catch (e) {
+        if (!cancel) setHata(e.message || 'Haftalık personel tablosu yüklenemedi');
+      } finally {
+        if (!cancel) setPersonelHaftaYukleniyor(false);
+      }
+    })();
+    return () => { cancel = true; };
+  }, [gorunumModu, pazartesiSecili]);
+
+  useEffect(() => {
     if (gorunumModu === 'sube_hafta' && !subeHaftaId && (gunPlani?.subeler?.[0]?.sube_id || subeler[0]?.id)) {
       setSubeHaftaId(String(gunPlani?.subeler?.[0]?.sube_id || subeler[0].id));
     }
@@ -1001,6 +1026,53 @@ export default function VardiyaPlanlamaV2() {
   async function uyariOnayIptal() {
     setUyariOnayModal(null);
     await yukleGun();
+  }
+
+  function personelHaftaGunBaslik(iso) {
+    const d = new Date(`${iso}T12:00:00`);
+    return TR_GUNLER[(d.getDay() + 6) % 7].slice(0, 3);
+  }
+
+  function personelHaftaExcel() {
+    if (!personelHafta?.gunler?.length || !personelHafta?.satirlar) return;
+    const { gunler, satirlar, pazartesi: pzt } = personelHafta;
+    const hdr = ['Şube', 'Görev', 'Ad', 'Soyad', ...gunler.map(personelHaftaGunBaslik), 'Kapanış', 'Notlar'];
+    const rows = satirlar.map((row) => [
+      row.sube_ad,
+      row.gorev,
+      row.ad,
+      row.soyad,
+      ...gunler.map((g) => (row.gunler?.[g]?.metin || '').replace(/\n/g, ' | ')),
+      row.kapanis_sayisi,
+      row.notlar || '',
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([hdr, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Hafta');
+    XLSX.writeFile(wb, `vardiya-personel-hafta-${pzt}.xlsx`);
+  }
+
+  function personelHaftaPdf() {
+    if (!personelHafta?.gunler?.length || !personelHafta?.satirlar) return;
+    const { gunler, satirlar, pazartesi: pzt } = personelHafta;
+    const head = [['Şube', 'Görev', 'Ad', 'Soyad', ...gunler.map(personelHaftaGunBaslik), 'Kap.', 'Notlar']];
+    const body = satirlar.map((row) => [
+      row.sube_ad,
+      row.gorev,
+      row.ad,
+      row.soyad,
+      ...gunler.map((g) => (row.gunler?.[g]?.metin || '—').replace(/\n/g, ' ')),
+      String(row.kapanis_sayisi ?? ''),
+      (row.notlar || '').slice(0, 200),
+    ]);
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
+    autoTable(doc, {
+      head,
+      body,
+      styles: { fontSize: 6, cellPadding: 1 },
+      headStyles: { fillColor: [79, 142, 247] },
+    });
+    doc.save(`vardiya-personel-hafta-${pzt}.pdf`);
   }
 
   async function otomatikDoldur() {
@@ -1725,11 +1797,19 @@ export default function VardiyaPlanlamaV2() {
                   {TR_GUNLER[(new Date(`${tarih}T12:00:00`).getDay() + 6) % 7]} · <span style={{ color: 'var(--text2)' }}>{tarih}</span>
                   <span style={{ fontWeight: 500, fontSize: 12, color: 'var(--text3)', marginLeft: 8 }}>Saat ↓ · Şube →</span>
                 </>
-              ) : (
+              ) : gorunumModu === 'sube_hafta' ? (
                 <>
                   Şube × hafta
                   <span style={{ fontWeight: 500, fontSize: 12, color: 'var(--text3)', marginLeft: 8 }}>
                     Pazartesi–Pazar · saat ↓ · gün →
+                  </span>
+                </>
+              ) : (
+                <>
+                  Personel × hafta
+                  <span style={{ fontWeight: 500, fontSize: 12, color: 'var(--text3)', marginLeft: 8 }}>
+                    Hafta <span style={{ fontFamily: 'var(--font-mono, monospace)' }}>{personelHafta?.pazartesi || pazartesiSecili}</span>
+                    {' '}· şube · görev · ad · 7 gün · kapanış · notlar
                   </span>
                 </>
               )}
@@ -1737,6 +1817,7 @@ export default function VardiyaPlanlamaV2() {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginLeft: 'auto', alignItems: 'center' }}>
               <button type="button" className={gorunumModu === 'gun_matris' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('gun_matris')}>Gün × şube</button>
               <button type="button" className={gorunumModu === 'sube_hafta' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('sube_hafta')}>Şube × hafta</button>
+              <button type="button" className={gorunumModu === 'personel_hafta' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('personel_hafta')}>Personel × hafta</button>
               {gorunumModu === 'sube_hafta' && (
                 <select className="input input-sm" value={subeHaftaId} onChange={(e) => setSubeHaftaId(e.target.value)} style={{ minWidth: 170 }}>
                   {(gunPlani?.subeler?.length ? gunPlani.subeler : (subeler || []).map((x) => ({ sube_id: x.id, sube_ad: x.ad }))).map((s) => (
@@ -1744,10 +1825,21 @@ export default function VardiyaPlanlamaV2() {
                   ))}
                 </select>
               )}
+              {gorunumModu === 'personel_hafta' && personelHafta && (
+                <>
+                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => personelHaftaExcel()}>⬇ Excel</button>
+                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => personelHaftaPdf()}>⬇ PDF</button>
+                </>
+              )}
             </div>
             {gorunumModu === 'gun_matris' && (
               <div style={{ fontSize: 11, color: 'var(--text3)', width: '100%' }}>
                 Çerçeve: gri boş · yeşil min tam · turuncu min eksik · sarı ideal eksik · açılış/kapanışta ek mavi halka · sürüklerken yeşil/sarı/kırmızı vurgu · atananlar üst üste avatar
+              </div>
+            )}
+            {gorunumModu === 'personel_hafta' && (
+              <div style={{ fontSize: 11, color: 'var(--text3)', width: '100%' }}>
+                Üstteki hafta pill’leri veya tarih ile haftayı değiştirin. Hücre: saat aralığı + şube adı; izin günü <strong>İZİNLİ</strong>.
               </div>
             )}
           </div>
@@ -1829,7 +1921,7 @@ export default function VardiyaPlanlamaV2() {
                 })()}
               </div>
             )
-          ) : (
+          ) : gorunumModu === 'sube_hafta' ? (
             <div style={{ padding: 12 }}>
               {haftaYukleniyor || !haftaPlanCache ? (
                 <div className="empty"><p>Haftalık plan yükleniyor…</p></div>
@@ -1903,6 +1995,65 @@ export default function VardiyaPlanlamaV2() {
                     );
                   })()}
                 </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ padding: 12, overflowX: 'auto' }}>
+              {personelHaftaYukleniyor || !personelHafta?.gunler ? (
+                <div className="empty"><p>Haftalık personel tablosu yükleniyor…</p></div>
+              ) : (
+                <table className="table" style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse', minWidth: 720 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg2)' }}>
+                      <th style={{ padding: 8, textAlign: 'left', whiteSpace: 'nowrap' }}>Şube</th>
+                      <th style={{ padding: 8, textAlign: 'left' }}>Görev</th>
+                      <th style={{ padding: 8, textAlign: 'left' }}>Ad Soyad</th>
+                      {personelHafta.gunler.map((iso) => (
+                        <th key={iso} style={{ padding: 8, textAlign: 'center', minWidth: 88 }}>
+                          <div>{personelHaftaGunBaslik(iso)}</div>
+                          <div style={{ fontSize: 9, color: 'var(--text3)', fontWeight: 500 }}>{iso.slice(5)}</div>
+                        </th>
+                      ))}
+                      <th style={{ padding: 8, textAlign: 'center' }}>Kapanış</th>
+                      <th style={{ padding: 8, textAlign: 'left', minWidth: 120 }}>Notlar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(personelHafta.satirlar || []).map((row) => (
+                      <tr key={row.personel_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: 8, verticalAlign: 'top' }}>{row.sube_ad}</td>
+                        <td style={{ padding: 8, verticalAlign: 'top' }}>{row.gorev}</td>
+                        <td style={{ padding: 8, verticalAlign: 'top', fontWeight: 600 }}>
+                          {row.ad}{row.soyad ? ` ${row.soyad}` : ''}
+                        </td>
+                        {personelHafta.gunler.map((iso) => {
+                          const c = row.gunler?.[iso];
+                          const m = c?.metin || '—';
+                          const iz = c?.tip === 'izinli';
+                          return (
+                            <td
+                              key={iso}
+                              style={{
+                                padding: 8,
+                                verticalAlign: 'top',
+                                whiteSpace: 'pre-line',
+                                textAlign: 'center',
+                                fontSize: 10,
+                                color: iz ? '#b91c1c' : 'var(--text2)',
+                                fontWeight: iz ? 700 : 400,
+                                background: iz ? 'rgba(239,68,68,0.07)' : 'transparent',
+                              }}
+                            >
+                              {m}
+                            </td>
+                          );
+                        })}
+                        <td style={{ padding: 8, textAlign: 'center', verticalAlign: 'top' }}>{row.kapanis_sayisi}</td>
+                        <td style={{ padding: 8, verticalAlign: 'top', fontSize: 10, color: 'var(--text3)', maxWidth: 220 }}>{row.notlar || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
           )}
