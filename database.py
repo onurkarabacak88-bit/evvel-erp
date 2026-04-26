@@ -894,18 +894,22 @@ def init_db():
                 END IF;
             END $$;
         """)
-        # Migration: islem_turu CHECK constraint — geçersiz tip girişini engeller
+        # Migration: islem_turu CHECK constraint — eski hali silip yenile.
+        # Eski production DB'lerde 'FAIZ' kabul etmeyen versiyon olabilir;
+        # bu yüzden DROP + CREATE ile her seferinde güncel hale getiriyoruz.
         cur.execute("""
             DO $$ BEGIN
-                IF NOT EXISTS (
+                IF EXISTS (
                     SELECT 1 FROM information_schema.constraint_column_usage
                     WHERE table_name = 'kart_hareketleri'
                     AND constraint_name = 'kart_hareketleri_islem_turu_check'
                 ) THEN
                     ALTER TABLE kart_hareketleri
-                    ADD CONSTRAINT kart_hareketleri_islem_turu_check
-                    CHECK (islem_turu IN ('HARCAMA', 'ODEME', 'FAIZ'));
+                    DROP CONSTRAINT kart_hareketleri_islem_turu_check;
                 END IF;
+                ALTER TABLE kart_hareketleri
+                ADD CONSTRAINT kart_hareketleri_islem_turu_check
+                CHECK (islem_turu IN ('HARCAMA', 'ODEME', 'FAIZ'));
             EXCEPTION WHEN others THEN NULL;
             END $$;
         """)
