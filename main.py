@@ -5913,11 +5913,11 @@ def v2_atama_check(a: _V2AtamaIn):
         "uyarilar": uyarilar,
         "kritik_var": any(u["seviye"] == "kritik" for u in uyarilar),
         "personel_gun": {
-            "durum": gd["durum"],
-            "kalan_saat": gd["kalan_saat"],
-            "toplam_saat": gd["toplam_saat"],
-            "max_gunluk_saat": gd["max_gunluk_saat"],
-            "atama_sayisi": gd["atama_sayisi"],
+            "durum": gd.get("durum"),
+            "kalan_saat": gd.get("kalan_saat"),
+            "toplam_saat": gd.get("toplam_saat"),
+            "max_gunluk_saat": gd.get("max_gunluk_saat", 9.0),
+            "atama_sayisi": gd.get("atama_sayisi", 0),
         },
     }
 

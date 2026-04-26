@@ -440,18 +440,8 @@ def gun_kilit_kaydet(cur, tarih: date, kilitli: bool, aciklama: str = "") -> Non
         cur.execute("DELETE FROM vardiya_gun_kilit WHERE tarih = %s::date", (tarih,))
 
 
-def personel_kisit_getir(cur, personel_id: str) -> Dict[str, Any]:
-    """
-    Personelin kısıtlarını döner. Kayıt yoksa default değerlerle döner
-    (ilk kullanımda upsert tetiklemez — okurken transparan).
-    """
-    cur.execute(
-        "SELECT * FROM personel_kisit WHERE personel_id = %s",
-        (personel_id,)
-    )
-    r = cur.fetchone()
-    if r:
-        return dict(r)
+def _personel_kisit_varsayilan(personel_id: str) -> Dict[str, Any]:
+    """Şema/kayıt eksik olsa bile tüm beklenen anahtarlar (KeyError önleme)."""
     return {
         "personel_id": personel_id,
         "max_gunluk_saat": 9.0,
@@ -462,6 +452,49 @@ def personel_kisit_getir(cur, personel_id: str) -> Dict[str, Any]:
         "calisilabilir_saat_max": None,
         "min_gecis_dk": 30,
     }
+
+
+def personel_kisit_getir(cur, personel_id: str) -> Dict[str, Any]:
+    """
+    Personelin kısıtlarını döner. Kayıt yoksa default değerlerle döner
+    (ilk kullanımda upsert tetiklemez — okurken transparan).
+    Eski DB satırında eksik kolon varsa varsayılanlarla tamamlanır.
+    """
+    cur.execute(
+        "SELECT * FROM personel_kisit WHERE personel_id = %s",
+        (personel_id,)
+    )
+    r = cur.fetchone()
+    base = _personel_kisit_varsayilan(personel_id)
+    if not r:
+        return base
+    row = dict(r)
+    for k, v in base.items():
+        if k == "personel_id":
+            continue
+        if k not in row or row[k] is None:
+            row[k] = v
+    row["personel_id"] = personel_id
+    try:
+        row["max_gunluk_saat"] = float(row.get("max_gunluk_saat") or base["max_gunluk_saat"])
+    except (TypeError, ValueError):
+        row["max_gunluk_saat"] = base["max_gunluk_saat"]
+    try:
+        row["max_haftalik_saat"] = float(row.get("max_haftalik_saat") or base["max_haftalik_saat"])
+    except (TypeError, ValueError):
+        row["max_haftalik_saat"] = base["max_haftalik_saat"]
+    if row.get("min_gecis_dk") is None:
+        row["min_gecis_dk"] = base["min_gecis_dk"]
+    else:
+        try:
+            row["min_gecis_dk"] = int(row["min_gecis_dk"])
+        except (TypeError, ValueError):
+            row["min_gecis_dk"] = base["min_gecis_dk"]
+    iz = row.get("izinli_subeler")
+    row["izinli_subeler"] = list(iz) if iz is not None else []
+    yz = row.get("yasak_subeler")
+    row["yasak_subeler"] = list(yz) if yz is not None else []
+    return row
 
 
 # ═══════════════════════════════════════════════════════════════════
