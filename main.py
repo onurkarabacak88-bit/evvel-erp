@@ -5738,6 +5738,10 @@ class _V2KisitIn(BaseModel):
     calisilabilir_saat_min: Optional[str] = None
     calisilabilir_saat_max: Optional[str] = None
     min_gecis_dk: int = 30
+    # YENİ: hibrit preset + ders saatleri + yemek molası
+    vardiya_preset_json: Dict[str, Any] = Field(default_factory=dict)
+    gun_saat_kisitlari_json: Dict[str, Any] = Field(default_factory=dict)
+    yemek_sube_id: Optional[str] = None
 
 class _V2AtamaIn(BaseModel):
     personel_id: str
@@ -5857,26 +5861,105 @@ def v2_kisit_getir(pid: str):
 
 @app.put("/api/vardiya/v2/kisit/{pid}")
 def v2_kisit_kaydet(pid: str, k: _V2KisitIn):
+    """
+    Eski PostgreSQL kurulumlarında `personel_kisit` tablosunda ayrı NOT NULL `id`
+    kolonu olabiliyor; INSERT `id` vermezse NotNullViolation oluşur. Kolon varsa
+    UUID üretilir.
+    """
     with db() as (conn, cur):
-        cur.execute("""
-            INSERT INTO personel_kisit
-                (personel_id, max_gunluk_saat, max_haftalik_saat,
-                 izinli_subeler, yasak_subeler,
-                 calisilabilir_saat_min, calisilabilir_saat_max, min_gecis_dk)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (personel_id) DO UPDATE SET
-                max_gunluk_saat = EXCLUDED.max_gunluk_saat,
-                max_haftalik_saat = EXCLUDED.max_haftalik_saat,
-                izinli_subeler = EXCLUDED.izinli_subeler,
-                yasak_subeler = EXCLUDED.yasak_subeler,
-                calisilabilir_saat_min = EXCLUDED.calisilabilir_saat_min,
-                calisilabilir_saat_max = EXCLUDED.calisilabilir_saat_max,
-                min_gecis_dk = EXCLUDED.min_gecis_dk,
-                guncelleme = NOW()
-        """, (pid, k.max_gunluk_saat, k.max_haftalik_saat,
-              k.izinli_subeler, k.yasak_subeler,
-              _t(k.calisilabilir_saat_min), _t(k.calisilabilir_saat_max),
-              k.min_gecis_dk))
+        cur.execute(
+            """
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'personel_kisit'
+              AND column_name = 'id'
+            """
+        )
+        has_id_col = cur.fetchone() is not None
+        tmin = _t(k.calisilabilir_saat_min)
+        tmax = _t(k.calisilabilir_saat_max)
+        if has_id_col:
+            kid = str(uuid.uuid4())
+            cur.execute(
+                """
+                INSERT INTO personel_kisit
+                    (id, personel_id, max_gunluk_saat, max_haftalik_saat,
+                     izinli_subeler, yasak_subeler,
+                     calisilabilir_saat_min, calisilabilir_saat_max, min_gecis_dk)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (personel_id) DO UPDATE SET
+                    max_gunluk_saat = EXCLUDED.max_gunluk_saat,
+                    max_haftalik_saat = EXCLUDED.max_haftalik_saat,
+                    izinli_subeler = EXCLUDED.izinli_subeler,
+                    yasak_subeler = EXCLUDED.yasak_subeler,
+                    calisilabilir_saat_min = EXCLUDED.calisilabilir_saat_min,
+                    calisilabilir_saat_max = EXCLUDED.calisilabilir_saat_max,
+                    min_gecis_dk = EXCLUDED.min_gecis_dk,
+                    guncelleme = NOW()
+                """,
+                (
+                    kid,
+                    pid,
+                    k.max_gunluk_saat,
+                    k.max_haftalik_saat,
+                    k.izinli_subeler,
+                    k.yasak_subeler,
+                    tmin,
+                    tmax,
+                    k.min_gecis_dk,
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO personel_kisit
+                    (personel_id, max_gunluk_saat, max_haftalik_saat,
+                     izinli_subeler, yasak_subeler,
+                     calisilabilir_saat_min, calisilabilir_saat_max, min_gecis_dk)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (personel_id) DO UPDATE SET
+                    max_gunluk_saat = EXCLUDED.max_gunluk_saat,
+                    max_haftalik_saat = EXCLUDED.max_haftalik_saat,
+                    izinli_subeler = EXCLUDED.izinli_subeler,
+                    yasak_subeler = EXCLUDED.yasak_subeler,
+                    calisilabilir_saat_min = EXCLUDED.calisilabilir_saat_min,
+                    calisilabilir_saat_max = EXCLUDED.calisilabilir_saat_max,
+                    min_gecis_dk = EXCLUDED.min_gecis_dk,
+                    guncelleme = NOW()
+                """,
+                (
+                    pid,
+                    k.max_gunluk_saat,
+                    k.max_haftalik_saat,
+                    k.izinli_subeler,
+                    k.yasak_subeler,
+                    tmin,
+                    tmax,
+                    k.min_gecis_dk,
+                ),
+            )
+        # YENİ alanlar (preset, ders saatleri, yemek molası) — UPDATE ayrı.
+        # Eski/yeni schema fark etmez; kolonlar yoksa migration zaten ekleyecek.
+        import json as _json
+        try:
+            cur.execute(
+                """
+                UPDATE personel_kisit
+                SET vardiya_preset_json = %s::jsonb,
+                    gun_saat_kisitlari_json = %s::jsonb,
+                    yemek_sube_id = %s,
+                    guncelleme = NOW()
+                WHERE personel_id = %s
+                """,
+                (
+                    _json.dumps(k.vardiya_preset_json or {}),
+                    _json.dumps(k.gun_saat_kisitlari_json or {}),
+                    k.yemek_sube_id,
+                    pid,
+                ),
+            )
+        except Exception:
+            # Eski schema'da kolon yoksa sessiz geç (migration sonrasında çalışacak)
+            pass
     return {"basarili": True}
 
 
@@ -5909,9 +5992,16 @@ def v2_atama_check(a: _V2AtamaIn):
             _t(a.baslangic_saat), _t(a.bitis_saat)
         )
         gd = _vv2.personel_gun_durumu(cur, a.personel_id, t)
+    has_cakisma = any(u.get("tip") == "cakisma" for u in uyarilar)
+    # Override yalnızca çakışma dışı kritikler için; çakışma fiziksel blok (override edilemez).
+    override_gerekir = any(
+        u.get("seviye") == "kritik" and u.get("tip") != "cakisma" for u in uyarilar
+    )
     return {
         "uyarilar": uyarilar,
         "kritik_var": any(u["seviye"] == "kritik" for u in uyarilar),
+        "cakisma_var": has_cakisma,
+        "override_gerekir": override_gerekir,
         "personel_gun": {
             "durum": gd.get("durum"),
             "kalan_saat": gd.get("kalan_saat"),
@@ -5959,6 +6049,17 @@ def v2_gun_temizle(tarih: str, sube_id: Optional[str] = None):
     t = _dt.strptime(tarih, "%Y-%m-%d").date()
     with db() as (conn, cur):
         return _vv2.gun_temizle(cur, t, sube_id)
+
+
+@app.get("/api/vardiya/v2/hafta-personel-tablo")
+def v2_hafta_personel_tablo(pazartesi: str):
+    """Tulipi PDF formatında personel × 7 gün haftalık görünüm."""
+    from datetime import datetime as _dt
+    p = _dt.strptime(pazartesi, "%Y-%m-%d").date()
+    # Pazartesi'ye normalize et
+    p = p - timedelta(days=p.weekday())
+    with db() as (conn, cur):
+        return _vv2.personel_haftalik_gorunum(cur, p)
 
 
 @app.post("/api/vardiya/v2/gun-kopyala")
@@ -6089,6 +6190,69 @@ def v2_rapor_izinli_calisti(
     d2 = _dt.strptime(bitis[:10], "%Y-%m-%d").date()
     with db() as (conn, cur):
         return _vv2.rapor_izinli_calisti(cur, d1, d2, limit=limit)
+
+
+# ── PRESET (TAM/PART/ARACI/AÇILIŞ/KAPANIŞ) ──
+class _V2PresetIn(BaseModel):
+    kod: str
+    ad: str
+    bas_saat: str
+    bit_saat: str
+    gece_vardiyasi: bool = False
+    renk: Optional[str] = None
+    sira: int = 0
+    aktif: bool = True
+
+
+@app.get("/api/vardiya/v2/preset")
+def v2_preset_listele():
+    with db() as (conn, cur):
+        return {"presetler": _vv2.vardiya_preset_listele(cur)}
+
+
+@app.get("/api/vardiya/v2/preset-admin")
+def v2_preset_admin_liste():
+    """Tüm preset satırları (pasif dahil) — sistem yönetimi ekranı."""
+    with db() as (conn, cur):
+        return {"presetler": _vv2.vardiya_preset_listele_hepsi(cur)}
+
+
+@app.post("/api/vardiya/v2/preset")
+def v2_preset_kaydet(p: _V2PresetIn):
+    with db() as (conn, cur):
+        cur.execute("""
+            INSERT INTO vardiya_preset (kod, ad, bas_saat, bit_saat, gece_vardiyasi, renk, sira, aktif)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (kod) DO UPDATE SET
+                ad = EXCLUDED.ad,
+                bas_saat = EXCLUDED.bas_saat,
+                bit_saat = EXCLUDED.bit_saat,
+                gece_vardiyasi = EXCLUDED.gece_vardiyasi,
+                renk = EXCLUDED.renk,
+                sira = EXCLUDED.sira,
+                aktif = EXCLUDED.aktif
+        """, (p.kod, p.ad, _t(p.bas_saat), _t(p.bit_saat), p.gece_vardiyasi,
+              p.renk, p.sira, p.aktif))
+    return {"basarili": True}
+
+
+@app.delete("/api/vardiya/v2/preset/{kod}")
+def v2_preset_sil(kod: str):
+    with db() as (conn, cur):
+        cur.execute("UPDATE vardiya_preset SET aktif = FALSE WHERE kod = %s", (kod,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Preset bulunamadı")
+    return {"basarili": True}
+
+
+@app.get("/api/vardiya/v2/personel-onerilen-saat")
+def v2_personel_onerilen_saat(personel_id: str, tarih: str):
+    """Personelin verilen tarih için önerilen vardiya saatini döner (preset)."""
+    from datetime import datetime as _dt
+    t = _dt.strptime(tarih, "%Y-%m-%d").date()
+    with db() as (conn, cur):
+        preset = _vv2.personel_gun_preset(cur, personel_id, t)
+        return {"preset": preset, "tarih": tarih}
 
 
 # ── OVERRIDE LOG ──

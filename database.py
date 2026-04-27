@@ -2167,6 +2167,33 @@ $$;
             "ON vardiya_slot (sube_id, aktif, sira)"
         )
 
+        # 2a) Vardiya preset (sistem genel — TAM/PART/ARACI/AÇILIŞ/KAPANIŞ)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS vardiya_preset (
+                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                kod             TEXT NOT NULL UNIQUE,
+                ad              TEXT NOT NULL,
+                bas_saat        TIME NOT NULL,
+                bit_saat        TIME NOT NULL,
+                gece_vardiyasi  BOOLEAN NOT NULL DEFAULT FALSE,
+                renk            TEXT,
+                sira            INT NOT NULL DEFAULT 0,
+                aktif           BOOLEAN NOT NULL DEFAULT TRUE,
+                olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        # Default presetleri seed et (ilk kurulumda) — varsa atlanır
+        cur.execute("""
+            INSERT INTO vardiya_preset (kod, ad, bas_saat, bit_saat, renk, sira)
+            VALUES
+                ('TAM',     'Tam Mesai',  '09:00', '18:30', '#3b82f6', 1),
+                ('PART',    'Part-Time',  '14:00', '19:00', '#22c55e', 2),
+                ('ARACI',   'Aracı',      '11:00', '21:00', '#facc15', 3),
+                ('ACILIS',  'Açılışçı',   '06:00', '14:00', '#f97316', 4),
+                ('KAPANIS', 'Kapanışçı',  '18:00', '00:00', '#a855f7', 5)
+            ON CONFLICT (kod) DO NOTHING
+        """)
+
         # 2) Personel kısıtları — kişi başına 1 satır
         cur.execute("""
             CREATE TABLE IF NOT EXISTS personel_kisit (
@@ -2180,6 +2207,13 @@ $$;
                 calisilabilir_saat_max   TIME,
                 min_gecis_dk             INT NOT NULL DEFAULT 60,
                                          -- şube değişiminde min süre
+                vardiya_preset_json      JSONB NOT NULL DEFAULT '{}'::jsonb,
+                                         -- {"hafta_ici":"PART","hafta_sonu":"TAM"} veya
+                                         -- {"pzt":"PART","sal":"PART",...,"cmt":"TAM","paz":"TAM"}
+                gun_saat_kisitlari_json  JSONB NOT NULL DEFAULT '{}'::jsonb,
+                                         -- {"car":[{"yasak_bas":"06:00","yasak_bit":"13:00","neden":"Ders"}]}
+                yemek_sube_id            TEXT REFERENCES subeler(id),
+                                         -- yemek molasının yapılacağı şube (sabit)
                 guncelleme               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 CHECK (max_gunluk_saat > 0 AND max_haftalik_saat > 0 AND min_gecis_dk >= 0)
             )
@@ -2254,6 +2288,55 @@ $$;
                 ) THEN
                     ALTER TABLE personel_kisit
                         ADD COLUMN guncelleme TIMESTAMPTZ NOT NULL DEFAULT NOW();
+                END IF;
+                -- Eski schema'da ayrı NOT NULL `id` kolonu olabilir; INSERT id vermezse hata.
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'personel_kisit'
+                      AND column_name = 'id'
+                ) THEN
+                    BEGIN
+                        UPDATE personel_kisit SET id = gen_random_uuid()
+                        WHERE id IS NULL;
+                    EXCEPTION WHEN others THEN NULL;
+                    END;
+                    BEGIN
+                        UPDATE personel_kisit SET id = gen_random_uuid()::text
+                        WHERE id IS NULL;
+                    EXCEPTION WHEN others THEN NULL;
+                    END;
+                    BEGIN
+                        ALTER TABLE personel_kisit ALTER COLUMN id SET DEFAULT gen_random_uuid();
+                    EXCEPTION WHEN others THEN NULL;
+                    END;
+                    BEGIN
+                        ALTER TABLE personel_kisit ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+                    EXCEPTION WHEN others THEN NULL;
+                    END;
+                END IF;
+                -- Yeni kolonlar (preset, ders saatleri, yemek şubesi)
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'personel_kisit'
+                      AND column_name = 'vardiya_preset_json'
+                ) THEN
+                    ALTER TABLE personel_kisit
+                        ADD COLUMN vardiya_preset_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'personel_kisit'
+                      AND column_name = 'gun_saat_kisitlari_json'
+                ) THEN
+                    ALTER TABLE personel_kisit
+                        ADD COLUMN gun_saat_kisitlari_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'personel_kisit'
+                      AND column_name = 'yemek_sube_id'
+                ) THEN
+                    ALTER TABLE personel_kisit ADD COLUMN yemek_sube_id TEXT;
                 END IF;
                 END IF;
             END $$;

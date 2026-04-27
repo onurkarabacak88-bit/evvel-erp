@@ -451,7 +451,69 @@ def _personel_kisit_varsayilan(personel_id: str) -> Dict[str, Any]:
         "calisilabilir_saat_min": None,
         "calisilabilir_saat_max": None,
         "min_gecis_dk": 30,
+        "vardiya_preset_json": {},
+        "gun_saat_kisitlari_json": {},
+        "yemek_sube_id": None,
     }
+
+
+GUN_KISALTMA = ['pzt', 'sal', 'car', 'per', 'cum', 'cmt', 'paz']
+
+
+def vardiya_preset_listele(cur) -> List[Dict[str, Any]]:
+    """Sistem genel preset'leri (TAM/PART/ARACI/AÇILIŞ/KAPANIŞ)."""
+    cur.execute("""
+        SELECT * FROM vardiya_preset WHERE aktif = TRUE ORDER BY sira, kod
+    """)
+    return [dict(r) for r in cur.fetchall()]
+
+
+def vardiya_preset_listele_hepsi(cur) -> List[Dict[str, Any]]:
+    """Yönetim ekranı: pasif preset'ler dahil."""
+    cur.execute("""
+        SELECT * FROM vardiya_preset ORDER BY aktif DESC, sira, kod
+    """)
+    return [dict(r) for r in cur.fetchall()]
+
+
+def vardiya_preset_kod_to_saat(cur, kod: str) -> Optional[Dict[str, Any]]:
+    """Preset kodundan saat aralığını döner."""
+    if not kod:
+        return None
+    cur.execute("""
+        SELECT * FROM vardiya_preset WHERE kod = %s AND aktif = TRUE
+    """, (kod,))
+    r = cur.fetchone()
+    return dict(r) if r else None
+
+
+def personel_gun_preset(cur, personel_id: str, tarih: date) -> Optional[Dict[str, Any]]:
+    """
+    Personelin verilen tarih için "önerilen vardiya preset"ini döner.
+    Mantık (öncelik sırası):
+      1) JSON'da gün-spesifik kayıt varsa (örn "car" → "TAM")
+      2) JSON'da hafta_ici / hafta_sonu varsa
+      3) Yoksa None (kullanıcı manuel girer)
+    """
+    cur.execute("""
+        SELECT vardiya_preset_json FROM personel_kisit WHERE personel_id = %s
+    """, (personel_id,))
+    r = cur.fetchone()
+    pj = (r['vardiya_preset_json'] if r else {}) or {}
+    if isinstance(pj, str):
+        import json as _json
+        try:
+            pj = _json.loads(pj)
+        except Exception:
+            pj = {}
+
+    gun_kisa = GUN_KISALTMA[tarih.weekday()]
+    haftasonu = tarih.weekday() >= 5
+
+    kod = pj.get(gun_kisa) or pj.get('hafta_sonu' if haftasonu else 'hafta_ici') or pj.get('default')
+    if not kod:
+        return None
+    return vardiya_preset_kod_to_saat(cur, kod)
 
 
 def personel_kisit_getir(cur, personel_id: str) -> Dict[str, Any]:
@@ -632,6 +694,59 @@ def personel_gun_durumu(cur, personel_id: str, tarih: date) -> Dict[str, Any]:
     }
 
 
+def _kisit_calisma_saati_uyari_mesaji(
+    smin: Optional[time],
+    smax: Optional[time],
+    bas: time,
+    bit: time,
+    gece: bool,
+) -> Optional[str]:
+    """
+    `calisilabilir_saat_min` / `calisilabilir_saat_max` ile slot uyumu.
+    min > max (örn. 23:59 – 08:00) → GECE penceresi: izinli [min, 24:00) ∪ [00:00, max];
+    gündüz dilimi (max, min) ile kesişen slotlar uyarı üretir.
+    """
+    if not smin and not smax:
+        return None
+
+    b0 = _saat_dakika(bas)
+    b1 = _saat_dakika(bit)
+    if gece or bit <= bas:
+        b1 += 24 * 60
+
+    if smin and smax and _saat_dakika(smin) > _saat_dakika(smax):
+        hi_m = _saat_dakika(smax)
+        lo_m = _saat_dakika(smin)
+
+        def _gece_penceresi_disinda(sb0: int, sb1: int) -> bool:
+            return sb0 < lo_m and sb1 > hi_m
+
+        if _gece_penceresi_disinda(b0, min(b1, 24 * 60)):
+            return (
+                f"Slot, çalışılabilir gece penceresi ({smin}–{smax}, ertesi sabah) dışındaki "
+                f"gündüz dilimine denk geliyor ({bas}–{bit})."
+            )
+        if b1 > 24 * 60:
+            sb0 = 0
+            sb1 = b1 - 24 * 60
+            if _gece_penceresi_disinda(sb0, sb1):
+                return (
+                    f"Slot, çalışılabilir gece penceresi ({smin}–{smax}) dışına taşıyor ({bas}–{bit})."
+                )
+        return None
+
+    if smin and b0 < _saat_dakika(smin):
+        return f"Personel {smin} öncesi atanmıyor. Slot başlangıcı {bas}."
+    if smax:
+        if gece:
+            if b1 > 24 * 60 + _saat_dakika(smax):
+                return f"Personel en geç ertesi sabah {smax} sonrasına uzanmıyor. Slot {bas}–{bit}."
+        else:
+            if _saat_dakika(bit) > _saat_dakika(smax):
+                return f"Personel {smax} sonrası çalışmıyor. Slot bitişi {bit}."
+    return None
+
+
 def personel_haftalik_saat(cur, personel_id: str, tarih: date) -> float:
     """Verilen tarihin ait olduğu haftada (Pzt–Paz) toplam atanmış saat."""
     pzt = tarih - timedelta(days=tarih.weekday())
@@ -717,6 +832,12 @@ def atama_uyarilari(
         return [{"tip": "sube_uyumsuz", "seviye": "kritik", "mesaj": "Slot bulunamadı", "detay": {}}]
     slot = dict(slot)
 
+    # Saat verilmemişse preset'ten al (atama_olustur ile aynı mantık)
+    if baslangic_saat is None and bitis_saat is None:
+        preset = personel_gun_preset(cur, personel_id, tarih)
+        if preset:
+            baslangic_saat = preset['bas_saat']
+            bitis_saat = preset['bit_saat']
     bas = baslangic_saat or slot['baslangic_saat']
     bit = bitis_saat or slot['bitis_saat']
     gece = bool(slot.get('gece_vardiyasi'))
@@ -757,21 +878,60 @@ def atama_uyarilari(
             "detay": {"sube_id": slot['sube_id'], "izinli_subeler": izinli_sub},
         })
 
-    # 3) ÇALIŞABİLİR SAAT ARALIĞI
+    # 3) ÇALIŞABİLİR SAAT ARALIĞI (gün penceresi veya min>max gece penceresi, örn. 23:59–08:00)
     smin = kisit.get('calisilabilir_saat_min')
     smax = kisit.get('calisilabilir_saat_max')
-    if smin and bas < smin:
+    if isinstance(smin, str):
+        smin = _parse_saat_metni(smin)
+    if isinstance(smax, str):
+        smax = _parse_saat_metni(smax)
+    saat_uyari = _kisit_calisma_saati_uyari_mesaji(smin, smax, bas, bit, gece)
+    if saat_uyari:
         uyarilar.append({
-            "tip": "saat_disinda", "seviye": "uyari",
-            "mesaj": f"Personel {smin} öncesi çalışmıyor. Slot başlangıcı {bas}.",
-            "detay": {"saat_min": str(smin), "slot_bas": str(bas)},
+            "tip": "saat_disinda",
+            "seviye": "uyari",
+            "mesaj": saat_uyari,
+            "detay": {
+                "saat_min": str(smin) if smin else None,
+                "saat_max": str(smax) if smax else None,
+                "slot_bas": str(bas),
+                "slot_bit": str(bit),
+            },
         })
-    if smax and bit > smax and not gece:
-        uyarilar.append({
-            "tip": "saat_disinda", "seviye": "uyari",
-            "mesaj": f"Personel {smax} sonrası çalışmıyor. Slot bitişi {bit}.",
-            "detay": {"saat_max": str(smax), "slot_bit": str(bit)},
-        })
+
+    # 3b) GÜN-BAZLI SAAT KISITLARI (öğrenci ders saatleri vs)
+    # Personel için bu güne ait yasak saat aralıkları varsa ve atama bunlarla
+    # çakışıyorsa "kritik" uyarı (override edilebilir).
+    cur.execute(
+        "SELECT gun_saat_kisitlari_json FROM personel_kisit WHERE personel_id = %s",
+        (personel_id,)
+    )
+    _gskr = cur.fetchone()
+    gsk = (_gskr['gun_saat_kisitlari_json'] if _gskr else {}) or {}
+    if isinstance(gsk, str):
+        try:
+            import json as _json
+            gsk = _json.loads(gsk)
+        except Exception:
+            gsk = {}
+    gun_kisa = GUN_KISALTMA[tarih.weekday()]
+    yasak_listesi = gsk.get(gun_kisa) or []
+    if yasak_listesi:
+        for ys in yasak_listesi:
+            yb = _parse_saat_metni(ys.get('yasak_bas'))
+            yt = _parse_saat_metni(ys.get('yasak_bit'))
+            if not yb or not yt:
+                continue
+            if araliklar_cakisir(yb, yt, False, bas, bit, gece):
+                uyarilar.append({
+                    "tip": "saat_disinda",
+                    "seviye": "kritik",
+                    "mesaj": (f"Bu personelin {ys.get('neden') or 'kısıtlı saat'} "
+                              f"({yb.strftime('%H:%M')}–{yt.strftime('%H:%M')}) "
+                              f"ile atama saati çakışıyor. Emin misin?"),
+                    "detay": {"yasak_bas": str(yb), "yasak_bit": str(yt),
+                              "neden": ys.get('neden')},
+                })
 
     # 4) GÜNLÜK SAAT KONTROLÜ
     gun_d = personel_gun_durumu(cur, personel_id, tarih)
@@ -891,6 +1051,15 @@ def atama_olustur(
     """
     uyarilar = atama_uyarilari(cur, personel_id, slot_id, tarih,
                                baslangic_saat, bitis_saat)
+
+    # FIZIK KURALI: Çakışma override edilemez (aynı anda iki yerde olunamaz).
+    cakisma_var = any(u['tip'] == 'cakisma' for u in uyarilar)
+    if cakisma_var:
+        return {"basarili": False, "atama_id": None, "uyarilar": uyarilar,
+                "mesaj": "Aynı anda iki yerde olunamaz — bu kural override edilemez."}
+
+    # Diğer kritikler (şube uyumsuz, saat aşımı, izinli, ders saati vs)
+    # override ile geçer.
     kritik_var = any(u['seviye'] == 'kritik' for u in uyarilar)
     if kritik_var and not override:
         return {"basarili": False, "atama_id": None, "uyarilar": uyarilar,
@@ -903,6 +1072,15 @@ def atama_olustur(
         return {"basarili": False, "atama_id": None, "uyarilar": [],
                 "mesaj": "Slot bulunamadı."}
     slot = dict(slot)
+    # Saat öncelik sırası:
+    #   1) Caller'ın verdiği saat (drop popup'tan)
+    #   2) Personel preset'i (TAM/PART/ARACI vs — gün-bazlı)
+    #   3) Slot varsayılanı
+    if baslangic_saat is None and bitis_saat is None:
+        preset = personel_gun_preset(cur, personel_id, tarih)
+        if preset:
+            baslangic_saat = preset['bas_saat']
+            bitis_saat = preset['bit_saat']
     bas = baslangic_saat or slot['baslangic_saat']
     bit = bitis_saat or slot['bitis_saat']
     gece = bool(slot.get('gece_vardiyasi'))
@@ -1116,6 +1294,30 @@ def gun_planini_getir(cur, tarih: date, sube_id: Optional[str] = None) -> Dict[s
     for a in tum_atamalar:
         atama_by_slot.setdefault(a['slot_id'], []).append(a)
 
+    # Yemek molası şubesi — havuz + atama satırlarında gösterim için (tek sorgu)
+    cur.execute("SELECT id FROM personel WHERE aktif = TRUE")
+    _havuz_ids = [str(r["id"]) for r in cur.fetchall()]
+    _atama_ids = [str(a["personel_id"]) for a in tum_atamalar]
+    _y_pid = list(set(_havuz_ids) | set(_atama_ids))
+    yemek_by_pid: Dict[str, Dict[str, Any]] = {}
+    if _y_pid:
+        cur.execute(
+            """
+            SELECT pk.personel_id::text AS personel_id,
+                   pk.yemek_sube_id::text AS yemek_sube_id,
+                   s.ad AS yemek_sube_ad
+            FROM personel_kisit pk
+            LEFT JOIN subeler s ON s.id = pk.yemek_sube_id
+            WHERE pk.personel_id = ANY(%s)
+            """,
+            (_y_pid,),
+        )
+        for row in cur.fetchall():
+            yemek_by_pid[str(row["personel_id"])] = dict(row)
+    for a in tum_atamalar:
+        ym = yemek_by_pid.get(str(a["personel_id"]))
+        a["yemek_sube_ad"] = ym.get("yemek_sube_ad") if ym else None
+
     sube_blocks: List[Dict[str, Any]] = []
     for s in subeler:
         s_slotlar = [sl for sl in tum_slotlar if sl['sube_id'] == s['id']]
@@ -1152,10 +1354,13 @@ def gun_planini_getir(cur, tarih: date, sube_id: Optional[str] = None) -> Dict[s
         p.pop("ad_soyad", None)
         gd = personel_gun_durumu(cur, p['id'], tarih)
         haf = personel_haftalik_saat(cur, p['id'], tarih)
+        ym = yemek_by_pid.get(str(p["id"]))
         personeller.append({
             **p,
             "gun_durumu": gd,
             "haftalik_saat": round(haf, 2),
+            "yemek_sube_id": ym.get("yemek_sube_id") if ym else None,
+            "yemek_sube_ad": ym.get("yemek_sube_ad") if ym else None,
         })
 
     return {
@@ -1288,6 +1493,125 @@ def hafta_personel_tablosu(cur, herhangi_bir_gun: date) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════
 # RAPORLAMA (Aşama 7)
 # ═══════════════════════════════════════════════════════════════════
+
+def personel_haftalik_gorunum(cur, pazartesi: date) -> Dict[str, Any]:
+    """
+    Tulipi PDF formatında personel × hafta görünümü.
+    Her personel için 7 günün her biri için 1 hücre:
+      - "saat" → kendi asıl şubesinde çalışıyor (örn "09:00-18:30")
+      - "sube" → başka şubeye gönderildi (örn "ZAFER")
+      - "izinli" → izin
+      - "yok" → planlanmamış
+    Ayrıca: kapanış sayısı (kapanış slotu sayısı), notlar.
+    """
+    paz = pazartesi + timedelta(days=6)
+    gunler = [pazartesi + timedelta(days=i) for i in range(7)]
+
+    # Tüm aktif personel
+    cur.execute("""
+        SELECT p.id, p.ad_soyad, p.gorev, p.sube_id,
+               s.ad AS asil_sube_ad
+        FROM personel p
+        LEFT JOIN subeler s ON s.id = p.sube_id
+        WHERE p.aktif = TRUE
+        ORDER BY s.ad NULLS LAST, p.gorev, p.ad_soyad
+    """)
+    personeller = [dict(r) for r in cur.fetchall()]
+
+    # Tüm haftalık atamalar (bir kerede)
+    cur.execute("""
+        SELECT a.tarih, a.personel_id, a.baslangic_saat, a.bitis_saat, a.gece_vardiyasi,
+               sl.tip AS slot_tip, sl.sube_id AS slot_sube_id, su.ad AS slot_sube_ad
+        FROM vardiya_atama a
+        JOIN vardiya_slot sl ON sl.id = a.slot_id
+        LEFT JOIN subeler su ON su.id = sl.sube_id
+        WHERE a.tarih BETWEEN %s::date AND %s::date AND a.durum != 'iptal'
+        ORDER BY a.tarih, a.baslangic_saat
+    """, (pazartesi, paz))
+    atamalar = [dict(r) for r in cur.fetchall()]
+
+    # Tüm haftalık izinler
+    cur.execute("""
+        SELECT personel_id, baslangic_tarih, bitis_tarih, tip
+        FROM personel_izin
+        WHERE bitis_tarih >= %s::date AND baslangic_tarih <= %s::date
+    """, (pazartesi, paz))
+    izinler = [dict(r) for r in cur.fetchall()]
+
+    def hucre(personel: Dict[str, Any], tarih: date) -> Dict[str, Any]:
+        # 1) İzin
+        for iz in izinler:
+            if iz['personel_id'] == personel['id'] \
+               and iz['baslangic_tarih'] <= tarih <= iz['bitis_tarih']:
+                return {"tip": "izinli", "metin": "İZİNLİ", "renk": "#ef4444"}
+
+        # 2) O güne ait atamalar
+        gun_atamalar = [a for a in atamalar if a['personel_id'] == personel['id'] and a['tarih'] == tarih]
+        if not gun_atamalar:
+            return {"tip": "yok", "metin": "", "renk": ""}
+
+        # Birden fazlaysa hepsini "/" ile birleştir
+        parcalar = []
+        baska_sube_var = False
+        for a in gun_atamalar:
+            asil_sid = personel.get('sube_id')
+            slot_sid = a.get('slot_sube_id')
+            if asil_sid and slot_sid and asil_sid != slot_sid:
+                parcalar.append((a.get('slot_sube_ad') or '?').upper())
+                baska_sube_var = True
+            else:
+                bs = a['baslangic_saat'].strftime('%H:%M') if a['baslangic_saat'] else '?'
+                bt = a['bitis_saat'].strftime('%H:%M') if a['bitis_saat'] else '?'
+                parcalar.append(f"{bs}-{bt}")
+        return {
+            "tip": "sube" if baska_sube_var else "saat",
+            "metin": " / ".join(parcalar),
+            "renk": "#a855f7" if baska_sube_var else "",
+        }
+
+    def _ad_soyad_split(ts: str) -> Tuple[str, str]:
+        ts = (ts or '').strip()
+        if not ts:
+            return ('', '')
+        prc = ts.split(maxsplit=1)
+        if len(prc) == 1:
+            return (prc[0], '')
+        return (prc[0], prc[1])
+
+    satirlar = []
+    for p in personeller:
+        gun_hucreleri = []
+        kapanis_sayisi = 0
+        for g in gunler:
+            h = hucre(p, g)
+            gun_hucreleri.append({**h, "tarih": str(g)})
+            # Kapanış sayma — kendi şubesinde kapanış slotu varsa
+            for a in atamalar:
+                if a['personel_id'] == p['id'] and a['tarih'] == g and a.get('slot_tip') == 'kapanis':
+                    kapanis_sayisi += 1
+                    break
+        ad, soyad = _ad_soyad_split(p.get('ad_soyad'))
+        satirlar.append({
+            "personel_id":    p['id'],
+            "ad_soyad":       p['ad_soyad'],
+            "ad":             ad,
+            "soyad":          soyad,
+            "gorev":          p.get('gorev') or 'BARİSTA',
+            "asil_sube_ad":   p.get('asil_sube_ad') or '—',
+            "sube_ad":        p.get('asil_sube_ad') or '—',
+            "asil_sube_id":   p.get('sube_id'),
+            "gunler":         gun_hucreleri,
+            "kapanis_sayisi": kapanis_sayisi,
+            "notlar":         "",
+        })
+
+    return {
+        "pazartesi": str(pazartesi),
+        "pazar":     str(paz),
+        "gunler":    [str(g) for g in gunler],
+        "satirlar":  satirlar,
+    }
+
 
 def rapor_fazla_mesai(
     cur, baslangic: date, bitis: date, limit: int = 500
