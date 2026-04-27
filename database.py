@@ -2193,6 +2193,15 @@ $$;
                 ('KAPANIS', 'Kapanışçı',  '18:00', '00:00', '#a855f7', 5)
             ON CONFLICT (kod) DO NOTHING
         """)
+        # Part sabah / akşam / ara — personel_kisit.vardiya_preset_json veya sürükle-bırak hızlı seç
+        cur.execute("""
+            INSERT INTO vardiya_preset (kod, ad, bas_saat, bit_saat, renk, sira)
+            VALUES
+                ('PART1', 'Part sabah (açılış)',   '09:00', '14:30', '#22c55e', 11),
+                ('PART2', 'Part akşam (kapanış)', '14:30', '23:59', '#15803d', 12),
+                ('PART3', 'Part aracı (ara dilim)', '11:00', '21:00', '#84cc16', 13)
+            ON CONFLICT (kod) DO NOTHING
+        """)
 
         # 2) Personel kısıtları — kişi başına 1 satır
         cur.execute("""

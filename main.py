@@ -6246,13 +6246,26 @@ def v2_preset_sil(kod: str):
 
 
 @app.get("/api/vardiya/v2/personel-onerilen-saat")
-def v2_personel_onerilen_saat(personel_id: str, tarih: str):
-    """Personelin verilen tarih için önerilen vardiya saatini döner (preset)."""
+def v2_personel_onerilen_saat(
+    personel_id: str,
+    tarih: str,
+    slot_id: Optional[str] = None,
+):
+    """
+    Personelin verilen tarih için önerilen vardiya saatini döner.
+    Öncelik: personel gün preset (vardiya_preset_json) → part-time ise slot tipine göre öneri.
+    `slot_id` verilirse part-time için açılış/kapanış/ara dilimi hesaplanır.
+    """
     from datetime import datetime as _dt
     t = _dt.strptime(tarih, "%Y-%m-%d").date()
     with db() as (conn, cur):
         preset = _vv2.personel_gun_preset(cur, personel_id, t)
-        return {"preset": preset, "tarih": tarih}
+        kaynak = "personel_json" if preset else None
+        if not preset and slot_id:
+            preset = _vv2.part_time_slot_onerilen_saat(cur, personel_id, t, slot_id)
+            if preset:
+                kaynak = "part_slot"
+        return {"preset": preset, "tarih": tarih, "kaynak": kaynak}
 
 
 # ── OVERRIDE LOG ──

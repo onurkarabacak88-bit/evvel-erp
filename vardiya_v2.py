@@ -516,6 +516,136 @@ def personel_gun_preset(cur, personel_id: str, tarih: date) -> Optional[Dict[str
     return vardiya_preset_kod_to_saat(cur, kod)
 
 
+# Part-time: sabah (açılış) / akşam (kapanış) / ara — gün ortası ayrımı (09–14:30 / 14:30–24 ile uyumlu)
+PART_GUN_ORTASI_DK = 14 * 60 + 30  # 14:30
+
+
+def _vardiya_row_saat(val: Any) -> Optional[time]:
+    if val is None:
+        return None
+    if isinstance(val, time):
+        return val
+    if isinstance(val, datetime):
+        return val.time()
+    return _parse_saat_metni(str(val))
+
+
+def _sube_gun_penceresi_dk(acilis_raw: Any, kapanis_raw: Any) -> Tuple[int, int]:
+    """Şube aynı gün dakika penceresi; `24:00` kapanış → 1440 (üst sınırda kırpılır)."""
+    ac = _vardiya_row_saat(acilis_raw) or time(8, 0)
+    open_dk = _dk_from_time(ac)
+    ks = str(kapanis_raw or "").strip().upper().replace(".", ":")
+    if ks.startswith("24:"):
+        close_dk = 24 * 60
+    else:
+        kp = _vardiya_row_saat(kapanis_raw) or time(23, 59)
+        close_dk = _dk_from_time(kp)
+        if close_dk == 0 and kp == time(0, 0):
+            close_dk = 24 * 60
+    return open_dk, close_dk
+
+
+def _dk_den_time(dk: int) -> time:
+    dk = max(0, min(int(dk), 24 * 60 - 1))
+    return time(dk // 60, dk % 60)
+
+
+def part_time_slot_onerilen_saat(
+    cur,
+    personel_id: str,
+    tarih: date,
+    slot_id: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    `calisma_turu` part-time iken ve personelde gün preset'i yokken:
+      - `acilis` slot → şube açılışı–14:30 ile slotun kesişimi (sabah part)
+      - `kapanis` slot → 14:30–şube kapanışı ile slotun kesişimi (akşam part)
+      - diğer (normal / yoğun) → slot süresi şube mesai içinde kırpılır (ara / aracı)
+    Gece vardiyası slotlarında öneri verilmez (manuel saat).
+    """
+    _ = tarih  # API imzası / ileride gün bazlı kural için rezerv
+    cur.execute("SELECT calisma_turu FROM personel WHERE id = %s", (personel_id,))
+    rp = cur.fetchone()
+    cal = (rp.get("calisma_turu") if rp else None) or "surekli"
+    cal = str(cal).strip().lower().replace("-", "_")
+    if cal not in ("part_time", "part"):
+        return None
+
+    cur.execute(
+        """
+        SELECT s.*, su.acilis_saati, su.kapanis_saati
+        FROM vardiya_slot s
+        JOIN subeler su ON su.id = s.sube_id
+        WHERE s.id = %s
+        """,
+        (slot_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    slot = dict(row)
+    if bool(slot.get("gece_vardiyasi")):
+        return None
+
+    sb = _vardiya_row_saat(slot.get("baslangic_saat"))
+    se = _vardiya_row_saat(slot.get("bitis_saat"))
+    if sb is None or se is None:
+        return None
+
+    s0 = _dk_from_time(sb)
+    s1 = _dk_from_time(se)
+    if s1 <= s0:
+        return None
+
+    open_dk, close_dk = _sube_gun_penceresi_dk(slot.get("acilis_saati"), slot.get("kapanis_saati"))
+    tip = (slot.get("tip") or "normal").strip().lower()
+    mid = PART_GUN_ORTASI_DK
+
+    if tip == "acilis":
+        lo = max(s0, open_dk)
+        hi = min(s1, mid)
+    elif tip == "kapanis":
+        lo = max(s0, mid)
+        hi = min(s1, close_dk)
+    else:
+        lo = max(s0, open_dk)
+        hi = min(s1, close_dk)
+
+    if hi <= lo:
+        lo, hi = s0, s1
+
+    hi_clamped = min(hi, 24 * 60 - 1)
+    if hi_clamped <= lo:
+        lo, hi_clamped = s0, min(s1, 24 * 60 - 1)
+
+    return {
+        "kod": "_PART_ORY",
+        "ad": "Part-Time (slot önerisi)",
+        "bas_saat": _dk_den_time(lo),
+        "bit_saat": _dk_den_time(hi_clamped),
+        "gece_vardiyasi": False,
+        "renk": "#22c55e",
+        "sira": 0,
+        "aktif": True,
+    }
+
+
+def coz_varsayilan_atama_saatleri(
+    cur,
+    personel_id: str,
+    tarih: date,
+    slot_id: str,
+) -> Optional[Tuple[time, time]]:
+    """Önce personel gün preset (vardiya_preset_json); yoksa part-time slot önerisi."""
+    pr = personel_gun_preset(cur, personel_id, tarih)
+    if pr:
+        return (pr["bas_saat"], pr["bit_saat"])
+    pt = part_time_slot_onerilen_saat(cur, personel_id, tarih, slot_id)
+    if pt:
+        return (pt["bas_saat"], pt["bit_saat"])
+    return None
+
+
 def personel_kisit_getir(cur, personel_id: str) -> Dict[str, Any]:
     """
     Personelin kısıtlarını döner. Kayıt yoksa default değerlerle döner
@@ -832,12 +962,11 @@ def atama_uyarilari(
         return [{"tip": "sube_uyumsuz", "seviye": "kritik", "mesaj": "Slot bulunamadı", "detay": {}}]
     slot = dict(slot)
 
-    # Saat verilmemişse preset'ten al (atama_olustur ile aynı mantık)
+    # Saat verilmemişse: gün preset → part-time slot önerisi → slot saati
     if baslangic_saat is None and bitis_saat is None:
-        preset = personel_gun_preset(cur, personel_id, tarih)
-        if preset:
-            baslangic_saat = preset['bas_saat']
-            bitis_saat = preset['bit_saat']
+        coz = coz_varsayilan_atama_saatleri(cur, personel_id, tarih, slot_id)
+        if coz:
+            baslangic_saat, bitis_saat = coz
     bas = baslangic_saat or slot['baslangic_saat']
     bit = bitis_saat or slot['bitis_saat']
     gece = bool(slot.get('gece_vardiyasi'))
@@ -1074,13 +1203,12 @@ def atama_olustur(
     slot = dict(slot)
     # Saat öncelik sırası:
     #   1) Caller'ın verdiği saat (drop popup'tan)
-    #   2) Personel preset'i (TAM/PART/ARACI vs — gün-bazlı)
+    #   2) Gün preset → part-time slot önerisi
     #   3) Slot varsayılanı
     if baslangic_saat is None and bitis_saat is None:
-        preset = personel_gun_preset(cur, personel_id, tarih)
-        if preset:
-            baslangic_saat = preset['bas_saat']
-            bitis_saat = preset['bit_saat']
+        coz = coz_varsayilan_atama_saatleri(cur, personel_id, tarih, slot_id)
+        if coz:
+            baslangic_saat, bitis_saat = coz
     bas = baslangic_saat or slot['baslangic_saat']
     bit = bitis_saat or slot['bitis_saat']
     gece = bool(slot.get('gece_vardiyasi'))
