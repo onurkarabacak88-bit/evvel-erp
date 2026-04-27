@@ -42,13 +42,22 @@ def _saat_dakika(t: time) -> int:
     return t.hour * 60 + t.minute
 
 
-def slot_sure_saat(baslangic: time, bitis: time, gece: bool = False) -> float:
-    """Bir slot'un toplam saat süresi (gece vardiyası destekli)."""
-    bas = _saat_dakika(baslangic)
-    bit = _saat_dakika(bitis)
-    if gece or bit <= bas:
-        bit += 24 * 60
-    return round((bit - bas) / 60.0, 2)
+def _aralik_dakika_cifti(bas: time, bit: time) -> Tuple[int, int]:
+    """[bas, bit) aralığının dakika uçları; yerel saatte bit ≤ bas ise bit ertesi güne taşınır."""
+    s = _saat_dakika(bas)
+    e = _saat_dakika(bit)
+    if e <= s:
+        e += 24 * 60
+    return s, e
+
+
+def slot_sure_saat(baslangic: time, bitis: time) -> float:
+    """
+    İki saat çiftinin süresi (saat).
+    Bitiş saat olarak başlangıçtan önce veya eşitse (ör. 22:00→06:00) ertesi güne uzanır.
+    """
+    s, e = _aralik_dakika_cifti(baslangic, bitis)
+    return round((e - s) / 60.0, 2)
 
 
 def _atama_saat_cifti_normalize(
@@ -65,26 +74,11 @@ def _atama_saat_cifti_normalize(
     return baslangic_saat, bitis_saat
 
 
-def araliklar_cakisir(
-    a_bas: time, a_bit: time, a_gece: bool,
-    b_bas: time, b_bit: time, b_gece: bool,
-) -> bool:
-    """İki vardiya aralığı çakışıyor mu? Gece destekli."""
-    a1 = _saat_dakika(a_bas)
-    a2 = _saat_dakika(a_bit) + (24 * 60 if a_gece or a_bit <= a_bas else 0)
-    b1 = _saat_dakika(b_bas)
-    b2 = _saat_dakika(b_bit) + (24 * 60 if b_gece or b_bit <= b_bas else 0)
+def araliklar_cakisir(a_bas: time, a_bit: time, b_bas: time, b_bit: time) -> bool:
+    """İki vardiya aralığı çakışıyor mu? (Bitiş ≤ başlangıç → gece kesiti / +1 gün.)"""
+    a1, a2 = _aralik_dakika_cifti(a_bas, a_bit)
+    b1, b2 = _aralik_dakika_cifti(b_bas, b_bit)
     return not (a2 <= b1 or b2 <= a1)
-
-
-def gecis_dakika(
-    a_bit: time, a_gece: bool,
-    b_bas: time, b_gece: bool,
-) -> int:
-    """A bittikten sonra B başlayana kadar geçen dakika (negatif = çakışma)."""
-    a_son = _saat_dakika(a_bit) + (24 * 60 if a_gece else 0)
-    b_baslangic = _saat_dakika(b_bas) + (24 * 60 if b_gece else 0)
-    return b_baslangic - a_son
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -892,7 +886,7 @@ def personel_gun_durumu(cur, personel_id: str, tarih: date) -> Dict[str, Any]:
     """, (personel_id, tarih))
     atamalar = [dict(r) for r in cur.fetchall()]
     toplam = sum(
-        slot_sure_saat(a['baslangic_saat'], a['bitis_saat'], bool(a.get('gece_vardiyasi')))
+        slot_sure_saat(a['baslangic_saat'], a['bitis_saat'])
         for a in atamalar
     )
 
@@ -987,7 +981,6 @@ def _kisit_calisma_saati_uyari_mesaji(
     smax: Optional[time],
     bas: time,
     bit: time,
-    gece: bool,
 ) -> Optional[str]:
     """
     `calisilabilir_saat_min` / `calisilabilir_saat_max` ile slot uyumu.
@@ -999,7 +992,7 @@ def _kisit_calisma_saati_uyari_mesaji(
 
     b0 = _saat_dakika(bas)
     b1 = _saat_dakika(bit)
-    if gece or bit <= bas:
+    if bit <= bas:
         b1 += 24 * 60
 
     if smin and smax and _saat_dakika(smin) > _saat_dakika(smax):
@@ -1026,7 +1019,7 @@ def _kisit_calisma_saati_uyari_mesaji(
     if smin and b0 < _saat_dakika(smin):
         return f"Personel {smin} öncesi atanmıyor. Slot başlangıcı {bas}."
     if smax:
-        if gece:
+        if bit <= bas:
             if b1 > 24 * 60 + _saat_dakika(smax):
                 return f"Personel en geç ertesi sabah {smax} sonrasına uzanmıyor. Slot {bas}–{bit}."
         else:
@@ -1042,7 +1035,7 @@ def personel_haftalik_saat(cur, personel_id: str, tarih: date) -> float:
     cur.execute("""
         SELECT COALESCE(SUM(EXTRACT(EPOCH FROM
             CASE
-                WHEN gece_vardiyasi OR bitis_saat <= baslangic_saat
+                WHEN bitis_saat <= baslangic_saat
                   THEN ((bitis_saat::time + INTERVAL '24 hours') - baslangic_saat::time)
                 ELSE (bitis_saat::time - baslangic_saat::time)
             END
@@ -1129,8 +1122,7 @@ def atama_uyarilari(
             baslangic_saat, bitis_saat = coz
     bas = baslangic_saat or slot['baslangic_saat']
     bit = bitis_saat or slot['bitis_saat']
-    gece = bool(slot.get('gece_vardiyasi'))
-    yeni_sure = slot_sure_saat(bas, bit, gece)
+    yeni_sure = slot_sure_saat(bas, bit)
 
     # Personel kısıtları
     kisit = personel_kisit_getir(cur, personel_id)
@@ -1174,7 +1166,7 @@ def atama_uyarilari(
         smin = _parse_saat_metni(smin)
     if isinstance(smax, str):
         smax = _parse_saat_metni(smax)
-    saat_uyari = _kisit_calisma_saati_uyari_mesaji(smin, smax, bas, bit, gece)
+    saat_uyari = _kisit_calisma_saati_uyari_mesaji(smin, smax, bas, bit)
     if saat_uyari:
         uyarilar.append({
             "tip": "saat_disinda",
@@ -1211,7 +1203,7 @@ def atama_uyarilari(
             yt = _parse_saat_metni(ys.get('yasak_bit'))
             if not yb or not yt:
                 continue
-            if araliklar_cakisir(yb, yt, False, bas, bit, gece):
+            if araliklar_cakisir(yb, yt, bas, bit):
                 uyarilar.append({
                     "tip": "saat_disinda",
                     "seviye": "kritik",
@@ -1252,9 +1244,9 @@ def atama_uyarilari(
     #    Eşik personel_kisit.min_gecis_dk; kayıt yoksa varsayılan 30 dk. 0 = kontrol kapalı.
     min_gecis = int(kisit.get('min_gecis_dk') or 0)
     for a in gun_d['atamalar']:
-        a_bas = a['baslangic_saat']; a_bit = a['bitis_saat']; a_gece = bool(a.get('gece_vardiyasi'))
+        a_bas = a['baslangic_saat']; a_bit = a['bitis_saat']
         # ÇAKIŞMA
-        if araliklar_cakisir(a_bas, a_bit, a_gece, bas, bit, gece):
+        if araliklar_cakisir(a_bas, a_bit, bas, bit):
             uyarilar.append({
                 "tip": "cakisma", "seviye": "kritik",
                 "mesaj": (f"Aynı saatte başka atama var: {a.get('slot_ad')} "
@@ -1265,10 +1257,8 @@ def atama_uyarilari(
             # GEÇİŞ SÜRESİ — sadece farklı şube ise
             if a['sube_id'] != slot['sube_id']:
                 # Önce hangisi bitiyor, ona göre boşluk hesapla
-                a1 = _saat_dakika(a_bas) + (24 * 60 if a_gece else 0)
-                a2 = _saat_dakika(a_bit) + (24 * 60 if a_gece or a_bit <= a_bas else 0)
-                b1 = _saat_dakika(bas) + (24 * 60 if gece else 0)
-                b2 = _saat_dakika(bit) + (24 * 60 if gece or bit <= bas else 0)
+                a1, a2 = _aralik_dakika_cifti(a_bas, a_bit)
+                b1, b2 = _aralik_dakika_cifti(bas, bit)
                 if a2 <= b1:
                     bos = b1 - a2
                 elif b2 <= a1:
