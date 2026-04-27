@@ -28,6 +28,20 @@ const SLOT_TIPI = {
 /** Yeni atama — spec POST /assign ile aynı gövde (`/atama` ile eşdeğer) */
 const V2_ATAMA_POST = '/vardiya/v2/assign';
 
+/** Sürükle-bırak «Atama saati» modalı — hızlı seç (sabit; `/vardiya/v2/preset` kullanılmaz) */
+const DROP_ATAMA_HIZLI_SAATLER = [
+  { etiket: 'Açılış tam', bas: '09:00', bit: '18:30' },
+  { etiket: 'Açılış part', bas: '09:00', bit: '14:30' },
+  { etiket: 'Kapanış part', bas: '18:30', bit: '23:59' },
+  { etiket: 'Kapanış tam', bas: '14:30', bit: '23:59' },
+  { etiket: 'Aracı 1', bas: '10:30', bit: '20:00' },
+  { etiket: 'Aracı 2', bas: '12:00', bit: '21:00' },
+  { etiket: 'Aracı 3', bas: '12:00', bit: '22:30' },
+  { etiket: 'Part', bas: '09:00', bit: '14:30' },
+  { etiket: 'Part 2', bas: '18:30', bit: '23:59' },
+  { etiket: 'Part (KAYDIRMA)', bas: '15:30', bit: '19:00' },
+];
+
 const isoToday = () => new Date().toISOString().slice(0, 10);
 const fmtSaat  = (t) => (t || '').slice(0, 5);
 const fmtTarihKisa = (s) => (s == null || s === '' ? '' : String(s).slice(0, 10));
@@ -68,14 +82,15 @@ function slotEtiketiBul(plan, slotId) {
   return '';
 }
 
-/** Havuzdan sürükleme: izinli veya günlük süre doluysa kapalı */
+/**
+ * Havuzdan sürükleme: yalnızca izinli kapalı.
+ * Günlük limit (kalan_saat) kartta uyarı olarak kalır; kısmi saat seçimi için
+ * modal açılmalı — aksi halde «hesaplanan limit dolu» ile havuz kilitlenip
+ * gerçekte 4.5h gibi kısa vardiya atanamıyordu (toplam yanlış tam slot gibi görünse bile).
+ */
 function havuzdanSuruklenebilirMi(p) {
   const d = p?.gun_durumu || {};
   if (d.durum === 'IZINLI') return false;
-  if (d.durum === 'CALISIYOR') {
-    const k = Number(d.kalan_saat);
-    if (Number.isFinite(k) && k <= 0) return false;
-  }
   return true;
 }
 
@@ -1112,7 +1127,7 @@ export default function VardiyaPlanlamaV2() {
       if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
       return;
     }
-    // Havuz → slot: izinli / günlük dolu kartlar drop zincirine hiç girmesin (toast / önizleme yok)
+    // Havuz → slot: yalnızca izinli kartlar drop zincirine girmesin (toast / önizleme yok)
     if (!transferAtamaId && !havuzdanSuruklenebilirMi(personel)) {
       transferAtamaRef.current = null;
       previewReqRef.current += 1;
@@ -1871,8 +1886,8 @@ export default function VardiyaPlanlamaV2() {
             <span style={{ color: '#22c55e', fontWeight: 700 }}>●</span> uygun{' '}
             <span style={{ color: '#facc15', fontWeight: 700 }}>●</span> uyarı{' '}
             <span style={{ color: '#a855f7', fontWeight: 700 }}>●</span> override{' '}
-            <span style={{ color: '#9ca3af', fontWeight: 700 }}>●</span> günlük dolu{' '}
-            <span style={{ color: '#ef4444', fontWeight: 700 }}>●</span> izin / limit aşımı · İzinli ve günlük dolu: sürükleme kapalı (izin: tıkla / 🌴)
+            <span style={{ color: '#9ca3af', fontWeight: 700 }}>●</span> günlük limit (hesap) dolu — yine de sürükleme açık, saat modalında kısmi seçim mümkün{' '}
+            <span style={{ color: '#ef4444', fontWeight: 700 }}>●</span> izin / limit aşımı · İzinli: sürükleme kapalı (izin: tıkla / 🌴)
           </div>
           {havuzKaynakTarih !== tarih && havuzYukleniyor && !havuzGunPlani ? (
             <div style={{ color: 'var(--text3)' }}>Havuz günü yükleniyor…</div>
@@ -1886,7 +1901,8 @@ export default function VardiyaPlanlamaV2() {
               const izinli = d.durum === 'IZINLI';
               const calisiyor = d.durum === 'CALISIYOR';
               const planYok = d.durum === 'PLANLANMADI';
-              const dolu = !izinli && calisiyor && (Number(d.kalan_saat) || 0) <= 0;
+              /** Hesaplanan günlük limit (kart uyarısı); sürükleme buna bağlı değil */
+              const hesapGunlukDolu = !izinli && calisiyor && (Number(d.kalan_saat) || 0) <= 0;
               const suruklenebilir = havuzdanSuruklenebilirMi(p);
               const g = personelKartGosterge(d, !!havuzPersonelKaynagi?.gun_kilitli);
               const haftaPlan = (d.haftalik_saat_snapshot != null)
@@ -1895,8 +1911,10 @@ export default function VardiyaPlanlamaV2() {
               const barBg = g.doluGunluk || g.fazla > 0 ? '#ef4444' : (g.yuzde >= 70 ? '#facc15' : '#22c55e');
               const subeAtamalar = calisiyor ? gunAtamaSubeleriGrup(d.atamalar, subeler) : [];
               const tt = !suruklenebilir
-                ? (izinli ? 'İzinli — tıkla: izin veya kısıtlar' : 'Günlük süre dolu — sürüklenemez, tıkla: kısıtlar')
-                : 'Tıkla: kısıtlar · Sürükle: slota ata';
+                ? (izinli ? 'İzinli — tıkla: izin veya kısıtlar' : 'Tıkla: kısıtlar')
+                : hesapGunlukDolu
+                  ? 'Günlük süre (hesap) dolu görünüyor — yine de sürükleyip kısmi saat seçebilirsiniz; sistem kontrol eder · Tıkla: kısıtlar'
+                  : 'Tıkla: kısıtlar · Sürükle: slota ata';
               return (
                 <div
                   key={p.id}
@@ -1915,7 +1933,7 @@ export default function VardiyaPlanlamaV2() {
                             : g.seviye === 'override' ? '0 0 0 1px rgba(168,85,247,0.25)'
                             : g.seviye === 'uyari' ? '0 0 0 1px rgba(250,204,21,0.25)' : 'none',
                     cursor: suruklenebilir ? 'grab' : (izinli ? 'default' : 'not-allowed'),
-                    opacity: suruklenebilir ? 1 : 0.4,
+                    opacity: suruklenebilir ? (hesapGunlukDolu ? 0.92 : 1) : 0.4,
                     background: g.bg && g.bg !== 'transparent' ? g.bg
                               : (izinli ? 'rgba(239,68,68,0.11)'
                                 : calisiyor ? 'rgba(34,197,94,0.08)' : planYok ? 'rgba(245,158,11,0.06)' : 'var(--bg3)'),
@@ -3446,15 +3464,10 @@ function DropAtamaSaatModal({
 }) {
   const [bas, setBas] = useState('09:00');
   const [bit, setBit] = useState('18:00');
-  const [presetler, setPresetler] = useState([]);
   const [oneriKaynak, setOneriKaynak] = useState(null);
   const [busy, setBusy] = useState(true);
 
   const partTime = String(personel?.calisma_turu || '').toLowerCase().replace(/-/g, '_') === 'part_time';
-  /** Hızlı seç: sabah / akşam / kaydırma — PART2/PART3 yerine PART_K */
-  const partKodlar = ['PART', 'PART1', 'PART_K'];
-  const partPresetler = partKodlar.map((k) => presetler.find((p) => p.kod === k)).filter(Boolean);
-  const digerPresetler = presetler.filter((p) => !partKodlar.includes(p.kod));
 
   useEffect(() => {
     let cancel = false;
@@ -3474,10 +3487,6 @@ function DropAtamaSaatModal({
       } catch {
         if (!cancel) setOneriKaynak(null);
       }
-      try {
-        const r = await api('/vardiya/v2/preset');
-        if (!cancel) setPresetler(r.presetler || []);
-      } catch { if (!cancel) setPresetler([]); }
       if (!cancel) {
         setBas(b0);
         setBit(b1);
@@ -3513,7 +3522,7 @@ function DropAtamaSaatModal({
       {partTime && oneriKaynak === 'part_slot' && (
         <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6, marginBottom: 0, lineHeight: 1.35 }}>
           Part-time: saatler <strong>slot tipine</strong> göre önerildi (açılış → sabah dilimi, kapanış → akşam, diğer → ara).
-          İsterseniz aşağıdan <strong>PART</strong> / <strong>PART1</strong> / <strong>PART_K</strong> veya slot saatini seçin.
+          İsterseniz aşağıdan <strong>hızlı seç</strong> düğmelerinden veya slot saatini kullanın.
         </p>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 10 }}>
@@ -3527,45 +3536,23 @@ function DropAtamaSaatModal({
         </div>
       </div>
       <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginTop: 10 }}>Hızlı seç</div>
-      {partTime && partPresetler.length > 0 && (
-        <div style={{ marginTop: 6 }}>
-          <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4 }}>Part: sabah 09:00–14:30 · akşam 18:30–23:59 · kaydırma 15:30–19:00</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {partPresetler.map((pr) => (
-              <button
-                key={pr.kod}
-                type="button"
-                className="btn btn-sm btn-secondary"
-                disabled={busy}
-                onClick={() => {
-                  setBas(fmtSaat(pr.bas_saat));
-                  setBit(fmtSaat(pr.bit_saat));
-                }}
-                title={pr.ad || pr.kod}
-              >
-                {pr.kod}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center' }}>
         <button type="button" className="btn btn-sm btn-secondary" disabled={busy} onClick={() => { setBas(slotBasDef); setBit(slotBitDef); }}>
           Slot saati ({slotBasDef}–{slotBitDef})
         </button>
-        {digerPresetler.map((pr) => (
+        {DROP_ATAMA_HIZLI_SAATLER.map((h) => (
           <button
-            key={pr.kod}
+            key={h.etiket}
             type="button"
             className="btn btn-sm btn-secondary"
             disabled={busy}
             onClick={() => {
-              setBas(fmtSaat(pr.bas_saat));
-              setBit(fmtSaat(pr.bit_saat));
+              setBas(h.bas);
+              setBit(h.bit);
             }}
-            title={pr.ad || pr.kod}
+            title={`${h.etiket}: ${h.bas} – ${h.bit}`}
           >
-            {pr.kod}
+            {h.etiket} ({h.bas}–{h.bit})
           </button>
         ))}
       </div>
