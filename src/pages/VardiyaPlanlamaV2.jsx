@@ -113,6 +113,22 @@ function avatarRenkGradient(personelId) {
   return `linear-gradient(145deg, hsl(${hue} 48% 44%), hsl(${hue} 56% 28%))`;
 }
 
+/** Havuz günü `gun_durumu.atamalar` içinden benzersiz şubeler (o şubedeki tüm atama id’leri) */
+function gunAtamaSubeleriGrup(atamalar, subelerList) {
+  const m = new Map();
+  for (const a of atamalar || []) {
+    const sid = a.sube_id != null ? String(a.sube_id) : '';
+    if (!sid) continue;
+    if (!m.has(sid)) {
+      const sn = (subelerList || []).find((x) => String(x.id) === sid)?.ad || `Şube`;
+      m.set(sid, { sube_id: sid, sube_ad: sn, atama_ids: [] });
+    }
+    const row = m.get(sid);
+    if (a.id) row.atama_ids.push(a.id);
+  }
+  return [...m.values()];
+}
+
 /**
  * Slotta bırakma önizlemesi (drag-over) — API `uyarilar` listesinden üçlü durum.
  * engel: SADECE çakışma (fizik kuralı; aynı anda iki yerde olunamaz)
@@ -344,7 +360,9 @@ function personelKartGosterge(d, gunKilitli) {
   const izinli = d.durum === 'IZINLI';
   const calisiyor = d.durum === 'CALISIYOR';
   const planYok = d.durum === 'PLANLANMADI';
-  const maxGun = Number(d.max_gunluk_saat) || 9;
+  const maxGun = (Number.isFinite(Number(d.max_gunluk_saat)) && Number(d.max_gunluk_saat) > 0)
+    ? Number(d.max_gunluk_saat)
+    : 9.5;
   const toplam = Number(d.toplam_saat) || 0;
   const kalan = Number(d.kalan_saat);
   const kalanN = Number.isFinite(kalan) ? kalan : Math.max(0, maxGun - toplam);
@@ -441,6 +459,8 @@ export default function VardiyaPlanlamaV2() {
   /** Sürükle-bırak sonrası saat seçimi + check/atama */
   const [dropSaatModal, setDropSaatModal] = useState(null);
   const [izinModal, setIzinModal] = useState(false);
+  /** Seçili haftada izin kaydı olmayan aktif personel (yasal hatırlatma) */
+  const [izinHaftaOzet, setIzinHaftaOzet] = useState(null);
   const [overrideModal, setOverrideModal] = useState(null); // {payload, uyarilar, ozetMetni?, transferAtamaId?} | null
   /** Sadece seviye uyari — drop öncesi EVET/HAYIR (override log yok) */
   const [uyariOnayModal, setUyariOnayModal] = useState(null); // aynı şekil
@@ -525,6 +545,15 @@ export default function VardiyaPlanlamaV2() {
     finally { setYukleniyor(false); }
   }, [tarih, subeFilter]);
 
+  const yukleIzinHaftaOzet = useCallback(async () => {
+    try {
+      const r = await api(`/vardiya/v2/izin-hafta-ozet?pazartesi=${encodeURIComponent(tarih)}`);
+      setIzinHaftaOzet(r);
+    } catch {
+      setIzinHaftaOzet(null);
+    }
+  }, [tarih]);
+
   const planGunTazele = useCallback(async (gunTarihi) => {
     try {
       const q = subeFilter ? `&sube_id=${subeFilter}` : '';
@@ -595,6 +624,7 @@ export default function VardiyaPlanlamaV2() {
 
   useEffect(() => { yukleSubeler(); }, [yukleSubeler]);
   useEffect(() => { yukleGun(); }, [yukleGun]);
+  useEffect(() => { void yukleIzinHaftaOzet(); }, [yukleIzinHaftaOzet]);
 
   useEffect(() => {
     eksikSlotOncekiRef.current = null;
@@ -722,7 +752,9 @@ export default function VardiyaPlanlamaV2() {
     const list = gunPlani?.personel_havuzu || [];
     return list.map((p) => {
       const d = p.gun_durumu || {};
-      const maxGun = Number(d.max_gunluk_saat) || 9;
+      const maxGun = (Number.isFinite(Number(d.max_gunluk_saat)) && Number(d.max_gunluk_saat) > 0)
+        ? Number(d.max_gunluk_saat)
+        : 9.5;
       const toplam = Number(d.toplam_saat) || 0;
       const fazla  = Number(d.fazla_gunluk_saat) || Math.max(0, toplam - maxGun);
       return {
@@ -1015,7 +1047,7 @@ export default function VardiyaPlanlamaV2() {
         body: {
           sube_id: subeId,
           mod: 'yenile',
-          hafta_ici: true,
+          hafta_ici: false,
           acilis_dakika: 60,
           kapanis_dakika: 60,
           normal_slot_dakika: 120,
@@ -1043,7 +1075,7 @@ export default function VardiyaPlanlamaV2() {
           body: {
             sube_id: s.sube_id,
             mod: 'yenile',
-            hafta_ici: true,
+            hafta_ici: false,
             acilis_dakika: 60,
             kapanis_dakika: 60,
             normal_slot_dakika: 120,
@@ -1301,6 +1333,34 @@ export default function VardiyaPlanlamaV2() {
     } catch (e) { setHata(e.message); }
   }
 
+  /** Havuz kartı: seçilen şubede o gün için personelin tüm atamalarını iptal eder (başka şubeye sürüklemek için). */
+  async function personelSubeGunAtamalariniKaldir(p, subeId) {
+    const gun = havuzKaynakTarih;
+    const ids = (p.gun_durumu?.atamalar || [])
+      .filter((a) => String(a.sube_id || '') === String(subeId))
+      .map((a) => a.id)
+      .filter(Boolean);
+    if (!ids.length) return;
+    const sid = String(subeId);
+    const ad = (subeler || []).find((s) => String(s.id) === sid)?.ad || sid;
+    if (!confirm(`${p.ad} ${p.soyad || ''} — ${gun} · ${ad}\nBu şubedeki ${ids.length} atama iptal edilsin mi?`)) return;
+    try {
+      for (const id of ids) {
+        await api(`/vardiya/v2/atama/${id}`, { method: 'DELETE' });
+      }
+      await yukleGun();
+      if (gorunumModu === 'sube_hafta') setHaftaPlanCache(null);
+      await planGunTazele(gun);
+      if (gun !== tarih) {
+        const q = subeFilter ? `&sube_id=${subeFilter}` : '';
+        const r = await api(`/vardiya/v2/gun?tarih=${encodeURIComponent(gun)}${q}`);
+        setHavuzGunPlani(r);
+      }
+    } catch (e) {
+      setHata(e.message || 'Atamalar iptal edilemedi');
+    }
+  }
+
   /** Matris hücresi: saat bandı + üst üste avatarlar + [+] drop · 🟢… + sürükle (havuz / chip transfer) */
   function matrisSlotHucre(sv, s, gunTarihi = tarih, matrisBandKey = '') {
     const t = SLOT_TIPI[sv.slot.tip] || SLOT_TIPI.normal;
@@ -1410,7 +1470,7 @@ export default function VardiyaPlanlamaV2() {
                   key={a.id}
                   className="slot-avatar-wrap"
                   style={{ marginLeft: i === 0 ? 0 : -11, zIndex: i + 1 }}
-                  title={`${tamAd}${a.yemek_sube_ad ? ` · 🍽 ${a.yemek_sube_ad}` : ''} — sürükleyerek taşı · ✕ iptal`}
+                  title={`${tamAd} · ${s.sube_ad || 'Şube'}${a.yemek_sube_ad ? ` · 🍽 ${a.yemek_sube_ad}` : ''} — sürükleyerek taşı · ✕ tek atama iptal`}
                 >
                   <div
                     className="slot-avatar-face"
@@ -1511,6 +1571,29 @@ export default function VardiyaPlanlamaV2() {
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => setLogPanel(true)}>📜 Override Log</button>
           </div>
         </div>
+        {izinHaftaOzet && (izinHaftaOzet.izin_gormeyen_sayisi || 0) > 0 && (
+          <div
+            role="status"
+            style={{
+              padding: '10px 16px',
+              background: 'rgba(245, 158, 11, 0.14)',
+              borderBottom: '1px solid var(--border)',
+              fontSize: 12,
+              color: 'var(--text2)',
+              lineHeight: 1.45,
+            }}
+          >
+            <strong style={{ color: '#b45309' }}>İzin hatırlatması</strong>
+            {' '}(hafta {izinHaftaOzet.hafta_pazartesi} – {izinHaftaOzet.hafta_pazar}): bu hafta için henüz
+            {' '}<strong>hiç izin kaydı olmayan</strong> aktif personel{' '}
+            <strong>{izinHaftaOzet.izin_gormeyen_sayisi}</strong> kişi — yasal izin planlaması için «İzinler»den
+            (yıllık / mazeret / rapor vb.) kayıt ekleyin.
+            <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text3)', maxHeight: 44, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {(izinHaftaOzet.izin_gormeyen_personel || []).slice(0, 18).map((x) => x.ad_soyad).join(' · ')}
+              {(izinHaftaOzet.izin_gormeyen_sayisi || 0) > 18 ? ` … +${(izinHaftaOzet.izin_gormeyen_sayisi || 0) - 18}` : ''}
+            </div>
+          </div>
+        )}
 
         <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.14, color: 'var(--text3)', marginBottom: 8 }}>HEADER · HAFTA & GÜNLER</div>
@@ -1661,10 +1744,24 @@ export default function VardiyaPlanlamaV2() {
       )}
       {draggedPersonel && (
         <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12, padding: '8px 12px', background: 'var(--bg2)', borderRadius: 6 }}>
-          Sürükleme: önce <strong>yerel</strong> çakışma (anı), ardından <strong>atama/check</strong> ({PREVIEW_DEBOUNCE_MS}ms gecikmeli) kesin renk.
-          {' '}<strong style={{ color: '#22c55e' }}>Yeşil</strong> = uygun ·{' '}
-          <strong style={{ color: '#facc15' }}>Sarı</strong> = uyarı / onay ·{' '}
-          <strong style={{ color: '#ef4444' }}>Kırmızı</strong> = atanamaz.
+          <div>
+            <strong>{draggedPersonel.ad} {draggedPersonel.soyad}</strong>
+            {(() => {
+              const gr = gunAtamaSubeleriGrup(draggedPersonel.gun_durumu?.atamalar, subeler);
+              if (!gr.length) return null;
+              return (
+                <span style={{ color: 'var(--text3)', fontWeight: 500 }}>
+                  {' '}· havuz günü şubeler: {gr.map((x) => x.sube_ad).join(', ')}
+                </span>
+              );
+            })()}
+          </div>
+          <div style={{ marginTop: 6, fontSize: 11 }}>
+            Sürükleme: önce <strong>yerel</strong> çakışma (anı), ardından <strong>atama/check</strong> ({PREVIEW_DEBOUNCE_MS}ms gecikmeli) kesin renk.
+            {' '}<strong style={{ color: '#22c55e' }}>Yeşil</strong> = uygun ·{' '}
+            <strong style={{ color: '#facc15' }}>Sarı</strong> = uyarı / onay ·{' '}
+            <strong style={{ color: '#ef4444' }}>Kırmızı</strong> = atanamaz.
+          </div>
         </div>
       )}
 
@@ -1796,6 +1893,7 @@ export default function VardiyaPlanlamaV2() {
                 ? Number(d.haftalik_saat_snapshot)
                 : Number(p.haftalik_saat) || 0;
               const barBg = g.doluGunluk || g.fazla > 0 ? '#ef4444' : (g.yuzde >= 70 ? '#facc15' : '#22c55e');
+              const subeAtamalar = calisiyor ? gunAtamaSubeleriGrup(d.atamalar, subeler) : [];
               const tt = !suruklenebilir
                 ? (izinli ? 'İzinli — tıkla: izin veya kısıtlar' : 'Günlük süre dolu — sürüklenemez, tıkla: kısıtlar')
                 : 'Tıkla: kısıtlar · Sürükle: slota ata';
@@ -1832,6 +1930,80 @@ export default function VardiyaPlanlamaV2() {
                 >
                   <div style={{ width: 5, flexShrink: 0, background: g.accent }} aria-hidden />
                   <div style={{ flex: 1, padding: '8px 10px 8px 8px', minWidth: 0 }}>
+                    {subeAtamalar.length > 0 && (
+                      <div
+                        style={{
+                          marginBottom: 8,
+                          paddingBottom: 8,
+                          borderBottom: '1px solid var(--border)',
+                        }}
+                      >
+                        <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.04, color: 'var(--text3)', marginBottom: 6 }}>
+                          Bu gün atanmış şube{subeAtamalar.length > 1 ? 'ler' : ''} ({fmtTarihKisa(havuzKaynakTarih)})
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                          {subeAtamalar.map((row) => (
+                            <div
+                              key={row.sube_id}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                background: 'rgba(79,142,247,0.1)',
+                                border: '1px solid rgba(79,142,247,0.28)',
+                                borderRadius: 6,
+                                padding: '3px 4px 3px 8px',
+                                maxWidth: '100%',
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  color: '#334155',
+                                  minWidth: 0,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                                title={row.sube_ad}
+                              >
+                                🏢 {row.sube_ad}
+                              </span>
+                              <button
+                                type="button"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  personelSubeGunAtamalariniKaldir(p, row.sube_id);
+                                }}
+                                style={{
+                                  flexShrink: 0,
+                                  width: 22,
+                                  height: 22,
+                                  borderRadius: 6,
+                                  border: '1px solid rgba(239,68,68,0.55)',
+                                  background: 'rgba(239,68,68,0.08)',
+                                  color: '#b91c1c',
+                                  fontSize: 16,
+                                  fontWeight: 800,
+                                  lineHeight: 1,
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  padding: 0,
+                                }}
+                                title={`${row.sube_ad}: bu gün bu şubedeki tüm atamaları kaldır`}
+                                aria-label={`${row.sube_ad} atamalarını kaldır`}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
                       <span style={{ fontWeight: 600, fontSize: 13, lineHeight: 1.25 }}>
                         {p.ad} {p.soyad}
@@ -2375,7 +2547,7 @@ export default function VardiyaPlanlamaV2() {
       />}
       {izinModal && <IzinModal
         personeller={(gunPlani?.personel_havuzu) || []}
-        onClose={() => { setIzinModal(false); yukleGun(); }}
+        onClose={() => { setIzinModal(false); yukleGun(); void yukleIzinHaftaOzet(); }}
       />}
       {uyariOnayModal && (
         <UyariOnayModal
@@ -3008,12 +3180,37 @@ function IzinModal({ personeller, onClose }) {
   async function ekle() {
     if (!yeni.personel_id) return;
     setBusy(true);
+    const temiz = {
+      personel_id: yeni.personel_id,
+      baslangic_tarih: yeni.baslangic_tarih,
+      bitis_tarih: yeni.bitis_tarih,
+      tip: yeni.tip,
+      aciklama: yeni.aciklama || undefined,
+    };
     try {
-      await api('/vardiya/v2/izin', { method: 'POST', body: yeni });
+      await api('/vardiya/v2/izin', { method: 'POST', body: temiz });
       setYeni({ personel_id: '', baslangic_tarih: isoToday(), bitis_tarih: isoToday(), tip: 'mazeret', aciklama: '' });
       await yukle();
-    } catch (e) { alert(e.message); }
-    finally { setBusy(false); }
+    } catch (e) {
+      const msg = String(e?.message || '');
+      const ayniHaftaIkinci =
+        msg.includes('force') || msg.includes('aynı takvim haftasında');
+      if (ayniHaftaIkinci) {
+        if (confirm(`${msg}\n\nYine de bu hafta ikinci izin kaydı oluşturulsun mu?`)) {
+          try {
+            await api('/vardiya/v2/izin', { method: 'POST', body: { ...temiz, force: true } });
+            setYeni({ personel_id: '', baslangic_tarih: isoToday(), bitis_tarih: isoToday(), tip: 'mazeret', aciklama: '' });
+            await yukle();
+          } catch (e2) {
+            alert(String(e2?.message || 'Kaydedilemedi'));
+          }
+        }
+      } else {
+        alert(msg || 'Kaydedilemedi');
+      }
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function sil(id) {
@@ -3254,7 +3451,8 @@ function DropAtamaSaatModal({
   const [busy, setBusy] = useState(true);
 
   const partTime = String(personel?.calisma_turu || '').toLowerCase().replace(/-/g, '_') === 'part_time';
-  const partKodlar = ['PART1', 'PART2', 'PART3'];
+  /** Hızlı seç: sabah / akşam / kaydırma — PART2/PART3 yerine PART_K */
+  const partKodlar = ['PART', 'PART1', 'PART_K'];
   const partPresetler = partKodlar.map((k) => presetler.find((p) => p.kod === k)).filter(Boolean);
   const digerPresetler = presetler.filter((p) => !partKodlar.includes(p.kod));
 
@@ -3315,7 +3513,7 @@ function DropAtamaSaatModal({
       {partTime && oneriKaynak === 'part_slot' && (
         <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6, marginBottom: 0, lineHeight: 1.35 }}>
           Part-time: saatler <strong>slot tipine</strong> göre önerildi (açılış → sabah dilimi, kapanış → akşam, diğer → ara).
-          İsterseniz aşağıdan Part 1 / 2 / 3 veya slot saatini seçin.
+          İsterseniz aşağıdan <strong>PART</strong> / <strong>PART1</strong> / <strong>PART_K</strong> veya slot saatini seçin.
         </p>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 10 }}>
@@ -3331,7 +3529,7 @@ function DropAtamaSaatModal({
       <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginTop: 10 }}>Hızlı seç</div>
       {partTime && partPresetler.length > 0 && (
         <div style={{ marginTop: 6 }}>
-          <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4 }}>Part (sabah 09–14:30 · akşam 14:30–23:59 · ara 11–21)</div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4 }}>Part: sabah 09:00–14:30 · akşam 18:30–23:59 · kaydırma 15:30–19:00</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {partPresetler.map((pr) => (
               <button
