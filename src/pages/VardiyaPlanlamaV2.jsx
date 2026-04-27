@@ -19,27 +19,28 @@ const TR_GUNLER = ['Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartes
 const V2_PRESET_GUN_ANAHTARLARI = ['pzt', 'sal', 'car', 'per', 'cum', 'cmt', 'paz'];
 
 const SLOT_TIPI = {
-  acilis:   { ikon: '🌅', renk: '#f59e0b', etiket: 'Açılış' },
-  normal:   { ikon: '⏱',  renk: '#4f8ef7', etiket: 'Normal' },
-  yogun:    { ikon: '🔥', renk: '#ef4444', etiket: 'Yoğun' },
-  kapanis:  { ikon: '🌙', renk: '#7c3aed', etiket: 'Kapanış' },
+  acilis:   { ikon: '🌅', renk: '#f59e0b', etiket: 'Sabah bandı' },
+  normal:   { ikon: '⏱',  renk: '#4f8ef7', etiket: 'Standart mesai' },
+  yogun:    { ikon: '🔥', renk: '#ef4444', etiket: 'Yoğun vurgu' },
+  kapanis:  { ikon: '🌙', renk: '#7c3aed', etiket: 'Akşam bandı' },
 };
 
 /** Yeni atama — spec POST /assign ile aynı gövde (`/atama` ile eşdeğer) */
 const V2_ATAMA_POST = '/vardiya/v2/assign';
 
-/** Sürükle-bırak «Atama saati» modalı — hızlı seç (sabit; `/vardiya/v2/preset` kullanılmaz) */
-const DROP_ATAMA_HIZLI_SAATLER = [
-  { etiket: 'Açılış tam', bas: '09:00', bit: '18:30' },
-  { etiket: 'Açılış part', bas: '09:00', bit: '14:30' },
-  { etiket: 'Kapanış part', bas: '18:30', bit: '23:59' },
-  { etiket: 'Kapanış tam', bas: '14:30', bit: '23:59' },
-  { etiket: 'Aracı 1', bas: '10:30', bit: '20:00' },
-  { etiket: 'Aracı 2', bas: '12:00', bit: '21:00' },
-  { etiket: 'Aracı 3', bas: '12:00', bit: '22:30' },
-  { etiket: 'Part', bas: '09:00', bit: '14:30' },
-  { etiket: 'Part 2', bas: '18:30', bit: '23:59' },
-  { etiket: 'Part (KAYDIRMA)', bas: '15:30', bit: '19:00' },
+/**
+ * Şube slotu + atama «hızlı seç» — tek kaynak. Asıl tanım başlangıç–bitiş; `tip` liste rengi / özet raporlar için.
+ */
+const SAAT_SABLONLARI = [
+  { etiket: 'Tam gün', bas: '09:00', bit: '18:30', tip: 'normal' },
+  { etiket: 'Sabah dilimi', bas: '09:00', bit: '14:30', tip: 'acilis' },
+  { etiket: 'Akşam dilimi', bas: '18:30', bit: '23:59', tip: 'kapanis' },
+  { etiket: 'Öğleden kapanışa', bas: '14:30', bit: '23:59', tip: 'kapanis' },
+  { etiket: 'Aracı bandı A', bas: '10:30', bit: '20:00', tip: 'normal' },
+  { etiket: 'Aracı bandı B', bas: '12:00', bit: '21:00', tip: 'normal' },
+  { etiket: 'Aracı bandı C', bas: '12:00', bit: '22:30', tip: 'normal' },
+  { etiket: 'Öğle yoğun', bas: '12:00', bit: '15:30', tip: 'yogun' },
+  { etiket: 'Kaydırmalı part', bas: '15:30', bit: '19:00', tip: 'normal' },
 ];
 
 const isoToday = () => new Date().toISOString().slice(0, 10);
@@ -1050,7 +1051,7 @@ export default function VardiyaPlanlamaV2() {
   }
 
   async function slotUretFromSube(subeId, subeAd) {
-    const msg = `${subeAd || 'Şube'}: Şube kartındaki açılış/kapanış/yoğun saatlerine göre AUTO: slotlar oluşturulacak.\n`
+    const msg = `${subeAd || 'Şube'}: Şube kartındaki çalışma saatleri ve yoğun penceresi bilgisine göre zaman dilimleri (AUTO:) otomatik bölünür.\n`
       + 'Ataması olan AUTO slot silinmez; kalanları silinip yenilenir. Devam?';
     if (!confirm(msg)) return;
     try {
@@ -2746,27 +2747,41 @@ function SlotModal({
     setForm({ ...form, aktif_gunler: yeni });
   }
 
+  function sablonUygula(s) {
+    setForm((prev) => ({
+      ...prev,
+      ad: s.etiket,
+      baslangic_saat: s.bas,
+      bitis_saat: s.bit,
+      tip: s.tip,
+    }));
+  }
+
   return (
     <Modal onClose={onClose} title={slot?.id ? 'Slot Düzenle' : 'Yeni Slot'}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         <div className="form-group" style={{ gridColumn: '1/-1' }}>
-          <label>Slot Adı</label>
-          <input className="input" value={form.ad} onChange={e => setForm({ ...form, ad: e.target.value })} placeholder="örn. Sabah açılışı, Öğlen yoğun…" />
+          <label>Slot adı</label>
+          <input className="input" value={form.ad} onChange={e => setForm({ ...form, ad: e.target.value })} placeholder="Şablon seçildiğinde otomatik dolar; dilerseniz özelleştirin." />
         </div>
-        <div className="form-group">
-          <label>Tip</label>
-          <select className="input" value={form.tip} onChange={e => setForm({ ...form, tip: e.target.value })}>
-            <option value="acilis">🌅 Açılış</option>
-            <option value="normal">⏱ Normal</option>
-            <option value="yogun">🔥 Yoğun</option>
-            <option value="kapanis">🌙 Kapanış</option>
-          </select>
-        </div>
-        <div className="form-group">
-          <label>
-            <input type="checkbox" checked={form.gece_vardiyasi} onChange={e => setForm({ ...form, gece_vardiyasi: e.target.checked })} />
-            {' '}Gece vardiyası (bitiş ertesi gün)
-          </label>
+        <div className="form-group" style={{ gridColumn: '1/-1' }}>
+          <label>Tanımlı saat şablonları</label>
+          <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 8px', lineHeight: 1.35 }}>
+            Planın omurgası saat aralığıdır; aşağıdan bir dilim seçin veya başlangıç/bitişi elle yazın.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+            {SAAT_SABLONLARI.map((s) => (
+              <button
+                key={s.etiket}
+                type="button"
+                className="btn btn-sm btn-secondary"
+                onClick={() => sablonUygula(s)}
+                title={`${s.etiket}: ${s.bas}–${s.bit}`}
+              >
+                {s.etiket} ({s.bas}–{s.bit})
+              </button>
+            ))}
+          </div>
         </div>
         <div className="form-group">
           <label>Başlangıç</label>
@@ -2776,6 +2791,26 @@ function SlotModal({
           <label>Bitiş</label>
           <input className="input" type="time" value={fmtSaat(form.bitis_saat)} onChange={e => setForm({ ...form, bitis_saat: e.target.value })} />
         </div>
+        <div className="form-group" style={{ gridColumn: '1/-1' }}>
+          <label>
+            <input type="checkbox" checked={form.gece_vardiyasi} onChange={e => setForm({ ...form, gece_vardiyasi: e.target.checked })} />
+            {' '}Gece vardiyası (bitiş ertesi gün)
+          </label>
+        </div>
+        <details className="form-group" style={{ gridColumn: '1/-1', marginTop: 4 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--text2)' }}>
+            Özet tipi — liste rengi ve raporlar (isteğe bağlı)
+          </summary>
+          <p style={{ fontSize: 11, color: 'var(--text3)', margin: '8px 0 6px', lineHeight: 1.35 }}>
+            Şablon seçildiğinde otomatik atanır. Matris vurgusu ve kapanış sayımı için <code>tip</code> alanı kullanılır; özel durumda değiştirin.
+          </p>
+          <select className="input" style={{ maxWidth: 280 }} value={form.tip} onChange={e => setForm({ ...form, tip: e.target.value })}>
+            <option value="normal">{SLOT_TIPI.normal.ikon} {SLOT_TIPI.normal.etiket}</option>
+            <option value="acilis">{SLOT_TIPI.acilis.ikon} {SLOT_TIPI.acilis.etiket}</option>
+            <option value="yogun">{SLOT_TIPI.yogun.ikon} {SLOT_TIPI.yogun.etiket}</option>
+            <option value="kapanis">{SLOT_TIPI.kapanis.ikon} {SLOT_TIPI.kapanis.etiket}</option>
+          </select>
+        </details>
         <div className="form-group">
           <label>Min Personel</label>
           <input className="input" type="number" min={0} value={form.min_personel} onChange={e => setForm({ ...form, min_personel: parseInt(e.target.value) || 0 })} />
@@ -3209,10 +3244,10 @@ function GanttGorunumu({ gunPlani, filtrelenmisSubeler, tarih, havuzById }) {
 
         {/* Açıklama */}
         <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 11, color: 'var(--text3)' }}>
-          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#f59e0b', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>Açılış</div>
-          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#3b82f6', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>Normal</div>
-          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#ef4444', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>Yoğun</div>
-          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#a855f7', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>Kapanış</div>
+          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#f59e0b', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>{SLOT_TIPI.acilis.etiket}</div>
+          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#3b82f6', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>{SLOT_TIPI.normal.etiket}</div>
+          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#ef4444', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>{SLOT_TIPI.yogun.etiket}</div>
+          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#a855f7', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>{SLOT_TIPI.kapanis.etiket}</div>
           <div style={{ marginLeft: 'auto' }}>Açık renk: slot zemini (kapsama hedefi) · Koyu çubuk: gerçek atama</div>
         </div>
       </div>
@@ -3826,11 +3861,15 @@ function DropAtamaSaatModal({
         {' · '}
         {gunTarihi}
       </p>
+      <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8, marginBottom: 0, lineHeight: 1.35 }}>
+        Slot şubenin çalışabileceği saat çerçevesidir (plan bandı). Bu kişinin o şubede{' '}
+        <strong>ne kadar kalacağını</strong> aşağıdaki başlangıç–bitiş belirler; seçtiğiniz süre kadar mesai yazılır.
+      </p>
       {mesaiOneriSlot && (
         <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6, marginBottom: 0, lineHeight: 1.35 }}>
           Başlangıç saatleri <strong>slot + günlük çalışma limitine</strong> göre önerildi; uzun slotlarda otomatik
           <strong> tam slot doldurma</strong> varsayılmaz. Tam gün veya başka dilim için{' '}
-          <strong>hızlı seç</strong> veya <strong>Slot saati</strong> kullanın.
+          <strong>tanımlı şablonlar</strong> veya <strong>Slot saati</strong> kullanın.
         </p>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 10 }}>
@@ -3843,12 +3882,12 @@ function DropAtamaSaatModal({
           <input className="input" type="time" value={bit} onChange={(e) => setBit(e.target.value)} disabled={busy} />
         </div>
       </div>
-      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginTop: 10 }}>Hızlı seç</div>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginTop: 10 }}>Tanımlı saat şablonları</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center' }}>
         <button type="button" className="btn btn-sm btn-secondary" disabled={busy} onClick={() => { setBas(slotBasDef); setBit(slotBitDef); }}>
           Slot saati ({slotBasDef}–{slotBitDef})
         </button>
-        {DROP_ATAMA_HIZLI_SAATLER.map((h) => (
+        {SAAT_SABLONLARI.map((h) => (
           <button
             key={h.etiket}
             type="button"
