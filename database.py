@@ -2184,6 +2184,80 @@ $$;
                 CHECK (max_gunluk_saat > 0 AND max_haftalik_saat > 0 AND min_gecis_dk >= 0)
             )
         """)
+        # Migration: Eski kurulumlarda `personel_kisit` tablosu farklı/eksik sütunlu olabilir
+        # (CREATE IF NOT EXISTS mevcut tabloyu güncellemez → UndefinedColumn: max_gunluk_saat).
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'personel_kisit'
+                ) THEN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'personel_kisit'
+                      AND column_name = 'max_gunluk_saat'
+                ) THEN
+                    ALTER TABLE personel_kisit
+                        ADD COLUMN max_gunluk_saat NUMERIC(4,2) NOT NULL DEFAULT 9;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'personel_kisit'
+                      AND column_name = 'max_haftalik_saat'
+                ) THEN
+                    ALTER TABLE personel_kisit
+                        ADD COLUMN max_haftalik_saat NUMERIC(5,2) NOT NULL DEFAULT 45;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'personel_kisit'
+                      AND column_name = 'izinli_subeler'
+                ) THEN
+                    ALTER TABLE personel_kisit
+                        ADD COLUMN izinli_subeler TEXT[] NOT NULL DEFAULT '{}';
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'personel_kisit'
+                      AND column_name = 'yasak_subeler'
+                ) THEN
+                    ALTER TABLE personel_kisit
+                        ADD COLUMN yasak_subeler TEXT[] NOT NULL DEFAULT '{}';
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'personel_kisit'
+                      AND column_name = 'calisilabilir_saat_min'
+                ) THEN
+                    ALTER TABLE personel_kisit ADD COLUMN calisilabilir_saat_min TIME;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'personel_kisit'
+                      AND column_name = 'calisilabilir_saat_max'
+                ) THEN
+                    ALTER TABLE personel_kisit ADD COLUMN calisilabilir_saat_max TIME;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'personel_kisit'
+                      AND column_name = 'min_gecis_dk'
+                ) THEN
+                    ALTER TABLE personel_kisit
+                        ADD COLUMN min_gecis_dk INT NOT NULL DEFAULT 60;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'personel_kisit'
+                      AND column_name = 'guncelleme'
+                ) THEN
+                    ALTER TABLE personel_kisit
+                        ADD COLUMN guncelleme TIMESTAMPTZ NOT NULL DEFAULT NOW();
+                END IF;
+                END IF;
+            END $$;
+        """)
 
         # 3) Personel atama — gün × slot × kişi
         cur.execute("""
