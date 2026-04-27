@@ -11,11 +11,11 @@ Tasarım kuralları (kullanıcı onaylı):
 5. Override sistemi: kritik uyarılar varsayılan blok; override ile
    atama + vardiya_override_log.
 
-6. **Asıl olan: personele tanımlanan çalışma saati.** Günlük çalışılabilir pencere
-   (`personel_kisit.calisilabilir_saat_min/max`, parça/zaman kültüründe tek parça gündüz bandı)
-   kişinin **gerçekten ne zaman işe gelebileceğidir**. Şube slotu ise **aynı anda**
-   kontenjan + «hangi band içinde iş var» **referans çerçevesidir**. Geçerli mesai süresi
-   çoğu durumda **personel bandı ∩ slot ∩ şube açılış–kapanış** kesişimidir.
+6. **Asıl olan: personele tanımlanan çalışma saati.** Kaynaklar birlikte kullanılır:
+   günlük **vardiya preset kodu** (`vardiya_preset_json`, örn. PART = 09–14:30) ile isteğe bağlı
+   tablo satırı (`calisilabilir_saat_min/max`) **kesişimi** kişinin fiilen çalışabileceği gündüz
+   bandıdır. Şube slotu kontenjan + hangi dilimde iş olduğu için **referans çerçevedir**;
+   kayıtlı mesai süresi **preset ∩ calisilabilir ∩ slot** ile uyumlu olmalıdır (otomatik ve API).
 
 7. **Kayıt birinciliği:** `vardiya_atama.baslangic_saat` / `bitis_saat` fiilen yazılan
    mesaidir; otomatik öneri ve UI buraya yaklaşır ama **personel bandı asla aşılmaz**
@@ -685,14 +685,67 @@ def _kisit_calisilabilir_gunduz_dk_band(kisit: Dict[str, Any]) -> Optional[Tuple
     return lo, hi
 
 
-def _cozumle_kirp_calisilabilir(
+def _etkin_gunduz_dk_bounds(
     cur,
     personel_id: str,
+    tarih: date,
+    kisit: Dict[str, Any],
+) -> Optional[Tuple[int, int]]:
+    """
+    Günlük «gerçekten çalışılabilir» dakika bandı: ``calisilabilir_saat`` ∩ ``vardiya_preset_json`` güni.
+
+    Birçok personelde saat yalnızca PART/TAM preset satırındadır; tabloda
+    ``calisilabilir_saat_max`` boş olabilir — o durumda da preset sınırı uygulanmalı.
+    """
+    bands: List[Tuple[int, int]] = []
+    cb = _kisit_calisilabilir_gunduz_dk_band(kisit)
+    if cb:
+        bands.append(cb)
+    pr = personel_gun_preset(cur, personel_id, tarih)
+    if pr:
+        pb = _vardiya_row_saat(pr.get("bas_saat"))
+        pe = _vardiya_row_saat(pr.get("bit_saat"))
+        if pb is not None and pe is not None and _saat_dakika(pe) > _saat_dakika(pb):
+            bands.append((_saat_dakika(pb), _saat_dakika(pe)))
+    if not bands:
+        return None
+    lo = max(b[0] for b in bands)
+    hi = min(b[1] for b in bands)
+    if hi <= lo:
+        return None
+    return lo, hi
+
+
+def _cozumle_kirp_personel_tanimlari(
+    cur,
+    personel_id: str,
+    tarih: date,
     bas: time,
     bit: time,
 ) -> Tuple[Optional[time], Optional[time], Optional[str]]:
-    """personel_kisit çalışma saatleri ile kırpma — tek giriş noktası."""
+    """
+    Atama aralığını günlük preset + çalışılabilir saat kesişimine indirger.
+    İkisi de tanımlı değilse yalnızca eski calisilabilir satır kuralları uygulanır.
+    """
     kisit = personel_kisit_getir(cur, personel_id)
+    win = _etkin_gunduz_dk_bounds(cur, personel_id, tarih, kisit)
+
+    db = _saat_dakika(bas)
+    de = _saat_dakika(bit)
+    if de <= db:
+        return bas, bit, None
+
+    if win:
+        elo, ehi = win
+        lo = max(db, elo)
+        hi = min(de, ehi)
+        if hi <= lo:
+            return None, None, (
+                f"Atama ({bas.strftime('%H:%M')}–{bit.strftime('%H:%M')}) "
+                "personelin günlük preset ve çalışılabilir saat tanımıyla uyumlu değil."
+            )
+        return _dk_den_time(lo), _dk_den_time(hi), None
+
     smin, smax = _kisit_normalize_calisilabilir_saatler(kisit)
     return _kirp_saat_cifti_calisilabilir_pencere(bas, bit, smin, smax)
 
@@ -719,10 +772,11 @@ def kisa_slot_bandini_baslat(
     *,
     cur=None,
     personel_id: Optional[str] = None,
+    tarih: Optional[date] = None,
 ) -> Optional[Tuple[time, time]]:
     """
     Preset ve mesai önerisi yokken atama süresini slotun TAMAMI yerine ilk kısa dilim yap.
-    Personel tanımlı çalışma bandı verilmişse (`cur` + `personel_id`) bitiş/başlangıç buna göre kesilir.
+    ``tarih`` + personel verilmişse kısa dilim personel preset/çalışılabilir bandına göre kesilir.
     """
     sb = _vardiya_row_saat(slot.get("baslangic_saat"))
     se = _vardiya_row_saat(slot.get("bitis_saat"))
@@ -736,8 +790,8 @@ def kisa_slot_bandini_baslat(
         use = min(span, VARSAYILAN_ATAMA_KISA_DK)
         end_dk = s0 + use
         out_b, out_e = sb, _gunluk_saat_cevir_extended_dk(end_dk)
-    if cur is not None and personel_id:
-        eb2, ee2, err = _cozumle_kirp_calisilabilir(cur, personel_id, out_b, out_e)
+    if cur is not None and personel_id and tarih is not None:
+        eb2, ee2, err = _cozumle_kirp_personel_tanimlari(cur, personel_id, tarih, out_b, out_e)
         if err:
             return None
         return eb2, ee2
@@ -753,17 +807,16 @@ def slot_mesai_onerilen_saat(
     """
     Personelde gün preset'i yokken mesai önerisi.
 
-    **Öncelik:** personele tanımlı gündüz çalışma bandı (`calisilabilir_saat_min/max`)
-    ile şube mesai penceresi kesişir; slot tipi (açılış/kapanış/normal) bu **dar band**
-    üzerinde seçilir. Ardından günlük limit ve kısa öneri genişliği uygulanır.
+    **Öncelik:** personele tanımlı gün + **vardiya preset (PART/TAM…)** ve
+    ``calisilabilir_saat`` kesişimi; ardından şube mesai penceresi; slot tipi (açılış/kapanış)
+    bu **dar band** üzerinde seçilir. Sonra günlük limit / kısa öneri genişliği uygulanır.
 
     Gece vardiyası slotlarında öneri verilmez (manuel saat).
     """
-    _ = tarih  # API imzası / ileride gün bazlı kural için rezerv
     kisit = personel_kisit_getir(cur, personel_id)
     max_h = float(kisit.get("max_gunluk_saat") or 9.5)
     max_dk = max(60, int(round(max_h * 60)))  # en az 1 saatlik anlamlı bant
-    person_gunduz = _kisit_calisilabilir_gunduz_dk_band(kisit)
+    person_etkin = _etkin_gunduz_dk_bounds(cur, personel_id, tarih, kisit)
 
     cur.execute(
         """
@@ -792,8 +845,8 @@ def slot_mesai_onerilen_saat(
         return None
 
     open_dk, close_dk = _sube_gun_penceresi_dk(slot.get("acilis_saati"), slot.get("kapanis_saati"))
-    if person_gunduz:
-        plo, phi = person_gunduz
+    if person_etkin:
+        plo, phi = person_etkin
         open_dk = max(open_dk, plo)
         close_dk = min(close_dk, phi)
         if close_dk <= open_dk:
@@ -813,13 +866,13 @@ def slot_mesai_onerilen_saat(
         hi = min(s1, close_dk)
 
     if hi <= lo:
-        if person_gunduz is not None:
+        if person_etkin is not None:
             return None
         lo, hi = s0, s1
 
     hi_clamped = min(hi, 24 * 60 - 1)
     if hi_clamped <= lo:
-        if person_gunduz is not None:
+        if person_etkin is not None:
             return None
         lo, hi_clamped = s0, min(s1, 24 * 60 - 1)
 
@@ -827,7 +880,7 @@ def slot_mesai_onerilen_saat(
         hi_clamped = lo + max_dk
         hi_clamped = min(hi_clamped, s1, close_dk, 24 * 60 - 1)
     if hi_clamped <= lo:
-        if person_gunduz is not None:
+        if person_etkin is not None:
             return None
         lo, hi_clamped = s0, min(s1, 24 * 60 - 1)
 
@@ -837,7 +890,7 @@ def slot_mesai_onerilen_saat(
         hi_clamped = lo + ilk_genis_cap
         hi_clamped = min(hi_clamped, s1, close_dk, 24 * 60 - 1)
     if hi_clamped <= lo:
-        if person_gunduz is not None:
+        if person_etkin is not None:
             return None
         lo, hi_clamped = s0, min(s1, 24 * 60 - 1)
 
@@ -862,14 +915,19 @@ def coz_varsayilan_atama_saatleri(
     """Önce personel gün preset (vardiya_preset_json); yoksa mesai önerisi; yoksa slotun kısa dilimi (tam slot dolgusu değil)."""
     pr = personel_gun_preset(cur, personel_id, tarih)
     if pr:
-        return (pr["bas_saat"], pr["bit_saat"])
+        bas = _vardiya_row_saat(pr.get("bas_saat"))
+        bit = _vardiya_row_saat(pr.get("bit_saat"))
+        if bas is not None and bit is not None:
+            bas_k, bit_k, err = _cozumle_kirp_personel_tanimlari(cur, personel_id, tarih, bas, bit)
+            if not err:
+                return (bas_k, bit_k)
     pt = slot_mesai_onerilen_saat(cur, personel_id, tarih, slot_id)
     if pt:
         return (pt["bas_saat"], pt["bit_saat"])
     cur.execute("SELECT * FROM vardiya_slot WHERE id = %s", (slot_id,))
     sr = cur.fetchone()
     if sr:
-        kisa = kisa_slot_bandini_baslat(dict(sr), cur=cur, personel_id=personel_id)
+        kisa = kisa_slot_bandini_baslat(dict(sr), cur=cur, personel_id=personel_id, tarih=tarih)
         if kisa:
             return kisa
     return None
@@ -918,7 +976,7 @@ def _cozumle_atama_saatleri(
         if cz:
             bas, bit = cz[0], cz[1]
         else:
-            ks = kisa_slot_bandini_baslat(slot, cur=cur, personel_id=personel_id)
+            ks = kisa_slot_bandini_baslat(slot, cur=cur, personel_id=personel_id, tarih=tarih)
             if ks:
                 bas, bit = ks[0], ks[1]
             else:
@@ -934,7 +992,7 @@ def _cozumle_atama_saatleri(
     if bas is None or bit is None:
         return None, None, "Saat çözümü başarısız."
 
-    bas_k, bit_k, cerr = _cozumle_kirp_calisilabilir(cur, personel_id, bas, bit)
+    bas_k, bit_k, cerr = _cozumle_kirp_personel_tanimlari(cur, personel_id, tarih, bas, bit)
     if cerr:
         return None, None, cerr
     return bas_k, bit_k, None
