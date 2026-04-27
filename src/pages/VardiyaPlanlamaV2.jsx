@@ -32,6 +32,26 @@ const isoToday = () => new Date().toISOString().slice(0, 10);
 const fmtSaat  = (t) => (t || '').slice(0, 5);
 const fmtTarihKisa = (s) => (s == null || s === '' ? '' : String(s).slice(0, 10));
 
+/**
+ * `<input type="time" />` en fazla 23:59 kabul eder; şubede kapanış `24:00` yazılabiliyor.
+ */
+function saatHtmlTimeInput(raw) {
+  const t = fmtSaat(raw);
+  if (!t) return '';
+  if (t === '24:00' || t.startsWith('24:')) return '23:59';
+  return t;
+}
+
+/** Yeni slot formu: şube açılış/kapanışı (`/subeler`); yoksa 08:00–23:59 */
+function slotVarsayilanSaatleri(subelerList, subeId) {
+  const sid = String(subeId || '');
+  const sub = (subelerList || []).find((x) => String(x.id) === sid);
+  const bas = saatHtmlTimeInput(sub?.acilis_saati) || '08:00';
+  let bit = saatHtmlTimeInput(sub?.kapanis_saati);
+  if (!bit) bit = '23:59';
+  return { baslangic_saat: bas, bitis_saat: bit };
+}
+
 /** Gün planından slot_id → "Şube · SS:MM–SS:MM" (override özet metni) */
 function slotEtiketiBul(plan, slotId) {
   if (!slotId || !plan?.subeler) return '';
@@ -414,7 +434,8 @@ export default function VardiyaPlanlamaV2() {
   const [hata, setHata] = useState('');
 
   // Modal state
-  const [slotModal, setSlotModal] = useState(null);    // {sube_id, slot?} | null
+  /** Yeni slot: `defaultBaslangicSaat` / `defaultBitisSaat` şube açılış-kapanıştan */
+  const [slotModal, setSlotModal] = useState(null);    // {sube_id, slot?, defaultBaslangicSaat?, defaultBitisSaat?} | null
   const [kisitModal, setKisitModal] = useState(null);  // personel_id | null
   const [sistemPresetModal, setSistemPresetModal] = useState(false);
   /** Sürükle-bırak sonrası saat seçimi + check/atama */
@@ -1603,7 +1624,13 @@ export default function VardiyaPlanlamaV2() {
                   setHata('Şube yok — önce şube tanımlayın.');
                   return;
                 }
-                setSlotModal({ sube_id: s0.sube_id, slot: null });
+                const d = slotVarsayilanSaatleri(subeler, s0.sube_id);
+                setSlotModal({
+                  sube_id: s0.sube_id,
+                  slot: null,
+                  defaultBaslangicSaat: d.baslangic_saat,
+                  defaultBitisSaat: d.bitis_saat,
+                });
               }}
             >＋ Slot ekle
             </button>
@@ -1964,7 +1991,20 @@ export default function VardiyaPlanlamaV2() {
                             <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6 }}>🏪 {s.sube_ad}</div>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center' }}>
                               <button type="button" className="btn btn-sm btn-secondary" title="Şube saatlerinden slot" onClick={() => slotUretFromSube(s.sube_id, s.sube_ad)}>⚙</button>
-                              <button type="button" className="btn btn-sm btn-primary" title="Slot tanımla" onClick={() => setSlotModal({ sube_id: s.sube_id, slot: null })}>＋</button>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-primary"
+                                title="Slot tanımla"
+                                onClick={() => {
+                                  const d = slotVarsayilanSaatleri(subeler, s.sube_id);
+                                  setSlotModal({
+                                    sube_id: s.sube_id,
+                                    slot: null,
+                                    defaultBaslangicSaat: d.baslangic_saat,
+                                    defaultBitisSaat: d.bitis_saat,
+                                  });
+                                }}
+                              >＋</button>
                             </div>
                           </div>
                         ))}
@@ -2287,12 +2327,17 @@ export default function VardiyaPlanlamaV2() {
       )}
 
       {/* MODAL'lar */}
-      {slotModal && <SlotModal
-        sube_id={slotModal.sube_id}
-        slot={slotModal.slot}
-        onClose={() => setSlotModal(null)}
-        onKaydet={() => { setSlotModal(null); yukleGun(); }}
-      />}
+      {slotModal && (
+        <SlotModal
+          key={slotModal.slot?.id ? String(slotModal.slot.id) : `new-${slotModal.sube_id}`}
+          sube_id={slotModal.sube_id}
+          slot={slotModal.slot}
+          defaultBaslangicSaat={slotModal.defaultBaslangicSaat}
+          defaultBitisSaat={slotModal.defaultBitisSaat}
+          onClose={() => setSlotModal(null)}
+          onKaydet={() => { setSlotModal(null); yukleGun(); }}
+        />
+      )}
       {dropSaatModal && (
         <DropAtamaSaatModal
           personel={dropSaatModal.personel}
@@ -2354,12 +2399,27 @@ export default function VardiyaPlanlamaV2() {
 // ═══════════════════════════════════════════════════════════════════
 // SLOT TANIMI MODAL
 // ═══════════════════════════════════════════════════════════════════
-function SlotModal({ sube_id, slot, onClose, onKaydet }) {
-  const [form, setForm] = useState(slot || {
-    sube_id, ad: '', tip: 'normal', baslangic_saat: '08:00', bitis_saat: '23:59',
-    gece_vardiyasi: false, min_personel: 1, ideal_personel: 1,
-    aktif_gunler: [1,2,3,4,5,6,7], aktif: true, sira: 0,
-  });
+function SlotModal({
+  sube_id,
+  slot,
+  defaultBaslangicSaat,
+  defaultBitisSaat,
+  onClose,
+  onKaydet,
+}) {
+  const [form, setForm] = useState(() => (slot ? { ...slot, sube_id } : {
+    sube_id,
+    ad: '',
+    tip: 'normal',
+    baslangic_saat: defaultBaslangicSaat || '08:00',
+    bitis_saat: defaultBitisSaat || '23:59',
+    gece_vardiyasi: false,
+    min_personel: 1,
+    ideal_personel: 1,
+    aktif_gunler: [1, 2, 3, 4, 5, 6, 7],
+    aktif: true,
+    sira: 0,
+  }));
   const [busy, setBusy] = useState(false);
 
   async function kaydet() {
@@ -3190,7 +3250,13 @@ function DropAtamaSaatModal({
   const [bas, setBas] = useState('09:00');
   const [bit, setBit] = useState('18:00');
   const [presetler, setPresetler] = useState([]);
+  const [oneriKaynak, setOneriKaynak] = useState(null);
   const [busy, setBusy] = useState(true);
+
+  const partTime = String(personel?.calisma_turu || '').toLowerCase().replace(/-/g, '_') === 'part_time';
+  const partKodlar = ['PART1', 'PART2', 'PART3'];
+  const partPresetler = partKodlar.map((k) => presetler.find((p) => p.kod === k)).filter(Boolean);
+  const digerPresetler = presetler.filter((p) => !partKodlar.includes(p.kod));
 
   useEffect(() => {
     let cancel = false;
@@ -3200,11 +3266,16 @@ function DropAtamaSaatModal({
       let b1 = fmtSaat(row?.sv?.slot?.bitis_saat) || '18:00';
       try {
         const pr = await api(
-          `/vardiya/v2/personel-onerilen-saat?personel_id=${encodeURIComponent(personel.id)}&tarih=${encodeURIComponent(gunTarihi)}`,
+          `/vardiya/v2/personel-onerilen-saat?personel_id=${encodeURIComponent(personel.id)}`
+          + `&tarih=${encodeURIComponent(gunTarihi)}`
+          + `&slot_id=${encodeURIComponent(slotId)}`,
         );
         if (pr?.preset?.bas_saat) b0 = fmtSaat(pr.preset.bas_saat);
         if (pr?.preset?.bit_saat) b1 = fmtSaat(pr.preset.bit_saat);
-      } catch { /* preset yok */ }
+        if (!cancel) setOneriKaynak(pr?.kaynak || null);
+      } catch {
+        if (!cancel) setOneriKaynak(null);
+      }
       try {
         const r = await api('/vardiya/v2/preset');
         if (!cancel) setPresetler(r.presetler || []);
@@ -3241,6 +3312,12 @@ function DropAtamaSaatModal({
         {' · '}
         {gunTarihi}
       </p>
+      {partTime && oneriKaynak === 'part_slot' && (
+        <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6, marginBottom: 0, lineHeight: 1.35 }}>
+          Part-time: saatler <strong>slot tipine</strong> göre önerildi (açılış → sabah dilimi, kapanış → akşam, diğer → ara).
+          İsterseniz aşağıdan Part 1 / 2 / 3 veya slot saatini seçin.
+        </p>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 10 }}>
         <div className="form-group">
           <label>Başlangıç</label>
@@ -3252,11 +3329,33 @@ function DropAtamaSaatModal({
         </div>
       </div>
       <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginTop: 10 }}>Hızlı seç</div>
+      {partTime && partPresetler.length > 0 && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4 }}>Part (sabah 09–14:30 · akşam 14:30–23:59 · ara 11–21)</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {partPresetler.map((pr) => (
+              <button
+                key={pr.kod}
+                type="button"
+                className="btn btn-sm btn-secondary"
+                disabled={busy}
+                onClick={() => {
+                  setBas(fmtSaat(pr.bas_saat));
+                  setBit(fmtSaat(pr.bit_saat));
+                }}
+                title={pr.ad || pr.kod}
+              >
+                {pr.kod}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
         <button type="button" className="btn btn-sm btn-secondary" disabled={busy} onClick={() => { setBas(slotBasDef); setBit(slotBitDef); }}>
           Slot saati ({slotBasDef}–{slotBitDef})
         </button>
-        {presetler.map((pr) => (
+        {digerPresetler.map((pr) => (
           <button
             key={pr.kod}
             type="button"
