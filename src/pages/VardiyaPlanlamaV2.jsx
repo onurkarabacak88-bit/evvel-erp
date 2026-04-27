@@ -1,6 +1,6 @@
 /**
  * VARDİYA PLANLAMA v2 — 16 maddelik spec ile hizalı akış
- * - Gün matrisi: hafta (üst) + sol personel + saat (satır) × şube (sütun) + sürükle-bırak
+ * - Gün matrisi: hafta (üst) + sol personel + saat satırları (plandaki slotlardan 30/60/120 dk bantlar) × şube + sürükle-bırak
  * - Şube haftası: tek şube × 7 gün × saat (alternatif görünüm)
  * - Havuzdan veya slottaki kişi chip’inden sürükleme → başka şube/slota transfer (önce iptal)
  * - Otomatik doldur: eksik slotlara uygun personel (override/kritik atlanır)
@@ -15,6 +15,8 @@ import { api } from '../utils/api';
 
 const TR_AYLAR = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
 const TR_GUNLER = ['Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi','Pazar'];
+/** `personel_gun_preset` ile aynı anahtarlar (vardiya_v2.GUN_KISALTMA) */
+const V2_PRESET_GUN_ANAHTARLARI = ['pzt', 'sal', 'car', 'per', 'cum', 'cmt', 'paz'];
 
 const SLOT_TIPI = {
   acilis:   { ikon: '🌅', renk: '#f59e0b', etiket: 'Açılış' },
@@ -93,14 +95,13 @@ function avatarRenkGradient(personelId) {
 
 /**
  * Slotta bırakma önizlemesi (drag-over) — API `uyarilar` listesinden üçlü durum.
- * engel: çakışma veya yasak şube (modal yok, drop iptal)
- * uyari: kritik olmayan uyarılar (bırakınca onay modalı; önizlemede sarı)
+ * engel: SADECE çakışma (fizik kuralı; aynı anda iki yerde olunamaz)
+ * uyari: çakışma dışı (override `override_gerekir` ile; sarı onay modalı)
  */
 function slotHoverDurumuFromCheck(uyarilar) {
   if (!uyarilar || uyarilar.length === 0) return 'ok';
   for (const u of uyarilar) {
     if (u.tip === 'cakisma') return 'engel';
-    if (u.tip === 'sube_uyumsuz' && u.seviye === 'kritik') return 'engel';
   }
   return 'uyari';
 }
@@ -113,14 +114,72 @@ function _parseSaatDakika(s) {
   return h * 60 + m;
 }
 
-/** 2 saatlik bant [startMin, endMin) ile slot çakışıyor mu (gece slotu son banda düşer). */
+/** Bant [bandStartMin, bandEndMin) ile slot aralığı çakışıyor mu (bitiş ≤ başlangıç → ertesi güne uzanır). */
 function slotBantIleKesisir(sv, bandStartMin, bandEndMin) {
   if (!sv?.slot) return false;
-  if (sv.slot.gece_vardiyasi) return bandStartMin >= 20 * 60;
   const bas = _parseSaatDakika(sv.slot.baslangic_saat);
   let bit = _parseSaatDakika(sv.slot.bitis_saat);
   if (bit <= bas) bit += 24 * 60;
   return bas < bandEndMin && bit > bandStartMin;
+}
+
+/** Matris satır etiketi: 24:00 sonrası için (+1) ile ertesi gün vurgusu */
+function _saatEtiketiDakika(m) {
+  const u = Math.max(0, Math.floor(m));
+  const day = Math.floor(u / (24 * 60));
+  const r = u % (24 * 60);
+  const h = Math.floor(r / 60);
+  const mi = r % 60;
+  const core = `${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}`;
+  if (day === 0) return core;
+  return `${core}\u2009(+${day})`;
+}
+
+/** Şube listesindeki tüm slotlardan [min,max) dakika aralığı (yoksa any=false) */
+function _slotZamanAraligiDakika(list) {
+  let minM = Infinity;
+  let maxM = -Infinity;
+  let any = false;
+  for (const s of list || []) {
+    for (const sv of s.slotlar || []) {
+      if (!sv?.slot) continue;
+      const bas = _parseSaatDakika(sv.slot.baslangic_saat);
+      let bit = _parseSaatDakika(sv.slot.bitis_saat);
+      if (bit <= bas) bit += 24 * 60;
+      any = true;
+      if (bas < minM) minM = bas;
+      if (bit > maxM) maxM = bit;
+    }
+  }
+  return { minM, maxM, any };
+}
+
+/**
+ * Sürükle-bırak matrisi: satırlar plandaki gerçek slotlardan türetilir (varsayılan 30 dk;
+ * çok satır olursa 60 / 120 dk’ya çıkar). Böylece sol etiket ile hücredeki slot saati hizalı kalır.
+ */
+function saatBantlariPlandan(plan, subeListesi, istenenAdim = 30) {
+  const list = subeListesi?.length ? subeListesi : (plan?.subeler || []);
+  const { minM, maxM, any } = _slotZamanAraligiDakika(list);
+  if (!any || !Number.isFinite(minM) || !Number.isFinite(maxM)) return saatBantlari();
+  let step = istenenAdim;
+  const span = maxM - minM;
+  if (span / step > 50) step = 60;
+  if (span / step > 50) step = 120;
+  let minBand = Math.floor(minM / step) * step;
+  let maxBand = Math.ceil(maxM / step) * step;
+  if (maxBand <= minBand) maxBand = minBand + step;
+  const out = [];
+  for (let a = minBand; a < maxBand; a += step) {
+    const b = a + step;
+    out.push({
+      key: `${a}-${b}`,
+      startMin: a,
+      endMin: b,
+      label: `${_saatEtiketiDakika(a)}–${_saatEtiketiDakika(b)}`,
+    });
+  }
+  return out.length ? out : saatBantlari();
 }
 
 function pazartesiIso(iso) {
@@ -242,34 +301,19 @@ function saatBantlari() {
   return out;
 }
 
-/** Slotu matris satırına tek yerde göstermek: başlangıç saatine göre ana bant */
-function slotAnaBantKey(sv, bands) {
-  if (!sv?.slot || !bands?.length) return bands[0].key;
-  if (sv.slot.gece_vardiyasi) {
-    const b = bands.find((x) => x.startMin >= 20 * 60);
-    return (b || bands[bands.length - 1]).key;
-  }
-  const bas = _parseSaatDakika(sv.slot.baslangic_saat);
-  for (const b of bands) {
-    if (bas >= b.startMin && bas < b.endMin) return b.key;
-  }
-  for (const b of bands) {
-    if (slotBantIleKesisir(sv, b.startMin, b.endMin)) return b.key;
-  }
-  return bands[0].key;
-}
-
-/** Gün planından şube×bant → { sv, s } listesi (matris hücresi) */
+/** Gün planından şube×bant → { sv, s, bandKey } listesi; slot birden fazla satırla kesişiyorsa her satırda görünür */
 function slotMatrisHaritasiOlustur(plan, subeListesi, bands) {
   const m = new Map();
-  if (!plan?.subeler) return m;
+  if (!plan?.subeler || !bands?.length) return m;
   const list = subeListesi?.length ? subeListesi : plan.subeler;
   for (const s of list) {
     for (const sv of s.slotlar || []) {
-      const bk = slotAnaBantKey(sv, bands);
-      const key = `${s.sube_id}|${bk}`;
-      if (!m.has(key)) m.set(key, []);
-      m.get(key).push({ sv, s });
+      for (const b of bands) {
+        if (!slotBantIleKesisir(sv, b.startMin, b.endMin)) continue;
+        const key = `${s.sube_id}|${b.key}`;
+        if (!m.has(key)) m.set(key, []);
+        m.get(key).push({ sv, s, bandKey: b.key });
+      }
     }
   }
   return m;
@@ -372,6 +416,9 @@ export default function VardiyaPlanlamaV2() {
   // Modal state
   const [slotModal, setSlotModal] = useState(null);    // {sube_id, slot?} | null
   const [kisitModal, setKisitModal] = useState(null);  // personel_id | null
+  const [sistemPresetModal, setSistemPresetModal] = useState(false);
+  /** Sürükle-bırak sonrası saat seçimi + check/atama */
+  const [dropSaatModal, setDropSaatModal] = useState(null);
   const [izinModal, setIzinModal] = useState(false);
   const [overrideModal, setOverrideModal] = useState(null); // {payload, uyarilar, ozetMetni?, transferAtamaId?} | null
   /** Sadece seviye uyari — drop öncesi EVET/HAYIR (override log yok) */
@@ -477,6 +524,54 @@ export default function VardiyaPlanlamaV2() {
     await planGunTazele(body.tarih);
   }, [yukleGun, planGunTazele]);
 
+  /**
+   * Saat seçiminden sonra atama/check.
+   * Çakışma = kesin engel; override yalnızca çakışma dışı kritikler için (API `override_gerekir`).
+   */
+  const devamAtamaKontrolVeKaydet = useCallback(async (body, transferAtamaId, ctx) => {
+    const planGun = ctx?.planForGun || gunPlani;
+    const personelAd = `${ctx.personel.ad || ''} ${ctx.personel.soyad || ''}`.trim() || 'Bu personel';
+    const slotEtiket = (planGun && slotEtiketiBul(planGun, body.slot_id))
+      || slotEtiketiBul(gunPlani, body.slot_id);
+    const ozetMetni = slotEtiket
+      ? `${personelAd} bu saat uygun değil (${slotEtiket}).`
+      : `${personelAd} bu atama için uygun değil.`;
+    try {
+      const c = await api('/vardiya/v2/atama/check', { method: 'POST', body });
+      const hover = slotHoverDurumuFromCheck(c.uyarilar || []);
+      const cakismaVar = c.cakisma_var === true || hover === 'engel';
+      if (cakismaVar) {
+        setHata('Bu personel aynı saatte başka bir slotta zaten atanmış (çakışma).');
+        await yukleGun();
+        return;
+      }
+      const needOverride = c.override_gerekir === true
+        || (c.override_gerekir === undefined && c.kritik_var);
+      if (needOverride) {
+        setOverrideModal({
+          payload: body,
+          uyarilar: c.uyarilar,
+          transferAtamaId,
+          ozetMetni,
+        });
+        return;
+      }
+      if ((c.uyarilar || []).length > 0) {
+        setUyariOnayModal({
+          payload: body,
+          uyarilar: c.uyarilar,
+          transferAtamaId,
+          ozetMetni,
+        });
+        return;
+      }
+      await tamamlaNormalAtama(body, transferAtamaId);
+    } catch (e) {
+      setHata(e.message || 'Atama başarısız');
+      await yukleGun();
+    }
+  }, [gunPlani, tamamlaNormalAtama, yukleGun]);
+
   useEffect(() => { yukleSubeler(); }, [yukleSubeler]);
   useEffect(() => { yukleGun(); }, [yukleGun]);
 
@@ -563,8 +658,6 @@ export default function VardiyaPlanlamaV2() {
     return list.filter((p) => `${p.ad || ''} ${p.soyad || ''}`.toLowerCase().includes(q));
   }, [havuzPersonelKaynagi, personelMetinFiltre]);
 
-  const saatBantlariMemo = useMemo(() => saatBantlari(), []);
-
   const eksikSlotSayisi = useMemo(() => {
     if (!gunPlani?.subeler) return 0;
     let n = 0;
@@ -582,9 +675,26 @@ export default function VardiyaPlanlamaV2() {
     return raw.filter((s) => String(s.sube_id) === String(subeFilter));
   }, [gunPlani, subeFilter]);
 
+  /** Gün matrisi: seçili gün + şube filtresindeki slotlardan bantlar (30/60/120 dk) */
+  const saatBantlariGunMatris = useMemo(
+    () => saatBantlariPlandan(gunPlani, filtrelenmisSubeler, 30),
+    [gunPlani, filtrelenmisSubeler],
+  );
+
+  /** Şube×hafta matrisi: haftadaki tüm günlerin slot birleşimi — her güne aynı satır hizası */
+  const saatBantlariHaftaMatris = useMemo(() => {
+    if (!haftaPlanCache || typeof haftaPlanCache !== 'object') return saatBantlari();
+    const list = [];
+    for (const p of Object.values(haftaPlanCache)) {
+      for (const s of p?.subeler || []) list.push(s);
+    }
+    if (!list.length) return saatBantlari();
+    return saatBantlariPlandan({ subeler: list }, list, 30);
+  }, [haftaPlanCache]);
+
   const slotMatris = useMemo(
-    () => slotMatrisHaritasiOlustur(gunPlani, filtrelenmisSubeler, saatBantlariMemo),
-    [gunPlani, filtrelenmisSubeler, saatBantlariMemo],
+    () => slotMatrisHaritasiOlustur(gunPlani, filtrelenmisSubeler, saatBantlariGunMatris),
+    [gunPlani, filtrelenmisSubeler, saatBantlariGunMatris],
   );
 
   const altOzetPersonel = useMemo(() => {
@@ -959,20 +1069,17 @@ export default function VardiyaPlanlamaV2() {
       setDragSlotPreview(null);
       return;
     }
-    const body = {
-      personel_id: personel.id,
-      slot_id: slotId,
-      tarih: gunTarihi,
-      override: false,
-    };
-    const personelAd = `${personel.ad || ''} ${personel.soyad || ''}`.trim() || 'Bu personel';
     const planForGun = (gorunumModu === 'sube_hafta' && haftaPlanCache?.[gunTarihi])
       ? haftaPlanCache[gunTarihi]
       : gunPlani;
-    const slotEtiket = slotEtiketiBul(planForGun, slotId) || slotEtiketiBul(gunPlani, slotId);
-    const ozetMetni = slotEtiket
-      ? `${personelAd} bu saat uygun değil (${slotEtiket}).`
-      : `${personelAd} bu atama için uygun değil.`;
+    const row = planSlotSatirBul(planForGun, slotId);
+    if (!row?.sv?.slot) {
+      setHata('Slot bulunamadı — planı yenileyin.');
+      transferAtamaRef.current = null;
+      previewReqRef.current += 1;
+      if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+      return;
+    }
     setDraggedPersonel(null);
     draggedRef.current = null;
     setDragSlotPreview(null);
@@ -980,37 +1087,13 @@ export default function VardiyaPlanlamaV2() {
     previewReqRef.current += 1;
     if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
 
-    try {
-      const c = await api('/vardiya/v2/atama/check', { method: 'POST', body });
-      const hover = slotHoverDurumuFromCheck(c.uyarilar || []);
-      if (hover === 'engel') {
-        setHata('Bu slota atanamaz: çakışma veya yasak şube (onay penceresi açılmaz).');
-        await yukleGun();
-        return;
-      }
-      if (c.kritik_var) {
-        setOverrideModal({
-          payload: body,
-          uyarilar: c.uyarilar,
-          transferAtamaId,
-          ozetMetni,
-        });
-        return;
-      }
-      if ((c.uyarilar || []).length > 0) {
-        setUyariOnayModal({
-          payload: body,
-          uyarilar: c.uyarilar,
-          transferAtamaId,
-          ozetMetni,
-        });
-        return;
-      }
-      await tamamlaNormalAtama(body, transferAtamaId);
-    } catch (e) {
-      setHata(e.message || 'Atama başarısız');
-      await yukleGun();
-    }
+    setDropSaatModal({
+      personel,
+      slotId,
+      gunTarihi,
+      transferAtamaId,
+      planForGun,
+    });
   }
 
   async function uyariOnaylaEvet() {
@@ -1198,7 +1281,7 @@ export default function VardiyaPlanlamaV2() {
   }
 
   /** Matris hücresi: saat bandı + üst üste avatarlar + [+] drop · 🟢… + sürükle (havuz / chip transfer) */
-  function matrisSlotHucre(sv, s, gunTarihi = tarih) {
+  function matrisSlotHucre(sv, s, gunTarihi = tarih, matrisBandKey = '') {
     const t = SLOT_TIPI[sv.slot.tip] || SLOT_TIPI.normal;
     const eksik = sv.eksik > 0;
     const idealUyari = !eksik && (sv.ideal_eksik > 0);
@@ -1230,7 +1313,7 @@ export default function VardiyaPlanlamaV2() {
     const hucreBoxShadow = boxShadowParts.length ? boxShadowParts.join(', ') : 'none';
     return (
       <div
-        key={`${sv.slot.id}-${gunTarihi}`}
+        key={`${sv.slot.id}-${gunTarihi}-${matrisBandKey || '0'}`}
         onDragOver={(e) => slotDragOver(e, sv.slot.id, gunTarihi)}
         onDrop={(e) => {
           e.preventDefault();
@@ -1239,7 +1322,7 @@ export default function VardiyaPlanlamaV2() {
             && dragSlotPreview?.gunTarihi === gunTarihi
             && dragSlotPreview?.durum === 'engel'
           ) {
-            setHata('Bu slota bu personel atanamaz (çakışma veya yasak şube).');
+            setHata('Bu personel aynı saatte başka bir slotta zaten atanmış (çakışma).');
             previewReqRef.current += 1;
             if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
             draggedRef.current = null;
@@ -1306,7 +1389,7 @@ export default function VardiyaPlanlamaV2() {
                   key={a.id}
                   className="slot-avatar-wrap"
                   style={{ marginLeft: i === 0 ? 0 : -11, zIndex: i + 1 }}
-                  title={`${tamAd} — sürükleyerek taşı · ✕ iptal`}
+                  title={`${tamAd}${a.yemek_sube_ad ? ` · 🍽 ${a.yemek_sube_ad}` : ''} — sürükleyerek taşı · ✕ iptal`}
                 >
                   <div
                     className="slot-avatar-face"
@@ -1378,6 +1461,15 @@ export default function VardiyaPlanlamaV2() {
             ) : null}
           </div>
         )}
+        {sv.atamalar.length > 0 ? (() => {
+          const ads = [...new Set(sv.atamalar.map((at) => at.yemek_sube_ad).filter(Boolean))];
+          if (!ads.length) return null;
+          return (
+            <div style={{ fontSize: 9, color: 'var(--text3)', marginTop: 4, lineHeight: 1.35 }}>
+              🍽 Mola şubesi: {ads.join(' · ')}
+            </div>
+          );
+        })() : null}
       </div>
     );
   }
@@ -1490,6 +1582,7 @@ export default function VardiyaPlanlamaV2() {
         <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'rgba(79,142,247,0.07)' }}>
           <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.14, color: 'var(--text3)', marginBottom: 8 }}>AMAÇLI İŞLEMLER</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <button type="button" className="btn btn-sm btn-secondary" title="TAM/PART vb. sistem genel preset — ekle / düzenle / pasifleştir" onClick={() => setSistemPresetModal(true)}>🗂 Sistem presetleri</button>
             <button type="button" className="btn btn-sm btn-secondary" disabled={otomatikBusy || yukleniyor} title="Eksik slotlara uygun personel ata" onClick={() => otomatikDoldur()}>🤖 Otomatik doldur</button>
             <button type="button" className="btn btn-sm btn-secondary" title="Bu günün tüm atamalarını iptal et (şube filtresi varsa yalnız o şube)" onClick={() => gunTemizle()}>🧹 Tümünü temizle</button>
             <button type="button" className="btn btn-sm btn-primary" title="Sunucudan planı yeniden çek (sürükle-bırak atamaları zaten anında kaydedilir)" onClick={() => yukleGun()}>↻ Yenile</button>
@@ -1752,6 +1845,11 @@ export default function VardiyaPlanlamaV2() {
                         ))}
                       </div>
                     )}
+                    {p.yemek_sube_ad && (
+                      <div style={{ fontSize: 10, color: '#64748b', marginTop: 4, lineHeight: 1.35 }}>
+                        🍽 Mola: <strong style={{ color: '#475569' }}>{p.yemek_sube_ad}</strong>
+                      </div>
+                    )}
                     {!izinli && !calisiyor && (
                       <label
                         style={{ fontSize: 10, marginTop: 8, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: 'var(--text2)' }}
@@ -1871,7 +1969,7 @@ export default function VardiyaPlanlamaV2() {
                           </div>
                         ))}
                       </div>
-                      {saatBantlariMemo.map((band) => (
+                      {saatBantlariGunMatris.map((band) => (
                         <div
                           key={band.key}
                           style={{
@@ -1911,7 +2009,7 @@ export default function VardiyaPlanlamaV2() {
                                 {hucre.length === 0 ? (
                                   <div style={{ fontSize: 11, color: 'var(--text3)', padding: '12px 0', textAlign: 'center' }}>—</div>
                                 ) : (
-                                  hucre.map(({ sv, s: subeRow }) => matrisSlotHucre(sv, subeRow, tarih))
+                                  hucre.map(({ sv, s: subeRow, bandKey }) => matrisSlotHucre(sv, subeRow, tarih, bandKey))
                                 )}
                               </div>
                             );
@@ -1958,7 +2056,7 @@ export default function VardiyaPlanlamaV2() {
                             </div>
                           ))}
                         </div>
-                        {saatBantlariMemo.map((band) => (
+                        {saatBantlariHaftaMatris.map((band) => (
                           <div
                             key={`w-${band.key}`}
                             style={{
@@ -1974,7 +2072,7 @@ export default function VardiyaPlanlamaV2() {
                               const planGun = haftaPlanCache[g.iso];
                               const sub = planGun?.subeler?.[0];
                               const hucre = sub
-                                ? (slotMatrisHaritasiOlustur(planGun, [sub], saatBantlariMemo).get(`${sub.sube_id}|${band.key}`) || [])
+                                ? (slotMatrisHaritasiOlustur(planGun, [sub], saatBantlariHaftaMatris).get(`${sub.sube_id}|${band.key}`) || [])
                                 : [];
                               return (
                                 <div
@@ -1986,7 +2084,7 @@ export default function VardiyaPlanlamaV2() {
                                   ) : hucre.length === 0 ? (
                                     <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center' }}>—</div>
                                   ) : (
-                                    hucre.map(({ sv, s: subeRow }) => matrisSlotHucre(sv, subeRow, g.iso))
+                                    hucre.map(({ sv, s: subeRow, bandKey }) => matrisSlotHucre(sv, subeRow, g.iso, bandKey))
                                   )}
                                 </div>
                               );
@@ -2195,6 +2293,35 @@ export default function VardiyaPlanlamaV2() {
         onClose={() => setSlotModal(null)}
         onKaydet={() => { setSlotModal(null); yukleGun(); }}
       />}
+      {dropSaatModal && (
+        <DropAtamaSaatModal
+          personel={dropSaatModal.personel}
+          slotId={dropSaatModal.slotId}
+          gunTarihi={dropSaatModal.gunTarihi}
+          planForGun={dropSaatModal.planForGun}
+          onClose={() => setDropSaatModal(null)}
+          onTamam={async (bas, bit) => {
+            const m = dropSaatModal;
+            setDropSaatModal(null);
+            if (!m?.personel) return;
+            const body = {
+              personel_id: m.personel.id,
+              slot_id: m.slotId,
+              tarih: m.gunTarihi,
+              override: false,
+              baslangic_saat: bas || null,
+              bitis_saat: bit || null,
+            };
+            await devamAtamaKontrolVeKaydet(body, m.transferAtamaId, m);
+          }}
+        />
+      )}
+      {sistemPresetModal && (
+        <SistemPresetYonetimModal
+          onClose={() => setSistemPresetModal(false)}
+          onDegisti={() => { yukleGun(); }}
+        />
+      )}
       {kisitModal && <KisitModal
         personel_id={kisitModal}
         subeler={subeler}
@@ -2344,11 +2471,210 @@ function SlotModal({ sube_id, slot, onClose, onKaydet }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// SİSTEM PRESET YÖNETİMİ (`vardiya_preset` — tüm kurulum)
+// ═══════════════════════════════════════════════════════════════════
+function saatApiToInput(v) {
+  if (v == null || v === '') return '';
+  if (typeof v === 'string') return v.slice(0, 5);
+  return String(v).slice(0, 8);
+}
+
+function SistemPresetYonetimModal({ onClose, onDegisti }) {
+  const [liste, setListe] = useState([]);
+  const [busy, setBusy] = useState(false);
+  /** null = yeni kayıt formu; string = düzenlenen `kod` */
+  const [duzenKod, setDuzenKod] = useState(null);
+  const [form, setForm] = useState({
+    kod: '',
+    ad: '',
+    bas_saat: '09:00',
+    bit_saat: '18:00',
+    gece_vardiyasi: false,
+    renk: '#3b82f6',
+    sira: 10,
+    aktif: true,
+  });
+
+  const yukle = useCallback(() => api('/vardiya/v2/preset-admin').then((r) => setListe(r.presetler || [])).catch(() => setListe([])), []);
+
+  useEffect(() => { yukle(); }, [yukle]);
+
+  function satirDuzenle(row) {
+    setDuzenKod(row.kod);
+    setForm({
+      kod: row.kod,
+      ad: row.ad || '',
+      bas_saat: saatApiToInput(row.bas_saat),
+      bit_saat: saatApiToInput(row.bit_saat),
+      gece_vardiyasi: !!row.gece_vardiyasi,
+      renk: row.renk || '#3b82f6',
+      sira: Number(row.sira) || 0,
+      aktif: row.aktif !== false,
+    });
+  }
+
+  function yeniSatir() {
+    const maxS = liste.length ? Math.max(...liste.map((x) => Number(x.sira) || 0)) : 0;
+    setDuzenKod(null);
+    setForm({
+      kod: '',
+      ad: '',
+      bas_saat: '09:00',
+      bit_saat: '18:00',
+      gece_vardiyasi: false,
+      renk: '#3b82f6',
+      sira: maxS + 1,
+      aktif: true,
+    });
+  }
+
+  async function kaydet() {
+    const kod = (form.kod || '').trim().toUpperCase();
+    if (!kod) {
+      window.alert('Kod zorunlu (benzersiz, örn. TAM, OZEL_1).');
+      return;
+    }
+    if (!(form.ad || '').trim()) {
+      window.alert('Ad zorunlu.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api('/vardiya/v2/preset', {
+        method: 'POST',
+        body: {
+          kod,
+          ad: (form.ad || '').trim(),
+          bas_saat: form.bas_saat || '09:00',
+          bit_saat: form.bit_saat || '18:00',
+          gece_vardiyasi: !!form.gece_vardiyasi,
+          renk: (form.renk || '').trim() || null,
+          sira: Number(form.sira) || 0,
+          aktif: !!form.aktif,
+        },
+      });
+      await yukle();
+      onDegisti?.();
+      yeniSatir();
+    } catch (e) {
+      window.alert(e.message || 'Kayıt başarısız');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function pasiflestir(kod) {
+    if (!window.confirm(`"${kod}" pasifleştirilsin mi? (Personel seçimlerinde listelenmez.)`)) return;
+    setBusy(true);
+    try {
+      await api(`/vardiya/v2/preset/${encodeURIComponent(kod)}`, { method: 'DELETE' });
+      await yukle();
+      onDegisti?.();
+      if (duzenKod === kod) yeniSatir();
+    } catch (e) {
+      window.alert(e.message || 'İşlem başarısız');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal onClose={onClose} title="🗂 Sistem vardiya presetleri" geniş>
+      <p style={{ fontSize: 12, color: 'var(--text3)', marginTop: 0, lineHeight: 1.45 }}>
+        Tüm şubelerde personel kısıtında seçilebilen hazır saat şablonları. Kayıt <strong>kod</strong> ile benzersizdir; aynı kodla gönderince güncellenir.
+      </p>
+      <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 8, marginBottom: 14 }}>
+        <table className="table" style={{ width: '100%', fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: 'var(--bg2)' }}>
+              <th style={{ padding: 6 }}>Aktif</th>
+              <th style={{ padding: 6 }}>Kod</th>
+              <th style={{ padding: 6 }}>Ad</th>
+              <th style={{ padding: 6 }}>Saat</th>
+              <th style={{ padding: 6 }}>Sıra</th>
+              <th style={{ padding: 6 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {liste.length === 0 && (
+              <tr><td colSpan={6} style={{ padding: 12, color: 'var(--text3)' }}>Preset yok — aşağıdan ekleyin.</td></tr>
+            )}
+            {liste.map((row) => (
+              <tr key={row.kod} style={{ opacity: row.aktif === false ? 0.55 : 1 }}>
+                <td style={{ padding: 6 }}>{row.aktif === false ? '—' : '✓'}</td>
+                <td style={{ padding: 6, fontFamily: 'monospace' }}>{row.kod}</td>
+                <td style={{ padding: 6 }}>{row.ad}</td>
+                <td style={{ padding: 6 }}>{fmtSaat(saatApiToInput(row.bas_saat))}–{fmtSaat(saatApiToInput(row.bit_saat))}{row.gece_vardiyasi ? ' · gece' : ''}</td>
+                <td style={{ padding: 6 }}>{row.sira}</td>
+                <td style={{ padding: 6, whiteSpace: 'nowrap' }}>
+                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => satirDuzenle(row)} disabled={busy}>Düzenle</button>
+                  {row.aktif !== false && (
+                    <button type="button" className="btn btn-sm btn-danger" style={{ marginLeft: 4 }} onClick={() => pasiflestir(row.kod)} disabled={busy}>Pasifleştir</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 13 }}>{duzenKod ? `Düzenle: ${duzenKod}` : 'Yeni preset'}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+        <div className="form-group">
+          <label>Kod</label>
+          <input className="input" value={form.kod} disabled={!!duzenKod} onChange={(e) => setForm({ ...form, kod: e.target.value.toUpperCase() })} placeholder="TAM" />
+        </div>
+        <div className="form-group">
+          <label>Ad</label>
+          <input className="input" value={form.ad} onChange={(e) => setForm({ ...form, ad: e.target.value })} placeholder="Tam mesai" />
+        </div>
+        <div className="form-group">
+          <label>Sıra</label>
+          <input className="input" type="number" value={form.sira} onChange={(e) => setForm({ ...form, sira: parseInt(e.target.value, 10) || 0 })} />
+        </div>
+        <div className="form-group">
+          <label>Başlangıç</label>
+          <input className="input" type="time" value={form.bas_saat} onChange={(e) => setForm({ ...form, bas_saat: e.target.value })} />
+        </div>
+        <div className="form-group">
+          <label>Bitiş</label>
+          <input className="input" type="time" value={form.bit_saat} onChange={(e) => setForm({ ...form, bit_saat: e.target.value })} />
+        </div>
+        <div className="form-group">
+          <label>Renk (hex)</label>
+          <input className="input" value={form.renk} onChange={(e) => setForm({ ...form, renk: e.target.value })} placeholder="#3b82f6" />
+        </div>
+        <div className="form-group" style={{ gridColumn: '1/-1' }}>
+          <label>
+            <input type="checkbox" checked={form.gece_vardiyasi} onChange={(e) => setForm({ ...form, gece_vardiyasi: e.target.checked })} />
+            {' '}Gece vardiyası (bitiş ertesi gün)
+          </label>
+          {' '}
+          <label style={{ marginLeft: 16 }}>
+            <input type="checkbox" checked={form.aktif} onChange={(e) => setForm({ ...form, aktif: e.target.checked })} />
+            {' '}Aktif (listede görünsün)
+          </label>
+        </div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
+        <button type="button" className="btn btn-secondary" onClick={yeniSatir} disabled={busy}>Formu temizle</button>
+        <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy}>Kapat</button>
+        <button type="button" className="btn btn-primary" onClick={kaydet} disabled={busy}>{busy ? '…' : 'Kaydet (ekle / güncelle)'}</button>
+      </div>
+    </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // PERSONEL KISIT MODAL
 // ═══════════════════════════════════════════════════════════════════
 function KisitModal({ personel_id, subeler, onClose, onKaydet }) {
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [presetler, setPresetler] = useState([]);
+
+  useEffect(() => {
+    api('/vardiya/v2/preset').then(r => setPresetler(r.presetler || [])).catch(() => {});
+  }, []);
 
   useEffect(() => {
     api(`/vardiya/v2/kisit/${personel_id}`).then(r => setForm({
@@ -2359,6 +2685,9 @@ function KisitModal({ personel_id, subeler, onClose, onKaydet }) {
       calisilabilir_saat_min: r.calisilabilir_saat_min ? fmtSaat(r.calisilabilir_saat_min) : '',
       calisilabilir_saat_max: r.calisilabilir_saat_max ? fmtSaat(r.calisilabilir_saat_max) : '',
       min_gecis_dk: r.min_gecis_dk,
+      vardiya_preset_json: r.vardiya_preset_json || {},
+      gun_saat_kisitlari_json: r.gun_saat_kisitlari_json || {},
+      yemek_sube_id: r.yemek_sube_id || '',
     }));
   }, [personel_id]);
 
@@ -2369,10 +2698,36 @@ function KisitModal({ personel_id, subeler, onClose, onKaydet }) {
         ...form,
         calisilabilir_saat_min: form.calisilabilir_saat_min || null,
         calisilabilir_saat_max: form.calisilabilir_saat_max || null,
+        yemek_sube_id: form.yemek_sube_id || null,
       }});
       onKaydet();
     } catch (e) { alert(e.message); }
     finally { setBusy(false); }
+  }
+
+  function presetSet(slot, kod) {
+    setForm({ ...form, vardiya_preset_json: { ...(form.vardiya_preset_json||{}), [slot]: kod || undefined }});
+  }
+
+  function dersEkle() {
+    const gun = window.prompt('Hangi gün? (pzt/sal/car/per/cum/cmt/paz)', 'car');
+    if (!gun || !['pzt','sal','car','per','cum','cmt','paz'].includes(gun)) return;
+    const bas = window.prompt('Yasak başlangıç saati (HH:MM)', '09:00');
+    if (!bas) return;
+    const bit = window.prompt('Yasak bitiş saati (HH:MM)', '13:00');
+    if (!bit) return;
+    const neden = window.prompt('Neden? (Ders/Lab/Randevu)', 'Ders') || 'Ders';
+    const cur = (form.gun_saat_kisitlari_json || {})[gun] || [];
+    const yeni = [...cur, { yasak_bas: bas, yasak_bit: bit, neden }];
+    setForm({ ...form, gun_saat_kisitlari_json: { ...(form.gun_saat_kisitlari_json||{}), [gun]: yeni }});
+  }
+
+  function dersSil(gun, idx) {
+    const cur = (form.gun_saat_kisitlari_json || {})[gun] || [];
+    const yeni = cur.filter((_, i) => i !== idx);
+    const j = { ...(form.gun_saat_kisitlari_json||{}) };
+    if (yeni.length) j[gun] = yeni; else delete j[gun];
+    setForm({ ...form, gun_saat_kisitlari_json: j });
   }
 
   function subeToggle(arr_field, sid) {
@@ -2407,6 +2762,14 @@ function KisitModal({ personel_id, subeler, onClose, onKaydet }) {
             onChange={e => setForm({ ...form, calisilabilir_saat_max: e.target.value })} />
         </div>
         <div className="form-group" style={{ gridColumn: '1/-1' }}>
+          <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
+            <strong>Gündüz penceresi:</strong> Min ≤ Max (ör. 08:00–22:00) — slot bu aralığa uymalı.
+            {' '}
+            <strong>Gece penceresi:</strong> Min &gt; Max (ör. 23:59–08:00) — yalnızca bu gece dilimine
+            denk slotlar uygundur; gündüz dilimi (ör. 09:00–22:00) ile kesişen atamalarda uyarı verilir.
+          </div>
+        </div>
+        <div className="form-group" style={{ gridColumn: '1/-1' }}>
           <label>Şube A → B minimum boşluk (dk)</label>
           <input className="input" type="number" min={0} value={form.min_gecis_dk}
             onChange={e => setForm({ ...form, min_gecis_dk: parseInt(e.target.value) || 0 })} />
@@ -2431,6 +2794,119 @@ function KisitModal({ personel_id, subeler, onClose, onKaydet }) {
             })}
           </div>
         </div>
+        {/* ─── Yemek molası şubesi ─── */}
+        <div className="form-group" style={{ gridColumn: '1/-1', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <label>🍽 Yemek Molası Şubesi</label>
+          <select className="input" value={form.yemek_sube_id || ''}
+            onChange={e => setForm({ ...form, yemek_sube_id: e.target.value })}>
+            <option value="">— Seçilmemiş —</option>
+            {subeler.map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
+          </select>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Personelin yemek molasını yapacağı sabit şube. Sol havuz kartında ve atama hücresinde 🍽 satırı olarak gösterilir.
+          </div>
+        </div>
+
+        {/* ─── Vardiya Preset (hibrit) ─── */}
+        <div className="form-group" style={{ gridColumn: '1/-1', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <label>⏱ Vardiya Preset (atama saati önceliği)</label>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
+            Sürükle-bırak atamasında sunucu önce <strong>gün kodu</strong> (pzt…paz), yoksa hafta içi/sonu, yoksa varsayılan preset saatini kullanır; hepsi boşsa slot saati kalır.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Hafta İçi (Pzt–Cum)</div>
+              <select className="input" value={form.vardiya_preset_json?.hafta_ici || ''}
+                onChange={e => presetSet('hafta_ici', e.target.value)}>
+                <option value="">— Yok —</option>
+                {presetler.map(pr => (
+                  <option key={pr.kod} value={pr.kod}>
+                    {pr.ad} ({fmtSaat(pr.bas_saat)}–{fmtSaat(pr.bit_saat)})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Hafta Sonu (Cmt–Paz)</div>
+              <select className="input" value={form.vardiya_preset_json?.hafta_sonu || ''}
+                onChange={e => presetSet('hafta_sonu', e.target.value)}>
+                <option value="">— Yok —</option>
+                {presetler.map(pr => (
+                  <option key={pr.kod} value={pr.kod}>
+                    {pr.ad} ({fmtSaat(pr.bas_saat)}–{fmtSaat(pr.bit_saat)})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text3)', margin: '10px 0 6px' }}>
+            <strong>Gün başına</strong> (doluysa hafta içi/sonu yerine o günün kodu kullanılır):
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
+            {V2_PRESET_GUN_ANAHTARLARI.map((gk, i) => (
+              <div key={gk}>
+                <div style={{ fontSize: 10, fontWeight: 700, marginBottom: 2, color: 'var(--text3)' }}>{TR_GUNLER[i].slice(0, 3)}</div>
+                <select
+                  className="input"
+                  style={{ fontSize: 11, padding: '4px 2px' }}
+                  value={form.vardiya_preset_json?.[gk] || ''}
+                  onChange={(e) => presetSet(gk, e.target.value)}
+                >
+                  <option value="">—</option>
+                  {presetler.map((pr) => (
+                    <option key={pr.kod} value={pr.kod}>{pr.kod}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Varsayılan preset</div>
+            <select className="input" value={form.vardiya_preset_json?.default || ''}
+              onChange={(e) => presetSet('default', e.target.value)}>
+              <option value="">— Yok —</option>
+              {presetler.map((pr) => (
+                <option key={pr.kod} value={pr.kod}>
+                  {pr.ad} ({fmtSaat(pr.bas_saat)}–{fmtSaat(pr.bit_saat)})
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* ─── Gün-bazlı yasak saatler (öğrenci/ders) ─── */}
+        <div className="form-group" style={{ gridColumn: '1/-1', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <label>🚫 Çalışamayacağı Saatler (öğrenci/ders/randevu)</label>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
+            Bu saat aralığında atanırsa drop popup'ı kritik uyarı verir, override ile geçilebilir.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+            {Object.keys(form.gun_saat_kisitlari_json || {}).length === 0 && (
+              <div style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>
+                Henüz tanımlı kısıt yok.
+              </div>
+            )}
+            {Object.entries(form.gun_saat_kisitlari_json || {}).flatMap(([gun, liste]) =>
+              (liste || []).map((item, i) => (
+                <div key={`${gun}-${i}`} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '4px 8px', background: 'var(--bg3)', borderRadius: 4, fontSize: 12,
+                }}>
+                  <span>
+                    <strong>{gun.toUpperCase()}</strong>: {item.yasak_bas} – {item.yasak_bit}
+                    {item.neden && <span style={{ color: 'var(--text3)' }}> · {item.neden}</span>}
+                  </span>
+                  <button type="button" onClick={() => dersSil(gun, i)}
+                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>✕</button>
+                </div>
+              ))
+            )}
+          </div>
+          <button type="button" className="btn btn-sm btn-secondary" onClick={dersEkle}>
+            + Saat kısıtı ekle
+          </button>
+        </div>
+
         <div className="form-group" style={{ gridColumn: '1/-1' }}>
           <label>Yasaklı Şubeler</label>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -2697,5 +3173,109 @@ function Modal({ children, onClose, title, geniş = false }) {
         <div className="modal-body">{children}</div>
       </div>
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DROP ATAMA — saat + hızlı preset (atama/check öncesi)
+// ═══════════════════════════════════════════════════════════════════
+function DropAtamaSaatModal({
+  personel,
+  slotId,
+  gunTarihi,
+  planForGun,
+  onClose,
+  onTamam,
+}) {
+  const [bas, setBas] = useState('09:00');
+  const [bit, setBit] = useState('18:00');
+  const [presetler, setPresetler] = useState([]);
+  const [busy, setBusy] = useState(true);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      const row = planSlotSatirBul(planForGun, slotId);
+      let b0 = fmtSaat(row?.sv?.slot?.baslangic_saat) || '09:00';
+      let b1 = fmtSaat(row?.sv?.slot?.bitis_saat) || '18:00';
+      try {
+        const pr = await api(
+          `/vardiya/v2/personel-onerilen-saat?personel_id=${encodeURIComponent(personel.id)}&tarih=${encodeURIComponent(gunTarihi)}`,
+        );
+        if (pr?.preset?.bas_saat) b0 = fmtSaat(pr.preset.bas_saat);
+        if (pr?.preset?.bit_saat) b1 = fmtSaat(pr.preset.bit_saat);
+      } catch { /* preset yok */ }
+      try {
+        const r = await api('/vardiya/v2/preset');
+        if (!cancel) setPresetler(r.presetler || []);
+      } catch { if (!cancel) setPresetler([]); }
+      if (!cancel) {
+        setBas(b0);
+        setBit(b1);
+        setBusy(false);
+      }
+    })();
+    return () => { cancel = true; };
+  }, [personel.id, slotId, gunTarihi, planForGun]);
+
+  const slotRow = planSlotSatirBul(planForGun, slotId);
+  const slotAd = slotRow?.sv?.slot?.ad || 'Slot';
+  const slotBasDef = fmtSaat(slotRow?.sv?.slot?.baslangic_saat);
+  const slotBitDef = fmtSaat(slotRow?.sv?.slot?.bitis_saat);
+
+  async function handleTamam() {
+    setBusy(true);
+    try {
+      await onTamam(bas, bit);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal onClose={onClose} title="Atama saati">
+      <p style={{ fontSize: 12, color: 'var(--text3)', marginTop: 0 }}>
+        <strong>{personel.ad} {personel.soyad || ''}</strong>
+        {' → '}
+        <strong>{slotAd}</strong>
+        {' · '}
+        {gunTarihi}
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 10 }}>
+        <div className="form-group">
+          <label>Başlangıç</label>
+          <input className="input" type="time" value={bas} onChange={(e) => setBas(e.target.value)} disabled={busy} />
+        </div>
+        <div className="form-group">
+          <label>Bitiş</label>
+          <input className="input" type="time" value={bit} onChange={(e) => setBit(e.target.value)} disabled={busy} />
+        </div>
+      </div>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginTop: 10 }}>Hızlı seç</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+        <button type="button" className="btn btn-sm btn-secondary" disabled={busy} onClick={() => { setBas(slotBasDef); setBit(slotBitDef); }}>
+          Slot saati ({slotBasDef}–{slotBitDef})
+        </button>
+        {presetler.map((pr) => (
+          <button
+            key={pr.kod}
+            type="button"
+            className="btn btn-sm btn-secondary"
+            disabled={busy}
+            onClick={() => {
+              setBas(fmtSaat(pr.bas_saat));
+              setBit(fmtSaat(pr.bit_saat));
+            }}
+            title={pr.ad || pr.kod}
+          >
+            {pr.kod}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+        <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy}>İptal</button>
+        <button type="button" className="btn btn-primary" onClick={handleTamam} disabled={busy}>{busy ? '…' : 'Atamaya devam'}</button>
+      </div>
+    </Modal>
   );
 }
