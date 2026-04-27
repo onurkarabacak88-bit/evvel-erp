@@ -762,6 +762,8 @@ def _cozumle_atama_saatleri(
     slot: Dict[str, Any],
     baslangic_saat: Optional[time],
     bitis_saat: Optional[time],
+    *,
+    otomatik_saat_cozumu: bool = False,
 ) -> Tuple[Optional[time], Optional[time], Optional[str]]:
     """
     İki saat birlikte verilmişse olduğu gibi kullanılır — şube slotu ile **asla**
@@ -774,6 +776,12 @@ def _cozumle_atama_saatleri(
     if baslangic_saat is not None and bitis_saat is not None:
         return baslangic_saat, bitis_saat, None
     if baslangic_saat is None and bitis_saat is None:
+        if not otomatik_saat_cozumu:
+            return None, None, (
+                "baslangic_saat ve bitis_saat birlikte zorunludur. "
+                "Saat gönderilmezse sistem süre üretmez (yanlışlıkla tam slot veya otomatik öneri yazılmaz). "
+                "Yalnızca otomatik atama/motor istekleri `otomatik_saat_cozumu=true` ile preset/mesai kullanır."
+            )
         sid = str(slot.get("id") or "").strip()
         if not sid:
             return None, None, "Slot kimliği eksik."
@@ -1186,6 +1194,9 @@ def atama_uyarilari(
 
     Not: ``slot_band_disinda`` çoğunlukla **uyari** — şube çerçevesi bilgi amaçlıdır;
     gerçek mesai atama satırındaki saatlerdedir (ek mesai vb. bilinçli taşma).
+
+    ``otomatik_saat_cozumu=True``: başlangıç/bitiş boşken preset/mesai kullanılır (sürükle önizleme,
+    otomatik doldur). Varsayılan False → saat yoksa süre üretilmez (manuel API ile karışmaz).
     """
     uyarilar: List[Dict[str, Any]] = []
 
@@ -1211,6 +1222,7 @@ def atama_uyarilari(
 
     bas, bit, saat_err = _cozumle_atama_saatleri(
         cur, personel_id, tarih, slot, baslangic_saat, bitis_saat,
+        otomatik_saat_cozumu=otomatik_saat_cozumu,
     )
     if saat_err:
         uyarilar.append({
@@ -1438,6 +1450,8 @@ def atama_olustur(
     override_uyarilar: Optional[List[Dict[str, Any]]] = None,
     kullanici_id: Optional[str] = None,
     aciklama: Optional[str] = None,
+    *,
+    otomatik_saat_cozumu: bool = False,
 ) -> Dict[str, Any]:
     """
     Atama oluşturur. Önce uyarıları hesaplar:
@@ -1449,7 +1463,7 @@ def atama_olustur(
     varsayılan bloklayıcı değildir — günlük limit / izin / çakışma ayrı kurallarda kalır.
 
     Saat çözümü: iki saat birlikte gelmişse aynen kullanılır; slot bitişi ile **tamamlanmaz**.
-    İkisi de boşsa preset/mesai/kısa dilim; yalnızca biri doluysa hata.
+    İkisi de boşsa yalnızca ``otomatik_saat_cozumu=True`` ise preset/mesai/kısa dilim; aksi halde hata (sessiz süre üretimi yok).
     """
     cur.execute("SELECT * FROM vardiya_slot WHERE id = %s", (slot_id,))
     slot = cur.fetchone()
@@ -1460,6 +1474,7 @@ def atama_olustur(
 
     bas, bit, saat_err = _cozumle_atama_saatleri(
         cur, personel_id, tarih, slot, baslangic_saat, bitis_saat,
+        otomatik_saat_cozumu=otomatik_saat_cozumu,
     )
     if saat_err:
         return {
@@ -1469,14 +1484,17 @@ def atama_olustur(
                 "tip": "saat_cifti_gecersiz",
                 "seviye": "kritik",
                 "mesaj": saat_err,
-                "detay": {},
+                "detay": {"otomatik_saat_cozumu": otomatik_saat_cozumu},
             }],
             "mesaj": saat_err,
             "hata": saat_err,
         }
 
-    uyarilar = atama_uyarilari(cur, personel_id, slot_id, tarih,
-                               baslangic_saat=bas, bitis_saat=bit)
+    uyarilar = atama_uyarilari(
+        cur, personel_id, slot_id, tarih,
+        baslangic_saat=bas, bitis_saat=bit,
+        otomatik_saat_cozumu=False,
+    )
 
     # FIZIK KURALI: Çakışma override edilemez (aynı anda iki yerde olunamaz).
     cakisma_var = any(u['tip'] == 'cakisma' for u in uyarilar)

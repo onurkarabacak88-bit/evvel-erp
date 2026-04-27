@@ -5774,6 +5774,16 @@ class _V2AtamaIn(BaseModel):
     bitis_saat: Optional[str] = None
     override: bool = False
     aciklama: Optional[str] = None
+    # True: saatler boşsa preset/mesai/kısa dilim (otomatik doldur / motor / sürükle önizleme)
+    otomatik_saat_cozumu: bool = False
+
+
+class _MotorHaftaIn(BaseModel):
+    """Haftalık otomatik plan motoru (`vardiya_plan_motor`)."""
+    pazartesi: str              # ISO gün — haftanın herhangi bir günü olabilir (Pzt’ye normalize edilir)
+    max_rounds: int = 120
+    tasima_izni: bool = True    # Başka slottan taşımayı dene (min kontenjan korunur)
+    dry_run: bool = False       # True ise işlem sonunda rollback (önizleme)
 
 
 class _V2SubeGunHedefIn(BaseModel):
@@ -6023,6 +6033,30 @@ def v2_hafta_personel_tablo(pazartesi: str):
         return _vv2.hafta_personel_tablosu(cur, t)
 
 
+@app.post("/api/vardiya/v2/motor/hafta-doldur")
+def v2_motor_hafta_doldur(body: _MotorHaftaIn):
+    """Haftalık plan motoru — eksik slotları önceliklendirir; doğrudan veya taşıma ile doldurur."""
+    import vardiya_plan_motor as _vpm
+    from datetime import datetime as _dt
+    pzt = _dt.strptime(body.pazartesi[:10], "%Y-%m-%d").date()
+    mr = max(15, min(int(body.max_rounds or 120), 400))
+    with db() as (conn, cur):
+        out = _vpm.hafta_otomatik_planla(
+            cur,
+            pazartesi_gun=pzt,
+            max_rounds=mr,
+            tasima_izni=bool(body.tasima_izni),
+            kullanici_id=None,
+            aciklama_etiketi="[Otomatik plan motoru]",
+        )
+        if getattr(body, "dry_run", False):
+            conn.rollback()
+            out["dry_run"] = True
+            base = out.get("mesaj") or ""
+            out["mesaj"] = base + " (dry-run — veritabanı geri alındı)"
+    return out
+
+
 @app.post("/api/vardiya/v2/atama/check")
 def v2_atama_check(a: _V2AtamaIn):
     """Atama yapılmadan önce uyarıları döner — UI bunu çağırıp gösterir.
@@ -6035,7 +6069,8 @@ def v2_atama_check(a: _V2AtamaIn):
     with db() as (conn, cur):
         uyarilar = _vv2.atama_uyarilari(
             cur, a.personel_id, a.slot_id, t,
-            _t(a.baslangic_saat), _t(a.bitis_saat)
+            _t(a.baslangic_saat), _t(a.bitis_saat),
+            otomatik_saat_cozumu=bool(a.otomatik_saat_cozumu),
         )
         gd = _vv2.personel_gun_durumu(cur, a.personel_id, t)
     has_cakisma = any(u.get("tip") == "cakisma" for u in uyarilar)
@@ -6067,6 +6102,7 @@ def v2_atama_olustur(a: _V2AtamaIn):
             _t(a.baslangic_saat), _t(a.bitis_saat),
             override=a.override,
             aciklama=a.aciklama,
+            otomatik_saat_cozumu=bool(a.otomatik_saat_cozumu),
         )
         if not sonuc.get('basarili'):
             raise HTTPException(409, sonuc)
