@@ -2182,32 +2182,41 @@ $$;
                 olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
-        # Default presetleri seed et (ilk kurulumda) — varsa atlanır
+        # Sistem vardiya presetleri — tek UPSERT (yeni kurulum + mevcut DB güncellemesi)
         cur.execute("""
-            INSERT INTO vardiya_preset (kod, ad, bas_saat, bit_saat, renk, sira)
+            INSERT INTO vardiya_preset (kod, ad, bas_saat, bit_saat, gece_vardiyasi, renk, sira, aktif)
             VALUES
-                ('TAM',     'Tam Mesai',  '09:00', '18:30', '#3b82f6', 1),
-                ('PART',    'Part-Time',  '14:00', '19:00', '#22c55e', 2),
-                ('ARACI',   'Aracı',      '11:00', '21:00', '#facc15', 3),
-                ('ACILIS',  'Açılışçı',   '06:00', '14:00', '#f97316', 4),
-                ('KAPANIS', 'Kapanışçı',  '18:00', '00:00', '#a855f7', 5)
-            ON CONFLICT (kod) DO NOTHING
+                ('TAM',     'Tam mesai',              '09:00', '18:30', FALSE, '#3b82f6',  1, TRUE),
+                ('PART',    'Part (sabah)',           '09:00', '14:30', FALSE, '#22c55e',  2, TRUE),
+                ('PART1',   'Part 1 (akşam)',        '18:30', '23:59', FALSE, '#15803d',  3, TRUE),
+                ('PART_K',  'Part kaydırma',        '15:30', '19:00', FALSE, '#65a30d',  4, TRUE),
+                ('ARACI',   'Aracı',                 '12:00', '21:30', FALSE, '#facc15', 10, TRUE),
+                ('ARACI1',  'Aracı 1',               '10:30', '20:00', FALSE, '#eab308', 11, TRUE),
+                ('ARACI3',  'Aracı 3',               '12:00', '22:30', FALSE, '#ca8a04', 12, TRUE),
+                ('ACILIS',  'Açılış',                '09:00', '18:30', FALSE, '#f97316', 20, TRUE),
+                ('KAPANIS', 'Kapanış',               '14:30', '23:59', FALSE, '#a855f7', 21, TRUE),
+                ('FULL1',   'Full 1',                '10:30', '23:00', FALSE, '#2563eb', 30, TRUE),
+                ('FULL2',   'Full 2',                '11:00', '23:59', FALSE, '#1d4ed8', 31, TRUE)
+            ON CONFLICT (kod) DO UPDATE SET
+                ad = EXCLUDED.ad,
+                bas_saat = EXCLUDED.bas_saat,
+                bit_saat = EXCLUDED.bit_saat,
+                gece_vardiyasi = EXCLUDED.gece_vardiyasi,
+                renk = EXCLUDED.renk,
+                sira = EXCLUDED.sira,
+                aktif = EXCLUDED.aktif
         """)
-        # Part sabah / akşam / ara — personel_kisit.vardiya_preset_json veya sürükle-bırak hızlı seç
+        # Eski PART2/PART3 kodları PART_K ile çakışmasın diye kapatılır
         cur.execute("""
-            INSERT INTO vardiya_preset (kod, ad, bas_saat, bit_saat, renk, sira)
-            VALUES
-                ('PART1', 'Part sabah (açılış)',   '09:00', '14:30', '#22c55e', 11),
-                ('PART2', 'Part akşam (kapanış)', '14:30', '23:59', '#15803d', 12),
-                ('PART3', 'Part aracı (ara dilim)', '11:00', '21:00', '#84cc16', 13)
-            ON CONFLICT (kod) DO NOTHING
+            UPDATE vardiya_preset SET aktif = FALSE
+            WHERE kod IN ('PART2', 'PART3')
         """)
 
         # 2) Personel kısıtları — kişi başına 1 satır
         cur.execute("""
             CREATE TABLE IF NOT EXISTS personel_kisit (
                 personel_id              TEXT PRIMARY KEY REFERENCES personel(id) ON DELETE CASCADE,
-                max_gunluk_saat          NUMERIC(4,2) NOT NULL DEFAULT 9,
+                max_gunluk_saat          NUMERIC(4,2) NOT NULL DEFAULT 9.5,
                 max_haftalik_saat        NUMERIC(5,2) NOT NULL DEFAULT 45,
                 izinli_subeler           TEXT[] NOT NULL DEFAULT '{}',
                                          -- boş = tüm aktif şubeler
@@ -2242,7 +2251,7 @@ $$;
                       AND column_name = 'max_gunluk_saat'
                 ) THEN
                     ALTER TABLE personel_kisit
-                        ADD COLUMN max_gunluk_saat NUMERIC(4,2) NOT NULL DEFAULT 9;
+                        ADD COLUMN max_gunluk_saat NUMERIC(4,2) NOT NULL DEFAULT 9.5;
                 END IF;
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
@@ -2351,6 +2360,25 @@ $$;
             END $$;
         """)
 
+        # Eski 9 saat varsayılanını çalışma türüne göre 9,5 (sürekli) / 5,5 (part) yap
+        try:
+            cur.execute("""
+                UPDATE personel_kisit pk SET max_gunluk_saat = 5.5
+                FROM personel p
+                WHERE p.id = pk.personel_id
+                  AND LOWER(REPLACE(COALESCE(p.calisma_turu, ''), '-', '_')) IN ('part_time', 'part')
+                  AND pk.max_gunluk_saat IN (9, 9.0)
+            """)
+            cur.execute("""
+                UPDATE personel_kisit pk SET max_gunluk_saat = 9.5
+                FROM personel p
+                WHERE p.id = pk.personel_id
+                  AND LOWER(REPLACE(COALESCE(p.calisma_turu, ''), '-', '_')) NOT IN ('part_time', 'part')
+                  AND pk.max_gunluk_saat IN (9, 9.0)
+            """)
+        except Exception:
+            pass
+
         # 3) Personel atama — gün × slot × kişi
         cur.execute("""
             CREATE TABLE IF NOT EXISTS vardiya_atama (
@@ -2450,6 +2478,21 @@ $$;
             )
         """)
 
+        # 7b) Şube × gün — planlamada hedef kişi sayısı (slot ayrı; atama sonrası altında/tam/üstünde özeti)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS vardiya_sube_gun_hedef (
+                sube_id          TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                tarih            DATE NOT NULL,
+                hedef_personel   INT NOT NULL CHECK (hedef_personel >= 0),
+                guncelleme       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (sube_id, tarih)
+            )
+        """)
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_vardiya_sube_gun_hedef_tarih "
+            "ON vardiya_sube_gun_hedef (tarih)"
+        )
+
         # 8) Personel × gün özet durumu (Aşama 1/5 — atama/izin/niyet ile güncellenir)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS personel_gun_state (
@@ -2460,7 +2503,7 @@ $$;
                 atama_sayisi      INT NOT NULL DEFAULT 0,
                 toplam_saat       NUMERIC(6,2) NOT NULL DEFAULT 0,
                 kalan_saat        NUMERIC(6,2) NOT NULL DEFAULT 0,
-                max_gunluk_saat   NUMERIC(4,2) NOT NULL DEFAULT 9,
+                max_gunluk_saat   NUMERIC(4,2) NOT NULL DEFAULT 9.5,
                 haftalik_saat     NUMERIC(6,2) NOT NULL DEFAULT 0,
                 fazla_gunluk_saat NUMERIC(6,2) NOT NULL DEFAULT 0,
                 guncelleme        TIMESTAMPTZ NOT NULL DEFAULT NOW(),

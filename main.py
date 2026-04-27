@@ -5776,6 +5776,13 @@ class _V2AtamaIn(BaseModel):
     aciklama: Optional[str] = None
 
 
+class _V2SubeGunHedefIn(BaseModel):
+    """Şube × gün hedef kişi; `hedef_personel` null/omit → hedef kaldırılır."""
+    sube_id: str
+    tarih: str
+    hedef_personel: Optional[int] = None
+
+
 class _V2PersonelGunNiyetIn(BaseModel):
     personel_id: str
     tarih: str
@@ -5995,6 +6002,16 @@ def v2_gun_planini_getir(tarih: str, sube_id: Optional[str] = None):
     t = _dt.strptime(tarih, "%Y-%m-%d").date()
     with db() as (conn, cur):
         return _vv2.gun_planini_getir(cur, t, sube_id)
+
+
+@app.put("/api/vardiya/v2/sube-gun-hedef")
+def v2_sube_gun_hedef_kaydet(body: _V2SubeGunHedefIn):
+    """Şube için seçilen güne hedef kişi sayısı (vardiya_sube_gun_hedef)."""
+    from datetime import datetime as _dt
+    t = _dt.strptime(body.tarih[:10], "%Y-%m-%d").date()
+    with db() as (conn, cur):
+        _vv2.sube_gun_hedef_kaydet(cur, body.sube_id, t, body.hedef_personel)
+    return {"basarili": True}
 
 
 @app.get("/api/vardiya/v2/hafta-personel-tablo")

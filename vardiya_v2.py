@@ -15,6 +15,7 @@ Bu modül SAFE helper'lar sağlar — endpoint'ler main.py'da.
 """
 from __future__ import annotations
 from typing import Optional, List, Dict, Any, Tuple, Set
+from collections import defaultdict
 from datetime import date, time, datetime, timedelta
 import uuid as _uuid
 
@@ -455,6 +456,34 @@ def gun_kilit_kaydet(cur, tarih: date, kilitli: bool, aciklama: str = "") -> Non
         )
     else:
         cur.execute("DELETE FROM vardiya_gun_kilit WHERE tarih = %s::date", (tarih,))
+
+
+def sube_gun_hedef_kaydet(
+    cur,
+    sube_id: str,
+    tarih: date,
+    hedef_personel: Optional[int],
+) -> None:
+    """
+    Şube × gün hedef kişi sayısı. `hedef_personel` None → satır silinir (hedef tanımsız).
+    """
+    if hedef_personel is None:
+        cur.execute(
+            "DELETE FROM vardiya_sube_gun_hedef WHERE sube_id = %s AND tarih = %s::date",
+            (sube_id, tarih),
+        )
+        return
+    h = max(0, int(hedef_personel))
+    cur.execute(
+        """
+        INSERT INTO vardiya_sube_gun_hedef (sube_id, tarih, hedef_personel)
+        VALUES (%s, %s::date, %s)
+        ON CONFLICT (sube_id, tarih) DO UPDATE SET
+            hedef_personel = EXCLUDED.hedef_personel,
+            guncelleme = NOW()
+        """,
+        (sube_id, tarih, h),
+    )
 
 
 def _max_gunluk_saat_varsayilan(calisma_turu: Optional[str]) -> float:
@@ -1574,6 +1603,29 @@ def gun_planini_getir(cur, tarih: date, sube_id: Optional[str] = None) -> Dict[s
         ym = yemek_by_pid.get(str(a["personel_id"]))
         a["yemek_sube_ad"] = ym.get("yemek_sube_ad") if ym else None
 
+    # Şube bazında o gün benzersiz atanmış personel (ihtiyaç özeti)
+    slot_sube_id: Dict[str, str] = {str(sl["id"]): str(sl["sube_id"]) for sl in tum_slotlar}
+    pid_by_sube: Dict[str, Set[str]] = defaultdict(set)
+    for a in tum_atamalar:
+        sid = slot_sube_id.get(str(a.get("slot_id")))
+        if sid:
+            pid_by_sube[sid].add(str(a["personel_id"]))
+
+    hedef_map: Dict[str, int] = {}
+    try:
+        cur.execute(
+            """
+            SELECT sube_id::text AS sube_id, hedef_personel
+            FROM vardiya_sube_gun_hedef
+            WHERE tarih = %s::date
+            """,
+            (tarih,),
+        )
+        for row in cur.fetchall():
+            hedef_map[str(row["sube_id"])] = int(row["hedef_personel"])
+    except Exception:
+        hedef_map = {}
+
     sube_blocks: List[Dict[str, Any]] = []
     for s in subeler:
         s_slotlar = [sl for sl in tum_slotlar if sl['sube_id'] == s['id']]
@@ -1589,10 +1641,24 @@ def gun_planini_getir(cur, tarih: date, sube_id: Optional[str] = None) -> Dict[s
                 "eksik": max(0, int(sl['min_personel']) - len(atamalar)),
                 "ideal_eksik": max(0, int(sl['ideal_personel']) - len(atamalar)),
             })
+        sid_m = str(s["id"])
+        hedef_k = hedef_map.get(sid_m)
+        atanan_benz = len(pid_by_sube.get(sid_m, set()))
+        iht_durumu: Optional[str] = None
+        if hedef_k is not None:
+            if atanan_benz < hedef_k:
+                iht_durumu = "altinda"
+            elif atanan_benz > hedef_k:
+                iht_durumu = "ustunde"
+            else:
+                iht_durumu = "tam"
         sube_blocks.append({
             "sube_id": s['id'],
             "sube_ad": s['ad'],
             "slotlar": slot_views,
+            "ihtiyac_hedef_kisi": hedef_k,
+            "atanan_benzersiz_kisi": atanan_benz,
+            "ihtiyac_durumu": iht_durumu,
         })
 
     # Personel havuzu
