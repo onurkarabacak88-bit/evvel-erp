@@ -11,13 +11,17 @@ Tasarım kuralları (kullanıcı onaylı):
 5. Override sistemi: kritik uyarılar varsayılan blok; override ile
    atama + vardiya_override_log.
 
-6. **Kaynak önceliği — atama satırı birincildir.** `vardiya_atama.baslangic_saat`
-   ve `bitis_saat`, o kişinin o şubedeki gerçek mesaidir. Şube slotundaki
-   başlangıç–bitiş, kapasite / kontenjan / plan bandı için **referans çerçevedir**;
-   kullanıcı kısmi mesai (ör. 09:00–14:30), ardışık iki kişi (Ahmet sonra Mehmet)
-   veya çerçeveden uzun/kısa dilim yazdıysa esas olan **yazılan saatlerdir**.
+6. **Asıl olan: personele tanımlanan çalışma saati.** Günlük çalışılabilir pencere
+   (`personel_kisit.calisilabilir_saat_min/max`, parça/zaman kültüründe tek parça gündüz bandı)
+   kişinin **gerçekten ne zaman işe gelebileceğidir**. Şube slotu ise **aynı anda**
+   kontenjan + «hangi band içinde iş var» **referans çerçevesidir**. Geçerli mesai süresi
+   çoğu durumda **personel bandı ∩ slot ∩ şube açılış–kapanış** kesişimidir.
 
-7. **Şube çerçevesi dışı** bilinçli ek mesai veya özel düzen olabilir; bu durum
+7. **Kayıt birinciliği:** `vardiya_atama.baslangic_saat` / `bitis_saat` fiilen yazılan
+   mesaidir; otomatik öneri ve UI buraya yaklaşır ama **personel bandı asla aşılmaz**
+   (gündüz penceresinde).
+
+8. **Şube çerçevesi dışı** bilinçli ek mesai veya özel düzen olabilir; bu durum
    `slot_band_disinda` ile **uyarı** seviyesindedir (bloklayıcı kritik değil).
    Günlük limit, izin, fiziksel çakışma vb. ayrı kurallarda kalır.
 
@@ -604,6 +608,95 @@ def _gunluk_saat_cevir_extended_dk(dk: int) -> time:
     return _dk_den_time(int(dk) % (24 * 60))
 
 
+def _kirp_saat_cifti_calisilabilir_pencere(
+    bas: time,
+    bit: time,
+    smin: Optional[time],
+    smax: Optional[time],
+) -> Tuple[Optional[time], Optional[time], Optional[str]]:
+    """
+    personel_kisit.calisilabilir_saat_min/max ile (gündüz) çalışma penceresi kesişimi.
+
+    Gece çalışma penceresi (ör. 23:00–06:00, min > max) tanımlıysa otomatik kırpılmaz —
+    bu durumda mevcut uyarı akışı geçerlidir.
+
+    Gün içi tipik mesai (bas < bit, aynı takvim günü) için bitiş örn. 14:30 ile sınırlanır.
+    """
+    if not smin and not smax:
+        return bas, bit, None
+
+    db = _saat_dakika(bas)
+    de = _saat_dakika(bit)
+    if de <= db:
+        # Gece uzayan tek kayıt satırı — otomatik kırpma riskli; olduğu gibi bırak
+        return bas, bit, None
+
+    if smin and smax and _saat_dakika(smin) > _saat_dakika(smax):
+        return bas, bit, None
+
+    lo = db
+    hi = de
+    if smin:
+        lo = max(lo, _saat_dakika(smin))
+    if smax:
+        hi = min(hi, _saat_dakika(smax))
+
+    if hi <= lo:
+        smin_s = smin.strftime("%H:%M") if smin else "—"
+        smax_s = smax.strftime("%H:%M") if smax else "—"
+        return None, None, (
+            f"Atama ({bas.strftime('%H:%M')}–{bit.strftime('%H:%M')}) personelin "
+            f"çalışılabilir saat penceresi ({smin_s}–{smax_s}) ile kesişmiyor."
+        )
+
+    return _dk_den_time(lo), _dk_den_time(hi), None
+
+
+def _kisit_normalize_calisilabilir_saatler(kisit: Dict[str, Any]) -> Tuple[Optional[time], Optional[time]]:
+    """personel_kisit satırından calisilabilir_saat min/max → `time` veya None."""
+    smin = kisit.get("calisilabilir_saat_min")
+    smax = kisit.get("calisilabilir_saat_max")
+    if isinstance(smin, str):
+        smin = _parse_saat_metni(smin)
+    if isinstance(smax, str):
+        smax = _parse_saat_metni(smax)
+    if smin is not None and not isinstance(smin, time):
+        smin = _vardiya_row_saat(smin)
+    if smax is not None and not isinstance(smax, time):
+        smax = _vardiya_row_saat(smax)
+    return smin, smax
+
+
+def _kisit_calisilabilir_gunduz_dk_band(kisit: Dict[str, Any]) -> Optional[Tuple[int, int]]:
+    """
+    Personelin «asıl» gündüz çalışma bandı (dakika): min≤max tek parça.
+    Tanımsız → None (kısıt yok); gece penceresi (min>max) → None (kesişim burada yapılmaz).
+    """
+    smin, smax = _kisit_normalize_calisilabilir_saatler(kisit)
+    if not smin and not smax:
+        return None
+    if smin and smax and _saat_dakika(smin) > _saat_dakika(smax):
+        return None
+    lo = _saat_dakika(smin) if smin else 0
+    hi = _saat_dakika(smax) if smax else 24 * 60 - 1
+    hi = min(hi, 24 * 60 - 1)
+    if hi <= lo:
+        return None
+    return lo, hi
+
+
+def _cozumle_kirp_calisilabilir(
+    cur,
+    personel_id: str,
+    bas: time,
+    bit: time,
+) -> Tuple[Optional[time], Optional[time], Optional[str]]:
+    """personel_kisit çalışma saatleri ile kırpma — tek giriş noktası."""
+    kisit = personel_kisit_getir(cur, personel_id)
+    smin, smax = _kisit_normalize_calisilabilir_saatler(kisit)
+    return _kirp_saat_cifti_calisilabilir_pencere(bas, bit, smin, smax)
+
+
 def _atama_slot_bandini_icinde_mi(slot: Dict[str, Any], bas: time, bit: time) -> bool:
     """Atama aralığı şube slot çerçevesine gömülü mü (⊆)? Kısmi mesai True döner.
 
@@ -621,10 +714,15 @@ def _atama_slot_bandini_icinde_mi(slot: Dict[str, Any], bas: time, bit: time) ->
     return a0 >= s0 and a1 <= s1
 
 
-def kisa_slot_bandini_baslat(slot: Dict[str, Any]) -> Optional[Tuple[time, time]]:
+def kisa_slot_bandini_baslat(
+    slot: Dict[str, Any],
+    *,
+    cur=None,
+    personel_id: Optional[str] = None,
+) -> Optional[Tuple[time, time]]:
     """
     Preset ve mesai önerisi yokken atama süresini slotun TAMAMI yerine ilk kısa dilim yap.
-    Şube slotu çerçeve; süre seçimi kullanıcıda / yerleşik önerilerde tamamlanır.
+    Personel tanımlı çalışma bandı verilmişse (`cur` + `personel_id`) bitiş/başlangıç buna göre kesilir.
     """
     sb = _vardiya_row_saat(slot.get("baslangic_saat"))
     se = _vardiya_row_saat(slot.get("bitis_saat"))
@@ -633,11 +731,17 @@ def kisa_slot_bandini_baslat(slot: Dict[str, Any]) -> Optional[Tuple[time, time]
     s0, s1 = _aralik_dakika_cifti(sb, se)
     span = s1 - s0
     if span <= 15:
-        return sb, se
-    use = min(span, VARSAYILAN_ATAMA_KISA_DK)
-    end_dk = s0 + use
-    eb = _gunluk_saat_cevir_extended_dk(end_dk)
-    return sb, eb
+        out_b, out_e = sb, se
+    else:
+        use = min(span, VARSAYILAN_ATAMA_KISA_DK)
+        end_dk = s0 + use
+        out_b, out_e = sb, _gunluk_saat_cevir_extended_dk(end_dk)
+    if cur is not None and personel_id:
+        eb2, ee2, err = _cozumle_kirp_calisilabilir(cur, personel_id, out_b, out_e)
+        if err:
+            return None
+        return eb2, ee2
+    return out_b, out_e
 
 
 def slot_mesai_onerilen_saat(
@@ -647,18 +751,19 @@ def slot_mesai_onerilen_saat(
     slot_id: str,
 ) -> Optional[Dict[str, Any]]:
     """
-    Personelde gün preset'i yokken atama için önerilen saat bandı (tam/part ayrımı yok):
-      - `acilis` slot → şube açılışı–14:30 ile slotun kesişimi
-      - `kapanis` slot → 14:30–şube kapanışı ile slotun kesişimi
-      - diğer → slot ∩ şube mesai penceresi
-    Uzun bantlarda öneri, kişinin **max günlük saat** süresini aşmayacak şekilde kısaltılır
-    (tam slotu doldurma varsayımı kalkar; kullanıcı «Slot saati» veya hızlı seç ile genişletebilir).
+    Personelde gün preset'i yokken mesai önerisi.
+
+    **Öncelik:** personele tanımlı gündüz çalışma bandı (`calisilabilir_saat_min/max`)
+    ile şube mesai penceresi kesişir; slot tipi (açılış/kapanış/normal) bu **dar band**
+    üzerinde seçilir. Ardından günlük limit ve kısa öneri genişliği uygulanır.
+
     Gece vardiyası slotlarında öneri verilmez (manuel saat).
     """
     _ = tarih  # API imzası / ileride gün bazlı kural için rezerv
     kisit = personel_kisit_getir(cur, personel_id)
     max_h = float(kisit.get("max_gunluk_saat") or 9.5)
     max_dk = max(60, int(round(max_h * 60)))  # en az 1 saatlik anlamlı bant
+    person_gunduz = _kisit_calisilabilir_gunduz_dk_band(kisit)
 
     cur.execute(
         """
@@ -687,6 +792,13 @@ def slot_mesai_onerilen_saat(
         return None
 
     open_dk, close_dk = _sube_gun_penceresi_dk(slot.get("acilis_saati"), slot.get("kapanis_saati"))
+    if person_gunduz:
+        plo, phi = person_gunduz
+        open_dk = max(open_dk, plo)
+        close_dk = min(close_dk, phi)
+        if close_dk <= open_dk:
+            return None
+
     tip = (slot.get("tip") or "normal").strip().lower()
     mid = PART_GUN_ORTASI_DK
 
@@ -701,16 +813,22 @@ def slot_mesai_onerilen_saat(
         hi = min(s1, close_dk)
 
     if hi <= lo:
+        if person_gunduz is not None:
+            return None
         lo, hi = s0, s1
 
     hi_clamped = min(hi, 24 * 60 - 1)
     if hi_clamped <= lo:
+        if person_gunduz is not None:
+            return None
         lo, hi_clamped = s0, min(s1, 24 * 60 - 1)
 
     if hi_clamped - lo > max_dk:
         hi_clamped = lo + max_dk
         hi_clamped = min(hi_clamped, s1, close_dk, 24 * 60 - 1)
     if hi_clamped <= lo:
+        if person_gunduz is not None:
+            return None
         lo, hi_clamped = s0, min(s1, 24 * 60 - 1)
 
     # Modal ilk değeri: uzun şube slotu ile aynı uzunlukta «tam mesai» gibi görünmesin (kişinin süresi seçimidir).
@@ -719,6 +837,8 @@ def slot_mesai_onerilen_saat(
         hi_clamped = lo + ilk_genis_cap
         hi_clamped = min(hi_clamped, s1, close_dk, 24 * 60 - 1)
     if hi_clamped <= lo:
+        if person_gunduz is not None:
+            return None
         lo, hi_clamped = s0, min(s1, 24 * 60 - 1)
 
     return {
@@ -749,7 +869,7 @@ def coz_varsayilan_atama_saatleri(
     cur.execute("SELECT * FROM vardiya_slot WHERE id = %s", (slot_id,))
     sr = cur.fetchone()
     if sr:
-        kisa = kisa_slot_bandini_baslat(dict(sr))
+        kisa = kisa_slot_bandini_baslat(dict(sr), cur=cur, personel_id=personel_id)
         if kisa:
             return kisa
     return None
@@ -766,16 +886,25 @@ def _cozumle_atama_saatleri(
     otomatik_saat_cozumu: bool = False,
 ) -> Tuple[Optional[time], Optional[time], Optional[str]]:
     """
-    İki saat birlikte verilmişse olduğu gibi kullanılır — şube slotu ile **asla**
-    tek taraflı tamamlanmaz (09:00–14:30 kesin kalır; slot 18:30’a uzatılmaz).
+    **Kaynak sırası:** Personele tanımlı çalışılabilir saat bandı «asıl» çerçevedir;
+    otomatik öneriler (preset → mesai → kısa dilim) önce kişi + şube kesişiminden gelir.
 
-    İkisi de boşsa: preset → mesai önerisi → coz içindeki kısa dilim / burada kisa_slot_bandini_baslat.
+    Talep/API ile gelen başlangıç–bitiş da aynı band ile **kesişir**; UI/slot 18:30 yazsa
+    bile kişi en geç 14:30 diyorsa kayıt orada biter (gündüz bandında).
 
-    Yalnızca biri doluysa açık hata (eski «ikisini NULL yap, slotu doldur» yok).
+    İki saat birlikte API’den gelmiş olsa bile şube slotu ile tek taraflı tamamlanmaz;
+    slot çerçevesi dışı bilinçli mesai ayrı uyarıdır.
+
+    İkisi de boşsa: preset → mesai önerisi → kısa dilim (otomatik_saat_cozumu gerekir).
+
+    Yalnızca biri doluysa açık hata.
     """
+    bas: Optional[time] = None
+    bit: Optional[time] = None
+
     if baslangic_saat is not None and bitis_saat is not None:
-        return baslangic_saat, bitis_saat, None
-    if baslangic_saat is None and bitis_saat is None:
+        bas, bit = baslangic_saat, bitis_saat
+    elif baslangic_saat is None and bitis_saat is None:
         if not otomatik_saat_cozumu:
             return None, None, (
                 "baslangic_saat ve bitis_saat birlikte zorunludur. "
@@ -787,17 +916,28 @@ def _cozumle_atama_saatleri(
             return None, None, "Slot kimliği eksik."
         cz = coz_varsayilan_atama_saatleri(cur, personel_id, tarih, sid)
         if cz:
-            return cz[0], cz[1], None
-        ks = kisa_slot_bandini_baslat(slot)
-        if ks:
-            return ks[0], ks[1], None
+            bas, bit = cz[0], cz[1]
+        else:
+            ks = kisa_slot_bandini_baslat(slot, cur=cur, personel_id=personel_id)
+            if ks:
+                bas, bit = ks[0], ks[1]
+            else:
+                return None, None, (
+                    "baslangic_saat ve bitis_saat birlikte gönderin veya personel için bu güne "
+                    "preset / mesai önerisi tanımlayın."
+                )
+    else:
         return None, None, (
-            "baslangic_saat ve bitis_saat birlikte gönderin veya personel için bu güne "
-            "preset / mesai önerisi tanımlayın."
+            "baslangic_saat ve bitis_saat birlikte zorunludur (yalnızca biri gönderilemez)."
         )
-    return None, None, (
-        "baslangic_saat ve bitis_saat birlikte zorunludur (yalnızca biri gönderilemez)."
-    )
+
+    if bas is None or bit is None:
+        return None, None, "Saat çözümü başarısız."
+
+    bas_k, bit_k, cerr = _cozumle_kirp_calisilabilir(cur, personel_id, bas, bit)
+    if cerr:
+        return None, None, cerr
+    return bas_k, bit_k, None
 
 
 def personel_kisit_getir(cur, personel_id: str) -> Dict[str, Any]:
