@@ -11,6 +11,16 @@ Tasarım kuralları (kullanıcı onaylı):
 5. Override sistemi: kritik uyarılar varsayılan blok; override ile
    atama + vardiya_override_log.
 
+6. **Kaynak önceliği — atama satırı birincildir.** `vardiya_atama.baslangic_saat`
+   ve `bitis_saat`, o kişinin o şubedeki gerçek mesaidir. Şube slotundaki
+   başlangıç–bitiş, kapasite / kontenjan / plan bandı için **referans çerçevedir**;
+   kullanıcı kısmi mesai (ör. 09:00–14:30), ardışık iki kişi (Ahmet sonra Mehmet)
+   veya çerçeveden uzun/kısa dilim yazdıysa esas olan **yazılan saatlerdir**.
+
+7. **Şube çerçevesi dışı** bilinçli ek mesai veya özel düzen olabilir; bu durum
+   `slot_band_disinda` ile **uyarı** seviyesindedir (bloklayıcı kritik değil).
+   Günlük limit, izin, fiziksel çakışma vb. ayrı kurallarda kalır.
+
 Bu modül SAFE helper'lar sağlar — endpoint'ler main.py'da.
 """
 from __future__ import annotations
@@ -609,7 +619,10 @@ def _gunluk_saat_cevir_extended_dk(dk: int) -> time:
 
 
 def _atama_slot_bandini_icinde_mi(slot: Dict[str, Any], bas: time, bit: time) -> bool:
-    """Atama aralığı slot çerçevesinde mi? (Şube çalışma bandı ile uyum.)"""
+    """Atama aralığı şube slot çerçevesine gömülü mü (⊆)? Kısmi mesai True döner.
+
+    Çerçeve şubenin planlanabilir bandıdır; atama satırındaki süre birincil kaynaktır.
+    """
     sb = _vardiya_row_saat(slot.get("baslangic_saat"))
     se = _vardiya_row_saat(slot.get("bitis_saat"))
     if sb is None or se is None:
@@ -1147,6 +1160,9 @@ def atama_uyarilari(
         "detay": dict,
       }, ...
     ]
+
+    Not: ``slot_band_disinda`` çoğunlukla **uyari** — şube çerçevesi bilgi amaçlıdır;
+    gerçek mesai atama satırındaki saatlerdedir (ek mesai vb. bilinçli taşma).
     """
     uyarilar: List[Dict[str, Any]] = []
 
@@ -1182,17 +1198,18 @@ def atama_uyarilari(
     if not _atama_slot_bandini_icinde_mi(slot, bas, bit):
         uyarilar.append({
             "tip": "slot_band_disinda",
-            "seviye": "kritik",
+            "seviye": "uyari",
             "mesaj": (
-                "Atama saatleri slotun (şube çalışma çerçevesinin) dışına taşıyor. "
-                "Slot şubenin hangi saatler arasında planlanabilir olduğunu gösterir; "
-                "personelin gerçek çalışma süresi bu çerçeve içinde seçtiğiniz başlangıç–bitiş ile belirlenir."
+                "Atama, şube slot çerçevesinin dışına taşıyor (ör. ek mesai veya özel vardiya). "
+                "Kayıtta esas olan sizin yazdığınız başlangıç–bitiştir; çerçeve yalnızca "
+                "şubenin plan bandı referansıdır — bu uyarı bilgilendiricidir."
             ),
             "detay": {
                 "atama_bas": bas.strftime("%H:%M"),
                 "atama_bit": bit.strftime("%H:%M"),
                 "slot_bas": str(slot.get("baslangic_saat")),
                 "slot_bit": str(slot.get("bitis_saat")),
+                "politika": "atama_saati_birincil",
             },
         })
 
@@ -1402,9 +1419,9 @@ def atama_olustur(
       - Kritik uyarı varsa ve override=False → atama yapılmaz, uyarılar döner
       - override=True ise her ihlal için override_log'a kayıt + atama yapılır
 
-    Şube slotu = o gün o şubede «ne zaman açık / saat aralığı ve min-ideal personel» çerçevesi;
-    atama satırlarındaki baslangic/bitis = o personelin o şubedeki gerçek mesai dilimi.
-    Uyarılar, nihai saatlerle (kullanıcı + öneri) hesaplanır; tam slot doldurma zorunluluğu yok.
+    Şube slotu = kontenjan ve referans çerçeve; **kayıtlı başlangıç–bitiş = o kişinin gerçek mesaisi**
+    (kısmi, ardışık vardiya veya çerçeve dışı ek mesai dahil). Şube bandı taşması uyarıdır (`slot_band_disinda`),
+    varsayılan bloklayıcı değildir — günlük limit / izin / çakışma ayrı kurallarda kalır.
     """
     baslangic_saat, bitis_saat = _atama_saat_cifti_normalize(baslangic_saat, bitis_saat)
 
@@ -1596,7 +1613,7 @@ def gun_planini_getir(cur, tarih: date, sube_id: Optional[str] = None) -> Dict[s
             "slotlar": [
               {
                 "slot": {...},
-                "atamalar": [{"personel_id", "personel_ad", ...}],
+                "atamalar": [{"personel_id", "personel_ad", ..., "slot_cercevesinde": bool}, ...],
                 "min_personel", "atanan_personel",
                 "eksik": int   # min_personel - atanan
               }
@@ -1703,6 +1720,16 @@ def gun_planini_getir(cur, tarih: date, sube_id: Optional[str] = None) -> Dict[s
         slot_views = []
         for sl in s_slotlar:
             atamalar = atama_by_slot.get(sl['id'], [])
+            _slot_d = dict(sl)
+            for a in atamalar:
+                _ab = _vardiya_row_saat(a.get("baslangic_saat"))
+                _at = _vardiya_row_saat(a.get("bitis_saat"))
+                if _ab is None or _at is None:
+                    a["slot_cercevesinde"] = True
+                else:
+                    a["slot_cercevesinde"] = _atama_slot_bandini_icinde_mi(
+                        _slot_d, _ab, _at
+                    )
             slot_views.append({
                 "slot": sl,
                 "atamalar": atamalar,

@@ -6025,7 +6025,11 @@ def v2_hafta_personel_tablo(pazartesi: str):
 
 @app.post("/api/vardiya/v2/atama/check")
 def v2_atama_check(a: _V2AtamaIn):
-    """Atama yapılmadan önce uyarıları döner — UI bunu çağırıp gösterir."""
+    """Atama yapılmadan önce uyarıları döner — UI bunu çağırıp gösterir.
+
+    Şube çerçevesi taşması (`slot_band_disinda`) uyarıdır; kritik blok listesinde yer almaz.
+    Esas zamanlar istek gövdesindeki / önerilen atama başlangıç–bitişidir (`vardiya_v2` docstring).
+    """
     from datetime import datetime as _dt
     t = _dt.strptime(a.tarih, "%Y-%m-%d").date()
     with db() as (conn, cur):
