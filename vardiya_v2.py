@@ -50,6 +50,20 @@ def slot_sure_saat(baslangic: time, bitis: time, gece: bool = False) -> float:
     return round((bit - bas) / 60.0, 2)
 
 
+def _atama_saat_cifti_normalize(
+    baslangic_saat: Optional[time],
+    bitis_saat: Optional[time],
+) -> Tuple[Optional[time], Optional[time]]:
+    """
+    API'de yalnızca başlangıç veya yalnızca bitiş gelirse slot ile birleştirilerek
+    tam slot süresi (ör. 9.5 saat) yazılıyordu; günlük toplam ve havuz kilidi yanlış doluyordu.
+    Tek taraflı gönderimi tamamen yok say → preset / slot çifti birlikte kullanılsın.
+    """
+    if (baslangic_saat is None) != (bitis_saat is None):
+        return None, None
+    return baslangic_saat, bitis_saat
+
+
 def araliklar_cakisir(
     a_bas: time, a_bit: time, a_gece: bool,
     b_bas: time, b_bit: time, b_gece: bool,
@@ -1072,6 +1086,8 @@ def atama_uyarilari(
         return [{"tip": "sube_uyumsuz", "seviye": "kritik", "mesaj": "Slot bulunamadı", "detay": {}}]
     slot = dict(slot)
 
+    baslangic_saat, bitis_saat = _atama_saat_cifti_normalize(baslangic_saat, bitis_saat)
+
     # Saat verilmemişse: gün preset → part-time slot önerisi → slot saati
     if baslangic_saat is None and bitis_saat is None:
         coz = coz_varsayilan_atama_saatleri(cur, personel_id, tarih, slot_id)
@@ -1288,6 +1304,8 @@ def atama_olustur(
       - Kritik uyarı varsa ve override=False → atama yapılmaz, uyarılar döner
       - override=True ise her ihlal için override_log'a kayıt + atama yapılır
     """
+    baslangic_saat, bitis_saat = _atama_saat_cifti_normalize(baslangic_saat, bitis_saat)
+
     uyarilar = atama_uyarilari(cur, personel_id, slot_id, tarih,
                                baslangic_saat, bitis_saat)
 
