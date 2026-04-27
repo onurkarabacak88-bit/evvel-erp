@@ -70,20 +70,6 @@ def slot_sure_saat(baslangic: time, bitis: time) -> float:
     return round((e - s) / 60.0, 2)
 
 
-def _atama_saat_cifti_normalize(
-    baslangic_saat: Optional[time],
-    bitis_saat: Optional[time],
-) -> Tuple[Optional[time], Optional[time]]:
-    """
-    API'de yalnızca başlangıç veya yalnızca bitiş gelirse slot ile birleştirilerek
-    tam slot süresi (ör. 9.5 saat) yazılıyordu; günlük toplam ve havuz kilidi yanlış doluyordu.
-    Tek taraflı gönderimi tamamen yok say → preset / slot çifti birlikte kullanılsın.
-    """
-    if (baslangic_saat is None) != (bitis_saat is None):
-        return None, None
-    return baslangic_saat, bitis_saat
-
-
 def araliklar_cakisir(a_bas: time, a_bit: time, b_bas: time, b_bit: time) -> bool:
     """İki vardiya aralığı çakışıyor mu? (Bitiş ≤ başlangıç → gece kesiti / +1 gün.)"""
     a1, a2 = _aralik_dakika_cifti(a_bas, a_bit)
@@ -769,6 +755,43 @@ def coz_varsayilan_atama_saatleri(
     return None
 
 
+def _cozumle_atama_saatleri(
+    cur,
+    personel_id: str,
+    tarih: date,
+    slot: Dict[str, Any],
+    baslangic_saat: Optional[time],
+    bitis_saat: Optional[time],
+) -> Tuple[Optional[time], Optional[time], Optional[str]]:
+    """
+    İki saat birlikte verilmişse olduğu gibi kullanılır — şube slotu ile **asla**
+    tek taraflı tamamlanmaz (09:00–14:30 kesin kalır; slot 18:30’a uzatılmaz).
+
+    İkisi de boşsa: preset → mesai önerisi → coz içindeki kısa dilim / burada kisa_slot_bandini_baslat.
+
+    Yalnızca biri doluysa açık hata (eski «ikisini NULL yap, slotu doldur» yok).
+    """
+    if baslangic_saat is not None and bitis_saat is not None:
+        return baslangic_saat, bitis_saat, None
+    if baslangic_saat is None and bitis_saat is None:
+        sid = str(slot.get("id") or "").strip()
+        if not sid:
+            return None, None, "Slot kimliği eksik."
+        cz = coz_varsayilan_atama_saatleri(cur, personel_id, tarih, sid)
+        if cz:
+            return cz[0], cz[1], None
+        ks = kisa_slot_bandini_baslat(slot)
+        if ks:
+            return ks[0], ks[1], None
+        return None, None, (
+            "baslangic_saat ve bitis_saat birlikte gönderin veya personel için bu güne "
+            "preset / mesai önerisi tanımlayın."
+        )
+    return None, None, (
+        "baslangic_saat ve bitis_saat birlikte zorunludur (yalnızca biri gönderilemez)."
+    )
+
+
 def personel_kisit_getir(cur, personel_id: str) -> Dict[str, Any]:
     """
     Personelin kısıtlarını döner. Kayıt yoksa default değerlerle döner
@@ -1186,16 +1209,18 @@ def atama_uyarilari(
         return [{"tip": "sube_uyumsuz", "seviye": "kritik", "mesaj": "Slot bulunamadı", "detay": {}}]
     slot = dict(slot)
 
-    baslangic_saat, bitis_saat = _atama_saat_cifti_normalize(baslangic_saat, bitis_saat)
-
-    # Saat verilmemişse: gün preset → part-time slot önerisi → slot saati
-    if baslangic_saat is None and bitis_saat is None:
-        coz = coz_varsayilan_atama_saatleri(cur, personel_id, tarih, slot_id)
-        if coz:
-            baslangic_saat, bitis_saat = coz
-    bas = baslangic_saat or slot['baslangic_saat']
-    bit = bitis_saat or slot['bitis_saat']
-    if not _atama_slot_bandini_icinde_mi(slot, bas, bit):
+    bas, bit, saat_err = _cozumle_atama_saatleri(
+        cur, personel_id, tarih, slot, baslangic_saat, bitis_saat,
+    )
+    if saat_err:
+        uyarilar.append({
+            "tip": "saat_cifti_gecersiz",
+            "seviye": "kritik",
+            "mesaj": saat_err,
+            "detay": {},
+        })
+        return uyarilar
+    if not _atama_slot_bandini_icinde_mi(slot, bas, bit):  # bas/bit = çözümlenmiş gerçek mesai
         uyarilar.append({
             "tip": "slot_band_disinda",
             "seviye": "uyari",
@@ -1422,9 +1447,10 @@ def atama_olustur(
     Şube slotu = kontenjan ve referans çerçeve; **kayıtlı başlangıç–bitiş = o kişinin gerçek mesaisi**
     (kısmi, ardışık vardiya veya çerçeve dışı ek mesai dahil). Şube bandı taşması uyarıdır (`slot_band_disinda`),
     varsayılan bloklayıcı değildir — günlük limit / izin / çakışma ayrı kurallarda kalır.
-    """
-    baslangic_saat, bitis_saat = _atama_saat_cifti_normalize(baslangic_saat, bitis_saat)
 
+    Saat çözümü: iki saat birlikte gelmişse aynen kullanılır; slot bitişi ile **tamamlanmaz**.
+    İkisi de boşsa preset/mesai/kısa dilim; yalnızca biri doluysa hata.
+    """
     cur.execute("SELECT * FROM vardiya_slot WHERE id = %s", (slot_id,))
     slot = cur.fetchone()
     if not slot:
@@ -1432,13 +1458,22 @@ def atama_olustur(
                 "mesaj": "Slot bulunamadı."}
     slot = dict(slot)
 
-    # Saat çözümü (uyarıdan önce): kullanıcı > preset/mesai/kısa dilim > slot ucundan uçuna yalnız son çare
-    if baslangic_saat is None and bitis_saat is None:
-        coz = coz_varsayilan_atama_saatleri(cur, personel_id, tarih, slot_id)
-        if coz:
-            baslangic_saat, bitis_saat = coz
-    bas = baslangic_saat or slot['baslangic_saat']
-    bit = bitis_saat or slot['bitis_saat']
+    bas, bit, saat_err = _cozumle_atama_saatleri(
+        cur, personel_id, tarih, slot, baslangic_saat, bitis_saat,
+    )
+    if saat_err:
+        return {
+            "basarili": False,
+            "atama_id": None,
+            "uyarilar": [{
+                "tip": "saat_cifti_gecersiz",
+                "seviye": "kritik",
+                "mesaj": saat_err,
+                "detay": {},
+            }],
+            "mesaj": saat_err,
+            "hata": saat_err,
+        }
 
     uyarilar = atama_uyarilari(cur, personel_id, slot_id, tarih,
                                baslangic_saat=bas, bitis_saat=bit)
