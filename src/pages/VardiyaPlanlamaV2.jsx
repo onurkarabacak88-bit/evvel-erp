@@ -414,6 +414,8 @@ export default function VardiyaPlanlamaV2() {
   const [haftaYukleniyor, setHaftaYukleniyor] = useState(false);
   const [otomatikBusy, setOtomatikBusy] = useState(false);
   const PREVIEW_DEBOUNCE_MS = 220;
+  /** Alt özet — varsayılan kapalı; vardiya grid’ine yer açar */
+  const [altPanelAcik, setAltPanelAcik] = useState(false);
 
   const isoHaftaEtiket = useMemo(() => isoYilVeHafta(tarih), [tarih]);
   const [isoJump, setIsoJump] = useState(() => {
@@ -1382,7 +1384,7 @@ export default function VardiyaPlanlamaV2() {
 
   // ── RENDER ──
   return (
-    <div className="page" style={{ paddingBottom: 200 }}>
+    <div className="page" style={{ paddingBottom: altPanelAcik ? 240 : 64 }}>
       {/* ── FULL LAYOUT: tek üst kart (HEADER) + ana gövde + alt panel ── */}
       <div className="card mb-14" style={{ padding: 0, overflow: 'hidden', border: '1px solid var(--border)' }}>
         <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg2)', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -2061,80 +2063,127 @@ export default function VardiyaPlanlamaV2() {
       </div>
       </>
 
-      {/* Alt panel — özet + canlı uyarı listesi (scroll’da alta yapışır; raporlar ayrı kartta kalır) */}
+      {/* Alt panel — kapalıyken ince şerit; tıklanınca açılır (vardiya alanını kaplamasın) */}
       {gunPlani && (
         <div
-          className="card mt-14"
           style={{
-            padding: 14,
             position: 'sticky',
             bottom: 8,
             zIndex: 12,
-            boxShadow: '0 -10px 28px rgba(0,0,0,0.18)',
-            border: '1px solid var(--border)',
+            marginTop: 14,
           }}
         >
-          <div style={{ fontWeight: 800, marginBottom: 8, fontSize: 14 }}>Alt panel — Gün özeti · canlı uyarılar</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'baseline', marginBottom: 10 }}>
-            <span style={{ fontSize: 13 }}>
-              Eksik personelli slot: <strong style={{ color: eksikSlotSayisi ? '#fb923c' : '#22c55e' }}>{eksikSlotSayisi}</strong>
-            </span>
-            <span style={{ fontSize: 13 }}>
-              Fazla mesai: <strong style={{ color: fazlaMesaiSayisi ? '#ef4444' : '#22c55e' }}>{fazlaMesaiSayisi} kişi</strong>
-            </span>
-            <span style={{ fontSize: 12, color: 'var(--text3)' }}>
-              Raporlar (tarih aralığı, override log) üstteki <strong>📊 Raporlar</strong> kartında.
-            </span>
-          </div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 6, letterSpacing: 0.04 }}>PERSONEL SAAT (X/Y)</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 20px', fontSize: 12, marginBottom: 14 }}>
-            {altOzetPersonel.map((o) => (
-              <span key={o.id} style={{ color: o.izinli ? 'var(--text3)' : 'var(--text2)' }}>
-                {o.etiket || '—'} → {o.izinli ? 'İZİNLİ' : `${Number(o.toplam).toFixed(1)}/${o.maxGun} saat`}
-              </span>
-            ))}
-          </div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 6, letterSpacing: 0.04 }}>CANLI UYARI LİSTESİ</div>
-          {canliUyariListesi.length === 0 ? (
-            <div style={{ fontSize: 13, color: '#22c55e', padding: '10px 12px', background: 'rgba(34,197,94,0.08)', borderRadius: 8, border: '1px solid rgba(34,197,94,0.25)' }}>
-              Bu gün için listede kritik uyarı yok (kilit / eksik slot / limit üstü / plan yok taraması temiz).
-            </div>
-          ) : (
-            <ul
+          {!altPanelAcik ? (
+            <button
+              type="button"
+              className="card"
+              onClick={() => setAltPanelAcik(true)}
               style={{
-                margin: 0,
-                padding: '4px 0 0 0',
-                listStyle: 'none',
-                maxHeight: 220,
-                overflowY: 'auto',
-                borderTop: '1px dashed var(--border)',
+                width: '100%',
+                padding: '10px 14px',
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 10,
+                cursor: 'pointer',
+                textAlign: 'left',
+                border: '1px solid var(--border)',
+                boxShadow: '0 -4px 16px rgba(0,0,0,0.12)',
+                background: 'var(--bg2)',
+                font: 'inherit',
+                color: 'var(--text2)',
               }}
             >
-              {canliUyariListesi.map((u, i) => {
-                const col = u.seviye === 'kritik' ? '#ef4444' : u.seviye === 'uyari' ? '#fb923c' : 'var(--text3)';
-                const bg = u.seviye === 'kritik' ? 'rgba(239,68,68,0.07)' : u.seviye === 'uyari' ? 'rgba(251,146,60,0.08)' : 'rgba(148,163,184,0.08)';
-                return (
-                  <li
-                    key={i}
-                    style={{
-                      fontSize: 12,
-                      padding: '8px 10px',
-                      marginBottom: 6,
-                      borderRadius: 6,
-                      borderLeft: `4px solid ${col}`,
-                      background: bg,
-                      color: 'var(--text2)',
-                      lineHeight: 1.45,
-                    }}
-                  >
-                    <span style={{ fontWeight: 800, color: col, marginRight: 8 }}>
-                      {u.seviye === 'kritik' ? '●' : u.seviye === 'uyari' ? '▲' : '◇'}
-                    </span>
-                    {u.metin}
-                  </li>
-                );
-              })}
-            </ul>
+              <span style={{ fontWeight: 800, fontSize: 13 }}>
+                ▲ Gün özeti · uyarılar <span style={{ fontWeight: 500, color: 'var(--text3)' }}>(genişlet)</span>
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--text3)' }}>
+                Eksik slot: <strong style={{ color: eksikSlotSayisi ? '#fb923c' : '#22c55e' }}>{eksikSlotSayisi}</strong>
+                {' · '}
+                Fazla mesai: <strong style={{ color: fazlaMesaiSayisi ? '#ef4444' : '#22c55e' }}>{fazlaMesaiSayisi}</strong>
+                {' · '}
+                Uyarı satırı: <strong>{canliUyariListesi.length}</strong>
+              </span>
+            </button>
+          ) : (
+            <div
+              className="card"
+              style={{
+                padding: 14,
+                border: '1px solid var(--border)',
+                boxShadow: '0 -10px 28px rgba(0,0,0,0.18)',
+                background: 'var(--bg)',
+              }}
+            >
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+                <div style={{ fontWeight: 800, fontSize: 14 }}>Alt panel — Gün özeti · canlı uyarılar</div>
+                <button type="button" className="btn btn-sm btn-secondary" onClick={() => setAltPanelAcik(false)}>
+                  ▼ Daralt
+                </button>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'baseline', marginBottom: 10 }}>
+                <span style={{ fontSize: 13 }}>
+                  Eksik personelli slot: <strong style={{ color: eksikSlotSayisi ? '#fb923c' : '#22c55e' }}>{eksikSlotSayisi}</strong>
+                </span>
+                <span style={{ fontSize: 13 }}>
+                  Fazla mesai: <strong style={{ color: fazlaMesaiSayisi ? '#ef4444' : '#22c55e' }}>{fazlaMesaiSayisi} kişi</strong>
+                </span>
+                <span style={{ fontSize: 12, color: 'var(--text3)' }}>
+                  Raporlar üstteki <strong>📊 Raporlar</strong> kartında.
+                </span>
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 6, letterSpacing: 0.04 }}>PERSONEL SAAT (X/Y)</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 20px', fontSize: 12, marginBottom: 14 }}>
+                {altOzetPersonel.map((o) => (
+                  <span key={o.id} style={{ color: o.izinli ? 'var(--text3)' : 'var(--text2)' }}>
+                    {o.etiket || '—'} → {o.izinli ? 'İZİNLİ' : `${Number(o.toplam).toFixed(1)}/${o.maxGun} saat`}
+                  </span>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 6, letterSpacing: 0.04 }}>CANLI UYARI LİSTESİ</div>
+              {canliUyariListesi.length === 0 ? (
+                <div style={{ fontSize: 13, color: '#22c55e', padding: '10px 12px', background: 'rgba(34,197,94,0.08)', borderRadius: 8, border: '1px solid rgba(34,197,94,0.25)' }}>
+                  Bu gün için listede kritik uyarı yok (kilit / eksik slot / limit üstü / plan yok taraması temiz).
+                </div>
+              ) : (
+                <ul
+                  style={{
+                    margin: 0,
+                    padding: '4px 0 0 0',
+                    listStyle: 'none',
+                    maxHeight: 220,
+                    overflowY: 'auto',
+                    borderTop: '1px dashed var(--border)',
+                  }}
+                >
+                  {canliUyariListesi.map((u, i) => {
+                    const col = u.seviye === 'kritik' ? '#ef4444' : u.seviye === 'uyari' ? '#fb923c' : 'var(--text3)';
+                    const bg = u.seviye === 'kritik' ? 'rgba(239,68,68,0.07)' : u.seviye === 'uyari' ? 'rgba(251,146,60,0.08)' : 'rgba(148,163,184,0.08)';
+                    return (
+                      <li
+                        key={i}
+                        style={{
+                          fontSize: 12,
+                          padding: '8px 10px',
+                          marginBottom: 6,
+                          borderRadius: 6,
+                          borderLeft: `4px solid ${col}`,
+                          background: bg,
+                          color: 'var(--text2)',
+                          lineHeight: 1.45,
+                        }}
+                      >
+                        <span style={{ fontWeight: 800, color: col, marginRight: 8 }}>
+                          {u.seviye === 'kritik' ? '●' : u.seviye === 'uyari' ? '▲' : '◇'}
+                        </span>
+                        {u.metin}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           )}
         </div>
       )}
