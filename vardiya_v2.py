@@ -1175,6 +1175,8 @@ def atama_uyarilari(
     tarih: date,
     baslangic_saat: Optional[time] = None,
     bitis_saat: Optional[time] = None,
+    *,
+    otomatik_saat_cozumu: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Bir atama yapılmadan ÖNCE çalıştırılır. Tüm potansiyel ihlalleri
