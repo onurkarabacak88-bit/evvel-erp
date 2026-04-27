@@ -5,7 +5,7 @@
  * - Havuzdan veya slottaki kişi chip’inden sürükleme → başka şube/slota transfer (önce iptal)
  * - Otomatik doldur: eksik slotlara uygun personel (override/kritik atlanır)
  * - Kritik ihlal → override modalı; yalnızca sarı uyarı → Evet/Hayır; temiz → POST /assign + yenile
- * - Şube filtresi yokken eksik slot 0 olunca gün otomatik kilitlenir
+ * - Gün kilidi yalnızca manuel (slot min dolunca otomatik kilit yok — şube hedefi / kısmi saat ile çakışıyordu)
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
@@ -506,8 +506,6 @@ export default function VardiyaPlanlamaV2() {
   const previewReqRef = useRef(0);
   /** Slottaki kişiyi başka slota taşırken: iptal + yeni atama */
   const transferAtamaRef = useRef(null);
-  /** Eksik slot sayısı geçişi: >0 → 0 olunca (tüm şubeler) gün otomatik kilit */
-  const eksikSlotOncekiRef = useRef(null);
 
   const [gorunumModu, setGorunumModu] = useState('gun_matris'); // 'gun_matris' | 'sube_hafta' | 'personel_hafta'
   const [personelHafta, setPersonelHafta] = useState(null);
@@ -640,10 +638,6 @@ export default function VardiyaPlanlamaV2() {
   useEffect(() => { yukleSubeler(); }, [yukleSubeler]);
   useEffect(() => { yukleGun(); }, [yukleGun]);
   useEffect(() => { void yukleIzinHaftaOzet(); }, [yukleIzinHaftaOzet]);
-
-  useEffect(() => {
-    eksikSlotOncekiRef.current = null;
-  }, [tarih, subeFilter]);
 
   useEffect(() => {
     setHavuzTarihOverride(null);
@@ -788,31 +782,6 @@ export default function VardiyaPlanlamaV2() {
     [altOzetPersonel]
   );
 
-  /** Tüm şubeler görünümünde eksik slot kalmayınca günü kilitle (spec: gün doldu → kilit) */
-  useEffect(() => {
-    if (!gunPlani || subeFilter) return;
-    const eksik = eksikSlotSayisi;
-    const prev = eksikSlotOncekiRef.current;
-    eksikSlotOncekiRef.current = eksik;
-    if (prev === null) return;
-    if (prev > 0 && eksik === 0 && !gunPlani.gun_kilitli) {
-      let cancelled = false;
-      (async () => {
-        try {
-          await api('/vardiya/v2/gun-kilit', {
-            method: 'PUT',
-            body: { tarih, kilitli: true, aciklama: 'Tüm zorunlu slotlar doldu (otomatik)' },
-          });
-          if (!cancelled) await yukleGun();
-        } catch (e) {
-          if (!cancelled) setHata(e.message || 'Otomatik gün kilidi başarısız');
-        }
-      })();
-      return () => { cancelled = true; };
-    }
-    return undefined;
-  }, [gunPlani, eksikSlotSayisi, tarih, yukleGun, subeFilter]);
-
   /** Gün planından anlık uyarı satırları (alt panel / şema benzeri canlı liste) */
   const canliUyariListesi = useMemo(() => {
     if (!gunPlani) return [];
@@ -828,6 +797,13 @@ export default function VardiyaPlanlamaV2() {
     }
 
     for (const s of gunPlani.subeler || []) {
+      if (s.ihtiyac_hedef_kisi != null && s.ihtiyac_durumu === 'altinda') {
+        const at = Number.isFinite(Number(s.atanan_benzersiz_kisi)) ? Number(s.atanan_benzersiz_kisi) : 0;
+        push(
+          'uyari',
+          `${s.sube_ad}: şube hedefi altında (hedef ${s.ihtiyac_hedef_kisi} kişi, bugün bu şubede atanan benzersiz ${at}) — slot min’den bağımsız`,
+        );
+      }
       for (const sv of s.slotlar || []) {
         if (sv.eksik > 0) {
           push(
@@ -1579,6 +1555,40 @@ export default function VardiyaPlanlamaV2() {
             ) : null}
           </div>
         )}
+        {/* HÜCRE SAAT LİSTESİ — kim hangi saatte (slot dışı uzayanları da göster) */}
+        {sv.atamalar.length > 0 && (
+          <div style={{ marginTop: 6, paddingTop: 4, borderTop: '1px dashed var(--border)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {sv.atamalar.map((a) => {
+              const slotBas = sv.slot.baslangic_saat ? fmtSaat(sv.slot.baslangic_saat) : '';
+              const slotBit = sv.slot.bitis_saat ? fmtSaat(sv.slot.bitis_saat) : '';
+              const aBas = fmtSaat(a.baslangic_saat);
+              const aBit = fmtSaat(a.bitis_saat);
+              const slotIcinde = aBas === slotBas && aBit === slotBit;
+              const renk = slotIcinde ? 'var(--text2)' : '#a855f7'; // slot dışına taşıyorsa mor
+              const tip = slotIcinde ? '' : (aBas < slotBas || aBit > slotBit ? ' ↔' : '');
+              const adKisa = (a.personel_ad || '?').split(' ')[0];
+              return (
+                <div
+                  key={`saat-${a.id}`}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 10,
+                    color: renk,
+                    fontWeight: slotIcinde ? 500 : 700,
+                    fontFamily: 'var(--font-mono, monospace)',
+                  }}
+                  title={`${a.personel_ad || ''} ${a.personel_soyad || ''} · ${aBas}–${aBit}${slotIcinde ? '' : ' (slot dışına taşıyor)'}`}
+                >
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 70 }}>
+                    {adKisa}
+                  </span>
+                  <span>{aBas}–{aBit}{tip}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
         {sv.atamalar.length > 0 ? (() => {
           const ads = [...new Set(sv.atamalar.map((at) => at.yemek_sube_ad).filter(Boolean))];
           if (!ads.length) return null;
@@ -1659,7 +1669,7 @@ export default function VardiyaPlanlamaV2() {
             ))}
             <span style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 6, fontWeight: 600 }}>{tarihGoster}</span>
             <label
-              title="Manuel kilit. Şube filtresi kapalıyken tüm zorunlu slotlar dolunca gün ayrıca otomatik kilitlenir."
+              title="Manuel gün kilidi. Slotlar dolsun diye gün otomatik kilitlenmez (şube hedefi / kısmi vardiya için)."
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -2143,6 +2153,11 @@ export default function VardiyaPlanlamaV2() {
                     Pazartesi–Pazar · saat ↓ · gün →
                   </span>
                 </>
+              ) : gorunumModu === 'gun_gantt' ? (
+                <>
+                  Gantt · {TR_GUNLER[(new Date(`${tarih}T12:00:00`).getDay() + 6) % 7]} · <span style={{ color: 'var(--text2)' }}>{tarih}</span>
+                  <span style={{ fontWeight: 500, fontSize: 12, color: 'var(--text3)', marginLeft: 8 }}>Saat ekseni · şube grupları · personel çubukları</span>
+                </>
               ) : (
                 <>
                   Personel × hafta
@@ -2157,6 +2172,7 @@ export default function VardiyaPlanlamaV2() {
               <button type="button" className={gorunumModu === 'gun_matris' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('gun_matris')}>Gün × şube</button>
               <button type="button" className={gorunumModu === 'sube_hafta' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('sube_hafta')}>Şube × hafta</button>
               <button type="button" className={gorunumModu === 'personel_hafta' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('personel_hafta')}>Personel × hafta</button>
+              <button type="button" className={gorunumModu === 'gun_gantt' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('gun_gantt')} title="Saat ekseni — kim ne zaman çalışacak görsel">📊 Gantt (saat çubuğu)</button>
               {gorunumModu === 'sube_hafta' && (
                 <select className="input input-sm" value={subeHaftaId} onChange={(e) => setSubeHaftaId(e.target.value)} style={{ minWidth: 170 }}>
                   {(gunPlani?.subeler?.length ? gunPlani.subeler : (subeler || []).map((x) => ({ sube_id: x.id, sube_ad: x.ad }))).map((s) => (
@@ -2183,7 +2199,14 @@ export default function VardiyaPlanlamaV2() {
               </div>
             )}
           </div>
-          {gorunumModu === 'gun_matris' ? (
+          {gorunumModu === 'gun_gantt' ? (
+            <GanttGorunumu
+              gunPlani={gunPlani}
+              filtrelenmisSubeler={filtrelenmisSubeler}
+              tarih={tarih}
+              havuzById={havuzById}
+            />
+          ) : gorunumModu === 'gun_matris' ? (
             !gunPlani ? (
               <div className="empty" style={{ padding: 24 }}><p>Yükleniyor…</p></div>
             ) : (gunPlani.subeler || []).length === 0 ? (
@@ -2994,6 +3017,211 @@ function SistemPresetYonetimModal({ onClose, onDegisti }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// GANTT GÖRÜNÜMÜ — saat ekseni × şube grupları × personel çubukları
+// ═══════════════════════════════════════════════════════════════════
+function GanttGorunumu({ gunPlani, filtrelenmisSubeler, tarih, havuzById }) {
+  // Saat ekseni: 06:00 → 24:00 (eksen tamamı). Slot ve atamalara göre dinamik daraltabiliriz.
+  const SAAT_BAS = 6;   // 06:00
+  const SAAT_BIT = 24;  // 24:00 (gece slotu varsa +24 olarak hesaplanır)
+  const SAAT_GENISLIK = 60; // her saat için piksel
+  const SATIR_YUKSEKLIK = 32;
+
+  if (!gunPlani) {
+    return <div className="empty" style={{ padding: 24 }}><p>Yükleniyor…</p></div>;
+  }
+  const subeler = filtrelenmisSubeler && filtrelenmisSubeler.length
+    ? filtrelenmisSubeler
+    : (gunPlani.subeler || []);
+  if (subeler.length === 0) {
+    return <div className="empty" style={{ padding: 24 }}><p>Şube yok</p></div>;
+  }
+
+  const dkToPix = (hh, mm) => Math.max(0, ((hh - SAAT_BAS) * 60 + mm) * (SAAT_GENISLIK / 60));
+  const saatToPix = (saatStr, gece = false) => {
+    if (!saatStr) return 0;
+    const [h, m] = String(saatStr).split(':').map((x) => parseInt(x, 10));
+    let dk = (h || 0) * 60 + (m || 0);
+    if (gece && dk < SAAT_BAS * 60) dk += 24 * 60; // gece taşması
+    return Math.max(0, ((dk - SAAT_BAS * 60) * (SAAT_GENISLIK / 60)));
+  };
+
+  const toplamGenislik = (SAAT_BIT - SAAT_BAS) * SAAT_GENISLIK;
+
+  // Saat etiketleri — saat başlarında işaret çizgisi
+  const saatBaslari = [];
+  for (let h = SAAT_BAS; h <= SAAT_BIT; h++) {
+    saatBaslari.push(h);
+  }
+
+  return (
+    <div style={{ overflowX: 'auto', padding: 14 }}>
+      <div style={{ minWidth: 200 + toplamGenislik, position: 'relative' }}>
+        {/* Saat ekseni başlığı */}
+        <div style={{ display: 'flex', borderBottom: '2px solid var(--border)', paddingBottom: 6 }}>
+          <div style={{ width: 200, fontWeight: 700, fontSize: 12, color: 'var(--text3)' }}>
+            ŞUBE / PERSONEL
+          </div>
+          <div style={{ position: 'relative', width: toplamGenislik, height: 20 }}>
+            {saatBaslari.map((h) => (
+              <div
+                key={`sb-${h}`}
+                style={{
+                  position: 'absolute',
+                  left: dkToPix(h, 0),
+                  fontSize: 10,
+                  color: 'var(--text3)',
+                  fontFamily: 'var(--font-mono, monospace)',
+                  transform: 'translateX(-50%)',
+                }}
+              >
+                {String(h).padStart(2, '0')}:00
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Her şube bir grup */}
+        {subeler.map((s) => {
+          const slotlar = (s.slotlar || []);
+          // Her slot içindeki tüm atamaları topla
+          const tumAtamalar = [];
+          slotlar.forEach((sv) => {
+            (sv.atamalar || []).forEach((a) => {
+              tumAtamalar.push({ ...a, slot: sv.slot });
+            });
+          });
+
+          if (tumAtamalar.length === 0 && slotlar.length === 0) return null;
+
+          // Personel başına bir satır (aynı kişi birden fazla atama olabilir → satırda yan yana)
+          const personelGruplari = {};
+          tumAtamalar.forEach((a) => {
+            if (!personelGruplari[a.personel_id]) {
+              personelGruplari[a.personel_id] = {
+                personel_id: a.personel_id,
+                personel_ad: a.personel_ad,
+                personel_soyad: a.personel_soyad,
+                atamalar: [],
+              };
+            }
+            personelGruplari[a.personel_id].atamalar.push(a);
+          });
+          const personelListe = Object.values(personelGruplari).sort((a, b) =>
+            String(a.personel_ad || '').localeCompare(String(b.personel_ad || ''), 'tr')
+          );
+
+          return (
+            <div key={s.sube_id} style={{ marginBottom: 18, borderBottom: '1px solid var(--border)', paddingBottom: 12 }}>
+              {/* Şube başlığı */}
+              <div style={{ display: 'flex', alignItems: 'center', padding: '8px 0', background: 'var(--bg2)', borderRadius: 4, marginBottom: 4 }}>
+                <div style={{ width: 200, fontWeight: 700, fontSize: 13, paddingLeft: 8 }}>
+                  🏪 {s.sube_ad}
+                </div>
+                <div style={{ position: 'relative', width: toplamGenislik, height: 24 }}>
+                  {/* Şube genel slot zemini (açık renk) */}
+                  {slotlar.map((sv) => {
+                    const x = saatToPix(fmtSaat(sv.slot.baslangic_saat));
+                    const x2 = saatToPix(fmtSaat(sv.slot.bitis_saat), sv.slot.gece_vardiyasi);
+                    const w = Math.max(2, x2 - x);
+                    const tipRenkleri = { acilis: '#f59e0b22', kapanis: '#a855f722', yogun: '#ef444422', normal: '#3b82f622' };
+                    const renk = tipRenkleri[sv.slot.tip] || '#3b82f622';
+                    return (
+                      <div
+                        key={`zemin-${sv.slot.id}`}
+                        style={{
+                          position: 'absolute', left: x, top: 2, width: w, height: 18,
+                          background: renk, borderRadius: 3,
+                          fontSize: 9, color: 'var(--text3)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          overflow: 'hidden', whiteSpace: 'nowrap',
+                        }}
+                        title={`${sv.slot.ad} (${fmtSaat(sv.slot.baslangic_saat)}–${fmtSaat(sv.slot.bitis_saat)})`}
+                      >
+                        {w > 60 ? sv.slot.ad : ''}
+                      </div>
+                    );
+                  })}
+                  {/* Saat çizgileri */}
+                  {saatBaslari.map((h) => (
+                    <div key={`sl-${h}`} style={{
+                      position: 'absolute', left: dkToPix(h, 0), top: 0, bottom: 0,
+                      width: 1, background: 'rgba(148,163,184,0.18)',
+                    }}/>
+                  ))}
+                </div>
+              </div>
+
+              {/* Personel satırları */}
+              {personelListe.length === 0 ? (
+                <div style={{ padding: '8px 0 8px 200px', fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>
+                  Bu şubede atama yok
+                </div>
+              ) : (
+                personelListe.map((p) => {
+                  const pInfo = havuzById?.get(p.personel_id);
+                  const tamAd = `${p.personel_ad || ''} ${p.personel_soyad || ''}`.trim() || 'Personel';
+                  return (
+                    <div key={`${s.sube_id}-${p.personel_id}`} style={{ display: 'flex', alignItems: 'center', height: SATIR_YUKSEKLIK, position: 'relative' }}>
+                      <div style={{ width: 200, fontSize: 12, paddingLeft: 12, color: 'var(--text2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {tamAd}
+                      </div>
+                      <div style={{ position: 'relative', width: toplamGenislik, height: SATIR_YUKSEKLIK }}>
+                        {/* Saat dikey çizgileri (zemin) */}
+                        {saatBaslari.map((h) => (
+                          <div key={`pl-${p.personel_id}-${h}`} style={{
+                            position: 'absolute', left: dkToPix(h, 0), top: 4, bottom: 4,
+                            width: 1, background: 'rgba(148,163,184,0.12)',
+                          }}/>
+                        ))}
+                        {/* Atama çubukları */}
+                        {p.atamalar.map((a) => {
+                          const x = saatToPix(fmtSaat(a.baslangic_saat));
+                          const x2 = saatToPix(fmtSaat(a.bitis_saat), a.gece_vardiyasi);
+                          const w = Math.max(8, x2 - x);
+                          const tip = a.slot?.tip || 'normal';
+                          const tipRenkleri = { acilis: '#f59e0b', kapanis: '#a855f7', yogun: '#ef4444', normal: '#3b82f6' };
+                          const renk = tipRenkleri[tip] || '#3b82f6';
+                          return (
+                            <div
+                              key={a.id}
+                              style={{
+                                position: 'absolute', left: x, top: 4, width: w, height: SATIR_YUKSEKLIK - 8,
+                                background: renk, borderRadius: 4,
+                                color: '#fff', fontSize: 10, fontWeight: 700,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                paddingLeft: 6, paddingRight: 6, overflow: 'hidden', whiteSpace: 'nowrap',
+                                boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
+                                cursor: 'help',
+                              }}
+                              title={`${tamAd} · ${fmtSaat(a.baslangic_saat)}–${fmtSaat(a.bitis_saat)} · ${a.slot?.ad || ''}`}
+                            >
+                              {w > 80 ? `${fmtSaat(a.baslangic_saat)}–${fmtSaat(a.bitis_saat)}` : ''}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          );
+        })}
+
+        {/* Açıklama */}
+        <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 11, color: 'var(--text3)' }}>
+          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#f59e0b', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>Açılış</div>
+          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#3b82f6', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>Normal</div>
+          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#ef4444', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>Yoğun</div>
+          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#a855f7', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>Kapanış</div>
+          <div style={{ marginLeft: 'auto' }}>Açık renk: slot zemini (kapsama hedefi) · Koyu çubuk: gerçek atama</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
 // PERSONEL KISIT MODAL
 // ═══════════════════════════════════════════════════════════════════
 function KisitModal({ personel_id, subeler, onClose, onKaydet }) {
@@ -3546,7 +3774,7 @@ function DropAtamaSaatModal({
   const [oneriKaynak, setOneriKaynak] = useState(null);
   const [busy, setBusy] = useState(true);
 
-  const partTime = String(personel?.calisma_turu || '').toLowerCase().replace(/-/g, '_') === 'part_time';
+  const mesaiOneriSlot = oneriKaynak === 'mesai_slot' || oneriKaynak === 'part_slot';
 
   useEffect(() => {
     let cancel = false;
@@ -3598,10 +3826,11 @@ function DropAtamaSaatModal({
         {' · '}
         {gunTarihi}
       </p>
-      {partTime && oneriKaynak === 'part_slot' && (
+      {mesaiOneriSlot && (
         <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6, marginBottom: 0, lineHeight: 1.35 }}>
-          Part-time: saatler <strong>slot tipine</strong> göre önerildi (açılış → sabah dilimi, kapanış → akşam, diğer → ara).
-          İsterseniz aşağıdan <strong>hızlı seç</strong> düğmelerinden veya slot saatini kullanın.
+          Başlangıç saatleri <strong>slot + günlük çalışma limitine</strong> göre önerildi; uzun slotlarda otomatik
+          <strong> tam slot doldurma</strong> varsayılmaz. Tam gün veya başka dilim için{' '}
+          <strong>hızlı seç</strong> veya <strong>Slot saati</strong> kullanın.
         </p>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 10 }}>
