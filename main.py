@@ -6332,8 +6332,9 @@ def v2_personel_onerilen_saat(
 ):
     """
     Personelin verilen tarih için önerilen vardiya saatini döner.
-    Öncelik: personel gün preset (vardiya_preset_json) → part-time ise slot tipine göre öneri.
-    `slot_id` verilirse part-time için açılış/kapanış/ara dilimi hesaplanır.
+    Öncelik: personel gün preset (vardiya_preset_json) → yoksa slot + günlük limit ile mesai bandı
+    (tam/part ayrımı yok; uzun slotlarda tam gün varsayılmaz).
+    `slot_id` verilmezse yalnızca JSON preset dönebilir.
     """
     from datetime import datetime as _dt
     t = _dt.strptime(tarih, "%Y-%m-%d").date()
@@ -6341,9 +6342,9 @@ def v2_personel_onerilen_saat(
         preset = _vv2.personel_gun_preset(cur, personel_id, t)
         kaynak = "personel_json" if preset else None
         if not preset and slot_id:
-            preset = _vv2.part_time_slot_onerilen_saat(cur, personel_id, t, slot_id)
+            preset = _vv2.slot_mesai_onerilen_saat(cur, personel_id, t, slot_id)
             if preset:
-                kaynak = "part_slot"
+                kaynak = "mesai_slot"
         return {"preset": preset, "tarih": tarih, "kaynak": kaynak}
 
 

@@ -604,26 +604,25 @@ def _dk_den_time(dk: int) -> time:
     return time(dk // 60, dk % 60)
 
 
-def part_time_slot_onerilen_saat(
+def slot_mesai_onerilen_saat(
     cur,
     personel_id: str,
     tarih: date,
     slot_id: str,
 ) -> Optional[Dict[str, Any]]:
     """
-    `calisma_turu` part-time iken ve personelde gün preset'i yokken:
-      - `acilis` slot → şube açılışı–14:30 ile slotun kesişimi (sabah part)
-      - `kapanis` slot → 14:30–şube kapanışı ile slotun kesişimi (akşam part)
-      - diğer (normal / yoğun) → slot süresi şube mesai içinde kırpılır (ara / aracı)
+    Personelde gün preset'i yokken atama için önerilen saat bandı (tam/part ayrımı yok):
+      - `acilis` slot → şube açılışı–14:30 ile slotun kesişimi
+      - `kapanis` slot → 14:30–şube kapanışı ile slotun kesişimi
+      - diğer → slot ∩ şube mesai penceresi
+    Uzun bantlarda öneri, kişinin **max günlük saat** süresini aşmayacak şekilde kısaltılır
+    (tam slotu doldurma varsayımı kalkar; kullanıcı «Slot saati» veya hızlı seç ile genişletebilir).
     Gece vardiyası slotlarında öneri verilmez (manuel saat).
     """
     _ = tarih  # API imzası / ileride gün bazlı kural için rezerv
-    cur.execute("SELECT calisma_turu FROM personel WHERE id = %s", (personel_id,))
-    rp = cur.fetchone()
-    cal = (rp.get("calisma_turu") if rp else None) or "surekli"
-    cal = str(cal).strip().lower().replace("-", "_")
-    if cal not in ("part_time", "part"):
-        return None
+    kisit = personel_kisit_getir(cur, personel_id)
+    max_h = float(kisit.get("max_gunluk_saat") or 9.5)
+    max_dk = max(60, int(round(max_h * 60)))  # en az 1 saatlik anlamlı bant
 
     cur.execute(
         """
@@ -672,9 +671,15 @@ def part_time_slot_onerilen_saat(
     if hi_clamped <= lo:
         lo, hi_clamped = s0, min(s1, 24 * 60 - 1)
 
+    if hi_clamped - lo > max_dk:
+        hi_clamped = lo + max_dk
+        hi_clamped = min(hi_clamped, s1, close_dk, 24 * 60 - 1)
+    if hi_clamped <= lo:
+        lo, hi_clamped = s0, min(s1, 24 * 60 - 1)
+
     return {
-        "kod": "_PART_ORY",
-        "ad": "Part-Time (slot önerisi)",
+        "kod": "_MESAI_SLOT",
+        "ad": "Mesai önerisi (slot + günlük limit)",
         "bas_saat": _dk_den_time(lo),
         "bit_saat": _dk_den_time(hi_clamped),
         "gece_vardiyasi": False,
@@ -690,11 +695,11 @@ def coz_varsayilan_atama_saatleri(
     tarih: date,
     slot_id: str,
 ) -> Optional[Tuple[time, time]]:
-    """Önce personel gün preset (vardiya_preset_json); yoksa part-time slot önerisi."""
+    """Önce personel gün preset (vardiya_preset_json); yoksa slot + günlük limit mesai önerisi."""
     pr = personel_gun_preset(cur, personel_id, tarih)
     if pr:
         return (pr["bas_saat"], pr["bit_saat"])
-    pt = part_time_slot_onerilen_saat(cur, personel_id, tarih, slot_id)
+    pt = slot_mesai_onerilen_saat(cur, personel_id, tarih, slot_id)
     if pt:
         return (pt["bas_saat"], pt["bit_saat"])
     return None
