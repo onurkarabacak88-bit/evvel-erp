@@ -2356,7 +2356,7 @@ export default function VardiyaPlanlamaV2() {
 // ═══════════════════════════════════════════════════════════════════
 function SlotModal({ sube_id, slot, onClose, onKaydet }) {
   const [form, setForm] = useState(slot || {
-    sube_id, ad: '', tip: 'normal', baslangic_saat: '08:00', bitis_saat: '16:00',
+    sube_id, ad: '', tip: 'normal', baslangic_saat: '08:00', bitis_saat: '23:59',
     gece_vardiyasi: false, min_personel: 1, ideal_personel: 1,
     aktif_gunler: [1,2,3,4,5,6,7], aktif: true, sira: 0,
   });
