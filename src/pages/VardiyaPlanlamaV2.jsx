@@ -5,7 +5,8 @@
  * - Havuzdan veya slottaki kişi chip’inden sürükleme → başka şube/slota transfer (önce iptal)
  * - Birincil kaynak: API’deki her atama satırının baslangıç–bitiş’i (kısmi mesai / ardışık iki kişi / ek mesai).
  * - Şube slotu: referans çerçeve + kontenjan; kullanıcı saatleri çerçeveyi aşabilir (sunucu slot_band uyarısı, blok değil).
- * - Otomatik doldur: şablon + slot içi boş dilimde kaydırma, sunucu check; kritik/onay gerektirenler atlanır
+ * - Otomatik doldur (gün): şablon + boş dilim kaydırma + sunucu check
+ * - Haftalık motor: `vardiya_plan_motor` — Pzt–Paz eksik önceliği, ana şube / haftalık denge, taşıma (min korunur)
  * - Çakışma kesin blok; kritik ihlal → override; sarı uyarılar → Evet/Hayır; şube çerçevesi taşması uyarı kotunda
  * - Gün kilidi manuel (slot min ile otomatik kilit yok)
  */
@@ -477,10 +478,11 @@ function isoHaftaKaydir(ymd, delta) {
 
 /** Gün planında slot_id → { sv, sube_ad } */
 function planSlotSatirBul(plan, slotId) {
-  if (!plan?.subeler || !slotId) return null;
+  if (!plan?.subeler || slotId == null || slotId === '') return null;
+  const sid = String(slotId);
   for (const sub of plan.subeler) {
     for (const sv of sub.slotlar || []) {
-      if (sv.slot?.id === slotId) return { sv, sube_ad: sub.sube_ad };
+      if (String(sv.slot?.id) === sid) return { sv, sube_ad: sub.sube_ad };
     }
   }
   return null;
@@ -689,6 +691,8 @@ export default function VardiyaPlanlamaV2() {
   const [haftaPlanCache, setHaftaPlanCache] = useState(null);
   const [haftaYukleniyor, setHaftaYukleniyor] = useState(false);
   const [otomatikBusy, setOtomatikBusy] = useState(false);
+  const [motorBusy, setMotorBusy] = useState(false);
+  const [motorSonuc, setMotorSonuc] = useState(null);
   const PREVIEW_DEBOUNCE_MS = 220;
   /** Alt özet — varsayılan kapalı; vardiya grid’ine yer açar */
   const [altPanelAcik, setAltPanelAcik] = useState(false);
@@ -1148,7 +1152,13 @@ export default function VardiyaPlanlamaV2() {
     previewTimerRef.current = setTimeout(async () => {
       if (draggedRef.current?.id !== p.id || seq !== previewReqRef.current) return;
       try {
-        const body = { personel_id: p.id, slot_id: slotId, tarih: gunTarihi, override: false };
+        const body = {
+          personel_id: p.id,
+          slot_id: slotId,
+          tarih: gunTarihi,
+          override: false,
+          otomatik_saat_cozumu: true,
+        };
         const c = await api('/vardiya/v2/atama/check', { method: 'POST', body });
         if (draggedRef.current?.id !== p.id || seq !== previewReqRef.current) return;
         const durum = slotHoverDurumuFromCheck(c.uyarilar || []);
@@ -1289,8 +1299,12 @@ export default function VardiyaPlanlamaV2() {
   }
 
   async function dropToSlot(slotId, gunTarihi = tarih) {
-    if (!draggedPersonel) return;
-    const personel = draggedPersonel;
+    /** State bazen henüz commit olmadan drop gelir; ref dragstart'ta senkron yazılır */
+    const personel = draggedPersonel || draggedRef.current;
+    if (!personel) {
+      setHata('Sürüklenen personel bulunamadı — tekrar sürükleyip bırakın.');
+      return;
+    }
     const xfer = transferAtamaRef.current;
     const transferAtamaId = xfer?.atamaId || null;
     const fromGun = xfer?.fromGunTarihi || tarih;
@@ -1308,6 +1322,7 @@ export default function VardiyaPlanlamaV2() {
       setDraggedPersonel(null);
       draggedRef.current = null;
       setDragSlotPreview(null);
+      setHata('İzinli personel havuzdan slota atanamaz.');
       return;
     }
     const planForGun = (gorunumModu === 'sube_hafta' && haftaPlanCache?.[gunTarihi])
@@ -1468,7 +1483,13 @@ export default function VardiyaPlanlamaV2() {
               break;
             }
             if (yerlesti) break;
-            const fallbackBody = { personel_id: p.id, slot_id: row.sv.slot.id, tarih, override: false };
+            const fallbackBody = {
+              personel_id: p.id,
+              slot_id: row.sv.slot.id,
+              tarih,
+              override: false,
+              otomatik_saat_cozumu: true,
+            };
             const c0 = await api('/vardiya/v2/atama/check', { method: 'POST', body: fallbackBody });
             if (slotHoverDurumuFromCheck(c0.uyarilar || []) === 'engel') continue;
             if (c0.kritik_var) continue;
@@ -1487,6 +1508,39 @@ export default function VardiyaPlanlamaV2() {
       await yukleGun();
     } finally {
       setOtomatikBusy(false);
+    }
+  }
+
+  async function haftaMotoruCalistir() {
+    if (!confirm(
+      'Haftalık plan motoru: seçili tarihin ISO haftası (Pzt–Paz) için eksik slotları öncelik sırasıyla doldurur '
+      + '(ana şube, haftalık saat dengesi, gün içi çoklu şube maliyeti). Gerekirse kişiyi başka bir slottan '
+      + 'taşır (verilebilir atama = donor slotta iptal sonrası min kontenjan korunur). Devam?',
+    )) return;
+    setMotorBusy(true);
+    setHata('');
+    try {
+      const r = await api('/vardiya/v2/motor/hafta-doldur', {
+        method: 'POST',
+        body: {
+          pazartesi: pazartesiSecili,
+          max_rounds: 120,
+          tasima_izni: true,
+          dry_run: false,
+        },
+      });
+      setMotorSonuc({
+        mesaj: r.mesaj || '',
+        log: r.log || [],
+        atama_sayisi: r.atama_sayisi,
+        tur_sayisi: r.tur_sayisi,
+      });
+      await yukleGun();
+    } catch (e) {
+      setHata(e.message || 'Haftalık motor başarısız');
+      await yukleGun();
+    } finally {
+      setMotorBusy(false);
     }
   }
 
@@ -1953,7 +2007,8 @@ export default function VardiyaPlanlamaV2() {
           <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.14, color: 'var(--text3)', marginBottom: 8 }}>AMAÇLI İŞLEMLER</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
             <button type="button" className="btn btn-sm btn-secondary" title="TAM/PART vb. sistem genel preset — ekle / düzenle / pasifleştir" onClick={() => setSistemPresetModal(true)}>🗂 Sistem presetleri</button>
-            <button type="button" className="btn btn-sm btn-secondary" disabled={otomatikBusy || yukleniyor} title="Eksik slotlara akıllı atama: şablon + boş dilimde kaydırma, ardından sunucu önerisi" onClick={() => otomatikDoldur()}>🤖 Otomatik doldur</button>
+            <button type="button" className="btn btn-sm btn-secondary" disabled={otomatikBusy || motorBusy || yukleniyor} title="Eksik slotlara akıllı atama: şablon + boş dilimde kaydırma, ardından sunucu önerisi" onClick={() => otomatikDoldur()}>🤖 Otomatik doldur (gün)</button>
+            <button type="button" className="btn btn-sm btn-primary" disabled={motorBusy || otomatikBusy || yukleniyor} title="Haftalık motor: bu ISO haftasında (Pzt–Paz) tüm şubelerde eksikleri sırayla kapatır; gerekirse taşır" onClick={() => haftaMotoruCalistir()}>🧠 Haftalık motor</button>
             <button type="button" className="btn btn-sm btn-secondary" title="Bu günün tüm atamalarını iptal et (şube filtresi varsa yalnız o şube)" onClick={() => gunTemizle()}>🧹 Tümünü temizle</button>
             <button type="button" className="btn btn-sm btn-primary" title="Sunucudan planı yeniden çek (sürükle-bırak atamaları zaten anında kaydedilir)" onClick={() => yukleGun()}>↻ Yenile</button>
           </div>
@@ -2858,15 +2913,21 @@ export default function VardiyaPlanlamaV2() {
           onClose={() => setDropSaatModal(null)}
           onTamam={async (bas, bit) => {
             const m = dropSaatModal;
-            setDropSaatModal(null);
             if (!m?.personel) return;
+            const b0 = (bas || '').trim();
+            const b1 = (bit || '').trim();
+            if (!b0 || !b1) {
+              setHata('Başlangıç ve bitiş saati birlikte zorunludur (örn. 09:00–14:30); tek saat gönderilemez.');
+              return;
+            }
+            setDropSaatModal(null);
             const body = {
               personel_id: m.personel.id,
               slot_id: m.slotId,
               tarih: m.gunTarihi,
               override: false,
-              baslangic_saat: bas || null,
-              bitis_saat: bit || null,
+              baslangic_saat: b0,
+              bitis_saat: b1,
             };
             await devamAtamaKontrolVeKaydet(body, m.transferAtamaId, m);
           }}
@@ -2902,6 +2963,32 @@ export default function VardiyaPlanlamaV2() {
         onIptal={() => setOverrideModal(null)}
         onOnayla={(g) => overrideOnayla(g)}
       />}
+      {motorSonuc ? (
+        <Modal onClose={() => setMotorSonuc(null)} title="Haftalık plan motoru — sonuç" geniş>
+          <p style={{ fontSize: 14, fontWeight: 700, marginTop: 0 }}>{motorSonuc.mesaj}</p>
+          {(motorSonuc.atama_sayisi != null || motorSonuc.tur_sayisi != null) && (
+            <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
+              Atama: <strong>{motorSonuc.atama_sayisi ?? '—'}</strong>
+              {' · '}
+              Tur: <strong>{motorSonuc.tur_sayisi ?? '—'}</strong>
+            </p>
+          )}
+          <div style={{
+            fontSize: 11,
+            fontFamily: 'var(--font-mono, monospace)',
+            whiteSpace: 'pre-wrap',
+            lineHeight: 1.45,
+            maxHeight: 420,
+            overflowY: 'auto',
+            padding: 12,
+            background: 'var(--bg3)',
+            borderRadius: 8,
+            border: '1px solid var(--border)',
+          }}>
+            {(motorSonuc.log || []).length ? (motorSonuc.log || []).join('\n') : 'Günlük satırı yok.'}
+          </div>
+        </Modal>
+      ) : null}
       {logPanel && <LogModal onClose={() => setLogPanel(false)} />}
     </div>
   );
@@ -4067,9 +4154,15 @@ function DropAtamaSaatModal({
   const slotBitDef = fmtSaat(slotRow?.sv?.slot?.bitis_saat);
 
   async function handleTamam() {
+    const b0 = (bas || '').trim();
+    const b1 = (bit || '').trim();
+    if (!b0 || !b1) {
+      window.alert('Başlangıç ve bitiş saatini birlikte girin (örn. mesai 14:30\'ta bitecekse bitiş 14:30 olmalı).');
+      return;
+    }
     setBusy(true);
     try {
-      await onTamam(bas, bit);
+      await onTamam(b0, b1);
     } finally {
       setBusy(false);
     }
