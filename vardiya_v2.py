@@ -14,7 +14,7 @@ Tasarım kuralları (kullanıcı onaylı):
 Bu modül SAFE helper'lar sağlar — endpoint'ler main.py'da.
 """
 from __future__ import annotations
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Set
 from datetime import date, time, datetime, timedelta
 import uuid as _uuid
 
@@ -156,7 +156,7 @@ def slotlari_sube_saatlerinden_uret(
     kapanis_dakika: int = 60,
     normal_slot_dakika: int = 120,
     aktif_gunler: Optional[List[int]] = None,
-    hafta_ici: bool = True,
+    hafta_ici: bool = False,
 ) -> Dict[str, Any]:
     """
     Şube `subeler` satırındaki açılış/kapanış/yoğun metin alanlarına göre
@@ -165,6 +165,9 @@ def slotlari_sube_saatlerinden_uret(
     mod:
       - yenile: atamasız AUTO slotları sil, yeniden üret
       - ekle: şubede hiç AUTO slot yoksa üret; varsa hata
+
+    `aktif_gunler` verilmezse: `hafta_ici=True` → Pzt–Cum (1–5), aksi halde tüm hafta (1–7).
+    Gün matrisi yalnızca o güne düşen slotları gösterir (`gun_planini_getir` + `aktif_gunler`).
     """
     uyarilar: List[str] = []
     if mod not in ("yenile", "ekle"):
@@ -440,11 +443,19 @@ def gun_kilit_kaydet(cur, tarih: date, kilitli: bool, aciklama: str = "") -> Non
         cur.execute("DELETE FROM vardiya_gun_kilit WHERE tarih = %s::date", (tarih,))
 
 
-def _personel_kisit_varsayilan(personel_id: str) -> Dict[str, Any]:
+def _max_gunluk_saat_varsayilan(calisma_turu: Optional[str]) -> float:
+    """Sürekli ≈ 9,5 saat (9:30); part-time ≈ 5,5 saat (5:30)."""
+    c = (calisma_turu or "surekli").strip().lower().replace("-", "_")
+    if c in ("part_time", "part"):
+        return 5.5
+    return 9.5
+
+
+def _personel_kisit_varsayilan(personel_id: str, *, max_gunluk_saat: float = 9.5) -> Dict[str, Any]:
     """Şema/kayıt eksik olsa bile tüm beklenen anahtarlar (KeyError önleme)."""
     return {
         "personel_id": personel_id,
-        "max_gunluk_saat": 9.0,
+        "max_gunluk_saat": float(max_gunluk_saat),
         "max_haftalik_saat": 45.0,
         "izinli_subeler": [],
         "yasak_subeler": [],
@@ -652,12 +663,16 @@ def personel_kisit_getir(cur, personel_id: str) -> Dict[str, Any]:
     (ilk kullanımda upsert tetiklemez — okurken transparan).
     Eski DB satırında eksik kolon varsa varsayılanlarla tamamlanır.
     """
+    cur.execute("SELECT calisma_turu FROM personel WHERE id = %s", (personel_id,))
+    pr_ct = cur.fetchone()
+    _cal = pr_ct.get("calisma_turu") if pr_ct else None
+    _max_def = _max_gunluk_saat_varsayilan(_cal)
     cur.execute(
         "SELECT * FROM personel_kisit WHERE personel_id = %s",
         (personel_id,)
     )
     r = cur.fetchone()
-    base = _personel_kisit_varsayilan(personel_id)
+    base = _personel_kisit_varsayilan(personel_id, max_gunluk_saat=_max_def)
     if not r:
         return base
     row = dict(r)
@@ -687,6 +702,101 @@ def personel_kisit_getir(cur, personel_id: str) -> Dict[str, Any]:
     yz = row.get("yasak_subeler")
     row["yasak_subeler"] = list(yz) if yz is not None else []
     return row
+
+
+def _tarih_olustur(v: Any) -> date:
+    """psycopg2 date / datetime / str → date."""
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, date):
+        return v
+    if v is None:
+        raise ValueError("tarih None")
+    return datetime.strptime(str(v)[:10], "%Y-%m-%d").date()
+
+
+def _iso_hafta_numaralari_araliktan(a: date, b: date) -> Set[Tuple[int, int]]:
+    """[a,b] kapanık aralığındaki her günün (ISO yıl, ISO hafta) anahtarları."""
+    s: Set[Tuple[int, int]] = set()
+    d = a
+    while d <= b:
+        y, w, _ = d.isocalendar()
+        s.add((y, w))
+        d += timedelta(days=1)
+    return s
+
+
+def personel_izin_baska_ayni_iso_haftada(
+    cur,
+    personel_id: str,
+    d_bas: date,
+    d_bit: date,
+    exclude_izin_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Aynı ISO takvim haftasında (yıl+hafta) kesişen başka izin var mı.
+    Çakışmayan ama aynı haftaya düşen ikinci kayıt da yakalanır (çift kayıt uyarısı).
+    """
+    yeni = _iso_hafta_numaralari_araliktan(d_bas, d_bit)
+    cur.execute(
+        """
+        SELECT id, baslangic_tarih, bitis_tarih, tip
+        FROM personel_izin
+        WHERE personel_id = %s
+        """,
+        (personel_id,),
+    )
+    out: List[Dict[str, Any]] = []
+    for r in cur.fetchall():
+        rid = str(r["id"])
+        if exclude_izin_id and rid == str(exclude_izin_id):
+            continue
+        o_bas = _tarih_olustur(r["baslangic_tarih"])
+        o_bit = _tarih_olustur(r["bitis_tarih"])
+        eski = _iso_hafta_numaralari_araliktan(o_bas, o_bit)
+        if yeni & eski:
+            out.append(dict(r))
+    return out
+
+
+def izin_hafta_ozet(cur, hafta_pazartesi: date) -> Dict[str, Any]:
+    """
+    Verilen Pazartesi ile başlayan haftada kendi adına izin kaydı olmayan aktif personel.
+    Yasal izin planlaması için hatırlatma listesi (kayıt yok = dikkat).
+    """
+    paz = hafta_pazartesi
+    paz_s = str(paz)
+    paz_son = paz + timedelta(days=6)
+    paz_son_s = str(paz_son)
+    cur.execute(
+        """
+        SELECT DISTINCT personel_id::text AS personel_id
+        FROM personel_izin
+        WHERE baslangic_tarih <= %s::date AND bitis_tarih >= %s::date
+        """,
+        (paz_son_s, paz_s),
+    )
+    izinli = {str(r["personel_id"]) for r in cur.fetchall()}
+    cur.execute(
+        """
+        SELECT id::text AS id, TRIM(COALESCE(ad_soyad, '')) AS ad_soyad
+        FROM personel
+        WHERE aktif = TRUE
+        ORDER BY COALESCE(NULLIF(TRIM(ad_soyad), ''), id::text)
+        """,
+    )
+    izin_gormeyen: List[Dict[str, str]] = []
+    for r in cur.fetchall():
+        pid = str(r["id"])
+        if pid not in izinli:
+            name = (r.get("ad_soyad") or "").strip() or pid
+            izin_gormeyen.append({"personel_id": pid, "ad_soyad": name})
+    return {
+        "hafta_pazartesi": paz_s,
+        "hafta_pazar": paz_son_s,
+        "izin_gormeyen_personel": izin_gormeyen,
+        "izin_gormeyen_sayisi": len(izin_gormeyen),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════

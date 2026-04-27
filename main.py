@@ -4112,6 +4112,29 @@ def sube_guncelle(sid: str, body: SubeGuncelleModel):
                 sid,
             ),
         )
+    # Vardiya planı açık şubelerde: mesai saatleri kaydedilince AUTO slotları güncelle
+    # (Pzt–Paz tüm günler — gün matrisi `aktif_gunler` ile aynı hizada kalır)
+    if bool(body.vardiya_yazilsin):
+        try:
+            with db() as (conn, cur):
+                sonuc = _vv2.slotlari_sube_saatlerinden_uret(
+                    cur,
+                    sid,
+                    mod="yenile",
+                    acilis_dakika=60,
+                    kapanis_dakika=60,
+                    normal_slot_dakika=120,
+                    hafta_ici=False,
+                    aktif_gunler=None,
+                )
+            if not sonuc.get("basarili"):
+                logging.warning(
+                    "Şube %s güncellendi; AUTO slot yenilenemedi: %s",
+                    sid,
+                    sonuc.get("mesaj"),
+                )
+        except Exception:
+            logging.exception("Şube %s güncellendi; AUTO slot yenileme hatası", sid)
     return {"success": True}
 
 @app.get("/api/subeler/{sid}/kasa-onizle")
@@ -5726,12 +5749,12 @@ class _V2SlotUretIn(BaseModel):
     acilis_dakika: int = 60
     kapanis_dakika: int = 60
     normal_slot_dakika: int = 120
-    hafta_ici: bool = True
+    hafta_ici: bool = False
     aktif_gunler: Optional[List[int]] = None
 
 
 class _V2KisitIn(BaseModel):
-    max_gunluk_saat: float = 9.0
+    max_gunluk_saat: float = 9.5
     max_haftalik_saat: float = 45.0
     izinli_subeler: List[str] = Field(default_factory=list)
     yasak_subeler: List[str] = Field(default_factory=list)
@@ -5771,6 +5794,8 @@ class _V2IzinIn(BaseModel):
     bitis_tarih: str
     tip: str = "mazeret"
     aciklama: Optional[str] = None
+    # Aynı ISO haftasında ikinci kayıt: 409 sonrası kullanıcı onayı ile True
+    force: bool = False
 
 
 def _t(s: Optional[str]):
@@ -6129,13 +6154,50 @@ def v2_izin_liste(personel_id: Optional[str] = None,
             izinler.append(d)
         return {"izinler": izinler}
 
+
+@app.get("/api/vardiya/v2/izin-hafta-ozet")
+def v2_izin_hafta_ozet(pazartesi: str):
+    """
+    Seçilen tarihin ait olduğu ISO haftasında (Pzt–Paz) izin kaydı olmayan aktif personel listesi.
+    `pazartesi` herhangi bir gün olabilir; haftanın Pazartesi’sine normalize edilir.
+    """
+    from datetime import datetime as _dt
+    raw = _dt.strptime(pazartesi[:10], "%Y-%m-%d").date()
+    mon = raw - timedelta(days=raw.weekday())
+    with db() as (conn, cur):
+        return _vv2.izin_hafta_ozet(cur, mon)
+
+
 @app.post("/api/vardiya/v2/izin")
 def v2_izin_ekle(i: _V2IzinIn):
     from datetime import datetime as _dt
     iid = str(uuid.uuid4())
     d1 = _dt.strptime(i.baslangic_tarih[:10], "%Y-%m-%d").date()
     d2 = _dt.strptime(i.bitis_tarih[:10], "%Y-%m-%d").date()
+    if d2 < d1:
+        raise HTTPException(400, "Bitiş tarihi başlangıçtan önce olamaz.")
     with db() as (conn, cur):
+        if not bool(i.force):
+            cak = _vv2.personel_izin_baska_ayni_iso_haftada(cur, i.personel_id, d1, d2)
+            if cak:
+                parcalar = []
+                for x in cak[:4]:
+                    parcalar.append(
+                        f"{x.get('baslangic_tarih')} → {x.get('bitis_tarih')} ({x.get('tip') or '?'})"
+                    )
+                ozet = " | ".join(parcalar)
+                if len(cak) > 4:
+                    ozet += f" (+{len(cak) - 4} kayıt daha)"
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Bu personel için aynı takvim haftasında (Pzt–Paz) zaten izin kaydı var. "
+                        "Bu hafta içinde tekrar izin tanımlıyorsunuz; yasal planlamada çift kayıt oluşmaması için "
+                        "önce mevcut kaydı düzenleyin veya silin. Mevcut: "
+                        + ozet
+                        + " Yine de eklemek için gövdede «force»: true gönderin."
+                    ),
+                )
         cur.execute("""
             INSERT INTO personel_izin
                 (id, personel_id, baslangic_tarih, bitis_tarih, tip, aciklama)
