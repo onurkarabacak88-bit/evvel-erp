@@ -567,6 +567,11 @@ def personel_gun_preset(cur, personel_id: str, tarih: date) -> Optional[Dict[str
 # Part-time: sabah (açılış) / akşam (kapanış) / ara — gün ortası ayrımı (09–14:30 / 14:30–24 ile uyumlu)
 PART_GUN_ORTASI_DK = 14 * 60 + 30  # 14:30
 
+# Şube slotu = çalışma çerçevesi (kaçta açılır–kapanır); kişinin gerçek süresi atamanın başlangıç/bitişindedir.
+# Öneri boş kalırsa tam slot yerine ilk dilim atanır; mesai modal önerisi çok uzun görünmez.
+VARSAYILAN_ATAMA_KISA_DK = 4 * 60
+MESAI_ONERI_ILK_GENISLIK_UST_DK = 5 * 60  # günlük limit ile birlikte daha düşük olan uygulanır
+
 
 def _vardiya_row_saat(val: Any) -> Optional[time]:
     if val is None:
@@ -596,6 +601,44 @@ def _sube_gun_penceresi_dk(acilis_raw: Any, kapanis_raw: Any) -> Tuple[int, int]
 def _dk_den_time(dk: int) -> time:
     dk = max(0, min(int(dk), 24 * 60 - 1))
     return time(dk // 60, dk % 60)
+
+
+def _gunluk_saat_cevir_extended_dk(dk: int) -> time:
+    """Genişletilmiş zaman çizgisindeki dakikayı aynı takvim satırı için `time` yap (örn. gece kesiti bitiş)."""
+    return _dk_den_time(int(dk) % (24 * 60))
+
+
+def _atama_slot_bandini_icinde_mi(slot: Dict[str, Any], bas: time, bit: time) -> bool:
+    """Atama aralığı slot çerçevesinde mi? (Şube çalışma bandı ile uyum.)"""
+    sb = _vardiya_row_saat(slot.get("baslangic_saat"))
+    se = _vardiya_row_saat(slot.get("bitis_saat"))
+    if sb is None or se is None:
+        return True
+    try:
+        s0, s1 = _aralik_dakika_cifti(sb, se)
+        a0, a1 = _aralik_dakika_cifti(bas, bit)
+    except Exception:
+        return True
+    return a0 >= s0 and a1 <= s1
+
+
+def kisa_slot_bandini_baslat(slot: Dict[str, Any]) -> Optional[Tuple[time, time]]:
+    """
+    Preset ve mesai önerisi yokken atama süresini slotun TAMAMI yerine ilk kısa dilim yap.
+    Şube slotu çerçeve; süre seçimi kullanıcıda / yerleşik önerilerde tamamlanır.
+    """
+    sb = _vardiya_row_saat(slot.get("baslangic_saat"))
+    se = _vardiya_row_saat(slot.get("bitis_saat"))
+    if sb is None or se is None:
+        return None
+    s0, s1 = _aralik_dakika_cifti(sb, se)
+    span = s1 - s0
+    if span <= 15:
+        return sb, se
+    use = min(span, VARSAYILAN_ATAMA_KISA_DK)
+    end_dk = s0 + use
+    eb = _gunluk_saat_cevir_extended_dk(end_dk)
+    return sb, eb
 
 
 def slot_mesai_onerilen_saat(
@@ -671,6 +714,14 @@ def slot_mesai_onerilen_saat(
     if hi_clamped <= lo:
         lo, hi_clamped = s0, min(s1, 24 * 60 - 1)
 
+    # Modal ilk değeri: uzun şube slotu ile aynı uzunlukta «tam mesai» gibi görünmesin (kişinin süresi seçimidir).
+    ilk_genis_cap = min(max_dk, MESAI_ONERI_ILK_GENISLIK_UST_DK)
+    if hi_clamped - lo > ilk_genis_cap:
+        hi_clamped = lo + ilk_genis_cap
+        hi_clamped = min(hi_clamped, s1, close_dk, 24 * 60 - 1)
+    if hi_clamped <= lo:
+        lo, hi_clamped = s0, min(s1, 24 * 60 - 1)
+
     return {
         "kod": "_MESAI_SLOT",
         "ad": "Mesai önerisi (slot + günlük limit)",
@@ -689,13 +740,19 @@ def coz_varsayilan_atama_saatleri(
     tarih: date,
     slot_id: str,
 ) -> Optional[Tuple[time, time]]:
-    """Önce personel gün preset (vardiya_preset_json); yoksa slot + günlük limit mesai önerisi."""
+    """Önce personel gün preset (vardiya_preset_json); yoksa mesai önerisi; yoksa slotun kısa dilimi (tam slot dolgusu değil)."""
     pr = personel_gun_preset(cur, personel_id, tarih)
     if pr:
         return (pr["bas_saat"], pr["bit_saat"])
     pt = slot_mesai_onerilen_saat(cur, personel_id, tarih, slot_id)
     if pt:
         return (pt["bas_saat"], pt["bit_saat"])
+    cur.execute("SELECT * FROM vardiya_slot WHERE id = %s", (slot_id,))
+    sr = cur.fetchone()
+    if sr:
+        kisa = kisa_slot_bandini_baslat(dict(sr))
+        if kisa:
+            return kisa
     return None
 
 
@@ -1083,7 +1140,7 @@ def atama_uyarilari(
     Dönen yapı: [
       {
         "tip": 'saat_asimi' | 'sube_uyumsuz' | 'cakisma' | 'gecis_yetersiz'
-              | 'izinli_atandi' | 'saat_disinda' | 'min_personel_eksik' | 'kapanis_eksik'
+              | 'izinli_atandi' | 'saat_disinda' | 'slot_band_disinda' | 'min_personel_eksik' | 'kapanis_eksik'
               | 'gun_kilitli',
         "seviye": 'uyari' | 'kritik',
         "mesaj": str,
@@ -1122,6 +1179,23 @@ def atama_uyarilari(
             baslangic_saat, bitis_saat = coz
     bas = baslangic_saat or slot['baslangic_saat']
     bit = bitis_saat or slot['bitis_saat']
+    if not _atama_slot_bandini_icinde_mi(slot, bas, bit):
+        uyarilar.append({
+            "tip": "slot_band_disinda",
+            "seviye": "kritik",
+            "mesaj": (
+                "Atama saatleri slotun (şube çalışma çerçevesinin) dışına taşıyor. "
+                "Slot şubenin hangi saatler arasında planlanabilir olduğunu gösterir; "
+                "personelin gerçek çalışma süresi bu çerçeve içinde seçtiğiniz başlangıç–bitiş ile belirlenir."
+            ),
+            "detay": {
+                "atama_bas": bas.strftime("%H:%M"),
+                "atama_bit": bit.strftime("%H:%M"),
+                "slot_bas": str(slot.get("baslangic_saat")),
+                "slot_bit": str(slot.get("bitis_saat")),
+            },
+        })
+
     yeni_sure = slot_sure_saat(bas, bit)
 
     # Personel kısıtları
@@ -1327,11 +1401,30 @@ def atama_olustur(
     Atama oluşturur. Önce uyarıları hesaplar:
       - Kritik uyarı varsa ve override=False → atama yapılmaz, uyarılar döner
       - override=True ise her ihlal için override_log'a kayıt + atama yapılır
+
+    Şube slotu = o gün o şubede «ne zaman açık / saat aralığı ve min-ideal personel» çerçevesi;
+    atama satırlarındaki baslangic/bitis = o personelin o şubedeki gerçek mesai dilimi.
+    Uyarılar, nihai saatlerle (kullanıcı + öneri) hesaplanır; tam slot doldurma zorunluluğu yok.
     """
     baslangic_saat, bitis_saat = _atama_saat_cifti_normalize(baslangic_saat, bitis_saat)
 
+    cur.execute("SELECT * FROM vardiya_slot WHERE id = %s", (slot_id,))
+    slot = cur.fetchone()
+    if not slot:
+        return {"basarili": False, "atama_id": None, "uyarilar": [],
+                "mesaj": "Slot bulunamadı."}
+    slot = dict(slot)
+
+    # Saat çözümü (uyarıdan önce): kullanıcı > preset/mesai/kısa dilim > slot ucundan uçuna yalnız son çare
+    if baslangic_saat is None and bitis_saat is None:
+        coz = coz_varsayilan_atama_saatleri(cur, personel_id, tarih, slot_id)
+        if coz:
+            baslangic_saat, bitis_saat = coz
+    bas = baslangic_saat or slot['baslangic_saat']
+    bit = bitis_saat or slot['bitis_saat']
+
     uyarilar = atama_uyarilari(cur, personel_id, slot_id, tarih,
-                               baslangic_saat, bitis_saat)
+                               baslangic_saat=bas, bitis_saat=bit)
 
     # FIZIK KURALI: Çakışma override edilemez (aynı anda iki yerde olunamaz).
     cakisma_var = any(u['tip'] == 'cakisma' for u in uyarilar)
@@ -1346,23 +1439,6 @@ def atama_olustur(
         return {"basarili": False, "atama_id": None, "uyarilar": uyarilar,
                 "mesaj": "Kritik uyarı(lar) override gerektirir."}
 
-    # Slot'tan saat varsayılanı al
-    cur.execute("SELECT * FROM vardiya_slot WHERE id = %s", (slot_id,))
-    slot = cur.fetchone()
-    if not slot:
-        return {"basarili": False, "atama_id": None, "uyarilar": [],
-                "mesaj": "Slot bulunamadı."}
-    slot = dict(slot)
-    # Saat öncelik sırası:
-    #   1) Caller'ın verdiği saat (drop popup'tan)
-    #   2) Gün preset → part-time slot önerisi
-    #   3) Slot varsayılanı
-    if baslangic_saat is None and bitis_saat is None:
-        coz = coz_varsayilan_atama_saatleri(cur, personel_id, tarih, slot_id)
-        if coz:
-            baslangic_saat, bitis_saat = coz
-    bas = baslangic_saat or slot['baslangic_saat']
-    bit = bitis_saat or slot['bitis_saat']
     gece = bool(slot.get('gece_vardiyasi'))
 
     aid = str(_uuid.uuid4())
