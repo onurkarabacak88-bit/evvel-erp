@@ -1041,6 +1041,28 @@ export default function VardiyaPlanlamaV2() {
     }
   }
 
+  /** Şube × gün hedef kişi (vardiya_sube_gun_hedef); null = hedef kaldır */
+  async function subeGunHedefKaydet(subeId, rawVal) {
+    let hedef_personel = null;
+    if (rawVal != null && String(rawVal).trim() !== '') {
+      const n = parseInt(String(rawVal).trim(), 10);
+      if (Number.isNaN(n) || n < 0) {
+        setHata('Hedef kişi: 0 veya pozitif tam sayı girin.');
+        return;
+      }
+      hedef_personel = n;
+    }
+    try {
+      await api('/vardiya/v2/sube-gun-hedef', {
+        method: 'PUT',
+        body: { sube_id: subeId, tarih, hedef_personel },
+      });
+      await yukleGun();
+    } catch (e) {
+      setHata(e.message || 'Hedef kaydedilemedi');
+    }
+  }
+
   async function toggleGunKilit() {
     try {
       const next = !gunPlani?.gun_kilitli;
@@ -2151,7 +2173,8 @@ export default function VardiyaPlanlamaV2() {
             </div>
             {gorunumModu === 'gun_matris' && (
               <div style={{ fontSize: 11, color: 'var(--text3)', width: '100%' }}>
-                Çerçeve: gri boş · yeşil min tam · turuncu min eksik · sarı ideal eksik · açılış/kapanışta ek mavi halka · sürüklerken yeşil/sarı/kırmızı vurgu · atananlar üst üste avatar
+                Şube sütununda <strong>hedef kişi</strong> girin; sistem o gün o şubede <strong>benzersiz atanmış</strong> kişi sayısına göre <strong>altında / tam / üstünde</strong> der (saat/rol atama modalında).
+                {' '}Çerçeve: gri boş · yeşil min tam · turuncu min eksik · sarı ideal eksik · açılış/kapanışta ek mavi halka · sürüklerken yeşil/sarı/kırmızı vurgu · atananlar üst üste avatar
               </div>
             )}
             {gorunumModu === 'personel_hafta' && (
@@ -2176,7 +2199,28 @@ export default function VardiyaPlanlamaV2() {
                     <div style={{ minWidth: 88 + n * 160 }}>
                       <div style={{ display: 'grid', gridTemplateColumns: tpl, gap: 0, borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>
                         <div style={{ padding: '10px 8px', fontSize: 11, fontWeight: 700, color: 'var(--text3)' }}>Saat</div>
-                        {filtrelenmisSubeler.map((s) => (
+                        {filtrelenmisSubeler.map((s) => {
+                          const hedef = s.ihtiyac_hedef_kisi;
+                          const atanan = Number.isFinite(Number(s.atanan_benzersiz_kisi))
+                            ? Number(s.atanan_benzersiz_kisi)
+                            : 0;
+                          const dur = s.ihtiyac_durumu;
+                          let durumParca = '';
+                          let durumRenk = 'var(--text3)';
+                          if (hedef != null) {
+                            if (dur === 'altinda') {
+                              durumParca = '→ altında';
+                              durumRenk = '#c2410c';
+                            } else if (dur === 'ustunde') {
+                              durumParca = '→ üstünde';
+                              durumRenk = '#1d4ed8';
+                            } else {
+                              durumParca = '→ tam';
+                              durumRenk = '#15803d';
+                            }
+                          }
+                          const hid = `vardiya-hedef-${s.sube_id}`;
+                          return (
                           <div key={s.sube_id} style={{ padding: '8px 6px', textAlign: 'center', borderLeft: '1px solid var(--border)' }}>
                             <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6 }}>🏪 {s.sube_ad}</div>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center' }}>
@@ -2196,8 +2240,43 @@ export default function VardiyaPlanlamaV2() {
                                 }}
                               >＋</button>
                             </div>
+                            <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--border)' }}>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center', alignItems: 'center', fontSize: 10 }}>
+                                <label htmlFor={hid} style={{ color: 'var(--text3)', fontWeight: 700 }}>Hedef kişi</label>
+                                <input
+                                  id={hid}
+                                  type="number"
+                                  min={0}
+                                  className="input input-sm"
+                                  style={{ width: 52 }}
+                                  placeholder="—"
+                                  defaultValue={hedef != null ? String(hedef) : ''}
+                                  key={`${s.sube_id}-${tarih}-${hedef ?? 'x'}`}
+                                />
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-secondary"
+                                  title="Hedefi kaydet"
+                                  onClick={() => {
+                                    const el = document.getElementById(hid);
+                                    subeGunHedefKaydet(s.sube_id, el?.value);
+                                  }}
+                                >Kaydet</button>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-secondary"
+                                  title="Hedefi kaldır"
+                                  onClick={() => subeGunHedefKaydet(s.sube_id, null)}
+                                >Temizle</button>
+                              </div>
+                              <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: durumRenk, lineHeight: 1.35 }}>
+                                İhtiyaç: {hedef != null ? hedef : '—'} · Atanan: {atanan}
+                                {hedef != null ? ` ${durumParca}` : ''}
+                              </div>
+                            </div>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                       {saatBantlariGunMatris.map((band) => (
                         <div
