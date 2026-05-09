@@ -1181,8 +1181,8 @@ def ops_dashboard(
 @router.get("/kapanis-takip")
 def kapanis_takip(tarih: Optional[str] = None):
     """
-    Günlük kapanış takip: tüm aktif şubeler için kapanış durumu + ciro taslak nakit/pos/online.
-    Hem bekleyen hem de onaylı taslakları kapsar — eksik olanlar açıkça görünür.
+    Günlük kapanış takip: tüm aktif şubeler, kapanış + açılış durumu + ciro (nakit/pos/online).
+    Onaylandi taslak bekliyor'a göre önceliklidir (aynı gün içinde).
     """
     from datetime import date as _date
     try:
@@ -1194,13 +1194,14 @@ def kapanis_takip(tarih: Optional[str] = None):
         cur.execute("SELECT id::text, ad FROM subeler WHERE aktif=TRUE ORDER BY ad")
         subeler = [dict(r) for r in (cur.fetchall() or [])]
 
-        # Kapanış eventleri
+        # Kapanış eventleri (sube_operasyon_event)
         cur.execute(
             """
             SELECT e.sube_id::text,
-                   MIN(e.olay_ts)   AS kapanis_ts,
-                   MAX(e.kasa_sayim) AS kasa_sayim,
-                   MAX(e.devir)      AS devir
+                   MIN(e.olay_ts AT TIME ZONE 'Europe/Istanbul') AS kapanis_ts,
+                   MAX(e.kasa_sayim)  AS kasa_sayim,
+                   MAX(e.devir)       AS devir,
+                   MAX(e.personel_ad) AS personel_ad
             FROM sube_operasyon_event e
             WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
               AND e.tarih = %s
@@ -1210,14 +1211,32 @@ def kapanis_takip(tarih: Optional[str] = None):
         )
         kapanis_map = {r["sube_id"]: dict(r) for r in (cur.fetchall() or [])}
 
-        # Ciro taslakları (bekliyor + onaylandi, aynı gün içinde en son)
+        # Açılış eventleri (bugün açıldı mı?)
+        cur.execute(
+            """
+            SELECT e.sube_id::text,
+                   MIN(e.olay_ts AT TIME ZONE 'Europe/Istanbul') AS acilis_ts,
+                   MAX(e.personel_ad) AS personel_ad
+            FROM sube_operasyon_event e
+            WHERE e.tip = 'ACILIS' AND e.durum = 'tamamlandi'
+              AND e.tarih = %s
+            GROUP BY e.sube_id
+            """,
+            (hedef,),
+        )
+        acilis_map = {r["sube_id"]: dict(r) for r in (cur.fetchall() or [])}
+
+        # Ciro taslakları: onaylandi > bekliyor, en son olusturma
         cur.execute(
             """
             SELECT DISTINCT ON (t.sube_id)
-                   t.sube_id::text, t.nakit, t.pos, t.online, t.durum, t.olusturma
+                   t.sube_id::text, t.nakit, t.pos, t.online,
+                   t.durum, t.olusturma, t.gonderen_ad
             FROM ciro_taslak t
             WHERE t.tarih = %s AND t.durum IN ('bekliyor', 'onaylandi')
-            ORDER BY t.sube_id, t.olusturma DESC
+            ORDER BY t.sube_id,
+                     CASE t.durum WHEN 'onaylandi' THEN 0 ELSE 1 END,
+                     t.olusturma DESC
             """,
             (hedef,),
         )
@@ -1225,36 +1244,67 @@ def kapanis_takip(tarih: Optional[str] = None):
         for r in (cur.fetchall() or []):
             taslak_map[str(r["sube_id"])] = dict(r)
 
-        # Onaylı ciro toplamı
+        # Onaylı ciro — nakit/pos/online kesin tutar
         cur.execute(
-            "SELECT sube_id::text, toplam FROM ciro WHERE tarih=%s AND durum='aktif'",
+            """
+            SELECT c.sube_id::text,
+                   c.toplam,
+                   c.nakit, c.pos, c.online
+            FROM ciro c
+            WHERE c.tarih = %s AND c.durum = 'aktif'
+            """,
             (hedef,),
         )
-        ciro_map = {str(r["sube_id"]): float(r["toplam"] or 0) for r in (cur.fetchall() or [])}
+        ciro_map = {}
+        for r in (cur.fetchall() or []):
+            ciro_map[str(r["sube_id"])] = {
+                "toplam": float(r["toplam"] or 0),
+                "nakit":  float(r.get("nakit") or 0),
+                "pos":    float(r.get("pos") or 0),
+                "online": float(r.get("online") or 0),
+            }
 
     satirlar = []
     for s in subeler:
         sid = s["id"]
-        kap = kapanis_map.get(sid, {})
-        tas = taslak_map.get(sid, {})
-        ciro_tutar = ciro_map.get(sid, 0.0)
-        kts = kap.get("kapanis_ts")
-        tas_ts = tas.get("olusturma")
+        kap  = kapanis_map.get(sid, {})
+        acil = acilis_map.get(sid, {})
+        tas  = taslak_map.get(sid, {})
+        ciro = ciro_map.get(sid, {})
+
+        ciro_tutar = ciro.get("toplam", 0.0)
+        # Nakit/pos/online: onaylı ciro tablosundan al (en kesin), yoksa taslaktan
+        nakit  = ciro.get("nakit")  or float(tas.get("nakit")  or 0)
+        pos    = ciro.get("pos")    or float(tas.get("pos")    or 0)
+        online = ciro.get("online") or float(tas.get("online") or 0)
+
+        kts  = kap.get("kapanis_ts")
+        ats  = acil.get("acilis_ts")
+        tts  = tas.get("olusturma")
+
         satirlar.append({
-            "sube_id":        sid,
-            "sube_adi":       s["ad"],
-            "kapanis_tamam":  bool(kap),
-            "kapanis_ts":     str(kts) if kts else "",
-            "kasa_sayim":     float(kap.get("kasa_sayim") or 0),
-            "devir":          float(kap.get("devir") or 0),
-            "taslak_var":     bool(tas),
-            "taslak_durum":   str(tas.get("durum") or ""),
-            "taslak_ts":      str(tas_ts) if tas_ts else "",
-            "nakit":          float(tas.get("nakit") or 0),
-            "pos":            float(tas.get("pos") or 0),
-            "online":         float(tas.get("online") or 0),
-            "ciro_onaylandi": ciro_tutar > 0,
-            "ciro_tutar":     ciro_tutar,
+            "sube_id":         sid,
+            "sube_adi":        s["ad"],
+            # Açılış
+            "acildi":          bool(acil),
+            "acilis_ts":       str(ats) if ats else "",
+            # Kapanış
+            "kapanis_tamam":   bool(kap),
+            "kapanis_ts":      str(kts) if kts else "",
+            "kasa_sayim":      float(kap.get("kasa_sayim") or 0),
+            "devir":           float(kap.get("devir") or 0),
+            "kapanis_personel": str(kap.get("personel_ad") or ""),
+            # Ciro taslak
+            "taslak_var":      bool(tas),
+            "taslak_durum":    str(tas.get("durum") or ""),
+            "taslak_ts":       str(tts) if tts else "",
+            "gonderen_ad":     str(tas.get("gonderen_ad") or ""),
+            # Tutarlar
+            "nakit":           nakit,
+            "pos":             pos,
+            "online":          online,
+            "ciro_onaylandi":  ciro_tutar > 0,
+            "ciro_tutar":      ciro_tutar,
         })
 
     return {

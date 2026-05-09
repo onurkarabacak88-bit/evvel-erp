@@ -1606,6 +1606,8 @@ export default function OperasyonMerkezi() {
   const [kapanisTakip, setKapanisTakip] = useState(null);
   const [kapanisTakipYukleniyor, setKapanisTakipYukleniyor] = useState(false);
   const [kapanisTakipTarih, setKapanisTakipTarih] = useState(bugunIsoTarih());
+  const [kapanisTakipSonGuncelleme, setKapanisTakipSonGuncelleme] = useState(null);
+  const kapanisTakipIntervalRef = useRef(null);
   const [ciroOnayBugun, setCiroOnayBugun] = useState({ tarih: '', toplam: 0, toplam_tutar: 0, kayitlar: [] });
   const [ciroOnayBugunYukleniyor, setCiroOnayBugunYukleniyor] = useState(false);
   const [ciroOnayAramaTarih, setCiroOnayAramaTarih] = useState(bugunIsoTarih());
@@ -2023,16 +2025,17 @@ export default function OperasyonMerkezi() {
     });
   }, [kullanilanGunYukle]);
 
-  const yukleKapanisTakip = useCallback(async (tarih) => {
+  const yukleKapanisTakip = useCallback(async (tarih, { silent = false } = {}) => {
     const hedef = (tarih || bugunIsoTarih()).trim();
-    setKapanisTakipYukleniyor(true);
+    if (!silent) setKapanisTakipYukleniyor(true);
     try {
       const r = await api(`/ops/kapanis-takip?tarih=${encodeURIComponent(hedef)}`);
       setKapanisTakip(r);
+      setKapanisTakipSonGuncelleme(new Date());
     } catch (e) {
-      toast(e.message || 'Kapanış takip yüklenemedi');
+      if (!silent) toast(e.message || 'Kapanış takip yüklenemedi');
     } finally {
-      setKapanisTakipYukleniyor(false);
+      if (!silent) setKapanisTakipYukleniyor(false);
     }
   }, [toast]);
 
@@ -2956,8 +2959,26 @@ export default function OperasyonMerkezi() {
   }, [aktifSekme, toast, kullanilanGunYukle, kullanilanHaftaYukle]);
 
   useEffect(() => {
-    if (aktifSekme !== 'kapanis-takip') return;
+    if (aktifSekme !== 'kapanis-takip') {
+      if (kapanisTakipIntervalRef.current) {
+        clearInterval(kapanisTakipIntervalRef.current);
+        kapanisTakipIntervalRef.current = null;
+      }
+      return;
+    }
     yukleKapanisTakip(kapanisTakipTarih);
+    // Bugünkü görünümde 2 dakikada bir otomatik yenile
+    if (kapanisTakipTarih === bugunIsoTarih()) {
+      kapanisTakipIntervalRef.current = setInterval(() => {
+        yukleKapanisTakip(kapanisTakipTarih, { silent: true });
+      }, 120_000);
+    }
+    return () => {
+      if (kapanisTakipIntervalRef.current) {
+        clearInterval(kapanisTakipIntervalRef.current);
+        kapanisTakipIntervalRef.current = null;
+      }
+    };
   }, [aktifSekme, yukleKapanisTakip, kapanisTakipTarih]);
 
   useEffect(() => {
@@ -7356,151 +7377,204 @@ export default function OperasyonMerkezi() {
 
       {aktifSekme === 'kapanis-takip' && (() => {
         const kt = kapanisTakip;
-        const satirlar = Array.isArray(kt?.satirlar) ? kt.satirlar : [];
-        const eksikKapanis = satirlar.filter(r => !r.kapanis_tamam);
-        const eksikCiro = satirlar.filter(r => !r.ciro_onaylandi && !r.taslak_var);
-        const bekleyenTaslak = satirlar.filter(r => r.taslak_var && r.taslak_durum === 'bekliyor');
-        const fmt = (v) => Number(v || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 });
-        const saat = (ts) => {
-          if (!ts) return '—';
-          try { return new Date(ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }); }
-          catch { return '—'; }
+        const tumSatirlar = Array.isArray(kt?.satirlar) ? kt.satirlar : [];
+
+        // Öncelik sırası: 0=kapanmadı (en acil), 1=ciro yok, 2=onay bekliyor, 3=tamam
+        const _oncelik = (r) => {
+          if (!r.kapanis_tamam) return 0;
+          if (!r.ciro_onaylandi && !r.taslak_var) return 1;
+          if (r.taslak_var && r.taslak_durum === 'bekliyor') return 2;
+          return 3;
         };
+        const satirlar = [...tumSatirlar].sort((a, b) =>
+          _oncelik(a) - _oncelik(b) || (a.sube_adi || '').localeCompare(b.sube_adi || '', 'tr')
+        );
+
+        const eksikKapanisSayisi  = satirlar.filter(r => !r.kapanis_tamam).length;
+        const eksikCiroSayisi     = satirlar.filter(r => !r.ciro_onaylandi && !r.taslak_var).length;
+        const bekleyenSayisi      = satirlar.filter(r => r.taslak_var && r.taslak_durum === 'bekliyor').length;
+        const tamamSayisi         = satirlar.filter(r => r.ciro_onaylandi).length;
+
+        const topNakit  = satirlar.reduce((s, r) => s + (r.nakit  || 0), 0);
+        const topPos    = satirlar.reduce((s, r) => s + (r.pos    || 0), 0);
+        const topOnline = satirlar.reduce((s, r) => s + (r.online || 0), 0);
+        const topCiro   = satirlar.reduce((s, r) => s + (r.ciro_tutar > 0 ? r.ciro_tutar : r.nakit + r.pos + r.online), 0);
+
+        const fmt  = (v) => Number(v || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 });
+        const saat = (ts) => {
+          if (!ts) return null;
+          try { return new Date(ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }); }
+          catch { return null; }
+        };
+        const bugunMu = kapanisTakipTarih === bugunIsoTarih();
+
         return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {/* Tarih seçici + özet sayılar */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+            {/* ── Üst bar: tarih + yenile + son güncelleme ── */}
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
               <div>
-                <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Tarih</span>
+                <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 3 }}>Tarih</span>
                 <input
                   type="date"
                   value={kapanisTakipTarih}
                   onChange={(e) => setKapanisTakipTarih(e.target.value)}
-                  style={{ fontSize: 13, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg2)', color: 'var(--text)' }}
+                  style={{ fontSize: 13, padding: '5px 9px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg2)', color: 'var(--text)' }}
                 />
               </div>
               <button
                 onClick={() => yukleKapanisTakip(kapanisTakipTarih)}
                 disabled={kapanisTakipYukleniyor}
                 className="btn btn-sm"
-                style={{ marginTop: 18 }}
+                style={{ height: 32 }}
               >
                 {kapanisTakipYukleniyor ? '⏳' : '🔄'} Yenile
               </button>
-              {kt && (
-                <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
-                  <span style={{ background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.35)', borderRadius: 8, padding: '4px 12px', fontSize: 12 }}>
-                    ✅ Kapanış: <strong>{kt.kapanis_yapan_adet}/{kt.sube_sayisi}</strong>
-                  </span>
-                  <span style={{ background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', borderRadius: 8, padding: '4px 12px', fontSize: 12 }}>
-                    💳 Ciro onaylı: <strong>{kt.ciro_onaylanan_adet}</strong>
-                  </span>
-                  {bekleyenTaslak.length > 0 && (
-                    <span style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 8, padding: '4px 12px', fontSize: 12 }}>
-                      ⏳ Onay bekleyen: <strong>{bekleyenTaslak.length}</strong>
-                    </span>
-                  )}
-                  {eksikKapanis.length > 0 && (
-                    <span style={{ background: 'rgba(232,93,93,0.15)', border: '1px solid rgba(232,93,93,0.4)', borderRadius: 8, padding: '4px 12px', fontSize: 12 }}>
-                      🔴 Kapanmadı: <strong>{eksikKapanis.length}</strong>
-                    </span>
-                  )}
-                  {eksikCiro.length > 0 && (
-                    <span style={{ background: 'rgba(232,93,93,0.12)', border: '1px solid rgba(232,93,93,0.35)', borderRadius: 8, padding: '4px 12px', fontSize: 12 }}>
-                      ❌ Ciro yok: <strong>{eksikCiro.length}</strong>
-                    </span>
-                  )}
-                </div>
+              {bugunMu && (
+                <span style={{ fontSize: 11, color: 'var(--text3)', alignSelf: 'center' }}>
+                  Her 2 dk otomatik güncellenir
+                </span>
+              )}
+              {kapanisTakipSonGuncelleme && (
+                <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 'auto', alignSelf: 'center' }}>
+                  Son güncelleme: {kapanisTakipSonGuncelleme.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+                </span>
               )}
             </div>
 
-            {/* Tablo */}
-            {kapanisTakipYukleniyor ? (
-              <div style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>Yükleniyor...</div>
-            ) : satirlar.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>
-                {kt ? 'Bu tarihte aktif şube bulunamadı.' : 'Veri yüklemek için Yenile düğmesine basın.'}
+            {/* ── Özet metrik kartları ── */}
+            {kt && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10 }}>
+                {[
+                  { label: 'Kapanış yapan', val: `${kt.kapanis_yapan_adet} / ${kt.sube_sayisi}`, color: eksikKapanisSayisi > 0 ? '#e85d5d' : '#22c55e', bg: eksikKapanisSayisi > 0 ? 'rgba(232,93,93,0.12)' : 'rgba(34,197,94,0.12)', border: eksikKapanisSayisi > 0 ? 'rgba(232,93,93,0.4)' : 'rgba(34,197,94,0.4)' },
+                  { label: 'Ciro onaylı',   val: `${tamamSayisi} şube`, color: tamamSayisi === kt.sube_sayisi ? '#22c55e' : '#f59e0b', bg: 'rgba(99,102,241,0.10)', border: 'rgba(99,102,241,0.3)' },
+                  { label: 'Onay bekleyen', val: bekleyenSayisi > 0 ? `${bekleyenSayisi} şube` : '—', color: bekleyenSayisi > 0 ? '#fbbf24' : 'var(--text3)', bg: bekleyenSayisi > 0 ? 'rgba(245,158,11,0.10)' : 'var(--bg2)', border: bekleyenSayisi > 0 ? 'rgba(245,158,11,0.35)' : 'var(--border)' },
+                  { label: 'Ciro eksik',    val: eksikCiroSayisi > 0 ? `${eksikCiroSayisi} şube` : 'Yok', color: eksikCiroSayisi > 0 ? '#e85d5d' : '#22c55e', bg: eksikCiroSayisi > 0 ? 'rgba(232,93,93,0.10)' : 'rgba(34,197,94,0.07)', border: eksikCiroSayisi > 0 ? 'rgba(232,93,93,0.35)' : 'rgba(34,197,94,0.25)' },
+                ].map((m, i) => (
+                  <div key={i} style={{ background: m.bg, border: `1px solid ${m.border}`, borderRadius: 8, padding: '10px 14px' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{m.label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: m.color }}>{m.val}</div>
+                  </div>
+                ))}
               </div>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
+            )}
+
+            {/* ── Yükleniyor / boş durum ── */}
+            {kapanisTakipYukleniyor && !kt && (
+              <div style={{ textAlign: 'center', padding: 50, color: 'var(--text3)' }}>Yükleniyor...</div>
+            )}
+            {!kapanisTakipYukleniyor && !kt && (
+              <div style={{ textAlign: 'center', padding: 50, color: 'var(--text3)' }}>
+                Yenile düğmesine basın veya tarih seçin.
+              </div>
+            )}
+            {kt && satirlar.length === 0 && (
+              <div style={{ textAlign: 'center', padding: 50, color: 'var(--text3)' }}>
+                Bu tarihte aktif şube kaydı bulunamadı.
+              </div>
+            )}
+
+            {/* ── Ana tablo ── */}
+            {satirlar.length > 0 && (
+              <div style={{ overflowX: 'auto', borderRadius: 10, border: '1px solid var(--border)' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
-                    <tr style={{ background: 'var(--bg2)', color: 'var(--text3)', fontSize: 11 }}>
-                      <th style={{ padding: '6px 10px', textAlign: 'left', borderBottom: '1px solid var(--border)' }}>Şube</th>
-                      <th style={{ padding: '6px 10px', textAlign: 'center', borderBottom: '1px solid var(--border)' }}>Kapanış</th>
-                      <th style={{ padding: '6px 10px', textAlign: 'center', borderBottom: '1px solid var(--border)' }}>Saat</th>
-                      <th style={{ padding: '6px 10px', textAlign: 'center', borderBottom: '1px solid var(--border)' }}>Ciro</th>
-                      <th style={{ padding: '6px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)' }}>Nakit</th>
-                      <th style={{ padding: '6px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)' }}>POS</th>
-                      <th style={{ padding: '6px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)' }}>Online</th>
-                      <th style={{ padding: '6px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)' }}>Toplam</th>
+                    <tr style={{ background: 'var(--bg2)' }}>
+                      {['Şube', 'Kapanış', 'Saat', 'Kapanış Personeli', 'Ciro Durumu', 'Gönderen', 'Nakit', 'POS', 'Online', 'Toplam'].map((h, i) => (
+                        <th key={i} style={{ padding: '8px 10px', textAlign: i >= 6 ? 'right' : i >= 1 ? 'center' : 'left', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--text3)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                          {h}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {satirlar.map((r, i) => {
-                      const kritikSatir = !r.kapanis_tamam || (!r.ciro_onaylandi && !r.taslak_var);
-                      const uyariSatir = r.taslak_var && r.taslak_durum === 'bekliyor';
-                      const rowBg = kritikSatir
-                        ? 'rgba(232,93,93,0.07)'
-                        : uyariSatir
-                        ? 'rgba(245,158,11,0.07)'
-                        : i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.025)';
+                    {satirlar.map((r) => {
+                      const onc = _oncelik(r);
+                      const rowBg = onc === 0
+                        ? 'rgba(232,93,93,0.09)'
+                        : onc === 1
+                        ? 'rgba(232,93,93,0.05)'
+                        : onc === 2
+                        ? 'rgba(245,158,11,0.06)'
+                        : 'transparent';
                       const toplam = r.ciro_tutar > 0 ? r.ciro_tutar : (r.nakit + r.pos + r.online);
+                      const kapanisSaat = saat(r.kapanis_ts);
                       return (
-                        <tr key={r.sube_id} style={{ background: rowBg }}>
-                          <td style={{ padding: '7px 10px', fontWeight: 600, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
+                        <tr key={r.sube_id} style={{ background: rowBg, transition: 'background 0.15s' }}>
+                          {/* Şube */}
+                          <td style={{ padding: '8px 10px', fontWeight: 700, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
                             🏪 {r.sube_adi}
                           </td>
-                          <td style={{ padding: '7px 10px', textAlign: 'center', borderBottom: '1px solid var(--border)' }}>
+                          {/* Kapanış */}
+                          <td style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
                             {r.kapanis_tamam
-                              ? <span style={{ color: 'var(--green)', fontWeight: 700 }}>✅ Kapandı</span>
-                              : <span style={{ color: 'var(--red)', fontWeight: 700 }}>🔴 Kapanmadı</span>}
+                              ? <span style={{ color: '#22c55e', fontWeight: 700 }}>✅ Kapandı</span>
+                              : r.acildi
+                              ? <span style={{ color: '#e85d5d', fontWeight: 700 }}>🔴 Kapanmadı</span>
+                              : <span style={{ color: 'var(--text3)', fontStyle: 'italic', fontSize: 12 }}>Açılmadı</span>}
                           </td>
-                          <td style={{ padding: '7px 10px', textAlign: 'center', borderBottom: '1px solid var(--border)', color: 'var(--text3)', fontSize: 12 }}>
-                            {saat(r.kapanis_ts)}
+                          {/* Saat */}
+                          <td style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '1px solid var(--border)', color: 'var(--text3)', fontSize: 12, whiteSpace: 'nowrap' }}>
+                            {kapanisSaat || '—'}
                           </td>
-                          <td style={{ padding: '7px 10px', textAlign: 'center', borderBottom: '1px solid var(--border)' }}>
+                          {/* Personel */}
+                          <td style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '1px solid var(--border)', fontSize: 12, color: 'var(--text2)', whiteSpace: 'nowrap' }}>
+                            {r.kapanis_personel || '—'}
+                          </td>
+                          {/* Ciro durumu */}
+                          <td style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
                             {r.ciro_onaylandi
-                              ? <span style={{ color: 'var(--green)', fontWeight: 600 }}>✓ Onaylı</span>
+                              ? <span style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e', borderRadius: 6, padding: '2px 8px', fontWeight: 700, fontSize: 12 }}>✓ Onaylı</span>
                               : r.taslak_var && r.taslak_durum === 'bekliyor'
-                              ? <span style={{ color: '#fbbf24', fontWeight: 600 }}>⏳ Onayda</span>
-                              : <span style={{ color: 'var(--red)' }}>❌ Yok</span>}
+                              ? <span style={{ background: 'rgba(245,158,11,0.15)', color: '#fbbf24', borderRadius: 6, padding: '2px 8px', fontWeight: 700, fontSize: 12 }}>⏳ Onayda</span>
+                              : r.kapanis_tamam
+                              ? <span style={{ background: 'rgba(232,93,93,0.15)', color: '#e85d5d', borderRadius: 6, padding: '2px 8px', fontWeight: 700, fontSize: 12 }}>❌ Ciro Yok</span>
+                              : <span style={{ color: 'var(--text3)', fontSize: 12 }}>—</span>}
                           </td>
-                          <td style={{ padding: '7px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}>
-                            {(r.nakit > 0 || r.ciro_tutar > 0)
-                              ? <span>{r.nakit > 0 ? `${fmt(r.nakit)} ₺` : (r.ciro_onaylandi ? <span style={{ color: 'var(--text3)', fontSize: 11 }}>—</span> : '—')}</span>
-                              : '—'}
+                          {/* Gönderen */}
+                          <td style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '1px solid var(--border)', fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>
+                            {r.gonderen_ad || '—'}
                           </td>
-                          <td style={{ padding: '7px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}>
-                            {r.pos > 0 ? `${fmt(r.pos)} ₺` : '—'}
+                          {/* Nakit */}
+                          <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                            {r.nakit > 0 ? <strong>{fmt(r.nakit)} ₺</strong> : <span style={{ color: 'var(--text3)' }}>—</span>}
                           </td>
-                          <td style={{ padding: '7px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}>
-                            {r.online > 0 ? `${fmt(r.online)} ₺` : '—'}
+                          {/* POS */}
+                          <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                            {r.pos > 0 ? <strong>{fmt(r.pos)} ₺</strong> : <span style={{ color: 'var(--text3)' }}>—</span>}
                           </td>
-                          <td style={{ padding: '7px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontWeight: toplam > 0 ? 700 : 400, fontVariantNumeric: 'tabular-nums' }}>
-                            {toplam > 0 ? `${fmt(toplam)} ₺` : <span style={{ color: 'var(--text3)' }}>—</span>}
+                          {/* Online */}
+                          <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                            {r.online > 0 ? <strong>{fmt(r.online)} ₺</strong> : <span style={{ color: 'var(--text3)' }}>—</span>}
+                          </td>
+                          {/* Toplam */}
+                          <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                            {toplam > 0
+                              ? <span style={{ fontWeight: 800, fontSize: 14, color: r.ciro_onaylandi ? '#22c55e' : 'var(--text)' }}>{fmt(toplam)} ₺</span>
+                              : <span style={{ color: 'var(--text3)' }}>—</span>}
                           </td>
                         </tr>
                       );
                     })}
                   </tbody>
-                  {satirlar.some(r => r.ciro_tutar > 0 || r.nakit > 0) && (
+                  {/* Toplam satırı */}
+                  {topCiro > 0 && (
                     <tfoot>
-                      <tr style={{ background: 'var(--bg2)', fontWeight: 700 }}>
-                        <td colSpan={4} style={{ padding: '6px 10px', borderTop: '2px solid var(--border)', fontSize: 12, color: 'var(--text3)' }}>
-                          TOPLAM ({satirlar.filter(r => r.ciro_tutar > 0 || r.nakit > 0 || r.pos > 0 || r.online > 0).length} şube)
+                      <tr style={{ background: 'var(--bg2)' }}>
+                        <td colSpan={6} style={{ padding: '9px 10px', borderTop: '2px solid var(--border)', fontSize: 12, color: 'var(--text3)', fontWeight: 600 }}>
+                          TOPLAM · {satirlar.filter(r => r.ciro_tutar > 0 || r.nakit > 0 || r.pos > 0 || r.online > 0).length} şube
                         </td>
-                        <td style={{ padding: '6px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}>
-                          {fmt(satirlar.reduce((s, r) => s + (r.nakit || 0), 0))} ₺
+                        <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 700, fontSize: 13 }}>
+                          {fmt(topNakit)} ₺
                         </td>
-                        <td style={{ padding: '6px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}>
-                          {fmt(satirlar.reduce((s, r) => s + (r.pos || 0), 0))} ₺
+                        <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 700, fontSize: 13 }}>
+                          {fmt(topPos)} ₺
                         </td>
-                        <td style={{ padding: '6px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}>
-                          {fmt(satirlar.reduce((s, r) => s + (r.online || 0), 0))} ₺
+                        <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 700, fontSize: 13 }}>
+                          {fmt(topOnline)} ₺
                         </td>
-                        <td style={{ padding: '6px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}>
-                          {fmt(satirlar.reduce((s, r) => s + (r.ciro_tutar > 0 ? r.ciro_tutar : r.nakit + r.pos + r.online), 0))} ₺
+                        <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 800, fontSize: 15, color: '#22c55e' }}>
+                          {fmt(topCiro)} ₺
                         </td>
                       </tr>
                     </tfoot>
@@ -7509,12 +7583,13 @@ export default function OperasyonMerkezi() {
               </div>
             )}
 
-            {/* Açıklama notu */}
-            <p style={{ fontSize: 11, color: 'var(--text3)', margin: 0 }}>
-              Nakit/POS/Online tutarlar şube panelinden gönderilen ciro taslağından gelir.
-              Onaylı ciro için toplam tutar gösterilir; nakit/pos/online kırılımı yalnızca onay bekleyen veya yeni onaylanan taslaklar için görünür.
-              Ciro onaylandıktan sonra kırılım detayına <strong>💳 Bekleyen Ciro Onayları</strong> geçmişinden ulaşabilirsiniz.
-            </p>
+            {/* Alt not */}
+            <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.6 }}>
+              Sıralama: önce kapanmayan şubeler, sonra ciro eksik, sonra onay bekleyenler, en altta tamamlananlar.
+              Nakit/POS/Online tutarlar ciro taslağından gelir; kırmızı satır = acil aksiyon gerektiriyor.
+              {bugunMu && ' · Tablo 2 dakikada bir otomatik yenilenir.'}
+            </div>
+
           </div>
         );
       })()}
