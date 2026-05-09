@@ -1198,7 +1198,7 @@ def kapanis_takip(tarih: Optional[str] = None):
         cur.execute(
             """
             SELECT e.sube_id::text,
-                   MIN(e.olay_ts AT TIME ZONE 'Europe/Istanbul') AS kapanis_ts,
+                   MIN(e.cevap_ts AT TIME ZONE 'Europe/Istanbul') AS kapanis_ts,
                    MAX(e.kasa_sayim)  AS kasa_sayim,
                    MAX(e.devir)       AS devir,
                    MAX(e.personel_ad) AS personel_ad
@@ -1215,7 +1215,7 @@ def kapanis_takip(tarih: Optional[str] = None):
         cur.execute(
             """
             SELECT e.sube_id::text,
-                   MIN(e.olay_ts AT TIME ZONE 'Europe/Istanbul') AS acilis_ts,
+                   MIN(e.cevap_ts AT TIME ZONE 'Europe/Istanbul') AS acilis_ts,
                    MAX(e.personel_ad) AS personel_ad
             FROM sube_operasyon_event e
             WHERE e.tip = 'ACILIS' AND e.durum = 'tamamlandi'
