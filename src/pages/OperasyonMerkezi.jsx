@@ -2099,10 +2099,14 @@ export default function OperasyonMerkezi() {
     const r = await api(`/ops/bekleyen-merkez?year_month=${encodeURIComponent(ym)}`);
     const tum = Array.isArray(r?.kasa_uyumsuzluklar) ? r.kasa_uyumsuzluklar : [];
     const kayitlar = tum.filter((u) => String(u?.tarih || '').slice(0, 10) === hedef);
+    const eksikKapanis = hedef === bugunIsoTarih()
+      ? (Array.isArray(r?.eksik_kapanis_bugun) ? r.eksik_kapanis_bugun : [])
+      : [];
     return {
       tarih: hedef,
       toplam: kayitlar.length,
       kayitlar,
+      eksik_kapanis: eksikKapanis,
     };
   }, []);
 
@@ -8398,6 +8402,23 @@ export default function OperasyonMerkezi() {
             ))}
           </div>
 
+          {/* Bugün açılış yapan ama dün kapanış yapmayan şubeler */}
+          {kasaUyumAramaTarih === bugunIsoTarih() && (kasaUyumAramaSonuc?.eksik_kapanis || kasaUyumBugun?.eksik_kapanis || []).length > 0 && (
+            <div style={{ background: 'rgba(220,38,38,0.10)', border: '1px solid rgba(220,38,38,0.4)', borderRadius: 8, padding: '10px 14px' }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#fca5a5', marginBottom: 8 }}>
+                ⛔ Dünkü kapanışı eksik — bugün açılış yapmış şubeler ({(kasaUyumAramaSonuc?.eksik_kapanis || kasaUyumBugun?.eksik_kapanis || []).length})
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {(kasaUyumAramaSonuc?.eksik_kapanis || kasaUyumBugun?.eksik_kapanis || []).map((e) => (
+                  <span key={e.sube_id} style={{ background: 'rgba(220,38,38,0.18)', borderRadius: 6, padding: '3px 10px', fontSize: 12, color: '#fca5a5', fontWeight: 600 }}>
+                    {e.sube_adi}
+                    <span style={{ fontWeight: 400, opacity: 0.7, marginLeft: 4 }}>({e.beklenen_kapanis_tarih} kapanışı yok)</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {kasaUyumGorunenKayitlar.length === 0 ? (
             <div className="empty"><p>Seçilen tarihte kasa uyumsuzluğu yok</p></div>
           ) : (
@@ -8406,29 +8427,43 @@ export default function OperasyonMerkezi() {
                 const fark = Number(u?.fark_tl || 0);
                 const absFark = Math.abs(fark);
                 const farkPozitif = fark >= 0;
+                const kapanis_tarih = u.kapanis_tarih || u.tarih;
+                const kapanis_yapildi = u.kapanis_yapildi !== false;
                 return (
                   <div key={u.id} className="card" style={{ padding: '12px 14px', borderLeft: `4px solid ${absFark >= 200 ? 'var(--red)' : 'var(--yellow)'}` }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontWeight: 600 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                           {u.sube_adi || u.sube_id}
-                          <span style={{ marginLeft: 8 }} className={`badge ${absFark >= 200 ? 'badge-red' : 'badge-yellow'}`}>
-                            {farkPozitif ? '+' : ''}{fmt(fark)}
+                          <span className={`badge ${absFark >= 200 ? 'badge-red' : 'badge-yellow'}`}>
+                            {farkPozitif ? '+' : ''}{fmt(fark)} fark
                           </span>
+                          {!kapanis_yapildi && (
+                            <span className="badge badge-red" style={{ fontSize: 10 }}>Kapanış yapılmamış</span>
+                          )}
                         </div>
-                        <div className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>
-                          {u.tarih} · Dün kapanış: {fmt(u.beklenen_tl || 0)}{u.kapanis_personel_ad ? ` (${u.kapanis_personel_ad})` : ''} · Bugün açılış: {fmt(u.gercek_tl || 0)}{u.acilis_personel_ad ? ` (${u.acilis_personel_ad})` : ''}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px', marginTop: 8 }}>
+                          <div style={{ fontSize: 12 }}>
+                            <span style={{ color: 'var(--text3)' }}>{kapanis_tarih} kapanışı:</span>
+                            <span className="mono" style={{ marginLeft: 6, fontWeight: 600 }}>{fmt(u.beklenen_tl || 0)}</span>
+                            {u.kapanis_personel_ad && <span style={{ color: 'var(--text3)', marginLeft: 5 }}>({u.kapanis_personel_ad})</span>}
+                          </div>
+                          <div style={{ fontSize: 12 }}>
+                            <span style={{ color: 'var(--text3)' }}>{u.tarih} açılışı:</span>
+                            <span className="mono" style={{ marginLeft: 6, fontWeight: 600 }}>{fmt(u.gercek_tl || 0)}</span>
+                            {u.acilis_personel_ad && <span style={{ color: 'var(--text3)', marginLeft: 5 }}>({u.acilis_personel_ad})</span>}
+                          </div>
                         </div>
-                        {u.mesaj && <div style={{ fontSize: 12, marginTop: 6 }}>{u.mesaj}</div>}
+                        {u.mesaj && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 5 }}>{u.mesaj}</div>}
                       </div>
-                      <div>
+                      <div style={{ flexShrink: 0 }}>
                         <button
                           type="button"
                           className="btn btn-primary btn-sm"
                           disabled={!!onayBusyId}
                           onClick={() => kasaUyumsuzlukCoz(u.id)}
                         >
-                          {onayBusyId === `ku:${u.id}` ? '…' : 'Çözüldü işaretle'}
+                          {onayBusyId === `ku:${u.id}` ? '…' : 'Çözüldü'}
                         </button>
                       </div>
                     </div>

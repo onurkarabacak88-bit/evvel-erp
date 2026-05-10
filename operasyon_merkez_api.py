@@ -4934,7 +4934,14 @@ def ops_bekleyen_merkez(
         q4 = """
             SELECT u.id, u.sube_id, s.ad AS sube_adi, u.tarih, u.seviye,
                    u.beklenen_tl, u.gercek_tl, u.fark_tl, u.mesaj, u.okundu, u.olusturma,
-                   u.acilis_personel_id, u.acilis_personel_ad, u.kapanis_personel_id, u.kapanis_personel_ad
+                   u.acilis_personel_id, u.acilis_personel_ad, u.kapanis_personel_id, u.kapanis_personel_ad,
+                   (u.tarih - INTERVAL '1 day')::date AS kapanis_tarih,
+                   EXISTS (
+                       SELECT 1 FROM sube_operasyon_event e
+                       WHERE e.sube_id = u.sube_id
+                         AND e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
+                         AND e.tarih = (u.tarih - INTERVAL '1 day')::date
+                   ) AS kapanis_yapildi
             FROM sube_operasyon_uyari u
             JOIN subeler s ON s.id = u.sube_id
             WHERE u.tip='ACILIS_KASA_FARK'
@@ -4957,6 +4964,8 @@ def ops_bekleyen_merkez(
             for k in ("beklenen_tl", "gercek_tl", "fark_tl"):
                 if d.get(k) is not None:
                     d[k] = float(d[k])
+            if d.get("kapanis_tarih"):
+                d["kapanis_tarih"] = str(d["kapanis_tarih"])
             kasa_uyumsuzluklar.append(d)
 
         qp5 = [ym]
@@ -5003,6 +5012,33 @@ def ops_bekleyen_merkez(
             d["kapanis_personel_aylik_hata_adet"] = k_cnt
             d["kritik_personel_var"] = (a_cnt >= 2) or (k_cnt >= 2)
 
+    # Bugün açılış yapan ama bir önceki gün kapanış yapmayan şubeler
+    eksik_kapanis_bugun: list = []
+    try:
+        with db() as (_, cur_ek):
+            cur_ek.execute("""
+                SELECT a.sube_id::text, s.ad AS sube_adi,
+                       (CURRENT_DATE - INTERVAL '1 day')::date AS beklenen_kapanis_tarih
+                FROM sube_operasyon_event a
+                JOIN subeler s ON s.id = a.sube_id
+                WHERE a.tip = 'ACILIS' AND a.durum = 'tamamlandi'
+                  AND a.tarih = CURRENT_DATE
+                  AND NOT EXISTS (
+                      SELECT 1 FROM sube_operasyon_event k
+                      WHERE k.sube_id = a.sube_id
+                        AND k.tip = 'KAPANIS' AND k.durum = 'tamamlandi'
+                        AND k.tarih = (CURRENT_DATE - INTERVAL '1 day')::date
+                  )
+                ORDER BY s.ad
+            """)
+            for r in (cur_ek.fetchall() or []):
+                d = dict(r)
+                if d.get("beklenen_kapanis_tarih"):
+                    d["beklenen_kapanis_tarih"] = str(d["beklenen_kapanis_tarih"])
+                eksik_kapanis_bugun.append(d)
+    except Exception:
+        eksik_kapanis_bugun = []
+
     return {
         "year_month": ym,
         "sube_id_filtre": sid_f,
@@ -5011,12 +5047,14 @@ def ops_bekleyen_merkez(
         "siparis_talepleri": siparis_talepleri,
         "kasa_uyumsuzluklar": kasa_uyumsuzluklar,
         "kritik_kasa_personelleri": kritik_personeller,
+        "eksik_kapanis_bugun": eksik_kapanis_bugun,
         "ozet": {
             "ciro_taslak": len(ciro_taslaklari),
             "onay_satir": len(onay_satirlar),
             "siparis_talep": len(siparis_talepleri),
             "kasa_uyumsuzluk": len(kasa_uyumsuzluklar),
             "kritik_kasa_personel": len(kritik_personeller),
+            "eksik_kapanis": len(eksik_kapanis_bugun),
         },
     }
 
