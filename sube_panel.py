@@ -1076,7 +1076,7 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                         (
                             str(uuid.uuid4()), sube_id, sev,
                             bek, ks, fark,
-                            f"Açılış kasası dün kapanışa göre fark: {fark:,.2f} TL ({sev})",
+                            f"Açılış kasası dün devirine göre fark: {fark:,.2f} TL ({sev})",
                             pid, onay_ad, kap_pid, kap_pad,
                         ),
                     )

@@ -710,7 +710,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                             bek,
                             ks,
                             fark,
-                            f"Açılış kasası dün kapanışa göre fark: {fark:,.2f} TL ({sev})",
+                            f"Açılış kasası dün devirine göre fark: {fark:,.2f} TL ({sev})",
                             pid_panel,
                             onay_ad,
                             kap_pid,

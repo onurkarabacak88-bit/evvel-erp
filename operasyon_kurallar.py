@@ -53,10 +53,14 @@ def beklenen_dunku_kapanis_stok(cur: Any, sube_id: str) -> Optional[dict]:
 
 
 def beklenen_dunku_kapanis_kasa(cur: Any, sube_id: str) -> Optional[float]:
-    """Dün tamamlanmış KAPANIS olayındaki kasa/teslim referansı (yoksa None)."""
+    """
+    Dün tamamlanmış KAPANIS olayındaki devir miktarı (yoksa None).
+    Devir = kapanış sonrası kasada bırakılan, ertesi güne açılış kasası olarak aktarılan tutar.
+    Kasa teslim yapıldıysa devir = kasa_sayim - teslim; yapılmadıysa devir = kasa_sayim.
+    """
     cur.execute(
         """
-        SELECT COALESCE(kasa_sayim, teslim) AS ref
+        SELECT COALESCE(devir, kasa_sayim) AS ref
         FROM sube_operasyon_event
         WHERE sube_id=%s
           AND tarih = (CURRENT_DATE - INTERVAL '1 day')

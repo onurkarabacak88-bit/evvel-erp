@@ -8444,12 +8444,12 @@ export default function OperasyonMerkezi() {
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px', marginTop: 8 }}>
                           <div style={{ fontSize: 12 }}>
-                            <span style={{ color: 'var(--text3)' }}>{kapanis_tarih} kapanışı:</span>
+                            <span style={{ color: 'var(--text3)' }}>{kapanis_tarih} deviri (beklenen):</span>
                             <span className="mono" style={{ marginLeft: 6, fontWeight: 600 }}>{fmt(u.beklenen_tl || 0)}</span>
                             {u.kapanis_personel_ad && <span style={{ color: 'var(--text3)', marginLeft: 5 }}>({u.kapanis_personel_ad})</span>}
                           </div>
                           <div style={{ fontSize: 12 }}>
-                            <span style={{ color: 'var(--text3)' }}>{u.tarih} açılışı:</span>
+                            <span style={{ color: 'var(--text3)' }}>{u.tarih} açılış sayımı:</span>
                             <span className="mono" style={{ marginLeft: 6, fontWeight: 600 }}>{fmt(u.gercek_tl || 0)}</span>
                             {u.acilis_personel_ad && <span style={{ color: 'var(--text3)', marginLeft: 5 }}>({u.acilis_personel_ad})</span>}
                           </div>
