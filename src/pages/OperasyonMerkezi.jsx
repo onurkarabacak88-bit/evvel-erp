@@ -8252,99 +8252,11 @@ export default function OperasyonMerkezi() {
             }}
           >
             <strong style={{ color: 'var(--text2)', fontWeight: 600 }}>Bu kart ne işe yarar?</strong>{' '}
-            Şube sabah <strong style={{ color: 'var(--text2)' }}>açılış</strong>ında girilen kasa sayımı, bir önceki günün tamamlanmış{' '}
-            <strong style={{ color: 'var(--text2)' }}>kapanış</strong> kasasıyla karşılaştırılır; tutarlar örtüşmüyorsa (küçük toleransın üstünde fark)
-            sistem otomatik uyarı üretir. Burada yalnızca merkez tarafından henüz <strong style={{ color: 'var(--text2)' }}>«Çözüldü»</strong> işaretlenmemiş
-            kayıtlar listelenir; çözülen günler bu özet satırında 0 görünebilir.
+            Şube açılışında girilen kasa sayımı, önceki günün kapanış <strong style={{ color: 'var(--text2)' }}>devirine</strong> göre karşılaştırılır.
+            Fark 50 ₺ üzerindeyse sistem otomatik uyarı üretir. Çözülmemiş kayıtlar listelenir.
           </div>
 
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginBottom: 8 }}>
-              Son 7 gün — çözüm bekleyen uyarılar {kasaUyumHaftaYukleniyor ? <span style={{ color: 'var(--text3)', fontWeight: 500 }}>(yükleniyor…)</span> : null}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {kasaUyumHaftaYukleniyor && kasaUyumHaftaSatirlari.length === 0 ? (
-                <div className="empty" style={{ padding: '14px 12px' }}><p style={{ margin: 0 }}>Haftalık özet yükleniyor…</p></div>
-              ) : (kasaUyumHaftaSatirlari.length ? kasaUyumHaftaSatirlari : Array.from({ length: 7 }, (_, i) => ({
-                tarih: isoTariheGunEkle(bugunIsoTarih(), -i),
-                adet: 0,
-                maxAbsFark: 0,
-              }))).map((s) => {
-                const bugunStr = bugunIsoTarih();
-                const dikkat = s.adet > 0;
-                const kritikFark = dikkat && s.maxAbsFark >= 200;
-                const ortaFark = dikkat && !kritikFark;
-                return (
-                  <button
-                    key={`kasa-hafta-${s.tarih}`}
-                    type="button"
-                    onClick={async () => {
-                      setKasaUyumAramaTarih(s.tarih);
-                      setKasaUyumAramaYukleniyor(true);
-                      try {
-                        const data = await kasaUyumGunYukle(s.tarih);
-                        setKasaUyumAramaSonuc(data);
-                        setKasaUyumSeciliSubeKey('all');
-                      } catch (e) {
-                        toast(e.message || 'Kasa uyumsuzluk verisi yüklenemedi');
-                      } finally {
-                        setKasaUyumAramaYukleniyor(false);
-                      }
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 10,
-                      width: '100%',
-                      textAlign: 'left',
-                      padding: '8px 12px',
-                      borderRadius: 8,
-                      cursor: 'pointer',
-                      border: kritikFark
-                        ? '1px solid rgba(220, 38, 38, 0.55)'
-                        : ortaFark
-                          ? '1px solid rgba(234, 179, 8, 0.45)'
-                          : '1px solid var(--border)',
-                      background: kritikFark
-                        ? 'rgba(220, 38, 38, 0.12)'
-                        : ortaFark
-                          ? 'rgba(234, 179, 8, 0.08)'
-                          : 'var(--bg2)',
-                      boxShadow: kritikFark ? '0 0 0 1px rgba(220, 38, 38, 0.15)' : 'none',
-                    }}
-                  >
-                    <span style={{ fontSize: 12, color: dikkat ? 'var(--text)' : 'var(--text3)' }}>
-                      <span className="mono" style={{ fontWeight: 700 }}>{s.tarih}</span>
-                      {s.tarih === bugunStr ? (
-                        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>(bugün)</span>
-                      ) : null}
-                    </span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                      {dikkat ? (
-                        <>
-                          <span
-                            className={`badge ${kritikFark ? 'badge-red' : 'badge-yellow'}`}
-                            style={{ fontWeight: 700 }}
-                          >
-                            {s.adet} şube · max |fark| {fmt(s.maxAbsFark)}
-                          </span>
-                          <span style={{ fontSize: 11, color: 'var(--text3)' }}>Detay ↓</span>
-                        </>
-                      ) : (
-                        <span style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 500 }}>Bekleyen yok</span>
-                      )}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            <p style={{ fontSize: 11, color: 'var(--text3)', opacity: 0.85, margin: '8px 0 0' }}>
-              Satıra tıklayınca aşağıdaki detay alanı o güne yüklenir. Kritik eşik (|fark| ≥ 200 ₺) kırmızı, daha düşük fakat bekleyen kayıtlar sarı çerçevede vurgulanır.
-            </p>
-          </div>
-
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginTop: 4 }}>Tarih seçerek detay</div>
+          {/* ── ÜSTTE: Tarih seçici + detay ── */}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <label style={{ margin: 0 }}>
               <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Tarih</span>
@@ -8361,13 +8273,14 @@ export default function OperasyonMerkezi() {
               style={{ alignSelf: 'flex-end' }}
               onClick={() => kasaUyumAramaYap()}
             >
-              {kasaUyumAramaYukleniyor ? '…' : 'Tarihi getir'}
+              {kasaUyumAramaYukleniyor ? '…' : 'Getir'}
             </button>
             <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'flex-end' }}>
               {kasaUyumAramaSonuc?.tarih || kasaUyumAramaTarih} · {kasaUyumAramaSonuc?.toplam || 0} uyumsuzluk
             </div>
           </div>
 
+          {/* Şube filtresi */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button
               type="button"
@@ -8402,7 +8315,7 @@ export default function OperasyonMerkezi() {
             ))}
           </div>
 
-          {/* Bugün açılış yapan ama dün kapanış yapmayan şubeler */}
+          {/* Dünkü kapanışı eksik şubeler */}
           {kasaUyumAramaTarih === bugunIsoTarih() && (kasaUyumAramaSonuc?.eksik_kapanis || kasaUyumBugun?.eksik_kapanis || []).length > 0 && (
             <div style={{ background: 'rgba(220,38,38,0.10)', border: '1px solid rgba(220,38,38,0.4)', borderRadius: 8, padding: '10px 14px' }}>
               <div style={{ fontWeight: 700, fontSize: 13, color: '#fca5a5', marginBottom: 8 }}>
@@ -8419,10 +8332,11 @@ export default function OperasyonMerkezi() {
             </div>
           )}
 
+          {/* Uyumsuzluk kartları */}
           {kasaUyumGorunenKayitlar.length === 0 ? (
             <div className="empty"><p>Seçilen tarihte kasa uyumsuzluğu yok</p></div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 480, overflow: 'auto' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 520, overflow: 'auto' }}>
               {kasaUyumGorunenKayitlar.map((u) => {
                 const fark = Number(u?.fark_tl || 0);
                 const absFark = Math.abs(fark);
@@ -8430,10 +8344,11 @@ export default function OperasyonMerkezi() {
                 const kapanis_tarih = u.kapanis_tarih || u.tarih;
                 const kapanis_yapildi = u.kapanis_yapildi !== false;
                 return (
-                  <div key={u.id} className="card" style={{ padding: '12px 14px', borderLeft: `4px solid ${absFark >= 200 ? 'var(--red)' : 'var(--yellow)'}` }}>
+                  <div key={u.id} className="card" style={{ padding: '14px 16px', borderLeft: `4px solid ${absFark >= 200 ? 'var(--red)' : 'var(--yellow)'}` }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        {/* Başlık satırı */}
+                        <div style={{ fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                           {u.sube_adi || u.sube_id}
                           <span className={`badge ${absFark >= 200 ? 'badge-red' : 'badge-yellow'}`}>
                             {farkPozitif ? '+' : ''}{fmt(fark)} fark
@@ -8442,21 +8357,32 @@ export default function OperasyonMerkezi() {
                             <span className="badge badge-red" style={{ fontSize: 10 }}>Kapanış yapılmamış</span>
                           )}
                         </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px', marginTop: 8 }}>
-                          <div style={{ fontSize: 12 }}>
-                            <span style={{ color: 'var(--text3)' }}>{kapanis_tarih} deviri (beklenen):</span>
-                            <span className="mono" style={{ marginLeft: 6, fontWeight: 600 }}>{fmt(u.beklenen_tl || 0)}</span>
-                            {u.kapanis_personel_ad && <span style={{ color: 'var(--text3)', marginLeft: 5 }}>({u.kapanis_personel_ad})</span>}
+                        {/* Kapanış bilgisi */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 20px' }}>
+                          <div style={{ background: 'var(--bg2)', borderRadius: 6, padding: '8px 10px' }}>
+                            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                              Kapanış — {kapanis_tarih}
+                            </div>
+                            <div className="mono" style={{ fontSize: 15, fontWeight: 700 }}>{fmt(u.beklenen_tl || 0)}</div>
+                            {u.kapanis_personel_ad
+                              ? <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4 }}>👤 {u.kapanis_personel_ad}</div>
+                              : <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Personel bilinmiyor</div>
+                            }
                           </div>
-                          <div style={{ fontSize: 12 }}>
-                            <span style={{ color: 'var(--text3)' }}>{u.tarih} açılış sayımı:</span>
-                            <span className="mono" style={{ marginLeft: 6, fontWeight: 600 }}>{fmt(u.gercek_tl || 0)}</span>
-                            {u.acilis_personel_ad && <span style={{ color: 'var(--text3)', marginLeft: 5 }}>({u.acilis_personel_ad})</span>}
+                          <div style={{ background: 'var(--bg2)', borderRadius: 6, padding: '8px 10px' }}>
+                            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                              Açılış — {u.tarih}
+                            </div>
+                            <div className="mono" style={{ fontSize: 15, fontWeight: 700 }}>{fmt(u.gercek_tl || 0)}</div>
+                            {u.acilis_personel_ad
+                              ? <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4 }}>👤 {u.acilis_personel_ad}</div>
+                              : <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Personel bilinmiyor</div>
+                            }
                           </div>
                         </div>
-                        {u.mesaj && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 5 }}>{u.mesaj}</div>}
+                        {u.mesaj && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>{u.mesaj}</div>}
                       </div>
-                      <div style={{ flexShrink: 0 }}>
+                      <div style={{ flexShrink: 0, paddingTop: 2 }}>
                         <button
                           type="button"
                           className="btn btn-primary btn-sm"
@@ -8472,6 +8398,90 @@ export default function OperasyonMerkezi() {
               })}
             </div>
           )}
+
+          {/* ── ALTTA: Son 7 gün özeti ── */}
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginBottom: 8 }}>
+              Son 7 gün — çözüm bekleyen uyarılar {kasaUyumHaftaYukleniyor ? <span style={{ color: 'var(--text3)', fontWeight: 500 }}>(yükleniyor…)</span> : null}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {kasaUyumHaftaYukleniyor && kasaUyumHaftaSatirlari.length === 0 ? (
+                <div className="empty" style={{ padding: '14px 12px' }}><p style={{ margin: 0 }}>Yükleniyor…</p></div>
+              ) : (kasaUyumHaftaSatirlari.length ? kasaUyumHaftaSatirlari : Array.from({ length: 7 }, (_, i) => ({
+                tarih: isoTariheGunEkle(bugunIsoTarih(), -i),
+                adet: 0,
+                maxAbsFark: 0,
+              }))).map((s) => {
+                const bugunStr = bugunIsoTarih();
+                const secili = s.tarih === kasaUyumAramaTarih;
+                const dikkat = s.adet > 0;
+                const kritikFark = dikkat && s.maxAbsFark >= 200;
+                const ortaFark = dikkat && !kritikFark;
+                return (
+                  <button
+                    key={`kasa-hafta-${s.tarih}`}
+                    type="button"
+                    onClick={async () => {
+                      setKasaUyumAramaTarih(s.tarih);
+                      setKasaUyumAramaYukleniyor(true);
+                      try {
+                        const data = await kasaUyumGunYukle(s.tarih);
+                        setKasaUyumAramaSonuc(data);
+                        setKasaUyumSeciliSubeKey('all');
+                      } catch (e) {
+                        toast(e.message || 'Kasa uyumsuzluk verisi yüklenemedi');
+                      } finally {
+                        setKasaUyumAramaYukleniyor(false);
+                      }
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 10,
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      cursor: 'pointer',
+                      border: secili
+                        ? '1px solid #4a9eff'
+                        : kritikFark
+                          ? '1px solid rgba(220,38,38,0.55)'
+                          : ortaFark
+                            ? '1px solid rgba(234,179,8,0.45)'
+                            : '1px solid var(--border)',
+                      background: secili
+                        ? 'rgba(74,158,255,0.12)'
+                        : kritikFark
+                          ? 'rgba(220,38,38,0.10)'
+                          : ortaFark
+                            ? 'rgba(234,179,8,0.07)'
+                            : 'var(--bg2)',
+                    }}
+                  >
+                    <span style={{ fontSize: 12, color: dikkat ? 'var(--text)' : 'var(--text3)' }}>
+                      <span className="mono" style={{ fontWeight: 700 }}>{s.tarih}</span>
+                      {s.tarih === bugunStr && <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text3)' }}>(bugün)</span>}
+                      {secili && <span style={{ marginLeft: 6, fontSize: 11, color: '#4a9eff' }}>← seçili</span>}
+                    </span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      {dikkat ? (
+                        <span className={`badge ${kritikFark ? 'badge-red' : 'badge-yellow'}`} style={{ fontWeight: 700 }}>
+                          {s.adet} şube · max {fmt(s.maxAbsFark)}
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 11, color: 'var(--text3)' }}>Bekleyen yok</span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--text3)', opacity: 0.8, margin: '6px 0 0' }}>
+              Bir güne tıklayınca üstteki detay alanı o güne yüklenir.
+            </p>
+          </div>
         </div>
       )}
 
