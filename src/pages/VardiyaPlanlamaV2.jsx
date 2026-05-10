@@ -2,8 +2,8 @@
  * VARDİYA PLANLAMA v2 — 16 maddelik spec ile hizalı akış
  * - Gün matrisi: hafta (üst) + sol personel + saat satırları (plandaki slotlardan 30/60/120 dk bantlar) × şube + sürükle-bırak
  * - Şube haftası: tek şube × 7 gün × saat (alternatif görünüm)
- * - Havuzdan veya slottaki kişi chip’inden sürükleme → başka şube/slota transfer (önce iptal)
- * - Birincil kaynak: API’deki her atama satırının baslangıç–bitiş’i (kısmi mesai / ardışık iki kişi / ek mesai).
+ * - Havuzdan veya slottaki kişi chip'inden sürükleme → başka şube/slota transfer (önce iptal)
+ * - Birincil kaynak: API'deki her atama satırının baslangıç–bitiş'i (kısmi mesai / ardışık iki kişi / ek mesai).
  * - Şube slotu: referans çerçeve + kontenjan; kullanıcı saatleri çerçeveyi aşabilir (sunucu slot_band uyarısı, blok değil).
  * - Otomatik doldur (gün): şablon + boş dilim kaydırma + sunucu check
  * - Haftalık motor: `vardiya_plan_motor` — Pzt–Paz eksik önceliği, ana şube / haftalık denge, taşıma (min korunur)
@@ -154,7 +154,7 @@ function avatarRenkGradient(personelId) {
   return `linear-gradient(145deg, hsl(${hue} 48% 44%), hsl(${hue} 56% 28%))`;
 }
 
-/** Havuz günü `gun_durumu.atamalar` içinden benzersiz şubeler (o şubedeki tüm atama id’leri) */
+/** Havuz günü `gun_durumu.atamalar` içinden benzersiz şubeler (o şubedeki tüm atama id'leri) */
 function gunAtamaSubeleriGrup(atamalar, subelerList) {
   const m = new Map();
   for (const a of atamalar || []) {
@@ -283,7 +283,7 @@ function atamaListesiIsOzeti(atamalar) {
 
 /**
  * Matris saat bandı [bandStartMin, bandEndMin) ile atama çakışıyor mu.
- * Slot çerçevesi 18:30’a uzasa bile kişi 14:00’te bitiyorsa öğleden sonra satırında görünmez.
+ * Slot çerçevesi 18:30'a uzasa bile kişi 14:00'te bitiyorsa öğleden sonra satırında görünmez.
  */
 function atamaBantIleKesisir(a, bandStartMin, bandEndMin) {
   if (!a?.baslangic_saat || !a?.bitis_saat) return true;
@@ -441,7 +441,7 @@ function _slotZamanAraligiDakika(list) {
 
 /**
  * Sürükle-bırak matrisi: satırlar plandaki gerçek slotlardan türetilir (varsayılan 30 dk;
- * çok satır olursa 60 / 120 dk’ya çıkar). Böylece sol etiket ile hücredeki slot saati hizalı kalır.
+ * çok satır olursa 60 / 120 dk'ya çıkar). Böylece sol etiket ile hücredeki slot saati hizalı kalır.
  */
 function saatBantlariPlandan(plan, subeListesi, istenenAdim = 30) {
   const list = subeListesi?.length ? subeListesi : (plan?.subeler || []);
@@ -559,7 +559,7 @@ function yerelAtamaSlotCakisir(a, sv) {
   return !(ae <= bb || be <= ab);
 }
 
-/** Yerel önizleme: null = bilinmiyor (API’ye bırak), 'engel' | 'ok' */
+/** Yerel önizleme: null = bilinmiyor (API'ye bırak), 'engel' | 'ok' */
 function yerelDragSlotDurum(person, slotId, gunTarihi, planGun) {
   if (!person || !planGun?.subeler) return null;
   const row = planSlotSatirBul(planGun, slotId);
@@ -757,7 +757,7 @@ export default function VardiyaPlanlamaV2() {
   const [motorBusy, setMotorBusy] = useState(false);
   const [motorSonuc, setMotorSonuc] = useState(null);
   const PREVIEW_DEBOUNCE_MS = 220;
-  /** Alt özet — varsayılan kapalı; vardiya grid’ine yer açar */
+  /** Alt özet — varsayılan kapalı; vardiya grid'ine yer açar */
   const [altPanelAcik, setAltPanelAcik] = useState(false);
 
   const isoHaftaEtiket = useMemo(() => isoYilVeHafta(tarih), [tarih]);
@@ -1043,7 +1043,7 @@ export default function VardiyaPlanlamaV2() {
         const at = Number.isFinite(Number(s.atanan_benzersiz_kisi)) ? Number(s.atanan_benzersiz_kisi) : 0;
         push(
           'uyari',
-          `${s.sube_ad}: şube hedefi altında (hedef ${s.ihtiyac_hedef_kisi} kişi, bugün bu şubede atanan benzersiz ${at}) — slot min’den bağımsız`,
+          `${s.sube_ad}: şube hedefi altında (hedef ${s.ihtiyac_hedef_kisi} kişi, bugün bu şubede atanan benzersiz ${at}) — slot min'den bağımsız`,
         );
       }
       for (const sv of s.slotlar || []) {
@@ -2860,7 +2860,7 @@ export default function VardiyaPlanlamaV2() {
             )}
             {gorunumModu === 'personel_hafta' && (
               <div style={{ fontSize: 11, color: 'var(--text3)', width: '100%' }}>
-                Üstteki hafta pill’leri veya tarih ile haftayı değiştirin. Hücre: saat aralığı + şube adı; izin günü <strong>İZİNLİ</strong>.
+                Üstteki hafta pill'leri veya tarih ile haftayı değiştirin. Hücre: saat aralığı + şube adı; izin günü <strong>İZİNLİ</strong>.
               </div>
             )}
           </div>
@@ -4571,7 +4571,7 @@ function UyariOnayModal({ uyarilar, ozetMetni, onHayir, onEvet }) {
       ) : null}
       <div style={{ marginBottom: 12, fontSize: 13, color: 'var(--text2)', lineHeight: 1.45 }}>
         Bu atama kurallara göre riskli uyarılar içeriyor (kritik değil). Yine de kaydetmek istiyor musunuz?
-        {' '}Override log’a yazılmaz; yalnızca atama oluşturulur.
+        {' '}Override log'a yazılmaz; yalnızca atama oluşturulur.
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
         {(uyarilar || []).map((u, i) => (
@@ -4612,7 +4612,7 @@ function OverrideModal({ uyarilar, ozetMetni, onIptal, onOnayla }) {
         </div>
       ) : null}
       <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text3)' }}>
-        Aşağıdaki uyarılar geçilirse atama yapılır; ihlaller override log’a yazılır (otomatik metin + sizin gerekçeniz ayrı).
+        Aşağıdaki uyarılar geçilirse atama yapılır; ihlaller override log'a yazılır (otomatik metin + sizin gerekçeniz ayrı).
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
         {uyarilar.map((u, i) => (
@@ -4738,15 +4738,15 @@ function DropAtamaSaatModal({
   onClose,
   onTamam,
 }) {
-  /** Sunucu önerisi gelene kadar slot bitişine yazma — PART (14:30) kullanıcıda 18:30’a kayıyordu */
-  const [bas, setBas] = useState(‘09:00’);
-  const [bit, setBit] = useState(‘09:00’);
+  /** Sunucu önerisi gelene kadar slot bitişine yazma — PART (14:30) kullanıcıda 18:30'a kayıyordu */
+  const [bas, setBas] = useState('09:00');
+  const [bit, setBit] = useState('09:00');
   const [oneriKaynak, setOneriKaynak] = useState(null);
   const [busy, setBusy] = useState(true);
   const [kisitOneriMesaj, setKisitOneriMesaj] = useState(null);
   const [kisitBusy, setKisitBusy] = useState(false);
 
-  const mesaiOneriSlot = oneriKaynak === ‘mesai_slot’ || oneriKaynak === ‘personel_json’;
+  const mesaiOneriSlot = oneriKaynak === 'mesai_slot' || oneriKaynak === 'personel_json';
 
   async function personeleGoreAyarla() {
     setKisitBusy(true);
@@ -4762,10 +4762,10 @@ function DropAtamaSaatModal({
         setBit(r.bit_saat.slice(0, 5));
         setKisitOneriMesaj({ ok: true, mesaj: r.mesaj });
       } else {
-        setKisitOneriMesaj({ ok: false, mesaj: r.mesaj || ‘Uygun serbest dilim bulunamadı.’ });
+        setKisitOneriMesaj({ ok: false, mesaj: r.mesaj || 'Uygun serbest dilim bulunamadı.' });
       }
     } catch {
-      setKisitOneriMesaj({ ok: false, mesaj: ‘Kısıt bilgisi alınamadı.’ });
+      setKisitOneriMesaj({ ok: false, mesaj: 'Kısıt bilgisi alınamadı.' });
     } finally {
       setKisitBusy(false);
     }
@@ -4832,7 +4832,7 @@ function DropAtamaSaatModal({
         <strong>ne zaman çalışacağını</strong> yalnızca aşağıdaki başlangıç–bitiş belirler (kısmi mesai, ardışık iki vardiya veya çerçeveden uzun mesai dahil).
       </p>
       <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8, marginBottom: 0, lineHeight: 1.35 }}>
-        Aynı slot altında iki kişiyi ardışık çalıştırabilirsiniz (ör. 09:00–14:30 ve 14:30’dan sonra). Çerçeveyi{' '}
+        Aynı slot altında iki kişiyi ardışık çalıştırabilirsiniz (ör. 09:00–14:30 ve 14:30'dan sonra). Çerçeveyi{' '}
         <strong>bilinçli aştığınızda</strong> (ek mesai vb.) sistem bilgilendirici uyarı verir; kayıtta esas olan yine burada yazdığınız saatlerdir.
       </p>
       {mesaiOneriSlot && (
