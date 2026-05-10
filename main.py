@@ -6487,6 +6487,111 @@ def v2_personel_onerilen_saat(
         return {"preset": preset, "tarih": tarih, "kaynak": kaynak}
 
 
+@app.get("/api/vardiya/v2/personel-kisit-serbest-saat")
+def v2_personel_kisit_serbest_saat(
+    personel_id: str,
+    tarih: str,
+    slot_id: Optional[str] = None,
+):
+    """
+    Personelin o gün ders/kısıt saatlerinin dışındaki ilk uygun zaman dilimini döner.
+    slot_id verilirse yalnızca o slot'un saat çerçevesi içinde arar.
+    Dönüş: {bas_saat, bit_saat, kisit_var, yasaklar[], mesaj}
+    """
+    from datetime import datetime as _dt
+    t = _dt.strptime(tarih, "%Y-%m-%d").date()
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT gun_saat_kisitlari_json FROM personel_kisit WHERE personel_id = %s",
+            (personel_id,),
+        )
+        row = cur.fetchone()
+        gsk = (row["gun_saat_kisitlari_json"] if row else {}) or {}
+        if isinstance(gsk, str):
+            import json as _json
+            try:
+                gsk = _json.loads(gsk)
+            except Exception:
+                gsk = {}
+
+        gun_kisa = _vv2.GUN_KISALTMA[t.weekday()]
+        yasak_listesi = gsk.get(gun_kisa) or []
+
+        arama_bas_t = _vv2._parse_saat_metni("08:00")
+        arama_bit_t = _vv2._parse_saat_metni("22:00")
+        if slot_id:
+            cur.execute(
+                "SELECT baslangic_saat, bitis_saat FROM vardiya_slot WHERE id = %s",
+                (slot_id,),
+            )
+            sr = cur.fetchone()
+            if sr and sr["baslangic_saat"] and sr["bitis_saat"]:
+                arama_bas_t = sr["baslangic_saat"]
+                arama_bit_t = sr["bitis_saat"]
+
+        def _to_min(tt):
+            return tt.hour * 60 + tt.minute
+
+        def _to_str(m):
+            return f"{m // 60:02d}:{m % 60:02d}"
+
+        yasaklar = []
+        for ys in yasak_listesi:
+            yb = _vv2._parse_saat_metni(ys.get("yasak_bas"))
+            yt = _vv2._parse_saat_metni(ys.get("yasak_bit"))
+            if yb and yt:
+                yasaklar.append({"bas": yb, "bit": yt, "neden": ys.get("neden", "Kısıt")})
+        yasaklar.sort(key=lambda x: x["bas"])
+        yasak_out = [{"neden": y["neden"], "bas": str(y["bas"]), "bit": str(y["bit"])} for y in yasaklar]
+
+        if not yasaklar:
+            return {
+                "bas_saat": str(arama_bas_t),
+                "bit_saat": str(arama_bit_t),
+                "kisit_var": False,
+                "yasaklar": [],
+                "mesaj": "Bu gün için kısıt tanımlı değil.",
+            }
+
+        r_bas = _to_min(arama_bas_t)
+        r_bit = _to_min(arama_bit_t)
+        current = r_bas
+
+        for ys in yasaklar:
+            yb = _to_min(ys["bas"])
+            yt = _to_min(ys["bit"])
+            if yt <= current:
+                continue
+            if yb > current:
+                free_end = min(yb, r_bit)
+                if free_end > current:
+                    return {
+                        "bas_saat": _to_str(current),
+                        "bit_saat": _to_str(free_end),
+                        "kisit_var": True,
+                        "yasaklar": yasak_out,
+                        "mesaj": f"Kısıt başlamadan önceki serbest dilim önerildi ({_to_str(current)}–{_to_str(free_end)}).",
+                    }
+            current = max(current, yt)
+
+        if current < r_bit:
+            return {
+                "bas_saat": _to_str(current),
+                "bit_saat": _to_str(r_bit),
+                "kisit_var": True,
+                "yasaklar": yasak_out,
+                "mesaj": f"Kısıtlar bittikten sonraki serbest dilim önerildi ({_to_str(current)}–{_to_str(r_bit)}).",
+            }
+
+        return {
+            "bas_saat": None,
+            "bit_saat": None,
+            "kisit_var": True,
+            "yasaklar": yasak_out,
+            "mesaj": "Bu gün tüm saatler kısıtlı — uygun boş dilim bulunamadı.",
+        }
+
+
 # ── OVERRIDE LOG ──
 @app.get("/api/vardiya/v2/override-log")
 def v2_override_log_liste(limit: int = 100, personel_id: Optional[str] = None):

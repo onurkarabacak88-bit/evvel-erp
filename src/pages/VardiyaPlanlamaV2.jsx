@@ -4647,12 +4647,37 @@ function DropAtamaSaatModal({
   onTamam,
 }) {
   /** Sunucu önerisi gelene kadar slot bitişine yazma — PART (14:30) kullanıcıda 18:30’a kayıyordu */
-  const [bas, setBas] = useState('09:00');
-  const [bit, setBit] = useState('09:00');
+  const [bas, setBas] = useState(‘09:00’);
+  const [bit, setBit] = useState(‘09:00’);
   const [oneriKaynak, setOneriKaynak] = useState(null);
   const [busy, setBusy] = useState(true);
+  const [kisitOneriMesaj, setKisitOneriMesaj] = useState(null);
+  const [kisitBusy, setKisitBusy] = useState(false);
 
-  const mesaiOneriSlot = oneriKaynak === 'mesai_slot' || oneriKaynak === 'personel_json';
+  const mesaiOneriSlot = oneriKaynak === ‘mesai_slot’ || oneriKaynak === ‘personel_json’;
+
+  async function personeleGoreAyarla() {
+    setKisitBusy(true);
+    setKisitOneriMesaj(null);
+    try {
+      const r = await api(
+        `/vardiya/v2/personel-kisit-serbest-saat?personel_id=${encodeURIComponent(personel.id)}`
+        + `&tarih=${encodeURIComponent(gunTarihi)}`
+        + `&slot_id=${encodeURIComponent(slotId)}`,
+      );
+      if (r.bas_saat && r.bit_saat) {
+        setBas(r.bas_saat.slice(0, 5));
+        setBit(r.bit_saat.slice(0, 5));
+        setKisitOneriMesaj({ ok: true, mesaj: r.mesaj });
+      } else {
+        setKisitOneriMesaj({ ok: false, mesaj: r.mesaj || ‘Uygun serbest dilim bulunamadı.’ });
+      }
+    } catch {
+      setKisitOneriMesaj({ ok: false, mesaj: ‘Kısıt bilgisi alınamadı.’ });
+    } finally {
+      setKisitBusy(false);
+    }
+  }
 
   useEffect(() => {
     let cancel = false;
@@ -4734,6 +4759,26 @@ function DropAtamaSaatModal({
           <label>Bitiş</label>
           <input className="input" type="time" value={bit} onChange={(e) => setBit(e.target.value)} disabled={busy} />
         </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+        <button
+          type="button"
+          className="btn btn-sm btn-primary"
+          disabled={busy || kisitBusy}
+          title="Personelin o gün ders/kısıt saati olmayan ilk uygun zaman dilimini otomatik doldurur."
+          onClick={personeleGoreAyarla}
+        >
+          🎓 {kisitBusy ? 'Hesaplanıyor…' : 'Personele göre ayarla'}
+        </button>
+        {kisitOneriMesaj && (
+          <span style={{
+            fontSize: 11,
+            color: kisitOneriMesaj.ok ? '#16a34a' : '#dc2626',
+            fontWeight: 600,
+          }}>
+            {kisitOneriMesaj.mesaj}
+          </span>
+        )}
       </div>
       <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginTop: 10 }}>Tanımlı saat şablonları</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center' }}>
