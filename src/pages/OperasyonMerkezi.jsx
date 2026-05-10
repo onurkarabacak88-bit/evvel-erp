@@ -8417,7 +8417,7 @@ export default function OperasyonMerkezi() {
                           </span>
                         </div>
                         <div className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>
-                          {u.tarih} · Dün kapanış: {fmt(u.beklenen_tl || 0)} · Bugün açılış: {fmt(u.gercek_tl || 0)}
+                          {u.tarih} · Dün kapanış: {fmt(u.beklenen_tl || 0)}{u.kapanis_personel_ad ? ` (${u.kapanis_personel_ad})` : ''} · Bugün açılış: {fmt(u.gercek_tl || 0)}
                         </div>
                         {u.mesaj && <div style={{ fontSize: 12, marginTop: 6 }}>{u.mesaj}</div>}
                       </div>
