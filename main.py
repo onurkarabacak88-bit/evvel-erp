@@ -6131,6 +6131,15 @@ def v2_hafta_personel_tablo(pazartesi: str):
         return _vv2.hafta_personel_tablosu(cur, t)
 
 
+@app.get("/api/vardiya/v2/hafta-sube-tablo")
+def v2_hafta_sube_tablo(pazartesi: str):
+    """Şube × hafta görünümü — her şube için 7 gün, her günde çalışan personel listesi."""
+    from datetime import datetime as _dt
+    t = _dt.strptime(pazartesi[:10], "%Y-%m-%d").date()
+    with db() as (conn, cur):
+        return _vv2.sube_haftalik_gorunum(cur, t)
+
+
 @app.post("/api/vardiya/v2/motor/hafta-doldur")
 def v2_motor_hafta_doldur(body: _MotorHaftaIn):
     """Haftalık plan motoru — eksik slotları önceliklendirir; doğrudan veya taşıma ile doldurur."""

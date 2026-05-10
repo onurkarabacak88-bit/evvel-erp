@@ -2440,6 +2440,67 @@ def personel_haftalik_gorunum(cur, pazartesi: date) -> Dict[str, Any]:
     }
 
 
+def sube_haftalik_gorunum(cur, pazartesi: date) -> Dict[str, Any]:
+    """
+    Şube × hafta görünümü — her şube için 7 gün, her günde o şubede çalışacak personel listesi.
+    Hücre: [{"ad_soyad", "gorev", "saat", "kapanis"}]
+    """
+    paz = pazartesi + timedelta(days=6)
+    gunler = [pazartesi + timedelta(days=i) for i in range(7)]
+
+    cur.execute("SELECT id, ad FROM subeler WHERE aktif = TRUE ORDER BY ad")
+    subeler = [dict(r) for r in cur.fetchall()]
+
+    cur.execute("""
+        SELECT a.tarih, a.personel_id, a.baslangic_saat, a.bitis_saat,
+               sl.tip AS slot_tip, sl.sube_id AS slot_sube_id,
+               p.ad_soyad, p.gorev
+        FROM vardiya_atama a
+        JOIN vardiya_slot sl ON sl.id = a.slot_id
+        JOIN personel p ON p.id = a.personel_id
+        WHERE a.tarih BETWEEN %s::date AND %s::date AND a.durum != 'iptal'
+        ORDER BY a.tarih, a.baslangic_saat, p.ad_soyad
+    """, (pazartesi, paz))
+    atamalar = [dict(r) for r in cur.fetchall()]
+
+    # Group by sube_id → tarih → personel list
+    sube_gun_map: Dict[str, Dict[str, list]] = {str(s['id']): {str(g): [] for g in gunler} for s in subeler}
+    for a in atamalar:
+        sid = str(a['slot_sube_id'])
+        if sid not in sube_gun_map:
+            continue
+        tarih_str = str(a['tarih'])
+        if tarih_str not in sube_gun_map[sid]:
+            continue
+        bs = a['baslangic_saat'].strftime('%H:%M') if a['baslangic_saat'] else '?'
+        bt = a['bitis_saat'].strftime('%H:%M') if a['bitis_saat'] else '?'
+        sube_gun_map[sid][tarih_str].append({
+            "ad_soyad": a['ad_soyad'] or '',
+            "gorev": a['gorev'] or '',
+            "saat": f"{bs}-{bt}",
+            "kapanis": a.get('slot_tip') == 'kapanis',
+        })
+
+    subeler_out = []
+    for s in subeler:
+        sid = str(s['id'])
+        gun_data = sube_gun_map.get(sid, {})
+        toplam = sum(len(v) for v in gun_data.values())
+        subeler_out.append({
+            "sube_id": sid,
+            "sube_ad": s['ad'],
+            "gunler": gun_data,
+            "toplam_atama": toplam,
+        })
+
+    return {
+        "pazartesi": str(pazartesi),
+        "pazar": str(paz),
+        "gunler": [str(g) for g in gunler],
+        "subeler": subeler_out,
+    }
+
+
 def rapor_fazla_mesai(
     cur, baslangic: date, bitis: date, limit: int = 500
 ) -> Dict[str, Any]:

@@ -744,10 +744,12 @@ export default function VardiyaPlanlamaV2() {
   /** Slottaki kişiyi başka slota taşırken: iptal + yeni atama */
   const transferAtamaRef = useRef(null);
 
-  const [gorunumModu, setGorunumModu] = useState('gun_matris'); // 'gun_matris' | 'sube_hafta' | 'personel_hafta'
+  const [gorunumModu, setGorunumModu] = useState('gun_matris'); // 'gun_matris' | 'sube_hafta' | 'personel_hafta' | 'sube_hafta_tablo'
   const [personelHafta, setPersonelHafta] = useState(null);
   const [personelHaftaYukleniyor, setPersonelHaftaYukleniyor] = useState(false);
   const [mesaiHesap, setMesaiHesap] = useState(null); // { pzt, satirlar[] } | null
+  const [subeHaftaTablo, setSubeHaftaTablo] = useState(null);
+  const [subeHaftaTabloYukleniyor, setSubeHaftaTabloYukleniyor] = useState(false);
   const [subeHaftaId, setSubeHaftaId] = useState('');
   const [haftaPlanCache, setHaftaPlanCache] = useState(null);
   const [haftaYukleniyor, setHaftaYukleniyor] = useState(false);
@@ -1162,6 +1164,26 @@ export default function VardiyaPlanlamaV2() {
   useEffect(() => {
     setMesaiHesap(null);
   }, [personelHafta?.pazartesi]);
+
+  useEffect(() => {
+    if (gorunumModu !== 'sube_hafta_tablo') {
+      setSubeHaftaTablo(null);
+      return;
+    }
+    let cancel = false;
+    (async () => {
+      setSubeHaftaTabloYukleniyor(true);
+      try {
+        const r = await api(`/vardiya/v2/hafta-sube-tablo?pazartesi=${encodeURIComponent(pazartesiSecili)}`);
+        if (!cancel) setSubeHaftaTablo(r);
+      } catch (e) {
+        if (!cancel) setHata(e.message || 'Haftalık şube tablosu yüklenemedi');
+      } finally {
+        if (!cancel) setSubeHaftaTabloYukleniyor(false);
+      }
+    })();
+    return () => { cancel = true; };
+  }, [gorunumModu, pazartesiSecili]);
 
   useEffect(() => {
     if (gorunumModu === 'sube_hafta' && !subeHaftaId && (gunPlani?.subeler?.[0]?.sube_id || subeler[0]?.id)) {
@@ -2813,6 +2835,7 @@ export default function VardiyaPlanlamaV2() {
               <button type="button" className={gorunumModu === 'gun_matris' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('gun_matris')}>Gün × şube</button>
               <button type="button" className={gorunumModu === 'sube_hafta' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('sube_hafta')}>Şube × hafta</button>
               <button type="button" className={gorunumModu === 'personel_hafta' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('personel_hafta')}>Personel × hafta</button>
+              <button type="button" className={gorunumModu === 'sube_hafta_tablo' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('sube_hafta_tablo')}>Şube × hafta tablosu</button>
               <button type="button" className={gorunumModu === 'gun_gantt' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('gun_gantt')} title="Saat ekseni — kim ne zaman çalışacak görsel">📊 Gantt (saat çubuğu)</button>
               {gorunumModu === 'sube_hafta' && (
                 <select className="input input-sm" value={subeHaftaId} onChange={(e) => setSubeHaftaId(e.target.value)} style={{ minWidth: 170 }}>
@@ -3172,6 +3195,75 @@ export default function VardiyaPlanlamaV2() {
                         })}
                         <td style={{ padding: 8, textAlign: 'center', verticalAlign: 'top' }}>{row.kapanis_sayisi}</td>
                         <td style={{ padding: 8, verticalAlign: 'top', fontSize: 10, color: 'var(--text3)', maxWidth: 220 }}>{row.notlar || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+
+          {gorunumModu === 'sube_hafta_tablo' && (
+            <div style={{ overflowX: 'auto' }}>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
+                Her şube için 7 gün — hücrede o gün o şubede çalışacak personel listesi. Kapanış personeli <strong>K</strong> ile işaretlenir.
+              </div>
+              {subeHaftaTabloYukleniyor || !subeHaftaTablo?.gunler ? (
+                <div className="empty"><p>Haftalık şube tablosu yükleniyor…</p></div>
+              ) : (
+                <table className="table" style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse', minWidth: 760 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg2)' }}>
+                      <th style={{ padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap', minWidth: 130 }}>Şube</th>
+                      {subeHaftaTablo.gunler.map((iso) => (
+                        <th key={iso} style={{ padding: 8, textAlign: 'center', minWidth: 110 }}>
+                          <div>{personelHaftaGunBaslik(iso)}</div>
+                          <div style={{ fontSize: 9, color: 'var(--text3)', fontWeight: 500 }}>{iso.slice(5)}</div>
+                        </th>
+                      ))}
+                      <th style={{ padding: 8, textAlign: 'center', whiteSpace: 'nowrap' }}>Haftalık</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(subeHaftaTablo.subeler || []).map((sube) => (
+                      <tr key={sube.sube_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '8px 10px', verticalAlign: 'top', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                          {sube.sube_ad}
+                        </td>
+                        {subeHaftaTablo.gunler.map((iso) => {
+                          const kisiler = sube.gunler?.[iso] || [];
+                          return (
+                            <td key={iso} style={{ padding: 6, verticalAlign: 'top', minWidth: 110 }}>
+                              {kisiler.length === 0 ? (
+                                <span style={{ color: 'var(--text3)', fontSize: 10 }}>—</span>
+                              ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                  {kisiler.map((k, i) => (
+                                    <div
+                                      key={i}
+                                      style={{
+                                        background: k.kapanis ? 'rgba(59,130,246,0.10)' : 'var(--bg2)',
+                                        borderRadius: 5,
+                                        padding: '3px 6px',
+                                        borderLeft: `3px solid ${k.kapanis ? '#3b82f6' : 'var(--border)'}`,
+                                      }}
+                                    >
+                                      <div style={{ fontWeight: 600, fontSize: 10, color: 'var(--text)' }}>
+                                        {k.ad_soyad}{k.kapanis ? ' K' : ''}
+                                      </div>
+                                      <div style={{ fontSize: 9, color: 'var(--text3)', marginTop: 1 }}>
+                                        {k.saat}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td style={{ padding: 8, textAlign: 'center', verticalAlign: 'top', fontWeight: 700, color: sube.toplam_atama > 0 ? 'var(--text)' : 'var(--text3)' }}>
+                          {sube.toplam_atama}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
