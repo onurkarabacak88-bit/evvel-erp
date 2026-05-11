@@ -1547,6 +1547,271 @@
       margin-bottom: 0;
     }
 
+    /* Gönderilecek siparişler sekmesi — personel/PIN + liste okunabilirliği */
+    .gonderilecek-onay-panel {
+      margin: 0 0 14px 0;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: 2px solid rgba(59, 130, 246, 0.55);
+      background: linear-gradient(155deg, rgba(37, 99, 235, 0.22), rgba(30, 58, 138, 0.35));
+      box-shadow: 0 4px 22px rgba(0, 0, 0, 0.22);
+    }
+    .gonderilecek-onay-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 6px 0;
+    }
+    .gonderilecek-onay-tag {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      padding: 4px 10px;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #2563eb, #1d4ed8);
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(29, 78, 216, 0.45);
+    }
+    .gonderilecek-onay-title {
+      font-size: 15px;
+      font-weight: 800;
+      color: #e0f2fe;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    }
+    .gonderilecek-onay-alt {
+      font-size: 12px;
+      color: #bae6fd;
+      margin: 0 0 12px 0;
+      line-height: 1.5;
+      opacity: 0.96;
+    }
+    .gonderilecek-onay-grid {
+      display: grid;
+      grid-template-columns: minmax(200px, 1fr) 140px;
+      gap: 12px;
+      align-items: end;
+    }
+    .gonderilecek-onay-panel .form-group {
+      margin: 0;
+    }
+    .gonderilecek-onay-panel .form-group label {
+      font-weight: 700;
+      font-size: 12px;
+      color: #e0f2fe;
+    }
+    .gonderilecek-onay-panel select {
+      font-size: 14px !important;
+      border-width: 2px !important;
+    }
+    .gonderilecek-onay-panel .pin-input {
+      font-size: 22px !important;
+      letter-spacing: 0.14em;
+      text-align: center;
+      border: 2px solid rgba(125, 211, 252, 0.65) !important;
+      background: rgba(15, 23, 42, 0.45) !important;
+    }
+    .gonderilecek-yol-bilgi {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 0 0 12px;
+      line-height: 1.55;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(15, 23, 42, 0.35);
+    }
+    .gonderilecek-sect-eyebrow {
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 4px 0 8px;
+    }
+    .gonderilecek-hazirlik-ozet {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .gonderilecek-hazirlik-ozet .badge {
+      font-size: 11px;
+    }
+    .dep-haz-kart {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 12px;
+      overflow: hidden;
+      background: var(--bg);
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+    }
+    .dep-haz-acc-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 14px;
+      cursor: pointer;
+      background: linear-gradient(180deg, var(--bg2), var(--bg));
+      gap: 10px;
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s ease;
+    }
+    .dep-haz-acc-head:hover {
+      background: var(--bg2);
+    }
+    .dep-haz-acc-head:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .dep-haz-acc-head-main {
+      flex: 1;
+      min-width: 0;
+    }
+    .dep-haz-acc-sube {
+      font-size: 13px;
+      font-weight: 800;
+      line-height: 1.3;
+    }
+    .dep-haz-acc-id {
+      font-weight: 600;
+      opacity: 0.75;
+      font-size: 12px;
+    }
+    .dep-haz-acc-kalem {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 4px;
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .dep-haz-acc-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .dep-haz-acc-arrow {
+      font-size: 13px;
+      color: var(--muted);
+      min-width: 1.2em;
+      text-align: center;
+    }
+    .dep-haz-acc-body {
+      padding: 12px 14px 14px;
+    }
+    .dep-haz-talimat {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 10px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      line-height: 1.45;
+      background: rgba(251, 191, 36, 0.06);
+    }
+    .dep-kalem-cols {
+      display: grid;
+      gap: 10px 12px;
+      grid-template-columns: 1fr;
+      align-items: end;
+    }
+    @media (min-width: 700px) {
+      .dep-kalem-cols {
+        grid-template-columns: minmax(0, 1.35fr) 124px 108px minmax(0, 1fr);
+      }
+    }
+    @media (min-width: 480px) and (max-width: 699px) {
+      .dep-kalem-cols {
+        grid-template-columns: 1fr 1fr;
+      }
+      .dep-kalem-urun {
+        grid-column: 1 / -1;
+      }
+      .dep-kalem-field--wide {
+        grid-column: 1 / -1;
+      }
+    }
+    .dep-kalem-lbl {
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .dep-kalem-urun-txt {
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.35;
+    }
+    .dep-kalem-urun-ist {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .dep-kalem-field select,
+    .dep-kalem-field input.dep-kalem-adet {
+      width: 100%;
+      font-size: 13px;
+    }
+    .dep-kalem-field input[type='text']:not(.dep-kalem-adet) {
+      width: 100%;
+      font-size: 13px;
+    }
+    .dep-haz-kart-foot {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .dep-haz-kaydet-row {
+      display: flex;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .gonderilecek-gecmis {
+      margin-top: 22px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+    .gonderilecek-gecmis-baslik {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    .gonderilecek-gecmis-kart {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      opacity: 0.92;
+      background: var(--bg2);
+    }
+    @media (max-width: 520px) {
+      .gonderilecek-onay-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .sol-gonder-title {
       font-size: 13px;
       font-weight: 700;
@@ -1998,19 +2263,36 @@
       <div class="sekme-icerik" id="tab-gonderilecek">
         <div class="kart">
           <div class="kart-baslik"><span class="ico">📤</span> Gönderilecek siparişler</div>
-          <div style="display:grid;grid-template-columns:minmax(180px,1fr) 120px;gap:8px;align-items:end;margin-bottom:10px">
-            <div class="form-group" style="margin:0"><label>Personel</label><select id="gndrPers"></select></div>
-            <div class="form-group" style="margin:0"><label>Onay Kodu</label><input id="gndrPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>
+          <p class="gonderilecek-yol-bilgi">
+            Merkezin bu şubeye <strong>depo</strong> olarak yönlendirdiği siparişler burada listelenir. Kart başlığına tıklayarak kalemleri açın;
+            <strong>Kısmi gönder</strong> kısayolu yazdığınız gönderilen adetlere göre satır durumunu düzenler. Kayıt için karttaki <strong>Depo sevkiyatını kaydet</strong> kullanılır — özet onay penceresi açılır.
+          </p>
+          <div class="gonderilecek-onay-panel" role="region" aria-label="Sevkiyat için personel ve onay kodu">
+            <div class="gonderilecek-onay-head">
+              <span class="gonderilecek-onay-tag">Kimlik</span>
+              <span class="gonderilecek-onay-title">Personel ve onay kodu (PIN)</span>
+            </div>
+            <p class="gonderilecek-onay-alt">
+              Bu alanı bir kez doldurmanız yeterli. <strong>Depo sevkiyatını kaydet</strong> dediğinizde aynı bilgilerle doğrulanır; ekstra pencerede tekrar PIN istenmez (sipariş onayındaki gibi).
+            </p>
+            <div class="gonderilecek-onay-grid">
+              <div class="form-group">
+                <label for="gndrPers">Personel</label>
+                <select id="gndrPers"></select>
+              </div>
+              <div class="form-group">
+                <label for="gndrPin">Onay kodu (4 hane)</label>
+                <input id="gndrPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" />
+              </div>
+            </div>
           </div>
           <div class="gonderilecek-uyari-banner" role="alert">
             <span style="flex-shrink:0;font-size:16px;line-height:1" aria-hidden="true">⚠️</span>
             <div>
-              <strong>Dikkat — depo kaydı zinciri etkiler.</strong>
-              Her ürün satırında <strong>durum</strong> ve <strong>gönderilen adet</strong> talep eden şubenin stok akışına yazılır.
-              Kısmi veya yok gönderimde mutlaka satırları tek tek düzeltin; üstteki toplu kısayollar yalnızca tam gönderim için tasarlanmıştır.
+              <strong>Dikkat — depo kaydı talep şubesinin stok akışını etkiler.</strong>
+              Her satırda <strong>durum</strong> ve <strong>gönderilen adet</strong> dikkatle girilmelidir. Kısmi veya «yok» gönderimde satırları tek tek kontrol edin; üstteki toplu kısayollar tam gönderim senaryoları içindir.
             </div>
           </div>
-          <p style="font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.5">Merkezin bu şubeye depo olarak yönlendirdiği siparişler. <strong>Kısmi gönder</strong> ile yazdığınız adetlere göre satır durumu düzenlenir; talep şubesi teslimde yalnızca depodan çıkan miktarı sayar. Kart başlığına tıklayarak açın; kayıt için <strong>Depo sevkiyatını kaydet</strong> kullanın.</p>
           <div id="gonderilecekPanel"></div>
           <div id="gonderilecekMsg"></div>
         </div>
@@ -3202,11 +3484,28 @@ function _depAccToggle(tid) {
   var body = document.getElementById('depAcc_' + tid);
   var arrow = document.getElementById('depArrow_' + tid);
   if (!body) return;
-  var open = body.style.display !== 'none';
-  body.style.display = open ? 'none' : '';
-  if (arrow) arrow.textContent = open ? '▶' : '▼';
+  var wasVisible = body.style.display !== 'none';
+  body.style.display = wasVisible ? 'none' : '';
+  if (arrow) arrow.textContent = wasVisible ? '▶' : '▼';
+  document.querySelectorAll('.dep-haz-acc-head[data-dep-tid]').forEach(function (head) {
+    if (String(head.getAttribute('data-dep-tid') || '') === String(tid)) {
+      head.setAttribute('aria-expanded', wasVisible ? 'false' : 'true');
+    }
+  });
 }
 window._depAccToggle = _depAccToggle;
+function _depAccToggleFromEl(el) {
+  var tid = el && el.getAttribute && el.getAttribute('data-dep-tid');
+  if (tid) _depAccToggle(tid);
+}
+function _depAccHeadKey(ev, el) {
+  if (ev.key === 'Enter' || ev.key === ' ') {
+    ev.preventDefault();
+    _depAccToggleFromEl(el);
+  }
+}
+window._depAccToggleFromEl = _depAccToggleFromEl;
+window._depAccHeadKey = _depAccHeadKey;
 
 function depKalemSatirTamamMi(rid) {
   var sel = document.getElementById('depDur_' + rid);
@@ -3348,7 +3647,11 @@ function buildDepoHazirlikHTML(depoHazirlik) {
   h += '<button type="button" class="btn btn-warning btn-sm" onclick="gonderilecekBulkTamGonder();return false;" title="Tüm açık kartlardaki ürün satırlarında durumu «var» yapar ve gönderilen adedi istenenle eşitler">Tüm kalemlerde tam gönder (var)</button>';
   h += '<button type="button" class="btn btn-ghost btn-sm" onclick="gonderilecekBulkHepsiGonderildi();return false;" title="Her sipariş kartındaki «Sevkiyat tamamlandı» kutusunu işaretler">Tüm kartlarda sevkiyat tamamlandı ✓</button>';
   h += '</div>';
-  h += '<div style="margin-bottom:6px;font-size:12px;font-weight:700;color:var(--muted)">🏪 ' + dh.length + ' sipariş hazırlanacak — başlığa tıklayarak açın</div>';
+  h += '<div class="gonderilecek-sect-eyebrow">Hazırlık listesi</div>';
+  h +=
+    '<div class="gonderilecek-hazirlik-ozet"><span>🏪 ' +
+    dh.length +
+    ' sipariş</span><span class="badge badge-gray" style="font-weight:700">Kart başlığına tıklayın · aç / kapat</span></div>';
   dh.forEach(function (d, idx) {
     var tid = String(d.id || '');
     var rows = Array.isArray(d.kalem_duzenle) ? d.kalem_duzenle : [];
@@ -3356,47 +3659,66 @@ function buildDepoHazirlikHTML(depoHazirlik) {
     var subeAd = escHtml(d.talep_sube_adi || d.talep_sube_id || '—');
     var kalemOzet = rows.map(function(k){ return escHtml(k.urun_ad||k.urun_id||'?') + ' ×' + (k.istenen_adet||0); }).join(', ');
     var isFirst = idx === 0;
-    h += '<div style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px;overflow:hidden">';
-    // Accordion header
-    h += '<div onclick="_depAccToggle(\'' + tid + '\')" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;cursor:pointer;background:var(--bg2);gap:8px;flex-wrap:wrap">';
-    h += '<div style="flex:1;min-width:0">';
-    h += '<div style="font-size:12px;font-weight:700">' + subeAd + ' <span class="mono" style="font-weight:400;opacity:.7">#' + escHtml(tid.slice(0,8)) + '…</span></div>';
-    h += '<div style="font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + kalemOzet + '</div>';
+    var tidEsc = escHtml(tid);
+    h += '<div class="dep-haz-kart">';
+    h +=
+      '<div class="dep-haz-acc-head" role="button" tabindex="0" data-dep-tid="' +
+      tidEsc +
+      '" onclick="_depAccToggleFromEl(this)" onkeydown="_depAccHeadKey(event,this)" aria-expanded="' +
+      (isFirst ? 'true' : 'false') +
+      '" aria-controls="depAcc_' +
+      tidEsc +
+      '">';
+    h += '<div class="dep-haz-acc-head-main">';
+    h += '<div class="dep-haz-acc-sube">' + subeAd + ' <span class="mono dep-haz-acc-id">#' + escHtml(tid.slice(0,8)) + '…</span></div>';
+    h += '<div class="dep-haz-acc-kalem">' + kalemOzet + '</div>';
     h += '</div>';
-    h += '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0">';
-    h += '<span class="badge badge-blue" style="font-size:10px">' + durum + '</span>';
-    h += '<span id="depArrow_' + tid + '" style="font-size:12px;color:var(--muted)">' + (isFirst ? '▼' : '▶') + '</span>';
+    h += '<div class="dep-haz-acc-meta">';
+    h += '<span class="badge badge-blue">' + durum + '</span>';
+    h += '<span id="depArrow_' + tidEsc + '" class="dep-haz-acc-arrow" aria-hidden="true">' + (isFirst ? '▼' : '▶') + '</span>';
     h += '</div></div>';
-    // Accordion body
-    h += '<div id="depAcc_' + tid + '" style="padding:10px 12px;' + (isFirst ? '' : 'display:none') + '">';
+    h += '<div id="depAcc_' + tidEsc + '" class="dep-haz-acc-body" style="' + (isFirst ? '' : 'display:none') + '">';
     if (d.operasyon_yonlendirme_talimati) {
-      h += '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;border:1px dashed var(--border);border-radius:8px;padding:6px 8px"><strong>Talimat:</strong> ' + escHtml(d.operasyon_yonlendirme_talimati) + '</div>';
+      h += '<div class="dep-haz-talimat"><strong>Talimat:</strong> ' + escHtml(d.operasyon_yonlendirme_talimati) + '</div>';
     }
-    h += '<div style="display:grid;gap:6px;margin-bottom:10px">';
+    h += '<div style="display:grid;gap:10px;margin-bottom:4px">';
     rows.forEach(function (k, i) {
       var rid = tid + '_' + i;
+      var ridEsc = escHtml(rid);
       var ist = Number(k.istenen_adet || 0);
       var gon = Number(k.gonderilen_adet || 0);
       var d0 = String(k.durum || 'bekliyor');
-      h += '<div class="dep-kalem-row" id="depKalemRow_' + escHtml(rid) + '" data-dep-rid="' + escHtml(rid) + '">';
-      h += '<div style="display:grid;grid-template-columns:minmax(0,1fr) 110px 120px 1fr;gap:6px;align-items:center">';
-      h += '<div style="font-size:12px">' + escHtml(k.urun_ad || k.urun_id || 'Kalem ' + (i + 1)) + ' <span class="mono" style="opacity:.8">İstenen:' + ist + '</span></div>';
-      h += '<select id="depDur_' + escHtml(rid) + '"><option value="var"' + (d0==='var'?' selected':'') + '>var</option><option value="kismi"' + (d0==='kismi'?' selected':'') + '>kısmi</option><option value="yok"' + (d0==='yok'?' selected':'') + '>yok</option><option value="bekliyor"' + (d0==='bekliyor'?' selected':'') + '>bekliyor</option></select>';
-      h += '<input id="depAd_' + escHtml(rid) + '" data-istenen="' + String(ist) + '" inputmode="numeric" value="' + String(gon||0) + '" placeholder="Gönderilen" />';
-      h += '<input id="depNt_' + escHtml(rid) + '" placeholder="Kalem notu (opsiyonel)" value="' + escHtml(k.not||'') + '" />';
+      h += '<div class="dep-kalem-row" id="depKalemRow_' + ridEsc + '" data-dep-rid="' + ridEsc + '">';
+      h += '<div class="dep-kalem-cols">';
+      h += '<div class="dep-kalem-urun">';
+      h += '<span class="dep-kalem-urun-txt">' + escHtml(k.urun_ad || k.urun_id || 'Kalem ' + (i + 1)) + '</span>';
+      h += '<span class="dep-kalem-urun-ist mono">İstenen: <strong>' + ist + '</strong> adet</span>';
+      h += '</div>';
+      h += '<div class="dep-kalem-field">';
+      h += '<label class="dep-kalem-lbl" for="depDur_' + ridEsc + '">Durum</label>';
+      h += '<select id="depDur_' + ridEsc + '"><option value="var"' + (d0==='var'?' selected':'') + '>var</option><option value="kismi"' + (d0==='kismi'?' selected':'') + '>kısmi</option><option value="yok"' + (d0==='yok'?' selected':'') + '>yok</option><option value="bekliyor"' + (d0==='bekliyor'?' selected':'') + '>bekliyor</option></select>';
+      h += '</div>';
+      h += '<div class="dep-kalem-field">';
+      h += '<label class="dep-kalem-lbl" for="depAd_' + ridEsc + '">Gönderilen</label>';
+      h += '<input class="dep-kalem-adet" id="depAd_' + ridEsc + '" data-istenen="' + String(ist) + '" inputmode="numeric" value="' + String(gon||0) + '" placeholder="0" />';
+      h += '</div>';
+      h += '<div class="dep-kalem-field dep-kalem-field--wide">';
+      h += '<label class="dep-kalem-lbl" for="depNt_' + ridEsc + '">Kalem notu</label>';
+      h += '<input id="depNt_' + ridEsc + '" type="text" placeholder="Opsiyonel" value="' + escHtml(k.not||'') + '" />';
+      h += '</div>';
       h += '</div></div>';
     });
     h += '</div>';
-    h += '<div style="display:grid;grid-template-columns:1fr;gap:8px">';
-    h += '<div class="form-group" style="margin:0"><label>Sevkiyat notu</label><input id="depNot_' + escHtml(tid) + '" value="' + escHtml(d.sevkiyat_notu||'') + '" placeholder="Opsiyonel not" /></div>';
+    h += '<div class="dep-haz-kart-foot">';
+    h += '<div class="form-group" style="margin:0"><label for="depNot_' + tidEsc + '">Sevkiyat notu (tüm kart)</label><input id="depNot_' + tidEsc + '" value="' + escHtml(d.sevkiyat_notu||'') + '" placeholder="Opsiyonel genel not" /></div>';
+    h += '<label class="chk-row" style="margin:0"><input type="checkbox" id="depDone_' + tidEsc + '" /><span>Sevkiyat tamamlandı (gönderildi)</span></label>';
+    h += '<div class="dep-haz-kaydet-row">';
+    h += '<button type="button" class="btn btn-primary btn-sm" id="depKaydet_' + tidEsc + '">Depo sevkiyatını kaydet</button>';
     h += '</div>';
-    h += '<label class="chk-row" style="margin-top:8px"><input type="checkbox" id="depDone_' + escHtml(tid) + '" /><span>Sevkiyat tamamlandı (gönderildi)</span></label>';
-    h += '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">';
-    h += '<button class="btn btn-primary btn-sm" id="depKaydet_' + escHtml(tid) + '">Depo sevkiyatını kaydet</button>';
+    h += '<div id="depMsg_' + tidEsc + '"></div>';
     h += '</div>';
-    h += '<div id="depMsg_' + escHtml(tid) + '"></div>';
-    h += '</div>'; // accordion body
-    h += '</div>'; // card
+    h += '</div>';
+    h += '</div>';
   });
   return h;
 }
@@ -3481,21 +3803,21 @@ function wireDepKaydetHandlers(depoHazirlik) {
 function buildDepoGonderilenHTML(gonderilenler) {
   var list = gonderilenler || [];
   if (!list.length) return '';
-  var h = '<div style="margin-top:20px;border-top:1px solid var(--border);padding-top:14px">';
-  h += '<div style="font-size:12px;font-weight:700;color:var(--text3);letter-spacing:.06em;margin-bottom:10px">📦 GÖNDERİLENLER — SON 7 GÜN</div>';
+  var h = '<div class="gonderilecek-gecmis">';
+  h += '<div class="gonderilecek-gecmis-baslik">📦 Gönderilenler — son 7 gün</div>';
   list.forEach(function (d) {
     var tid = String(d.id || '');
     var subeAd = d.talep_sube_adi || d.talep_sube_id || 'Şube';
     var tarih = (d.sevkiyat_ts || d.tarih || '').substring(0, 16).replace('T', ' ');
     var personel = d.sevkiyat_personel_ad ? (' · ' + d.sevkiyat_personel_ad) : '';
     var uyari = d.depo_sevkiyat_rapor_uyari;
-    h += '<div style="border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:8px;opacity:.85">';
+    h += '<div class="gonderilecek-gecmis-kart">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">';
     h += '<span style="font-weight:600;font-size:13px">' + escHtml(subeAd) + '</span>';
-    h += '<span style="font-size:11px;color:var(--text3)">' + escHtml(tarih) + escHtml(personel) + '</span>';
+    h += '<span style="font-size:11px;color:var(--muted)">' + escHtml(tarih) + escHtml(personel) + '</span>';
     h += '</div>';
     if (d.depo_sevkiyat_rapor_metni) {
-      h += '<div style="font-size:11px;color:var(--text3);margin-top:4px;white-space:pre-wrap">' + escHtml(d.depo_sevkiyat_rapor_metni) + '</div>';
+      h += '<div style="font-size:11px;color:var(--muted);margin-top:4px;white-space:pre-wrap">' + escHtml(d.depo_sevkiyat_rapor_metni) + '</div>';
     }
     if (uyari === true || uyari === 'true') {
       h += '<div style="font-size:11px;color:#f59e0b;margin-top:4px">⚠ Eksik veya kısmi kalemler var</div>';
