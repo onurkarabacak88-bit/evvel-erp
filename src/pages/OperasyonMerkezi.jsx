@@ -3823,6 +3823,72 @@ export default function OperasyonMerkezi() {
     }
   }
 
+  /** Geç Açılan Şubeler: tarih + getir + özet sayılar (her iki kart sekmesinde üstte gösterilir). */
+  const gecAcilanTarihSecimPaneli = (
+    <div
+      className="card"
+      style={{
+        padding: '14px 16px',
+        borderRadius: 10,
+        border: '1px solid rgba(249, 115, 22, 0.4)',
+        background: 'linear-gradient(165deg, rgba(249, 115, 22, 0.12) 0%, var(--bg) 55%)',
+        boxShadow: '0 4px 18px rgba(0, 0, 0, 0.07)',
+      }}
+    >
+      <div
+        style={{
+          fontSize: 13,
+          fontWeight: 800,
+          color: 'var(--text)',
+          marginBottom: 10,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
+        }}
+      >
+        <span aria-hidden>📅</span>
+        Tarih seçerek detay
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)' }}>— şube listesi ve tablolar</span>
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <label style={{ margin: 0 }}>
+          <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Tarih</span>
+          <input
+            type="date"
+            className="input"
+            value={gecAcilanAramaTarih}
+            onChange={(e) => setGecAcilanAramaTarih(e.target.value || bugunIsoTarih())}
+          />
+        </label>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          style={{ alignSelf: 'flex-end' }}
+          onClick={() => gecAcilanAramaYap()}
+        >
+          {gecAcilanAramaYukleniyor ? '…' : 'Tarihi getir'}
+        </button>
+        <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'flex-end' }}>
+          {gecAcilanAramaSonuc?.tarih || gecAcilanAramaTarih}
+          {gecAcilanKartSekme === 'akis' ? (
+            <>
+              {' · '}
+              {gecAcilanAramaSonuc?.toplam || 0} geç açılış
+              {' · '}
+              {Number(gecAcilanAramaSonuc?.acilmayan_toplam ?? (gecAcilanAramaSonuc?.acilmayan_subeler || []).length ?? 0)} henüz açılmamış
+            </>
+          ) : (
+            <>
+              {' · '}
+              {Number(gecAcilanAramaSonuc?.plan_kayitsiz_toplam ?? (gecAcilanAramaSonuc?.plan_kayitsiz_subeler || []).length ?? 0)} şube (planlı, ACILIS yok)
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
@@ -7917,241 +7983,8 @@ export default function OperasyonMerkezi() {
             <strong style={{ color: 'var(--text2)' }}>«Planlı · operasyon kaydı yok»</strong> sekmesine geçin.
           </div>
 
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginBottom: 8 }}>
-              Son 7 gün özeti {gecAcilanHaftaYukleniyor ? <span style={{ color: 'var(--text3)', fontWeight: 500 }}>(yükleniyor…)</span> : null}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {gecAcilanHaftaYukleniyor && gecAcilanHaftaSatirlari.length === 0 ? (
-                <div className="empty" style={{ padding: '14px 12px' }}><p style={{ margin: 0 }}>Haftalık özet yükleniyor…</p></div>
-              ) : (gecAcilanHaftaSatirlari.length ? gecAcilanHaftaSatirlari : Array.from({ length: 7 }, (_, i) => ({
-                tarih: isoTariheGunEkle(bugunIsoTarih(), -i),
-                gec_toplam: 0,
-                acilmayan_toplam: 0,
-                ozetMetin: '',
-                plan_kayitsiz_toplam: 0,
-                planOzetMetin: '',
-              }))).map((s) => {
-                const bugunStr = bugunIsoTarih();
-                const gec = Number(s.gec_toplam || 0);
-                const ac = Number(s.acilmayan_toplam || 0);
-                const dikkat = gec > 0 || ac > 0;
-                const kritikAc = ac > 0;
-                return (
-                  <button
-                    key={`gec-hafta-${s.tarih}`}
-                    type="button"
-                    title={s.ozetMetin || undefined}
-                    onClick={async () => {
-                      setGecAcilanAramaTarih(s.tarih);
-                      setGecAcilanAramaYukleniyor(true);
-                      try {
-                        const data = await gecAcilanGunYukle(s.tarih);
-                        setGecAcilanAramaSonuc(data);
-                        setGecAcilanSeciliSubeKey('all');
-                      } catch (e) {
-                        toast(e.message || 'Geç açılan şubeler yüklenemedi');
-                      } finally {
-                        setGecAcilanAramaYukleniyor(false);
-                      }
-                    }}
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'stretch',
-                      gap: 6,
-                      width: '100%',
-                      textAlign: 'left',
-                      padding: '8px 12px',
-                      borderRadius: 8,
-                      cursor: 'pointer',
-                      border: kritikAc
-                        ? '1px solid rgba(220, 38, 38, 0.55)'
-                        : gec > 0
-                          ? '1px solid rgba(249, 115, 22, 0.5)'
-                          : '1px solid var(--border)',
-                      background: kritikAc
-                        ? 'rgba(220, 38, 38, 0.1)'
-                        : gec > 0
-                          ? 'rgba(249, 115, 22, 0.08)'
-                          : 'var(--bg2)',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 12, color: dikkat ? 'var(--text)' : 'var(--text3)' }}>
-                        <span className="mono" style={{ fontWeight: 700 }}>{s.tarih}</span>
-                        {s.tarih === bugunStr ? (
-                          <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>(bugün)</span>
-                        ) : null}
-                      </span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        {gec > 0 ? (
-                          <span className="badge badge-yellow" style={{ fontWeight: 700 }}>{gec} geç</span>
-                        ) : (
-                          <span style={{ fontSize: 11, color: 'var(--text3)' }}>Geç yok</span>
-                        )}
-                        {ac > 0 ? (
-                          <span className="badge badge-red" style={{ fontWeight: 700 }}>{ac} açılmamış</span>
-                        ) : (
-                          <span style={{ fontSize: 11, color: 'var(--text3)' }}>Bekleyen yok</span>
-                        )}
-                        <span style={{ fontSize: 11, color: 'var(--text3)' }}>Detay ↓</span>
-                      </span>
-                    </div>
-                    {s.ozetMetin ? (
-                      <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.45, opacity: 0.95 }}>
-                        {s.ozetMetin}
-                      </div>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-            <p style={{ fontSize: 11, color: 'var(--text3)', opacity: 0.85, margin: '8px 0 0' }}>
-              Satıra tıklayınca aşağıdaki detay o güne yüklenir. Tam şube listesi için satırın üzerine gelin (tooltip) veya detaydan okuyun.
-            </p>
-          </div>
-          </>
-          )}
+          {gecAcilanTarihSecimPaneli}
 
-          {gecAcilanKartSekme === 'plan_kayitsiz' && (
-          <>
-          <div
-            style={{
-              fontSize: 12,
-              lineHeight: 1.55,
-              color: 'var(--text3)',
-              opacity: 0.88,
-              margin: 0,
-              padding: '10px 12px',
-              borderRadius: 8,
-              background: 'var(--bg2)',
-              border: '1px solid var(--border)',
-            }}
-          >
-            <strong style={{ color: 'var(--text2)', fontWeight: 600 }}>Planlı · operasyon kaydı yok nedir?</strong>{' '}
-            <strong style={{ color: 'var(--text2)' }}>Aktif</strong> ve <strong style={{ color: 'var(--text2)' }}>vardiya/operasyon takibi açık</strong> (
-            <code style={{ fontSize: 11 }}>vardiya_yazilsin</code>
-            ) şubelerde, seçilen gün için veritabanında <strong style={{ color: 'var(--text2)' }}>hiç ACILIS event satırı oluşmamış</strong> olanlar listelenir.
-            Bu genelde şube panelinin / operasyon motorunun o gün o şube için hiç çalışmadığını gösterir (ilk yüklemede ACILIS satırı oluşturulur). Geç veya yarım kalmış açılışlar bir üst sekmededir.
-          </div>
-
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginBottom: 8 }}>
-              Son 7 gün — planlı ama ACILIS yok {gecAcilanHaftaYukleniyor ? <span style={{ color: 'var(--text3)', fontWeight: 500 }}>(yükleniyor…)</span> : null}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {gecAcilanHaftaYukleniyor && gecAcilanHaftaSatirlari.length === 0 ? (
-                <div className="empty" style={{ padding: '14px 12px' }}><p style={{ margin: 0 }}>Haftalık özet yükleniyor…</p></div>
-              ) : (gecAcilanHaftaSatirlari.length ? gecAcilanHaftaSatirlari : Array.from({ length: 7 }, (_, i) => ({
-                tarih: isoTariheGunEkle(bugunIsoTarih(), -i),
-                plan_kayitsiz_toplam: 0,
-                planOzetMetin: '',
-              }))).map((s) => {
-                const bugunStr = bugunIsoTarih();
-                const pt = Number(s.plan_kayitsiz_toplam || 0);
-                const vurgu = pt > 0;
-                return (
-                  <button
-                    key={`gec-plan-hafta-${s.tarih}`}
-                    type="button"
-                    title={s.planOzetMetin || undefined}
-                    onClick={async () => {
-                      setGecAcilanAramaTarih(s.tarih);
-                      setGecAcilanAramaYukleniyor(true);
-                      try {
-                        const data = await gecAcilanGunYukle(s.tarih);
-                        setGecAcilanAramaSonuc(data);
-                      } catch (e) {
-                        toast(e.message || 'Veri yüklenemedi');
-                      } finally {
-                        setGecAcilanAramaYukleniyor(false);
-                      }
-                    }}
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'stretch',
-                      gap: 6,
-                      width: '100%',
-                      textAlign: 'left',
-                      padding: '8px 12px',
-                      borderRadius: 8,
-                      cursor: 'pointer',
-                      border: vurgu ? '1px solid rgba(100, 116, 139, 0.65)' : '1px solid var(--border)',
-                      background: vurgu ? 'rgba(100, 116, 139, 0.12)' : 'var(--bg2)',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 12, color: vurgu ? 'var(--text)' : 'var(--text3)' }}>
-                        <span className="mono" style={{ fontWeight: 700 }}>{s.tarih}</span>
-                        {s.tarih === bugunStr ? (
-                          <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>(bugün)</span>
-                        ) : null}
-                      </span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        {pt > 0 ? (
-                          <span className="badge badge-yellow" style={{ fontWeight: 700, background: 'rgba(100,116,139,0.35)', borderColor: '#94a3b8' }}>{pt} şube</span>
-                        ) : (
-                          <span style={{ fontSize: 11, color: 'var(--text3)' }}>Kayıt tam</span>
-                        )}
-                        <span style={{ fontSize: 11, color: 'var(--text3)' }}>Detay ↓</span>
-                      </span>
-                    </div>
-                    {s.planOzetMetin ? (
-                      <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.45, opacity: 0.95 }}>
-                        {s.planOzetMetin}
-                      </div>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-            <p style={{ fontSize: 11, color: 'var(--text3)', opacity: 0.85, margin: '8px 0 0' }}>
-              Gelecek tarihlerde tüm şubeler “kayıtsız” görünebilir; geçmiş günlerde kalan satır genelde anlamlıdır.
-            </p>
-          </div>
-          </>
-          )}
-
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginTop: 4 }}>Tarih seçerek detay</div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <label style={{ margin: 0 }}>
-              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Tarih</span>
-              <input
-                type="date"
-                className="input"
-                value={gecAcilanAramaTarih}
-                onChange={(e) => setGecAcilanAramaTarih(e.target.value || bugunIsoTarih())}
-              />
-            </label>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              style={{ alignSelf: 'flex-end' }}
-              onClick={() => gecAcilanAramaYap()}
-            >
-              {gecAcilanAramaYukleniyor ? '…' : 'Tarihi getir'}
-            </button>
-            <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'flex-end' }}>
-              {gecAcilanAramaSonuc?.tarih || gecAcilanAramaTarih}
-              {gecAcilanKartSekme === 'akis' ? (
-                <>
-                  {' · '}{gecAcilanAramaSonuc?.toplam || 0} geç açılış
-                  {' · '}
-                  {Number(gecAcilanAramaSonuc?.acilmayan_toplam ?? (gecAcilanAramaSonuc?.acilmayan_subeler || []).length ?? 0)} henüz açılmamış
-                </>
-              ) : (
-                <>
-                  {' · '}
-                  {Number(gecAcilanAramaSonuc?.plan_kayitsiz_toplam ?? (gecAcilanAramaSonuc?.plan_kayitsiz_subeler || []).length ?? 0)} şube (planlı, ACILIS yok)
-                </>
-              )}
-            </div>
-          </div>
-
-          {gecAcilanKartSekme === 'akis' && (
-          <>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button
               type="button"
@@ -8254,11 +8087,152 @@ export default function OperasyonMerkezi() {
               </table>
             </div>
           ) : null}
+
+          <div
+            className="card"
+            style={{
+              marginTop: 4,
+              padding: '14px 16px',
+              borderRadius: 10,
+              border: '1px solid var(--border)',
+              background: 'var(--bg2)',
+              boxShadow: '0 2px 10px rgba(0, 0, 0, 0.04)',
+            }}
+          >
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: 800,
+                color: 'var(--text)',
+                marginBottom: 10,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
+              }}
+            >
+              <span aria-hidden>📊</span>
+              Son 7 gün özeti
+              {gecAcilanHaftaYukleniyor ? <span style={{ color: 'var(--text3)', fontWeight: 500, fontSize: 12 }}>(yükleniyor…)</span> : null}
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)' }}>— hızlı gün seçimi</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {gecAcilanHaftaYukleniyor && gecAcilanHaftaSatirlari.length === 0 ? (
+                <div className="empty" style={{ padding: '14px 12px' }}><p style={{ margin: 0 }}>Haftalık özet yükleniyor…</p></div>
+              ) : (gecAcilanHaftaSatirlari.length ? gecAcilanHaftaSatirlari : Array.from({ length: 7 }, (_, i) => ({
+                tarih: isoTariheGunEkle(bugunIsoTarih(), -i),
+                gec_toplam: 0,
+                acilmayan_toplam: 0,
+                ozetMetin: '',
+                plan_kayitsiz_toplam: 0,
+                planOzetMetin: '',
+              }))).map((s) => {
+                const bugunStr = bugunIsoTarih();
+                const gec = Number(s.gec_toplam || 0);
+                const ac = Number(s.acilmayan_toplam || 0);
+                const dikkat = gec > 0 || ac > 0;
+                const kritikAc = ac > 0;
+                return (
+                  <button
+                    key={`gec-hafta-${s.tarih}`}
+                    type="button"
+                    title={s.ozetMetin || undefined}
+                    onClick={async () => {
+                      setGecAcilanAramaTarih(s.tarih);
+                      setGecAcilanAramaYukleniyor(true);
+                      try {
+                        const data = await gecAcilanGunYukle(s.tarih);
+                        setGecAcilanAramaSonuc(data);
+                        setGecAcilanSeciliSubeKey('all');
+                      } catch (e) {
+                        toast(e.message || 'Geç açılan şubeler yüklenemedi');
+                      } finally {
+                        setGecAcilanAramaYukleniyor(false);
+                      }
+                    }}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'stretch',
+                      gap: 6,
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      cursor: 'pointer',
+                      border: kritikAc
+                        ? '1px solid rgba(220, 38, 38, 0.55)'
+                        : gec > 0
+                          ? '1px solid rgba(249, 115, 22, 0.5)'
+                          : '1px solid var(--border)',
+                      background: kritikAc
+                        ? 'rgba(220, 38, 38, 0.1)'
+                        : gec > 0
+                          ? 'rgba(249, 115, 22, 0.08)'
+                          : 'var(--bg)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12, color: dikkat ? 'var(--text)' : 'var(--text3)' }}>
+                        <span className="mono" style={{ fontWeight: 700 }}>{s.tarih}</span>
+                        {s.tarih === bugunStr ? (
+                          <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>(bugün)</span>
+                        ) : null}
+                      </span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        {gec > 0 ? (
+                          <span className="badge badge-yellow" style={{ fontWeight: 700 }}>{gec} geç</span>
+                        ) : (
+                          <span style={{ fontSize: 11, color: 'var(--text3)' }}>Geç yok</span>
+                        )}
+                        {ac > 0 ? (
+                          <span className="badge badge-red" style={{ fontWeight: 700 }}>{ac} açılmamış</span>
+                        ) : (
+                          <span style={{ fontSize: 11, color: 'var(--text3)' }}>Bekleyen yok</span>
+                        )}
+                        <span style={{ fontSize: 11, color: 'var(--text3)' }}>Detay ↑</span>
+                      </span>
+                    </div>
+                    {s.ozetMetin ? (
+                      <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.45, opacity: 0.95 }}>
+                        {s.ozetMetin}
+                      </div>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--text3)', opacity: 0.88, margin: '10px 0 0' }}>
+              Satıra tıklayınca üstteki detay paneli o güne yüklenir. Tam şube listesi için satırın üzerine gelin (tooltip) veya tablodan okuyun.
+            </p>
+          </div>
           </>
           )}
 
           {gecAcilanKartSekme === 'plan_kayitsiz' && (
           <>
+          <div
+            style={{
+              fontSize: 12,
+              lineHeight: 1.55,
+              color: 'var(--text3)',
+              opacity: 0.88,
+              margin: 0,
+              padding: '10px 12px',
+              borderRadius: 8,
+              background: 'var(--bg2)',
+              border: '1px solid var(--border)',
+            }}
+          >
+            <strong style={{ color: 'var(--text2)', fontWeight: 600 }}>Planlı · operasyon kaydı yok nedir?</strong>{' '}
+            <strong style={{ color: 'var(--text2)' }}>Aktif</strong> ve <strong style={{ color: 'var(--text2)' }}>vardiya/operasyon takibi açık</strong> (
+            <code style={{ fontSize: 11 }}>vardiya_yazilsin</code>
+            ) şubelerde, seçilen gün için veritabanında <strong style={{ color: 'var(--text2)' }}>hiç ACILIS event satırı oluşmamış</strong> olanlar listelenir.
+            Bu genelde şube panelinin / operasyon motorunun o gün o şube için hiç çalışmadığını gösterir (ilk yüklemede ACILIS satırı oluşturulur). Geç veya yarım kalmış açılışlar bir üst sekmededir.
+          </div>
+
+          {gecAcilanTarihSecimPaneli}
+
           {(gecAcilanAramaSonuc?.plan_kayitsiz_subeler || []).length === 0 ? (
             <div className="empty"><p>Seçilen tarihte bu kritere uyan şube yok (tüm planlı şubelerde ACILIS satırı var)</p></div>
           ) : (
@@ -8284,6 +8258,106 @@ export default function OperasyonMerkezi() {
               </table>
             </div>
           )}
+
+          <div
+            className="card"
+            style={{
+              marginTop: 4,
+              padding: '14px 16px',
+              borderRadius: 10,
+              border: '1px solid rgba(100, 116, 139, 0.45)',
+              background: 'linear-gradient(165deg, rgba(100, 116, 139, 0.1) 0%, var(--bg2) 55%)',
+              boxShadow: '0 2px 10px rgba(0, 0, 0, 0.04)',
+            }}
+          >
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: 800,
+                color: 'var(--text)',
+                marginBottom: 10,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
+              }}
+            >
+              <span aria-hidden>📊</span>
+              Son 7 gün — planlı ama ACILIS yok
+              {gecAcilanHaftaYukleniyor ? <span style={{ color: 'var(--text3)', fontWeight: 500, fontSize: 12 }}>(yükleniyor…)</span> : null}
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)' }}>— hızlı gün seçimi</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {gecAcilanHaftaYukleniyor && gecAcilanHaftaSatirlari.length === 0 ? (
+                <div className="empty" style={{ padding: '14px 12px' }}><p style={{ margin: 0 }}>Haftalık özet yükleniyor…</p></div>
+              ) : (gecAcilanHaftaSatirlari.length ? gecAcilanHaftaSatirlari : Array.from({ length: 7 }, (_, i) => ({
+                tarih: isoTariheGunEkle(bugunIsoTarih(), -i),
+                plan_kayitsiz_toplam: 0,
+                planOzetMetin: '',
+              }))).map((s) => {
+                const bugunStr = bugunIsoTarih();
+                const pt = Number(s.plan_kayitsiz_toplam || 0);
+                const vurgu = pt > 0;
+                return (
+                  <button
+                    key={`gec-plan-hafta-${s.tarih}`}
+                    type="button"
+                    title={s.planOzetMetin || undefined}
+                    onClick={async () => {
+                      setGecAcilanAramaTarih(s.tarih);
+                      setGecAcilanAramaYukleniyor(true);
+                      try {
+                        const data = await gecAcilanGunYukle(s.tarih);
+                        setGecAcilanAramaSonuc(data);
+                      } catch (e) {
+                        toast(e.message || 'Veri yüklenemedi');
+                      } finally {
+                        setGecAcilanAramaYukleniyor(false);
+                      }
+                    }}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'stretch',
+                      gap: 6,
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      cursor: 'pointer',
+                      border: vurgu ? '1px solid rgba(100, 116, 139, 0.65)' : '1px solid var(--border)',
+                      background: vurgu ? 'rgba(100, 116, 139, 0.14)' : 'var(--bg)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12, color: vurgu ? 'var(--text)' : 'var(--text3)' }}>
+                        <span className="mono" style={{ fontWeight: 700 }}>{s.tarih}</span>
+                        {s.tarih === bugunStr ? (
+                          <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>(bugün)</span>
+                        ) : null}
+                      </span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        {pt > 0 ? (
+                          <span className="badge badge-yellow" style={{ fontWeight: 700, background: 'rgba(100,116,139,0.35)', borderColor: '#94a3b8' }}>{pt} şube</span>
+                        ) : (
+                          <span style={{ fontSize: 11, color: 'var(--text3)' }}>Kayıt tam</span>
+                        )}
+                        <span style={{ fontSize: 11, color: 'var(--text3)' }}>Detay ↑</span>
+                      </span>
+                    </div>
+                    {s.planOzetMetin ? (
+                      <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.45, opacity: 0.95 }}>
+                        {s.planOzetMetin}
+                      </div>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--text3)', opacity: 0.88, margin: '10px 0 0' }}>
+              Satıra tıklayınca üstteki detay ve tablo o güne yüklenir. Gelecek tarihlerde tüm şubeler “kayıtsız” görünebilir; geçmiş günlerde kalan satır genelde anlamlıdır.
+            </p>
+          </div>
           </>
           )}
         </div>

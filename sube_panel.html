@@ -1104,6 +1104,128 @@
     .stok-pin-dock .pin-input {
       max-width: 120px;
     }
+    /* Ürün Teslim Al — toptancı: tedarikçi + personel + PIN vurgu kutusu */
+    .sv-toptanci-onay-panel {
+      margin: 0 0 16px 0;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: 2px solid rgba(14, 165, 233, 0.55);
+      background: linear-gradient(155deg, rgba(14, 165, 233, 0.2), rgba(30, 58, 138, 0.32));
+      box-shadow: 0 4px 22px rgba(0, 0, 0, 0.22);
+    }
+    .sv-toptanci-onay-baslik {
+      font-size: 14px;
+      font-weight: 800;
+      color: #e0f2fe;
+      margin: 0 0 6px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    }
+    .sv-toptanci-onay-alt {
+      font-size: 12px;
+      color: #bae6fd;
+      margin: 0 0 12px 0;
+      line-height: 1.5;
+      opacity: 0.96;
+    }
+    .sv-toptanci-onay-panel .form-group label {
+      font-weight: 700;
+      font-size: 12px;
+      color: #e0f2fe;
+    }
+    .sv-toptanci-onay-panel select {
+      font-size: 14px !important;
+      border-width: 2px !important;
+    }
+    .sv-toptanci-pin-grid {
+      display: grid;
+      grid-template-columns: minmax(200px, 1fr) 132px;
+      gap: 10px;
+      align-items: end;
+      margin-top: 10px;
+    }
+    .sv-toptanci-pin-grid .pin-input {
+      font-size: 20px !important;
+      letter-spacing: 0.12em;
+      border: 2px solid rgba(125, 211, 252, 0.65) !important;
+      background: rgba(15, 23, 42, 0.45) !important;
+    }
+    /* Sipariş tam geldi / eksik — üstte büyük seçim */
+    .sv-teslim-durum-panel {
+      margin: 0 0 16px 0;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: 2px solid rgba(251, 191, 36, 0.5);
+      background: linear-gradient(165deg, rgba(251, 191, 36, 0.14), var(--bg2));
+      box-shadow: 0 2px 18px rgba(0, 0, 0, 0.12);
+    }
+    .sv-teslim-durum-panel .sv-durum-baslik {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--text);
+      margin: 0 0 6px 0;
+    }
+    .sv-teslim-durum-panel .sv-durum-alt {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 0 0 12px 0;
+      line-height: 1.5;
+    }
+    .sv-durum-btn-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .sv-durum-btn {
+      flex: 1 1 220px;
+      min-height: 56px;
+      padding: 10px 14px;
+      font-size: 15px;
+      font-weight: 800;
+      border-radius: 10px;
+      border: 2px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      cursor: pointer;
+      text-align: center;
+      line-height: 1.25;
+      transition: transform 0.1s ease, box-shadow 0.1s ease, border-color 0.1s ease;
+    }
+    .sv-durum-btn:hover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .sv-durum-tam.is-active {
+      border-color: #22c55e !important;
+      background: rgba(34, 197, 94, 0.22) !important;
+      color: #bbf7d0 !important;
+      box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.28);
+    }
+    .sv-durum-eksik.is-active {
+      border-color: #f97316 !important;
+      background: rgba(249, 115, 22, 0.2) !important;
+      color: #ffedd5 !important;
+      box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.3);
+    }
+    .sv-teslim-submit-bar {
+      margin-top: 16px;
+      padding: 14px 0 4px;
+      border-top: 2px solid rgba(59, 130, 246, 0.28);
+    }
+    .sv-teslim-submit-bar .btn-primary {
+      width: 100%;
+      padding: 14px 18px;
+      font-size: 15px;
+      font-weight: 800;
+    }
+    @media (max-width: 520px) {
+      .sv-toptanci-pin-grid {
+        grid-template-columns: 1fr;
+      }
+    }
     /* Ürün Aç — personel + PIN: dikkat çekici kutu (kullanıcı kolayca görsün) */
     .urun-ac-onay-panel {
       margin: 0 0 16px 0;
@@ -4811,16 +4933,30 @@ function renderStokForms(tip) {
         h += 'Girilen miktarlar <strong>aktif stoka girmez</strong> — depodaki potansiyel stok olarak izlenir. ';
         h += 'Ürünü bardan/kullanıma açmak için <strong>Ürün Aç</strong> formunu kullanın.';
         h += '</div>';
-        h += '<div style="margin-bottom:10px">';
-        h += '<div style="display:grid;grid-template-columns:minmax(180px,1fr) 120px;gap:8px;align-items:end;margin-bottom:10px">';
-        h += '<div class="form-group" style="margin:0"><label>Personel</label><select id="svPers"></select></div>';
-        h += '<div class="form-group" style="margin:0"><label>Onay Kodu</label><input id="svPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>';
-        h += '</div>';
-        h += '<button class="btn btn-primary" id="svGonder">✅ Seçimleri Onayla ve Teslim Al</button>';
-        h += '<div id="svMsg" style="margin-top:8px;font-size:12px"></div>';
-        h += '</div>';
-        // Tedarikçi dropdown (zorunlu)
+        h += '<div class="sv-toptanci-onay-panel">';
+        h += '<div class="sv-toptanci-onay-baslik"><span aria-hidden="true">🚚</span> Toptancı / tedarikçi ve <strong style="color:#fff">teslimi onaylayan personel</strong></div>';
+        h += '<p class="sv-toptanci-onay-alt">Önce <strong>tedarikçiyi</strong> seçin; ardından bu teslim kaydını imzalayacak <strong>personel</strong> ve <strong>4 haneli PIN</strong> girin.</p>';
         h += tedarikciSelectHTML('svTedarikci');
+        h += '<div class="sv-toptanci-pin-grid">';
+        h += '<div class="form-group" style="margin:0"><label>Personel *</label><select id="svPers"></select></div>';
+        h += '<div class="form-group" style="margin:0"><label>Onay kodu (PIN) *</label><input id="svPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>';
+        h += '</div></div>';
+        h += '<div class="sv-teslim-durum-panel">';
+        h += '<div class="sv-durum-baslik">Verilen sipariş tam geldi mi? <span style="color:#fda4af">*</span></div>';
+        h += '<p class="sv-durum-alt"><strong>Önce burayı işaretleyin:</strong> Paket siparişle birebir tam ise <strong>Tam geldi</strong>; kısmi veya farklı ise <strong>Eksik var</strong>. Tam geldi seçtiğinizde aşağıdaki kontrol listesinde <em>tüm</em> kalemleri tiklemeniz gerekir.</p>';
+        h += '<div class="sv-durum-btn-row">';
+        h += '<button type="button" class="sv-durum-btn sv-durum-tam" id="svDurumTamBtn" data-val="tam_geldi">✅ Tam geldi<br><span style="font-size:11px;font-weight:700;opacity:0.9">Sipariş eksiksiz</span></button>';
+        h += '<button type="button" class="sv-durum-btn sv-durum-eksik" id="svDurumEksikBtn" data-val="eksik_var">⚠️ Eksik var<br><span style="font-size:11px;font-weight:700;opacity:0.9">Kısmi veya yanlış sevkiyat</span></button>';
+        h += '</div>';
+        h += '<input type="hidden" id="svTeslimDurumu" value="" />';
+        h += '<div id="svEksikPanel" class="siparis-detay sip-inner-panel" style="display:none;margin-top:12px">';
+        h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Eksik ürün bilgisi <span style="color:#fda4af">*</span></div>';
+        h += '<div class="form-group"><label>Eksik ürün sipariş formunda var mıydı? *</label>';
+        h += '<select id="svEksikKategori"><option value="">— Seçin —</option><option value="sipariste_vardi">Sipariş formunda vardı</option><option value="sipariste_yoktu">Sipariş formunda yoktu / yazılmadı</option></select></div>';
+        h += '<div class="form-group"><label>Gelmeyen ürünler açıklaması *</label><textarea id="svEksikAciklama" rows="3" placeholder="Örn: 2 koli soda, 1 koli su gelmedi."></textarea></div>';
+        h += '</div>';
+        h += '<div class="form-group" style="margin-top:12px;margin-bottom:0"><label>Teslim açıklaması *</label><textarea id="svTeslimAciklama" rows="2" placeholder="Teslimin genel durumunu yazın (zorunlu)."></textarea></div>';
+        h += '</div>';
         h += '<div id="svSiparisKontrolWrap"></div>';
         h += '<div id="svKatalogWrap"></div>';
         h += '<div id="svKatOverlay" class="overlay sip-kat-overlay" style="display:none" aria-hidden="true">';
@@ -4828,20 +4964,9 @@ function renderStokForms(tip) {
         h += '<div id="svKatModalInner"></div>';
         h += '</div></div>';
         h += '<div id="svSecimOzet" class="siparis-detay" style="margin-top:10px;font-size:12px;color:var(--muted)">Henüz ürün seçilmedi.</div>';
-        h += '<div class="siparis-detay sip-inner-panel" style="margin-top:10px">';
-        h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Sipariş verilen ürünler geldi mi? <span style="color:#fda4af">*</span></div>';
-        h += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
-        h += '<button type="button" class="sip-mini-btn" id="svDurumTamBtn" data-val="tam_geldi">✅ Tam geldi</button>';
-        h += '<button type="button" class="sip-mini-btn" id="svDurumEksikBtn" data-val="eksik_var">⚠️ Eksik var</button>';
-        h += '</div>';
-        h += '<input type="hidden" id="svTeslimDurumu" value="" />';
-        h += '<div id="svEksikPanel" class="siparis-detay sip-inner-panel" style="display:none;margin-top:10px">';
-        h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Eksik ürün bilgisi <span style="color:#fda4af">*</span></div>';
-        h += '<div class="form-group"><label>Eksik ürün sipariş formunda var mıydı? *</label>';
-        h += '<select id="svEksikKategori"><option value="">— Seçin —</option><option value="sipariste_vardi">Sipariş formunda vardı</option><option value="sipariste_yoktu">Sipariş formunda yoktu / yazılmadı</option></select></div>';
-        h += '<div class="form-group"><label>Gelmeyen ürünler açıklaması *</label><textarea id="svEksikAciklama" rows="3" placeholder="Örn: 2 koli soda, 1 koli su gelmedi."></textarea></div>';
-        h += '</div>';
-        h += '<div class="form-group"><label>Teslim açıklaması *</label><textarea id="svTeslimAciklama" rows="2" placeholder="Teslimin genel durumunu yazın."></textarea></div>';
+        h += '<div class="sv-teslim-submit-bar">';
+        h += '<button type="button" class="btn btn-primary" id="svGonder">✅ Seçimleri Onayla ve Teslim Al</button>';
+        h += '<div id="svMsg" style="margin-top:10px;font-size:13px"></div>';
         h += '</div>';
         el.innerHTML = h;
         _stokKatalogByPrefix.sv = katalog;
