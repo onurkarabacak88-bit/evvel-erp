@@ -1710,8 +1710,7 @@
         <div id="siparisStickyBar" class="siparis-sticky-secim" style="display:none" role="region" aria-label="Seçilen sipariş özeti">
           <div class="siparis-sticky-secim-inner">
             <span id="sipSeciliUstOzet" class="siparis-sticky-secim-ozet"></span>
-            <select id="sipPers" style="min-width:170px"></select>
-            <input id="sipPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="Onay kodu" style="width:120px" />
+            <select id="sipPers" style="min-width:170px" aria-label="Sipariş onayı personel"></select>
             <button type="button" class="btn btn-success btn-sm" id="siparisOnayBtnUst" disabled>Seçimleri Onayla</button>
           </div>
         </div>
@@ -3443,10 +3442,10 @@ async function renderSiparisPanel() {
       h += '</button>';
     });
     h += '</div>';
-    h += '<div class="siparis-detay" style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.45">Ürün adı ve adet kutusu <strong>aynı satırda</strong>; liste tam ekran pencerede açılır. Seçim varken <strong>üstteki yeşil çubukta</strong> özet görünür — personel ve onay kodu üstten veya onay penceresinden girilebilir.</div>';
+    h += '<div class="siparis-detay" style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.45">Ürün adı ve adet kutusu <strong>aynı satırda</strong>; liste tam ekran pencerede açılır. Seçim varken <strong>üstteki yeşil çubukta</strong> özet görünür; onay için <strong>Seçimleri Onayla</strong> ile açılan pencerede PIN girilir.</div>';
     h += '<div class="siparis-detay" id="siparisOnayFormWrap" style="display:none">';
     h += '<div style="font-size:12px;font-weight:700;margin-bottom:6px">Sipariş notu (opsiyonel)</div>';
-    h += '<p style="font-size:11px;color:var(--muted);margin:0 0 10px;line-height:1.45">PIN ve personel — üstteki yapışkan yeşil kutuda; göndermek için <strong>Seçimleri Onayla</strong> düğmesine basın.</p>';
+    h += '<p style="font-size:11px;color:var(--muted);margin:0 0 10px;line-height:1.45">İsteğe bağlı personel üstteki yeşil çubukta seçilebilir; <strong>onay kodu (PIN)</strong> yalnızca açılan pencerede istenir. Göndermek için <strong>Seçimleri Onayla</strong> düğmesine basın.</p>';
     h += '<div class="form-group"><label>Not</label><input id="siparisOnayNot" placeholder="Kısa not" /></div>';
     h += '</div>';
   } else {
@@ -3553,7 +3552,7 @@ async function renderSiparisPanel() {
       onayBtnUst.style.opacity = secimVar ? '1' : '0.65';
       onayBtnUst.title = !secimVar
         ? 'Önce en az bir üründe adet girin'
-        : 'Onayda üstteki personel/onay kodu kullanılır; boşsa pencereden istenir';
+        : 'Onay penceresinde personel ve PIN; üstte personel seçtiyseniz pencerede önceden işaretlenir';
     }
     if (ustOzet) ustOzet.textContent = ozetTxt;
     if (ustBar) ustBar.style.display = secimVar ? 'block' : 'none';
@@ -3561,9 +3560,7 @@ async function renderSiparisPanel() {
   }
   siparisSeciliOzetGuncelle();
   var sipPersEl = document.getElementById('sipPers');
-  var sipPinEl = document.getElementById('sipPin');
   if (sipPersEl) sipPersEl.onchange = siparisSeciliOzetGuncelle;
-  if (sipPinEl) sipPinEl.oninput = siparisSeciliOzetGuncelle;
   var sipOzBtn = document.getElementById('sipOzelGonderBtn');
   if (sipOzBtn) sipOzBtn.onclick = async function(){
     setMsg('siparisMsg','','');
@@ -3579,7 +3576,7 @@ async function renderSiparisPanel() {
       var ozetHtml = '<div style="font-size:12px"><span>' + escHtml(ad) + '</span> <strong>×' + adet + '</strong>' + (n0 ? '<div style="color:var(--muted);margin-top:4px">' + escHtml(n0) + '</div>' : '') + '</div>';
       var creds0 = await ensureTopCredentials(
         'sipPers',
-        'sipPin',
+        null,
         '📌 Özel talep onayı',
         ozetHtml
       );
@@ -3623,7 +3620,7 @@ async function renderSiparisPanel() {
       if (!kalemler.length) throw new Error('Onay için en az bir üründe adet girin');
       var creds = await ensureTopCredentials(
         'sipPers',
-        'sipPin',
+        null,
         '🛒 Sipariş onayı',
         '<div style="font-size:12px">Siparişi onaylamak için personel ve onay kodu gerekli.</div>'
       );
@@ -3887,7 +3884,7 @@ function pinOnayModalAc(opts) {
         (askCredentials
           ? '<div class="form-group" style="margin-top:8px"><label>Personel</label><select id="pinModalPers">' + perselOps + '</select></div>' +
             '<div class="form-group" style="margin-top:8px"><label>PIN</label><input id="pinModalPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="····" /></div>'
-          : '<div style="font-size:12px;color:var(--muted);margin-top:8px">Personel ve onay kodu üst alandaki kutudan alınacak.</div>'
+          : '<div style="font-size:12px;color:var(--muted);margin-top:8px">Bir önceki adımda girilen personel ve PIN ile kayıt tamamlanır; burada yalnızca özeti onaylayın.</div>'
         ) +
         '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">' +
           '<button type="button" class="btn btn-secondary" id="pinModalIptal">İptal</button>' +
@@ -3918,20 +3915,21 @@ function pinOnayModalAc(opts) {
 
 async function ensureTopCredentials(personelSelId, pinInputId, baslik, ozetHtml) {
   var pid = selVal(personelSelId);
-  var pin = inpVal(pinInputId).replace(/\D/g, '').slice(0, 4);
+  var pinEl = pinInputId ? document.getElementById(pinInputId) : null;
+  var pin = pinEl ? inpVal(pinInputId).replace(/\D/g, '').slice(0, 4) : '';
   if (pid && pin.length === 4) return { personel_id: pid, pin: pin };
   var modalRes = await pinOnayModalAc({
     baslik: baslik || 'Onay bilgisi gerekli',
     ozetHtml: ozetHtml || '<div style="font-size:12px">Devam etmek için personel ve onay kodu girin.</div>',
-    askCredentials: true
+    askCredentials: true,
+    personelId: pid || undefined,
   });
   if (!modalRes || !modalRes.ok) return null;
   var pSel = document.getElementById(personelSelId);
-  var pIn = document.getElementById(pinInputId);
   if (pSel) pSel.value = modalRes.personel_id || '';
-  if (pIn) pIn.value = modalRes.pin || '';
+  if (pinEl) pinEl.value = modalRes.pin || '';
   pid = selVal(personelSelId);
-  pin = inpVal(pinInputId).replace(/\D/g, '').slice(0, 4);
+  pin = pinEl ? inpVal(pinInputId).replace(/\D/g, '').slice(0, 4) : String(modalRes.pin || '').replace(/\D/g, '').slice(0, 4);
   if (!pid || pin.length !== 4) return null;
   return { personel_id: pid, pin: pin };
 }
