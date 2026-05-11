@@ -961,6 +961,46 @@
       color: var(--muted);
       line-height: 1.5;
     }
+    /* Sipariş Ver — depo sevk edildi, talep şubesi: siparişiniz geliyor */
+    .sip-geliyor-banner {
+      border-radius: var(--rs);
+      border: 1px solid rgba(34, 197, 94, 0.45);
+      background: linear-gradient(145deg, rgba(34, 197, 94, 0.22), rgba(16, 185, 129, 0.08));
+      padding: 14px 16px;
+      margin-bottom: 14px;
+      box-shadow: 0 6px 26px rgba(0, 0, 0, 0.16);
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+    }
+    .sip-geliyor-banner:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 30px rgba(34, 197, 94, 0.2);
+    }
+    .sip-geliyor-etiket {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #ecfdf5;
+      background: rgba(5, 150, 105, 0.85);
+      padding: 5px 11px;
+      border-radius: 999px;
+      border: 1px solid rgba(167, 243, 208, 0.45);
+    }
+    .sip-geliyor-baslik {
+      margin: 11px 0 7px;
+      font-size: 16px;
+      font-weight: 800;
+      color: var(--text);
+      line-height: 1.35;
+      letter-spacing: -0.01em;
+    }
+    .sip-geliyor-alt {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
     .sip-ana-sip-banner {
       background: rgba(251, 191, 36, 0.08);
       border: 1px solid rgba(251, 191, 36, 0.32);
@@ -1210,16 +1250,67 @@
       color: #ffedd5 !important;
       box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.3);
     }
-    .sv-teslim-submit-bar {
-      margin-top: 16px;
-      padding: 14px 0 4px;
-      border-top: 2px solid rgba(59, 130, 246, 0.28);
+    /* Toptancı teslim: sipariş paneli gibi yapışkan özet + gönder (sayfa sonunda kaybolmaz) */
+    #svTeslimStickyBar {
+      position: sticky;
+      top: 0;
+      z-index: 55;
+      margin: 0 0 14px 0;
     }
-    .sv-teslim-submit-bar .btn-primary {
+    .sv-teslim-sticky-panel {
+      margin: 0;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: 2px solid rgba(59, 130, 246, 0.65);
+      background: linear-gradient(145deg, rgba(37, 99, 235, 0.28), rgba(15, 118, 110, 0.2));
+      box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.25), 0 8px 26px rgba(0, 0, 0, 0.28);
+    }
+    .sv-teslim-sticky-baslik {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 800;
+      color: #e0f2fe;
+      margin: 0 0 8px 0;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    }
+    .sv-teslim-sticky-tag {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 4px 10px;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #2563eb, #1d4ed8);
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(29, 78, 216, 0.45);
+    }
+    .sv-teslim-sticky-alt {
+      font-size: 12px;
+      font-weight: 600;
+      color: #bae6fd;
+      margin: 0 0 12px 0;
+      line-height: 1.45;
+    }
+    .sv-teslim-sticky-ozet {
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      line-height: 1.35;
+    }
+    .sv-teslim-sticky-panel .btn-primary {
       width: 100%;
       padding: 14px 18px;
       font-size: 15px;
       font-weight: 800;
+    }
+    .sv-eksik-modal-overlay {
+      z-index: 9300;
+    }
+    .sv-eksik-modal-kart {
+      max-width: 520px;
     }
     @media (max-width: 520px) {
       .sv-toptanci-pin-grid {
@@ -2414,6 +2505,22 @@ function _teslimBekleyenPaketFiltre(akis) {
     );
   });
 }
+/** Sol menü «Ürün Teslim Al» rozeti — bekleyen depo paketi sayısı (Ürün Aç rozeti gibi). */
+function solSevkTeslimBekleyenRozetGuncelle(akis) {
+  var badge = document.getElementById('solSevkBadge');
+  if (!badge) return;
+  if (!akis || typeof akis !== 'object') {
+    badge.style.display = 'none';
+    return;
+  }
+  var n = _teslimBekleyenPaketFiltre(akis).length;
+  if (n <= 0) {
+    badge.style.display = 'none';
+    return;
+  }
+  badge.textContent = n > 99 ? '99+' : String(n);
+  badge.style.display = '';
+}
 /** sessionStorage: son görülen gönderilecek kuyruk imzası (yeni düşünce yanıp sönme) */
 var EVVEL_GONDER_ACK = 'evvel_gonder_ack_v2_';
 const URUN_AC_PERSONEL_CACHE_KEY = 'sube_panel_urun_ac_personel';
@@ -2964,21 +3071,49 @@ function siparisNormalize(raw) {
     var items = Array.isArray(k.items) ? k.items : [];
     var nItems = items.map(function(it, i){
       if (typeof it === 'string') return { id: slugifyTR(it) + '_' + i, ad: it, aktif: true };
+      var depoKod = it && it.depo_stok_kalem_kodu != null ? String(it.depo_stok_kalem_kodu).trim() : '';
       return {
         id: (it && it.id) || (slugifyTR((it&&it.ad)||'urun') + '_' + i),
         ad: String((it && it.ad) || '').trim() || ('Ürün ' + (i+1)),
-        aktif: it && it.aktif !== false
+        aktif: it && it.aktif !== false,
+        depo_stok_kalem_kodu: depoKod || null,
+        aciklama: it && it.aciklama != null ? String(it.aciklama).trim() || null : null,
       };
     });
     return { id: k.id, label: k.label, items: nItems };
   });
+}
+
+/** Aynı depo stok kalemi veya aynı stokApiKey (bardak vb.) için yalnızca tek satır — Ürün Aç / teslim katalogunda çift görünümü engeller. */
+function stokKatalogDedupeAnahtar(it) {
+  var kod = String((it && it.depo_stok_kalem_kodu) || '').trim().toLowerCase();
+  if (kod) return 'depo:' + kod;
+  var api = stokApiKeyFromAd(it && it.ad);
+  if (api) return 'stok:' + api;
+  return '';
+}
+function siparisKatalogDedupeStokSatirlari(data) {
+  if (!Array.isArray(data) || !data.length) return data;
+  var gordu = Object.create(null);
+  return data
+    .map(function(kat) {
+      var items = (kat.items || []).filter(function(it) {
+        var dk = stokKatalogDedupeAnahtar(it);
+        if (!dk) return true;
+        if (gordu[dk]) return false;
+        gordu[dk] = true;
+        return true;
+      });
+      return { id: kat.id, label: kat.label, items: items };
+    })
+    .filter(function(kat) { return (kat.items || []).length > 0; });
 }
 async function siparisLoad(force) {
   if (!force && Array.isArray(siparisKatalogCache) && siparisKatalogCache.length) {
     return siparisKatalogCache;
   }
   var d = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-katalog');
-  siparisKatalogCache = siparisNormalize(d && d.kategoriler);
+  siparisKatalogCache = siparisKatalogDedupeStokSatirlari(siparisNormalize(d && d.kategoriler));
   return siparisKatalogCache;
 }
 async function siparisAkisLoad(force) {
@@ -3043,6 +3178,8 @@ async function siparisGonderSolBlokGuncelle(akisOptional) {
 
   if (btn) btn.classList.toggle('sol-gonder-yanip', shouldBlink);
   if (bar) bar.style.display = shouldBlink ? 'block' : 'none';
+
+  solSevkTeslimBekleyenRozetGuncelle(akis);
 }
 
 function gonderilecekAckBlink() {
@@ -3558,7 +3695,21 @@ async function renderSiparisPanel() {
   if (katalogBos && siparisOpenKat) siparisOpenKat = null;
   if (!katalogBos && siparisOpenKat && !data.some(function(k){ return k.id === siparisOpenKat; })) siparisOpenKat = null;
   var acik = data.find(function(k){ return k.id === siparisOpenKat; }) || null;
+  var teslimKabulListe = _teslimBekleyenPaketFiltre(akis);
+  _teslimKabulListe = teslimKabulListe;
+  renderDepoKabulSection();
   var h = '';
+  if (teslimKabulListe.length) {
+    h +=
+      '<div class="sip-geliyor-banner" role="button" tabindex="0" onclick="solSekmeAc(\'sevk\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();solSekmeAc(\'sevk\');}">';
+    h += '<span class="sip-geliyor-etiket">Depo sevk</span>';
+    h += '<div class="sip-geliyor-baslik">Siparişiniz geliyor</div>';
+    h +=
+      '<p class="sip-geliyor-alt">Depo siparişiniz yola çıktı — <strong>' +
+      teslimKabulListe.length +
+      '</strong> paket teslim kabulü bekliyor. Fiziksel sayım için <strong>Ürün Teslim Al</strong> sekmesine geçin (tıklayın).</p>';
+    h += '</div>';
+  }
   var tekSipler = bekListe.filter(function(b){ return b.tur === 'tek_sefer'; });
   if (tekSipler.length) {
     h += '<div class="siparis-detay" style="border-left:3px solid rgba(59,130,246,.55);padding-left:12px;margin-bottom:14px;background:rgba(59,130,246,.06)">';
@@ -3597,15 +3748,6 @@ async function renderSiparisPanel() {
       h += '</div>';
       h += '</div>';
     });
-    h += '</div>';
-  }
-  var teslimKabulListe = _teslimBekleyenPaketFiltre(akis);
-  _teslimKabulListe = teslimKabulListe;
-  renderDepoKabulSection();
-  if (teslimKabulListe.length) {
-    h += '<div onclick="solSekmeAc(\'sevk\')" style="cursor:pointer;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.45);border-radius:10px;padding:10px 14px;margin-bottom:14px">';
-    h += '<div style="font-size:12px;font-weight:700;margin-bottom:4px">📥 ' + teslimKabulListe.length + ' sipariş paketi teslim kabulü bekliyor</div>';
-    h += '<p style="font-size:11px;color:var(--muted);margin:0;line-height:1.4">Paketi teslim almak için <strong>Ürün Teslim Al</strong> sekmesine gidin → <strong>Depo Siparişi Kabulü</strong> bölümünden kör denetimle onaylayın.</p>';
     h += '</div>';
   }
   if (!katalogBos) {
@@ -3867,18 +4009,17 @@ function renderDepoKabulSection() {
   var kart = document.getElementById('depoKabulKart');
   if (!el) return;
   var liste = _teslimKabulListe || [];
-  var badge = document.getElementById('solSevkBadge');
   if (!liste.length) {
     el.innerHTML = '';
     if (kart) kart.style.display = 'none';
-    if (badge) badge.style.display = 'none';
+    solSevkTeslimBekleyenRozetGuncelle(siparisAkisCache);
     return;
   }
   if (kart) kart.style.display = '';
-  if (badge) { badge.textContent = liste.length; badge.style.display = ''; }
+  solSevkTeslimBekleyenRozetGuncelle(siparisAkisCache);
   var h = '';
   h +=
-    '<p style="font-size:11px;color:var(--muted);margin:0 0 12px;line-height:1.45">Her kalemi <strong>bağımsız olarak sayın</strong> ve saydığınız adedi girin (kör denetim). Depo kısmi gönderdiyse kutuya <strong>fiziki paketteki</strong> adedi yazın — satır yanında <strong>depodan çıkan</strong> sistem adedi ipucu olarak gösterilir; eşleşince stok düşer. Uyuşmazlıkta operasyon merkezi çözümüne kadar askıda kalır.</p>';
+    '<p style="font-size:11px;color:var(--muted);margin:0 0 12px;line-height:1.45">Her kalemi <strong>bağımsız olarak sayın</strong> ve saydığınız adedi girin (kör denetim). Depo kısmi gönderdiyse kutuya <strong>fiziki paketteki</strong> adedi yazın. Siparişteki miktar burada gösterilmez; uyuşmazlıkta operasyon merkezi çözümüne kadar askıda kalabilir.</p>';
   liste.forEach(function (t) {
     var tid = String(t.id || '').trim();
     var rows = t.teslim_bekleyen_kalemler || [];
@@ -3889,18 +4030,9 @@ function renderDepoKabulSection() {
     rows.forEach(function (row, idx) {
       var kk = String(row.kalem_kodu || '').trim();
       var ka = String(row.kalem_adi || row.kalem_kodu || '').trim();
-      var sevk = row.sevk_adet;
       var inpId = 'teslimKab_' + tid.replace(/[^a-zA-Z0-9_-]/g, '_') + '_' + idx;
       h += '<div style="display:grid;grid-template-columns:minmax(0,1fr) 88px;gap:8px;align-items:start;font-size:12px">';
-      h +=
-        '<span>' +
-        escHtml(ka) +
-        (sevk != null && sevk !== ''
-          ? '<span class="mono" style="display:block;font-size:10px;color:#34d399;margin-top:2px">Depodan çıkan: ' +
-            escHtml(String(sevk)) +
-            ' adet</span>'
-          : '') +
-        '</span>';
+      h += '<span>' + escHtml(ka) + '</span>';
       h += '<input class="teslim-kabul-adet" inputmode="numeric" id="' + escHtml(inpId) + '" value="" placeholder="Adet" data-kalem-kodu="' + escHtml(kk) + '" data-kalem-adi="' + escHtml(ka) + '" />';
       h += '</div>';
     });
@@ -4740,7 +4872,18 @@ function stokApiKeyFromAd(ad){
     'kare cikolata':'pasta_kare_cik','kare yerfistik':'pasta_kare_yerfistik','kare karamel':'pasta_kare_karamel','kare limon':'pasta_kare_limon',
     'dilim sade':'pasta_dilim_sade','dilim antep':'pasta_dilim_antep','dilim cikolata':'pasta_dilim_cik','dilim yabanmersini':'pasta_dilim_yaban'
   };
-  return m[n] || pm[n] || null;
+  var ex = m[n] || pm[n];
+  if (ex) return ex;
+  /* Katalogda aynı bardak havuzu için farklı satır adları (8 oz / 14 oz vb.) — stok düşümünde tekilleştirme için */
+  if (/\bbardak\b/.test(n)) {
+    if (/\bkarton\b/.test(n)) return 'karton_bardak';
+    if (/\bplastik\b/.test(n)) return 'bardak_plastik';
+    if (/\b(14|15|16|18|20|22)\b\s*oz\b/.test(n) || /\b(14|15|16)\s*oz\b/.test(n)) return 'bardak_buyuk';
+    if (/\b(4|5|6|7|8|9|10|11|12)\b\s*oz\b/.test(n)) return 'bardak_kucuk';
+    if (/\bbuyuk\b/.test(n) || /\bbyk\b/.test(n)) return 'bardak_buyuk';
+    if (/\bkucuk\b/.test(n) || /\bkck\b/.test(n)) return 'bardak_kucuk';
+  }
+  return null;
 }
 
 var _PASTA_KEYS = ['pasta_porsiyon_sade','pasta_porsiyon_antep','pasta_porsiyon_cik','pasta_mag_cilek','pasta_mag_lotus','pasta_buyuk_tart','pasta_kucuk_tart','pasta_snickers','pasta_malaga','pasta_latte','pasta_muzlu_rulo','pasta_cik_rulo','pasta_meyveli_rulo','pasta_browni','pasta_dilim_ss_sade','pasta_cream_puff','pasta_kavala','pasta_cup_limon','pasta_cup_yerfistik','pasta_cup_cilek','pasta_cup_karamel','pasta_cup_lotus','pasta_cup_antep','pasta_cup_hindistan','pasta_profiterol','pasta_kare_cik','pasta_kare_yerfistik','pasta_kare_karamel','pasta_kare_limon','pasta_dilim_sade','pasta_dilim_antep','pasta_dilim_cik','pasta_dilim_yaban'];
@@ -4900,22 +5043,106 @@ function wireSevkTeslimDurumuUI() {
   var tamBtn = document.getElementById('svDurumTamBtn');
   var eksikBtn = document.getElementById('svDurumEksikBtn');
   var hid = document.getElementById('svTeslimDurumu');
-  var panel = document.getElementById('svEksikPanel');
-  if (!tamBtn || !eksikBtn || !hid || !panel) return;
+  var modal = document.getElementById('svEksikModal');
+  if (!tamBtn || !eksikBtn || !hid) return;
+  function svEksikModalKapat() {
+    if (modal) {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+    }
+    try {
+      document.body.style.overflow = '';
+    } catch (_) {}
+  }
+  function svEksikModalAc() {
+    if (!modal) return;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    try {
+      document.body.style.overflow = 'hidden';
+    } catch (_) {}
+    var ta = document.getElementById('svEksikAciklama');
+    setTimeout(function () {
+      try {
+        if (ta) ta.focus();
+      } catch (_) {}
+    }, 80);
+  }
   function setDurum(v) {
     hid.value = v;
     tamBtn.classList.toggle('is-active', v === 'tam_geldi');
     eksikBtn.classList.toggle('is-active', v === 'eksik_var');
-    panel.style.display = (v === 'eksik_var') ? '' : 'none';
     if (v !== 'eksik_var') {
+      svEksikModalKapat();
       var eksikKat = document.getElementById('svEksikKategori');
       var eksikAcik = document.getElementById('svEksikAciklama');
       if (eksikKat) eksikKat.value = '';
       if (eksikAcik) eksikAcik.value = '';
+      var chip = document.getElementById('svEksikKayitChip');
+      if (chip) chip.style.display = 'none';
     }
   }
-  tamBtn.onclick = function(){ setDurum('tam_geldi'); };
-  eksikBtn.onclick = function(){ setDurum('eksik_var'); };
+  tamBtn.onclick = function () {
+    setDurum('tam_geldi');
+  };
+  eksikBtn.onclick = function () {
+    hid.value = 'eksik_var';
+    tamBtn.classList.remove('is-active');
+    eksikBtn.classList.add('is-active');
+    svEksikModalAc();
+  };
+  var kaydet = document.getElementById('svEksikModalKaydet');
+  var iptal = document.getElementById('svEksikModalIptal');
+  if (kaydet) {
+    kaydet.onclick = function () {
+      var k = selVal('svEksikKategori');
+      var a = inpVal('svEksikAciklama').trim();
+      if (k !== 'sipariste_vardi' && k !== 'sipariste_yoktu') {
+        alert('Eksik ürün kategorisini seçin.');
+        return;
+      }
+      if (a.length < 3) {
+        alert('Gelmeyen ürünleri açıklamada yazın (en az 3 karakter).');
+        return;
+      }
+      svEksikModalKapat();
+      var chip = document.getElementById('svEksikKayitChip');
+      if (chip) chip.style.display = '';
+    };
+  }
+  if (iptal) {
+    iptal.onclick = function () {
+      svEksikModalKapat();
+      hid.value = '';
+      tamBtn.classList.remove('is-active');
+      eksikBtn.classList.remove('is-active');
+      var eksikKat = document.getElementById('svEksikKategori');
+      var eksikAcik = document.getElementById('svEksikAciklama');
+      if (eksikKat) eksikKat.value = '';
+      if (eksikAcik) eksikAcik.value = '';
+      var chip = document.getElementById('svEksikKayitChip');
+      if (chip) chip.style.display = 'none';
+    };
+  }
+  if (modal) {
+    modal.onclick = function (ev) {
+      if (ev.target === modal) svEksikModalKapat();
+    };
+    if (!modal.dataset.escWired) {
+      modal.dataset.escWired = '1';
+      document.addEventListener('keydown', function (ev) {
+        if (ev.key !== 'Escape') return;
+        var m = document.getElementById('svEksikModal');
+        if (!m || m.style.display === 'none') return;
+        ev.preventDefault();
+        m.style.display = 'none';
+        m.setAttribute('aria-hidden', 'true');
+        try {
+          document.body.style.overflow = '';
+        } catch (_) {}
+      });
+    }
+  }
 }
 
 function renderStokForms(tip) {
@@ -4943,31 +5170,40 @@ function renderStokForms(tip) {
         h += '</div></div>';
         h += '<div class="sv-teslim-durum-panel">';
         h += '<div class="sv-durum-baslik">Verilen sipariş tam geldi mi? <span style="color:#fda4af">*</span></div>';
-        h += '<p class="sv-durum-alt"><strong>Önce burayı işaretleyin:</strong> Paket siparişle birebir tam ise <strong>Tam geldi</strong>; kısmi veya farklı ise <strong>Eksik var</strong>. Tam geldi seçtiğinizde aşağıdaki kontrol listesinde <em>tüm</em> kalemleri tiklemeniz gerekir.</p>';
+        h += '<p class="sv-durum-alt"><strong>Önce burayı işaretleyin:</strong> Paket siparişle birebir tam ise <strong>Tam geldi</strong>; kısmi veya farklı ise <strong>Eksik var</strong> — eksik seçince ekranın ortasında bilgi penceresi açılır. Tam geldi seçtiğinizde aşağıdaki kontrol listesinde <em>tüm</em> kalemleri tiklemeniz gerekir.</p>';
         h += '<div class="sv-durum-btn-row">';
         h += '<button type="button" class="sv-durum-btn sv-durum-tam" id="svDurumTamBtn" data-val="tam_geldi">✅ Tam geldi<br><span style="font-size:11px;font-weight:700;opacity:0.9">Sipariş eksiksiz</span></button>';
         h += '<button type="button" class="sv-durum-btn sv-durum-eksik" id="svDurumEksikBtn" data-val="eksik_var">⚠️ Eksik var<br><span style="font-size:11px;font-weight:700;opacity:0.9">Kısmi veya yanlış sevkiyat</span></button>';
         h += '</div>';
         h += '<input type="hidden" id="svTeslimDurumu" value="" />';
-        h += '<div id="svEksikPanel" class="siparis-detay sip-inner-panel" style="display:none;margin-top:12px">';
-        h += '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Eksik ürün bilgisi <span style="color:#fda4af">*</span></div>';
-        h += '<div class="form-group"><label>Eksik ürün sipariş formunda var mıydı? *</label>';
-        h += '<select id="svEksikKategori"><option value="">— Seçin —</option><option value="sipariste_vardi">Sipariş formunda vardı</option><option value="sipariste_yoktu">Sipariş formunda yoktu / yazılmadı</option></select></div>';
-        h += '<div class="form-group"><label>Gelmeyen ürünler açıklaması *</label><textarea id="svEksikAciklama" rows="3" placeholder="Örn: 2 koli soda, 1 koli su gelmedi."></textarea></div>';
-        h += '</div>';
+        h += '<div id="svEksikKayitChip" class="siparis-detay" style="display:none;margin-top:10px;padding:8px 10px;font-size:11px;border-radius:8px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.38);color:#86efac">✓ Eksik ürün bilgisi kaydedildi. Düzenlemek için tekrar <strong>Eksik var</strong>a tıklayın.</div>';
         h += '<div class="form-group" style="margin-top:12px;margin-bottom:0"><label>Teslim açıklaması *</label><textarea id="svTeslimAciklama" rows="2" placeholder="Teslimin genel durumunu yazın (zorunlu)."></textarea></div>';
         h += '</div>';
+        h += '<div id="svTeslimStickyBar">';
+        h += '<div class="sv-teslim-sticky-panel">';
+        h += '<div class="sv-teslim-sticky-baslik"><span class="sv-teslim-sticky-tag">Özet</span><span>Teslim kaydı — gönder</span></div>';
+        h += '<p class="sv-teslim-sticky-alt">Aşağıdan ürün adetlerini girin. <strong>Personel ve PIN</strong> yukarıdaki mavi kutuda; buradan gönderince ortada onay penceresi açılır (sipariş ekranındaki gibi).</p>';
+        h += '<div id="svSecimOzet" class="siparis-detay sv-teslim-sticky-ozet" style="color:var(--muted)">Henüz ürün seçilmedi.</div>';
+        h += '<button type="button" class="btn btn-primary" id="svGonder">✅ Seçimleri Onayla ve Teslim Al</button>';
+        h += '<div id="svMsg" style="margin-top:10px;font-size:13px"></div>';
+        h += '</div></div>';
         h += '<div id="svSiparisKontrolWrap"></div>';
         h += '<div id="svKatalogWrap"></div>';
         h += '<div id="svKatOverlay" class="overlay sip-kat-overlay" style="display:none" aria-hidden="true">';
         h += '<div class="overlay-kart sip-kat-modal-kart" id="svKatModalKart">';
         h += '<div id="svKatModalInner"></div>';
         h += '</div></div>';
-        h += '<div id="svSecimOzet" class="siparis-detay" style="margin-top:10px;font-size:12px;color:var(--muted)">Henüz ürün seçilmedi.</div>';
-        h += '<div class="sv-teslim-submit-bar">';
-        h += '<button type="button" class="btn btn-primary" id="svGonder">✅ Seçimleri Onayla ve Teslim Al</button>';
-        h += '<div id="svMsg" style="margin-top:10px;font-size:13px"></div>';
-        h += '</div>';
+        h += '<div id="svEksikModal" class="overlay sv-eksik-modal-overlay" style="display:none" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="svEksikModalTitle">';
+        h += '<div class="overlay-kart sv-eksik-modal-kart" onclick="event.stopPropagation()">';
+        h += '<h2 id="svEksikModalTitle" style="margin:0 0 8px;font-size:18px;font-weight:800">Eksik ürün bilgisi</h2>';
+        h += '<p style="color:var(--muted);font-size:13px;margin:0 0 14px;line-height:1.55">Zorunlu alanları doldurup <strong>Kaydet</strong> ile kapatın. <strong>İptal</strong> derseniz «Eksik var» seçimi ve yazdıklarınız silinir.</p>';
+        h += '<div class="form-group"><label>Eksik ürün sipariş formunda var mıydı? <span style="color:#fda4af">*</span></label>';
+        h += '<select id="svEksikKategori"><option value="">— Seçin —</option><option value="sipariste_vardi">Sipariş formunda vardı</option><option value="sipariste_yoktu">Sipariş formunda yoktu / yazılmadı</option></select></div>';
+        h += '<div class="form-group"><label>Gelmeyen ürünler açıklaması <span style="color:#fda4af">*</span></label><textarea id="svEksikAciklama" rows="4" placeholder="Örn: 2 koli soda, 1 koli su gelmedi."></textarea></div>';
+        h += '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap">';
+        h += '<button type="button" class="btn btn-secondary" id="svEksikModalIptal">İptal</button>';
+        h += '<button type="button" class="btn btn-success" id="svEksikModalKaydet">Kaydet</button>';
+        h += '</div></div></div>';
         el.innerHTML = h;
         _stokKatalogByPrefix.sv = katalog;
         stokKartState('sv').openKat = null;
@@ -5019,26 +5255,28 @@ function renderStokForms(tip) {
         h += 'Bu kayıt teorik stok hesabına dahil edilir: ';
         h += '<em>Açılış + Ürün Aç = Beklenen kapanış stoku</em>';
         h += '</div>';
-        h += '<div class="urun-ac-onay-panel">';
-        h += '<div class="urun-ac-onay-baslik"><span class="tag-zorunlu">Zorunlu</span><span>Personel + onay kodu (PIN)</span></div>';
-        h += '<p class="urun-ac-onay-alt">Göndermeden önce burayı doldurun: önce <strong>personel</strong> seçin — ardından <strong>4 haneli şifre</strong> (PIN) girin. Personel seçilmeden PIN kutusu kapalıdır.</p>';
-        h += '<div class="urun-ac-onay-grid">';
-        h += '<div class="form-group" style="margin:0"><label>Personel</label><select id="acPers"></select></div>';
-        h += '<div class="form-group" style="margin:0"><label>Onay kodu (PIN)</label><input id="acPin" class="pin-input urun-ac-pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>';
-        h += '</div>';
-        h += '<div id="acPinBilgi" class="urun-ac-pin-bilgi"></div>';
-        h += '</div>';
-        h += '<div style="margin-bottom:10px">';
-        h += '<button class="btn btn-primary" id="acGonder">🔓 Seçimleri Onayla ve Aktif Kullanıma Al</button>';
-        h += '<div id="acMsg" style="margin-top:8px;font-size:12px"></div>';
-        h += '</div>';
         h += '<div id="acKatalogWrap"></div>';
         h += '<div id="acKatOverlay" class="overlay sip-kat-overlay" style="display:none" aria-hidden="true">';
         h += '<div class="overlay-kart sip-kat-modal-kart" id="acKatModalKart">';
         h += '<div id="acKatModalInner"></div>';
         h += '</div></div>';
         h += '<div id="acSecimOzet" class="siparis-detay" style="margin-top:10px;font-size:12px;color:var(--muted)">Henüz ürün seçilmedi.</div>';
+        h += '<div id="acZorunluOnayWrap" style="display:none" aria-hidden="true">';
+        h += '<div class="urun-ac-onay-panel">';
+        h += '<div class="urun-ac-onay-baslik"><span class="tag-zorunlu">Zorunlu</span><span>Personel + onay kodu (PIN)</span></div>';
+        h += '<p class="urun-ac-onay-alt">Kahve veya başka bir üründe adet girince bu bölüm açılır. Önce <strong>personel</strong> seçin — ardından <strong>4 haneli PIN</strong> girin.</p>';
+        h += '<div class="urun-ac-onay-grid">';
+        h += '<div class="form-group" style="margin:0"><label>Personel</label><select id="acPers"></select></div>';
+        h += '<div class="form-group" style="margin:0"><label>Onay kodu (PIN)</label><input id="acPin" class="pin-input urun-ac-pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>';
+        h += '</div>';
+        h += '<div id="acPinBilgi" class="urun-ac-pin-bilgi"></div>';
+        h += '</div>';
         h += '<div class="form-group"><label>Not</label><input id="acNot" placeholder="Opsiyonel" /></div>';
+        h += '<div style="margin-bottom:10px">';
+        h += '<button class="btn btn-primary" id="acGonder">🔓 Seçimleri Onayla ve Aktif Kullanıma Al</button>';
+        h += '<div id="acMsg" style="margin-top:8px;font-size:12px"></div>';
+        h += '</div>';
+        h += '</div>';
         el.innerHTML = h;
         _stokKatalogByPrefix.ac = katalog || [];
         stokKartState('ac').openKat = null;
@@ -5147,6 +5385,14 @@ function stokSecimOzeti(prefix, data) {
 
 function stokSecimBilgiYenile(prefix, data) {
   var oz = stokSecimOzeti(prefix, data || _stokKatalogByPrefix[prefix] || []);
+  if (prefix === 'ac') {
+    var acOnayW = document.getElementById('acZorunluOnayWrap');
+    if (acOnayW) {
+      var acOnayGoster = (oz.kalem || 0) > 0;
+      acOnayW.style.display = acOnayGoster ? '' : 'none';
+      acOnayW.setAttribute('aria-hidden', acOnayGoster ? 'false' : 'true');
+    }
+  }
   var ozetEl = document.getElementById(prefix + 'SecimOzet');
   if (ozetEl) {
     if (oz.kalem > 0) {
@@ -5304,8 +5550,16 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
         if (eksikKat) eksikKat.value = '';
         var eksikAcik = document.getElementById('svEksikAciklama');
         if (eksikAcik) eksikAcik.value = '';
-        var eksikPanel = document.getElementById('svEksikPanel');
-        if (eksikPanel) eksikPanel.style.display = 'none';
+        var eksikModal = document.getElementById('svEksikModal');
+        if (eksikModal) {
+          eksikModal.style.display = 'none';
+          eksikModal.setAttribute('aria-hidden', 'true');
+        }
+        try {
+          document.body.style.overflow = '';
+        } catch (_) {}
+        var eksikChip = document.getElementById('svEksikKayitChip');
+        if (eksikChip) eksikChip.style.display = 'none';
         var tamBtn = document.getElementById('svDurumTamBtn');
         var eksikBtn = document.getElementById('svDurumEksikBtn');
         if (tamBtn) tamBtn.classList.remove('is-active');
