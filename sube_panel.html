@@ -1557,74 +1557,6 @@
       margin-bottom: 0;
     }
 
-    /* Gönderilecek siparişler sekmesi — personel/PIN + liste okunabilirliği */
-    .gonderilecek-onay-panel {
-      margin: 14px 0 14px 0;
-      padding: 14px 16px;
-      border-radius: 12px;
-      border: 2px solid rgba(59, 130, 246, 0.55);
-      background: linear-gradient(155deg, rgba(37, 99, 235, 0.22), rgba(30, 58, 138, 0.35));
-      box-shadow: 0 4px 22px rgba(0, 0, 0, 0.22);
-    }
-    #gonderilecekKimlikPanel[hidden] {
-      display: none !important;
-    }
-    .gonderilecek-onay-head {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 10px;
-      margin: 0 0 6px 0;
-    }
-    .gonderilecek-onay-tag {
-      font-size: 10px;
-      font-weight: 800;
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-      padding: 4px 10px;
-      border-radius: 8px;
-      background: linear-gradient(180deg, #2563eb, #1d4ed8);
-      color: #fff;
-      box-shadow: 0 2px 8px rgba(29, 78, 216, 0.45);
-    }
-    .gonderilecek-onay-title {
-      font-size: 15px;
-      font-weight: 800;
-      color: #e0f2fe;
-      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-    }
-    .gonderilecek-onay-alt {
-      font-size: 12px;
-      color: #bae6fd;
-      margin: 0 0 12px 0;
-      line-height: 1.5;
-      opacity: 0.96;
-    }
-    .gonderilecek-onay-grid {
-      display: grid;
-      grid-template-columns: minmax(200px, 1fr) 140px;
-      gap: 12px;
-      align-items: end;
-    }
-    .gonderilecek-onay-panel .form-group {
-      margin: 0;
-    }
-    .gonderilecek-onay-panel .form-group label {
-      font-weight: 700;
-      font-size: 12px;
-      color: #e0f2fe;
-    }
-    .gonderilecek-onay-panel select {
-      font-size: 14px !important;
-      border-width: 2px !important;
-    }
-    .gonderilecek-onay-panel .pin-input {
-      font-size: 22px !important;
-      letter-spacing: 0.14em;
-      text-align: center;
-      border: 2px solid rgba(125, 211, 252, 0.65) !important;
-      background: rgba(15, 23, 42, 0.45) !important;
-    }
     .gonderilecek-sect-eyebrow {
       font-size: 10px;
       font-weight: 800;
@@ -2275,31 +2207,6 @@
           </div>
           <div id="gonderilecekBulkBarWrap" aria-live="polite"></div>
           <div id="gonderilecekPanel"></div>
-          <div
-            id="gonderilecekKimlikPanel"
-            class="gonderilecek-onay-panel"
-            role="region"
-            aria-label="Sevkiyat için personel ve onay kodu"
-            hidden
-          >
-            <div class="gonderilecek-onay-head">
-              <span class="gonderilecek-onay-tag">Kimlik</span>
-              <span class="gonderilecek-onay-title">Personel ve onay kodu (PIN)</span>
-            </div>
-            <p class="gonderilecek-onay-alt">
-              Bu alanı bir kez doldurmanız yeterli. <strong>Depo sevkiyatını kaydet</strong> dediğinizde aynı bilgilerle doğrulanır; ekstra pencerede tekrar PIN istenmez (sipariş onayındaki gibi).
-            </p>
-            <div class="gonderilecek-onay-grid">
-              <div class="form-group">
-                <label for="gndrPers">Personel</label>
-                <select id="gndrPers"></select>
-              </div>
-              <div class="form-group">
-                <label for="gndrPin">Onay kodu (4 hane)</label>
-                <input id="gndrPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" />
-              </div>
-            </div>
-          </div>
           <div id="gonderilecekMsg"></div>
         </div>
       </div>
@@ -2538,18 +2445,6 @@ var gonderilecekDepoTaslakDirty = false;
 /** Son hızlı işlem: kismi | tam | isaretle — aynı butona tekrar basılınca snapshot ile sıfırlanır */
 var gonderilecekHizliIslemModu = null;
 var gonderilecekHizliIslemSnapshot = null;
-function gonderilecekKimlikPanelGoster() {
-  var el = document.getElementById('gonderilecekKimlikPanel');
-  if (!el) return;
-  el.removeAttribute('hidden');
-  try {
-    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  } catch (e) {}
-}
-function gonderilecekKimlikPanelGizle() {
-  var el = document.getElementById('gonderilecekKimlikPanel');
-  if (el) el.setAttribute('hidden', '');
-}
 /** Backend `tr_saat.ACILIS_TAMAM_EN_ERKEN_SAAT` ile aynı — panel uyarıları için */
 var ACILIS_PANEL_MIN_SAAT = 7;
 
@@ -3518,7 +3413,6 @@ function _depAccToggle(tid) {
 }
 window._depAccToggle = _depAccToggle;
 function _depAccToggleFromEl(el) {
-  gonderilecekKimlikPanelGoster();
   var tid = el && el.getAttribute && el.getAttribute('data-dep-tid');
   if (tid) _depAccToggle(tid);
 }
@@ -3631,7 +3525,6 @@ function gonderilecekBulkTamGonder() {
   gonderilecekHizliIslemSnapshot = gonderilecekDepoSnapshotAl();
   gonderilecekHizliIslemModu = 'tam';
   gonderilecekDepoTaslakDirty = true;
-  gonderilecekKimlikPanelGoster();
   document.querySelectorAll('#gonderilecekPanel input[id^="depAd_"]').forEach(function (inp) {
     var ist = parseInt(String(inp.getAttribute('data-istenen') || '0').replace(/\D/g, ''), 10);
     var rid = String(inp.id || '').replace(/^depAd_/, '');
@@ -3655,7 +3548,6 @@ function gonderilecekBulkHepsiGonderildi() {
   gonderilecekHizliIslemSnapshot = gonderilecekDepoSnapshotAl();
   gonderilecekHizliIslemModu = 'isaretle';
   gonderilecekDepoTaslakDirty = true;
-  gonderilecekKimlikPanelGoster();
   document.querySelectorAll('#gonderilecekPanel input[type="checkbox"][id^="depDone_"]').forEach(function (ch) {
     ch.checked = true;
   });
@@ -3677,7 +3569,6 @@ function gonderilecekKismiSatirlariUygula() {
   gonderilecekHizliIslemSnapshot = gonderilecekDepoSnapshotAl();
   gonderilecekHizliIslemModu = 'kismi';
   gonderilecekDepoTaslakDirty = true;
-  gonderilecekKimlikPanelGoster();
   document.querySelectorAll('#gonderilecekPanel input[id^="depAd_"]').forEach(function (inp) {
     var rid = String(inp.id || '').replace(/^depAd_/, '');
     var ist = parseInt(String(inp.getAttribute('data-istenen') || '0').replace(/\D/g, ''), 10) || 0;
@@ -3891,21 +3782,22 @@ function wireDepKaydetHandlers(depoHazirlik) {
         var ozetSatirlar = kalemler.map(function(x){
           return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:12px"><span>' + escHtml(x.urun_ad||'') + '</span><strong>×' + (x.gonderilen_adet||0) + '</strong></div>';
         }).join('');
-        var creds0 = await ensureTopCredentials(
-          'gndrPers',
-          'gndrPin',
-          '🚚 Sevkiyat onayı',
-          '<div style="font-size:12px">Sevkiyat kaydı için personel ve onay kodu girin.</div>'
-        );
-        if (!creds0) throw new Error('Onay bilgisi gerekli');
-        var modalRes = await pinOnayModalAc({ baslik: '🚚 Depo sevkiyatı kaydedilecek', ozetHtml: '<div style="max-height:62vh;overflow:auto">' + ozetSatirlar + '</div>', askCredentials: false });
+        var modalRes = await pinOnayModalAc({
+          baslik: '🚚 Depo sevkiyatını kaydet',
+          ozetHtml:
+            '<p style="margin:0 0 8px 0;font-size:12px;color:var(--muted)">Kalem özeti — personel ve PIN ile onaylayın.</p>' +
+            '<div style="max-height:62vh;overflow:auto">' +
+            ozetSatirlar +
+            '</div>',
+          askCredentials: true,
+        });
         if (!modalRes || !modalRes.ok) { setMsg(msgId,'İşlem iptal edildi.','msg-warn'); return; }
         await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-depo-sevkiyat-kaydet', {
           method: 'POST',
           body: {
             talep_id: tid,
-            personel_id: creds0.personel_id,
-            pin: creds0.pin,
+            personel_id: modalRes.personel_id,
+            pin: modalRes.pin,
             kalemler: kalemler,
             sevkiyat_notu: inpVal('depNot_' + tid) || null,
             gonderildi: !!(
@@ -4000,7 +3892,6 @@ async function renderGonderilecekPanel() {
       var panel = document.getElementById('gonderilecekPanel');
       if (!panel || !panel.contains(t)) return;
       gonderilecekDepoTaslakDirty = true;
-      gonderilecekKimlikPanelGoster();
       var rid = '';
       if (tid.indexOf('depDur_') === 0) rid = tid.slice(7);
       else if (tid.indexOf('depAd_') === 0 || tid.indexOf('depNt_') === 0) rid = tid.slice(6);
@@ -4011,7 +3902,6 @@ async function renderGonderilecekPanel() {
   }
   await siparisGonderSolBlokGuncelle(akis);
   gonderilecekDepoTaslakDirty = false;
-  gonderilecekKimlikPanelGizle();
   gonderilecekHizliIslemSifirla();
 }
 function siparisAktifAdet(kat) {
@@ -4889,7 +4779,7 @@ function fillSels() {
              'xrPers','puanPers',
              'dvPers1','dvPers2','kapPers',
              'kasaUser','araTeslimPers',
-             'svPers','acPers','gndrPers'];
+             'svPers','acPers'];
   ids.forEach(function(id){
     var el = document.getElementById(id); if (!el || el.tagName !== 'SELECT') return;
     var cur = el.value;
