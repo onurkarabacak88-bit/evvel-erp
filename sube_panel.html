@@ -984,7 +984,7 @@
       margin: 0;
     }
 
-    /* Sipariş Ver: seçim varken orta panel üstünde yapışkan özet (aşağıda kaybolmasın) */
+    /* Sipariş Ver: seçim varken yapışkan özet — Ürün Aç onay paneli gibi belirgin kutu (personel/PIN yalnız modalda) */
     #siparisStickyBar {
       display: none;
       position: sticky;
@@ -993,26 +993,61 @@
       margin: 0 0 14px 0;
       padding: 0;
     }
-    .siparis-sticky-secim {
-      background: var(--bg2);
-      border: 1px solid rgba(45, 181, 115, 0.5);
-      border-radius: 10px;
-      padding: 10px 12px;
-      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.14);
+    .siparis-sticky-onay-panel {
+      margin: 0;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: 2px solid rgba(251, 191, 36, 0.92);
+      background: linear-gradient(145deg, rgba(234, 88, 12, 0.28), rgba(22, 163, 74, 0.22), rgba(30, 64, 175, 0.32));
+      box-shadow: 0 0 0 1px rgba(253, 224, 71, 0.22), 0 8px 26px rgba(0, 0, 0, 0.28);
     }
-    .siparis-sticky-secim-inner {
+    .siparis-sticky-onay-baslik {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 800;
+      color: #fffbeb;
+      margin: 0 0 8px 0;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    }
+    .siparis-sticky-tag-zorunlu {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      padding: 4px 10px;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #ef4444, #b91c1c);
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(185, 28, 28, 0.55);
+    }
+    .siparis-sticky-onay-alt {
+      font-size: 12px;
+      font-weight: 600;
+      color: #fef9c3;
+      margin: 0 0 12px 0;
+      line-height: 1.45;
+    }
+    .siparis-sticky-onay-aksiyon {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
+      gap: 12px;
     }
     .siparis-sticky-secim-ozet {
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 800;
-      color: var(--text);
+      color: #ecfdf5;
       line-height: 1.35;
       flex: 1 1 200px;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    }
+    .siparis-sticky-onay-aksiyon .btn-success {
+      flex-shrink: 0;
+      box-shadow: 0 2px 12px rgba(34, 197, 94, 0.35);
     }
     .siparis-sticky-pin-row {
       margin-top: 10px;
@@ -1158,6 +1193,21 @@
       font-weight: 700;
       color: #fef08a;
       line-height: 1.4;
+    }
+    @keyframes urun-ac-pin-yanip {
+      0%, 100% { opacity: 1; color: #fef08a; text-shadow: 0 0 6px rgba(250, 204, 21, 0.55); }
+      50% { opacity: 0.28; color: #facc15; text-shadow: none; }
+    }
+    #acPinBilgi.urun-ac-pin-bilgi.urun-ac-pin-yanip {
+      animation: urun-ac-pin-yanip 0.85s ease-in-out infinite;
+    }
+    @keyframes ac-msg-yanip {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+    #acMsg.msg-err.ac-msg-yanip {
+      animation: ac-msg-yanip 0.75s ease-in-out infinite;
+      font-weight: 700 !important;
     }
     /* Depo teslim kabulü: uzun kalem listesinde PIN görünür kalsın */
     .sip-teslim-pin-dock {
@@ -1707,11 +1757,17 @@
       </div>
 
       <div class="sekme-icerik" id="tab-siparis">
-        <div id="siparisStickyBar" class="siparis-sticky-secim" style="display:none" role="region" aria-label="Seçilen sipariş özeti">
-          <div class="siparis-sticky-secim-inner">
-            <span id="sipSeciliUstOzet" class="siparis-sticky-secim-ozet"></span>
-            <select id="sipPers" style="min-width:170px" aria-label="Sipariş onayı personel"></select>
-            <button type="button" class="btn btn-success btn-sm" id="siparisOnayBtnUst" disabled>Seçimleri Onayla</button>
+        <div id="siparisStickyBar" style="display:none" role="region" aria-label="Seçilen sipariş özeti">
+          <div class="siparis-sticky-onay-panel">
+            <div class="siparis-sticky-onay-baslik">
+              <span class="siparis-sticky-tag-zorunlu">Onay</span>
+              <span>Siparişi gönder — personel ve PIN güvenli pencerede istenir</span>
+            </div>
+            <p class="siparis-sticky-onay-alt">Özeti kontrol edin; <strong>Seçimleri Onayla</strong> ile ortadaki onay penceresine geçilir (PIN burada girilmez).</p>
+            <div class="siparis-sticky-onay-aksiyon">
+              <span id="sipSeciliUstOzet" class="siparis-sticky-secim-ozet"></span>
+              <button type="button" class="btn btn-success btn-sm" id="siparisOnayBtnUst" disabled>Seçimleri Onayla</button>
+            </div>
           </div>
         </div>
         <div class="kart">
@@ -2553,6 +2609,7 @@ function setMsg(id, txt, cls) {
   var el = document.getElementById(id); if (!el) return;
   el.textContent = txt;
   el.className = cls || '';
+  if (id === 'acMsg' && cls === 'msg-err' && txt) el.classList.add('ac-msg-yanip');
 }
 function reqNum(id, label) {
   var raw = inpVal(id);
@@ -3442,10 +3499,10 @@ async function renderSiparisPanel() {
       h += '</button>';
     });
     h += '</div>';
-    h += '<div class="siparis-detay" style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.45">Ürün adı ve adet kutusu <strong>aynı satırda</strong>; liste tam ekran pencerede açılır. Seçim varken <strong>üstteki yeşil çubukta</strong> özet görünür; onay için <strong>Seçimleri Onayla</strong> ile açılan pencerede PIN girilir.</div>';
+    h += '<div class="siparis-detay" style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.45">Ürün adı ve adet kutusu <strong>aynı satırda</strong>; liste tam ekran pencerede açılır. Seçim varken <strong>üstteki vurgulu kutuda</strong> özet görünür; personel ve PIN yalnızca <strong>Seçimleri Onayla</strong> ile açılan pencerede girilir.</div>';
     h += '<div class="siparis-detay" id="siparisOnayFormWrap" style="display:none">';
     h += '<div style="font-size:12px;font-weight:700;margin-bottom:6px">Sipariş notu (opsiyonel)</div>';
-    h += '<p style="font-size:11px;color:var(--muted);margin:0 0 10px;line-height:1.45">İsteğe bağlı personel üstteki yeşil çubukta seçilebilir; <strong>onay kodu (PIN)</strong> yalnızca açılan pencerede istenir. Göndermek için <strong>Seçimleri Onayla</strong> düğmesine basın.</p>';
+    h += '<p style="font-size:11px;color:var(--muted);margin:0 0 10px;line-height:1.45"><strong>Personel ve PIN</strong> yalnızca onay penceresinde istenir. Göndermek için üstteki kutudaki <strong>Seçimleri Onayla</strong> düğmesine basın.</p>';
     h += '<div class="form-group"><label>Not</label><input id="siparisOnayNot" placeholder="Kısa not" /></div>';
     h += '</div>';
   } else {
@@ -3552,15 +3609,13 @@ async function renderSiparisPanel() {
       onayBtnUst.style.opacity = secimVar ? '1' : '0.65';
       onayBtnUst.title = !secimVar
         ? 'Önce en az bir üründe adet girin'
-        : 'Onay penceresinde personel ve PIN; üstte personel seçtiyseniz pencerede önceden işaretlenir';
+        : 'Personel ve PIN yalnızca açılacak güvenli onay penceresinde';
     }
     if (ustOzet) ustOzet.textContent = ozetTxt;
     if (ustBar) ustBar.style.display = secimVar ? 'block' : 'none';
     if (formWrap) formWrap.style.display = secimVar ? 'block' : 'none';
   }
   siparisSeciliOzetGuncelle();
-  var sipPersEl = document.getElementById('sipPers');
-  if (sipPersEl) sipPersEl.onchange = siparisSeciliOzetGuncelle;
   var sipOzBtn = document.getElementById('sipOzelGonderBtn');
   if (sipOzBtn) sipOzBtn.onclick = async function(){
     setMsg('siparisMsg','','');
@@ -3575,7 +3630,7 @@ async function renderSiparisPanel() {
       if (!adet || adet < 1) throw new Error('Geçerli adet girin');
       var ozetHtml = '<div style="font-size:12px"><span>' + escHtml(ad) + '</span> <strong>×' + adet + '</strong>' + (n0 ? '<div style="color:var(--muted);margin-top:4px">' + escHtml(n0) + '</div>' : '') + '</div>';
       var creds0 = await ensureTopCredentials(
-        'sipPers',
+        null,
         null,
         '📌 Özel talep onayı',
         ozetHtml
@@ -3619,7 +3674,7 @@ async function renderSiparisPanel() {
       });
       if (!kalemler.length) throw new Error('Onay için en az bir üründe adet girin');
       var creds = await ensureTopCredentials(
-        'sipPers',
+        null,
         null,
         '🛒 Sipariş onayı',
         '<div style="font-size:12px">Siparişi onaylamak için personel ve onay kodu gerekli.</div>'
@@ -3914,7 +3969,7 @@ function pinOnayModalAc(opts) {
 }
 
 async function ensureTopCredentials(personelSelId, pinInputId, baslik, ozetHtml) {
-  var pid = selVal(personelSelId);
+  var pid = personelSelId ? selVal(personelSelId) : '';
   var pinEl = pinInputId ? document.getElementById(pinInputId) : null;
   var pin = pinEl ? inpVal(pinInputId).replace(/\D/g, '').slice(0, 4) : '';
   if (pid && pin.length === 4) return { personel_id: pid, pin: pin };
@@ -3925,10 +3980,12 @@ async function ensureTopCredentials(personelSelId, pinInputId, baslik, ozetHtml)
     personelId: pid || undefined,
   });
   if (!modalRes || !modalRes.ok) return null;
-  var pSel = document.getElementById(personelSelId);
-  if (pSel) pSel.value = modalRes.personel_id || '';
+  if (personelSelId) {
+    var pSel = document.getElementById(personelSelId);
+    if (pSel) pSel.value = modalRes.personel_id || '';
+  }
   if (pinEl) pinEl.value = modalRes.pin || '';
-  pid = selVal(personelSelId);
+  pid = personelSelId ? selVal(personelSelId) : String(modalRes.personel_id || '').trim();
   pin = pinEl ? inpVal(pinInputId).replace(/\D/g, '').slice(0, 4) : String(modalRes.pin || '').replace(/\D/g, '').slice(0, 4);
   if (!pid || pin.length !== 4) return null;
   return { personel_id: pid, pin: pin };
@@ -4101,7 +4158,7 @@ function fillSels() {
              'xrPers','puanPers',
              'dvPers1','dvPers2','kapPers',
              'kasaUser','araTeslimPers',
-             'svPers','acPers','sipPers','gndrPers'];
+             'svPers','acPers','gndrPers'];
   ids.forEach(function(id){
     var el = document.getElementById(id); if (!el || el.tagName !== 'SELECT') return;
     var cur = el.value;
@@ -4978,9 +5035,19 @@ function stokSecimBilgiYenile(prefix, data) {
   var pinBilgi = document.getElementById(prefix + 'PinBilgi');
   if (pinBilgi) {
     if (prefix === 'ac') {
-      pinBilgi.textContent = oz.kalem > 0
-        ? ('Özet kartta PIN onayı istenecek — ' + oz.kalem + ' kalem / ' + oz.adet + ' adet seçtiniz')
-        : 'Onay için önce en az 1 ürün seçin.';
+      var _pSelAc = document.getElementById('acPers');
+      var _persAc = !!(_pSelAc && String(_pSelAc.value || '').trim());
+      var _pinElAc = document.getElementById('acPin');
+      var _pinLenAc = _pinElAc ? inpVal('acPin').replace(/\D/g, '').length : 0;
+      pinBilgi.classList.remove('urun-ac-pin-yanip');
+      if (oz.kalem > 0 && _persAc && _pinLenAc < 4) {
+        pinBilgi.textContent = '4 haneli onay kodunu (PIN) girin — göndermek için zorunlu.';
+        pinBilgi.classList.add('urun-ac-pin-yanip');
+      } else if (oz.kalem > 0) {
+        pinBilgi.textContent = 'Özet kartta PIN onayı istenecek — ' + oz.kalem + ' kalem / ' + oz.adet + ' adet seçtiniz';
+      } else {
+        pinBilgi.textContent = 'Onay için önce en az 1 ürün seçin.';
+      }
     } else {
       pinBilgi.textContent = oz.kalem > 0
         ? ('Onay için PIN girin — ' + oz.kalem + ' kalem / ' + oz.adet + ' adet seçtiniz')
