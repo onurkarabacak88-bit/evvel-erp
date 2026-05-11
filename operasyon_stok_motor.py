@@ -2314,6 +2314,177 @@ def merkez_tahsis_yap(cur: Any, siparis_talep_id: str,
 
 # ── Aşama 3: Sevk çıktı ──────────────────────────────────────────
 
+
+
+def _tahsis_sifir_listesi_kalemlerden(kalemler_raw: Any) -> List[Dict[str, Any]]:
+    """Talep kalemlerinden merkez_tahsis_yap için tahsis_adet=0 liste üret."""
+    km = kalemler_raw
+    if isinstance(km, str):
+        try:
+            km = json.loads(km)
+        except Exception:
+            km = []
+    if not isinstance(km, list):
+        km = []
+    out: List[Dict[str, Any]] = []
+    for k in km:
+        if not isinstance(k, dict):
+            continue
+        kk = str(k.get("urun_id") or k.get("kalem_kodu") or "").strip()
+        if not kk:
+            continue
+        ad = str(k.get("urun_ad") or k.get("ad") or kk).strip()
+        talep = max(
+            0,
+            int(
+                k.get("adet")
+                or k.get("istenen_adet")
+                or k.get("istened_adet")
+                or 0
+            ),
+        )
+        out.append(
+            {"kalem_kodu": kk, "kalem_adi": ad, "talep_adet": talep, "tahsis_adet": 0}
+        )
+    return out
+
+
+def _tahsis_sifir_listesi_kalem_durumlarindan(kd_raw: Any) -> List[Dict[str, Any]]:
+    """Mevcut kalem_durumlari satırlarından tahsis_adet=0 liste (rezerv iadesi için)."""
+    km = kd_raw
+    if isinstance(km, str):
+        try:
+            km = json.loads(km)
+        except Exception:
+            km = []
+    if not isinstance(km, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for it in km:
+        if not isinstance(it, dict):
+            continue
+        kk = str(it.get("kalem_kodu") or it.get("urun_id") or "").strip()
+        if not kk:
+            continue
+        ad = str(it.get("urun_ad") or it.get("kalem_adi") or kk).strip()
+        talep = max(
+            0,
+            int(
+                it.get("istenen_adet")
+                or it.get("talep_adet")
+                or it.get("adet")
+                or 0
+            ),
+        )
+        if talep <= 0:
+            continue
+        out.append(
+            {"kalem_kodu": kk, "kalem_adi": ad, "talep_adet": talep, "tahsis_adet": 0}
+        )
+    return out
+
+
+def siparis_talep_merkez_iptal(
+    cur: Any,
+    siparis_talep_id: str,
+    aciklama: Optional[str] = None,
+    yapan_ad: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Operasyon merkezi: bekleyen veya tahsis onaylı (onaylandi) siparişi iptal eder.
+    Rezervler merkez_tahsis_yap(tahsis=0) ile iade edilir; depo / yolda aşamasına
+    geçmiş (hazirlaniyor, gonderildi) talepler reddedilir.
+    """
+    aid = (siparis_talep_id or "").strip()
+    if not aid:
+        raise ValueError("talep_id zorunlu")
+    cur.execute(
+        """
+        SELECT id, sube_id, durum, kalemler, kalem_durumlari, sevkiyat_notu
+        FROM siparis_talep
+        WHERE id=%s
+        FOR UPDATE
+        """,
+        (aid,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise ValueError(f"siparis_talep bulunamadı: {aid}")
+    rd = dict(row)
+    st = str(rd.get("durum") or "").strip().lower()
+    if st in (
+        "iptal",
+        "teslim_edildi",
+        "gonderildi",
+        "hazirlaniyor",
+        "kabul_edildi",
+        "tamamlandi",
+        "kabul_uyusmazlik",
+        "uyumsuz_kabul",
+    ):
+        raise ValueError(f"Bu sipariş iptal edilemez (durum={st or '—'})")
+    if st not in ("bekliyor", "onaylandi"):
+        raise ValueError(f"Merkez iptal yalnızca bekliyor/onaylandi için (durum={st or '—'})")
+
+    sube_id = str(rd.get("sube_id") or "").strip()
+    tl = _tahsis_sifir_listesi_kalemlerden(rd.get("kalemler"))
+    if not tl:
+        tl = _tahsis_sifir_listesi_kalem_durumlarindan(rd.get("kalem_durumlari"))
+
+    yn = (yapan_ad or "").strip() or "Merkez"
+    if tl:
+        merkez_tahsis_yap(cur, aid, tl, None, yn)
+
+    eski_not = str(rd.get("sevkiyat_notu") or "").strip()
+    frag = f"MERKEZ_IPTAL: {yn}"
+    ac = (aciklama or "").strip()
+    if ac:
+        frag += f" — {ac}"
+    yeni_not = (eski_not + " | " + frag) if eski_not else frag
+
+    cur.execute(
+        """
+        UPDATE siparis_talep
+        SET durum='iptal',
+            sevkiyat_notu=%s,
+            sevkiyat_durumu='iptal',
+            sevkiyat_durum='iptal'
+        WHERE id=%s
+        """,
+        (yeni_not, aid),
+    )
+    try:
+        _disiplin_olay_yaz(
+            cur,
+            aid,
+            sube_id,
+            "SIPARIS_MERKEZ_IPTAL",
+            None,
+            yn,
+            {"aciklama": ac or None},
+        )
+    except Exception:
+        pass
+    try:
+        mesaj = (
+            "Sipariş talebiniz operasyon merkezi tarafından iptal edildi "
+            f"(talep {aid[:10]}…)."
+        )
+        if ac:
+            mesaj += f" Neden: {ac}"
+        cur.execute(
+            """
+            INSERT INTO sube_operasyon_uyari
+                (id, sube_id, tarih, tip, seviye, mesaj, siparis_talep_id)
+            VALUES (%s, %s, %s::date, 'SIPARIS_MERKEZ_IPTAL', 'uyari', %s, %s)
+            """,
+            (str(uuid.uuid4()), sube_id, str(bugun_tr()), mesaj, aid),
+        )
+    except Exception:
+        pass
+
+    return {"success": True, "talep_id": aid, "durum": "iptal"}
+
 def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                        sevk_kalemleri: List[Dict[str, Any]],
                        yapan_id: Optional[str] = None,

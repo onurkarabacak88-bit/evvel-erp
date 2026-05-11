@@ -55,6 +55,7 @@ from operasyon_stok_motor import (
     OLAY_TAHSIS_TAM,
     OLAY_SEVK_CIKTI,
     sevk_cikti_kaydet as _disiplin_sevk_cikti,
+    siparis_talep_merkez_iptal,
 )
 from siparis_sevkiyat_islem import (
     sevkiyat_kalem_durumlari_normalize,
@@ -1203,6 +1204,10 @@ def kapanis_takip(tarih: Optional[str] = None):
     Günlük kapanış takip: tüm aktif şubeler, kapanış + açılış durumu + ciro (nakit/pos/online).
     Onaylandi taslak bekliyor'a göre önceliklidir (aynı gün içinde).
     Tarih verilmezse varsayılan: iş günü (gece 02:00'e kadar önceki takvim günü) — tr_saat.is_gunu_tr.
+
+    Nakit denge (merkez, satır bazlı; yalnızca aynı gün hem açılış hem kapanış tamamsa):
+    sabah_kasa + ciro_nakit (yapılan iş / tablodaki nakit) − teslim − devir (kasada kalan) − onaylı nakit anlık gider.
+    ≈0 beklenir; + kasa açığı, − kasa fazlası (iş kuralı tanımına göre).
     """
     from datetime import date as _date
     try:
@@ -1221,6 +1226,7 @@ def kapanis_takip(tarih: Optional[str] = None):
                    MIN(e.cevap_ts AT TIME ZONE 'Europe/Istanbul') AS kapanis_ts,
                    MAX(e.kasa_sayim)  AS kasa_sayim,
                    MAX(e.devir)       AS devir,
+                   MAX(e.teslim)      AS teslim,
                    MAX(e.personel_ad) AS personel_ad
             FROM sube_operasyon_event e
             WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
@@ -1231,11 +1237,12 @@ def kapanis_takip(tarih: Optional[str] = None):
         )
         kapanis_map = {r["sube_id"]: dict(r) for r in (cur.fetchall() or [])}
 
-        # Açılış eventleri (bugün açıldı mı?)
+        # Açılış eventleri (bugün açıldı mı?) + sabah kasa sayımı
         cur.execute(
             """
             SELECT e.sube_id::text,
                    MIN(e.cevap_ts AT TIME ZONE 'Europe/Istanbul') AS acilis_ts,
+                   MAX(e.kasa_sayim)  AS acilis_kasa,
                    MAX(e.personel_ad) AS personel_ad
             FROM sube_operasyon_event e
             WHERE e.tip = 'ACILIS' AND e.durum = 'tamamlandi'
@@ -1245,6 +1252,20 @@ def kapanis_takip(tarih: Optional[str] = None):
             (hedef,),
         )
         acilis_map = {r["sube_id"]: dict(r) for r in (cur.fetchall() or [])}
+
+        # Onaylı nakit anlık giderler (iş günü tarihi)
+        cur.execute(
+            """
+            SELECT sube::text AS sube_id, COALESCE(SUM(tutar), 0)::float AS gider_nakit
+            FROM anlik_giderler
+            WHERE tarih = %s::date
+              AND LOWER(COALESCE(NULLIF(TRIM(odeme_yontemi), ''), 'nakit')) = 'nakit'
+              AND durum = 'aktif'
+            GROUP BY sube
+            """,
+            (hedef,),
+        )
+        gider_map = {str(r["sube_id"]): float(r["gider_nakit"] or 0) for r in (cur.fetchall() or [])}
 
         # Ciro taslakları: onaylandi > bekliyor, en son olusturma
         cur.execute(
@@ -1290,17 +1311,36 @@ def kapanis_takip(tarih: Optional[str] = None):
         kap  = kapanis_map.get(sid, {})
         acil = acilis_map.get(sid, {})
         tas  = taslak_map.get(sid, {})
-        ciro = ciro_map.get(sid, {})
+        ciro = ciro_map.get(sid)
 
-        ciro_tutar = ciro.get("toplam", 0.0)
-        # Nakit/pos/online: onaylı ciro tablosundan al (en kesin), yoksa taslaktan
-        nakit  = ciro.get("nakit")  or float(tas.get("nakit")  or 0)
-        pos    = ciro.get("pos")    or float(tas.get("pos")    or 0)
-        online = ciro.get("online") or float(tas.get("online") or 0)
+        # Onaylı ciro satırı varsa kalemler yalnızca ordan (0 geçerli; `x or taslak` 0'ı yok sayıp
+        # taslaktaki eski/OCR yanlış online/nakit/pos'u gösterebilirdi).
+        if ciro:
+            ciro_tutar = float(ciro.get("toplam") or 0)
+            nakit = float(ciro.get("nakit") or 0)
+            pos = float(ciro.get("pos") or 0)
+            online = float(ciro.get("online") or 0)
+        else:
+            ciro_tutar = 0.0
+            nakit = float(tas.get("nakit") or 0)
+            pos = float(tas.get("pos") or 0)
+            online = float(tas.get("online") or 0)
 
         kts  = kap.get("kapanis_ts")
         ats  = acil.get("acilis_ts")
         tts  = tas.get("olusturma")
+
+        sabah_kasa = float(acil.get("acilis_kasa") or 0) if acil else 0.0
+        teslim_kasa = float(kap.get("teslim") or 0) if kap else 0.0
+        devir_kalan = float(kap.get("devir") or 0) if kap else 0.0
+        gider_nakit = float(gider_map.get(sid, 0.0) or 0.0)
+        nakit_denkleme_tam = bool(acil) and bool(kap)
+        nakit_kasa_fark = None
+        if nakit_denkleme_tam:
+            nakit_kasa_fark = round(
+                sabah_kasa + float(nakit) - teslim_kasa - devir_kalan - gider_nakit,
+                2,
+            )
 
         satirlar.append({
             "sube_id":         sid,
@@ -1308,11 +1348,13 @@ def kapanis_takip(tarih: Optional[str] = None):
             # Açılış
             "acildi":          bool(acil),
             "acilis_ts":       str(ats) if ats else "",
+            "sabah_kasa_tl":   sabah_kasa,
             # Kapanış
             "kapanis_tamam":   bool(kap),
             "kapanis_ts":      str(kts) if kts else "",
             "kasa_sayim":      float(kap.get("kasa_sayim") or 0),
-            "devir":           float(kap.get("devir") or 0),
+            "devir":           devir_kalan,
+            "teslim_kasa_tl":  teslim_kasa,
             "kapanis_personel": str(kap.get("personel_ad") or ""),
             # Ciro taslak
             "taslak_var":      bool(tas),
@@ -1325,6 +1367,10 @@ def kapanis_takip(tarih: Optional[str] = None):
             "online":          online,
             "ciro_onaylandi":  ciro_tutar > 0,
             "ciro_tutar":      ciro_tutar,
+            # Nakit kasa denge (ciro nakit = yapılan iş; devir = kasada kalan)
+            "anlik_gider_nakit_tl": gider_nakit,
+            "nakit_denkleme_tam": nakit_denkleme_tam,
+            "nakit_kasa_fark_tl": nakit_kasa_fark,
         })
 
     return {
@@ -5778,6 +5824,12 @@ class OpsSiparisSevkiyataGonderBody(BaseModel):
     operasyon_yonlendirme_talimati: Optional[str] = None
 
 
+class OpsSiparisMerkezIptalBody(BaseModel):
+    talep_id: str
+    aciklama: Optional[str] = None
+    yapan_ad: Optional[str] = None
+
+
 class OpsSiparisToptanciKalemBody(BaseModel):
     urun_ad: str
     adet: int
@@ -6239,6 +6291,31 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
         "sevkiyat_sube_id": sevk_sube_id,
         "sevkiyat_durumu": "depoda_hazirlaniyor",
     }
+
+
+@router.post("/siparis/merkez-iptal")
+def ops_siparis_merkez_iptal(body: OpsSiparisMerkezIptalBody):
+    """
+    Stok Disiplin / sipariş kuyruğu: merkez, bekleyen (bekliyor) veya tahsis onaylı (onaylandi)
+    talebi iptal eder; tahsis rezervleri iade edilir. Depo hazırlık veya yolda aşamasındakiler reddedilir.
+    """
+    tid = (body.talep_id or "").strip()
+    if not tid:
+        raise HTTPException(400, "talep_id zorunlu")
+    with db() as (conn, cur):
+        try:
+            r = siparis_talep_merkez_iptal(
+                cur,
+                tid,
+                body.aciklama,
+                body.yapan_ad,
+            )
+        except ValueError as e:
+            msg = (str(e) or "İptal yapılamadı").strip()
+            code = 404 if "bulunamad" in msg.lower() else 409
+            raise HTTPException(code, msg) from e
+        audit(cur, "siparis_talep", tid, "OPS_SIPARIS_MERKEZ_IPTAL")
+    return r
 
 
 @router.post("/siparis/toptanciya-yolla")

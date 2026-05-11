@@ -924,24 +924,23 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             )
             teslim_f = max(0.0, float(body.teslim or 0))
             ks_girdi = float(body.kasa_sayim) if body.kasa_sayim is not None else teslim_f
+            # Şube panelinde teslim/devir/sayımla tutarlılık denetimi yok; eski açılış–devir uyumsuzluğu vb. ayrı akışlarda kalır.
             if body.devir is None:
                 ham_dev = round(ks_girdi - teslim_f, 2)
-                if ham_dev < -0.05:
-                    raise HTTPException(
-                        400,
-                        "Kasa sayımı teslim tutarından küçük olamaz. Teslim ve kasa toplamını kontrol edin.",
-                    )
                 devir_kayit = max(0.0, ham_dev)
             else:
                 devir_kayit = max(0.0, float(body.devir))
             ks = round(teslim_f + devir_kayit, 2)
-            if abs(ks_girdi - ks) > 0.05:
-                raise HTTPException(
-                    400,
-                    "Kasa tutarsız: Kasa sayımı (toplam) ≈ Teslim + Devir olmalı. "
-                    "Kasada saydığınız toplamı girin veya teslim/devir alanlarını kontrol edin.",
-                )
             kasa_kime_teslim = (body.kasa_kime_teslim or "").strip()
+            _meta_kapanis = {
+                "kapanis_stok_sayim": k_stok,
+                "x_rapor": {"nakit": cn, "pos": cp, "online": co},
+                "kasa_kime_teslim": kasa_kime_teslim,
+            }
+            if abs(ks_girdi - ks) > 0.05:
+                # Şubeye hata dönülmez; merkez / rapor tarafı formdaki sayım ile kayıtlı tutarı karşılaştırabilir
+                _meta_kapanis["kapanis_kasa_sayim_form"] = round(ks_girdi, 2)
+                _meta_kapanis["kapanis_kasa_sayim_kayit"] = ks
             cur.execute(
                 """
                 UPDATE sube_operasyon_event
@@ -956,14 +955,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     ks,
                     body.teslim,
                     devir_kayit,
-                    json.dumps(
-                        {
-                            "kapanis_stok_sayim": k_stok,
-                            "x_rapor": {"nakit": cn, "pos": cp, "online": co},
-                            "kasa_kime_teslim": kasa_kime_teslim,
-                        },
-                        ensure_ascii=False,
-                    ),
+                    json.dumps(_meta_kapanis, ensure_ascii=False),
                     event_id,
                 ),
             )

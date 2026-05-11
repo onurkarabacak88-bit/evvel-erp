@@ -7435,8 +7435,52 @@ export default function OperasyonMerkezi() {
         const topPos    = satirlar.reduce((s, r) => s + (r.pos    || 0), 0);
         const topOnline = satirlar.reduce((s, r) => s + (r.online || 0), 0);
         const topCiro   = satirlar.reduce((s, r) => s + (r.ciro_tutar > 0 ? r.ciro_tutar : r.nakit + r.pos + r.online), 0);
+        const topSabah  = satirlar.reduce((s, r) => s + (Number(r.sabah_kasa_tl) || 0), 0);
+        const topTeslim = satirlar.reduce((s, r) => s + (Number(r.teslim_kasa_tl) || 0), 0);
+        const topDevir  = satirlar.reduce((s, r) => s + (Number(r.devir) || 0), 0);
+        const topAgider = satirlar.reduce((s, r) => s + (Number(r.anlik_gider_nakit_tl) || 0), 0);
 
         const fmt  = (v) => Number(v || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 });
+        const fmtFark = (v) => {
+          if (v == null || Number.isNaN(Number(v))) return null;
+          const x = Number(v);
+          const s = x.toLocaleString('tr-TR', { maximumFractionDigits: 0 });
+          return x > 0 ? `+${s}` : s;
+        };
+        const farkStil = (v) => {
+          if (v == null || Number.isNaN(Number(v))) return { color: 'var(--text3)', fontWeight: 600 };
+          const x = Number(v);
+          if (Math.abs(x) <= 0.5) return { color: '#22c55e', fontWeight: 800 };
+          if (x > 0.5) return { color: '#e85d5d', fontWeight: 800 };
+          return { color: '#3b82f6', fontWeight: 800 };
+        };
+        /** Nakit Δ: yalnızca açılış+kapanış tamam ise tutar; değilse açık uyarı metni (şube paneli değil, merkez tablosu). */
+        const nakitDeltaHucre = (r) => {
+          const ac = !!r.acildi;
+          const kap = !!r.kapanis_tamam;
+          const fark = r.nakit_kasa_fark_tl;
+          const tam = r.nakit_denkleme_tam === true || (ac && kap);
+          if (tam && fark != null && !Number.isNaN(Number(fark))) {
+            const fs = fmtFark(fark);
+            if (fs != null) {
+              return (
+                <span style={farkStil(fark)}>{fs} ₺</span>
+              );
+            }
+          }
+          const st = { fontSize: 11, fontWeight: 700, lineHeight: 1.35, textAlign: 'right', color: '#e85d5d' };
+          if (!ac && !kap) {
+            return <span style={st} title="Nakit denge için açılış ve kapanış tamamlanmalı">Açılış ve kapanış yapılmadı</span>;
+          }
+          if (!ac) {
+            return <span style={st} title="Sabah kasa sayımı yok">Açılış yapılmadı</span>;
+          }
+          if (!kap) {
+            return <span style={st} title="Teslim/devir için kapanış tamamlanmalı">Kapanış yapılmadı</span>;
+          }
+          return <span style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>Δ hesaplanamadı</span>;
+        };
+        const eksikUyariStil = { fontSize: 11, fontWeight: 700, color: '#e85d5d', lineHeight: 1.3, textAlign: 'right' };
         const saat = (ts) => {
           if (!ts) return null;
           try { return new Date(ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }); }
@@ -7484,6 +7528,10 @@ export default function OperasyonMerkezi() {
                 <span> Takvim: <span className="mono">{kt.takvim_tr}</span> · İş günü: <span className="mono">{kt.is_gunu_tr}</span></span>
               ) : null}
             </p>
+            <p style={{ margin: 0, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
+              <strong>Nakit denge (Δ):</strong> aynı iş günü <em>sabah kasa</em> (açılış sayımı) + <em>ciro nakit</em> (yapılan iş) − <em>teslim</em> − <em>devir</em> (kasada kalan) − <em>onaylı nakit anlık gider</em>.
+              Yalnızca hem açılış hem kapanış tamamlanmış şubelerde tutar gösterilir. Eksikte ilgili sütunlarda <strong>Açılış yapılmadı</strong> / <strong>Kapanış yapılmadı</strong> bildirilir. İş kuralı: <span style={{ color: '#e85d5d' }}>+</span> kasa açığı, <span style={{ color: '#3b82f6' }}>−</span> kasa fazlası (≈0 yeşil).
+            </p>
 
             {/* ── Özet metrik kartları ── */}
             {kt && (
@@ -7523,7 +7571,7 @@ export default function OperasyonMerkezi() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr style={{ background: 'var(--bg2)' }}>
-                      {['Şube', 'Kapanış', 'Saat', 'Kapanış Personeli', 'Ciro Durumu', 'Gönderen', 'Nakit', 'POS', 'Online', 'Toplam'].map((h, i) => (
+                      {['Şube', 'Kapanış', 'Saat', 'Kapanış Personeli', 'Ciro Durumu', 'Gönderen', 'Nakit', 'POS', 'Online', 'Toplam', 'Sabah kasa', 'Teslim', 'Devir', 'A.gider (N)', 'Nakit Δ'].map((h, i) => (
                         <th key={i} style={{ padding: '8px 10px', textAlign: i >= 6 ? 'right' : i >= 1 ? 'center' : 'left', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--text3)', fontWeight: 600, whiteSpace: 'nowrap' }}>
                           {h}
                         </th>
@@ -7596,12 +7644,32 @@ export default function OperasyonMerkezi() {
                               ? <span style={{ fontWeight: 800, fontSize: 14, color: r.ciro_onaylandi ? '#22c55e' : 'var(--text)' }}>{fmt(toplam)} ₺</span>
                               : <span style={{ color: 'var(--text3)' }}>—</span>}
                           </td>
+                          {/* Sabah kasa */}
+                          <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontSize: 12, maxWidth: 120 }}>
+                            {r.acildi ? <span style={{ whiteSpace: 'nowrap' }}>{fmt(r.sabah_kasa_tl)} ₺</span> : <span style={eksikUyariStil}>Açılış yapılmadı</span>}
+                          </td>
+                          {/* Teslim */}
+                          <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontSize: 12, maxWidth: 120 }}>
+                            {r.kapanis_tamam ? <span style={{ whiteSpace: 'nowrap' }}>{fmt(r.teslim_kasa_tl)} ₺</span> : <span style={eksikUyariStil}>Kapanış yapılmadı</span>}
+                          </td>
+                          {/* Devir (kasada kalan) */}
+                          <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontSize: 12, maxWidth: 120 }}>
+                            {r.kapanis_tamam ? <span style={{ whiteSpace: 'nowrap' }}>{fmt(r.devir)} ₺</span> : <span style={eksikUyariStil}>Kapanış yapılmadı</span>}
+                          </td>
+                          {/* Anlık gider nakit */}
+                          <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', fontSize: 12 }}>
+                            {(r.anlik_gider_nakit_tl || 0) > 0 ? <span>{fmt(r.anlik_gider_nakit_tl)} ₺</span> : <span style={{ color: 'var(--text3)' }}>—</span>}
+                          </td>
+                          {/* Nakit denge farkı */}
+                          <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontSize: 12, maxWidth: 160 }}>
+                            {nakitDeltaHucre(r)}
+                          </td>
                         </tr>
                       );
                     })}
                   </tbody>
                   {/* Toplam satırı */}
-                  {topCiro > 0 && (
+                  {satirlar.length > 0 && (
                     <tfoot>
                       <tr style={{ background: 'var(--bg2)' }}>
                         <td colSpan={6} style={{ padding: '9px 10px', borderTop: '2px solid var(--border)', fontSize: 12, color: 'var(--text3)', fontWeight: 600 }}>
@@ -7618,6 +7686,21 @@ export default function OperasyonMerkezi() {
                         </td>
                         <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 800, fontSize: 15, color: '#22c55e' }}>
                           {fmt(topCiro)} ₺
+                        </td>
+                        <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 700, fontSize: 12, color: 'var(--text2)' }}>
+                          {fmt(topSabah)} ₺
+                        </td>
+                        <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 700, fontSize: 12, color: 'var(--text2)' }}>
+                          {fmt(topTeslim)} ₺
+                        </td>
+                        <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 700, fontSize: 12, color: 'var(--text2)' }}>
+                          {fmt(topDevir)} ₺
+                        </td>
+                        <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 700, fontSize: 12, color: 'var(--text2)' }}>
+                          {fmt(topAgider)} ₺
+                        </td>
+                        <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>
+                          —
                         </td>
                       </tr>
                     </tfoot>
@@ -10254,6 +10337,24 @@ export default function OperasyonMerkezi() {
                 setKuyrukBusy(null);
               }
             };
+            const merkezSiparisIptal = async (talep_id, subeAd) => {
+              if (!talep_id) return;
+              if (!window.confirm(`Bu sipariş talebini merkezden iptal etmek istiyor musunuz?\n${subeAd || ''}`)) return;
+              const aciklama = window.prompt('İptal nedeni (isteğe bağlı):', '') || '';
+              setKuyrukBusy(talep_id);
+              try {
+                await api('/ops/siparis/merkez-iptal', {
+                  method: 'POST',
+                  body: { talep_id, aciklama: aciklama.trim() || undefined },
+                });
+                toast('Sipariş merkezden iptal edildi', 'green');
+                yukleDisiplin();
+              } catch (e) {
+                toast(e.message || 'İptal edilemedi');
+              } finally {
+                setKuyrukBusy(null);
+              }
+            };
             const gonderilenleIlgiliToptanciyaYolla = async (sip) => {
               const talepId = String(sip?.id || '').trim();
               if (!talepId) return;
@@ -10400,6 +10501,16 @@ export default function OperasyonMerkezi() {
                         {sip.merkez_kayit_eksik_var && <span className="badge badge-yellow">❓ Kart eksik</span>}
                         {sip.gereksiz_var    && <span className="badge" style={{ background: '#3a2a0a', color: '#e8a03d' }}>⚠️ Şubede var</span>}
                         {sip.uyari_var       && <span className="badge" style={{ background: '#2a1a3a', color: '#c084fc' }}>🚨 Davranış uyarısı</span>}
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          style={{ marginLeft: 'auto', borderColor: '#e85d5d', color: '#e85d5d' }}
+                          disabled={kuyrukBusy === talepId}
+                          title="Yalnızca merkez sırasındaki talepler (bekliyor / tahsis onayı); depoya gidenler iptal edilemez."
+                          onClick={() => merkezSiparisIptal(talepId, sip.sube_adi)}
+                        >
+                          {kuyrukBusy === talepId ? '…' : 'Merkezden iptal'}
+                        </button>
                       </div>
                     </div>
 
