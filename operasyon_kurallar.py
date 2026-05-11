@@ -54,13 +54,16 @@ def beklenen_dunku_kapanis_stok(cur: Any, sube_id: str) -> Optional[dict]:
 
 def beklenen_dunku_kapanis_kasa(cur: Any, sube_id: str) -> Optional[float]:
     """
-    Dün tamamlanmış KAPANIS olayındaki devir miktarı (yoksa None).
-    Devir = kapanış sonrası kasada bırakılan, ertesi güne açılış kasası olarak aktarılan tutar.
-    Kasa teslim yapıldıysa devir = kasa_sayim - teslim; yapılmadıysa devir = kasa_sayim.
+    Ertesi gün açılışta kasada beklenen tutar (dünkü KAPANIS sonrası).
+    Öncelik: kayıtlı `devir`. NULL ise `max(0, kasa_sayim - teslim)` ile türetilir
+    (panel eski sürümde devir boş bırakılmış olsa bile tutarlılık).
     """
     cur.execute(
         """
-        SELECT COALESCE(devir, kasa_sayim) AS ref
+        SELECT COALESCE(
+            devir,
+            GREATEST(0, COALESCE(kasa_sayim, 0) - COALESCE(teslim, 0))
+        ) AS ref
         FROM sube_operasyon_event
         WHERE sube_id=%s
           AND tarih = (CURRENT_DATE - INTERVAL '1 day')

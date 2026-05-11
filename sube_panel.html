@@ -1658,7 +1658,9 @@
           <div class="form-group"><label>X POS (₺)</label><input id="kapP" inputmode="decimal" placeholder="0" /></div>
           <div class="form-group"><label>X Online (₺)</label><input id="kapO" inputmode="decimal" placeholder="0" /></div>
           <div class="form-group"><label>Teslim Kasa (₺)</label><input id="kapTeslim" inputmode="decimal" /></div>
-          <div class="form-group"><label>Devir (₺)</label><input id="kapDevir" inputmode="decimal" placeholder="0" /></div>
+          <div class="form-group"><label>Devir (₺) — ertesi gün kasada kalacak</label><input id="kapDevir" inputmode="decimal" placeholder="0" /></div>
+          <div class="form-group"><label>Kasada sayılan toplam (₺)</label><input id="kapToplam" inputmode="decimal" placeholder="Teslim+Devir veya tam sayım" /></div>
+          <div style="font-size:11px;color:var(--muted);margin:-6px 0 10px">Ertesi gün uyarı için: <strong>Toplam = Teslim + Devir</strong> olmalı. Boş bırakırsanız toplam otomatik hesaplanır.</div>
           <div class="form-group"><label>Kasa Kime Teslim</label><select id="kapKimeTeslim"></select></div>
           <button class="btn btn-primary btn-sm" id="kapNext1">Bardak Sayımına Geç</button>
         </div>
@@ -5302,6 +5304,15 @@ function wireKapanisHandler() {
       if (!kime) throw new Error('Kasa kime teslim seçin');
       var teslim = parseNum(inpVal('kapTeslim'));
       if (teslim==null||teslim<0) throw new Error('Teslim tutarı girin');
+      var devirRaw = parseNum(inpVal('kapDevir'));
+      var devirNum = devirRaw === null ? 0 : Math.max(0, devirRaw);
+      var toplamEl = inpVal('kapToplam').trim();
+      var toplamSay = toplamEl ? parseNum(toplamEl) : null;
+      if (toplamSay !== null && (toplamSay < 0 || isNaN(toplamSay))) throw new Error('Kasada sayılan toplam geçersiz');
+      var kasaToplam = toplamSay !== null ? toplamSay : (teslim + devirNum);
+      if (Math.abs(kasaToplam - (teslim + devirNum)) > 0.05) {
+        throw new Error('Teslim + Devir, kasada sayılan toplamla uyuşmuyor. Toplam alanını kontrol edin veya boş bırakın.');
+      }
       var n = parseNum(inpVal('kapN'))||0, p2 = parseNum(inpVal('kapP'))||0, o = parseNum(inpVal('kapO'))||0;
       if (n+p2+o <= 0) throw new Error('En az bir ciro tutarı girin');
       // Kapanış operasyon eventini tamamla
@@ -5309,9 +5320,9 @@ function wireKapanisHandler() {
       if (!eid) throw new Error('Aktif kapanış eventi bulunamadı — önce sistem kapanış adımını bekleyin');
       var body = {
         personel_id: pid, pin: pin,
-        teslim: teslim, devir: parseNum(inpVal('kapDevir'))||0,
+        teslim: teslim, devir: devirNum,
         kasa_kime_teslim: kime,
-        kasa_sayim: teslim,
+        kasa_sayim: kasaToplam,
         x_raporu_gonderildi: document.getElementById('kapXRapor').checked,
         ciro_gonderim_onay: false,
         ciro_nakit: n, ciro_pos: p2, ciro_online: o,

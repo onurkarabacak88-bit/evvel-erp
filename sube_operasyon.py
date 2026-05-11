@@ -315,11 +315,23 @@ def _refresh_durum(cur, sube_id: str) -> None:
 
 
 def _list_events(cur, sube_id: str) -> List[dict]:
+    """
+    Bugünün operasyon satırları + bir önceki takvim gününden henüz bitmemiş KAPANIS
+    (00:00–02:00 arası kasa/kapanış hâlâ önceki iş gününe yazılabilir).
+    """
     cur.execute(
         """
         SELECT * FROM sube_operasyon_event
-        WHERE sube_id=%s AND tarih=CURRENT_DATE
-        ORDER BY sistem_slot_ts, tip
+        WHERE sube_id=%s
+          AND (
+            tarih = CURRENT_DATE
+            OR (
+              tarih = (CURRENT_DATE - INTERVAL '1 day')::date
+              AND tip = 'KAPANIS'
+              AND durum IN ('bekliyor', 'gecikti')
+            )
+          )
+        ORDER BY tarih DESC, sistem_slot_ts, tip
         """,
         (sube_id,),
     )
@@ -910,7 +922,25 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 panel_kullanici_id=None,
                 audit_etiket="KAPANIS_TASLAK",
             )
-            ks = body.kasa_sayim if body.kasa_sayim is not None else body.teslim
+            teslim_f = max(0.0, float(body.teslim or 0))
+            ks_girdi = float(body.kasa_sayim) if body.kasa_sayim is not None else teslim_f
+            if body.devir is None:
+                ham_dev = round(ks_girdi - teslim_f, 2)
+                if ham_dev < -0.05:
+                    raise HTTPException(
+                        400,
+                        "Kasa sayımı teslim tutarından küçük olamaz. Teslim ve kasa toplamını kontrol edin.",
+                    )
+                devir_kayit = max(0.0, ham_dev)
+            else:
+                devir_kayit = max(0.0, float(body.devir))
+            ks = round(teslim_f + devir_kayit, 2)
+            if abs(ks_girdi - ks) > 0.05:
+                raise HTTPException(
+                    400,
+                    "Kasa tutarsız: Kasa sayımı (toplam) ≈ Teslim + Devir olmalı. "
+                    "Kasada saydığınız toplamı girin veya teslim/devir alanlarını kontrol edin.",
+                )
             kasa_kime_teslim = (body.kasa_kime_teslim or "").strip()
             cur.execute(
                 """
@@ -925,7 +955,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     body.personel_saat,
                     ks,
                     body.teslim,
-                    body.devir,
+                    devir_kayit,
                     json.dumps(
                         {
                             "kapanis_stok_sayim": k_stok,
@@ -952,7 +982,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                         alici_ad = alici_d["ad"] + (
                             " — " + alici_d["unvan"] if alici_d.get("unvan") else ""
                         )
-                        devir_not = float(body.devir or 0)
+                        devir_not = float(devir_kayit or 0)
                         kt_id = str(uuid.uuid4())
                         cur.execute(
                             """INSERT INTO kasa_teslim
@@ -975,7 +1005,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             from operasyon_defter import operasyon_defter_ekle
 
             defter_satir = (
-                f"KAPANIS teslim={body.teslim} devir={body.devir} kasa_sayim={ks} | "
+                f"KAPANIS teslim={body.teslim} devir={devir_kayit} kasa_sayim={ks} | "
                 f"kasa_kime_teslim={kasa_kime_teslim} | "
                 f"X ciro(nakit,pos,online)=({cn},{cp},{co}) | "
                 f"stok bardak(kucuk/buyuk/plastik)=({k_stok['bardak_kucuk']}/{k_stok['bardak_buyuk']}/{k_stok['bardak_plastik']}) "

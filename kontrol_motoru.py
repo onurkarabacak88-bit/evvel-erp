@@ -6,7 +6,7 @@ from datetime import datetime, date, timedelta
 from typing import Any, Dict, List, Optional
 
 from database import db
-from tr_saat import bugun_tr, dt_now_tr_naive
+from tr_saat import bugun_tr, dt_now_tr_naive, is_gunu_tr
 from operasyon_stok_motor import build_virtual_merkez_uyarilari
 
 
@@ -64,23 +64,23 @@ def _sonuc(
 
 
 # ─── YARDIMCI ────────────────────────────────────────────────
-def _kasa_event_ref(cur, sube_id: str, tarih_sql: str, tip: str) -> Optional[dict]:
-    """Belirtilen tarih ve tip için kasa tutarı + personel bilgisi."""
+def _kasa_event_ref(cur, sube_id: str, is_gunu: date, tip: str) -> Optional[dict]:
+    """Belirtilen iş günü tarihi ve tip için kasa tutarı + personel bilgisi."""
     cur.execute(
-        f"""
+        """
         SELECT
             COALESCE(kasa_sayim, teslim) AS tutar,
             personel_id,
             personel_saat
         FROM sube_operasyon_event
         WHERE sube_id = %s
-          AND tarih = {tarih_sql}
+          AND tarih = %s::date
           AND tip = %s
           AND durum = 'tamamlandi'
         ORDER BY cevap_ts DESC NULLS LAST
         LIMIT 1
         """,
-        (sube_id, tip),
+        (sube_id, is_gunu, tip),
     )
     r = cur.fetchone()
     if not r or r.get("tutar") is None:
@@ -92,19 +92,21 @@ def _kasa_event_ref(cur, sube_id: str, tarih_sql: str, tip: str) -> Optional[dic
 
 
 def _dun_kapanis_kasa_ref(cur, sube_id: str) -> Optional[dict]:
-    """Dün kapanış kasa tutarı + o kapanışı yapan personel."""
-    return _kasa_event_ref(cur, sube_id, "CURRENT_DATE - INTERVAL '1 day'", "KAPANIS")
+    """Bir önceki iş günü kapanış kasası (takvim günü değil, is_gunu_tr - 1)."""
+    ig = is_gunu_tr()
+    onceki = ig - timedelta(days=1)
+    return _kasa_event_ref(cur, sube_id, onceki, "KAPANIS")
 
 
 def _bugun_acilis_kasa_ref(cur, sube_id: str) -> Optional[dict]:
-    """Bugün açılış kasa tutarı + açılışı yapan personel."""
-    return _kasa_event_ref(cur, sube_id, "CURRENT_DATE", "ACILIS")
+    """Geçerli iş günü açılış kasası (00:00–02:00 arası hâlâ önceki takvim gününün iş günü)."""
+    return _kasa_event_ref(cur, sube_id, is_gunu_tr(), "ACILIS")
 
 
 # ─── KONTROL 1: KASA FARK ────────────────────────────────────
 def kontrol_kasa_fark(cur, sube_id: str) -> Optional[dict]:
     """
-    Dün kapanış kasası vs bugün açılış kasası.
+    Bir önceki iş günü kapanış kasası vs geçerli iş günü açılış kasası (is_gunu_tr).
     Fark varsa kim açtı bilgisiyle birlikte döner.
     """
     dun = _dun_kapanis_kasa_ref(cur, sube_id)
@@ -128,8 +130,8 @@ def kontrol_kasa_fark(cur, sube_id: str) -> Optional[dict]:
         "KASA_FARK",
         sev,
         (
-            f"Kasa farkı {fark:+.0f}₺ — dün kapanış {dun['tutar']:,.0f}₺, "
-            f"bugün açılış {bugun['tutar']:,.0f}₺ ({yon})"
+            f"Kasa farkı {fark:+.0f}₺ — önceki iş günü kapanış {dun['tutar']:,.0f}₺, "
+            f"bu iş günü açılış {bugun['tutar']:,.0f}₺ ({yon})"
         ),
         deger=round(fark, 2),
         esik=200,
@@ -313,10 +315,10 @@ def kontrol_kapanis_gecikme(cur, sube_id: str, kapanis_saati: str) -> Optional[d
     cur.execute(
         """
         SELECT durum FROM sube_operasyon_event
-        WHERE sube_id = %s AND tarih = CURRENT_DATE AND tip = 'KAPANIS'
+        WHERE sube_id = %s AND tarih = %s::date AND tip = 'KAPANIS'
         ORDER BY olusturma DESC LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, str(is_gunu_tr())),
     )
     r = cur.fetchone()
     if r and r.get("durum") == "tamamlandi":
@@ -335,14 +337,15 @@ def kontrol_kapanis_gecikme(cur, sube_id: str, kapanis_saati: str) -> Optional[d
 
 def kontrol_ciro_girildi_mi(cur, sube_id: str) -> Optional[dict]:
     """Kapanış yapıldıysa ciro girilmiş mi?"""
+    ig = str(is_gunu_tr())
     cur.execute(
         """
         SELECT 1 FROM sube_operasyon_event
-        WHERE sube_id = %s AND tarih = CURRENT_DATE
+        WHERE sube_id = %s AND tarih = %s::date
           AND tip = 'KAPANIS' AND durum = 'tamamlandi'
         LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, ig),
     )
     if not cur.fetchone():
         return None
@@ -350,10 +353,10 @@ def kontrol_ciro_girildi_mi(cur, sube_id: str) -> Optional[dict]:
     cur.execute(
         """
         SELECT 1 FROM ciro
-        WHERE sube_id = %s AND tarih = CURRENT_DATE AND durum = 'aktif'
+        WHERE sube_id = %s AND tarih = %s::date AND durum = 'aktif'
         LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, ig),
     )
     if cur.fetchone():
         return None
@@ -361,11 +364,11 @@ def kontrol_ciro_girildi_mi(cur, sube_id: str) -> Optional[dict]:
     cur.execute(
         """
         SELECT 1 FROM ciro_taslak
-        WHERE sube_id = %s AND tarih = CURRENT_DATE
+        WHERE sube_id = %s AND tarih = %s::date
           AND durum IN ('bekliyor', 'onaylandi')
         LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, ig),
     )
     if cur.fetchone():
         return None

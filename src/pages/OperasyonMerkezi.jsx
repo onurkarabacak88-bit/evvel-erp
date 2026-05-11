@@ -505,6 +505,37 @@ function bugunIsoTarih() {
   return `${y}-${m}-${d}`;
 }
 
+/** İstanbul: 00:00–02:00 arası bir önceki takvim günü (backend `tr_saat.is_gunu_tr` ile uyumlu). */
+function isGunuIsoIstanbul() {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Istanbul',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(new Date());
+    const y = parseInt(parts.find((p) => p.type === 'year')?.value, 10);
+    const mo = parseInt(parts.find((p) => p.type === 'month')?.value, 10);
+    const da = parseInt(parts.find((p) => p.type === 'day')?.value, 10);
+    const h = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+    let yy = y;
+    let mm = mo;
+    let dd = da;
+    if (Number.isFinite(h) && h < 2) {
+      const t = new Date(Date.UTC(y, mo - 1, da));
+      t.setUTCDate(t.getUTCDate() - 1);
+      yy = t.getUTCFullYear();
+      mm = t.getUTCMonth() + 1;
+      dd = t.getUTCDate();
+    }
+    return `${yy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+  } catch {
+    return bugunIsoTarih();
+  }
+}
+
 /** `YYYY-MM-DD` ± gün (yerel saat). */
 function isoTariheGunEkle(isoTarih, gunDelta) {
   const p = String(isoTarih || '').trim().split('-').map((x) => parseInt(x, 10));
@@ -690,7 +721,8 @@ function hubLocalHourTr() {
 function hubAcilisKapanisBucket(kartlar) {
   const list = Array.isArray(kartlar) ? kartlar : [];
   const h = hubLocalHourTr();
-  const aksamKapanisListe = h >= 15;
+  // 15:00 sonrası veya gece 02:00 öncesi: kapanış hâlâ «aynı iş günü» kabul edilir (kasa girişi gecikebilir).
+  const aksamKapanisListe = h >= 15 || h < 2;
 
   const acilisBekliyor = [];
   const acilisGecikti = [];
@@ -781,7 +813,7 @@ function HubGunlukAcilisKapanisCard({ bucket }) {
           <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800 }}>Bugün · Açılış / kapanış özeti</h3>
           <p style={{ margin: '6px 0 0', fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
             Kaynak: şube operasyon olayları (ACILIS / KAPANIS). İstanbul saati ~{bucket.saatTr}:00 —
-            kapanış bekleyen listesi genelde <strong>15:00 sonrası</strong> veya şube &quot;kapalı&quot; göründüğünde gösterilir.
+            kapanış bekleyen listesi <strong>15:00 sonrası</strong> veya <strong>gece 02:00 öncesi</strong> (ertesi takvim gününe sarkan kapanış) veya şube &quot;kapalı&quot; göründüğünde gösterilir.
           </p>
         </div>
         {tamam ? (
@@ -1605,7 +1637,7 @@ export default function OperasyonMerkezi() {
   const [kullanilanHaftaYukleniyor, setKullanilanHaftaYukleniyor] = useState(false);
   const [kapanisTakip, setKapanisTakip] = useState(null);
   const [kapanisTakipYukleniyor, setKapanisTakipYukleniyor] = useState(false);
-  const [kapanisTakipTarih, setKapanisTakipTarih] = useState(bugunIsoTarih());
+  const [kapanisTakipTarih, setKapanisTakipTarih] = useState(isGunuIsoIstanbul());
   const [kapanisTakipSonGuncelleme, setKapanisTakipSonGuncelleme] = useState(null);
   const kapanisTakipIntervalRef = useRef(null);
   const [ciroOnayBugun, setCiroOnayBugun] = useState({ tarih: '', toplam: 0, toplam_tutar: 0, kayitlar: [] });
@@ -2026,7 +2058,7 @@ export default function OperasyonMerkezi() {
   }, [kullanilanGunYukle]);
 
   const yukleKapanisTakip = useCallback(async (tarih, { silent = false } = {}) => {
-    const hedef = (tarih || bugunIsoTarih()).trim();
+    const hedef = (tarih || isGunuIsoIstanbul()).trim();
     if (!silent) setKapanisTakipYukleniyor(true);
     try {
       const r = await api(`/ops/kapanis-takip?tarih=${encodeURIComponent(hedef)}`);
@@ -2099,7 +2131,7 @@ export default function OperasyonMerkezi() {
     const r = await api(`/ops/bekleyen-merkez?year_month=${encodeURIComponent(ym)}`);
     const tum = Array.isArray(r?.kasa_uyumsuzluklar) ? r.kasa_uyumsuzluklar : [];
     const kayitlar = tum.filter((u) => String(u?.tarih || '').slice(0, 10) === hedef);
-    const eksikKapanis = hedef === bugunIsoTarih()
+    const eksikKapanis = hedef === isGunuIsoIstanbul()
       ? (Array.isArray(r?.eksik_kapanis_bugun) ? r.eksik_kapanis_bugun : [])
       : [];
     return {
@@ -2972,7 +3004,7 @@ export default function OperasyonMerkezi() {
     }
     yukleKapanisTakip(kapanisTakipTarih);
     // Bugünkü görünümde 2 dakikada bir otomatik yenile
-    if (kapanisTakipTarih === bugunIsoTarih()) {
+    if (kapanisTakipTarih === isGunuIsoIstanbul()) {
       kapanisTakipIntervalRef.current = setInterval(() => {
         yukleKapanisTakip(kapanisTakipTarih, { silent: true });
       }, 120_000);
@@ -7410,7 +7442,7 @@ export default function OperasyonMerkezi() {
           try { return new Date(ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }); }
           catch { return null; }
         };
-        const bugunMu = kapanisTakipTarih === bugunIsoTarih();
+        const bugunMu = kapanisTakipTarih === isGunuIsoIstanbul();
 
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -7445,6 +7477,13 @@ export default function OperasyonMerkezi() {
                 </span>
               )}
             </div>
+            <p style={{ margin: 0, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
+              Varsayılan tarih <strong>iş günü</strong> (İstanbul’da gece 02:00’ye kadar önceki takvim günü). Kapanış son teslim: ertesi gün{' '}
+              {Number(kt?.kapanis_son_teslim_saat) === 2 || kt?.kapanis_son_teslim_saat == null ? '02:00' : `${String(kt?.kapanis_son_teslim_saat)}:00`}.
+              {kt?.takvim_tr && kt?.is_gunu_tr && String(kt.takvim_tr) !== String(kt.is_gunu_tr) ? (
+                <span> Takvim: <span className="mono">{kt.takvim_tr}</span> · İş günü: <span className="mono">{kt.is_gunu_tr}</span></span>
+              ) : null}
+            </p>
 
             {/* ── Özet metrik kartları ── */}
             {kt && (

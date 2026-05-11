@@ -20,7 +20,13 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from database import db
-from tr_saat import bugun_tr, is_gunu_tr, dt_now_tr, dt_now_tr_naive
+from tr_saat import (
+    bugun_tr,
+    is_gunu_tr,
+    dt_now_tr,
+    dt_now_tr_naive,
+    KAPANIS_SON_TESLIM_ERTESI_GUN_SAAT,
+)
 from operasyon_defter import (
     operasyon_defter_ekle,
     operasyon_defter_satir_imza_gecerli,
@@ -1051,11 +1057,13 @@ def ops_dashboard(
     except Exception:
         kasa_devir_listesi = []
 
-    # Bugünkü tamamlanan KAPANIS eventleri — kasa sayım özeti
+    # İş gününe göre tamamlanan KAPANIS (gece 02:00 öncesi takvim «ertesi gün» olsa bile önceki iş günü)
     kapanis_ozet_listesi = []
     try:
+        ig = is_gunu_tr()
         with db() as (_, cur3):
-            cur3.execute("""
+            cur3.execute(
+                """
                 SELECT
                     e.sube_id::text,
                     COALESCE(s.ad, e.sube_id::text) AS sube_adi,
@@ -1070,9 +1078,11 @@ def ops_dashboard(
                 LEFT JOIN personel p ON p.id::text = e.personel_id::text
                 WHERE e.tip = 'KAPANIS'
                   AND e.durum = 'tamamlandi'
-                  AND e.tarih = CURRENT_DATE
+                  AND e.tarih = %s
                 ORDER BY e.olay_ts DESC
-            """)
+                """,
+                (ig,),
+            )
             for row in (cur3.fetchall() or []):
                 ts = row.get("olay_ts")
                 kapanis_ozet_listesi.append({
@@ -1129,20 +1139,29 @@ def ops_dashboard(
                 SELECT
                     a.sube_id::text,
                     COALESCE(s.ad, a.sube_id::text) AS sube_adi,
-                    a.kasa_sayim                       AS acilis_kasa,
-                    k.devir                            AS dun_devir,
-                    (a.kasa_sayim - COALESCE(k.devir,0))::float AS fark
+                    a.kasa_sayim AS acilis_kasa,
+                    COALESCE(
+                        k.devir,
+                        GREATEST(0, COALESCE(k.kasa_sayim, 0) - COALESCE(k.teslim, 0))
+                    )::float AS dun_devir,
+                    (a.kasa_sayim - COALESCE(
+                        k.devir,
+                        GREATEST(0, COALESCE(k.kasa_sayim, 0) - COALESCE(k.teslim, 0))
+                    ))::float AS fark
                 FROM sube_operasyon_event a
                 LEFT JOIN subeler s ON s.id = a.sube_id
                 LEFT JOIN sube_operasyon_event k
                     ON k.sube_id = a.sube_id
                     AND k.tip = 'KAPANIS'
                     AND k.durum = 'tamamlandi'
-                    AND DATE(k.olay_ts AT TIME ZONE 'Europe/Istanbul') = CURRENT_DATE - 1
+                    AND k.tarih = (a.tarih - INTERVAL '1 day')::date
                 WHERE a.tip = 'ACILIS'
                   AND a.durum = 'tamamlandi'
-                  AND DATE(a.olay_ts AT TIME ZONE 'Europe/Istanbul') = CURRENT_DATE
-                  AND ABS(a.kasa_sayim - COALESCE(k.devir,0)) > 50
+                  AND a.tarih = CURRENT_DATE
+                  AND ABS(a.kasa_sayim - COALESCE(
+                        k.devir,
+                        GREATEST(0, COALESCE(k.kasa_sayim, 0) - COALESCE(k.teslim, 0))
+                    )) > 50
             """)
             for row in (cur_ku.fetchall() or []):
                 kasa_uyumsuzluk_listesi.append({
@@ -1183,12 +1202,13 @@ def kapanis_takip(tarih: Optional[str] = None):
     """
     Günlük kapanış takip: tüm aktif şubeler, kapanış + açılış durumu + ciro (nakit/pos/online).
     Onaylandi taslak bekliyor'a göre önceliklidir (aynı gün içinde).
+    Tarih verilmezse varsayılan: iş günü (gece 02:00'e kadar önceki takvim günü) — tr_saat.is_gunu_tr.
     """
     from datetime import date as _date
     try:
-        hedef = str(_date.fromisoformat(tarih)) if tarih else str(_date.today())
+        hedef = str(_date.fromisoformat(tarih)) if tarih else str(is_gunu_tr())
     except Exception:
-        hedef = str(_date.today())
+        hedef = str(is_gunu_tr())
 
     with db() as (conn, cur):
         cur.execute("SELECT id::text, ad FROM subeler WHERE aktif=TRUE ORDER BY ad")
@@ -1309,6 +1329,9 @@ def kapanis_takip(tarih: Optional[str] = None):
 
     return {
         "tarih":                hedef,
+        "is_gunu_tr":           str(is_gunu_tr()),
+        "takvim_tr":            str(bugun_tr()),
+        "kapanis_son_teslim_saat": int(KAPANIS_SON_TESLIM_ERTESI_GUN_SAAT),
         "satirlar":             satirlar,
         "sube_sayisi":          len(satirlar),
         "kapanis_yapan_adet":   sum(1 for r in satirlar if r["kapanis_tamam"]),
@@ -5018,7 +5041,7 @@ def ops_bekleyen_merkez(
         with db() as (_, cur_ek):
             cur_ek.execute("""
                 SELECT a.sube_id::text, s.ad AS sube_adi,
-                       (CURRENT_DATE - INTERVAL '1 day')::date AS beklenen_kapanis_tarih
+                       (a.tarih - INTERVAL '1 day')::date AS beklenen_kapanis_tarih
                 FROM sube_operasyon_event a
                 JOIN subeler s ON s.id = a.sube_id
                 WHERE a.tip = 'ACILIS' AND a.durum = 'tamamlandi'
@@ -5027,7 +5050,7 @@ def ops_bekleyen_merkez(
                       SELECT 1 FROM sube_operasyon_event k
                       WHERE k.sube_id = a.sube_id
                         AND k.tip = 'KAPANIS' AND k.durum = 'tamamlandi'
-                        AND k.tarih = (CURRENT_DATE - INTERVAL '1 day')::date
+                        AND k.tarih = (a.tarih - INTERVAL '1 day')::date
                   )
                 ORDER BY s.ad
             """)
