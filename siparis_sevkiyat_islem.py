@@ -158,7 +158,7 @@ def _kaynak_depo_aktif_uyumsuzluk_sayisi(cur: Any, kaynak_depo_sube_id: str, har
     )
     rr = cur.fetchone()
     try:
-        return int((rr or [0])[0] or 0)
+        return int(list(rr.values())[0] or 0) if rr else 0
     except Exception:
         return 0
 

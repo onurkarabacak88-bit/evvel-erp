@@ -1803,7 +1803,8 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
             """,
             (sube_id,),
         )
-        bekleyen_siparis_sayisi = int((cur.fetchone() or [0])[0])
+        br = cur.fetchone()
+        bekleyen_siparis_sayisi = int(list(br.values())[0]) if br else 0
     except Exception:
         bekleyen_siparis_sayisi = 0
 
@@ -1819,7 +1820,8 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
             """,
             (sube_id, sube_id),
         )
-        depo_hazirlik_bekleyen_sayisi = int((cur.fetchone() or [0])[0])
+        dr = cur.fetchone()
+        depo_hazirlik_bekleyen_sayisi = int(list(dr.values())[0]) if dr else 0
     except Exception:
         depo_hazirlik_bekleyen_sayisi = 0
 
@@ -3638,7 +3640,8 @@ def sube_siparis_akisi(
                 """,
                 (sube_id, sube_id, gun_i),
             )
-            depo_hazirlik_toplam = int((cur.fetchone() or [0])[0])
+            drt = cur.fetchone()
+            depo_hazirlik_toplam = int(list(drt.values())[0]) if drt else 0
         except Exception:
             depo_hazirlik_toplam = len(depo_hazirlik)
 

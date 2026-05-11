@@ -6817,7 +6817,9 @@ def ops_siparis_sevkiyat_uyumsuzluk_coz(body: OpsSevkiyatUyumsuzlukCozBody):
             """,
             (str(r.get("siparis_talep_id") or ""),),
         )
-        kalan_uyumsuz = int((cur.fetchone() or [0])[0] or 0)
+        cr = cur.fetchone()
+        # RealDictCursor: satır [0] ile indekslenmez; COUNT ilk değerden okunur
+        kalan_uyumsuz = int(list(cr.values())[0] or 0) if cr else 0
         if kalan_uyumsuz <= 0:
             cur.execute(
                 """
