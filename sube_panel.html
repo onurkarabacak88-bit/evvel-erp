@@ -1612,16 +1612,6 @@
       border: 2px solid rgba(125, 211, 252, 0.65) !important;
       background: rgba(15, 23, 42, 0.45) !important;
     }
-    .gonderilecek-yol-bilgi {
-      font-size: 12px;
-      color: var(--muted);
-      margin: 0 0 12px;
-      line-height: 1.55;
-      padding: 10px 12px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      background: rgba(15, 23, 42, 0.35);
-    }
     .gonderilecek-sect-eyebrow {
       font-size: 10px;
       font-weight: 800;
@@ -2263,10 +2253,14 @@
       <div class="sekme-icerik" id="tab-gonderilecek">
         <div class="kart">
           <div class="kart-baslik"><span class="ico">📤</span> Gönderilecek siparişler</div>
-          <p class="gonderilecek-yol-bilgi">
-            Merkezin bu şubeye <strong>depo</strong> olarak yönlendirdiği siparişler burada listelenir. Kart başlığına tıklayarak kalemleri açın;
-            <strong>Kısmi gönder</strong> kısayolu yazdığınız gönderilen adetlere göre satır durumunu düzenler. Kayıt için karttaki <strong>Depo sevkiyatını kaydet</strong> kullanılır — özet onay penceresi açılır.
-          </p>
+          <div class="gonderilecek-uyari-banner" role="alert">
+            <span style="flex-shrink:0;font-size:16px;line-height:1" aria-hidden="true">⚠️</span>
+            <div>
+              <strong>Dikkat — depo kaydı talep şubesinin stok akışını etkiler.</strong>
+              Her satırda <strong>durum</strong> ve <strong>gönderilen adet</strong> dikkatle girilmelidir. Kısmi veya «yok» gönderimde satırları tek tek kontrol edin; hemen alttaki <strong>Hızlı işlem</strong> toplu kısayolları tam gönderim senaryoları içindir.
+            </div>
+          </div>
+          <div id="gonderilecekBulkBarWrap" aria-live="polite"></div>
           <div class="gonderilecek-onay-panel" role="region" aria-label="Sevkiyat için personel ve onay kodu">
             <div class="gonderilecek-onay-head">
               <span class="gonderilecek-onay-tag">Kimlik</span>
@@ -2284,13 +2278,6 @@
                 <label for="gndrPin">Onay kodu (4 hane)</label>
                 <input id="gndrPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" />
               </div>
-            </div>
-          </div>
-          <div class="gonderilecek-uyari-banner" role="alert">
-            <span style="flex-shrink:0;font-size:16px;line-height:1" aria-hidden="true">⚠️</span>
-            <div>
-              <strong>Dikkat — depo kaydı talep şubesinin stok akışını etkiler.</strong>
-              Her satırda <strong>durum</strong> ve <strong>gönderilen adet</strong> dikkatle girilmelidir. Kısmi veya «yok» gönderimde satırları tek tek kontrol edin; üstteki toplu kısayollar tam gönderim senaryoları içindir.
             </div>
           </div>
           <div id="gonderilecekPanel"></div>
@@ -3551,7 +3538,7 @@ function gonderilecekBulkHepsiGonderildi() {
   document.querySelectorAll('input[type="checkbox"][id^="depDone_"]').forEach(function (ch) {
     ch.checked = true;
   });
-  panelToast('Tüm sipariş kartlarında «Sevkiyat tamamlandı» işaretlendi.', 4200);
+  panelToast('Tüm sipariş kartlarında tamamlandı onayı işaretlendi.', 4200);
 }
 window.gonderilecekBulkTamGonder = gonderilecekBulkTamGonder;
 window.gonderilecekBulkHepsiGonderildi = gonderilecekBulkHepsiGonderildi;
@@ -3634,19 +3621,24 @@ function buildDepoKalanHTML(kalanListe) {
   return h;
 }
 
-function buildDepoHazirlikHTML(depoHazirlik) {
-  var dh = depoHazirlik || [];
-  if (!dh.length) {
-    return '<div class="merkez-mesaj-bos" style="padding:12px 0">Şu an size yönlendirilmiş gönderilecek sipariş yok.</div>';
-  }
+function buildGonderilecekBulkBarHTML() {
   var h = '';
   h += '<div class="gonderilecek-bulk-bar">';
   h += '<span>Hızlı işlem</span>';
   h +=
     '<button type="button" class="btn btn-secondary btn-sm" onclick="gonderilecekKismiSatirlariUygula();return false;" title="Gönderilen kutularına yazdığınız adetlere göre satır durumunu kısmi / tam / bekliyor yapar">Kısmi gönder (satırları düzenle)</button>';
   h += '<button type="button" class="btn btn-warning btn-sm" onclick="gonderilecekBulkTamGonder();return false;" title="Tüm açık kartlardaki ürün satırlarında durumu «var» yapar ve gönderilen adedi istenenle eşitler">Tüm kalemlerde tam gönder (var)</button>';
-  h += '<button type="button" class="btn btn-ghost btn-sm" onclick="gonderilecekBulkHepsiGonderildi();return false;" title="Her sipariş kartındaki «Sevkiyat tamamlandı» kutusunu işaretler">Tüm kartlarda sevkiyat tamamlandı ✓</button>';
+  h += '<button type="button" class="btn btn-ghost btn-sm" onclick="gonderilecekBulkHepsiGonderildi();return false;" title="Her sipariş kartındaki tamamlandı onay kutusunu işaretler">Tüm kartlarda işaretle ✓</button>';
   h += '</div>';
+  return h;
+}
+
+function buildDepoHazirlikHTML(depoHazirlik) {
+  var dh = depoHazirlik || [];
+  if (!dh.length) {
+    return '<div class="merkez-mesaj-bos" style="padding:12px 0">Şu an size yönlendirilmiş gönderilecek sipariş yok.</div>';
+  }
+  var h = '';
   h += '<div class="gonderilecek-sect-eyebrow">Hazırlık listesi</div>';
   h +=
     '<div class="gonderilecek-hazirlik-ozet"><span>🏪 ' +
@@ -3840,6 +3832,10 @@ async function renderGonderilecekPanel() {
   var depoHazirlik = (akis && akis.depo_hazirlik_talepleri) || [];
   var depoGonderilenler = (akis && akis.depo_gonderilenler) || [];
   var depoKalan = (akis && akis.depo_kalan_kalemleri) || [];
+  var bulkWrap = document.getElementById('gonderilecekBulkBarWrap');
+  if (bulkWrap) {
+    bulkWrap.innerHTML = depoHazirlik.length ? buildGonderilecekBulkBarHTML() : '';
+  }
   root.innerHTML =
     buildDepoKalanHTML(depoKalan) + buildDepoHazirlikHTML(depoHazirlik) + buildDepoGonderilenHTML(depoGonderilenler);
   fillSels();
