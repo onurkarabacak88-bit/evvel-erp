@@ -4003,13 +4003,21 @@ export default function OperasyonMerkezi() {
                 </span>
               </div>
               <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
-                Dünkü kapanış deviri ile bugünkü açılış kasa sayımı eşleşmiyor.
+                Dünkü kapanış <strong>devri</strong> ile bugünkü <strong>açılış kasa</strong> sayımı eşleşmiyor.
+                Pozitif fark: açılışta devre göre <strong>fazla</strong> nakit; negatif fark: devre göre <strong>eksik</strong>.
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {(ozet.kasa_uyumsuzluk_listesi || []).map((x, i) => {
                   const fark = Number(x.fark || 0);
                   const farkStr = (fark >= 0 ? '+' : '') + fark.toLocaleString('tr-TR') + ' ₺';
                   const farkRenk = fark > 0 ? '#4ade80' : '#f87171';
+                  /** fark = bugün açılış kasa − dün kapanış devri */
+                  const farkAciklama = fark > 0
+                    ? 'Bugün açılış kasası dün devrinden yüksek (fazla sayım / düşük devir şüphesi).'
+                    : fark < 0
+                      ? 'Bugün açılış kasası dün devrinden düşük (eksik nakit / yüksek devir şüphesi).'
+                      : 'Eşleşme.';
+                  const farkEtiket = fark > 0 ? 'Açılışta fazla' : fark < 0 ? 'Açılışta eksik' : '—';
                   return (
                     <div key={i} style={{ background: 'rgba(0,0,0,0.18)', borderRadius: 8, padding: '7px 12px', border: '1px solid rgba(239,68,68,0.35)', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
                       <span style={{ fontWeight: 700, fontSize: 13, minWidth: 110 }}>🏪 {x.sube_adi}</span>
@@ -4019,7 +4027,10 @@ export default function OperasyonMerkezi() {
                       <span style={{ fontSize: 12, background: 'rgba(255,255,255,0.07)', borderRadius: 6, padding: '1px 8px' }}>
                         Bugün Açılış: <strong>{Number(x.acilis_kasa || 0).toLocaleString('tr-TR')} ₺</strong>
                       </span>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: farkRenk }}>Fark: {farkStr}</span>
+                      <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }} title={farkAciklama}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: farkRenk }}>Fark: {farkStr}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text2)', letterSpacing: '0.02em' }}>{farkEtiket}</span>
+                      </span>
                     </div>
                   );
                 })}
@@ -7447,12 +7458,13 @@ export default function OperasyonMerkezi() {
           const s = x.toLocaleString('tr-TR', { maximumFractionDigits: 0 });
           return x > 0 ? `+${s}` : s;
         };
+        /** Nakit Δ: açık (+) kırmızı, fazla (−) yeşil, dengede (≈0) nötr — ekstra renk yok. */
         const farkStil = (v) => {
           if (v == null || Number.isNaN(Number(v))) return { color: 'var(--text3)', fontWeight: 600 };
           const x = Number(v);
-          if (Math.abs(x) <= 0.5) return { color: '#22c55e', fontWeight: 800 };
+          if (Math.abs(x) <= 0.5) return { color: 'var(--text2)', fontWeight: 600 };
           if (x > 0.5) return { color: '#e85d5d', fontWeight: 800 };
-          return { color: '#3b82f6', fontWeight: 800 };
+          return { color: '#22c55e', fontWeight: 800 };
         };
         /** Nakit Δ: yalnızca açılış+kapanış tamam ise tutar; değilse açık uyarı metni (şube paneli değil, merkez tablosu). */
         const nakitDeltaHucre = (r) => {
@@ -7463,8 +7475,27 @@ export default function OperasyonMerkezi() {
           if (tam && fark != null && !Number.isNaN(Number(fark))) {
             const fs = fmtFark(fark);
             if (fs != null) {
+              const fv = Number(fark);
+              const buyuk = Math.abs(fv) > 0.5;
+              /** İş kuralı (API): + → kasa açığı, − → kasa fazlası (denge formülü fazla/eksik nakit). */
+              const etiket = !buyuk
+                ? 'Dengede'
+                : fv > 0
+                  ? 'Kasa açığı'
+                  : 'Kasa fazlası';
+              const title =
+                'Nakit denge: sabah kasa + ciro nakit − teslim − devir − nakit anlık gider. '
+                + (buyuk
+                  ? (fv > 0
+                    ? 'Pozitif: denkleme göre kasada tutması gerekenden az nakit (açık).'
+                    : 'Negatif: denkleme göre kasada tutması gerekenden fazla nakit (fazla).')
+                  : 'Mutlak değer küçük; pratikte dengeli.');
+              const etiketRenk = !buyuk ? 'var(--text3)' : fv > 0 ? '#e85d5d' : '#22c55e';
               return (
-                <span style={farkStil(fark)}>{fs} ₺</span>
+                <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }} title={title}>
+                  <span style={farkStil(fark)}>{fs} ₺</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: etiketRenk, whiteSpace: 'nowrap' }}>{etiket}</span>
+                </span>
               );
             }
           }
@@ -7530,7 +7561,7 @@ export default function OperasyonMerkezi() {
             </p>
             <p style={{ margin: 0, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
               <strong>Nakit denge (Δ):</strong> aynı iş günü <em>sabah kasa</em> (açılış sayımı) + <em>ciro nakit</em> (yapılan iş) − <em>teslim</em> − <em>devir</em> (kasada kalan) − <em>onaylı nakit anlık gider</em>.
-              Yalnızca hem açılış hem kapanış tamamlanmış şubelerde tutar gösterilir. Eksikte ilgili sütunlarda <strong>Açılış yapılmadı</strong> / <strong>Kapanış yapılmadı</strong> bildirilir. İş kuralı: <span style={{ color: '#e85d5d' }}>+</span> kasa açığı, <span style={{ color: '#3b82f6' }}>−</span> kasa fazlası (≈0 yeşil).
+              Yalnızca hem açılış hem kapanış tamamlanmış şubelerde tutar gösterilir. Eksikte ilgili sütunlarda <strong>Açılış yapılmadı</strong> / <strong>Kapanış yapılmadı</strong> bildirilir. Tabloda: <span style={{ color: '#e85d5d' }}>+</span> kasa açığı <strong style={{ color: '#e85d5d' }}>kırmızı</strong>, <span style={{ color: '#22c55e' }}>−</span> kasa fazlası <strong style={{ color: '#22c55e' }}>yeşil</strong>, ≈0 dengede nötr.
             </p>
 
             {/* ── Özet metrik kartları ── */}
@@ -7571,7 +7602,7 @@ export default function OperasyonMerkezi() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr style={{ background: 'var(--bg2)' }}>
-                      {['Şube', 'Kapanış', 'Saat', 'Kapanış Personeli', 'Ciro Durumu', 'Gönderen', 'Nakit', 'POS', 'Online', 'Toplam', 'Sabah kasa', 'Teslim', 'Devir', 'A.gider (N)', 'Nakit Δ'].map((h, i) => (
+                      {['Şube', 'Kapanış', 'Saat', 'Kapanış Personeli', 'Ciro Durumu', 'Gönderen', 'Nakit', 'POS', 'Online', 'Toplam', 'Sabah kasa', 'Teslim', 'Devir', 'A.gider (N)', 'Nakit Δ (açık / fazla)'].map((h, i) => (
                         <th key={i} style={{ padding: '8px 10px', textAlign: i >= 6 ? 'right' : i >= 1 ? 'center' : 'left', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--text3)', fontWeight: 600, whiteSpace: 'nowrap' }}>
                           {h}
                         </th>
