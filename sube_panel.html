@@ -2153,6 +2153,83 @@ const URUN_AC_PERSONEL_CACHE_KEY = 'sube_panel_urun_ac_personel';
 const URUN_AC_LAST_ACTION_KEY = 'sube_panel_urun_ac_last_action';
 const URUN_AC_HATIR_KAPAT_KEY = 'sube_panel_urun_ac_hatir_kapat';
 
+/** Adet / tutar: alanda sadece 0 varken odakta sıfır silinir; imleç en başta iken rakam «10» oluşturmasın diye 0 yerine yazar. PIN alanlarında çalışmaz. */
+(function panelSayiGirisSifirDuzelt() {
+  if (window.__panelSayiGirisSifirBound) return;
+  window.__panelSayiGirisSifirBound = true;
+  function isAdetSayiInput(el) {
+    if (!el || el.tagName !== 'INPUT') return false;
+    if (el.classList.contains('pin-input') || el.type === 'password' || el.type === 'hidden' || el.disabled || el.readOnly) return false;
+    var im = String(el.getAttribute('inputmode') || '');
+    return im === 'numeric' || im === 'decimal';
+  }
+  document.addEventListener(
+    'focusin',
+    function (ev) {
+      var el = ev.target;
+      if (!isAdetSayiInput(el)) return;
+      var im = String(el.getAttribute('inputmode') || '');
+      var tr = String(el.value == null ? '' : el.value).trim();
+      if (im === 'numeric') {
+        if (/^0+$/.test(tr)) {
+          el.dataset._panelSifirGeciciBos = '1';
+          el.value = '';
+        }
+      } else if (im === 'decimal') {
+        if (/^0([.,]0*)?$/.test(tr)) {
+          el.dataset._panelSifirGeciciBos = '1';
+          el.value = '';
+        }
+      }
+    },
+    true
+  );
+  document.addEventListener(
+    'focusout',
+    function (ev) {
+      var el = ev.target;
+      if (!isAdetSayiInput(el)) return;
+      var hadSifirBos = el.dataset._panelSifirGeciciBos === '1';
+      var trim = String(el.value || '').trim();
+      if (trim !== '') {
+        if (hadSifirBos) delete el.dataset._panelSifirGeciciBos;
+        return;
+      }
+      var im = String(el.getAttribute('inputmode') || '');
+      if (im === 'numeric') {
+        var isAdetKutu =
+          !!(el.getAttribute('data-sip-input') || el.getAttribute('data-stok-input') || /^depAd_/.test(String(el.id || '')));
+        if (isAdetKutu || hadSifirBos) el.value = '0';
+      }
+      if (hadSifirBos) delete el.dataset._panelSifirGeciciBos;
+    },
+    true
+  );
+  document.addEventListener(
+    'beforeinput',
+    function (ev) {
+      var el = ev.target;
+      if (!isAdetSayiInput(el)) return;
+      var im = String(el.getAttribute('inputmode') || '');
+      if (im !== 'numeric' && im !== 'decimal') return;
+      var v = String(el.value || '');
+      if (im === 'decimal' && v.length !== 1) return;
+      if (v !== '0') return;
+      if (el.selectionStart !== 0 || el.selectionEnd !== 0) return;
+      if (ev.inputType !== 'insertText') return;
+      var d = ev.data || '';
+      if (!/^\d$/.test(d)) return;
+      ev.preventDefault();
+      el.value = d;
+      try {
+        el.setSelectionRange(1, 1);
+      } catch (e2) {}
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    },
+    true
+  );
+})();
+
 // ─── AUTO-NOTIFICATION ───────────────────────────────────────
 var _prevUyariSig = null;
 var _toastTimer = null;
@@ -3347,7 +3424,14 @@ async function renderSiparisPanel() {
   document.querySelectorAll('[data-sip-input]').forEach(function(inp){
     inp.oninput = function(){
       var k = this.getAttribute('data-sip-input');
-      var n = parseInt(String(this.value||'').replace(/\D/g,''), 10);
+      var digits = String(this.value||'').replace(/\D/g,'');
+      if (digits === '') {
+        siparisDegerler[k] = 0;
+        this.value = '';
+        siparisSeciliOzetGuncelle();
+        return;
+      }
+      var n = parseInt(digits, 10);
       siparisDegerler[k] = isNaN(n) ? 0 : n;
       this.value = String(siparisDegerler[k]);
       siparisSeciliOzetGuncelle();
@@ -4341,8 +4425,14 @@ function wireStokInputDelegation(formEl, prefix) {
     if (!inp || inp.tagName !== 'INPUT') return;
     var k = inp.getAttribute('data-stok-input');
     if (!k || k.indexOf(prefix + '::') !== 0) return;
-    var n = parseInt(String(inp.value || '').replace(/\D/g, ''), 10);
+    var digits = String(inp.value || '').replace(/\D/g, '');
     if (!stokKalemDeger[prefix]) stokKalemDeger[prefix] = {};
+    if (digits === '') {
+      stokKalemDeger[prefix][k] = 0;
+      inp.value = '';
+      return;
+    }
+    var n = parseInt(digits, 10);
     stokKalemDeger[prefix][k] = isNaN(n) ? 0 : n;
     inp.value = String(stokKalemDeger[prefix][k]);
   });

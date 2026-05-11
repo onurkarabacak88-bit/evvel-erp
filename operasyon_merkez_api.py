@@ -6593,13 +6593,62 @@ def ops_subeler_depolar():
     return {"satirlar": rows}
 
 
+@router.get("/siparis/sevkiyat-subeler-ozet")
+def ops_siparis_sevkiyat_subeler_ozet(gun: int = 90):
+    """
+    Aktif şubeler için (hedef depo olarak atanan) sevkiyat taleplerinin durum özeti.
+    Merkez «Sevkiyat Hazırlama» ekranında şube bazlı yük / tamamlanan takibi için.
+    """
+    gun_sayi = max(1, min(365, int(gun or 90)))
+    expr = sevkiyat_durumu_sql_expr("t")
+    with db() as (conn, cur):
+        cur.execute(
+            f"""
+            WITH agg AS (
+                SELECT
+                    COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)::text AS depo_id,
+                    COUNT(*)::int AS toplam,
+                    COUNT(*) FILTER (
+                        WHERE ({expr}) IN ('depoda_hazirlaniyor', 'kismi_hazirlandi', 'hazirlaniyor')
+                    )::int AS hazirlikta,
+                    COUNT(*) FILTER (WHERE ({expr}) = 'gonderildi')::int AS gonderildi,
+                    COUNT(*) FILTER (WHERE ({expr}) = 'teslim_edildi')::int AS teslim_edildi,
+                    MAX(t.tarih)::text AS son_talep_tarih
+                FROM siparis_talep t
+                WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) IS NOT NULL
+                  AND t.tarih >= (CURRENT_DATE - (%s::int * INTERVAL '1 day'))
+                GROUP BY COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
+            )
+            SELECT s.id::text AS depo_sube_id,
+                   s.ad AS depo_sube_adi,
+                   COALESCE(NULLIF(TRIM(s.sube_tipi), ''), 'normal') AS sube_tipi,
+                   COALESCE(a.toplam, 0)::int AS toplam,
+                   COALESCE(a.hazirlikta, 0)::int AS hazirlikta,
+                   COALESCE(a.gonderildi, 0)::int AS gonderildi,
+                   COALESCE(a.teslim_edildi, 0)::int AS teslim_edildi,
+                   a.son_talep_tarih
+            FROM subeler s
+            LEFT JOIN agg a ON a.depo_id = s.id::text
+            WHERE s.aktif = TRUE
+            ORDER BY
+              CASE WHEN COALESCE(a.toplam, 0) > 0 THEN 0 ELSE 1 END,
+              COALESCE(a.hazirlikta, 0) DESC,
+              (COALESCE(a.gonderildi, 0) + COALESCE(a.teslim_edildi, 0)) DESC,
+              s.ad
+            """,
+            (gun_sayi,),
+        )
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+    return {"gun_sayi": gun_sayi, "satirlar": satirlar}
+
+
 @router.get("/siparis/sevkiyat-listesi")
 def ops_siparis_sevkiyat_listesi(
     sevkiyat_sube_id: Optional[str] = None,
     durum: str = "hazirlaniyor",
     gun: int = 7,
 ):
-    gun_sayi = max(1, min(60, int(gun or 7)))
+    gun_sayi = max(1, min(365, int(gun or 7)))
     sid = (sevkiyat_sube_id or "").strip() or None
     durum_f = (durum or "hazirlaniyor").strip().lower()
     if durum_f == "all":
@@ -6632,7 +6681,8 @@ def ops_siparis_sevkiyat_listesi(
             else:
                 q += f" AND {sevkiyat_durumu_sql_expr('t')}=%s"
                 qp.append(durum_f)
-        q += " ORDER BY t.tarih DESC, t.olusturma DESC NULLS LAST, t.id"
+        liste_limit = 500 if gun_sayi <= 120 else 400
+        q += f" ORDER BY t.tarih DESC, t.olusturma DESC NULLS LAST, t.id LIMIT {liste_limit}"
         cur.execute(q, qp)
         rows: List[Dict[str, Any]] = []
         for r in cur.fetchall():
@@ -6663,6 +6713,7 @@ def ops_siparis_sevkiyat_listesi(
         "hedef_depo_sube_id": sid,
         "sevkiyat_sube_id": sid,
         "gun_sayi": gun_sayi,
+        "liste_limit": liste_limit,
     }
 
 
@@ -6710,11 +6761,22 @@ def ops_siparis_depo_bekleyen(sube_id: str, gun: int = 15):
 
 
 @router.get("/siparis/depo-sevkiyat-raporlari")
-def ops_siparis_depo_sevkiyat_raporlari(gun: int = 21, limit: int = 40):
-    """Depo şubesinin işlediği kalem bazlı özet raporlar (isten / gönderilen / yok)."""
-    gun_i = max(1, min(90, int(gun or 21)))
-    lim = max(1, min(80, int(limit or 40)))
+def ops_siparis_depo_sevkiyat_raporlari(
+    gun: int = 21,
+    limit: int = 40,
+    hedef_depo_sube_id: Optional[str] = None,
+):
+    """Depo şubesinin işlediği kalem bazlı özet raporlar (isten / gönderilen / yok). Sevkiyat Hazırlama ekranından tarihsel takip."""
+    gun_i = max(1, min(365, int(gun or 21)))
+    lim = max(1, min(200, int(limit or 40)))
+    hid = (hedef_depo_sube_id or "").strip() or None
     with db() as (conn, cur):
+        qp: List[Any] = [gun_i]
+        q_where_hid = ""
+        if hid:
+            q_where_hid = " AND COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)=%s"
+            qp.append(hid)
+        qp.append(lim)
         cur.execute(
             f"""
             SELECT t.id, t.sube_id, s.ad AS talep_sube_adi, t.tarih, t.durum,
@@ -6730,10 +6792,11 @@ def ops_siparis_depo_sevkiyat_raporlari(gun: int = 21, limit: int = 40):
             WHERE t.depo_sevkiyat_rapor_metni IS NOT NULL
               AND TRIM(t.depo_sevkiyat_rapor_metni) <> ''
               AND t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            {q_where_hid}
             ORDER BY t.depo_sevkiyat_rapor_ts DESC NULLS LAST, t.olusturma DESC NULLS LAST
             LIMIT %s
             """,
-            (gun_i, lim),
+            tuple(qp),
         )
         raporlar: List[Dict[str, Any]] = []
         for r in cur.fetchall() or []:
@@ -6744,7 +6807,7 @@ def ops_siparis_depo_sevkiyat_raporlari(gun: int = 21, limit: int = 40):
                 d["depo_sevkiyat_rapor_ts"] = str(d["depo_sevkiyat_rapor_ts"])
             d["id"] = str(d.get("id") or "")
             raporlar.append(d)
-    return {"gun": gun_i, "limit": lim, "raporlar": raporlar}
+    return {"gun": gun_i, "limit": lim, "hedef_depo_sube_id": hid, "raporlar": raporlar}
 
 
 @router.get("/siparis/sevkiyat-uyumsuzluklar")
