@@ -1069,6 +1069,96 @@
     .stok-pin-dock .pin-input {
       max-width: 120px;
     }
+    /* Ürün Aç — personel + PIN: dikkat çekici kutu (kullanıcı kolayca görsün) */
+    .urun-ac-onay-panel {
+      margin: 0 0 16px 0;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: 2px solid rgba(251, 191, 36, 0.92);
+      background: linear-gradient(145deg, rgba(234, 88, 12, 0.32), rgba(245, 158, 11, 0.2), rgba(30, 64, 175, 0.38));
+      box-shadow: 0 0 0 1px rgba(253, 224, 71, 0.22), 0 8px 26px rgba(0, 0, 0, 0.3);
+    }
+    .urun-ac-onay-panel .urun-ac-onay-baslik {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 800;
+      color: #fffbeb;
+      margin: 0 0 8px 0;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    }
+    .urun-ac-onay-panel .urun-ac-onay-baslik .tag-zorunlu {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      padding: 4px 10px;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #ef4444, #b91c1c);
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(185, 28, 28, 0.55);
+    }
+    .urun-ac-onay-panel .urun-ac-onay-alt {
+      font-size: 12px;
+      font-weight: 600;
+      color: #fef9c3;
+      margin: 0 0 12px 0;
+      line-height: 1.45;
+    }
+    .urun-ac-onay-grid {
+      display: grid;
+      grid-template-columns: minmax(200px, 1fr) minmax(136px, 172px);
+      gap: 12px 16px;
+      align-items: end;
+    }
+    @media (max-width: 540px) {
+      .urun-ac-onay-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .urun-ac-onay-panel .form-group {
+      margin: 0;
+    }
+    .urun-ac-onay-panel .form-group label {
+      color: #fde68a !important;
+      font-size: 12px !important;
+      letter-spacing: 0.04em;
+    }
+    .urun-ac-onay-panel .form-group select {
+      border: 2px solid rgba(59, 130, 246, 0.9) !important;
+      background: rgba(15, 23, 42, 0.94) !important;
+      box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.28);
+      font-weight: 600;
+    }
+    .urun-ac-onay-panel .form-group select:focus {
+      border-color: #93c5fd !important;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.38);
+    }
+    .urun-ac-onay-panel .urun-ac-pin-input.pin-input,
+    .urun-ac-onay-panel .form-group .urun-ac-pin-input {
+      border: 2px solid rgba(34, 197, 94, 0.92) !important;
+      background: rgba(6, 78, 59, 0.5) !important;
+      color: #bbf7d0 !important;
+      font-size: 20px !important;
+    }
+    .urun-ac-onay-panel .urun-ac-pin-input:focus {
+      border-color: #4ade80 !important;
+      box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.38);
+    }
+    .urun-ac-onay-panel .urun-ac-pin-input:disabled {
+      opacity: 0.55;
+      border-color: rgba(113, 113, 122, 0.85) !important;
+      color: #a1a1aa !important;
+    }
+    #acPinBilgi.urun-ac-pin-bilgi {
+      margin-top: 10px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #fef08a;
+      line-height: 1.4;
+    }
     /* Depo teslim kabulü: uzun kalem listesinde PIN görünür kalsın */
     .sip-teslim-pin-dock {
       position: sticky;
@@ -4749,11 +4839,16 @@ function renderStokForms(tip) {
         h += 'Bu kayıt teorik stok hesabına dahil edilir: ';
         h += '<em>Açılış + Ürün Aç = Beklenen kapanış stoku</em>';
         h += '</div>';
-        h += '<div style="margin-bottom:10px">';
-        h += '<div style="display:grid;grid-template-columns:minmax(180px,1fr) 120px;gap:8px;align-items:end;margin-bottom:10px">';
+        h += '<div class="urun-ac-onay-panel">';
+        h += '<div class="urun-ac-onay-baslik"><span class="tag-zorunlu">Zorunlu</span><span>Personel + onay kodu (PIN)</span></div>';
+        h += '<p class="urun-ac-onay-alt">Göndermeden önce burayı doldurun: önce <strong>personel</strong> seçin — ardından <strong>4 haneli şifre</strong> (PIN) girin. Personel seçilmeden PIN kutusu kapalıdır.</p>';
+        h += '<div class="urun-ac-onay-grid">';
         h += '<div class="form-group" style="margin:0"><label>Personel</label><select id="acPers"></select></div>';
-        h += '<div class="form-group" style="margin:0"><label>Onay Kodu</label><input id="acPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>';
+        h += '<div class="form-group" style="margin:0"><label>Onay kodu (PIN)</label><input id="acPin" class="pin-input urun-ac-pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>';
         h += '</div>';
+        h += '<div id="acPinBilgi" class="urun-ac-pin-bilgi"></div>';
+        h += '</div>';
+        h += '<div style="margin-bottom:10px">';
         h += '<button class="btn btn-primary" id="acGonder">🔓 Seçimleri Onayla ve Aktif Kullanıma Al</button>';
         h += '<div id="acMsg" style="margin-top:8px;font-size:12px"></div>';
         h += '</div>';
@@ -4811,10 +4906,11 @@ function renderStokForms(tip) {
         var formAc = document.getElementById('acForm');
         if (formAc && !formAc.dataset.autosaveBound) {
           formAc.dataset.autosaveBound = '1';
-          var saveTimer = null;
+          formAc._urunAcTaslakTimer = null;
           var doSave = function(){
-            if (saveTimer) clearTimeout(saveTimer);
-            saveTimer = setTimeout(function(){
+            if (formAc._urunAcTaslakTimer) clearTimeout(formAc._urunAcTaslakTimer);
+            formAc._urunAcTaslakTimer = setTimeout(function(){
+              formAc._urunAcTaslakTimer = null;
               var body = stokBody('ac', _stokKatalogByPrefix.ac || []);
               var payload = {
                 kalemler: (body.kalemler || []).filter(function(x){ return parseInt(x.adet||0,10) > 0; }),
@@ -4979,6 +5075,17 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
       });
       setMsg(prefix+'Msg', successMsg, 'msg-ok');
       if (prefix === 'ac') {
+        var fac = document.getElementById('acForm');
+        if (fac && fac._urunAcTaslakTimer) {
+          clearTimeout(fac._urunAcTaslakTimer);
+          fac._urunAcTaslakTimer = null;
+        }
+        try {
+          await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/urun-ac/taslak', {
+            method: 'DELETE',
+            sessizIslemToast: true,
+          });
+        } catch (_) { /* sunucu zaten sildi veya ağ; devam */ }
         var kalemSayisi = (body.kalemler || []).length;
         showToast('✅ Ürün Aç tamamlandı — ' + kalemSayisi + ' kalem / ' + sum + ' adet aktif kullanıma alındı', 'ok', 4500);
         urunAcBasariSinyali();
