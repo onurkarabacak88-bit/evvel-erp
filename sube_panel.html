@@ -1507,6 +1507,13 @@
       font-size: 11px;
       padding: 6px 10px;
     }
+    .gonderilecek-bulk-bar .btn.gonderilecek-bulk-btn--aktif {
+      background: rgba(34, 197, 94, 0.42) !important;
+      border-color: rgba(21, 128, 61, 0.75) !important;
+      color: var(--text) !important;
+      font-weight: 800;
+      box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.25);
+    }
 
     /* Gönderilecek sipariş — kalem satırı doldurulunca yeşil */
     .dep-kalem-row {
@@ -1528,6 +1535,9 @@
       color: rgba(21, 128, 61, 0.95);
     }
 
+    #gonderilecekPanel > .depo-kalan-blok {
+      margin-top: 18px;
+    }
     .depo-kalan-blok {
       margin-bottom: 14px;
       border: 1px solid rgba(59, 130, 246, 0.45);
@@ -1549,12 +1559,15 @@
 
     /* Gönderilecek siparişler sekmesi — personel/PIN + liste okunabilirliği */
     .gonderilecek-onay-panel {
-      margin: 0 0 14px 0;
+      margin: 14px 0 14px 0;
       padding: 14px 16px;
       border-radius: 12px;
       border: 2px solid rgba(59, 130, 246, 0.55);
       background: linear-gradient(155deg, rgba(37, 99, 235, 0.22), rgba(30, 58, 138, 0.35));
       box-shadow: 0 4px 22px rgba(0, 0, 0, 0.22);
+    }
+    #gonderilecekKimlikPanel[hidden] {
+      display: none !important;
     }
     .gonderilecek-onay-head {
       display: flex;
@@ -2261,7 +2274,14 @@
             </div>
           </div>
           <div id="gonderilecekBulkBarWrap" aria-live="polite"></div>
-          <div class="gonderilecek-onay-panel" role="region" aria-label="Sevkiyat için personel ve onay kodu">
+          <div id="gonderilecekPanel"></div>
+          <div
+            id="gonderilecekKimlikPanel"
+            class="gonderilecek-onay-panel"
+            role="region"
+            aria-label="Sevkiyat için personel ve onay kodu"
+            hidden
+          >
             <div class="gonderilecek-onay-head">
               <span class="gonderilecek-onay-tag">Kimlik</span>
               <span class="gonderilecek-onay-title">Personel ve onay kodu (PIN)</span>
@@ -2280,7 +2300,6 @@
               </div>
             </div>
           </div>
-          <div id="gonderilecekPanel"></div>
           <div id="gonderilecekMsg"></div>
         </div>
       </div>
@@ -2514,6 +2533,23 @@ const FILE_FALLBACK_KEY  = 'sube_panel_api_base';
 const SAVED_API_BASE_KEY = 'sube_panel_saved_api_base';
 const SAVED_SUBE_ID_KEY  = 'sube_panel_saved_sube_id';
 const POLL_MS = 15000;
+/** Kaydedilmemiş depo sevkiyat taslağı varsa periyotik yenilemede DOM sıfırlanmasın */
+var gonderilecekDepoTaslakDirty = false;
+/** Son hızlı işlem: kismi | tam | isaretle — aynı butona tekrar basılınca snapshot ile sıfırlanır */
+var gonderilecekHizliIslemModu = null;
+var gonderilecekHizliIslemSnapshot = null;
+function gonderilecekKimlikPanelGoster() {
+  var el = document.getElementById('gonderilecekKimlikPanel');
+  if (!el) return;
+  el.removeAttribute('hidden');
+  try {
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (e) {}
+}
+function gonderilecekKimlikPanelGizle() {
+  var el = document.getElementById('gonderilecekKimlikPanel');
+  if (el) el.setAttribute('hidden', '');
+}
 /** Backend `tr_saat.ACILIS_TAMAM_EN_ERKEN_SAAT` ile aynı — panel uyarıları için */
 var ACILIS_PANEL_MIN_SAAT = 7;
 
@@ -3482,6 +3518,7 @@ function _depAccToggle(tid) {
 }
 window._depAccToggle = _depAccToggle;
 function _depAccToggleFromEl(el) {
+  gonderilecekKimlikPanelGoster();
   var tid = el && el.getAttribute && el.getAttribute('data-dep-tid');
   if (tid) _depAccToggle(tid);
 }
@@ -3522,8 +3559,80 @@ function depKalemTumSatirlariYenile() {
     if (rid) depKalemSatirRenkGuncelle(rid);
   });
 }
+function gonderilecekDepoSnapshotAl() {
+  var kalemler = {};
+  document.querySelectorAll('#gonderilecekPanel input[id^="depAd_"]').forEach(function (inp) {
+    var rid = String(inp.id || '').replace(/^depAd_/, '');
+    var durEl = document.getElementById('depDur_' + rid);
+    var ntEl = document.getElementById('depNt_' + rid);
+    kalemler[rid] = {
+      durum: durEl ? String(durEl.value || 'bekliyor') : 'bekliyor',
+      adet: inp.value,
+      not: ntEl ? ntEl.value : '',
+    };
+  });
+  var kartlar = {};
+  document.querySelectorAll('#gonderilecekPanel [id^="depNot_"]').forEach(function (inp) {
+    var tid = String(inp.id || '').replace(/^depNot_/, '');
+    kartlar[tid] = kartlar[tid] || {};
+    kartlar[tid].kartNot = inp.value;
+  });
+  document.querySelectorAll('#gonderilecekPanel input[type="checkbox"][id^="depDone_"]').forEach(function (ch) {
+    var tid = String(ch.id || '').replace(/^depDone_/, '');
+    kartlar[tid] = kartlar[tid] || {};
+    kartlar[tid].done = ch.checked;
+  });
+  return { kalemler: kalemler, kartlar: kartlar };
+}
+function gonderilecekDepoSnapshotUygula(snap) {
+  if (!snap || !snap.kalemler) return;
+  Object.keys(snap.kalemler).forEach(function (rid) {
+    var k = snap.kalemler[rid];
+    var durEl = document.getElementById('depDur_' + rid);
+    var adEl = document.getElementById('depAd_' + rid);
+    var ntEl = document.getElementById('depNt_' + rid);
+    if (durEl && k.durum != null) durEl.value = k.durum;
+    if (adEl && k.adet != null) adEl.value = k.adet;
+    if (ntEl && k.not != null) ntEl.value = k.not;
+    depKalemSatirRenkGuncelle(rid);
+  });
+  Object.keys(snap.kartlar || {}).forEach(function (tid) {
+    var kv = snap.kartlar[tid];
+    var nEl = document.getElementById('depNot_' + tid);
+    var dEl = document.getElementById('depDone_' + tid);
+    if (nEl && kv.kartNot != null) nEl.value = kv.kartNot;
+    if (dEl && kv.done != null) dEl.checked = !!kv.done;
+  });
+}
+function gonderilecekBulkBarAktifSiniflari() {
+  ['gonderilecekBulkBtnKismi', 'gonderilecekBulkBtnTam', 'gonderilecekBulkBtnIsaretle'].forEach(function (bid) {
+    var b = document.getElementById(bid);
+    if (b) b.classList.remove('gonderilecek-bulk-btn--aktif');
+  });
+  var map = { kismi: 'gonderilecekBulkBtnKismi', tam: 'gonderilecekBulkBtnTam', isaretle: 'gonderilecekBulkBtnIsaretle' };
+  if (gonderilecekHizliIslemModu && map[gonderilecekHizliIslemModu]) {
+    var el = document.getElementById(map[gonderilecekHizliIslemModu]);
+    if (el) el.classList.add('gonderilecek-bulk-btn--aktif');
+  }
+}
+function gonderilecekHizliIslemSifirla() {
+  gonderilecekHizliIslemModu = null;
+  gonderilecekHizliIslemSnapshot = null;
+  gonderilecekBulkBarAktifSiniflari();
+}
 function gonderilecekBulkTamGonder() {
-  document.querySelectorAll('input[id^="depAd_"]').forEach(function (inp) {
+  if (gonderilecekHizliIslemModu === 'tam') {
+    gonderilecekDepoSnapshotUygula(gonderilecekHizliIslemSnapshot);
+    gonderilecekHizliIslemSifirla();
+    gonderilecekDepoTaslakDirty = true;
+    panelToast('Tam gönder ayarı önceki haline döndü.', 3400);
+    return;
+  }
+  gonderilecekHizliIslemSnapshot = gonderilecekDepoSnapshotAl();
+  gonderilecekHizliIslemModu = 'tam';
+  gonderilecekDepoTaslakDirty = true;
+  gonderilecekKimlikPanelGoster();
+  document.querySelectorAll('#gonderilecekPanel input[id^="depAd_"]').forEach(function (inp) {
     var ist = parseInt(String(inp.getAttribute('data-istenen') || '0').replace(/\D/g, ''), 10);
     var rid = String(inp.id || '').replace(/^depAd_/, '');
     var sel = document.getElementById('depDur_' + rid);
@@ -3532,12 +3641,25 @@ function gonderilecekBulkTamGonder() {
     else inp.value = '0';
     depKalemSatirRenkGuncelle(rid);
   });
+  gonderilecekBulkBarAktifSiniflari();
   panelToast('Tüm kalemler «var» + istenen adet olarak ayarlandı. Kısmi/yok gönderim varsa satırları düzeltin; sonra kaydedin.', 5200);
 }
 function gonderilecekBulkHepsiGonderildi() {
-  document.querySelectorAll('input[type="checkbox"][id^="depDone_"]').forEach(function (ch) {
+  if (gonderilecekHizliIslemModu === 'isaretle') {
+    gonderilecekDepoSnapshotUygula(gonderilecekHizliIslemSnapshot);
+    gonderilecekHizliIslemSifirla();
+    gonderilecekDepoTaslakDirty = true;
+    panelToast('Tamamlandı onayları önceki haline döndü.', 3400);
+    return;
+  }
+  gonderilecekHizliIslemSnapshot = gonderilecekDepoSnapshotAl();
+  gonderilecekHizliIslemModu = 'isaretle';
+  gonderilecekDepoTaslakDirty = true;
+  gonderilecekKimlikPanelGoster();
+  document.querySelectorAll('#gonderilecekPanel input[type="checkbox"][id^="depDone_"]').forEach(function (ch) {
     ch.checked = true;
   });
+  gonderilecekBulkBarAktifSiniflari();
   panelToast('Tüm sipariş kartlarında tamamlandı onayı işaretlendi.', 4200);
 }
 window.gonderilecekBulkTamGonder = gonderilecekBulkTamGonder;
@@ -3545,6 +3667,17 @@ window.gonderilecekBulkHepsiGonderildi = gonderilecekBulkHepsiGonderildi;
 
 /** Gönderilen adet kutularına yazdığınız değerlere göre durumu var / kısmi / bekliyor yapar (kayıt etmez). */
 function gonderilecekKismiSatirlariUygula() {
+  if (gonderilecekHizliIslemModu === 'kismi') {
+    gonderilecekDepoSnapshotUygula(gonderilecekHizliIslemSnapshot);
+    gonderilecekHizliIslemSifirla();
+    gonderilecekDepoTaslakDirty = true;
+    panelToast('Kısmi gönder düzenlemesi önceki haline döndü.', 3400);
+    return;
+  }
+  gonderilecekHizliIslemSnapshot = gonderilecekDepoSnapshotAl();
+  gonderilecekHizliIslemModu = 'kismi';
+  gonderilecekDepoTaslakDirty = true;
+  gonderilecekKimlikPanelGoster();
   document.querySelectorAll('#gonderilecekPanel input[id^="depAd_"]').forEach(function (inp) {
     var rid = String(inp.id || '').replace(/^depAd_/, '');
     var ist = parseInt(String(inp.getAttribute('data-istenen') || '0').replace(/\D/g, ''), 10) || 0;
@@ -3566,6 +3699,7 @@ function gonderilecekKismiSatirlariUygula() {
     }
     depKalemSatirRenkGuncelle(rid);
   });
+  gonderilecekBulkBarAktifSiniflari();
   panelToast(
     'Durumlar güncellendi: gönderilen adete göre «kısmi», tam ise «var», sıfır ise «bekliyor». Kaydetmeden önce kontrol edin.',
     5200
@@ -3626,9 +3760,11 @@ function buildGonderilecekBulkBarHTML() {
   h += '<div class="gonderilecek-bulk-bar">';
   h += '<span>Hızlı işlem</span>';
   h +=
-    '<button type="button" class="btn btn-secondary btn-sm" onclick="gonderilecekKismiSatirlariUygula();return false;" title="Gönderilen kutularına yazdığınız adetlere göre satır durumunu kısmi / tam / bekliyor yapar">Kısmi gönder (satırları düzenle)</button>';
-  h += '<button type="button" class="btn btn-warning btn-sm" onclick="gonderilecekBulkTamGonder();return false;" title="Tüm açık kartlardaki ürün satırlarında durumu «var» yapar ve gönderilen adedi istenenle eşitler">Tüm kalemlerde tam gönder (var)</button>';
-  h += '<button type="button" class="btn btn-ghost btn-sm" onclick="gonderilecekBulkHepsiGonderildi();return false;" title="Her sipariş kartındaki tamamlandı onay kutusunu işaretler">Tüm kartlarda işaretle ✓</button>';
+    '<button type="button" id="gonderilecekBulkBtnKismi" class="btn btn-secondary btn-sm" onclick="gonderilecekKismiSatirlariUygula();return false;" title="İlk tık: gönderilen adetlere göre satır durumu. Yeşilken tekrar: önceki değerlere dön.">Kısmi gönder (satırları düzenle)</button>';
+  h +=
+    '<button type="button" id="gonderilecekBulkBtnTam" class="btn btn-warning btn-sm" onclick="gonderilecekBulkTamGonder();return false;" title="İlk tık: tüm satırlarda «var» + istenen adet. Yeşilken tekrar: önceki değerlere dön.">Tüm kalemlerde tam gönder (var)</button>';
+  h +=
+    '<button type="button" id="gonderilecekBulkBtnIsaretle" class="btn btn-ghost btn-sm" onclick="gonderilecekBulkHepsiGonderildi();return false;" title="İlk tık: tüm kartlarda tamamlandı işareti. Yeşilken tekrar: önceki işaretleri geri al.">Tüm kartlarda işaretle ✓</button>';
   h += '</div>';
   return h;
 }
@@ -3837,7 +3973,9 @@ async function renderGonderilecekPanel() {
     bulkWrap.innerHTML = depoHazirlik.length ? buildGonderilecekBulkBarHTML() : '';
   }
   root.innerHTML =
-    buildDepoKalanHTML(depoKalan) + buildDepoHazirlikHTML(depoHazirlik) + buildDepoGonderilenHTML(depoGonderilenler);
+    buildDepoHazirlikHTML(depoHazirlik) +
+    buildDepoGonderilenHTML(depoGonderilenler) +
+    buildDepoKalanHTML(depoKalan);
   fillSels();
   document.querySelectorAll('[id^="depKaydet_"]').forEach(function (b) {
     delete b.dataset.wired;
@@ -3849,16 +3987,32 @@ async function renderGonderilecekPanel() {
     function depKalemEvtUyari(e) {
       var t = e.target;
       if (!t || !t.id || typeof t.id !== 'string') return;
-      if (t.id.indexOf('depDur_') !== 0 && t.id.indexOf('depAd_') !== 0) return;
+      var tid = t.id;
+      if (
+        tid.indexOf('depDur_') !== 0 &&
+        tid.indexOf('depAd_') !== 0 &&
+        tid.indexOf('depNt_') !== 0 &&
+        tid.indexOf('depNot_') !== 0 &&
+        tid.indexOf('depDone_') !== 0
+      ) {
+        return;
+      }
       var panel = document.getElementById('gonderilecekPanel');
       if (!panel || !panel.contains(t)) return;
-      var rid = t.id.indexOf('depDur_') === 0 ? t.id.slice(7) : t.id.slice(6);
-      depKalemSatirRenkGuncelle(rid);
+      gonderilecekDepoTaslakDirty = true;
+      gonderilecekKimlikPanelGoster();
+      var rid = '';
+      if (tid.indexOf('depDur_') === 0) rid = tid.slice(7);
+      else if (tid.indexOf('depAd_') === 0 || tid.indexOf('depNt_') === 0) rid = tid.slice(6);
+      if (rid) depKalemSatirRenkGuncelle(rid);
     }
     document.addEventListener('input', depKalemEvtUyari, true);
     document.addEventListener('change', depKalemEvtUyari, true);
   }
   await siparisGonderSolBlokGuncelle(akis);
+  gonderilecekDepoTaslakDirty = false;
+  gonderilecekKimlikPanelGizle();
+  gonderilecekHizliIslemSifirla();
 }
 function siparisAktifAdet(kat) {
   return (kat.items || []).filter(function(it){ return it.aktif !== false; }).length;
@@ -3956,6 +4110,7 @@ function siparisPanelPeriyotikYenilemeAtla() {
 }
 /** Gönderilecek siparişler sekmesinde form doldurulurken periyotik yenilemeyi atla. */
 function gonderilecekPanelPeriyotikYenilemeAtla() {
+  if (gonderilecekDepoTaslakDirty) return true;
   var ae = document.activeElement;
   if (ae && typeof ae.closest === 'function') {
     var root = document.getElementById('gonderilecekPanel');
@@ -4672,11 +4827,15 @@ window.solSekmeAc = function(id) {
   }
   if (id === 'siparis') renderSiparisPanel().catch(function(e){ setMsg('siparisMsg', e.message || 'Hata', 'msg-err'); });
   if (id === 'gonderilecek') {
-    renderGonderilecekPanel()
-      .then(function () { gonderilecekAckBlink(); })
-      .catch(function (e) {
-        setMsg('gonderilecekMsg', e.message || 'Hata', 'msg-err');
-      });
+    if (gonderilecekDepoTaslakDirty) {
+      gonderilecekAckBlink();
+    } else {
+      renderGonderilecekPanel()
+        .then(function () { gonderilecekAckBlink(); })
+        .catch(function (e) {
+          setMsg('gonderilecekMsg', e.message || 'Hata', 'msg-err');
+        });
+    }
   }
   if (id === 'geri') yukleGeriBildirimler();
 };
