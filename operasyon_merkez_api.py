@@ -1208,6 +1208,10 @@ def kapanis_takip(tarih: Optional[str] = None):
     Nakit denge (merkez, satır bazlı; yalnızca aynı gün hem açılış hem kapanış tamamsa):
     sabah_kasa + ciro_nakit (yapılan iş / tablodaki nakit) − teslim − devir (kasada kalan) − onaylı nakit anlık gider.
     ≈0 beklenir; + kasa açığı, − kasa fazlası (iş kuralı tanımına göre).
+
+    Kapanış tutarları: aynı iş gününde birden fazla tamamlanmış KAPANIS kaydı olabilir (ör. vardiya ara adımı
+    ile son operasyon kapanışı). MAX(teslim)/MAX(devir) karışımı yapılmaz; şube bazında ``cevap_ts`` en yeni
+    olan tek satır kullanılır (_son_kapanis_event_row ile uyumlu).
     """
     from datetime import date as _date
     try:
@@ -1219,19 +1223,20 @@ def kapanis_takip(tarih: Optional[str] = None):
         cur.execute("SELECT id::text, ad FROM subeler WHERE aktif=TRUE ORDER BY ad")
         subeler = [dict(r) for r in (cur.fetchall() or [])]
 
-        # Kapanış eventleri (sube_operasyon_event)
+        # Kapanış eventleri — şube başına tek satır: en son tamamlanan (ara devir + son kapanış karışmaz)
         cur.execute(
             """
-            SELECT e.sube_id::text,
-                   MIN(e.cevap_ts AT TIME ZONE 'Europe/Istanbul') AS kapanis_ts,
-                   MAX(e.kasa_sayim)  AS kasa_sayim,
-                   MAX(e.devir)       AS devir,
-                   MAX(e.teslim)      AS teslim,
-                   MAX(e.personel_ad) AS personel_ad
+            SELECT DISTINCT ON (e.sube_id)
+                   e.sube_id::text,
+                   e.cevap_ts AT TIME ZONE 'Europe/Istanbul' AS kapanis_ts,
+                   e.kasa_sayim,
+                   e.devir,
+                   e.teslim,
+                   e.personel_ad
             FROM sube_operasyon_event e
             WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
               AND e.tarih = %s
-            GROUP BY e.sube_id
+            ORDER BY e.sube_id, e.cevap_ts DESC NULLS LAST, e.id DESC
             """,
             (hedef,),
         )
