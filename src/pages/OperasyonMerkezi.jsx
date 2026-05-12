@@ -5417,38 +5417,46 @@ export default function OperasyonMerkezi() {
         <>
           {opsIcBolum === 'ozet' && (
           <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 14 }}>
-            <div className="metric-card" style={{ borderTop: '3px solid #4a9eff' }}>
-              <div className="metric-label">🏢 Aktif Şube</div>
-              <div className="metric-value" style={{ color: '#4a9eff' }}>{kartlar.filter(k => k.sube_acik).length} / {kartlar.length || '—'}</div>
-              <div className="metric-sub">Açık / toplam <span style={{ color: 'var(--text3)', fontSize: 10 }}>→</span></div>
-            </div>
-            <div className="metric-card" style={{ borderTop: '3px solid var(--green)' }}>
-              <div className="metric-label">✓ Ciro Onaylı</div>
-              <div className="metric-value" style={{ color: 'var(--green)' }}>{kartlar.filter(k => k.ciro_girildi).length}</div>
-              <div className="metric-sub">Onaylı kayıt <span style={{ color: 'var(--text3)', fontSize: 10 }}>→</span></div>
-            </div>
-            <div className="metric-card" style={{ borderTop: '3px solid var(--yellow)' }}>
-              <div className="metric-label">⏳ Ciro Onayda</div>
-              <div className="metric-value" style={{ color: 'var(--yellow)' }}>{kartlar.filter(k => k.ciro_taslak_bekliyor).length}</div>
-              <div className="metric-sub">Taslak bekliyor <span style={{ color: 'var(--text3)', fontSize: 10 }}>→</span></div>
-            </div>
-            <div className="metric-card" style={{ borderTop: `3px solid ${toplamGecikme > 0 ? 'var(--red)' : 'var(--text3)'}` }}>
-              <div className="metric-label">⚠️ 30g Gecikme</div>
-              <div className="metric-value" style={{ color: toplamGecikme > 0 ? 'var(--red)' : 'var(--text3)' }}>{toplamGecikme}</div>
-              <div className="metric-sub">{skor?.uyari_sayisi_uyari_kritik || 0} uyarı/kritik kayıt <span style={{ color: 'var(--text3)', fontSize: 10 }}>→</span></div>
-            </div>
-            <div className="metric-card" style={{ borderTop: '3px solid var(--green)' }}>
-              <div className="metric-label">📉 Tahmini Satış (açık)</div>
-              <div className="metric-value" style={{ color: 'var(--green)' }}>{fmt(Number(ozet?.satis_tahmin_toplam || ozet?.satis_tahmini_toplam || 0))}</div>
-              <div className="metric-sub">Teorik − gerçek <span style={{ color: 'var(--text3)', fontSize: 10 }}>→</span></div>
-            </div>
-            <div className="metric-card" style={{ borderTop: `3px solid ${kritikSayi > 0 ? 'var(--red)' : gecikSayi > 0 ? '#f08040' : 'var(--text3)'}` }}>
-              <div className="metric-label">🚨 Kritik / Gecikme</div>
-              <div className="metric-value" style={{ fontSize: 22, color: kritikSayi > 0 ? 'var(--red)' : 'var(--text3)' }}>{kritikSayi}</div>
-              <div className="metric-sub">{gecikSayi} geciken şube · {guvenlikSayi} güvenlik <span style={{ color: 'var(--text3)', fontSize: 10 }}>→</span></div>
-            </div>
-          </div>
+          {(() => {
+            const gecAlert = Number(gecAcilanBugun?.toplam || 0) + Number(gecAcilanBugun?.acilmayan_toplam || 0);
+            const kapanmayanSayi = Array.isArray(kapanisTakip?.satirlar) ? kapanisTakip.satirlar.filter((r) => !r.kapanis_tamam).length : 0;
+            const gecPersonelSayi = Number(gecKalanPersonelBugun?.kritik_personel_sayisi || 0);
+            const toplamUyari = kritikSayi + gecikSayi + gecAlert + kapanmayanSayi + gecPersonelSayi + guvenlikSayi;
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 14 }}>
+                <div className="metric-card" style={{ borderTop: `3px solid ${kartlar.filter(k => k.sube_acik).length === kartlar.length && kartlar.length > 0 ? 'var(--green)' : '#4a9eff'}` }}>
+                  <div className="metric-label">🏢 Aktif Şube</div>
+                  <div className="metric-value" style={{ color: '#4a9eff' }}>{kartlar.filter(k => k.sube_acik).length} / {kartlar.length || '—'}</div>
+                  <div className="metric-sub">Şu an açık / toplam</div>
+                </div>
+                <div className="metric-card" style={{ borderTop: `3px solid ${gecAlert > 0 ? 'var(--red)' : 'var(--text3)'}` }}>
+                  <div className="metric-label">⏰ Geç / Açılmayan</div>
+                  <div className="metric-value" style={{ color: gecAlert > 0 ? 'var(--red)' : 'var(--text3)' }}>{gecAlert}</div>
+                  <div className="metric-sub">{Number(gecAcilanBugun?.toplam || 0)} geç · {Number(gecAcilanBugun?.acilmayan_toplam || 0)} açılmadı</div>
+                </div>
+                <div className="metric-card" style={{ borderTop: `3px solid ${kapanmayanSayi > 0 ? '#f08040' : 'var(--text3)'}` }}>
+                  <div className="metric-label">🔒 Kapanmayan</div>
+                  <div className="metric-value" style={{ color: kapanmayanSayi > 0 ? '#f08040' : 'var(--text3)' }}>{kapanmayanSayi}</div>
+                  <div className="metric-sub">Kapanış tamamlanmayan şube</div>
+                </div>
+                <div className="metric-card" style={{ borderTop: `3px solid ${gecPersonelSayi > 0 ? 'var(--yellow)' : 'var(--text3)'}` }}>
+                  <div className="metric-label">👤 Geç Kalan Personel</div>
+                  <div className="metric-value" style={{ color: gecPersonelSayi > 0 ? 'var(--yellow)' : 'var(--text3)' }}>{gecPersonelSayi}</div>
+                  <div className="metric-sub">Bu ay kritik gecikme</div>
+                </div>
+                <div className="metric-card" style={{ borderTop: `3px solid ${guvenlikSayi > 0 ? '#be185d' : 'var(--text3)'}` }}>
+                  <div className="metric-label">🔐 Güvenlik Alarmı</div>
+                  <div className="metric-value" style={{ color: guvenlikSayi > 0 ? '#be185d' : 'var(--text3)' }}>{guvenlikSayi}</div>
+                  <div className="metric-sub">Aktif PIN / kilit alarmı</div>
+                </div>
+                <div className="metric-card" style={{ borderTop: `3px solid ${toplamUyari > 0 ? 'var(--red)' : 'var(--green)'}` }}>
+                  <div className="metric-label">🚨 Toplam Uyarı</div>
+                  <div className="metric-value" style={{ fontSize: 22, color: toplamUyari > 0 ? 'var(--red)' : 'var(--green)' }}>{toplamUyari}</div>
+                  <div className="metric-sub">{toplamUyari === 0 ? 'Tüm şubeler normal ✓' : `${kritikSayi} kritik · ${gecikSayi} geciken`}</div>
+                </div>
+              </div>
+            );
+          })()}
 
           <HubGunlukAcilisKapanisCard bucket={hubAcKapBucket} />
 
@@ -5556,79 +5564,6 @@ export default function OperasyonMerkezi() {
             </div>
           </div>
 
-          {/* 7 Günlük Ciro Karşılaştırması */}
-          {haftalikKarsilastirma && (
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>7 Günlük Ciro Karşılaştırması</h3>
-                <div style={{ fontSize: 12, color: 'var(--text3)', display: 'flex', gap: 16 }}>
-                  <span>Bu hafta: <strong style={{ color: 'var(--green)' }}>{fmt(haftalikKarsilastirma.toplam_bu_hafta)} ₺</strong></span>
-                  <span>Geçen hafta: <strong>{fmt(haftalikKarsilastirma.toplam_gecen_hafta)} ₺</strong></span>
-                  {haftalikKarsilastirma.genel_degisim_pct != null && (
-                    <span style={{ color: haftalikKarsilastirma.genel_degisim_pct >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
-                      {haftalikKarsilastirma.genel_degisim_pct >= 0 ? '▲' : '▼'} %{Math.abs(haftalikKarsilastirma.genel_degisim_pct)}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="table-wrap" style={{ margin: 0 }}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th style={{ width: 28 }}>#</th>
-                      <th>Şube</th>
-                      <th style={{ textAlign: 'right' }}>Bu Hafta</th>
-                      <th style={{ textAlign: 'right' }}>Geçen Hafta</th>
-                      <th style={{ textAlign: 'center' }}>Değişim</th>
-                      <th style={{ width: 100 }}>Trend</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(haftalikKarsilastirma.subeler || []).map((s) => {
-                      const trendMax = Math.max(...(s.trend || []).map(t => t.ciro || 0), 1);
-                      const pct = s.degisim_pct;
-                      return (
-                        <tr key={s.sube_id}>
-                          <td style={{ fontWeight: 700, color: s.sira === 1 ? 'var(--yellow)' : 'var(--text3)', fontSize: 13 }}>
-                            {s.sira === 1 ? '🥇' : s.sira === 2 ? '🥈' : s.sira === 3 ? '🥉' : s.sira}
-                          </td>
-                          <td style={{ fontWeight: 500, fontSize: 13 }}>{s.sube_adi || s.sube_id}</td>
-                          <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--green)' }}>{fmt(s.bu_hafta)} ₺</td>
-                          <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{fmt(s.gecen_hafta)} ₺</td>
-                          <td style={{ textAlign: 'center' }}>
-                            {pct == null ? (
-                              <span style={{ fontSize: 11, color: 'var(--text3)' }}>—</span>
-                            ) : (
-                              <span className={`badge ${pct >= 0 ? 'badge-green' : 'badge-red'}`} style={{ fontSize: 11 }}>
-                                {pct >= 0 ? '▲' : '▼'} %{Math.abs(pct)}
-                              </span>
-                            )}
-                          </td>
-                          <td>
-                            {/* Mini sparkline — 7 çubuk */}
-                            <div style={{ display: 'flex', gap: 1, alignItems: 'flex-end', height: 18 }}>
-                              {(s.trend || []).map((t, i) => {
-                                const h = Math.max(2, Math.round((t.ciro / trendMax) * 16));
-                                const isToday = i === (s.trend.length - 1);
-                                return (
-                                  <div key={t.tarih}
-                                    title={`${t.tarih}: ${Number(t.ciro || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺`}
-                                    style={{ flex: 1, height: h, background: isToday ? 'var(--green)' : (t.ciro > 0 ? '#4f8ef7' : 'var(--bg2)'), borderRadius: '1px 1px 0 0' }} />
-                                );
-                              })}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {(haftalikKarsilastirma.subeler || []).length === 0 && (
-                      <tr><td colSpan={6}><div className="empty"><p>Henüz ciro verisi yok</p></div></td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
           </>
           )}
 
