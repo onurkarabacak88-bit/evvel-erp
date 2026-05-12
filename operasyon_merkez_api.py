@@ -117,8 +117,10 @@ def _siparis_gonderilmedi_kapat(cur: Any) -> int:
 
 def _stok_kayip_ozet_hizli() -> Dict[str, int]:
     """
-    Son 30 günde açılış+kapanış eşleşmesi olan şubeler arasında stok farkı
-    tespit edilenleri sayar. 10 dakika önbellekte tutulur.
+    Son 30 günde açılış+kapanış eşleşmesi olan şubelerde stok sapmasını sayar.
+    Formül: açılış + ekleme(URUN_STOK_EKLE/URUN_AC) - kapanış = tahmini tüketim.
+    Pozitif fark → açıklanamayan kayıp.
+    10 dakika önbellekte tutulur.
     """
     now = time.time()
     if now - _stok_kayip_cache["ts"] < _STOK_KAYIP_CACHE_SURE:
@@ -140,10 +142,28 @@ def _stok_kayip_ozet_hizli() -> Dict[str, int]:
                   AND tarih >= CURRENT_DATE - INTERVAL '30 days'
             """)
             ac_rows = [dict(r) for r in cur.fetchall()]
+            # Gün içi eklemeler (URUN_STOK_EKLE + URUN_AC) — tam analizle aynı formül
+            cur.execute("""
+                SELECT sube_id, tarih, etiket, aciklama
+                FROM operasyon_defter
+                WHERE tarih >= CURRENT_DATE - INTERVAL '30 days'
+                  AND etiket IN ('URUN_STOK_EKLE', 'URUN_AC')
+            """)
+            defter_rows = [dict(r) for r in cur.fetchall()]
 
         ac_map: Dict[tuple, Any] = {}
         for r in ac_rows:
             ac_map[(str(r["sube_id"]), str(r["tarih"]))] = r.get("meta")
+
+        ek_map: Dict[tuple, Dict[str, int]] = {}
+        for r in defter_rows:
+            key = (str(r["sube_id"]), str(r["tarih"]))
+            if key not in ek_map:
+                ek_map[key] = {k: 0 for k in STOK_KEYS}
+            prefix = "URUN_STOK_JSON:" if r.get("etiket") == "URUN_STOK_EKLE" else "URUN_AC_JSON:"
+            d = _ops_parse_defter_delta(str(r.get("aciklama") or ""), prefix)
+            for k in STOK_KEYS:
+                ek_map[key][k] += int(d.get(k) or 0)
 
         for r in kap_rows:
             key = (str(r["sube_id"]), str(r["tarih"]))
@@ -151,8 +171,10 @@ def _stok_kayip_ozet_hizli() -> Dict[str, int]:
                 continue
             kap_stok = _stok_map_from_meta(r.get("meta"), "kapanis_stok_sayim")
             ac_stok  = _stok_map_from_meta(ac_map[key], "acilis_stok_sayim")
+            ek       = ek_map.get(key, {})
             for k in STOK_KEYS:
-                fark = int(ac_stok.get(k) or 0) - int(kap_stok.get(k) or 0)
+                # açılış + ekleme - kapanış = tüketim; pozitif = kayıp
+                fark = int(ac_stok.get(k) or 0) + int(ek.get(k) or 0) - int(kap_stok.get(k) or 0)
                 if fark > 0:
                     anomali_subeler.add(r["sube_id"])
                     toplam_kayip += fark
