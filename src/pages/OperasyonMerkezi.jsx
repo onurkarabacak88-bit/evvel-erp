@@ -956,25 +956,10 @@ function SubeKart({ k, onDetay, personelRisk }) {
     : displayEv;
 
   const uyarilar = k.uyarilar || [];
+  const kritikler = uyarilar.filter(u => u.seviye === 'kritik');
+  const digerUyarilar = uyarilar.filter(u => u.seviye !== 'kritik');
   const g = k.guvenlik || {};
   const ad = g.alarm_durum;
-
-  // Açılış zamanlaması — vardiya planı vs gerçek
-  const bekSaati  = k.beklenen_acilis_saati || '';   // "08:30"
-  const gerSaati  = (k.acilis_saat || '').slice(0, 5); // "09:10"
-  const acilisZamanlama = (() => {
-    if (!bekSaati && !gerSaati) return null;
-    if (bekSaati && gerSaati) {
-      const [bh, bm] = bekSaati.split(':').map(Number);
-      const [gh, gm] = gerSaati.split(':').map(Number);
-      const gecDk = (gh * 60 + gm) - (bh * 60 + bm);
-      if (gecDk > 2)  return { tip: 'gec',   dk: gecDk,          metin: `Açıldı ${gerSaati} · Beklenen ${bekSaati} · +${gecDk}dk gecikme` };
-      if (gecDk < -2) return { tip: 'erken', dk: Math.abs(gecDk), metin: `Açıldı ${gerSaati} · Beklenen ${bekSaati} · ${Math.abs(gecDk)}dk erken` };
-      return { tip: 'tamam', dk: 0, metin: `Açıldı ${gerSaati} · Zamanında (Beklenen ${bekSaati})` };
-    }
-    if (bekSaati && !gerSaati) return { tip: 'bekliyor', dk: 0, metin: `Beklenen açılış: ${bekSaati}${k.beklenen_acilis_personel ? ' · ' + k.beklenen_acilis_personel : ''}` };
-    return { tip: 'acildi', dk: 0, metin: `Açıldı: ${gerSaati}` };
-  })();
 
   const eventChip = e => {
     const renk = e.durum === 'tamamlandi' ? 'var(--green)' : e.durum === 'gecikti' ? 'var(--red)' : 'var(--text3)';
@@ -1074,24 +1059,15 @@ function SubeKart({ k, onDetay, personelRisk }) {
             🔐 {o.alarm_sayisi_toplam} güvenlik
           </span>
         )}
-        {uyarilar.filter(u => u.seviye === 'kritik').length > 0 && (
-          <span
-            className="badge badge-red"
-            title={uyarilar.filter(u => u.seviye === 'kritik').map(u => temizMesaj(u.mesaj)).join('\n')}
-          >
-            🚨 {uyarilar.filter(u => u.seviye === 'kritik').length} kritik
+        {kritikler.length > 0 && (
+          <span className="badge badge-red" title={kritikler.map(u => temizMesaj(u.mesaj)).join('\n')}>
+            🚨 {kritikler.length} kritik
           </span>
         )}
-        {uyarilar.filter(u => u.seviye !== 'kritik').length > 0 && (
-          <span
-            className="badge badge-yellow"
-            title={uyarilar.filter(u => u.seviye !== 'kritik').map(u => temizMesaj(u.mesaj)).join('\n')}
-          >
-            ⚠️ {uyarilar.filter(u => u.seviye !== 'kritik').length} uyarı
+        {digerUyarilar.length > 0 && (
+          <span className="badge badge-yellow" title={digerUyarilar.map(u => temizMesaj(u.mesaj)).join('\n')}>
+            ⚠️ {digerUyarilar.length} uyarı
           </span>
-        )}
-        {b.guvenlik_alarm && !ad && (
-          <span className="badge badge-red" title={g.mesaj || 'Güvenlik alarmı aktif'}>🔐 Alarm aktif</span>
         )}
         {ad && (
           <span className="badge badge-gray" title={`Son işlem: ${ad.durum}`}>🔐 {ad.durum === 'susturuldu' ? 'Susturuldu' : 'Okundu'}</span>
@@ -3771,7 +3747,6 @@ export default function OperasyonMerkezi() {
   const kritikSayi    = kartlar.filter(k => k.bayraklar?.kritik).length;
   const gecikSayi     = kartlar.filter(k => k.bayraklar?.geciken).length;
   const guvenlikSayi  = kartlar.filter(k => k.bayraklar?.guvenlik_alarm).length;
-  const karsilastirmaKartlar = [...kartlar].sort((a, b) => String(a?.sube_adi || '').localeCompare(String(b?.sube_adi || ''), 'tr'));
   const hubAcKapBucket = useMemo(() => hubAcilisKapanisBucket(kartlar), [kartlar]);
   const riskliPersonelSubeMap = (personelDavranis?.surekli_riskli_personel || []).reduce((acc, p) => {
     const sid = p?.sube_id || '';
@@ -5099,6 +5074,7 @@ export default function OperasyonMerkezi() {
       {aktifSekme === 'canli' && (() => {
         const gecAlert = Number(gecAcilanBugun?.toplam || 0) + Number(gecAcilanBugun?.acilmayan_toplam || 0);
         const kapanmayanSayi = Array.isArray(kapanisTakip?.satirlar) ? kapanisTakip.satirlar.filter((r) => !r.kapanis_tamam).length : 0;
+        const subeAcikSayi = kartlar.filter(k => k.sube_acik).length;
         const ciroGiren = kartlar.filter(k => k.ciro_girildi).length;
         const ciroOnayda = kartlar.filter(k => !k.ciro_girildi && k.ciro_taslak_bekliyor).length;
         const ciroYok = kartlar.length - ciroGiren - ciroOnayda;
@@ -5115,9 +5091,9 @@ export default function OperasyonMerkezi() {
           <>
             {/* 6 canlı alert kartı */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 14 }}>
-              <div className="metric-card" style={{ borderTop: `3px solid ${kartlar.filter(k => k.sube_acik).length === kartlar.length && kartlar.length > 0 ? 'var(--green)' : '#4a9eff'}` }}>
+              <div className="metric-card" style={{ borderTop: `3px solid ${subeAcikSayi === kartlar.length && kartlar.length > 0 ? 'var(--green)' : '#4a9eff'}` }}>
                 <div className="metric-label">🏢 Aktif Şube</div>
-                <div className="metric-value" style={{ color: '#4a9eff' }}>{kartlar.filter(k => k.sube_acik).length} / {kartlar.length || '—'}</div>
+                <div className="metric-value" style={{ color: '#4a9eff' }}>{subeAcikSayi} / {kartlar.length || '—'}</div>
                 <div className="metric-sub">Şu an açık / toplam</div>
               </div>
               <div
