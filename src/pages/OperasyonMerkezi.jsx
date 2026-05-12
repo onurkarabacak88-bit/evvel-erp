@@ -1416,6 +1416,189 @@ function DetayModal({ kart, onKapat, filtre, onYenileDetay }) {
   );
 }
 
+// ─── STOK KAYIP PANELİ ───────────────────────────────────────────────────────
+
+const RISK_CFG = {
+  yuksek: { label: 'Yüksek Risk', renk: '#ef4444', bg: 'rgba(239,68,68,0.1)', icon: '🔴' },
+  orta:   { label: 'Orta Risk',   renk: '#f97316', bg: 'rgba(249,115,22,0.1)', icon: '🟠' },
+  dusuk:  { label: 'Düşük',       renk: '#94a3b8', bg: 'rgba(148,163,184,0.1)', icon: '⚪' },
+};
+
+function StokKayipPanel({ veri }) {
+  if (!veri) {
+    return (
+      <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text3)' }}>
+        <div style={{ fontSize: 32, marginBottom: 8 }}>📦</div>
+        <div style={{ fontSize: 14 }}>Analiz yükleniyor…</div>
+      </div>
+    );
+  }
+
+  const subeOzet       = veri.sube_ozet || [];
+  const riskPersonel   = veri.surekli_acik_personel || [];
+  const veriEksik      = veri.veri_eksik_gun_sayisi || 0;
+  const gun            = veri.gun_sayi || 45;
+  const toplamKayip    = subeOzet.reduce((a, s) => a + (s.toplam_acik || 0), 0);
+  const yuksekRisk     = riskPersonel.filter((p) => p.risk_seviyesi === 'yuksek');
+  const ortaRisk       = riskPersonel.filter((p) => p.risk_seviyesi === 'orta');
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+      {/* ── ÖZET STAT BARI ── */}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        {[
+          { label: 'Sapma Tespit Edilen Şube', val: subeOzet.length, renk: subeOzet.length > 0 ? '#ef4444' : '#22c55e', icon: '🏪' },
+          { label: 'Toplam Açıklanamayan Birim', val: toplamKayip, renk: toplamKayip > 0 ? '#f97316' : '#22c55e', icon: '📦' },
+          { label: 'Risk Altında Personel', val: riskPersonel.length, renk: riskPersonel.length > 0 ? '#f97316' : '#94a3b8', icon: '👤' },
+          { label: 'Veri Eksik Gün', val: veriEksik, renk: veriEksik > 0 ? '#eab308' : '#94a3b8', icon: '⚠️' },
+        ].map((st) => (
+          <div key={st.label} style={{
+            flex: '1 1 140px',
+            background: 'var(--bg2)',
+            border: '1px solid var(--border)',
+            borderRadius: 10,
+            padding: '12px 14px',
+          }}>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{st.icon} {st.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: st.renk }}>{st.val}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── VERİ EKSİK UYARISI ── */}
+      {veriEksik > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 10,
+          padding: '10px 14px', borderRadius: 8,
+          background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.35)',
+        }}>
+          <span style={{ fontSize: 16 }}>⚠️</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#eab308' }}>
+              {veriEksik} günde açılış kaydı eksik
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>
+              Bu günlere ait kapanış verileri analiz dışında tutuldu. Şube personelinin açılış formunu doldurduğundan emin olun.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── RİSK PERSONELİ ── */}
+      {riskPersonel.length > 0 && (
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 14 }}>🚨</span>
+            <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text1)' }}>Tekrarlı Kayıp — Personel İzleme</span>
+            <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 4 }}>Son {gun} gün · Exception-Based Reporting</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {riskPersonel.map((p, i) => {
+              const rc = RISK_CFG[p.risk_seviyesi] || RISK_CFG.dusuk;
+              return (
+                <div key={`${p.personel_id || p.personel_ad}-${i}`} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '10px 14px',
+                  borderBottom: i < riskPersonel.length - 1 ? '1px solid var(--border)' : 'none',
+                  background: rc.bg,
+                }}>
+                  {/* Risk badge */}
+                  <span style={{
+                    flex: '0 0 auto',
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    background: rc.renk + '22', color: rc.renk,
+                    border: `1px solid ${rc.renk}55`,
+                    borderRadius: 20, padding: '2px 9px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
+                  }}>
+                    {rc.icon} {rc.label}
+                  </span>
+                  {/* İsim + şube */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text1)' }}>
+                      {p.personel_ad || p.personel_id || '—'}
+                      {p.cok_sube && (
+                        <span style={{ marginLeft: 6, fontSize: 10, background: '#7c3aed22', color: '#7c3aed', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>
+                          ÇOK ŞUBE
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 1 }}>{p.sube_adi || p.sube_id}</div>
+                  </div>
+                  {/* Sayılar */}
+                  <div style={{ flex: '0 0 auto', textAlign: 'right' }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: rc.renk }}>{p.toplam_acik} birim</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 1 }}>{p.acik_gun_sayisi} günde · {p.acik_kalem} kalem</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {yuksekRisk.length > 0 && (
+            <div style={{ padding: '8px 14px', background: 'rgba(239,68,68,0.06)', borderTop: '1px solid var(--border)', fontSize: 12, color: '#ef4444' }}>
+              🔴 {yuksekRisk.length} personel yüksek risk eşiğini aştı — HR veya mağaza müdürü bilgilendirilmeli.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── ŞUBE BAZLI SAPMA TABLOSU ── */}
+      {subeOzet.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text3)' }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Son {gun} günde açıklanamayan stok sapması yok</div>
+        </div>
+      ) : (
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', fontWeight: 700, fontSize: 14 }}>
+            📉 Şube Bazlı Sapma — Son {gun} Gün
+          </div>
+          <div className="table-wrap" style={{ margin: 0 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Şube</th>
+                  <th style={{ textAlign: 'right' }}>Açık Birim</th>
+                  <th style={{ textAlign: 'right' }}>Kalem</th>
+                  <th style={{ textAlign: 'right' }}>Gün Sayısı</th>
+                  <th style={{ textAlign: 'right' }}>Günlük Ort.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {subeOzet.map((s, i) => {
+                  const ort = s.acik_gun_sayisi > 0 ? (s.toplam_acik / s.acik_gun_sayisi).toFixed(1) : '—';
+                  const yuksek = s.toplam_acik >= 20 || s.acik_gun_sayisi >= 5;
+                  return (
+                    <tr key={`${s.sube_id}-${i}`} style={yuksek ? { background: 'rgba(239,68,68,0.06)' } : {}}>
+                      <td style={{ fontWeight: 600 }}>
+                        {s.sube_adi || s.sube_id}
+                        {yuksek && <span style={{ marginLeft: 6, fontSize: 10, color: '#ef4444' }}>●</span>}
+                      </td>
+                      <td className="mono" style={{ textAlign: 'right', fontWeight: 700, color: s.toplam_acik > 0 ? '#f97316' : 'inherit' }}>
+                        {s.toplam_acik}
+                      </td>
+                      <td className="mono" style={{ textAlign: 'right', color: 'var(--text3)' }}>{s.acik_kalem}</td>
+                      <td className="mono" style={{ textAlign: 'right', color: 'var(--text3)' }}>{s.acik_gun_sayisi}</td>
+                      <td className="mono" style={{ textAlign: 'right', color: 'var(--text3)' }}>{ort}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'right' }}>
+        Formül: Açılış stoku + Eklenen − Kapanış stoku = Açıklanamayan fark.
+        İş günü sınırı {veri.is_gunu_siniri_saat || 6}:00 (gece geçişi düzeltmesi aktif).
+      </div>
+    </div>
+  );
+}
+
+// ─── SİPARİŞ GEÇMİŞİ ────────────────────────────────────────────────────────
+
 const DURUM_LABEL = {
   bekliyor:       { label: 'Bekliyor',       renk: '#4a9eff', icon: '🕐' },
   teslim_edildi:  { label: 'Teslim Edildi',  renk: '#22c55e', icon: '✅' },
@@ -4945,8 +5128,11 @@ export default function OperasyonMerkezi() {
                 val = opsOzet.uyari_30d;
                 sub = '30 günde uyarı/kritik';
               } else if (s.id === 'stok-kayip') {
-                val = opsOzet.stok_kayip_sube;
-                sub = '7 günde kapanış kaydı olan şube';
+                val = opsOzet.stok_kayip_sube || null;
+                const birim = opsOzet.stok_kayip_birim_toplam || 0;
+                sub = opsOzet.stok_kayip_sube > 0
+                  ? `${opsOzet.stok_kayip_sube} şubede sapma · toplam ${birim} birim (son 30 gün)`
+                  : 'Son 30 günde sapma tespit edilmedi';
               } else if (s.id === 'personel-davranis') {
                 val = opsOzet.davranis_personel;
                 sub = '30 günde aktif personel';
@@ -7126,34 +7312,7 @@ export default function OperasyonMerkezi() {
       )}
 
       {aktifSekme === 'stok-kayip' && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Stok kayıp tahmini (son {stokKayip?.gun_sayi || 45} gün)</h3>
-          <div className="table-wrap" style={{ margin: 0 }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>Şube</th>
-                  <th>Açık Toplam</th>
-                  <th>Açık Kalem</th>
-                  <th>Açık Gün</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(stokKayip?.sube_ozet || []).map((s, i) => (
-                  <tr key={`${s.sube_id}-${i}`}>
-                    <td>{s.sube_adi || s.sube_id}</td>
-                    <td className="mono">{s.toplam_acik || 0}</td>
-                    <td className="mono">{s.acik_kalem || 0}</td>
-                    <td className="mono">{s.acik_gun_sayisi || 0}</td>
-                  </tr>
-                ))}
-                {(stokKayip?.sube_ozet || []).length === 0 && (
-                  <tr><td colSpan={4}><div className="empty"><p>Stok kayıp verisi yok</p></div></td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <StokKayipPanel veri={stokKayip} />
       )}
 
       {aktifSekme === 'personel-davranis' && (

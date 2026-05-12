@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -84,7 +85,15 @@ from sevkiyat_helpers import (
 
 router = APIRouter(prefix="/api/ops", tags=["operasyon-merkez"])
 logger = logging.getLogger(__name__)
+log = logger
 OPS_STOK_DISIPLIN_BEKLEYEN_GUN = 7
+
+# İş günü başlangıç saati — bu saatten önce biten kapanışlar bir önceki iş gününe ait sayılır
+_IS_GUNU_SINIRI_SAAT: int = max(0, min(12, int(os.getenv("EVVEL_IS_GUNU_SINIRI_SAAT", "6"))))
+
+# Stok kayıp özet önbelleği — hub-ozet her çağrıldığında tam analiz çalıştırmamak için
+_stok_kayip_cache: Dict[str, Any] = {"ts": 0.0, "anomali_sube": 0, "toplam_kayip": 0}
+_STOK_KAYIP_CACHE_SURE = 600  # 10 dakika
 
 
 def _siparis_gonderilmedi_kapat(cur: Any) -> int:
@@ -104,6 +113,56 @@ def _siparis_gonderilmedi_kapat(cur: Any) -> int:
         (OPS_STOK_DISIPLIN_BEKLEYEN_GUN,),
     )
     return cur.rowcount
+
+
+def _stok_kayip_ozet_hizli() -> Dict[str, int]:
+    """
+    Son 30 günde açılış+kapanış eşleşmesi olan şubeler arasında stok farkı
+    tespit edilenleri sayar. 10 dakika önbellekte tutulur.
+    """
+    now = time.time()
+    if now - _stok_kayip_cache["ts"] < _STOK_KAYIP_CACHE_SURE:
+        return {"anomali_sube": int(_stok_kayip_cache["anomali_sube"]), "toplam_kayip": int(_stok_kayip_cache["toplam_kayip"])}
+
+    anomali_subeler: set = set()
+    toplam_kayip = 0
+    try:
+        with db() as (conn, cur):
+            cur.execute("""
+                SELECT sube_id, tarih, meta FROM sube_operasyon_event
+                WHERE tip='KAPANIS' AND durum='tamamlandi'
+                  AND tarih >= CURRENT_DATE - INTERVAL '30 days'
+            """)
+            kap_rows = [dict(r) for r in cur.fetchall()]
+            cur.execute("""
+                SELECT sube_id, tarih, meta FROM sube_operasyon_event
+                WHERE tip='ACILIS' AND durum='tamamlandi'
+                  AND tarih >= CURRENT_DATE - INTERVAL '30 days'
+            """)
+            ac_rows = [dict(r) for r in cur.fetchall()]
+
+        ac_map: Dict[tuple, Any] = {}
+        for r in ac_rows:
+            ac_map[(str(r["sube_id"]), str(r["tarih"]))] = r.get("meta")
+
+        for r in kap_rows:
+            key = (str(r["sube_id"]), str(r["tarih"]))
+            if key not in ac_map:
+                continue
+            kap_stok = _stok_map_from_meta(r.get("meta"), "kapanis_stok_sayim")
+            ac_stok  = _stok_map_from_meta(ac_map[key], "acilis_stok_sayim")
+            for k in STOK_KEYS:
+                fark = int(ac_stok.get(k) or 0) - int(kap_stok.get(k) or 0)
+                if fark > 0:
+                    anomali_subeler.add(r["sube_id"])
+                    toplam_kayip += fark
+    except Exception:
+        logger.exception("_stok_kayip_ozet_hizli hata")
+
+    _stok_kayip_cache["ts"] = now
+    _stok_kayip_cache["anomali_sube"] = len(anomali_subeler)
+    _stok_kayip_cache["toplam_kayip"] = toplam_kayip
+    return {"anomali_sube": len(anomali_subeler), "toplam_kayip": toplam_kayip}
 
 
 class OpsGiderFisKontrolBody(BaseModel):
@@ -3185,6 +3244,23 @@ def ops_stok_kayip_analiz(
         cur.execute(qd, qpd)
         defter_rows = [dict(r) for r in cur.fetchall()]
 
+    def _is_gunu_tarihi(tarih_s: str, cevap_ts_s: Any) -> str:
+        """
+        Gece yarısı geçişi: kapanış cevap_ts saati iş günü sınırından (örn. 06:00)
+        önce ise, etkinlik bir önceki takvim gününe aittir.
+        """
+        if not cevap_ts_s:
+            return tarih_s
+        try:
+            ct = datetime.fromisoformat(str(cevap_ts_s).replace("Z", "+00:00").replace(" ", "T"))
+            ct_date_str = ct.strftime("%Y-%m-%d")
+            if ct_date_str != tarih_s and ct.hour < _IS_GUNU_SINIRI_SAAT:
+                prev = (datetime.strptime(ct_date_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+                return prev
+        except Exception:
+            pass
+        return tarih_s
+
     acilis_map: Dict[tuple, Dict[str, int]] = {}
     for r in acilis_rows:
         key = (str(r.get("sube_id") or ""), str(r.get("tarih") or ""))
@@ -3207,12 +3283,16 @@ def ops_stok_kayip_analiz(
     sube_agg: Dict[str, Dict[str, Any]] = {}
     personel_agg: Dict[str, Dict[str, Any]] = {}
     pattern_agg: Dict[tuple, Dict[str, Any]] = {}
+    veri_eksik_gunler: List[Dict[str, Any]] = []  # açılış eventi olmayan kapanışlar
 
     for r in kapanis_rows:
         sid = str(r.get("sube_id") or "")
-        tarih_s = str(r.get("tarih") or "")
+        tarih_s = _is_gunu_tarihi(str(r.get("tarih") or ""), r.get("cevap_ts"))
         key = (sid, tarih_s)
-        ac = acilis_map.get(key) or {k: 0 for k in STOK_KEYS}
+        if key not in acilis_map:
+            veri_eksik_gunler.append({"sube_id": sid, "sube_adi": r.get("sube_adi"), "tarih": tarih_s})
+            continue
+        ac = acilis_map[key]
         ek = ek_map.get(key) or {k: 0 for k in STOK_KEYS}
         kap_blk = _stok_map_from_meta(r.get("meta"), "kapanis_stok_sayim")
         try:
@@ -3314,17 +3394,36 @@ def ops_stok_kayip_analiz(
         )
     sube_ozet.sort(key=lambda x: (x["toplam_acik"], x["acik_gun_sayisi"]), reverse=True)
 
-    personel_ozet = []
+    # Personel bazında kaç farklı şubede kayıp var?
+    personel_sube_set: Dict[str, set] = {}
     for v in personel_agg.values():
+        pid_k = v["personel_id"] or f"anon:{v['personel_ad']}"
+        if pid_k not in personel_sube_set:
+            personel_sube_set[pid_k] = set()
+        personel_sube_set[pid_k].add(v["sube_id"])
+
+    personel_ozet = []
+    for pkey, v in personel_agg.items():
+        gun_s = len(v["gunler"])
+        acik  = int(v["toplam_acik"])
+        cok_sube = len(personel_sube_set.get(pkey, set())) > 1
+        if acik >= 20 or gun_s >= 5:
+            risk = "yuksek"
+        elif acik >= 8 or gun_s >= 3:
+            risk = "orta"
+        else:
+            risk = "dusuk"
         personel_ozet.append(
             {
                 "personel_id": v["personel_id"],
                 "personel_ad": v["personel_ad"],
                 "sube_id": v["sube_id"],
                 "sube_adi": v["sube_adi"],
-                "toplam_acik": int(v["toplam_acik"]),
+                "toplam_acik": acik,
                 "acik_kalem": int(v["acik_kalem"]),
-                "acik_gun_sayisi": len(v["gunler"]),
+                "acik_gun_sayisi": gun_s,
+                "risk_seviyesi": risk,
+                "cok_sube": cok_sube,
             }
         )
     personel_ozet.sort(key=lambda x: (x["toplam_acik"], x["acik_gun_sayisi"]), reverse=True)
@@ -3332,7 +3431,7 @@ def ops_stok_kayip_analiz(
     surekli_acik_personel = [
         p
         for p in personel_ozet
-        if int(p.get("acik_gun_sayisi") or 0) >= 3 and int(p.get("toplam_acik") or 0) > 0
+        if p["risk_seviyesi"] in ("yuksek", "orta")
     ]
 
     haftalik_pattern = []
@@ -3357,6 +3456,9 @@ def ops_stok_kayip_analiz(
         "personel_ozet": personel_ozet[:120],
         "surekli_acik_personel": surekli_acik_personel[:40],
         "haftalik_pattern": haftalik_pattern[:80],
+        "veri_eksik_gun": veri_eksik_gunler[:100],
+        "veri_eksik_gun_sayisi": len(veri_eksik_gunler),
+        "is_gunu_siniri_saat": _IS_GUNU_SINIRI_SAAT,
     }
 
 
@@ -4606,12 +4708,13 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
             pass
         uyari_30d = 0
 
-    cur.execute("""
-        SELECT COUNT(DISTINCT sube_id) FROM sube_operasyon_event
-        WHERE tip='KAPANIS' AND durum='tamamlandi'
-          AND tarih >= CURRENT_DATE - INTERVAL '7 days'
-    """)
-    stok_kayip_sube = _fetch_int_count(cur)
+    try:
+        _sk = _stok_kayip_ozet_hizli()
+        stok_kayip_sube        = _sk["anomali_sube"]
+        stok_kayip_birim_toplam = _sk["toplam_kayip"]
+    except Exception:
+        stok_kayip_sube        = 0
+        stok_kayip_birim_toplam = 0
 
     cur.execute("""
         SELECT COUNT(DISTINCT personel_id) FROM sube_operasyon_event
@@ -4685,6 +4788,7 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
         "kontrol_gecikti": kontrol_gecikti,
         "uyari_30d": uyari_30d,
         "stok_kayip_sube": stok_kayip_sube,
+        "stok_kayip_birim_toplam": stok_kayip_birim_toplam,
         "davranis_personel": davranis_personel,
         "aktif_personel": aktif_personel,
         "siparis_paralel_sube_sayisi": siparis_paralel_sube_sayisi,
@@ -4712,6 +4816,7 @@ def _hub_ozet_fallback_panel() -> Dict[str, Any]:
         "kontrol_gecikti": 0,
         "uyari_30d": 0,
         "stok_kayip_sube": 0,
+        "stok_kayip_birim_toplam": 0,
         "davranis_personel": 0,
         "aktif_personel": 0,
         "siparis_paralel_sube_sayisi": 0,
