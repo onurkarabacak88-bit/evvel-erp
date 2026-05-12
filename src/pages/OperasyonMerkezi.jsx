@@ -949,7 +949,10 @@ function SubeKart({ k, onDetay, personelRisk }) {
   else if (b.geciken) borderColor = '#f08040';
 
   // Operasyon olaylarının durumu
-  const tipIkon = { ACILIS: '🌅', KONTROL: '🔍', KAPANIS: '🌙', CIKIS: '🚪' };
+  const tipIkon  = { ACILIS: '🌅', KONTROL: '🔍', KAPANIS: '🌙', CIKIS: '🚪' };
+  const tipLabel = { ACILIS: 'Açılış', KONTROL: 'Kontrol', KAPANIS: 'Kapanış', CIKIS: 'Çıkış' };
+  const insancaDk = dk => { const sa = Math.floor(dk / 60); const kdk = dk % 60; return sa > 0 ? (kdk > 0 ? `${sa}sa ${kdk}dk` : `${sa}sa`) : `${dk}dk`; };
+  const temizMesaj = m => (m || '').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '').replace(/\{[^}]*\}/g, '').replace(/\s{2,}/g, ' ').trim();
   const allEv = op.events || [];
   const displayEv = allEv.slice(0, 5);
   const acilisEv = allEv.filter(e => e.tip === 'ACILIS');
@@ -982,9 +985,9 @@ function SubeKart({ k, onDetay, personelRisk }) {
     const renk = e.durum === 'tamamlandi' ? 'var(--green)' : e.durum === 'gecikti' ? 'var(--red)' : 'var(--text3)';
     return (
       <span key={e.id} style={{ fontSize: 11, color: renk, display: 'flex', alignItems: 'center', gap: 3 }}>
-        {tipIkon[e.tip] || '○'} {e.tip}
+        {tipIkon[e.tip] || '○'} {tipLabel[e.tip] || e.tip}
         {e.durum === 'gecikti' && op.aktif_gecikme_dk != null && e.id === aktif?.id
-          ? ` (${op.aktif_gecikme_dk}dk)` : ''}
+          ? ` (${insancaDk(op.aktif_gecikme_dk)})` : ''}
       </span>
     );
   };
@@ -1155,10 +1158,9 @@ function SubeKart({ k, onDetay, personelRisk }) {
         <span style={{ color: k.vardiya_devri_tamam ? 'var(--green)' : k.vardiya_devri_basladi ? 'var(--yellow)' : 'var(--text3)' }}>
           {k.vardiya_devri_tamam ? 'Tamamlandı' : k.vardiya_devri_basladi ? 'Devam ediyor' : '—'}
         </span>
-        {' · '}
-        Alarm: <span style={{ color: (o.alarm_sayisi_toplam || 0) > 0 ? 'var(--yellow)' : 'var(--text3)' }}>
-          {o.alarm_sayisi_toplam || 0}
-        </span>
+        {(o.alarm_sayisi_toplam || 0) > 0 && (
+          <>{' · '}Alarm: <span style={{ color: 'var(--yellow)' }}>{o.alarm_sayisi_toplam}</span></>
+        )}
       </div>
 
       {(g.alarm || ad) && (
@@ -1188,7 +1190,7 @@ function SubeKart({ k, onDetay, personelRisk }) {
               color: u.seviye === 'kritik' ? 'var(--red)' : 'var(--yellow)',
               borderLeft: `2px solid ${u.seviye === 'kritik' ? 'var(--red)' : 'var(--yellow)'}`,
             }}>
-              {(u.mesaj || '').slice(0, 90)}
+              {temizMesaj(u.mesaj).slice(0, 90)}
             </div>
           ))}
         </div>
