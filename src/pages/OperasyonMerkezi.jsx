@@ -316,7 +316,8 @@ const UST_SEKMELER = [
   { id: 'sevkiyat-uyumsuzluk', label: '🚚 Sevkiyat uyumsuzlukları' },
   { id: 'magaza-kartlari', label: '🏪 Depo stokları' },
   { id: 'kontrol', label: '🔍 Kontrol' },
-  { id: 'metrics', label: '📊 Metrikler' },
+  { id: 'guvenlik-alarmlar', label: '🚨 Güvenlik Alarmları' },
+  { id: 'metrics', label: '📊 KPI Paneli' },
   { id: 'stok-kayip', label: '📉 Stok Kayıp' },
   { id: 'personel-davranis', label: '👤 Personel Davranış' },
   { id: 'fis', label: '🧾 Fiş Kontrol' },
@@ -326,7 +327,7 @@ const UST_SEKMELER = [
   { id: 'siparis-kabul-takip', label: '📥 Sipariş kabul takibi' },
   { id: 'toptanci-siparisleri', label: '🚚 Toptancı siparişleri' },
   { id: 'toptanci-teslimler', label: '📦 Toptancıdan Gelenler' },
-  { id: 'analitik', label: '📊 Analitik' },
+  { id: 'analitik', label: '📈 Şube Analitik' },
   { id: 'stok-tahmin', label: '🔮 Stok Tahmin' },
   { id: 'mesaj', label: '📩 Merkez Mesajı' },
   { id: 'puan', label: '⭐ Personel Puan' },
@@ -359,6 +360,7 @@ const OPS_MODUL_BOLUM = {
     { id: 'stok', label: 'Stok & tedarik' },
   ],
   kontrol: [{ id: 'icerik', label: 'Kontrol özeti' }],
+  'guvenlik-alarmlar': [{ id: 'icerik', label: 'Aktif alarmlar' }],
   'stok-kayip': [{ id: 'icerik', label: 'Özet tablo' }],
   'personel-davranis': [{ id: 'icerik', label: 'Davranış analizi' }],
   fis: [{ id: 'icerik', label: 'Bekleyen fişler' }],
@@ -394,6 +396,7 @@ const OPS_HUB_RENK = {
   'sevkiyat-uyumsuzluk': '#ea580c',
   'magaza-kartlari': '#7c6fdc',
   kontrol: '#e85d5d',
+  'guvenlik-alarmlar': '#be185d',
   metrics: '#2db573',
   'stok-kayip': '#f08040',
   'personel-davranis': '#c9a227',
@@ -455,7 +458,7 @@ const MODULLER = [
     label: '🔐 Güvenlik & Denetim',
     renk: '#be185d',
     desc: 'Kontrol özeti, güvenlik alarmları ve defter kayıtları',
-    tabs: ['kontrol', 'defter'],
+    tabs: ['kontrol', 'guvenlik-alarmlar', 'defter'],
   },
   {
     id: 'raporlar',
@@ -5111,8 +5114,11 @@ export default function OperasyonMerkezi() {
               alertSayisi = Number(personelVardiyaUyumBugun?.toplam || 0) + Number(gecKalanPersonelBugun?.kritik_personel_sayisi || 0);
               descSatir = alertSayisi > 0 ? `${alertSayisi} uyumsuz vardiya / geç kalan` : ‘Personel durumu normal ✓’;
             } else if (modul.id === ‘guvenlik-denetim’) {
-              alertSayisi = Number(ozt.kontrol_gecikti || 0);
-              descSatir = alertSayisi > 0 ? `${alertSayisi} kontrol gecikti — denetim gerekli` : ‘Kontrol tamamlandı ✓’;
+              const guvenlikAlarmSayi = kartlar.filter((k) => k.bayraklar?.guvenlik_alarm).length;
+              alertSayisi = Number(ozt.kontrol_gecikti || 0) + guvenlikAlarmSayi;
+              descSatir = alertSayisi > 0
+                ? `${guvenlikAlarmSayi > 0 ? `${guvenlikAlarmSayi} güvenlik alarmı · ` : ‘’}${Number(ozt.kontrol_gecikti || 0) > 0 ? `${ozt.kontrol_gecikti} kontrol gecikti` : ‘denetim gerekli’}`
+                : ‘Kontrol tamamlandı · Güvenlik normal ✓’;
             } else if (modul.id === ‘raporlar’) {
               const u30 = Number(ozt.uyari_30d || 0);
               descSatir = u30 > 0 ? `Son 30 günde ${u30} uyarı/kritik kaydı` : modul.desc;
@@ -7312,6 +7318,80 @@ export default function OperasyonMerkezi() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {aktifSekme === 'guvenlik-alarmlar' && (
+        <div>
+          {(() => {
+            const alarmliKartlar = kartlar.filter((k) => k.bayraklar?.guvenlik_alarm);
+            if (!alarmliKartlar.length) {
+              return (
+                <div className="empty">
+                  <p>Aktif güvenlik alarmı yok ✓</p>
+                  <p style={{ fontSize: 12, color: 'var(--text3)' }}>
+                    Tüm şubelerde PIN kilit/hatalı deneme eşiğin altında.
+                  </p>
+                </div>
+              );
+            }
+            const pencere = alarmliKartlar[0]?.guvenlik?.pencere_dk || 15;
+            return (
+              <>
+                <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text3)' }}>
+                  {alarmliKartlar.length} şubede aktif alarm · Son {pencere} dk penceresi
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {alarmliKartlar.map((k) => {
+                    const g = k.guvenlik || {};
+                    const ad = g.alarm_durum;
+                    const sid = k.sube_id;
+                    const islemYap = async (tur) => {
+                      try {
+                        await api(`/ops/guvenlik-alarmlar/${encodeURIComponent(sid)}/${tur}`, { method: 'POST', body: {} });
+                        yukle(filtre);
+                      } catch (e) { window.alert(e.message || 'İşlem başarısız'); }
+                    };
+                    return (
+                      <div key={sid} style={{
+                        padding: '12px 16px', borderRadius: 8,
+                        border: `1px solid ${g.seviye === 'kritik' ? 'rgba(190,24,93,0.4)' : 'rgba(245,158,11,0.35)'}`,
+                        background: g.seviye === 'kritik' ? 'rgba(190,24,93,0.06)' : 'rgba(245,158,11,0.05)',
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                          <strong style={{ fontSize: 14 }}>{k.sube_adi || sid}</strong>
+                          <span className={`badge ${g.seviye === 'kritik' ? 'badge-red' : 'badge-yellow'}`}>
+                            {g.seviye === 'kritik' ? 'KRİTİK' : 'UYARI'}
+                          </span>
+                          {ad?.durum === 'susturuldu' && (
+                            <span className="badge" style={{ background: 'rgba(128,128,128,0.15)', color: 'var(--text3)', fontSize: 11 }}>
+                              Susturuldu{ad.sustur_bitis_ts ? ` → ${String(ad.sustur_bitis_ts).slice(11, 16)}` : ''}
+                            </span>
+                          )}
+                        </div>
+                        {g.mesaj && (
+                          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>{g.mesaj}</div>
+                        )}
+                        <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--text3)', marginBottom: 10, flexWrap: 'wrap' }}>
+                          <span>PIN Kilit: <strong style={{ color: (g.pin_kilit_adet || 0) > 0 ? 'var(--red)' : 'inherit' }}>{g.pin_kilit_adet || 0}</strong></span>
+                          <span>Hatalı Deneme: <strong style={{ color: (g.pin_hatali_adet || 0) > 0 ? 'var(--yellow)' : 'inherit' }}>{g.pin_hatali_adet || 0}</strong></span>
+                          <span>Kilitliyken Deneme: <strong>{g.pin_kilitte_deneme_adet || 0}</strong></span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button type="button" className="btn btn-secondary btn-sm" onClick={() => islemYap('okundu')}>
+                            ✓ Okundu
+                          </button>
+                          <button type="button" className="btn btn-secondary btn-sm" onClick={() => islemYap('sustur')}>
+                            🔇 Sustur (2 saat)
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 
