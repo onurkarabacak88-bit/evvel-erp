@@ -1101,6 +1101,9 @@ def ops_dashboard(
 
         kartlar = [k for k in kartlar if _stok_es(k)]
 
+    # Dashboard üst blokları (kasa devir / kapanış özeti / kasa uyum) aynı iş günü etiketiyle hizalı
+    ig_dash = is_gunu_tr()
+
     # Bugünkü kasa devri kayıtları
     kasa_devir_listesi = []
     try:
@@ -1121,10 +1124,10 @@ def ops_dashboard(
                 LEFT JOIN subeler s ON s.id = k.sube_id
                 LEFT JOIN personel p1 ON p1.id::text = k.sabahci_personel_id::text
                 LEFT JOIN personel p2 ON p2.id::text = k.aksamci_personel_id::text
-                WHERE k.tarih = CURRENT_DATE
+                WHERE k.tarih = %s
                   AND k.olay = 'vardiya_sabah_aksam_devri'
                 ORDER BY k.kapanisci_onay_ts DESC
-            """)
+            """, (ig_dash,))
             for row in (cur2.fetchall() or []):
                 sabah_ts = row.get("sabah_ts")
                 # Devir stok sayımını meta'dan çıkar
@@ -1161,7 +1164,6 @@ def ops_dashboard(
     # İş gününe göre tamamlanan KAPANIS (gece 02:00 öncesi takvim «ertesi gün» olsa bile önceki iş günü)
     kapanis_ozet_listesi = []
     try:
-        ig = is_gunu_tr()
         with db() as (_, cur3):
             cur3.execute(
                 """
@@ -1182,7 +1184,7 @@ def ops_dashboard(
                   AND e.tarih = %s
                 ORDER BY e.olay_ts DESC
                 """,
-                (ig,),
+                (ig_dash,),
             )
             for row in (cur3.fetchall() or []):
                 ts = row.get("olay_ts")
@@ -1198,38 +1200,51 @@ def ops_dashboard(
     except Exception:
         kapanis_ozet_listesi = []
 
-    # Bugünkü kasa teslim hareketleri (ara + gün_sonu)
+    # Kasa teslim (ara + gün_sonu): tabloda `olusturma` var; eski `olusturulma_ts` hatalıydı → sorgu çöküp liste boş kalıyordu.
+    # Tarih aralığı iş günü sonu (`is_gunu_tr`) ile hizalı, son 14 gün (merkezde son işlemler görünsün).
     kasa_teslim_bugun_listesi: list = []
     try:
+        gun_son = is_gunu_tr()
+        gun_bas = gun_son - timedelta(days=13)
         with db() as (_, cur_kt):
-            cur_kt.execute("""
+            cur_kt.execute(
+                """
                 SELECT
                     kt.sube_id::text,
                     COALESCE(s.ad, kt.sube_id::text) AS sube_adi,
+                    kt.tarih,
                     kt.teslim_turu,
                     kt.tutar,
                     kt.teslim_eden_ad,
                     kt.teslim_alan_ad,
                     kt.aciklama,
-                    kt.olusturulma_ts
+                    kt.olusturma
                 FROM kasa_teslim kt
                 LEFT JOIN subeler s ON s.id = kt.sube_id
-                WHERE kt.tarih = CURRENT_DATE
-                ORDER BY kt.olusturulma_ts DESC
-            """)
+                WHERE kt.tarih >= %s AND kt.tarih <= %s
+                ORDER BY kt.tarih DESC, kt.olusturma DESC NULLS LAST
+                LIMIT 200
+                """,
+                (gun_bas, gun_son),
+            )
             for row in (cur_kt.fetchall() or []):
-                ts = row.get("olusturulma_ts")
-                kasa_teslim_bugun_listesi.append({
-                    "sube_id":         str(row.get("sube_id") or ""),
-                    "sube_adi":        str(row.get("sube_adi") or ""),
-                    "teslim_turu":     str(row.get("teslim_turu") or ""),
-                    "tutar":           float(row.get("tutar") or 0),
-                    "teslim_eden_ad":  str(row.get("teslim_eden_ad") or ""),
-                    "teslim_alan_ad":  str(row.get("teslim_alan_ad") or ""),
-                    "aciklama":        str(row.get("aciklama") or ""),
-                    "ts":              str(ts) if ts else "",
-                })
+                ts = row.get("olusturma")
+                tr = row.get("tarih")
+                kasa_teslim_bugun_listesi.append(
+                    {
+                        "sube_id": str(row.get("sube_id") or ""),
+                        "sube_adi": str(row.get("sube_adi") or ""),
+                        "tarih": str(tr) if tr else "",
+                        "teslim_turu": str(row.get("teslim_turu") or ""),
+                        "tutar": float(row.get("tutar") or 0),
+                        "teslim_eden_ad": str(row.get("teslim_eden_ad") or ""),
+                        "teslim_alan_ad": str(row.get("teslim_alan_ad") or ""),
+                        "aciklama": str(row.get("aciklama") or ""),
+                        "ts": str(ts) if ts else "",
+                    }
+                )
     except Exception:
+        logger.exception("ops_dashboard kasa_teslim listesi okunamadı")
         kasa_teslim_bugun_listesi = []
 
     # Kasa uyumsuzluk: dünün deviri ile bugünün açılış sayımı karşılaştır
@@ -1258,12 +1273,12 @@ def ops_dashboard(
                     AND k.tarih = (a.tarih - INTERVAL '1 day')::date
                 WHERE a.tip = 'ACILIS'
                   AND a.durum = 'tamamlandi'
-                  AND a.tarih = CURRENT_DATE
+                  AND a.tarih = %s
                   AND ABS(a.kasa_sayim - COALESCE(
                         k.devir,
                         GREATEST(0, COALESCE(k.kasa_sayim, 0) - COALESCE(k.teslim, 0))
                     )) > 50
-            """)
+            """, (ig_dash,))
             for row in (cur_ku.fetchall() or []):
                 kasa_uyumsuzluk_listesi.append({
                     "sube_id":    str(row.get("sube_id") or ""),

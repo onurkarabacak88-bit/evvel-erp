@@ -128,6 +128,8 @@ def kasa_teslim_ekle(body: KasaTeslimBody):
             onay_ad = (ku.get("ad_soyad") or onay_ad).strip()
             pid = str(ku.get("id") or pid)
 
+        from tr_saat import dt_now_tr, is_gunu_tr
+
         tid = str(uuid.uuid4())
         cur.execute(
             """INSERT INTO kasa_teslim
@@ -135,10 +137,11 @@ def kasa_teslim_ekle(body: KasaTeslimBody):
                 teslim_eden_personel_id, teslim_eden_ad,
                 teslim_alan_id, teslim_alan_ad,
                 teslim_turu, aciklama)
-               VALUES (%s, %s, CURRENT_DATE, %s, %s, %s, %s, %s, %s, %s)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 tid,
                 body.sube_id,
+                is_gunu_tr(),
                 body.tutar,
                 pid,
                 onay_ad,
@@ -151,7 +154,6 @@ def kasa_teslim_ekle(body: KasaTeslimBody):
         audit(cur, "kasa_teslim", tid, "KASA_TESLIM")
 
         from operasyon_defter import operasyon_defter_ekle
-        from tr_saat import dt_now_tr
 
         saat = dt_now_tr().strftime("%H:%M:%S")
         operasyon_defter_ekle(

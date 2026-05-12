@@ -12,14 +12,14 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from database import db
-from tr_saat import bugun_tr, dt_now_tr_naive
+from tr_saat import bugun_tr, dt_now_tr_naive, is_gunu_tr
 from evvel_merkez_guard import merkez_mutasyon_korumasi
 from kasa_service import audit
 from personel_panel_auth import (
@@ -131,6 +131,24 @@ def get_kapanis_panel_blob(cur, sube_id: str) -> Dict[str, Any]:
     return vardiya_devir_panel_blob(cur, sube_id)
 
 
+def _coerce_ciro_taslak_tarih(raw: Optional[Any]) -> date:
+    """İş günü (``sube_operasyon_event.tarih``) — ``CURRENT_DATE`` / takvim günü ile karıştırılmaz."""
+    if raw is None:
+        return is_gunu_tr()
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
+    if isinstance(raw, str):
+        s = (raw or "").strip()[:10]
+        if len(s) == 10:
+            try:
+                return date.fromisoformat(s)
+            except ValueError:
+                pass
+    return is_gunu_tr()
+
+
 def _upsert_ciro_taslak(
     cur,
     sube_id: str,
@@ -144,14 +162,17 @@ def _upsert_ciro_taslak(
     bildirim_saati: Optional[str] = None,
     panel_kullanici_id: Optional[str] = None,
     audit_etiket: str = "VARDIYA_DEVIR_TASLAK",
+    taslak_tarih: Optional[Any] = None,
 ) -> None:
+    """Şube ciro taslağı: yalnızca X nakit/POS/online. Teslim/devir/kasa sayım buraya eklenmez."""
+    gun = _coerce_ciro_taslak_tarih(taslak_tarih)
     cur.execute(
         """
         SELECT id FROM ciro_taslak
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='bekliyor'
+        WHERE sube_id=%s AND tarih=%s AND durum='bekliyor'
         LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, gun),
     )
     ex = cur.fetchone()
     if ex:
@@ -182,11 +203,12 @@ def _upsert_ciro_taslak(
         INSERT INTO ciro_taslak
             (id, sube_id, tarih, nakit, pos, online, aciklama, personel_id, durum,
              gonderen_ad, bildirim_saati, panel_kullanici_id)
-        VALUES (%s, %s, CURRENT_DATE, %s, %s, %s, %s, %s, 'bekliyor', %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'bekliyor', %s, %s, %s)
         """,
         (
             tid,
             sube_id,
+            gun,
             nakit,
             pos,
             online,

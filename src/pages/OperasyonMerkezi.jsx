@@ -2247,7 +2247,7 @@ export default function OperasyonMerkezi() {
   const kapanisTakipIntervalRef = useRef(null);
   const [ciroOnayBugun, setCiroOnayBugun] = useState({ tarih: '', toplam: 0, toplam_tutar: 0, kayitlar: [] });
   const [ciroOnayBugunYukleniyor, setCiroOnayBugunYukleniyor] = useState(false);
-  const [ciroOnayAramaTarih, setCiroOnayAramaTarih] = useState(bugunIsoTarih());
+  const [ciroOnayAramaTarih, setCiroOnayAramaTarih] = useState(isGunuIsoIstanbul());
   const [ciroOnayAramaYukleniyor, setCiroOnayAramaYukleniyor] = useState(false);
   const [ciroOnayAramaSonuc, setCiroOnayAramaSonuc] = useState({ tarih: '', toplam: 0, toplam_tutar: 0, kayitlar: [] });
   const [ciroOnaySeciliSubeKey, setCiroOnaySeciliSubeKey] = useState('all');
@@ -2677,7 +2677,7 @@ export default function OperasyonMerkezi() {
   }, [toast]);
 
   const ciroOnayGunYukle = useCallback(async (tarih) => {
-    const hedef = (tarih || bugunIsoTarih()).trim();
+    const hedef = (tarih || isGunuIsoIstanbul()).trim();
     const ym = hedef.slice(0, 7);
     const r = await api(`/ops/bekleyen-merkez?year_month=${encodeURIComponent(ym)}`);
     const satirlar = Array.isArray(r?.ciro_taslaklari) ? r.ciro_taslaklari : [];
@@ -2700,10 +2700,10 @@ export default function OperasyonMerkezi() {
     const silent = !!opts.silent;
     setCiroOnayBugunYukleniyor(true);
     try {
-      const data = await ciroOnayGunYukle(bugunIsoTarih());
+      const data = await ciroOnayGunYukle(isGunuIsoIstanbul());
       setCiroOnayBugun(data);
       if (aktifSekme !== 'ciro-onay') {
-        setCiroOnayAramaTarih(data.tarih || bugunIsoTarih());
+        setCiroOnayAramaTarih(data.tarih || isGunuIsoIstanbul());
         setCiroOnayAramaSonuc(data);
       }
     } catch (e) {
@@ -2714,7 +2714,7 @@ export default function OperasyonMerkezi() {
   }, [aktifSekme, ciroOnayGunYukle, toast]);
 
   const ciroOnayAramaYap = useCallback(async () => {
-    const hedef = (ciroOnayAramaTarih || bugunIsoTarih()).trim();
+    const hedef = (ciroOnayAramaTarih || isGunuIsoIstanbul()).trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(hedef)) {
       toast('Tarih formatı YYYY-MM-DD olmalı');
       return;
@@ -3625,9 +3625,9 @@ export default function OperasyonMerkezi() {
   useEffect(() => {
     if (aktifSekme !== 'ciro-onay') return;
     setYukleniyor(true);
-    ciroOnayGunYukle(bugunIsoTarih())
+    ciroOnayGunYukle(isGunuIsoIstanbul())
       .then((data) => {
-        setCiroOnayAramaTarih(data.tarih || bugunIsoTarih());
+        setCiroOnayAramaTarih(data.tarih || isGunuIsoIstanbul());
         setCiroOnayAramaSonuc(data);
       })
       .catch((e) => toast(e.message || 'Bekleyen ciro onayları yüklenemedi'))
@@ -3986,24 +3986,22 @@ export default function OperasyonMerkezi() {
     });
   const kullanilanGorunenSatirlarSirali = kullanilanSatirlariSubeyeGoreSirala(kullanilanGorunenSatirlar);
   const ciroOnaySubeSekmeleri = (ciroOnayAramaSonuc?.kayitlar || []).reduce((acc, r) => {
+    const sid = String(r?.sube_id || '').trim();
     const baslik = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
-    const key = urunAcSubeAnahtar(baslik) || baslik;
+    const key = sid ? `id:${sid}` : (urunAcSubeAnahtar(baslik) || baslik);
     const bulunan = acc.find((x) => x.key === key);
     if (bulunan) bulunan.adet += 1;
     else acc.push({ key, baslik, adet: 1 });
     return acc;
   }, []);
-  ciroOnaySubeSekmeleri.sort((a, b) => {
-    const ai = URUN_AC_SUBE_ONCELIK.indexOf(a.key);
-    const bi = URUN_AC_SUBE_ONCELIK.indexOf(b.key);
-    const ao = ai >= 0 ? ai : 99;
-    const bo = bi >= 0 ? bi : 99;
-    if (ao !== bo) return ao - bo;
-    return a.baslik.localeCompare(b.baslik, 'tr');
-  });
+  ciroOnaySubeSekmeleri.sort((a, b) => a.baslik.localeCompare(b.baslik, 'tr'));
   const ciroOnayGorunenKayitlar = ciroOnaySeciliSubeKey === 'all'
     ? (ciroOnayAramaSonuc?.kayitlar || [])
     : (ciroOnayAramaSonuc?.kayitlar || []).filter((r) => {
+      const sid = String(r?.sube_id || '').trim();
+      if (sid && String(ciroOnaySeciliSubeKey || '').startsWith('id:')) {
+        return `id:${sid}` === ciroOnaySeciliSubeKey;
+      }
       const label = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
       return (urunAcSubeAnahtar(label) || label) === ciroOnaySeciliSubeKey;
     });
@@ -4649,19 +4647,23 @@ export default function OperasyonMerkezi() {
           {(ozet?.kasa_teslim_bugun_listesi || []).length > 0 && (
             <div className="alert-box mb-16" style={{ padding: '12px 16px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.35)', color: 'var(--text)', marginBottom: 16 }}>
               <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-                💵 Bugün Kasa Teslim
+                💵 Kasa teslim (son 14 gün — ara + gün sonu)
                 <span style={{ background: 'rgba(245,158,11,0.25)', borderRadius: 12, padding: '1px 10px', fontSize: 13 }}>
                   {(ozet.kasa_teslim_bugun_listesi || []).length} hareket
                 </span>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
+                İş günü tarihine göre son 14 gün; satırda işlem günü + saat. Gün sonu ve ara teslim aynı listede.
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {(ozet.kasa_teslim_bugun_listesi || []).map((x, i) => {
                   const saatStr = x.ts ? new Date(x.ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) : '—';
                   const turEtiketi = x.teslim_turu === 'gun_sonu' ? '🌙 Gün Sonu' : '🔄 Ara Teslim';
+                  const gunSaat = x.tarih ? `${x.tarih} · ${saatStr}` : saatStr;
                   return (
                     <div key={i} style={{ background: 'rgba(0,0,0,0.15)', borderRadius: 8, padding: '7px 12px', border: '1px solid rgba(245,158,11,0.25)', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
                       <span style={{ fontWeight: 700, fontSize: 13, minWidth: 110 }}>🏪 {x.sube_adi}</span>
-                      <span style={{ fontSize: 11, color: 'var(--text3)' }}>⏰ {saatStr}</span>
+                      <span style={{ fontSize: 11, color: 'var(--text3)' }} className="mono">⏰ {gunSaat}</span>
                       <span style={{ fontSize: 11, background: 'rgba(245,158,11,0.18)', borderRadius: 6, padding: '1px 7px' }}>{turEtiketi}</span>
                       <span style={{ fontSize: 12, background: 'rgba(255,255,255,0.07)', borderRadius: 6, padding: '1px 8px' }}>
                         💰 <strong>{Number(x.tutar || 0).toLocaleString('tr-TR')} ₺</strong>
@@ -5140,7 +5142,7 @@ export default function OperasyonMerkezi() {
                     setKasaUyumAramaTarih(bugunIsoTarih());
                     setKasaUyumAramaSonuc(kasaUyumBugun);
                   } else if (firstTab === ‘ciro-onay’) {
-                    setCiroOnayAramaTarih(bugunIsoTarih());
+                    setCiroOnayAramaTarih(isGunuIsoIstanbul());
                     setCiroOnayAramaSonuc(ciroOnayBugun);
                   } else if (firstTab === ‘magaza-kartlari’) {
                     setDisiplinPanel(‘kuyruk’);
@@ -8287,8 +8289,12 @@ export default function OperasyonMerkezi() {
 
       {aktifSekme === 'ciro-onay' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
-            Akşam kapanıştan gelen <strong>ciro taslakları</strong> burada şube/tarih bazında doğrulanır. Onaylanan kayıt CFO panelindeki ciro girişine otomatik işlenir; reddedilen kayıt yazılmaz.
+          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0, lineHeight: 1.55 }}>
+            <strong>Ciro onayı:</strong> Şube panelinde kapanışta girilen <strong>X nakit / POS / online</strong> tutarları aynen{' '}
+            <code className="mono">ciro_taslak</code> satırına düşer; burada onayladığınızda CFO cirosu ve kasa hareketine (net ciro) yansır.
+            <strong> Teslim kasa, devir, kasada sayılan toplam ve kime teslim</strong> ciro taslağına yazılmaz; bunlar{' '}
+            <strong>Kapanış Takip</strong> tablosunda ve <strong>kasa teslim</strong> kayıtlarında (ayrı tablo) izlenir.
+            Taslak tarihi iş günüdür (<code className="mono">is_gunu_tr</code>).
           </p>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <label style={{ margin: 0 }}>

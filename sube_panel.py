@@ -185,9 +185,9 @@ def _sube_getir(cur, sube_id: str) -> dict:
 def _bugun_ciro_var_mi(cur, sube_id: str) -> bool:
     cur.execute("""
         SELECT 1 FROM ciro
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='aktif'
+        WHERE sube_id=%s AND tarih=%s AND durum='aktif'
         LIMIT 1
-    """, (sube_id,))
+    """, (sube_id, is_gunu_tr()))
     return cur.fetchone() is not None
 
 
@@ -196,10 +196,10 @@ def _bugun_ciro_taslak_bekliyor(cur, sube_id: str) -> Optional[dict]:
         SELECT id, nakit, pos, online, olusturma, aciklama, personel_id,
                gonderen_ad, bildirim_saati, panel_kullanici_id
         FROM ciro_taslak
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='bekliyor'
+        WHERE sube_id=%s AND tarih=%s AND durum='bekliyor'
         ORDER BY olusturma DESC
         LIMIT 1
-    """, (sube_id,))
+    """, (sube_id, is_gunu_tr()))
     r = cur.fetchone()
     if not r:
         return None
@@ -231,12 +231,12 @@ def _ciro_insert_aktif_ve_kasa(
            geçmiş günün cirosu bugün tarihiyle yazılır.
     """
     from datetime import date as _date
-    gercek_tarih = tarih if tarih is not None else bugun_tr()
+    gercek_tarih = tarih if tarih is not None else is_gunu_tr()
     if isinstance(gercek_tarih, str):
         try:
             gercek_tarih = _date.fromisoformat(gercek_tarih)
         except ValueError:
-            gercek_tarih = bugun_tr()
+            gercek_tarih = is_gunu_tr()
 
     pos_oran = float(sube.get("pos_oran") or 0)
     online_oran = float(sube.get("online_oran") or 0)
@@ -2043,9 +2043,9 @@ def sube_ara_kasa_teslim(sube_id: str, body: AraTeslimModel):
                 teslim_eden_personel_id, teslim_eden_ad,
                 teslim_alan_id, teslim_alan_ad,
                 teslim_turu, aciklama)
-               VALUES (%s, %s, CURRENT_DATE, %s, %s, %s, %s, %s, 'ara', %s)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'ara', %s)""",
             (
-                kt_id, sube_id, float(body.tutar),
+                kt_id, sube_id, is_gunu_tr(), float(body.tutar),
                 pid_panel, onay_ad,
                 alici_d["id"], alici_ad,
                 (body.aciklama or "").strip() or None,

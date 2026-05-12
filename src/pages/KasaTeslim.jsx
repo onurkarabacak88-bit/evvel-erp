@@ -1,5 +1,28 @@
 import { useState, useEffect, useMemo } from 'react';
-import { api, fmt, fmtDate } from '../utils/api';
+import { api, fmt } from '../utils/api';
+
+/** Takvim günü Europe/Istanbul (YYYY-MM-DD) — UTC `toISOString` ile iş günü kayması olmaz */
+function tarihTrISO(d = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Istanbul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+/** ISO tarihinden yaklaşık N gün önce (İstanbul takvimi; varsayılan liste penceresi) */
+function tarihTrISOGunOnce(iso, gun) {
+  const s = String(iso || '').trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return tarihTrISO(new Date(Date.now() - gun * 86400000));
+  const y = Number(m[1]);
+  const mo = Number(m[2]) - 1;
+  const d = Number(m[3]);
+  const t = new Date(Date.UTC(y, mo, d, 12, 0, 0));
+  t.setUTCDate(t.getUTCDate() - gun);
+  return tarihTrISO(t);
+}
 
 const TUR_LABEL = {
   ara: { label: 'Ara Teslim', renk: '#BA7517', bg: 'rgba(186,117,23,.10)' },
@@ -7,8 +30,9 @@ const TUR_LABEL = {
 };
 
 export default function KasaTeslim() {
-  const bugun = new Date().toISOString().split('T')[0];
   const [satirlar, setSatirlar] = useState([]);
+  /** Filtre + tarih aralığında satır yoksa: tarih kısıtı olmadan en son hareketler */
+  const [fallbackSatirlar, setFallbackSatirlar] = useState([]);
   const [subeler, setSubeler] = useState([]);
   const [alicilar, setAlicilar] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -19,8 +43,8 @@ export default function KasaTeslim() {
   const [turFiltre, setTurFiltre] = useState('');
   const [aliciFiltre, setAliciFiltre] = useState('');
   const [edenFiltre, setEdenFiltre] = useState('');
-  const [tarihBas, setTarihBas] = useState(bugun);
-  const [tarihBit, setTarihBit] = useState(bugun);
+  const [tarihBas, setTarihBas] = useState(() => tarihTrISOGunOnce(tarihTrISO(), 13));
+  const [tarihBit, setTarihBit] = useState(() => tarihTrISO());
 
   // Teslim alıcı yönetimi
   const [aliciModal, setAliciModal] = useState(false);
@@ -34,6 +58,7 @@ export default function KasaTeslim() {
 
   const load = () => {
     setLoading(true);
+    setFallbackSatirlar([]);
     const qs = new URLSearchParams();
     if (subeFiltre) qs.set('sube_id', subeFiltre);
     if (turFiltre) qs.set('teslim_turu', turFiltre);
@@ -43,7 +68,24 @@ export default function KasaTeslim() {
     if (tarihBit) qs.set('tarih_bitis', tarihBit);
     qs.set('limit', '500');
     api(`/kasa-teslim?${qs}`)
-      .then((r) => setSatirlar(r.satirlar || []))
+      .then(async (r) => {
+        const rows = r.satirlar || [];
+        setSatirlar(rows);
+        if (rows.length === 0) {
+          const qs2 = new URLSearchParams();
+          if (subeFiltre) qs2.set('sube_id', subeFiltre);
+          if (turFiltre) qs2.set('teslim_turu', turFiltre);
+          if (aliciFiltre) qs2.set('teslim_alan_id', aliciFiltre);
+          if (edenFiltre) qs2.set('teslim_eden_ad', edenFiltre);
+          qs2.set('limit', '200');
+          try {
+            const r2 = await api(`/kasa-teslim?${qs2}`);
+            setFallbackSatirlar(r2.satirlar || []);
+          } catch {
+            setFallbackSatirlar([]);
+          }
+        }
+      })
       .catch((e) => toast(e.message, 'red'))
       .finally(() => setLoading(false));
   };
@@ -57,18 +99,21 @@ export default function KasaTeslim() {
     load();
   }, [subeFiltre, turFiltre, aliciFiltre, edenFiltre, tarihBas, tarihBit]);
 
-  // Özet hesapla
+  const gosterilen = satirlar.length > 0 ? satirlar : fallbackSatirlar;
+  const fallbackModu = satirlar.length === 0 && fallbackSatirlar.length > 0;
+
+  // Özet: tabloda görünen satırlara göre (fallback modunda da kartlar dolu olsun)
   const ozet = useMemo(() => {
-    const ara = satirlar.filter((s) => s.teslim_turu === 'ara');
-    const gunSonu = satirlar.filter((s) => s.teslim_turu === 'gun_sonu');
+    const ara = gosterilen.filter((s) => s.teslim_turu === 'ara');
+    const gunSonu = gosterilen.filter((s) => s.teslim_turu === 'gun_sonu');
     return {
       ara_adet: ara.length,
       ara_toplam: ara.reduce((a, s) => a + s.tutar, 0),
       sonu_adet: gunSonu.length,
       sonu_toplam: gunSonu.reduce((a, s) => a + s.tutar, 0),
-      genel_toplam: satirlar.reduce((a, s) => a + s.tutar, 0),
+      genel_toplam: gosterilen.reduce((a, s) => a + s.tutar, 0),
     };
-  }, [satirlar]);
+  }, [gosterilen]);
 
   async function aliciKaydet() {
     if (!aliciForm.ad.trim()) {
@@ -201,12 +246,21 @@ export default function KasaTeslim() {
           <div className="spinner" />
           Yükleniyor…
         </div>
-      ) : satirlar.length === 0 ? (
+      ) : gosterilen.length === 0 ? (
         <div className="empty">
           <p>Kayıt bulunamadı</p>
         </div>
       ) : (
         <div className="table-wrap">
+          {fallbackModu && (
+            <div
+              className="alert-box yellow mb-16"
+              style={{ padding: '10px 14px', fontSize: 13 }}
+            >
+              Seçili tarih ve filtrelerde kayıt yok; <strong>en son kasa teslim hareketleri</strong> (tarih filtresi
+              dışında, son 200) listeleniyor.
+            </div>
+          )}
           <table>
             <thead>
               <tr>
@@ -221,7 +275,7 @@ export default function KasaTeslim() {
               </tr>
             </thead>
             <tbody>
-              {satirlar.map((s) => {
+              {gosterilen.map((s) => {
                 const tur = TUR_LABEL[s.teslim_turu] || TUR_LABEL.gun_sonu;
                 const saat = s.olusturma
                   ? new Date(s.olusturma).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })

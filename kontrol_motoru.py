@@ -387,9 +387,9 @@ def kontrol_ciro_taslak_bekliyor(cur, sube_id: str) -> Optional[dict]:
         """
         SELECT COUNT(*) AS adet
         FROM ciro_taslak
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='bekliyor'
+        WHERE sube_id=%s AND tarih=%s AND durum='bekliyor'
         """,
-        (sube_id,),
+        (sube_id, is_gunu_tr()),
     )
     adet = int((cur.fetchone() or {}).get("adet") or 0)
     if adet <= 0:

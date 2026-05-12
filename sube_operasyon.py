@@ -21,6 +21,7 @@ from tr_saat import (
     dt_format_api_tr,
     dt_now_tr as _display_now_tr,
     dt_now_tr_naive,
+    is_gunu_tr,
     tr_acilis_tamam_saat_uygun_mu,
     tr_kapanis_son_teslim_ts,
 )
@@ -414,7 +415,9 @@ class OperasyonTamamla(BaseModel):
     snap_online: Optional[float] = None
     x_raporu_gonderildi: bool = False
     ciro_gonderim_onay: bool = False
-    # KAPANIS: merkez ciro taslağı (nakit/POS/online) + PIN ile onaylayan
+    # KAPANIS — iki ayrı kanal (birbirine karıştırılmaz):
+    # 1) X ciro: ciro_nakit / ciro_pos / ciro_online → yalnızca ciro_taslak (+ event meta.x_rapor)
+    # 2) Kasa devir/teslim: teslim, devir, kasa_sayim, kasa_kime_teslim → sube_operasyon_event + kasa_teslim tablosu
     ciro_nakit: Optional[float] = None
     ciro_pos: Optional[float] = None
     ciro_online: Optional[float] = None
@@ -889,6 +892,16 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             cn = float(body.ciro_nakit)
             cp = float(body.ciro_pos)
             co = float(body.ciro_online)
+            tarih_ev_ciro = ev.get("tarih")
+            if isinstance(tarih_ev_ciro, datetime):
+                tarih_ev_ciro = tarih_ev_ciro.date()
+            elif isinstance(tarih_ev_ciro, str):
+                try:
+                    tarih_ev_ciro = date.fromisoformat((tarih_ev_ciro or "")[:10])
+                except ValueError:
+                    tarih_ev_ciro = is_gunu_tr()
+            elif not isinstance(tarih_ev_ciro, date):
+                tarih_ev_ciro = is_gunu_tr()
             from operasyon_stok_motor import PASTA_KEYS as _PK2
             _pasta_f2 = {k: int(getattr(body, k) or 0) for k in _PK2}
             k_stok = {
@@ -915,12 +928,13 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 cn,
                 cp,
                 co,
-                "Operasyon KAPANIS (X nakit/POS/online)",
+                "Operasyon KAPANIS — X raporu (nakit/POS/online); teslim/devir bu taslağa yazılmaz.",
                 personel_id=pid_panel,
                 gonderen_ad=onay_ad,
                 bildirim_saati=bildirim_saat,
                 panel_kullanici_id=None,
                 audit_etiket="KAPANIS_TASLAK",
+                taslak_tarih=tarih_ev_ciro,
             )
             teslim_f = max(0.0, float(body.teslim or 0))
             ks_girdi = float(body.kasa_sayim) if body.kasa_sayim is not None else teslim_f
@@ -984,7 +998,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                                 teslim_turu, aciklama)
                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'gun_sonu', %s)""",
                             (
-                                kt_id, sube_id, simdi_tr.date(),
+                                kt_id, sube_id, tarih_ev_ciro,
                                 float(body.teslim),
                                 pid_panel, onay_ad,
                                 alici_d["id"], alici_ad,
