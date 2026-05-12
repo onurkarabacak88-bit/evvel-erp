@@ -10313,10 +10313,20 @@ export default function OperasyonMerkezi() {
 
       {aktifSekme === 'onay' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
-            Bu ekranda yalnızca şube kaynaklı iki ana onay akışı tutulur: <strong>ciro onayları</strong> ve <strong>anlık gider onayları</strong>.
-            Anlık gider onaylandığında talep kuyruktan düşer; ciro onaylandığında kayıt resmi ciro + kasa akışına yazılır.
-          </p>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
+              Bu ekranda yalnızca şube kaynaklı iki ana onay akışı tutulur: <strong>ciro onayları</strong> ve <strong>anlık gider onayları</strong>.
+              Anlık gider onaylandığında talep kuyruktan düşer; ciro onaylandığında kayıt resmi ciro + kasa akışına yazılır.
+            </p>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              background: 'var(--bg3)', border: '1px solid var(--border)',
+              borderRadius: 20, padding: '3px 12px', fontSize: 12, color: 'var(--text2)',
+              whiteSpace: 'nowrap', flexShrink: 0,
+            }}>
+              📅 {ayFiltre} görüntüleniyor
+            </span>
+          </div>
 
           {yukleniyor && !bekleyenPaket ? (
             <div className="loading"><div className="spinner" />Yükleniyor…</div>

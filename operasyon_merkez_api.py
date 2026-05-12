@@ -5108,9 +5108,9 @@ def ops_bekleyen_merkez(
             d.pop("sube_adi_from_anlik", None)
             onay_satirlar.append(d)
 
-        # Bekleyen katalog siparişleri: ay filtresi YOK.
-        # Onay merkezi tam kuyruğu görür; hub / stok disiplin özeti ise son N gün ile sınırlıdır.
-        qp3: List[Any] = []
+        # Bekleyen katalog siparişleri: ciro/onay/kasa ile aynı ay filtresi uygulanır.
+        # Geçmiş aylardaki bekleyen/kapanan siparişler için Sipariş Geçmişi paneli kullanılır.
+        qp3: List[Any] = [ym]
         q3 = f"""
             SELECT t.id, t.sube_id, s.ad AS sube_adi, t.tarih, t.durum,
                    t.personel_id, t.personel_ad, t.bildirim_saati,
@@ -5125,6 +5125,7 @@ def ops_bekleyen_merkez(
             JOIN subeler s ON s.id = t.sube_id
             LEFT JOIN subeler ss ON ss.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
             WHERE t.durum = 'bekliyor'
+              AND to_char(t.tarih, 'YYYY-MM') = %s
         """
         if sid_f:
             q3 += " AND t.sube_id = %s"
