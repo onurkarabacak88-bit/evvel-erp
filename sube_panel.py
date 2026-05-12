@@ -1481,6 +1481,50 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
     )
     kasa_teslim_alicilari = [dict(r) for r in cur.fetchall()]
 
+    # Şube paneli «Kasa teslim» sekmesi: son hareketler (ara + kapanış/gün_sonu aynı tabloda)
+    kasa_teslim_son_hareketler: List[Dict[str, Any]] = []
+    try:
+        from datetime import timedelta as _td
+
+        _ig = is_gunu_tr()
+        _bas = _ig - _td(days=29)
+        cur.execute(
+            """
+            SELECT
+                id::text,
+                tarih::text AS tarih,
+                tutar::float,
+                COALESCE(teslim_eden_ad, '') AS teslim_eden_ad,
+                COALESCE(teslim_alan_ad, '') AS teslim_alan_ad,
+                COALESCE(teslim_turu, 'ara') AS teslim_turu,
+                COALESCE(aciklama, '') AS aciklama,
+                to_char(olusturma AT TIME ZONE 'Europe/Istanbul', 'YYYY-MM-DD HH24:MI:SS') AS olusturma_tr
+            FROM kasa_teslim
+            WHERE sube_id = %s
+              AND tarih >= %s
+              AND tarih <= %s
+            ORDER BY olusturma DESC NULLS LAST
+            LIMIT 80
+            """,
+            (sube_id, _bas, _ig),
+        )
+        for r in cur.fetchall() or []:
+            rr = dict(r)
+            kasa_teslim_son_hareketler.append(
+                {
+                    "id": str(rr.get("id") or ""),
+                    "tarih": str(rr.get("tarih") or ""),
+                    "tutar": float(rr.get("tutar") or 0),
+                    "teslim_eden_ad": str(rr.get("teslim_eden_ad") or ""),
+                    "teslim_alan_ad": str(rr.get("teslim_alan_ad") or ""),
+                    "teslim_turu": str(rr.get("teslim_turu") or "ara"),
+                    "aciklama": str(rr.get("aciklama") or ""),
+                    "olusturma_tr": str(rr.get("olusturma_tr") or ""),
+                }
+            )
+    except Exception:
+        kasa_teslim_son_hareketler = []
+
     from sube_operasyon import build_panel_operasyon_blob
     from sube_kapanis_dual import vardiya_devir_panel_blob
 
@@ -1863,6 +1907,7 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
         "panel_pin_kullanicilar": panel_pin_kullanicilar,
         "panel_yonetici_sayisi": panel_yonetici_sayisi,
         "kasa_teslim_alicilari": kasa_teslim_alicilari,
+        "kasa_teslim_son_hareketler": kasa_teslim_son_hareketler,
         "acilis_kaydi": acilis_kaydi,
         "gorevler": gorevler,
         "tamamlanan": tamamlanan,

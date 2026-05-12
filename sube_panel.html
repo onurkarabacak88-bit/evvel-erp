@@ -2038,6 +2038,12 @@
       </div>
 
       <div class="sol-divider"></div>
+      <div class="panel-title">Kasa teslim</div>
+      <button class="sol-btn" id="solAraTeslimBtn" onclick="solSekmeAc('araTeslim')">
+        <span class="ico">💵</span> Ara teslim
+      </button>
+
+      <div class="sol-divider"></div>
       <div class="panel-title">Hızlı Erişim</div>
       <button class="sol-btn" id="solXrBtn" onclick="solSekmeAc('xr')">
         <span class="ico">📷</span> X Raporu OCR
@@ -2236,6 +2242,29 @@
       </div>
 
 
+      <div class="sekme-icerik" id="tab-araTeslim">
+        <div class="kart">
+          <div class="kart-baslik"><span class="ico">💵</span> Kasa teslim <span style="font-size:11px;color:var(--muted);font-weight:400">(Ara + kapanış aynı akış)</span></div>
+          <p id="ktBilgiSatir" style="font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.5"></p>
+          <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:12px;line-height:1.55;color:var(--text)">
+            <strong>Kayıt tarihi</strong> merkez ile aynı <strong>iş günü</strong> (<code>tarih</code>) olarak yazılır; <strong>saat</strong> İstanbul sunucu zamanıdır.
+            <strong>PIN</strong> gönderim anında doğrulanır — kapanışta oluşan <strong>gün sonu teslim</strong> satırları da aşağıdaki listede görünür.
+          </div>
+          <div class="form-group"><label>Tutar (₺)</label><input id="ktTutar" inputmode="decimal" placeholder="0" autocomplete="off" /></div>
+          <div class="form-group"><label>Teslim alan</label><select id="ktAlan"><option value="">— Teslim alıcı seçin —</option></select></div>
+          <div class="form-group"><label>Personel</label><select id="ktPers"><option value="">— Personel seçin —</option></select></div>
+          <div class="form-group"><label>PIN (4 hane)</label><input id="ktPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>
+          <div class="form-group"><label>Açıklama <span style="color:var(--muted);font-size:11px">(opsiyonel)</span></label><input id="ktAcik" placeholder="Örn: fazla nakit" autocomplete="off" /></div>
+          <button type="button" class="btn btn-primary btn-sm" id="ktGonder">💵 Ara teslimi kaydet</button>
+          <div id="ktMsg" style="margin-top:8px;font-size:12px"></div>
+          <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+            <div style="font-size:13px;font-weight:700;margin-bottom:8px">Son hareketler (bu şube · son 30 iş günü)</div>
+            <p style="font-size:11px;color:var(--muted);margin:0 0 10px;line-height:1.45"><strong>Ara</strong> buradan girilir; <strong>Gün sonu / kapanış teslim</strong> kapanış akışı tamamlanınca otomatik düşer.</p>
+            <div id="ktListeWrap"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="sekme-icerik" id="tab-xr">
         <div class="kart">
           <div class="kart-baslik"><span class="ico">📷</span> X Raporu OCR</div>
@@ -2283,18 +2312,6 @@
       <div class="sag-content sekme-icerik aktif" id="sagTab-kasa-ic">
         <div id="kasaDevirDurum"></div>
         <div id="kasaDevirForm"></div>
-
-        <!-- Ara Kasa Teslim -->
-        <div id="araTeslimWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
-          <div class="sip-alt-baslik">💵 Ara Kasa Teslim</div>
-          <div class="form-group"><label>Tutar (₺)</label><input id="araTeslimTutar" inputmode="decimal" placeholder="0" /></div>
-          <div class="form-group"><label>Teslim Alan</label><select id="araTeslimAlan"><option value="">— Teslim Alıcı Seçin —</option></select></div>
-          <div class="form-group"><label>Personel</label><select id="araTeslimPers"><option value="">— Personel Seçin —</option></select></div>
-          <div class="form-group"><label>PIN</label><input id="araTeslimPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" placeholder="••••" /></div>
-          <div class="form-group"><label>Açıklama <span style="color:var(--muted);font-size:11px">(opsiyonel)</span></label><input id="araTeslimAcik" placeholder="Ör: fazla nakit teslim" /></div>
-          <button class="btn btn-primary btn-sm" id="araTeslimGonder">💵 Teslimi Gönder</button>
-          <div id="araTeslimMsg" style="margin-top:6px;font-size:12px"></div>
-        </div>
       </div>
 
       <!-- Kapanış -->
@@ -4737,6 +4754,7 @@ window.solSekmeAc = function(id) {
       });
   }
   if (id === 'siparis') renderSiparisPanel().catch(function(e){ setMsg('siparisMsg', e.message || 'Hata', 'msg-err'); });
+  if (id === 'araTeslim' && lastData) renderKasaTeslimTab(lastData);
   if (id === 'gonderilecek') {
     if (gonderilecekDepoTaslakDirty) {
       gonderilecekAckBlink();
@@ -4799,7 +4817,7 @@ function fillSels() {
   var ids = ['mgPers','mnPers','stPers','stPin',
              'xrPers','puanPers',
              'dvPers1','dvPers2','kapPers',
-             'kasaUser','araTeslimPers',
+             'kasaUser','ktPers',
              'svPers'];
   ids.forEach(function(id){
     var el = document.getElementById(id); if (!el || el.tagName !== 'SELECT') return;
@@ -4837,7 +4855,7 @@ function fillSels() {
 
 function fillKimeTeslimSel() {
   var alicilar = (lastData && lastData.kasa_teslim_alicilari) || [];
-  var selIds = ['kapKimeTeslim', 'araTeslimAlan'];
+  var selIds = ['kapKimeTeslim', 'ktAlan'];
   selIds.forEach(function(id) {
     var el = document.getElementById(id);
     if (!el || el.tagName !== 'SELECT') return;
@@ -4869,36 +4887,119 @@ function fillKimeTeslimSel() {
   });
 }
 
-function wireAraTeslimHandler() {
-  var btn = document.getElementById('araTeslimGonder');
-  if (!btn || btn.dataset.wired) return;
-  btn.dataset.wired = '1';
-  btn.addEventListener('click', async function() {
-    var tutar  = parseFloat((document.getElementById('araTeslimTutar')  || {}).value || '0');
-    var alan   = ((document.getElementById('araTeslimAlan')  || {}).value || '').trim();
-    var pers   = ((document.getElementById('araTeslimPers')  || {}).value || '').trim();
-    var pin    = ((document.getElementById('araTeslimPin')   || {}).value || '').trim();
-    var acik   = ((document.getElementById('araTeslimAcik')  || {}).value || '').trim();
-    var msgEl  = document.getElementById('araTeslimMsg');
-    function setM(t, cls) { if (msgEl) { msgEl.textContent = t; msgEl.className = cls || ''; } }
+function renderKasaTeslimTab(data) {
+  data = data || lastData;
+  var bilgi = document.getElementById('ktBilgiSatir');
+  var wrap = document.getElementById('ktListeWrap');
+  if (!bilgi || !wrap) return;
+  var tr = (data && data.tarih) ? String(data.tarih) : '—';
+  var sun = (data && data.operasyon && data.operasyon.sunucu_saati) ? String(data.operasyon.sunucu_saati) : '—';
+  bilgi.innerHTML =
+    '<strong>Panel iş günü</strong> (kayıt <code>tarih</code> ile uyumlu): <span class="mono">' +
+    escHtml(tr) +
+    '</span> · <strong>Sunucu saati</strong>: <span class="mono">' +
+    escHtml(sun) +
+    '</span>';
+  var rows = (data && data.kasa_teslim_son_hareketler) || [];
+  if (!rows.length) {
+    wrap.innerHTML = '<div style="font-size:12px;color:var(--muted)">Henüz bu aralıkta teslim kaydı yok.</div>';
+    return;
+  }
+  function turLabel(t) {
+    t = String(t || '').toLowerCase();
+    if (t === 'gun_sonu') return '<span class="badge badge-blue" style="font-size:10px;text-transform:none">Kapanış teslim</span>';
+    return '<span class="badge badge-warn" style="font-size:10px;text-transform:none">Ara teslim</span>';
+  }
+  var h =
+    '<div class="table-wrap" style="overflow:auto;max-height:52vh"><table style="width:100%;font-size:12px;border-collapse:collapse">' +
+    '<thead><tr style="text-align:left;border-bottom:1px solid var(--border)">' +
+    '<th style="padding:6px 8px">Tür</th><th style="padding:6px 8px">Tarih</th><th style="padding:6px 8px">Saat (TR)</th>' +
+    '<th style="padding:6px 8px;text-align:right">Tutar</th><th style="padding:6px 8px">Eden</th><th style="padding:6px 8px">Alan</th><th style="padding:6px 8px">Not</th>' +
+    '</tr></thead><tbody>';
+  rows.forEach(function (r) {
+    var aa = String(r.aciklama || '').trim();
+    if (aa.length > 120) aa = aa.slice(0, 120) + '…';
+    var saat = String(r.olusturma_tr || '');
+    if (saat.length >= 19) saat = saat.slice(11, 19);
+    else if (saat.length >= 16 && saat.indexOf(' ') > 0) saat = saat.split(' ')[1].slice(0, 8);
+    h +=
+      '<tr style="border-bottom:1px solid var(--border);vertical-align:top">' +
+      '<td style="padding:8px;white-space:nowrap">' +
+      turLabel(r.teslim_turu) +
+      '</td>' +
+      '<td class="mono" style="padding:8px">' +
+      escHtml(String(r.tarih || '')) +
+      '</td>' +
+      '<td class="mono" style="padding:8px">' +
+      escHtml(saat || '—') +
+      '</td>' +
+      '<td style="padding:8px;text-align:right;font-weight:600">' +
+      (Number(r.tutar) || 0).toLocaleString('tr-TR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) +
+      ' ₺</td>' +
+      '<td style="padding:8px">' +
+      escHtml(String(r.teslim_eden_ad || '—')) +
+      '</td>' +
+      '<td style="padding:8px">' +
+      escHtml(String(r.teslim_alan_ad || '—')) +
+      '</td>' +
+      '<td style="padding:8px;color:var(--muted);font-size:11px">' +
+      escHtml(aa || '—') +
+      '</td>' +
+      '</tr>';
+  });
+  h += '</tbody></table></div>';
+  wrap.innerHTML = h;
+}
+
+function wireKasaTeslimTabHandler() {
+  var btn = document.getElementById('ktGonder');
+  if (!btn || btn.dataset.ktWired) return;
+  btn.dataset.ktWired = '1';
+  btn.addEventListener('click', async function () {
+    var msgEl = document.getElementById('ktMsg');
+    function setM(t, cls) {
+      if (msgEl) {
+        msgEl.textContent = t || '';
+        msgEl.className = cls || '';
+      }
+    }
+    var tutar = parseFloat(
+      String((document.getElementById('ktTutar') || {}).value || '0').replace(',', '.')
+    );
+    var alan = String((document.getElementById('ktAlan') || {}).value || '').trim();
+    var pers = String((document.getElementById('ktPers') || {}).value || '').trim();
+    var pin = String((document.getElementById('ktPin') || {}).value || '')
+      .replace(/\D/g, '')
+      .slice(0, 4);
+    var acik = String((document.getElementById('ktAcik') || {}).value || '').trim();
     if (!tutar || tutar <= 0) return setM('Tutar giriniz.', 'msg-err');
-    if (!alan)                return setM('Teslim alıcı seçiniz.', 'msg-err');
-    if (!pers)                return setM('Personel seçiniz.', 'msg-err');
-    if (pin.length !== 4)     return setM('4 haneli PIN giriniz.', 'msg-err');
+    if (!alan) return setM('Teslim alanı seçiniz.', 'msg-err');
+    if (!pers) return setM('Personel seçiniz.', 'msg-err');
+    if (pin.length !== 4) return setM('4 haneli PIN giriniz.', 'msg-err');
     btn.disabled = true;
     setM('Gönderiliyor…', '');
     try {
       await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/ara-kasa-teslim', {
         method: 'POST',
-        body: { tutar: tutar, teslim_alan_id: alan, personel_id: pers, pin: pin, aciklama: acik || null }
+        body: {
+          tutar: tutar,
+          teslim_alan_id: alan,
+          personel_id: pers,
+          pin: pin,
+          aciklama: acik || null,
+        },
       });
       setM('✅ Ara teslim kaydedildi.', 'msg-ok');
-      document.getElementById('araTeslimTutar').value = '';
-      document.getElementById('araTeslimPin').value   = '';
-      document.getElementById('araTeslimAcik').value  = '';
-      setTimeout(refresh, 800);
-    } catch(e) {
-      setM(e.message || 'Hata oluştu.', 'msg-err');
+      var tEl = document.getElementById('ktTutar');
+      if (tEl) tEl.value = '';
+      var pEl = document.getElementById('ktPin');
+      if (pEl) pEl.value = '';
+      var aEl = document.getElementById('ktAcik');
+      if (aEl) aEl.value = '';
+      setTimeout(refresh, 600);
+    } catch (e) {
+      if (e.status === 429 && msgEl) handle429(msgEl, e);
+      else setM(e.message || 'Hata oluştu.', 'msg-err');
     } finally {
       btn.disabled = false;
     }
@@ -6423,7 +6524,8 @@ function renderMain(data) {
   // Fillsels
   fillSels();
   fillKimeTeslimSel();
-  wireAraTeslimHandler();
+  renderKasaTeslimTab(data);
+  wireKasaTeslimTabHandler();
 
   // Kapanış personel
   wireKapanisStepFlow();
