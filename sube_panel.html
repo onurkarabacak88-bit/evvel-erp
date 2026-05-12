@@ -3240,7 +3240,7 @@ function wireDvAdim1StepFlow() {
   n1._wired = true;
   n1.onclick = function(){
     try {
-      reqNum('dvTeslim', 'Teslim kasa tutarı');
+      reqNum('dvTeslim', 'Kasadaki nakit tutarı');
       setMsg('dvMsg', '', '');
       setDvAdim1Step(2);
     } catch(e) { setMsg('dvMsg', e.message || 'Hata', 'msg-err'); }
@@ -6192,8 +6192,7 @@ function renderEksikListesi() {
 // Sabahçının girdiği değerleri etiketli nesne olarak döner
 function dvRowLabel(key) {
   var m = {
-    teslim:'Teslim kasa (₺)', nakit:'Nakit ciro (₺)', pos:'POS ciro (₺)', online:'Online ciro (₺)',
-    devir:'Devir (₺)', bardak_kucuk:'Küçük bardak', bardak_buyuk:'Büyük bardak',
+    teslim:'Kasadaki Nakit (₺)', bardak_kucuk:'Küçük bardak', bardak_buyuk:'Büyük bardak',
     bardak_plastik:'Plastik bardak', su_adet:'Su', redbull_adet:'Redbull',
     soda_adet:'Soda', cookie_adet:'Cookie', pasta_adet:'Pasta'
   };
@@ -6204,7 +6203,7 @@ function fmt2(v) { return (v==null||v===undefined) ? '—' : String(v); }
 
 function renderAdim2(row) {
   // row = kapanis_kayit satırı
-  var keys = ['teslim','nakit','pos','online','devir','bardak_kucuk','bardak_buyuk','bardak_plastik','su_adet','redbull_adet','soda_adet','cookie_adet','pasta_adet'].concat(_PASTA_KEYS);
+  var keys = ['teslim','bardak_kucuk','bardak_buyuk','bardak_plastik','su_adet','redbull_adet','soda_adet','cookie_adet','pasta_adet'].concat(_PASTA_KEYS);
   var h = '<p style="font-size:12px;color:var(--muted);margin-bottom:12px">Sabahçının girdiği değerleri kontrol et. Her satırı gördüğünü tıklayarak onayla.</p>';
   h += '<div id="dvTikListesi">';
   keys.forEach(function(k, i){

@@ -577,27 +577,6 @@ def vardiya_devri_adim2(sube_id: str, body: VardiyaDevirAdim2):
         )
         kid_out = kk["id"]
 
-        eid = kk.get("operasyon_event_id")
-        if eid:
-            cur.execute(
-                """
-                UPDATE sube_operasyon_event
-                SET durum='tamamlandi', cevap_ts=%s,
-                    teslim=%s, devir=%s,
-                    kasa_sayim=%s,
-                    x_raporu_onay=TRUE, ciro_gonderim_onay=TRUE
-                WHERE id=%s AND sube_id=%s AND tip='KAPANIS'
-                """,
-                (
-                    simdi,
-                    float(kk["teslim"]),
-                    float(kk["devir"] or 0),
-                    float(kk["teslim"]),
-                    eid,
-                    sube_id,
-                ),
-            )
-
         # Devir tamamlandı — 1 saat sonrası için ansızın kasa sayımı planla
         try:
             from sube_operasyon import plan_kontrol_after_devir
