@@ -4960,15 +4960,26 @@ export default function OperasyonMerkezi() {
               <div style={{ display: 'flex', gap: 6, marginTop: 10, marginBottom: 4, flexWrap: 'wrap', overflowX: 'auto', position: 'sticky', top: 0, zIndex: 3, background: 'var(--bg)', paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>
                 {_modul.tabs.map((tabId) => {
                   const sekme = UST_SEKMELER.find((s) => s.id === tabId);
+                  const tabBekleyen = tabId === 'ciro-onay' ? Number(ciroOnayBugun?.toplam || 0) : 0;
                   return sekme ? (
                     <button
                       key={tabId}
                       type="button"
                       className={`tab-pill ${aktifSekme === tabId ? 'active' : ''}`}
-                      style={{ whiteSpace: 'nowrap', fontSize: 12 }}
+                      style={{ whiteSpace: 'nowrap', fontSize: 12, position: 'relative', paddingRight: tabBekleyen > 0 ? 30 : undefined }}
                       onClick={() => acModulTab(tabId)}
                     >
                       {sekme.label}
+                      {tabBekleyen > 0 && (
+                        <span style={{
+                          position: 'absolute', top: -6, right: -6,
+                          minWidth: 18, height: 18, padding: '0 5px',
+                          borderRadius: 999, background: '#d946b8', color: '#fff',
+                          fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
+                        }}>
+                          {tabBekleyen}
+                        </span>
+                      )}
                     </button>
                   ) : null;
                 })}
