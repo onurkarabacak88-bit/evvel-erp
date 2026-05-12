@@ -337,11 +337,7 @@ const UST_SEKMELER = [
 
 /** Modül penceresi içi başlık sekmeleri (CFO kart drill-down benzeri) */
 const OPS_MODUL_BOLUM = {
-  canli: [
-    { id: 'ozet', label: 'Özet' },
-    { id: 'subeler', label: 'Şubeler' },
-    { id: 'karsilastirma', label: 'Karşılaştırma' },
-  ],
+  canli: [{ id: 'icerik', label: 'Genel Bakış' }],
   'urun-ac': [{ id: 'icerik', label: 'Günlük akış' }],
   'gec-acilan-subeler': [{ id: 'icerik', label: 'Günlük akış' }],
   'gec-kalan-personel': [{ id: 'icerik', label: 'Aylık analiz' }],
@@ -870,10 +866,7 @@ function HubGunlukAcilisKapanisCard({ bucket }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
         <div>
           <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800 }}>Bugün · Açılış / kapanış özeti</h3>
-          <p style={{ margin: '6px 0 0', fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
-            Kaynak: şube operasyon olayları (ACILIS / KAPANIS). İstanbul saati ~{bucket.saatTr}:00 —
-            kapanış bekleyen listesi <strong>15:00 sonrası</strong> veya <strong>gece 02:00 öncesi</strong> (ertesi takvim gününe sarkan kapanış) veya şube &quot;kapalı&quot; göründüğünde gösterilir.
-          </p>
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--text3)' }}>Saat ~{bucket.saatTr}:00 itibarıyla</p>
         </div>
         {tamam ? (
           <span className="badge badge-green" style={{ flexShrink: 0 }}>Eksik adım yok</span>
@@ -3864,11 +3857,11 @@ export default function OperasyonMerkezi() {
 
   // Haftalık karşılaştırma — sadece ilgili sekme açıkken yükle
   useEffect(() => {
-    if (opsIcBolum !== 'karsilastirma') return;
+    if (aktifSekme !== 'canli') return;
     api('/ops/haftalik-karsilastirma')
       .then(setHaftalikKarsilastirma)
       .catch(() => {});
-  }, [opsIcBolum]);
+  }, [aktifSekme]);
 
   const toplamGecikme = skor?.son_30_gun?.reduce((s, r) => s + (r.gecikme_adet || 0), 0) || 0;
   const kritikSayi    = kartlar.filter(k => k.bayraklar?.kritik).length;
@@ -5413,162 +5406,160 @@ export default function OperasyonMerkezi() {
         </div>
       )}
 
-      {aktifSekme === 'canli' && (
-        <>
-          {opsIcBolum === 'ozet' && (
+      {aktifSekme === 'canli' && (() => {
+        const gecAlert = Number(gecAcilanBugun?.toplam || 0) + Number(gecAcilanBugun?.acilmayan_toplam || 0);
+        const kapanmayanSayi = Array.isArray(kapanisTakip?.satirlar) ? kapanisTakip.satirlar.filter((r) => !r.kapanis_tamam).length : 0;
+        const bugunCiro = kartlar.reduce((s, k) => s + Number(k.bugun_ciro_tutar || 0), 0);
+        const toplamUyari = kritikSayi + gecikSayi + gecAlert + kapanmayanSayi + guvenlikSayi;
+        const uyariParcalar = [
+          gecAlert > 0 && `${gecAlert} geç açılış`,
+          kapanmayanSayi > 0 && `${kapanmayanSayi} kapanmayan`,
+          guvenlikSayi > 0 && `${guvenlikSayi} güvenlik`,
+          kritikSayi > 0 && `${kritikSayi} kritik`,
+          gecikSayi > 0 && `${gecikSayi} geciken`,
+        ].filter(Boolean);
+        return (
           <>
-          {(() => {
-            const gecAlert = Number(gecAcilanBugun?.toplam || 0) + Number(gecAcilanBugun?.acilmayan_toplam || 0);
-            const kapanmayanSayi = Array.isArray(kapanisTakip?.satirlar) ? kapanisTakip.satirlar.filter((r) => !r.kapanis_tamam).length : 0;
-            const gecPersonelSayi = Number(gecKalanPersonelBugun?.kritik_personel_sayisi || 0);
-            const toplamUyari = kritikSayi + gecikSayi + gecAlert + kapanmayanSayi + gecPersonelSayi + guvenlikSayi;
-            return (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 14 }}>
-                <div className="metric-card" style={{ borderTop: `3px solid ${kartlar.filter(k => k.sube_acik).length === kartlar.length && kartlar.length > 0 ? 'var(--green)' : '#4a9eff'}` }}>
-                  <div className="metric-label">🏢 Aktif Şube</div>
-                  <div className="metric-value" style={{ color: '#4a9eff' }}>{kartlar.filter(k => k.sube_acik).length} / {kartlar.length || '—'}</div>
-                  <div className="metric-sub">Şu an açık / toplam</div>
-                </div>
-                <div className="metric-card" style={{ borderTop: `3px solid ${gecAlert > 0 ? 'var(--red)' : 'var(--text3)'}` }}>
-                  <div className="metric-label">⏰ Geç / Açılmayan</div>
-                  <div className="metric-value" style={{ color: gecAlert > 0 ? 'var(--red)' : 'var(--text3)' }}>{gecAlert}</div>
-                  <div className="metric-sub">{Number(gecAcilanBugun?.toplam || 0)} geç · {Number(gecAcilanBugun?.acilmayan_toplam || 0)} açılmadı</div>
-                </div>
-                <div className="metric-card" style={{ borderTop: `3px solid ${kapanmayanSayi > 0 ? '#f08040' : 'var(--text3)'}` }}>
-                  <div className="metric-label">🔒 Kapanmayan</div>
-                  <div className="metric-value" style={{ color: kapanmayanSayi > 0 ? '#f08040' : 'var(--text3)' }}>{kapanmayanSayi}</div>
-                  <div className="metric-sub">Kapanış tamamlanmayan şube</div>
-                </div>
-                <div className="metric-card" style={{ borderTop: `3px solid ${gecPersonelSayi > 0 ? 'var(--yellow)' : 'var(--text3)'}` }}>
-                  <div className="metric-label">👤 Geç Kalan Personel</div>
-                  <div className="metric-value" style={{ color: gecPersonelSayi > 0 ? 'var(--yellow)' : 'var(--text3)' }}>{gecPersonelSayi}</div>
-                  <div className="metric-sub">Bu ay kritik gecikme</div>
-                </div>
-                <div className="metric-card" style={{ borderTop: `3px solid ${guvenlikSayi > 0 ? '#be185d' : 'var(--text3)'}` }}>
-                  <div className="metric-label">🔐 Güvenlik Alarmı</div>
-                  <div className="metric-value" style={{ color: guvenlikSayi > 0 ? '#be185d' : 'var(--text3)' }}>{guvenlikSayi}</div>
-                  <div className="metric-sub">Aktif PIN / kilit alarmı</div>
-                </div>
-                <div className="metric-card" style={{ borderTop: `3px solid ${toplamUyari > 0 ? 'var(--red)' : 'var(--green)'}` }}>
-                  <div className="metric-label">🚨 Toplam Uyarı</div>
-                  <div className="metric-value" style={{ fontSize: 22, color: toplamUyari > 0 ? 'var(--red)' : 'var(--green)' }}>{toplamUyari}</div>
-                  <div className="metric-sub">{toplamUyari === 0 ? 'Tüm şubeler normal ✓' : `${kritikSayi} kritik · ${gecikSayi} geciken`}</div>
+            {/* Bugünkü ciro satırı */}
+            {bugunCiro > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, padding: '8px 14px', background: 'var(--bg2)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 12, color: 'var(--text3)' }}>Bugünkü toplam ciro</span>
+                <span style={{ fontWeight: 700, fontSize: 16, color: 'var(--green)' }}>{fmt(bugunCiro)} ₺</span>
+                <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 'auto' }}>{kartlar.filter(k => k.ciro_girildi).length} / {kartlar.length} şube girdi</span>
+              </div>
+            )}
+
+            {/* 6 canlı alert kartı */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 14 }}>
+              <div className="metric-card" style={{ borderTop: `3px solid ${kartlar.filter(k => k.sube_acik).length === kartlar.length && kartlar.length > 0 ? 'var(--green)' : '#4a9eff'}` }}>
+                <div className="metric-label">🏢 Aktif Şube</div>
+                <div className="metric-value" style={{ color: '#4a9eff' }}>{kartlar.filter(k => k.sube_acik).length} / {kartlar.length || '—'}</div>
+                <div className="metric-sub">Şu an açık / toplam</div>
+              </div>
+              <div
+                className="metric-card"
+                style={{ borderTop: `3px solid ${gecAlert > 0 ? 'var(--red)' : 'var(--text3)'}`, cursor: gecAlert > 0 ? 'pointer' : 'default' }}
+                onClick={() => gecAlert > 0 && acModulTab('gec-acilan-subeler')}
+                title={gecAlert > 0 ? 'Detay için tıkla' : ''}
+              >
+                <div className="metric-label">⏰ Geç / Açılmayan</div>
+                <div className="metric-value" style={{ color: gecAlert > 0 ? 'var(--red)' : 'var(--text3)' }}>{gecAlert}</div>
+                <div className="metric-sub">{Number(gecAcilanBugun?.toplam || 0)} geç · {Number(gecAcilanBugun?.acilmayan_toplam || 0)} açılmadı{gecAlert > 0 ? ' →' : ''}</div>
+              </div>
+              <div
+                className="metric-card"
+                style={{ borderTop: `3px solid ${kapanmayanSayi > 0 ? '#f08040' : 'var(--text3)'}`, cursor: kapanmayanSayi > 0 ? 'pointer' : 'default' }}
+                onClick={() => kapanmayanSayi > 0 && acModulTab('kapanis-takip')}
+                title={kapanmayanSayi > 0 ? 'Detay için tıkla' : ''}
+              >
+                <div className="metric-label">🔒 Kapanmayan</div>
+                <div className="metric-value" style={{ color: kapanmayanSayi > 0 ? '#f08040' : 'var(--text3)' }}>{kapanmayanSayi}</div>
+                <div className="metric-sub">Kapanış tamamlanmayan{kapanmayanSayi > 0 ? ' →' : ''}</div>
+              </div>
+              <div
+                className="metric-card"
+                style={{ borderTop: `3px solid ${guvenlikSayi > 0 ? '#be185d' : 'var(--text3)'}`, cursor: guvenlikSayi > 0 ? 'pointer' : 'default' }}
+                onClick={() => guvenlikSayi > 0 && acOpsModul('guvenlik-alarmlar', 'denetim-uyum')}
+                title={guvenlikSayi > 0 ? 'Detay için tıkla' : ''}
+              >
+                <div className="metric-label">🔐 Güvenlik Alarmı</div>
+                <div className="metric-value" style={{ color: guvenlikSayi > 0 ? '#be185d' : 'var(--text3)' }}>{guvenlikSayi}</div>
+                <div className="metric-sub">Aktif PIN / kilit alarmı{guvenlikSayi > 0 ? ' →' : ''}</div>
+              </div>
+              <div
+                className="metric-card"
+                style={{ borderTop: `3px solid ${bugunCiro > 0 ? 'var(--green)' : 'var(--text3)'}`, cursor: 'pointer' }}
+                onClick={() => acOpsModul('ciro-onay', 'finans-kasa')}
+                title="Ciro onay sayfasına git"
+              >
+                <div className="metric-label">💰 Bugünkü Ciro</div>
+                <div className="metric-value" style={{ color: 'var(--green)', fontSize: bugunCiro > 0 ? 18 : 22 }}>{bugunCiro > 0 ? `${fmt(bugunCiro)} ₺` : '—'}</div>
+                <div className="metric-sub">{kartlar.filter(k => k.ciro_girildi).length} şube girdi · Finans →</div>
+              </div>
+              <div className="metric-card" style={{ borderTop: `3px solid ${toplamUyari > 0 ? 'var(--red)' : 'var(--green)'}` }}>
+                <div className="metric-label">🚨 Toplam Uyarı</div>
+                <div className="metric-value" style={{ fontSize: 22, color: toplamUyari > 0 ? 'var(--red)' : 'var(--green)' }}>{toplamUyari}</div>
+                <div className="metric-sub">{toplamUyari === 0 ? 'Tüm şubeler normal ✓' : uyariParcalar.join(' · ')}</div>
+              </div>
+            </div>
+
+            {/* Açılış/Kapanış özet kartı */}
+            <HubGunlukAcilisKapanisCard bucket={hubAcKapBucket} />
+
+            {/* Şube filtresi */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+              {FILTRELER.map(f => (
+                <button key={f.id} className={`tab-pill ${filtre === f.id ? 'active' : ''}`} onClick={() => setFiltre(f.id)}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Canlı durum tablosu */}
+            {karsilastirmaKartlar.length > 0 && (
+              <div className="card" style={{ marginBottom: 16 }}>
+                <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: 'var(--text2)' }}>Şube durum tablosu</h3>
+                <div className="table-wrap" style={{ margin: 0 }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Şube</th>
+                        <th>Açılış</th>
+                        <th>Kontrol</th>
+                        <th>Kapanış</th>
+                        <th>Vardiya devri</th>
+                        <th>Ciro</th>
+                        <th>Not</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {karsilastirmaKartlar.map((k) => {
+                        const acilisDurum = operasyonTipOzeti(k, 'ACILIS') || { text: '—', badge: 'badge-gray' };
+                        const kontrolDurum = operasyonTipOzeti(k, 'KONTROL');
+                        const kapanisDurum = operasyonTipOzeti(k, 'KAPANIS');
+                        const vardiyaDurum = k?.vardiya_devri_tamam
+                          ? { text: 'Tamamlandı', badge: 'badge-green' }
+                          : k?.vardiya_devri_basladi
+                            ? { text: 'Devam ediyor', badge: 'badge-yellow' }
+                            : { text: '—', badge: 'badge-gray' };
+                        const gecikme = Number(k?.kontrol_gecikme_dk || 0);
+                        const kontrolCell = kontrolDurum
+                          ? (gecikme > 0 ? { text: `⚠️ ${gecikme} dk geç`, badge: gecikme >= 30 ? 'badge-red' : 'badge-yellow' } : kontrolDurum)
+                          : { text: '⏳', badge: 'badge-yellow' };
+                        const kapanisCell = kapanisDurum || { text: '⏳', badge: 'badge-yellow' };
+                        return (
+                          <tr key={`cmp-${k.sube_id}`} onClick={() => setDetay(k)} style={{ cursor: 'pointer' }} title="Detay için tıkla">
+                            <td style={{ fontWeight: 500, fontSize: 13 }}>{k.sube_adi || k.sube_id || '—'}</td>
+                            <td><span className={`badge ${acilisDurum.badge}`}>{acilisDurum.text}</span></td>
+                            <td><span className={`badge ${kontrolCell.badge}`}>{kontrolCell.text}</span></td>
+                            <td><span className={`badge ${kapanisCell.badge}`}>{kapanisCell.text}</span></td>
+                            <td><span className={`badge ${vardiyaDurum.badge}`}>{vardiyaDurum.text}</span></td>
+                            <td className="mono">{fmt(Number(k?.bugun_ciro_tutar || 0))}</td>
+                            <td className="mono">{Number(k?.gunluk_not_adet || 0)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
-            );
-          })()}
+            )}
 
-          <HubGunlukAcilisKapanisCard bucket={hubAcKapBucket} />
-
-          <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-            {FILTRELER.map(f => (
-              <button
-                key={f.id}
-                className={`tab-pill ${filtre === f.id ? 'active' : ''}`}
-                onClick={() => setFiltre(f.id)}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-          </>
-          )}
-
-          {opsIcBolum === 'subeler' && (
-          <>
-          <HubGunlukAcilisKapanisCard bucket={hubAcKapBucket} />
-          {yukleniyor ? (
-            <div className="loading" style={{ marginBottom: 16 }}><div className="spinner" />Yükleniyor…</div>
-          ) : kartlar.length === 0 ? (
-            <div className="empty" style={{ marginBottom: 16 }}>
-              <div className="icon">✅</div>
-              <p>Bu filtrede şube yok</p>
-            </div>
-          ) : (
-            <div style={{ marginBottom: 18 }}>
-              <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px 0', color: 'var(--text1)' }}>Şube kartları</h3>
+            {/* Şube kartları grid */}
+            {yukleniyor ? (
+              <div className="loading" style={{ marginBottom: 16 }}><div className="spinner" />Yükleniyor…</div>
+            ) : kartlar.length === 0 ? (
+              <div className="empty"><div className="icon">✅</div><p>Bu filtrede şube yok</p></div>
+            ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
                 {kartlar.map((k) => (
-                  <SubeKart
-                    key={k.sube_id || k.sube_adi}
-                    k={k}
-                    onDetay={setDetay}
-                    personelRisk={riskliPersonelSubeMap[k.sube_id]}
-                  />
+                  <SubeKart key={k.sube_id || k.sube_adi} k={k} onDetay={setDetay} personelRisk={riskliPersonelSubeMap[k.sube_id]} />
                 ))}
               </div>
-            </div>
-          )}
+            )}
           </>
-          )}
-
-          {opsIcBolum === 'karsilastirma' && (
-          <>
-          <HubGunlukAcilisKapanisCard bucket={hubAcKapBucket} />
-          <div className="card" style={{ marginBottom: 16 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Şubeler arası canlı karşılaştırma</h3>
-            <div className="table-wrap" style={{ margin: 0 }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Şube</th>
-                    <th>Açılış</th>
-                    <th>Kontrol</th>
-                    <th>Kapanış</th>
-                    <th>Vardiya devri</th>
-                    <th>Ciro</th>
-                    <th>Not</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {karsilastirmaKartlar.map((k) => {
-                    const acilisDurum = operasyonTipOzeti(k, 'ACILIS') || { text: '—', badge: 'badge-gray' };
-                    const kontrolDurum = operasyonTipOzeti(k, 'KONTROL');
-                    const kapanisDurum = operasyonTipOzeti(k, 'KAPANIS');
-                    const vardiyaDurum = k?.vardiya_devri_tamam
-                      ? { text: 'Tamamlandı', badge: 'badge-green' }
-                      : k?.vardiya_devri_basladi
-                        ? { text: 'Devam ediyor', badge: 'badge-yellow' }
-                        : { text: '—', badge: 'badge-gray' };
-                    const gecikme = Number(k?.kontrol_gecikme_dk || 0);
-                    const kontrolCell = kontrolDurum
-                      ? (gecikme > 0
-                        ? { text: `⚠️ ${gecikme} dk geç`, badge: gecikme >= 30 ? 'badge-red' : 'badge-yellow' }
-                        : kontrolDurum)
-                      : { text: '⏳', badge: 'badge-yellow' };
-                    const kapanisCell = kapanisDurum || { text: '⏳', badge: 'badge-yellow' };
-                    const ciro = Number(k?.bugun_ciro_tutar || 0);
-                    const notAdet = Number(k?.gunluk_not_adet || 0);
-                    return (
-                      <tr
-                        key={`cmp-${k.sube_id}`}
-                        onClick={() => setDetay(k)}
-                        style={{ cursor: 'pointer' }}
-                        title="Detay için tıkla"
-                      >
-                        <td style={{ fontWeight: 500, fontSize: 13 }}>{k.sube_adi || k.sube_id || '—'}</td>
-                        <td><span className={`badge ${acilisDurum.badge}`}>{acilisDurum.text}</span></td>
-                        <td><span className={`badge ${kontrolCell.badge}`}>{kontrolCell.text}</span></td>
-                        <td><span className={`badge ${kapanisCell.badge}`}>{kapanisCell.text}</span></td>
-                        <td><span className={`badge ${vardiyaDurum.badge}`}>{vardiyaDurum.text}</span></td>
-                        <td className="mono">{fmt(ciro)}</td>
-                        <td className="mono">{notAdet}</td>
-                      </tr>
-                    );
-                  })}
-                  {karsilastirmaKartlar.length === 0 && (
-                    <tr><td colSpan={7}><div className="empty"><p>Karşılaştırma için şube verisi yok</p></div></td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          </>
-          )}
-
-        </>
-      )}
+        );
+      })()}
 
       {aktifSekme === 'magaza-kartlari' && (
         <>
