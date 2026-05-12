@@ -6295,8 +6295,8 @@ function renderKasaDevir() {
   frmEl.innerHTML =
     '<div id="dvStep1" class="siparis-detay">' +
     '<div class="sip-alt-baslik">Adım 1 / 5 — Kasa Say</div>' +
-    '<div class="form-group"><label>Teslim Kasa (₺) *</label><input id="dvTeslim" inputmode="decimal" /></div>' +
-    '<div class="form-group"><label>Devir (₺)</label><input id="dvDevir" inputmode="decimal" placeholder="0" /></div>' +
+    '<div style="font-size:11px;color:var(--muted);margin:-4px 0 10px;line-height:1.5">Kasada bulunan nakit miktarı — para kasada kalır, hesaplamalara girmez.</div>' +
+    '<div class="form-group"><label>Kasadaki Nakit (₺)</label><input id="dvTeslim" inputmode="decimal" placeholder="0" /></div>' +
     '<button class="btn btn-primary btn-sm" type="button" id="dvNext1">Bardak Sayımına Geç</button>' +
     '</div>' +
     '<div id="dvStep2" class="siparis-detay" style="display:none">' +
@@ -6350,8 +6350,8 @@ function renderKasaDevir() {
       var pid1 = selVal('dvPers1'), pin1 = inpVal('dvPin1').replace(/\D/g,'').slice(0,4);
       if (!pid1) throw new Error('Personel seçin');
       if (pin1.length!==4) throw new Error('4 haneli PIN');
-      var teslim = parseNum(inpVal('dvTeslim'));
-      if (teslim==null||teslim<0) throw new Error('Teslim tutarı girin');
+      var kasadakiNakit = parseNum(inpVal('dvTeslim')) || 0;
+      if (kasadakiNakit < 0) throw new Error('Kasadaki nakit negatif olamaz');
       if (!document.getElementById('dvXRapor').checked) throw new Error('X raporu gönderildi onayı gerekli');
       var opAktif = lastData && lastData.operasyon && lastData.operasyon.aktif;
       var body = {
@@ -6359,7 +6359,7 @@ function renderKasaDevir() {
         nakit: 0,
         pos: 0,
         online: 0,
-        teslim: teslim, devir: parseNum(inpVal('dvDevir'))||0,
+        teslim: kasadakiNakit, devir: 0,
         x_raporu_gonderildi: true, ciro_gonderildi: false,
         operasyon_event_id: opAktif&&opAktif.id ? opAktif.id : null,
         bardak_kucuk:   pInt('dvBk','Küçük bardak'),

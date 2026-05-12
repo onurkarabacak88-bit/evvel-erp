@@ -1145,11 +1145,7 @@ def ops_dashboard(
                 kasa_devir_listesi.append({
                     "sube_id":             str(row.get("sube_id") or ""),
                     "sube_adi":            str(row.get("sube_adi") or ""),
-                    "nakit":               float(row.get("nakit") or 0),
-                    "pos":                 float(row.get("pos") or 0),
-                    "online":              float(row.get("online") or 0),
-                    "teslim":              float(row.get("teslim") or 0),
-                    "devir":               float(row.get("devir") or 0),
+                    "kasadaki_nakit":      float(row.get("teslim") or 0),
                     "durum":               str(row.get("durum") or ""),
                     "sabah_ts":            str(sabah_ts) if sabah_ts else "",
                     "sabahci_adi":         str(row.get("sabahci_adi") or ""),

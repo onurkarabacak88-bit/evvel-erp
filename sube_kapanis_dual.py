@@ -272,7 +272,8 @@ class VardiyaDevirAdim1(BaseModel):
     """1. imza: sabahçı (devreden) — `sabahci_devreden_id` = personel_id.
 
     Bardak ve ürün sayımları zorunludur (açılış / devir tutarlılığı; >= 0 tam sayı).
-    Nakit/POS/Online panelde zorunlu değildir (0 gönderilebilir); asıl vurgu teslim kasa + sayımlar.
+    `teslim` = kasadaki nakit tutarı (para kasada kalır, hiçbir finansal hesaba girmez).
+    `devir` = her zaman 0 (vardiya devrinde para kasadan çıkmaz).
     """
 
     sabahci_devreden_id: str
@@ -280,7 +281,7 @@ class VardiyaDevirAdim1(BaseModel):
     nakit: float = 0
     pos: float = 0
     online: float = 0
-    teslim: float
+    teslim: float = 0
     devir: float = 0
     x_raporu_gonderildi: bool = False
     ciro_gonderildi: bool = False
@@ -402,8 +403,8 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
     from sube_panel import _bugun_sube_acildi_mi
 
     simdi = dt_now_tr_naive()
-    if body.teslim < 0 or body.devir < 0:
-        raise HTTPException(400, "Teslim / devir geçersiz")
+    if body.teslim < 0:
+        raise HTTPException(400, "Kasadaki nakit negatif olamaz")
     # Panelde adım-1 yalnızca kasa sayımı; X nakit/POS/online isteğe bağlı (0 olabilir).
     if not body.x_raporu_gonderildi:
         raise HTTPException(400, "X raporu gönderildi onayı gerekli")
