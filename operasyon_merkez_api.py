@@ -1242,17 +1242,18 @@ def kapanis_takip(tarih: Optional[str] = None):
         )
         kapanis_map = {r["sube_id"]: dict(r) for r in (cur.fetchall() or [])}
 
-        # Açılış eventleri (bugün açıldı mı?) + sabah kasa sayımı
+        # Açılış — şube başına tek satır: o gün ilk tamamlanan ACILIS (MIN/MAX karışımı yok)
         cur.execute(
             """
-            SELECT e.sube_id::text,
-                   MIN(e.cevap_ts AT TIME ZONE 'Europe/Istanbul') AS acilis_ts,
-                   MAX(e.kasa_sayim)  AS acilis_kasa,
-                   MAX(e.personel_ad) AS personel_ad
+            SELECT DISTINCT ON (e.sube_id)
+                   e.sube_id::text,
+                   e.cevap_ts AT TIME ZONE 'Europe/Istanbul' AS acilis_ts,
+                   e.kasa_sayim AS acilis_kasa,
+                   e.personel_ad
             FROM sube_operasyon_event e
             WHERE e.tip = 'ACILIS' AND e.durum = 'tamamlandi'
               AND e.tarih = %s
-            GROUP BY e.sube_id
+            ORDER BY e.sube_id, e.cevap_ts ASC NULLS LAST, e.id ASC
             """,
             (hedef,),
         )
@@ -2331,7 +2332,8 @@ def ops_gec_acilan_subeler(
 ):
     """
     Seçilen günde plan saatine göre geç açılan şubeleri döner.
-    Geç açılış kriteri: ACILIS cevap_ts > sistem_slot_ts.
+    Referans saat: vardiya ataması varsa MIN(başlangıç), yoksa operasyon sistem_slot_ts.
+    Yanıtta ``gecikme_seviye``: ≤15 dk → uyarı, >15 dk → kritik (iş kuralı).
     Ek olarak: o gün için ACILIS satırı var ama henüz tamamlanmamış (cevap yok / bekliyor-gecikti vb.)
     şubeler `acilmayan_subeler` listesinde döner.
     `plan_kayitsiz_subeler`: aktif ve vardiya/operasyon takibi açık şubelerden o gün için hiç ACILIS
@@ -2374,7 +2376,8 @@ def ops_gec_acilan_subeler(
                 END AS gecikme_dk,
                 va.bek_personel,
                 x.personel_id,
-                x.personel_ad
+                x.personel_ad,
+                (va.bek_saat IS NOT NULL) AS vardiya_planli
             FROM sube_operasyon_event e
             LEFT JOIN subeler s ON s.id = e.sube_id
             LEFT JOIN LATERAL (
@@ -2501,6 +2504,8 @@ def ops_gec_acilan_subeler(
         s = str(v).strip()[:5]
         return s if len(s) == 5 else None
 
+    _GEC_UYARI_ESIK_DK = 15.0  # İş kuralı: bu dakikaya kadar «uyarı», üstü «kritik» (vardiya slotlu/slotsuz aynı eşik)
+
     kayitlar: List[Dict[str, Any]] = []
     for r in rows:
         gercek_ts = r.get("cevap_ts")
@@ -2508,6 +2513,9 @@ def ops_gec_acilan_subeler(
             gecikme = float(r.get("gecikme_dk") or 0.0)
         except (TypeError, ValueError):
             gecikme = 0.0
+        gecikme = round(max(0.0, gecikme), 2)
+        vardiya_planli = bool(r.get("vardiya_planli"))
+        seviye = "kritik" if gecikme > _GEC_UYARI_ESIK_DK else "uyari"
         kayitlar.append(
             {
                 "event_id":         r.get("event_id"),
@@ -2516,7 +2524,9 @@ def ops_gec_acilan_subeler(
                 "tarih":            str(r.get("tarih") or hedef_tarih),
                 "planlanan_saat":   str(r.get("planlanan_saat") or ""),
                 "acilis_saat":      gercek_ts.strftime("%H:%M") if hasattr(gercek_ts, "strftime") else None,
-                "gecikme_dk":       round(max(0.0, gecikme), 2),
+                "gecikme_dk":       gecikme,
+                "gecikme_seviye":   seviye,
+                "vardiya_planli":   vardiya_planli,
                 "beklened_personel": str(r.get("bek_personel") or ""),
                 "personel_id":      r.get("personel_id"),
                 "personel_ad":      str(r.get("personel_ad") or ""),
@@ -2550,6 +2560,7 @@ def ops_gec_acilan_subeler(
         "tarih": hedef_tarih,
         "toplam": len(kayitlar),
         "kayitlar": kayitlar,
+        "gecikme_uyari_esik_dk": _GEC_UYARI_ESIK_DK,
         "acilmayan_subeler": acilmayan_subeler,
         "acilmayan_toplam": len(acilmayan_subeler),
         "plan_kayitsiz_subeler": plan_kayitsiz_subeler,
@@ -2561,12 +2572,13 @@ def ops_gec_acilan_subeler(
 def ops_gec_kalan_personel(
     year_month: Optional[str] = Query(None, description="YYYY-MM"),
     gecikme_dk: int = Query(5, ge=1, le=120),
-    kritik_dk: int = Query(30, ge=5, le=240),
+    kritik_dk: int = Query(15, ge=5, le=240),
     limit: int = Query(300, ge=1, le=1000),
 ):
     """
     Aylık personel bazlı geç açılış özeti.
-    Geç kalma kriteri: ACILIS eventinde cevap_ts > sistem_slot_ts.
+    Gecikme dakikası «Geç Açılan Şubeler» ile aynı referansı kullanır:
+    vardiya planı varsa (MIN başlangıç) o saat; yoksa operasyon sistem_slot_ts.
     """
     ym = _coerce_year_month(year_month)
     with db() as (conn, cur):
@@ -2579,11 +2591,37 @@ def ops_gec_kalan_personel(
                 e.tarih,
                 e.sistem_slot_ts,
                 e.cevap_ts,
-                ROUND(EXTRACT(EPOCH FROM (e.cevap_ts - e.sistem_slot_ts)) / 60.0, 2) AS gecikme_dk,
+                CASE
+                    WHEN va.bek_saat IS NOT NULL THEN
+                        ROUND(EXTRACT(EPOCH FROM
+                            (e.cevap_ts AT TIME ZONE 'Europe/Istanbul'
+                             - (e.tarih::date + va.bek_saat))
+                        ) / 60.0, 2)
+                    WHEN e.sistem_slot_ts IS NOT NULL THEN
+                        ROUND(EXTRACT(EPOCH FROM (e.cevap_ts - e.sistem_slot_ts)) / 60.0, 2)
+                    ELSE NULL
+                END AS gecikme_dk,
+                CASE
+                    WHEN va.bek_saat IS NOT NULL THEN TO_CHAR(va.bek_saat, 'HH24:MI')
+                    WHEN e.sistem_slot_ts IS NOT NULL THEN
+                        TO_CHAR(e.sistem_slot_ts AT TIME ZONE 'Europe/Istanbul', 'HH24:MI')
+                    ELSE NULL
+                END AS planlanan_saat_str,
                 x.personel_id,
                 x.personel_ad
             FROM sube_operasyon_event e
             LEFT JOIN subeler s ON s.id = e.sube_id
+            LEFT JOIN LATERAL (
+                SELECT
+                    MIN(va2.baslangic_saat)                AS bek_saat,
+                    STRING_AGG(DISTINCT p2.ad_soyad, ', ') AS bek_personel
+                FROM vardiya_atama va2
+                JOIN vardiya_slot vs2 ON vs2.id = va2.slot_id
+                JOIN personel p2      ON p2.id  = va2.personel_id
+                WHERE vs2.sube_id = e.sube_id
+                  AND va2.tarih   = e.tarih
+                  AND va2.durum  != 'iptal'
+            ) va ON TRUE
             LEFT JOIN LATERAL (
                 SELECT
                     d.personel_id,
@@ -2596,13 +2634,23 @@ def ops_gec_kalan_personel(
             ) x ON TRUE
             WHERE e.tip = 'ACILIS'
               AND to_char(e.tarih, 'YYYY-MM') = %s
-              AND e.sistem_slot_ts IS NOT NULL
               AND e.cevap_ts IS NOT NULL
-              AND EXTRACT(EPOCH FROM (e.cevap_ts - e.sistem_slot_ts)) >= (%s * 60)
+              AND (
+                CASE
+                    WHEN va.bek_saat IS NOT NULL THEN
+                        EXTRACT(EPOCH FROM
+                            (e.cevap_ts AT TIME ZONE 'Europe/Istanbul'
+                             - (e.tarih::date + va.bek_saat))
+                        ) >= (%s * 60)
+                    WHEN e.sistem_slot_ts IS NOT NULL THEN
+                        EXTRACT(EPOCH FROM (e.cevap_ts - e.sistem_slot_ts)) >= (%s * 60)
+                    ELSE FALSE
+                END
+              )
             ORDER BY e.tarih DESC, sube_adi ASC
             LIMIT %s
             """,
-            (ym, gecikme_dk, limit),
+            (ym, gecikme_dk, gecikme_dk, limit),
         )
         rows = cur.fetchall() or []
 
@@ -2622,8 +2670,8 @@ def ops_gec_kalan_personel(
         except (TypeError, ValueError):
             gecikme = 0.0
         gecikme = round(max(0.0, gecikme), 2)
-        plan_ts = r.get("sistem_slot_ts")
         gercek_ts = r.get("cevap_ts")
+        plan_saat = str(r.get("planlanan_saat_str") or "").strip() or None
         agg = personel_map.setdefault(
             pkey,
             {
@@ -2645,7 +2693,7 @@ def ops_gec_kalan_personel(
                 "tarih": str(r.get("tarih") or ""),
                 "sube_id": r.get("sube_id"),
                 "sube_adi": r.get("sube_adi"),
-                "planlanan_saat": plan_ts.strftime("%H:%M") if plan_ts else None,
+                "planlanan_saat": plan_saat,
                 "acilis_saat": gercek_ts.strftime("%H:%M") if gercek_ts else None,
                 "gecikme_dk": gecikme,
             }
@@ -2727,7 +2775,8 @@ def ops_bar_ozet(
 
         cur.execute(
             f"""
-            SELECT e.sube_id, s.ad AS sube_adi, e.tarih,
+            SELECT DISTINCT ON (e.sube_id, e.tarih)
+                   e.sube_id, s.ad AS sube_adi, e.tarih,
                    e.cevap_ts AS acilis_ts, e.meta AS acilis_meta
             FROM sube_operasyon_event e
             JOIN subeler s ON s.id = e.sube_id
@@ -2735,7 +2784,7 @@ def ops_bar_ozet(
               AND to_char(e.tarih, 'YYYY-MM') = %s
               AND (NULLIF(%s, '') IS NULL OR e.tarih = NULLIF(%s, '')::date)
               {acilis_sube_filter}
-            ORDER BY e.tarih DESC, s.ad
+            ORDER BY e.sube_id, e.tarih, e.cevap_ts ASC NULLS LAST, e.id ASC
             LIMIT %s
             """,
             acilis_params,
@@ -2754,12 +2803,14 @@ def ops_bar_ozet(
 
         cur.execute(
             f"""
-            SELECT e.sube_id, e.tarih, e.meta AS kapanis_meta
+            SELECT DISTINCT ON (e.sube_id, e.tarih)
+                   e.sube_id, e.tarih, e.meta AS kapanis_meta
             FROM sube_operasyon_event e
             WHERE e.tip='KAPANIS' AND e.durum='tamamlandi'
               AND to_char(e.tarih, 'YYYY-MM') = %s
               AND (NULLIF(%s, '') IS NULL OR e.tarih = NULLIF(%s, '')::date)
               {kap_sube_filter}
+            ORDER BY e.sube_id, e.tarih, e.cevap_ts DESC NULLS LAST, e.id DESC
             """,
             kap_params,
         )
@@ -2876,12 +2927,14 @@ def ops_bar_ozet(
             tarih_list = [date.fromisoformat(p[1]) for p in prev_pairs]
             cur.execute(
                 """
-                SELECT e.sube_id, e.tarih::text, e.meta AS kapanis_meta
+                SELECT DISTINCT ON (e.sube_id, e.tarih)
+                       e.sube_id, e.tarih::text, e.meta AS kapanis_meta
                 FROM sube_operasyon_event e
                 INNER JOIN (
                     SELECT * FROM unnest(%s::text[], %s::date[]) AS j(sube_id, tarih)
                 ) q ON e.sube_id = q.sube_id AND e.tarih = q.tarih
                 WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
+                ORDER BY e.sube_id, e.tarih, e.cevap_ts DESC NULLS LAST, e.id DESC
                 """,
                 (sid_list, tarih_list),
             )

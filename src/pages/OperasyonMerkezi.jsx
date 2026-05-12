@@ -1607,7 +1607,7 @@ export default function OperasyonMerkezi() {
   const [gecKalanPersonelBugun, setGecKalanPersonelBugun] = useState({
     year_month: varsayilanAy,
     gecikme_dk: 5,
-    kritik_dk: 30,
+    kritik_dk: 15,
     toplam_personel: 0,
     gecikme_toplam_adet: 0,
     kritik_personel_sayisi: 0,
@@ -1619,7 +1619,7 @@ export default function OperasyonMerkezi() {
   const [gecKalanPersonelAramaSonuc, setGecKalanPersonelAramaSonuc] = useState({
     year_month: varsayilanAy,
     gecikme_dk: 5,
-    kritik_dk: 30,
+    kritik_dk: 15,
     toplam_personel: 0,
     gecikme_toplam_adet: 0,
     kritik_personel_sayisi: 0,
@@ -1932,11 +1932,11 @@ export default function OperasyonMerkezi() {
 
   const gecKalanPersonelAyYukle = useCallback(async (ym) => {
     const hedefAy = String(ym || varsayilanAy).trim() || varsayilanAy;
-    const r = await api(`/ops/gec-kalan-personel?year_month=${encodeURIComponent(hedefAy)}&gecikme_dk=5&kritik_dk=30&limit=500`);
+    const r = await api(`/ops/gec-kalan-personel?year_month=${encodeURIComponent(hedefAy)}&gecikme_dk=5&kritik_dk=15&limit=500`);
     return {
       year_month: String(r?.year_month || hedefAy),
       gecikme_dk: Number(r?.gecikme_dk || 5),
-      kritik_dk: Number(r?.kritik_dk || 30),
+      kritik_dk: Number(r?.kritik_dk ?? 15),
       toplam_personel: Number(r?.toplam_personel || 0),
       gecikme_toplam_adet: Number(r?.gecikme_toplam_adet || 0),
       kritik_personel_sayisi: Number(r?.kritik_personel_sayisi || 0),
@@ -7048,6 +7048,7 @@ export default function OperasyonMerkezi() {
             Şubede personelin <strong style={{ color: 'var(--text2)' }}>ürün / sarf açtığı</strong> her işlem, operasyon defterine{' '}
             <strong style={{ color: 'var(--text2)' }}>URUN_AC</strong> kaydı olarak düşer (hangi şube, hangi saat, kim, hangi kalemler ve adetler).
             Bu ekran o kayıtları <strong style={{ color: 'var(--text2)' }}>gün bazında</strong> özetler; merkez yoğunluğu ve şube bazlı tekrarları izlemek içindir.
+            Liste <strong style={{ color: 'var(--text2)' }}>defter satırının ``tarih``</strong> alanına göre filtrelenir (takvim günü); gece 00:00–02:00 bandındaki işlemler bazen ertesi takvim gününe yazılabilir — yoğun analizde iş günü ile çapraz kontrol edin.
             API güvenlik için günde en fazla <strong style={{ color: 'var(--text2)' }}>80 satır</strong> döndürür — yoğun günlerde satır sayısı 80’e dayanıyorsa aşağıdaki liste eksik kalabilir, o gün satırı sarı ile uyarılır.
           </div>
 
@@ -7267,8 +7268,10 @@ export default function OperasyonMerkezi() {
             }}
           >
             <strong style={{ color: 'var(--text2)', fontWeight: 600 }}>Ne gösterilir?</strong>{' '}
-            Bar / operasyon özetinden gelen günlük <strong style={{ color: 'var(--text2)' }}>satılan (kullanılan)</strong> ürün adetleri şube bazında izlenir.
-            Haftalık bölümde günler <strong style={{ color: 'var(--text2)' }}>bugünden geriye</strong> sıralanır; aynı gün içinde şubeler <strong style={{ color: 'var(--text2)' }}>ada göre (A–Z)</strong> alt alta listelenir, karışık görünmez.
+            Kaynak <strong style={{ color: 'var(--text2)' }}>/ops/bar-ozet</strong>: her şube için{' '}
+            <strong style={{ color: 'var(--text2)' }}>Satılan ≈ Açılış sayımı + gün içi Ürün Aç − Kapanış sayımı</strong> (bardak, su, soda, redbull, pasta toplamı vb.).
+            Kapanış girilmemiş günlerde satılan sütunu eksik kalabilir. Tarih, operasyon <strong style={{ color: 'var(--text2)' }}>ACILIS/KAPANIS</strong> olayının takvim günüdür; gece yarısı sonrası hareketlerde «Kapanış Takip» ile aynı iş günü seçimine dikkat edin.
+            Haftalık bölümde günler <strong style={{ color: 'var(--text2)' }}>bugünden geriye</strong> sıralanır; şubeler <strong style={{ color: 'var(--text2)' }}>ada göre (A–Z)</strong> listelenir.
           </div>
 
           <div>
@@ -7627,7 +7630,9 @@ export default function OperasyonMerkezi() {
             </p>
             <p style={{ margin: 0, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
               <strong>Nakit denge (Δ):</strong> aynı iş günü <em>sabah kasa</em> (açılış sayımı) + <em>ciro nakit</em> (yapılan iş) − <em>teslim</em> − <em>devir</em> (kasada kalan) − <em>onaylı nakit anlık gider</em>.
-              Yalnızca hem açılış hem kapanış tamamlanmış şubelerde tutar gösterilir. Eksikte ilgili sütunlarda <strong>Açılış yapılmadı</strong> / <strong>Kapanış yapılmadı</strong> bildirilir. Tabloda: <span style={{ color: '#e85d5d' }}>+</span> kasa açığı <strong style={{ color: '#e85d5d' }}>kırmızı</strong>, <span style={{ color: '#22c55e' }}>−</span> kasa fazlası <strong style={{ color: '#22c55e' }}>yeşil</strong>, ≈0 dengede nötr.
+              Teslim zorunlu değilse satırda 0 görünebilir. Kapanış satırı şube başına <strong>en son tamamlanan KAPANIS</strong> olayından gelir (vardiya + son kapanış ayrımı karışmaz).
+              Yalnızca hem açılış hem kapanış tamamlanmış şubelerde Δ tutar gösterilir. Tabloda: <span style={{ color: '#e85d5d' }}>+</span> kasa açığı, <span style={{ color: '#22c55e' }}>−</span> kasa fazlası, ≈0 nötr.
+              Adım adım kasa / X uyumsuzluk kayıtları için <strong>Kasa uyumsuzluk</strong> sekmesine bakın.
             </p>
 
             {/* ── Özet metrik kartları ── */}
@@ -7977,8 +7982,10 @@ export default function OperasyonMerkezi() {
             }}
           >
             <strong style={{ color: 'var(--text2)', fontWeight: 600 }}>Ne listelenir?</strong>{' '}
-            <strong style={{ color: 'var(--text2)' }}>Geç açılan</strong>: o gün operasyon <strong style={{ color: 'var(--text2)' }}>ACILIS</strong> tamamlanmış ama cevap zamanı plan slotundan
-            sonradır. <strong style={{ color: 'var(--text2)' }}>Henüz açılmamış</strong>: aynı gün için ACILIS kaydı oluşmuş fakat henüz tamamlanmamış şubeler (bekliyor / gecikti / cevap yok);
+            <strong style={{ color: 'var(--text2)' }}>Geç açılan</strong>: o gün operasyon <strong style={{ color: 'var(--text2)' }}>ACILIS</strong> tamamlanmış ama cevap zamanı{' '}
+            <strong style={{ color: 'var(--text2)' }}>vardiya planındaki en erken slottan</strong> (varsa) veya yoksa <strong style={{ color: 'var(--text2)' }}>sistem slotundan</strong> sonradır.{' '}
+            <strong style={{ color: '#fbbf24' }}>Uyarı</strong>: 1–15 dk gecikme; <strong style={{ color: '#f87171' }}>Kritik</strong>: 15 dk üzeri.{' '}
+            <strong style={{ color: 'var(--text2)' }}>Henüz açılmamış</strong>: aynı gün için ACILIS kaydı oluşmuş fakat henüz tamamlanmamış şubeler (bekliyor / gecikti / cevap yok);
             bu şubeler aşağıda ayrı blokta <strong style={{ color: 'var(--text2)' }}>isimleriyle</strong> yazılır. Hiç ACILIS satırı oluşmamış planlı şubeler için üstteki{' '}
             <strong style={{ color: 'var(--text2)' }}>«Planlı · operasyon kaydı yok»</strong> sekmesine geçin.
           </div>
@@ -8068,6 +8075,7 @@ export default function OperasyonMerkezi() {
                     <th style={{ padding: '7px 8px', textAlign: 'center', color: '#93c5fd', fontWeight: 600 }}>Planlanan</th>
                     <th style={{ padding: '7px 8px', textAlign: 'center', color: '#fbbf24', fontWeight: 600 }}>Açılış</th>
                     <th style={{ padding: '7px 8px', textAlign: 'center', color: '#fca5a5', fontWeight: 700 }}>Gecikme</th>
+                    <th style={{ padding: '7px 8px', textAlign: 'center', color: 'var(--text3)', fontWeight: 600 }}>Seviye</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -8080,6 +8088,13 @@ export default function OperasyonMerkezi() {
                       <td className="mono" style={{ padding: '7px 8px', textAlign: 'center' }}>{r.acilis_saat || '—'}</td>
                       <td className="mono" style={{ padding: '7px 8px', textAlign: 'center', color: 'var(--red)', fontWeight: 700 }}>
                         +{Number(r.gecikme_dk || 0).toFixed(1)} dk
+                      </td>
+                      <td style={{ padding: '7px 8px', textAlign: 'center', fontWeight: 700, fontSize: 11 }}>
+                        {String(r.gecikme_seviye || '') === 'kritik' ? (
+                          <span style={{ color: '#f87171' }}>Kritik</span>
+                        ) : (
+                          <span style={{ color: '#fbbf24' }}>Uyarı</span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -8365,8 +8380,9 @@ export default function OperasyonMerkezi() {
 
       {aktifSekme === 'gec-kalan-personel' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
-            Aylık bazda personel geç açılış tekrarları burada izlenir. Geç açılış eşiği: <strong>5 dk+</strong>, kritik eşik: <strong>30 dk+</strong>.
+          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0, lineHeight: 1.5 }}>
+            Aylık bazda personel geç açılış tekrarları burada izlenir. Gecikme dakikası <strong>Geç Açılan Şubeler</strong> ile aynıdır: önce vardiya planı (MIN başlangıç), yoksa operasyon <code className="mono">sistem_slot_ts</code>.
+            Listeye girmek için en az <strong>5 dk</strong> gecikme; satırda <strong>kritik</strong> sayımı <strong>15 dk+</strong> olaylar içindir.
           </p>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <label style={{ margin: 0 }}>
