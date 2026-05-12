@@ -942,12 +942,6 @@ function SubeKart({ k, onDetay, personelRisk }) {
   const vurgu = computeOpsKartVurgu(k);
   const satisTahminToplam = Number(k.satis_tahmin_toplam || k.satis_tahmini_toplam || 0);
 
-  // Ciro trendi (sparkline) — backend generate_series ile her zaman 7 eleman döner.
-  const ciroTrend      = k.ciro_trend || [];
-  const ciroTrendMax   = Math.max(...ciroTrend.map(t => t.ciro || 0), 1);
-  const CIRO_BAR_H     = 28;   // px — maksimum bar yüksekliği
-  const CIRO_GUN_ADI   = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
-
   // Kart rengi
   let borderColor = 'var(--border)';
   if (b.kritik)       borderColor = 'var(--red)';
@@ -1049,94 +1043,11 @@ function SubeKart({ k, onDetay, personelRisk }) {
             ⚠️ Taslak gecikiyor
           </span>
         )}
-        {(k.anlik_gider_bekleyen || 0) > 0 && (
-          <span className="badge badge-yellow">💸 Gider bekliyor: {k.anlik_gider_bekleyen}</span>
-        )}
-        {(k.gunluk_not_adet || 0) > 0 && (
-          <span className="badge badge-gray">📝 Günlük not: {k.gunluk_not_adet}</span>
-        )}
-        {satisTahminToplam !== 0 && (
-          <span className={`badge ${satisTahminToplam > 0 ? 'badge-yellow' : 'badge-green'}`}>
-            📉 Tahmini açık: {satisTahminToplam > 0 ? '+' : ''}{fmt(satisTahminToplam)}
-          </span>
+        {satisTahminToplam > 0 && (
+          <span className="badge badge-yellow">📉 Satış açığı var</span>
         )}
       </div>
 
-      {/* 7 Günlük Ciro Trendi (sparkline) */}
-      {ciroTrend.length === 7 && (
-        <div style={{ padding: '6px 8px', background: 'var(--bg3)', borderRadius: 7 }}>
-          {/* Başlık satırı: etiket sol, bugünkü tutar sağ */}
-          <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span>7 Günlük Ciro</span>
-            {(k.bugun_ciro_tutar || 0) > 0 && (
-              <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: 11 }}>
-                Bugün: {fmt(k.bugun_ciro_tutar)} ₺
-              </span>
-            )}
-          </div>
-          {/* Bar chart — flex sütunlar, alignItems: flex-end = barlar tabandan yukarı büyür */}
-          <div style={{ display: 'flex', gap: 2, alignItems: 'flex-end', height: CIRO_BAR_H + 14 }}>
-            {ciroTrend.map((t, i) => {
-              const barH   = Math.max(2, Math.round((t.ciro / ciroTrendMax) * CIRO_BAR_H));
-              const isBugun = i === 6;
-              const d      = new Date(t.tarih + 'T00:00:00');
-              const wd     = d.getDay();   // 0=Pazar … 6=Cumartesi
-              const gunAdi = isBugun ? 'Bug.' : (CIRO_GUN_ADI[wd === 0 ? 6 : wd - 1] || '—');
-              const barRenk = isBugun
-                ? (t.ciro > 0 ? 'var(--green)' : 'var(--red)')
-                : (t.ciro > 0 ? '#4f8ef7' : 'var(--bg2)');
-              return (
-                <div
-                  key={t.tarih}
-                  title={`${gunAdi}: ${Number(t.ciro || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺`}
-                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, cursor: 'default' }}
-                >
-                  <div style={{ width: '100%', height: barH, background: barRenk, borderRadius: '2px 2px 0 0' }} />
-                  <span style={{ fontSize: 8, color: isBugun ? 'var(--green)' : 'var(--text3)', marginTop: 2, lineHeight: 1 }}>
-                    {gunAdi}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Teorik / Gerçek Satış Verimliliği */}
-      {(() => {
-        const sv = k.satis_verimlilik;
-        if (!sv || !sv.yeterli_veri || sv.teorik_ciro == null) return null;
-        const yuzde = sv.yuzde != null ? Number(sv.yuzde) : null;
-        const renk = yuzde == null ? 'var(--text3)'
-          : yuzde >= 90 ? 'var(--green)'
-          : yuzde >= 70 ? '#f59e0b'
-          : 'var(--red)';
-        const etiket = yuzde == null ? '—'
-          : yuzde >= 90 ? 'Normal'
-          : yuzde >= 70 ? 'Düşük'
-          : 'Fire Riski';
-        return (
-          <div style={{ background: 'var(--bg3)', borderRadius: 7, padding: '6px 10px', fontSize: 12 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-              <span style={{ color: 'var(--text3)', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Satış Verimliliği</span>
-              <span style={{ color: renk, fontWeight: 700, fontSize: 13 }}>
-                {yuzde != null ? `%${yuzde.toFixed(0)}` : '—'}
-                <span style={{ fontSize: 10, fontWeight: 400, marginLeft: 4, opacity: 0.8 }}>{etiket}</span>
-              </span>
-            </div>
-            <div style={{ display: 'flex', gap: 8, fontSize: 11, color: 'var(--text2)' }}>
-              <span>Beklenen: <strong>{Number(sv.teorik_ciro).toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺</strong></span>
-              <span style={{ opacity: 0.5 }}>·</span>
-              <span>Gerçek: <strong style={{ color: renk }}>{Number(sv.gercek_ciro).toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺</strong></span>
-            </div>
-            {yuzde != null && yuzde < 90 && (
-              <div style={{ marginTop: 4, height: 4, borderRadius: 2, background: 'var(--bg2)', overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${Math.min(100, yuzde)}%`, background: renk, borderRadius: 2, transition: 'width .4s' }} />
-              </div>
-            )}
-          </div>
-        );
-      })()}
 
       {/* Operasyon events */}
       {displayEv.length > 0 && (
@@ -5412,7 +5323,6 @@ export default function OperasyonMerkezi() {
       {aktifSekme === 'canli' && (() => {
         const gecAlert = Number(gecAcilanBugun?.toplam || 0) + Number(gecAcilanBugun?.acilmayan_toplam || 0);
         const kapanmayanSayi = Array.isArray(kapanisTakip?.satirlar) ? kapanisTakip.satirlar.filter((r) => !r.kapanis_tamam).length : 0;
-        const bugunCiro = kartlar.reduce((s, k) => s + Number(k.bugun_ciro_tutar || 0), 0);
         const toplamUyari = kritikSayi + gecikSayi + gecAlert + kapanmayanSayi + guvenlikSayi;
         const uyariParcalar = [
           gecAlert > 0 && `${gecAlert} geç açılış`,
@@ -5423,14 +5333,29 @@ export default function OperasyonMerkezi() {
         ].filter(Boolean);
         return (
           <>
-            {/* Bugünkü ciro satırı */}
-            {bugunCiro > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, padding: '8px 14px', background: 'var(--bg2)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                <span style={{ fontSize: 12, color: 'var(--text3)' }}>Bugünkü toplam ciro</span>
-                <span style={{ fontWeight: 700, fontSize: 16, color: 'var(--green)' }}>{fmt(bugunCiro)} ₺</span>
-                <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 'auto' }}>{kartlar.filter(k => k.ciro_girildi).length} / {kartlar.length} şube girdi</span>
-              </div>
-            )}
+            {/* Ciro giriş durumu — operasyonel tamamlanma oranı */}
+            {(() => {
+              const ciroGiren = kartlar.filter(k => k.ciro_girildi).length;
+              const ciroOnayda = kartlar.filter(k => !k.ciro_girildi && k.ciro_taslak_bekliyor).length;
+              const ciroYok = kartlar.length - ciroGiren - ciroOnayda;
+              const hepsiGirdi = ciroGiren === kartlar.length && kartlar.length > 0;
+              if (kartlar.length === 0) return null;
+              return (
+                <div
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, padding: '8px 14px', background: 'var(--bg2)', borderRadius: 8, border: `1px solid ${hepsiGirdi ? 'var(--green)' : ciroYok > 0 ? 'rgba(224,92,92,.3)' : 'var(--border)'}`, cursor: 'pointer' }}
+                  onClick={() => acOpsModul('ciro-onay', 'finans-kasa')}
+                  title="Finans & Kasa — Ciro Onay sayfasına git"
+                >
+                  <span style={{ fontSize: 12, color: 'var(--text3)' }}>Ciro girişi</span>
+                  <span style={{ fontWeight: 700, fontSize: 15, color: hepsiGirdi ? 'var(--green)' : ciroYok > 0 ? 'var(--red)' : 'var(--yellow)' }}>
+                    {ciroGiren} / {kartlar.length} şube
+                  </span>
+                  {ciroOnayda > 0 && <span style={{ fontSize: 11, color: 'var(--yellow)' }}>{ciroOnayda} onayda</span>}
+                  {ciroYok > 0 && <span style={{ fontSize: 11, color: 'var(--red)' }}>{ciroYok} girilmedi</span>}
+                  <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 'auto' }}>Finans & Kasa →</span>
+                </div>
+              );
+            })()}
 
             {/* 6 canlı alert kartı */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 14 }}>
@@ -5471,13 +5396,15 @@ export default function OperasyonMerkezi() {
               </div>
               <div
                 className="metric-card"
-                style={{ borderTop: `3px solid ${bugunCiro > 0 ? 'var(--green)' : 'var(--text3)'}`, cursor: 'pointer' }}
+                style={{ borderTop: `3px solid ${kartlar.filter(k => !k.ciro_girildi && !k.ciro_taslak_bekliyor).length > 0 ? 'var(--red)' : 'var(--green)'}`, cursor: 'pointer' }}
                 onClick={() => acOpsModul('ciro-onay', 'finans-kasa')}
-                title="Ciro onay sayfasına git"
+                title="Finans & Kasa — Ciro Onay sayfasına git"
               >
-                <div className="metric-label">💰 Bugünkü Ciro</div>
-                <div className="metric-value" style={{ color: 'var(--green)', fontSize: bugunCiro > 0 ? 18 : 22 }}>{bugunCiro > 0 ? `${fmt(bugunCiro)} ₺` : '—'}</div>
-                <div className="metric-sub">{kartlar.filter(k => k.ciro_girildi).length} şube girdi · Finans →</div>
+                <div className="metric-label">📋 Ciro Girişi</div>
+                <div className="metric-value" style={{ color: kartlar.filter(k => k.ciro_girildi).length === kartlar.length && kartlar.length > 0 ? 'var(--green)' : 'var(--yellow)' }}>
+                  {kartlar.filter(k => k.ciro_girildi).length} / {kartlar.length}
+                </div>
+                <div className="metric-sub">Şube girdi · Finans →</div>
               </div>
               <div className="metric-card" style={{ borderTop: `3px solid ${toplamUyari > 0 ? 'var(--red)' : 'var(--green)'}` }}>
                 <div className="metric-label">🚨 Toplam Uyarı</div>
@@ -5511,8 +5438,7 @@ export default function OperasyonMerkezi() {
                         <th>Kontrol</th>
                         <th>Kapanış</th>
                         <th>Vardiya devri</th>
-                        <th>Ciro</th>
-                        <th>Not</th>
+                        <th>Ciro durumu</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -5524,12 +5450,17 @@ export default function OperasyonMerkezi() {
                           ? { text: 'Tamamlandı', badge: 'badge-green' }
                           : k?.vardiya_devri_basladi
                             ? { text: 'Devam ediyor', badge: 'badge-yellow' }
-                            : { text: '—', badge: 'badge-gray' };
+                            : { text: 'Başlamadı', badge: 'badge-gray' };
                         const gecikme = Number(k?.kontrol_gecikme_dk || 0);
                         const kontrolCell = kontrolDurum
-                          ? (gecikme > 0 ? { text: `⚠️ ${gecikme} dk geç`, badge: gecikme >= 30 ? 'badge-red' : 'badge-yellow' } : kontrolDurum)
+                          ? (gecikme > 0 ? { text: `⚠️ ${insancaDk(gecikme)} geç`, badge: gecikme >= 30 ? 'badge-red' : 'badge-yellow' } : kontrolDurum)
                           : { text: '⏳', badge: 'badge-yellow' };
                         const kapanisCell = kapanisDurum || { text: '⏳', badge: 'badge-yellow' };
+                        const ciroDurum = k?.ciro_girildi
+                          ? { text: '✓ Girdi', badge: 'badge-green' }
+                          : k?.ciro_taslak_bekliyor
+                            ? { text: '⏳ Onayda', badge: 'badge-yellow' }
+                            : { text: '✕ Girilmedi', badge: 'badge-red' };
                         return (
                           <tr key={`cmp-${k.sube_id}`} onClick={() => setDetay(k)} style={{ cursor: 'pointer' }} title="Detay için tıkla">
                             <td style={{ fontWeight: 500, fontSize: 13 }}>{k.sube_adi || k.sube_id || '—'}</td>
@@ -5537,8 +5468,7 @@ export default function OperasyonMerkezi() {
                             <td><span className={`badge ${kontrolCell.badge}`}>{kontrolCell.text}</span></td>
                             <td><span className={`badge ${kapanisCell.badge}`}>{kapanisCell.text}</span></td>
                             <td><span className={`badge ${vardiyaDurum.badge}`}>{vardiyaDurum.text}</span></td>
-                            <td className="mono">{fmt(Number(k?.bugun_ciro_tutar || 0))}</td>
-                            <td className="mono">{Number(k?.gunluk_not_adet || 0)}</td>
+                            <td><span className={`badge ${ciroDurum.badge}`}>{ciroDurum.text}</span></td>
                           </tr>
                         );
                       })}
