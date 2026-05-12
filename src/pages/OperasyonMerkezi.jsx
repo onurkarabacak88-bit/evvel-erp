@@ -3,7 +3,7 @@ import { api, fmt } from '../utils/api';
 import { computeOpsKartVurgu } from '../utils/opsVurgu';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
 
-/** Backend’in statik şube paneli (`GET /sube-panel/{id}`) — API ile aynı kök (VITE_API_URL). */
+/** Backend'in statik şube paneli (`GET /sube-panel/{id}`) — API ile aynı kök (VITE_API_URL). */
 function subePanelHariciUrl(subeId) {
   const sid = String(subeId || '').trim();
   if (!sid) return '';
@@ -13,7 +13,7 @@ function subePanelHariciUrl(subeId) {
   return `${origin}/sube-panel/${encodeURIComponent(sid)}`;
 }
 
-/** Mağaza depo katalog — şube paneli `siparisNormalize` ile aynı mantık (ayrı dosya Docker’da eksik kalmasın diye burada). */
+/** Mağaza depo katalog — şube paneli `siparisNormalize` ile aynı mantık (ayrı dosya Docker'da eksik kalmasın diye burada). */
 function magazaDepoSlugifyTr(s) {
   return String(s || '')
     .toLocaleLowerCase('tr-TR')
@@ -776,7 +776,7 @@ function hubLocalHourTr() {
   }
 }
 
-/** Dashboard kartlarından bugünkü ACILIS/KAPANIS özet bucket’ı (sube_operasyon_event özetleri). */
+/** Dashboard kartlarından bugünkü ACILIS/KAPANIS özet bucket'ı (sube_operasyon_event özetleri). */
 function hubAcilisKapanisBucket(kartlar) {
   const list = Array.isArray(kartlar) ? kartlar : [];
   const h = hubLocalHourTr();
@@ -5082,44 +5082,44 @@ export default function OperasyonMerkezi() {
 
               {hubOperasyonDetayAcik && (opsOzet?.alarm_satirlari || []).length === 0 && (
                 <p style={{ fontSize: 12, color: 'var(--text3)', margin: '8px 0 0' }}>
-                  Sunucu şu an özet satırı döndürmedi; «Özet yenile» ile tekrar deneyin veya hub’daki «Şube sipariş» kartından kuyruğu açın.
+                  Sunucu şu an özet satırı döndürmedi; «Özet yenile» ile tekrar deneyin veya hub'daki «Şube sipariş» kartından kuyruğu açın.
                 </p>
               )}
             </section>
           )}
 
-        <div style={{ display: ‘grid’, gridTemplateColumns: ‘repeat(auto-fit, minmax(260px, 1fr))’, gap: 16, marginBottom: 20 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginBottom: 20 }}>
           {MODULLER.map((modul) => {
             const ozt = opsOzet || {};
             let alertSayisi = 0;
             let descSatir = modul.desc;
 
-            if (modul.id === ‘canli-ops’) {
+            if (modul.id === 'canli-ops') {
               const gecAlert = Number(gecAcilanBugun?.toplam || 0) + Number(gecAcilanBugun?.acilmayan_toplam || 0);
               const personelAlert = Number(gecKalanPersonelBugun?.kritik_personel_sayisi || 0);
               const kapanisEksik = Array.isArray(kapanisTakip?.satirlar) ? kapanisTakip.satirlar.filter((r) => !r.kapanis_tamam).length : 0;
               alertSayisi = gecAlert + personelAlert + kapanisEksik;
               const aktifSubeAdet = ozt.aktif_sube ?? kartlar.filter((k) => k.sube_acik).length;
-              descSatir = `${aktifSubeAdet} şube aktif${alertSayisi > 0 ? ` · ${alertSayisi} uyarı` : ‘ · sorun yok ✓’}`;
-            } else if (modul.id === ‘stok-depo’) {
+              descSatir = `${aktifSubeAdet} şube aktif${alertSayisi > 0 ? ` · ${alertSayisi} uyarı` : ' · sorun yok ✓'}`;
+            } else if (modul.id === 'stok-depo') {
               alertSayisi = Number(ozt.stok_kayip_sube || 0) + Number(ozt.stok_alarm_bekleyen || 0) + Number(urunUyumBugun?.toplam || 0);
-              descSatir = alertSayisi > 0 ? `${alertSayisi} kayıp/uyarı — depo kontrol gerekli` : ‘Stok normal · kayıp tespit edilmedi ✓’;
-            } else if (modul.id === ‘siparis-tedarik’) {
+              descSatir = alertSayisi > 0 ? `${alertSayisi} kayıp/uyarı — depo kontrol gerekli` : 'Stok normal · kayıp tespit edilmedi ✓';
+            } else if (modul.id === 'siparis-tedarik') {
               alertSayisi = Number(ozt.siparis_gonderilmedi_toplam || 0) + Number(sevkiyatUyumOzet?.adet || 0) + Number(ozt.siparis_bekleyen || 0);
-              descSatir = alertSayisi > 0 ? `${alertSayisi} bekleyen/uyumsuz sipariş` : ‘Tüm siparişler takipte ✓’;
-            } else if (modul.id === ‘kasa-ciro’) {
+              descSatir = alertSayisi > 0 ? `${alertSayisi} bekleyen/uyumsuz sipariş` : 'Tüm siparişler takipte ✓';
+            } else if (modul.id === 'kasa-ciro') {
               alertSayisi = Number(kasaUyumBugun?.toplam || 0) + Number(ciroOnayBugun?.toplam || 0) + Number(ozt.fis_bekleyen || 0);
-              descSatir = alertSayisi > 0 ? `${alertSayisi} onay/uyumsuzluk bekliyor` : ‘Kasa dengede · onay kuyruğu boş ✓’;
-            } else if (modul.id === ‘personel’) {
+              descSatir = alertSayisi > 0 ? `${alertSayisi} onay/uyumsuzluk bekliyor` : 'Kasa dengede · onay kuyruğu boş ✓';
+            } else if (modul.id === 'personel') {
               alertSayisi = Number(personelVardiyaUyumBugun?.toplam || 0) + Number(gecKalanPersonelBugun?.kritik_personel_sayisi || 0);
-              descSatir = alertSayisi > 0 ? `${alertSayisi} uyumsuz vardiya / geç kalan` : ‘Personel durumu normal ✓’;
-            } else if (modul.id === ‘guvenlik-denetim’) {
+              descSatir = alertSayisi > 0 ? `${alertSayisi} uyumsuz vardiya / geç kalan` : 'Personel durumu normal ✓';
+            } else if (modul.id === 'guvenlik-denetim') {
               const guvenlikAlarmSayi = kartlar.filter((k) => k.bayraklar?.guvenlik_alarm).length;
               alertSayisi = Number(ozt.kontrol_gecikti || 0) + guvenlikAlarmSayi;
               descSatir = alertSayisi > 0
-                ? `${guvenlikAlarmSayi > 0 ? `${guvenlikAlarmSayi} güvenlik alarmı · ` : ‘’}${Number(ozt.kontrol_gecikti || 0) > 0 ? `${ozt.kontrol_gecikti} kontrol gecikti` : ‘denetim gerekli’}`
-                : ‘Kontrol tamamlandı · Güvenlik normal ✓’;
-            } else if (modul.id === ‘raporlar’) {
+                ? `${guvenlikAlarmSayi > 0 ? `${guvenlikAlarmSayi} güvenlik alarmı · ` : ''}${Number(ozt.kontrol_gecikti || 0) > 0 ? `${ozt.kontrol_gecikti} kontrol gecikti` : 'denetim gerekli'}`
+                : 'Kontrol tamamlandı · Güvenlik normal ✓';
+            } else if (modul.id === 'raporlar') {
               const u30 = Number(ozt.uyari_30d || 0);
               descSatir = u30 > 0 ? `Son 30 günde ${u30} uyarı/kritik kaydı` : modul.desc;
             }
@@ -5129,29 +5129,29 @@ export default function OperasyonMerkezi() {
                 key={modul.id}
                 className="metric-card"
                 style={{
-                  borderTop: `4px solid ${alertSayisi > 0 ? modul.renk : ‘var(--border)’}`,
-                  cursor: ‘pointer’,
-                  padding: ‘16px 18px’,
-                  display: ‘flex’,
-                  flexDirection: ‘column’,
+                  borderTop: `4px solid ${alertSayisi > 0 ? modul.renk : 'var(--border)'}`,
+                  cursor: 'pointer',
+                  padding: '16px 18px',
+                  display: 'flex',
+                  flexDirection: 'column',
                   gap: 8,
                   minHeight: 120,
-                  position: ‘relative’,
+                  position: 'relative',
                 }}
                 onClick={() => {
                   const firstTab = modul.tabs[0];
                   setAktifModul(modul.id);
-                  if (firstTab === ‘gec-acilan-subeler’) {
+                  if (firstTab === 'gec-acilan-subeler') {
                     setGecAcilanAramaTarih(bugunIsoTarih());
                     setGecAcilanAramaSonuc(gecAcilanBugun);
-                  } else if (firstTab === ‘kasa-uyumsuzluk’) {
+                  } else if (firstTab === 'kasa-uyumsuzluk') {
                     setKasaUyumAramaTarih(bugunIsoTarih());
                     setKasaUyumAramaSonuc(kasaUyumBugun);
-                  } else if (firstTab === ‘ciro-onay’) {
+                  } else if (firstTab === 'ciro-onay') {
                     setCiroOnayAramaTarih(isGunuIsoIstanbul());
                     setCiroOnayAramaSonuc(ciroOnayBugun);
-                  } else if (firstTab === ‘magaza-kartlari’) {
-                    setDisiplinPanel(‘kuyruk’);
+                  } else if (firstTab === 'magaza-kartlari') {
+                    setDisiplinPanel('kuyruk');
                   }
                   acOpsModul(firstTab);
                 }}
@@ -5159,26 +5159,26 @@ export default function OperasyonMerkezi() {
               >
                 {alertSayisi > 0 && (
                   <div style={{
-                    position: ‘absolute’, top: 10, right: 12,
-                    background: modul.renk, color: ‘#fff’,
-                    borderRadius: 12, padding: ‘2px 9px’,
+                    position: 'absolute', top: 10, right: 12,
+                    background: modul.renk, color: '#fff',
+                    borderRadius: 12, padding: '2px 9px',
                     fontSize: 12, fontWeight: 700, lineHeight: 1.6,
                   }}>
                     {alertSayisi}
                   </div>
                 )}
-                <div style={{ fontSize: 14, fontWeight: 700, color: alertSayisi > 0 ? modul.renk : ‘var(--text)’, paddingRight: alertSayisi > 0 ? 40 : 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: alertSayisi > 0 ? modul.renk : 'var(--text)', paddingRight: alertSayisi > 0 ? 40 : 0 }}>
                   {modul.label}
                 </div>
-                <div style={{ fontSize: 12, color: ‘var(--text2)’, lineHeight: 1.4 }}>
+                <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.4 }}>
                   {descSatir}
                 </div>
-                <div style={{ marginTop: ‘auto’, fontSize: 10, color: ‘var(--text3)’, display: ‘flex’, gap: 5, flexWrap: ‘wrap’, paddingTop: 4 }}>
+                <div style={{ marginTop: 'auto', fontSize: 10, color: 'var(--text3)', display: 'flex', gap: 5, flexWrap: 'wrap', paddingTop: 4 }}>
                   {modul.tabs.map((tabId) => {
                     const sekme = UST_SEKMELER.find((s) => s.id === tabId);
                     return sekme ? (
-                      <span key={tabId} style={{ background: ‘rgba(128,128,128,0.1)’, borderRadius: 4, padding: ‘2px 5px’ }}>
-                        {sekme.label.replace(/^[^\w\sğüşöçı]+\s*/u, ‘’)}
+                      <span key={tabId} style={{ background: 'rgba(128,128,128,0.1)', borderRadius: 4, padding: '2px 5px' }}>
+                        {sekme.label.replace(/^[^\w\sğüşöçı]+\s*/u, '')}
                       </span>
                     ) : null;
                   })}
@@ -6361,12 +6361,12 @@ export default function OperasyonMerkezi() {
                   </div>
                   {!k && depoMeta?.durum !== 'hub_yok' && (
                     <p style={{ fontSize: 12, color: '#b45309', margin: 0, padding: '8px 10px', background: 'rgba(232,160,61,.12)', borderRadius: 6, border: '1px solid rgba(232,160,61,.35)' }}>
-                      Hub’da bu şube eşleşmedi — operasyon dashboard’unda şube kartı yok veya isim filtresi eşleşmiyor.
+                      Hub'da bu şube eşleşmedi — operasyon dashboard'unda şube kartı yok veya isim filtresi eşleşmiyor.
                     </p>
                   )}
                   {depoMeta?.durum === 'hub_yok' && (
                     <p style={{ fontSize: 12, color: '#b45309', margin: 0, padding: '8px 10px', background: 'rgba(232,160,61,.1)', borderRadius: 6 }}>
-                      <strong>Depo verisi yok:</strong> şube ID üretilemedi; istek gönderilmedi. Hub’da aktif şube kartı ve <strong>sube_id</strong> eşleşmesi gerekir.
+                      <strong>Depo verisi yok:</strong> şube ID üretilemedi; istek gönderilmedi. Hub'da aktif şube kartı ve <strong>sube_id</strong> eşleşmesi gerekir.
                     </p>
                   )}
                   {depoMeta?.durum === 'api_hata' && (
@@ -7621,7 +7621,7 @@ export default function OperasyonMerkezi() {
             <strong style={{ color: 'var(--text2)' }}>URUN_AC</strong> kaydı olarak düşer (hangi şube, hangi saat, kim, hangi kalemler ve adetler).
             Bu ekran o kayıtları <strong style={{ color: 'var(--text2)' }}>gün bazında</strong> özetler; merkez yoğunluğu ve şube bazlı tekrarları izlemek içindir.
             Liste <strong style={{ color: 'var(--text2)' }}>defter satırının ``tarih``</strong> alanına göre filtrelenir (takvim günü); gece 00:00–02:00 bandındaki işlemler bazen ertesi takvim gününe yazılabilir — yoğun analizde iş günü ile çapraz kontrol edin.
-            API güvenlik için günde en fazla <strong style={{ color: 'var(--text2)' }}>80 satır</strong> döndürür — yoğun günlerde satır sayısı 80’e dayanıyorsa aşağıdaki liste eksik kalabilir, o gün satırı sarı ile uyarılır.
+            API güvenlik için günde en fazla <strong style={{ color: 'var(--text2)' }}>80 satır</strong> döndürür — yoğun günlerde satır sayısı 80'e dayanıyorsa aşağıdaki liste eksik kalabilir, o gün satırı sarı ile uyarılır.
           </div>
 
           <div>
@@ -8194,7 +8194,7 @@ export default function OperasyonMerkezi() {
               )}
             </div>
             <p style={{ margin: 0, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
-              Varsayılan tarih <strong>iş günü</strong> (İstanbul’da gece 02:00’ye kadar önceki takvim günü). Kapanış son teslim: ertesi gün{' '}
+              Varsayılan tarih <strong>iş günü</strong> (İstanbul'da gece 02:00'ye kadar önceki takvim günü). Kapanış son teslim: ertesi gün{' '}
               {Number(kt?.kapanis_son_teslim_saat) === 2 || kt?.kapanis_son_teslim_saat == null ? '02:00' : `${String(kt?.kapanis_son_teslim_saat)}:00`}.
               {kt?.takvim_tr && kt?.is_gunu_tr && String(kt.takvim_tr) !== String(kt.is_gunu_tr) ? (
                 <span> Takvim: <span className="mono">{kt.takvim_tr}</span> · İş günü: <span className="mono">{kt.is_gunu_tr}</span></span>
@@ -9747,7 +9747,7 @@ export default function OperasyonMerkezi() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
           <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
             Bu sekmede <strong>sipariş kataloğu</strong> yönetilir (kategori, ürün ekleme ve aktif / pasif).
-            Şubelerden gelen bekleyen siparişleri işlemek için hub’daki <strong>Şube sipariş</strong> kartına veya{' '}
+            Şubelerden gelen bekleyen siparişleri işlemek için hub'daki <strong>Şube sipariş</strong> kartına veya{' '}
             <strong>Stok Disiplin › Sipariş kuyruğu</strong> ekranına gidin; sevkiyat ve depo yönlendirme orada yapılır.
           </p>
 
