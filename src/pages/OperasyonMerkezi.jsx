@@ -5188,11 +5188,16 @@ export default function OperasyonMerkezi() {
         <div style={{ marginTop: 4 }}>
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            gap: 12, marginBottom: 16, flexWrap: 'wrap',
-            borderBottom: `2px solid ${OPS_HUB_RENK[aktifSekme] || 'var(--border)'}`,
-            paddingBottom: 12,
+            gap: 12, marginBottom: 8, flexWrap: 'wrap',
+            borderBottom: `2px solid ${(aktifModul ? MODULLER.find((m) => m.id === aktifModul)?.renk : null) || OPS_HUB_RENK[aktifSekme] || 'var(--border)'}`,
+            paddingBottom: 10,
           }}>
             <div style={{ flex: 1, minWidth: 0 }}>
+              {aktifModul && (
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3, letterSpacing: '0.01em' }}>
+                  {MODULLER.find((m) => m.id === aktifModul)?.label}
+                </div>
+              )}
               <h3 style={{ margin: 0, fontSize: 17, color: 'var(--text)' }}>
                 {UST_SEKMELER.find((x) => x.id === aktifSekme)?.label || aktifSekme}
               </h3>
@@ -5284,9 +5289,31 @@ export default function OperasyonMerkezi() {
               </button>
             </div>
           </div>
-          <div style={{ paddingTop: 4 }}>
+          {(() => {
+            const _modul = aktifModul ? MODULLER.find((m) => m.id === aktifModul) : null;
+            if (!_modul || _modul.tabs.length <= 1) return null;
+            return (
+              <div style={{ display: 'flex', gap: 6, marginTop: 10, marginBottom: 4, flexWrap: 'wrap', overflowX: 'auto', position: 'sticky', top: 0, zIndex: 3, background: 'var(--bg)', paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>
+                {_modul.tabs.map((tabId) => {
+                  const sekme = UST_SEKMELER.find((s) => s.id === tabId);
+                  return sekme ? (
+                    <button
+                      key={tabId}
+                      type="button"
+                      className={`tab-pill ${aktifSekme === tabId ? 'active' : ''}`}
+                      style={{ whiteSpace: 'nowrap', fontSize: 12 }}
+                      onClick={() => acModulTab(tabId)}
+                    >
+                      {sekme.label}
+                    </button>
+                  ) : null;
+                })}
+              </div>
+            );
+          })()}
+          <div style={{ paddingTop: 8 }}>
               {(OPS_MODUL_BOLUM[aktifSekme] || []).length > 1 && (
-                <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap', position: 'sticky', top: 0, zIndex: 2, background: 'var(--bg)', paddingBottom: 6 }}>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap', position: 'sticky', top: 44, zIndex: 2, background: 'var(--bg)', paddingBottom: 6 }}>
                   {(OPS_MODUL_BOLUM[aktifSekme] || []).map((b) => (
                     <button
                       key={b.id}
