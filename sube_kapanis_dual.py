@@ -63,11 +63,11 @@ def vardiya_devri_tamamlandi_mi(cur, sube_id: str) -> bool:
     cur.execute(
         """
         SELECT 1 FROM kapanis_kayit
-        WHERE sube_id=%s AND tarih=CURRENT_DATE
+        WHERE sube_id=%s AND tarih=%s
           AND olay = 'vardiya_sabah_aksam_devri'
           AND durum = 'tamamlandi'
         """,
-        (sube_id,),
+        (sube_id, is_gunu_tr()),
     )
     return cur.fetchone() is not None
 
@@ -82,10 +82,10 @@ def _bugun_acilis_kayitli_sabah_personel_id(cur, sube_id: str) -> Optional[str]:
     cur.execute(
         """
         SELECT personel_id FROM sube_acilis
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='acildi' AND personel_id IS NOT NULL
+        WHERE sube_id=%s AND tarih=%s AND durum='acildi' AND personel_id IS NOT NULL
         LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, is_gunu_tr()),
     )
     r = cur.fetchone()
     return str(r["personel_id"]) if r and r.get("personel_id") else None
@@ -95,11 +95,11 @@ def vardiya_devir_panel_blob(cur, sube_id: str) -> Dict[str, Any]:
     cur.execute(
         """
         SELECT * FROM kapanis_kayit
-        WHERE sube_id=%s AND tarih=CURRENT_DATE
+        WHERE sube_id=%s AND tarih=%s
           AND olay = 'vardiya_sabah_aksam_devri'
         LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, is_gunu_tr()),
     )
     kk = cur.fetchone()
     row = dict(kk) if kk else None
@@ -419,11 +419,11 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
         cur.execute(
             """
             SELECT id FROM sube_operasyon_event
-            WHERE id=%s AND sube_id=%s AND tarih=CURRENT_DATE AND tip='KAPANIS'
+            WHERE id=%s AND sube_id=%s AND tarih=%s AND tip='KAPANIS'
               AND durum IN ('bekliyor','gecikti')
             LIMIT 1
             """,
-            (eid, sube_id),
+            (eid, sube_id, is_gunu_tr()),
         )
         if not cur.fetchone():
             raise HTTPException(
@@ -444,9 +444,9 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
         cur.execute(
             """
             SELECT id FROM kapanis_kayit
-            WHERE sube_id=%s AND tarih=CURRENT_DATE AND olay='vardiya_sabah_aksam_devri'
+            WHERE sube_id=%s AND tarih=%s AND olay='vardiya_sabah_aksam_devri'
             """,
-            (sube_id,),
+            (sube_id, is_gunu_tr()),
         )
         if cur.fetchone():
             raise HTTPException(409, "Bugün için vardiya devri kaydı zaten başlatılmış")
@@ -475,11 +475,12 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
                  kapanisci_id, kapanisci_onay_ts, durum,
                  operasyon_event_id, x_raporu_onay, ciro_gonderim_onay,
                  sabahci_personel_id, aksamci_personel_id, meta)
-            VALUES (%s, %s, CURRENT_DATE, 'vardiya_sabah_aksam_devri', %s, %s, %s, %s, %s, NULL, %s, 'acilis_bekliyor', %s, %s, %s, %s, NULL, %s::jsonb)
+            VALUES (%s, %s, %s, 'vardiya_sabah_aksam_devri', %s, %s, %s, %s, %s, NULL, %s, 'acilis_bekliyor', %s, %s, %s, %s, NULL, %s::jsonb)
             """,
             (
                 kid,
                 sube_id,
+                is_gunu_tr(),
                 body.nakit,
                 body.pos,
                 body.online,
@@ -527,10 +528,10 @@ def vardiya_devri_adim2(sube_id: str, body: VardiyaDevirAdim2):
         cur.execute(
             """
             SELECT * FROM kapanis_kayit
-            WHERE sube_id=%s AND tarih=CURRENT_DATE AND olay='vardiya_sabah_aksam_devri'
+            WHERE sube_id=%s AND tarih=%s AND olay='vardiya_sabah_aksam_devri'
             FOR UPDATE
             """,
-            (sube_id,),
+            (sube_id, is_gunu_tr()),
         )
         kk = cur.fetchone()
         if not kk:
