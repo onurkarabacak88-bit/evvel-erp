@@ -955,7 +955,7 @@ function SubeKart({ k, onDetay, personelRisk }) {
     ? displayEv.filter(e => e.tip !== 'ACILIS')
     : displayEv;
 
-  const uyarilar = (k.uyarilar || []).slice(0, 2);
+  const uyarilar = k.uyarilar || [];
   const g = k.guvenlik || {};
   const ad = g.alarm_durum;
 
@@ -1064,49 +1064,39 @@ function SubeKart({ k, onDetay, personelRisk }) {
         </div>
       )}
 
-      {/* Vardiya */}
-      <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-        Vardiya devri:{' '}
+      {/* Vardiya + özet bayraklar — tek satır */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 12 }}>
         <span style={{ color: k.vardiya_devri_tamam ? 'var(--green)' : k.vardiya_devri_basladi ? 'var(--yellow)' : 'var(--text3)' }}>
-          {k.vardiya_devri_tamam ? 'Tamamlandı' : k.vardiya_devri_basladi ? 'Devam ediyor' : '—'}
+          {k.vardiya_devri_tamam ? '✓ Vardiya' : k.vardiya_devri_basladi ? '⏳ Vardiya' : '— Vardiya'}
         </span>
         {(o.alarm_sayisi_toplam || 0) > 0 && (
-          <>{' · '}Alarm: <span style={{ color: 'var(--yellow)' }}>{o.alarm_sayisi_toplam}</span></>
+          <span className="badge badge-red" title="Güvenlik alarmı — detay için tıkla">
+            🔐 {o.alarm_sayisi_toplam} güvenlik
+          </span>
+        )}
+        {uyarilar.filter(u => u.seviye === 'kritik').length > 0 && (
+          <span
+            className="badge badge-red"
+            title={uyarilar.filter(u => u.seviye === 'kritik').map(u => temizMesaj(u.mesaj)).join('\n')}
+          >
+            🚨 {uyarilar.filter(u => u.seviye === 'kritik').length} kritik
+          </span>
+        )}
+        {uyarilar.filter(u => u.seviye !== 'kritik').length > 0 && (
+          <span
+            className="badge badge-yellow"
+            title={uyarilar.filter(u => u.seviye !== 'kritik').map(u => temizMesaj(u.mesaj)).join('\n')}
+          >
+            ⚠️ {uyarilar.filter(u => u.seviye !== 'kritik').length} uyarı
+          </span>
+        )}
+        {b.guvenlik_alarm && !ad && (
+          <span className="badge badge-red" title={g.mesaj || 'Güvenlik alarmı aktif'}>🔐 Alarm aktif</span>
+        )}
+        {ad && (
+          <span className="badge badge-gray" title={`Son işlem: ${ad.durum}`}>🔐 {ad.durum === 'susturuldu' ? 'Susturuldu' : 'Okundu'}</span>
         )}
       </div>
-
-      {(g.alarm || ad) && (
-        <div style={{ fontSize: 11, color: 'var(--text3)', padding: '6px 8px', background: 'var(--bg3)', borderRadius: 6 }}>
-          {g.mesaj && <div style={{ color: b.guvenlik_alarm ? 'var(--red)' : 'var(--text3)', marginBottom: 4 }}>{g.mesaj}</div>}
-          {ad && (
-            <div>
-              Son işlem: <strong>{ad.durum}</strong>
-              {ad.islem_ts && <span className="mono" style={{ marginLeft: 6 }}>{String(ad.islem_ts).replace('T', ' ').slice(0, 19)}</span>}
-              {ad.sustur_bitis_ts && (
-                <span style={{ display: 'block', marginTop: 2 }}>Susturma bitiş: {String(ad.sustur_bitis_ts).replace('T', ' ').slice(0, 19)}</span>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Uyarılar */}
-      {uyarilar.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {uyarilar.map((u, i) => (
-            <div key={i} style={{
-              fontSize: 11,
-              padding: '4px 8px',
-              borderRadius: 5,
-              background: u.seviye === 'kritik' ? 'rgba(224,92,92,.1)' : 'rgba(232,197,71,.1)',
-              color: u.seviye === 'kritik' ? 'var(--red)' : 'var(--yellow)',
-              borderLeft: `2px solid ${u.seviye === 'kritik' ? 'var(--red)' : 'var(--yellow)'}`,
-            }}>
-              {temizMesaj(u.mesaj).slice(0, 90)}
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
