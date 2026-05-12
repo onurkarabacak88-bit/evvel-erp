@@ -929,6 +929,11 @@ function operasyonTipOzeti(kart, tip) {
   return { text: '—', badge: 'badge-gray' };
 }
 
+const OPS_TIP_IKON  = { ACILIS: '🌅', KONTROL: '🔍', KAPANIS: '🌙', CIKIS: '🚪' };
+const OPS_TIP_LABEL = { ACILIS: 'Açılış', KONTROL: 'Kontrol', KAPANIS: 'Kapanış', CIKIS: 'Çıkış' };
+const insancaDk = dk => { const sa = Math.floor(dk / 60); const kdk = dk % 60; return sa > 0 ? (kdk > 0 ? `${sa}sa ${kdk}dk` : `${sa}sa`) : `${dk}dk`; };
+const temizMesaj = m => (m || '').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '').replace(/\{[^}]*\}/g, '').replace(/\s{2,}/g, ' ').trim();
+
 function SubeKart({ k, onDetay, personelRisk }) {
   const b   = k.bayraklar || {};
   const o   = k.ozet || {};
@@ -949,10 +954,6 @@ function SubeKart({ k, onDetay, personelRisk }) {
   else if (b.geciken) borderColor = '#f08040';
 
   // Operasyon olaylarının durumu
-  const tipIkon  = { ACILIS: '🌅', KONTROL: '🔍', KAPANIS: '🌙', CIKIS: '🚪' };
-  const tipLabel = { ACILIS: 'Açılış', KONTROL: 'Kontrol', KAPANIS: 'Kapanış', CIKIS: 'Çıkış' };
-  const insancaDk = dk => { const sa = Math.floor(dk / 60); const kdk = dk % 60; return sa > 0 ? (kdk > 0 ? `${sa}sa ${kdk}dk` : `${sa}sa`) : `${dk}dk`; };
-  const temizMesaj = m => (m || '').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '').replace(/\{[^}]*\}/g, '').replace(/\s{2,}/g, ' ').trim();
   const allEv = op.events || [];
   const displayEv = allEv.slice(0, 5);
   const acilisEv = allEv.filter(e => e.tip === 'ACILIS');
@@ -985,7 +986,7 @@ function SubeKart({ k, onDetay, personelRisk }) {
     const renk = e.durum === 'tamamlandi' ? 'var(--green)' : e.durum === 'gecikti' ? 'var(--red)' : 'var(--text3)';
     return (
       <span key={e.id} style={{ fontSize: 11, color: renk, display: 'flex', alignItems: 'center', gap: 3 }}>
-        {tipIkon[e.tip] || '○'} {tipLabel[e.tip] || e.tip}
+        {OPS_TIP_IKON[e.tip] || '○'} {OPS_TIP_LABEL[e.tip] || e.tip}
         {e.durum === 'gecikti' && op.aktif_gecikme_dk != null && e.id === aktif?.id
           ? ` (${insancaDk(op.aktif_gecikme_dk)})` : ''}
       </span>
@@ -1309,9 +1310,9 @@ function DetayModal({ kart, onKapat, filtre, onYenileDetay }) {
                   const saat = (e.sistem_slot_ts || '').substring(11, 16);
                   return (
                     <div key={e.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 10px', background: 'var(--bg3)', borderRadius: 6, fontSize: 13 }}>
-                      <span>{e.tip} <span style={{ color: 'var(--text3)', fontSize: 11 }}>({saat})</span></span>
+                      <span>{OPS_TIP_IKON[e.tip] || '○'} {OPS_TIP_LABEL[e.tip] || e.tip} <span style={{ color: 'var(--text3)', fontSize: 11 }}>({saat})</span></span>
                       <span style={{ color: renk, fontWeight: 500 }}>
-                        {e.durum === 'tamamlandi' ? 'Tamamlandı' : e.durum === 'gecikti' ? `Gecikti${op.aktif_gecikme_dk ? ` · ${op.aktif_gecikme_dk}dk` : ''}` : 'Bekliyor'}
+                        {e.durum === 'tamamlandi' ? 'Tamamlandı' : e.durum === 'gecikti' ? `Gecikti${op.aktif_gecikme_dk ? ` · ${insancaDk(op.aktif_gecikme_dk)}` : ''}` : 'Bekliyor'}
                       </span>
                     </div>
                   );
@@ -1323,11 +1324,11 @@ function DetayModal({ kart, onKapat, filtre, onYenileDetay }) {
           {/* Ozet */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12 }}>
             {[
-              ['Açılış op', o.acilis_tamam ? '✓ Tamamlandı' : o.acilis_gecikti ? '! Gecikti' : '—'],
-              ['Kapanış op', o.kapanis_tamam ? '✓ Tamamlandı' : o.kapanis_gecikti ? '! Gecikti' : '—'],
-              ['Kontrol bekleyen', o.kontrol_bekleyen ?? '—'],
+              ['Açılış op', o.acilis_tamam ? '✓ Tamamlandı' : o.acilis_gecikti ? '! Gecikti' : 'Henüz başlamadı'],
+              ['Kapanış op', o.kapanis_tamam ? '✓ Tamamlandı' : o.kapanis_gecikti ? '! Gecikti' : 'Henüz başlamadı'],
+              ['Kontrol bekleyen', o.kontrol_bekleyen ?? 'Yok'],
               ['Alarm sayısı', o.alarm_sayisi_toplam ?? 0],
-              ['Vardiya devri', kart.vardiya_devri_tamam ? 'Tamamlandı' : kart.vardiya_devri_basladi ? 'Devam ediyor' : '—'],
+              ['Vardiya devri', kart.vardiya_devri_tamam ? 'Tamamlandı' : kart.vardiya_devri_basladi ? 'Devam ediyor' : 'Başlamadı'],
             ].map(([label, val]) => (
               <div key={label} style={{ background: 'var(--bg3)', borderRadius: 6, padding: '8px 10px' }}>
                 <div style={{ color: 'var(--text3)', marginBottom: 3 }}>{label}</div>
@@ -1356,7 +1357,7 @@ function DetayModal({ kart, onKapat, filtre, onYenileDetay }) {
                   alignItems: 'center',
                   gap: 8,
                 }}>
-                  <span>{u.mesaj}</span>
+                  <span>{temizMesaj(u.mesaj)}</span>
                   {u.fark_tl != null && (
                     <span style={{ whiteSpace: 'nowrap', color: '#fca5a5', fontWeight: 700 }}>
                       +{Number(u.fark_tl).toFixed(0)} adet
@@ -1373,7 +1374,7 @@ function DetayModal({ kart, onKapat, filtre, onYenileDetay }) {
               <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Uyarılar</div>
               {(kart.uyarilar || []).filter(u => u.tip !== 'URUN_AC_UYUMSUZLUK').map((u, i) => (
                 <div key={i} className={`alert-box ${u.seviye === 'kritik' ? 'red' : 'yellow'}`} style={{ marginBottom: 6 }}>
-                  <strong>{u.seviye?.toUpperCase()}</strong> {u.mesaj}
+                  <strong>{u.seviye?.toUpperCase()}</strong> {temizMesaj(u.mesaj)}
                   {u.fark_tl != null && <span style={{ marginLeft: 6, opacity: .7 }}>Fark: {u.fark_tl?.toFixed(0)} ₺</span>}
                 </div>
               ))}
@@ -5551,9 +5552,9 @@ export default function OperasyonMerkezi() {
             {yukleniyor ? (
               <div className="loading" style={{ marginBottom: 16 }}><div className="spinner" />Yükleniyor…</div>
             ) : kartlar.length === 0 ? (
-              <div className="empty"><div className="icon">✅</div><p>Bu filtrede şube yok</p></div>
+              <div className="empty"><div className="icon">✅</div><p>Seçili filtrede gösterilecek şube bulunamadı</p></div>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(280px, 100%), 1fr))', gap: 12 }}>
                 {kartlar.map((k) => (
                   <SubeKart key={k.sube_id || k.sube_adi} k={k} onDetay={setDetay} personelRisk={riskliPersonelSubeMap[k.sube_id]} />
                 ))}
