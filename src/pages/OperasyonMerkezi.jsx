@@ -331,6 +331,7 @@ const UST_SEKMELER = [
   { id: 'mesaj', label: '📩 Merkez Mesajı' },
   { id: 'puan', label: '⭐ Personel Puan' },
   { id: 'stok-disiplin', label: '🔴 Stok Disiplin' },
+  { id: 'siparis-gecmis', label: '📋 Sipariş Geçmişi' },
 ];
 
 /** Modül penceresi içi başlık sekmeleri (CFO kart drill-down benzeri) */
@@ -376,6 +377,7 @@ const OPS_MODUL_BOLUM = {
   mesaj: [{ id: 'icerik', label: 'Mesajlar' }],
   puan: [{ id: 'icerik', label: 'Puan listesi' }],
   'stok-disiplin': [{ id: 'icerik', label: 'Disiplin Merkezi' }],
+  'siparis-gecmis': [{ id: 'icerik', label: 'Geçmiş' }],
 };
 
 const OPS_HUB_RENK = {
@@ -408,6 +410,7 @@ const OPS_HUB_RENK = {
   mesaj: '#8899aa',
   puan: '#ffc14d',
   'stok-disiplin': '#e85d5d',
+  'siparis-gecmis': '#94a3b8',
 };
 
 const ONAY_TURU_LABEL = {
@@ -1409,6 +1412,369 @@ function DetayModal({ kart, onKapat, filtre, onYenileDetay }) {
           <button className="btn btn-secondary" onClick={onKapat}>Kapat</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+const DURUM_LABEL = {
+  bekliyor:       { label: 'Bekliyor',       renk: '#4a9eff', icon: '🕐' },
+  teslim_edildi:  { label: 'Teslim Edildi',  renk: '#22c55e', icon: '✅' },
+  iptal:          { label: 'İptal',          renk: '#94a3b8', icon: '✕' },
+  gonderilmedi:   { label: 'Gönderilmedi',   renk: '#f97316', icon: '⚠️' },
+};
+
+function gorececTarih(tarihStr) {
+  if (!tarihStr) return '—';
+  const tarih = new Date(tarihStr);
+  const bugun = new Date();
+  bugun.setHours(0, 0, 0, 0);
+  const fark = Math.round((bugun - new Date(String(tarihStr).slice(0, 10))) / 86400000);
+  if (fark === 0) return 'Bugün';
+  if (fark === 1) return 'Dün';
+  if (fark < 7) return `${fark} gün önce`;
+  if (fark < 30) return `${Math.round(fark / 7)} hafta önce`;
+  return `${Math.round(fark / 30)} ay önce`;
+}
+
+function kalemOzet(kalemler) {
+  if (!Array.isArray(kalemler) || !kalemler.length) return null;
+  return kalemler
+    .filter((k) => k && parseInt(k.adet || 0) > 0)
+    .slice(0, 3)
+    .map((k) => `${k.urun_adi || k.kalem_kodu || '?'}: ${k.adet}`)
+    .join(' · ');
+}
+
+function SiparisGecmisPanel() {
+  const [veri, setVeri]               = useState(null);
+  const [yukleniyor, setYukleniyor]   = useState(false);
+  const [gun, setGun]                 = useState(90);
+  const [durumFiltre, setDurumFiltre] = useState('');
+  const [subeFiltre, setSubeFiltre]   = useState('');
+  const [acikSatir, setAcikSatir]     = useState(null);
+  const [yenidenAcBusy, setYenidenAcBusy] = useState(null);
+
+  const yukle = useCallback(async (opts = {}) => {
+    const g = opts.gun      ?? gun;
+    const d = opts.durum    ?? durumFiltre;
+    const s = opts.sube     ?? subeFiltre;
+    setYukleniyor(true);
+    try {
+      const q = new URLSearchParams({ gun: g });
+      if (d) q.set('durum', d);
+      if (s.trim()) q.set('sube_arama', s.trim());
+      const r = await api(`/ops/siparis/gecmis?${q}`);
+      setVeri(r);
+    } catch (e) {
+      alert(e.message || 'Geçmiş yüklenemedi');
+    } finally {
+      setYukleniyor(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => { yukle({}); }, []); // eslint-disable-line
+
+  const getir = () => { setAcikSatir(null); yukle({ gun, durum: durumFiltre, sube: subeFiltre }); };
+
+  const yenidenAc = useCallback(async (talep_id) => {
+    if (!window.confirm('Bu siparişi tekrar kuyruğa almak istediğinizden emin misiniz?')) return;
+    setYenidenAcBusy(talep_id);
+    try {
+      await api(`/ops/siparis/gecmis/${encodeURIComponent(talep_id)}/yeniden-ac`, { method: 'POST' });
+      setAcikSatir(null);
+      yukle({ gun, durum: durumFiltre, sube: subeFiltre });
+    } catch (e) {
+      alert(e.message || 'Yeniden açma başarısız');
+    } finally {
+      setYenidenAcBusy(null);
+    }
+  }, [yukle, gun, durumFiltre, subeFiltre]);
+
+  const ozet   = veri?.ozet   || {};
+  const satirlar = veri?.satirlar || [];
+  const toplamKayit = Object.values(ozet).reduce((a, b) => a + b, 0);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+      {/* ── ÜST BAR: arama + zaman ── */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 160, maxWidth: 300 }}>
+          <input
+            className="input"
+            style={{ width: '100%', paddingRight: 28 }}
+            placeholder="🔍  Şube adıyla ara…"
+            value={subeFiltre}
+            onChange={(e) => setSubeFiltre(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && getir()}
+          />
+          {subeFiltre && (
+            <button
+              type="button"
+              onClick={() => { setSubeFiltre(''); }}
+              style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 14, lineHeight: 1 }}
+            >✕</button>
+          )}
+        </div>
+
+        {/* Zaman seçici — pill butonlar */}
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {[7, 30, 90, 180, 365].map((g) => (
+            <button
+              key={g}
+              type="button"
+              className="btn btn-sm"
+              style={{
+                padding: '4px 10px',
+                fontSize: 12,
+                background: gun === g ? 'var(--accent)' : 'var(--bg3)',
+                color: gun === g ? '#fff' : 'var(--text2)',
+                border: 'none',
+                borderRadius: 20,
+                fontWeight: gun === g ? 700 : 400,
+              }}
+              onClick={() => setGun(g)}
+            >
+              {g < 30 ? `${g}g` : g < 365 ? `${Math.round(g/30)}ay` : '1yıl'}
+            </button>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          onClick={getir}
+          disabled={yukleniyor}
+          style={{ whiteSpace: 'nowrap' }}
+        >
+          {yukleniyor ? '…' : '↻ Getir'}
+        </button>
+      </div>
+
+      {/* ── DURUM FİLTRE PİLLLERI (Stripe / Linear tarzı) ── */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button
+          type="button"
+          className="btn btn-sm"
+          style={{
+            borderRadius: 20,
+            padding: '4px 12px',
+            fontSize: 12,
+            background: !durumFiltre ? 'var(--accent)' : 'var(--bg3)',
+            color: !durumFiltre ? '#fff' : 'var(--text2)',
+            border: 'none',
+            fontWeight: !durumFiltre ? 700 : 400,
+          }}
+          onClick={() => setDurumFiltre('')}
+        >
+          Tümü {toplamKayit > 0 && <span style={{ opacity: 0.7, fontSize: 11 }}>({toplamKayit})</span>}
+        </button>
+        {Object.entries(DURUM_LABEL).map(([k, v]) => {
+          const adet = ozet[k] || 0;
+          const aktif = durumFiltre === k;
+          return (
+            <button
+              key={k}
+              type="button"
+              className="btn btn-sm"
+              style={{
+                borderRadius: 20,
+                padding: '4px 12px',
+                fontSize: 12,
+                background: aktif ? v.renk : 'var(--bg3)',
+                color: aktif ? '#fff' : adet > 0 ? v.renk : 'var(--text3)',
+                border: aktif ? 'none' : `1px solid ${adet > 0 ? v.renk + '55' : 'transparent'}`,
+                fontWeight: aktif ? 700 : 400,
+                opacity: adet === 0 && !aktif ? 0.4 : 1,
+              }}
+              onClick={() => setDurumFiltre(aktif ? '' : k)}
+            >
+              {v.icon} {v.label} {adet > 0 && <span style={{ opacity: 0.8, fontSize: 11 }}>({adet})</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── YÜKLEME ── */}
+      {yukleniyor && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {[1,2,3].map((i) => (
+            <div key={i} style={{ height: 52, borderRadius: 10, background: 'var(--bg3)', opacity: 0.5, animation: 'pulse 1.5s ease-in-out infinite' }} />
+          ))}
+        </div>
+      )}
+
+      {/* ── BOŞ DURUM ── */}
+      {!yukleniyor && satirlar.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text3)' }}>
+          <div style={{ fontSize: 36, marginBottom: 8 }}>📭</div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
+            {durumFiltre ? `"${DURUM_LABEL[durumFiltre]?.label}" durumunda sipariş yok` : 'Bu aralıkta sipariş kaydı yok'}
+          </div>
+          {durumFiltre && (
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setDurumFiltre('')} style={{ marginTop: 8 }}>
+              Filtreyi kaldır
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── SİPARİŞ KARTI LİSTESİ (Shopify tarzı) ── */}
+      {!yukleniyor && satirlar.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {satirlar.map((s) => {
+            const dl = DURUM_LABEL[s.durum] || { label: s.durum, renk: 'var(--text3)', icon: '?' };
+            const acik = acikSatir === s.id;
+            const gonderilmedi = s.durum === 'gonderilmedi';
+            const oz = kalemOzet(s.kalemler);
+            return (
+              <div
+                key={s.id}
+                style={{
+                  borderRadius: 10,
+                  border: gonderilmedi
+                    ? '1px solid rgba(249,115,22,0.4)'
+                    : '1px solid var(--border)',
+                  background: gonderilmedi
+                    ? 'rgba(249,115,22,0.05)'
+                    : 'var(--bg2)',
+                  overflow: 'hidden',
+                  transition: 'box-shadow 0.15s',
+                }}
+              >
+                {/* Ana satır — tıklanabilir */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', cursor: 'pointer' }}
+                  onClick={() => setAcikSatir(acik ? null : s.id)}
+                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setAcikSatir(acik ? null : s.id)}
+                >
+                  {/* Sol: tarih + şube */}
+                  <div style={{ flex: '0 0 auto', minWidth: 80 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text1)' }}>
+                      {gorececTarih(s.tarih)}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                      {String(s.tarih || '').slice(0, 10)}
+                    </div>
+                  </div>
+
+                  {/* Orta: şube + özet */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {s.sube_adi || s.sube_id}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {oz || (s.kalem_adet_toplam ? `${s.kalem_adet_toplam} adet` : 'İçerik yok')}
+                      {s.personel_ad ? ` · ${s.personel_ad}` : ''}
+                    </div>
+                  </div>
+
+                  {/* Sağ: durum + adet */}
+                  <div style={{ flex: '0 0 auto', textAlign: 'right' }}>
+                    <span style={{
+                      display: 'inline-block',
+                      background: dl.renk + '22',
+                      color: dl.renk,
+                      border: `1px solid ${dl.renk}55`,
+                      borderRadius: 20,
+                      padding: '2px 10px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {dl.icon} {dl.label}
+                    </span>
+                    {s.kalem_adet_toplam > 0 && (
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 3 }}>
+                        {s.kalem_adet_toplam} adet
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ color: 'var(--text3)', fontSize: 12, flex: '0 0 16px' }}>
+                    {acik ? '▲' : '▼'}
+                  </div>
+                </div>
+
+                {/* Açılır detay */}
+                {acik && (
+                  <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px', background: 'var(--bg1)' }}>
+
+                    {/* Kalemler */}
+                    {Array.isArray(s.kalemler) && s.kalemler.filter((k) => parseInt(k?.adet || 0) > 0).length > 0 ? (
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          Sipariş İçeriği
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {s.kalemler
+                            .filter((k) => parseInt(k?.adet || 0) > 0)
+                            .map((k, i) => (
+                              <span key={i} style={{
+                                background: 'var(--bg3)',
+                                borderRadius: 6,
+                                padding: '3px 9px',
+                                fontSize: 12,
+                                color: 'var(--text2)',
+                              }}>
+                                {k.urun_adi || k.kalem_kodu || '?'}
+                                <span style={{ fontWeight: 700, color: 'var(--text1)', marginLeft: 5 }}>×{k.adet}</span>
+                              </span>
+                            ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>Kalem detayı yok.</p>
+                    )}
+
+                    {/* Not */}
+                    {s.not_aciklama && (
+                      <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text2)', background: 'var(--bg3)', borderRadius: 6, padding: '6px 10px' }}>
+                        💬 {s.not_aciklama}
+                      </div>
+                    )}
+
+                    {/* Gönderilmedi uyarısı + yeniden aç */}
+                    {gonderilmedi && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, padding: '8px 12px', background: 'rgba(249,115,22,0.1)', borderRadius: 8, border: '1px solid rgba(249,115,22,0.3)' }}>
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: '#f97316' }}>
+                            ⚠️ Bu sipariş 7 günde işleme alınmadığı için otomatik kapatıldı
+                          </div>
+                          {s.gonderilmedi_ts && (
+                            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                              Kapatılma: {String(s.gonderilmedi_ts).slice(0, 16).replace('T', ' ')}
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          style={{ background: '#f97316', color: '#fff', border: 'none', fontWeight: 700, borderRadius: 8, whiteSpace: 'nowrap' }}
+                          disabled={yenidenAcBusy === s.id}
+                          onClick={() => yenidenAc(s.id)}
+                        >
+                          {yenidenAcBusy === s.id ? 'İşleniyor…' : '↩ Yeniden Kuyruğa Al'}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Meta bilgi */}
+                    <div style={{ marginTop: 10, display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11, color: 'var(--text3)' }}>
+                      {s.personel_ad && <span>👤 {s.personel_ad}</span>}
+                      {s.olusturma && <span>🕐 {String(s.olusturma).slice(0, 16).replace('T', ' ')}</span>}
+                      {s.hedef_depo_sube_adi && <span>🏪 Depo: {s.hedef_depo_sube_adi}</span>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -4593,6 +4959,12 @@ export default function OperasyonMerkezi() {
                 sub = sa > 0
                   ? `${sa} okunmamış depo alarmı`
                   : 'Stok & sipariş disiplin merkezi';
+              } else if (s.id === 'siparis-gecmis') {
+                const gnd = opsOzet?.siparis_gonderilmedi_toplam || 0;
+                val = gnd > 0 ? gnd : null;
+                sub = gnd > 0
+                  ? `${gnd} sipariş gönderilemedi — geçmişe bak`
+                  : 'Tüm siparişler — bekliyor, teslim, iptal, gönderilmedi';
               } else if (s.id === 'toptanci-siparisleri') {
                 val = Array.isArray(toptanciSiparisListe?.satirlar) ? toptanciSiparisListe.satirlar.length : 0;
                 sub = 'Kategori bazlı ürün listesi';
@@ -10409,6 +10781,11 @@ export default function OperasyonMerkezi() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ═══════════════ SİPARİŞ GEÇMİŞİ PANELİ ═══════════════ */}
+      {aktifSekme === 'siparis-gecmis' && (
+        <SiparisGecmisPanel />
       )}
 
       {/* ═══════════════ STOK DİSİPLİN PANELİ ═══════════════ */}

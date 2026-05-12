@@ -23,10 +23,3 @@ Bu faz görünürlük katmanıdır; karar/aksiyon (bildirim, webhook, ceza polit
 bir sonraki faza bırakılabilir.
 """
 
-from __future__ import annotations
-
-FAZ5_DEPLOY_PYTHON: tuple[str, ...] = (
-    "database.py",
-    "personel_panel_auth.py",
-    "operasyon_merkez_api.py",
-)

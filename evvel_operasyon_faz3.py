@@ -28,17 +28,3 @@ Deploy: ``evvel_merkez_guard.py``, ``sube_panel.py``, ``sube_kapanis_dual.py``,
 Faz 4: ``evvel_operasyon_faz4.py`` — append-only tetikleyici, PIN kilidi, CSV export.
 """
 
-from __future__ import annotations
-
-FAZ3_DEPLOY_PYTHON: tuple[str, ...] = (
-    "evvel_merkez_guard.py",
-    "main.py",
-    "sube_panel.py",
-    "sube_kapanis_dual.py",
-    "operasyon_merkez_api.py",
-)
-
-FAZ3_DEPLOY_FRONTEND: tuple[str, ...] = (
-    "src/utils/api.js",
-    "src/pages/SubePanelPinleri.jsx",
-)

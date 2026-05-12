@@ -26,10 +26,3 @@ Deploy: ``database.py``, ``personel_panel_auth.py``, ``operasyon_merkez_api.py``
 Faz 5: ``evvel_operasyon_faz5.py`` — güvenlik olay listesi/özeti.
 """
 
-from __future__ import annotations
-
-FAZ4_DEPLOY_PYTHON: tuple[str, ...] = (
-    "database.py",
-    "personel_panel_auth.py",
-    "operasyon_merkez_api.py",
-)

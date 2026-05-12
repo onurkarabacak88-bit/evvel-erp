@@ -31,18 +31,3 @@ Konum özeti
 Faz 2: ``evvel_operasyon_faz2.py`` — şube bazlı zincir + merkez yönetici onayı.
 """
 
-from __future__ import annotations
-
-# Faz 0 ile aynı deploy seti; ek olarak env yukarıda.
-FAZ1_DEPLOY_PYTHON: tuple[str, ...] = (
-    "main.py",
-    "database.py",
-    "operasyon_defter.py",
-    "sube_panel.py",
-    "sube_operasyon.py",
-    "sube_kapanis_dual.py",
-    "personel_panel_auth.py",
-    "operasyon_merkez_api.py",
-)
-
-FAZ1_DEPLOY_STATIC: tuple[str, ...] = ("static/sube_panel.html",)

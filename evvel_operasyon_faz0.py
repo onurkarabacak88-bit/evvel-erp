@@ -29,16 +29,3 @@ Faz 1: ``evvel_operasyon_faz1.py`` — satır ``imza_hmac``. Faz 2:
 Yaz-yükle deploy paketi (tipik)
 --------------------------------
 """
-from __future__ import annotations
-
-FAZ0_DEPLOY_PYTHON: tuple[str, ...] = (
-    "main.py",
-    "sube_panel.py",
-    "sube_operasyon.py",
-    "sube_kapanis_dual.py",
-    "operasyon_defter.py",
-    "personel_panel_auth.py",
-    "operasyon_merkez_api.py",
-)
-
-FAZ0_DEPLOY_STATIC: tuple[str, ...] = ("static/sube_panel.html",)

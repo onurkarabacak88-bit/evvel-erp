@@ -20,9 +20,3 @@ Davranış
 - İşlem saati string olarak merkez panel çıktısına taşınır.
 """
 
-from __future__ import annotations
-
-FAZ7_DEPLOY_PYTHON: tuple[str, ...] = (
-    "database.py",
-    "operasyon_merkez_api.py",
-)

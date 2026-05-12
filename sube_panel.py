@@ -1039,7 +1039,7 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
 
             from operasyon_defter import operasyon_defter_ekle
             from operasyon_kurallar import (
-                beklened_dunku_kapanis_kasa, beklenen_dunku_kapanis_kasa,
+                beklenen_dunku_kapanis_kasa,
                 beklenen_dunku_kapanis_stok,
                 tolerans_seviyesi, stok_tolerans_seviyesi,
             )

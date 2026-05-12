@@ -35,17 +35,3 @@ onay kuralı (``yetkili_panel_kullanici_id`` + ``yetkili_pin``) zorunlu.
 Faz 3: ``evvel_operasyon_faz3.py`` — ``X-Evvel-Merkez-Key`` + ``/defter-guvenlik-ozet``.
 """
 
-from __future__ import annotations
-
-FAZ2_DEPLOY_PYTHON: tuple[str, ...] = (
-    "main.py",
-    "database.py",
-    "operasyon_defter.py",
-    "sube_panel.py",
-    "sube_kapanis_dual.py",
-    "operasyon_merkez_api.py",
-    "personel_panel_auth.py",
-)
-
-FAZ2_DEPLOY_STATIC: tuple[str, ...] = ()
-FAZ2_DEPLOY_FRONTEND: tuple[str, ...] = ("src/pages/SubePanelPinleri.jsx",)

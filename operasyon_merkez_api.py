@@ -87,6 +87,25 @@ logger = logging.getLogger(__name__)
 OPS_STOK_DISIPLIN_BEKLEYEN_GUN = 7
 
 
+def _siparis_gonderilmedi_kapat(cur: Any) -> int:
+    """
+    7 günü geçmiş bekleyen siparişleri 'gonderilmedi' olarak kapatır.
+    hub-ozet her çağrıldığında çalışır (lazy kapatma).
+    Döner: kapatılan sipariş sayısı.
+    """
+    cur.execute(
+        """
+        UPDATE siparis_talep
+        SET durum          = 'gonderilmedi',
+            gonderilmedi_ts = NOW()
+        WHERE durum = 'bekliyor'
+          AND tarih < CURRENT_DATE - (%s * INTERVAL '1 day')
+        """,
+        (OPS_STOK_DISIPLIN_BEKLEYEN_GUN,),
+    )
+    return cur.rowcount
+
+
 class OpsGiderFisKontrolBody(BaseModel):
     gider_id: str
     durum: str  # geldi | gelmedi | muaf
@@ -4642,6 +4661,12 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
     except Exception:
         stok_alarm_bekleyen = 0
 
+    try:
+        cur.execute("SELECT COUNT(*) FROM siparis_talep WHERE durum = 'gonderilmedi'")
+        siparis_gonderilmedi_toplam = _fetch_int_count(cur)
+    except Exception:
+        siparis_gonderilmedi_toplam = 0
+
     return {
         "aktif_sube": aktif_sube,
         # Hub kartı, stok disiplin kuyruğuyla aynı kümeyi gösterir:
@@ -4665,6 +4690,7 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
         "siparis_paralel_sube_sayisi": siparis_paralel_sube_sayisi,
         "siparis_paralel_fazla_talep": siparis_paralel_fazla_talep,
         "stok_alarm_bekleyen": stok_alarm_bekleyen,
+        "siparis_gonderilmedi_toplam": siparis_gonderilmedi_toplam,
     }
 
 
@@ -4691,6 +4717,7 @@ def _hub_ozet_fallback_panel() -> Dict[str, Any]:
         "siparis_paralel_sube_sayisi": 0,
         "siparis_paralel_fazla_talep": 0,
         "stok_alarm_bekleyen": 0,
+        "siparis_gonderilmedi_toplam": 0,
     }
 
 
@@ -7258,6 +7285,14 @@ def ops_hub_ozet(skip_alarms: bool = Query(False, description="True ise yalnızc
     try:
         with db() as (conn, cur):
             try:
+                _siparis_gonderilmedi_kapat(cur)
+            except Exception:
+                log.exception("hub-ozet: gonderilmedi_kapat")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            try:
                 oz = _ops_panel_ozet_from_cur(cur, bugun)
             except Exception:
                 log.exception("hub-ozet: panel_ozet_from_cur")
@@ -7286,6 +7321,140 @@ def ops_hub_ozet(skip_alarms: bool = Query(False, description="True ise yalnızc
         out = _hub_ozet_fallback_panel()
         out["alarm_satirlari"] = []
         return out
+
+
+@router.get("/siparis/gecmis")
+def ops_siparis_gecmis(
+    gun: int = Query(90, ge=1, le=730, description="Kaç gün geriye"),
+    sube_arama: Optional[str] = Query(None, description="Şube adı veya ID (kısmi eşleşme)"),
+    durum: Optional[str] = Query(None, description="bekliyor | teslim_edildi | iptal | gonderilmedi"),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    """
+    Tüm sipariş geçmişi — bekliyor, teslim edildi, iptal ve gönderilmedi dahil.
+    sube_arama: şube adı (kısmi) veya tam sube_id ile çalışır.
+    ozet: seçili şube + gün filtresi uygulanır, durum filtresi uygulanmaz (tüm durumları göster).
+    """
+    arama = (sube_arama or "").strip() or None
+    dur = (durum or "").strip() or None
+    gun_sayi = max(1, min(730, int(gun or 90)))
+
+    valid_durumlar = {"bekliyor", "teslim_edildi", "iptal", "gonderilmedi"}
+    if dur and dur not in valid_durumlar:
+        dur = None
+
+    with db() as (conn, cur):
+        # Şube filtresi: ad ile ara (ILIKE) veya tam ID eşleşmesi
+        sube_kosul = ""
+        sube_qp_ana: List[Any] = []
+        sube_qp_ozet: List[Any] = []
+        if arama:
+            sube_kosul = " AND (LOWER(s.ad) LIKE LOWER(%s) OR t.sube_id = %s)"
+            like_val = f"%{arama}%"
+            sube_qp_ana = [like_val, arama]
+            sube_qp_ozet = [like_val, arama]
+
+        # Ana sorgu (durum filtresi dahil)
+        qp: List[Any] = [gun_sayi] + sube_qp_ana
+        q = f"""
+            SELECT
+                t.id, t.sube_id, s.ad AS sube_adi,
+                t.tarih, t.durum, t.olusturma,
+                t.personel_id, t.personel_ad,
+                t.not_aciklama, t.kalemler,
+                t.gonderilmedi_ts,
+                t.sevkiyat_ts,
+                t.tahsis_yapan_ad,
+                COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS hedef_depo_sube_id,
+                ss.ad AS hedef_depo_sube_adi
+            FROM siparis_talep t
+            JOIN subeler s ON s.id = t.sube_id
+            LEFT JOIN subeler ss ON ss.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
+            WHERE t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            {sube_kosul}
+        """
+        if dur:
+            q += " AND t.durum = %s"
+            qp.append(dur)
+        q += " ORDER BY t.tarih DESC, t.olusturma DESC LIMIT %s"
+        qp.append(limit)
+
+        cur.execute(q, qp)
+        satirlar = []
+        for row in cur.fetchall():
+            d = dict(row)
+            for k in ("tarih", "olusturma", "gonderilmedi_ts", "sevkiyat_ts"):
+                if d.get(k):
+                    d[k] = str(d[k])
+            kalemler = d.get("kalemler") or []
+            if isinstance(kalemler, str):
+                try:
+                    kalemler = json.loads(kalemler)
+                except Exception:
+                    kalemler = []
+            d["kalemler"] = kalemler if isinstance(kalemler, list) else []
+            d["kalem_adet_toplam"] = sum(
+                max(0, int((it or {}).get("adet") or 0))
+                for it in d["kalemler"] if isinstance(it, dict)
+            )
+            satirlar.append(d)
+
+        # Özet: şube + gün filtresi uygulanır, durum filtresi UYGULANMAZ
+        # → Kullanıcı "Zafer" filtrelediğinde sadece o şubenin durum dağılımını görür
+        ozet_qp: List[Any] = [gun_sayi] + sube_qp_ozet
+        ozet_kosul = f"WHERE tarih >= CURRENT_DATE - (%s * INTERVAL '1 day'){sube_kosul.replace('s.ad', 'subeler.ad').replace('t.sube_id', 'siparis_talep.sube_id')}"
+        cur.execute(
+            f"""
+            SELECT durum, COUNT(*)::int AS adet
+            FROM siparis_talep
+            JOIN subeler ON subeler.id = siparis_talep.sube_id
+            {ozet_kosul}
+            GROUP BY durum
+            """,
+            ozet_qp,
+        )
+        ozet = {r["durum"]: r["adet"] for r in (cur.fetchall() or [])}
+
+    return {
+        "gun": gun_sayi,
+        "sube_arama": arama,
+        "durum_filtre": dur,
+        "toplam": len(satirlar),
+        "ozet": ozet,
+        "satirlar": satirlar,
+    }
+
+
+@router.post("/siparis/gecmis/{talep_id}/yeniden-ac")
+def ops_siparis_yeniden_ac(talep_id: str):
+    """
+    'gonderilmedi' statüsündeki siparişi tekrar 'bekliyor'a alır.
+    gonderilmedi_ts temizlenir; sipariş kuyruğa döner.
+    """
+    tid = (talep_id or "").strip()
+    if not tid:
+        raise HTTPException(400, "talep_id boş olamaz")
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT id, sube_id, durum FROM siparis_talep WHERE id = %s",
+            (tid,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Sipariş bulunamadı")
+        if row["durum"] != "gonderilmedi":
+            raise HTTPException(400, f"Sadece 'gonderilmedi' siparişler yeniden açılabilir (mevcut: {row['durum']})")
+        cur.execute(
+            """
+            UPDATE siparis_talep
+            SET durum           = 'bekliyor',
+                gonderilmedi_ts = NULL,
+                tarih           = CURRENT_DATE
+            WHERE id = %s
+            """,
+            (tid,),
+        )
+    return {"ok": True, "talep_id": tid}
 
 
 # ══════════════════════════════════════════════════════════════════

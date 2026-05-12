@@ -2182,6 +2182,22 @@ $$;
             ON stok_yolda (siparis_talep_id)
         """)
 
+        # ── siparis_talep → otomatik gonderilmedi kapatma ─────
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='siparis_talep' AND column_name='gonderilmedi_ts') THEN
+                    ALTER TABLE siparis_talep
+                        ADD COLUMN gonderilmedi_ts TIMESTAMPTZ;
+                END IF;
+            END $$;
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_siparis_talep_gonderilmedi
+            ON siparis_talep (durum, tarih)
+            WHERE durum = 'bekliyor'
+        """)
+
         # ── YENİ: Şube aylık skor ─────────────────────────────
         # Gerçekten yeni kavram — aylık davranış puanı özeti.
         cur.execute("""

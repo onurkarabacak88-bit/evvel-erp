@@ -80,11 +80,6 @@ def beklenen_dunku_kapanis_kasa(cur: Any, sube_id: str) -> Optional[float]:
     return float(r["ref"])
 
 
-def beklened_dunku_kapanis_kasa(cur: Any, sube_id: str) -> Optional[float]:
-    """Eski/yanlış isim kullanan çağrılar için alias."""
-    return beklenen_dunku_kapanis_kasa(cur, sube_id)
-
-
 def vardiya_devri_bugun_baslamis_mi(cur: Any, sube_id: str) -> bool:
     cur.execute(
         """

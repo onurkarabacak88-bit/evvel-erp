@@ -21,8 +21,3 @@ Ortam eşikleri
 Faz 7: ``evvel_operasyon_faz7.py`` — alarm okundu/susturuldu + işlem saati.
 """
 
-from __future__ import annotations
-
-FAZ6_DEPLOY_PYTHON: tuple[str, ...] = (
-    "operasyon_merkez_api.py",
-)
