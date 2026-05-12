@@ -1441,6 +1441,9 @@ function StokKayipPanel({ veri }) {
   const toplamKayip    = subeOzet.reduce((a, s) => a + (s.toplam_acik || 0), 0);
   const yuksekRisk     = riskPersonel.filter((p) => p.risk_seviyesi === 'yuksek');
   const ortaRisk       = riskPersonel.filter((p) => p.risk_seviyesi === 'orta');
+  const toplamRiskUyari = yuksekRisk.length > 0
+    ? `🔴 ${yuksekRisk.length} yüksek risk${ortaRisk.length > 0 ? ` · 🟠 ${ortaRisk.length} orta risk` : ''} — HR veya mağaza müdürü bilgilendirilmeli.`
+    : ortaRisk.length > 0 ? `🟠 ${ortaRisk.length} orta riskli personel — yakından izlenmeli.` : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -1534,9 +1537,9 @@ function StokKayipPanel({ veri }) {
               );
             })}
           </div>
-          {yuksekRisk.length > 0 && (
-            <div style={{ padding: '8px 14px', background: 'rgba(239,68,68,0.06)', borderTop: '1px solid var(--border)', fontSize: 12, color: '#ef4444' }}>
-              🔴 {yuksekRisk.length} personel yüksek risk eşiğini aştı — HR veya mağaza müdürü bilgilendirilmeli.
+          {toplamRiskUyari && (
+            <div style={{ padding: '8px 14px', background: yuksekRisk.length > 0 ? 'rgba(239,68,68,0.06)' : 'rgba(249,115,22,0.06)', borderTop: '1px solid var(--border)', fontSize: 12, color: yuksekRisk.length > 0 ? '#ef4444' : '#f97316' }}>
+              {toplamRiskUyari}
             </div>
           )}
         </div>
@@ -1608,7 +1611,6 @@ const DURUM_LABEL = {
 
 function gorececTarih(tarihStr) {
   if (!tarihStr) return '—';
-  const tarih = new Date(tarihStr);
   const bugun = new Date();
   bugun.setHours(0, 0, 0, 0);
   const fark = Math.round((bugun - new Date(String(tarihStr).slice(0, 10))) / 86400000);

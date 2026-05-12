@@ -3284,6 +3284,8 @@ def ops_stok_kayip_analiz(
     personel_agg: Dict[str, Dict[str, Any]] = {}
     pattern_agg: Dict[tuple, Dict[str, Any]] = {}
     veri_eksik_gunler: List[Dict[str, Any]] = []  # açılış eventi olmayan kapanışlar
+    # Her personelin hangi şubelerde kayıp yarattığı — çok-şube tespiti için
+    personel_sube_set: Dict[str, set] = {}
 
     for r in kapanis_rows:
         sid = str(r.get("sube_id") or "")
@@ -3362,6 +3364,8 @@ def ops_stok_kayip_analiz(
                 pagg["toplam_acik"] += sat["acik"]
                 pagg["acik_kalem"] += 1
                 pagg["gunler"].add(tarih_s)
+                # Çok-şube tespiti: her kayıp anında personelin şubesini kaydet
+                personel_sube_set.setdefault(pkey, set()).add(sid)
 
                 ptn_key = (sid, k, hafta_gun)
                 ptn = pattern_agg.setdefault(
@@ -3393,14 +3397,6 @@ def ops_stok_kayip_analiz(
             }
         )
     sube_ozet.sort(key=lambda x: (x["toplam_acik"], x["acik_gun_sayisi"]), reverse=True)
-
-    # Personel bazında kaç farklı şubede kayıp var?
-    personel_sube_set: Dict[str, set] = {}
-    for v in personel_agg.values():
-        pid_k = v["personel_id"] or f"anon:{v['personel_ad']}"
-        if pid_k not in personel_sube_set:
-            personel_sube_set[pid_k] = set()
-        personel_sube_set[pid_k].add(v["sube_id"])
 
     personel_ozet = []
     for pkey, v in personel_agg.items():
