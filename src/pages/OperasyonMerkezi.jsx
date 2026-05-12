@@ -4407,7 +4407,7 @@ export default function OperasyonMerkezi() {
   return (
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
-      {Number(ozet?.yarim_urun_ac_oturum_sayisi || 0) > 0 && (
+      {Number(ozet?.yarim_urun_ac_oturum_sayisi || 0) > 0 && aktifSekme === 'urun-ac' && (
         <div className="alert-box yellow mb-16" style={{ padding: '12px 16px' }}>
           <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
             ⚠️ Yarım Kalan Ürün Aç Oturumları
@@ -4460,7 +4460,7 @@ export default function OperasyonMerkezi() {
         </div>
       )}
 
-      {(ozet?.kasa_devir_listesi || []).length > 0 && (
+      {(ozet?.kasa_devir_listesi || []).length > 0 && aktifSekme === 'kapanis-takip' && (
         <div className="alert-box mb-16" style={{ padding: '12px 16px', background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.3)', color: 'var(--text)' }}>
           <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
             💼 Kasa Devri
@@ -4517,7 +4517,7 @@ export default function OperasyonMerkezi() {
 
       <div className="page-header flex items-center justify-between">
         <div>
-          {(ozet?.kapanis_ozet_listesi || []).length > 0 && (
+          {(ozet?.kapanis_ozet_listesi || []).length > 0 && aktifSekme === 'kapanis-takip' && (
             <div className="alert-box green mb-16" style={{ padding: '12px 16px', marginBottom: 16 }}>
               <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
                 🏁 Bugün Kapanış Yapan Şubeler
@@ -4544,7 +4544,7 @@ export default function OperasyonMerkezi() {
           )}
 
           {/* ── Kasa Teslim Hareketleri ── */}
-          {(ozet?.kasa_teslim_bugun_listesi || []).length > 0 && (
+          {(ozet?.kasa_teslim_bugun_listesi || []).length > 0 && aktifSekme === 'kasa-uyumsuzluk' && (
             <div className="alert-box mb-16" style={{ padding: '12px 16px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.35)', color: 'var(--text)', marginBottom: 16 }}>
               <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
                 💵 Kasa teslim (son 14 gün — ara + gün sonu)
@@ -4579,7 +4579,7 @@ export default function OperasyonMerkezi() {
           )}
 
           {/* ── Kasa Uyumsuzlukları (devir ≠ açılış) ── */}
-          {(ozet?.kasa_uyumsuzluk_listesi || []).length > 0 && (
+          {(ozet?.kasa_uyumsuzluk_listesi || []).length > 0 && aktifSekme === 'kasa-uyumsuzluk' && (
             <div className="alert-box red mb-16" style={{ padding: '12px 16px', marginBottom: 16 }}>
               <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
                 ⚠️ Kasa Uyumsuzluğu — Devir ≠ Açılış
