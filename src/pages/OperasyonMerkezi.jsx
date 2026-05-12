@@ -416,35 +416,35 @@ const OPS_HUB_RENK = {
   'siparis-gecmis': '#94a3b8',
 };
 
-/** 29 eski tab → 7 Dünya standardı modül */
+/** 29 eski tab → 7 Dünya standardı modül (kahve zinciri / hizmet sektörü mantığı) */
 const MODULLER = [
   {
     id: 'canli-ops',
     label: '📡 Canlı Operasyon',
     renk: '#4a9eff',
-    desc: 'Anlık şube durumu, açılma, kapanış, personel ve ürün akışı',
-    tabs: ['canli', 'gec-acilan-subeler', 'kapanis-takip', 'gec-kalan-personel', 'kullanilan-urunler', 'urun-ac'],
+    desc: 'Anlık şube durumu, açılma, kapanış, personel takibi ve merkez direktifleri',
+    tabs: ['canli', 'gec-acilan-subeler', 'kapanis-takip', 'gec-kalan-personel', 'mesaj'],
   },
   {
-    id: 'stok-depo',
-    label: '📦 Stok & Depo',
+    id: 'envanter',
+    label: '📦 Envanter',
     renk: '#f08040',
-    desc: 'Envanter, açılış sayımı, kayıp analizi, sipariş disiplin ve tahmin',
-    tabs: ['magaza-kartlari', 'sayim', 'stok-kayip', 'urun-uyumsuzluk', 'stok-disiplin', 'stok-tahmin'],
+    desc: 'Stok sayımı, tüketim takibi, fire & kayıp analizi ve ürün uyumsuzlukları',
+    tabs: ['magaza-kartlari', 'sayim', 'kullanilan-urunler', 'urun-ac', 'stok-kayip', 'urun-uyumsuzluk'],
   },
   {
     id: 'siparis-tedarik',
     label: '🚚 Sipariş & Tedarik',
     renk: '#0ea5a4',
-    desc: 'Ürün katalogu, kabul takibi, toptancı siparişleri, sevkiyat ve geçmiş',
-    tabs: ['siparis', 'siparis-kabul-takip', 'toptanci-siparisleri', 'toptanci-teslimler', 'sevkiyat-uyumsuzluk', 'siparis-gecmis'],
+    desc: 'Sipariş disiplini, kabul takibi, toptancı ve sevkiyat yönetimi',
+    tabs: ['siparis', 'stok-disiplin', 'siparis-kabul-takip', 'toptanci-siparisleri', 'toptanci-teslimler', 'sevkiyat-uyumsuzluk', 'siparis-gecmis'],
   },
   {
-    id: 'kasa-ciro',
-    label: '💳 Kasa & Ciro',
+    id: 'finans-kasa',
+    label: '💳 Finans & Kasa',
     renk: '#e85d5d',
-    desc: 'Kasa uyumsuzluğu, ciro onayları ve fiş kontrol',
-    tabs: ['kasa-uyumsuzluk', 'ciro-onay', 'fis'],
+    desc: 'Günlük ciro onayı, kasa uyumsuzluğu ve fiş kontrol',
+    tabs: ['ciro-onay', 'kasa-uyumsuzluk', 'fis'],
   },
   {
     id: 'personel',
@@ -454,18 +454,18 @@ const MODULLER = [
     tabs: ['personel-davranis', 'personel-vardiya-uyumsuzluk', 'puan'],
   },
   {
-    id: 'guvenlik-denetim',
-    label: '🔐 Güvenlik & Denetim',
+    id: 'denetim-uyum',
+    label: '🔐 Denetim & Uyum',
     renk: '#be185d',
-    desc: 'Kontrol özeti, güvenlik alarmları ve defter kayıtları',
+    desc: 'Kontrol özeti, güvenlik alarmları ve operasyonel kayıtlar',
     tabs: ['kontrol', 'guvenlik-alarmlar', 'defter'],
   },
   {
-    id: 'raporlar',
-    label: '📊 Raporlar',
+    id: 'analitik-planlama',
+    label: '📊 Analitik & Planlama',
     renk: '#6366f1',
-    desc: 'Performans metrikleri, şube analitik ve merkez mesajları',
-    tabs: ['metrics', 'analitik', 'mesaj'],
+    desc: 'KPI paneli, şube performans analizi ve stok tahmin/planlama',
+    tabs: ['metrics', 'analitik', 'stok-tahmin'],
   },
 ];
 
@@ -5101,25 +5101,25 @@ export default function OperasyonMerkezi() {
               alertSayisi = gecAlert + personelAlert + kapanisEksik;
               const aktifSubeAdet = ozt.aktif_sube ?? kartlar.filter((k) => k.sube_acik).length;
               descSatir = `${aktifSubeAdet} şube aktif${alertSayisi > 0 ? ` · ${alertSayisi} uyarı` : ' · sorun yok ✓'}`;
-            } else if (modul.id === 'stok-depo') {
+            } else if (modul.id === 'envanter') {
               alertSayisi = Number(ozt.stok_kayip_sube || 0) + Number(ozt.stok_alarm_bekleyen || 0) + Number(urunUyumBugun?.toplam || 0);
-              descSatir = alertSayisi > 0 ? `${alertSayisi} kayıp/uyarı — depo kontrol gerekli` : 'Stok normal · kayıp tespit edilmedi ✓';
+              descSatir = alertSayisi > 0 ? `${alertSayisi} kayıp/uyarı — envanter kontrol gerekli` : 'Envanter normal · kayıp tespit edilmedi ✓';
             } else if (modul.id === 'siparis-tedarik') {
               alertSayisi = Number(ozt.siparis_gonderilmedi_toplam || 0) + Number(sevkiyatUyumOzet?.adet || 0) + Number(ozt.siparis_bekleyen || 0);
               descSatir = alertSayisi > 0 ? `${alertSayisi} bekleyen/uyumsuz sipariş` : 'Tüm siparişler takipte ✓';
-            } else if (modul.id === 'kasa-ciro') {
+            } else if (modul.id === 'finans-kasa') {
               alertSayisi = Number(kasaUyumBugun?.toplam || 0) + Number(ciroOnayBugun?.toplam || 0) + Number(ozt.fis_bekleyen || 0);
               descSatir = alertSayisi > 0 ? `${alertSayisi} onay/uyumsuzluk bekliyor` : 'Kasa dengede · onay kuyruğu boş ✓';
             } else if (modul.id === 'personel') {
               alertSayisi = Number(personelVardiyaUyumBugun?.toplam || 0) + Number(gecKalanPersonelBugun?.kritik_personel_sayisi || 0);
               descSatir = alertSayisi > 0 ? `${alertSayisi} uyumsuz vardiya / geç kalan` : 'Personel durumu normal ✓';
-            } else if (modul.id === 'guvenlik-denetim') {
+            } else if (modul.id === 'denetim-uyum') {
               const guvenlikAlarmSayi = kartlar.filter((k) => k.bayraklar?.guvenlik_alarm).length;
               alertSayisi = Number(ozt.kontrol_gecikti || 0) + guvenlikAlarmSayi;
               descSatir = alertSayisi > 0
                 ? `${guvenlikAlarmSayi > 0 ? `${guvenlikAlarmSayi} güvenlik alarmı · ` : ''}${Number(ozt.kontrol_gecikti || 0) > 0 ? `${ozt.kontrol_gecikti} kontrol gecikti` : 'denetim gerekli'}`
                 : 'Kontrol tamamlandı · Güvenlik normal ✓';
-            } else if (modul.id === 'raporlar') {
+            } else if (modul.id === 'analitik-planlama') {
               const u30 = Number(ozt.uyari_30d || 0);
               descSatir = u30 > 0 ? `Son 30 günde ${u30} uyarı/kritik kaydı` : modul.desc;
             }
