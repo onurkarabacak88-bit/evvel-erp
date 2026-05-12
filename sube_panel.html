@@ -1024,8 +1024,9 @@
       margin: 0;
     }
 
-    /* Sipariş Ver: seçim varken yapışkan özet — Ürün Aç onay paneli gibi belirgin kutu (personel/PIN yalnız modalda) */
-    #siparisStickyBar {
+    /* Sipariş Ver + Ürün Aç: seçim varken yapışkan özet (personel/PIN yalnızca modalda) */
+    #siparisStickyBar,
+    #urunAcStickyBar {
       display: none;
       position: sticky;
       top: 0;
@@ -2212,6 +2213,22 @@
       </div>
 
       <div class="sekme-icerik" id="tab-ac">
+        <div id="urunAcStickyBar" style="display:none" role="region" aria-label="Seçilen ürün aç özeti">
+          <div class="siparis-sticky-onay-panel">
+            <div class="siparis-sticky-onay-baslik">
+              <span class="siparis-sticky-tag-zorunlu">Onay</span>
+              <span>Ürün açımını onayla — personel ve PIN güvenli pencerede istenir</span>
+            </div>
+            <p class="siparis-sticky-onay-alt">
+              Özeti kontrol edin; <strong>Seçimleri Onayla</strong> ile önce personel + PIN, ardından kalem listesi özeti açılır
+              (<strong>Sipariş Ver</strong> ile aynı akış; PIN bu kutuda girilmez).
+            </p>
+            <div class="siparis-sticky-onay-aksiyon">
+              <span id="urunAcSeciliUstOzet" class="siparis-sticky-secim-ozet"></span>
+              <button type="button" class="btn btn-success btn-sm" id="acGonder" disabled data-btn-base="Seçimleri Onayla">Seçimleri Onayla</button>
+            </div>
+          </div>
+        </div>
         <div class="kart">
           <div class="kart-baslik"><span class="ico">🔓</span> Ürün Aç <span style="font-size:11px;color:var(--muted);font-weight:400">(Depodan aktif kullanıma)</span></div>
           <div id="acForm"></div>
@@ -4783,7 +4800,7 @@ function fillSels() {
              'xrPers','puanPers',
              'dvPers1','dvPers2','kapPers',
              'kasaUser','araTeslimPers',
-             'svPers','acPers'];
+             'svPers'];
   ids.forEach(function(id){
     var el = document.getElementById(id); if (!el || el.tagName !== 'SELECT') return;
     var cur = el.value;
@@ -4794,10 +4811,6 @@ function fillSels() {
       el.appendChild(o);
     });
     if (cur) el.value = cur;
-    if (id === 'acPers' && !el.value) {
-      var cached = String(localStorage.getItem(URUN_AC_PERSONEL_CACHE_KEY) || '').trim();
-      if (cached) el.value = cached;
-    }
   });
   // Merkez mesajı PIN selectleri
   document.querySelectorAll('[id^="mmSel_"]').forEach(function(el){
@@ -5626,28 +5639,19 @@ function renderStokForms(tip) {
         h += 'Bu kayıt teorik stok hesabına dahil edilir: ';
         h += '<em>Açılış + Ürün Aç = Beklenen kapanış stoku</em>';
         h += '</div>';
+        h += '<div class="siparis-detay" style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.45">Ürün adı ve adet <strong>aynı satırda</strong>; kategori tam ekran pencerede açılır. Seçim varken <strong>üstteki vurgulu kutuda</strong> özet görünür; personel ve PIN yalnızca <strong>Seçimleri Onayla</strong> ile açılan pencerelerde girilir (Sipariş Ver ile aynı).</div>';
         h += '<div id="acKatalogWrap"></div>';
         h += '<div id="acKatOverlay" class="overlay sip-kat-overlay" style="display:none" aria-hidden="true">';
         h += '<div class="overlay-kart sip-kat-modal-kart" id="acKatModalKart">';
         h += '<div id="acKatModalInner"></div>';
         h += '</div></div>';
         h += '<div id="acSecimOzet" class="siparis-detay" style="margin-top:10px;font-size:12px;color:var(--muted)">Henüz ürün seçilmedi.</div>';
-        h += '<div id="acZorunluOnayWrap" style="display:none" aria-hidden="true">';
-        h += '<div class="urun-ac-onay-panel">';
-        h += '<div class="urun-ac-onay-baslik"><span class="tag-zorunlu">Zorunlu</span><span>Personel + onay kodu (PIN)</span></div>';
-        h += '<p class="urun-ac-onay-alt">Kahve veya başka bir üründe adet girince bu bölüm açılır. Önce <strong>personel</strong> seçin — ardından <strong>4 haneli PIN</strong> girin.</p>';
-        h += '<div class="urun-ac-onay-grid">';
-        h += '<div class="form-group" style="margin:0"><label>Personel</label><select id="acPers"></select></div>';
-        h += '<div class="form-group" style="margin:0"><label>Onay kodu (PIN)</label><input id="acPin" class="pin-input urun-ac-pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>';
-        h += '</div>';
-        h += '<div id="acPinBilgi" class="urun-ac-pin-bilgi"></div>';
-        h += '</div>';
+        h += '<div id="acOnayNotWrap" class="siparis-detay" style="display:none" aria-hidden="true">';
+        h += '<div style="font-size:12px;font-weight:700;margin-bottom:6px">Ürün aç notu (opsiyonel)</div>';
+        h += '<p style="font-size:11px;color:var(--muted);margin:0 0 10px;line-height:1.45"><strong>Personel ve PIN</strong> yalnızca onay penceresinde istenir. Göndermek için <strong>üstteki</strong> kutudaki <strong>Seçimleri Onayla</strong> düğmesine basın.</p>';
         h += '<div class="form-group"><label>Not</label><input id="acNot" placeholder="Opsiyonel" /></div>';
-        h += '<div style="margin-bottom:10px">';
-        h += '<button class="btn btn-primary" id="acGonder">🔓 Seçimleri Onayla ve Aktif Kullanıma Al</button>';
+        h += '</div>';
         h += '<div id="acMsg" style="margin-top:8px;font-size:12px"></div>';
-        h += '</div>';
-        h += '</div>';
         el.innerHTML = h;
         _stokKatalogByPrefix.ac = katalog || [];
         stokKartState('ac').openKat = null;
@@ -5675,17 +5679,13 @@ function renderStokForms(tip) {
               if (notEl && !notEl.value) notEl.value = taslak.not_aciklama;
             }
             if (taslak.personel_id) {
-              var perSel = document.getElementById('acPers');
-              if (perSel && !perSel.value) {
-                try { perSel.value = taslak.personel_id; } catch(_){}
-              }
               try { localStorage.setItem(URUN_AC_PERSONEL_CACHE_KEY, String(taslak.personel_id || '')); } catch(_) {}
             }
             if (dolduruldu > 0) {
               refreshStokKatalogUI('ac');
               stokSecimBilgiYenile('ac', katalog || []);
               setMsg('acMsg',
-                '🔄 ' + dolduruldu + ' kalem yüklendi. Personel ve onay kodu girerek gönderin. ' +
+                '🔄 ' + dolduruldu + ' kalem yüklendi. Üstteki «Seçimleri Onayla» ile personel + PIN (Sipariş Ver ile aynı akış) girerek gönderin. ' +
                 '<button type="button" onclick="urunAcTaslakSifirla()" style="margin-left:8px;padding:2px 10px;font-size:11px;border-radius:6px;border:1px solid #f59e0b;background:rgba(245,158,11,0.15);color:#fbbf24;cursor:pointer;font-weight:600">✕ Taslağı temizle</button>',
                 'msg-warn');
             }
@@ -5700,11 +5700,11 @@ function renderStokForms(tip) {
             if (formAc._urunAcTaslakTimer) clearTimeout(formAc._urunAcTaslakTimer);
             formAc._urunAcTaslakTimer = setTimeout(function(){
               formAc._urunAcTaslakTimer = null;
-              var body = stokBody('ac', _stokKatalogByPrefix.ac || []);
+              var bodyDraft = stokBody('ac', _stokKatalogByPrefix.ac || [], { personel_id: '', pin: '' });
               var payload = {
-                kalemler: (body.kalemler || []).filter(function(x){ return parseInt(x.adet||0,10) > 0; }),
+                kalemler: (bodyDraft.kalemler || []).filter(function(x){ return parseInt(x.adet||0,10) > 0; }),
                 not_aciklama: (document.getElementById('acNot') || {}).value || '',
-                personel_id: (document.getElementById('acPers') || {}).value || '',
+                personel_id: (function(){ try { return String(localStorage.getItem(URUN_AC_PERSONEL_CACHE_KEY)||'').trim(); } catch(_){ return ''; } })(),
               };
               api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/urun-ac/taslak', {
                 method: 'POST',
@@ -5723,12 +5723,25 @@ function renderStokForms(tip) {
   }
 }
 
-function stokBody(prefix, data) {
+function stokBody(prefix, data, credsOverride) {
+  credsOverride = credsOverride || null;
+  var pid = '';
+  var pin = '';
+  if (credsOverride && Object.prototype.hasOwnProperty.call(credsOverride, 'personel_id')) {
+    pid = String(credsOverride.personel_id != null ? credsOverride.personel_id : '').trim();
+  } else {
+    pid = selVal(prefix + 'Pers');
+  }
+  if (credsOverride && Object.prototype.hasOwnProperty.call(credsOverride, 'pin')) {
+    pin = String(credsOverride.pin != null ? credsOverride.pin : '').replace(/\D/g, '').slice(0, 4);
+  } else {
+    pin = inpVal(prefix + 'Pin').replace(/\D/g, '').slice(0, 4);
+  }
   var fixedKeys = ['bardak_kucuk','bardak_buyuk','bardak_plastik','su_adet','redbull_adet','soda_adet','cookie_adet','pasta_adet','sut_litre','surup_adet','kahve_paket','karton_bardak','kapak_adet','pecete_paket','diger_sarf'].concat(_PASTA_KEYS);
   var body = {
-    personel_id: selVal(prefix+'Pers'),
-    pin: inpVal(prefix+'Pin').replace(/\D/g,'').slice(0,4),
-    not_aciklama: inpVal(prefix+'Not') || null,
+    personel_id: pid,
+    pin: pin,
+    not_aciklama: inpVal(prefix + 'Not') || null,
     kalemler: []
   };
   fixedKeys.forEach(function(k){ body[k] = 0; });
@@ -5757,11 +5770,19 @@ function stokSecimOzeti(prefix, data) {
 function stokSecimBilgiYenile(prefix, data) {
   var oz = stokSecimOzeti(prefix, data || _stokKatalogByPrefix[prefix] || []);
   if (prefix === 'ac') {
-    var acOnayW = document.getElementById('acZorunluOnayWrap');
-    if (acOnayW) {
-      var acOnayGoster = (oz.kalem || 0) > 0;
-      acOnayW.style.display = acOnayGoster ? '' : 'none';
-      acOnayW.setAttribute('aria-hidden', acOnayGoster ? 'false' : 'true');
+    var acOnayGoster = (oz.kalem || 0) > 0;
+    var ustBar = document.getElementById('urunAcStickyBar');
+    var ustOzet = document.getElementById('urunAcSeciliUstOzet');
+    var notWrap = document.getElementById('acOnayNotWrap');
+    if (ustBar) ustBar.style.display = acOnayGoster ? 'block' : 'none';
+    if (ustOzet) {
+      ustOzet.textContent = acOnayGoster
+        ? ('Seçili ürün: ' + oz.kalem + ' kalem · toplam ' + oz.adet + ' adet')
+        : '';
+    }
+    if (notWrap) {
+      notWrap.style.display = acOnayGoster ? 'block' : 'none';
+      notWrap.setAttribute('aria-hidden', acOnayGoster ? 'false' : 'true');
     }
   }
   var ozetEl = document.getElementById(prefix + 'SecimOzet');
@@ -5775,51 +5796,30 @@ function stokSecimBilgiYenile(prefix, data) {
     }
   }
   var pinBilgi = document.getElementById(prefix + 'PinBilgi');
-  if (pinBilgi) {
-    if (prefix === 'ac') {
-      var _pSelAc = document.getElementById('acPers');
-      var _persAc = !!(_pSelAc && String(_pSelAc.value || '').trim());
-      var _pinElAc = document.getElementById('acPin');
-      var _pinLenAc = _pinElAc ? inpVal('acPin').replace(/\D/g, '').length : 0;
-      pinBilgi.classList.remove('urun-ac-pin-yanip');
-      if (oz.kalem > 0 && _persAc && _pinLenAc < 4) {
-        pinBilgi.textContent = '4 haneli onay kodunu (PIN) girin — göndermek için zorunlu.';
-        pinBilgi.classList.add('urun-ac-pin-yanip');
-      } else if (oz.kalem > 0) {
-        pinBilgi.textContent = 'Özet kartta PIN onayı istenecek — ' + oz.kalem + ' kalem / ' + oz.adet + ' adet seçtiniz';
-      } else {
-        pinBilgi.textContent = 'Onay için önce en az 1 ürün seçin.';
-      }
-    } else {
-      pinBilgi.textContent = oz.kalem > 0
-        ? ('Onay için PIN girin — ' + oz.kalem + ' kalem / ' + oz.adet + ' adet seçtiniz')
-        : 'Onay için önce en az 1 ürün seçin.';
-    }
+  if (pinBilgi && prefix !== 'ac') {
+    pinBilgi.textContent = oz.kalem > 0
+      ? ('Onay için PIN girin — ' + oz.kalem + ' kalem / ' + oz.adet + ' adet seçtiniz')
+      : 'Onay için önce en az 1 ürün seçin.';
   }
   var btn = document.getElementById(prefix + 'Gonder');
   if (btn) {
     var asText = btn.getAttribute('data-btn-base') || btn.textContent || 'Onayla';
+    var baseTxt = asText.replace(/\s+\(\d+\s+kalem\)$/,'').trim();
+    if (!btn.getAttribute('data-btn-base')) btn.setAttribute('data-btn-base', baseTxt);
     btn.textContent = oz.kalem > 0
-      ? (asText + ' (' + oz.kalem + ' kalem)')
-      : asText;
+      ? (baseTxt + ' (' + oz.kalem + ' kalem)')
+      : baseTxt;
     btn.disabled = oz.kalem <= 0;
-  }
-  if (prefix === 'ac') {
-    var pSel = document.getElementById('acPers');
-    var pinEl = document.getElementById('acPin');
-    var personelSecili = !!(pSel && String(pSel.value || '').trim());
-    if (pinEl) {
-      pinEl.disabled = !personelSecili;
-      if (!personelSecili) pinEl.value = '';
-      pinEl.placeholder = personelSecili ? '••••' : 'Önce personel seçin';
-    }
-    if (btn && oz.kalem > 0 && !personelSecili) {
-      btn.disabled = true;
-      btn.title = 'Önce personel seçin';
-    } else if (btn) {
+    if (prefix === 'ac') {
+      btn.style.opacity = oz.kalem > 0 ? '1' : '0.65';
+      btn.title = !oz.kalem
+        ? 'Önce en az bir üründe adet girin'
+        : 'Personel ve PIN yalnızca açılacak güvenli onay penceresinde';
+    } else {
       btn.title = '';
     }
   }
+  // Ürün Aç: personel/PIN artık formda yok (Sipariş Ver ile aynı modal akışı)
   // 3. SOL MENÜ BADGE — sadece urun-ac için, kullanıcı başka sekmedeyken bekleyen seçim hatırlatıcısı
   if (prefix === 'ac') {
     var badge = document.getElementById('solUrunAcBadge');
@@ -5827,7 +5827,7 @@ function stokSecimBilgiYenile(prefix, data) {
       if (oz.kalem > 0) {
         badge.textContent = String(oz.kalem);
         badge.style.display = 'inline-block';
-        badge.title = oz.kalem + ' kalem seçili — onay bekliyor (PIN girilmedi)';
+        badge.title = oz.kalem + ' kalem seçili — üstteki «Seçimleri Onayla» ile PIN onayı bekleniyor';
       } else {
         badge.style.display = 'none';
       }
@@ -5862,17 +5862,35 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
     setMsg(prefix+'Msg','','');
     btn.disabled = true;
     try {
-      var body = stokBody(prefix, data);
-      var sum = (body.kalemler || []).reduce(function(s,x){ return s + (parseInt(x.adet||0,10)||0); }, 0);
-      if (sum <= 0) throw new Error('En az bir kalemde adet girin');
-      var _pid = selVal(prefix + 'Pers');
-      var _pin = inpVal(prefix + 'Pin').replace(/\D/g, '').slice(0, 4);
-      if (!_pid) throw new Error('Personel seçin');
-      if (_pin.length !== 4) throw new Error('4 haneli onay kodu girin');
-      body.personel_id = _pid;
-      body.pin = _pin;
+      var body;
+      var sum;
       if (prefix === 'ac') {
+        body = stokBody(prefix, data, { personel_id: '', pin: '' });
+        sum = (body.kalemler || []).reduce(function(s,x){ return s + (parseInt(x.adet||0,10)||0); }, 0);
+        if (sum <= 0) throw new Error('En az bir kalemde adet girin');
+        var ozHtmlShort = '<div style="font-size:12px">Ürün açmayı onaylamak için personel ve onay kodu gerekli.</div>';
+        var creds = await ensureTopCredentials(null, null, '🔓 Ürün Aç onayı', ozHtmlShort);
+        if (!creds) throw new Error('Onay bilgisi gerekli');
+        var ozetSatirlar = (body.kalemler || []).map(function(x){
+          var adLabel = escHtml(x.urun_ad||'') + (x.aciklama ? ' <span style="opacity:.7;font-weight:400">('+escHtml(x.aciklama)+')</span>' : '');
+          return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:12px"><span>' + adLabel + '</span><strong>×' + x.adet + '</strong></div>';
+        }).join('');
+        var ozetHtml = '<div style="max-height:62vh;overflow:auto">' + ozetSatirlar + '</div>';
+        var modalRes = await pinOnayModalAc({ baslik: '🔓 ' + sum + ' adet ürün açılacak', ozetHtml: ozetHtml, askCredentials: false });
+        if (!modalRes || !modalRes.ok) { setMsg(prefix+'Msg','İşlem iptal edildi.','msg-warn'); return; }
+        body = stokBody(prefix, data, creds);
+        if (!body.personel_id || body.pin.length !== 4) throw new Error('Onay bilgisi eksik');
         try { localStorage.setItem(URUN_AC_PERSONEL_CACHE_KEY, body.personel_id); } catch(_) {}
+      } else {
+        body = stokBody(prefix, data);
+        sum = (body.kalemler || []).reduce(function(s,x){ return s + (parseInt(x.adet||0,10)||0); }, 0);
+        if (sum <= 0) throw new Error('En az bir kalemde adet girin');
+        var _pid = selVal(prefix + 'Pers');
+        var _pin = inpVal(prefix + 'Pin').replace(/\D/g, '').slice(0, 4);
+        if (!_pid) throw new Error('Personel seçin');
+        if (_pin.length !== 4) throw new Error('4 haneli onay kodu girin');
+        body.personel_id = _pid;
+        body.pin = _pin;
       }
       if (extraFn) extraFn(body);
       await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + endpoint, {
