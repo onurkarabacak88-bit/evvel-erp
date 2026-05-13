@@ -690,9 +690,9 @@ export function SabitGiderler() {
         tutar:               form.tip === 'degisken' ? (parseFloat(form.tutar) || 0) : (parseFloat(form.tutar) || 0),
         periyot:             form.periyot || 'aylik',
         odeme_gunu:          parseInt(form.odeme_gunu) || 1,
-        odeme_yontemi:       form.tip === 'degisken' ? 'nakit' : (form.odeme_yontemi || 'nakit'),
+        odeme_yontemi:       form.odeme_yontemi || 'nakit',
         sube_id:             form.sube_id             || null,
-        kart_id:             form.tip === 'degisken' ? null : (form.kart_id || null),
+        kart_id:             form.kart_id || null,
         baslangic_tarihi:    form.baslangic_tarihi    || null,
         gecerlilik_tarihi:   form.gecerlilik_tarihi   || null,
         sozlesme_sure_ay:    form.sozlesme_sure_ay    ? parseInt(form.sozlesme_sure_ay)   : null,
@@ -1029,13 +1029,13 @@ export function SabitGiderler() {
                     </button>
                     <button
                       className={`btn btn-sm ${form.tip==='degisken'?'btn-primary':'btn-ghost'}`}
-                      onClick={()=>setForm({...form,tip:'degisken',odeme_yontemi:'nakit',kart_id:''})}>
+                      onClick={()=>setForm({...form,tip:'degisken'})}>
                       📄 Değişken <span style={{fontSize:10,opacity:0.7}}>— elektrik, su, doğalgaz vb.</span>
                     </button>
                   </div>
                   {form.tip==='degisken' && (
                     <div style={{marginTop:6,fontSize:11,color:'var(--yellow)',background:'rgba(220,160,0,0.08)',padding:'6px 10px',borderRadius:6,border:'1px solid rgba(220,160,0,0.3)'}}>
-                      ⚡ Değişken gider hatırlatmadır — ödeme geldiğinde tutarı Anlık Gider olarak girersiniz. Kasaya etki etmez.
+                      ⚡ Değişken gider hatırlatmadır — ödeme geldiğinde tutarı Anlık Gider olarak girersiniz. Kart talimatı seçerseniz hangi karttan ödeneceği kayıt altına alınır.
                     </div>
                   )}
                 </div>
@@ -1117,8 +1117,8 @@ export function SabitGiderler() {
                   </>
                 )}
 
-                {/* ÖDEME YÖNTEMİ — sadece sabit giderde göster */}
-                {form.tip !== 'degisken' && <div className="form-group" style={{gridColumn:'1/-1'}}>
+                {/* ÖDEME YÖNTEMİ — sabit ve değişken her ikisinde göster */}
+                <div className="form-group" style={{gridColumn:'1/-1'}}>
                   <label>Ödeme Yöntemi</label>
                   <div style={{display:'flex',gap:8,marginTop:4}}>
                     <button type="button"
@@ -1132,15 +1132,20 @@ export function SabitGiderler() {
                       💳 Kart Talimatı
                     </button>
                   </div>
-                  {form.odeme_yontemi === 'kart' && (
+                  {form.odeme_yontemi === 'kart' && form.tip === 'degisken' && (
+                    <p style={{fontSize:11,color:'var(--text3)',marginTop:4}}>
+                      Tutar her ay değişir — hangi karttan ödeneceği kayıt altına alınır. Fatura geldiğinde Anlık Gider olarak girersiniz.
+                    </p>
+                  )}
+                  {form.odeme_yontemi === 'kart' && form.tip !== 'degisken' && (
                     <p style={{fontSize:11,color:'var(--text3)',marginTop:4}}>
                       Her ay otomatik olarak seçilen karta harcama olarak işlenir.
                     </p>
                   )}
-                </div>}
+                </div>
 
-                {/* KART SEÇİMİ — sadece sabit tipte göster */}
-                {form.tip !== 'degisken' && form.odeme_yontemi === 'kart' && (
+                {/* KART SEÇİMİ — kart talimatı seçilince her iki tipte göster */}
+                {form.odeme_yontemi === 'kart' && (
                   <div className="form-group" style={{gridColumn:'1/-1'}}>
                     <label>Kart Seç *</label>
                     <select value={form.kart_id} onChange={e=>setForm({...form,kart_id:e.target.value})}
