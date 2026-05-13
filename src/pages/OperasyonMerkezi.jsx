@@ -1888,6 +1888,7 @@ function SiparisGecmisPanel() {
 export default function OperasyonMerkezi() {
   const varsayilanAy = new Date().toISOString().slice(0, 7);
   const [aktifSekme, setAktifSekme] = useState('');
+  const [oncekiSekme, setOncekiSekme] = useState('');
   const [aktifModul, setAktifModul] = useState('');
   const [opsMerkezPencere, setOpsMerkezPencere] = useState(false);
   const [opsIcBolum, setOpsIcBolum] = useState('icerik');
@@ -4096,10 +4097,11 @@ export default function OperasyonMerkezi() {
   /** Modül içinde sekme değişimi — yukleniyor tetikler, veri useEffect ile yüklenir */
   const acModulTab = useCallback((tabId) => {
     const bolumler = OPS_MODUL_BOLUM[tabId] || [{ id: 'icerik', label: 'İçerik' }];
+    setOncekiSekme((prev) => (prev !== tabId ? (aktifSekme || prev) : prev));
     setAktifSekme(tabId);
     setOpsIcBolum(bolumler[0].id);
     setYukleniyor(true);
-  }, []);
+  }, [aktifSekme]);
 
   /** Hub alarm kartından ilgili modüle git (stok disiplin alt panel dahil) */
   const alarmHedefeGit = useCallback((a) => {
@@ -4946,6 +4948,16 @@ export default function OperasyonMerkezi() {
               >
                 ↻ Yenile
               </button>
+              {oncekiSekme && oncekiSekme !== aktifSekme && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => acModulTab(oncekiSekme)}
+                  title={`Geri: ${UST_SEKMELER.find((x) => x.id === oncekiSekme)?.label || oncekiSekme}`}
+                >
+                  ← Geri
+                </button>
+              )}
               <button type="button" className="btn btn-secondary btn-sm" onClick={kapatOpsModul}>
                 ← Modüller
               </button>
