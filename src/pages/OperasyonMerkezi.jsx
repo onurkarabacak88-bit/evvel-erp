@@ -773,25 +773,59 @@ function hubLocalHourTr() {
 function hubAcilisKapanisBucket(kartlar) {
   const list = Array.isArray(kartlar) ? kartlar : [];
   const h = hubLocalHourTr();
-  // 15:00 sonrası veya gece 02:00 öncesi: kapanış hâlâ «aynı iş günü» kabul edilir (kasa girişi gecikebilir).
   const aksamKapanisListe = h >= 15 || h < 2;
+  const simdi = Date.now();
 
-  const acilisBekliyor = [];
-  const acilisGecikti = [];
+  const acilisBekliyor  = [];
+  const acilisGecikti   = []; // hâlâ açılmadı + gecikti
+  const acilisGecAcildi = []; // geç açıldı ama nihayetinde açıldı
   const kapanisBekliyor = [];
-  const kapanisGecikti = [];
+  const kapanisGecikti  = [];
+
+  const sonEv = (events, tip) =>
+    (Array.isArray(events) ? events : [])
+      .filter(e => String(e?.tip || '').toUpperCase() === tip)
+      .sort((a, b) => String(a?.cevap_ts || a?.sistem_slot_ts || '').localeCompare(String(b?.cevap_ts || b?.sistem_slot_ts || '')))
+      .at(-1);
+
+  const gecMs = (ts) => { try { const d = new Date(ts).getTime(); return Number.isFinite(d) ? Math.round((simdi - d) / 60000) : null; } catch (_) { return null; } };
+  const araMs = (ts1, ts2) => { try { const d1 = new Date(ts1).getTime(); const d2 = new Date(ts2).getTime(); return Number.isFinite(d1) && Number.isFinite(d2) ? Math.round((d2 - d1) / 60000) : null; } catch (_) { return null; } };
 
   for (const k of list) {
-    const oz = k.ozet || {};
-    const ad = String(k.sube_adi || k.sube_id || '').trim() || String(k.sube_id || '');
+    const oz  = k.ozet || {};
+    const op  = k.operasyon || {};
+    const ad  = String(k.sube_adi || k.sube_id || '').trim() || String(k.sube_id || '');
     const sid = k.sube_id;
+    const events = Array.isArray(op.events) ? op.events : [];
+
+    // --- AÇILIŞ ---
+    const acilisEv = sonEv(events, 'ACILIS');
     if (!oz.acilis_tamam) {
-      if (oz.acilis_gecikti) acilisGecikti.push({ sid, ad });
-      else acilisBekliyor.push({ sid, ad });
+      if (oz.acilis_gecikti) {
+        const gecikme_dk = typeof op.aktif_gecikme_dk === 'number'
+          ? op.aktif_gecikme_dk
+          : gecMs(acilisEv?.sistem_slot_ts);
+        acilisGecikti.push({ sid, ad, gecikme_dk: gecikme_dk != null && gecikme_dk > 0 ? gecikme_dk : null });
+      } else {
+        acilisBekliyor.push({ sid, ad });
+      }
+    } else if (acilisEv?.cevap_ts && acilisEv?.sistem_slot_ts) {
+      // Açıldı — geç açıldı mı?
+      const gecikme_dk = araMs(acilisEv.sistem_slot_ts, acilisEv.cevap_ts);
+      if (gecikme_dk != null && gecikme_dk >= 5) {
+        acilisGecAcildi.push({ sid, ad, gecikme_dk });
+      }
     }
+
+    // --- KAPANIŞ ---
+    const kapanisEv = sonEv(events, 'KAPANIS');
     if (!oz.kapanis_tamam) {
-      if (oz.kapanis_gecikti) kapanisGecikti.push({ sid, ad });
-      else if (aksamKapanisListe || !k.sube_acik) kapanisBekliyor.push({ sid, ad });
+      if (oz.kapanis_gecikti) {
+        const gecikme_dk = gecMs(kapanisEv?.sistem_slot_ts);
+        kapanisGecikti.push({ sid, ad, gecikme_dk: gecikme_dk != null && gecikme_dk > 0 ? gecikme_dk : null });
+      } else if (aksamKapanisListe || !k.sube_acik) {
+        kapanisBekliyor.push({ sid, ad });
+      }
     }
   }
 
@@ -802,6 +836,7 @@ function hubAcilisKapanisBucket(kartlar) {
     aksamKapanisListe,
     acilisBekliyor,
     acilisGecikti,
+    acilisGecAcildi,
     kapanisBekliyor,
     kapanisGecikti,
     sorunSayisi,
@@ -822,18 +857,28 @@ function HubGunlukAcilisKapanisCard({ bucket }) {
 
   const tamam = bucket.sorunSayisi === 0;
 
+  const gecStr = (dk) => {
+    if (!dk || dk <= 0) return '';
+    const sa = Math.floor(dk / 60); const kdk = Math.round(dk % 60);
+    return ' +' + (sa > 0 ? (kdk > 0 ? `${sa}sa ${kdk}dk` : `${sa}sa`) : `${kdk}dk`);
+  };
+
   const parcalar = [];
-  if (tamam) {
+  if (tamam && !bucket.acilisGecAcildi.length) {
     parcalar.push('✅  Tüm şubelerde açılış ve kapanış normal');
   } else {
     if (bucket.acilisGecikti.length)
-      parcalar.push(`🚨 Açılış gecikti: ${bucket.acilisGecikti.map(r => r.ad).join(' · ')}`);
+      parcalar.push(`🚨 AÇILMIYOR: ${bucket.acilisGecikti.map(r => r.ad + gecStr(r.gecikme_dk)).join(' · ')}`);
     if (bucket.acilisBekliyor.length)
       parcalar.push(`🌅 Açılış bekliyor: ${bucket.acilisBekliyor.map(r => r.ad).join(' · ')}`);
+    if (bucket.acilisGecAcildi.length)
+      parcalar.push(`⚠️ Gecikerek açıldı: ${bucket.acilisGecAcildi.map(r => r.ad + gecStr(r.gecikme_dk)).join(' · ')}`);
     if (bucket.kapanisGecikti.length)
-      parcalar.push(`🚨 Kapanış gecikti: ${bucket.kapanisGecikti.map(r => r.ad).join(' · ')}`);
+      parcalar.push(`🚨 Kapanış gecikti: ${bucket.kapanisGecikti.map(r => r.ad + gecStr(r.gecikme_dk)).join(' · ')}`);
     if (bucket.kapanisBekliyor.length)
       parcalar.push(`🌙 Kapanış bekliyor: ${bucket.kapanisBekliyor.map(r => r.ad).join(' · ')}`);
+    if (!parcalar.length)
+      parcalar.push('✅  Tüm şubelerde açılış ve kapanış normal');
   }
 
   const tickerMetni = (parcalar.join('   ·   ') + '      ').repeat(3);
