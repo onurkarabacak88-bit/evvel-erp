@@ -465,11 +465,7 @@ export default function SevkiyatHazirlama() {
                     return (
                       <div key={key} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 8 }}>
                         <div style={{ fontSize: 13, marginBottom: 6 }}>
-                          <strong>{k?.depo_stok_ad || k?.urun_ad || 'Ürün'}</strong>
-                          {k?.depo_stok_ad && k?.urun_ad && k.depo_stok_ad !== k.urun_ad && (
-                            <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 6 }}>({k.urun_ad})</span>
-                          )}
-                          {' '}· İstenen: {Number(k?.adet || 0)}
+                          <strong>{k?.urun_ad || 'Ürün'}</strong> · İstenen: {Number(k?.adet || 0)}
                         </div>
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                           <select

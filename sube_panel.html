@@ -3310,11 +3310,9 @@ function siparisNormalize(raw) {
     var nItems = items.map(function(it, i){
       if (typeof it === 'string') return { id: slugifyTR(it) + '_' + i, ad: it, aktif: true };
       var depoKod = it && it.depo_stok_kalem_kodu != null ? String(it.depo_stok_kalem_kodu).trim() : '';
-      var depoAd = it && it.depo_kalem_adi ? String(it.depo_kalem_adi).trim() : '';
       return {
         id: (it && it.id) || (slugifyTR((it&&it.ad)||'urun') + '_' + i),
         ad: String((it && it.ad) || '').trim() || ('Ürün ' + (i+1)),
-        depo_kalem_adi: depoAd || null,
         aktif: it && it.aktif !== false,
         depo_stok_kalem_kodu: depoKod || null,
         aciklama: it && it.aciklama != null ? String(it.aciklama).trim() || null : null,
@@ -4335,7 +4333,7 @@ async function renderSiparisPanel() {
           var key = k.id + '::' + it.id;
           var adet = parseInt(siparisDegerler[key] || 0, 10);
           if (!isNaN(adet) && adet > 0) {
-            kalemler.push({ kategori_id: k.id, urun_id: it.id, urun_ad: it.depo_kalem_adi || it.ad, aciklama: it.aciklama || null, adet: adet });
+            kalemler.push({ kategori_id: k.id, urun_id: it.id, urun_ad: it.ad, aciklama: it.aciklama || null, adet: adet });
           }
         });
       });
@@ -5855,7 +5853,7 @@ function stokBody(prefix, data, credsOverride) {
       var key = prefix + '::' + kat.id + '::' + it.id;
       var adet = parseInt((stokKalemDeger[prefix] && stokKalemDeger[prefix][key]) || 0, 10);
       if (isNaN(adet) || adet <= 0) return;
-      body.kalemler.push({ kategori_id: kat.id, urun_id: it.id, urun_ad: it.depo_kalem_adi || it.ad, aciklama: it.aciklama || null, adet: adet });
+      body.kalemler.push({ kategori_id: kat.id, urun_id: it.id, urun_ad: it.ad, aciklama: it.aciklama || null, adet: adet });
       var apiKey = stokApiKeyFromAd(it.ad);
       if (apiKey) body[apiKey] = (body[apiKey] || 0) + adet;
     });

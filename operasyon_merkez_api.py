@@ -6239,6 +6239,40 @@ def _depo_stok_kalem_kodu_normalize(raw: Optional[str]) -> Optional[str]:
     )
 
 
+def _siparis_urun_kanonik_ad(cur, depo_stok_kalem_kodu: Optional[str]) -> Optional[str]:
+    """depo_stok_kalem_kodu → canlı depodaki kanonik isim.
+    STOK_LABEL_TR sabit sözlüğü → sube_depo_stok.kalem_adi → başka siparis_urun.ad (UUID ise) sırasıyla bakar.
+    Bulamazsa None döner (mevcut ad korunur)."""
+    kk = str(depo_stok_kalem_kodu or "").strip()
+    if not kk:
+        return None
+    # 1) Sabit etiket sözlüğü
+    lab = STOK_LABEL_TR.get(kk)
+    if lab:
+        return lab
+    # 2) sube_depo_stok.kalem_adi (herhangi bir şubeden ilk eşleşen)
+    try:
+        cur.execute(
+            "SELECT kalem_adi FROM sube_depo_stok WHERE kalem_kodu=%s AND kalem_adi IS NOT NULL AND kalem_adi != '' LIMIT 1",
+            (kk,),
+        )
+        r = cur.fetchone()
+        if r:
+            return str(dict(r)["kalem_adi"]).strip() or None
+    except Exception:
+        pass
+    # 3) UUID ise başka bir siparis_urun.ad'ına işaret ediyor olabilir
+    try:
+        uuid.UUID(kk)
+        cur.execute("SELECT ad FROM siparis_urun WHERE id=%s LIMIT 1", (kk,))
+        r = cur.fetchone()
+        if r:
+            return str(dict(r)["ad"]).strip() or None
+    except Exception:
+        pass
+    return None
+
+
 @router.post("/siparis/urun-depo-kalem")
 def ops_siparis_urun_depo_kalem(body: OpsSiparisUrunDepoKalemBody):
     kod_sql = _depo_stok_kalem_kodu_normalize(body.depo_stok_kalem_kodu)
@@ -6251,15 +6285,28 @@ def ops_siparis_urun_depo_kalem(body: OpsSiparisUrunDepoKalemBody):
         if not kr:
             raise HTTPException(404, "Kategori bulunamadı")
         kid = str(dict(kr)["id"])
-        cur.execute(
-            """
-            UPDATE siparis_urun
-            SET depo_stok_kalem_kodu=%s, guncelleme=NOW()
-            WHERE id=%s AND kategori_id=%s
-            RETURNING id, ad, depo_stok_kalem_kodu
-            """,
-            (kod_sql, (body.urun_id or "").strip(), kid),
-        )
+        # depo_stok_kalem_kodu → kanonik ad (varsa siparis_urun.ad güncellenir)
+        kanonik_ad = _siparis_urun_kanonik_ad(cur, kod_sql)
+        if kanonik_ad:
+            cur.execute(
+                """
+                UPDATE siparis_urun
+                SET depo_stok_kalem_kodu=%s, ad=%s, guncelleme=NOW()
+                WHERE id=%s AND kategori_id=%s
+                RETURNING id, ad, depo_stok_kalem_kodu
+                """,
+                (kod_sql, kanonik_ad, (body.urun_id or "").strip(), kid),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE siparis_urun
+                SET depo_stok_kalem_kodu=%s, guncelleme=NOW()
+                WHERE id=%s AND kategori_id=%s
+                RETURNING id, ad, depo_stok_kalem_kodu
+                """,
+                (kod_sql, (body.urun_id or "").strip(), kid),
+            )
         ur = cur.fetchone()
         if not ur:
             raise HTTPException(404, "Ürün bulunamadı")
@@ -6281,9 +6328,81 @@ def ops_siparis_urun_depo_kalem(body: OpsSiparisUrunDepoKalemBody):
     return {
         "success": True,
         "urun_id": str(ud["id"]),
+        "ad": ud.get("ad"),
         "depo_stok_kalem_kodu": (
             str(dv).strip() if dv is not None and str(dv).strip() else None
         ),
+    }
+
+
+@router.post("/siparis/sync-urun-adlari")
+def ops_siparis_sync_urun_adlari():
+    """Tek seferlik / isteğe bağlı migration: siparis_urun.ad alanını depo kanonik adıyla senkronize eder.
+    Aynı zamanda geçmiş siparis_talep.kalemler JSONB içindeki urun_ad'ları da günceller."""
+    with db() as (conn, cur):
+        # 1) siparis_urun tablosunu güncelle
+        cur.execute("SELECT id, ad, depo_stok_kalem_kodu FROM siparis_urun WHERE depo_stok_kalem_kodu IS NOT NULL")
+        urunler = [dict(r) for r in cur.fetchall()]
+        urun_guncellenen: List[Dict] = []
+        for u in urunler:
+            kanonik = _siparis_urun_kanonik_ad(cur, u.get("depo_stok_kalem_kodu"))
+            if not kanonik:
+                continue
+            if str(u.get("ad") or "").strip() == kanonik:
+                continue
+            cur.execute(
+                "UPDATE siparis_urun SET ad=%s, guncelleme=NOW() WHERE id=%s",
+                (kanonik, str(u["id"])),
+            )
+            urun_guncellenen.append({"id": str(u["id"]), "eski": u.get("ad"), "yeni": kanonik})
+
+        # 2) urun_id → kanonik ad eşlemesi (yeni adlar dahil)
+        cur.execute("SELECT id, ad FROM siparis_urun")
+        urun_ad_map: Dict[str, str] = {str(r["id"]): str(r["ad"]) for r in cur.fetchall()}
+
+        # 3) siparis_talep.kalemler JSONB'yi güncelle (urun_id'ye göre)
+        cur.execute(
+            """
+            SELECT id, kalemler FROM siparis_talep
+            WHERE kalemler IS NOT NULL AND jsonb_typeof(kalemler) = 'array'
+            """
+        )
+        talep_satirlari = cur.fetchall()
+        talep_guncellenen = 0
+        for row in talep_satirlari:
+            talep_id = str(row["id"])
+            kalemler_raw = row["kalemler"]
+            if isinstance(kalemler_raw, str):
+                try:
+                    kalemler_raw = json.loads(kalemler_raw)
+                except Exception:
+                    continue
+            if not isinstance(kalemler_raw, list):
+                continue
+            degisti = False
+            yeni_kalemler = []
+            for km in kalemler_raw:
+                if not isinstance(km, dict):
+                    yeni_kalemler.append(km)
+                    continue
+                uid = str(km.get("urun_id") or "").strip()
+                kanonik = urun_ad_map.get(uid)
+                if kanonik and str(km.get("urun_ad") or "").strip() != kanonik:
+                    km = {**km, "urun_ad": kanonik}
+                    degisti = True
+                yeni_kalemler.append(km)
+            if degisti:
+                cur.execute(
+                    "UPDATE siparis_talep SET kalemler=%s WHERE id=%s",
+                    (json.dumps(yeni_kalemler, ensure_ascii=False), talep_id),
+                )
+                talep_guncellenen += 1
+
+    return {
+        "success": True,
+        "urun_guncellenen_adet": len(urun_guncellenen),
+        "talep_guncellenen_adet": talep_guncellenen,
+        "detay": urun_guncellenen,
     }
 
 
@@ -6904,36 +7023,8 @@ def ops_siparis_sevkiyat_listesi(
         liste_limit = 500 if gun_sayi <= 120 else 400
         q += f" ORDER BY t.tarih DESC, t.olusturma DESC NULLS LAST, t.id LIMIT {liste_limit}"
         cur.execute(q, qp)
-        raw_rows = cur.fetchall()
-
-        # ── Kalem adı zenginleştirme (geriye dönük uyumluluk) ──────────────────
-        # urun_id'si olan kalemlerde siparis_urun.depo_stok_kalem_kodu → canlı depo adı
-        # Tüm siparis_urun'u tek sorguda çek (büyük liste için N+1 yerine 1 sorgu)
-        try:
-            cur.execute("SELECT id, ad, depo_stok_kalem_kodu FROM siparis_urun WHERE aktif = TRUE")
-            _urun_map: Dict[str, Dict] = {str(r["id"]): dict(r) for r in cur.fetchall()}
-        except Exception:
-            _urun_map = {}
-        # sube_depo_stok'tan özel kalem adları (STOK_LABEL_TR'de olmayan katalog ürünleri için)
-        try:
-            cur.execute("SELECT DISTINCT kalem_kodu, kalem_adi FROM sube_depo_stok WHERE kalem_adi IS NOT NULL AND kalem_adi != ''")
-            _depo_adi_map: Dict[str, str] = {str(r["kalem_kodu"]): str(r["kalem_adi"]) for r in cur.fetchall()}
-        except Exception:
-            _depo_adi_map = {}
-
-        def _kalem_depo_ad(kalem: Dict) -> Optional[str]:
-            """Kalem dict'inden canlı depo adını türet — bulamazsa None döner."""
-            uid = str(kalem.get("urun_id") or "").strip()
-            if uid and uid in _urun_map:
-                kk = str(_urun_map[uid].get("depo_stok_kalem_kodu") or "").strip()
-                if kk:
-                    lab = STOK_LABEL_TR.get(kk) or _depo_adi_map.get(kk)
-                    if lab:
-                        return lab
-            return None
-
         rows: List[Dict[str, Any]] = []
-        for r in raw_rows:
+        for r in cur.fetchall():
             d = dict(r)
             d["sevkiyat_sube_id"] = d.get("hedef_depo_sube_id")
             d["sevkiyat_sube_adi"] = d.get("hedef_depo_sube_adi")
@@ -6953,16 +7044,6 @@ def ops_siparis_sevkiyat_listesi(
                         v = []
                 if not isinstance(v, list):
                     v = []
-                # Kalemlere depo_stok_ad ekle (canlı depo ismiyle eşleştir)
-                if k == "kalemler":
-                    enriched = []
-                    for km in v:
-                        if isinstance(km, dict):
-                            depo_ad = _kalem_depo_ad(km)
-                            if depo_ad:
-                                km = {**km, "depo_stok_ad": depo_ad}
-                        enriched.append(km)
-                    v = enriched
                 d[k] = v
             rows.append(d)
     return {
