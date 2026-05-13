@@ -419,7 +419,7 @@ const MODULLER = [
     label: '📡 Canlı Operasyon',
     renk: '#4a9eff',
     desc: 'Anlık şube durumu, açılma, kapanış, personel takibi ve merkez direktifleri',
-    tabs: ['canli', 'gec-kalan-personel', 'mesaj'],
+    tabs: ['canli', 'gec-acilan-subeler', 'kapanis-takip', 'gec-kalan-personel', 'mesaj'],
   },
   {
     id: 'envanter',
