@@ -415,8 +415,8 @@ const MODULLER = [
     id: 'canli-ops',
     label: '📡 Canlı Operasyon',
     renk: '#4a9eff',
-    desc: 'Anlık şube durumu, açılma, kapanış, personel takibi ve merkez direktifleri',
-    tabs: ['canli', 'acilis-takip', 'kapanis-takip', 'mesaj'],
+    desc: 'Anlık şube durumu, açılma takibi ve merkez direktifleri',
+    tabs: ['canli', 'acilis-takip', 'mesaj'],
   },
   {
     id: 'envanter',
@@ -436,8 +436,8 @@ const MODULLER = [
     id: 'finans-kasa',
     label: '💳 Finans & Kasa',
     renk: '#e85d5d',
-    desc: 'Günlük ciro onayı, kasa uyumsuzluğu ve fiş kontrol',
-    tabs: ['ciro-onay', 'kasa-uyumsuzluk', 'fis'],
+    desc: 'Günlük kapanış özeti, ciro onayı, kasa uyumsuzluğu ve fiş kontrol',
+    tabs: ['kapanis-takip', 'ciro-onay', 'kasa-uyumsuzluk', 'fis'],
   },
   {
     id: 'personel',
