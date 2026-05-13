@@ -305,8 +305,7 @@ const FILTRELER = [
 const UST_SEKMELER = [
   { id: 'canli', label: 'Canlı Operasyon' },
   { id: 'urun-ac', label: '🟢 Ürün Aç Akışı' },
-  { id: 'gec-acilan-subeler', label: '⏰ Geç Açılan Şubeler' },
-  { id: 'gec-kalan-personel', label: '👤 Geç Kalan Personel' },
+  { id: 'acilis-takip', label: '⏰ Açılış Takip' },
   { id: 'kullanilan-urunler', label: '🟠 Kullanılan Ürünler' },
   { id: 'kapanis-takip', label: '📊 Kapanış Takip' },
   { id: 'ciro-onay', label: '💳 Bekleyen Ciro Onayları' },
@@ -339,8 +338,7 @@ const UST_SEKMELER = [
 const OPS_MODUL_BOLUM = {
   canli: [{ id: 'icerik', label: 'Genel Bakış' }],
   'urun-ac': [{ id: 'icerik', label: 'Günlük akış' }],
-  'gec-acilan-subeler': [{ id: 'icerik', label: 'Günlük akış' }],
-  'gec-kalan-personel': [{ id: 'icerik', label: 'Aylık analiz' }],
+  'acilis-takip': [{ id: 'icerik', label: 'Açılış & Personel' }],
   'kullanilan-urunler': [{ id: 'icerik', label: 'Günlük akış' }],
   'kapanis-takip': [{ id: 'icerik', label: 'Günlük özet' }],
   'ciro-onay': [{ id: 'icerik', label: 'Onay akışı' }],
@@ -381,8 +379,7 @@ const OPS_MODUL_BOLUM = {
 const OPS_HUB_RENK = {
   canli: '#4a9eff',
   'urun-ac': '#2db573',
-  'gec-acilan-subeler': '#f97316',
-  'gec-kalan-personel': '#0ea5a4',
+  'acilis-takip': '#f97316',
   'kullanilan-urunler': '#f59e0b',
   'kapanis-takip': '#22c55e',
   'ciro-onay': '#d946b8',
@@ -419,7 +416,7 @@ const MODULLER = [
     label: '📡 Canlı Operasyon',
     renk: '#4a9eff',
     desc: 'Anlık şube durumu, açılma, kapanış, personel takibi ve merkez direktifleri',
-    tabs: ['canli', 'gec-acilan-subeler', 'kapanis-takip', 'gec-kalan-personel', 'mesaj'],
+    tabs: ['canli', 'acilis-takip', 'kapanis-takip', 'mesaj'],
   },
   {
     id: 'envanter',
@@ -2076,6 +2073,8 @@ export default function OperasyonMerkezi() {
     plan_kayitsiz_toplam: 0,
   });
   const [gecAcilanSeciliSubeKey, setGecAcilanSeciliSubeKey] = useState('all');
+  /** acilis-takip içi alt sekme: 'gec-acilis' | 'gec-personel' */
+  const [acilisTakipAlt, setAcilisTakipAlt] = useState('gec-acilis');
   /** Geç açılan kartı içi: operasyon akışı vs planlı ama ACILIS oluşmamış. */
   const [gecAcilanKartSekme, setGecAcilanKartSekme] = useState('akis');
   const [gecAcilanHaftaSatirlari, setGecAcilanHaftaSatirlari] = useState([]);
@@ -2342,7 +2341,7 @@ export default function OperasyonMerkezi() {
     try {
       const data = await gecAcilanGunYukle(bugunIsoTarih());
       setGecAcilanBugun(data);
-      if (aktifSekme !== 'gec-acilan-subeler') {
+      if (aktifSekme !== 'acilis-takip') {
         setGecAcilanAramaTarih(data.tarih || bugunIsoTarih());
         setGecAcilanAramaSonuc(data);
       }
@@ -2426,7 +2425,7 @@ export default function OperasyonMerkezi() {
     try {
       const data = await gecKalanPersonelAyYukle(varsayilanAy);
       setGecKalanPersonelBugun(data);
-      if (aktifSekme !== 'gec-kalan-personel') {
+      if (aktifSekme !== 'acilis-takip') {
         setGecKalanPersonelAy(data.year_month || varsayilanAy);
         setGecKalanPersonelAramaSonuc(data);
       }
@@ -3321,7 +3320,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     if (!aktifSekme) return;
-    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'siparis-kabul-takip' || aktifSekme === 'toptanci-siparisleri' || aktifSekme === 'urun-ac' || aktifSekme === 'gec-acilan-subeler' || aktifSekme === 'gec-kalan-personel' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'personel-vardiya-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'sevkiyat-uyumsuzluk' || aktifSekme === 'magaza-kartlari' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
+    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'siparis-kabul-takip' || aktifSekme === 'toptanci-siparisleri' || aktifSekme === 'urun-ac' || aktifSekme === 'acilis-takip' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'personel-vardiya-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'sevkiyat-uyumsuzluk' || aktifSekme === 'magaza-kartlari' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
     yukle(filtre);
   }, [filtre, aktifSekme, ayFiltre, gunFiltre, yukle]);
 
@@ -3420,7 +3419,8 @@ export default function OperasyonMerkezi() {
   }, [aktifSekme, toast, urunAcGunYukle, urunAcHaftaYukle]);
 
   useEffect(() => {
-    if (aktifSekme !== 'gec-acilan-subeler') return;
+    if (aktifSekme !== 'acilis-takip') return;
+    setAcilisTakipAlt('gec-acilis');
     setYukleniyor(true);
     setGecAcilanHaftaYukleniyor(true);
     gecAcilanHaftaYukle()
@@ -3437,12 +3437,12 @@ export default function OperasyonMerkezi() {
   }, [aktifSekme, toast, gecAcilanGunYukle, gecAcilanHaftaYukle]);
 
   useEffect(() => {
-    if (aktifSekme === 'gec-acilan-subeler') return;
+    if (aktifSekme === 'acilis-takip') return;
     setGecAcilanKartSekme('akis');
   }, [aktifSekme]);
 
   useEffect(() => {
-    if (aktifSekme !== 'gec-kalan-personel') return;
+    if (aktifSekme !== 'acilis-takip' || acilisTakipAlt !== 'gec-personel') return;
     setYukleniyor(true);
     gecKalanPersonelAyYukle(varsayilanAy)
       .then((data) => {
@@ -3451,7 +3451,7 @@ export default function OperasyonMerkezi() {
       })
       .catch((e) => toast(e.message || 'Geç kalan personel yüklenemedi'))
       .finally(() => setYukleniyor(false));
-  }, [aktifSekme, toast, gecKalanPersonelAyYukle, varsayilanAy]);
+  }, [aktifSekme, acilisTakipAlt, toast, gecKalanPersonelAyYukle, varsayilanAy]);
 
   useEffect(() => {
     if (aktifSekme !== 'kullanilan-urunler') return;
@@ -3645,17 +3645,18 @@ export default function OperasyonMerkezi() {
           .catch(() => {})
           .finally(() => setUrunAcHaftaYukleniyor(false));
         urunAcAramaYap().finally(() => setYukleniyor(false));
-      } else if (aktifSekme === 'gec-acilan-subeler') {
+      } else if (aktifSekme === 'acilis-takip') {
         setYukleniyor(true);
-        setGecAcilanHaftaYukleniyor(true);
-        gecAcilanHaftaYukle()
-          .then(setGecAcilanHaftaSatirlari)
-          .catch(() => {})
-          .finally(() => setGecAcilanHaftaYukleniyor(false));
-        gecAcilanAramaYap().finally(() => setYukleniyor(false));
-      } else if (aktifSekme === 'gec-kalan-personel') {
-        setYukleniyor(true);
-        gecKalanPersonelAramaYap().finally(() => setYukleniyor(false));
+        if (acilisTakipAlt === 'gec-acilis') {
+          setGecAcilanHaftaYukleniyor(true);
+          gecAcilanHaftaYukle()
+            .then(setGecAcilanHaftaSatirlari)
+            .catch(() => {})
+            .finally(() => setGecAcilanHaftaYukleniyor(false));
+          gecAcilanAramaYap().finally(() => setYukleniyor(false));
+        } else {
+          gecKalanPersonelAramaYap().finally(() => setYukleniyor(false));
+        }
       } else if (aktifSekme === 'kullanilan-urunler') {
         setYukleniyor(true);
         setKullanilanHaftaYukleniyor(true);
@@ -3727,7 +3728,7 @@ export default function OperasyonMerkezi() {
       }
     });
     return unsub;
-  }, [aktifSekme, filtre, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, urunAcHaftaYukle, gecAcilanAramaYap, gecAcilanHaftaYukle, gecKalanPersonelAramaYap, kullanilanAramaYap, kullanilanHaftaYukle, ciroOnayAramaYap, kasaUyumAramaYap, kasaUyumHaftaYukle, personelVardiyaUyumAramaYap, personelVardiyaUyumHaftaYukle, urunUyumAramaYap, yukleSevkiyatUyumOzet, sevkiyatUyumDetayYukle, yukleSiparisMerkez, yukleSiparisKabulTakip, yukleToptanciSiparisleri, toptanciSiparisListe?.gun, yukleToptanciTeslimler, magazaDepoTamYenile, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
+  }, [aktifSekme, acilisTakipAlt, filtre, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, urunAcHaftaYukle, gecAcilanAramaYap, gecAcilanHaftaYukle, gecKalanPersonelAramaYap, kullanilanAramaYap, kullanilanHaftaYukle, ciroOnayAramaYap, kasaUyumAramaYap, kasaUyumHaftaYukle, personelVardiyaUyumAramaYap, personelVardiyaUyumHaftaYukle, urunUyumAramaYap, yukleSevkiyatUyumOzet, sevkiyatUyumDetayYukle, yukleSiparisMerkez, yukleSiparisKabulTakip, yukleToptanciSiparisleri, toptanciSiparisListe?.gun, yukleToptanciTeslimler, magazaDepoTamYenile, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
 
 
   // Haftalık karşılaştırma — sadece ilgili sekme açıkken yükle
@@ -4437,16 +4438,17 @@ export default function OperasyonMerkezi() {
                 .finally(() => setUrunAcHaftaYukleniyor(false));
               urunAcAramaYap().finally(() => setYukleniyor(false));
             }
-            else if (aktifSekme === 'gec-acilan-subeler') {
-              setGecAcilanHaftaYukleniyor(true);
-              gecAcilanHaftaYukle()
-                .then(setGecAcilanHaftaSatirlari)
-                .catch(() => {})
-                .finally(() => setGecAcilanHaftaYukleniyor(false));
-              gecAcilanAramaYap().finally(() => setYukleniyor(false));
-            }
-            else if (aktifSekme === 'gec-kalan-personel') {
-              gecKalanPersonelAramaYap().finally(() => setYukleniyor(false));
+            else if (aktifSekme === 'acilis-takip') {
+              if (acilisTakipAlt === 'gec-acilis') {
+                setGecAcilanHaftaYukleniyor(true);
+                gecAcilanHaftaYukle()
+                  .then(setGecAcilanHaftaSatirlari)
+                  .catch(() => {})
+                  .finally(() => setGecAcilanHaftaYukleniyor(false));
+                gecAcilanAramaYap().finally(() => setYukleniyor(false));
+              } else {
+                gecKalanPersonelAramaYap().finally(() => setYukleniyor(false));
+              }
             }
             else if (aktifSekme === 'kullanilan-urunler') {
               setKullanilanHaftaYukleniyor(true);
@@ -4794,7 +4796,7 @@ export default function OperasyonMerkezi() {
                 onClick={() => {
                   const firstTab = modul.tabs[0];
                   setAktifModul(modul.id);
-                  if (firstTab === 'gec-acilan-subeler') {
+                  if (firstTab === 'acilis-takip') {
                     setGecAcilanAramaTarih(bugunIsoTarih());
                     setGecAcilanAramaSonuc(gecAcilanBugun);
                   } else if (firstTab === 'kasa-uyumsuzluk') {
@@ -4885,16 +4887,17 @@ export default function OperasyonMerkezi() {
                       .finally(() => setUrunAcHaftaYukleniyor(false));
                     urunAcAramaYap().finally(() => setYukleniyor(false));
                   }
-                  else if (aktifSekme === 'gec-acilan-subeler') {
-                    setGecAcilanHaftaYukleniyor(true);
-                    gecAcilanHaftaYukle()
-                      .then(setGecAcilanHaftaSatirlari)
-                      .catch(() => {})
-                      .finally(() => setGecAcilanHaftaYukleniyor(false));
-                    gecAcilanAramaYap().finally(() => setYukleniyor(false));
-                  }
-                  else if (aktifSekme === 'gec-kalan-personel') {
-                    gecKalanPersonelAramaYap().finally(() => setYukleniyor(false));
+                  else if (aktifSekme === 'acilis-takip') {
+                    if (acilisTakipAlt === 'gec-acilis') {
+                      setGecAcilanHaftaYukleniyor(true);
+                      gecAcilanHaftaYukle()
+                        .then(setGecAcilanHaftaSatirlari)
+                        .catch(() => {})
+                        .finally(() => setGecAcilanHaftaYukleniyor(false));
+                      gecAcilanAramaYap().finally(() => setYukleniyor(false));
+                    } else {
+                      gecKalanPersonelAramaYap().finally(() => setYukleniyor(false));
+                    }
                   }
                   else if (aktifSekme === 'kullanilan-urunler') {
                     setKullanilanHaftaYukleniyor(true);
@@ -5105,7 +5108,7 @@ export default function OperasyonMerkezi() {
               <div
                 className="metric-card"
                 style={{ borderTop: `3px solid ${gecAlert > 0 ? 'var(--red)' : 'var(--text3)'}`, cursor: 'pointer' }}
-                onClick={() => acModulTab('gec-acilan-subeler')}
+                onClick={() => acModulTab('acilis-takip')}
                 title="Geç açılan / açılmayan şubeler — detay için tıkla"
               >
                 <div className="metric-label">⏰ Geç / Açılmayan</div>
@@ -8055,8 +8058,34 @@ export default function OperasyonMerkezi() {
         </div>
       )}
 
-      {aktifSekme === 'gec-acilan-subeler' && (
+      {aktifSekme === 'acilis-takip' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: 10 }}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => setAcilisTakipAlt('gec-acilis')}
+              style={{
+                padding: '8px 16px', fontWeight: 700,
+                border: acilisTakipAlt === 'gec-acilis' ? '1px solid #f97316' : '1px solid var(--border)',
+                background: acilisTakipAlt === 'gec-acilis' ? 'rgba(249,115,22,0.22)' : 'var(--bg2)',
+                color: acilisTakipAlt === 'gec-acilis' ? '#fed7aa' : 'var(--text2)',
+              }}
+            >⏰ Geç Açılan Şubeler</button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => setAcilisTakipAlt('gec-personel')}
+              style={{
+                padding: '8px 16px', fontWeight: 700,
+                border: acilisTakipAlt === 'gec-personel' ? '1px solid #0ea5a4' : '1px solid var(--border)',
+                background: acilisTakipAlt === 'gec-personel' ? 'rgba(14,165,164,0.22)' : 'var(--bg2)',
+                color: acilisTakipAlt === 'gec-personel' ? '#99f6e4' : 'var(--text2)',
+              }}
+            >👤 Geç Kalan Personel (aylık)</button>
+          </div>
+          {acilisTakipAlt === 'gec-acilis' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <button
               type="button"
@@ -8497,11 +8526,10 @@ export default function OperasyonMerkezi() {
           </div>
           </>
           )}
-        </div>
-      )}
-
-      {aktifSekme === 'gec-kalan-personel' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          </div>
+          )}
+          {acilisTakipAlt === 'gec-personel' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0, lineHeight: 1.5 }}>
             Aylık bazda personel geç açılış tekrarları burada izlenir. Gecikme dakikası <strong>Geç Açılan Şubeler</strong> ile aynıdır: önce vardiya planı (MIN başlangıç), yoksa operasyon <code className="mono">sistem_slot_ts</code>.
             Listeye girmek için en az <strong>5 dk</strong> gecikme; satırda <strong>kritik</strong> sayımı <strong>15 dk+</strong> olaylar içindir.
@@ -8597,6 +8625,8 @@ export default function OperasyonMerkezi() {
                 );
               })}
             </div>
+          )}
+          </div>
           )}
         </div>
       )}
