@@ -6208,6 +6208,99 @@ def ops_siparis_urun_fiyat(body: OpsSiparisUrunFiyatBody):
     }
 
 
+class OpsSiparisUrunAdBody(BaseModel):
+    """Katalog ürününün adını günceller; geçmiş siparis_talep.kalemler JSON'ını da düzeltir."""
+
+    kategori_kod: str
+    urun_id: str
+    yeni_ad: str
+
+
+@router.post("/siparis/urun-ad")
+def ops_siparis_urun_ad(body: OpsSiparisUrunAdBody):
+    """Ürün adını güncelle ve geçmiş talep JSONB'sini de senkronize et."""
+    yeni = str(body.yeni_ad or "").strip()
+    if not yeni:
+        raise HTTPException(400, "Yeni ad boş olamaz")
+    if len(yeni) > 120:
+        raise HTTPException(400, "Ürün adı en fazla 120 karakter olabilir")
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT id FROM siparis_kategori WHERE kod=%s",
+            ((body.kategori_kod or "").strip(),),
+        )
+        kr = cur.fetchone()
+        if not kr:
+            raise HTTPException(404, "Kategori bulunamadı")
+        kid = str(dict(kr)["id"])
+        cur.execute(
+            """
+            UPDATE siparis_urun
+            SET ad=%s, norm_ad=LOWER(TRIM(%s)), guncelleme=NOW()
+            WHERE id=%s AND kategori_id=%s
+            RETURNING id, ad
+            """,
+            (yeni, yeni, (body.urun_id or "").strip(), kid),
+        )
+        ur = cur.fetchone()
+        if not ur:
+            raise HTTPException(404, "Ürün bulunamadı")
+        ud = dict(ur)
+        urun_id_str = str(ud["id"])
+        # Geçmiş siparis_talep.kalemler JSONB'sindeki urun_ad'ı da güncelle
+        talep_guncellenen = 0
+        try:
+            cur.execute(
+                """
+                SELECT id, kalemler FROM siparis_talep
+                WHERE kalemler IS NOT NULL
+                  AND EXISTS (
+                    SELECT 1 FROM jsonb_array_elements(kalemler) AS k
+                    WHERE k->>'urun_id' = %s
+                  )
+                """,
+                (urun_id_str,),
+            )
+            rows = cur.fetchall()
+            for row in rows:
+                rd = dict(row)
+                talep_id = rd["id"]
+                kalemler = rd["kalemler"]
+                if not isinstance(kalemler, list):
+                    continue
+                degisti = False
+                for k in kalemler:
+                    if isinstance(k, dict) and str(k.get("urun_id", "")) == urun_id_str:
+                        k["urun_ad"] = yeni
+                        degisti = True
+                if degisti:
+                    import json as _json
+                    cur.execute(
+                        "UPDATE siparis_talep SET kalemler=%s WHERE id=%s",
+                        (_json.dumps(kalemler, ensure_ascii=False), talep_id),
+                    )
+                    talep_guncellenen += 1
+        except Exception:
+            pass  # JSONB güncelleme hatası kritik değil, devam et
+        audit(cur, "siparis_urun", urun_id_str, "OPS_SIPARIS_URUN_AD")
+        from operasyon_defter import operasyon_defter_ekle
+        sid = _ops_sube_anchor(cur)
+        saat = dt_now_tr().strftime("%H:%M:%S")
+        operasyon_defter_ekle(
+            cur,
+            sid,
+            "OPS_SIPARIS_URUN_AD",
+            f"Merkez — ürün adı güncellendi: {yeni} (geçmiş talep güncellenen: {talep_guncellenen})",
+            bildirim_saati=saat,
+        )
+    return {
+        "success": True,
+        "urun_id": urun_id_str,
+        "yeni_ad": yeni,
+        "talep_guncellenen_adet": talep_guncellenen,
+    }
+
+
 class OpsSiparisUrunDepoKalemBody(BaseModel):
     """Katalog ürününün depo havuz anahtarını sabitler (boş = otomatik eşleme)."""
 

@@ -2019,6 +2019,8 @@ export default function OperasyonMerkezi() {
     urun_id: '',
     yeni_fiyat_tl: '',
   });
+  const [magazaUrunAdGuncelleAcik, setMagazaUrunAdGuncelleAcik] = useState(false);
+  const [magazaUrunAdForm, setMagazaUrunAdForm] = useState({ kategori_kod: '', urun_id: '', yeni_ad: '' });
   /** ürün bazlı global override fiyat: urun_id -> birim fiyat */
   const [magazaGlobalFiyatMap, setMagazaGlobalFiyatMap] = useState({});
   /** kategori içi hızlı fiyat düzenleme taslakları: urun_id -> metin fiyat */
@@ -5463,11 +5465,25 @@ export default function OperasyonMerkezi() {
                 </button>
                 <button
                   type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    setMagazaUrunAdGuncelleAcik((a) => {
+                      const ac = !a;
+                      if (ac) { setMagazaUrunEkleAcik(false); setMagazaFiyatGuncelleAcik(false); }
+                      return ac;
+                    });
+                  }}
+                  style={magazaUrunAdGuncelleAcik ? { boxShadow: '0 0 0 1px rgba(90, 140, 220, 0.6)' } : undefined}
+                >
+                  {magazaUrunAdGuncelleAcik ? 'Adı güncellemeyi kapat' : '✏️ Adı güncelle'}
+                </button>
+                <button
+                  type="button"
                   className="btn btn-primary btn-sm"
                   onClick={() => {
                     setMagazaUrunEkleAcik((a) => {
                       const ac = !a;
-                      if (ac) setMagazaFiyatGuncelleAcik(false);
+                      if (ac) { setMagazaFiyatGuncelleAcik(false); setMagazaUrunAdGuncelleAcik(false); }
                       return ac;
                     });
                   }}
@@ -5481,7 +5497,7 @@ export default function OperasyonMerkezi() {
                   onClick={() => {
                     setMagazaFiyatGuncelleAcik((a) => {
                       const ac = !a;
-                      if (ac) setMagazaUrunEkleAcik(false);
+                      if (ac) { setMagazaUrunEkleAcik(false); setMagazaUrunAdGuncelleAcik(false); }
                       return ac;
                     });
                   }}
@@ -5492,6 +5508,99 @@ export default function OperasyonMerkezi() {
               </div>
             </div>
           </div>
+
+          {magazaUrunAdGuncelleAcik && (
+            <div
+              className="card"
+              style={{ marginBottom: 16, padding: '14px 16px', borderLeft: '4px solid #5a8cdc', background: 'var(--bg2)' }}
+            >
+              <h4 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 6px' }}>✏️ Ürün adını güncelle</h4>
+              <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 12px', lineHeight: 1.45 }}>
+                Katalog ürününün adını değiştir. Geçmiş sipariş kayıtlarındaki ad da otomatik güncellenir.
+              </p>
+              <div style={{ display: 'grid', gap: 10 }}>
+                <label style={{ margin: 0 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Kategori</span>
+                  <select
+                    className="input"
+                    value={magazaUrunAdForm.kategori_kod}
+                    onChange={(e) => setMagazaUrunAdForm((p) => ({ ...p, kategori_kod: e.target.value, urun_id: '', yeni_ad: '' }))}
+                  >
+                    <option value="">— Kategori seç —</option>
+                    {(magazaDepoKatalogState.kategoriler || []).map((k) => (
+                      <option key={k.id} value={k.id}>{k.label || k.ad}</option>
+                    ))}
+                  </select>
+                </label>
+                {magazaUrunAdForm.kategori_kod && (
+                  <label style={{ margin: 0 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Ürün</span>
+                    <select
+                      className="input"
+                      value={magazaUrunAdForm.urun_id}
+                      onChange={(e) => {
+                        const uid = e.target.value;
+                        const kat = (magazaDepoKatalogState.kategoriler || []).find((k) => k.id === magazaUrunAdForm.kategori_kod);
+                        const urun = (kat?.items || []).find((it) => it.id === uid);
+                        setMagazaUrunAdForm((p) => ({ ...p, urun_id: uid, yeni_ad: urun?.ad || '' }));
+                      }}
+                    >
+                      <option value="">— Ürün seç —</option>
+                      {(() => {
+                        const kat = (magazaDepoKatalogState.kategoriler || []).find((k) => k.id === magazaUrunAdForm.kategori_kod);
+                        return (kat?.items || []).map((it) => (
+                          <option key={it.id} value={it.id}>{it.ad}</option>
+                        ));
+                      })()}
+                    </select>
+                  </label>
+                )}
+                {magazaUrunAdForm.urun_id && (
+                  <label style={{ margin: 0 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Yeni ad</span>
+                    <input
+                      className="input"
+                      value={magazaUrunAdForm.yeni_ad}
+                      onChange={(e) => setMagazaUrunAdForm((p) => ({ ...p, yeni_ad: e.target.value }))}
+                      placeholder="Ürün adı"
+                    />
+                  </label>
+                )}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" className="btn btn-secondary btn-sm"
+                    onClick={() => setMagazaUrunAdForm({ kategori_kod: '', urun_id: '', yeni_ad: '' })}>
+                    Temizle
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    disabled={!magazaUrunAdForm.urun_id || !String(magazaUrunAdForm.yeni_ad || '').trim()}
+                    onClick={async () => {
+                      const yeniAd = String(magazaUrunAdForm.yeni_ad || '').trim();
+                      if (!yeniAd) return;
+                      try {
+                        const r = await api('/ops/siparis/urun-ad', {
+                          method: 'POST',
+                          body: {
+                            kategori_kod: magazaUrunAdForm.kategori_kod,
+                            urun_id: magazaUrunAdForm.urun_id,
+                            yeni_ad: yeniAd,
+                          },
+                        });
+                        toast(`"${yeniAd}" olarak güncellendi. Geçmiş talep güncellenen: ${r.talep_guncellenen_adet}`, 'green');
+                        setMagazaUrunAdForm({ kategori_kod: '', urun_id: '', yeni_ad: '' });
+                        await magazaDepoTamYenile();
+                      } catch (e) {
+                        toast(`Ad güncellenemedi: ${e.message}`, 'red');
+                      }
+                    }}
+                  >
+                    Adı güncelle
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {magazaUrunEkleAcik && (
             <div
