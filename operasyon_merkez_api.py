@@ -6574,6 +6574,26 @@ def ops_siparis_sync_urun_adlari():
         except Exception:
             pass
 
+        # 5) sube_depo_stok.kalem_adi — kalem_kodu = siparis_urun.depo_stok_kalem_kodu olanları eşitle
+        #    (örn: katalog__surup__cilek → "Çilek Şurup", katalog__pure__cilek → "Çilek Püre")
+        depo_guncellenen2 = 0
+        try:
+            cur.execute(
+                """
+                UPDATE sube_depo_stok ds
+                SET kalem_adi = su.ad
+                FROM siparis_urun su
+                WHERE su.depo_stok_kalem_kodu IS NOT NULL
+                  AND su.aktif = TRUE
+                  AND ds.kalem_kodu = su.depo_stok_kalem_kodu
+                  AND ds.kalem_adi IS DISTINCT FROM su.ad
+                """
+            )
+            depo_guncellenen2 = cur.rowcount or 0
+        except Exception:
+            pass
+        depo_guncellenen += depo_guncellenen2
+
     return {
         "success": True,
         "urun_guncellenen_adet": len(urun_guncellenen),
