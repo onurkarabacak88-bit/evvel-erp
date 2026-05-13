@@ -994,10 +994,8 @@ function SubeKart({ k, onDetay, personelRisk }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ fontWeight: 600, fontSize: 15 }}>{k.sube_adi || k.sube_id}</span>
         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {b.kritik   && <span className="badge badge-red">KRİTİK</span>}
           {!b.kritik && b.geciken && <span className="badge badge-yellow">Gecikme</span>}
           {b.fark_var && <span className="badge badge-yellow">Fark</span>}
-          {b.guvenlik_alarm && <span className="badge badge-red">Güvenlik</span>}
           {!!personelRisk?.adet && (
             <span className={`badge ${personelRisk.maxSkor >= 45 ? 'badge-red' : 'badge-yellow'}`}>
               👤 Riskli personel: {personelRisk.adet}
@@ -1054,23 +1052,20 @@ function SubeKart({ k, onDetay, personelRisk }) {
         <span style={{ color: k.vardiya_devri_tamam ? 'var(--green)' : k.vardiya_devri_basladi ? 'var(--yellow)' : 'var(--text3)' }}>
           {k.vardiya_devri_tamam ? '✓ Vardiya' : k.vardiya_devri_basladi ? '⏳ Vardiya' : '— Vardiya'}
         </span>
+        {(b.kritik || kritikler.length > 0) && (
+          <span className="badge badge-red" title={kritikler.map(u => temizMesaj(u.mesaj)).join('\n')}>
+            🚨 {kritikler.length > 0 ? `${kritikler.length} kritik` : 'kritik'}
+          </span>
+        )}
         {(o.alarm_sayisi_toplam || 0) > 0 && (
           <span className="badge badge-red" title="Güvenlik alarmı — detay için tıkla">
             🔐 {o.alarm_sayisi_toplam} güvenlik
-          </span>
-        )}
-        {kritikler.length > 0 && (
-          <span className="badge badge-red" title={kritikler.map(u => temizMesaj(u.mesaj)).join('\n')}>
-            🚨 {kritikler.length} kritik
           </span>
         )}
         {digerUyarilar.length > 0 && (
           <span className="badge badge-yellow" title={digerUyarilar.map(u => temizMesaj(u.mesaj)).join('\n')}>
             ⚠️ {digerUyarilar.length} uyarı
           </span>
-        )}
-        {ad && (
-          <span className="badge badge-gray" title={`Son işlem: ${ad.durum}`}>🔐 {ad.durum === 'susturuldu' ? 'Susturuldu' : 'Okundu'}</span>
         )}
       </div>
     </div>
