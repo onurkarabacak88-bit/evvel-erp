@@ -5110,61 +5110,69 @@ export default function OperasyonMerkezi() {
         ].filter(Boolean);
         return (
           <>
-            {/* 6 canlı alert kartı */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 14 }}>
-              <div className="metric-card" style={{ borderTop: `3px solid ${subeAcikSayi === kartlar.length && kartlar.length > 0 ? 'var(--green)' : '#4a9eff'}` }}>
-                <div className="metric-label">🏢 Aktif Şube</div>
-                <div className="metric-value" style={{ color: '#4a9eff' }}>{subeAcikSayi} / {kartlar.length || '—'}</div>
-                <div className="metric-sub">Şu an açık / toplam</div>
-              </div>
+            {/* 6 canlı alert pill'i */}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+              {/* Aktif Şube */}
               <div
-                className="metric-card"
-                style={{ borderTop: `3px solid ${gecAlert > 0 ? 'var(--red)' : 'var(--text3)'}`, cursor: 'pointer' }}
+                className="tab-pill"
+                style={{ borderColor: subeAcikSayi === kartlar.length && kartlar.length > 0 ? 'var(--green)' : '#4a9eff', color: '#4a9eff', cursor: 'default' }}
+                title="Şu an açık / toplam şube"
+              >
+                🏢 Aktif Şube&nbsp;
+                <span style={{ fontWeight: 800 }}>{subeAcikSayi}/{kartlar.length || '—'}</span>
+              </div>
+              {/* Geç / Açılmayan */}
+              <button
+                type="button"
+                className="tab-pill"
+                style={{ borderColor: gecAlert > 0 ? 'var(--red)' : undefined, color: gecAlert > 0 ? 'var(--red)' : undefined }}
                 onClick={() => acModulTab('acilis-takip')}
-                title="Geç açılan / açılmayan şubeler — detay için tıkla"
+                title={`${Number(gecAcilanBugun?.toplam || 0)} geç · ${Number(gecAcilanBugun?.acilmayan_toplam || 0)} açılmadı`}
               >
-                <div className="metric-label">⏰ Geç / Açılmayan</div>
-                <div className="metric-value" style={{ color: gecAlert > 0 ? 'var(--red)' : 'var(--text3)' }}>{gecAlert}</div>
-                <div className="metric-sub">{Number(gecAcilanBugun?.toplam || 0)} geç · {Number(gecAcilanBugun?.acilmayan_toplam || 0)} açılmadı →</div>
-              </div>
-              <div
-                className="metric-card"
-                style={{ borderTop: `3px solid ${kapanmayanSayi > 0 ? '#f08040' : 'var(--text3)'}`, cursor: 'pointer' }}
+                ⏰ Geç/Açılmayan&nbsp;
+                <span style={{ fontWeight: 800 }}>{gecAlert}</span>
+              </button>
+              {/* Kapanmayan */}
+              <button
+                type="button"
+                className="tab-pill"
+                style={{ borderColor: kapanmayanSayi > 0 ? '#f08040' : undefined, color: kapanmayanSayi > 0 ? '#f08040' : undefined }}
                 onClick={() => acModulTab('kapanis-takip')}
-                title="Kapanış tamamlanmayan şubeler — detay için tıkla"
+                title="Kapanış tamamlanmayan şubeler"
               >
-                <div className="metric-label">🔒 Kapanmayan</div>
-                <div className="metric-value" style={{ color: kapanmayanSayi > 0 ? '#f08040' : 'var(--text3)' }}>{kapanmayanSayi}</div>
-                <div className="metric-sub">Kapanış tamamlanmayan →</div>
-              </div>
-              <div
-                className="metric-card"
-                style={{ borderTop: `3px solid ${guvenlikSayi > 0 ? '#be185d' : 'var(--text3)'}`, cursor: 'pointer' }}
+                🔒 Kapanmayan&nbsp;
+                <span style={{ fontWeight: 800 }}>{kapanmayanSayi}</span>
+              </button>
+              {/* Güvenlik */}
+              <button
+                type="button"
+                className="tab-pill"
+                style={{ borderColor: guvenlikSayi > 0 ? '#be185d' : undefined, color: guvenlikSayi > 0 ? '#be185d' : undefined }}
                 onClick={() => acOpsModul('guvenlik-alarmlar', 'denetim-uyum')}
-                title="Güvenlik alarmları — detay için tıkla"
+                title="Aktif PIN / kilit alarmı"
               >
-                <div className="metric-label">🔐 Güvenlik Alarmı</div>
-                <div className="metric-value" style={{ color: guvenlikSayi > 0 ? '#be185d' : 'var(--text3)' }}>{guvenlikSayi}</div>
-                <div className="metric-sub">Aktif PIN / kilit alarmı →</div>
-              </div>
-              <div
-                className="metric-card"
-                style={{ borderTop: `3px solid ${ciroYok > 0 ? 'var(--red)' : hepsiGirdi ? 'var(--green)' : 'var(--yellow)'}`, cursor: kartlar.length > 0 ? 'pointer' : 'default' }}
+                🔐 Güvenlik&nbsp;
+                <span style={{ fontWeight: 800 }}>{guvenlikSayi}</span>
+              </button>
+              {/* Ciro Girişi */}
+              <button
+                type="button"
+                className="tab-pill"
+                style={{ borderColor: ciroYok > 0 ? 'var(--red)' : hepsiGirdi ? 'var(--green)' : 'var(--yellow)', color: hepsiGirdi ? 'var(--green)' : ciroYok > 0 ? 'var(--red)' : 'var(--yellow)' }}
                 onClick={() => kartlar.length > 0 && acOpsModul('ciro-onay', 'finans-kasa')}
-                title="Finans & Kasa — Ciro Onay sayfasına git"
+                title={hepsiGirdi ? 'Tüm ciro girildi' : `${ciroOnayda} onayda · ${ciroYok} girilmedi`}
               >
-                <div className="metric-label">📋 Ciro Girişi</div>
-                <div className="metric-value" style={{ color: hepsiGirdi ? 'var(--green)' : ciroYok > 0 ? 'var(--red)' : 'var(--yellow)' }}>
-                  {ciroGiren} / {kartlar.length}
-                </div>
-                <div className="metric-sub">
-                  {hepsiGirdi ? 'Tamamlandı ✓' : [ciroOnayda > 0 && `${ciroOnayda} onayda`, ciroYok > 0 && `${ciroYok} girilmedi`].filter(Boolean).join(' · ')} · Finans →
-                </div>
-              </div>
-              <div className="metric-card" style={{ borderTop: `3px solid ${toplamUyari > 0 ? 'var(--red)' : 'var(--green)'}` }}>
-                <div className="metric-label">🚨 Toplam Uyarı</div>
-                <div className="metric-value" style={{ fontSize: 22, color: toplamUyari > 0 ? 'var(--red)' : 'var(--green)' }}>{toplamUyari}</div>
-                <div className="metric-sub">{toplamUyari === 0 ? 'Tüm şubeler normal ✓' : uyariParcalar.join(' · ')}</div>
+                📋 Ciro&nbsp;
+                <span style={{ fontWeight: 800 }}>{ciroGiren}/{kartlar.length}</span>
+              </button>
+              {/* Toplam Uyarı */}
+              <div
+                className="tab-pill"
+                style={{ borderColor: toplamUyari > 0 ? 'var(--red)' : 'var(--green)', color: toplamUyari > 0 ? 'var(--red)' : 'var(--green)', cursor: 'default' }}
+                title={toplamUyari === 0 ? 'Tüm şubeler normal' : uyariParcalar.join(' · ')}
+              >
+                🚨 Uyarı&nbsp;
+                <span style={{ fontWeight: 800 }}>{toplamUyari}</span>
               </div>
             </div>
 
