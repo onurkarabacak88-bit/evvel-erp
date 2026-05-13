@@ -820,90 +820,75 @@ function hubScrollToSubeKart(subeId) {
 function HubGunlukAcilisKapanisCard({ bucket }) {
   if (!bucket || bucket.subeSayisi === 0) return null;
 
-  const chip = (row) => (
-    <button
-      key={String(row.sid)}
-      type="button"
-      className="btn btn-secondary btn-sm"
-      style={{ padding: '2px 8px', fontSize: 11 }}
-      onClick={(e) => {
-        e.preventDefault();
-        hubScrollToSubeKart(row.sid);
-      }}
-    >
-      {row.ad}
-    </button>
-  );
-
-  const blok = (baslik, rows, renk, aciklama) => {
-    if (!rows.length) return null;
-    return (
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: renk, marginBottom: 6 }}>{baslik}</div>
-        <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 6px', lineHeight: 1.45 }}>{aciklama}</p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {rows.map(chip)}
-        </div>
-      </div>
-    );
-  };
-
   const tamam = bucket.sorunSayisi === 0;
+
+  const parcalar = [];
+  if (tamam) {
+    parcalar.push('✅  Tüm şubelerde açılış ve kapanış normal');
+  } else {
+    if (bucket.acilisGecikti.length)
+      parcalar.push(`🚨 Açılış gecikti: ${bucket.acilisGecikti.map(r => r.ad).join(' · ')}`);
+    if (bucket.acilisBekliyor.length)
+      parcalar.push(`🌅 Açılış bekliyor: ${bucket.acilisBekliyor.map(r => r.ad).join(' · ')}`);
+    if (bucket.kapanisGecikti.length)
+      parcalar.push(`🚨 Kapanış gecikti: ${bucket.kapanisGecikti.map(r => r.ad).join(' · ')}`);
+    if (bucket.kapanisBekliyor.length)
+      parcalar.push(`🌙 Kapanış bekliyor: ${bucket.kapanisBekliyor.map(r => r.ad).join(' · ')}`);
+  }
+
+  const tickerMetni = (parcalar.join('   ·   ') + '      ').repeat(3);
+  const renk = tamam ? '#22c55e' : '#ea580c';
+  const hiz = Math.max(12, tickerMetni.length * 0.18);
 
   return (
     <div
-      className="card"
       style={{
-        marginBottom: 14,
-        padding: '12px 14px',
-        borderLeft: `4px solid ${tamam ? '#22c55e' : '#ea580c'}`,
-        background: tamam ? 'var(--bg2)' : 'rgba(234, 88, 12, 0.06)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 0,
+        marginBottom: 12,
+        borderRadius: 8,
+        overflow: 'hidden',
+        border: `1px solid ${tamam ? 'rgba(34,197,94,0.25)' : 'rgba(234,88,12,0.3)'}`,
+        background: tamam ? 'rgba(34,197,94,0.07)' : 'rgba(234,88,12,0.07)',
+        height: 34,
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
-        <div>
-          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800 }}>Bugün · Açılış / kapanış özeti</h3>
-          <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--text3)' }}>Saat ~{bucket.saatTr}:00 itibarıyla</p>
-        </div>
-        {tamam ? (
-          <span className="badge badge-green" style={{ flexShrink: 0 }}>Eksik adım yok</span>
-        ) : (
-          <span className="badge badge-red" style={{ flexShrink: 0 }}>{bucket.sorunSayisi} şube</span>
-        )}
+      {/* Sol etiket */}
+      <div style={{
+        flexShrink: 0,
+        padding: '0 10px',
+        fontSize: 11,
+        fontWeight: 800,
+        color: renk,
+        background: tamam ? 'rgba(34,197,94,0.15)' : 'rgba(234,88,12,0.15)',
+        borderRight: `1px solid ${tamam ? 'rgba(34,197,94,0.25)' : 'rgba(234,88,12,0.3)'}`,
+        height: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        whiteSpace: 'nowrap',
+        letterSpacing: '0.03em',
+      }}>
+        {tamam ? '✔ DURUM' : `⚠ ${bucket.sorunSayisi} ŞUBE`}
       </div>
-
-      {tamam ? (
-        <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--text2)' }}>
-          Tüm aktif şubelerde bugünkü özet alanlarında açılış tamam ve (veya beklenen koşullarda) kapanış için kritik eksik görünmüyor.
-        </p>
-      ) : (
-        <div style={{ marginTop: 10 }}>
-          {blok(
-            '🌅 Açılış bekliyor',
-            bucket.acilisBekliyor,
-            '#ca8a04',
-            'ACILIS henüz tamamlanmamış (slot içi).',
-          )}
-          {blok(
-            '🚨 Açılış gecikti',
-            bucket.acilisGecikti,
-            '#dc2626',
-            'ACILIS süresi aşıldı — şube panelinde önceliklidir.',
-          )}
-          {blok(
-            '🌙 Kapanış bekliyor',
-            bucket.kapanisBekliyor,
-            '#ea580c',
-            'KAPANIS henüz tamamlanmamış (akşam penceresi veya şube kapalı sinyali sonrası listelenir).',
-          )}
-          {blok(
-            '🚨 Kapanış gecikti',
-            bucket.kapanisGecikti,
-            '#dc2626',
-            'Kapanış penceresi kaçmış olabilir.',
-          )}
+      {/* Kayan metin */}
+      <div style={{ flex: 1, overflow: 'hidden', position: 'relative', height: '100%' }}>
+        <style>{`
+          @keyframes ops-ticker { from { transform: translateX(0); } to { transform: translateX(-33.333%); } }
+        `}</style>
+        <div style={{
+          display: 'inline-block',
+          whiteSpace: 'nowrap',
+          fontSize: 12,
+          color: tamam ? '#86efac' : '#fdba74',
+          fontWeight: 600,
+          lineHeight: '34px',
+          animation: `ops-ticker ${hiz}s linear infinite`,
+          paddingLeft: 12,
+        }}>
+          {tickerMetni}
         </div>
-      )}
+      </div>
     </div>
   );
 }
