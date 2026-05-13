@@ -2108,10 +2108,12 @@ export default function OperasyonMerkezi() {
     plan_kayitsiz_toplam: 0,
   });
   const [gecAcilanSeciliSubeKey, setGecAcilanSeciliSubeKey] = useState('all');
-  /** acilis-takip içi personel paneli açık/kapalı */
-  const [acilisTakipPersonelAcik, setAcilisTakipPersonelAcik] = useState(false);
-  const acilisTakipAlt = acilisTakipPersonelAcik ? 'gec-personel' : 'gec-acilis';
-  const setAcilisTakipAlt = (v) => setAcilisTakipPersonelAcik(v === 'gec-personel');
+  /** acilis-takip içi sekme: canli | gun-detay | personel */
+  const [acilisTakipSekme, setAcilisTakipSekme] = useState('canli');
+  const acilisTakipPersonelAcik = acilisTakipSekme === 'personel';
+  const setAcilisTakipPersonelAcik = (v) => setAcilisTakipSekme(v ? 'personel' : 'canli');
+  const acilisTakipAlt = acilisTakipSekme === 'personel' ? 'gec-personel' : 'gec-acilis';
+  const setAcilisTakipAlt = (v) => setAcilisTakipSekme(v === 'gec-personel' ? 'personel' : 'gun-detay');
   /** Geç açılan kartı içi: operasyon akışı vs planlı ama ACILIS oluşmamış. */
   const [gecAcilanKartSekme, setGecAcilanKartSekme] = useState('akis');
   const [gecAcilanHaftaSatirlari, setGecAcilanHaftaSatirlari] = useState([]);
@@ -8116,13 +8118,69 @@ export default function OperasyonMerkezi() {
       )}
 
       {aktifSekme === 'acilis-takip' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
 
-          {/* ── BÖLÜM 1: CANLI DURUM ── */}
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 10 }}>
-              📡 Canlı Durum{hubAcKapBucket.saatTr != null ? <span style={{ fontWeight: 500, letterSpacing: 0, marginLeft: 8, fontSize: 11 }}>— TR {hubAcKapBucket.saatTr}:xx</span> : null}
-            </div>
+          {/* ── SEKME ÇUBUĞU ── */}
+          <div style={{ display: 'flex', gap: 2, borderBottom: '2px solid var(--border)', marginBottom: 18 }}>
+            <button
+              type="button"
+              onClick={() => setAcilisTakipSekme('canli')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 7,
+                padding: '10px 18px', fontWeight: 700, fontSize: 13, cursor: 'pointer',
+                background: acilisTakipSekme === 'canli' ? 'rgba(249,115,22,0.12)' : 'transparent',
+                borderBottom: acilisTakipSekme === 'canli' ? '2px solid #f97316' : '2px solid transparent',
+                color: acilisTakipSekme === 'canli' ? '#fb923c' : 'var(--text3)',
+                marginBottom: -2, borderRadius: '6px 6px 0 0', border: 'none',
+                borderBottomWidth: 2, borderBottomStyle: 'solid',
+                borderBottomColor: acilisTakipSekme === 'canli' ? '#f97316' : 'transparent',
+              }}
+            >
+              📡 Canlı Durum
+              {(() => {
+                const kz = hubAcKapBucket.saatTr >= 22 || hubAcKapBucket.saatTr < 2;
+                const sorun = hubAcKapBucket.acilisGecikti.length + (kz ? hubAcKapBucket.kapanisGecikti.length : 0);
+                return sorun > 0 ? (
+                  <span style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999, background: '#dc2626', color: '#fff', fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center' }}>{sorun}</span>
+                ) : <span style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999, background: 'rgba(74,222,128,0.2)', color: '#4ade80', fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center' }}>✓</span>;
+              })()}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAcilisTakipSekme('gun-detay')}
+              style={{
+                padding: '10px 18px', fontWeight: 700, fontSize: 13, cursor: 'pointer',
+                background: acilisTakipSekme === 'gun-detay' ? 'rgba(59,130,246,0.12)' : 'transparent',
+                color: acilisTakipSekme === 'gun-detay' ? '#93c5fd' : 'var(--text3)',
+                marginBottom: -2, borderRadius: '6px 6px 0 0', border: 'none',
+                borderBottomWidth: 2, borderBottomStyle: 'solid',
+                borderBottomColor: acilisTakipSekme === 'gun-detay' ? '#3b82f6' : 'transparent',
+              }}
+            >
+              📅 Gün Detayı
+            </button>
+            <button
+              type="button"
+              onClick={() => setAcilisTakipSekme('personel')}
+              style={{
+                padding: '10px 18px', fontWeight: 700, fontSize: 13, cursor: 'pointer',
+                background: acilisTakipSekme === 'personel' ? 'rgba(14,165,164,0.12)' : 'transparent',
+                color: acilisTakipSekme === 'personel' ? '#99f6e4' : 'var(--text3)',
+                marginBottom: -2, borderRadius: '6px 6px 0 0', border: 'none',
+                borderBottomWidth: 2, borderBottomStyle: 'solid',
+                borderBottomColor: acilisTakipSekme === 'personel' ? '#0ea5a4' : 'transparent',
+              }}
+            >
+              👤 Geç Açan Personel
+            </button>
+          </div>
+
+          {/* ── SEKME: CANLI DURUM ── */}
+          {acilisTakipSekme === 'canli' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {hubAcKapBucket.saatTr != null && (
+              <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 500 }}>TR {hubAcKapBucket.saatTr}:xx itibarıyla</div>
+            )}
             {hubAcKapBucket.acilisGecikti.length > 0 && (
               <div style={{ marginBottom: 10 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: '#f87171', marginBottom: 6 }}>🔴 AÇILMADI ({hubAcKapBucket.acilisGecikti.length})</div>
@@ -8214,12 +8272,11 @@ export default function OperasyonMerkezi() {
               <div className="empty"><p>Kartlar yükleniyor…</p></div>
             )}
           </div>
+          )}
 
-          <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: 0 }} />
-
-          {/* ── BÖLÜM 2: GÜN DETAYI ── */}
+          {/* ── SEKME: GÜN DETAYI ── */}
+          {acilisTakipSekme === 'gun-detay' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 2 }}>📅 Gün Detayı</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <button
               type="button"
@@ -8661,20 +8718,11 @@ export default function OperasyonMerkezi() {
           </>
           )}
           </div>
-          <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: 0 }} />
+          )}
 
-          {/* ── BÖLÜM 3: KRONİK GECİKME ── */}
-          <div>
-            <button
-              type="button"
-              onClick={() => setAcilisTakipPersonelAcik(!acilisTakipPersonelAcik)}
-              style={{ width: '100%', textAlign: 'left', padding: '10px 14px', fontWeight: 700, fontSize: 13, borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: acilisTakipPersonelAcik ? 'rgba(14,165,164,0.12)' : 'var(--bg2)', border: acilisTakipPersonelAcik ? '1px solid rgba(14,165,164,0.4)' : '1px solid var(--border)', color: acilisTakipPersonelAcik ? '#99f6e4' : 'var(--text2)', cursor: 'pointer' }}
-            >
-              <span>👤 Kronik Gecikme — Aylık Personel Analizi</span>
-              <span>{acilisTakipPersonelAcik ? '▲' : '▼'}</span>
-            </button>
-            {acilisTakipPersonelAcik && (
-              <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* ── SEKME: GEÇ AÇAN PERSONEL ── */}
+          {acilisTakipSekme === 'personel' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0, lineHeight: 1.5 }}>
             Aylık bazda personel geç açılış tekrarları burada izlenir. Gecikme dakikası <strong>Geç Açılan Şubeler</strong> ile aynıdır: önce vardiya planı (MIN başlangıç), yoksa operasyon <code className="mono">sistem_slot_ts</code>.
             Listeye girmek için en az <strong>5 dk</strong> gecikme; satırda <strong>kritik</strong> sayımı <strong>15 dk+</strong> olaylar içindir.
@@ -8772,8 +8820,7 @@ export default function OperasyonMerkezi() {
             </div>
           )}
           </div>
-            )}
-          </div>
+          )}
 
         </div>
       )}
