@@ -713,6 +713,21 @@ def merkez_stok_kart_guncelle(cur: Any) -> List[Dict[str, Any]]:
             }
         )
 
+    # Aktif anahtarlar — STOK_KEYS + katalog ürünleri
+    aktif_kodlar = {r["kalem_kodu"] for r in rows}
+    # Eski / stale katalog satırlarını temizle (yeniden üretilmeyenler)
+    try:
+        cur.execute("SELECT kalem_kodu FROM merkez_stok_kart WHERE kalem_kodu LIKE 'katalog__%'")
+        eski_katalog = {row["kalem_kodu"] for row in cur.fetchall()}
+        silincekler = eski_katalog - aktif_kodlar
+        if silincekler:
+            cur.execute(
+                "DELETE FROM merkez_stok_kart WHERE kalem_kodu = ANY(%s)",
+                (list(silincekler),),
+            )
+    except Exception:
+        pass
+
     for r in rows:
         cur.execute(
             """

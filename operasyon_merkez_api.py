@@ -2415,30 +2415,37 @@ def _urun_ac_delta_parse(aciklama: str) -> Dict[str, int]:
         return {}
     if not isinstance(obj, dict):
         return {}
-    result: Dict[str, int] = {}
-    # delta alanı — doğrudan STOK_KEY bazlı
     delta = obj.get("delta") or {}
-    if isinstance(delta, dict):
-        for k in _BAR_KEYS:
-            v = delta.get(k) or 0
-            if v > 0:
-                result[k] = result.get(k, 0) + max(0, int(v))
-    # kalemler alanı — katalog ürünlerini urun_ad → STOK_KEY eşlemesiyle dahil et
+    if not isinstance(delta, dict):
+        delta = {}
     kalemler = obj.get("kalemler") or []
-    if isinstance(kalemler, list):
-        for item in kalemler:
-            if not isinstance(item, dict):
-                continue
-            urun_ad = str(item.get("urun_ad") or "").strip()
-            try:
-                adet = max(0, int(item.get("adet") or 0))
-            except (TypeError, ValueError):
-                adet = 0
-            if not urun_ad or adet <= 0:
-                continue
-            stok_key = _stok_key_from_urun_ad(urun_ad)
-            if stok_key and stok_key in _BAR_KEYS:
-                result[stok_key] = result.get(stok_key, 0) + adet
+    if not isinstance(kalemler, list):
+        kalemler = []
+    # Şube paneli aynı açılışı hem `delta` hem `kalemler` ile gönderir; toplamda çift sayım yapılmaz.
+    s_map: Dict[str, int] = {k: 0 for k in _BAR_KEYS}
+    for item in kalemler:
+        if not isinstance(item, dict):
+            continue
+        urun_ad = str(item.get("urun_ad") or "").strip()
+        try:
+            adet = max(0, int(item.get("adet") or 0))
+        except (TypeError, ValueError):
+            adet = 0
+        if not urun_ad or adet <= 0:
+            continue
+        stok_key = _stok_key_from_urun_ad(urun_ad)
+        if stok_key and stok_key in _BAR_KEYS:
+            s_map[stok_key] += adet
+    result: Dict[str, int] = {}
+    for k in _BAR_KEYS:
+        try:
+            dv = max(0, int(delta.get(k) or 0))
+        except (TypeError, ValueError):
+            dv = 0
+        sv = int(s_map.get(k) or 0)
+        merged = max(dv, sv)
+        if merged > 0:
+            result[k] = merged
     return result
 
 
@@ -6290,14 +6297,15 @@ def ops_siparis_urun_ad(body: OpsSiparisUrunAdBody):
         if not kr:
             raise HTTPException(404, "Kategori bulunamadı")
         kid = str(dict(kr)["id"])
+        yeni_norm = _norm_ad_tr(yeni)
         cur.execute(
             """
             UPDATE siparis_urun
-            SET ad=%s, norm_ad=LOWER(TRIM(%s)), guncelleme=NOW()
+            SET ad=%s, norm_ad=%s, guncelleme=NOW()
             WHERE id=%s AND kategori_id=%s
             RETURNING id, ad
             """,
-            (yeni, yeni, (body.urun_id or "").strip(), kid),
+            (yeni, yeni_norm, (body.urun_id or "").strip(), kid),
         )
         ur = cur.fetchone()
         if not ur:
@@ -6594,11 +6602,28 @@ def ops_siparis_sync_urun_adlari():
             pass
         depo_guncellenen += depo_guncellenen2
 
+        # 6) norm_ad migration: LOWER(TRIM()) ile kaydedilmiş bozuk norm_ad'ları düzelt
+        norm_guncellenen = 0
+        try:
+            cur.execute("SELECT id, ad, norm_ad FROM siparis_urun")
+            norm_rows = cur.fetchall()
+            for nr in norm_rows:
+                dogru_norm = _norm_ad_tr(str(nr["ad"] or ""))
+                if dogru_norm and str(nr.get("norm_ad") or "") != dogru_norm:
+                    cur.execute(
+                        "UPDATE siparis_urun SET norm_ad=%s WHERE id=%s",
+                        (dogru_norm, nr["id"]),
+                    )
+                    norm_guncellenen += 1
+        except Exception:
+            pass
+
     return {
         "success": True,
         "urun_guncellenen_adet": len(urun_guncellenen),
         "talep_guncellenen_adet": talep_guncellenen,
         "depo_stok_guncellenen_adet": depo_guncellenen,
+        "norm_ad_duzeltilen_adet": norm_guncellenen,
         "detay": urun_guncellenen,
     }
 
