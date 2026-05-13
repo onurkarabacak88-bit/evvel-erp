@@ -1498,7 +1498,22 @@ def _davranis_uyari_yaz(cur: Any, sube_id: str, kural: str,
     puan   = KURAL_PUAN.get(kural, 1)
     mesaj  = KURAL_MESAJ.get(kural, kural)
     if detay:
-        mesaj += " — " + json.dumps(detay, ensure_ascii=False)[:400]
+        kalem_adi = detay.get("kalem_adi") or detay.get("urun_ad") or ""
+        mevcut    = detay.get("mevcut")
+        min_stok  = detay.get("min_stok")
+        ekler = []
+        if kalem_adi:
+            ekler.append(kalem_adi)
+        if mevcut is not None:
+            ekler.append(f"mevcut: {mevcut}")
+        if min_stok is not None:
+            ekler.append(f"min: {min_stok}")
+        # Yukarıdakiler dışında kalan diğer anahtarlar
+        diger = {k: v for k, v in detay.items() if k not in ("kalem_adi", "urun_ad", "mevcut", "min_stok")}
+        if diger:
+            ekler.append(json.dumps(diger, ensure_ascii=False)[:200])
+        if ekler:
+            mesaj += " — " + " · ".join(str(e) for e in ekler)
     seviye = "kritik" if puan >= 3 else "uyari"
     cur.execute(
         """
@@ -2931,7 +2946,7 @@ def eksik_kullanim_kontrol(cur: Any) -> None:
             if not kalem_kodu:
                 continue
             cur.execute(
-                "SELECT mevcut_adet, min_stok FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s",
+                "SELECT mevcut_adet, min_stok, kalem_adi FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s",
                 (sube_id, kalem_kodu),
             )
             depo = cur.fetchone()
@@ -2939,6 +2954,7 @@ def eksik_kullanim_kontrol(cur: Any) -> None:
                 continue
             mevcut = int(depo.get("mevcut_adet") or 0)
             min_s  = int(depo.get("min_stok") or 0)
+            kalem_adi_depo = str(depo.get("kalem_adi") or "").strip()
             if mevcut > min_s:
                 cur.execute(
                     """
@@ -2949,9 +2965,13 @@ def eksik_kullanim_kontrol(cur: Any) -> None:
                     (sube_id, kalem_kodu, KURAL_EKSIK_KULLANIM),
                 )
                 if not cur.fetchone():
+                    # kalem_adi depo stokta yoksa siparis_urun veya siparis_talep.kalemler'den al
+                    if not kalem_adi_depo:
+                        urun_ad_k = str(k.get("urun_ad") or k.get("kalem_adi") or "").strip()
+                        kalem_adi_depo = urun_ad_k
                     _davranis_uyari_yaz(cur, sube_id, KURAL_EKSIK_KULLANIM,
                                         talep_id, kalem_kodu,
-                                        {"mevcut": mevcut, "min_stok": min_s})
+                                        {"kalem_adi": kalem_adi_depo, "mevcut": mevcut, "min_stok": min_s})
 
 
 # ── Skor Hesaplama ────────────────────────────────────────────────

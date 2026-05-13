@@ -561,10 +561,12 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
 
     cur.execute(
         """
-        SELECT id, tip, seviye, fark_tl, mesaj, okundu, olusturma
-        FROM sube_operasyon_uyari
-        WHERE sube_id=%s AND tarih=CURRENT_DATE
-        ORDER BY olusturma DESC
+        SELECT u.id, u.tip, u.seviye, u.fark_tl, u.mesaj, u.okundu, u.olusturma,
+               u.kalem_kodu, COALESCE(ds.kalem_adi, '') AS kalem_adi
+        FROM sube_operasyon_uyari u
+        LEFT JOIN sube_depo_stok ds ON ds.sube_id = u.sube_id AND ds.kalem_kodu = u.kalem_kodu
+        WHERE u.sube_id=%s AND u.tarih=CURRENT_DATE
+        ORDER BY u.olusturma DESC
         LIMIT 12
         """,
         (sid,),
@@ -579,6 +581,29 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
             d["fark_tl"] = float(d["fark_tl"])
             if fark_tl is None and abs(float(d["fark_tl"])) > 0.01:
                 fark_tl = float(d["fark_tl"])
+        # DAVRANIS uyarılarında eski format düzelt: ürün adı mesaja ekle
+        if d.get("tip") == "DAVRANIS" and d.get("kalem_adi"):
+            mesaj = str(d.get("mesaj") or "")
+            kalem_adi = str(d["kalem_adi"])
+            # Eski format: "... — {"mevcut": X, ...}" — ürün adı yoksa ekle
+            if kalem_adi and kalem_adi not in mesaj:
+                # JSON kuyruğunu temizle, ürün adını ekle
+                import re as _re
+                mesaj_temiz = _re.sub(r"\s*—\s*\{.*\}$", "", mesaj).strip()
+                # detay'dan mevcut/min_stok al
+                detay_raw = d.get("detay") or "{}"
+                try:
+                    detay_obj = json.loads(detay_raw) if isinstance(detay_raw, str) else (detay_raw or {})
+                except Exception:
+                    detay_obj = {}
+                mevcut  = detay_obj.get("mevcut")
+                min_stok = detay_obj.get("min_stok")
+                ekler = [kalem_adi]
+                if mevcut is not None:
+                    ekler.append(f"mevcut: {mevcut}")
+                if min_stok is not None:
+                    ekler.append(f"min: {min_stok}")
+                d["mesaj"] = mesaj_temiz + " — " + " · ".join(str(e) for e in ekler)
         uyarilar.append(d)
 
     virt = build_virtual_merkez_uyarilari(cur, sid, dt_now_tr_naive())
