@@ -1931,6 +1931,7 @@ export default function OperasyonMerkezi() {
   const [opsIcBolum, setOpsIcBolum] = useState('icerik');
   const [filtre,    setFiltre]    = useState('all');
   const [kartlar,   setKartlar]   = useState([]);
+  const [alertDrawerAcik, setAlertDrawerAcik] = useState(false);
   const [defter,    setDefter]    = useState([]);
   const [sayimlar,  setSayimlar]  = useState([]);
   const [barOzet,   setBarOzet]   = useState([]);
@@ -5213,16 +5214,159 @@ export default function OperasyonMerkezi() {
                 📋 Ciro&nbsp;
                 <span style={{ fontWeight: 800 }}>{ciroGiren}/{kartlar.length}</span>
               </button>
-              {/* Toplam Uyarı */}
-              <div
+              {/* Toplam Uyarı — tıklanabilir, drawer açar */}
+              <button
+                type="button"
                 className="tab-pill"
-                style={{ borderColor: toplamUyari > 0 ? 'var(--red)' : 'var(--green)', color: toplamUyari > 0 ? 'var(--red)' : 'var(--green)', cursor: 'default' }}
-                title={toplamUyari === 0 ? 'Tüm şubeler normal' : uyariParcalar.join(' · ')}
+                style={{ borderColor: toplamUyari > 0 ? 'var(--red)' : 'var(--green)', color: toplamUyari > 0 ? 'var(--red)' : 'var(--green)' }}
+                title={toplamUyari === 0 ? 'Tüm şubeler normal — tıkla' : uyariParcalar.join(' · ')}
+                onClick={() => setAlertDrawerAcik(true)}
               >
                 🚨 Uyarı&nbsp;
                 <span style={{ fontWeight: 800 }}>{toplamUyari}</span>
-              </div>
+              </button>
             </div>
+
+            {/* ════ ALERT DRAWER ════ */}
+            {alertDrawerAcik && (() => {
+              // Tüm uyarıları topla
+              const tumUyarilar = [];
+
+              // 1) Geç / açılmayan şubeler
+              const gecSubeler = [
+                ...(gecAcilanBugun?.subeler || []).map(s => ({
+                  _sube: s.sube_adi || s.sube_id,
+                  _sube_id: s.sube_id,
+                  _seviye: 'kritik',
+                  _tip: '⏰ Geç Açılış',
+                  _mesaj: `${s.gecikme_dk != null ? s.gecikme_dk + ' dk geç' : 'Gecikme var'}`,
+                  _sekme: 'acilis-takip',
+                })),
+                ...(gecAcilanBugun?.acilmayan_subeler || []).map(s => ({
+                  _sube: s.sube_adi || s.sube_id,
+                  _sube_id: s.sube_id,
+                  _seviye: 'kritik',
+                  _tip: '🚫 Açılmadı',
+                  _mesaj: 'Bugün hiç açılmadı',
+                  _sekme: 'acilis-takip',
+                })),
+              ];
+              tumUyarilar.push(...gecSubeler);
+
+              // 2) Kapanmayan şubeler
+              const kapanmayanlar = (kapanisTakip?.satirlar || [])
+                .filter(r => !r.kapanis_tamam && r.acildi)
+                .map(r => ({
+                  _sube: r.sube_adi || r.sube_id,
+                  _sube_id: r.sube_id,
+                  _seviye: 'uyari',
+                  _tip: '🔒 Kapanmadı',
+                  _mesaj: 'Kapanış tamamlanmadı',
+                  _sekme: 'kapanis-takip',
+                }));
+              tumUyarilar.push(...kapanmayanlar);
+
+              // 3) Şube kartlarındaki uyarılar
+              for (const k of kartlar) {
+                for (const u of (k.uyarilar || [])) {
+                  const tipLabel = u.tip === 'DAVRANIS' ? '📦 Stok Davranışı'
+                    : u.tip === 'KASA_FARK' ? '💰 Kasa Farkı'
+                    : u.tip === 'URUN_AC_UYUMSUZLUK' ? '📋 Ürün Aç'
+                    : u.tip === 'ACILIS_VARDIYA_PERSONEL' ? '👤 Vardiya'
+                    : u.tip || 'Uyarı';
+                  tumUyarilar.push({
+                    _sube: k.sube_adi,
+                    _sube_id: k.sube_id,
+                    _seviye: u.seviye || 'uyari',
+                    _tip: tipLabel,
+                    _mesaj: u.mesaj || '',
+                    _sekme: null,
+                  });
+                }
+              }
+
+              // Sırala: kritik önce
+              const seviyeSkor = { kritik: 0, uyari: 1, bilgi: 2 };
+              tumUyarilar.sort((a, b) => (seviyeSkor[a._seviye] ?? 3) - (seviyeSkor[b._seviye] ?? 3));
+
+              // Grupla
+              const kritikler = tumUyarilar.filter(u => u._seviye === 'kritik');
+              const uyarilar2  = tumUyarilar.filter(u => u._seviye === 'uyari');
+              const bilgiler   = tumUyarilar.filter(u => u._seviye !== 'kritik' && u._seviye !== 'uyari');
+
+              const seviyeRenk = { kritik: 'var(--red)', uyari: '#f08040', bilgi: 'var(--text3)' };
+
+              const UyariSatir = ({ u }) => (
+                <div style={{
+                  display: 'grid', gridTemplateColumns: '1fr auto', gap: 6,
+                  padding: '8px 10px', borderRadius: 6,
+                  background: 'var(--bg)', marginBottom: 4,
+                  borderLeft: `3px solid ${seviyeRenk[u._seviye] || 'var(--border)'}`,
+                }}>
+                  <div>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 2 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: seviyeRenk[u._seviye] }}>{u._tip}</span>
+                      <span style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 600 }}>· {u._sube}</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.4 }}>{u._mesaj}</div>
+                  </div>
+                  {u._sekme && (
+                    <button type="button" className="btn btn-secondary btn-sm"
+                      style={{ fontSize: 11, padding: '3px 8px', alignSelf: 'center' }}
+                      onClick={() => { acModulTab(u._sekme); setAlertDrawerAcik(false); }}>
+                      Git →
+                    </button>
+                  )}
+                </div>
+              );
+
+              const Grup = ({ baslik, liste, renk }) => liste.length === 0 ? null : (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: renk, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+                    {baslik} ({liste.length})
+                  </div>
+                  {liste.map((u, i) => <UyariSatir key={i} u={u} />)}
+                </div>
+              );
+
+              return (
+                <>
+                  {/* Overlay */}
+                  <div
+                    onClick={() => setAlertDrawerAcik(false)}
+                    style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1200 }}
+                  />
+                  {/* Drawer */}
+                  <div style={{
+                    position: 'fixed', top: 0, right: 0, bottom: 0, width: 380,
+                    background: 'var(--bg2)', borderLeft: '2px solid var(--border)',
+                    zIndex: 1201, overflowY: 'auto', padding: '20px 16px',
+                    boxShadow: '-4px 0 24px rgba(0,0,0,0.3)',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                      <div>
+                        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>🚨 Aktif Uyarılar</h3>
+                        <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text3)' }}>{tumUyarilar.length} aktif · bugün</p>
+                      </div>
+                      <button type="button" className="btn btn-secondary btn-sm"
+                        onClick={() => setAlertDrawerAcik(false)}>✕ Kapat</button>
+                    </div>
+
+                    {tumUyarilar.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--green)', fontSize: 14 }}>
+                        ✅ Tüm şubeler normal
+                      </div>
+                    ) : (
+                      <>
+                        <Grup baslik="🔴 KRİTİK" liste={kritikler} renk="var(--red)" />
+                        <Grup baslik="🟠 UYARI" liste={uyarilar2} renk="#f08040" />
+                        <Grup baslik="ℹ️ BİLGİ" liste={bilgiler} renk="var(--text3)" />
+                      </>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
 
             {/* Açılış/Kapanış özet kartı */}
             <HubGunlukAcilisKapanisCard bucket={hubAcKapBucket} />
