@@ -5447,6 +5447,22 @@ export default function OperasyonMerkezi() {
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 <button
                   type="button"
+                  className="btn btn-secondary btn-sm"
+                  title="siparis_urun.ad alanlarini depo stok kanonik adlariyla esitler — tek seferlik calistir"
+                  onClick={async () => {
+                    try {
+                      const r = await api('/ops/siparis/sync-urun-adlari', { method: 'POST' });
+                      toast(`Senkronizasyon tamamlandi — ${r.urun_guncellenen_adet} urun adi, ${r.talep_guncellenen_adet} gecmis talep guncellendi.`, 'green');
+                      await magazaDepoTamYenile();
+                    } catch (e) {
+                      toast(`Senkronizasyon hatasi: ${e.message}`, 'red');
+                    }
+                  }}
+                >
+                  🔄 Adlari depoya esitle
+                </button>
+                <button
+                  type="button"
                   className="btn btn-primary btn-sm"
                   onClick={() => {
                     setMagazaUrunEkleAcik((a) => {
@@ -5487,25 +5503,7 @@ export default function OperasyonMerkezi() {
                 background: 'var(--bg2)',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-                <h4 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>Kataloga ürün (ön form)</h4>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={async () => {
-                    try {
-                      const r = await api('/ops/siparis/sync-urun-adlari', { method: 'POST' });
-                      toast(`Senkronizasyon tamamlandı — ${r.urun_guncellenen_adet} ürün adı, ${r.talep_guncellenen_adet} geçmiş talep güncellendi.`, 'green');
-                      await magazaDepoTamYenile();
-                    } catch (e) {
-                      toast(`Senkronizasyon hatası: ${e.message}`, 'red');
-                    }
-                  }}
-                  title="siparis_urun.ad alanlarini depo stok kanonik adlariyla esitler"
-                >
-                  🔄 Ürün adlarını depoya senkronize et
-                </button>
-              </div>
+              <h4 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Kataloga ürün (ön form)</h4>
               <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 12px', lineHeight: 1.45 }}>
                 Ürün merkez kataloga eklenir ve tüm şube depolarına aynı katalog ürünü olarak düşer.
                 Ek olarak <strong>birim fiyat (TL)</strong> kaydedilir; <strong>adet</strong> girerseniz depo kartlarında bu yeni ürün için başlangıç stokuna ön-yazım yapılır.
