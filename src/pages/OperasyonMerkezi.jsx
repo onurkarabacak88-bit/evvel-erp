@@ -863,26 +863,30 @@ function HubGunlukAcilisKapanisCard({ bucket }) {
     return ' +' + (sa > 0 ? (kdk > 0 ? `${sa}sa ${kdk}dk` : `${sa}sa`) : `${kdk}dk`);
   };
 
+  const h = bucket.saatTr;
+  const kapanisZamani = h >= 22 || h < 2;
+
   const parcalar = [];
-  if (tamam && !bucket.acilisGecAcildi.length) {
-    parcalar.push('✅  Tüm şubelerde açılış ve kapanış normal');
-  } else {
-    if (bucket.acilisGecikti.length)
-      parcalar.push(`🚨 AÇILMIYOR: ${bucket.acilisGecikti.map(r => r.ad + gecStr(r.gecikme_dk)).join(' · ')}`);
-    if (bucket.acilisBekliyor.length)
-      parcalar.push(`🌅 Açılış bekliyor: ${bucket.acilisBekliyor.map(r => r.ad).join(' · ')}`);
-    if (bucket.acilisGecAcildi.length)
-      parcalar.push(`⚠️ Gecikerek açıldı: ${bucket.acilisGecAcildi.map(r => r.ad + gecStr(r.gecikme_dk)).join(' · ')}`);
+  // Hâlâ açılmamış + gecikmiş → her zaman kritik
+  if (bucket.acilisGecikti.length)
+    parcalar.push(`🚨 AÇILMIYOR: ${bucket.acilisGecikti.map(r => r.ad + gecStr(r.gecikme_dk)).join(' · ')}`);
+  // Gecikerek açıldı → gün boyunca göster (farkındalık)
+  if (bucket.acilisGecAcildi.length)
+    parcalar.push(`⚠️ Gecikerek açıldı: ${bucket.acilisGecAcildi.map(r => r.ad + gecStr(r.gecikme_dk)).join(' · ')}`);
+  // Kapanış bilgileri yalnızca 22:00 sonrası
+  if (kapanisZamani) {
     if (bucket.kapanisGecikti.length)
       parcalar.push(`🚨 Kapanış gecikti: ${bucket.kapanisGecikti.map(r => r.ad + gecStr(r.gecikme_dk)).join(' · ')}`);
     if (bucket.kapanisBekliyor.length)
-      parcalar.push(`🌙 Kapanış bekliyor: ${bucket.kapanisBekliyor.map(r => r.ad).join(' · ')}`);
-    if (!parcalar.length)
-      parcalar.push('✅  Tüm şubelerde açılış ve kapanış normal');
+      parcalar.push(`🌙 Kapanış bekleyen: ${bucket.kapanisBekliyor.map(r => r.ad).join(' · ')}`);
   }
+  if (!parcalar.length)
+    parcalar.push('✅  Tüm şubelerde açılış normal' + (kapanisZamani ? ' · Kapanış tamamlandı' : ''));
 
+  const goruntulenenSorun = bucket.acilisGecikti.length + bucket.acilisGecAcildi.length
+    + (kapanisZamani ? bucket.kapanisGecikti.length + bucket.kapanisBekliyor.length : 0);
   const tickerMetni = (parcalar.join('   ·   ') + '      ').repeat(3);
-  const renk = tamam ? '#22c55e' : '#ea580c';
+  const renk = goruntulenenSorun === 0 ? '#22c55e' : '#ea580c';
   const hiz = Math.max(12, tickerMetni.length * 0.18);
 
   return (
@@ -906,15 +910,15 @@ function HubGunlukAcilisKapanisCard({ bucket }) {
         fontSize: 11,
         fontWeight: 800,
         color: renk,
-        background: tamam ? 'rgba(34,197,94,0.15)' : 'rgba(234,88,12,0.15)',
-        borderRight: `1px solid ${tamam ? 'rgba(34,197,94,0.25)' : 'rgba(234,88,12,0.3)'}`,
+        background: goruntulenenSorun === 0 ? 'rgba(34,197,94,0.15)' : 'rgba(234,88,12,0.15)',
+        borderRight: `1px solid ${goruntulenenSorun === 0 ? 'rgba(34,197,94,0.25)' : 'rgba(234,88,12,0.3)'}`,
         height: '100%',
         display: 'flex',
         alignItems: 'center',
         whiteSpace: 'nowrap',
         letterSpacing: '0.03em',
       }}>
-        {tamam ? '✔ DURUM' : `⚠ ${bucket.sorunSayisi} ŞUBE`}
+        {goruntulenenSorun === 0 ? '✔ DURUM' : `⚠ ${goruntulenenSorun} ŞUBE`}
       </div>
       {/* Kayan metin */}
       <div style={{ flex: 1, overflow: 'hidden', position: 'relative', height: '100%' }}>
