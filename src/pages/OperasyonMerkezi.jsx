@@ -2108,8 +2108,10 @@ export default function OperasyonMerkezi() {
     plan_kayitsiz_toplam: 0,
   });
   const [gecAcilanSeciliSubeKey, setGecAcilanSeciliSubeKey] = useState('all');
-  /** acilis-takip içi alt sekme: 'gec-acilis' | 'gec-personel' */
-  const [acilisTakipAlt, setAcilisTakipAlt] = useState('gec-acilis');
+  /** acilis-takip içi personel paneli açık/kapalı */
+  const [acilisTakipPersonelAcik, setAcilisTakipPersonelAcik] = useState(false);
+  const acilisTakipAlt = acilisTakipPersonelAcik ? 'gec-personel' : 'gec-acilis';
+  const setAcilisTakipAlt = (v) => setAcilisTakipPersonelAcik(v === 'gec-personel');
   /** Geç açılan kartı içi: operasyon akışı vs planlı ama ACILIS oluşmamış. */
   const [gecAcilanKartSekme, setGecAcilanKartSekme] = useState('akis');
   const [gecAcilanHaftaSatirlari, setGecAcilanHaftaSatirlari] = useState([]);
@@ -3477,7 +3479,8 @@ export default function OperasyonMerkezi() {
   }, [aktifSekme]);
 
   useEffect(() => {
-    if (aktifSekme !== 'acilis-takip' || acilisTakipAlt !== 'gec-personel') return;
+    if (aktifSekme !== 'acilis-takip' || !acilisTakipPersonelAcik) return;
+    if (gecKalanPersonelAramaSonuc?.satirlar?.length) return; // zaten yüklendi
     setYukleniyor(true);
     gecKalanPersonelAyYukle(varsayilanAy)
       .then((data) => {
@@ -3486,7 +3489,7 @@ export default function OperasyonMerkezi() {
       })
       .catch((e) => toast(e.message || 'Geç kalan personel yüklenemedi'))
       .finally(() => setYukleniyor(false));
-  }, [aktifSekme, acilisTakipAlt, toast, gecKalanPersonelAyYukle, varsayilanAy]);
+  }, [aktifSekme, acilisTakipPersonelAcik, toast, gecKalanPersonelAyYukle, varsayilanAy, gecKalanPersonelAramaSonuc?.satirlar?.length]);
 
   useEffect(() => {
     if (aktifSekme !== 'kullanilan-urunler') return;
@@ -8113,33 +8116,110 @@ export default function OperasyonMerkezi() {
       )}
 
       {aktifSekme === 'acilis-takip' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: 10 }}>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => setAcilisTakipAlt('gec-acilis')}
-              style={{
-                padding: '8px 16px', fontWeight: 700,
-                border: acilisTakipAlt === 'gec-acilis' ? '1px solid #f97316' : '1px solid var(--border)',
-                background: acilisTakipAlt === 'gec-acilis' ? 'rgba(249,115,22,0.22)' : 'var(--bg2)',
-                color: acilisTakipAlt === 'gec-acilis' ? '#fed7aa' : 'var(--text2)',
-              }}
-            >⏰ Geç Açılan Şubeler</button>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => setAcilisTakipAlt('gec-personel')}
-              style={{
-                padding: '8px 16px', fontWeight: 700,
-                border: acilisTakipAlt === 'gec-personel' ? '1px solid #0ea5a4' : '1px solid var(--border)',
-                background: acilisTakipAlt === 'gec-personel' ? 'rgba(14,165,164,0.22)' : 'var(--bg2)',
-                color: acilisTakipAlt === 'gec-personel' ? '#99f6e4' : 'var(--text2)',
-              }}
-            >👤 Geç Kalan Personel (aylık)</button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+          {/* ── BÖLÜM 1: CANLI DURUM ── */}
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 10 }}>
+              📡 Canlı Durum{hubAcKapBucket.saatTr != null ? <span style={{ fontWeight: 500, letterSpacing: 0, marginLeft: 8, fontSize: 11 }}>— TR {hubAcKapBucket.saatTr}:xx</span> : null}
+            </div>
+            {hubAcKapBucket.acilisGecikti.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#f87171', marginBottom: 6 }}>🔴 AÇILMADI ({hubAcKapBucket.acilisGecikti.length})</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {hubAcKapBucket.acilisGecikti.map(r => (
+                    <div key={`cd-gec-${r.sid}`} style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, background: 'rgba(220,38,38,0.18)', border: '1px solid rgba(220,38,38,0.5)', color: '#fca5a5' }}>
+                      {r.ad}{r.gecikme_dk ? ` +${Math.round(r.gecikme_dk)}dk` : ''}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {hubAcKapBucket.acilisGecAcildi.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#fbbf24', marginBottom: 6 }}>🟡 GEÇ AÇILDI ({hubAcKapBucket.acilisGecAcildi.length})</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {hubAcKapBucket.acilisGecAcildi.map(r => (
+                    <div key={`cd-gecac-${r.sid}`} style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, background: 'rgba(251,191,36,0.14)', border: '1px solid rgba(251,191,36,0.4)', color: '#fde68a' }}>
+                      {r.ad}{r.gecikme_dk ? ` +${Math.round(r.gecikme_dk)}dk` : ''}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(() => {
+              const sorunluIds = new Set([
+                ...hubAcKapBucket.acilisGecikti.map(r => r.sid),
+                ...hubAcKapBucket.acilisGecAcildi.map(r => r.sid),
+                ...hubAcKapBucket.acilisBekliyor.map(r => r.sid),
+              ]);
+              const normalAcilanlar = (Array.isArray(kartlar) ? kartlar : []).filter(k => {
+                const oz = k.ozet || {};
+                return oz.acilis_tamam && !sorunluIds.has(k.sube_id);
+              });
+              return normalAcilanlar.length > 0 ? (
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#4ade80', marginBottom: 6 }}>✅ AÇILDI ({normalAcilanlar.length})</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {normalAcilanlar.map(k => (
+                      <div key={`cd-ok-${k.sube_id}`} style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.25)', color: '#86efac' }}>
+                        {String(k.sube_adi || k.sube_id || '').trim()}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null;
+            })()}
+            {hubAcKapBucket.acilisBekliyor.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 6 }}>⏳ AÇILIŞ BEKLİYOR ({hubAcKapBucket.acilisBekliyor.length})</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {hubAcKapBucket.acilisBekliyor.map(r => (
+                    <div key={`cd-bek-${r.sid}`} style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: 'var(--bg2)', border: '1px solid var(--border)', color: 'var(--text3)' }}>
+                      {r.ad}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(hubAcKapBucket.saatTr >= 22 || hubAcKapBucket.saatTr < 2) && (
+              <>
+                {hubAcKapBucket.kapanisGecikti.length > 0 && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#f87171', marginBottom: 6 }}>🔴 KAPANIŞ GECİKİYOR ({hubAcKapBucket.kapanisGecikti.length})</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {hubAcKapBucket.kapanisGecikti.map(r => (
+                        <div key={`cd-kapgec-${r.sid}`} style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, background: 'rgba(220,38,38,0.18)', border: '1px solid rgba(220,38,38,0.5)', color: '#fca5a5' }}>
+                          {r.ad}{r.gecikme_dk ? ` +${Math.round(r.gecikme_dk)}dk` : ''}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {hubAcKapBucket.kapanisBekliyor.length > 0 && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#c4b5fd', marginBottom: 6 }}>🌙 KAPANIŞ BEKLİYOR ({hubAcKapBucket.kapanisBekliyor.length})</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {hubAcKapBucket.kapanisBekliyor.map(r => (
+                        <div key={`cd-kapbek-${r.sid}`} style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.3)', color: '#c4b5fd' }}>
+                          {r.ad}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+            {hubAcKapBucket.subeSayisi === 0 && (
+              <div className="empty"><p>Kartlar yükleniyor…</p></div>
+            )}
           </div>
-          {acilisTakipAlt === 'gec-acilis' && (
+
+          <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: 0 }} />
+
+          {/* ── BÖLÜM 2: GÜN DETAYI ── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 2 }}>📅 Gün Detayı</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <button
               type="button"
@@ -8581,9 +8661,20 @@ export default function OperasyonMerkezi() {
           </>
           )}
           </div>
-          )}
-          {acilisTakipAlt === 'gec-personel' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: 0 }} />
+
+          {/* ── BÖLÜM 3: KRONİK GECİKME ── */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setAcilisTakipPersonelAcik(!acilisTakipPersonelAcik)}
+              style={{ width: '100%', textAlign: 'left', padding: '10px 14px', fontWeight: 700, fontSize: 13, borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: acilisTakipPersonelAcik ? 'rgba(14,165,164,0.12)' : 'var(--bg2)', border: acilisTakipPersonelAcik ? '1px solid rgba(14,165,164,0.4)' : '1px solid var(--border)', color: acilisTakipPersonelAcik ? '#99f6e4' : 'var(--text2)', cursor: 'pointer' }}
+            >
+              <span>👤 Kronik Gecikme — Aylık Personel Analizi</span>
+              <span>{acilisTakipPersonelAcik ? '▲' : '▼'}</span>
+            </button>
+            {acilisTakipPersonelAcik && (
+              <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 14 }}>
           <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0, lineHeight: 1.5 }}>
             Aylık bazda personel geç açılış tekrarları burada izlenir. Gecikme dakikası <strong>Geç Açılan Şubeler</strong> ile aynıdır: önce vardiya planı (MIN başlangıç), yoksa operasyon <code className="mono">sistem_slot_ts</code>.
             Listeye girmek için en az <strong>5 dk</strong> gecikme; satırda <strong>kritik</strong> sayımı <strong>15 dk+</strong> olaylar içindir.
@@ -8681,7 +8772,9 @@ export default function OperasyonMerkezi() {
             </div>
           )}
           </div>
-          )}
+            )}
+          </div>
+
         </div>
       )}
 
