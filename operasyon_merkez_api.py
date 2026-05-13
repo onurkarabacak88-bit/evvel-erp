@@ -6904,8 +6904,36 @@ def ops_siparis_sevkiyat_listesi(
         liste_limit = 500 if gun_sayi <= 120 else 400
         q += f" ORDER BY t.tarih DESC, t.olusturma DESC NULLS LAST, t.id LIMIT {liste_limit}"
         cur.execute(q, qp)
+        raw_rows = cur.fetchall()
+
+        # ── Kalem adı zenginleştirme (geriye dönük uyumluluk) ──────────────────
+        # urun_id'si olan kalemlerde siparis_urun.depo_stok_kalem_kodu → canlı depo adı
+        # Tüm siparis_urun'u tek sorguda çek (büyük liste için N+1 yerine 1 sorgu)
+        try:
+            cur.execute("SELECT id, ad, depo_stok_kalem_kodu FROM siparis_urun WHERE aktif = TRUE")
+            _urun_map: Dict[str, Dict] = {str(r["id"]): dict(r) for r in cur.fetchall()}
+        except Exception:
+            _urun_map = {}
+        # sube_depo_stok'tan özel kalem adları (STOK_LABEL_TR'de olmayan katalog ürünleri için)
+        try:
+            cur.execute("SELECT DISTINCT kalem_kodu, kalem_adi FROM sube_depo_stok WHERE kalem_adi IS NOT NULL AND kalem_adi != ''")
+            _depo_adi_map: Dict[str, str] = {str(r["kalem_kodu"]): str(r["kalem_adi"]) for r in cur.fetchall()}
+        except Exception:
+            _depo_adi_map = {}
+
+        def _kalem_depo_ad(kalem: Dict) -> Optional[str]:
+            """Kalem dict'inden canlı depo adını türet — bulamazsa None döner."""
+            uid = str(kalem.get("urun_id") or "").strip()
+            if uid and uid in _urun_map:
+                kk = str(_urun_map[uid].get("depo_stok_kalem_kodu") or "").strip()
+                if kk:
+                    lab = STOK_LABEL_TR.get(kk) or _depo_adi_map.get(kk)
+                    if lab:
+                        return lab
+            return None
+
         rows: List[Dict[str, Any]] = []
-        for r in cur.fetchall():
+        for r in raw_rows:
             d = dict(r)
             d["sevkiyat_sube_id"] = d.get("hedef_depo_sube_id")
             d["sevkiyat_sube_adi"] = d.get("hedef_depo_sube_adi")
@@ -6925,6 +6953,16 @@ def ops_siparis_sevkiyat_listesi(
                         v = []
                 if not isinstance(v, list):
                     v = []
+                # Kalemlere depo_stok_ad ekle (canlı depo ismiyle eşleştir)
+                if k == "kalemler":
+                    enriched = []
+                    for km in v:
+                        if isinstance(km, dict):
+                            depo_ad = _kalem_depo_ad(km)
+                            if depo_ad:
+                                km = {**km, "depo_stok_ad": depo_ad}
+                        enriched.append(km)
+                    v = enriched
                 d[k] = v
             rows.append(d)
     return {

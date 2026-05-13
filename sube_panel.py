@@ -3204,6 +3204,26 @@ def _siparis_katalog_getir(cur) -> List[Dict[str, Any]]:
         """
     )
     kats = [dict(r) for r in cur.fetchall()]
+
+    # Tüm depo_stok_kalem_kodu → kalem_adi eşlemesini tek sorguda çek
+    # (STOK_LABEL_TR'de olmayan özel katalog ürünleri için sube_depo_stok'tan)
+    try:
+        cur.execute("SELECT DISTINCT kalem_kodu, kalem_adi FROM sube_depo_stok WHERE kalem_adi IS NOT NULL AND kalem_adi != '' ORDER BY kalem_kodu")
+        _depo_adi_map: Dict[str, str] = {str(r["kalem_kodu"]): str(r["kalem_adi"]) for r in cur.fetchall()}
+    except Exception:
+        _depo_adi_map = {}
+
+    def _depo_kalem_adi(kk: Optional[str]) -> Optional[str]:
+        """depo_stok_kalem_kodu → canlı depoda göründüğü isim."""
+        if not kk:
+            return None
+        # Önce sabit label sözlüğüne bak
+        lab = STOK_LABEL_TR.get(kk)
+        if lab:
+            return lab
+        # Sonra sube_depo_stok'tan gelen eşlemeye bak
+        return _depo_adi_map.get(kk) or None
+
     out: List[Dict[str, Any]] = []
     for k in kats:
         cur.execute(
@@ -3216,22 +3236,22 @@ def _siparis_katalog_getir(cur) -> List[Dict[str, Any]]:
             """,
             (k["id"],),
         )
-        items = [
-            {
-                "id": str(x["id"]),
-                "ad": x["ad"],
-                "aktif": bool(x["aktif"]),
-                "birim_fiyat_tl": (float(x["birim_fiyat_tl"]) if x.get("birim_fiyat_tl") is not None else None),
-                "depo_stok_kalem_kodu": (
-                    str(x["depo_stok_kalem_kodu"]).strip()
-                    if x.get("depo_stok_kalem_kodu") is not None
-                    and str(x.get("depo_stok_kalem_kodu") or "").strip()
-                    else None
-                ),
-                "aciklama": (str(x["aciklama"]).strip() if x.get("aciklama") else None),
-            }
-            for x in cur.fetchall()
-        ]
+        items = []
+        for x in cur.fetchall():
+            kk = str(x["depo_stok_kalem_kodu"]).strip() if x.get("depo_stok_kalem_kodu") and str(x.get("depo_stok_kalem_kodu") or "").strip() else None
+            depo_ad = _depo_kalem_adi(kk)
+            items.append(
+                {
+                    "id": str(x["id"]),
+                    "ad": x["ad"],
+                    # Canlı depoda görünen isim — varsa şube paneli ve merkez bu adı kullanır
+                    "depo_kalem_adi": depo_ad,
+                    "aktif": bool(x["aktif"]),
+                    "birim_fiyat_tl": (float(x["birim_fiyat_tl"]) if x.get("birim_fiyat_tl") is not None else None),
+                    "depo_stok_kalem_kodu": kk,
+                    "aciklama": (str(x["aciklama"]).strip() if x.get("aciklama") else None),
+                }
+            )
         out.append(
             {
                 "id": str(k["kod"]),

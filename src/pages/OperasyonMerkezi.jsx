@@ -10915,7 +10915,7 @@ export default function OperasyonMerkezi() {
                           <div style={{ display: 'grid', gap: 6 }}>
                             {detayRows.map((k, ki) => (
                               <div key={`${talepId}-det-${ki}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, borderBottom: '1px dashed var(--border)', paddingBottom: 4 }}>
-                                <span style={{ fontSize: 13 }}>{k.urun_ad || k.ad || k.kalem_kodu || 'Kalem'}</span>
+                                <span style={{ fontSize: 13 }}>{k.depo_stok_ad || k.urun_ad || k.ad || k.kalem_kodu || 'Kalem'}</span>
                                 <span className="mono" style={{ fontSize: 13, fontWeight: 700 }}>{Number(k.istenen_adet || 0)}</span>
                               </div>
                             ))}
@@ -10952,7 +10952,10 @@ export default function OperasyonMerkezi() {
                                   : k.merkez_barem_risk ? 'rgba(232,197,71,0.06)' : 'transparent',
                               }}>
                                 <td>
-                                  <span style={{ fontWeight: 500 }}>{k.urun_ad}</span>
+                                  <span style={{ fontWeight: 500 }}>{k.depo_stok_ad || k.urun_ad}</span>
+                                  {k.depo_stok_ad && k.urun_ad && k.depo_stok_ad !== k.urun_ad && (
+                                    <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text3)' }}>({k.urun_ad})</span>
+                                  )}
                                   {k.sube_zaten_var && (
                                     <span style={{ marginLeft: 6, fontSize: 11, color: '#e8a03d' }}>⚠️ şubede zaten {k.sube_depo_mevcut} adet var</span>
                                   )}
