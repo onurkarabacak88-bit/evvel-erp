@@ -419,7 +419,7 @@ const MODULLER = [
     label: '📡 Canlı Operasyon',
     renk: '#4a9eff',
     desc: 'Anlık şube durumu, açılma, kapanış, personel takibi ve merkez direktifleri',
-    tabs: ['canli', 'gec-acilan-subeler', 'kapanis-takip', 'gec-kalan-personel', 'mesaj'],
+    tabs: ['canli', 'gec-kalan-personel', 'mesaj'],
   },
   {
     id: 'envanter',
@@ -5104,33 +5104,33 @@ export default function OperasyonMerkezi() {
               </div>
               <div
                 className="metric-card"
-                style={{ borderTop: `3px solid ${gecAlert > 0 ? 'var(--red)' : 'var(--text3)'}`, cursor: gecAlert > 0 ? 'pointer' : 'default' }}
-                onClick={() => gecAlert > 0 && acModulTab('gec-acilan-subeler')}
-                title={gecAlert > 0 ? 'Detay için tıkla' : ''}
+                style={{ borderTop: `3px solid ${gecAlert > 0 ? 'var(--red)' : 'var(--text3)'}`, cursor: 'pointer' }}
+                onClick={() => acModulTab('gec-acilan-subeler')}
+                title="Geç açılan / açılmayan şubeler — detay için tıkla"
               >
                 <div className="metric-label">⏰ Geç / Açılmayan</div>
                 <div className="metric-value" style={{ color: gecAlert > 0 ? 'var(--red)' : 'var(--text3)' }}>{gecAlert}</div>
-                <div className="metric-sub">{Number(gecAcilanBugun?.toplam || 0)} geç · {Number(gecAcilanBugun?.acilmayan_toplam || 0)} açılmadı{gecAlert > 0 ? ' →' : ''}</div>
+                <div className="metric-sub">{Number(gecAcilanBugun?.toplam || 0)} geç · {Number(gecAcilanBugun?.acilmayan_toplam || 0)} açılmadı →</div>
               </div>
               <div
                 className="metric-card"
-                style={{ borderTop: `3px solid ${kapanmayanSayi > 0 ? '#f08040' : 'var(--text3)'}`, cursor: kapanmayanSayi > 0 ? 'pointer' : 'default' }}
-                onClick={() => kapanmayanSayi > 0 && acModulTab('kapanis-takip')}
-                title={kapanmayanSayi > 0 ? 'Detay için tıkla' : ''}
+                style={{ borderTop: `3px solid ${kapanmayanSayi > 0 ? '#f08040' : 'var(--text3)'}`, cursor: 'pointer' }}
+                onClick={() => acModulTab('kapanis-takip')}
+                title="Kapanış tamamlanmayan şubeler — detay için tıkla"
               >
                 <div className="metric-label">🔒 Kapanmayan</div>
                 <div className="metric-value" style={{ color: kapanmayanSayi > 0 ? '#f08040' : 'var(--text3)' }}>{kapanmayanSayi}</div>
-                <div className="metric-sub">Kapanış tamamlanmayan{kapanmayanSayi > 0 ? ' →' : ''}</div>
+                <div className="metric-sub">Kapanış tamamlanmayan →</div>
               </div>
               <div
                 className="metric-card"
-                style={{ borderTop: `3px solid ${guvenlikSayi > 0 ? '#be185d' : 'var(--text3)'}`, cursor: guvenlikSayi > 0 ? 'pointer' : 'default' }}
-                onClick={() => guvenlikSayi > 0 && acOpsModul('guvenlik-alarmlar', 'denetim-uyum')}
-                title={guvenlikSayi > 0 ? 'Detay için tıkla' : ''}
+                style={{ borderTop: `3px solid ${guvenlikSayi > 0 ? '#be185d' : 'var(--text3)'}`, cursor: 'pointer' }}
+                onClick={() => acOpsModul('guvenlik-alarmlar', 'denetim-uyum')}
+                title="Güvenlik alarmları — detay için tıkla"
               >
                 <div className="metric-label">🔐 Güvenlik Alarmı</div>
                 <div className="metric-value" style={{ color: guvenlikSayi > 0 ? '#be185d' : 'var(--text3)' }}>{guvenlikSayi}</div>
-                <div className="metric-sub">Aktif PIN / kilit alarmı{guvenlikSayi > 0 ? ' →' : ''}</div>
+                <div className="metric-sub">Aktif PIN / kilit alarmı →</div>
               </div>
               <div
                 className="metric-card"
