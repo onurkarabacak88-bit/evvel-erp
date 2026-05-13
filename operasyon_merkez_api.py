@@ -6307,6 +6307,16 @@ def ops_siparis_urun_ad(body: OpsSiparisUrunAdBody):
                     talep_guncellenen += 1
         except Exception:
             pass  # JSONB güncelleme hatası kritik değil, devam et
+        # sube_depo_stok.kalem_adi — kalem_kodu = urun_id olan tüm şubelerde güncelle
+        depo_guncellenen = 0
+        try:
+            cur.execute(
+                "UPDATE sube_depo_stok SET kalem_adi=%s WHERE kalem_kodu=%s AND (kalem_adi IS DISTINCT FROM %s)",
+                (yeni, urun_id_str, yeni),
+            )
+            depo_guncellenen = cur.rowcount or 0
+        except Exception:
+            pass
         audit(cur, "siparis_urun", urun_id_str, "OPS_SIPARIS_URUN_AD")
         from operasyon_defter import operasyon_defter_ekle
         sid = _ops_sube_anchor(cur)
@@ -6516,10 +6526,27 @@ def ops_siparis_sync_urun_adlari():
                 )
                 talep_guncellenen += 1
 
+        # 4) sube_depo_stok.kalem_adi — kalem_kodu = siparis_urun.id olanları eşitle
+        depo_guncellenen = 0
+        try:
+            cur.execute(
+                """
+                UPDATE sube_depo_stok ds
+                SET kalem_adi = su.ad
+                FROM siparis_urun su
+                WHERE ds.kalem_kodu = su.id::text
+                  AND ds.kalem_adi IS DISTINCT FROM su.ad
+                """
+            )
+            depo_guncellenen = cur.rowcount or 0
+        except Exception:
+            pass
+
     return {
         "success": True,
         "urun_guncellenen_adet": len(urun_guncellenen),
         "talep_guncellenen_adet": talep_guncellenen,
+        "depo_stok_guncellenen_adet": depo_guncellenen,
         "detay": urun_guncellenen,
     }
 
