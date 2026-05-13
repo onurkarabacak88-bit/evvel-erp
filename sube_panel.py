@@ -3211,7 +3211,7 @@ def _siparis_katalog_getir(cur) -> List[Dict[str, Any]]:
             SELECT id, ad, aktif, sira, birim_fiyat_tl,
                    depo_stok_kalem_kodu, aciklama
             FROM siparis_urun
-            WHERE kategori_id=%s
+            WHERE kategori_id=%s AND aktif=TRUE
             ORDER BY sira ASC, ad ASC
             """,
             (k["id"],),

@@ -5914,9 +5914,41 @@ def _ops_json_prefix_parse(raw: Any, prefix: str) -> Dict[str, Any]:
 
 
 @router.get("/siparis/katalog")
-def ops_siparis_katalog():
+def ops_siparis_katalog(tumunu_goster: bool = False):
+    """Ops katalog: varsayılan olarak sadece aktif ürünler.
+    Katalog yönetimi (aktif/pasif toggle) için ?tumunu_goster=true."""
     with db() as (conn, cur):
-        return {"kategoriler": _siparis_katalog_getir(cur)}
+        if tumunu_goster:
+            return {"kategoriler": _siparis_katalog_getir(cur)}
+        # Aktif filtreli versiyon
+        cur.execute(
+            "SELECT id, kod, ad, emoji, sira FROM siparis_kategori WHERE aktif=TRUE ORDER BY sira ASC, ad ASC"
+        )
+        kats = [dict(r) for r in cur.fetchall()]
+        out = []
+        for k in kats:
+            cur.execute(
+                """
+                SELECT id, ad, aktif, sira, birim_fiyat_tl, depo_stok_kalem_kodu, aciklama
+                FROM siparis_urun
+                WHERE kategori_id=%s AND aktif=TRUE
+                ORDER BY sira ASC, ad ASC
+                """,
+                (k["id"],),
+            )
+            items = [
+                {
+                    "id": str(x["id"]),
+                    "ad": x["ad"],
+                    "aktif": True,
+                    "birim_fiyat_tl": (float(x["birim_fiyat_tl"]) if x.get("birim_fiyat_tl") is not None else None),
+                    "depo_stok_kalem_kodu": (str(x["depo_stok_kalem_kodu"]).strip() if x.get("depo_stok_kalem_kodu") else None),
+                    "aciklama": (str(x["aciklama"]).strip() if x.get("aciklama") else None),
+                }
+                for x in cur.fetchall()
+            ]
+            out.append({"id": str(k["kod"]), "label": f"{k['emoji'] or ''} {k['ad']}".strip(), "ad": k["ad"], "emoji": k.get("emoji"), "items": items})
+        return {"kategoriler": out}
 
 
 @router.get("/siparis/kabul-takip")
