@@ -332,6 +332,7 @@ const UST_SEKMELER = [
   { id: 'puan', label: '⭐ Personel Puan' },
   { id: 'stok-disiplin', label: '🔴 Stok Disiplin' },
   { id: 'siparis-gecmis', label: '📋 Sipariş Geçmişi' },
+  { id: 'gec-acan-personel', label: '⏰ Geç Açan Personel' },
 ];
 
 /** Modül penceresi içi başlık sekmeleri (CFO kart drill-down benzeri) */
@@ -374,6 +375,7 @@ const OPS_MODUL_BOLUM = {
   puan: [{ id: 'icerik', label: 'Puan listesi' }],
   'stok-disiplin': [{ id: 'icerik', label: 'Disiplin Merkezi' }],
   'siparis-gecmis': [{ id: 'icerik', label: 'Geçmiş' }],
+  'gec-acan-personel': [{ id: 'icerik', label: 'Aylık analiz' }],
 };
 
 const OPS_HUB_RENK = {
@@ -407,6 +409,7 @@ const OPS_HUB_RENK = {
   puan: '#ffc14d',
   'stok-disiplin': '#e85d5d',
   'siparis-gecmis': '#94a3b8',
+  'gec-acan-personel': '#0ea5a4',
 };
 
 /** 29 eski tab → 7 Dünya standardı modül (kahve zinciri / hizmet sektörü mantığı) */
@@ -444,7 +447,7 @@ const MODULLER = [
     label: '👤 Personel',
     renk: '#c9a227',
     desc: 'Davranış analizi, vardiya uyumsuzluğu ve puan sistemi',
-    tabs: ['personel-davranis', 'personel-vardiya-uyumsuzluk', 'puan'],
+    tabs: ['personel-davranis', 'personel-vardiya-uyumsuzluk', 'gec-acan-personel', 'puan'],
   },
   {
     id: 'denetim-uyum',
@@ -3485,7 +3488,7 @@ export default function OperasyonMerkezi() {
   }, [aktifSekme]);
 
   useEffect(() => {
-    if (aktifSekme !== 'acilis-takip' || !acilisTakipPersonelAcik) return;
+    if (aktifSekme !== 'gec-acan-personel') return;
     if (gecKalanPersonelAramaSonuc?.satirlar?.length) return; // zaten yüklendi
     setYukleniyor(true);
     gecKalanPersonelAyYukle(varsayilanAy)
@@ -3495,7 +3498,7 @@ export default function OperasyonMerkezi() {
       })
       .catch((e) => toast(e.message || 'Geç kalan personel yüklenemedi'))
       .finally(() => setYukleniyor(false));
-  }, [aktifSekme, acilisTakipPersonelAcik, toast, gecKalanPersonelAyYukle, varsayilanAy, gecKalanPersonelAramaSonuc?.satirlar?.length]);
+  }, [aktifSekme, toast, gecKalanPersonelAyYukle, varsayilanAy, gecKalanPersonelAramaSonuc?.satirlar?.length]);
 
   useEffect(() => {
     if (aktifSekme !== 'kullanilan-urunler') return;
@@ -8177,20 +8180,6 @@ export default function OperasyonMerkezi() {
             >
               📋 Plansız Şube
             </button>
-            <button
-              type="button"
-              onClick={() => setAcilisTakipSekme('personel')}
-              style={{
-                padding: '10px 18px', fontWeight: 700, fontSize: 13, cursor: 'pointer',
-                background: acilisTakipSekme === 'personel' ? 'rgba(14,165,164,0.12)' : 'transparent',
-                color: acilisTakipSekme === 'personel' ? '#99f6e4' : 'var(--text3)',
-                marginBottom: -2, borderRadius: '6px 6px 0 0', border: 'none',
-                borderBottomWidth: 2, borderBottomStyle: 'solid',
-                borderBottomColor: acilisTakipSekme === 'personel' ? '#0ea5a4' : 'transparent',
-              }}
-            >
-              👤 Geç Açan Personel
-            </button>
           </div>
 
           {/* ── SEKME: CANLI DURUM ── */}
@@ -8625,9 +8614,11 @@ export default function OperasyonMerkezi() {
           </div>
           )}
 
-          {/* ── SEKME: GEÇ AÇAN PERSONEL ── */}
-          {acilisTakipSekme === 'personel' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        </div>
+      )}
+
+      {aktifSekme === 'gec-acan-personel' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0, lineHeight: 1.5 }}>
             Aylık bazda personel geç açılış tekrarları burada izlenir. Gecikme dakikası <strong>Geç Açılan Şubeler</strong> ile aynıdır: önce vardiya planı (MIN başlangıç), yoksa operasyon <code className="mono">sistem_slot_ts</code>.
             Listeye girmek için en az <strong>5 dk</strong> gecikme; satırda <strong>kritik</strong> sayımı <strong>15 dk+</strong> olaylar içindir.
@@ -8648,7 +8639,7 @@ export default function OperasyonMerkezi() {
               style={{ alignSelf: 'flex-end' }}
               onClick={() => gecKalanPersonelAramaYap()}
             >
-              {gecKalanPersonelAramaYukleniyor ? '…' : 'Ayı getir'}
+              {gecKalanPersonelAramaYukleniyor ? '...' : 'Ayi getir'}
             </button>
             <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'flex-end' }}>
               {gecKalanPersonelAramaSonuc?.year_month || gecKalanPersonelAy} · {gecKalanPersonelAramaSonuc?.toplam_personel || 0} personel · {gecKalanPersonelAramaSonuc?.kritik_personel_sayisi || 0} kritik
@@ -8656,11 +8647,11 @@ export default function OperasyonMerkezi() {
           </div>
 
           {gecKalanPersonelSatirlari.length === 0 ? (
-            <div className="empty"><p>Bu ay geç kalan personel kaydı yok</p></div>
+            <div className="empty"><p>Bu ay gec kalan personel kaydi yok</p></div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 520, overflow: 'auto' }}>
               {gecKalanPersonelSatirlari.map((p, idx) => {
-                const pKey = `${p.personel_id || 'anon'}-${p.personel_ad || '—'}-${idx}`;
+                const pKey = `${p.personel_id || 'anon'}-${p.personel_ad || ''}-${idx}`;
                 const acik = gecKalanPersonelAcikKey === pKey;
                 const detaylar = Array.isArray(p?.detaylar) ? p.detaylar : [];
                 const kritik = !!p?.kritik;
@@ -8679,7 +8670,7 @@ export default function OperasyonMerkezi() {
                           {kritik && <span className="badge badge-red" style={{ marginLeft: 6 }}>Kritik</span>}
                         </div>
                         <div className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>
-                          Toplam geç kalma: {Number(p?.gecikme_adet || 0)} · Kritik geç kalma: {Number(p?.kritik_gecikme_adet || 0)} · Toplam gecikme: {Number(p?.toplam_gecikme_dk || 0).toFixed(1)} dk · Olay sayısı: {Array.isArray(p?.detaylar) ? p.detaylar.length : 0}
+                          Toplam gec kalma: {Number(p?.gecikme_adet || 0)} · Kritik gec kalma: {Number(p?.kritik_gecikme_adet || 0)} · Toplam gecikme: {Number(p?.toplam_gecikme_dk || 0).toFixed(1)} dk · Olay sayisi: {Array.isArray(p?.detaylar) ? p.detaylar.length : 0}
                         </div>
                       </div>
                       <button
@@ -8687,7 +8678,7 @@ export default function OperasyonMerkezi() {
                         className="btn btn-secondary btn-sm"
                         onClick={() => setGecKalanPersonelAcikKey(acik ? '' : pKey)}
                       >
-                        {acik ? 'Detayı gizle' : 'Detayı göster'}
+                        {acik ? 'Detayi gizle' : 'Detayi goster'}
                       </button>
                     </div>
 
@@ -8697,19 +8688,19 @@ export default function OperasyonMerkezi() {
                           <thead>
                             <tr style={{ background: 'var(--bg2)' }}>
                               <th style={{ padding: '6px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600 }}>Tarih</th>
-                              <th style={{ padding: '6px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600 }}>Şube</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600 }}>Sube</th>
                               <th style={{ padding: '6px 8px', textAlign: 'center', color: '#93c5fd', fontWeight: 600 }}>Planlanan</th>
-                              <th style={{ padding: '6px 8px', textAlign: 'center', color: '#fbbf24', fontWeight: 600 }}>Açılış</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'center', color: '#fbbf24', fontWeight: 600 }}>Acilis</th>
                               <th style={{ padding: '6px 8px', textAlign: 'center', color: '#fca5a5', fontWeight: 700 }}>Gecikme</th>
                             </tr>
                           </thead>
                           <tbody>
                             {detaylar.map((d, di) => (
                               <tr key={d.event_id || `${d.tarih}-${d.sube_id}-${di}`} style={{ borderTop: '1px solid var(--border)' }}>
-                                <td className="mono" style={{ padding: '6px 8px' }}>{d.tarih || '—'}</td>
-                                <td style={{ padding: '6px 8px' }}>{d.sube_adi || d.sube_id || '—'}</td>
-                                <td className="mono" style={{ padding: '6px 8px', textAlign: 'center' }}>{d.planlanan_saat || '—'}</td>
-                                <td className="mono" style={{ padding: '6px 8px', textAlign: 'center' }}>{d.acilis_saat || '—'}</td>
+                                <td className="mono" style={{ padding: '6px 8px' }}>{d.tarih || '-'}</td>
+                                <td style={{ padding: '6px 8px' }}>{d.sube_adi || d.sube_id || '-'}</td>
+                                <td className="mono" style={{ padding: '6px 8px', textAlign: 'center' }}>{d.planlanan_saat || '-'}</td>
+                                <td className="mono" style={{ padding: '6px 8px', textAlign: 'center' }}>{d.acilis_saat || '-'}</td>
                                 <td className="mono" style={{ padding: '6px 8px', textAlign: 'center', color: 'var(--red)', fontWeight: 700 }}>
                                   +{Number(d.gecikme_dk || 0).toFixed(1)} dk
                                 </td>
@@ -8724,9 +8715,6 @@ export default function OperasyonMerkezi() {
               })}
             </div>
           )}
-          </div>
-          )}
-
         </div>
       )}
 
