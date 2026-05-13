@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { api } from './utils/api';
+import { subscribeGlobalDataRefresh } from './utils/globalDataRefresh';
 import Panel from './pages/Panel';
 import Kartlar from './pages/Kartlar';
 import KartHareketleri from './pages/KartHareketleri';
@@ -115,6 +117,19 @@ export default function App() {
   const [page, setPage] = useState(() => readPageFromHash() ?? 'panel');
   const mainRef = useRef(null);
   const Page = PAGES[page] || Panel;
+  const [onayBekleyen, setOnayBekleyen] = useState(0);
+
+  useEffect(() => {
+    const yukle = () => {
+      api('/onay-kuyrugu?durum=bekliyor&limit=400')
+        .then(d => setOnayBekleyen(Array.isArray(d) ? d.length : 0))
+        .catch(() => {});
+    };
+    yukle();
+    const timer = setInterval(yukle, 60000);
+    const unsub = subscribeGlobalDataRefresh(yukle);
+    return () => { clearInterval(timer); unsub(); };
+  }, []);
 
   const navigate = (id) => {
     const p = Object.prototype.hasOwnProperty.call(PAGES, id) ? id : 'panel';
@@ -151,9 +166,21 @@ export default function App() {
                   key={item.id}
                   className={`nav-item ${page === item.id ? 'active' : ''}`}
                   onClick={() => navigate(item.id)}
+                  style={{ position: 'relative' }}
                 >
                   <span className="icon">{item.icon}</span>
                   {item.label}
+                  {item.id === 'onay' && onayBekleyen > 0 && (
+                    <span style={{
+                      position: 'absolute', top: '50%', right: 10,
+                      transform: 'translateY(-50%)',
+                      minWidth: 18, height: 18, padding: '0 5px',
+                      borderRadius: 999, background: '#22c55e', color: '#fff',
+                      fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
+                    }}>
+                      {onayBekleyen}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
