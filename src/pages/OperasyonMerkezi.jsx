@@ -449,7 +449,7 @@ const MODULLER = [
     label: '👤 Personel',
     renk: '#c9a227',
     desc: 'Davranış analizi, vardiya uyumsuzluğu ve puan sistemi',
-    tabs: ['personel-davranis', 'personel-vardiya-uyumsuzluk', 'gec-acan-personel', 'puan'],
+    tabs: ['kasa-personel-takip', 'personel-davranis', 'personel-vardiya-uyumsuzluk', 'gec-acan-personel', 'puan'],
   },
   {
     id: 'denetim-uyum',
