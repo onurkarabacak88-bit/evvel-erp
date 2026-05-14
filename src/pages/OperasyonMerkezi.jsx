@@ -9016,177 +9016,206 @@ export default function OperasyonMerkezi() {
         const bugunStr = bugunIsoTarih();
         const secilenTarih = kasaUyumAramaTarih || bugunStr;
         const tumKayitlar = Array.isArray(kasaUyumAramaSonuc?.kayitlar) ? kasaUyumAramaSonuc.kayitlar : [];
-        const kritikAdet = tumKayitlar.filter(u => Math.abs(Number(u.fark_tl || 0)) >= 200).length;
-        const normalAdet = tumKayitlar.filter(u => Math.abs(Number(u.fark_tl || 0)) < 200).length;
-        const eksikList = secilenTarih === bugunStr
-          ? (kasaUyumAramaSonuc?.eksik_kapanis || kasaUyumBugun?.eksik_kapanis || [])
-          : [];
+
+        // İki tip ayrı listeler
+        const devirFarkKayitlar = tumKayitlar.filter(u => u.tip === 'ACILIS_KASA_FARK');
+        const kasaAcigiKayitlar  = tumKayitlar.filter(u => u.tip === 'KAPANIS_KASA_FARK');
+
         const haftaRows = kasaUyumHaftaSatirlari.length
           ? kasaUyumHaftaSatirlari
           : Array.from({ length: 7 }, (_, i) => ({ tarih: kuGunEkle(bugunStr, -i), adet: 0, maxAbsFark: 0 }));
 
+        // Seviye renkleri
+        const sevRenk = (absFark) => absFark >= 200
+          ? { border: 'rgba(220,38,38,0.45)', bg: 'rgba(220,38,38,0.06)', hdr: 'rgba(220,38,38,0.1)', sep: 'rgba(220,38,38,0.2)', badge: 'rgba(220,38,38,0.25)', badgeTxt: '#fca5a5' }
+          : absFark >= 50
+          ? { border: 'rgba(240,128,64,0.4)', bg: 'rgba(240,128,64,0.04)', hdr: 'rgba(240,128,64,0.09)', sep: 'rgba(240,128,64,0.2)', badge: 'rgba(240,128,64,0.25)', badgeTxt: '#fdba74' }
+          : { border: 'rgba(234,179,8,0.35)', bg: 'rgba(234,179,8,0.04)', hdr: 'rgba(234,179,8,0.08)', sep: 'rgba(234,179,8,0.18)', badge: 'rgba(234,179,8,0.25)', badgeTxt: '#fde68a' };
+
+        // Personel satırı
+        const PersonelSatir = ({ ad }) => (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6 }}>
+            <span style={{ fontSize: 15, lineHeight: 1 }}>👤</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: ad ? 'var(--text)' : 'var(--text3)' }}>{ad || '—'}</span>
+          </div>
+        );
+
+        // Kronik rozet
+        const KronikRozet = ({ adet }) => adet >= 3 ? (
+          <span title={`Son 7 günde ${adet} kez fark oluştu`} style={{ background: 'rgba(220,38,38,0.2)', color: '#fca5a5', borderRadius: 5, padding: '1px 7px', fontSize: 10, fontWeight: 700 }}>
+            📈 {adet}× / 7 gün
+          </span>
+        ) : null;
+
+        // Devir farkı kartı — akşamcı ne bıraktı vs sabahçı ne saydı
+        const DevirFarkKart = ({ u }) => {
+          const fark = Number(u?.fark_tl || 0);
+          const absFark = Math.abs(fark);
+          const r = sevRenk(absFark);
+          const kapTarih = u.kapanis_tarih || kuGunEkle(u.tarih, -1);
+          return (
+            <div style={{ borderRadius: 10, border: `1px solid ${r.border}`, background: r.bg, overflow: 'hidden' }}>
+              {/* Başlık */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', padding: '9px 14px', borderBottom: `1px solid ${r.sep}`, background: r.hdr }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 800, fontSize: 13 }}>💰 {u.sube_adi || u.sube_id}</span>
+                  <span style={{ background: r.badge, color: r.badgeTxt, borderRadius: 6, padding: '2px 10px', fontSize: 13, fontWeight: 800, fontFamily: 'monospace' }}>
+                    {fark > 0 ? '+' : ''}{fmt(fark)}
+                  </span>
+                  <KronikRozet adet={u.son_7g_adet} />
+                  <span style={{ fontSize: 10, color: 'var(--text3)', padding: '1px 7px', border: '1px solid var(--border)', borderRadius: 4 }}>
+                    Devir uyumsuzluğu — çözülmeli
+                  </span>
+                </div>
+                <button type="button" className="btn btn-sm"
+                  style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
+                  disabled={!!onayBusyId}
+                  onClick={() => kasaUyumsuzlukCoz(u.id)}>
+                  {onayBusyId === `ku:${u.id}` ? '…' : '✓ Çözüldü'}
+                </button>
+              </div>
+              {/* İki kutu */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
+                <div style={{ padding: '12px 14px', borderRight: `1px solid ${r.sep}` }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>
+                    Akşamcı — bıraktığı devir
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 6 }}>{kapTarih} kapanış</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'monospace' }}>{fmt(u.beklenen_tl ?? 0)}</div>
+                  <PersonelSatir ad={u.kapanis_personel_ad} />
+                </div>
+                <div style={{ padding: '12px 14px' }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>
+                    Sabahçı — saydığı kasa
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 6 }}>{u.tarih} açılış</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'monospace' }}>{fmt(u.gercek_tl ?? 0)}</div>
+                  <PersonelSatir ad={u.acilis_personel_ad} />
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // Kasa açığı kartı — kasiyer beyanı vs sistem beklentisi
+        const KasaAcigiKart = ({ u }) => {
+          const fark = Number(u?.fark_tl || 0);
+          const absFark = Math.abs(fark);
+          const r = sevRenk(absFark);
+          return (
+            <div style={{ borderRadius: 10, border: `1px solid ${r.border}`, background: r.bg, overflow: 'hidden' }}>
+              {/* Başlık */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', padding: '9px 14px', borderBottom: `1px solid ${r.sep}`, background: r.hdr }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 800, fontSize: 13 }}>🔍 {u.sube_adi || u.sube_id}</span>
+                  <span style={{ background: r.badge, color: r.badgeTxt, borderRadius: 6, padding: '2px 10px', fontSize: 13, fontWeight: 800, fontFamily: 'monospace' }}>
+                    {fark > 0 ? '+' : ''}{fmt(fark)}
+                  </span>
+                  <KronikRozet adet={u.son_7g_adet} />
+                  <span style={{ fontSize: 10, color: 'var(--text3)', padding: '1px 7px', border: '1px solid var(--border)', borderRadius: 4 }}>
+                    Kasa açığı — takip
+                  </span>
+                </div>
+                <button type="button" className="btn btn-sm"
+                  style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
+                  disabled={!!onayBusyId}
+                  onClick={() => kasaUyumsuzlukCoz(u.id)}>
+                  {onayBusyId === `ku:${u.id}` ? '…' : '✓ Takip alındı'}
+                </button>
+              </div>
+              {/* İki kutu */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
+                <div style={{ padding: '12px 14px', borderRight: `1px solid ${r.sep}` }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>
+                    Sistem beklentisi
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 6 }}>kasa_sayım − teslim − ara teslimler</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'monospace' }}>{fmt(u.beklenen_tl ?? 0)}</div>
+                </div>
+                <div style={{ padding: '12px 14px' }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>
+                    Kasiyerin beyanı
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 6 }}>{u.tarih} kapanış · kör sayım</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'monospace' }}>{fmt(u.gercek_tl ?? 0)}</div>
+                  <PersonelSatir ad={u.kapanis_personel_ad} />
+                </div>
+              </div>
+            </div>
+          );
+        };
+
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-            {/* ── NAVİGASYON ÇUBUĞU ── */}
+            {/* ── NAVİGASYON ── */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px' }}>
               <button type="button" className="btn btn-sm" style={{ padding: '5px 10px', fontSize: 16, lineHeight: 1 }}
                 onClick={() => kuGunGit(kuGunEkle(secilenTarih, -1))}>‹</button>
-              <input
-                type="date"
-                className="input"
-                value={secilenTarih}
+              <input type="date" className="input" value={secilenTarih}
                 style={{ fontSize: 13, padding: '5px 9px', flex: '0 0 auto' }}
-                onChange={(e) => e.target.value && kuGunGit(e.target.value)}
-              />
+                onChange={(e) => e.target.value && kuGunGit(e.target.value)} />
               <button type="button" className="btn btn-sm" style={{ padding: '5px 10px', fontSize: 16, lineHeight: 1 }}
                 disabled={secilenTarih >= bugunStr}
                 onClick={() => kuGunGit(kuGunEkle(secilenTarih, 1))}>›</button>
               {secilenTarih !== bugunStr && (
                 <button type="button" className="btn btn-secondary btn-sm" onClick={() => kuGunGit(bugunStr)}>Bugün</button>
               )}
-              <span style={{ marginLeft: 4, fontSize: 12, color: 'var(--text3)' }}>
+              <span style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 4 }}>
                 {kasaUyumAramaYukleniyor ? '⏳ yükleniyor…' : `${tumKayitlar.length} kayıt`}
               </span>
-              {/* Özet çipler */}
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {kritikAdet > 0 && <span className="badge badge-red" style={{ fontWeight: 700 }}>🔴 {kritikAdet} kritik</span>}
-                {normalAdet > 0 && <span className="badge badge-yellow" style={{ fontWeight: 700 }}>🟡 {normalAdet} normal</span>}
-                {eksikList.length > 0 && <span className="badge badge-red" style={{ fontWeight: 700, background: 'rgba(220,38,38,0.2)' }}>⛔ {eksikList.length} eksik kapanış</span>}
-                {tumKayitlar.length === 0 && !kasaUyumAramaYukleniyor && <span style={{ fontSize: 12, color: '#4ade80', fontWeight: 600 }}>✓ Sorun yok</span>}
+                {devirFarkKayitlar.length > 0 && <span className="badge" style={{ background: 'rgba(240,128,64,0.2)', color: '#fdba74', fontWeight: 700 }}>💰 {devirFarkKayitlar.length} devir farkı</span>}
+                {kasaAcigiKayitlar.length > 0  && <span className="badge" style={{ background: 'rgba(74,158,255,0.15)', color: '#93c5fd', fontWeight: 700 }}>🔍 {kasaAcigiKayitlar.length} kasa açığı</span>}
+                {tumKayitlar.length === 0 && !kasaUyumAramaYukleniyor && <span style={{ fontSize: 12, color: '#4ade80', fontWeight: 600 }}>✓ Bu gün sorun yok</span>}
               </div>
             </div>
 
-            {/* ── EKSİK KAPANIŞ UYARISI ── */}
-            {eksikList.length > 0 && (
-              <div style={{ background: 'rgba(220,38,38,0.09)', border: '1px solid rgba(220,38,38,0.35)', borderRadius: 8, padding: '10px 14px' }}>
-                <div style={{ fontWeight: 700, fontSize: 12, color: '#fca5a5', marginBottom: 6 }}>
-                  ⛔ Dünkü kapanışı eksik — bugün açılış yapan {eksikList.length} şube
+            {/* ── DEVİR UYUMSUZLUĞU — ÇÖZÜLMELI ── */}
+            {(devirFarkKayitlar.length > 0 || !kasaUyumAramaYukleniyor) && (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: '#fdba74', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    💰 Devir Uyumsuzluğu
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--text3)' }}>Akşamcının bıraktığı ≠ Sabahçının saydığı — nedeni açıklanmalı</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>{devirFarkKayitlar.length} kayıt</span>
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                  {eksikList.map((e) => (
-                    <span key={e.sube_id} style={{ background: 'rgba(220,38,38,0.15)', borderRadius: 5, padding: '2px 9px', fontSize: 12, color: '#fca5a5', fontWeight: 600 }}>
-                      {e.sube_adi}
-                    </span>
-                  ))}
+                {devirFarkKayitlar.length === 0 ? (
+                  <div style={{ padding: '14px 16px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12, color: '#4ade80', fontWeight: 600, textAlign: 'center' }}>
+                    ✓ Bu gün devir uyumsuzluğu yok
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {devirFarkKayitlar.map(u => <DevirFarkKart key={u.id} u={u} />)}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── KASA AÇIĞI — TAKİP ── */}
+            {(kasaAcigiKayitlar.length > 0 || !kasaUyumAramaYukleniyor) && (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: '#93c5fd', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    🔍 Kasa Açığı
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--text3)' }}>Kasiyerin beyanı ≠ Sistem beklentisi — takip et, kronikleşirse harekete geç</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>{kasaAcigiKayitlar.length} kayıt</span>
                 </div>
+                {kasaAcigiKayitlar.length === 0 ? (
+                  <div style={{ padding: '14px 16px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12, color: '#4ade80', fontWeight: 600, textAlign: 'center' }}>
+                    ✓ Bu gün kasa açığı yok
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {kasaAcigiKayitlar.map(u => <KasaAcigiKart key={u.id} u={u} />)}
+                  </div>
+                )}
               </div>
             )}
 
-            {/* ── ŞUBE FİLTRESİ ── */}
-            {kasaUyumSubeSekmeleri.length > 0 && (
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <button type="button" className="btn btn-sm"
-                  onClick={() => setKasaUyumSeciliSubeKey('all')}
-                  style={{ padding: '4px 12px', fontWeight: 700,
-                    background: kasaUyumSeciliSubeKey === 'all' ? 'rgba(232,93,93,0.2)' : 'var(--bg2)',
-                    border: kasaUyumSeciliSubeKey === 'all' ? '1px solid #e85d5d' : '1px solid var(--border)',
-                    color: kasaUyumSeciliSubeKey === 'all' ? '#fecaca' : 'var(--text2)' }}>
-                  Tümü ({tumKayitlar.length})
-                </button>
-                {kasaUyumSubeSekmeleri.map((s) => (
-                  <button key={`ku-${s.key}`} type="button" className="btn btn-sm"
-                    onClick={() => setKasaUyumSeciliSubeKey(s.key)}
-                    style={{ padding: '4px 12px', fontWeight: 600,
-                      background: kasaUyumSeciliSubeKey === s.key ? 'rgba(74,158,255,0.18)' : 'var(--bg2)',
-                      border: kasaUyumSeciliSubeKey === s.key ? '1px solid #4a9eff' : '1px solid var(--border)',
-                      color: kasaUyumSeciliSubeKey === s.key ? '#e6f7ff' : 'var(--text2)' }}>
-                    {s.baslik}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* ── UYUMSUZLUK KARTLARI ── */}
-            {kasaUyumGorunenKayitlar.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text3)' }}>
-                {kasaUyumAramaYukleniyor ? '⏳ Yükleniyor…' : '✓ Bu tarihte çözüm bekleyen kasa uyumsuzluğu yok'}
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {kasaUyumGorunenKayitlar.map((u) => {
-                  const fark = Number(u?.fark_tl || 0);
-                  const absFark = Math.abs(fark);
-                  const kritik = absFark >= 200;
-                  const kapanis_tarih = u.kapanis_tarih || kuGunEkle(u.tarih, -1);
-                  const kapanis_yapildi = u.kapanis_yapildi !== false;
-                  return (
-                    <div key={u.id} style={{
-                      borderRadius: 10,
-                      border: `1px solid ${kritik ? 'rgba(220,38,38,0.4)' : 'rgba(234,179,8,0.35)'}`,
-                      background: kritik ? 'rgba(220,38,38,0.05)' : 'rgba(234,179,8,0.04)',
-                      overflow: 'hidden',
-                    }}>
-                      {/* Kart başlık şeridi */}
-                      <div style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        gap: 10, flexWrap: 'wrap',
-                        padding: '10px 14px',
-                        borderBottom: `1px solid ${kritik ? 'rgba(220,38,38,0.2)' : 'rgba(234,179,8,0.2)'}`,
-                        background: kritik ? 'rgba(220,38,38,0.08)' : 'rgba(234,179,8,0.07)',
-                      }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <span style={{ fontWeight: 700, fontSize: 14 }}>{u.sube_adi || u.sube_id}</span>
-                          <span style={{
-                            background: kritik ? 'rgba(220,38,38,0.25)' : 'rgba(234,179,8,0.25)',
-                            color: kritik ? '#fca5a5' : '#fde68a',
-                            borderRadius: 6, padding: '2px 10px', fontSize: 13, fontWeight: 800,
-                          }}>
-                            {fark > 0 ? '+' : ''}{fmt(fark)}
-                          </span>
-                          {!kapanis_yapildi && (
-                            <span style={{ background: 'rgba(220,38,38,0.3)', color: '#fca5a5', borderRadius: 5, padding: '1px 8px', fontSize: 11, fontWeight: 700 }}>
-                              Kapanış yapılmamış
-                            </span>
-                          )}
-                        </div>
-                        <button type="button" className="btn btn-sm"
-                          style={{ padding: '4px 14px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600 }}
-                          disabled={!!onayBusyId}
-                          onClick={() => kasaUyumsuzlukCoz(u.id)}>
-                          {onayBusyId === `ku:${u.id}` ? '…' : '✓ Çözüldü'}
-                        </button>
-                      </div>
-                      {/* Kart detay */}
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
-                        {/* Kapanış kutusu */}
-                        <div style={{ padding: '12px 14px', borderRight: '1px solid var(--border)' }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
-                            Kapanış deviri · {kapanis_tarih}
-                          </div>
-                          <div style={{ fontSize: 20, fontWeight: 800, fontFamily: 'monospace', marginBottom: 6 }}>
-                            {fmt(u.beklenen_tl || 0)}
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                            <span style={{ fontSize: 18, lineHeight: 1 }}>👤</span>
-                            <span style={{ fontSize: 13, fontWeight: 600, color: u.kapanis_personel_ad ? 'var(--text)' : 'var(--text3)' }}>
-                              {u.kapanis_personel_ad || '—'}
-                            </span>
-                          </div>
-                        </div>
-                        {/* Açılış kutusu */}
-                        <div style={{ padding: '12px 14px' }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
-                            Açılış sayımı · {u.tarih}
-                          </div>
-                          <div style={{ fontSize: 20, fontWeight: 800, fontFamily: 'monospace', marginBottom: 6 }}>
-                            {fmt(u.gercek_tl || 0)}
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                            <span style={{ fontSize: 18, lineHeight: 1 }}>👤</span>
-                            <span style={{ fontSize: 13, fontWeight: 600, color: u.acilis_personel_ad ? 'var(--text)' : 'var(--text3)' }}>
-                              {u.acilis_personel_ad || '—'}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* ── SON 7 GÜN ŞERIDI ── */}
+            {/* ── SON 7 GÜN ── */}
             <div style={{ marginTop: 4, padding: '12px 14px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginBottom: 10 }}>
                 Son 7 gün {kasaUyumHaftaYukleniyor && <span style={{ fontWeight: 400, color: 'var(--text3)' }}>yükleniyor…</span>}
@@ -9194,12 +9223,11 @@ export default function OperasyonMerkezi() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
                 {haftaRows.slice(0, 7).reverse().map((s) => {
                   const secili = s.tarih === secilenTarih;
-                  const bugun = s.tarih === bugunStr;
+                  const bugun2 = s.tarih === bugunStr;
                   const dikkat = s.adet > 0;
                   const kritik = dikkat && s.maxAbsFark >= 200;
                   return (
-                    <button key={`ku7-${s.tarih}`} type="button"
-                      onClick={() => kuGunGit(s.tarih)}
+                    <button key={`ku7-${s.tarih}`} type="button" onClick={() => kuGunGit(s.tarih)}
                       style={{
                         display: 'flex', flexDirection: 'column', alignItems: 'center',
                         padding: '7px 4px', borderRadius: 8, cursor: 'pointer', textAlign: 'center',
@@ -9210,15 +9238,13 @@ export default function OperasyonMerkezi() {
                       <span style={{ fontSize: 9, color: 'var(--text3)', marginBottom: 2 }}>
                         {new Date(s.tarih + 'T00:00:00').toLocaleDateString('tr-TR', { weekday: 'short' })}
                       </span>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: secili ? '#93c5fd' : bugun ? 'var(--text)' : 'var(--text2)', fontFamily: 'monospace' }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: secili ? '#93c5fd' : bugun2 ? 'var(--text)' : 'var(--text2)', fontFamily: 'monospace' }}>
                         {s.tarih.slice(8)}
                       </span>
-                      <span style={{ marginTop: 4, fontSize: 13 }}>
-                        {kritik ? '🔴' : dikkat ? '🟡' : '✓'}
-                      </span>
+                      <span style={{ marginTop: 4, fontSize: 13 }}>{kritik ? '🔴' : dikkat ? '🟡' : '✓'}</span>
                       {dikkat && (
                         <span style={{ fontSize: 9, color: kritik ? '#fca5a5' : '#fde68a', fontWeight: 700, marginTop: 1 }}>
-                          {s.adet} şube
+                          {s.adet} kayıt
                         </span>
                       )}
                     </button>
