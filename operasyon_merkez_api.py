@@ -2994,36 +2994,42 @@ def ops_bar_ozet(
 
         # ── 2b. Fallback: KAPANIS eventi olmayan günler için vardiya devri stok sayımı ──
         # kapanis_kayit.meta.vardiya_devir_stok_sayim → sabahçı devir sırasında sayım yaptı
+        # SAVEPOINT kullanılıyor: tablo yoksa transaction abort olmasın
         kap_fb_params: list = [ym, gun_v, gun_v]
         kap_fb_sube_filter = ""
         if sube_id:
             kap_fb_sube_filter = "AND k.sube_id = %s"
             kap_fb_params.append(sube_id)
-        cur.execute(
-            f"""
-            SELECT k.sube_id::text, k.tarih::text, k.meta
-            FROM kapanis_kayit k
-            WHERE k.olay = 'vardiya_sabah_aksam_devri'
-              AND k.durum = 'tamamlandi'
-              AND to_char(k.tarih, 'YYYY-MM') = %s
-              AND (NULLIF(%s, '') IS NULL OR k.tarih = NULLIF(%s, '')::date)
-              {kap_fb_sube_filter}
-            """,
-            kap_fb_params,
-        )
-        for r in cur.fetchall():
-            key = (str(r["sube_id"]), str(r["tarih"]))
-            if key in kapanis_map:
-                continue  # KAPANIS eventi zaten var, üzerine yazma
-            meta_raw = r.get("meta") or {}
-            if isinstance(meta_raw, str):
-                try:
-                    import json as _jfb; meta_raw = _jfb.loads(meta_raw)
-                except Exception:
-                    meta_raw = {}
-            devir_stok = meta_raw.get("vardiya_devir_stok_sayim") or {}
-            if devir_stok:
-                kapanis_map[key] = {k: max(0, int(devir_stok.get(k) or 0)) for k in _BAR_KEYS}
+        try:
+            cur.execute("SAVEPOINT sp_kapanis_kayit_fb")
+            cur.execute(
+                f"""
+                SELECT k.sube_id::text, k.tarih::text, k.meta
+                FROM kapanis_kayit k
+                WHERE k.olay = 'vardiya_sabah_aksam_devri'
+                  AND k.durum = 'tamamlandi'
+                  AND to_char(k.tarih, 'YYYY-MM') = %s
+                  AND (NULLIF(%s, '') IS NULL OR k.tarih = NULLIF(%s, '')::date)
+                  {kap_fb_sube_filter}
+                """,
+                kap_fb_params,
+            )
+            for r in cur.fetchall():
+                key = (str(r["sube_id"]), str(r["tarih"]))
+                if key in kapanis_map:
+                    continue  # KAPANIS eventi zaten var, üzerine yazma
+                meta_raw = r.get("meta") or {}
+                if isinstance(meta_raw, str):
+                    try:
+                        import json as _jfb; meta_raw = _jfb.loads(meta_raw)
+                    except Exception:
+                        meta_raw = {}
+                devir_stok = meta_raw.get("vardiya_devir_stok_sayim") or {}
+                if devir_stok:
+                    kapanis_map[key] = {k: max(0, int(devir_stok.get(k) or 0)) for k in _BAR_KEYS}
+            cur.execute("RELEASE SAVEPOINT sp_kapanis_kayit_fb")
+        except Exception:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_kapanis_kayit_fb")
 
         # ── 2c. Fallback 3: sube_operasyon_ozet.kapanis_stok_json (hesaplanmış kapanış) ──
         kap_ozet_params: list = [ym, gun_v, gun_v]
@@ -3032,6 +3038,7 @@ def ops_bar_ozet(
             kap_ozet_sube_filter = "AND o.sube_id = %s"
             kap_ozet_params.append(sube_id)
         try:
+            cur.execute("SAVEPOINT sp_ozet_kapanis_stok")
             cur.execute(
                 f"""
                 SELECT o.sube_id::text, o.tarih::text, o.kapanis_stok_json
@@ -3055,8 +3062,9 @@ def ops_bar_ozet(
                         raw = {}
                 if raw:
                     kapanis_map[key] = {k: max(0, int(raw.get(k) or 0)) for k in _BAR_KEYS}
+            cur.execute("RELEASE SAVEPOINT sp_ozet_kapanis_stok")
         except Exception:
-            pass  # Sütun henüz schema'da yoksa sessizce geç
+            cur.execute("ROLLBACK TO SAVEPOINT sp_ozet_kapanis_stok")  # tablo/sütun yoksa transaction abort olmasın
 
         # ── 3. URUN_AC gün toplamları ──────────────────────────────────────
         urun_params: list = [ym, gun_v, gun_v]
@@ -3120,30 +3128,35 @@ def ops_bar_ozet(
             if missing_dun:
                 d_sid_list  = [p[0] for p in missing_dun]
                 d_tar_list  = [date.fromisoformat(p[1]) for p in missing_dun]
-                cur.execute(
-                    """
-                    SELECT k.sube_id::text, k.tarih::text, k.meta
-                    FROM kapanis_kayit k
-                    INNER JOIN (
-                        SELECT * FROM unnest(%s::text[], %s::date[]) AS j(sube_id, tarih)
-                    ) q ON k.sube_id = q.sube_id AND k.tarih = q.tarih
-                    WHERE k.olay = 'vardiya_sabah_aksam_devri' AND k.durum = 'tamamlandi'
-                    """,
-                    (d_sid_list, d_tar_list),
-                )
-                for r in cur.fetchall() or []:
-                    kk = (str(r["sube_id"]), str(r["tarih"]))
-                    if kk in kapanis_dun_map:
-                        continue
-                    meta_raw = r.get("meta") or {}
-                    if isinstance(meta_raw, str):
-                        try:
-                            import json as _jd; meta_raw = _jd.loads(meta_raw)
-                        except Exception:
-                            meta_raw = {}
-                    devir_stok = meta_raw.get("vardiya_devir_stok_sayim") or {}
-                    if devir_stok:
-                        kapanis_dun_map[kk] = {k: max(0, int(devir_stok.get(k) or 0)) for k in _BAR_KEYS}
+                try:
+                    cur.execute("SAVEPOINT sp_kapanis_kayit_dun")
+                    cur.execute(
+                        """
+                        SELECT k.sube_id::text, k.tarih::text, k.meta
+                        FROM kapanis_kayit k
+                        INNER JOIN (
+                            SELECT * FROM unnest(%s::text[], %s::date[]) AS j(sube_id, tarih)
+                        ) q ON k.sube_id = q.sube_id AND k.tarih = q.tarih
+                        WHERE k.olay = 'vardiya_sabah_aksam_devri' AND k.durum = 'tamamlandi'
+                        """,
+                        (d_sid_list, d_tar_list),
+                    )
+                    for r in cur.fetchall() or []:
+                        kk = (str(r["sube_id"]), str(r["tarih"]))
+                        if kk in kapanis_dun_map:
+                            continue
+                        meta_raw = r.get("meta") or {}
+                        if isinstance(meta_raw, str):
+                            try:
+                                import json as _jd; meta_raw = _jd.loads(meta_raw)
+                            except Exception:
+                                meta_raw = {}
+                        devir_stok = meta_raw.get("vardiya_devir_stok_sayim") or {}
+                        if devir_stok:
+                            kapanis_dun_map[kk] = {k: max(0, int(devir_stok.get(k) or 0)) for k in _BAR_KEYS}
+                    cur.execute("RELEASE SAVEPOINT sp_kapanis_kayit_dun")
+                except Exception:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_kapanis_kayit_dun")
 
         # ── 4. Birleştir ───────────────────────────────────────────────────
         satirlar: List[Dict[str, Any]] = []
