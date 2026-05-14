@@ -6173,6 +6173,11 @@ def ops_siparis_urun_ekle(body: OpsSiparisUrunBody):
             f"Merkez katalog — ürün eklendi/aktif: kategori={body.kategori_kod} urun={r['ad']}",
             bildirim_saati=saat,
         )
+        # Event-driven: yeni ürün eklenince merkez stok kartına otomatik gir
+        try:
+            merkez_stok_kart_guncelle(cur)
+        except Exception:
+            pass
     return {"success": True, "urun_id": str(r["id"]), "urun_ad": r["ad"]}
 
 
@@ -6223,6 +6228,11 @@ def ops_siparis_urun_durum(body: OpsSiparisUrunDurumBody):
             f"Merkez — ürün aktif={bool(ud['aktif'])} kategori={body.kategori_kod} urun={ud['ad']}",
             bildirim_saati=saat,
         )
+        # Event-driven: aktif/pasif değişince merkez stok kartını otomatik güncelle
+        try:
+            merkez_stok_kart_guncelle(cur)
+        except Exception:
+            pass
     return {"success": True, "urun_id": str(ud["id"]), "aktif": bool(ud["aktif"])}
 
 
@@ -6368,6 +6378,11 @@ def ops_siparis_urun_ad(body: OpsSiparisUrunAdBody):
             f"Merkez — ürün adı güncellendi: {yeni} (geçmiş talep güncellenen: {talep_guncellenen})",
             bildirim_saati=saat,
         )
+        # Event-driven: merkez stok kartını otomatik güncelle (manuel sync gerekmez)
+        try:
+            merkez_stok_kart_guncelle(cur)
+        except Exception:
+            pass
     return {
         "success": True,
         "urun_id": urun_id_str,

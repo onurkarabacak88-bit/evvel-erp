@@ -606,9 +606,19 @@ def merkez_stok_kart_guncelle(cur: Any) -> List[Dict[str, Any]]:
     (siparis_talep.kalemler'de görünen ancak STOK_KEYS'e map edilemeyen ürünler).
     """
     siparis = _zero_stok()
-    # Katalog ürünleri için: {norm_key: {ad, adet}}
+    # Katalog ürünleri için: {key: {ad, adet}}
+    # Key mimarisi: urun__<uuid> (aktif katalog), katalog__legacy__<norm> (urun_id bilinmeyen eski siparişler)
     katalog_siparis: Dict[str, Dict[str, Any]] = {}
 
+    # 1) Aktif katalog ürünleri: id → ad haritası (UUID tabanlı key için)
+    aktif_urun_map: Dict[str, str] = {}
+    try:
+        cur.execute("SELECT id, ad FROM siparis_urun WHERE aktif = TRUE")
+        aktif_urun_map = {str(r["id"]): str(r["ad"]) for r in cur.fetchall()}
+    except Exception:
+        pass
+
+    # 2) Siparişlerden kalem sayımı
     cur.execute("SELECT kalemler FROM siparis_talep WHERE durum!='iptal'")
     for r in cur.fetchall():
         kal = r.get("kalemler")
@@ -625,62 +635,44 @@ def merkez_stok_kart_guncelle(cur: Any) -> List[Dict[str, Any]]:
             urun_ad = str(it.get("urun_ad") or "").strip()
             if not urun_ad:
                 continue
+            adet = max(0, int(it.get("adet") or 0))
+            # STOK_KEYS kontrolü (fiziksel sarf malzemeleri)
             key = _stok_key_from_urun_ad(urun_ad)
             if key:
                 try:
-                    siparis[key] += max(0, int(it.get("adet") or 0))
+                    siparis[key] += adet
                 except (TypeError, ValueError):
                     pass
-            else:
-                # Katalog ürünü — STOK_KEYS dışı, sadece siparis_adet takibi
-                norm = urun_ad.lower().replace(" ", "_").replace("ş", "s").replace(
-                    "ı", "i").replace("ğ", "g").replace("ü", "u").replace(
-                    "ö", "o").replace("ç", "c")
-                # Alfanümerik + _ karakterleri koru
-                norm = "".join(c if c.isalnum() or c == "_" else "_" for c in norm)
-                norm = f"katalog__{norm}"
-                if norm not in katalog_siparis:
-                    katalog_siparis[norm] = {"ad": urun_ad, "adet": 0}
-                try:
-                    katalog_siparis[norm]["adet"] += max(0, int(it.get("adet") or 0))
-                except (TypeError, ValueError):
-                    pass
-
-    # Aktif katalog ürünlerini de ekle (hiç sipariş edilmemiş olsa bile göster)
-    # Ayrıca siparis_talep'teki urun_ad eşleşmelerini katalog ID'siyle düzelt
-    try:
-        cur.execute(
-            """
-            SELECT k.kod AS kat_kod, u.norm_ad, u.ad
-            FROM siparis_urun u
-            JOIN siparis_kategori k ON k.id = u.kategori_id
-            WHERE u.aktif = TRUE
-            ORDER BY k.kod, u.sira, u.ad
-            """
-        )
-        for ru in cur.fetchall():
-            kat_kod = str(ru.get("kat_kod") or "").strip()
-            norm_ad = str(ru.get("norm_ad") or "").strip()
-            ad = str(ru.get("ad") or "").strip()
-            if not norm_ad or not ad or not kat_kod:
                 continue
-            # Kategori kodu + norm_ad ile unique key
-            norm_key = f"katalog__{kat_kod}__{norm_ad}"
-            if norm_key not in katalog_siparis:
-                # urun_ad bazlı eşleşmeyi katalog key'iyle güncelle
-                # (siparis_talep'ten oluşturulan basit norm ile üst üste gelebilir)
-                katalog_siparis[norm_key] = {"ad": ad, "adet": 0}
-                # Basit norm anahtarı varsa adetini aktar ve sil
-                simple_key = "katalog__" + "".join(
+            # UUID ile katalog eşleşmesi — tercih edilen yol (Single Source of Truth)
+            urun_id = str(it.get("urun_id") or "").strip()
+            if urun_id and urun_id in aktif_urun_map:
+                uuid_key = f"urun__{urun_id}"
+                if uuid_key not in katalog_siparis:
+                    katalog_siparis[uuid_key] = {"ad": aktif_urun_map[urun_id], "adet": 0}
+                katalog_siparis[uuid_key]["adet"] += adet
+            else:
+                # Eski sipariş: urun_id yok/bilinmiyor — isim normalizasyonu ile legacy key
+                norm = "".join(
                     c if c.isalnum() or c == "_" else "_"
-                    for c in ad.lower().replace(" ", "_").replace("ş", "s").replace(
-                        "ı", "i").replace("ğ", "g").replace("ü", "u").replace(
-                        "ö", "o").replace("ç", "c")
+                    for c in urun_ad.lower()
+                    .replace("ş", "s").replace("ı", "i").replace("ğ", "g")
+                    .replace("ü", "u").replace("ö", "o").replace("ç", "c")
+                    .replace(" ", "_")
                 )
-                if simple_key in katalog_siparis and simple_key != norm_key:
-                    katalog_siparis[norm_key]["adet"] += katalog_siparis.pop(simple_key)["adet"]
-    except Exception:
-        pass
+                legacy_key = f"katalog__legacy__{norm}"
+                if legacy_key not in katalog_siparis:
+                    katalog_siparis[legacy_key] = {"ad": urun_ad, "adet": 0}
+                katalog_siparis[legacy_key]["adet"] += adet
+
+    # 3) Aktif katalog ürünlerini ekle (hiç sipariş edilmemiş olsa bile görünsün)
+    #    Her zaman kanonik adı kullan — adı yanlış giren legacy kayıtların üstüne yaz
+    for urun_id, ad in aktif_urun_map.items():
+        uuid_key = f"urun__{urun_id}"
+        if uuid_key not in katalog_siparis:
+            katalog_siparis[uuid_key] = {"ad": ad, "adet": 0}
+        else:
+            katalog_siparis[uuid_key]["ad"] = ad  # kanonik adı zorla
 
     sevk = sum_merkez_stok_sevk(cur)
     kullanilan = sum_urun_ac_genel(cur)
@@ -715,11 +707,13 @@ def merkez_stok_kart_guncelle(cur: Any) -> List[Dict[str, Any]]:
 
     # Aktif anahtarlar — STOK_KEYS + katalog ürünleri
     aktif_kodlar = {r["kalem_kodu"] for r in rows}
-    # Eski / stale katalog satırlarını temizle (yeniden üretilmeyenler)
+    # Stale satırları temizle: katalog__ (eski format) ve urun__ (yeni format) dahil
     try:
-        cur.execute("SELECT kalem_kodu FROM merkez_stok_kart WHERE kalem_kodu LIKE 'katalog__%'")
-        eski_katalog = {row["kalem_kodu"] for row in cur.fetchall()}
-        silincekler = eski_katalog - aktif_kodlar
+        cur.execute(
+            "SELECT kalem_kodu FROM merkez_stok_kart WHERE kalem_kodu LIKE 'katalog__%' OR kalem_kodu LIKE 'urun__%'"
+        )
+        eski = {row["kalem_kodu"] for row in cur.fetchall()}
+        silincekler = eski - aktif_kodlar
         if silincekler:
             cur.execute(
                 "DELETE FROM merkez_stok_kart WHERE kalem_kodu = ANY(%s)",
