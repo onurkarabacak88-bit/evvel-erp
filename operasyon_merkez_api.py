@@ -9287,6 +9287,259 @@ def ops_maliyet_recete_sil(urun_id: str):
     return {"success": True, "urun_id": urun}
 
 
+# ─── Geçici Kasa Teşhis Endpoint ────────────────────────────────────────────
+@router.get("/kasa-teshis")
+def ops_kasa_teshis(
+    sube_ad: str = Query("zafer", description="Şube adı içeriği (küçük harf)"),
+    tarih: str = Query("2026-05-14", description="YYYY-MM-DD"),
+):
+    """
+    Geçici teşhis endpoint: belirli şube + gün için tüm kasa verilerini gösterir.
+    açılış sayım, kapanış sayım, ciro, gider, uyarılar, devir hesabı.
+    """
+    hedef = date.fromisoformat(tarih)
+    with db() as (_, cur):
+
+        # 1. Şube bul
+        cur.execute("SELECT id::text, ad FROM subeler WHERE lower(ad) LIKE %s ORDER BY ad", (f"%{sube_ad.lower()}%",))
+        subeler_r = [dict(r) for r in cur.fetchall()]
+
+        if not subeler_r:
+            return {"hata": f"'{sube_ad}' adında şube bulunamadı", "subeler": []}
+
+        sube_id = subeler_r[0]["id"]
+        sube_adi = subeler_r[0]["ad"]
+
+        sonuc = {"sube_id": sube_id, "sube_adi": sube_adi, "tarih": str(hedef)}
+
+        # 2. ACILIS event
+        try:
+            cur.execute("SAVEPOINT sp_td_acilis")
+            cur.execute("""
+                SELECT e.id, e.tip, e.tarih, e.durum,
+                       e.cevap_ts AT TIME ZONE 'Europe/Istanbul' AS cevap_ts_tr,
+                       e.meta
+                FROM sube_operasyon_event e
+                WHERE e.sube_id = %s AND e.tarih = %s AND e.tip = 'ACILIS'
+                ORDER BY e.cevap_ts DESC NULLS LAST, e.id DESC
+                LIMIT 5
+            """, (sube_id, hedef))
+            sonuc["acilis_eventler"] = []
+            for r in cur.fetchall():
+                d = dict(r)
+                d["tarih"] = str(d["tarih"])
+                d["cevap_ts_tr"] = str(d.get("cevap_ts_tr") or "")
+                meta = d.pop("meta", {}) or {}
+                if isinstance(meta, str):
+                    try: meta = json.loads(meta)
+                    except: meta = {}
+                d["kasa_sayim"] = meta.get("acilis_kasa_sayim")
+                d["stok_sayim"] = meta.get("acilis_stok_sayim")
+                d["personel_ad"] = meta.get("personel_ad") or meta.get("acilan_ad")
+                sonuc["acilis_eventler"].append(d)
+            cur.execute("RELEASE SAVEPOINT sp_td_acilis")
+        except Exception as ex:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_td_acilis")
+            sonuc["acilis_eventler"] = [{"hata": str(ex)}]
+
+        # 3. KAPANIS event
+        try:
+            cur.execute("SAVEPOINT sp_td_kapanis")
+            cur.execute("""
+                SELECT e.id, e.tip, e.tarih, e.durum,
+                       e.cevap_ts AT TIME ZONE 'Europe/Istanbul' AS cevap_ts_tr,
+                       e.meta
+                FROM sube_operasyon_event e
+                WHERE e.sube_id = %s AND e.tarih = %s AND e.tip = 'KAPANIS'
+                ORDER BY e.cevap_ts DESC NULLS LAST, e.id DESC
+                LIMIT 5
+            """, (sube_id, hedef))
+            sonuc["kapanis_eventler"] = []
+            for r in cur.fetchall():
+                d = dict(r)
+                d["tarih"] = str(d["tarih"])
+                d["cevap_ts_tr"] = str(d.get("cevap_ts_tr") or "")
+                meta = d.pop("meta", {}) or {}
+                if isinstance(meta, str):
+                    try: meta = json.loads(meta)
+                    except: meta = {}
+                d["kasa_sayim"]     = meta.get("kapanis_kasa_sayim")
+                d["stok_sayim"]     = meta.get("kapanis_stok_sayim")
+                d["kasa_teslim"]    = meta.get("kasa_teslim_tutari") or meta.get("teslim_tutari")
+                d["devir_kasaya"]   = meta.get("devir_kasaya") or meta.get("devir_bırakilan")
+                d["personel_ad"]    = meta.get("personel_ad") or meta.get("kapatan_ad")
+                sonuc["kapanis_eventler"].append(d)
+            cur.execute("RELEASE SAVEPOINT sp_td_kapanis")
+        except Exception as ex:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_td_kapanis")
+            sonuc["kapanis_eventler"] = [{"hata": str(ex)}]
+
+        # 4. Ciro
+        try:
+            cur.execute("SAVEPOINT sp_td_ciro")
+            cur.execute("""
+                SELECT toplam, nakit, pos, online, durum
+                FROM ciro WHERE sube_id = %s AND tarih = %s
+            """, (sube_id, hedef))
+            ciro_r = cur.fetchone()
+            sonuc["ciro"] = dict(ciro_r) if ciro_r else None
+            if sonuc["ciro"]:
+                for k in ("toplam","nakit","pos","online"):
+                    if sonuc["ciro"].get(k) is not None:
+                        sonuc["ciro"][k] = float(sonuc["ciro"][k])
+            cur.execute("RELEASE SAVEPOINT sp_td_ciro")
+        except Exception as ex:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_td_ciro")
+            sonuc["ciro"] = {"hata": str(ex)}
+
+        # 5. ciro_taslak
+        try:
+            cur.execute("SAVEPOINT sp_td_taslak")
+            cur.execute("""
+                SELECT nakit, pos, online, durum, gonderen_ad, olusturma
+                FROM ciro_taslak WHERE sube_id = %s AND tarih = %s
+                ORDER BY CASE durum WHEN 'onaylandi' THEN 0 ELSE 1 END, olusturma DESC
+                LIMIT 3
+            """, (sube_id, hedef))
+            taslaklari = []
+            for r in cur.fetchall():
+                d = dict(r)
+                d["olusturma"] = str(d.get("olusturma") or "")
+                for k in ("nakit","pos","online"):
+                    if d.get(k) is not None: d[k] = float(d[k])
+                taslaklari.append(d)
+            sonuc["ciro_taslak"] = taslaklari
+            cur.execute("RELEASE SAVEPOINT sp_td_taslak")
+        except Exception as ex:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_td_taslak")
+            sonuc["ciro_taslak"] = [{"hata": str(ex)}]
+
+        # 6. Günlük gider (nakit çıkış)
+        try:
+            cur.execute("SAVEPOINT sp_td_gider")
+            cur.execute("""
+                SELECT SUM(tutar) AS toplam_gider, COUNT(*) AS adet
+                FROM anlik_giderler
+                WHERE sube_id = %s AND DATE(olusturma AT TIME ZONE 'Europe/Istanbul') = %s
+                  AND durum = 'aktif'
+            """, (sube_id, hedef))
+            gider_r = cur.fetchone()
+            sonuc["gunluk_gider"] = {"toplam": float(gider_r["toplam_gider"] or 0), "adet": int(gider_r["adet"] or 0)} if gider_r else None
+            cur.execute("RELEASE SAVEPOINT sp_td_gider")
+        except Exception as ex:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_td_gider")
+            sonuc["gunluk_gider"] = {"hata": str(ex)}
+
+        # 7. Kasa uyarıları
+        try:
+            cur.execute("SAVEPOINT sp_td_uyari")
+            cur.execute("""
+                SELECT id, tip, tarih, seviye, fark_tl, beklenen_tl, gercek_tl,
+                       mesaj, okundu, olusturma,
+                       acilis_personel_ad, kapanis_personel_ad
+                FROM sube_operasyon_uyari
+                WHERE sube_id = %s AND tarih = %s
+                  AND tip IN ('ACILIS_KASA_FARK','KAPANIS_KASA_FARK')
+                ORDER BY olusturma DESC
+            """, (sube_id, hedef))
+            uyarilar = []
+            for r in cur.fetchall():
+                d = dict(r)
+                d["tarih"] = str(d["tarih"])
+                d["olusturma"] = str(d.get("olusturma") or "")
+                for k in ("fark_tl","beklenen_tl","gercek_tl"):
+                    if d.get(k) is not None: d[k] = float(d[k])
+                uyarilar.append(d)
+            sonuc["kasa_uyarilari"] = uyarilar
+            cur.execute("RELEASE SAVEPOINT sp_td_uyari")
+        except Exception as ex:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_td_uyari")
+            sonuc["kasa_uyarilari"] = [{"hata": str(ex)}]
+
+        # 8. Kasa operasyon kayıtları (kasa_hareketleri)
+        try:
+            cur.execute("SAVEPOINT sp_td_kasa_har")
+            cur.execute("""
+                SELECT tip, tutar, aciklama,
+                       olusturma AT TIME ZONE 'Europe/Istanbul' AS zaman_tr
+                FROM kasa_hareketleri
+                WHERE sube_id = %s
+                  AND DATE(olusturma AT TIME ZONE 'Europe/Istanbul') = %s
+                ORDER BY olusturma
+            """, (sube_id, hedef))
+            hareketler = []
+            for r in cur.fetchall():
+                d = dict(r)
+                d["zaman_tr"] = str(d.get("zaman_tr") or "")
+                if d.get("tutar") is not None: d["tutar"] = float(d["tutar"])
+                hareketler.append(d)
+            sonuc["kasa_hareketleri"] = hareketler
+            cur.execute("RELEASE SAVEPOINT sp_td_kasa_har")
+        except Exception as ex:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_td_kasa_har")
+            sonuc["kasa_hareketleri"] = [{"hata": str(ex)}]
+
+        # 9. Operasyon defter KASA kayıtları
+        try:
+            cur.execute("SAVEPOINT sp_td_defter")
+            cur.execute("""
+                SELECT etiket, aciklama,
+                       olay_ts AT TIME ZONE 'Europe/Istanbul' AS zaman_tr
+                FROM operasyon_defter
+                WHERE sube_id = %s
+                  AND DATE(olay_ts AT TIME ZONE 'Europe/Istanbul') = %s
+                  AND etiket ILIKE '%KASA%'
+                ORDER BY olay_ts
+                LIMIT 30
+            """, (sube_id, hedef))
+            defter = [{"etiket": r["etiket"], "aciklama": str(r["aciklama"] or "")[:200], "zaman": str(r["zaman_tr"] or "")} for r in cur.fetchall()]
+            sonuc["operasyon_defter_kasa"] = defter
+            cur.execute("RELEASE SAVEPOINT sp_td_defter")
+        except Exception as ex:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_td_defter")
+            sonuc["operasyon_defter_kasa"] = [{"hata": str(ex)}]
+
+        # 10. Devir hesabı (manuel)
+        try:
+            ac = sonuc.get("acilis_eventler", [{}])[0] if sonuc.get("acilis_eventler") else {}
+            kap = sonuc.get("kapanis_eventler", [{}])[0] if sonuc.get("kapanis_eventler") else {}
+            ciro = sonuc.get("ciro") or {}
+            gider = sonuc.get("gunluk_gider") or {}
+
+            acilis_kasa = float(ac.get("kasa_sayim") or 0) if ac.get("kasa_sayim") is not None else None
+            kapanis_kasa = float(kap.get("kasa_sayim") or 0) if kap.get("kasa_sayim") is not None else None
+            kapanis_teslim = float(kap.get("kasa_teslim") or 0) if kap.get("kasa_teslim") is not None else None
+            kapanis_devir = float(kap.get("devir_kasaya") or 0) if kap.get("devir_kasaya") is not None else None
+            ciro_nakit = float(ciro.get("nakit") or 0) if ciro.get("nakit") is not None else None
+            gider_toplam = float(gider.get("toplam") or 0)
+
+            if acilis_kasa is not None and ciro_nakit is not None:
+                beklenen_kapanis = acilis_kasa + ciro_nakit - gider_toplam
+                gercek_kapanis = kapanis_kasa
+                fark = (gercek_kapanis - beklenen_kapanis) if gercek_kapanis is not None else None
+                sonuc["devir_hesabi"] = {
+                    "acilis_kasa_sayim": acilis_kasa,
+                    "ciro_nakit": ciro_nakit,
+                    "gunluk_gider": gider_toplam,
+                    "beklenen_kapanis_kasa": round(beklenen_kapanis, 2),
+                    "gercek_kapanis_kasa": gercek_kapanis,
+                    "fark_tl": round(fark, 2) if fark is not None else None,
+                    "teslim_edilen": kapanis_teslim,
+                    "devirde_birakilan": kapanis_devir,
+                    "aciklama": "fark = gercek_kapanis - (acilis + ciro_nakit - gider)",
+                }
+            else:
+                sonuc["devir_hesabi"] = {
+                    "aciklama": "Hesap yapılamadı — açılış kasa sayımı veya ciro nakit eksik",
+                    "acilis_kasa_sayim": acilis_kasa,
+                    "ciro_nakit": ciro_nakit,
+                }
+        except Exception as ex:
+            sonuc["devir_hesabi"] = {"hata": str(ex)}
+
+    return sonuc
+
+
 # ─── Food Cost Günlük Hesaplama Motoru ────────────────────────────────────────
 
 def _alis_fiyat_haritasi(cur: Any) -> Dict[str, float]:
