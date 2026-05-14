@@ -2651,18 +2651,13 @@ export default function OperasyonMerkezi() {
 
   const kasaUyumGunYukle = useCallback(async (tarih) => {
     const hedef = (tarih || bugunIsoTarih()).trim();
-    const ym = hedef.slice(0, 7);
-    const r = await api(`/ops/bekleyen-merkez?year_month=${encodeURIComponent(ym)}`);
-    const tum = Array.isArray(r?.kasa_uyumsuzluklar) ? r.kasa_uyumsuzluklar : [];
-    const kayitlar = tum.filter((u) => String(u?.tarih || '').slice(0, 10) === hedef);
-    const eksikKapanis = hedef === isGunuIsoIstanbul()
-      ? (Array.isArray(r?.eksik_kapanis_bugun) ? r.eksik_kapanis_bugun : [])
-      : [];
+    const r = await api(`/ops/kasa-uyumsuzluk?tarih=${encodeURIComponent(hedef)}&sadece_bekleyen=true`);
+    const kayitlar = Array.isArray(r?.liste) ? r.liste : [];
     return {
       tarih: hedef,
-      toplam: kayitlar.length,
+      toplam: r?.toplam ?? kayitlar.length,
       kayitlar,
-      eksik_kapanis: eksikKapanis,
+      eksik_kapanis: [],
     };
   }, []);
 
@@ -2704,22 +2699,12 @@ export default function OperasyonMerkezi() {
     for (let i = 0; i < 7; i += 1) {
       gunlerDesc.push(isoTariheGunEkle(bugun, -i));
     }
-    const yms = [...new Set(gunlerDesc.map((t) => t.slice(0, 7)))];
     const responses = await Promise.all(
-      yms.map((ym) => api(`/ops/bekleyen-merkez?year_month=${encodeURIComponent(ym)}`).catch(() => null)),
+      gunlerDesc.map((t) => api(`/ops/kasa-uyumsuzluk?tarih=${encodeURIComponent(t)}&sadece_bekleyen=false`).catch(() => null)),
     );
-    const tum = [];
-    responses.forEach((r) => {
-      if (r && Array.isArray(r.kasa_uyumsuzluklar)) tum.push(...r.kasa_uyumsuzluklar);
-    });
-    const byGun = new Map();
-    gunlerDesc.forEach((t) => byGun.set(t, []));
-    tum.forEach((u) => {
-      const t = String(u?.tarih || '').slice(0, 10);
-      if (byGun.has(t)) byGun.get(t).push(u);
-    });
-    return gunlerDesc.map((tarih) => {
-      const kayitlar = byGun.get(tarih) || [];
+    return gunlerDesc.map((tarih, i) => {
+      const r = responses[i];
+      const kayitlar = Array.isArray(r?.liste) ? r.liste : [];
       let maxAbs = 0;
       kayitlar.forEach((u) => {
         const a = Math.abs(Number(u?.fark_tl || 0));
@@ -5149,7 +5134,9 @@ export default function OperasyonMerkezi() {
         const ciroOnayda = kartlar.filter(k => !k.ciro_girildi && k.ciro_taslak_bekliyor).length;
         const ciroYok = kartlar.length - ciroGiren - ciroOnayda;
         const hepsiGirdi = ciroGiren === kartlar.length && kartlar.length > 0;
-        const toplamUyari = kritikSayi + gecikSayi + gecAlert + kapanmayanSayi + guvenlikSayi;
+        const devirFarkSayi = kasaUyumBugun?.toplam || 0;
+        const devirFarkMaxAbs = Math.max(0, ...((kasaUyumBugun?.kayitlar || []).map(u => Math.abs(Number(u?.fark_tl || 0)))));
+        const toplamUyari = kritikSayi + gecikSayi + gecAlert + kapanmayanSayi + guvenlikSayi + devirFarkSayi;
         const uyariParcalar = [
           gecAlert > 0 && `${gecAlert} geç açılış`,
           kapanmayanSayi > 0 && `${kapanmayanSayi} kapanmayan`,
@@ -5214,6 +5201,28 @@ export default function OperasyonMerkezi() {
                 📋 Ciro&nbsp;
                 <span style={{ fontWeight: 800 }}>{ciroGiren}/{kartlar.length}</span>
               </button>
+              {/* 💰 Devir Farkı */}
+              <button
+                type="button"
+                className="tab-pill"
+                style={{
+                  borderColor: devirFarkSayi === 0 ? 'var(--green)' : devirFarkMaxAbs >= 200 ? 'var(--red)' : '#f08040',
+                  color: devirFarkSayi === 0 ? 'var(--green)' : devirFarkMaxAbs >= 200 ? 'var(--red)' : '#f08040',
+                  fontWeight: devirFarkSayi > 0 ? 800 : undefined,
+                  animation: devirFarkMaxAbs >= 200 ? 'pulse 1.2s infinite' : undefined,
+                }}
+                title={
+                  devirFarkSayi === 0
+                    ? 'Tüm devir sayımları eşleşti'
+                    : `${devirFarkSayi} şubede açılış devir farkı var · max ${devirFarkMaxAbs.toFixed(0)}₺`
+                }
+                onClick={() => acOpsModul('kasa-uyumsuzluk', 'finans-kasa')}
+              >
+                💰 Devir Farkı&nbsp;
+                <span style={{ fontWeight: 800 }}>
+                  {devirFarkSayi > 0 ? `${devirFarkSayi} şube` : '✓'}
+                </span>
+              </button>
               {/* Toplam Uyarı — tıklanabilir, drawer açar */}
               <button
                 type="button"
@@ -5271,6 +5280,7 @@ export default function OperasyonMerkezi() {
                 for (const u of (k.uyarilar || [])) {
                   const tipLabel = u.tip === 'DAVRANIS' ? '📦 Stok Davranışı'
                     : u.tip === 'KASA_FARK' ? '💰 Kasa Farkı'
+                    : u.tip === 'ACILIS_KASA_FARK' ? '💰 Devir Farkı'
                     : u.tip === 'URUN_AC_UYUMSUZLUK' ? '📋 Ürün Aç'
                     : u.tip === 'ACILIS_VARDIYA_PERSONEL' ? '👤 Vardiya'
                     : u.tip || 'Uyarı';
