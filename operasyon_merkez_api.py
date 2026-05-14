@@ -7677,6 +7677,7 @@ def ops_siparis_sevkiyat_uyumsuzluk_coz(body: OpsSevkiyatUyumsuzlukCozBody):
         # Kaynak depoda sevk düzeltmesi: çözüm adedine göre farkı geri ekle / ek düş.
         kaynak_delta = cozum - onceki_sevk
         if kaynak_sid and kk and kaynak_delta != 0:
+            kaynak_onceki = _stok_onceki_adet(cur, kaynak_sid, kk)
             if kaynak_delta > 0:
                 # daha fazla sevk kabul edildi: kaynak depodan ek düş.
                 cur.execute(
@@ -7687,6 +7688,14 @@ def ops_siparis_sevkiyat_uyumsuzluk_coz(body: OpsSevkiyatUyumsuzlukCozBody):
                     WHERE sube_id=%s AND kalem_kodu=%s
                     """,
                     (kaynak_delta, kaynak_sid, kk),
+                )
+                _stok_hareket_yaz(
+                    cur, sube_id=kaynak_sid, kalem_kodu=kk, kalem_adi=ka,
+                    hareket_turu="SEVK_CIKIS", miktar=-float(kaynak_delta),
+                    onceki_miktar=kaynak_onceki,
+                    sonraki_miktar=max(0.0, kaynak_onceki - kaynak_delta),
+                    kaynak_tip="sevkiyat", kaynak_id=str(yid),
+                    aciklama=f"Sevkiyat uzlaşma — {ka} x{kaynak_delta} kaynak depodan çıkış",
                 )
             else:
                 # daha az sevk uzlaşıldı: kaynak depoya iade ekle.
@@ -7702,10 +7711,19 @@ def ops_siparis_sevkiyat_uyumsuzluk_coz(body: OpsSevkiyatUyumsuzlukCozBody):
                     """,
                     (str(uuid.uuid4()), kaynak_sid, kk, ka, abs(kaynak_delta)),
                 )
+                _stok_hareket_yaz(
+                    cur, sube_id=kaynak_sid, kalem_kodu=kk, kalem_adi=ka,
+                    hareket_turu="SEVK_UZLASMA", miktar=float(abs(kaynak_delta)),
+                    onceki_miktar=kaynak_onceki,
+                    sonraki_miktar=kaynak_onceki + abs(kaynak_delta),
+                    kaynak_tip="sevkiyat", kaynak_id=str(yid),
+                    aciklama=f"Sevkiyat uzlaşma iadesi — {ka} x{abs(kaynak_delta)} geri döndü",
+                )
 
         # Hedef şubede kabul düzeltmesi: çözüm adedine göre giriş / geri düşüm.
         hedef_delta = cozum - onceki_kabul
         if hedef_sid and kk and hedef_delta != 0:
+            hedef_onceki = _stok_onceki_adet(cur, hedef_sid, kk)
             if hedef_delta > 0:
                 cur.execute(
                     """
@@ -7719,6 +7737,14 @@ def ops_siparis_sevkiyat_uyumsuzluk_coz(body: OpsSevkiyatUyumsuzlukCozBody):
                     """,
                     (str(uuid.uuid4()), hedef_sid, kk, ka, hedef_delta),
                 )
+                _stok_hareket_yaz(
+                    cur, sube_id=hedef_sid, kalem_kodu=kk, kalem_adi=ka,
+                    hareket_turu="SEVK_GIRIS", miktar=float(hedef_delta),
+                    onceki_miktar=hedef_onceki,
+                    sonraki_miktar=hedef_onceki + hedef_delta,
+                    kaynak_tip="sevkiyat", kaynak_id=str(yid),
+                    aciklama=f"Sevkiyat kabulü — {ka} x{hedef_delta} şubeye giriş",
+                )
             else:
                 cur.execute(
                     """
@@ -7728,6 +7754,14 @@ def ops_siparis_sevkiyat_uyumsuzluk_coz(body: OpsSevkiyatUyumsuzlukCozBody):
                     WHERE sube_id=%s AND kalem_kodu=%s
                     """,
                     (abs(hedef_delta), hedef_sid, kk),
+                )
+                _stok_hareket_yaz(
+                    cur, sube_id=hedef_sid, kalem_kodu=kk, kalem_adi=ka,
+                    hareket_turu="SEVK_UZLASMA", miktar=-float(abs(hedef_delta)),
+                    onceki_miktar=hedef_onceki,
+                    sonraki_miktar=max(0.0, hedef_onceki - abs(hedef_delta)),
+                    kaynak_tip="sevkiyat", kaynak_id=str(yid),
+                    aciklama=f"Sevkiyat uzlaşma düzeltme — {ka} x{abs(hedef_delta)} geri alındı",
                 )
 
         cur.execute(
@@ -8569,6 +8603,119 @@ def _ensure_sube_depo_alis_fiyati_col(cur: Any) -> None:
         """
     )
 
+def _ensure_stok_hareket_tablosu(cur: Any) -> None:
+    """
+    Stok hareket defteri (inventory ledger) tablosunu oluşturur.
+    Her stok değişimi append-only olarak buraya yazılır; sube_depo_stok sadece
+    canlı bakiyeyi tutar. Aylık/yıllık geçmiş sorgusu buradan yapılır.
+    Hareket türleri (NRF/QSR standardı):
+      SEVK_GIRIS     - Şube sevkiyat kabul etti            (+)
+      SEVK_CIKIS     - Kaynak depodan çıkış               (-)
+      SEVK_UZLASMA   - Uzlaşma farkı düzeltmesi           (±)
+      KULLANIM       - Günlük ürün tüketimi               (-)
+      SAYIM_DUZELTME - Fiziksel sayım farkı               (±)
+      FIRE           - Fire / bozulma / zayi              (-)
+      IADE           - Tedarikçiye iade                   (-)
+      TRANSFER_GIRIS - Şubeler arası transfer girişi      (+)
+      TRANSFER_CIKIS - Şubeler arası transfer çıkışı      (-)
+      MANUEL         - Yönetici manuel düzeltmesi         (±)
+    """
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sube_depo_stok_hareket (
+            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            zaman           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            sube_id         TEXT NOT NULL,
+            kalem_kodu      TEXT NOT NULL,
+            kalem_adi       TEXT,
+            hareket_turu    TEXT NOT NULL,
+            miktar          NUMERIC(12,4) NOT NULL,
+            onceki_miktar   NUMERIC(12,4),
+            sonraki_miktar  NUMERIC(12,4),
+            kaynak_tip      TEXT,
+            kaynak_id       TEXT,
+            kaynak_belge_no TEXT,
+            personel_id     TEXT,
+            personel_ad     TEXT,
+            aciklama        TEXT,
+            onay_durumu     TEXT NOT NULL DEFAULT 'otomatik',
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_stok_hareket_sube_zaman
+        ON sube_depo_stok_hareket(sube_id, zaman DESC)
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_stok_hareket_kalem_zaman
+        ON sube_depo_stok_hareket(kalem_kodu, zaman DESC)
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_stok_hareket_kaynak
+        ON sube_depo_stok_hareket(kaynak_tip, kaynak_id)
+    """)
+
+
+def _stok_hareket_yaz(
+    cur: Any,
+    *,
+    sube_id: str,
+    kalem_kodu: str,
+    kalem_adi: str = "",
+    hareket_turu: str,
+    miktar: float,
+    onceki_miktar: float = None,
+    sonraki_miktar: float = None,
+    kaynak_tip: str = None,
+    kaynak_id: str = None,
+    kaynak_belge_no: str = None,
+    personel_id: str = None,
+    personel_ad: str = None,
+    aciklama: str = None,
+    onay_durumu: str = "otomatik",
+) -> None:
+    """
+    Stok hareket defterine bir satır yazar.
+    Tüm sube_depo_stok mutasyonlarından önce/sonra çağrılmalı.
+    Miktar: pozitif = giriş, negatif = çıkış.
+    """
+    _ensure_stok_hareket_tablosu(cur)
+    cur.execute(
+        """
+        INSERT INTO sube_depo_stok_hareket
+            (sube_id, kalem_kodu, kalem_adi, hareket_turu, miktar,
+             onceki_miktar, sonraki_miktar,
+             kaynak_tip, kaynak_id, kaynak_belge_no,
+             personel_id, personel_ad, aciklama, onay_durumu)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """,
+        (
+            str(sube_id or "").strip(),
+            str(kalem_kodu or "").strip(),
+            str(kalem_adi or "").strip() or None,
+            str(hareket_turu or "MANUEL").strip().upper(),
+            round(float(miktar or 0), 4),
+            round(float(onceki_miktar), 4) if onceki_miktar is not None else None,
+            round(float(sonraki_miktar), 4) if sonraki_miktar is not None else None,
+            str(kaynak_tip or "").strip() or None,
+            str(kaynak_id or "").strip() or None,
+            str(kaynak_belge_no or "").strip() or None,
+            str(personel_id or "").strip() or None,
+            str(personel_ad or "").strip() or None,
+            str(aciklama or "").strip() or None,
+            str(onay_durumu or "otomatik").strip(),
+        ),
+    )
+
+
+def _stok_onceki_adet(cur: Any, sube_id: str, kalem_kodu: str) -> float:
+    """sube_depo_stok'tan mevcut adedi okur (hareket kaydı için onceki_miktar)."""
+    cur.execute(
+        "SELECT COALESCE(mevcut_adet, 0) FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s",
+        (sube_id, kalem_kodu),
+    )
+    row = cur.fetchone()
+    return float(row[0]) if row else 0.0
+
 @router.get("/v2/merkez-depo")
 def ops_v2_merkez_depo():
     """Merkez depo anlık stok listesi."""
@@ -8618,6 +8765,18 @@ def ops_v2_sube_depo_guncelle(body: SubeDepoGuncelle):
     with db() as (conn, cur):
         _ensure_sube_depo_alis_fiyati_col(cur)
         kalem_kodu = depo_kalem_kodu_resolve(cur, kalem_raw, kalem_adi_hint or kalem_raw)
+        yeni_adet = int(body.mevcut_adet or 0)
+        # Hareket defteri için önceki adedi oku
+        onceki = _stok_onceki_adet(cur, sube_id, kalem_kodu)
+        delta = yeni_adet - onceki
+        hareket_turu_map = {
+            "satinalma": "SEVK_GIRIS",
+            "sayim_duzeltme": "SAYIM_DUZELTME",
+            "iade": "IADE",
+            "transfer_giris": "TRANSFER_GIRIS",
+            "fire_zayi": "FIRE",
+            "diger": "MANUEL",
+        }
         cur.execute(
             """
             INSERT INTO sube_depo_stok
@@ -8635,11 +8794,26 @@ def ops_v2_sube_depo_guncelle(body: SubeDepoGuncelle):
                 sube_id,
                 kalem_kodu,
                 body.kalem_adi or kalem_kodu,
-                int(body.mevcut_adet or 0),
+                yeni_adet,
                 int(body.min_stok or 0),
                 round(alis_fiyat, 2),
             ),
         )
+        # Stok hareket defterine yaz (sadece gerçek değişimde)
+        if delta != 0:
+            _stok_hareket_yaz(
+                cur,
+                sube_id=sube_id,
+                kalem_kodu=kalem_kodu,
+                kalem_adi=body.kalem_adi or kalem_kodu,
+                hareket_turu=hareket_turu_map.get(neden, "MANUEL"),
+                miktar=float(delta),
+                onceki_miktar=onceki,
+                sonraki_miktar=float(yeni_adet),
+                kaynak_tip="manuel",
+                aciklama=f"Manuel güncelleme — neden: {neden_map.get(neden, neden)}",
+                onay_durumu="manuel",
+            )
         saat = dt_now_tr().strftime("%H:%M:%S")
         operasyon_defter_ekle(
             cur,
@@ -8647,13 +8821,12 @@ def ops_v2_sube_depo_guncelle(body: SubeDepoGuncelle):
             "SUBE_DEPO_MANUEL_GUNCELLE",
             (
                 f"Şube depo manuel güncelleme — kalem={kalem_kodu} "
-                f"mevcut={int(body.mevcut_adet or 0)} min={int(body.min_stok or 0)} "
+                f"mevcut={yeni_adet} min={int(body.min_stok or 0)} "
                 f"alis={round(alis_fiyat, 2)} "
                 f"neden={neden_map.get(neden, neden)}"
             ),
             bildirim_saati=saat,
         )
-        # commit() kaldırıldı — db() context manager başarılı çıkışta otomatik commit yapar
     return {"success": True, "sube_id": sube_id, "kalem_kodu": kalem_kodu, "giris_nedeni": neden, "alis_fiyati_tl": round(alis_fiyat, 2)}
 
 
@@ -8757,6 +8930,115 @@ def ops_v2_sube_depo(sube_id: str):
             )
         ]
     return {"sube_id": sube_id, "stok": rows, "alarm_sayisi": len(alarmlar)}
+
+
+@router.get("/stok-hareketleri")
+def ops_stok_hareketleri(
+    gun: int = Query(30, ge=1, le=365),
+    sube_id: Optional[str] = Query(None),
+    kalem_kodu: Optional[str] = Query(None),
+    hareket_turu: Optional[str] = Query(None),
+    limit: int = Query(200, ge=1, le=2000),
+):
+    """
+    Stok hareket defteri — append-only tarihsel kayıtlar.
+    Filtreler: sube_id, kalem_kodu, hareket_turu (virgülle ayrılmış), gun.
+    Kullanım: Operasyon Merkezi → Envanter → Stok Hareketi sekmesi.
+    """
+    with db() as (conn, cur):
+        _ensure_stok_hareket_tablosu(cur)
+        conds = ["zaman >= NOW() - (%s || ' days')::interval"]
+        params: list = [gun]
+        if sube_id:
+            conds.append("sube_id = %s")
+            params.append(sube_id.strip())
+        if kalem_kodu:
+            conds.append("kalem_kodu = %s")
+            params.append(kalem_kodu.strip())
+        if hareket_turu:
+            turler = [t.strip().upper() for t in hareket_turu.split(",") if t.strip()]
+            if turler:
+                conds.append(f"hareket_turu = ANY(%s)")
+                params.append(turler)
+        where = " AND ".join(conds)
+        cur.execute(
+            f"""
+            SELECT
+                h.id,
+                h.zaman AT TIME ZONE 'Europe/Istanbul' AS zaman,
+                h.sube_id,
+                COALESCE(s.ad, h.sube_id) AS sube_ad,
+                h.kalem_kodu,
+                h.kalem_adi,
+                h.hareket_turu,
+                h.miktar,
+                h.onceki_miktar,
+                h.sonraki_miktar,
+                h.kaynak_tip,
+                h.kaynak_id,
+                h.kaynak_belge_no,
+                h.personel_id,
+                h.personel_ad,
+                h.aciklama,
+                h.onay_durumu
+            FROM sube_depo_stok_hareket h
+            LEFT JOIN subeler s ON s.id = h.sube_id
+            WHERE {where}
+            ORDER BY h.zaman DESC
+            LIMIT %s
+            """,
+            params + [limit],
+        )
+        rows = []
+        for r in cur.fetchall():
+            d = dict(r)
+            if d.get("zaman"):
+                d["zaman"] = d["zaman"].isoformat()
+            rows.append(d)
+
+        # Özet: hareket_turu bazında adet ve toplam giriş/çıkış
+        cur.execute(
+            f"""
+            SELECT
+                hareket_turu,
+                COUNT(*) AS adet,
+                SUM(CASE WHEN miktar > 0 THEN miktar ELSE 0 END) AS toplam_giris,
+                SUM(CASE WHEN miktar < 0 THEN ABS(miktar) ELSE 0 END) AS toplam_cikis
+            FROM sube_depo_stok_hareket h
+            WHERE {where}
+            GROUP BY hareket_turu
+            ORDER BY adet DESC
+            """,
+            params,
+        )
+        ozet = [dict(r) for r in cur.fetchall()]
+
+        # Şube bazında özet
+        cur.execute(
+            f"""
+            SELECT
+                h.sube_id,
+                COALESCE(s.ad, h.sube_id) AS sube_ad,
+                COUNT(*) AS hareket_adet,
+                SUM(CASE WHEN miktar > 0 THEN miktar ELSE 0 END) AS toplam_giris,
+                SUM(CASE WHEN miktar < 0 THEN ABS(miktar) ELSE 0 END) AS toplam_cikis
+            FROM sube_depo_stok_hareket h
+            LEFT JOIN subeler s ON s.id = h.sube_id
+            WHERE {where}
+            GROUP BY h.sube_id, s.ad
+            ORDER BY hareket_adet DESC
+            """,
+            params,
+        )
+        sube_ozet = [dict(r) for r in cur.fetchall()]
+
+    return {
+        "gun": gun,
+        "toplam": len(rows),
+        "satirlar": rows,
+        "tur_ozet": ozet,
+        "sube_ozet": sube_ozet,
+    }
 
 
 @router.get("/v2/depo-ozet")

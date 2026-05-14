@@ -315,6 +315,7 @@ const UST_SEKMELER = [
   { id: 'urun-uyumsuzluk', label: '🧪 Ürün Uyumsuzlukları' },
   { id: 'sevkiyat-uyumsuzluk', label: '🚚 Sevkiyat uyumsuzlukları' },
   { id: 'magaza-kartlari', label: '🏪 Depo stokları' },
+  { id: 'stok-hareketi', label: '📋 Stok Hareketi' },
   { id: 'kontrol', label: '🔍 Kontrol' },
   { id: 'guvenlik-alarmlar', label: '🚨 Güvenlik Alarmları' },
   { id: 'metrics', label: '📊 KPI Paneli' },
@@ -350,6 +351,7 @@ const OPS_MODUL_BOLUM = {
   'urun-uyumsuzluk': [{ id: 'icerik', label: 'Günlük akış' }],
   'sevkiyat-uyumsuzluk': [{ id: 'icerik', label: 'Liste' }],
   'magaza-kartlari': [{ id: 'icerik', label: 'Şubeler' }],
+  'stok-hareketi': [{ id: 'icerik', label: 'Hareket Defteri' }],
   metrics: [
     { id: 'personel', label: 'Personel verimlilik' },
     { id: 'sube', label: 'Şube operasyon' },
@@ -428,7 +430,7 @@ const MODULLER = [
     label: '📦 Envanter',
     renk: '#f08040',
     desc: 'Stok sayımı, tüketim takibi, fire & kayıp analizi ve ürün uyumsuzlukları',
-    tabs: ['magaza-kartlari', 'sayim', 'kullanilan-urunler', 'urun-ac', 'stok-kayip', 'urun-uyumsuzluk'],
+    tabs: ['magaza-kartlari', 'stok-hareketi', 'sayim', 'kullanilan-urunler', 'urun-ac', 'stok-kayip', 'urun-uyumsuzluk'],
   },
   {
     id: 'siparis-tedarik',
@@ -2183,6 +2185,13 @@ export default function OperasyonMerkezi() {
   const [kasaUyumHaftaYukleniyor, setKasaUyumHaftaYukleniyor] = useState(false);
   const [kasaAcikAnaliz, setKasaAcikAnaliz] = useState({ takip_listesi: [], acik_listesi: [] });
   const [kasaAcikAnalizYukleniyor, setKasaAcikAnalizYukleniyor] = useState(false);
+
+  // Stok Hareketi
+  const [stokHareket, setStokHareket] = useState({ satirlar: [], tur_ozet: [], sube_ozet: [], toplam: 0 });
+  const [stokHareketYukleniyor, setStokHareketYukleniyor] = useState(false);
+  const [stokHareketGun, setStokHareketGun] = useState(30);
+  const [stokHareketSubeFiltre, setStokHareketSubeFiltre] = useState('');
+  const [stokHareketTurFiltre, setStokHareketTurFiltre] = useState('');
   const [personelVardiyaUyumBugun, setPersonelVardiyaUyumBugun] = useState({ tarih: '', toplam: 0, kayitlar: [] });
   const [personelVardiyaUyumBugunYukleniyor, setPersonelVardiyaUyumBugunYukleniyor] = useState(false);
   const [personelVardiyaUyumAramaTarih, setPersonelVardiyaUyumAramaTarih] = useState(bugunIsoTarih());
@@ -3570,6 +3579,18 @@ export default function OperasyonMerkezi() {
       .catch((e) => toast(e.message || 'Personel kasa analizi yüklenemedi'))
       .finally(() => { setKasaAcikAnalizYukleniyor(false); setYukleniyor(false); });
   }, [aktifSekme, toast]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'stok-hareketi') return;
+    setStokHareketYukleniyor(true);
+    const q = new URLSearchParams({ gun: stokHareketGun, limit: 500 });
+    if (stokHareketSubeFiltre) q.set('sube_id', stokHareketSubeFiltre);
+    if (stokHareketTurFiltre) q.set('hareket_turu', stokHareketTurFiltre);
+    api(`/ops/stok-hareketleri?${q}`)
+      .then(setStokHareket)
+      .catch((e) => toast(e.message || 'Stok hareketi yüklenemedi'))
+      .finally(() => setStokHareketYukleniyor(false));
+  }, [aktifSekme, stokHareketGun, stokHareketSubeFiltre, stokHareketTurFiltre, toast]);
 
   useEffect(() => {
     if (aktifSekme !== 'personel-vardiya-uyumsuzluk') return;
@@ -9399,6 +9420,168 @@ export default function OperasyonMerkezi() {
               )}
             </div>
 
+          </div>
+        );
+      })()}
+
+      {aktifSekme === 'stok-hareketi' && (() => {
+        const TUR_ETIKET = {
+          SEVK_GIRIS:      { label: 'Sevk Girişi',      renk: '#22c55e', ikon: '📦' },
+          SEVK_CIKIS:      { label: 'Sevk Çıkışı',      renk: '#f97316', ikon: '🚚' },
+          SEVK_UZLASMA:    { label: 'Sevk Uzlaşma',     renk: '#f59e0b', ikon: '🔄' },
+          KULLANIM:        { label: 'Kullanım',          renk: '#a78bfa', ikon: '☕' },
+          SAYIM_DUZELTME:  { label: 'Sayım Düzeltme',   renk: '#60a5fa', ikon: '📊' },
+          FIRE:            { label: 'Fire / Zayi',       renk: '#ef4444', ikon: '🗑' },
+          IADE:            { label: 'İade',              renk: '#94a3b8', ikon: '↩️' },
+          TRANSFER_GIRIS:  { label: 'Transfer Girişi',   renk: '#34d399', ikon: '➡️' },
+          TRANSFER_CIKIS:  { label: 'Transfer Çıkışı',  renk: '#fb923c', ikon: '⬅️' },
+          MANUEL:          { label: 'Manuel Düzeltme',   renk: '#a1a1aa', ikon: '✏️' },
+        };
+        const satirlar = stokHareket?.satirlar || [];
+        const turOzet  = stokHareket?.tur_ozet || [];
+        const subeOzet = stokHareket?.sube_ozet || [];
+        const subeler  = [...new Set(satirlar.map(s => s.sube_id).filter(Boolean))];
+        const turler   = [...new Set(satirlar.map(s => s.hareket_turu).filter(Boolean))];
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Header + açıklama */}
+            <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(91,143,216,.08)', border: '1px solid rgba(91,143,216,.25)', fontSize: 12, color: 'var(--text2)', lineHeight: 1.55 }}>
+              <strong style={{ display: 'block', marginBottom: 4 }}>📋 Stok Hareket Defteri — Inventory Ledger</strong>
+              Her stok değişimi (sevkiyat kabulü, kullanım, sayım, fire) buraya yazılır. Aylık/yıllık sorgulama,
+              şube bazında karşılaştırma ve kaçak/fire tespiti bu veriden yapılır.
+              Starbucks/McDonald's standardı: teorik tüketim (reçete × satış) ile gerçek stok düşüşü farkı izlenir;
+              {' '}<strong>%2 üstü shrinkage → inceleme, %5 üstü → soruşturma</strong>.
+            </div>
+
+            {/* Filtreler */}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <select
+                value={stokHareketGun}
+                onChange={e => setStokHareketGun(Number(e.target.value))}
+                style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg2)', color: 'var(--text1)', fontSize: 12 }}
+              >
+                {[7, 14, 30, 60, 90, 180, 365].map(g => (
+                  <option key={g} value={g}>Son {g} gün</option>
+                ))}
+              </select>
+              <select
+                value={stokHareketSubeFiltre}
+                onChange={e => setStokHareketSubeFiltre(e.target.value)}
+                style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg2)', color: 'var(--text1)', fontSize: 12 }}
+              >
+                <option value=''>Tüm şubeler</option>
+                {subeler.map(sid => {
+                  const satir = satirlar.find(s => s.sube_id === sid);
+                  return <option key={sid} value={sid}>{satir?.sube_ad || sid}</option>;
+                })}
+              </select>
+              <select
+                value={stokHareketTurFiltre}
+                onChange={e => setStokHareketTurFiltre(e.target.value)}
+                style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg2)', color: 'var(--text1)', fontSize: 12 }}
+              >
+                <option value=''>Tüm hareket türleri</option>
+                {Object.entries(TUR_ETIKET).map(([k, v]) => (
+                  <option key={k} value={k}>{v.ikon} {v.label}</option>
+                ))}
+              </select>
+              {stokHareketYukleniyor && <span style={{ fontSize: 11, color: 'var(--text3)' }}>Yükleniyor…</span>}
+              <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>{stokHareket.toplam} kayıt</span>
+            </div>
+
+            {/* Şube + Tür özet kartları */}
+            {turOzet.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Hareket Türü Özeti</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {turOzet.map(t => {
+                    const meta = TUR_ETIKET[t.hareket_turu] || { label: t.hareket_turu, renk: '#888', ikon: '•' };
+                    return (
+                      <div key={t.hareket_turu} style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${meta.renk}40`, background: `${meta.renk}10`, minWidth: 140 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: meta.renk }}>{meta.ikon} {meta.label}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>
+                          {t.adet} hareket · <span style={{ color: '#22c55e' }}>+{Number(t.toplam_giris || 0).toFixed(1)}</span> / <span style={{ color: '#ef4444' }}>−{Number(t.toplam_cikis || 0).toFixed(1)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Şube özet */}
+            {subeOzet.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Şube Bazlı Özet</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {subeOzet.map(s => (
+                    <div key={s.sube_id} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg2)', minWidth: 160 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700 }}>🏪 {s.sube_ad || s.sube_id}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>
+                        {s.hareket_adet} hareket · <span style={{ color: '#22c55e' }}>+{Number(s.toplam_giris || 0).toFixed(1)}</span> / <span style={{ color: '#ef4444' }}>−{Number(s.toplam_cikis || 0).toFixed(1)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Ana tablo */}
+            {satirlar.length === 0 ? (
+              <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>
+                {stokHareketYukleniyor ? 'Yükleniyor…' : 'Bu dönemde henüz kayıt yok. Sevkiyat kabulü, sayım veya manuel güncelleme yapıldıkça burası dolacak.'}
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg2)', borderBottom: '2px solid var(--border)' }}>
+                      {['Zaman', 'Şube', 'Kalem', 'Tür', 'Miktar', 'Önce → Sonra', 'Kaynak', 'Açıklama'].map(h => (
+                        <th key={h} style={{ padding: '7px 10px', textAlign: 'left', fontWeight: 700, fontSize: 11, color: 'var(--text2)', whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {satirlar.map((s, i) => {
+                      const meta  = TUR_ETIKET[s.hareket_turu] || { label: s.hareket_turu, renk: '#888', ikon: '•' };
+                      const pozitif = Number(s.miktar || 0) >= 0;
+                      const zaman = s.zaman ? new Date(s.zaman).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+                      return (
+                        <tr key={s.id || i} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'transparent' : 'var(--bg2)' }}>
+                          <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', color: 'var(--text3)', fontSize: 11 }}>{zaman}</td>
+                          <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontWeight: 600 }}>{s.sube_ad || s.sube_id || '—'}</td>
+                          <td style={{ padding: '6px 10px', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={s.kalem_kodu}>{s.kalem_adi || s.kalem_kodu || '—'}</td>
+                          <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 4, fontSize: 11, fontWeight: 600, background: `${meta.renk}18`, color: meta.renk, border: `1px solid ${meta.renk}30` }}>
+                              {meta.ikon} {meta.label}
+                            </span>
+                          </td>
+                          <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontWeight: 700, color: pozitif ? '#22c55e' : '#ef4444', fontVariantNumeric: 'tabular-nums' }}>
+                            {pozitif ? '+' : ''}{Number(s.miktar || 0).toFixed(1)}
+                          </td>
+                          <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', color: 'var(--text3)', fontSize: 11 }}>
+                            {s.onceki_miktar != null ? Number(s.onceki_miktar).toFixed(1) : '?'} → {s.sonraki_miktar != null ? Number(s.sonraki_miktar).toFixed(1) : '?'}
+                          </td>
+                          <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontSize: 11, color: 'var(--text3)' }}>
+                            {s.kaynak_tip ? <span style={{ padding: '1px 5px', borderRadius: 3, background: 'var(--bg3)', fontFamily: 'monospace', fontSize: 10 }}>{s.kaynak_tip}</span> : '—'}
+                            {s.kaynak_belge_no && <span style={{ marginLeft: 4 }}>#{s.kaynak_belge_no}</span>}
+                          </td>
+                          <td style={{ padding: '6px 10px', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text2)', fontSize: 11 }} title={s.aciklama}>{s.aciklama || '—'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Boş durum bilgi kutusu */}
+            {satirlar.length === 0 && !stokHareketYukleniyor && (
+              <div style={{ padding: '12px 14px', borderRadius: 8, background: 'rgba(234,179,8,.08)', border: '1px solid rgba(234,179,8,.3)', fontSize: 12, color: 'var(--text2)' }}>
+                <strong>⚠️ Geçmişe dönük kayıt yok</strong> — Bu özellik bugünden itibaren aktif.
+                Bundan sonra yapılan her sevkiyat kabulü, manuel stok güncellemesi ve sayım düzeltmesi buraya yazılacak.
+              </div>
+            )}
           </div>
         );
       })()}
