@@ -2868,6 +2868,51 @@ def sube_depo_stok_depo_giris_ekle(
         (sube_id, f"%{kk}%", sube_id, kk),
     )
 
+    # ── Deferred Reconciliation ────────────────────────────────────────────────
+    # Sevkiyat gelince bekleyen URUN_AC_UYUMSUZLUK borçlarını otomatik uygula.
+    # (Negatif stok yerine "borç biriktirir, ürün gelince mahsup eder" — Dynamics 365 / NetSuite mantığı)
+    try:
+        cur.execute(
+            """
+            SELECT id, detay FROM sube_operasyon_uyari
+            WHERE sube_id = %s AND kalem_kodu = %s
+              AND tarih = CURRENT_DATE
+              AND tip = 'URUN_AC_UYUMSUZLUK'
+              AND okundu = FALSE
+            """,
+            (sube_id, kk),
+        )
+        borclar = cur.fetchall()
+        toplam_eksik = 0
+        cozulen_ids: List[str] = []
+        for b in borclar:
+            d = b.get("detay") or {}
+            if isinstance(d, str):
+                try:
+                    d = json.loads(d)
+                except Exception:
+                    d = {}
+            toplam_eksik += int(d.get("eksik_miktar") or 0)
+            cozulen_ids.append(str(b["id"]))
+        if toplam_eksik > 0 and cozulen_ids:
+            # Ertelenmiş düşümü uygula (sevkiyattan gelen stoka mahsup et)
+            cur.execute(
+                """
+                UPDATE sube_depo_stok
+                SET mevcut_adet = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
+                    guncelleme  = NOW()
+                WHERE sube_id = %s AND kalem_kodu = %s
+                """,
+                (toplam_eksik, sube_id, kk),
+            )
+            # Borç uyarılarını çözümlendi olarak işaretle
+            cur.execute(
+                "UPDATE sube_operasyon_uyari SET okundu = TRUE WHERE id = ANY(%s)",
+                (cozulen_ids,),
+            )
+    except Exception:
+        pass  # Reconciliation kritik değil, ana giriş işlemini etkileme
+
 
 def kullanim_kaydet(cur: Any, sube_id: str,
                     kullanim_kalemleri: List[Dict[str, Any]],

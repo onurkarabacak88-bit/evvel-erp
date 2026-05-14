@@ -2863,7 +2863,13 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
     Depodan aktif kullanıma açılan ürün (URUN_AC).
     Bu kayıt teorik stok hesabına girer: açılış + URUN_STOK_EKLE + URUN_AC = beklenen stok.
     """
-    from operasyon_stok_motor import normalize_delta_body, sube_depo_stok_depo_cikis_dus
+    from operasyon_stok_motor import (
+        STOK_KEYS,
+        depo_kalem_kodu_resolve,
+        normalize_delta_body,
+        sube_depo_stok_depo_cikis_dus,
+        _stok_key_from_urun_ad as _kf_urun_ac,
+    )
 
     pid_in = (body.personel_id or "").strip()
     pin = (body.pin or "").replace(" ", "")
@@ -2937,29 +2943,89 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
         audit(cur, "operasyon_defter", rid, "URUN_AC")
 
         # ── Şube deposundan düş — bara giren ürün depoda azalır ──
-        from operasyon_stok_motor import (
-            _stok_key_from_urun_ad as _kf,
-            depo_kalem_kodu_resolve,
-        )
+        # Panel `stokBody` aynı satırı hem `kalemler` dizisine hem üst düzey STOK_KEYS (delta) alanlarına
+        # yazar; aksi halde bardak vb. için depo iki kez düşülürdü. Defter JSON'daki delta aynı kalır
+        # (teorik toplamlar / sum_urun_ac_tarih), depo çıkışı yalnızca kalemler + delta farkı ile yapılır.
         import uuid as _uuid
 
+        kaplanan: Dict[str, int] = {k: 0 for k in STOK_KEYS}
+        for k in kalemler:
+            uid = str(k.get("urun_id") or "").strip()
+            uad = str(k.get("urun_ad") or "").strip()
+            if uid:
+                kk = depo_kalem_kodu_resolve(cur, uid, uad) or ""
+            else:
+                kk = _kf_urun_ac(uad) or ""
+            if kk not in kaplanan:
+                continue
+            try:
+                adet_k = max(0, int(k.get("adet") or 0))
+            except (TypeError, ValueError):
+                adet_k = 0
+            if adet_k <= 0:
+                continue
+            kaplanan[kk] += adet_k
+
+        eff_delta = {
+            k: max(0, int(delta.get(k) or 0) - int(kaplanan.get(k) or 0))
+            for k in STOK_KEYS
+        }
+
         def _uyumsuzluk_yaz(cur, sube_id, kalem_kodu, mevcut_oncesi, istenen):
+            """Karşılıksız URUN_AC borcunu loglar.
+            Aynı gün aynı kalem için kayıt varsa eksik_miktar toplanır (borç birikir).
+            Sevkiyat geldiğinde sube_depo_stok_depo_giris_ekle bu borcu otomatik uygular.
+            (Deferred Reconciliation — SAP/NetSuite/Dynamics 365 yaklaşımı)
+            """
+            import json as _json2
+            eksik = max(0, istenen - mevcut_oncesi)
+            if eksik <= 0:
+                return
+            # Aynı gün aynı kalem için mevcut kayıt var mı?
             cur.execute("""
-                SELECT 1 FROM sube_operasyon_uyari
+                SELECT id, detay FROM sube_operasyon_uyari
                 WHERE sube_id=%s AND tip='URUN_AC_UYUMSUZLUK'
-                  AND tarih=CURRENT_DATE AND mesaj LIKE %s
+                  AND tarih=CURRENT_DATE AND kalem_kodu=%s
                 LIMIT 1
-            """, (sube_id, f"%{kalem_kodu}%"))
-            if not cur.fetchone():
+            """, (sube_id, kalem_kodu))
+            mevcut_kayit = cur.fetchone()
+            if mevcut_kayit:
+                # Borcu topla — her URUN_AC açığı birikir
+                eski_detay = mevcut_kayit.get("detay") or {}
+                if isinstance(eski_detay, str):
+                    try: eski_detay = _json2.loads(eski_detay)
+                    except: eski_detay = {}
+                toplam_eksik = int(eski_detay.get("eksik_miktar") or 0) + eksik
+                yeni_detay = {**eski_detay, "eksik_miktar": toplam_eksik}
+                cur.execute("""
+                    UPDATE sube_operasyon_uyari
+                    SET detay=%s, mesaj=%s
+                    WHERE id=%s
+                """, (
+                    _json2.dumps(yeni_detay, ensure_ascii=False),
+                    f"Karşılıksız açma: {kalem_kodu} — toplam {toplam_eksik} adet borç birikti.",
+                    str(mevcut_kayit["id"]),
+                ))
+            else:
+                detay = _json2.dumps({
+                    "kalem_kodu": kalem_kodu,
+                    "eksik_miktar": eksik,
+                    "mevcut_oncesi": mevcut_oncesi,
+                    "istenen": istenen,
+                }, ensure_ascii=False)
                 cur.execute("""
                     INSERT INTO sube_operasyon_uyari
-                        (id, sube_id, tarih, tip, seviye, mesaj)
-                    VALUES (%s, %s, CURRENT_DATE, 'URUN_AC_UYUMSUZLUK', 'kritik', %s)
-                """, (str(_uuid.uuid4()), sube_id,
-                      f"Karşılıksız açma: {kalem_kodu} — depoda {mevcut_oncesi} adet varken {istenen} adet açıldı."))
+                        (id, sube_id, tarih, tip, seviye, mesaj, kalem_kodu, detay)
+                    VALUES (%s, %s, CURRENT_DATE, 'URUN_AC_UYUMSUZLUK', 'kritik', %s, %s, %s)
+                """, (
+                    str(_uuid.uuid4()), sube_id,
+                    f"Karşılıksız açma: {kalem_kodu} — depoda {mevcut_oncesi} adet varken {istenen} adet açıldı.",
+                    kalem_kodu,
+                    detay,
+                ))
 
-        # 1) STOK_KEYS kalemleri (delta dict)
-        for kalem_kodu, miktar in delta.items():
+        # 1) STOK_KEYS kalemleri — kalemler listesinde zaten düşülen adetleri çıkarılmış eff_delta
+        for kalem_kodu, miktar in eff_delta.items():
             if not miktar or int(miktar) <= 0:
                 continue
             miktar = int(miktar)
@@ -3017,7 +3083,7 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
             if uid:
                 kk = depo_kalem_kodu_resolve(cur, uid, uad)
             else:
-                kk = _kf(uad) or ""
+                kk = _kf_urun_ac(uad) or ""
             if not kk:
                 continue
             adet = max(0, int(k.get("adet") or 0))
