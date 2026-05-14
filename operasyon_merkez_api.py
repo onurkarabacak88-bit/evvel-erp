@@ -9227,6 +9227,66 @@ def ops_maliyet_recete_listesi():
     return {"receteler": rows, "toplam": len(rows)}
 
 
+class ReceteHammadde(BaseModel):
+    hammadde_kodu: str
+    hammadde_adi: Optional[str] = None
+    miktar: float
+    birim: str = "adet"
+
+
+class ReceteBody(BaseModel):
+    urun_id: str
+    urun_adi: Optional[str] = None
+    hammaddeler: List[ReceteHammadde]
+
+
+@router.post("/maliyet/recete-kaydet")
+def ops_maliyet_recete_kaydet(body: ReceteBody):
+    """
+    Ürün reçetesini kaydeder veya günceller.
+    Mevcut reçete satırları silinip yeniden yazılır (tam güncelleme).
+    hammaddeler: [{hammadde_kodu, hammadde_adi, miktar, birim}]
+    """
+    urun = str(body.urun_id or "").strip()
+    if not urun:
+        raise HTTPException(400, "urun_id zorunlu")
+    hammaddeler = [h for h in (body.hammaddeler or []) if str(h.hammadde_kodu or "").strip()]
+    if not hammaddeler:
+        raise HTTPException(400, "En az 1 geçerli hammadde satırı gerekli")
+    with db() as (conn, cur):
+        _ensure_maliyet_tablolari(cur)
+        # Mevcut reçeteyi temizle, yeniden yaz
+        cur.execute("DELETE FROM urun_recete WHERE urun_id = %s", (urun,))
+        for h in hammaddeler:
+            hk = str(h.hammadde_kodu).strip()
+            cur.execute(
+                """
+                INSERT INTO urun_recete (urun_id, urun_adi, hammadde_kodu, hammadde_adi, miktar, birim)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (urun_id, hammadde_kodu) DO UPDATE
+                    SET miktar       = EXCLUDED.miktar,
+                        birim        = EXCLUDED.birim,
+                        hammadde_adi = EXCLUDED.hammadde_adi,
+                        urun_adi     = EXCLUDED.urun_adi
+                """,
+                (urun, body.urun_adi or urun, hk, h.hammadde_adi or hk,
+                 round(float(h.miktar), 4), h.birim),
+            )
+    return {"success": True, "urun_id": urun, "hammadde_sayisi": len(hammaddeler)}
+
+
+@router.delete("/maliyet/recete-sil/{urun_id}")
+def ops_maliyet_recete_sil(urun_id: str):
+    """Bir ürünün tüm reçete satırlarını siler."""
+    urun = str(urun_id or "").strip()
+    if not urun:
+        raise HTTPException(400, "urun_id zorunlu")
+    with db() as (conn, cur):
+        _ensure_maliyet_tablolari(cur)
+        cur.execute("DELETE FROM urun_recete WHERE urun_id = %s", (urun,))
+    return {"success": True, "urun_id": urun}
+
+
 @router.get("/stok-hareketleri")
 def ops_stok_hareketleri(
     gun: int = Query(30, ge=1, le=365),

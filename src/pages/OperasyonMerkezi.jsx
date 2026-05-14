@@ -2219,6 +2219,17 @@ export default function OperasyonMerkezi() {
   const [maliyetGun, setMaliyetGun] = useState(30);
   const [alisFiyatlari, setAlisFiyatlari] = useState([]);
   const [receteler, setReceteler] = useState([]);
+
+  // Alış Fiyatı Formu
+  const [alisFormGoster, setAlisFormGoster] = useState(false);
+  const [alisFormKayit, setAlisFormKayit] = useState(false);
+  const [alisForm, setAlisForm] = useState({ kalem_kodu: '', kalem_adi: '', birim: 'kg', birim_maliyet_tl: '', tedarikci: '', notlar: '' });
+
+  // Reçete Formu
+  const [receteFormGoster, setReceteFormGoster] = useState(false);
+  const [receteFormKayit, setReceteFormKayit] = useState(false);
+  const [receteDuzenle, setReceteDuzenle] = useState(null); // null = yeni, string = urun_id
+  const [receteForm, setReceteForm] = useState({ urun_id: '', urun_adi: '', hammaddeler: [{ hammadde_kodu: '', hammadde_adi: '', miktar: '', birim: 'kg' }] });
   const [personelVardiyaUyumBugun, setPersonelVardiyaUyumBugun] = useState({ tarih: '', toplam: 0, kayitlar: [] });
   const [personelVardiyaUyumBugunYukleniyor, setPersonelVardiyaUyumBugunYukleniyor] = useState(false);
   const [personelVardiyaUyumAramaTarih, setPersonelVardiyaUyumAramaTarih] = useState(bugunIsoTarih());
@@ -9616,21 +9627,127 @@ export default function OperasyonMerkezi() {
 
             {aktifSekme === 'alis-fiyatlari' && (
               <div>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>🏷 Alış Fiyat Listesi</div>
-                <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(234,179,8,.07)', border: '1px solid rgba(234,179,8,.3)', fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
-                  Her kalem için güncel birim alış maliyetini buraya gir. Bu fiyatlar stok değeri ve food cost hesabında kullanılır.
+                {/* Başlık + Ekle butonu */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>🏷 Alış Fiyat Listesi</div>
+                  <button
+                    onClick={() => { setAlisFormGoster(v => !v); setAlisForm({ kalem_kodu: '', kalem_adi: '', birim: 'kg', birim_maliyet_tl: '', tedarikci: '', notlar: '' }); }}
+                    style={{ padding: '5px 14px', borderRadius: 6, border: 'none', background: alisFormGoster ? 'var(--bg2)' : '#16a34a', color: alisFormGoster ? 'var(--text)' : '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}
+                  >{alisFormGoster ? '✕ Kapat' : '+ Fiyat Ekle'}</button>
+                </div>
+
+                {/* Fiyat Giriş Formu */}
+                {alisFormGoster && (
+                  <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px', marginBottom: 14 }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 10, color: '#16a34a' }}>Yeni Alış Fiyatı</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 120px', gap: 8, marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>Kalem Kodu *</div>
+                        <input
+                          value={alisForm.kalem_kodu}
+                          onChange={e => setAlisForm(f => ({ ...f, kalem_kodu: e.target.value }))}
+                          placeholder="ör: arabica_kg"
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 12, boxSizing: 'border-box' }}
+                        />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>Kalem Adı</div>
+                        <input
+                          value={alisForm.kalem_adi}
+                          onChange={e => setAlisForm(f => ({ ...f, kalem_adi: e.target.value }))}
+                          placeholder="ör: Arabica Kahve"
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 12, boxSizing: 'border-box' }}
+                        />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>Birim</div>
+                        <select
+                          value={alisForm.birim}
+                          onChange={e => setAlisForm(f => ({ ...f, birim: e.target.value }))}
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 12 }}
+                        >
+                          {['kg', 'lt', 'adet', 'gram', 'ml', 'paket', 'kutu', 'çuval'].map(b => <option key={b} value={b}>{b}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>Birim Maliyet (₺) *</div>
+                        <input
+                          type="number" min="0" step="0.01"
+                          value={alisForm.birim_maliyet_tl}
+                          onChange={e => setAlisForm(f => ({ ...f, birim_maliyet_tl: e.target.value }))}
+                          placeholder="0.00"
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 12, boxSizing: 'border-box' }}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+                      <div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>Tedarikçi</div>
+                        <input
+                          value={alisForm.tedarikci}
+                          onChange={e => setAlisForm(f => ({ ...f, tedarikci: e.target.value }))}
+                          placeholder="Tedarikçi adı"
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 12, boxSizing: 'border-box' }}
+                        />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>Notlar</div>
+                        <input
+                          value={alisForm.notlar}
+                          onChange={e => setAlisForm(f => ({ ...f, notlar: e.target.value }))}
+                          placeholder="İsteğe bağlı not"
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 12, boxSizing: 'border-box' }}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        disabled={alisFormKayit || !alisForm.kalem_kodu.trim() || !alisForm.birim_maliyet_tl}
+                        onClick={() => {
+                          setAlisFormKayit(true);
+                          api('/ops/maliyet/alis-fiyat-kaydet', {
+                            method: 'POST',
+                            body: JSON.stringify({
+                              kalem_kodu: alisForm.kalem_kodu.trim(),
+                              kalem_adi: alisForm.kalem_adi.trim() || alisForm.kalem_kodu.trim(),
+                              birim: alisForm.birim,
+                              birim_maliyet_tl: parseFloat(alisForm.birim_maliyet_tl) || 0,
+                              tedarikci: alisForm.tedarikci.trim() || null,
+                              notlar: alisForm.notlar.trim() || null,
+                            }),
+                          })
+                            .then(() => {
+                              toast('✅ Fiyat kaydedildi');
+                              setAlisFormGoster(false);
+                              return api('/ops/maliyet/alis-fiyatlari');
+                            })
+                            .then(d => setAlisFiyatlari(d?.satirlar || []))
+                            .catch(e => toast(e.message || 'Kayıt hatası'))
+                            .finally(() => setAlisFormKayit(false));
+                        }}
+                        style={{ padding: '6px 18px', borderRadius: 6, border: 'none', background: '#16a34a', color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer', opacity: alisFormKayit ? .6 : 1 }}
+                      >{alisFormKayit ? 'Kaydediliyor…' : '💾 Kaydet'}</button>
+                      <button onClick={() => setAlisFormGoster(false)} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text2)', fontSize: 12, cursor: 'pointer' }}>İptal</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Açıklama */}
+                <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(234,179,8,.07)', border: '1px solid rgba(234,179,8,.3)', fontSize: 11, color: 'var(--text2)', marginBottom: 12 }}>
                   Fiyat değiştiğinde yeni kayıt ekle — eski kayıt arşivlenir, geçmiş analizler bozulmaz.
                 </div>
+
+                {/* Tablo */}
                 {alisFiyatlari.length === 0 ? (
                   <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>
-                    Henüz fiyat girilmemiş. Bu alan üzerinden ciddi çalışmaya başladığınızda fiyat giriş formu buraya eklenecek.
+                    Henüz fiyat girilmemiş — "Fiyat Ekle" ile başla.
                   </div>
                 ) : (
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                       <thead>
                         <tr style={{ background: 'var(--bg2)', borderBottom: '2px solid var(--border)' }}>
-                          {['Kalem', 'Birim', 'Birim Maliyet', 'Geçerlilik', 'Tedarikçi'].map(h => (
+                          {['Kalem', 'Birim', 'Birim Maliyet', 'Geçerlilik', 'Tedarikçi', 'Notlar'].map(h => (
                             <th key={h} style={{ padding: '7px 10px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text2)' }}>{h}</th>
                           ))}
                         </tr>
@@ -9638,11 +9755,12 @@ export default function OperasyonMerkezi() {
                       <tbody>
                         {alisFiyatlari.map((r, i) => (
                           <tr key={r.id || i} style={{ borderBottom: '1px solid var(--border)', background: i%2===0?'transparent':'var(--bg2)' }}>
-                            <td style={{ padding: '6px 10px', fontWeight: 600 }}>{r.kalem_adi || r.kalem_kodu}</td>
+                            <td style={{ padding: '6px 10px', fontWeight: 600 }}>{r.kalem_adi || r.kalem_kodu}<br/><span style={{ fontWeight: 400, fontSize: 10, color: 'var(--text3)' }}>{r.kalem_kodu}</span></td>
                             <td style={{ padding: '6px 10px', color: 'var(--text3)' }}>{r.birim}</td>
                             <td style={{ padding: '6px 10px', fontWeight: 700, color: '#16a34a', fontVariantNumeric: 'tabular-nums' }}>₺{Number(r.birim_maliyet_tl||0).toFixed(4)}</td>
-                            <td style={{ padding: '6px 10px', fontSize: 11, color: 'var(--text3)' }}>{r.gecerli_baslangic}{r.gecerli_bitis ? ` → ${r.gecerli_bitis}` : ' →'}</td>
+                            <td style={{ padding: '6px 10px', fontSize: 11, color: 'var(--text3)' }}>{r.gecerli_baslangic}{r.gecerli_bitis ? ` → ${r.gecerli_bitis}` : ' → günümüze'}</td>
                             <td style={{ padding: '6px 10px', color: 'var(--text3)' }}>{r.tedarikci || '—'}</td>
+                            <td style={{ padding: '6px 10px', color: 'var(--text3)', fontSize: 11 }}>{r.notlar || '—'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -9652,20 +9770,190 @@ export default function OperasyonMerkezi() {
               </div>
             )}
 
-            {aktifSekme === 'recete' && (
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>📐 Ürün Reçeteleri</div>
-                <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(22,163,74,.07)', border: '1px solid rgba(22,163,74,.25)', fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
-                  Her satılan ürün için hammadde tüketimi tanımlanır. Reçete × satış adedi = teorik maliyet.
-                  Gerçek stok düşüşünden fazlası shrinkage (fire/kayıp/hırsızlık).
+            {aktifSekme === 'recete' && (() => {
+              const acHammadde = () => setReceteForm(f => ({ ...f, hammaddeler: [...f.hammaddeler, { hammadde_kodu: '', hammadde_adi: '', miktar: '', birim: 'kg' }] }));
+              const silHammadde = idx => setReceteForm(f => ({ ...f, hammaddeler: f.hammaddeler.filter((_, i) => i !== idx) }));
+              const setHammadde = (idx, key, val) => setReceteForm(f => {
+                const hs = [...f.hammaddeler];
+                hs[idx] = { ...hs[idx], [key]: val };
+                return { ...f, hammaddeler: hs };
+              });
+              const aciklaReceteFormu = (r) => {
+                if (r) {
+                  setReceteForm({ urun_id: r.urun_id, urun_adi: r.urun_adi || r.urun_id, hammaddeler: (r.hammaddeler || []).map(h => ({ hammadde_kodu: h.hammadde_kodu, hammadde_adi: h.hammadde_adi || '', miktar: String(h.miktar), birim: h.birim || 'kg' })) });
+                  setReceteDuzenle(r.urun_id);
+                } else {
+                  setReceteForm({ urun_id: '', urun_adi: '', hammaddeler: [{ hammadde_kodu: '', hammadde_adi: '', miktar: '', birim: 'kg' }] });
+                  setReceteDuzenle(null);
+                }
+                setReceteFormGoster(true);
+              };
+              const kaydetRecete = () => {
+                const gecerli = receteForm.hammaddeler.filter(h => h.hammadde_kodu.trim() && h.miktar);
+                if (!receteForm.urun_id.trim()) return toast('Ürün ID zorunlu');
+                if (!gecerli.length) return toast('En az 1 hammadde satırı gerekli');
+                setReceteFormKayit(true);
+                api('/ops/maliyet/recete-kaydet', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    urun_id: receteForm.urun_id.trim(),
+                    urun_adi: receteForm.urun_adi.trim() || receteForm.urun_id.trim(),
+                    hammaddeler: gecerli.map(h => ({ hammadde_kodu: h.hammadde_kodu.trim(), hammadde_adi: h.hammadde_adi.trim() || h.hammadde_kodu.trim(), miktar: parseFloat(h.miktar) || 0, birim: h.birim })),
+                  }),
+                })
+                  .then(() => { toast('✅ Reçete kaydedildi'); setReceteFormGoster(false); return api('/ops/maliyet/recete-listesi'); })
+                  .then(d => setReceteler(d?.receteler || []))
+                  .catch(e => toast(e.message || 'Kayıt hatası'))
+                  .finally(() => setReceteFormKayit(false));
+              };
+              const silRecete = (urun_id) => {
+                if (!window.confirm(`"${urun_id}" reçetesi silinsin mi?`)) return;
+                api(`/ops/maliyet/recete-sil/${encodeURIComponent(urun_id)}`, { method: 'DELETE' })
+                  .then(() => { toast('🗑 Reçete silindi'); return api('/ops/maliyet/recete-listesi'); })
+                  .then(d => setReceteler(d?.receteler || []))
+                  .catch(e => toast(e.message || 'Silme hatası'));
+              };
+              return (
+                <div>
+                  {/* Başlık + Ekle */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>📐 Ürün Reçeteleri</div>
+                    <button
+                      onClick={() => receteFormGoster ? setReceteFormGoster(false) : aciklaReceteFormu(null)}
+                      style={{ padding: '5px 14px', borderRadius: 6, border: 'none', background: receteFormGoster ? 'var(--bg2)' : '#166534', color: receteFormGoster ? 'var(--text)' : '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}
+                    >{receteFormGoster ? '✕ Kapat' : '+ Reçete Ekle'}</button>
+                  </div>
+
+                  {/* Açıklama */}
+                  <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(22,163,74,.07)', border: '1px solid rgba(22,163,74,.25)', fontSize: 11, color: 'var(--text2)', marginBottom: 12 }}>
+                    Her satılan ürün için hammadde tüketimi tanımlanır. <strong>Reçete × satış adedi = teorik maliyet.</strong> Gerçek stok düşüşünden fazlası shrinkage.
+                  </div>
+
+                  {/* Reçete Formu */}
+                  {receteFormGoster && (
+                    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px', marginBottom: 16 }}>
+                      <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 10, color: '#166534' }}>
+                        {receteDuzenle ? `✏️ Düzenleniyor: ${receteDuzenle}` : 'Yeni Reçete'}
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+                        <div>
+                          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>Ürün ID / Kodu *</div>
+                          <input
+                            value={receteForm.urun_id}
+                            onChange={e => setReceteForm(f => ({ ...f, urun_id: e.target.value }))}
+                            disabled={!!receteDuzenle}
+                            placeholder="ör: flat_white, latte_buyuk"
+                            style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: receteDuzenle ? 'var(--bg)' : 'var(--bg)', color: 'var(--text)', fontSize: 12, boxSizing: 'border-box', opacity: receteDuzenle ? .7 : 1 }}
+                          />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>Ürün Adı</div>
+                          <input
+                            value={receteForm.urun_adi}
+                            onChange={e => setReceteForm(f => ({ ...f, urun_adi: e.target.value }))}
+                            placeholder="ör: Flat White, Büyük Latte"
+                            style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 12, boxSizing: 'border-box' }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Hammadde Satırları */}
+                      <div style={{ fontWeight: 600, fontSize: 11, color: 'var(--text2)', marginBottom: 6 }}>Hammaddeler</div>
+                      {receteForm.hammaddeler.map((h, idx) => (
+                        <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 90px 80px 32px', gap: 6, marginBottom: 6, alignItems: 'end' }}>
+                          <div>
+                            {idx === 0 && <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 3 }}>Hammadde Kodu *</div>}
+                            <input
+                              value={h.hammadde_kodu}
+                              onChange={e => setHammadde(idx, 'hammadde_kodu', e.target.value)}
+                              placeholder="ör: arabica_kg"
+                              style={{ width: '100%', padding: '5px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 11, boxSizing: 'border-box' }}
+                            />
+                          </div>
+                          <div>
+                            {idx === 0 && <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 3 }}>Hammadde Adı</div>}
+                            <input
+                              value={h.hammadde_adi}
+                              onChange={e => setHammadde(idx, 'hammadde_adi', e.target.value)}
+                              placeholder="ör: Arabica Kahve"
+                              style={{ width: '100%', padding: '5px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 11, boxSizing: 'border-box' }}
+                            />
+                          </div>
+                          <div>
+                            {idx === 0 && <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 3 }}>Miktar *</div>}
+                            <input
+                              type="number" min="0" step="0.001"
+                              value={h.miktar}
+                              onChange={e => setHammadde(idx, 'miktar', e.target.value)}
+                              placeholder="0.018"
+                              style={{ width: '100%', padding: '5px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 11, boxSizing: 'border-box' }}
+                            />
+                          </div>
+                          <div>
+                            {idx === 0 && <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 3 }}>Birim</div>}
+                            <select
+                              value={h.birim}
+                              onChange={e => setHammadde(idx, 'birim', e.target.value)}
+                              style={{ width: '100%', padding: '5px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 11 }}
+                            >
+                              {['kg', 'lt', 'adet', 'gram', 'ml', 'paket'].map(b => <option key={b} value={b}>{b}</option>)}
+                            </select>
+                          </div>
+                          <div style={{ paddingTop: idx === 0 ? 16 : 0 }}>
+                            {receteForm.hammaddeler.length > 1 && (
+                              <button onClick={() => silHammadde(idx)} style={{ padding: '5px 7px', borderRadius: 5, border: '1px solid rgba(239,68,68,.4)', background: 'rgba(239,68,68,.07)', color: '#ef4444', fontSize: 11, cursor: 'pointer', width: '100%' }}>✕</button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      <button onClick={acHammadde} style={{ padding: '4px 10px', borderRadius: 5, border: '1px dashed var(--border)', background: 'transparent', color: 'var(--text3)', fontSize: 11, cursor: 'pointer', marginBottom: 12 }}>+ Hammadde Ekle</button>
+
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          disabled={receteFormKayit}
+                          onClick={kaydetRecete}
+                          style={{ padding: '6px 18px', borderRadius: 6, border: 'none', background: '#166534', color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer', opacity: receteFormKayit ? .6 : 1 }}
+                        >{receteFormKayit ? 'Kaydediliyor…' : '💾 Kaydet'}</button>
+                        <button onClick={() => setReceteFormGoster(false)} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text2)', fontSize: 12, cursor: 'pointer' }}>İptal</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Mevcut Reçeteler */}
+                  {receteler.length === 0 ? (
+                    <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>
+                      Henüz reçete tanımlanmamış — "Reçete Ekle" ile başla.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {receteler.map((r) => (
+                        <div key={r.urun_id} style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--bg2)', borderBottom: '1px solid var(--border)' }}>
+                            <div>
+                              <span style={{ fontWeight: 700, fontSize: 13 }}>{r.urun_adi || r.urun_id}</span>
+                              <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 8 }}>{r.urun_id}</span>
+                              <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 8 }}>{(r.hammaddeler || []).length} hammadde</span>
+                            </div>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button onClick={() => aciklaReceteFormu(r)} style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text2)', fontSize: 11, cursor: 'pointer' }}>✏️ Düzenle</button>
+                              <button onClick={() => silRecete(r.urun_id)} style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid rgba(239,68,68,.4)', background: 'rgba(239,68,68,.07)', color: '#ef4444', fontSize: 11, cursor: 'pointer' }}>🗑 Sil</button>
+                            </div>
+                          </div>
+                          <div style={{ padding: '8px 12px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                            {(r.hammaddeler || []).map((h, i) => (
+                              <div key={i} style={{ padding: '4px 10px', borderRadius: 6, background: 'rgba(22,163,74,.08)', border: '1px solid rgba(22,163,74,.2)', fontSize: 11 }}>
+                                <span style={{ fontWeight: 600 }}>{h.hammadde_adi || h.hammadde_kodu}</span>
+                                <span style={{ color: 'var(--text3)', marginLeft: 6 }}>{Number(h.miktar).toFixed(4)} {h.birim}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>
-                  {receteler.length === 0
-                    ? 'Henüz reçete tanımlanmamış. Ciddi çalışma aşamasında sipariş kataloğundaki her ürüne reçete bağlanacak.'
-                    : `${receteler.length} ürün reçetesi tanımlı.`}
-                </div>
-              </div>
-            )}
+              );
+            })()}
 
             {aktifSekme === 'shrinkage' && (
               <div>
