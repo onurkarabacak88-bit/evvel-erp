@@ -1027,7 +1027,7 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                     meta         = EXCLUDED.meta,
                     personel_id  = COALESCE(sube_operasyon_event.personel_id, EXCLUDED.personel_id),
                     personel_ad  = COALESCE(sube_operasyon_event.personel_ad, EXCLUDED.personel_ad)
-                WHERE sube_operasyon_event.durum IN ('bekliyor', 'gecikti')
+                -- WHERE kaldırıldı: kör sayım değeri her durumda yazılır (durum=tamamlandi olsa bile)
                 """,
                 (
                     _eid_ev, sube_id, is_gunu_tr(),
@@ -1061,11 +1061,14 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
             kap_pad = (prev_kap.get("personel_ad") or "").strip() or None if prev_kap else None
 
             # ── 1. KASA FARK KONTROLÜ ──
+            _kasa_fark_sonuc: Optional[dict] = None  # açılış sonrası panel'e iletilecek
             bek = beklenen_dunku_kapanis_kasa(cur, sube_id)
             if bek is not None:
                 fark = round(ks - float(bek), 2)
+                _kasa_fark_sonuc = {"fark": fark, "beklenen": float(bek), "gercek": float(ks)}
                 if abs(fark) > 0.01:
                     sev = tolerans_seviyesi(fark)
+                    _kasa_fark_sonuc["seviye"] = sev
                     mesaj_kf = (
                         f"Açılış kasası dün devirine göre fark: {fark:+,.2f} TL "
                         f"(beklenen {bek:,.0f}₺ → gerçek {ks:,.0f}₺, {sev})"
@@ -1153,6 +1156,7 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                 "acilis_saati": saat_str,
                 "idempotent": False,
                 "sayimli": True,
+                "kasa_fark": _kasa_fark_sonuc,  # Kör sayım sonucu: sayım bittikten SONRA göster
             }
 
         if not _bugun_kasa_acildi_mi(cur, sube_id):

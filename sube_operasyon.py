@@ -959,16 +959,32 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 audit_etiket="KAPANIS_TASLAK",
                 taslak_tarih=tarih_ev_ciro,
             )
-            # Devir zorunlu — kasiyer kör sayım yapıp kasada bıraktığı tutarı beyan eder
+            # ── KÖR SAYIM: kasa_sayim ZORUNLU — panel kullanıcısı beklenen değeri görmeden sayar ──
+            # Dünya standardı (Toast / Square / Lightspeed / McDonald's):
+            #   Kasiyer kasadaki nakit toplamını fiziksel sayarak girer (kasa_sayim).
+            #   Sistem beklenen değeri yalnızca SONRA hesaplar ve farkı operasyon merkezine iletir.
+            #   Sayım yapılmadan kapanış gönderilemez — session "open" kalır.
+            if body.kasa_sayim is None or body.kasa_sayim < 0:
+                raise HTTPException(
+                    400,
+                    "Kapanış: fiziksel kasa sayımı zorunludur. "
+                    "Kasadaki nakit tutarını sayıp girin (kör sayım — beklenen bu aşamada gösterilmez).",
+                )
+            if body.kasa_sayim > 9_999_999:
+                raise HTTPException(400, "Kasa sayımı geçersiz: 9.999.999₺ üstü kabul edilmez")
+
+            # Devir zorunlu — kasiyer kasada bıraktığı tutarı beyan eder
             if body.devir is None or body.devir < 0:
-                raise HTTPException(400, "Kapanış: kasada bırakılan devir tutarı zorunludur (kör sayım)")
+                raise HTTPException(400, "Kapanış: kasada bırakılan devir tutarı zorunludur")
             teslim_f = max(0.0, float(body.teslim or 0))
             devir_kayit = round(float(body.devir), 2)
-            ks = round(teslim_f + devir_kayit, 2)
+            # ks = fiziksel sayım (kasa_sayim) — teslim+devir'in toplamına eşit olmak zorunda değil
+            # ancak tutarsızsa çapraz kontrol farkı operasyon merkezine gider
+            ks = round(float(body.kasa_sayim), 2)
             kasa_kime_teslim = (body.kasa_kime_teslim or "").strip()
 
             # Sistem çapraz kontrolü: kasa_sayim − kapanış_teslim − bugünkü ara teslimler = beklenen devir
-            ks_girdi = float(body.kasa_sayim) if body.kasa_sayim is not None else ks
+            ks_girdi = ks  # artık her zaman body.kasa_sayim kullanılır
             cur.execute(
                 """SELECT COALESCE(SUM(tutar), 0) AS ara_toplam
                    FROM kasa_teslim

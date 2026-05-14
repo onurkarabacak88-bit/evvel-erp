@@ -2328,11 +2328,14 @@
           <div class="form-group"><label>X Online (₺)</label><input id="kapO" inputmode="decimal" placeholder="0" /></div>
           <div class="form-group"><label>Teslim Kasa (₺)</label><input id="kapTeslim" inputmode="decimal" /></div>
           <div class="form-group">
-            <label>Devir (₺) — kasada bıraktığınız tutar <span style="color:var(--red)">*</span></label>
-            <input id="kapDevir" inputmode="decimal" placeholder="Zorunlu — kasayı sayıp girin" />
-            <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">Kasanızı bağımsız sayın ve bıraktığınız tutarı girin. Sistem kontrolü merkezde yapılır.</div>
+            <label>Devir (₺) — yarın için kasada bıraktığınız tutar <span style="color:var(--red)">*</span></label>
+            <input id="kapDevir" inputmode="decimal" placeholder="Zorunlu — sonraki vardiyaya bıraktığınız miktar" />
           </div>
-          <div class="form-group"><label>Kasada sayılan toplam (₺)</label><input id="kapToplam" inputmode="decimal" placeholder="Boş bırakılabilir" /></div>
+          <div class="form-group">
+            <label>Kasada sayılan toplam (₺) <span style="color:var(--red)">*</span></label>
+            <input id="kapToplam" inputmode="decimal" placeholder="Zorunlu — önce sayın, sonra girin" />
+            <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">Kasanızdaki tüm nakit tutarını bağımsız sayıp girin. Beklenen rakam bu ekranda gösterilmez.</div>
+          </div>
           <div class="form-group"><label>Kasa Kime Teslim</label><select id="kapKimeTeslim"></select></div>
           <button class="btn btn-primary btn-sm" id="kapNext1">Bardak Sayımına Geç</button>
         </div>
@@ -3135,8 +3138,10 @@ function wireKapanisStepFlow() {
   n1._wired = true;
   n1.onclick = function(){
     try {
-      reqNum('kapTeslim', 'Teslim tutarı');
-      reqNum('kapDevir', 'Devir tutarı (kasada bıraktığınız miktar) zorunludur');
+      // KÖR SAYIM: önce fiziksel sayım zorunlu — beklenen değer burada gösterilmez
+      reqNum('kapToplam', 'Kasada sayılan toplam zorunludur — kasanızı sayıp girin (kör sayım)');
+      reqNum('kapTeslim', 'Teslim tutarı zorunludur');
+      reqNum('kapDevir', 'Devir tutarı zorunludur (kasada bıraktığınız miktar)');
       var n = parseNum(inpVal('kapN')) || 0;
       var p2 = parseNum(inpVal('kapP')) || 0;
       var o = parseNum(inpVal('kapO')) || 0;
@@ -6683,7 +6688,9 @@ function wireKapanisHandler() {
       var devirExplicit = (devirStr === '' || devirParsed == null) ? null : Math.max(0, devirParsed);
       var toplamEl = inpVal('kapToplam').trim();
       var toplamSay = toplamEl === '' ? null : parseNum(toplamEl);
-      var kasaToplam = toplamSay != null ? toplamSay : (teslim + (devirExplicit != null ? devirExplicit : 0));
+      // KÖR SAYIM: fiziksel sayım zorunlu — fallback yok
+      if (toplamSay == null || toplamSay < 0) throw new Error('Kasada sayılan toplam girilmedi. Lütfen Adım 1\'e dönüp kasanızı sayın.');
+      var kasaToplam = toplamSay;
       var n = parseNum(inpVal('kapN'))||0, p2 = parseNum(inpVal('kapP'))||0, o = parseNum(inpVal('kapO'))||0;
       if (n+p2+o <= 0) throw new Error('En az bir ciro tutarı girin');
       // Kapanış operasyon eventini tamamla
