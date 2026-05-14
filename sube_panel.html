@@ -6914,7 +6914,7 @@ function wirePuanHandler() {
 }
 
 // ─── OPERASyon OVERLAY ───────────────────────────────────────
-var opAcilisStep=1, opAcilisKasa=null, opAcilisStok={};
+var opAcilisStep=1, opAcilisKasa=null, opAcilisStok={}, opAcilisPastaSub=0;
 
 function hideOpOverlay() {
   stopAlarm();
@@ -6946,11 +6946,11 @@ function buildOpFields(tip, ev) {
 
   if (tip==='ACILIS') {
     if (opAcilisStep===1) return (
-      '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">Sunucu saati: <strong>'+sunucu+'</strong></p>' +
+      '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">1 / 5 · Sunucu saati: <strong>'+sunucu+'</strong></p>' +
       '<div class="form-group"><label>Kasa Sayımı (₺)</label><input id="opKasa" inputmode="decimal" autocomplete="off" placeholder="0" /></div>'
     );
     if (opAcilisStep===2) return (
-      '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">2 / 4 · Bardak sayımları</p>' +
+      '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">2 / 5 · Bardak sayımları</p>' +
       '<div class="stok-grid">' +
       '<div class="stok-item"><label>Küçük bardak</label><input id="opBardakK" inputmode="numeric" placeholder="0" /></div>' +
       '<div class="stok-item"><label>Büyük bardak</label><input id="opBardakB" inputmode="numeric" placeholder="0" /></div>' +
@@ -6959,22 +6959,32 @@ function buildOpFields(tip, ev) {
       '<button class="btn btn-ghost btn-sm" id="opGeriBtn" style="margin-top:6px">« Kasa sayımına dön</button>'
     );
     if (opAcilisStep===3) return (
-      '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">3 / 4 · Ürün sayımları</p>' +
+      '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">3 / 5 · Ürün sayımları</p>' +
       '<div class="stok-grid">' +
       '<div class="stok-item"><label>Su</label><input id="opSu" inputmode="numeric" placeholder="0" /></div>' +
       '<div class="stok-item"><label>Süt</label><input id="opSut" inputmode="numeric" placeholder="0" /></div>' +
       '<div class="stok-item"><label>Redbull</label><input id="opRb" inputmode="numeric" placeholder="0" /></div>' +
       '<div class="stok-item"><label>Soda</label><input id="opSo" inputmode="numeric" placeholder="0" /></div>' +
       '<div class="stok-item"><label>Cookie</label><input id="opCk" inputmode="numeric" placeholder="0" /></div>' +
-      '<div class="stok-item"><label>Pasta</label><input id="opPa" inputmode="numeric" placeholder="0" /></div>' +
       '</div>' +
       '<button class="btn btn-ghost btn-sm" id="opGeriBtn" style="margin-top:6px">« Bardak sayımına dön</button>'
     );
-    if (opAcilisStep===4) return (
-      '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">4 / 4 · Personel ve PIN onayı</p>' +
+    if (opAcilisStep===4) {
+      var _og = _PASTA_GRUPLAR[opAcilisPastaSub];
+      var _ogi = (opAcilisPastaSub + 1) + ' / ' + _PASTA_GRUPLAR.length;
+      return (
+        '<p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.45">4 / 5 · <strong>Pasta</strong>' +
+        (_og ? ' — ' + escHtml(_og.ad) + ' <span style="color:var(--muted)">(' + escHtml(_ogi) + ')</span>' : '') +
+        '</p>' +
+        buildPastaOneGroupHTML('op', opAcilisPastaSub) +
+        '<button class="btn btn-ghost btn-sm" id="opGeriBtn" style="margin-top:8px">« Ürün sayımına dön</button>'
+      );
+    }
+    if (opAcilisStep===5) return (
+      '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">5 / 5 · Personel ve PIN onayı</p>' +
       '<div class="form-group"><label>Personel</label><select id="opAcilisPers"><option value="">— Seçin —</option>'+persOpts+'</select></div>' +
       '<div class="form-group"><label>PIN</label><input id="opAcilisPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>' +
-      '<button class="btn btn-ghost btn-sm" id="opGeriBtn" style="margin-top:6px">« Ürün sayımına dön</button>'
+      '<button class="btn btn-ghost btn-sm" id="opGeriBtn" style="margin-top:6px">« Pasta sayımına dön</button>'
     );
   }
   if (tip==='KONTROL') {
@@ -7003,7 +7013,7 @@ function buildOpFields(tip, ev) {
 function showOpOverlay(aktif, blob) {
   opAktifEvent = aktif;
   var tip = aktif.tip||'', durum = aktif.durum||'';
-  if (tip==='ACILIS') { opAcilisStep=1; opAcilisKasa=null; opAcilisStok={}; }
+  if (tip==='ACILIS') { opAcilisStep=1; opAcilisKasa=null; opAcilisStok={}; opAcilisPastaSub=0; }
 
   var baslik = document.getElementById('opBaslik');
   var acik   = document.getElementById('opAcik');
@@ -7039,13 +7049,18 @@ function wireOpGeriBtn() {
   gBtn.onclick = function(){
     var tip = opAktifEvent && opAktifEvent.tip;
     if (tip==='ACILIS') {
-      if (opAcilisStep===2) opAcilisStep=1;
-      else if (opAcilisStep===3) opAcilisStep=2;
-      else if (opAcilisStep===4) opAcilisStep=3;
+      if (opAcilisStep===2) { opAcilisStep=1; }
+      else if (opAcilisStep===3) { opAcilisStep=2; }
+      else if (opAcilisStep===4) {
+        if (opAcilisPastaSub > 0) { opAcilisPastaSub--; }
+        else { opAcilisStep=3; }
+      }
+      else if (opAcilisStep===5) { opAcilisStep=4; opAcilisPastaSub=_PASTA_GRUPLAR.length-1; }
       var fields = document.getElementById('opFields');
       if (fields) fields.innerHTML = buildOpFields('ACILIS', null);
+      if (opAcilisStep===4) pastaGrupKeysStoktanDoldur('op', opAcilisStok, opAcilisPastaSub);
       var submit = document.getElementById('opSubmit');
-      if (submit) submit.textContent = opAcilisStep===4 ? 'Onayla ve Tamamla' : 'İleri';
+      if (submit) submit.textContent = opAcilisStep===5 ? 'Onayla ve Tamamla' : 'İleri';
       wireOpGeriBtn();
       updateOpAcilisSaatUyariBanner();
     }
@@ -7083,14 +7098,32 @@ document.getElementById('opSubmit').onclick = async function(){
       opAcilisStok.redbull_adet  = reqInt('opRb', 'Redbull');
       opAcilisStok.soda_adet     = reqInt('opSo', 'Soda');
       opAcilisStok.cookie_adet   = reqInt('opCk', 'Cookie');
-      opAcilisStok.pasta_adet    = reqInt('opPa', 'Pasta');
-      opAcilisStep=4;
+      opAcilisStep=4; opAcilisPastaSub=0;
+      document.getElementById('opFields').innerHTML = buildOpFields('ACILIS', null);
+      pastaGrupKeysStoktanDoldur('op', opAcilisStok, opAcilisPastaSub);
+      document.getElementById('opSubmit').textContent = 'İleri';
+      wireOpGeriBtn();
+      btn.disabled=false; return;
+    }
+    if (tip==='ACILIS' && opAcilisStep===4) {
+      // Pasta grubu ilerle
+      pastaGrupKeysStokaYaz('op', opAcilisStok, opAcilisPastaSub);
+      if (opAcilisPastaSub < _PASTA_GRUPLAR.length - 1) {
+        opAcilisPastaSub++;
+        document.getElementById('opFields').innerHTML = buildOpFields('ACILIS', null);
+        pastaGrupKeysStoktanDoldur('op', opAcilisStok, opAcilisPastaSub);
+        wireOpGeriBtn();
+        btn.disabled=false; return;
+      }
+      // Tüm pasta grupları bitti → pasta_adet hesapla → PIN adımına geç
+      opAcilisStok.pasta_adet = _PASTA_KEYS.reduce(function(s,k){ return s+(opAcilisStok[k]||0); }, 0);
+      opAcilisStep=5;
       document.getElementById('opFields').innerHTML = buildOpFields('ACILIS', null);
       document.getElementById('opSubmit').textContent = 'Onayla ve Tamamla';
       wireOpGeriBtn();
       btn.disabled=false; return;
     }
-    if (tip==='ACILIS' && opAcilisStep===4) {
+    if (tip==='ACILIS' && opAcilisStep===5) {
       var pidA = selVal('opAcilisPers');
       if (!pidA) throw new Error('Personeli seçin');
       var pinA = inpVal('opAcilisPin').replace(/\D/g,'').slice(0,4);
