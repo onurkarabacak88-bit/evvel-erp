@@ -9312,13 +9312,15 @@ def ops_kasa_teshis(
 
         sonuc = {"sube_id": sube_id, "sube_adi": sube_adi, "tarih": str(hedef)}
 
-        # 2. ACILIS event
+        # 2. ACILIS event — kasa_sayim direkt sütun, meta'da değil
         try:
             cur.execute("SAVEPOINT sp_td_acilis")
             cur.execute("""
                 SELECT e.id, e.tip, e.tarih, e.durum,
                        e.cevap_ts AT TIME ZONE 'Europe/Istanbul' AS cevap_ts_tr,
-                       e.meta
+                       e.kasa_sayim, e.teslim, e.devir,
+                       e.snap_nakit, e.snap_pos, e.snap_online,
+                       e.personel_ad, e.meta
                 FROM sube_operasyon_event e
                 WHERE e.sube_id = %s AND e.tarih = %s AND e.tip = 'ACILIS'
                 ORDER BY e.cevap_ts DESC NULLS LAST, e.id DESC
@@ -9333,22 +9335,24 @@ def ops_kasa_teshis(
                 if isinstance(meta, str):
                     try: meta = json.loads(meta)
                     except: meta = {}
-                d["kasa_sayim"] = meta.get("acilis_kasa_sayim")
                 d["stok_sayim"] = meta.get("acilis_stok_sayim")
-                d["personel_ad"] = meta.get("personel_ad") or meta.get("acilan_ad")
+                for k in ("kasa_sayim","teslim","devir","snap_nakit","snap_pos","snap_online"):
+                    if d.get(k) is not None: d[k] = float(d[k])
                 sonuc["acilis_eventler"].append(d)
             cur.execute("RELEASE SAVEPOINT sp_td_acilis")
         except Exception as ex:
             cur.execute("ROLLBACK TO SAVEPOINT sp_td_acilis")
             sonuc["acilis_eventler"] = [{"hata": str(ex)}]
 
-        # 3. KAPANIS event
+        # 3. KAPANIS event — kasa_sayim, teslim, devir direkt sütunlar
         try:
             cur.execute("SAVEPOINT sp_td_kapanis")
             cur.execute("""
                 SELECT e.id, e.tip, e.tarih, e.durum,
                        e.cevap_ts AT TIME ZONE 'Europe/Istanbul' AS cevap_ts_tr,
-                       e.meta
+                       e.kasa_sayim, e.teslim, e.devir,
+                       e.snap_nakit, e.snap_pos, e.snap_online,
+                       e.personel_ad, e.meta
                 FROM sube_operasyon_event e
                 WHERE e.sube_id = %s AND e.tarih = %s AND e.tip = 'KAPANIS'
                 ORDER BY e.cevap_ts DESC NULLS LAST, e.id DESC
@@ -9363,11 +9367,9 @@ def ops_kasa_teshis(
                 if isinstance(meta, str):
                     try: meta = json.loads(meta)
                     except: meta = {}
-                d["kasa_sayim"]     = meta.get("kapanis_kasa_sayim")
-                d["stok_sayim"]     = meta.get("kapanis_stok_sayim")
-                d["kasa_teslim"]    = meta.get("kasa_teslim_tutari") or meta.get("teslim_tutari")
-                d["devir_kasaya"]   = meta.get("devir_kasaya") or meta.get("devir_bırakilan")
-                d["personel_ad"]    = meta.get("personel_ad") or meta.get("kapatan_ad")
+                d["stok_sayim"] = meta.get("kapanis_stok_sayim")
+                for k in ("kasa_sayim","teslim","devir","snap_nakit","snap_pos","snap_online"):
+                    if d.get(k) is not None: d[k] = float(d[k])
                 sonuc["kapanis_eventler"].append(d)
             cur.execute("RELEASE SAVEPOINT sp_td_kapanis")
         except Exception as ex:
@@ -9414,13 +9416,13 @@ def ops_kasa_teshis(
             cur.execute("ROLLBACK TO SAVEPOINT sp_td_taslak")
             sonuc["ciro_taslak"] = [{"hata": str(ex)}]
 
-        # 6. Günlük gider (nakit çıkış)
+        # 6. Günlük gider (nakit çıkış) — anlik_giderler.sube sütunu kullanır
         try:
             cur.execute("SAVEPOINT sp_td_gider")
             cur.execute("""
                 SELECT SUM(tutar) AS toplam_gider, COUNT(*) AS adet
                 FROM anlik_giderler
-                WHERE sube_id = %s AND DATE(olusturma AT TIME ZONE 'Europe/Istanbul') = %s
+                WHERE sube = %s AND DATE(olusturma AT TIME ZONE 'Europe/Istanbul') = %s
                   AND durum = 'aktif'
             """, (sube_id, hedef))
             gider_r = cur.fetchone()
@@ -9499,40 +9501,53 @@ def ops_kasa_teshis(
             cur.execute("ROLLBACK TO SAVEPOINT sp_td_defter")
             sonuc["operasyon_defter_kasa"] = [{"hata": str(ex)}]
 
-        # 10. Devir hesabı (manuel)
+        # 10. Devir hesabı — kasa_sayim/teslim/devir direkt sütunlardan
         try:
-            ac = sonuc.get("acilis_eventler", [{}])[0] if sonuc.get("acilis_eventler") else {}
-            kap = sonuc.get("kapanis_eventler", [{}])[0] if sonuc.get("kapanis_eventler") else {}
+            ac  = sonuc["acilis_eventler"][0]  if sonuc.get("acilis_eventler")  else {}
+            kap = sonuc["kapanis_eventler"][0] if sonuc.get("kapanis_eventler") else {}
             ciro = sonuc.get("ciro") or {}
+            taslak_list = sonuc.get("ciro_taslak") or []
+            taslak = taslak_list[0] if taslak_list else {}
             gider = sonuc.get("gunluk_gider") or {}
 
-            acilis_kasa = float(ac.get("kasa_sayim") or 0) if ac.get("kasa_sayim") is not None else None
-            kapanis_kasa = float(kap.get("kasa_sayim") or 0) if kap.get("kasa_sayim") is not None else None
-            kapanis_teslim = float(kap.get("kasa_teslim") or 0) if kap.get("kasa_teslim") is not None else None
-            kapanis_devir = float(kap.get("devir_kasaya") or 0) if kap.get("devir_kasaya") is not None else None
-            ciro_nakit = float(ciro.get("nakit") or 0) if ciro.get("nakit") is not None else None
+            acilis_kasa    = ac.get("kasa_sayim")   # float veya None
+            kapanis_kasa   = kap.get("kasa_sayim")
+            kapanis_teslim = kap.get("teslim")
+            kapanis_devir  = kap.get("devir")
+
+            # Ciro nakit: onaylı önce, sonra taslak
+            ciro_nakit = ciro.get("nakit") if ciro.get("nakit") is not None else taslak.get("nakit")
             gider_toplam = float(gider.get("toplam") or 0)
 
             if acilis_kasa is not None and ciro_nakit is not None:
-                beklenen_kapanis = acilis_kasa + ciro_nakit - gider_toplam
-                gercek_kapanis = kapanis_kasa
-                fark = (gercek_kapanis - beklenen_kapanis) if gercek_kapanis is not None else None
+                # Kasada olması gereken = açılış deviri + günlük nakit ciro - giderler
+                beklenen = round(acilis_kasa + ciro_nakit - gider_toplam, 2)
+                # Kasiyer kasayı saydı → teslim + devirde bıraktı
+                gercek_toplam = None
+                if kapanis_teslim is not None and kapanis_devir is not None:
+                    gercek_toplam = round(kapanis_teslim + kapanis_devir, 2)
+                elif kapanis_kasa is not None:
+                    gercek_toplam = round(kapanis_kasa, 2)
+
+                fark = round(gercek_toplam - beklenen, 2) if gercek_toplam is not None else None
                 sonuc["devir_hesabi"] = {
-                    "acilis_kasa_sayim": acilis_kasa,
-                    "ciro_nakit": ciro_nakit,
-                    "gunluk_gider": gider_toplam,
-                    "beklenen_kapanis_kasa": round(beklenen_kapanis, 2),
-                    "gercek_kapanis_kasa": gercek_kapanis,
-                    "fark_tl": round(fark, 2) if fark is not None else None,
-                    "teslim_edilen": kapanis_teslim,
-                    "devirde_birakilan": kapanis_devir,
-                    "aciklama": "fark = gercek_kapanis - (acilis + ciro_nakit - gider)",
+                    "acilis_kasa_sayim":   acilis_kasa,
+                    "ciro_nakit":          ciro_nakit,
+                    "gunluk_gider":        gider_toplam,
+                    "beklenen_kasada":     beklenen,
+                    "kapanis_kasa_sayim":  kapanis_kasa,
+                    "teslim_edilen":       kapanis_teslim,
+                    "devirde_birakilan":   kapanis_devir,
+                    "gercek_kasada":       gercek_toplam,
+                    "fark_tl":             fark,
+                    "aciklama":            "fark = (teslim+devir) - (acilis_kasa + ciro_nakit - gider) | pozitif=fazla, negatif=açık",
                 }
             else:
                 sonuc["devir_hesabi"] = {
-                    "aciklama": "Hesap yapılamadı — açılış kasa sayımı veya ciro nakit eksik",
+                    "aciklama": "Hesap yapılamadı",
                     "acilis_kasa_sayim": acilis_kasa,
                     "ciro_nakit": ciro_nakit,
+                    "eksik": [k for k,v in [("acilis_kasa_sayim", acilis_kasa), ("ciro_nakit", ciro_nakit)] if v is None],
                 }
         except Exception as ex:
             sonuc["devir_hesabi"] = {"hata": str(ex)}
