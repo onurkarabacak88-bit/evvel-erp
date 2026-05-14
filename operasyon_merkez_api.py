@@ -5447,7 +5447,7 @@ def ops_kasa_uyumsuzluk_listesi(
         cur.execute(
             """
             SELECT
-                u.id, u.sube_id::text, COALESCE(s.ad, u.sube_id::text) AS sube_adi,
+                u.id, u.tip, u.sube_id::text, COALESCE(s.ad, u.sube_id::text) AS sube_adi,
                 u.tarih, u.seviye, u.fark_tl, u.beklenen_tl, u.gercek_tl,
                 u.mesaj, u.okundu, u.olusturma,
                 u.acilis_personel_ad, u.kapanis_personel_ad,

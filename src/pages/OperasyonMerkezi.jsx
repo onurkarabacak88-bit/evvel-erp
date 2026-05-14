@@ -9264,8 +9264,15 @@ export default function OperasyonMerkezi() {
               </div>
             </div>
 
-            {/* ── DEVİR UYUMSUZLUĞU — ÇÖZÜLMELI ── */}
-            {(devirFarkKayitlar.length > 0 || !kasaUyumAramaYukleniyor) && (
+            {/* ── BOŞSA BİRLEŞİK MESAJ ── */}
+            {!kasaUyumAramaYukleniyor && tumKayitlar.length === 0 && (
+              <div style={{ padding: '20px 16px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 13, color: '#4ade80', fontWeight: 600, textAlign: 'center' }}>
+                ✓ Bu gün kasa farkı veya devir uyumsuzluğu yok
+              </div>
+            )}
+
+            {/* ── DEVİR UYUMSUZLUĞU — sadece kayıt varsa göster ── */}
+            {devirFarkKayitlar.length > 0 && (
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                   <span style={{ fontSize: 11, fontWeight: 800, color: '#fdba74', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
@@ -9274,20 +9281,14 @@ export default function OperasyonMerkezi() {
                   <span style={{ fontSize: 11, color: 'var(--text3)' }}>Akşamcının bıraktığı ≠ Sabahçının saydığı — nedeni açıklanmalı</span>
                   <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>{devirFarkKayitlar.length} kayıt</span>
                 </div>
-                {devirFarkKayitlar.length === 0 ? (
-                  <div style={{ padding: '14px 16px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12, color: '#4ade80', fontWeight: 600, textAlign: 'center' }}>
-                    ✓ Bu gün devir uyumsuzluğu yok
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {devirFarkKayitlar.map(u => <DevirFarkKart key={u.id} u={u} />)}
-                  </div>
-                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {devirFarkKayitlar.map(u => <DevirFarkKart key={u.id} u={u} />)}
+                </div>
               </div>
             )}
 
-            {/* ── KASA AÇIĞI — TAKİP ── */}
-            {(kasaAcigiKayitlar.length > 0 || !kasaUyumAramaYukleniyor) && (
+            {/* ── KASA AÇIĞI — sadece kayıt varsa göster ── */}
+            {kasaAcigiKayitlar.length > 0 && (
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                   <span style={{ fontSize: 11, fontWeight: 800, color: '#93c5fd', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
@@ -9296,15 +9297,16 @@ export default function OperasyonMerkezi() {
                   <span style={{ fontSize: 11, color: 'var(--text3)' }}>Kasiyerin beyanı ≠ Sistem beklentisi — takip et, kronikleşirse harekete geç</span>
                   <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>{kasaAcigiKayitlar.length} kayıt</span>
                 </div>
-                {kasaAcigiKayitlar.length === 0 ? (
-                  <div style={{ padding: '14px 16px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12, color: '#4ade80', fontWeight: 600, textAlign: 'center' }}>
-                    ✓ Bu gün kasa açığı yok
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {kasaAcigiKayitlar.map(u => <KasaAcigiKart key={u.id} u={u} />)}
-                  </div>
-                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {kasaAcigiKayitlar.map(u => <KasaAcigiKart key={u.id} u={u} />)}
+                </div>
+              </div>
+            )}
+
+            {/* ── Tip bilgisi gelmeyen kayıtlar (fallback) ── */}
+            {!kasaUyumAramaYukleniyor && tumKayitlar.length > 0 && devirFarkKayitlar.length === 0 && kasaAcigiKayitlar.length === 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {tumKayitlar.map(u => <DevirFarkKart key={u.id} u={u} />)}
               </div>
             )}
 
