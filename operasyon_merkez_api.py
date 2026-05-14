@@ -5496,7 +5496,7 @@ def ops_kasa_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyu
             SELECT id, sube_id, beklenen_tl, gercek_tl, fark_tl, okundu
             FROM sube_operasyon_uyari
             WHERE id=%s
-              AND tip='ACILIS_KASA_FARK'
+              AND tip IN ('ACILIS_KASA_FARK', 'KAPANIS_KASA_FARK')
             FOR UPDATE
             """,
             (uyari_id,),
@@ -5532,6 +5532,100 @@ def ops_kasa_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyu
         )
         audit(cur, "sube_operasyon_uyari", uyari_id, "KASA_UYUMSUZLUK_COZULDU")
     return {"success": True, "durum": "cozuldu", "id": uyari_id}
+
+
+@router.get("/kasa-acik-analiz")
+def ops_kasa_acik_analiz(gun_sayi: int = 30):
+    """
+    Personel bazlı kasa açığı takip raporu (NRF / QSR standardı).
+
+    Durum seviyeleri:
+      izleme      → 30 günde 2+ kez >50₺ açık
+      aksiyona_gec → 30 günde 3+ kez >50₺ açık VEYA tek açık >150₺
+      kritik      → 30 günde 4+ kez VEYA tek açık >200₺
+
+    Returns:
+      takip_listesi : izleme/aksiyona_gec/kritik durumundaki personel
+      acik_listesi  : son {gun_sayi} günde abs(fark_tl) > 20₺ olan tüm kayıtlar
+    """
+    gun_sayi = max(7, min(int(gun_sayi), 90))
+    with db() as (conn, cur):
+        # ── Personel bazlı gruplama ──────────────────────────────────────────
+        cur.execute(
+            """
+            SELECT
+                u.kapanis_personel_id                                  AS personel_id,
+                COALESCE(u.kapanis_personel_ad, '—')                   AS personel_ad,
+                COALESCE(s.ad, u.sube_id::text)                        AS sube_adi,
+                u.sube_id,
+                COUNT(*)                                               AS toplam_adet,
+                COUNT(*) FILTER (WHERE ABS(u.fark_tl) > 50)           AS elli_ustu_adet,
+                COALESCE(SUM(ABS(u.fark_tl)), 0)                      AS toplam_abs_fark,
+                MAX(ABS(u.fark_tl))                                    AS max_tek_fark,
+                MAX(u.tarih)                                           AS son_tarih
+            FROM sube_operasyon_uyari u
+            LEFT JOIN subeler s ON s.id = u.sube_id
+            WHERE u.tip = 'KAPANIS_KASA_FARK'
+              AND u.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+              AND u.kapanis_personel_id IS NOT NULL
+            GROUP BY u.kapanis_personel_id, u.kapanis_personel_ad, u.sube_id, s.ad
+            HAVING
+                COUNT(*) FILTER (WHERE ABS(u.fark_tl) > 50) >= 2
+                OR MAX(ABS(u.fark_tl)) > 150
+            ORDER BY elli_ustu_adet DESC, toplam_abs_fark DESC
+            """,
+            (gun_sayi,),
+        )
+        takip_listesi = []
+        for row in cur.fetchall():
+            d = dict(row)
+            d["toplam_abs_fark"] = float(d.get("toplam_abs_fark") or 0)
+            d["max_tek_fark"]    = float(d.get("max_tek_fark")    or 0)
+            if d.get("son_tarih"):
+                d["son_tarih"] = str(d["son_tarih"])
+            adet = int(d.get("elli_ustu_adet") or 0)
+            maks = d["max_tek_fark"]
+            if adet >= 4 or maks > 200:
+                d["durum"] = "kritik"
+            elif adet >= 3 or maks > 150:
+                d["durum"] = "aksiyona_gec"
+            else:
+                d["durum"] = "izleme"
+            takip_listesi.append(d)
+
+        # ── Son N günde tüm >20₺ açıklar ────────────────────────────────────
+        cur.execute(
+            """
+            SELECT
+                u.id, u.tarih,
+                COALESCE(s.ad, u.sube_id::text)   AS sube_adi,
+                COALESCE(u.kapanis_personel_ad, '—') AS personel_ad,
+                u.fark_tl, u.beklenen_tl, u.gercek_tl, u.seviye, u.okundu
+            FROM sube_operasyon_uyari u
+            LEFT JOIN subeler s ON s.id = u.sube_id
+            WHERE u.tip = 'KAPANIS_KASA_FARK'
+              AND ABS(COALESCE(u.fark_tl, 0)) > 20
+              AND u.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            ORDER BY u.tarih DESC, ABS(u.fark_tl) DESC
+            """,
+            (gun_sayi,),
+        )
+        acik_listesi = []
+        for row in cur.fetchall():
+            d = dict(row)
+            if d.get("tarih"):
+                d["tarih"] = str(d["tarih"])
+            for k in ("fark_tl", "beklenen_tl", "gercek_tl"):
+                if d.get(k) is not None:
+                    d[k] = float(d[k])
+            acik_listesi.append(d)
+
+    return {
+        "gun_sayi": gun_sayi,
+        "esikler": {"tek_olay_liste": 20, "izleme_tek": 50, "izleme_adet": 2, "aksiyon_adet": 3, "kritik_tek": 200},
+        "takip_listesi": takip_listesi,
+        "acik_listesi": acik_listesi,
+    }
 
 
 @router.get("/personel-vardiya-uyumsuzluk")

@@ -2179,6 +2179,8 @@ export default function OperasyonMerkezi() {
   /** Bugünden geriye 7 gün: çözüm bekleyen kasa uyarısı özeti (API yalnızca okundu=false döner). */
   const [kasaUyumHaftaSatirlari, setKasaUyumHaftaSatirlari] = useState([]);
   const [kasaUyumHaftaYukleniyor, setKasaUyumHaftaYukleniyor] = useState(false);
+  const [kasaAcikAnaliz, setKasaAcikAnaliz] = useState({ takip_listesi: [], acik_listesi: [] });
+  const [kasaAcikAnalizYukleniyor, setKasaAcikAnalizYukleniyor] = useState(false);
   const [personelVardiyaUyumBugun, setPersonelVardiyaUyumBugun] = useState({ tarih: '', toplam: 0, kayitlar: [] });
   const [personelVardiyaUyumBugunYukleniyor, setPersonelVardiyaUyumBugunYukleniyor] = useState(false);
   const [personelVardiyaUyumAramaTarih, setPersonelVardiyaUyumAramaTarih] = useState(bugunIsoTarih());
@@ -3555,6 +3557,12 @@ export default function OperasyonMerkezi() {
       })
       .catch((e) => toast(e.message || 'Kasa uyumsuzluk verisi yüklenemedi'))
       .finally(() => setYukleniyor(false));
+    // Personel takip analizi — 30 günlük
+    setKasaAcikAnalizYukleniyor(true);
+    api('/ops/kasa-acik-analiz?gun_sayi=30')
+      .then(setKasaAcikAnaliz)
+      .catch(() => {})
+      .finally(() => setKasaAcikAnalizYukleniyor(false));
   }, [aktifSekme, toast, kasaUyumGunYukle, kasaUyumHaftaYukle]);
 
   useEffect(() => {
@@ -9252,6 +9260,150 @@ export default function OperasyonMerkezi() {
                 })}
               </div>
             </div>
+
+            {/* ── PERSONEL TAKİP LİSTESİ ── */}
+            {(() => {
+              const takipList = kasaAcikAnaliz?.takip_listesi || [];
+              const acikList  = kasaAcikAnaliz?.acik_listesi  || [];
+              if (kasaAcikAnalizYukleniyor && takipList.length === 0 && acikList.length === 0) return null;
+
+              const durumCfg = {
+                kritik:        { renk: '#fca5a5', bg: 'rgba(220,38,38,0.15)', border: 'rgba(220,38,38,0.4)', etiket: '🔴 Kritik',          aciklama: '4+ açık / ay veya tek >200₺' },
+                aksiyona_gec:  { renk: '#fdba74', bg: 'rgba(240,128,64,0.12)', border: 'rgba(240,128,64,0.4)', etiket: '🟠 Harekete Geç',   aciklama: '3+ açık / ay veya >150₺' },
+                izleme:        { renk: '#fde68a', bg: 'rgba(234,179,8,0.1)',  border: 'rgba(234,179,8,0.35)', etiket: '🟡 İzleme',           aciklama: '2+ kez >50₺ açık / 30 gün' },
+              };
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 4 }}>
+
+                  {/* ── § PERSONEL TAKİP LİSTESİ ── */}
+                  <div style={{ padding: '14px 16px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>👥 Personel Takip Listesi</span>
+                      <span style={{ fontSize: 11, color: 'var(--text3)' }}>Son 30 gün · NRF/QSR standardı</span>
+                      {kasaAcikAnalizYukleniyor && <span style={{ fontSize: 11, color: 'var(--text3)' }}>⏳</span>}
+                      {takipList.length > 0 && (
+                        <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#fca5a5' }}>
+                          {takipList.filter(p => p.durum === 'kritik').length > 0 && `${takipList.filter(p => p.durum === 'kritik').length} kritik · `}
+                          {takipList.length} personel izleniyor
+                        </span>
+                      )}
+                    </div>
+
+                    {takipList.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '12px 0', fontSize: 12, color: '#4ade80', fontWeight: 600 }}>
+                        ✓ Son 30 günde takip gerektiren personel yok
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {/* Başlık satırı */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px 70px 80px 90px 100px', gap: 8, padding: '4px 10px', fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                          <span>Personel · Şube</span>
+                          <span style={{ textAlign: 'center' }}>50₺+ açık</span>
+                          <span style={{ textAlign: 'center' }}>Toplam</span>
+                          <span style={{ textAlign: 'center' }}>En yüksek</span>
+                          <span style={{ textAlign: 'center' }}>Son tarih</span>
+                          <span style={{ textAlign: 'center' }}>Durum</span>
+                        </div>
+                        {takipList.map((p, i) => {
+                          const cfg = durumCfg[p.durum] || durumCfg.izleme;
+                          return (
+                            <div key={`pt-${p.personel_id || i}`} style={{
+                              display: 'grid', gridTemplateColumns: '1fr 90px 70px 80px 90px 100px',
+                              gap: 8, alignItems: 'center', padding: '8px 10px', borderRadius: 8,
+                              background: cfg.bg, border: `1px solid ${cfg.border}`,
+                            }}>
+                              <div>
+                                <div style={{ fontWeight: 700, fontSize: 13 }}>{p.personel_ad}</div>
+                                <div style={{ fontSize: 11, color: 'var(--text3)' }}>{p.sube_adi}</div>
+                              </div>
+                              <div style={{ textAlign: 'center', fontWeight: 800, fontSize: 14, fontFamily: 'monospace', color: cfg.renk }}>
+                                {p.elli_ustu_adet}×
+                              </div>
+                              <div style={{ textAlign: 'center', fontSize: 12, fontFamily: 'monospace', color: 'var(--text2)' }}>
+                                {fmt(p.toplam_abs_fark)}
+                              </div>
+                              <div style={{ textAlign: 'center', fontSize: 12, fontFamily: 'monospace', color: 'var(--text2)' }}>
+                                {fmt(p.max_tek_fark)}
+                              </div>
+                              <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--text3)' }}>
+                                {p.son_tarih?.slice(5)}
+                              </div>
+                              <div style={{ textAlign: 'center' }}>
+                                <span title={cfg.aciklama} style={{ background: cfg.bg, color: cfg.renk, border: `1px solid ${cfg.border}`, borderRadius: 5, padding: '2px 8px', fontSize: 10, fontWeight: 700, cursor: 'help', whiteSpace: 'nowrap' }}>
+                                  {cfg.etiket}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {/* Kılavuz */}
+                        <div style={{ marginTop: 6, padding: '8px 10px', background: 'var(--bg)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                          <div style={{ fontSize: 10, color: 'var(--text3)', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                            <span>🟡 <strong>İzleme</strong>: 30 günde 2+ kez &gt;50₺</span>
+                            <span>🟠 <strong>Harekete Geç</strong>: 3+ kez veya &gt;150₺ tek açık</span>
+                            <span>🔴 <strong>Kritik</strong>: 4+ kez veya &gt;200₺ tek açık → resmi inceleme</span>
+                            <span style={{ marginLeft: 'auto' }}>NRF / QSR standardı</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── § KASA AÇIKLARI LOGu (>20₺) ── */}
+                  <div style={{ padding: '14px 16px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>📋 Kasa Açıkları Logu</span>
+                      <span style={{ fontSize: 11, color: 'var(--text3)' }}>Son 30 gün · 20₺ üstü tüm açıklar</span>
+                      {acikList.length > 0 && (
+                        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>{acikList.length} kayıt</span>
+                      )}
+                    </div>
+
+                    {acikList.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '12px 0', fontSize: 12, color: '#4ade80', fontWeight: 600 }}>
+                        ✓ Son 30 günde 20₺+ kasa açığı yok
+                      </div>
+                    ) : (
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                          <thead>
+                            <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                              {['Tarih', 'Şube', 'Kasiyer', 'Beklenti', 'Beyan', 'Açık', 'Seviye'].map(h => (
+                                <th key={h} style={{ padding: '5px 8px', textAlign: h === 'Tarih' || h === 'Şube' || h === 'Kasiyer' ? 'left' : 'right', fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {acikList.map((a, i) => {
+                              const abs = Math.abs(Number(a.fark_tl || 0));
+                              const renkTxt = abs >= 200 ? '#fca5a5' : abs >= 50 ? '#fdba74' : '#fde68a';
+                              return (
+                                <tr key={`al-${a.id || i}`} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)' }}>
+                                  <td style={{ padding: '6px 8px', color: 'var(--text3)', whiteSpace: 'nowrap' }}>{a.tarih}</td>
+                                  <td style={{ padding: '6px 8px', fontWeight: 600 }}>{a.sube_adi}</td>
+                                  <td style={{ padding: '6px 8px' }}>{a.personel_ad}</td>
+                                  <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'monospace', color: 'var(--text2)' }}>{fmt(a.beklenen_tl ?? 0)}</td>
+                                  <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'monospace', color: 'var(--text2)' }}>{fmt(a.gercek_tl ?? 0)}</td>
+                                  <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, color: renkTxt }}>{a.fark_tl > 0 ? '+' : ''}{fmt(a.fark_tl ?? 0)}</td>
+                                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                                    <span style={{ fontSize: 10, fontWeight: 700, color: renkTxt, background: abs >= 200 ? 'rgba(220,38,38,0.15)' : abs >= 50 ? 'rgba(240,128,64,0.15)' : 'rgba(234,179,8,0.15)', borderRadius: 4, padding: '1px 6px' }}>
+                                      {abs >= 200 ? 'Kritik' : abs >= 50 ? 'Uyarı' : 'Normal'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              );
+            })()}
 
           </div>
         );
