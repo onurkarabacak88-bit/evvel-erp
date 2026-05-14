@@ -8945,6 +8945,288 @@ def ops_v2_sube_depo(sube_id: str):
     return {"sube_id": sube_id, "stok": rows, "alarm_sayisi": len(alarmlar)}
 
 
+# ══════════════════════════════════════════════════════════════════════
+# MALIYET & FOOD COST ALT YAPISI
+# Kahve zinciri CFO standardı: Food Cost % = Tüketim TL / Ciro TL
+# Benchmark: %28–35 arası sağlıklı, üstü soruştur
+# Tablolar şimdi kurulur, veriler alış fiyatı + reçete girildikçe dolar.
+# ══════════════════════════════════════════════════════════════════════
+
+def _ensure_maliyet_tablolari(cur: Any) -> None:
+    """
+    Maliyet analizi için gerekli 3 tabloyu oluşturur.
+
+    1. urun_alis_fiyat  — hammadde/ürün alış birim maliyeti (tedarikçi fiyat listesi)
+    2. urun_recete      — ürün başına hammadde tüketimi (standart reçete)
+    3. sube_food_cost_gun — günlük şube bazlı food cost snapshot
+
+    Alış fiyatları girilmeden food cost hesaplanamaz.
+    Reçete tanımlanmadan teorik maliyet hesaplanamaz.
+    """
+    # Alış fiyatları — hangi kalemin birim maliyeti ne
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS urun_alis_fiyat (
+            id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            kalem_kodu          TEXT NOT NULL,
+            kalem_adi           TEXT,
+            birim               TEXT NOT NULL DEFAULT 'adet',
+            birim_maliyet_tl    NUMERIC(12,4) NOT NULL,
+            gecerli_baslangic   DATE NOT NULL DEFAULT CURRENT_DATE,
+            gecerli_bitis       DATE,
+            tedarikci           TEXT,
+            notlar              TEXT,
+            olusturan           TEXT,
+            created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_alis_fiyat_kalem_tarih
+        ON urun_alis_fiyat(kalem_kodu, gecerli_baslangic DESC)
+    """)
+
+    # Reçete — hangi üründe hangi hammadde ne kadar kullanılır
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS urun_recete (
+            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            urun_id         TEXT NOT NULL,
+            urun_adi        TEXT,
+            hammadde_kodu   TEXT NOT NULL,
+            hammadde_adi    TEXT,
+            miktar          NUMERIC(10,4) NOT NULL,
+            birim           TEXT NOT NULL DEFAULT 'adet',
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE(urun_id, hammadde_kodu)
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_recete_urun
+        ON urun_recete(urun_id)
+    """)
+
+    # Günlük food cost snapshot — hesaplanmış, raporlama için saklanır
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sube_food_cost_gun (
+            id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            sube_id             TEXT NOT NULL,
+            tarih               DATE NOT NULL,
+            ciro_tl             NUMERIC(12,2),
+            teorik_maliyet_tl   NUMERIC(12,2),
+            gercek_maliyet_tl   NUMERIC(12,2),
+            food_cost_pct       NUMERIC(6,4),
+            shrinkage_tl        NUMERIC(12,2),
+            shrinkage_pct       NUMERIC(6,4),
+            stok_degeri_tl      NUMERIC(12,2),
+            hesaplama_ts        TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(sube_id, tarih)
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_food_cost_sube_tarih
+        ON sube_food_cost_gun(sube_id, tarih DESC)
+    """)
+
+
+@router.get("/maliyet/ozet")
+def ops_maliyet_ozet(
+    gun: int = Query(30, ge=1, le=365),
+    sube_id: Optional[str] = Query(None),
+):
+    """
+    Food Cost & Maliyet Özeti.
+    Altyapı hazır — alış fiyatları ve reçete tanımlandıkça veriler dolar.
+
+    Dönen yapı:
+      - altyapi_durum: hangi tablolar dolu, hangisi eksik
+      - gun_satirlari:  günlük food cost (sube_food_cost_gun tablosundan)
+      - alis_fiyat_sayisi: tanımlı fiyat kaydı adedi
+      - recete_sayisi:  tanımlı reçete adedi
+      - stok_degeri_tl: mevcut stok × birim maliyet (anlık)
+      - benchmark:      %28–35 kahve zinciri normu
+    """
+    with db() as (conn, cur):
+        _ensure_maliyet_tablolari(cur)
+
+        # Alış fiyatı kaç kalem tanımlı?
+        cur.execute("SELECT COUNT(*) AS n FROM urun_alis_fiyat WHERE gecerli_bitis IS NULL OR gecerli_bitis >= CURRENT_DATE")
+        alis_fiyat_sayisi = int((cur.fetchone() or {}).get("n") or 0)
+
+        # Reçete kaç ürün tanımlı?
+        cur.execute("SELECT COUNT(DISTINCT urun_id) AS n FROM urun_recete")
+        recete_sayisi = int((cur.fetchone() or {}).get("n") or 0)
+
+        # Canlı stok değeri: sube_depo_stok × urun_alis_fiyat
+        stok_filtre = "AND ds.sube_id = %s" if sube_id else ""
+        stok_params = [sube_id] if sube_id else []
+        cur.execute(
+            f"""
+            SELECT
+                COALESCE(SUM(ds.mevcut_adet * COALESCE(
+                    (SELECT af.birim_maliyet_tl
+                     FROM urun_alis_fiyat af
+                     WHERE af.kalem_kodu = ds.kalem_kodu
+                       AND (af.gecerli_bitis IS NULL OR af.gecerli_bitis >= CURRENT_DATE)
+                     ORDER BY af.gecerli_baslangic DESC LIMIT 1),
+                    ds.alis_fiyati_tl,
+                    0
+                )), 0) AS toplam_stok_degeri_tl,
+                COUNT(DISTINCT ds.sube_id) AS sube_sayisi,
+                COUNT(*) AS kalem_sayisi
+            FROM sube_depo_stok ds
+            WHERE ds.mevcut_adet > 0
+            {stok_filtre}
+            """,
+            stok_params,
+        )
+        stok_row = dict(cur.fetchone() or {})
+
+        # Geçmiş food cost kayıtları
+        fc_filtre = "AND sube_id = %s" if sube_id else ""
+        fc_params: list = [gun]
+        if sube_id:
+            fc_params.append(sube_id)
+        cur.execute(
+            f"""
+            SELECT
+                fcg.tarih,
+                COALESCE(s.ad, fcg.sube_id) AS sube_adi,
+                fcg.sube_id,
+                fcg.ciro_tl,
+                fcg.teorik_maliyet_tl,
+                fcg.gercek_maliyet_tl,
+                fcg.food_cost_pct,
+                fcg.shrinkage_tl,
+                fcg.shrinkage_pct,
+                fcg.stok_degeri_tl,
+                fcg.hesaplama_ts
+            FROM sube_food_cost_gun fcg
+            LEFT JOIN subeler s ON s.id = fcg.sube_id
+            WHERE fcg.tarih >= CURRENT_DATE - (%s || ' days')::interval
+            {fc_filtre}
+            ORDER BY fcg.tarih DESC, fcg.sube_id
+            """,
+            fc_params,
+        )
+        gun_satirlari = []
+        for r in cur.fetchall():
+            d = dict(r)
+            if d.get("tarih"):
+                d["tarih"] = str(d["tarih"])
+            if d.get("hesaplama_ts"):
+                d["hesaplama_ts"] = d["hesaplama_ts"].isoformat()
+            gun_satirlari.append(d)
+
+        # Altyapı durum raporu
+        altyapi_durum = {
+            "tablolar_hazir": True,
+            "alis_fiyat_girildi": alis_fiyat_sayisi > 0,
+            "recete_tanimli": recete_sayisi > 0,
+            "food_cost_hesaplandi": len(gun_satirlari) > 0,
+            "eksikler": [],
+        }
+        if not altyapi_durum["alis_fiyat_girildi"]:
+            altyapi_durum["eksikler"].append("Alış fiyatları girilmeli (Fiyat Listesi sekmesi)")
+        if not altyapi_durum["recete_tanimli"]:
+            altyapi_durum["eksikler"].append("Ürün reçeteleri tanımlanmalı (Reçete sekmesi)")
+        if not altyapi_durum["food_cost_hesaplandi"]:
+            altyapi_durum["eksikler"].append("Henüz hesaplanmış food cost kaydı yok")
+
+    return {
+        "gun": gun,
+        "altyapi_durum": altyapi_durum,
+        "alis_fiyat_sayisi": alis_fiyat_sayisi,
+        "recete_sayisi": recete_sayisi,
+        "stok_degeri_tl": float(stok_row.get("toplam_stok_degeri_tl") or 0),
+        "stok_kalem_sayisi": int(stok_row.get("kalem_sayisi") or 0),
+        "gun_satirlari": gun_satirlari,
+        "benchmark": {
+            "food_cost_min_pct": 28,
+            "food_cost_max_pct": 35,
+            "shrinkage_izleme_pct": 2,
+            "shrinkage_sorusturma_pct": 5,
+            "aciklama": "Kahve zinciri NRF/QSR standardı",
+        },
+    }
+
+
+@router.get("/maliyet/alis-fiyatlari")
+def ops_maliyet_alis_fiyatlari():
+    """Tanımlı alış fiyatlarını listeler."""
+    with db() as (conn, cur):
+        _ensure_maliyet_tablolari(cur)
+        cur.execute("""
+            SELECT id, kalem_kodu, kalem_adi, birim, birim_maliyet_tl,
+                   gecerli_baslangic, gecerli_bitis, tedarikci, notlar
+            FROM urun_alis_fiyat
+            ORDER BY kalem_adi, gecerli_baslangic DESC
+        """)
+        rows = [dict(r) for r in cur.fetchall()]
+        for r in rows:
+            if r.get("gecerli_baslangic"): r["gecerli_baslangic"] = str(r["gecerli_baslangic"])
+            if r.get("gecerli_bitis"):     r["gecerli_bitis"]     = str(r["gecerli_bitis"])
+    return {"satirlar": rows, "toplam": len(rows)}
+
+
+class AlisFiyatBody(BaseModel):
+    kalem_kodu: str
+    kalem_adi: Optional[str] = None
+    birim: str = "adet"
+    birim_maliyet_tl: float
+    gecerli_baslangic: Optional[str] = None
+    tedarikci: Optional[str] = None
+    notlar: Optional[str] = None
+
+
+@router.post("/maliyet/alis-fiyat-kaydet")
+def ops_maliyet_alis_fiyat_kaydet(body: AlisFiyatBody):
+    """Yeni alış fiyatı kaydeder veya günceller."""
+    kalem = str(body.kalem_kodu or "").strip()
+    if not kalem:
+        raise HTTPException(400, "kalem_kodu zorunlu")
+    if body.birim_maliyet_tl < 0:
+        raise HTTPException(400, "birim_maliyet_tl negatif olamaz")
+    bas = body.gecerli_baslangic or str(date.today())
+    with db() as (conn, cur):
+        _ensure_maliyet_tablolari(cur)
+        # Önceki geçerli kaydı kapat
+        cur.execute(
+            "UPDATE urun_alis_fiyat SET gecerli_bitis = %s WHERE kalem_kodu = %s AND gecerli_bitis IS NULL AND gecerli_baslangic < %s",
+            (bas, kalem, bas),
+        )
+        cur.execute(
+            """
+            INSERT INTO urun_alis_fiyat
+                (kalem_kodu, kalem_adi, birim, birim_maliyet_tl, gecerli_baslangic, tedarikci, notlar)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+            RETURNING id
+            """,
+            (kalem, body.kalem_adi or kalem, body.birim, round(body.birim_maliyet_tl, 4),
+             bas, body.tedarikci, body.notlar),
+        )
+        new_id = str((cur.fetchone() or {}).get("id") or "")
+    return {"success": True, "id": new_id, "kalem_kodu": kalem}
+
+
+@router.get("/maliyet/recete-listesi")
+def ops_maliyet_recete_listesi():
+    """Reçete tanımlarını listeler."""
+    with db() as (conn, cur):
+        _ensure_maliyet_tablolari(cur)
+        cur.execute("""
+            SELECT urun_id, urun_adi,
+                   json_agg(json_build_object(
+                       'hammadde_kodu', hammadde_kodu,
+                       'hammadde_adi', hammadde_adi,
+                       'miktar', miktar,
+                       'birim', birim
+                   ) ORDER BY hammadde_adi) AS hammaddeler
+            FROM urun_recete
+            GROUP BY urun_id, urun_adi
+            ORDER BY urun_adi
+        """)
+        rows = [dict(r) for r in cur.fetchall()]
+    return {"receteler": rows, "toplam": len(rows)}
+
+
 @router.get("/stok-hareketleri")
 def ops_stok_hareketleri(
     gun: int = Query(30, ge=1, le=365),

@@ -316,6 +316,10 @@ const UST_SEKMELER = [
   { id: 'sevkiyat-uyumsuzluk', label: '🚚 Sevkiyat uyumsuzlukları' },
   { id: 'magaza-kartlari', label: '🏪 Depo stokları' },
   { id: 'stok-hareketi', label: '📋 Stok Hareketi' },
+  { id: 'food-cost-ozet', label: '💰 Food Cost Özeti' },
+  { id: 'alis-fiyatlari', label: '🏷 Alış Fiyatları' },
+  { id: 'recete', label: '📐 Reçete' },
+  { id: 'shrinkage', label: '📉 Shrinkage' },
   { id: 'kontrol', label: '🔍 Kontrol' },
   { id: 'guvenlik-alarmlar', label: '🚨 Güvenlik Alarmları' },
   { id: 'metrics', label: '📊 KPI Paneli' },
@@ -352,6 +356,10 @@ const OPS_MODUL_BOLUM = {
   'sevkiyat-uyumsuzluk': [{ id: 'icerik', label: 'Liste' }],
   'magaza-kartlari': [{ id: 'icerik', label: 'Şubeler' }],
   'stok-hareketi': [{ id: 'icerik', label: 'Hareket Defteri' }],
+  'food-cost-ozet': [{ id: 'icerik', label: 'Özet' }],
+  'alis-fiyatlari': [{ id: 'icerik', label: 'Fiyat Listesi' }],
+  'recete': [{ id: 'icerik', label: 'Reçete Tanımları' }],
+  'shrinkage': [{ id: 'icerik', label: 'Shrinkage Raporu' }],
   metrics: [
     { id: 'personel', label: 'Personel verimlilik' },
     { id: 'sube', label: 'Şube operasyon' },
@@ -414,6 +422,11 @@ const OPS_HUB_RENK = {
   'stok-disiplin': '#e85d5d',
   'siparis-gecmis': '#94a3b8',
   'gec-acan-personel': '#0ea5a4',
+  'stok-hareketi': '#64748b',
+  'food-cost-ozet': '#16a34a',
+  'alis-fiyatlari': '#15803d',
+  'recete': '#166534',
+  'shrinkage': '#dc2626',
 };
 
 /** 29 eski tab → 7 Dünya standardı modül (kahve zinciri / hizmet sektörü mantığı) */
@@ -466,6 +479,13 @@ const MODULLER = [
     renk: '#6366f1',
     desc: 'KPI paneli, şube performans analizi ve stok tahmin/planlama',
     tabs: ['metrics', 'analitik', 'stok-tahmin'],
+  },
+  {
+    id: 'maliyet-cfo',
+    label: '💰 Maliyet & Food Cost',
+    renk: '#16a34a',
+    desc: 'Food cost %, alış fiyatları, reçete maliyeti ve shrinkage analizi — CFO izleme merkezi',
+    tabs: ['food-cost-ozet', 'alis-fiyatlari', 'recete', 'shrinkage'],
   },
 ];
 
@@ -2192,6 +2212,13 @@ export default function OperasyonMerkezi() {
   const [stokHareketGun, setStokHareketGun] = useState(30);
   const [stokHareketSubeFiltre, setStokHareketSubeFiltre] = useState('');
   const [stokHareketTurFiltre, setStokHareketTurFiltre] = useState('');
+
+  // Maliyet & Food Cost
+  const [maliyetOzet, setMaliyetOzet] = useState(null);
+  const [maliyetYukleniyor, setMaliyetYukleniyor] = useState(false);
+  const [maliyetGun, setMaliyetGun] = useState(30);
+  const [alisFiyatlari, setAlisFiyatlari] = useState([]);
+  const [receteler, setReceteler] = useState([]);
   const [personelVardiyaUyumBugun, setPersonelVardiyaUyumBugun] = useState({ tarih: '', toplam: 0, kayitlar: [] });
   const [personelVardiyaUyumBugunYukleniyor, setPersonelVardiyaUyumBugunYukleniyor] = useState(false);
   const [personelVardiyaUyumAramaTarih, setPersonelVardiyaUyumAramaTarih] = useState(bugunIsoTarih());
@@ -3579,6 +3606,23 @@ export default function OperasyonMerkezi() {
       .catch((e) => toast(e.message || 'Personel kasa analizi yüklenemedi'))
       .finally(() => { setKasaAcikAnalizYukleniyor(false); setYukleniyor(false); });
   }, [aktifSekme, toast]);
+
+  useEffect(() => {
+    if (!['food-cost-ozet', 'alis-fiyatlari', 'recete', 'shrinkage'].includes(aktifSekme)) return;
+    setMaliyetYukleniyor(true);
+    Promise.all([
+      api(`/ops/maliyet/ozet?gun=${maliyetGun}`),
+      api('/ops/maliyet/alis-fiyatlari'),
+      api('/ops/maliyet/recete-listesi'),
+    ])
+      .then(([ozet, fiyatlar, rec]) => {
+        setMaliyetOzet(ozet || null);
+        setAlisFiyatlari(fiyatlar?.satirlar || []);
+        setReceteler(rec?.receteler || []);
+      })
+      .catch((e) => toast(e.message || 'Maliyet verisi yüklenemedi'))
+      .finally(() => setMaliyetYukleniyor(false));
+  }, [aktifSekme, maliyetGun, toast]);
 
   useEffect(() => {
     if (aktifSekme !== 'stok-hareketi') return;
@@ -9419,6 +9463,222 @@ export default function OperasyonMerkezi() {
                 </div>
               )}
             </div>
+
+          </div>
+        );
+      })()}
+
+      {['food-cost-ozet', 'alis-fiyatlari', 'recete', 'shrinkage'].includes(aktifSekme) && (() => {
+        const durum = maliyetOzet?.altyapi_durum || {};
+        const benchmark = maliyetOzet?.benchmark || {};
+        const gunSatirlari = maliyetOzet?.gun_satirlari || [];
+        const stokDegeri = maliyetOzet?.stok_degeri_tl || 0;
+        const alisCount = maliyetOzet?.alis_fiyat_sayisi || 0;
+        const receteCount = maliyetOzet?.recete_sayisi || 0;
+        const eksikler = durum?.eksikler || [];
+
+        // Hesaplanmış metrikler
+        const avgFoodCost = gunSatirlari.length > 0
+          ? gunSatirlari.filter(r => r.food_cost_pct).reduce((s, r) => s + Number(r.food_cost_pct || 0), 0) / gunSatirlari.filter(r => r.food_cost_pct).length
+          : null;
+        const avgShrinkage = gunSatirlari.length > 0
+          ? gunSatirlari.filter(r => r.shrinkage_pct).reduce((s, r) => s + Number(r.shrinkage_pct || 0), 0) / gunSatirlari.filter(r => r.shrinkage_pct).length
+          : null;
+
+        const fcRenk = avgFoodCost == null ? 'var(--text3)'
+          : avgFoodCost > benchmark.food_cost_max_pct ? '#ef4444'
+          : avgFoodCost < benchmark.food_cost_min_pct ? '#f59e0b'
+          : '#22c55e';
+
+        const shrinkRenk = avgShrinkage == null ? 'var(--text3)'
+          : avgShrinkage > benchmark.shrinkage_sorusturma_pct ? '#ef4444'
+          : avgShrinkage > benchmark.shrinkage_izleme_pct ? '#f97316'
+          : '#22c55e';
+
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+            {/* Başlık + açıklama */}
+            <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(22,163,74,.08)', border: '1px solid rgba(22,163,74,.25)', fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
+              <strong style={{ display: 'block', fontSize: 13, marginBottom: 4, color: '#16a34a' }}>💰 Maliyet & Food Cost — CFO İzleme Merkezi</strong>
+              Kahve zinciri CFO standardı: <strong>Food Cost % = Tüketim TL / Ciro TL</strong>.
+              Benchmark <strong>%{benchmark.food_cost_min_pct}–{benchmark.food_cost_max_pct}</strong> arası sağlıklı.
+              Alış fiyatları ve reçete tanımlandıkça bu kart otomatik dolar.
+            </div>
+
+            {/* Altyapı durum banner */}
+            {eksikler.length > 0 && (
+              <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(234,179,8,.08)', border: '1px solid rgba(234,179,8,.3)', fontSize: 12 }}>
+                <strong style={{ color: '#b45309' }}>⚙️ Altyapı hazır — şu adımlar tamamlandıkça hesaplamalar aktif olur:</strong>
+                <ul style={{ margin: '6px 0 0 16px', padding: 0, color: 'var(--text2)' }}>
+                  {eksikler.map((e, i) => <li key={i}>{e}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {/* 4 ana metrik kartı */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+              {[
+                {
+                  baslik: 'Food Cost %',
+                  deger: avgFoodCost != null ? `%${avgFoodCost.toFixed(1)}` : '—',
+                  alt: avgFoodCost != null ? `Benchmark %${benchmark.food_cost_min_pct}–${benchmark.food_cost_max_pct}` : 'Alış fiyatı ve reçete gerekli',
+                  renk: fcRenk, ikon: '🍽',
+                },
+                {
+                  baslik: 'Canlı Stok Değeri',
+                  deger: stokDegeri > 0 ? `₺${Number(stokDegeri).toLocaleString('tr-TR', { maximumFractionDigits: 0 })}` : '—',
+                  alt: stokDegeri > 0 ? `${maliyetOzet?.stok_kalem_sayisi || 0} kalem` : 'Alış fiyatı girilmeli',
+                  renk: stokDegeri > 0 ? '#16a34a' : 'var(--text3)', ikon: '📦',
+                },
+                {
+                  baslik: 'Shrinkage %',
+                  deger: avgShrinkage != null ? `%${avgShrinkage.toFixed(2)}` : '—',
+                  alt: avgShrinkage != null ? (avgShrinkage > benchmark.shrinkage_sorusturma_pct ? '⚠️ Soruştur' : avgShrinkage > benchmark.shrinkage_izleme_pct ? '👁 İzle' : '✓ Normal') : 'Hesaplanmadı',
+                  renk: shrinkRenk, ikon: '📉',
+                },
+                {
+                  baslik: 'Tanımlı Reçete',
+                  deger: receteCount > 0 ? `${receteCount} ürün` : '—',
+                  alt: alisCount > 0 ? `${alisCount} fiyat tanımlı` : 'Fiyat girilmeli',
+                  renk: receteCount > 0 ? '#16a34a' : 'var(--text3)', ikon: '📐',
+                },
+              ].map((m, i) => (
+                <div key={i} style={{ padding: '14px 16px', borderRadius: 10, border: `1px solid ${m.renk}30`, background: `${m.renk}08` }}>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>{m.ikon} {m.baslik}</div>
+                  <div style={{ fontSize: 26, fontWeight: 800, color: m.renk, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>{m.deger}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 5 }}>{m.alt}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Benchmark referans şeridi */}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {[
+                { label: 'Food Cost %28–35', aciklama: 'Sağlıklı aralık', renk: '#22c55e' },
+                { label: 'FC >%35', aciklama: 'Maliyet soruştur', renk: '#f97316' },
+                { label: 'Shrinkage <%2', aciklama: 'Normal kayıp', renk: '#22c55e' },
+                { label: 'Shrinkage %2–5', aciklama: 'İzle', renk: '#f97316' },
+                { label: 'Shrinkage >%5', aciklama: 'Soruştur', renk: '#ef4444' },
+              ].map((b, i) => (
+                <div key={i} style={{ padding: '4px 10px', borderRadius: 20, border: `1px solid ${b.renk}40`, background: `${b.renk}10`, fontSize: 11 }}>
+                  <span style={{ fontWeight: 700, color: b.renk }}>{b.label}</span>
+                  <span style={{ color: 'var(--text3)', marginLeft: 4 }}>→ {b.aciklama}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Sekme içerikleri */}
+            {aktifSekme === 'food-cost-ozet' && (
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10 }}>📅 Günlük Food Cost Geçmişi</div>
+                {gunSatirlari.length === 0 ? (
+                  <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>
+                    {maliyetYukleniyor ? 'Yükleniyor…' : 'Henüz hesaplanmış kayıt yok. Alış fiyatları ve reçete tanımlandıktan sonra her gece otomatik hesaplanacak.'}
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ background: 'var(--bg2)', borderBottom: '2px solid var(--border)' }}>
+                          {['Tarih', 'Şube', 'Ciro', 'Teorik Maliyet', 'Gerçek Maliyet', 'Food Cost %', 'Shrinkage', 'Stok Değeri'].map(h => (
+                            <th key={h} style={{ padding: '7px 10px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text2)', whiteSpace: 'nowrap' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {gunSatirlari.map((r, i) => {
+                          const fc = Number(r.food_cost_pct || 0) * 100;
+                          const fcR = fc > 35 ? '#ef4444' : fc < 28 ? '#f59e0b' : '#22c55e';
+                          return (
+                            <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: i%2===0?'transparent':'var(--bg2)' }}>
+                              <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontSize: 11, color: 'var(--text3)' }}>{r.tarih}</td>
+                              <td style={{ padding: '6px 10px', fontWeight: 600 }}>{r.sube_adi}</td>
+                              <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>₺{Number(r.ciro_tl||0).toLocaleString('tr-TR',{maximumFractionDigits:0})}</td>
+                              <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>₺{Number(r.teorik_maliyet_tl||0).toLocaleString('tr-TR',{maximumFractionDigits:0})}</td>
+                              <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>₺{Number(r.gercek_maliyet_tl||0).toLocaleString('tr-TR',{maximumFractionDigits:0})}</td>
+                              <td style={{ padding: '6px 10px', fontWeight: 700, color: fcR }}>{fc > 0 ? `%${fc.toFixed(1)}` : '—'}</td>
+                              <td style={{ padding: '6px 10px', color: Number(r.shrinkage_pct||0)*100 > 2 ? '#f97316' : 'var(--text2)' }}>
+                                {r.shrinkage_tl != null ? `₺${Number(r.shrinkage_tl).toFixed(0)}` : '—'}
+                              </td>
+                              <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums', color: 'var(--text3)' }}>
+                                {r.stok_degeri_tl ? `₺${Number(r.stok_degeri_tl).toLocaleString('tr-TR',{maximumFractionDigits:0})}` : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {aktifSekme === 'alis-fiyatlari' && (
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>🏷 Alış Fiyat Listesi</div>
+                <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(234,179,8,.07)', border: '1px solid rgba(234,179,8,.3)', fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
+                  Her kalem için güncel birim alış maliyetini buraya gir. Bu fiyatlar stok değeri ve food cost hesabında kullanılır.
+                  Fiyat değiştiğinde yeni kayıt ekle — eski kayıt arşivlenir, geçmiş analizler bozulmaz.
+                </div>
+                {alisFiyatlari.length === 0 ? (
+                  <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>
+                    Henüz fiyat girilmemiş. Bu alan üzerinden ciddi çalışmaya başladığınızda fiyat giriş formu buraya eklenecek.
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ background: 'var(--bg2)', borderBottom: '2px solid var(--border)' }}>
+                          {['Kalem', 'Birim', 'Birim Maliyet', 'Geçerlilik', 'Tedarikçi'].map(h => (
+                            <th key={h} style={{ padding: '7px 10px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text2)' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {alisFiyatlari.map((r, i) => (
+                          <tr key={r.id || i} style={{ borderBottom: '1px solid var(--border)', background: i%2===0?'transparent':'var(--bg2)' }}>
+                            <td style={{ padding: '6px 10px', fontWeight: 600 }}>{r.kalem_adi || r.kalem_kodu}</td>
+                            <td style={{ padding: '6px 10px', color: 'var(--text3)' }}>{r.birim}</td>
+                            <td style={{ padding: '6px 10px', fontWeight: 700, color: '#16a34a', fontVariantNumeric: 'tabular-nums' }}>₺{Number(r.birim_maliyet_tl||0).toFixed(4)}</td>
+                            <td style={{ padding: '6px 10px', fontSize: 11, color: 'var(--text3)' }}>{r.gecerli_baslangic}{r.gecerli_bitis ? ` → ${r.gecerli_bitis}` : ' →'}</td>
+                            <td style={{ padding: '6px 10px', color: 'var(--text3)' }}>{r.tedarikci || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {aktifSekme === 'recete' && (
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>📐 Ürün Reçeteleri</div>
+                <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(22,163,74,.07)', border: '1px solid rgba(22,163,74,.25)', fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
+                  Her satılan ürün için hammadde tüketimi tanımlanır. Reçete × satış adedi = teorik maliyet.
+                  Gerçek stok düşüşünden fazlası shrinkage (fire/kayıp/hırsızlık).
+                </div>
+                <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>
+                  {receteler.length === 0
+                    ? 'Henüz reçete tanımlanmamış. Ciddi çalışma aşamasında sipariş kataloğundaki her ürüne reçete bağlanacak.'
+                    : `${receteler.length} ürün reçetesi tanımlı.`}
+                </div>
+              </div>
+            )}
+
+            {aktifSekme === 'shrinkage' && (
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>📉 Shrinkage Raporu</div>
+                <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(220,38,38,.07)', border: '1px solid rgba(220,38,38,.25)', fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
+                  <strong>Shrinkage = Teorik Tüketim − Gerçek Stok Düşüşü.</strong> Pozitif = fire/hırsızlık/ölçüm hatası.
+                  NRF standardı: %2 altı normal, %2–5 izle, %5 üstü soruştur.
+                </div>
+                <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>
+                  Alış fiyatları ve reçete tanımlandıktan sonra shrinkage otomatik hesaplanacak.
+                </div>
+              </div>
+            )}
 
           </div>
         );
