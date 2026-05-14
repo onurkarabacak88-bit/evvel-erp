@@ -2217,6 +2217,9 @@ export default function OperasyonMerkezi() {
   const [maliyetOzet, setMaliyetOzet] = useState(null);
   const [maliyetYukleniyor, setMaliyetYukleniyor] = useState(false);
   const [maliyetGun, setMaliyetGun] = useState(30);
+  const [foodCostHesaplaYukleniyor, setFoodCostHesaplaYukleniyor] = useState(false);
+  const [foodCostHesaplaSonuc, setFoodCostHesaplaSonuc] = useState(null);
+  const [foodCostHesaplaTarih, setFoodCostHesaplaTarih] = useState(() => new Date().toISOString().slice(0, 10));
   const [alisFiyatlari, setAlisFiyatlari] = useState([]);
   const [receteler, setReceteler] = useState([]);
 
@@ -9580,50 +9583,118 @@ export default function OperasyonMerkezi() {
             </div>
 
             {/* Sekme içerikleri */}
-            {aktifSekme === 'food-cost-ozet' && (
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10 }}>📅 Günlük Food Cost Geçmişi</div>
-                {gunSatirlari.length === 0 ? (
-                  <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>
-                    {maliyetYukleniyor ? 'Yükleniyor…' : 'Henüz hesaplanmış kayıt yok. Alış fiyatları ve reçete tanımlandıktan sonra her gece otomatik hesaplanacak.'}
+            {aktifSekme === 'food-cost-ozet' && (() => {
+              const hesaplaGunluk = () => {
+                setFoodCostHesaplaYukleniyor(true);
+                setFoodCostHesaplaSonuc(null);
+                api('/ops/maliyet/food-cost-hesapla', {
+                  method: 'POST',
+                  body: JSON.stringify({ tarih: foodCostHesaplaTarih }),
+                })
+                  .then(d => {
+                    setFoodCostHesaplaSonuc(d);
+                    toast(`✅ ${d.hesaplanan_satir} şube hesaplandı`);
+                    // Özet kartlarını yenile
+                    return Promise.all([
+                      api(`/ops/maliyet/ozet?gun=${maliyetGun}`),
+                      api('/ops/maliyet/alis-fiyatlari'),
+                      api('/ops/maliyet/recete-listesi'),
+                    ]);
+                  })
+                  .then(([ozet, fiyatlar, rec]) => {
+                    if (ozet) setMaliyetOzet(ozet);
+                    if (fiyatlar) setAlisFiyatlari(fiyatlar?.satirlar || []);
+                    if (rec) setReceteler(rec?.receteler || []);
+                  })
+                  .catch(e => toast(e.message || 'Hesaplama hatası'))
+                  .finally(() => setFoodCostHesaplaYukleniyor(false));
+              };
+
+              // Tabloda gösterilecek kayıtlar: hesaplama sonucu varsa onu, yoksa DB geçmişi
+              const gosterilecekler = foodCostHesaplaSonuc?.satirlar?.length
+                ? foodCostHesaplaSonuc.satirlar
+                : gunSatirlari;
+              const kaynakHesaplama = !!foodCostHesaplaSonuc?.satirlar?.length;
+
+              return (
+                <div>
+                  {/* Hesaplama Paneli */}
+                  <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 16px', marginBottom: 14 }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 10, color: '#16a34a' }}>🔄 Manuel Hesaplama</div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                      <div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>Tarih</div>
+                        <input
+                          type="date"
+                          value={foodCostHesaplaTarih}
+                          onChange={e => setFoodCostHesaplaTarih(e.target.value)}
+                          style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 12 }}
+                        />
+                      </div>
+                      <button
+                        disabled={foodCostHesaplaYukleniyor}
+                        onClick={hesaplaGunluk}
+                        style={{ padding: '7px 18px', borderRadius: 6, border: 'none', background: '#16a34a', color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer', opacity: foodCostHesaplaYukleniyor ? .6 : 1 }}
+                      >{foodCostHesaplaYukleniyor ? '⏳ Hesaplanıyor…' : '▶ Hesapla'}</button>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', alignSelf: 'center' }}>
+                        Seçili güne ait açılış/kapanış stok ve ciro verilerinden teorik maliyet hesaplar → tabloya yazar.
+                      </div>
+                    </div>
+                    {foodCostHesaplaSonuc && (
+                      <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 7, background: foodCostHesaplaSonuc.uyari ? 'rgba(234,179,8,.1)' : 'rgba(22,163,74,.08)', border: `1px solid ${foodCostHesaplaSonuc.uyari ? 'rgba(234,179,8,.4)' : 'rgba(22,163,74,.25)'}`, fontSize: 11 }}>
+                        {foodCostHesaplaSonuc.uyari
+                          ? `⚠️ ${foodCostHesaplaSonuc.uyari}`
+                          : `✅ ${foodCostHesaplaSonuc.hesaplanan_satir} şube · ${foodCostHesaplaSonuc.hesaplanan_gun} gün hesaplandı ve tabloya yazıldı.`}
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                      <thead>
-                        <tr style={{ background: 'var(--bg2)', borderBottom: '2px solid var(--border)' }}>
-                          {['Tarih', 'Şube', 'Ciro', 'Teorik Maliyet', 'Gerçek Maliyet', 'Food Cost %', 'Shrinkage', 'Stok Değeri'].map(h => (
-                            <th key={h} style={{ padding: '7px 10px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text2)', whiteSpace: 'nowrap' }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {gunSatirlari.map((r, i) => {
-                          const fc = Number(r.food_cost_pct || 0) * 100;
-                          const fcR = fc > 35 ? '#ef4444' : fc < 28 ? '#f59e0b' : '#22c55e';
-                          return (
-                            <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: i%2===0?'transparent':'var(--bg2)' }}>
-                              <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontSize: 11, color: 'var(--text3)' }}>{r.tarih}</td>
-                              <td style={{ padding: '6px 10px', fontWeight: 600 }}>{r.sube_adi}</td>
-                              <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>₺{Number(r.ciro_tl||0).toLocaleString('tr-TR',{maximumFractionDigits:0})}</td>
-                              <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>₺{Number(r.teorik_maliyet_tl||0).toLocaleString('tr-TR',{maximumFractionDigits:0})}</td>
-                              <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>₺{Number(r.gercek_maliyet_tl||0).toLocaleString('tr-TR',{maximumFractionDigits:0})}</td>
-                              <td style={{ padding: '6px 10px', fontWeight: 700, color: fcR }}>{fc > 0 ? `%${fc.toFixed(1)}` : '—'}</td>
-                              <td style={{ padding: '6px 10px', color: Number(r.shrinkage_pct||0)*100 > 2 ? '#f97316' : 'var(--text2)' }}>
-                                {r.shrinkage_tl != null ? `₺${Number(r.shrinkage_tl).toFixed(0)}` : '—'}
-                              </td>
-                              <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums', color: 'var(--text3)' }}>
-                                {r.stok_degeri_tl ? `₺${Number(r.stok_degeri_tl).toLocaleString('tr-TR',{maximumFractionDigits:0})}` : '—'}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+
+                  {/* Tablo */}
+                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
+                    📅 {kaynakHesaplama ? 'Hesaplama Sonucu' : `Son ${maliyetGun} Günlük Food Cost Geçmişi`}
                   </div>
-                )}
-              </div>
-            )}
+                  {gosterilecekler.length === 0 ? (
+                    <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>
+                      {maliyetYukleniyor ? 'Yükleniyor…' : 'Kayıt yok. Tarih seç → Hesapla butonuna bas.'}
+                    </div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                        <thead>
+                          <tr style={{ background: 'var(--bg2)', borderBottom: '2px solid var(--border)' }}>
+                            {['Tarih', 'Şube', 'Ciro', 'Teorik Maliyet', 'Food Cost %', 'Stok Değeri', 'Alış Fiyatlı Kalem'].map(h => (
+                              <th key={h} style={{ padding: '7px 10px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text2)', whiteSpace: 'nowrap' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {gosterilecekler.map((r, i) => {
+                            // DB kayıtları food_cost_pct decimal (0.32), hesaplama sonucu % (32.0)
+                            const fcRaw = kaynakHesaplama ? Number(r.food_cost_pct || 0) : Number(r.food_cost_pct || 0) * 100;
+                            const fcR = fcRaw > 35 ? '#ef4444' : fcRaw > 0 && fcRaw < 28 ? '#f59e0b' : fcRaw > 0 ? '#22c55e' : 'var(--text3)';
+                            return (
+                              <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: i%2===0?'transparent':'var(--bg2)' }}>
+                                <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontSize: 11, color: 'var(--text3)' }}>{r.tarih}</td>
+                                <td style={{ padding: '6px 10px', fontWeight: 600 }}>{r.sube_adi || r.sube_id}</td>
+                                <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>₺{Number(r.ciro_tl||0).toLocaleString('tr-TR',{maximumFractionDigits:0})}</td>
+                                <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>₺{Number(r.teorik_maliyet_tl||0).toLocaleString('tr-TR',{maximumFractionDigits:0})}</td>
+                                <td style={{ padding: '6px 10px', fontWeight: 700, color: fcR }}>{fcRaw > 0 ? `%${fcRaw.toFixed(1)}` : '—'}</td>
+                                <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums', color: 'var(--text3)' }}>
+                                  {r.stok_degeri_tl != null ? `₺${Number(r.stok_degeri_tl).toLocaleString('tr-TR',{maximumFractionDigits:0})}` : '—'}
+                                </td>
+                                <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text3)' }}>
+                                  {r.fiyatli_kalem_sayisi != null ? r.fiyatli_kalem_sayisi : '—'}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {aktifSekme === 'alis-fiyatlari' && (
               <div>

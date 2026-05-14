@@ -9287,6 +9287,321 @@ def ops_maliyet_recete_sil(urun_id: str):
     return {"success": True, "urun_id": urun}
 
 
+# ─── Food Cost Günlük Hesaplama Motoru ────────────────────────────────────────
+
+def _alis_fiyat_haritasi(cur: Any) -> Dict[str, float]:
+    """
+    urun_alis_fiyat tablosundan güncel (gecerli_bitis IS NULL veya >= bugün)
+    fiyatları döner: {kalem_kodu: birim_maliyet_tl}
+    Aynı kalem için birden fazla aktif kayıt varsa en son başlangıç tarihi alınır.
+    """
+    cur.execute("""
+        SELECT DISTINCT ON (kalem_kodu)
+               kalem_kodu, birim_maliyet_tl
+        FROM urun_alis_fiyat
+        WHERE gecerli_bitis IS NULL OR gecerli_bitis >= CURRENT_DATE
+        ORDER BY kalem_kodu, gecerli_baslangic DESC
+    """)
+    return {str(r["kalem_kodu"]): float(r["birim_maliyet_tl"] or 0) for r in cur.fetchall()}
+
+
+def _depo_alis_fiyat_haritasi(cur: Any) -> Dict[str, float]:
+    """
+    sube_depo_stok.alis_fiyati_tl — fallback fiyat kaynağı.
+    Kalem başına şubeler arası en büyük fiyatı döner (tutarsız kaçının).
+    """
+    try:
+        cur.execute("SAVEPOINT sp_depo_alis_fiyat")
+        cur.execute("""
+            SELECT kalem_kodu, MAX(alis_fiyati_tl) AS alis_fiyati_tl
+            FROM sube_depo_stok
+            WHERE alis_fiyati_tl > 0
+            GROUP BY kalem_kodu
+        """)
+        rows = {str(r["kalem_kodu"]): float(r["alis_fiyati_tl"] or 0) for r in cur.fetchall()}
+        cur.execute("RELEASE SAVEPOINT sp_depo_alis_fiyat")
+        return rows
+    except Exception:
+        cur.execute("ROLLBACK TO SAVEPOINT sp_depo_alis_fiyat")
+        return {}
+
+
+def _food_cost_hesapla_gun(
+    cur: Any,
+    tarih_str: str,
+    sube_id_filtre: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Belirli bir gün için tüm (veya tek) şubenin food cost hesabını yapar ve
+    sube_food_cost_gun tablosuna yazar.
+
+    Algoritma:
+      kullanim[k] = acilis_stok[k] + urun_ac[k] - kapanis_stok[k]   (max 0)
+      teorik_maliyet = Σ kullanim[k] × alis_fiyati[k]
+      stok_degeri_tl = Σ kapanis_stok[k] × alis_fiyati[k]
+      food_cost_pct  = teorik_maliyet / ciro_tl  (null if ciro=0)
+
+    Returns: hesaplanan satır listesi (sube başına 1 satır)
+    """
+    hedef = date.fromisoformat(str(tarih_str)[:10])
+    _ensure_maliyet_tablolari(cur)
+
+    # ── 1. Alış fiyatları (önce urun_alis_fiyat, sonra sube_depo_stok fallback) ──
+    alis_fiyat = _alis_fiyat_haritasi(cur)
+    if not alis_fiyat:
+        alis_fiyat = _depo_alis_fiyat_haritasi(cur)
+    # BAR_KEYS'deki tüm kalemler için fiyat haritası — 0 ise maliyet hesaplanamaz
+    fiyat: Dict[str, float] = {k: alis_fiyat.get(k, 0.0) for k in _BAR_KEYS}
+
+    # ── 2. Şubeleri belirle ──
+    sube_filtre = "AND e.sube_id = %s" if sube_id_filtre else ""
+    sube_params = [sube_id_filtre] if sube_id_filtre else []
+
+    # ── 3. ACILIS stok sayımları ──
+    cur.execute(
+        f"""
+        SELECT DISTINCT ON (e.sube_id)
+               e.sube_id::text, e.meta AS acilis_meta
+        FROM sube_operasyon_event e
+        WHERE e.tip = 'ACILIS'
+          AND e.tarih = %s
+          AND e.durum IN ('tamamlandi', 'onaylandi')
+          {sube_filtre}
+        ORDER BY e.sube_id, e.cevap_ts DESC NULLS LAST, e.id DESC
+        """,
+        [hedef, *sube_params],
+    )
+    acilis_rows: Dict[str, Dict[str, int]] = {}
+    for r in cur.fetchall():
+        sid = str(r["sube_id"])
+        acilis_rows[sid] = _bar_stok_from_meta(r.get("acilis_meta"), "acilis_stok_sayim")
+
+    if not acilis_rows:
+        return []  # O gün açılış kaydı yok
+
+    # ── 4. KAPANIS stok sayımları ──
+    kapanis_rows: Dict[str, Dict[str, int]] = {}
+    try:
+        cur.execute("SAVEPOINT sp_fc_kapanis")
+        cur.execute(
+            f"""
+            SELECT DISTINCT ON (e.sube_id)
+                   e.sube_id::text, e.meta AS kapanis_meta
+            FROM sube_operasyon_event e
+            WHERE e.tip = 'KAPANIS'
+              AND e.tarih = %s
+              AND e.durum = 'tamamlandi'
+              {sube_filtre}
+            ORDER BY e.sube_id, e.cevap_ts DESC NULLS LAST, e.id DESC
+            """,
+            [hedef, *sube_params],
+        )
+        for r in cur.fetchall():
+            sid = str(r["sube_id"])
+            kapanis_rows[sid] = _bar_stok_from_meta(r.get("kapanis_meta"), "kapanis_stok_sayim")
+        cur.execute("RELEASE SAVEPOINT sp_fc_kapanis")
+    except Exception:
+        cur.execute("ROLLBACK TO SAVEPOINT sp_fc_kapanis")
+
+    # Fallback: sube_operasyon_ozet.kapanis_stok_json
+    if not kapanis_rows:
+        try:
+            cur.execute("SAVEPOINT sp_fc_ozet_kapanis")
+            cur.execute(
+                f"""
+                SELECT o.sube_id::text, o.kapanis_stok_json
+                FROM sube_operasyon_ozet o
+                WHERE o.tarih = %s AND o.kapanis_stok_json IS NOT NULL
+                {sube_filtre}
+                """,
+                [hedef, *sube_params],
+            )
+            for r in cur.fetchall():
+                sid = str(r["sube_id"])
+                raw = r.get("kapanis_stok_json") or {}
+                if isinstance(raw, str):
+                    try:
+                        import json as _jfc; raw = _jfc.loads(raw)
+                    except Exception:
+                        raw = {}
+                if raw:
+                    kapanis_rows[sid] = {k: max(0, int(raw.get(k) or 0)) for k in _BAR_KEYS}
+            cur.execute("RELEASE SAVEPOINT sp_fc_ozet_kapanis")
+        except Exception:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_fc_ozet_kapanis")
+
+    # ── 5. URUN_AC toplamları ──
+    urun_ac_map: Dict[str, Dict[str, int]] = {}
+    cur.execute(
+        f"""
+        SELECT sube_id::text, aciklama
+        FROM operasyon_defter
+        WHERE etiket = 'URUN_AC'
+          AND (olay_ts AT TIME ZONE 'Europe/Istanbul')::date = %s
+          {'AND sube_id = %s' if sube_id_filtre else ''}
+        """,
+        [hedef, *sube_params],
+    )
+    for r in cur.fetchall():
+        sid = str(r["sube_id"])
+        delta = _urun_ac_delta_parse(r["aciklama"] or "")
+        entry = urun_ac_map.setdefault(sid, {k: 0 for k in _BAR_KEYS})
+        for k, v in delta.items():
+            entry[k] = entry.get(k, 0) + v
+
+    # ── 6. Ciro ──
+    cur.execute(
+        f"""
+        SELECT sube_id::text, toplam AS ciro_tl
+        FROM ciro
+        WHERE tarih = %s AND durum = 'aktif'
+        {'AND sube_id = %s' if sube_id_filtre else ''}
+        """,
+        [hedef, *sube_params],
+    )
+    ciro_map: Dict[str, float] = {str(r["sube_id"]): float(r["ciro_tl"] or 0) for r in cur.fetchall()}
+
+    # Fallback: ciro_taslak (onaylı veya bekliyor)
+    if not ciro_map:
+        try:
+            cur.execute(
+                f"""
+                SELECT DISTINCT ON (sube_id)
+                       sube_id::text,
+                       (COALESCE(nakit,0) + COALESCE(pos,0) + COALESCE(online,0)) AS ciro_tl
+                FROM ciro_taslak
+                WHERE tarih = %s AND durum IN ('onaylandi','bekliyor')
+                {'AND sube_id = %s' if sube_id_filtre else ''}
+                ORDER BY sube_id, CASE durum WHEN 'onaylandi' THEN 0 ELSE 1 END, olusturma DESC
+                """,
+                [hedef, *sube_params],
+            )
+            for r in cur.fetchall():
+                sid = str(r["sube_id"])
+                if sid not in ciro_map:
+                    ciro_map[sid] = float(r["ciro_tl"] or 0)
+        except Exception:
+            pass
+
+    # ── 7. Şube isim haritası ──
+    cur.execute("SELECT id::text, ad FROM subeler")
+    sube_adlari: Dict[str, str] = {str(r["id"]): str(r["ad"] or "") for r in cur.fetchall()}
+
+    # ── 8. Her şube için hesapla ve yaz ──
+    sonuclar: List[Dict[str, Any]] = []
+    for sid in acilis_rows:
+        acilis  = acilis_rows[sid]
+        kapanis = kapanis_rows.get(sid, {})
+        urun_ac = urun_ac_map.get(sid, {k: 0 for k in _BAR_KEYS})
+        ciro_tl = ciro_map.get(sid, 0.0)
+
+        teorik_maliyet = 0.0
+        stok_degeri_tl  = 0.0
+        kapanis_var = bool(kapanis)
+
+        for k in _BAR_KEYS:
+            fp = fiyat.get(k, 0.0)
+            if fp <= 0:
+                continue
+            a  = acilis.get(k, 0)
+            u  = urun_ac.get(k, 0)
+            kp = kapanis.get(k, 0)
+            kullanim = max(0, a + u - kp)
+            teorik_maliyet += kullanim * fp
+            stok_degeri_tl  += kp * fp
+
+        food_cost_pct = round(teorik_maliyet / ciro_tl, 6) if ciro_tl > 0 else None
+
+        # UPSERT → sube_food_cost_gun
+        cur.execute(
+            """
+            INSERT INTO sube_food_cost_gun
+                (sube_id, tarih, ciro_tl, teorik_maliyet_tl, food_cost_pct,
+                 stok_degeri_tl, hesaplama_ts)
+            VALUES (%s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (sube_id, tarih) DO UPDATE
+                SET ciro_tl           = EXCLUDED.ciro_tl,
+                    teorik_maliyet_tl = EXCLUDED.teorik_maliyet_tl,
+                    food_cost_pct     = EXCLUDED.food_cost_pct,
+                    stok_degeri_tl    = EXCLUDED.stok_degeri_tl,
+                    hesaplama_ts      = NOW()
+            """,
+            (sid, hedef,
+             round(ciro_tl, 2),
+             round(teorik_maliyet, 2),
+             food_cost_pct,
+             round(stok_degeri_tl, 2)),
+        )
+
+        sonuclar.append({
+            "sube_id":          sid,
+            "sube_adi":         sube_adlari.get(sid, sid),
+            "tarih":            str(hedef),
+            "ciro_tl":          round(ciro_tl, 2),
+            "teorik_maliyet_tl": round(teorik_maliyet, 2),
+            "food_cost_pct":    round(food_cost_pct * 100, 2) if food_cost_pct else None,
+            "stok_degeri_tl":   round(stok_degeri_tl, 2),
+            "kapanis_var":      kapanis_var,
+            "fiyatli_kalem_sayisi": sum(1 for k in _BAR_KEYS if fiyat.get(k, 0) > 0),
+        })
+
+    return sonuclar
+
+
+class FoodCostHesaplaBody(BaseModel):
+    tarih: Optional[str] = None        # YYYY-MM-DD, boş = bugün
+    tarih_bitis: Optional[str] = None  # Aralık için bitiş; boş = tarih ile aynı
+    sube_id: Optional[str] = None
+
+
+@router.post("/maliyet/food-cost-hesapla")
+def ops_food_cost_hesapla(body: FoodCostHesaplaBody = None):
+    """
+    Food cost hesaplama motoru — manuel veya otomatik tetikleyici.
+
+    Verilen tarih aralığı için:
+      1. Açılış/kapanış stok sayımlarından günlük tüketim hesaplar
+      2. Alış fiyatlarıyla çarpar → teorik maliyet
+      3. Ciro ile böler → food cost %
+      4. sube_food_cost_gun tablosuna yazar (UPSERT)
+
+    body: { tarih, tarih_bitis, sube_id }  — hepsi opsiyonel
+    """
+    body = body or FoodCostHesaplaBody()
+    bas_str = (body.tarih or str(date.today()))[:10]
+    bit_str = (body.tarih_bitis or bas_str)[:10]
+    bas = date.fromisoformat(bas_str)
+    bit = date.fromisoformat(bit_str)
+    if (bit - bas).days > 90:
+        raise HTTPException(400, "Aralık 90 günü geçemez")
+
+    gun_listesi = []
+    d = bas
+    while d <= bit:
+        gun_listesi.append(d)
+        d += timedelta(days=1)
+
+    with db() as (conn, cur):
+        _ensure_maliyet_tablolari(cur)
+        # Alış fiyatı var mı kontrol
+        cur.execute("SELECT COUNT(*) AS n FROM urun_alis_fiyat WHERE gecerli_bitis IS NULL OR gecerli_bitis >= CURRENT_DATE")
+        alis_fiyat_sayisi = int((cur.fetchone() or {}).get("n") or 0)
+
+        tum_sonuclar = []
+        for gun in gun_listesi:
+            satirlar = _food_cost_hesapla_gun(cur, str(gun), body.sube_id)
+            tum_sonuclar.extend(satirlar)
+
+    return {
+        "success": True,
+        "hesaplanan_gun": len(gun_listesi),
+        "hesaplanan_satir": len(tum_sonuclar),
+        "alis_fiyat_sayisi": alis_fiyat_sayisi,
+        "uyari": None if alis_fiyat_sayisi > 0 else "Alış fiyatı girilmemiş — teorik maliyet sıfır hesaplandı",
+        "satirlar": tum_sonuclar,
+    }
+
+
 @router.get("/stok-hareketleri")
 def ops_stok_hareketleri(
     gun: int = Query(30, ge=1, le=365),
