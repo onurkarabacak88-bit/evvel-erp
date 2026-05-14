@@ -3599,7 +3599,7 @@ def ops_personel_davranis_analiz(
         qu = """
             SELECT sube_id, tarih, ABS(COALESCE(fark_tl, 0)) AS abs_fark
             FROM sube_operasyon_uyari
-            WHERE tip='ACILIS_KASA_FARK'
+            WHERE tip IN ('ACILIS_KASA_FARK', 'KAPANIS_KASA_FARK')
               AND tarih >= (CURRENT_DATE - (%s * INTERVAL '1 day'))
         """
         qup: List[Any] = [gun_sayi]
@@ -5295,7 +5295,7 @@ def ops_bekleyen_merkez(
                    ) AS kapanis_yapildi
             FROM sube_operasyon_uyari u
             JOIN subeler s ON s.id = u.sube_id
-            WHERE u.tip='ACILIS_KASA_FARK'
+            WHERE u.tip IN ('ACILIS_KASA_FARK', 'KAPANIS_KASA_FARK')
               AND u.okundu=FALSE
               AND to_char(u.tarih, 'YYYY-MM') = %s
         """
@@ -5448,12 +5448,12 @@ def ops_kasa_uyumsuzluk_listesi(
                 (
                     SELECT COALESCE(SUM(ABS(u7.fark_tl)), 0) FROM sube_operasyon_uyari u7
                     WHERE u7.sube_id = u.sube_id
-                      AND u7.tip = 'ACILIS_KASA_FARK'
+                      AND u7.tip IN ('ACILIS_KASA_FARK', 'KAPANIS_KASA_FARK')
                       AND u7.tarih >= CURRENT_DATE - INTERVAL '7 days'
                 ) AS son_7g_toplam
             FROM sube_operasyon_uyari u
             LEFT JOIN subeler s ON s.id = u.sube_id
-            WHERE u.tip = 'ACILIS_KASA_FARK'
+            WHERE u.tip IN ('ACILIS_KASA_FARK', 'KAPANIS_KASA_FARK')
               AND u.tarih = %s
               AND ABS(COALESCE(u.fark_tl, 0)) >= %s
               AND (%s = FALSE OR u.okundu = FALSE)

@@ -5281,6 +5281,7 @@ export default function OperasyonMerkezi() {
                   const tipLabel = u.tip === 'DAVRANIS' ? '📦 Stok Davranışı'
                     : u.tip === 'KASA_FARK' ? '💰 Kasa Farkı'
                     : u.tip === 'ACILIS_KASA_FARK' ? '💰 Devir Farkı'
+                    : u.tip === 'KAPANIS_KASA_FARK' ? '🔍 Kapanış Kasa Açığı'
                     : u.tip === 'URUN_AC_UYUMSUZLUK' ? '📋 Ürün Aç'
                     : u.tip === 'ACILIS_VARDIYA_PERSONEL' ? '👤 Vardiya'
                     : u.tip || 'Uyarı';

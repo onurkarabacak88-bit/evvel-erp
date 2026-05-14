@@ -959,25 +959,70 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 audit_etiket="KAPANIS_TASLAK",
                 taslak_tarih=tarih_ev_ciro,
             )
+            # Devir zorunlu — kasiyer kör sayım yapıp kasada bıraktığı tutarı beyan eder
+            if body.devir is None or body.devir < 0:
+                raise HTTPException(400, "Kapanış: kasada bırakılan devir tutarı zorunludur (kör sayım)")
             teslim_f = max(0.0, float(body.teslim or 0))
-            ks_girdi = float(body.kasa_sayim) if body.kasa_sayim is not None else teslim_f
-            # Şube panelinde teslim/devir/sayımla tutarlılık denetimi yok; eski açılış–devir uyumsuzluğu vb. ayrı akışlarda kalır.
-            if body.devir is None:
-                ham_dev = round(ks_girdi - teslim_f, 2)
-                devir_kayit = max(0.0, ham_dev)
-            else:
-                devir_kayit = max(0.0, float(body.devir))
+            devir_kayit = round(float(body.devir), 2)
             ks = round(teslim_f + devir_kayit, 2)
             kasa_kime_teslim = (body.kasa_kime_teslim or "").strip()
+
+            # Sistem çapraz kontrolü: kasa_sayim − kapanış_teslim − bugünkü ara teslimler = beklenen devir
+            ks_girdi = float(body.kasa_sayim) if body.kasa_sayim is not None else ks
+            cur.execute(
+                """SELECT COALESCE(SUM(tutar), 0) AS ara_toplam
+                   FROM kasa_teslim
+                   WHERE sube_id=%s AND tarih=%s AND teslim_turu='ara'""",
+                (sube_id, tarih_ev_ciro),
+            )
+            ara_teslim_toplam = float((cur.fetchone() or {}).get("ara_toplam") or 0)
+            sistem_beklenen_devir = round(ks_girdi - teslim_f - ara_teslim_toplam, 2)
+            kasa_acigi = round(devir_kayit - sistem_beklenen_devir, 2)
+
             _meta_kapanis = {
                 "kapanis_stok_sayim": k_stok,
                 "x_rapor": {"nakit": cn, "pos": cp, "online": co},
                 "kasa_kime_teslim": kasa_kime_teslim,
+                "kasiyer_devir_beyan": devir_kayit,
+                "sistem_beklenen_devir": sistem_beklenen_devir,
+                "ara_teslim_toplam": ara_teslim_toplam,
+                "kasa_acigi": kasa_acigi,
             }
-            if abs(ks_girdi - ks) > 0.05:
-                # Şubeye hata dönülmez; merkez / rapor tarafı formdaki sayım ile kayıtlı tutarı karşılaştırabilir
-                _meta_kapanis["kapanis_kasa_sayim_form"] = round(ks_girdi, 2)
-                _meta_kapanis["kapanis_kasa_sayim_kayit"] = ks
+
+            # KAPANIS_KASA_FARK uyarısı — sadece merkez görür, kasiyer panelinde gösterilmez
+            if abs(kasa_acigi) > 0.01:
+                from operasyon_kurallar import tolerans_seviyesi
+                sev_kf = tolerans_seviyesi(kasa_acigi)
+                mesaj_kf = (
+                    f"Kapanış kasa açığı: {kasa_acigi:+,.2f} TL "
+                    f"(kasiyer beyan {devir_kayit:,.0f}₺ · sistem beklenti {sistem_beklenen_devir:,.0f}₺"
+                    + (f" · ara teslim {ara_teslim_toplam:,.0f}₺" if ara_teslim_toplam > 0 else "")
+                    + f", {sev_kf})"
+                )
+                cur.execute(
+                    "SELECT id FROM sube_operasyon_uyari WHERE sube_id=%s AND tarih=%s AND tip='KAPANIS_KASA_FARK' LIMIT 1",
+                    (sube_id, tarih_ev_ciro),
+                )
+                mevcut_kkf = cur.fetchone()
+                if mevcut_kkf:
+                    cur.execute(
+                        """UPDATE sube_operasyon_uyari
+                           SET seviye=%s, beklenen_tl=%s, gercek_tl=%s, fark_tl=%s, mesaj=%s,
+                               kapanis_personel_id=%s, kapanis_personel_ad=%s, okundu=FALSE
+                           WHERE id=%s""",
+                        (sev_kf, sistem_beklenen_devir, devir_kayit, kasa_acigi,
+                         mesaj_kf, pid_panel, onay_ad, mevcut_kkf["id"]),
+                    )
+                else:
+                    cur.execute(
+                        """INSERT INTO sube_operasyon_uyari
+                           (id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj,
+                            kapanis_personel_id, kapanis_personel_ad)
+                           VALUES (%s, %s, %s, 'KAPANIS_KASA_FARK', %s, %s, %s, %s, %s, %s, %s)""",
+                        (str(uuid.uuid4()), sube_id, tarih_ev_ciro,
+                         sev_kf, sistem_beklenen_devir, devir_kayit, kasa_acigi,
+                         mesaj_kf, pid_panel, onay_ad),
+                    )
             cur.execute(
                 """
                 UPDATE sube_operasyon_event

@@ -2327,7 +2327,11 @@
           <div class="form-group"><label>X POS (₺)</label><input id="kapP" inputmode="decimal" placeholder="0" /></div>
           <div class="form-group"><label>X Online (₺)</label><input id="kapO" inputmode="decimal" placeholder="0" /></div>
           <div class="form-group"><label>Teslim Kasa (₺)</label><input id="kapTeslim" inputmode="decimal" /></div>
-          <div class="form-group"><label>Devir (₺) — ertesi gün kasada kalacak</label><input id="kapDevir" inputmode="decimal" placeholder="0" /></div>
+          <div class="form-group">
+            <label>Devir (₺) — kasada bıraktığınız tutar <span style="color:var(--red)">*</span></label>
+            <input id="kapDevir" inputmode="decimal" placeholder="Zorunlu — kasayı sayıp girin" />
+            <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">Kasanızı bağımsız sayın ve bıraktığınız tutarı girin. Sistem kontrolü merkezde yapılır.</div>
+          </div>
           <div class="form-group"><label>Kasada sayılan toplam (₺)</label><input id="kapToplam" inputmode="decimal" placeholder="Boş bırakılabilir" /></div>
           <div class="form-group"><label>Kasa Kime Teslim</label><select id="kapKimeTeslim"></select></div>
           <button class="btn btn-primary btn-sm" id="kapNext1">Bardak Sayımına Geç</button>
@@ -2764,6 +2768,8 @@ var EVVEL_GONDER_ACK = 'evvel_gonder_ack_v2_';
 const URUN_AC_PERSONEL_CACHE_KEY = 'sube_panel_urun_ac_personel';
 const URUN_AC_LAST_ACTION_KEY = 'sube_panel_urun_ac_last_action';
 const URUN_AC_HATIR_KAPAT_KEY = 'sube_panel_urun_ac_hatir_kapat';
+/** Ürün Aç POST çift tıklama / yarış önleme */
+var urunAcApiInFlight = false;
 
 /** Adet / tutar: alanda sadece 0 varken odakta sıfır silinir; imleç en başta iken rakam «10» oluşturmasın diye 0 yerine yazar. PIN alanlarında çalışmaz. */
 (function panelSayiGirisSifirDuzelt() {
@@ -3130,6 +3136,7 @@ function wireKapanisStepFlow() {
   n1.onclick = function(){
     try {
       reqNum('kapTeslim', 'Teslim tutarı');
+      reqNum('kapDevir', 'Devir tutarı (kasada bıraktığınız miktar) zorunludur');
       var n = parseNum(inpVal('kapN')) || 0;
       var p2 = parseNum(inpVal('kapP')) || 0;
       var o = parseNum(inpVal('kapO')) || 0;
@@ -5016,7 +5023,9 @@ function resetAcilisWiz() {
 function buildAcilisWizFields() {
   var sunucu = lastData && lastData.operasyon ? (lastData.operasyon.sunucu_saati||'—') : '—';
   if (acilisWizStep===1) return (
-    '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">1 / 5 · Sunucu saati: <strong>'+escHtml(sunucu)+'</strong></p>' +
+    '<div style="display:inline-flex;align-items:center;gap:6px;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.3);color:#60a5fa;border-radius:6px;padding:6px 10px;font-size:11px;font-weight:700;letter-spacing:.04em;margin-bottom:10px">🔒 KÖR SAYIM</div>' +
+    '<p style="font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.5">Kasadaki parayı <strong>bağımsız olarak say</strong> — herhangi bir önceki tutara bakma. Sayım tamamlanınca sonuç gösterilir.</p>' +
+    '<p style="color:var(--muted);font-size:11px;margin-bottom:10px">1 / 5 · Sunucu saati: <strong>'+escHtml(sunucu)+'</strong></p>' +
     '<div class="form-group"><label>Kasa Sayımı (₺)</label><input id="awKasa" inputmode="decimal" autocomplete="off" placeholder="0" /></div>'
   );
   if (acilisWizStep===2) return (
@@ -5994,6 +6003,11 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
         body.pin = _pin;
       }
       if (extraFn) extraFn(body);
+      if (prefix === 'ac' && urunAcApiInFlight) {
+        setMsg(prefix + 'Msg', 'Kayıt zaten gönderiliyor, lütfen bekleyin.', 'msg-warn');
+        return;
+      }
+      if (prefix === 'ac') urunAcApiInFlight = true;
       await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + endpoint, {
         method: 'POST',
         body: body,
@@ -6061,6 +6075,7 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
       if (e.status===429) handle429(document.getElementById(prefix+'Msg'), e);
       else setMsg(prefix+'Msg', e.message||'Hata', 'msg-err');
     } finally {
+      if (prefix === 'ac') urunAcApiInFlight = false;
       // 1. BUG FIX: Hata olsa bile butonu tekrar tıklanabilir hale getir.
       btn.disabled = false;
     }
