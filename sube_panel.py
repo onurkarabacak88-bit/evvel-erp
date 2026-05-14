@@ -1066,20 +1066,43 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                 fark = round(ks - float(bek), 2)
                 if abs(fark) > 0.01:
                     sev = tolerans_seviyesi(fark)
-                    cur.execute(
-                        """
-                        INSERT INTO sube_operasyon_uyari
-                            (id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj,
-                             acilis_personel_id, acilis_personel_ad, kapanis_personel_id, kapanis_personel_ad)
-                        VALUES (%s, %s, CURRENT_DATE, 'ACILIS_KASA_FARK', %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            str(uuid.uuid4()), sube_id, sev,
-                            bek, ks, fark,
-                            f"Açılış kasası dün devirine göre fark: {fark:,.2f} TL ({sev})",
-                            pid, onay_ad, kap_pid, kap_pad,
-                        ),
+                    mesaj_kf = (
+                        f"Açılış kasası dün devirine göre fark: {fark:+,.2f} TL "
+                        f"(beklenen {bek:,.0f}₺ → gerçek {ks:,.0f}₺, {sev})"
                     )
+                    # Upsert: aynı gün için tek ACILIS_KASA_FARK kaydı (iki açılış yolu çakışmasın)
+                    cur.execute(
+                        "SELECT id FROM sube_operasyon_uyari "
+                        "WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='ACILIS_KASA_FARK' LIMIT 1",
+                        (sube_id,),
+                    )
+                    mevcut_kf = cur.fetchone()
+                    if mevcut_kf:
+                        cur.execute(
+                            """UPDATE sube_operasyon_uyari
+                               SET seviye=%s, beklenen_tl=%s, gercek_tl=%s, fark_tl=%s, mesaj=%s,
+                                   acilis_personel_id=%s, acilis_personel_ad=%s,
+                                   kapanis_personel_id=%s, kapanis_personel_ad=%s,
+                                   okundu=FALSE
+                               WHERE id=%s""",
+                            (sev, bek, ks, fark, mesaj_kf,
+                             pid, onay_ad, kap_pid, kap_pad,
+                             mevcut_kf["id"]),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            INSERT INTO sube_operasyon_uyari
+                                (id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj,
+                                 acilis_personel_id, acilis_personel_ad, kapanis_personel_id, kapanis_personel_ad)
+                            VALUES (%s, %s, CURRENT_DATE, 'ACILIS_KASA_FARK', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            (
+                                str(uuid.uuid4()), sube_id, sev,
+                                bek, ks, fark, mesaj_kf,
+                                pid, onay_ad, kap_pid, kap_pad,
+                            ),
+                        )
 
             # ── 2. STOK FARK KONTROLÜ ──
             bek_stok = beklenen_dunku_kapanis_stok(cur, sube_id)

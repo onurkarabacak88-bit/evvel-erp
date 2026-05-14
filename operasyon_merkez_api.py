@@ -561,7 +561,8 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
 
     cur.execute(
         """
-        SELECT u.id, u.tip, u.seviye, u.fark_tl, u.mesaj, u.okundu, u.olusturma,
+        SELECT u.id, u.tip, u.seviye, u.fark_tl, u.beklenen_tl, u.gercek_tl,
+               u.mesaj, u.okundu, u.olusturma,
                u.kalem_kodu, COALESCE(ds.kalem_adi, '') AS kalem_adi
         FROM sube_operasyon_uyari u
         LEFT JOIN sube_depo_stok ds ON ds.sube_id = u.sube_id AND ds.kalem_kodu = u.kalem_kodu
@@ -581,6 +582,10 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
             d["fark_tl"] = float(d["fark_tl"])
             if fark_tl is None and abs(float(d["fark_tl"])) > 0.01:
                 fark_tl = float(d["fark_tl"])
+        if d.get("beklenen_tl") is not None:
+            d["beklenen_tl"] = float(d["beklenen_tl"])
+        if d.get("gercek_tl") is not None:
+            d["gercek_tl"] = float(d["gercek_tl"])
         # DAVRANIS uyarılarında eski format düzelt: ürün adı mesaja ekle
         if d.get("tip") == "DAVRANIS" and d.get("kalem_adi"):
             mesaj = str(d.get("mesaj") or "")
@@ -1269,6 +1274,7 @@ def ops_dashboard(
         kasa_teslim_bugun_listesi = []
 
     # Kasa uyumsuzluk: dünün deviri ile bugünün açılış sayımı karşılaştır
+    # |fark| > 50 eşiği: zincir standardı (±50₺ tolerans bandı içi normal)
     kasa_uyumsuzluk_listesi: list = []
     try:
         with db() as (_, cur_ku):
@@ -1284,7 +1290,20 @@ def ops_dashboard(
                     (a.kasa_sayim - COALESCE(
                         k.devir,
                         GREATEST(0, COALESCE(k.kasa_sayim, 0) - COALESCE(k.teslim, 0))
-                    ))::float AS fark
+                    ))::float AS fark,
+                    -- Son 7 günde kaç kez fark oluştu (kronik takip)
+                    (
+                        SELECT COUNT(*) FROM sube_operasyon_uyari u7
+                        WHERE u7.sube_id = a.sube_id
+                          AND u7.tip = 'ACILIS_KASA_FARK'
+                          AND u7.tarih >= CURRENT_DATE - INTERVAL '7 days'
+                    ) AS son_7g_fark_adet,
+                    (
+                        SELECT COALESCE(SUM(ABS(u7.fark_tl)), 0) FROM sube_operasyon_uyari u7
+                        WHERE u7.sube_id = a.sube_id
+                          AND u7.tip = 'ACILIS_KASA_FARK'
+                          AND u7.tarih >= CURRENT_DATE - INTERVAL '7 days'
+                    ) AS son_7g_fark_toplam
                 FROM sube_operasyon_event a
                 LEFT JOIN subeler s ON s.id = a.sube_id
                 LEFT JOIN sube_operasyon_event k
@@ -1301,12 +1320,23 @@ def ops_dashboard(
                     )) > 50
             """, (ig_dash,))
             for row in (cur_ku.fetchall() or []):
+                fark_val = float(row.get("fark") or 0)
+                fark_abs = abs(fark_val)
+                if fark_abs >= 200:
+                    sev_ku = "kritik"
+                elif fark_abs >= 50:
+                    sev_ku = "uyari"
+                else:
+                    sev_ku = "normal"
                 kasa_uyumsuzluk_listesi.append({
                     "sube_id":    str(row.get("sube_id") or ""),
                     "sube_adi":   str(row.get("sube_adi") or ""),
                     "acilis_kasa": float(row.get("acilis_kasa") or 0),
                     "dun_devir":   float(row.get("dun_devir") or 0),
-                    "fark":        float(row.get("fark") or 0),
+                    "fark":        fark_val,
+                    "seviye":      sev_ku,
+                    "son_7g_fark_adet":   int(row.get("son_7g_fark_adet") or 0),
+                    "son_7g_fark_toplam": float(row.get("son_7g_fark_toplam") or 0),
                 })
     except Exception:
         kasa_uyumsuzluk_listesi = []
@@ -5377,6 +5407,78 @@ def ops_bekleyen_merkez(
             "kritik_kasa_personel": len(kritik_personeller),
             "eksik_kapanis": len(eksik_kapanis_bugun),
         },
+    }
+
+
+@router.get("/kasa-uyumsuzluk")
+def ops_kasa_uyumsuzluk_listesi(
+    tarih: Optional[str] = None,
+    sadece_bekleyen: bool = True,
+    min_fark: float = 0.01,
+):
+    """
+    Tüm şubelerin bekleyen ACILIS_KASA_FARK uyarılarını döner.
+    Merkez kasa fark çözüm kuyruğu (dashboard kasa_uyumsuzluk_listesi >50₺ eşiğinin
+    yanında küçük farkları da kapsayan tam liste).
+    - sadece_bekleyen=true → okundu=FALSE kayıtlar
+    - min_fark → abs(fark_tl) bu değerin üstündekiler (varsayılan: 0.01)
+    - tarih → YYYY-MM-DD; boşsa bugün (iş günü)
+    """
+    from tr_saat import is_gunu_tr
+    try:
+        hedef_tarih = date.fromisoformat(tarih) if tarih else is_gunu_tr()
+    except ValueError:
+        raise HTTPException(400, "Geçersiz tarih formatı (YYYY-MM-DD bekleniyor)")
+
+    with db() as (_, cur):
+        cur.execute(
+            """
+            SELECT
+                u.id, u.sube_id::text, COALESCE(s.ad, u.sube_id::text) AS sube_adi,
+                u.tarih, u.seviye, u.fark_tl, u.beklenen_tl, u.gercek_tl,
+                u.mesaj, u.okundu, u.olusturma,
+                u.acilis_personel_ad, u.kapanis_personel_ad,
+                -- 7-günlük kronik takip
+                (
+                    SELECT COUNT(*) FROM sube_operasyon_uyari u7
+                    WHERE u7.sube_id = u.sube_id
+                      AND u7.tip = 'ACILIS_KASA_FARK'
+                      AND u7.tarih >= CURRENT_DATE - INTERVAL '7 days'
+                ) AS son_7g_adet,
+                (
+                    SELECT COALESCE(SUM(ABS(u7.fark_tl)), 0) FROM sube_operasyon_uyari u7
+                    WHERE u7.sube_id = u.sube_id
+                      AND u7.tip = 'ACILIS_KASA_FARK'
+                      AND u7.tarih >= CURRENT_DATE - INTERVAL '7 days'
+                ) AS son_7g_toplam
+            FROM sube_operasyon_uyari u
+            LEFT JOIN subeler s ON s.id = u.sube_id
+            WHERE u.tip = 'ACILIS_KASA_FARK'
+              AND u.tarih = %s
+              AND ABS(COALESCE(u.fark_tl, 0)) >= %s
+              AND (%s = FALSE OR u.okundu = FALSE)
+            ORDER BY ABS(u.fark_tl) DESC NULLS LAST
+            """,
+            (hedef_tarih, min_fark, sadece_bekleyen),
+        )
+        rows = []
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            for k in ("fark_tl", "beklenen_tl", "gercek_tl", "son_7g_toplam"):
+                if d.get(k) is not None:
+                    d[k] = float(d[k])
+            d["son_7g_adet"] = int(d.get("son_7g_adet") or 0)
+            d["olusturma"] = str(d["olusturma"]) if d.get("olusturma") else None
+            d["tarih"] = str(d["tarih"]) if d.get("tarih") else None
+            rows.append(d)
+
+    return {
+        "tarih": str(hedef_tarih),
+        "sadece_bekleyen": sadece_bekleyen,
+        "min_fark": min_fark,
+        "toplam": len(rows),
+        "liste": rows,
+        "tolerans": {"normal_tl": 50, "uyari_tl": 200},
     }
 
 

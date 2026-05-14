@@ -689,7 +689,6 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 fark = round(ks - float(bek), 2)
                 if abs(fark) > 0.01:
                     sev = tolerans_seviyesi(fark)
-                    uid = str(uuid.uuid4())
                     kap_pid = None
                     kap_pad = None
                     cur.execute(
@@ -709,29 +708,53 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     if prev_kap:
                         kap_pid = (prev_kap.get("personel_id") or "").strip() or None
                         kap_pad = (prev_kap.get("personel_ad") or "").strip() or None
-                    cur.execute(
-                        """
-                        INSERT INTO sube_operasyon_uyari
-                            (
-                                id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj,
-                                acilis_personel_id, acilis_personel_ad, kapanis_personel_id, kapanis_personel_ad
-                            )
-                        VALUES (%s, %s, CURRENT_DATE, 'ACILIS_KASA_FARK', %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            uid,
-                            sube_id,
-                            sev,
-                            bek,
-                            ks,
-                            fark,
-                            f"Açılış kasası dün devirine göre fark: {fark:,.2f} TL ({sev})",
-                            pid_panel,
-                            onay_ad,
-                            kap_pid,
-                            kap_pad,
-                        ),
+                    mesaj_kf = (
+                        f"Açılış kasası dün devirine göre fark: {fark:+,.2f} TL "
+                        f"(beklenen {bek:,.0f}₺ → gerçek {ks:,.0f}₺, {sev})"
                     )
+                    # Upsert: aynı gün için tek ACILIS_KASA_FARK (panel + operasyon yolu çakışmasın)
+                    cur.execute(
+                        "SELECT id FROM sube_operasyon_uyari "
+                        "WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='ACILIS_KASA_FARK' LIMIT 1",
+                        (sube_id,),
+                    )
+                    mevcut_kf = cur.fetchone()
+                    if mevcut_kf:
+                        cur.execute(
+                            """UPDATE sube_operasyon_uyari
+                               SET seviye=%s, beklenen_tl=%s, gercek_tl=%s, fark_tl=%s, mesaj=%s,
+                                   acilis_personel_id=%s, acilis_personel_ad=%s,
+                                   kapanis_personel_id=%s, kapanis_personel_ad=%s,
+                                   okundu=FALSE
+                               WHERE id=%s""",
+                            (sev, bek, ks, fark, mesaj_kf,
+                             pid_panel, onay_ad, kap_pid, kap_pad,
+                             mevcut_kf["id"]),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            INSERT INTO sube_operasyon_uyari
+                                (
+                                    id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj,
+                                    acilis_personel_id, acilis_personel_ad, kapanis_personel_id, kapanis_personel_ad
+                                )
+                            VALUES (%s, %s, CURRENT_DATE, 'ACILIS_KASA_FARK', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            (
+                                str(uuid.uuid4()),
+                                sube_id,
+                                sev,
+                                bek,
+                                ks,
+                                fark,
+                                mesaj_kf,
+                                pid_panel,
+                                onay_ad,
+                                kap_pid,
+                                kap_pad,
+                            ),
+                        )
             operasyon_defter_ekle(
                 cur,
                 sube_id,
