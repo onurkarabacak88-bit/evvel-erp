@@ -2,6 +2,12 @@
 evobulut REST API entegrasyonu.
 Günlük satış verisi çeker → bar-ozet fiziksel sayımıyla karşılaştırır → fark alarmı üretir.
 
+evobulut REST API kuralları (dev.evobulut.com Postman collection'dan doğrulandı):
+  - Tüm istekler POST'tur, URL: https://ws.evobulut.com/api/{modül}/base/
+  - Token (UID) her isteğin JSON body'sinde gönderilir, header'da DEĞİL
+  - Login: POST /api/index/base/ {"cmd":"euas","p1":user,"p2":pass,"app":"..."}
+  - Token: response["veri"]["Ana"][0]["UID"]
+
 Env değişkenleri:
     EVO_KULLANICI  → evobulut kullanıcı adı (e-posta)
     EVO_SIFRE      → evobulut şifresi
@@ -12,7 +18,7 @@ import json
 import logging
 import os
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 import requests
 from fastapi import APIRouter, HTTPException, Query
@@ -32,7 +38,7 @@ EVO_PASS  = os.environ.get("EVO_SIFRE", "")
 # 1. TOKEN YÖNETİMİ
 # ─────────────────────────────────────────────
 
-_token_cache: Dict[str, Any] = {}   # {"token": str, "expires": datetime}
+_token_cache: Dict[str, Any] = {}
 
 
 def _token_al() -> str:
@@ -44,52 +50,57 @@ def _token_al() -> str:
     if not EVO_USER or not EVO_PASS:
         raise HTTPException(500, "EVO_KULLANICI veya EVO_SIFRE env değişkeni eksik")
 
-    # evobulut REST API: cmd="euas" (dev.evobulut.com Postman collection'dan doğrulandı)
     r = requests.post(
         f"{EVO_API}/index/base/",
-        json={
-            "cmd": "euas",
-            "p1":  EVO_USER,
-            "p2":  EVO_PASS,
-            "app": "evvel-erp",
-        },
+        json={"cmd": "euas", "p1": EVO_USER, "p2": EVO_PASS, "app": "evvel-erp"},
         timeout=15,
     )
     if r.status_code != 200:
         raise HTTPException(502, f"evobulut login başarısız: HTTP {r.status_code}")
 
     data = r.json()
-    # Cevap yapısı birkaç farklı şekilde gelebilir
-    token = None
-    if isinstance(data, dict) and "veri" in data:
-        veri = data["veri"]
-        if isinstance(veri, dict):
-            # {"veri": {"Ana": [{"UID": "..."}]}}
-            token = (veri.get("Ana") or [{}])[0].get("UID")
-        elif isinstance(veri, list) and veri:
-            # {"veri": [{"UID": "..."}]}
-            token = veri[0].get("UID") or veri[0].get("TokenUID")
-        else:
-            token = None
-    elif isinstance(data, list) and data:
-        item = data[0]
-        if isinstance(item, dict):
-            token = item.get("UID") or item.get("TokenUID")
-        elif isinstance(item, list) and item:
-            token = item[0].get("UID") if isinstance(item[0], dict) else None
-    elif isinstance(data, dict):
-        token = data.get("UID") or data.get("TokenUID")
-    if not token:
+    # Başarılı cevap: {"status":"OK","veri":{"Ana":[{"UID":"...","kullanici_kodu":"..."}]}}
+    if data.get("status") not in ("OK", None):
+        mesaj = ""
+        try:
+            mesaj = data["veri"]["Ana"][0].get("mesaj", "")
+        except Exception:
+            pass
+        raise HTTPException(502, f"evobulut login hata: {mesaj or data}")
+
+    try:
+        token = data["veri"]["Ana"][0]["UID"]
+    except (KeyError, IndexError, TypeError):
         raise HTTPException(502, f"evobulut token alınamadı: {data}")
 
     _token_cache["token"]   = token
-    _token_cache["expires"] = now + timedelta(hours=8)   # genellikle günlük geçerli
-    log.info("evobulut token alındı")
+    _token_cache["expires"] = now + timedelta(hours=8)
+    log.info("evobulut token alındı, kullanıcı: %s", EVO_USER)
     return token
 
 
-def _headers() -> dict:
-    return {"TokenUID": _token_al(), "Content-Type": "application/json"}
+def _evo_post(modul: str, body: dict) -> dict:
+    """
+    evobulut REST API generic POST.
+    Token'ı body'ye ekler, POST atar, status kontrolü yapar.
+    """
+    body["UID"] = _token_al()
+    r = requests.post(
+        f"{EVO_API}/{modul}/base/",
+        json=body,
+        timeout=20,
+    )
+    if r.status_code != 200:
+        raise HTTPException(502, f"evobulut /{modul} HTTP {r.status_code}")
+    data = r.json()
+    if isinstance(data, dict) and data.get("status") not in ("OK", None, ""):
+        mesaj = ""
+        try:
+            mesaj = data["veri"]["Ana"][0].get("mesaj", "")
+        except Exception:
+            pass
+        raise HTTPException(502, f"evobulut /{modul} hata: {mesaj or data.get('status')}")
+    return data
 
 
 # ─────────────────────────────────────────────
@@ -97,68 +108,90 @@ def _headers() -> dict:
 # ─────────────────────────────────────────────
 
 def _tarih_fmt(d: date) -> str:
-    """evobulut DD.MM.YYYY formatı bekliyor."""
+    """evobulut DD.MM.YYYY formatı."""
     return d.strftime("%d.%m.%Y")
 
 
-def evo_satis_cek(bastar: date, bittar: date, tip: int = 34) -> List[Dict]:
+def evo_fatura_listesi(bastar: date, bittar: date, tip: int = 34) -> List[Dict]:
     """
     Fatura listesini çeker.
-    tip=34 → Satış Fişi (hızlı satış)
+    tip=34 → Satış Fişi (hızlı satış / kasa)
     tip=31 → Satış Faturası
     """
-    params = {
-        "bastar": _tarih_fmt(bastar),
-        "bittar": _tarih_fmt(bittar),
-        "tip": tip,
-    }
-    r = requests.get(
-        f"{EVO_API}/FaturaListesi",
-        headers=_headers(),
-        params=params,
-        timeout=20,
-    )
-    if r.status_code != 200:
-        raise HTTPException(502, f"evobulut FaturaListesi hatası: HTTP {r.status_code}")
-    data = r.json()
-    if isinstance(data, list):
-        return data
-    return data.get("Rows") or data.get("rows") or []
+    data = _evo_post("fatura", {
+        "cmd":        "jq_list",
+        "sayfa":      "0",
+        "a_tur":      str(tip),
+        "a_tarih_bas": _tarih_fmt(bastar),
+        "a_tarih_son": _tarih_fmt(bittar),
+        "a_onay":     "",
+        "a_cari_id":  "",
+        "ara":        "",
+    })
+    veri = data.get("veri", {})
+    if isinstance(veri, dict):
+        return veri.get("Ana") or []
+    if isinstance(veri, list):
+        return veri
+    return []
 
 
-def evo_fatura_detay(fatura_id: str) -> List[Dict]:
-    """Bir faturanın satır detaylarını (ürün adedi) çeker."""
-    r = requests.get(
-        f"{EVO_API}/FaturaBilgisiGetir",
-        headers=_headers(),
-        params={"id": fatura_id},
-        timeout=15,
-    )
-    if r.status_code != 200:
-        return []
-    data = r.json()
-    if isinstance(data, list):
-        data = data[0] if data else {}
-    return data.get("satirlar") or data.get("Satirlar") or []
+def evo_fatura_detay(fatura_id: str) -> Dict:
+    """Bir faturanın tam detayını (satır kalemleri dahil) çeker."""
+    try:
+        data = _evo_post("fatura", {
+            "cmd":    "sql",
+            "sql_id": fatura_id,
+        })
+    except HTTPException:
+        return {}
+    veri = data.get("veri", [])
+    if isinstance(veri, list) and veri:
+        return veri[0]
+    if isinstance(veri, dict):
+        return veri
+    return {}
+
+
+def _satirlari_coz(detay: Dict) -> List[Dict]:
+    """Fatura detay cevabından satır kalemlerini çıkarır."""
+    # evobulut satırları farklı key'lerde dönebilir
+    for key in ("Det", "det", "Satirlar", "satirlar", "Satir", "satir"):
+        val = detay.get(key)
+        if val and isinstance(val, list):
+            return val
+    return []
 
 
 def evo_urun_bazli_satis(bastar: date, bittar: date) -> Dict[str, float]:
     """
-    Belirtilen tarih aralığında ürün adı → toplam satılan adet sözlüğü döndürür.
-    Fatura listesini çeker, her faturanın satırlarını toplar.
+    Tarih aralığında ürün adı → toplam satılan adet.
+    Satış fişleri (34) + satış faturaları (31) birleştirilir.
     """
-    faturalar = evo_satis_cek(bastar, bittar, tip=34)   # satış fişleri
-    faturalar += evo_satis_cek(bastar, bittar, tip=31)  # satış faturaları
+    faturalar: List[Dict] = []
+    for tip in (34, 31):
+        try:
+            faturalar += evo_fatura_listesi(bastar, bittar, tip=tip)
+        except HTTPException as e:
+            log.warning("Fatura listesi tip=%s alınamadı: %s", tip, e.detail)
 
     urun_toplam: Dict[str, float] = {}
     for f in faturalar:
-        fid = str(f.get("id") or f.get("ID") or f.get("a_id") or "")
+        fid = str(f.get("G.a_id") or f.get("a_id") or f.get("id") or "").strip()
         if not fid:
             continue
-        satirlar = evo_fatura_detay(fid)
+        detay   = evo_fatura_detay(fid)
+        satirlar = _satirlari_coz(detay)
         for s in satirlar:
-            ad  = str(s.get("stok_adi") or s.get("urun_adi") or s.get("a_adi") or "").strip()
-            mik = float(s.get("miktar") or s.get("Miktar") or 0)
+            ad  = str(
+                s.get("a_stok_adi") or s.get("stok_adi") or
+                s.get("a_adi")     or s.get("urun_adi") or ""
+            ).strip()
+            mik = 0.0
+            try:
+                mik = float(s.get("a_miktar") or s.get("miktar") or s.get("Miktar") or 0)
+            except (ValueError, TypeError):
+                pass
             if ad and mik > 0:
                 urun_toplam[ad] = urun_toplam.get(ad, 0) + mik
 
@@ -169,7 +202,7 @@ def evo_urun_bazli_satis(bastar: date, bittar: date) -> Dict[str, float]:
 # 3. FİZİKSEL SAYIM vs POS KARŞILAŞTIRMA
 # ─────────────────────────────────────────────
 
-# evobulut ürün adı → senin sistemindeki bar_key eşlemesi
+# evobulut ürün adı → sistemdeki bar_key eşlemesi
 _URUN_MAP: Dict[str, str] = {
     "Su":            "su_adet",
     "Redbull":       "redbull_adet",
@@ -178,7 +211,7 @@ _URUN_MAP: Dict[str, str] = {
     "Limonata":      "soda_adet",
     "Limonlu Soda":  "soda_adet",
     "Pasta":         "pasta_adet",
-    # kahve ürünleri → kahve_paket olarak say
+    # kahve
     "Türk Kahvesi":              "kahve_paket",
     "Filtre Kahve 14 Oz":        "kahve_paket",
     "Filtre Kahve 8 Oz":         "kahve_paket",
@@ -214,9 +247,7 @@ def pos_vs_fiziksel(
 ) -> List[Dict]:
     """
     evobulut POS satışı ile fiziksel açılış-kapanış farkını karşılaştırır.
-    Sonuç: her bar_key için {urun, pos_adet, fizik_adet, fark, fark_pct} listesi
     """
-    # Fiziksel satılan = bar-ozet hesabından
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -244,19 +275,18 @@ def pos_vs_fiziksel(
     acilis  = _stok(rows.get("ACILIS"),  "acilis_stok_sayim")
     kapanis = _stok(rows.get("KAPANIS"), "kapanis_stok_sayim")
 
-    # POS verisini bar_key'e çevir
+    # POS → bar_key
     pos_key: Dict[str, float] = {}
     for urun_adi, adet in evo_satis.items():
         key = _URUN_MAP.get(urun_adi)
         if key:
             pos_key[key] = pos_key.get(key, 0) + adet
 
-    # Karşılaştır
     sonuclar = []
     for key, pos_adet in pos_key.items():
-        a   = float(acilis.get(key) or 0)
+        a   = float(acilis.get(key)  or 0)
         k   = float(kapanis.get(key) or 0)
-        fiz = a - k   # fiziksel kullanım
+        fiz  = a - k
         fark = fiz - pos_adet
         fark_pct = abs(fark / pos_adet * 100) if pos_adet else 0
 
@@ -293,19 +323,6 @@ def evo_token_test():
         raise HTTPException(502, str(e))
 
 
-@router.get("/token-raw")
-def evo_token_raw():
-    """evobulut ham login cevabını döndürür (debug için)."""
-    if not EVO_USER or not EVO_PASS:
-        raise HTTPException(500, "EVO_KULLANICI veya EVO_SIFRE env değişkeni eksik")
-    r = requests.post(
-        f"{EVO_API}/index/base/",
-        json={"cmd": "euas", "p1": EVO_USER, "p2": EVO_PASS, "app": "evvel-erp"},
-        timeout=15,
-    )
-    return {"status_code": r.status_code, "body": r.json()}
-
-
 @router.get("/satis")
 def evo_satis_endpoint(
     bastar: str = Query(..., description="YYYY-MM-DD"),
@@ -320,21 +337,55 @@ def evo_satis_endpoint(
 
     satis = evo_urun_bazli_satis(b, e)
     return {
-        "bastar": bastar,
-        "bittar": bittar,
-        "toplam_urun": len(satis),
-        "satislar": satis,
+        "bastar":       bastar,
+        "bittar":       bittar,
+        "toplam_urun":  len(satis),
+        "satislar":     satis,
+    }
+
+
+@router.get("/fatura-listesi-ham")
+def evo_fatura_ham(
+    bastar: str = Query(..., description="YYYY-MM-DD"),
+    bittar: str = Query(..., description="YYYY-MM-DD"),
+    tip:    int = Query(34,  description="34=Satış Fişi, 31=Satış Faturası"),
+):
+    """Ham fatura listesini döndürür (field adlarını görmek için debug endpoint)."""
+    try:
+        b = date.fromisoformat(bastar)
+        e = date.fromisoformat(bittar)
+    except ValueError:
+        raise HTTPException(400, "Tarih formatı YYYY-MM-DD olmalı")
+    faturalar = evo_fatura_listesi(b, e, tip=tip)
+    ilk = faturalar[0] if faturalar else {}
+    return {
+        "toplam":      len(faturalar),
+        "ilk_kayit":   ilk,
+        "kolonlar":    list(ilk.keys()) if ilk else [],
+    }
+
+
+@router.get("/fatura-detay-ham")
+def evo_detay_ham(fatura_id: str = Query(...)):
+    """Tek fatura detayını döndürür (field adlarını görmek için debug endpoint)."""
+    detay    = evo_fatura_detay(fatura_id)
+    satirlar = _satirlari_coz(detay)
+    ilk_sat  = satirlar[0] if satirlar else {}
+    return {
+        "detay_kolonlar":  list(detay.keys()),
+        "satir_sayisi":    len(satirlar),
+        "ilk_satir":       ilk_sat,
+        "satir_kolonlari": list(ilk_sat.keys()) if ilk_sat else [],
     }
 
 
 @router.get("/karsilastir")
 def evo_karsilastir(
     sube_id: str = Query(...),
-    tarih: str   = Query(..., description="YYYY-MM-DD"),
+    tarih:   str = Query(..., description="YYYY-MM-DD"),
 ):
     """
-    Bir şubenin belirtilen günü için:
-    evobulut POS satışı vs fiziksel açılış-kapanış farkını karşılaştırır.
+    Bir şubenin belirtilen günü için evobulut POS vs fiziksel sayım karşılaştırması.
     """
     try:
         t = date.fromisoformat(tarih)
@@ -343,8 +394,8 @@ def evo_karsilastir(
 
     evo_satis = evo_urun_bazli_satis(t, t)
     sonuclar  = pos_vs_fiziksel(sube_id, t, evo_satis)
-
     alarm_var = any(s["durum"] != "ok" for s in sonuclar)
+
     return {
         "sube_id":   sube_id,
         "tarih":     tarih,
