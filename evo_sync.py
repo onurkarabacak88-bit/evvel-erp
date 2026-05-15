@@ -812,6 +812,13 @@ def evo_urun_probe(
     return {"durum": "bulunamadi", "denemeler": sonuclar}
 
 
+@router.get("/debug-token")
+def evo_debug_token():
+    """Geliştirme: evo_token değerini döndürür (browser enjeksiyonu için)."""
+    token, sunucu = _web_giris()
+    return {"evo_token": token, "sunucu": sunucu}
+
+
 @router.get("/debug-rest-raw")
 def evo_debug_rest_raw(
     modul: str = Query("fatura"),
