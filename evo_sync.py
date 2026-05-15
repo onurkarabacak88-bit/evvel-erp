@@ -84,14 +84,15 @@ def _token_al() -> str:
 # ─────────────────────────────────────────────
 
 _web_session: Dict[str, Any] = {}
+_web_http: Any = None   # requests.Session — cookie'leri taşır
 EVO_WEB = "https://web.evobulut.com"
 
 
 def _web_giris() -> tuple[str, str]:
     """
-    Web app'e giriş yaparak token ve sunucu URL'si alır.
-    Hızlı Satış verileri sadece internal .ashx API ile çekilebilir.
+    Web app'e Session ile giriş yapar — ASP.NET session cookie korunur.
     """
+    global _web_http
     now = datetime.utcnow()
     if _web_session.get("token") and _web_session.get("expires", now) > now:
         return _web_session["token"], _web_session["sunucu"]
@@ -99,63 +100,72 @@ def _web_giris() -> tuple[str, str]:
     if not EVO_USER or not EVO_PASS:
         raise HTTPException(500, "EVO_KULLANICI veya EVO_SIFRE env değişkeni eksik")
 
-    r = requests.post(
+    _web_http = requests.Session()
+    _web_http.headers.update({
+        "Referer":          f"{EVO_WEB}/login.html",
+        "Origin":           EVO_WEB,
+        "X-Requested-With": "XMLHttpRequest",
+        "User-Agent":       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    })
+
+    r = _web_http.post(
         f"{EVO_WEB}/ashx/login.ashx?komut=login",
         data={"user_code": EVO_USER, "user_pass": EVO_PASS},
-        headers={
-            "Content-Type":   "application/x-www-form-urlencoded",
-            "Referer":        f"{EVO_WEB}/login.html",
-            "Origin":         EVO_WEB,
-            "X-Requested-With": "XMLHttpRequest",
-        },
-        allow_redirects=False,   # 302 redirect'i takip etme
+        allow_redirects=False,
         timeout=15,
     )
-    # 302 redirect → header eksik → ham body'yi log'la
-    if r.status_code not in (200, 302):
-        raise HTTPException(502, f"evobulut web login HTTP {r.status_code}")
+
     if r.status_code == 302:
-        raise HTTPException(502, f"evobulut web login 302 redirect: {r.headers.get('Location')} — CSRF/IP engeli")
+        raise HTTPException(502, f"evobulut web login 302: {r.headers.get('Location')} — IP/CSRF engeli")
+    if r.status_code != 200:
+        raise HTTPException(502, f"evobulut web login HTTP {r.status_code}: {r.text[:200]}")
 
     try:
-        data = r.json()
+        payload = r.json()
     except Exception:
-        raise HTTPException(502, f"evobulut web login JSON parse hatası: {r.text[:200]}")
-    res = data[0].get("RES", "")
+        raise HTTPException(502, f"evobulut web login JSON hata: {r.text[:300]}")
+
+    res = payload[0].get("RES", "")
     if res != "OK":
         mesajlar = {
             "NO":  "Hatalı kullanıcı adı veya şifre",
             "NO1": "Kullanım süresi dolmuş",
             "NO2": "Çalışma saatleri dışında",
             "NO3": "IP FireWall ihlali",
-            "NO5": "Bu hesap API kullanıcısı — web girişi yapılamaz",
+            "NO5": "API kullanıcısı — web girişi yasak",
         }
         raise HTTPException(502, f"evobulut web login: {mesajlar.get(res, res)}")
 
-    sunucu = data[0].get("sunucu") or "web.evobulut.com"
+    sunucu = payload[0].get("sunucu") or "web.evobulut.com"
     if not sunucu.startswith("http"):
         sunucu = f"https://{sunucu}"
 
-    _web_session["token"]   = data[0]["token"]
+    _web_session["token"]   = payload[0]["token"]
     _web_session["sunucu"]  = sunucu
     _web_session["expires"] = now + timedelta(hours=8)
-    log.info("evobulut web token alındı, sunucu: %s", sunucu)
+    log.info("evobulut web token alındı, sunucu: %s | cookies: %s",
+             sunucu, list(_web_http.cookies.keys()))
     return _web_session["token"], _web_session["sunucu"]
 
 
 def _web_ashx(ashx_yol: str, data: dict) -> Any:
-    """Internal evobulut .ashx endpoint'ini çağırır."""
+    """Internal evobulut .ashx endpoint'ini session cookie + token ile çağırır."""
+    global _web_http
     token, sunucu = _web_giris()
-    data["token"] = token
-    r = requests.post(
+    data.setdefault("evo_token", token)
+    data.setdefault("token",     token)
+
+    r = _web_http.post(
         f"{sunucu}/ashx/{ashx_yol}",
         data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=20,
     )
     if r.status_code != 200:
-        raise HTTPException(502, f"evobulut /{ashx_yol} HTTP {r.status_code}")
-    return r.json()
+        raise HTTPException(502, f"evobulut /{ashx_yol} HTTP {r.status_code}: {r.text[:200]}")
+    try:
+        return r.json()
+    except Exception:
+        raise HTTPException(502, f"evobulut /{ashx_yol} JSON hata ({r.status_code}): {r.text[:300]}")
 
 
 def _evo_post(modul: str, body: dict) -> dict:
