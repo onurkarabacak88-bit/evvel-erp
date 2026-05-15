@@ -832,14 +832,26 @@ def evo_debug_html_page(
     html = r.text
     # İlginç kısımları bul
     import re
-    ashx_refs = re.findall(r'ashx/[^"\'<>\s]+', html)
-    js_refs   = re.findall(r'js/[^"\'<>\s?]+\.js', html)
+    ashx_refs  = re.findall(r'ashx/[^"\'<>\s]+', html)
+    js_refs    = re.findall(r'js/[^"\'<>\s?]+\.js', html)
+    # Grid init URL'leri
+    grid_urls  = re.findall(r'"url"\s*:\s*"([^"]+)"', html)
+    grid_sayfa = re.findall(r"Sayfa\s*[:=]\s*['\"]([^'\"]+)['\"]", html, re.I)
+    grid_proje = re.findall(r"Proje\s*[:=]\s*['\"]([^'\"]+)['\"]", html, re.I)
+    # ashx load patterns
+    evo_data   = re.findall(r"evo_data\([^)]{0,200}\)", html)
+    grid_inits = re.findall(r"evo_grid[^(]*\([^)]{0,200}\)", html)
     return {
         "status": r.status_code,
         "boyut": len(html),
-        "ashx_refs": list(set(ashx_refs))[:30],
-        "js_refs":   list(set(js_refs))[:30],
-        "ilk_500":  html[:500],
+        "ashx_refs":  list(set(ashx_refs))[:30],
+        "js_refs":    list(set(js_refs))[:20],
+        "grid_urls":  list(set(grid_urls))[:20],
+        "grid_sayfa": list(set(grid_sayfa))[:10],
+        "grid_proje": list(set(grid_proje))[:5],
+        "evo_data_calls": list(set(evo_data))[:10],
+        "grid_inits": list(set(grid_inits))[:10],
+        "ilk_500": html[:500],
     }
 
 
