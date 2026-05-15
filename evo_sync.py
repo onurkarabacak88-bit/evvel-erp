@@ -841,17 +841,26 @@ def evo_debug_html_page(
     # ashx load patterns
     evo_data   = re.findall(r"evo_data\([^)]{0,200}\)", html)
     grid_inits = re.findall(r"evo_grid[^(]*\([^)]{0,200}\)", html)
+    # Inline script içindeki ashx referansları
+    scripts    = re.findall(r'<script[^>]*>(.*?)</script>', html, re.DOTALL | re.I)
+    inline_ashx = []
+    inline_grid_urls = []
+    for s in scripts:
+        inline_ashx += re.findall(r'ashx/[^"\'<>\s]+', s)
+        inline_grid_urls += re.findall(r"[\"']url[\"']\s*:\s*[\"']([^\"']+)[\"']", s)
+        inline_grid_urls += re.findall(r'datatype\s*:\s*["\']json["\'][^}]{0,300}url\s*:\s*["\']([^"\']+)["\']', s)
+
     return {
         "status": r.status_code,
         "boyut": len(html),
-        "ashx_refs":  list(set(ashx_refs))[:30],
-        "js_refs":    list(set(js_refs))[:20],
-        "grid_urls":  list(set(grid_urls))[:20],
-        "grid_sayfa": list(set(grid_sayfa))[:10],
-        "grid_proje": list(set(grid_proje))[:5],
-        "evo_data_calls": list(set(evo_data))[:10],
-        "grid_inits": list(set(grid_inits))[:10],
-        "ilk_500": html[:500],
+        "ashx_refs":        list(set(ashx_refs + inline_ashx))[:30],
+        "js_refs":          list(set(js_refs))[:20],
+        "grid_urls":        list(set(grid_urls + inline_grid_urls))[:20],
+        "grid_sayfa":       list(set(grid_sayfa))[:10],
+        "grid_proje":       list(set(grid_proje))[:5],
+        "evo_data_calls":   list(set(evo_data))[:10],
+        "inline_scripts_n": len(scripts),
+        "ilk_500":          html[:500],
     }
 
 
