@@ -819,6 +819,30 @@ def evo_debug_token():
     return {"evo_token": token, "sunucu": sunucu}
 
 
+@router.get("/debug-html-page")
+def evo_debug_html_page(
+    sayfa: str = Query("fatura.html"),
+    qs:    str = Query("t=34"),
+):
+    """Web app sayfasının HTML içeriğini oturum ile çeker (ashx URL'lerini bulmak için)."""
+    global _web_http
+    token, sunucu = _web_giris()
+    url = f"{sunucu}/{sayfa}?{qs}" if qs else f"{sunucu}/{sayfa}"
+    r = _web_http.get(url, timeout=20)
+    html = r.text
+    # İlginç kısımları bul
+    import re
+    ashx_refs = re.findall(r'ashx/[^"\'<>\s]+', html)
+    js_refs   = re.findall(r'js/[^"\'<>\s?]+\.js', html)
+    return {
+        "status": r.status_code,
+        "boyut": len(html),
+        "ashx_refs": list(set(ashx_refs))[:30],
+        "js_refs":   list(set(js_refs))[:30],
+        "ilk_500":  html[:500],
+    }
+
+
 @router.get("/debug-rest-raw")
 def evo_debug_rest_raw(
     modul: str = Query("fatura"),
