@@ -34,6 +34,7 @@ from kasa_teslim_api import router as kasa_teslim_router
 from tedarikci_api import router as tedarikci_router
 from odeme_plani_motor_api import router as odeme_plani_motor_router
 from odeme_plani_api import router as odeme_plani_read_router
+from evo_sync import router as evo_sync_router
 import vardiya_v2 as _vv2
 from vardiya_v2 import _ad_soyad_split as _vardiya_personel_ad_split
 
@@ -79,6 +80,7 @@ app.include_router(kasa_teslim_router)
 app.include_router(tedarikci_router)
 app.include_router(odeme_plani_motor_router)
 app.include_router(odeme_plani_read_router)
+app.include_router(evo_sync_router)
 
 logging.basicConfig(
     level=logging.INFO,
