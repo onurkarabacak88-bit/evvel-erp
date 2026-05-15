@@ -59,12 +59,25 @@ def _token_al() -> str:
         raise HTTPException(502, f"evobulut login başarısız: HTTP {r.status_code}")
 
     data = r.json()
-    # Cevap: {"veri": {"Ana": [{"UID": "..."}]}}
+    # Cevap yapısı birkaç farklı şekilde gelebilir
+    token = None
     if isinstance(data, dict) and "veri" in data:
-        token = (data["veri"].get("Ana") or [{}])[0].get("UID")
-    elif isinstance(data, list):
-        token = data[0].get("UID") or data[0].get("TokenUID")
-    else:
+        veri = data["veri"]
+        if isinstance(veri, dict):
+            # {"veri": {"Ana": [{"UID": "..."}]}}
+            token = (veri.get("Ana") or [{}])[0].get("UID")
+        elif isinstance(veri, list) and veri:
+            # {"veri": [{"UID": "..."}]}
+            token = veri[0].get("UID") or veri[0].get("TokenUID")
+        else:
+            token = None
+    elif isinstance(data, list) and data:
+        item = data[0]
+        if isinstance(item, dict):
+            token = item.get("UID") or item.get("TokenUID")
+        elif isinstance(item, list) and item:
+            token = item[0].get("UID") if isinstance(item[0], dict) else None
+    elif isinstance(data, dict):
         token = data.get("UID") or data.get("TokenUID")
     if not token:
         raise HTTPException(502, f"evobulut token alınamadı: {data}")
@@ -274,8 +287,23 @@ def evo_token_test():
     try:
         token = _token_al()
         return {"durum": "ok", "token_var": bool(token)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(502, str(e))
+
+
+@router.get("/token-raw")
+def evo_token_raw():
+    """evobulut ham login cevabını döndürür (debug için)."""
+    if not EVO_USER or not EVO_PASS:
+        raise HTTPException(500, "EVO_KULLANICI veya EVO_SIFRE env değişkeni eksik")
+    r = requests.post(
+        f"{EVO_API}/index/base/",
+        data={"cmd": "euas_login", "p1": EVO_USER, "p2": EVO_PASS, "app": "evvel-erp"},
+        timeout=15,
+    )
+    return {"status_code": r.status_code, "body": r.json()}
 
 
 @router.get("/satis")
