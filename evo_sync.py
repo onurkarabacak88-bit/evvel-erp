@@ -610,6 +610,95 @@ def evo_debug_web(
     }
 
 
+@router.get("/stok-analiz")
+def evo_stok_analiz(
+    tarih: str = Query("14.05.2026", description="DD.MM.YYYY"),
+):
+    """
+    Tüm stok kalemleri için stok_hareketleri çağrısı yapar.
+    O tarihte hareketi olan ürünleri ve miktarlarını döndürür.
+    """
+    import json as _json
+
+    # 1) Stok listesini REST API'den al
+    stok_data = _evo_post("stok", {
+        "cmd": "jq_list",
+        "sayfa": "0",
+        "ara": "",
+    })
+    veri = stok_data.get("veri", {})
+    if isinstance(veri, dict):
+        stok_listesi = veri.get("Ana") or []
+    elif isinstance(veri, list):
+        stok_listesi = veri
+    else:
+        stok_listesi = []
+
+    if not stok_listesi:
+        raise HTTPException(502, "Stok listesi alınamadı")
+
+    # 2) Her stok için hareket sorgula
+    sonuclar = []
+    ICERIK_DENE = ["", "0", "1", "2", tarih]
+
+    for stok in stok_listesi[:50]:  # max 50 stok
+        stok_id = str(stok.get("a_id") or "").strip()
+        stok_adi = str(stok.get("a_adi") or "").strip()
+        if not stok_id:
+            continue
+
+        for icerik in ICERIK_DENE:
+            try:
+                data = _web_ashx("stok.ashx", {
+                    "komut":    "stok_hareketleri",
+                    "stok_id":  stok_id,
+                    "icerik":   icerik,
+                    "modul":    "",
+                    "musteri":  "",
+                    "cari_id":  "",
+                })
+            except HTTPException:
+                continue
+
+            if not isinstance(data, list) or not data:
+                continue
+
+            # tarih filtresi (DD.MM.YYYY ile başlayanlar)
+            tarih_gun = tarih[:10]  # DD.MM.YYYY
+            hareketler = [
+                h for h in data
+                if str(h.get("a_tarih") or "").startswith(tarih_gun)
+            ]
+            if hareketler:
+                toplam_cikan = sum(
+                    float(h.get("miktar") or 0)
+                    for h in hareketler
+                    if float(h.get("miktar") or 0) < 0  # cikis = negatif
+                )
+                toplam_giren = sum(
+                    float(h.get("miktar") or 0)
+                    for h in hareketler
+                    if float(h.get("miktar") or 0) > 0
+                )
+                sonuclar.append({
+                    "stok_id":  stok_id,
+                    "stok_adi": stok_adi,
+                    "icerik":   icerik,
+                    "hareket_sayisi": len(hareketler),
+                    "toplam_cikan": abs(toplam_cikan),
+                    "toplam_giren": toplam_giren,
+                    "ornek": data[:2],
+                })
+                break  # bu stok için bulundu, sonrakine geç
+
+    return {
+        "tarih": tarih,
+        "stok_sayisi": len(stok_listesi),
+        "hareket_var": len(sonuclar),
+        "sonuclar": sonuclar,
+    }
+
+
 @router.get("/urun-probe")
 def evo_urun_probe(
     bas: str = Query("14.05.2026"),
