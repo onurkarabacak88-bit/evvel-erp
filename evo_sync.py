@@ -792,6 +792,36 @@ def evo_urun_probe(
     return {"durum": "bulunamadi", "denemeler": sonuclar}
 
 
+@router.get("/debug-rest-raw")
+def evo_debug_rest_raw(
+    modul: str = Query("fatura"),
+    cmd:   str = Query("jq_list"),
+    bas:   str = Query("01.01.2026"),
+    son:   str = Query("15.05.2026"),
+):
+    """Ham REST API cevabını döndürür — parsing olmadan."""
+    import json as _json
+    token = _token_al()
+    body = {
+        "cmd": cmd, "sayfa": "0", "ara": "",
+        "a_tarih_bas": bas, "a_tarih_son": son,
+        "bastar": bas, "bittar": son,
+        "UID": token,
+    }
+    r = requests.post(f"{EVO_API}/{modul}/base/", json=body, timeout=20)
+    raw = r.text
+    try:
+        parsed = r.json()
+    except Exception:
+        parsed = None
+    return {
+        "status_code": r.status_code,
+        "ham_boyut": len(raw),
+        "ham_ilk_2000": raw[:2000],
+        "parsed_keys": list(parsed.keys()) if isinstance(parsed, dict) else type(parsed).__name__,
+    }
+
+
 @router.get("/debug-modül")
 def evo_debug_modul(
     modul: str = Query(..., description="Örn: stokhareket, gelirGider, stok"),
