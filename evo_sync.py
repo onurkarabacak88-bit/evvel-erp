@@ -33,6 +33,10 @@ router = APIRouter(prefix="/api/evo", tags=["evo-sync"])
 EVO_API   = "https://ws.evobulut.com/api"
 EVO_USER  = os.environ.get("EVO_KULLANICI", "")
 EVO_PASS  = os.environ.get("EVO_SIFRE", "")
+EVO_WEB   = "https://web.evobulut.com"
+
+# Hızlı Satış web token — env var ile verilir, /api/evo/set-web-token ile güncellenir
+_hs_web_token: str = os.environ.get("EVO_WEB_TOKEN", "")
 
 # ─────────────────────────────────────────────
 # 1. TOKEN YÖNETİMİ
@@ -85,7 +89,6 @@ def _token_al() -> str:
 
 _web_session: Dict[str, Any] = {}
 _web_http: Any = None   # requests.Session — cookie'leri taşır
-EVO_WEB = "https://web.evobulut.com"
 
 
 def _web_giris() -> tuple[str, str]:
@@ -396,12 +399,99 @@ def faturajq_urun_bazli_satis(bastar: date, bittar: date) -> Dict[str, float]:
     return urun_toplam
 
 
+# ─────────────────────────────────────────────
+# 2b. HS_RAPOR — Hızlı Satış en çok satılan ürünler
+# ─────────────────────────────────────────────
+
+def _hs_web_token_al() -> str:
+    """Web localStorage token'ı döndürür. Env var veya DB'den alınır."""
+    global _hs_web_token
+    # Önce bellekteki cache
+    if _hs_web_token:
+        return _hs_web_token
+    # DB'den dene
+    try:
+        row = db.execute("SELECT deger FROM ayarlar WHERE anahtar='evo_web_token'").fetchone()
+        if row and row[0]:
+            _hs_web_token = row[0]
+            return _hs_web_token
+    except Exception:
+        pass
+    raise HTTPException(503, "EVO_WEB_TOKEN tanımlı değil. /api/evo/set-web-token ile token girin.")
+
+
+def hs_rapor_urun_satis(bastar: date, bittar: date) -> Dict[str, float]:
+    """
+    hs_rapor.ashx → Cok_Satilan listesinden ürün adı → adet döndürür.
+    Web localStorage token gerektirir (EVO_WEB_TOKEN env var veya DB).
+    """
+    token = _hs_web_token_al()
+    url = (
+        f"{EVO_WEB}/hizli/hs_rapor.ashx"
+        f"?evo_token={token}&evo_server=web.evobulut.com"
+    )
+    body = {
+        "komut":    "FORM_LOAD",
+        "tarih1":   bastar.strftime("%d.%m.%Y 00:00:00"),
+        "tarih2":   bittar.strftime("%d.%m.%Y 23:59:59"),
+        "personel": "0",
+        "sube":     "0",
+    }
+    headers = {
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer":          f"{EVO_WEB}/hizli/hs_rapor.html",
+    }
+    r = requests.post(url, data=body, headers=headers, timeout=20)
+    if r.status_code != 200:
+        raise HTTPException(502, f"hs_rapor.ashx HTTP {r.status_code}")
+
+    try:
+        d = r.json()
+    except Exception:
+        raise HTTPException(502, f"hs_rapor.ashx JSON hatası: {r.text[:200]}")
+
+    if d.get("Statu") != "OK":
+        raise HTTPException(502, f"hs_rapor.ashx Statu: {d.get('Statu')}")
+
+    cok = d.get("Cok_Satilan", [])
+    if not cok:
+        log.warning("hs_rapor Cok_Satilan boş — token geçersiz olabilir")
+        return {}
+
+    urun_toplam: Dict[str, float] = {}
+    for item in cok:
+        ad  = str(item.get("a_adi") or "").strip()
+        try:
+            mik = float(item.get("satis_mik") or 0)
+        except (ValueError, TypeError):
+            mik = 0.0
+        if ad and mik > 0:
+            urun_toplam[ad] = urun_toplam.get(ad, 0) + mik
+
+    log.info("hs_rapor: %d ürün, %s→%s", len(urun_toplam), bastar, bittar)
+    return urun_toplam
+
+
 def evo_urun_bazli_satis(bastar: date, bittar: date) -> Dict[str, float]:
     """
     Tarih aralığında ürün adı → toplam satılan adet.
-    Satış fişleri (34) + satış faturaları (31) birleştirilir.
+    Önce hs_rapor.ashx dener (en doğru), sonra faturajq, sonra REST API.
     """
-    # Önce faturajq.ashx (web app) endpoint'ini dene — daha güvenilir
+    # 1. hs_rapor.ashx — en doğru kaynak
+    try:
+        sonuc = hs_rapor_urun_satis(bastar, bittar)
+        if sonuc:
+            log.info("hs_rapor yöntemi başarılı: %d ürün", len(sonuc))
+            return sonuc
+    except HTTPException as e:
+        if e.status_code == 503:
+            log.info("hs_rapor token yok, faturajq deneniyor")
+        else:
+            log.warning("hs_rapor başarısız: %s", e.detail)
+    except Exception as e:
+        log.warning("hs_rapor başarısız: %s", e)
+
+    # 2. faturajq.ashx (web app)
     try:
         sonuc = faturajq_urun_bazli_satis(bastar, bittar)
         if sonuc:
@@ -557,6 +647,54 @@ def pos_vs_fiziksel(
 # ─────────────────────────────────────────────
 # 4. API ENDPOINT'LERİ
 # ─────────────────────────────────────────────
+
+
+@router.post("/set-web-token")
+def evo_set_web_token(token: str = Query(..., description="Browser localStorage'dan evo_token değeri")):
+    """
+    Hızlı Satış web token'ını günceller.
+    Browser localStorage'dan alınan evo_token buraya girilir.
+    """
+    global _hs_web_token
+    _hs_web_token = token.strip()
+    # DB'ye kaydet
+    try:
+        db.execute(
+            "INSERT INTO ayarlar (anahtar, deger) VALUES ('evo_web_token', ?) "
+            "ON CONFLICT(anahtar) DO UPDATE SET deger=excluded.deger",
+            (_hs_web_token,)
+        )
+        db.commit()
+    except Exception as e:
+        log.warning("Token DB'ye kaydedilemedi: %s", e)
+    return {"durum": "ok", "token_baslangic": _hs_web_token[:8] + "..."}
+
+
+@router.get("/hs-rapor")
+def evo_hs_rapor(
+    tarih1: str = Query(None, description="DD.MM.YYYY — başlangıç (boş=bugün)"),
+    tarih2: str = Query(None, description="DD.MM.YYYY — bitiş (boş=bugün)"),
+):
+    """hs_rapor.ashx → En çok satılan ürünler (Cok_Satilan)."""
+    from datetime import date
+    bugun = bugun_tr()
+    if tarih1:
+        bastar = datetime.strptime(tarih1, "%d.%m.%Y").date()
+    else:
+        bastar = bugun
+    if tarih2:
+        bittar = datetime.strptime(tarih2, "%d.%m.%Y").date()
+    else:
+        bittar = bugun
+
+    sonuc = hs_rapor_urun_satis(bastar, bittar)
+    return {
+        "bastar": str(bastar),
+        "bittar": str(bittar),
+        "urun_sayisi": len(sonuc),
+        "urunler": dict(sorted(sonuc.items(), key=lambda x: -x[1])),
+    }
+
 
 @router.get("/token-test")
 def evo_token_test():

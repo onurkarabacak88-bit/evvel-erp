@@ -820,6 +820,15 @@ def init_db():
             WHERE sustur_bitis_ts IS NOT NULL
         """)
 
+        # Genel anahtar-değer ayarlar tablosu (evo_web_token vb.)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ayarlar (
+                anahtar  TEXT PRIMARY KEY,
+                deger    TEXT NOT NULL,
+                guncelle TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+
         # Faz 4: operasyon_defter yalnız INSERT (UPDATE/DELETE engeli)
         cur.execute("""
             CREATE OR REPLACE FUNCTION operasyon_defter_append_only_fn()
