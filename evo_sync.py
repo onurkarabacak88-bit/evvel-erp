@@ -610,6 +610,15 @@ def evo_urun_probe(
     import json as _json
     sonuclar = []
 
+    # ISO tarih formatı da dene
+    try:
+        from datetime import datetime as _dt
+        bas_iso = _dt.strptime(bas, "%d.%m.%Y").strftime("%Y-%m-%d")
+        son_iso = _dt.strptime(son, "%d.%m.%Y").strftime("%Y-%m-%d")
+    except Exception:
+        bas_iso = bas
+        son_iso = son
+
     # Denenecek kombinasyonlar
     denemeler = [
         # (ashx, body)
@@ -618,11 +627,15 @@ def evo_urun_probe(
         ("Dashboard.ashx", {"komut": "urun_satis_getir", "sube_id": "0",
                              "bastar": bas, "bittar": son}),
         ("Dashboard.ashx", {"komut": "urun_satis_getir", "sube_id": "0",
-                             "a_tarih_bas": bas, "a_tarih_son": son}),
+                             "satis_tarih_bas": bas_iso, "satis_tarih_bit": son_iso}),
+        ("Dashboard.ashx", {"komut": "urun_satis_getir", "sube_id": "0",
+                             "bastar": bas_iso, "bittar": son_iso}),
         ("Dashboard.ashx", {"komut": "urun_satis_getir", "sube_id": "0", "tip": "34",
                              "satis_tarih_bas": bas, "satis_tarih_bit": son}),
         ("stok_hareket.ashx", {"komut": "jq_list", "a_tarih_bas": bas, "a_tarih_son": son,
                                 "sayfa": "0", "ara": "", "a_tur": "34"}),
+        ("stok_hareket.ashx", {"komut": "jq_list", "a_tarih_bas": bas, "a_tarih_son": son,
+                                "sayfa": "0", "ara": ""}),
         ("stok_hareket.ashx", {"komut": "jq_list", "bastar": bas, "bittar": son,
                                 "sayfa": "0", "ara": "", "modul": "34"}),
         ("stok_hareket.ashx", {"komut": "jq_list", "tarih_bas": bas, "tarih_bit": son,
@@ -631,22 +644,34 @@ def evo_urun_probe(
         ("stok_hareket.ashx", {"komut": "satis_listesi", "bastar": bas, "bittar": son}),
     ]
 
+    def _gecerli(data) -> bool:
+        """Gerçek veri mi? (hata ve boş response'ları eler)"""
+        if isinstance(data, list):
+            if not data:
+                return False
+            if data[0].get("Sonuc") == "HATA" or data[0].get("sonuc") == "ERR":
+                return False
+        if isinstance(data, dict):
+            if data.get("sonuc") == "ERR" or data.get("Sonuc") == "HATA":
+                return False
+            # S/S1 boş grid response
+            if set(data.keys()) <= {"S", "S1", "yetkili"} and not data.get("S") and not data.get("S1"):
+                return False
+        return True
+
     for ashx, body in denemeler:
         try:
             data = _web_ashx(ashx, body)
             raw = _json.dumps(data, ensure_ascii=False)
-            is_empty = (raw in ("[]", "{}", "null") or
-                        '"S": []' in raw or '"S":[]' in raw or
-                        '"Ana": []' in raw or len(raw) < 40)
+            gecerli = _gecerli(data)
             sonuclar.append({
                 "ashx": ashx,
                 "body_keys": list(body.keys()),
                 "boyut": len(raw),
-                "bos": is_empty,
-                "ilk_500": raw[:500],
+                "gecerli": gecerli,
+                "ilk_300": raw[:300],
             })
-            if not is_empty:
-                # Başarılı sonuç — tüm veriyi döndür
+            if gecerli:
                 return {
                     "durum": "bulundu",
                     "ashx": ashx,
@@ -655,9 +680,9 @@ def evo_urun_probe(
                     "veri": data,
                 }
         except HTTPException as e:
-            sonuclar.append({"ashx": ashx, "hata": e.detail})
+            sonuclar.append({"ashx": ashx, "body_keys": list(body.keys()), "hata": e.detail})
         except Exception as e:
-            sonuclar.append({"ashx": ashx, "hata": str(e)})
+            sonuclar.append({"ashx": ashx, "body_keys": list(body.keys()), "hata": str(e)})
 
     return {"durum": "bulunamadi", "denemeler": sonuclar}
 
