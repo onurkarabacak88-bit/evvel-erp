@@ -411,10 +411,12 @@ def _hs_web_token_al() -> str:
         return _hs_web_token
     # DB'den dene
     try:
-        row = db.execute("SELECT deger FROM ayarlar WHERE anahtar='evo_web_token'").fetchone()
-        if row and row[0]:
-            _hs_web_token = row[0]
-            return _hs_web_token
+        with db() as (conn, cur):
+            cur.execute("SELECT deger FROM ayarlar WHERE anahtar='evo_web_token'")
+            row = cur.fetchone()
+            if row and row["deger"]:
+                _hs_web_token = row["deger"]
+                return _hs_web_token
     except Exception:
         pass
     raise HTTPException(503, "EVO_WEB_TOKEN tanımlı değil. /api/evo/set-web-token ile token girin.")
@@ -585,18 +587,17 @@ def pos_vs_fiziksel(
     """
     evobulut POS satışı ile fiziksel açılış-kapanış farkını karşılaştırır.
     """
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT e.meta, e.tip
-                FROM sube_operasyon_event e
-                WHERE e.sube_id = %s
-                  AND e.tarih  = %s
-                  AND e.tip IN ('ACILIS','KAPANIS')
-                  AND e.durum  = 'tamamlandi'
-                ORDER BY e.tip
-            """, (sube_id, tarih))
-            rows = {r["tip"]: r for r in cur.fetchall()}
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT e.meta, e.tip
+            FROM sube_operasyon_event e
+            WHERE e.sube_id = %s
+              AND e.tarih  = %s
+              AND e.tip IN ('ACILIS','KAPANIS')
+              AND e.durum  = 'tamamlandi'
+            ORDER BY e.tip
+        """, (sube_id, tarih))
+        rows = {r["tip"]: r for r in cur.fetchall()}
 
     def _stok(row, alan):
         if not row:
@@ -659,12 +660,12 @@ def evo_set_web_token(token: str = Query(..., description="Browser localStorage'
     _hs_web_token = token.strip()
     # DB'ye kaydet
     try:
-        db.execute(
-            "INSERT INTO ayarlar (anahtar, deger) VALUES ('evo_web_token', ?) "
-            "ON CONFLICT(anahtar) DO UPDATE SET deger=excluded.deger",
-            (_hs_web_token,)
-        )
-        db.commit()
+        with db() as (conn, cur):
+            cur.execute(
+                "INSERT INTO ayarlar (anahtar, deger) VALUES ('evo_web_token', %s) "
+                "ON CONFLICT(anahtar) DO UPDATE SET deger=EXCLUDED.deger, guncelle=NOW()",
+                (_hs_web_token,)
+            )
     except Exception as e:
         log.warning("Token DB'ye kaydedilemedi: %s", e)
     return {"durum": "ok", "token_baslangic": _hs_web_token[:8] + "..."}
