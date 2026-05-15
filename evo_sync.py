@@ -91,7 +91,12 @@ EVO_WEB = "https://web.evobulut.com"
 def _web_giris() -> tuple[str, str]:
     """
     Web app'e Session ile giriş yapar — ASP.NET session cookie korunur.
+    UYARI: Bu fonksiyon kullanıcının browser oturumunu sonlandırır!
+    Evobulut aynı kullanıcı için tek web oturumu destekliyor.
+    Şimdilik devre dışı — aktif edin SADECE tek kullanıcı gerekliyse.
     """
+    raise HTTPException(503, "web-session devre dışı: kullanıcı browser oturumunu korumak için. REST API kullanın.")
+
     global _web_http
     now = datetime.utcnow()
     if _web_session.get("token") and _web_session.get("expires", now) > now:
@@ -898,6 +903,94 @@ def evo_debug_rest_raw(
         "ham_ilk_2000": raw[:2000],
         "parsed_keys": list(parsed.keys()) if isinstance(parsed, dict) else type(parsed).__name__,
     }
+
+
+@router.get("/debug-fatura-ashx")
+def evo_debug_fatura_ashx(
+    bas: str = Query("14.05.2026"),
+    son: str = Query("14.05.2026"),
+    komut: str = Query("jq_list"),
+    tur: str = Query("34"),
+):
+    """
+    fatura.ashx endpoint'ini farklı parametre kombinasyonlarıyla dener.
+    HızlıSatış (Tur=34) fatura listesini almak için kullanılır.
+    """
+    import json as _json
+
+    # Denenecek parametre setleri
+    denemeler = [
+        {"komut": komut, "Tur": tur, "a_tur": tur, "bas_tarih": bas, "son_tarih": son,
+         "pagenum": "0", "pagesize": "50"},
+        {"komut": komut, "Tur": tur, "tarih_bas": bas, "tarih_son": son,
+         "pagenum": "0", "pagesize": "50"},
+        {"komut": komut, "a_tur": tur, "a_tarih_bas": bas, "a_tarih_son": son,
+         "pagenum": "0", "pagesize": "50"},
+        {"komut": komut, "Tur": tur, "bastar": bas, "bittar": son,
+         "pagenum": "0", "pagesize": "50"},
+        {"komut": "jq_list", "a_tur": tur, "filtervalue0": bas, "filtercondition0": "GREATER_THAN_OR_EQUAL",
+         "filterdatafield0": "a_tarih", "filterdatatype0": "date",
+         "filtervalue1": son, "filtercondition1": "LESS_THAN_OR_EQUAL",
+         "filterdatafield1": "a_tarih", "filterdatatype1": "date",
+         "filteroperator0": "0", "filterscount": "2", "pagenum": "0", "pagesize": "50"},
+    ]
+
+    sonuclar = []
+    for i, body in enumerate(denemeler):
+        try:
+            data = _web_ashx("fatura.ashx", body.copy())
+            raw = _json.dumps(data, ensure_ascii=False)
+            kayit_sayisi = 0
+            if isinstance(data, list):
+                kayit_sayisi = len(data)
+            elif isinstance(data, dict):
+                for k in ("S", "Ana", "rows", "data", "Records"):
+                    if k in data and isinstance(data[k], list):
+                        kayit_sayisi = len(data[k])
+                        break
+            sonuclar.append({
+                "deneme": i + 1,
+                "body_keys": list(body.keys()),
+                "boyut": len(raw),
+                "tip": type(data).__name__,
+                "kayit_sayisi": kayit_sayisi,
+                "cevap": raw[:1000],
+            })
+        except Exception as e:
+            sonuclar.append({"deneme": i + 1, "hata": str(e)})
+
+    return {"bas": bas, "son": son, "tur": tur, "denemeler": sonuclar}
+
+
+@router.get("/debug-fatura-js")
+def evo_debug_fatura_js():
+    """fatura.js ve fatura_part01.js dosyalarını session ile çeker, ashx ve komut referanslarını çıkarır."""
+    global _web_http
+    import re
+    token, sunucu = _web_giris()
+
+    sonuclar = {}
+    for js_dosya in ["fatura.js", "fatura_part01.js"]:
+        try:
+            r = _web_http.get(f"{sunucu}/js/{js_dosya}", timeout=15)
+            txt = r.text
+            ashx_refs = re.findall(r'["\']([^"\']*ashx[^"\']*)["\']', txt)
+            komut_refs = re.findall(r'komut["\s]*[:=]["\s]*["\']([^"\']+)["\']', txt, re.I)
+            tur_refs = re.findall(r'[Tt]ur["\s]*[:=]["\s]*["\']?(\d+)["\']?', txt)
+            veri_yukle = re.findall(r'Veri_Yukle[^;]{0,300}', txt)[:5]
+            sonuclar[js_dosya] = {
+                "status": r.status_code,
+                "boyut": len(txt),
+                "ashx_refs": list(set(ashx_refs))[:20],
+                "komut_refs": list(set(komut_refs))[:20],
+                "tur_refs": list(set(tur_refs))[:10],
+                "veri_yukle_ornekleri": veri_yukle,
+                "ilk_500": txt[:500],
+            }
+        except Exception as e:
+            sonuclar[js_dosya] = {"hata": str(e)}
+
+    return sonuclar
 
 
 @router.get("/debug-modül")
