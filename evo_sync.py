@@ -555,6 +555,49 @@ def evo_bugun(sube_id: str = Query(...)):
     return evo_karsilastir(sube_id=sube_id, tarih=str(bugun_tr()))
 
 
+@router.get("/debug-web-ashx")
+def evo_debug_web(
+    ashx:   str = Query("hizlisatis.ashx"),
+    komut:  str = Query(...),
+    bas:    str = Query("14.05.2026"),
+    son:    str = Query("14.05.2026"),
+    ekstra: str = Query("", description="key=val,key2=val2 formatında ek parametre"),
+):
+    """
+    Web app internal .ashx endpoint'ini doğrudan çağırır (keşif için).
+    Örn: /debug-web-ashx?ashx=hizlisatis.ashx&komut=satis_listesi&bas=14.05.2026
+    """
+    body: dict = {
+        "komut":       komut,
+        "bastar":      bas,
+        "bittar":      son,
+        "tarih_bas":   bas,
+        "tarih_bit":   son,
+        "satis_tarih_bas": bas,
+        "satis_tarih_bit": son,
+    }
+    for pair in ekstra.split(","):
+        if "=" in pair:
+            k, v = pair.split("=", 1)
+            body[k.strip()] = v.strip()
+
+    try:
+        data = _web_ashx(ashx, body)
+    except HTTPException as e:
+        return {"hata": e.detail, "ashx": ashx, "komut": komut}
+
+    # Boyutu kontrol et
+    import json as _json
+    raw = _json.dumps(data, ensure_ascii=False)
+    return {
+        "ashx":     ashx,
+        "komut":    komut,
+        "boyut":    len(raw),
+        "tip":      type(data).__name__,
+        "ilk_1000": raw[:1000],
+    }
+
+
 @router.get("/debug-modül")
 def evo_debug_modul(
     modul: str = Query(..., description="Örn: stokhareket, gelirGider, stok"),
