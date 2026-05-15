@@ -151,33 +151,53 @@ def _web_giris() -> tuple[str, str]:
 def _web_ashx(ashx_yol: str, data: dict, qs: dict | None = None) -> Any:
     """
     Internal evobulut .ashx endpoint'ini session cookie + token ile çağırır.
-    ashx_yol: 'faturajq.ashx' veya 'faturajq.ashx?Tur=34' (querystring desteklenir)
-    qs: URL querystring parametreleri dict (opsiyonel, ashx_yol'dan ayrı geçilebilir)
+    NON_AUTHENTICATED_USER alınırsa oturumu temizleyip bir kez retry yapar.
     """
     global _web_http
+
+    def _build_url(token: str, sunucu: str) -> str:
+        data["evo_token"] = token
+        data["token"]     = token
+        if "?" in ashx_yol:
+            base_yol, qs_str = ashx_yol.split("?", 1)
+            url = f"{sunucu}/ashx/{base_yol}?{qs_str}"
+        else:
+            url = f"{sunucu}/ashx/{ashx_yol}"
+        if qs:
+            sep = "&" if "?" in url else "?"
+            url += sep + "&".join(f"{k}={v}" for k, v in qs.items())
+        return url
+
+    def _do_post(url: str) -> Any:
+        r = _web_http.post(url, data=data, timeout=20)
+        if r.status_code != 200:
+            raise HTTPException(502, f"evobulut /{ashx_yol} HTTP {r.status_code}: {r.text[:200]}")
+        try:
+            return r.json()
+        except Exception:
+            raise HTTPException(502, f"evobulut /{ashx_yol} JSON hata ({r.status_code}): {r.text[:300]}")
+
+    # İlk deneme
     token, sunucu = _web_giris()
-    data.setdefault("evo_token", token)
-    data.setdefault("token",     token)
+    url = _build_url(token, sunucu)
+    result = _do_post(url)
 
-    # ashx_yol içinde ? varsa ayır
-    if "?" in ashx_yol:
-        base_yol, qs_str = ashx_yol.split("?", 1)
-        url = f"{sunucu}/ashx/{base_yol}?{qs_str}"
-    else:
-        url = f"{sunucu}/ashx/{ashx_yol}"
+    # NON_AUTHENTICATED_USER → oturumu temizle ve bir kez daha dene
+    def _auth_hata(res) -> bool:
+        if isinstance(res, list) and res:
+            return res[0].get("RES") == "NON_AUTHENTICATED_USER"
+        return False
 
-    # Ekstra querystring parametreleri
-    if qs:
-        sep = "&" if "?" in url else "?"
-        url += sep + "&".join(f"{k}={v}" for k, v in qs.items())
+    if _auth_hata(result):
+        log.warning("evobulut session hatası — yeniden giriş yapılıyor")
+        _web_session.clear()
+        token, sunucu = _web_giris()
+        url = _build_url(token, sunucu)
+        result = _do_post(url)
+        if _auth_hata(result):
+            raise HTTPException(502, "evobulut oturum yenilemesi başarısız — lütfen tekrar deneyin")
 
-    r = _web_http.post(url, data=data, timeout=20)
-    if r.status_code != 200:
-        raise HTTPException(502, f"evobulut /{ashx_yol} HTTP {r.status_code}: {r.text[:200]}")
-    try:
-        return r.json()
-    except Exception:
-        raise HTTPException(502, f"evobulut /{ashx_yol} JSON hata ({r.status_code}): {r.text[:300]}")
+    return result
 
 
 def _evo_post(modul: str, body: dict) -> dict:
