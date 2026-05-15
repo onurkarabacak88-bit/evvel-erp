@@ -812,6 +812,12 @@ def evo_urun_probe(
     return {"durum": "bulunamadi", "denemeler": sonuclar}
 
 
+@router.get("/debug-kullanici")
+def evo_debug_kullanici():
+    """Kullanıcı adını döndürür."""
+    return {"kullanici": EVO_USER}
+
+
 @router.get("/debug-token")
 def evo_debug_token():
     """Geliştirme: evo_token değerini döndürür (browser enjeksiyonu için)."""
