@@ -421,3 +421,43 @@ def evo_karsilastir(
 def evo_bugun(sube_id: str = Query(...)):
     """Bugünkü karşılaştırmayı döndürür."""
     return evo_karsilastir(sube_id=sube_id, tarih=str(bugun_tr()))
+
+
+@router.get("/debug-modül")
+def evo_debug_modul(
+    modul: str = Query(..., description="Örn: stokhareket, gelirGider, stok"),
+    cmd:   str = Query("jq_list"),
+    bas:   str = Query("01.01.2026"),
+    son:   str = Query("15.05.2026"),
+):
+    """
+    Herhangi bir evobulut modülüne jq_list gönderir — hangi verinin nerede olduğunu bulmak için.
+    Örn: /debug-modül?modul=StokHareket&cmd=jq_list
+    """
+    body: dict = {"cmd": cmd, "sayfa": "0"}
+    # Ortak tarih field'ları dene
+    for key in ("a_tarih_bas", "tarih_bas", "bastar"):
+        body[key] = bas
+    for key in ("a_tarih_son", "tarih_son", "bittar"):
+        body[key] = son
+    body["ara"] = ""
+
+    try:
+        data = _evo_post(modul, body)
+    except HTTPException as e:
+        return {"hata": e.detail}
+
+    veri = data.get("veri", {})
+    ana: list = []
+    if isinstance(veri, dict):
+        ana = veri.get("Ana") or []
+    elif isinstance(veri, list):
+        ana = veri
+
+    ilk = ana[0] if ana else {}
+    return {
+        "modul":    modul,
+        "toplam":   len(ana),
+        "kolonlar": list(ilk.keys()) if ilk else [],
+        "ilk_3":    ana[:3],
+    }
