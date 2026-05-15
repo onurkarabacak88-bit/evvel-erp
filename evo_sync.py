@@ -79,6 +79,73 @@ def _token_al() -> str:
     return token
 
 
+# ─────────────────────────────────────────────
+# 1b. WEB APP SESSION (Hızlı Satış için)
+# ─────────────────────────────────────────────
+
+_web_session: Dict[str, Any] = {}
+EVO_WEB = "https://web.evobulut.com"
+
+
+def _web_giris() -> tuple[str, str]:
+    """
+    Web app'e giriş yaparak token ve sunucu URL'si alır.
+    Hızlı Satış verileri sadece internal .ashx API ile çekilebilir.
+    """
+    now = datetime.utcnow()
+    if _web_session.get("token") and _web_session.get("expires", now) > now:
+        return _web_session["token"], _web_session["sunucu"]
+
+    if not EVO_USER or not EVO_PASS:
+        raise HTTPException(500, "EVO_KULLANICI veya EVO_SIFRE env değişkeni eksik")
+
+    r = requests.post(
+        f"{EVO_WEB}/ashx/login.ashx?komut=login",
+        data={"user_code": EVO_USER, "user_pass": EVO_PASS},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=15,
+    )
+    if r.status_code != 200:
+        raise HTTPException(502, f"evobulut web login HTTP {r.status_code}")
+
+    data = r.json()
+    res = data[0].get("RES", "")
+    if res != "OK":
+        mesajlar = {
+            "NO":  "Hatalı kullanıcı adı veya şifre",
+            "NO1": "Kullanım süresi dolmuş",
+            "NO2": "Çalışma saatleri dışında",
+            "NO3": "IP FireWall ihlali",
+            "NO5": "Bu hesap API kullanıcısı — web girişi yapılamaz",
+        }
+        raise HTTPException(502, f"evobulut web login: {mesajlar.get(res, res)}")
+
+    sunucu = data[0].get("sunucu") or "web.evobulut.com"
+    if not sunucu.startswith("http"):
+        sunucu = f"https://{sunucu}"
+
+    _web_session["token"]   = data[0]["token"]
+    _web_session["sunucu"]  = sunucu
+    _web_session["expires"] = now + timedelta(hours=8)
+    log.info("evobulut web token alındı, sunucu: %s", sunucu)
+    return _web_session["token"], _web_session["sunucu"]
+
+
+def _web_ashx(ashx_yol: str, data: dict) -> Any:
+    """Internal evobulut .ashx endpoint'ini çağırır."""
+    token, sunucu = _web_giris()
+    data["token"] = token
+    r = requests.post(
+        f"{sunucu}/ashx/{ashx_yol}",
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=20,
+    )
+    if r.status_code != 200:
+        raise HTTPException(502, f"evobulut /{ashx_yol} HTTP {r.status_code}")
+    return r.json()
+
+
 def _evo_post(modul: str, body: dict) -> dict:
     """
     evobulut REST API generic POST.
@@ -326,7 +393,7 @@ def pos_vs_fiziksel(
 
 @router.get("/token-test")
 def evo_token_test():
-    """evobulut bağlantısını test eder."""
+    """evobulut REST API bağlantısını test eder."""
     try:
         token = _token_al()
         return {"durum": "ok", "token_var": bool(token)}
@@ -334,6 +401,59 @@ def evo_token_test():
         raise
     except Exception as e:
         raise HTTPException(502, str(e))
+
+
+@router.get("/web-login-test")
+def evo_web_login_test():
+    """evobulut web app girişini test eder (Hızlı Satış için)."""
+    try:
+        token, sunucu = _web_giris()
+        return {"durum": "ok", "sunucu": sunucu, "token_var": bool(token)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, str(e))
+
+
+@router.get("/hizli-satis")
+def evo_hizli_satis_endpoint(
+    bastar: str = Query(..., description="YYYY-MM-DD"),
+    bittar: str = Query(..., description="YYYY-MM-DD"),
+):
+    """
+    evobulut web app internal API ile hızlı satış (POS) verilerini çeker.
+    Ürün adı → adet sözlüğü döndürür.
+    """
+    try:
+        b = date.fromisoformat(bastar)
+        e = date.fromisoformat(bittar)
+    except ValueError:
+        raise HTTPException(400, "Tarih formatı YYYY-MM-DD olmalı")
+
+    # İlk önce web token al, sonra satış verisini çek
+    try:
+        token, sunucu = _web_giris()
+    except HTTPException as ex:
+        raise HTTPException(502, f"Web giriş başarısız: {ex.detail}")
+
+    # satisDetay.ashx ile dene
+    try:
+        data = _web_ashx("satisDetay.ashx", {
+            "komut": "ARA_Bul",
+            "bastar": _tarih_fmt(b),
+            "bittar": _tarih_fmt(e),
+        })
+        return {"durum": "ok", "kaynak": "satisDetay.ashx", "veri": data}
+    except Exception as e1:
+        log.warning("satisDetay.ashx başarısız: %s", e1)
+
+    # whoami ile sunucu doğrula
+    try:
+        who = _web_ashx("whoami.ashx", {"komut": "sen_kimsin"})
+        return {"durum": "partial", "whoami": who, "sunucu": sunucu,
+                "not": "satisDetay.ashx bulunamadı, endpoint keşfi devam ediyor"}
+    except Exception as e2:
+        return {"durum": "hata", "sunucu": sunucu, "hata1": str(e1), "hata2": str(e2)}
 
 
 @router.get("/satis")
