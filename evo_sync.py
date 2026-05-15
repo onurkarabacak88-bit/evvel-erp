@@ -102,13 +102,25 @@ def _web_giris() -> tuple[str, str]:
     r = requests.post(
         f"{EVO_WEB}/ashx/login.ashx?komut=login",
         data={"user_code": EVO_USER, "user_pass": EVO_PASS},
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        headers={
+            "Content-Type":   "application/x-www-form-urlencoded",
+            "Referer":        f"{EVO_WEB}/login.html",
+            "Origin":         EVO_WEB,
+            "X-Requested-With": "XMLHttpRequest",
+        },
+        allow_redirects=False,   # 302 redirect'i takip etme
         timeout=15,
     )
-    if r.status_code != 200:
+    # 302 redirect → header eksik → ham body'yi log'la
+    if r.status_code not in (200, 302):
         raise HTTPException(502, f"evobulut web login HTTP {r.status_code}")
+    if r.status_code == 302:
+        raise HTTPException(502, f"evobulut web login 302 redirect: {r.headers.get('Location')} — CSRF/IP engeli")
 
-    data = r.json()
+    try:
+        data = r.json()
+    except Exception:
+        raise HTTPException(502, f"evobulut web login JSON parse hatası: {r.text[:200]}")
     res = data[0].get("RES", "")
     if res != "OK":
         mesajlar = {
