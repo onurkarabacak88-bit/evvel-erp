@@ -148,18 +148,30 @@ def _web_giris() -> tuple[str, str]:
     return _web_session["token"], _web_session["sunucu"]
 
 
-def _web_ashx(ashx_yol: str, data: dict) -> Any:
-    """Internal evobulut .ashx endpoint'ini session cookie + token ile çağırır."""
+def _web_ashx(ashx_yol: str, data: dict, qs: dict | None = None) -> Any:
+    """
+    Internal evobulut .ashx endpoint'ini session cookie + token ile çağırır.
+    ashx_yol: 'faturajq.ashx' veya 'faturajq.ashx?Tur=34' (querystring desteklenir)
+    qs: URL querystring parametreleri dict (opsiyonel, ashx_yol'dan ayrı geçilebilir)
+    """
     global _web_http
     token, sunucu = _web_giris()
     data.setdefault("evo_token", token)
     data.setdefault("token",     token)
 
-    r = _web_http.post(
-        f"{sunucu}/ashx/{ashx_yol}",
-        data=data,
-        timeout=20,
-    )
+    # ashx_yol içinde ? varsa ayır
+    if "?" in ashx_yol:
+        base_yol, qs_str = ashx_yol.split("?", 1)
+        url = f"{sunucu}/ashx/{base_yol}?{qs_str}"
+    else:
+        url = f"{sunucu}/ashx/{ashx_yol}"
+
+    # Ekstra querystring parametreleri
+    if qs:
+        sep = "&" if "?" in url else "?"
+        url += sep + "&".join(f"{k}={v}" for k, v in qs.items())
+
+    r = _web_http.post(url, data=data, timeout=20)
     if r.status_code != 200:
         raise HTTPException(502, f"evobulut /{ashx_yol} HTTP {r.status_code}: {r.text[:200]}")
     try:
@@ -642,6 +654,10 @@ def evo_urun_probe(
                                 "sayfa": "0", "ara": ""}),
         ("stok_hareket.ashx", {"komut": "liste", "bastar": bas, "bittar": son}),
         ("stok_hareket.ashx", {"komut": "satis_listesi", "bastar": bas, "bittar": son}),
+        # faturajq.ashx ?Tur= URL querystring ile çalışır
+        ("faturajq.ashx?Tur=34", {"bastar": bas, "bittar": son, "sayfa": "0", "ara": ""}),
+        ("faturajq.ashx?Tur=34", {"a_tarih_bas": bas, "a_tarih_son": son, "sayfa": "0"}),
+        ("faturajq.ashx?Tur=0",  {"bastar": bas, "bittar": son, "sayfa": "0"}),
     ]
 
     def _gecerli(data) -> bool:
