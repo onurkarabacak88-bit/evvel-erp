@@ -90,10 +90,11 @@ EVO_WEB = "https://web.evobulut.com"
 
 def _web_giris() -> tuple[str, str]:
     """
-    Web app'e Session ile giriş yapar — ASP.NET session cookie korunur.
-    evo_server=web.evobulut.com parametresiyle login yapar (tarayıcıyla aynı).
-    NOT: Evobulut birden fazla oturumu destekler; browser oturumu etkilenmez.
+    Web app'e Session ile giriş yapar.
+    DEVRE DIŞI — evobulut tek web oturumu destekler, kullanıcıyı atar.
     """
+    raise HTTPException(503, "web-session devre dışı: kullanıcı oturumunu korumak için.")
+
     global _web_http
     now = datetime.utcnow()
     if _web_session.get("token") and _web_session.get("expires", now) > now:
@@ -335,10 +336,23 @@ def faturajq_listesi(bastar: date, bittar: date, tur: int = 34) -> List[Dict]:
         "sortorder":      "desc",
     }
 
+    # Web login YAPMADAN dene: REST token'ı POST body'e ekle
+    # (evobulut bazı endpoint'lerde token-only auth kabul eder)
     try:
-        result = _web_ashx(f"faturajq.ashx?Tur={tur}", body)
-    except HTTPException as e:
-        log.warning("faturajq.ashx hatası: %s", e.detail)
+        token = _token_al()
+        body["evo_token"] = token
+        body["token"]     = token
+        url = f"{EVO_WEB}/ashx/faturajq.ashx?Tur={tur}&evo_server=web.evobulut.com"
+        r = requests.post(url, data=body, timeout=20,
+                          headers={"X-Requested-With": "XMLHttpRequest",
+                                   "Referer": f"{EVO_WEB}/ajax/fatura.html?t={tur}"})
+        if r.status_code == 200:
+            result = r.json()
+        else:
+            log.warning("faturajq.ashx HTTP %d: %s", r.status_code, r.text[:200])
+            return []
+    except Exception as e:
+        log.warning("faturajq.ashx hatası: %s", e)
         return []
 
     # Cevap formatı: {"TotalRows": N, "Rows": [...]}  veya {"rows": [...]}
