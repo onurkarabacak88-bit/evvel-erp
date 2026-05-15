@@ -91,12 +91,9 @@ EVO_WEB = "https://web.evobulut.com"
 def _web_giris() -> tuple[str, str]:
     """
     Web app'e Session ile giriş yapar — ASP.NET session cookie korunur.
-    UYARI: Bu fonksiyon kullanıcının browser oturumunu sonlandırır!
-    Evobulut aynı kullanıcı için tek web oturumu destekliyor.
-    Şimdilik devre dışı — aktif edin SADECE tek kullanıcı gerekliyse.
+    evo_server=web.evobulut.com parametresiyle login yapar (tarayıcıyla aynı).
+    NOT: Evobulut birden fazla oturumu destekler; browser oturumu etkilenmez.
     """
-    raise HTTPException(503, "web-session devre dışı: kullanıcı browser oturumunu korumak için. REST API kullanın.")
-
     global _web_http
     now = datetime.utcnow()
     if _web_session.get("token") and _web_session.get("expires", now) > now:
@@ -114,8 +111,8 @@ def _web_giris() -> tuple[str, str]:
     })
 
     r = _web_http.post(
-        f"{EVO_WEB}/ashx/login.ashx?komut=login",
-        data={"user_code": EVO_USER, "user_pass": EVO_PASS},
+        f"{EVO_WEB}/ashx/login.ashx?komut=login&evo_server=web.evobulut.com",
+        data={"user_code": EVO_USER, "user_pass": EVO_PASS, "evo_server": "web.evobulut.com"},
         allow_redirects=False,
         timeout=15,
     )
@@ -297,18 +294,115 @@ def _satirlari_coz(detay: Dict) -> List[Dict]:
     return []
 
 
+def faturajq_listesi(bastar: date, bittar: date, tur: int = 34) -> List[Dict]:
+    """
+    faturajq.ashx endpoint'i üzerinden fatura listesini çeker.
+    Browser'ın kullandığı aynı endpoint — tarih filtresi uygular.
+    tur=34 → Satış Fişi (HızlıSatış/POS), tur=31 → Satış Faturası
+    """
+    bas_str = _tarih_fmt(bastar)   # DD.MM.YYYY
+    bit_str = _tarih_fmt(bittar)
+
+    body = {
+        "a_caller":       "1054",
+        "profil":         "",
+        "modul":          "",
+        "grp":            "",
+        "kos":            "|||||grup_icerir^1^1|",
+        "veri":           "",
+        "export":         "view",
+        "groupscount":    "0",
+        "Full_Text":      "",
+        "gnm":            "jqxgrid_mod1054",
+        "fts":            "|G.a_sbelge_seri_no|G.a_tarih|CARI_ADI|G.a_ack|TBL_STOK_DEPO.a_adi|G.a_isk_tut|G.a_kdv_tut|Kalan|G.a_tutar|TBL_DOV.a_adi|G.a_cdate|TBL_ONAY.a_adi|G.a_vtarih|PERSONELADI",
+        # Tarih filtresi
+        "filterscount":   "2",
+        "filtervalue0":   bas_str,
+        "filtercondition0": "GREATER_THAN_OR_EQUAL",
+        "filterdatafield0": "G.a_tarih",
+        "filterdatatype0":  "date",
+        "filteroperator0":  "0",
+        "filtervalue1":   bit_str,
+        "filtercondition1": "LESS_THAN_OR_EQUAL",
+        "filterdatafield1": "G.a_tarih",
+        "filterdatatype1":  "date",
+        "filteroperator1":  "0",
+        "pagenum":        "0",
+        "pagesize":       "1000",
+        "recordstartindex": "1",
+        "recordendindex": "1000",
+        "sortdatafield":  "G.a_tarih",
+        "sortorder":      "desc",
+    }
+
+    try:
+        result = _web_ashx(f"faturajq.ashx?Tur={tur}", body)
+    except HTTPException as e:
+        log.warning("faturajq.ashx hatası: %s", e.detail)
+        return []
+
+    # Cevap formatı: {"TotalRows": N, "Rows": [...]}  veya {"rows": [...]}
+    if isinstance(result, dict):
+        rows = result.get("Rows") or result.get("rows") or result.get("data") or []
+        if not rows and isinstance(result.get("TotalRows"), int):
+            log.info("faturajq.ashx toplam %d kayıt, Rows boş", result["TotalRows"])
+        return rows
+    if isinstance(result, list):
+        return result
+    return []
+
+
+def faturajq_urun_bazli_satis(bastar: date, bittar: date) -> Dict[str, float]:
+    """
+    faturajq.ashx → fatura listesi, sonra her fatura için detay çek.
+    Ürün adı → toplam satılan adet döndürür.
+    """
+    faturalar = faturajq_listesi(bastar, bittar, tur=34)
+    log.info("faturajq: %d adet Satış Fişi bulundu", len(faturalar))
+
+    urun_toplam: Dict[str, float] = {}
+    for f in faturalar:
+        fid = str(f.get("G.a_id") or f.get("a_id") or f.get("id") or "").strip()
+        if not fid:
+            continue
+        detay   = evo_fatura_detay(fid)
+        satirlar = _satirlari_coz(detay)
+        for s in satirlar:
+            ad = str(
+                s.get("a_stok_adi") or s.get("stok_adi") or
+                s.get("a_adi")     or s.get("urun_adi") or ""
+            ).strip()
+            try:
+                mik = float(s.get("a_miktar") or s.get("miktar") or 0)
+            except (ValueError, TypeError):
+                mik = 0.0
+            if ad and mik > 0:
+                urun_toplam[ad] = urun_toplam.get(ad, 0) + mik
+
+    return urun_toplam
+
+
 def evo_urun_bazli_satis(bastar: date, bittar: date) -> Dict[str, float]:
     """
     Tarih aralığında ürün adı → toplam satılan adet.
     Satış fişleri (34) + satış faturaları (31) birleştirilir.
     """
-    # tip=0 → tüm faturalar, client-side filtre uygulanır
+    # Önce faturajq.ashx (web app) endpoint'ini dene — daha güvenilir
+    try:
+        sonuc = faturajq_urun_bazli_satis(bastar, bittar)
+        if sonuc:
+            log.info("faturajq yöntemi başarılı: %d ürün", len(sonuc))
+            return sonuc
+    except Exception as e:
+        log.warning("faturajq yöntemi başarısız, REST API'ye geçiliyor: %s", e)
+
+    # Yedek: REST API (ws.evobulut.com)
     try:
         tum_faturalar = evo_fatura_listesi(bastar, bittar, tip=0)
     except HTTPException as e:
         log.warning("Fatura listesi alınamadı: %s", e.detail)
         tum_faturalar = []
-    # Satış fişi (34) + satış faturası (31) → istenmeyen türleri dışla
+
     faturalar = [
         f for f in tum_faturalar
         if str(f.get("G.a_tur") or f.get("a_tur") or "") in ("31", "34", "")
@@ -902,6 +996,37 @@ def evo_debug_rest_raw(
         "ham_boyut": len(raw),
         "ham_ilk_2000": raw[:2000],
         "parsed_keys": list(parsed.keys()) if isinstance(parsed, dict) else type(parsed).__name__,
+    }
+
+
+@router.get("/debug-fatura-jq")
+def evo_debug_fatura_jq(
+    bas: str = Query("14.05.2026", description="DD.MM.YYYY"),
+    son: str = Query("14.05.2026", description="DD.MM.YYYY"),
+    tur: int = Query(34, description="34=Satış Fişi, 31=Satış Faturası"),
+):
+    """
+    faturajq.ashx endpoint'ini test eder. Browser'ın kullandığı gerçek endpoint.
+    """
+    import json as _json
+    from datetime import datetime as _dt
+    try:
+        b = _dt.strptime(bas, "%d.%m.%Y").date()
+        s = _dt.strptime(son, "%d.%m.%Y").date()
+    except ValueError:
+        raise HTTPException(400, "Tarih formatı DD.MM.YYYY olmalı")
+
+    rows = faturajq_listesi(b, s, tur=tur)
+    raw  = _json.dumps(rows, ensure_ascii=False)
+    ilk  = rows[0] if rows else {}
+    return {
+        "tur":         tur,
+        "bas":         bas,
+        "son":         son,
+        "toplam_satir": len(rows),
+        "kolonlar":    list(ilk.keys()) if ilk else [],
+        "ilk_3":       rows[:3],
+        "ham_boyut":   len(raw),
     }
 
 
