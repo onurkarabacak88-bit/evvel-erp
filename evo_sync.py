@@ -598,6 +598,70 @@ def evo_debug_web(
     }
 
 
+@router.get("/urun-probe")
+def evo_urun_probe(
+    bas: str = Query("14.05.2026"),
+    son: str = Query("14.05.2026"),
+):
+    """
+    Ürün bazlı satış verisini bulmak için çeşitli endpoint/param kombinasyonlarını dener.
+    İlk çalışan kombinasyonu ve sonucunu döndürür.
+    """
+    import json as _json
+    sonuclar = []
+
+    # Denenecek kombinasyonlar
+    denemeler = [
+        # (ashx, body)
+        ("Dashboard.ashx", {"komut": "urun_satis_getir", "sube_id": "0",
+                             "satis_tarih_bas": bas, "satis_tarih_bit": son}),
+        ("Dashboard.ashx", {"komut": "urun_satis_getir", "sube_id": "0",
+                             "bastar": bas, "bittar": son}),
+        ("Dashboard.ashx", {"komut": "urun_satis_getir", "sube_id": "0",
+                             "a_tarih_bas": bas, "a_tarih_son": son}),
+        ("Dashboard.ashx", {"komut": "urun_satis_getir", "sube_id": "0", "tip": "34",
+                             "satis_tarih_bas": bas, "satis_tarih_bit": son}),
+        ("stok_hareket.ashx", {"komut": "jq_list", "a_tarih_bas": bas, "a_tarih_son": son,
+                                "sayfa": "0", "ara": "", "a_tur": "34"}),
+        ("stok_hareket.ashx", {"komut": "jq_list", "bastar": bas, "bittar": son,
+                                "sayfa": "0", "ara": "", "modul": "34"}),
+        ("stok_hareket.ashx", {"komut": "jq_list", "tarih_bas": bas, "tarih_bit": son,
+                                "sayfa": "0", "ara": ""}),
+        ("stok_hareket.ashx", {"komut": "liste", "bastar": bas, "bittar": son}),
+        ("stok_hareket.ashx", {"komut": "satis_listesi", "bastar": bas, "bittar": son}),
+    ]
+
+    for ashx, body in denemeler:
+        try:
+            data = _web_ashx(ashx, body)
+            raw = _json.dumps(data, ensure_ascii=False)
+            is_empty = (raw in ("[]", "{}", "null") or
+                        '"S": []' in raw or '"S":[]' in raw or
+                        '"Ana": []' in raw or len(raw) < 40)
+            sonuclar.append({
+                "ashx": ashx,
+                "body_keys": list(body.keys()),
+                "boyut": len(raw),
+                "bos": is_empty,
+                "ilk_500": raw[:500],
+            })
+            if not is_empty:
+                # Başarılı sonuç — tüm veriyi döndür
+                return {
+                    "durum": "bulundu",
+                    "ashx": ashx,
+                    "body": body,
+                    "boyut": len(raw),
+                    "veri": data,
+                }
+        except HTTPException as e:
+            sonuclar.append({"ashx": ashx, "hata": e.detail})
+        except Exception as e:
+            sonuclar.append({"ashx": ashx, "hata": str(e)})
+
+    return {"durum": "bulunamadi", "denemeler": sonuclar}
+
+
 @router.get("/debug-modül")
 def evo_debug_modul(
     modul: str = Query(..., description="Örn: stokhareket, gelirGider, stok"),
