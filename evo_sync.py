@@ -442,30 +442,20 @@ def evo_hizli_satis_endpoint(
     except ValueError:
         raise HTTPException(400, "Tarih formatı YYYY-MM-DD olmalı")
 
-    # İlk önce web token al, sonra satış verisini çek
-    try:
-        token, sunucu = _web_giris()
-    except HTTPException as ex:
-        raise HTTPException(502, f"Web giriş başarısız: {ex.detail}")
-
-    # satisDetay.ashx ile dene
-    try:
-        data = _web_ashx("satisDetay.ashx", {
-            "komut": "ARA_Bul",
-            "bastar": _tarih_fmt(b),
-            "bittar": _tarih_fmt(e),
-        })
-        return {"durum": "ok", "kaynak": "satisDetay.ashx", "veri": data}
-    except Exception as e1:
-        log.warning("satisDetay.ashx başarısız: %s", e1)
-
-    # whoami ile sunucu doğrula
-    try:
-        who = _web_ashx("whoami.ashx", {"komut": "sen_kimsin"})
-        return {"durum": "partial", "whoami": who, "sunucu": sunucu,
-                "not": "satisDetay.ashx bulunamadı, endpoint keşfi devam ediyor"}
-    except Exception as e2:
-        return {"durum": "hata", "sunucu": sunucu, "hata1": str(e1), "hata2": str(e2)}
+    # Dashboard.ashx → grafik_satis_getir komutu (dashboard JS'den doğrulandı)
+    sube_id = 0  # 0 = tüm şubeler
+    data = _web_ashx("Dashboard.ashx", {
+        "komut":          "grafik_satis_getir",
+        "sube_id":        str(sube_id),
+        "satis_tarih_bas": _tarih_fmt(b),
+        "satis_tarih_bit": _tarih_fmt(e),
+    })
+    return {
+        "bastar":  bastar,
+        "bittar":  bittar,
+        "kaynak":  "Dashboard.ashx/grafik_satis_getir",
+        "veri":    data,
+    }
 
 
 @router.get("/satis")
