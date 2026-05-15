@@ -606,7 +606,7 @@ def evo_debug_web(
         "komut":    komut,
         "boyut":    len(raw),
         "tip":      type(data).__name__,
-        "ilk_1000": raw[:1000],
+        "ilk_3000": raw[:3000],
     }
 
 
