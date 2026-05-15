@@ -44,10 +44,10 @@ def _token_al() -> str:
     if not EVO_USER or not EVO_PASS:
         raise HTTPException(500, "EVO_KULLANICI veya EVO_SIFRE env değişkeni eksik")
 
-    # evobulut gerçek login endpoint: POST /api/index/base/ + form params
+    # evobulut REST API: JSON body bekliyor
     r = requests.post(
         f"{EVO_API}/index/base/",
-        data={
+        json={
             "cmd": "euas_login",
             "p1":  EVO_USER,
             "p2":  EVO_PASS,
@@ -300,7 +300,7 @@ def evo_token_raw():
         raise HTTPException(500, "EVO_KULLANICI veya EVO_SIFRE env değişkeni eksik")
     r = requests.post(
         f"{EVO_API}/index/base/",
-        data={"cmd": "euas_login", "p1": EVO_USER, "p2": EVO_PASS, "app": "evvel-erp"},
+        json={"cmd": "euas_login", "p1": EVO_USER, "p2": EVO_PASS, "app": "evvel-erp"},
         timeout=15,
     )
     return {"status_code": r.status_code, "body": r.json()}
