@@ -112,28 +112,36 @@ def _tarih_fmt(d: date) -> str:
     return d.strftime("%d.%m.%Y")
 
 
-def evo_fatura_listesi(bastar: date, bittar: date, tip: int = 34) -> List[Dict]:
+def evo_fatura_listesi(bastar: date, bittar: date, tip: int = 0) -> List[Dict]:
     """
     Fatura listesini çeker.
+    tip=0  → tüm fatüralar (filtre yok)
     tip=34 → Satış Fişi (hızlı satış / kasa)
     tip=31 → Satış Faturası
+    Not: evobulut jq_list'te a_tur filtresi yok; tip client-side filtrelenir.
     """
     data = _evo_post("fatura", {
-        "cmd":        "jq_list",
-        "sayfa":      "0",
-        "a_tur":      str(tip),
+        "cmd":         "jq_list",
+        "sayfa":       "0",
         "a_tarih_bas": _tarih_fmt(bastar),
         "a_tarih_son": _tarih_fmt(bittar),
-        "a_onay":     "",
-        "a_cari_id":  "",
-        "ara":        "",
+        "a_onay":      "",
+        "a_cari_id":   "",
+        "a_stok_id":   "",
+        "a_stok_ack":  "",
+        "ara":         "",
     })
     veri = data.get("veri", {})
+    ana: List[Dict] = []
     if isinstance(veri, dict):
-        return veri.get("Ana") or []
-    if isinstance(veri, list):
-        return veri
-    return []
+        ana = veri.get("Ana") or []
+    elif isinstance(veri, list):
+        ana = veri
+
+    # client-side tip filtresi ("G.a_tur" kolonuyla)
+    if tip:
+        ana = [f for f in ana if str(f.get("G.a_tur") or f.get("a_tur") or "") == str(tip)]
+    return ana
 
 
 def evo_fatura_detay(fatura_id: str) -> Dict:
@@ -168,12 +176,17 @@ def evo_urun_bazli_satis(bastar: date, bittar: date) -> Dict[str, float]:
     Tarih aralığında ürün adı → toplam satılan adet.
     Satış fişleri (34) + satış faturaları (31) birleştirilir.
     """
-    faturalar: List[Dict] = []
-    for tip in (34, 31):
-        try:
-            faturalar += evo_fatura_listesi(bastar, bittar, tip=tip)
-        except HTTPException as e:
-            log.warning("Fatura listesi tip=%s alınamadı: %s", tip, e.detail)
+    # tip=0 → tüm faturalar, client-side filtre uygulanır
+    try:
+        tum_faturalar = evo_fatura_listesi(bastar, bittar, tip=0)
+    except HTTPException as e:
+        log.warning("Fatura listesi alınamadı: %s", e.detail)
+        tum_faturalar = []
+    # Satış fişi (34) + satış faturası (31) → istenmeyen türleri dışla
+    faturalar = [
+        f for f in tum_faturalar
+        if str(f.get("G.a_tur") or f.get("a_tur") or "") in ("31", "34", "")
+    ]
 
     urun_toplam: Dict[str, float] = {}
     for f in faturalar:
