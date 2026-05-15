@@ -44,20 +44,28 @@ def _token_al() -> str:
     if not EVO_USER or not EVO_PASS:
         raise HTTPException(500, "EVO_KULLANICI veya EVO_SIFRE env değişkeni eksik")
 
+    # evobulut gerçek login endpoint: POST /api/index/base/ + form params
     r = requests.post(
-        f"{EVO_API}/Login",
-        json={"kullanici_kodu": EVO_USER, "sifre": EVO_PASS},
+        f"{EVO_API}/index/base/",
+        data={
+            "cmd": "euas_login",
+            "p1":  EVO_USER,
+            "p2":  EVO_PASS,
+            "app": "evvel-erp",
+        },
         timeout=15,
     )
     if r.status_code != 200:
         raise HTTPException(502, f"evobulut login başarısız: HTTP {r.status_code}")
 
     data = r.json()
-    # evobulut cevabı: [{"Sonuc":"OK","TokenUID":"xxx",...}]
-    if isinstance(data, list):
-        data = data[0]
-
-    token = data.get("TokenUID") or data.get("token_uid") or data.get("Token")
+    # Cevap: {"veri": {"Ana": [{"UID": "..."}]}}
+    if isinstance(data, dict) and "veri" in data:
+        token = (data["veri"].get("Ana") or [{}])[0].get("UID")
+    elif isinstance(data, list):
+        token = data[0].get("UID") or data[0].get("TokenUID")
+    else:
+        token = data.get("UID") or data.get("TokenUID")
     if not token:
         raise HTTPException(502, f"evobulut token alınamadı: {data}")
 
