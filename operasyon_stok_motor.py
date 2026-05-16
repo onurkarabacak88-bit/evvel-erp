@@ -282,6 +282,18 @@ def _stok_key_from_urun_ad(urun_ad: Any) -> Optional[str]:
     if "pasta" in n:
         return "pasta_adet"
     if "sut" in n or "süt" in n:
+        # Genel açılış «Süt» → sut_litre; katalog çeşitleri (tam/yarım yağlı vb.) ayrı kalem
+        if n in ("sut", "süt", "sut litre", "sut_litre"):
+            return "sut_litre"
+        cesit_isaret = (
+            "yagli", "yağlı", "yagsiz", "yağsız", "yarim", "yarım",
+            "laktoz", "badem", "soya", "yulaf", "hindistan", "findik", "fındık",
+            "cevizi", "vegan",
+        )
+        if any(t in n for t in cesit_isaret):
+            return None
+        if len(n) > 5:
+            return None
         return "sut_litre"
     if "surup" in n or "şurup" in n:
         return "surup_adet"
@@ -326,7 +338,7 @@ def depo_kalem_kodu_resolve(cur: Any, urun_id: str, urun_ad_fallback: str = "") 
     try:
         cur.execute(
             """
-            SELECT ad, depo_stok_kalem_kodu
+            SELECT ad, depo_stok_kalem_kodu, norm_ad
             FROM siparis_urun
             WHERE id=%s
             LIMIT 1
@@ -339,6 +351,9 @@ def depo_kalem_kodu_resolve(cur: Any, urun_id: str, urun_ad_fallback: str = "") 
             ov = str(d.get("depo_stok_kalem_kodu") or "").strip()
             if ov:
                 return ov
+            norm = str(d.get("norm_ad") or "").strip()
+            if norm:
+                return norm
             db_ad = str(d.get("ad") or "").strip()
             if db_ad:
                 ad_src = db_ad

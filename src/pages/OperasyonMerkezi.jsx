@@ -122,7 +122,11 @@ function magazaCanliDepoSatirMeta(st, kategoriler) {
   for (let ki = 0; ki < kats.length; ki += 1) {
     const kat = kats[ki];
     const items = Array.isArray(kat.items) ? kat.items : [];
-    const it = items.find((x) => String(x?.id || '') === kk);
+    const it = items.find(
+      (x) => String(x?.id || '') === kk
+        || String(x?.depo_stok_kalem_kodu || '').trim() === kk
+        || magazaDepoKalemKodu(x) === kk,
+    );
     if (it) {
       const katEtiket = String(kat.label || kat.ad || '').trim() || String(kat.id || '').trim();
       const katalogAd = String(it.ad || '').trim();
@@ -216,6 +220,51 @@ function magazaStokGirdiOku(stokMap, sid, urunId, apiStok) {
   if (stokMap && Object.prototype.hasOwnProperty.call(stokMap, key)) return stokMap[key];
   if (apiStok != null) return String(apiStok);
   return '';
+}
+
+/** Panel açılış havuzu — backend ``_stok_key_from_urun_ad`` ile uyumlu (süt çeşitleri hariç). */
+function magazaStokKeyFromUrunAd(ad) {
+  const n = magazaAdNorm(ad || '');
+  if (!n) return null;
+  if (n.includes('sut') || n.includes('süt')) {
+    if (n === 'sut' || n === 'süt' || n === 'sut litre' || n === 'sut_litre') return 'sut_litre';
+    const cesit = ['yagli', 'yağlı', 'yagsiz', 'yağsız', 'yarim', 'yarım', 'laktoz', 'badem', 'soya', 'yulaf', 'hindistan', 'findik', 'fındık', 'cevizi', 'vegan'];
+    if (cesit.some((t) => n.includes(t))) return null;
+    if (n.length > 5) return null;
+    return 'sut_litre';
+  }
+  if (n.includes('kahve')) return 'kahve_paket';
+  if (n === 'su' || n.includes(' su ')) return 'su_adet';
+  if (n.includes('redbull')) return 'redbull_adet';
+  if (n.includes('soda')) return 'soda_adet';
+  if (n.includes('cookie')) return 'cookie_adet';
+  if (n.includes('pasta')) return 'pasta_adet';
+  if (n.includes('surup') || n.includes('şurup')) return 'surup_adet';
+  if (n.includes('kapak')) return 'kapak_adet';
+  if (n.includes('pecete') || n.includes('peçete')) return 'pecete_paket';
+  return null;
+}
+
+/** ``sube_depo_stok.kalem_kodu`` — backend ``depo_kalem_kodu_resolve`` ile aynı öncelik. */
+function magazaDepoKalemKodu(it) {
+  if (!it || typeof it !== 'object') return '';
+  const havuz = it.depo_stok_kalem_kodu ? String(it.depo_stok_kalem_kodu).trim() : '';
+  if (havuz) return havuz;
+  const sk = magazaStokKeyFromUrunAd(it.ad);
+  if (sk && sk !== 'kahve_paket') return sk;
+  const slug = magazaDepoSlugifyTr(it.ad);
+  if (slug && slug !== 'urun') return slug;
+  return String(it.id || '').trim();
+}
+
+function magazaCanliDepoSatirBul(canliStokSatirlari, it) {
+  const rows = Array.isArray(canliStokSatirlari) ? canliStokSatirlari : [];
+  const kod = magazaDepoKalemKodu(it);
+  if (!kod) return undefined;
+  return (
+    rows.find((st) => String(st?.kalem_kodu || '') === kod)
+    || rows.find((st) => String(st?.kalem_kodu || '') === String(it?.id || ''))
+  );
 }
 
 function magazaUrunEfektifBirimFiyat(it, fiyatMap) {
@@ -3298,7 +3347,7 @@ export default function OperasyonMerkezi() {
     }
     setMagazaStokOnayBusy((prev) => ({ ...prev, [draftKey]: true }));
     try {
-      await api('/ops/v2/sube-depo/guncelle', {
+      const res = await api('/ops/v2/sube-depo/guncelle', {
         method: 'POST',
         body: {
           sube_id: sid,
@@ -3310,10 +3359,11 @@ export default function OperasyonMerkezi() {
           giris_nedeni: 'sayim_duzeltme',
         },
       });
+      const resolvedKk = String(res?.kalem_kodu || kk).trim() || kk;
       setMagazaDepoCanliStok((prev) => {
         const rows = Array.isArray(prev?.[slug]) ? [...prev[slug]] : [];
-        const i = rows.findIndex((r) => String(r?.kalem_kodu || '') === kk);
-        const nextRow = i >= 0 ? { ...rows[i] } : { kalem_kodu: kk, kalem_adi: String(kalemAdi || kk) };
+        const i = rows.findIndex((r) => String(r?.kalem_kodu || '') === resolvedKk);
+        const nextRow = i >= 0 ? { ...rows[i] } : { kalem_kodu: resolvedKk, kalem_adi: String(kalemAdi || kk) };
         nextRow.kalem_adi = String(kalemAdi || nextRow.kalem_adi || kk);
         nextRow.mevcut_adet = Math.max(0, Number(mevcutAdet || 0));
         nextRow.min_stok = Math.max(0, Number(minStok || 0));
@@ -6449,7 +6499,7 @@ export default function OperasyonMerkezi() {
                       const kk = `${m.slug}::${kat.id}`;
                       const acik = magazaDepoKatAcik[kk] === true;
                       const filteredItems = (kat.items || []).filter((it) => {
-                        const canliSatir = canliStokSatirlari.find((st) => String(st?.kalem_kodu || '') === String(it.id || ''));
+                        const canliSatir = magazaCanliDepoSatirBul(canliStokSatirlari, it);
                         const kritikCtx = {
                           kategoriKod: kat.id,
                           kategoriLabel: kat.label || kat.ad,
@@ -6517,7 +6567,7 @@ export default function OperasyonMerkezi() {
                               <ul style={{ margin: 0, padding: '0 10px 8px', listStyle: 'none', fontSize: 11, background: 'var(--bg)', minWidth: 480 }}>
                                 {filteredItems.map((it) => {
                                   const mapKey = `${subeDepoKey}::${it.id}`;
-                                  const canliSatir = canliStokSatirlari.find((st) => String(st?.kalem_kodu || '') === String(it.id || ''));
+                                  const canliSatir = magazaCanliDepoSatirBul(canliStokSatirlari, it);
                                   const referansHam = canliSatir ? canliSatir.mevcut_adet : it.stok;
                                   const referansSayi = String(referansHam ?? '').trim() === '' ? 0 : (magazaKatalogSayi(referansHam) ?? 0);
                                   const stokRaw = magazaStokGirdiOku(magazaSubeStokInput, subeDepoKey, it.id, referansHam);
@@ -6549,10 +6599,15 @@ export default function OperasyonMerkezi() {
                                     >
                                       <div style={{ minWidth: 0 }}>
                                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={it.ad}>{it.ad}</span>
-                                        {it.stok != null ? (
+                                        {canliSatir != null ? (
+                                          <span style={{ fontSize: 9, color: 'var(--text3)' }}>
+                                            Depoda: {magazaFmtStok(canliSatir.mevcut_adet)}
+                                            <span className="mono" style={{ marginLeft: 4, opacity: 0.85 }}>({magazaDepoKalemKodu(it)})</span>
+                                          </span>
+                                        ) : it.stok != null ? (
                                           <span style={{ fontSize: 9, color: 'var(--text3)' }}>Sistem: {magazaFmtStok(it.stok)}</span>
                                         ) : (
-                                          <span style={{ fontSize: 9, color: 'var(--text3)' }}>Sistem verisi yok</span>
+                                          <span style={{ fontSize: 9, color: 'var(--text3)' }}>Depoda kayıt yok · havuz: {magazaDepoKalemKodu(it)}</span>
                                         )}
                                         <div
                                           style={{
@@ -6625,7 +6680,7 @@ export default function OperasyonMerkezi() {
                                               n[mapKey] = {
                                                 slug: m.slug,
                                                 sube_id: String(k?.sube_id || ''),
-                                                kalem_kodu: String(it.id || ''),
+                                                kalem_kodu: magazaDepoKalemKodu(it),
                                                 kalem_adi: it.ad,
                                                 mevcut_adet: parsed,
                                               };
@@ -6648,7 +6703,7 @@ export default function OperasyonMerkezi() {
                                             slug: m.slug,
                                             subeDepoKey,
                                             subeId: String(k.sube_id || ''),
-                                            kalemKodu: String(it.id || ''),
+                                            kalemKodu: magazaDepoKalemKodu(it),
                                             kalemAdi: it.ad,
                                             mevcutAdet: stokSayi,
                                             minStok: Number(canliSatir?.min_stok || 0),
@@ -6670,7 +6725,7 @@ export default function OperasyonMerkezi() {
                     })}
                     {!magazaDepoKatalogState.yukleniyor && katList.length > 0 && (() => {
                       const hasAny = katList.some((kat) => (kat.items || []).some((it) => {
-                        const canliSatir = canliStokSatirlari.find((st) => String(st?.kalem_kodu || '') === String(it.id || ''));
+                        const canliSatir = magazaCanliDepoSatirBul(canliStokSatirlari, it);
                         const kritikCtx = {
                           kategoriKod: kat.id,
                           kategoriLabel: kat.label || kat.ad,

@@ -650,15 +650,15 @@ def pos_vs_fiziksel(
 # ─────────────────────────────────────────────
 
 
-@router.post("/set-web-token")
+@router.api_route("/set-web-token", methods=["GET", "POST"])
 def evo_set_web_token(token: str = Query(..., description="Browser localStorage'dan evo_token değeri")):
     """
     Hızlı Satış web token'ını günceller.
-    Browser localStorage'dan alınan evo_token buraya girilir.
+    GET veya POST — bookmarklet ile çağrılabilir.
     """
     global _hs_web_token
     _hs_web_token = token.strip()
-    # DB'ye kaydet
+    # DB'ye kaydet (restart'ta kaybolmasın)
     try:
         with db() as (conn, cur):
             cur.execute(
@@ -668,7 +668,8 @@ def evo_set_web_token(token: str = Query(..., description="Browser localStorage'
             )
     except Exception as e:
         log.warning("Token DB'ye kaydedilemedi: %s", e)
-    return {"durum": "ok", "token_baslangic": _hs_web_token[:8] + "..."}
+    log.info("Web token güncellendi: %s...", _hs_web_token[:8])
+    return {"durum": "ok", "mesaj": "Token güncellendi ✅", "token_baslangic": _hs_web_token[:8] + "..."}
 
 
 @router.get("/hs-rapor")
