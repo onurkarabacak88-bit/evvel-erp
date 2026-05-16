@@ -100,15 +100,14 @@ async def log_requests(request: Request, call_next):
 @app.get("/api/admin/fix-tema-kapanis-tarih")
 def fix_tema_kapanis_tarih(gizli: str = ""):
     """
-    TEK KULLANIM — TEMA şubesinin gece yarısı 16 Mayıs'a yazılan
-    kapanış kaydını 15 Mayıs'a taşır. Sonra bu endpoint silinecek.
+    TEK KULLANIM — TEMA için gece yarısı hatalı açılan 16 Mayıs
+    KAPANIS eventini (bekliyor/gecikti) siler. 15 Mayıs kapanışı zaten
+    tamamlandi. Sonra bu endpoint silinecek.
     """
-    import json as _json
     if gizli != "evvel-fix-2026":
         return {"hata": "yetkisiz"}
 
     with db() as (conn, cur):
-        # TEMA şubesini bul
         cur.execute("SELECT id, ad FROM subeler WHERE LOWER(ad) LIKE '%tema%' AND aktif=TRUE LIMIT 1")
         sube = cur.fetchone()
         if not sube:
@@ -116,83 +115,35 @@ def fix_tema_kapanis_tarih(gizli: str = ""):
         sube_id = str(sube["id"])
         sube_ad = sube["ad"]
 
-        # 16 Mayıs KAPANIS event — tamamlandi (yanlış tarihli)
+        # 16 Mayıs KAPANIS — bekliyor veya gecikti (hatalı açılan boş event)
         cur.execute("""
-            SELECT id, meta, cevap_ts, personel_id, personel_ad, kasa_sayim, teslim, devir
-            FROM sube_operasyon_event
-            WHERE sube_id=%s AND tarih='2026-05-16' AND tip='KAPANIS' AND durum='tamamlandi'
-            ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+            SELECT id, durum FROM sube_operasyon_event
+            WHERE sube_id=%s AND tarih='2026-05-16' AND tip='KAPANIS'
+              AND durum IN ('bekliyor','gecikti')
+            LIMIT 1
         """, (sube_id,))
-        kaynak = cur.fetchone()
-        if not kaynak:
-            # Durum ne olursa olsun son 3 KAPANIS event'i göster (debug)
+        yanlis = cur.fetchone()
+        if not yanlis:
+            # Debug: mevcut durumu göster
             cur.execute("""
-                SELECT id, tarih, durum, cevap_ts,
-                       CASE WHEN meta IS NOT NULL THEN 'var' ELSE 'yok' END AS meta_durum
+                SELECT id, tarih::text, durum,
+                       CASE WHEN meta IS NOT NULL THEN 'var' ELSE 'yok' END AS meta
                 FROM sube_operasyon_event
                 WHERE sube_id=%s AND tip='KAPANIS'
-                ORDER BY tarih DESC, cevap_ts DESC NULLS LAST LIMIT 5
+                ORDER BY tarih DESC LIMIT 5
             """, (sube_id,))
-            debug = [dict(r) for r in cur.fetchall()]
-            for d in debug:
-                d["tarih"] = str(d.get("tarih") or "")
-                d["cevap_ts"] = str(d.get("cevap_ts") or "")
-            return {"bilgi": f"{sube_ad} için 16 Mayıs tamamlanmış KAPANIS bulunamadı", "mevcut_eventler": debug}
+            return {"bilgi": "Silinecek kayıt bulunamadı",
+                    "mevcut": [dict(r) for r in cur.fetchall()]}
 
-        kaynak = dict(kaynak)
-        kaynak_id = kaynak["id"]
-
-        # 15 Mayıs KAPANIS event — bekliyor/gecikti (doğru tarihli, boş)
-        cur.execute("""
-            SELECT id FROM sube_operasyon_event
-            WHERE sube_id=%s AND tarih='2026-05-15' AND tip='KAPANIS'
-            ORDER BY durum DESC LIMIT 1
-        """, (sube_id,))
-        hedef = cur.fetchone()
-        if not hedef:
-            return {"hata": "15 Mayıs KAPANIS eventi bulunamadı"}
-        hedef_id = str(hedef["id"])
-
-        # 15 Mayıs event'ine 16 Mayıs'ın verisini kopyala → tamamlandi yap
-        cur.execute("""
-            UPDATE sube_operasyon_event
-            SET durum='tamamlandi',
-                meta=%s,
-                cevap_ts=%s,
-                personel_id=%s,
-                personel_ad=%s,
-                kasa_sayim=%s,
-                teslim=%s,
-                devir=%s
-            WHERE id=%s
-        """, (
-            _json.dumps(kaynak["meta"]) if isinstance(kaynak["meta"], dict) else kaynak["meta"],
-            kaynak["cevap_ts"],
-            kaynak["personel_id"],
-            kaynak["personel_ad"],
-            kaynak["kasa_sayim"],
-            kaynak["teslim"],
-            kaynak["devir"],
-            hedef_id,
-        ))
-
-        # 16 Mayıs event'ini geri al → bekliyor
-        cur.execute("""
-            UPDATE sube_operasyon_event
-            SET durum='bekliyor', meta=NULL, cevap_ts=NULL,
-                personel_id=NULL, personel_ad=NULL,
-                kasa_sayim=NULL, teslim=NULL, devir=NULL
-            WHERE id=%s
-        """, (kaynak_id,))
-
+        yanlis_id = str(yanlis["id"])
+        cur.execute("DELETE FROM sube_operasyon_event WHERE id=%s", (yanlis_id,))
         conn.commit()
 
     return {
         "basarili": True,
         "sube": sube_ad,
-        "tasinan_kayit": kaynak_id,
-        "hedef_event": hedef_id,
-        "aciklama": "16 Mayıs kapanış verisi 15 Mayıs'a taşındı"
+        "silinen_event": yanlis_id,
+        "aciklama": "16 Mayıs hatalı KAPANIS eventi silindi, 15 Mayıs kapanışı korundu"
     }
 
 
