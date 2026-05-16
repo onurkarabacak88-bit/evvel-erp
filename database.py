@@ -2714,3 +2714,113 @@ $$;
         except Exception as _mig_e:
             # Migration başarısız olursa init_db'yi düşürme — sadece logla
             print(f"[MIGRATION WARN] faiz_kkdf_bsmv_geriye_donuk_v1: {_mig_e}")
+
+        # ─── MIGRATION: depo_stok_duplike_temizlik_v1 ─────────────────────────────
+        # sube_depo_stok içinde aynı fiziksel ürün için hem eski text-kodu hem UUID-kodu
+        # var. Eski (legacy) text kodları kaldır; mevcut_adet varsa UUID satırına aktar.
+        # Ayrıca plastik_bardak→bardak_plastik ve su→su_adet text-text duplikeler temizlenir.
+        try:
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log WHERE ad='depo_stok_duplike_temizlik_v1' LIMIT 1
+            """)
+            if not cur.fetchone():
+                # 1. Eski text kodlarını UUID karşılıklarına taşı (mevcut_adet varsa ekle)
+                cur.execute("""
+                    WITH legacy AS (
+                        SELECT sds.sube_id, sds.kalem_kodu AS eski_kod,
+                               sds.mevcut_adet AS eski_adet,
+                               su.id            AS yeni_kod
+                        FROM sube_depo_stok sds
+                        JOIN siparis_urun su
+                          ON su.norm_ad = sds.kalem_kodu
+                        WHERE sds.kalem_kodu NOT IN (
+                            'bardak_kucuk','bardak_buyuk','bardak_plastik','su_adet',
+                            'redbull_adet','soda_adet','cookie_adet','pasta_adet',
+                            'sut_litre','surup_adet','kahve_paket','karton_bardak',
+                            'kapak_adet','pecete_paket','diger_sarf'
+                        )
+                          AND sds.kalem_kodu !~ '^[0-9a-f]{8}-'
+                    )
+                    UPDATE sube_depo_stok dst
+                    SET mevcut_adet = dst.mevcut_adet + legacy.eski_adet
+                    FROM legacy
+                    WHERE dst.sube_id  = legacy.sube_id
+                      AND dst.kalem_kodu = legacy.yeni_kod
+                      AND legacy.eski_adet > 0
+                """)
+                adet1 = cur.rowcount
+
+                # 2. Eski text-kodlu satırları sil (norm_ad → UUID eşleşmesi varsa)
+                cur.execute("""
+                    DELETE FROM sube_depo_stok
+                    WHERE kalem_kodu NOT IN (
+                        'bardak_kucuk','bardak_buyuk','bardak_plastik','su_adet',
+                        'redbull_adet','soda_adet','cookie_adet','pasta_adet',
+                        'sut_litre','surup_adet','kahve_paket','karton_bardak',
+                        'kapak_adet','pecete_paket','diger_sarf'
+                    )
+                      AND kalem_kodu !~ '^[0-9a-f]{8}-'
+                      AND EXISTS (
+                          SELECT 1 FROM siparis_urun su WHERE su.norm_ad = kalem_kodu
+                      )
+                """)
+                silinen1 = cur.rowcount
+
+                # 3. Text-text duplikeler: plastik_bardak → bardak_plastik
+                cur.execute("""
+                    UPDATE sube_depo_stok dst
+                    SET mevcut_adet = dst.mevcut_adet +
+                        COALESCE((SELECT mevcut_adet FROM sube_depo_stok
+                                  WHERE sube_id=dst.sube_id AND kalem_kodu='plastik_bardak'), 0)
+                    WHERE dst.kalem_kodu = 'bardak_plastik'
+                      AND EXISTS (SELECT 1 FROM sube_depo_stok
+                                  WHERE sube_id=dst.sube_id AND kalem_kodu='plastik_bardak')
+                """)
+                cur.execute("DELETE FROM sube_depo_stok WHERE kalem_kodu='plastik_bardak'")
+                silinen2 = cur.rowcount
+
+                # 4. Text-text duplikeler: su → su_adet
+                cur.execute("""
+                    UPDATE sube_depo_stok dst
+                    SET mevcut_adet = dst.mevcut_adet +
+                        COALESCE((SELECT mevcut_adet FROM sube_depo_stok
+                                  WHERE sube_id=dst.sube_id AND kalem_kodu='su'), 0)
+                    WHERE dst.kalem_kodu = 'su_adet'
+                      AND EXISTS (SELECT 1 FROM sube_depo_stok
+                                  WHERE sube_id=dst.sube_id AND kalem_kodu='su')
+                """)
+                cur.execute("DELETE FROM sube_depo_stok WHERE kalem_kodu='su'")
+                silinen3 = cur.rowcount
+
+                # 5. merkez_stok_kart'tan da eski legacy kodları temizle
+                cur.execute("""
+                    DELETE FROM merkez_stok_kart
+                    WHERE kalem_kodu NOT IN (
+                        'bardak_kucuk','bardak_buyuk','bardak_plastik','su_adet',
+                        'redbull_adet','soda_adet','cookie_adet','pasta_adet',
+                        'sut_litre','surup_adet','kahve_paket','karton_bardak',
+                        'kapak_adet','pecete_paket','diger_sarf'
+                    )
+                      AND kalem_kodu !~ '^[0-9a-f]{8}-'
+                      AND EXISTS (
+                          SELECT 1 FROM siparis_urun su WHERE su.norm_ad = kalem_kodu
+                      )
+                """)
+                silinen4 = cur.rowcount
+                cur.execute("DELETE FROM merkez_stok_kart WHERE kalem_kodu IN ('plastik_bardak','su')")
+                silinen5 = cur.rowcount
+
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay) VALUES (%s, %s::jsonb)
+                """, (
+                    'depo_stok_duplike_temizlik_v1',
+                    f'{{"stok_aktarim": {adet1}, "eski_kod_silinen": {silinen1}, '
+                    f'"plastik_bardak_silinen": {silinen2}, "su_silinen": {silinen3}, '
+                    f'"merkez_kart_silinen": {silinen4}, "metin_text_silinen": {silinen5}}}',
+                ))
+                print(f"[MIGRATION] depo_stok_duplike_temizlik_v1: "
+                      f"stok_aktarim={adet1}, eski_kod_silinen={silinen1}, "
+                      f"plastik_bardak={silinen2}, su={silinen3}, "
+                      f"merkez={silinen4}+{silinen5}")
+        except Exception as _mig_e:
+            print(f"[MIGRATION WARN] depo_stok_duplike_temizlik_v1: {_mig_e}")
