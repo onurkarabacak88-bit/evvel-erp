@@ -97,52 +97,6 @@ async def log_requests(request: Request, call_next):
     logger.info(f"{request.method} {request.url.path} → {response.status_code} ({ms}ms)")
     return response
 
-@app.get("/api/admin/fix-tema-kapanis-tarih")
-def fix_tema_kapanis_tarih(gizli: str = ""):
-    """
-    TEK KULLANIM — TEMA için gece yarısı hatalı açılan 16 Mayıs
-    KAPANIS eventini (bekliyor/gecikti) siler. 15 Mayıs kapanışı zaten
-    tamamlandi. Sonra bu endpoint silinecek.
-    """
-    if gizli != "evvel-fix-2026":
-        return {"hata": "yetkisiz"}
-
-    with db() as (conn, cur):
-        cur.execute("SELECT id, ad FROM subeler WHERE LOWER(ad) LIKE '%tema%' AND aktif=TRUE LIMIT 1")
-        sube = cur.fetchone()
-        if not sube:
-            return {"hata": "TEMA şubesi bulunamadı"}
-        sube_id = str(sube["id"])
-        sube_ad = sube["ad"]
-
-        sonuclar = []
-
-        # kasa_teslim — 16 Mayıs gun_sonu kayıtlarını önce listele
-        cur.execute("""
-            SELECT id::text, tarih::text, tutar::text, teslim_turu
-            FROM kasa_teslim
-            WHERE sube_id=%s AND tarih BETWEEN '2026-05-15' AND '2026-05-16'
-            ORDER BY tarih
-        """, (sube_id,))
-        kt_debug = [dict(r) for r in cur.fetchall()]
-        sonuclar.append({"kasa_teslim_mevcut": kt_debug})
-
-        # Düzeltilecek kayıt var mı?
-        kt16 = [r for r in kt_debug if r["tarih"] == "2026-05-16" and r["teslim_turu"] == "gun_sonu"]
-        for kt in kt16:
-            cur.execute("SAVEPOINT sp_kt")
-            try:
-                cur.execute("UPDATE kasa_teslim SET tarih='2026-05-15' WHERE id=%s::uuid", (kt["id"],))
-                cur.execute("RELEASE SAVEPOINT sp_kt")
-                sonuclar.append(f"kasa_teslim duzeltildi: {kt['id']}")
-            except Exception as e:
-                cur.execute("ROLLBACK TO SAVEPOINT sp_kt")
-                sonuclar.append(f"kasa_teslim hata: {e}")
-
-        conn.commit()
-
-    return {"basarili": True, "sube": sube_ad, "islemler": sonuclar}
-
 
 @app.exception_handler(Exception)
 async def hata_yakala(request: Request, exc: Exception):
