@@ -125,7 +125,19 @@ def fix_tema_kapanis_tarih(gizli: str = ""):
         """, (sube_id,))
         kaynak = cur.fetchone()
         if not kaynak:
-            return {"bilgi": f"{sube_ad} için 16 Mayıs tamamlanmış KAPANIS eventi bulunamadı — zaten düzeltilmiş olabilir"}
+            # Durum ne olursa olsun son 3 KAPANIS event'i göster (debug)
+            cur.execute("""
+                SELECT id, tarih, durum, cevap_ts,
+                       CASE WHEN meta IS NOT NULL THEN 'var' ELSE 'yok' END AS meta_durum
+                FROM sube_operasyon_event
+                WHERE sube_id=%s AND tip='KAPANIS'
+                ORDER BY tarih DESC, cevap_ts DESC NULLS LAST LIMIT 5
+            """, (sube_id,))
+            debug = [dict(r) for r in cur.fetchall()]
+            for d in debug:
+                d["tarih"] = str(d.get("tarih") or "")
+                d["cevap_ts"] = str(d.get("cevap_ts") or "")
+            return {"bilgi": f"{sube_ad} için 16 Mayıs tamamlanmış KAPANIS bulunamadı", "mevcut_eventler": debug}
 
         kaynak = dict(kaynak)
         kaynak_id = kaynak["id"]
