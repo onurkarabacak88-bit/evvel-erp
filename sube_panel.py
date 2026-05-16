@@ -1107,6 +1107,29 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                             ),
                         )
 
+                    # ── Onay kuyruğuna ekle (hem update hem insert yolunda) ──
+                    try:
+                        _kasa_farki_onay_kuyruguna_ekle(
+                            cur, sube_id, "ACILIS_KASA_FARK",
+                            float(bek), float(ks), pid, onay_ad, mesaj_kf,
+                        )
+                    except Exception:
+                        pass  # onay_kuyrugu yazımı kritik değil
+
+                    # ── Personel risk sinyali ──
+                    if pid:
+                        try:
+                            agirlik_kf = 20 if sev == "kritik" else 10
+                            cur.execute(
+                                """INSERT INTO personel_risk_sinyal
+                                       (id, personel_id, sube_id, tarih, sinyal_turu, agirlik, aciklama, referans_id)
+                                   VALUES (%s, %s, %s, CURRENT_DATE, 'ACILIS_KASA_FARK', %s, %s, %s)""",
+                                (str(uuid.uuid4()), pid, sube_id,
+                                 agirlik_kf, mesaj_kf[:1800], str(sube_id)),
+                            )
+                        except Exception:
+                            pass  # risk sinyal yazımı kritik değil
+
             # ── 2. STOK FARK KONTROLÜ ──
             bek_stok = beklenen_dunku_kapanis_stok(cur, sube_id)
             if bek_stok is not None:

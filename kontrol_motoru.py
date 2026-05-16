@@ -156,7 +156,7 @@ def kontrol_kasa_fark_trend(cur, sube_id: str, gun: int = 7) -> Optional[dict]:
         SELECT COUNT(*) AS adet, COALESCE(SUM(ABS(fark_tl)), 0) AS toplam
         FROM sube_operasyon_uyari
         WHERE sube_id = %s
-          AND tip = 'ACILIS_KASA_FARK'
+          AND tip IN ('ACILIS_KASA_FARK', 'KAPANIS_KASA_FARK')
           AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
         """,
         (sube_id, gun),

@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from database import db
-from kasa_service import audit
+from kasa_service import audit, onay_ekle
 from vardiya_v2 import sube_gun_acilis_vardiya_plan, sube_gun_kapanis_vardiya_plan
 from tr_saat import (
     bugun_tr,
@@ -1090,6 +1090,42 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                          sev_kf, mutabakat_fark, kasa_acigi, mesaj_kf,
                          pid_panel, onay_ad, detay_json),
                     )
+
+                # ── Onay kuyruğuna ekle (idempotent) ──
+                try:
+                    cur.execute(
+                        """SELECT 1 FROM onay_kuyrugu
+                           WHERE kaynak_tablo='kasa_farki' AND islem_turu='KAPANIS_KASA_FARK'
+                             AND tarih=%s AND aciklama LIKE %s AND durum='bekliyor' LIMIT 1""",
+                        (tarih_ev_ciro, f"%{sube_id}%"),
+                    )
+                    if not cur.fetchone():
+                        onay_ekle(
+                            cur,
+                            "KAPANIS_KASA_FARK",
+                            "kasa_farki",
+                            str(uuid.uuid4()),
+                            f"[{sube_id}] {mesaj_kf}"[:500],
+                            kasa_acigi,
+                            tarih_ev_ciro,
+                        )
+                except Exception:
+                    pass  # onay_kuyrugu yazımı kritik değil
+
+                # ── Personel risk sinyali ──
+                if pid_panel:
+                    try:
+                        agirlik_kf = 20 if sev_kf == "kritik" else 10
+                        cur.execute(
+                            """INSERT INTO personel_risk_sinyal
+                                   (id, personel_id, sube_id, tarih, sinyal_turu, agirlik, aciklama, referans_id)
+                               VALUES (%s, %s, %s, %s::date, 'KAPANIS_KASA_FARK', %s, %s, %s)""",
+                            (str(uuid.uuid4()), pid_panel, sube_id, str(tarih_ev_ciro),
+                             agirlik_kf, mesaj_kf[:1800], str(sube_id)),
+                        )
+                    except Exception:
+                        pass  # risk sinyal yazımı kritik değil
+
             cur.execute(
                 """
                 UPDATE sube_operasyon_event
