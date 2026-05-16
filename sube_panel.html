@@ -6720,6 +6720,7 @@ function wireGiderHandler() {
       });
       setMsg('mgMsg','Gönderildi — merkez onayı bekleniyor.','msg-ok');
       ['mgKat','mgTut','mgAcik','mgPin'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+      setTimeout(function(){ refresh().catch(function(){}); }, 400);
     } catch(e) {
       if (e.status===429) handle429(document.getElementById('mgMsg'),e);
       else setMsg('mgMsg',e.message||'Hata','msg-err');
@@ -7318,6 +7319,11 @@ async function refresh() {
     renderMain(data);
   } catch(e) {
     console.error('refresh error', e);
+    var orta = document.getElementById('orta');
+    if (orta) {
+      var msg = (e && e.message) ? String(e.message) : 'Panel yüklenemedi';
+      orta.innerHTML = '<motion-div class="kart" style="border-color:var(--red)"><p style="color:var(--red);font-weight:700;margin:0 0 8px">Panel yüklenemedi</p><p style="font-size:12px;color:var(--muted);margin:0">' + escHtml(msg) + '</p><p style="font-size:11px;color:var(--muted);margin:8px 0 0">API yeniden başlatıldıysa sayfayı yenileyin (F5).</p></div>';
+    }
   }
 }
 

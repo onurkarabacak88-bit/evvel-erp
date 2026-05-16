@@ -999,7 +999,9 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             cur.execute(
                 """SELECT COALESCE(SUM(tutar), 0) AS toplam
                    FROM anlik_giderler
-                   WHERE sube_id=%s AND tarih=%s AND odeme_yontemi='nakit'""",
+                   WHERE sube=%s AND tarih=%s
+                     AND LOWER(COALESCE(NULLIF(TRIM(odeme_yontemi), ''), 'nakit')) = 'nakit'
+                     AND durum='aktif'""",
                 (sube_id, tarih_ev_ciro),
             )
             nakit_giderler = float((cur.fetchone() or {}).get("toplam") or 0)
