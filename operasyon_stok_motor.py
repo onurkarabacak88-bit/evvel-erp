@@ -188,14 +188,22 @@ def _stok_key_from_urun_ad(urun_ad: Any) -> Optional[str]:
     n = str(urun_ad or "").strip().lower()
     if not n:
         return None
-    # Bardak — 14/8 oz ve plastik (sayım / katalog adları)
+    # Bardak — tüm eşleşmeler burada biter, aşağıya düşmez
     if "bardak" in n:
         if "plastik" in n:
             return "bardak_plastik"
+        if "karton" in n:
+            return "karton_bardak"
         if "14" in n and "oz" in n:
             return "bardak_buyuk"
         if "8" in n and "oz" in n:
             return "bardak_kucuk"
+        if "kucuk" in n or "küçük" in n or "small" in n:
+            return "bardak_kucuk"
+        if "buyuk" in n or "büyük" in n or "large" in n or "orta" in n:
+            return "bardak_buyuk"
+        # "bardak su", "su bardak" vb. — su şişesi değil, farklı kalem; eşleşme yok
+        return None
     if "kucuk bardak" in n or "küçük bardak" in n:
         return "bardak_kucuk"
     if "buyuk bardak" in n or "büyük bardak" in n:
@@ -204,7 +212,11 @@ def _stok_key_from_urun_ad(urun_ad: Any) -> Optional[str]:
         return "bardak_plastik"
     if "karton bardak" in n:
         return "karton_bardak"
-    if n == "su" or " su " in f" {n} ":
+    # Su şişesi — yalnızca "su" tek başına veya net olarak su şişesi ifade ediyorsa
+    if n == "su" or n == "su adet" or n == "su_adet" or n == "su sisesi" or n == "su şişesi":
+        return "su_adet"
+    # "bardaksız su" ifadesi yoksa " su " içeren ama bardak içermeyen kısa ifadeler
+    if " su " in f" {n} " and "bardak" not in n and len(n) <= 15:
         return "su_adet"
     if "redbull" in n:
         return "redbull_adet"
