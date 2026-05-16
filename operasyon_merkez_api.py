@@ -5529,16 +5529,16 @@ def ops_bekleyen_merkez(
 @router.get("/kasa-uyumsuzluk")
 def ops_kasa_uyumsuzluk_listesi(
     tarih: Optional[str] = None,
-    sadece_bekleyen: bool = True,
+    sadece_bekleyen: bool = False,
+    sadece_cozuldu: bool = False,
     min_fark: float = 0.01,
 ):
     """
-    Tüm şubelerin bekleyen ACILIS_KASA_FARK uyarılarını döner.
-    Merkez kasa fark çözüm kuyruğu (dashboard kasa_uyumsuzluk_listesi >50₺ eşiğinin
-    yanında küçük farkları da kapsayan tam liste).
-    - sadece_bekleyen=true → okundu=FALSE kayıtlar
-    - min_fark → abs(fark_tl) bu değerin üstündekiler (varsayılan: 0.01)
-    - tarih → YYYY-MM-DD; boşsa bugün (iş günü)
+    ACILIS_KASA_FARK / KAPANIS_KASA_FARK uyarı listesi (merkez çözüm kuyruğu).
+    - sadece_bekleyen=true → yalnız okundu=FALSE (çözüm bekleyen)
+    - sadece_cozuldu=true → yalnız okundu=TRUE (çözümlendi)
+    - ikisi de false → o günün tüm kayıtları (varsayılan; çözülenler kaybolmaz)
+    - min_fark → abs(fark_tl) eşiği (varsayılan: 0.01)
     """
     from tr_saat import is_gunu_tr
     try:
@@ -5547,6 +5547,24 @@ def ops_kasa_uyumsuzluk_listesi(
         raise HTTPException(400, "Geçersiz tarih formatı (YYYY-MM-DD bekleniyor)")
 
     with db() as (_, cur):
+        cur.execute(
+            """
+            SELECT
+                COUNT(*)::int AS toplam_gun,
+                COUNT(*) FILTER (WHERE u.okundu = FALSE)::int AS bekleyen_gun,
+                COUNT(*) FILTER (WHERE u.okundu = TRUE)::int AS cozuldu_gun
+            FROM sube_operasyon_uyari u
+            WHERE u.tip IN ('ACILIS_KASA_FARK', 'KAPANIS_KASA_FARK')
+              AND u.tarih = %s
+              AND ABS(COALESCE(u.fark_tl, 0)) >= %s
+            """,
+            (hedef_tarih, min_fark),
+        )
+        ozet_row = dict(cur.fetchone() or {})
+        gun_toplam = int(ozet_row.get("toplam_gun") or 0)
+        gun_bekleyen = int(ozet_row.get("bekleyen_gun") or 0)
+        gun_cozuldu = int(ozet_row.get("cozuldu_gun") or 0)
+
         cur.execute(
             """
             SELECT
@@ -5574,13 +5592,15 @@ def ops_kasa_uyumsuzluk_listesi(
               AND u.tarih = %s
               AND ABS(COALESCE(u.fark_tl, 0)) >= %s
               AND (%s = FALSE OR u.okundu = FALSE)
-            ORDER BY ABS(u.fark_tl) DESC NULLS LAST
+              AND (%s = FALSE OR u.okundu = TRUE)
+            ORDER BY u.okundu ASC, ABS(u.fark_tl) DESC NULLS LAST, u.olusturma DESC
             """,
-            (hedef_tarih, min_fark, sadece_bekleyen),
+            (hedef_tarih, min_fark, sadece_bekleyen, sadece_cozuldu),
         )
         rows = []
         for r in (cur.fetchall() or []):
             d = dict(r)
+            d["cozuldu"] = bool(d.get("okundu"))
             for k in ("fark_tl", "beklenen_tl", "gercek_tl", "son_7g_toplam"):
                 if d.get(k) is not None:
                     d[k] = float(d[k])
@@ -5600,8 +5620,12 @@ def ops_kasa_uyumsuzluk_listesi(
     return {
         "tarih": str(hedef_tarih),
         "sadece_bekleyen": sadece_bekleyen,
+        "sadece_cozuldu": sadece_cozuldu,
         "min_fark": min_fark,
         "toplam": len(rows),
+        "gun_toplam": gun_toplam,
+        "gun_bekleyen": gun_bekleyen,
+        "gun_cozuldu": gun_cozuldu,
         "liste": rows,
         "tolerans": {"normal_tl": 50, "uyari_tl": 200},
     }

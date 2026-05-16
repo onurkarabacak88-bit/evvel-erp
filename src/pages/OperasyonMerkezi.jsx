@@ -2262,6 +2262,8 @@ export default function OperasyonMerkezi() {
   const [kasaUyumAramaYukleniyor, setKasaUyumAramaYukleniyor] = useState(false);
   const [kasaUyumAramaSonuc, setKasaUyumAramaSonuc] = useState({ tarih: '', toplam: 0, kayitlar: [] });
   const [kasaUyumSeciliSubeKey, setKasaUyumSeciliSubeKey] = useState('all');
+  /** all | bekleyen | cozuldu — çözülen kayıtlar varsayılan listede kaybolmasın */
+  const [kasaUyumDurumFiltre, setKasaUyumDurumFiltre] = useState('all');
   /** Bugünden geriye 7 gün: çözüm bekleyen kasa uyarısı özeti (API yalnızca okundu=false döner). */
   const [kasaUyumHaftaSatirlari, setKasaUyumHaftaSatirlari] = useState([]);
   const [kasaUyumHaftaYukleniyor, setKasaUyumHaftaYukleniyor] = useState(false);
@@ -2769,13 +2771,21 @@ export default function OperasyonMerkezi() {
     }
   }, [ciroOnayAramaTarih, ciroOnayGunYukle, toast]);
 
-  const kasaUyumGunYukle = useCallback(async (tarih) => {
+  const kasaUyumGunYukle = useCallback(async (tarih, opts = {}) => {
     const hedef = (tarih || bugunIsoTarih()).trim();
-    const r = await api(`/ops/kasa-uyumsuzluk?tarih=${encodeURIComponent(hedef)}&sadece_bekleyen=true`);
+    const durum = opts.durum || 'all';
+    let url = `/ops/kasa-uyumsuzluk?tarih=${encodeURIComponent(hedef)}`;
+    if (durum === 'bekleyen') url += '&sadece_bekleyen=true';
+    else if (durum === 'cozuldu') url += '&sadece_cozuldu=true';
+    else url += '&sadece_bekleyen=false&sadece_cozuldu=false';
+    const r = await api(url);
     const kayitlar = Array.isArray(r?.liste) ? r.liste : [];
     return {
       tarih: hedef,
       toplam: r?.toplam ?? kayitlar.length,
+      gun_toplam: r?.gun_toplam ?? kayitlar.length,
+      gun_bekleyen: r?.gun_bekleyen ?? kayitlar.filter((u) => !u.cozuldu).length,
+      gun_cozuldu: r?.gun_cozuldu ?? kayitlar.filter((u) => u.cozuldu).length,
       kayitlar,
       eksik_kapanis: [],
     };
@@ -2785,10 +2795,8 @@ export default function OperasyonMerkezi() {
     const silent = !!opts.silent;
     setKasaUyumBugunYukleniyor(true);
     try {
-      const data = await kasaUyumGunYukle(bugunIsoTarih());
+      const data = await kasaUyumGunYukle(bugunIsoTarih(), { durum: 'bekleyen' });
       setKasaUyumBugun(data);
-      setKasaUyumAramaTarih(data.tarih || bugunIsoTarih());
-      setKasaUyumAramaSonuc(data);
     } catch (e) {
       if (!silent) toast(e.message || 'Kasa uyumsuzluk verisi yüklenemedi');
     } finally {
@@ -2804,14 +2812,14 @@ export default function OperasyonMerkezi() {
     }
     setKasaUyumAramaYukleniyor(true);
     try {
-      const data = await kasaUyumGunYukle(hedef);
+      const data = await kasaUyumGunYukle(hedef, { durum: kasaUyumDurumFiltre });
       setKasaUyumAramaSonuc(data);
     } catch (e) {
       toast(e.message || 'Kasa uyumsuzluk araması yapılamadı');
     } finally {
       setKasaUyumAramaYukleniyor(false);
     }
-  }, [kasaUyumAramaTarih, kasaUyumGunYukle, toast]);
+  }, [kasaUyumAramaTarih, kasaUyumDurumFiltre, kasaUyumGunYukle, toast]);
 
   const kasaUyumHaftaYukle = useCallback(async () => {
     const bugun = bugunIsoTarih();
@@ -2830,7 +2838,13 @@ export default function OperasyonMerkezi() {
         const a = Math.abs(Number(u?.fark_tl || 0));
         if (Number.isFinite(a) && a > maxAbs) maxAbs = a;
       });
-      return { tarih, adet: kayitlar.length, maxAbsFark: maxAbs };
+      return {
+        tarih,
+        adet: Number(r?.gun_toplam ?? kayitlar.length) || 0,
+        bekleyenAdet: Number(r?.gun_bekleyen ?? 0) || 0,
+        cozulduAdet: Number(r?.gun_cozuldu ?? 0) || 0,
+        maxAbsFark: maxAbs,
+      };
     });
   }, []);
 
@@ -3687,14 +3701,14 @@ export default function OperasyonMerkezi() {
       .then(setKasaUyumHaftaSatirlari)
       .catch(() => {})
       .finally(() => setKasaUyumHaftaYukleniyor(false));
-    kasaUyumGunYukle(bugunIsoTarih())
+    kasaUyumGunYukle(bugunIsoTarih(), { durum: kasaUyumDurumFiltre })
       .then((data) => {
         setKasaUyumAramaTarih(data.tarih || bugunIsoTarih());
         setKasaUyumAramaSonuc(data);
       })
       .catch((e) => toast(e.message || 'Kasa uyumsuzluk verisi yüklenemedi'))
       .finally(() => setYukleniyor(false));
-  }, [aktifSekme, toast, kasaUyumGunYukle, kasaUyumHaftaYukle]);
+  }, [aktifSekme, toast, kasaUyumGunYukle, kasaUyumHaftaYukle, kasaUyumDurumFiltre]);
 
   useEffect(() => {
     if (aktifSekme !== 'kasa-personel-takip') return;
@@ -4474,7 +4488,13 @@ export default function OperasyonMerkezi() {
       });
       toast('Kasa uyumsuzluk kaydı çözüldü olarak işaretlendi.', 'green');
       publishGlobalDataRefresh('ops-kasa-uyumsuzluk-cozuldu');
-      kasaUyumHaftaYukle().then(setKasaUyumHaftaSatirlari).catch(() => {});
+      const hedefKu = (kasaUyumAramaTarih || bugunIsoTarih()).trim();
+      const [haftaData, gunData] = await Promise.all([
+        kasaUyumHaftaYukle().catch(() => []),
+        kasaUyumGunYukle(hedefKu, { durum: kasaUyumDurumFiltre }).catch(() => null),
+      ]);
+      setKasaUyumHaftaSatirlari(haftaData);
+      if (gunData) setKasaUyumAramaSonuc(gunData);
       await yukleOnayMerkez();
     } catch (e) {
       toast(e.message || 'Kayıt çözülemedi');
@@ -9223,11 +9243,12 @@ export default function OperasyonMerkezi() {
       )}
 
       {aktifSekme === 'kasa-uyumsuzluk' && (() => {
-        const kuGunGit = async (yeniTarih) => {
+        const kuGunGit = async (yeniTarih, durumOverride) => {
           setKasaUyumAramaTarih(yeniTarih);
           setKasaUyumAramaYukleniyor(true);
+          const durum = durumOverride || kasaUyumDurumFiltre;
           try {
-            const data = await kasaUyumGunYukle(yeniTarih);
+            const data = await kasaUyumGunYukle(yeniTarih, { durum });
             setKasaUyumAramaSonuc(data);
             setKasaUyumSeciliSubeKey('all');
           } catch (e) { toast(e.message || 'Veri yüklenemedi'); }
@@ -9239,6 +9260,13 @@ export default function OperasyonMerkezi() {
         };
         const bugunStr = bugunIsoTarih();
         const secilenTarih = kasaUyumAramaTarih || bugunStr;
+        const kuDurumDegistir = async (yeniDurum) => {
+          setKasaUyumDurumFiltre(yeniDurum);
+          await kuGunGit(secilenTarih, yeniDurum);
+        };
+        const gunToplam = Number(kasaUyumAramaSonuc?.gun_toplam ?? 0);
+        const gunBekleyen = Number(kasaUyumAramaSonuc?.gun_bekleyen ?? 0);
+        const gunCozuldu = Number(kasaUyumAramaSonuc?.gun_cozuldu ?? 0);
         const tumKayitlar = Array.isArray(kasaUyumAramaSonuc?.kayitlar) ? kasaUyumAramaSonuc.kayitlar : [];
 
         // İki tip ayrı listeler
@@ -9266,10 +9294,16 @@ export default function OperasyonMerkezi() {
 
         // Kronik rozet
         const KronikRozet = ({ adet }) => adet >= 3 ? (
-          <span title={`Son 7 günde ${adet} kez fark oluştu`} style={{ background: 'rgba(220,38,38,0.2)', color: '#fca5a5', borderRadius: 5, padding: '1px 7px', fontSize: 10, fontWeight: 700 }}>
-            📈 {adet}× / 7 gün
+          <span title={`Bu şubede son 7 günde (çözülenler dahil) ${adet} kasa uyarısı`} style={{ background: 'rgba(220,38,38,0.2)', color: '#fca5a5', borderRadius: 5, padding: '1px 7px', fontSize: 10, fontWeight: 700 }}>
+            📈 {adet}× / 7 gün (şube)
           </span>
         ) : null;
+
+        const CozulduRozet = () => (
+          <span style={{ background: 'rgba(34,197,94,0.2)', color: '#4ade80', borderRadius: 5, padding: '1px 8px', fontSize: 10, fontWeight: 700 }}>
+            ✓ Çözüldü
+          </span>
+        );
 
         // Devir farkı kartı — akşamcı ne bıraktı vs sabahçı ne saydı
         const DevirFarkKart = ({ u }) => {
@@ -9277,8 +9311,9 @@ export default function OperasyonMerkezi() {
           const absFark = Math.abs(fark);
           const r = sevRenk(absFark);
           const kapTarih = u.kapanis_tarih || kuGunEkle(u.tarih, -1);
+          const cozuldu = !!u.cozuldu;
           return (
-            <div style={{ borderRadius: 10, border: `1px solid ${r.border}`, background: r.bg, overflow: 'hidden' }}>
+            <div style={{ borderRadius: 10, border: `1px solid ${r.border}`, background: r.bg, overflow: 'hidden', opacity: cozuldu ? 0.85 : 1 }}>
               {/* Başlık */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', padding: '9px 14px', borderBottom: `1px solid ${r.sep}`, background: r.hdr }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -9287,16 +9322,20 @@ export default function OperasyonMerkezi() {
                     {fark > 0 ? '+' : ''}{fmt(fark)}
                   </span>
                   <KronikRozet adet={u.son_7g_adet} />
-                  <span style={{ fontSize: 10, color: 'var(--text3)', padding: '1px 7px', border: '1px solid var(--border)', borderRadius: 4 }}>
-                    Devir uyumsuzluğu — çözülmeli
-                  </span>
+                  {cozuldu ? <CozulduRozet /> : (
+                    <span style={{ fontSize: 10, color: 'var(--text3)', padding: '1px 7px', border: '1px solid var(--border)', borderRadius: 4 }}>
+                      Devir uyumsuzluğu — çözüm bekliyor
+                    </span>
+                  )}
                 </div>
-                <button type="button" className="btn btn-sm"
-                  style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
-                  disabled={!!onayBusyId}
-                  onClick={() => kasaUyumsuzlukCoz(u.id)}>
-                  {onayBusyId === `ku:${u.id}` ? '…' : '✓ Çözüldü'}
-                </button>
+                {cozuldu ? <CozulduRozet /> : (
+                  <button type="button" className="btn btn-sm"
+                    style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
+                    disabled={!!onayBusyId}
+                    onClick={() => kasaUyumsuzlukCoz(u.id)}>
+                    {onayBusyId === `ku:${u.id}` ? '…' : 'Çözüldü işaretle'}
+                  </button>
+                )}
               </div>
               {/* İki kutu */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
@@ -9323,6 +9362,7 @@ export default function OperasyonMerkezi() {
 
         // Kasa açığı kartı — mutabakat formülü: açılış + Z nakit − gider − teslim − devir = 0
         const KasaAcigiKart = ({ u }) => {
+          const cozuldu = !!u.cozuldu;
           const fark = Number(u?.fark_tl || 0);
           const absFark = Math.abs(fark);
           const r = sevRenk(absFark);
@@ -9349,7 +9389,7 @@ export default function OperasyonMerkezi() {
           );
 
           return (
-            <div style={{ borderRadius: 10, border: `1px solid ${r.border}`, background: r.bg, overflow: 'hidden' }}>
+            <div style={{ borderRadius: 10, border: `1px solid ${r.border}`, background: r.bg, overflow: 'hidden', opacity: cozuldu ? 0.85 : 1 }}>
               {/* Başlık */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', padding: '9px 14px', borderBottom: `1px solid ${r.sep}`, background: r.hdr }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -9358,16 +9398,20 @@ export default function OperasyonMerkezi() {
                     {fark > 0 ? '+' : ''}{fmt(fark)}
                   </span>
                   <KronikRozet adet={u.son_7g_adet} />
-                  <span style={{ fontSize: 10, color: 'var(--text3)', padding: '1px 7px', border: '1px solid var(--border)', borderRadius: 4 }}>
-                    Kasa mutabakat farkı — çözüm gerekli
-                  </span>
+                  {cozuldu ? <CozulduRozet /> : (
+                    <span style={{ fontSize: 10, color: 'var(--text3)', padding: '1px 7px', border: '1px solid var(--border)', borderRadius: 4 }}>
+                      Kasa mutabakat farkı — çözüm bekliyor
+                    </span>
+                  )}
                 </div>
-                <button type="button" className="btn btn-sm"
-                  style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
-                  disabled={!!onayBusyId}
-                  onClick={() => kasaUyumsuzlukCoz(u.id)}>
-                  {onayBusyId === `ku:${u.id}` ? '…' : '✓ Çözüldü'}
-                </button>
+                {cozuldu ? <CozulduRozet /> : (
+                  <button type="button" className="btn btn-sm"
+                    style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
+                    disabled={!!onayBusyId}
+                    onClick={() => kasaUyumsuzlukCoz(u.id)}>
+                    {onayBusyId === `ku:${u.id}` ? '…' : 'Çözüldü işaretle'}
+                  </button>
+                )}
               </div>
 
               {hasDetay ? (
@@ -9437,17 +9481,49 @@ export default function OperasyonMerkezi() {
                 <button type="button" className="btn btn-secondary btn-sm" onClick={() => kuGunGit(bugunStr)}>Bugün</button>
               )}
               <span style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 4 }}>
-                {kasaUyumAramaYukleniyor ? '⏳ yükleniyor…' : `${tumKayitlar.length} kayıt`}
+                {kasaUyumAramaYukleniyor
+                  ? '⏳ yükleniyor…'
+                  : `Gösterilen: ${tumKayitlar.length} · Gün toplamı: ${gunToplam} (${gunBekleyen} bekleyen, ${gunCozuldu} çözüldü)`}
               </span>
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {devirFarkKayitlar.length > 0 && <span className="badge" style={{ background: 'rgba(240,128,64,0.2)', color: '#fdba74', fontWeight: 700 }}>💰 {devirFarkKayitlar.length} devir farkı</span>}
                 {kasaAcigiKayitlar.length > 0  && <span className="badge" style={{ background: 'rgba(74,158,255,0.15)', color: '#93c5fd', fontWeight: 700 }}>🔍 {kasaAcigiKayitlar.length} kasa açığı</span>}
-                {tumKayitlar.length === 0 && !kasaUyumAramaYukleniyor && <span style={{ fontSize: 12, color: '#4ade80', fontWeight: 600 }}>✓ Bu gün sorun yok</span>}
+                {gunToplam === 0 && !kasaUyumAramaYukleniyor && <span style={{ fontSize: 12, color: '#4ade80', fontWeight: 600 }}>✓ Bu gün sorun yok</span>}
               </div>
             </div>
 
-            {/* ── BOŞSA BİRLEŞİK MESAJ ── */}
-            {!kasaUyumAramaYukleniyor && tumKayitlar.length === 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              {[
+                { id: 'all', label: `Tümü (${gunToplam})` },
+                { id: 'bekleyen', label: `Çözüm bekleyen (${gunBekleyen})` },
+                { id: 'cozuldu', label: `Çözüldü (${gunCozuldu})` },
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => kuDurumDegistir(f.id)}
+                  style={{
+                    padding: '4px 12px',
+                    fontWeight: kasaUyumDurumFiltre === f.id ? 700 : 500,
+                    border: kasaUyumDurumFiltre === f.id ? '1px solid #4a9eff' : '1px solid var(--border)',
+                    background: kasaUyumDurumFiltre === f.id ? 'rgba(74,158,255,0.15)' : 'var(--bg2)',
+                    color: kasaUyumDurumFiltre === f.id ? '#93c5fd' : 'var(--text2)',
+                  }}
+                >
+                  {f.label}
+                </button>
+              ))}
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>Çözülen kayıtlar listeden silinmez.</span>
+            </div>
+
+            {!kasaUyumAramaYukleniyor && tumKayitlar.length === 0 && gunToplam > 0 && (
+              <div style={{ padding: '16px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text3)', textAlign: 'center' }}>
+                Bu filtrede kayıt yok.
+                <button type="button" className="btn btn-secondary btn-sm" style={{ marginLeft: 8 }} onClick={() => kuDurumDegistir('all')}>Tümünü göster</button>
+              </div>
+            )}
+            {!kasaUyumAramaYukleniyor && gunToplam === 0 && (
               <div style={{ padding: '20px 16px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 13, color: '#4ade80', fontWeight: 600, textAlign: 'center' }}>
                 ✓ Bu gün kasa farkı veya devir uyumsuzluğu yok
               </div>
@@ -9521,7 +9597,7 @@ export default function OperasyonMerkezi() {
                       <span style={{ marginTop: 4, fontSize: 13 }}>{kritik ? '🔴' : dikkat ? '🟡' : '✓'}</span>
                       {dikkat && (
                         <span style={{ fontSize: 9, color: kritik ? '#fca5a5' : '#fde68a', fontWeight: 700, marginTop: 1 }}>
-                          {s.adet} kayıt
+                          {s.adet} kayıt{s.bekleyenAdet != null && s.bekleyenAdet < s.adet ? ` (${s.bekleyenAdet} açık)` : ''}
                         </span>
                       )}
                     </button>
