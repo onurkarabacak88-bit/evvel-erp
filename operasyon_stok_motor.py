@@ -9,11 +9,17 @@ Operasyon stok / bardak tutarlılık motoru (davranış denetimi).
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from tr_saat import bugun_tr, dt_coerce_naive_tr, dt_now_tr_naive
+
+# UUID formatı — sube_depo_stok.kalem_kodu olarak doğrudan siparis_urun.id kullanılır
+_UUID_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I
+)
 
 STOK_KEYS = (
     "bardak_kucuk",
@@ -334,8 +340,12 @@ def depo_kalem_kodu_resolve(cur: Any, urun_id: str, urun_ad_fallback: str = "") 
     """
     Katalog satırını DB üzerinden çözerek ``sube_depo_stok.kalem_kodu`` tekilleştirir.
 
-    - ``siparis_urun.depo_stok_kalem_kodu`` doluysa doğrudan kullanılır (elle havuz).
-    - Değilse katalog ``ad`` okunur; ``depo_kalem_kodu_panel_katalog`` ile havuza düşürülür.
+    Öncelik:
+    1. ``siparis_urun.depo_stok_kalem_kodu`` (elle havuz ataması) — doluysa doğrudan kullan.
+    2. UUID katalog öğesi (1-to-1 eşleştirme aktif) → UUID'in kendisi kalem_kodu olur.
+       1-to-1 migration her aktif siparis_urun için tüm şubelerde UUID'li satır oluşturdu;
+       bu yüzden norm_ad'a gerek kalmadı. Türkçe karakter slug uyumsuzluğunu da engeller.
+    3. UUID olmayan eski STOK_KEY veya özel kod → panel katalog mantığına düşer.
     """
     uid = str(urun_id or "").strip()
     if not uid:
@@ -344,7 +354,7 @@ def depo_kalem_kodu_resolve(cur: Any, urun_id: str, urun_ad_fallback: str = "") 
     try:
         cur.execute(
             """
-            SELECT ad, depo_stok_kalem_kodu, norm_ad
+            SELECT ad, depo_stok_kalem_kodu
             FROM siparis_urun
             WHERE id=%s
             LIMIT 1
@@ -354,12 +364,15 @@ def depo_kalem_kodu_resolve(cur: Any, urun_id: str, urun_ad_fallback: str = "") 
         row = cur.fetchone()
         if row:
             d = dict(row) if not isinstance(row, dict) else row
+            # 1. Elle atanmış havuz kodu varsa onu kullan
             ov = str(d.get("depo_stok_kalem_kodu") or "").strip()
             if ov:
                 return ov
-            norm = str(d.get("norm_ad") or "").strip()
-            if norm:
-                return norm
+            # 2. UUID biçimli öğe: doğrudan UUID'i kalem_kodu olarak döndür.
+            #    1-to-1 migration bu UUID'le satır garantiledi; Türkçe slug sorunu yok.
+            if _UUID_RE.match(uid):
+                return uid
+            # 3. UUID değil (eski sistem veri): norm_ad kullan
             db_ad = str(d.get("ad") or "").strip()
             if db_ad:
                 ad_src = db_ad
