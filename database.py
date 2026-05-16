@@ -2824,3 +2824,30 @@ $$;
                       f"merkez={silinen4}+{silinen5}")
         except Exception as _mig_e:
             print(f"[MIGRATION WARN] depo_stok_duplike_temizlik_v1: {_mig_e}")
+
+        # ─── MIGRATION: depo_stok_duplike_temizlik_v2 (typo kalem_kodlar) ─────────
+        try:
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log WHERE ad='depo_stok_duplike_temizlik_v2' LIMIT 1
+            """)
+            if not cur.fetchone():
+                _typo_kodlar = ['tu_rk_kahvesi', 'frambuaz_surup']
+                cur.execute(
+                    "DELETE FROM sube_depo_stok WHERE kalem_kodu = ANY(%s)",
+                    (_typo_kodlar,),
+                )
+                s1 = cur.rowcount
+                cur.execute(
+                    "DELETE FROM merkez_stok_kart WHERE kalem_kodu = ANY(%s)",
+                    (_typo_kodlar,),
+                )
+                s2 = cur.rowcount
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay) VALUES (%s, %s::jsonb)
+                """, (
+                    'depo_stok_duplike_temizlik_v2',
+                    f'{{"sds_silinen": {s1}, "msk_silinen": {s2}, "kodlar": {_typo_kodlar}}}',
+                ))
+                print(f"[MIGRATION] depo_stok_duplike_temizlik_v2: sds={s1}, msk={s2}")
+        except Exception as _mig_e:
+            print(f"[MIGRATION WARN] depo_stok_duplike_temizlik_v2: {_mig_e}")
