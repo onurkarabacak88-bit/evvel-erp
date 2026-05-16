@@ -119,7 +119,8 @@ export default function EvoSatis() {
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
           {tokenDurumu === 'ok' && (
             <span style={{ fontSize: 12, color: 'var(--green)', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span>●</span> Bağlı
+              <span>●</span>
+              {veri?.kaynak === 'rest_api_fallback' ? 'REST API (token yok)' : 'Bağlı · hs_rapor'}
               {sonGuncelleme && <span style={{ color: 'var(--muted)' }}>· {sonGuncelleme.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>}
             </span>
           )}

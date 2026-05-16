@@ -422,10 +422,27 @@ def _hs_web_token_al() -> str:
     raise HTTPException(503, "EVO_WEB_TOKEN tanımlı değil. /api/evo/set-web-token ile token girin.")
 
 
+def _hs_web_token_temizle() -> None:
+    """Geçersiz/süresi dolmuş token'ı bellekten ve DB'den temizler."""
+    global _hs_web_token
+    _hs_web_token = ""
+    try:
+        with db() as (conn, cur):
+            cur.execute("DELETE FROM ayarlar WHERE anahtar='evo_web_token'")
+    except Exception:
+        pass
+    log.info("hs_rapor web token temizlendi (geçersiz/süresi dolmuş)")
+
+
+# Kimlik doğrulama hatası gösteren evobulut cevap anahtarları
+_EVO_AUTH_HATA = {"NON_AUTHENTICATED_USER", "HATA", "ERR", "LOGIN", "NOTOKEN"}
+
+
 def hs_rapor_urun_satis(bastar: date, bittar: date) -> Dict[str, float]:
     """
     hs_rapor.ashx → Cok_Satilan listesinden ürün adı → adet döndürür.
     Web localStorage token gerektirir (EVO_WEB_TOKEN env var veya DB).
+    Token geçersizse belleği temizler ve 503 fırlatır (fallback tetiklenir).
     """
     token = _hs_web_token_al()
     url = (
@@ -452,12 +469,19 @@ def hs_rapor_urun_satis(bastar: date, bittar: date) -> Dict[str, float]:
     except Exception:
         raise HTTPException(502, f"hs_rapor.ashx JSON hatası: {r.text[:200]}")
 
-    if d.get("Statu") != "OK":
-        raise HTTPException(502, f"hs_rapor.ashx Statu: {d.get('Statu')}")
+    statu = str(d.get("Statu") or "").strip().upper()
+
+    # Token süresi dolmuş / kimlik hatası → token'ı temizle, 503 fırlat (fallback devreye girer)
+    if statu in _EVO_AUTH_HATA or statu != "OK":
+        _hs_web_token_temizle()
+        raise HTTPException(
+            503,
+            f"hs_rapor web token geçersiz (Statu={statu}) — token yenileyin veya REST API kullanılıyor"
+        )
 
     cok = d.get("Cok_Satilan", [])
     if not cok:
-        log.warning("hs_rapor Cok_Satilan boş — token geçersiz olabilir")
+        log.warning("hs_rapor Cok_Satilan boş — veri yok")
         return {}
 
     urun_toplam: Dict[str, float] = {}
@@ -677,8 +701,12 @@ def evo_hs_rapor(
     tarih1: str = Query(None, description="DD.MM.YYYY — başlangıç (boş=bugün)"),
     tarih2: str = Query(None, description="DD.MM.YYYY — bitiş (boş=bugün)"),
 ):
-    """hs_rapor.ashx → En çok satılan ürünler (Cok_Satilan)."""
-    from datetime import date
+    """
+    Ürün bazlı satış — Hızlı Satış raporu.
+    Öncelik: hs_rapor.ashx (web token) → REST API fatura (EVO_KULLANICI/EVO_SIFRE).
+    Web token süresi dolmuşsa otomatik temizler ve REST API'ye düşer.
+    """
+    from datetime import date as _date
     bugun = bugun_tr()
     if tarih1:
         bastar = datetime.strptime(tarih1, "%d.%m.%Y").date()
@@ -689,11 +717,69 @@ def evo_hs_rapor(
     else:
         bittar = bugun
 
-    sonuc = hs_rapor_urun_satis(bastar, bittar)
+    kaynak = "hs_rapor"
+    sonuc: Dict[str, float] = {}
+
+    # 1. hs_rapor.ashx (web token — en doğru kaynak)
+    try:
+        sonuc = hs_rapor_urun_satis(bastar, bittar)
+        if sonuc:
+            log.info("hs_rapor başarılı: %d ürün", len(sonuc))
+    except HTTPException as e:
+        if e.status_code in (503,):
+            # Token yok veya geçersiz → REST API'ye geç
+            log.info("hs_rapor token geçersiz, REST API deneniyor: %s", e.detail)
+            kaynak = "rest_api_fallback"
+        else:
+            log.warning("hs_rapor hatası (%d): %s", e.status_code, e.detail)
+            kaynak = "rest_api_fallback"
+    except Exception as e:
+        log.warning("hs_rapor hatası: %s", e)
+        kaynak = "rest_api_fallback"
+
+    # 2. REST API fallback (EVO_KULLANICI + EVO_SIFRE ile)
+    if not sonuc and kaynak == "rest_api_fallback":
+        if EVO_USER and EVO_PASS:
+            try:
+                tum_faturalar = evo_fatura_listesi(bastar, bittar, tip=0)
+                faturalar = [
+                    f for f in tum_faturalar
+                    if str(f.get("G.a_tur") or f.get("a_tur") or "") in ("31", "34", "")
+                ]
+                urun_toplam: Dict[str, float] = {}
+                for f in faturalar:
+                    fid = str(f.get("G.a_id") or f.get("a_id") or f.get("id") or "").strip()
+                    if not fid:
+                        continue
+                    detay = evo_fatura_detay(fid)
+                    satirlar = _satirlari_coz(detay)
+                    for s in satirlar:
+                        ad = str(
+                            s.get("a_stok_adi") or s.get("stok_adi") or
+                            s.get("a_adi") or s.get("urun_adi") or ""
+                        ).strip()
+                        try:
+                            mik = float(s.get("a_miktar") or s.get("miktar") or 0)
+                        except (ValueError, TypeError):
+                            mik = 0.0
+                        if ad and mik > 0:
+                            urun_toplam[ad] = urun_toplam.get(ad, 0) + mik
+                sonuc = urun_toplam
+                log.info("REST API fallback başarılı: %d ürün", len(sonuc))
+            except Exception as e:
+                log.warning("REST API fallback başarısız: %s", e)
+        else:
+            # Token yok, REST API credentials da yok → 503
+            raise HTTPException(
+                503,
+                "EVO_WEB_TOKEN tanımlı değil. /api/evo/set-web-token ile token girin."
+            )
+
     return {
         "bastar": str(bastar),
         "bittar": str(bittar),
         "urun_sayisi": len(sonuc),
+        "kaynak": kaynak,
         "urunler": dict(sorted(sonuc.items(), key=lambda x: -x[1])),
     }
 
