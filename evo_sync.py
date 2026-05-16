@@ -921,6 +921,101 @@ def evo_sube_analiz(
     }
 
 
+@router.get("/sube-urunler")
+def evo_sube_urunler(
+    bastar: str = Query(..., description="YYYY-MM-DD"),
+    bittar: str = Query(..., description="YYYY-MM-DD"),
+    sube_adi: str = Query(..., description="Şube adı (örn: Zafer Şubesi)"),
+    max_fatura: int = Query(30, ge=1, le=50, description="Maksimum işlenecek fatura sayısı"),
+):
+    """
+    Belirli bir şubenin ürün bazlı satış detayları.
+    hs_rapor S dizisinden o şubenin fatura ID'leri alınır,
+    paralel REST API çağrılarıyla ürün kalemleri hesaplanır.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    try:
+        bs = date.fromisoformat(bastar)
+        bt = date.fromisoformat(bittar)
+    except ValueError:
+        raise HTTPException(400, "Geçersiz tarih formatı (YYYY-MM-DD)")
+
+    # hs_rapor'dan tüm veri
+    try:
+        ham = _hs_rapor_ham_veri(bs, bt)
+    except HTTPException as e:
+        raise HTTPException(e.status_code, e.detail)
+
+    # Şubeye ait faturaları filtrele
+    sube_faturalari = [
+        f for f in ham.get("S", [])
+        if str(f.get("a_sube_adi") or "").strip() == sube_adi.strip()
+    ]
+
+    if not sube_faturalari:
+        return {
+            "bastar": str(bs), "bittar": str(bt),
+            "sube_adi": sube_adi, "toplam_fis": 0,
+            "ciro": 0.0, "urunler": [],
+            "uyari": "Bu şubede fiş bulunamadı",
+        }
+
+    toplam_fis = len(sube_faturalari)
+    ciro = sum(float(f.get("a_tutar") or 0) for f in sube_faturalari)
+
+    # İşlenecek fatura ID'leri (en yeni, max_fatura adet)
+    fatura_ids = [str(f.get("a_id") or "") for f in sube_faturalari if f.get("a_id")]
+    fatura_ids = fatura_ids[:max_fatura]
+
+    # Paralel fatura detay çek
+    urun_toplam: Dict[str, float] = {}
+
+    def _cek(fid: str) -> Dict[str, float]:
+        sonuc: Dict[str, float] = {}
+        try:
+            detay = evo_fatura_detay(fid)
+            for s in _satirlari_coz(detay):
+                ad = str(
+                    s.get("a_stok_adi") or s.get("stok_adi") or
+                    s.get("a_adi") or s.get("urun_adi") or ""
+                ).strip()
+                try:
+                    mik = float(s.get("a_miktar") or s.get("miktar") or 0)
+                except (ValueError, TypeError):
+                    mik = 0.0
+                if ad and mik > 0:
+                    sonuc[ad] = sonuc.get(ad, 0) + mik
+        except Exception:
+            pass
+        return sonuc
+
+    with ThreadPoolExecutor(max_workers=8) as exe:
+        futures = {exe.submit(_cek, fid): fid for fid in fatura_ids}
+        for fut in as_completed(futures):
+            for ad, mik in fut.result().items():
+                urun_toplam[ad] = urun_toplam.get(ad, 0) + mik
+
+    urunler = [
+        {"urun": ad, "adet": mik}
+        for ad, mik in sorted(urun_toplam.items(), key=lambda x: -x[1])
+    ]
+
+    return {
+        "bastar":       str(bs),
+        "bittar":       str(bt),
+        "sube_adi":     sube_adi,
+        "toplam_fis":   toplam_fis,
+        "islenen_fis":  len(fatura_ids),
+        "ciro":         round(ciro, 2),
+        "urunler":      urunler,
+        "uyari": (
+            f"{toplam_fis} fişin {len(fatura_ids)} tanesi işlendi — tam veri için max_fatura artırın"
+            if len(fatura_ids) < toplam_fis else None
+        ),
+    }
+
+
 @router.get("/token-test")
 def evo_token_test():
     """evobulut REST API bağlantısını test eder."""

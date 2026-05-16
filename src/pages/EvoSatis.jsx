@@ -47,6 +47,8 @@ export default function EvoSatis() {
   const [subeYukleniyor, setSubeYukleniyor] = useState(false);
   const [subeHata, setSubeHata] = useState(null);
   const [secilenSube, setSecilenSube] = useState(null);
+  const [subeUrunler, setSubeUrunler] = useState(null);   // seçilen şubenin ürün detayı
+  const [subeUrunYukleniyor, setSubeUrunYukleniyor] = useState(false);
   const popupRef = useRef(null);
   const pollRef = useRef(null);
 
@@ -100,6 +102,26 @@ export default function EvoSatis() {
     } finally {
       setSubeYukleniyor(false);
     }
+  }
+
+  async function subeUrunYukle(subeAdi) {
+    if (!subeAdi) return;
+    setSubeUrunYukleniyor(true);
+    setSubeUrunler(null);
+    try {
+      const r = await api(`/evo/sube-urunler?bastar=${tarih1}&bittar=${tarih2}&sube_adi=${encodeURIComponent(subeAdi)}&max_fatura=40`);
+      setSubeUrunler(r);
+    } catch (e) {
+      setSubeUrunler({ hata: e.message || String(e) });
+    } finally {
+      setSubeUrunYukleniyor(false);
+    }
+  }
+
+  function subeSecOlayı(ad) {
+    setSecilenSube(ad);
+    setSubeUrunler(null);
+    subeUrunYukle(ad);
   }
 
   useEffect(() => { veriYukle(); }, [tarih1, tarih2]);
@@ -275,7 +297,7 @@ export default function EvoSatis() {
                   .sort((a, b) => b[1].ciro - a[1].ciro)
                   .map(([ad, bilgi]) => (
                     <div key={ad}
-                      onClick={() => setSecilenSube(ad)}
+                      onClick={() => subeSecOlayı(ad)}
                       className="card"
                       style={{
                         padding: '14px 18px', cursor: 'pointer',
@@ -290,6 +312,107 @@ export default function EvoSatis() {
                     </div>
                   ))}
               </div>
+
+              {/* Seçili şubenin ürün detayı */}
+              {secilenSube && (
+                <div className="card" style={{ padding: 0, marginBottom: 16 }}>
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontWeight: 700, fontSize: 14 }}>🏪 {secilenSube} — Ürün Detayı</span>
+                    {subeUrunler && !subeUrunler.hata && subeUrunler.uyari && (
+                      <span style={{ fontSize: 11, color: 'var(--yellow)', marginLeft: 'auto' }}>
+                        ⚠️ {subeUrunler.uyari}
+                      </span>
+                    )}
+                    {subeUrunler && !subeUrunler.hata && (
+                      <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: subeUrunler.uyari ? 0 : 'auto' }}>
+                        {subeUrunler.islenen_fis}/{subeUrunler.toplam_fis} fiş · {fmtTL(subeUrunler.ciro)}
+                      </span>
+                    )}
+                  </div>
+
+                  {subeUrunYukleniyor && (
+                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)' }}>
+                      ⏳ Fatura detayları yükleniyor...
+                    </div>
+                  )}
+
+                  {!subeUrunYukleniyor && subeUrunler?.hata && (
+                    <div style={{ padding: 16, color: 'var(--red)' }}>{subeUrunler.hata}</div>
+                  )}
+
+                  {!subeUrunYukleniyor && subeUrunler?.urunler?.length > 0 && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
+                      {/* Ürün listesi */}
+                      <div style={{ borderRight: '1px solid var(--border)' }}>
+                        <div style={{ padding: '8px 14px', fontSize: 11, color: 'var(--muted)', fontWeight: 600, borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>
+                          ÜRÜN SATIŞLARI
+                        </div>
+                        <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                            <tbody>
+                              {subeUrunler.urunler.map((u, i) => (
+                                <tr key={i} style={{ borderTop: i > 0 ? '1px solid var(--border)' : undefined }}>
+                                  <td style={{ padding: '7px 14px', color: 'var(--muted)', width: 24, fontSize: 12 }}>{i + 1}</td>
+                                  <td style={{ padding: '7px 14px', fontWeight: i < 3 ? 600 : 400 }}>{u.urun}</td>
+                                  <td style={{ padding: '7px 14px', textAlign: 'right', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
+                                    {Math.round(u.adet)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {/* Malzeme özeti */}
+                      <div>
+                        <div style={{ padding: '8px 14px', fontSize: 11, color: 'var(--muted)', fontWeight: 600, borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>
+                          TAHMİNİ MALZEME KULLANIMI
+                        </div>
+                        {(() => {
+                          // Ürün adından malzeme tahmin et
+                          const malzeme = {};
+                          const URUN_MALZEME = {
+                            'ICE': 'Plastik Bardak', 'FROZEN': 'Plastik Bardak', 'BUZLU': 'Plastik Bardak',
+                            '14 OZ': '14oz Karton Bardak', '8 OZ': '8oz Karton Bardak',
+                            'SU': 'Su Şişesi', 'REDBULL': 'Kutu', 'ÇAY': 'Çay Bardağı',
+                            'PASTA': 'Pasta Tabağı', 'MADEN': 'Maden Suyu Şişesi',
+                          };
+                          for (const u of subeUrunler.urunler) {
+                            const adUpper = u.urun.toUpperCase();
+                            let mal = null;
+                            for (const [kw, m] of Object.entries(URUN_MALZEME)) {
+                              if (adUpper.includes(kw)) { mal = m; break; }
+                            }
+                            if (mal) malzeme[mal] = (malzeme[mal] || 0) + u.adet;
+                          }
+                          return (
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                              <tbody>
+                                {Object.entries(malzeme).sort((a,b) => b[1]-a[1]).map(([mal, adet], i) => (
+                                  <tr key={i} style={{ borderTop: i > 0 ? '1px solid var(--border)' : undefined }}>
+                                    <td style={{ padding: '9px 14px' }}>
+                                      <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: MALZEME_RENK[mal] || '#94a3b8', marginRight: 6 }}/>
+                                      {mal}
+                                    </td>
+                                    <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
+                                      {Math.round(adet)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
+
+                  {!subeUrunYukleniyor && subeUrunler?.urunler?.length === 0 && (
+                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)' }}>Bu şubede ürün detayı bulunamadı.</div>
+                  )}
+                </div>
+              )}
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
 
