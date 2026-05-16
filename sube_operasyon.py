@@ -94,7 +94,7 @@ def _row_event(r) -> dict:
 
 
 def _ensure_events(cur, sube_id: str, sube: dict) -> None:
-    d = bugun_tr()
+    d = is_gunu_tr()   # gece 00:00–02:00 → önceki iş günü (kapanış 02:00'a kadar aynı gün sayılır)
     acilis_t = sube.get("acilis_saati") or "09:00"
     kapanis_t = sube.get("kapanis_saati") or "22:00"
     vp_ac = sube_gun_acilis_vardiya_plan(cur, sube_id, d)
