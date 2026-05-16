@@ -404,12 +404,18 @@ def faturajq_urun_bazli_satis(bastar: date, bittar: date) -> Dict[str, float]:
 # ─────────────────────────────────────────────
 
 def _hs_web_token_al() -> str:
-    """Web localStorage token'ı döndürür. Env var veya DB'den alınır."""
+    """
+    Web localStorage token'ı döndürür.
+    Öncelik sırası:
+      1. Bellekteki cache
+      2. DB'deki kayıtlı token (evo_web_token)
+      3. REST API (EVO_KULLANICI/EVO_SIFRE) ile otomatik UID token alma
+    """
     global _hs_web_token
-    # Önce bellekteki cache
+    # 1. Bellekteki cache
     if _hs_web_token:
         return _hs_web_token
-    # DB'den dene
+    # 2. DB'den dene
     try:
         with db() as (conn, cur):
             cur.execute("SELECT deger FROM ayarlar WHERE anahtar='evo_web_token'")
@@ -419,6 +425,16 @@ def _hs_web_token_al() -> str:
                 return _hs_web_token
     except Exception:
         pass
+    # 3. REST API ile otomatik token al (EVO_KULLANICI + EVO_SIFRE)
+    if EVO_USER and EVO_PASS:
+        try:
+            token = _token_al()  # ws.evobulut.com REST API UID
+            _hs_web_token = token
+            log.info("hs_rapor: REST API UID token otomatik alındı (%s...)", token[:8])
+            # Önbellekle (DB'ye kaydetme — REST token kısa ömürlü, her seferinde alınır)
+            return token
+        except Exception as e:
+            log.warning("hs_rapor: REST API otomatik token alınamadı: %s", e)
     raise HTTPException(503, "EVO_WEB_TOKEN tanımlı değil. /api/evo/set-web-token ile token girin.")
 
 
