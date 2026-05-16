@@ -282,18 +282,12 @@ def _stok_key_from_urun_ad(urun_ad: Any) -> Optional[str]:
     if "pasta" in n:
         return "pasta_adet"
     if "sut" in n or "süt" in n:
-        # Genel açılış «Süt» → sut_litre; katalog çeşitleri (tam/yarım yağlı vb.) ayrı kalem
-        if n in ("sut", "süt", "sut litre", "sut_litre"):
-            return "sut_litre"
-        cesit_isaret = (
-            "yagli", "yağlı", "yagsiz", "yağsız", "yarim", "yarım",
-            "laktoz", "badem", "soya", "yulaf", "hindistan", "findik", "fındık",
-            "cevizi", "vegan",
-        )
-        if any(t in n for t in cesit_isaret):
-            return None
-        if len(n) > 5:
-            return None
+        # Sistemde tek süt kalemi sut_litre — yarım yağlı, tam yağlı vb. hepsi aynı kaleme gider.
+        # Bitkisel sütler (badem, soya, yulaf vb.) ayrı kalem olarak tanımlı değilse yine sut_litre.
+        _BASKA_STOK = ("badem sutu", "badem sütü", "soya sutu", "soya sütü",
+                       "yulaf sutu", "yulaf sütü", "hindistan cevizi sutu", "hindistan cevizi sütü")
+        if any(b in n for b in _BASKA_STOK):
+            return None   # ileride ayrı kalem tanımlanırsa buraya eklenir
         return "sut_litre"
     if "surup" in n or "şurup" in n:
         return "surup_adet"
