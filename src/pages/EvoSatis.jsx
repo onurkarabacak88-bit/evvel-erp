@@ -641,10 +641,24 @@ export default function EvoSatis() {
               </p>
             </div>
 
+            {/* Otomatik sync bilgisi */}
+            <div style={{ background: '#0f172a', border: '1px solid #1e3a5f', borderRadius: 8, padding: 14, marginBottom: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#60a5fa', marginBottom: 6 }}>
+                🤖 Otomatik Token (PC Zamanlayıcı)
+              </div>
+              <div style={{ fontSize: 11, color: '#94a3b8', lineHeight: 1.6 }}>
+                PC'de <strong style={{ color: '#e2e8f0' }}>Görev Zamanlayıcı</strong> kuruldu — her 2 saatte bir token otomatik yenilenir.<br/>
+                PC açık ve <strong style={{ color: '#e2e8f0' }}>Chrome (Evvel ERP)</strong> kısayoluyla başlatılmışsa hiç el atmana gerek yok.
+              </div>
+              <div style={{ marginTop: 8, fontSize: 11, color: '#64748b' }}>
+                📂 Log: <code style={{ fontSize: 10, background: '#1e293b', padding: '1px 5px', borderRadius: 3 }}>Desktop\YAPALIM\evvel_token_sync.log</code>
+              </div>
+            </div>
+
             {/* ADIM 2: Butona bas ve evobulut popup'ta açılır */}
             <div style={{ background: 'var(--bg2)', borderRadius: 8, padding: 16, marginBottom: 20 }}>
               <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: 'var(--text)' }}>
-                🚀 Her seferinde: Tek tıkla güncelle
+                🚀 Manuel: Tek tıkla güncelle
               </div>
               {!popupBekle ? (
                 <>
