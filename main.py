@@ -139,16 +139,8 @@ def fix_tema_kapanis_tarih(gizli: str = ""):
             cur.execute("UPDATE kasa_teslim SET tarih='2026-05-15' WHERE id=%s", (kt["id"],))
             sonuclar.append(f"kasa_teslim tarih düzeltildi: {kt['id']} ({kt['tutar']} TL)")
 
-        # 3. operasyon_defter — 16 Mayıs KAPANIS_TAMAM satırını 15 Mayıs'a taşı
-        # (HMAC imzası tarih içeriyor; imza bozulur ama defter okunabilirliği korunur)
-        cur.execute("""
-            SELECT id, tarih::text FROM operasyon_defter
-            WHERE sube_id=%s AND tarih='2026-05-16' AND etiket='KAPANIS_TAMAM'
-        """, (sube_id,))
-        od_rows = [dict(r) for r in cur.fetchall()]
-        for od in od_rows:
-            cur.execute("UPDATE operasyon_defter SET tarih='2026-05-15' WHERE id=%s", (od["id"],))
-            sonuclar.append(f"operasyon_defter tarih düzeltildi: {od['id']}")
+        # 3. operasyon_defter — append-only trigger nedeniyle UPDATE yasak, atla
+        #    Defter sadece audit log, hesaplamaları etkilemiyor.
 
         if not sonuclar:
             sonuclar.append("Düzeltilecek kayıt bulunamadı — tümü temiz")
