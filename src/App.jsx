@@ -23,6 +23,7 @@ import SubePanelPinleri from './pages/SubePanelPinleri';
 import Tedarikciler from './pages/Tedarikciler';
 import VeriTemizle from './pages/VeriTemizle.jsx';
 import OperasyonMerkezi from './pages/OperasyonMerkezi';
+import EvoSatis from './pages/EvoSatis';
 import TeslimKayit from './pages/TeslimKayit';
 import SevkiyatHazirlama from './pages/SevkiyatHazirlama';
 import KasaTeslim from './pages/KasaTeslim';
@@ -32,6 +33,7 @@ const NAV = [
   { group: 'Ana', items: [
     { id: 'panel',            label: 'CFO Panel',           icon: '⬛' },
     { id: 'ops-merkez',       label: 'Operasyon Merkezi',   icon: '📡' },
+    { id: 'evo-satis',        label: 'Ürün Satışları',      icon: '☕' },
     { id: 'kasa-teslim',      label: 'Kasa Teslim',         icon: '💰' },
     { id: 'rapor',            label: 'Aylık Rapor',         icon: '📊' },
     { id: 'strateji',         label: 'Strateji Motoru',     icon: '🧠' },
@@ -67,6 +69,7 @@ const NAV = [
 const PAGES = {
   panel:              Panel,
   'ops-merkez':       OperasyonMerkezi,
+  'evo-satis':        EvoSatis,
   'kasa-teslim':      KasaTeslim,
   strateji:           Strateji,
   onay:               OnayKuyrugu,
