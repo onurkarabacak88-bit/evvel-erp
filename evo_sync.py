@@ -817,27 +817,49 @@ _MALZEME_MAP: Dict[str, str] = {
 def _hs_rapor_ham_veri(bastar: date, bittar: date) -> Dict:
     """
     hs_rapor.ashx'ten ham JSON döndürür: S, Cok_Satilan, Grup_Pasta, kasa, banka.
-    Token geçersizse 503 fırlatır.
+    Web token geçersizse otomatik yenileme dener (REST API UID ile).
     """
-    token = _hs_web_token_al()
-    url = f"{EVO_WEB}/hizli/hs_rapor.ashx?evo_token={token}&evo_server=web.evobulut.com"
-    body = {
-        "komut":    "FORM_LOAD",
-        "tarih1":   bastar.strftime("%d.%m.%Y 00:00:00"),
-        "tarih2":   bittar.strftime("%d.%m.%Y 23:59:59"),
-        "personel": "0",
-        "sube":     "0",
-    }
-    headers = {"X-Requested-With": "XMLHttpRequest", "Referer": f"{EVO_WEB}/hizli/hs_rapor.html"}
-    r = requests.post(url, data=body, headers=headers, timeout=20)
-    if r.status_code != 200:
-        raise HTTPException(502, f"hs_rapor.ashx HTTP {r.status_code}")
-    d = r.json()
-    statu = str(d.get("Statu") or "").strip().upper()
-    if statu in _EVO_AUTH_HATA or statu != "OK":
-        _hs_web_token_temizle()
-        raise HTTPException(503, f"hs_rapor token geçersiz (Statu={statu})")
-    return d
+    def _cek_token(token: str) -> Dict:
+        url = f"{EVO_WEB}/hizli/hs_rapor.ashx?evo_token={token}&evo_server=web.evobulut.com"
+        body = {
+            "komut":    "FORM_LOAD",
+            "tarih1":   bastar.strftime("%d.%m.%Y 00:00:00"),
+            "tarih2":   bittar.strftime("%d.%m.%Y 23:59:59"),
+            "personel": "0",
+            "sube":     "0",
+        }
+        headers = {"X-Requested-With": "XMLHttpRequest", "Referer": f"{EVO_WEB}/hizli/hs_rapor.html"}
+        r = requests.post(url, data=body, headers=headers, timeout=20)
+        if r.status_code != 200:
+            raise HTTPException(502, f"hs_rapor.ashx HTTP {r.status_code}")
+        return r.json()
+
+    # 1. Önce mevcut token ile dene
+    try:
+        token = _hs_web_token_al()
+        d = _cek_token(token)
+        statu = str(d.get("Statu") or "").strip().upper()
+        if statu in _EVO_AUTH_HATA or statu != "OK":
+            _hs_web_token_temizle()
+            raise HTTPException(503, "token_gecersiz")
+        # Token çalıştı ama S boşsa REST API UID denemesi yap
+        if d.get("S") or d.get("Cok_Satilan"):
+            return d
+    except HTTPException:
+        pass
+
+    # 2. REST API UID token ile dene (EVO_KULLANICI/EVO_SIFRE)
+    if EVO_USER and EVO_PASS:
+        try:
+            rest_token = _token_al()
+            d2 = _cek_token(rest_token)
+            statu2 = str(d2.get("Statu") or "").strip().upper()
+            if statu2 == "OK" and (d2.get("S") or d2.get("Cok_Satilan")):
+                return d2
+        except Exception:
+            pass
+
+    raise HTTPException(503, "hs_rapor verisi alınamadı — token yenileyin veya EVO_KULLANICI/EVO_SIFRE kontrol edin")
 
 
 @router.get("/sube-analiz")
