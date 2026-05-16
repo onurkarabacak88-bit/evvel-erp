@@ -8169,6 +8169,7 @@ export default function OperasyonMerkezi() {
         const topSabah  = satirlar.reduce((s, r) => s + (Number(r.sabah_kasa_tl) || 0), 0);
         const topTeslim = satirlar.reduce((s, r) => s + (Number(r.teslim_kasa_tl) || 0), 0);
         const topDevir  = satirlar.reduce((s, r) => s + (Number(r.devir) || 0), 0);
+        const topAraTeslim = satirlar.reduce((s, r) => s + (Number(r.ara_teslim_tl) || 0), 0);
         const topAgider = satirlar.reduce((s, r) => s + (Number(r.anlik_gider_nakit_tl) || 0), 0);
 
         const fmt  = (v) => Number(v || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 });
@@ -8193,6 +8194,8 @@ export default function OperasyonMerkezi() {
           const fark = r.nakit_kasa_fark_tl;
           const kismi = r.nakit_denkleme_kismi === true;
           const tam = r.nakit_denkleme_tam === true || (ac && kap);
+          const nakitX = Number(r.nakit) || 0;
+          const giderN = Number(r.anlik_gider_nakit_tl) || 0;
           if ((tam || kismi) && fark != null && !Number.isNaN(Number(fark))) {
             const fs = fmtFark(fark);
             if (fs != null) {
@@ -8206,8 +8209,8 @@ export default function OperasyonMerkezi() {
                   : 'Kasa fazlası';
               const title =
                 (kismi && !tam
-                  ? 'Kısmi denge (kapanış yok): sabah kasa + ciro nakit − nakit anlık gider − ara teslim. '
-                  : 'Nakit denge: sabah kasa + ciro nakit − teslim − devir − ara teslim − nakit anlık gider. ')
+                  ? `Kısmi: sabah kasa + X nakit (${fmt(nakitX)}) − gider (${fmt(giderN)}) − ara teslim. `
+                  : `Tam: sabah kasa + X nakit (${fmt(nakitX)}) − teslim − devir − ara teslim − gider (${fmt(giderN)}). `)
                 + (buyuk
                   ? (fv > 0
                     ? 'Pozitif: denkleme göre kasada tutması gerekenden az nakit (açık).'
@@ -8285,10 +8288,13 @@ export default function OperasyonMerkezi() {
               ) : null}
             </p>
             <p style={{ margin: 0, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
-              <strong>Nakit denge (Δ):</strong> aynı iş günü <em>sabah kasa</em> (açılış sayımı) + <em>ciro nakit</em> (yapılan iş) − <em>teslim</em> − <em>devir</em> (kasada kalan) − <em>onaylı nakit anlık gider</em>.
-              Teslim zorunlu değilse satırda 0 görünebilir. Kapanış satırı şube başına <strong>en son tamamlanan KAPANIS</strong> olayından gelir (vardiya + son kapanış ayrımı karışmaz).
-              Yalnızca hem açılış hem kapanış tamamlanmış şubelerde Δ tutar gösterilir. Tabloda: <span style={{ color: '#e85d5d' }}>+</span> kasa açığı, <span style={{ color: '#22c55e' }}>−</span> kasa fazlası, ≈0 nötr.
-              Adım adım kasa / X uyumsuzluk kayıtları için <strong>Kasa uyumsuzluk</strong> sekmesine bakın.
+              <strong>Ciro sütunları:</strong> kapanış yapılmış şubede şubenin panelde girdiği <strong>X nakit / POS / online</strong> (kapanış kaydı).
+              Online satış yoksa <strong>0</strong> görünür. Merkez onayında yanlışlıkla nakit+POS toplamının online’a yazılması düzeltilir (çift sayım uyarısı).
+              <strong>Toplam</strong> = Nakit + POS + Online. Devir / teslim / sabah kasa bu sütunlara girmez.
+            </p>
+            <p style={{ margin: 0, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
+              <strong>Nakit Δ:</strong> sabah kasa + <em>X nakit</em> − teslim − devir − ara teslim − <em>anlık gider (nakit)</em>.
+              Gider düşülmezse sahte kasa açığı çıkar. POS ve online Δ’ye dahil değildir.
             </p>
 
             {/* ── Özet metrik kartları ── */}
@@ -8329,7 +8335,7 @@ export default function OperasyonMerkezi() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr style={{ background: 'var(--bg2)' }}>
-                      {['Şube', 'Kapanış', 'Saat', 'Kapanış Personeli', 'Ciro Durumu', 'Gönderen', 'Nakit', 'POS', 'Online', 'Toplam', 'Sabah kasa', 'Teslim', 'Devir', 'A.gider (N)', 'Nakit Δ (açık / fazla)'].map((h, i) => (
+                      {['Şube', 'Kapanış', 'Saat', 'Kapanış Personeli', 'Ciro Durumu', 'Gönderen', 'Nakit', 'POS', 'Online', 'Toplam', 'Sabah kasa', 'Teslim', 'Devir', 'Ara teslim', 'A.gider (N)', 'Nakit Δ'].map((h, i) => (
                         <th key={i} style={{ padding: '8px 10px', textAlign: i >= 6 ? 'right' : i >= 1 ? 'center' : 'left', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--text3)', fontWeight: 600, whiteSpace: 'nowrap' }}>
                           {h}
                         </th>
@@ -8346,7 +8352,15 @@ export default function OperasyonMerkezi() {
                         : onc === 2
                         ? 'rgba(245,158,11,0.06)'
                         : 'transparent';
-                      const toplam = r.ciro_tutar > 0 ? r.ciro_tutar : (r.nakit + r.pos + r.online);
+                      const ciroKalemToplam = (Number(r.nakit) || 0) + (Number(r.pos) || 0) + (Number(r.online) || 0);
+                      const toplam = r.ciro_tutar > 0 ? r.ciro_tutar : ciroKalemToplam;
+                      const onlineCiftKayit = r.online_cift_kayit === true
+                        || (
+                          (Number(r.online) || 0) > 0
+                          && (Number(r.nakit) || 0) > 0
+                          && (Number(r.pos) || 0) > 0
+                          && Math.abs((Number(r.online) || 0) - (Number(r.nakit) + Number(r.pos))) < 0.5
+                        );
                       const kapanisSaat = saat(r.kapanis_ts);
                       return (
                         <tr key={r.sube_id} style={{ background: rowBg, transition: 'background 0.15s' }}>
@@ -8384,7 +8398,6 @@ export default function OperasyonMerkezi() {
                           <td style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '1px solid var(--border)', fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>
                             {r.gonderen_ad || '—'}
                           </td>
-                          {/* Nakit */}
                           <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
                             {r.nakit > 0 ? <strong>{fmt(r.nakit)} ₺</strong> : <span style={{ color: 'var(--text3)' }}>—</span>}
                           </td>
@@ -8392,12 +8405,27 @@ export default function OperasyonMerkezi() {
                           <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
                             {r.pos > 0 ? <strong>{fmt(r.pos)} ₺</strong> : <span style={{ color: 'var(--text3)' }}>—</span>}
                           </td>
-                          {/* Online */}
-                          <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                            {r.online > 0 ? <strong>{fmt(r.online)} ₺</strong> : <span style={{ color: 'var(--text3)' }}>—</span>}
+                          {/* Online — X raporu online kanalı (nakit Δ'ye dahil değil) */}
+                          <td
+                            style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
+                            title="X raporu: online kanal satışı. Nakit denge (Δ) formülüne girmez."
+                          >
+                            {r.online > 0 ? (
+                              <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                                <strong>{fmt(r.online)} ₺</strong>
+                                {onlineCiftKayit ? (
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: '#f59e0b', maxWidth: 100, textAlign: 'right', lineHeight: 1.2 }}>
+                                    Nakit+POS çift?
+                                  </span>
+                                ) : null}
+                              </span>
+                            ) : <span style={{ color: 'var(--text3)' }}>—</span>}
                           </td>
-                          {/* Toplam */}
-                          <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                          {/* Toplam = nakit + pos + online */}
+                          <td
+                            style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
+                            title={`Toplam ciro (Nakit ${fmt(r.nakit)} + POS ${fmt(r.pos)} + Online ${fmt(r.online)})`}
+                          >
                             {toplam > 0
                               ? <span style={{ fontWeight: 800, fontSize: 14, color: r.ciro_onaylandi ? '#22c55e' : 'var(--text)' }}>{fmt(toplam)} ₺</span>
                               : <span style={{ color: 'var(--text3)' }}>—</span>}
@@ -8413,6 +8441,10 @@ export default function OperasyonMerkezi() {
                           {/* Devir (kasada kalan) */}
                           <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontSize: 12, maxWidth: 120 }}>
                             {r.kapanis_tamam ? <span style={{ whiteSpace: 'nowrap' }}>{fmt(r.devir)} ₺</span> : <span style={eksikUyariStil}>Kapanış yapılmadı</span>}
+                          </td>
+                          {/* Ara teslim (gün içi) */}
+                          <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontSize: 12, whiteSpace: 'nowrap' }}>
+                            {(r.ara_teslim_tl || 0) > 0 ? <span>{fmt(r.ara_teslim_tl)} ₺</span> : <span style={{ color: 'var(--text3)' }}>—</span>}
                           </td>
                           {/* Anlık gider nakit */}
                           <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', fontSize: 12 }}>
@@ -8453,6 +8485,9 @@ export default function OperasyonMerkezi() {
                         </td>
                         <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 700, fontSize: 12, color: 'var(--text2)' }}>
                           {fmt(topDevir)} ₺
+                        </td>
+                        <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 700, fontSize: 12, color: 'var(--text2)' }}>
+                          {fmt(topAraTeslim)} ₺
                         </td>
                         <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 700, fontSize: 12, color: 'var(--text2)' }}>
                           {fmt(topAgider)} ₺

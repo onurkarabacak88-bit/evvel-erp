@@ -95,7 +95,15 @@ def ciro_taslak_detay(taslak_id: str):
 
 @router.patch("/{taslak_id}")
 def ciro_taslak_duzenle(taslak_id: str, body: CiroTaslakTutarBody):
-    toplam = float(body.nakit or 0) + float(body.pos or 0) + float(body.online or 0)
+    nakit = float(body.nakit or 0)
+    pos = float(body.pos or 0)
+    online = float(body.online or 0)
+    if online > 0.001 and nakit > 0.001 and pos > 0.001 and abs(online - (nakit + pos)) < 0.5:
+        raise HTTPException(
+            400,
+            "Online tutarı nakit+POS toplamına eşit — çift sayım. Online yoksa 0 girin.",
+        )
+    toplam = nakit + pos + online
     if toplam <= 0:
         raise HTTPException(400, "En az bir tutar girilmeli")
     with db() as (conn, cur):
@@ -163,6 +171,11 @@ def ciro_taslak_onayla(taslak_id: str, body: CiroTaslakOnayTutarlari = CiroTasla
         nakit = float(body.nakit) if body.nakit is not None else float(t["nakit"])
         pos = float(body.pos) if body.pos is not None else float(t["pos"])
         online = float(body.online) if body.online is not None else float(t["online"])
+        if online > 0.001 and nakit > 0.001 and pos > 0.001 and abs(online - (nakit + pos)) < 0.5:
+            raise HTTPException(
+                400,
+                "Online tutarı nakit+POS toplamına eşit — çift sayım. Online yoksa 0 onaylayın.",
+            )
         if nakit + pos + online <= 0:
             raise HTTPException(400, "Onay tutarları geçersiz")
 

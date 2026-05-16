@@ -915,6 +915,12 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             cn = float(body.ciro_nakit)
             cp = float(body.ciro_pos)
             co = float(body.ciro_online)
+            if co > 0.001 and cn > 0.001 and cp > 0.001 and abs(co - (cn + cp)) < 0.5:
+                raise HTTPException(
+                    400,
+                    "Online tutarı nakit ile POS toplamına eşit olamaz — "
+                    "online satış yoksa 0 girin; günlük toplamı yalnızca nakit ve POS alanlarına yazın.",
+                )
             tarih_ev_ciro = ev.get("tarih")
             if isinstance(tarih_ev_ciro, datetime):
                 tarih_ev_ciro = tarih_ev_ciro.date()

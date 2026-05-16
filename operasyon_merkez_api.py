@@ -1373,9 +1373,10 @@ def kapanis_takip(tarih: Optional[str] = None):
     Onaylandi taslak bekliyor'a göre önceliklidir (aynı gün içinde).
     Tarih verilmezse varsayılan: iş günü (gece 02:00'e kadar önceki takvim günü) — tr_saat.is_gunu_tr.
 
-    Nakit denge (merkez, satır bazlı):
-    Tam: sabah_kasa + ciro_nakit − teslim − devir − ara_teslim − onaylı nakit anlık gider (açılış+kapanış tamam).
-    Kısmi: açılış var, kapanış yok — gider ve/veya ciro nakit ile sabah_kasa − gider − ara_teslim (teslim/devir=0).
+    Ciro sütunları: kapanış varsa meta.x_rapor (şubenin X girişi); yoksa ciro/taslak.
+    Online=nakit+POS çift kaydı tespit edilirse online=0 sayılır (toplam çift sayılmaz).
+
+    Nakit denge (Δ): sabah_kasa + X_nakit − teslim − devir − ara_teslim − nakit anlık gider (aktif+onay_bekliyor).
     ≈0 beklenir; + kasa açığı, − kasa fazlası.
 
     Kapanış tutarları: aynı iş gününde birden fazla tamamlanmış KAPANIS kaydı olabilir (ör. vardiya ara adımı
@@ -1401,7 +1402,11 @@ def kapanis_takip(tarih: Optional[str] = None):
                    e.kasa_sayim,
                    e.devir,
                    e.teslim,
-                   e.personel_ad
+                   e.personel_ad,
+                   e.snap_nakit,
+                   e.snap_pos,
+                   e.snap_online,
+                   e.meta
             FROM sube_operasyon_event e
             WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
               AND e.tarih = %s
@@ -1502,18 +1507,18 @@ def kapanis_takip(tarih: Optional[str] = None):
         tas  = taslak_map.get(sid, {})
         ciro = ciro_map.get(sid)
 
-        # Onaylı ciro satırı varsa kalemler yalnızca ordan (0 geçerli; `x or taslak` 0'ı yok sayıp
-        # taslaktaki eski/OCR yanlış online/nakit/pos'u gösterebilirdi).
         if ciro:
             ciro_tutar = float(ciro.get("toplam") or 0)
             nakit = float(ciro.get("nakit") or 0)
             pos = float(ciro.get("pos") or 0)
             online = float(ciro.get("online") or 0)
+            ciro_kaynak = "ciro"
         else:
             ciro_tutar = 0.0
             nakit = float(tas.get("nakit") or 0)
             pos = float(tas.get("pos") or 0)
             online = float(tas.get("online") or 0)
+            ciro_kaynak = "taslak" if tas else ""
 
         kts  = kap.get("kapanis_ts")
         ats  = acil.get("acilis_ts")
@@ -1524,17 +1529,34 @@ def kapanis_takip(tarih: Optional[str] = None):
         devir_kalan = float(kap.get("devir") or 0) if kap else 0.0
         ara_teslim = float(ara_teslim_map.get(sid, 0.0) or 0.0)
         gider_nakit = float(gider_map.get(sid, 0.0) or 0.0)
+
+        # Ciro sütunları: önce kapanışta kaydedilen X (şubenin girdiği); merkez onayı yanlışsa karışmasın
+        xr_kap = _kapanis_x_rapor_from_event(kap if kap else None)
+        online_cift_kayit = False
+        if bool(kap) and xr_kap.get("nakit") is not None:
+            nakit = float(xr_kap.get("nakit") or 0)
+            pos = float(xr_kap.get("pos") or 0)
+            online = float(xr_kap.get("online") or 0)
+            ciro_tutar = round(nakit + pos + online, 2)
+            ciro_kaynak = "kapanis_x"
+        elif _online_nakit_pos_cift(nakit, pos, online):
+            online_cift_kayit = True
+            online = 0.0
+            ciro_tutar = round(nakit + pos, 2)
+
+        nakit_delta_icin = float(nakit)
+
         nakit_denkleme_tam = bool(acil) and bool(kap)
         nakit_denkleme_kismi = False
         nakit_kasa_fark = None
         if nakit_denkleme_tam:
             nakit_kasa_fark = round(
-                sabah_kasa + float(nakit) - teslim_kasa - devir_kalan - gider_nakit - ara_teslim,
+                sabah_kasa + nakit_delta_icin - teslim_kasa - devir_kalan - gider_nakit - ara_teslim,
                 2,
             )
-        elif bool(acil) and (gider_nakit > 0.001 or float(nakit) > 0.001 or ara_teslim > 0.001):
+        elif bool(acil) and (gider_nakit > 0.001 or nakit_delta_icin > 0.001 or ara_teslim > 0.001):
             nakit_kasa_fark = round(
-                sabah_kasa + float(nakit) - gider_nakit - ara_teslim,
+                sabah_kasa + nakit_delta_icin - gider_nakit - ara_teslim,
                 2,
             )
             nakit_denkleme_kismi = True
@@ -1563,9 +1585,10 @@ def kapanis_takip(tarih: Optional[str] = None):
             "nakit":           nakit,
             "pos":             pos,
             "online":          online,
-            "ciro_onaylandi":  ciro_tutar > 0,
+            "ciro_kaynak":     ciro_kaynak,
+            "online_cift_kayit": online_cift_kayit,
+            "ciro_onaylandi":  bool(ciro),
             "ciro_tutar":      ciro_tutar,
-            # Nakit kasa denge (ciro nakit = yapılan iş; devir = kasada kalan)
             "anlik_gider_nakit_tl": gider_nakit,
             "nakit_denkleme_tam": nakit_denkleme_tam,
             "nakit_denkleme_kismi": nakit_denkleme_kismi,
@@ -2448,6 +2471,49 @@ def _stok_map_from_meta(meta_raw: Any, alan: str, keys: Optional[List[str]] = No
 def _bar_stok_from_meta(meta_raw: Any, alan: str) -> Dict[str, int]:
     """meta JSONB'den belirli alanı (acilis_stok_sayim / kapanis_stok_sayim) okur."""
     return _stok_map_from_meta(meta_raw, alan, _BAR_KEYS)
+
+
+def _event_meta_dict(meta_raw: Any) -> Dict[str, Any]:
+    if meta_raw is None or meta_raw == "":
+        return {}
+    if isinstance(meta_raw, dict):
+        return meta_raw
+    if isinstance(meta_raw, str):
+        try:
+            parsed = json.loads(meta_raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _online_nakit_pos_cift(nakit: float, pos: float, online: float) -> bool:
+    """Online alanına yanlışlıkla nakit+POS toplamı yazılmış mı (çift sayım)."""
+    n, p, o = float(nakit or 0), float(pos or 0), float(online or 0)
+    if o <= 0.001 or n <= 0.001 or p <= 0.001:
+        return False
+    return abs(o - (n + p)) < 0.5
+
+
+def _kapanis_x_rapor_from_event(kap: Optional[dict]) -> Dict[str, Optional[float]]:
+    """Kapanış anında kaydedilen X nakit/POS/online (meta.x_rapor veya snap_*)."""
+    if not kap:
+        return {"nakit": None, "pos": None, "online": None}
+    meta = _event_meta_dict(kap.get("meta"))
+    xr = meta.get("x_rapor") if isinstance(meta.get("x_rapor"), dict) else {}
+    out: Dict[str, Optional[float]] = {}
+    for key, snap_key in (
+        ("nakit", "snap_nakit"),
+        ("pos", "snap_pos"),
+        ("online", "snap_online"),
+    ):
+        val = None
+        if isinstance(xr, dict) and key in xr and xr.get(key) is not None:
+            val = float(xr.get(key) or 0)
+        elif kap.get(snap_key) is not None:
+            val = float(kap.get(snap_key) or 0)
+        out[key] = val
+    return out
 
 
 def _bar_prev_calendar_iso(tarih_str: str) -> str:

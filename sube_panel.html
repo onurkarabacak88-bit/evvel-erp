@@ -3134,6 +3134,9 @@ function wireKapanisStepFlow() {
       var p2 = parseNum(inpVal('kapP')) || 0;
       var o = parseNum(inpVal('kapO')) || 0;
       var kime = selVal('kapKimeTeslim');
+      if (o > 0 && n > 0 && p2 > 0 && Math.abs(o - (n + p2)) < 0.5) {
+        throw new Error('Online alanı nakit+POS toplamına eşit olamaz. Online satış yoksa 0 bırakın.');
+      }
       if ((n + p2 + o) <= 0) throw new Error('En az bir ciro tutarı girin');
       if (!kime) throw new Error('Kasa kime teslim seçin');
       setMsg('kapMsg', '', '');
@@ -6667,6 +6670,9 @@ function wireKapanisHandler() {
       if (toplamSay == null || toplamSay < 0) throw new Error('Kasada sayılan toplam girilmedi. Lütfen Adım 1\'e dönüp kasanızı sayın.');
       var kasaToplam = toplamSay;
       var n = parseNum(inpVal('kapN'))||0, p2 = parseNum(inpVal('kapP'))||0, o = parseNum(inpVal('kapO'))||0;
+      if (o > 0 && n > 0 && p2 > 0 && Math.abs(o - (n + p2)) < 0.5) {
+        throw new Error('Online alanı nakit+POS toplamına eşit olamaz. Online satış yoksa 0 bırakın.');
+      }
       if (n+p2+o <= 0) throw new Error('En az bir ciro tutarı girin');
       // Kapanış operasyon eventini tamamla
       var eid = kapanisEventIdBul();
