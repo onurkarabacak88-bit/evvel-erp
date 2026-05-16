@@ -1884,13 +1884,13 @@ def init_db():
             JOIN siparis_kategori k ON k.kod = v.kod
             ON CONFLICT (kategori_id, norm_ad) DO NOTHING
         """)
-        # Pasta ürünlerine depo_stok_kalem_kodu bağla
+        # Pasta / süt ürünlerine depo_stok_kalem_kodu bağla (norm_ad = depo anahtarı)
         cur.execute("""
             UPDATE siparis_urun su
             SET depo_stok_kalem_kodu = su.norm_ad
             FROM siparis_kategori sk
             WHERE su.kategori_id = sk.id
-              AND sk.kod = 'pasta'
+              AND sk.kod IN ('pasta', 'sut')
               AND su.depo_stok_kalem_kodu IS NULL
         """)
 

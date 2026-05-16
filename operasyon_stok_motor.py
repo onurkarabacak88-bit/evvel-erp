@@ -2866,22 +2866,7 @@ def sube_depo_stok_depo_giris_ekle(
         """,
         (str(uuid.uuid4()), sube_id, kk, lab, ad),
     )
-    # Stok min_stok'u geçtiyse o kalem için bugünkü STOK_ALARM uyarısını sil
-    cur.execute(
-        """
-        DELETE FROM sube_operasyon_uyari
-        WHERE sube_id = %s
-          AND tip = 'STOK_ALARM'
-          AND tarih = CURRENT_DATE
-          AND mesaj LIKE %s
-          AND EXISTS (
-              SELECT 1 FROM sube_depo_stok
-              WHERE sube_id = %s AND kalem_kodu = %s
-                AND COALESCE(mevcut_adet, 0) > GREATEST(1, COALESCE(min_stok, 0))
-          )
-        """,
-        (sube_id, f"%{kk}%", sube_id, kk),
-    )
+    sube_depo_stok_alarm_sonrasi_temizle(cur, sube_id, kk, lab)
 
     # ── Deferred Reconciliation ────────────────────────────────────────────────
     # Sevkiyat gelince bekleyen URUN_AC_UYUMSUZLUK borçlarını otomatik uygula.
@@ -2927,6 +2912,146 @@ def sube_depo_stok_depo_giris_ekle(
             )
     except Exception:
         pass  # Reconciliation kritik değil, ana giriş işlemini etkileme
+
+
+
+BARDAK_DEPO_ESIK = 50
+
+
+def _depo_kalem_bardak_mi_basit(kalem_adi: str = "", kalem_kodu: str = "") -> bool:
+    blob = f"{kalem_adi or ''} {kalem_kodu or ''}".lower()
+    return "bardak" in blob
+
+
+def depo_stok_satiri_alarmda_mi(
+    mevcut: Any,
+    min_stok: Any = 0,
+    kalem_adi: str = "",
+    kalem_kodu: str = "",
+) -> bool:
+    """operasyon_merkez_api._depo_stok_satir_alarm_mu ile aynı mantık."""
+    try:
+        m = int(mevcut or 0)
+    except (TypeError, ValueError):
+        m = 0
+    if _depo_kalem_bardak_mi_basit(kalem_adi, kalem_kodu):
+        return m < BARDAK_DEPO_ESIK
+    return m <= 0
+
+
+def depo_kalem_ilgili_kodlar(cur: Any, kalem_kodu: str, kalem_adi: str = "") -> List[str]:
+    """STOK_ALARM temizliği — aynı katalog ürününe bağlı olası depo anahtarları."""
+    kodlar: set = set()
+    kk = str(kalem_kodu or "").strip()
+    ka = str(kalem_adi or "").strip()
+    if kk:
+        kodlar.add(kk)
+    try:
+        cur.execute(
+            """
+            SELECT id, ad, norm_ad, depo_stok_kalem_kodu
+            FROM siparis_urun
+            WHERE id=%s OR norm_ad=%s OR depo_stok_kalem_kodu=%s
+            LIMIT 8
+            """,
+            (kk, kk, kk),
+        )
+        for row in cur.fetchall() or []:
+            d = dict(row) if not isinstance(row, dict) else row
+            for key in ("id", "norm_ad", "depo_stok_kalem_kodu"):
+                v = str(d.get(key) or "").strip()
+                if v:
+                    kodlar.add(v)
+            sk = _stok_key_from_urun_ad(str(d.get("ad") or ""))
+            if sk:
+                kodlar.add(sk)
+    except Exception:
+        pass
+    if ka:
+        sk = _stok_key_from_urun_ad(ka)
+        if sk:
+            kodlar.add(sk)
+        uid = kk or "x"
+        kodlar.add(depo_kalem_kodu_panel_katalog(uid, ka))
+    return sorted(k for k in kodlar if k)
+
+
+def sube_depo_stok_alarm_sonrasi_temizle(
+    cur: Any,
+    sube_id: str,
+    kalem_kodu: str,
+    kalem_adi: str = "",
+) -> None:
+    """Stok artınca / sayım düzeltilince bugünkü STOK_ALARM kayıtlarını kaldırır."""
+    sid = str(sube_id or "").strip()
+    if not sid:
+        return
+    for kod in depo_kalem_ilgili_kodlar(cur, kalem_kodu, kalem_adi):
+        cur.execute(
+            """
+            SELECT COALESCE(mevcut_adet, 0) AS m,
+                   COALESCE(min_stok, 0) AS mn,
+                   kalem_adi
+            FROM sube_depo_stok
+            WHERE sube_id=%s AND kalem_kodu=%s
+            """,
+            (sid, kod),
+        )
+        row = cur.fetchone()
+        if not row:
+            continue
+        d = dict(row) if not isinstance(row, dict) else row
+        kad = str(d.get("kalem_adi") or kalem_adi or kod)
+        if depo_stok_satiri_alarmda_mi(d.get("m"), d.get("mn"), kad, kod):
+            continue
+        cur.execute(
+            """
+            DELETE FROM sube_operasyon_uyari
+            WHERE sube_id=%s AND tarih=CURRENT_DATE
+              AND tip IN ('STOK_ALARM', 'STOK_BITTI')
+              AND (
+                kalem_kodu=%s
+                OR mesaj ILIKE %s
+                OR (%s <> '' AND mesaj ILIKE %s)
+              )
+            """,
+            (sid, kod, f"%{kod}%", kad, f"%{kad}%"),
+        )
+
+
+def sube_depo_stok_eski_satir_temizle(
+    cur: Any,
+    sube_id: str,
+    kalem_raw: str,
+    kalem_resolved: str,
+) -> None:
+    """Ham kod ≠ çözümlenen kod ise 0 stoklu eski (çift) satırı sil — uyarı hayaleti."""
+    sid = str(sube_id or "").strip()
+    raw = str(kalem_raw or "").strip()
+    res = str(kalem_resolved or "").strip()
+    if not sid or not raw or not res or raw == res:
+        return
+    cur.execute(
+        """
+        SELECT COALESCE(mevcut_adet, 0) AS m
+        FROM sube_depo_stok
+        WHERE sube_id=%s AND kalem_kodu=%s
+        """,
+        (sid, res),
+    )
+    row = cur.fetchone()
+    resolved_m = int((dict(row) if row else {}).get("m") or 0) if row else 0
+    if resolved_m <= 0:
+        return
+    cur.execute(
+        """
+        DELETE FROM sube_depo_stok
+        WHERE sube_id=%s AND kalem_kodu=%s AND COALESCE(mevcut_adet, 0) = 0
+        """,
+        (sid, raw),
+    )
+    if cur.rowcount:
+        sube_depo_stok_alarm_sonrasi_temizle(cur, sid, raw, "")
 
 
 def kullanim_kaydet(cur: Any, sube_id: str,

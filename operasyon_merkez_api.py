@@ -40,6 +40,8 @@ from ciro_taslak_api import _taslak_dict
 from operasyon_stok_motor import (
     build_virtual_merkez_uyarilari,
     depo_kalem_kodu_resolve,
+    sube_depo_stok_alarm_sonrasi_temizle,
+    sube_depo_stok_eski_satir_temizle,
     STOK_KEYS,
     PASTA_KEYS,
     STOK_LABEL_TR,
@@ -8839,6 +8841,10 @@ def ops_v2_sube_depo_guncelle(body: SubeDepoGuncelle):
                 f"neden={neden_map.get(neden, neden)}"
             ),
             bildirim_saati=saat,
+        )
+        sube_depo_stok_eski_satir_temizle(cur, sube_id, kalem_raw, kalem_kodu)
+        sube_depo_stok_alarm_sonrasi_temizle(
+            cur, sube_id, kalem_kodu, str(body.kalem_adi or kalem_kodu)
         )
     return {"success": True, "sube_id": sube_id, "kalem_kodu": kalem_kodu, "giris_nedeni": neden, "alis_fiyati_tl": round(alis_fiyat, 2)}
 

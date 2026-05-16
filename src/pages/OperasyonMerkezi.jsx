@@ -3332,6 +3332,7 @@ export default function OperasyonMerkezi() {
     slug,
     subeDepoKey,
     subeId,
+    mapKey,
     kalemKodu,
     kalemAdi,
     mevcutAdet,
@@ -3340,7 +3341,7 @@ export default function OperasyonMerkezi() {
   }) => {
     const sid = String(subeId || '').trim();
     const kk = String(kalemKodu || '').trim();
-    const draftKey = `${subeDepoKey}::${kk}`;
+    const draftKey = String(mapKey || '').trim() || `${subeDepoKey}::${kk}`;
     if (!sid || !kk) {
       toast('Bu depo kartında şube/kalem bilgisi eksik.', 'red');
       return;
@@ -3360,18 +3361,32 @@ export default function OperasyonMerkezi() {
         },
       });
       const resolvedKk = String(res?.kalem_kodu || kk).trim() || kk;
-      setMagazaDepoCanliStok((prev) => {
-        const rows = Array.isArray(prev?.[slug]) ? [...prev[slug]] : [];
-        const i = rows.findIndex((r) => String(r?.kalem_kodu || '') === resolvedKk);
-        const nextRow = i >= 0 ? { ...rows[i] } : { kalem_kodu: resolvedKk, kalem_adi: String(kalemAdi || kk) };
-        nextRow.kalem_adi = String(kalemAdi || nextRow.kalem_adi || kk);
-        nextRow.mevcut_adet = Math.max(0, Number(mevcutAdet || 0));
-        nextRow.min_stok = Math.max(0, Number(minStok || 0));
-        nextRow.alis_fiyati_tl = Math.max(0, Number(alisFiyatiTl || 0));
-        if (i >= 0) rows[i] = nextRow;
-        else rows.push(nextRow);
-        return { ...prev, [slug]: rows };
-      });
+      try {
+        const depoRes = await api(`/ops/v2/sube/${encodeURIComponent(sid)}/depo`);
+        const stok = Array.isArray(depoRes?.stok) ? depoRes.stok : [];
+        const alarmSayi = Number(depoRes?.alarm_sayisi ?? 0);
+        setMagazaDepoCanliStok((prev) => ({ ...prev, [slug]: stok }));
+        setMagazaDepoDepoMeta((prev) => ({
+          ...prev,
+          [slug]: {
+            alarm_sayisi: Number.isFinite(alarmSayi) ? alarmSayi : 0,
+            durum: 'ok',
+          },
+        }));
+      } catch {
+        setMagazaDepoCanliStok((prev) => {
+          const rows = Array.isArray(prev?.[slug]) ? [...prev[slug]] : [];
+          const i = rows.findIndex((r) => String(r?.kalem_kodu || '') === resolvedKk);
+          const nextRow = i >= 0 ? { ...rows[i] } : { kalem_kodu: resolvedKk, kalem_adi: String(kalemAdi || kk) };
+          nextRow.kalem_adi = String(kalemAdi || nextRow.kalem_adi || kk);
+          nextRow.mevcut_adet = Math.max(0, Number(mevcutAdet || 0));
+          nextRow.min_stok = Math.max(0, Number(minStok || 0));
+          nextRow.alis_fiyati_tl = Math.max(0, Number(alisFiyatiTl || 0));
+          if (i >= 0) rows[i] = nextRow;
+          else rows.push(nextRow);
+          return { ...prev, [slug]: rows };
+        });
+      }
       setMagazaSubeStokInput((prev) => {
         const n = { ...prev };
         delete n[draftKey];
@@ -3383,6 +3398,7 @@ export default function OperasyonMerkezi() {
         return n;
       });
       toast(`${String(kalemAdi || kk)} depoya işlendi ✓`, 'green');
+      publishGlobalDataRefresh('depo-stok');
     } catch (e) {
       toast(e?.message || 'Depo stok onayı başarısız.', 'red');
     } finally {
@@ -6703,6 +6719,7 @@ export default function OperasyonMerkezi() {
                                             slug: m.slug,
                                             subeDepoKey,
                                             subeId: String(k.sube_id || ''),
+                                            mapKey,
                                             kalemKodu: magazaDepoKalemKodu(it),
                                             kalemAdi: it.ad,
                                             mevcutAdet: stokSayi,
