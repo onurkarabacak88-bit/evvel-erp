@@ -97,6 +97,93 @@ async def log_requests(request: Request, call_next):
     logger.info(f"{request.method} {request.url.path} → {response.status_code} ({ms}ms)")
     return response
 
+@app.get("/api/admin/fix-tema-kapanis-tarih")
+def fix_tema_kapanis_tarih(gizli: str = ""):
+    """
+    TEK KULLANIM — TEMA şubesinin gece yarısı 16 Mayıs'a yazılan
+    kapanış kaydını 15 Mayıs'a taşır. Sonra bu endpoint silinecek.
+    """
+    import json as _json
+    if gizli != "evvel-fix-2026":
+        return {"hata": "yetkisiz"}
+
+    with db() as (conn, cur):
+        # TEMA şubesini bul
+        cur.execute("SELECT id, ad FROM subeler WHERE LOWER(ad) LIKE '%tema%' AND aktif=TRUE LIMIT 1")
+        sube = cur.fetchone()
+        if not sube:
+            return {"hata": "TEMA şubesi bulunamadı"}
+        sube_id = str(sube["id"])
+        sube_ad = sube["ad"]
+
+        # 16 Mayıs KAPANIS event — tamamlandi (yanlış tarihli)
+        cur.execute("""
+            SELECT id, meta, cevap_ts, personel_id, personel_ad, kasa_sayim, teslim, devir
+            FROM sube_operasyon_event
+            WHERE sube_id=%s AND tarih='2026-05-16' AND tip='KAPANIS' AND durum='tamamlandi'
+            ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+        """, (sube_id,))
+        kaynak = cur.fetchone()
+        if not kaynak:
+            return {"bilgi": f"{sube_ad} için 16 Mayıs tamamlanmış KAPANIS eventi bulunamadı — zaten düzeltilmiş olabilir"}
+
+        kaynak = dict(kaynak)
+        kaynak_id = kaynak["id"]
+
+        # 15 Mayıs KAPANIS event — bekliyor/gecikti (doğru tarihli, boş)
+        cur.execute("""
+            SELECT id FROM sube_operasyon_event
+            WHERE sube_id=%s AND tarih='2026-05-15' AND tip='KAPANIS'
+            ORDER BY durum DESC LIMIT 1
+        """, (sube_id,))
+        hedef = cur.fetchone()
+        if not hedef:
+            return {"hata": "15 Mayıs KAPANIS eventi bulunamadı"}
+        hedef_id = str(hedef["id"])
+
+        # 15 Mayıs event'ine 16 Mayıs'ın verisini kopyala → tamamlandi yap
+        cur.execute("""
+            UPDATE sube_operasyon_event
+            SET durum='tamamlandi',
+                meta=%s,
+                cevap_ts=%s,
+                personel_id=%s,
+                personel_ad=%s,
+                kasa_sayim=%s,
+                teslim=%s,
+                devir=%s
+            WHERE id=%s
+        """, (
+            _json.dumps(kaynak["meta"]) if isinstance(kaynak["meta"], dict) else kaynak["meta"],
+            kaynak["cevap_ts"],
+            kaynak["personel_id"],
+            kaynak["personel_ad"],
+            kaynak["kasa_sayim"],
+            kaynak["teslim"],
+            kaynak["devir"],
+            hedef_id,
+        ))
+
+        # 16 Mayıs event'ini geri al → bekliyor
+        cur.execute("""
+            UPDATE sube_operasyon_event
+            SET durum='bekliyor', meta=NULL, cevap_ts=NULL,
+                personel_id=NULL, personel_ad=NULL,
+                kasa_sayim=NULL, teslim=NULL, devir=NULL
+            WHERE id=%s
+        """, (kaynak_id,))
+
+        conn.commit()
+
+    return {
+        "basarili": True,
+        "sube": sube_ad,
+        "tasinan_kayit": kaynak_id,
+        "hedef_event": hedef_id,
+        "aciklama": "16 Mayıs kapanış verisi 15 Mayıs'a taşındı"
+    }
+
+
 @app.exception_handler(Exception)
 async def hata_yakala(request: Request, exc: Exception):
     tb = traceback.format_exc()
