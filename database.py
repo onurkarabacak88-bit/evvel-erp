@@ -319,6 +319,13 @@ def init_db():
                 ) THEN
                     ALTER TABLE sube_operasyon_uyari ADD COLUMN kapanis_personel_ad TEXT;
                 END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'sube_operasyon_uyari'
+                      AND column_name = 'detay_json'
+                ) THEN
+                    ALTER TABLE sube_operasyon_uyari ADD COLUMN detay_json JSONB;
+                END IF;
             EXCEPTION WHEN others THEN NULL;
             END $$;
         """)

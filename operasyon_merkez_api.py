@@ -5453,6 +5453,7 @@ def ops_kasa_uyumsuzluk_listesi(
                 u.tarih, u.seviye, u.fark_tl, u.beklenen_tl, u.gercek_tl,
                 u.mesaj, u.okundu, u.olusturma,
                 u.acilis_personel_ad, u.kapanis_personel_ad,
+                u.detay_json,
                 -- 7-günlük kronik takip
                 (
                     SELECT COUNT(*) FROM sube_operasyon_uyari u7
@@ -5485,6 +5486,14 @@ def ops_kasa_uyumsuzluk_listesi(
             d["son_7g_adet"] = int(d.get("son_7g_adet") or 0)
             d["olusturma"] = str(d["olusturma"]) if d.get("olusturma") else None
             d["tarih"] = str(d["tarih"]) if d.get("tarih") else None
+            # detay_json: JSONB olarak gelir, dict'e çevir
+            dj = d.get("detay_json")
+            if isinstance(dj, str):
+                try:
+                    import json as _j; dj = _j.loads(dj)
+                except Exception:
+                    dj = None
+            d["detay_json"] = dj
             rows.append(d)
 
     return {

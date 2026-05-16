@@ -983,8 +983,28 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             ks = round(float(body.kasa_sayim), 2)
             kasa_kime_teslim = (body.kasa_kime_teslim or "").strip()
 
-            # Sistem çapraz kontrolü: kasa_sayim − kapanış_teslim − bugünkü ara teslimler = beklenen devir
-            ks_girdi = ks  # artık her zaman body.kasa_sayim kullanılır
+            # ── Kasa Mutabakatı (Cash Reconciliation) ──────────────────────────────
+            # Formül: Açılış Kasası + Z Nakit Ciro − Nakit Giderler − Teslim − Devir = 0
+            #
+            # 1. Bugünkü açılış kasa sayımı
+            cur.execute(
+                """SELECT kasa_sayim FROM sube_operasyon_event
+                   WHERE sube_id=%s AND tarih=%s AND tip='ACILIS' AND durum='tamamlandi'
+                   ORDER BY cevap_ts DESC NULLS LAST LIMIT 1""",
+                (sube_id, tarih_ev_ciro),
+            )
+            acilis_kasa = float((cur.fetchone() or {}).get("kasa_sayim") or 0)
+
+            # 2. Gün içi nakit giderler (anlik_giderler, odeme_yontemi='nakit')
+            cur.execute(
+                """SELECT COALESCE(SUM(tutar), 0) AS toplam
+                   FROM anlik_giderler
+                   WHERE sube_id=%s AND tarih=%s AND odeme_yontemi='nakit'""",
+                (sube_id, tarih_ev_ciro),
+            )
+            nakit_giderler = float((cur.fetchone() or {}).get("toplam") or 0)
+
+            # 3. Gün içi ara teslimler (müdüre kasa_teslim)
             cur.execute(
                 """SELECT COALESCE(SUM(tutar), 0) AS ara_toplam
                    FROM kasa_teslim
@@ -992,8 +1012,19 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 (sube_id, tarih_ev_ciro),
             )
             ara_teslim_toplam = float((cur.fetchone() or {}).get("ara_toplam") or 0)
-            sistem_beklenen_devir = round(ks_girdi - teslim_f - ara_teslim_toplam, 2)
-            kasa_acigi = round(devir_kayit - sistem_beklenen_devir, 2)
+
+            # 4. Z raporu nakit ciro (kapanışta girilen)
+            z_nakit = round(cn, 2)  # body.ciro_nakit
+
+            # 5. Mutabakat hesabı
+            # acilis_kasa + z_nakit − giderler − teslim(müdür) − ara_teslim − devir = 0
+            mutabakat_fark = round(
+                acilis_kasa + z_nakit - nakit_giderler - teslim_f - ara_teslim_toplam - devir_kayit, 2
+            )
+
+            # Eski uyumluluk için sistem_beklenen_devir korunuyor (meta'da kullanılıyor)
+            sistem_beklenen_devir = round(ks - teslim_f - ara_teslim_toplam, 2)
+            kasa_acigi = mutabakat_fark  # yeni formül
 
             _meta_kapanis = {
                 "kapanis_stok_sayim": k_stok,
@@ -1003,6 +1034,15 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 "sistem_beklenen_devir": sistem_beklenen_devir,
                 "ara_teslim_toplam": ara_teslim_toplam,
                 "kasa_acigi": kasa_acigi,
+                "mutabakat": {
+                    "acilis_kasa": acilis_kasa,
+                    "z_nakit": z_nakit,
+                    "nakit_giderler": nakit_giderler,
+                    "ara_teslim": ara_teslim_toplam,
+                    "teslim": teslim_f,
+                    "devir": devir_kayit,
+                    "fark": mutabakat_fark,
+                },
             }
 
             # KAPANIS_KASA_FARK uyarısı — sadece merkez görür, kasiyer panelinde gösterilmez
@@ -1010,11 +1050,21 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 from operasyon_kurallar import tolerans_seviyesi
                 sev_kf = tolerans_seviyesi(kasa_acigi)
                 mesaj_kf = (
-                    f"Kapanış kasa açığı: {kasa_acigi:+,.2f} TL "
-                    f"(kasiyer beyan {devir_kayit:,.0f}₺ · sistem beklenti {sistem_beklenen_devir:,.0f}₺"
-                    + (f" · ara teslim {ara_teslim_toplam:,.0f}₺" if ara_teslim_toplam > 0 else "")
-                    + f", {sev_kf})"
+                    f"Kasa mutabakat farkı: {kasa_acigi:+,.2f} TL "
+                    f"(açılış {acilis_kasa:,.0f}₺ + Z nakit {z_nakit:,.0f}₺"
+                    + (f" − gider {nakit_giderler:,.0f}₺" if nakit_giderler > 0 else "")
+                    + (f" − ara teslim {ara_teslim_toplam:,.0f}₺" if ara_teslim_toplam > 0 else "")
+                    + f" − teslim {teslim_f:,.0f}₺ − devir {devir_kayit:,.0f}₺ = {kasa_acigi:+,.2f}₺)"
                 )
+                detay_json = json.dumps({
+                    "acilis_kasa":    acilis_kasa,
+                    "z_nakit":        z_nakit,
+                    "nakit_giderler": nakit_giderler,
+                    "ara_teslim":     ara_teslim_toplam,
+                    "teslim":         teslim_f,
+                    "devir":          devir_kayit,
+                    "fark":           mutabakat_fark,
+                }, ensure_ascii=False)
                 cur.execute(
                     "SELECT id FROM sube_operasyon_uyari WHERE sube_id=%s AND tarih=%s AND tip='KAPANIS_KASA_FARK' LIMIT 1",
                     (sube_id, tarih_ev_ciro),
@@ -1023,21 +1073,22 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 if mevcut_kkf:
                     cur.execute(
                         """UPDATE sube_operasyon_uyari
-                           SET seviye=%s, beklenen_tl=%s, gercek_tl=%s, fark_tl=%s, mesaj=%s,
-                               kapanis_personel_id=%s, kapanis_personel_ad=%s, okundu=FALSE
+                           SET seviye=%s, beklenen_tl=0, gercek_tl=%s, fark_tl=%s, mesaj=%s,
+                               kapanis_personel_id=%s, kapanis_personel_ad=%s,
+                               detay_json=%s::jsonb, okundu=FALSE
                            WHERE id=%s""",
-                        (sev_kf, sistem_beklenen_devir, devir_kayit, kasa_acigi,
-                         mesaj_kf, pid_panel, onay_ad, mevcut_kkf["id"]),
+                        (sev_kf, mutabakat_fark, kasa_acigi, mesaj_kf,
+                         pid_panel, onay_ad, detay_json, mevcut_kkf["id"]),
                     )
                 else:
                     cur.execute(
                         """INSERT INTO sube_operasyon_uyari
                            (id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj,
-                            kapanis_personel_id, kapanis_personel_ad)
-                           VALUES (%s, %s, %s, 'KAPANIS_KASA_FARK', %s, %s, %s, %s, %s, %s, %s)""",
+                            kapanis_personel_id, kapanis_personel_ad, detay_json)
+                           VALUES (%s, %s, %s, 'KAPANIS_KASA_FARK', %s, 0, %s, %s, %s, %s, %s, %s::jsonb)""",
                         (str(uuid.uuid4()), sube_id, tarih_ev_ciro,
-                         sev_kf, sistem_beklenen_devir, devir_kayit, kasa_acigi,
-                         mesaj_kf, pid_panel, onay_ad),
+                         sev_kf, mutabakat_fark, kasa_acigi, mesaj_kf,
+                         pid_panel, onay_ad, detay_json),
                     )
             cur.execute(
                 """

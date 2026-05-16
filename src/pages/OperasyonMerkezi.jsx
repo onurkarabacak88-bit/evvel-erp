@@ -9262,11 +9262,33 @@ export default function OperasyonMerkezi() {
           );
         };
 
-        // Kasa açığı kartı — kasiyer beyanı vs sistem beklentisi
+        // Kasa açığı kartı — mutabakat formülü: açılış + Z nakit − gider − teslim − devir = 0
         const KasaAcigiKart = ({ u }) => {
           const fark = Number(u?.fark_tl || 0);
           const absFark = Math.abs(fark);
           const r = sevRenk(absFark);
+          const d = u.detay_json || {};
+          const acilisKasa   = Number(d.acilis_kasa    ?? 0);
+          const zNakit       = Number(d.z_nakit        ?? 0);
+          const nakitGider   = Number(d.nakit_giderler ?? 0);
+          const araTeslim    = Number(d.ara_teslim     ?? 0);
+          const teslim       = Number(d.teslim         ?? 0);
+          const devir        = Number(d.devir          ?? 0);
+          const hasDetay     = !!u.detay_json;
+
+          const KutuLabel = ({ txt }) => (
+            <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 3 }}>{txt}</div>
+          );
+          const KutuTutar = ({ val, renk }) => (
+            <div style={{ fontSize: 19, fontWeight: 800, fontFamily: 'monospace', color: renk || 'inherit' }}>{fmt(val)}</div>
+          );
+          const Kutu = ({ label, val, renk, sep }) => (
+            <div style={{ padding: '10px 12px', borderRight: sep ? `1px solid ${r.sep}` : 'none' }}>
+              <KutuLabel txt={label} />
+              <KutuTutar val={val} renk={renk} />
+            </div>
+          );
+
           return (
             <div style={{ borderRadius: 10, border: `1px solid ${r.border}`, background: r.bg, overflow: 'hidden' }}>
               {/* Başlık */}
@@ -9278,34 +9300,63 @@ export default function OperasyonMerkezi() {
                   </span>
                   <KronikRozet adet={u.son_7g_adet} />
                   <span style={{ fontSize: 10, color: 'var(--text3)', padding: '1px 7px', border: '1px solid var(--border)', borderRadius: 4 }}>
-                    Kasa açığı — takip
+                    Kasa mutabakat farkı — çözüm gerekli
                   </span>
                 </div>
                 <button type="button" className="btn btn-sm"
                   style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
                   disabled={!!onayBusyId}
                   onClick={() => kasaUyumsuzlukCoz(u.id)}>
-                  {onayBusyId === `ku:${u.id}` ? '…' : '✓ Takip alındı'}
+                  {onayBusyId === `ku:${u.id}` ? '…' : '✓ Çözüldü'}
                 </button>
               </div>
-              {/* İki kutu */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
-                <div style={{ padding: '12px 14px', borderRight: `1px solid ${r.sep}` }}>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>
-                    Sistem beklentisi
+
+              {hasDetay ? (
+                <>
+                  {/* Formül satırı: Açılış + Z Nakit − Gider − Teslim − Devir = Fark */}
+                  <div style={{ padding: '8px 14px 4px', fontSize: 10, color: 'var(--text3)', borderBottom: `1px solid ${r.sep}` }}>
+                    <span style={{ fontFamily: 'monospace', letterSpacing: '0.03em' }}>
+                      Açılış Kasası + Z Nakit − Nakit Gider − Teslim − Devir = 0 (beklenen)
+                    </span>
                   </div>
-                  <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 6 }}>kasa_sayım − teslim − ara teslimler</div>
-                  <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'monospace' }}>{fmt(u.beklenen_tl ?? 0)}</div>
-                </div>
-                <div style={{ padding: '12px 14px' }}>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>
-                    Kasiyerin beyanı
+                  {/* 5 kutu grid */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', borderBottom: `1px solid ${r.sep}` }}>
+                    <Kutu label="Açılış Kasası" val={acilisKasa} renk="#86efac" sep />
+                    <Kutu label="Z Nakit Ciro"  val={zNakit}    renk="#86efac" sep />
+                    <Kutu label={`Nakit Gider${araTeslim > 0 ? ' + Ara Teslim' : ''}`}
+                               val={nakitGider + araTeslim} renk="#fca5a5" sep />
+                    <Kutu label="Müdüre Teslim" val={teslim}    renk="#fca5a5" sep />
+                    <Kutu label="Kasada Devir"  val={devir}     renk="#fca5a5" />
                   </div>
-                  <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 6 }}>{u.tarih} kapanış · kör sayım</div>
-                  <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'monospace' }}>{fmt(u.gercek_tl ?? 0)}</div>
-                  <PersonelSatir ad={u.kapanis_personel_ad} />
+                  {/* Sonuç satırı */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', padding: '10px 14px', gap: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 3 }}>
+                        Fark (0 olmalıydı)
+                      </div>
+                      <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'monospace', color: fark > 0 ? '#fca5a5' : '#fdba74' }}>
+                        {fark > 0 ? '+' : ''}{fmt(fark)}
+                      </div>
+                    </div>
+                    <PersonelSatir ad={u.kapanis_personel_ad} />
+                  </div>
+                </>
+              ) : (
+                /* Eski format (detay_json yoksa) */
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
+                  <div style={{ padding: '12px 14px', borderRight: `1px solid ${r.sep}` }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>Sistem beklentisi</div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 6 }}>kasa_sayım − teslim − ara teslimler</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'monospace' }}>{fmt(u.beklenen_tl ?? 0)}</div>
+                  </div>
+                  <div style={{ padding: '12px 14px' }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>Kasiyerin beyanı</div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 6 }}>{u.tarih} kapanış</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'monospace' }}>{fmt(u.gercek_tl ?? 0)}</div>
+                    <PersonelSatir ad={u.kapanis_personel_ad} />
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           );
         };
