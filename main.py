@@ -4148,6 +4148,43 @@ def subeler():
         return [dict(r) for r in cur.fetchall()]
 
 
+def _sube_katalog_stok_garantile(cur, sube_id: str) -> int:
+    """Verilen şube için tüm aktif siparis_urun kayıtlarına karşılık sube_depo_stok satırı ekler.
+    Mevcut satırları değiştirmez (ON CONFLICT DO NOTHING). Eklenen satır sayısını döner."""
+    cur.execute("""
+        INSERT INTO sube_depo_stok (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet)
+        SELECT gen_random_uuid()::text, %s, su.id::text, su.ad, 0
+        FROM siparis_urun su
+        WHERE su.aktif = TRUE
+        ON CONFLICT (sube_id, kalem_kodu) DO NOTHING
+    """, (sube_id,))
+    return cur.rowcount
+
+
+@app.post("/api/subeler")
+def sube_olustur(body: dict):
+    """Yeni şube oluştur. Zorunlu: id (text), ad (text). İsteğe bağlı: adres."""
+    sid = (body.get("id") or "").strip()
+    ad  = (body.get("ad") or "").strip()
+    adres = (body.get("adres") or "").strip() or None
+    if not sid or not ad:
+        raise HTTPException(400, "id ve ad zorunludur")
+    import re
+    if not re.match(r'^[a-z0-9_-]+$', sid):
+        raise HTTPException(400, "id yalnızca küçük harf, rakam, _ veya - içerebilir")
+    with db() as (conn, cur):
+        cur.execute("SELECT id FROM subeler WHERE id=%s", (sid,))
+        if cur.fetchone():
+            raise HTTPException(409, f"'{sid}' id'li şube zaten mevcut")
+        cur.execute(
+            "INSERT INTO subeler (id, ad, adres) VALUES (%s, %s, %s)",
+            (sid, ad, adres),
+        )
+        # 1-to-1: yeni şube için tüm aktif katalog ürünlerinin stok satırını garantile
+        eklenen = _sube_katalog_stok_garantile(cur, sid)
+    return {"success": True, "sube_id": sid, "stok_satirlari_eklendi": eklenen}
+
+
 @app.put("/api/subeler/{sid}")
 def sube_guncelle(sid: str, body: SubeGuncelleModel):
     pos_oran = float(body.pos_oran)

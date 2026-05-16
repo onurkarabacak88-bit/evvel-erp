@@ -6108,7 +6108,19 @@ def _siparis_urun_insert(cur, kategori_kod: str, urun_adi: str, aciklama: Option
         """,
         (kategori_db_id, ad, norm, kategori_db_id, aciklama_val),
     )
-    return dict(cur.fetchone())
+    row = dict(cur.fetchone())
+    # 1-to-1 eşleştirme: yeni/reaktive ürün → tüm aktif şubeler için stok satırı garantile
+    try:
+        cur.execute("""
+            INSERT INTO sube_depo_stok (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet)
+            SELECT gen_random_uuid()::text, s.id, %s, %s, 0
+            FROM subeler s
+            WHERE s.aktif = TRUE
+            ON CONFLICT (sube_id, kalem_kodu) DO NOTHING
+        """, (str(row["id"]), row["ad"]))
+    except Exception:
+        pass  # stok satırı oluşturma kritik değil — migration v1 de yapar
+    return row
 
 
 def _siparis_kategori_kod_unique(cur, base: str) -> str:
@@ -6453,6 +6465,18 @@ def ops_siparis_urun_durum(body: OpsSiparisUrunDurumBody):
             merkez_stok_kart_guncelle(cur)
         except Exception:
             pass
+        # 1-to-1: ürün reaktive edilince eksik sube_depo_stok satırlarını tamamla
+        if bool(body.aktif):
+            try:
+                cur.execute("""
+                    INSERT INTO sube_depo_stok (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet)
+                    SELECT gen_random_uuid()::text, s.id, %s, %s, 0
+                    FROM subeler s
+                    WHERE s.aktif = TRUE
+                    ON CONFLICT (sube_id, kalem_kodu) DO NOTHING
+                """, (str(ud["id"]), ud["ad"]))
+            except Exception:
+                pass
     return {"success": True, "urun_id": str(ud["id"]), "aktif": bool(ud["aktif"])}
 
 

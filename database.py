@@ -2851,3 +2851,36 @@ $$;
                 print(f"[MIGRATION] depo_stok_duplike_temizlik_v2: sds={s1}, msk={s2}")
         except Exception as _mig_e:
             print(f"[MIGRATION WARN] depo_stok_duplike_temizlik_v2: {_mig_e}")
+
+        # ─── MIGRATION: katalog_stok_birebir_v1 ──────────────────────────────────
+        # Her aktif siparis_urun × her aktif sube için sube_depo_stok satırı garantile.
+        # Var olanları bozmaz (ON CONFLICT DO NOTHING), sadece eksik olanları 0 adet ile ekler.
+        try:
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log WHERE ad='katalog_stok_birebir_v1' LIMIT 1
+            """)
+            if not cur.fetchone():
+                cur.execute("""
+                    INSERT INTO sube_depo_stok (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet)
+                    SELECT
+                        gen_random_uuid()::text,
+                        s.id,
+                        su.id::text,
+                        su.ad,
+                        0
+                    FROM siparis_urun su
+                    CROSS JOIN subeler s
+                    WHERE su.aktif = TRUE
+                      AND s.aktif  = TRUE
+                    ON CONFLICT (sube_id, kalem_kodu) DO NOTHING
+                """)
+                _eklenen = cur.rowcount
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay) VALUES (%s, %s::jsonb)
+                """, (
+                    'katalog_stok_birebir_v1',
+                    f'{{"eklenen": {_eklenen}}}',
+                ))
+                print(f"[MIGRATION] katalog_stok_birebir_v1: {_eklenen} sube_depo_stok satırı eklendi")
+        except Exception as _mig_e:
+            print(f"[MIGRATION WARN] katalog_stok_birebir_v1: {_mig_e}")
