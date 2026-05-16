@@ -2621,14 +2621,18 @@ export default function OperasyonMerkezi() {
   const kullanilanGunYukle = useCallback(async (tarih) => {
     const hedef = (tarih || bugunIsoTarih()).trim();
     const ym = hedef.slice(0, 7);
-    const r = await api(`/ops/bar-ozet?year_month=${encodeURIComponent(ym)}&gun=${encodeURIComponent(hedef)}&limit=180`);
-    const satirlar = Array.isArray(r?.satirlar) ? r.satirlar : [];
+    const r = await api(
+      `/ops/bar-ozet?year_month=${encodeURIComponent(ym)}&gun=${encodeURIComponent(hedef)}&limit=180&kapanis_fallback=false`,
+    );
+    const ham = Array.isArray(r?.satirlar) ? r.satirlar : [];
+    const satirlar = ham.filter((row) => row?.kapanis_var === true);
     const toplamAdet = satirlar.reduce((sum, row) => sum + _sumSatilan(row?.satilan), 0);
     return {
       tarih: hedef,
       toplam_islem: satirlar.length,
       toplam_adet: toplamAdet,
       satirlar,
+      kapanis_eksik_sube: ham.filter((row) => row?.kapanis_var !== true).length,
     };
   }, []);
 
@@ -2904,7 +2908,9 @@ export default function OperasyonMerkezi() {
   const urunUyumGunYukle = useCallback(async (tarih) => {
     const hedef = (tarih || bugunIsoTarih()).trim();
     const ym = hedef.slice(0, 7);
-    const r = await api(`/ops/bar-ozet?year_month=${encodeURIComponent(ym)}&gun=${encodeURIComponent(hedef)}&limit=180`);
+    const r = await api(
+      `/ops/bar-ozet?year_month=${encodeURIComponent(ym)}&gun=${encodeURIComponent(hedef)}&limit=180&kapanis_fallback=false`,
+    );
     const satirlar = Array.isArray(r?.satirlar) ? r.satirlar : [];
     const keys = ['bardak_kucuk','bardak_buyuk','bardak_plastik','karton_bardak','su_adet','sut_litre','redbull_adet','soda_adet','cookie_adet','pasta_adet','surup_adet','kahve_paket','kapak_adet','pecete_paket','diger_sarf','pasta_porsiyon_sade','pasta_porsiyon_antep','pasta_porsiyon_cik','pasta_mag_cilek','pasta_mag_lotus','pasta_buyuk_tart','pasta_kucuk_tart','pasta_snickers','pasta_malaga','pasta_latte','pasta_muzlu_rulo','pasta_cik_rulo','pasta_meyveli_rulo','pasta_browni','pasta_dilim_ss_sade','pasta_cream_puff','pasta_kavala','pasta_cup_limon','pasta_cup_yerfistik','pasta_cup_cilek','pasta_cup_karamel','pasta_cup_lotus','pasta_cup_antep','pasta_cup_hindistan','pasta_profiterol','pasta_kare_cik','pasta_kare_yerfistik','pasta_kare_karamel','pasta_kare_limon','pasta_dilim_sade','pasta_dilim_antep','pasta_dilim_cik','pasta_dilim_yaban'];
     const kayitlar = satirlar
@@ -7913,9 +7919,9 @@ export default function OperasyonMerkezi() {
             }}
           >
             <strong style={{ color: 'var(--text2)', fontWeight: 600 }}>Ne gösterilir?</strong>{' '}
-            Kaynak <strong style={{ color: 'var(--text2)' }}>/ops/bar-ozet</strong>: her şube için{' '}
-            <strong style={{ color: 'var(--text2)' }}>Satılan ≈ Açılış sayımı + gün içi Ürün Aç − Kapanış sayımı</strong> (bardak, su, soda, redbull, pasta toplamı vb.).
-            Kapanış girilmemiş günlerde satılan sütunu eksik kalabilir. Tarih, operasyon <strong style={{ color: 'var(--text2)' }}>ACILIS/KAPANIS</strong> olayının takvim günüdür; gece yarısı sonrası hareketlerde «Kapanış Takip» ile aynı iş günü seçimine dikkat edin.
+            Kaynak <strong style={{ color: 'var(--text2)' }}>/ops/bar-ozet</strong> (yalnızca tamamlanmış <strong style={{ color: 'var(--text2)' }}>KAPANIS</strong> eventi; vardiya devir sayımı kullanılmaz):{' '}
+            <strong style={{ color: 'var(--text2)' }}>Satılan ≈ Açılış + Ürün Aç − Kapanış sayımı</strong> (bardak, su, soda, redbull, pasta vb.).
+            Kapanış yapılmamış şubeler bu listede görünmez. Tarih, operasyon olayının takvim günüdür.
             Haftalık bölümde günler <strong style={{ color: 'var(--text2)' }}>bugünden geriye</strong> sıralanır; şubeler <strong style={{ color: 'var(--text2)' }}>ada göre (A–Z)</strong> listelenir.
           </div>
 
@@ -8185,8 +8191,9 @@ export default function OperasyonMerkezi() {
           const ac = !!r.acildi;
           const kap = !!r.kapanis_tamam;
           const fark = r.nakit_kasa_fark_tl;
+          const kismi = r.nakit_denkleme_kismi === true;
           const tam = r.nakit_denkleme_tam === true || (ac && kap);
-          if (tam && fark != null && !Number.isNaN(Number(fark))) {
+          if ((tam || kismi) && fark != null && !Number.isNaN(Number(fark))) {
             const fs = fmtFark(fark);
             if (fs != null) {
               const fv = Number(fark);
@@ -8198,7 +8205,9 @@ export default function OperasyonMerkezi() {
                   ? 'Kasa açığı'
                   : 'Kasa fazlası';
               const title =
-                'Nakit denge: sabah kasa + ciro nakit − teslim − devir − nakit anlık gider. '
+                (kismi && !tam
+                  ? 'Kısmi denge (kapanış yok): sabah kasa + ciro nakit − nakit anlık gider − ara teslim. '
+                  : 'Nakit denge: sabah kasa + ciro nakit − teslim − devir − ara teslim − nakit anlık gider. ')
                 + (buyuk
                   ? (fv > 0
                     ? 'Pozitif: denkleme göre kasada tutması gerekenden az nakit (açık).'
@@ -8208,7 +8217,9 @@ export default function OperasyonMerkezi() {
               return (
                 <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }} title={title}>
                   <span style={farkStil(fark)}>{fs} ₺</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: etiketRenk, whiteSpace: 'nowrap' }}>{etiket}</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: etiketRenk, whiteSpace: 'nowrap' }}>
+                    {kismi && !tam ? 'Kısmi Δ' : etiket}
+                  </span>
                 </span>
               );
             }

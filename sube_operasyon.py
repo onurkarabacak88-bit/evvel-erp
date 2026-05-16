@@ -995,16 +995,22 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             )
             acilis_kasa = float((cur.fetchone() or {}).get("kasa_sayim") or 0)
 
-            # 2. Gün içi nakit giderler (anlik_giderler, odeme_yontemi='nakit')
+            # 2. Gün içi nakit giderler — panelden girilen onay_bekliyor dahil (kasadan çıkan nakit)
             cur.execute(
-                """SELECT COALESCE(SUM(tutar), 0) AS toplam
+                """SELECT
+                       COALESCE(SUM(tutar), 0) AS toplam,
+                       COALESCE(SUM(tutar) FILTER (WHERE durum = 'aktif'), 0) AS aktif,
+                       COALESCE(SUM(tutar) FILTER (WHERE durum = 'onay_bekliyor'), 0) AS bekleyen
                    FROM anlik_giderler
                    WHERE sube=%s AND tarih=%s
                      AND LOWER(COALESCE(NULLIF(TRIM(odeme_yontemi), ''), 'nakit')) = 'nakit'
-                     AND durum='aktif'""",
+                     AND durum IN ('aktif', 'onay_bekliyor')""",
                 (sube_id, tarih_ev_ciro),
             )
-            nakit_giderler = float((cur.fetchone() or {}).get("toplam") or 0)
+            _gider_row = cur.fetchone() or {}
+            nakit_giderler = float(_gider_row.get("toplam") or 0)
+            nakit_giderler_aktif = float(_gider_row.get("aktif") or 0)
+            nakit_giderler_bekleyen = float(_gider_row.get("bekleyen") or 0)
 
             # 3. Gün içi ara teslimler (müdüre kasa_teslim)
             cur.execute(
@@ -1040,6 +1046,8 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     "acilis_kasa": acilis_kasa,
                     "z_nakit": z_nakit,
                     "nakit_giderler": nakit_giderler,
+                    "nakit_giderler_aktif": nakit_giderler_aktif,
+                    "nakit_giderler_bekleyen": nakit_giderler_bekleyen,
                     "ara_teslim": ara_teslim_toplam,
                     "teslim": teslim_f,
                     "devir": devir_kayit,
@@ -1062,6 +1070,8 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     "acilis_kasa":    acilis_kasa,
                     "z_nakit":        z_nakit,
                     "nakit_giderler": nakit_giderler,
+                    "nakit_giderler_aktif": nakit_giderler_aktif,
+                    "nakit_giderler_bekleyen": nakit_giderler_bekleyen,
                     "ara_teslim":     ara_teslim_toplam,
                     "teslim":         teslim_f,
                     "devir":          devir_kayit,

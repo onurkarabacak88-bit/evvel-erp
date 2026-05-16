@@ -1373,9 +1373,10 @@ def kapanis_takip(tarih: Optional[str] = None):
     Onaylandi taslak bekliyor'a göre önceliklidir (aynı gün içinde).
     Tarih verilmezse varsayılan: iş günü (gece 02:00'e kadar önceki takvim günü) — tr_saat.is_gunu_tr.
 
-    Nakit denge (merkez, satır bazlı; yalnızca aynı gün hem açılış hem kapanış tamamsa):
-    sabah_kasa + ciro_nakit (yapılan iş / tablodaki nakit) − teslim − devir (kasada kalan) − onaylı nakit anlık gider.
-    ≈0 beklenir; + kasa açığı, − kasa fazlası (iş kuralı tanımına göre).
+    Nakit denge (merkez, satır bazlı):
+    Tam: sabah_kasa + ciro_nakit − teslim − devir − ara_teslim − onaylı nakit anlık gider (açılış+kapanış tamam).
+    Kısmi: açılış var, kapanış yok — gider ve/veya ciro nakit ile sabah_kasa − gider − ara_teslim (teslim/devir=0).
+    ≈0 beklenir; + kasa açığı, − kasa fazlası.
 
     Kapanış tutarları: aynı iş gününde birden fazla tamamlanmış KAPANIS kaydı olabilir (ör. vardiya ara adımı
     ile son operasyon kapanışı). MAX(teslim)/MAX(devir) karışımı yapılmaz; şube bazında ``cevap_ts`` en yeni
@@ -1427,19 +1428,33 @@ def kapanis_takip(tarih: Optional[str] = None):
         )
         acilis_map = {r["sube_id"]: dict(r) for r in (cur.fetchall() or [])}
 
-        # Onaylı nakit anlık giderler (iş günü tarihi)
+        # Nakit anlık giderler (aktif + merkez onayı bekleyen — gün içi görünürlük)
         cur.execute(
             """
             SELECT sube::text AS sube_id, COALESCE(SUM(tutar), 0)::float AS gider_nakit
             FROM anlik_giderler
             WHERE tarih = %s::date
               AND LOWER(COALESCE(NULLIF(TRIM(odeme_yontemi), ''), 'nakit')) = 'nakit'
-              AND durum = 'aktif'
+              AND durum IN ('aktif', 'onay_bekliyor')
             GROUP BY sube
             """,
             (hedef,),
         )
         gider_map = {str(r["sube_id"]): float(r["gider_nakit"] or 0) for r in (cur.fetchall() or [])}
+
+        # Gün içi ara kasa teslimleri (müdüre — kapanış formülünde düşülür)
+        cur.execute(
+            """
+            SELECT sube_id::text, COALESCE(SUM(tutar), 0)::float AS ara_toplam
+            FROM kasa_teslim
+            WHERE tarih = %s::date AND teslim_turu = 'ara'
+            GROUP BY sube_id
+            """,
+            (hedef,),
+        )
+        ara_teslim_map = {
+            str(r["sube_id"]): float(r["ara_toplam"] or 0) for r in (cur.fetchall() or [])
+        }
 
         # Ciro taslakları: onaylandi > bekliyor, en son olusturma
         cur.execute(
@@ -1507,14 +1522,22 @@ def kapanis_takip(tarih: Optional[str] = None):
         sabah_kasa = float(acil.get("acilis_kasa") or 0) if acil else 0.0
         teslim_kasa = float(kap.get("teslim") or 0) if kap else 0.0
         devir_kalan = float(kap.get("devir") or 0) if kap else 0.0
+        ara_teslim = float(ara_teslim_map.get(sid, 0.0) or 0.0)
         gider_nakit = float(gider_map.get(sid, 0.0) or 0.0)
         nakit_denkleme_tam = bool(acil) and bool(kap)
+        nakit_denkleme_kismi = False
         nakit_kasa_fark = None
         if nakit_denkleme_tam:
             nakit_kasa_fark = round(
-                sabah_kasa + float(nakit) - teslim_kasa - devir_kalan - gider_nakit,
+                sabah_kasa + float(nakit) - teslim_kasa - devir_kalan - gider_nakit - ara_teslim,
                 2,
             )
+        elif bool(acil) and (gider_nakit > 0.001 or float(nakit) > 0.001 or ara_teslim > 0.001):
+            nakit_kasa_fark = round(
+                sabah_kasa + float(nakit) - gider_nakit - ara_teslim,
+                2,
+            )
+            nakit_denkleme_kismi = True
 
         satirlar.append({
             "sube_id":         sid,
@@ -1529,6 +1552,7 @@ def kapanis_takip(tarih: Optional[str] = None):
             "kasa_sayim":      float(kap.get("kasa_sayim") or 0),
             "devir":           devir_kalan,
             "teslim_kasa_tl":  teslim_kasa,
+            "ara_teslim_tl":   ara_teslim,
             "kapanis_personel": str(kap.get("personel_ad") or ""),
             # Ciro taslak
             "taslak_var":      bool(tas),
@@ -1544,6 +1568,7 @@ def kapanis_takip(tarih: Optional[str] = None):
             # Nakit kasa denge (ciro nakit = yapılan iş; devir = kasada kalan)
             "anlik_gider_nakit_tl": gider_nakit,
             "nakit_denkleme_tam": nakit_denkleme_tam,
+            "nakit_denkleme_kismi": nakit_denkleme_kismi,
             "nakit_kasa_fark_tl": nakit_kasa_fark,
         })
 
@@ -2927,6 +2952,13 @@ def ops_bar_ozet(
     year_month: Optional[str] = None,
     gun: Optional[str] = None,
     limit: int = Query(60, ge=1, le=365),
+    kapanis_fallback: bool = Query(
+        True,
+        description=(
+            "False: gün sonu stok yalnızca tamamlanmış KAPANIS eventinden; "
+            "vardiya devir yedekleri kullanılmaz (Kullanılan Ürünler için)."
+        ),
+    ),
 ):
     """
     Günlük bar özeti:
@@ -2994,79 +3026,77 @@ def ops_bar_ozet(
             key = (str(r["sube_id"]), str(r["tarih"]))
             kapanis_map[key] = _bar_stok_from_meta(r["kapanis_meta"], "kapanis_stok_sayim")
 
-        # ── 2b. Fallback: KAPANIS eventi olmayan günler için vardiya devri stok sayımı ──
-        # kapanis_kayit.meta.vardiya_devir_stok_sayim → sabahçı devir sırasında sayım yaptı
-        # SAVEPOINT kullanılıyor: tablo yoksa transaction abort olmasın
-        kap_fb_params: list = [ym, gun_v, gun_v]
-        kap_fb_sube_filter = ""
-        if sube_id:
-            kap_fb_sube_filter = "AND k.sube_id = %s"
-            kap_fb_params.append(sube_id)
-        try:
-            cur.execute("SAVEPOINT sp_kapanis_kayit_fb")
-            cur.execute(
-                f"""
-                SELECT k.sube_id::text, k.tarih::text, k.meta
-                FROM kapanis_kayit k
-                WHERE k.olay = 'vardiya_sabah_aksam_devri'
-                  AND k.durum = 'tamamlandi'
-                  AND to_char(k.tarih, 'YYYY-MM') = %s
-                  AND (NULLIF(%s, '') IS NULL OR k.tarih = NULLIF(%s, '')::date)
-                  {kap_fb_sube_filter}
-                """,
-                kap_fb_params,
-            )
-            for r in cur.fetchall():
-                key = (str(r["sube_id"]), str(r["tarih"]))
-                if key in kapanis_map:
-                    continue  # KAPANIS eventi zaten var, üzerine yazma
-                meta_raw = r.get("meta") or {}
-                if isinstance(meta_raw, str):
-                    try:
-                        import json as _jfb; meta_raw = _jfb.loads(meta_raw)
-                    except Exception:
-                        meta_raw = {}
-                devir_stok = meta_raw.get("vardiya_devir_stok_sayim") or {}
-                if devir_stok:
-                    kapanis_map[key] = {k: max(0, int(devir_stok.get(k) or 0)) for k in _BAR_KEYS}
-            cur.execute("RELEASE SAVEPOINT sp_kapanis_kayit_fb")
-        except Exception:
-            cur.execute("ROLLBACK TO SAVEPOINT sp_kapanis_kayit_fb")
+        # ── 2b/2c. Yedek kapanış stoğu — yalnızca kapanis_fallback=True (devir ≠ gerçek kapanış) ──
+        if kapanis_fallback:
+            kap_fb_params: list = [ym, gun_v, gun_v]
+            kap_fb_sube_filter = ""
+            if sube_id:
+                kap_fb_sube_filter = "AND k.sube_id = %s"
+                kap_fb_params.append(sube_id)
+            try:
+                cur.execute("SAVEPOINT sp_kapanis_kayit_fb")
+                cur.execute(
+                    f"""
+                    SELECT k.sube_id::text, k.tarih::text, k.meta
+                    FROM kapanis_kayit k
+                    WHERE k.olay = 'vardiya_sabah_aksam_devri'
+                      AND k.durum = 'tamamlandi'
+                      AND to_char(k.tarih, 'YYYY-MM') = %s
+                      AND (NULLIF(%s, '') IS NULL OR k.tarih = NULLIF(%s, '')::date)
+                      {kap_fb_sube_filter}
+                    """,
+                    kap_fb_params,
+                )
+                for r in cur.fetchall():
+                    key = (str(r["sube_id"]), str(r["tarih"]))
+                    if key in kapanis_map:
+                        continue
+                    meta_raw = r.get("meta") or {}
+                    if isinstance(meta_raw, str):
+                        try:
+                            import json as _jfb; meta_raw = _jfb.loads(meta_raw)
+                        except Exception:
+                            meta_raw = {}
+                    devir_stok = meta_raw.get("vardiya_devir_stok_sayim") or {}
+                    if devir_stok:
+                        kapanis_map[key] = {k: max(0, int(devir_stok.get(k) or 0)) for k in _BAR_KEYS}
+                cur.execute("RELEASE SAVEPOINT sp_kapanis_kayit_fb")
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_kapanis_kayit_fb")
 
-        # ── 2c. Fallback 3: sube_operasyon_ozet.kapanis_stok_json (hesaplanmış kapanış) ──
-        kap_ozet_params: list = [ym, gun_v, gun_v]
-        kap_ozet_sube_filter = ""
-        if sube_id:
-            kap_ozet_sube_filter = "AND o.sube_id = %s"
-            kap_ozet_params.append(sube_id)
-        try:
-            cur.execute("SAVEPOINT sp_ozet_kapanis_stok")
-            cur.execute(
-                f"""
-                SELECT o.sube_id::text, o.tarih::text, o.kapanis_stok_json
-                FROM sube_operasyon_ozet o
-                WHERE to_char(o.tarih, 'YYYY-MM') = %s
-                  AND (NULLIF(%s, '') IS NULL OR o.tarih = NULLIF(%s, '')::date)
-                  AND o.kapanis_stok_json IS NOT NULL
-                  {kap_ozet_sube_filter}
-                """,
-                kap_ozet_params,
-            )
-            for r in cur.fetchall():
-                key = (str(r["sube_id"]), str(r["tarih"]))
-                if key in kapanis_map:
-                    continue  # Daha önce bulundu, üzerine yazma
-                raw = r.get("kapanis_stok_json") or {}
-                if isinstance(raw, str):
-                    try:
-                        import json as _joz; raw = _joz.loads(raw)
-                    except Exception:
-                        raw = {}
-                if raw:
-                    kapanis_map[key] = {k: max(0, int(raw.get(k) or 0)) for k in _BAR_KEYS}
-            cur.execute("RELEASE SAVEPOINT sp_ozet_kapanis_stok")
-        except Exception:
-            cur.execute("ROLLBACK TO SAVEPOINT sp_ozet_kapanis_stok")  # tablo/sütun yoksa transaction abort olmasın
+            kap_ozet_params: list = [ym, gun_v, gun_v]
+            kap_ozet_sube_filter = ""
+            if sube_id:
+                kap_ozet_sube_filter = "AND o.sube_id = %s"
+                kap_ozet_params.append(sube_id)
+            try:
+                cur.execute("SAVEPOINT sp_ozet_kapanis_stok")
+                cur.execute(
+                    f"""
+                    SELECT o.sube_id::text, o.tarih::text, o.kapanis_stok_json
+                    FROM sube_operasyon_ozet o
+                    WHERE to_char(o.tarih, 'YYYY-MM') = %s
+                      AND (NULLIF(%s, '') IS NULL OR o.tarih = NULLIF(%s, '')::date)
+                      AND o.kapanis_stok_json IS NOT NULL
+                      {kap_ozet_sube_filter}
+                    """,
+                    kap_ozet_params,
+                )
+                for r in cur.fetchall():
+                    key = (str(r["sube_id"]), str(r["tarih"]))
+                    if key in kapanis_map:
+                        continue
+                    raw = r.get("kapanis_stok_json") or {}
+                    if isinstance(raw, str):
+                        try:
+                            import json as _joz; raw = _joz.loads(raw)
+                        except Exception:
+                            raw = {}
+                    if raw:
+                        kapanis_map[key] = {k: max(0, int(raw.get(k) or 0)) for k in _BAR_KEYS}
+                cur.execute("RELEASE SAVEPOINT sp_ozet_kapanis_stok")
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_ozet_kapanis_stok")
 
         # ── 3. URUN_AC gün toplamları ──────────────────────────────────────
         urun_params: list = [ym, gun_v, gun_v]
@@ -3217,7 +3247,12 @@ def ops_bar_ozet(
             })
 
         satirlar.sort(key=lambda x: (x["tarih"], x["sube_adi"]), reverse=True)
-        return {"satirlar": satirlar, "year_month": ym, "gun": gun_v or None}
+        return {
+            "satirlar": satirlar,
+            "year_month": ym,
+            "gun": gun_v or None,
+            "kapanis_fallback": bool(kapanis_fallback),
+        }
 
 
 def _ops_parse_defter_delta(raw_aciklama: str, prefix: str) -> Dict[str, int]:
