@@ -197,9 +197,11 @@ def operasyon_defter_ekle(
     rid = str(uuid.uuid4())
     etik = etiket[:120]
     acik = (aciklama or "")[:2000]
-    cur.execute("SELECT CURRENT_DATE AS d, NOW() AS ts")
+    # İş günü tarihi: gece 00:00-02:00 arası girişler önceki güne yazılır
+    from tr_saat import is_gunu_tr as _is_gunu_tr
+    cur.execute("SELECT NOW() AS ts")
     trow = cur.fetchone()
-    tarih_val = trow["d"]
+    tarih_val = _is_gunu_tr()   # takvim günü değil, operasyonel iş günü
     olay_ts_val = trow["ts"]
     body = operasyon_defter_canonical_v1(
         rid,

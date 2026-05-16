@@ -115,7 +115,9 @@ def fix_tema_kapanis_tarih(gizli: str = ""):
         sube_id = str(sube["id"])
         sube_ad = sube["ad"]
 
-        # 16 Mayıs KAPANIS — bekliyor veya gecikti (hatalı açılan boş event)
+        sonuclar = []
+
+        # 1. 16 Mayıs KAPANIS event (bekliyor/gecikti) — zaten silindi, kontrol et
         cur.execute("""
             SELECT id, durum FROM sube_operasyon_event
             WHERE sube_id=%s AND tarih='2026-05-16' AND tip='KAPANIS'
@@ -123,28 +125,37 @@ def fix_tema_kapanis_tarih(gizli: str = ""):
             LIMIT 1
         """, (sube_id,))
         yanlis = cur.fetchone()
-        if not yanlis:
-            # Debug: mevcut durumu göster
-            cur.execute("""
-                SELECT id, tarih::text, durum,
-                       CASE WHEN meta IS NOT NULL THEN 'var' ELSE 'yok' END AS meta
-                FROM sube_operasyon_event
-                WHERE sube_id=%s AND tip='KAPANIS'
-                ORDER BY tarih DESC LIMIT 5
-            """, (sube_id,))
-            return {"bilgi": "Silinecek kayıt bulunamadı",
-                    "mevcut": [dict(r) for r in cur.fetchall()]}
+        if yanlis:
+            cur.execute("DELETE FROM sube_operasyon_event WHERE id=%s", (str(yanlis["id"]),))
+            sonuclar.append(f"KAPANIS event silindi: {yanlis['id']}")
 
-        yanlis_id = str(yanlis["id"])
-        cur.execute("DELETE FROM sube_operasyon_event WHERE id=%s", (yanlis_id,))
+        # 2. kasa_teslim — 16 Mayıs 'gun_sonu' kaydını 15 Mayıs'a taşı
+        cur.execute("""
+            SELECT id, tarih::text, tutar FROM kasa_teslim
+            WHERE sube_id=%s AND tarih='2026-05-16' AND teslim_turu='gun_sonu'
+        """, (sube_id,))
+        kt_rows = [dict(r) for r in cur.fetchall()]
+        for kt in kt_rows:
+            cur.execute("UPDATE kasa_teslim SET tarih='2026-05-15' WHERE id=%s", (kt["id"],))
+            sonuclar.append(f"kasa_teslim tarih düzeltildi: {kt['id']} ({kt['tutar']} TL)")
+
+        # 3. operasyon_defter — 16 Mayıs KAPANIS_TAMAM satırını 15 Mayıs'a taşı
+        # (HMAC imzası tarih içeriyor; imza bozulur ama defter okunabilirliği korunur)
+        cur.execute("""
+            SELECT id, tarih::text FROM operasyon_defter
+            WHERE sube_id=%s AND tarih='2026-05-16' AND etiket='KAPANIS_TAMAM'
+        """, (sube_id,))
+        od_rows = [dict(r) for r in cur.fetchall()]
+        for od in od_rows:
+            cur.execute("UPDATE operasyon_defter SET tarih='2026-05-15' WHERE id=%s", (od["id"],))
+            sonuclar.append(f"operasyon_defter tarih düzeltildi: {od['id']}")
+
+        if not sonuclar:
+            sonuclar.append("Düzeltilecek kayıt bulunamadı — tümü temiz")
+
         conn.commit()
 
-    return {
-        "basarili": True,
-        "sube": sube_ad,
-        "silinen_event": yanlis_id,
-        "aciklama": "16 Mayıs hatalı KAPANIS eventi silindi, 15 Mayıs kapanışı korundu"
-    }
+    return {"basarili": True, "sube": sube_ad, "islemler": sonuclar}
 
 
 @app.exception_handler(Exception)
