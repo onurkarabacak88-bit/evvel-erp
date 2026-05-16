@@ -800,6 +800,127 @@ def evo_hs_rapor(
     }
 
 
+# ─── Malzeme (bardak/kap) eşleme tablosu ───────────────────────────────────
+# Grup_Pasta kategori adı → kullanılan malzeme
+_MALZEME_MAP: Dict[str, str] = {
+    "Ice":         "Plastik Bardak",
+    "14 Oz":       "14oz Karton Bardak",
+    "8 Oz":        "8oz Karton Bardak",
+    "Su":          "Su Şişesi",
+    "Redbull":     "Kutu (Redbull)",
+    "Pasta":       "Pasta Tabağı",
+    "ÇAY":         "Çay Bardağı",
+    "Maden Suyu":  "Maden Suyu Şişesi",
+}
+
+
+def _hs_rapor_ham_veri(bastar: date, bittar: date) -> Dict:
+    """
+    hs_rapor.ashx'ten ham JSON döndürür: S, Cok_Satilan, Grup_Pasta, kasa, banka.
+    Token geçersizse 503 fırlatır.
+    """
+    token = _hs_web_token_al()
+    url = f"{EVO_WEB}/hizli/hs_rapor.ashx?evo_token={token}&evo_server=web.evobulut.com"
+    body = {
+        "komut":    "FORM_LOAD",
+        "tarih1":   bastar.strftime("%d.%m.%Y 00:00:00"),
+        "tarih2":   bittar.strftime("%d.%m.%Y 23:59:59"),
+        "personel": "0",
+        "sube":     "0",
+    }
+    headers = {"X-Requested-With": "XMLHttpRequest", "Referer": f"{EVO_WEB}/hizli/hs_rapor.html"}
+    r = requests.post(url, data=body, headers=headers, timeout=20)
+    if r.status_code != 200:
+        raise HTTPException(502, f"hs_rapor.ashx HTTP {r.status_code}")
+    d = r.json()
+    statu = str(d.get("Statu") or "").strip().upper()
+    if statu in _EVO_AUTH_HATA or statu != "OK":
+        _hs_web_token_temizle()
+        raise HTTPException(503, f"hs_rapor token geçersiz (Statu={statu})")
+    return d
+
+
+@router.get("/sube-analiz")
+def evo_sube_analiz(
+    bastar: str = Query(..., description="YYYY-MM-DD"),
+    bittar: str = Query(..., description="YYYY-MM-DD"),
+):
+    """
+    Şube bazlı satış analizi:
+    - Her şube için ciro + fiş sayısı (S dizisinden)
+    - Grup_Pasta → kategori bazlı satış + malzeme hesabı
+    - Cok_Satilan → en çok satan 20 ürün
+    """
+    try:
+        bs = date.fromisoformat(bastar)
+        bt = date.fromisoformat(bittar)
+    except ValueError:
+        raise HTTPException(400, "Geçersiz tarih formatı (YYYY-MM-DD)")
+
+    try:
+        d = _hs_rapor_ham_veri(bs, bt)
+        kaynak = "hs_rapor"
+    except HTTPException as e:
+        raise HTTPException(e.status_code, e.detail)
+
+    # 1. Şube bazlı ciro (S dizisinden)
+    sube_ciro: Dict[str, Dict] = {}
+    for fis in d.get("S", []):
+        ad = str(fis.get("a_sube_adi") or "").strip()
+        if not ad:
+            continue
+        if ad not in sube_ciro:
+            sube_ciro[ad] = {"ciro": 0.0, "fis_sayisi": 0}
+        try:
+            sube_ciro[ad]["ciro"] += float(fis.get("a_tutar") or 0)
+        except (ValueError, TypeError):
+            pass
+        sube_ciro[ad]["fis_sayisi"] += 1
+
+    # 2. Grup_Pasta → malzeme hesabı
+    grup_pasta = []
+    for g in d.get("Grup_Pasta", []):
+        ad = str(g.get("a_adi") or "").strip()
+        try:
+            mik = float(g.get("satis_mik") or 0)
+            tut = float(g.get("satis_tut") or 0)
+        except (ValueError, TypeError):
+            mik, tut = 0.0, 0.0
+        grup_pasta.append({
+            "kategori":  ad,
+            "adet":      mik,
+            "ciro":      round(tut, 2),
+            "malzeme":   _MALZEME_MAP.get(ad, ad),
+        })
+
+    # 3. Cok_Satilan
+    cok_satilan = []
+    for u in d.get("Cok_Satilan", []):
+        ad = str(u.get("a_adi") or "").strip()
+        try:
+            mik = float(u.get("satis_mik") or 0)
+            tut = float(u.get("satis_tut") or 0)
+        except (ValueError, TypeError):
+            mik, tut = 0.0, 0.0
+        cok_satilan.append({"urun": ad, "adet": mik, "ciro": round(tut, 2)})
+
+    # 4. Kasa/banka özeti
+    kasa_ozet = [{"ad": k.get("a_adi",""), "tutar": float(k.get("tutar",0))} for k in d.get("kasa",[])]
+    banka_ozet = [{"ad": b.get("a_adi",""), "tutar": float(b.get("tutar",0))} for b in d.get("banka",[])]
+
+    return {
+        "bastar":     str(bs),
+        "bittar":     str(bt),
+        "kaynak":     kaynak,
+        "toplam_fis": len(d.get("S", [])),
+        "subeler":    sube_ciro,
+        "grup_pasta": grup_pasta,
+        "cok_satilan": cok_satilan,
+        "kasa":       kasa_ozet,
+        "banka":      banka_ozet,
+    }
+
+
 @router.get("/token-test")
 def evo_token_test():
     """evobulut REST API bağlantısını test eder."""

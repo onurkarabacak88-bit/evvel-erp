@@ -19,6 +19,18 @@ function fmtTL(n) {
   return Number(n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
 }
 
+// Malzeme renk eşlemesi
+const MALZEME_RENK = {
+  'Plastik Bardak':      '#3b82f6',
+  '14oz Karton Bardak':  '#f59e0b',
+  '8oz Karton Bardak':   '#10b981',
+  'Su Şişesi':           '#6366f1',
+  'Çay Bardağı':         '#ef4444',
+  'Pasta Tabağı':        '#ec4899',
+  'Kutu (Redbull)':      '#8b5cf6',
+  'Maden Suyu Şişesi':   '#14b8a6',
+};
+
 export default function EvoSatis() {
   const bugun = new Date().toISOString().slice(0, 10);
   const [tarih1, setTarih1] = useState(bugun);
@@ -26,10 +38,15 @@ export default function EvoSatis() {
   const [veri, setVeri] = useState(null);
   const [yukleniyor, setYukleniyor] = useState(false);
   const [hata, setHata] = useState(null);
-  const [tokenDurumu, setTokenDurumu] = useState('bilinmiyor'); // 'ok' | 'yok' | 'bilinmiyor'
+  const [tokenDurumu, setTokenDurumu] = useState('bilinmiyor');
   const [tokenGuncelModal, setTokenGuncelModal] = useState(false);
   const [popupBekle, setPopupBekle] = useState(false);
   const [sonGuncelleme, setSonGuncelleme] = useState(null);
+  const [aktifSekme, setAktifSekme] = useState('urun'); // 'urun' | 'sube'
+  const [subeAnaliz, setSubeAnaliz] = useState(null);
+  const [subeYukleniyor, setSubeYukleniyor] = useState(false);
+  const [subeHata, setSubeHata] = useState(null);
+  const [secilenSube, setSecilenSube] = useState(null);
   const popupRef = useRef(null);
   const pollRef = useRef(null);
 
@@ -61,7 +78,32 @@ export default function EvoSatis() {
     }
   }
 
+  async function subeAnalızYukle() {
+    setSubeYukleniyor(true);
+    setSubeHata(null);
+    try {
+      const r = await api(`/evo/sube-analiz?bastar=${tarih1}&bittar=${tarih2}`);
+      setSubeAnaliz(r);
+      setTokenDurumu('ok');
+      if (!secilenSube && r.subeler) {
+        const ilk = Object.keys(r.subeler)[0];
+        if (ilk) setSecilenSube(ilk);
+      }
+    } catch (e) {
+      const mesaj = e.message || String(e);
+      if (mesaj.includes('503') || mesaj.toLowerCase().includes('token')) {
+        setTokenDurumu('yok');
+        setSubeHata('token_yok');
+      } else {
+        setSubeHata(mesaj);
+      }
+    } finally {
+      setSubeYukleniyor(false);
+    }
+  }
+
   useEffect(() => { veriYukle(); }, [tarih1, tarih2]);
+  useEffect(() => { if (aktifSekme === 'sube') subeAnalızYukle(); }, [tarih1, tarih2, aktifSekme]);
 
   // Popup açıldıktan sonra kapanmayı bekle
   useEffect(() => {
@@ -150,6 +192,24 @@ export default function EvoSatis() {
         </div>
       </div>
 
+      {/* Sekme navigasyonu */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '2px solid var(--border)', paddingBottom: 0 }}>
+        {[
+          { key: 'urun', label: '📊 Ürün Satışları' },
+          { key: 'sube', label: '🏪 Şube Analiz' },
+        ].map(s => (
+          <button key={s.key} onClick={() => setAktifSekme(s.key)}
+            style={{
+              padding: '8px 18px', fontSize: 14, fontWeight: aktifSekme === s.key ? 700 : 400,
+              border: 'none', borderBottom: aktifSekme === s.key ? '2px solid var(--accent)' : '2px solid transparent',
+              background: 'none', cursor: 'pointer', color: aktifSekme === s.key ? 'var(--accent)' : 'var(--muted)',
+              marginBottom: -2, transition: 'all .15s',
+            }}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+
       {/* Tarih seçici */}
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 20, flexWrap: 'wrap' }}>
         <label style={{ fontSize: 13, color: 'var(--muted)' }}>Başlangıç</label>
@@ -169,8 +229,8 @@ export default function EvoSatis() {
         ))}
       </div>
 
-      {/* Token yok uyarısı */}
-      {(hata === 'token_yok') && (
+      {/* Token yok uyarısı — sadece ürün sekmesinde */}
+      {aktifSekme === 'urun' && hata === 'token_yok' && (
         <div className="alert-box red" style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span>⚠️ Evobulut bağlantısı yok — token gerekiyor.</span>
           <button className="btn btn-primary btn-sm" onClick={() => setTokenGuncelModal(true)}>
@@ -180,16 +240,171 @@ export default function EvoSatis() {
       )}
 
       {/* Genel hata */}
-      {hata && hata !== 'token_yok' && (
+      {aktifSekme === 'urun' && hata && hata !== 'token_yok' && (
         <div className="alert-box red" style={{ marginBottom: 16 }}>{hata}</div>
       )}
 
       {/* Yükleniyor */}
-      {yukleniyor && (
+      {aktifSekme === 'urun' && yukleniyor && (
         <div style={{ textAlign: 'center', padding: 48, color: 'var(--muted)' }}>
           ⏳ Yükleniyor...
         </div>
       )}
+
+      {/* ─── ŞUBE ANALİZ SEKMESİ ─── */}
+      {aktifSekme === 'sube' && (
+        <div>
+          {subeYukleniyor && (
+            <div style={{ textAlign: 'center', padding: 48, color: 'var(--muted)' }}>⏳ Şube verileri yükleniyor...</div>
+          )}
+          {subeHata === 'token_yok' && (
+            <div className="alert-box red" style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>⚠️ Evobulut bağlantısı yok — token gerekiyor.</span>
+              <button className="btn btn-primary btn-sm" onClick={() => setTokenGuncelModal(true)}>Bağlan →</button>
+            </div>
+          )}
+          {subeHata && subeHata !== 'token_yok' && (
+            <div className="alert-box red" style={{ marginBottom: 16 }}>{subeHata}</div>
+          )}
+
+          {!subeYukleniyor && subeAnaliz && (
+            <>
+              {/* Şube kartları */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
+                {Object.entries(subeAnaliz.subeler || {})
+                  .sort((a, b) => b[1].ciro - a[1].ciro)
+                  .map(([ad, bilgi]) => (
+                    <div key={ad}
+                      onClick={() => setSecilenSube(ad)}
+                      className="card"
+                      style={{
+                        padding: '14px 18px', cursor: 'pointer',
+                        border: secilenSube === ad ? '2px solid var(--accent)' : '2px solid transparent',
+                        transition: 'border-color .15s',
+                      }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6, color: secilenSube === ad ? 'var(--accent)' : 'var(--text)' }}>
+                        🏪 {ad}
+                      </div>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--green)' }}>{fmtTL(bilgi.ciro)}</div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{bilgi.fis_sayisi} fiş</div>
+                    </div>
+                  ))}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+
+                {/* Kategori / Malzeme tablosu */}
+                <div className="card" style={{ padding: 0 }}>
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontWeight: 700, fontSize: 14 }}>
+                    🧃 Kategori & Malzeme Kullanımı
+                    <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400, marginLeft: 8 }}>tüm şubeler</span>
+                  </div>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg2)' }}>
+                        <th style={{ padding: '8px 14px', textAlign: 'left', color: 'var(--muted)', fontWeight: 600, fontSize: 11 }}>KATEGORİ</th>
+                        <th style={{ padding: '8px 14px', textAlign: 'center', color: 'var(--muted)', fontWeight: 600, fontSize: 11 }}>ADET</th>
+                        <th style={{ padding: '8px 14px', textAlign: 'left', color: 'var(--muted)', fontWeight: 600, fontSize: 11 }}>MALZEME</th>
+                        <th style={{ padding: '8px 14px', textAlign: 'right', color: 'var(--muted)', fontWeight: 600, fontSize: 11 }}>CİRO</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(subeAnaliz.grup_pasta || []).map((g, i) => (
+                        <tr key={i} style={{ borderTop: '1px solid var(--border)' }}>
+                          <td style={{ padding: '9px 14px', fontWeight: 600 }}>{g.kategori}</td>
+                          <td style={{ padding: '9px 14px', textAlign: 'center' }}>
+                            <span style={{
+                              display: 'inline-block', padding: '2px 10px', borderRadius: 12,
+                              background: (MALZEME_RENK[g.malzeme] || '#94a3b8') + '22',
+                              color: MALZEME_RENK[g.malzeme] || 'var(--text)',
+                              fontWeight: 700, fontSize: 13,
+                            }}>{Math.round(g.adet)}</span>
+                          </td>
+                          <td style={{ padding: '9px 14px', fontSize: 12, color: 'var(--muted)' }}>
+                            <span style={{
+                              display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                              background: MALZEME_RENK[g.malzeme] || '#94a3b8', marginRight: 6
+                            }}/>
+                            {g.malzeme}
+                          </td>
+                          <td style={{ padding: '9px 14px', textAlign: 'right', fontSize: 12, color: 'var(--muted)' }}>
+                            {fmtTL(g.ciro)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg2)' }}>
+                        <td colSpan={4} style={{ padding: '8px 14px', fontSize: 11, color: 'var(--muted)', fontStyle: 'italic' }}>
+                          💡 Adet = o kategoriden bugün satılan → kullanılan malzeme
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                {/* En çok satanlar */}
+                <div className="card" style={{ padding: 0 }}>
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontWeight: 700, fontSize: 14 }}>
+                    🏆 En Çok Satılan Ürünler
+                    <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400, marginLeft: 8 }}>ilk 20</span>
+                  </div>
+                  <div style={{ maxHeight: 380, overflowY: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <tbody>
+                        {(subeAnaliz.cok_satilan || []).map((u, i) => (
+                          <tr key={i} style={{ borderTop: i > 0 ? '1px solid var(--border)' : undefined }}>
+                            <td style={{ padding: '8px 14px', color: 'var(--muted)', width: 28, fontSize: 12 }}>
+                              {i < 3 ? ['🥇','🥈','🥉'][i] : i + 1}
+                            </td>
+                            <td style={{ padding: '8px 14px', fontWeight: i < 3 ? 600 : 400 }}>{u.urun}</td>
+                            <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
+                              {Math.round(u.adet)}
+                            </td>
+                            <td style={{ padding: '8px 14px', textAlign: 'right', fontSize: 12, color: 'var(--muted)' }}>
+                              {fmtTL(u.ciro)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              {/* Kasa / Banka özeti */}
+              {((subeAnaliz.kasa || []).length > 0 || (subeAnaliz.banka || []).length > 0) && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                  {[
+                    { baslik: '💵 Nakit Kasalar', veri: subeAnaliz.kasa },
+                    { baslik: '💳 Pos / Banka', veri: subeAnaliz.banka },
+                  ].map(({ baslik, veri: rows }) => (
+                    <div key={baslik} className="card" style={{ padding: 0 }}>
+                      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontWeight: 700, fontSize: 14 }}>{baslik}</div>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                        <tbody>
+                          {(rows || []).map((k, i) => (
+                            <tr key={i} style={{ borderTop: i > 0 ? '1px solid var(--border)' : undefined }}>
+                              <td style={{ padding: '9px 14px' }}>{k.ad}</td>
+                              <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 700, color: 'var(--green)' }}>
+                                {fmtTL(k.tutar)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ─── ÜRÜN SATIŞLARI SEKMESİ ─── */}
+      {aktifSekme === 'urun' && (
+        <>
 
       {/* Satış tablosu */}
       {!yukleniyor && veri && urunler.length > 0 && (
@@ -253,7 +468,8 @@ export default function EvoSatis() {
           <div>Bu tarih aralığında satış verisi yok.</div>
         </div>
       )}
-
+        </>
+      )}
 
       {/* ─── TOKEN GÜNCELLE MODAL ─── */}
       {tokenGuncelModal && (
