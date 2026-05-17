@@ -9368,11 +9368,29 @@ export default function OperasyonMerkezi() {
           </span>
         ) : null;
 
-        const CozulduRozet = () => (
-          <span style={{ background: 'rgba(34,197,94,0.2)', color: '#4ade80', borderRadius: 5, padding: '1px 8px', fontSize: 10, fontWeight: 700 }}>
-            ✓ Çözüldü
-          </span>
-        );
+        const CozulduRozet = ({ u } = {}) => {
+          const duz = u?.cozum_duzeltilen_tl;
+          const showDuz = duz != null && Number.isFinite(Number(duz));
+          return (
+            <span
+              style={{
+                background: 'rgba(34,197,94,0.2)', color: '#4ade80',
+                borderRadius: 5, padding: '1px 8px', fontSize: 10, fontWeight: 700,
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+              }}
+              title={showDuz
+                ? `Düzeltilmiş tutar: ${Number(duz).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺ — bundan sonraki hesaplar bu değere göre`
+                : 'Orijinal tutar geçerli (düzeltme yapılmadı)'}
+            >
+              ✓ Çözüldü
+              {showDuz && (
+                <span style={{ background: 'rgba(34,197,94,0.35)', borderRadius: 4, padding: '0 5px', fontFamily: 'monospace', fontSize: 11 }}>
+                  → {Number(duz).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}₺
+                </span>
+              )}
+            </span>
+          );
+        };
 
         // Devir farkı kartı — akşamcı ne bıraktı vs sabahçı ne saydı
         const DevirFarkKart = ({ u }) => {
@@ -9391,13 +9409,13 @@ export default function OperasyonMerkezi() {
                     {fark > 0 ? '+' : ''}{fmt(fark)}
                   </span>
                   <KronikRozet adet={u.son_7g_adet} />
-                  {cozuldu ? <CozulduRozet /> : (
+                  {cozuldu ? <CozulduRozet u={u} /> : (
                     <span style={{ fontSize: 10, color: 'var(--text3)', padding: '1px 7px', border: '1px solid var(--border)', borderRadius: 4 }}>
                       Devir uyumsuzluğu — çözüm bekliyor
                     </span>
                   )}
                 </div>
-                {cozuldu ? <CozulduRozet /> : (
+                {cozuldu ? <CozulduRozet u={u} /> : (
                   <button type="button" className="btn btn-sm"
                     style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
                     disabled={!!onayBusyId}
@@ -9467,13 +9485,13 @@ export default function OperasyonMerkezi() {
                     {fark > 0 ? '+' : ''}{fmt(fark)}
                   </span>
                   <KronikRozet adet={u.son_7g_adet} />
-                  {cozuldu ? <CozulduRozet /> : (
+                  {cozuldu ? <CozulduRozet u={u} /> : (
                     <span style={{ fontSize: 10, color: 'var(--text3)', padding: '1px 7px', border: '1px solid var(--border)', borderRadius: 4 }}>
                       Kasa mutabakat farkı — çözüm bekliyor
                     </span>
                   )}
                 </div>
-                {cozuldu ? <CozulduRozet /> : (
+                {cozuldu ? <CozulduRozet u={u} /> : (
                   <button type="button" className="btn btn-sm"
                     style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
                     disabled={!!onayBusyId}
