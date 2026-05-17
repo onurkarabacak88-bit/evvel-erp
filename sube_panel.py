@@ -1637,12 +1637,12 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
 
     cur.execute(
         """
-        SELECT id, mesaj, oncelik, okundu, olusturma, ttl_saat
+        SELECT id, mesaj, oncelik, okundu, olusturma, ttl_saat, aktif
         FROM sube_merkez_mesaj
-        WHERE sube_id=%s AND aktif=TRUE
+        WHERE sube_id=%s
           AND olusturma + (COALESCE(ttl_saat, 72) * INTERVAL '1 hour') > NOW()
         ORDER BY okundu ASC, olusturma DESC
-        LIMIT 20
+        LIMIT 30
         """,
         (sube_id,),
     )
@@ -1653,7 +1653,9 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
             md["olusturma"] = str(md["olusturma"])
         merkez_mesajlar.append(md)
 
-    okunmamis_mesaj_var = any(not m.get("okundu") for m in merkez_mesajlar)
+    okunmamis_mesaj_var = any(
+        not m.get("okundu") and m.get("aktif", True) for m in merkez_mesajlar
+    )
 
     # Stok uyarısı: şube deposunda mevcutu sıfır olan tüm kalemler (havuz anahtarı, katalog ürün id, özel kod).
     try:
@@ -3209,9 +3211,9 @@ def sube_merkez_mesajlari_getir(sube_id: str):
         _sube_getir(cur, sube_id)
         cur.execute(
             """
-            SELECT id, mesaj, olusturma, okundu, okundu_ts, oncelik, ttl_saat
+            SELECT id, mesaj, olusturma, okundu, okundu_ts, oncelik, ttl_saat, aktif
             FROM sube_merkez_mesaj
-            WHERE sube_id=%s AND aktif=TRUE
+            WHERE sube_id=%s
               AND olusturma + (COALESCE(ttl_saat, 72) * INTERVAL '1 hour') > NOW()
             ORDER BY olusturma DESC
             LIMIT 50

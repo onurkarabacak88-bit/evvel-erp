@@ -1811,6 +1811,26 @@
       0% { transform: translateX(100%); }
       100% { transform: translateX(-100%); }
     }
+    .merkez-marquee-bar {
+      overflow: hidden;
+      background: linear-gradient(90deg, rgba(127,29,29,.96), rgba(185,28,28,.9));
+      color: #fef2f2;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 8px 14px;
+      letter-spacing: 0.02em;
+      border-radius: var(--rs);
+      margin-bottom: 10px;
+    }
+    .merkez-marquee-inner {
+      display: inline-block;
+      white-space: nowrap;
+      animation: gonderMarqueeSlide 18s linear infinite;
+    }
+    .merkez-msg-arsiv {
+      opacity: 0.72;
+      border-style: dashed;
+    }
 
     .divider { height: 1px; background: var(--border); margin: 14px 0; }
     .sect-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 10px; }
@@ -2065,12 +2085,34 @@
           <div id="opTimeline"><div style="color:var(--muted);font-size:13px">Yükleniyor…</div></div>
         </div>
 
+        <div class="kart">
+          <div class="kart-baslik"><span class="ico">🧭</span> Hızlı İşlem Kartları</div>
+          <div class="orta-kart-grid">
+            <button class="orta-kisa-kart" type="button" onclick="solSekmeAc('gider')">
+              <span class="ico">💸</span>
+              <span class="ttl">Anlık Gider</span>
+              <span class="sub">Merkeze gönder, PIN ile imzala</span>
+            </button>
+            <button class="orta-kisa-kart" type="button" onclick="solSekmeAc('not')">
+              <span class="ico">📝</span>
+              <span class="ttl">Merkez Notu</span>
+              <span class="sub">Operasyon merkezine ilet</span>
+            </button>
+            <button class="orta-kisa-kart" type="button" id="anaUrunAcKart" onclick="solSekmeAc('ac')" style="position:relative">
+              <span class="ico">🔓</span>
+              <span class="ttl">Ürün Aç</span>
+              <span class="sub">Depodan aktif kullanıma</span>
+            </button>
+          </div>
+        </div>
+
         <div id="anaSiparisBilgiWrap" class="kart sip-ana-sip-banner" style="display:none" role="status" aria-live="polite"></div>
         <div id="siparisRedBildirimWrap" style="display:none" role="alert" aria-live="polite"></div>
 
         <!-- Merkez mesajları — orta alan alt kutu -->
         <div class="kart merkez-mesaj-kutusu" id="merkezMesajKutusu">
           <div class="kart-baslik"><span class="ico">📩</span> Merkez Mesajları</div>
+          <div id="merkezMesajMarqueeBar" class="merkez-marquee-bar" style="display:none" aria-live="polite"></div>
           <div id="mesajlarDiv" class="merkez-mesaj-icerik">
             <div class="merkez-mesaj-bos">Mesajlar yükleniyor…</div>
           </div>
@@ -2094,27 +2136,6 @@
           </p>
           <div id="kabulTakipListesi" class="merkez-mesaj-icerik" style="max-height:220px">
             <div class="merkez-mesaj-bos">Yükleniyor…</div>
-          </div>
-        </div>
-
-        <div class="kart">
-          <div class="kart-baslik"><span class="ico">🧭</span> Hızlı İşlem Kartları</div>
-          <div class="orta-kart-grid">
-            <button class="orta-kisa-kart" type="button" onclick="solSekmeAc('gider')">
-              <span class="ico">💸</span>
-              <span class="ttl">Anlık Gider</span>
-              <span class="sub">Merkeze gönder, PIN ile imzala</span>
-            </button>
-            <button class="orta-kisa-kart" type="button" onclick="solSekmeAc('not')">
-              <span class="ico">📝</span>
-              <span class="ttl">Merkez Notu</span>
-              <span class="sub">Operasyon merkezine ilet</span>
-            </button>
-            <button class="orta-kisa-kart" type="button" id="anaUrunAcKart" onclick="solSekmeAc('ac')" style="position:relative">
-              <span class="ico">🔓</span>
-              <span class="ttl">Ürün Aç</span>
-              <span class="sub">Depodan aktif kullanıma</span>
-            </button>
           </div>
         </div>
       </div>
@@ -3020,8 +3041,7 @@ function kontrolYeniUyari(data) {
   } else if (yeniSevk.length > 0) {
     gosterUyariToast('🚚 Yeni Sevkiyat', 'Depodan siparişiniz geldi — lütfen kabul işlemi yapın.');
   } else if (yeniMesaj.length > 0) {
-    var ilkMesaj = yeniMesaj[0];
-    gosterUyariToast('📩 Merkez Mesajı', ilkMesaj.mesaj ? String(ilkMesaj.mesaj).substring(0, 120) : 'Operasyon merkezinden yeni mesaj var.');
+    merkezMesajYeniModalKontrol(data.merkez_mesajlar || []);
   } else if (yeniDepoSay > eskiDepoSay) {
     gosterUyariToast('📦 Depo Yönlendirme', 'Merkezden ' + yeniDepoSay + ' yeni sipariş deponuza yönlendirildi.');
   } else if (yeniStok.length > 0) {
@@ -6438,8 +6458,9 @@ function renderMain(data) {
   var subeEl = document.getElementById('subeTitle');
   if (subeEl) subeEl.textContent = data.sube_adi || 'Şube';
 
-  // Merkez mesajları (orta kutu: kompakt görünüm)
+  // Merkez mesajları (orta kutu: kompakt görünüm + orta modal)
   renderMesajlariDiv(data.merkez_mesajlar || [], 'compact');
+  merkezMesajYeniModalKontrol(data.merkez_mesajlar || []);
 
   renderAnaSiparisHatirlat(data);
   var _polledDepoSay = data.depo_hazirlik_bekleyen_sayisi || 0;
@@ -6544,12 +6565,146 @@ function renderMain(data) {
 }
 
 // ─── MERKEZ MESAJLARI ────────────────────────────────────────
+var _merkezMesajModalAcik = false;
+
+function _mmAktif(m) {
+  return m && m.aktif !== false && m.aktif !== 'false' && m.aktif !== 0;
+}
+function _mmMerkezSildi(m) {
+  return m && (m.aktif === false || m.aktif === 'false' || m.aktif === 0);
+}
+function _mmModalKey() { return 'mmModalAck_' + SUBE_ID; }
+function _mmModalShownIds() {
+  try {
+    var raw = sessionStorage.getItem(_mmModalKey());
+    var arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) { return []; }
+}
+function _mmModalMarkShown(id) {
+  if (!id) return;
+  var ids = _mmModalShownIds();
+  if (ids.indexOf(id) < 0) ids.push(id);
+  try { sessionStorage.setItem(_mmModalKey(), JSON.stringify(ids)); } catch (e) {}
+}
+function _mmModalClearShown(id) {
+  if (!id) return;
+  var ids = _mmModalShownIds().filter(function(x) { return x !== id; });
+  try { sessionStorage.setItem(_mmModalKey(), JSON.stringify(ids)); } catch (e) {}
+}
+
+function renderMerkezMesajMarquee(mesajlar) {
+  var bar = document.getElementById('merkezMesajMarqueeBar');
+  if (!bar) return;
+  var kritikOkundu = (mesajlar || []).filter(function(m) {
+    return m.okundu && m.oncelik === 'kritik';
+  });
+  if (!kritikOkundu.length) {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    return;
+  }
+  var parcalar = kritikOkundu.map(function(m) {
+    var t = String(m.mesaj || '').trim();
+    if (_mmMerkezSildi(m)) t += ' (merkez listeden kaldırdı)';
+    return '🚨 ' + t;
+  });
+  bar.innerHTML = '<span class="merkez-marquee-inner">' + escHtml(parcalar.join('   ·   ')) + '</span>';
+  bar.style.display = 'block';
+}
+
+function merkezMesajModalAc(m) {
+  if (_merkezMesajModalAcik || !m || m.okundu || !_mmAktif(m)) return Promise.resolve({ ok: false });
+  var mid = String(m.id || '');
+  if (_mmModalShownIds().indexOf(mid) >= 0) return Promise.resolve({ ok: false });
+  _merkezMesajModalAcik = true;
+  _mmModalMarkShown(mid);
+  var kritik = m.oncelik === 'kritik';
+  var liste = panelDropdownPersonel();
+  var perselOps = '<option value="">— Seçin —</option>' + liste.map(function(u) {
+    return '<option value="' + escHtml(String(u.id || '')) + '">' + escHtml(u.ad || u.id) + '</option>';
+  }).join('');
+  var metin = escHtml(String(m.mesaj || '').trim());
+  return new Promise(function(resolve) {
+    var modal = document.createElement('div');
+    modal.className = 'modal-acik';
+    modal.style.zIndex = '9200';
+    modal.setAttribute('data-merkez-mesaj-id', mid);
+    modal.innerHTML =
+      '<div class="modal-box" style="max-width:520px;border-color:' + (kritik ? 'rgba(239,68,68,.55)' : 'var(--border)') + '">' +
+        '<h3 style="margin:0 0 10px 0">' + (kritik ? '🚨 Kritik Merkez Mesajı' : '📩 Merkez Mesajı') + '</h3>' +
+        '<p style="font-size:14px;line-height:1.6;margin:0 0 16px 0;white-space:pre-wrap">' + metin + '</p>' +
+        '<div class="form-group" style="margin-bottom:8px"><label>Personel</label><select id="mmModalPers">' + perselOps + '</select></div>' +
+        '<div class="form-group"><label>PIN — Okundu onayı</label><input id="mmModalPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="····" /></div>' +
+        '<div id="mmModalMsg" class="err-text" style="min-height:18px;margin-top:6px"></div>' +
+        '<div style="display:flex;justify-content:flex-end;margin-top:14px">' +
+          '<button type="button" class="btn btn-danger" id="mmModalOkundu">✓ Okudum, Onaylıyorum</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(modal);
+    function kapat(out) {
+      try { modal.remove(); } catch (_) {}
+      _merkezMesajModalAcik = false;
+      resolve(out || { ok: false });
+    }
+    var persEl = modal.querySelector('#mmModalPers');
+    var pinEl = modal.querySelector('#mmModalPin');
+    var okBtn = modal.querySelector('#mmModalOkundu');
+    var msgEl = modal.querySelector('#mmModalMsg');
+    if (okBtn) {
+      okBtn.onclick = async function() {
+        okBtn.disabled = true;
+        if (msgEl) msgEl.textContent = '';
+        try {
+          var pid = persEl ? String(persEl.value || '').trim() : '';
+          var pin = String((pinEl && pinEl.value) || '').replace(/\D/g, '').slice(0, 4);
+          if (!pid) throw new Error('Personel seçin');
+          if (pin.length !== 4) throw new Error('4 haneli PIN');
+          await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/merkez-mesaj/' + encodeURIComponent(mid) + '/oku', {
+            method: 'POST',
+            body: { personel_id: pid, pin: pin },
+          });
+          _mmModalClearShown(mid);
+          kapat({ ok: true });
+          await refresh();
+        } catch (e) {
+          if (e.status === 429) handle429(msgEl, e);
+          else if (msgEl) msgEl.textContent = e.message || 'Hata';
+          okBtn.disabled = false;
+        }
+      };
+    }
+    if (pinEl) {
+      pinEl.focus();
+      pinEl.onkeydown = function(ev) { if (ev.key === 'Enter' && okBtn) okBtn.click(); };
+    }
+  });
+}
+
+function merkezMesajYeniModalKontrol(mesajlar) {
+  if (_merkezMesajModalAcik) return;
+  var okunmamis = (mesajlar || []).filter(function(m) { return !m.okundu && _mmAktif(m); });
+  if (!okunmamis.length) return;
+  okunmamis.sort(function(a, b) {
+    var ak = a.oncelik === 'kritik' ? 0 : 1;
+    var bk = b.oncelik === 'kritik' ? 0 : 1;
+    if (ak !== bk) return ak - bk;
+    return String(a.olusturma || '').localeCompare(String(b.olusturma || ''));
+  });
+  var ilk = okunmamis[0];
+  var mid = String(ilk.id || '');
+  if (_mmModalShownIds().indexOf(mid) >= 0) return;
+  merkezMesajModalAc(ilk);
+}
+
 function renderMesajlariDiv(mesajlar, mode) {
   mode = mode || 'full';
   var el = document.getElementById('mesajlarDiv');
   if (!el) return;
+  renderMerkezMesajMarquee(mesajlar || []);
   if (!mesajlar.length) { el.innerHTML = ''; return; }
-  var okunmamis = mesajlar.filter(function(m){ return !m.okundu; });
+  var okunmamis = mesajlar.filter(function(m) { return !m.okundu && _mmAktif(m); });
+  var arsiv = mesajlar.filter(function(m) { return _mmMerkezSildi(m); });
   var kutu = document.getElementById('merkezMesajKutusu');
   // Alt bar badge
   var badge = document.getElementById('mesajBadge');
