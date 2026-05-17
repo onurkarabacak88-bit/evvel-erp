@@ -5093,8 +5093,17 @@ export default function OperasyonMerkezi() {
                   {MODULLER.find((m) => m.id === aktifModul)?.label}
                 </div>
               )}
-              <h3 style={{ margin: 0, fontSize: 17, color: 'var(--text)' }}>
+              <h3 style={{ margin: 0, fontSize: 17, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 {UST_SEKMELER.find((x) => x.id === aktifSekme)?.label || aktifSekme}
+                {aktifSekme === 'sevkiyat-uyumsuzluk' && Number(sevkiyatUyumOzet?.adet || 0) > 0 && (
+                  <span style={{
+                    background: '#ea580c', color: '#fff',
+                    padding: '2px 10px', borderRadius: 999,
+                    fontSize: 13, fontWeight: 700, lineHeight: 1.4,
+                  }}>
+                    {Number(sevkiyatUyumOzet.adet)} uyumsuzluk
+                  </span>
+                )}
               </h3>
             </div>
             <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
