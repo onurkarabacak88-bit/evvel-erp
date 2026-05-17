@@ -10513,7 +10513,11 @@ def ops_v2_urun_ac_akis(
         delta_raw = payload.get("delta") if isinstance(payload.get("delta"), dict) else {}
         kalemler_raw = payload.get("kalemler") if isinstance(payload.get("kalemler"), list) else []
 
-        urun_map: Dict[str, int] = {}
+        # NOT: Şube paneli aynı kalemi HEM delta HEM kalemler alanına yazar
+        # (bkz. sube_panel.py:3000 — depo iki kez düşmesin diye). Toplama
+        # yaparken çift sayımı önlemek için ad bazında max(delta, kalemler)
+        # mantığı kullanılır (bar-ozet/_urun_ac_delta_parse ile tutarlı).
+        delta_map: Dict[str, int] = {}
         for k, v in delta_raw.items():
             try:
                 adet = max(0, int(v or 0))
@@ -10522,8 +10526,9 @@ def ops_v2_urun_ac_akis(
             if adet <= 0:
                 continue
             ad = STOK_LABEL_TR.get(str(k), str(k))
-            urun_map[ad] = urun_map.get(ad, 0) + adet
+            delta_map[ad] = delta_map.get(ad, 0) + adet
 
+        kalemler_map: Dict[str, int] = {}
         for it in kalemler_raw:
             if not isinstance(it, dict):
                 continue
@@ -10540,7 +10545,13 @@ def ops_v2_urun_ac_akis(
                 adet = 0
             if adet <= 0:
                 continue
-            urun_map[ad] = urun_map.get(ad, 0) + adet
+            kalemler_map[ad] = kalemler_map.get(ad, 0) + adet
+
+        # Birleştir: aynı ad varsa max al (çift sayım engellenir),
+        # sadece birinde varsa onu al.
+        urun_map: Dict[str, int] = {}
+        for ad in set(delta_map.keys()) | set(kalemler_map.keys()):
+            urun_map[ad] = max(int(delta_map.get(ad, 0)), int(kalemler_map.get(ad, 0)))
 
         urunler = [{"urun_ad": ad, "adet": int(adet)} for ad, adet in urun_map.items()]
         urunler.sort(key=lambda x: (-int(x.get("adet") or 0), str(x.get("urun_ad") or "")))
