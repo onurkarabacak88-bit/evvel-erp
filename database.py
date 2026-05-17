@@ -1389,6 +1389,61 @@ def init_db():
                 THEN ALTER TABLE anlik_giderler ADD COLUMN fis_kontrol_notu TEXT; END IF;
             END $$;
         """)
+
+        # ── Defensive: anlik_giderler.sube_id alias kolonu ──
+        # Bazı eski deploy'lar veya cache'lenmiş PostgreSQL plan'lar 'sube_id' ister.
+        # 'sube' kolonunun jenerik aynası (sadece SELECT için, INSERT için trigger).
+        cur.execute("""
+            DO $$
+            BEGIN
+                -- 1) Generated column ekle (sadece tablo varsa ve kolon yoksa)
+                IF EXISTS (SELECT 1 FROM information_schema.tables
+                           WHERE table_schema='public' AND table_name='anlik_giderler')
+                   AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='anlik_giderler' AND column_name='sube_id')
+                THEN
+                    BEGIN
+                        ALTER TABLE anlik_giderler
+                        ADD COLUMN sube_id TEXT GENERATED ALWAYS AS (sube) STORED;
+                    EXCEPTION WHEN OTHERS THEN
+                        -- Generated column desteklenmiyorsa normal kolon + view yap
+                        ALTER TABLE anlik_giderler ADD COLUMN sube_id TEXT;
+                        UPDATE anlik_giderler SET sube_id = sube WHERE sube_id IS NULL;
+                    END;
+                END IF;
+            END $$;
+        """)
+        # sube_id geriye-uyumlu trigger: INSERT/UPDATE'lerde sube ↔ sube_id senkronize
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION anlik_gider_sube_sync_fn()
+            RETURNS trigger AS $$
+            BEGIN
+                -- INSERT veya UPDATE: hangisi doluysa diğerini doldur
+                IF NEW.sube IS NULL AND NEW.sube_id IS NOT NULL THEN
+                    NEW.sube := NEW.sube_id;
+                ELSIF NEW.sube_id IS NULL AND NEW.sube IS NOT NULL THEN
+                    NEW.sube_id := NEW.sube;
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                -- Generated column ise trigger gereksiz (otomatik senkronize); kontrol et
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='anlik_giderler' AND column_name='sube_id'
+                      AND COALESCE(is_generated,'NEVER') = 'NEVER'
+                ) THEN
+                    DROP TRIGGER IF EXISTS tr_anlik_gider_sube_sync ON anlik_giderler;
+                    CREATE TRIGGER tr_anlik_gider_sube_sync
+                    BEFORE INSERT OR UPDATE ON anlik_giderler
+                    FOR EACH ROW EXECUTE FUNCTION anlik_gider_sube_sync_fn();
+                END IF;
+            END $$;
+        """)
         cur.execute("""
             DO $$
             BEGIN
