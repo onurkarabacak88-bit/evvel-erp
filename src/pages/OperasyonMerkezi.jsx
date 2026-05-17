@@ -3786,6 +3786,13 @@ export default function OperasyonMerkezi() {
       .finally(() => setYukleniyor(false));
   }, [aktifSekme, sevkiyatUyumGun, sevkiyatUyumDetayYukle, toast]);
 
+  // Sipariş & Tedarik modülü açıkken sevkiyat uyumsuzluk sayısını sürekli güncel tut
+  // (kullanıcı diğer sekmelerdeyken de tab pill üzerinde rozet görsün)
+  useEffect(() => {
+    if (aktifModul !== 'siparis-tedarik') return;
+    yukleSevkiyatUyumOzet({ silent: true }).catch(() => {});
+  }, [aktifModul, aktifSekme, yukleSevkiyatUyumOzet]);
+
   useEffect(() => {
     if (aktifSekme !== 'magaza-kartlari') return;
     magazaDepoTamYenile();
@@ -5211,7 +5218,14 @@ export default function OperasyonMerkezi() {
               <div style={{ display: 'flex', gap: 6, marginTop: 10, marginBottom: 4, flexWrap: 'wrap', overflowX: 'auto', position: 'sticky', top: 0, zIndex: 3, background: 'var(--bg)', paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>
                 {_modul.tabs.map((tabId) => {
                   const sekme = UST_SEKMELER.find((s) => s.id === tabId);
-                  const tabBekleyen = tabId === 'ciro-onay' ? Number(ciroOnayBugun?.toplam || 0) : 0;
+                  let tabBekleyen = 0;
+                  let tabBekleyenRenk = '#d946b8';
+                  if (tabId === 'ciro-onay') {
+                    tabBekleyen = Number(ciroOnayBugun?.toplam || 0);
+                  } else if (tabId === 'sevkiyat-uyumsuzluk') {
+                    tabBekleyen = Number(sevkiyatUyumOzet?.adet || 0);
+                    tabBekleyenRenk = '#ea580c';
+                  }
                   return sekme ? (
                     <button
                       key={tabId}
@@ -5225,7 +5239,7 @@ export default function OperasyonMerkezi() {
                         <span style={{
                           position: 'absolute', top: -6, right: -6,
                           minWidth: 18, height: 18, padding: '0 5px',
-                          borderRadius: 999, background: '#d946b8', color: '#fff',
+                          borderRadius: 999, background: tabBekleyenRenk, color: '#fff',
                           fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
                         }}>
                           {tabBekleyen}
