@@ -326,35 +326,26 @@ def init_db():
                 ) THEN
                     ALTER TABLE sube_operasyon_uyari ADD COLUMN detay_json JSONB;
                 END IF;
-                -- ÇÖZÜM (düzeltilen tutar) alanları: hesaplar bu tutara göre devam eder
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_schema='public' AND table_name='sube_operasyon_uyari'
-                      AND column_name='cozum_duzeltilen_tl') THEN
-                    ALTER TABLE sube_operasyon_uyari ADD COLUMN cozum_duzeltilen_tl NUMERIC(14,2);
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_schema='public' AND table_name='sube_operasyon_uyari'
-                      AND column_name='cozum_notu') THEN
-                    ALTER TABLE sube_operasyon_uyari ADD COLUMN cozum_notu TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_schema='public' AND table_name='sube_operasyon_uyari'
-                      AND column_name='cozum_ts') THEN
-                    ALTER TABLE sube_operasyon_uyari ADD COLUMN cozum_ts TIMESTAMPTZ;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_schema='public' AND table_name='sube_operasyon_uyari'
-                      AND column_name='cozum_personel_id') THEN
-                    ALTER TABLE sube_operasyon_uyari ADD COLUMN cozum_personel_id TEXT;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_schema='public' AND table_name='sube_operasyon_uyari'
-                      AND column_name='cozum_personel_ad') THEN
-                    ALTER TABLE sube_operasyon_uyari ADD COLUMN cozum_personel_ad TEXT;
-                END IF;
             EXCEPTION WHEN others THEN NULL;
             END $$;
         """)
+
+        # ── ÇÖZÜM (düzeltilen tutar) alanları — AYRI bağımsız blok ──
+        # Önceki blokların hata atıp swallow ettiği durumda da çalışsın diye ayrı.
+        # Her ALTER kendi DO bloğunda; biri patlasa diğeri etkilenmez.
+        for _kolon, _tip in [
+            ("cozum_duzeltilen_tl", "NUMERIC(14,2)"),
+            ("cozum_notu", "TEXT"),
+            ("cozum_ts", "TIMESTAMPTZ"),
+            ("cozum_personel_id", "TEXT"),
+            ("cozum_personel_ad", "TEXT"),
+        ]:
+            try:
+                cur.execute(
+                    f"ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS {_kolon} {_tip}"
+                )
+            except Exception:
+                pass
         cur.execute("""
             CREATE TABLE IF NOT EXISTS sube_fire_haftalik (
                 id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,

@@ -5557,6 +5557,25 @@ def ops_kasa_uyumsuzluk_listesi(
         raise HTTPException(400, "Geçersiz tarih formatı (YYYY-MM-DD bekleniyor)")
 
     with db() as (_, cur):
+        # Defensive: cozum_duzeltilen_tl kolonu yoksa migration henüz çalışmamış,
+        # graceful düş — sadece orijinal fark_tl ile çalış.
+        cur.execute("""
+            SELECT COUNT(*) FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='sube_operasyon_uyari'
+              AND column_name='cozum_duzeltilen_tl'
+        """)
+        _has_cozum = int((cur.fetchone() or {}).get("count") or 0) > 0
+        if not _has_cozum:
+            # Migration acil tetikle
+            try:
+                cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_duzeltilen_tl NUMERIC(14,2)")
+                cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_notu TEXT")
+                cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_ts TIMESTAMPTZ")
+                cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_personel_id TEXT")
+                cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_personel_ad TEXT")
+                _has_cozum = True
+            except Exception:
+                pass
         cur.execute(
             """
             SELECT
