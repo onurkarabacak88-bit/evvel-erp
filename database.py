@@ -346,6 +346,41 @@ def init_db():
                 )
             except Exception:
                 pass
+
+        # ── KASA FARK KAYNAK DÜZELTME (Source Correction Audit) ──
+        # Her uyumsuzluk düzeltmesi (ciro/açılış/gider/devir/gerçek_açık) burada loglanır.
+        # SOX-uyumlu audit trail: eski_deger + yeni_deger + sebep + kim + zaman.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS kasa_fark_kaynak_duzeltme (
+                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                uyari_id        TEXT NOT NULL REFERENCES sube_operasyon_uyari(id) ON DELETE CASCADE,
+                sube_id         TEXT NOT NULL,
+                tarih           DATE NOT NULL,
+                tip             TEXT NOT NULL,
+                sebep           TEXT NOT NULL CHECK (sebep IN (
+                    'ciro_yanlis','acilis_yanlis','gider_eksik',
+                    'devir_yanlis','gercek_acik'
+                )),
+                hedef_tablo     TEXT,
+                hedef_id        TEXT,
+                eski_deger_json JSONB,
+                yeni_deger_json JSONB,
+                eski_fark_tl    NUMERIC(14,2),
+                yeni_fark_tl    NUMERIC(14,2),
+                notu            TEXT,
+                personel_id     TEXT,
+                personel_ad     TEXT,
+                onay_durumu_eski TEXT,
+                onay_durumu_yeni TEXT,
+                olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_kfkd_uyari ON kasa_fark_kaynak_duzeltme(uyari_id)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_kfkd_sube_tarih ON kasa_fark_kaynak_duzeltme(sube_id, tarih DESC)
+        """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS sube_fire_haftalik (
                 id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,

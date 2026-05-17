@@ -1,0 +1,318 @@
+"""
+kasa_fark_recalc.py
+-------------------
+Kasa uyumsuzluğunun zincirleme yeniden hesaplanması.
+
+Tek sorumluluk:
+    1) İlgili gün için ACILIS veya KAPANIS bileşenlerini DB'den yeniden topla,
+    2) Formülü çalıştır → yeni fark hesapla,
+    3) sube_operasyon_uyari satırını güncelle (beklenen/gercek/fark/seviye),
+    4) onay_kuyrugu kaydı varsa tutar/durum/iptal mantığını yürüt,
+    5) Tolerans eşiği altına düşerse otomatik 'çözüldü' işaretle.
+
+Bu modül kullanıcı düzeltme yaptığında (ciro/açılış/gider/devir) çağrılır.
+Asla DB transaction'ı açmaz — caller'ın cur'unu kullanır (atomicity korunur).
+"""
+from __future__ import annotations
+
+import json
+import logging
+from datetime import date
+from typing import Any, Dict, Optional, Tuple
+
+from operasyon_kurallar import tolerans_seviyesi, beklenen_dunku_kapanis_kasa
+
+log = logging.getLogger(__name__)
+
+
+def _bilesenleri_topla_kapanis(cur: Any, sube_id: str, tarih: Any) -> Dict[str, float]:
+    """KAPANIS fark formülünün 6 bileşenini DB'nin mevcut halinden topla."""
+    # 1. acilis_kasa — sube_operasyon_event ACILIS.kasa_sayim
+    cur.execute(
+        """
+        SELECT kasa_sayim
+        FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=%s::date AND tip='ACILIS' AND durum='tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+        """,
+        (sube_id, str(tarih)),
+    )
+    acilis_kasa = float((cur.fetchone() or {}).get("kasa_sayim") or 0)
+
+    # 2. z_nakit — ciro.nakit (onaylanmış)
+    cur.execute(
+        """
+        SELECT COALESCE(SUM(nakit), 0) AS nakit
+        FROM ciro
+        WHERE sube_id=%s AND tarih=%s::date AND durum='aktif'
+        """,
+        (sube_id, str(tarih)),
+    )
+    z_nakit = float((cur.fetchone() or {}).get("nakit") or 0)
+
+    # 3. nakit_giderler — anlik_giderler nakit + aktif/onay_bekliyor
+    cur.execute(
+        """
+        SELECT COALESCE(SUM(tutar), 0) AS toplam
+        FROM anlik_giderler
+        WHERE sube=%s AND tarih=%s::date
+          AND LOWER(COALESCE(NULLIF(TRIM(odeme_yontemi), ''), 'nakit')) = 'nakit'
+          AND durum IN ('aktif','onay_bekliyor')
+        """,
+        (sube_id, str(tarih)),
+    )
+    nakit_giderler = float((cur.fetchone() or {}).get("toplam") or 0)
+
+    # 4. ara_teslim — kasa_teslim teslim_turu='ara'
+    cur.execute(
+        """
+        SELECT COALESCE(SUM(tutar), 0) AS toplam
+        FROM kasa_teslim
+        WHERE sube_id=%s AND tarih=%s::date AND teslim_turu='ara'
+        """,
+        (sube_id, str(tarih)),
+    )
+    ara_teslim = float((cur.fetchone() or {}).get("toplam") or 0)
+
+    # 5+6. teslim, devir — sube_operasyon_event KAPANIS
+    cur.execute(
+        """
+        SELECT COALESCE(teslim, 0) AS teslim, COALESCE(devir, 0) AS devir,
+               COALESCE(kasa_sayim, 0) AS kasa_sayim
+        FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+        """,
+        (sube_id, str(tarih)),
+    )
+    kr = cur.fetchone() or {}
+    teslim = float(kr.get("teslim") or 0)
+    devir = float(kr.get("devir") or 0)
+    kasa_sayim = float(kr.get("kasa_sayim") or 0)
+
+    return {
+        "acilis_kasa": acilis_kasa,
+        "z_nakit": z_nakit,
+        "nakit_giderler": nakit_giderler,
+        "ara_teslim": ara_teslim,
+        "teslim": teslim,
+        "devir": devir,
+        "kasa_sayim": kasa_sayim,
+    }
+
+
+def _formul_kapanis(b: Dict[str, float]) -> float:
+    """KAPANIS mutabakat formülü (tutarlı, tek yerden)."""
+    return round(
+        b["acilis_kasa"] + b["z_nakit"]
+        - b["nakit_giderler"] - b["teslim"] - b["devir"] - b["ara_teslim"],
+        2,
+    )
+
+
+def _bilesenleri_topla_acilis(cur: Any, sube_id: str, tarih: Any) -> Dict[str, float]:
+    """ACILIS fark = sabah kasa sayım - beklenen dünkü kapanış kasa."""
+    cur.execute(
+        """
+        SELECT kasa_sayim FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=%s::date AND tip='ACILIS' AND durum='tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+        """,
+        (sube_id, str(tarih)),
+    )
+    sabah_kasa = float((cur.fetchone() or {}).get("kasa_sayim") or 0)
+    # beklenen_dunku_kapanis_kasa — operasyon_kurallar.py'den çağrılır
+    try:
+        bek = float(beklenen_dunku_kapanis_kasa(cur, sube_id) or 0)
+    except Exception:
+        bek = 0.0
+    return {"sabah_kasa": sabah_kasa, "beklenen": bek}
+
+
+# ─────────────────────────────────────────────────────────────────
+# ANA FONKSİYON
+# ─────────────────────────────────────────────────────────────────
+
+# Tolerans eşiği — bu seviyenin altında otomatik çözüldü işaretlenir
+OTOMATIK_COZUM_ESIK_TL = 0.01
+
+
+def yeniden_hesapla(
+    cur: Any,
+    uyari_id: str,
+    *,
+    kim_pid: Optional[str] = None,
+    kim_ad: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Verilen kasa fark uyarısını DB'nin güncel haline göre yeniden hesaplar.
+
+    Yapılan iş:
+    - sube_operasyon_uyari satırı bulunur (tip ACILIS_KASA_FARK / KAPANIS_KASA_FARK)
+    - İlgili bileşenler yeniden toplanır
+    - Yeni fark hesaplanır
+    - Eski fark ile karşılaştırılır:
+        * yeni_fark ≤ eşik → otomatik 'çözüldü' işaretle (cozum_duzeltilen_tl = yeni_fark)
+        * yeni_fark > eşik → uyari satırını güncelle (beklenen/gercek/fark/seviye/detay_json)
+    - onay_kuyrugu kaydı varsa:
+        * durum='bekliyor' + yeni_fark ≤ eşik → onay_kuyrugu iptal et
+        * durum='bekliyor' + yeni_fark > eşik → tutar/aciklama güncelle
+        * durum='onaylandi' → revize kayıt log'la (manuel müdahale gerekli)
+
+    Returns:
+        {
+          "uyari_id": ...,
+          "eski_fark": float,
+          "yeni_fark": float,
+          "otomatik_cozuldu": bool,
+          "onay_durumu_eski": str | None,
+          "onay_durumu_yeni": str | None,
+          "uyari_silindi_mi": False,  # uyari silinmez, sadece okundu=TRUE
+        }
+    """
+    cur.execute(
+        """
+        SELECT id, sube_id::text, tarih::text, tip, fark_tl, beklenen_tl, gercek_tl,
+               okundu, cozum_duzeltilen_tl, detay_json
+        FROM sube_operasyon_uyari
+        WHERE id=%s AND tip IN ('ACILIS_KASA_FARK','KAPANIS_KASA_FARK')
+        FOR UPDATE
+        """,
+        (uyari_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise ValueError(f"Uyari bulunamadi: {uyari_id}")
+    u = dict(row)
+    sube_id = str(u["sube_id"])
+    tarih = u["tarih"]
+    tip = str(u["tip"])
+    eski_fark = float(u.get("fark_tl") or 0)
+    eski_beklenen = float(u.get("beklenen_tl") or 0)
+    eski_gercek = float(u.get("gercek_tl") or 0)
+
+    # Yeniden hesapla
+    if tip == "KAPANIS_KASA_FARK":
+        bilesenler = _bilesenleri_topla_kapanis(cur, sube_id, tarih)
+        yeni_fark = _formul_kapanis(bilesenler)
+        yeni_beklenen = bilesenler["acilis_kasa"] + bilesenler["z_nakit"] - bilesenler["nakit_giderler"] - bilesenler["ara_teslim"]
+        yeni_gercek = bilesenler["teslim"] + bilesenler["devir"]
+        detay_json_yeni = {
+            "acilis_kasa": bilesenler["acilis_kasa"],
+            "z_nakit": bilesenler["z_nakit"],
+            "nakit_giderler": bilesenler["nakit_giderler"],
+            "ara_teslim": bilesenler["ara_teslim"],
+            "teslim": bilesenler["teslim"],
+            "devir": bilesenler["devir"],
+            "fark": yeni_fark,
+            "yeniden_hesap_ts": True,
+        }
+    else:  # ACILIS_KASA_FARK
+        bilesenler = _bilesenleri_topla_acilis(cur, sube_id, tarih)
+        yeni_fark = round(bilesenler["sabah_kasa"] - bilesenler["beklenen"], 2)
+        yeni_beklenen = bilesenler["beklenen"]
+        yeni_gercek = bilesenler["sabah_kasa"]
+        detay_json_yeni = {
+            "sabah_kasa": bilesenler["sabah_kasa"],
+            "beklenen": bilesenler["beklenen"],
+            "fark": yeni_fark,
+            "yeniden_hesap_ts": True,
+        }
+
+    yeni_seviye = tolerans_seviyesi(yeni_fark)
+    otomatik_cozuldu = abs(yeni_fark) <= OTOMATIK_COZUM_ESIK_TL
+
+    # Uyari satırını güncelle
+    if otomatik_cozuldu:
+        cur.execute(
+            """
+            UPDATE sube_operasyon_uyari
+            SET fark_tl=%s, beklenen_tl=%s, gercek_tl=%s, seviye=%s,
+                detay_json=%s,
+                okundu=TRUE,
+                cozum_duzeltilen_tl=%s,
+                cozum_notu=COALESCE(cozum_notu, 'Kaynak düzeltildi — fark sıfırlandı'),
+                cozum_ts=COALESCE(cozum_ts, NOW()),
+                cozum_personel_id=COALESCE(cozum_personel_id, %s),
+                cozum_personel_ad=COALESCE(cozum_personel_ad, %s)
+            WHERE id=%s
+            """,
+            (yeni_fark, yeni_beklenen, yeni_gercek, yeni_seviye,
+             json.dumps(detay_json_yeni, ensure_ascii=False),
+             yeni_fark, kim_pid, kim_ad, uyari_id),
+        )
+    else:
+        cur.execute(
+            """
+            UPDATE sube_operasyon_uyari
+            SET fark_tl=%s, beklenen_tl=%s, gercek_tl=%s, seviye=%s,
+                detay_json=%s
+            WHERE id=%s
+            """,
+            (yeni_fark, yeni_beklenen, yeni_gercek, yeni_seviye,
+             json.dumps(detay_json_yeni, ensure_ascii=False),
+             uyari_id),
+        )
+
+    # onay_kuyrugu senkronizasyonu (yalnızca KAPANIS_KASA_FARK'ta var)
+    onay_durumu_eski = None
+    onay_durumu_yeni = None
+    if tip == "KAPANIS_KASA_FARK":
+        cur.execute(
+            """
+            SELECT id, durum FROM onay_kuyrugu
+            WHERE islem_turu='KAPANIS_KASA_FARK'
+              AND kaynak_tablo='kasa_farki'
+              AND tarih=%s::date
+              AND aciklama LIKE %s
+            ORDER BY olusturma DESC LIMIT 1
+            """,
+            (str(tarih), f"%{sube_id}%"),
+        )
+        onay_row = cur.fetchone()
+        if onay_row:
+            onay_row = dict(onay_row)
+            onay_id = onay_row["id"]
+            onay_durumu_eski = str(onay_row.get("durum") or "")
+            if onay_durumu_eski == "bekliyor":
+                if otomatik_cozuldu:
+                    # Onay kuyruğu otomatik iptal
+                    cur.execute(
+                        "UPDATE onay_kuyrugu SET durum='iptal', onay_tarihi=NOW() WHERE id=%s",
+                        (onay_id,),
+                    )
+                    onay_durumu_yeni = "iptal"
+                else:
+                    # Tutar güncelle
+                    cur.execute(
+                        """
+                        UPDATE onay_kuyrugu
+                        SET tutar=%s,
+                            aciklama=%s
+                        WHERE id=%s
+                        """,
+                        (
+                            yeni_fark,
+                            f"[{sube_id}] Kapanış kasa farkı (yeniden hesap): {yeni_fark:+,.2f}₺",
+                            onay_id,
+                        ),
+                    )
+                    onay_durumu_yeni = "bekliyor"
+            elif onay_durumu_eski == "onaylandi":
+                # Onaylanmış → tutar/durum değişmez; revize bilgisi audit'e gider
+                onay_durumu_yeni = "onaylandi_revize"
+
+    return {
+        "uyari_id": uyari_id,
+        "eski_fark": eski_fark,
+        "yeni_fark": yeni_fark,
+        "eski_beklenen": eski_beklenen,
+        "yeni_beklenen": yeni_beklenen,
+        "eski_gercek": eski_gercek,
+        "yeni_gercek": yeni_gercek,
+        "yeni_seviye": yeni_seviye,
+        "otomatik_cozuldu": otomatik_cozuldu,
+        "onay_durumu_eski": onay_durumu_eski,
+        "onay_durumu_yeni": onay_durumu_yeni,
+        "detay_json": detay_json_yeni,
+    }

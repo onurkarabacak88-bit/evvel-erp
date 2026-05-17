@@ -364,6 +364,21 @@ class KasaUyumsuzlukCozBody(BaseModel):
     duzeltilen_fark_tl: Optional[float] = None
 
 
+class KasaKaynakDuzeltmeBody(BaseModel):
+    """Kasa farkının KAYNAĞINI düzeltir, sonra recalc tetiklenir."""
+    sebep: str  # ciro_yanlis | acilis_yanlis | gider_eksik | devir_yanlis | gercek_acik
+    notu: Optional[str] = None
+    personel_id: Optional[str] = None
+    personel_ad: Optional[str] = None
+    # Sebebe göre payload:
+    #   ciro_yanlis: { yeni_nakit, yeni_pos?, yeni_online? }
+    #   acilis_yanlis: { yeni_acilis_kasa }
+    #   gider_eksik: { kategori, tutar, aciklama? }
+    #   devir_yanlis: { yeni_teslim?, yeni_devir? }
+    #   gercek_acik: {} (kaynak değişmez, sadece audit + okundu)
+    payload: Dict[str, Any] = {}
+
+
 def _coerce_year_month(ym: Optional[str]) -> str:
     v = (ym or "").strip()
     if not v:
@@ -5734,6 +5749,301 @@ def ops_kasa_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyu
         )
         audit(cur, "sube_operasyon_uyari", uyari_id, "KASA_UYUMSUZLUK_COZULDU")
     return {"success": True, "durum": "cozuldu", "id": uyari_id, "duzeltilen_fark_tl": duz}
+
+
+# ─────────────────────────────────────────────────────────────────
+# KASA FARKI KAYNAK DÜZELTME ENDPOINT'İ
+# (ciro/açılış/gider/devir kaydını düzelt → fark otomatik yeniden hesaplanır)
+# ─────────────────────────────────────────────────────────────────
+
+_SEBEPLER = {"ciro_yanlis", "acilis_yanlis", "gider_eksik", "devir_yanlis", "gercek_acik"}
+
+
+def _kk_uyari_getir(cur, uyari_id: str) -> Dict[str, Any]:
+    cur.execute(
+        """
+        SELECT id, sube_id::text, tarih::text, tip, fark_tl, beklenen_tl, gercek_tl, okundu
+        FROM sube_operasyon_uyari
+        WHERE id=%s AND tip IN ('ACILIS_KASA_FARK','KAPANIS_KASA_FARK')
+        FOR UPDATE
+        """,
+        (uyari_id,),
+    )
+    r = cur.fetchone()
+    if not r:
+        raise HTTPException(404, "Kasa uyumsuzluk kaydı bulunamadı")
+    return dict(r)
+
+
+def _kk_ciro_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """ciro tablosunu güncelle (nakit/pos/online). Mevcut kaydı bulup üzerine yazar."""
+    yeni_nakit = payload.get("yeni_nakit")
+    yeni_pos = payload.get("yeni_pos")
+    yeni_online = payload.get("yeni_online")
+    if yeni_nakit is None and yeni_pos is None and yeni_online is None:
+        raise HTTPException(400, "ciro_yanlis: yeni_nakit / yeni_pos / yeni_online'dan en az biri zorunlu")
+    cur.execute(
+        """
+        SELECT id::text, nakit::float, pos::float, online::float
+        FROM ciro WHERE sube_id=%s AND tarih=%s::date AND durum='aktif'
+        ORDER BY olusturma DESC LIMIT 1 FOR UPDATE
+        """,
+        (sube_id, tarih),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Bu şube/tarih için aktif ciro kaydı yok — önce ciro girilmeli")
+    r = dict(row)
+    eski = {"nakit": float(r["nakit"] or 0), "pos": float(r["pos"] or 0), "online": float(r["online"] or 0)}
+    yeni = {
+        "nakit": float(yeni_nakit) if yeni_nakit is not None else eski["nakit"],
+        "pos": float(yeni_pos) if yeni_pos is not None else eski["pos"],
+        "online": float(yeni_online) if yeni_online is not None else eski["online"],
+    }
+    cur.execute(
+        "UPDATE ciro SET nakit=%s, pos=%s, online=%s WHERE id=%s",
+        (yeni["nakit"], yeni["pos"], yeni["online"], r["id"]),
+    )
+    return {"hedef_tablo": "ciro", "hedef_id": r["id"], "eski": eski, "yeni": yeni}
+
+
+def _kk_acilis_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    yeni_kasa = payload.get("yeni_acilis_kasa")
+    if yeni_kasa is None:
+        raise HTTPException(400, "acilis_yanlis: yeni_acilis_kasa zorunlu")
+    try:
+        yeni_kasa_f = float(yeni_kasa)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "yeni_acilis_kasa sayısal olmalı")
+    cur.execute(
+        """
+        SELECT id::text, kasa_sayim::float
+        FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=%s::date AND tip='ACILIS' AND durum='tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST LIMIT 1 FOR UPDATE
+        """,
+        (sube_id, tarih),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Bu şube/tarih için tamamlanmış ACILIS eventi yok")
+    r = dict(row)
+    eski = {"kasa_sayim": float(r["kasa_sayim"] or 0)}
+    cur.execute(
+        "UPDATE sube_operasyon_event SET kasa_sayim=%s WHERE id=%s",
+        (yeni_kasa_f, r["id"]),
+    )
+    return {"hedef_tablo": "sube_operasyon_event(ACILIS)", "hedef_id": r["id"],
+            "eski": eski, "yeni": {"kasa_sayim": yeni_kasa_f}}
+
+
+def _kk_devir_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    yeni_teslim = payload.get("yeni_teslim")
+    yeni_devir = payload.get("yeni_devir")
+    if yeni_teslim is None and yeni_devir is None:
+        raise HTTPException(400, "devir_yanlis: yeni_teslim veya yeni_devir zorunlu")
+    cur.execute(
+        """
+        SELECT id::text, teslim::float, devir::float
+        FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST LIMIT 1 FOR UPDATE
+        """,
+        (sube_id, tarih),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Bu şube/tarih için tamamlanmış KAPANIS eventi yok")
+    r = dict(row)
+    eski = {"teslim": float(r["teslim"] or 0), "devir": float(r["devir"] or 0)}
+    yeni = {
+        "teslim": float(yeni_teslim) if yeni_teslim is not None else eski["teslim"],
+        "devir": float(yeni_devir) if yeni_devir is not None else eski["devir"],
+    }
+    cur.execute(
+        "UPDATE sube_operasyon_event SET teslim=%s, devir=%s WHERE id=%s",
+        (yeni["teslim"], yeni["devir"], r["id"]),
+    )
+    return {"hedef_tablo": "sube_operasyon_event(KAPANIS)", "hedef_id": r["id"],
+            "eski": eski, "yeni": yeni}
+
+
+def _kk_gider_ekle(cur, sube_id: str, tarih: str, payload: Dict[str, Any],
+                   pid: Optional[str], pad: Optional[str]) -> Dict[str, Any]:
+    """Eksik anlık gider eklenir. Aktif olarak girilir (onay beklemez — düzeltme zaten merkez yetkili)."""
+    kategori = (payload.get("kategori") or "Düzeltme — kasa farkı kaynak").strip()
+    try:
+        tutar = float(payload.get("tutar") or 0)
+    except (TypeError, ValueError):
+        tutar = 0.0
+    if tutar <= 0:
+        raise HTTPException(400, "gider_eksik: tutar > 0 olmalı")
+    aciklama = (payload.get("aciklama") or "Kasa farkı kaynak düzeltmesi — eksik nakit gider").strip()
+    gid = str(uuid.uuid4())
+    cur.execute(
+        """
+        INSERT INTO anlik_giderler
+            (id, tarih, kategori, tutar, aciklama, sube, odeme_yontemi, durum, personel_id,
+             fis_gonderildi, fis_kontrol_durumu, kaynak_tablo, kaynak_id)
+        VALUES (%s, %s::date, %s, %s, %s, %s, 'nakit', 'aktif', %s,
+                FALSE, 'muaf', 'kasa_fark_kaynak_duzeltme', %s)
+        """,
+        (gid, tarih, kategori, tutar, aciklama, sube_id, pid, gid),
+    )
+    return {"hedef_tablo": "anlik_giderler", "hedef_id": gid,
+            "eski": None, "yeni": {"kategori": kategori, "tutar": tutar, "aciklama": aciklama}}
+
+
+def _kk_audit_yaz(cur, uyari: Dict[str, Any], sebep: str,
+                  hedef: Dict[str, Any], eski_fark: float, yeni_fark: float,
+                  notu: Optional[str], pid: Optional[str], pad: Optional[str],
+                  onay_eski: Optional[str], onay_yeni: Optional[str]) -> None:
+    cur.execute(
+        """
+        INSERT INTO kasa_fark_kaynak_duzeltme
+            (uyari_id, sube_id, tarih, tip, sebep, hedef_tablo, hedef_id,
+             eski_deger_json, yeni_deger_json, eski_fark_tl, yeni_fark_tl,
+             notu, personel_id, personel_ad, onay_durumu_eski, onay_durumu_yeni)
+        VALUES (%s, %s, %s::date, %s, %s, %s, %s,
+                %s::jsonb, %s::jsonb, %s, %s,
+                %s, %s, %s, %s, %s)
+        """,
+        (
+            uyari["id"], uyari["sube_id"], uyari["tarih"], uyari["tip"], sebep,
+            hedef.get("hedef_tablo"), hedef.get("hedef_id"),
+            json.dumps(hedef.get("eski"), ensure_ascii=False) if hedef.get("eski") is not None else None,
+            json.dumps(hedef.get("yeni"), ensure_ascii=False) if hedef.get("yeni") is not None else None,
+            eski_fark, yeni_fark,
+            notu, pid, pad, onay_eski, onay_yeni,
+        ),
+    )
+
+
+@router.post("/kasa-uyumsuzluk/{uyari_id}/kaynak-duzelt")
+def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
+    """
+    Kasa uyumsuzluğunun KAYNAĞINI düzeltir, fark yeniden hesaplanır.
+
+    Akış:
+      1) Sebebi ayrıştır (ciro/açılış/gider/devir/gerçek_açık)
+      2) İlgili tabloyu güncelle (UPDATE/INSERT)
+      3) kasa_fark_recalc.yeniden_hesapla() ile yeni fark hesapla
+      4) sube_operasyon_uyari + onay_kuyrugu otomatik güncellenir
+      5) Audit kaydı (kasa_fark_kaynak_duzeltme) yazılır
+
+    Tek atomik transaction — herhangi bir adım hata verirse hiçbir değişiklik kalmaz.
+    """
+    sebep = (body.sebep or "").strip().lower()
+    if sebep not in _SEBEPLER:
+        raise HTTPException(400, f"Geçersiz sebep — şunlardan biri olmalı: {sorted(_SEBEPLER)}")
+    pid = (body.personel_id or "").strip() or None
+    pad = (body.personel_ad or "").strip() or None
+    notu = (body.notu or "").strip() or None
+
+    from kasa_fark_recalc import yeniden_hesapla as _kf_recalc
+
+    with db() as (conn, cur):
+        uyari = _kk_uyari_getir(cur, uyari_id)
+        sube_id = uyari["sube_id"]
+        tarih = uyari["tarih"]
+        eski_fark = float(uyari.get("fark_tl") or 0)
+
+        # 1+2. Sebebe göre kaynak düzeltme
+        if sebep == "ciro_yanlis":
+            hedef = _kk_ciro_duzelt(cur, sube_id, tarih, body.payload or {})
+        elif sebep == "acilis_yanlis":
+            hedef = _kk_acilis_duzelt(cur, sube_id, tarih, body.payload or {})
+        elif sebep == "devir_yanlis":
+            hedef = _kk_devir_duzelt(cur, sube_id, tarih, body.payload or {})
+        elif sebep == "gider_eksik":
+            hedef = _kk_gider_ekle(cur, sube_id, tarih, body.payload or {}, pid, pad)
+        else:  # gercek_acik
+            hedef = {"hedef_tablo": None, "hedef_id": None, "eski": None, "yeni": None}
+
+        # 3+4. Yeniden hesap + onay_kuyrugu senkron
+        if sebep == "gercek_acik":
+            # Kaynak değişmedi — sadece okundu işaretle, ciro/gider/açılış aynı kalır
+            cur.execute(
+                """
+                UPDATE sube_operasyon_uyari
+                SET okundu=TRUE,
+                    cozum_notu=COALESCE(cozum_notu, %s),
+                    cozum_ts=COALESCE(cozum_ts, NOW()),
+                    cozum_personel_id=COALESCE(cozum_personel_id, %s),
+                    cozum_personel_ad=COALESCE(cozum_personel_ad, %s)
+                WHERE id=%s
+                """,
+                (notu or 'Gerçek kasa açığı — kaynak düzeltme yapılmadı', pid, pad, uyari_id),
+            )
+            recalc = {
+                "uyari_id": uyari_id,
+                "eski_fark": eski_fark,
+                "yeni_fark": eski_fark,  # değişmez
+                "otomatik_cozuldu": False,
+                "onay_durumu_eski": None,
+                "onay_durumu_yeni": None,
+            }
+        else:
+            recalc = _kf_recalc(cur, uyari_id, kim_pid=pid, kim_ad=pad)
+
+        # 5. Audit
+        _kk_audit_yaz(
+            cur, uyari, sebep, hedef,
+            eski_fark, float(recalc["yeni_fark"]),
+            notu, pid, pad,
+            recalc.get("onay_durumu_eski"), recalc.get("onay_durumu_yeni"),
+        )
+
+        # Operasyon defter
+        try:
+            operasyon_defter_ekle(
+                cur, sube_id,
+                "KASA_FARK_KAYNAK_DUZELTME",
+                (f"sebep={sebep} eski_fark={eski_fark:+,.2f} yeni_fark={float(recalc['yeni_fark']):+,.2f} "
+                 f"hedef={hedef.get('hedef_tablo') or '-'} {(' | not=' + notu) if notu else ''}")[:480],
+                None,
+                personel_id=pid, personel_ad=pad,
+                bildirim_saati=dt_now_tr().strftime("%H:%M"),
+            )
+        except Exception:
+            pass
+
+    return {
+        "success": True,
+        "sebep": sebep,
+        "eski_fark": eski_fark,
+        "yeni_fark": float(recalc["yeni_fark"]),
+        "otomatik_cozuldu": bool(recalc.get("otomatik_cozuldu")),
+        "onay_durumu_eski": recalc.get("onay_durumu_eski"),
+        "onay_durumu_yeni": recalc.get("onay_durumu_yeni"),
+        "hedef": hedef,
+    }
+
+
+@router.get("/kasa-uyumsuzluk/{uyari_id}/duzeltme-tarihce")
+def ops_kasa_duzeltme_tarihce(uyari_id: str):
+    """Belirli bir uyari için yapılan tüm kaynak düzeltmelerin audit tarihçesi."""
+    with db() as (_, cur):
+        cur.execute(
+            """
+            SELECT id, sebep, hedef_tablo, hedef_id,
+                   eski_deger_json, yeni_deger_json,
+                   eski_fark_tl::float, yeni_fark_tl::float,
+                   notu, personel_id, personel_ad,
+                   onay_durumu_eski, onay_durumu_yeni,
+                   olusturma
+            FROM kasa_fark_kaynak_duzeltme
+            WHERE uyari_id=%s
+            ORDER BY olusturma DESC
+            """,
+            (uyari_id,),
+        )
+        kayitlar = []
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            d["olusturma"] = str(d["olusturma"]) if d.get("olusturma") else None
+            kayitlar.append(d)
+    return {"uyari_id": uyari_id, "tarihce": kayitlar}
 
 
 @router.get("/kasa-acik-analiz")
