@@ -10850,15 +10850,17 @@ export default function OperasyonMerkezi() {
             <div className="empty"><p>Bu aralıkta bekleyen sevkiyat uyumsuzluğu yok</p></div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 560, overflow: 'auto' }}>
-              {(sevkiyatUyumDetay?.satirlar || []).map((row) => {
-                const yid = String(row.stok_yolda_id || '');
-                const draft = sevkiyatUyumCozInputs[yid] || {};
+              {(sevkiyatUyumDetay?.satirlar || []).map((row, idx) => {
+                const yid = String(row.stok_yolda_id || '').trim();
+                const stableKey = yid || `${row.siparis_talep_id || 'notalep'}__${row.kalem_kodu || row.kalem_adi || 'nokalem'}__${idx}`;
+                const inputKey = yid || stableKey;
+                const draft = sevkiyatUyumCozInputs[inputKey] || {};
                 const sevk = Number(row.sevk_adet || 0);
                 const kabul = Number(row.kabul_adet || 0);
                 const fark = row.fark_adet != null ? Number(row.fark_adet) : sevk - kabul;
                 const busy = sevkiyatUyumCozBusy === yid;
                 return (
-                  <div key={yid || row.siparis_talep_id} className="card" style={{ padding: '12px 14px', borderLeft: '4px solid #ea580c' }}>
+                  <div key={stableKey} className="card" style={{ padding: '12px 14px', borderLeft: '4px solid #ea580c' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
                       <div style={{ flex: '1 1 220px', minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: 14 }}>{row.kalem_adi || row.kalem_kodu || 'Kalem'}</div>
@@ -10897,7 +10899,7 @@ export default function OperasyonMerkezi() {
                             value={draft.cozum_adet != null ? draft.cozum_adet : ''}
                             onChange={(e) => setSevkiyatUyumCozInputs((prev) => ({
                               ...prev,
-                              [yid]: { ...prev[yid], cozum_adet: e.target.value },
+                              [inputKey]: { ...prev[inputKey], cozum_adet: e.target.value },
                             }))}
                             style={{ width: '100%', marginTop: 4, padding: '6px 8px' }}
                           />
@@ -10911,7 +10913,7 @@ export default function OperasyonMerkezi() {
                             value={draft.notu != null ? draft.notu : ''}
                             onChange={(e) => setSevkiyatUyumCozInputs((prev) => ({
                               ...prev,
-                              [yid]: { ...prev[yid], notu: e.target.value },
+                              [inputKey]: { ...prev[inputKey], notu: e.target.value },
                             }))}
                             style={{ width: '100%', marginTop: 4, padding: '6px 8px' }}
                           />
@@ -10921,8 +10923,13 @@ export default function OperasyonMerkezi() {
                           className="btn btn-primary btn-sm"
                           style={{ marginTop: 4 }}
                           disabled={busy || !yid}
+                          title={!yid ? 'Bu satırın stok_yolda_id bilgisi eksik — sayfayı yenileyin' : undefined}
                           onClick={() => {
-                            const d = sevkiyatUyumCozInputs[yid] || {};
+                            if (!yid) {
+                              toast('Bu satırın kimliği eksik. Listeyi yenile.', 'yellow');
+                              return;
+                            }
+                            const d = sevkiyatUyumCozInputs[inputKey] || {};
                             const raw = String(d.cozum_adet != null ? d.cozum_adet : '').trim();
                             const coz = parseInt(raw.replace(/\D/g, ''), 10);
                             if (Number.isNaN(coz) || coz < 0) {
