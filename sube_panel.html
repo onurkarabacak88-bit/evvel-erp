@@ -6717,25 +6717,34 @@ function renderMesajlariDiv(mesajlar, mode) {
     }
   }
   if (kutu) kutu.classList.toggle('yanip-sonen', okunmamis.length > 0);
-  if (!okunmamis.length) {
+  function renderArsivHtml() {
+    if (!arsiv.length) return '';
+    var hA = '<div style="font-size:11px;color:var(--muted);margin:12px 0 6px;font-weight:700">Panelde saklanan (merkez kaldırdı)</div>';
+    arsiv.slice(0, 8).forEach(function(m) {
+      var metin = escHtml(String(m.mesaj || '').trim());
+      if (metin.length > 280) metin = metin.slice(0, 280) + '…';
+      var okLbl = m.okundu ? ' · okundu' : ' · okunmadı';
+      hA += '<div class="merkez-msg-kisa merkez-msg-arsiv">';
+      hA += '<div><strong>📩</strong> ' + metin + '</div>';
+      hA += '<div class="meta">Merkez panelinden silindi' + okLbl + '</div>';
+      hA += '</div>';
+    });
+    return hA;
+  }
+
+  if (!okunmamis.length && !arsiv.length) {
     el.innerHTML = '<div class="merkez-mesaj-bos">Şu an okunmamış merkez mesajı yok.</div>';
     return;
   }
   if (mode === 'compact') {
     var hCompact = '';
-    okunmamis.slice(0, 4).forEach(function(m){
-      var kritik = m.oncelik === 'kritik';
-      var metin = String(m.mesaj || '').trim();
-      if (metin.length > 220) metin = metin.slice(0, 220) + '…';
-      hCompact += '<div class="merkez-msg-kisa' + (kritik ? ' kritik' : '') + '">';
-      hCompact += '<div><strong>' + (kritik ? '🚨 Kritik' : '📩 Bildirim') + '</strong></div>';
-      hCompact += '<div style="margin-top:4px">' + metin + '</div>';
-      hCompact += '<div class="meta">Onay için alt menuden Mesaj sekmesine girin.</div>';
-      hCompact += '</div>';
-    });
-    if (okunmamis.length > 4) {
-      hCompact += '<div class="merkez-mesaj-bos" style="padding-top:4px">+' + (okunmamis.length - 4) + ' mesaj daha var.</div>';
+    if (okunmamis.length) {
+      hCompact += '<div class="merkez-mesaj-bos" style="padding:8px 2px;line-height:1.5">' +
+        okunmamis.length + ' okunmamış mesaj — ekran ortasında onaylayın veya alt menüden <strong>Mesaj</strong> sekmesine gidin.</div>';
+    } else {
+      hCompact += '<div class="merkez-mesaj-bos" style="padding:8px 2px">Okunmamış mesaj yok.</div>';
     }
+    hCompact += renderArsivHtml();
     el.innerHTML = hCompact;
     return;
   }
@@ -6752,6 +6761,7 @@ function renderMesajlariDiv(mesajlar, mode) {
     h += '<div id="mmMsg_'+m.id+'"></div>';
     h += '</div>';
   });
+  h += renderArsivHtml();
   el.innerHTML = h;
   fillSels();
   okunmamis.forEach(function(m){

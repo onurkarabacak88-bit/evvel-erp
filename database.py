@@ -326,6 +326,32 @@ def init_db():
                 ) THEN
                     ALTER TABLE sube_operasyon_uyari ADD COLUMN detay_json JSONB;
                 END IF;
+                -- ÇÖZÜM (düzeltilen tutar) alanları: hesaplar bu tutara göre devam eder
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='sube_operasyon_uyari'
+                      AND column_name='cozum_duzeltilen_tl') THEN
+                    ALTER TABLE sube_operasyon_uyari ADD COLUMN cozum_duzeltilen_tl NUMERIC(14,2);
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='sube_operasyon_uyari'
+                      AND column_name='cozum_notu') THEN
+                    ALTER TABLE sube_operasyon_uyari ADD COLUMN cozum_notu TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='sube_operasyon_uyari'
+                      AND column_name='cozum_ts') THEN
+                    ALTER TABLE sube_operasyon_uyari ADD COLUMN cozum_ts TIMESTAMPTZ;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='sube_operasyon_uyari'
+                      AND column_name='cozum_personel_id') THEN
+                    ALTER TABLE sube_operasyon_uyari ADD COLUMN cozum_personel_id TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='sube_operasyon_uyari'
+                      AND column_name='cozum_personel_ad') THEN
+                    ALTER TABLE sube_operasyon_uyari ADD COLUMN cozum_personel_ad TEXT;
+                END IF;
             EXCEPTION WHEN others THEN NULL;
             END $$;
         """)

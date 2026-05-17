@@ -359,6 +359,9 @@ class KasaUyumsuzlukCozBody(BaseModel):
     notu: Optional[str] = None
     personel_id: Optional[str] = None
     personel_ad: Optional[str] = None
+    # Düzeltilmiş fark tutarı — sonradan yapılan hesaplamalar bu tutara göre işler.
+    # None bırakılırsa orijinal fark_tl geçerli olur.
+    duzeltilen_fark_tl: Optional[float] = None
 
 
 def _coerce_year_month(ym: Optional[str]) -> str:
@@ -5580,7 +5583,11 @@ def ops_kasa_uyumsuzluk_listesi(
                 u.mesaj, u.okundu, u.olusturma,
                 u.acilis_personel_ad, u.kapanis_personel_ad,
                 u.detay_json,
-                -- 7-günlük kronik takip
+                u.cozum_duzeltilen_tl, u.cozum_notu, u.cozum_ts,
+                u.cozum_personel_id, u.cozum_personel_ad,
+                -- Efektif fark: düzeltilmiş tutar varsa onu, yoksa orijinal
+                COALESCE(u.cozum_duzeltilen_tl, u.fark_tl) AS efektif_fark_tl,
+                -- 7-günlük kronik takip (düzeltilmiş tutarlar dahil)
                 (
                     SELECT COUNT(*) FROM sube_operasyon_uyari u7
                     WHERE u7.sube_id = u.sube_id
@@ -5588,7 +5595,7 @@ def ops_kasa_uyumsuzluk_listesi(
                       AND u7.tarih >= CURRENT_DATE - INTERVAL '7 days'
                 ) AS son_7g_adet,
                 (
-                    SELECT COALESCE(SUM(ABS(u7.fark_tl)), 0) FROM sube_operasyon_uyari u7
+                    SELECT COALESCE(SUM(ABS(COALESCE(u7.cozum_duzeltilen_tl, u7.fark_tl))), 0) FROM sube_operasyon_uyari u7
                     WHERE u7.sube_id = u.sube_id
                       AND u7.tip IN ('ACILIS_KASA_FARK', 'KAPANIS_KASA_FARK')
                       AND u7.tarih >= CURRENT_DATE - INTERVAL '7 days'
@@ -5597,10 +5604,10 @@ def ops_kasa_uyumsuzluk_listesi(
             LEFT JOIN subeler s ON s.id = u.sube_id
             WHERE u.tip IN ('ACILIS_KASA_FARK', 'KAPANIS_KASA_FARK')
               AND u.tarih = %s
-              AND ABS(COALESCE(u.fark_tl, 0)) >= %s
+              AND ABS(COALESCE(u.cozum_duzeltilen_tl, u.fark_tl, 0)) >= %s
               AND (%s = FALSE OR u.okundu = FALSE)
               AND (%s = FALSE OR u.okundu = TRUE)
-            ORDER BY u.okundu ASC, ABS(u.fark_tl) DESC NULLS LAST, u.olusturma DESC
+            ORDER BY u.okundu ASC, ABS(COALESCE(u.cozum_duzeltilen_tl, u.fark_tl)) DESC NULLS LAST, u.olusturma DESC
             """,
             (hedef_tarih, min_fark, sadece_bekleyen, sadece_cozuldu),
         )
@@ -5608,9 +5615,12 @@ def ops_kasa_uyumsuzluk_listesi(
         for r in (cur.fetchall() or []):
             d = dict(r)
             d["cozuldu"] = bool(d.get("okundu"))
-            for k in ("fark_tl", "beklenen_tl", "gercek_tl", "son_7g_toplam"):
+            for k in ("fark_tl", "beklenen_tl", "gercek_tl", "son_7g_toplam",
+                      "cozum_duzeltilen_tl", "efektif_fark_tl"):
                 if d.get(k) is not None:
                     d[k] = float(d[k])
+            if d.get("cozum_ts") is not None:
+                d["cozum_ts"] = str(d["cozum_ts"])
             d["son_7g_adet"] = int(d.get("son_7g_adet") or 0)
             d["olusturma"] = str(d["olusturma"]) if d.get("olusturma") else None
             d["tarih"] = str(d["tarih"]) if d.get("tarih") else None
@@ -5646,6 +5656,12 @@ def ops_kasa_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyu
     notu = (body.notu or "").strip()
     pid = (body.personel_id or "").strip() or None
     pad = (body.personel_ad or "").strip() or None
+    duz = None
+    if body.duzeltilen_fark_tl is not None:
+        try:
+            duz = round(float(body.duzeltilen_fark_tl), 2)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "duzeltilen_fark_tl sayısal olmalı")
     with db() as (conn, cur):
         cur.execute(
             """
@@ -5664,8 +5680,17 @@ def ops_kasa_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyu
         if bool(r.get("okundu")):
             return {"success": True, "durum": "zaten_cozulmus", "id": uyari_id}
         cur.execute(
-            "UPDATE sube_operasyon_uyari SET okundu=TRUE WHERE id=%s",
-            (uyari_id,),
+            """
+            UPDATE sube_operasyon_uyari
+            SET okundu=TRUE,
+                cozum_duzeltilen_tl=%s,
+                cozum_notu=%s,
+                cozum_ts=NOW(),
+                cozum_personel_id=%s,
+                cozum_personel_ad=%s
+            WHERE id=%s
+            """,
+            (duz, (notu or None), pid, pad, uyari_id),
         )
         bek = float(r.get("beklenen_tl") or 0)
         ger = float(r.get("gercek_tl") or 0)
@@ -5674,6 +5699,8 @@ def ops_kasa_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyu
             f"Kasa uyumsuzluk çözüldü — uyari_id={uyari_id} "
             f"beklenen={bek:,.2f} gercek={ger:,.2f} fark={fark:,.2f}"
         )
+        if duz is not None:
+            aciklama += f" → düzeltilmiş_fark={duz:,.2f}"
         if notu:
             aciklama += f" | not={notu[:300]}"
         operasyon_defter_ekle(
@@ -5687,7 +5714,7 @@ def ops_kasa_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyu
             bildirim_saati=dt_now_tr().strftime("%H:%M"),
         )
         audit(cur, "sube_operasyon_uyari", uyari_id, "KASA_UYUMSUZLUK_COZULDU")
-    return {"success": True, "durum": "cozuldu", "id": uyari_id}
+    return {"success": True, "durum": "cozuldu", "id": uyari_id, "duzeltilen_fark_tl": duz}
 
 
 @router.get("/kasa-acik-analiz")

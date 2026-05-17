@@ -4485,15 +4485,46 @@ export default function OperasyonMerkezi() {
     }
   }
 
-  async function kasaUyumsuzlukCoz(uid) {
+  async function kasaUyumsuzlukCoz(uid, orijinalFark) {
+    // Önce düzeltme tutarını sor (boş bırakılırsa orijinal fark geçerli kalır)
+    const orijinalStr = (orijinalFark != null && Number.isFinite(Number(orijinalFark)))
+      ? Number(orijinalFark).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : '—';
+    const duzStr = window.prompt(
+      `Düzeltilen fark tutarı (₺) — opsiyonel\n\n` +
+      `Orijinal fark: ${orijinalStr} ₺\n\n` +
+      `• Boş bırak: orijinal tutar geçerli kalır\n` +
+      `• Yeni tutar gir: bundan sonraki hesaplar bu tutarla devam eder\n` +
+      `• Negatif yazılabilir (örn. -25.50)`,
+      ''
+    );
+    if (duzStr === null) return; // İptal
+    let duzeltilen = null;
+    const trim = String(duzStr).trim().replace(',', '.');
+    if (trim !== '') {
+      const n = Number(trim);
+      if (!Number.isFinite(n)) {
+        toast('Geçerli bir sayı girin (örn. -25.50 veya 100)', 'yellow');
+        return;
+      }
+      duzeltilen = n;
+    }
     const neden = window.prompt('Çözüm notu (opsiyonel):') ?? '';
     setOnayBusyId(`ku:${uid}`);
     try {
       await api(`/ops/kasa-uyumsuzluk/${encodeURIComponent(uid)}/coz`, {
         method: 'POST',
-        body: { notu: (neden || '').trim() },
+        body: {
+          notu: (neden || '').trim(),
+          duzeltilen_fark_tl: duzeltilen,
+        },
       });
-      toast('Kasa uyumsuzluk kaydı çözüldü olarak işaretlendi.', 'green');
+      toast(
+        duzeltilen != null
+          ? `Çözüldü — düzeltilmiş tutar: ${Number(duzeltilen).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺`
+          : 'Çözüldü — orijinal tutar (değişmedi) geçerli',
+        'green'
+      );
       publishGlobalDataRefresh('ops-kasa-uyumsuzluk-cozuldu');
       const hedefKu = (kasaUyumAramaTarih || bugunIsoTarih()).trim();
       const [haftaData, gunData] = await Promise.all([
@@ -9370,7 +9401,7 @@ export default function OperasyonMerkezi() {
                   <button type="button" className="btn btn-sm"
                     style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
                     disabled={!!onayBusyId}
-                    onClick={() => kasaUyumsuzlukCoz(u.id)}>
+                    onClick={() => kasaUyumsuzlukCoz(u.id, u.fark_tl)}>
                     {onayBusyId === `ku:${u.id}` ? '…' : 'Çözüldü işaretle'}
                   </button>
                 )}
@@ -9446,7 +9477,7 @@ export default function OperasyonMerkezi() {
                   <button type="button" className="btn btn-sm"
                     style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
                     disabled={!!onayBusyId}
-                    onClick={() => kasaUyumsuzlukCoz(u.id)}>
+                    onClick={() => kasaUyumsuzlukCoz(u.id, u.fark_tl)}>
                     {onayBusyId === `ku:${u.id}` ? '…' : 'Çözüldü işaretle'}
                   </button>
                 )}
@@ -11717,7 +11748,7 @@ export default function OperasyonMerkezi() {
                                 type="button"
                                 className="btn btn-primary btn-sm"
                                 disabled={!!onayBusyId}
-                                onClick={() => kasaUyumsuzlukCoz(u.id)}
+                                onClick={() => kasaUyumsuzlukCoz(u.id, u.fark_tl)}
                               >
                                 {onayBusyId === `ku:${u.id}` ? '…' : 'Çözüldü işaretle'}
                               </button>
