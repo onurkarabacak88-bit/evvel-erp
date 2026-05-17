@@ -8182,10 +8182,27 @@ export default function OperasyonMerkezi() {
         const bekleyenSayisi      = satirlar.filter(r => r.taslak_var && r.taslak_durum === 'bekliyor').length;
         const tamamSayisi         = satirlar.filter(r => r.ciro_onaylandi).length;
 
+        const ktOnlineCift = (r) => {
+          const n = Number(r.nakit) || 0;
+          const p = Number(r.pos) || 0;
+          const o = Number(r.online) || 0;
+          return r.online_cift_kayit === true
+            || (o > 0 && n > 0 && p > 0 && Math.abs(o - (n + p)) < 0.5);
+        };
+        const ktOnlineNet = (r) => (ktOnlineCift(r) ? 0 : (Number(r.online) || 0));
+        const ktCiroToplam = (r) => {
+          const n = Number(r.nakit) || 0;
+          const p = Number(r.pos) || 0;
+          const o = ktOnlineNet(r);
+          if (r.ciro_tutar > 0) {
+            return ktOnlineCift(r) && r.ciro_tutar > n + p + 0.5 ? n + p : r.ciro_tutar;
+          }
+          return n + p + o;
+        };
         const topNakit  = satirlar.reduce((s, r) => s + (r.nakit  || 0), 0);
         const topPos    = satirlar.reduce((s, r) => s + (r.pos    || 0), 0);
-        const topOnline = satirlar.reduce((s, r) => s + (r.online || 0), 0);
-        const topCiro   = satirlar.reduce((s, r) => s + (r.ciro_tutar > 0 ? r.ciro_tutar : r.nakit + r.pos + r.online), 0);
+        const topOnline = satirlar.reduce((s, r) => s + ktOnlineNet(r), 0);
+        const topCiro   = satirlar.reduce((s, r) => s + ktCiroToplam(r), 0);
         const topSabah  = satirlar.reduce((s, r) => s + (Number(r.sabah_kasa_tl) || 0), 0);
         const topTeslim = satirlar.reduce((s, r) => s + (Number(r.teslim_kasa_tl) || 0), 0);
         const topDevir  = satirlar.reduce((s, r) => s + (Number(r.devir) || 0), 0);
@@ -8372,15 +8389,11 @@ export default function OperasyonMerkezi() {
                         : onc === 2
                         ? 'rgba(245,158,11,0.06)'
                         : 'transparent';
-                      const ciroKalemToplam = (Number(r.nakit) || 0) + (Number(r.pos) || 0) + (Number(r.online) || 0);
-                      const toplam = r.ciro_tutar > 0 ? r.ciro_tutar : ciroKalemToplam;
-                      const onlineCiftKayit = r.online_cift_kayit === true
-                        || (
-                          (Number(r.online) || 0) > 0
-                          && (Number(r.nakit) || 0) > 0
-                          && (Number(r.pos) || 0) > 0
-                          && Math.abs((Number(r.online) || 0) - (Number(r.nakit) + Number(r.pos))) < 0.5
-                        );
+                      const nakitN = Number(r.nakit) || 0;
+                      const posN = Number(r.pos) || 0;
+                      const onlineCiftKayit = ktOnlineCift(r);
+                      const onlineNet = ktOnlineNet(r);
+                      const toplam = ktCiroToplam(r);
                       const kapanisSaat = saat(r.kapanis_ts);
                       return (
                         <tr key={r.sube_id} style={{ background: rowBg, transition: 'background 0.15s' }}>
@@ -8425,26 +8438,28 @@ export default function OperasyonMerkezi() {
                           <td style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
                             {r.pos > 0 ? <strong>{fmt(r.pos)} ₺</strong> : <span style={{ color: 'var(--text3)' }}>—</span>}
                           </td>
-                          {/* Online — X raporu online kanalı (nakit Δ'ye dahil değil) */}
+                          {/* Online — panelde girilmediyse boş; nakit+POS çift kayıt gösterilmez */}
                           <td
                             style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
-                            title="X raporu: online kanal satışı. Nakit denge (Δ) formülüne girmez."
+                            title={onlineCiftKayit
+                              ? 'Online satış yok; yanlışlıkla nakit+POS toplamı yazılmış — düzeltildi (0).'
+                              : 'X raporu: yalnızca online kanal satışı.'}
                           >
-                            {r.online > 0 ? (
+                            {onlineNet > 0 ? (
+                              <strong>{fmt(onlineNet)} ₺</strong>
+                            ) : onlineCiftKayit ? (
                               <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-                                <strong>{fmt(r.online)} ₺</strong>
-                                {onlineCiftKayit ? (
-                                  <span style={{ fontSize: 9, fontWeight: 700, color: '#f59e0b', maxWidth: 100, textAlign: 'right', lineHeight: 1.2 }}>
-                                    Nakit+POS çift?
-                                  </span>
-                                ) : null}
+                                <span style={{ color: 'var(--text3)' }}>—</span>
+                                <span style={{ fontSize: 9, fontWeight: 700, color: '#f59e0b', maxWidth: 110, textAlign: 'right', lineHeight: 1.2 }}>
+                                  Online yok (çift kayıt düzeltildi)
+                                </span>
                               </span>
                             ) : <span style={{ color: 'var(--text3)' }}>—</span>}
                           </td>
-                          {/* Toplam = nakit + pos + online */}
+                          {/* Toplam = nakit + pos + online (çift kayıt düşülmüş) */}
                           <td
                             style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
-                            title={`Toplam ciro (Nakit ${fmt(r.nakit)} + POS ${fmt(r.pos)} + Online ${fmt(r.online)})`}
+                            title={`Toplam ciro (Nakit ${fmt(nakitN)} + POS ${fmt(posN)}${onlineNet > 0 ? ` + Online ${fmt(onlineNet)}` : ''})`}
                           >
                             {toplam > 0
                               ? <span style={{ fontWeight: 800, fontSize: 14, color: r.ciro_onaylandi ? '#22c55e' : 'var(--text)' }}>{fmt(toplam)} ₺</span>

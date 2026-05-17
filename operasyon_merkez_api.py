@@ -1530,19 +1530,16 @@ def kapanis_takip(tarih: Optional[str] = None):
         ara_teslim = float(ara_teslim_map.get(sid, 0.0) or 0.0)
         gider_nakit = float(gider_map.get(sid, 0.0) or 0.0)
 
-        # Ciro sütunları: önce kapanışta kaydedilen X (şubenin girdiği); merkez onayı yanlışsa karışmasın
+        # Ciro sütunları: önce kapanış X (panel girişi); yoksa onaylı ciro / taslak
         xr_kap = _kapanis_x_rapor_from_event(kap if kap else None)
-        online_cift_kayit = False
         if bool(kap) and xr_kap.get("nakit") is not None:
             nakit = float(xr_kap.get("nakit") or 0)
             pos = float(xr_kap.get("pos") or 0)
             online = float(xr_kap.get("online") or 0)
-            ciro_tutar = round(nakit + pos + online, 2)
             ciro_kaynak = "kapanis_x"
-        elif _online_nakit_pos_cift(nakit, pos, online):
-            online_cift_kayit = True
-            online = 0.0
-            ciro_tutar = round(nakit + pos, 2)
+        nakit, pos, online, ciro_tutar, online_cift_kayit = _ciro_kalemleri_sanitize(
+            nakit, pos, online
+        )
 
         nakit_delta_icin = float(nakit)
 
@@ -2493,6 +2490,16 @@ def _online_nakit_pos_cift(nakit: float, pos: float, online: float) -> bool:
     if o <= 0.001 or n <= 0.001 or p <= 0.001:
         return False
     return abs(o - (n + p)) < 0.5
+
+
+def _ciro_kalemleri_sanitize(
+    nakit: float, pos: float, online: float
+) -> tuple[float, float, float, float, bool]:
+    """Panelde online yokken merkez/OCR hatası: online=nakit+pos ise sıfırla."""
+    n, p, o = float(nakit or 0), float(pos or 0), float(online or 0)
+    if _online_nakit_pos_cift(n, p, o):
+        return n, p, 0.0, round(n + p, 2), True
+    return n, p, o, round(n + p + o, 2), False
 
 
 def _kapanis_x_rapor_from_event(kap: Optional[dict]) -> Dict[str, Optional[float]]:
