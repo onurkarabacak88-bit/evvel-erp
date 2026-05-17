@@ -10888,13 +10888,23 @@ export default function OperasyonMerkezi() {
                           {' ← '}
                           {row.kaynak_depo_sube_adi || row.kaynak_depo_sube_id || 'Depo'}
                         </div>
-                        <div style={{ fontSize: 12, marginTop: 8, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                        <div style={{ fontSize: 12, marginTop: 8, display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
                           <span>Sevk: <strong className="mono">{sevk}</strong></span>
                           <span>Kabul: <strong className="mono">{kabul}</strong></span>
                           <span style={{ color: fark !== 0 ? 'var(--red)' : 'var(--text2)' }}>
                             Fark: <strong className="mono">{fark >= 0 ? '+' : ''}{fark}</strong>
                           </span>
                           {row.durum ? <span className="badge badge-yellow">{String(row.durum)}</span> : null}
+                          {row.siparis_iptal && (
+                            <span className="badge" style={{ background: '#dc2626', color: '#fff', fontWeight: 700 }}>
+                              ⛔ Sipariş İptal
+                            </span>
+                          )}
+                          {row.kabul_yok && !row.siparis_iptal && (
+                            <span className="badge" style={{ background: '#f59e0b', color: '#fff' }}>
+                              ⏳ Kabul Bekliyor
+                            </span>
+                          )}
                         </div>
                         <div className="mono" style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
                           Sipariş tarihi {row.tarih || '—'} · Sevk {String(row.sevk_ts || '').replace('T', ' ').slice(0, 16)}
@@ -10935,25 +10945,25 @@ export default function OperasyonMerkezi() {
                         <button
                           type="button"
                           className="btn btn-primary btn-sm"
-                          style={{ marginTop: 4 }}
+                          style={{ marginTop: 4, background: row.siparis_iptal ? '#dc2626' : undefined, borderColor: row.siparis_iptal ? '#dc2626' : undefined }}
                           disabled={busy || !yid}
-                          title={!yid ? 'Bu satırın stok_yolda_id bilgisi eksik — sayfayı yenileyin' : undefined}
+                          title={!yid ? 'Bu satırın stok_yolda_id bilgisi eksik — sayfayı yenileyin' : (row.siparis_iptal ? 'Sipariş iptal — 0 girip uzlaştırarak stoku geri al' : undefined)}
                           onClick={() => {
                             if (!yid) {
                               toast('Bu satırın kimliği eksik. Listeyi yenile.', 'yellow');
                               return;
                             }
                             const d = sevkiyatUyumCozInputs[inputKey] || {};
-                            const raw = String(d.cozum_adet != null ? d.cozum_adet : '').trim();
+                            const raw = String(d.cozum_adet != null ? d.cozum_adet : (row.siparis_iptal ? '0' : '')).trim();
                             const coz = parseInt(raw.replace(/\D/g, ''), 10);
                             if (Number.isNaN(coz) || coz < 0) {
-                              toast('Geçerli uzlaşılan adet girin (0 veya pozitif tam sayı).', 'yellow');
+                              toast('Geçerli uzlaşılan adet girin (0 veya pozitif tam sayı). İptal sipariş için 0 yazabilirsin.', 'yellow');
                               return;
                             }
                             sevkiyatUyumsuzlukCoz(yid, coz, d.notu);
                           }}
                         >
-                          {busy ? 'Kaydediliyor…' : 'Uzlaştır ve stokları düzelt'}
+                          {busy ? 'Kaydediliyor…' : (row.siparis_iptal ? '⛔ İptal — Stoku geri al' : 'Uzlaştır ve stokları düzelt')}
                         </button>
                       </div>
                     </div>

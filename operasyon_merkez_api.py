@@ -7783,17 +7783,17 @@ def ops_siparis_sevkiyat_uyumsuzluklar(gun: int = 30, limit: int = 100):
                 y.sevk_ts,
                 y.kabul_ts,
                 t.tarih,
+                t.durum AS siparis_durum,
                 COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS kaynak_depo_sube_id,
                 ks.ad AS kaynak_depo_sube_adi
             FROM stok_yolda y
-            JOIN siparis_talep t ON t.id = y.siparis_talep_id
+            LEFT JOIN siparis_talep t ON t.id = y.siparis_talep_id
             LEFT JOIN subeler hs ON hs.id = y.sube_id
             LEFT JOIN subeler ks ON ks.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
-            WHERE t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
-              AND y.kabul_ts IS NOT NULL
+            WHERE (t.tarih IS NULL OR t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day'))
               AND COALESCE(y.sevk_adet, 0) <> COALESCE(y.kabul_adet, 0)
               AND y.durum IN ('kabul_uyusmazlik', 'kabul_edildi', 'yolda')
-            ORDER BY t.tarih DESC, y.sevk_ts DESC NULLS LAST
+            ORDER BY t.tarih DESC NULLS LAST, y.sevk_ts DESC NULLS LAST
             LIMIT %s
             """,
             (gun_i, lim),
@@ -7807,6 +7807,8 @@ def ops_siparis_sevkiyat_uyumsuzluklar(gun: int = 30, limit: int = 100):
         if d.get("tarih"):
             d["tarih"] = str(d["tarih"])
         d["fark_adet"] = int(d.get("sevk_adet") or 0) - int(d.get("kabul_adet") or 0)
+        d["siparis_iptal"] = (str(d.get("siparis_durum") or "").lower() == "iptal")
+        d["kabul_yok"] = d.get("kabul_ts") is None
     return {"gun": gun_i, "limit": lim, "satirlar": rows}
 
 
@@ -7825,6 +7827,7 @@ def ops_siparis_sevkiyat_uyumsuzluk_coz(body: OpsSevkiyatUyumsuzlukCozBody):
     notu = (body.notu or "").strip() or None
 
     with db() as (conn, cur):
+        # LEFT JOIN: siparis_talep silinmiş/iptal olsa bile stok_yolda satırı çözülebilsin
         cur.execute(
             """
             SELECT
@@ -7835,11 +7838,12 @@ def ops_siparis_sevkiyat_uyumsuzluk_coz(body: OpsSevkiyatUyumsuzlukCozBody):
                 y.kalem_adi,
                 COALESCE(y.sevk_adet, 0) AS sevk_adet,
                 COALESCE(y.kabul_adet, 0) AS kabul_adet,
-                COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS kaynak_depo_sube_id
+                COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS kaynak_depo_sube_id,
+                t.durum AS siparis_durum
             FROM stok_yolda y
-            JOIN siparis_talep t ON t.id = y.siparis_talep_id
+            LEFT JOIN siparis_talep t ON t.id = y.siparis_talep_id
             WHERE y.id = %s
-            FOR UPDATE
+            FOR UPDATE OF y
             """,
             (yid,),
         )
