@@ -2270,6 +2270,10 @@ export default function OperasyonMerkezi() {
   const [kasaAcikAnaliz, setKasaAcikAnaliz] = useState({ takip_listesi: [], acik_listesi: [] });
   const [kasaAcikAnalizYukleniyor, setKasaAcikAnalizYukleniyor] = useState(false);
 
+  // Kasa Farkı Kaynak Düzeltme Modal
+  const [kkDuzeltModal, setKkDuzeltModal] = useState(null); // { uyari, sebep, payload }
+  const [kkDuzeltBusy, setKkDuzeltBusy] = useState(false);
+
   // Stok Hareketi
   const [stokHareket, setStokHareket] = useState({ satirlar: [], tur_ozet: [], sube_ozet: [], toplam: 0 });
   const [stokHareketYukleniyor, setStokHareketYukleniyor] = useState(false);
@@ -4538,6 +4542,57 @@ export default function OperasyonMerkezi() {
       toast(e.message || 'Kayıt çözülemedi');
     } finally {
       setOnayBusyId(null);
+    }
+  }
+
+  // Kasa farkı kaynak düzeltme — modal açar
+  function kkDuzeltModalAc(uyari) {
+    setKkDuzeltModal({
+      uyari,
+      sebep: 'ciro_yanlis',
+      payload: {},
+    });
+  }
+
+  async function kkDuzeltGonder() {
+    if (!kkDuzeltModal) return;
+    const { uyari, sebep, payload } = kkDuzeltModal;
+    setKkDuzeltBusy(true);
+    try {
+      const r = await api(`/ops/kasa-uyumsuzluk/${encodeURIComponent(uyari.id)}/kaynak-duzelt`, {
+        method: 'POST',
+        body: {
+          sebep,
+          payload,
+          notu: (payload._notu || '').trim() || null,
+        },
+      });
+      const eski = Number(r?.eski_fark || 0);
+      const yeni = Number(r?.yeni_fark || 0);
+      const fmt = (n) => n.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const onayDurum = r?.onay_durumu_yeni
+        ? ` · Onay kuyruğu: ${r.onay_durumu_yeni}`
+        : '';
+      toast(
+        r?.otomatik_cozuldu
+          ? `✅ Düzeltildi, fark sıfırlandı (eski ${fmt(eski)}₺ → 0₺)${onayDurum}`
+          : `🔧 Düzeltildi: ${fmt(eski)}₺ → ${fmt(yeni)}₺${onayDurum}`,
+        'green'
+      );
+      publishGlobalDataRefresh('ops-kasa-uyumsuzluk-cozuldu');
+      const hedefKu = (kasaUyumAramaTarih || bugunIsoTarih()).trim();
+      const [haftaData, gunData] = await Promise.all([
+        kasaUyumHaftaYukle().catch(() => []),
+        kasaUyumGunYukle(hedefKu, { durum: kasaUyumDurumFiltre }).catch(() => null),
+      ]);
+      setKasaUyumHaftaSatirlari(haftaData);
+      if (gunData) setKasaUyumAramaSonuc(gunData);
+      await yukleOnayMerkez();
+      setKkDuzeltModal(null);
+    } catch (e) {
+      toast(e.message || 'Düzeltme başarısız', 'red');
+    } finally {
+      setKkDuzeltBusy(false);
     }
   }
 
@@ -9416,12 +9471,21 @@ export default function OperasyonMerkezi() {
                   )}
                 </div>
                 {cozuldu ? <CozulduRozet u={u} /> : (
-                  <button type="button" className="btn btn-sm"
-                    style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
-                    disabled={!!onayBusyId}
-                    onClick={() => kasaUyumsuzlukCoz(u.id, u.fark_tl)}>
-                    {onayBusyId === `ku:${u.id}` ? '…' : 'Çözüldü işaretle'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" className="btn btn-sm"
+                      style={{ padding: '4px 10px', background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', fontWeight: 600, fontSize: 12 }}
+                      disabled={!!onayBusyId || kkDuzeltBusy}
+                      title="Sebebi bul, kaynağı düzelt, fark otomatik yeniden hesaplanır"
+                      onClick={() => kkDuzeltModalAc(u)}>
+                      🔧 Kaynağı Düzelt
+                    </button>
+                    <button type="button" className="btn btn-sm"
+                      style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
+                      disabled={!!onayBusyId}
+                      onClick={() => kasaUyumsuzlukCoz(u.id, u.fark_tl)}>
+                      {onayBusyId === `ku:${u.id}` ? '…' : 'Çözüldü işaretle'}
+                    </button>
+                  </div>
                 )}
               </div>
               {/* İki kutu */}
@@ -9492,12 +9556,21 @@ export default function OperasyonMerkezi() {
                   )}
                 </div>
                 {cozuldu ? <CozulduRozet u={u} /> : (
-                  <button type="button" className="btn btn-sm"
-                    style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
-                    disabled={!!onayBusyId}
-                    onClick={() => kasaUyumsuzlukCoz(u.id, u.fark_tl)}>
-                    {onayBusyId === `ku:${u.id}` ? '…' : 'Çözüldü işaretle'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" className="btn btn-sm"
+                      style={{ padding: '4px 10px', background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', fontWeight: 600, fontSize: 12 }}
+                      disabled={!!onayBusyId || kkDuzeltBusy}
+                      title="Sebebi bul, kaynağı düzelt, fark otomatik yeniden hesaplanır"
+                      onClick={() => kkDuzeltModalAc(u)}>
+                      🔧 Kaynağı Düzelt
+                    </button>
+                    <button type="button" className="btn btn-sm"
+                      style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
+                      disabled={!!onayBusyId}
+                      onClick={() => kasaUyumsuzlukCoz(u.id, u.fark_tl)}>
+                      {onayBusyId === `ku:${u.id}` ? '…' : 'Çözüldü işaretle'}
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -11761,7 +11834,17 @@ export default function OperasyonMerkezi() {
                               </div>
                               {u.mesaj && <div style={{ fontSize: 12, marginTop: 6 }}>{u.mesaj}</div>}
                             </div>
-                            <div>
+                            <div style={{ display: 'flex', gap: 6, flexDirection: 'column' }}>
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                style={{ background: '#f59e0b', color: '#fff', border: 'none' }}
+                                disabled={!!onayBusyId || kkDuzeltBusy}
+                                title="Sebebi bul, kaynağı düzelt"
+                                onClick={() => kkDuzeltModalAc(u)}
+                              >
+                                🔧 Kaynağı Düzelt
+                              </button>
                               <button
                                 type="button"
                                 className="btn btn-primary btn-sm"
@@ -13165,6 +13248,195 @@ export default function OperasyonMerkezi() {
           onKapat={() => setDetay(null)}
           onYenileDetay={yenileDetayKart}
         />
+      )}
+
+      {/* Kasa Farkı Kaynak Düzeltme Modal */}
+      {kkDuzeltModal && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget && !kkDuzeltBusy) setKkDuzeltModal(null); }}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}>
+          <div className="card" style={{ width: 540, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', padding: 24 }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>
+              🔧 Kasa Farkı — Kaynak Düzeltme
+            </h3>
+            <p style={{ margin: '0 0 18px', fontSize: 12, color: 'var(--text3)' }}>
+              {kkDuzeltModal.uyari?.sube_adi} · {kkDuzeltModal.uyari?.tarih} · Mevcut fark:{' '}
+              <strong className="mono" style={{ color: Number(kkDuzeltModal.uyari?.fark_tl) < 0 ? '#fca5a5' : '#86efac' }}>
+                {Number(kkDuzeltModal.uyari?.fark_tl || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺
+              </strong>
+            </p>
+
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Sebep</label>
+            <select
+              className="input"
+              value={kkDuzeltModal.sebep}
+              disabled={kkDuzeltBusy}
+              onChange={(e) => setKkDuzeltModal((prev) => ({ ...prev, sebep: e.target.value, payload: {} }))}
+              style={{ width: '100%', marginBottom: 16, padding: '8px 10px' }}
+            >
+              <option value="ciro_yanlis">📝 Ciro yanlış girilmiş (nakit/pos/online düzelt)</option>
+              <option value="acilis_yanlis">🌅 Açılış kasa sayımı yanlış</option>
+              <option value="gider_eksik">💸 Eksik nakit gider var (ekle)</option>
+              <option value="devir_yanlis">🌙 Kapanış teslim/devir yanlış</option>
+              <option value="gercek_acik">⚠️ Gerçek açık — kaynak değişmez, açık devam eder</option>
+            </select>
+
+            {/* Sebebe göre dinamik form */}
+            {kkDuzeltModal.sebep === 'ciro_yanlis' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+                {['yeni_nakit', 'yeni_pos', 'yeni_online'].map((k) => (
+                  <label key={k} style={{ fontSize: 11, color: 'var(--text3)' }}>
+                    {k.replace('yeni_', '').toUpperCase()} (₺)
+                    <input
+                      type="number" step="0.01" className="input"
+                      placeholder="Boş = değiştirme"
+                      disabled={kkDuzeltBusy}
+                      value={kkDuzeltModal.payload[k] ?? ''}
+                      onChange={(e) => setKkDuzeltModal((prev) => ({
+                        ...prev,
+                        payload: { ...prev.payload, [k]: e.target.value === '' ? undefined : Number(e.target.value) },
+                      }))}
+                      style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {kkDuzeltModal.sebep === 'acilis_yanlis' && (
+              <label style={{ fontSize: 12, display: 'block', marginBottom: 14 }}>
+                Yeni açılış kasa sayımı (₺)
+                <input
+                  type="number" step="0.01" className="input"
+                  disabled={kkDuzeltBusy}
+                  value={kkDuzeltModal.payload.yeni_acilis_kasa ?? ''}
+                  onChange={(e) => setKkDuzeltModal((prev) => ({
+                    ...prev,
+                    payload: { ...prev.payload, yeni_acilis_kasa: Number(e.target.value) },
+                  }))}
+                  style={{ width: '100%', marginTop: 4, padding: '8px 10px' }}
+                  required
+                />
+              </label>
+            )}
+
+            {kkDuzeltModal.sebep === 'devir_yanlis' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+                {['yeni_teslim', 'yeni_devir'].map((k) => (
+                  <label key={k} style={{ fontSize: 11, color: 'var(--text3)' }}>
+                    {k === 'yeni_teslim' ? 'Müdüre teslim (₺)' : 'Kasada kalan / devir (₺)'}
+                    <input
+                      type="number" step="0.01" className="input"
+                      placeholder="Boş = değiştirme"
+                      disabled={kkDuzeltBusy}
+                      value={kkDuzeltModal.payload[k] ?? ''}
+                      onChange={(e) => setKkDuzeltModal((prev) => ({
+                        ...prev,
+                        payload: { ...prev.payload, [k]: e.target.value === '' ? undefined : Number(e.target.value) },
+                      }))}
+                      style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {kkDuzeltModal.sebep === 'gider_eksik' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+                <label style={{ fontSize: 11, color: 'var(--text3)' }}>
+                  Kategori
+                  <input
+                    type="text" className="input"
+                    disabled={kkDuzeltBusy}
+                    value={kkDuzeltModal.payload.kategori ?? ''}
+                    onChange={(e) => setKkDuzeltModal((prev) => ({
+                      ...prev,
+                      payload: { ...prev.payload, kategori: e.target.value },
+                    }))}
+                    placeholder="örn. Mutfak"
+                    style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
+                  />
+                </label>
+                <label style={{ fontSize: 11, color: 'var(--text3)' }}>
+                  Tutar (₺)
+                  <input
+                    type="number" step="0.01" className="input"
+                    disabled={kkDuzeltBusy}
+                    value={kkDuzeltModal.payload.tutar ?? ''}
+                    onChange={(e) => setKkDuzeltModal((prev) => ({
+                      ...prev,
+                      payload: { ...prev.payload, tutar: Number(e.target.value) },
+                    }))}
+                    style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
+                  />
+                </label>
+                <label style={{ fontSize: 11, color: 'var(--text3)', gridColumn: '1 / -1' }}>
+                  Açıklama (opsiyonel)
+                  <input
+                    type="text" className="input"
+                    disabled={kkDuzeltBusy}
+                    value={kkDuzeltModal.payload.aciklama ?? ''}
+                    onChange={(e) => setKkDuzeltModal((prev) => ({
+                      ...prev,
+                      payload: { ...prev.payload, aciklama: e.target.value },
+                    }))}
+                    style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
+                  />
+                </label>
+              </div>
+            )}
+
+            {kkDuzeltModal.sebep === 'gercek_acik' && (
+              <div style={{ background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 6, padding: 12, marginBottom: 14, fontSize: 12, color: '#fca5a5' }}>
+                Bu seçim ile kaynak veriler (ciro/açılış/gider) değişmez. Mevcut fark olduğu gibi kalır,
+                kayıt "çözüldü" olarak işaretlenir ama kasa açığı personele/şubeye yansır.
+              </div>
+            )}
+
+            {/* Not */}
+            <label style={{ display: 'block', fontSize: 12, marginBottom: 18 }}>
+              Çözüm notu (opsiyonel)
+              <textarea
+                className="input"
+                rows={2}
+                disabled={kkDuzeltBusy}
+                value={kkDuzeltModal.payload._notu ?? ''}
+                onChange={(e) => setKkDuzeltModal((prev) => ({
+                  ...prev,
+                  payload: { ...prev.payload, _notu: e.target.value },
+                }))}
+                placeholder="örn. Açılış sayımında 200₺ atlanmış, kasiyer doğrulandı."
+                style={{ width: '100%', marginTop: 4, padding: '8px 10px', resize: 'vertical' }}
+              />
+            </label>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+              <button
+                type="button" className="btn btn-secondary"
+                disabled={kkDuzeltBusy}
+                onClick={() => setKkDuzeltModal(null)}
+              >
+                İptal
+              </button>
+              <button
+                type="button" className="btn btn-primary"
+                disabled={kkDuzeltBusy}
+                onClick={kkDuzeltGonder}
+                style={{ background: '#f59e0b', borderColor: '#f59e0b' }}
+              >
+                {kkDuzeltBusy ? 'Düzeltiliyor…' : '🔧 Düzelt ve Yeniden Hesapla'}
+              </button>
+            </div>
+
+            <p style={{ fontSize: 10, color: 'var(--text3)', margin: '14px 0 0', lineHeight: 1.5 }}>
+              💡 Kaynak güncellenecek → kasa formülü otomatik yeniden hesaplanır → onay kuyruğundaki KASA_FARK kaydı
+              senkronize olur. Yeni fark 0₺ olursa kayıt otomatik "çözüldü" işaretlenir ve onay iptal edilir.
+            </p>
+          </div>
+        </div>
       )}
     </div>
   );
