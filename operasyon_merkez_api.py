@@ -8372,9 +8372,7 @@ def ops_siparis_sevkiyat_uyumsuzluk_coz(body: OpsSevkiyatUyumsuzlukCozBody):
             """,
             (str(r.get("siparis_talep_id") or ""),),
         )
-        cr = cur.fetchone()
-        # RealDictCursor: satır [0] ile indekslenmez; COUNT ilk değerden okunur
-        kalan_uyumsuz = int(list(cr.values())[0] or 0) if cr else 0
+        kalan_uyumsuz = _fetch_int_count(cur)
         if kalan_uyumsuz <= 0:
             cur.execute(
                 """
@@ -9359,11 +9357,17 @@ def _stok_hareket_yaz(
 def _stok_onceki_adet(cur: Any, sube_id: str, kalem_kodu: str) -> float:
     """sube_depo_stok'tan mevcut adedi okur (hareket kaydı için onceki_miktar)."""
     cur.execute(
-        "SELECT COALESCE(mevcut_adet, 0) FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s",
+        """
+        SELECT COALESCE(mevcut_adet, 0) AS mevcut_adet
+        FROM sube_depo_stok
+        WHERE sube_id=%s AND kalem_kodu=%s
+        """,
         (sube_id, kalem_kodu),
     )
     row = cur.fetchone()
-    return float(row[0]) if row else 0.0
+    if not row:
+        return 0.0
+    return float(dict(row).get("mevcut_adet") or 0)
 
 @router.get("/v2/merkez-depo")
 def ops_v2_merkez_depo():

@@ -6430,7 +6430,10 @@ function renderKasaDevir() {
       setTimeout(refresh, 800);
     } catch(e) {
       if (e.status===429) handle429(document.getElementById('dvMsg'),e);
-      else setMsg('dvMsg',e.message||'Hata','msg-err');
+      else {
+        setMsg('dvMsg',e.message||'Hata','msg-err');
+        if (e.status===409 && /akşamcı|zaten/i.test(e.message||'')) setTimeout(refresh, 600);
+      }
     }
     btn1.disabled=false;
   };

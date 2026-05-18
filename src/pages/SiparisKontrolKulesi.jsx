@@ -291,17 +291,27 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
   };
 
   const uyumCoz = async (row) => {
+    const yid = String(row?.stok_yolda_id || row?.id || '').trim();
+    if (!yid) {
+      toast('Stok yolda kaydı bulunamadı — listeyi yenileyin', 'red');
+      return;
+    }
     const cozum = window.prompt(
       `Uzlaşma adedi (sevk: ${row.sevk_adet}, kabul: ${row.kabul_adet}):`,
       String(row.kabul_adet ?? row.sevk_adet ?? 0),
     );
     if (cozum === null) return;
+    const cozumAdet = Number(cozum);
+    if (!Number.isFinite(cozumAdet) || cozumAdet < 0) {
+      toast('Geçerli bir adet girin (0 veya üzeri)', 'red');
+      return;
+    }
     try {
       await api('/ops/siparis/sevkiyat-uyumsuzluk-coz', {
         method: 'POST',
         body: {
-          stok_yolda_id: row.stok_yolda_id,
-          cozum_adet: Number(cozum) || 0,
+          stok_yolda_id: yid,
+          cozum_adet: cozumAdet,
         },
       });
       toast('Uyumsuzluk kaydı güncellendi');
