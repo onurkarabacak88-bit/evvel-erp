@@ -6047,6 +6047,13 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
         except Exception:
             pass
 
+        # ── RAPOR CACHE HOOK ── kasa fark düzeltildi → özet yenile
+        try:
+            from rapor_cache import gunluk_ozet_yenile
+            gunluk_ozet_yenile(cur, sube_id, tarih, kaynak='event_kasa_duzelt')
+        except Exception:
+            pass
+
     return {
         "success": True,
         "sebep": sebep,

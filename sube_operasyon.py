@@ -680,6 +680,17 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 ),
             )
             audit(cur, "sube_operasyon_event", event_id, "ACILIS_TAMAMLANDI")
+
+            # ── RAPOR CACHE HOOK ── (defensive)
+            try:
+                from rapor_cache import gunluk_ozet_yenile
+                _ev_tarih = ev.get("tarih")
+                if isinstance(_ev_tarih, datetime):
+                    _ev_tarih = _ev_tarih.date()
+                gunluk_ozet_yenile(cur, sube_id, _ev_tarih, kaynak='event_acilis')
+            except Exception:
+                pass
+
             from operasyon_defter import operasyon_defter_ekle
             from operasyon_kurallar import beklenen_dunku_kapanis_kasa, tolerans_seviyesi
 
@@ -1164,6 +1175,13 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 ),
             )
             audit(cur, "sube_operasyon_event", event_id, "KAPANIS_TAMAMLANDI")
+
+            # ── RAPOR CACHE HOOK ── (defensive)
+            try:
+                from rapor_cache import gunluk_ozet_yenile
+                gunluk_ozet_yenile(cur, sube_id, tarih_ev_ciro, kaynak='event_kapanis')
+            except Exception:
+                pass
 
             # Kasa teslim kaydı otomatik oluştur (gün sonu teslimi)
             if body.teslim is not None and float(body.teslim) > 0:

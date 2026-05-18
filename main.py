@@ -1818,6 +1818,16 @@ def _onayla_tx(cur, oid: str):
                 ref_id=oid,
                 ref_type="ONAY",
             )
+
+        # ── RAPOR CACHE HOOK ── anlık gider onaylanınca özet güncellensin
+        try:
+            cur.execute("SELECT sube, tarih FROM anlik_giderler WHERE id=%s", (kid,))
+            _ag = cur.fetchone()
+            if _ag and _ag.get("sube"):
+                from rapor_cache import gunluk_ozet_yenile
+                gunluk_ozet_yenile(cur, str(_ag["sube"]), _ag.get("tarih"), kaynak='event_gider')
+        except Exception:
+            pass
     elif islem_turu in ("CIRO", "CIRO_DUZELTME"):
         # Ciro kaynak kaydı varsa satırı kilitleyerek eşzamanlı onay/yazım çakışmasını azalt.
         if (onay.get("kaynak_tablo") or "") == "ciro" and onay.get("kaynak_id"):
