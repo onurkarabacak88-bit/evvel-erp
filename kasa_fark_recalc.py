@@ -319,22 +319,24 @@ def yeniden_hesapla(
                     onay_durumu_yeni = "bekliyor"
             elif onay_durumu_eski == "onaylandi":
                 # Onaylanmış onay — REVİZE AKIŞI:
-                # 1) Eski onayı 'iptal_revize' yap (silinmez, audit kalır)
+                # 1) Eski onayı 'iptal' yap (CHECK constraint'e uyumlu — 'iptal_revize' bazı
+                #    eski DB'lerde tanımlı değil. Açıklamaya [REVİZE] etiketi ile ayrım korunur.)
                 # 2) Yeni fark > eşik ise YENİ 'bekliyor' kayıt aç (merkez yeniden onaylasın)
-                # 3) Yeni fark ~ 0 ise sadece iptal_revize yeter (yeni onaya gerek yok)
+                # 3) Yeni fark ~ 0 ise sadece iptal yeter (yeni onaya gerek yok)
                 cur.execute(
                     """
                     UPDATE onay_kuyrugu
-                    SET durum='iptal_revize',
+                    SET durum='iptal',
+                        onay_tarihi=NOW(),
                         aciklama = COALESCE(aciklama, '') ||
-                                   ' | REVİZE: kaynak düzeltildi (' ||
+                                   ' | [REVİZE-' ||
                                    to_char(NOW() AT TIME ZONE 'Europe/Istanbul','YYYY-MM-DD HH24:MI') ||
-                                   '), yeni fark ' || %s::text || '₺'
+                                   '] kaynak düzeltildi, yeni fark ' || %s::text || '₺'
                     WHERE id=%s
                     """,
                     (f"{yeni_fark:+.2f}", onay_id),
                 )
-                onay_durumu_yeni = "iptal_revize"
+                onay_durumu_yeni = "iptal_revize"  # caller'a semantik bilgi (DB'de 'iptal')
                 if not otomatik_cozuldu:
                     # Yeni bekliyor kayıt — merkez yeniden onaylasın
                     yeni_onay_id = str(_uuid.uuid4())
