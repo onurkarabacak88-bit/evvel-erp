@@ -821,6 +821,43 @@ function urunAcSubeAnahtar(raw) {
   return s;
 }
 
+/** Ürün uyumsuzluk sekmeleri: dört mağaza her zaman; adet o günkü kayıt sayısı. */
+function urunUyumSubeSekmeleriOlustur(kayitlar) {
+  const rows = Array.isArray(kayitlar) ? kayitlar : [];
+  const sayim = rows.reduce((acc, r) => {
+    const baslik = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
+    const key = urunAcSubeAnahtar(baslik) || baslik;
+    const bulunan = acc.find((x) => x.key === key);
+    if (bulunan) bulunan.adet += 1;
+    else acc.push({ key, baslik, adet: 1 });
+    return acc;
+  }, []);
+  const map = new Map();
+  MAGAZA_DORT_SUBE.forEach((m) => {
+    map.set(m.slug, { key: m.slug, baslik: m.label, adet: 0 });
+  });
+  sayim.forEach((s) => {
+    const prev = map.get(s.key);
+    if (prev) prev.adet = s.adet;
+    else map.set(s.key, s);
+  });
+  const out = Array.from(map.values());
+  out.sort((a, b) => {
+    const ai = URUN_AC_SUBE_ONCELIK.indexOf(a.key);
+    const bi = URUN_AC_SUBE_ONCELIK.indexOf(b.key);
+    const ao = ai >= 0 ? ai : 99;
+    const bo = bi >= 0 ? bi : 99;
+    if (ao !== bo) return ao - bo;
+    return a.baslik.localeCompare(b.baslik, 'tr');
+  });
+  return out;
+}
+
+function urunUyumSubeBaslik(key) {
+  const hit = MAGAZA_DORT_SUBE.find((m) => m.slug === key);
+  return hit?.label || key;
+}
+
 function urunAcSubeGruplari(kayitlar) {
   const rows = Array.isArray(kayitlar) ? kayitlar : [];
   const map = new Map();
@@ -3081,12 +3118,15 @@ export default function OperasyonMerkezi() {
   const urunUyumGunYukle = useCallback(async (tarih) => {
     const hedef = (tarih || bugunIsoTarih()).trim();
     const ym = hedef.slice(0, 7);
-    const r = await api(
-      `/ops/bar-ozet?year_month=${encodeURIComponent(ym)}&gun=${encodeURIComponent(hedef)}&limit=180&kapanis_fallback=false`,
-    );
-    const satirlar = Array.isArray(r?.satirlar) ? r.satirlar : [];
+    const q = `year_month=${encodeURIComponent(ym)}&gun=${encodeURIComponent(hedef)}&limit=180`;
+    const [barR, acR] = await Promise.all([
+      api(`/ops/bar-ozet?${q}&kapanis_fallback=false`),
+      api(`/ops/urun-ac-uyumsuzluklar?${q}`).catch(() => ({ satirlar: [] })),
+    ]);
+    const satirlar = Array.isArray(barR?.satirlar) ? barR.satirlar : [];
+    const acUyumlar = Array.isArray(acR?.satirlar) ? acR.satirlar : [];
     const keys = ['bardak_kucuk','bardak_buyuk','bardak_plastik','karton_bardak','su_adet','sut_litre','redbull_adet','soda_adet','cookie_adet','pasta_adet','surup_adet','kahve_paket','kapak_adet','pecete_paket','diger_sarf','pasta_porsiyon_sade','pasta_porsiyon_antep','pasta_porsiyon_cik','pasta_mag_cilek','pasta_mag_lotus','pasta_buyuk_tart','pasta_kucuk_tart','pasta_snickers','pasta_malaga','pasta_latte','pasta_muzlu_rulo','pasta_cik_rulo','pasta_meyveli_rulo','pasta_browni','pasta_dilim_ss_sade','pasta_cream_puff','pasta_kavala','pasta_cup_limon','pasta_cup_yerfistik','pasta_cup_cilek','pasta_cup_karamel','pasta_cup_lotus','pasta_cup_antep','pasta_cup_hindistan','pasta_profiterol','pasta_kare_cik','pasta_kare_yerfistik','pasta_kare_karamel','pasta_kare_limon','pasta_dilim_sade','pasta_dilim_antep','pasta_dilim_cik','pasta_dilim_yaban'];
-    const kayitlar = satirlar
+    const barKayitlar = satirlar
       .map((x) => {
         const sat = x?.satilan || {};
         const uyumsuzGunIci = keys.filter((k) => Number(sat?.[k] || 0) < 0);
@@ -3098,6 +3138,7 @@ export default function OperasyonMerkezi() {
         if (kapYok && uyumsuz_adet === 0) uyumsuz_adet = 1;
         return {
           ...x,
+          kaynak: 'bar_sayim',
           uyumsuz_urunler: uyumsuzlar,
           uyumsuz_gun_ici_keys: uyumsuzGunIci,
           uyumsuz_devir_keys: dk,
@@ -3105,6 +3146,38 @@ export default function OperasyonMerkezi() {
         };
       })
       .filter((x) => x.uyumsuz_adet > 0);
+
+    const acBySube = new Map();
+    acUyumlar.forEach((u) => {
+      const sid = String(u?.sube_id || '').trim();
+      if (!sid) return;
+      const prev = acBySube.get(sid) || {
+        sube_id: sid,
+        sube_adi: String(u?.sube_adi || sid).trim() || sid,
+        tarih: hedef,
+        kaynak: 'urun_ac_uyari',
+        urun_ac_uyarilari: [],
+        uyumsuz_adet: 0,
+      };
+      prev.urun_ac_uyarilari.push(u);
+      prev.uyumsuz_adet = prev.urun_ac_uyarilari.length;
+      acBySube.set(sid, prev);
+    });
+
+    const barSidSet = new Set(barKayitlar.map((k) => String(k?.sube_id || '').trim()).filter(Boolean));
+    const kayitlar = [...barKayitlar];
+    acBySube.forEach((row, sid) => {
+      if (barSidSet.has(sid)) {
+        const hit = kayitlar.find((k) => String(k?.sube_id || '').trim() === sid);
+        if (hit) {
+          hit.urun_ac_uyarilari = row.urun_ac_uyarilari;
+          hit.uyumsuz_adet = (hit.uyumsuz_adet || 0) + row.urun_ac_uyarilari.length;
+        }
+      } else {
+        kayitlar.push(row);
+      }
+    });
+    kayitlar.sort((a, b) => String(a?.sube_adi || '').localeCompare(String(b?.sube_adi || ''), 'tr'));
     return { tarih: hedef, toplam: kayitlar.length, kayitlar };
   }, []);
 
@@ -4364,22 +4437,7 @@ export default function OperasyonMerkezi() {
       const label = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
       return (urunAcSubeAnahtar(label) || label) === personelVardiyaUyumSeciliSubeKey;
     });
-  const urunUyumSubeSekmeleri = (urunUyumAramaSonuc?.kayitlar || []).reduce((acc, r) => {
-    const baslik = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
-    const key = urunAcSubeAnahtar(baslik) || baslik;
-    const bulunan = acc.find((x) => x.key === key);
-    if (bulunan) bulunan.adet += 1;
-    else acc.push({ key, baslik, adet: 1 });
-    return acc;
-  }, []);
-  urunUyumSubeSekmeleri.sort((a, b) => {
-    const ai = URUN_AC_SUBE_ONCELIK.indexOf(a.key);
-    const bi = URUN_AC_SUBE_ONCELIK.indexOf(b.key);
-    const ao = ai >= 0 ? ai : 99;
-    const bo = bi >= 0 ? bi : 99;
-    if (ao !== bo) return ao - bo;
-    return a.baslik.localeCompare(b.baslik, 'tr');
-  });
+  const urunUyumSubeSekmeleri = urunUyumSubeSekmeleriOlustur(urunUyumAramaSonuc?.kayitlar);
   const urunUyumGorunenKayitlar = urunUyumSeciliSubeKey === 'all'
     ? (urunUyumAramaSonuc?.kayitlar || [])
     : (urunUyumAramaSonuc?.kayitlar || []).filter((r) => {
@@ -9797,16 +9855,37 @@ export default function OperasyonMerkezi() {
           const devir        = Number(d.devir          ?? 0);
           const hasDetay     = !!u.detay_json;
 
+          // "TALHA TOPAL" -> "Talha T." formatına çevir (ad + soyad ilk harfi)
+          const kisaAd = (tamAd) => {
+            if (!tamAd) return null;
+            const parts = String(tamAd).trim().split(/\s+/);
+            if (parts.length === 1) return parts[0].charAt(0).toUpperCase() + parts[0].slice(1).toLowerCase();
+            const ad = parts[0].charAt(0).toUpperCase() + parts[0].slice(1).toLowerCase();
+            const soyadHarf = parts[parts.length - 1].charAt(0).toUpperCase();
+            return `${ad} ${soyadHarf}.`;
+          };
+
           const KutuLabel = ({ txt }) => (
             <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 3 }}>{txt}</div>
           );
           const KutuTutar = ({ val, renk }) => (
             <div style={{ fontSize: 19, fontWeight: 800, fontFamily: 'monospace', color: renk || 'inherit' }}>{fmt(val)}</div>
           );
-          const Kutu = ({ label, val, renk, sep }) => (
+          const KutuPersonel = ({ ad }) => ad ? (
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4, fontStyle: 'italic' }}
+                 title={`Bu değeri giren: ${ad}`}>
+              👤 {kisaAd(ad)}
+            </div>
+          ) : (
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4, fontStyle: 'italic', opacity: 0.5 }}>
+              👤 —
+            </div>
+          );
+          const Kutu = ({ label, val, renk, sep, personel }) => (
             <div style={{ padding: '10px 12px', borderRight: sep ? `1px solid ${r.sep}` : 'none' }}>
               <KutuLabel txt={label} />
               <KutuTutar val={val} renk={renk} />
+              <KutuPersonel ad={personel} />
             </div>
           );
 
@@ -9853,14 +9932,18 @@ export default function OperasyonMerkezi() {
                       Açılış Kasası + Z Nakit − Nakit Gider − Teslim − Devir = 0 (beklenen)
                     </span>
                   </div>
-                  {/* 5 kutu grid */}
+                  {/* 5 kutu grid — her tutarın yanında veriyi giren personel */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', borderBottom: `1px solid ${r.sep}` }}>
-                    <Kutu label="Açılış Kasası" val={acilisKasa} renk="#86efac" sep />
-                    <Kutu label="Z Nakit Ciro"  val={zNakit}    renk="#86efac" sep />
+                    <Kutu label="Açılış Kasası" val={acilisKasa} renk="#86efac" sep
+                          personel={u.acilis_personel_ad} />
+                    <Kutu label="Z Nakit Ciro"  val={zNakit}    renk="#86efac" sep
+                          personel={u.kapanis_personel_ad} />
                     <Kutu label={`Nakit Gider${araTeslim > 0 ? ' + Ara Teslim' : ''}`}
                                val={nakitGider + araTeslim} renk="#fca5a5" sep />
-                    <Kutu label="Müdüre Teslim" val={teslim}    renk="#fca5a5" sep />
-                    <Kutu label="Kasada Devir"  val={devir}     renk="#fca5a5" />
+                    <Kutu label="Müdüre Teslim" val={teslim}    renk="#fca5a5" sep
+                          personel={u.kapanis_personel_ad} />
+                    <Kutu label="Kasada Devir"  val={devir}     renk="#fca5a5"
+                          personel={u.kapanis_personel_ad} />
                   </div>
                   {/* Sonuç satırı */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', padding: '10px 14px', gap: 12 }}>
@@ -11086,6 +11169,9 @@ export default function OperasyonMerkezi() {
             <strong>Aynı gün (bar içi):</strong> Açılış + Ürün Aç − Kapanış = mantıksal satış; negatif kalem gün içi stoğu tutmuyor demektir.
             <br />
             <strong>Günler arası (devir):</strong> Bir önceki günün <em>kapanış</em> stok sayımı ile aynı günün <em>sabah açılış</em> sayımı kalem kalem eşleştirilir; fark varsa veya önceki gün kapanışı yoksa bu listede görünür.
+            <br />
+            <strong>Karşılıksız ürün aç:</strong> Depoda yeterli stok yokken yapılan ürün aç işlemleri (hub kartındaki «Ürün Aç» uyarısı) ayrıca listelenir.
+            Şube sekmeleri dört mağazanın tamamını gösterir; <em>(0)</em> o gün için kayıt olmadığı anlamına gelir.
           </p>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <label style={{ margin: 0 }}>
