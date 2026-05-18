@@ -28,10 +28,157 @@ function kisaTs(ts) {
 function kalemOzet(kalemler) {
   if (!Array.isArray(kalemler) || !kalemler.length) return '—';
   return kalemler
-    .filter((k) => k && Number(k.adet) > 0)
+    .filter((k) => k && Number(k.adet ?? k.istenen_adet) > 0)
     .slice(0, 4)
-    .map((k) => `${k.urun_ad || k.kalem_kodu || '?'} ×${k.adet}`)
+    .map((k) => `${k.urun_ad || k.kalem_kodu || '?'} ×${k.adet ?? k.istenen_adet}`)
     .join(' · ');
+}
+
+function KuyrukYonlendirmeKarti({
+  sip,
+  depolar,
+  mod,
+  onModChange,
+  kuyrukDepo,
+  setKuyrukDepo,
+  kuyrukTalimat,
+  setKuyrukTalimat,
+  kuyrukToptanciTedarikci,
+  setKuyrukToptanciTedarikci,
+  kuyrukToptanciNot,
+  setKuyrukToptanciNot,
+  kuyrukToptanciKalem,
+  setKuyrukToptanciKalem,
+  kuyrukBusy,
+  depoyaGonder,
+  toptanciyaYolla,
+  kalemIstenenAdet,
+}) {
+  const talepId = String(sip?.id || '');
+  const detayRows = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 4, marginTop: 8, flexWrap: 'wrap' }}>
+        {[
+          { id: 'depo', label: '🏭 Depo sevk' },
+          { id: 'toptanci', label: '🚚 Toptancı' },
+        ].map((m) => (
+          <button
+            key={m.id}
+            type="button"
+            className={`btn btn-sm ${mod === m.id ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => onModChange(m.id)}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+      {mod === 'depo' ? (
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <textarea
+            className="input"
+            rows={2}
+            placeholder="Operasyon talimatı (isteğe bağlı)"
+            style={{ fontSize: 11, resize: 'vertical' }}
+            value={kuyrukTalimat[talepId] || ''}
+            onChange={(e) => setKuyrukTalimat((p) => ({ ...p, [talepId]: e.target.value }))}
+          />
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <select
+              className="input"
+              style={{ flex: 1, minWidth: 120, fontSize: 12 }}
+              value={kuyrukDepo[talepId] || ''}
+              onChange={(e) => setKuyrukDepo((p) => ({ ...p, [talepId]: e.target.value }))}
+            >
+              <option value="">Hedef depo seç…</option>
+              {depolar.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.ad}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              disabled={kuyrukBusy === talepId || !kuyrukDepo[talepId]}
+              onClick={() => depoyaGonder(talepId)}
+            >
+              Depoya yönlendir
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <p style={{ fontSize: 11, color: 'var(--text3)', margin: 0, lineHeight: 1.4 }}>
+            Süt, kahve vb. kalemleri toptancıya ayrı gönderin. Kayıtlar{' '}
+            <strong>Toptancı siparişleri</strong> sekmesinde listelenir.
+          </p>
+          <label style={{ margin: 0, fontSize: 11, color: 'var(--text3)' }}>
+            Toptancı / tedarikçi
+            <input
+              className="input"
+              style={{ width: '100%', marginTop: 3, fontSize: 12 }}
+              placeholder="Örn: ABC Toptan Gıda"
+              value={kuyrukToptanciTedarikci[talepId] || ''}
+              onChange={(e) =>
+                setKuyrukToptanciTedarikci((p) => ({ ...p, [talepId]: e.target.value }))
+              }
+            />
+          </label>
+          <div style={{ display: 'grid', gap: 4, maxHeight: 140, overflowY: 'auto' }}>
+            {detayRows.length === 0 ? (
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>Kalem yok</span>
+            ) : (
+              detayRows.map((k, ki) => {
+                const kk = String(k?.kalem_kodu || k?.urun_id || `k_${ki}`);
+                const key = `${talepId}::${kk}`;
+                const val = kuyrukToptanciKalem[key] ?? String(kalemIstenenAdet(k));
+                return (
+                  <div
+                    key={key}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'minmax(0,1fr) 72px',
+                      gap: 6,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <span style={{ fontSize: 12 }}>{k.urun_ad || k.ad || kk}</span>
+                    <input
+                      className="input"
+                      inputMode="numeric"
+                      style={{ fontSize: 12, padding: '4px 6px' }}
+                      value={val}
+                      onChange={(e) => {
+                        const v = String(e.target.value || '').replace(/[^\d]/g, '');
+                        setKuyrukToptanciKalem((p) => ({ ...p, [key]: v }));
+                      }}
+                    />
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <textarea
+            className="input"
+            rows={2}
+            placeholder="Toptancı sipariş notu (isteğe bağlı)"
+            style={{ fontSize: 11, resize: 'vertical' }}
+            value={kuyrukToptanciNot[talepId] || ''}
+            onChange={(e) => setKuyrukToptanciNot((p) => ({ ...p, [talepId]: e.target.value }))}
+          />
+          <button
+            type="button"
+            className="btn btn-sm btn-primary"
+            disabled={kuyrukBusy === talepId}
+            onClick={() => toptanciyaYolla(sip)}
+          >
+            {kuyrukBusy === talepId ? '…' : '⇢ Toptancıya yolla'}
+          </button>
+        </div>
+      )}
+    </>
+  );
 }
 
 export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = null }) {
@@ -83,6 +230,10 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
   const [depolar, setDepolar] = useState([]);
   const [kuyrukDepo, setKuyrukDepo] = useState({});
   const [kuyrukTalimat, setKuyrukTalimat] = useState({});
+  const [kuyrukMod, setKuyrukMod] = useState({}); // talep_id → depo | toptanci
+  const [kuyrukToptanciTedarikci, setKuyrukToptanciTedarikci] = useState({});
+  const [kuyrukToptanciNot, setKuyrukToptanciNot] = useState({});
+  const [kuyrukToptanciKalem, setKuyrukToptanciKalem] = useState({}); // `${talep_id}::${kalem}` → adet
   const [kuyrukBusy, setKuyrukBusy] = useState(null);
 
   const [uyumsuzluklar, setUyumsuzluklar] = useState([]);
@@ -223,6 +374,8 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
     [ozet],
   );
 
+  const kalemIstenenAdet = (k) => Math.max(0, Number(k?.istenen_adet ?? k?.adet ?? 0));
+
   const depoyaGonder = async (talepId) => {
     const depo = kuyrukDepo[talepId];
     if (!depo) {
@@ -239,6 +392,52 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
       yukle();
     } catch (e) {
       toast(e.message || 'Yönlendirme hatası', 'red');
+    } finally {
+      setKuyrukBusy(null);
+    }
+  };
+
+  const toptanciyaYolla = async (sip) => {
+    const talepId = String(sip?.id || '').trim();
+    if (!talepId) return;
+    const rows = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
+    const kalemler = rows
+      .map((k, i) => {
+        const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
+        const key = `${talepId}::${kk}`;
+        const adetRaw = kuyrukToptanciKalem[key];
+        const adet = Math.max(
+          0,
+          parseInt(String(adetRaw ?? kalemIstenenAdet(k)), 10) || 0,
+        );
+        return {
+          urun_ad: String(k?.urun_ad || k?.ad || kk),
+          adet,
+          kalem_kodu: kk,
+          kategori_kod:
+            String(k?.kategori_kod || k?.kategori || k?.kategori_id || '').trim() || null,
+        };
+      })
+      .filter((x) => x.adet > 0);
+    if (!kalemler.length) {
+      toast('Toptancı formunda en az 1 kalem için adet girin', 'red');
+      return;
+    }
+    setKuyrukBusy(talepId);
+    try {
+      await api('/ops/siparis/toptanciya-yolla', {
+        method: 'POST',
+        body: {
+          talep_id: talepId,
+          tedarikci_ad: (kuyrukToptanciTedarikci[talepId] || '').trim() || null,
+          not_aciklama: (kuyrukToptanciNot[talepId] || '').trim() || null,
+          kalemler,
+        },
+      });
+      toast('Talep toptancı sipariş listesine aktarıldı', 'green');
+      yukle();
+    } catch (e) {
+      toast(e.message || 'Toptancıya gönderim hatası', 'red');
     } finally {
       setKuyrukBusy(null);
     }
@@ -351,7 +550,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
       </div>
 
       <p style={{ margin: 0, fontSize: 13, color: 'var(--text3)', lineHeight: 1.5 }}>
-        Tüm şubelerin sipariş taleplerini tek ekranda izleyin: kuyruk → depo → yol → kabul. Eski «Stok Disiplin», «Sipariş Geçmişi», «Kabul takibi» ve «Sevkiyat Hazırlama» menüleri burada birleştirildi.
+        Tüm şubelerin sipariş taleplerini tek ekranda izleyin: kuyruk → depo veya toptancı → yol → kabul. Merkez kuyruğunda her talep için «Depo sevk» veya «Toptancı» sekmesini kullanın.
       </p>
 
       {gorunum === 'izleme' && (
@@ -450,7 +649,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                   <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>
                     📬 Merkez kuyruğu ({bekleyenListe.length})
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 320, overflowY: 'auto' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 420, overflowY: 'auto' }}>
                     {bekleyenListe.map((sip) => (
                       <div
                         key={sip.id}
@@ -464,29 +663,29 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                       >
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{sip.sube_adi}</div>
                         <div style={{ fontSize: 11, color: 'var(--text3)' }}>{kisaTs(sip.olusturma)} · {kalemOzet(sip.kalemler)}</div>
-                        <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-                          <select
-                            className="input"
-                            style={{ flex: 1, minWidth: 120, fontSize: 12 }}
-                            value={kuyrukDepo[sip.id] || ''}
-                            onChange={(e) => setKuyrukDepo((p) => ({ ...p, [sip.id]: e.target.value }))}
-                          >
-                            <option value="">Depo seç…</option>
-                            {depolar.map((d) => (
-                              <option key={d.id} value={d.id}>
-                                {d.ad}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-primary"
-                            disabled={kuyrukBusy === sip.id}
-                            onClick={() => depoyaGonder(sip.id)}
-                          >
-                            Yönlendir
-                          </button>
-                        </div>
+                        <KuyrukYonlendirmeKarti
+                            sip={sip}
+                            depolar={depolar}
+                            mod={kuyrukMod[String(sip.id || '')] || 'depo'}
+                            onModChange={(m) => {
+                              const tid = String(sip.id || '');
+                              setKuyrukMod((p) => ({ ...p, [tid]: m }));
+                            }}
+                            kuyrukDepo={kuyrukDepo}
+                            setKuyrukDepo={setKuyrukDepo}
+                            kuyrukTalimat={kuyrukTalimat}
+                            setKuyrukTalimat={setKuyrukTalimat}
+                            kuyrukToptanciTedarikci={kuyrukToptanciTedarikci}
+                            setKuyrukToptanciTedarikci={setKuyrukToptanciTedarikci}
+                            kuyrukToptanciNot={kuyrukToptanciNot}
+                            setKuyrukToptanciNot={setKuyrukToptanciNot}
+                            kuyrukToptanciKalem={kuyrukToptanciKalem}
+                            setKuyrukToptanciKalem={setKuyrukToptanciKalem}
+                            kuyrukBusy={kuyrukBusy}
+                            depoyaGonder={depoyaGonder}
+                            toptanciyaYolla={toptanciyaYolla}
+                            kalemIstenenAdet={kalemIstenenAdet}
+                          />
                       </div>
                     ))}
                   </div>
