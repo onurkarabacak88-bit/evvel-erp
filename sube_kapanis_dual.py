@@ -16,7 +16,7 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from database import db
 from tr_saat import bugun_tr, dt_now_tr_naive, is_gunu_tr
@@ -283,12 +283,16 @@ class VardiyaDevirAdim1(BaseModel):
     online: float = 0
     teslim: float = 0
     devir: float = 0
-    kasa_sayim_dogrulandi: bool = Field(
-        ...,
-        description="Kasadaki nakit sayımı personel tarafından doğrulandı (kapanış X raporu değil).",
-    )
+    kasa_sayim_dogrulandi: bool = False
+    x_raporu_gonderildi: bool = False  # eski panel — kapanış X raporu değil, sayım onayı
     ciro_gonderildi: bool = False
     operasyon_event_id: Optional[str] = None  # kullanılmıyor; geriye dönük istek gövdesi
+
+    @model_validator(mode="after")
+    def _sayim_onay_kontrol(self) -> "VardiyaDevirAdim1":
+        if not self.kasa_sayim_dogrulandi and not self.x_raporu_gonderildi:
+            raise ValueError("Kasa sayımı doğrulama onayı gerekli")
+        return self
     bardak_kucuk: int = Field(..., ge=0)
     bardak_buyuk: int = Field(..., ge=0)
     bardak_plastik: int = Field(..., ge=0)
@@ -408,9 +412,6 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
     simdi = dt_now_tr_naive()
     if body.teslim < 0:
         raise HTTPException(400, "Kasadaki nakit negatif olamaz")
-    if not body.kasa_sayim_dogrulandi:
-        raise HTTPException(400, "Kasa sayımı doğrulama onayı gerekli")
-
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
         if not _bugun_sube_acildi_mi(cur, sube_id):
@@ -426,15 +427,27 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
         ku = _vardiya_imza_personel_dogrula(cur, body.sabahci_devreden_id, body.pin)
         onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
 
+        gun = is_gunu_tr()
         cur.execute(
             """
-            SELECT id FROM kapanis_kayit
-            WHERE sube_id=%s AND tarih=%s AND olay='vardiya_sabah_aksam_devri'
+            SELECT id, olay, durum FROM kapanis_kayit
+            WHERE sube_id=%s AND tarih=%s
+            LIMIT 1
             """,
-            (sube_id, is_gunu_tr()),
+            (sube_id, gun),
         )
-        if cur.fetchone():
-            raise HTTPException(409, "Bugün için vardiya devri kaydı zaten başlatılmış")
+        mevcut = cur.fetchone()
+        if mevcut:
+            mevcut = dict(mevcut)
+            if (mevcut.get("olay") or "") == "vardiya_sabah_aksam_devri":
+                raise HTTPException(
+                    409,
+                    "Bugün için vardiya devri kaydı zaten başlatılmış — akşamcı onayını tamamlayın.",
+                )
+            raise HTTPException(
+                409,
+                "Bu iş günü için başka bir kapanış/devir kaydı var; destek ile iletişime geçin.",
+            )
 
         stok_sayim = {
             "bardak_kucuk": int(body.bardak_kucuk),
@@ -453,32 +466,47 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
         meta_sql = json.dumps(meta_obj, ensure_ascii=False)
 
         kid = str(uuid.uuid4())
-        cur.execute(
-            """
-            INSERT INTO kapanis_kayit
-                (id, sube_id, tarih, olay, nakit, pos, online, teslim, devir,
-                 kapanisci_id, kapanisci_onay_ts, durum,
-                 operasyon_event_id, x_raporu_onay, ciro_gonderim_onay,
-                 sabahci_personel_id, aksamci_personel_id, meta)
-            VALUES (%s, %s, %s, 'vardiya_sabah_aksam_devri', %s, %s, %s, %s, %s, NULL, %s, 'acilis_bekliyor', %s, %s, %s, %s, NULL, %s::jsonb)
-            """,
-            (
-                kid,
-                sube_id,
-                is_gunu_tr(),
-                body.nakit,
-                body.pos,
-                body.online,
-                body.teslim,
-                body.devir,
-                simdi,
-                None,
-                False,
-                False,
-                body.sabahci_devreden_id,
-                meta_sql,
-            ),
-        )
+        try:
+            cur.execute(
+                """
+                INSERT INTO kapanis_kayit
+                    (id, sube_id, tarih, olay, nakit, pos, online, teslim, devir,
+                     kapanisci_id, kapanisci_onay_ts, durum,
+                     operasyon_event_id, x_raporu_onay, ciro_gonderim_onay,
+                     sabahci_personel_id, aksamci_personel_id, meta)
+                VALUES (%s, %s, %s, 'vardiya_sabah_aksam_devri', %s, %s, %s, %s, %s, NULL, %s, 'acilis_bekliyor', %s, %s, %s, %s, NULL, %s::jsonb)
+                """,
+                (
+                    kid,
+                    sube_id,
+                    gun,
+                    body.nakit,
+                    body.pos,
+                    body.online,
+                    body.teslim,
+                    body.devir,
+                    simdi,
+                    None,
+                    False,
+                    False,
+                    body.sabahci_devreden_id,
+                    meta_sql,
+                ),
+            )
+        except Exception as ex:
+            from psycopg2 import errors as pg_errors
+
+            if isinstance(ex, pg_errors.UniqueViolation):
+                raise HTTPException(
+                    409,
+                    "Bugün için vardiya devri kaydı zaten var — sayfayı yenileyip akşamcı onayına geçin.",
+                ) from ex
+            if isinstance(ex, pg_errors.NotNullViolation):
+                raise HTTPException(
+                    500,
+                    "Veritabanı şeması güncel değil (kapanis_kayit). Sunucuyu yeniden başlatın veya destek alın.",
+                ) from ex
+            raise
         audit(cur, "kapanis_kayit", kid, "VARDIYA_DEVIR_ADIM1_SABAH")
         from operasyon_defter import operasyon_defter_ekle
 

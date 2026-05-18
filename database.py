@@ -1287,6 +1287,13 @@ def init_db():
             EXCEPTION WHEN others THEN NULL;
             END $$;
         """)
+        cur.execute("""
+            ALTER TABLE kapanis_kayit DROP CONSTRAINT IF EXISTS kapanis_kayit_sube_id_tarih_key
+        """)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_kapanis_kayit_sube_tarih_olay
+            ON kapanis_kayit (sube_id, tarih, olay)
+        """)
 
         cur.execute("""
             DO $$
