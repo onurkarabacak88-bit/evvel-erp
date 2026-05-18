@@ -2991,3 +2991,107 @@ $$;
                 print(f"[MIGRATION] katalog_stok_birebir_v1: {_eklenen} sube_depo_stok satırı eklendi")
         except Exception as _mig_e:
             print(f"[MIGRATION WARN] katalog_stok_birebir_v1: {_mig_e}")
+
+        # ─── RAPOR CACHE TABLOLARI (Seviye 1+2 raporlama hızlandırma) ──────────
+        # Sık sorulan günlük/aylık özetler — canlı sorgu yerine bu tablodan okunur.
+        # Gece batch + olay-tetikli güncelleme ile sürekli güncel tutulur.
+
+        # 1. Günlük şube özeti (her şube/gün için tek satır)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS rapor_gunluk_sube_ozet (
+                sube_id         TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                tarih           DATE NOT NULL,
+                -- Ciro
+                ciro_nakit      NUMERIC(14,2) NOT NULL DEFAULT 0,
+                ciro_pos        NUMERIC(14,2) NOT NULL DEFAULT 0,
+                ciro_online     NUMERIC(14,2) NOT NULL DEFAULT 0,
+                ciro_toplam     NUMERIC(14,2) NOT NULL DEFAULT 0,
+                ciro_durum      TEXT,                          -- 'onaylandi' | 'taslak' | 'yok'
+                fis_sayisi      INTEGER NOT NULL DEFAULT 0,    -- Evo'dan veya manuel
+                -- Kasa
+                kasa_acilis     NUMERIC(14,2) NOT NULL DEFAULT 0,
+                kasa_kapanis    NUMERIC(14,2) NOT NULL DEFAULT 0,
+                kasa_teslim     NUMERIC(14,2) NOT NULL DEFAULT 0,
+                kasa_devir      NUMERIC(14,2) NOT NULL DEFAULT 0,
+                ara_teslim      NUMERIC(14,2) NOT NULL DEFAULT 0,
+                kasa_fark_tl    NUMERIC(14,2),                 -- COALESCE(cozum_duzeltilen_tl, fark_tl)
+                kasa_fark_durum TEXT,                          -- 'normal' | 'uyari' | 'kritik' | 'cozuldu' | NULL
+                -- Giderler
+                anlik_gider_nakit NUMERIC(14,2) NOT NULL DEFAULT 0,
+                anlik_gider_kart  NUMERIC(14,2) NOT NULL DEFAULT 0,
+                anlik_gider_adet  INTEGER NOT NULL DEFAULT 0,
+                -- Operasyon
+                acilis_yapildi    BOOLEAN NOT NULL DEFAULT FALSE,
+                kapanis_yapildi   BOOLEAN NOT NULL DEFAULT FALSE,
+                acilis_personel   TEXT,
+                kapanis_personel  TEXT,
+                -- Meta
+                guncelleme        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                kaynak            TEXT NOT NULL DEFAULT 'batch', -- 'batch' | 'event'
+                PRIMARY KEY (sube_id, tarih)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_rapor_gunluk_tarih
+            ON rapor_gunluk_sube_ozet (tarih DESC, sube_id)
+        """)
+
+        # 2. Günlük ürün özeti (her şube/gün/kalem için tek satır)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS rapor_gunluk_urun_ozet (
+                sube_id         TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                tarih           DATE NOT NULL,
+                kalem_kodu      TEXT NOT NULL,
+                kalem_adi       TEXT,
+                acilan_adet     INTEGER NOT NULL DEFAULT 0,    -- URUN_AC delta+kalemler max
+                sevk_adet       INTEGER NOT NULL DEFAULT 0,    -- URUN_SEVK (merkez→şube)
+                kullanilan_adet INTEGER NOT NULL DEFAULT 0,    -- bar-ozet satılan
+                kalan_adet      INTEGER NOT NULL DEFAULT 0,    -- sube_depo_stok kapanış
+                guncelleme      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (sube_id, tarih, kalem_kodu)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_rapor_urun_tarih
+            ON rapor_gunluk_urun_ozet (tarih DESC, sube_id)
+        """)
+
+        # 3. Aylık food cost özeti (şube/ay)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS rapor_aylik_food_cost (
+                sube_id         TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                year_month      TEXT NOT NULL,                 -- 'YYYY-MM'
+                toplam_ciro     NUMERIC(14,2) NOT NULL DEFAULT 0,
+                toplam_gider    NUMERIC(14,2) NOT NULL DEFAULT 0, -- anlık+sabit gider
+                anlik_gider     NUMERIC(14,2) NOT NULL DEFAULT 0,
+                sabit_gider     NUMERIC(14,2) NOT NULL DEFAULT 0,
+                food_cost_pct   NUMERIC(6,2),                  -- (gider/ciro)*100
+                fis_sayisi      INTEGER NOT NULL DEFAULT 0,
+                ortalama_fis_tutari NUMERIC(14,2),
+                guncelleme      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (sube_id, year_month)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_rapor_aylik_ym
+            ON rapor_aylik_food_cost (year_month DESC, sube_id)
+        """)
+
+        # 4. Batch run log (gece çalıştı mı, kaç şube/gün işledi)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS rapor_batch_log (
+                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                batch_tipi      TEXT NOT NULL,                 -- 'gunluk_ozet' | 'aylik_food_cost' | 'manuel'
+                baslangic_ts    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                bitis_ts        TIMESTAMPTZ,
+                durum           TEXT NOT NULL DEFAULT 'calisiyor', -- 'calisiyor' | 'basarili' | 'hatali'
+                islenen_kayit   INTEGER NOT NULL DEFAULT 0,
+                sure_ms         INTEGER,
+                hata_mesaji     TEXT,
+                detay           JSONB
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_rapor_batch_baslangic
+            ON rapor_batch_log (baslangic_ts DESC)
+        """)
