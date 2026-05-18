@@ -205,13 +205,6 @@ def ciro_taslak_onayla(taslak_id: str, body: CiroTaslakOnayTutarlari = CiroTasla
         )
         audit(cur, "ciro_taslak", taslak_id, "ONAYLANDI")
 
-        # ── RAPOR CACHE HOOK — ciro onaylanınca özet hemen güncellensin ──
-        try:
-            from rapor_cache import gunluk_ozet_yenile
-            gunluk_ozet_yenile(cur, sube_id, t.get("tarih"), kaynak='event_ciro_onay')
-        except Exception:
-            pass
-
     return {
         "success": True,
         "ciro_id": cid,

@@ -211,46 +211,6 @@ def _gece_yarisi_scheduler():
                 except Exception as e:
                     logger.warning(f"⏰ Scheduler haftalık fire hatası: {e}")
 
-            # RAPOR CACHE — Her gece dün+bugün günlük özetleri yenile + ay sonu food cost
-            try:
-                from rapor_cache import (
-                    gunluk_ozet_topla_tum_subeler,
-                    aylik_food_cost_hesapla,
-                    batch_log_basla, batch_log_bitir, batch_log_hata,
-                )
-                import time as _tm
-                _t0 = _tm.time()
-                # Dünkü + bugünkü gün özeti (gece çalışırken bugün=yarın, dün=bugün)
-                dun = bugun - timedelta(days=1)
-                bid = None
-                with db() as (conn, cur):
-                    bid = batch_log_basla(cur, 'gunluk_ozet',
-                                          {'tarih': str(dun), 'sebep': 'gece_scheduler'})
-                    conn.commit()
-                with db() as (conn, cur):
-                    sayac_dun = gunluk_ozet_topla_tum_subeler(cur, dun)
-                    sayac_bugun = gunluk_ozet_topla_tum_subeler(cur, bugun)
-                    conn.commit()
-                with db() as (conn, cur):
-                    batch_log_bitir(cur, bid,
-                                    islenen=sayac_dun + sayac_bugun,
-                                    sure_ms=int((_tm.time() - _t0) * 1000),
-                                    detay={'dun': sayac_dun, 'bugun': sayac_bugun})
-                    conn.commit()
-                logger.info(f"⏰ Rapor cache: dün={sayac_dun} bugün={sayac_bugun} şube güncellendi")
-
-                # Aylık food cost — her gece bu ayı yenile + ay başında geçen ayı kapat
-                ym_bu = bugun.strftime("%Y-%m")
-                ym_oncesi = (bugun.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
-                with db() as (conn, cur):
-                    aylik_food_cost_hesapla(cur, ym_bu)
-                    if bugun.day <= 3:  # ay başı 3 gün boyunca geçen ay da yenilen
-                        aylik_food_cost_hesapla(cur, ym_oncesi)
-                    conn.commit()
-                logger.info(f"⏰ Rapor cache: aylık food cost {ym_bu} hesaplandı")
-            except Exception as e:
-                logger.warning(f"⏰ Scheduler rapor cache hatası: {e}")
-
         except Exception as e:
             logger.error(f"⏰ Scheduler genel hata: {e}")
             import time as _t
@@ -1858,16 +1818,6 @@ def _onayla_tx(cur, oid: str):
                 ref_id=oid,
                 ref_type="ONAY",
             )
-
-        # ── RAPOR CACHE HOOK — anlık gider onaylanınca o şubenin özeti güncellensin ──
-        try:
-            cur.execute("SELECT sube, tarih FROM anlik_giderler WHERE id=%s", (kid,))
-            _ag = cur.fetchone()
-            if _ag and _ag.get("sube"):
-                from rapor_cache import gunluk_ozet_yenile
-                gunluk_ozet_yenile(cur, str(_ag["sube"]), _ag.get("tarih"), kaynak='event_gider')
-        except Exception:
-            pass
     elif islem_turu in ("CIRO", "CIRO_DUZELTME"):
         # Ciro kaynak kaydı varsa satırı kilitleyerek eşzamanlı onay/yazım çakışmasını azalt.
         if (onay.get("kaynak_tablo") or "") == "ciro" and onay.get("kaynak_id"):
