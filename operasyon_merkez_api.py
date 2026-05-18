@@ -8083,11 +8083,14 @@ def ops_toptanci_teslimler(gun: int = 30, sube_id: Optional[str] = None):
         if not sid:
             continue
         if sid not in subeler_dict:
+            # En son teslim: olay_ts ZATEN DESC sıralı geldiği için ilk gelen son'dur
+            _olay = str(d.get("olay_ts") or "")[:16].replace("T", " ")
             subeler_dict[sid] = {
                 "sube_id": sid,
                 "sube_adi": str(d.get("sube_adi") or sid),
                 "toplam": 0,
                 "son_tarih": str(d.get("tarih") or ""),
+                "son_olay_ts": _olay,  # saat dahil — kart başlığında bunu göster
                 "teslimler": [],
             }
         aciklama = str(d.get("aciklama") or "")

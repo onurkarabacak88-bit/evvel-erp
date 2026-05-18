@@ -12028,8 +12028,33 @@ export default function OperasyonMerkezi() {
                           {sube.sube_adi}
                         </span>
                         <span style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 10 }}>
-                          {sube.toplam} teslim · son: {sube.son_tarih || '—'}
+                          {sube.toplam} teslim · son:{' '}
+                          <strong style={{ color: 'var(--text2)' }}>
+                            {sube.son_olay_ts || sube.son_tarih || '—'}
+                          </strong>
                         </span>
+                        {/* Aynı gün birden fazla teslim varsa vurgu */}
+                        {(() => {
+                          const gunSayim = {};
+                          (sube.teslimler || []).forEach((t) => {
+                            const g = String(t.tarih || '').slice(0, 10);
+                            if (g) gunSayim[g] = (gunSayim[g] || 0) + 1;
+                          });
+                          const cokluGunler = Object.entries(gunSayim).filter(([, n]) => n > 1);
+                          if (cokluGunler.length === 0) return null;
+                          return (
+                            <span
+                              style={{
+                                marginLeft: 8, fontSize: 10, fontWeight: 700,
+                                background: 'rgba(245,158,11,0.20)', color: '#fbbf24',
+                                padding: '2px 7px', borderRadius: 4,
+                              }}
+                              title={cokluGunler.map(([g, n]) => `${g}: ${n} ayrı teslim`).join('\n')}
+                            >
+                              ⏰ {cokluGunler.length} günde çoklu teslim
+                            </span>
+                          );
+                        })()}
                       </div>
                       <span style={{ fontSize: 16, color: 'var(--text3)', flexShrink: 0 }}>
                         {isAcik ? '▲' : '▼'}
@@ -12059,8 +12084,16 @@ export default function OperasyonMerkezi() {
                                     </span>
                                   )}
                                 </div>
-                                <span style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap' }}>
-                                  {t.olay_ts || t.tarih}
+                                <span style={{
+                                  fontSize: 11, fontWeight: 700,
+                                  color: 'var(--text2)',
+                                  whiteSpace: 'nowrap',
+                                  background: 'rgba(99,102,241,0.12)',
+                                  border: '1px solid rgba(99,102,241,0.25)',
+                                  padding: '2px 8px', borderRadius: 4,
+                                }}
+                                title={t.olay_ts ? 'Teslim alındığı tarih + saat' : 'Sadece tarih'}>
+                                  📅 {t.olay_ts || t.tarih}
                                 </span>
                               </div>
                               {t.kalemler.length > 0 ? (
