@@ -43,6 +43,59 @@ def kasa_gun_lock(cur: Any, sube_id: str, tarih: Any) -> None:
     cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (lock1, lock2))
 
 
+# ─────────────────────────────────────────────────────────────────
+# CONSTRAINT GARANTİSİ — Stripe Expand-Contract + Heroku idempotent
+# onay_kuyrugu.durum CHECK constraint'i 'iptal_revize' kabul etmiyor olabilir
+# (Railway DB'de manuel eski migration ile eklenmiş). Lazy + idempotent fix.
+# ─────────────────────────────────────────────────────────────────
+
+_ONAY_KUYRUGU_CONSTRAINT_KONTROL = False  # process-level cache
+
+
+def _onay_kuyrugu_constraint_garantile(cur: Any) -> None:
+    """Idempotent: CHECK constraint tüm gerekli durumları kabul etsin.
+    Sadece process'te bir kez çalışır (cache)."""
+    global _ONAY_KUYRUGU_CONSTRAINT_KONTROL
+    if _ONAY_KUYRUGU_CONSTRAINT_KONTROL:
+        return
+    try:
+        cur.execute("SAVEPOINT sp_ok_constraint")
+        # 1) Mevcut constraint'i kontrol et
+        cur.execute("""
+            SELECT pg_get_constraintdef(oid) AS def
+            FROM pg_constraint
+            WHERE conname = 'onay_kuyrugu_durum_check'
+        """)
+        row = cur.fetchone()
+        mevcut = (dict(row).get("def") if row else "") or ""
+        # 2) Gerekli tüm değerler var mı?
+        gerekli = ['bekliyor', 'onaylandi', 'iptal', 'iptal_revize']
+        eksik = [v for v in gerekli if f"'{v}'" not in mevcut]
+        if not eksik:
+            cur.execute("RELEASE SAVEPOINT sp_ok_constraint")
+            _ONAY_KUYRUGU_CONSTRAINT_KONTROL = True
+            return
+        # 3) EXPAND: DROP + ADD (idempotent, atomic — tek DDL transaction)
+        log.info("onay_kuyrugu constraint genişletiliyor (eksik: %s)", eksik)
+        cur.execute("ALTER TABLE onay_kuyrugu DROP CONSTRAINT IF EXISTS onay_kuyrugu_durum_check")
+        cur.execute("""
+            ALTER TABLE onay_kuyrugu
+            ADD CONSTRAINT onay_kuyrugu_durum_check
+            CHECK (durum IN ('bekliyor','onaylandi','iptal','iptal_revize','reddedildi'))
+        """)
+        cur.execute("RELEASE SAVEPOINT sp_ok_constraint")
+        _ONAY_KUYRUGU_CONSTRAINT_KONTROL = True
+        log.info("onay_kuyrugu constraint güncellendi başarılı")
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_ok_constraint")
+        except Exception:
+            pass
+        log.warning("onay_kuyrugu constraint güncellenemedi: %s", e)
+        # Cache'leme: tekrar denesin
+        _ONAY_KUYRUGU_CONSTRAINT_KONTROL = False
+
+
 def _bilesenleri_topla_kapanis(cur: Any, sube_id: str, tarih: Any) -> Dict[str, float]:
     """KAPANIS fark formülünün 6 bileşenini DB'nin mevcut halinden topla."""
     # 1. acilis_kasa — sube_operasyon_event ACILIS.kasa_sayim
@@ -189,6 +242,9 @@ def yeniden_hesapla(
           "uyari_silindi_mi": False,  # uyari silinmez, sadece okundu=TRUE
         }
     """
+    # Pre-flight: constraint genişletilmiş olsun (process-level cache, 1 kez kontrol)
+    _onay_kuyrugu_constraint_garantile(cur)
+
     cur.execute(
         """
         SELECT id, sube_id::text, tarih::text, tip, fark_tl, beklenen_tl, gercek_tl,
@@ -318,15 +374,14 @@ def yeniden_hesapla(
                     )
                     onay_durumu_yeni = "bekliyor"
             elif onay_durumu_eski == "onaylandi":
-                # Onaylanmış onay — REVİZE AKIŞI:
-                # 1) Eski onayı 'iptal' yap (CHECK constraint'e uyumlu — 'iptal_revize' bazı
-                #    eski DB'lerde tanımlı değil. Açıklamaya [REVİZE] etiketi ile ayrım korunur.)
+                # Onaylanmış onay — REVİZE AKIŞI (Stripe Expand-Contract):
+                # 1) Eski onayı 'iptal_revize' yap (constraint genişletildi, semantik ayrım korunur)
                 # 2) Yeni fark > eşik ise YENİ 'bekliyor' kayıt aç (merkez yeniden onaylasın)
-                # 3) Yeni fark ~ 0 ise sadece iptal yeter (yeni onaya gerek yok)
+                # 3) Yeni fark ~ 0 ise sadece iptal_revize yeter (yeni onaya gerek yok)
                 cur.execute(
                     """
                     UPDATE onay_kuyrugu
-                    SET durum='iptal',
+                    SET durum='iptal_revize',
                         onay_tarihi=NOW(),
                         aciklama = COALESCE(aciklama, '') ||
                                    ' | [REVİZE-' ||
@@ -336,7 +391,7 @@ def yeniden_hesapla(
                     """,
                     (f"{yeni_fark:+.2f}", onay_id),
                 )
-                onay_durumu_yeni = "iptal_revize"  # caller'a semantik bilgi (DB'de 'iptal')
+                onay_durumu_yeni = "iptal_revize"
                 if not otomatik_cozuldu:
                     # Yeni bekliyor kayıt — merkez yeniden onaylasın
                     yeni_onay_id = str(_uuid.uuid4())

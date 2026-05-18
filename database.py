@@ -1143,6 +1143,22 @@ def init_db():
                 THEN ALTER TABLE onay_kuyrugu ADD COLUMN onay_tarihi TIMESTAMP; END IF;
             END $$;
         """)
+        # CHECK constraint expand (Stripe Expand-Contract pattern)
+        # iptal_revize: kasa fark kaynak düzeltme sonrası revize edilen onaylar
+        # reddedildi: gelecekte eklenmesi muhtemel red akışı için (forward-compat)
+        try:
+            cur.execute("SAVEPOINT sp_ok_check_expand")
+            cur.execute("ALTER TABLE onay_kuyrugu DROP CONSTRAINT IF EXISTS onay_kuyrugu_durum_check")
+            cur.execute("""
+                ALTER TABLE onay_kuyrugu
+                ADD CONSTRAINT onay_kuyrugu_durum_check
+                CHECK (durum IN ('bekliyor','onaylandi','iptal','iptal_revize','reddedildi'))
+            """)
+            cur.execute("RELEASE SAVEPOINT sp_ok_check_expand")
+        except Exception as _e:
+            try: cur.execute("ROLLBACK TO SAVEPOINT sp_ok_check_expand")
+            except Exception: pass
+            print(f"[MIGRATION WARN] onay_kuyrugu_durum_check: {_e}")
 
         # ── PERSONEL ───────────────────────────────────────────
         cur.execute("""
