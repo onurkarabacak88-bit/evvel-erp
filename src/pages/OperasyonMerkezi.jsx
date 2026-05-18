@@ -1200,11 +1200,12 @@ function SubeKart({ k, onDetay, personelRisk }) {
         {(b.kritik || kritikler.length > 0) && (
           <span className="badge badge-red" title={kritikler.map(u => temizMesaj(u.mesaj)).join('\n')}>
             🚨 {kritikler.length > 0 ? `${kritikler.length} kritik` : 'kritik'}
+            {uyariFiltre === 'bugun' && kritikler.length > 0 && <span style={{ opacity: 0.7, marginLeft: 4 }}>(bugün)</span>}
           </span>
         )}
         {(o.alarm_sayisi_toplam || 0) > 0 && (
-          <span className="badge badge-red" title="Bugün operasyon eventlerinde biriken alarm sayacı — detay için tıkla">
-            🔐 {o.alarm_sayisi_toplam} alarm
+          <span className="badge badge-red" title="Operasyon eventlerinde biriken alarm sayacı (bugün)">
+            🔐 {o.alarm_sayisi_toplam} alarm <span style={{ opacity: 0.7 }}>(bugün)</span>
           </span>
         )}
         {digerUyarilar.length > 0 && (
@@ -1217,18 +1218,20 @@ function SubeKart({ k, onDetay, personelRisk }) {
           <span
             onClick={(e) => { e.stopPropagation(); setUyariFiltre(uyariFiltre === 'bugun' ? 'hepsi' : 'bugun'); }}
             style={{
-              fontSize: 10, fontWeight: 600, cursor: 'pointer',
-              padding: '2px 8px', borderRadius: 999,
-              background: uyariFiltre === 'hepsi' ? 'rgba(99,102,241,0.20)' : 'rgba(99,102,241,0.10)',
-              color: uyariFiltre === 'hepsi' ? '#a5b4fc' : 'var(--text3)',
-              border: `1px solid ${uyariFiltre === 'hepsi' ? 'rgba(99,102,241,0.45)' : 'rgba(99,102,241,0.20)'}`,
+              fontSize: 11, fontWeight: 700, cursor: 'pointer',
+              padding: '3px 10px', borderRadius: 999,
+              background: uyariFiltre === 'hepsi' ? 'rgba(99,102,241,0.28)' : 'rgba(99,102,241,0.14)',
+              color: uyariFiltre === 'hepsi' ? '#c7d2fe' : '#a5b4fc',
+              border: `1px solid ${uyariFiltre === 'hepsi' ? '#6366f1' : 'rgba(99,102,241,0.40)'}`,
               userSelect: 'none',
             }}
             title={uyariFiltre === 'bugun'
-              ? `Hepsini göster (geçmişte +${eskiSayi} uyarı daha var)`
+              ? `Hepsini göster — kritik + uyarı sayıları geçmişe dahil olur (toplam ${tumUyarilar.length})`
               : 'Sadece bugünü göster'}
           >
-            {uyariFiltre === 'hepsi' ? `📅 Hepsi (${tumUyarilar.length})` : `+ Hepsi (${tumUyarilar.length})`}
+            {uyariFiltre === 'hepsi'
+              ? `📅 Hepsi · Bugüne dön`
+              : `📅 Hepsi (${tumUyarilar.length})`}
           </span>
         )}
       </div>
