@@ -11323,3 +11323,160 @@ def ops_stok_tahmin(sube_id: Optional[str] = None, gun: int = Query(default=14, 
             "tahminler": tahminler,
             "guncelleme": str(bugun),
         }
+
+
+# ─────────────────────────────────────────────────────────────────
+# RAPOR CACHE ENDPOINT'LERİ (Adım 3 — okuma + manuel trigger)
+# ─────────────────────────────────────────────────────────────────
+
+@router.get("/rapor-cache/gunluk")
+def ops_rapor_cache_gunluk(
+    sube_id: Optional[str] = None,
+    bastar: Optional[str] = None,
+    bittar: Optional[str] = None,
+):
+    """rapor_gunluk_sube_ozet tablosundan hızlı oku."""
+    try:
+        from rapor_cache import gunluk_ozet_oku
+    except Exception as e:
+        raise HTTPException(500, f"rapor_cache modülü yüklenemedi: {e}")
+    with db() as (_, cur):
+        kayitlar = gunluk_ozet_oku(cur, sube_id=sube_id, bastar=bastar, bittar=bittar)
+    for k in kayitlar:
+        if k.get("tarih"):
+            k["tarih"] = str(k["tarih"])
+        if k.get("guncelleme"):
+            k["guncelleme"] = str(k["guncelleme"])
+        for fld in ("ciro_nakit", "ciro_pos", "ciro_online", "ciro_toplam",
+                    "kasa_acilis", "kasa_kapanis", "kasa_teslim", "kasa_devir",
+                    "ara_teslim", "kasa_fark_tl",
+                    "anlik_gider_nakit", "anlik_gider_kart"):
+            if k.get(fld) is not None:
+                k[fld] = float(k[fld])
+    return {
+        "sube_id": sube_id, "bastar": bastar, "bittar": bittar,
+        "toplam": len(kayitlar), "kayitlar": kayitlar,
+    }
+
+
+@router.get("/rapor-cache/aylik-food-cost")
+def ops_rapor_cache_aylik_food(
+    sube_id: Optional[str] = None,
+    year_month: Optional[str] = None,
+):
+    """rapor_aylik_food_cost tablosundan oku."""
+    try:
+        from rapor_cache import aylik_food_cost_oku
+    except Exception as e:
+        raise HTTPException(500, f"rapor_cache modülü yüklenemedi: {e}")
+    with db() as (_, cur):
+        kayitlar = aylik_food_cost_oku(cur, sube_id=sube_id, year_month=year_month)
+    for k in kayitlar:
+        if k.get("guncelleme"):
+            k["guncelleme"] = str(k["guncelleme"])
+        for fld in ("toplam_ciro", "toplam_gider", "anlik_gider",
+                    "sabit_gider", "food_cost_pct", "ortalama_fis_tutari"):
+            if k.get(fld) is not None:
+                k[fld] = float(k[fld])
+    return {
+        "sube_id": sube_id, "year_month": year_month,
+        "toplam": len(kayitlar), "kayitlar": kayitlar,
+    }
+
+
+class _RaporCacheYenileBody(BaseModel):
+    tipi: str = "gunluk"
+    tarih: Optional[str] = None
+    year_month: Optional[str] = None
+    sube_id: Optional[str] = None
+
+
+@router.post("/rapor-cache/yenile")
+def ops_rapor_cache_yenile(body: _RaporCacheYenileBody = _RaporCacheYenileBody()):
+    """Manuel cache yenileme — admin/test."""
+    try:
+        from rapor_cache import (
+            gunluk_ozet_topla_tum_subeler, gunluk_ozet_yenile,
+            aylik_food_cost_hesapla,
+            batch_log_basla, batch_log_bitir, batch_log_hata,
+        )
+    except Exception as e:
+        raise HTTPException(500, f"rapor_cache modülü yüklenemedi: {e}")
+    import time as _tm
+
+    tipi = (body.tipi or "gunluk").strip().lower()
+    if tipi not in {"gunluk", "aylik", "her_ikisi"}:
+        raise HTTPException(400, "tipi: gunluk | aylik | her_ikisi")
+
+    sonuc: Dict[str, Any] = {"tipi": tipi}
+    t0 = _tm.time()
+    sayac = 0
+    sayac_ay = 0
+    bid = None
+
+    try:
+        with db() as (conn, cur):
+            bid = batch_log_basla(cur, 'manuel', {'tipi': tipi, 'sube_id': body.sube_id})
+            conn.commit()
+
+        if tipi in ("gunluk", "her_ikisi"):
+            tarih = body.tarih or str(bugun_tr())
+            with db() as (conn, cur):
+                if body.sube_id:
+                    gunluk_ozet_yenile(cur, body.sube_id, tarih, kaynak='manuel')
+                    sayac = 1
+                else:
+                    sayac = gunluk_ozet_topla_tum_subeler(cur, tarih)
+                conn.commit()
+            sonuc["gunluk"] = {"tarih": tarih, "islenen_sube": sayac}
+
+        if tipi in ("aylik", "her_ikisi"):
+            ym = body.year_month or bugun_tr().strftime("%Y-%m")
+            with db() as (conn, cur):
+                sayac_ay = aylik_food_cost_hesapla(cur, ym)
+                conn.commit()
+            sonuc["aylik"] = {"year_month": ym, "islenen_sube": sayac_ay}
+
+        sure_ms = int((_tm.time() - t0) * 1000)
+        with db() as (conn, cur):
+            batch_log_bitir(cur, bid, islenen=sayac + sayac_ay,
+                            sure_ms=sure_ms, detay=sonuc)
+            conn.commit()
+        sonuc["sure_ms"] = sure_ms
+        sonuc["success"] = True
+        return sonuc
+    except Exception as e:
+        sure_ms = int((_tm.time() - t0) * 1000)
+        try:
+            with db() as (conn, cur):
+                batch_log_hata(cur, bid, str(e), sure_ms=sure_ms)
+                conn.commit()
+        except Exception:
+            pass
+        raise HTTPException(500, f"Yenileme hatası: {e}")
+
+
+@router.get("/rapor-cache/batch-log")
+def ops_rapor_cache_batch_log(limit: int = Query(20, ge=1, le=200)):
+    """Son N batch çalıştırma logu."""
+    try:
+        with db() as (_, cur):
+            cur.execute(
+                """
+                SELECT id, batch_tipi, baslangic_ts, bitis_ts, durum,
+                       islenen_kayit, sure_ms, hata_mesaji, detay
+                FROM rapor_batch_log
+                ORDER BY baslangic_ts DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            kayitlar = []
+            for r in (cur.fetchall() or []):
+                d = dict(r)
+                d["baslangic_ts"] = str(d["baslangic_ts"]) if d.get("baslangic_ts") else None
+                d["bitis_ts"] = str(d["bitis_ts"]) if d.get("bitis_ts") else None
+                kayitlar.append(d)
+        return {"toplam": len(kayitlar), "kayitlar": kayitlar}
+    except Exception as e:
+        raise HTTPException(500, f"Batch log okunamadı: {e}")
