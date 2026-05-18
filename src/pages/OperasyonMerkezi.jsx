@@ -1067,6 +1067,8 @@ const insancaDk = dk => { const sa = Math.floor(dk / 60); const kdk = dk % 60; r
 const temizMesaj = m => (m || '').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '').replace(/\{[^}]*\}/g, '').replace(/\s{2,}/g, ' ').trim();
 
 function SubeKart({ k, onDetay, personelRisk }) {
+  // Uyarı filtre toggle: default 'bugun', tıklanırsa 'hepsi'
+  const [uyariFiltre, setUyariFiltre] = useState('bugun');  // 'bugun' | 'hepsi'
   const b   = k.bayraklar || {};
   const o   = k.ozet || {};
   const op  = k.operasyon || {};
@@ -1087,7 +1089,18 @@ function SubeKart({ k, onDetay, personelRisk }) {
     ? displayEv.filter(e => e.tip !== 'ACILIS')
     : displayEv;
 
-  const uyarilar = k.uyarilar || [];
+  // Uyarı filtre: bugün (default) vs hepsi (geçmiş tüm)
+  const tumUyarilar = k.uyarilar || [];
+  const bugunIso = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+  const bugunUyarilar = tumUyarilar.filter(u => {
+    const ts = String(u.olusturma || u.tarih || '');
+    return ts.startsWith(bugunIso);
+  });
+  const uyarilar = uyariFiltre === 'hepsi' ? tumUyarilar : bugunUyarilar;
+  const eskiSayi = tumUyarilar.length - bugunUyarilar.length;
   const kritikler = uyarilar.filter(u => u.seviye === 'kritik');
   const digerUyarilar = uyarilar.filter(u => u.seviye !== 'kritik');
   const g = k.guvenlik || {};
@@ -1190,13 +1203,32 @@ function SubeKart({ k, onDetay, personelRisk }) {
           </span>
         )}
         {(o.alarm_sayisi_toplam || 0) > 0 && (
-          <span className="badge badge-red" title="Güvenlik alarmı — detay için tıkla">
-            🔐 {o.alarm_sayisi_toplam} güvenlik
+          <span className="badge badge-red" title="Bugün operasyon eventlerinde biriken alarm sayacı — detay için tıkla">
+            🔐 {o.alarm_sayisi_toplam} alarm
           </span>
         )}
         {digerUyarilar.length > 0 && (
           <span className="badge badge-yellow" title={digerUyarilar.map(u => temizMesaj(u.mesaj)).join('\n')}>
-            ⚠️ {digerUyarilar.length} uyarı
+            ⚠️ {digerUyarilar.length} uyarı{uyariFiltre === 'bugun' ? ' (bugün)' : ''}
+          </span>
+        )}
+        {/* Bugün/Hepsi toggle — sadece geçmişten eski uyarı varsa görünür */}
+        {eskiSayi > 0 && (
+          <span
+            onClick={(e) => { e.stopPropagation(); setUyariFiltre(uyariFiltre === 'bugun' ? 'hepsi' : 'bugun'); }}
+            style={{
+              fontSize: 10, fontWeight: 600, cursor: 'pointer',
+              padding: '2px 8px', borderRadius: 999,
+              background: uyariFiltre === 'hepsi' ? 'rgba(99,102,241,0.20)' : 'rgba(99,102,241,0.10)',
+              color: uyariFiltre === 'hepsi' ? '#a5b4fc' : 'var(--text3)',
+              border: `1px solid ${uyariFiltre === 'hepsi' ? 'rgba(99,102,241,0.45)' : 'rgba(99,102,241,0.20)'}`,
+              userSelect: 'none',
+            }}
+            title={uyariFiltre === 'bugun'
+              ? `Hepsini göster (geçmişte +${eskiSayi} uyarı daha var)`
+              : 'Sadece bugünü göster'}
+          >
+            {uyariFiltre === 'hepsi' ? `📅 Hepsi (${tumUyarilar.length})` : `+ Hepsi (${tumUyarilar.length})`}
           </span>
         )}
       </div>
