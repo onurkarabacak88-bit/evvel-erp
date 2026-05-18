@@ -368,14 +368,14 @@ def depo_kalem_kodu_resolve(cur: Any, urun_id: str, urun_ad_fallback: str = "") 
             ov = str(d.get("depo_stok_kalem_kodu") or "").strip()
             if ov:
                 return ov
-            # 2. UUID biçimli öğe: doğrudan UUID'i kalem_kodu olarak döndür.
-            #    1-to-1 migration bu UUID'le satır garantiledi; Türkçe slug sorunu yok.
-            if _UUID_RE.match(uid):
-                return uid
-            # 3. UUID değil (eski sistem veri): norm_ad kullan
             db_ad = str(d.get("ad") or "").strip()
             if db_ad:
                 ad_src = db_ad
+            sk = _stok_key_from_urun_ad(ad_src)
+            if sk and sk != "kahve_paket":
+                return sk
+            if _UUID_RE.match(uid):
+                return uid
     except Exception:
         pass
     return depo_kalem_kodu_panel_katalog(uid, ad_src or uid)

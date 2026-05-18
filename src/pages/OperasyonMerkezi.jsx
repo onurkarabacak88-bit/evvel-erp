@@ -223,10 +223,23 @@ function magazaStokGirdiOku(stokMap, sid, urunId, apiStok) {
   return '';
 }
 
-/** Panel açılış havuzu — backend ``_stok_key_from_urun_ad`` ile uyumlu (süt çeşitleri hariç). */
+/** Panel açılış havuzu — backend ``operasyon_stok_motor._stok_key_from_urun_ad`` ile uyumlu. */
 function magazaStokKeyFromUrunAd(ad) {
   const n = magazaAdNorm(ad || '');
   if (!n) return null;
+  if (n.includes('bardak')) {
+    if (n.includes('plastik')) return 'bardak_plastik';
+    if (n.includes('karton')) return 'karton_bardak';
+    if (n.includes('14') && n.includes('oz')) return 'bardak_buyuk';
+    if (n.includes('8') && n.includes('oz')) return 'bardak_kucuk';
+    if (n.includes('kucuk') || n.includes('küçük') || n.includes('small')) return 'bardak_kucuk';
+    if (n.includes('buyuk') || n.includes('büyük') || n.includes('large') || n.includes('orta')) return 'bardak_buyuk';
+    return null;
+  }
+  if (n.includes('kucuk bardak') || n.includes('küçük bardak')) return 'bardak_kucuk';
+  if (n.includes('buyuk bardak') || n.includes('büyük bardak')) return 'bardak_buyuk';
+  if (n.includes('plastik bardak')) return 'bardak_plastik';
+  if (n.includes('karton bardak')) return 'karton_bardak';
   if (n.includes('sut') || n.includes('süt')) {
     if (n === 'sut' || n === 'süt' || n === 'sut litre' || n === 'sut_litre') return 'sut_litre';
     const cesit = ['yagli', 'yağlı', 'yagsiz', 'yağsız', 'yarim', 'yarım', 'laktoz', 'badem', 'soya', 'yulaf', 'hindistan', 'findik', 'fındık', 'cevizi', 'vegan'];
@@ -235,7 +248,8 @@ function magazaStokKeyFromUrunAd(ad) {
     return 'sut_litre';
   }
   if (n.includes('kahve')) return 'kahve_paket';
-  if (n === 'su' || n.includes(' su ')) return 'su_adet';
+  if (n === 'su' || n === 'su adet' || n === 'su_adet' || n === 'su sisesi' || n === 'su şişesi') return 'su_adet';
+  if (n.includes(' su ') && !n.includes('bardak') && n.length <= 15) return 'su_adet';
   if (n.includes('redbull')) return 'redbull_adet';
   if (n.includes('soda')) return 'soda_adet';
   if (n.includes('cookie')) return 'cookie_adet';
@@ -274,11 +288,15 @@ function magazaDepoKalemKodu(it) {
 function magazaCanliDepoSatirBul(canliStokSatirlari, it) {
   const rows = Array.isArray(canliStokSatirlari) ? canliStokSatirlari : [];
   const kod = magazaDepoKalemKodu(it);
-  if (!kod) return undefined;
-  return (
-    rows.find((st) => String(st?.kalem_kodu || '') === kod)
-    || rows.find((st) => String(st?.kalem_kodu || '') === String(it?.id || ''))
-  );
+  const uid = String(it?.id || '').trim();
+  const havuz = it?.depo_stok_kalem_kodu ? String(it.depo_stok_kalem_kodu).trim() : '';
+  const sk = magazaStokKeyFromUrunAd(it?.ad);
+  const adaylar = [kod, havuz, sk, uid].filter(Boolean);
+  for (const k of adaylar) {
+    const hit = rows.find((st) => String(st?.kalem_kodu || '') === k);
+    if (hit) return hit;
+  }
+  return undefined;
 }
 
 function magazaUrunEfektifBirimFiyat(it, fiyatMap) {
@@ -6729,6 +6747,7 @@ export default function OperasyonMerkezi() {
                               <ul style={{ margin: 0, padding: '0 10px 8px', listStyle: 'none', fontSize: 11, background: 'var(--bg)', minWidth: 480 }}>
                                 {filteredItems.map((it) => {
                                   const mapKey = `${subeDepoKey}::${it.id}`;
+                                  const etkinSubeId = String(k?.sube_id || m?.sube_id || '').trim();
                                   const canliSatir = magazaCanliDepoSatirBul(canliStokSatirlari, it);
                                   const referansHam = canliSatir ? canliSatir.mevcut_adet : it.stok;
                                   const referansSayi = String(referansHam ?? '').trim() === '' ? 0 : (magazaKatalogSayi(referansHam) ?? 0);
@@ -6737,6 +6756,7 @@ export default function OperasyonMerkezi() {
                                   const efektifBirimFiyat = magazaUrunEfektifBirimFiyat(it, magazaGlobalFiyatMap);
                                   const onayGerekli = stokSayi != null && stokSayi !== referansSayi;
                                   const onayBusy = !!magazaStokOnayBusy[mapKey];
+                                  const kalemKoduKayit = magazaDepoKalemKodu(it);
                                   const satirToplam = stokSayi != null && efektifBirimFiyat != null && Number.isFinite(efektifBirimFiyat)
                                     ? stokSayi * efektifBirimFiyat
                                     : null;
@@ -6857,16 +6877,24 @@ export default function OperasyonMerkezi() {
                                       <button
                                         type="button"
                                         className={`btn btn-sm ${onayGerekli ? 'btn-primary' : 'btn-secondary'}`}
-                                        disabled={!k?.sube_id || stokSayi == null || !onayGerekli || onayBusy}
-                                        title={onayGerekli ? 'Bu satırı depoya işle' : 'Onay gerektiren değişiklik yok'}
+                                        disabled={!etkinSubeId || stokSayi == null || !onayGerekli || onayBusy}
+                                        title={
+                                          !etkinSubeId
+                                            ? 'Şube bağlantısı yok — canlı operasyon kartı yüklenene kadar bekleyin'
+                                            : stokSayi == null
+                                              ? 'Geçerli bir sayı girin'
+                                              : onayGerekli
+                                                ? `Depoya işle (havuz: ${kalemKoduKayit})`
+                                                : 'Onay gerektiren değişiklik yok'
+                                        }
                                         onClick={() => {
-                                          if (!k?.sube_id || stokSayi == null) return;
+                                          if (!etkinSubeId || stokSayi == null) return;
                                           magazaStokKalemOnayla({
                                             slug: m.slug,
                                             subeDepoKey,
-                                            subeId: String(k.sube_id || ''),
+                                            subeId: etkinSubeId,
                                             mapKey,
-                                            kalemKodu: magazaDepoKalemKodu(it),
+                                            kalemKodu: kalemKoduKayit,
                                             kalemAdi: it.ad,
                                             mevcutAdet: stokSayi,
                                             minStok: Number(canliSatir?.min_stok || 0),
