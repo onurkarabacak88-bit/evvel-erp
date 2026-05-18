@@ -5922,10 +5922,59 @@ def _kk_gider_ekle(cur, sube_id: str, tarih: str, payload: Dict[str, Any],
             "eski": None, "yeni": {"kategori": kategori, "tutar": tutar, "aciklama": aciklama}}
 
 
+_KKD_TABLO_KONTROL_EDILDI = False  # process-level cache
+
+
+def _kkd_tablo_garantile(cur) -> None:
+    """Lazy migration: kasa_fark_kaynak_duzeltme tablosu yoksa anında oluştur.
+    database.py init_db SAVEPOINT migration'ı yutmuş olabilir."""
+    global _KKD_TABLO_KONTROL_EDILDI
+    if _KKD_TABLO_KONTROL_EDILDI:
+        return
+    for ddl in [
+        # FK kaldırıldı (sube_operasyon_uyari migration sırası problemi çıkarmasın)
+        """
+        CREATE TABLE IF NOT EXISTS kasa_fark_kaynak_duzeltme (
+            id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            uyari_id        TEXT NOT NULL,
+            sube_id         TEXT NOT NULL,
+            tarih           DATE NOT NULL,
+            tip             TEXT NOT NULL,
+            sebep           TEXT NOT NULL,
+            hedef_tablo     TEXT,
+            hedef_id        TEXT,
+            eski_deger_json JSONB,
+            yeni_deger_json JSONB,
+            eski_fark_tl    NUMERIC(14,2),
+            yeni_fark_tl    NUMERIC(14,2),
+            notu            TEXT,
+            personel_id     TEXT,
+            personel_ad     TEXT,
+            onay_durumu_eski TEXT,
+            onay_durumu_yeni TEXT,
+            olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_kfkd_uyari ON kasa_fark_kaynak_duzeltme(uyari_id)",
+        "CREATE INDEX IF NOT EXISTS idx_kfkd_sube_tarih ON kasa_fark_kaynak_duzeltme(sube_id, tarih DESC)",
+    ]:
+        try:
+            cur.execute("SAVEPOINT sp_kkd")
+            cur.execute(ddl)
+            cur.execute("RELEASE SAVEPOINT sp_kkd")
+        except Exception:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_kkd")
+            except Exception:
+                pass
+    _KKD_TABLO_KONTROL_EDILDI = True
+
+
 def _kk_audit_yaz(cur, uyari: Dict[str, Any], sebep: str,
                   hedef: Dict[str, Any], eski_fark: float, yeni_fark: float,
                   notu: Optional[str], pid: Optional[str], pad: Optional[str],
                   onay_eski: Optional[str], onay_yeni: Optional[str]) -> None:
+    _kkd_tablo_garantile(cur)
     cur.execute(
         """
         INSERT INTO kasa_fark_kaynak_duzeltme
@@ -6104,6 +6153,7 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
 def ops_kasa_duzeltme_tarihce(uyari_id: str):
     """Belirli bir uyari için yapılan tüm kaynak düzeltmelerin audit tarihçesi."""
     with db() as (_, cur):
+        _kkd_tablo_garantile(cur)
         cur.execute(
             """
             SELECT id, sebep, hedef_tablo, hedef_id,
