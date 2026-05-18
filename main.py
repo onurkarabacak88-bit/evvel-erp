@@ -211,6 +211,42 @@ def _gece_yarisi_scheduler():
                 except Exception as e:
                     logger.warning(f"⏰ Scheduler haftalık fire hatası: {e}")
 
+            # ── RAPOR CACHE — gecelik özet batch (defensive) ──
+            try:
+                from rapor_cache import (
+                    gunluk_ozet_topla_tum_subeler, aylik_food_cost_hesapla,
+                    batch_log_basla, batch_log_bitir,
+                )
+                import time as _tm
+                _t0 = _tm.time()
+                dun = bugun - timedelta(days=1)
+                bid = None
+                with db() as (conn, cur):
+                    bid = batch_log_basla(cur, 'gunluk_ozet',
+                                          {'tarih': str(dun), 'sebep': 'gece_scheduler'})
+                    conn.commit()
+                with db() as (conn, cur):
+                    sayac_dun = gunluk_ozet_topla_tum_subeler(cur, dun)
+                    sayac_bugun = gunluk_ozet_topla_tum_subeler(cur, bugun)
+                    conn.commit()
+                # Aylık food cost — bu ay + ay başında geçen ay
+                ym_bu = bugun.strftime("%Y-%m")
+                with db() as (conn, cur):
+                    aylik_food_cost_hesapla(cur, ym_bu)
+                    if bugun.day <= 3:
+                        ym_oncesi = (bugun.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+                        aylik_food_cost_hesapla(cur, ym_oncesi)
+                    conn.commit()
+                with db() as (conn, cur):
+                    batch_log_bitir(cur, bid,
+                                    islenen=sayac_dun + sayac_bugun,
+                                    sure_ms=int((_tm.time() - _t0) * 1000),
+                                    detay={'dun': sayac_dun, 'bugun': sayac_bugun, 'ym': ym_bu})
+                    conn.commit()
+                logger.info(f"⏰ Rapor cache: dün={sayac_dun} bugün={sayac_bugun} aylık={ym_bu}")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler rapor cache hatası: {e}")
+
         except Exception as e:
             logger.error(f"⏰ Scheduler genel hata: {e}")
             import time as _t
