@@ -15,14 +15,32 @@ Asla DB transaction'ı açmaz — caller'ın cur'unu kullanır (atomicity korunu
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import uuid as _uuid
 from datetime import date
 from typing import Any, Dict, Optional, Tuple
 
 from operasyon_kurallar import tolerans_seviyesi, beklenen_dunku_kapanis_kasa
 
 log = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────
+# CONCURRENCY LOCK — aynı şube/gün için tüm operasyonları seri hale getirir.
+# kapanış-event, /coz, /kaynak-duzelt, yeniden_hesap arasında race önler.
+# pg_advisory_xact_lock: transaction sonunda OTOMATİK düşer (commit/rollback).
+# ─────────────────────────────────────────────────────────────────
+
+def kasa_gun_lock(cur: Any, sube_id: str, tarih: Any) -> None:
+    """Aynı (sube_id, tarih) için işlem-seviyesi kilit alır.
+    Bu transaction commit/rollback olunca otomatik düşer."""
+    key = f"kasa_fark:{sube_id}:{tarih}"
+    h = hashlib.sha256(key.encode("utf-8")).digest()
+    lock1 = int.from_bytes(h[:4], "big", signed=True)
+    lock2 = int.from_bytes(h[4:8], "big", signed=True)
+    cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (lock1, lock2))
 
 
 def _bilesenleri_topla_kapanis(cur: Any, sube_id: str, tarih: Any) -> Dict[str, float]:
@@ -299,8 +317,42 @@ def yeniden_hesapla(
                     )
                     onay_durumu_yeni = "bekliyor"
             elif onay_durumu_eski == "onaylandi":
-                # Onaylanmış → tutar/durum değişmez; revize bilgisi audit'e gider
-                onay_durumu_yeni = "onaylandi_revize"
+                # Onaylanmış onay — REVİZE AKIŞI:
+                # 1) Eski onayı 'iptal_revize' yap (silinmez, audit kalır)
+                # 2) Yeni fark > eşik ise YENİ 'bekliyor' kayıt aç (merkez yeniden onaylasın)
+                # 3) Yeni fark ~ 0 ise sadece iptal_revize yeter (yeni onaya gerek yok)
+                cur.execute(
+                    """
+                    UPDATE onay_kuyrugu
+                    SET durum='iptal_revize',
+                        aciklama = COALESCE(aciklama, '') ||
+                                   ' | REVİZE: kaynak düzeltildi (' ||
+                                   to_char(NOW() AT TIME ZONE 'Europe/Istanbul','YYYY-MM-DD HH24:MI') ||
+                                   '), yeni fark ' || %s::text || '₺'
+                    WHERE id=%s
+                    """,
+                    (f"{yeni_fark:+.2f}", onay_id),
+                )
+                onay_durumu_yeni = "iptal_revize"
+                if not otomatik_cozuldu:
+                    # Yeni bekliyor kayıt — merkez yeniden onaylasın
+                    yeni_onay_id = str(_uuid.uuid4())
+                    cur.execute(
+                        """
+                        INSERT INTO onay_kuyrugu
+                            (id, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih, durum)
+                        VALUES (%s, 'KAPANIS_KASA_FARK', 'kasa_farki', %s, %s, %s, %s::date, 'bekliyor')
+                        """,
+                        (
+                            yeni_onay_id,
+                            yeni_onay_id,
+                            (f"[{sube_id}] Kapanış kasa farkı (REVİZE — eski onay "
+                             f"{onay_id[:8]}…): {yeni_fark:+,.2f}₺"),
+                            yeni_fark,
+                            str(tarih),
+                        ),
+                    )
+                    onay_durumu_yeni = "iptal_revize_yeni_bekliyor"
 
     return {
         "uyari_id": uyari_id,

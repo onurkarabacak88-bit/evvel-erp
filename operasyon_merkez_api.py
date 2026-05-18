@@ -5697,13 +5697,13 @@ def ops_kasa_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyu
         except (TypeError, ValueError):
             raise HTTPException(400, "duzeltilen_fark_tl sayısal olmalı")
     with db() as (conn, cur):
+        # 1) Önce sube/tarih'i öğren (lock için)
         cur.execute(
             """
-            SELECT id, sube_id, beklenen_tl, gercek_tl, fark_tl, okundu
+            SELECT id, sube_id, tarih, beklenen_tl, gercek_tl, fark_tl, okundu
             FROM sube_operasyon_uyari
             WHERE id=%s
               AND tip IN ('ACILIS_KASA_FARK', 'KAPANIS_KASA_FARK')
-            FOR UPDATE
             """,
             (uyari_id,),
         )
@@ -5711,6 +5711,24 @@ def ops_kasa_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyu
         if not row:
             raise HTTPException(404, "Kasa uyumsuzluk kaydı bulunamadı")
         r = dict(row)
+
+        # 2) Aynı (sube,tarih) için işlem-seviyesi kilit (tx sonunda otomatik düşer)
+        from kasa_fark_recalc import kasa_gun_lock
+        kasa_gun_lock(cur, str(r["sube_id"]), str(r["tarih"]))
+
+        # 3) Kilidi aldıktan sonra row'u FOR UPDATE ile yeniden oku (tutar son halde)
+        cur.execute(
+            """
+            SELECT id, sube_id, beklenen_tl, gercek_tl, fark_tl, okundu
+            FROM sube_operasyon_uyari
+            WHERE id=%s
+            FOR UPDATE
+            """,
+            (uyari_id,),
+        )
+        r = dict(cur.fetchone() or {})
+        if not r:
+            raise HTTPException(404, "Kasa uyumsuzluk kaydı bulunamadı")
         if bool(r.get("okundu")):
             return {"success": True, "durum": "zaten_cozulmus", "id": uyari_id}
         cur.execute(
@@ -5940,9 +5958,28 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
     pad = (body.personel_ad or "").strip() or None
     notu = (body.notu or "").strip() or None
 
-    from kasa_fark_recalc import yeniden_hesapla as _kf_recalc
+    from kasa_fark_recalc import yeniden_hesapla as _kf_recalc, kasa_gun_lock
 
     with db() as (conn, cur):
+        # ─── Önce sube/tarih'i SELECT (lock alabilmek için) ───
+        cur.execute(
+            """
+            SELECT sube_id::text, tarih::text
+            FROM sube_operasyon_uyari
+            WHERE id=%s AND tip IN ('ACILIS_KASA_FARK','KAPANIS_KASA_FARK')
+            """,
+            (uyari_id,),
+        )
+        _pre = cur.fetchone()
+        if not _pre:
+            raise HTTPException(404, "Kasa uyumsuzluk kaydı bulunamadı")
+        _pre = dict(_pre)
+        # ─── Aynı (sube,tarih) için işlem-seviyesi kilit ───
+        # Eş zamanlı /kaynak-duzelt veya /coz çağrıları bu noktada bekler.
+        # Kilit transaction commit/rollback olunca otomatik düşer.
+        kasa_gun_lock(cur, _pre["sube_id"], _pre["tarih"])
+
+        # Kilidi aldıktan sonra row'u FOR UPDATE ile yeniden oku (en güncel hali)
         uyari = _kk_uyari_getir(cur, uyari_id)
         sube_id = uyari["sube_id"]
         tarih = uyari["tarih"]
