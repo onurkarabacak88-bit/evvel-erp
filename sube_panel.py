@@ -153,7 +153,8 @@ def _x_extract_amounts(obj: dict) -> dict:
     pos = _x_to_float(low.get("pos"), 0)
     online = _x_to_float(low.get("online"), 0)
     toplam = _x_to_float(low.get("toplam"), 0)
-    if online > 0.001 and nakit > 0.001 and pos > 0.001 and abs(online - (nakit + pos)) < 0.5:
+    # Çift sayım kontrolü: tolerans 1 kuruş (eski 50 kuruş hile riskini önler)
+    if online > 0.001 and nakit > 0.001 and pos > 0.001 and abs(online - (nakit + pos)) < 0.01:
         online = 0.0
     if toplam <= 0 and (nakit + pos + online) > 0:
         toplam = nakit + pos + online

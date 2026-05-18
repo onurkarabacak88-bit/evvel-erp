@@ -98,7 +98,7 @@ def ciro_taslak_duzenle(taslak_id: str, body: CiroTaslakTutarBody):
     nakit = float(body.nakit or 0)
     pos = float(body.pos or 0)
     online = float(body.online or 0)
-    if online > 0.001 and nakit > 0.001 and pos > 0.001 and abs(online - (nakit + pos)) < 0.5:
+    if online > 0.001 and nakit > 0.001 and pos > 0.001 and abs(online - (nakit + pos)) < 0.01:
         raise HTTPException(
             400,
             "Online tutarı nakit+POS toplamına eşit — çift sayım. Online yoksa 0 girin.",
@@ -171,7 +171,7 @@ def ciro_taslak_onayla(taslak_id: str, body: CiroTaslakOnayTutarlari = CiroTasla
         nakit = float(body.nakit) if body.nakit is not None else float(t["nakit"])
         pos = float(body.pos) if body.pos is not None else float(t["pos"])
         online = float(body.online) if body.online is not None else float(t["online"])
-        if online > 0.001 and nakit > 0.001 and pos > 0.001 and abs(online - (nakit + pos)) < 0.5:
+        if online > 0.001 and nakit > 0.001 and pos > 0.001 and abs(online - (nakit + pos)) < 0.01:
             raise HTTPException(
                 400,
                 "Online tutarı nakit+POS toplamına eşit — çift sayım. Online yoksa 0 onaylayın.",

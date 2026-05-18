@@ -2507,7 +2507,9 @@ def _online_nakit_pos_cift(nakit: float, pos: float, online: float) -> bool:
     n, p, o = float(nakit or 0), float(pos or 0), float(online or 0)
     if o <= 0.001 or n <= 0.001 or p <= 0.001:
         return False
-    return abs(o - (n + p)) < 0.5
+    # Tolerans 50 kuruştan 1 kuruşa indirildi — eskiden 49 kuruşa kadar kasiyer hile/hata
+    # yapabiliyordu. Banka para mutabakatı standardı: < 0.01₺ (kuruş hassasiyeti).
+    return abs(o - (n + p)) < 0.01
 
 
 def _ciro_kalemleri_sanitize(

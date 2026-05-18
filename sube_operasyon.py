@@ -915,7 +915,8 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             cn = float(body.ciro_nakit)
             cp = float(body.ciro_pos)
             co = float(body.ciro_online)
-            if co > 0.001 and cn > 0.001 and cp > 0.001 and abs(co - (cn + cp)) < 0.5:
+            # Çift sayım kontrolü: tolerans 1 kuruş (eski 50 kuruş hile riskini önler)
+            if co > 0.001 and cn > 0.001 and cp > 0.001 and abs(co - (cn + cp)) < 0.01:
                 raise HTTPException(
                     400,
                     "Online tutarı nakit ile POS toplamına eşit olamaz — "
