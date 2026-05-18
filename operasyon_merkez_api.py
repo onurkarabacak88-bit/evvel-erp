@@ -11460,7 +11460,9 @@ def ops_rapor_cache_yenile(body: _RaporCacheYenileBody = _RaporCacheYenileBody()
 def ops_rapor_cache_batch_log(limit: int = Query(20, ge=1, le=200)):
     """Son N batch çalıştırma logu."""
     try:
+        from rapor_cache import tablolari_garantile
         with db() as (_, cur):
+            tablolari_garantile(cur)
             cur.execute(
                 """
                 SELECT id, batch_tipi, baslangic_ts, bitis_ts, durum,
