@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'rea
 import { api, fmt } from '../utils/api';
 import { computeOpsKartVurgu } from '../utils/opsVurgu';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
+import { cacheFreshness, cacheTooltip } from '../utils/raporCache';
+import CacheFreshnessBadge from '../components/CacheFreshnessBadge';
 import SiparisKontrolKulesi from './SiparisKontrolKulesi';
 
 /** Backend'in statik şube paneli (`GET /sube-panel/{id}`) — API ile aynı kök (VITE_API_URL). */
@@ -2259,6 +2261,7 @@ export default function OperasyonMerkezi() {
   const [kapanisTakipYukleniyor, setKapanisTakipYukleniyor] = useState(false);
   const [kapanisTakipTarih, setKapanisTakipTarih] = useState(isGunuIsoIstanbul());
   const [kapanisTakipSonGuncelleme, setKapanisTakipSonGuncelleme] = useState(null);
+  const [kapanisTakipKaynak, setKapanisTakipKaynak] = useState(null);  // 'cache' | 'live'
   const kapanisTakipIntervalRef = useRef(null);
   const [ciroOnayBugun, setCiroOnayBugun] = useState({ tarih: '', toplam: 0, toplam_tutar: 0, kayitlar: [] });
   const [ciroOnayBugunYukleniyor, setCiroOnayBugunYukleniyor] = useState(false);
@@ -2717,19 +2720,83 @@ export default function OperasyonMerkezi() {
     });
   }, [kullanilanGunYukle]);
 
-  const yukleKapanisTakip = useCallback(async (tarih, { silent = false } = {}) => {
+  // Cache → satır formatına dönüştür (kapanis-takip satır formatıyla uyumlu)
+  const _cacheToKapanisTakipSatirlar = useCallback((cacheRes) => {
+    const k = Array.isArray(cacheRes?.kayitlar) ? cacheRes.kayitlar : [];
+    if (k.length === 0) return null;
+    const satirlar = k.map((row) => ({
+      sube_id: row.sube_id,
+      sube_adi: row.sube_id,  // gerçek ad live'da gelecek; cache'ten geçici
+      // Açılış
+      acildi: !!row.acilis_yapildi,
+      sabah_kasa_tl: Number(row.kasa_acilis || 0),
+      // Kapanış
+      kapanis_tamam: !!row.kapanis_yapildi,
+      teslim_kasa_tl: Number(row.kasa_teslim || 0),
+      devir: Number(row.kasa_devir || 0),
+      ara_teslim_tl: Number(row.ara_teslim || 0),
+      kapanis_personel: row.kapanis_personel || '',
+      // Ciro
+      ciro_onaylandi: row.ciro_durum === 'onaylandi',
+      taslak_var: row.ciro_durum === 'taslak',
+      taslak_durum: row.ciro_durum === 'taslak' ? 'bekliyor' : '',
+      nakit: Number(row.ciro_nakit || 0),
+      pos: Number(row.ciro_pos || 0),
+      online: Number(row.ciro_online || 0),
+      ciro_tutar: Number(row.ciro_toplam || 0),
+      // Gider + kasa fark
+      anlik_gider_nakit_tl: Number(row.anlik_gider_nakit || 0),
+      nakit_kasa_fark_tl: row.kasa_fark_tl,
+      nakit_denkleme_tam: row.kasa_fark_durum != null,
+      // Meta
+      _cache: true,  // bu satır cache'ten geldi işareti
+    }));
+    return {
+      tarih: cacheRes?.bastar || cacheRes?.bittar || null,
+      satirlar,
+      sube_sayisi: satirlar.length,
+      kapanis_yapan_adet: satirlar.filter((r) => r.kapanis_tamam).length,
+      ciro_onaylanan_adet: satirlar.filter((r) => r.ciro_onaylandi).length,
+      taslak_bekleyen_adet: satirlar.filter((r) => r.taslak_var && r.taslak_durum === 'bekliyor').length,
+      eksik_kapanis_adet: satirlar.filter((r) => !r.kapanis_tamam).length,
+      eksik_ciro_adet: satirlar.filter((r) => !r.ciro_onaylandi && !r.taslak_var).length,
+      _cache: true,
+    };
+  }, []);
+
+  const yukleKapanisTakip = useCallback(async (tarih, { silent = false, cacheFirst = false } = {}) => {
     const hedef = (tarih || isGunuIsoIstanbul()).trim();
     if (!silent) setKapanisTakipYukleniyor(true);
+
+    // CACHE-FIRST: önce hızlı cache'ten oku (sadece ilk yüklemede), anında ekrana bas
+    if (cacheFirst) {
+      try {
+        const cr = await api(`/ops/rapor-cache/gunluk?bastar=${hedef}&bittar=${hedef}`);
+        const cacheData = _cacheToKapanisTakipSatirlar(cr);
+        if (cacheData) {
+          setKapanisTakip(cacheData);
+          setKapanisTakipKaynak('cache');
+          setKapanisTakipSonGuncelleme(new Date());
+          // Cache geldi — yükleniyor spinner'ı kaldır (kullanıcı veriyi gördü)
+          if (!silent) setKapanisTakipYukleniyor(false);
+        }
+      } catch {
+        // Cache hatası sessiz, live devam etsin
+      }
+    }
+
+    // LIVE: kesin doğru veri (cache üzerine yazar)
     try {
       const r = await api(`/ops/kapanis-takip?tarih=${encodeURIComponent(hedef)}`);
       setKapanisTakip(r);
+      setKapanisTakipKaynak('live');
       setKapanisTakipSonGuncelleme(new Date());
     } catch (e) {
       if (!silent) toast(e.message || 'Kapanış takip yüklenemedi');
     } finally {
       if (!silent) setKapanisTakipYukleniyor(false);
     }
-  }, [toast]);
+  }, [toast, _cacheToKapanisTakipSatirlar]);
 
   const ciroOnayGunYukle = useCallback(async (tarih) => {
     const hedef = (tarih || isGunuIsoIstanbul()).trim();
@@ -3680,7 +3747,8 @@ export default function OperasyonMerkezi() {
       }
       return;
     }
-    yukleKapanisTakip(kapanisTakipTarih);
+    // Cache-first: ilk yüklemede hızlı cache + paralel live
+    yukleKapanisTakip(kapanisTakipTarih, { cacheFirst: true });
     // Bugünkü görünümde 2 dakikada bir otomatik yenile
     if (kapanisTakipTarih === isGunuIsoIstanbul()) {
       kapanisTakipIntervalRef.current = setInterval(() => {
@@ -8446,11 +8514,14 @@ export default function OperasyonMerkezi() {
                   Her 2 dk otomatik güncellenir
                 </span>
               )}
-              {kapanisTakipSonGuncelleme && (
-                <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 'auto', alignSelf: 'center' }}>
-                  Son güncelleme: {kapanisTakipSonGuncelleme.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
-                </span>
-              )}
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <CacheFreshnessBadge
+                  guncelleme={kapanisTakipSonGuncelleme}
+                  kaynak={kapanisTakipKaynak}
+                  onYenile={() => yukleKapanisTakip(kapanisTakipTarih)}
+                  yenileniyor={kapanisTakipYukleniyor}
+                />
+              </div>
             </div>
             <p style={{ margin: 0, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
               Varsayılan tarih <strong>iş günü</strong> (İstanbul'da gece 02:00'ye kadar önceki takvim günü). Kapanış son teslim: ertesi gün{' '}
