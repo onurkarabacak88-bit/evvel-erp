@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from tr_saat import is_gunu_tr
+
 def tolerans_seviyesi(fark_tl: float) -> str:
     """±50 normal, 50–200 uyarı, 200+ kritik (mutlak fark)."""
     a = abs(float(fark_tl or 0))
@@ -81,13 +83,14 @@ def beklenen_dunku_kapanis_kasa(cur: Any, sube_id: str) -> Optional[float]:
 
 
 def vardiya_devri_bugun_baslamis_mi(cur: Any, sube_id: str) -> bool:
+    """Yalnızca sabah→akşam vardiya devri kaydı (akşam kapanış kaydı değil)."""
     cur.execute(
         """
         SELECT 1 FROM kapanis_kayit
-        WHERE sube_id=%s AND tarih=CURRENT_DATE
+        WHERE sube_id=%s AND tarih=%s AND olay='vardiya_sabah_aksam_devri'
         LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, is_gunu_tr()),
     )
     return cur.fetchone() is not None
 

@@ -283,9 +283,12 @@ class VardiyaDevirAdim1(BaseModel):
     online: float = 0
     teslim: float = 0
     devir: float = 0
-    x_raporu_gonderildi: bool = False
+    kasa_sayim_dogrulandi: bool = Field(
+        ...,
+        description="Kasadaki nakit sayımı personel tarafından doğrulandı (kapanış X raporu değil).",
+    )
     ciro_gonderildi: bool = False
-    operasyon_event_id: Optional[str] = None
+    operasyon_event_id: Optional[str] = None  # kullanılmıyor; geriye dönük istek gövdesi
     bardak_kucuk: int = Field(..., ge=0)
     bardak_buyuk: int = Field(..., ge=0)
     bardak_plastik: int = Field(..., ge=0)
@@ -405,31 +408,13 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
     simdi = dt_now_tr_naive()
     if body.teslim < 0:
         raise HTTPException(400, "Kasadaki nakit negatif olamaz")
-    # Panelde adım-1 yalnızca kasa sayımı; X nakit/POS/online isteğe bağlı (0 olabilir).
-    if not body.x_raporu_gonderildi:
-        raise HTTPException(400, "X raporu gönderildi onayı gerekli")
+    if not body.kasa_sayim_dogrulandi:
+        raise HTTPException(400, "Kasa sayımı doğrulama onayı gerekli")
 
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
         if not _bugun_sube_acildi_mi(cur, sube_id):
             raise HTTPException(403, "Şube açılış kaydı olmadan vardiya devri başlatılamaz")
-        eid = (body.operasyon_event_id or "").strip()
-        if not eid:
-            raise HTTPException(400, "Vardiya devri için aktif KAPANIS operasyon eventi zorunludur")
-        cur.execute(
-            """
-            SELECT id FROM sube_operasyon_event
-            WHERE id=%s AND sube_id=%s AND tarih=%s AND tip='KAPANIS'
-              AND durum IN ('bekliyor','gecikti')
-            LIMIT 1
-            """,
-            (eid, sube_id, is_gunu_tr()),
-        )
-        if not cur.fetchone():
-            raise HTTPException(
-                409,
-                "Vardiya devri yalnızca aktif KAPANIS operasyon eventi ile başlatılabilir",
-            )
 
         zorunlu_sabah = _bugun_acilis_kayitli_sabah_personel_id(cur, sube_id)
         if zorunlu_sabah and body.sabahci_devreden_id != zorunlu_sabah:
@@ -487,9 +472,9 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
                 body.teslim,
                 body.devir,
                 simdi,
-                eid,
-                body.x_raporu_gonderildi,
-                body.ciro_gonderildi,
+                None,
+                False,
+                False,
                 body.sabahci_devreden_id,
                 meta_sql,
             ),
@@ -505,7 +490,7 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
                 f"Vardiya devri 1. imza (PIN) — personel={onay_ad} "
                 f"tarih={bugun_tr()} saat={simdi.strftime('%H:%M:%S')}"
             ),
-            ref_event_id=eid,
+            ref_event_id=kid,
             personel_id=body.sabahci_devreden_id,
             personel_ad=onay_ad,
             bildirim_saati=simdi.strftime("%H:%M:%S"),
@@ -570,7 +555,7 @@ def vardiya_devri_adim2(sube_id: str, body: VardiyaDevirAdim2):
                 f"Vardiya devri 2. imza (PIN) — personel={onay_ad} "
                 f"tarih={bugun_tr()} saat={simdi.strftime('%H:%M:%S')}"
             ),
-            ref_event_id=kk.get("operasyon_event_id"),
+            ref_event_id=kk["id"],
             personel_id=body.aksamci_devralan_id,
             personel_ad=onay_ad,
             bildirim_saati=simdi.strftime("%H:%M:%S"),
@@ -612,7 +597,10 @@ def legacy_kapanis_adim1(sube_id: str, body: dict = Body(...)):
         online=float(body.get("online") or 0),
         teslim=float(body.get("teslim", 0)),
         devir=float(body.get("devir") or 0),
-        x_raporu_gonderildi=bool(body.get("x_raporu_gonderildi")),
+        kasa_sayim_dogrulandi=bool(
+            body.get("kasa_sayim_dogrulandi")
+            or body.get("x_raporu_gonderildi")
+        ),
         ciro_gonderildi=bool(body.get("ciro_gonderildi")),
         operasyon_event_id=body.get("operasyon_event_id"),
         bardak_kucuk=_zint("bardak_kucuk"),

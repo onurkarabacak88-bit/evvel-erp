@@ -6247,6 +6247,30 @@ function renderAdim2(row) {
   return h;
 }
 
+/** Vardiya devri / kapanış — bekleyen veya geciken KAPANIS operasyon event id. */
+function kapanisOperasyonEventIdBul() {
+  var op = lastData && lastData.operasyon ? lastData.operasyon : null;
+  if (!op) return null;
+  var aktif = op.aktif || null;
+  if (aktif && String(aktif.tip || '').toUpperCase() === 'KAPANIS' && aktif.id) return aktif.id;
+  var adaylar = [];
+  if (Array.isArray(op.events)) adaylar = adaylar.concat(op.events);
+  if (Array.isArray(op.events_ozet)) adaylar = adaylar.concat(op.events_ozet);
+  var i;
+  for (i = 0; i < adaylar.length; i++) {
+    var ev = adaylar[i] || {};
+    var tip = String(ev.tip || '').toUpperCase();
+    var durum = String(ev.durum || '').toLowerCase();
+    if (!ev.id || tip !== 'KAPANIS') continue;
+    if (durum === 'bekliyor' || durum === 'gecikti' || durum === 'devam' || durum === 'aktif') return ev.id;
+  }
+  for (i = 0; i < adaylar.length; i++) {
+    var ev2 = adaylar[i] || {};
+    if (ev2.id && String(ev2.tip || '').toUpperCase() === 'KAPANIS') return ev2.id;
+  }
+  return null;
+}
+
 function renderKasaDevir() {
   var vd = lastData && (lastData.vardiya_devir || {});
   var row = vd && vd.vardiya_devir;
@@ -6348,7 +6372,7 @@ function renderKasaDevir() {
     '</div></div>' +
     '<div id="dvStep5" class="siparis-detay" style="display:none">' +
     '<div class="sip-alt-baslik">Adım 5 / 5 — Bitir ve İmzala</div>' +
-    '<label class="chk-row"><input type="checkbox" id="dvXRapor" /><span>X raporu gönderildi</span></label>' +
+    '<label class="chk-row"><input type="checkbox" id="dvKasaSayim" /><span>Kasadaki nakit sayımını doğruladım</span></label>' +
     '<div class="form-group"><label>Devreden (Sabahçı)</label><select id="dvPers1"></select></div>' +
     '<div class="form-group"><label>PIN</label><input id="dvPin1" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>' +
     '<div style="display:flex;gap:8px">' +
@@ -6369,16 +6393,14 @@ function renderKasaDevir() {
       if (pin1.length!==4) throw new Error('4 haneli PIN');
       var kasadakiNakit = parseNum(inpVal('dvTeslim')) || 0;
       if (kasadakiNakit < 0) throw new Error('Kasadaki nakit negatif olamaz');
-      if (!document.getElementById('dvXRapor').checked) throw new Error('X raporu gönderildi onayı gerekli');
-      var opAktif = lastData && lastData.operasyon && lastData.operasyon.aktif;
+      if (!document.getElementById('dvKasaSayim').checked) throw new Error('Kasa sayımı doğrulama onayı gerekli');
       var body = {
         sabahci_devreden_id: pid1, pin: pin1,
         nakit: 0,
         pos: 0,
         online: 0,
         teslim: kasadakiNakit, devir: 0,
-        x_raporu_gonderildi: true, ciro_gonderildi: false,
-        operasyon_event_id: opAktif&&opAktif.id ? opAktif.id : null,
+        kasa_sayim_dogrulandi: true, ciro_gonderildi: false,
         bardak_kucuk:   pInt('dvBk','Küçük bardak'),
         bardak_buyuk:   pInt('dvBb','Büyük bardak'),
         bardak_plastik: pInt('dvBp','Plastik bardak'),

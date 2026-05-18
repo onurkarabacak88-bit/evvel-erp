@@ -451,10 +451,10 @@ def kontrol_vardiya_devri(cur, sube_id: str) -> Optional[dict]:
     cur.execute(
         """
         SELECT durum FROM kapanis_kayit
-        WHERE sube_id = %s AND tarih = CURRENT_DATE
+        WHERE sube_id = %s AND tarih = %s AND olay = 'vardiya_sabah_aksam_devri'
         ORDER BY olusturma DESC LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, is_gunu_tr()),
     )
     r = cur.fetchone()
     if not r:

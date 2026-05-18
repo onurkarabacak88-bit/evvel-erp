@@ -11476,6 +11476,18 @@ def ops_rapor_cache_batch_log(limit: int = Query(20, ge=1, le=200)):
                 d = dict(r)
                 d["baslangic_ts"] = str(d["baslangic_ts"]) if d.get("baslangic_ts") else None
                 d["bitis_ts"] = str(d["bitis_ts"]) if d.get("bitis_ts") else None
+                # int cast — psycopg2 bazen Decimal döner
+                if d.get("islenen_kayit") is not None:
+                    d["islenen_kayit"] = int(d["islenen_kayit"])
+                if d.get("sure_ms") is not None:
+                    d["sure_ms"] = int(d["sure_ms"])
+                # detay JSONB — psycopg2 zaten dict döner; defensive cast
+                dj = d.get("detay")
+                if dj is not None and not isinstance(dj, (dict, list, str, int, float, bool)):
+                    try:
+                        d["detay"] = json.loads(str(dj)) if isinstance(dj, (bytes, bytearray)) else str(dj)
+                    except Exception:
+                        d["detay"] = None
                 kayitlar.append(d)
         return {"toplam": len(kayitlar), "kayitlar": kayitlar}
     except Exception as e:
