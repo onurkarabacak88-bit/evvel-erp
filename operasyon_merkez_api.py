@@ -5857,11 +5857,19 @@ def _kk_acilis_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) ->
             "eski": eski, "yeni": {"kasa_sayim": yeni_kasa_f}}
 
 
-def _kk_devir_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def _kk_devir_duzelt(
+    cur,
+    sube_id: str,
+    tarih: str,
+    payload: Dict[str, Any],
+    *,
+    kapanis_tarih: Optional[str] = None,
+) -> Dict[str, Any]:
     yeni_teslim = payload.get("yeni_teslim")
     yeni_devir = payload.get("yeni_devir")
     if yeni_teslim is None and yeni_devir is None:
         raise HTTPException(400, "devir_yanlis: yeni_teslim veya yeni_devir zorunlu")
+    kap_gun = (kapanis_tarih or tarih or "").strip()[:10]
     cur.execute(
         """
         SELECT id::text, teslim::float, devir::float
@@ -5869,7 +5877,7 @@ def _kk_devir_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> 
         WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
         ORDER BY cevap_ts DESC NULLS LAST LIMIT 1 FOR UPDATE
         """,
-        (sube_id, tarih),
+        (sube_id, kap_gun),
     )
     row = cur.fetchone()
     if not row:
@@ -5985,17 +5993,40 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
         uyari = _kk_uyari_getir(cur, uyari_id)
         sube_id = uyari["sube_id"]
         tarih = uyari["tarih"]
+        uyari_tip = str(uyari.get("tip") or "")
         eski_fark = float(uyari.get("fark_tl") or 0)
+        pl_raw = body.payload or {}
+        payload = {k: v for k, v in pl_raw.items() if not str(k).startswith("_")}
 
         # 1+2. Sebebe göre kaynak düzeltme
         if sebep == "ciro_yanlis":
-            hedef = _kk_ciro_duzelt(cur, sube_id, tarih, body.payload or {})
+            if uyari_tip == "ACILIS_KASA_FARK":
+                raise HTTPException(
+                    400,
+                    "Devir uyumsuzluğu için «Açılış sayımı» veya «Önceki gün kapanış devir» seçin.",
+                )
+            hedef = _kk_ciro_duzelt(cur, sube_id, tarih, payload)
         elif sebep == "acilis_yanlis":
-            hedef = _kk_acilis_duzelt(cur, sube_id, tarih, body.payload or {})
+            hedef = _kk_acilis_duzelt(cur, sube_id, tarih, payload)
         elif sebep == "devir_yanlis":
-            hedef = _kk_devir_duzelt(cur, sube_id, tarih, body.payload or {})
+            kap_tarih = str(tarih)[:10]
+            if uyari_tip == "ACILIS_KASA_FARK":
+                from datetime import date as _date_cls, timedelta as _td
+
+                try:
+                    kap_tarih = str(_date_cls.fromisoformat(kap_tarih) - _td(days=1))
+                except ValueError:
+                    raise HTTPException(400, "Geçersiz uyarı tarihi")
+            hedef = _kk_devir_duzelt(
+                cur, sube_id, tarih, payload, kapanis_tarih=kap_tarih,
+            )
         elif sebep == "gider_eksik":
-            hedef = _kk_gider_ekle(cur, sube_id, tarih, body.payload or {}, pid, pad)
+            if uyari_tip == "ACILIS_KASA_FARK":
+                raise HTTPException(
+                    400,
+                    "Devir uyumsuzluğu için gider eklenemez — açılış veya önceki gün devir düzeltin.",
+                )
+            hedef = _kk_gider_ekle(cur, sube_id, tarih, payload, pid, pad)
         else:  # gercek_acik
             hedef = {"hedef_tablo": None, "hedef_id": None, "eski": None, "yeni": None}
 
@@ -6023,7 +6054,10 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
                 "onay_durumu_yeni": None,
             }
         else:
-            recalc = _kf_recalc(cur, uyari_id, kim_pid=pid, kim_ad=pad)
+            try:
+                recalc = _kf_recalc(cur, uyari_id, kim_pid=pid, kim_ad=pad)
+            except ValueError as ex:
+                raise HTTPException(400, str(ex)) from ex
 
         # 5. Audit
         _kk_audit_yaz(
@@ -8611,7 +8645,11 @@ def ops_hub_ozet(skip_alarms: bool = Query(False, description="True ise yalnızc
                 oz["alarm_satirlari"] = []
             else:
                 try:
-                    oz["alarm_satirlari"] = _hub_alarm_satirlari(cur, ozet=oz)
+                    tum = _hub_alarm_satirlari(cur, ozet=oz)
+                    # Operasyon Merkezi «gelen sipariş» kartı: yalnızca bekleyen katalog talepleri
+                    oz["alarm_satirlari"] = [
+                        a for a in tum if (a.get("tip") or "") == "siparis_merkez_bekliyor"
+                    ]
                 except Exception:
                     log.exception("hub-ozet: alarm_satirlari hesaplanamadi")
                     try:

@@ -2184,6 +2184,13 @@ export default function OperasyonMerkezi() {
   const [fisBusyId, setFisBusyId] = useState(null);
   const [opsOzet, setOpsOzet] = useState(null);
   const siparisBekleyenGunPenceresi = Math.max(1, Number(opsOzet?.siparis_bekleyen_gun_penceresi || 7));
+  /** Hub üst kart: yalnızca gelen (bekleyen) katalog sipariş alarm satırları */
+  const hubGelenSiparisAlarmlari = useMemo(
+    () => (opsOzet?.alarm_satirlari || []).filter((a) => a?.tip === 'siparis_merkez_bekliyor'),
+    [opsOzet?.alarm_satirlari],
+  );
+  const hubGelenSiparisGoster =
+    (Number(opsOzet?.siparis_bekleyen) || 0) > 0 || hubGelenSiparisAlarmlari.length > 0;
   /** hub-ozet alarm kartı genişletilmiş satır id */
   const [hubAlarmAcikId, setHubAlarmAcikId] = useState(null);
   /** Hub: gelen sipariş kartında operasyon özet satırları (alarm listesi) */
@@ -4661,24 +4668,68 @@ export default function OperasyonMerkezi() {
 
   // Kasa farkı kaynak düzeltme — modal açar
   function kkDuzeltModalAc(uyari) {
+    const tip = String(uyari?.tip || '');
+    const varsayilanSebep = tip === 'ACILIS_KASA_FARK' ? 'acilis_yanlis' : 'ciro_yanlis';
     setKkDuzeltModal({
       uyari,
-      sebep: 'ciro_yanlis',
+      sebep: varsayilanSebep,
       payload: {},
     });
+  }
+
+  function kkDuzeltPayloadDogrula(sebep, payload, uyariTip) {
+    const p = payload || {};
+    if (sebep === 'ciro_yanlis') {
+      if (uyariTip === 'ACILIS_KASA_FARK') {
+        return 'Devir uyumsuzluğu için ciro düzeltmesi uygun değil.';
+      }
+      if (p.yeni_nakit == null && p.yeni_pos == null && p.yeni_online == null) {
+        return 'En az bir ciro alanı girin (nakit, POS veya online).';
+      }
+    }
+    if (sebep === 'acilis_yanlis') {
+      if (!Number.isFinite(Number(p.yeni_acilis_kasa))) {
+        return 'Yeni açılış kasa sayımı (₺) zorunlu.';
+      }
+    }
+    if (sebep === 'devir_yanlis') {
+      if (p.yeni_teslim == null && p.yeni_devir == null) {
+        return 'Teslim veya devir alanından en az birini girin.';
+      }
+    }
+    if (sebep === 'gider_eksik') {
+      if (uyariTip === 'ACILIS_KASA_FARK') {
+        return 'Devir uyumsuzluğu için gider eklenemez.';
+      }
+      if (!Number.isFinite(Number(p.tutar)) || Number(p.tutar) <= 0) {
+        return 'Gider tutarı 0\'dan büyük olmalı.';
+      }
+    }
+    return null;
   }
 
   async function kkDuzeltGonder() {
     if (!kkDuzeltModal) return;
     const { uyari, sebep, payload } = kkDuzeltModal;
+    const uyariTip = String(uyari?.tip || '');
+    const hata = kkDuzeltPayloadDogrula(sebep, payload, uyariTip);
+    if (hata) {
+      toast(hata, 'red');
+      return;
+    }
+    if (!uyari?.id) {
+      toast('Uyarı kaydı bulunamadı — listeyi yenileyin', 'red');
+      return;
+    }
+    const { _notu, ...apiPayload } = payload || {};
     setKkDuzeltBusy(true);
     try {
       const r = await api(`/ops/kasa-uyumsuzluk/${encodeURIComponent(uyari.id)}/kaynak-duzelt`, {
         method: 'POST',
         body: {
           sebep,
-          payload,
-          notu: (payload._notu || '').trim() || null,
+          payload: apiPayload,
+          notu: (_notu || '').trim() || null,
         },
       });
       const eski = Number(r?.eski_fark || 0);
@@ -4932,7 +4983,7 @@ export default function OperasyonMerkezi() {
 
       {!opsMerkezPencere && (
         <>
-          {(((opsOzet?.siparis_bekleyen || 0) > 0) || ((opsOzet?.alarm_satirlari || []).length > 0)) && (
+          {hubGelenSiparisGoster && (
             <section
               className={`card${hubYeniSiparisVurgu ? ' ops-hub-yeni-siparis-flash' : ''}`}
               style={{
@@ -4979,10 +5030,9 @@ export default function OperasyonMerkezi() {
                     }
                   }}
                 >
-                  {(opsOzet?.siparis_bekleyen || 0) > 0 ? (
-                    <>
-                      <div
-                        style={{
+                  <>
+                    <div
+                      style={{
                           fontSize: 11,
                           fontWeight: 800,
                           letterSpacing: '0.07em',
@@ -4994,14 +5044,14 @@ export default function OperasyonMerkezi() {
                         Gelen sipariş — şube talepleri
                       </div>
                       <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--text1)', lineHeight: 1.15 }}>
-                        {opsOzet.siparis_bekleyen}{' '}
+                        {Number(opsOzet?.siparis_bekleyen) || hubGelenSiparisAlarmlari.length}{' '}
                         <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text2)' }}>bekleyen talep</span>
                       </div>
                       <p style={{ margin: '8px 0 0', fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
-                        İşlem için <strong>Stok Disiplin › Sipariş kuyruğu</strong> kullanılır; buradaki sayı hub özetiyle aynı kaynaktır.
+                        Yalnızca şube katalog siparişleri; depo, fiş veya vardiya uyarıları bu alanda gösterilmez.
                       </p>
                       <p style={{ margin: '8px 0 0', fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
-                        Son <strong>{siparisBekleyenGunPenceresi} gun</strong> icindeki kuyruk izlenir; bu sayi Stok Disiplin ekranindaki ayni pencereyle eslesir.
+                        Son <strong>{siparisBekleyenGunPenceresi} gün</strong> · işlem için <strong>Sipariş kontrol kulesi</strong>.
                       </p>
                       {(Number(opsOzet?.siparis_ozel_bekleyen) || 0) > 0 && (
                         <p style={{ margin: '8px 0 0', fontSize: 11, color: '#facc15', lineHeight: 1.45 }}>
@@ -5009,17 +5059,9 @@ export default function OperasyonMerkezi() {
                         </p>
                       )}
                       <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--text3)', lineHeight: 1.45 }}>
-                        {hubOperasyonDetayAcik ? '▼ Özet satırlarını gizlemek için tekrar tıklayın.' : '▶ Alarm satırları — detay için tıklayın.'}
+                        {hubOperasyonDetayAcik ? '▼ Talep satırlarını gizlemek için tekrar tıklayın.' : '▶ Talep detayları için tıklayın.'}
                       </p>
-                    </>
-                  ) : (
-                    <>
-                      <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>📌 Operasyon uyarıları</h3>
-                      <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text3)' }}>
-                        Bekleyen sipariş yok; özet uyarılar için {hubOperasyonDetayAcik ? 'tekrar tıklayıp daraltın' : 'tıklayın'}.
-                      </p>
-                    </>
-                  )}
+                  </>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'stretch', flexShrink: 0 }}>
                   {(opsOzet?.siparis_bekleyen || 0) > 0 && (
@@ -5028,11 +5070,10 @@ export default function OperasyonMerkezi() {
                       className="btn btn-primary btn-sm"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setDisiplinPanel('kuyruk');
                         acOpsModul('siparis-kontrol');
                       }}
                     >
-                      Stok Disiplin · sipariş kuyruğu →
+                      Sipariş kontrol kulesi →
                     </button>
                   )}
                   {(Number(opsOzet?.siparis_ozel_bekleyen) || 0) > 0 && (
@@ -5061,9 +5102,9 @@ export default function OperasyonMerkezi() {
                 </div>
               </div>
 
-              {hubOperasyonDetayAcik && (opsOzet?.alarm_satirlari || []).length > 0 && (
+              {hubOperasyonDetayAcik && hubGelenSiparisAlarmlari.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {(opsOzet.alarm_satirlari || []).map((a) => {
+                  {hubGelenSiparisAlarmlari.map((a) => {
                     const acik = hubAlarmAcikId === a.id;
                     const sev = a.seviye === 'kritik' ? 'var(--red)' : a.seviye === 'uyari' ? 'var(--yellow)' : 'var(--text3)';
                     const bg = a.seviye === 'kritik' ? 'rgba(220,50,50,0.08)' : a.seviye === 'uyari' ? 'rgba(220,160,0,0.07)' : 'var(--bg3)';
@@ -5176,9 +5217,9 @@ export default function OperasyonMerkezi() {
                 </div>
               )}
 
-              {hubOperasyonDetayAcik && (opsOzet?.alarm_satirlari || []).length === 0 && (
+              {hubOperasyonDetayAcik && hubGelenSiparisAlarmlari.length === 0 && (
                 <p style={{ fontSize: 12, color: 'var(--text3)', margin: '8px 0 0' }}>
-                  Sunucu şu an özet satırı döndürmedi; «Özet yenile» ile tekrar deneyin veya hub'daki «Şube sipariş» kartından kuyruğu açın.
+                  Bekleyen talep satırı yüklenemedi; «Özet yenile» ile tekrar deneyin.
                 </p>
               )}
             </section>
@@ -13490,11 +13531,21 @@ export default function OperasyonMerkezi() {
               onChange={(e) => setKkDuzeltModal((prev) => ({ ...prev, sebep: e.target.value, payload: {} }))}
               style={{ width: '100%', marginBottom: 16, padding: '8px 10px' }}
             >
-              <option value="ciro_yanlis">📝 Ciro yanlış girilmiş (nakit/pos/online düzelt)</option>
-              <option value="acilis_yanlis">🌅 Açılış kasa sayımı yanlış</option>
-              <option value="gider_eksik">💸 Eksik nakit gider var (ekle)</option>
-              <option value="devir_yanlis">🌙 Kapanış teslim/devir yanlış</option>
-              <option value="gercek_acik">⚠️ Gerçek açık — kaynak değişmez, açık devam eder</option>
+              {kkDuzeltModal.uyari?.tip === 'ACILIS_KASA_FARK' ? (
+                <>
+                  <option value="acilis_yanlis">🌅 Sabahçı kasa sayımı yanlış (bugünkü açılış)</option>
+                  <option value="devir_yanlis">🌙 Akşamcı devir/teslim yanlış (önceki gün kapanış)</option>
+                  <option value="gercek_acik">⚠️ Gerçek açık — kaynak değişmez</option>
+                </>
+              ) : (
+                <>
+                  <option value="ciro_yanlis">📝 Ciro yanlış (nakit / POS / online)</option>
+                  <option value="gider_eksik">💸 Eksik nakit gider (ekle)</option>
+                  <option value="devir_yanlis">🌙 Kapanış teslim / devir yanlış (aynı gün)</option>
+                  <option value="acilis_yanlis">🌅 Açılış kasa sayımı yanlış</option>
+                  <option value="gercek_acik">⚠️ Gerçek açık — kaynak değişmez</option>
+                </>
+              )}
             </select>
 
             {/* Sebebe göre dinamik form */}
@@ -13537,24 +13588,31 @@ export default function OperasyonMerkezi() {
             )}
 
             {kkDuzeltModal.sebep === 'devir_yanlis' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
-                {['yeni_teslim', 'yeni_devir'].map((k) => (
-                  <label key={k} style={{ fontSize: 11, color: 'var(--text3)' }}>
-                    {k === 'yeni_teslim' ? 'Müdüre teslim (₺)' : 'Kasada kalan / devir (₺)'}
-                    <input
-                      type="number" step="0.01" className="input"
-                      placeholder="Boş = değiştirme"
-                      disabled={kkDuzeltBusy}
-                      value={kkDuzeltModal.payload[k] ?? ''}
-                      onChange={(e) => setKkDuzeltModal((prev) => ({
-                        ...prev,
-                        payload: { ...prev.payload, [k]: e.target.value === '' ? undefined : Number(e.target.value) },
-                      }))}
-                      style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
-                    />
-                  </label>
-                ))}
-              </div>
+              <>
+                {kkDuzeltModal.uyari?.tip === 'ACILIS_KASA_FARK' && (
+                  <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 10px', lineHeight: 1.45 }}>
+                    Devir uyumsuzluğu: düzeltme <strong>önceki günün kapanış</strong> teslim/devir kaydına yazılır.
+                  </p>
+                )}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+                  {['yeni_teslim', 'yeni_devir'].map((k) => (
+                    <label key={k} style={{ fontSize: 11, color: 'var(--text3)' }}>
+                      {k === 'yeni_teslim' ? 'Müdüre teslim (₺)' : 'Kasada kalan / devir (₺)'}
+                      <input
+                        type="number" step="0.01" className="input"
+                        placeholder="Boş = değiştirme"
+                        disabled={kkDuzeltBusy}
+                        value={kkDuzeltModal.payload[k] ?? ''}
+                        onChange={(e) => setKkDuzeltModal((prev) => ({
+                          ...prev,
+                          payload: { ...prev.payload, [k]: e.target.value === '' ? undefined : Number(e.target.value) },
+                        }))}
+                        style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </>
             )}
 
             {kkDuzeltModal.sebep === 'gider_eksik' && (

@@ -54,12 +54,16 @@ def beklenen_dunku_kapanis_stok(cur: Any, sube_id: str) -> Optional[dict]:
         return None
 
 
-def beklenen_dunku_kapanis_kasa(cur: Any, sube_id: str) -> Optional[float]:
+def beklenen_onceki_kapanis_kasa(
+    cur: Any, sube_id: str, acilis_tarih: Any,
+) -> Optional[float]:
     """
-    Ertesi gün açılışta kasada beklenen tutar (dünkü KAPANIS sonrası).
-    Öncelik: kayıtlı `devir`. NULL ise `max(0, kasa_sayim - teslim)` ile türetilir
-    (panel eski sürümde devir boş bırakılmış olsa bile tutarlılık).
+  Belirli bir açılış günü için beklenen kasa = bir önceki gün tamamlanmış KAPANIS devir.
+  `acilis_tarih` = uyarı / açılış kaydının tarihi (YYYY-MM-DD).
     """
+    gun = str(acilis_tarih)[:10] if acilis_tarih else None
+    if not gun:
+        return None
     cur.execute(
         """
         SELECT COALESCE(
@@ -68,18 +72,31 @@ def beklenen_dunku_kapanis_kasa(cur: Any, sube_id: str) -> Optional[float]:
         ) AS ref
         FROM sube_operasyon_event
         WHERE sube_id=%s
-          AND tarih = (CURRENT_DATE - INTERVAL '1 day')
+          AND tarih = (%s::date - INTERVAL '1 day')
           AND tip = 'KAPANIS'
           AND durum = 'tamamlandi'
         ORDER BY cevap_ts DESC NULLS LAST
         LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, gun),
     )
     r = cur.fetchone()
-    if not r or r.get("ref") is None:
+    if not r:
         return None
-    return float(r["ref"])
+    ref = dict(r).get("ref")
+    if ref is None:
+        return None
+    return float(ref)
+
+
+def beklenen_dunku_kapanis_kasa(cur: Any, sube_id: str) -> Optional[float]:
+    """
+    Bugünkü açılış için beklenen kasa (iş günü - 1 gün KAPANIS devir).
+    Geriye dönük: `beklenen_onceki_kapanis_kasa(cur, sube_id, is_gunu_tr())`.
+    """
+    from tr_saat import is_gunu_tr
+
+    return beklenen_onceki_kapanis_kasa(cur, sube_id, is_gunu_tr())
 
 
 def vardiya_devri_bugun_baslamis_mi(cur: Any, sube_id: str) -> bool:

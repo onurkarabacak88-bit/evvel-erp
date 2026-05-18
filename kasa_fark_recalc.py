@@ -22,7 +22,7 @@ import uuid as _uuid
 from datetime import date
 from typing import Any, Dict, Optional, Tuple
 
-from operasyon_kurallar import tolerans_seviyesi, beklenen_dunku_kapanis_kasa
+from operasyon_kurallar import tolerans_seviyesi, beklenen_onceki_kapanis_kasa
 
 log = logging.getLogger(__name__)
 
@@ -138,10 +138,11 @@ def _bilesenleri_topla_acilis(cur: Any, sube_id: str, tarih: Any) -> Dict[str, f
         """,
         (sube_id, str(tarih)),
     )
-    sabah_kasa = float((cur.fetchone() or {}).get("kasa_sayim") or 0)
-    # beklenen_dunku_kapanis_kasa — operasyon_kurallar.py'den çağrılır
+    row = cur.fetchone()
+    sabah_kasa = float(dict(row).get("kasa_sayim") or 0) if row else 0.0
     try:
-        bek = float(beklenen_dunku_kapanis_kasa(cur, sube_id) or 0)
+        bek_raw = beklenen_onceki_kapanis_kasa(cur, sube_id, tarih)
+        bek = float(bek_raw if bek_raw is not None else 0)
     except Exception:
         bek = 0.0
     return {"sabah_kasa": sabah_kasa, "beklenen": bek}
