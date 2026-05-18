@@ -2057,8 +2057,18 @@ export default function OperasyonMerkezi() {
   const [kuyrukToptanciTedarikci, setKuyrukToptanciTedarikci] = useState({}); // talep_id -> tedarikci_ad
   const [kuyrukToptanciNot, setKuyrukToptanciNot] = useState({}); // talep_id -> not
   const [kuyrukToptanciKalemDeger, setKuyrukToptanciKalemDeger] = useState({}); // `${talep_id}::${kalem}` -> adet
-  const [toptanciSiparisListe, setToptanciSiparisListe] = useState({ gun: 30, toplam_kayit: 0, satirlar: [] });
-  const [toptanciSiparisGun, setToptanciSiparisGun] = useState(30);
+  const [toptanciSiparisListe, setToptanciSiparisListe] = useState({
+    gun: 30,
+    donem: 'gun_30',
+    filtre_etiket: 'Son 30 gün',
+    toplam_kayit: 0,
+    satirlar: [],
+    gonderimler: [],
+  });
+  const [toptanciSiparisDonem, setToptanciSiparisDonem] = useState('gun_30');
+  const [toptanciSiparisTarih, setToptanciSiparisTarih] = useState(() => bugunIsoTarih());
+  const [toptanciSiparisSirala, setToptanciSiparisSirala] = useState('en_son');
+  const [toptanciSiparisGorunum, setToptanciSiparisGorunum] = useState('gonderim');
   const [toptanciTeslimGun, setToptanciTeslimGun] = useState(30);
   const [toptanciTeslimListe, setToptanciTeslimListe] = useState(null);
   const [toptanciTeslimAcikSube, setToptanciTeslimAcikSube] = useState(null);
@@ -3217,24 +3227,44 @@ export default function OperasyonMerkezi() {
   }, [siparisKabulTakipGun, siparisKabulTakipSube]);
 
   const yukleToptanciSiparisleri = useCallback(async () => {
-    const seciliGun = Math.max(1, Number(toptanciSiparisGun || 30));
+    const donem = String(toptanciSiparisDonem || 'gun_30');
     try {
       const q = new URLSearchParams();
-      q.set('gun', String(seciliGun));
+      q.set('donem', donem);
+      q.set('sirala', String(toptanciSiparisSirala || 'en_son'));
       q.set('limit', '1200');
+      if (donem === 'tarih') {
+        q.set('tarih', String(toptanciSiparisTarih || bugunIsoTarih()).trim().slice(0, 10));
+      } else if (donem.startsWith('gun_')) {
+        q.set('gun', String(donem.split('_')[1] || '30'));
+      }
       const r = await api('/ops/siparis/toptanci-listesi?' + q.toString());
       setToptanciSiparisListe({
-        gun: Number(r?.gun || seciliGun),
+        gun: Number(r?.gun || 30),
+        donem: r?.donem || donem,
+        filtre_etiket: r?.filtre_etiket || '',
+        tarih_bas: r?.tarih_bas,
+        tarih_bit: r?.tarih_bit,
+        sirala: r?.sirala || toptanciSiparisSirala,
         toplam_kayit: Number(r?.toplam_kayit || 0),
+        toplam_satir: Number(r?.toplam_satir || 0),
         satirlar: Array.isArray(r?.satirlar) ? r.satirlar : [],
+        gonderimler: Array.isArray(r?.gonderimler) ? r.gonderimler : [],
       });
     } catch (e) {
       toast(e.message || 'Toptancı sipariş listesi yüklenemedi');
-      setToptanciSiparisListe({ gun: seciliGun, toplam_kayit: 0, satirlar: [] });
+      setToptanciSiparisListe({
+        gun: 30,
+        donem,
+        filtre_etiket: '',
+        toplam_kayit: 0,
+        satirlar: [],
+        gonderimler: [],
+      });
     } finally {
       setYukleniyor(false);
     }
-  }, [toast, toptanciSiparisGun]);
+  }, [toast, toptanciSiparisDonem, toptanciSiparisTarih, toptanciSiparisSirala]);
 
   const yukleToptanciTeslimler = useCallback(async () => {
     const seciliGun = Math.max(1, Number(toptanciTeslimGun || 30));
@@ -3702,9 +3732,9 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     if (!opsMerkezPencere) return;
-    if ((toptanciSiparisListe?.satirlar || []).length > 0) return;
+    if ((toptanciSiparisListe?.gonderimler || []).length > 0 || (toptanciSiparisListe?.satirlar || []).length > 0) return;
     yukleToptanciSiparisleri();
-  }, [opsMerkezPencere, toptanciSiparisListe?.satirlar, yukleToptanciSiparisleri]);
+  }, [opsMerkezPencere, toptanciSiparisListe?.gonderimler, toptanciSiparisListe?.satirlar, yukleToptanciSiparisleri]);
 
   useEffect(() => {
     if (aktifSekme !== 'urun-ac') return;
@@ -4081,7 +4111,7 @@ export default function OperasyonMerkezi() {
       }
     });
     return unsub;
-  }, [aktifSekme, acilisTakipAlt, filtre, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, urunAcHaftaYukle, gecAcilanAramaYap, gecAcilanHaftaYukle, gecKalanPersonelAramaYap, kullanilanAramaYap, kullanilanHaftaYukle, ciroOnayAramaYap, kasaUyumAramaYap, kasaUyumHaftaYukle, personelVardiyaUyumAramaYap, personelVardiyaUyumHaftaYukle, urunUyumAramaYap, yukleSevkiyatUyumOzet, sevkiyatUyumDetayYukle, yukleSiparisMerkez, yukleSiparisKabulTakip, yukleToptanciSiparisleri, toptanciSiparisListe?.gun, yukleToptanciTeslimler, magazaDepoTamYenile, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
+  }, [aktifSekme, acilisTakipAlt, filtre, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, urunAcHaftaYukle, gecAcilanAramaYap, gecAcilanHaftaYukle, gecKalanPersonelAramaYap, kullanilanAramaYap, kullanilanHaftaYukle, ciroOnayAramaYap, kasaUyumAramaYap, kasaUyumHaftaYukle, personelVardiyaUyumAramaYap, personelVardiyaUyumHaftaYukle, urunUyumAramaYap, yukleSevkiyatUyumOzet, sevkiyatUyumDetayYukle, yukleSiparisMerkez, yukleSiparisKabulTakip, yukleToptanciSiparisleri, toptanciSiparisDonem, toptanciSiparisTarih, toptanciSiparisSirala, yukleToptanciTeslimler, magazaDepoTamYenile, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
 
 
   // Haftalık karşılaştırma — sadece ilgili sekme açıkken yükle
@@ -11680,20 +11710,70 @@ export default function OperasyonMerkezi() {
       {aktifSekme === 'toptanci-siparisleri' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
-            Bu liste operasyon defterindeki <code style={{ fontSize: 11 }}>SIPARIS_TOPTANCI_YONLENDIRME</code> kayıtlarından üretilir ve kategori/ürün bazında gruplanır.
+            Kontrol kulesinden toptancıya yönlendirilen gönderimler. <strong>Gönderilenler</strong> tek tek kayıt;
+            <strong> Ürün özeti</strong> kategori/ürün toplamı.
           </p>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {[
+              { id: 'gonderim', label: '📤 Gönderilenler' },
+              { id: 'ozet', label: '📊 Ürün özeti' },
+            ].map((g) => (
+              <button
+                key={g.id}
+                type="button"
+                className={`btn btn-sm ${toptanciSiparisGorunum === g.id ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setToptanciSiparisGorunum(g.id)}
+              >
+                {g.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ fontSize: 12, color: 'var(--text3)', fontWeight: 600 }}>Dönem</span>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {[
+                { id: 'bugun', label: 'Bugün' },
+                { id: 'dun', label: 'Dün' },
+                { id: 'gun_7', label: 'Son 7 gün' },
+                { id: 'gun_14', label: 'Son 14 gün' },
+                { id: 'gun_30', label: 'Son 30 gün' },
+                { id: 'gun_60', label: 'Son 60 gün' },
+                { id: 'tarih', label: 'Tarih seç' },
+              ].map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  className={`btn btn-sm ${toptanciSiparisDonem === d.id ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setToptanciSiparisDonem(d.id)}
+                >
+                  {d.label}
+                </button>
+              ))}
+            </div>
+            {toptanciSiparisDonem === 'tarih' && (
+              <label style={{ margin: 0, maxWidth: 200 }}>
+                <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Tarih</span>
+                <input
+                  type="date"
+                  className="input"
+                  value={toptanciSiparisTarih}
+                  onChange={(e) => setToptanciSiparisTarih(e.target.value || bugunIsoTarih())}
+                />
+              </label>
+            )}
+          </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end' }}>
             <label style={{ margin: 0 }}>
-              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Gün</span>
+              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Sırala</span>
               <select
                 className="input"
-                value={String(toptanciSiparisGun)}
-                onChange={(e) => setToptanciSiparisGun(Number(e.target.value || 30))}
+                value={toptanciSiparisSirala}
+                onChange={(e) => setToptanciSiparisSirala(e.target.value)}
               >
-                <option value="7">Son 7 gün</option>
-                <option value="14">Son 14 gün</option>
-                <option value="30">Son 30 gün</option>
-                <option value="60">Son 60 gün</option>
+                <option value="en_son">En son gönderilen</option>
+                <option value="eski">En eski</option>
+                <option value="adet_azalan">Adet (yüksek → düşük)</option>
+                <option value="urun">Ürün adı (A→Z)</option>
               </select>
             </label>
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setYukleniyor(true); yukleToptanciSiparisleri(); }}>
@@ -11703,20 +11783,36 @@ export default function OperasyonMerkezi() {
               type="button"
               className="btn btn-secondary btn-sm"
               onClick={() => {
-                const rows = Array.isArray(toptanciSiparisListe?.satirlar) ? toptanciSiparisListe.satirlar : [];
-                const tsv = [
-                  ['Kategori', 'Ürün', 'Toplam adet'].join('\t'),
-                  ...rows.map((r) => [
-                    String(r?.kategori_kod || r?.kategori || r?.kat || r?.kategori_id || ''),
-                    String(r?.urun_ad || r?.urun || r?.ad || r?.urun_adi || ''),
-                    String(Number(r?.toplam_adet || r?.adet || r?.miktar || 0)),
-                  ].join('\t')),
-                ].join('\n');
+                const gonderimMod = toptanciSiparisGorunum === 'gonderim';
+                const rows = gonderimMod
+                  ? (Array.isArray(toptanciSiparisListe?.gonderimler) ? toptanciSiparisListe.gonderimler : [])
+                  : (Array.isArray(toptanciSiparisListe?.satirlar) ? toptanciSiparisListe.satirlar : []);
+                const tsv = gonderimMod
+                  ? [
+                      ['Tarih', 'Saat', 'Şube', 'Toptancı', 'Kalemler', 'Adet'].join('\t'),
+                      ...rows.map((g) => [
+                        String(g?.tarih || ''),
+                        String(g?.saat || '').slice(0, 5),
+                        String(g?.sube_adi || ''),
+                        String(g?.tedarikci_ad || ''),
+                        String(g?.kalemler_ozet || ''),
+                        String(Number(g?.toplam_adet || 0)),
+                      ].join('\t')),
+                    ].join('\n')
+                  : [
+                      ['Kategori', 'Ürün', 'Toplam adet', 'Son gönderim'].join('\t'),
+                      ...rows.map((r) => [
+                        String(r?.kategori_kod || r?.kategori || r?.kat || r?.kategori_id || ''),
+                        String(r?.urun_ad || r?.urun || r?.ad || r?.urun_adi || ''),
+                        String(Number(r?.toplam_adet || r?.adet || r?.miktar || 0)),
+                        String(r?.son_tarih || ''),
+                      ].join('\t')),
+                    ].join('\n');
                 const blob = new Blob([`﻿${tsv}`], { type: 'application/vnd.ms-excel;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `toptanci_siparisleri_son_${Number(toptanciSiparisListe?.gun || toptanciSiparisGun || 30)}_gun.xls`;
+                a.download = `toptanci_siparisleri_${String(toptanciSiparisListe?.filtre_etiket || 'liste').replace(/\s+/g, '_')}.xls`;
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
@@ -11744,7 +11840,7 @@ export default function OperasyonMerkezi() {
                 const bodyRows = rows.map((r) => (
                   `<tr><td>${esc(r?.kategori_kod || r?.kategori || r?.kat || r?.kategori_id || '')}</td><td>${esc(r?.urun_ad || r?.urun || r?.ad || r?.urun_adi || '')}</td><td style="text-align:right;">${esc(Number(r?.toplam_adet || r?.adet || r?.miktar || 0))}</td></tr>`
                 )).join('');
-                w.document.write(`<!doctype html><html><head><meta charset="utf-8" /><title>Toptancı Siparişleri</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#111}h1{font-size:18px;margin:0 0 12px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #d0d0d0;padding:8px;font-size:12px;text-align:left}th{background:#f5f5f5}</style></head><body><h1>Toptancı Siparişleri (Son ${esc(Number(toptanciSiparisListe?.gun || toptanciSiparisGun || 30))} gün)</h1><table><thead><tr><th>Kategori</th><th>Ürün</th><th>Toplam adet</th></tr></thead><tbody>${bodyRows || '<tr><td colspan="3">Kayıt yok</td></tr>'}</tbody></table></body></html>`);
+                w.document.write(`<!doctype html><html><head><meta charset="utf-8" /><title>Toptancı Siparişleri</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#111}h1{font-size:18px;margin:0 0 12px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #d0d0d0;padding:8px;font-size:12px;text-align:left}th{background:#f5f5f5}</style></head><body><h1>Toptancı Siparişleri (${esc(toptanciSiparisListe?.filtre_etiket || 'liste')})</h1><table><thead><tr><th>Kategori</th><th>Ürün</th><th>Toplam adet</th></tr></thead><tbody>${bodyRows || '<tr><td colspan="3">Kayıt yok</td></tr>'}</tbody></table></body></html>`);
                 w.document.close();
                 w.focus();
                 w.print();
@@ -11754,9 +11850,52 @@ export default function OperasyonMerkezi() {
             </button>
           </div>
           <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-            Son {Number(toptanciSiparisListe?.gun || toptanciSiparisGun || 30)} gün · {Number(toptanciSiparisListe?.toplam_kayit || 0)} kayıt · {Array.isArray(toptanciSiparisListe?.satirlar) ? toptanciSiparisListe.satirlar.length : 0} ürün satırı
+            {toptanciSiparisListe?.filtre_etiket || '—'}
+            {toptanciSiparisListe?.tarih_bas && toptanciSiparisListe?.tarih_bit
+              && toptanciSiparisListe.tarih_bas !== toptanciSiparisListe.tarih_bit
+              ? ` (${toptanciSiparisListe.tarih_bas} – ${toptanciSiparisListe.tarih_bit})`
+              : ''}
+            {' · '}{Number(toptanciSiparisListe?.toplam_kayit || 0)} gönderim · {Number(toptanciSiparisListe?.toplam_satir || 0)} ürün satırı (özet)
           </div>
-          {!Array.isArray(toptanciSiparisListe?.satirlar) || toptanciSiparisListe.satirlar.length === 0 ? (
+          {toptanciSiparisGorunum === 'gonderim' ? (
+            !Array.isArray(toptanciSiparisListe?.gonderimler) || toptanciSiparisListe.gonderimler.length === 0 ? (
+              <div className="empty"><p>Seçilen dönemde toptancıya gönderim kaydı yok.</p></div>
+            ) : (
+              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ maxHeight: 560, overflow: 'auto' }}>
+                  <table className="table" style={{ margin: 0 }}>
+                    <thead>
+                      <tr>
+                        <th>Tarih</th>
+                        <th>Saat</th>
+                        <th>Şube</th>
+                        <th>Toptancı</th>
+                        <th>Kalemler</th>
+                        <th style={{ textAlign: 'right' }}>Adet</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {toptanciSiparisListe.gonderimler.map((g) => (
+                        <tr key={g.id}>
+                          <td className="mono" style={{ whiteSpace: 'nowrap' }}>{g.tarih || '—'}</td>
+                          <td className="mono">{g.saat ? String(g.saat).slice(0, 5) : '—'}</td>
+                          <td>{g.sube_adi || '—'}</td>
+                          <td>{g.tedarikci_ad || '—'}</td>
+                          <td style={{ fontSize: 12, maxWidth: 280 }} title={g.not_aciklama || ''}>
+                            {g.kalemler_ozet || '—'}
+                            {g.not_aciklama ? (
+                              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>{g.not_aciklama}</div>
+                            ) : null}
+                          </td>
+                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{Number(g.toplam_adet || 0)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          ) : !Array.isArray(toptanciSiparisListe?.satirlar) || toptanciSiparisListe.satirlar.length === 0 ? (
             <div className="empty"><p>Kategori bazlı toptancı sipariş satırı yok.</p></div>
           ) : (
             <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -11767,6 +11906,7 @@ export default function OperasyonMerkezi() {
                       <th>Kategori</th>
                       <th>Ürün</th>
                       <th style={{ textAlign: 'right' }}>Toplam adet</th>
+                      <th>Son gönderim</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -11775,6 +11915,7 @@ export default function OperasyonMerkezi() {
                         <td>{r?.kategori_kod || r?.kategori || r?.kat || r?.kategori_id || '—'}</td>
                         <td>{r?.urun_ad || r?.urun || r?.ad || r?.urun_adi || '—'}</td>
                         <td style={{ textAlign: 'right' }}>{Number(r?.toplam_adet || r?.adet || r?.miktar || 0)}</td>
+                        <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{r?.son_tarih || '—'}</td>
                       </tr>
                     ))}
                   </tbody>

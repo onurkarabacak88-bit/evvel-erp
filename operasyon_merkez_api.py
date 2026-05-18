@@ -7766,54 +7766,107 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
     return {"success": True, "talep_id": tid, "kalem_sayisi": len(kalemler), "toplam_adet": sum(int(k.get("adet") or 0) for k in kalemler)}
 
 
+def _toptanci_liste_tarih_araligi(
+    donem: Optional[str],
+    gun: int,
+    tarih: Optional[str],
+) -> Tuple[Optional[date], Optional[date], int, str]:
+    """(tarih_bas, tarih_bit, gun_etiket, donem_norm) — tek gün için bas=bit."""
+    bugun = bugun_tr()
+    d = (donem or "").strip().lower()
+    if not d:
+        gun_i = max(1, min(120, int(gun or 30)))
+        return bugun - timedelta(days=gun_i - 1), bugun, gun_i, f"gun_{gun_i}"
+
+    if d == "bugun":
+        return bugun, bugun, 1, "bugun"
+    if d == "dun":
+        dun = bugun - timedelta(days=1)
+        return dun, dun, 1, "dun"
+    if d in ("tarih", "ozel"):
+        t_raw = (tarih or "").strip()[:10]
+        try:
+            t = date.fromisoformat(t_raw)
+        except ValueError:
+            raise HTTPException(400, "Geçerli tarih girin (YYYY-MM-DD)")
+        return t, t, 1, "tarih"
+
+    if d.startswith("gun_"):
+        try:
+            gun_i = max(1, min(120, int(d.split("_", 1)[1])))
+        except (IndexError, ValueError):
+            gun_i = max(1, min(120, int(gun or 30)))
+        return bugun - timedelta(days=gun_i - 1), bugun, gun_i, d
+
+    gun_i = max(1, min(120, int(gun or 30)))
+    return bugun - timedelta(days=gun_i - 1), bugun, gun_i, f"gun_{gun_i}"
+
+
+def _toptanci_kalem_kategori(it: Dict[str, Any]) -> str:
+    kategori_kod = str(it.get("kategori_kod") or "").strip()
+    if not kategori_kod:
+        kk = str(it.get("kalem_kodu") or "").strip()
+        if kk.startswith("katalog__") and "__" in kk:
+            parts = kk.split("__")
+            if len(parts) >= 3:
+                kategori_kod = str(parts[1] or "").strip()
+    return kategori_kod or "genel"
+
+
 @router.get("/siparis/toptanci-listesi")
 def ops_siparis_toptanci_listesi(
     gun: int = 30,
     limit: int = 800,
     format: str = "json",  # json | csv
+    donem: Optional[str] = Query(None, description="bugun | dun | gun_7 | gun_14 | gun_30 | gun_60 | tarih"),
+    tarih: Optional[str] = Query(None, description="YYYY-MM-DD — donem=tarih iken"),
+    sirala: str = Query("en_son", description="en_son | eski | adet_azalan | urun"),
 ):
-    gun_i = max(1, min(120, int(gun or 30)))
+    tarih_bas, tarih_bit, gun_i, donem_norm = _toptanci_liste_tarih_araligi(donem, gun, tarih)
     lim_i = max(1, min(5000, int(limit or 800)))
+    sirala_norm = (sirala or "en_son").strip().lower()
+    if sirala_norm not in ("en_son", "eski", "adet_azalan", "urun"):
+        raise HTTPException(400, "sirala: en_son | eski | adet_azalan | urun")
+
     with db() as (conn, cur):
         cur.execute(
             """
-            SELECT d.id, d.sube_id, s.ad AS sube_adi, d.tarih, d.bildirim_saati, d.aciklama
+            SELECT d.id, d.sube_id, s.ad AS sube_adi, d.tarih, d.bildirim_saati,
+                   d.olay_ts, d.aciklama
             FROM operasyon_defter d
             LEFT JOIN subeler s ON s.id = d.sube_id
             WHERE d.etiket='SIPARIS_TOPTANCI_YONLENDIRME'
-              AND d.tarih >= CURRENT_DATE - (%s::int || ' days')::interval
-            ORDER BY d.tarih DESC, d.olay_ts DESC NULLS LAST, d.id DESC
+              AND d.tarih >= %s::date
+              AND d.tarih <= %s::date
+            ORDER BY d.olay_ts DESC NULLS LAST, d.tarih DESC, d.id DESC
             LIMIT %s
             """,
-            (gun_i, lim_i),
+            (tarih_bas, tarih_bit, lim_i),
         )
         rows = [dict(r) for r in cur.fetchall()]
 
     agregat: Dict[str, Dict[str, Any]] = {}
+    gonderimler: List[Dict[str, Any]] = []
     for r in rows:
         payload = _ops_json_prefix_parse(r.get("aciklama"), "TOPTANCI_SIPARIS_JSON:")
         if not payload:
             continue
         kalemler = payload.get("kalemler") if isinstance(payload.get("kalemler"), list) else []
+        kalem_satirlari: List[Dict[str, Any]] = []
+        toplam_adet_g = 0
         for it in kalemler:
             if not isinstance(it, dict):
                 continue
             urun_ad = str(it.get("urun_ad") or "").strip()
-            kategori_kod = str(it.get("kategori_kod") or "").strip()
-            if not kategori_kod:
-                kk = str(it.get("kalem_kodu") or "").strip()
-                if kk.startswith("katalog__") and "__" in kk:
-                    parts = kk.split("__")
-                    if len(parts) >= 3:
-                        kategori_kod = str(parts[1] or "").strip()
-            if not kategori_kod:
-                kategori_kod = "genel"
+            kategori_kod = _toptanci_kalem_kategori(it)
             try:
                 adet = max(0, int(it.get("adet") or 0))
             except Exception:
                 adet = 0
             if not urun_ad or adet <= 0:
                 continue
+            kalem_satirlari.append({"urun_ad": urun_ad, "adet": adet, "kategori_kod": kategori_kod})
+            toplam_adet_g += adet
             key = f"{kategori_kod}::{urun_ad}"
             if key not in agregat:
                 agregat[key] = {
@@ -7829,10 +7882,68 @@ def ops_siparis_toptanci_listesi(
             if trh and trh > str(agregat[key].get("son_tarih") or ""):
                 agregat[key]["son_tarih"] = trh
 
-    satirlar = sorted(
-        agregat.values(),
-        key=lambda x: (str(x.get("kategori_kod") or ""), str(x.get("urun_ad") or "")),
-    )
+        if not kalem_satirlari:
+            continue
+        olay_ts = r.get("olay_ts")
+        olay_iso = ""
+        if olay_ts is not None:
+            try:
+                olay_iso = olay_ts.isoformat() if hasattr(olay_ts, "isoformat") else str(olay_ts)
+            except Exception:
+                olay_iso = str(olay_ts)
+        gonderimler.append(
+            {
+                "id": str(r.get("id") or ""),
+                "tarih": str(r.get("tarih") or ""),
+                "saat": str(r.get("bildirim_saati") or "")[:8] or None,
+                "olay_ts": olay_iso or None,
+                "sube_adi": str(r.get("sube_adi") or "").strip() or None,
+                "tedarikci_ad": (str(payload.get("tedarikci_ad") or "").strip() or None),
+                "not_aciklama": (str(payload.get("not_aciklama") or "").strip() or None),
+                "talep_id": (str(payload.get("talep_id") or "").strip() or None),
+                "kalem_sayisi": len(kalem_satirlari),
+                "toplam_adet": toplam_adet_g,
+                "kalemler": kalem_satirlari,
+                "kalemler_ozet": " · ".join(
+                    f"{k['urun_ad']} ×{k['adet']}" for k in kalem_satirlari[:5]
+                )
+                + (" …" if len(kalem_satirlari) > 5 else ""),
+            }
+        )
+
+    if sirala_norm == "eski":
+        gonderimler.sort(
+            key=lambda x: (str(x.get("tarih") or ""), str(x.get("olay_ts") or ""), str(x.get("id") or "")),
+        )
+    elif sirala_norm == "adet_azalan":
+        gonderimler.sort(
+            key=lambda x: (int(x.get("toplam_adet") or 0), str(x.get("olay_ts") or "")),
+            reverse=True,
+        )
+    elif sirala_norm == "urun":
+        gonderimler.sort(key=lambda x: (str(x.get("kalemler_ozet") or "").lower(), str(x.get("olay_ts") or "")))
+    # en_son: SQL sırası korunur (zaten DESC)
+
+    satirlar = list(agregat.values())
+    if sirala_norm == "en_son":
+        satirlar.sort(
+            key=lambda x: (str(x.get("son_tarih") or ""), str(x.get("urun_ad") or "")),
+            reverse=True,
+        )
+    elif sirala_norm == "eski":
+        satirlar.sort(key=lambda x: (str(x.get("son_tarih") or ""), str(x.get("urun_ad") or "")))
+    elif sirala_norm == "adet_azalan":
+        satirlar.sort(key=lambda x: (-int(x.get("toplam_adet") or 0), str(x.get("urun_ad") or "")))
+    else:
+        satirlar.sort(key=lambda x: (str(x.get("urun_ad") or "").lower(), str(x.get("kategori_kod") or "")))
+
+    filtre_etiket = {
+        "bugun": "Bugün",
+        "dun": "Dün",
+        "tarih": str(tarih_bas),
+    }.get(donem_norm, f"Son {gun_i} gün")
+    if donem_norm == "tarih":
+        filtre_etiket = str(tarih_bas)
 
     if format.lower() == "csv":
         sio = io.StringIO()
@@ -7849,9 +7960,15 @@ def ops_siparis_toptanci_listesi(
 
     return {
         "gun": gun_i,
-        "toplam_kayit": len(rows),
+        "donem": donem_norm,
+        "tarih_bas": str(tarih_bas),
+        "tarih_bit": str(tarih_bit),
+        "filtre_etiket": filtre_etiket,
+        "sirala": sirala_norm,
+        "toplam_kayit": len(gonderimler),
         "toplam_satir": len(satirlar),
         "satirlar": satirlar,
+        "gonderimler": gonderimler,
     }
 
 
