@@ -5194,7 +5194,7 @@ def _hub_alarm_satirlari(cur: Any, *, ozet: Optional[Dict[str, Any]] = None, lim
             "seviye": "uyari",
             "baslik": "Depo / sevkiyat hattı",
             "ozet": f"{depo_c} sipariş depo veya sevkiyat aşamasında.",
-            "meta": {"hedef_sekme": "stok-disiplin", "hedef_panel": "kuyruk"},
+            "meta": {"hedef_sekme": "siparis-kontrol"},
         })
 
     oz = ozet or {}
@@ -8639,7 +8639,14 @@ def ops_siparis_gecmis(
     dur = (durum or "").strip() or None
     gun_sayi = max(1, min(730, int(gun or 90)))
 
-    valid_durumlar = {"bekliyor", "teslim_edildi", "iptal", "gonderilmedi"}
+    valid_durumlar = {
+        "bekliyor",
+        "hazirlaniyor",
+        "gonderildi",
+        "teslim_edildi",
+        "iptal",
+        "gonderilmedi",
+    }
     if dur and dur not in valid_durumlar:
         dur = None
 
@@ -8952,6 +8959,62 @@ def ops_v2_siparis_akis(limit: int = Query(50, ge=1, le=200)):
     with db() as (conn, cur):
         akis = siparis_akis_ozet(cur, limit)
     return {"siparis_akis": akis, "toplam": len(akis)}
+
+
+# ── Sipariş Kontrol Kulesi (birleşik merkez görünürlük) ─────────────
+
+from siparis_kontrol_kulesi import (  # noqa: E402
+    siparis_kontrol_kulesi_yukle,
+    siparis_urun_gecmis,
+    ASAMA_LABEL,
+)
+
+
+@router.get("/siparis/kontrol-kulesi")
+def ops_siparis_kontrol_kulesi(
+    gun: int = Query(30, ge=1, le=365),
+    asama: Optional[str] = Query(None, description="bekliyor|depoda|yolda|uyumsuzluk|tamamlandi|iptal|gonderilmedi"),
+    sube_arama: Optional[str] = Query(None),
+    depo_sube_id: Optional[str] = Query(None),
+    talep_arama: Optional[str] = Query(None),
+    sadece_acik: bool = Query(True),
+    limit: int = Query(500, ge=1, le=1000),
+):
+    """Merkez kontrol kulesi — pipeline özeti + sipariş kartları."""
+    asm = (asama or "").strip() or None
+    if asm and asm not in ASAMA_LABEL:
+        asm = None
+    with db() as (conn, cur):
+        data = siparis_kontrol_kulesi_yukle(
+            cur,
+            gun=gun,
+            asama=asm,
+            sube_arama=sube_arama,
+            depo_sube_id=depo_sube_id,
+            talep_arama=talep_arama,
+            sadece_acik=sadece_acik,
+            limit=limit,
+        )
+    data["asama_label"] = ASAMA_LABEL
+    return data
+
+
+@router.get("/siparis/urun-gecmis")
+def ops_siparis_urun_gecmis(
+    urun: str = Query(..., min_length=2, description="Ürün adı veya kodu (kısmi)"),
+    gun: int = Query(90, ge=1, le=730),
+    sube_id: Optional[str] = Query(None),
+    limit: int = Query(80, ge=1, le=300),
+):
+    """Ürün bazında geçmiş sipariş talepleri."""
+    with db() as (conn, cur):
+        return siparis_urun_gecmis(
+            cur,
+            urun_arama=urun,
+            gun=gun,
+            sube_id=sube_id,
+            limit=limit,
+        )
 
 
 # ── Panel: Sipariş Timeline ───────────────────────────────────────

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'rea
 import { api, fmt } from '../utils/api';
 import { computeOpsKartVurgu } from '../utils/opsVurgu';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
+import SiparisKontrolKulesi from './SiparisKontrolKulesi';
 
 /** Backend'in statik şube paneli (`GET /sube-panel/{id}`) — API ile aynı kök (VITE_API_URL). */
 function subePanelHariciUrl(subeId) {
@@ -375,7 +376,7 @@ const UST_SEKMELER = [
   { id: 'kasa-personel-takip', label: '👥 Personel Kasa Takibi' },
   { id: 'personel-vardiya-uyumsuzluk', label: '⚠️ Personel Uyumsuzluğu' },
   { id: 'urun-uyumsuzluk', label: '🧪 Ürün Uyumsuzlukları' },
-  { id: 'sevkiyat-uyumsuzluk', label: '🚚 Sevkiyat uyumsuzlukları' },
+  { id: 'siparis-kontrol', label: '📡 Sipariş Kontrol Kulesi' },
   { id: 'magaza-kartlari', label: '🏪 Depo stokları' },
   { id: 'stok-hareketi', label: '📋 Stok Hareketi' },
   { id: 'food-cost-ozet', label: '💰 Food Cost Özeti' },
@@ -391,15 +392,12 @@ const UST_SEKMELER = [
   { id: 'defter', label: 'Defter Kayıtları' },
   { id: 'sayim', label: 'Açılış Sayımları' },
   { id: 'siparis', label: '📦 Sipariş katalog' },
-  { id: 'siparis-kabul-takip', label: '📥 Sipariş kabul takibi' },
   { id: 'toptanci-siparisleri', label: '🚚 Toptancı siparişleri' },
   { id: 'toptanci-teslimler', label: '📦 Toptancıdan Gelenler' },
   { id: 'analitik', label: '📈 Şube Analitik' },
   { id: 'stok-tahmin', label: '🔮 Stok Tahmin' },
   { id: 'mesaj', label: '📩 Merkez Mesajı' },
   { id: 'puan', label: '⭐ Personel Puan' },
-  { id: 'stok-disiplin', label: '🔴 Stok Disiplin' },
-  { id: 'siparis-gecmis', label: '📋 Sipariş Geçmişi' },
   { id: 'gec-acan-personel', label: '⏰ Geç Açan Personel' },
 ];
 
@@ -415,7 +413,7 @@ const OPS_MODUL_BOLUM = {
   'kasa-personel-takip': [{ id: 'icerik', label: 'Takip Raporu' }],
   'personel-vardiya-uyumsuzluk': [{ id: 'icerik', label: 'Günlük akış' }],
   'urun-uyumsuzluk': [{ id: 'icerik', label: 'Günlük akış' }],
-  'sevkiyat-uyumsuzluk': [{ id: 'icerik', label: 'Liste' }],
+  'siparis-kontrol': [{ id: 'icerik', label: 'Kontrol kulesi' }],
   'magaza-kartlari': [{ id: 'icerik', label: 'Şubeler' }],
   'stok-hareketi': [{ id: 'icerik', label: 'Hareket Defteri' }],
   'food-cost-ozet': [{ id: 'icerik', label: 'Özet' }],
@@ -440,15 +438,12 @@ const OPS_MODUL_BOLUM = {
     { id: 'bar-ozet', label: 'Bar Günlük Özet' },
   ],
   siparis: [{ id: 'icerik', label: 'Sipariş katalogu' }],
-  'siparis-kabul-takip': [{ id: 'icerik', label: 'Kabul listesi' }],
   'toptanci-siparisleri': [{ id: 'icerik', label: 'Liste' }],
   'toptanci-teslimler': [{ id: 'icerik', label: 'Şube bazlı' }],
   analitik: [{ id: 'icerik', label: 'Genel özet' }],
   'stok-tahmin': [{ id: 'icerik', label: 'Tahminler' }],
   mesaj: [{ id: 'icerik', label: 'Mesajlar' }],
   puan: [{ id: 'icerik', label: 'Puan listesi' }],
-  'stok-disiplin': [{ id: 'icerik', label: 'Disiplin Merkezi' }],
-  'siparis-gecmis': [{ id: 'icerik', label: 'Geçmiş' }],
   'gec-acan-personel': [{ id: 'icerik', label: 'Aylık analiz' }],
 };
 
@@ -462,7 +457,7 @@ const OPS_HUB_RENK = {
   'kasa-uyumsuzluk': '#e85d5d',
   'personel-vardiya-uyumsuzluk': '#be185d',
   'urun-uyumsuzluk': '#8b5cf6',
-  'sevkiyat-uyumsuzluk': '#ea580c',
+  'siparis-kontrol': '#0ea5a4',
   'magaza-kartlari': '#7c6fdc',
   kontrol: '#e85d5d',
   'guvenlik-alarmlar': '#be185d',
@@ -474,15 +469,12 @@ const OPS_HUB_RENK = {
   defter: 'var(--text3)',
   sayim: 'var(--green)',
   siparis: '#4a9eff',
-  'siparis-kabul-takip': '#2db573',
   'toptanci-siparisleri': '#0ea5a4',
   'toptanci-teslimler': '#f59e0b',
   analitik: '#6366f1',
   'stok-tahmin': '#10b981',
   mesaj: '#8899aa',
   puan: '#ffc14d',
-  'stok-disiplin': '#e85d5d',
-  'siparis-gecmis': '#94a3b8',
   'gec-acan-personel': '#0ea5a4',
   'stok-hareketi': '#64748b',
   'food-cost-ozet': '#16a34a',
@@ -511,8 +503,8 @@ const MODULLER = [
     id: 'siparis-tedarik',
     label: '🚚 Sipariş & Tedarik',
     renk: '#0ea5a4',
-    desc: 'Sipariş disiplini, kabul takibi, toptancı ve sevkiyat yönetimi',
-    tabs: ['siparis', 'stok-disiplin', 'siparis-kabul-takip', 'toptanci-siparisleri', 'toptanci-teslimler', 'sevkiyat-uyumsuzluk', 'siparis-gecmis'],
+    desc: 'Sipariş kontrol kulesi, katalog ve toptancı tedarik',
+    tabs: ['siparis-kontrol', 'siparis', 'toptanci-siparisleri', 'toptanci-teslimler'],
   },
   {
     id: 'finans-kasa',
@@ -3511,7 +3503,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     if (!aktifSekme) return;
-    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'siparis-kabul-takip' || aktifSekme === 'toptanci-siparisleri' || aktifSekme === 'urun-ac' || aktifSekme === 'acilis-takip' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'personel-vardiya-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'sevkiyat-uyumsuzluk' || aktifSekme === 'magaza-kartlari' || aktifSekme === 'metrics' || aktifSekme === 'kontrol' || aktifSekme === 'stok-disiplin') return;
+    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'siparis-kontrol' || aktifSekme === 'toptanci-siparisleri' || aktifSekme === 'urun-ac' || aktifSekme === 'acilis-takip' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'personel-vardiya-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'magaza-kartlari' || aktifSekme === 'metrics' || aktifSekme === 'kontrol') return;
     yukle(filtre);
   }, [filtre, aktifSekme, ayFiltre, gunFiltre, yukle]);
 
@@ -4328,8 +4320,18 @@ export default function OperasyonMerkezi() {
     setOpsIcBolum(bolumler[0].id);
     if (modulId !== undefined) setAktifModul(modulId);
     setOpsMerkezPencere(true);
-    setYukleniyor(true);
+    setYukleniyor(id !== 'siparis-kontrol');
   }, []);
+
+  useEffect(() => {
+    try {
+      const sek = sessionStorage.getItem('ops_merkez_ac_sekme');
+      if (!sek) return;
+      sessionStorage.removeItem('ops_merkez_ac_sekme');
+      const modul = MODULLER.find((m) => m.tabs.includes(sek));
+      acOpsModul(sek, modul?.id);
+    } catch (_) {}
+  }, [acOpsModul]);
 
   /** Modül içinde sekme değişimi — yukleniyor tetikler, veri useEffect ile yüklenir */
   const acModulTab = useCallback((tabId) => {
@@ -4345,9 +4347,8 @@ export default function OperasyonMerkezi() {
     const m = a?.meta || {};
     let sek = m.hedef_sekme;
     if (!sek) return;
-    if (sek === 'siparis') {
-      sek = 'stok-disiplin';
-      setDisiplinPanel('kuyruk');
+    if (sek === 'siparis' || sek === 'stok-disiplin' || sek === 'siparis-gecmis' || sek === 'siparis-kabul-takip' || sek === 'sevkiyat-uyumsuzluk') {
+      sek = 'siparis-kontrol';
       if (m.talep_id) {
         try {
           sessionStorage.setItem('ops_siparis_vurgula_talep', String(m.talep_id));
@@ -4364,14 +4365,11 @@ export default function OperasyonMerkezi() {
     if (modul) setAktifModul(modul.id);
     setOpsMerkezPencere(true);
     setYukleniyor(true);
-    if (sek === 'stok-disiplin' && m.hedef_panel) {
-      setDisiplinPanel(String(m.hedef_panel));
-    }
     setHubAlarmAcikId(null);
   }, []);
 
   useEffect(() => {
-    if (aktifSekme !== 'stok-disiplin' || !opsMerkezPencere || disiplinPanel !== 'kuyruk') return;
+    if (aktifSekme !== 'siparis-kontrol' || !opsMerkezPencere) return;
     let tid;
     try {
       tid = sessionStorage.getItem('ops_siparis_vurgula_talep');
@@ -4391,7 +4389,7 @@ export default function OperasyonMerkezi() {
       window.clearTimeout(t1);
       window.clearTimeout(t2);
     };
-  }, [aktifSekme, opsMerkezPencere, disiplinPanel, bekleyenSiparisler]);
+  }, [aktifSekme, opsMerkezPencere]);
 
   useEffect(() => {
     if (aktifSekme !== 'onay') return;
@@ -4808,7 +4806,7 @@ export default function OperasyonMerkezi() {
             else if (aktifSekme === 'metrics') yukleMetrics();
             else if (aktifSekme === 'kontrol') yukleKontrolOzet();
             else if (aktifSekme === 'fis') yukleFisBekleyen();
-            else if (aktifSekme === 'stok-disiplin') yukleDisiplin();
+            else if (aktifSekme === 'siparis-kontrol') { /* SiparisKontrolKulesi kendi yükler */ }
             else yukle(filtre);
           }}
         >
@@ -4915,7 +4913,7 @@ export default function OperasyonMerkezi() {
                       onClick={(e) => {
                         e.stopPropagation();
                         setDisiplinPanel('kuyruk');
-                        acOpsModul('stok-disiplin');
+                        acOpsModul('siparis-kontrol');
                       }}
                     >
                       Stok Disiplin · sipariş kuyruğu →
@@ -5276,7 +5274,7 @@ export default function OperasyonMerkezi() {
                   else if (aktifSekme === 'metrics') yukleMetrics();
                   else if (aktifSekme === 'kontrol') yukleKontrolOzet();
                   else if (aktifSekme === 'fis') yukleFisBekleyen();
-                  else if (aktifSekme === 'stok-disiplin') yukleDisiplin();
+                  else if (aktifSekme === 'siparis-kontrol') { /* SiparisKontrolKulesi kendi yükler */ }
                   else yukle(filtre);
                 }}
               >
@@ -10949,7 +10947,7 @@ export default function OperasyonMerkezi() {
         </div>
       )}
 
-      {aktifSekme === 'sevkiyat-uyumsuzluk' && (
+      {false && aktifSekme === 'sevkiyat-uyumsuzluk' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0, lineHeight: 1.55 }}>
             <strong style={{ color: 'var(--text2)' }}>Depo çıkış (sevk)</strong> ile{' '}
@@ -11397,7 +11395,7 @@ export default function OperasyonMerkezi() {
         </div>
       )}
 
-      {aktifSekme === 'siparis-kabul-takip' && (
+      {false && aktifSekme === 'siparis-kabul-takip' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
             Şube panelinde yapılan ürün teslim/kabul kayıtları burada izlenir. Satırlar operasyon defterindeki{' '}
@@ -12362,12 +12360,12 @@ export default function OperasyonMerkezi() {
       )}
 
       {/* ═══════════════ SİPARİŞ GEÇMİŞİ PANELİ ═══════════════ */}
-      {aktifSekme === 'siparis-gecmis' && (
-        <SiparisGecmisPanel />
+      {aktifSekme === 'siparis-kontrol' && (
+        <SiparisKontrolKulesi />
       )}
 
-      {/* ═══════════════ STOK DİSİPLİN PANELİ ═══════════════ */}
-      {aktifSekme === 'stok-disiplin' && (
+      {/* Eski paneller birleştirildi — SiparisKontrolKulesi */}
+      {false && aktifSekme === 'stok-disiplin' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 
           {/* Alt panel seçici */}
@@ -12781,7 +12779,12 @@ export default function OperasyonMerkezi() {
                                   try {
                                     sessionStorage.setItem('ops_sevkiyat_hazirlama_sube_id', sid);
                                   } catch (_) {}
-                                  window.location.hash = 'sevkiyat-hazirlama';
+                                  try {
+                                    sessionStorage.setItem('ops_kontrol_kulesi_gorunum', 'depo');
+                                    sessionStorage.setItem('ops_kontrol_kulesi_depo', sid);
+                                  } catch (_) {}
+                                  window.location.hash = 'ops-merkez';
+                                  acOpsModul('siparis-kontrol', 'siparis-tedarik');
                                 }}
                               >
                                 Sevkiyat hazırlama

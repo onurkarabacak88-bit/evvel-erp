@@ -25,7 +25,6 @@ import VeriTemizle from './pages/VeriTemizle.jsx';
 import OperasyonMerkezi from './pages/OperasyonMerkezi';
 import EvoSatis from './pages/EvoSatis';
 import TeslimKayit from './pages/TeslimKayit';
-import SevkiyatHazirlama from './pages/SevkiyatHazirlama';
 import KasaTeslim from './pages/KasaTeslim';
 import './index.css';
 
@@ -49,7 +48,6 @@ const NAV = [
     { id: 'vadeli',           label: 'Vadeli Alım',         icon: '📦' },
     { id: 'excel',            label: 'Excel Import',        icon: '📊' },
     { id: 'teslim-kayit',     label: 'Bilgi Teslim',        icon: '📦' },
-    { id: 'sevkiyat-hazirlama', label: 'Sevkiyat Hazırlama', icon: '🚚' },
   ]},
   { group: 'Tanımlar', items: [
     { id: 'kartlar',          label: 'Kartlar',             icon: '💳' },
@@ -84,7 +82,6 @@ const PAGES = {
   vadeli:             VadeliAlimlar,
   excel:              ExcelImport,
   'teslim-kayit':     TeslimKayit,
-  'sevkiyat-hazirlama': SevkiyatHazirlama,
   kartlar:            Kartlar,
   'kart-analiz':      KartMerkez,
   personel:           Personel,
@@ -100,6 +97,18 @@ function readPageFromHash() {
   try {
     const raw = (window.location.hash || '').replace(/^#/, '').split('&')[0];
     const h = decodeURIComponent(raw).trim();
+    if (h === 'sevkiyat-hazirlama') {
+      try {
+        sessionStorage.setItem('ops_merkez_ac_sekme', 'siparis-kontrol');
+        sessionStorage.setItem('ops_kontrol_kulesi_gorunum', 'depo');
+        const sid = sessionStorage.getItem('ops_sevkiyat_hazirlama_sube_id');
+        if (sid) {
+          sessionStorage.setItem('ops_kontrol_kulesi_depo', sid);
+          sessionStorage.removeItem('ops_sevkiyat_hazirlama_sube_id');
+        }
+      } catch (_) {}
+      return 'ops-merkez';
+    }
     if (h && Object.prototype.hasOwnProperty.call(PAGES, h)) return h;
   } catch (_) {}
   return null;
