@@ -11197,7 +11197,7 @@ def ops_v2_bekleyen_siparisler(gun: int = Query(7, ge=1, le=30)):
     with db() as (conn, cur):
         cur.execute("""
             SELECT st.id, st.sube_id, s.ad AS sube_adi,
-                   st.tarih, st.olusturma, st.personel_ad,
+                   st.tarih, st.olusturma, st.personel_id, st.personel_ad,
                    st.not_aciklama, st.kalemler,
                    COALESCE(st.hedef_depo_sube_id, st.sevkiyat_sube_id) AS hedef_depo_sube_id,
                    st.tahsis_kaynak_depo_sube_id,
@@ -11273,6 +11273,7 @@ def ops_v2_bekleyen_siparisler(gun: int = Query(7, ge=1, le=30)):
                 "sube_adi": talep.get("sube_adi"),
                 "tarih": str(talep.get("tarih") or ""),
                 "olusturma": str(talep.get("olusturma") or ""),
+                "personel_id": talep.get("personel_id"),
                 "personel_ad": talep.get("personel_ad"),
                 "not_aciklama": talep.get("not_aciklama"),
                 "kalemler": kalem_detay,

@@ -36,6 +36,24 @@ function kalemOzet(kalemler) {
     .join(' · ');
 }
 
+/** Şube panelinden siparişi onaylayan personel (siparis_talep.personel_ad). */
+function siparisGonderenAdi(kayit) {
+  const ad = String(kayit?.personel_ad || kayit?.gonderen_ad || '').trim();
+  if (ad) return ad;
+  const pid = String(kayit?.personel_id || '').trim();
+  return pid ? `Personel #${pid.slice(0, 8)}` : null;
+}
+
+function SiparisGonderenSatiri({ kayit, style = {} }) {
+  const ad = siparisGonderenAdi(kayit);
+  if (!ad) return null;
+  return (
+    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2, ...style }}>
+      👤 Gönderen: <span style={{ color: 'var(--text2)', fontWeight: 500 }}>{ad}</span>
+    </div>
+  );
+}
+
 function KuyrukYonlendirmeKarti({
   sip,
   depolar,
@@ -739,6 +757,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                         }}
                       >
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{sip.sube_adi}</div>
+                        <SiparisGonderenSatiri kayit={sip} />
                         <div style={{ fontSize: 11, color: 'var(--text3)' }}>{kisaTs(sip.olusturma)} · {kalemOzet(sip.kalemler)}</div>
                         <KuyrukYonlendirmeKarti
                             sip={sip}
@@ -816,6 +835,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                           {s.hedef_depo_sube_adi && (
                             <div style={{ fontSize: 11, color: 'var(--text3)' }}>→ {s.hedef_depo_sube_adi}</div>
                           )}
+                          <SiparisGonderenSatiri kayit={s} style={{ marginTop: 2 }} />
                           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{s.asama_metni}</div>
                           <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'monospace' }}>
                             #{String(s.id).slice(-8)} · {kisaTs(s.olusturma)}
@@ -870,6 +890,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 12 }}>
                     <div>
                       <div style={{ fontWeight: 700, fontSize: 16 }}>{secili.sube_adi}</div>
+                      <SiparisGonderenSatiri kayit={secili} style={{ marginTop: 4, fontSize: 12 }} />
                       <div style={{ fontSize: 12, color: 'var(--text3)' }}>
                         {secili.hedef_depo_sube_adi && `Depo: ${secili.hedef_depo_sube_adi} · `}
                         {secili.asama_metni}
@@ -934,6 +955,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                     <div style={{ fontSize: 11, maxHeight: 200, overflowY: 'auto' }}>
                       <div style={{ padding: '4px 0', color: 'var(--text3)' }}>
                         📝 Talep: {kisaTs(secili.olusturma)}
+                        {siparisGonderenAdi(secili) && ` · 👤 ${siparisGonderenAdi(secili)}`}
                       </div>
                       {secili.tahsis_ts && (
                         <div style={{ padding: '4px 0', color: 'var(--text3)' }}>
@@ -1006,6 +1028,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                   }}
                 >
                   <div style={{ fontWeight: 600 }}>{t.talep_sube_adi || t.sube_adi}</div>
+                  <SiparisGonderenSatiri kayit={t} />
                   <div style={{ fontSize: 11, color: 'var(--text3)' }}>{kalemOzet(t.kalemler)}</div>
                 </button>
               ))}
@@ -1016,7 +1039,8 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
               <div className="empty">Depo listesinden talep seçin</div>
             ) : (
               <>
-                <div style={{ fontWeight: 700, marginBottom: 10 }}>{depoSecili.talep_sube_adi || depoSecili.sube_adi}</div>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>{depoSecili.talep_sube_adi || depoSecili.sube_adi}</div>
+                <SiparisGonderenSatiri kayit={depoSecili} style={{ marginBottom: 10 }} />
                 {(depoSecili.kalemler || []).map((k, i) => {
                   const key = `${k?.urun_id || ''}:${k?.urun_ad || ''}:${i}`;
                   const kd = depoKalem[key] || {};
