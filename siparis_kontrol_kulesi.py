@@ -68,6 +68,8 @@ def siparis_asama_hesapla(
         return ASAMA_TAMAMLANDI
     if d == "bekliyor":
         return ASAMA_BEKLIYOR
+    if sd == "toptanciya_yonlendirildi":
+        return ASAMA_TAMAMLANDI
     if d == "gonderildi":
         return ASAMA_YOLDA
     if d == "hazirlaniyor":
@@ -94,6 +96,8 @@ def _asama_metni(asama: str, sevkiyat_durumu: Optional[str]) -> str:
     if asama == ASAMA_UYUMSUZLUK:
         return "Kabul uyumsuzluğu — merkez müdahalesi gerekli"
     if asama == ASAMA_TAMAMLANDI:
+        if sevkiyat_durumu_coz(sevkiyat_durumu) == "toptanciya_yonlendirildi":
+            return "Toptancıya yönlendirildi"
         return "Teslim alındı (tamamlandı)"
     if asama == ASAMA_IPTAL:
         return "İptal edildi"

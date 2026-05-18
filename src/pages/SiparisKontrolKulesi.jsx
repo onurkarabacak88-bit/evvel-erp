@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
+import IslemSonucOverlay from '../components/IslemSonucOverlay';
+import { publishGlobalDataRefresh } from '../utils/globalDataRefresh';
 
 const ASAMA_STIL = {
   bekliyor: { renk: '#4a9eff', ikon: '🕐', label: 'Merkez kuyruğu' },
@@ -235,6 +237,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
   const [kuyrukToptanciNot, setKuyrukToptanciNot] = useState({});
   const [kuyrukToptanciKalem, setKuyrukToptanciKalem] = useState({}); // `${talep_id}::${kalem}` → adet
   const [kuyrukBusy, setKuyrukBusy] = useState(null);
+  const [islemSonuc, setIslemSonuc] = useState(null); // { basarili, mesaj }
 
   const [uyumsuzluklar, setUyumsuzluklar] = useState([]);
   const [urunArama, setUrunArama] = useState('');
@@ -376,6 +379,61 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
 
   const kalemIstenenAdet = (k) => Math.max(0, Number(k?.istenen_adet ?? k?.adet ?? 0));
 
+  const kuyrukTalepTemizle = useCallback((talepId) => {
+    const tid = String(talepId || '');
+    if (!tid) return;
+    setBekleyen((prev) => {
+      const liste = Array.isArray(prev?.siparisler) ? prev.siparisler : [];
+      const yeni = liste.filter((s) => String(s?.id || '') !== tid);
+      if (yeni.length === liste.length) return prev;
+      return { ...prev, siparisler: yeni, toplam: yeni.length };
+    });
+    setVeri((prev) => {
+      if (!prev?.ozet || prev.ozet.bekliyor == null) return prev;
+      return {
+        ...prev,
+        ozet: { ...prev.ozet, bekliyor: Math.max(0, Number(prev.ozet.bekliyor || 0) - 1) },
+      };
+    });
+    setKuyrukDepo((p) => {
+      const n = { ...p };
+      delete n[tid];
+      return n;
+    });
+    setKuyrukTalimat((p) => {
+      const n = { ...p };
+      delete n[tid];
+      return n;
+    });
+    setKuyrukMod((p) => {
+      const n = { ...p };
+      delete n[tid];
+      return n;
+    });
+    setKuyrukToptanciTedarikci((p) => {
+      const n = { ...p };
+      delete n[tid];
+      return n;
+    });
+    setKuyrukToptanciNot((p) => {
+      const n = { ...p };
+      delete n[tid];
+      return n;
+    });
+    setKuyrukToptanciKalem((p) => {
+      const n = { ...p };
+      Object.keys(n).forEach((k) => {
+        if (k.startsWith(`${tid}::`)) delete n[k];
+      });
+      return n;
+    });
+    if (secili?.id === tid) setSecili(null);
+  }, [secili?.id]);
+
+  const islemSonucGoster = useCallback((basarili, mesaj) => {
+    setIslemSonuc({ basarili, mesaj });
+  }, []);
+
   const depoyaGonder = async (talepId) => {
     const depo = kuyrukDepo[talepId];
     if (!depo) {
@@ -388,10 +446,12 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
       const tal = (kuyrukTalimat[talepId] || '').trim();
       if (tal) body.operasyon_yonlendirme_talimati = tal;
       await api('/ops/siparis/sevkiyata-gonder', { method: 'POST', body });
-      toast('Sipariş depoya yönlendirildi');
+      kuyrukTalepTemizle(talepId);
+      publishGlobalDataRefresh('siparis-kontrol-depo-yonlendir');
+      islemSonucGoster(true, 'Sipariş depoya yönlendirildi — merkez kuyruğundan çıktı.');
       yukle();
     } catch (e) {
-      toast(e.message || 'Yönlendirme hatası', 'red');
+      islemSonucGoster(false, e.message || 'Yönlendirme hatası');
     } finally {
       setKuyrukBusy(null);
     }
@@ -425,7 +485,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
     }
     setKuyrukBusy(talepId);
     try {
-      await api('/ops/siparis/toptanciya-yolla', {
+      const r = await api('/ops/siparis/toptanciya-yolla', {
         method: 'POST',
         body: {
           talep_id: talepId,
@@ -434,10 +494,19 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
           kalemler,
         },
       });
-      toast('Talep toptancı sipariş listesine aktarıldı', 'green');
+      kuyrukTalepTemizle(talepId);
+      publishGlobalDataRefresh('siparis-kontrol-toptanci-yonlendir');
+      const tedarikci = (kuyrukToptanciTedarikci[talepId] || '').trim();
+      const adetTop = Number(r?.toplam_adet || 0);
+      islemSonucGoster(
+        true,
+        tedarikci
+          ? `Toptancıya yönlendirildi (${tedarikci}) — ${adetTop} adet · kuyruktan düştü.`
+          : `Toptancıya yönlendirildi — ${adetTop} adet · merkez kuyruğundan çıktı.`,
+      );
       yukle();
     } catch (e) {
-      toast(e.message || 'Toptancıya gönderim hatası', 'red');
+      islemSonucGoster(false, e.message || 'Toptancıya gönderim hatası');
     } finally {
       setKuyrukBusy(null);
     }
@@ -522,6 +591,14 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {islemSonuc && (
+        <IslemSonucOverlay
+          basarili={islemSonuc.basarili}
+          mesaj={islemSonuc.mesaj}
+          sureMs={5000}
+          onKapat={() => setIslemSonuc(null)}
+        />
+      )}
       {msg && <div className={`alert-box ${msg.t} mb-8`}>{msg.m}</div>}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>

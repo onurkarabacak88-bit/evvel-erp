@@ -7762,8 +7762,31 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
             bildirim_saati=dt_now_tr().strftime("%H:%M:%S"),
             ref_event_id=tid,
         )
+        sevk_notu = notu
+        if tedarikci_ad:
+            ek = f"Toptancı: {tedarikci_ad}"
+            sevk_notu = f"{ek}. {sevk_notu}" if sevk_notu else ek
+        cur.execute(
+            """
+            UPDATE siparis_talep
+            SET durum = 'gonderildi',
+                sevkiyat_durumu = 'toptanciya_yonlendirildi',
+                sevkiyat_durum = 'toptanciya_yonlendirildi',
+                sevkiyat_notu = COALESCE(NULLIF(TRIM(%s), ''), sevkiyat_notu),
+                sevkiyat_ts = COALESCE(sevkiyat_ts, NOW())
+            WHERE id = %s
+            """,
+            (sevk_notu, tid),
+        )
         audit(cur, "siparis_talep", tid, "OPS_SIPARIS_TOPTANCIYA_YOLLA")
-    return {"success": True, "talep_id": tid, "kalem_sayisi": len(kalemler), "toplam_adet": sum(int(k.get("adet") or 0) for k in kalemler)}
+    return {
+        "success": True,
+        "talep_id": tid,
+        "kalem_sayisi": len(kalemler),
+        "toplam_adet": sum(int(k.get("adet") or 0) for k in kalemler),
+        "durum": "gonderildi",
+        "sevkiyat_durumu": "toptanciya_yonlendirildi",
+    }
 
 
 def _toptanci_liste_tarih_araligi(
