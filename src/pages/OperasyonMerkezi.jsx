@@ -2280,6 +2280,14 @@ export default function OperasyonMerkezi() {
   const markGuncel = useCallback((sekme) => {
     setSekmeSonGuncelleme((prev) => ({ ...prev, [sekme]: new Date() }));
   }, []);
+
+  // Sekme açıldığında otomatik mark — loader paralel çalışır, badge anında doğru
+  // Loader bittikten sonra ilgili fonksiyon zaten markGuncel çağırır (override eder)
+  useEffect(() => {
+    if (aktifSekme) {
+      setSekmeSonGuncelleme((prev) => ({ ...prev, [aktifSekme]: new Date() }));
+    }
+  }, [aktifSekme]);
   const [ciroOnayBugun, setCiroOnayBugun] = useState({ tarih: '', toplam: 0, toplam_tutar: 0, kayitlar: [] });
   const [ciroOnayBugunYukleniyor, setCiroOnayBugunYukleniyor] = useState(false);
   const [ciroOnayAramaTarih, setCiroOnayAramaTarih] = useState(isGunuIsoIstanbul());
@@ -5316,6 +5324,14 @@ export default function OperasyonMerkezi() {
                   }}>
                     {Number(sevkiyatUyumOzet.adet)} uyumsuzluk
                   </span>
+                )}
+                {/* Global cache freshness rozeti — aktif sekmenin son güncelleme zamanı */}
+                {sekmeSonGuncelleme[aktifSekme] && (
+                  <CacheFreshnessBadge
+                    guncelleme={sekmeSonGuncelleme[aktifSekme]}
+                    kaynak={aktifSekme === 'kapanis-takip' ? kapanisTakipKaynak : 'live'}
+                    kompakt
+                  />
                 )}
               </h3>
             </div>
