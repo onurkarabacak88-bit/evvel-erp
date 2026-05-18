@@ -2991,3 +2991,97 @@ $$;
                 print(f"[MIGRATION] katalog_stok_birebir_v1: {_eklenen} sube_depo_stok satırı eklendi")
         except Exception as _mig_e:
             print(f"[MIGRATION WARN] katalog_stok_birebir_v1: {_mig_e}")
+
+        # ─── RAPOR CACHE TABLOLARI (raporlama hızlandırma) — savepoint ile safe ──
+        # Her CREATE ayrı savepoint'te — biri patlasa diğerleri etkilenmez.
+        for _ddl_ad, _ddl in [
+            ("rapor_gunluk_sube_ozet", """
+                CREATE TABLE IF NOT EXISTS rapor_gunluk_sube_ozet (
+                    sube_id         TEXT NOT NULL,
+                    tarih           DATE NOT NULL,
+                    ciro_nakit      NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    ciro_pos        NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    ciro_online     NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    ciro_toplam     NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    ciro_durum      TEXT,
+                    fis_sayisi      INTEGER NOT NULL DEFAULT 0,
+                    kasa_acilis     NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    kasa_kapanis    NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    kasa_teslim     NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    kasa_devir      NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    ara_teslim      NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    kasa_fark_tl    NUMERIC(14,2),
+                    kasa_fark_durum TEXT,
+                    anlik_gider_nakit NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    anlik_gider_kart  NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    anlik_gider_adet  INTEGER NOT NULL DEFAULT 0,
+                    acilis_yapildi    BOOLEAN NOT NULL DEFAULT FALSE,
+                    kapanis_yapildi   BOOLEAN NOT NULL DEFAULT FALSE,
+                    acilis_personel   TEXT,
+                    kapanis_personel  TEXT,
+                    guncelleme        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    kaynak            TEXT NOT NULL DEFAULT 'batch',
+                    PRIMARY KEY (sube_id, tarih)
+                )
+            """),
+            ("idx_rapor_gunluk_tarih",
+                "CREATE INDEX IF NOT EXISTS idx_rapor_gunluk_tarih ON rapor_gunluk_sube_ozet (tarih DESC, sube_id)"),
+            ("rapor_gunluk_urun_ozet", """
+                CREATE TABLE IF NOT EXISTS rapor_gunluk_urun_ozet (
+                    sube_id         TEXT NOT NULL,
+                    tarih           DATE NOT NULL,
+                    kalem_kodu      TEXT NOT NULL,
+                    kalem_adi       TEXT,
+                    acilan_adet     INTEGER NOT NULL DEFAULT 0,
+                    sevk_adet       INTEGER NOT NULL DEFAULT 0,
+                    kullanilan_adet INTEGER NOT NULL DEFAULT 0,
+                    kalan_adet      INTEGER NOT NULL DEFAULT 0,
+                    guncelleme      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (sube_id, tarih, kalem_kodu)
+                )
+            """),
+            ("idx_rapor_urun_tarih",
+                "CREATE INDEX IF NOT EXISTS idx_rapor_urun_tarih ON rapor_gunluk_urun_ozet (tarih DESC, sube_id)"),
+            ("rapor_aylik_food_cost", """
+                CREATE TABLE IF NOT EXISTS rapor_aylik_food_cost (
+                    sube_id         TEXT NOT NULL,
+                    year_month      TEXT NOT NULL,
+                    toplam_ciro     NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    toplam_gider    NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    anlik_gider     NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    sabit_gider     NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    food_cost_pct   NUMERIC(6,2),
+                    fis_sayisi      INTEGER NOT NULL DEFAULT 0,
+                    ortalama_fis_tutari NUMERIC(14,2),
+                    guncelleme      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (sube_id, year_month)
+                )
+            """),
+            ("idx_rapor_aylik_ym",
+                "CREATE INDEX IF NOT EXISTS idx_rapor_aylik_ym ON rapor_aylik_food_cost (year_month DESC, sube_id)"),
+            ("rapor_batch_log", """
+                CREATE TABLE IF NOT EXISTS rapor_batch_log (
+                    id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                    batch_tipi      TEXT NOT NULL,
+                    baslangic_ts    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    bitis_ts        TIMESTAMPTZ,
+                    durum           TEXT NOT NULL DEFAULT 'calisiyor',
+                    islenen_kayit   INTEGER NOT NULL DEFAULT 0,
+                    sure_ms         INTEGER,
+                    hata_mesaji     TEXT,
+                    detay           JSONB
+                )
+            """),
+            ("idx_rapor_batch_baslangic",
+                "CREATE INDEX IF NOT EXISTS idx_rapor_batch_baslangic ON rapor_batch_log (baslangic_ts DESC)"),
+        ]:
+            try:
+                cur.execute(f"SAVEPOINT sp_rc_{_ddl_ad[:30]}")
+                cur.execute(_ddl)
+                cur.execute(f"RELEASE SAVEPOINT sp_rc_{_ddl_ad[:30]}")
+            except Exception as _e:
+                try:
+                    cur.execute(f"ROLLBACK TO SAVEPOINT sp_rc_{_ddl_ad[:30]}")
+                except Exception:
+                    pass
+                print(f"[MIGRATION WARN] rapor_cache {_ddl_ad}: {_e}")
