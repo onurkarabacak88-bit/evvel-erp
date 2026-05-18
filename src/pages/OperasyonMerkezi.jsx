@@ -2064,6 +2064,16 @@ export default function OperasyonMerkezi() {
   const [toptanciTeslimAcikSube, setToptanciTeslimAcikSube] = useState(null);
   const [analitikGun, setAnalitikGun] = useState(30);
   const [analitikVeri, setAnalitikVeri] = useState(null);
+  // Şube Analitik için aylık food cost cache (rapor_aylik_food_cost'tan)
+  const [aylikFoodCostCache, setAylikFoodCostCache] = useState(null);
+  const yukleAylikFoodCost = useCallback(async () => {
+    try {
+      const r = await api('/ops/rapor-cache/aylik-food-cost');
+      setAylikFoodCostCache(r);
+    } catch {
+      setAylikFoodCostCache(null);
+    }
+  }, []);
   const [stokTahminGun, setStokTahminGun] = useState(14);
   const [stokTahminSube, setStokTahminSube] = useState('');
   const [stokTahminVeri, setStokTahminVeri] = useState(null);
@@ -2263,6 +2273,13 @@ export default function OperasyonMerkezi() {
   const [kapanisTakipSonGuncelleme, setKapanisTakipSonGuncelleme] = useState(null);
   const [kapanisTakipKaynak, setKapanisTakipKaynak] = useState(null);  // 'cache' | 'live'
   const kapanisTakipIntervalRef = useRef(null);
+
+  // Sekme bazlı son güncelleme map'i — her sekmenin freshness rozeti bundan beslenir
+  // Helper: markGuncel('sekme-adi') → state günceller, badge yenilenir
+  const [sekmeSonGuncelleme, setSekmeSonGuncelleme] = useState({});
+  const markGuncel = useCallback((sekme) => {
+    setSekmeSonGuncelleme((prev) => ({ ...prev, [sekme]: new Date() }));
+  }, []);
   const [ciroOnayBugun, setCiroOnayBugun] = useState({ tarih: '', toplam: 0, toplam_tutar: 0, kayitlar: [] });
   const [ciroOnayBugunYukleniyor, setCiroOnayBugunYukleniyor] = useState(false);
   const [ciroOnayAramaTarih, setCiroOnayAramaTarih] = useState(isGunuIsoIstanbul());
@@ -2828,12 +2845,13 @@ export default function OperasyonMerkezi() {
         setCiroOnayAramaTarih(data.tarih || isGunuIsoIstanbul());
         setCiroOnayAramaSonuc(data);
       }
+      markGuncel('ciro-onay');
     } catch (e) {
       if (!silent) toast(e.message || 'Bekleyen ciro onayları yüklenemedi');
     } finally {
       setCiroOnayBugunYukleniyor(false);
     }
-  }, [aktifSekme, ciroOnayGunYukle, toast]);
+  }, [aktifSekme, ciroOnayGunYukle, toast, markGuncel]);
 
   const ciroOnayAramaYap = useCallback(async () => {
     const hedef = (ciroOnayAramaTarih || isGunuIsoIstanbul()).trim();
@@ -3224,12 +3242,15 @@ export default function OperasyonMerkezi() {
     try {
       const r = await api(`/ops/analitik-ozet?gun=${analitikGun}`);
       setAnalitikVeri(r);
+      // Paralel: aylık food cost cache (hızlı, sadece çekiyoruz)
+      yukleAylikFoodCost();
+      markGuncel('analitik');
     } catch (e) {
       toast(e.message || 'Analitik yüklenemedi');
     } finally {
       setYukleniyor(false);
     }
-  }, [toast, analitikGun]);
+  }, [toast, analitikGun, markGuncel, yukleAylikFoodCost]);
 
   const yukleStokTahmin = useCallback(async () => {
     try {
@@ -3276,12 +3297,13 @@ export default function OperasyonMerkezi() {
       setMSubeOperasyonKalite(sk);
       setMFinansOzet(fo);
       setMStokTedarik(st);
+      markGuncel('metrics');
     } catch (e) {
       console.error('yukleMetrics hata:', e);
     } finally {
       setYukleniyor(false);
     }
-  }, []);
+  }, [markGuncel]);
 
   const yukleKontrolOzet = useCallback(async () => {
     try {
@@ -5153,6 +5175,20 @@ export default function OperasyonMerkezi() {
               )}
             </section>
           )}
+
+        {/* Operasyon Merkezi ana sayfa — modül kartları üst freshness barı */}
+        {!opsMerkezPencere && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+              Modül kartları canlı veri · alt sayfalar açıldığında cache devreye girer
+            </span>
+            <CacheFreshnessBadge
+              guncelleme={sonYenileme}
+              kaynak="live"
+              kompakt
+            />
+          </div>
+        )}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginBottom: 20 }}>
           {MODULLER.map((modul) => {
@@ -7357,6 +7393,14 @@ export default function OperasyonMerkezi() {
           ? <div className="loading"><div className="spinner" />Metrik veriler yükleniyor…</div>
           : (
           <>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+              <CacheFreshnessBadge
+                guncelleme={sekmeSonGuncelleme['metrics']}
+                kaynak="live"
+                onYenile={() => yukleMetrics()}
+                yenileniyor={yukleniyor}
+              />
+            </div>
             {opsIcBolum === 'personel' && (
             <div className="card">
               <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Personel verimlilik</h3>
@@ -8783,6 +8827,14 @@ export default function OperasyonMerkezi() {
             </button>
             <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'flex-end' }}>
               {ciroOnayAramaSonuc?.tarih || ciroOnayAramaTarih} · {ciroOnayAramaSonuc?.toplam || 0} bekleyen · {fmt(ciroOnayAramaSonuc?.toplam_tutar || 0)}
+            </div>
+            <div style={{ marginLeft: 'auto', alignSelf: 'flex-end' }}>
+              <CacheFreshnessBadge
+                guncelleme={sekmeSonGuncelleme['ciro-onay']}
+                kaynak="live"
+                onYenile={() => yukleCiroOnayBugun()}
+                yenileniyor={ciroOnayBugunYukleniyor}
+              />
             </div>
           </div>
 
@@ -12060,6 +12112,14 @@ export default function OperasyonMerkezi() {
                 onClick={() => { setAnalitikGun(g); setYukleniyor(true); }}
               >{g} gün</button>
             ))}
+            <div style={{ marginLeft: 'auto' }}>
+              <CacheFreshnessBadge
+                guncelleme={sekmeSonGuncelleme['analitik']}
+                kaynak="live"
+                onYenile={() => { setYukleniyor(true); yukleAnalitik(); }}
+                yenileniyor={yukleniyor}
+              />
+            </div>
           </div>
           {!analitikVeri ? (
             <div style={{ color: 'var(--text3)', fontSize: 13 }}>Yükleniyor…</div>
@@ -12080,6 +12140,41 @@ export default function OperasyonMerkezi() {
                   </div>
                 ))}
               </div>
+
+              {/* Aylık Food Cost — cache'ten (anında, ms düzeyi) */}
+              {aylikFoodCostCache && Array.isArray(aylikFoodCostCache.kayitlar) && aylikFoodCostCache.kayitlar.length > 0 && (
+                <div className="card" style={{ padding: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>💰 Aylık Food Cost — Şube Bazlı</div>
+                    <span style={{
+                      background: 'rgba(99,102,241,0.18)', color: '#a5b4fc',
+                      borderRadius: 4, padding: '1px 6px', fontSize: 9, fontWeight: 700,
+                    }}>⚡ CACHE</span>
+                    <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 'auto' }}>
+                      Cache'ten ms düzeyinde okundu
+                    </span>
+                  </div>
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    {aylikFoodCostCache.kayitlar.map((k) => {
+                      const pct = k.food_cost_pct;
+                      const renk = pct == null ? '#94a3b8' : pct <= 30 ? '#22c55e' : pct <= 45 ? '#f59e0b' : '#ef4444';
+                      return (
+                        <div key={k.sube_id + k.year_month} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 90px 60px 60px', gap: 8, alignItems: 'center', fontSize: 12 }}>
+                          <span style={{ fontWeight: 600 }}>{k.sube_id} <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 10 }}>· {k.year_month}</span></span>
+                          <span style={{ color: 'var(--text3)' }}>Ciro: {fmt(k.toplam_ciro || 0)}</span>
+                          <span style={{ color: 'var(--text3)' }}>Gider: {fmt(k.toplam_gider || 0)}</span>
+                          <span style={{ color: 'var(--text3)' }}>Fiş: {k.fis_sayisi || 0}</span>
+                          <span style={{ fontWeight: 700, color: renk }}>{pct != null ? `%${pct}` : '—'}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p style={{ margin: '8px 0 0', fontSize: 10, color: 'var(--text3)' }}>
+                    Renk: yeşil ≤30%, sarı ≤45%, kırmızı &gt;45%. Otomatik gece güncellenir + olay-tetikli.
+                  </p>
+                </div>
+              )}
+
               {(analitikVeri.sube_performans || []).length > 0 && (
                 <div className="card" style={{ padding: 14 }}>
                   <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10 }}>Şube Performansı</div>
