@@ -1731,6 +1731,42 @@ def evo_debug_modul(
 #  KEŞİF ENDPOINT — Evo'da bardak/su/soda detayı var mı?
 # ════════════════════════════════════════════════════════════════════════════
 
+@router.get("/grup-pasta-ham")
+def evo_grup_pasta_ham(
+    bastar: str = Query(..., description="YYYY-MM-DD"),
+    bittar: str = Query(..., description="YYYY-MM-DD"),
+):
+    """KEŞİF — hs_rapor.ashx'in tüm cevap yapısını debug için döner.
+    Amaç: Grup_Pasta dizisinin yapısını + S/Cok_Satilan ilk örneklerini görmek.
+    Şube ayrımı için a_sube_adi/a_sube_id alanlarının olup olmadığını anlamak."""
+    try:
+        bs = date.fromisoformat(bastar)
+        bt = date.fromisoformat(bittar)
+    except ValueError:
+        raise HTTPException(400, "Tarih formatı YYYY-MM-DD")
+    d = _hs_rapor_ham_veri(bs, bt)
+    return {
+        "anahtarlar": list(d.keys()),
+        "Grup_Pasta_tum": d.get("Grup_Pasta", []),
+        "Grup_Pasta_ilk_alanlar": (
+            list(d.get("Grup_Pasta", [{}])[0].keys()) if d.get("Grup_Pasta") else []
+        ),
+        "S_ilk_3": (d.get("S") or [])[:3],
+        "S_ilk_alanlar": (
+            list((d.get("S") or [{}])[0].keys()) if d.get("S") else []
+        ),
+        "S_toplam": len(d.get("S") or []),
+        "Cok_Satilan_ilk_5": (d.get("Cok_Satilan") or [])[:5],
+        "Cok_Satilan_ilk_alanlar": (
+            list((d.get("Cok_Satilan") or [{}])[0].keys()) if d.get("Cok_Satilan") else []
+        ),
+        "kasa_toplam_satir": len(d.get("kasa") or []),
+        "banka_toplam_satir": len(d.get("banka") or []),
+        "kasa_ornek": (d.get("kasa") or [])[:3],
+        "banka_ornek": (d.get("banka") or [])[:3],
+    }
+
+
 @router.get("/sube-tam-detay")
 def evo_sube_tam_detay(
     bastar: str = Query(..., description="YYYY-MM-DD"),
