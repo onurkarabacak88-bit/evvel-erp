@@ -84,7 +84,18 @@ export default function EvoSatis() {
     setSubeYukleniyor(true);
     setSubeHata(null);
     try {
-      const r = await api(`/evo/sube-analiz?bastar=${tarih1}&bittar=${tarih2}`);
+      // Yeni endpoint: her şube için hs_rapor sube=N paralel çağrı
+      const r = await api(`/evo/sube-grup-detay?bastar=${tarih1}&bittar=${tarih2}`);
+      // Eski yapı uyumu: {subeler: {ad: {ciro, fis_sayisi, ...}}}
+      // Yeni: {subeler: {ad: {ciro_toplam, fatura_sayisi, gruplar, ...}}}
+      // Eski şube kartları için ciro/fis_sayisi alanı bekleniyor — adapter:
+      if (r?.subeler) {
+        for (const ad of Object.keys(r.subeler)) {
+          const s = r.subeler[ad];
+          if (s.ciro_toplam != null) s.ciro = s.ciro_toplam;
+          if (s.fatura_sayisi != null) s.fis_sayisi = s.fatura_sayisi;
+        }
+      }
       setSubeAnaliz(r);
       setTokenDurumu('ok');
       if (!secilenSube && r.subeler) {
@@ -104,13 +115,34 @@ export default function EvoSatis() {
     }
   }
 
+  // YENI: Şube verisi artık /evo/sube-grup-detay içinde geliyor (subeAnaliz state'inde)
+  // Bu yüzden ayrı bir subeUrunYukle çağrısına gerek yok; seçili şubenin payload'unu
+  // doğrudan subeAnaliz.subeler[secilenSube] üzerinden okuyacağız.
   async function subeUrunYukle(subeAdi) {
     if (!subeAdi) return;
     setSubeUrunYukleniyor(true);
-    setSubeUrunler(null);
     try {
-      const r = await api(`/evo/sube-urunler?bastar=${tarih1}&bittar=${tarih2}&sube_adi=${encodeURIComponent(subeAdi)}&max_fatura=40`);
-      setSubeUrunler(r);
+      const sec = subeAnaliz?.subeler?.[subeAdi];
+      if (sec) {
+        // Eski UI uyum adapteri: urunler / toplam_fis / islenen_fis / ciro
+        const urunler = (sec.cok_satilan || []).map(u => ({
+          urun: u.ad, adet: u.adet, grup: u.grup, ciro: u.ciro,
+        }));
+        setSubeUrunler({
+          urunler,
+          gruplar: sec.gruplar || {},
+          personel: sec.personel_satislar || [],
+          toplam_fis: sec.fatura_sayisi || 0,
+          islenen_fis: sec.fatura_sayisi || 0,
+          ciro: sec.ciro_toplam || 0,
+          nakit: sec.nakit || 0,
+          kart: sec.kart || 0,
+          iskonto: sec.iskonto_toplam || 0,
+          evo_sube_id: sec.evo_sube_id,
+        });
+      } else {
+        setSubeUrunler({ hata: 'Şube verisi bulunamadı (önce şube analizini yükleyin)' });
+      }
     } catch (e) {
       setSubeUrunler({ hata: e.message || String(e) });
     } finally {
@@ -309,6 +341,12 @@ export default function EvoSatis() {
                       </div>
                       <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--green)' }}>{fmtTL(bilgi.ciro)}</div>
                       <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{bilgi.fis_sayisi} fiş</div>
+                      {(bilgi.nakit != null || bilgi.kart != null) && (
+                        <div style={{ display: 'flex', gap: 8, marginTop: 6, fontSize: 11 }}>
+                          <span style={{ color: '#86efac' }}>💵 {fmtTL(bilgi.nakit || 0)}</span>
+                          <span style={{ color: '#93c5fd' }}>💳 {fmtTL(bilgi.kart || 0)}</span>
+                        </div>
+                      )}
                     </div>
                   ))}
               </div>
@@ -325,10 +363,62 @@ export default function EvoSatis() {
                     )}
                     {subeUrunler && !subeUrunler.hata && (
                       <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: subeUrunler.uyari ? 0 : 'auto' }}>
-                        {subeUrunler.islenen_fis}/{subeUrunler.toplam_fis} fiş · {fmtTL(subeUrunler.ciro)}
+                        {subeUrunler.toplam_fis} fiş · {fmtTL(subeUrunler.ciro)}
+                        {subeUrunler.evo_sube_id && <span style={{ color: 'var(--text3)' }}> · Evo ID {subeUrunler.evo_sube_id}</span>}
                       </span>
                     )}
                   </div>
+
+                  {/* GRUP TABLOSU (Evo Grup_Pasta) — yeni eklendi */}
+                  {!subeUrunYukleniyor && subeUrunler?.gruplar && Object.keys(subeUrunler.gruplar).length > 0 && (
+                    <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'rgba(0,0,0,0.02)' }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase' }}>
+                        🥤 Grup Dağılımı (Evo) — Nakit {fmtTL(subeUrunler.nakit)} · Kart {fmtTL(subeUrunler.kart)} · İskonto {fmtTL(subeUrunler.iskonto)}
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        {Object.entries(subeUrunler.gruplar).map(([g, v]) => {
+                          const renkMap = {
+                            'Ice':'#3b82f6', '14 Oz':'#f59e0b', '8 Oz':'#10b981',
+                            'Su':'#6366f1', 'Maden Suyu':'#14b8a6',
+                            'Redbull':'#8b5cf6', 'Pasta':'#ec4899', 'ÇAY':'#ef4444',
+                          };
+                          const r = renkMap[g] || '#94a3b8';
+                          return (
+                            <div key={g} style={{
+                              padding: '8px 12px', borderRadius: 6, minWidth: 110,
+                              background: r + '22', border: `1px solid ${r}66`,
+                            }}>
+                              <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', fontWeight: 600 }}>{g}</div>
+                              <div style={{ fontSize: 18, fontWeight: 800, color: r }}>{Math.round(v.adet)}</div>
+                              <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>{fmtTL(v.ciro)}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* PERSONEL SATIŞ ÖZETİ */}
+                  {!subeUrunYukleniyor && subeUrunler?.personel && subeUrunler.personel.length > 0 && (
+                    <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase' }}>
+                        👤 Personel Satışları
+                      </div>
+                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 12 }}>
+                        {subeUrunler.personel.slice(0, 8).map((p) => (
+                          <div key={p.personel_id} style={{
+                            padding: '6px 10px', borderRadius: 4,
+                            background: 'rgba(0,0,0,0.04)', border: '1px solid var(--border)',
+                          }}>
+                            <strong>{p.ad}</strong>
+                            <span style={{ marginLeft: 6, color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
+                              {p.fis_sayisi} fiş · {fmtTL(p.ciro)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {subeUrunYukleniyor && (
                     <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)' }}>

@@ -560,62 +560,56 @@ def veri_topla(cur, sube_id: str, tarih: str) -> List[BoyutVeri]:
         n2_kasa = None
         n2_meta = {}
 
-    # N3 — Önceki günkü Evo POS hareketleri (ücretli + ikram ayrı).
-    # Önce evo_sync.faturajq_satis_ve_ikram() denenir; yoksa eski evo_satis tablosuna düşer.
-    evo_satis: Dict[str, float] = {}
-    evo_ikram: Dict[str, float] = {}
+    # N3 — Önceki günkü Evo POS hareketleri (şube bazlı, doğrudan Grup_Pasta).
+    # Yeni kaynak: hs_rapor_sube_bazli — şube_adi ile eşleşip o şubenin grupları çekilir.
+    # Bizim sube_id (UUID) → subeler.ad → hs_rapor sube adıyla eşleştirme.
+    grup_adet: Dict[str, float] = {}  # Evo grup adı → adet (örn. "Ice": 85)
     try:
-        from evo_sync import faturajq_satis_ve_ikram as _ev_si
+        # subeler tablosundan şube adı al
+        cur.execute("SELECT ad FROM subeler WHERE id::text=%s", (str(sube_id),))
+        srow = cur.fetchone()
+        sube_adi_evvel = str(dict(srow).get("ad") or "") if srow else ""
+
+        from evo_sync import hs_rapor_sube_bazli, EVO_SUBE_ID_MAP
         from datetime import date as _d
         y, mo, d = (int(x) for x in str(onceki)[:10].split("-"))
         tarih_d = _d(y, mo, d)
-        sonuc = _ev_si(tarih_d, tarih_d)
-        # sonuc: {urun_ad: {"satis", "ikram", "toplam"}}
-        for ad, v in (sonuc or {}).items():
-            k = str(ad).lower()
-            evo_satis[k] = float(v.get("satis") or 0)
-            evo_ikram[k] = float(v.get("ikram") or 0)
+        evo_sonuc = hs_rapor_sube_bazli(tarih_d, tarih_d)
+
+        # Şube eşleşmesi: sube_adi_evvel (örn. "ZAFER" veya "Zafer") ↔ "Zafer Şubesi"
+        evo_sube_payload = None
+        if sube_adi_evvel:
+            # case-insensitive substring eşleşme
+            evvel_lower = sube_adi_evvel.strip().lower().replace("şubesi", "").strip()
+            for ad, payload in (evo_sonuc.get("subeler") or {}).items():
+                evo_lower = ad.strip().lower().replace("şubesi", "").strip()
+                if evvel_lower and (evvel_lower in evo_lower or evo_lower in evvel_lower):
+                    evo_sube_payload = payload
+                    break
+
+        if evo_sube_payload:
+            for g, v in (evo_sube_payload.get("gruplar") or {}).items():
+                try:
+                    grup_adet[g] = float(v.get("adet") or 0)
+                except (TypeError, ValueError):
+                    grup_adet[g] = 0.0
     except Exception as e:
-        log.warning("truth_motor evo ikram cekilemedi (%s) — eski evo_satis tablosuna düşülüyor", e)
-        try:
-            cur.execute(
-                """
-                SELECT urun_ad, COALESCE(SUM(adet),0) AS adet
-                FROM evo_satis WHERE sube_id=%s AND tarih=%s::date
-                GROUP BY urun_ad
-                """,
-                (sube_id, onceki),
-            )
-            for r in (cur.fetchall() or []):
-                d = dict(r)
-                evo_satis[str(d.get("urun_ad", "")).lower()] = float(d.get("adet") or 0)
-        except Exception:
-            pass
+        log.warning("truth_motor hs_rapor_sube_bazli cekilemedi (%s)", e)
 
-    def _evo_topla(kaynak: Dict[str, float], *anahtar_parcalari: str) -> Optional[float]:
-        """Substring match ile ürün adlarını topla."""
-        if not kaynak:
-            return None
-        s, var = 0.0, False
-        for k, adet in kaynak.items():
-            if any(p in k for p in anahtar_parcalari):
-                s += adet; var = True
-        return s if var else None
-
-    def _ev(s_keys, i_keys=None):
-        """Hem satış hem ikram için aynı substring listesiyle topla."""
-        if i_keys is None:
-            i_keys = s_keys
-        return (
-            _evo_topla(evo_satis, *s_keys),
-            _evo_topla(evo_ikram, *i_keys),
-        )
-
-    # Boyut → kaynak haritası
-    s_pl, i_pl = _ev(["plastik bardak", "plastik_bardak"])
-    s_kr, i_kr = _ev(["karton bardak", "kucuk bardak", "buyuk bardak"])
-    s_rs, i_rs = _ev(["redbull", "soda"])
-    s_pa, i_pa = _ev(["pasta"])
+    # Evo grup adı → boyut adı (motorun bekleyeni)
+    n3_bardak_plastik = grup_adet.get("Ice")  # soğuk içecek = plastik bardak
+    # 14 Oz + 8 Oz toplam karton (büyük + küçük aynı boyut grubu)
+    if "14 Oz" in grup_adet or "8 Oz" in grup_adet:
+        n3_bardak_karton = float(grup_adet.get("14 Oz") or 0) + float(grup_adet.get("8 Oz") or 0)
+    else:
+        n3_bardak_karton = None
+    # Redbull + Maden Suyu (soda alternatifi) — redbull_soda boyutuna birleşir
+    if "Redbull" in grup_adet or "Maden Suyu" in grup_adet:
+        n3_redbull_soda = float(grup_adet.get("Redbull") or 0) + float(grup_adet.get("Maden Suyu") or 0)
+    else:
+        n3_redbull_soda = None
+    n3_pasta = grup_adet.get("Pasta")
+    n3_su = grup_adet.get("Su")  # ileride ayrı boyut olabilir
 
     return [
         BoyutVeri(
@@ -627,25 +621,25 @@ def veri_topla(cur, sube_id: str, tarih: str) -> List[BoyutVeri]:
             boyut="bardak_plastik",
             n1_aksam=_meta_sayi(n1_meta, "bardak_plastik"),
             n2_sabah=_meta_sayi(n2_meta, "bardak_plastik"),
-            n3_evo=s_pl, n3_evo_ikram=i_pl,
+            n3_evo=n3_bardak_plastik, n3_evo_ikram=None,
         ),
         BoyutVeri(
             boyut="bardak_karton",
             n1_aksam=_meta_sayi(n1_meta, "bardak_kucuk", "bardak_buyuk"),
             n2_sabah=_meta_sayi(n2_meta, "bardak_kucuk", "bardak_buyuk"),
-            n3_evo=s_kr, n3_evo_ikram=i_kr,
+            n3_evo=n3_bardak_karton, n3_evo_ikram=None,
         ),
         BoyutVeri(
             boyut="redbull_soda",
             n1_aksam=_meta_sayi(n1_meta, "redbull_adet", "soda_adet"),
             n2_sabah=_meta_sayi(n2_meta, "redbull_adet", "soda_adet"),
-            n3_evo=s_rs, n3_evo_ikram=i_rs,
+            n3_evo=n3_redbull_soda, n3_evo_ikram=None,
         ),
         BoyutVeri(
             boyut="pasta",
             n1_aksam=_meta_sayi(n1_meta, "pasta_adet"),
             n2_sabah=_meta_sayi(n2_meta, "pasta_adet"),
-            n3_evo=s_pa, n3_evo_ikram=i_pa,
+            n3_evo=n3_pasta, n3_evo_ikram=None,
         ),
     ]
 
