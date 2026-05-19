@@ -289,9 +289,9 @@ def evo_fatura_detay(fatura_id: str) -> Dict:
 
 
 def _satirlari_coz(detay: Dict) -> List[Dict]:
-    """Fatura detay cevabından satır kalemlerini çıkarır."""
-    # evobulut satırları farklı key'lerde dönebilir
-    for key in ("Det", "det", "Satirlar", "satirlar", "Satir", "satir"):
+    """Fatura detay cevabından satır kalemlerini çıkarır.
+    Evobulut farklı anahtar isimleri kullanabilir: Detay (HS POS), Det, Satirlar..."""
+    for key in ("Detay", "detay", "Det", "det", "Satirlar", "satirlar", "Satir", "satir"):
         val = detay.get(key)
         if val and isinstance(val, list):
             return val
