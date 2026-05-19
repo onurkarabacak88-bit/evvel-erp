@@ -1743,6 +1743,15 @@ def evo_debug_modul(
 # ════════════════════════════════════════════════════════════════════════════
 EVO_GRUPLARI = ("Ice", "14 Oz", "8 Oz", "Su", "Maden Suyu", "Redbull", "Pasta", "ÇAY")
 
+# Evo dahili şube ID'leri → şube adı (test edilerek doğrulandı 2026-05-19)
+# Yeni şube eklenirse buraya manuel ekleyin (ileride subeler.evo_sube_id kolonu ile otomatize).
+EVO_SUBE_ID_MAP = {
+    "2": "Zafer Şubesi",
+    "3": "Alsancak Şubesi",
+    "4": "Gazze Şubesi",
+    "5": "Köyceğiz Şubesi",
+}
+
 
 def evo_grup_belirle(urun_adi: str) -> str:
     """Ürün adından Evo grup adını çıkar.
@@ -1806,6 +1815,153 @@ def evo_ikram_satir_mi(s: Dict[str, Any]) -> bool:
         return True
     ack = str(s.get("a_ack") or "").lower()
     return any(k in ack for k in ("ikram", "hediye", "promosyon", "promo", "tadim"))
+
+
+def hs_rapor_sube_bazli(bastar: date, bittar: date) -> Dict[str, Any]:
+    """Her Evo şubesi için ayrı hs_rapor çağrısı → şube × grup × ciro matrisi.
+
+    Veri kaynağı: hs_rapor.ashx sube=N parametresi (gerçek Evo şube ID).
+    Fatura detayı çekilmez (yavaş + hatalı), doğrudan Grup_Pasta toplamı kullanılır.
+
+    Returns:
+      {
+        "tarih_bas", "tarih_bit",
+        "subeler": {
+          "Zafer Şubesi": {
+            "evo_sube_id": "2",
+            "fatura_sayisi": N,
+            "ciro_toplam": N,
+            "iskonto_toplam": N,
+            "nakit": N, "kart": N,
+            "gruplar": {"Ice": {"adet": N, "ciro": N}, ...},
+            "cok_satilan": [{stok_kodu, ad, grup, adet, ciro}],
+            "personel_satislar": [{personel_id, ad, ciro, fis_sayisi}]
+          }
+        }
+      }
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    sonuc_subeler: Dict[str, Any] = {}
+
+    def _sube_cek(evo_id: str, ad: str) -> Dict[str, Any]:
+        try:
+            d = _hs_rapor_ham_veri(bastar, bittar, sube_id=evo_id)
+        except Exception as e:
+            log.warning("hs_rapor sube=%s hata: %s", evo_id, e)
+            return None
+
+        # Fatura toplamları
+        s_list = d.get("S") or []
+        ciro_top = 0.0
+        iskonto_top = 0.0
+        personel_map: Dict[str, Dict[str, Any]] = {}
+        for f in s_list:
+            try:
+                ciro_top += float(f.get("a_tutar") or 0)
+                iskonto_top += float(f.get("a_isk_tut") or 0)
+            except (TypeError, ValueError):
+                pass
+            pid = str(f.get("a_per_id") or "0")
+            pad = str(f.get("SATIS_PER") or "").strip() or pid
+            p = personel_map.setdefault(pid, {"ad": pad, "ciro": 0.0, "fis_sayisi": 0})
+            try:
+                p["ciro"] += float(f.get("a_tutar") or 0)
+            except (TypeError, ValueError):
+                pass
+            p["fis_sayisi"] += 1
+
+        # Grup_Pasta — Evo'nun grup dağılımı
+        gruplar = {g: {"adet": 0.0, "ciro": 0.0} for g in EVO_GRUPLARI}
+        for g in (d.get("Grup_Pasta") or []):
+            g_ad = str(g.get("a_adi") or "").strip()
+            try:
+                mik = float(g.get("satis_mik") or 0)
+                tut = float(g.get("satis_tut") or 0)
+            except (TypeError, ValueError):
+                mik, tut = 0.0, 0.0
+            if g_ad in gruplar:
+                gruplar[g_ad]["adet"] += mik
+                gruplar[g_ad]["ciro"] += tut
+
+        # Cok_Satilan — ürün listesi (stok_kodu, ad, grup çıkarımı)
+        cok = []
+        for u in (d.get("Cok_Satilan") or []):
+            u_ad = str(u.get("a_adi") or "").strip()
+            try:
+                mik = float(u.get("satis_mik") or 0)
+                tut = float(u.get("satis_tut") or 0)
+            except (TypeError, ValueError):
+                mik, tut = 0.0, 0.0
+            cok.append({
+                "stok_kodu": str(u.get("a_kod") or ""),
+                "ad": u_ad,
+                "grup": evo_grup_belirle(u_ad),
+                "adet": round(mik, 2),
+                "ciro": round(tut, 2),
+            })
+        cok.sort(key=lambda x: -x["adet"])
+
+        # kasa (nakit) — şube adı eşleşmesi
+        nakit = 0.0
+        kart = 0.0
+        for k in (d.get("kasa") or []):
+            k_ad = str(k.get("a_adi") or "")
+            try:
+                tut = float(k.get("tutar") or 0)
+            except (TypeError, ValueError):
+                tut = 0.0
+            # bu şubenin kasa adı içeriyorsa say
+            sube_kelime = ad.replace(" Şubesi", "").strip()
+            if sube_kelime.lower() in k_ad.lower():
+                nakit += tut
+        for b in (d.get("banka") or []):
+            b_ad = str(b.get("a_adi") or "")
+            try:
+                tut = float(b.get("tutar") or 0)
+            except (TypeError, ValueError):
+                tut = 0.0
+            sube_kelime = ad.replace(" Şubesi", "").strip()
+            if sube_kelime.lower() in b_ad.lower():
+                kart += tut
+
+        personel_listesi = [
+            {"personel_id": pid, "ad": p["ad"],
+             "ciro": round(p["ciro"], 2), "fis_sayisi": p["fis_sayisi"]}
+            for pid, p in personel_map.items() if p["fis_sayisi"] > 0
+        ]
+        personel_listesi.sort(key=lambda x: -x["ciro"])
+
+        return {
+            "evo_sube_id": evo_id,
+            "fatura_sayisi": len(s_list),
+            "ciro_toplam": round(ciro_top, 2),
+            "iskonto_toplam": round(iskonto_top, 2),
+            "nakit": round(nakit, 2),
+            "kart": round(kart, 2),
+            "gruplar": {g: {"adet": round(v["adet"], 2), "ciro": round(v["ciro"], 2)}
+                        for g, v in gruplar.items() if v["adet"] > 0},
+            "cok_satilan": cok[:50],
+            "personel_satislar": personel_listesi,
+        }
+
+    # Paralel çek — 4 şube
+    with ThreadPoolExecutor(max_workers=4) as exe:
+        futures = {exe.submit(_sube_cek, eid, ad): (eid, ad)
+                   for eid, ad in EVO_SUBE_ID_MAP.items()}
+        for fut in as_completed(futures):
+            eid, ad = futures[fut]
+            res = fut.result()
+            if res is not None:
+                sonuc_subeler[ad] = res
+
+    return {
+        "tarih_bas": str(bastar),
+        "tarih_bit": str(bittar),
+        "sube_sayisi": len(sonuc_subeler),
+        "kaynak": "hs_rapor.sube",
+        "subeler": sonuc_subeler,
+    }
 
 
 def faturajq_sube_grup_detay(bastar: date, bittar: date,
@@ -2051,16 +2207,16 @@ def faturajq_sube_grup_detay(bastar: date, bittar: date,
 def evo_sube_grup_detay(
     bastar: str = Query(..., description="YYYY-MM-DD"),
     bittar: str = Query(..., description="YYYY-MM-DD"),
-    max_fatura: int = Query(1000, ge=1, le=2000),
 ):
-    """Şube × grup × ikram × nakit/kart × personel matrisi.
+    """Şube × grup × nakit/kart × personel matrisi.
+    Veri kaynağı: hs_rapor.ashx sube=N parametresi (her şubeye paralel çağrı).
     Akıllı Denetim ve EvoSatis sayfasının ana veri kaynağı."""
     try:
         bs = date.fromisoformat(bastar)
         bt = date.fromisoformat(bittar)
     except ValueError:
         raise HTTPException(400, "Tarih formatı YYYY-MM-DD")
-    return faturajq_sube_grup_detay(bs, bt, max_fatura=max_fatura)
+    return hs_rapor_sube_bazli(bs, bt)
 
 
 @router.get("/grup-pasta-ham")
