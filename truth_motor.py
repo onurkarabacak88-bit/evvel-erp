@@ -800,3 +800,386 @@ def otomatik_baskin_tetik(cur, sube_id: str, tarih: str,
     except Exception as e:
         log.exception("Otomatik baskın tetiklenemedi: %s", e)
         return {"baslatildi": False, "hata": str(e), "tani": sebep_listesi}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SPRINT A — VARDIYA BAZLI UZLAŞMA + PERSONEL DAVRANIŞ SİNYALİ
+# ════════════════════════════════════════════════════════════════════════════
+# Vardiya = ardışık operasyon event'leri arasındaki zaman dilimi.
+#   ACILIS → KONTROL_1 (vardiya 1, sabahcı)
+#   KONTROL_1 → KONTROL_2 veya KAPANIS (vardiya 2, öğlenci)
+#   ...
+# Her vardiya için: sorumlu personel + kasa P&L + bardak P&L + satış velocity
+# ════════════════════════════════════════════════════════════════════════════
+
+def _parse_evo_dt(s: str):
+    """Evo a_cdate '19.05.2026 21:14:00' → datetime."""
+    from datetime import datetime as _dt
+    try:
+        return _dt.strptime((s or "").strip(), "%d.%m.%Y %H:%M:%S")
+    except Exception:
+        try:
+            return _dt.strptime((s or "").strip()[:10], "%d.%m.%Y")
+        except Exception:
+            return None
+
+
+def _evo_sube_saatli_satis(sube_evo_id: str, bastar, bittar) -> List[Dict[str, Any]]:
+    """hs_rapor.S'den o şubenin fişlerini saat damgalı liste olarak getirir."""
+    try:
+        from evo_sync import _hs_rapor_ham_veri
+        d = _hs_rapor_ham_veri(bastar, bittar, sube_id=sube_evo_id)
+    except Exception as e:
+        log.warning("evo saatli satis cekilemedi: %s", e)
+        return []
+    rows = []
+    for f in (d.get("S") or []):
+        try:
+            tutar = float(f.get("a_tutar") or 0)
+        except (TypeError, ValueError):
+            tutar = 0.0
+        try:
+            iskonto = float(f.get("a_isk_tut") or 0)
+        except (TypeError, ValueError):
+            iskonto = 0.0
+        rows.append({
+            "tutar": tutar,
+            "iskonto": iskonto,
+            "saat_str": str(f.get("a_cdate") or ""),
+            "saat_dt": _parse_evo_dt(str(f.get("a_cdate") or "")),
+            "personel_id": str(f.get("a_per_id") or ""),
+            "personel_ad": str(f.get("SATIS_PER") or "").strip() or None,
+            "sube_adi": str(f.get("a_sube_adi") or "").strip(),
+        })
+    rows.sort(key=lambda r: (r["saat_dt"] or 0))
+    return rows
+
+
+def vardiya_bazli_uzlasma(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
+    """Bir şubenin bir gününde vardiya bazlı kasa/bardak uzlaşması.
+
+    Returns:
+      {
+        "sube_id", "tarih",
+        "vardiyalar": [
+          {
+            "no": 1, "tip_dilimi": "ACILIS→KONTROL",
+            "baslangic_ts", "bitis_ts", "sure_dk",
+            "personel_id", "personel_ad",
+            "baslangic_kasa", "bitis_kasa",
+            "evo_nakit_satis", "evo_iskonto", "evo_fis_sayisi",
+            "giderler", "ara_teslim", "teslim", "devir",
+            "beklenen_kasa", "fark_kasa",
+            "tani": "UYUMLU" | "VARDIYA_KASA_HATA" | "VARDIYA_FAZLA"
+          }
+        ],
+        "personel_ozet": {personel_id: {ad, vardiya_sayisi, kasa_fark_toplam}}
+      }
+    """
+    # 1. O günün event'lerini sıralı al (ACILIS, KONTROL*, KAPANIS)
+    cur.execute(
+        """
+        SELECT id, tip, sira_no, cevap_ts, kasa_sayim, teslim, devir, meta
+        FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=%s::date AND durum='tamamlandi'
+        ORDER BY cevap_ts NULLS LAST, sira_no
+        """,
+        (sube_id, tarih),
+    )
+    events = [dict(r) for r in (cur.fetchall() or [])]
+    if not events:
+        return {"sube_id": sube_id, "tarih": tarih, "vardiyalar": [],
+                "uyari": "O gün için tamamlanmış event yok"}
+
+    # 2. Şubenin Evo ID'sini al (EVO_SUBE_ID_MAP'ten ad eşleşmesi)
+    cur.execute("SELECT ad FROM subeler WHERE id::text=%s", (str(sube_id),))
+    srow = cur.fetchone()
+    sube_adi_evvel = str(dict(srow).get("ad") or "") if srow else ""
+
+    evo_sube_id = None
+    try:
+        from evo_sync import EVO_SUBE_ID_MAP
+        evvel_lower = sube_adi_evvel.strip().lower().replace("şubesi", "").strip()
+        for eid, ead in EVO_SUBE_ID_MAP.items():
+            elow = ead.strip().lower().replace("şubesi", "").strip()
+            if evvel_lower and (evvel_lower in elow or elow in evvel_lower):
+                evo_sube_id = eid
+                break
+    except Exception:
+        pass
+
+    # 3. Tüm günün Evo satışlarını saatli al (vardiyaya bölümlemek için)
+    evo_satislar: List[Dict[str, Any]] = []
+    if evo_sube_id:
+        from datetime import date as _d
+        y, mo, dn = (int(x) for x in str(tarih)[:10].split("-"))
+        tarih_d = _d(y, mo, dn)
+        evo_satislar = _evo_sube_saatli_satis(evo_sube_id, tarih_d, tarih_d)
+
+    # 4. Giderleri ve ara teslimleri saatli çek
+    cur.execute(
+        """
+        SELECT olusturma AS ts, tutar
+        FROM anlik_giderler
+        WHERE sube=%s AND tarih=%s::date
+          AND LOWER(COALESCE(NULLIF(TRIM(odeme_yontemi),''),'nakit'))='nakit'
+          AND durum IN ('aktif','onay_bekliyor')
+        """,
+        (sube_id, tarih),
+    )
+    giderler = [dict(r) for r in (cur.fetchall() or [])]
+    cur.execute(
+        """
+        SELECT olusturma AS ts, tutar
+        FROM kasa_teslim
+        WHERE sube_id=%s AND tarih=%s::date AND teslim_turu='ara'
+        """,
+        (sube_id, tarih),
+    )
+    ara_teslimler = [dict(r) for r in (cur.fetchall() or [])]
+
+    # 5. Vardiyaları oluştur: ardışık event'ler arası dilimler
+    vardiyalar: List[Dict[str, Any]] = []
+    personel_ozet: Dict[str, Dict[str, Any]] = {}
+
+    for i in range(len(events) - 1):
+        bas = events[i]
+        bit = events[i + 1]
+        bas_ts = bas.get("cevap_ts")
+        bit_ts = bit.get("cevap_ts")
+        if bas_ts is None or bit_ts is None:
+            continue
+
+        # Meta'dan personel — bit event'inin personel'i (vardiyayı kapatan)
+        meta_bit = {}
+        try:
+            mraw = bit.get("meta")
+            meta_bit = json.loads(mraw) if isinstance(mraw, str) else (mraw or {})
+        except Exception:
+            meta_bit = {}
+        personel_id = str(meta_bit.get("personel_id") or "")
+        personel_ad = str(meta_bit.get("personel_ad") or "")
+        if not personel_id and not personel_ad:
+            # bas event'ine de bak
+            try:
+                mraw = bas.get("meta")
+                meta_bas = json.loads(mraw) if isinstance(mraw, str) else (mraw or {})
+                personel_id = str(meta_bas.get("personel_id") or "")
+                personel_ad = str(meta_bas.get("personel_ad") or "")
+            except Exception:
+                pass
+
+        # Evo satışlarını bu aralıkta topla
+        evo_nakit = 0.0
+        evo_iskonto = 0.0
+        evo_fis_sayisi = 0
+        for s in evo_satislar:
+            dt = s.get("saat_dt")
+            if dt is None:
+                continue
+            if dt >= bas_ts and dt < bit_ts:
+                evo_nakit += s["tutar"]  # not: Evo'da nakit/kart ayrımı saatlik yok
+                evo_iskonto += s["iskonto"]
+                evo_fis_sayisi += 1
+
+        # Giderler ve ara teslim
+        gider_top = sum(float(g["tutar"] or 0) for g in giderler
+                        if g["ts"] and bas_ts <= g["ts"] < bit_ts)
+        ara_top = sum(float(a["tutar"] or 0) for a in ara_teslimler
+                      if a["ts"] and bas_ts <= a["ts"] < bit_ts)
+
+        bas_kasa = float(bas.get("kasa_sayim") or 0)
+        bit_kasa = float(bit.get("kasa_sayim") or 0)
+        teslim = float(bit.get("teslim") or 0)
+        devir = float(bit.get("devir") or 0)
+
+        # Beklenen son kasa: ACILIS-KONTROL/KAPANIS arası
+        # Eğer son event KAPANIS ise teslim + devir kasa'dan çıkar:
+        son_event = bit.get("tip") == "KAPANIS"
+        if son_event:
+            beklenen = bas_kasa + evo_nakit - gider_top - ara_top - teslim - devir
+        else:
+            beklenen = bas_kasa + evo_nakit - gider_top - ara_top
+        fark = round(bit_kasa - beklenen, 2) if bit.get("kasa_sayim") is not None else None
+
+        if fark is None:
+            tani = "YETERSIZ_VERI"
+        elif abs(fark) < 1.0:
+            tani = "UYUMLU"
+        elif fark < 0:
+            tani = "VARDIYA_KASA_ACIK"
+        else:
+            tani = "VARDIYA_KASA_FAZLA"
+
+        sure_dk = round((bit_ts - bas_ts).total_seconds() / 60.0, 1) if bit_ts and bas_ts else 0
+        velocity = round(evo_fis_sayisi / (sure_dk / 60.0), 1) if sure_dk > 0 else 0
+
+        v_kayit = {
+            "no": i + 1,
+            "tip_dilimi": f"{bas.get('tip')}→{bit.get('tip')}",
+            "baslangic_ts": str(bas_ts) if bas_ts else None,
+            "bitis_ts": str(bit_ts) if bit_ts else None,
+            "sure_dk": sure_dk,
+            "personel_id": personel_id,
+            "personel_ad": personel_ad,
+            "baslangic_kasa": bas_kasa,
+            "bitis_kasa": bit_kasa,
+            "evo_nakit_satis": round(evo_nakit, 2),
+            "evo_iskonto": round(evo_iskonto, 2),
+            "evo_fis_sayisi": evo_fis_sayisi,
+            "velocity_fis_per_saat": velocity,
+            "giderler": round(gider_top, 2),
+            "ara_teslim": round(ara_top, 2),
+            "teslim": round(teslim, 2),
+            "devir": round(devir, 2),
+            "beklenen_kasa": round(beklenen, 2),
+            "fark_kasa": fark,
+            "tani": tani,
+        }
+        vardiyalar.append(v_kayit)
+
+        # Personel özet
+        pkey = personel_id or personel_ad or "?"
+        po = personel_ozet.setdefault(pkey, {
+            "ad": personel_ad or pkey,
+            "vardiya_sayisi": 0,
+            "kasa_fark_toplam": 0.0,
+            "satis_toplam": 0.0,
+            "fis_sayisi": 0,
+            "anomali_sayisi": 0,
+        })
+        po["vardiya_sayisi"] += 1
+        if fark is not None:
+            po["kasa_fark_toplam"] = round(po["kasa_fark_toplam"] + fark, 2)
+        po["satis_toplam"] = round(po["satis_toplam"] + evo_nakit, 2)
+        po["fis_sayisi"] += evo_fis_sayisi
+        if tani not in ("UYUMLU", "YETERSIZ_VERI"):
+            po["anomali_sayisi"] += 1
+
+    return {
+        "sube_id": sube_id,
+        "sube_adi": sube_adi_evvel,
+        "evo_sube_id": evo_sube_id,
+        "tarih": tarih,
+        "event_sayisi": len(events),
+        "vardiyalar": vardiyalar,
+        "personel_ozet": personel_ozet,
+    }
+
+
+def personel_davranis_sinyali(cur, gun: int = 30,
+                              sube_id: Optional[str] = None) -> Dict[str, Any]:
+    """Personel davranış sinyalleri (son N gün).
+
+    Sinyaller:
+      - velocity: saatlik fiş sayısı ortalaması + sapma (Z-skor)
+      - ortalama fiş tutarı sapma (anomali)
+      - iskonto oranı (toplam iskonto / toplam ciro)
+      - vardiya başına ortalama kasa farkı
+
+    Returns:
+      {
+        "gun": N,
+        "personeller": [
+          {"personel_id", "ad",
+           "vardiya_sayisi", "ortalama_velocity", "ortalama_fis_tutari",
+           "iskonto_orani_yuzde", "ortalama_kasa_fark",
+           "anomali_seviye": "normal"|"yuksek"|"kritik"}
+        ]
+      }
+    """
+    # Bu fonksiyon Evo satışlarını agregat alır.
+    # MVP: o günün tüm şube vardiya_bazli_uzlasma sonuçlarını birleştir.
+    from datetime import date as _d, timedelta as _td
+
+    # Son N gün için her şube × her gün vardiya analizini topla
+    # (basit yaklaşım: tek günlük analizleri loop'la)
+    cur.execute("SELECT id::text AS id, ad FROM subeler ORDER BY ad")
+    subeler = [dict(r) for r in (cur.fetchall() or [])]
+    if sube_id:
+        subeler = [s for s in subeler if s["id"] == sube_id]
+
+    today = _d.today()
+    personel_agregat: Dict[str, Dict[str, Any]] = {}
+
+    for off in range(gun):
+        t = (today - _td(days=off)).isoformat()
+        for sb in subeler:
+            try:
+                u = vardiya_bazli_uzlasma(cur, sb["id"], t)
+            except Exception:
+                continue
+            for v in u.get("vardiyalar") or []:
+                pkey = v.get("personel_id") or v.get("personel_ad") or "?"
+                pa = personel_agregat.setdefault(pkey, {
+                    "ad": v.get("personel_ad") or pkey,
+                    "vardiya_sayisi": 0,
+                    "satis_toplam": 0.0,
+                    "fis_sayisi": 0,
+                    "iskonto_toplam": 0.0,
+                    "kasa_fark_toplam": 0.0,
+                    "kasa_fark_abs_toplam": 0.0,
+                    "anomali_sayisi": 0,
+                })
+                pa["vardiya_sayisi"] += 1
+                pa["satis_toplam"] += float(v.get("evo_nakit_satis") or 0)
+                pa["fis_sayisi"] += int(v.get("evo_fis_sayisi") or 0)
+                pa["iskonto_toplam"] += float(v.get("evo_iskonto") or 0)
+                f = v.get("fark_kasa")
+                if f is not None:
+                    pa["kasa_fark_toplam"] += float(f)
+                    pa["kasa_fark_abs_toplam"] += abs(float(f))
+                if v.get("tani") not in ("UYUMLU", "YETERSIZ_VERI"):
+                    pa["anomali_sayisi"] += 1
+
+    # Personel kayıt isimleri için ekstra sorgu
+    pid_list = [pid for pid in personel_agregat.keys() if pid and pid != "?"]
+    if pid_list:
+        try:
+            cur.execute(
+                "SELECT id::text, ad FROM personeller WHERE id::text = ANY(%s)",
+                (pid_list,),
+            )
+            for r in cur.fetchall() or []:
+                rd = dict(r)
+                if rd["id"] in personel_agregat:
+                    personel_agregat[rd["id"]]["ad"] = rd["ad"]
+        except Exception:
+            pass
+
+    # Türetilmiş metrikler
+    sonuc = []
+    for pid, pa in personel_agregat.items():
+        if pa["vardiya_sayisi"] == 0:
+            continue
+        ort_fis = pa["satis_toplam"] / pa["fis_sayisi"] if pa["fis_sayisi"] > 0 else 0
+        isk_oran = (pa["iskonto_toplam"] / pa["satis_toplam"] * 100) if pa["satis_toplam"] > 0 else 0
+        ort_fark = pa["kasa_fark_toplam"] / pa["vardiya_sayisi"]
+        ort_fark_abs = pa["kasa_fark_abs_toplam"] / pa["vardiya_sayisi"]
+        anomali_oran = pa["anomali_sayisi"] / pa["vardiya_sayisi"]
+
+        # Anomali seviyesi (heuristic)
+        seviye = "normal"
+        if anomali_oran >= 0.5 or abs(ort_fark) > 50:
+            seviye = "kritik"
+        elif anomali_oran >= 0.25 or abs(ort_fark) > 20 or isk_oran > 5:
+            seviye = "yuksek"
+
+        sonuc.append({
+            "personel_id": pid, "ad": pa["ad"],
+            "vardiya_sayisi": pa["vardiya_sayisi"],
+            "fis_sayisi": pa["fis_sayisi"],
+            "satis_toplam": round(pa["satis_toplam"], 2),
+            "ortalama_fis_tutari": round(ort_fis, 2),
+            "iskonto_orani_yuzde": round(isk_oran, 2),
+            "ortalama_kasa_fark": round(ort_fark, 2),
+            "ortalama_kasa_fark_abs": round(ort_fark_abs, 2),
+            "anomali_sayisi": pa["anomali_sayisi"],
+            "anomali_oran_yuzde": round(anomali_oran * 100, 1),
+            "anomali_seviye": seviye,
+        })
+    sonuc.sort(key=lambda x: (
+        {"kritik": 0, "yuksek": 1, "normal": 2}.get(x["anomali_seviye"], 3),
+        -x["anomali_sayisi"]
+    ))
+    return {"gun": gun, "toplam": len(sonuc), "personeller": sonuc}

@@ -12926,6 +12926,29 @@ def truth_iz_listele(
     return {"toplam": len(rows), "kayitlar": rows}
 
 
+@router.get("/truth/vardiya-pl/{sube_id}/{tarih}")
+def truth_vardiya_pl(sube_id: str, tarih: str):
+    """Bir şubenin bir gününde vardiya bazlı kasa P&L + personel sorumluluğu."""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.vardiya_bazli_uzlasma(cur, sube_id, tarih)
+
+
+@router.get("/truth/personel-davranis")
+def truth_personel_davranis(gun: int = Query(30, ge=1, le=180),
+                            sube_id: Optional[str] = Query(None)):
+    """Personel davranış sinyali (son N gün): velocity, iskonto oranı, ortalama fiş tutarı, kasa fark."""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.personel_davranis_sinyali(cur, gun=gun, sube_id=sube_id)
+
+
 @router.get("/truth/personel-skor")
 def truth_personel_skor(gun: int = Query(90, ge=7, le=365),
                          sube_id: Optional[str] = Query(None)):
