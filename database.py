@@ -358,7 +358,7 @@ def init_db():
                 tarih           DATE NOT NULL,
                 tip             TEXT NOT NULL,
                 sebep           TEXT NOT NULL CHECK (sebep IN (
-                    'ciro_yanlis','acilis_yanlis','gider_eksik',
+                    'ciro_yanlis','acilis_yanlis','gider_eksik','ciro_fazla',
                     'devir_yanlis','gercek_acik'
                 )),
                 hedef_tablo     TEXT,
@@ -381,6 +381,121 @@ def init_db():
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_kfkd_sube_tarih ON kasa_fark_kaynak_duzeltme(sube_id, tarih DESC)
         """)
+
+        # ── KASA BASKINI (CFO blind cash count) ──
+        # CFO her şubeye habersiz "şu an kasanı say" emri verir; şube kör sayım yapar
+        # (beklenen tutar gizli), sonra sistem fark çıkarır. Müdür kademesi olmadığı için
+        # bu özellik direkt CFO → personel kontrol kanalıdır (NRF Loss Prevention pattern).
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS kasa_baskini (
+                id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                sube_id           TEXT NOT NULL,
+                baslatan_cfo_id   TEXT,
+                baslatan_cfo_ad   TEXT,
+                baslatma_ts       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                son_tarih_ts      TIMESTAMPTZ,
+                beklenen_tutar    NUMERIC(14,2),
+                sayilan_tutar     NUMERIC(14,2),
+                fark              NUMERIC(14,2),
+                sayim_personel_id TEXT,
+                sayim_personel_ad TEXT,
+                sayim_pin_dogru   BOOLEAN,
+                sayim_ts          TIMESTAMPTZ,
+                durum             TEXT NOT NULL DEFAULT 'aktif'
+                                  CHECK (durum IN ('aktif','tamamlandi','sure_doldu','iptal')),
+                snapshot_json     JSONB,
+                notu              TEXT,
+                olusturma         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_kasa_baskini_sube_durum
+            ON kasa_baskini(sube_id, durum, baslatma_ts DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_kasa_baskini_aktif
+            ON kasa_baskini(sube_id) WHERE durum = 'aktif'
+        """)
+
+        # ── TRUTH ESTABLISHMENT MOTOR (Cascading 5-dim × 3-source triangulation) ──
+        # Bağımsız modül — env var EVVEL_TRUTH_MOTOR_ENABLED ile global aç/kapat.
+        # Her şube için ayrı aktiflik ayarı (truth_motor_ayar). Karar log'u append-only.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS truth_motor_ayar (
+                sube_id      TEXT PRIMARY KEY,
+                aktif        BOOLEAN NOT NULL DEFAULT FALSE,
+                mod          TEXT NOT NULL DEFAULT 'read_only'
+                             CHECK (mod IN ('read_only','apply')),
+                son_calisma  TIMESTAMPTZ,
+                notu         TEXT,
+                guncelleme   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS truth_motor_kararlar (
+                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                sube_id         TEXT NOT NULL,
+                tarih           DATE NOT NULL,
+                boyut           TEXT NOT NULL,
+                                -- 'kasa' | 'bardak_plastik' | 'bardak_karton' |
+                                -- 'redbull_soda' | 'pasta'
+                n1_aksam        NUMERIC(14,2),
+                n2_sabah        NUMERIC(14,2),
+                n3_evo          NUMERIC(14,2),
+                fark_n1_n2      NUMERIC(14,2),
+                evo_destek      TEXT,
+                                -- 'n1' | 'n2' | 'notr' | 'yok'
+                tani            TEXT NOT NULL,
+                                -- 'UYUMLU' | 'IKRAM_UNUTULDU' | 'SWEETHEARTING_SINYAL' |
+                                -- 'SABAH_HATALI' | 'AKSAM_HATALI' | 'COZULMEDI' |
+                                -- 'SISTEMIK_HATA' | 'YETERSIZ_VERI'
+                guven_skoru     NUMERIC(5,2),
+                                -- 0-100, üçgenleme gücü
+                detay_json      JSONB,
+                aksiyon_alindi  BOOLEAN NOT NULL DEFAULT FALSE,
+                aksiyon_ts      TIMESTAMPTZ,
+                aksiyon_personel TEXT,
+                olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_truth_kararlar_sube_tarih
+            ON truth_motor_kararlar(sube_id, tarih DESC, boyut)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_truth_kararlar_tani
+            ON truth_motor_kararlar(tani, olusturma DESC) WHERE tani != 'UYUMLU'
+        """)
+
+        # ── AKILLI DENETİM İZ (Takip Workflow) ──
+        # Bir karar üzerinde yapılan eylem zinciri. Her anomali → görev oluşturulabilir.
+        # Bekliyor → İnceleme → Çözüldü/Soruşturma/İptal.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS akilli_denetim_iz (
+                id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                karar_id     TEXT NOT NULL REFERENCES truth_motor_kararlar(id) ON DELETE CASCADE,
+                durum        TEXT NOT NULL DEFAULT 'bekliyor'
+                             CHECK (durum IN ('bekliyor','inceleme','cozuldu','sorusturma','iptal')),
+                oncelik      TEXT NOT NULL DEFAULT 'orta'
+                             CHECK (oncelik IN ('dusuk','orta','yuksek','kritik')),
+                atanan_id    TEXT,
+                atanan_ad    TEXT,
+                acan_id      TEXT,
+                acan_ad      TEXT,
+                cozum_notu   TEXT,
+                cozum_ts     TIMESTAMPTZ,
+                olusturma    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                guncelleme   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_akilli_iz_durum
+            ON akilli_denetim_iz(durum, oncelik DESC, olusturma DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_akilli_iz_karar ON akilli_denetim_iz(karar_id)
+        """)
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS sube_fire_haftalik (
                 id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,

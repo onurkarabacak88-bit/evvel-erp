@@ -13826,21 +13826,36 @@ export default function OperasyonMerkezi() {
               onChange={(e) => setKkDuzeltModal((prev) => ({ ...prev, sebep: e.target.value, payload: {} }))}
               style={{ width: '100%', marginBottom: 16, padding: '8px 10px' }}
             >
-              {kkDuzeltModal.uyari?.tip === 'ACILIS_KASA_FARK' ? (
-                <>
-                  <option value="acilis_yanlis">🌅 Sabahçı kasa sayımı yanlış (bugünkü açılış)</option>
-                  <option value="devir_yanlis">🌙 Akşamcı devir/teslim yanlış (önceki gün kapanış)</option>
-                  <option value="gercek_acik">⚠️ Gerçek açık — kaynak değişmez</option>
-                </>
-              ) : (
-                <>
-                  <option value="ciro_yanlis">📝 Ciro yanlış (nakit / POS / online)</option>
-                  <option value="gider_eksik">💸 Eksik nakit gider (ekle)</option>
-                  <option value="devir_yanlis">🌙 Kapanış teslim / devir yanlış (aynı gün)</option>
-                  <option value="acilis_yanlis">🌅 Açılış kasa sayımı yanlış</option>
-                  <option value="gercek_acik">⚠️ Gerçek açık — kaynak değişmez</option>
-                </>
-              )}
+              {(() => {
+                const farkNum = Number(kkDuzeltModal.uyari?.fark_tl || 0);
+                const fazla = farkNum > 0;
+                if (kkDuzeltModal.uyari?.tip === 'ACILIS_KASA_FARK') {
+                  return (
+                    <>
+                      <option value="acilis_yanlis">🌅 Sabahçı kasa sayımı yanlış (bugünkü açılış)</option>
+                      <option value="devir_yanlis">🌙 Akşamcı devir/teslim yanlış (önceki gün kapanış)</option>
+                      <option value="gercek_acik">
+                        {fazla ? '⚠️ Gerçek fazla — kaynak değişmez' : '⚠️ Gerçek açık — kaynak değişmez'}
+                      </option>
+                    </>
+                  );
+                }
+                return (
+                  <>
+                    <option value="ciro_yanlis">📝 Ciro yanlış (nakit / POS / online)</option>
+                    {fazla ? (
+                      <option value="ciro_fazla">💰 Z eksik basılmış — nakit ciroya ekle</option>
+                    ) : (
+                      <option value="gider_eksik">💸 Eksik nakit gider (anlık gidere ekle)</option>
+                    )}
+                    <option value="devir_yanlis">🌙 Kapanış teslim / devir yanlış (aynı gün)</option>
+                    <option value="acilis_yanlis">🌅 Açılış kasa sayımı yanlış</option>
+                    <option value="gercek_acik">
+                      {fazla ? '⚠️ Gerçek fazla — kaynak değişmez' : '⚠️ Gerçek açık — kaynak değişmez'}
+                    </option>
+                  </>
+                );
+              })()}
             </select>
 
             {/* Sebebe göre dinamik form */}
@@ -13936,6 +13951,7 @@ export default function OperasyonMerkezi() {
                       ...prev,
                       payload: { ...prev.payload, tutar: Number(e.target.value) },
                     }))}
+                    placeholder={Math.abs(Number(kkDuzeltModal.uyari?.fark_tl||0)).toFixed(2)}
                     style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
                   />
                 </label>
@@ -13955,12 +13971,58 @@ export default function OperasyonMerkezi() {
               </div>
             )}
 
-            {kkDuzeltModal.sebep === 'gercek_acik' && (
-              <div style={{ background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 6, padding: 12, marginBottom: 14, fontSize: 12, color: '#fca5a5' }}>
-                Bu seçim ile kaynak veriler (ciro/açılış/gider) değişmez. Mevcut fark olduğu gibi kalır,
-                kayıt "çözüldü" olarak işaretlenir ama kasa açığı personele/şubeye yansır.
-              </div>
-            )}
+            {kkDuzeltModal.sebep === 'ciro_fazla' && (() => {
+              const farkAbs = Math.abs(Number(kkDuzeltModal.uyari?.fark_tl || 0));
+              return (
+                <>
+                  <div style={{
+                    background: 'rgba(34,197,94,0.10)',
+                    border: '1px solid rgba(34,197,94,0.35)',
+                    borderRadius: 6, padding: 10, marginBottom: 12, fontSize: 11,
+                    color: '#86efac', lineHeight: 1.5,
+                  }}>
+                    <strong>Kasa fazlası → Ciroya nakit ekle</strong> —
+                    Z raporu eksik basılmış olabilir; kasada beklenenden{' '}
+                    <strong>{farkAbs.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}₺</strong>
+                    {' '}fazla var. Bu tutar mevcut nakit ciroya <strong>eklenir</strong> (Cash Over =
+                    bildirilmemiş satış). POS/online dokunulmaz.
+                  </div>
+                  <label style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 14 }}>
+                    Ciroya eklenecek nakit (₺)
+                    <input
+                      type="number" step="0.01" min="0" className="input"
+                      disabled={kkDuzeltBusy}
+                      value={kkDuzeltModal.payload.tutar ?? ''}
+                      onChange={(e) => setKkDuzeltModal((prev) => ({
+                        ...prev,
+                        payload: { ...prev.payload, tutar: Number(e.target.value) },
+                      }))}
+                      placeholder={farkAbs.toFixed(2)}
+                      style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
+                    />
+                  </label>
+                </>
+              );
+            })()}
+
+            {kkDuzeltModal.sebep === 'gercek_acik' && (() => {
+              const farkNum = Number(kkDuzeltModal.uyari?.fark_tl || 0);
+              const fazla = farkNum > 0;
+              return (
+                <div style={{
+                  background: fazla ? 'rgba(34,197,94,0.10)' : 'rgba(220,38,38,0.10)',
+                  border: `1px solid ${fazla ? 'rgba(34,197,94,0.30)' : 'rgba(220,38,38,0.30)'}`,
+                  borderRadius: 6, padding: 12, marginBottom: 14, fontSize: 12,
+                  color: fazla ? '#86efac' : '#fca5a5', lineHeight: 1.5,
+                }}>
+                  Bu seçim ile kaynak veriler (ciro/açılış/gider) <strong>değişmez</strong>.
+                  Mevcut {fazla ? 'fazla' : 'açık'} olduğu gibi kalır, kayıt "çözüldü" olarak
+                  işaretlenir; {fazla
+                    ? 'fazla tutar muhasebede ayrıca raporlanır (Cash Over).'
+                    : 'kasa açığı personele/şubeye yansır.'}
+                </div>
+              );
+            })()}
 
             {/* Not */}
             <label style={{ display: 'block', fontSize: 12, marginBottom: 18 }}>

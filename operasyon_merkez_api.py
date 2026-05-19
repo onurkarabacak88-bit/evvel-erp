@@ -3348,6 +3348,73 @@ def ops_bar_ozet(
         }
 
 
+@router.get("/urun-ac-uyumsuzluklar")
+def ops_urun_ac_uyumsuzluklar(
+    gun: Optional[str] = None,
+    year_month: Optional[str] = None,
+    sube_id: Optional[str] = None,
+    limit: int = Query(500, ge=1, le=2000),
+):
+    """
+    Karşılıksız ürün açma uyarıları (sube_operasyon_uyari, tip=URUN_AC_UYUMSUZLUK).
+    Hub kartlarındaki «Ürün Aç» uyarıları ile aynı kaynak; bar-ozet sayım farkından bağımsızdır.
+    """
+    lim = max(1, min(2000, int(limit)))
+    gun_v = (gun or "").strip()
+    ym = _coerce_year_month(year_month) if (year_month or "").strip() else (
+        gun_v[:7] if len(gun_v) >= 7 else _coerce_year_month(None)
+    )
+    sid = (sube_id or "").strip() or None
+
+    with db() as (conn, cur):
+        params: list = []
+        where = ["u.tip = 'URUN_AC_UYUMSUZLUK'"]
+        if sid:
+            where.append("u.sube_id = %s")
+            params.append(sid)
+        if gun_v:
+            where.append("u.tarih = NULLIF(%s, '')::date")
+            params.append(gun_v)
+        else:
+            where.append("to_char(u.tarih, 'YYYY-MM') = %s")
+            params.append(ym)
+        params.append(lim)
+        cur.execute(
+            f"""
+            SELECT u.id, u.sube_id, s.ad AS sube_adi, u.tarih::text AS tarih,
+                   u.kalem_kodu,
+                   COALESCE(NULLIF(TRIM(ds.kalem_adi), ''), u.kalem_kodu) AS kalem_adi,
+                   u.mesaj, u.detay, u.olusturma
+            FROM sube_operasyon_uyari u
+            JOIN subeler s ON s.id = u.sube_id
+            LEFT JOIN sube_depo_stok ds
+                   ON ds.sube_id = u.sube_id AND ds.kalem_kodu = u.kalem_kodu
+            WHERE {' AND '.join(where)}
+            ORDER BY u.tarih DESC, s.ad ASC, u.olusturma DESC
+            LIMIT %s
+            """,
+            params,
+        )
+        satirlar: List[Dict[str, Any]] = []
+        for r in cur.fetchall():
+            d = dict(r)
+            if d.get("olusturma"):
+                d["olusturma"] = str(d["olusturma"])
+            detay_raw = d.get("detay")
+            if isinstance(detay_raw, str):
+                try:
+                    detay_raw = json.loads(detay_raw)
+                except Exception:
+                    detay_raw = {}
+            if not isinstance(detay_raw, dict):
+                detay_raw = {}
+            d["detay"] = detay_raw
+            d["eksik_miktar"] = int(detay_raw.get("eksik_miktar") or 0)
+            satirlar.append(d)
+
+    return {"satirlar": satirlar, "year_month": ym, "gun": gun_v or None}
+
+
 def _ops_parse_defter_delta(raw_aciklama: str, prefix: str) -> Dict[str, int]:
     out = {k: 0 for k in STOK_KEYS}
     s = (raw_aciklama or "").strip()
@@ -5776,7 +5843,7 @@ def ops_kasa_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyu
 # (ciro/açılış/gider/devir kaydını düzelt → fark otomatik yeniden hesaplanır)
 # ─────────────────────────────────────────────────────────────────
 
-_SEBEPLER = {"ciro_yanlis", "acilis_yanlis", "gider_eksik", "devir_yanlis", "gercek_acik"}
+_SEBEPLER = {"ciro_yanlis", "acilis_yanlis", "gider_eksik", "ciro_fazla", "devir_yanlis", "gercek_acik"}
 
 
 def _kk_uyari_getir(cur, uyari_id: str) -> Dict[str, Any]:
@@ -5898,7 +5965,8 @@ def _kk_devir_duzelt(
 
 def _kk_gider_ekle(cur, sube_id: str, tarih: str, payload: Dict[str, Any],
                    pid: Optional[str], pad: Optional[str]) -> Dict[str, Any]:
-    """Eksik anlık gider eklenir. Aktif olarak girilir (onay beklemez — düzeltme zaten merkez yetkili)."""
+    """Sadece kasa AÇIĞI için: eksik nakit gider olarak anlik_giderler'e INSERT.
+    Fazla için bu fonksiyon kullanılmaz — fazla CIROYA eklenir (_kk_ciro_artir)."""
     kategori = (payload.get("kategori") or "Düzeltme — kasa farkı kaynak").strip()
     try:
         tutar = float(payload.get("tutar") or 0)
@@ -5920,6 +5988,59 @@ def _kk_gider_ekle(cur, sube_id: str, tarih: str, payload: Dict[str, Any],
     )
     return {"hedef_tablo": "anlik_giderler", "hedef_id": gid,
             "eski": None, "yeni": {"kategori": kategori, "tutar": tutar, "aciklama": aciklama}}
+
+
+def _kk_ciro_artir(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Kasa FAZLASI için: ciro.nakit kaydını fark kadar arttırır (Z eksik basılmış olabilir).
+
+    Aksiyon: O günün ciro satırının NAKİT alanı `eski_nakit + tutar` olarak güncellenir.
+    POS/online dokunulmaz. Eğer o gün ciro satırı yoksa yeni nakit-only satır oluşturulur
+    (durum='aktif', kaynak='kasa_fark_fazla').
+    """
+    try:
+        ek_tutar = float(payload.get("tutar") or 0)
+    except (TypeError, ValueError):
+        ek_tutar = 0.0
+    if ek_tutar <= 0:
+        raise HTTPException(400, "ciro_fazla: tutar > 0 olmalı (eklenecek nakit)")
+
+    cur.execute(
+        """
+        SELECT id::text, COALESCE(nakit,0) AS nakit, COALESCE(pos,0) AS pos,
+               COALESCE(online,0) AS online, COALESCE(toplam,0) AS toplam
+        FROM ciro
+        WHERE sube_id=%s AND tarih=%s::date AND durum='aktif'
+        ORDER BY olusturma DESC NULLS LAST LIMIT 1
+        FOR UPDATE
+        """,
+        (sube_id, tarih),
+    )
+    row = cur.fetchone()
+    if row:
+        r = dict(row)
+        eski_nakit = float(r["nakit"] or 0)
+        yeni_nakit = round(eski_nakit + ek_tutar, 2)
+        yeni_toplam = round(float(r["pos"] or 0) + float(r["online"] or 0) + yeni_nakit, 2)
+        cur.execute(
+            "UPDATE ciro SET nakit=%s, toplam=%s WHERE id=%s",
+            (yeni_nakit, yeni_toplam, r["id"]),
+        )
+        return {"hedef_tablo": "ciro", "hedef_id": r["id"],
+                "eski": {"nakit": eski_nakit, "toplam": float(r["toplam"] or 0)},
+                "yeni": {"nakit": yeni_nakit, "toplam": yeni_toplam,
+                         "eklenen": ek_tutar, "yon": "fazla"}}
+    # Ciro satırı yok — yeni nakit-only satır
+    cid = str(uuid.uuid4())
+    cur.execute(
+        """
+        INSERT INTO ciro (id, sube_id, tarih, nakit, pos, online, toplam, durum, kaynak)
+        VALUES (%s, %s, %s::date, %s, 0, 0, %s, 'aktif', 'kasa_fark_fazla')
+        """,
+        (cid, sube_id, tarih, ek_tutar, ek_tutar),
+    )
+    return {"hedef_tablo": "ciro", "hedef_id": cid,
+            "eski": None, "yeni": {"nakit": ek_tutar, "toplam": ek_tutar,
+                                    "eklenen": ek_tutar, "yon": "fazla"}}
 
 
 _KKD_TABLO_KONTROL_EDILDI = False  # process-level cache
@@ -5957,6 +6078,28 @@ def _kkd_tablo_garantile(cur) -> None:
         """,
         "CREATE INDEX IF NOT EXISTS idx_kfkd_uyari ON kasa_fark_kaynak_duzeltme(uyari_id)",
         "CREATE INDEX IF NOT EXISTS idx_kfkd_sube_tarih ON kasa_fark_kaynak_duzeltme(sube_id, tarih DESC)",
+        # Sebep CHECK constraint expand — 'ciro_fazla' yeni değer
+        # (Stripe Expand-Contract pattern: önce eski constraint'i kaldır, sonra yenisini ekle)
+        """
+        DO $$
+        DECLARE _con_name TEXT;
+        BEGIN
+            SELECT con.conname INTO _con_name
+            FROM pg_constraint con
+            JOIN pg_class c ON c.oid = con.conrelid
+            WHERE c.relname = 'kasa_fark_kaynak_duzeltme'
+              AND con.contype = 'c'
+              AND pg_get_constraintdef(con.oid) LIKE '%sebep%'
+            LIMIT 1;
+            IF _con_name IS NOT NULL THEN
+                EXECUTE format('ALTER TABLE kasa_fark_kaynak_duzeltme DROP CONSTRAINT %I', _con_name);
+            END IF;
+            ALTER TABLE kasa_fark_kaynak_duzeltme
+              ADD CONSTRAINT kasa_fark_kaynak_duzeltme_sebep_check
+              CHECK (sebep IN ('ciro_yanlis','acilis_yanlis','gider_eksik','ciro_fazla','devir_yanlis','gercek_acik'));
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END $$
+        """,
     ]:
         try:
             cur.execute("SAVEPOINT sp_kkd")
@@ -6075,7 +6218,26 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
                     400,
                     "Devir uyumsuzluğu için gider eklenemez — açılış veya önceki gün devir düzeltin.",
                 )
+            if eski_fark > 0:
+                raise HTTPException(
+                    400,
+                    "Kasa FAZLA olduğunda 'eksik gider' eklenemez — "
+                    "fazla için 'ciro_fazla' sebebini kullanın (Z eksik basıldı → ciroya eklenir).",
+                )
             hedef = _kk_gider_ekle(cur, sube_id, tarih, payload, pid, pad)
+        elif sebep == "ciro_fazla":
+            if uyari_tip == "ACILIS_KASA_FARK":
+                raise HTTPException(
+                    400,
+                    "Devir uyumsuzluğu için ciro fazla eklenemez — açılış veya önceki gün devir düzeltin.",
+                )
+            if eski_fark < 0:
+                raise HTTPException(
+                    400,
+                    "Kasa AÇIK olduğunda 'ciro fazla' kullanılamaz — "
+                    "açık için 'gider_eksik' sebebini kullanın.",
+                )
+            hedef = _kk_ciro_artir(cur, sube_id, tarih, payload)
         else:  # gercek_acik
             hedef = {"hedef_tablo": None, "hedef_id": None, "eski": None, "yeni": None}
 
@@ -11737,3 +11899,1021 @@ def ops_rapor_cache_batch_log(limit: int = Query(20, ge=1, le=200)):
         return {"toplam": len(kayitlar), "kayitlar": kayitlar}
     except Exception as e:
         raise HTTPException(500, f"Batch log okunamadı: {e}")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  KASA BASKINI (CFO blind cash count)
+#  ─────────────────────────────────────
+#  Müdür kademesi olmadığı için CFO her şubeye habersiz "şimdi say" emri verir.
+#  Şube personeli **beklenen tutarı görmeden** kasayı sayar (blind count) ve
+#  PIN ile onaylar. Sistem fark çıkarır.
+#
+#  Pattern: NRF Loss Prevention — Unannounced Cash Audit
+#  Trade-off: Şube panelinde aktif baskın varken hiçbir kasa işlemi yapılamaz.
+#  Production-grade: idempotent, atomic, auditable, observable.
+# ════════════════════════════════════════════════════════════════════════════
+
+_KASA_BASKINI_TABLO_KONTROL = False  # process-level cache
+
+
+def _kb_tablo_garantile(cur) -> None:
+    """Lazy migration: kasa_baskini tablosu yoksa anında oluştur."""
+    global _KASA_BASKINI_TABLO_KONTROL
+    if _KASA_BASKINI_TABLO_KONTROL:
+        return
+    for ddl in [
+        """
+        CREATE TABLE IF NOT EXISTS kasa_baskini (
+            id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            sube_id           TEXT NOT NULL,
+            baslatan_cfo_id   TEXT,
+            baslatan_cfo_ad   TEXT,
+            baslatma_ts       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            son_tarih_ts      TIMESTAMPTZ,
+            beklenen_tutar    NUMERIC(14,2),
+            sayilan_tutar     NUMERIC(14,2),
+            fark              NUMERIC(14,2),
+            sayim_personel_id TEXT,
+            sayim_personel_ad TEXT,
+            sayim_pin_dogru   BOOLEAN,
+            sayim_ts          TIMESTAMPTZ,
+            durum             TEXT NOT NULL DEFAULT 'aktif'
+                              CHECK (durum IN ('aktif','tamamlandi','sure_doldu','iptal')),
+            snapshot_json     JSONB,
+            notu              TEXT,
+            olusturma         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_kasa_baskini_sube_durum ON kasa_baskini(sube_id, durum, baslatma_ts DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_kasa_baskini_aktif ON kasa_baskini(sube_id) WHERE durum = 'aktif'",
+    ]:
+        try:
+            cur.execute("SAVEPOINT sp_kb")
+            cur.execute(ddl)
+            cur.execute("RELEASE SAVEPOINT sp_kb")
+        except Exception:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_kb")
+            except Exception:
+                pass
+    _KASA_BASKINI_TABLO_KONTROL = True
+
+
+def _kb_beklenen_tutar_hesapla(cur, sube_id: str, tarih_str: str) -> Dict[str, float]:
+    """Şu anki teorik kasa tutarı.
+    Formül: acilis_kasa + bugün_nakit_satis (ciro Z'si varsa) − nakit_giderler − ara_teslim.
+    Z raporu henüz girilmemişse z_nakit=0 sayılır (anlık satışlar tablosu yoksa).
+    """
+    # 1. Açılış sayımı
+    cur.execute(
+        """
+        SELECT COALESCE(kasa_sayim, 0) AS kasa_sayim
+        FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=%s::date AND tip='ACILIS' AND durum='tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+        """,
+        (sube_id, tarih_str),
+    )
+    acilis = float((cur.fetchone() or {}).get("kasa_sayim") or 0)
+
+    # 2. Z nakit ciro (girilmişse)
+    cur.execute(
+        """
+        SELECT COALESCE(SUM(nakit), 0) AS nakit
+        FROM ciro WHERE sube_id=%s AND tarih=%s::date AND durum='aktif'
+        """,
+        (sube_id, tarih_str),
+    )
+    z_nakit = float((cur.fetchone() or {}).get("nakit") or 0)
+
+    # 3. Nakit giderler
+    cur.execute(
+        """
+        SELECT COALESCE(SUM(tutar), 0) AS toplam
+        FROM anlik_giderler
+        WHERE sube=%s AND tarih=%s::date
+          AND LOWER(COALESCE(NULLIF(TRIM(odeme_yontemi), ''), 'nakit')) = 'nakit'
+          AND durum IN ('aktif','onay_bekliyor')
+        """,
+        (sube_id, tarih_str),
+    )
+    giderler = float((cur.fetchone() or {}).get("toplam") or 0)
+
+    # 4. Ara teslim
+    cur.execute(
+        """
+        SELECT COALESCE(SUM(tutar), 0) AS toplam
+        FROM kasa_teslim
+        WHERE sube_id=%s AND tarih=%s::date AND teslim_turu='ara'
+        """,
+        (sube_id, tarih_str),
+    )
+    ara = float((cur.fetchone() or {}).get("toplam") or 0)
+
+    beklenen = round(acilis + z_nakit - giderler - ara, 2)
+    return {
+        "acilis_kasa": acilis,
+        "z_nakit": z_nakit,
+        "nakit_giderler": giderler,
+        "ara_teslim": ara,
+        "beklenen": beklenen,
+        "z_raporu_var": z_nakit > 0,
+    }
+
+
+class KasaBaskiniBaslatBody(BaseModel):
+    sube_id: str
+    cfo_id: Optional[str] = None
+    cfo_ad: Optional[str] = None
+    sure_dakika: int = 15
+    notu: Optional[str] = None
+
+
+class KasaBaskiniTamamlaBody(BaseModel):
+    sayilan_tutar: float
+    personel_id: str
+    pin: str
+    notu: Optional[str] = None
+
+
+@router.post("/kasa-baskini/baslat")
+def kasa_baskini_baslat(body: KasaBaskiniBaslatBody):
+    """CFO bir şubeye kasa baskını başlatır (blind count emri)."""
+    sube_id = (body.sube_id or "").strip()
+    if not sube_id:
+        raise HTTPException(400, "sube_id zorunlu")
+    sure_dk = max(2, min(120, int(body.sure_dakika or 15)))
+    bugun = bugun_tr().isoformat()
+
+    with db() as (conn, cur):
+        _kb_tablo_garantile(cur)
+
+        # Aynı şubede aktif baskın varsa yenisini başlatma
+        cur.execute(
+            "SELECT id FROM kasa_baskini WHERE sube_id=%s AND durum='aktif' LIMIT 1",
+            (sube_id,),
+        )
+        if cur.fetchone():
+            raise HTTPException(409, "Bu şubede zaten aktif bir kasa baskını var")
+
+        # Şube var mı kontrol
+        cur.execute("SELECT id::text, ad FROM subeler WHERE id=%s", (sube_id,))
+        sube = cur.fetchone()
+        if not sube:
+            raise HTTPException(404, "Şube bulunamadı")
+        sube = dict(sube)
+
+        bilesen = _kb_beklenen_tutar_hesapla(cur, sube_id, bugun)
+        snapshot = {
+            "tarih": bugun,
+            "bilesenler": bilesen,
+            "baslatma_dk": dt_now_tr().isoformat(),
+        }
+
+        bid = str(uuid.uuid4())
+        cur.execute(
+            """
+            INSERT INTO kasa_baskini
+                (id, sube_id, baslatan_cfo_id, baslatan_cfo_ad,
+                 son_tarih_ts, beklenen_tutar, snapshot_json, notu, durum)
+            VALUES (%s, %s, %s, %s,
+                    NOW() + (%s || ' minutes')::interval,
+                    %s, %s::jsonb, %s, 'aktif')
+            """,
+            (
+                bid, sube_id,
+                (body.cfo_id or "").strip() or None,
+                (body.cfo_ad or "").strip() or None,
+                str(sure_dk),
+                bilesen["beklenen"],
+                json.dumps(snapshot, ensure_ascii=False, default=str),
+                (body.notu or "").strip() or None,
+            ),
+        )
+
+        # Audit defterine yaz
+        try:
+            operasyon_defter_ekle(
+                cur,
+                sube_id=sube_id,
+                tip="KASA_BASKINI_BASLATILDI",
+                tarih=bugun,
+                detay={
+                    "baskin_id": bid,
+                    "sure_dakika": sure_dk,
+                    "beklenen_tutar": bilesen["beklenen"],
+                    "cfo_id": body.cfo_id,
+                    "cfo_ad": body.cfo_ad,
+                },
+            )
+        except Exception as _e:
+            log.warning("KASA_BASKINI_BASLATILDI defter yazılamadı: %s", _e)
+
+        log.info("KASA_BASKINI baslat sube=%s id=%s beklenen=%.2f sure=%dmin",
+                 sube_id, bid, bilesen["beklenen"], sure_dk)
+
+    return {
+        "ok": True,
+        "id": bid,
+        "sube_id": sube_id,
+        "sube_ad": sube.get("ad"),
+        "sure_dakika": sure_dk,
+        "tarih": bugun,
+        # NOT: beklenen tutar UI'a DÖNMEZ — sadece tamamla sonucunda görünür (blind count)
+    }
+
+
+@router.get("/kasa-baskini/aktif/{sube_id}")
+def kasa_baskini_aktif(sube_id: str):
+    """Şube panelinin poll edeceği endpoint — aktif baskın varsa banner gösterilir."""
+    with db() as (conn, cur):
+        _kb_tablo_garantile(cur)
+        cur.execute(
+            """
+            SELECT id, baslatma_ts, son_tarih_ts, baslatan_cfo_ad, notu,
+                   EXTRACT(EPOCH FROM (son_tarih_ts - NOW()))::int AS kalan_sn
+            FROM kasa_baskini
+            WHERE sube_id=%s AND durum='aktif'
+            ORDER BY baslatma_ts DESC LIMIT 1
+            """,
+            (sube_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"aktif": False}
+        d = dict(row)
+
+        # Süresi dolmuşsa otomatik kapat
+        if (d.get("kalan_sn") or 0) <= 0:
+            cur.execute(
+                "UPDATE kasa_baskini SET durum='sure_doldu' WHERE id=%s",
+                (d["id"],),
+            )
+            return {"aktif": False, "sure_doldu": True}
+
+        return {
+            "aktif": True,
+            "id": d["id"],
+            "baslatma_ts": str(d["baslatma_ts"]),
+            "son_tarih_ts": str(d["son_tarih_ts"]),
+            "kalan_sn": int(d["kalan_sn"]),
+            "baslatan_cfo_ad": d.get("baslatan_cfo_ad"),
+            "notu": d.get("notu"),
+        }
+
+
+@router.post("/kasa-baskini/{baskin_id}/tamamla")
+def kasa_baskini_tamamla(baskin_id: str, body: KasaBaskiniTamamlaBody):
+    """Şube personeli blind sayımı girer; PIN ile onaylar.
+    Fark hesaplanıp UI'a dönülür. Sayım girildikten SONRA beklenen tutar açığa çıkar."""
+    try:
+        sayilan = float(body.sayilan_tutar)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Geçersiz sayılan tutar")
+    if sayilan < 0:
+        raise HTTPException(400, "Sayılan tutar negatif olamaz")
+
+    pid = (body.personel_id or "").strip()
+    pin = (body.pin or "").strip()
+    if not pid or not pin:
+        raise HTTPException(400, "Personel ve PIN zorunlu")
+
+    with db() as (conn, cur):
+        _kb_tablo_garantile(cur)
+
+        cur.execute(
+            """
+            SELECT id, sube_id, beklenen_tutar, durum, son_tarih_ts,
+                   EXTRACT(EPOCH FROM (son_tarih_ts - NOW()))::int AS kalan_sn
+            FROM kasa_baskini WHERE id=%s FOR UPDATE
+            """,
+            (baskin_id,),
+        )
+        bk = cur.fetchone()
+        if not bk:
+            raise HTTPException(404, "Baskın bulunamadı")
+        bk = dict(bk)
+        if bk["durum"] != "aktif":
+            raise HTTPException(409, f"Baskın aktif değil (durum={bk['durum']})")
+        if (bk.get("kalan_sn") or 0) <= 0:
+            cur.execute("UPDATE kasa_baskini SET durum='sure_doldu' WHERE id=%s", (baskin_id,))
+            raise HTTPException(409, "Baskın süresi dolmuş")
+
+        # PIN doğrulama (mevcut personel sistemi)
+        cur.execute(
+            "SELECT id::text, ad, pin FROM personeller WHERE id=%s AND sube_id=%s",
+            (pid, bk["sube_id"]),
+        )
+        per = cur.fetchone()
+        if not per:
+            raise HTTPException(404, "Personel bulunamadı")
+        per = dict(per)
+        pin_dogru = str(per.get("pin") or "").strip() == pin
+        if not pin_dogru:
+            # Yanlış PIN denemesini logla ama baskını kapatma
+            log.warning("KASA_BASKINI yanlış PIN baskin=%s pid=%s", baskin_id, pid)
+            raise HTTPException(401, "PIN hatalı")
+
+        beklenen = float(bk["beklenen_tutar"] or 0)
+        fark = round(sayilan - beklenen, 2)
+
+        cur.execute(
+            """
+            UPDATE kasa_baskini
+            SET sayilan_tutar=%s, fark=%s, sayim_personel_id=%s, sayim_personel_ad=%s,
+                sayim_pin_dogru=TRUE, sayim_ts=NOW(), durum='tamamlandi',
+                notu=COALESCE(NULLIF(%s,''), notu)
+            WHERE id=%s
+            """,
+            (sayilan, fark, pid, per.get("ad"), (body.notu or "").strip(), baskin_id),
+        )
+
+        # Audit
+        try:
+            operasyon_defter_ekle(
+                cur,
+                sube_id=bk["sube_id"],
+                tip="KASA_BASKINI_TAMAMLANDI",
+                tarih=bugun_tr().isoformat(),
+                detay={
+                    "baskin_id": baskin_id,
+                    "beklenen": beklenen,
+                    "sayilan": sayilan,
+                    "fark": fark,
+                    "personel_id": pid,
+                    "personel_ad": per.get("ad"),
+                },
+            )
+        except Exception as _e:
+            log.warning("KASA_BASKINI_TAMAMLANDI defter yazılamadı: %s", _e)
+
+        log.info("KASA_BASKINI tamamla id=%s beklenen=%.2f sayilan=%.2f fark=%+.2f",
+                 baskin_id, beklenen, sayilan, fark)
+
+    seviye = "uyumlu" if abs(fark) <= 1.0 else ("dusuk" if abs(fark) <= 50 else ("orta" if abs(fark) <= 200 else "yuksek"))
+    return {
+        "ok": True,
+        "id": baskin_id,
+        "beklenen": beklenen,
+        "sayilan": sayilan,
+        "fark": fark,
+        "seviye": seviye,
+        "personel_ad": per.get("ad"),
+    }
+
+
+@router.get("/kasa-baskini/liste")
+def kasa_baskini_liste(
+    sube_id: Optional[str] = Query(None),
+    durum: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """CFO listeleme — son baskınlar (default: tüm şubeler, son 50)."""
+    sql = ["SELECT b.*, s.ad AS sube_ad FROM kasa_baskini b LEFT JOIN subeler s ON s.id::text = b.sube_id WHERE 1=1"]
+    params: List[Any] = []
+    if sube_id:
+        sql.append("AND b.sube_id=%s")
+        params.append(sube_id)
+    if durum:
+        sql.append("AND b.durum=%s")
+        params.append(durum)
+    sql.append("ORDER BY b.baslatma_ts DESC LIMIT %s")
+    params.append(limit)
+    with db() as (conn, cur):
+        _kb_tablo_garantile(cur)
+        cur.execute(" ".join(sql), tuple(params))
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+
+    for r in rows:
+        for k in ("baslatma_ts", "son_tarih_ts", "sayim_ts", "olusturma"):
+            if r.get(k) is not None:
+                r[k] = str(r[k])
+        for k in ("beklenen_tutar", "sayilan_tutar", "fark"):
+            if r.get(k) is not None:
+                r[k] = float(r[k])
+    return {"toplam": len(rows), "kayitlar": rows}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  TRUTH ESTABLISHMENT MOTOR — İzole tanı motoru endpoint'leri
+#  (truth_motor.py modülü; mevcut akışı etkilemez, feature flag korumalı)
+# ════════════════════════════════════════════════════════════════════════════
+
+class TruthAyarBody(BaseModel):
+    sube_id: str
+    aktif: bool
+    mod: Optional[str] = "read_only"
+    notu: Optional[str] = None
+
+
+_TRUTH_TABLO_KONTROL = False
+
+
+def _truth_tablo_garantile(cur) -> None:
+    """Lazy migration: truth_motor tabloları yoksa anında kur."""
+    global _TRUTH_TABLO_KONTROL
+    if _TRUTH_TABLO_KONTROL:
+        return
+    for ddl in [
+        """
+        CREATE TABLE IF NOT EXISTS truth_motor_ayar (
+            sube_id      TEXT PRIMARY KEY,
+            aktif        BOOLEAN NOT NULL DEFAULT FALSE,
+            mod          TEXT NOT NULL DEFAULT 'read_only',
+            son_calisma  TIMESTAMPTZ,
+            notu         TEXT,
+            guncelleme   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS truth_motor_kararlar (
+            id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            sube_id         TEXT NOT NULL,
+            tarih           DATE NOT NULL,
+            boyut           TEXT NOT NULL,
+            n1_aksam        NUMERIC(14,2),
+            n2_sabah        NUMERIC(14,2),
+            n3_evo          NUMERIC(14,2),
+            fark_n1_n2      NUMERIC(14,2),
+            evo_destek      TEXT,
+            tani            TEXT NOT NULL,
+            guven_skoru     NUMERIC(5,2),
+            detay_json      JSONB,
+            aksiyon_alindi  BOOLEAN NOT NULL DEFAULT FALSE,
+            aksiyon_ts      TIMESTAMPTZ,
+            aksiyon_personel TEXT,
+            olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_truth_kararlar_sube_tarih ON truth_motor_kararlar(sube_id, tarih DESC, boyut)",
+        "CREATE INDEX IF NOT EXISTS idx_truth_kararlar_tani ON truth_motor_kararlar(tani, olusturma DESC) WHERE tani != 'UYUMLU'",
+        """
+        CREATE TABLE IF NOT EXISTS akilli_denetim_iz (
+            id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            karar_id     TEXT NOT NULL,
+            durum        TEXT NOT NULL DEFAULT 'bekliyor',
+            oncelik      TEXT NOT NULL DEFAULT 'orta',
+            atanan_id    TEXT,
+            atanan_ad    TEXT,
+            acan_id      TEXT,
+            acan_ad      TEXT,
+            cozum_notu   TEXT,
+            cozum_ts     TIMESTAMPTZ,
+            olusturma    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            guncelleme   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_akilli_iz_durum ON akilli_denetim_iz(durum, oncelik DESC, olusturma DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_akilli_iz_karar ON akilli_denetim_iz(karar_id)",
+    ]:
+        try:
+            cur.execute("SAVEPOINT sp_truth")
+            cur.execute(ddl)
+            cur.execute("RELEASE SAVEPOINT sp_truth")
+        except Exception:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_truth")
+            except Exception:
+                pass
+    _TRUTH_TABLO_KONTROL = True
+
+
+@router.get("/truth/durum")
+def truth_durum():
+    """Global flag + tüm şubelerin motor durumu."""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        return {"global_aktif": False, "import_hata": str(e), "subeler": []}
+    global_aktif = _tm._global_aktif()
+    rows = []
+    try:
+        with db() as (_c, cur):
+            _truth_tablo_garantile(cur)
+            cur.execute("""
+                SELECT a.sube_id, a.aktif, a.mod, a.son_calisma, a.notu,
+                       COALESCE(s.ad, a.sube_id) AS sube_ad
+                FROM truth_motor_ayar a
+                LEFT JOIN subeler s ON s.id::text = a.sube_id
+                ORDER BY sube_ad
+            """)
+            for r in (cur.fetchall() or []):
+                d = dict(r)
+                if d.get("son_calisma"):
+                    d["son_calisma"] = str(d["son_calisma"])
+                rows.append(d)
+    except Exception as e:
+        log.warning("truth/durum query hata: %s", e)
+    return {"global_aktif": global_aktif, "subeler": rows}
+
+
+@router.post("/truth/ayar")
+def truth_ayar(body: TruthAyarBody):
+    """Şube için motoru aç/kapat veya modunu değiştir."""
+    sube_id = (body.sube_id or "").strip()
+    if not sube_id:
+        raise HTTPException(400, "sube_id zorunlu")
+    mod = (body.mod or "read_only").strip()
+    if mod not in ("read_only", "apply"):
+        raise HTTPException(400, "mod 'read_only' veya 'apply' olmalı")
+
+    with db() as (conn, cur):
+        _truth_tablo_garantile(cur)
+        cur.execute(
+            """
+            INSERT INTO truth_motor_ayar (sube_id, aktif, mod, notu, guncelleme)
+            VALUES (%s, %s, %s, %s, NOW())
+            ON CONFLICT (sube_id) DO UPDATE
+            SET aktif=EXCLUDED.aktif, mod=EXCLUDED.mod,
+                notu=EXCLUDED.notu, guncelleme=NOW()
+            """,
+            (sube_id, bool(body.aktif), mod, (body.notu or "").strip() or None),
+        )
+    return {"ok": True, "sube_id": sube_id, "aktif": bool(body.aktif), "mod": mod}
+
+
+@router.post("/truth/calistir/{sube_id}/{tarih}")
+def truth_calistir(sube_id: str, tarih: str):
+    """Şube + tarih için motoru manuel tetikle (sabah ACILIS sonrası önerilir).
+    tarih = bugün (ACILIS günü); motor önceki günü N1 olarak kullanır."""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+
+    if not _tm._global_aktif():
+        raise HTTPException(403, "EVVEL_TRUTH_MOTOR_ENABLED env var ile global olarak kapatılmış")
+
+    with db() as (conn, cur):
+        _truth_tablo_garantile(cur)
+        if not _tm.sube_aktif_mi(cur, sube_id):
+            raise HTTPException(403, "Bu şube için motor pasif (truth_motor_ayar)")
+
+        veriler = _tm.veri_topla(cur, sube_id, tarih)
+        sonuc = _tm.motor_calistir(cur, sube_id, tarih, veriler)
+    return sonuc
+
+
+@router.get("/truth/gunluk-rapor")
+def truth_gunluk_rapor(tarih: Optional[str] = Query(None)):
+    """Tüm şubeler için tek bir tarihte özet rapor.
+    Her şube için: ana_tani (en yüksek alarm), anomali_sayisi, boyut_ozet.
+    Frontend'de matrix kart olarak gösterilir."""
+    if not tarih:
+        tarih = bugun_tr().isoformat()
+
+    # Alarm önceliği — en kritik en üstte
+    alarm_oncelik = {
+        "AKSAM_ZIMMET_SINYALI": 100,
+        "SWEETHEARTING_SINYAL": 95,
+        "KAOS": 90,
+        "POS_BYPASS": 85,
+        "SABAH_TOPYEKUN": 80,
+        "AKSAM_TOPYEKUN": 80,
+        "POS_SYNC_HATA": 75,
+        "SABAH_HATALI": 60,
+        "AKSAM_HATALI": 60,
+        "COZULMEDI": 50,
+        "IKRAM_UNUTULDU": 30,
+        "YETERSIZ_VERI": 10,
+        "UYUMLU": 0,
+    }
+
+    with db() as (conn, cur):
+        _truth_tablo_garantile(cur)
+
+        # Tüm şubeleri listele (motor ayarı olsun ya da olmasın)
+        cur.execute("SELECT id::text, ad FROM subeler ORDER BY ad")
+        subeler = [dict(r) for r in (cur.fetchall() or [])]
+
+        # O tarihteki tüm kararları çek
+        cur.execute(
+            """
+            SELECT sube_id, boyut, tani, fark_n1_n2, guven_skoru, detay_json
+            FROM truth_motor_kararlar
+            WHERE tarih=%s::date
+            ORDER BY olusturma DESC
+            """,
+            (tarih,),
+        )
+        kararlar = [dict(r) for r in (cur.fetchall() or [])]
+
+        # Şube ayar durumlarını al
+        cur.execute("SELECT sube_id, aktif, mod, son_calisma FROM truth_motor_ayar")
+        ayarlar = {dict(r)["sube_id"]: dict(r) for r in (cur.fetchall() or [])}
+
+    # Şube başına agregat
+    sube_map = {s["id"]: s for s in subeler}
+    sube_kararlari: Dict[str, List[Dict[str, Any]]] = {s["id"]: [] for s in subeler}
+    # Her şube için her boyutun EN YENİ kararını al (aynı şube/tarih/boyut çoklu kayıt olabilir)
+    seen = set()
+    for k in kararlar:
+        anahtar = (k["sube_id"], k["boyut"])
+        if anahtar in seen:
+            continue
+        seen.add(anahtar)
+        if k["sube_id"] in sube_kararlari:
+            sube_kararlari[k["sube_id"]].append(k)
+
+    rapor = []
+    for s in subeler:
+        sid = s["id"]
+        kayitlar = sube_kararlari.get(sid, [])
+        ayar = ayarlar.get(sid, {})
+
+        # En kritik tanı
+        ana_tani = "UYUMLU"
+        en_yuksek = -1
+        for k in kayitlar:
+            t = k.get("tani") or "YETERSIZ_VERI"
+            o = alarm_oncelik.get(t, 0)
+            if o > en_yuksek:
+                en_yuksek = o
+                ana_tani = t
+
+        anomali_sayisi = sum(
+            1 for k in kayitlar
+            if k.get("tani") not in ("UYUMLU", "YETERSIZ_VERI")
+        )
+
+        # Boyut özet — kullanıcı dostu
+        boyut_ozet = []
+        for k in kayitlar:
+            t = k.get("tani") or "YETERSIZ_VERI"
+            if t in ("UYUMLU", "YETERSIZ_VERI"):
+                continue
+            f = k.get("fark_n1_n2")
+            f_str = ""
+            if f is not None:
+                f_str = f" ({'+' if float(f) > 0 else ''}{float(f):.2f})"
+            boyut_ozet.append({
+                "boyut": k["boyut"],
+                "tani": t,
+                "fark": float(f) if f is not None else None,
+                "ozet": f"{k['boyut']}{f_str}",
+            })
+
+        rapor.append({
+            "sube_id": sid,
+            "sube_ad": s["ad"],
+            "tarih": tarih,
+            "motor_aktif": bool(ayar.get("aktif", False)),
+            "motor_mod": ayar.get("mod") or "read_only",
+            "son_calisma": str(ayar["son_calisma"]) if ayar.get("son_calisma") else None,
+            "calistirildi": len(kayitlar) > 0,
+            "ana_tani": ana_tani,
+            "alarm_oncelik": en_yuksek if en_yuksek >= 0 else 0,
+            "toplam_karar": len(kayitlar),
+            "anomali_sayisi": anomali_sayisi,
+            "boyut_ozet": boyut_ozet,
+        })
+
+    # Alarm önceliğine göre sırala (kritik üstte)
+    rapor.sort(key=lambda r: (-r["alarm_oncelik"], r["sube_ad"]))
+    return {"tarih": tarih, "subeler": rapor}
+
+
+@router.get("/truth/kararlar")
+def truth_kararlar(
+    sube_id: Optional[str] = Query(None),
+    tarih: Optional[str] = Query(None),
+    tani: Optional[str] = Query(None),
+    sadece_anomali: bool = Query(False),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Geçmiş kararları listele. Default: en yeniler."""
+    sql = ["SELECT k.*, s.ad AS sube_ad FROM truth_motor_kararlar k LEFT JOIN subeler s ON s.id::text = k.sube_id WHERE 1=1"]
+    params: List[Any] = []
+    if sube_id:
+        sql.append("AND k.sube_id=%s"); params.append(sube_id)
+    if tarih:
+        sql.append("AND k.tarih=%s::date"); params.append(tarih)
+    if tani:
+        sql.append("AND k.tani=%s"); params.append(tani)
+    if sadece_anomali:
+        sql.append("AND k.tani NOT IN ('UYUMLU','YETERSIZ_VERI')")
+    sql.append("ORDER BY k.olusturma DESC LIMIT %s")
+    params.append(limit)
+
+    with db() as (conn, cur):
+        _truth_tablo_garantile(cur)
+        try:
+            cur.execute(" ".join(sql), tuple(params))
+            rows = [dict(r) for r in (cur.fetchall() or [])]
+        except Exception as e:
+            raise HTTPException(500, f"Kararlar okunamadı: {e}")
+
+    for r in rows:
+        for k in ("olusturma", "aksiyon_ts"):
+            if r.get(k) is not None:
+                r[k] = str(r[k])
+        for k in ("n1_aksam", "n2_sabah", "n3_evo", "fark_n1_n2", "guven_skoru"):
+            if r.get(k) is not None:
+                r[k] = float(r[k])
+    return {"toplam": len(rows), "kayitlar": rows}
+
+
+class IzAcBody(BaseModel):
+    karar_id: str
+    oncelik: Optional[str] = "orta"
+    atanan_id: Optional[str] = None
+    atanan_ad: Optional[str] = None
+    acan_id: Optional[str] = None
+    acan_ad: Optional[str] = None
+
+
+class IzDurumBody(BaseModel):
+    durum: str
+    cozum_notu: Optional[str] = None
+    atanan_id: Optional[str] = None
+    atanan_ad: Optional[str] = None
+
+
+_IZ_GECERLI_DURUM = {"bekliyor", "inceleme", "cozuldu", "sorusturma", "iptal"}
+_IZ_GECERLI_ONCELIK = {"dusuk", "orta", "yuksek", "kritik"}
+
+
+@router.post("/truth/iz/ac")
+def truth_iz_ac(body: IzAcBody):
+    """Bir kararı takip için aç — varsayılan 'bekliyor', öncelik tanı türüne göre."""
+    if not (body.karar_id or "").strip():
+        raise HTTPException(400, "karar_id zorunlu")
+    oncelik = (body.oncelik or "orta").strip()
+    if oncelik not in _IZ_GECERLI_ONCELIK:
+        raise HTTPException(400, f"Geçersiz öncelik (geçerli: {sorted(_IZ_GECERLI_ONCELIK)})")
+
+    with db() as (conn, cur):
+        _truth_tablo_garantile(cur)
+        # Karar var mı kontrol
+        cur.execute("SELECT tani FROM truth_motor_kararlar WHERE id=%s", (body.karar_id,))
+        kr = cur.fetchone()
+        if not kr:
+            raise HTTPException(404, "Karar bulunamadı")
+        # Aynı karar için açık iz varsa yenisini engelle
+        cur.execute(
+            "SELECT id FROM akilli_denetim_iz WHERE karar_id=%s AND durum NOT IN ('cozuldu','iptal') LIMIT 1",
+            (body.karar_id,),
+        )
+        var = cur.fetchone()
+        if var:
+            raise HTTPException(409, "Bu karar için zaten açık bir görev var")
+
+        iz_id = str(uuid.uuid4())
+        cur.execute(
+            """
+            INSERT INTO akilli_denetim_iz
+                (id, karar_id, durum, oncelik, atanan_id, atanan_ad, acan_id, acan_ad)
+            VALUES (%s, %s, 'bekliyor', %s, %s, %s, %s, %s)
+            """,
+            (iz_id, body.karar_id, oncelik,
+             (body.atanan_id or "").strip() or None,
+             (body.atanan_ad or "").strip() or None,
+             (body.acan_id or "").strip() or None,
+             (body.acan_ad or "").strip() or None),
+        )
+    return {"ok": True, "id": iz_id}
+
+
+@router.post("/truth/iz/{iz_id}/durum")
+def truth_iz_durum(iz_id: str, body: IzDurumBody):
+    """Durum güncelle. 'cozuldu' → cozum_ts otomatik set."""
+    d = (body.durum or "").strip()
+    if d not in _IZ_GECERLI_DURUM:
+        raise HTTPException(400, f"Geçersiz durum (geçerli: {sorted(_IZ_GECERLI_DURUM)})")
+
+    cozum_ts_clause = "cozum_ts=NOW()" if d == "cozuldu" else "cozum_ts=cozum_ts"
+
+    with db() as (conn, cur):
+        _truth_tablo_garantile(cur)
+        cur.execute(
+            f"""
+            UPDATE akilli_denetim_iz
+            SET durum=%s,
+                cozum_notu=COALESCE(NULLIF(%s,''), cozum_notu),
+                atanan_id=COALESCE(NULLIF(%s,''), atanan_id),
+                atanan_ad=COALESCE(NULLIF(%s,''), atanan_ad),
+                {cozum_ts_clause},
+                guncelleme=NOW()
+            WHERE id=%s
+            RETURNING id
+            """,
+            (d,
+             (body.cozum_notu or "").strip(),
+             (body.atanan_id or "").strip(),
+             (body.atanan_ad or "").strip(),
+             iz_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "İz bulunamadı")
+    return {"ok": True, "id": iz_id, "durum": d}
+
+
+@router.get("/truth/iz/listele")
+def truth_iz_listele(
+    durum: Optional[str] = Query(None),
+    sube_id: Optional[str] = Query(None),
+    sadece_acik: bool = Query(True),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Görevleri listele — karar + iz birleşik JOIN ile."""
+    sql = [
+        """
+        SELECT i.id, i.karar_id, i.durum, i.oncelik, i.atanan_ad, i.acan_ad,
+               i.cozum_notu, i.cozum_ts, i.olusturma, i.guncelleme,
+               k.sube_id, k.tarih, k.boyut, k.tani, k.guven_skoru,
+               k.n1_aksam, k.n2_sabah, k.n3_evo, k.fark_n1_n2,
+               s.ad AS sube_ad
+        FROM akilli_denetim_iz i
+        JOIN truth_motor_kararlar k ON k.id = i.karar_id
+        LEFT JOIN subeler s ON s.id::text = k.sube_id
+        WHERE 1=1
+        """
+    ]
+    params: List[Any] = []
+    if durum:
+        sql.append("AND i.durum=%s"); params.append(durum)
+    if sube_id:
+        sql.append("AND k.sube_id=%s"); params.append(sube_id)
+    if sadece_acik and not durum:
+        sql.append("AND i.durum NOT IN ('cozuldu','iptal')")
+    sql.append("""
+        ORDER BY
+          CASE i.oncelik WHEN 'kritik' THEN 0 WHEN 'yuksek' THEN 1
+                        WHEN 'orta'   THEN 2 ELSE 3 END,
+          i.olusturma DESC
+        LIMIT %s
+    """)
+    params.append(limit)
+
+    with db() as (conn, cur):
+        _truth_tablo_garantile(cur)
+        cur.execute(" ".join(sql), tuple(params))
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+
+    for r in rows:
+        for k in ("olusturma", "guncelleme", "cozum_ts"):
+            if r.get(k) is not None:
+                r[k] = str(r[k])
+        for k in ("n1_aksam", "n2_sabah", "n3_evo", "fark_n1_n2", "guven_skoru"):
+            if r.get(k) is not None:
+                r[k] = float(r[k])
+    return {"toplam": len(rows), "kayitlar": rows}
+
+
+@router.get("/truth/personel-skor")
+def truth_personel_skor(gun: int = Query(90, ge=7, le=365),
+                         sube_id: Optional[str] = Query(None)):
+    """Personel davranış skoru — son N gündeki anomalileri personele eşleştirir.
+
+    Eşleme mantığı:
+      - SABAH_* tanıları → o gün ACILIS event'inin personel_id'sine yazılır
+      - AKSAM_* tanıları → önceki gün KAPANIS event'inin personel_id'sine yazılır
+      - SWEETHEARTING/ZIMMET sinyalleri → her ikisine de işaret (sorumluluk paylaşımı)
+
+    Z-skor > 2.0 → istatistiksel anomali (eğitim/soruşturma adayı).
+    """
+    where_sube = ""
+    params: List[Any] = [gun]
+    if sube_id:
+        where_sube = "AND k.sube_id=%s"
+        params.append(sube_id)
+
+    sql = f"""
+    WITH anomali AS (
+      SELECT k.id, k.sube_id, k.tarih, k.boyut, k.tani,
+             k.guven_skoru, k.fark_n1_n2
+      FROM truth_motor_kararlar k
+      WHERE k.olusturma >= NOW() - (%s || ' days')::interval
+        AND k.tani NOT IN ('UYUMLU','YETERSIZ_VERI','POS_SYNC_HATA')
+        {where_sube}
+    ),
+    -- ACILIS personeli (sabahcı) o güne ait
+    sabah_personel AS (
+      SELECT e.sube_id, e.tarih, e.personel_id, e.personel_ad
+      FROM sube_operasyon_event e
+      WHERE e.tip='ACILIS' AND e.durum='tamamlandi'
+        AND e.tarih >= CURRENT_DATE - (%s || ' days')::interval
+    ),
+    -- KAPANIS personeli (akşamcı) önceki güne ait
+    aksam_personel AS (
+      SELECT e.sube_id, e.tarih, e.personel_id, e.personel_ad
+      FROM sube_operasyon_event e
+      WHERE e.tip='KAPANIS' AND e.durum='tamamlandi'
+        AND e.tarih >= CURRENT_DATE - (%s || ' days')::interval
+    ),
+    -- Anomali → personel eşleme
+    eslestirme AS (
+      SELECT
+        CASE
+          WHEN a.tani LIKE 'SABAH_%%' THEN sp.personel_id
+          WHEN a.tani LIKE 'AKSAM_%%' THEN ap.personel_id
+          ELSE COALESCE(sp.personel_id, ap.personel_id)
+        END AS personel_id,
+        CASE
+          WHEN a.tani LIKE 'SABAH_%%' THEN sp.personel_ad
+          WHEN a.tani LIKE 'AKSAM_%%' THEN ap.personel_ad
+          ELSE COALESCE(sp.personel_ad, ap.personel_ad)
+        END AS personel_ad,
+        a.tani, a.boyut, a.guven_skoru, a.sube_id
+      FROM anomali a
+      LEFT JOIN sabah_personel sp ON sp.sube_id=a.sube_id AND sp.tarih=a.tarih
+      LEFT JOIN aksam_personel ap ON ap.sube_id=a.sube_id AND ap.tarih=(a.tarih - 1)
+    )
+    SELECT
+      personel_id, personel_ad,
+      COUNT(*) AS toplam_anomali,
+      COUNT(*) FILTER (WHERE tani='SWEETHEARTING_SINYAL') AS sweethearting,
+      COUNT(*) FILTER (WHERE tani='AKSAM_ZIMMET_SINYALI') AS zimmet,
+      COUNT(*) FILTER (WHERE tani IN ('SABAH_HATALI','SABAH_TOPYEKUN')) AS sabah_hata,
+      COUNT(*) FILTER (WHERE tani IN ('AKSAM_HATALI','AKSAM_TOPYEKUN')) AS aksam_hata,
+      COUNT(*) FILTER (WHERE tani='KAOS') AS kaos,
+      AVG(guven_skoru) AS ortalama_guven,
+      COUNT(DISTINCT sube_id) AS sube_sayisi,
+      JSONB_OBJECT_AGG(boyut, COUNT(*)) FILTER (WHERE boyut IS NOT NULL) AS boyut_dagilim
+    FROM eslestirme
+    WHERE personel_id IS NOT NULL
+    GROUP BY personel_id, personel_ad
+    ORDER BY toplam_anomali DESC
+    LIMIT 50
+    """
+
+    params2 = list(params) + [gun, gun]
+
+    with db() as (conn, cur):
+        _truth_tablo_garantile(cur)
+        try:
+            cur.execute(sql, tuple(params2))
+            rows = [dict(r) for r in (cur.fetchall() or [])]
+        except Exception as e:
+            log.exception("personel-skor sorgu hata: %s", e)
+            return {"gun": gun, "kayitlar": [], "hata": str(e)}
+
+    # Z-skor hesabı (basit istatistik)
+    if rows:
+        toplamlar = [int(r["toplam_anomali"]) for r in rows]
+        n = len(toplamlar)
+        ort = sum(toplamlar) / n if n else 0.0
+        var = sum((x - ort) ** 2 for x in toplamlar) / n if n else 0.0
+        std = var ** 0.5 if var > 0 else 1.0
+        for r in rows:
+            r["z_skor"] = round((int(r["toplam_anomali"]) - ort) / (std or 1.0), 2)
+            r["anomali_seviye"] = (
+                "kritik" if r["z_skor"] >= 2.0
+                else "yuksek" if r["z_skor"] >= 1.0
+                else "normal"
+            )
+            if r.get("ortalama_guven") is not None:
+                r["ortalama_guven"] = float(r["ortalama_guven"])
+            for k in ("toplam_anomali", "sweethearting", "zimmet",
+                      "sabah_hata", "aksam_hata", "kaos", "sube_sayisi"):
+                if r.get(k) is not None:
+                    r[k] = int(r[k])
+
+    return {"gun": gun, "toplam": len(rows), "kayitlar": rows}
+
+
+@router.get("/truth/iz/karar/{karar_id}")
+def truth_iz_karar(karar_id: str):
+    """Bir karara bağlı izler (varsa)."""
+    with db() as (conn, cur):
+        _truth_tablo_garantile(cur)
+        cur.execute(
+            """
+            SELECT * FROM akilli_denetim_iz
+            WHERE karar_id=%s
+            ORDER BY olusturma DESC
+            """,
+            (karar_id,),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    for r in rows:
+        for k in ("olusturma", "guncelleme", "cozum_ts"):
+            if r.get(k) is not None:
+                r[k] = str(r[k])
+    return {"toplam": len(rows), "kayitlar": rows}
+
+
+@router.post("/kasa-baskini/{baskin_id}/iptal")
+def kasa_baskini_iptal(baskin_id: str, cfo_id: Optional[str] = Query(None)):
+    """CFO yanlışlıkla başlattığı baskını iptal edebilir."""
+    with db() as (conn, cur):
+        _kb_tablo_garantile(cur)
+        cur.execute(
+            "UPDATE kasa_baskini SET durum='iptal' WHERE id=%s AND durum='aktif' RETURNING sube_id",
+            (baskin_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Aktif baskın bulunamadı")
+        try:
+            operasyon_defter_ekle(
+                cur,
+                sube_id=dict(row)["sube_id"],
+                tip="KASA_BASKINI_IPTAL",
+                tarih=bugun_tr().isoformat(),
+                detay={"baskin_id": baskin_id, "cfo_id": cfo_id},
+            )
+        except Exception:
+            pass
+    return {"ok": True, "id": baskin_id}

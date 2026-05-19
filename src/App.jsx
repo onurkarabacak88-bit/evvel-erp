@@ -23,6 +23,7 @@ import SubePanelPinleri from './pages/SubePanelPinleri';
 import Tedarikciler from './pages/Tedarikciler';
 import VeriTemizle from './pages/VeriTemizle.jsx';
 import OperasyonMerkezi from './pages/OperasyonMerkezi';
+import TruthMotor from './pages/TruthMotor';
 import EvoSatis from './pages/EvoSatis';
 import TeslimKayit from './pages/TeslimKayit';
 import KasaTeslim from './pages/KasaTeslim';
@@ -39,6 +40,9 @@ const NAV = [
     { id: 'onay',             label: 'Onay Kuyruğu',        icon: '✅' },
     { id: 'ciro-taslak-onay', label: 'Ciro Onayı',          icon: '📋' },
     { id: 'ledger',           label: 'İşlem Defteri',       icon: '📒' },
+  ]},
+  { group: 'Denetim Motorları', items: [
+    { id: 'akilli-denetim',   label: 'Akıllı Denetim',      icon: '🧠' },
   ]},
   { group: 'Veri Girişi', items: [
     { id: 'ciro',             label: 'Ciro Girişi',         icon: '📈' },
@@ -67,6 +71,7 @@ const NAV = [
 const PAGES = {
   panel:              Panel,
   'ops-merkez':       OperasyonMerkezi,
+  'akilli-denetim':   TruthMotor,
   'evo-satis':        EvoSatis,
   'kasa-teslim':      KasaTeslim,
   strateji:           Strateji,
