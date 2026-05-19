@@ -18,7 +18,7 @@ import json
 import logging
 import os
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import requests
 from fastapi import APIRouter, HTTPException, Query
