@@ -417,6 +417,7 @@ const UST_SEKMELER = [
   { id: 'analitik', label: '📈 Şube Analitik' },
   { id: 'stok-tahmin', label: '🔮 Stok Tahmin' },
   { id: 'mesaj', label: '📩 Merkez Mesajı' },
+  { id: 'sube-notlar', label: '📝 Şube Notları' },
   { id: 'puan', label: '⭐ Personel Puan' },
   { id: 'gec-acan-personel', label: '⏰ Geç Açan Personel' },
 ];
@@ -463,6 +464,7 @@ const OPS_MODUL_BOLUM = {
   analitik: [{ id: 'icerik', label: 'Genel özet' }],
   'stok-tahmin': [{ id: 'icerik', label: 'Tahminler' }],
   mesaj: [{ id: 'icerik', label: 'Mesajlar' }],
+  'sube-notlar': [{ id: 'icerik', label: 'Gelen notlar' }],
   puan: [{ id: 'icerik', label: 'Puan listesi' }],
   'gec-acan-personel': [{ id: 'icerik', label: 'Aylık analiz' }],
 };
@@ -494,6 +496,7 @@ const OPS_HUB_RENK = {
   analitik: '#6366f1',
   'stok-tahmin': '#10b981',
   mesaj: '#8899aa',
+  'sube-notlar': '#3b82f6',
   puan: '#ffc14d',
   'gec-acan-personel': '#0ea5a4',
   'stok-hareketi': '#64748b',
@@ -510,7 +513,7 @@ const MODULLER = [
     label: '📡 Canlı Operasyon',
     renk: '#4a9eff',
     desc: 'Anlık şube durumu, açılma takibi ve merkez direktifleri',
-    tabs: ['canli', 'acilis-takip', 'mesaj'],
+    tabs: ['canli', 'acilis-takip', 'mesaj', 'sube-notlar'],
   },
   {
     id: 'envanter',
@@ -3419,6 +3422,17 @@ export default function OperasyonMerkezi() {
     }
   }, [toast, stokTahminGun, stokTahminSube]);
 
+  const yukleSubeNotlar = useCallback(async () => {
+    try {
+      const qs = `year_month=${encodeURIComponent(ayFiltre)}`;
+      const sq = subeOnayFiltre ? `&sube_id=${encodeURIComponent(subeOnayFiltre)}` : '';
+      const n = await api(`/ops/sube-notlar?${qs}${sq}&limit=200`);
+      setNotlarListe(n?.satirlar || []);
+    } catch (e) {
+      toast(e.message || 'Şube notları yüklenemedi');
+    }
+  }, [ayFiltre, subeOnayFiltre, toast]);
+
   const yukleOnayMerkez = useCallback(async () => {
     try {
       const qs = `year_month=${encodeURIComponent(ayFiltre)}`;
@@ -3788,6 +3802,19 @@ export default function OperasyonMerkezi() {
       })
       .catch(() => {});
   }, [aktifSekme]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'sube-notlar') return;
+    setYukleniyor(true);
+    api('/subeler')
+      .then((subeler) => {
+        if (Array.isArray(subeler)) {
+          setSubeListeAdmin(subeler.filter((s) => s.aktif !== false));
+        }
+      })
+      .catch(() => {});
+    yukleSubeNotlar().finally(() => setYukleniyor(false));
+  }, [aktifSekme, ayFiltre, subeOnayFiltre, yukleSubeNotlar]);
 
   useEffect(() => {
     if (aktifSekme !== 'puan') return;
@@ -12776,6 +12803,64 @@ export default function OperasyonMerkezi() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {aktifSekme === 'sube-notlar' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0, lineHeight: 1.55 }}>
+            Şubelerin <strong>Merkez Notu</strong> ile gönderdiği mesajlar (iade, sorun, bilgi). Bu ekran <em>merkezden şubeye</em> giden
+            «Merkez Mesajı» sekmesinden farklıdır — orası sizin şubeye yazdığınız mesajlardır.
+          </p>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ margin: 0 }}>
+              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Ay</span>
+              <input type="month" value={ayFiltre} onChange={(e) => { setYukleniyor(true); setAyFiltre(e.target.value || varsayilanAy); }} />
+            </label>
+            <label style={{ margin: 0 }}>
+              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Şube (opsiyonel)</span>
+              <select
+                className="input"
+                style={{ minWidth: 200, padding: '8px 10px' }}
+                value={subeOnayFiltre}
+                onChange={(e) => { setYukleniyor(true); setSubeOnayFiltre(e.target.value); }}
+              >
+                <option value="">Tüm şubeler</option>
+                {subeListeAdmin.map((s) => (
+                  <option key={s.id} value={s.id}>{s.ad || s.id}</option>
+                ))}
+              </select>
+            </label>
+            <button type="button" className="btn btn-secondary btn-sm" style={{ alignSelf: 'flex-end' }} onClick={() => { setYukleniyor(true); yukleSubeNotlar().finally(() => setYukleniyor(false)); }}>
+              ↻ Yenile
+            </button>
+          </div>
+          {notlarListe.length === 0 ? (
+            <div className="empty"><p>Bu filtrede şube notu yok</p></div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Zaman</th>
+                    <th>Şube</th>
+                    <th>Personel</th>
+                    <th>Not</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {notlarListe.map((n) => (
+                    <tr key={n.id}>
+                      <td className="mono" style={{ fontSize: 11 }}>{(n.olusturma || '').replace('T', ' ').slice(0, 19)}</td>
+                      <td>{n.sube_adi || n.sube_id}</td>
+                      <td style={{ fontSize: 12 }}>{n.personel_ad || n.personel_id || '—'}</td>
+                      <td style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{n.metin}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
