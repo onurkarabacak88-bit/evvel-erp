@@ -1862,13 +1862,23 @@ def faturajq_sube_grup_detay(bastar: date, bittar: date,
     except Exception as e:
         log.warning("hs_rapor kasa/banka cekilemedi: %s", e)
 
-    # 2. Faturalar — tüm şubeler
-    faturalar = faturajq_listesi(bastar, bittar, tur=34)
+    # 2. Faturalar — önce hs_rapor.S (REST API fallback'li, sağlam),
+    #               yoksa faturajq.ashx (web token).
+    faturalar = ham.get("S") if ham else None
+    kaynak = "hs_rapor.S"
+    if not faturalar:
+        log.info("sube-grup-detay: hs_rapor.S boş, faturajq dene")
+        try:
+            faturalar = faturajq_listesi(bastar, bittar, tur=34)
+            kaynak = "faturajq"
+        except Exception:
+            faturalar = []
     if not faturalar:
         return {
             "tarih_bas": str(bastar), "tarih_bit": str(bittar),
             "fatura_islendi": 0, "subeler": {},
             "uyari": "Eşleşen fatura yok",
+            "kaynak": kaynak,
         }
 
     # Sınır
