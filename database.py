@@ -442,6 +442,7 @@ def init_db():
                 n1_aksam        NUMERIC(14,2),
                 n2_sabah        NUMERIC(14,2),
                 n3_evo          NUMERIC(14,2),
+                n3_evo_ikram    NUMERIC(14,2),
                 fark_n1_n2      NUMERIC(14,2),
                 evo_destek      TEXT,
                                 -- 'n1' | 'n2' | 'notr' | 'yok'

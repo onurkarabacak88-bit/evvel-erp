@@ -7,12 +7,21 @@ const API = '';  // same-origin
 
 const TANI_ETIKET = {
   UYUMLU:                { renk: '#86efac', bg: 'rgba(34,197,94,0.10)',  bord: 'rgba(34,197,94,0.35)',  emoji: '✅' },
+  IKRAM_EVO_TEYIT:       { renk: '#86efac', bg: 'rgba(34,197,94,0.10)',  bord: 'rgba(34,197,94,0.35)',  emoji: '🎁✓' },
   IKRAM_UNUTULDU:        { renk: '#fbbf24', bg: 'rgba(245,158,11,0.10)', bord: 'rgba(245,158,11,0.35)', emoji: '🎁' },
   SWEETHEARTING_SINYAL:  { renk: '#fca5a5', bg: 'rgba(220,38,38,0.10)',  bord: 'rgba(220,38,38,0.40)',  emoji: '🚨' },
+  STOK_KACAGI_BEYANSIZ:  { renk: '#fca5a5', bg: 'rgba(220,38,38,0.10)',  bord: 'rgba(220,38,38,0.40)',  emoji: '📦❓' },
+  ZIMMET_NAKIT_CEPTE:    { renk: '#f87171', bg: 'rgba(239,68,68,0.15)',  bord: 'rgba(239,68,68,0.45)',  emoji: '👋💰' },
+  IKRAM_SURDURULEN:      { renk: '#93c5fd', bg: 'rgba(59,130,246,0.10)', bord: 'rgba(59,130,246,0.35)', emoji: '🎁📅' },
   SABAH_HATALI:          { renk: '#fbbf24', bg: 'rgba(245,158,11,0.10)', bord: 'rgba(245,158,11,0.35)', emoji: '🌅' },
   AKSAM_HATALI:          { renk: '#fbbf24', bg: 'rgba(245,158,11,0.10)', bord: 'rgba(245,158,11,0.35)', emoji: '🌙' },
+  SABAH_TOPYEKUN:        { renk: '#fbbf24', bg: 'rgba(245,158,11,0.15)', bord: 'rgba(245,158,11,0.40)', emoji: '🌅🌅' },
+  AKSAM_TOPYEKUN:        { renk: '#fbbf24', bg: 'rgba(245,158,11,0.15)', bord: 'rgba(245,158,11,0.40)', emoji: '🌙🌙' },
+  KAOS:                  { renk: '#f87171', bg: 'rgba(239,68,68,0.10)',  bord: 'rgba(239,68,68,0.35)',  emoji: '🌀' },
   COZULMEDI:             { renk: '#a78bfa', bg: 'rgba(139,92,246,0.10)', bord: 'rgba(139,92,246,0.35)', emoji: '🔄' },
-  SISTEMIK_HATA:         { renk: '#f87171', bg: 'rgba(239,68,68,0.10)',  bord: 'rgba(239,68,68,0.35)',  emoji: '⚙️' },
+  POS_SYNC_HATA:         { renk: '#f87171', bg: 'rgba(239,68,68,0.10)',  bord: 'rgba(239,68,68,0.35)',  emoji: '⚙️' },
+  POS_BYPASS:            { renk: '#fca5a5', bg: 'rgba(220,38,38,0.10)',  bord: 'rgba(220,38,38,0.40)',  emoji: '🚫' },
+  AKSAM_ZIMMET_SINYALI:  { renk: '#f87171', bg: 'rgba(239,68,68,0.15)',  bord: 'rgba(239,68,68,0.45)',  emoji: '🌙💸' },
   YETERSIZ_VERI:         { renk: 'var(--text3)', bg: 'rgba(120,120,120,0.10)', bord: 'rgba(120,120,120,0.30)', emoji: '⚪' },
 };
 
@@ -850,7 +859,11 @@ function DetayModal({ sube_id, sube_ad, tarih, onKapat, onGorevAcildi }) {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, fontSize: 11, marginBottom: 8 }}>
                   <KaynakCell label="N1 Akşamcı"     deger={k.n1_aksam} />
                   <KaynakCell label="N2 Sabahcı"     deger={k.n2_sabah} />
-                  <KaynakCell label="N3 Evo POS"     deger={k.n3_evo} />
+                  <KaynakCell
+                    label="N3 Evo POS"
+                    deger={k.n3_evo}
+                    altLabel={k.n3_evo_ikram > 0 ? `+ ikram ${k.n3_evo_ikram.toFixed(0)}` : null}
+                  />
                   <KaynakCell label="Fark (N2-N1)"   deger={k.fark_n1_n2} renk={k.fark_n1_n2 > 0 ? '#86efac' : k.fark_n1_n2 < 0 ? '#fca5a5' : ''} />
                 </div>
                 {k.detay_json?.capraz && (
@@ -910,13 +923,18 @@ function DetayModal({ sube_id, sube_ad, tarih, onKapat, onGorevAcildi }) {
   );
 }
 
-function KaynakCell({ label, deger, renk }) {
+function KaynakCell({ label, deger, renk, altLabel }) {
   return (
     <div>
       <div style={{ fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase' }}>{label}</div>
       <div style={{ fontFamily: 'monospace', fontSize: 13, color: renk || 'inherit' }}>
         {deger == null ? '—' : (deger > 0 ? '+' : '') + Number(deger).toFixed(2)}
       </div>
+      {altLabel && (
+        <div style={{ fontSize: 9, color: '#93c5fd', fontFamily: 'monospace', marginTop: 1 }}>
+          {altLabel}
+        </div>
+      )}
     </div>
   );
 }

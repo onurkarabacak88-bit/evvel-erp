@@ -119,31 +119,14 @@ EYLEM_MAP: Dict[str, Dict[str, str]] = {
     "YETERSIZ_VERI":         {"oto": "—",                "insan": "Eksik sayımı tamamla",                   "alarm": "yok"},
 }
 
-# Her tanı için (otomatik aksiyon, insan aksiyonu, alarm seviyesi)
-EYLEM_MAP: Dict[str, Dict[str, str]] = {
-    "UYUMLU":                {"oto": "log_yesil",        "insan": "—",                                       "alarm": "yok"},
-    "IKRAM_UNUTULDU":        {"oto": "uyari_dusuk",      "insan": "Z raporu kontrol et, ikram defteri sor", "alarm": "dusuk"},
-    "SWEETHEARTING_SINYAL":  {"oto": "kasa_baskini_oner","insan": "Kasa Baskını başlat, kamera incele",     "alarm": "yuksek"},
-    "SABAH_HATALI":          {"oto": "sabah_update_oner","insan": "Sabahcı PIN ile teyit, gerekirse 3. say","alarm": "orta"},
-    "AKSAM_HATALI":          {"oto": "aksam_update_oner","insan": "Akşamcı çağır, PIN teyit",               "alarm": "orta"},
-    "SABAH_TOPYEKUN":        {"oto": "sabah_supheli_tag","insan": "Sabahcı + 3. kişi tüm boyutları say",    "alarm": "yuksek"},
-    "AKSAM_TOPYEKUN":        {"oto": "aksam_supheli_tag","insan": "Akşamcı performans incele, eğitim",      "alarm": "yuksek"},
-    "KAOS":                  {"oto": "cfo_bildirim",     "insan": "Fiziksel soruşturma + güvenlik kamerası","alarm": "yuksek"},
-    "COZULMEDI":             {"oto": "truth_walk_iste",  "insan": "3. kişi sayım talep et",                 "alarm": "orta"},
-    "POS_SYNC_HATA":         {"oto": "evo_refresh_iste", "insan": "Evobulut destek + IT kontrol",           "alarm": "orta"},
-    "AKSAM_ZIMMET_SINYALI":  {"oto": "cfo_bildirim_log", "insan": "Soruşturma, kamera, 3-ay pattern bak",   "alarm": "kritik"},
-    "POS_BYPASS":            {"oto": "evo_yetki_kontrol","insan": "Evo yetki + manuel iade kontrol",        "alarm": "yuksek"},
-    "YETERSIZ_VERI":         {"oto": "—",                "insan": "Eksik sayımı tamamla",                   "alarm": "yok"},
-}
-
-
 @dataclass
 class BoyutVeri:
-    """Tek bir boyut için 3 kaynaklı ölçüm."""
+    """Tek bir boyut için 3 kaynaklı ölçüm (Evo POS ücretli ve ikram ayrı tutulur)."""
     boyut: str
-    n1_aksam: Optional[float] = None    # önceki gün KAPANIS beyanı (devir / kapanış sayım)
-    n2_sabah: Optional[float] = None    # bugün ACILIS kör sayımı
-    n3_evo: Optional[float] = None      # POS gerçeği (önceki günkü satış)
+    n1_aksam: Optional[float] = None       # önceki gün KAPANIS beyanı (devir / kapanış sayım)
+    n2_sabah: Optional[float] = None       # bugün ACILIS kör sayımı
+    n3_evo: Optional[float] = None         # POS ücretli satış (önceki gün)
+    n3_evo_ikram: Optional[float] = None   # POS ikram/0₺/tam iskonto (önceki gün)
 
 
 @dataclass
@@ -155,6 +138,7 @@ class Tani:
     n1_aksam: Optional[float]
     n2_sabah: Optional[float]
     n3_evo: Optional[float]
+    n3_evo_ikram: Optional[float]   # Evo POS ikram/0₺ adetleri (yeni)
     fark_n1_n2: Optional[float]
     evo_destek: str   # 'n1' | 'n2' | 'notr' | 'yok'
     tani: str         # TANI_TIPLERI'nden biri
@@ -183,16 +167,30 @@ def _esit(a: Optional[float], b: Optional[float], tol: float) -> bool:
 
 
 def boyut_taniyi_uret(sube_id: str, tarih: str, veri: BoyutVeri) -> Tani:
-    """Tek boyut için üçgenleme."""
+    """Tek boyut için üçgenleme.
+
+    İkram entegrasyonu: ürün boyutlarında **Evo toplam = ücretli satış + ikram**.
+    Eğer stok düşüşü Evo toplam ile eşleşiyorsa POS zincirinden geçmiş → IKRAM_EVO_TEYIT (kasa boyutu hariç).
+    """
     boyut = veri.boyut
     tol = _TOLERANS.get(boyut, 0)
-    n1, n2, n3 = veri.n1_aksam, veri.n2_sabah, veri.n3_evo
+    n1, n2 = veri.n1_aksam, veri.n2_sabah
+
+    # İkram dahil toplam POS hareketi (sadece ürün boyutlarında anlamlı)
+    is_urun = boyut != "kasa"
+    n3_satis = veri.n3_evo
+    n3_ikram = veri.n3_evo_ikram if is_urun else None
+    if n3_satis is None and n3_ikram is None:
+        n3_toplam = None
+    else:
+        n3_toplam = (float(n3_satis or 0) + float(n3_ikram or 0))
+    n3 = n3_toplam   # Bundan sonra n3 = Evo toplam hareketi (satış + ikram)
 
     # Yetersiz veri kontrolü
     if n1 is None or n2 is None:
         return Tani(
             sube_id=sube_id, tarih=tarih, boyut=boyut,
-            n1_aksam=n1, n2_sabah=n2, n3_evo=n3,
+            n1_aksam=n1, n2_sabah=n2, n3_evo=n3_satis, n3_evo_ikram=n3_ikram,
             fark_n1_n2=None, evo_destek="yok",
             tani="YETERSIZ_VERI", guven_skoru=0.0,
             detay={"sebep": "n1 veya n2 eksik"},
@@ -211,15 +209,44 @@ def boyut_taniyi_uret(sube_id: str, tarih: str, veri: BoyutVeri) -> Tani:
         else:
             evo_destek = "notr"
 
-    # Tanı matrisi
+    # ─── Tanı matrisi ───
+    detay: Dict[str, Any] = {"tolerans": tol}
+    if is_urun and n3_ikram is not None and n3_ikram > 0:
+        detay["evo_ikram_adet"] = float(n3_ikram)
+    if is_urun and n3_satis is not None:
+        detay["evo_satis_adet"] = float(n3_satis)
+
     if n1_n2_esit:
+        # N1 = N2 → sayım zinciri tutarlı
         if n3 is None or _esit(n3, n1, tol):
             tani = "UYUMLU"
             guven = 95.0 if n3 is not None else 70.0
         else:
-            # N1=N2 ama Evo farklı — sweethearting veya ikram
-            tani = "IKRAM_UNUTULDU"
-            guven = 60.0  # SWEETHEARTING_SINYAL çapraz boyut analizinde yükseltilir
+            # Sayım eşit ama Evo farklı
+            # Kayıp (stok eridi > Evo): üründe kayıt dışı kullanım veya beyanız ikram
+            # Fazla (Evo > stok): POS fantom satış
+            stok_dususu = float(n1) - float(n2)  # azalma >0 = stok eridi
+            if is_urun and stok_dususu > 0 and n3 is not None and stok_dususu > n3 + tol:
+                # Stok eridi, Evo (satış+ikram) dahi yetmiyor
+                if n3_ikram is not None and n3_ikram > 0:
+                    detay["aciklama"] = (
+                        f"Stok eridi {stok_dususu:.0f} > Evo satış {n3_satis or 0:.0f} + ikram {n3_ikram:.0f} → "
+                        "ikram POS'a düşmüş ama yetmedi"
+                    )
+                tani = "STOK_KACAGI_BEYANSIZ"
+                guven = 75.0
+            elif is_urun and stok_dususu > 0 and n3 is not None and _esit(stok_dususu, n3, tol):
+                # Stok eridi tam olarak Evo toplam (satış+ikram) kadar → temiz
+                if n3_ikram and n3_ikram > 0:
+                    tani = "IKRAM_EVO_TEYIT"
+                    detay["aciklama"] = f"Stok eridi {stok_dususu:.0f} = Evo satış {n3_satis or 0:.0f} + ikram {n3_ikram:.0f} ✓"
+                else:
+                    tani = "UYUMLU"
+                guven = 92.0
+            else:
+                # Evo farklı, kayıp net değil → eski mantık
+                tani = "IKRAM_UNUTULDU"
+                guven = 55.0
     else:
         # N1 ≠ N2 — uzlaşmazlık
         if evo_destek == "n1":
@@ -234,10 +261,10 @@ def boyut_taniyi_uret(sube_id: str, tarih: str, veri: BoyutVeri) -> Tani:
 
     return Tani(
         sube_id=sube_id, tarih=tarih, boyut=boyut,
-        n1_aksam=n1, n2_sabah=n2, n3_evo=n3,
+        n1_aksam=n1, n2_sabah=n2, n3_evo=n3_satis, n3_evo_ikram=n3_ikram,
         fark_n1_n2=fark, evo_destek=evo_destek,
         tani=tani, guven_skoru=guven,
-        detay={"tolerans": tol},
+        detay=detay,
     )
 
 
@@ -332,13 +359,84 @@ def capraz_boyut_yorumla(taniler: List[Tani]) -> List[Tani]:
                 t.guven_skoru = 65.0
                 t.detay["capraz"] = f"{t.boyut} sayımı eksildi ama Evo'da satış yok → kayıt dışı kullanım"
 
-    # ─── 5. Çapraz sinyalleri kasa tanısına yansıt ───
+    # ─── 5. ZIMMET_NAKIT_CEPTE — sayısal korelasyon (kasa eksik + ürün eksik) ───
+    # Eksik bardak × ortalama satış fiyatı ≈ kasa eksik → para cebe sinyali
+    ORT_FIYAT = {  # boyut → tahmini ortalama satış fiyatı (₺/adet)
+        "bardak_plastik": 50.0,
+        "bardak_karton":  60.0,
+        "redbull_soda":   45.0,
+        "pasta":          90.0,
+    }
+    if kasa is not None and kasa.fark_n1_n2 is not None and kasa.fark_n1_n2 < -1.0:
+        kasa_eksik = abs(kasa.fark_n1_n2)
+        beklenen_urun_tutari = 0.0
+        eslesen_boyutlar = []
+        for t in urun_taniler:
+            if t.tani not in ("STOK_KACAGI_BEYANSIZ", "IKRAM_UNUTULDU", "AKSAM_HATALI"):
+                continue
+            if t.fark_n1_n2 is None or t.fark_n1_n2 >= 0:
+                continue
+            eksik = abs(t.fark_n1_n2)
+            fiyat = ORT_FIYAT.get(t.boyut, 0)
+            beklenen_urun_tutari += eksik * fiyat
+            eslesen_boyutlar.append(f"{t.boyut} {eksik:.0f} × ₺{fiyat:.0f}")
+        if beklenen_urun_tutari > 0:
+            uyum = min(beklenen_urun_tutari, kasa_eksik) / max(beklenen_urun_tutari, kasa_eksik)
+            if uyum >= 0.85:  # %85+ eşleşme
+                kasa.tani = "ZIMMET_NAKIT_CEPTE"
+                kasa.guven_skoru = round(70.0 + uyum * 25.0, 1)
+                kasa.detay["capraz"] = (
+                    f"Kasa eksik ₺{kasa_eksik:.0f} ≈ ürün kaybı ₺{beklenen_urun_tutari:.0f} "
+                    f"(uyum %{uyum*100:.0f}) — {'; '.join(eslesen_boyutlar)} → "
+                    "satış yapıldı, ürün gitti, para kasaya hiç konmadı"
+                )
+
+    # ─── 6. Çapraz sinyalleri kasa tanısına yansıt ───
     sinyal_tani = [t.tani for t in urun_taniler if t.tani in
-                   ("SWEETHEARTING_SINYAL", "AKSAM_ZIMMET_SINYALI", "POS_BYPASS")]
-    if kasa is not None and sinyal_tani:
+                   ("SWEETHEARTING_SINYAL", "AKSAM_ZIMMET_SINYALI", "POS_BYPASS",
+                    "STOK_KACAGI_BEYANSIZ")]
+    if kasa is not None and sinyal_tani and kasa.tani != "ZIMMET_NAKIT_CEPTE":
         kasa.detay["capraz_sinyaller"] = sinyal_tani
 
     return taniler
+
+
+def ikram_surekli_mi(cur, sube_id: str, personel_id: Optional[str],
+                     boyut: str, gun: int = 30) -> Dict[str, Any]:
+    """Son N gündeki ikram pattern'ini analiz et.
+    Returns: {ortalama, son_gun_ikram, z_skor, sureklilik_mi}"""
+    if not personel_id:
+        return {"sureklilik_mi": False, "sebep": "personel_id yok"}
+    try:
+        cur.execute(
+            """
+            SELECT DATE(olusturma) AS gun,
+                   COALESCE((detay_json->>'evo_ikram_adet')::float, 0) AS ikram
+            FROM truth_motor_kararlar
+            WHERE sube_id=%s AND boyut=%s
+              AND olusturma >= NOW() - (%s || ' days')::interval
+            ORDER BY gun DESC
+            """,
+            (sube_id, boyut, gun),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception:
+        return {"sureklilik_mi": False}
+    if len(rows) < 7:
+        return {"sureklilik_mi": False, "sebep": "yeterli veri yok"}
+    degerler = [float(r["ikram"] or 0) for r in rows]
+    ort = sum(degerler) / len(degerler)
+    var = sum((x - ort) ** 2 for x in degerler) / len(degerler)
+    std = var ** 0.5 if var > 0 else 1.0
+    son = degerler[0]
+    z = (son - ort) / (std or 1.0)
+    return {
+        "sureklilik_mi": ort >= 2.0 and abs(z) < 1.5,  # tutarlı yüksek = davranış
+        "ortalama": round(ort, 2),
+        "son_gun_ikram": son,
+        "z_skor": round(z, 2),
+        "anomali": abs(z) > 2.0,
+    }
 
 
 def eylem_oner(tani: str) -> Dict[str, str]:
@@ -358,13 +456,13 @@ def kararlari_kaydet(cur, taniler: List[Tani]) -> int:
             cur.execute(
                 """
                 INSERT INTO truth_motor_kararlar
-                    (sube_id, tarih, boyut, n1_aksam, n2_sabah, n3_evo,
+                    (sube_id, tarih, boyut, n1_aksam, n2_sabah, n3_evo, n3_evo_ikram,
                      fark_n1_n2, evo_destek, tani, guven_skoru, detay_json)
-                VALUES (%s, %s::date, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                VALUES (%s, %s::date, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                 """,
                 (
                     t.sube_id, t.tarih, t.boyut,
-                    t.n1_aksam, t.n2_sabah, t.n3_evo,
+                    t.n1_aksam, t.n2_sabah, t.n3_evo, t.n3_evo_ikram,
                     t.fark_n1_n2, t.evo_destek, t.tani, t.guven_skoru,
                     json.dumps(t.detay, ensure_ascii=False, default=str),
                 ),
@@ -462,68 +560,92 @@ def veri_topla(cur, sube_id: str, tarih: str) -> List[BoyutVeri]:
         n2_kasa = None
         n2_meta = {}
 
-    # N3 — Önceki günkü Evo POS satışları (lazy, opsiyonel)
-    # evo_satis veya benzeri bir tablodan satış adetleri çekilir.
-    # Şema bilinmediği için defensive try/except.
-    evo: Dict[str, float] = {}
+    # N3 — Önceki günkü Evo POS hareketleri (ücretli + ikram ayrı).
+    # Önce evo_sync.faturajq_satis_ve_ikram() denenir; yoksa eski evo_satis tablosuna düşer.
+    evo_satis: Dict[str, float] = {}
+    evo_ikram: Dict[str, float] = {}
     try:
-        cur.execute(
-            """
-            SELECT urun_ad, COALESCE(SUM(adet),0) AS adet
-            FROM evo_satis
-            WHERE sube_id=%s AND tarih=%s::date
-            GROUP BY urun_ad
-            """,
-            (sube_id, onceki),
-        )
-        for r in (cur.fetchall() or []):
-            d = dict(r)
-            evo[str(d.get("urun_ad", "")).lower()] = float(d.get("adet") or 0)
-    except Exception:
-        # evo_satis tablosu yok veya farklı şema — N3 yok kabul edilir
-        evo = {}
+        from evo_sync import faturajq_satis_ve_ikram as _ev_si
+        from datetime import date as _d
+        y, mo, d = (int(x) for x in str(onceki)[:10].split("-"))
+        tarih_d = _d(y, mo, d)
+        sonuc = _ev_si(tarih_d, tarih_d)
+        # sonuc: {urun_ad: {"satis", "ikram", "toplam"}}
+        for ad, v in (sonuc or {}).items():
+            k = str(ad).lower()
+            evo_satis[k] = float(v.get("satis") or 0)
+            evo_ikram[k] = float(v.get("ikram") or 0)
+    except Exception as e:
+        log.warning("truth_motor evo ikram cekilemedi (%s) — eski evo_satis tablosuna düşülüyor", e)
+        try:
+            cur.execute(
+                """
+                SELECT urun_ad, COALESCE(SUM(adet),0) AS adet
+                FROM evo_satis WHERE sube_id=%s AND tarih=%s::date
+                GROUP BY urun_ad
+                """,
+                (sube_id, onceki),
+            )
+            for r in (cur.fetchall() or []):
+                d = dict(r)
+                evo_satis[str(d.get("urun_ad", "")).lower()] = float(d.get("adet") or 0)
+        except Exception:
+            pass
 
-    def _evo(*anahtar_parcalari: str) -> Optional[float]:
-        """evo dict'inden ürün adına göre arama (substring)."""
-        if not evo:
+    def _evo_topla(kaynak: Dict[str, float], *anahtar_parcalari: str) -> Optional[float]:
+        """Substring match ile ürün adlarını topla."""
+        if not kaynak:
             return None
         s, var = 0.0, False
-        for k, adet in evo.items():
+        for k, adet in kaynak.items():
             if any(p in k for p in anahtar_parcalari):
                 s += adet; var = True
         return s if var else None
 
+    def _ev(s_keys, i_keys=None):
+        """Hem satış hem ikram için aynı substring listesiyle topla."""
+        if i_keys is None:
+            i_keys = s_keys
+        return (
+            _evo_topla(evo_satis, *s_keys),
+            _evo_topla(evo_ikram, *i_keys),
+        )
+
     # Boyut → kaynak haritası
+    s_pl, i_pl = _ev(["plastik bardak", "plastik_bardak"])
+    s_kr, i_kr = _ev(["karton bardak", "kucuk bardak", "buyuk bardak"])
+    s_rs, i_rs = _ev(["redbull", "soda"])
+    s_pa, i_pa = _ev(["pasta"])
+
     return [
         BoyutVeri(
             boyut="kasa",
-            n1_aksam=n1_kasa,
-            n2_sabah=n2_kasa,
-            n3_evo=None,  # kasa için Evo direkt karşılaştırılmaz (ciro_nakit ayrı kontrol)
+            n1_aksam=n1_kasa, n2_sabah=n2_kasa,
+            n3_evo=None, n3_evo_ikram=None,  # kasa için Evo direkt karşılaştırılmaz
         ),
         BoyutVeri(
             boyut="bardak_plastik",
             n1_aksam=_meta_sayi(n1_meta, "bardak_plastik"),
             n2_sabah=_meta_sayi(n2_meta, "bardak_plastik"),
-            n3_evo=_evo("plastik bardak", "plastik_bardak"),
+            n3_evo=s_pl, n3_evo_ikram=i_pl,
         ),
         BoyutVeri(
             boyut="bardak_karton",
             n1_aksam=_meta_sayi(n1_meta, "bardak_kucuk", "bardak_buyuk"),
             n2_sabah=_meta_sayi(n2_meta, "bardak_kucuk", "bardak_buyuk"),
-            n3_evo=_evo("karton bardak", "kucuk bardak", "buyuk bardak"),
+            n3_evo=s_kr, n3_evo_ikram=i_kr,
         ),
         BoyutVeri(
             boyut="redbull_soda",
             n1_aksam=_meta_sayi(n1_meta, "redbull_adet", "soda_adet"),
             n2_sabah=_meta_sayi(n2_meta, "redbull_adet", "soda_adet"),
-            n3_evo=_evo("redbull", "soda"),
+            n3_evo=s_rs, n3_evo_ikram=i_rs,
         ),
         BoyutVeri(
             boyut="pasta",
             n1_aksam=_meta_sayi(n1_meta, "pasta_adet"),
             n2_sabah=_meta_sayi(n2_meta, "pasta_adet"),
-            n3_evo=_evo("pasta"),
+            n3_evo=s_pa, n3_evo_ikram=i_pa,
         ),
     ]
 

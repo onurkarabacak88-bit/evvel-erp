@@ -12491,6 +12491,7 @@ def _truth_tablo_garantile(cur) -> None:
             n1_aksam        NUMERIC(14,2),
             n2_sabah        NUMERIC(14,2),
             n3_evo          NUMERIC(14,2),
+            n3_evo_ikram    NUMERIC(14,2),
             fark_n1_n2      NUMERIC(14,2),
             evo_destek      TEXT,
             tani            TEXT NOT NULL,
@@ -12502,6 +12503,7 @@ def _truth_tablo_garantile(cur) -> None:
             olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """,
+        "ALTER TABLE truth_motor_kararlar ADD COLUMN IF NOT EXISTS n3_evo_ikram NUMERIC(14,2)",
         "CREATE INDEX IF NOT EXISTS idx_truth_kararlar_sube_tarih ON truth_motor_kararlar(sube_id, tarih DESC, boyut)",
         "CREATE INDEX IF NOT EXISTS idx_truth_kararlar_tani ON truth_motor_kararlar(tani, olusturma DESC) WHERE tani != 'UYUMLU'",
         """
@@ -12621,19 +12623,23 @@ def truth_gunluk_rapor(tarih: Optional[str] = Query(None)):
 
     # Alarm önceliği — en kritik en üstte
     alarm_oncelik = {
+        "ZIMMET_NAKIT_CEPTE":   105,
         "AKSAM_ZIMMET_SINYALI": 100,
         "SWEETHEARTING_SINYAL": 95,
-        "KAOS": 90,
-        "POS_BYPASS": 85,
-        "SABAH_TOPYEKUN": 80,
-        "AKSAM_TOPYEKUN": 80,
-        "POS_SYNC_HATA": 75,
-        "SABAH_HATALI": 60,
-        "AKSAM_HATALI": 60,
-        "COZULMEDI": 50,
-        "IKRAM_UNUTULDU": 30,
-        "YETERSIZ_VERI": 10,
-        "UYUMLU": 0,
+        "KAOS":                 90,
+        "STOK_KACAGI_BEYANSIZ": 88,
+        "POS_BYPASS":           85,
+        "SABAH_TOPYEKUN":       80,
+        "AKSAM_TOPYEKUN":       80,
+        "POS_SYNC_HATA":        75,
+        "SABAH_HATALI":         60,
+        "AKSAM_HATALI":         60,
+        "COZULMEDI":            50,
+        "IKRAM_UNUTULDU":       30,
+        "IKRAM_SURDURULEN":     20,
+        "IKRAM_EVO_TEYIT":      5,
+        "YETERSIZ_VERI":        10,
+        "UYUMLU":               0,
     }
 
     with db() as (conn, cur):
@@ -12764,7 +12770,7 @@ def truth_kararlar(
         for k in ("olusturma", "aksiyon_ts"):
             if r.get(k) is not None:
                 r[k] = str(r[k])
-        for k in ("n1_aksam", "n2_sabah", "n3_evo", "fark_n1_n2", "guven_skoru"):
+        for k in ("n1_aksam", "n2_sabah", "n3_evo", "n3_evo_ikram", "fark_n1_n2", "guven_skoru"):
             if r.get(k) is not None:
                 r[k] = float(r[k])
     return {"toplam": len(rows), "kayitlar": rows}
@@ -12912,7 +12918,7 @@ def truth_iz_listele(
         for k in ("olusturma", "guncelleme", "cozum_ts"):
             if r.get(k) is not None:
                 r[k] = str(r[k])
-        for k in ("n1_aksam", "n2_sabah", "n3_evo", "fark_n1_n2", "guven_skoru"):
+        for k in ("n1_aksam", "n2_sabah", "n3_evo", "n3_evo_ikram", "fark_n1_n2", "guven_skoru"):
             if r.get(k) is not None:
                 r[k] = float(r[k])
     return {"toplam": len(rows), "kayitlar": rows}
