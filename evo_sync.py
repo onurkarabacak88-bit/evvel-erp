@@ -1725,3 +1725,199 @@ def evo_debug_modul(
         "kolonlar": list(ilk.keys()) if ilk else [],
         "ilk_3":    ana[:3],
     }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  KEŞİF ENDPOINT — Evo'da bardak/su/soda detayı var mı?
+# ════════════════════════════════════════════════════════════════════════════
+
+@router.get("/sube-tam-detay")
+def evo_sube_tam_detay(
+    bastar: str = Query(..., description="YYYY-MM-DD"),
+    bittar: str = Query(..., description="YYYY-MM-DD"),
+    sube_adi: Optional[str] = Query(None, description="Tek şube; boş = tüm şubeler"),
+    max_fatura: int = Query(200, ge=1, le=1000, description="Maksimum fatura"),
+):
+    """
+    KEŞİF amaçlı: tüm satır kalemlerini şube + ürün matrisi olarak döner.
+    Bardak/su/soda/ICE/OZ pattern'lerini ayrı kategoride gösterir.
+
+    Çıktı:
+      {
+        sube_adi: {
+          "toplam_fis": N, "toplam_satir": M,
+          "urunler": [{ad, adet, satis_tutar, iskonto_tutar, birim_fiyat_ort,
+                       ikram_mi, kategori}],
+          "bardak_satirlari": [filtre uygulanmış bardak/su/soda],
+          "kategoriler": {bardak_oz: adet, bardak_ice: adet, su: adet, soda: adet,
+                          redbull: adet, pasta: adet, kahve: adet, diger: adet}
+        }
+      }
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    try:
+        bs = date.fromisoformat(bastar)
+        bt = date.fromisoformat(bittar)
+    except ValueError:
+        raise HTTPException(400, "Tarih formatı YYYY-MM-DD")
+
+    faturalar = faturajq_listesi(bs, bt, tur=34)
+    log.info("sube-tam-detay: %d fatura cekildi", len(faturalar))
+
+    # Şube filtresi (opsiyonel)
+    if sube_adi:
+        sad = sube_adi.strip().lower()
+        faturalar = [f for f in faturalar
+                     if sad in str(f.get("a_sube_adi") or "").strip().lower()]
+
+    if not faturalar:
+        return {"uyari": "Eşleşen fatura yok", "subeler": {}}
+
+    # İlk N fatura ile sınırla
+    faturalar = faturalar[:max_fatura]
+
+    # Kategori pattern eşleştirme
+    def _kategorize(ad: str) -> str:
+        a = ad.lower()
+        if any(k in a for k in ("ice", "iced", "14 oz", "14oz", "8 oz", "8oz", "16 oz", "16oz", "20 oz", "20oz")):
+            return "bardak_oz_ice"
+        if "bardak" in a or "kup" in a or "kutu" in a:
+            return "bardak_diger"
+        if "su" in a and ("şişe" in a or "sise" in a or "500" in a or "su -" in a or a.strip() == "su"):
+            return "su"
+        if "soda" in a:
+            return "soda"
+        if "redbull" in a or "red bull" in a or "energy" in a:
+            return "redbull"
+        if "pasta" in a or "kek" in a or "tatlı" in a or "tatli" in a:
+            return "pasta"
+        if any(k in a for k in ("kahve", "latte", "americano", "espresso", "mocha", "cappuccino", "filtre")):
+            return "kahve"
+        if "çay" in a or "cay" in a or "tea" in a:
+            return "cay"
+        return "diger"
+
+    def _ikram_mi(s: Dict[str, Any]) -> bool:
+        try:
+            br_fiyat = float(s.get("a_brm_fiyat") or s.get("birim_fiyat") or s.get("a_fiyat") or 0)
+        except (TypeError, ValueError):
+            br_fiyat = 0.0
+        if br_fiyat < 1.0:
+            try:
+                tutar = float(s.get("a_tutar") or 0)
+            except (TypeError, ValueError):
+                tutar = 0.0
+            if tutar < 1.0:
+                return True
+        try:
+            brut = float(s.get("a_brut") or 0)
+            iskonto = float(s.get("a_isk_tut") or 0)
+        except (TypeError, ValueError):
+            brut, iskonto = 0.0, 0.0
+        if brut > 0 and iskonto > 0 and (iskonto / brut) >= 0.99:
+            return True
+        ack = str(s.get("a_ack") or "").lower()
+        return any(k in ack for k in ("ikram", "hediye", "promosyon", "promo", "tadim"))
+
+    # Fatura → şube haritası
+    fid_sube = {}
+    for f in faturalar:
+        fid = str(f.get("a_id") or f.get("G.a_id") or "").strip()
+        sub = str(f.get("a_sube_adi") or "?").strip()
+        if fid:
+            fid_sube[fid] = sub
+
+    # Şube başına aggregat
+    sube_data: Dict[str, Dict[str, Any]] = {}
+    for sub in set(fid_sube.values()):
+        sube_data[sub] = {
+            "toplam_fis": 0, "toplam_satir": 0,
+            "urunler_map": {},   # ad → {adet, satis_tutar, iskonto, kategori, ikram_adet}
+            "kategoriler": {},
+        }
+
+    # Paralel detay çek
+    def _cek(fid: str):
+        sub = fid_sube[fid]
+        sonuc = []
+        try:
+            detay = evo_fatura_detay(fid)
+            for s in _satirlari_coz(detay):
+                ad = str(s.get("a_stok_adi") or s.get("stok_adi") or s.get("a_adi") or s.get("urun_adi") or "").strip()
+                if not ad:
+                    continue
+                try:
+                    mik = float(s.get("a_miktar") or s.get("miktar") or 0)
+                    tut = float(s.get("a_tutar") or 0)
+                    isk = float(s.get("a_isk_tut") or 0)
+                    brm = float(s.get("a_brm_fiyat") or s.get("birim_fiyat") or 0)
+                except (TypeError, ValueError):
+                    mik, tut, isk, brm = 0.0, 0.0, 0.0, 0.0
+                if mik <= 0:
+                    continue
+                ikram = _ikram_mi(s)
+                sonuc.append((sub, ad, mik, tut, isk, brm, ikram))
+        except Exception:
+            pass
+        return sonuc
+
+    with ThreadPoolExecutor(max_workers=8) as exe:
+        futures = [exe.submit(_cek, fid) for fid in fid_sube.keys()]
+        for fut in as_completed(futures):
+            for sub, ad, mik, tut, isk, brm, ikram in fut.result():
+                if sub not in sube_data:
+                    continue
+                u_map = sube_data[sub]["urunler_map"]
+                kat = _kategorize(ad)
+                rec = u_map.setdefault(ad, {
+                    "adet": 0.0, "satis_tutar": 0.0, "iskonto": 0.0,
+                    "ikram_adet": 0.0, "kategori": kat, "birim_fiyat_son": 0.0,
+                })
+                rec["adet"] += mik
+                rec["satis_tutar"] += tut
+                rec["iskonto"] += isk
+                if ikram:
+                    rec["ikram_adet"] += mik
+                if brm > 0:
+                    rec["birim_fiyat_son"] = brm
+                sube_data[sub]["toplam_satir"] += 1
+                sube_data[sub]["kategoriler"][kat] = sube_data[sub]["kategoriler"].get(kat, 0.0) + mik
+
+    # Fiş sayısı
+    for sub in sube_data:
+        sube_data[sub]["toplam_fis"] = sum(1 for v in fid_sube.values() if v == sub)
+
+    # Map'leri liste yap, kategori bazlı sırala
+    sonuc_subeler = {}
+    for sub, d in sube_data.items():
+        urunler = []
+        for ad, r in d["urunler_map"].items():
+            urunler.append({
+                "ad": ad,
+                "kategori": r["kategori"],
+                "adet": round(r["adet"], 2),
+                "satis_tutar": round(r["satis_tutar"], 2),
+                "iskonto": round(r["iskonto"], 2),
+                "ikram_adet": round(r["ikram_adet"], 2),
+                "birim_fiyat_son": round(r["birim_fiyat_son"], 2),
+            })
+        urunler.sort(key=lambda x: -x["adet"])
+        bardak_satirlari = [u for u in urunler if u["kategori"] in (
+            "bardak_oz_ice", "bardak_diger", "su", "soda", "redbull"
+        )]
+        sonuc_subeler[sub] = {
+            "toplam_fis": d["toplam_fis"],
+            "toplam_satir": d["toplam_satir"],
+            "urunler": urunler[:200],   # ilk 200 ürün (görsel sınır)
+            "bardak_su_soda_satirlari": bardak_satirlari,
+            "kategoriler": {k: round(v, 2) for k, v in d["kategoriler"].items()},
+        }
+
+    return {
+        "bastar": str(bs), "bittar": str(bt),
+        "fatura_islendi": len(fid_sube),
+        "fatura_toplam": len(faturalar),
+        "sube_sayisi": len(sonuc_subeler),
+        "subeler": sonuc_subeler,
+    }
