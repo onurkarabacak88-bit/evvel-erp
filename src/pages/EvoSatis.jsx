@@ -152,12 +152,56 @@ export default function EvoSatis() {
 
   function subeSecOlayı(ad) {
     setSecilenSube(ad);
-    setSubeUrunler(null);
-    subeUrunYukle(ad);
+    // Yeni endpoint zaten tüm şubelerin ürün/grup detayını döndürüyor; subeAnaliz'den direkt al
+    const subePayload = subeAnaliz?.subeler?.[ad];
+    if (subePayload) {
+      setSubeUrunler({
+        sube_adi: ad,
+        evo_sube_id: subePayload.evo_sube_id,
+        toplam_fis: subePayload.fatura_sayisi,
+        ciro: subePayload.ciro_toplam,
+        nakit: subePayload.nakit,
+        kart: subePayload.kart,
+        iskonto: subePayload.iskonto_toplam,
+        gruplar: subePayload.gruplar,
+        urunler: (subePayload.cok_satilan || []).map(u => ({
+          urun: u.ad, adet: u.adet, ciro: u.ciro, grup: u.grup, stok_kodu: u.stok_kodu,
+        })),
+        personel: subePayload.personel_satislar || [],
+      });
+    } else {
+      // fallback: eski endpoint
+      setSubeUrunler(null);
+      subeUrunYukle(ad);
+    }
   }
 
   useEffect(() => { veriYukle(); }, [tarih1, tarih2]);
   useEffect(() => { if (aktifSekme === 'sube') subeAnalızYukle(); }, [tarih1, tarih2, aktifSekme]);
+
+  // Yeni sube-grup-detay endpoint'i tüm şubelerin verisini bir kerede dönüyor.
+  // İlk yükleme veya tarih değişiminde, seçili şubenin payload'ı otomatik subeUrunler'a yansır.
+  useEffect(() => {
+    if (!secilenSube || !subeAnaliz?.subeler?.[secilenSube]) return;
+    const s = subeAnaliz.subeler[secilenSube];
+    // Eğer hem gruplar hem cok_satilan yeni endpoint'ten geldiyse, doğrudan kullan
+    if (s.gruplar || s.cok_satilan) {
+      setSubeUrunler({
+        sube_adi: secilenSube,
+        evo_sube_id: s.evo_sube_id,
+        toplam_fis: s.fatura_sayisi,
+        ciro: s.ciro_toplam,
+        nakit: s.nakit,
+        kart: s.kart,
+        iskonto: s.iskonto_toplam,
+        gruplar: s.gruplar,
+        urunler: (s.cok_satilan || []).map(u => ({
+          urun: u.ad, adet: u.adet, ciro: u.ciro, grup: u.grup, stok_kodu: u.stok_kodu,
+        })),
+        personel: s.personel_satislar || [],
+      });
+    }
+  }, [subeAnaliz, secilenSube]);
 
   // Popup açıldıktan sonra kapanmayı bekle
   useEffect(() => {
