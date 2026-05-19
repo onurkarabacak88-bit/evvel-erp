@@ -2399,6 +2399,8 @@ export default function OperasyonMerkezi() {
 
   // Kasa Farkı Kaynak Düzeltme Modal
   const [kkDuzeltModal, setKkDuzeltModal] = useState(null); // { uyari, sebep, payload }
+  const [tahsisCozModal, setTahsisCozModal] = useState(null); // { talep_id, urun_id, kalem_adi, talep_adet, tahsis_adet }
+  const [tahsisCozBusy, setTahsisCozBusy] = useState(false);
   const [kkDuzeltBusy, setKkDuzeltBusy] = useState(false);
 
   // Stok Hareketi
@@ -13683,14 +13685,45 @@ export default function OperasyonMerkezi() {
                               ) : (s.tahsis || []).length > 0 ? (
                                 <div>
                                   <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tahsis Kararı</div>
-                                  {(s.tahsis || []).map((t, idx) => (
-                                    <div key={idx} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 12, padding: '4px 0' }}>
-                                      <span style={{ flex: 1 }}>{t.kalem_adi || t.kalem_kodu}</span>
-                                      <span className="mono" style={{ color: 'var(--text3)' }}>Talep: {t.talep_adet}</span>
-                                      <span className="mono" style={{ color: 'var(--text3)' }}>Tahsis: {t.tahsis_adet}</span>
-                                      <span className="badge" style={{ fontSize: 10 }}>{t.durum}</span>
-                                    </div>
-                                  ))}
+                                  {(s.tahsis || []).map((t, idx) => {
+                                    const tlp = Number(t.talep_adet || 0);
+                                    const ths = Number(t.tahsis_adet || 0);
+                                    const fark = tlp !== ths;
+                                    const uzlasildi = !!t.uzlasildi;
+                                    return (
+                                      <div key={idx} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 12, padding: '4px 0' }}>
+                                        <span style={{ flex: 1 }}>{t.kalem_adi || t.kalem_kodu}</span>
+                                        <span className="mono" style={{ color: 'var(--text3)' }}>Talep: {tlp}</span>
+                                        <span className="mono" style={{ color: 'var(--text3)' }}>Tahsis: {ths}</span>
+                                        <span className="badge" style={{ fontSize: 10 }}>{t.durum}</span>
+                                        {fark && !uzlasildi && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setTahsisCozModal({
+                                              talep_id: s.id || s.talep_id,
+                                              urun_id: t.kalem_kodu || t.urun_id,
+                                              kalem_adi: t.kalem_adi || t.kalem_kodu,
+                                              talep_adet: tlp,
+                                              tahsis_adet: ths,
+                                              cozum_adet: ths,
+                                              notu: '',
+                                            })}
+                                            style={{
+                                              fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                                              background: '#f59e0b', borderColor: '#f59e0b',
+                                              color: '#000', border: '1px solid #f59e0b', cursor: 'pointer',
+                                            }}
+                                            title="Sipariş-Tahsis uyumsuzluğunu uzlaştır"
+                                          >
+                                            ⚙ Düzelt
+                                          </button>
+                                        )}
+                                        {uzlasildi && (
+                                          <span style={{ fontSize: 10, color: '#86efac' }}>✓ Uzlaşıldı</span>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               ) : (
                                 <div style={{ fontSize: 12, color: 'var(--text3)' }}>Henüz sevkiyat kaydı yok.</div>
@@ -13797,6 +13830,94 @@ export default function OperasyonMerkezi() {
           onKapat={() => setDetay(null)}
           onYenileDetay={yenileDetayKart}
         />
+      )}
+
+      {/* Sipariş-Tahsis Uyumsuzluk Çöz Modal */}
+      {tahsisCozModal && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget && !tahsisCozBusy) setTahsisCozModal(null); }}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}>
+          <div className="card" style={{ width: 480, maxWidth: '95vw', padding: 22 }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700 }}>
+              ⚙ Sipariş ↔ Tahsis Uzlaşması
+            </h3>
+            <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--text3)' }}>
+              <strong>{tahsisCozModal.kalem_adi}</strong><br />
+              Talep: <span className="mono">{tahsisCozModal.talep_adet}</span> ·
+              Tahsis: <span className="mono">{tahsisCozModal.tahsis_adet}</span> ·
+              Fark: <strong style={{ color: '#fbbf24' }}>{tahsisCozModal.talep_adet - tahsisCozModal.tahsis_adet}</strong>
+            </p>
+
+            <label style={{ display: 'block', fontSize: 12, marginBottom: 10 }}>
+              Uzlaşma adedi
+              <input
+                type="number" min="0" step="1" className="input"
+                disabled={tahsisCozBusy}
+                value={tahsisCozModal.cozum_adet}
+                onChange={(e) => setTahsisCozModal((prev) => ({ ...prev, cozum_adet: Number(e.target.value) }))}
+                style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
+              />
+            </label>
+
+            <label style={{ display: 'block', fontSize: 12, marginBottom: 14 }}>
+              Not (opsiyonel)
+              <textarea
+                className="input" rows={2}
+                disabled={tahsisCozBusy}
+                value={tahsisCozModal.notu || ''}
+                onChange={(e) => setTahsisCozModal((prev) => ({ ...prev, notu: e.target.value }))}
+                placeholder="örn. Stok yetersiz, kalan adet iptal kabul edildi."
+                style={{ width: '100%', marginTop: 3, padding: '6px 8px', resize: 'vertical' }}
+              />
+            </label>
+
+            <p style={{ fontSize: 10, color: 'var(--text3)', margin: '0 0 12px', lineHeight: 1.5 }}>
+              💡 Uzlaşma adedi hem talep hem tahsisin yeni değeri olur. Kalem "tam" duruma geçer ve audit'e yazılır.
+            </p>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+              <button type="button" className="btn btn-secondary"
+                disabled={tahsisCozBusy}
+                onClick={() => setTahsisCozModal(null)}>İptal</button>
+              <button type="button" className="btn btn-primary"
+                disabled={tahsisCozBusy}
+                onClick={async () => {
+                  setTahsisCozBusy(true);
+                  try {
+                    const resp = await fetch('/api/ops/siparis/talep-tahsis-uyumsuzluk-coz', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        talep_id: tahsisCozModal.talep_id,
+                        urun_id:  tahsisCozModal.urun_id,
+                        cozum_adet: tahsisCozModal.cozum_adet,
+                        notu: tahsisCozModal.notu,
+                      }),
+                    });
+                    const data = await resp.json().catch(() => null);
+                    if (!resp.ok) {
+                      const msg = data?.detail || data?.message || `HTTP ${resp.status}`;
+                      throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+                    }
+                    setTahsisCozModal(null);
+                    // Sayfayı yenile (mevcut yenile fonksiyonu varsa kullanılabilir)
+                    if (typeof yenile === 'function') yenile();
+                    else window.location.reload();
+                  } catch (err) {
+                    alert('Uzlaşma kaydedilemedi: ' + (err.message || err));
+                  } finally {
+                    setTahsisCozBusy(false);
+                  }
+                }}
+                style={{ background: '#f59e0b', borderColor: '#f59e0b' }}>
+                {tahsisCozBusy ? 'Kaydediliyor…' : 'Uzlaş ve Kaydet'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Kasa Farkı Kaynak Düzeltme Modal */}

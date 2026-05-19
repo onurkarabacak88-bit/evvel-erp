@@ -8802,6 +8802,163 @@ def ops_siparis_sevkiyat_uyumsuzluk_coz(body: OpsSevkiyatUyumsuzlukCozBody):
     }
 
 
+class OpsTalepTahsisUyumsuzlukCozBody(BaseModel):
+    """Sipariş↔Sevk (talep↔tahsis) uyumsuzluğunu uzlaştırır.
+    cozum_adet: hem talep_adet hem tahsis_adet bu değere eşitlenir."""
+    talep_id:   str
+    urun_id:    str
+    cozum_adet: int = 0
+    notu:       Optional[str] = None
+
+
+@router.post("/siparis/talep-tahsis-uyumsuzluk-coz")
+def ops_siparis_talep_tahsis_uyumsuzluk_coz(body: OpsTalepTahsisUyumsuzlukCozBody):
+    """
+    Sipariş (talep) ile sevk/tahsis arasındaki uyumsuzluğu manuel uzlaştırır.
+
+    Aksiyon:
+      - siparis_talep.kalemler içinde urun_id'ye karşılık gelen kalemin
+        istenen_adet'i cozum_adet'e güncellenir.
+      - siparis_talep.kalem_durumlari içinde aynı kalemin tahsis_adet'i ve
+        talep_adet'i cozum_adet'e güncellenir, durum='tam' + uzlasildi=True.
+      - operasyon_defter'e audit log yazılır.
+    """
+    tid = (body.talep_id or "").strip()
+    uid = (body.urun_id or "").strip()
+    cozum = max(0, int(body.cozum_adet or 0))
+    notu = (body.notu or "").strip() or None
+    if not tid or not uid:
+        raise HTTPException(400, "talep_id ve urun_id zorunlu")
+
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT id, sube_id::text AS sube_id, kalemler, kalem_durumlari
+            FROM siparis_talep
+            WHERE id=%s
+            FOR UPDATE
+            """,
+            (tid,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Sipariş talebi bulunamadı")
+        r = dict(row)
+
+        # Kalemler JSON parse
+        kalemler = r.get("kalemler")
+        if isinstance(kalemler, str):
+            try:
+                kalemler = json.loads(kalemler)
+            except Exception:
+                kalemler = []
+        if not isinstance(kalemler, list):
+            kalemler = []
+
+        kalem_durumlari = r.get("kalem_durumlari")
+        if isinstance(kalem_durumlari, str):
+            try:
+                kalem_durumlari = json.loads(kalem_durumlari)
+            except Exception:
+                kalem_durumlari = []
+        if not isinstance(kalem_durumlari, list):
+            kalem_durumlari = []
+
+        # Eski değerler
+        eski_istenen = 0
+        kalem_adi = uid
+        kalem_bulundu = False
+        for k in kalemler:
+            if not isinstance(k, dict):
+                continue
+            if str(k.get("urun_id") or "") == uid:
+                eski_istenen = int(k.get("adet") or k.get("istenen_adet") or 0)
+                kalem_adi = str(k.get("urun_ad") or k.get("ad") or uid)
+                k["adet"] = cozum
+                k["istenen_adet"] = cozum
+                kalem_bulundu = True
+                break
+
+        eski_tahsis = 0
+        durum_bulundu = False
+        ts_now = dt_now_tr().isoformat()
+        for kd in kalem_durumlari:
+            if not isinstance(kd, dict):
+                continue
+            kk = str(kd.get("kalem_kodu") or kd.get("urun_id") or "")
+            if kk == uid:
+                eski_tahsis = int(kd.get("tahsis_adet") or 0)
+                kd["talep_adet"] = cozum
+                kd["tahsis_adet"] = cozum
+                kd["durum"] = "tam"
+                kd["uzlasildi"] = True
+                kd["uzlasma_notu"] = notu
+                kd["uzlasma_ts"] = ts_now
+                durum_bulundu = True
+                break
+        if not durum_bulundu:
+            kalem_durumlari.append({
+                "kalem_kodu": uid,
+                "urun_id": uid,
+                "kalem_adi": kalem_adi,
+                "talep_adet": cozum,
+                "tahsis_adet": cozum,
+                "durum": "tam",
+                "uzlasildi": True,
+                "uzlasma_notu": notu,
+                "uzlasma_ts": ts_now,
+            })
+
+        if not kalem_bulundu and not durum_bulundu:
+            raise HTTPException(404, f"Kalem bulunamadı: {uid}")
+
+        cur.execute(
+            """
+            UPDATE siparis_talep
+            SET kalemler=%s::jsonb,
+                kalem_durumlari=%s::jsonb,
+                guncelleme=NOW()
+            WHERE id=%s
+            """,
+            (
+                json.dumps(kalemler, ensure_ascii=False),
+                json.dumps(kalem_durumlari, ensure_ascii=False),
+                tid,
+            ),
+        )
+
+        # Audit log
+        try:
+            sube_sid = r.get("sube_id") or _ops_sube_anchor(cur)
+            aciklama = (
+                f"Sipariş-Tahsis uzlaşma | talep={tid} | kalem={kalem_adi}({uid}) | "
+                f"istenen: {eski_istenen}→{cozum} | tahsis: {eski_tahsis}→{cozum}"
+                + (f" | not={notu}" if notu else "")
+            )
+            operasyon_defter_ekle(
+                cur,
+                sube_sid,
+                "OPS_SIPARIS_TAHSIS_UZLASMA",
+                aciklama[:900],
+                bildirim_saati=dt_now_tr().strftime("%H:%M:%S"),
+            )
+        except Exception:
+            pass
+
+    log.info("siparis-tahsis-uzlasma talep=%s urun=%s eski_istenen=%d eski_tahsis=%d cozum=%d",
+             tid, uid, eski_istenen, eski_tahsis, cozum)
+
+    return {
+        "success": True,
+        "talep_id": tid,
+        "urun_id": uid,
+        "kalem_adi": kalem_adi,
+        "onceki_talep_adet": eski_istenen,
+        "onceki_tahsis_adet": eski_tahsis,
+        "cozum_adet": cozum,
+    }
+
+
 @router.post("/siparis/sevkiyat-guncelle")
 def ops_siparis_sevkiyat_guncelle(body: OpsSiparisSevkiyatGuncelleBody):
     tid = (body.talep_id or "").strip()
