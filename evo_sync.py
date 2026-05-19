@@ -1838,6 +1838,7 @@ def faturajq_sube_grup_detay(bastar: date, bittar: date,
     # 1. hs_rapor ile şube nakit/kart toplamı
     nakit_map: Dict[str, float] = {}
     kart_map: Dict[str, float] = {}
+    ham: Dict[str, Any] = {}
     try:
         ham = _hs_rapor_ham_veri(bastar, bittar)
         for k in (ham.get("kasa") or []):
