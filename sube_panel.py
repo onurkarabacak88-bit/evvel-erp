@@ -3715,21 +3715,22 @@ def sube_siparis_akisi(
             d["id"] = oid
             talepler.append(d)
 
-        tids_gonderildi = [
-            str(d["id"])
-            for d in talepler
-            if str(d.get("durum") or "").strip() == "gonderildi"
-        ]
+        tids_tum = [str(d.get("id") or "").strip() for d in talepler if str(d.get("id") or "").strip()]
         yolda_map: Dict[str, List[Dict[str, Any]]] = {}
-        if tids_gonderildi:
+        if tids_tum:
+            # Çoklu depo: Tema sevk edip talep Zafer'e yönlendirilince durum hazirlaniyor olur;
+            # yoldaki paket yine de talep şubesinde (Köyceğiz) kabul edilmeli.
             cur.execute(
                 """
-                SELECT siparis_talep_id, id, kalem_kodu, kalem_adi, sevk_adet
-                FROM stok_yolda
-                WHERE sube_id=%s AND durum='yolda' AND siparis_talep_id = ANY(%s)
-                ORDER BY sevk_ts ASC
+                SELECT y.siparis_talep_id, y.id, y.kalem_kodu, y.kalem_adi, y.sevk_adet,
+                       y.sevk_kaynak_depo_sube_id,
+                       COALESCE(ks.ad, '') AS sevk_kaynak_depo_adi
+                FROM stok_yolda y
+                LEFT JOIN subeler ks ON ks.id = y.sevk_kaynak_depo_sube_id
+                WHERE y.sube_id=%s AND y.durum='yolda' AND y.siparis_talep_id = ANY(%s)
+                ORDER BY y.sevk_ts ASC
                 """,
-                (sube_id, tids_gonderildi),
+                (sube_id, tids_tum),
             )
             for yr in cur.fetchall() or []:
                 yy = dict(yr)
@@ -3742,6 +3743,8 @@ def sube_siparis_akisi(
                         "kalem_kodu": str(yy.get("kalem_kodu") or "").strip(),
                         "kalem_adi": str(yy.get("kalem_adi") or "").strip(),
                         "sevk_adet": int(yy.get("sevk_adet") or 0),
+                        "sevk_kaynak_depo_sube_id": str(yy.get("sevk_kaynak_depo_sube_id") or "").strip() or None,
+                        "sevk_kaynak_depo_adi": str(yy.get("sevk_kaynak_depo_adi") or "").strip() or None,
                     }
                 )
         for d in talepler:
@@ -3888,11 +3891,25 @@ def sube_siparis_teslim_kabul(sube_id: str, body: SubeSiparisTeslimKabulBody):
         st = str(row.get("durum") or row[1] or "").strip()
         if talep_sube != sube_id:
             raise HTTPException(403, "Bu sipariş bu şubeye ait değil")
-        if st != "gonderildi":
+        if st not in ("gonderildi", "hazirlaniyor"):
             raise HTTPException(
                 400,
-                f"Teslim onayı yalnızca gönderilmiş siparişlerde yapılır (şu an: {st or '—'})",
+                f"Teslim onayı bu sipariş durumunda yapılamaz (şu an: {st or '—'})",
             )
+        if st == "hazirlaniyor":
+            cur.execute(
+                """
+                SELECT 1 FROM stok_yolda
+                WHERE siparis_talep_id=%s AND sube_id=%s AND durum='yolda'
+                LIMIT 1
+                """,
+                (tid, sube_id),
+            )
+            if not cur.fetchone():
+                raise HTTPException(
+                    400,
+                    "Henüz yola çıkmış paket yok — depo sevk çıkışı bekleniyor",
+                )
         sonuc = sube_kabul_kaydet(
             cur,
             tid,

@@ -2442,6 +2442,15 @@ $$;
             CREATE INDEX IF NOT EXISTS idx_stok_yolda_talep
             ON stok_yolda (siparis_talep_id)
         """)
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='stok_yolda' AND column_name='sevk_kaynak_depo_sube_id') THEN
+                    ALTER TABLE stok_yolda
+                        ADD COLUMN sevk_kaynak_depo_sube_id TEXT REFERENCES subeler(id) ON DELETE SET NULL;
+                END IF;
+            END $$;
+        """)
 
         # ── siparis_talep → otomatik gonderilmedi kapatma ─────
         cur.execute("""

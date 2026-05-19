@@ -80,8 +80,12 @@ BOYUTLAR = ("kasa", "bardak_plastik", "bardak_karton", "redbull_soda", "pasta")
 
 TANI_TIPLERI = (
     "UYUMLU",
-    "IKRAM_UNUTULDU",        # N1=N2, Evo eksik, kasa normal
+    "IKRAM_EVO_TEYIT",       # stok eridi = Evo_satis + Evo_ikram → ikram POS'tan geçmiş ✓
+    "IKRAM_UNUTULDU",        # N1=N2, Evo eksik, kasa normal (eski; geriye dönük uyumluluk)
     "SWEETHEARTING_SINYAL",  # N1=N2, Evo eksik + kasa fazla
+    "STOK_KACAGI_BEYANSIZ",  # stok eridi > (Evo_satis + Evo_ikram), kasa normal/eksik → kasıt veya ihmal
+    "ZIMMET_NAKIT_CEPTE",    # stok eridi > Evo + kasa eksik + sayisal eslesme → para cebe
+    "IKRAM_SURDURULEN",      # personel sürekli ikram → davranis pattern (anomali değil)
     "SABAH_HATALI",          # tek boyut: N1≠N2, Evo N1'i destekliyor
     "AKSAM_HATALI",          # tek boyut: N1≠N2, Evo N2'yi destekliyor
     "SABAH_TOPYEKUN",        # çoklu boyut hepsi N1 yönünde → sabah dikkat zayıf
@@ -93,6 +97,27 @@ TANI_TIPLERI = (
     "POS_BYPASS",            # bardak eksik ama Evo yok → kayıt dışı satış
     "YETERSIZ_VERI",         # N1 veya N2 yok
 )
+
+# Her tanı için (otomatik aksiyon, insan aksiyonu, alarm seviyesi)
+EYLEM_MAP: Dict[str, Dict[str, str]] = {
+    "UYUMLU":                {"oto": "log_yesil",        "insan": "—",                                       "alarm": "yok"},
+    "IKRAM_EVO_TEYIT":       {"oto": "log_yesil",        "insan": "İkram POS'tan geçmiş — temiz zincir",     "alarm": "yok"},
+    "IKRAM_UNUTULDU":        {"oto": "uyari_dusuk",      "insan": "Z raporu kontrol et, ikram defteri sor", "alarm": "dusuk"},
+    "SWEETHEARTING_SINYAL":  {"oto": "kasa_baskini_oner","insan": "Kasa Baskını başlat, kamera incele",     "alarm": "yuksek"},
+    "STOK_KACAGI_BEYANSIZ":  {"oto": "uyari_yuksek",     "insan": "Personeli sorgula: ikram mı kayıtsız satış mı?", "alarm": "yuksek"},
+    "ZIMMET_NAKIT_CEPTE":    {"oto": "cfo_bildirim_kritik","insan": "Kasa Baskını + güvenlik kamerası + soruşturma", "alarm": "kritik"},
+    "IKRAM_SURDURULEN":      {"oto": "log_pattern",      "insan": "Personel davranışı izle; ikram politikası gözden geçir", "alarm": "dusuk"},
+    "SABAH_HATALI":          {"oto": "sabah_update_oner","insan": "Sabahcı PIN ile teyit, gerekirse 3. say","alarm": "orta"},
+    "AKSAM_HATALI":          {"oto": "aksam_update_oner","insan": "Akşamcı çağır, PIN teyit",               "alarm": "orta"},
+    "SABAH_TOPYEKUN":        {"oto": "sabah_supheli_tag","insan": "Sabahcı + 3. kişi tüm boyutları say",    "alarm": "yuksek"},
+    "AKSAM_TOPYEKUN":        {"oto": "aksam_supheli_tag","insan": "Akşamcı performans incele, eğitim",      "alarm": "yuksek"},
+    "KAOS":                  {"oto": "cfo_bildirim",     "insan": "Fiziksel soruşturma + güvenlik kamerası","alarm": "yuksek"},
+    "COZULMEDI":             {"oto": "truth_walk_iste",  "insan": "3. kişi sayım talep et",                 "alarm": "orta"},
+    "POS_SYNC_HATA":         {"oto": "evo_refresh_iste", "insan": "Evobulut destek + IT kontrol",           "alarm": "orta"},
+    "AKSAM_ZIMMET_SINYALI":  {"oto": "cfo_bildirim_log", "insan": "Soruşturma, kamera, 3-ay pattern bak",   "alarm": "kritik"},
+    "POS_BYPASS":            {"oto": "evo_yetki_kontrol","insan": "Evo yetki + manuel iade kontrol",        "alarm": "yuksek"},
+    "YETERSIZ_VERI":         {"oto": "—",                "insan": "Eksik sayımı tamamla",                   "alarm": "yok"},
+}
 
 # Her tanı için (otomatik aksiyon, insan aksiyonu, alarm seviyesi)
 EYLEM_MAP: Dict[str, Dict[str, str]] = {

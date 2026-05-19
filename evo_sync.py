@@ -399,6 +399,81 @@ def faturajq_urun_bazli_satis(bastar: date, bittar: date) -> Dict[str, float]:
     return urun_toplam
 
 
+def faturajq_satis_ve_ikram(bastar: date, bittar: date) -> Dict[str, Dict[str, float]]:
+    """
+    Evo POS satışlarını **ücretli satış** ve **ikram (0₺ / tam iskonto)** olarak AYIRARAK döner.
+
+    Akıllı Denetim için kritik: gerçek ikram POS'a 0₺ veya %100 iskonto olarak düşer.
+    İkram olarak işaretlenmiş satış ≠ kayıt dışı kullanım (zimmet/sweethearting).
+
+    İkram tespiti (sıralı kural):
+      1. Satır birim fiyatı 0 veya çok düşük (< 1₺) → ikram
+      2. İskonto tutarı ≈ brüt tutar (≥ %99 indirim) → ikram
+      3. Açıklamada "ikram" / "hediye" / "promosyon" geçiyorsa → ikram
+
+    Returns:
+        {urun_adi: {"satis": float, "ikram": float, "toplam": float}}
+    """
+    faturalar = faturajq_listesi(bastar, bittar, tur=34)
+    log.info("faturajq_satis_ve_ikram: %d adet Satış Fişi", len(faturalar))
+
+    sonuc: Dict[str, Dict[str, float]] = {}
+    IKRAM_KELIMELER = ("ikram", "hediye", "promosyon", "promo", "iade-ikram", "tadim")
+
+    def _ikram_mi(s: Dict[str, Any]) -> bool:
+        # 1. Birim fiyat ≤ 0.99
+        try:
+            br_fiyat = float(s.get("a_brm_fiyat") or s.get("birim_fiyat") or s.get("a_fiyat") or 0)
+        except (TypeError, ValueError):
+            br_fiyat = 0.0
+        if br_fiyat < 1.0:
+            try:
+                tutar = float(s.get("a_tutar") or s.get("toplam") or 0)
+            except (TypeError, ValueError):
+                tutar = 0.0
+            if tutar < 1.0:
+                return True
+        # 2. Tam iskonto (≥ %99)
+        try:
+            brut = float(s.get("a_brut") or s.get("a_brut_tut") or 0)
+            iskonto = float(s.get("a_isk_tut") or s.get("iskonto") or 0)
+        except (TypeError, ValueError):
+            brut, iskonto = 0.0, 0.0
+        if brut > 0 and iskonto > 0 and (iskonto / brut) >= 0.99:
+            return True
+        # 3. Açıklamada anahtar kelime
+        ack = str(s.get("a_ack") or s.get("aciklama") or "").lower()
+        if any(k in ack for k in IKRAM_KELIMELER):
+            return True
+        return False
+
+    for f in faturalar:
+        fid = str(f.get("G.a_id") or f.get("a_id") or f.get("id") or "").strip()
+        if not fid:
+            continue
+        detay   = evo_fatura_detay(fid)
+        satirlar = _satirlari_coz(detay)
+        for s in satirlar:
+            ad = str(
+                s.get("a_stok_adi") or s.get("stok_adi") or
+                s.get("a_adi")     or s.get("urun_adi") or ""
+            ).strip()
+            try:
+                mik = float(s.get("a_miktar") or s.get("miktar") or 0)
+            except (ValueError, TypeError):
+                mik = 0.0
+            if not ad or mik <= 0:
+                continue
+            kayit = sonuc.setdefault(ad, {"satis": 0.0, "ikram": 0.0, "toplam": 0.0})
+            if _ikram_mi(s):
+                kayit["ikram"] += mik
+            else:
+                kayit["satis"] += mik
+            kayit["toplam"] += mik
+
+    return sonuc
+
+
 # ─────────────────────────────────────────────
 # 2b. HS_RAPOR — Hızlı Satış en çok satılan ürünler
 # ─────────────────────────────────────────────

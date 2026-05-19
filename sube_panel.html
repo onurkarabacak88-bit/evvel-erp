@@ -2772,14 +2772,11 @@ var siparisDegerler = {};
 var siparisKatalogCache = null;
 var siparisAkisCache = null;
 var _teslimKabulListe = [];
-/** Merkezden gelen, depo kabulü bekleyen sipariş paketleri (durum=gönderildi + teslim kalemleri). */
+/** Yolda stok kalemi olan sipariş paketleri (çoklu depo: durum hazirlaniyor olsa bile). */
 function _teslimBekleyenPaketFiltre(akis) {
   var kendiAkis = (akis && akis.talepler) || [];
   return kendiAkis.filter(function (t) {
-    return (
-      String(t.durum || '').trim() === 'gonderildi' &&
-      (t.teslim_bekleyen_kalemler || []).length > 0
-    );
+    return (t.teslim_bekleyen_kalemler || []).length > 0;
   });
 }
 /** Sol menü «Ürün Teslim Al» rozeti — bekleyen depo paketi sayısı (Ürün Aç rozeti gibi). */

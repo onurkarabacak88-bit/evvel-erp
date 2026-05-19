@@ -2565,8 +2565,7 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
     if not row:
         raise ValueError(f"siparis_talep bulunamadı: {siparis_talep_id}")
     rd = dict(row)
-    if rd.get("durum") == "gonderildi":
-        return []  # idempotency: zaten gönderildi
+    already_gonderildi = str(rd.get("durum") or "").strip() == "gonderildi"
     sube_id = str(rd.get("sube_id") or "")
     kaynak_depo = str(rd.get("kaynak_depo_sube_id") or "").strip() or None
 
@@ -2604,21 +2603,23 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
         cur.execute(
             """
             INSERT INTO stok_yolda
-                (id, siparis_talep_id, sube_id, kalem_kodu, kalem_adi, sevk_adet, durum)
-            VALUES (%s, %s, %s, %s, %s, %s, 'yolda')
+                (id, siparis_talep_id, sube_id, kalem_kodu, kalem_adi, sevk_adet, durum,
+                 sevk_kaynak_depo_sube_id)
+            VALUES (%s, %s, %s, %s, %s, %s, 'yolda', %s)
             """,
-            (yid, siparis_talep_id, sube_id, kalem_kodu, kalem_adi, sevk_adet),
+            (yid, siparis_talep_id, sube_id, kalem_kodu, kalem_adi, sevk_adet, kaynak_depo),
         )
         yolda_ids.append(yid)
 
-    cur.execute(
-        """UPDATE siparis_talep
-           SET durum='gonderildi',
-               sevkiyat_durumu='gonderildi',
-               sevkiyat_durum='gonderildi'
-           WHERE id=%s""",
-        (siparis_talep_id,),
-    )
+    if not already_gonderildi:
+        cur.execute(
+            """UPDATE siparis_talep
+               SET durum='gonderildi',
+                   sevkiyat_durumu='gonderildi',
+                   sevkiyat_durum='gonderildi'
+               WHERE id=%s""",
+            (siparis_talep_id,),
+        )
     _disiplin_olay_yaz(cur, siparis_talep_id, sube_id, OLAY_SEVK_CIKTI,
                         yapan_id, yapan_ad, {"sevk_kalemleri": sevk_kalemleri})
     return yolda_ids
