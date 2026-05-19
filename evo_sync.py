@@ -889,9 +889,10 @@ _MALZEME_MAP: Dict[str, str] = {
 }
 
 
-def _hs_rapor_ham_veri(bastar: date, bittar: date) -> Dict:
+def _hs_rapor_ham_veri(bastar: date, bittar: date, sube_id: str = "0") -> Dict:
     """
     hs_rapor.ashx'ten ham JSON döndürür: S, Cok_Satilan, Grup_Pasta, kasa, banka.
+    sube_id='0' tüm şubeler; herhangi bir Evo şube ID'si verilirse filtreleme uygular.
     Web token geçersizse otomatik yenileme dener (REST API UID ile).
     """
     def _cek_token(token: str) -> Dict:
@@ -901,7 +902,7 @@ def _hs_rapor_ham_veri(bastar: date, bittar: date) -> Dict:
             "tarih1":   bastar.strftime("%d.%m.%Y 00:00:00"),
             "tarih2":   bittar.strftime("%d.%m.%Y 23:59:59"),
             "personel": "0",
-            "sube":     "0",
+            "sube":     str(sube_id or "0"),
         }
         headers = {"X-Requested-With": "XMLHttpRequest", "Referer": f"{EVO_WEB}/hizli/hs_rapor.html"}
         r = requests.post(url, data=body, headers=headers, timeout=20)
@@ -1735,16 +1736,16 @@ def evo_debug_modul(
 def evo_grup_pasta_ham(
     bastar: str = Query(..., description="YYYY-MM-DD"),
     bittar: str = Query(..., description="YYYY-MM-DD"),
+    sube: str = Query("0", description="Evo şube ID (0=tüm)"),
 ):
     """KEŞİF — hs_rapor.ashx'in tüm cevap yapısını debug için döner.
-    Amaç: Grup_Pasta dizisinin yapısını + S/Cok_Satilan ilk örneklerini görmek.
-    Şube ayrımı için a_sube_adi/a_sube_id alanlarının olup olmadığını anlamak."""
+    Şube parametresi ile çağrılırsa Grup_Pasta şubeye filtrelenip filtrelenmediği görülür."""
     try:
         bs = date.fromisoformat(bastar)
         bt = date.fromisoformat(bittar)
     except ValueError:
         raise HTTPException(400, "Tarih formatı YYYY-MM-DD")
-    d = _hs_rapor_ham_veri(bs, bt)
+    d = _hs_rapor_ham_veri(bs, bt, sube_id=sube)
     return {
         "anahtarlar": list(d.keys()),
         "Grup_Pasta_tum": d.get("Grup_Pasta", []),
