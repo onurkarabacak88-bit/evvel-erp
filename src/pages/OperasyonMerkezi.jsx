@@ -94,8 +94,8 @@ const MAGAZA_DEPO_STOK_ANAHTARLARI = [
 
 /** Havuz satırında «çilek» gibi kısa ad yerine ne tür kalem olduğu okunsun (backend STOK_KEYS ile uyumlu). */
 const MAGAZA_DEPO_HAVUZ_ETIKET_TR = {
-  bardak_kucuk: 'Küçük bardak (genel havuz)',
-  bardak_buyuk: 'Büyük bardak (genel havuz)',
+  bardak_kucuk: '8oz Bardak (genel havuz)',
+  bardak_buyuk: '14oz Bardak (genel havuz)',
   bardak_plastik: 'Plastik bardak (genel havuz)',
   su_adet: 'Su — adet (genel havuz)',
   redbull_adet: 'Red Bull — adet (genel havuz)',
@@ -761,7 +761,7 @@ const KULLANILAN_BAZE_KEYS = [
   'kapak_adet','pecete_paket','diger_sarf',
 ];
 const KULLANILAN_LABEL = {
-  bardak_kucuk:'K.Bardak', bardak_buyuk:'B.Bardak', bardak_plastik:'Plastik', karton_bardak:'Karton Bardak',
+  bardak_kucuk:'8oz', bardak_buyuk:'14oz', bardak_plastik:'Plastik', karton_bardak:'Karton Bardak',
   su_adet:'Su', sut_litre:'Süt', soda_adet:'Soda', redbull_adet:'Redbull',
   cookie_adet:'Cookie', pasta_adet:'Pasta (toplam)', surup_adet:'Şurup', kahve_paket:'Kahve Pkt',
   kapak_adet:'Kapak', pecete_paket:'Peçete', diger_sarf:'Diğer',
@@ -8094,7 +8094,7 @@ export default function OperasyonMerkezi() {
             <div className="empty"><p>Seçilen filtrede bar özeti yok</p></div>
           ) : barOzetGorunenSatirlar.map((r) => {
             const keys = ['bardak_kucuk','bardak_buyuk','bardak_plastik','karton_bardak','su_adet','sut_litre','soda_adet','redbull_adet','cookie_adet','pasta_adet','surup_adet','kahve_paket','kapak_adet','pecete_paket','diger_sarf'];
-            const labels = { bardak_kucuk:'K.Bardak', bardak_buyuk:'B.Bardak', bardak_plastik:'Plastik', karton_bardak:'Karton Bardak', su_adet:'Su', sut_litre:'Süt', soda_adet:'Soda', redbull_adet:'Redbull', cookie_adet:'Cookie', pasta_adet:'Pasta', surup_adet:'Şurup', kahve_paket:'Kahve Pkt', kapak_adet:'Kapak', pecete_paket:'Peçete', diger_sarf:'Diğer' };
+            const labels = { bardak_kucuk:'8oz', bardak_buyuk:'14oz', bardak_plastik:'Plastik', karton_bardak:'Karton Bardak', su_adet:'Su', sut_litre:'Süt', soda_adet:'Soda', redbull_adet:'Redbull', cookie_adet:'Cookie', pasta_adet:'Pasta', surup_adet:'Şurup', kahve_paket:'Kahve Pkt', kapak_adet:'Kapak', pecete_paket:'Peçete', diger_sarf:'Diğer' };
             const hasFark = r.fark_var;
             const kapanisYok = !r.kapanis_var;
             return (
@@ -11265,7 +11265,7 @@ export default function OperasyonMerkezi() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 480, overflow: 'auto' }}>
               {urunUyumGorunenKayitlar.map((r) => {
                 const keys = ['bardak_kucuk','bardak_buyuk','bardak_plastik','karton_bardak','su_adet','sut_litre','redbull_adet','soda_adet','cookie_adet','pasta_adet','surup_adet','kahve_paket','kapak_adet','pecete_paket','diger_sarf','pasta_porsiyon_sade','pasta_porsiyon_antep','pasta_porsiyon_cik','pasta_mag_cilek','pasta_mag_lotus','pasta_buyuk_tart','pasta_kucuk_tart','pasta_snickers','pasta_malaga','pasta_latte','pasta_muzlu_rulo','pasta_cik_rulo','pasta_meyveli_rulo','pasta_browni','pasta_dilim_ss_sade','pasta_cream_puff','pasta_kavala','pasta_cup_limon','pasta_cup_yerfistik','pasta_cup_cilek','pasta_cup_karamel','pasta_cup_lotus','pasta_cup_antep','pasta_cup_hindistan','pasta_profiterol','pasta_kare_cik','pasta_kare_yerfistik','pasta_kare_karamel','pasta_kare_limon','pasta_dilim_sade','pasta_dilim_antep','pasta_dilim_cik','pasta_dilim_yaban'];
-                const labels = { bardak_kucuk:'K.Bardak', bardak_buyuk:'B.Bardak', bardak_plastik:'Plastik', karton_bardak:'Karton Bardak', su_adet:'Su', sut_litre:'Süt', redbull_adet:'Redbull', soda_adet:'Soda', cookie_adet:'Cookie', pasta_adet:'Pasta', surup_adet:'Şurup', kahve_paket:'Kahve Pkt', kapak_adet:'Kapak', pecete_paket:'Peçete', diger_sarf:'Diğer' };
+                const labels = { bardak_kucuk:'8oz', bardak_buyuk:'14oz', bardak_plastik:'Plastik', karton_bardak:'Karton Bardak', su_adet:'Su', sut_litre:'Süt', redbull_adet:'Redbull', soda_adet:'Soda', cookie_adet:'Cookie', pasta_adet:'Pasta', surup_adet:'Şurup', kahve_paket:'Kahve Pkt', kapak_adet:'Kapak', pecete_paket:'Peçete', diger_sarf:'Diğer' };
                 return (
                   <div key={`${r.sube_id}-${r.tarih}`} className="card" style={{ borderLeft: '4px solid #8b5cf6', padding: '14px 16px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>

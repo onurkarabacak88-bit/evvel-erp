@@ -54,6 +54,7 @@ from operasyon_stok_motor import (
     siparis_cift_gonderim_bilgi_notu,
     siparis_rezerve_kaynak_depoya_tasi,
     _stok_key_from_urun_ad,
+    urun_ac_gorunen_ad,
     # disiplin motoru — sevkiyat adaptasyonu
     OLAY_TAHSIS_TAM,
     OLAY_SEVK_CIKTI,
@@ -11498,19 +11499,19 @@ def ops_v2_urun_ac_akis(
                 adet = 0
             if adet <= 0:
                 continue
-            ad = STOK_LABEL_TR.get(str(k), str(k))
+            ad = urun_ac_gorunen_ad(k)
             delta_map[ad] = delta_map.get(ad, 0) + adet
 
         kalemler_map: Dict[str, int] = {}
         for it in kalemler_raw:
             if not isinstance(it, dict):
                 continue
-            ad = (
+            raw_ad = (
                 str(it.get("urun_ad") or "").strip()
                 or str(it.get("kalem_adi") or "").strip()
                 or str(it.get("kalem_kodu") or "").strip()
             )
-            if not ad:
+            if not raw_ad:
                 continue
             try:
                 adet = max(0, int(it.get("adet") or 0))
@@ -11518,6 +11519,7 @@ def ops_v2_urun_ac_akis(
                 adet = 0
             if adet <= 0:
                 continue
+            ad = urun_ac_gorunen_ad(raw_ad)
             kalemler_map[ad] = kalemler_map.get(ad, 0) + adet
 
         # Birleştir: aynı ad varsa max al (çift sayım engellenir),

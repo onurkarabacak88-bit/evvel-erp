@@ -100,8 +100,8 @@ PASTA_GRUPLAR: List[Tuple[str, List[str]]] = [
 ]
 
 STOK_LABEL_TR = {
-    "bardak_kucuk": "Küçük bardak",
-    "bardak_buyuk": "Büyük bardak",
+    "bardak_kucuk": "8oz Bardak",
+    "bardak_buyuk": "14oz Bardak",
     "bardak_plastik": "Plastik bardak",
     "su_adet": "Su",
     "redbull_adet": "Redbull",
@@ -317,6 +317,22 @@ def _stok_key_from_urun_ad(urun_ad: Any) -> Optional[str]:
         return "pecete_paket"
     return None
 
+
+
+def urun_ac_gorunen_ad(ad_or_key: Any) -> str:
+    """Ürün aç listesinde delta (stok anahtarı) ile kalemler (katalog adı) tek etikette birleşir."""
+    raw = str(ad_or_key or "").strip()
+    if not raw:
+        return ""
+    key = raw if raw in STOK_KEYS else _stok_key_from_urun_ad(raw)
+    if key and key in STOK_LABEL_TR:
+        return STOK_LABEL_TR[key]
+    n = raw.lower().replace(".", " ").strip()
+    if n in ("b bardak", "bbardak"):
+        return STOK_LABEL_TR["bardak_buyuk"]
+    if n in ("k bardak", "kbardak"):
+        return STOK_LABEL_TR["bardak_kucuk"]
+    return raw
 
 
 def depo_kalem_kodu_panel_katalog(urun_id: str, urun_ad: str) -> str:
