@@ -1732,6 +1732,308 @@ def evo_debug_modul(
 #  KEŞİF ENDPOINT — Evo'da bardak/su/soda detayı var mı?
 # ════════════════════════════════════════════════════════════════════════════
 
+# ════════════════════════════════════════════════════════════════════════════
+#  EVO GRUP TAKSONOMİSİ — hs_rapor Grup_Pasta'da gözüken gerçek gruplar
+# ════════════════════════════════════════════════════════════════════════════
+# Evobulut'un kendi "Grup_Pasta" çıktısı şu gruplar:
+#   Ice, 14 Oz, 8 Oz, Su, Maden Suyu, Redbull, Pasta, ÇAY
+#
+# Bunları ürün adından geri-çıkarmak için pattern-match (büyük/küçük harf duyarsız).
+# Hedef: bizim Akıllı Denetim boyutlarına ve TruthMotor'a sağlam mapping.
+# ════════════════════════════════════════════════════════════════════════════
+EVO_GRUPLARI = ("Ice", "14 Oz", "8 Oz", "Su", "Maden Suyu", "Redbull", "Pasta", "ÇAY")
+
+
+def evo_grup_belirle(urun_adi: str) -> str:
+    """Ürün adından Evo grup adını çıkar.
+    Sıra önemli — özel öncelik (14 Oz, 8 Oz) Ice'tan önce kontrol edilir."""
+    if not urun_adi:
+        return ""
+    a = str(urun_adi).strip().lower()
+    # 14 Oz / 8 Oz öncelikli (boyut ürün adında geçtiğinde)
+    if "14 oz" in a or "14oz" in a:
+        return "14 Oz"
+    if "8 oz" in a or "8oz" in a:
+        return "8 Oz"
+    # Ice / Iced / Frozen — soğuk içecek → plastik bardak grubu
+    if "ice" in a or "iced" in a or "frozen" in a:
+        return "Ice"
+    # Su (önce Maden Suyu, sonra düz Su)
+    if "maden" in a:
+        return "Maden Suyu"
+    if a == "su" or a.startswith("su ") or " su" == a[-3:] or "şişe su" in a or "sise su" in a:
+        return "Su"
+    # Redbull / Energy
+    if "redbull" in a or "red bull" in a or "energy" in a:
+        return "Redbull"
+    # Pasta / kek / tatlı
+    if "pasta" in a or "kek" in a or "tatlı" in a or "tatli" in a:
+        return "Pasta"
+    # Çay
+    if "çay" in a or "cay" in a or "tea" in a:
+        return "ÇAY"
+    return ""  # bilinmeyen — grup dışı (örn. türk kahvesi, limonata, espresso vs.)
+
+
+# Evo grup → Akıllı Denetim boyutu mapping
+EVO_GRUP_BOYUT = {
+    "Ice":        "bardak_plastik",
+    "14 Oz":      "bardak_karton",   # büyük karton
+    "8 Oz":       "bardak_karton",   # küçük karton (aynı boyutta toplanır)
+    "Su":         "su",
+    "Maden Suyu": "su",              # soda alternatifine de düşülebilir; şimdilik su
+    "Redbull":    "redbull_soda",
+    "Pasta":      "pasta",
+    "ÇAY":        "",                # boyut dışı (porselen kupa, sayım yok)
+}
+
+
+def evo_ikram_satir_mi(s: Dict[str, Any]) -> bool:
+    """Detay satırının ikram olup olmadığı (0₺ veya %99+ iskonto veya 'ikram' anahtarı)."""
+    try:
+        br = float(s.get("a_brm_fiy") or s.get("a_fiy") or 0)
+        tut = float(s.get("a_tutar") or 0)
+    except (TypeError, ValueError):
+        br, tut = 0.0, 0.0
+    if br < 1.0 and tut < 1.0:
+        return True
+    try:
+        brut = float(s.get("a_isk1_mat") or s.get("a_tutar_kdvh") or 0)
+        isk = float(s.get("a_isk_tutar") or 0)
+    except (TypeError, ValueError):
+        brut, isk = 0.0, 0.0
+    if brut > 0 and isk > 0 and (isk / brut) >= 0.99:
+        return True
+    ack = str(s.get("a_ack") or "").lower()
+    return any(k in ack for k in ("ikram", "hediye", "promosyon", "promo", "tadim"))
+
+
+def faturajq_sube_grup_detay(bastar: date, bittar: date,
+                              max_fatura: int = 1000) -> Dict[str, Any]:
+    """Şube × grup × {ucretli, ikram, ciro} matrisi + şube nakit/kart + personel × ürün.
+
+    Veri yolu:
+      1. faturajq_listesi(tur=34) → tüm fatura header (a_id, a_sube_adi, a_tutar, a_cdate)
+      2. her fatura için paralel evo_fatura_detay → satır kalemleri
+      3. her satır → a_sube_id eşlemesi (header a_sube_adi ile cross-check)
+      4. ürün adından grup çıkarımı → şube × grup matrisi
+      5. hs_rapor → kasa + banka dizilerinden şube bazlı nakit/kart toplamı
+
+    Returns:
+      {
+        "tarih_bas": "...", "tarih_bit": "...",
+        "subeler": {
+          "Zafer Şubesi": {
+            "fatura_sayisi": N, "ciro_toplam": N, "iskonto_toplam": N,
+            "nakit": N, "kart": N,
+            "gruplar": {"Ice": {"adet": N, "ikram_adet": N, "ciro": N}, ...},
+            "urunler": [{"stok_kodu", "ad", "grup", "adet", "ikram_adet", "ciro"}],
+            "personel_satislar": {"49671": {"ad": "?", "adet": N, "ciro": N}}
+          }
+        }
+      }
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # 1. hs_rapor ile şube nakit/kart toplamı
+    nakit_map: Dict[str, float] = {}
+    kart_map: Dict[str, float] = {}
+    try:
+        ham = _hs_rapor_ham_veri(bastar, bittar)
+        for k in (ham.get("kasa") or []):
+            ad = str(k.get("a_adi") or "").strip()
+            try:
+                tut = float(k.get("tutar") or 0)
+            except (TypeError, ValueError):
+                tut = 0.0
+            # "Zafer Şubesi Nakit Kasa" → "Zafer Şubesi"
+            sube_ad = ad.replace(" Nakit Kasa", "").replace(" Nakit", "").strip()
+            if sube_ad:
+                nakit_map[sube_ad] = nakit_map.get(sube_ad, 0) + tut
+        for b in (ham.get("banka") or []):
+            ad = str(b.get("a_adi") or "").strip()
+            try:
+                tut = float(b.get("tutar") or 0)
+            except (TypeError, ValueError):
+                tut = 0.0
+            # "Zafer Pos" → "Zafer Şubesi" (manuel mapping)
+            sube_ad = ad.replace(" Pos", "").strip()
+            kart_map[sube_ad] = kart_map.get(sube_ad, 0) + tut
+    except Exception as e:
+        log.warning("hs_rapor kasa/banka cekilemedi: %s", e)
+
+    # 2. Faturalar — tüm şubeler
+    faturalar = faturajq_listesi(bastar, bittar, tur=34)
+    if not faturalar:
+        return {
+            "tarih_bas": str(bastar), "tarih_bit": str(bittar),
+            "fatura_islendi": 0, "subeler": {},
+            "uyari": "Eşleşen fatura yok",
+        }
+
+    # Sınır
+    faturalar = faturalar[:max_fatura]
+
+    # Fatura header bilgisi (a_id → {sube_adi, ciro, iskonto, tarih})
+    fatura_meta: Dict[str, Dict[str, Any]] = {}
+    for f in faturalar:
+        fid = str(f.get("a_id") or f.get("G.a_id") or "").strip()
+        if not fid:
+            continue
+        fatura_meta[fid] = {
+            "sube_adi": str(f.get("a_sube_adi") or "").strip(),
+            "ciro": float(f.get("a_tutar") or 0) if f.get("a_tutar") else 0.0,
+            "iskonto": float(f.get("a_isk_tut") or 0) if f.get("a_isk_tut") else 0.0,
+            "tarih": str(f.get("a_cdate") or f.get("a_tarih") or ""),
+            "personel_id": str(f.get("a_per_id") or ""),
+            "personel_ad": str(f.get("SATIS_PER") or "").strip() or None,
+        }
+
+    # 3. Detayları paralel çek
+    sube_data: Dict[str, Any] = {}
+
+    def _yeni_sube_kayit(ad: str) -> Dict[str, Any]:
+        return {
+            "fatura_sayisi": 0,
+            "ciro_toplam": 0.0,
+            "iskonto_toplam": 0.0,
+            "nakit": nakit_map.get(ad, 0.0),
+            "kart": kart_map.get(ad, 0.0),
+            "gruplar": {g: {"adet": 0.0, "ikram_adet": 0.0, "ciro": 0.0}
+                        for g in EVO_GRUPLARI},
+            "urunler_map": {},  # stok_kodu → {ad, grup, adet, ikram, ciro}
+            "personel_satislar": {},  # personel_id → {ad, adet, ciro}
+            "bilinmeyen_urunler": {},  # grup dışı ürünler (debug)
+        }
+
+    def _islem(fid: str):
+        meta = fatura_meta.get(fid) or {}
+        sube_ad = meta.get("sube_adi") or "?"
+        satirlar = []
+        try:
+            detay = evo_fatura_detay(fid)
+            satirlar = _satirlari_coz(detay)
+        except Exception:
+            pass
+        return fid, sube_ad, meta, satirlar
+
+    with ThreadPoolExecutor(max_workers=8) as exe:
+        futures = [exe.submit(_islem, fid) for fid in fatura_meta.keys()]
+        for fut in as_completed(futures):
+            fid, sube_ad, meta, satirlar = fut.result()
+            if sube_ad not in sube_data:
+                sube_data[sube_ad] = _yeni_sube_kayit(sube_ad)
+            d = sube_data[sube_ad]
+            d["fatura_sayisi"] += 1
+            d["ciro_toplam"] += meta.get("ciro", 0)
+            d["iskonto_toplam"] += meta.get("iskonto", 0)
+            pid = meta.get("personel_id") or "0"
+            pad = meta.get("personel_ad") or pid
+            if pid not in d["personel_satislar"]:
+                d["personel_satislar"][pid] = {"ad": pad, "adet": 0.0, "ciro": 0.0}
+
+            for s in satirlar:
+                ad = str(s.get("a_stok_adi") or s.get("stok_adi") or "").strip()
+                kod = str(s.get("a_kod") or "").strip()
+                if not ad and not kod:
+                    continue
+                try:
+                    mik = float(s.get("a_mik") or s.get("a_mik_cik") or 0)
+                    tut = float(s.get("a_tutar") or 0)
+                except (TypeError, ValueError):
+                    mik, tut = 0.0, 0.0
+                if mik <= 0:
+                    continue
+                ikram = evo_ikram_satir_mi(s)
+                grup = evo_grup_belirle(ad)
+
+                # Ürün kayıt
+                urec = d["urunler_map"].setdefault(kod or ad, {
+                    "stok_kodu": kod, "ad": ad, "grup": grup,
+                    "adet": 0.0, "ikram_adet": 0.0, "ciro": 0.0,
+                })
+                urec["adet"] += mik
+                urec["ciro"] += tut
+                if ikram:
+                    urec["ikram_adet"] += mik
+
+                # Grup kayıt
+                if grup:
+                    g = d["gruplar"][grup]
+                    g["adet"] += mik
+                    if ikram:
+                        g["ikram_adet"] += mik
+                    g["ciro"] += tut
+                else:
+                    d["bilinmeyen_urunler"][ad] = d["bilinmeyen_urunler"].get(ad, 0) + mik
+
+                # Personel kayıt
+                d["personel_satislar"][pid]["adet"] += mik
+                d["personel_satislar"][pid]["ciro"] += tut
+
+    # 4. Çıktıyı temizle (urunler_map → list, vs.)
+    sonuc_subeler = {}
+    for ad, d in sube_data.items():
+        urunler = sorted(d["urunler_map"].values(), key=lambda x: -x["adet"])
+        for u in urunler:
+            u["adet"] = round(u["adet"], 2)
+            u["ikram_adet"] = round(u["ikram_adet"], 2)
+            u["ciro"] = round(u["ciro"], 2)
+        gruplar = {}
+        for g, v in d["gruplar"].items():
+            if v["adet"] > 0 or v["ikram_adet"] > 0:
+                gruplar[g] = {
+                    "adet": round(v["adet"], 2),
+                    "ikram_adet": round(v["ikram_adet"], 2),
+                    "ciro": round(v["ciro"], 2),
+                }
+        personel = []
+        for pid, p in d["personel_satislar"].items():
+            if p["adet"] > 0:
+                personel.append({
+                    "personel_id": pid, "ad": p["ad"],
+                    "adet": round(p["adet"], 2), "ciro": round(p["ciro"], 2),
+                })
+        personel.sort(key=lambda x: -x["ciro"])
+        sonuc_subeler[ad] = {
+            "fatura_sayisi": d["fatura_sayisi"],
+            "ciro_toplam": round(d["ciro_toplam"], 2),
+            "iskonto_toplam": round(d["iskonto_toplam"], 2),
+            "nakit": round(d["nakit"], 2),
+            "kart": round(d["kart"], 2),
+            "gruplar": gruplar,
+            "urunler": urunler[:200],
+            "personel_satislar": personel,
+            "bilinmeyen_urunler": dict(sorted(
+                d["bilinmeyen_urunler"].items(), key=lambda x: -x[1]
+            )[:20]),
+        }
+
+    return {
+        "tarih_bas": str(bastar), "tarih_bit": str(bittar),
+        "fatura_islendi": len(fatura_meta),
+        "fatura_toplam": len(faturalar),
+        "sube_sayisi": len(sonuc_subeler),
+        "subeler": sonuc_subeler,
+    }
+
+
+@router.get("/sube-grup-detay")
+def evo_sube_grup_detay(
+    bastar: str = Query(..., description="YYYY-MM-DD"),
+    bittar: str = Query(..., description="YYYY-MM-DD"),
+    max_fatura: int = Query(1000, ge=1, le=2000),
+):
+    """Şube × grup × ikram × nakit/kart × personel matrisi.
+    Akıllı Denetim ve EvoSatis sayfasının ana veri kaynağı."""
+    try:
+        bs = date.fromisoformat(bastar)
+        bt = date.fromisoformat(bittar)
+    except ValueError:
+        raise HTTPException(400, "Tarih formatı YYYY-MM-DD")
+    return faturajq_sube_grup_detay(bs, bt, max_fatura=max_fatura)
+
+
 @router.get("/grup-pasta-ham")
 def evo_grup_pasta_ham(
     bastar: str = Query(..., description="YYYY-MM-DD"),
