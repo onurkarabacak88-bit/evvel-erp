@@ -1917,21 +1917,35 @@ def faturajq_sube_grup_detay(bastar: date, bittar: date,
             "bilinmeyen_urunler": {},  # grup dışı ürünler (debug)
         }
 
+    detay_hata_sayisi = 0
+    detay_bos_sayisi = 0
+    detay_basari_sayisi = 0
+
     def _islem(fid: str):
         meta = fatura_meta.get(fid) or {}
         sube_ad = meta.get("sube_adi") or "?"
         satirlar = []
+        hata = None
         try:
             detay = evo_fatura_detay(fid)
             satirlar = _satirlari_coz(detay)
-        except Exception:
-            pass
-        return fid, sube_ad, meta, satirlar
+        except Exception as e:
+            hata = str(e)[:200]
+        return fid, sube_ad, meta, satirlar, hata
 
-    with ThreadPoolExecutor(max_workers=8) as exe:
+    # max_workers=4 (token paralel istek limitlerini düşürmek için)
+    with ThreadPoolExecutor(max_workers=4) as exe:
         futures = [exe.submit(_islem, fid) for fid in fatura_meta.keys()]
         for fut in as_completed(futures):
-            fid, sube_ad, meta, satirlar = fut.result()
+            fid, sube_ad, meta, satirlar, hata = fut.result()
+            if hata:
+                detay_hata_sayisi += 1
+                if detay_hata_sayisi <= 3:
+                    log.warning("sube-grup-detay detay hata fid=%s: %s", fid, hata)
+            elif not satirlar:
+                detay_bos_sayisi += 1
+            else:
+                detay_basari_sayisi += 1
             if sube_ad not in sube_data:
                 sube_data[sube_ad] = _yeni_sube_kayit(sube_ad)
             d = sube_data[sube_ad]
@@ -2025,6 +2039,10 @@ def faturajq_sube_grup_detay(bastar: date, bittar: date,
         "fatura_islendi": len(fatura_meta),
         "fatura_toplam": len(faturalar),
         "sube_sayisi": len(sonuc_subeler),
+        "kaynak": kaynak,
+        "detay_basari": detay_basari_sayisi,
+        "detay_bos": detay_bos_sayisi,
+        "detay_hata": detay_hata_sayisi,
         "subeler": sonuc_subeler,
     }
 
