@@ -9980,9 +9980,14 @@ export default function OperasyonMerkezi() {
                       <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 3 }}>
                         Fark (0 olmalıydı)
                       </div>
-                      <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'monospace', color: fark > 0 ? '#fca5a5' : '#fdba74' }}>
+                      <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'monospace', color: fark > 0 ? '#fca5a5' : fark < 0 ? '#86efac' : 'var(--text2)' }}>
                         {fark > 0 ? '+' : ''}{fmt(fark)}
                       </div>
+                      {Math.abs(fark) > 0.5 && (
+                        <div style={{ fontSize: 10, fontWeight: 700, marginTop: 4, color: fark > 0 ? '#fca5a5' : '#86efac' }}>
+                          {fark > 0 ? 'Kasa açığı (+ eksik nakit)' : 'Kasa fazlası (− fazla nakit)'}
+                        </div>
+                      )}
                     </div>
                     <PersonelSatir ad={u.kapanis_personel_ad} />
                   </div>
@@ -14019,9 +14024,18 @@ export default function OperasyonMerkezi() {
             </h3>
             <p style={{ margin: '0 0 18px', fontSize: 12, color: 'var(--text3)' }}>
               {kkDuzeltModal.uyari?.sube_adi} · {kkDuzeltModal.uyari?.tarih} · Mevcut fark:{' '}
-              <strong className="mono" style={{ color: Number(kkDuzeltModal.uyari?.fark_tl) < 0 ? '#fca5a5' : '#86efac' }}>
+              <strong className="mono" style={{ color: (() => {
+                const fn = Number(kkDuzeltModal.uyari?.fark_tl || 0);
+                const acik = kkDuzeltModal.uyari?.tip === 'ACILIS_KASA_FARK' ? fn < 0 : fn > 0;
+                return acik ? '#fca5a5' : fn === 0 ? 'var(--text2)' : '#86efac';
+              })() }}>
                 {Number(kkDuzeltModal.uyari?.fark_tl || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺
               </strong>
+              <span style={{ display: 'block', marginTop: 4, fontSize: 11 }}>
+                {kkDuzeltModal.uyari?.tip === 'ACILIS_KASA_FARK'
+                  ? 'Devir: + sabah fazla saydı, − sabah eksik saydı'
+                  : 'Kapanış: + kasa açığı (eksik nakit), − kasa fazlası'}
+              </span>
             </p>
 
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Sebep</label>
@@ -14034,8 +14048,9 @@ export default function OperasyonMerkezi() {
             >
               {(() => {
                 const farkNum = Number(kkDuzeltModal.uyari?.fark_tl || 0);
-                const fazla = farkNum > 0;
-                if (kkDuzeltModal.uyari?.tip === 'ACILIS_KASA_FARK') {
+                const isDevir = kkDuzeltModal.uyari?.tip === 'ACILIS_KASA_FARK';
+                const fazla = isDevir ? farkNum > 0 : farkNum < 0;
+                if (isDevir) {
                   return (
                     <>
                       <option value="acilis_yanlis">🌅 Sabahçı kasa sayımı yanlış (bugünkü açılış)</option>
