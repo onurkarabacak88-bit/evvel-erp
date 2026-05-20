@@ -13284,6 +13284,73 @@ def truth_personel_skor(gun: int = Query(90, ge=7, le=365),
     return {"gun": gun, "toplam": len(rows), "kayitlar": rows}
 
 
+@router.get("/truth/tam-analiz/{sube_id}/{tarih}")
+def truth_tam_analiz(sube_id: str, tarih: str,
+                     ogrenme: bool = Query(False, description="Personel profilleri güncelle (apply mod)")):
+    """Kapsamlı tam analiz — kasa + stok + personel sorumluluk + kök neden + öğrenme motoru.
+
+    Tek çağrı ile günün tam resmini çizer:
+      - Kasa P&L her vardiya bazında
+      - 5 stok boyutu: ACILIS + URUN_AC − Evo − fire = beklenen KAPANIS
+      - Her personel için kasa farkı + stok sorumluluğu + risk skoru
+      - Kök neden analizi (sweethearting, nakit çekildi, kayıtsız ikram, …)
+      - Öğrenilmiş profil: personelin tipik sapması ile normalizasyon
+
+    ogrenme=true → vardiya sonunda Welford algoritmasıyla profil güncellenir."""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        _truth_tablo_garantile(cur)
+        try:
+            return _tm.tam_analiz(cur, sube_id, tarih, ogrenme_aktif=ogrenme)
+        except Exception as e:
+            log.exception("truth tam_analiz hata sube=%s tarih=%s: %s", sube_id, tarih, e)
+            raise HTTPException(500, str(e))
+
+
+@router.get("/truth/stok-akis/{sube_id}/{tarih}")
+def truth_stok_akis(sube_id: str, tarih: str):
+    """Stok akış tablosu — 5 boyut için ACILIS + URUN_AC − Evo − fire = beklenen KAPANIS.
+    varyans < 0 = STOK_ACIK (kayıtsız tüketim/ikram/hırsızlık)
+    varyans > 0 = STOK_FAZLA (Evo eksik kayıt?)"""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.stok_akis_tablosu(cur, sube_id, tarih)
+
+
+@router.get("/truth/personel-sorumluluk/{sube_id}/{tarih}")
+def truth_personel_sorumluluk(sube_id: str, tarih: str):
+    """Personel sorumluluk matrisi — kim hangi vardiyada kaç ₺ devir aldı/verdi.
+    Risk seviyesi: normal / orta / yuksek / kritik.
+    Öğrenilmiş tipik sapma ile normalizasyon yapılır."""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.personel_sorumluluk_matrisi(cur, sube_id, tarih)
+
+
+@router.get("/truth/ogrenme-profil/{personel_id}")
+def truth_ogrenme_profil(personel_id: str,
+                          sube_id: Optional[str] = Query(None)):
+    """Personel öğrenme profili — Welford algoritmasıyla hesaplanan tarihsel istatistikler.
+    kasa_fark_ort, kasa_fark_std, tipik_sapma (±2σ), anomali_oran, risk_skoru."""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    if not sube_id:
+        return {"hata": "sube_id gerekli"}
+    with db() as (conn, cur):
+        return _tm.ogrenme_profili_oku(cur, personel_id, sube_id)
+
+
 @router.get("/truth/iz/karar/{karar_id}")
 def truth_iz_karar(karar_id: str):
     """Bir karara bağlı izler (varsa)."""

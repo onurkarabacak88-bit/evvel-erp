@@ -2936,3 +2936,757 @@ def personel_davranis_sinyali(cur, gun: int = 30,
         -x["anomali_sayisi"]
     ))
     return {"gun": gun, "toplam": len(sonuc), "personeller": sonuc}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  TAM ANALİZ — KAPSAMLI MOTOR
+#  Kasa Akışı + Stok Akışı + Personel Sorumluluk + Kök Neden + Öğrenme
+# ════════════════════════════════════════════════════════════════════════════
+# Felsefe: Her ₺ ve her ürün birimi izlenir. Bir açık oluştuğunda "kim,
+# ne zaman, neden" sorusu matematiksel kanıtla yanıtlanır.
+# Öğrenme: Her personelin "tipik sapması" Welford online algoritmasıyla
+# öğrenilir; sapma tarihsel norma göre değerlendirilir.
+# ════════════════════════════════════════════════════════════════════════════
+
+_FIRE_TABLOLAR = ("fire_kayit", "fire_kayitlari", "stok_fire")
+
+ORT_FIYAT_MAP = {
+    "bardak_plastik": 50.0,
+    "bardak_karton":  60.0,
+    "redbull_soda":   45.0,
+    "pasta":          90.0,
+}
+
+
+def _fire_sorgula(cur, sube_id: str, tarih: str) -> Dict[str, float]:
+    """Fire/waste kayıtlarını sorgula. Tablo yoksa {} döner.
+    Alternatif: anlik_giderler'de fire/ziyan/bozulma kategorisi."""
+    for tablo in _FIRE_TABLOLAR:
+        try:
+            cur.execute(
+                f"SELECT * FROM {tablo} WHERE sube_id=%s AND tarih=%s::date",
+                (sube_id, tarih),
+            )
+            rows = [dict(r) for r in (cur.fetchall() or [])]
+            if rows:
+                fire: Dict[str, float] = {}
+                for r in rows:
+                    for boyut in BOYUTLAR:
+                        v = r.get(boyut) or r.get(f"{boyut}_adet") or r.get(f"{boyut}_fire")
+                        if v is not None:
+                            try:
+                                fire[boyut] = fire.get(boyut, 0) + float(v)
+                            except (TypeError, ValueError):
+                                pass
+                return fire
+        except Exception:
+            continue
+    try:
+        cur.execute(
+            """
+            SELECT kategori, COALESCE(tutar, 0) AS tutar
+            FROM anlik_giderler
+            WHERE sube=%s AND tarih=%s::date
+              AND LOWER(TRIM(COALESCE(kategori,''))) IN
+                  ('fire','fire_kayip','ziyan','bozulma','hurda','stok_fire')
+            """,
+            (sube_id, tarih),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+        if rows:
+            return {"_nakit_degeri": sum(float(r["tutar"] or 0) for r in rows)}
+    except Exception:
+        pass
+    return {}
+
+
+def stok_akis_tablosu(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
+    """5 boyut için tam stok akış tablosu.
+
+    Formül (her boyut):
+      ACILIS_stok + URUN_AC − Evo_satis − Evo_ikram − fire = beklenen_KAPANIS
+      varyans = gercek_KAPANIS − beklenen_KAPANIS
+
+    varyans > 0 : STOK_FAZLA (Evo eksik kayıt?)
+    varyans < 0 : STOK_ACIK  (kayıtsız tüketim / ikram / hırsızlık)
+    varyans = 0 : UYUMLU
+    """
+    cur.execute(
+        """SELECT meta FROM sube_operasyon_event
+           WHERE sube_id=%s AND tarih=%s::date AND tip='ACILIS' AND durum='tamamlandi'
+           ORDER BY cevap_ts DESC NULLS LAST LIMIT 1""",
+        (sube_id, tarih),
+    )
+    r = cur.fetchone()
+    acilis_stok = _meta_oku(dict(r)["meta"]).get("acilis_stok_sayim") or {} if r else {}
+
+    cur.execute(
+        """SELECT meta FROM sube_operasyon_event
+           WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
+           ORDER BY cevap_ts DESC NULLS LAST LIMIT 1""",
+        (sube_id, tarih),
+    )
+    r = cur.fetchone()
+    kapanis_raw = _meta_oku(dict(r)["meta"]) if r else None
+    kapanis_stok = kapanis_raw.get("kapanis_stok_sayim") or {} if kapanis_raw else None
+
+    # KONTROL event'lerinden ara sayım (zaman damgalı stok noktaları)
+    cur.execute(
+        """SELECT tip, cevap_ts, meta FROM sube_operasyon_event
+           WHERE sube_id=%s AND tarih=%s::date AND durum='tamamlandi'
+             AND tip LIKE 'KONTROL%%'
+           ORDER BY cevap_ts NULLS LAST""",
+        (sube_id, tarih),
+    )
+    kontrol_stok_list = []
+    for rr in (cur.fetchall() or []):
+        d = dict(rr)
+        m = _meta_oku(d.get("meta"))
+        ks = m.get("kontrol_stok_sayim")
+        if ks:
+            kontrol_stok_list.append({
+                "tip": d["tip"],
+                "saat": str(d["cevap_ts"])[:16] if d.get("cevap_ts") else "",
+                "stok": ks,
+            })
+
+    # URUN_AC (paket açma)
+    cur.execute(
+        "SELECT kalemler_json FROM urun_ac_taslak WHERE sube_id=%s AND tarih=%s::date AND durum='aktif'",
+        (sube_id, tarih),
+    )
+    urun_ac: Dict[str, float] = {}
+    for rr in (cur.fetchall() or []):
+        kj = dict(rr).get("kalemler_json")
+        if isinstance(kj, str):
+            try:
+                kj = json.loads(kj)
+            except Exception:
+                kj = {}
+        if isinstance(kj, dict):
+            for k, v in kj.items():
+                try:
+                    urun_ac[k] = urun_ac.get(k, 0) + float(v or 0)
+                except (TypeError, ValueError):
+                    pass
+
+    # Evo günlük grup satışı
+    evo_gruplar = _evo_sube_grup_satis(cur, sube_id, tarih)
+
+    # Fire
+    fire_kayitlar = _fire_sorgula(cur, sube_id, tarih)
+
+    # Her boyut hesapla
+    sonuclar: Dict[str, Dict] = {}
+    for boyut in BOYUTLAR:
+        if boyut == "kasa":
+            continue
+        acilis_v = _meta_boyut_topla(acilis_stok, boyut)
+        urun_ac_v = _meta_boyut_topla(urun_ac, boyut)
+
+        grup_adi_list = _BOYUT_EVO_GRUP.get(boyut) or []
+        evo_satis_v = sum(float(evo_gruplar.get(g, 0)) for g in grup_adi_list)
+        evo_ikram_v = 0.0  # Fiş bazlı detay gerekir — şimdilik 0
+        fire_v = float(fire_kayitlar.get(boyut, 0))
+
+        beklenen = acilis_v + urun_ac_v - evo_satis_v - evo_ikram_v - fire_v
+
+        if kapanis_stok is not None:
+            gercek = _meta_boyut_topla(kapanis_stok, boyut)
+            varyans = round(gercek - beklenen, 2)
+            if abs(varyans) < 1:
+                tani = "UYUMLU"
+            elif varyans > 0:
+                tani = "STOK_FAZLA"
+            else:
+                tani = "STOK_ACIK"
+        else:
+            gercek = None
+            varyans = None
+            tani = "KAPANIS_YOK"
+
+        sonuclar[boyut] = {
+            "acilis": round(acilis_v, 2),
+            "urun_ac": round(urun_ac_v, 2),
+            "evo_satis": round(evo_satis_v, 2),
+            "evo_ikram": round(evo_ikram_v, 2),
+            "fire": round(fire_v, 2),
+            "beklenen_kapanis": round(beklenen, 2),
+            "gercek_kapanis": round(gercek, 2) if gercek is not None else None,
+            "varyans": varyans,
+            "tani": tani,
+        }
+
+    return {
+        "sube_id": sube_id,
+        "tarih": tarih,
+        "boyutlar": sonuclar,
+        "kontrol_stok_list": kontrol_stok_list,
+        "fire_kayitlar": fire_kayitlar,
+        "kapanis_tamamlandi": kapanis_stok is not None,
+    }
+
+
+def personel_sorumluluk_matrisi(cur, sube_id: str, tarih: str,
+                                  vardiya_data: Optional[Dict] = None,
+                                  stok_data: Optional[Dict] = None) -> List[Dict]:
+    """Her personelin vardiya bazlı kasa + stok sorumluluk hesabı.
+
+    Kasa:  devraldı + Evo_nakit − gider − ara_teslim = beklenen_devir
+           gerçek_devir − beklenen_devir = kasa_fark (kim, ne kadar, ne zaman)
+
+    Stok:  gün sonu kapanış sorumlusu = son vardiyacı
+           KONTROL event'leri varsa ara sorumluluk tespit edilir.
+
+    Risk skoru: |kasa_fark_ort| + anomali_oran × ağırlık
+    """
+    if vardiya_data is None:
+        vardiya_data = vardiya_bazli_uzlasma(cur, sube_id, tarih, evo_dahil=True)
+    if stok_data is None:
+        stok_data = stok_akis_tablosu(cur, sube_id, tarih)
+
+    vardiyalar = vardiya_data.get("vardiyalar") or []
+    stok_boyutlar = stok_data.get("boyutlar") or {}
+    stok_aciklar = {b: d for b, d in stok_boyutlar.items() if d.get("tani") == "STOK_ACIK"}
+    kontrol_stok = stok_data.get("kontrol_stok_list") or []
+
+    # Personel bazlı topla
+    personel_map: Dict[str, Dict] = {}
+    for v in vardiyalar:
+        pid = v.get("personel_id") or v.get("personel_ad") or "?"
+        pad = v.get("personel_ad") or pid
+        ps = personel_map.setdefault(pid, {
+            "personel_id": pid,
+            "ad": pad,
+            "vardiya_sayisi": 0,
+            "kasa_fark_toplam": 0.0,
+            "kasa_fark_abs": 0.0,
+            "evo_nakit_toplam": 0.0,
+            "evo_fis_sayisi": 0,
+            "anomaliler": [],
+            "stok_sorumluluk": {},
+            "risk_seviye": "normal",
+        })
+        ps["vardiya_sayisi"] += 1
+        fark = v.get("fark_kasa")
+        if fark is not None:
+            ps["kasa_fark_toplam"] = round(ps["kasa_fark_toplam"] + fark, 2)
+            ps["kasa_fark_abs"] = round(ps["kasa_fark_abs"] + abs(fark), 2)
+        ps["evo_nakit_toplam"] = round(
+            ps["evo_nakit_toplam"] + float(v.get("evo_nakit_satis") or 0), 2)
+        ps["evo_fis_sayisi"] += int(v.get("evo_fis_sayisi") or 0)
+        if v.get("tani") not in ("UYUMLU", "YETERSIZ_VERI"):
+            ps["anomaliler"].append({
+                "vardiya_no": v.get("no"),
+                "dilim": v.get("tip_dilimi"),
+                "kasa_fark": fark,
+                "tani": v.get("tani"),
+                "sure_dk": v.get("sure_dk"),
+            })
+
+    # Stok sorumluluğu: son vardiyacı KAPANIS'tan sorumlu
+    if vardiyalar and stok_aciklar:
+        son = vardiyalar[-1]
+        son_pid = son.get("personel_id") or son.get("personel_ad") or "?"
+        if son_pid in personel_map:
+            for boyut, d in stok_aciklar.items():
+                personel_map[son_pid]["stok_sorumluluk"][boyut] = {
+                    "varyans": d["varyans"],
+                    "tani": d["tani"],
+                    "sebep": "Kapanış sayımı sorumlusu",
+                }
+
+    # KONTROL stok noktaları ile orta vardiya sorumluluğu
+    if kontrol_stok and len(vardiyalar) >= 2:
+        for ks in kontrol_stok:
+            ks_stok = ks.get("stok") or {}
+            ks_saat = ks.get("saat", "")
+            for v in vardiyalar:
+                if v.get("bitis_ts", "")[:16] == ks_saat:
+                    pid = v.get("personel_id") or v.get("personel_ad") or "?"
+                    if pid in personel_map:
+                        for boyut in BOYUTLAR:
+                            if boyut == "kasa":
+                                continue
+                            stok_d = stok_boyutlar.get(boyut) or {}
+                            beklenen_k = stok_d.get("beklenen_kapanis")
+                            ks_v = _meta_boyut_topla(ks_stok, boyut)
+                            if beklenen_k is not None and abs(ks_v - beklenen_k) > 1:
+                                personel_map[pid]["stok_sorumluluk"].setdefault(boyut, {
+                                    "varyans": round(ks_v - beklenen_k, 2),
+                                    "tani": "KONTROL_ANLIK",
+                                    "sebep": f"KONTROL {ks_saat} sorumlusu",
+                                })
+                    break
+
+    # Risk seviyesi + öğrenilmiş eşik
+    for pid, ps in personel_map.items():
+        n = ps["vardiya_sayisi"]
+        kasa_fark_ort = ps["kasa_fark_toplam"] / n if n > 0 else 0
+        anomali_oran = len(ps["anomaliler"]) / n if n > 0 else 0
+
+        # Öğrenilmiş profil var mı?
+        profil = ogrenme_profili_oku(cur, pid, sube_id)
+        tipik_sapma = float(profil.get("tipik_sapma") or 5.0) if profil.get("var_mi") else 5.0
+        esik = max(1.0, tipik_sapma)  # Personelin kendi "normalı"
+
+        ps["kasa_fark_ort"] = round(kasa_fark_ort, 2)
+        ps["anomali_oran_yuzde"] = round(anomali_oran * 100, 1)
+        ps["ogrenilmis_tipik_sapma"] = round(tipik_sapma, 2)
+        ps["ogrenilmis_risk_skoru"] = profil.get("risk_skoru") if profil.get("var_mi") else None
+
+        has_stok_acik = bool(ps["stok_sorumluluk"])
+        if abs(kasa_fark_ort) > max(esik * 3, 50) or anomali_oran >= 0.5:
+            ps["risk_seviye"] = "kritik"
+        elif abs(kasa_fark_ort) > max(esik * 2, 20) or anomali_oran >= 0.25 or (has_stok_acik and abs(kasa_fark_ort) > esik):
+            ps["risk_seviye"] = "yuksek"
+        elif abs(kasa_fark_ort) > esik or has_stok_acik:
+            ps["risk_seviye"] = "orta"
+
+    return sorted(personel_map.values(), key=lambda x: (
+        {"kritik": 0, "yuksek": 1, "orta": 2, "normal": 3}.get(x["risk_seviye"], 4),
+        -abs(x["kasa_fark_abs"])
+    ))
+
+
+def kok_neden_analiz(kasa_fark: float,
+                     stok_boyutlar: Dict[str, Dict],
+                     evo_nakit: float,
+                     evo_ikram_var: bool = False) -> List[Dict]:
+    """Kasa + stok varyansları verildiğinde olası kök nedenleri öncelik sırası ile üret.
+
+    Karar matrisi (NRF + retail forensics):
+      kasa_acik + stok_acik + sayisal_esleme → SWEETHEARTING / ZIMMET
+      kasa_acik + stok_tamam                → NAKIT_CEKILDI (satış kasaya girmedi)
+      kasa_tamam + stok_acik                → KAYITSIZ_IKRAM / FIRE
+      kasa_fazla + stok_acik                → AKSAM_ZIMMET_POZISYON
+      stok_fazla + kasa_acik                → POS_FANTOM_SATIS
+    """
+    sebepler: List[Dict] = []
+
+    stok_aciklar = {b: d for b, d in stok_boyutlar.items()
+                    if d.get("tani") == "STOK_ACIK" and d.get("varyans") is not None}
+    stok_fazlalar = {b: d for b, d in stok_boyutlar.items()
+                     if d.get("tani") == "STOK_FAZLA"}
+
+    # Teorik kayıp tutarı (stok açığı × birim fiyat)
+    teorik_kayip = sum(
+        abs(float(d["varyans"])) * ORT_FIYAT_MAP.get(b, 0)
+        for b, d in stok_aciklar.items()
+    )
+
+    # 1. Kasa açık + stok açık + sayısal eşleşme → sweethearting/zimmet
+    if kasa_fark < -1 and stok_aciklar and teorik_kayip > 0:
+        uyum = min(abs(kasa_fark), teorik_kayip) / max(abs(kasa_fark), teorik_kayip)
+        stok_ozet = ", ".join(
+            f"{b} {abs(float(d['varyans'])):.0f} adet" for b, d in stok_aciklar.items()
+        )
+        if uyum >= 0.65:
+            sebepler.append({
+                "sira": 1,
+                "tip": "SWEETHEARTING_ZIMMET",
+                "guven": round(min(95, uyum * 100), 0),
+                "aciklama": (
+                    f"Kasa ₺{abs(kasa_fark):.0f} açık + stok açığı ({stok_ozet}) "
+                    f"≈ ₺{teorik_kayip:.0f} teorik kayıp (uyum %{uyum*100:.0f}). "
+                    "Ürün satıldı, para kasaya konmadı veya kasadan çekildi."
+                ),
+                "aksiyon": "Kasa Baskını + kamera inceleme + personel sorgulama",
+            })
+        else:
+            sebepler.append({
+                "sira": 2,
+                "tip": "KASA_STOK_BIRLIKTE_ACIK",
+                "guven": 55.0,
+                "aciklama": (
+                    f"Kasa ₺{abs(kasa_fark):.0f} açık + stok açığı var ama "
+                    f"sayısal eşleşme zayıf (%{uyum*100:.0f}). "
+                    "Sayım hatası veya fire olabilir."
+                ),
+                "aksiyon": "3. kişi sayım + fire beyanı sor",
+            })
+
+    # 2. Kasa açık + stok tamam → Nakit çekildi
+    if kasa_fark < -1 and not stok_aciklar and evo_nakit > 0:
+        sebepler.append({
+            "sira": 2 if not sebepler else 3,
+            "tip": "NAKIT_CEKILDI",
+            "guven": 65.0,
+            "aciklama": (
+                f"Kasa ₺{abs(kasa_fark):.0f} açık ama stok tutarlı. "
+                f"Evo'da ₺{evo_nakit:.0f} nakit satış kayıtlı. "
+                "Nakit satış gerçekleşti ama kasaya girmeden alındı."
+            ),
+            "aksiyon": "Kasa Baskını + Z raporu vs nakit fişleri karşılaştır",
+        })
+
+    # 3. Kasa tamam + stok açık → kayıtsız ikram veya fire
+    if abs(kasa_fark) <= 5 and stok_aciklar:
+        stok_ozet = ", ".join(
+            f"{b} -{abs(float(d['varyans'])):.0f}" for b, d in stok_aciklar.items()
+        )
+        sebep_tip = "KAYITSIZ_IKRAM_FIRE" if not evo_ikram_var else "IKRAM_POLICY_IHLALI"
+        sebepler.append({
+            "sira": 3,
+            "tip": sebep_tip,
+            "guven": 60.0,
+            "aciklama": (
+                f"Kasa normal ama stok açığı var: {stok_ozet}. "
+                "Ürün kullanıldı ama kaydedilmedi — ikram, fire veya kişisel tüketim."
+            ),
+            "aksiyon": "İkram defteri kontrol + fire beyanı sor + personel ifadesi al",
+        })
+
+    # 4. Kasa fazla + stok açık → Akşam zimmet pozisyonu
+    if kasa_fark > 5 and stok_aciklar:
+        sebepler.append({
+            "sira": 4,
+            "tip": "AKSAM_ZIMMET_POZISYON",
+            "guven": 70.0,
+            "aciklama": (
+                f"Kasa ₺{kasa_fark:.0f} FAZLA + stok açık. "
+                "Akşamcı kasayı yüksek beyan etti (yarın zimmet için "
+                "'hazırlık pozisyonu' oluşturuyor olabilir)."
+            ),
+            "aksiyon": "3. kişi sayım + akşamcı performans inceleme + 30 gün trend bak",
+        })
+
+    # 5. Stok fazla + kasa açık → POS fantom satış
+    if kasa_fark < -1 and stok_fazlalar:
+        sebepler.append({
+            "sira": 5,
+            "tip": "POS_FANTOM_SATIS",
+            "guven": 55.0,
+            "aciklama": (
+                "Kasa açık ama stok beklenenden fazla kaldı — "
+                "Evo'ya satış girilmiş ama ürün verilmemiş "
+                "(void sonrası iade veya fantom kayıt?)."
+            ),
+            "aksiyon": "Evo void/iade loglarını kontrol et + POS yetki denetimi",
+        })
+
+    # 6. Sadece kasa açık, Evo yok → kayıtsız satış
+    if kasa_fark < -1 and evo_nakit == 0 and not stok_aciklar:
+        sebepler.append({
+            "sira": 6,
+            "tip": "EVO_KAYDI_YOK",
+            "guven": 45.0,
+            "aciklama": (
+                f"Kasa ₺{abs(kasa_fark):.0f} açık ama Evo'da nakit satış kaydı yok. "
+                "Evo erişim sorunu mu, yoksa satış POS'a hiç girilmedi mi?"
+            ),
+            "aksiyon": "Evo bağlantı kontrolü + manuel satış defteri var mı?",
+        })
+
+    if not sebepler:
+        sebepler.append({
+            "sira": 99,
+            "tip": "BELIRSIZ",
+            "guven": 20.0,
+            "aciklama": "Mevcut veri ile kök neden tespit edilemedi. Ek sayım ve doğrulama gerekli.",
+            "aksiyon": "3. kişi sayım + ERP log inceleme",
+        })
+
+    return sorted(sebepler, key=lambda x: x["sira"])
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  ÖĞRENME MOTORU — Personel bazlı adaptif eşik
+#  Algoritma: Welford online (sayısal kararlı, O(1) güncelleme)
+#  Tablo: truth_motor_personel_profil (otomatik oluşturulur)
+# ════════════════════════════════════════════════════════════════════════════
+
+_PROFIL_DDL = """
+CREATE TABLE IF NOT EXISTS truth_motor_personel_profil (
+    personel_id    TEXT NOT NULL,
+    sube_id        TEXT NOT NULL,
+    guncelleme_n   INT  DEFAULT 0,
+    kasa_fark_ort  FLOAT DEFAULT 0,
+    kasa_fark_m2   FLOAT DEFAULT 0,
+    anomali_sayisi INT  DEFAULT 0,
+    toplam_vardiya INT  DEFAULT 0,
+    risk_skoru     FLOAT DEFAULT 50,
+    son_guncelleme DATE,
+    PRIMARY KEY (personel_id, sube_id)
+)
+"""
+
+
+def _welford(n: int, mean: float, m2: float, x: float):
+    """Welford online algoritması: (n, mean, M2) → güncel istatistik."""
+    n += 1
+    delta = x - mean
+    mean += delta / n
+    delta2 = x - mean
+    m2 += delta * delta2
+    return n, mean, m2
+
+
+def ogrenme_profili_guncelle(cur, personel_id: str, sube_id: str,
+                               kasa_fark: float, tani: str) -> Dict:
+    """Bir vardiya tamamlandığında personel profilini güncelle.
+
+    Welford online: kasa_fark ortalaması + varyansı = personelin "normal sapma" aralığı.
+    risk_skoru = f(anomali_oran, |kasa_fark_ort|) → 0 temiz, 100 kritik.
+    """
+    if not personel_id or personel_id == "?":
+        return {"guncellendi": False, "sebep": "personel_id yok"}
+    try:
+        cur.execute(_PROFIL_DDL)
+    except Exception:
+        pass
+    try:
+        cur.execute(
+            "SELECT * FROM truth_motor_personel_profil WHERE personel_id=%s AND sube_id=%s",
+            (personel_id, sube_id),
+        )
+        profil = dict(cur.fetchone() or {})
+    except Exception as e:
+        return {"guncellendi": False, "hata": str(e)}
+
+    n = int(profil.get("guncelleme_n") or 0)
+    mean = float(profil.get("kasa_fark_ort") or 0)
+    m2 = float(profil.get("kasa_fark_m2") or 0)
+    anomali_s = int(profil.get("anomali_sayisi") or 0)
+    toplam_v = int(profil.get("toplam_vardiya") or 0)
+
+    n, mean, m2 = _welford(n, mean, m2, kasa_fark)
+    toplam_v += 1
+    if tani not in ("UYUMLU", "YETERSIZ_VERI"):
+        anomali_s += 1
+
+    std = (m2 / (n - 1)) ** 0.5 if n > 1 else 0.0
+    anomali_oran = anomali_s / toplam_v if toplam_v > 0 else 0.0
+    risk = min(99.0, max(1.0,
+        50.0 * anomali_oran + min(50.0, abs(mean) / 2.0)
+    ))
+
+    try:
+        cur.execute(
+            """
+            INSERT INTO truth_motor_personel_profil
+                (personel_id, sube_id, guncelleme_n, kasa_fark_ort, kasa_fark_m2,
+                 anomali_sayisi, toplam_vardiya, risk_skoru, son_guncelleme)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,CURRENT_DATE)
+            ON CONFLICT (personel_id, sube_id) DO UPDATE SET
+                guncelleme_n   = EXCLUDED.guncelleme_n,
+                kasa_fark_ort  = EXCLUDED.kasa_fark_ort,
+                kasa_fark_m2   = EXCLUDED.kasa_fark_m2,
+                anomali_sayisi = EXCLUDED.anomali_sayisi,
+                toplam_vardiya = EXCLUDED.toplam_vardiya,
+                risk_skoru     = EXCLUDED.risk_skoru,
+                son_guncelleme = EXCLUDED.son_guncelleme
+            """,
+            (personel_id, sube_id, n, round(mean, 4), round(m2, 4),
+             anomali_s, toplam_v, round(risk, 2)),
+        )
+    except Exception as e:
+        return {"guncellendi": False, "hata": str(e)}
+
+    return {
+        "guncellendi": True,
+        "personel_id": personel_id,
+        "guncelleme_n": n,
+        "kasa_fark_ort": round(mean, 2),
+        "kasa_fark_std": round(std, 2),
+        "tipik_sapma": round(std * 2, 2),   # ±2σ = "bu personel için normal"
+        "anomali_oran_yuzde": round(anomali_oran * 100, 1),
+        "risk_skoru": round(risk, 2),
+    }
+
+
+def ogrenme_profili_oku(cur, personel_id: str, sube_id: str) -> Dict:
+    """Personelin öğrenilmiş profilini oku. Yoksa var_mi=False döner."""
+    try:
+        cur.execute(_PROFIL_DDL)
+    except Exception:
+        pass
+    try:
+        cur.execute(
+            "SELECT * FROM truth_motor_personel_profil WHERE personel_id=%s AND sube_id=%s",
+            (personel_id, sube_id),
+        )
+        r = cur.fetchone()
+        if not r:
+            return {"var_mi": False}
+        d = dict(r)
+        n = int(d.get("guncelleme_n") or 0)
+        m2 = float(d.get("kasa_fark_m2") or 0)
+        std = (m2 / (n - 1)) ** 0.5 if n > 1 else 0.0
+        toplam_v = int(d.get("toplam_vardiya") or 1)
+        return {
+            "var_mi": True,
+            "personel_id": personel_id,
+            "guncelleme_n": n,
+            "kasa_fark_ort": round(float(d.get("kasa_fark_ort") or 0), 2),
+            "kasa_fark_std": round(std, 2),
+            "tipik_sapma": round(std * 2, 2),
+            "anomali_oran_yuzde": round(
+                int(d.get("anomali_sayisi") or 0) / toplam_v * 100, 1
+            ),
+            "risk_skoru": round(float(d.get("risk_skoru") or 50), 2),
+            "son_guncelleme": str(d.get("son_guncelleme") or ""),
+        }
+    except Exception as e:
+        return {"var_mi": False, "hata": str(e)}
+
+
+def tam_analiz(cur, sube_id: str, tarih: str,
+               ogrenme_aktif: bool = False) -> Dict[str, Any]:
+    """Master tam analiz — tek çağrı ile kapsamlı tanı.
+
+    Çalışma sırası:
+      1. vardiya_bazli_uzlasma  → kasa P&L vardiya bazlı
+      2. stok_akis_tablosu      → 5 boyut stok akışı + fire
+      3. personel_sorumluluk_matrisi → kim, ne kadar, neden
+      4. kok_neden_analiz       → kausal zincir + öncelikli sebepler
+      5. ogrenme profilleri oku → tarihsel bağlam
+      6. ogrenme profilleri güncelle (ogrenme_aktif=True ise)
+
+    Args:
+        ogrenme_aktif: True ise vardiya sonunda profil güncellenir (uygulama modunda).
+
+    Returns: Kapsamlı rapor dict.
+    """
+    # 1. Kasa vardiya P&L
+    try:
+        vardiya_data = vardiya_bazli_uzlasma(cur, sube_id, tarih, evo_dahil=True)
+    except Exception as e:
+        log.warning("tam_analiz vardiya hata: %s", e)
+        vardiya_data = {"vardiyalar": [], "uyari": str(e)}
+
+    # 2. Stok akış tablosu
+    try:
+        stok_data = stok_akis_tablosu(cur, sube_id, tarih)
+    except Exception as e:
+        log.warning("tam_analiz stok hata: %s", e)
+        stok_data = {"boyutlar": {}, "uyari": str(e)}
+
+    # 3. Personel sorumluluk matrisi
+    try:
+        personel_sorumlu = personel_sorumluluk_matrisi(
+            cur, sube_id, tarih,
+            vardiya_data=vardiya_data, stok_data=stok_data,
+        )
+    except Exception as e:
+        log.warning("tam_analiz personel hata: %s", e)
+        personel_sorumlu = []
+
+    # 4. Özet metrikler
+    vardiyalar = vardiya_data.get("vardiyalar") or []
+    evo_nakit_toplam = sum(float(v.get("evo_nakit_satis") or 0) for v in vardiyalar)
+    kasa_fark_toplam = sum(
+        float(v.get("fark_kasa") or 0) for v in vardiyalar
+        if v.get("fark_kasa") is not None
+    )
+    stok_boyutlar = stok_data.get("boyutlar") or {}
+    stok_acik_sayisi = sum(1 for d in stok_boyutlar.values() if d.get("tani") == "STOK_ACIK")
+    stok_aciklar_detay = {b: d for b, d in stok_boyutlar.items() if d.get("tani") == "STOK_ACIK"}
+
+    # 5. Kök neden analizi
+    try:
+        kok_nedenler = kok_neden_analiz(
+            kasa_fark=kasa_fark_toplam,
+            stok_boyutlar=stok_boyutlar,
+            evo_nakit=evo_nakit_toplam,
+        )
+    except Exception as e:
+        log.warning("tam_analiz kok_neden hata: %s", e)
+        kok_nedenler = [{"tip": "HATA", "aciklama": str(e)}]
+
+    # 6. Öğrenilmiş profiller
+    profiller: Dict[str, Dict] = {}
+    for ps in personel_sorumlu:
+        pid = ps.get("personel_id")
+        if pid and pid != "?":
+            try:
+                profil = ogrenme_profili_oku(cur, pid, sube_id)
+                if profil.get("var_mi"):
+                    profiller[pid] = profil
+            except Exception:
+                pass
+
+    # 7. Öğrenme güncelleme (ogrenme_aktif=True ise)
+    ogrenme_log: Dict[str, Any] = {}
+    if ogrenme_aktif:
+        for v in vardiyalar:
+            pid = v.get("personel_id") or v.get("personel_ad")
+            if pid:
+                try:
+                    r = ogrenme_profili_guncelle(
+                        cur, pid, sube_id,
+                        kasa_fark=float(v.get("fark_kasa") or 0),
+                        tani=v.get("tani") or "YETERSIZ_VERI",
+                    )
+                    if r.get("guncellendi"):
+                        ogrenme_log[pid] = r
+                except Exception:
+                    pass
+
+    # 8. Genel alarm seviyesi
+    has_kritik = any(ps.get("risk_seviye") == "kritik" for ps in personel_sorumlu)
+    has_yuksek = any(ps.get("risk_seviye") == "yuksek" for ps in personel_sorumlu)
+    birincil_koken = kok_nedenler[0].get("tip", "") if kok_nedenler else ""
+
+    if has_kritik or birincil_koken in ("SWEETHEARTING_ZIMMET",):
+        alarm = "kritik"
+    elif has_yuksek or birincil_koken in ("NAKIT_CEKILDI", "AKSAM_ZIMMET_POZISYON"):
+        alarm = "yuksek"
+    elif stok_acik_sayisi > 0 or abs(kasa_fark_toplam) > 5:
+        alarm = "orta"
+    else:
+        alarm = "dusuk"
+
+    # 9. Özet açıklama
+    en_riskli = personel_sorumlu[0] if personel_sorumlu else {}
+    en_riskli_ad = en_riskli.get("ad", "?")
+    ozet_parcalari = []
+    if abs(kasa_fark_toplam) > 1:
+        ozet_parcalari.append(f"Kasa: ₺{kasa_fark_toplam:+.0f}")
+    if stok_acik_sayisi > 0:
+        stok_str = ", ".join(
+            f"{b} {abs(float(d['varyans'])):.0f}↓"
+            for b, d in stok_aciklar_detay.items()
+        )
+        ozet_parcalari.append(f"Stok açığı: {stok_str}")
+    if birincil_koken and birincil_koken != "BELIRSIZ":
+        ozet_parcalari.append(f"Kök neden: {birincil_koken}")
+    if en_riskli.get("risk_seviye") not in (None, "normal"):
+        ozet_parcalari.append(f"En riskli: {en_riskli_ad} ({en_riskli.get('risk_seviye')})")
+    ozet = " | ".join(ozet_parcalari) or "Tüm kontroller uyumlu"
+
+    return {
+        "sube_id": sube_id,
+        "tarih": tarih,
+        "alarm_seviyesi": alarm,
+        "ozet": ozet,
+        # Kasa özeti
+        "kasa_ozet": {
+            "toplam_fark": round(kasa_fark_toplam, 2),
+            "evo_nakit_toplam": round(evo_nakit_toplam, 2),
+            "vardiya_sayisi": len(vardiyalar),
+            "anomali_vardiya": sum(
+                1 for v in vardiyalar
+                if v.get("tani") not in ("UYUMLU", "YETERSIZ_VERI")
+            ),
+        },
+        # Stok özeti
+        "stok_ozet": {
+            "acik_boyut_sayisi": stok_acik_sayisi,
+            "aciklar": {b: d["varyans"] for b, d in stok_aciklar_detay.items()},
+            "fire_kayitlar": stok_data.get("fire_kayitlar") or {},
+            "kapanis_tamamlandi": stok_data.get("kapanis_tamamlandi"),
+        },
+        # Personel sorumluluk (öncelik sıralı)
+        "personel_sorumlu": personel_sorumlu,
+        # Kök neden (öncelik sıralı)
+        "kok_nedenler": kok_nedenler,
+        # Öğrenilmiş profiller
+        "personel_profiller": profiller,
+        # Öğrenme güncelleme
+        "ogrenme_aktif": ogrenme_aktif,
+        "ogrenme_log": ogrenme_log,
+        # Ham veriler
+        "vardiya_data": vardiya_data,
+        "stok_data": stok_data,
+    }
