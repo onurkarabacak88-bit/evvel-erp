@@ -299,7 +299,13 @@ export default function TruthMotor() {
       {/* AÇIK GÖREVLER */}
       <AcikGorevler refreshKey={`${tarih}-${Object.keys(detay || {}).join('')}`} />
 
-      {/* PERSONEL SKORU */}
+      {/* VARDIYA P&L (Sprint A) */}
+      <VardiyaPL tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
+
+      {/* PERSONEL DAVRANIŞ SİNYALİ (Sprint A — velocity/iskonto/fiş tutarı) */}
+      <PersonelDavranis />
+
+      {/* PERSONEL SKORU (eski Z-skor — anomali bazlı) */}
       <PersonelSkor />
 
       {/* ŞUBE KARTLARI */}
@@ -450,6 +456,253 @@ export default function TruthMotor() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  SPRINT A — VARDIYA P&L + PERSONEL DAVRANIŞ SİNYALİ
+// ════════════════════════════════════════════════════════════════════════════
+
+function VardiyaPL({ tarih, subeler }) {
+  const [secSubeId, setSecSubeId] = useState('');
+  const [vData, setVData] = useState(null);
+  const [yukleniyor, setYukleniyor] = useState(false);
+  const [hata, setHata] = useState('');
+
+  // İlk şubeyi otomatik seç
+  useEffect(() => {
+    if (!secSubeId && subeler.length > 0) setSecSubeId(subeler[0].id);
+  }, [subeler, secSubeId]);
+
+  const yukle = useCallback(async () => {
+    if (!secSubeId || !tarih) return;
+    setYukleniyor(true); setHata('');
+    try {
+      const d = await fetchJson(`${API}/api/ops/truth/vardiya-pl/${secSubeId}/${tarih}`);
+      setVData(d);
+    } catch (e) {
+      setHata(String(e.message || e));
+      setVData(null);
+    } finally {
+      setYukleniyor(false);
+    }
+  }, [secSubeId, tarih]);
+
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const vardiyalar = vData?.vardiyalar || [];
+
+  return (
+    <div style={{ margin: '24px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>🕒 Vardiya Bazlı Kasa P&L</h3>
+        <select className="input" value={secSubeId} onChange={(e) => setSecSubeId(e.target.value)}
+          style={{ fontSize: 12, padding: '3px 8px' }}>
+          {subeler.map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
+        </select>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>{tarih}</span>
+        <button className="btn btn-sm" onClick={yukle} style={{ fontSize: 11 }}>↻</button>
+        {vData?.event_sayisi != null && (
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
+            {vData.event_sayisi} event · {vardiyalar.length} vardiya
+          </span>
+        )}
+      </div>
+
+      {hata && <div className="card" style={{ padding: 10, color: '#fca5a5', fontSize: 12 }}>⚠️ {hata}</div>}
+      {yukleniyor && <div className="card" style={{ padding: 12, textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>Yükleniyor…</div>}
+
+      {!yukleniyor && vardiyalar.length === 0 && (
+        <div className="card" style={{ padding: 16, textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>
+          {vData?.uyari || 'Vardiya verisi yok'}
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gap: 8 }}>
+        {vardiyalar.map((v) => {
+          const tani = v.tani || 'UYUMLU';
+          const renk = tani === 'UYUMLU' ? '#86efac'
+                     : tani === 'YETERSIZ_VERI' ? 'var(--text3)'
+                     : tani === 'VARDIYA_KASA_FAZLA' ? '#fbbf24'
+                     : '#fca5a5';
+          const bg = tani === 'UYUMLU' ? 'rgba(34,197,94,0.08)'
+                   : tani === 'YETERSIZ_VERI' ? 'rgba(120,120,120,0.08)'
+                   : tani === 'VARDIYA_KASA_FAZLA' ? 'rgba(245,158,11,0.10)'
+                   : 'rgba(220,38,38,0.10)';
+          return (
+            <div key={v.no} className="card" style={{
+              padding: '10px 14px', background: bg, borderLeft: `4px solid ${renk}`,
+              display: 'grid', gridTemplateColumns: '130px 180px 1fr 200px', gap: 12, alignItems: 'center',
+            }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700 }}>Vardiya #{v.no}</div>
+                <div style={{ fontSize: 10, color: 'var(--text3)' }}>{v.tip_dilimi} · {v.sure_dk}dk</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600 }}>{v.personel_ad || v.personel_id || '?'}</div>
+                <div style={{ fontSize: 10, color: 'var(--text3)' }}>
+                  {v.baslangic_ts ? v.baslangic_ts.slice(11, 16) : '—'} → {v.bitis_ts ? v.bitis_ts.slice(11, 16) : '—'}
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, fontSize: 11 }}>
+                <PLCell label="Baş Kasa" deger={v.baslangic_kasa} />
+                <PLCell label="Bit Kasa" deger={v.bitis_kasa} />
+                <PLCell label="Evo Nakit" deger={v.evo_nakit_satis} />
+                <PLCell label="Fiş" deger={v.evo_fis_sayisi} para={false} />
+                <PLCell label="Gider" deger={v.giderler} />
+                <PLCell label="Ara Teslim" deger={v.ara_teslim} />
+                <PLCell label="Teslim" deger={v.teslim} />
+                <PLCell label="Devir" deger={v.devir} />
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 10, color: 'var(--text3)' }}>Beklenen / Fark</div>
+                <div style={{ fontSize: 11, fontFamily: 'monospace' }}>
+                  {Number(v.beklenen_kasa || 0).toFixed(2)} ₺
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: renk, fontFamily: 'monospace' }}>
+                  {v.fark_kasa != null ? (v.fark_kasa > 0 ? '+' : '') + Number(v.fark_kasa).toFixed(2) : '—'} ₺
+                </div>
+                <div style={{ fontSize: 10, fontWeight: 600, color: renk }}>{tani}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Personel özet */}
+      {vData?.personel_ozet && Object.keys(vData.personel_ozet).length > 0 && (
+        <div className="card" style={{ marginTop: 10, padding: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 8 }}>
+            👥 Personel Özet (bu gün)
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 }}>
+            {Object.entries(vData.personel_ozet).map(([pid, po]) => {
+              const fark = Number(po.kasa_fark_toplam || 0);
+              const farkRenk = Math.abs(fark) < 1 ? '#86efac' : fark < 0 ? '#fca5a5' : '#fbbf24';
+              return (
+                <div key={pid} style={{ padding: 8, borderRadius: 4, background: 'rgba(255,255,255,0.03)' }}>
+                  <div style={{ fontSize: 12, fontWeight: 600 }}>{po.ad}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text3)' }}>
+                    {po.vardiya_sayisi} vardiya · {po.fis_sayisi} fiş · {po.anomali_sayisi} anomali
+                  </div>
+                  <div style={{ fontSize: 13, fontFamily: 'monospace', fontWeight: 700, color: farkRenk, marginTop: 2 }}>
+                    {fark > 0 ? '+' : ''}{fark.toFixed(2)} ₺
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PLCell({ label, deger, para = true }) {
+  return (
+    <div>
+      <div style={{ fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 600 }}>
+        {deger == null ? '—' : (para ? Number(deger).toFixed(2) + ' ₺' : String(deger))}
+      </div>
+    </div>
+  );
+}
+
+function PersonelDavranis() {
+  const [gun, setGun] = useState(30);
+  const [rows, setRows] = useState([]);
+  const [yukleniyor, setYukleniyor] = useState(false);
+
+  const yukle = useCallback(async () => {
+    setYukleniyor(true);
+    try {
+      const d = await fetchJson(`${API}/api/ops/truth/personel-davranis?gun=${gun}`);
+      setRows(d?.personeller || []);
+    } catch (_) {} finally { setYukleniyor(false); }
+  }, [gun]);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  if (!yukleniyor && rows.length === 0) {
+    return (
+      <div style={{ margin: '24px 0' }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 8px' }}>📊 Personel Davranış Sinyali (Sprint A)</h3>
+        <div className="card" style={{ padding: 16, textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>
+          Son {gun} günde vardiya verisi yok
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ margin: '24px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>📊 Personel Davranış Sinyali</h3>
+        <select className="input" value={gun} onChange={(e) => setGun(Number(e.target.value))}
+          style={{ fontSize: 12, padding: '3px 8px' }}>
+          <option value={7}>Son 7 gün</option>
+          <option value={14}>Son 14 gün</option>
+          <option value={30}>Son 30 gün</option>
+          <option value={60}>Son 60 gün</option>
+        </select>
+        <button className="btn btn-sm" onClick={yukle} style={{ fontSize: 11 }}>↻</button>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>{rows.length} personel</span>
+      </div>
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead style={{ background: 'rgba(255,255,255,0.04)' }}>
+            <tr>
+              <th style={th}>Personel</th>
+              <th style={th}>Seviye</th>
+              <th style={{ ...th, textAlign: 'right' }}>Vardiya</th>
+              <th style={{ ...th, textAlign: 'right' }}>Fiş</th>
+              <th style={{ ...th, textAlign: 'right' }}>Ort. Fiş ₺</th>
+              <th style={{ ...th, textAlign: 'right' }}>İskonto %</th>
+              <th style={{ ...th, textAlign: 'right' }}>Ort. Kasa Fark</th>
+              <th style={{ ...th, textAlign: 'right' }}>Anomali %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => {
+              const sevR = r.anomali_seviye === 'kritik' ? '#fca5a5'
+                         : r.anomali_seviye === 'yuksek' ? '#fbbf24' : 'var(--text3)';
+              const farkR = Math.abs(r.ortalama_kasa_fark || 0) < 5 ? 'inherit'
+                          : r.ortalama_kasa_fark < 0 ? '#fca5a5' : '#fbbf24';
+              return (
+                <tr key={r.personel_id} style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                  <td style={td}><strong>{r.ad}</strong></td>
+                  <td style={td}>
+                    <span style={{
+                      padding: '2px 6px', borderRadius: 3, fontSize: 10, fontWeight: 600,
+                      background: r.anomali_seviye === 'kritik' ? 'rgba(239,68,68,0.15)'
+                                : r.anomali_seviye === 'yuksek' ? 'rgba(245,158,11,0.15)'
+                                : 'rgba(120,120,120,0.10)',
+                      color: sevR,
+                    }}>{r.anomali_seviye}</span>
+                  </td>
+                  <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>{r.vardiya_sayisi}</td>
+                  <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>{r.fis_sayisi}</td>
+                  <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>{Number(r.ortalama_fis_tutari || 0).toFixed(0)}</td>
+                  <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', color: (r.iskonto_orani_yuzde || 0) > 5 ? '#fbbf24' : 'inherit' }}>
+                    {Number(r.iskonto_orani_yuzde || 0).toFixed(1)}%
+                  </td>
+                  <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', color: farkR }}>
+                    {(r.ortalama_kasa_fark > 0 ? '+' : '') + Number(r.ortalama_kasa_fark || 0).toFixed(2)}
+                  </td>
+                  <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', color: sevR }}>
+                    {Number(r.anomali_oran_yuzde || 0).toFixed(0)}%
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+        💡 <strong>Kritik</strong> = anomali oranı ≥%50 veya ort. kasa fark &gt; 50₺ ·
+        <strong>Yüksek</strong> = anomali ≥%25 veya iskonto &gt; %5 ·
+        Vardiya = ACILIS → KONTROL/KAPANIS arası dilim
+      </p>
     </div>
   );
 }
