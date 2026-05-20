@@ -305,6 +305,9 @@ export default function TruthMotor() {
       {/* PERSONEL DAVRANIŞ SİNYALİ (Sprint A — velocity/iskonto/fiş tutarı) */}
       <PersonelDavranis />
 
+      {/* PATTERN DETECTION (Sprint B — NRF zekası) */}
+      <PatternDetect />
+
       {/* PERSONEL SKORU (eski Z-skor — anomali bazlı) */}
       <PersonelSkor />
 
@@ -703,6 +706,129 @@ function PersonelDavranis() {
         <strong>Yüksek</strong> = anomali ≥%25 veya iskonto &gt; %5 ·
         Vardiya = ACILIS → KONTROL/KAPANIS arası dilim
       </p>
+    </div>
+  );
+}
+
+function PatternDetect() {
+  const [gun, setGun] = useState(30);
+  const [data, setData] = useState(null);
+  const [yukleniyor, setYukleniyor] = useState(false);
+
+  const yukle = useCallback(async () => {
+    setYukleniyor(true);
+    try {
+      const d = await fetchJson(`${API}/api/ops/truth/pattern-detect?gun=${gun}`);
+      setData(d);
+    } catch (_) {} finally { setYukleniyor(false); }
+  }, [gun]);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  if (!data && !yukleniyor) return null;
+  return (
+    <div style={{ margin: '24px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>🧬 Pattern Detection (NRF Zekası)</h3>
+        <select className="input" value={gun} onChange={(e) => setGun(Number(e.target.value))}
+          style={{ fontSize: 12, padding: '3px 8px' }}>
+          <option value={14}>Son 14 gün</option>
+          <option value={30}>Son 30 gün</option>
+          <option value={60}>Son 60 gün</option>
+        </select>
+        <button className="btn btn-sm" onClick={yukle} style={{ fontSize: 11 }}>↻</button>
+      </div>
+
+      {yukleniyor && <div className="card" style={{ padding: 12, textAlign: 'center', color: 'var(--text3)' }}>Yükleniyor…</div>}
+
+      {data && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+          {/* 1. Yuvarlak sayı */}
+          <PatternCard
+            baslik="🎯 Yuvarlak Sayı Bias"
+            anomali={data.round_number?.anomali}
+            metrik={`%${data.round_number?.yuvarlak_oran_yuzde || 0}`}
+            altMetrik={`${data.round_number?.yuvarlak_sayisi || 0}/${data.round_number?.toplam_kasa_fark || 0} açık yuvarlak`}
+            yorum={data.round_number?.yorum}
+          />
+          {/* 2. End of shift */}
+          <PatternCard
+            baslik="🌙 Kapanış Telaşı Etkisi"
+            anomali={data.end_of_shift?.anomali}
+            metrik={`${data.end_of_shift?.aksam_gun_orani || 0}x`}
+            altMetrik={`Akşam ort: ${data.end_of_shift?.aksam_ort_abs_fark || 0}₺ · Gün içi: ${data.end_of_shift?.gun_ici_ort_abs_fark || 0}₺`}
+            yorum={data.end_of_shift?.yorum}
+          />
+          {/* 3. Sube cluster */}
+          <PatternCard
+            baslik="🏪 Şube Cluster Anomalisi"
+            anomali={data.sube_cluster?.aykiri_subeler?.length > 0}
+            metrik={data.sube_cluster?.aykiri_subeler?.length > 0
+              ? data.sube_cluster.aykiri_subeler.join(', ')
+              : 'Hepsi normal'}
+            altMetrik={`Ort. anomali oranı: %${data.sube_cluster?.ort_anomali_oran || 0}`}
+            yorum={data.sube_cluster?.yorum}
+          />
+          {/* 4. Coklu sube */}
+          <PatternCard
+            baslik="🌐 Çoklu Şube Korelasyonu (Bugün)"
+            anomali={(data.coklu_sube?.korelasyonlar || []).length > 0}
+            metrik={(data.coklu_sube?.korelasyonlar || []).length === 0 ? 'Yok' :
+              `${data.coklu_sube.korelasyonlar.length} pattern`}
+            altMetrik={(data.coklu_sube?.korelasyonlar || []).slice(0, 2).map(k =>
+              `${k.boyut} ${k.tani} (${k.sube_sayisi} şube)`).join(' · ')}
+            yorum={(data.coklu_sube?.korelasyonlar || []).length >= 1 &&
+              data.coklu_sube.korelasyonlar[0].sube_sayisi >= 3
+              ? '3+ şube benzer anomali — sistemik (POS/Evo) muhtemel'
+              : 'Yerel (şubeye özgü) anomaliler'}
+          />
+        </div>
+      )}
+
+      {/* Şube cluster detay tablo */}
+      {data?.sube_cluster?.subeler?.length > 0 && (
+        <div className="card" style={{ marginTop: 10, padding: 0, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead style={{ background: 'rgba(255,255,255,0.04)' }}>
+              <tr>
+                <th style={th}>Şube</th>
+                <th style={{ ...th, textAlign: 'right' }}>Vardiya</th>
+                <th style={{ ...th, textAlign: 'right' }}>Anomali</th>
+                <th style={{ ...th, textAlign: 'right' }}>Anomali %</th>
+                <th style={{ ...th, textAlign: 'right' }}>Ort. Fark</th>
+                <th style={{ ...th, textAlign: 'right' }}>Z-skor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.sube_cluster.subeler.map(s => (
+                <tr key={s.ad} style={{ borderTop: '1px solid rgba(255,255,255,0.05)',
+                  background: s.aykiri ? 'rgba(245,158,11,0.08)' : 'transparent' }}>
+                  <td style={td}><strong>{s.ad}</strong>{s.aykiri && ' ⚠️'}</td>
+                  <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>{s.vardiya || 0}</td>
+                  <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>{s.anomali || 0}</td>
+                  <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>{s.anomali_oran || 0}%</td>
+                  <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>{s.ort_fark_abs || 0}₺</td>
+                  <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', color: s.aykiri ? '#fbbf24' : 'inherit' }}>
+                    {s.z_skor || 0}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PatternCard({ baslik, anomali, metrik, altMetrik, yorum }) {
+  const renk = anomali ? '#fca5a5' : '#86efac';
+  const bg = anomali ? 'rgba(220,38,38,0.10)' : 'rgba(34,197,94,0.08)';
+  return (
+    <div className="card" style={{ padding: 14, borderLeft: `4px solid ${renk}`, background: bg }}>
+      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>{baslik}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color: renk, fontFamily: 'monospace' }}>{metrik}</div>
+      {altMetrik && <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>{altMetrik}</div>}
+      {yorum && <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 6, lineHeight: 1.4 }}>{yorum}</div>}
     </div>
   );
 }

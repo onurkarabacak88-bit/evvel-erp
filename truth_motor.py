@@ -1067,6 +1067,215 @@ def vardiya_bazli_uzlasma(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     }
 
 
+# ════════════════════════════════════════════════════════════════════════════
+#  SPRINT B — PATTERN DETECTION (NRF zekası)
+# ════════════════════════════════════════════════════════════════════════════
+
+def round_number_pattern(cur, gun: int = 60,
+                         sube_id: Optional[str] = None) -> Dict[str, Any]:
+    """Kasa açıkları yuvarlak sayılarda (50, 100, 200, 500) yoğunlaşıyor mu?
+    Zimmet sinyali: kasiyer 'yuvarlak miktar' alır (rastgele değil)."""
+    where_sube = ""
+    params: List[Any] = [gun]
+    if sube_id:
+        where_sube = "AND sube_id=%s"
+        params.append(sube_id)
+    try:
+        cur.execute(
+            f"""
+            SELECT fark_n1_n2 AS fark
+            FROM truth_motor_kararlar
+            WHERE boyut='kasa'
+              AND olusturma >= NOW() - (%s || ' days')::interval
+              AND fark_n1_n2 IS NOT NULL
+              AND ABS(fark_n1_n2) >= 1
+              {where_sube}
+            """,
+            tuple(params),
+        )
+        rows = [float(dict(r)["fark"]) for r in (cur.fetchall() or [])]
+    except Exception:
+        return {"gun": gun, "toplam": 0, "yuvarlak": [], "anomali": False}
+
+    if not rows:
+        return {"gun": gun, "toplam": 0, "yuvarlak": [], "anomali": False}
+
+    # Yuvarlak değerleri say: |fark| / 10 tam sayı + |fark| / 50 tam sayı
+    yuvarlak_bins = {10: 0, 25: 0, 50: 0, 100: 0, 200: 0, 500: 0, 1000: 0}
+    for f in rows:
+        af = abs(f)
+        for bin_ in yuvarlak_bins:
+            if abs(af - round(af / bin_) * bin_) < 0.5 and af >= bin_ * 0.9:
+                yuvarlak_bins[bin_] += 1
+                break
+    toplam = len(rows)
+    yuvarlak_top = sum(yuvarlak_bins.values())
+    # Beklenen yuvarlak oranı %15-20 (rastgele dağılım). > %35 → anomali.
+    yuvarlak_oran = yuvarlak_top / toplam if toplam > 0 else 0
+    return {
+        "gun": gun,
+        "toplam_kasa_fark": toplam,
+        "yuvarlak_sayisi": yuvarlak_top,
+        "yuvarlak_oran_yuzde": round(yuvarlak_oran * 100, 1),
+        "bins": yuvarlak_bins,
+        "anomali": yuvarlak_oran > 0.35,
+        "yorum": ("Kasa açıkları yuvarlak sayılarda yoğun — zimmet sinyali"
+                  if yuvarlak_oran > 0.35
+                  else "Rastgele dağılım — normal"),
+    }
+
+
+def end_of_shift_effect(cur, gun: int = 30,
+                         sube_id: Optional[str] = None) -> Dict[str, Any]:
+    """KAPANIŞ vardiyasında açık yoğunlaşıyor mu (kapanış telaşı)?
+    Vardiya P&L'den KAPANIS dilimindeki farkları ACILIS-KONTROL dilimi ile karşılaştır."""
+    from datetime import date as _d, timedelta as _td
+    today = _d.today()
+    cur.execute("SELECT id::text AS id, ad FROM subeler ORDER BY ad")
+    subeler = [dict(r) for r in (cur.fetchall() or [])]
+    if sube_id:
+        subeler = [s for s in subeler if s["id"] == sube_id]
+
+    aksam_farklar = []
+    gun_ici_farklar = []
+    for off in range(gun):
+        t = (today - _td(days=off)).isoformat()
+        for sb in subeler:
+            try:
+                u = vardiya_bazli_uzlasma(cur, sb["id"], t)
+            except Exception:
+                continue
+            for v in (u.get("vardiyalar") or []):
+                f = v.get("fark_kasa")
+                if f is None:
+                    continue
+                if v.get("tip_dilimi", "").endswith("KAPANIS"):
+                    aksam_farklar.append(float(f))
+                else:
+                    gun_ici_farklar.append(float(f))
+
+    def _ort_abs(lst):
+        return sum(abs(x) for x in lst) / len(lst) if lst else 0.0
+
+    aksam_ort = _ort_abs(aksam_farklar)
+    gun_ort = _ort_abs(gun_ici_farklar)
+    fark_orani = (aksam_ort / gun_ort) if gun_ort > 0 else 0
+    return {
+        "gun": gun,
+        "aksam_vardiya_sayisi": len(aksam_farklar),
+        "gun_ici_vardiya_sayisi": len(gun_ici_farklar),
+        "aksam_ort_abs_fark": round(aksam_ort, 2),
+        "gun_ici_ort_abs_fark": round(gun_ort, 2),
+        "aksam_gun_orani": round(fark_orani, 2),
+        "anomali": fark_orani > 2.0,
+        "yorum": ("Kapanış vardiyasında ortalama fark gün içine göre 2x üstü — "
+                  "telaş veya kasıt sinyali"
+                  if fark_orani > 2.0
+                  else "Vardiya dağılımı normal"),
+    }
+
+
+def sube_cluster_anomalisi(cur, gun: int = 30) -> Dict[str, Any]:
+    """Tüm şubelerin anomali oranı + 1 şube cluster dışı mı?"""
+    from datetime import date as _d, timedelta as _td
+    today = _d.today()
+    cur.execute("SELECT id::text AS id, ad FROM subeler ORDER BY ad")
+    subeler = [dict(r) for r in (cur.fetchall() or [])]
+
+    sube_stat: Dict[str, Dict[str, Any]] = {}
+    for sb in subeler:
+        sube_stat[sb["id"]] = {"ad": sb["ad"], "anomali": 0, "vardiya": 0, "fark_top": 0.0}
+
+    for off in range(gun):
+        t = (today - _td(days=off)).isoformat()
+        for sb in subeler:
+            try:
+                u = vardiya_bazli_uzlasma(cur, sb["id"], t)
+            except Exception:
+                continue
+            for v in (u.get("vardiyalar") or []):
+                st = sube_stat[sb["id"]]
+                st["vardiya"] += 1
+                if v.get("tani") not in ("UYUMLU", "YETERSIZ_VERI"):
+                    st["anomali"] += 1
+                f = v.get("fark_kasa")
+                if f is not None:
+                    st["fark_top"] += abs(float(f))
+
+    # Anomali oranlarını hesapla
+    oranlar = []
+    for st in sube_stat.values():
+        if st["vardiya"] > 0:
+            st["anomali_oran"] = st["anomali"] / st["vardiya"]
+            st["ort_fark_abs"] = st["fark_top"] / st["vardiya"]
+            oranlar.append(st["anomali_oran"])
+
+    if not oranlar:
+        return {"gun": gun, "subeler": list(sube_stat.values()), "yorum": "veri yok"}
+
+    ort = sum(oranlar) / len(oranlar)
+    var = sum((x - ort) ** 2 for x in oranlar) / len(oranlar)
+    std = var ** 0.5 if var > 0 else 0.01
+    aykiri = []
+    for sid, st in sube_stat.items():
+        if "anomali_oran" not in st:
+            continue
+        z = (st["anomali_oran"] - ort) / (std or 0.01)
+        st["z_skor"] = round(z, 2)
+        st["aykiri"] = abs(z) > 1.5
+        if abs(z) > 1.5:
+            aykiri.append(st["ad"])
+        # round için
+        st["anomali_oran"] = round(st["anomali_oran"] * 100, 1)
+        st["ort_fark_abs"] = round(st["ort_fark_abs"], 2)
+        st["fark_top"] = round(st["fark_top"], 2)
+
+    return {
+        "gun": gun,
+        "ort_anomali_oran": round(ort * 100, 1),
+        "subeler": list(sube_stat.values()),
+        "aykiri_subeler": aykiri,
+        "yorum": (f"Aykırı şube tespit edildi: {', '.join(aykiri)}" if aykiri
+                  else "Tüm şubeler benzer profilde"),
+    }
+
+
+def coklu_sube_korelasyon(cur, tarih: Optional[str] = None) -> Dict[str, Any]:
+    """Aynı gün birden çok şubede aynı boyutta anomali var mı?
+    Varsa sistemik (POS sync) muhtemel, personel suçu değil."""
+    if not tarih:
+        from datetime import date as _d
+        tarih = _d.today().isoformat()
+    cur.execute(
+        """
+        SELECT sube_id, boyut, tani
+        FROM truth_motor_kararlar
+        WHERE tarih=%s::date
+          AND tani NOT IN ('UYUMLU', 'YETERSIZ_VERI')
+        """,
+        (tarih,),
+    )
+    rows = [dict(r) for r in (cur.fetchall() or [])]
+    # Boyut × tani başına şube sayısı
+    grup: Dict[tuple, set] = {}
+    for r in rows:
+        anahtar = (r["boyut"], r["tani"])
+        grup.setdefault(anahtar, set()).add(r["sube_id"])
+    korelasyon = []
+    for (boyut, tani), subeler in grup.items():
+        if len(subeler) >= 2:
+            korelasyon.append({
+                "boyut": boyut, "tani": tani,
+                "sube_sayisi": len(subeler),
+                "yorum": (
+                    f"{len(subeler)} şubede aynı anomali → sistemik (POS/Evo) sinyali"
+                    if len(subeler) >= 3 else f"{len(subeler)} şubede benzer pattern"
+                ),
+            })
+    korelasyon.sort(key=lambda x: -x["sube_sayisi"])
+    return {"tarih": tarih, "korelasyonlar": korelasyon}
+
+
 def personel_davranis_sinyali(cur, gun: int = 30,
                               sube_id: Optional[str] = None) -> Dict[str, Any]:
     """Personel davranış sinyalleri (son N gün).

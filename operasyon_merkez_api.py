@@ -12937,6 +12937,29 @@ def truth_vardiya_pl(sube_id: str, tarih: str):
         return _tm.vardiya_bazli_uzlasma(cur, sube_id, tarih)
 
 
+@router.get("/truth/pattern-detect")
+def truth_pattern_detect(gun: int = Query(30, ge=7, le=180),
+                          sube_id: Optional[str] = Query(None)):
+    """Sprint B — 4 pattern detection bir arada:
+    - round_number (yuvarlak sayı bias)
+    - end_of_shift (kapanış telaşı)
+    - sube_cluster (aykırı şube)
+    - coklu_sube_korelasyon (sistemik vs personel ayrımı, bugün için)"""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        from datetime import date as _d
+        return {
+            "gun": gun,
+            "round_number":  _tm.round_number_pattern(cur, gun=gun, sube_id=sube_id),
+            "end_of_shift":  _tm.end_of_shift_effect(cur, gun=gun, sube_id=sube_id),
+            "sube_cluster":  _tm.sube_cluster_anomalisi(cur, gun=gun),
+            "coklu_sube":    _tm.coklu_sube_korelasyon(cur, tarih=_d.today().isoformat()),
+        }
+
+
 @router.get("/truth/personel-davranis")
 def truth_personel_davranis(gun: int = Query(30, ge=1, le=180),
                             sube_id: Optional[str] = Query(None)):
