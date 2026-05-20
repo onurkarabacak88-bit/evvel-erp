@@ -6564,8 +6564,13 @@ function renderMain(data) {
   renderAnaSiparisHatirlat(data);
   var _polledDepoSay = data.depo_hazirlik_bekleyen_sayisi || 0;
   var _cachedDepoSay = siparisAkisCache ? (siparisAkisCache.depo_hazirlik_sayisi != null ? siparisAkisCache.depo_hazirlik_sayisi : (siparisAkisCache.depo_hazirlik_talepleri || []).length) : -1;
-  if (_polledDepoSay !== _cachedDepoSay) siparisAkisCache = null;
-  siparisGonderSolBlokGuncelle(null).catch(function () {});
+  var _depoSayiDegisti = _polledDepoSay !== _cachedDepoSay;
+  if (_depoSayiDegisti) siparisAkisCache = null;
+  siparisGonderSolBlokGuncelle(null).then(function () {
+    if (_depoSayiDegisti && aktifSolSekme === 'gonderilecek' && !gonderilecekDepoTaslakDirty) {
+      renderGonderilecekPanel().catch(function () {});
+    }
+  }).catch(function () {});
   renderSiparisRedBildirimleri(data);
 
   renderDepoStokListe();
