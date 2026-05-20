@@ -13372,6 +13372,116 @@ def truth_iz_karar(karar_id: str):
     return {"toplam": len(rows), "kayitlar": rows}
 
 
+# ─── PROAKTİF RİSK MOTORU Endpointleri ──────────────────────────────────────
+
+@router.get("/truth/proaktif/{sube_id}/{tarih}")
+def truth_proaktif_denetim(
+    sube_id: str,
+    tarih: str,
+    personel_id: Optional[str] = Query(None),
+    ogrenme: bool = Query(False),
+):
+    """Mini AI — 6 adım proaktif denetim:
+    1. tam_analiz (kasa+stok+kök neden)
+    2. risk_haritasi (tüm sinyal kaynakları)
+    3. etki_alani_analiz (anomali yayılma + sistemik test)
+    4. onlem_plani_uret (kural motoru → aksiyon listesi)
+    5. adaptif_ayar_guncelle (sistem davranışını kaydet)
+    6. adaptif_ayar_oku (mevcut aktif ayarlar)
+
+    proaktif_alarm: kritik / yuksek / orta / dusuk
+    onlemler: UI'da gösterilecek aksiyon listesi
+    adaptif.aktif_ayarlar: KONTROL/KAPANIS formu açılmadan önce okunur → form genişler."""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        _truth_tablo_garantile(cur)
+        try:
+            return _tm.proaktif_denetim(
+                cur, sube_id, tarih,
+                personel_id=personel_id,
+                ogrenme_aktif=ogrenme,
+            )
+        except Exception as e:
+            log.exception("truth proaktif_denetim hata sube=%s tarih=%s: %s", sube_id, tarih, e)
+            raise HTTPException(500, str(e))
+
+
+@router.get("/truth/risk-haritasi/{sube_id}/{tarih}")
+def truth_risk_haritasi(
+    sube_id: str,
+    tarih: str,
+    personel_id: Optional[str] = Query(None),
+):
+    """Risk haritası — personel_risk, sube_anomali_oran, kapanış_fark_orani,
+    stok_acik_ardisik, kasa_acik_en_son — tüm sinyal kaynakları tek objede.
+
+    Kural motoruna girdi olarak kullanılır; UI risk dashboard için ayrı çekebilir."""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        try:
+            return _tm.risk_haritasi(cur, sube_id, tarih, personel_id=personel_id)
+        except Exception as e:
+            log.exception("truth risk_haritasi hata sube=%s tarih=%s: %s", sube_id, tarih, e)
+            raise HTTPException(500, str(e))
+
+
+@router.get("/truth/adaptif-ayar/{sube_id}")
+def truth_adaptif_ayar_oku(
+    sube_id: str,
+    personel_id: Optional[str] = Query(None),
+):
+    """Aktif adaptif ayarları oku — sube_panel.html her KONTROL/KAPANIS formu
+    açılmadan önce bu endpoint'i çağırır; dönen ayarlara göre formu genişletir.
+
+    bardak_sayim_iste=true  → Kasa+Bardak sayım alanı ekle
+    ara_kontrol_sayisi=2    → Ekstra ara kontrol kutusu ekle
+    ucuncu_kisi_kapanis=true → 3. kişi adı alanı ekle
+    cfo_bildirim_shift_basi → Vardiya başında CFO SMS/bildirim tetikle
+    baskin_onerisi=true     → 🔴 Kasa Baskını öner banner'ı göster"""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        try:
+            return _tm.adaptif_ayar_oku(cur, sube_id, personel_id=personel_id)
+        except Exception as e:
+            log.exception("truth adaptif_ayar_oku hata sube=%s: %s", sube_id, e)
+            raise HTTPException(500, str(e))
+
+
+@router.get("/truth/etki-alani/{sube_id}/{tarih}/{anomali_tipi}")
+def truth_etki_alani(
+    sube_id: str,
+    tarih: str,
+    anomali_tipi: str,
+    etkilenen_boyutlar: Optional[str] = Query(None,
+        description="Virgülle ayrılmış boyut listesi: bardak_plastik,redbull_soda,..."),
+):
+    """Anomali etki alanı analizi — yayılım, kamera gereksinimi, sistemik risk testi.
+
+    etkilenen_boyutlar: virgülle ayrılmış ürün boyutları (opsiyonel)
+    sistemik_risk: aynı anomali 2+ şubede aynı gün → Evo/POS sync şüphesi"""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    boyutlar = [b.strip() for b in etkilenen_boyutlar.split(",")] if etkilenen_boyutlar else []
+    with db() as (conn, cur):
+        try:
+            return _tm.etki_alani_analiz(cur, sube_id, tarih, anomali_tipi, boyutlar)
+        except Exception as e:
+            log.exception("truth etki_alani hata sube=%s tarih=%s anomali=%s: %s",
+                          sube_id, tarih, anomali_tipi, e)
+            raise HTTPException(500, str(e))
+
+
 @router.post("/kasa-baskini/{baskin_id}/iptal")
 def kasa_baskini_iptal(baskin_id: str, cfo_id: Optional[str] = Query(None)):
     """CFO yanlışlıkla başlattığı baskını iptal edebilir."""

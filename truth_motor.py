@@ -2939,7 +2939,620 @@ def personel_davranis_sinyali(cur, gun: int = 30,
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  TAM ANALİZ — KAPSAMLI MOTOR
+#  PROAKTİF RİSK MOTORU — "Mini AI"
+#  Sorunları tespit eder → etki alanını belirler → kuralları değerlendirir →
+#  sistemi otomatik adapte eder (form alanı ekle, ek kontrol iste, CFO bildir).
+#
+#  Felsefe: "Ahmet riskli ise KONTROL formuna bardak sayımı alanı kendiliğinden
+#            eklensin" — sistem riski bilerek fazladan veri toplar.
+# ════════════════════════════════════════════════════════════════════════════
+
+# ─── Kural tanımları (statik, genişletilebilir) ───────────────────────────
+# koşul anahtarları → risk_haritasi() çıktısındaki alanlara karşılık gelir
+# aksiyonlar → adaptif_ayar_oku() tarafından okunur, UI buna göre form değiştirir
+RISK_KURALLARI: List[Dict] = [
+    {
+        "id":         "yuksek_risk_personel",
+        "aciklama":   "Personel Bayesian risk skoru ≥ 70",
+        "kosul":      {"personel_risk_min": 70},
+        "aksiyonlar": {"bardak_sayim_iste": True, "ara_kontrol_sayisi": 2},
+        "aciliyet":   "yuksek",
+    },
+    {
+        "id":         "zimmet_gecmis",
+        "aciklama":   "Geçmişte ZIMMET veya SWEETHEARTING tanısı var",
+        "kosul":      {"tani_gecmis_icerir": ["ZIMMET_NAKIT_CEPTE", "SWEETHEARTING_SINYAL"]},
+        "aksiyonlar": {"ucuncu_kisi_kapanis": True, "cfo_bildirim_shift_basi": True,
+                       "bardak_sayim_iste": True},
+        "aciliyet":   "kritik",
+    },
+    {
+        "id":         "sistematik_stok_acik",
+        "aciklama":   "3+ gün ardışık stok açığı tespit edildi",
+        "kosul":      {"stok_acik_ardisik_min": 3},
+        "aksiyonlar": {"kontrol_stok_sayim_iste": True, "bom_dogrulama_gunluk": True},
+        "aciliyet":   "orta",
+    },
+    {
+        "id":         "yuksek_sube_anomali",
+        "aciklama":   "Şube genel anomali oranı ≥ %40",
+        "kosul":      {"sube_anomali_oran_min": 40.0},
+        "aksiyonlar": {"haftalik_baskin_planla": True, "ara_kontrol_sayisi": 2},
+        "aciliyet":   "yuksek",
+    },
+    {
+        "id":         "kapanış_riski",
+        "aciklama":   "Kapanış vardiyası açığı gün içine 2× üstünde",
+        "kosul":      {"kapanış_fark_oran_min": 2.0},
+        "aksiyonlar": {"ucuncu_kisi_kapanis": True, "cfo_bildirim_shift_basi": True},
+        "aciliyet":   "yuksek",
+    },
+    {
+        "id":         "kasa_acik_kritik",
+        "aciklama":   "Son kasa farkı ≥ ₺200 açık",
+        "kosul":      {"kasa_acik_tl_min": 200.0},
+        "aksiyonlar": {"cfo_bildirim_shift_basi": True, "baskin_onerisi": True},
+        "aciliyet":   "kritik",
+    },
+    {
+        "id":         "dusuk_risk_normal",
+        "aciklama":   "Tüm sinyaller normal — ekstra kontrol yok",
+        "kosul":      {"personel_risk_max": 30, "sube_anomali_oran_max": 15.0},
+        "aksiyonlar": {},
+        "aciliyet":   "dusuk",
+    },
+]
+
+# Anomali tipi → etkilenen sistemler / yayılma / kamera
+_ETKI_MATRISI: Dict[str, Dict] = {
+    "SWEETHEARTING_ZIMMET":  {"yayilim": "yuksek",  "sistemler": ["kasa", "stok", "personel"], "kamera": True,  "diger_gun": True},
+    "ZIMMET_NAKIT_CEPTE":    {"yayilim": "kritik",  "sistemler": ["kasa", "personel"],           "kamera": True,  "diger_gun": True},
+    "NAKIT_CEKILDI":         {"yayilim": "yuksek",  "sistemler": ["kasa", "evo"],                "kamera": True,  "diger_gun": True},
+    "AKSAM_ZIMMET_POZISYON": {"yayilim": "yuksek",  "sistemler": ["kasa", "personel"],           "kamera": True,  "diger_gun": True},
+    "POS_FANTOM_SATIS":      {"yayilim": "orta",    "sistemler": ["evo", "pos"],                 "kamera": False, "diger_gun": False},
+    "KAYITSIZ_IKRAM_FIRE":   {"yayilim": "dusuk",   "sistemler": ["stok", "ikram"],              "kamera": False, "diger_gun": False},
+    "STOK_ACIK":             {"yayilim": "orta",    "sistemler": ["stok", "urun_ac"],             "kamera": False, "diger_gun": False},
+    "STOK_FAZLA":            {"yayilim": "dusuk",   "sistemler": ["stok", "evo"],                "kamera": False, "diger_gun": False},
+    "BELIRSIZ":              {"yayilim": "dusuk",   "sistemler": [],                              "kamera": False, "diger_gun": False},
+}
+
+_AKSIYON_ACIKLAMA: Dict[str, str] = {
+    "bardak_sayim_iste":      "Bu personelin vardiyasında kasa + bardak sayımı isteyin",
+    "ara_kontrol_sayisi":     "{deger}x ara KONTROL planlayın (normalde 1)",
+    "ucuncu_kisi_kapanis":    "Kapanış sayımına 3. kişi (müdür/CFO) dahil edin",
+    "cfo_bildirim_shift_basi":"Vardiya başında CFO'ya otomatik bildirim gönderin",
+    "bom_dogrulama_gunluk":   "Günlük BOM reçete varyansı otomatik çalışsın",
+    "kontrol_stok_sayim_iste":"KONTROL event formuna stok sayımı alanı ekleyin",
+    "haftalik_baskin_planla": "Haftalık periyodik Kasa Baskını planlayın",
+    "baskin_onerisi":         "Kasa Baskını başlatın — açık kritik eşiği aştı",
+    "kamera_incele":          "Kamera görüntüsü inceleyin — anomali saatine odaklanın",
+}
+
+_ADAPTIF_AYAR_DDL = """
+CREATE TABLE IF NOT EXISTS truth_motor_adaptif_ayar (
+    id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    sube_id           TEXT NOT NULL,
+    personel_id       TEXT,
+    gecerli_baslangic DATE NOT NULL DEFAULT CURRENT_DATE,
+    gecerli_bitis     DATE,
+    ayar_json         JSONB NOT NULL DEFAULT '{}',
+    sebep             TEXT,
+    tetikleyen_kural  TEXT,
+    olusturan         TEXT DEFAULT 'truth_motor_otomatik',
+    olusturma         TIMESTAMPTZ DEFAULT NOW()
+)
+"""
+
+
+def _kural_tetiklendi_mi(kural: Dict, harita: Dict) -> bool:
+    """Kuralın kosul bloğunu harita verisine göre değerlendir."""
+    k = kural.get("kosul") or {}
+    if "personel_risk_min" in k and harita.get("personel_risk", 0) < k["personel_risk_min"]:
+        return False
+    if "personel_risk_max" in k and harita.get("personel_risk", 100) > k["personel_risk_max"]:
+        return False
+    if "tani_gecmis_icerir" in k:
+        gecmis = harita.get("personel_tani_gecmis") or []
+        if not any(t in gecmis for t in k["tani_gecmis_icerir"]):
+            return False
+    if "stok_acik_ardisik_min" in k and harita.get("stok_acik_ardisik", 0) < k["stok_acik_ardisik_min"]:
+        return False
+    if "sube_anomali_oran_min" in k and harita.get("sube_anomali_oran", 0) < k["sube_anomali_oran_min"]:
+        return False
+    if "sube_anomali_oran_max" in k and harita.get("sube_anomali_oran", 100) > k["sube_anomali_oran_max"]:
+        return False
+    if "kapanış_fark_oran_min" in k and harita.get("kapanış_fark_orani", 0) < k["kapanış_fark_oran_min"]:
+        return False
+    if "kasa_acik_tl_min" in k and abs(harita.get("kasa_acik_en_son", 0)) < k["kasa_acik_tl_min"]:
+        return False
+    return True
+
+
+def risk_haritasi(cur, sube_id: str, tarih: str,
+                   personel_id: Optional[str] = None) -> Dict[str, Any]:
+    """Mevcut context için risk puanı haritası — tüm sinyal kaynakları tek objede.
+
+    Bileşenler:
+      personel_risk        : Welford profil risk_skoru (0-100)
+      personel_tani_gecmis : son 30 gün tanı türleri
+      sube_anomali_oran    : şube genel anomali yüzdesi
+      kapanış_fark_orani   : kapanış vardiyası / gün içi fark oranı
+      stok_acik_ardisik    : kaç gündür ardışık stok açığı
+      kasa_acik_en_son     : en son kasa farkı (₺)
+    """
+    harita: Dict[str, Any] = {
+        "sube_id": sube_id, "tarih": tarih, "personel_id": personel_id,
+        "personel_risk": 50.0,
+        "personel_tani_gecmis": [],
+        "sube_anomali_oran": 0.0,
+        "kapanış_fark_orani": 1.0,
+        "stok_acik_ardisik": 0,
+        "kasa_acik_en_son": 0.0,
+    }
+
+    if personel_id:
+        profil = ogrenme_profili_oku(cur, personel_id, sube_id)
+        if profil.get("var_mi"):
+            harita["personel_risk"] = float(profil.get("risk_skoru") or 50)
+
+    try:
+        cur.execute(
+            """
+            SELECT COUNT(*) FILTER (WHERE tani NOT IN ('UYUMLU','YETERSIZ_VERI')) AS anomali,
+                   COUNT(*) AS toplam
+            FROM truth_motor_kararlar
+            WHERE sube_id=%s AND olusturma >= NOW() - INTERVAL '30 days'
+            """,
+            (sube_id,),
+        )
+        r = dict(cur.fetchone() or {})
+        if int(r.get("toplam") or 0) > 0:
+            harita["sube_anomali_oran"] = round(
+                int(r.get("anomali") or 0) / int(r["toplam"]) * 100, 1
+            )
+    except Exception:
+        pass
+
+    try:
+        cur.execute(
+            """
+            SELECT DISTINCT tani FROM truth_motor_kararlar
+            WHERE sube_id=%s
+              AND olusturma >= NOW() - INTERVAL '30 days'
+              AND tani NOT IN ('UYUMLU','YETERSIZ_VERI')
+            LIMIT 20
+            """,
+            (sube_id,),
+        )
+        harita["personel_tani_gecmis"] = [dict(r)["tani"] for r in (cur.fetchall() or [])]
+    except Exception:
+        pass
+
+    try:
+        ef = end_of_shift_effect(cur, gun=14, sube_id=sube_id)
+        harita["kapanış_fark_orani"] = float(ef.get("aksam_gun_orani") or 1.0)
+    except Exception:
+        pass
+
+    try:
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT tarih) AS n FROM truth_motor_kararlar
+            WHERE sube_id=%s AND boyut != 'kasa'
+              AND tani = 'STOK_ACIK'
+              AND tarih >= CURRENT_DATE - INTERVAL '14 days'
+            """,
+            (sube_id,),
+        )
+        r = dict(cur.fetchone() or {})
+        harita["stok_acik_ardisik"] = int(r.get("n") or 0)
+    except Exception:
+        pass
+
+    try:
+        cur.execute(
+            """
+            SELECT COALESCE(fark_n1_n2, 0) AS f FROM truth_motor_kararlar
+            WHERE sube_id=%s AND boyut='kasa' AND tarih < %s::date
+            ORDER BY tarih DESC LIMIT 1
+            """,
+            (sube_id, tarih),
+        )
+        r = cur.fetchone()
+        if r:
+            harita["kasa_acik_en_son"] = float(dict(r).get("f") or 0)
+    except Exception:
+        pass
+
+    return harita
+
+
+def etki_alani_analiz(cur, sube_id: str, tarih: str,
+                       anomali_tipi: str,
+                       etkilenen_boyutlar: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Bir anomalinin yayılma alanı: hangi sistemler, kaç gün, kaç şube, tekrar sayısı."""
+    bilgi = _ETKI_MATRISI.get(anomali_tipi, _ETKI_MATRISI["BELIRSIZ"])
+
+    tekrar_sayisi = 0
+    try:
+        cur.execute(
+            """
+            SELECT COUNT(*) AS n FROM truth_motor_kararlar
+            WHERE sube_id=%s AND tani=%s
+              AND olusturma >= NOW() - INTERVAL '30 days'
+            """,
+            (sube_id, anomali_tipi),
+        )
+        tekrar_sayisi = int(dict(cur.fetchone() or {}).get("n") or 0)
+    except Exception:
+        pass
+
+    diger_sube_sayisi = 0
+    try:
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT sube_id) AS n FROM truth_motor_kararlar
+            WHERE tani=%s AND tarih=%s::date AND sube_id != %s
+            """,
+            (anomali_tipi, tarih, sube_id),
+        )
+        diger_sube_sayisi = int(dict(cur.fetchone() or {}).get("n") or 0)
+    except Exception:
+        pass
+
+    sistemik = diger_sube_sayisi >= 2
+    yayilim = "sistemik" if sistemik else bilgi["yayilim"]
+
+    oneri_listesi = []
+    if bilgi["kamera"]:
+        oneri_listesi.append("Kamera görüntüsü inceleyin — anomali saatine odaklanın")
+    if sistemik:
+        oneri_listesi.append(f"{diger_sube_sayisi} şubede aynı anda → Evo/POS sync hatası olabilir, IT'ye danışın")
+    if tekrar_sayisi >= 3:
+        oneri_listesi.append(f"Son 30 günde {tekrar_sayisi}. tekrar → sistematik, soruşturma başlatın")
+    if bilgi["diger_gun"]:
+        oneri_listesi.append("Bu anomali tipi geçmiş günleri de etkileyebilir — trend analizi yapın")
+
+    return {
+        "anomali_tipi": anomali_tipi,
+        "etkilenen_sistemler": bilgi["sistemler"],
+        "etkilenen_boyutlar": etkilenen_boyutlar or [],
+        "risk_yayilimi": yayilim,
+        "kamera_gerekli": bilgi["kamera"],
+        "diger_gunler_etkilenir": bilgi["diger_gun"],
+        "tekrar_sayisi_30gun": tekrar_sayisi,
+        "diger_sube_sayisi": diger_sube_sayisi,
+        "sistemik_risk": sistemik,
+        "oneriler": oneri_listesi,
+        "yorum": (
+            f"SİSTEMİK: {diger_sube_sayisi} şubede aynı anomali!" if sistemik
+            else f"Son 30 günde {tekrar_sayisi}. tekrar" if tekrar_sayisi > 0
+            else "İlk tespit"
+        ),
+    }
+
+
+def onlem_plani_uret(harita: Dict,
+                      etki: Optional[Dict] = None) -> Dict[str, Any]:
+    """Kural motoru: risk haritası + etki alanı → aksiyon listesi + adaptif ayarlar."""
+    tetiklenen_aksiyonlar: Dict[str, Any] = {}
+    tetiklenen_kurallar: List[str] = []
+    onlemler: List[Dict] = []
+
+    for kural in RISK_KURALLARI:
+        if _kural_tetiklendi_mi(kural, harita):
+            tetiklenen_kurallar.append(kural["id"])
+            for ak, deger in (kural.get("aksiyonlar") or {}).items():
+                if isinstance(deger, bool):
+                    tetiklenen_aksiyonlar[ak] = tetiklenen_aksiyonlar.get(ak, False) or deger
+                elif isinstance(deger, (int, float)):
+                    tetiklenen_aksiyonlar[ak] = max(
+                        tetiklenen_aksiyonlar.get(ak, deger), deger
+                    )
+
+    # Etki alanından ek aksiyonlar
+    if etki:
+        if etki.get("kamera_gerekli"):
+            tetiklenen_aksiyonlar["kamera_incele"] = True
+        if etki.get("sistemik_risk"):
+            onlemler.append({
+                "aksiyon_kodu": "sistemik_uyari",
+                "tip": "SİSTEMİK_UYARI",
+                "aciklama": etki.get("yorum", ""),
+                "deger": True,
+                "aciliyet": "kritik",
+            })
+
+    # Aksiyonları okunabilir önlem listesine çevir
+    for ak, deger in tetiklenen_aksiyonlar.items():
+        if not deger:
+            continue
+        aciklama_sablonu = _AKSIYON_ACIKLAMA.get(ak, ak)
+        aciklama = aciklama_sablonu.format(deger=deger)
+        # Aciliyet — kural listesinden en yüksek
+        aciliyet = "orta"
+        for kural in RISK_KURALLARI:
+            if kural["id"] in tetiklenen_kurallar and ak in (kural.get("aksiyonlar") or {}):
+                kural_aciliyet = kural.get("aciliyet", "orta")
+                if {"kritik": 0, "yuksek": 1, "orta": 2, "dusuk": 3}.get(kural_aciliyet, 2) < \
+                   {"kritik": 0, "yuksek": 1, "orta": 2, "dusuk": 3}.get(aciliyet, 2):
+                    aciliyet = kural_aciliyet
+        onlemler.append({
+            "aksiyon_kodu": ak,
+            "tip": ak.upper(),
+            "aciklama": aciklama,
+            "deger": deger,
+            "aciliyet": aciliyet,
+        })
+
+    onlemler.sort(key=lambda x: {"kritik": 0, "yuksek": 1, "orta": 2, "dusuk": 3}.get(x["aciliyet"], 4))
+
+    return {
+        "tetiklenen_kurallar": tetiklenen_kurallar,
+        "adaptif_ayarlar": tetiklenen_aksiyonlar,
+        "onlemler": onlemler,
+    }
+
+
+def adaptif_ayar_guncelle(cur, sube_id: str,
+                            personel_id: Optional[str],
+                            ayarlar: Dict[str, Any],
+                            sebep: str = "",
+                            tetikleyen_kural: str = "") -> Dict:
+    """Sistem davranış ayarını güncelle — sonraki forma/event'e yansır.
+
+    7 gün geçerli olarak kaydedilir; sube_panel.html her KONTROL/KAPANIS
+    öncesinde adaptif_ayar_oku() ile kontrol eder.
+    """
+    try:
+        cur.execute(_ADAPTIF_AYAR_DDL)
+        cur.execute(
+            """
+            INSERT INTO truth_motor_adaptif_ayar
+                (sube_id, personel_id, gecerli_baslangic, gecerli_bitis,
+                 ayar_json, sebep, tetikleyen_kural)
+            VALUES (%s, %s, CURRENT_DATE, CURRENT_DATE + INTERVAL '7 days',
+                    %s::jsonb, %s, %s)
+            RETURNING id
+            """,
+            (
+                sube_id, personel_id,
+                json.dumps(ayarlar, ensure_ascii=False, default=str),
+                sebep[:500] if sebep else "",
+                tetikleyen_kural[:200] if tetikleyen_kural else "",
+            ),
+        )
+        r = cur.fetchone()
+        return {"kaydedildi": True, "id": str(dict(r or {}).get("id") or "")}
+    except Exception as e:
+        log.warning("adaptif_ayar_guncelle hata: %s", e)
+        return {"kaydedildi": False, "hata": str(e)}
+
+
+def adaptif_ayar_oku(cur, sube_id: str,
+                      personel_id: Optional[str] = None) -> Dict[str, Any]:
+    """Bu şube/personel için aktif adaptif ayarları oku.
+
+    Şube geneli + personel özel ayarlar birleştirilir (personel özel > şube geneli).
+    sube_panel.html her KONTROL/KAPANIS formunu açmadan önce bunu çağırır;
+    dönen ayarlara göre formu dinamik olarak genişletir.
+    """
+    try:
+        cur.execute(_ADAPTIF_AYAR_DDL)
+        if personel_id:
+            cur.execute(
+                """
+                SELECT ayar_json, sebep, personel_id
+                FROM truth_motor_adaptif_ayar
+                WHERE sube_id=%s
+                  AND (personel_id IS NULL OR personel_id=%s)
+                  AND gecerli_baslangic <= CURRENT_DATE
+                  AND (gecerli_bitis IS NULL OR gecerli_bitis >= CURRENT_DATE)
+                ORDER BY personel_id DESC NULLS LAST, olusturma DESC
+                """,
+                (sube_id, personel_id),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT ayar_json, sebep, personel_id
+                FROM truth_motor_adaptif_ayar
+                WHERE sube_id=%s AND personel_id IS NULL
+                  AND gecerli_baslangic <= CURRENT_DATE
+                  AND (gecerli_bitis IS NULL OR gecerli_bitis >= CURRENT_DATE)
+                ORDER BY olusturma DESC
+                """,
+                (sube_id,),
+            )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:
+        return {"aktif": False, "hata": str(e), "ayarlar": {}}
+
+    if not rows:
+        return {"aktif": False, "ayarlar": {}, "aciklamalar": []}
+
+    birlesik: Dict[str, Any] = {}
+    for r in rows:
+        ayar = r.get("ayar_json") or {}
+        if isinstance(ayar, str):
+            try:
+                ayar = json.loads(ayar)
+            except Exception:
+                ayar = {}
+        for k, v in ayar.items():
+            if isinstance(v, bool):
+                birlesik[k] = birlesik.get(k, False) or v
+            elif isinstance(v, (int, float)):
+                birlesik[k] = max(birlesik.get(k, v), v)
+            else:
+                birlesik[k] = v
+
+    return {
+        "aktif": bool(birlesik),
+        "ayarlar": birlesik,
+        "kayit_sayisi": len(rows),
+        "aciklamalar": [r["sebep"] for r in rows if r.get("sebep")],
+        "yorum": _adaptif_ayar_yorumla(birlesik),
+    }
+
+
+def _adaptif_ayar_yorumla(ayarlar: Dict) -> str:
+    """Adaptif ayar dict'ini insan-okunabilir tek cümleye çevir."""
+    if not ayarlar:
+        return "Ekstra kontrol yok"
+    yorumlar = []
+    if ayarlar.get("bardak_sayim_iste"):
+        yorumlar.append("bardak sayımı iste")
+    n_kontrol = ayarlar.get("ara_kontrol_sayisi")
+    if n_kontrol and n_kontrol > 1:
+        yorumlar.append(f"{n_kontrol}x ara kontrol")
+    if ayarlar.get("ucuncu_kisi_kapanis"):
+        yorumlar.append("3. kişi kapanış")
+    if ayarlar.get("cfo_bildirim_shift_basi"):
+        yorumlar.append("CFO bildirim")
+    if ayarlar.get("kontrol_stok_sayim_iste"):
+        yorumlar.append("stok sayım ekle")
+    if ayarlar.get("haftalik_baskin_planla"):
+        yorumlar.append("haftalık baskın")
+    if ayarlar.get("baskin_onerisi"):
+        yorumlar.append("🔴 BASKIN ÖNERİSİ")
+    return "Aktif: " + ", ".join(yorumlar) if yorumlar else "Pasif ayar"
+
+
+def proaktif_denetim(cur, sube_id: str, tarih: str,
+                      personel_id: Optional[str] = None,
+                      ogrenme_aktif: bool = False) -> Dict[str, Any]:
+    """Ana proaktif denetim — mini AI tek giriş noktası.
+
+    Sıra:
+      1. tam_analiz       → bugünün durumu (kasa + stok + kök neden)
+      2. risk_haritasi    → tüm sinyal kaynakları tek haritada
+      3. etki_alani_analiz→ anomali yayılma alanı + sistemik test
+      4. onlem_plani_uret → kural motoru → aksiyon listesi
+      5. adaptif_ayar_guncelle → yarın için sistem davranışını kaydet
+      6. adaptif_ayar_oku → mevcut aktif ayarları döndür
+
+    ogrenme_aktif=True → Welford profil güncellemesi de çalışır.
+    """
+    # 1. Tam analiz
+    try:
+        analiz = tam_analiz(cur, sube_id, tarih, ogrenme_aktif=ogrenme_aktif)
+    except Exception as e:
+        log.warning("proaktif_denetim tam_analiz hata: %s", e)
+        analiz = {"alarm_seviyesi": "bilinmiyor", "ozet": str(e),
+                  "kok_nedenler": [], "stok_ozet": {}, "kasa_ozet": {}}
+
+    # 2. Risk haritası
+    try:
+        harita = risk_haritasi(cur, sube_id, tarih, personel_id=personel_id)
+    except Exception as e:
+        log.warning("proaktif_denetim risk_haritasi hata: %s", e)
+        harita = {"personel_risk": 50.0, "sube_anomali_oran": 0.0,
+                  "kapanış_fark_orani": 1.0, "stok_acik_ardisik": 0,
+                  "kasa_acik_en_son": 0.0, "personel_tani_gecmis": []}
+
+    # 3. Etki alanı — birincil anomali
+    kok_nedenler = analiz.get("kok_nedenler") or []
+    birincil_anomali = kok_nedenler[0].get("tip", "BELIRSIZ") if kok_nedenler else "BELIRSIZ"
+    stok_aciklar = list((analiz.get("stok_ozet") or {}).get("aciklar", {}).keys())
+    try:
+        etki = etki_alani_analiz(cur, sube_id, tarih, birincil_anomali, stok_aciklar)
+    except Exception as e:
+        log.warning("proaktif_denetim etki_alani hata: %s", e)
+        etki = {"anomali_tipi": birincil_anomali, "sistemik_risk": False,
+                "etkilenen_sistemler": [], "oneriler": []}
+
+    # 4. Önlem planı
+    try:
+        plan = onlem_plani_uret(harita, etki)
+    except Exception as e:
+        log.warning("proaktif_denetim onlem_plani hata: %s", e)
+        plan = {"tetiklenen_kurallar": [], "adaptif_ayarlar": {}, "onlemler": []}
+
+    # 5. Adaptif ayarı kaydet (risk varsa)
+    adaptif = plan.get("adaptif_ayarlar") or {}
+    ayar_kaydedildi = {}
+    if any(v for v in adaptif.values()):
+        sebep = (
+            f"Proaktif [{', '.join(plan.get('tetiklenen_kurallar') or [])}] "
+            f"→ {birincil_anomali} — tarih {tarih}"
+        )
+        try:
+            ayar_kaydedildi = adaptif_ayar_guncelle(
+                cur, sube_id, personel_id, adaptif,
+                sebep=sebep,
+                tetikleyen_kural=";".join(plan.get("tetiklenen_kurallar") or []),
+            )
+        except Exception as e:
+            ayar_kaydedildi = {"kaydedildi": False, "hata": str(e)}
+
+    # 6. Mevcut aktif ayarlar
+    try:
+        aktif_ayarlar = adaptif_ayar_oku(cur, sube_id, personel_id=personel_id)
+    except Exception as e:
+        aktif_ayarlar = {"aktif": False, "hata": str(e)}
+
+    # 7. Proaktif alarm seviyesi
+    onlemler = plan.get("onlemler") or []
+    ac_seviyeler = {o.get("aciliyet") for o in onlemler}
+    proaktif_alarm = (
+        "kritik" if "kritik" in ac_seviyeler
+        else "yuksek" if "yuksek" in ac_seviyeler
+        else "orta" if "orta" in ac_seviyeler
+        else "dusuk"
+    )
+
+    # 8. Personel bazlı özet mesaj
+    en_riskli_personel = None
+    personel_listesi = analiz.get("personel_sorumlu") or []
+    if personel_listesi and personel_listesi[0].get("risk_seviye") != "normal":
+        ep = personel_listesi[0]
+        en_riskli_personel = {
+            "ad": ep.get("ad"),
+            "risk_seviye": ep.get("risk_seviye"),
+            "kasa_fark_ort": ep.get("kasa_fark_ort"),
+            "anomali_oran": ep.get("anomali_oran_yuzde"),
+            "aktif_ayarlar": aktif_ayarlar.get("ayarlar"),
+            "yorum": aktif_ayarlar.get("yorum"),
+        }
+
+    log.info("proaktif_denetim sube=%s tarih=%s alarm=%s kurallar=%s",
+             sube_id, tarih, proaktif_alarm, plan.get("tetiklenen_kurallar"))
+
+    return {
+        "sube_id": sube_id,
+        "tarih": tarih,
+        "personel_id": personel_id,
+        "proaktif_alarm": proaktif_alarm,
+        # Bugünün özeti
+        "bugun": {
+            "alarm": analiz.get("alarm_seviyesi"),
+            "ozet": analiz.get("ozet"),
+            "kasa_fark": (analiz.get("kasa_ozet") or {}).get("toplam_fark"),
+            "stok_acik_sayisi": (analiz.get("stok_ozet") or {}).get("acik_boyut_sayisi"),
+            "kok_neden": birincil_anomali,
+        },
+        # Risk haritası
+        "risk_haritasi": harita,
+        # Etki alanı
+        "etki_alani": etki,
+        # Önlemler (kural motoru çıktısı)
+        "tetiklenen_kurallar": plan.get("tetiklenen_kurallar") or [],
+        "onlemler": onlemler,
+        # Adaptif sistem ayarları
+        "adaptif": {
+            "yeni_ayarlar": adaptif,
+            "kaydedildi": ayar_kaydedildi,
+            "aktif_ayarlar": aktif_ayarlar,
+        },
+        # En riskli personel özeti
+        "en_riskli_personel": en_riskli_personel,
+        # Ham veriler
+        "tam_analiz_sonucu": analiz,
+    }
+
+
+# TAM ANALİZ — KAPSAMLI MOTOR
 #  Kasa Akışı + Stok Akışı + Personel Sorumluluk + Kök Neden + Öğrenme
 # ════════════════════════════════════════════════════════════════════════════
 # Felsefe: Her ₺ ve her ürün birimi izlenir. Bir açık oluştuğunda "kim,
