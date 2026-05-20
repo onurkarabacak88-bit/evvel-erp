@@ -12964,6 +12964,19 @@ def truth_iz_listele(
     return {"toplam": len(rows), "kayitlar": rows}
 
 
+@router.get("/truth/walk/{sube_id}/{tarih}/{boyut}")
+def truth_adaptive_walk(sube_id: str, tarih: str, boyut: str):
+    """Adaptive Truth Walk — Evo veriyle matematiksel kanıt zinciri kurar.
+    Akşamcı doğru mu, sabahcı doğru mu, ikisi de hatalı mı?
+    boyut: kasa | bardak_plastik | bardak_karton | redbull_soda | pasta | su"""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.adaptive_truth_walk(cur, sube_id, tarih, boyut)
+
+
 @router.get("/truth/vardiya-pl/{sube_id}/{tarih}")
 def truth_vardiya_pl(sube_id: str, tarih: str):
     """Bir şubenin bir gününde vardiya bazlı kasa P&L + personel sorumluluğu."""

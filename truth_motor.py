@@ -857,6 +857,388 @@ def _evo_sube_saatli_satis(sube_evo_id: str, bastar, bittar) -> List[Dict[str, A
     return rows
 
 
+# ════════════════════════════════════════════════════════════════════════════
+#  ADAPTIVE TRUTH WALK — Evo veriyle "kim doğru saymış" kanıtlama
+# ════════════════════════════════════════════════════════════════════════════
+# Kullanıcı senaryosu: Sabah açılış 1 saat olmuş, kasa -30₺ + soda +1 fazla.
+# Motor "KAOS" diyor ama hangi tarafın hatalı olduğunu bilmiyor.
+#
+# Bu motor Evo'dan satışları çekip MATEMATİKSEL KANIT zinciri kurar:
+#   1. Dün ACILIS sayım + dün URUN_AC + dün KAPANIS sayım
+#   2. Dün Evo satış (kapanış saatine kadar)
+#   3. Beklenen akşam = açılış + URUN_AC − Evo satış
+#   4. Beklenen akşam ≈ KAPANIS sayım → AKŞAMCI doğru
+#   5. Bugün ACILIS sayım (sabahcı) + bugün şu ana kadar Evo satış
+#   6. Beklenen sabah = (akşam devir) − bugün satış → SABAHCI doğru/yanlış
+#
+# Karar: AKSAMCI_DOGRU | SABAHCI_DOGRU | IKISI_DE_HATALI | EVO_DESTEKLI_HIRSIZLIK |
+#        IKRAM_DESTEKLI | TRUTH_WALK_COZULMEDI
+# ════════════════════════════════════════════════════════════════════════════
+
+# Boyut → Evo grup adı mapping (motor boyut → hs_rapor.Grup_Pasta.a_adi)
+_BOYUT_EVO_GRUP = {
+    "kasa":            None,  # özel: nakit hesap
+    "bardak_plastik":  ["Ice"],
+    "bardak_karton":   ["14 Oz", "8 Oz"],
+    "redbull_soda":    ["Redbull", "Maden Suyu"],
+    "pasta":           ["Pasta"],
+    "su":              ["Su"],
+}
+
+# Boyut → şube meta JSON anahtarı mapping
+_BOYUT_META = {
+    "kasa":            [],  # özel
+    "bardak_plastik":  ["bardak_plastik"],
+    "bardak_karton":   ["bardak_kucuk", "bardak_buyuk"],
+    "redbull_soda":    ["redbull_adet", "soda_adet"],
+    "pasta":           ["pasta_adet"],
+    "su":              ["su_adet"],
+}
+
+
+def _evo_sube_grup_satis(cur, sube_id: str, tarih: str) -> Dict[str, float]:
+    """Bir şubenin verilen tarihteki Evo grup satışları (Ice, 14 Oz, vs).
+    hs_rapor_sube_bazli'ı çağırır; sube_id (Evvel UUID) → şube_adi eşleştirme."""
+    try:
+        cur.execute("SELECT ad FROM subeler WHERE id::text=%s", (str(sube_id),))
+        srow = cur.fetchone()
+        sube_adi_evvel = str(dict(srow).get("ad") or "") if srow else ""
+        from evo_sync import hs_rapor_sube_bazli
+        from datetime import date as _d
+        y, mo, dn = (int(x) for x in str(tarih)[:10].split("-"))
+        tarih_d = _d(y, mo, dn)
+        evo = hs_rapor_sube_bazli(tarih_d, tarih_d)
+        evvel_lower = sube_adi_evvel.strip().lower().replace("şubesi", "").strip()
+        for ad, payload in (evo.get("subeler") or {}).items():
+            elow = ad.strip().lower().replace("şubesi", "").strip()
+            if evvel_lower and (evvel_lower in elow or elow in evvel_lower):
+                gruplar = {}
+                for g, v in (payload.get("gruplar") or {}).items():
+                    gruplar[g] = float(v.get("adet") or 0)
+                gruplar["_nakit"] = float(payload.get("nakit") or 0)
+                gruplar["_kart"] = float(payload.get("kart") or 0)
+                gruplar["_ciro"] = float(payload.get("ciro_toplam") or 0)
+                return gruplar
+    except Exception as e:
+        log.warning("_evo_sube_grup_satis hata: %s", e)
+    return {}
+
+
+def _meta_boyut_topla(meta: Dict[str, Any], boyut: str) -> float:
+    """meta JSON'undan boyutun toplam değerini al."""
+    if not isinstance(meta, dict):
+        return 0.0
+    anahtarlar = _BOYUT_META.get(boyut) or []
+    s = 0.0
+    for a in anahtarlar:
+        v = meta.get(a)
+        if v is not None:
+            try:
+                s += float(v)
+            except (TypeError, ValueError):
+                pass
+    return s
+
+
+def _urun_ac_toplam(cur, sube_id: str, tarih: str, boyut: str) -> float:
+    """O gün açılan paket toplamı (URUN_AC), boyut bazında."""
+    try:
+        cur.execute(
+            """
+            SELECT kalemler_json FROM urun_ac_taslak
+            WHERE sube_id=%s AND tarih=%s::date AND durum='aktif'
+            """,
+            (sube_id, tarih),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception:
+        return 0.0
+    anahtarlar = _BOYUT_META.get(boyut) or []
+    toplam = 0.0
+    for r in rows:
+        kj = r.get("kalemler_json")
+        if isinstance(kj, str):
+            try:
+                kj = json.loads(kj)
+            except Exception:
+                kj = {}
+        if isinstance(kj, dict):
+            for a in anahtarlar:
+                v = kj.get(a)
+                if v is not None:
+                    try:
+                        toplam += float(v)
+                    except (TypeError, ValueError):
+                        pass
+    return toplam
+
+
+def adaptive_truth_walk(cur, sube_id: str, tarih: str, boyut: str) -> Dict[str, Any]:
+    """Bir boyut için matematiksel kanıt zinciri kurarak 'kim hatalı' kararı.
+
+    Args:
+        sube_id: Evvel UUID
+        tarih: bugün (YYYY-MM-DD)
+        boyut: 'kasa' | 'bardak_plastik' | 'bardak_karton' | 'redbull_soda' | 'pasta' | 'su'
+
+    Returns:
+        {
+          karar: AKSAMCI_DOGRU | SABAHCI_DOGRU | IKISI_DE_HATALI |
+                 EVO_DESTEKLI_HIRSIZLIK | IKRAM_DESTEKLI | UYUMLU | TRUTH_WALK_COZULMEDI,
+          guven: 0-100,
+          kanit_zinciri: [{adim, deger, kaynak, aciklama}],
+          oneriler: [string],
+          ozet: kısa metin
+        }
+    """
+    from datetime import date as _d, timedelta as _td
+
+    onceki = _previous_day(tarih)
+    tolerans = _TOLERANS.get(boyut, 0.5) if boyut != "kasa" else 1.0
+    kanit: List[Dict[str, Any]] = []
+
+    # 1. Dün ACILIS sayım (önceki gün sabah)
+    cur.execute(
+        """SELECT meta, kasa_sayim FROM sube_operasyon_event
+           WHERE sube_id=%s AND tarih=%s::date AND tip='ACILIS' AND durum='tamamlandi'
+           ORDER BY cevap_ts DESC NULLS LAST LIMIT 1""",
+        (sube_id, onceki),
+    )
+    r_dun_ac = cur.fetchone()
+    dun_acilis_meta = _meta_oku(dict(r_dun_ac).get("meta")).get("acilis_stok_sayim") if r_dun_ac else {}
+    if boyut == "kasa":
+        dun_acilis = float(dict(r_dun_ac).get("kasa_sayim") or 0) if r_dun_ac else 0
+    else:
+        dun_acilis = _meta_boyut_topla(dun_acilis_meta or {}, boyut)
+    kanit.append({"adim": "1. Dün açılış sayımı",
+                  "deger": dun_acilis,
+                  "kaynak": "sube_operasyon_event ACILIS (önceki gün)",
+                  "aciklama": "Dün sabah personelin saydığı başlangıç stok"})
+
+    # 2. Dün URUN_AC (paket açma) — kasa için anlamsız, atla
+    urun_ac = 0.0
+    if boyut != "kasa":
+        urun_ac = _urun_ac_toplam(cur, sube_id, onceki, boyut)
+        kanit.append({"adim": "2. Dün açılan paketler (URUN_AC)",
+                      "deger": urun_ac,
+                      "kaynak": "urun_ac_taslak kalemler_json",
+                      "aciklama": "Dün gün içinde açılan ek paketler"})
+
+    # 3. Dün Evo satış toplamı (tüm gün — akşamcının kapatma anına kadar varsayım)
+    evo_dun = _evo_sube_grup_satis(cur, sube_id, onceki)
+    if boyut == "kasa":
+        evo_dun_nakit = float(evo_dun.get("_nakit") or 0)
+        kanit.append({"adim": "3. Dün Evo nakit satış toplamı",
+                      "deger": evo_dun_nakit,
+                      "kaynak": "hs_rapor.ashx kasa (önceki gün)",
+                      "aciklama": "Evo POS'tan dün toplam nakit satış"})
+        evo_satis_dun = evo_dun_nakit
+    else:
+        grup_anahtarlari = _BOYUT_EVO_GRUP.get(boyut) or []
+        evo_satis_dun = sum(float(evo_dun.get(g, 0)) for g in grup_anahtarlari)
+        kanit.append({"adim": "3. Dün Evo satış toplamı",
+                      "deger": evo_satis_dun,
+                      "kaynak": f"hs_rapor.Grup_Pasta {grup_anahtarlari}",
+                      "aciklama": f"Evo POS'ta dün {', '.join(grup_anahtarlari)} satışları"})
+
+    # 4. Dün KAPANIS sayım (akşamcı beyanı)
+    cur.execute(
+        """SELECT meta, kasa_sayim, devir, teslim FROM sube_operasyon_event
+           WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
+           ORDER BY cevap_ts DESC NULLS LAST LIMIT 1""",
+        (sube_id, onceki),
+    )
+    r_dun_kap = cur.fetchone()
+    if boyut == "kasa":
+        # Akşamcı devir tutarı = bugün sabah açılış için bırakılan
+        aksamci_beyan = float(dict(r_dun_kap).get("devir") or 0) if r_dun_kap else 0
+        aksam_teslim = float(dict(r_dun_kap).get("teslim") or 0) if r_dun_kap else 0
+        kanit.append({"adim": "4a. Dün akşam — Müdüre teslim",
+                      "deger": aksam_teslim,
+                      "kaynak": "sube_operasyon_event KAPANIS.teslim",
+                      "aciklama": "Akşamcının müdüre verdiği tutar"})
+        kanit.append({"adim": "4b. Dün akşam — Kasada devir (akşamcı beyanı)",
+                      "deger": aksamci_beyan,
+                      "kaynak": "sube_operasyon_event KAPANIS.devir",
+                      "aciklama": "Akşamcının kasada bıraktığını söylediği tutar"})
+    else:
+        dun_kapanis_meta = _meta_oku(dict(r_dun_kap).get("meta")).get("kapanis_stok_sayim") if r_dun_kap else {}
+        aksamci_beyan = _meta_boyut_topla(dun_kapanis_meta or {}, boyut)
+        kanit.append({"adim": "4. Dün KAPANIS sayım (akşamcı beyanı)",
+                      "deger": aksamci_beyan,
+                      "kaynak": "sube_operasyon_event KAPANIS meta",
+                      "aciklama": "Akşamcının kapanışta saydığı stok"})
+
+    # 5. TÜRETİLMİŞ AKŞAM beklenen
+    if boyut == "kasa":
+        # Nakit gider dünkü
+        cur.execute("""
+            SELECT COALESCE(SUM(tutar),0) AS t FROM anlik_giderler
+            WHERE sube=%s AND tarih=%s::date
+              AND LOWER(COALESCE(NULLIF(TRIM(odeme_yontemi),''),'nakit'))='nakit'
+              AND durum IN ('aktif','onay_bekliyor')
+        """, (sube_id, onceki))
+        gider_dun = float(dict(cur.fetchone() or {}).get("t") or 0)
+        # Ara teslim dünkü
+        cur.execute("""
+            SELECT COALESCE(SUM(tutar),0) AS t FROM kasa_teslim
+            WHERE sube_id=%s AND tarih=%s::date AND teslim_turu='ara'
+        """, (sube_id, onceki))
+        ara_dun = float(dict(cur.fetchone() or {}).get("t") or 0)
+        kanit.append({"adim": "5a. Dün nakit gider", "deger": gider_dun,
+                      "kaynak": "anlik_giderler (nakit, önceki gün)"})
+        kanit.append({"adim": "5b. Dün ara teslim", "deger": ara_dun,
+                      "kaynak": "kasa_teslim teslim_turu='ara'"})
+        beklenen_aksam = dun_acilis + evo_satis_dun - gider_dun - ara_dun - aksam_teslim
+        kanit.append({"adim": "6. TÜRETİLMİŞ akşam kasa = açılış + Evo nakit − gider − ara − teslim",
+                      "deger": round(beklenen_aksam, 2),
+                      "kaynak": "matematik (kanıt)",
+                      "aciklama": "Akşamcının saymış olması gereken tutar"})
+    else:
+        beklenen_aksam = dun_acilis + urun_ac - evo_satis_dun
+        kanit.append({"adim": "5. TÜRETİLMİŞ akşam stok = açılış + URUN_AC − Evo satış",
+                      "deger": round(beklenen_aksam, 2),
+                      "kaynak": "matematik (kanıt)",
+                      "aciklama": "Akşamcının saymış olması gereken stok"})
+
+    aksam_fark = round(aksamci_beyan - beklenen_aksam, 2)
+    kanit.append({"adim": "7. Akşamcı beyanı − Türetilmiş",
+                  "deger": aksam_fark,
+                  "kaynak": "karşılaştırma",
+                  "aciklama": "0 ise akşamcı doğru, ≠0 ise akşamcı hatalı"})
+    aksamci_dogru = abs(aksam_fark) <= tolerans
+
+    # 6. Bugün ACILIS sayım (sabahcı)
+    cur.execute(
+        """SELECT meta, kasa_sayim, cevap_ts FROM sube_operasyon_event
+           WHERE sube_id=%s AND tarih=%s::date AND tip='ACILIS' AND durum='tamamlandi'
+           ORDER BY cevap_ts DESC NULLS LAST LIMIT 1""",
+        (sube_id, tarih),
+    )
+    r_bugun_ac = cur.fetchone()
+    bugun_acilis_meta = _meta_oku(dict(r_bugun_ac).get("meta")).get("acilis_stok_sayim") if r_bugun_ac else {}
+    if boyut == "kasa":
+        sabahci_beyan = float(dict(r_bugun_ac).get("kasa_sayim") or 0) if r_bugun_ac else 0
+    else:
+        sabahci_beyan = _meta_boyut_topla(bugun_acilis_meta or {}, boyut)
+    kanit.append({"adim": "8. Bugün ACILIS sayım (sabahcı beyanı)",
+                  "deger": sabahci_beyan,
+                  "kaynak": "sube_operasyon_event ACILIS meta (bugün)",
+                  "aciklama": "Sabahcının açılışta saydığı"})
+
+    # 7. Bugün şu ana kadar Evo satış (kapanış-açılış arası genelde 0)
+    evo_bugun = _evo_sube_grup_satis(cur, sube_id, tarih)
+    if boyut == "kasa":
+        evo_satis_bugun = float(evo_bugun.get("_nakit") or 0)
+    else:
+        grup_anahtarlari = _BOYUT_EVO_GRUP.get(boyut) or []
+        evo_satis_bugun = sum(float(evo_bugun.get(g, 0)) for g in grup_anahtarlari)
+    kanit.append({"adim": "9. Bugün sabaha kadar Evo satış",
+                  "deger": evo_satis_bugun,
+                  "kaynak": "hs_rapor (bugün, açılış saatine kadar)",
+                  "aciklama": "Genelde 0 — geceden satış olmaz, ama olası"})
+
+    # Türetilmiş sabah stok (akşam beyanı doğru kabul edersek)
+    beklenen_sabah_v1 = aksamci_beyan - evo_satis_bugun
+    # Türetilmiş sabah stok (akşam beyanı yanlış, türetilmiş doğru kabul edersek)
+    beklenen_sabah_v2 = beklenen_aksam - evo_satis_bugun
+
+    sabah_fark_v1 = round(sabahci_beyan - beklenen_sabah_v1, 2)
+    sabah_fark_v2 = round(sabahci_beyan - beklenen_sabah_v2, 2)
+    kanit.append({"adim": "10a. Sabah fark (akşamcı beyanı doğru kabul)",
+                  "deger": sabah_fark_v1,
+                  "kaynak": "matematik"})
+    kanit.append({"adim": "10b. Sabah fark (türetilmiş akşam doğru kabul)",
+                  "deger": sabah_fark_v2,
+                  "kaynak": "matematik"})
+
+    sabahci_dogru_v1 = abs(sabah_fark_v1) <= tolerans
+    sabahci_dogru_v2 = abs(sabah_fark_v2) <= tolerans
+
+    # KARAR MATRİSİ
+    karar, guven, ozet, oneriler = "TRUTH_WALK_COZULMEDI", 30.0, "", []
+    if aksamci_dogru and sabahci_dogru_v1:
+        karar = "UYUMLU"
+        guven = 95.0
+        ozet = "Akşamcı ve sabahcı her ikisi de doğru — fark yok"
+        oneriler = ["Aksiyon gerekmez."]
+    elif aksamci_dogru and not sabahci_dogru_v1:
+        karar = "SABAHCI_HATALI"
+        guven = 90.0
+        ozet = (f"Akşamcı doğru saydı, sabahcı yanlış. "
+                f"Sabah beyan {sabahci_beyan:.0f}, beklenen {beklenen_sabah_v1:.0f}. "
+                f"Fark {sabah_fark_v1:+.0f}.")
+        oneriler = [
+            "Sabahcıyı PIN ile teyit ettir, yeniden say.",
+            f"Eğer sabahcı yeniden sayıp {beklenen_sabah_v1:.0f} der ise sayım hatasıydı.",
+            "Eğer aynı rakam çıkarsa fiziksel kayıp olabilir — 3. kişi sayım gerek.",
+        ]
+    elif not aksamci_dogru and sabahci_dogru_v2:
+        karar = "AKSAMCI_HATALI"
+        guven = 88.0
+        ozet = (f"Akşamcı yanlış saydı. Türetilmiş akşam {beklenen_aksam:.0f}, "
+                f"akşamcı beyanı {aksamci_beyan:.0f}, fark {aksam_fark:+.0f}. "
+                f"Sabahcı türetilmişle uyumlu — sabahcı doğru.")
+        oneriler = [
+            f"Dün akşamı KAPANIS kaydını revize et: stok {aksamci_beyan:.0f} → {beklenen_aksam:.0f}.",
+            "Akşamcı performans incelemesine alın.",
+            "Eğer fark sürekli aynı yönde ise zimmet pre-pozisyonu sinyali.",
+        ]
+    elif not aksamci_dogru and not sabahci_dogru_v1 and not sabahci_dogru_v2:
+        # Her iki taraf da türetilmişle uyumsuz
+        if boyut != "kasa" and evo_satis_dun > 0:
+            # Evo'da satış var ama sayım eksilmemiş → POS_BYPASS / İKRAM
+            stok_dususu = dun_acilis + urun_ac - aksamci_beyan
+            if stok_dususu < evo_satis_dun * 0.5:
+                karar = "EVO_DESTEKLI_HIRSIZLIK"
+                guven = 75.0
+                ozet = (f"Evo'da {evo_satis_dun:.0f} satış kayıtlı ama "
+                        f"stok sadece {stok_dususu:.0f} azalmış. Stok dışı kaynaktan satış var.")
+                oneriler = ["Kasa Baskını + güvenlik kamerası incele.", "POS yetki kontrolü."]
+            else:
+                karar = "IKRAM_DESTEKLI"
+                guven = 60.0
+                ozet = "Stok düşmüş ama Evo'da net karşılığı yok — ikram olabilir."
+                oneriler = ["Personele ikram defteri tutturun (PIN ile)."]
+        else:
+            karar = "IKISI_DE_HATALI"
+            guven = 40.0
+            ozet = "Hem akşamcı hem sabahcı türetilmişle uyumsuz — 3. kişi sayımı şart."
+            oneriler = [
+                "3. kişi (CFO veya görevli) ile yeniden sayım yap.",
+                "Sonra hangi sayımın yanlış olduğunu tespit et.",
+            ]
+    else:
+        karar = "TRUTH_WALK_COZULMEDI"
+        guven = 35.0
+        ozet = "Kanıt zinciri net karar üretmedi. Ek veri (örn. KONTROL sayımı) gerekir."
+        oneriler = [
+            "Bugün KONTROL event'i tetikle — gün ortası sayım.",
+            "Stok-Evo karşılaştırması daha fazla gün için yap.",
+        ]
+
+    return {
+        "sube_id": sube_id,
+        "tarih": tarih,
+        "boyut": boyut,
+        "karar": karar,
+        "guven": guven,
+        "aksamci_beyan": aksamci_beyan,
+        "sabahci_beyan": sabahci_beyan,
+        "beklenen_aksam": round(beklenen_aksam, 2),
+        "beklenen_sabah_v1": round(beklenen_sabah_v1, 2),
+        "beklenen_sabah_v2": round(beklenen_sabah_v2, 2),
+        "aksam_fark": aksam_fark,
+        "sabah_fark_v1": sabah_fark_v1,
+        "sabah_fark_v2": sabah_fark_v2,
+        "aksamci_dogru": aksamci_dogru,
+        "sabahci_dogru": sabahci_dogru_v1 or sabahci_dogru_v2,
+        "ozet": ozet,
+        "kanit_zinciri": kanit,
+        "oneriler": oneriler,
+    }
+
+
 def vardiya_bazli_uzlasma(cur, sube_id: str, tarih: str,
                            evo_dahil: bool = True) -> Dict[str, Any]:
     """Bir şubenin bir gününde vardiya bazlı kasa/bardak uzlaşması.

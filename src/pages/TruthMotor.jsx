@@ -1589,6 +1589,20 @@ function DetayModal({ sube_id, sube_ad, tarih, onKapat, onGorevAcildi }) {
   const [izler, setIzler] = useState({});  // karar_id → en yeni iz
   const [yukleniyor, setYukleniyor] = useState(true);
   const [gorevBusy, setGorevBusy] = useState('');
+  const [walkData, setWalkData] = useState({});  // boyut → walk sonucu
+  const [walkBusy, setWalkBusy] = useState('');
+
+  const walkBaslat = async (boyut) => {
+    setWalkBusy(boyut);
+    try {
+      const d = await fetchJson(`${API}/api/ops/truth/walk/${sube_id}/${tarih}/${boyut}`);
+      setWalkData(prev => ({ ...prev, [boyut]: d }));
+    } catch (e) {
+      setWalkData(prev => ({ ...prev, [boyut]: { hata: String(e.message || e) } }));
+    } finally {
+      setWalkBusy('');
+    }
+  };
 
   const yukle = useCallback(async () => {
     setYukleniyor(true);
@@ -1736,6 +1750,21 @@ function DetayModal({ sube_id, sube_ad, tarih, onKapat, onGorevAcildi }) {
                           {gorevBusy === k.id ? '…' : `📋 Görev Aç`}
                         </button>
                       ))}
+                      {/* Adaptive Truth Walk butonu — anomali olan her boyutta */}
+                      {anomali && (
+                        <button
+                          className="btn btn-sm"
+                          disabled={walkBusy === k.boyut}
+                          onClick={() => walkBaslat(k.boyut)}
+                          style={{
+                            fontSize: 10, padding: '3px 8px',
+                            background: '#10b981', borderColor: '#10b981', color: '#fff', fontWeight: 600,
+                          }}
+                          title="Evo verisi ile matematiksel kanıt zinciri kur (akşamcı mı sabahcı mı hatalı)"
+                        >
+                          {walkBusy === k.boyut ? '⏳ Walk…' : '🔍 Truth Walk'}
+                        </button>
+                      )}
                       {/* Kasa boyutu için Operasyon Merkezi shortcut */}
                       {anomali && k.boyut === 'kasa' && (
                         <a
@@ -1758,6 +1787,10 @@ function DetayModal({ sube_id, sube_ad, tarih, onKapat, onGorevAcildi }) {
                     </div>
                   </div>
                 )}
+                {/* Walk sonucu paneli */}
+                {walkData[k.boyut] && (
+                  <WalkSonucu data={walkData[k.boyut]} onKapat={() => setWalkData(prev => { const n = {...prev}; delete n[k.boyut]; return n; })} />
+                )}
               </div>
             );
           })}
@@ -1767,6 +1800,82 @@ function DetayModal({ sube_id, sube_ad, tarih, onKapat, onGorevAcildi }) {
           <button className="btn btn-secondary" onClick={onKapat}>Kapat</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function WalkSonucu({ data, onKapat }) {
+  if (data.hata) {
+    return (
+      <div style={{
+        marginTop: 8, padding: 10, background: 'rgba(220,38,38,0.10)',
+        border: '1px solid rgba(220,38,38,0.30)', borderRadius: 4, fontSize: 11,
+      }}>
+        ⚠️ Walk hatası: {data.hata}
+        <button onClick={onKapat} style={{ marginLeft: 8, fontSize: 10 }}>Kapat</button>
+      </div>
+    );
+  }
+
+  const KARAR_RENK = {
+    UYUMLU:                 { renk: '#86efac', bg: 'rgba(34,197,94,0.12)', label: '✅ Her şey uyumlu' },
+    SABAHCI_HATALI:         { renk: '#fbbf24', bg: 'rgba(245,158,11,0.12)', label: '🌅 SABAHCI hatalı (akşamcı doğru)' },
+    AKSAMCI_HATALI:         { renk: '#fbbf24', bg: 'rgba(245,158,11,0.12)', label: '🌙 AKŞAMCI hatalı (sabahcı doğru)' },
+    IKISI_DE_HATALI:        { renk: '#fca5a5', bg: 'rgba(220,38,38,0.12)', label: '🌀 Her iki taraf da hatalı' },
+    EVO_DESTEKLI_HIRSIZLIK: { renk: '#f87171', bg: 'rgba(239,68,68,0.15)', label: '🚨 Hırsızlık sinyali (Evo destekli)' },
+    IKRAM_DESTEKLI:         { renk: '#93c5fd', bg: 'rgba(59,130,246,0.10)', label: '🎁 İkram olabilir' },
+    TRUTH_WALK_COZULMEDI:   { renk: '#a78bfa', bg: 'rgba(139,92,246,0.10)', label: '🔄 Çözülmedi — 3. kişi sayım' },
+  };
+  const r = KARAR_RENK[data.karar] || KARAR_RENK.TRUTH_WALK_COZULMEDI;
+
+  return (
+    <div style={{
+      marginTop: 10, padding: 12, background: r.bg, border: `1px solid ${r.renk}55`,
+      borderRadius: 6, fontSize: 11,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <strong style={{ color: r.renk, fontSize: 12 }}>{r.label}</strong>
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>güven %{Number(data.guven || 0).toFixed(0)}</span>
+        <button
+          onClick={onKapat}
+          style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', background: 'transparent', border: '1px solid var(--text3)', color: 'var(--text2)', borderRadius: 3, cursor: 'pointer' }}>
+          Kapat
+        </button>
+      </div>
+
+      <div style={{ marginBottom: 8, fontSize: 11, lineHeight: 1.5 }}>{data.ozet}</div>
+
+      {/* Kanıt zinciri */}
+      <details style={{ marginBottom: 8 }}>
+        <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: 11, color: 'var(--text2)' }}>
+          📐 Kanıt zinciri ({(data.kanit_zinciri || []).length} adım)
+        </summary>
+        <table style={{ marginTop: 6, width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+          <tbody>
+            {(data.kanit_zinciri || []).map((k, i) => (
+              <tr key={i} style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                <td style={{ padding: '4px 6px', color: 'var(--text2)', whiteSpace: 'nowrap' }}>{k.adim}</td>
+                <td style={{ padding: '4px 6px', fontFamily: 'monospace', textAlign: 'right', fontWeight: 600 }}>
+                  {typeof k.deger === 'number' ? k.deger.toFixed(2) : k.deger}
+                </td>
+                <td style={{ padding: '4px 6px', color: 'var(--text3)', fontSize: 9 }}>
+                  {k.aciklama || k.kaynak}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+
+      {/* Öneriler */}
+      {(data.oneriler || []).length > 0 && (
+        <div style={{ background: 'rgba(255,255,255,0.04)', padding: 8, borderRadius: 4 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text2)', marginBottom: 4 }}>Önerilen aksiyonlar:</div>
+          <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, lineHeight: 1.5 }}>
+            {data.oneriler.map((o, i) => <li key={i}>{o}</li>)}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
