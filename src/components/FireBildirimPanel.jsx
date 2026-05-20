@@ -215,8 +215,44 @@ export default function FireBildirimPanel({
               </div>
             </div>
             <div style={{ padding: '12px 14px', fontSize: 12, lineHeight: 1.5 }}>
+              {k.sebep_kodu === 'iade' && (
+                <div
+                  style={{
+                    marginBottom: 12,
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    background: 'rgba(249,115,22,.1)',
+                    border: '1px solid rgba(249,115,22,.35)',
+                    fontSize: 11,
+                    lineHeight: 1.55,
+                  }}
+                >
+                  <div style={{ fontWeight: 700, color: '#fdba74', marginBottom: 8, fontSize: 12 }}>
+                    ↩️ İade — müşteri bilgisi (yalnızca merkez panel)
+                  </div>
+                  <div><strong>Fiş no:</strong> {k.fis_no || '—'}</div>
+                  <div><strong>İade zamanı:</strong> {k.iade_zaman || '—'}</div>
+                  <div><strong>Müşteri:</strong> {k.iade_musteri_ad || '—'}</div>
+                  <div>
+                    <strong>Telefon:</strong>{' '}
+                    {k.iade_musteri_telefon
+                      ? (
+                        <a href={`tel:0${k.iade_musteri_telefon}`} style={{ color: '#fdba74', fontWeight: 700 }}>
+                          0{k.iade_musteri_telefon.replace(/(\d{3})(\d{3})(\d{2})(\d{2})/, '$1 $2 $3 $4')}
+                        </a>
+                      )
+                      : '—'}
+                  </div>
+                  <div style={{ color: 'var(--text3)', marginTop: 4 }}>
+                    <strong>Panel kayıt logu:</strong> {k.panel_kayit_zaman || k.olusturma || '—'}
+                  </div>
+                </div>
+              )}
               <div style={{ marginBottom: 10, color: 'var(--text2)' }}>
                 <strong>Açıklama:</strong> {k.aciklama}
+              </div>
+              <div style={{ marginBottom: 6, fontSize: 11, color: 'var(--text3)' }}>
+                <strong>Ürünler:</strong>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {(k.kalemler || []).map((line, i) => (

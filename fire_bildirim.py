@@ -5,10 +5,12 @@ Depo stok düşer; stok hareket defterine FIRE yazılır; operasyon_defter SUBE_
 from __future__ import annotations
 
 import json
+import re
 import uuid
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from tr_saat import TR_TZ, dt_format_api_tr, dt_now_tr
 from operasyon_stok_motor import (
     STOK_KEYS,
     STOK_LABEL_TR,
@@ -28,6 +30,96 @@ FIRE_SEBEP: Dict[str, str] = {
     "diger": "Diğer",
 }
 
+# Müşteri iadesi — şube panelinde zorunlu alanlar
+FIRE_IADE_SEBEP = "iade"
+
+# Şube API yanıtında ve defterde ASLA dönmez / yazılmaz (yalnızca merkez + DB)
+SUBE_GIZLI_IADE_ALANLARI = frozenset({
+    "iade_musteri_ad",
+    "iade_musteri_telefon",
+})
+
+
+def parse_iade_zaman_tr(raw: str) -> datetime:
+    """Panel datetime-local veya ISO → Europe/Istanbul tz bilgili."""
+    s = (raw or "").strip()
+    if not s:
+        raise ValueError("İade zamanı zorunlu — kasa fişindeki saati girin")
+    try:
+        if "T" in s:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        else:
+            dt = datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError as ex:
+        raise ValueError("Geçersiz iade zamanı — tarih ve saat seçin") from ex
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=TR_TZ)
+    else:
+        dt = dt.astimezone(TR_TZ)
+    return dt
+
+
+def _normalize_iade_telefon(raw: str) -> str:
+    """TR cep: 10 hane, 5 ile başlar."""
+    digits = re.sub(r"\D", "", (raw or ""))
+    if digits.startswith("90") and len(digits) == 12:
+        digits = digits[2:]
+    if digits.startswith("0") and len(digits) == 11:
+        digits = digits[1:]
+    if len(digits) != 10 or not digits.startswith("5"):
+        raise ValueError("Geçerli cep telefonu girin (5XX XXX XX XX)")
+    return digits
+
+
+def _normalize_iade_musteri_ad(raw: str) -> str:
+    ad = " ".join((raw or "").strip().split())
+    if len(ad) < 2:
+        raise ValueError("Müşteri adı zorunlu (en az 2 karakter)")
+    if len(ad) > 120:
+        raise ValueError("Müşteri adı en fazla 120 karakter olabilir")
+    return ad
+
+
+def _iade_alanlari_dogrula(
+    sebep_kodu: str,
+    fis_no: Optional[str],
+    iade_zaman_raw: Optional[str],
+    cikis: List[Tuple[str, str, int]],
+    musteri_ad: Optional[str] = None,
+    musteri_telefon: Optional[str] = None,
+) -> Tuple[Optional[str], Optional[datetime], Optional[str], Optional[str]]:
+    """İade: fiş, zaman, ürün, müşteri adı ve telefon zorunlu."""
+    if (sebep_kodu or "").strip().lower() != FIRE_IADE_SEBEP:
+        return None, None, None, None
+    fn = (fis_no or "").strip()
+    if len(fn) < 1:
+        raise ValueError("İade için fiş numarası zorunlu")
+    if len(fn) > 64:
+        raise ValueError("Fiş numarası en fazla 64 karakter olabilir")
+    if not cikis:
+        raise ValueError("İade için en az bir ürün kalemi seçin")
+    iade_dt = parse_iade_zaman_tr(iade_zaman_raw or "")
+    mad = _normalize_iade_musteri_ad(musteri_ad or "")
+    mtel = _normalize_iade_telefon(musteri_telefon or "")
+    return fn, iade_dt, mad, mtel
+
+
+def fire_bildirim_sube_yanit(kayit: Dict[str, Any]) -> Dict[str, Any]:
+    """Şube paneline dönen yanıt — müşteri adı/telefon ASLA dönmez."""
+    safe = {k: v for k, v in (kayit or {}).items() if k not in SUBE_GIZLI_IADE_ALANLARI}
+    return {
+        "success": True,
+        "id": safe.get("id"),
+        "toplam_adet": safe.get("toplam_adet"),
+        "kalem_sayisi": safe.get("kalem_sayisi"),
+        "sebep_kodu": safe.get("sebep_kodu"),
+        "mesaj": (
+            "Fire bildirimi merkeze iletildi. "
+            "Müşteri adı ve telefon yalnızca operasyon merkezinde görünür; "
+            "şube panelinde tekrar gösterilmez veya saklanmaz."
+        ),
+    }
+
 
 def ensure_fire_bildirim_tablosu(cur: Any) -> None:
     cur.execute("""
@@ -44,10 +136,34 @@ def ensure_fire_bildirim_tablosu(cur: Any) -> None:
             kalemler        JSONB NOT NULL DEFAULT '[]'::jsonb,
             toplam_adet     INT NOT NULL DEFAULT 0,
             defter_id       TEXT,
-            goruldu         BOOLEAN NOT NULL DEFAULT FALSE,
-            goruldu_ts      TIMESTAMPTZ
+                goruldu         BOOLEAN NOT NULL DEFAULT FALSE,
+                goruldu_ts      TIMESTAMPTZ,
+                fis_no          TEXT,
+                iade_zaman      TIMESTAMPTZ,
+                iade_musteri_ad TEXT,
+                iade_musteri_telefon TEXT
         )
     """)
+    for kolon, tip in (
+        ("fis_no", "TEXT"),
+        ("iade_zaman", "TIMESTAMPTZ"),
+        ("iade_musteri_ad", "TEXT"),
+        ("iade_musteri_telefon", "TEXT"),
+    ):
+        cur.execute(
+            f"""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'sube_fire_bildirim'
+                      AND column_name = '{kolon}'
+                ) THEN
+                    ALTER TABLE sube_fire_bildirim ADD COLUMN {kolon} {tip};
+                END IF;
+            END $$;
+            """
+        )
     cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_sube_fire_bildirim_sube_tarih
         ON sube_fire_bildirim (sube_id, tarih DESC, olusturma DESC)
@@ -108,6 +224,7 @@ def _fire_stok_hareket_yaz(
     personel_id: str,
     personel_ad: str,
     aciklama: str,
+    kaynak_belge_no: Optional[str] = None,
 ) -> None:
     _ensure_stok_hareket_tablosu(cur)
     onceki = _stok_onceki_adet(cur, sube_id, kalem_kodu)
@@ -118,9 +235,9 @@ def _fire_stok_hareket_yaz(
         INSERT INTO sube_depo_stok_hareket
             (sube_id, kalem_kodu, kalem_adi, hareket_turu, miktar,
              onceki_miktar, sonraki_miktar,
-             kaynak_tip, kaynak_id,
+             kaynak_tip, kaynak_id, kaynak_belge_no,
              personel_id, personel_ad, aciklama, onay_durumu)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """,
         (
             sube_id,
@@ -132,6 +249,7 @@ def _fire_stok_hareket_yaz(
             round(sonraki, 4),
             "SUBE_FIRE",
             bildirim_id,
+            (kaynak_belge_no or "").strip() or None,
             personel_id or None,
             personel_ad or None,
             (aciklama or "").strip()[:500] or None,
@@ -198,6 +316,10 @@ def fire_bildirim_kaydet(
     body_delta: Optional[Dict[str, Any]] = None,
     not_aciklama: Optional[str] = None,
     tarih: Optional[date] = None,
+    fis_no: Optional[str] = None,
+    iade_zaman: Optional[str] = None,
+    iade_musteri_ad: Optional[str] = None,
+    iade_musteri_telefon: Optional[str] = None,
 ) -> Dict[str, Any]:
     ensure_fire_bildirim_tablosu(cur)
     kod = (sebep_kodu or "").strip().lower()
@@ -218,6 +340,10 @@ def fire_bildirim_kaydet(
     if not cikis:
         raise ValueError("En az bir kalemde fire adedi girin")
 
+    fis_kayit, iade_dt, musteri_ad_k, musteri_tel_k = _iade_alanlari_dogrula(
+        kod, fis_no, iade_zaman, cikis, iade_musteri_ad, iade_musteri_telefon,
+    )
+
     toplam = sum(a for _, _, a in cikis)
     sebep_label = FIRE_SEBEP[kod]
     bid = str(uuid.uuid4())
@@ -229,8 +355,13 @@ def fire_bildirim_kaydet(
     ]
 
     hareket_acik = f"{sebep_label}: {acik}"
+    if fis_kayit:
+        iz = dt_format_api_tr(iade_dt) if iade_dt else ""
+        hareket_acik = f"İADE fiş={fis_kayit} zaman={iz} | {hareket_acik}"
     if (not_aciklama or "").strip():
         hareket_acik += f" | Not: {(not_aciklama or '').strip()[:200]}"
+
+    panel_log = dt_format_api_tr(dt_now_tr())
 
     for kk, lab, adet in cikis:
         _fire_stok_hareket_yaz(
@@ -243,6 +374,7 @@ def fire_bildirim_kaydet(
             personel_id=personel_id,
             personel_ad=personel_ad,
             aciklama=hareket_acik,
+            kaynak_belge_no=fis_kayit,
         )
 
     from operasyon_defter import operasyon_defter_ekle
@@ -253,7 +385,12 @@ def fire_bildirim_kaydet(
         "aciklama": acik,
         "kalemler": json_kalemler,
         "toplam_adet": toplam,
+        "panel_kayit_zaman": panel_log,
     }
+    if fis_kayit and iade_dt:
+        payload["fis_no"] = fis_kayit
+        payload["iade_zaman"] = dt_format_api_tr(iade_dt)
+    # Müşteri PII yalnızca DB + merkez API; defter JSON'da yok
     defter_acik = (
         f"SUBE_FIRE_JSON:{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}"
     )
@@ -273,8 +410,9 @@ def fire_bildirim_kaydet(
         """
         INSERT INTO sube_fire_bildirim
             (id, sube_id, tarih, personel_id, personel_ad,
-             sebep_kodu, sebep_label, aciklama, kalemler, toplam_adet, defter_id)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+             sebep_kodu, sebep_label, aciklama, kalemler, toplam_adet, defter_id,
+             fis_no, iade_zaman, iade_musteri_ad, iade_musteri_telefon)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """,
         (
             bid,
@@ -288,6 +426,10 @@ def fire_bildirim_kaydet(
             json.dumps(json_kalemler, ensure_ascii=False),
             toplam,
             rid,
+            fis_kayit,
+            iade_dt,
+            musteri_ad_k,
+            musteri_tel_k,
         ),
     )
 
@@ -298,6 +440,11 @@ def fire_bildirim_kaydet(
         "kalem_sayisi": len(cikis),
         "sebep_kodu": kod,
         "sebep_label": sebep_label,
+        "fis_no": fis_kayit,
+        "iade_zaman": dt_format_api_tr(iade_dt) if iade_dt else None,
+        "panel_kayit_zaman": panel_log,
+        "iade_musteri_ad": musteri_ad_k,
+        "iade_musteri_telefon": musteri_tel_k,
     }
 
 
@@ -313,12 +460,14 @@ def _row_to_dict(row: Any, sube_ad_map: Dict[str, str]) -> Dict[str, Any]:
     if not isinstance(kalemler, list):
         kalemler = []
     olusturma = d.get("olusturma")
+    iade_z = d.get("iade_zaman")
     return {
         "id": d.get("id"),
         "sube_id": sid,
         "sube_ad": sube_ad_map.get(sid) or sid,
         "tarih": str(d.get("tarih") or "")[:10],
         "olusturma": olusturma.isoformat() if hasattr(olusturma, "isoformat") else str(olusturma or ""),
+        "panel_kayit_zaman": dt_format_api_tr(olusturma) if olusturma else "",
         "personel_id": d.get("personel_id"),
         "personel_ad": d.get("personel_ad"),
         "sebep_kodu": d.get("sebep_kodu"),
@@ -328,6 +477,10 @@ def _row_to_dict(row: Any, sube_ad_map: Dict[str, str]) -> Dict[str, Any]:
         "toplam_adet": int(d.get("toplam_adet") or 0),
         "defter_id": d.get("defter_id"),
         "goruldu": bool(d.get("goruldu")),
+        "fis_no": (d.get("fis_no") or "").strip() or None,
+        "iade_zaman": dt_format_api_tr(iade_z) if iade_z else None,
+        "iade_musteri_ad": (d.get("iade_musteri_ad") or "").strip() or None,
+        "iade_musteri_telefon": (d.get("iade_musteri_telefon") or "").strip() or None,
     }
 
 

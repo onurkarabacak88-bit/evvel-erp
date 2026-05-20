@@ -2381,6 +2381,10 @@ class SubeFireBildirBody(BaseModel):
     aciklama: str
     kalemler: List[Dict[str, Any]] = []
     not_aciklama: Optional[str] = None
+    fis_no: Optional[str] = None
+    iade_zaman: Optional[str] = None
+    iade_musteri_ad: Optional[str] = None
+    iade_musteri_telefon: Optional[str] = None
     bardak_kucuk: Optional[int] = None
     bardak_buyuk: Optional[int] = None
     bardak_plastik: Optional[int] = None
@@ -2400,7 +2404,7 @@ class SubeFireBildirBody(BaseModel):
 
 @router.post("/{sube_id}/fire-bildir")
 def sube_fire_bildir(sube_id: str, body: SubeFireBildirBody):
-    from fire_bildirim import fire_bildirim_kaydet, FIRE_SEBEP
+    from fire_bildirim import fire_bildirim_kaydet, fire_bildirim_sube_yanit, FIRE_SEBEP
     from tr_saat import bugun_tr
 
     pid_in = (body.personel_id or "").strip()
@@ -2434,12 +2438,16 @@ def sube_fire_bildir(sube_id: str, body: SubeFireBildirBody):
                 body_delta=body.model_dump(),
                 not_aciklama=body.not_aciklama,
                 tarih=bugun_tr(),
+                fis_no=body.fis_no,
+                iade_zaman=body.iade_zaman,
+                iade_musteri_ad=body.iade_musteri_ad,
+                iade_musteri_telefon=body.iade_musteri_telefon,
             )
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         audit(cur, "sube_fire_bildirim", out["id"], "SUBE_FIRE")
 
-    return {"success": True, **out}
+    return fire_bildirim_sube_yanit(out)
 
 
 # ─────────────────────────────────────────────────────────────

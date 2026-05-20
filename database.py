@@ -530,7 +530,11 @@ def init_db():
                 toplam_adet     INT NOT NULL DEFAULT 0,
                 defter_id       TEXT,
                 goruldu         BOOLEAN NOT NULL DEFAULT FALSE,
-                goruldu_ts      TIMESTAMPTZ
+                goruldu_ts      TIMESTAMPTZ,
+                fis_no          TEXT,
+                iade_zaman      TIMESTAMPTZ,
+                iade_musteri_ad TEXT,
+                iade_musteri_telefon TEXT
             )
         """)
         cur.execute("""
@@ -541,6 +545,26 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_sube_fire_bildirim_tarih
             ON sube_fire_bildirim (tarih DESC, olusturma DESC)
         """)
+        for _fk, _ft in (
+            ("fis_no", "TEXT"),
+            ("iade_zaman", "TIMESTAMPTZ"),
+            ("iade_musteri_ad", "TEXT"),
+            ("iade_musteri_telefon", "TEXT"),
+        ):
+            cur.execute(
+                f"""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'public' AND table_name = 'sube_fire_bildirim'
+                          AND column_name = '{_fk}'
+                    ) THEN
+                        ALTER TABLE sube_fire_bildirim ADD COLUMN {_fk} {_ft};
+                    END IF;
+                END $$;
+                """
+            )
         cur.execute("""
             CREATE TABLE IF NOT EXISTS sube_operasyon_ozet (
                 id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
