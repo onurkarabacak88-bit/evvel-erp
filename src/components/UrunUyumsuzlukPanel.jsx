@@ -78,7 +78,9 @@ export default function UrunUyumsuzlukPanel({
         body: { notu: (neden || '').trim() },
       });
       toast('Çözüldü işaretlendi', 'green');
-      const data = await gunYukle(secilenTarih, { durum: durumFiltre });
+      const yeniDurum = durumFiltre === 'bekleyen' ? 'cozuldu' : durumFiltre;
+      if (yeniDurum !== durumFiltre) setDurumFiltre(yeniDurum);
+      const data = await gunYukle(secilenTarih, { durum: yeniDurum });
       setAramaSonuc(data);
       if (onRefreshHub) await onRefreshHub();
     } catch (e) {
@@ -117,7 +119,10 @@ export default function UrunUyumsuzlukPanel({
           'green',
         );
       }
-      const data = await gunYukle(secilenTarih, { durum: durumFiltre });
+      const otomatikCoz = !!r?.otomatik_cozuldu;
+      const yeniDurum = (durumFiltre === 'bekleyen' && otomatikCoz) ? 'cozuldu' : durumFiltre;
+      if (yeniDurum !== durumFiltre) setDurumFiltre(yeniDurum);
+      const data = await gunYukle(secilenTarih, { durum: yeniDurum });
       setAramaSonuc(data);
       setDuzeltModal(null);
       if (onRefreshHub) await onRefreshHub();
@@ -207,6 +212,12 @@ export default function UrunUyumsuzlukPanel({
             {fark > 0 ? '+' : ''}{fmt(fark)} adet
           </div>
           {u.mesaj && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6, lineHeight: 1.45 }}>{u.mesaj}</div>}
+          {cozuldu && (u.cozum_notu || u.cozum_ts) && (
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 8, paddingTop: 8, borderTop: `1px solid ${r.sep}`, lineHeight: 1.45 }}>
+              {u.cozum_notu && <div><strong>Çözüm:</strong> {u.cozum_notu}</div>}
+              {u.cozum_ts && <div style={{ marginTop: 4 }}><strong>Zaman:</strong> {String(u.cozum_ts).replace('T', ' ').slice(0, 16)}</div>}
+            </div>
+          )}
         </div>
       </div>
     );

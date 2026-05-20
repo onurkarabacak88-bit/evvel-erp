@@ -3340,12 +3340,36 @@ def ops_bar_ozet(
                 "devir_uyumsuz_var": devir_uyumsuz_var,
             })
 
+        # Evo Grup_Pasta → satılan yanında malzeme etiketi (tek gün sorgularında)
+        evo_by_sube: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        if gun_v:
+            try:
+                from evo_sync import evo_bar_adet_by_sube_id
+
+                evo_by_sube = evo_bar_adet_by_sube_id(cur, hedef_tarih)
+            except Exception:
+                evo_by_sube = {}
+
+        for row in satirlar:
+            evo_bar = evo_by_sube.get(str(row.get("sube_id") or "")) or {}
+            row["evo_adet"] = {
+                k: round(float(v.get("adet") or 0), 1)
+                for k, v in evo_bar.items()
+            }
+            row["evo_etiket"] = {
+                k: f"Evo: {v.get('etiket') or k} ({int(round(float(v.get('adet') or 0)))})"
+                for k, v in evo_bar.items()
+                if float(v.get("adet") or 0) > 0
+            }
+            row["evo_kaynak"] = "hs_rapor" if evo_bar else None
+
         satirlar.sort(key=lambda x: (x["tarih"], x["sube_adi"]), reverse=True)
         return {
             "satirlar": satirlar,
             "year_month": ym,
             "gun": gun_v or None,
             "kapanis_fallback": bool(kapanis_fallback),
+            "evo_dahil": bool(gun_v),
         }
 
 

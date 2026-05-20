@@ -1964,6 +1964,72 @@ def hs_rapor_sube_bazli(bastar: date, bittar: date) -> Dict[str, Any]:
     }
 
 
+# Evo Grup_Pasta → bar-ozet / Kullanılan Ürünler satır etiketi
+EVO_GRUP_BAR_OZET: Dict[str, tuple] = {
+    "14 Oz": ("bardak_buyuk", "14oz karton bardak"),
+    "8 Oz": ("bardak_kucuk", "8oz karton bardak"),
+    "Ice": ("bardak_plastik", "plastik bardak"),
+    "Su": ("su_adet", "su"),
+    "Maden Suyu": ("soda_adet", "maden suyu"),
+    "Redbull": ("redbull_adet", "redbull"),
+    "Pasta": ("pasta_adet", "pasta"),
+}
+
+
+def _evvel_sube_evo_payload_eslestir(
+    sube_adi_evvel: str,
+    evo_subeler: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    evvel_lower = (sube_adi_evvel or "").strip().lower().replace("şubesi", "").strip()
+    if not evvel_lower:
+        return None
+    for evo_ad, payload in (evo_subeler or {}).items():
+        elow = str(evo_ad or "").strip().lower().replace("şubesi", "").strip()
+        if evvel_lower in elow or elow in evvel_lower:
+            return payload
+    return None
+
+
+def evo_bar_adet_by_sube_id(cur: Any, hedef: date) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """
+    Tek gün için şube_id → bar_key → {adet, etiket, grup}.
+    Kaynak: hs_rapor Grup_Pasta (Evo Hızlı Satış).
+    """
+    out: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    try:
+        evo = hs_rapor_sube_bazli(hedef, hedef)
+        evo_subeler = evo.get("subeler") or {}
+        if not evo_subeler:
+            return out
+        cur.execute("SELECT id::text AS id, ad FROM subeler")
+        for row in cur.fetchall() or []:
+            sid = str(row.get("id") or "")
+            ad = str(row.get("ad") or "")
+            payload = _evvel_sube_evo_payload_eslestir(ad, evo_subeler)
+            if not payload:
+                continue
+            by_bar: Dict[str, Dict[str, Any]] = {}
+            for grup, (bkey, etiket) in EVO_GRUP_BAR_OZET.items():
+                g = (payload.get("gruplar") or {}).get(grup) or {}
+                adet = float(g.get("adet") or 0)
+                if adet <= 0:
+                    continue
+                prev = by_bar.get(bkey)
+                if prev:
+                    prev["adet"] = float(prev.get("adet") or 0) + adet
+                else:
+                    by_bar[bkey] = {
+                        "adet": adet,
+                        "etiket": etiket,
+                        "grup": grup,
+                    }
+            if by_bar:
+                out[sid] = by_bar
+    except Exception as e:
+        log.warning("evo_bar_adet_by_sube_id: %s", e)
+    return out
+
+
 def faturajq_sube_grup_detay(bastar: date, bittar: date,
                               max_fatura: int = 1000) -> Dict[str, Any]:
     """Şube × grup × {ucretli, ikram, ciro} matrisi + şube nakit/kart + personel × ürün.

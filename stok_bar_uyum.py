@@ -375,13 +375,16 @@ def build_stok_uyum_liste(
         """,
         (hedef_tarih,),
     )
-    rows: List[Dict[str, Any]] = []
+    tum_satirlar: List[Dict[str, Any]] = []
     for r in cur.fetchall() or []:
         d = dict(r)
         tip = str(d.get("tip") or "")
-        if tip.startswith("STOK_BAR_") and str(d.get("id") or "") not in aktif_ids:
+        uid = str(d.get("id") or "")
+        cozuldu_flag = bool(d.get("okundu"))
+        # Aktif bar uyumsuzluğu yoksa kayıt silinmesin: çözülmüş (okundu) arşiv olarak kalsın.
+        if tip.startswith("STOK_BAR_") and uid not in aktif_ids and not cozuldu_flag:
             continue
-        d["cozuldu"] = bool(d.get("okundu"))
+        d["cozuldu"] = cozuldu_flag
         for k in ("fark_tl", "beklenen_tl", "gercek_tl", "cozum_duzeltilen_tl"):
             if d.get(k) is not None:
                 d[k] = float(d[k])
@@ -399,19 +402,22 @@ def build_stok_uyum_liste(
         d["kalem_adi"] = (d.get("detay_json") or {}).get("kalem_adi") or STOK_LABEL_TR.get(
             str(d.get("kalem_kodu") or ""), str(d.get("kalem_kodu") or "")
         )
-        if sadece_bekleyen and d["cozuldu"]:
-            continue
-        if sadece_cozuldu and not d["cozuldu"]:
-            continue
-        rows.append(d)
+        tum_satirlar.append(d)
 
-    gun_toplam = len(rows)
-    gun_bekleyen = sum(1 for x in rows if not x["cozuldu"])
-    gun_cozuldu = gun_toplam - gun_bekleyen
+    gun_toplam = len(tum_satirlar)
+    gun_bekleyen = sum(1 for x in tum_satirlar if not x["cozuldu"])
+    gun_cozuldu = sum(1 for x in tum_satirlar if x["cozuldu"])
+
+    rows = tum_satirlar
+    if sadece_bekleyen:
+        rows = [x for x in tum_satirlar if not x["cozuldu"]]
+    elif sadece_cozuldu:
+        rows = [x for x in tum_satirlar if x["cozuldu"]]
+
     return {
         "tarih": gun_str,
         "liste": rows,
-        "toplam": gun_toplam,
+        "toplam": len(rows),
         "gun_toplam": gun_toplam,
         "gun_bekleyen": gun_bekleyen,
         "gun_cozuldu": gun_cozuldu,
