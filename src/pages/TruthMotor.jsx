@@ -132,7 +132,14 @@ export default function TruthMotor() {
         setHata(r?.sebep || 'Motor çalışmadı');
       } else {
         const anomali = (r.taniler || []).filter((t) => !['UYUMLU', 'YETERSIZ_VERI'].includes(t.tani));
-        setInfo(`${sube_id}: ${r.kaydedildi} karar, ${anomali.length} anomali (mod=${r.mod})`);
+        let mesaj = `${sube_id}: ${r.kaydedildi} karar, ${anomali.length} anomali (mod=${r.mod})`;
+        // Otomatik kasa baskını tetiklenmişse net bilgi
+        if (r.baskin_tetik?.baslatildi) {
+          mesaj += ` · 🚨 KASA BASKINI BAŞLATILDI (id: ${(r.baskin_tetik.id || '').slice(0, 8)}) — ${(r.baskin_tetik.tani || []).join(', ')}`;
+        } else if (r.baskin_tetik?.oneri) {
+          mesaj += ` · ⚠️ Kasa baskını ÖNERİSİ (mod=read_only, ${(r.baskin_tetik.tani || []).join(', ')})`;
+        }
+        setInfo(mesaj);
         await Promise.all([kararlariYukle(), gunlukYukle()]);
       }
     } catch (e) {
