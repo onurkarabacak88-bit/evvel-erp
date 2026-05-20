@@ -57,6 +57,7 @@ export default function TruthMotor() {
   const [gunluk, setGunluk] = useState({ tarih: bugunStr(), subeler: [] });
   const [tarih, setTarih] = useState(bugunStr());
   const [detay, setDetay] = useState(null);  // {sube_id, sube_ad}
+  const [aktifSekme, setAktifSekme] = useState('genel');  // genel|vardiya|tani|mali|gelismis
   const [filtre, setFiltre] = useState({ sadece_anomali: true, sube_id: '', tani: '' });
   const [busy, setBusy] = useState('');
   const [hata, setHata] = useState('');
@@ -296,31 +297,72 @@ export default function TruthMotor() {
         )}
       </div>
 
-      {/* AÇIK GÖREVLER */}
-      <AcikGorevler refreshKey={`${tarih}-${Object.keys(detay || {}).join('')}`} />
+      {/* SEKMELER */}
+      <div style={{
+        display: 'flex', gap: 4, borderBottom: '1px solid rgba(255,255,255,0.1)',
+        margin: '20px 0 16px', overflowX: 'auto',
+      }}>
+        {[
+          { id: 'genel',     label: '📋 Genel',          icon: '' },
+          { id: 'vardiya',   label: '🕒 Vardiya & Personel', icon: '' },
+          { id: 'tani',      label: '🧬 Akıllı Tanı',    icon: '' },
+          { id: 'mali',      label: '💳 Mali Çapraz',    icon: '' },
+          { id: 'gelismis',  label: '⚙️ Geçmiş & Ayar', icon: '' },
+        ].map(s => (
+          <button
+            key={s.id}
+            onClick={() => setAktifSekme(s.id)}
+            style={{
+              padding: '8px 14px', border: 'none', background: 'transparent',
+              borderBottom: aktifSekme === s.id ? '2px solid var(--accent)' : '2px solid transparent',
+              color: aktifSekme === s.id ? 'var(--accent)' : 'var(--text2)',
+              fontSize: 13, fontWeight: aktifSekme === s.id ? 700 : 500,
+              cursor: 'pointer', whiteSpace: 'nowrap',
+            }}>
+            {s.label}
+          </button>
+        ))}
+      </div>
 
-      {/* VARDIYA P&L (Sprint A) */}
-      <VardiyaPL tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
+      {/* ========== GENEL ========== */}
+      {aktifSekme === 'genel' && (
+        <>
+          <AcikGorevler refreshKey={`${tarih}-${Object.keys(detay || {}).join('')}`} />
+        </>
+      )}
 
-      {/* PERSONEL DAVRANIŞ SİNYALİ (Sprint A — velocity/iskonto/fiş tutarı) */}
-      <PersonelDavranis />
+      {/* ========== VARDIYA & PERSONEL ========== */}
+      {aktifSekme === 'vardiya' && (
+        <>
+          <VardiyaPL tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
+          <PersonelDavranis />
+        </>
+      )}
 
-      {/* PATTERN DETECTION (Sprint B — NRF zekası) */}
-      <PatternDetect />
+      {/* ========== AKILLI TANI (Pattern + BOM + Heatmap) ========== */}
+      {aktifSekme === 'tani' && (
+        <>
+          <PatternDetect />
+          <BomVaryans tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
+          <SaatHeatmap />
+        </>
+      )}
 
-      {/* ÜRÜN BOM RECETE VARYANSI (Sprint C) */}
-      <BomVaryans tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
+      {/* ========== MALI ÇAPRAZ ========== */}
+      {aktifSekme === 'mali' && (
+        <MaliCapraz />
+      )}
 
-      {/* SAAT HEATMAP (Sprint C) */}
-      <SaatHeatmap />
+      {/* ========== GEÇMİŞ & AYAR (Personel Skor + Şube Ayarları + Karar Tablosu) ========== */}
+      {aktifSekme === 'gelismis' && (
+        <>
+          <PersonelSkor />
+        </>
+      )}
 
-      {/* MALI CAPRAZ (Sprint D) */}
-      <MaliCapraz />
-
-      {/* PERSONEL SKORU (eski Z-skor — anomali bazlı) */}
-      <PersonelSkor />
-
-      {/* ŞUBE KARTLARI */}
+      {/* ŞUBE KARTLARI — sadece Geçmiş & Ayar sekmesinde */}
+      {aktifSekme === 'gelismis' && (
+      <>
       <h3 style={{ fontSize: 14, fontWeight: 600, margin: '20px 0 8px' }}>Şube Ayarları</h3>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10, marginBottom: 24 }}>
         {(durum?.subeler || []).length === 0 && (
@@ -468,6 +510,8 @@ export default function TruthMotor() {
           </tbody>
         </table>
       </div>
+      </>
+      )}
     </div>
   );
 }
