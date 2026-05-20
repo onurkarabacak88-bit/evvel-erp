@@ -1731,6 +1731,25 @@ function DetayModal({ sube_id, sube_ad, tarih, onKapat, onGorevAcildi }) {
                           {gorevBusy === k.id ? '…' : `📋 Görev Aç`}
                         </button>
                       ))}
+                      {/* Kasa boyutu için Operasyon Merkezi shortcut */}
+                      {anomali && k.boyut === 'kasa' && (
+                        <a
+                          href="#ops-merkez"
+                          onClick={() => {
+                            try {
+                              sessionStorage.setItem('ops_merkez_ac_sekme', 'kasa-uyumsuzlugu');
+                            } catch (_) {}
+                          }}
+                          style={{
+                            fontSize: 10, padding: '3px 8px',
+                            background: '#f59e0b', color: '#000', borderRadius: 4,
+                            textDecoration: 'none', fontWeight: 600,
+                          }}
+                          title="Operasyon Merkezi'nde kaynak düzelt akışını aç"
+                        >
+                          ⚙ Kaynağı Düzelt →
+                        </a>
+                      )}
                     </div>
                   </div>
                 )}
