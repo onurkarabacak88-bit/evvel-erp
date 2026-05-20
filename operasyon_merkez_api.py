@@ -3416,6 +3416,112 @@ def ops_urun_ac_uyumsuzluklar(
     return {"satirlar": satirlar, "year_month": ym, "gun": gun_v or None}
 
 
+class StokKaynakDuzeltmeBody(BaseModel):
+    sebep: str
+    payload: Dict[str, Any] = {}
+    notu: Optional[str] = None
+    personel_id: Optional[str] = None
+    personel_ad: Optional[str] = None
+
+
+@router.get("/urun-uyumsuzluk")
+def ops_urun_uyumsuzluk_listesi(
+    tarih: Optional[str] = None,
+    sadece_bekleyen: bool = False,
+    sadece_cozuldu: bool = False,
+):
+    """
+    Depo stok bar uyumsuzlukları — kasa uyumsuzluk ekranı ile aynı kuyruk modeli.
+    STOK_BAR_DEVIR_FARK, STOK_BAR_GUN_ICI_FARK, URUN_AC_UYUMSUZLUK.
+    """
+    from tr_saat import is_gunu_tr
+    from stok_bar_uyum import build_stok_uyum_liste
+
+    try:
+        hedef_tarih = date.fromisoformat(tarih) if tarih else is_gunu_tr()
+    except ValueError:
+        raise HTTPException(400, "Geçersiz tarih formatı (YYYY-MM-DD bekleniyor)")
+
+    with db() as (_, cur):
+        out = build_stok_uyum_liste(cur, hedef_tarih, sadece_bekleyen, sadece_cozuldu)
+    out["sadece_bekleyen"] = sadece_bekleyen
+    out["sadece_cozuldu"] = sadece_cozuldu
+    return out
+
+
+@router.post("/urun-uyumsuzluk/{uyari_id}/coz")
+def ops_urun_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyumsuzlukCozBody()):
+    from stok_bar_uyum import stok_uyum_coz
+
+    notu = (body.notu or "").strip() or None
+    duz = None
+    if body.duzeltilen_fark_tl is not None:
+        try:
+            duz = round(float(body.duzeltilen_fark_tl), 2)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "duzeltilen_fark_tl sayısal olmalı")
+    with db() as (_, cur):
+        try:
+            return stok_uyum_coz(cur, uyari_id, notu, duz)
+        except ValueError as ex:
+            raise HTTPException(404, str(ex)) from ex
+
+
+@router.post("/urun-uyumsuzluk/{uyari_id}/kaynak-duzelt")
+def ops_urun_uyumsuzluk_kaynak_duzelt(uyari_id: str, body: StokKaynakDuzeltmeBody):
+    from stok_bar_uyum import stok_uyum_kaynak_duzelt
+
+    sebep = (body.sebep or "").strip().lower()
+    izin = {"acilis_yanlis", "kapanis_yanlis", "devir_yanlis", "urun_ac_yanlis", "gercek_uyumsuzluk", "depo_girisi"}
+    if sebep not in izin:
+        raise HTTPException(400, f"Geçersiz sebep — şunlardan biri: {sorted(izin)}")
+    with db() as (_, cur):
+        try:
+            return stok_uyum_kaynak_duzelt(
+                cur, uyari_id, sebep, body.payload or {}, (body.notu or "").strip() or None,
+            )
+        except ValueError as ex:
+            raise HTTPException(400, str(ex)) from ex
+
+
+@router.get("/fire-bildirimler")
+def ops_fire_bildirimler(
+    tarih: Optional[str] = None,
+    sube_id: Optional[str] = None,
+    sebep_kodu: Optional[str] = None,
+    gun: int = 45,
+):
+    """Şube fire bildirimleri — sebep, kalem ve açıklama ile merkez listesi."""
+    from datetime import date
+    from tr_saat import is_gunu_tr
+    from fire_bildirim import build_fire_bildirim_liste
+
+    try:
+        hedef_tarih = date.fromisoformat(tarih) if tarih else is_gunu_tr()
+    except ValueError:
+        raise HTTPException(400, "Geçersiz tarih formatı (YYYY-MM-DD bekleniyor)")
+
+    with db() as (_, cur):
+        return build_fire_bildirim_liste(
+            cur,
+            hedef_tarih,
+            sube_id=(sube_id or "").strip() or None,
+            sebep_kodu=(sebep_kodu or "").strip() or None,
+            gun=gun,
+        )
+
+
+@router.post("/fire-bildirimler/{bildirim_id}/goruldu")
+def ops_fire_bildirim_goruldu(bildirim_id: str):
+    from fire_bildirim import fire_bildirim_goruldu
+
+    with db() as (_, cur):
+        try:
+            return fire_bildirim_goruldu(cur, bildirim_id)
+        except ValueError as ex:
+            raise HTTPException(404, str(ex)) from ex
+
+
 def _ops_parse_defter_delta(raw_aciklama: str, prefix: str) -> Dict[str, int]:
     out = {k: 0 for k in STOK_KEYS}
     s = (raw_aciklama or "").strip()

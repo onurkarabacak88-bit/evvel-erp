@@ -2037,6 +2037,9 @@
         <span class="ico">🔓</span> Ürün Aç
         <span id="solUrunAcBadge" style="display:none;position:absolute;right:10px;top:50%;transform:translateY(-50%);min-width:18px;height:18px;padding:0 6px;border-radius:999px;background:#f59e0b;color:#111;font-size:11px;font-weight:800;line-height:18px;text-align:center;animation:pulse 1.2s ease-in-out infinite">0</span>
       </button>
+      <button class="sol-btn" id="solFireBtn" onclick="solSekmeAc('fire')">
+        <span class="ico">🔥</span> Fire Bildirimi
+      </button>
       <div id="solGonderWrap" class="sol-gonder-wrap">
         <button type="button" class="sol-btn" id="solGonderilecekBtn" onclick="solSekmeAc('gonderilecek')" style="position:relative">
           <span class="ico">📤</span> Gönderilecek siparişler
@@ -2102,6 +2105,11 @@
               <span class="ico">🔓</span>
               <span class="ttl">Ürün Aç</span>
               <span class="sub">Depodan aktif kullanıma</span>
+            </button>
+            <button class="orta-kisa-kart" type="button" onclick="solSekmeAc('fire')">
+              <span class="ico">🔥</span>
+              <span class="ttl">Fire Bildirimi</span>
+              <span class="sub">Kayıp / zayi — sebep ile merkeze</span>
             </button>
           </div>
         </div>
@@ -2236,6 +2244,13 @@
           <div id="gonderilecekBulkBarWrap" aria-live="polite"></div>
           <div id="gonderilecekPanel"></div>
           <div id="gonderilecekMsg"></div>
+        </div>
+      </div>
+
+      <div class="sekme-icerik" id="tab-fire">
+        <div class="kart">
+          <div class="kart-baslik"><span class="ico">🔥</span> Fire Bildirimi <span style="font-size:11px;color:var(--muted);font-weight:400">(Kayıp / zayi)</span></div>
+          <div id="fireForm"></div>
         </div>
       </div>
 
@@ -4756,7 +4771,7 @@ window.solSekmeAc = function(id) {
   var altBtn = document.getElementById('altTab-' + id);
   if (altBtn) altBtn.classList.add('active');
   // Stok formlarını doldur
-  if (id === 'sevk' || id === 'ac') renderStokForms(id);
+  if (id === 'sevk' || id === 'ac' || id === 'fire') renderStokForms(id);
   if (id === 'sevk') {
     siparisAkisLoad(true)
       .then(function (akis) {
@@ -5092,8 +5107,8 @@ function renderAcilisWiz() {
 }
 
 // ─── STOK FORMS (MERKEZI KATALOG ILE) ────────────────────────
-var stokKalemDeger = { sv: {}, ac: {} };
-var _stokKatalogByPrefix = { sv: null, ac: null };
+var stokKalemDeger = { sv: {}, ac: {}, fr: {} };
+var _stokKatalogByPrefix = { sv: null, ac: null, fr: null };
 var stokKartUiState = {};
 function stokKartState(prefix) {
   if (!stokKartUiState[prefix]) stokKartUiState[prefix] = { openKat: null, showPasif: false };
@@ -5838,6 +5853,57 @@ function renderStokForms(tip) {
         setMsg('acMsg', e.message || 'Katalog yüklenemedi', 'msg-err');
       });
     }
+  } else if (tip === 'fire') {
+    var fel = document.getElementById('fireForm');
+    if (fel && !fel.dataset.built) {
+      fel.dataset.built = '1';
+      siparisLoad().then(function(katalog){
+        var fh = '';
+        fh += '<div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.28);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px;line-height:1.6;color:#fca5a5">';
+        fh += '<strong>🔥 Fire / zayi bildirimi</strong><br/>';
+        fh += 'Kayıp ürünleri (bardak, pasta, sarf vb.) ve <strong>sebebini</strong> girin. ';
+        fh += 'Gönderince depo stoğu düşer; operasyon merkezinde aynı gün listelenir.';
+        fh += '</div>';
+        fh += '<div class="form-group"><label>Fire sebebi <span style="color:#fda4af">*</span></label>';
+        fh += '<select id="frSebep"><option value="">— Seçin —</option>';
+        fh += '<option value="iade">Müşteri iadesi / bozuk ürün</option>';
+        fh += '<option value="sayim_hatasi">Sayım hatası</option>';
+        fh += '<option value="panel_hatasi">Panel kullanım hatası</option>';
+        fh += '<option value="skt_bozulma">SKT / bozulma</option>';
+        fh += '<option value="hazirlik_deneme">Hazırlık / deneme / eğitim</option>';
+        fh += '<option value="kirilma_dokulme">Kırılma / dökülme</option>';
+        fh += '<option value="diger">Diğer</option></select></div>';
+        fh += '<div class="form-group"><label>Açıklama <span style="color:#fda4af">*</span></label>';
+        fh += '<textarea id="frAciklama" rows="2" placeholder="Ne oldu? (min. 3 karakter; Diğer için min. 10)"></textarea></div>';
+        fh += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">';
+        fh += '<div class="form-group" style="margin:0"><label>Personel *</label><select id="frPers"></select></div>';
+        fh += '<div class="form-group" style="margin:0"><label>PIN *</label><input id="frPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>';
+        fh += '</div>';
+        fh += '<div class="form-group"><label>Ek not (opsiyonel)</label><input id="frNot" placeholder="Opsiyonel" /></div>';
+        fh += '<div id="frKatalogWrap"></div>';
+        fh += '<div id="frKatOverlay" class="overlay sip-kat-overlay" style="display:none" aria-hidden="true">';
+        fh += '<div class="overlay-kart sip-kat-modal-kart" id="frKatModalKart"><div id="frKatModalInner"></div></div></div>';
+        fh += '<div id="frSecimOzet" class="siparis-detay" style="margin-top:10px;font-size:12px;color:var(--muted)">Henüz fire kalemi seçilmedi.</div>';
+        fh += '<button type="button" class="btn btn-primary" id="frGonder">🔥 Fire bildirimini gönder</button>';
+        fh += '<div id="frMsg" style="margin-top:8px;font-size:12px"></div>';
+        fel.innerHTML = fh;
+        _stokKatalogByPrefix.fr = katalog || [];
+        stokKartState('fr').openKat = null;
+        refreshStokKatalogUI('fr');
+        fillSels();
+        wireStokBtn('fr', katalog || [], '/fire-bildir', '✅ Fire bildirimi merkeze iletildi.', function(body){
+          var sebep = selVal('frSebep');
+          if (!sebep) throw new Error('Fire sebebini seçin');
+          var acik = inpVal('frAciklama').trim();
+          if (acik.length < 3) throw new Error('Açıklama en az 3 karakter olmalı');
+          if (sebep === 'diger' && acik.length < 10) throw new Error('Diğer seçeneğinde açıklama en az 10 karakter olmalı');
+          body.sebep_kodu = sebep;
+          body.aciklama = acik;
+        });
+      }).catch(function(e){
+        setMsg('frMsg', e.message || 'Katalog yüklenemedi', 'msg-err');
+      });
+    }
   }
 }
 
@@ -5959,7 +6025,7 @@ function urunAcBekleyenSecimVarMi() {
 }
 
 function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
-  var formEl = document.getElementById(prefix === 'sv' ? 'sevkForm' : 'acForm');
+  var formEl = document.getElementById(prefix === 'sv' ? 'sevkForm' : (prefix === 'fr' ? 'fireForm' : 'acForm'));
   if (formEl) {
     attachStokKatalogDelegatedHandlers(formEl, prefix);
     wireStokInputDelegation(formEl, prefix);
@@ -5970,7 +6036,7 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
     btn.setAttribute('data-btn-base', (btn.textContent || '').replace(/\s+\(\d+\s+kalem\)$/,'').trim());
   }
   stokSecimBilgiYenile(prefix, data);
-  var formWatch = document.getElementById(prefix === 'sv' ? 'sevkForm' : 'acForm');
+  var formWatch = document.getElementById(prefix === 'sv' ? 'sevkForm' : (prefix === 'fr' ? 'fireForm' : 'acForm'));
   if (formWatch && formWatch.dataset['stokMeta_' + prefix] !== '1') {
     formWatch.dataset['stokMeta_' + prefix] = '1';
     formWatch.addEventListener('input', function(){ stokSecimBilgiYenile(prefix, data); });

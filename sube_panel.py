@@ -2373,6 +2373,76 @@ def sube_urun_stok_ekle(sube_id: str, body: SubeUrunStokEkleBody):
     return {"success": True, "defter_id": rid, "delta": delta}
 
 
+class SubeFireBildirBody(BaseModel):
+    """Şube fire / zayi bildirimi — depo düşer, merkez listesine düşer."""
+
+    personel_id: str
+    pin: str
+    sebep_kodu: str
+    aciklama: str
+    kalemler: List[Dict[str, Any]] = []
+    not_aciklama: Optional[str] = None
+    bardak_kucuk: Optional[int] = None
+    bardak_buyuk: Optional[int] = None
+    bardak_plastik: Optional[int] = None
+    su_adet: Optional[int] = None
+    redbull_adet: Optional[int] = None
+    soda_adet: Optional[int] = None
+    cookie_adet: Optional[int] = None
+    pasta_adet: Optional[int] = None
+    sut_litre: Optional[int] = None
+    surup_adet: Optional[int] = None
+    kahve_paket: Optional[int] = None
+    karton_bardak: Optional[int] = None
+    kapak_adet: Optional[int] = None
+    pecete_paket: Optional[int] = None
+    diger_sarf: Optional[int] = None
+
+
+@router.post("/{sube_id}/fire-bildir")
+def sube_fire_bildir(sube_id: str, body: SubeFireBildirBody):
+    from fire_bildirim import fire_bildirim_kaydet, FIRE_SEBEP
+    from tr_saat import bugun_tr
+
+    pid_in = (body.personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    if not pid_in:
+        raise HTTPException(400, "personel_id gerekli")
+    if len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "4 haneli panel PIN gerekli")
+    kod = (body.sebep_kodu or "").strip().lower()
+    if kod not in FIRE_SEBEP:
+        raise HTTPException(400, "Geçersiz fire sebebi")
+
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        if not _bugun_kasa_acildi_mi(cur, sube_id):
+            raise HTTPException(403, "Önce günlük kasa kilidini PIN ile açmalısınız.")
+        if not _bugun_sube_acildi_mi(cur, sube_id):
+            raise HTTPException(403, "Önce şubeyi açmalısınız.")
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        pid_panel = str(ku.get("id") or "").strip() or pid_in
+        try:
+            out = fire_bildirim_kaydet(
+                cur,
+                sube_id,
+                personel_id=pid_panel,
+                personel_ad=onay_ad,
+                sebep_kodu=kod,
+                aciklama=(body.aciklama or "").strip(),
+                kalemler=body.kalemler or [],
+                body_delta=body.model_dump(),
+                not_aciklama=body.not_aciklama,
+                tarih=bugun_tr(),
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        audit(cur, "sube_fire_bildirim", out["id"], "SUBE_FIRE")
+
+    return {"success": True, **out}
+
+
 # ─────────────────────────────────────────────────────────────
 # SEVK — Depoya teslim alınan ürün (potansiyel stok)
 # ─────────────────────────────────────────────────────────────

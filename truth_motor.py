@@ -973,6 +973,227 @@ def _urun_ac_toplam(cur, sube_id: str, tarih: str, boyut: str) -> float:
     return toplam
 
 
+def vardiya_kompozisyonu(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
+    """O gün şubede vardiya kompozisyonu.
+
+    Veri kaynakları:
+      - vardiya_atama (planlı vardiya)
+      - sube_operasyon_event (ACILIS/KONTROL/KAPANIS gerçek personel + saat)
+
+    Returns:
+      {
+        "atamalar": [{personel_id, ad, baslangic, bitis, slot_ad}],
+        "event_personelleri": [
+          {tip, personel_id, personel_ad, saat, kasa_sayim}
+        ],
+        "tek_basina_araliklari": [
+          {bas, bit, personel_id, personel_ad}  # bir tek personel olduğu zaman dilimleri
+        ],
+        "coklu_araliklari": [
+          {bas, bit, personeller: [{id, ad}]}
+        ],
+        "sorumluluk_haritasi": [
+          {bas, bit, sorumlu_personel_ad, tek_basina: bool, collusion_riski: bool}
+        ],
+        "ozet": kısa string ("Bugün tek personel: Talha 09-17"),
+      }
+    """
+    # 1. Planlı vardiya atamaları
+    atamalar = []
+    try:
+        cur.execute(
+            """
+            SELECT va.personel_id, p.ad,
+                   va.baslangic_saat::text AS bas, va.bitis_saat::text AS bit,
+                   va.gece_vardiyasi, va.durum,
+                   vs.ad AS slot_ad
+            FROM vardiya_atama va
+            JOIN vardiya_slot vs ON vs.id = va.slot_id
+            LEFT JOIN personel p ON p.id = va.personel_id
+            WHERE vs.sube_id=%s AND va.tarih=%s::date
+              AND va.durum != 'iptal'
+            ORDER BY va.baslangic_saat
+            """,
+            (sube_id, tarih),
+        )
+        atamalar = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:
+        log.warning("vardiya_atama cekilemedi: %s", e)
+
+    # 2. Gerçek event'lerdeki personeller (ACILIS/KONTROL/KAPANIS)
+    event_personelleri = []
+    try:
+        cur.execute(
+            """
+            SELECT tip, cevap_ts, kasa_sayim, meta, personel_saat
+            FROM sube_operasyon_event
+            WHERE sube_id=%s AND tarih=%s::date AND durum='tamamlandi'
+            ORDER BY cevap_ts NULLS LAST
+            """,
+            (sube_id, tarih),
+        )
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            meta = _meta_oku(d.get("meta"))
+            pid = str(meta.get("personel_id") or "")
+            pad = str(meta.get("personel_ad") or "")
+            saat = ""
+            try:
+                if d.get("cevap_ts"):
+                    saat = d["cevap_ts"].strftime("%H:%M")
+            except Exception:
+                pass
+            event_personelleri.append({
+                "tip": d.get("tip"),
+                "personel_id": pid,
+                "personel_ad": pad,
+                "saat": saat,
+                "kasa_sayim": float(d.get("kasa_sayim") or 0),
+            })
+    except Exception as e:
+        log.warning("event personelleri cekilemedi: %s", e)
+
+    # 3. Zaman dilimi analizi — saat aralıklarına göre kim vardı
+    # Vardiya_atama bas-bit dilimlerini çakıştır
+    def _saat_int(s):
+        """'HH:MM:SS' veya 'HH:MM' → integer (dakika)"""
+        try:
+            parts = str(s).split(":")
+            return int(parts[0]) * 60 + int(parts[1])
+        except Exception:
+            return 0
+
+    # Eğer atama yoksa, event'lerden çıkar
+    if not atamalar and event_personelleri:
+        # Heuristic: ilk ACILIS → KONTROL_1 = sabahcı, ...
+        atamalar = []
+        gecmis_saat = None
+        gecmis_pid = None
+        gecmis_pad = None
+        for e in event_personelleri:
+            if e.get("personel_id"):
+                if gecmis_pid:
+                    atamalar.append({
+                        "personel_id": gecmis_pid, "ad": gecmis_pad,
+                        "bas": gecmis_saat, "bit": e["saat"],
+                        "slot_ad": "Event'ten çıkarıldı",
+                    })
+                gecmis_saat = e["saat"]
+                gecmis_pid = e["personel_id"]
+                gecmis_pad = e["personel_ad"]
+        # son event → bugün sonu
+        if gecmis_pid:
+            atamalar.append({
+                "personel_id": gecmis_pid, "ad": gecmis_pad,
+                "bas": gecmis_saat, "bit": "23:59",
+                "slot_ad": "Event'ten çıkarıldı (son)",
+            })
+
+    # Tek başına vs çoklu zaman dilimleri (basit overlap analizi)
+    # 24 saatlik dakika grid'i — her dakika için kaç personel var
+    dakika_personel: Dict[int, List[Dict]] = {}
+    for a in atamalar:
+        bas_m = _saat_int(a.get("bas") or a.get("baslangic_saat") or 0)
+        bit_m = _saat_int(a.get("bit") or a.get("bitis_saat") or 0)
+        if bit_m <= bas_m:
+            bit_m += 24 * 60  # gece vardiyası
+        for m in range(bas_m, min(bit_m, 48 * 60)):
+            dakika_personel.setdefault(m, []).append({
+                "id": a.get("personel_id"), "ad": a.get("ad"),
+            })
+
+    tek_basina_araliklari = []
+    coklu_araliklari = []
+    # Ardışık dakikaları aralıklara birleştir
+    if dakika_personel:
+        sirali_dakikalar = sorted(dakika_personel.keys())
+        son_dakika = None
+        bas = sirali_dakikalar[0]
+        son_personeller = None
+        for m in sirali_dakikalar:
+            personeller = tuple(sorted([str(p["id"]) for p in dakika_personel[m]]))
+            if son_personeller is None:
+                son_personeller = personeller
+                bas = m
+            elif personeller != son_personeller or (son_dakika is not None and m - son_dakika > 1):
+                # Aralık değişti — önceki aralığı kapat
+                _kapatma(bas, son_dakika or m, son_personeller, dakika_personel, tek_basina_araliklari, coklu_araliklari)
+                bas = m
+                son_personeller = personeller
+            son_dakika = m
+        # Son aralık
+        if son_personeller is not None:
+            _kapatma(bas, son_dakika or bas, son_personeller, dakika_personel, tek_basina_araliklari, coklu_araliklari)
+
+    # Sorumluluk haritası: aralık → tek personel mi, collusion riski mi?
+    sorumluluk_haritasi = []
+    for ara in tek_basina_araliklari:
+        sorumluluk_haritasi.append({
+            "bas": ara["bas"], "bit": ara["bit"],
+            "sorumlu_personel_ad": ara["personel_ad"],
+            "sorumlu_personel_id": ara["personel_id"],
+            "tek_basina": True,
+            "collusion_riski": False,
+            "yorum": "Tek personel — kasa %100 kontrolünde",
+        })
+    for ara in coklu_araliklari:
+        sorumluluk_haritasi.append({
+            "bas": ara["bas"], "bit": ara["bit"],
+            "sorumlu_personel_ad": ", ".join(p["ad"] or p["id"] for p in ara["personeller"]),
+            "sorumlu_personel_id": None,
+            "tek_basina": False,
+            "collusion_riski": True,
+            "yorum": f"{len(ara['personeller'])} personel — sorumluluk paylaşımı",
+        })
+    sorumluluk_haritasi.sort(key=lambda x: x["bas"])
+
+    # Özet
+    if tek_basina_araliklari and not coklu_araliklari:
+        ozet = "Tüm gün tek personel vardiyasında (yüksek izolasyon — kasa tek kontrol)"
+    elif coklu_araliklari and not tek_basina_araliklari:
+        ozet = f"Tüm gün {len(coklu_araliklari)} farklı çoklu personel dilimi"
+    elif tek_basina_araliklari and coklu_araliklari:
+        ozet = f"{len(tek_basina_araliklari)} tek-personel dilimi + {len(coklu_araliklari)} çoklu dilim"
+    elif atamalar:
+        ozet = f"{len(atamalar)} atama (analiz edilemedi)"
+    else:
+        ozet = "Vardiya atama bulunamadı"
+
+    return {
+        "sube_id": sube_id, "tarih": tarih,
+        "atamalar": atamalar,
+        "event_personelleri": event_personelleri,
+        "tek_basina_araliklari": tek_basina_araliklari,
+        "coklu_araliklari": coklu_araliklari,
+        "sorumluluk_haritasi": sorumluluk_haritasi,
+        "ozet": ozet,
+    }
+
+
+def _kapatma(bas_m, bit_m, personeller_tup, dakika_personel, tek, coklu):
+    """vardiya_kompozisyonu içinde kullanılan yardımcı: bir aralığı doğru listeye koy."""
+    def _fmt(m):
+        return f"{(m // 60) % 24:02d}:{m % 60:02d}"
+    if not personeller_tup:
+        return
+    if len(personeller_tup) == 1:
+        # Tek personel
+        ilk_d = list(dakika_personel.get(bas_m, []))
+        ad = ilk_d[0]["ad"] if ilk_d else None
+        tek.append({
+            "bas": _fmt(bas_m), "bit": _fmt(bit_m),
+            "personel_id": personeller_tup[0],
+            "personel_ad": ad or personeller_tup[0],
+        })
+    else:
+        # Çoklu personel
+        ilk_d = dakika_personel.get(bas_m, [])
+        coklu.append({
+            "bas": _fmt(bas_m), "bit": _fmt(bit_m),
+            "personeller": ilk_d,
+        })
+
+
 def adaptive_truth_walk(cur, sube_id: str, tarih: str, boyut: str) -> Dict[str, Any]:
     """Bir boyut için matematiksel kanıt zinciri kurarak 'kim hatalı' kararı.
 
@@ -1217,6 +1438,54 @@ def adaptive_truth_walk(cur, sube_id: str, tarih: str, boyut: str) -> Dict[str, 
             "Stok-Evo karşılaştırması daha fazla gün için yap.",
         ]
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # KATMAN 0 — VARDİYA KOMPOZİSYONU ENTEGRASYONU
+    # Tek personel ise sorumluluk net → güven artar
+    # Çoklu personel ise collusion riski → ek not eklenir
+    # ═══════════════════════════════════════════════════════════════════════
+    vardiya_dun = vardiya_kompozisyonu(cur, sube_id, onceki)
+    vardiya_bugun = vardiya_kompozisyonu(cur, sube_id, tarih)
+
+    vardiya_notu = []
+    tek_personel_aksam = len(vardiya_dun.get("tek_basina_araliklari") or []) > 0 and \
+                         len(vardiya_dun.get("coklu_araliklari") or []) == 0
+    tek_personel_sabah = len(vardiya_bugun.get("tek_basina_araliklari") or []) > 0 and \
+                         len(vardiya_bugun.get("coklu_araliklari") or []) == 0
+
+    # Akşamcı tek başınaysa → onun beyanı dışında veri yok, sorumluluk net
+    if karar == "AKSAMCI_HATALI" and tek_personel_aksam:
+        guven = min(99.0, guven + 8.0)
+        sorumlu = vardiya_dun.get("tek_basina_araliklari", [{}])[-1].get("personel_ad", "?")
+        vardiya_notu.append(f"⭐ Dün akşam TEK PERSONEL: {sorumlu} — kasa %100 kontrolünde, başka açıklama yok")
+        oneriler.insert(0, f"Sorumlu: {sorumlu} (tek başınaydı, devir kimseyle yapmadı)")
+    elif karar == "SABAHCI_HATALI" and tek_personel_sabah:
+        guven = min(99.0, guven + 8.0)
+        sorumlu = vardiya_bugun.get("tek_basina_araliklari", [{}])[0].get("personel_ad", "?")
+        vardiya_notu.append(f"⭐ Bugün sabah TEK PERSONEL: {sorumlu} — sayım yalnız onun")
+        oneriler.insert(0, f"Sorumlu: {sorumlu} (tek başınaydı)")
+    elif karar in ("AKSAMCI_HATALI", "SABAHCI_HATALI"):
+        # Çoklu personel — collusion riski
+        ilgili = vardiya_dun if karar == "AKSAMCI_HATALI" else vardiya_bugun
+        ilk_coklu = (ilgili.get("coklu_araliklari") or [{}])
+        if ilk_coklu and ilk_coklu[0].get("personeller"):
+            isimler = ", ".join(p.get("ad") or p.get("id") for p in ilk_coklu[0]["personeller"])
+            vardiya_notu.append(f"⚠️ Vardiyada {len(ilk_coklu[0]['personeller'])} personel: {isimler} — sorumluluk paylaşımı, collusion riski var")
+            oneriler.insert(0, f"Vardiyada beraber çalışanları ayrı ayrı sorgula: {isimler}")
+    elif karar == "EVO_DESTEKLI_HIRSIZLIK":
+        # Hırsızlık şüphesi varsa kim/kimlerle çalışıldığını mutlaka belirt
+        sorumlu_list = []
+        for ara in vardiya_dun.get("tek_basina_araliklari") or []:
+            sorumlu_list.append(f"{ara['personel_ad']} ({ara['bas']}-{ara['bit']} tek başına)")
+        for ara in vardiya_dun.get("coklu_araliklari") or []:
+            isimler = ", ".join(p.get("ad") or p.get("id") for p in ara["personeller"])
+            sorumlu_list.append(f"{ara['bas']}-{ara['bit']} arası: {isimler}")
+        if sorumlu_list:
+            vardiya_notu.append("🔴 Dün vardiya çizelgesi: " + " | ".join(sorumlu_list))
+            oneriler.insert(0, "Saatlik vardiyaya göre kim sorumlu — kamera görüntüsünü o saatlere yoğunlaştır")
+
+    if vardiya_notu:
+        ozet = f"{ozet}\n\n" + "\n".join(vardiya_notu)
+
     return {
         "sube_id": sube_id,
         "tarih": tarih,
@@ -1236,6 +1505,21 @@ def adaptive_truth_walk(cur, sube_id: str, tarih: str, boyut: str) -> Dict[str, 
         "ozet": ozet,
         "kanit_zinciri": kanit,
         "oneriler": oneriler,
+        # Katman 0 — vardiya kompozisyon
+        "vardiya_dun": {
+            "ozet": vardiya_dun.get("ozet"),
+            "tek_basina_araliklari": vardiya_dun.get("tek_basina_araliklari"),
+            "coklu_araliklari": vardiya_dun.get("coklu_araliklari"),
+            "sorumluluk_haritasi": vardiya_dun.get("sorumluluk_haritasi"),
+        },
+        "vardiya_bugun": {
+            "ozet": vardiya_bugun.get("ozet"),
+            "tek_basina_araliklari": vardiya_bugun.get("tek_basina_araliklari"),
+            "coklu_araliklari": vardiya_bugun.get("coklu_araliklari"),
+            "sorumluluk_haritasi": vardiya_bugun.get("sorumluluk_haritasi"),
+        },
+        "tek_personel_aksam": tek_personel_aksam,
+        "tek_personel_sabah": tek_personel_sabah,
     }
 
 

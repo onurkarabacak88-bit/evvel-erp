@@ -516,6 +516,32 @@ def init_db():
             ON sube_fire_haftalik (sube_id, hafta_baslangic DESC)
         """)
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_fire_bildirim (
+                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                sube_id         TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,
+                tarih           DATE NOT NULL DEFAULT CURRENT_DATE,
+                olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                personel_id     TEXT,
+                personel_ad     TEXT,
+                sebep_kodu      TEXT NOT NULL,
+                sebep_label     TEXT NOT NULL,
+                aciklama        TEXT NOT NULL,
+                kalemler        JSONB NOT NULL DEFAULT '[]'::jsonb,
+                toplam_adet     INT NOT NULL DEFAULT 0,
+                defter_id       TEXT,
+                goruldu         BOOLEAN NOT NULL DEFAULT FALSE,
+                goruldu_ts      TIMESTAMPTZ
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sube_fire_bildirim_sube_tarih
+            ON sube_fire_bildirim (sube_id, tarih DESC, olusturma DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sube_fire_bildirim_tarih
+            ON sube_fire_bildirim (tarih DESC, olusturma DESC)
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS sube_operasyon_ozet (
                 id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
                 sube_id           TEXT NOT NULL REFERENCES subeler(id) ON DELETE CASCADE,

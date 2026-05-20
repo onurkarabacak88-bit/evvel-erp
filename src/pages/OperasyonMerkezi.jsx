@@ -5,6 +5,8 @@ import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/g
 import { cacheFreshness, cacheTooltip } from '../utils/raporCache';
 import CacheFreshnessBadge from '../components/CacheFreshnessBadge';
 import SiparisKontrolKulesi from './SiparisKontrolKulesi';
+import UrunUyumsuzlukPanel from '../components/UrunUyumsuzlukPanel';
+import FireBildirimPanel from '../components/FireBildirimPanel';
 
 /** Backend'in statik şube paneli (`GET /sube-panel/{id}`) — API ile aynı kök (VITE_API_URL). */
 function subePanelHariciUrl(subeId) {
@@ -396,6 +398,7 @@ const UST_SEKMELER = [
   { id: 'kasa-personel-takip', label: '👥 Personel Kasa Takibi' },
   { id: 'personel-vardiya-uyumsuzluk', label: '⚠️ Personel Uyumsuzluğu' },
   { id: 'urun-uyumsuzluk', label: '🧪 Ürün Uyumsuzlukları' },
+  { id: 'fire-bildirim', label: '🔥 Fire Bildirimleri' },
   { id: 'siparis-kontrol', label: '📡 Sipariş Kontrol Kulesi' },
   { id: 'magaza-kartlari', label: '🏪 Depo stokları' },
   { id: 'stok-hareketi', label: '📋 Stok Hareketi' },
@@ -434,6 +437,7 @@ const OPS_MODUL_BOLUM = {
   'kasa-personel-takip': [{ id: 'icerik', label: 'Takip Raporu' }],
   'personel-vardiya-uyumsuzluk': [{ id: 'icerik', label: 'Günlük akış' }],
   'urun-uyumsuzluk': [{ id: 'icerik', label: 'Günlük akış' }],
+  'fire-bildirim': [{ id: 'icerik', label: 'Günlük akış' }],
   'siparis-kontrol': [{ id: 'icerik', label: 'Kontrol kulesi' }],
   'magaza-kartlari': [{ id: 'icerik', label: 'Şubeler' }],
   'stok-hareketi': [{ id: 'icerik', label: 'Hareket Defteri' }],
@@ -479,6 +483,7 @@ const OPS_HUB_RENK = {
   'kasa-uyumsuzluk': '#e85d5d',
   'personel-vardiya-uyumsuzluk': '#be185d',
   'urun-uyumsuzluk': '#8b5cf6',
+  'fire-bildirim': '#ef4444',
   'siparis-kontrol': '#0ea5a4',
   'magaza-kartlari': '#7c6fdc',
   kontrol: '#e85d5d',
@@ -520,7 +525,7 @@ const MODULLER = [
     label: '📦 Envanter',
     renk: '#f08040',
     desc: 'Stok sayımı, tüketim takibi, fire & kayıp analizi ve ürün uyumsuzlukları',
-    tabs: ['magaza-kartlari', 'stok-hareketi', 'sayim', 'kullanilan-urunler', 'urun-ac', 'stok-kayip', 'urun-uyumsuzluk'],
+    tabs: ['magaza-kartlari', 'stok-hareketi', 'sayim', 'kullanilan-urunler', 'urun-ac', 'stok-kayip', 'urun-uyumsuzluk', 'fire-bildirim'],
   },
   {
     id: 'siparis-tedarik',
@@ -2447,6 +2452,16 @@ export default function OperasyonMerkezi() {
   const [urunUyumAramaYukleniyor, setUrunUyumAramaYukleniyor] = useState(false);
   const [urunUyumAramaSonuc, setUrunUyumAramaSonuc] = useState({ tarih: '', toplam: 0, kayitlar: [] });
   const [urunUyumSeciliSubeKey, setUrunUyumSeciliSubeKey] = useState('all');
+  const [urunUyumDurumFiltre, setUrunUyumDurumFiltre] = useState('all');
+  const [urunUyumHaftaSatirlari, setUrunUyumHaftaSatirlari] = useState([]);
+  const [urunUyumHaftaYukleniyor, setUrunUyumHaftaYukleniyor] = useState(false);
+  const [fireAramaTarih, setFireAramaTarih] = useState(bugunIsoTarih());
+  const [fireAramaYukleniyor, setFireAramaYukleniyor] = useState(false);
+  const [fireAramaSonuc, setFireAramaSonuc] = useState({ tarih: '', gun_toplam: 0, kayitlar: [] });
+  const [fireSeciliSubeKey, setFireSeciliSubeKey] = useState('all');
+  const [fireSebepFiltre, setFireSebepFiltre] = useState('');
+  const [fireHaftaSatirlari, setFireHaftaSatirlari] = useState([]);
+  const [fireHaftaYukleniyor, setFireHaftaYukleniyor] = useState(false);
   /** Depo sevk vs şube kabul farkı — merkez API: /ops/siparis/sevkiyat-uyumsuzluklar */
   const [sevkiyatUyumOzet, setSevkiyatUyumOzet] = useState({ adet: 0 });
   const [sevkiyatUyumOzetYukleniyor, setSevkiyatUyumOzetYukleniyor] = useState(false);
@@ -3120,70 +3135,43 @@ export default function OperasyonMerkezi() {
     }));
   }, []);
 
-  const urunUyumGunYukle = useCallback(async (tarih) => {
+  const urunUyumGunYukle = useCallback(async (tarih, opts = {}) => {
     const hedef = (tarih || bugunIsoTarih()).trim();
-    const ym = hedef.slice(0, 7);
-    const q = `year_month=${encodeURIComponent(ym)}&gun=${encodeURIComponent(hedef)}&limit=180`;
-    const [barR, acR] = await Promise.all([
-      api(`/ops/bar-ozet?${q}&kapanis_fallback=false`),
-      api(`/ops/urun-ac-uyumsuzluklar?${q}`).catch(() => ({ satirlar: [] })),
-    ]);
-    const satirlar = Array.isArray(barR?.satirlar) ? barR.satirlar : [];
-    const acUyumlar = Array.isArray(acR?.satirlar) ? acR.satirlar : [];
-    const keys = ['bardak_kucuk','bardak_buyuk','bardak_plastik','karton_bardak','su_adet','sut_litre','redbull_adet','soda_adet','cookie_adet','pasta_adet','surup_adet','kahve_paket','kapak_adet','pecete_paket','diger_sarf','pasta_porsiyon_sade','pasta_porsiyon_antep','pasta_porsiyon_cik','pasta_mag_cilek','pasta_mag_lotus','pasta_buyuk_tart','pasta_kucuk_tart','pasta_snickers','pasta_malaga','pasta_latte','pasta_muzlu_rulo','pasta_cik_rulo','pasta_meyveli_rulo','pasta_browni','pasta_dilim_ss_sade','pasta_cream_puff','pasta_kavala','pasta_cup_limon','pasta_cup_yerfistik','pasta_cup_cilek','pasta_cup_karamel','pasta_cup_lotus','pasta_cup_antep','pasta_cup_hindistan','pasta_profiterol','pasta_kare_cik','pasta_kare_yerfistik','pasta_kare_karamel','pasta_kare_limon','pasta_dilim_sade','pasta_dilim_antep','pasta_dilim_cik','pasta_dilim_yaban'];
-    const barKayitlar = satirlar
-      .map((x) => {
-        const sat = x?.satilan || {};
-        const uyumsuzGunIci = keys.filter((k) => Number(sat?.[k] || 0) < 0);
-        const dk = Array.isArray(x?.devir_uyumsuz_kalemleri) ? x.devir_uyumsuz_kalemleri : [];
-        const kapYok = !!x?.onceki_kapanis_yok;
-        const birlesik = new Set([...uyumsuzGunIci, ...dk]);
-        const uyumsuzlar = keys.filter((k) => birlesik.has(k));
-        let uyumsuz_adet = uyumsuzlar.length;
-        if (kapYok && uyumsuz_adet === 0) uyumsuz_adet = 1;
-        return {
-          ...x,
-          kaynak: 'bar_sayim',
-          uyumsuz_urunler: uyumsuzlar,
-          uyumsuz_gun_ici_keys: uyumsuzGunIci,
-          uyumsuz_devir_keys: dk,
-          uyumsuz_adet,
-        };
-      })
-      .filter((x) => x.uyumsuz_adet > 0);
+    const durum = opts.durum || 'all';
+    let url = `/ops/urun-uyumsuzluk?tarih=${encodeURIComponent(hedef)}`;
+    if (durum === 'bekleyen') url += '&sadece_bekleyen=true';
+    else if (durum === 'cozuldu') url += '&sadece_cozuldu=true';
+    else url += '&sadece_bekleyen=false&sadece_cozuldu=false';
+    const r = await api(url);
+    const kayitlar = Array.isArray(r?.liste) ? r.liste : [];
+    return {
+      tarih: hedef,
+      toplam: r?.toplam ?? kayitlar.length,
+      gun_toplam: r?.gun_toplam ?? kayitlar.length,
+      gun_bekleyen: r?.gun_bekleyen ?? kayitlar.filter((u) => !u.cozuldu).length,
+      gun_cozuldu: r?.gun_cozuldu ?? kayitlar.filter((u) => u.cozuldu).length,
+      kayitlar,
+    };
+  }, []);
 
-    const acBySube = new Map();
-    acUyumlar.forEach((u) => {
-      const sid = String(u?.sube_id || '').trim();
-      if (!sid) return;
-      const prev = acBySube.get(sid) || {
-        sube_id: sid,
-        sube_adi: String(u?.sube_adi || sid).trim() || sid,
-        tarih: hedef,
-        kaynak: 'urun_ac_uyari',
-        urun_ac_uyarilari: [],
-        uyumsuz_adet: 0,
-      };
-      prev.urun_ac_uyarilari.push(u);
-      prev.uyumsuz_adet = prev.urun_ac_uyarilari.length;
-      acBySube.set(sid, prev);
-    });
-
-    const barSidSet = new Set(barKayitlar.map((k) => String(k?.sube_id || '').trim()).filter(Boolean));
-    const kayitlar = [...barKayitlar];
-    acBySube.forEach((row, sid) => {
-      if (barSidSet.has(sid)) {
-        const hit = kayitlar.find((k) => String(k?.sube_id || '').trim() === sid);
-        if (hit) {
-          hit.urun_ac_uyarilari = row.urun_ac_uyarilari;
-          hit.uyumsuz_adet = (hit.uyumsuz_adet || 0) + row.urun_ac_uyarilari.length;
-        }
-      } else {
-        kayitlar.push(row);
-      }
-    });
-    kayitlar.sort((a, b) => String(a?.sube_adi || '').localeCompare(String(b?.sube_adi || ''), 'tr'));
-    return { tarih: hedef, toplam: kayitlar.length, kayitlar };
+  const urunUyumHaftaYukle = useCallback(async () => {
+    const bugun = bugunIsoTarih();
+    const gunlerDesc = [];
+    for (let i = 0; i < 7; i += 1) gunlerDesc.push(isoTariheGunEkle(bugun, -i));
+    setUrunUyumHaftaYukleniyor(true);
+    try {
+      const sonuclar = await Promise.all(
+        gunlerDesc.map((t) => api(`/ops/urun-uyumsuzluk?tarih=${encodeURIComponent(t)}&sadece_bekleyen=false&sadece_cozuldu=false`).catch(() => null)),
+      );
+      setUrunUyumHaftaSatirlari(
+        gunlerDesc.map((t, i) => ({
+          tarih: t,
+          adet: Number(sonuclar[i]?.gun_toplam ?? sonuclar[i]?.toplam ?? 0),
+        })),
+      );
+    } finally {
+      setUrunUyumHaftaYukleniyor(false);
+    }
   }, []);
 
   const yukleUrunUyumBugun = useCallback(async (opts = {}) => {
@@ -3209,14 +3197,63 @@ export default function OperasyonMerkezi() {
     }
     setUrunUyumAramaYukleniyor(true);
     try {
-      const data = await urunUyumGunYukle(hedef);
+      const data = await urunUyumGunYukle(hedef, { durum: urunUyumDurumFiltre });
       setUrunUyumAramaSonuc(data);
     } catch (e) {
       toast(e.message || 'Ürün uyumsuzluk araması yapılamadı');
     } finally {
       setUrunUyumAramaYukleniyor(false);
     }
-  }, [urunUyumAramaTarih, urunUyumGunYukle, toast]);
+  }, [urunUyumAramaTarih, urunUyumDurumFiltre, urunUyumGunYukle, toast]);
+
+  const fireGunYukle = useCallback(async (tarih, opts = {}) => {
+    const hedef = (tarih || bugunIsoTarih()).trim();
+    let url = `/ops/fire-bildirimler?tarih=${encodeURIComponent(hedef)}`;
+    const sebep = opts.sebep != null ? opts.sebep : fireSebepFiltre;
+    if (sebep) url += `&sebep_kodu=${encodeURIComponent(sebep)}`;
+    return api(url);
+  }, [fireSebepFiltre]);
+
+  const fireHaftaYukle = useCallback(async () => {
+    setFireHaftaYukleniyor(true);
+    try {
+      const gunlerDesc = [];
+      for (let i = 0; i < 7; i += 1) gunlerDesc.push(isoTariheGunEkle(bugunIsoTarih(), -i));
+      const sonuclar = await Promise.all(
+        gunlerDesc.map((t) => api(`/ops/fire-bildirimler?tarih=${encodeURIComponent(t)}`).catch(() => null)),
+      );
+      const satirlar = gunlerDesc.map((t, idx) => {
+        const r = sonuclar[idx];
+        return {
+          tarih: t,
+          toplam: Number(r?.gun_toplam ?? (r?.kayitlar || []).length),
+          adet: Number(r?.toplam_adet_gun ?? (r?.kayitlar || []).reduce((s, k) => s + (k.toplam_adet || 0), 0)),
+        };
+      });
+      setFireHaftaSatirlari(satirlar);
+    } catch (e) {
+      toast(e.message || 'Fire hafta özeti yüklenemedi');
+    } finally {
+      setFireHaftaYukleniyor(false);
+    }
+  }, [toast]);
+
+  const fireAramaYap = useCallback(async () => {
+    const hedef = (fireAramaTarih || bugunIsoTarih()).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(hedef)) {
+      toast('Tarih formatı YYYY-MM-DD olmalı');
+      return;
+    }
+    setFireAramaYukleniyor(true);
+    try {
+      const data = await fireGunYukle(hedef, { sebep: fireSebepFiltre });
+      setFireAramaSonuc(data);
+    } catch (e) {
+      toast(e.message || 'Fire bildirimleri yüklenemedi');
+    } finally {
+      setFireAramaYukleniyor(false);
+    }
+  }, [fireAramaTarih, fireSebepFiltre, fireGunYukle, toast]);
 
   const yukleSevkiyatUyumOzet = useCallback(async (opts = {}) => {
     const silent = !!opts.silent;
@@ -3779,7 +3816,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     if (!aktifSekme) return;
-    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'siparis-kontrol' || aktifSekme === 'toptanci-siparisleri' || aktifSekme === 'urun-ac' || aktifSekme === 'acilis-takip' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'personel-vardiya-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'magaza-kartlari' || aktifSekme === 'metrics' || aktifSekme === 'kontrol') return;
+    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'siparis-kontrol' || aktifSekme === 'toptanci-siparisleri' || aktifSekme === 'urun-ac' || aktifSekme === 'acilis-takip' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'personel-vardiya-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'fire-bildirim' || aktifSekme === 'magaza-kartlari' || aktifSekme === 'metrics' || aktifSekme === 'kontrol') return;
     yukle(filtre);
   }, [filtre, aktifSekme, ayFiltre, gunFiltre, yukle]);
 
@@ -4055,14 +4092,29 @@ export default function OperasyonMerkezi() {
   useEffect(() => {
     if (aktifSekme !== 'urun-uyumsuzluk') return;
     setYukleniyor(true);
-    urunUyumGunYukle(bugunIsoTarih())
+    urunUyumHaftaYukle().catch(() => {});
+    urunUyumGunYukle(bugunIsoTarih(), { durum: urunUyumDurumFiltre })
       .then((data) => {
+        setUrunUyumBugun(data);
         setUrunUyumAramaTarih(data.tarih || bugunIsoTarih());
         setUrunUyumAramaSonuc(data);
       })
       .catch((e) => toast(e.message || 'Ürün uyumsuzluk verisi yüklenemedi'))
       .finally(() => setYukleniyor(false));
-  }, [aktifSekme, toast, urunUyumGunYukle]);
+  }, [aktifSekme, toast, urunUyumGunYukle, urunUyumHaftaYukle, urunUyumDurumFiltre]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'fire-bildirim') return;
+    setYukleniyor(true);
+    fireHaftaYukle().catch(() => {});
+    fireGunYukle(bugunIsoTarih(), { sebep: fireSebepFiltre })
+      .then((data) => {
+        setFireAramaTarih(data.tarih || bugunIsoTarih());
+        setFireAramaSonuc(data);
+      })
+      .catch((e) => toast(e.message || 'Fire bildirimleri yüklenemedi'))
+      .finally(() => setYukleniyor(false));
+  }, [aktifSekme, toast, fireGunYukle, fireHaftaYukle, fireSebepFiltre]);
 
   useEffect(() => {
     if (aktifSekme !== 'sevkiyat-uyumsuzluk') return;
@@ -4207,6 +4259,9 @@ export default function OperasyonMerkezi() {
       } else if (aktifSekme === 'urun-uyumsuzluk') {
         setYukleniyor(true);
         urunUyumAramaYap().finally(() => setYukleniyor(false));
+      } else if (aktifSekme === 'fire-bildirim') {
+        setYukleniyor(true);
+        fireAramaYap().finally(() => setYukleniyor(false));
       } else if (aktifSekme === 'sevkiyat-uyumsuzluk') {
         setYukleniyor(true);
         yukleSevkiyatUyumOzet({ silent: true }).catch(() => {});
@@ -4248,7 +4303,7 @@ export default function OperasyonMerkezi() {
       }
     });
     return unsub;
-  }, [aktifSekme, acilisTakipAlt, filtre, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, urunAcHaftaYukle, gecAcilanAramaYap, gecAcilanHaftaYukle, gecKalanPersonelAramaYap, kullanilanAramaYap, kullanilanHaftaYukle, ciroOnayAramaYap, kasaUyumAramaYap, kasaUyumHaftaYukle, personelVardiyaUyumAramaYap, personelVardiyaUyumHaftaYukle, urunUyumAramaYap, yukleSevkiyatUyumOzet, sevkiyatUyumDetayYukle, yukleSiparisMerkez, yukleSiparisKabulTakip, yukleToptanciSiparisleri, toptanciSiparisDonem, toptanciSiparisTarih, toptanciSiparisSirala, yukleToptanciTeslimler, magazaDepoTamYenile, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
+  }, [aktifSekme, acilisTakipAlt, filtre, hubOzetIsle, yukle, yukleOnayMerkez, urunAcAramaYap, urunAcHaftaYukle, gecAcilanAramaYap, gecAcilanHaftaYukle, gecKalanPersonelAramaYap, kullanilanAramaYap, kullanilanHaftaYukle, ciroOnayAramaYap, kasaUyumAramaYap, kasaUyumHaftaYukle, personelVardiyaUyumAramaYap, personelVardiyaUyumHaftaYukle, urunUyumAramaYap, fireAramaYap, yukleSevkiyatUyumOzet, sevkiyatUyumDetayYukle, yukleSiparisMerkez, yukleSiparisKabulTakip, yukleToptanciSiparisleri, toptanciSiparisDonem, toptanciSiparisTarih, toptanciSiparisSirala, yukleToptanciTeslimler, magazaDepoTamYenile, yukleMetrics, yukleKontrolOzet, yukleFisBekleyen, yukleDisiplin]);
 
 
   // Haftalık karşılaştırma — sadece ilgili sekme açıkken yükle
@@ -4472,6 +4527,19 @@ export default function OperasyonMerkezi() {
     : (urunUyumAramaSonuc?.kayitlar || []).filter((r) => {
       const label = String(r?.sube_adi || r?.sube_id || 'Diğer').trim() || 'Diğer';
       return (urunAcSubeAnahtar(label) || label) === urunUyumSeciliSubeKey;
+    });
+  const fireSubeSekmeleriRaw = urunUyumSubeSekmeleriOlustur(
+    (fireAramaSonuc?.kayitlar || []).map((r) => ({ sube_adi: r.sube_ad, sube_id: r.sube_id })),
+  );
+  const fireSubeSekmeleri = [
+    { key: 'all', label: 'Tümü', adet: (fireAramaSonuc?.kayitlar || []).length },
+    ...fireSubeSekmeleriRaw.map((s) => ({ key: s.key, label: s.baslik, adet: s.adet })),
+  ];
+  const fireGorunenKayitlar = fireSeciliSubeKey === 'all'
+    ? (fireAramaSonuc?.kayitlar || [])
+    : (fireAramaSonuc?.kayitlar || []).filter((r) => {
+      const label = String(r?.sube_ad || r?.sube_id || 'Diğer').trim() || 'Diğer';
+      return (urunAcSubeAnahtar(label) || label) === fireSeciliSubeKey;
     });
 
   useEffect(() => {
@@ -5121,6 +5189,9 @@ export default function OperasyonMerkezi() {
             else if (aktifSekme === 'urun-uyumsuzluk') {
               urunUyumAramaYap().finally(() => setYukleniyor(false));
             }
+            else if (aktifSekme === 'fire-bildirim') {
+              fireAramaYap().finally(() => setYukleniyor(false));
+            }
             else if (aktifSekme === 'magaza-kartlari') magazaDepoTamYenile();
             else if (aktifSekme === 'metrics') yukleMetrics();
             else if (aktifSekme === 'kontrol') yukleKontrolOzet();
@@ -5596,6 +5667,9 @@ export default function OperasyonMerkezi() {
                   }
                   else if (aktifSekme === 'urun-uyumsuzluk') {
                     urunUyumAramaYap().finally(() => setYukleniyor(false));
+                  }
+                  else if (aktifSekme === 'fire-bildirim') {
+                    fireAramaYap().finally(() => setYukleniyor(false));
                   }
                   else if (aktifSekme === 'sevkiyat-uyumsuzluk') {
                     yukleSevkiyatUyumOzet({ silent: true }).catch(() => {});
@@ -11198,146 +11272,58 @@ export default function OperasyonMerkezi() {
       )}
 
       {aktifSekme === 'urun-uyumsuzluk' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0, lineHeight: 1.55 }}>
-            <strong>Aynı gün (bar içi):</strong> Açılış + Ürün Aç − Kapanış = mantıksal satış; negatif kalem gün içi stoğu tutmuyor demektir.
-            <br />
-            <strong>Günler arası (devir):</strong> Bir önceki günün <em>kapanış</em> stok sayımı ile aynı günün <em>sabah açılış</em> sayımı kalem kalem eşleştirilir; fark varsa veya önceki gün kapanışı yoksa bu listede görünür.
-            <br />
-            <strong>Karşılıksız ürün aç:</strong> Depoda yeterli stok yokken yapılan ürün aç işlemleri (hub kartındaki «Ürün Aç» uyarısı) ayrıca listelenir.
-            Şube sekmeleri dört mağazanın tamamını gösterir; <em>(0)</em> o gün için kayıt olmadığı anlamına gelir.
-          </p>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <label style={{ margin: 0 }}>
-              <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Tarih</span>
-              <input
-                type="date"
-                className="input"
-                value={urunUyumAramaTarih}
-                onChange={(e) => setUrunUyumAramaTarih(e.target.value || bugunIsoTarih())}
-              />
-            </label>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              style={{ alignSelf: 'flex-end' }}
-              onClick={() => urunUyumAramaYap()}
-            >
-              {urunUyumAramaYukleniyor ? '…' : 'Tarihi getir'}
-            </button>
-            <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'flex-end' }}>
-              {urunUyumAramaSonuc?.tarih || urunUyumAramaTarih} · {urunUyumAramaSonuc?.toplam || 0} uyumsuzluk
-            </div>
-          </div>
+        <UrunUyumsuzlukPanel
+          api={api}
+          toast={toast}
+          bugunIsoTarih={bugunIsoTarih}
+          isoTariheGunEkle={isoTariheGunEkle}
+          aramaSonuc={urunUyumAramaSonuc}
+          setAramaSonuc={setUrunUyumAramaSonuc}
+          aramaTarih={urunUyumAramaTarih}
+          setAramaTarih={setUrunUyumAramaTarih}
+          aramaYukleniyor={urunUyumAramaYukleniyor || yukleniyor}
+          setAramaYukleniyor={setUrunUyumAramaYukleniyor}
+          durumFiltre={urunUyumDurumFiltre}
+          setDurumFiltre={setUrunUyumDurumFiltre}
+          gunYukle={urunUyumGunYukle}
+          haftaYukle={urunUyumHaftaYukle}
+          haftaSatirlari={urunUyumHaftaSatirlari}
+          haftaYukleniyor={urunUyumHaftaYukleniyor}
+          seciliSubeKey={urunUyumSeciliSubeKey}
+          setSeciliSubeKey={setUrunUyumSeciliSubeKey}
+          subeSekmeleri={urunUyumSubeSekmeleri}
+          gorunenKayitlar={urunUyumGorunenKayitlar}
+          onayBusyId={onayBusyId}
+          setOnayBusyId={setOnayBusyId}
+          onRefreshHub={yukleOnayMerkez}
+        />
+      )}
 
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => setUrunUyumSeciliSubeKey('all')}
-              style={{
-                border: urunUyumSeciliSubeKey === 'all' ? '1px solid #8b5cf6' : '1px solid var(--border)',
-                background: urunUyumSeciliSubeKey === 'all' ? 'rgba(139, 92, 246, 0.2)' : 'var(--bg2)',
-                color: urunUyumSeciliSubeKey === 'all' ? '#ddd6fe' : 'var(--text2)',
-                padding: '6px 10px',
-                fontWeight: 700,
-              }}
-            >
-              Tümü
-            </button>
-            {urunUyumSubeSekmeleri.map((s) => (
-              <button
-                key={`urun-uyum-${s.key}`}
-                type="button"
-                className="btn btn-sm"
-                onClick={() => setUrunUyumSeciliSubeKey(s.key)}
-                style={{
-                  border: urunUyumSeciliSubeKey === s.key ? '1px solid #4a9eff' : '1px solid var(--border)',
-                  background: urunUyumSeciliSubeKey === s.key ? 'rgba(74, 158, 255, 0.2)' : 'var(--bg2)',
-                  color: urunUyumSeciliSubeKey === s.key ? '#e6f7ff' : 'var(--text2)',
-                  padding: '6px 10px',
-                  fontWeight: 700,
-                }}
-              >
-                {s.baslik} ({s.adet})
-              </button>
-            ))}
-          </div>
-
-          {urunUyumGorunenKayitlar.length === 0 ? (
-            <div className="empty"><p>Seçilen tarihte ürün uyumsuzluğu yok</p></div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 480, overflow: 'auto' }}>
-              {urunUyumGorunenKayitlar.map((r) => {
-                const keys = ['bardak_kucuk','bardak_buyuk','bardak_plastik','karton_bardak','su_adet','sut_litre','redbull_adet','soda_adet','cookie_adet','pasta_adet','surup_adet','kahve_paket','kapak_adet','pecete_paket','diger_sarf','pasta_porsiyon_sade','pasta_porsiyon_antep','pasta_porsiyon_cik','pasta_mag_cilek','pasta_mag_lotus','pasta_buyuk_tart','pasta_kucuk_tart','pasta_snickers','pasta_malaga','pasta_latte','pasta_muzlu_rulo','pasta_cik_rulo','pasta_meyveli_rulo','pasta_browni','pasta_dilim_ss_sade','pasta_cream_puff','pasta_kavala','pasta_cup_limon','pasta_cup_yerfistik','pasta_cup_cilek','pasta_cup_karamel','pasta_cup_lotus','pasta_cup_antep','pasta_cup_hindistan','pasta_profiterol','pasta_kare_cik','pasta_kare_yerfistik','pasta_kare_karamel','pasta_kare_limon','pasta_dilim_sade','pasta_dilim_antep','pasta_dilim_cik','pasta_dilim_yaban'];
-                const labels = { bardak_kucuk:'8oz', bardak_buyuk:'14oz', bardak_plastik:'Plastik', karton_bardak:'Karton Bardak', su_adet:'Su', sut_litre:'Süt', redbull_adet:'Redbull', soda_adet:'Soda', cookie_adet:'Cookie', pasta_adet:'Pasta', surup_adet:'Şurup', kahve_paket:'Kahve Pkt', kapak_adet:'Kapak', pecete_paket:'Peçete', diger_sarf:'Diğer' };
-                return (
-                  <div key={`${r.sube_id}-${r.tarih}`} className="card" style={{ borderLeft: '4px solid #8b5cf6', padding: '14px 16px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
-                      <div>
-                        <span style={{ fontWeight: 700, fontSize: 14 }}>{r.sube_adi || r.sube_id}</span>
-                        <span className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 10 }}>{r.tarih}</span>
-                      </div>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        <span className="badge badge-red">{r.uyumsuz_adet || 0} kalem uyumsuz</span>
-                        {!r.kapanis_var && <span className="badge badge-yellow">Bugün kapanış yok</span>}
-                        {r.onceki_kapanis_yok && (
-                          <span className="badge badge-yellow" title={r.onceki_kapanis_tarihi || ''}>
-                            Önceki gün kapanışı yok ({r.onceki_kapanis_tarihi || '—'})
-                          </span>
-                        )}
-                        {(r.uyumsuz_devir_keys || []).length > 0 && !r.onceki_kapanis_yok && (
-                          <span className="badge badge-blue">Devir (dün kap ≠ bugün aç)</span>
-                        )}
-                      </div>
-                    </div>
-                    <div style={{ overflowX: 'auto' }}>
-                      <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                        <thead>
-                          <tr style={{ background: 'var(--bg2)' }}>
-                            <th style={{ padding: '5px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600, fontSize: 11 }}>Ürün</th>
-                            <th style={{ padding: '5px 8px', textAlign: 'center', color: '#c4b5fd', fontWeight: 600, fontSize: 11 }} title="Bir önceki gün tamamlanmış kapanış sayımı">Önceki kapanış</th>
-                            <th style={{ padding: '5px 8px', textAlign: 'center', color: '#93c5fd', fontWeight: 600, fontSize: 11 }}>Bugün açılış</th>
-                            <th style={{ padding: '5px 8px', textAlign: 'center', color: '#86efac', fontWeight: 600, fontSize: 11 }}>Ürün Aç</th>
-                            <th style={{ padding: '5px 8px', textAlign: 'center', color: '#fbbf24', fontWeight: 600, fontSize: 11 }}>Bugün kapanış</th>
-                            <th style={{ padding: '5px 8px', textAlign: 'center', color: '#fca5a5', fontWeight: 700, fontSize: 11 }}>Gün içi fark</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {keys.map((k) => {
-                            const ac = Number(r?.acilis?.[k] || 0);
-                            const ua = Number(r?.urun_ac?.[k] || 0);
-                            const kap = Number(r?.kapanis?.[k] || 0);
-                            const fark = Number(r?.satilan?.[k] || 0);
-                            const dunKap = r?.dun_kapanis && typeof r.dun_kapanis === 'object' ? Number(r.dun_kapanis[k] || 0) : null;
-                            const uyumsuzGunIci = fark < 0;
-                            const uyumsuzDevir = (r.uyumsuz_devir_keys || []).includes(k)
-                              || (r.onceki_kapanis_yok && dunKap === null);
-                            const uyumsuz = uyumsuzGunIci || uyumsuzDevir;
-                            return (
-                              <tr key={k} style={{ borderTop: '1px solid var(--border)', background: uyumsuz ? 'rgba(220, 38, 38, 0.07)' : 'transparent' }}>
-                                <td style={{ padding: '5px 8px', color: uyumsuz ? '#fecaca' : 'var(--text2)' }}>{labels[k] || k}</td>
-                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', color: dunKap === null ? 'var(--text3)' : '#ddd6fe' }}>
-                                  {dunKap === null ? '—' : dunKap}
-                                </td>
-                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center' }}>{ac}</td>
-                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', color: ua > 0 ? '#86efac' : 'var(--text3)' }}>{ua > 0 ? `+${ua}` : ua}</td>
-                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', color: kap > 0 ? '#fbbf24' : 'var(--text3)' }}>{kap > 0 ? kap : '—'}</td>
-                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', fontWeight: 700, color: uyumsuzGunIci ? 'var(--red)' : 'var(--text3)' }}>
-                                  {fark}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+      {aktifSekme === 'fire-bildirim' && (
+        <FireBildirimPanel
+          api={api}
+          toast={toast}
+          bugunIsoTarih={bugunIsoTarih}
+          isoTariheGunEkle={isoTariheGunEkle}
+          aramaSonuc={fireAramaSonuc}
+          setAramaSonuc={setFireAramaSonuc}
+          aramaTarih={fireAramaTarih}
+          setAramaTarih={setFireAramaTarih}
+          aramaYukleniyor={fireAramaYukleniyor || yukleniyor}
+          setAramaYukleniyor={setFireAramaYukleniyor}
+          sebepFiltre={fireSebepFiltre}
+          setSebepFiltre={setFireSebepFiltre}
+          gunYukle={fireGunYukle}
+          haftaYukle={fireHaftaYukle}
+          haftaSatirlari={fireHaftaSatirlari}
+          haftaYukleniyor={fireHaftaYukleniyor}
+          seciliSubeKey={fireSeciliSubeKey}
+          setSeciliSubeKey={setFireSeciliSubeKey}
+          subeSekmeleri={fireSubeSekmeleri}
+          gorunenKayitlar={fireGorunenKayitlar}
+          onayBusyId={onayBusyId}
+          setOnayBusyId={setOnayBusyId}
+        />
       )}
 
       {false && aktifSekme === 'sevkiyat-uyumsuzluk' && (
