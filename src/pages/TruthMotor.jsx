@@ -167,26 +167,49 @@ export default function TruthMotor() {
         Bu motor <strong>izoledir</strong> — global env var veya şube ayarı ile tamamen kapatılabilir.
       </p>
 
-      {/* GLOBAL DURUM */}
-      <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <span style={{
-            padding: '4px 10px', borderRadius: 4, fontSize: 12, fontWeight: 600,
-            background: durum?.global_aktif ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
-            color: durum?.global_aktif ? '#86efac' : '#fca5a5',
-          }}>
-            Global: {durum?.global_aktif ? 'AKTİF' : 'KAPALI'}
-          </span>
-          {!durum?.global_aktif && (
-            <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-              Railway env: <code className="mono">EVVEL_TRUTH_MOTOR_ENABLED=1</code> ayarla
-            </span>
-          )}
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
-            {durum?.subeler?.length || 0} şube ayarı kayıtlı
-          </span>
-        </div>
-      </div>
+      {/* GLOBAL DURUM + KPI ÖZETİ */}
+      {(() => {
+        const bugunAnomali = (gunluk?.subeler || []).reduce((s, r) => s + (Number(r.anomali_sayisi) || 0), 0);
+        const calistirilan = (gunluk?.subeler || []).filter(r => r.calistirildi).length;
+        const aktifSube = (durum?.subeler || []).filter(s => s.aktif).length;
+        return (
+          <div className="card" style={{ padding: 12, marginBottom: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase', fontWeight: 600 }}>Durum</div>
+                <span style={{
+                  display: 'inline-block', padding: '2px 8px', borderRadius: 3, fontSize: 11, fontWeight: 700, marginTop: 2,
+                  background: durum?.global_aktif ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+                  color: durum?.global_aktif ? '#86efac' : '#fca5a5',
+                }}>{durum?.global_aktif ? 'AKTİF' : 'KAPALI'}</span>
+              </div>
+              <div>
+                <div style={{ fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase', fontWeight: 600 }}>Bugün Anomali</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: bugunAnomali > 0 ? '#fca5a5' : '#86efac' }}>
+                  {bugunAnomali}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase', fontWeight: 600 }}>Çalıştırıldı</div>
+                <div style={{ fontSize: 22, fontWeight: 800 }}>{calistirilan}/{gunluk?.subeler?.length || 0}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase', fontWeight: 600 }}>Aktif Motor</div>
+                <div style={{ fontSize: 22, fontWeight: 800 }}>{aktifSube}/{durum?.subeler?.length || 0}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase', fontWeight: 600 }}>Tarih</div>
+                <div style={{ fontSize: 14, fontWeight: 700, fontFamily: 'monospace' }}>{tarih}</div>
+              </div>
+            </div>
+            {!durum?.global_aktif && (
+              <div style={{ marginTop: 10, fontSize: 11, color: '#fca5a5' }}>
+                ⚠️ Railway env: <code className="mono">EVVEL_TRUTH_MOTOR_ENABLED=1</code> ayarla
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* HATA / INFO */}
       {hata && (
