@@ -449,6 +449,131 @@ export default function EvoSatis() {
                 );
               })()}
 
+              {/* ─── ŞUBE × ÜRÜN KARŞILAŞTIRMA MATRİSİ ─── */}
+              {(() => {
+                const sb = subeAnaliz.subeler || {};
+                const subeAdlari = Object.keys(sb).sort();
+                if (subeAdlari.length === 0) return null;
+
+                // Pivot: urun ad → { stok_kodu, grup, toplam, subeler: {ad: adet} }
+                const urunMap = {};
+                subeAdlari.forEach(sad => {
+                  ((sb[sad]?.cok_satilan) || []).forEach(u => {
+                    const k = u.stok_kodu || u.ad;
+                    if (!urunMap[k]) {
+                      urunMap[k] = {
+                        stok_kodu: u.stok_kodu,
+                        ad: u.ad,
+                        grup: u.grup,
+                        toplam: 0,
+                        toplam_ciro: 0,
+                        subeler: {},
+                      };
+                    }
+                    urunMap[k].toplam += Number(u.adet || 0);
+                    urunMap[k].toplam_ciro += Number(u.ciro || 0);
+                    urunMap[k].subeler[sad] = (urunMap[k].subeler[sad] || 0) + Number(u.adet || 0);
+                  });
+                });
+                const urunler = Object.values(urunMap).sort((a, b) => b.toplam - a.toplam);
+                if (urunler.length === 0) return null;
+
+                return (
+                  <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 20 }}>
+                    <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <strong style={{ fontSize: 13 }}>📊 Şube × Ürün Karşılaştırma</strong>
+                      <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                        ({urunler.length} ürün, sıralı: toplam adet)
+                      </span>
+                    </div>
+                    <div style={{ overflowX: 'auto', maxHeight: 500, overflowY: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                        <thead style={{ background: 'rgba(255,255,255,0.04)', position: 'sticky', top: 0 }}>
+                          <tr>
+                            <th style={{ padding: '8px 10px', textAlign: 'left', fontSize: 10, color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase' }}>#</th>
+                            <th style={{ padding: '8px 10px', textAlign: 'left', fontSize: 10, color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase' }}>Ürün</th>
+                            <th style={{ padding: '8px 10px', textAlign: 'center', fontSize: 10, color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase' }}>Grup</th>
+                            <th style={{ padding: '8px 10px', textAlign: 'right', fontSize: 10, color: 'var(--green)', fontWeight: 700, textTransform: 'uppercase', borderRight: '2px solid var(--border)' }}>
+                              ✦ Toplam
+                            </th>
+                            {subeAdlari.map(sad => (
+                              <th key={sad} style={{ padding: '8px 10px', textAlign: 'right', fontSize: 10, color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase' }}>
+                                {sad.replace(' Şubesi', '')}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {urunler.slice(0, 100).map((u, i) => {
+                            const renkMap = {
+                              'Ice':'#3b82f6','14 Oz':'#f59e0b','8 Oz':'#10b981',
+                              'Su':'#6366f1','Maden Suyu':'#14b8a6',
+                              'Redbull':'#8b5cf6','Pasta':'#ec4899','ÇAY':'#ef4444',
+                            };
+                            const grpRenk = renkMap[u.grup] || '#94a3b8';
+                            const maks = Math.max(...subeAdlari.map(s => u.subeler[s] || 0));
+                            return (
+                              <tr key={u.stok_kodu || u.ad} style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                                <td style={{ padding: '6px 10px', color: 'var(--muted)', fontSize: 11 }}>{i + 1}</td>
+                                <td style={{ padding: '6px 10px', fontWeight: i < 5 ? 700 : 500 }}>
+                                  {u.ad}
+                                  {u.stok_kodu && (
+                                    <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--muted)', fontFamily: 'monospace' }}>
+                                      {u.stok_kodu}
+                                    </span>
+                                  )}
+                                </td>
+                                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                                  {u.grup && (
+                                    <span style={{
+                                      padding: '1px 6px', borderRadius: 3, fontSize: 9, fontWeight: 700,
+                                      background: grpRenk + '22', color: grpRenk, border: `1px solid ${grpRenk}55`,
+                                    }}>
+                                      {u.grup}
+                                    </span>
+                                  )}
+                                </td>
+                                <td style={{
+                                  padding: '6px 10px', textAlign: 'right', fontFamily: 'monospace',
+                                  fontWeight: 800, color: 'var(--green)', borderRight: '2px solid var(--border)',
+                                }}>
+                                  {Math.round(u.toplam)}
+                                  <div style={{ fontSize: 9, color: 'var(--muted)', fontWeight: 400 }}>
+                                    {fmtTL(u.toplam_ciro)}
+                                  </div>
+                                </td>
+                                {subeAdlari.map(sad => {
+                                  const v = u.subeler[sad] || 0;
+                                  const yogunluk = maks > 0 ? v / maks : 0;
+                                  const bg = v === 0
+                                    ? 'transparent'
+                                    : `rgba(34,197,94,${0.06 + yogunluk * 0.20})`;
+                                  return (
+                                    <td key={sad} style={{
+                                      padding: '6px 10px', textAlign: 'right',
+                                      fontFamily: 'monospace', background: bg,
+                                      color: v === 0 ? 'var(--text3)' : 'inherit',
+                                      fontWeight: v === maks && v > 0 ? 700 : 400,
+                                    }}>
+                                      {v === 0 ? '—' : Math.round(v)}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    {urunler.length > 100 && (
+                      <div style={{ padding: '6px 14px', fontSize: 10, color: 'var(--muted)', textAlign: 'center' }}>
+                        … {urunler.length - 100} ürün daha (ilk 100 gösteriliyor)
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* Şube kartları */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
                 {Object.entries(subeAnaliz.subeler || {})
