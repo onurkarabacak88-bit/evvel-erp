@@ -851,11 +851,13 @@ def _evo_sube_saatli_satis(sube_evo_id: str, bastar, bittar) -> List[Dict[str, A
             "personel_ad": str(f.get("SATIS_PER") or "").strip() or None,
             "sube_adi": str(f.get("a_sube_adi") or "").strip(),
         })
-    rows.sort(key=lambda r: (r["saat_dt"] or 0))
+    from datetime import datetime as _dt
+    rows.sort(key=lambda r: r["saat_dt"] or _dt.min)
     return rows
 
 
-def vardiya_bazli_uzlasma(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
+def vardiya_bazli_uzlasma(cur, sube_id: str, tarih: str,
+                           evo_dahil: bool = True) -> Dict[str, Any]:
     """Bir şubenin bir gününde vardiya bazlı kasa/bardak uzlaşması.
 
     Returns:
@@ -909,8 +911,9 @@ def vardiya_bazli_uzlasma(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         pass
 
     # 3. Tüm günün Evo satışlarını saatli al (vardiyaya bölümlemek için)
+    # evo_dahil=False ise atla (pattern detection'da batch için)
     evo_satislar: List[Dict[str, Any]] = []
-    if evo_sube_id:
+    if evo_dahil and evo_sube_id:
         from datetime import date as _d
         y, mo, dn = (int(x) for x in str(tarih)[:10].split("-"))
         tarih_d = _d(y, mo, dn)
@@ -1249,7 +1252,7 @@ def saat_heatmap(cur, gun: int = 14,
     """Şube × saat × anomali yoğunluk grafiği için veri.
     truth_motor_kararlar tablosundan saat damgalı anomalileri topla."""
     where = "WHERE tani NOT IN ('UYUMLU','YETERSIZ_VERI')"
-    params: List[Any] = [gun]
+    params: List[Any] = []
     if sube_id:
         where += " AND sube_id=%s"
         params.append(sube_id)
@@ -1267,7 +1270,7 @@ def saat_heatmap(cur, gun: int = 14,
             GROUP BY sube_id, saat
             ORDER BY sube_id, saat
             """,
-            tuple(params[:-1] if not sube_id else params[:-1]),  # gun param zaten 2 kez
+            tuple(params),
         )
         rows = [dict(r) for r in (cur.fetchall() or [])]
     except Exception as e:
@@ -1365,7 +1368,7 @@ def end_of_shift_effect(cur, gun: int = 30,
         t = (today - _td(days=off)).isoformat()
         for sb in subeler:
             try:
-                u = vardiya_bazli_uzlasma(cur, sb["id"], t)
+                u = vardiya_bazli_uzlasma(cur, sb["id"], t, evo_dahil=False)
             except Exception:
                 continue
             for v in (u.get("vardiyalar") or []):
@@ -1413,7 +1416,7 @@ def sube_cluster_anomalisi(cur, gun: int = 30) -> Dict[str, Any]:
         t = (today - _td(days=off)).isoformat()
         for sb in subeler:
             try:
-                u = vardiya_bazli_uzlasma(cur, sb["id"], t)
+                u = vardiya_bazli_uzlasma(cur, sb["id"], t, evo_dahil=False)
             except Exception:
                 continue
             for v in (u.get("vardiyalar") or []):
@@ -1499,6 +1502,204 @@ def coklu_sube_korelasyon(cur, tarih: Optional[str] = None) -> Dict[str, Any]:
     return {"tarih": tarih, "korelasyonlar": korelasyon}
 
 
+# ════════════════════════════════════════════════════════════════════════════
+#  SPRINT D — MALİ ÇAPRAZ KONTROL
+# ════════════════════════════════════════════════════════════════════════════
+# Z raporu POS toplamı ↔ kart_hareketleri (gerçek slip) çapraz
+# anlik_giderler kategori anomalisi (aynı kasiyer + aynı kategori sürekli)
+# Sahte iade tespiti
+# ════════════════════════════════════════════════════════════════════════════
+
+def z_kart_slip_capraz(cur, gun: int = 7,
+                        sube_id: Optional[str] = None) -> Dict[str, Any]:
+    """Z raporu kart toplamı ile kart_hareketleri (gerçek slip) çapraz kontrol.
+
+    Z'de görünen ama slip'te yok → POS kart hareketi kaydedilmemiş (Evo eksik)
+    Slip'te var ama Z'de yok → manuel slip + fişsiz satış (KAYIT_DISI)
+    Fark > %1 → uyumsuzluk
+    """
+    from datetime import date as _d, timedelta as _td
+    today = _d.today()
+    sonuc = []
+    where_sube = "AND c.sube_id=%s" if sube_id else ""
+
+    for off in range(gun):
+        t = (today - _td(days=off)).isoformat()
+        try:
+            # Z raporu (ciro tablosu) — pos toplamı
+            params_z = [t]
+            if sube_id:
+                params_z.append(sube_id)
+            cur.execute(
+                f"""
+                SELECT c.sube_id, COALESCE(SUM(c.pos), 0) AS z_pos
+                FROM ciro c
+                WHERE c.tarih = %s::date AND c.durum = 'aktif'
+                  {where_sube}
+                GROUP BY c.sube_id
+                """,
+                tuple(params_z),
+            )
+            z_rows = {dict(r)["sube_id"]: float(dict(r)["z_pos"]) for r in (cur.fetchall() or [])}
+
+            # kart_hareketleri (gerçek slip)
+            params_k = [t]
+            ks_where = ""
+            if sube_id:
+                params_k.append(sube_id)
+                ks_where = "AND sube_id=%s"
+            cur.execute(
+                f"""
+                SELECT sube_id, COALESCE(SUM(tutar), 0) AS slip_top
+                FROM kart_hareketleri
+                WHERE tarih = %s::date {ks_where}
+                GROUP BY sube_id
+                """,
+                tuple(params_k),
+            )
+            slip_rows = {dict(r)["sube_id"]: float(dict(r)["slip_top"]) for r in (cur.fetchall() or [])}
+        except Exception as e:
+            log.warning("z_kart_slip_capraz hata (%s): %s", t, e)
+            continue
+
+        # Birleştir + karşılaştır
+        tum_subeler = set(z_rows.keys()) | set(slip_rows.keys())
+        for sid in tum_subeler:
+            z = z_rows.get(sid, 0.0)
+            slip = slip_rows.get(sid, 0.0)
+            fark = round(slip - z, 2)
+            if abs(z) < 1 and abs(slip) < 1:
+                continue
+            esik = max(abs(z), abs(slip)) * 0.01  # %1
+            if abs(fark) > max(esik, 5):  # min 5₺
+                sonuc.append({
+                    "tarih": t,
+                    "sube_id": sid,
+                    "z_pos": round(z, 2),
+                    "slip": round(slip, 2),
+                    "fark": fark,
+                    "tani": ("KART_SLIP_FAZLA" if fark > 0
+                             else "Z_KART_ATILANMIS")
+                })
+    sonuc.sort(key=lambda x: -abs(x["fark"]))
+    return {"gun": gun, "uyumsuzluk_sayisi": len(sonuc), "kayitlar": sonuc[:50]}
+
+
+def gider_kategori_anomalisi(cur, gun: int = 30,
+                              sube_id: Optional[str] = None) -> Dict[str, Any]:
+    """anlik_giderler kategori bazlı pattern:
+    - Aynı personel + aynı kategori son N gün > 5 kez = sahte gider şüphesi
+    - Yuvarlak tutar yoğun = manuel ayarlama
+    - Fiş kontrolü 7+ gün bekleyenler = CFO ilgi kaybı
+    """
+    where_sube = "AND sube=%s" if sube_id else ""
+    params = [gun]
+    if sube_id:
+        params.append(sube_id)
+
+    try:
+        cur.execute(
+            f"""
+            SELECT personel_id, kategori, COUNT(*) AS adet,
+                   COALESCE(SUM(tutar), 0) AS tutar_top,
+                   COUNT(*) FILTER (WHERE fis_kontrol_durumu='bekliyor'
+                                    AND olusturma < NOW() - INTERVAL '7 days') AS gec_fis
+            FROM anlik_giderler
+            WHERE tarih >= CURRENT_DATE - (%s || ' days')::interval
+              {where_sube}
+            GROUP BY personel_id, kategori
+            HAVING COUNT(*) >= 3
+            ORDER BY COUNT(*) DESC
+            """,
+            tuple(params),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:
+        log.warning("gider_kategori_anomalisi hata: %s", e)
+        return {"gun": gun, "kayitlar": [], "hata": str(e)}
+
+    anomali = []
+    for r in rows:
+        adet = int(r["adet"])
+        kategori = r["kategori"]
+        tutar_top = float(r["tutar_top"] or 0)
+        pid = r["personel_id"]
+        gec_fis = int(r["gec_fis"] or 0)
+
+        sebep = []
+        if adet >= 5:
+            sebep.append(f"{adet}× tekrar")
+        if gec_fis >= 3:
+            sebep.append(f"{gec_fis} fiş 7+gün bekliyor")
+        # Yuvarlak tutar tespiti (her kayıt 50/100/200 katı mı)
+        try:
+            cur.execute(
+                """
+                SELECT tutar FROM anlik_giderler
+                WHERE personel_id=%s AND kategori=%s
+                  AND tarih >= CURRENT_DATE - INTERVAL '30 days'
+                """,
+                (pid, kategori),
+            )
+            tutarlar = [float(dict(t)["tutar"] or 0) for t in (cur.fetchall() or [])]
+            yuvarlak = sum(1 for t in tutarlar
+                           if t >= 50 and abs(t - round(t / 50) * 50) < 0.5)
+            if tutarlar and (yuvarlak / len(tutarlar)) > 0.5:
+                sebep.append("yuvarlak tutar yoğun")
+        except Exception:
+            pass
+
+        if sebep:
+            anomali.append({
+                "personel_id": pid,
+                "kategori": kategori,
+                "adet": adet,
+                "tutar_top": round(tutar_top, 2),
+                "gec_fis_sayisi": gec_fis,
+                "sebepler": sebep,
+            })
+    return {"gun": gun, "kayitlar": anomali[:50]}
+
+
+def sahte_iade_tespit(cur, gun: int = 14,
+                       sube_id: Optional[str] = None) -> Dict[str, Any]:
+    """Z raporunda iade var ama stoğa geri dönüş yok → iade kaydı sahte muhtemel."""
+    # MVP: ciro.iade (varsa) > 0 + stok_hareketleri'nda iade hareketi yok = işaret
+    where_sube = "AND sube_id=%s" if sube_id else ""
+    params = [gun]
+    if sube_id:
+        params.append(sube_id)
+    try:
+        cur.execute(
+            f"""
+            SELECT tarih, sube_id, COALESCE(iade, 0) AS iade_tutari
+            FROM ciro
+            WHERE tarih >= CURRENT_DATE - (%s || ' days')::interval
+              AND COALESCE(iade, 0) > 0
+              AND durum='aktif'
+              {where_sube}
+            ORDER BY tarih DESC, iade_tutari DESC
+            """,
+            tuple(params),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:
+        log.warning("sahte_iade_tespit hata: %s", e)
+        return {"gun": gun, "kayitlar": [], "hata": str(e)}
+
+    # Sade bir liste — sonra stok cross-check eklenebilir
+    return {
+        "gun": gun,
+        "iade_gunleri": len(rows),
+        "kayitlar": [{
+            "tarih": str(r["tarih"]),
+            "sube_id": r["sube_id"],
+            "iade_tutari": float(r["iade_tutari"]),
+            "not": "Stok iadesi kontrolü pending — manuel doğrula",
+        } for r in rows[:50]],
+    }
+
+
 def personel_davranis_sinyali(cur, gun: int = 30,
                               sube_id: Optional[str] = None) -> Dict[str, Any]:
     """Personel davranış sinyalleri (son N gün).
@@ -1538,7 +1739,8 @@ def personel_davranis_sinyali(cur, gun: int = 30,
         t = (today - _td(days=off)).isoformat()
         for sb in subeler:
             try:
-                u = vardiya_bazli_uzlasma(cur, sb["id"], t)
+                # Evo dahil — bu fonksiyon velocity, fiş tutarı, iskonto için Evo gerektirir
+                u = vardiya_bazli_uzlasma(cur, sb["id"], t, evo_dahil=True)
             except Exception:
                 continue
             for v in u.get("vardiyalar") or []:

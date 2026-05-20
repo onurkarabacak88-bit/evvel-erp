@@ -12937,6 +12937,26 @@ def truth_vardiya_pl(sube_id: str, tarih: str):
         return _tm.vardiya_bazli_uzlasma(cur, sube_id, tarih)
 
 
+@router.get("/truth/mali-capraz")
+def truth_mali_capraz(gun: int = Query(7, ge=1, le=60),
+                      sube_id: Optional[str] = Query(None)):
+    """Sprint D — mali çapraz kontrol:
+    - z_kart_slip_capraz: Z POS toplamı vs kart_hareketleri (gerçek slip)
+    - gider_kategori_anomalisi: aynı personel+kategori tekrar pattern, yuvarlak tutar, geç fiş
+    - sahte_iade_tespit: ciro.iade > 0 + stok dönüş yok"""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return {
+            "gun": gun,
+            "z_kart_slip":      _tm.z_kart_slip_capraz(cur, gun=gun, sube_id=sube_id),
+            "gider_kategori":   _tm.gider_kategori_anomalisi(cur, gun=max(gun, 14), sube_id=sube_id),
+            "sahte_iade":       _tm.sahte_iade_tespit(cur, gun=gun, sube_id=sube_id),
+        }
+
+
 @router.get("/truth/bom-varyans/{sube_id}/{tarih}")
 def truth_bom_varyans(sube_id: str, tarih: str):
     """Sprint C — ürün BOM reçete varyansı: teorik bardak sarfı vs fiziksel azalma."""

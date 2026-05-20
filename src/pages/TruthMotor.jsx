@@ -314,6 +314,9 @@ export default function TruthMotor() {
       {/* SAAT HEATMAP (Sprint C) */}
       <SaatHeatmap />
 
+      {/* MALI CAPRAZ (Sprint D) */}
+      <MaliCapraz />
+
       {/* PERSONEL SKORU (eski Z-skor — anomali bazlı) */}
       <PersonelSkor />
 
@@ -712,6 +715,125 @@ function PersonelDavranis() {
         <strong>Yüksek</strong> = anomali ≥%25 veya iskonto &gt; %5 ·
         Vardiya = ACILIS → KONTROL/KAPANIS arası dilim
       </p>
+    </div>
+  );
+}
+
+function MaliCapraz() {
+  const [gun, setGun] = useState(7);
+  const [data, setData] = useState(null);
+  const [yukleniyor, setYukleniyor] = useState(false);
+
+  const yukle = useCallback(async () => {
+    setYukleniyor(true);
+    try {
+      const d = await fetchJson(`${API}/api/ops/truth/mali-capraz?gun=${gun}`);
+      setData(d);
+    } catch (_) {} finally { setYukleniyor(false); }
+  }, [gun]);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  return (
+    <div style={{ margin: '24px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>💳 Mali Çapraz Kontrol (Sprint D)</h3>
+        <select className="input" value={gun} onChange={(e) => setGun(Number(e.target.value))}
+          style={{ fontSize: 12, padding: '3px 8px' }}>
+          <option value={3}>Son 3 gün</option>
+          <option value={7}>Son 7 gün</option>
+          <option value={14}>Son 14 gün</option>
+          <option value={30}>Son 30 gün</option>
+        </select>
+        <button className="btn btn-sm" onClick={yukle} style={{ fontSize: 11 }}>↻</button>
+      </div>
+
+      {yukleniyor && <div className="card" style={{ padding: 12, textAlign: 'center', color: 'var(--text3)' }}>Yükleniyor…</div>}
+
+      {data && (
+        <div style={{ display: 'grid', gap: 12 }}>
+          {/* Z vs Kart Slip */}
+          <div className="card" style={{ padding: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+              🔢 Z Raporu POS ↔ Kart Slip Toplamı
+              <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--text3)' }}>
+                {data.z_kart_slip?.uyumsuzluk_sayisi || 0} uyumsuzluk
+              </span>
+            </div>
+            {(data.z_kart_slip?.kayitlar || []).length === 0 && (
+              <div style={{ fontSize: 11, color: '#86efac' }}>✓ Tüm günler uyumlu</div>
+            )}
+            {(data.z_kart_slip?.kayitlar || []).length > 0 && (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Tarih</th>
+                    <th style={th}>Şube</th>
+                    <th style={{ ...th, textAlign: 'right' }}>Z POS</th>
+                    <th style={{ ...th, textAlign: 'right' }}>Slip</th>
+                    <th style={{ ...th, textAlign: 'right' }}>Fark</th>
+                    <th style={th}>Tanı</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.z_kart_slip.kayitlar.slice(0, 10).map((r, i) => (
+                    <tr key={i} style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={td}>{r.tarih}</td>
+                      <td style={td}>{r.sube_id?.slice(0, 8)}</td>
+                      <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>{r.z_pos.toFixed(2)}</td>
+                      <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>{r.slip.toFixed(2)}</td>
+                      <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', color: r.fark < 0 ? '#fca5a5' : '#fbbf24', fontWeight: 700 }}>
+                        {r.fark > 0 ? '+' : ''}{r.fark.toFixed(2)}
+                      </td>
+                      <td style={{ ...td, fontSize: 10, color: '#fbbf24' }}>{r.tani}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Gider kategori anomalisi */}
+          <div className="card" style={{ padding: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+              📋 Gider Kategori Anomalisi
+              <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--text3)' }}>
+                {(data.gider_kategori?.kayitlar || []).length} pattern
+              </span>
+            </div>
+            {(data.gider_kategori?.kayitlar || []).length === 0 && (
+              <div style={{ fontSize: 11, color: '#86efac' }}>✓ Tekrarlanan anormal pattern yok</div>
+            )}
+            {(data.gider_kategori?.kayitlar || []).slice(0, 10).map((r, i) => (
+              <div key={i} style={{ padding: '6px 0', borderTop: i > 0 ? '1px solid rgba(255,255,255,0.05)' : 'none', fontSize: 11 }}>
+                <strong>{r.personel_id?.slice(0, 8) || '?'}</strong> · {r.kategori} ·
+                <span style={{ marginLeft: 6, color: '#fbbf24' }}>{r.adet}×</span> ·
+                <span style={{ marginLeft: 6, fontFamily: 'monospace' }}>{r.tutar_top.toFixed(0)}₺</span>
+                <span style={{ marginLeft: 8, fontSize: 10, color: '#fca5a5' }}>{r.sebepler.join(' · ')}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Sahte iade */}
+          <div className="card" style={{ padding: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+              ↩️ Z Raporu İade Tespiti
+              <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--text3)' }}>
+                {data.sahte_iade?.iade_gunleri || 0} gün
+              </span>
+            </div>
+            {(data.sahte_iade?.kayitlar || []).length === 0 && (
+              <div style={{ fontSize: 11, color: '#86efac' }}>Z raporunda iade kaydı yok</div>
+            )}
+            {(data.sahte_iade?.kayitlar || []).slice(0, 5).map((r, i) => (
+              <div key={i} style={{ padding: '6px 0', borderTop: i > 0 ? '1px solid rgba(255,255,255,0.05)' : 'none', fontSize: 11 }}>
+                {r.tarih} · {r.sube_id?.slice(0, 8)} ·
+                <span style={{ marginLeft: 6, fontFamily: 'monospace', color: '#fbbf24' }}>-{r.iade_tutari.toFixed(2)}₺</span>
+                <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--text3)' }}>{r.not}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
