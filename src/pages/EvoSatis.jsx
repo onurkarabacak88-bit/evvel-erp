@@ -367,6 +367,88 @@ export default function EvoSatis() {
 
           {!subeYukleniyor && subeAnaliz && (
             <>
+              {/* TOPLAM ÖZET — tüm şubeler */}
+              {(() => {
+                const subeler = Object.values(subeAnaliz.subeler || {});
+                if (subeler.length === 0) return null;
+                const top = subeler.reduce((a, s) => ({
+                  ciro:    a.ciro    + (Number(s.ciro_toplam || s.ciro) || 0),
+                  nakit:   a.nakit   + (Number(s.nakit) || 0),
+                  kart:    a.kart    + (Number(s.kart)  || 0),
+                  fis:     a.fis     + (Number(s.fatura_sayisi || s.fis_sayisi) || 0),
+                  iskonto: a.iskonto + (Number(s.iskonto_toplam) || 0),
+                }), { ciro: 0, nakit: 0, kart: 0, fis: 0, iskonto: 0 });
+                // Grup toplamları (Ice/14oz/8oz/Su/Redbull/Pasta/ÇAY)
+                const grupTop = {};
+                subeler.forEach(s => {
+                  Object.entries(s.gruplar || {}).forEach(([g, v]) => {
+                    if (!grupTop[g]) grupTop[g] = { adet: 0, ciro: 0 };
+                    grupTop[g].adet += Number(v.adet || 0);
+                    grupTop[g].ciro += Number(v.ciro || 0);
+                  });
+                });
+                return (
+                  <div style={{ marginBottom: 16 }}>
+                    {/* 5 metrik kartı */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 12 }}>
+                      <div className="card" style={{ padding: 12 }}>
+                        <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase' }}>Toplam Ciro</div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--green)' }}>{fmtTL(top.ciro)}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)' }}>{top.fis} fiş · {subeler.length} şube</div>
+                      </div>
+                      <div className="card" style={{ padding: 12 }}>
+                        <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase' }}>💵 Toplam Nakit</div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: '#86efac' }}>{fmtTL(top.nakit)}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)' }}>{top.ciro > 0 ? Math.round(top.nakit/top.ciro*100) : 0}% nakit</div>
+                      </div>
+                      <div className="card" style={{ padding: 12 }}>
+                        <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase' }}>💳 Toplam Kart</div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: '#93c5fd' }}>{fmtTL(top.kart)}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)' }}>{top.ciro > 0 ? Math.round(top.kart/top.ciro*100) : 0}% kart</div>
+                      </div>
+                      <div className="card" style={{ padding: 12 }}>
+                        <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase' }}>İskonto</div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: top.iskonto > 0 ? '#fbbf24' : 'var(--text)' }}>{fmtTL(top.iskonto)}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)' }}>{top.ciro > 0 ? ((top.iskonto/top.ciro)*100).toFixed(2) : 0}%</div>
+                      </div>
+                      <div className="card" style={{ padding: 12 }}>
+                        <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase' }}>Ort. Fiş Tutarı</div>
+                        <div style={{ fontSize: 20, fontWeight: 800 }}>{fmtTL(top.fis > 0 ? top.ciro / top.fis : 0)}</div>
+                      </div>
+                    </div>
+
+                    {/* Grup toplamları yatay özet */}
+                    {Object.keys(grupTop).length > 0 && (
+                      <div className="card" style={{ padding: 10 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase' }}>
+                          🥤 Grup Toplamları (tüm şubeler)
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          {Object.entries(grupTop).sort((a,b) => b[1].adet - a[1].adet).map(([g, v]) => {
+                            const renkMap = {
+                              'Ice':'#3b82f6','14 Oz':'#f59e0b','8 Oz':'#10b981',
+                              'Su':'#6366f1','Maden Suyu':'#14b8a6',
+                              'Redbull':'#8b5cf6','Pasta':'#ec4899','ÇAY':'#ef4444',
+                            };
+                            const r = renkMap[g] || '#94a3b8';
+                            return (
+                              <div key={g} style={{
+                                padding: '6px 12px', borderRadius: 6, minWidth: 100,
+                                background: r + '22', border: `1px solid ${r}66`,
+                              }}>
+                                <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', fontWeight: 600 }}>{g}</div>
+                                <div style={{ fontSize: 16, fontWeight: 800, color: r }}>{Math.round(v.adet)}</div>
+                                <div style={{ fontSize: 9, color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>{fmtTL(v.ciro)}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* Şube kartları */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
                 {Object.entries(subeAnaliz.subeler || {})
