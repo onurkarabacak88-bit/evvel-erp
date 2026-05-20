@@ -327,6 +327,11 @@ export default function TruthMotor() {
       {/* ========== GENEL ========== */}
       {aktifSekme === 'genel' && (
         <>
+          <SekmeBilgi
+            icon="📋"
+            baslik="Genel — Açık görevler ve takip"
+            metin="Akıllı Denetim'in bulduğu anomaliler için açtığın görevlerin takibi. Görev aç → ata → çöz → kapat."
+          />
           <AcikGorevler refreshKey={`${tarih}-${Object.keys(detay || {}).join('')}`} />
         </>
       )}
@@ -334,6 +339,11 @@ export default function TruthMotor() {
       {/* ========== VARDIYA & PERSONEL ========== */}
       {aktifSekme === 'vardiya' && (
         <>
+          <SekmeBilgi
+            icon="🕒"
+            baslik="Vardiya Bazlı + Personel Davranış"
+            metin="Sabahcı, öğlenci, kapanışçı her vardiyada kasa açığı/fazlası kime ait belli olur. Personel başına saatlik satış velocity, ortalama fiş tutarı sapması ve iskonto pattern'i analiz edilir."
+          />
           <VardiyaPL tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
           <PersonelDavranis />
         </>
@@ -342,6 +352,11 @@ export default function TruthMotor() {
       {/* ========== AKILLI TANI (Pattern + BOM + Heatmap) ========== */}
       {aktifSekme === 'tani' && (
         <>
+          <SekmeBilgi
+            icon="🧬"
+            baslik="Akıllı Tanı — NRF pattern + BOM reçete + saat heatmap"
+            metin="Yuvarlak sayı bias (zimmet işareti), kapanış telaşı, aykırı şube cluster'ı, sistemik POS sync sinyali. Ürün-bardak reçetesinden teorik tüketim ile fiziksel azalma karşılaştırılır. Saat × şube anomali yoğunluk haritası ile 'hangi saatlerde kayıt dışı satış kümeleniyor' bulunur."
+          />
           <PatternDetect />
           <BomVaryans tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
           <SaatHeatmap />
@@ -350,12 +365,24 @@ export default function TruthMotor() {
 
       {/* ========== MALI ÇAPRAZ ========== */}
       {aktifSekme === 'mali' && (
-        <MaliCapraz />
+        <>
+          <SekmeBilgi
+            icon="💳"
+            baslik="Mali Çapraz Kontrol"
+            metin="Z raporu kart toplamı ile gerçek kart slip toplamı çapraz kontrol edilir (uyumsuz = fişsiz satış veya kayıt eksik). Gider kategorisi pattern — aynı personel sürekli aynı kategoriye girmişse şüpheli. Z'de iade var ama stok'a dönüş yok → sahte iade tespiti."
+          />
+          <MaliCapraz />
+        </>
       )}
 
       {/* ========== GEÇMİŞ & AYAR (Personel Skor + Şube Ayarları + Karar Tablosu) ========== */}
       {aktifSekme === 'gelismis' && (
         <>
+          <SekmeBilgi
+            icon="⚙️"
+            baslik="Geçmiş & Ayarlar"
+            metin="3 aylık personel Z-skor (anomali bazlı), motor başına şube açma/kapama, geçmiş tüm tanılar tablosu."
+          />
           <PersonelSkor />
         </>
       )}
@@ -759,6 +786,22 @@ function PersonelDavranis() {
         <strong>Yüksek</strong> = anomali ≥%25 veya iskonto &gt; %5 ·
         Vardiya = ACILIS → KONTROL/KAPANIS arası dilim
       </p>
+    </div>
+  );
+}
+
+function SekmeBilgi({ icon, baslik, metin }) {
+  return (
+    <div style={{
+      padding: '10px 14px', marginBottom: 14,
+      background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)',
+      borderRadius: 6, display: 'flex', gap: 12, alignItems: 'flex-start',
+    }}>
+      <div style={{ fontSize: 20 }}>{icon}</div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#93c5fd', marginBottom: 2 }}>{baslik}</div>
+        <div style={{ fontSize: 11, color: 'var(--text2)', lineHeight: 1.5 }}>{metin}</div>
+      </div>
     </div>
   );
 }
