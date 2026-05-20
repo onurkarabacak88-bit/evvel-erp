@@ -8471,6 +8471,8 @@ export default function OperasyonMerkezi() {
             <strong style={{ color: 'var(--text2)', fontWeight: 600 }}>Ne gösterilir?</strong>{' '}
             Kaynak <strong style={{ color: 'var(--text2)' }}>/ops/bar-ozet</strong> (yalnızca tamamlanmış <strong style={{ color: 'var(--text2)' }}>KAPANIS</strong> eventi; vardiya devir sayımı kullanılmaz):{' '}
             <strong style={{ color: 'var(--text2)' }}>Satılan ≈ Açılış + Ürün Aç − Kapanış sayımı</strong> (bardak, su, soda, redbull, pasta vb.).
+            Tabloda <strong style={{ color: 'var(--text2)' }}>Dün kapanış</strong> sütunu bir önceki günün kapanış sayımını gösterir (açılışın hemen solunda).
+            <strong style={{ color: 'var(--text2)' }}> Satılan</strong> sütununun altında Evo Hızlı Satış’tan gelen malzeme adedi (ör. redbull, 14oz karton bardak) yazılır.
             Kapanış yapılmamış şubeler bu listede görünmez. Tarih, operasyon olayının takvim günüdür.
             Haftalık bölümde günler <strong style={{ color: 'var(--text2)' }}>bugünden geriye</strong> sıralanır; şubeler <strong style={{ color: 'var(--text2)' }}>ada göre (A–Z)</strong> listelenir.
           </div>
@@ -8655,6 +8657,9 @@ export default function OperasyonMerkezi() {
                         <thead>
                           <tr style={{ background: 'var(--bg2)' }}>
                             <th style={{ padding: '5px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600, fontSize: 11 }}>Ürün</th>
+                            <th style={{ padding: '5px 8px', textAlign: 'center', color: '#c4b5fd', fontWeight: 600, fontSize: 11 }} title={r.onceki_kapanis_tarihi ? `Önceki gün: ${r.onceki_kapanis_tarihi}` : ''}>
+                              Dün kapanış{r.onceki_kapanis_tarihi ? ` (${String(r.onceki_kapanis_tarihi).slice(5)})` : ''}
+                            </th>
                             <th style={{ padding: '5px 8px', textAlign: 'center', color: '#93c5fd', fontWeight: 600, fontSize: 11 }}>Açılış</th>
                             <th style={{ padding: '5px 8px', textAlign: 'center', color: '#86efac', fontWeight: 600, fontSize: 11 }}>Ürün Aç</th>
                             <th style={{ padding: '5px 8px', textAlign: 'center', color: '#fbbf24', fontWeight: 600, fontSize: 11 }}>Kapanış</th>
@@ -8663,20 +8668,31 @@ export default function OperasyonMerkezi() {
                         </thead>
                         <tbody>
                           {keys.map((k) => {
+                            const dun = r.dun_kapanis?.[k] ?? 0;
                             const ac = r.acilis?.[k] ?? 0;
                             const ua = r.urun_ac?.[k] ?? 0;
                             const kap = r.kapanis?.[k] ?? 0;
                             const sat = r.satilan?.[k] ?? 0;
+                            const evoLbl = r.evo_etiket?.[k] || '';
                             const neg = sat < 0;
-                            if (ac === 0 && ua === 0 && kap === 0) return null;
+                            if (ac === 0 && ua === 0 && kap === 0 && dun === 0 && sat === 0 && !evoLbl) return null;
+                            const devirFark = dun > 0 && ac > 0 && dun !== ac;
                             return (
                               <tr key={k} style={{ borderTop: '1px solid var(--border)' }}>
                                 <td style={{ padding: '5px 8px', color: 'var(--text2)' }}>{labels[k] || k}</td>
+                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', color: devirFark ? '#fdba74' : dun > 0 ? '#c4b5fd' : 'var(--text3)' }}>
+                                  {r.onceki_kapanis_yok ? '—' : dun}
+                                </td>
                                 <td className="mono" style={{ padding: '5px 8px', textAlign: 'center' }}>{ac}</td>
                                 <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', color: ua > 0 ? '#86efac' : 'var(--text3)' }}>{ua > 0 ? `+${ua}` : ua}</td>
                                 <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', color: kap > 0 ? '#fbbf24' : 'var(--text3)' }}>{kap > 0 ? `-${kap}` : '—'}</td>
                                 <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', fontWeight: 700, color: neg ? 'var(--red)' : sat > 0 ? '#86efac' : 'var(--text3)' }}>
-                                  {sat}
+                                  <div>{sat}</div>
+                                  {evoLbl ? (
+                                    <div style={{ fontSize: 10, fontWeight: 500, color: '#93c5fd', marginTop: 3, lineHeight: 1.35 }}>
+                                      {evoLbl}
+                                    </div>
+                                  ) : null}
                                 </td>
                               </tr>
                             );
