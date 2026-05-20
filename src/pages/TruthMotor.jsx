@@ -203,7 +203,7 @@ export default function TruthMotor() {
       )}
 
       {/* GÜNLÜK RAPOR MATRİSİ */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '20px 0 8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '20px 0 8px', flexWrap: 'wrap' }}>
         <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>📋 Günlük Denetim Raporu</h3>
         <input
           type="date" value={tarih} onChange={(e) => setTarih(e.target.value)}
@@ -211,6 +211,32 @@ export default function TruthMotor() {
         />
         <button className="btn btn-sm" onClick={() => setTarih(bugunStr())} style={{ fontSize: 11 }}>
           Bugün
+        </button>
+        <button
+          className="btn btn-sm"
+          disabled={!durum?.global_aktif || !!busy}
+          onClick={async () => {
+            const aktif = (durum?.subeler || []).filter(s => s.aktif);
+            if (aktif.length === 0) { setHata('Aktif şube yok'); return; }
+            setInfo(''); setHata('');
+            for (const s of aktif) {
+              setBusy(`tum-${s.sube_id}`);
+              try {
+                await fetchJson(`${API}/api/ops/truth/calistir/${s.sube_id}/${tarih}`, { method: 'POST' });
+              } catch (e) {
+                // sessiz hata — sonraki şubeye geç
+              }
+            }
+            setBusy('');
+            setInfo(`${aktif.length} şube için motor çalıştırıldı`);
+            await Promise.all([gunlukYukle(), kararlariYukle()]);
+          }}
+          title={!durum?.global_aktif ? 'Global flag kapalı' : 'Tüm aktif şubeler için motoru çalıştır'}
+          style={{
+            fontSize: 11, padding: '4px 10px',
+            background: '#10b981', borderColor: '#10b981', color: '#fff', fontWeight: 600,
+          }}>
+          {busy?.startsWith('tum-') ? `⏳ ${busy.slice(4, 12)}…` : '▶▶ Hepsini Çalıştır'}
         </button>
         <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
           {gunluk?.subeler?.length || 0} şube
