@@ -135,11 +135,20 @@ export default function App() {
   const mainRef = useRef(null);
   const Page = PAGES[page] || Panel;
   const [onayBekleyen, setOnayBekleyen] = useState(0);
+  const [bugunAnomali, setBugunAnomali] = useState(0);
 
   useEffect(() => {
     const yukle = () => {
       api('/onay-kuyrugu?durum=bekliyor&limit=400')
         .then(d => setOnayBekleyen(Array.isArray(d) ? d.length : 0))
+        .catch(() => {});
+      // Akıllı Denetim bugün anomali sayısı
+      const bugun = new Date().toISOString().slice(0, 10);
+      api(`/ops/truth/gunluk-rapor?tarih=${bugun}`)
+        .then(d => {
+          const top = (d?.subeler || []).reduce((s, r) => s + (Number(r.anomali_sayisi) || 0), 0);
+          setBugunAnomali(top);
+        })
         .catch(() => {});
     };
     yukle();
@@ -196,6 +205,17 @@ export default function App() {
                       fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
                     }}>
                       {onayBekleyen}
+                    </span>
+                  )}
+                  {item.id === 'akilli-denetim' && bugunAnomali > 0 && (
+                    <span style={{
+                      position: 'absolute', top: '50%', right: 10,
+                      transform: 'translateY(-50%)',
+                      minWidth: 18, height: 18, padding: '0 5px',
+                      borderRadius: 999, background: '#ef4444', color: '#fff',
+                      fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
+                    }} title="Bugün anomali sayısı">
+                      {bugunAnomali}
                     </span>
                   )}
                 </div>
