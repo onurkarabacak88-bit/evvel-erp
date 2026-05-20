@@ -22,7 +22,7 @@ const TANI_ETIKET = {
   POS_SYNC_HATA:         { renk: '#f87171', bg: 'rgba(239,68,68,0.10)',  bord: 'rgba(239,68,68,0.35)',  emoji: '⚙️' },
   POS_BYPASS:            { renk: '#fca5a5', bg: 'rgba(220,38,38,0.10)',  bord: 'rgba(220,38,38,0.40)',  emoji: '🚫' },
   AKSAM_ZIMMET_SINYALI:  { renk: '#f87171', bg: 'rgba(239,68,68,0.15)',  bord: 'rgba(239,68,68,0.45)',  emoji: '🌙💸' },
-  YETERSIZ_VERI:         { renk: 'var(--text3)', bg: 'rgba(120,120,120,0.10)', bord: 'rgba(120,120,120,0.30)', emoji: '⚪' },
+  YETERSIZ_VERI:         { renk: 'var(--text3)', bg: 'rgba(120,120,120,0.10)', bord: 'rgba(120,120,120,0.30)', emoji: '⚪', etiket: 'Veri yok' },
 };
 
 const BOYUT_ETIKET = {
@@ -161,7 +161,7 @@ export default function TruthMotor() {
   }, [kararlar]);
 
   return (
-    <div style={{ padding: '24px 28px', maxWidth: 1400, margin: '0 auto' }}>
+    <div style={{ padding: '24px 28px', maxWidth: 1400, margin: '0 auto', minWidth: 0, overflowX: 'auto' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>🧠 Akıllı Denetim</h2>
         <button className="btn btn-secondary" onClick={() => { durumYukle(); kararlariYukle(); }}>
@@ -283,10 +283,12 @@ export default function TruthMotor() {
             <div key={r.sube_id} className="card" style={{
               padding: '10px 14px',
               borderLeft: `4px solid ${e.bord}`,
-              display: 'grid', gridTemplateColumns: '170px 200px 1fr auto', gap: 12, alignItems: 'center',
+              display: 'grid',
+              gridTemplateColumns: 'minmax(120px, 180px) minmax(140px, 200px) minmax(0, 1fr) auto',
+              gap: 12, alignItems: 'center', overflow: 'hidden',
             }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{r.sube_ad}</div>
+              <div style={{ minWidth: 0, overflow: 'hidden' }}>
+                <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{r.sube_ad}</div>
                 <div style={{ fontSize: 10, color: 'var(--text3)' }}>
                   {r.motor_aktif ? `motor • ${r.motor_mod}` : 'motor kapalı'}
                 </div>
@@ -298,25 +300,26 @@ export default function TruthMotor() {
                   border: `1px solid ${calistirilmadi ? 'rgba(120,120,120,0.30)' : e.bord}`,
                   color: calistirilmadi ? 'var(--text3)' : e.renk,
                 }}>
-                  {calistirilmadi ? '⚪ Çalıştırılmadı' : `${e.emoji} ${r.ana_tani}`}
+                  {calistirilmadi ? '⚪ Çalıştırılmadı'
+                    : r.ana_tani === 'YETERSIZ_VERI' ? '⚪ Veri yok'
+                    : `${e.emoji} ${r.ana_tani}`}
                 </span>
               </div>
               <div style={{ fontSize: 11, color: 'var(--text2)' }}>
                 {r.anomali_sayisi > 0 ? (
                   <span>
                     <strong style={{ color: '#fbbf24' }}>{r.anomali_sayisi}</strong> anomali:&nbsp;
-                    {(r.boyut_ozet || []).slice(0, 3).map((b) => (
-                      <span key={b.boyut} style={{ marginRight: 8 }}>
-                        {BOYUT_ETIKET[b.boyut]?.split(' ')[1] || b.boyut}
-                        <span style={{ color: b.fark > 0 ? '#86efac' : '#fca5a5' }}>
-                          {b.fark != null ? ` ${b.fark > 0 ? '+' : ''}${b.fark.toFixed(1)}` : ''}
-                        </span>
+                    {(r.boyut_ozet || []).slice(0, 3).map((b, i) => (
+                      <span key={`${b.boyut}-${i}`} style={{ marginRight: 8 }}>
+                        {b.ozet || b.boyut}
                       </span>
                     ))}
                     {(r.boyut_ozet || []).length > 3 && (
-                      <span style={{ color: 'var(--text3)' }}>… +{r.boyut_ozet.length - 3}</span>
+                      <span style={{ color: 'var(--text3)' }}>… +{(r.boyut_ozet || []).length - 3}</span>
                     )}
                   </span>
+                ) : r.ana_tani === 'YETERSIZ_VERI' ? (
+                  <span style={{ color: 'var(--text3)' }}>Veri yok (sayım veya satış kaydı eksik)</span>
                 ) : r.calistirildi ? (
                   <span style={{ color: '#86efac' }}>✓ Tüm boyutlar uyumlu</span>
                 ) : (

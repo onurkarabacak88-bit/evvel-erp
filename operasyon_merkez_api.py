@@ -12718,23 +12718,44 @@ def truth_gunluk_rapor(tarih: Optional[str] = Query(None)):
             if k.get("tani") not in ("UYUMLU", "YETERSIZ_VERI")
         )
 
-        # Boyut özet — kullanıcı dostu
+        # Boyut özet — kullanıcı dostu: tanıya göre anlamlı etiket
+        # Boyut adı kullanıcı için: "kasa" → "Kasa", "bardak_plastik" → "Plastik"
+        BOYUT_ADI = {
+            "kasa": "Kasa", "bardak_plastik": "Plastik",
+            "bardak_karton": "Karton", "redbull_soda": "Redbull/Soda", "pasta": "Pasta",
+        }
+        # Tanılar bazında özet metin
         boyut_ozet = []
         for k in kayitlar:
             t = k.get("tani") or "YETERSIZ_VERI"
             if t in ("UYUMLU", "YETERSIZ_VERI"):
                 continue
             f = k.get("fark_n1_n2")
-            f_str = ""
-            if f is not None:
-                f_str = f" ({'+' if float(f) > 0 else ''}{float(f):.2f})"
+            boyut_ad = BOYUT_ADI.get(k["boyut"], k["boyut"])
+            # Fark varsa ve anlamlıysa rakam, yoksa tanı türüne göre açıklama
+            if f is not None and abs(float(f)) >= 0.5:
+                f_str = f"{'+' if float(f) > 0 else ''}{float(f):.0f}"
+                ozet = f"{boyut_ad} {f_str}"
+            elif t in ("IKRAM_UNUTULDU", "SWEETHEARTING_SINYAL", "STOK_KACAGI_BEYANSIZ"):
+                # N1=N2 ama Evo eksik — fark sıfır ama anomali var
+                ozet = f"{boyut_ad} (Evo eksik)"
+            elif t == "POS_BYPASS":
+                ozet = f"{boyut_ad} (POS bypass)"
+            elif t in ("AKSAM_ZIMMET_SINYALI", "ZIMMET_NAKIT_CEPTE"):
+                ozet = f"{boyut_ad} 🚨 zimmet"
+            else:
+                # Diğer tanılar — fark görünmüyorsa sadece tanı adı
+                ozet = f"{boyut_ad} ({t.lower().replace('_', ' ')})"
             boyut_ozet.append({
                 "boyut": k["boyut"],
                 "tani": t,
                 "fark": float(f) if f is not None else None,
-                "ozet": f"{k['boyut']}{f_str}",
+                "ozet": ozet,
             })
 
+        # Tüm boyutlar YETERSIZ_VERI ise "Veri yok" — daha açıklayıcı
+        if kayitlar and all(k.get("tani") == "YETERSIZ_VERI" for k in kayitlar):
+            ana_tani = "YETERSIZ_VERI"
         rapor.append({
             "sube_id": sid,
             "sube_ad": s["ad"],
