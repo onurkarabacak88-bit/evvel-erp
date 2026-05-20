@@ -1914,8 +1914,7 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
             WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) = %s
               AND t.sube_id <> %s
               AND t.tarih >= CURRENT_DATE - INTERVAL '21 days'
-              AND t.durum = 'hazirlaniyor'
-              AND t.durum <> 'iptal'
+              AND t.durum NOT IN ('iptal', 'teslim_edildi', 'gonderilmedi', 'bekliyor', 'gonderildi')
             """,
             (sube_id, sube_id),
         )
@@ -3839,8 +3838,7 @@ def sube_siparis_akisi(
             WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) = %s
               AND t.sube_id <> %s
               AND t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
-              AND t.durum = 'hazirlaniyor'
-              AND t.durum <> 'iptal'
+              AND t.durum NOT IN ('iptal', 'teslim_edildi', 'gonderilmedi', 'bekliyor', 'gonderildi')
             ORDER BY t.sevkiyat_ts DESC NULLS LAST, t.olusturma DESC NULLS LAST, t.id DESC
             LIMIT %s
         """
@@ -3877,8 +3875,7 @@ def sube_siparis_akisi(
                 WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) = %s
                   AND t.sube_id <> %s
                   AND t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
-                  AND t.durum = 'hazirlaniyor'
-                  AND t.durum <> 'iptal'
+                  AND t.durum NOT IN ('iptal', 'teslim_edildi', 'gonderilmedi', 'bekliyor', 'gonderildi')
                 """,
                 (sube_id, sube_id, gun_i),
             )
