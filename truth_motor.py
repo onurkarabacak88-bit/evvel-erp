@@ -1194,6 +1194,392 @@ def _kapatma(bas_m, bit_m, personeller_tup, dakika_personel, tek, coklu):
         })
 
 
+# ════════════════════════════════════════════════════════════════════════════
+#  KATMAN 1-7 YARDIMCI FONKSİYONLAR — adaptive_truth_walk tarafından çağrılır
+# ════════════════════════════════════════════════════════════════════════════
+
+def _katman_1_sayisal_korelasyon(
+    boyut: str, aksam_fark: float, sabah_fark_v1: float,
+) -> Dict[str, Any]:
+    """Katman 1: Kasa/stok farkının ürün birim fiyatıyla sayısal eşleşmesi.
+    Tam adet × fiyat ≈ fark → kasıtlı miktar sinyali."""
+    if boyut == "kasa":
+        return {"katman": 1, "aktif": False, "sebep": "kasa boyutu için geçersiz"}
+    BIRIM_FIYAT = {
+        "bardak_plastik": 50.0,
+        "bardak_karton":  60.0,
+        "redbull_soda":   45.0,
+        "pasta":          90.0,
+    }
+    fiyat = BIRIM_FIYAT.get(boyut)
+    if not fiyat:
+        return {"katman": 1, "aktif": False}
+    en_buyuk_fark = max(abs(aksam_fark or 0), abs(sabah_fark_v1 or 0))
+    if en_buyuk_fark < 0.5:
+        return {"katman": 1, "aktif": False, "sebep": "fark çok küçük"}
+    tam_adet = round(en_buyuk_fark / fiyat)
+    if tam_adet == 0:
+        return {"katman": 1, "aktif": False}
+    beklenen = tam_adet * fiyat
+    uyum = 1.0 - abs(en_buyuk_fark - beklenen) / beklenen
+    eslesme = uyum >= 0.85
+    return {
+        "katman": 1, "aktif": True,
+        "boyut_fiyat": fiyat,
+        "fark": round(en_buyuk_fark, 2),
+        "tahmini_adet": tam_adet,
+        "beklenen_tutar": round(beklenen, 2),
+        "uyum_yuzde": round(uyum * 100, 1),
+        "eslesme": eslesme,
+        "yorum": (
+            f"{boyut} {tam_adet} adet × ₺{fiyat:.0f} = ₺{beklenen:.0f} "
+            f"↔ fark ₺{en_buyuk_fark:.0f} (uyum %{uyum*100:.0f}) → "
+            + ("Sayısal eşleşme: kasıtlı miktar sinyali" if eslesme
+               else "Eşleşme yok — rastgele hata olabilir")
+        ),
+        "guven_delta": 12.0 if eslesme else 0.0,
+    }
+
+
+def _katman_2_bayesian_gecmis(
+    cur, sube_id: str, boyut: str, tarih: str, gun: int = 30,
+) -> Dict[str, Any]:
+    """Katman 2: Son N günün aynı boyut anomali oranı → prior probability."""
+    try:
+        cur.execute(
+            """
+            SELECT COUNT(*) AS toplam,
+                   COUNT(*) FILTER (WHERE tani NOT IN ('UYUMLU','YETERSIZ_VERI')) AS anomali
+            FROM truth_motor_kararlar
+            WHERE sube_id=%s AND boyut=%s
+              AND tarih >= %s::date - (%s || ' days')::interval
+              AND tarih < %s::date
+            """,
+            (sube_id, boyut, tarih, gun, tarih),
+        )
+        row = dict(cur.fetchone() or {})
+    except Exception as e:
+        return {"katman": 2, "aktif": False, "hata": str(e)}
+    toplam = int(row.get("toplam") or 0)
+    anomali = int(row.get("anomali") or 0)
+    if toplam < 5:
+        return {"katman": 2, "aktif": False,
+                "sebep": f"Yeterli geçmiş yok ({toplam} kayıt, min 5 gerekli)"}
+    prior = anomali / toplam
+    return {
+        "katman": 2, "aktif": True,
+        "gun": gun,
+        "toplam_kayit": toplam,
+        "anomali_sayisi": anomali,
+        "prior_oran": round(prior, 3),
+        "prior_yuzde": round(prior * 100, 1),
+        "yorum": (
+            f"Son {gun} günde {anomali}/{toplam} anomali (%{prior*100:.0f}) → "
+            + ("Yüksek tekrarlama riski" if prior >= 0.4
+               else "Orta risk" if prior >= 0.2
+               else "Düşük geçmiş anomali")
+        ),
+        "guven_delta": 10.0 if prior >= 0.4 else 5.0 if prior >= 0.2 else 0.0,
+    }
+
+
+def _katman_3_sistematik_mi(
+    cur, sube_id: str, boyut: str, tarih: str, karar: str, gun: int = 14,
+) -> Dict[str, Any]:
+    """Katman 3: Aynı tanı kaç gün ardışık tekrarlandı? 3+ = sistematik, 7+ = kronik."""
+    if karar in ("UYUMLU", "YETERSIZ_VERI", "TRUTH_WALK_COZULMEDI"):
+        return {"katman": 3, "aktif": False, "sebep": "Belirsiz karar — pattern aramaya değmez"}
+    try:
+        cur.execute(
+            """
+            SELECT tani FROM truth_motor_kararlar
+            WHERE sube_id=%s AND boyut=%s
+              AND tarih >= %s::date - (%s || ' days')::interval
+              AND tarih < %s::date
+            ORDER BY tarih DESC
+            """,
+            (sube_id, boyut, tarih, gun, tarih),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:
+        return {"katman": 3, "aktif": False, "hata": str(e)}
+    if not rows:
+        return {"katman": 3, "aktif": False, "sebep": "Geçmiş kayıt yok"}
+    ardisik = 0
+    for r in rows:
+        if r["tani"] == karar:
+            ardisik += 1
+        else:
+            break
+    sistematik = ardisik >= 3
+    cok_sistematik = ardisik >= 7
+    return {
+        "katman": 3, "aktif": True,
+        "ardisik_gun": ardisik,
+        "sistematik": sistematik,
+        "cok_sistematik": cok_sistematik,
+        "hedef_tani": karar,
+        "yorum": (
+            f"Aynı tanı ({karar}) {ardisik} gün ardışık → "
+            + ("KRONİK DAVRANIŞ (7+ gün!)" if cok_sistematik
+               else "Sistematik pattern (3+ gün)" if sistematik
+               else "Tek seferlik — alışkanlık henüz oluşmamış")
+        ),
+        "guven_delta": 15.0 if cok_sistematik else 8.0 if sistematik else 0.0,
+    }
+
+
+def _katman_4_saat_daralma(
+    cur, sube_id: str, tarih: str, boyut: str, karar: str,
+) -> Dict[str, Any]:
+    """Katman 4: KONTROL event'leri kullanarak anomali zaman penceresini daralt.
+    ACILIS→KONTROL uyumlu, KONTROL→KAPANIS bozuk = anomali ikinci yarıda."""
+    try:
+        cur.execute(
+            """
+            SELECT tip, cevap_ts, kasa_sayim, meta, sira_no
+            FROM sube_operasyon_event
+            WHERE sube_id=%s AND tarih=%s::date AND durum='tamamlandi'
+            ORDER BY cevap_ts NULLS LAST, sira_no
+            """,
+            (sube_id, tarih),
+        )
+        events = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:
+        return {"katman": 4, "aktif": False, "hata": str(e)}
+    kontrol_events = [e for e in events if (e.get("tip") or "").startswith("KONTROL")]
+    if not kontrol_events:
+        return {
+            "katman": 4, "aktif": False,
+            "sebep": "O gün KONTROL event'i yok — daraltma yapılamadı",
+            "oneri": "Günde en az 1 KONTROL tetikle (öğle saati): 8 saatlik pencere → 4 saat",
+        }
+    if boyut == "kasa":
+        sayimlar = []
+        for e in kontrol_events:
+            ks = e.get("kasa_sayim")
+            if ks is not None:
+                sayimlar.append({
+                    "tip": e["tip"],
+                    "saat": str(e["cevap_ts"])[:16] if e.get("cevap_ts") else "",
+                    "kasa": float(ks),
+                })
+        return {
+            "katman": 4, "aktif": True, "boyut": "kasa",
+            "kontrol_sayimlar": sayimlar,
+            "kontrol_sayisi": len(kontrol_events),
+            "yorum": (
+                f"{len(kontrol_events)} ara kontrol var. "
+                "Kasa sayımları karşılaştırılarak anomali penceresi daraltılır — "
+                "kamera görüntüsünü o saate yoğunlaştır."
+            ),
+        }
+    else:
+        stoklar = []
+        for e in kontrol_events:
+            meta = _meta_oku(e.get("meta"))
+            stok = _meta_boyut_topla(meta.get("kontrol_stok_sayim") or {}, boyut)
+            stoklar.append({
+                "tip": e["tip"],
+                "saat": str(e["cevap_ts"])[:16] if e.get("cevap_ts") else "",
+                "stok": stok,
+            })
+        return {
+            "katman": 4, "aktif": True, "boyut": boyut,
+            "kontrol_stoklar": stoklar,
+            "kontrol_sayisi": len(kontrol_events),
+            "yorum": (
+                f"{len(kontrol_events)} ara kontrol var. "
+                f"Stok: {[k['stok'] for k in stoklar]} → "
+                "Hangi kontrol sonrası değer değiştiyse o pencereye odaklan."
+            ),
+        }
+
+
+def _katman_5_baskin_dogrulama(cur, sube_id: str) -> Dict[str, Any]:
+    """Katman 5: Son 7 günde kasa baskını sonucu var mı? Varsa motor bulgusuyla karşılaştır."""
+    try:
+        cur.execute(
+            """
+            SELECT id, baslatan_ts, durum, beklenen_tutar, gercek_tutar, notu
+            FROM kasa_baskini
+            WHERE sube_id=%s AND baslatan_ts >= NOW() - INTERVAL '7 days'
+            ORDER BY baslatan_ts DESC
+            LIMIT 5
+            """,
+            (sube_id,),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:
+        return {"katman": 5, "aktif": False, "hata": str(e)}
+    if not rows:
+        return {"katman": 5, "aktif": False, "sebep": "Son 7 günde baskın yok"}
+    son = rows[0]
+    gercek_fark = None
+    if son.get("gercek_tutar") is not None and son.get("beklenen_tutar") is not None:
+        gercek_fark = round(float(son["gercek_tutar"]) - float(son["beklenen_tutar"]), 2)
+    return {
+        "katman": 5, "aktif": True,
+        "baskin_sayisi": len(rows),
+        "son_baskin": {
+            "id": str(son.get("id") or ""),
+            "durum": son.get("durum"),
+            "beklenen": float(son.get("beklenen_tutar") or 0),
+            "gercek": float(son.get("gercek_tutar") or 0) if son.get("gercek_tutar") is not None else None,
+            "fark": gercek_fark,
+            "notu": son.get("notu"),
+        },
+        "yorum": (
+            f"Son baskın ({son.get('durum')}): "
+            + (f"Baskın farkı {gercek_fark:+.0f}₺ — DOĞRULANDI (açık gerçek)"
+               if gercek_fark is not None and gercek_fark < -5
+               else "Normal sayım çıktı" if gercek_fark is not None
+               else "Sonuç henüz girilmemiş")
+        ),
+        "guven_delta": 15.0 if (gercek_fark is not None and gercek_fark < -5) else 0.0,
+    }
+
+
+def _katman_6_nlp_aciklama(
+    karar: str, guven: float, boyut: str,
+    aksamci_beyan: float, sabahci_beyan: float,
+    beklenen_aksam: float, aksam_fark: float, sabah_fark_v1: float,
+    k0_vardiya: Dict[str, Any],
+    k1: Dict[str, Any], k2: Dict[str, Any], k3: Dict[str, Any],
+    k4: Dict[str, Any], k5: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Katman 6: Tüm katman bulgularını insan-okunabilir Türkçe anlatıya dönüştür."""
+    BOYUT_TR = {
+        "kasa": "kasa", "bardak_plastik": "plastik bardak",
+        "bardak_karton": "karton bardak", "redbull_soda": "RedBull/soda",
+        "pasta": "pasta dilimi",
+    }
+    KARAR_TR = {
+        "AKSAMCI_HATALI": "akşamcı hatalı saydı",
+        "SABAHCI_HATALI": "sabahcı hatalı saydı",
+        "IKISI_DE_HATALI": "iki taraf da hatalı",
+        "EVO_DESTEKLI_HIRSIZLIK": "kayıt dışı satış şüphesi",
+        "IKRAM_DESTEKLI": "kayıtsız ikram şüphesi",
+        "UYUMLU": "her şey uyumlu",
+        "TRUTH_WALK_COZULMEDI": "kanıt zinciri yeterli değil",
+    }
+    boyut_tr = BOYUT_TR.get(boyut, boyut)
+    karar_tr = KARAR_TR.get(karar, karar)
+    parcalar = []
+    if karar == "AKSAMCI_HATALI":
+        parcalar.append(
+            f"Dün akşam {boyut_tr} için akşamcı {aksamci_beyan:.0f} beyan etti, "
+            f"matematik {beklenen_aksam:.0f} olmasını bekliyordu (fark {aksam_fark:+.0f})."
+        )
+    elif karar == "SABAHCI_HATALI":
+        parcalar.append(
+            f"Bugün sabah {boyut_tr} için sabahcı {sabahci_beyan:.0f} beyan etti, "
+            f"matematik {aksamci_beyan:.0f} olmasını bekliyordu (fark {sabah_fark_v1:+.0f})."
+        )
+    elif karar == "EVO_DESTEKLI_HIRSIZLIK":
+        parcalar.append(
+            f"{boyut_tr} stoku beklenen kadar azalmadı ama "
+            "Evo'da satış kaydı var — ürün dışarıdan karşılandı veya satış kasaya girmedi."
+        )
+    elif karar == "IKISI_DE_HATALI":
+        parcalar.append(
+            f"{boyut_tr} için hem akşamcı hem sabahcı türetilmiş değerden sapıyor — "
+            "3. kişi sayımı zorunlu."
+        )
+    sorumlu_ad = None
+    if k0_vardiya:
+        tek = k0_vardiya.get("tek_basina_araliklari") or []
+        coklu = k0_vardiya.get("coklu_araliklari") or []
+        if tek:
+            sorumlu_ad = tek[-1].get("personel_ad") or tek[-1].get("personel_id")
+            parcalar.append(f"O günkü vardiyada tek personel ({sorumlu_ad}) kasa kontrolündeydi.")
+        elif coklu and coklu[0].get("personeller"):
+            isimler = ", ".join(p.get("ad") or p.get("id") for p in coklu[0]["personeller"])
+            parcalar.append(f"Vardiyada birden fazla personel çalıştı ({isimler}) — sorumluluk paylaşımlı.")
+    if k2.get("aktif") and k2.get("prior_yuzde", 0) >= 20:
+        parcalar.append(
+            f"Son {k2.get('gun', 30)} günde {boyut_tr} için %{k2['prior_yuzde']:.0f} anomali oranı var."
+        )
+    if k3.get("sistematik"):
+        parcalar.append(
+            f"Bu tanı {k3.get('ardisik_gun', 0)} gündür ardışık tekrarlanıyor — "
+            + ("kronik alışkanlık." if k3.get("cok_sistematik") else "sistematik pattern.")
+        )
+    if k1.get("eslesme"):
+        parcalar.append(
+            f"Sayısal eşleşme: fark ₺{k1.get('fark', 0):.0f} ≈ "
+            f"{k1.get('tahmini_adet', 0)} adet × ₺{k1.get('boyut_fiyat', 0):.0f} — kasıtlı miktar sinyali."
+        )
+    if k4.get("aktif") and k4.get("kontrol_sayisi", 0) > 0:
+        parcalar.append(
+            f"Gün içinde {k4['kontrol_sayisi']} ara kontrol anomali penceresini daraltabilir."
+        )
+    sb = (k5.get("son_baskin") or {}) if k5.get("aktif") else {}
+    if sb.get("fark") is not None and sb["fark"] < -5:
+        parcalar.append(f"Son baskın {sb['fark']:.0f}₺ açık ortaya koydu — motor bulgusuyla örtüşüyor.")
+    guven_yorum = (
+        "Çok yüksek güven" if guven >= 90 else
+        "Yüksek güven" if guven >= 75 else
+        "Orta güven — doğrulama gerekli" if guven >= 55 else
+        "Düşük güven — ek veri gerekli"
+    )
+    anlatim = " ".join(parcalar) or f"Karar: {karar_tr}. Güven: %{guven:.0f}."
+    return {
+        "katman": 6, "aktif": True,
+        "karar_tr": karar_tr,
+        "guven_yorum": guven_yorum,
+        "anlatim": anlatim,
+        "sorumlu_ad": sorumlu_ad,
+    }
+
+
+def _katman_7_bayesian_konsensus(
+    guven_base: float, karar: str,
+    k1: Dict[str, Any], k2: Dict[str, Any],
+    k3: Dict[str, Any], k5: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Katman 7: Tüm kanıt katmanlarını Bayesian ağırlıklarla birleştir → final güven."""
+    delta = 0.0
+    parcalar = []
+    if k1.get("eslesme"):
+        delta += 12.0
+        parcalar.append(f"K1+12 (sayısal eşleşme %{k1.get('uyum_yuzde', 0):.0f})")
+    if k2.get("aktif"):
+        prior = k2.get("prior_yuzde", 0.0)
+        if prior >= 40:
+            delta += 10.0; parcalar.append(f"K2+10 (geçmiş %{prior:.0f})")
+        elif prior >= 20:
+            delta += 5.0; parcalar.append(f"K2+5 (geçmiş %{prior:.0f})")
+    if k3.get("cok_sistematik"):
+        delta += 15.0; parcalar.append(f"K3+15 (kronik {k3.get('ardisik_gun', 0)} gün)")
+    elif k3.get("sistematik"):
+        delta += 8.0; parcalar.append(f"K3+8 (sistematik {k3.get('ardisik_gun', 0)} gün)")
+    if k5.get("guven_delta", 0) > 0:
+        delta += k5["guven_delta"]; parcalar.append(f"K5+{k5['guven_delta']:.0f} (baskın doğrulama)")
+    if karar in ("TRUTH_WALK_COZULMEDI", "IKISI_DE_HATALI"):
+        delta -= 10.0; parcalar.append("K7-10 (belirsiz karar)")
+    final_guven = min(99.0, max(10.0, guven_base + delta))
+    alarm = (
+        "kritik" if final_guven >= 90 and karar in (
+            "EVO_DESTEKLI_HIRSIZLIK", "AKSAMCI_HATALI", "SABAHCI_HATALI")
+        else "yuksek" if final_guven >= 75
+        else "orta" if final_guven >= 55
+        else "dusuk"
+    )
+    return {
+        "katman": 7, "aktif": True,
+        "guven_base": round(guven_base, 1),
+        "delta": round(delta, 1),
+        "final_guven": round(final_guven, 1),
+        "alarm_seviyesi": alarm,
+        "kanit_parcalari": parcalar,
+        "yorum": (
+            f"Bayesian konsensus: {guven_base:.0f} + {delta:+.0f} = {final_guven:.0f}. "
+            f"Alarm: {alarm.upper()}."
+        ),
+    }
+
+
 def adaptive_truth_walk(cur, sube_id: str, tarih: str, boyut: str) -> Dict[str, Any]:
     """Bir boyut için matematiksel kanıt zinciri kurarak 'kim hatalı' kararı.
 
@@ -1486,6 +1872,63 @@ def adaptive_truth_walk(cur, sube_id: str, tarih: str, boyut: str) -> Dict[str, 
     if vardiya_notu:
         ozet = f"{ozet}\n\n" + "\n".join(vardiya_notu)
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # KATMAN 1-7 — GELİŞMİŞ ANALİZ KATMANLARI
+    # Her katman bağımsız çalışır; hata atarsa try/except ile yutulur.
+    # ═══════════════════════════════════════════════════════════════════════
+    try:
+        k1 = _katman_1_sayisal_korelasyon(boyut, aksam_fark, sabah_fark_v1)
+    except Exception as _e:
+        k1 = {"katman": 1, "aktif": False, "hata": str(_e)}
+    try:
+        k2 = _katman_2_bayesian_gecmis(cur, sube_id, boyut, tarih)
+    except Exception as _e:
+        k2 = {"katman": 2, "aktif": False, "hata": str(_e)}
+    try:
+        k3 = _katman_3_sistematik_mi(cur, sube_id, boyut, tarih, karar)
+    except Exception as _e:
+        k3 = {"katman": 3, "aktif": False, "hata": str(_e)}
+    try:
+        k4 = _katman_4_saat_daralma(cur, sube_id, tarih, boyut, karar)
+    except Exception as _e:
+        k4 = {"katman": 4, "aktif": False, "hata": str(_e)}
+    try:
+        k5 = _katman_5_baskin_dogrulama(cur, sube_id)
+    except Exception as _e:
+        k5 = {"katman": 5, "aktif": False, "hata": str(_e)}
+
+    # Bayesian güven güncellemesi — K2 + K3 + K5 deltas Katman 0 sonrasına eklenir
+    guven = min(99.0, max(10.0,
+        guven
+        + k2.get("guven_delta", 0.0)
+        + k3.get("guven_delta", 0.0)
+    ))
+
+    try:
+        k6 = _katman_6_nlp_aciklama(
+            karar=karar, guven=guven, boyut=boyut,
+            aksamci_beyan=aksamci_beyan, sabahci_beyan=sabahci_beyan,
+            beklenen_aksam=beklenen_aksam, aksam_fark=aksam_fark,
+            sabah_fark_v1=sabah_fark_v1,
+            k0_vardiya=vardiya_dun,
+            k1=k1, k2=k2, k3=k3, k4=k4, k5=k5,
+        )
+    except Exception as _e:
+        k6 = {"katman": 6, "aktif": False, "hata": str(_e)}
+    try:
+        k7 = _katman_7_bayesian_konsensus(
+            guven_base=guven, karar=karar, k1=k1, k2=k2, k3=k3, k5=k5,
+        )
+    except Exception as _e:
+        k7 = {"katman": 7, "aktif": False, "hata": str(_e)}
+
+    # Final güven K7 Bayesian konsensus'tan alınır
+    guven = k7.get("final_guven", guven) if k7.get("aktif") else guven
+
+    # NLP anlatımını özet'e ekle
+    if k6.get("aktif") and k6.get("anlatim"):
+        ozet = f"{ozet}\n\n💬 {k6['anlatim']}"
+
     return {
         "sube_id": sube_id,
         "tarih": tarih,
@@ -1520,6 +1963,17 @@ def adaptive_truth_walk(cur, sube_id: str, tarih: str, boyut: str) -> Dict[str, 
         },
         "tek_personel_aksam": tek_personel_aksam,
         "tek_personel_sabah": tek_personel_sabah,
+        # Katman 1-7 — gelişmiş analiz
+        "katmanlar": {
+            "k1_sayisal_korelasyon": k1,
+            "k2_bayesian_gecmis": k2,
+            "k3_sistematik": k3,
+            "k4_saat_daralma": k4,
+            "k5_baskin_dogrulama": k5,
+            "k6_nlp_aciklama": k6,
+            "k7_bayesian_konsensus": k7,
+        },
+        "alarm_seviyesi": k7.get("alarm_seviyesi") if k7.get("aktif") else "bilinmiyor",
     }
 
 
