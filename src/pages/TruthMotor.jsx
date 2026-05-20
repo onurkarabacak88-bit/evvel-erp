@@ -308,6 +308,12 @@ export default function TruthMotor() {
       {/* PATTERN DETECTION (Sprint B — NRF zekası) */}
       <PatternDetect />
 
+      {/* ÜRÜN BOM RECETE VARYANSI (Sprint C) */}
+      <BomVaryans tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
+
+      {/* SAAT HEATMAP (Sprint C) */}
+      <SaatHeatmap />
+
       {/* PERSONEL SKORU (eski Z-skor — anomali bazlı) */}
       <PersonelSkor />
 
@@ -705,6 +711,180 @@ function PersonelDavranis() {
         💡 <strong>Kritik</strong> = anomali oranı ≥%50 veya ort. kasa fark &gt; 50₺ ·
         <strong>Yüksek</strong> = anomali ≥%25 veya iskonto &gt; %5 ·
         Vardiya = ACILIS → KONTROL/KAPANIS arası dilim
+      </p>
+    </div>
+  );
+}
+
+function BomVaryans({ tarih, subeler }) {
+  const [secSubeId, setSecSubeId] = useState('');
+  const [data, setData] = useState(null);
+  const [yukleniyor, setYukleniyor] = useState(false);
+
+  useEffect(() => {
+    if (!secSubeId && subeler.length > 0) setSecSubeId(subeler[0].id);
+  }, [subeler, secSubeId]);
+
+  const yukle = useCallback(async () => {
+    if (!secSubeId || !tarih) return;
+    setYukleniyor(true);
+    try {
+      const d = await fetchJson(`${API}/api/ops/truth/bom-varyans/${secSubeId}/${tarih}`);
+      setData(d);
+    } catch (_) {} finally { setYukleniyor(false); }
+  }, [secSubeId, tarih]);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  return (
+    <div style={{ margin: '24px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>🧪 BOM Reçete Varyansı</h3>
+        <select className="input" value={secSubeId} onChange={(e) => setSecSubeId(e.target.value)}
+          style={{ fontSize: 12, padding: '3px 8px' }}>
+          {subeler.map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
+        </select>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>{tarih}</span>
+        <button className="btn btn-sm" onClick={yukle} style={{ fontSize: 11 }}>↻</button>
+      </div>
+
+      {yukleniyor && <div className="card" style={{ padding: 12, textAlign: 'center', color: 'var(--text3)' }}>Yükleniyor…</div>}
+
+      {!yukleniyor && data && (
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead style={{ background: 'rgba(255,255,255,0.04)' }}>
+              <tr>
+                <th style={th}>Sarf Malzemesi</th>
+                <th style={{ ...th, textAlign: 'right' }}>Açılış</th>
+                <th style={{ ...th, textAlign: 'right' }}>Açılan Paket</th>
+                <th style={{ ...th, textAlign: 'right' }}>Kapanış</th>
+                <th style={{ ...th, textAlign: 'right' }}>Fiziksel Sarf</th>
+                <th style={{ ...th, textAlign: 'right' }}>Teorik (Evo)</th>
+                <th style={{ ...th, textAlign: 'right' }}>Varyans</th>
+                <th style={th}>Durum</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(data.recete_sonuclari || []).map(r => {
+                const drm = r.durum;
+                const renk = drm === 'uyumlu' ? '#86efac'
+                           : drm === 'kayit_disi_kullanim' ? '#fca5a5'
+                           : drm === 'satis_disi_olusum' ? '#fbbf24'
+                           : 'var(--text3)';
+                const lbl = drm === 'uyumlu' ? '✓ Uyumlu'
+                          : drm === 'kayit_disi_kullanim' ? '🚨 Kayıt dışı kullanım'
+                          : drm === 'satis_disi_olusum' ? '⚠️ Satışsız oluşum'
+                          : '⚪ Kapanış bekleniyor';
+                return (
+                  <tr key={r.sarf} style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                    <td style={td}><strong>{r.sarf}</strong></td>
+                    <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>{r.acilis}</td>
+                    <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>{r.urun_ac}</td>
+                    <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>{r.kapanis ?? '—'}</td>
+                    <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', fontWeight: 700 }}>
+                      {r.fiziksel ?? '—'}
+                    </td>
+                    <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>{r.teorik_evo}</td>
+                    <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', color: renk, fontWeight: 700 }}>
+                      {r.varyans == null ? '—' : (r.varyans > 0 ? '+' : '') + r.varyans}
+                    </td>
+                    <td style={{ ...td, color: renk }}>{lbl}</td>
+                  </tr>
+                );
+              })}
+              {(data.recete_sonuclari || []).length === 0 && (
+                <tr><td colSpan={8} style={{ padding: 16, textAlign: 'center', color: 'var(--text3)' }}>
+                  Evo satış verisi yok veya BOM uyumsuz
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+        💡 Teorik = Evo'da satılan ürünün BOM reçetesi ile beklenen sarf · Fiziksel = (açılış + URUN_AC − kapanış)
+        · <strong>Varyans &gt; 0</strong> = kayıt dışı kullanım · <strong>Varyans &lt; 0</strong> = POS'a girip ürün vermemiş
+      </p>
+    </div>
+  );
+}
+
+function SaatHeatmap() {
+  const [gun, setGun] = useState(14);
+  const [data, setData] = useState(null);
+  const [yukleniyor, setYukleniyor] = useState(false);
+
+  const yukle = useCallback(async () => {
+    setYukleniyor(true);
+    try {
+      const d = await fetchJson(`${API}/api/ops/truth/saat-heatmap?gun=${gun}`);
+      setData(d);
+    } catch (_) {} finally { setYukleniyor(false); }
+  }, [gun]);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  if (!data || Object.keys(data.matris || {}).length === 0) {
+    return (
+      <div style={{ margin: '24px 0' }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 8px' }}>🔥 Saat × Şube Anomali Heatmap</h3>
+        <div className="card" style={{ padding: 16, textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>
+          {yukleniyor ? 'Yükleniyor…' : 'Saatlik anomali verisi yok'}
+        </div>
+      </div>
+    );
+  }
+
+  // Maks değer (renk skala için)
+  let maks = 0;
+  Object.values(data.matris).forEach(saatler => {
+    Object.values(saatler).forEach(v => { if (v > maks) maks = v; });
+  });
+
+  return (
+    <div style={{ margin: '24px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>🔥 Saat × Şube Anomali Heatmap</h3>
+        <select className="input" value={gun} onChange={(e) => setGun(Number(e.target.value))}
+          style={{ fontSize: 12, padding: '3px 8px' }}>
+          <option value={7}>Son 7 gün</option>
+          <option value={14}>Son 14 gün</option>
+          <option value={30}>Son 30 gün</option>
+        </select>
+        <button className="btn btn-sm" onClick={yukle} style={{ fontSize: 11 }}>↻</button>
+      </div>
+
+      <div className="card" style={{ padding: 12, overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: 10, minWidth: '100%' }}>
+          <thead>
+            <tr>
+              <th style={{ padding: '4px 8px', textAlign: 'left', position: 'sticky', left: 0, background: 'var(--bg)' }}>Şube</th>
+              {data.saatler.map(s => <th key={s} style={{ padding: '4px 6px', textAlign: 'center', minWidth: 28 }}>{s}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(data.matris).map(([sube, saatler]) => (
+              <tr key={sube}>
+                <td style={{ padding: '4px 8px', fontWeight: 600, position: 'sticky', left: 0, background: 'var(--bg)' }}>{sube}</td>
+                {data.saatler.map(s => {
+                  const v = saatler[s] || 0;
+                  const ratio = maks > 0 ? v / maks : 0;
+                  const bg = v === 0 ? 'rgba(255,255,255,0.02)'
+                                     : `rgba(239,68,68,${0.15 + ratio * 0.55})`;
+                  return (
+                    <td key={s} style={{
+                      padding: '4px 6px', textAlign: 'center', background: bg,
+                      color: ratio > 0.5 ? '#fff' : 'inherit', fontFamily: 'monospace',
+                      borderRadius: 2, minWidth: 28,
+                    }}>{v || ''}</td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+        💡 Hücre = saatte tespit edilen anomali sayısı · Koyu kırmızı = yoğun saat (sweethearting/zimmet pattern'i orada kümeleniyor olabilir)
       </p>
     </div>
   );

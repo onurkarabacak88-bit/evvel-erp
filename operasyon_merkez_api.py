@@ -12937,6 +12937,29 @@ def truth_vardiya_pl(sube_id: str, tarih: str):
         return _tm.vardiya_bazli_uzlasma(cur, sube_id, tarih)
 
 
+@router.get("/truth/bom-varyans/{sube_id}/{tarih}")
+def truth_bom_varyans(sube_id: str, tarih: str):
+    """Sprint C — ürün BOM reçete varyansı: teorik bardak sarfı vs fiziksel azalma."""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.bom_recete_varyans(cur, sube_id, tarih)
+
+
+@router.get("/truth/saat-heatmap")
+def truth_saat_heatmap(gun: int = Query(14, ge=1, le=90),
+                       sube_id: Optional[str] = Query(None)):
+    """Sprint C — şube × saat × anomali yoğunluk haritası."""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.saat_heatmap(cur, gun=gun, sube_id=sube_id)
+
+
 @router.get("/truth/pattern-detect")
 def truth_pattern_detect(gun: int = Query(30, ge=7, le=180),
                           sube_id: Optional[str] = Query(None)):

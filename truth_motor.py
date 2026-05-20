@@ -1068,6 +1068,229 @@ def vardiya_bazli_uzlasma(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+#  SPRINT C — ÜRÜN BOM + SAAT HEATMAP
+# ════════════════════════════════════════════════════════════════════════════
+# Bardak/sarf reçetesi: her ürün satıldığında hangi malzemeden kaç tane harcanır.
+# Evo'da Grup_Pasta zaten Ice/14oz/8oz olarak gruplandığı için tek tek üründen
+# çok grup başına reçete daha pratik.
+#
+# Default reçete (kullanıcı sonra düzenleyebilir):
+#   "Ice" satışı   → 1 plastik bardak
+#   "14 Oz" satışı → 1 büyük karton bardak
+#   "8 Oz"  satışı → 1 küçük karton bardak
+#   "Su" satışı    → 1 şişe su (ürün kendisi)
+#   "Redbull"      → 1 kutu redbull
+#   "Maden Suyu"   → 1 şişe maden suyu
+#   "Pasta"        → 1 dilim pasta
+#   "ÇAY"          → 1 çay bardağı (porselen — sayım dışı default)
+# ════════════════════════════════════════════════════════════════════════════
+URUN_BOM = {
+    # grup → {sarf_kalemi: adet}
+    "Ice":        {"plastik_bardak": 1},
+    "14 Oz":      {"karton_buyuk":   1},
+    "8 Oz":       {"karton_kucuk":   1},
+    "Su":         {"su_sise":        1},
+    "Maden Suyu": {"maden_sise":     1},
+    "Redbull":    {"redbull_kutu":   1},
+    "Pasta":      {"pasta_dilim":    1},
+    "ÇAY":        {},  # porselen kupa — sayım dışı
+}
+
+
+def bom_recete_varyans(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
+    """Reçete varyansı: Evo satışından türeyen teorik bardak tüketimi vs
+    fiziksel azalma (açılış + URUN_AC − kapanış)."""
+    onceki = _previous_day(tarih)  # mevcut helper
+
+    # 1. Bugünkü Evo satışları (şube bazlı, grup bazlı)
+    cur.execute("SELECT ad FROM subeler WHERE id::text=%s", (str(sube_id),))
+    srow = cur.fetchone()
+    sube_adi_evvel = str(dict(srow).get("ad") or "") if srow else ""
+    evo_gruplar: Dict[str, float] = {}
+    try:
+        from evo_sync import hs_rapor_sube_bazli
+        from datetime import date as _d
+        y, mo, dn = (int(x) for x in str(tarih)[:10].split("-"))
+        tarih_d = _d(y, mo, dn)
+        evo = hs_rapor_sube_bazli(tarih_d, tarih_d)
+        evvel_lower = sube_adi_evvel.strip().lower().replace("şubesi", "").strip()
+        for ad, payload in (evo.get("subeler") or {}).items():
+            elow = ad.strip().lower().replace("şubesi", "").strip()
+            if evvel_lower and (evvel_lower in elow or elow in evvel_lower):
+                for g, v in (payload.get("gruplar") or {}).items():
+                    evo_gruplar[g] = float(v.get("adet") or 0)
+                break
+    except Exception as e:
+        log.warning("bom: evo cekilemedi: %s", e)
+
+    # 2. BOM ile teorik sarf hesabı
+    teorik_sarf: Dict[str, float] = {}
+    for grup, adet in evo_gruplar.items():
+        for sarf, oran in (URUN_BOM.get(grup) or {}).items():
+            teorik_sarf[sarf] = teorik_sarf.get(sarf, 0) + adet * oran
+
+    # 3. Fiziksel sarf (açılış + URUN_AC − kapanış)
+    # Bugünün ACILIS event'inden açılış stok sayımı
+    cur.execute(
+        """
+        SELECT meta FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=%s::date AND tip='ACILIS' AND durum='tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+        """,
+        (sube_id, tarih),
+    )
+    ar = cur.fetchone()
+    acilis_meta = _meta_oku(dict(ar)["meta"]) if ar else {}
+    acilis_stok = acilis_meta.get("acilis_stok_sayim") or {}
+
+    # Bugünün KAPANIS (varsa) — yoksa devam ediyor
+    cur.execute(
+        """
+        SELECT meta FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+        """,
+        (sube_id, tarih),
+    )
+    kr = cur.fetchone()
+    kapanis_meta = _meta_oku(dict(kr)["meta"]) if kr else {}
+    kapanis_stok = kapanis_meta.get("kapanis_stok_sayim") or {}
+
+    # URUN_AC bugün açılan paketler
+    cur.execute(
+        """
+        SELECT kalemler_json
+        FROM urun_ac_taslak
+        WHERE sube_id=%s AND tarih=%s::date AND durum='aktif'
+        """,
+        (sube_id, tarih),
+    )
+    urun_ac_toplam: Dict[str, float] = {}
+    for r in (cur.fetchall() or []):
+        kj = dict(r).get("kalemler_json")
+        if isinstance(kj, str):
+            try:
+                kj = json.loads(kj)
+            except Exception:
+                kj = {}
+        if isinstance(kj, dict):
+            for k, v in kj.items():
+                try:
+                    urun_ac_toplam[k] = urun_ac_toplam.get(k, 0) + float(v or 0)
+                except (TypeError, ValueError):
+                    pass
+
+    # Bardak/sarf isim haritası: BOM çıktısındaki anahtarlar (plastik_bardak)
+    # ile şube meta JSON'undaki anahtarlar (bardak_plastik, bardak_kucuk vs.) eşleştir.
+    SARF_META_MAP = {
+        "plastik_bardak": ["bardak_plastik"],
+        "karton_buyuk":   ["bardak_buyuk"],
+        "karton_kucuk":   ["bardak_kucuk"],
+        "su_sise":        ["su_adet", "su"],
+        "maden_sise":     ["maden_adet", "maden"],
+        "redbull_kutu":   ["redbull_adet"],
+        "pasta_dilim":    ["pasta_adet"],
+    }
+
+    def _meta_top(meta: Dict[str, Any], anahtarlar: List[str]) -> float:
+        s = 0.0
+        for a in anahtarlar:
+            v = meta.get(a)
+            if v is None:
+                continue
+            try:
+                s += float(v)
+            except (TypeError, ValueError):
+                pass
+        return s
+
+    sonuclar = []
+    for sarf, teorik in teorik_sarf.items():
+        meta_anahtar = SARF_META_MAP.get(sarf) or [sarf]
+        acilis_v = _meta_top(acilis_stok, meta_anahtar)
+        kapanis_v = _meta_top(kapanis_stok, meta_anahtar) if kapanis_stok else None
+        urun_ac_v = _meta_top(urun_ac_toplam, meta_anahtar)
+
+        if kapanis_v is None:
+            fiziksel = None
+            durum = "kapanis_bekliyor"
+            varyans = None
+        else:
+            fiziksel = (acilis_v + urun_ac_v) - kapanis_v
+            varyans = round(fiziksel - teorik, 2)
+            if abs(varyans) < 1:
+                durum = "uyumlu"
+            elif varyans > 0:
+                durum = "kayit_disi_kullanim"  # gerçek > teorik → ekstra harcanmış
+            else:
+                durum = "satis_disi_olusum"   # teorik > gerçek → POS'a girip ürün vermemiş?
+        sonuclar.append({
+            "sarf": sarf,
+            "teorik_evo": round(teorik, 2),
+            "fiziksel": None if fiziksel is None else round(fiziksel, 2),
+            "varyans": varyans,
+            "durum": durum,
+            "acilis": round(acilis_v, 2),
+            "urun_ac": round(urun_ac_v, 2),
+            "kapanis": None if kapanis_v is None else round(kapanis_v, 2),
+        })
+
+    return {
+        "sube_id": sube_id,
+        "sube_adi": sube_adi_evvel,
+        "tarih": tarih,
+        "evo_gruplar": evo_gruplar,
+        "recete_sonuclari": sonuclar,
+    }
+
+
+def saat_heatmap(cur, gun: int = 14,
+                 sube_id: Optional[str] = None) -> Dict[str, Any]:
+    """Şube × saat × anomali yoğunluk grafiği için veri.
+    truth_motor_kararlar tablosundan saat damgalı anomalileri topla."""
+    where = "WHERE tani NOT IN ('UYUMLU','YETERSIZ_VERI')"
+    params: List[Any] = [gun]
+    if sube_id:
+        where += " AND sube_id=%s"
+        params.append(sube_id)
+    where += " AND olusturma >= NOW() - (%s || ' days')::interval"
+    params.append(gun)
+
+    try:
+        cur.execute(
+            f"""
+            SELECT sube_id, EXTRACT(HOUR FROM olusturma)::int AS saat,
+                   COUNT(*) AS anomali_sayisi,
+                   COALESCE(AVG(guven_skoru), 0) AS ort_guven
+            FROM truth_motor_kararlar
+            {where}
+            GROUP BY sube_id, saat
+            ORDER BY sube_id, saat
+            """,
+            tuple(params[:-1] if not sube_id else params[:-1]),  # gun param zaten 2 kez
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:
+        log.warning("saat_heatmap hata: %s", e)
+        rows = []
+
+    # Şube adı eşle
+    sube_adi = {}
+    cur.execute("SELECT id::text AS id, ad FROM subeler")
+    for r in cur.fetchall() or []:
+        d = dict(r)
+        sube_adi[d["id"]] = d["ad"]
+
+    matris: Dict[str, Dict[int, int]] = {}
+    for r in rows:
+        sid = r["sube_id"]
+        ad = sube_adi.get(sid, sid[:8])
+        matris.setdefault(ad, {})[int(r["saat"])] = int(r["anomali_sayisi"])
+
+    return {"gun": gun, "matris": matris, "saatler": list(range(0, 24))}
+
+
+# ════════════════════════════════════════════════════════════════════════════
 #  SPRINT B — PATTERN DETECTION (NRF zekası)
 # ════════════════════════════════════════════════════════════════════════════
 
