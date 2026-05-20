@@ -211,7 +211,9 @@ export default function TruthMotor() {
             </div>
             {!durum?.global_aktif && (
               <div style={{ marginTop: 10, fontSize: 11, color: '#fca5a5' }}>
-                ⚠️ Railway env: <code className="mono">EVVEL_TRUTH_MOTOR_ENABLED=1</code> ayarla
+                ⚠️ Motor kapatılmış. Aktif etmek için Railway env'da{' '}
+                <code className="mono">EVVEL_TRUTH_MOTOR_ENABLED</code>'ı sil veya{' '}
+                <code className="mono">=1</code> yap (varsayılan: açık).
               </div>
             )}
           </div>
@@ -1783,32 +1785,9 @@ function KaynakCell({ label, deger, renk, altLabel }) {
 }
 
 function YeniSubeAyari({ onEkle, busy }) {
-  const [id, setId] = useState('');
-  const [mod, setMod] = useState('read_only');
-  return (
-    <div className="card" style={{ padding: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-      <strong style={{ fontSize: 12 }}>Yeni şube ayarı:</strong>
-      <input
-        className="input"
-        placeholder="şube ID (UUID)"
-        value={id}
-        onChange={(e) => setId(e.target.value)}
-        style={{ fontSize: 12, padding: '4px 8px', flex: 1, minWidth: 200 }}
-      />
-      <select className="input" value={mod} onChange={(e) => setMod(e.target.value)} style={{ fontSize: 12 }}>
-        <option value="read_only">read_only</option>
-        <option value="apply">apply</option>
-      </select>
-      <button
-        className="btn btn-sm"
-        disabled={!id.trim() || busy}
-        onClick={() => { onEkle(id.trim(), true, mod); setId(''); }}
-        style={{ fontSize: 11, padding: '4px 10px' }}
-      >
-        Ekle ve Aktive Et
-      </button>
-    </div>
-  );
+  // Form artık gizli — şubeler /truth/durum endpoint'inden otomatik geliyor.
+  // Bu component yine de çağrılıyor olabilir; null döndür.
+  return null;
 }
 
 function StatKart({ label, deger, renk = 'var(--text)' }) {

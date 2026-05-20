@@ -12541,7 +12541,9 @@ def _truth_tablo_garantile(cur) -> None:
 
 @router.get("/truth/durum")
 def truth_durum():
-    """Global flag + tüm şubelerin motor durumu."""
+    """Global flag + tüm şubelerin motor durumu.
+    Lazy bootstrap: truth_motor_ayar tablosu boşsa tüm aktif şubeleri otomatik ekler
+    (varsayılan: aktif=TRUE, mod='read_only')."""
     try:
         import truth_motor as _tm
     except Exception as e:
@@ -12551,6 +12553,21 @@ def truth_durum():
     try:
         with db() as (_c, cur):
             _truth_tablo_garantile(cur)
+
+            # LAZY BOOTSTRAP — subeler tablosundaki HER aktif şubeyi otomatik ekle
+            # (ON CONFLICT NOTHING — mevcut ayarlar değişmez, sadece eksikler eklenir)
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO truth_motor_ayar (sube_id, aktif, mod, notu)
+                    SELECT id::text, TRUE, 'read_only', 'Otomatik ilk kurulum'
+                    FROM subeler
+                    ON CONFLICT (sube_id) DO NOTHING
+                    """
+                )
+            except Exception as e:
+                log.warning("Akilli Denetim bootstrap hata: %s", e)
+
             cur.execute("""
                 SELECT a.sube_id, a.aktif, a.mod, a.son_calisma, a.notu,
                        COALESCE(s.ad, a.sube_id) AS sube_ad

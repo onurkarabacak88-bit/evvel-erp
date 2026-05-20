@@ -34,9 +34,10 @@ log = logging.getLogger(__name__)
 # ════════════════════════════════════════════════════════════════════════════
 
 def _global_aktif() -> bool:
-    """Env var ile global aç/kapat. Çalışmazsa flag=0 → motor tamamen pasif."""
-    v = str(os.getenv("EVVEL_TRUTH_MOTOR_ENABLED", "0")).strip().lower()
-    return v in ("1", "true", "yes", "on")
+    """Global aç/kapat. Varsayılan AÇIK; env var ile kapatılabilir.
+    Kapatmak için: EVVEL_TRUTH_MOTOR_ENABLED=0 set et."""
+    v = str(os.getenv("EVVEL_TRUTH_MOTOR_ENABLED", "1")).strip().lower()
+    return v not in ("0", "false", "no", "off", "kapali")
 
 
 def sube_aktif_mi(cur, sube_id: str) -> bool:
