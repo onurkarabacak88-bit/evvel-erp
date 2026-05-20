@@ -1103,8 +1103,6 @@ URUN_BOM = {
 def bom_recete_varyans(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     """Reçete varyansı: Evo satışından türeyen teorik bardak tüketimi vs
     fiziksel azalma (açılış + URUN_AC − kapanış)."""
-    onceki = _previous_day(tarih)  # mevcut helper
-
     # 1. Bugünkü Evo satışları (şube bazlı, grup bazlı)
     cur.execute("SELECT ad FROM subeler WHERE id::text=%s", (str(sube_id),))
     srow = cur.fetchone()
