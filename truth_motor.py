@@ -3519,11 +3519,26 @@ def proaktif_denetim(cur, sube_id: str, tarih: str,
     log.info("proaktif_denetim sube=%s tarih=%s alarm=%s kurallar=%s",
              sube_id, tarih, proaktif_alarm, plan.get("tetiklenen_kurallar"))
 
+    # Proaktif yorum — onlemler dahil daha zengin metin
+    stok_aciklar_map = dict(analiz.get("stok_ozet", {}).get("aciklar") or {})
+    personel_sorumlu_liste = analiz.get("personel_sorumlu") or []
+    kok_nedenler_liste = analiz.get("kok_nedenler") or []
+    proaktif_yorum = _yorum_uret(
+        alarm=proaktif_alarm,
+        kasa_fark=float((analiz.get("kasa_ozet") or {}).get("toplam_fark") or 0),
+        stok_aciklar=stok_aciklar_map,
+        kok_nedenler=kok_nedenler_liste,
+        personel_sorumlu=personel_sorumlu_liste,
+        onlemler=onlemler,
+        tarih=tarih,
+    )
+
     return {
         "sube_id": sube_id,
         "tarih": tarih,
         "personel_id": personel_id,
         "proaktif_alarm": proaktif_alarm,
+        "yorum_metni": proaktif_yorum,       # ← insan-okunabilir rapor
         # Bugünün özeti
         "bugun": {
             "alarm": analiz.get("alarm_seviyesi"),
@@ -4144,6 +4159,147 @@ def ogrenme_profili_oku(cur, personel_id: str, sube_id: str) -> Dict:
         return {"var_mi": False, "hata": str(e)}
 
 
+_ALARM_EMOJI = {"kritik": "🔴", "yuksek": "🟠", "orta": "🟡", "dusuk": "🟢"}
+
+_TANI_TR = {
+    "SWEETHEARTING_ZIMMET":     "Hırsızlık / Sweethearting",
+    "KASA_STOK_BIRLIKTE_ACIK":  "Kasa + Stok birlikte açık",
+    "NAKIT_CEKILDI":            "Nakit çekildi (satış kasaya girmedi)",
+    "AKSAM_ZIMMET_POZISYON":    "Akşam vardiyası zimmet pozisyonu",
+    "POS_FANTOM_SATIS":         "POS fantom satış",
+    "FAZLA_PARA_STOK_ACIK":     "Kasa fazla ama stok açık (iade hata?)",
+    "KAYITSIZ_IKRAM":           "Kayıtsız ikram / fire",
+    "UYUMLU":                   "Uyumlu — sorun yok",
+    "YETERSIZ_VERI":            "Yetersiz veri",
+}
+
+_BOYUT_TR = {
+    "bardak_plastik": "plastik bardak",
+    "bardak_karton":  "karton bardak",
+    "redbull_soda":   "RedBull/soda",
+    "pasta":          "pasta",
+}
+
+
+def _yorum_uret(
+    alarm: str,
+    kasa_fark: float,
+    stok_aciklar: Dict[str, Any],
+    kok_nedenler: List[Dict],
+    personel_sorumlu: List[Dict],
+    onlemler: Optional[List[Dict]] = None,
+    tarih: Optional[str] = None,
+) -> str:
+    """Tüm analiz verilerinden insan-okunabilir Türkçe rapor metni üret.
+
+    Denetçi gibi konuşur: ne buldu → neden önemli → kim → ne yapılmalı.
+    """
+    emoji = _ALARM_EMOJI.get(alarm, "⚪")
+    satirlar: List[str] = []
+
+    # ── Başlık ────────────────────────────────────────────────────────────
+    alarm_tr = {"kritik": "KRİTİK", "yuksek": "YÜKSEK RİSK",
+                "orta": "ORTA RİSK", "dusuk": "Normal"}.get(alarm, alarm.upper())
+    baslik = f"{emoji} {alarm_tr}"
+    if tarih:
+        baslik += f" ({tarih})"
+    satirlar.append(baslik)
+    satirlar.append("")
+
+    # ── 1. Kasa durumu ────────────────────────────────────────────────────
+    if abs(kasa_fark) > 1:
+        yon = "açık" if kasa_fark < 0 else "fazla"
+        satirlar.append(
+            f"💰 Kasa {yon}: ₺{abs(kasa_fark):.0f} "
+            f"({'eksik — para yerinde değil' if kasa_fark < 0 else 'fazla — açıklanamayan gelir var'})"
+        )
+    else:
+        satirlar.append("💰 Kasa: Dengede")
+
+    # ── 2. Stok durumu ────────────────────────────────────────────────────
+    if stok_aciklar:
+        stok_str_parcalari = []
+        for boyut, varyans in stok_aciklar.items():
+            adet = abs(float(varyans))
+            boyut_tr = _BOYUT_TR.get(boyut, boyut)
+            stok_str_parcalari.append(f"{boyut_tr} {adet:.0f} adet eksik")
+        satirlar.append("📦 Stok: " + ", ".join(stok_str_parcalari))
+    else:
+        satirlar.append("📦 Stok: Uyumlu")
+
+    # ── 3. Ne anlama geliyor (kök neden) ─────────────────────────────────
+    satirlar.append("")
+    if kok_nedenler:
+        birincil = kok_nedenler[0]
+        tip_tr = _TANI_TR.get(birincil.get("tip", ""), birincil.get("tip", "?"))
+        guven = birincil.get("guven", 0)
+        satirlar.append(f"🔍 Muhtemel sebep: {tip_tr} (güven %{guven:.0f})")
+        # Kısa insan-dili açıklama
+        aciklama = birincil.get("aciklama", "")
+        if aciklama:
+            # İlk cümleyi al (nokta veya 120 karakter)
+            kisalt = aciklama.split(".")[0].strip()
+            if len(kisalt) > 10:
+                satirlar.append(f"   → {kisalt}.")
+        # İkinci kök neden varsa kısaca ekle
+        if len(kok_nedenler) > 1:
+            ikinci = kok_nedenler[1]
+            tip2_tr = _TANI_TR.get(ikinci.get("tip", ""), ikinci.get("tip", ""))
+            guven2 = ikinci.get("guven", 0)
+            if guven2 >= 40:
+                satirlar.append(f"   (Alternatif: {tip2_tr}, %{guven2:.0f})")
+    else:
+        satirlar.append("🔍 Kök neden: Belirlenemedi — veri yetersiz")
+
+    # ── 4. Personel bağlantısı ────────────────────────────────────────────
+    satirlar.append("")
+    riskli = [p for p in personel_sorumlu if p.get("risk_seviye") != "normal"]
+    if riskli:
+        satirlar.append("👤 Şüpheli personel:")
+        for p in riskli[:3]:
+            ad = p.get("ad", "?")
+            seviye = p.get("risk_seviye", "?")
+            kf = p.get("kasa_fark_toplam", 0)
+            anomali_sayisi = len(p.get("anomaliler") or [])
+            stok_sorum = p.get("stok_sorumluluk") or {}
+            stok_acik_kisi = [_BOYUT_TR.get(b, b) for b in stok_sorum]
+
+            satir = f"   • {ad} — risk: {seviye}"
+            if abs(kf) > 1:
+                satir += f", kasa farkı ₺{kf:+.0f}"
+            if anomali_sayisi:
+                satir += f", {anomali_sayisi} vardiya anomalisi"
+            if stok_acik_kisi:
+                satir += f", stok sorumlusu: {', '.join(stok_acik_kisi)}"
+            satirlar.append(satir)
+    else:
+        satirlar.append("👤 Personel: Bireysel risk tespit edilmedi")
+
+    # ── 5. Ne yapılmalı (aksiyon) ─────────────────────────────────────────
+    satirlar.append("")
+    if onlemler:
+        kritik_aksiyonlar = [o for o in onlemler if o.get("aciliyet") in ("kritik", "yuksek")]
+        if kritik_aksiyonlar:
+            satirlar.append("⚡ Hemen yapılması gerekenler:")
+            for o in kritik_aksiyonlar[:3]:
+                satirlar.append(f"   • {o.get('aciklama', o.get('aksiyon_kodu', ''))}")
+        diger = [o for o in onlemler if o.get("aciliyet") not in ("kritik", "yuksek")]
+        if diger:
+            satirlar.append("📋 Önerilen:")
+            for o in diger[:2]:
+                satirlar.append(f"   • {o.get('aciklama', o.get('aksiyon_kodu', ''))}")
+    else:
+        # Kök nedenden aksiyon türet
+        if kok_nedenler and kok_nedenler[0].get("aksiyon"):
+            satirlar.append(f"⚡ Önerilen aksiyon: {kok_nedenler[0]['aksiyon']}")
+        elif alarm == "dusuk":
+            satirlar.append("✅ Aksiyon gerekmez — rutin takip yeterli")
+        else:
+            satirlar.append("⚡ Kasa + stok yeniden sayım yapılması önerilir")
+
+    return "\n".join(satirlar)
+
+
 def tam_analiz(cur, sube_id: str, tarih: str,
                ogrenme_aktif: bool = False) -> Dict[str, Any]:
     """Master tam analiz — tek çağrı ile kapsamlı tanı.
@@ -4250,7 +4406,7 @@ def tam_analiz(cur, sube_id: str, tarih: str,
     else:
         alarm = "dusuk"
 
-    # 9. Özet açıklama
+    # 9. Özet açıklama (kısa)
     en_riskli = personel_sorumlu[0] if personel_sorumlu else {}
     en_riskli_ad = en_riskli.get("ad", "?")
     ozet_parcalari = []
@@ -4268,11 +4424,23 @@ def tam_analiz(cur, sube_id: str, tarih: str,
         ozet_parcalari.append(f"En riskli: {en_riskli_ad} ({en_riskli.get('risk_seviye')})")
     ozet = " | ".join(ozet_parcalari) or "Tüm kontroller uyumlu"
 
+    # 10. İnsan-okunabilir yorum metni
+    yorum_metni = _yorum_uret(
+        alarm=alarm,
+        kasa_fark=kasa_fark_toplam,
+        stok_aciklar={b: d["varyans"] for b, d in stok_aciklar_detay.items()},
+        kok_nedenler=kok_nedenler,
+        personel_sorumlu=personel_sorumlu,
+        onlemler=None,
+        tarih=tarih,
+    )
+
     return {
         "sube_id": sube_id,
         "tarih": tarih,
         "alarm_seviyesi": alarm,
         "ozet": ozet,
+        "yorum_metni": yorum_metni,          # ← insan-okunabilir rapor
         # Kasa özeti
         "kasa_ozet": {
             "toplam_fark": round(kasa_fark_toplam, 2),
