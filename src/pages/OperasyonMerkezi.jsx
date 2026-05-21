@@ -393,6 +393,7 @@ const UST_SEKMELER = [
   { id: 'acilis-takip', label: '⏰ Açılış Takip' },
   { id: 'kullanilan-urunler', label: '🟠 Kullanılan Ürünler' },
   { id: 'kapanis-takip', label: '📊 Kapanış Takip' },
+  { id: 'acilis-kasa-takip', label: '💰 Açılış Takip' },
   { id: 'ciro-onay', label: '💳 Bekleyen Ciro Onayları' },
   { id: 'kasa-uyumsuzluk', label: '🔴 Kasa Uyumsuzluğu' },
   { id: 'kasa-personel-takip', label: '👥 Personel Kasa Takibi' },
@@ -432,6 +433,7 @@ const OPS_MODUL_BOLUM = {
   'acilis-takip': [{ id: 'icerik', label: 'Açılış & Personel' }],
   'kullanilan-urunler': [{ id: 'icerik', label: 'Günlük akış' }],
   'kapanis-takip': [{ id: 'icerik', label: 'Günlük özet' }],
+  'acilis-kasa-takip': [{ id: 'icerik', label: 'Açılış kasası' }],
   'ciro-onay': [{ id: 'icerik', label: 'Onay akışı' }],
   'kasa-uyumsuzluk': [{ id: 'icerik', label: 'Günlük akış' }],
   'kasa-personel-takip': [{ id: 'icerik', label: 'Takip Raporu' }],
@@ -479,6 +481,7 @@ const OPS_HUB_RENK = {
   'acilis-takip': '#f97316',
   'kullanilan-urunler': '#f59e0b',
   'kapanis-takip': '#22c55e',
+  'acilis-kasa-takip': '#f97316',
   'ciro-onay': '#d946b8',
   'kasa-uyumsuzluk': '#e85d5d',
   'personel-vardiya-uyumsuzluk': '#be185d',
@@ -538,8 +541,8 @@ const MODULLER = [
     id: 'finans-kasa',
     label: '💳 Finans & Kasa',
     renk: '#e85d5d',
-    desc: 'Günlük kapanış özeti, ciro onayı, kasa uyumsuzluğu ve fiş kontrol',
-    tabs: ['kapanis-takip', 'ciro-onay', 'kasa-uyumsuzluk', 'kasa-personel-takip', 'fis'],
+    desc: 'Açılış kasası, kapanış özeti, ciro onayı, kasa uyumsuzluğu ve fiş kontrol',
+    tabs: ['acilis-kasa-takip', 'kapanis-takip', 'ciro-onay', 'kasa-uyumsuzluk', 'kasa-personel-takip', 'fis'],
   },
   {
     id: 'personel',
@@ -2400,6 +2403,11 @@ export default function OperasyonMerkezi() {
   const [kapanisTakipSonGuncelleme, setKapanisTakipSonGuncelleme] = useState(null);
   const [kapanisTakipKaynak, setKapanisTakipKaynak] = useState(null);  // 'cache' | 'live'
   const kapanisTakipIntervalRef = useRef(null);
+  const [acilisKasaTakip, setAcilisKasaTakip] = useState(null);
+  const [acilisKasaTakipYukleniyor, setAcilisKasaTakipYukleniyor] = useState(false);
+  const [acilisKasaTakipTarih, setAcilisKasaTakipTarih] = useState(isGunuIsoIstanbul());
+  const [acilisKasaTakipSonGuncelleme, setAcilisKasaTakipSonGuncelleme] = useState(null);
+  const acilisKasaTakipIntervalRef = useRef(null);
 
   // Sekme bazlı son güncelleme map'i — her sekmenin freshness rozeti bundan beslenir
   // Helper: markGuncel('sekme-adi') → state günceller, badge yenilenir
@@ -2963,6 +2971,20 @@ export default function OperasyonMerkezi() {
       if (!silent) setKapanisTakipYukleniyor(false);
     }
   }, [toast, _cacheToKapanisTakipSatirlar]);
+
+  const yukleAcilisKasaTakip = useCallback(async (tarih, { silent = false } = {}) => {
+    const hedef = (tarih || isGunuIsoIstanbul()).trim();
+    if (!silent) setAcilisKasaTakipYukleniyor(true);
+    try {
+      const r = await api(`/ops/acilis-kasa-takip?tarih=${encodeURIComponent(hedef)}`);
+      setAcilisKasaTakip(r);
+      setAcilisKasaTakipSonGuncelleme(new Date());
+    } catch (e) {
+      if (!silent) toast(e.message || 'Açılış takip yüklenemedi');
+    } finally {
+      if (!silent) setAcilisKasaTakipYukleniyor(false);
+    }
+  }, [toast]);
 
   const ciroOnayGunYukle = useCallback(async (tarih) => {
     const hedef = (tarih || isGunuIsoIstanbul()).trim();
@@ -3848,7 +3870,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     if (!aktifSekme) return;
-    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'siparis-kontrol' || aktifSekme === 'toptanci-siparisleri' || aktifSekme === 'urun-ac' || aktifSekme === 'acilis-takip' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'personel-vardiya-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'fire-bildirim' || aktifSekme === 'magaza-kartlari' || aktifSekme === 'metrics' || aktifSekme === 'kontrol') return;
+    if (aktifSekme === 'onay' || aktifSekme === 'siparis' || aktifSekme === 'siparis-kontrol' || aktifSekme === 'toptanci-siparisleri' || aktifSekme === 'urun-ac' || aktifSekme === 'acilis-takip' || aktifSekme === 'kullanilan-urunler' || aktifSekme === 'ciro-onay' || aktifSekme === 'acilis-kasa-takip' || aktifSekme === 'kasa-uyumsuzluk' || aktifSekme === 'personel-vardiya-uyumsuzluk' || aktifSekme === 'urun-uyumsuzluk' || aktifSekme === 'fire-bildirim' || aktifSekme === 'magaza-kartlari' || aktifSekme === 'metrics' || aktifSekme === 'kontrol') return;
     yukle(filtre);
   }, [filtre, aktifSekme, ayFiltre, gunFiltre, yukle]);
 
@@ -4035,6 +4057,28 @@ export default function OperasyonMerkezi() {
       }
     };
   }, [aktifSekme, yukleKapanisTakip, kapanisTakipTarih]);
+
+  useEffect(() => {
+    if (aktifSekme !== 'acilis-kasa-takip') {
+      if (acilisKasaTakipIntervalRef.current) {
+        clearInterval(acilisKasaTakipIntervalRef.current);
+        acilisKasaTakipIntervalRef.current = null;
+      }
+      return;
+    }
+    yukleAcilisKasaTakip(acilisKasaTakipTarih);
+    if (acilisKasaTakipTarih === isGunuIsoIstanbul()) {
+      acilisKasaTakipIntervalRef.current = setInterval(() => {
+        yukleAcilisKasaTakip(acilisKasaTakipTarih, { silent: true });
+      }, 120_000);
+    }
+    return () => {
+      if (acilisKasaTakipIntervalRef.current) {
+        clearInterval(acilisKasaTakipIntervalRef.current);
+        acilisKasaTakipIntervalRef.current = null;
+      }
+    };
+  }, [aktifSekme, yukleAcilisKasaTakip, acilisKasaTakipTarih]);
 
   useEffect(() => {
     if (aktifSekme !== 'ciro-onay') return;
@@ -5202,6 +5246,9 @@ export default function OperasyonMerkezi() {
                 .finally(() => setKullanilanHaftaYukleniyor(false));
               kullanilanAramaYap().finally(() => setYukleniyor(false));
             }
+            else if (aktifSekme === 'acilis-kasa-takip') {
+              yukleAcilisKasaTakip(acilisKasaTakipTarih).finally(() => setYukleniyor(false));
+            }
             else if (aktifSekme === 'kasa-uyumsuzluk') {
               setKasaUyumHaftaYukleniyor(true);
               kasaUyumHaftaYukle()
@@ -5625,7 +5672,7 @@ export default function OperasyonMerkezi() {
                 {sekmeSonGuncelleme[aktifSekme] && (
                   <CacheFreshnessBadge
                     guncelleme={sekmeSonGuncelleme[aktifSekme]}
-                    kaynak={aktifSekme === 'kapanis-takip' ? kapanisTakipKaynak : 'live'}
+                    kaynak={aktifSekme === 'kapanis-takip' ? kapanisTakipKaynak : aktifSekme === 'acilis-kasa-takip' ? 'live' : 'live'}
                     kompakt
                   />
                 )}
@@ -5677,6 +5724,9 @@ export default function OperasyonMerkezi() {
                   }
                   else if (aktifSekme === 'kapanis-takip') {
                     yukleKapanisTakip(kapanisTakipTarih).finally(() => setYukleniyor(false));
+                  }
+                  else if (aktifSekme === 'acilis-kasa-takip') {
+                    yukleAcilisKasaTakip(acilisKasaTakipTarih).finally(() => setYukleniyor(false));
                   }
                   else if (aktifSekme === 'ciro-onay') {
                     ciroOnayAramaYap().finally(() => setYukleniyor(false));
@@ -9175,6 +9225,231 @@ export default function OperasyonMerkezi() {
               {bugunMu && ' · Tablo 2 dakikada bir otomatik yenilenir.'}
             </div>
 
+          </div>
+        );
+      })()}
+
+      {aktifSekme === 'acilis-kasa-takip' && (() => {
+        const akt = acilisKasaTakip;
+        const satirlar = Array.isArray(akt?.satirlar) ? akt.satirlar : [];
+        const fmt = (v) => Number(v || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 });
+        const fmtFark = (v) => {
+          if (v == null || Number.isNaN(Number(v))) return '—';
+          const x = Number(v);
+          const s = x.toLocaleString('tr-TR', { maximumFractionDigits: 0 });
+          return x > 0 ? `+${s}` : s;
+        };
+        const saat = (ts, fallback) => {
+          if (ts) {
+            try { return new Date(ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }); }
+            catch { /* fall through */ }
+          }
+          return fallback || '—';
+        };
+        const farkStil = (sev, fark) => {
+          if (fark == null || Math.abs(Number(fark)) <= 0.01) return { color: 'var(--text2)', fontWeight: 600 };
+          if (sev === 'kritik' || Math.abs(Number(fark)) >= 200) return { color: '#e85d5d', fontWeight: 800 };
+          if (sev === 'uyari' || Math.abs(Number(fark)) >= 50) return { color: '#f59e0b', fontWeight: 800 };
+          return { color: 'var(--text2)', fontWeight: 600 };
+        };
+        const durumHucre = (r) => {
+          if (r.acilis_tamam) {
+            return (
+              <span style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e', borderRadius: 6, padding: '2px 8px', fontWeight: 700, fontSize: 12 }}>
+                ✓ Açıldı
+              </span>
+            );
+          }
+          const d = String(r.acilis_durum || '').toLowerCase();
+          if (d === 'gecikti') {
+            return (
+              <span style={{ background: 'rgba(232,93,93,0.15)', color: '#e85d5d', borderRadius: 6, padding: '2px 8px', fontWeight: 700, fontSize: 12 }}>
+                ⏳ Gecikiyor
+              </span>
+            );
+          }
+          if (d && d !== 'yok') {
+            return (
+              <span style={{ background: 'rgba(245,158,11,0.15)', color: '#fbbf24', borderRadius: 6, padding: '2px 8px', fontWeight: 700, fontSize: 12 }}>
+                Bekliyor
+              </span>
+            );
+          }
+          return (
+            <span style={{ background: 'rgba(232,93,93,0.12)', color: '#e85d5d', borderRadius: 6, padding: '2px 8px', fontWeight: 700, fontSize: 12 }}>
+              Açılmadı
+            </span>
+          );
+        };
+        const topAcilis = satirlar.reduce((s, r) => s + (Number(r.acilis_kasa_tl) || 0), 0);
+        const topBeklenen = satirlar.reduce((s, r) => s + (Number(r.beklenen_devir_tl) || 0), 0);
+        const acilisSayisi = satirlar.filter((r) => r.acilis_tamam).length;
+        const bekleyenSayisi = satirlar.length - acilisSayisi;
+        const farkSayisi = Number(akt?.fark_uyari_adet || 0);
+        const uyumBekleyen = Number(akt?.uyumsuzluk_bekleyen_adet || 0);
+        const bugunMu = acilisKasaTakipTarih === isGunuIsoIstanbul();
+
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+              <div>
+                <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 3 }}>Tarih</span>
+                <input
+                  type="date"
+                  value={acilisKasaTakipTarih}
+                  onChange={(e) => setAcilisKasaTakipTarih(e.target.value)}
+                  style={{ fontSize: 13, padding: '5px 9px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg2)', color: 'var(--text)' }}
+                />
+              </div>
+              <button
+                onClick={() => yukleAcilisKasaTakip(acilisKasaTakipTarih)}
+                disabled={acilisKasaTakipYukleniyor}
+                className="btn btn-sm"
+                style={{ height: 32 }}
+              >
+                {acilisKasaTakipYukleniyor ? '⏳' : '🔄'} Yenile
+              </button>
+              {bugunMu && (
+                <span style={{ fontSize: 11, color: 'var(--text3)', alignSelf: 'center' }}>
+                  Her 2 dk otomatik güncellenir
+                </span>
+              )}
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <CacheFreshnessBadge
+                  guncelleme={acilisKasaTakipSonGuncelleme}
+                  kaynak="live"
+                  onYenile={() => yukleAcilisKasaTakip(acilisKasaTakipTarih)}
+                  yenileniyor={acilisKasaTakipYukleniyor}
+                />
+              </div>
+            </div>
+
+            <p style={{ margin: 0, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
+              Şube panelinde sayımlı açılışta girilen <strong>sabah kasa</strong> tutarları burada listelenir.
+              <strong> Beklenen devir</strong> = bir önceki gün ({akt?.dunku_kapanis_tarih || '—'}) kapanışında kasada bırakılan tutar.
+              Fark ±50 TL uyarı, ±200 TL kritik. Detaylı çözüm için <strong>Kasa Uyumsuzluğu</strong> sekmesine bakın.
+            </p>
+
+            {akt && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10 }}>
+                {[
+                  { label: 'Açılış yapan', val: `${acilisSayisi} / ${akt.sube_sayisi}`, color: bekleyenSayisi > 0 ? '#f59e0b' : '#22c55e', bg: bekleyenSayisi > 0 ? 'rgba(245,158,11,0.10)' : 'rgba(34,197,94,0.12)', border: bekleyenSayisi > 0 ? 'rgba(245,158,11,0.35)' : 'rgba(34,197,94,0.4)' },
+                  { label: 'Açılmayan', val: bekleyenSayisi > 0 ? `${bekleyenSayisi} şube` : 'Yok', color: bekleyenSayisi > 0 ? '#e85d5d' : '#22c55e', bg: bekleyenSayisi > 0 ? 'rgba(232,93,93,0.10)' : 'rgba(34,197,94,0.07)', border: bekleyenSayisi > 0 ? 'rgba(232,93,93,0.35)' : 'rgba(34,197,94,0.25)' },
+                  { label: 'Kasa farkı (≥50₺)', val: farkSayisi > 0 ? `${farkSayisi} şube` : 'Yok', color: farkSayisi > 0 ? '#f59e0b' : 'var(--text3)', bg: farkSayisi > 0 ? 'rgba(245,158,11,0.10)' : 'var(--bg2)', border: farkSayisi > 0 ? 'rgba(245,158,11,0.35)' : 'var(--border)' },
+                  { label: 'Uyumsuzluk bekleyen', val: uyumBekleyen > 0 ? `${uyumBekleyen} kayıt` : '—', color: uyumBekleyen > 0 ? '#e85d5d' : 'var(--text3)', bg: uyumBekleyen > 0 ? 'rgba(232,93,93,0.10)' : 'var(--bg2)', border: uyumBekleyen > 0 ? 'rgba(232,93,93,0.35)' : 'var(--border)' },
+                ].map((m, i) => (
+                  <div key={i} style={{ background: m.bg, border: `1px solid ${m.border}`, borderRadius: 8, padding: '10px 14px' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{m.label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: m.color }}>{m.val}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {acilisKasaTakipYukleniyor && !akt && (
+              <div style={{ textAlign: 'center', padding: 50, color: 'var(--text3)' }}>Yükleniyor...</div>
+            )}
+            {!acilisKasaTakipYukleniyor && !akt && (
+              <div style={{ textAlign: 'center', padding: 50, color: 'var(--text3)' }}>
+                Yenile düğmesine basın veya tarih seçin.
+              </div>
+            )}
+
+            {akt && satirlar.length > 0 && (
+              <div style={{ overflowX: 'auto', borderRadius: 10, border: '1px solid var(--border)' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 980 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg2)' }}>
+                      {['Şube', 'Durum', 'Saat', 'Sabahçı', 'Dün devir (beklenen)', 'Sayılan kasa', 'Fark', 'Uyumsuzluk'].map((h) => (
+                        <th key={h} style={{ padding: '9px 10px', textAlign: h === 'Şube' || h === 'Durum' || h === 'Sabahçı' ? 'left' : 'right', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap' }}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {satirlar.map((r) => {
+                      const fark = r.fark_tl;
+                      const rowBg = !r.acilis_tamam
+                        ? 'rgba(232,93,93,0.06)'
+                        : r.uyumsuzluk_bekliyor
+                          ? 'rgba(245,158,11,0.06)'
+                          : 'transparent';
+                      return (
+                        <tr key={r.sube_id} style={{ background: rowBg }}>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                            {r.sube_adi || r.sube_id}
+                            {r.panel_acilis && (
+                              <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text3)', fontWeight: 600 }} title="Şube paneli sayımlı açılış">📱</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>{durumHucre(r)}</td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                            {saat(r.acilis_ts, r.personel_saat)}
+                          </td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', fontSize: 12, color: 'var(--text2)', maxWidth: 140 }}>
+                            {r.personel_ad || '—'}
+                          </td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                            {r.beklenen_devir_tl != null ? (
+                              <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                                <span>{fmt(r.beklenen_devir_tl)} ₺</span>
+                                {r.dunku_kapanis_personel && (
+                                  <span style={{ fontSize: 10, color: 'var(--text3)' }}>👤 {r.dunku_kapanis_personel}</span>
+                                )}
+                              </span>
+                            ) : <span style={{ color: 'var(--text3)', fontSize: 12 }}>Dün kapanış yok</span>}
+                          </td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: r.acilis_tamam ? 800 : 400 }}>
+                            {r.acilis_kasa_tl != null ? `${fmt(r.acilis_kasa_tl)} ₺` : '—'}
+                          </td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                            {fark != null ? (
+                              <span style={farkStil(r.fark_seviye, fark)}>{fmtFark(fark)} ₺</span>
+                            ) : '—'}
+                          </td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            {r.uyumsuzluk_bekliyor ? (
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                style={{ padding: '3px 8px', fontSize: 11, background: 'rgba(232,93,93,0.12)', border: '1px solid rgba(232,93,93,0.35)', color: '#fca5a5' }}
+                                onClick={() => acOpsModul('kasa-uyumsuzluk', 'finans-kasa')}
+                              >
+                                Çözüm bekliyor →
+                              </button>
+                            ) : r.uyumsuzluk_cozuldu ? (
+                              <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 700 }}>✓ Çözüldü</span>
+                            ) : (
+                              <span style={{ color: 'var(--text3)', fontSize: 12 }}>—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: 'var(--bg2)' }}>
+                      <td colSpan={4} style={{ padding: '9px 10px', borderTop: '2px solid var(--border)', fontSize: 12, color: 'var(--text3)', fontWeight: 600 }}>
+                        TOPLAM · {acilisSayisi} açılış
+                      </td>
+                      <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                        {fmt(topBeklenen)} ₺
+                      </td>
+                      <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                        {fmt(topAcilis)} ₺
+                      </td>
+                      <td colSpan={2} style={{ padding: '9px 10px', borderTop: '2px solid var(--border)' }} />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+
+            <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.6 }}>
+              Sıralama: önce açılmayan / bekleyen şubeler, sonra çözüm bekleyen kasa farkları.
+              {bugunMu && ' · Tablo 2 dakikada bir otomatik yenilenir.'}
+            </div>
           </div>
         );
       })()}

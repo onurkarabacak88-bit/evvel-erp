@@ -1626,6 +1626,167 @@ def kapanis_takip(tarih: Optional[str] = None):
     }
 
 
+@router.get("/acilis-kasa-takip")
+def acilis_kasa_takip(tarih: Optional[str] = None):
+    """
+    Şube panelinden gelen açılış kasası — günlük merkez takip.
+    Kaynak: sube_operasyon_event ACILIS (kasa_sayim) + dün KAPANIS devir karşılaştırması.
+    """
+    import json as _json
+    from datetime import date as _date, timedelta
+    from operasyon_kurallar import tolerans_seviyesi
+
+    try:
+        hedef = str(_date.fromisoformat(tarih)) if tarih else str(is_gunu_tr())
+    except Exception:
+        hedef = str(is_gunu_tr())
+
+    dunku = str(_date.fromisoformat(hedef) - timedelta(days=1))
+
+    with db() as (_, cur):
+        cur.execute("SELECT id::text, ad FROM subeler WHERE aktif=TRUE ORDER BY ad")
+        subeler = [dict(r) for r in (cur.fetchall() or [])]
+
+        cur.execute(
+            """
+            SELECT DISTINCT ON (e.sube_id)
+                   e.sube_id::text,
+                   e.durum,
+                   e.cevap_ts AT TIME ZONE 'Europe/Istanbul' AS acilis_ts,
+                   e.personel_saat,
+                   e.kasa_sayim AS acilis_kasa,
+                   e.personel_id::text,
+                   e.personel_ad,
+                   e.meta,
+                   e.sistem_slot_ts AT TIME ZONE 'Europe/Istanbul' AS sistem_slot_ts
+            FROM sube_operasyon_event e
+            WHERE e.tip = 'ACILIS' AND e.tarih = %s
+            ORDER BY e.sube_id,
+                     CASE e.durum WHEN 'tamamlandi' THEN 0 ELSE 1 END,
+                     e.cevap_ts DESC NULLS LAST, e.id DESC
+            """,
+            (hedef,),
+        )
+        acilis_map = {r["sube_id"]: dict(r) for r in (cur.fetchall() or [])}
+
+        cur.execute(
+            """
+            SELECT DISTINCT ON (e.sube_id)
+                   e.sube_id::text,
+                   COALESCE(
+                       e.devir,
+                       GREATEST(0, COALESCE(e.kasa_sayim, 0) - COALESCE(e.teslim, 0))
+                   ) AS beklenen_devir,
+                   e.personel_ad AS kapanis_personel_ad
+            FROM sube_operasyon_event e
+            WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
+              AND e.tarih = %s
+            ORDER BY e.sube_id, e.cevap_ts DESC NULLS LAST, e.id DESC
+            """,
+            (dunku,),
+        )
+        kap_map = {r["sube_id"]: dict(r) for r in (cur.fetchall() or [])}
+
+        cur.execute(
+            """
+            SELECT u.id::text, u.sube_id::text, u.fark_tl, u.beklenen_tl, u.gercek_tl,
+                   u.seviye, u.okundu, u.acilis_personel_ad, u.kapanis_personel_ad
+            FROM sube_operasyon_uyari u
+            WHERE u.tip = 'ACILIS_KASA_FARK' AND u.tarih = %s
+            """,
+            (hedef,),
+        )
+        uyum_map = {str(r["sube_id"]): dict(r) for r in (cur.fetchall() or [])}
+
+    satirlar = []
+    for s in subeler:
+        sid = s["id"]
+        acil = acilis_map.get(sid, {})
+        kap = kap_map.get(sid, {})
+        uyum = uyum_map.get(sid)
+
+        durum = str(acil.get("durum") or "").strip().lower()
+        tamam = durum == "tamamlandi"
+        ats = acil.get("acilis_ts")
+
+        bek = kap.get("beklenen_devir")
+        if bek is not None:
+            bek = float(bek)
+        elif uyum and uyum.get("beklenen_tl") is not None:
+            bek = float(uyum["beklenen_tl"])
+
+        acilis_kasa = float(acil.get("acilis_kasa") or 0) if tamam else None
+        if acilis_kasa is None and uyum and uyum.get("gercek_tl") is not None:
+            acilis_kasa = float(uyum["gercek_tl"])
+
+        fark = None
+        fark_seviye = None
+        if acilis_kasa is not None and bek is not None:
+            fark = round(acilis_kasa - bek, 2)
+            fark_seviye = tolerans_seviyesi(fark)
+        elif uyum and uyum.get("fark_tl") is not None:
+            fark = round(float(uyum["fark_tl"]), 2)
+            fark_seviye = str(uyum.get("seviye") or tolerans_seviyesi(fark))
+
+        panel_acilis = False
+        meta_raw = acil.get("meta")
+        if meta_raw:
+            try:
+                meta = _json.loads(meta_raw) if isinstance(meta_raw, str) else meta_raw
+                panel_acilis = bool(meta.get("panel_acilis_tr_ts") or meta.get("acilis_stok_sayim"))
+            except Exception:
+                panel_acilis = False
+
+        satirlar.append({
+            "sube_id": sid,
+            "sube_adi": s["ad"],
+            "acilis_durum": durum or ("yok" if not acil else "bekliyor"),
+            "acilis_tamam": tamam,
+            "acilis_ts": str(ats) if ats else "",
+            "personel_saat": str(acil.get("personel_saat") or ""),
+            "personel_ad": str(acil.get("personel_ad") or uyum.get("acilis_personel_ad") or ""),
+            "panel_acilis": panel_acilis,
+            "acilis_kasa_tl": acilis_kasa,
+            "beklenen_devir_tl": bek,
+            "dunku_kapanis_tarih": dunku,
+            "dunku_kapanis_personel": str(
+                kap.get("kapanis_personel_ad") or uyum.get("kapanis_personel_ad") or ""
+            ),
+            "fark_tl": fark,
+            "fark_seviye": fark_seviye,
+            "uyumsuzluk_id": str(uyum["id"]) if uyum else None,
+            "uyumsuzluk_cozuldu": bool(uyum.get("okundu")) if uyum else False,
+            "uyumsuzluk_bekliyor": bool(uyum and not uyum.get("okundu")),
+        })
+
+    satirlar.sort(
+        key=lambda r: (
+            0 if not r["acilis_tamam"] else (1 if r.get("uyumsuzluk_bekliyor") else 2),
+            -abs(float(r.get("fark_tl") or 0)),
+            (r.get("sube_adi") or "").lower(),
+        )
+    )
+
+    acilis_yapan = sum(1 for r in satirlar if r["acilis_tamam"])
+    fark_uyari = sum(
+        1 for r in satirlar
+        if r.get("fark_seviye") in ("uyari", "kritik") and abs(float(r.get("fark_tl") or 0)) > 0.01
+    )
+
+    return {
+        "tarih": hedef,
+        "is_gunu_tr": str(is_gunu_tr()),
+        "takvim_tr": str(bugun_tr()),
+        "dunku_kapanis_tarih": dunku,
+        "satirlar": satirlar,
+        "sube_sayisi": len(satirlar),
+        "acilis_yapan_adet": acilis_yapan,
+        "acilis_bekleyen_adet": len(satirlar) - acilis_yapan,
+        "fark_uyari_adet": fark_uyari,
+        "uyumsuzluk_bekleyen_adet": sum(1 for r in satirlar if r.get("uyumsuzluk_bekliyor")),
+    }
+
+
 @router.get("/haftalik-karsilastirma")
 def ops_haftalik_karsilastirma():
     """
