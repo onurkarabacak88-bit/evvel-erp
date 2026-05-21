@@ -62,6 +62,7 @@ export default function TruthMotor() {
   const [busy, setBusy] = useState('');
   const [hata, setHata] = useState('');
   const [info, setInfo] = useState('');
+  const [sonRapor, setSonRapor] = useState(null);  // son çalıştırmanın AI raporu
 
   const durumYukle = useCallback(async () => {
     setYukleniyor(true);
@@ -133,13 +134,17 @@ export default function TruthMotor() {
       } else {
         const anomali = (r.taniler || []).filter((t) => !['UYUMLU', 'YETERSIZ_VERI'].includes(t.tani));
         let mesaj = `${sube_id}: ${r.kaydedildi} karar, ${anomali.length} anomali (mod=${r.mod})`;
-        // Otomatik kasa baskını tetiklenmişse net bilgi
         if (r.baskin_tetik?.baslatildi) {
           mesaj += ` · 🚨 KASA BASKINI BAŞLATILDI (id: ${(r.baskin_tetik.id || '').slice(0, 8)}) — ${(r.baskin_tetik.tani || []).join(', ')}`;
         } else if (r.baskin_tetik?.oneri) {
           mesaj += ` · ⚠️ Kasa baskını ÖNERİSİ (mod=read_only, ${(r.baskin_tetik.tani || []).join(', ')})`;
         }
         setInfo(mesaj);
+        // Proaktif AI raporu çek — sonuç anında göster
+        try {
+          const pr = await fetchJson(`${API}/api/ops/truth/proaktif/${sube_id}/${tarih}`);
+          if (pr?.yorum_metni) setSonRapor({ sube_id, ...pr });
+        } catch (_) {}
         await Promise.all([kararlariYukle(), gunlukYukle()]);
       }
     } catch (e) {
@@ -232,6 +237,23 @@ export default function TruthMotor() {
           background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)',
           borderRadius: 6, padding: 10, marginBottom: 12, fontSize: 12, color: '#86efac',
         }}>✓ {info}</div>
+      )}
+
+      {/* AI Denetim Raporu — son çalıştırma sonucu */}
+      {sonRapor && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <span style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>
+              SON ÇALIŞTIRMA RAPORU — {sonRapor.sube_id}
+            </span>
+            <button
+              className="btn btn-secondary"
+              style={{ fontSize: 10, padding: '2px 8px' }}
+              onClick={() => setSonRapor(null)}
+            >✕ Kapat</button>
+          </div>
+          <DenetimRaporuKarti proaktifData={sonRapor} />
+        </div>
       )}
 
       {/* GÜNLÜK RAPOR MATRİSİ */}
@@ -1584,6 +1606,63 @@ function GorevDuzenleModal({ gorev, onKapat, onKaydet }) {
   );
 }
 
+const ALARM_STIL = {
+  kritik: { bg: 'rgba(239,68,68,0.12)',  bord: 'rgba(239,68,68,0.40)',  renk: '#fca5a5', etiket: '🔴 KRİTİK'    },
+  yuksek: { bg: 'rgba(245,158,11,0.12)', bord: 'rgba(245,158,11,0.40)', renk: '#fbbf24', etiket: '🟠 YÜKSEK RİSK' },
+  orta:   { bg: 'rgba(59,130,246,0.10)', bord: 'rgba(59,130,246,0.35)', renk: '#93c5fd', etiket: '🟡 ORTA RİSK'  },
+  dusuk:  { bg: 'rgba(34,197,94,0.08)',  bord: 'rgba(34,197,94,0.30)',  renk: '#86efac', etiket: '🟢 Normal'     },
+};
+
+function DenetimRaporuKarti({ proaktifData }) {
+  if (!proaktifData) return null;
+  const alarm = proaktifData.proaktif_alarm || proaktifData.alarm_seviyesi || 'dusuk';
+  const stil = ALARM_STIL[alarm] || ALARM_STIL.dusuk;
+  const yorum = proaktifData.yorum_metni || '';
+  const onlemler = proaktifData.onlemler || [];
+  const kritikOnlemler = onlemler.filter(o => ['kritik','yuksek'].includes(o.aciliyet));
+
+  return (
+    <div style={{
+      padding: '14px 16px', borderRadius: 8, marginBottom: 16,
+      background: stil.bg, border: `1px solid ${stil.bord}`,
+    }}>
+      {/* Başlık satırı */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <strong style={{ fontSize: 13, color: stil.renk }}>🧠 AI Denetim Raporu</strong>
+        <span style={{
+          fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 3,
+          background: stil.bord, color: stil.renk,
+        }}>{stil.etiket}</span>
+      </div>
+
+      {/* Yorum metni — her satır ayrı paragraf */}
+      {yorum && (
+        <div style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--text1)', whiteSpace: 'pre-line', marginBottom: kritikOnlemler.length ? 12 : 0 }}>
+          {yorum}
+        </div>
+      )}
+
+      {/* Kritik aksiyonlar kutusu */}
+      {kritikOnlemler.length > 0 && (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${stil.bord}` }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: stil.renk, marginBottom: 6 }}>⚡ Aksiyon Listesi</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {onlemler.map((o, i) => {
+              const acs = ALARM_STIL[o.aciliyet] || ALARM_STIL.dusuk;
+              return (
+                <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 11 }}>
+                  <span style={{ fontWeight: 700, color: acs.renk, minWidth: 52 }}>{acs.etiket.split(' ')[0]} {o.aciliyet}</span>
+                  <span style={{ color: 'var(--text1)' }}>{o.aciklama}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DetayModal({ sube_id, sube_ad, tarih, onKapat, onGorevAcildi }) {
   const [kararlar, setKararlar] = useState([]);
   const [izler, setIzler] = useState({});  // karar_id → en yeni iz
@@ -1591,6 +1670,7 @@ function DetayModal({ sube_id, sube_ad, tarih, onKapat, onGorevAcildi }) {
   const [gorevBusy, setGorevBusy] = useState('');
   const [walkData, setWalkData] = useState({});  // boyut → walk sonucu
   const [walkBusy, setWalkBusy] = useState('');
+  const [proaktifData, setProaktifData] = useState(null);  // AI raporu
 
   const walkBaslat = async (boyut) => {
     setWalkBusy(boyut);
@@ -1607,9 +1687,14 @@ function DetayModal({ sube_id, sube_ad, tarih, onKapat, onGorevAcildi }) {
   const yukle = useCallback(async () => {
     setYukleniyor(true);
     try {
-      const d = await fetchJson(`${API}/api/ops/truth/kararlar?sube_id=${sube_id}&tarih=${tarih}&limit=20`);
-      const krs = d?.kayitlar || [];
+      // Kararlar + proaktif AI raporu paralel çek
+      const [d, pr] = await Promise.allSettled([
+        fetchJson(`${API}/api/ops/truth/kararlar?sube_id=${sube_id}&tarih=${tarih}&limit=20`),
+        fetchJson(`${API}/api/ops/truth/proaktif/${sube_id}/${tarih}`),
+      ]);
+      const krs = d.status === 'fulfilled' ? (d.value?.kayitlar || []) : [];
       setKararlar(krs);
+      if (pr.status === 'fulfilled' && pr.value) setProaktifData(pr.value);
       // Her karar için izleri çek
       const izMap = {};
       await Promise.all(krs.map(async (k) => {
@@ -1671,6 +1756,9 @@ function DetayModal({ sube_id, sube_ad, tarih, onKapat, onGorevAcildi }) {
         </p>
 
         {yukleniyor && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text3)' }}>Yükleniyor…</div>}
+
+        {/* AI Denetim Raporu — yorum_metni + aksiyon listesi */}
+        {!yukleniyor && <DenetimRaporuKarti proaktifData={proaktifData} />}
 
         {!yukleniyor && boyutKararlari.length === 0 && (
           <div style={{ padding: 20, textAlign: 'center', color: 'var(--text3)' }}>
