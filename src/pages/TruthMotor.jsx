@@ -471,6 +471,7 @@ export default function TruthMotor() {
             baslik="Akıllı Tanı — NRF pattern + BOM reçete + saat heatmap"
             metin="Yuvarlak sayı bias (zimmet işareti), kapanış telaşı, aykırı şube cluster'ı, sistemik POS sync sinyali. Ürün-bardak reçetesinden teorik tüketim ile fiziksel azalma karşılaştırılır. Saat × şube anomali yoğunluk haritası ile 'hangi saatlerde kayıt dışı satış kümeleniyor' bulunur."
           />
+          <KucukTutarBirikim />
           <PatternDetect />
           <BomVaryans tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
           <SaatHeatmap />
@@ -1367,6 +1368,139 @@ function SaatHeatmap() {
       <p style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
         💡 Hücre = saatte tespit edilen anomali sayısı · Koyu kırmızı = yoğun saat (sweethearting/zimmet pattern'i orada kümeleniyor olabilir)
       </p>
+    </div>
+  );
+}
+
+// ── Sprint I (D Bendi) — Küçük Tutarlı Günlük Kasa Eksilmesi ───────────────
+function KucukTutarBirikim() {
+  const [gun, setGun] = useState(30);
+  const [veri, setVeri] = useState(null);
+  const [yukleniyor, setYukleniyor] = useState(false);
+
+  const yukle = useCallback(async () => {
+    setYukleniyor(true);
+    try {
+      const d = await fetchJson(`${API}/api/ops/truth/kucuk-tutar-birikim?gun=${gun}`);
+      setVeri(d);
+    } catch (_) {} finally { setYukleniyor(false); }
+  }, [gun]);
+
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const liste = veri?.riskli_personeller || [];
+
+  return (
+    <div style={{ margin: '24px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>
+          📉 Küçük Tutarlı Günlük Birikim (D Bendi)
+        </h3>
+        <select className="input" value={gun} onChange={e => setGun(Number(e.target.value))}
+          style={{ fontSize: 12, padding: '3px 8px' }}>
+          {[14, 21, 30, 60, 90].map(g => <option key={g} value={g}>Son {g} gün</option>)}
+        </select>
+        <button className="btn btn-sm" onClick={yukle} style={{ fontSize: 11 }}>↻</button>
+        {veri && (
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
+            {veri.tespit_sayisi} riskli personel tespit edildi
+          </span>
+        )}
+      </div>
+
+      {/* Açıklama */}
+      <div className="card" style={{ padding: '8px 12px', marginBottom: 10, fontSize: 11, color: 'var(--text3)', lineHeight: 1.6 }}>
+        🔍 <b>D Bendi:</b> Her gün 10-50₺ götüren personeli tespit eder.
+        Tek güne bakıldığında "tolerans farkı" gibi görünür — geçer.
+        30 günde bakıldığında: aynı kişi, aynı yön, benzer miktar → sistematik.
+        Kriter: Çalışılan günlerin <b>&gt;%55'inde</b> kasa farkı negatif + ortalama <b>-4₺~-80₺</b> + toplam &lt; -80₺.
+      </div>
+
+      {yukleniyor && (
+        <div className="card" style={{ padding: 12, textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>
+          Yükleniyor…
+        </div>
+      )}
+
+      {!yukleniyor && liste.length === 0 && (
+        <div className="card" style={{ padding: 14, textAlign: 'center', color: '#86efac', fontSize: 12 }}>
+          ✅ Son {gun} günde küçük tutarlı birikim tespiti yok — tüm personel normal sınırda.
+        </div>
+      )}
+
+      {!yukleniyor && liste.length > 0 && (
+        <div style={{ display: 'grid', gap: 8 }}>
+          {liste.map((p, i) => {
+            const ciddiyetRenk = p.guven >= 90 ? '#fca5a5'
+                               : p.guven >= 80 ? '#fbbf24'
+                               : '#fdba74';
+            const ciddiyetBg  = p.guven >= 90 ? 'rgba(220,38,38,0.10)'
+                               : p.guven >= 80 ? 'rgba(245,158,11,0.10)'
+                               : 'rgba(249,115,22,0.08)';
+            return (
+              <div key={i} className="card" style={{
+                padding: '12px 16px',
+                borderLeft: `4px solid ${ciddiyetRenk}`,
+                background: ciddiyetBg,
+              }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr 220px', gap: 12, alignItems: 'center' }}>
+
+                  {/* Personel */}
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{p.personel_ad || '?'}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
+                      {p.rol === 'sabahci' ? '🌅 Sabahçı' : '🌆 Akşamcı'}
+                    </div>
+                    <div style={{ fontSize: 10, color: ciddiyetRenk, fontWeight: 600, marginTop: 4 }}>
+                      KUCUK_TUTAR_BIRIKIM · Güven %{p.guven?.toFixed(0)}
+                    </div>
+                  </div>
+
+                  {/* İstatistikler */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, fontSize: 11 }}>
+                    <div style={{ background: 'rgba(0,0,0,0.12)', borderRadius: 4, padding: '6px 8px' }}>
+                      <div style={{ fontSize: 9, color: 'var(--text3)' }}>ÇALIŞTIĞI GÜN</div>
+                      <div style={{ fontFamily: 'monospace', fontWeight: 700 }}>{p.gun_sayisi}</div>
+                    </div>
+                    <div style={{ background: 'rgba(0,0,0,0.12)', borderRadius: 4, padding: '6px 8px' }}>
+                      <div style={{ fontSize: 9, color: 'var(--text3)' }}>EKSİ GÜN</div>
+                      <div style={{ fontFamily: 'monospace', fontWeight: 700, color: ciddiyetRenk }}>
+                        {p.eksi_gun} <span style={{ fontWeight: 400, color: 'var(--text3)' }}>(%{((p.eksi_oran || 0)*100).toFixed(0)})</span>
+                      </div>
+                    </div>
+                    <div style={{ background: 'rgba(0,0,0,0.12)', borderRadius: 4, padding: '6px 8px' }}>
+                      <div style={{ fontSize: 9, color: 'var(--text3)' }}>GÜN ORT.</div>
+                      <div style={{ fontFamily: 'monospace', fontWeight: 700, color: ciddiyetRenk }}>
+                        {Number(p.ort_fark || 0).toFixed(1)} ₺
+                      </div>
+                    </div>
+                    <div style={{ background: 'rgba(0,0,0,0.12)', borderRadius: 4, padding: '6px 8px' }}>
+                      <div style={{ fontSize: 9, color: 'var(--text3)' }}>ARD. SERİ</div>
+                      <div style={{ fontFamily: 'monospace', fontWeight: 700 }}>{p.maks_seri} gün</div>
+                    </div>
+                  </div>
+
+                  {/* Toplam + Aksiyon */}
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 10, color: 'var(--text3)' }}>Kümülatif Kayıp</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'monospace', color: ciddiyetRenk }}>
+                      {Number(p.toplam_fark || 0).toFixed(0)} ₺
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                      Son {gun} günde birikim
+                    </div>
+                  </div>
+                </div>
+
+                {/* Detay */}
+                <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text3)', lineHeight: 1.5, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 8 }}>
+                  {p.detay}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

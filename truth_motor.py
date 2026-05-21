@@ -112,6 +112,8 @@ TANI_TIPLERI = (
     "SABAH_ZIMMET_SUPHE",        # N1>N2 + dün bardak UYUMLU → N1 fiziksel kanıtla doğrulandı, sabahçı düşük beyan
     # ── Sprint H (C Bendi) — Akşam Vardiyası Bardak P&L (devir→kapanis) ─────
     "AKSAM_VARDIYA_BARDAK_ACIK", # Devir→kapanis fiziksel bardak farkı > Evo akşam tahmini → kayıt dışı satış şüphesi
+    # ── Sprint I (D Bendi) — Küçük Tutarlı Günlük Kasa Eksilmesi Pattern ────
+    "KUCUK_TUTAR_BIRIKIM",       # Personel son 30g'de >%55 günde küçük negatif fark → birikim/drift zimmeti
 )
 
 # Her tanı için (otomatik aksiyon, insan aksiyonu, alarm seviyesi)
@@ -148,6 +150,8 @@ EYLEM_MAP: Dict[str, Dict[str, str]] = {
     "SABAH_ZIMMET_SUPHE":        {"oto": "cfo_bildirim_kritik",  "insan": "Dün bardak+Evo N1'i doğruluyor, sabahçı kasayı düşük beyan etmiş → soruşturma + kamera", "alarm": "kritik"},
     # Sprint H (C Bendi) — Akşam vardiyası bardak P&L
     "AKSAM_VARDIYA_BARDAK_ACIK": {"oto": "cfo_bildirim_log",     "insan": "Akşam vardiyası bardak açığı — devir→kapanis fiziksel fark Evo satış tahminini aşıyor → kayıt dışı satış + nakit soruşturması", "alarm": "yuksek"},
+    # Sprint I (D Bendi) — Küçük tutarlı günlük birikim
+    "KUCUK_TUTAR_BIRIKIM":       {"oto": "cfo_bildirim_log",     "insan": "Personel her gün küçük tutarda kasa açığı oluşturuyor → 30 günlük seri korelasyon soruşturması + birebir gözlem", "alarm": "yuksek"},
 }
 
 @dataclass
@@ -471,6 +475,8 @@ _TANI_ONCELIK = {
     "SABAH_ZIMMET_SUPHE":        96,
     # Sprint H (C Bendi)
     "AKSAM_VARDIYA_BARDAK_ACIK": 87,
+    # Sprint I (D Bendi)
+    "KUCUK_TUTAR_BIRIKIM":       82,
 }
 
 _TANI_INSAN = {
@@ -506,6 +512,8 @@ _TANI_INSAN = {
     "SABAH_ZIMMET_SUPHE":        "Sabahçı N2 düşük beyan — dün bardak N1'i doğruluyor → ZİMMET şüphesi",
     # Sprint H (C Bendi)
     "AKSAM_VARDIYA_BARDAK_ACIK": "Akşam vardiyası bardak açığı — devir→kapanis fark Evo tahminini aşıyor → kayıt dışı satış şüphesi",
+    # Sprint I (D Bendi)
+    "KUCUK_TUTAR_BIRIKIM":       "Günlük küçük kasa eksilmesi — birikim zimmeti şüphesi",
 }
 
 _ALARM_ESIK = {
@@ -6508,4 +6516,223 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         "tani":  "UYUMLU",
         "guven": 82.0,
         "detay": detay,
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SPRINT I (D BENDİ) — Küçük Tutarlı Günlük Kasa Eksilmesi Pattern Tespiti
+# ════════════════════════════════════════════════════════════════════════════
+
+def kucuk_tutar_birikim_tespit(cur, sube_id: str = None,
+                                gun: int = 30) -> Dict[str, Any]:
+    """Sprint I (D Bendi): Günlük küçük tutarlı kasa eksilmesi — birikim zimmeti.
+
+    Hikaye 1D: Personel her gün 10-50₺ götürüyor. Tek güne bakıldığında
+    "normal tolerans" gibi görünür, geçer. Ama 30 günlük seriye bakıldığında:
+    aynı kişi, aynı yön, benzer miktar — bu rastlantı değil, sistematik.
+
+    Sinyal kriterleri (5 koşulun tamamı):
+    ┌─ 1. Personel ≥7 iş günü çalışmış (yeterli örnek)
+    ├─ 2. Çalıştığı günlerin >%55'inde kasa farkı < -4₺ (sistematik yön)
+    ├─ 3. Günlük ortalama fark: -4₺ ile -80₺ arası
+    │       Alt sınır: <4₺ gürültü, Sprint G/G.2 zaten >= 80₺ yakalıyor
+    ├─ 4. Kümülatif fark < -80₺ (toplam zarar anlamlı)
+    └─ 5. Aynı kişinin aynı dönemde AKSAM_KASAYI_SISIRDI / SABAH_ZIMMET_SUPHE
+           tanısı YOK (çifte sayım önleme)
+
+    Güven faktörleri:
+      Eksi oran >%70        → +10 (çok sistematik)
+      Maks ardışık seri ≥5  → +8  (seri var, rastlantı değil)
+      Kümülatif < -200₺    → +5  (büyük zarar)
+      Temel güven           = 72
+
+    Veri kaynağı: sube_operasyon_event (yalnızca okuma)
+      - ACILIS.kasa_sayim  (N2) + ACILIS.personel_ad → sabahçı
+      - Önceki gün KAPANIS.devir (N1) + KAPANIS.personel_ad → akşamcı
+      fark = N2 - N1   (negatif = kasa açığı)
+
+    Args:
+        cur:     DB cursor (dict_cursor)
+        sube_id: Filtre — None ise tüm şubeler
+        gun:     Son kaç gün incelensin (varsayılan 30)
+
+    Returns:
+        {
+          "gun": int,
+          "tespit_sayisi": int,
+          "riskli_personeller": [
+            {
+              "personel_ad":  str,
+              "sube_id":      str,
+              "rol":          "sabahci" | "aksamci",
+              "gun_sayisi":   int,       # kaç gün çalışmış
+              "eksi_gun":     int,       # kaç günde fark < -4₺
+              "eksi_oran":    float,     # 0-1
+              "ort_fark":     float,     # günlük ortalama ₺
+              "toplam_fark":  float,     # kümülatif ₺
+              "maks_seri":    int,       # en uzun ardışık eksi gün serisi
+              "tani":         "KUCUK_TUTAR_BIRIKIM",
+              "guven":        float,
+              "detay":        str,
+            }
+          ]
+        }
+    """
+    where_sube = ""
+    params_base: List[Any] = [gun]
+    if sube_id:
+        where_sube = "AND a.sube_id = %s::uuid"
+        params_base.append(sube_id)
+
+    # ── 1. Günlük fark serisi: ACILIS(N2) × önceki gün KAPANIS(N1) ──────────
+    # fark = N2 - N1 (negatif = kasa açığı, pozitif = fazla)
+    # Her gün için hem sabahçıyı (ACILIS personel) hem akşamcıyı (KAPANIS personel) kaydediyoruz
+    try:
+        cur.execute(f"""
+            WITH daily_fark AS (
+                SELECT
+                    a.sube_id,
+                    a.tarih,
+                    COALESCE(a.kasa_sayim, 0)::float  AS n2,
+                    COALESCE(k.devir,      0)::float  AS n1,
+                    (COALESCE(a.kasa_sayim, 0) - COALESCE(k.devir, 0))::float  AS fark,
+                    COALESCE(a.personel_ad, '')        AS sabahci_ad,
+                    COALESCE(k.personel_ad, '')        AS aksamci_ad
+                FROM sube_operasyon_event a
+                LEFT JOIN sube_operasyon_event k
+                  ON  k.sube_id = a.sube_id
+                  AND k.tarih   = (a.tarih - INTERVAL '1 day')::date
+                  AND k.tip     = 'KAPANIS'
+                  AND k.durum   = 'tamamlandi'
+                  AND k.devir   IS NOT NULL
+                WHERE a.tip   = 'ACILIS'
+                  AND a.durum = 'tamamlandi'
+                  AND a.kasa_sayim IS NOT NULL
+                  AND a.tarih >= CURRENT_DATE - (%s || ' days')::interval
+                  {where_sube}
+            ),
+            sabahci_agg AS (
+                SELECT
+                    sube_id,
+                    sabahci_ad              AS personel_ad,
+                    'sabahci'::text         AS rol,
+                    COUNT(*)                AS gun_sayisi,
+                    SUM(CASE WHEN fark < -4 THEN 1 ELSE 0 END) AS eksi_gun,
+                    ROUND(AVG(fark)::numeric, 2)  AS ort_fark,
+                    ROUND(SUM(fark)::numeric, 2)  AS toplam_fark,
+                    array_agg(fark ORDER BY tarih) AS fark_seri,
+                    array_agg(tarih ORDER BY tarih) AS tarih_seri
+                FROM daily_fark
+                WHERE sabahci_ad != ''
+                GROUP BY sube_id, sabahci_ad
+            ),
+            aksamci_agg AS (
+                SELECT
+                    sube_id,
+                    aksamci_ad              AS personel_ad,
+                    'aksamci'::text         AS rol,
+                    COUNT(*)                AS gun_sayisi,
+                    SUM(CASE WHEN fark < -4 THEN 1 ELSE 0 END) AS eksi_gun,
+                    ROUND(AVG(fark)::numeric, 2)  AS ort_fark,
+                    ROUND(SUM(fark)::numeric, 2)  AS toplam_fark,
+                    array_agg(fark ORDER BY tarih) AS fark_seri,
+                    array_agg(tarih ORDER BY tarih) AS tarih_seri
+                FROM daily_fark
+                WHERE aksamci_ad != ''
+                GROUP BY sube_id, aksamci_ad
+            )
+            SELECT * FROM sabahci_agg
+            UNION ALL
+            SELECT * FROM aksamci_agg
+        """, tuple(params_base))
+    except Exception as e:
+        log.warning("kucuk_tutar_birikim SQL hata: %s", e)
+        return {"gun": gun, "tespit_sayisi": 0, "riskli_personeller": [], "hata": str(e)}
+
+    rows = [dict(r) for r in (cur.fetchall() or [])]
+
+    # ── 2. Kriterleri uygula + maks_seri hesapla ─────────────────────────────
+    riskli: List[Dict[str, Any]] = []
+
+    for r in rows:
+        gun_sayisi  = int(r.get("gun_sayisi")  or 0)
+        eksi_gun    = int(r.get("eksi_gun")    or 0)
+        ort_fark    = float(r.get("ort_fark")  or 0)
+        toplam_fark = float(r.get("toplam_fark") or 0)
+        personel_ad = str(r.get("personel_ad") or "").strip()
+        rol         = str(r.get("rol") or "")
+        sube_id_r   = str(r.get("sube_id") or "")
+        fark_seri   = list(r.get("fark_seri") or [])
+
+        # Kriter filtresi
+        if gun_sayisi < 7:
+            continue
+        if gun_sayisi == 0:
+            continue
+        eksi_oran = eksi_gun / gun_sayisi
+        if eksi_oran <= 0.55:
+            continue
+        if not (-80.0 <= ort_fark <= -4.0):
+            continue
+        if toplam_fark >= -80.0:
+            continue
+        if not personel_ad:
+            continue
+
+        # Maks ardışık eksi gün serisi (gaps-and-islands Python'da)
+        maks_seri = 0
+        cari_seri = 0
+        for f in fark_seri:
+            try:
+                fv = float(f)
+            except (TypeError, ValueError):
+                fv = 0.0
+            if fv < -4.0:
+                cari_seri += 1
+                maks_seri = max(maks_seri, cari_seri)
+            else:
+                cari_seri = 0
+
+        # ── Güven skoru ──────────────────────────────────────────────────────
+        guven = 72.0
+        if eksi_oran > 0.70:
+            guven += 10.0
+        if maks_seri >= 5:
+            guven += 8.0
+        if toplam_fark < -200.0:
+            guven += 5.0
+        guven = min(guven, 96.0)
+
+        # ── Detay metni ──────────────────────────────────────────────────────
+        rol_tr = "Sabahçı" if rol == "sabahci" else "Akşamcı"
+        detay = (
+            f"{rol_tr} {personel_ad}: {gun_sayisi} günde {eksi_gun} günde kasa açığı "
+            f"(%{eksi_oran*100:.0f}). "
+            f"Günlük ortalama {ort_fark:.1f}₺ — kümülatif {toplam_fark:.0f}₺. "
+            f"En uzun ardışık eksi seri: {maks_seri} gün. "
+            f"Rastlantısal değil — sistematik birikim şüphesi."
+        )
+
+        riskli.append({
+            "personel_ad":  personel_ad,
+            "sube_id":      sube_id_r,
+            "rol":          rol,
+            "gun_sayisi":   gun_sayisi,
+            "eksi_gun":     eksi_gun,
+            "eksi_oran":    round(eksi_oran, 3),
+            "ort_fark":     ort_fark,
+            "toplam_fark":  toplam_fark,
+            "maks_seri":    maks_seri,
+            "tani":         "KUCUK_TUTAR_BIRIKIM",
+            "guven":        round(guven, 1),
+            "detay":        detay,
+        })
+
+    # Kümülatif farka göre en kötüden sırala
+    riskli.sort(key=lambda x: x["toplam_fark"])
+
+    return {
+        "gun":                gun,
+        "tespit_sayisi":      len(riskli),
+        "riskli_personeller": riskli,
     }

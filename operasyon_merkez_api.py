@@ -3214,6 +3214,10 @@ def ops_bar_ozet(
             "vardiya devir yedekleri kullanılmaz (Kullanılan Ürünler için)."
         ),
     ),
+    evo_yenile: bool = Query(
+        False,
+        description="True: Evo hs_rapor token önbelleğini temizleyip Grup_Pasta verisini yeniden çeker.",
+    ),
 ):
     """
     Günlük bar özeti:
@@ -3446,6 +3450,8 @@ def ops_bar_ozet(
                     cur.execute("ROLLBACK TO SAVEPOINT sp_kapanis_kayit_dun")
 
         # ── 4. Birleştir ───────────────────────────────────────────────────
+        from stok_bar_uyum import GUN_ICI_DENETIM_KEYS
+
         satirlar: List[Dict[str, Any]] = []
         for (sid, tarih_str), ac_row in acilis_rows.items():
             key = (sid, tarih_str)
@@ -3455,14 +3461,16 @@ def ops_bar_ozet(
 
             satilan:  Dict[str, int] = {}
             fark_var: bool = False
+            urun_ac_eksik_var: bool = False
             for k in _BAR_KEYS:
                 a = acilis.get(k, 0)
                 u = urun_ac.get(k, 0)
                 kap = kapanis.get(k, 0)
                 sat = a + u - kap
                 satilan[k] = sat
-                if sat < 0:
+                if sat < 0 and k in GUN_ICI_DENETIM_KEYS:
                     fark_var = True
+                    urun_ac_eksik_var = True
 
             prev_key = (sid, _bar_prev_calendar_iso(tarih_str))
             dun_blk = kapanis_dun_map.get(prev_key)
@@ -3493,6 +3501,7 @@ def ops_bar_ozet(
                 "kapanis":    kapanis,
                 "satilan":    satilan,
                 "fark_var":   fark_var,
+                "urun_ac_eksik_var": urun_ac_eksik_var,
                 "onceki_kapanis_yok": onceki_kapanis_yok,
                 "onceki_kapanis_tarihi": _bar_prev_calendar_iso(tarih_str),
                 "dun_kapanis": dun_blk,
@@ -3507,8 +3516,10 @@ def ops_bar_ozet(
         evo_mesaj: Optional[str] = None
         if gun_v:
             try:
-                from evo_sync import evo_bar_adet_by_sube_id
+                from evo_sync import evo_bar_adet_by_sube_id, _hs_web_token_temizle
 
+                if evo_yenile:
+                    _hs_web_token_temizle()
                 evo_pack = evo_bar_adet_by_sube_id(cur, hedef_tarih)
                 evo_by_sube = evo_pack.get("by_sube") or {}
                 evo_veri_geldi = bool(evo_pack.get("evo_veri_geldi"))
@@ -3667,7 +3678,7 @@ def ops_urun_uyumsuzluk_kaynak_duzelt(uyari_id: str, body: StokKaynakDuzeltmeBod
     from stok_bar_uyum import stok_uyum_kaynak_duzelt
 
     sebep = (body.sebep or "").strip().lower()
-    izin = {"acilis_yanlis", "kapanis_yanlis", "devir_yanlis", "urun_ac_yanlis", "gercek_uyumsuzluk", "depo_girisi"}
+    izin = {"acilis_yanlis", "kapanis_yanlis", "devir_yanlis", "urun_ac_yanlis", "urun_ac_eksik", "gercek_uyumsuzluk", "depo_girisi"}
     if sebep not in izin:
         raise HTTPException(400, f"Geçersiz sebep — şunlardan biri: {sorted(izin)}")
     with db() as (_, cur):
@@ -13301,6 +13312,27 @@ def truth_vardiya_pl(sube_id: str, tarih: str):
         raise HTTPException(500, f"truth_motor import edilemedi: {e}")
     with db() as (conn, cur):
         return _tm.vardiya_bazli_uzlasma(cur, sube_id, tarih)
+
+
+@router.get("/truth/kucuk-tutar-birikim")
+def truth_kucuk_tutar_birikim(
+    gun: int = Query(30, ge=7, le=90),
+    sube_id: Optional[str] = Query(None),
+):
+    """Sprint I (D Bendi) — Küçük tutarlı günlük kasa eksilmesi pattern tespiti.
+
+    Her gün 10-50₺ götüren personeli tespit eder.
+    Tek güne bakıldığında 'tolerans farkı' gibi görünür — geçer.
+    30 günde bakıldığında: aynı kişi, aynı yön, benzer miktar → sistematik birikim.
+
+    Kriter: >%55 günde fark < -4₺ + ortalama -4₺~-80₺ + toplam < -80₺.
+    """
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.kucuk_tutar_birikim_tespit(cur, sube_id=sube_id, gun=gun)
 
 
 @router.get("/truth/vardiya-bardak-pnl/{sube_id}/{tarih}")
