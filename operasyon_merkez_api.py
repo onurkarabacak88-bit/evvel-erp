@@ -13303,6 +13303,25 @@ def truth_vardiya_pl(sube_id: str, tarih: str):
         return _tm.vardiya_bazli_uzlasma(cur, sube_id, tarih)
 
 
+@router.get("/truth/vardiya-bardak-pnl/{sube_id}/{tarih}")
+def truth_vardiya_bardak_pnl(sube_id: str, tarih: str):
+    """Sprint H (C Bendi) — Akşam vardiyası bardak P&L.
+
+    Devir anından (17:30) kapanışa kadar akşamcının bardak kullanımını
+    fiziksel sayım (devir_stok − kapanis_stok + URUN_AC) ve Evo POS akşam
+    tahminiyle karşılaştırır.
+
+    Anomali eşiği: >%30 aşım VE en az 3 bardak fark.
+    Tanı: AKSAM_VARDIYA_BARDAK_ACIK | UYUMLU | None (veri yetersiz).
+    """
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.aksam_vardiya_bardak_pnl(cur, sube_id, tarih)
+
+
 @router.get("/truth/mali-capraz")
 def truth_mali_capraz(gun: int = Query(7, ge=1, le=60),
                       sube_id: Optional[str] = Query(None)):

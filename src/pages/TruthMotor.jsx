@@ -458,6 +458,7 @@ export default function TruthMotor() {
             metin="Sabahcı, öğlenci, kapanışçı her vardiyada kasa açığı/fazlası kime ait belli olur. Personel başına saatlik satış velocity, ortalama fiş tutarı sapması ve iskonto pattern'i analiz edilir."
           />
           <VardiyaPL tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
+          <VardiyaBardakPNL tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
           <PersonelDavranis />
         </>
       )}
@@ -802,6 +803,164 @@ function PLCell({ label, deger, para = true }) {
       <div style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 600 }}>
         {deger == null ? '—' : (para ? Number(deger).toFixed(2) + ' ₺' : String(deger))}
       </div>
+    </div>
+  );
+}
+
+// ── Sprint H (C Bendi) — Akşam Vardiyası Bardak P&L ────────────────────────
+function VardiyaBardakPNL({ tarih, subeler }) {
+  const [secSubeId, setSecSubeId] = useState('');
+  const [veri, setVeri] = useState(null);
+  const [yukleniyor, setYukleniyor] = useState(false);
+  const [hata, setHata] = useState('');
+
+  useEffect(() => {
+    if (!secSubeId && subeler.length > 0) setSecSubeId(subeler[0].id);
+  }, [subeler, secSubeId]);
+
+  const yukle = useCallback(async () => {
+    if (!secSubeId || !tarih) return;
+    setYukleniyor(true); setHata('');
+    try {
+      const d = await fetchJson(`${API}/api/ops/truth/vardiya-bardak-pnl/${secSubeId}/${tarih}`);
+      setVeri(d);
+    } catch (e) {
+      setHata(String(e.message || e));
+      setVeri(null);
+    } finally { setYukleniyor(false); }
+  }, [secSubeId, tarih]);
+
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const tani      = veri?.tani || null;
+  const anomali   = tani === 'AKSAM_VARDIYA_BARDAK_ACIK';
+  const uyumlu    = tani === 'UYUMLU';
+  const renk      = anomali ? '#fca5a5' : uyumlu ? '#86efac' : 'var(--text3)';
+  const bg        = anomali ? 'rgba(220,38,38,0.10)' : uyumlu ? 'rgba(34,197,94,0.08)' : 'rgba(120,120,120,0.06)';
+  const border    = anomali ? '#ef4444' : uyumlu ? '#22c55e' : '#555';
+
+  const BardakHucre = ({ label, fiziksel, evo, acik, anomaliFlag }) => {
+    const acikRenk = acik > 0 ? (anomaliFlag ? '#fca5a5' : '#fbbf24') : '#86efac';
+    return (
+      <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: 6, padding: '8px 12px', flex: 1 }}>
+        <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, fontSize: 11 }}>
+          <div>
+            <div style={{ fontSize: 9, color: 'var(--text3)' }}>Fiziksel</div>
+            <div style={{ fontFamily: 'monospace', fontWeight: 700 }}>{fiziksel ?? '—'}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 9, color: 'var(--text3)' }}>Evo Tahmin</div>
+            <div style={{ fontFamily: 'monospace', fontWeight: 700 }}>{evo != null ? Number(evo).toFixed(0) : '—'}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 9, color: 'var(--text3)' }}>Fark</div>
+            <div style={{ fontFamily: 'monospace', fontWeight: 700, color: acik > 2 ? acikRenk : 'var(--text2)' }}>
+              {acik != null ? (acik > 0 ? '+' : '') + Number(acik).toFixed(0) : '—'}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ margin: '16px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>📦 Akşam Vardiyası Bardak P&L (Devir→Kapanış)</h3>
+        <select className="input" value={secSubeId} onChange={(e) => setSecSubeId(e.target.value)}
+          style={{ fontSize: 12, padding: '3px 8px' }}>
+          {subeler.map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
+        </select>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>{tarih}</span>
+        <button className="btn btn-sm" onClick={yukle} style={{ fontSize: 11 }}>↻</button>
+      </div>
+
+      {hata && <div className="card" style={{ padding: 10, color: '#fca5a5', fontSize: 12 }}>⚠️ {hata}</div>}
+      {yukleniyor && <div className="card" style={{ padding: 12, textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>Yükleniyor…</div>}
+
+      {!yukleniyor && !veri && !hata && (
+        <div className="card" style={{ padding: 14, textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>
+          Vardiya devir kaydı bulunamadı — bu gün sabah→akşam devir yapılmamış.
+        </div>
+      )}
+
+      {!yukleniyor && veri && (
+        <div className="card" style={{ padding: '12px 16px', borderLeft: `4px solid ${border}`, background: bg }}>
+
+          {/* Başlık + tanı badge */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: renk }}>
+              {anomali ? '🚨' : uyumlu ? '✅' : '⚪'} {tani || 'VERİ YETERSİZ'}
+            </span>
+            {veri.aksamci_ad && (
+              <span style={{ fontSize: 12, color: 'var(--text2)' }}>
+                Akşamcı: <b>{veri.aksamci_ad}</b>
+              </span>
+            )}
+            {veri.devir_ts && (
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                Devir: {String(veri.devir_ts).slice(11, 16)}
+              </span>
+            )}
+            {veri.aksam_fis_count > 0 && (
+              <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 'auto' }}>
+                {veri.aksam_fis_count} akşam fişi · %{((veri.aksam_oran || 0) * 100).toFixed(0)} gün oranı
+              </span>
+            )}
+          </div>
+
+          {/* Devir / Kapanis sayım satırı */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12, fontSize: 11 }}>
+            {[
+              { l: 'Devir Karton',    v: veri.devir_karton },
+              { l: 'Devir Plastik',   v: veri.devir_plastik },
+              { l: 'Kapanis Karton',  v: veri.kapanis_karton },
+              { l: 'Kapanis Plastik', v: veri.kapanis_plastik },
+            ].map(({ l, v }) => (
+              <div key={l} style={{ background: 'rgba(0,0,0,0.12)', borderRadius: 4, padding: '6px 8px' }}>
+                <div style={{ fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase' }}>{l}</div>
+                <div style={{ fontFamily: 'monospace', fontWeight: 700 }}>{v ?? '—'}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Fiziksel vs Evo analizi */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <BardakHucre
+              label="Karton Bardak (14oz + 8oz)"
+              fiziksel={veri.aksam_karton_kullanim}
+              evo={veri.evo_aksam_karton_est}
+              acik={veri.karton_acik}
+              anomaliFlag={veri.karton_anomali}
+            />
+            <BardakHucre
+              label="Plastik Bardak (Ice)"
+              fiziksel={veri.aksam_plastik_kullanim}
+              evo={veri.evo_aksam_plastik_est}
+              acik={veri.plastik_acik}
+              anomaliFlag={veri.plastik_anomali}
+            />
+          </div>
+
+          {/* Detay metni */}
+          {veri.detay && (
+            <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.5, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 8 }}>
+              {veri.detay}
+            </div>
+          )}
+
+          {/* Güven skoru */}
+          <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text3)' }}>
+            Güven: <b style={{ color: renk }}>{veri.guven?.toFixed(0)}%</b>
+            {veri.urun_ac_karton_aksam > 0 && (
+              <span style={{ marginLeft: 8 }}>
+                (+{veri.urun_ac_karton_aksam?.toFixed(0)} karton stok açılımı dahil)
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

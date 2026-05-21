@@ -110,6 +110,8 @@ TANI_TIPLERI = (
     "IPTAL_SUPHE",               # N1>N2 kasa açığı + stok normal + Evo açıklaması yok → iptal fiş kontrol
     # ── Sprint G.2 — Sabahçı N2 Düşük Beyan (bardak çapraz doğrulama) ────
     "SABAH_ZIMMET_SUPHE",        # N1>N2 + dün bardak UYUMLU → N1 fiziksel kanıtla doğrulandı, sabahçı düşük beyan
+    # ── Sprint H (C Bendi) — Akşam Vardiyası Bardak P&L (devir→kapanis) ─────
+    "AKSAM_VARDIYA_BARDAK_ACIK", # Devir→kapanis fiziksel bardak farkı > Evo akşam tahmini → kayıt dışı satış şüphesi
 )
 
 # Her tanı için (otomatik aksiyon, insan aksiyonu, alarm seviyesi)
@@ -144,6 +146,8 @@ EYLEM_MAP: Dict[str, Dict[str, str]] = {
     "IPTAL_SUPHE":               {"oto": "uyari_yuksek",         "insan": "Kasa açığı Evo'da açıklanamıyor — satış panelinde o vardiya iptal fişlerini manuel kontrol et", "alarm": "yuksek"},
     # Sprint G.2 — Sabahçı N2 düşük beyan
     "SABAH_ZIMMET_SUPHE":        {"oto": "cfo_bildirim_kritik",  "insan": "Dün bardak+Evo N1'i doğruluyor, sabahçı kasayı düşük beyan etmiş → soruşturma + kamera", "alarm": "kritik"},
+    # Sprint H (C Bendi) — Akşam vardiyası bardak P&L
+    "AKSAM_VARDIYA_BARDAK_ACIK": {"oto": "cfo_bildirim_log",     "insan": "Akşam vardiyası bardak açığı — devir→kapanis fiziksel fark Evo satış tahminini aşıyor → kayıt dışı satış + nakit soruşturması", "alarm": "yuksek"},
 }
 
 @dataclass
@@ -465,6 +469,8 @@ _TANI_ONCELIK = {
     "IPTAL_SUPHE":               62,
     # Sprint G.2
     "SABAH_ZIMMET_SUPHE":        96,
+    # Sprint H (C Bendi)
+    "AKSAM_VARDIYA_BARDAK_ACIK": 87,
 }
 
 _TANI_INSAN = {
@@ -498,6 +504,8 @@ _TANI_INSAN = {
     "IPTAL_SUPHE":               "Açıklanamayan kasa açığı — iptal fiş manipülasyonu şüphesi",
     # Sprint G.2
     "SABAH_ZIMMET_SUPHE":        "Sabahçı N2 düşük beyan — dün bardak N1'i doğruluyor → ZİMMET şüphesi",
+    # Sprint H (C Bendi)
+    "AKSAM_VARDIYA_BARDAK_ACIK": "Akşam vardiyası bardak açığı — devir→kapanis fark Evo tahminini aşıyor → kayıt dışı satış şüphesi",
 }
 
 _ALARM_ESIK = {
@@ -1041,7 +1049,7 @@ def motor_calistir(cur, sube_id: str, tarih: str,
                     _t.boyut == "kasa"
                     and _t.tani in ("SABAH_HATALI", "SABAH_TOPYEKUN", "COZULMEDI")
                     and _t.fark_n1_n2 is not None
-                    and _t.fark_n1_n2 > 0.99   # N2 > N1: fark = N2 - N1 > 0 → sabahçı düşük saydı
+                    and _t.fark_n1_n2 < -0.99   # N2 < N1: fark = N2 - N1 < 0 → sabahçı düşük saydı
                 ):
                     _t.tani = "SABAH_ZIMMET_SUPHE"
                     _t.guven_skoru = sprint_g2_meta["guven"]
@@ -1058,6 +1066,54 @@ def motor_calistir(cur, sube_id: str, tarih: str,
                     break
     except Exception as _e:
         log.warning("sprint_g2 sabah_zimmet_suphe_tespit hata: %s", _e)
+
+    # ── Sprint H (C Bendi): Akşam vardiyası bardak P&L (devir→kapanis) ───────
+    # Devir anındaki bardak sayısı - kapanis bardak sayısı = akşam fiziksel kullanım
+    # Evo saatli filtre (devir_ts→kapanis_ts) ile karşılaştırılır
+    # Fiziksel >> Evo tahmini → kayıt dışı satış + nakit zimmet şüphesi
+    sprint_h_meta: Dict[str, Any] = {}
+    try:
+        sprint_h_meta = aksam_vardiya_bardak_pnl(cur, sube_id, tarih)
+        if sprint_h_meta.get("tani") == "AKSAM_VARDIYA_BARDAK_ACIK":
+            # Önce bardak boyutlarında anomali var mı bak, orayı yükselt
+            _upgraded_h = False
+            _bardak_yukselt_tanilar = {
+                "STOK_KACAGI_BEYANSIZ", "ZIMMET_NAKIT_CEPTE",
+                "AKSAM_ZIMMET_SINYALI", "POS_BYPASS",
+                "COZULMEDI", "AKSAM_HATALI", "AKSAM_TOPYEKUN",
+            }
+            for _t in taniler:
+                if (
+                    _t.boyut in ("bardak_karton", "bardak_plastik")
+                    and _t.tani in _bardak_yukselt_tanilar
+                ):
+                    _t.tani = "AKSAM_VARDIYA_BARDAK_ACIK"
+                    _t.guven_skoru = sprint_h_meta["guven"]
+                    _t.detay["sprint_h"] = sprint_h_meta
+                    if sprint_h_meta.get("aksamci_ad"):
+                        _t.detay["aksamci_ad"] = sprint_h_meta["aksamci_ad"]
+                    _upgraded_h = True
+            if _upgraded_h:
+                log.info(
+                    "sprint_h aksam_vardiya_bardak_acik tetiklendi sube=%s tarih=%s "
+                    "karton_acik=%.0f plastik_acik=%.0f aksamci=%s",
+                    sube_id, tarih,
+                    sprint_h_meta.get("karton_acik", 0),
+                    sprint_h_meta.get("plastik_acik", 0),
+                    sprint_h_meta.get("aksamci_ad", "?"),
+                )
+            else:
+                # Günlük bardak analizi UYUMLU ama shift-level anomali → kasa boyutuna not ekle
+                for _t in taniler:
+                    if _t.boyut == "kasa":
+                        _t.detay["sprint_h_uyari"] = (
+                            f"Akşam vardiyası bardak açığı tespit edildi "
+                            f"(karton {sprint_h_meta.get('karton_acik', 0):.0f} + "
+                            f"plastik {sprint_h_meta.get('plastik_acik', 0):.0f} adet)"
+                        )
+                        break
+    except Exception as _e:
+        log.warning("sprint_h aksam_vardiya_bardak_pnl hata: %s", _e)
 
     # Eylem önerisi enjekte et
     for t in taniler:
@@ -1106,6 +1162,8 @@ def motor_calistir(cur, sube_id: str, tarih: str,
         "sprint_g": sprint_g_meta,
         # Sprint G.2 — sabahçı N2 düşük beyan (bardak doğrulama)
         "sprint_g2": sprint_g2_meta,
+        # Sprint H (C Bendi) — akşam vardiyası bardak P&L (devir→kapanis)
+        "sprint_h": sprint_h_meta,
     }
 
 
@@ -5973,6 +6031,13 @@ def tam_analiz(cur, sube_id: str, tarih: str,
     except Exception as e:
         log.warning("tam_analiz sprint_g2 hata: %s", e)
 
+    # 8f. Sprint H (C Bendi) — Akşam Vardiyası Bardak P&L (devir→kapanis)
+    sprint_h_sonuc: Dict[str, Any] = {}
+    try:
+        sprint_h_sonuc = aksam_vardiya_bardak_pnl(cur, sube_id, tarih)
+    except Exception as e:
+        log.warning("tam_analiz sprint_h hata: %s", e)
+
     # 9. Genel alarm seviyesi
     has_kritik = any(ps.get("risk_seviye") == "kritik" for ps in personel_sorumlu)
     has_yuksek = any(ps.get("risk_seviye") == "yuksek" for ps in personel_sorumlu)
@@ -5985,6 +6050,7 @@ def tam_analiz(cur, sube_id: str, tarih: str,
     sprint_f_orta = (sut_sapma.get("tani") == "SUT_SAPMA")
     sprint_g_kritik  = (sprint_g_sonuc.get("tani")  == "AKSAM_KASAYI_SISIRDI")
     sprint_g2_kritik = (sprint_g2_sonuc.get("tani") == "SABAH_ZIMMET_SUPHE")
+    sprint_h_yuksek  = (sprint_h_sonuc.get("tani")  == "AKSAM_VARDIYA_BARDAK_ACIK")
     # IPTAL_SUPHE: tam_analiz'de kasa_fark + stok açığı yok kombinasyonu
     iptal_suphe = (
         not sprint_g_kritik
@@ -5997,7 +6063,7 @@ def tam_analiz(cur, sube_id: str, tarih: str,
 
     if has_kritik or sprint_g_kritik or sprint_g2_kritik or birincil_koken in ("SWEETHEARTING_ZIMMET",):
         alarm = "kritik"
-    elif has_yuksek or sprint_f_yuksek or iptal_suphe or birincil_koken in ("NAKIT_CEKILDI", "AKSAM_ZIMMET_POZISYON"):
+    elif has_yuksek or sprint_f_yuksek or sprint_h_yuksek or iptal_suphe or birincil_koken in ("NAKIT_CEKILDI", "AKSAM_ZIMMET_POZISYON"):
         alarm = "yuksek"
     elif stok_acik_sayisi > 0 or abs(kasa_fark_toplam) > 5 or sprint_f_orta:
         alarm = "orta"
@@ -6028,6 +6094,14 @@ def tam_analiz(cur, sube_id: str, tarih: str,
         s_ad = sprint_g2_sonuc.get("sabahci_ad") or "Sabahçı"
         s_tl = sprint_g2_sonuc.get("dusuk_beyan_tl", 0)
         ozet_parcalari.append(f"⚠ {s_ad} {s_tl:.0f}₺ N2 düşük beyan (bardak doğruladı)")
+    if sprint_h_yuksek:
+        h_ad = sprint_h_sonuc.get("aksamci_ad") or "Akşamcı"
+        h_karton = sprint_h_sonuc.get("karton_acik", 0)
+        h_plastik = sprint_h_sonuc.get("plastik_acik", 0)
+        ozet_parcalari.append(
+            f"⚠ {h_ad} vardiya bardak açığı: "
+            f"{h_karton:.0f} karton + {h_plastik:.0f} plastik kayıt dışı"
+        )
     if iptal_suphe:
         ozet_parcalari.append(
             f"⚠ Kasa {abs(kasa_fark_toplam):.0f}₺ açık, stok normal → iptal fiş kontrol"
@@ -6090,4 +6164,348 @@ def tam_analiz(cur, sube_id: str, tarih: str,
         "sprint_g":  sprint_g_sonuc,
         # Sprint G.2 — sabahçı N2 düşük beyan (bardak çapraz doğrulama)
         "sprint_g2": sprint_g2_sonuc,
+        # Sprint H (C Bendi) — akşam vardiyası bardak P&L (devir→kapanis)
+        "sprint_h":  sprint_h_sonuc,
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SPRINT H (C BENDİ) — Akşam Vardiyası Bardak P&L (devir→kapanis)
+# ════════════════════════════════════════════════════════════════════════════
+
+def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
+    """Sprint H (C Bendi): Akşam vardiyası bardak P&L — devir anından kapanışa.
+
+    Hikaye 1C: Akşamcı devir alır, kayıt dışı satış yapıp nakit cebe koyar.
+    Devir→kapanis fiziksel bardak farkı, Evo akşam satış tahminiyle karşılaştırılır.
+
+    Veri kaynakları (bağımsız):
+      ┌─ DEVIR BARDAK:  kapanis_kayit[olay='vardiya_sabah_aksam_devri']
+      │    → meta.vardiya_devir_stok_sayim   (sabahçı teslim anındaki sayım)
+      │    → kapanisci_onay_ts               (devir zamanı, ~17:30)
+      │
+      ├─ KAPANİŞ BARDAK: sube_operasyon_event[tarih, KAPANIS]
+      │    → meta.kapanis_stok_sayim         (akşamcı kapanış sayımı)
+      │    → cevap_ts                        (kapanış zamanı, ~00:00)
+      │
+      ├─ URUN_AC (gün içi açılan paket): urun_ac_taslak[tarih]
+      │    → akşam payı = toplam × aksam_oran
+      │
+      └─ EVO POS (bağımsız):
+           _evo_sube_saatli_satis() → devir_ts→kapanis_ts arası fiş sayısı + tutar
+           _evo_sube_grup_satis()   → tüm gün grup dağılımı (14oz/8oz/Ice)
+           → Akşam bardak tahmini = grup_toplam × aksam_oran
+
+    Sonuç:
+      aksam_fiziksel = (devir_bardak + urun_ac_aksam) − kapanis_bardak
+      evo_tahmin     = tum_gun_evo_bardak × aksam_oran
+      Eğer fiziksel >> tahmin (>%30 ve >3 adet) → AKSAM_VARDIYA_BARDAK_ACIK
+
+    Returns:
+        {
+          "tani":                    "AKSAM_VARDIYA_BARDAK_ACIK" | "UYUMLU" | None,
+          "devir_karton":            int,    # devir anındaki toplam karton bardak (buyuk+kucuk)
+          "devir_plastik":           int,    # devir anındaki plastik bardak
+          "kapanis_karton":          int,
+          "kapanis_plastik":         int,
+          "urun_ac_karton_aksam":    float,  # devir sonrası açılan karton paket payı
+          "urun_ac_plastik_aksam":   float,
+          "aksam_karton_kullanim":   int,    # fiziksel kullanım
+          "aksam_plastik_kullanim":  int,
+          "evo_aksam_karton_est":    float,  # Evo tabanlı tahmin
+          "evo_aksam_plastik_est":   float,
+          "karton_acik":             float,  # fiziksel − tahmin
+          "plastik_acik":            float,
+          "karton_anomali":          bool,
+          "plastik_anomali":         bool,
+          "devir_ts":                str | None,
+          "aksam_fis_count":         int,
+          "aksam_fis_tutar":         float,
+          "aksam_oran":              float,  # akşam tutar / gün tutar
+          "aksamci_ad":              str | None,
+          "guven":                   float,
+          "detay":                   str,
+        }
+    """
+    sonuc: Dict[str, Any] = {"tani": None}
+
+    # ── 1. Devir kayıt (sabahçı → akşamcı teslim anı) ───────────────────────
+    # kapanis_kayit.olay='vardiya_sabah_aksam_devri' → sabahçı tarafından oluşturuldu
+    # meta.vardiya_devir_stok_sayim: akşamcıya bırakılan bardak sayımı
+    try:
+        cur.execute("""
+            SELECT meta, kapanisci_onay_ts, devir,
+                   aksamci_personel_id, sabahci_personel_id
+            FROM kapanis_kayit
+            WHERE sube_id=%s AND tarih=%s::date
+              AND olay = 'vardiya_sabah_aksam_devri'
+              AND durum IN ('tamamlandi', 'aktif', 'acilis_bekliyor')
+            ORDER BY kapanisci_onay_ts DESC NULLS LAST
+            LIMIT 1
+        """, (sube_id, tarih))
+    except Exception as e:
+        log.warning("aksam_vardiya_bardak_pnl devir sorgu hata: %s", e)
+        return sonuc
+
+    r_devir = cur.fetchone()
+    if not r_devir:
+        return sonuc   # Devir kaydı yok — bu gün vardiya devri yapılmamış
+
+    r_devir_dict = dict(r_devir)
+    devir_ts = r_devir_dict.get("kapanisci_onay_ts")
+    if devir_ts is None:
+        return sonuc   # Devir zamanı bilinmiyor — analiz yapılamaz
+
+    devir_meta_raw = r_devir_dict.get("meta") or {}
+    if isinstance(devir_meta_raw, str):
+        try:
+            devir_meta_raw = json.loads(devir_meta_raw)
+        except Exception:
+            devir_meta_raw = {}
+    devir_stok = devir_meta_raw.get("vardiya_devir_stok_sayim") or {}
+
+    devir_buyuk   = int(devir_stok.get("bardak_buyuk",   0) or 0)
+    devir_kucuk   = int(devir_stok.get("bardak_kucuk",   0) or 0)
+    devir_plastik = int(devir_stok.get("bardak_plastik", 0) or 0)
+    devir_karton  = devir_buyuk + devir_kucuk
+
+    if devir_karton == 0 and devir_plastik == 0:
+        return sonuc   # Devir stok sayımı girilmemiş → analiz yapılamaz
+
+    # ── 2. Akşamcı adı ─────────────────────────────────────────────────────
+    aksamci_ad: Optional[str] = None
+    aksamci_pid = r_devir_dict.get("aksamci_personel_id")
+    if aksamci_pid:
+        try:
+            cur.execute(
+                "SELECT ad FROM personel WHERE id::text=%s LIMIT 1",
+                (str(aksamci_pid),)
+            )
+            pr = cur.fetchone()
+            if pr:
+                aksamci_ad = dict(pr).get("ad") or None
+        except Exception:
+            pass
+    if not aksamci_ad:
+        # Fallback: KAPANIS event personel_ad
+        try:
+            cur.execute("""
+                SELECT personel_ad FROM sube_operasyon_event
+                WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
+                ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+            """, (sube_id, tarih))
+            pr = cur.fetchone()
+            if pr:
+                aksamci_ad = dict(pr).get("personel_ad") or None
+        except Exception:
+            pass
+
+    # ── 3. Kapanis bardak sayımı (akşamcının kapanış sayımı) ─────────────────
+    try:
+        cur.execute("""
+            SELECT meta, kasa_sayim, cevap_ts FROM sube_operasyon_event
+            WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
+            ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+        """, (sube_id, tarih))
+    except Exception as e:
+        log.warning("aksam_vardiya_bardak_pnl kapanis sorgu hata: %s", e)
+        return sonuc
+
+    r_kapanis = cur.fetchone()
+    if not r_kapanis:
+        return sonuc   # Kapanış tamamlanmamış — günlük analiz için bekle
+
+    r_kap_dict = dict(r_kapanis)
+    kapanis_ts  = r_kap_dict.get("cevap_ts")
+
+    kapanis_meta_raw = r_kap_dict.get("meta") or {}
+    if isinstance(kapanis_meta_raw, str):
+        try:
+            kapanis_meta_raw = json.loads(kapanis_meta_raw)
+        except Exception:
+            kapanis_meta_raw = {}
+    kapanis_stok = kapanis_meta_raw.get("kapanis_stok_sayim") or {}
+
+    if not kapanis_stok:
+        return sonuc   # Kapanış stok sayımı girilmemiş
+
+    kapanis_buyuk   = int(kapanis_stok.get("bardak_buyuk",   0) or 0)
+    kapanis_kucuk   = int(kapanis_stok.get("bardak_kucuk",   0) or 0)
+    kapanis_plastik = int(kapanis_stok.get("bardak_plastik", 0) or 0)
+    kapanis_karton  = kapanis_buyuk + kapanis_kucuk
+
+    # ── 4. Evo akşam satışları (time-filtered: devir_ts → kapanis_ts) ────────
+    evo_sube_id: Optional[str] = None
+    try:
+        cur.execute("SELECT ad FROM subeler WHERE id::text=%s", (str(sube_id),))
+        srow = cur.fetchone()
+        sube_adi_evvel = str(dict(srow).get("ad") or "") if srow else ""
+        from evo_sync import EVO_SUBE_ID_MAP
+        evvel_lower = sube_adi_evvel.strip().lower().replace("şubesi", "").strip()
+        for eid, ead in EVO_SUBE_ID_MAP.items():
+            elow = ead.strip().lower().replace("şubesi", "").strip()
+            if evvel_lower and (evvel_lower in elow or elow in evvel_lower):
+                evo_sube_id = eid
+                break
+    except Exception as e:
+        log.warning("aksam_vardiya_bardak_pnl evo_id hata: %s", e)
+
+    aksam_fis_count = 0
+    aksam_fis_tutar = 0.0
+    total_fis_count = 0
+    total_fis_tutar = 0.0
+
+    if evo_sube_id:
+        try:
+            from datetime import date as _d2
+            y2, mo2, dn2 = (int(x) for x in str(tarih)[:10].split("-"))
+            tarih_d2 = _d2(y2, mo2, dn2)
+            tum_fis = _evo_sube_saatli_satis(evo_sube_id, tarih_d2, tarih_d2)
+            for fis in tum_fis:
+                dt = fis.get("saat_dt")
+                if dt is None:
+                    continue
+                total_fis_count += 1
+                total_fis_tutar += float(fis.get("tutar") or 0)
+                # Akşam vardiyası: devir_ts'ten kapanis_ts'e (veya gece sonuna)
+                if dt >= devir_ts and (kapanis_ts is None or dt <= kapanis_ts):
+                    aksam_fis_count += 1
+                    aksam_fis_tutar += float(fis.get("tutar") or 0)
+        except Exception as e:
+            log.warning("aksam_vardiya_bardak_pnl evo saatli hata: %s", e)
+
+    # Akşam oranı (tutar bazlı; fiş bazlı fallback; hiç veri yoksa 0.5)
+    if total_fis_tutar > 1.0:
+        aksam_oran = min(aksam_fis_tutar / total_fis_tutar, 1.0)
+    elif total_fis_count > 0:
+        aksam_oran = min(aksam_fis_count / total_fis_count, 1.0)
+    else:
+        aksam_oran = 0.50   # veri yok — %50 varsayım
+
+    # ── 5. Tüm gün Evo grup → akşam bardak tahmini ───────────────────────────
+    evo_grup = _evo_sube_grup_satis(cur, sube_id, tarih)
+    evo_14oz = float(evo_grup.get("14 Oz") or 0)
+    evo_8oz  = float(evo_grup.get("8 Oz")  or 0)
+    evo_ice  = float(evo_grup.get("Ice")   or 0)
+
+    evo_aksam_karton_est  = round((evo_14oz + evo_8oz) * aksam_oran, 1)
+    evo_aksam_plastik_est = round(evo_ice * aksam_oran, 1)
+
+    # ── 6. URUN_AC (gün içi açılan paket) — akşam payı ──────────────────────
+    # Tüm gün URUN_AC'ı akşam oranıyla bölüştür (saatli veri yok)
+    try:
+        urun_ac_karton_gun  = _urun_ac_toplam(cur, sube_id, tarih, "bardak_karton")
+        urun_ac_plastik_gun = _urun_ac_toplam(cur, sube_id, tarih, "bardak_plastik")
+    except Exception:
+        urun_ac_karton_gun  = 0.0
+        urun_ac_plastik_gun = 0.0
+
+    urun_ac_karton_aksam  = round(urun_ac_karton_gun  * aksam_oran, 1)
+    urun_ac_plastik_aksam = round(urun_ac_plastik_gun * aksam_oran, 1)
+
+    # ── 7. Fiziksel akşam bardak kullanımı ───────────────────────────────────
+    # Formül: devir_stok + urun_ac_aksam − kapanis_stok = fiziksel_kullanim
+    aksam_karton_kullanim  = max(0, round(devir_karton  + urun_ac_karton_aksam  - kapanis_karton,  0))
+    aksam_plastik_kullanim = max(0, round(devir_plastik + urun_ac_plastik_aksam - kapanis_plastik, 0))
+
+    toplam_fiziksel = aksam_karton_kullanim + aksam_plastik_kullanim
+    if toplam_fiziksel < 2:
+        # Çok az kullanım → akşam vardiyası bardak verisi anlamsız
+        return sonuc
+
+    # ── 8. Anomali tespiti ────────────────────────────────────────────────────
+    # Eşik: fiziksel fark > %30 aşım VE en az 3 bardak
+    ESIK_ADET = 3
+    ESIK_ORAN = 0.30
+
+    karton_acik  = round(aksam_karton_kullanim  - evo_aksam_karton_est,  1)
+    plastik_acik = round(aksam_plastik_kullanim - evo_aksam_plastik_est, 1)
+
+    karton_anomali = bool(
+        karton_acik > ESIK_ADET
+        and evo_aksam_karton_est > 0
+        and karton_acik / evo_aksam_karton_est > ESIK_ORAN
+    )
+    plastik_anomali = bool(
+        plastik_acik > ESIK_ADET
+        and evo_aksam_plastik_est > 0
+        and plastik_acik / evo_aksam_plastik_est > ESIK_ORAN
+    )
+
+    aks_str = f" ({aksamci_ad})" if aksamci_ad else ""
+    oran_pct = f"%{aksam_oran * 100:.0f}"
+
+    # ── 9. Ortak sonuç alanları ───────────────────────────────────────────────
+    ortak = {
+        "devir_karton":            devir_karton,
+        "devir_plastik":           devir_plastik,
+        "kapanis_karton":          kapanis_karton,
+        "kapanis_plastik":         kapanis_plastik,
+        "urun_ac_karton_aksam":    urun_ac_karton_aksam,
+        "urun_ac_plastik_aksam":   urun_ac_plastik_aksam,
+        "aksam_karton_kullanim":   int(aksam_karton_kullanim),
+        "aksam_plastik_kullanim":  int(aksam_plastik_kullanim),
+        "evo_aksam_karton_est":    evo_aksam_karton_est,
+        "evo_aksam_plastik_est":   evo_aksam_plastik_est,
+        "karton_acik":             karton_acik,
+        "plastik_acik":            plastik_acik,
+        "karton_anomali":          karton_anomali,
+        "plastik_anomali":         plastik_anomali,
+        "devir_ts":                devir_ts.isoformat() if devir_ts else None,
+        "aksam_fis_count":         aksam_fis_count,
+        "aksam_fis_tutar":         round(aksam_fis_tutar, 2),
+        "aksam_oran":              round(aksam_oran, 3),
+        "total_fis_count":         total_fis_count,
+        "aksamci_ad":              aksamci_ad,
+    }
+
+    if karton_anomali or plastik_anomali:
+        # Güven: hem boyut hem Evo fiş miktarına göre
+        guven = 85.0
+        if karton_anomali and plastik_anomali:
+            guven = 91.0
+        if aksam_fis_count >= 5:
+            guven = min(95.0, guven + 4.0)
+
+        anomali_parcalar = []
+        if karton_anomali:
+            anomali_parcalar.append(
+                f"karton {int(aksam_karton_kullanim)} fiziksel vs {evo_aksam_karton_est:.0f} Evo "
+                f"→ {karton_acik:.0f} açık"
+            )
+        if plastik_anomali:
+            anomali_parcalar.append(
+                f"plastik {int(aksam_plastik_kullanim)} fiziksel vs {evo_aksam_plastik_est:.0f} Evo "
+                f"→ {plastik_acik:.0f} açık"
+            )
+
+        detay = (
+            f"Akşamcı{aks_str} devir anında {devir_karton} karton + {devir_plastik} plastik bardak devraldı. "
+            f"Kapanışta {kapanis_karton} karton + {kapanis_plastik} plastik kaldı. "
+            f"Akşam kullanım (fiziksel): {int(aksam_karton_kullanim)} karton + {int(aksam_plastik_kullanim)} plastik. "
+            f"Evo akşam tahmini ({oran_pct} oran, {aksam_fis_count} fiş): "
+            f"{evo_aksam_karton_est:.0f} karton + {evo_aksam_plastik_est:.0f} plastik. "
+            f"Anomali: {'; '.join(anomali_parcalar)}. "
+            f"Kayıt dışı satış şüphesi — nakit akşam vardiyasında cepde kalmış olabilir."
+        )
+        return {
+            **ortak,
+            "tani":   "AKSAM_VARDIYA_BARDAK_ACIK",
+            "guven":  guven,
+            "detay":  detay,
+        }
+
+    # UYUMLU — bardak kullanımı Evo tahminiyle örtüşüyor
+    detay = (
+        f"Akşamcı{aks_str} devir→kapanis: {int(aksam_karton_kullanim)} karton + "
+        f"{int(aksam_plastik_kullanim)} plastik kullandı. "
+        f"Evo tahmini ({oran_pct}, {aksam_fis_count} akşam fişi): "
+        f"{evo_aksam_karton_est:.0f} karton + {evo_aksam_plastik_est:.0f} plastik. "
+        f"Uyumlu — kayıt dışı satış sinyali yok."
+    )
+    return {
+        **ortak,
+        "tani":  "UYUMLU",
+        "guven": 82.0,
+        "detay": detay,
     }
