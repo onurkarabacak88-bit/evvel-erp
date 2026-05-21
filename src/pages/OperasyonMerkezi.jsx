@@ -527,8 +527,8 @@ const MODULLER = [
     id: 'envanter',
     label: '📦 Envanter',
     renk: '#f08040',
-    desc: 'Stok sayımı, ürün açma, fire & kayıp analizi ve ürün uyumsuzlukları',
-    tabs: ['magaza-kartlari', 'stok-hareketi', 'sayim', 'urun-ac', 'stok-kayip', 'urun-uyumsuzluk', 'fire-bildirim'],
+    desc: 'Stok sayımı, ürün açma, fire & kayıp analizi',
+    tabs: ['magaza-kartlari', 'stok-hareketi', 'sayim', 'urun-ac', 'stok-kayip', 'fire-bildirim'],
   },
   {
     id: 'siparis-tedarik',
@@ -541,8 +541,8 @@ const MODULLER = [
     id: 'finans-kasa',
     label: '💳 Finans & Kasa',
     renk: '#e85d5d',
-    desc: 'Açılış/kapanış kasası, kullanılan ürünler, ciro onayı, kasa uyumsuzluğu ve fiş kontrol',
-    tabs: ['acilis-kasa-takip', 'kapanis-takip', 'kullanilan-urunler', 'ciro-onay', 'kasa-uyumsuzluk', 'kasa-personel-takip', 'fis'],
+    desc: 'Açılış/kapanış kasası, kullanılan ürünler, ciro, kasa & stok uyumsuzlukları, fiş kontrol',
+    tabs: ['acilis-kasa-takip', 'kapanis-takip', 'kullanilan-urunler', 'ciro-onay', 'kasa-uyumsuzluk', 'urun-uyumsuzluk', 'kasa-personel-takip', 'fis'],
   },
   {
     id: 'personel',
@@ -789,6 +789,8 @@ const KULLANILAN_LABEL = {
   pasta_dilim_sade:'Dilim San Sebastian Sade', pasta_dilim_antep:'Dilim San Sebastian Antep Fıstıklı',
   pasta_dilim_cik:'Dilim San Sebastian Çikolatalı', pasta_dilim_yaban:'Dilim San Sebastian Yaban Mersinli',
 };
+
+const KULLANILAN_PASTA_KEYS = Object.keys(KULLANILAN_LABEL).filter((k) => k.startsWith('pasta_'));
 
 /** Negatif satılan = Ürün Aç paneline girilmemiş (stok_bar_uyum.GUN_ICI_DENETIM_KEYS ile uyumlu) */
 const KULLANILAN_URUN_AC_DENETIM = new Set([
@@ -5614,13 +5616,13 @@ export default function OperasyonMerkezi() {
               const aktifSubeAdet = ozt.aktif_sube ?? kartlar.filter((k) => k.sube_acik).length;
               descSatir = `${aktifSubeAdet} şube aktif${alertSayisi > 0 ? ` · ${alertSayisi} uyarı` : ' · sorun yok ✓'}`;
             } else if (modul.id === 'envanter') {
-              alertSayisi = Number(ozt.stok_kayip_sube || 0) + Number(ozt.stok_alarm_bekleyen || 0) + Number(urunUyumBugun?.toplam || 0);
+              alertSayisi = Number(ozt.stok_kayip_sube || 0) + Number(ozt.stok_alarm_bekleyen || 0);
               descSatir = alertSayisi > 0 ? `${alertSayisi} kayıp/uyarı — envanter kontrol gerekli` : 'Envanter normal · kayıp tespit edilmedi ✓';
             } else if (modul.id === 'siparis-tedarik') {
               alertSayisi = Number(ozt.siparis_gonderilmedi_toplam || 0) + Number(sevkiyatUyumOzet?.adet || 0) + Number(ozt.siparis_bekleyen || 0);
               descSatir = alertSayisi > 0 ? `${alertSayisi} bekleyen/uyumsuz sipariş` : 'Tüm siparişler takipte ✓';
             } else if (modul.id === 'finans-kasa') {
-              alertSayisi = Number(kasaUyumBugun?.toplam || 0) + Number(ciroOnayBugun?.toplam || 0) + Number(ozt.fis_bekleyen || 0);
+              alertSayisi = Number(kasaUyumBugun?.toplam || 0) + Number(urunUyumBugun?.toplam || 0) + Number(ciroOnayBugun?.toplam || 0) + Number(ozt.fis_bekleyen || 0);
               descSatir = alertSayisi > 0 ? `${alertSayisi} onay/uyumsuzluk bekliyor` : 'Kasa dengede · onay kuyruğu boş ✓';
             } else if (modul.id === 'personel') {
               alertSayisi = Number(personelVardiyaUyumBugun?.toplam || 0) + Number(gecKalanPersonelBugun?.kritik_personel_sayisi || 0);
@@ -5659,6 +5661,9 @@ export default function OperasyonMerkezi() {
                   } else if (firstTab === 'kasa-uyumsuzluk') {
                     setKasaUyumAramaTarih(bugunIsoTarih());
                     setKasaUyumAramaSonuc(kasaUyumBugun);
+                  } else if (firstTab === 'urun-uyumsuzluk') {
+                    setUrunUyumAramaTarih(bugunIsoTarih());
+                    setUrunUyumAramaSonuc(urunUyumBugun);
                   } else if (firstTab === 'ciro-onay') {
                     setCiroOnayAramaTarih(isGunuIsoIstanbul());
                     setCiroOnayAramaSonuc(ciroOnayBugun);
@@ -5855,6 +5860,12 @@ export default function OperasyonMerkezi() {
                   let tabBekleyenRenk = '#d946b8';
                   if (tabId === 'ciro-onay') {
                     tabBekleyen = Number(ciroOnayBugun?.toplam || 0);
+                  } else if (tabId === 'kasa-uyumsuzluk') {
+                    tabBekleyen = Number(kasaUyumBugun?.toplam || 0);
+                    tabBekleyenRenk = '#e85d5d';
+                  } else if (tabId === 'urun-uyumsuzluk') {
+                    tabBekleyen = Number(urunUyumBugun?.toplam || 0);
+                    tabBekleyenRenk = '#8b5cf6';
                   } else if (tabId === 'sevkiyat-uyumsuzluk') {
                     tabBekleyen = Number(sevkiyatUyumOzet?.adet || 0);
                     tabBekleyenRenk = '#ea580c';
