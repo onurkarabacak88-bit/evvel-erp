@@ -108,6 +108,8 @@ TANI_TIPLERI = (
     # ── Sprint G — Cross-day Akşamcı Zimmet Korelasyonu ──────────────────
     "AKSAM_KASAYI_SISIRDI",      # bugün N1>N2 + dün stok açığı → akşamcı N1 şişirerek zimmet gizledi
     "IPTAL_SUPHE",               # N1>N2 kasa açığı + stok normal + Evo açıklaması yok → iptal fiş kontrol
+    # ── Sprint G.2 — Sabahçı N2 Düşük Beyan (bardak çapraz doğrulama) ────
+    "SABAH_ZIMMET_SUPHE",        # N1>N2 + dün bardak UYUMLU → N1 fiziksel kanıtla doğrulandı, sabahçı düşük beyan
 )
 
 # Her tanı için (otomatik aksiyon, insan aksiyonu, alarm seviyesi)
@@ -140,6 +142,8 @@ EYLEM_MAP: Dict[str, Dict[str, str]] = {
     # Sprint G — Cross-day akşamcı zimmet korelasyonu
     "AKSAM_KASAYI_SISIRDI":      {"oto": "cfo_bildirim_kritik",  "insan": "Dün akşamcı N1'i şişirdi + stok açığı eşleşiyor → zimmet soruşturması + kamera", "alarm": "kritik"},
     "IPTAL_SUPHE":               {"oto": "uyari_yuksek",         "insan": "Kasa açığı Evo'da açıklanamıyor — satış panelinde o vardiya iptal fişlerini manuel kontrol et", "alarm": "yuksek"},
+    # Sprint G.2 — Sabahçı N2 düşük beyan
+    "SABAH_ZIMMET_SUPHE":        {"oto": "cfo_bildirim_kritik",  "insan": "Dün bardak+Evo N1'i doğruluyor, sabahçı kasayı düşük beyan etmiş → soruşturma + kamera", "alarm": "kritik"},
 }
 
 @dataclass
@@ -459,6 +463,8 @@ _TANI_ONCELIK = {
     # Sprint G
     "AKSAM_KASAYI_SISIRDI":      97,
     "IPTAL_SUPHE":               62,
+    # Sprint G.2
+    "SABAH_ZIMMET_SUPHE":        96,
 }
 
 _TANI_INSAN = {
@@ -490,6 +496,8 @@ _TANI_INSAN = {
     # Sprint G
     "AKSAM_KASAYI_SISIRDI":      "Akşamcı N1 şişirdi — dünkü stok açığı ile eşleşiyor → ZİMMET",
     "IPTAL_SUPHE":               "Açıklanamayan kasa açığı — iptal fiş manipülasyonu şüphesi",
+    # Sprint G.2
+    "SABAH_ZIMMET_SUPHE":        "Sabahçı N2 düşük beyan — dün bardak N1'i doğruluyor → ZİMMET şüphesi",
 }
 
 _ALARM_ESIK = {
@@ -1021,6 +1029,36 @@ def motor_calistir(cur, sube_id: str, tarih: str,
                     )
                     break
 
+    # ── Sprint G.2: Sabahçı N2 düşük beyan (bardak çapraz doğrulama) ─────────
+    # SABAH_ZIMMET_SUPHE: kasa boyutunda SABAH_HATALI var ama
+    # dün bardak akışı UYUMLU → N1 doğrulandı → sabahçı düşük beyan şüphesi
+    sprint_g2_meta: Dict[str, Any] = {}
+    try:
+        sprint_g2_meta = sabah_zimmet_suphe_tespit(cur, sube_id, tarih)
+        if sprint_g2_meta.get("tani") == "SABAH_ZIMMET_SUPHE":
+            for _t in taniler:
+                if (
+                    _t.boyut == "kasa"
+                    and _t.tani in ("SABAH_HATALI", "SABAH_TOPYEKUN", "COZULMEDI")
+                    and _t.fark_n1_n2 is not None
+                    and _t.fark_n1_n2 > 0.99   # N2 > N1: fark = N2 - N1 > 0 → sabahçı düşük saydı
+                ):
+                    _t.tani = "SABAH_ZIMMET_SUPHE"
+                    _t.guven_skoru = sprint_g2_meta["guven"]
+                    _t.detay["sprint_g2"] = sprint_g2_meta
+                    if sprint_g2_meta.get("sabahci_ad"):
+                        _t.detay["sabahci_ad"] = sprint_g2_meta["sabahci_ad"]
+                    log.info(
+                        "sprint_g2 sabah_zimmet_suphe tetiklendi sube=%s tarih=%s "
+                        "dusuk_beyan=%.0f sabahci=%s",
+                        sube_id, tarih,
+                        sprint_g2_meta.get("dusuk_beyan_tl", 0),
+                        sprint_g2_meta.get("sabahci_ad", "?"),
+                    )
+                    break
+    except Exception as _e:
+        log.warning("sprint_g2 sabah_zimmet_suphe_tespit hata: %s", _e)
+
     # Eylem önerisi enjekte et
     for t in taniler:
         t.detay["eylem"] = eylem_oner(t.tani)
@@ -1066,6 +1104,8 @@ def motor_calistir(cur, sube_id: str, tarih: str,
         "sprint_e": sprint_e_meta,
         # Sprint G — cross-day akşamcı N1 şişirme
         "sprint_g": sprint_g_meta,
+        # Sprint G.2 — sabahçı N2 düşük beyan (bardak doğrulama)
+        "sprint_g2": sprint_g2_meta,
     }
 
 
@@ -4942,6 +4982,194 @@ def aksam_kasa_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     }
 
 
+# ════════════════════════════════════════════════════════════════════════════
+#  SPRINT G.2 — Sabahçı N2 Düşük Beyan Tespiti (bardak çapraz doğrulama)
+# ════════════════════════════════════════════════════════════════════════════
+
+def sabah_zimmet_suphe_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
+    """Sprint G.2 — Sabahçı N2 Düşük Beyan Tespiti.
+
+    Hikaye 1B: Sabahçı kasada bulduğundan az beyan eder, farkı cebe koyar.
+
+    Validasyon zinciri (veri bağımsızlığı kritik):
+      ┌─ N1: sube_operasyon_event[DÜN, KAPANIS].devir
+      │       → Akşamcının bıraktığını söylediği tutar
+      │       → KAPANIS formu akşamcı tarafından doldurulur
+      │
+      ├─ N2: sube_operasyon_event[BUGÜN, ACILIS].kasa_sayim
+      │       → Sabahçının saydığı tutar (kör sayım)
+      │       → ACILIS formu sabahçı tarafından doldurulur
+      │
+      └─ Bardak doğrulama: stok_akis_tablosu(DÜN) → bardak boyutları
+              ├─ acilis_stok: [DÜN, ACILIS].meta.acilis_stok_sayim   (dünkü sabahçı)
+              ├─ kapanis_stok: [DÜN, KAPANIS].meta.kapanis_stok_sayim (akşamcı)
+              ├─ urun_ac: urun_ac_taslak[DÜN]                         (sistem)
+              └─ evo_satis: hs_rapor.ashx[DÜN]                        (Evo POS)
+
+    Mantık:
+      Dün bardak akışı UYUMLU → akşamcı X bardak kahve yaptı, Evo X bardak satış
+      kaydetmiş → N1 fiziksel kanıtla doğrulandı → N2 < N1 ise sabahçı kasıtlı
+      düşük beyan etmiş olabilir.
+
+    NOT: Sabahçı bardak sayımına (ACILIS.meta) dokunabilir ama KAPANIS.meta'ya
+    (akşamcının kapanış stok sayımı) erişemez. Bu yüzden DÜN'ün bardak akışı
+    bağımsız kanıt niteliği taşır.
+
+    Args:
+        cur:     DB cursor (dict_cursor)
+        sube_id: şube UUID
+        tarih:   BUGÜN — sabahçının kasa saydığı gün (YYYY-MM-DD)
+
+    Returns:
+        {
+          "tani":                   "SABAH_ZIMMET_SUPHE" | None,
+          "dusuk_beyan_tl":         float,   # N1 − N2
+          "n1_aksam":               float,   # akşamcı devir beyanı
+          "n2_sabah":               float,   # sabahçı kör sayım
+          "onceki_tarih":           str,
+          "bardak_plastik_tani":    str,     # UYUMLU / STOK_ACIK / KAPANIS_YOK
+          "bardak_karton_tani":     str,
+          "bardak_tamamen_uyumlu":  bool,
+          "aksamci_ad":             str | None,
+          "sabahci_ad":             str | None,
+          "guven":                  float,
+          "detay":                  str,
+        }
+    """
+    from datetime import date, timedelta
+
+    sonuc: Dict[str, Any] = {"tani": None}
+
+    try:
+        onceki = (date.fromisoformat(tarih) - timedelta(days=1)).isoformat()
+    except Exception:
+        return sonuc
+
+    # ── 1. N2: Bugün ACILIS kasa_sayim (sabahçı kör sayım) ──────────────────
+    # Kaynak: sube_operasyon_event.kasa_sayim — sabahçı tarafından girilen
+    cur.execute("""
+        SELECT kasa_sayim, personel_ad FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=%s::date AND tip='ACILIS' AND durum='tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+    """, (sube_id, tarih))
+    r_acilis = cur.fetchone()
+    if not r_acilis:
+        return sonuc
+    r_ac_dict = dict(r_acilis)
+    n2_sabah = float(r_ac_dict.get("kasa_sayim") or 0)
+    sabahci_ad: Optional[str] = r_ac_dict.get("personel_ad") or None
+
+    # ── 2. N1: Dün KAPANIS devir (akşamcı beyanı) ───────────────────────────
+    # Kaynak: sube_operasyon_event.devir — akşamcı tarafından girilen
+    # KAPANIS.devir ≠ KAPANIS.kasa_sayim: devir = kasada bırakılan, kasa_sayim = ayrı
+    cur.execute("""
+        SELECT devir, personel_ad FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+    """, (sube_id, onceki))
+    r_kapanis = cur.fetchone()
+    if not r_kapanis:
+        return sonuc
+    r_kap_dict = dict(r_kapanis)
+    n1_aksam = float(r_kap_dict.get("devir") or 0)
+    aksamci_ad: Optional[str] = r_kap_dict.get("personel_ad") or None
+
+    # Sabahçı düşük beyan mı etti?
+    dusuk_beyan = round(n1_aksam - n2_sabah, 2)
+    if dusuk_beyan < 1.0:
+        return sonuc   # Fark yok veya sabahçı daha yüksek buldu
+
+    # ── 3. Dün bardak akışı — akşamcı vardiyası bağımsız doğrulama ──────────
+    # Kaynak: stok_akis_tablosu(dün) → içinde ACILIS.meta + KAPANIS.meta + URUN_AC + Evo
+    # Neden bağımsız? Sabahçı KAPANIS.meta'ya (dünkü akşamcının stok sayımına) erişemez.
+    try:
+        dun_stok = stok_akis_tablosu(cur, sube_id, onceki)
+    except Exception as e:
+        log.warning("sabah_zimmet_suphe stok_akis hata: %s", e)
+        return sonuc
+
+    dun_boyutlar = dun_stok.get("boyutlar") or {}
+    plastik = dun_boyutlar.get("bardak_plastik") or {}
+    karton  = dun_boyutlar.get("bardak_karton")  or {}
+
+    plastik_tani = plastik.get("tani") or "KAPANIS_YOK"
+    karton_tani  = karton.get("tani")  or "KAPANIS_YOK"
+
+    # Dünkü akşamcı vardiyasında bardak problemi var mıydı?
+    # STOK_ACIK veya STOK_FAZLA → akşamcı da tutarsız → sabahçıyı suçlamak doğru olmaz
+    bardak_sorunlu = plastik_tani in ("STOK_ACIK", "STOK_FAZLA") or \
+                     karton_tani  in ("STOK_ACIK", "STOK_FAZLA")
+    if bardak_sorunlu:
+        # Akşamcı vardiyasında da ürün tutarsızlığı var → karışık senaryo,
+        # sabahçı zimmet tespiti güvenilmez
+        return sonuc
+
+    # Bardak doğrulama seviyesi
+    bardak_tamamen_uyumlu = (plastik_tani == "UYUMLU" and karton_tani == "UYUMLU")
+    bardak_kismen_uyumlu  = (plastik_tani == "UYUMLU" or karton_tani == "UYUMLU")
+
+    if not bardak_kismen_uyumlu and plastik_tani != "KAPANIS_YOK":
+        # Hiçbir bardak boyutu doğrulanamıyor
+        return sonuc
+
+    # ── 4. Evo satış miktarı — akşamcı gerçekten bu kadar sattı mı? ─────────
+    # Kaynak: _evo_sube_grup_satis(dün) → hs_rapor.ashx (Evo POS sunucusu)
+    # Evo verisi: kasa_sayim veya devir ile hiçbir ilgisi yok — bağımsız
+    dun_evo = _evo_sube_grup_satis(cur, sube_id, onceki)
+    evo_bardak_toplam = sum(
+        float(dun_evo.get(g, 0)) for g in ("14 Oz", "8 Oz", "Ice")
+    )
+    evo_nakit_dun = float(dun_evo.get("_nakit") or 0)
+
+    # Evo nakit ≈ N1 kontrolü (ek sinyal — bağımsız üçüncü kaynak)
+    evo_n1_yakin = False
+    if evo_nakit_dun > 0 and n1_aksam > 0:
+        # Açılış kasası bilinmiyorsa sadece fark kontrolü
+        oran = evo_nakit_dun / n1_aksam if n1_aksam else 0
+        evo_n1_yakin = 0.30 <= oran <= 3.0   # makul aralık
+
+    # ── 5. Güven skoru ve tanı metni ────────────────────────────────────────
+    sab_str = f" ({sabahci_ad})" if sabahci_ad else ""
+    aks_str = f" ({aksamci_ad})" if aksamci_ad else ""
+
+    if bardak_tamamen_uyumlu:
+        guven = 91.0
+        detay = (
+            f"Sabahçı{sab_str} N2={n2_sabah:.0f}₺ beyan etti, "
+            f"akşamcı{aks_str} N1={n1_aksam:.0f}₺ bırakmıştı. "
+            f"Fark: {dusuk_beyan:.0f}₺. "
+            f"Dün bardak_plastik+karton UYUMLU ({evo_bardak_toplam:.0f} adet Evo satışı eşleşiyor) "
+            f"→ N1 fiziksel kanıtla doğrulandı. "
+            f"Sabahçı kasayı {dusuk_beyan:.0f}₺ düşük beyan etmiş olabilir."
+        )
+    else:
+        guven = 76.0
+        detay = (
+            f"Sabahçı{sab_str} N2={n2_sabah:.0f}₺ beyan, "
+            f"akşamcı{aks_str} N1={n1_aksam:.0f}₺ idi. "
+            f"Fark: {dusuk_beyan:.0f}₺. "
+            f"Bardak kısmi doğrulama (plastik:{plastik_tani}, karton:{karton_tani}). "
+            f"N1 güvenilebilir, sabahçı düşük beyan şüphesi."
+        )
+
+    return {
+        "tani":                  "SABAH_ZIMMET_SUPHE",
+        "dusuk_beyan_tl":        dusuk_beyan,
+        "n1_aksam":              n1_aksam,
+        "n2_sabah":              n2_sabah,
+        "onceki_tarih":          onceki,
+        "bardak_plastik_tani":   plastik_tani,
+        "bardak_karton_tani":    karton_tani,
+        "bardak_tamamen_uyumlu": bardak_tamamen_uyumlu,
+        "evo_bardak_toplam":     evo_bardak_toplam,
+        "evo_nakit_dun":         evo_nakit_dun,
+        "aksamci_ad":            aksamci_ad,
+        "sabahci_ad":            sabahci_ad,
+        "guven":                 guven,
+        "detay":                 detay,
+    }
+
+
 def stok_akis_tablosu(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     """5 boyut için tam stok akış tablosu.
 
@@ -5738,6 +5966,13 @@ def tam_analiz(cur, sube_id: str, tarih: str,
     except Exception as e:
         log.warning("tam_analiz sprint_g hata: %s", e)
 
+    # 8e. Sprint G.2 — Sabahçı N2 Düşük Beyan (bardak çapraz doğrulama)
+    sprint_g2_sonuc: Dict[str, Any] = {}
+    try:
+        sprint_g2_sonuc = sabah_zimmet_suphe_tespit(cur, sube_id, tarih)
+    except Exception as e:
+        log.warning("tam_analiz sprint_g2 hata: %s", e)
+
     # 9. Genel alarm seviyesi
     has_kritik = any(ps.get("risk_seviye") == "kritik" for ps in personel_sorumlu)
     has_yuksek = any(ps.get("risk_seviye") == "yuksek" for ps in personel_sorumlu)
@@ -5748,17 +5983,19 @@ def tam_analiz(cur, sube_id: str, tarih: str,
         or bom_sapma_sonuc.get("tani") == "BOM_SAPMA"
     )
     sprint_f_orta = (sut_sapma.get("tani") == "SUT_SAPMA")
-    sprint_g_kritik = (sprint_g_sonuc.get("tani") == "AKSAM_KASAYI_SISIRDI")
+    sprint_g_kritik  = (sprint_g_sonuc.get("tani")  == "AKSAM_KASAYI_SISIRDI")
+    sprint_g2_kritik = (sprint_g2_sonuc.get("tani") == "SABAH_ZIMMET_SUPHE")
     # IPTAL_SUPHE: tam_analiz'de kasa_fark + stok açığı yok kombinasyonu
     iptal_suphe = (
         not sprint_g_kritik
+        and not sprint_g2_kritik
         and abs(kasa_fark_toplam) > 5
         and stok_acik_sayisi == 0
         and not has_kritik
         and not has_yuksek
     )
 
-    if has_kritik or sprint_g_kritik or birincil_koken in ("SWEETHEARTING_ZIMMET",):
+    if has_kritik or sprint_g_kritik or sprint_g2_kritik or birincil_koken in ("SWEETHEARTING_ZIMMET",):
         alarm = "kritik"
     elif has_yuksek or sprint_f_yuksek or iptal_suphe or birincil_koken in ("NAKIT_CEKILDI", "AKSAM_ZIMMET_POZISYON"):
         alarm = "yuksek"
@@ -5787,6 +6024,10 @@ def tam_analiz(cur, sube_id: str, tarih: str,
         g_ad = sprint_g_sonuc.get("aksamci_ad") or "Akşamcı"
         g_tl = sprint_g_sonuc.get("sisirme_tl", 0)
         ozet_parcalari.append(f"⚠ {g_ad} {g_tl:.0f}₺ N1 şişirdi (dün stok açığı)")
+    if sprint_g2_kritik:
+        s_ad = sprint_g2_sonuc.get("sabahci_ad") or "Sabahçı"
+        s_tl = sprint_g2_sonuc.get("dusuk_beyan_tl", 0)
+        ozet_parcalari.append(f"⚠ {s_ad} {s_tl:.0f}₺ N2 düşük beyan (bardak doğruladı)")
     if iptal_suphe:
         ozet_parcalari.append(
             f"⚠ Kasa {abs(kasa_fark_toplam):.0f}₺ açık, stok normal → iptal fiş kontrol"
@@ -5846,5 +6087,7 @@ def tam_analiz(cur, sube_id: str, tarih: str,
             "bom_sapma":    bom_sapma_sonuc,
         },
         # Sprint G — cross-day akşamcı N1 şişirme
-        "sprint_g": sprint_g_sonuc,
+        "sprint_g":  sprint_g_sonuc,
+        # Sprint G.2 — sabahçı N2 düşük beyan (bardak çapraz doğrulama)
+        "sprint_g2": sprint_g2_sonuc,
     }
