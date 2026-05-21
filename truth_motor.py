@@ -101,6 +101,10 @@ TANI_TIPLERI = (
     "BELGELENMIS_IADE",          # fire kaydı 'iade'/'siparis_iptali' → açıklanmış, zimmet yok
     "BELGELENMIS_FIRE",          # fire kaydı 'skt_bozulma'/'kirilma' vb. → açıklanmış
     "ZIMMET_IPTAL_MANIPULASYON", # Evo iptal tutarı ≈ kasa açığı → sahte iptal + para cepde
+    # ── Sprint F — QSR Büyük Zincir Senaryoları ──────────────────────────
+    "SUT_SAPMA",                 # gerçek süt tüketimi > teorik BOM → aşırı porsiyon/kayıt dışı ürün
+    "SAHTE_FIRE_KAYDI",          # fire kaydı var ama zamanlama+miktar şüpheli → sprint E bypass girişimi
+    "BOM_SAPMA",                 # fiziksel bardak/sarf tüketimi > Evo satış BOM → kayıt dışı kullanım
 )
 
 # Her tanı için (otomatik aksiyon, insan aksiyonu, alarm seviyesi)
@@ -123,9 +127,13 @@ EYLEM_MAP: Dict[str, Dict[str, str]] = {
     "POS_BYPASS":            {"oto": "evo_yetki_kontrol","insan": "Evo yetki + manuel iade kontrol",        "alarm": "yuksek"},
     "YETERSIZ_VERI":             {"oto": "—",                    "insan": "Eksik sayımı tamamla",                                 "alarm": "yok"},
     # Sprint E
-    "BELGELENMIS_IADE":          {"oto": "log_yesil",            "insan": "Fire kaydı + iade belgesi mevcut — araştırma gerekmez", "alarm": "yok"},
-    "BELGELENMIS_FIRE":          {"oto": "log_yesil",            "insan": "Fire kaydı mevcut (zayi/bozulma) — açıklanmış kayıp",  "alarm": "yok"},
-    "ZIMMET_IPTAL_MANIPULASYON": {"oto": "cfo_bildirim_kritik",  "insan": "Sahte Evo iptali + para cepde — soruşturma + kamera",  "alarm": "kritik"},
+    "BELGELENMIS_IADE":          {"oto": "log_yesil",            "insan": "Fire kaydı + iade belgesi mevcut — araştırma gerekmez",       "alarm": "yok"},
+    "BELGELENMIS_FIRE":          {"oto": "log_yesil",            "insan": "Fire kaydı mevcut (zayi/bozulma) — açıklanmış kayıp",          "alarm": "yok"},
+    "ZIMMET_IPTAL_MANIPULASYON": {"oto": "cfo_bildirim_kritik",  "insan": "Sahte Evo iptali + para cepde — soruşturma + kamera",          "alarm": "kritik"},
+    # Sprint F — QSR büyük zincir senaryoları
+    "SUT_SAPMA":                 {"oto": "uyari_orta",           "insan": "Reçete kontrolü + personel porsiyonlama izle + fire sor",       "alarm": "orta"},
+    "SAHTE_FIRE_KAYDI":          {"oto": "cfo_bildirim_log",     "insan": "Fire kaydı şüpheli — zamanlama + miktar incele + kamera bak",   "alarm": "yuksek"},
+    "BOM_SAPMA":                 {"oto": "uyari_yuksek",         "insan": "Sarf tüketimi BOM'u aşıyor — kayıt dışı kullanım soruştur",    "alarm": "yuksek"},
 }
 
 @dataclass
@@ -438,6 +446,10 @@ _TANI_ONCELIK = {
     "ZIMMET_IPTAL_MANIPULASYON": 98,
     "BELGELENMIS_IADE":          2,
     "BELGELENMIS_FIRE":          2,
+    # Sprint F
+    "SAHTE_FIRE_KAYDI":          88,
+    "BOM_SAPMA":                 65,
+    "SUT_SAPMA":                 55,
 }
 
 _TANI_INSAN = {
@@ -462,6 +474,10 @@ _TANI_INSAN = {
     "BELGELENMIS_IADE":          "Fire kaydı var — iade/iptal belgeli, zimmet yok",
     "BELGELENMIS_FIRE":          "Fire kaydı var — zayi/bozulma belgeli",
     "ZIMMET_IPTAL_MANIPULASYON": "Sahte Evo iptali — satış yapıldı, para kasaya konmadı",
+    # Sprint F
+    "SUT_SAPMA":                 "Süt tüketimi BOM'u aşıyor — aşırı porsiyonlama veya kayıt dışı ürün",
+    "SAHTE_FIRE_KAYDI":          "Fire kaydı şüpheli — zimmet örtbas girişimi olabilir",
+    "BOM_SAPMA":                 "Sarf tüketimi Evo satış BOM'undan fazla — kayıt dışı kullanım",
 }
 
 _ALARM_ESIK = {
@@ -4309,6 +4325,382 @@ def sprint_e_ikram_zimmet_ayir(cur, sube_id: str, tarih: str,
     return meta
 
 
+# ════════════════════════════════════════════════════════════════════════════
+#  SPRINT F — QSR BÜYÜK ZİNCİR SENARYO KÜTÜPHANESİ
+#  McDonald's / Starbucks / Domino's kaynaklı kanıtlanmış fraud pattern'leri
+#
+#  1. sut_sapma_analiz()     → Starbucks süt cross-reference (QSR evrensel sinyal)
+#  2. sahte_fire_tespiti()   → Waste Manipulation (McD / Starbucks #1 kör nokta)
+#  3. bom_sapma_tani()       → BOM varyans → kayıt dışı sarf tanısı
+# ════════════════════════════════════════════════════════════════════════════
+
+# Süt BOM — litre/satış (kullanıcı onaylı değerler 2026-05-21)
+SUT_BOM: Dict[str, float] = {
+    "14 Oz": 0.23,   # büyük karton kahve → 230ml (latte, cappuccino, vb.)
+    "8 Oz":  0.18,   # küçük karton kahve → 180ml
+    # Ice grubu: iced latte (süt var) + frozen (püreli, süt yok) karışık →
+    # bireysel hesaba dahil edilmiyor; %30 sapma eşiği bu toleransı karşılar.
+    # Milkshake: Evo'da ayrı grup yok → teorik'te yok, eşiğe gömülü.
+}
+
+# Süt sapma eşiği: %30 — milkshake + iced latte + ölçüm toleransı için buffer
+SUT_SAPMA_ESIK_YZ = 30.0
+
+# Sahte fire tespiti — zamanlama eşiği: kapanış öncesi kaç dakika?
+SAHTE_FIRE_KAPANIS_DK = 45   # kapanış öncesi 45dk içindeyse şüpheli
+
+
+def _meta_sut_bul(stok: Dict[str, Any]) -> Optional[float]:
+    """Stok sayım dict'inden süt değerini bul (çoklu anahtar denemesi)."""
+    for key in ("sut", "süt", "sut_litre", "süt_litre", "milk", "full_fat_milk",
+                "sut_lt", "süt_lt"):
+        v = stok.get(key)
+        if v is not None:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def _is_sut_key(key: str) -> bool:
+    """URUN_AC kalemler_json anahtarının süt olup olmadığını kontrol et."""
+    k = str(key).lower().strip()
+    return k in ("sut", "süt", "sut_litre", "süt_litre", "milk",
+                 "full_fat_milk", "sut_lt", "süt_lt")
+
+
+def sut_sapma_analiz(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
+    """Sprint F / Signal 1 — Süt çapraz referans analizi (Starbucks pattern).
+
+    Formül:
+      gercek_tuketim = acilis_sut + urun_ac_sut − kapanis_sut
+      teorik_tuketim = (14oz_satis × 0.23L) + (8oz_satis × 0.18L)
+      sapma_yuzde    = (gercek − teorik) / gercek × 100
+
+    Eşik: %30 (milkshake + iced latte + ölçüm buffer)
+
+    Returns dict: tani, sapma_litre, sapma_yuzde, gercek/teorik, yorum
+    """
+    sonuc: Dict[str, Any] = {
+        "acilis_sut": None,
+        "kapanis_sut": None,
+        "urun_ac_sut": 0.0,
+        "gercek_tuketim": None,
+        "teorik_tuketim": 0.0,
+        "sapma_litre": None,
+        "sapma_yuzde": None,
+        "tani": "VERI_YOK",
+        "yorum": "Süt sayım verisi bulunamadı",
+    }
+
+    # 1. ACILIS süt stoku
+    try:
+        cur.execute(
+            """SELECT meta FROM sube_operasyon_event
+               WHERE sube_id=%s AND tarih=%s::date AND tip='ACILIS'
+                 AND durum='tamamlandi'
+               ORDER BY cevap_ts DESC NULLS LAST LIMIT 1""",
+            (sube_id, tarih),
+        )
+        r = cur.fetchone()
+        if r:
+            m = _meta_oku(dict(r)["meta"])
+            v = _meta_sut_bul(m.get("acilis_stok_sayim") or {})
+            if v is not None:
+                sonuc["acilis_sut"] = v
+    except Exception as e:
+        log.warning("sut_sapma acilis hata: %s", e)
+
+    # 2. KAPANIS süt stoku
+    try:
+        cur.execute(
+            """SELECT meta FROM sube_operasyon_event
+               WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS'
+                 AND durum='tamamlandi'
+               ORDER BY cevap_ts DESC NULLS LAST LIMIT 1""",
+            (sube_id, tarih),
+        )
+        r = cur.fetchone()
+        if r:
+            m = _meta_oku(dict(r)["meta"])
+            v = _meta_sut_bul(m.get("kapanis_stok_sayim") or {})
+            if v is not None:
+                sonuc["kapanis_sut"] = v
+    except Exception as e:
+        log.warning("sut_sapma kapanis hata: %s", e)
+
+    # 3. URUN_AC süt girişi (gün içi açılan stok)
+    try:
+        cur.execute(
+            """SELECT kalemler_json FROM urun_ac_taslak
+               WHERE sube_id=%s AND tarih=%s::date AND durum='aktif'""",
+            (sube_id, tarih),
+        )
+        for rr in (cur.fetchall() or []):
+            kj = dict(rr).get("kalemler_json")
+            if isinstance(kj, str):
+                try:
+                    kj = json.loads(kj)
+                except Exception:
+                    kj = {}
+            if isinstance(kj, dict):
+                for k, v in kj.items():
+                    if _is_sut_key(k):
+                        try:
+                            sonuc["urun_ac_sut"] += float(v or 0)
+                        except (TypeError, ValueError):
+                            pass
+    except Exception as e:
+        log.warning("sut_sapma urun_ac hata: %s", e)
+
+    # 4. Teorik süt tüketimi (Evo satış × BOM)
+    try:
+        evo_gruplar = _evo_sube_grup_satis(cur, sube_id, tarih)
+        teorik = sum(
+            float(evo_gruplar.get(grup) or 0) * bom_lt
+            for grup, bom_lt in SUT_BOM.items()
+        )
+        sonuc["teorik_tuketim"] = round(teorik, 3)
+    except Exception as e:
+        log.warning("sut_sapma teorik hata: %s", e)
+
+    # 5. Sapma hesapla
+    if sonuc["acilis_sut"] is None or sonuc["kapanis_sut"] is None:
+        return sonuc   # VERI_YOK
+
+    gercek = round(
+        float(sonuc["acilis_sut"]) + float(sonuc["urun_ac_sut"])
+        - float(sonuc["kapanis_sut"]),
+        3,
+    )
+    sonuc["gercek_tuketim"] = gercek
+
+    if gercek <= 0:
+        sonuc["yorum"] = "Süt tüketimi sıfır/negatif — veri hatası olabilir"
+        return sonuc
+
+    sapma = round(gercek - sonuc["teorik_tuketim"], 3)
+    sapma_yz = round(sapma / gercek * 100, 1)
+    sonuc["sapma_litre"] = sapma
+    sonuc["sapma_yuzde"] = sapma_yz
+
+    if sapma_yz > SUT_SAPMA_ESIK_YZ:
+        sonuc["tani"] = "SUT_SAPMA"
+        sonuc["yorum"] = (
+            f"Gerçek süt tüketimi {gercek:.2f}L — teorik {sonuc['teorik_tuketim']:.2f}L. "
+            f"Açıklanamayan {sapma:.2f}L (%{sapma_yz:.0f}) — "
+            "aşırı porsiyonlama veya kayıt dışı ürün üretimi."
+        )
+    else:
+        sonuc["tani"] = "SUT_UYUMLU"
+        sonuc["yorum"] = (
+            f"Süt tüketimi {gercek:.2f}L — teorik {sonuc['teorik_tuketim']:.2f}L "
+            f"(%{sapma_yz:.0f} sapma) — normal aralıkta."
+        )
+
+    return sonuc
+
+
+def sahte_fire_tespiti(cur, sube_id: str, tarih: str,
+                       fire_sonuc: Optional[Dict] = None) -> Dict[str, Any]:
+    """Sprint F / Signal 2 — Sahte fire kaydı tespiti (Waste Manipulation).
+
+    Sprint E, fire kaydı varsa BELGELENMIS der ve bırakır.
+    Bu fonksiyon o kararı SORGULAR:
+
+    Şüphe sinyalleri:
+      1. Zamanlama: fire kaydı kapanış öncesi 45dk içinde → kapanışta oluşturulmuş
+      2. Tam eşleşme: fire adet = stok açığı ile birebir uyuşuyor (çok mükemmel)
+      3. Sıklık: bu personel son 7 günde >3 fire kaydı yazmış
+
+    Eğer ≥2 sinyal → SAHTE_FIRE_KAYDI tanısı.
+
+    Returns:
+        {
+          "sinyaller": [...],
+          "sinyal_sayisi": int,
+          "tani": "SAHTE_FIRE_KAYDI" | "FIRE_GUVENLIR" | "VERI_YOK",
+          "yorum": str,
+        }
+    """
+    sonuc: Dict[str, Any] = {
+        "sinyaller": [],
+        "sinyal_sayisi": 0,
+        "tani": "VERI_YOK",
+        "yorum": "Fire kaydı yok veya veri yetersiz",
+    }
+
+    if fire_sonuc is None:
+        try:
+            fire_sonuc = fire_bildirim_capraz(cur, sube_id, tarih)
+        except Exception:
+            return sonuc
+
+    if not fire_sonuc.get("fire_kayit_var"):
+        sonuc["tani"] = "FIRE_YOK"
+        sonuc["yorum"] = "Fire kaydı yok — sahte fire analizi uygulanamaz"
+        return sonuc
+
+    sinyaller = []
+
+    # ── Sinyal 1: Zamanlama — kapanış öncesi 45dk içinde mi? ────────────────
+    try:
+        cur.execute(
+            """SELECT cevap_ts FROM sube_operasyon_event
+               WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS'
+                 AND durum='tamamlandi'
+               ORDER BY cevap_ts DESC NULLS LAST LIMIT 1""",
+            (sube_id, tarih),
+        )
+        kr = cur.fetchone()
+        kapanis_ts = dict(kr).get("cevap_ts") if kr else None
+
+        cur.execute(
+            """SELECT olusturma FROM sube_fire_bildirim
+               WHERE sube_id=%s AND tarih=%s::date
+               ORDER BY olusturma""",
+            (sube_id, tarih),
+        )
+        fire_rows = [dict(r) for r in (cur.fetchall() or [])]
+
+        if kapanis_ts and fire_rows:
+            from datetime import timedelta
+            for fr in fire_rows:
+                ot = fr.get("olusturma")
+                if ot and kapanis_ts:
+                    try:
+                        fark_dk = (kapanis_ts - ot).total_seconds() / 60
+                        if 0 <= fark_dk <= SAHTE_FIRE_KAPANIS_DK:
+                            sinyaller.append({
+                                "tip": "ZAMANLAMA",
+                                "detay": f"Fire kaydı kapanıştan {fark_dk:.0f}dk önce — kapanış telaşı",
+                            })
+                            break
+                    except Exception:
+                        pass
+    except Exception as e:
+        log.warning("sahte_fire zamanlama hata: %s", e)
+
+    # ── Sinyal 2: Sıklık — aynı personel son 7 günde kaç fire yazmış? ───────
+    try:
+        cur.execute(
+            """SELECT sube_fire_bildirim.personel_id,
+                      COUNT(*) AS fire_sayisi
+               FROM sube_fire_bildirim
+               WHERE sube_id=%s
+                 AND tarih BETWEEN (%s::date - INTERVAL '7 days') AND %s::date
+               GROUP BY personel_id
+               HAVING COUNT(*) > 3""",
+            (sube_id, tarih, tarih),
+        )
+        supheli = [dict(r) for r in (cur.fetchall() or [])]
+        if supheli:
+            for s in supheli:
+                sinyaller.append({
+                    "tip": "SIKLIK",
+                    "detay": (
+                        f"Personel {s.get('personel_id')} son 7 günde "
+                        f"{s.get('fire_sayisi')} fire kaydı — ortalama üstü"
+                    ),
+                })
+    except Exception as e:
+        log.warning("sahte_fire siklik hata: %s", e)
+
+    # ── Sinyal 3: Toplam adet anormalliği — şube günlük ortalaması ile kıyasla
+    try:
+        cur.execute(
+            """SELECT AVG(toplam_adet) AS ort
+               FROM sube_fire_bildirim
+               WHERE sube_id=%s
+                 AND tarih BETWEEN (%s::date - INTERVAL '30 days') AND (%s::date - INTERVAL '1 day')""",
+            (sube_id, tarih, tarih),
+        )
+        r = cur.fetchone()
+        ort_adet = float(dict(r).get("ort") or 0) if r else 0.0
+        bugun_adet = float(fire_sonuc.get("toplam_adet") or 0)
+        if ort_adet > 0 and bugun_adet > ort_adet * 2.5:
+            sinyaller.append({
+                "tip": "MIKTAR_ANOMALI",
+                "detay": (
+                    f"Bugün fire {bugun_adet:.0f} adet — "
+                    f"30 gün ortalaması {ort_adet:.1f} (×{bugun_adet/ort_adet:.1f})"
+                ),
+            })
+    except Exception as e:
+        log.warning("sahte_fire miktar hata: %s", e)
+
+    sinyal_sayisi = len(sinyaller)
+    sonuc["sinyaller"] = sinyaller
+    sonuc["sinyal_sayisi"] = sinyal_sayisi
+
+    if sinyal_sayisi >= 2:
+        sonuc["tani"] = "SAHTE_FIRE_KAYDI"
+        sonuc["yorum"] = (
+            f"{sinyal_sayisi} şüphe sinyali tespit edildi — "
+            "fire kaydı stok açığını örtbas ediyor olabilir: "
+            + "; ".join(s["detay"] for s in sinyaller)
+        )
+    elif sinyal_sayisi == 1:
+        sonuc["tani"] = "FIRE_ZAYIF_SUPHE"
+        sonuc["yorum"] = (
+            f"1 zayıf sinyal: {sinyaller[0]['detay']} — "
+            "tek başına yeterli değil, izlemede tut"
+        )
+    else:
+        sonuc["tani"] = "FIRE_GUVENLIR"
+        sonuc["yorum"] = "Fire kaydı zamanlama + miktar açısından güvenilir görünüyor"
+
+    return sonuc
+
+
+def bom_sapma_tani(bom_varyans_sonuc: Dict[str, Any]) -> Dict[str, Any]:
+    """Sprint F / Signal 3 — BOM varyans sonucundan BOM_SAPMA tanısı üret.
+
+    bom_recete_varyans() çıktısını alır; eşik aşanları tanıya dönüştürür.
+
+    Eşik: fiziksel tüketim > teorik × 1.25 (>%25 fazla) → BOM_SAPMA
+    """
+    sonuclar = bom_varyans_sonuc.get("sonuclar") or []
+    bom_aciklar = []
+    for s in sonuclar:
+        if s.get("durum") != "kayit_disi_kullanim":
+            continue
+        teorik = float(s.get("teorik_evo") or 0)
+        fiziksel = float(s.get("fiziksel") or 0)
+        if teorik <= 0 or fiziksel <= 0:
+            continue
+        oran = fiziksel / teorik
+        if oran > 1.25:   # %25 fazla tüketim eşiği
+            bom_aciklar.append({
+                "sarf": s["sarf"],
+                "teorik": teorik,
+                "fiziksel": fiziksel,
+                "fazla_oran": round((oran - 1) * 100, 1),
+                "varyans": s.get("varyans"),
+            })
+
+    if bom_aciklar:
+        tani = "BOM_SAPMA"
+        yorum = (
+            f"{len(bom_aciklar)} sarf kalemi BOM'u aşıyor: "
+            + "; ".join(
+                f"{b['sarf']} %{b['fazla_oran']:.0f} fazla"
+                for b in bom_aciklar
+            )
+            + " — kayıt dışı kullanım veya reçete dışı üretim."
+        )
+    else:
+        tani = "BOM_UYUMLU"
+        yorum = "Tüm sarf kalemleri BOM eşiği içinde — reçete uyumlu."
+
+    return {
+        "tani": tani,
+        "bom_aciklar": bom_aciklar,
+        "yorum": yorum,
+    }
+
+
 def stok_akis_tablosu(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     """5 boyut için tam stok akış tablosu.
 
@@ -5073,16 +5465,47 @@ def tam_analiz(cur, sube_id: str, tarih: str,
                 except Exception:
                     pass
 
-    # 8. Genel alarm seviyesi
+    # 8. Sprint F — QSR büyük zincir çapraz kontrolleri
+    # 8a. Süt çapraz referans
+    sut_sapma: Dict[str, Any] = {}
+    try:
+        sut_sapma = sut_sapma_analiz(cur, sube_id, tarih)
+    except Exception as e:
+        log.warning("tam_analiz sut_sapma hata: %s", e)
+
+    # 8b. Sahte fire tespiti (fire kayıt varsa sprint_e'yi sorgula)
+    sahte_fire: Dict[str, Any] = {}
+    try:
+        fire_sonuc_ref = fire_bildirim_capraz(cur, sube_id, tarih)
+        if fire_sonuc_ref.get("fire_kayit_var"):
+            sahte_fire = sahte_fire_tespiti(cur, sube_id, tarih, fire_sonuc=fire_sonuc_ref)
+    except Exception as e:
+        log.warning("tam_analiz sahte_fire hata: %s", e)
+
+    # 8c. BOM reçete varyansı → BOM_SAPMA tanısı
+    bom_sapma_sonuc: Dict[str, Any] = {}
+    try:
+        bom_varyans = bom_recete_varyans(cur, sube_id, tarih)
+        bom_sapma_sonuc = bom_sapma_tani(bom_varyans)
+    except Exception as e:
+        log.warning("tam_analiz bom_sapma hata: %s", e)
+
+    # 9. Genel alarm seviyesi
     has_kritik = any(ps.get("risk_seviye") == "kritik" for ps in personel_sorumlu)
     has_yuksek = any(ps.get("risk_seviye") == "yuksek" for ps in personel_sorumlu)
     birincil_koken = kok_nedenler[0].get("tip", "") if kok_nedenler else ""
 
+    sprint_f_yuksek = (
+        sahte_fire.get("tani") == "SAHTE_FIRE_KAYDI"
+        or bom_sapma_sonuc.get("tani") == "BOM_SAPMA"
+    )
+    sprint_f_orta = (sut_sapma.get("tani") == "SUT_SAPMA")
+
     if has_kritik or birincil_koken in ("SWEETHEARTING_ZIMMET",):
         alarm = "kritik"
-    elif has_yuksek or birincil_koken in ("NAKIT_CEKILDI", "AKSAM_ZIMMET_POZISYON"):
+    elif has_yuksek or sprint_f_yuksek or birincil_koken in ("NAKIT_CEKILDI", "AKSAM_ZIMMET_POZISYON"):
         alarm = "yuksek"
-    elif stok_acik_sayisi > 0 or abs(kasa_fark_toplam) > 5:
+    elif stok_acik_sayisi > 0 or abs(kasa_fark_toplam) > 5 or sprint_f_orta:
         alarm = "orta"
     else:
         alarm = "dusuk"
@@ -5151,4 +5574,10 @@ def tam_analiz(cur, sube_id: str, tarih: str,
         # Ham veriler
         "vardiya_data": vardiya_data,
         "stok_data": stok_data,
+        # Sprint F — QSR büyük zincir çapraz kontrolleri
+        "sprint_f": {
+            "sut_sapma":    sut_sapma,
+            "sahte_fire":   sahte_fire,
+            "bom_sapma":    bom_sapma_sonuc,
+        },
     }
