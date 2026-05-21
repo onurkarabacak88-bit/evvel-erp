@@ -25,6 +25,13 @@ _BAR_KEYS = [
     "pasta_dilim_yaban",
 ]
 
+# Gün sonu denetimi: açılış + ürün aç − kapanış < 0 → ürün aç kaydı eksik (depo hatası)
+GUN_ICI_DENETIM_KEYS = frozenset({
+    "bardak_kucuk", "bardak_buyuk", "bardak_plastik",
+    "su_adet", "sut_litre", "redbull_adet", "soda_adet", "pasta_adet",
+    *[k for k in _BAR_KEYS if k.startswith("pasta_")],
+})
+
 STOK_UYUM_TIPS = ("STOK_BAR_DEVIR_FARK", "STOK_BAR_GUN_ICI_FARK", "URUN_AC_UYUMSUZLUK")
 
 
@@ -323,9 +330,6 @@ def build_stok_uyum_liste(
                 "kalem_adi": lab,
                 "dun_kapanis": vd,
                 "bugun_acilis": va,
-                "urun_ac": int(ua.get(k, 0) or 0),
-                "bugun_kapanis": int(kap.get(k, 0) or 0),
-                "gun_ici_fark": int(sat.get(k, 0) or 0),
                 "onceki_kapanis_yok": bool(row.get("onceki_kapanis_yok")),
                 "onceki_kapanis_tarihi": row.get("onceki_kapanis_tarihi"),
             }
@@ -335,6 +339,8 @@ def build_stok_uyum_liste(
             )
 
         for k, fark_val in (sat or {}).items():
+            if k not in GUN_ICI_DENETIM_KEYS:
+                continue
             fark = int(fark_val or 0)
             if fark >= 0:
                 continue
@@ -344,8 +350,11 @@ def build_stok_uyum_liste(
             ac_v = int(ac.get(k, 0) or 0)
             ua_v = int(ua.get(k, 0) or 0)
             kap_v = int(kap.get(k, 0) or 0)
+            eksik_ua = abs(fark)
             mesaj = (
-                f"Gün içi stok tutmuyor — {lab}: açılış {ac_v} + ürün aç {ua_v} − kapanış {kap_v} = {fark} adet"
+                f"Ürün aç kaydı eksik (depo stok hatası) — {lab}: "
+                f"açılış {ac_v} + ürün aç {ua_v} − kapanış {kap_v} = {fark} ad · "
+                f"≈{eksik_ua} ad Ürün Aç paneline girilmemiş"
             )
             detay = {
                 "kalem_kodu": k,
@@ -353,7 +362,9 @@ def build_stok_uyum_liste(
                 "acilis": ac_v,
                 "urun_ac": ua_v,
                 "kapanis": kap_v,
-                "gun_ici_fark": fark,
+                "kullanilan": fark,
+                "eksik_urun_ac": eksik_ua,
+                "hata_turu": "urun_ac_eksik",
             }
             _uyari_upsert(
                 cur, uid, sid, hedef_tarih, "STOK_BAR_GUN_ICI_FARK",
@@ -668,6 +679,19 @@ def stok_uyum_kaynak_duzelt(
             WHERE id=%s
             """,
             (notu or "Gerçek uyumsuzluk — kaynak düzeltilmedi", uyari_id),
+        )
+        return {"uyari_id": uyari_id, "eski_fark": float(u.get("fark_tl") or 0), "yeni_fark": float(u.get("fark_tl") or 0), "otomatik_cozuldu": True}
+    if sebep == "urun_ac_eksik":
+        cur.execute(
+            """
+            UPDATE sube_operasyon_uyari
+            SET okundu=TRUE, cozum_notu=COALESCE(cozum_notu, %s), cozum_ts=COALESCE(cozum_ts, NOW())
+            WHERE id=%s
+            """,
+            (
+                notu or "Ürün Aç panelinde eksik kayıt tamamlanacak — depo stok hatası",
+                uyari_id,
+            ),
         )
         return {"uyari_id": uyari_id, "eski_fark": float(u.get("fark_tl") or 0), "yeni_fark": float(u.get("fark_tl") or 0), "otomatik_cozuldu": True}
 

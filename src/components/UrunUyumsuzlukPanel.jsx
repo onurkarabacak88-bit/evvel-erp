@@ -207,7 +207,9 @@ export default function UrunUyumsuzlukPanel({
         )}
         {children}
         <div style={{ padding: '10px 14px', borderTop: children ? `1px solid ${r.sep}` : 'none' }}>
-          <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 4 }}>Fark (0 olmalıydı)</div>
+          <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 4 }}>
+            {u.tip === 'STOK_BAR_GUN_ICI_FARK' ? 'Eksik ürün aç (panelde girilmeli)' : 'Fark (0 olmalıydı)'}
+          </div>
           <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'monospace', color: fark < 0 ? '#fca5a5' : fark > 0 ? '#fdba74' : 'var(--text2)' }}>
             {fark > 0 ? '+' : ''}{fmt(fark)} adet
           </div>
@@ -232,7 +234,9 @@ export default function UrunUyumsuzlukPanel({
       <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0, lineHeight: 1.55 }}>
         Kasa uyumsuzlukları ile aynı mantık: formül → fark → <strong>Kaynağı Düzelt</strong> veya <strong>Çözüldü işaretle</strong>.
         <br />
-        <strong>Devir:</strong> Dün kapanış ≠ Bugün açılış · <strong>Gün içi:</strong> Açılış + Ürün Aç − Kapanış &lt; 0 · <strong>Karşılıksız ürün aç:</strong> Depoda stok yokken açılan kalem
+        <strong>Devir:</strong> Dün kapanış ≠ Bugün açılış (vardiya devir sayımı) ·{' '}
+        <strong>Ürün aç eksik:</strong> Açılış + Ürün Aç − Kapanış &lt; 0 → Ürün Aç paneline girilmemiş (depo stok hatası); pozitif = normal kullanılan ·{' '}
+        <strong>Karşılıksız ürün aç:</strong> Depoda stok yokken açılan kalem
       </p>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px' }}>
@@ -249,7 +253,7 @@ export default function UrunUyumsuzlukPanel({
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {devirKayitlar.length > 0 && <span className="badge" style={{ background: 'rgba(240,128,64,0.2)', color: '#fdba74' }}>💰 {devirKayitlar.length} devir</span>}
-          {gunIciKayitlar.length > 0 && <span className="badge" style={{ background: 'rgba(139,92,246,0.2)', color: '#ddd6fe' }}>📉 {gunIciKayitlar.length} gün içi</span>}
+          {gunIciKayitlar.length > 0 && <span className="badge" style={{ background: 'rgba(139,92,246,0.2)', color: '#ddd6fe' }}>📋 {gunIciKayitlar.length} ürün aç eksik</span>}
           {urunAcKayitlar.length > 0 && <span className="badge" style={{ background: 'rgba(220,38,38,0.15)', color: '#fca5a5' }}>⚠ {urunAcKayitlar.length} karşılıksız aç</span>}
           {gunToplam === 0 && !aramaYukleniyor && <span style={{ color: '#4ade80', fontWeight: 600 }}>✓ Bu gün sorun yok</span>}
         </div>
@@ -325,18 +329,20 @@ export default function UrunUyumsuzlukPanel({
 
       {gunIciKayitlar.length > 0 && (
         <div>
-          <div style={{ fontSize: 11, fontWeight: 800, color: '#ddd6fe', marginBottom: 8, textTransform: 'uppercase' }}>📉 Gün içi stok tutmuyor</div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#ddd6fe', marginBottom: 8, textTransform: 'uppercase' }}>📋 Ürün aç kaydı eksik (depo stok hatası)</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {gunIciKayitlar.map((u) => {
               const d = u.detay_json || {};
               const r = sevRenk(Math.abs(Number(u.fark_tl || 0)));
+              const eksik = Number(d.eksik_urun_ac ?? Math.abs(Number(u.fark_tl || 0)));
               return (
-                <StokKart key={u.id} u={u} tipLabel="📉" varsayilanSebep="kapanis_yanlis"
-                  formulaText="Açılış + Ürün Aç − Kapanış = 0 (beklenen)">
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', borderBottom: `1px solid ${r.sep}` }}>
+                <StokKart key={u.id} u={u} tipLabel="📋" varsayilanSebep="urun_ac_eksik"
+                  formulaText="Açılış + Ürün Aç − Kapanış · Negatif = Ürün Aç paneline girilmemiş · Pozitif = normal tüketim (uyarı yok)">
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', borderBottom: `1px solid ${r.sep}` }}>
                     <Kutu label="Açılış" val={d.acilis} renk="#86efac" sep />
                     <Kutu label="Ürün Aç" val={d.urun_ac} renk="#86efac" sep />
-                    <Kutu label="Kapanış" val={d.kapanis} renk="#fca5a5" />
+                    <Kutu label="Kapanış" val={d.kapanis} renk="#fca5a5" sep />
+                    <Kutu label="Eksik ürün aç" val={eksik} renk="#fca5a5" alt="panelde girilmeli" />
                   </div>
                 </StokKart>
               );
@@ -413,8 +419,9 @@ export default function UrunUyumsuzlukPanel({
                 </>
               ) : (
                 <>
-                  <option value="kapanis_yanlis">🌆 Bugün kapanış sayımı yanlış</option>
-                  <option value="acilis_yanlis">🌅 Bugün açılış sayımı yanlış</option>
+                  <option value="urun_ac_eksik">📋 Ürün Aç kaydı eksik (depo stok hatası)</option>
+                  <option value="kapanis_yanlis">🌆 Kapanış sayımı yanlış</option>
+                  <option value="acilis_yanlis">🌅 Açılış sayımı yanlış</option>
                   <option value="gercek_uyumsuzluk">⚠ Gerçek uyumsuzluk — kaynak değişmez</option>
                 </>
               )}

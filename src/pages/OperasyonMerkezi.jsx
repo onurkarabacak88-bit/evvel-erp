@@ -527,8 +527,8 @@ const MODULLER = [
     id: 'envanter',
     label: '📦 Envanter',
     renk: '#f08040',
-    desc: 'Stok sayımı, tüketim takibi, fire & kayıp analizi ve ürün uyumsuzlukları',
-    tabs: ['magaza-kartlari', 'stok-hareketi', 'sayim', 'kullanilan-urunler', 'urun-ac', 'stok-kayip', 'urun-uyumsuzluk', 'fire-bildirim'],
+    desc: 'Stok sayımı, ürün açma, fire & kayıp analizi ve ürün uyumsuzlukları',
+    tabs: ['magaza-kartlari', 'stok-hareketi', 'sayim', 'urun-ac', 'stok-kayip', 'urun-uyumsuzluk', 'fire-bildirim'],
   },
   {
     id: 'siparis-tedarik',
@@ -541,8 +541,8 @@ const MODULLER = [
     id: 'finans-kasa',
     label: '💳 Finans & Kasa',
     renk: '#e85d5d',
-    desc: 'Açılış kasası, kapanış özeti, ciro onayı, kasa uyumsuzluğu ve fiş kontrol',
-    tabs: ['acilis-kasa-takip', 'kapanis-takip', 'ciro-onay', 'kasa-uyumsuzluk', 'kasa-personel-takip', 'fis'],
+    desc: 'Açılış/kapanış kasası, kullanılan ürünler, ciro onayı, kasa uyumsuzluğu ve fiş kontrol',
+    tabs: ['acilis-kasa-takip', 'kapanis-takip', 'kullanilan-urunler', 'ciro-onay', 'kasa-uyumsuzluk', 'kasa-personel-takip', 'fis'],
   },
   {
     id: 'personel',
@@ -789,6 +789,19 @@ const KULLANILAN_LABEL = {
   pasta_dilim_sade:'Dilim San Sebastian Sade', pasta_dilim_antep:'Dilim San Sebastian Antep Fıstıklı',
   pasta_dilim_cik:'Dilim San Sebastian Çikolatalı', pasta_dilim_yaban:'Dilim San Sebastian Yaban Mersinli',
 };
+
+/** Negatif satılan = Ürün Aç paneline girilmemiş (stok_bar_uyum.GUN_ICI_DENETIM_KEYS ile uyumlu) */
+const KULLANILAN_URUN_AC_DENETIM = new Set([
+  'bardak_kucuk', 'bardak_buyuk', 'bardak_plastik',
+  'su_adet', 'sut_litre', 'redbull_adet', 'soda_adet', 'pasta_adet',
+  ...KULLANILAN_PASTA_KEYS,
+]);
+
+function kullanilanUrunAcEksikVar(r) {
+  if (r?.urun_ac_eksik_var === true) return true;
+  const sat = r?.satilan || {};
+  return [...KULLANILAN_URUN_AC_DENETIM].some((k) => Number(sat[k] ?? 0) < 0);
+}
 
 function _sumSatilan(satilan) {
   return Object.values(satilan || {}).reduce((sum, v) => {
@@ -2397,6 +2410,8 @@ export default function OperasyonMerkezi() {
   const [kullanilanSeciliSubeKey, setKullanilanSeciliSubeKey] = useState('all');
   const [kullanilanHaftaSatirlari, setKullanilanHaftaSatirlari] = useState([]);
   const [kullanilanHaftaYukleniyor, setKullanilanHaftaYukleniyor] = useState(false);
+  const [kullanilanEvoYenileniyor, setKullanilanEvoYenileniyor] = useState(false);
+  const kullanilanEvoPollRef = useRef(null);
   const [kapanisTakip, setKapanisTakip] = useState(null);
   const [kapanisTakipYukleniyor, setKapanisTakipYukleniyor] = useState(false);
   const [kapanisTakipTarih, setKapanisTakipTarih] = useState(isGunuIsoIstanbul());
@@ -2809,11 +2824,12 @@ export default function OperasyonMerkezi() {
     }
   }, [gecKalanPersonelAy, gecKalanPersonelAyYukle, toast, varsayilanAy]);
 
-  const kullanilanGunYukle = useCallback(async (tarih) => {
+  const kullanilanGunYukle = useCallback(async (tarih, { evoYenile = false } = {}) => {
     const hedef = (tarih || bugunIsoTarih()).trim();
     const ym = hedef.slice(0, 7);
+    const evoQs = evoYenile ? '&evo_yenile=1' : '';
     const r = await api(
-      `/ops/bar-ozet?year_month=${encodeURIComponent(ym)}&gun=${encodeURIComponent(hedef)}&limit=180&kapanis_fallback=false`,
+      `/ops/bar-ozet?year_month=${encodeURIComponent(ym)}&gun=${encodeURIComponent(hedef)}&limit=180&kapanis_fallback=false${evoQs}`,
     );
     const ham = Array.isArray(r?.satirlar) ? r.satirlar : [];
     const satirlar = ham.filter((row) => row?.kapanis_var === true);
@@ -2846,20 +2862,27 @@ export default function OperasyonMerkezi() {
     }
   }, [toast, kullanilanDetayAcik, kullanilanGunYukle]);
 
-  const kullanilanAramaYap = useCallback(async () => {
+  const kullanilanAramaYap = useCallback(async (opts = {}) => {
+    const evoYenile = !!opts.evoYenile;
     const hedef = (kullanilanAramaTarih || bugunIsoTarih()).trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(hedef)) {
       toast('Tarih formatı YYYY-MM-DD olmalı');
       return;
     }
-    setKullanilanAramaYukleniyor(true);
+    if (evoYenile) setKullanilanEvoYenileniyor(true);
+    else setKullanilanAramaYukleniyor(true);
     try {
-      const data = await kullanilanGunYukle(hedef);
+      const data = await kullanilanGunYukle(hedef, { evoYenile });
       setKullanilanAramaSonuc(data);
+      if (hedef === bugunIsoTarih()) setKullanilanBugun(data);
+      if (evoYenile && data.evo_veri_geldi) {
+        toast('Evo verisi güncellendi', 'green');
+      }
     } catch (e) {
       toast(e.message || 'Kullanılan ürün araması yapılamadı');
     } finally {
-      setKullanilanAramaYukleniyor(false);
+      if (evoYenile) setKullanilanEvoYenileniyor(false);
+      else setKullanilanAramaYukleniyor(false);
     }
   }, [kullanilanAramaTarih, kullanilanGunYukle, toast]);
 
@@ -4035,6 +4058,40 @@ export default function OperasyonMerkezi() {
   }, [aktifSekme, toast, kullanilanGunYukle, kullanilanHaftaYukle]);
 
   useEffect(() => {
+    if (aktifSekme !== 'kullanilan-urunler') {
+      if (kullanilanEvoPollRef.current) {
+        clearInterval(kullanilanEvoPollRef.current);
+        kullanilanEvoPollRef.current = null;
+      }
+      return;
+    }
+    if (kullanilanAramaSonuc?.evo_veri_geldi !== false) {
+      if (kullanilanEvoPollRef.current) {
+        clearInterval(kullanilanEvoPollRef.current);
+        kullanilanEvoPollRef.current = null;
+      }
+      return;
+    }
+    const hedef = (kullanilanAramaTarih || bugunIsoTarih()).trim();
+    const poll = async () => {
+      try {
+        const data = await kullanilanGunYukle(hedef, { evoYenile: true });
+        setKullanilanAramaSonuc(data);
+        if (hedef === bugunIsoTarih()) setKullanilanBugun(data);
+      } catch {
+        /* sessiz — bir sonraki turda tekrar dene */
+      }
+    };
+    kullanilanEvoPollRef.current = setInterval(poll, 45_000);
+    return () => {
+      if (kullanilanEvoPollRef.current) {
+        clearInterval(kullanilanEvoPollRef.current);
+        kullanilanEvoPollRef.current = null;
+      }
+    };
+  }, [aktifSekme, kullanilanAramaSonuc?.evo_veri_geldi, kullanilanAramaTarih, kullanilanGunYukle]);
+
+  useEffect(() => {
     if (aktifSekme !== 'kapanis-takip') {
       if (kapanisTakipIntervalRef.current) {
         clearInterval(kapanisTakipIntervalRef.current);
@@ -4755,6 +4812,8 @@ export default function OperasyonMerkezi() {
   /** Modül içinde sekme değişimi — yukleniyor tetikler, veri useEffect ile yüklenir */
   const acModulTab = useCallback((tabId) => {
     const bolumler = OPS_MODUL_BOLUM[tabId] || [{ id: 'icerik', label: 'İçerik' }];
+    const modul = MODULLER.find((m) => m.tabs.includes(tabId));
+    if (modul) setAktifModul(modul.id);
     setOncekiSekme((prev) => (prev !== tabId ? (aktifSekme || prev) : prev));
     setAktifSekme(tabId);
     setOpsIcBolum(bolumler[0].id);
@@ -5603,6 +5662,9 @@ export default function OperasyonMerkezi() {
                   } else if (firstTab === 'ciro-onay') {
                     setCiroOnayAramaTarih(isGunuIsoIstanbul());
                     setCiroOnayAramaSonuc(ciroOnayBugun);
+                  } else if (firstTab === 'kullanilan-urunler') {
+                    setKullanilanAramaTarih(bugunIsoTarih());
+                    setKullanilanAramaSonuc(kullanilanBugun);
                   } else if (firstTab === 'magaza-kartlari') {
                     setDisiplinPanel('kuyruk');
                   }
@@ -5965,7 +6027,7 @@ export default function OperasyonMerkezi() {
                 type="button"
                 className="tab-pill"
                 style={{ borderColor: kapanmayanSayi > 0 ? '#f08040' : undefined, color: kapanmayanSayi > 0 ? '#f08040' : undefined }}
-                onClick={() => acModulTab('kapanis-takip')}
+                onClick={() => acOpsModul('kapanis-takip', 'finans-kasa')}
                 title="Kapanış tamamlanmayan şubeler"
               >
                 🔒 Kapanmayan&nbsp;
@@ -8552,8 +8614,9 @@ export default function OperasyonMerkezi() {
           >
             <strong style={{ color: 'var(--text2)', fontWeight: 600 }}>Ne gösterilir?</strong>{' '}
             Kaynak <strong style={{ color: 'var(--text2)' }}>/ops/bar-ozet</strong> (yalnızca tamamlanmış <strong style={{ color: 'var(--text2)' }}>KAPANIS</strong> eventi; vardiya devir sayımı kullanılmaz):{' '}
-            <strong style={{ color: 'var(--text2)' }}>Satılan ≈ Açılış + Ürün Aç − Kapanış sayımı</strong> (bardak, su, soda, redbull, pasta vb.).
-            Tabloda <strong style={{ color: 'var(--text2)' }}>Dün kapanış</strong> sütunu bir önceki günün kapanış sayımını gösterir (açılışın hemen solunda).
+            <strong style={{ color: 'var(--text2)' }}>Satılan = Açılış + Ürün Aç − Kapanış</strong> (8oz, 14oz, plastik bardak, su, süt, soda, redbull, pasta vb.).
+            <strong style={{ color: 'var(--text2)' }}> Pozitif satılan</strong> = normal tüketim. <strong style={{ color: '#fca5a5' }}>Negatif satılan</strong> = Ürün Aç paneline girilmemiş (depo stok hatası) — Ürün Uyumsuzlukları sekmesinde denetlenir.
+            Tabloda <strong style={{ color: 'var(--text2)' }}>Dün kapanış</strong> sütunu bir önceki günün kapanış sayımını gösterir (devir; ürün aç ile karıştırılmaz).
             <strong style={{ color: 'var(--text2)' }}> Satılan</strong> sütununun altında Evo Hızlı Satış’tan gelen malzeme adedi (ör. redbull, 14oz karton bardak) yazılır.
             Kapanış yapılmamış şubeler bu listede görünmez. Tarih, operasyon olayının takvim günüdür.
             Haftalık bölümde günler <strong style={{ color: 'var(--text2)' }}>bugünden geriye</strong> sıralanır; şubeler <strong style={{ color: 'var(--text2)' }}>ada göre (A–Z)</strong> listelenir.
@@ -8686,11 +8749,37 @@ export default function OperasyonMerkezi() {
                 fontSize: 12,
                 color: '#fca5a5',
                 lineHeight: 1.5,
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                gap: 12,
+                flexWrap: 'wrap',
               }}
             >
-              <strong style={{ color: '#f87171' }}>⚠ Evo veri gelmedi</strong>
-              {' — '}
-              {kullanilanAramaSonuc?.evo_mesaj || 'Satılan sütununda Evo karşılaştırması gösterilemez. EVO_WEB_TOKEN veya EVO_KULLANICI/EVO_SIFRE kontrol edin.'}
+              <div style={{ flex: '1 1 240px' }}>
+                <strong style={{ color: '#f87171' }}>⚠ Evo veri gelmedi</strong>
+                {' — '}
+                {kullanilanAramaSonuc?.evo_mesaj || 'Satılan sütununda Evo karşılaştırması gösterilemez. EVO_WEB_TOKEN veya EVO_KULLANICI/EVO_SIFRE kontrol edin.'}
+                <div style={{ marginTop: 6, fontSize: 11, color: '#fdba74' }}>
+                  Veri akışı başladıysa <strong>Evo yenile</strong> ile tekrar deneyin; bu sekme açıkken otomatik olarak ~45 sn’de bir yeniden sorgulanır.
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={kullanilanEvoYenileniyor || kullanilanAramaYukleniyor}
+                onClick={() => kullanilanAramaYap({ evoYenile: true })}
+                style={{
+                  alignSelf: 'center',
+                  whiteSpace: 'nowrap',
+                  background: 'rgba(245,158,11,0.15)',
+                  border: '1px solid rgba(245,158,11,0.45)',
+                  color: '#fde68a',
+                  fontWeight: 700,
+                }}
+              >
+                {kullanilanEvoYenileniyor ? '⏳ Evo yenileniyor…' : '🔄 Evo yenile'}
+              </button>
             </div>
           )}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -8734,13 +8823,13 @@ export default function OperasyonMerkezi() {
                 const keys = kullanilanRowKeys(r);
                 const labels = KULLANILAN_LABEL;
                 const ozet = kullanilanTabloOzet(r, keys, labels);
-                const hasFark = r.fark_var;
+                const urunAcEksik = kullanilanUrunAcEksikVar(r);
                 const kapanisYok = !r.kapanis_var;
                 const evoYok = r.evo_veri_geldi === false;
                 const evoMesaj = r.evo_mesaj || kullanilanAramaSonuc?.evo_mesaj || 'Evo veri gelmedi';
                 return (
                   <div key={`${r.sube_id}-${r.tarih}`} className="card" style={{
-                    borderLeft: `4px solid ${hasFark ? 'var(--red)' : kapanisYok ? 'var(--yellow)' : 'var(--green)'}`,
+                    borderLeft: `4px solid ${urunAcEksik ? 'var(--red)' : kapanisYok ? 'var(--yellow)' : 'var(--green)'}`,
                     padding: '14px 16px',
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
@@ -8749,9 +8838,9 @@ export default function OperasyonMerkezi() {
                         <span className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 10 }}>{r.tarih}</span>
                       </div>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                        {hasFark && <span className="badge badge-red">Fark var</span>}
+                        {urunAcEksik && <span className="badge badge-red" title="Açılış + Ürün Aç − Kapanış negatif — Ürün Aç paneline eksik kayıt">Ürün aç eksik</span>}
                         {kapanisYok && <span className="badge badge-yellow">Kapanış yok</span>}
-                        {!hasFark && !kapanisYok && <span className="badge badge-green">Normal</span>}
+                        {!urunAcEksik && !kapanisYok && <span className="badge badge-green">Normal</span>}
                         {evoYok && (
                           <span className="badge badge-red" title={evoMesaj} style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             Evo veri gelmedi
@@ -8781,7 +8870,7 @@ export default function OperasyonMerkezi() {
                             const kap = r.kapanis?.[k] ?? 0;
                             const sat = r.satilan?.[k] ?? 0;
                             const evoLbl = r.evo_etiket?.[k] || '';
-                            const neg = sat < 0;
+                            const neg = sat < 0 && KULLANILAN_URUN_AC_DENETIM.has(k);
                             if (ac === 0 && ua === 0 && kap === 0 && dun === 0 && sat === 0 && !evoLbl) return null;
                             const devirFark = dun > 0 && ac > 0 && dun !== ac;
                             return (
@@ -8793,7 +8882,8 @@ export default function OperasyonMerkezi() {
                                 <td className="mono" style={{ padding: '5px 8px', textAlign: 'center' }}>{ac}</td>
                                 <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', color: ua > 0 ? '#86efac' : 'var(--text3)' }}>{ua > 0 ? `+${ua}` : ua}</td>
                                 <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', color: kap > 0 ? '#fbbf24' : 'var(--text3)' }}>{kap > 0 ? `-${kap}` : '—'}</td>
-                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', fontWeight: 700, color: neg ? 'var(--red)' : sat > 0 ? '#86efac' : 'var(--text3)' }}>
+                                <td className="mono" style={{ padding: '5px 8px', textAlign: 'center', fontWeight: 700, color: neg ? 'var(--red)' : sat > 0 ? '#86efac' : 'var(--text3)' }}
+                                  title={neg ? `Ürün Aç paneline ≈${Math.abs(sat)} ad girilmemiş (depo stok hatası)` : undefined}>
                                   <div>{sat}</div>
                                   {evoLbl ? (
                                     <div style={{ fontSize: 10, fontWeight: 500, color: '#93c5fd', marginTop: 3, lineHeight: 1.35 }}>
