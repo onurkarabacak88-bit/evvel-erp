@@ -107,6 +107,7 @@ TANI_TIPLERI = (
     "BOM_SAPMA",                 # fiziksel bardak/sarf tüketimi > Evo satış BOM → kayıt dışı kullanım
     # ── Sprint G — Cross-day Akşamcı Zimmet Korelasyonu ──────────────────
     "AKSAM_KASAYI_SISIRDI",      # bugün N1>N2 + dün stok açığı → akşamcı N1 şişirerek zimmet gizledi
+    "IPTAL_SUPHE",               # N1>N2 kasa açığı + stok normal + Evo açıklaması yok → iptal fiş kontrol
 )
 
 # Her tanı için (otomatik aksiyon, insan aksiyonu, alarm seviyesi)
@@ -138,6 +139,7 @@ EYLEM_MAP: Dict[str, Dict[str, str]] = {
     "BOM_SAPMA":                 {"oto": "uyari_yuksek",         "insan": "Sarf tüketimi BOM'u aşıyor — kayıt dışı kullanım soruştur",    "alarm": "yuksek"},
     # Sprint G — Cross-day akşamcı zimmet korelasyonu
     "AKSAM_KASAYI_SISIRDI":      {"oto": "cfo_bildirim_kritik",  "insan": "Dün akşamcı N1'i şişirdi + stok açığı eşleşiyor → zimmet soruşturması + kamera", "alarm": "kritik"},
+    "IPTAL_SUPHE":               {"oto": "uyari_yuksek",         "insan": "Kasa açığı Evo'da açıklanamıyor — satış panelinde o vardiya iptal fişlerini manuel kontrol et", "alarm": "yuksek"},
 }
 
 @dataclass
@@ -456,6 +458,7 @@ _TANI_ONCELIK = {
     "SUT_SAPMA":                 55,
     # Sprint G
     "AKSAM_KASAYI_SISIRDI":      97,
+    "IPTAL_SUPHE":               62,
 }
 
 _TANI_INSAN = {
@@ -486,6 +489,7 @@ _TANI_INSAN = {
     "BOM_SAPMA":                 "Sarf tüketimi Evo satış BOM'undan fazla — kayıt dışı kullanım",
     # Sprint G
     "AKSAM_KASAYI_SISIRDI":      "Akşamcı N1 şişirdi — dünkü stok açığı ile eşleşiyor → ZİMMET",
+    "IPTAL_SUPHE":               "Açıklanamayan kasa açığı — iptal fiş manipülasyonu şüphesi",
 }
 
 _ALARM_ESIK = {
@@ -982,6 +986,40 @@ def motor_calistir(cur, sube_id: str, tarih: str,
                     break
     except Exception as _e:
         log.warning("sprint_g aksam_kasa_sisirme_tespit hata: %s", _e)
+
+    # ── IPTAL_SUPHE: Sprint G tetiklenmediyse + açıklanamayan kasa açığı ────
+    # Sprint G stok açığı bulamadı → AKSAM_KASAYI_SISIRDI yok
+    # Ama kasa boyutunda AKSAM_HATALI / COZULMEDI + fark var → iptal fiş şüphesi
+    if not sprint_g_meta.get("tani"):
+        _diger_stok_sorun = any(
+            _t.boyut != "kasa" and _t.tani in (
+                "STOK_KACAGI_BEYANSIZ", "ZIMMET_NAKIT_CEPTE",
+                "SWEETHEARTING_SINYAL", "AKSAM_ZIMMET_SINYALI", "POS_BYPASS",
+            )
+            for _t in taniler
+        )
+        if not _diger_stok_sorun:
+            for _t in taniler:
+                if (
+                    _t.boyut == "kasa"
+                    and _t.tani in ("AKSAM_HATALI", "COZULMEDI", "AKSAM_TOPYEKUN")
+                    and _t.fark_n1_n2 is not None
+                    and _t.fark_n1_n2 < -5.0   # N2 < N1, en az 5₺ fark
+                ):
+                    _acik = abs(_t.fark_n1_n2)
+                    _t.tani = "IPTAL_SUPHE"
+                    _t.detay["iptal_suphe"] = {
+                        "kasa_acigi_tl": round(_acik, 2),
+                        "detay": (
+                            f"Kasa {_acik:.0f}₺ açık — Evo'da açıklama yok, stok normal. "
+                            "Satış paneli kapalı devre: o vardiya iptal fişlerini manuel kontrol et."
+                        ),
+                    }
+                    log.info(
+                        "IPTAL_SUPHE tetiklendi sube=%s tarih=%s acik=%.0f",
+                        sube_id, tarih, _acik,
+                    )
+                    break
 
     # Eylem önerisi enjekte et
     for t in taniler:
@@ -5711,10 +5749,18 @@ def tam_analiz(cur, sube_id: str, tarih: str,
     )
     sprint_f_orta = (sut_sapma.get("tani") == "SUT_SAPMA")
     sprint_g_kritik = (sprint_g_sonuc.get("tani") == "AKSAM_KASAYI_SISIRDI")
+    # IPTAL_SUPHE: tam_analiz'de kasa_fark + stok açığı yok kombinasyonu
+    iptal_suphe = (
+        not sprint_g_kritik
+        and abs(kasa_fark_toplam) > 5
+        and stok_acik_sayisi == 0
+        and not has_kritik
+        and not has_yuksek
+    )
 
     if has_kritik or sprint_g_kritik or birincil_koken in ("SWEETHEARTING_ZIMMET",):
         alarm = "kritik"
-    elif has_yuksek or sprint_f_yuksek or birincil_koken in ("NAKIT_CEKILDI", "AKSAM_ZIMMET_POZISYON"):
+    elif has_yuksek or sprint_f_yuksek or iptal_suphe or birincil_koken in ("NAKIT_CEKILDI", "AKSAM_ZIMMET_POZISYON"):
         alarm = "yuksek"
     elif stok_acik_sayisi > 0 or abs(kasa_fark_toplam) > 5 or sprint_f_orta:
         alarm = "orta"
@@ -5741,6 +5787,10 @@ def tam_analiz(cur, sube_id: str, tarih: str,
         g_ad = sprint_g_sonuc.get("aksamci_ad") or "Akşamcı"
         g_tl = sprint_g_sonuc.get("sisirme_tl", 0)
         ozet_parcalari.append(f"⚠ {g_ad} {g_tl:.0f}₺ N1 şişirdi (dün stok açığı)")
+    if iptal_suphe:
+        ozet_parcalari.append(
+            f"⚠ Kasa {abs(kasa_fark_toplam):.0f}₺ açık, stok normal → iptal fiş kontrol"
+        )
     ozet = " | ".join(ozet_parcalari) or "Tüm kontroller uyumlu"
 
     # 10. İnsan-okunabilir yorum metni
