@@ -1990,24 +1990,36 @@ def _evvel_sube_evo_payload_eslestir(
     return None
 
 
-def evo_bar_adet_by_sube_id(cur: Any, hedef: date) -> Dict[str, Dict[str, Dict[str, Any]]]:
+def evo_bar_adet_by_sube_id(cur: Any, hedef: date) -> Dict[str, Any]:
     """
     Tek gün için şube_id → bar_key → {adet, etiket, grup}.
     Kaynak: hs_rapor Grup_Pasta (Evo Hızlı Satış).
+
+    Dönüş:
+      by_sube — eşleşen şubeler
+      evo_veri_geldi — en az bir şubede Evo adedi var mı
+      evo_mesaj — veri yoksa kullanıcıya gösterilecek kısa metin
     """
     out: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    evo_mesaj: Optional[str] = None
     try:
         evo = hs_rapor_sube_bazli(hedef, hedef)
         evo_subeler = evo.get("subeler") or {}
         if not evo_subeler:
-            return out
+            return {
+                "by_sube": {},
+                "evo_veri_geldi": False,
+                "evo_mesaj": "Evo veri gelmedi — hs_rapor boş (token veya bağlantı kontrol edin)",
+            }
         cur.execute("SELECT id::text AS id, ad FROM subeler")
+        eslesen = 0
         for row in cur.fetchall() or []:
             sid = str(row.get("id") or "")
             ad = str(row.get("ad") or "")
             payload = _evvel_sube_evo_payload_eslestir(ad, evo_subeler)
             if not payload:
                 continue
+            eslesen += 1
             by_bar: Dict[str, Dict[str, Any]] = {}
             for grup, (bkey, etiket) in EVO_GRUP_BAR_OZET.items():
                 g = (payload.get("gruplar") or {}).get(grup) or {}
@@ -2025,9 +2037,20 @@ def evo_bar_adet_by_sube_id(cur: Any, hedef: date) -> Dict[str, Dict[str, Dict[s
                     }
             if by_bar:
                 out[sid] = by_bar
+        if out:
+            return {"by_sube": out, "evo_veri_geldi": True, "evo_mesaj": None}
+        if eslesen <= 0:
+            evo_mesaj = "Evo veri gelmedi — şube adı eşleşmedi (EVO_SUBE_ID_MAP kontrol edin)"
+        else:
+            evo_mesaj = "Evo veri gelmedi — o gün için grup satışı (Grup_Pasta) boş"
     except Exception as e:
         log.warning("evo_bar_adet_by_sube_id: %s", e)
-    return out
+        evo_mesaj = "Evo veri gelmedi — hs_rapor hatası"
+    return {
+        "by_sube": out,
+        "evo_veri_geldi": False,
+        "evo_mesaj": evo_mesaj or "Evo veri gelmedi",
+    }
 
 
 def faturajq_sube_grup_detay(bastar: date, bittar: date,

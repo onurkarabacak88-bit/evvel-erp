@@ -3342,13 +3342,19 @@ def ops_bar_ozet(
 
         # Evo Grup_Pasta → satılan yanında malzeme etiketi (tek gün sorgularında)
         evo_by_sube: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        evo_veri_geldi = False
+        evo_mesaj: Optional[str] = None
         if gun_v:
             try:
                 from evo_sync import evo_bar_adet_by_sube_id
 
-                evo_by_sube = evo_bar_adet_by_sube_id(cur, hedef_tarih)
+                evo_pack = evo_bar_adet_by_sube_id(cur, hedef_tarih)
+                evo_by_sube = evo_pack.get("by_sube") or {}
+                evo_veri_geldi = bool(evo_pack.get("evo_veri_geldi"))
+                evo_mesaj = evo_pack.get("evo_mesaj")
             except Exception:
                 evo_by_sube = {}
+                evo_mesaj = "Evo veri gelmedi — sunucu hatası"
 
         for row in satirlar:
             evo_bar = evo_by_sube.get(str(row.get("sube_id") or "")) or {}
@@ -3361,6 +3367,8 @@ def ops_bar_ozet(
                 for k, v in evo_bar.items()
                 if float(v.get("adet") or 0) > 0
             }
+            row["evo_veri_geldi"] = bool(evo_bar)
+            row["evo_mesaj"] = None if evo_bar else (evo_mesaj or "Evo veri gelmedi")
             row["evo_kaynak"] = "hs_rapor" if evo_bar else None
 
         satirlar.sort(key=lambda x: (x["tarih"], x["sube_adi"]), reverse=True)
@@ -3370,6 +3378,8 @@ def ops_bar_ozet(
             "gun": gun_v or None,
             "kapanis_fallback": bool(kapanis_fallback),
             "evo_dahil": bool(gun_v),
+            "evo_veri_geldi": evo_veri_geldi if gun_v else None,
+            "evo_mesaj": evo_mesaj if gun_v and not evo_veri_geldi else None,
         }
 
 
@@ -12886,6 +12896,15 @@ def truth_gunluk_rapor(tarih: Optional[str] = Query(None)):
         # Tüm boyutlar YETERSIZ_VERI ise "Veri yok" — daha açıklayıcı
         if kayitlar and all(k.get("tani") == "YETERSIZ_VERI" for k in kayitlar):
             ana_tani = "YETERSIZ_VERI"
+        # Zekâ özeti — DB satırlarından denetçi kararı üret
+        zeka = {}
+        if kayitlar:
+            try:
+                import truth_motor as _tm
+                zeka = _tm.zeka_ozet_from_rows(kayitlar)
+            except Exception:
+                pass
+
         rapor.append({
             "sube_id": sid,
             "sube_ad": s["ad"],
@@ -12899,6 +12918,11 @@ def truth_gunluk_rapor(tarih: Optional[str] = Query(None)):
             "toplam_karar": len(kayitlar),
             "anomali_sayisi": anomali_sayisi,
             "boyut_ozet": boyut_ozet,
+            # Zekâ özeti — denetçi kararı
+            "alarm": zeka.get("alarm", "normal"),
+            "zeka_ozet": zeka.get("ozet", ""),
+            "yorum_metni": zeka.get("yorum_metni", ""),
+            "capraz_aciklama": zeka.get("capraz_aciklama", ""),
         })
 
     # Alarm önceliğine göre sırala (kritik üstte)

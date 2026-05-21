@@ -2816,6 +2816,8 @@ export default function OperasyonMerkezi() {
       toplam_adet: toplamAdet,
       satirlar,
       kapanis_eksik_sube: ham.filter((row) => row?.kapanis_var !== true).length,
+      evo_veri_geldi: r?.evo_veri_geldi,
+      evo_mesaj: r?.evo_mesaj || null,
     };
   }, []);
 
@@ -8624,6 +8626,23 @@ export default function OperasyonMerkezi() {
               {kullanilanAramaSonuc?.tarih || kullanilanAramaTarih} · {kullanilanAramaSonuc?.toplam_islem || 0} şube · {kullanilanAramaSonuc?.toplam_adet || 0} adet
             </div>
           </div>
+          {kullanilanAramaSonuc?.evo_veri_geldi === false && (
+            <div
+              style={{
+                padding: '10px 14px',
+                borderRadius: 8,
+                background: 'rgba(239,68,68,.08)',
+                border: '1px solid rgba(239,68,68,.35)',
+                fontSize: 12,
+                color: '#fca5a5',
+                lineHeight: 1.5,
+              }}
+            >
+              <strong style={{ color: '#f87171' }}>⚠ Evo veri gelmedi</strong>
+              {' — '}
+              {kullanilanAramaSonuc?.evo_mesaj || 'Satılan sütununda Evo karşılaştırması gösterilemez. EVO_WEB_TOKEN veya EVO_KULLANICI/EVO_SIFRE kontrol edin.'}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button
               type="button"
@@ -8667,6 +8686,8 @@ export default function OperasyonMerkezi() {
                 const ozet = kullanilanTabloOzet(r, keys, labels);
                 const hasFark = r.fark_var;
                 const kapanisYok = !r.kapanis_var;
+                const evoYok = r.evo_veri_geldi === false;
+                const evoMesaj = r.evo_mesaj || kullanilanAramaSonuc?.evo_mesaj || 'Evo veri gelmedi';
                 return (
                   <div key={`${r.sube_id}-${r.tarih}`} className="card" style={{
                     borderLeft: `4px solid ${hasFark ? 'var(--red)' : kapanisYok ? 'var(--yellow)' : 'var(--green)'}`,
@@ -8677,10 +8698,15 @@ export default function OperasyonMerkezi() {
                         <span style={{ fontWeight: 700, fontSize: 14 }}>{r.sube_adi}</span>
                         <span className="mono" style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 10 }}>{r.tarih}</span>
                       </div>
-                      <div style={{ display: 'flex', gap: 6 }}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                         {hasFark && <span className="badge badge-red">Fark var</span>}
                         {kapanisYok && <span className="badge badge-yellow">Kapanış yok</span>}
                         {!hasFark && !kapanisYok && <span className="badge badge-green">Normal</span>}
+                        {evoYok && (
+                          <span className="badge badge-red" title={evoMesaj} style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            Evo veri gelmedi
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div style={{ overflowX: 'auto' }}>
@@ -8739,13 +8765,17 @@ export default function OperasyonMerkezi() {
                               <td className="mono" style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 700, color: '#fbbf24' }}>{ozet.tKap > 0 ? `-${ozet.tKap}` : '—'}</td>
                               <td className="mono" style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: ozet.tSat < 0 ? 'var(--red)' : '#86efac' }}>
                                 <div>{ozet.tSat}</div>
-                                {ozet.evoSatirlar.length > 0 && (
+                                {ozet.evoSatirlar.length > 0 ? (
                                   <div style={{ fontSize: 10, fontWeight: 500, color: '#93c5fd', marginTop: 4, lineHeight: 1.4, textAlign: 'left' }}>
                                     {ozet.evoSatirlar.map((line, i) => (
                                       <div key={i}>{line}</div>
                                     ))}
                                   </div>
-                                )}
+                                ) : evoYok ? (
+                                  <div style={{ fontSize: 10, fontWeight: 600, color: '#fca5a5', marginTop: 4, lineHeight: 1.4, textAlign: 'left' }}>
+                                    {evoMesaj}
+                                  </div>
+                                ) : null}
                               </td>
                             </tr>
                           )}

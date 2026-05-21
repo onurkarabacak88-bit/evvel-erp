@@ -21,13 +21,14 @@ from operasyon_stok_motor import (
 )
 
 FIRE_SEBEP: Dict[str, str] = {
-    "iade": "Müşteri iadesi / bozuk ürün",
-    "sayim_hatasi": "Sayım hatası",
-    "panel_hatasi": "Panel kullanım hatası",
-    "skt_bozulma": "SKT / bozulma",
-    "hazirlik_deneme": "Hazırlık / deneme / eğitim",
-    "kirilma_dokulme": "Kırılma / dökülme",
-    "diger": "Diğer",
+    "iade":             "Müşteri iadesi / bozuk ürün",
+    "siparis_iptali":   "Sipariş iptali (hazırlamadan önce)",
+    "sayim_hatasi":     "Sayım hatası",
+    "panel_hatasi":     "Panel kullanım hatası",
+    "skt_bozulma":      "SKT / bozulma",
+    "hazirlik_deneme":  "Hazırlık / deneme / eğitim",
+    "kirilma_dokulme":  "Kırılma / dökülme",
+    "diger":            "Diğer",
 }
 
 # Müşteri iadesi — şube panelinde zorunlu alanlar

@@ -94,9 +94,13 @@ TANI_TIPLERI = (
     "KAOS",                  # her iki taraf da hatalı, Evo nötr
     "COZULMEDI",             # tek boyut, Evo nötr → Truth Walk
     "POS_SYNC_HATA",         # tüm sayım UYUMLU ama Evo hep farklı
-    "AKSAM_ZIMMET_SINYALI",  # kasa+ & bardak− & Evo bardak destekli
-    "POS_BYPASS",            # bardak eksik ama Evo yok → kayıt dışı satış
-    "YETERSIZ_VERI",         # N1 veya N2 yok
+    "AKSAM_ZIMMET_SINYALI",      # kasa+ & bardak− & Evo bardak destekli
+    "POS_BYPASS",                # bardak eksik ama Evo yok → kayıt dışı satış
+    "YETERSIZ_VERI",             # N1 veya N2 yok
+    # ── Sprint E — İkram vs Zimmet ayırım tanıları ───────────────────────
+    "BELGELENMIS_IADE",          # fire kaydı 'iade'/'siparis_iptali' → açıklanmış, zimmet yok
+    "BELGELENMIS_FIRE",          # fire kaydı 'skt_bozulma'/'kirilma' vb. → açıklanmış
+    "ZIMMET_IPTAL_MANIPULASYON", # Evo iptal tutarı ≈ kasa açığı → sahte iptal + para cepde
 )
 
 # Her tanı için (otomatik aksiyon, insan aksiyonu, alarm seviyesi)
@@ -117,7 +121,11 @@ EYLEM_MAP: Dict[str, Dict[str, str]] = {
     "POS_SYNC_HATA":         {"oto": "evo_refresh_iste", "insan": "Evobulut destek + IT kontrol",           "alarm": "orta"},
     "AKSAM_ZIMMET_SINYALI":  {"oto": "cfo_bildirim_log", "insan": "Soruşturma, kamera, 3-ay pattern bak",   "alarm": "kritik"},
     "POS_BYPASS":            {"oto": "evo_yetki_kontrol","insan": "Evo yetki + manuel iade kontrol",        "alarm": "yuksek"},
-    "YETERSIZ_VERI":         {"oto": "—",                "insan": "Eksik sayımı tamamla",                   "alarm": "yok"},
+    "YETERSIZ_VERI":             {"oto": "—",                    "insan": "Eksik sayımı tamamla",                                 "alarm": "yok"},
+    # Sprint E
+    "BELGELENMIS_IADE":          {"oto": "log_yesil",            "insan": "Fire kaydı + iade belgesi mevcut — araştırma gerekmez", "alarm": "yok"},
+    "BELGELENMIS_FIRE":          {"oto": "log_yesil",            "insan": "Fire kaydı mevcut (zayi/bozulma) — açıklanmış kayıp",  "alarm": "yok"},
+    "ZIMMET_IPTAL_MANIPULASYON": {"oto": "cfo_bildirim_kritik",  "insan": "Sahte Evo iptali + para cepde — soruşturma + kamera",  "alarm": "kritik"},
 }
 
 @dataclass
@@ -423,9 +431,13 @@ _TANI_ONCELIK = {
     "COZULMEDI":             35,
     "IKRAM_SURDURULEN":      20,
     "IKRAM_UNUTULDU":        15,
-    "IKRAM_EVO_TEYIT":       5,
-    "YETERSIZ_VERI":         3,
-    "UYUMLU":                0,
+    "IKRAM_EVO_TEYIT":           5,
+    "YETERSIZ_VERI":             3,
+    "UYUMLU":                    0,
+    # Sprint E
+    "ZIMMET_IPTAL_MANIPULASYON": 98,
+    "BELGELENMIS_IADE":          2,
+    "BELGELENMIS_FIRE":          2,
 }
 
 _TANI_INSAN = {
@@ -443,9 +455,13 @@ _TANI_INSAN = {
     "COZULMEDI":             "Fark var, kaynak belirlenemedi — yeniden say",
     "IKRAM_SURDURULEN":      "Süregelen ikram pattern — onaylı mı?",
     "IKRAM_UNUTULDU":        "Kayıtsız ikram",
-    "IKRAM_EVO_TEYIT":       "Evo onaylı ikram — normal",
-    "YETERSIZ_VERI":         "Veri yetersiz",
-    "UYUMLU":                "Uyumlu",
+    "IKRAM_EVO_TEYIT":           "Evo onaylı ikram — normal",
+    "YETERSIZ_VERI":             "Veri yetersiz",
+    "UYUMLU":                    "Uyumlu",
+    # Sprint E
+    "BELGELENMIS_IADE":          "Fire kaydı var — iade/iptal belgeli, zimmet yok",
+    "BELGELENMIS_FIRE":          "Fire kaydı var — zayi/bozulma belgeli",
+    "ZIMMET_IPTAL_MANIPULASYON": "Sahte Evo iptali — satış yapıldı, para kasaya konmadı",
 }
 
 _ALARM_ESIK = {
@@ -593,6 +609,31 @@ def _zeka_ozet_uret(taniler: List["Tani"],
         "anomali_boyutlar": anomali_boyutlar,
         "capraz_aciklama": capraz,
     }
+
+
+def zeka_ozet_from_rows(rows: List[Dict]) -> Dict[str, Any]:
+    """DB karar satırlarından (truth_motor_kararlar) zekâ özeti üret.
+
+    gunluk_rapor endpoint'inde her şube için çağrılır — ekstra DB sorgusu yok.
+    rows: [{"boyut","tani","guven_skoru","fark_n1_n2","detay_json"}, ...]
+    """
+    if not rows:
+        return {"alarm": "normal", "ana_tani": "YETERSIZ_VERI",
+                "guven": 0, "ozet": "Veri yok", "yorum_metni": "⚪ Veri yok"}
+
+    class _TaniProxy:
+        __slots__ = ("boyut", "tani", "guven_skoru", "fark_n1_n2", "detay")
+        def __init__(self, r: Dict):
+            self.boyut       = r.get("boyut", "")
+            self.tani        = r.get("tani", "YETERSIZ_VERI")
+            self.guven_skoru = float(r.get("guven_skoru") or 0)
+            f                = r.get("fark_n1_n2")
+            self.fark_n1_n2  = float(f) if f is not None else None
+            dj               = r.get("detay_json") or {}
+            self.detay       = dj if isinstance(dj, dict) else {}
+
+    taniler = [_TaniProxy(r) for r in rows]
+    return _zeka_ozet_uret(taniler)  # type: ignore[arg-type]
 
 
 def ikram_surekli_mi(cur, sube_id: str, personel_id: Optional[str],
@@ -882,6 +923,13 @@ def motor_calistir(cur, sube_id: str, tarih: str,
     # Çapraz boyut yorumla (sweethearting, sistemik hata, topyekun)
     taniler = capraz_boyut_yorumla(taniler)
 
+    # ── Sprint E: İkram vs Zimmet ayırım sinyalleri ──────────────────────────
+    sprint_e_meta: Dict[str, Any] = {}
+    try:
+        sprint_e_meta = sprint_e_ikram_zimmet_ayir(cur, sube_id, tarih, taniler)
+    except Exception as _e:
+        log.warning("sprint_e_ikram_zimmet_ayir hata: %s", _e)
+
     # Eylem önerisi enjekte et
     for t in taniler:
         t.detay["eylem"] = eylem_oner(t.tani)
@@ -923,6 +971,8 @@ def motor_calistir(cur, sube_id: str, tarih: str,
         "yorum_metni": zeka["yorum_metni"],
         "anomali_boyutlar": zeka["anomali_boyutlar"],
         "capraz_aciklama": zeka["capraz_aciklama"],
+        # Sprint E — ikram/zimmet ayırım meta
+        "sprint_e": sprint_e_meta,
     }
 
 
@@ -3830,6 +3880,433 @@ def _fire_sorgula(cur, sube_id: str, tarih: str) -> Dict[str, float]:
     except Exception:
         pass
     return {}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SPRINT E — İKRAM vs ZİMMET AYIRIM SİNYALLERİ
+#  Signal 1: Fire Bildirim Çapraz  → sube_fire_bildirim tablosu
+#  Signal 2: Evo İptal Çapraz      → sahte iptal + para cepde
+#  Signal 3: Satış Velocity Analiz → yoğunluk bağlamı
+#
+#  Motor akışı:
+#    Stok açığı tespit
+#      → fire_bildirim_capraz():  fire kayıt var? → BELGELENMIS (bitti)
+#      → evo_iptal_capraz():      iptal ≈ fark?   → ZIMMET_IPTAL_MANIPULASYON
+#      → satis_velocity_analiz(): bağlam detay eklenir (tanı değişmez)
+# ════════════════════════════════════════════════════════════════════════════
+
+def fire_bildirim_capraz(cur, sube_id: str, tarih: str,
+                         stok_aciklar: Optional[Dict[str, float]] = None
+                         ) -> Dict[str, Any]:
+    """Signal 1 — sube_fire_bildirim tablosunu sorgula.
+
+    Aynı şube + tarih için fire kaydı bulunursa anomali BELGELENMIS sayılır
+    ve zimmet araştırması gerekmez.  Kayıt yoksa Signal 2/3'e devam edilir.
+
+    Args:
+        stok_aciklar: {boyut → açık_adet} — boyut eşleşmesi için opsiyonel.
+
+    Returns:
+        {
+          "fire_kayit_var": bool,
+          "kayit_sayisi": int,
+          "toplam_adet": int,
+          "sebep_dagilimi": {"iade": 2, "skt_bozulma": 1, ...},
+          "iade_var": bool,
+          "belgelenmis": bool,
+          "kayitlar": [...],
+        }
+    """
+    sonuc: Dict[str, Any] = {
+        "fire_kayit_var": False,
+        "kayit_sayisi": 0,
+        "toplam_adet": 0,
+        "sebep_dagilimi": {},
+        "iade_var": False,
+        "belgelenmis": False,
+        "kayitlar": [],
+    }
+    try:
+        cur.execute(
+            """
+            SELECT id, sebep_kodu, sebep_label, aciklama,
+                   kalemler, toplam_adet, fis_no, iade_zaman
+            FROM sube_fire_bildirim
+            WHERE sube_id=%s AND tarih=%s::date
+            ORDER BY olusturma
+            """,
+            (sube_id, tarih),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:
+        log.warning("fire_bildirim_capraz sorgu hata: %s", e)
+        return sonuc
+
+    if not rows:
+        return sonuc
+
+    sonuc["fire_kayit_var"] = True
+    sonuc["kayit_sayisi"] = len(rows)
+
+    sebep_dagil: Dict[str, int] = {}
+    toplam_adet = 0
+    for r in rows:
+        sk = r.get("sebep_kodu") or "diger"
+        sebep_dagil[sk] = sebep_dagil.get(sk, 0) + 1
+        try:
+            toplam_adet += int(r.get("toplam_adet") or 0)
+        except (TypeError, ValueError):
+            pass
+        sonuc["kayitlar"].append({
+            "id":          r.get("id"),
+            "sebep":       sk,
+            "label":       r.get("sebep_label"),
+            "aciklama":    r.get("aciklama"),
+            "toplam_adet": r.get("toplam_adet"),
+            "fis_no":      r.get("fis_no"),
+            "iade_zaman":  str(r.get("iade_zaman") or ""),
+        })
+
+    sonuc["toplam_adet"] = toplam_adet
+    sonuc["sebep_dagilimi"] = sebep_dagil
+    sonuc["iade_var"] = bool(
+        sebep_dagil.get("iade") or sebep_dagil.get("siparis_iptali")
+    )
+
+    # Belgelenmis mi? — fire adet vs stok açığı kıyaslama
+    if stok_aciklar:
+        # kalemler JSONB'den boyut bazlı adet topla
+        fire_boyut: Dict[str, float] = {}
+        for r in rows:
+            kl = r.get("kalemler")
+            if isinstance(kl, str):
+                try:
+                    kl = json.loads(kl)
+                except Exception:
+                    kl = []
+            if isinstance(kl, list):
+                for item in kl:
+                    if not isinstance(item, dict):
+                        continue
+                    urun_ad = (item.get("urun") or item.get("ad") or "").lower()
+                    adet = float(item.get("adet") or 0)
+                    for boyut in BOYUTLAR:
+                        if boyut[:5] in urun_ad or boyut in urun_ad:
+                            fire_boyut[boyut] = fire_boyut.get(boyut, 0) + adet
+                            break
+        if fire_boyut:
+            eslesen = sum(
+                1 for boyut, acik in stok_aciklar.items()
+                if fire_boyut.get(boyut, 0) >= abs(acik) * 0.8   # %80 tolerans
+            )
+            sonuc["belgelenmis"] = eslesen > 0
+        else:
+            # boyut eşleşemedi ama kayıt var → belgelenmis say
+            sonuc["belgelenmis"] = True
+    else:
+        sonuc["belgelenmis"] = sonuc["fire_kayit_var"]
+
+    return sonuc
+
+
+def evo_iptal_capraz(cur, sube_id: str, tarih: str,
+                     kasa_fark: Optional[float] = None) -> Dict[str, Any]:
+    """Signal 2 — Evo iptal/void tutarı ile kasa farkını kıyasla.
+
+    Sahte iptal senaryosu:
+      Ürün verildi + ödeme alındı → Evo'ya iptal girildi → para cepde kaldı.
+    Tespit: kasa açığı ≈ iptal tutarı (≥%70 eşleşme).
+
+    Returns:
+        {
+          "iptal_toplam": float,
+          "kasa_fark": float,
+          "eslesme_yuzdesi": float,
+          "zimmet_sinyali": bool,
+          "yorum": str,
+        }
+    """
+    sonuc: Dict[str, Any] = {
+        "iptal_toplam": 0.0,
+        "kasa_fark": round(float(kasa_fark or 0), 2),
+        "eslesme_yuzdesi": 0.0,
+        "zimmet_sinyali": False,
+        "yorum": "İptal verisi bulunamadı",
+    }
+    # ciro_giris tablosundan negatif / iade / iptal kayıtları
+    try:
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(ABS(ciro_tl)), 0) AS iptal_tl
+            FROM ciro_giris
+            WHERE sube_id=%s AND tarih=%s::date
+              AND (ciro_tl < 0 OR LOWER(COALESCE(tip,'')) IN ('iade','iptal','void','cancel'))
+            """,
+            (sube_id, tarih),
+        )
+        r = cur.fetchone()
+        if r:
+            sonuc["iptal_toplam"] = round(float(dict(r).get("iptal_tl") or 0), 2)
+    except Exception:
+        pass
+
+    # kasa_hareketleri fallback
+    if sonuc["iptal_toplam"] == 0:
+        try:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(ABS(tutar)), 0) AS iptal_tl
+                FROM kasa_hareketleri
+                WHERE sube_id=%s AND tarih=%s::date
+                  AND LOWER(COALESCE(tip,'')) IN ('iade','iptal','void')
+                """,
+                (sube_id, tarih),
+            )
+            r = cur.fetchone()
+            if r:
+                sonuc["iptal_toplam"] = round(float(dict(r).get("iptal_tl") or 0), 2)
+        except Exception:
+            pass
+
+    iptal = sonuc["iptal_toplam"]
+    kf = abs(float(kasa_fark or 0))
+
+    if iptal > 0 and kf > 1:
+        eslesme = min(iptal, kf) / max(iptal, kf)
+        sonuc["eslesme_yuzdesi"] = round(eslesme * 100, 1)
+        if eslesme >= 0.70:
+            sonuc["zimmet_sinyali"] = True
+            sonuc["yorum"] = (
+                f"İptal tutarı ₺{iptal:.0f} — kasa açığı ₺{kf:.0f} ile "
+                f"%{eslesme*100:.0f} eşleşiyor. Sahte iptal + para cepde sinyali."
+            )
+        else:
+            sonuc["yorum"] = (
+                f"İptal ₺{iptal:.0f} var ama kasa farkı ₺{kf:.0f} ile "
+                f"eşleşme %{eslesme*100:.0f} — zimmet eşiğinin (%70) altında."
+            )
+    elif iptal > 0:
+        sonuc["yorum"] = f"İptal ₺{iptal:.0f} kaydedilmiş, kasa farkı yok — normal."
+    elif kf > 1:
+        sonuc["yorum"] = f"Kasa açığı ₺{kf:.0f} var ama iptal kaydı bulunamadı."
+
+    return sonuc
+
+
+def satis_velocity_analiz(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
+    """Signal 3 — Satış yoğunluğu (velocity) bağlam analizi.
+
+    Yüksek velocity → çok yoğun → personel zimmet için fırsat bulamaz
+    → STOK_KACAGI sinyali 'ikram/unutulan' yönüne ağırlık verir.
+    Düşük velocity → sakin dönem → fırsat penceresi açık
+    → zimmet araştırması daha güçlü gerekçeye sahip.
+
+    NOT: Bu fonksiyon tanı DEĞİŞTİRMEZ — sadece detay bağlamı ekler.
+
+    Returns:
+        {
+          "vardiya_sayisi": int,
+          "toplam_sure_dk": float,
+          "toplam_fis": int,
+          "fis_per_saat": float,
+          "velocity_seviye": "yuksek"|"orta"|"dusuk"|"bilinmiyor",
+          "ikram_firsati_yuksek": bool,
+          "yorum": str,
+        }
+    """
+    sonuc: Dict[str, Any] = {
+        "vardiya_sayisi": 0,
+        "toplam_sure_dk": 0.0,
+        "toplam_fis": 0,
+        "fis_per_saat": 0.0,
+        "velocity_seviye": "bilinmiyor",
+        "ikram_firsati_yuksek": False,
+        "yorum": "Velocity verisi yok",
+    }
+    try:
+        cur.execute(
+            """
+            SELECT meta FROM sube_operasyon_event
+            WHERE sube_id=%s AND tarih=%s::date
+              AND tip IN ('VARDIYA','KAPANIS','ACILIS')
+              AND durum='tamamlandi'
+            ORDER BY cevap_ts
+            """,
+            (sube_id, tarih),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:
+        log.warning("satis_velocity_analiz sorgu hata: %s", e)
+        return sonuc
+
+    toplam_sure = 0.0
+    toplam_fis = 0
+    vardiya_sayisi = 0
+    for r in rows:
+        m = _meta_oku(r.get("meta"))
+        if not m:
+            continue
+        sure = float(m.get("sure_dk") or m.get("vardiya_sure_dk") or 0)
+        fis = int(m.get("evo_fis_sayisi") or m.get("fis_sayisi") or 0)
+        if sure > 0:
+            toplam_sure += sure
+            vardiya_sayisi += 1
+        if fis > 0:
+            toplam_fis += fis
+
+    # Fallback: ciro_giris fiş sayısı
+    if toplam_fis == 0:
+        try:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS n FROM ciro_giris
+                WHERE sube_id=%s AND tarih=%s::date AND durum='aktif'
+                """,
+                (sube_id, tarih),
+            )
+            r = cur.fetchone()
+            if r:
+                toplam_fis = int(dict(r).get("n") or 0)
+        except Exception:
+            pass
+
+    sonuc["vardiya_sayisi"] = vardiya_sayisi
+    sonuc["toplam_sure_dk"] = round(toplam_sure, 1)
+    sonuc["toplam_fis"] = toplam_fis
+
+    if toplam_sure > 0 and toplam_fis > 0:
+        fis_per_saat = round(toplam_fis / (toplam_sure / 60), 1)
+        sonuc["fis_per_saat"] = fis_per_saat
+        # Kahve dükkanı eşikleri: saatte 20+ fis = yoğun
+        if fis_per_saat >= 20:
+            sonuc["velocity_seviye"] = "yuksek"
+            sonuc["ikram_firsati_yuksek"] = False
+            sonuc["yorum"] = (
+                f"Saatte {fis_per_saat:.0f} fiş — çok yoğun. "
+                "Personel zimmet için fırsat bulmakta zorlanır; stok açığı ikramsızlık hatası olabilir."
+            )
+        elif fis_per_saat >= 8:
+            sonuc["velocity_seviye"] = "orta"
+            sonuc["ikram_firsati_yuksek"] = True
+            sonuc["yorum"] = (
+                f"Saatte {fis_per_saat:.0f} fiş — orta yoğunluk. "
+                "İkram ve zimmet her ikisi de mümkün; ek sinyal gerekli."
+            )
+        else:
+            sonuc["velocity_seviye"] = "dusuk"
+            sonuc["ikram_firsati_yuksek"] = True
+            sonuc["yorum"] = (
+                f"Saatte {fis_per_saat:.0f} fiş — sakin dönem. "
+                "Zimmet için fırsat penceresi açık — soruşturma güçlü gerekçeye sahip."
+            )
+
+    return sonuc
+
+
+def sprint_e_ikram_zimmet_ayir(cur, sube_id: str, tarih: str,
+                                taniler: List["Tani"]) -> Dict[str, Any]:
+    """Sprint E ana akışı — 3 sinyalle ikram/zimmet ayırımı.
+
+    AKIŞ:
+      1. fire_bildirim_capraz() → BELGELENMIS?
+         ├─ Evet → BELGELENMIS_IADE / BELGELENMIS_FIRE tanısı → bitti
+         └─ Hayır → devam
+      2. evo_iptal_capraz() → İptal ≈ kasa farkı?
+         ├─ Evet → ZIMMET_IPTAL_MANIPULASYON → bitti
+         └─ Hayır → devam
+      3. satis_velocity_analiz() → tanı değiştirmez, bağlam ekler
+
+    Returns:
+        sprint_e_meta dict (karar, fire/velocity/iptal sonuçları)
+    """
+    # Stok anomalisi olan boyutları + kasa bilgisini topla
+    stok_aciklar: Dict[str, float] = {}
+    kasa_tani = None
+    kasa_fark = 0.0
+    for t in taniler:
+        if t.boyut == "kasa":
+            kasa_tani = t
+            kasa_fark = float(t.fark_n1_n2 or 0)
+        elif t.tani in (
+            "STOK_KACAGI_BEYANSIZ", "IKRAM_UNUTULDU",
+            "SWEETHEARTING_SINYAL", "ZIMMET_NAKIT_CEPTE",
+        ):
+            if t.fark_n1_n2 is not None and t.fark_n1_n2 < 0:
+                stok_aciklar[t.boyut] = abs(float(t.fark_n1_n2))
+
+    meta: Dict[str, Any] = {
+        "sprint_e_aktif": True,
+        "stok_acik_boyutlar": list(stok_aciklar.keys()),
+    }
+
+    # ── Signal 1: Fire Bildirim Çapraz ──────────────────────────────────────
+    fire_sonuc = fire_bildirim_capraz(cur, sube_id, tarih, stok_aciklar or None)
+    meta["fire_bildirim"] = fire_sonuc
+
+    if fire_sonuc["fire_kayit_var"]:
+        iade_sebep = fire_sonuc.get("iade_var", False)
+        yeni_tani = "BELGELENMIS_IADE" if iade_sebep else "BELGELENMIS_FIRE"
+        # Ürün tanılarını güncelle
+        for t in taniler:
+            if t.boyut == "kasa":
+                continue
+            if t.tani not in (
+                "STOK_KACAGI_BEYANSIZ", "IKRAM_UNUTULDU",
+                "SWEETHEARTING_SINYAL",
+            ):
+                continue
+            t.tani = yeni_tani
+            t.guven_skoru = 88.0
+            t.detay["sprint_e"] = {
+                "karar": "BELGELENMIS",
+                "fire_kayit_sayisi": fire_sonuc["kayit_sayisi"],
+                "sebep_dagilimi": fire_sonuc["sebep_dagilimi"],
+                "aciklama": (
+                    f"Fire kaydı mevcut ({fire_sonuc['kayit_sayisi']} kayıt) — "
+                    "stok anomalisi belgelenmiş, zimmet araştırması gerekmiyor."
+                ),
+            }
+        # Kasa zimmet tanısını da güncelle
+        if kasa_tani and kasa_tani.tani == "ZIMMET_NAKIT_CEPTE":
+            kasa_tani.tani = "BELGELENMIS_IADE"
+            kasa_tani.guven_skoru = 85.0
+            kasa_tani.detay["sprint_e"] = {
+                "karar": "BELGELENMIS",
+                "aciklama": "Kasa farkı fire belgesiyle açıklanmış — iade/zayi kaydı mevcut.",
+            }
+        meta["karar"] = "BELGELENMIS"
+        return meta
+
+    # ── Signal 2: Evo İptal Çapraz ──────────────────────────────────────────
+    iptal_sonuc = evo_iptal_capraz(cur, sube_id, tarih, kasa_fark=kasa_fark)
+    meta["evo_iptal"] = iptal_sonuc
+
+    if iptal_sonuc["zimmet_sinyali"] and kasa_tani:
+        kasa_tani.tani = "ZIMMET_IPTAL_MANIPULASYON"
+        kasa_tani.guven_skoru = 82.0
+        kasa_tani.detay["sprint_e"] = {
+            "karar": "ZIMMET_IPTAL",
+            "iptal_tl": iptal_sonuc["iptal_toplam"],
+            "eslesme_yuzdesi": iptal_sonuc["eslesme_yuzdesi"],
+            "aciklama": iptal_sonuc["yorum"],
+        }
+        meta["karar"] = "ZIMMET_IPTAL_MANIPULASYON"
+        return meta
+
+    # ── Signal 3: Satış Velocity — bağlam ekle (tanı değiştirmez) ───────────
+    velocity_sonuc = satis_velocity_analiz(cur, sube_id, tarih)
+    meta["velocity"] = velocity_sonuc
+
+    for t in taniler:
+        if t.tani in ("STOK_KACAGI_BEYANSIZ", "IKRAM_UNUTULDU"):
+            t.detay.setdefault("sprint_e", {})["velocity"] = {
+                "seviye": velocity_sonuc["velocity_seviye"],
+                "fis_per_saat": velocity_sonuc["fis_per_saat"],
+                "yorum": velocity_sonuc["yorum"],
+            }
+
+    meta["karar"] = "ACIKLANAMAZ_DEVAM"
+    return meta
 
 
 def stok_akis_tablosu(cur, sube_id: str, tarih: str) -> Dict[str, Any]:

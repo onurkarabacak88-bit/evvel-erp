@@ -314,7 +314,7 @@ export default function TruthMotor() {
               borderLeft: `4px solid ${e.bord}`,
               display: 'grid',
               gridTemplateColumns: 'minmax(120px, 180px) minmax(140px, 200px) minmax(0, 1fr) auto',
-              gap: 12, alignItems: 'center', overflow: 'hidden',
+              gap: 12, alignItems: 'start', overflow: 'hidden',
             }}>
               <div style={{ minWidth: 0, overflow: 'hidden' }}>
                 <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{r.sube_ad}</div>
@@ -336,17 +336,40 @@ export default function TruthMotor() {
               </div>
               <div style={{ fontSize: 11, color: 'var(--text2)' }}>
                 {r.anomali_sayisi > 0 ? (
-                  <span>
-                    <strong style={{ color: '#fbbf24' }}>{r.anomali_sayisi}</strong> anomali:&nbsp;
-                    {(r.boyut_ozet || []).slice(0, 3).map((b, i) => (
-                      <span key={`${b.boyut}-${i}`} style={{ marginRight: 8 }}>
-                        {b.ozet || b.boyut}
-                      </span>
-                    ))}
-                    {(r.boyut_ozet || []).length > 3 && (
-                      <span style={{ color: 'var(--text3)' }}>… +{(r.boyut_ozet || []).length - 3}</span>
+                  <div>
+                    <div style={{ marginBottom: 4 }}>
+                      <strong style={{ color: '#fbbf24' }}>{r.anomali_sayisi}</strong> anomali:&nbsp;
+                      {(r.boyut_ozet || []).slice(0, 3).map((b, i) => (
+                        <span key={`${b.boyut}-${i}`} style={{ marginRight: 8 }}>
+                          {b.ozet || b.boyut}
+                        </span>
+                      ))}
+                      {(r.boyut_ozet || []).length > 3 && (
+                        <span style={{ color: 'var(--text3)' }}>… +{(r.boyut_ozet || []).length - 3}</span>
+                      )}
+                    </div>
+                    {/* Zekâ özeti — denetçi kararı */}
+                    {r.yorum_metni && (
+                      <div style={{
+                        marginTop: 6, padding: '6px 10px', borderRadius: 4,
+                        background: r.alarm === 'kritik' ? 'rgba(239,68,68,0.10)'
+                                  : r.alarm === 'yuksek' ? 'rgba(245,158,11,0.10)'
+                                  : r.alarm === 'orta'   ? 'rgba(59,130,246,0.08)'
+                                  : 'rgba(34,197,94,0.06)',
+                        border: r.alarm === 'kritik' ? '1px solid rgba(239,68,68,0.30)'
+                              : r.alarm === 'yuksek' ? '1px solid rgba(245,158,11,0.30)'
+                              : r.alarm === 'orta'   ? '1px solid rgba(59,130,246,0.25)'
+                              : '1px solid rgba(34,197,94,0.20)',
+                        fontSize: 11, whiteSpace: 'pre-line', lineHeight: 1.65,
+                        color: r.alarm === 'kritik' ? '#fca5a5'
+                             : r.alarm === 'yuksek' ? '#fbbf24'
+                             : r.alarm === 'orta'   ? '#93c5fd'
+                             : '#86efac',
+                      }}>
+                        {r.yorum_metni}
+                      </div>
                     )}
-                  </span>
+                  </div>
                 ) : r.ana_tani === 'YETERSIZ_VERI' ? (
                   <span style={{ color: 'var(--text3)' }}>Veri yok (sayım veya satış kaydı eksik)</span>
                 ) : r.calistirildi ? (
