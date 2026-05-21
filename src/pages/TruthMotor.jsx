@@ -140,11 +140,18 @@ export default function TruthMotor() {
           mesaj += ` · ⚠️ Kasa baskını ÖNERİSİ (mod=read_only, ${(r.baskin_tetik.tani || []).join(', ')})`;
         }
         setInfo(mesaj);
-        // Proaktif AI raporu çek — sonuç anında göster
-        try {
-          const pr = await fetchJson(`${API}/api/ops/truth/proaktif/${sube_id}/${tarih}`);
-          if (pr?.yorum_metni) setSonRapor({ sube_id, ...pr });
-        } catch (_) {}
+        // Motor zaten yorum_metni döndürüyor — ayrı API çağrısı yok
+        if (r.yorum_metni) {
+          setSonRapor({
+            sube_id,
+            proaktif_alarm: r.alarm || 'orta',
+            yorum_metni: r.yorum_metni,
+            onlemler: (r.anomali_boyutlar || []).map(b => ({
+              aciliyet: r.alarm || 'orta',
+              aciklama: `${b.boyut}: ${b.tani} (güven %${(b.guven||0).toFixed(0)})`,
+            })),
+          });
+        }
         await Promise.all([kararlariYukle(), gunlukYukle()]);
       }
     } catch (e) {

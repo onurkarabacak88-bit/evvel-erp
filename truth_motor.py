@@ -402,6 +402,199 @@ def capraz_boyut_yorumla(taniler: List[Tani]) -> List[Tani]:
     return taniler
 
 
+# ════════════════════════════════════════════════════════════════════════════
+#  ZEKÂ ÖZETİ — motor_calistir'in son adımı
+#  Taniler listesinden tek denetçi kararı üretir (insan diliyle).
+# ════════════════════════════════════════════════════════════════════════════
+
+# Tanı tipi → öncelik (yüksek = daha tehlikeli)
+_TANI_ONCELIK = {
+    "ZIMMET_NAKIT_CEPTE":    100,
+    "AKSAM_ZIMMET_SINYALI":  95,
+    "SWEETHEARTING_SINYAL":  90,
+    "KAOS":                  85,
+    "STOK_KACAGI_BEYANSIZ":  80,
+    "POS_BYPASS":            75,
+    "SABAH_TOPYEKUN":        70,
+    "AKSAM_TOPYEKUN":        70,
+    "POS_SYNC_HATA":         60,
+    "SABAH_HATALI":          40,
+    "AKSAM_HATALI":          40,
+    "COZULMEDI":             35,
+    "IKRAM_SURDURULEN":      20,
+    "IKRAM_UNUTULDU":        15,
+    "IKRAM_EVO_TEYIT":       5,
+    "YETERSIZ_VERI":         3,
+    "UYUMLU":                0,
+}
+
+_TANI_INSAN = {
+    "ZIMMET_NAKIT_CEPTE":    "Satış yapıldı, para kasaya konmadı — ZİMMET",
+    "AKSAM_ZIMMET_SINYALI":  "Akşam vardiyası zimmet pozisyonu",
+    "SWEETHEARTING_SINYAL":  "Kayıt dışı satış sinyali (sweethearting)",
+    "KAOS":                  "Birden fazla boyutta çözümsüz fark — soruşturma gerekli",
+    "STOK_KACAGI_BEYANSIZ":  "Ürün eksildi, beyan yok",
+    "POS_BYPASS":            "POS kaydı olmadan ürün verildi",
+    "SABAH_TOPYEKUN":        "Sabah vardiyası tüm sayımlarda hatalı",
+    "AKSAM_TOPYEKUN":        "Akşam vardiyası tüm sayımlarda hatalı",
+    "POS_SYNC_HATA":         "Evo POS ile sayım uyumsuz — sistem sorunu",
+    "SABAH_HATALI":          "Sabah sayım hatası",
+    "AKSAM_HATALI":          "Akşam devir hatası",
+    "COZULMEDI":             "Fark var, kaynak belirlenemedi — yeniden say",
+    "IKRAM_SURDURULEN":      "Süregelen ikram pattern — onaylı mı?",
+    "IKRAM_UNUTULDU":        "Kayıtsız ikram",
+    "IKRAM_EVO_TEYIT":       "Evo onaylı ikram — normal",
+    "YETERSIZ_VERI":         "Veri yetersiz",
+    "UYUMLU":                "Uyumlu",
+}
+
+_ALARM_ESIK = {
+    "kritik": 85,   # ≥85 → kritik
+    "yuksek": 60,   # ≥60 → yüksek
+    "orta":   30,   # ≥30 → orta
+}
+
+_BOYUT_KISA = {
+    "kasa": "kasa", "bardak_plastik": "plastik bardak",
+    "bardak_karton": "karton bardak", "redbull_soda": "RedBull/soda", "pasta": "pasta",
+}
+
+
+def _zeka_ozet_uret(taniler: List["Tani"],
+                     baskin_tetik: Optional[Dict] = None) -> Dict[str, Any]:
+    """Motor tarafından üretilen tanilerden tek bir denetçi kararı yaz.
+
+    motor_calistir → capraz_boyut_yorumla bittikten SONRA çağrılır.
+    Ekstra DB sorgusu YOK — yalnızca taniler listesini kullanır.
+
+    Returns:
+        {
+          alarm: "kritik"|"yuksek"|"orta"|"normal",
+          ana_tani: str,            # en yüksek öncelikli tani tipi
+          guven: float,             # ana tanının güven skoru
+          ozet: str,                # 1 cümle (teknik, gösterge paneli için)
+          yorum_metni: str,         # çok satır, insan dili, denetçi raporu
+          anomali_boyutlar: List,   # sadece anomali olan boyutlar
+          capraz_aciklama: str,     # varsa cross-dim detay_capraz metni
+        }
+    """
+    if not taniler:
+        return {"alarm": "normal", "ana_tani": "YETERSIZ_VERI",
+                "guven": 0, "ozet": "Veri yok", "yorum_metni": "⚪ Veri yok",
+                "anomali_boyutlar": [], "capraz_aciklama": ""}
+
+    # Tüm anomalileri önceliğe göre sırala
+    anomaliler = [
+        t for t in taniler
+        if t.tani not in ("UYUMLU", "YETERSIZ_VERI")
+    ]
+    anomaliler.sort(key=lambda t: -_TANI_ONCELIK.get(t.tani, 0))
+
+    # Normal akış
+    if not anomaliler:
+        return {
+            "alarm": "normal",
+            "ana_tani": "UYUMLU",
+            "guven": 100,
+            "ozet": "Tüm kontroller uyumlu — sorun yok",
+            "yorum_metni": (
+                "🟢 Normal\n\n"
+                "✅ Kasa ve stok uyumlu. Evo POS verileri beyanlarla örtüşüyor.\n"
+                "   Aksiyon gerekmez."
+            ),
+            "anomali_boyutlar": [],
+            "capraz_aciklama": "",
+        }
+
+    # Ana tanı (en tehlikeli)
+    ana = anomaliler[0]
+    oncelik = _TANI_ONCELIK.get(ana.tani, 0)
+    alarm = (
+        "kritik" if oncelik >= _ALARM_ESIK["kritik"]
+        else "yuksek" if oncelik >= _ALARM_ESIK["yuksek"]
+        else "orta"
+    )
+    alarm_emoji = {"kritik": "🔴", "yuksek": "🟠", "orta": "🟡"}.get(alarm, "⚪")
+    alarm_tr    = {"kritik": "KRİTİK", "yuksek": "YÜKSEK RİSK", "orta": "ORTA RİSK"}.get(alarm, "")
+
+    # Anomali boyut listesi
+    anomali_boyutlar = [
+        {"boyut": t.boyut, "tani": t.tani, "fark": t.fark_n1_n2, "guven": t.guven_skoru}
+        for t in anomaliler
+    ]
+
+    # Çapraz açıklama — varsa ana tanının detay_capraz'ını al
+    capraz = (ana.detay or {}).get("capraz", "")
+    if not capraz:
+        for t in anomaliler[1:]:
+            capraz = (t.detay or {}).get("capraz", "")
+            if capraz:
+                break
+
+    # ─── Tek cümle özet ───────────────────────────────────────────────────
+    kisa = _TANI_INSAN.get(ana.tani, ana.tani)
+    etkilenen = ", ".join(_BOYUT_KISA.get(t.boyut, t.boyut) for t in anomaliler[:3])
+    ozet = f"{kisa} [{etkilenen}] — güven %{ana.guven_skoru:.0f}"
+
+    # ─── Çok satır insan-dili yorum ──────────────────────────────────────
+    satirlar: List[str] = [f"{alarm_emoji} {alarm_tr}", ""]
+
+    # Bulgular — her anomali boyut
+    kasa_t = next((t for t in taniler if t.boyut == "kasa"), None)
+    urun_anomali = [t for t in anomaliler if t.boyut != "kasa"]
+
+    if kasa_t and kasa_t.fark_n1_n2 is not None and abs(kasa_t.fark_n1_n2) > 0.5:
+        yon = "açık (eksik)" if kasa_t.fark_n1_n2 < 0 else "fazla (açıklanamayan gelir)"
+        satirlar.append(f"💰 Kasa: ₺{abs(kasa_t.fark_n1_n2):.0f} {yon}")
+
+    for t in urun_anomali[:3]:
+        fark_str = ""
+        if t.fark_n1_n2 is not None:
+            fark_str = f" ({abs(t.fark_n1_n2):.0f} adet {'eksik' if t.fark_n1_n2 < 0 else 'fazla'})"
+        tani_kisa = _TANI_INSAN.get(t.tani, t.tani)
+        satirlar.append(f"📦 {_BOYUT_KISA.get(t.boyut, t.boyut)}{fark_str}: {tani_kisa}")
+
+    # Çapraz bağlantı — asıl zekâ burada
+    satirlar.append("")
+    if capraz:
+        satirlar.append(f"🔗 Çapraz bağlantı:")
+        satirlar.append(f"   → {capraz}")
+    else:
+        # Capraz yoksa ana tanıdan çıkar
+        satirlar.append(f"🔍 Sonuç: {kisa} (güven %{ana.guven_skoru:.0f})")
+
+    # Eylem
+    eylem = (ana.detay or {}).get("eylem", {})
+    insan_eylem = eylem.get("insan", "")
+    oto_eylem   = eylem.get("oto", "")
+    satirlar.append("")
+    if insan_eylem or oto_eylem:
+        satirlar.append(f"⚡ Aksiyon:")
+        if insan_eylem:
+            satirlar.append(f"   • {insan_eylem}")
+        if oto_eylem:
+            satirlar.append(f"   • Otomatik: {oto_eylem}")
+    elif alarm in ("kritik", "yuksek"):
+        satirlar.append("⚡ Aksiyon: Kasa + stok yeniden sayım, kamera inceleme")
+
+    # Kasa baskını
+    if baskin_tetik:
+        if baskin_tetik.get("baslatildi"):
+            satirlar.append(f"\n🚨 KASA BASKINI BAŞLATILDI (id: {str(baskin_tetik.get('id',''))[:8]})")
+        elif baskin_tetik.get("oneri"):
+            satirlar.append(f"\n⚠️ Kasa baskını ÖNERİSİ — {', '.join(baskin_tetik.get('tani', []))}")
+
+    return {
+        "alarm": alarm,
+        "ana_tani": ana.tani,
+        "guven": round(ana.guven_skoru, 1),
+        "ozet": ozet,
+        "yorum_metni": "\n".join(satirlar),
+        "anomali_boyutlar": anomali_boyutlar,
+        "capraz_aciklama": capraz,
+    }
+
+
 def ikram_surekli_mi(cur, sube_id: str, personel_id: Optional[str],
                      boyut: str, gun: int = 30) -> Dict[str, Any]:
     """Son N gündeki ikram pattern'ini analiz et.
@@ -712,6 +905,9 @@ def motor_calistir(cur, sube_id: str, tarih: str,
     log.info("truth_motor sube=%s tarih=%s mod=%s kaydedildi=%d",
              sube_id, tarih, mod, kaydedildi)
 
+    # ─── ZEKÂ ÖZETİ — tanilerden tek denetçi kararı ──────────────────────
+    zeka = _zeka_ozet_uret(taniler, baskin_tetik=baskin_tetik)
+
     return {
         "calisti": True,
         "sebep": None,
@@ -719,6 +915,14 @@ def motor_calistir(cur, sube_id: str, tarih: str,
         "taniler": [asdict(t) for t in taniler],
         "kaydedildi": kaydedildi,
         "baskin_tetik": baskin_tetik,
+        # Tek denetçi kararı — motorun ZEKÂsi
+        "alarm": zeka["alarm"],
+        "ana_tani": zeka["ana_tani"],
+        "guven": zeka["guven"],
+        "ozet": zeka["ozet"],
+        "yorum_metni": zeka["yorum_metni"],
+        "anomali_boyutlar": zeka["anomali_boyutlar"],
+        "capraz_aciklama": zeka["capraz_aciklama"],
     }
 
 
