@@ -105,6 +105,8 @@ TANI_TIPLERI = (
     "SUT_SAPMA",                 # gerçek süt tüketimi > teorik BOM → aşırı porsiyon/kayıt dışı ürün
     "SAHTE_FIRE_KAYDI",          # fire kaydı var ama zamanlama+miktar şüpheli → sprint E bypass girişimi
     "BOM_SAPMA",                 # fiziksel bardak/sarf tüketimi > Evo satış BOM → kayıt dışı kullanım
+    # ── Sprint G — Cross-day Akşamcı Zimmet Korelasyonu ──────────────────
+    "AKSAM_KASAYI_SISIRDI",      # bugün N1>N2 + dün stok açığı → akşamcı N1 şişirerek zimmet gizledi
 )
 
 # Her tanı için (otomatik aksiyon, insan aksiyonu, alarm seviyesi)
@@ -134,6 +136,8 @@ EYLEM_MAP: Dict[str, Dict[str, str]] = {
     "SUT_SAPMA":                 {"oto": "uyari_orta",           "insan": "Reçete kontrolü + personel porsiyonlama izle + fire sor",       "alarm": "orta"},
     "SAHTE_FIRE_KAYDI":          {"oto": "cfo_bildirim_log",     "insan": "Fire kaydı şüpheli — zamanlama + miktar incele + kamera bak",   "alarm": "yuksek"},
     "BOM_SAPMA":                 {"oto": "uyari_yuksek",         "insan": "Sarf tüketimi BOM'u aşıyor — kayıt dışı kullanım soruştur",    "alarm": "yuksek"},
+    # Sprint G — Cross-day akşamcı zimmet korelasyonu
+    "AKSAM_KASAYI_SISIRDI":      {"oto": "cfo_bildirim_kritik",  "insan": "Dün akşamcı N1'i şişirdi + stok açığı eşleşiyor → zimmet soruşturması + kamera", "alarm": "kritik"},
 }
 
 @dataclass
@@ -450,6 +454,8 @@ _TANI_ONCELIK = {
     "SAHTE_FIRE_KAYDI":          88,
     "BOM_SAPMA":                 65,
     "SUT_SAPMA":                 55,
+    # Sprint G
+    "AKSAM_KASAYI_SISIRDI":      97,
 }
 
 _TANI_INSAN = {
@@ -478,6 +484,8 @@ _TANI_INSAN = {
     "SUT_SAPMA":                 "Süt tüketimi BOM'u aşıyor — aşırı porsiyonlama veya kayıt dışı ürün",
     "SAHTE_FIRE_KAYDI":          "Fire kaydı şüpheli — zimmet örtbas girişimi olabilir",
     "BOM_SAPMA":                 "Sarf tüketimi Evo satış BOM'undan fazla — kayıt dışı kullanım",
+    # Sprint G
+    "AKSAM_KASAYI_SISIRDI":      "Akşamcı N1 şişirdi — dünkü stok açığı ile eşleşiyor → ZİMMET",
 }
 
 _ALARM_ESIK = {
@@ -946,6 +954,35 @@ def motor_calistir(cur, sube_id: str, tarih: str,
     except Exception as _e:
         log.warning("sprint_e_ikram_zimmet_ayir hata: %s", _e)
 
+    # ── Sprint G: Akşamcı N1 Şişirme (cross-day kasa korelasyonu) ───────────
+    sprint_g_meta: Dict[str, Any] = {}
+    try:
+        sprint_g_meta = aksam_kasa_sisirme_tespit(cur, sube_id, tarih)
+        if sprint_g_meta.get("tani") == "AKSAM_KASAYI_SISIRDI":
+            # Kasa boyutundaki AKSAM_HATALI / COZULMEDI tanısını yükselt
+            for _t in taniler:
+                if (
+                    _t.boyut == "kasa"
+                    and _t.tani in ("AKSAM_HATALI", "COZULMEDI", "AKSAM_TOPYEKUN")
+                    and _t.fark_n1_n2 is not None
+                    and _t.fark_n1_n2 < -0.99   # N2 < N1 → akşamcı fazla beyan
+                ):
+                    _t.tani = "AKSAM_KASAYI_SISIRDI"
+                    _t.guven_skoru = sprint_g_meta["guven"]
+                    _t.detay["sprint_g"] = sprint_g_meta
+                    if sprint_g_meta.get("aksamci_ad"):
+                        _t.detay["aksamci_ad"] = sprint_g_meta["aksamci_ad"]
+                    log.info(
+                        "sprint_g kasa tanisi yukseltildi sube=%s tarih=%s "
+                        "sisirme=%.0f aksamci=%s",
+                        sube_id, tarih,
+                        sprint_g_meta.get("sisirme_tl", 0),
+                        sprint_g_meta.get("aksamci_ad", "?"),
+                    )
+                    break
+    except Exception as _e:
+        log.warning("sprint_g aksam_kasa_sisirme_tespit hata: %s", _e)
+
     # Eylem önerisi enjekte et
     for t in taniler:
         t.detay["eylem"] = eylem_oner(t.tani)
@@ -989,6 +1026,8 @@ def motor_calistir(cur, sube_id: str, tarih: str,
         "capraz_aciklama": zeka["capraz_aciklama"],
         # Sprint E — ikram/zimmet ayırım meta
         "sprint_e": sprint_e_meta,
+        # Sprint G — cross-day akşamcı N1 şişirme
+        "sprint_g": sprint_g_meta,
     }
 
 
@@ -4701,6 +4740,170 @@ def bom_sapma_tani(bom_varyans_sonuc: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# ════════════════════════════════════════════════════════════════════════════
+#  SPRINT G — Cross-day Akşamcı N1 Şişirme Tespiti
+# ════════════════════════════════════════════════════════════════════════════
+
+def aksam_kasa_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
+    """Sprint G — Akşamcı N1 Şişirme Tespiti (cross-day kasa korelasyonu).
+
+    Senaryo (Hikaye 1):
+      Akşamcı unreported satış parasını (85₺) cebe koydu. Kasayı dengede göstermek için
+      N1 devir beyanını 85₺ şişirdi. Ertesi sabah sabahçı kör sayım yapar → N2 < N1.
+      Sistem "AKSAM_HATALI" der — ama gerçek suçlu akşamcı zimmetidir.
+
+    İki zorunlu sinyal:
+      1. N1_dün (KAPANIS.devir) > N2_bugün (ACILIS.kasa_sayim)  — akşamcı fazla beyan
+      2. Dün stok açığı var (STOK_ACIK)                          — unreported satış kanıtı
+
+    Üçüncü sinyal (güven artırıcı):
+      3. |N1 − N2| ≈ dünkü stok açığının ₺ karşılığı (±%30)     — sayısal eşleşme
+
+    Args:
+        cur:     DB cursor (dict_cursor)
+        sube_id: şube UUID
+        tarih:   BUGÜN — sabahçının saydığı gün (ACILIS günü, YYYY-MM-DD)
+
+    Returns:
+        {
+          "tani":          "AKSAM_KASAYI_SISIRDI" | None,
+          "sisirme_tl":    float,           # N1 − N2 (akşamcının şişirdiği tutar ₺)
+          "n1_aksam":      float,           # dün akşam KAPANIS.devir
+          "n2_sabah":      float,           # bugün ACILIS.kasa_sayim (kör sayım)
+          "onceki_tarih":  str,             # dün (YYYY-MM-DD)
+          "dun_stok_acik": bool,
+          "acik_boyutlar": dict,            # boyut → varyans (negatif = açık)
+          "dun_stok_tl":   float | None,   # stok açığının tahmini ₺ karşılığı
+          "tl_eslesen":    bool,            # sayısal eşleşme var mı?
+          "guven":         float,
+          "detay":         str,
+          "aksamci_ad":    str | None,      # dünkü akşamcı personel adı
+        }
+    """
+    from datetime import date, timedelta
+
+    sonuc: Dict[str, Any] = {"tani": None}
+
+    try:
+        onceki = (date.fromisoformat(tarih) - timedelta(days=1)).isoformat()
+    except Exception:
+        return sonuc
+
+    # ── Sinyal 1: Bugün kasa N1 > N2 (akşamcı fazla beyan) ─────────────────
+    cur.execute("""
+        SELECT kasa_sayim FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=%s::date AND tip='ACILIS' AND durum='tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+    """, (sube_id, tarih))
+    r_acilis = cur.fetchone()
+    if not r_acilis:
+        return sonuc
+    n2_sabah = float(dict(r_acilis).get("kasa_sayim") or 0)
+
+    cur.execute("""
+        SELECT devir, meta FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+    """, (sube_id, onceki))
+    r_kapanis = cur.fetchone()
+    if not r_kapanis:
+        return sonuc
+    r_kap_dict = dict(r_kapanis)
+    n1_aksam = float(r_kap_dict.get("devir") or 0)
+
+    sisirme_tl = round(n1_aksam - n2_sabah, 2)
+    if sisirme_tl < 1.0:
+        # Şişirme yok veya önemsiz — AKSAM_HATALI nedenini araştırmaya gerek yok
+        return sonuc
+
+    # ── Sinyal 2: Dün stok açığı var mı? ────────────────────────────────────
+    try:
+        dun_stok = stok_akis_tablosu(cur, sube_id, onceki)
+    except Exception as e:
+        log.warning("sprint_g stok_akis_tablosu hata: %s", e)
+        return sonuc
+
+    dun_boyutlar = dun_stok.get("boyutlar") or {}
+    acik_boyutlar = {
+        b: d for b, d in dun_boyutlar.items()
+        if d.get("tani") == "STOK_ACIK" and d.get("varyans") is not None
+    }
+
+    if not acik_boyutlar:
+        # Dün stok açığı yok → N1 şişirmesi tesadüfi sayım hatası olabilir
+        return sonuc
+
+    # ── Sinyal 3: ₺ değeri eşleşiyor mu? (güven artırıcı) ──────────────────
+    dun_evo = _evo_sube_grup_satis(cur, sube_id, onceki)
+    evo_ciro = float(dun_evo.get("_ciro") or 0)
+    evo_toplam_adet = sum(
+        float(dun_evo.get(g, 0)) for g in ("14 Oz", "8 Oz", "Ice")
+    )
+    toplam_acik_adet = sum(
+        abs(float(d["varyans"])) for d in acik_boyutlar.values()
+    )
+
+    dun_stok_tl: Optional[float] = None
+    tl_eslesen = False
+    if evo_toplam_adet > 0 and evo_ciro > 0 and toplam_acik_adet > 0:
+        avg_price = evo_ciro / evo_toplam_adet           # ₺/adet (Evo bazlı)
+        dun_stok_tl = round(toplam_acik_adet * avg_price, 2)
+        tolerans = max(dun_stok_tl * 0.30, 15.0)         # ±%30 veya min 15₺
+        tl_eslesen = abs(sisirme_tl - dun_stok_tl) <= tolerans
+
+    # ── Dünkü akşamcı kimdi? (KAPANIS meta'sından) ──────────────────────────
+    aksamci_ad: Optional[str] = None
+    try:
+        m = _meta_oku(r_kap_dict.get("meta"))
+        aksamci_ad = (
+            m.get("personel_ad")
+            or m.get("ad")
+            or m.get("kullanici_ad")
+            or None
+        )
+    except Exception:
+        pass
+
+    # ── Güven skoru & açıklama ───────────────────────────────────────────────
+    ad_str = f" ({aksamci_ad})" if aksamci_ad else ""
+    if tl_eslesen:
+        guven = 93.0
+        detay = (
+            f"Akşamcı{ad_str} N1−N2={sisirme_tl:.0f}₺ şişirdi. "
+            f"Dün stok açığı {toplam_acik_adet:.0f} adet ≈ {dun_stok_tl:.0f}₺ (eşleşiyor). "
+            f"Sinyal: unreported satış parası cebe alındı → N1 şişirildi."
+        )
+    else:
+        guven = 74.0
+        acik_str = ", ".join(
+            f"{b}:{abs(float(d['varyans'])):.0f}"
+            for b, d in acik_boyutlar.items()
+        )
+        detay = (
+            f"Akşamcı{ad_str} N1−N2={sisirme_tl:.0f}₺ şişirdi. "
+            f"Dün stok açığı var ({acik_str}). "
+            + (f"Tahmini ₺={dun_stok_tl:.0f} (değer farkı var, belirsizlik)."
+               if dun_stok_tl else "₺ değeri hesaplanamadı.")
+        )
+
+    return {
+        "tani":          "AKSAM_KASAYI_SISIRDI",
+        "sisirme_tl":    sisirme_tl,
+        "n1_aksam":      n1_aksam,
+        "n2_sabah":      n2_sabah,
+        "onceki_tarih":  onceki,
+        "dun_stok_acik": True,
+        "acik_boyutlar": {
+            b: round(float(d["varyans"]), 2) for b, d in acik_boyutlar.items()
+        },
+        "dun_stok_tl":   dun_stok_tl,
+        "tl_eslesen":    tl_eslesen,
+        "guven":         guven,
+        "detay":         detay,
+        "aksamci_ad":    aksamci_ad,
+    }
+
+
 def stok_akis_tablosu(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     """5 boyut için tam stok akış tablosu.
 
@@ -5490,6 +5693,13 @@ def tam_analiz(cur, sube_id: str, tarih: str,
     except Exception as e:
         log.warning("tam_analiz bom_sapma hata: %s", e)
 
+    # 8d. Sprint G — Akşamcı N1 Şişirme (cross-day kasa korelasyonu)
+    sprint_g_sonuc: Dict[str, Any] = {}
+    try:
+        sprint_g_sonuc = aksam_kasa_sisirme_tespit(cur, sube_id, tarih)
+    except Exception as e:
+        log.warning("tam_analiz sprint_g hata: %s", e)
+
     # 9. Genel alarm seviyesi
     has_kritik = any(ps.get("risk_seviye") == "kritik" for ps in personel_sorumlu)
     has_yuksek = any(ps.get("risk_seviye") == "yuksek" for ps in personel_sorumlu)
@@ -5500,8 +5710,9 @@ def tam_analiz(cur, sube_id: str, tarih: str,
         or bom_sapma_sonuc.get("tani") == "BOM_SAPMA"
     )
     sprint_f_orta = (sut_sapma.get("tani") == "SUT_SAPMA")
+    sprint_g_kritik = (sprint_g_sonuc.get("tani") == "AKSAM_KASAYI_SISIRDI")
 
-    if has_kritik or birincil_koken in ("SWEETHEARTING_ZIMMET",):
+    if has_kritik or sprint_g_kritik or birincil_koken in ("SWEETHEARTING_ZIMMET",):
         alarm = "kritik"
     elif has_yuksek or sprint_f_yuksek or birincil_koken in ("NAKIT_CEKILDI", "AKSAM_ZIMMET_POZISYON"):
         alarm = "yuksek"
@@ -5526,6 +5737,10 @@ def tam_analiz(cur, sube_id: str, tarih: str,
         ozet_parcalari.append(f"Kök neden: {birincil_koken}")
     if en_riskli.get("risk_seviye") not in (None, "normal"):
         ozet_parcalari.append(f"En riskli: {en_riskli_ad} ({en_riskli.get('risk_seviye')})")
+    if sprint_g_kritik:
+        g_ad = sprint_g_sonuc.get("aksamci_ad") or "Akşamcı"
+        g_tl = sprint_g_sonuc.get("sisirme_tl", 0)
+        ozet_parcalari.append(f"⚠ {g_ad} {g_tl:.0f}₺ N1 şişirdi (dün stok açığı)")
     ozet = " | ".join(ozet_parcalari) or "Tüm kontroller uyumlu"
 
     # 10. İnsan-okunabilir yorum metni
@@ -5580,4 +5795,6 @@ def tam_analiz(cur, sube_id: str, tarih: str,
             "sahte_fire":   sahte_fire,
             "bom_sapma":    bom_sapma_sonuc,
         },
+        # Sprint G — cross-day akşamcı N1 şişirme
+        "sprint_g": sprint_g_sonuc,
     }
