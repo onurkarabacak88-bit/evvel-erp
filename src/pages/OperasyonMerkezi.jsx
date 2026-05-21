@@ -813,6 +813,36 @@ function kullanilanSatirlariSubeyeGoreSirala(satirlar) {
   });
 }
 
+/** Kullanılan ürünler tablosu — görünen kalemlerin sütun toplamları + Evo özet. */
+function kullanilanTabloOzet(r, keys, labels) {
+  let tDun = 0;
+  let tAc = 0;
+  let tUa = 0;
+  let tKap = 0;
+  let tSat = 0;
+  let satirSay = 0;
+  const evoSatirlar = [];
+  (keys || []).forEach((k) => {
+    const dun = Number(r?.dun_kapanis?.[k] ?? 0);
+    const ac = Number(r?.acilis?.[k] ?? 0);
+    const ua = Number(r?.urun_ac?.[k] ?? 0);
+    const kap = Number(r?.kapanis?.[k] ?? 0);
+    const sat = Number(r?.satilan?.[k] ?? 0);
+    const evoLbl = r?.evo_etiket?.[k] || '';
+    if (ac === 0 && ua === 0 && kap === 0 && dun === 0 && sat === 0 && !evoLbl) return;
+    satirSay += 1;
+    if (!r?.onceki_kapanis_yok) tDun += dun;
+    tAc += ac;
+    tUa += ua;
+    tKap += kap;
+    tSat += sat;
+    if (evoLbl) {
+      evoSatirlar.push(`${labels?.[k] || k}: ${evoLbl.replace(/^Evo · /, '')}`);
+    }
+  });
+  return { tDun, tAc, tUa, tKap, tSat, satirSay, evoSatirlar };
+}
+
 function urunAcSubeAnahtar(raw) {
   const s = String(raw || '')
     .toLocaleLowerCase('tr')
@@ -8634,6 +8664,7 @@ export default function OperasyonMerkezi() {
               {kullanilanGorunenSatirlarSirali.map((r) => {
                 const keys = kullanilanRowKeys(r);
                 const labels = KULLANILAN_LABEL;
+                const ozet = kullanilanTabloOzet(r, keys, labels);
                 const hasFark = r.fark_var;
                 const kapanisYok = !r.kapanis_var;
                 return (
@@ -8697,6 +8728,27 @@ export default function OperasyonMerkezi() {
                               </tr>
                             );
                           })}
+                          {ozet.satirSay > 0 && (
+                            <tr style={{ borderTop: '2px solid var(--border)', background: 'rgba(245,158,11,.06)' }}>
+                              <td style={{ padding: '6px 8px', fontWeight: 800, fontSize: 11, color: '#fbbf24' }}>Toplam</td>
+                              <td className="mono" style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 700, color: '#c4b5fd' }}>
+                                {r.onceki_kapanis_yok ? '—' : ozet.tDun}
+                              </td>
+                              <td className="mono" style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 700 }}>{ozet.tAc}</td>
+                              <td className="mono" style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 700, color: '#86efac' }}>{ozet.tUa > 0 ? `+${ozet.tUa}` : ozet.tUa}</td>
+                              <td className="mono" style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 700, color: '#fbbf24' }}>{ozet.tKap > 0 ? `-${ozet.tKap}` : '—'}</td>
+                              <td className="mono" style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: ozet.tSat < 0 ? 'var(--red)' : '#86efac' }}>
+                                <div>{ozet.tSat}</div>
+                                {ozet.evoSatirlar.length > 0 && (
+                                  <div style={{ fontSize: 10, fontWeight: 500, color: '#93c5fd', marginTop: 4, lineHeight: 1.4, textAlign: 'left' }}>
+                                    {ozet.evoSatirlar.map((line, i) => (
+                                      <div key={i}>{line}</div>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
                         </tbody>
                       </table>
                     </div>

@@ -3357,7 +3357,7 @@ def ops_bar_ozet(
                 for k, v in evo_bar.items()
             }
             row["evo_etiket"] = {
-                k: f"Evo: {v.get('etiket') or k} ({int(round(float(v.get('adet') or 0)))})"
+                k: f"Evo · {(v.get('etiket') or k)} · {int(round(float(v.get('adet') or 0)))} ad"
                 for k, v in evo_bar.items()
                 if float(v.get("adet") or 0) > 0
             }
