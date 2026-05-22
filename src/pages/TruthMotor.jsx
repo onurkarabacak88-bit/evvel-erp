@@ -459,6 +459,7 @@ export default function TruthMotor() {
           />
           <VardiyaPL tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
           <VardiyaBardakPNL tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
+          <AksamBardakSisirme tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
           <PersonelDavranis />
         </>
       )}
@@ -1368,6 +1369,157 @@ function SaatHeatmap() {
       <p style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
         💡 Hücre = saatte tespit edilen anomali sayısı · Koyu kırmızı = yoğun saat (sweethearting/zimmet pattern'i orada kümeleniyor olabilir)
       </p>
+    </div>
+  );
+}
+
+// ── Sprint J — Cross-day Bardak Devamlılık Kontrolü (Akşamcı Bardak Şişirme) ─
+function AksamBardakSisirme({ tarih, subeler }) {
+  const [secSubeId, setSecSubeId] = useState('');
+  const [veri, setVeri] = useState(null);
+  const [yukleniyor, setYukleniyor] = useState(false);
+  const [hata, setHata] = useState('');
+
+  useEffect(() => {
+    if (!secSubeId && subeler.length > 0) setSecSubeId(subeler[0].id);
+  }, [subeler, secSubeId]);
+
+  const yukle = useCallback(async () => {
+    if (!secSubeId || !tarih) return;
+    setYukleniyor(true); setHata('');
+    try {
+      const d = await fetchJson(`${API}/api/ops/truth/bardak-sisirme/${secSubeId}/${tarih}`);
+      setVeri(d);
+    } catch (e) {
+      setHata(String(e.message || e));
+      setVeri(null);
+    } finally { setYukleniyor(false); }
+  }, [secSubeId, tarih]);
+
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const tani    = veri?.tani || null;
+  const sisirdi = tani === 'AKSAM_BARDAK_SISIRDI';
+  const uyumlu  = tani === 'UYUMLU';
+  const renk    = sisirdi ? '#fca5a5' : uyumlu ? '#86efac' : 'var(--text3)';
+  const bg      = sisirdi ? 'rgba(220,38,38,0.10)' : uyumlu ? 'rgba(34,197,94,0.08)' : 'rgba(120,120,120,0.06)';
+  const border  = sisirdi ? '#ef4444' : uyumlu ? '#22c55e' : '#555';
+
+  // Sayım kutusu helper
+  const SayimKutu = ({ label, dun, bugun, kaybi }) => {
+    const kaybiRenk = kaybi > 3 ? '#fca5a5' : kaybi > 0 ? '#fbbf24' : '#86efac';
+    return (
+      <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: 6, padding: '8px 12px', flex: 1 }}>
+        <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 6 }}>{label}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, fontSize: 11 }}>
+          <div>
+            <div style={{ fontSize: 9, color: 'var(--text3)' }}>Dün KAPANIS</div>
+            <div style={{ fontFamily: 'monospace', fontWeight: 700 }}>{dun ?? '—'}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 9, color: 'var(--text3)' }}>Bugün ACILIS</div>
+            <div style={{ fontFamily: 'monospace', fontWeight: 700 }}>{bugun ?? '—'}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 9, color: 'var(--text3)' }}>Gece Kaybı</div>
+            <div style={{ fontFamily: 'monospace', fontWeight: 700, color: kaybi > 3 ? kaybiRenk : 'var(--text2)' }}>
+              {kaybi != null ? (kaybi > 0 ? '+' : '') + kaybi : '—'}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ margin: '16px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>🌙 Cross-day Bardak Devamlılık (Dün Kapanış → Bugün Açılış)</h3>
+        <select className="input" value={secSubeId} onChange={e => setSecSubeId(e.target.value)}
+          style={{ fontSize: 12, padding: '3px 8px' }}>
+          {subeler.map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
+        </select>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>{tarih}</span>
+        <button className="btn btn-sm" onClick={yukle} style={{ fontSize: 11 }}>↻</button>
+      </div>
+
+      {/* Açıklama */}
+      <div className="card" style={{ padding: '8px 12px', marginBottom: 8, fontSize: 11, color: 'var(--text3)', lineHeight: 1.6 }}>
+        🌙 <b>Gece bardak kaybolmaz.</b> Dün akşamcı KAPANIS'ta bardağı şişirdiyse sabahçı
+        bugün kör sayımda gerçeği bulur. <b>Dün KAPANIS &gt; Bugün ACILIS</b> → fark = akşamcının şişirmesi.
+        Cross-sinyal: Aynı gün kasa açığı da varsa → akşamcı hem kasa hem bardak şişirdi.
+      </div>
+
+      {hata && <div className="card" style={{ padding: 10, color: '#fca5a5', fontSize: 12 }}>⚠️ {hata}</div>}
+      {yukleniyor && <div className="card" style={{ padding: 12, textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>Yükleniyor…</div>}
+
+      {!yukleniyor && !veri && !hata && (
+        <div className="card" style={{ padding: 14, textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>
+          Dün KAPANIS veya bugün ACILIS verisi bulunamadı.
+        </div>
+      )}
+
+      {!yukleniyor && veri && (
+        <div className="card" style={{ padding: '12px 16px', borderLeft: `4px solid ${border}`, background: bg }}>
+
+          {/* Başlık + tanı + akşamcı */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: renk }}>
+              {sisirdi ? '🚨' : uyumlu ? '✅' : '⚪'} {tani || 'VERİ YETERSİZ'}
+            </span>
+            {veri.aksamci_ad && (
+              <span style={{ fontSize: 12, color: 'var(--text2)' }}>
+                Akşamcı: <b>{veri.aksamci_ad}</b>
+              </span>
+            )}
+            {veri.guven > 0 && (
+              <span style={{ fontSize: 11, color: sisirdi ? renk : 'var(--text3)' }}>
+                Güven: %{Number(veri.guven).toFixed(0)}
+              </span>
+            )}
+            {veri.kasada_acik && (
+              <span style={{ fontSize: 11, background: 'rgba(220,38,38,0.18)', color: '#fca5a5', borderRadius: 4, padding: '2px 8px', fontWeight: 600 }}>
+                💰 Kasa açığı da var — çift sinyal!
+              </span>
+            )}
+          </div>
+
+          {/* Karton + Plastik sayım kutuları */}
+          <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+            <SayimKutu
+              label="Karton Bardak (Küçük+Büyük)"
+              dun={veri.dun_karton}
+              bugun={veri.bugun_karton}
+              kaybi={veri.gece_karton_kaybi}
+            />
+            <SayimKutu
+              label="Plastik Bardak"
+              dun={veri.dun_plastik}
+              bugun={veri.bugun_plastik}
+              kaybi={veri.gece_plastik_kaybi}
+            />
+          </div>
+
+          {/* Kasa cross-sinyal (N1/N2) */}
+          {veri.kasada_acik && (
+            <div style={{ background: 'rgba(220,38,38,0.12)', borderRadius: 6, padding: '8px 12px', marginBottom: 10, fontSize: 11 }}>
+              <span style={{ color: '#fca5a5', fontWeight: 600 }}>Kasa Cross-Sinyal:</span>
+              {' '}N1 (dün devir) = <b>{Number(veri.n1_devir || 0).toFixed(0)}₺</b>
+              {' '}&gt;{' '}
+              N2 (bugün ACILIS kör sayım) = <b>{Number(veri.n2_kasa || 0).toFixed(0)}₺</b>
+              {' '}→ <b style={{ color: '#fca5a5' }}>{Math.abs(Number(veri.fark_n1_n2 || 0)).toFixed(0)}₺ açık</b>
+              {' '}— Akşamcı hem kasayı hem bardağı şişirdi.
+            </div>
+          )}
+
+          {/* Detay metni */}
+          {veri.detay && (
+            <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.5, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 8 }}>
+              {veri.detay}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

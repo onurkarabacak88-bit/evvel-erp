@@ -3366,12 +3366,11 @@ def ops_bar_ozet(
 
         cur.execute(
             f"""
-            SELECT sube_id, (olay_ts AT TIME ZONE 'Europe/Istanbul')::date AS tarih, aciklama
+            SELECT sube_id, tarih::text AS tarih, aciklama
             FROM operasyon_defter
             WHERE etiket='URUN_AC'
-              AND to_char((olay_ts AT TIME ZONE 'Europe/Istanbul')::date, 'YYYY-MM') = %s
-              AND (NULLIF(%s, '') IS NULL
-                   OR (olay_ts AT TIME ZONE 'Europe/Istanbul')::date = NULLIF(%s,'')::date)
+              AND to_char(tarih, 'YYYY-MM') = %s
+              AND (NULLIF(%s, '') IS NULL OR tarih = NULLIF(%s,'')::date)
               {urun_sube_filter}
             """,
             urun_params,
@@ -11212,7 +11211,7 @@ def _food_cost_hesapla_gun(
         SELECT sube_id::text, aciklama
         FROM operasyon_defter
         WHERE etiket = 'URUN_AC'
-          AND (olay_ts AT TIME ZONE 'Europe/Istanbul')::date = %s
+          AND tarih = %s
           {'AND sube_id = %s' if sube_id_filtre else ''}
         """,
         [hedef, *sube_params],
@@ -13352,6 +13351,24 @@ def truth_vardiya_bardak_pnl(sube_id: str, tarih: str):
         raise HTTPException(500, f"truth_motor import edilemedi: {e}")
     with db() as (conn, cur):
         return _tm.aksam_vardiya_bardak_pnl(cur, sube_id, tarih)
+
+
+@router.get("/truth/bardak-sisirme/{sube_id}/{tarih}")
+def truth_bardak_sisirme(sube_id: str, tarih: str):
+    """Sprint J — Cross-day bardak devamlılık kontrolü (akşamcı bardak şişirme tespiti).
+
+    Dün KAPANIS.meta.kapanis_stok_sayim ile bugün ACILIS.meta.acilis_stok_sayim
+    karşılaştırılır. Gece arası bardak kaybolamaz → fark > 3 → AKSAM_BARDAK_SISIRDI.
+    Cross-sinyal: Aynı gün N1 (devir) > N2 (ACILIS.kasa_sayim) → hem kasa hem bardak şişirdi.
+
+    Tanı: AKSAM_BARDAK_SISIRDI | UYUMLU | YETERSIZ_VERI.
+    """
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.aksam_bardak_sisirme_tespit(cur, sube_id, tarih)
 
 
 @router.get("/truth/mali-capraz")

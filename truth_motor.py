@@ -114,6 +114,8 @@ TANI_TIPLERI = (
     "AKSAM_VARDIYA_BARDAK_ACIK", # Devir→kapanis fiziksel bardak farkı > Evo akşam tahmini → kayıt dışı satış şüphesi
     # ── Sprint I (D Bendi) — Küçük Tutarlı Günlük Kasa Eksilmesi Pattern ────
     "KUCUK_TUTAR_BIRIKIM",       # Personel son 30g'de >%55 günde küçük negatif fark → birikim/drift zimmeti
+    # ── Sprint J — Cross-day Bardak Devamlılık Kontrolü ──────────────────────
+    "AKSAM_BARDAK_SISIRDI",      # Dün KAPANIS bardak > bugün ACILIS bardak → gece "eridi" → akşamcı şişirdi
 )
 
 # Her tanı için (otomatik aksiyon, insan aksiyonu, alarm seviyesi)
@@ -152,6 +154,8 @@ EYLEM_MAP: Dict[str, Dict[str, str]] = {
     "AKSAM_VARDIYA_BARDAK_ACIK": {"oto": "cfo_bildirim_log",     "insan": "Akşam vardiyası bardak açığı — devir→kapanis fiziksel fark Evo satış tahminini aşıyor → kayıt dışı satış + nakit soruşturması", "alarm": "yuksek"},
     # Sprint I (D Bendi) — Küçük tutarlı günlük birikim
     "KUCUK_TUTAR_BIRIKIM":       {"oto": "cfo_bildirim_log",     "insan": "Personel her gün küçük tutarda kasa açığı oluşturuyor → 30 günlük seri korelasyon soruşturması + birebir gözlem", "alarm": "yuksek"},
+    # Sprint J — Cross-day bardak devamlılık
+    "AKSAM_BARDAK_SISIRDI":      {"oto": "cfo_bildirim_kritik",  "insan": "Dün akşamcı KAPANIS bardak sayısını şişirdi — sabahçı kör sayımda gerçeği buldu → gece bardak kaybolmaz → zimmet soruşturması + kamera", "alarm": "kritik"},
 }
 
 @dataclass
@@ -477,6 +481,8 @@ _TANI_ONCELIK = {
     "AKSAM_VARDIYA_BARDAK_ACIK": 87,
     # Sprint I (D Bendi)
     "KUCUK_TUTAR_BIRIKIM":       82,
+    # Sprint J — Cross-day bardak devamlılık
+    "AKSAM_BARDAK_SISIRDI":      93,
 }
 
 _TANI_INSAN = {
@@ -514,6 +520,8 @@ _TANI_INSAN = {
     "AKSAM_VARDIYA_BARDAK_ACIK": "Akşam vardiyası bardak açığı — devir→kapanis fark Evo tahminini aşıyor → kayıt dışı satış şüphesi",
     # Sprint I (D Bendi)
     "KUCUK_TUTAR_BIRIKIM":       "Günlük küçük kasa eksilmesi — birikim zimmeti şüphesi",
+    # Sprint J — Cross-day bardak devamlılık
+    "AKSAM_BARDAK_SISIRDI":      "Dün akşamcı bardak şişirdi — gece bardak kaybolmaz, sabahçı gerçeği buldu → ZİMMET",
 }
 
 _ALARM_ESIK = {
@@ -1123,6 +1131,54 @@ def motor_calistir(cur, sube_id: str, tarih: str,
     except Exception as _e:
         log.warning("sprint_h aksam_vardiya_bardak_pnl hata: %s", _e)
 
+    # ── Sprint J — Cross-day Bardak Devamlılık Kontrolü ──────────────────────
+    # Akşamcı dün KAPANIS'ta bardağı şişirdiyse sabahçı bugün gerçeği sayar.
+    # Gece arası bardak kaybolmaz → dün_kapanis > bugün_acilis → AKSAM_BARDAK_SISIRDI.
+    # Cross-sinyal: Aynı gün N1>N2 kasa açığı da varsa → akşamcı hem kasa hem bardak şişirdi.
+    sprint_j_meta: Dict[str, Any] = {}
+    try:
+        sprint_j_meta = aksam_bardak_sisirme_tespit(cur, sube_id, tarih)
+        if sprint_j_meta.get("tani") == "AKSAM_BARDAK_SISIRDI":
+            _upgraded_j = False
+            _bardak_j_yukselt = {
+                "AKSAM_HATALI", "AKSAM_TOPYEKUN",
+                "STOK_KACAGI_BEYANSIZ", "ZIMMET_NAKIT_CEPTE",
+                "AKSAM_ZIMMET_SINYALI", "POS_BYPASS",
+                "COZULMEDI", "AKSAM_KASAYI_SISIRDI",
+            }
+            for _t in taniler:
+                if (
+                    _t.boyut in ("bardak_karton", "bardak_plastik")
+                    and _t.tani in _bardak_j_yukselt
+                ):
+                    _t.tani = "AKSAM_BARDAK_SISIRDI"
+                    _t.guven_skoru = sprint_j_meta["guven"]
+                    _t.detay["sprint_j"] = sprint_j_meta
+                    if sprint_j_meta.get("aksamci_ad"):
+                        _t.detay["aksamci_ad"] = sprint_j_meta["aksamci_ad"]
+                    _upgraded_j = True
+            if _upgraded_j:
+                log.info(
+                    "sprint_j aksam_bardak_sisirdi tetiklendi sube=%s tarih=%s "
+                    "gece_karton=%.0f gece_plastik=%.0f aksamci=%s",
+                    sube_id, tarih,
+                    sprint_j_meta.get("gece_karton_kaybi", 0),
+                    sprint_j_meta.get("gece_plastik_kaybi", 0),
+                    sprint_j_meta.get("aksamci_ad", "?"),
+                )
+            else:
+                # Bardak tanısı yok ama cross-day anomali var → kasa boyutuna not ekle
+                for _t in taniler:
+                    if _t.boyut == "kasa":
+                        _t.detay["sprint_j_uyari"] = (
+                            f"Dün akşamcı bardak şişirme sinyali: "
+                            f"karton {sprint_j_meta.get('gece_karton_kaybi', 0):.0f} + "
+                            f"plastik {sprint_j_meta.get('gece_plastik_kaybi', 0):.0f} adet gece eridi"
+                        )
+                        break
+    except Exception as _e:
+        log.warning("sprint_j aksam_bardak_sisirme_tespit hata: %s", _e)
+
     # Eylem önerisi enjekte et
     for t in taniler:
         t.detay["eylem"] = eylem_oner(t.tani)
@@ -1172,6 +1228,8 @@ def motor_calistir(cur, sube_id: str, tarih: str,
         "sprint_g2": sprint_g2_meta,
         # Sprint H (C Bendi) — akşam vardiyası bardak P&L (devir→kapanis)
         "sprint_h": sprint_h_meta,
+        # Sprint J — cross-day bardak devamlılık (dün KAPANIS → bugün ACILIS)
+        "sprint_j": sprint_j_meta,
     }
 
 
@@ -6046,6 +6104,13 @@ def tam_analiz(cur, sube_id: str, tarih: str,
     except Exception as e:
         log.warning("tam_analiz sprint_h hata: %s", e)
 
+    # 8g. Sprint J — Cross-day Bardak Devamlılık Kontrolü (dün KAPANIS → bugün ACILIS)
+    sprint_j_sonuc: Dict[str, Any] = {}
+    try:
+        sprint_j_sonuc = aksam_bardak_sisirme_tespit(cur, sube_id, tarih)
+    except Exception as e:
+        log.warning("tam_analiz sprint_j hata: %s", e)
+
     # 9. Genel alarm seviyesi
     has_kritik = any(ps.get("risk_seviye") == "kritik" for ps in personel_sorumlu)
     has_yuksek = any(ps.get("risk_seviye") == "yuksek" for ps in personel_sorumlu)
@@ -6059,6 +6124,7 @@ def tam_analiz(cur, sube_id: str, tarih: str,
     sprint_g_kritik  = (sprint_g_sonuc.get("tani")  == "AKSAM_KASAYI_SISIRDI")
     sprint_g2_kritik = (sprint_g2_sonuc.get("tani") == "SABAH_ZIMMET_SUPHE")
     sprint_h_yuksek  = (sprint_h_sonuc.get("tani")  == "AKSAM_VARDIYA_BARDAK_ACIK")
+    sprint_j_kritik  = (sprint_j_sonuc.get("tani")  == "AKSAM_BARDAK_SISIRDI")
     # IPTAL_SUPHE: tam_analiz'de kasa_fark + stok açığı yok kombinasyonu
     iptal_suphe = (
         not sprint_g_kritik
@@ -6069,7 +6135,7 @@ def tam_analiz(cur, sube_id: str, tarih: str,
         and not has_yuksek
     )
 
-    if has_kritik or sprint_g_kritik or sprint_g2_kritik or birincil_koken in ("SWEETHEARTING_ZIMMET",):
+    if has_kritik or sprint_g_kritik or sprint_g2_kritik or sprint_j_kritik or birincil_koken in ("SWEETHEARTING_ZIMMET",):
         alarm = "kritik"
     elif has_yuksek or sprint_f_yuksek or sprint_h_yuksek or iptal_suphe or birincil_koken in ("NAKIT_CEKILDI", "AKSAM_ZIMMET_POZISYON"):
         alarm = "yuksek"
@@ -6109,6 +6175,15 @@ def tam_analiz(cur, sube_id: str, tarih: str,
         ozet_parcalari.append(
             f"⚠ {h_ad} vardiya bardak açığı: "
             f"{h_karton:.0f} karton + {h_plastik:.0f} plastik kayıt dışı"
+        )
+    if sprint_j_kritik:
+        j_ad = sprint_j_sonuc.get("aksamci_ad") or "Akşamcı"
+        j_karton = sprint_j_sonuc.get("gece_karton_kaybi", 0)
+        j_plastik = sprint_j_sonuc.get("gece_plastik_kaybi", 0)
+        kasa_str = " + kasa açığı eşleşiyor" if sprint_j_sonuc.get("kasada_acik") else ""
+        ozet_parcalari.append(
+            f"⚠ {j_ad} bardak şişirdi: "
+            f"{j_karton:.0f} karton + {j_plastik:.0f} plastik gece 'eridi'{kasa_str}"
         )
     if iptal_suphe:
         ozet_parcalari.append(
@@ -6174,6 +6249,8 @@ def tam_analiz(cur, sube_id: str, tarih: str,
         "sprint_g2": sprint_g2_sonuc,
         # Sprint H (C Bendi) — akşam vardiyası bardak P&L (devir→kapanis)
         "sprint_h":  sprint_h_sonuc,
+        # Sprint J — cross-day bardak devamlılık (dün KAPANIS → bugün ACILIS)
+        "sprint_j":  sprint_j_sonuc,
     }
 
 
@@ -6736,3 +6813,205 @@ def kucuk_tutar_birikim_tespit(cur, sube_id: str = None,
         "tespit_sayisi":      len(riskli),
         "riskli_personeller": riskli,
     }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SPRINT J — Cross-day Bardak Devamlılık Kontrolü (Akşamcı Bardak Şişirme)
+# ════════════════════════════════════════════════════════════════════════════
+
+def aksam_bardak_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
+    """Sprint J — Cross-day bardak devamlılık kontrolü.
+
+    Senaryo (Hikaye 1J):
+      Akşamcı kayıt dışı satış yapar. Stok farkını gizlemek için KAPANIS'ta
+      bardak sayısını fazla beyan eder (örn: 20 yerine 32 karton). Sabahçı
+      ertesi gün kör sayım yapar — gerçeği görür: 20 bardak.
+      Gece arası bardak KAYBOLAMAZ → fark = akşamcının şişirmesi.
+
+    İki kaynak BİRBİRİNDEN BAĞIMSIZ:
+      dün  → sube_operasyon_event[DÜN,  KAPANIS].meta.kapanis_stok_sayim  (akşamcı beyanı)
+      bugün → sube_operasyon_event[BUGÜN, ACILIS].meta.acilis_stok_sayim  (sabahçı kör sayımı)
+
+    Cross-sinyal (güçlendirici):
+      Aynı gün N1 (dün KAPANIS.devir) > N2 (bugün ACILIS.kasa_sayim):
+      akşamcı hem kasa hem bardak şişirdi → çok güçlü zimmet korelasyonu.
+
+    Eşik:
+      gece_karton_kaybi > 3 VE/VEYA gece_plastik_kaybi > 3 → AKSAM_BARDAK_SISIRDI
+
+    Returns:
+        {
+          "tani":               "AKSAM_BARDAK_SISIRDI" | "UYUMLU" | "YETERSIZ_VERI",
+          "guven":              float,
+          "gece_karton_kaybi":  int,     # pozitif = "eridi" (anomali)
+          "gece_plastik_kaybi": int,
+          "dun_karton":         int,     # dün KAPANIS beyanı
+          "dun_plastik":        int,
+          "bugun_karton":       int,     # bugün ACILIS kör sayım
+          "bugun_plastik":      int,
+          "karton_anomali":     bool,
+          "plastik_anomali":    bool,
+          "kasada_acik":        bool,    # N1 > N2 kasa cross-sinyal
+          "n1_devir":           float,
+          "n2_kasa":            float,
+          "fark_n1_n2":         float,   # N2 − N1 (negatif = kasa açığı)
+          "aksamci_ad":         str,
+          "detay":              str,
+        }
+    """
+    from datetime import date, timedelta
+
+    sonuc: Dict[str, Any] = {
+        "tani":               "YETERSIZ_VERI",
+        "guven":              0.0,
+        "gece_karton_kaybi":  0,
+        "gece_plastik_kaybi": 0,
+    }
+
+    # tarih = bugün (ACILIS tarihi); dun_tarih = bugün − 1 gün (KAPANIS tarihi)
+    try:
+        dun_tarih = (date.fromisoformat(str(tarih)) - timedelta(days=1)).isoformat()
+    except Exception:
+        return sonuc
+
+    # ── 1. Dün KAPANIS: bardak sayımı + devir (N1 kasa) + akşamcı adı ─────────
+    cur.execute("""
+        SELECT meta, devir, personel_ad
+        FROM sube_operasyon_event
+        WHERE sube_id = %s
+          AND tarih = %s::date
+          AND tip = 'KAPANIS'
+          AND durum = 'tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST
+        LIMIT 1
+    """, (sube_id, dun_tarih))
+    dun_row = cur.fetchone()
+    if not dun_row:
+        return sonuc
+
+    dun = dict(dun_row)
+    dun_meta = _meta_oku(dun.get("meta"))
+    dun_stok  = dun_meta.get("kapanis_stok_sayim") or {}
+    n1_devir  = float(dun.get("devir") or 0)
+    aksamci_ad = str(dun.get("personel_ad") or "").strip() or None
+
+    # ── 2. Bugün ACILIS: bardak sayımı + kasa_sayim (N2) ────────────────────
+    cur.execute("""
+        SELECT meta, kasa_sayim
+        FROM sube_operasyon_event
+        WHERE sube_id = %s
+          AND tarih = %s::date
+          AND tip = 'ACILIS'
+          AND durum = 'tamamlandi'
+        ORDER BY cevap_ts DESC NULLS LAST
+        LIMIT 1
+    """, (sube_id, tarih))
+    bugun_row = cur.fetchone()
+    if not bugun_row:
+        return sonuc
+
+    bugun = dict(bugun_row)
+    bugun_meta = _meta_oku(bugun.get("meta"))
+    bugun_stok = bugun_meta.get("acilis_stok_sayim") or {}
+    n2_kasa    = float(bugun.get("kasa_sayim") or 0)
+
+    # ── 3. Bardak değerleri ──────────────────────────────────────────────────
+    dun_kucuk   = float(dun_stok.get("bardak_kucuk",   0) or 0)
+    dun_buyuk   = float(dun_stok.get("bardak_buyuk",   0) or 0)
+    dun_plastik = float(dun_stok.get("bardak_plastik", 0) or 0)
+    dun_karton  = dun_kucuk + dun_buyuk
+
+    bugun_kucuk   = float(bugun_stok.get("bardak_kucuk",   0) or 0)
+    bugun_buyuk   = float(bugun_stok.get("bardak_buyuk",   0) or 0)
+    bugun_plastik = float(bugun_stok.get("bardak_plastik", 0) or 0)
+    bugun_karton  = bugun_kucuk + bugun_buyuk
+
+    # En az bir tarafın dolu olması gerekir; tamamen sıfır → veri yok
+    if dun_karton == 0 and dun_plastik == 0:
+        return sonuc
+
+    # ── 4. Gece kaybı (pozitif = bardak "eridi" → anomali) ──────────────────
+    gece_karton_kaybi  = int(round(dun_karton  - bugun_karton,  0))
+    gece_plastik_kaybi = int(round(dun_plastik - bugun_plastik, 0))
+
+    # ── 5. Cross-sinyal: N1 > N2 kasa açığı ─────────────────────────────────
+    fark_n1_n2  = round(n2_kasa - n1_devir, 2)   # negatif = kasa açığı
+    kasada_acik = bool(fark_n1_n2 < -0.99)
+
+    sonuc.update({
+        "dun_karton":         int(dun_karton),
+        "dun_plastik":        int(dun_plastik),
+        "bugun_karton":       int(bugun_karton),
+        "bugun_plastik":      int(bugun_plastik),
+        "gece_karton_kaybi":  gece_karton_kaybi,
+        "gece_plastik_kaybi": gece_plastik_kaybi,
+        "n1_devir":           n1_devir,
+        "n2_kasa":            n2_kasa,
+        "fark_n1_n2":         fark_n1_n2,
+        "kasada_acik":        kasada_acik,
+        "aksamci_ad":         aksamci_ad,
+        "onceki_tarih":       dun_tarih,
+    })
+
+    # ── 6. Eşik: bardak gece kaybolmaz ──────────────────────────────────────
+    ESIK_ADET = 3
+    karton_anomali  = gece_karton_kaybi  > ESIK_ADET
+    plastik_anomali = gece_plastik_kaybi > ESIK_ADET
+
+    sonuc["karton_anomali"]  = karton_anomali
+    sonuc["plastik_anomali"] = plastik_anomali
+
+    if not (karton_anomali or plastik_anomali):
+        detay = (
+            f"Gece bardak kaybı normal sınırlar içinde: "
+            f"karton {gece_karton_kaybi:+d} adet, plastik {gece_plastik_kaybi:+d} adet. "
+            f"(dün KAPANIS → bugün ACILIS)"
+        )
+        sonuc["tani"]  = "UYUMLU"
+        sonuc["guven"] = 80.0
+        sonuc["detay"] = detay
+        return sonuc
+
+    # ── 7. Güven skoru ───────────────────────────────────────────────────────
+    guven = 78.0
+    if karton_anomali and plastik_anomali:
+        guven += 8.0     # → 86: hem karton hem plastik anormal → çok güçlü
+    if kasada_acik:
+        guven += 10.0    # → 88–96: N1>N2 kasa açığı da var → koleksiyon kanıtı
+    if gece_karton_kaybi > 10 or gece_plastik_kaybi > 10:
+        guven += 3.0     # büyük fark → daha yüksek güven
+    guven = min(guven, 96.0)
+
+    # ── 8. Detay metni ───────────────────────────────────────────────────────
+    aks_str = f" ({aksamci_ad})" if aksamci_ad else ""
+    anomali_parcalar = []
+    if karton_anomali:
+        anomali_parcalar.append(
+            f"karton {int(dun_karton)}→{int(bugun_karton)} ({gece_karton_kaybi:+d} adet gece eridi)"
+        )
+    if plastik_anomali:
+        anomali_parcalar.append(
+            f"plastik {int(dun_plastik)}→{int(bugun_plastik)} ({gece_plastik_kaybi:+d} adet gece eridi)"
+        )
+
+    kasa_ek = ""
+    if kasada_acik:
+        kasa_ek = (
+            f" Kasa cross-sinyal: N1={n1_devir:.0f}₺ (dün devir) vs N2={n2_kasa:.0f}₺ "
+            f"(bugün kör sayım) → {abs(fark_n1_n2):.0f}₺ açık. "
+            f"Akşamcı{aks_str} hem kasa hem bardak şişirdi → çok güçlü zimmet korelasyonu."
+        )
+
+    detay = (
+        f"Dün akşamcı{aks_str} KAPANIS beyanı: {int(dun_karton)} karton + {int(dun_plastik)} plastik. "
+        f"Bugün sabahçı kör ACILIS sayımı: {int(bugun_karton)} karton + {int(bugun_plastik)} plastik. "
+        f"Gece arası bardak kaybolmaz → anomali: {'; '.join(anomali_parcalar)}."
+        f"{kasa_ek}"
+    )
+
+    sonuc.update({
+        "tani":  "AKSAM_BARDAK_SISIRDI",
+        "guven": round(guven, 1),
+        "detay": detay,
+    })
+    return sonuc
