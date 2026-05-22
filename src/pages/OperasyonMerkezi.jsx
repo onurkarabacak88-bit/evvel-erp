@@ -14126,19 +14126,60 @@ export default function OperasyonMerkezi() {
                 renk: s.kabul_durum === 'kabul_tam' ? '#22c55e' : s.kabul_durum === 'kabul_uyusmazlik' ? '#ef4444' : s.kabul_durum === 'kabul_kismi' ? '#f59e0b' : '#6b7280',
                 uyari: s.kabul_durum === 'kabul_uyusmazlik' ? 'Uyumsuzluk' : s.kabul_durum === 'kabul_kismi' ? 'Kısmi' : '' },
             ];
+            const uyumsuzlukSayisi = tumAkis.filter((s) => s.kabul_durum === 'kabul_uyusmazlik').length;
             return (
               <div>
+                {/* 🚨 Kör denetim uyuşmazlık uyarı banner — görünür, merkez gözden kaçıramaz */}
+                {uyumsuzlukSayisi > 0 && (
+                  <div
+                    onClick={() => setAkisFiltre('uyumsuzluk')}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      background: 'rgba(239,68,68,0.14)', border: '1.5px solid rgba(239,68,68,0.55)',
+                      borderRadius: 10, padding: '10px 14px', marginBottom: 12, cursor: 'pointer',
+                      animation: 'pulse 1.6s ease-in-out infinite',
+                    }}>
+                    <span style={{ fontSize: 20 }}>🚨</span>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: 13, color: '#fca5a5' }}>
+                        {uyumsuzlukSayisi} teslim kabulü uyumsuzluğu — şube sayımı ile depo gönderimi eşleşmiyor
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                        Kör denetim sonucu otomatik tespit edildi. Şube personeli detayları göremiyor. Tıkla → detay.
+                      </div>
+                    </div>
+                    <span style={{
+                      marginLeft: 'auto', background: '#ef4444', color: '#fff',
+                      borderRadius: 999, padding: '2px 9px', fontSize: 12, fontWeight: 800, flexShrink: 0,
+                    }}>{uyumsuzlukSayisi}</span>
+                  </div>
+                )}
                 {/* Filtre + başlık */}
                 <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
                   <span style={{ fontWeight: 700, fontSize: 14, marginRight: 4 }}>🔄 Sipariş Akışı</span>
-                  {FILTRELER.map((f) => (
-                    <button key={f.key} type="button"
-                      className={'btn btn-sm ' + (akisFiltre === f.key ? 'btn-primary' : 'btn-secondary')}
-                      style={{ fontSize: 11, padding: '3px 10px' }}
-                      onClick={() => setAkisFiltre(f.key)}>
-                      {f.label}
-                    </button>
-                  ))}
+                  {FILTRELER.map((f) => {
+                    const fSayisi = f.key === 'uyumsuzluk' ? uyumsuzlukSayisi : 0;
+                    return (
+                      <button key={f.key} type="button"
+                        className={'btn btn-sm ' + (akisFiltre === f.key ? 'btn-primary' : 'btn-secondary')}
+                        style={{
+                          fontSize: 11, padding: '3px 10px', position: 'relative',
+                          ...(f.key === 'uyumsuzluk' && fSayisi > 0 && akisFiltre !== 'uyumsuzluk'
+                            ? { borderColor: '#ef4444', color: '#fca5a5' } : {}),
+                        }}
+                        onClick={() => setAkisFiltre(f.key)}>
+                        {f.label}
+                        {fSayisi > 0 && (
+                          <span style={{
+                            position: 'absolute', top: -6, right: -6,
+                            background: '#ef4444', color: '#fff', borderRadius: 999,
+                            minWidth: 16, height: 16, fontSize: 10, fontWeight: 800,
+                            lineHeight: '16px', textAlign: 'center', padding: '0 4px',
+                          }}>{fSayisi}</span>
+                        )}
+                      </button>
+                    );
+                  })}
                   <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>{filtreliAkis.length} / {tumAkis.length} sipariş</span>
                   <button type="button" className="btn btn-sm btn-secondary" style={{ fontSize: 11 }} onClick={yukleDisiplin}>↺ Yenile</button>
                 </div>
