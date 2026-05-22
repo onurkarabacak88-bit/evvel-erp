@@ -16,6 +16,8 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
+log = logging.getLogger(__name__)  # modül-düzey logger — tüm fonksiyonlar kullanabilir
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -109,6 +111,7 @@ def _siparis_gonderilmedi_kapat(cur: Any) -> int:
 
     Döner: kapatılan sipariş sayısı.
     """
+    log = logging.getLogger(__name__)
     # Önce kapatılacak siparişleri ve kalemlerini çek
     cur.execute(
         """
@@ -9196,6 +9199,7 @@ def ops_siparis_talep_tahsis_uyumsuzluk_coz(body: OpsTalepTahsisUyumsuzlukCozBod
         talep_adet'i cozum_adet'e güncellenir, durum='tam' + uzlasildi=True.
       - operasyon_defter'e audit log yazılır.
     """
+    log = logging.getLogger(__name__)
     tid = (body.talep_id or "").strip()
     uid = (body.urun_id or "").strip()
     cozum = max(0, int(body.cozum_adet or 0))
@@ -12166,8 +12170,7 @@ def ops_siparis_birlestir(body: OpsSiparisBirlestirBody):
             raise HTTPException(400, "Birleştirilecek siparişlerde geçerli kalem bulunamadı")
 
         # Yeni birleşik sipariş oluştur
-        import uuid as _uuid
-        yeni_id = str(_uuid.uuid4())
+        yeni_id = str(uuid.uuid4())
         orijinal_idler_str = ", ".join(f"#{str(i)[:8]}" for i in idler)
         birlestir_notu = (body.not_aciklama or "").strip() or None
         sistem_notu = f"Birleştirildi: {len(idler)} sipariş ({orijinal_idler_str})"
@@ -12745,6 +12748,7 @@ class KasaBaskiniTamamlaBody(BaseModel):
 @router.post("/kasa-baskini/baslat")
 def kasa_baskini_baslat(body: KasaBaskiniBaslatBody):
     """CFO bir şubeye kasa baskını başlatır (blind count emri)."""
+    log = logging.getLogger(__name__)
     sube_id = (body.sube_id or "").strip()
     if not sube_id:
         raise HTTPException(400, "sube_id zorunlu")
@@ -12872,6 +12876,7 @@ def kasa_baskini_aktif(sube_id: str):
 def kasa_baskini_tamamla(baskin_id: str, body: KasaBaskiniTamamlaBody):
     """Şube personeli blind sayımı girer; PIN ile onaylar.
     Fark hesaplanıp UI'a dönülür. Sayım girildikten SONRA beklenen tutar açığa çıkar."""
+    log = logging.getLogger(__name__)
     try:
         sayilan = float(body.sayilan_tutar)
     except (TypeError, ValueError):
