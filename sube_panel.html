@@ -5881,6 +5881,12 @@ function renderSvSiparisKontrol() {
         : '＋ Listede olmayan ek ürün geldi mi? (katalog aç/kapat)';
     };
   }
+
+  // Sipariş kontrol listesi YÜKLENDİĞİ an sticky onay bar'ı güncelle
+  // (Mod B'de katalog tıklanmadan da onay gerek)
+  if (typeof stokSecimBilgiYenile === 'function') {
+    try { stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []); } catch (e) {}
+  }
 }
 
 function svKontrolEksikSatirlar() {
@@ -6401,6 +6407,42 @@ function stokBody(prefix, data, credsOverride) {
       if (apiKey) body[apiKey] = (body[apiKey] || 0) + adet;
     });
   });
+  // ── sv (teslim al) modu: aktif sipariş varsa TİKLİ kontrol kalemlerini body.kalemler'e ekle ──
+  // Katalog'tan ürün seçilmemiş olsa bile sipariş onayı geçer (sum > 0 olur)
+  if (prefix === 'sv' && (window._svKontrolSatirlari || []).length > 0) {
+    var siparisWrap = document.getElementById('svSiparisKontrolWrap');
+    if (siparisWrap) {
+      // Kataloğu ad bazlı index'le (urun_id/kategori_id eşleşmesi için)
+      var katalogIndex = {};
+      (data || []).forEach(function(kat){
+        (kat.items || []).forEach(function(it){
+          var norm = String(it.ad || '').toLocaleLowerCase('tr-TR').trim();
+          if (norm) katalogIndex[norm] = { kategori_id: kat.id, urun_id: it.id, urun_ad: it.ad, aciklama: it.aciklama || null };
+        });
+      });
+      // Duplicate engelle (aynı urun_id katalogtan da eklenmiş olabilir)
+      var eklenenIds = {};
+      body.kalemler.forEach(function(k){ if (k.urun_id) eklenenIds[k.urun_id] = true; });
+      _svKontrolSatirlari.forEach(function(r, i) {
+        var ch = siparisWrap.querySelector('input[data-sv-kontrol="' + i + '"]');
+        if (!ch || !ch.checked) return; // tiksiz = gelmedi
+        var siparisAd = String(r.urun_ad || '').trim();
+        var siparisAdet = parseInt(r.adet || 0, 10) || 0;
+        if (!siparisAd || siparisAdet <= 0) return;
+        var norm = siparisAd.toLocaleLowerCase('tr-TR');
+        var matched = katalogIndex[norm];
+        if (matched && eklenenIds[matched.urun_id]) return; // zaten kataloğa eklenmiş
+        body.kalemler.push(matched
+          ? { kategori_id: matched.kategori_id, urun_id: matched.urun_id, urun_ad: matched.urun_ad, aciklama: matched.aciklama, adet: siparisAdet, _kaynak: 'siparis_kontrol' }
+          : { urun_ad: siparisAd, adet: siparisAdet, _kaynak: 'siparis_kontrol' });
+        if (matched) {
+          eklenenIds[matched.urun_id] = true;
+          var apiKey = stokApiKeyFromAd(matched.urun_ad);
+          if (apiKey) body[apiKey] = (body[apiKey] || 0) + siparisAdet;
+        }
+      });
+    }
+  }
   return body;
 }
 
@@ -6430,10 +6472,13 @@ function stokSecimBilgiYenile(prefix, data) {
     }
   }
   // sv (teslim al) için sticky ÖZET bar'ı seçim durumuna göre göster/gizle
+  // Mod A: katalog seçimi → oz.kalem > 0
+  // Mod B: aktif sipariş kontrol listesi → _svKontrolSatirlari.length > 0 (katalog tıklanmasa da onay gerek)
   if (prefix === 'sv') {
     var svBar = document.getElementById('svTeslimStickyBar');
     if (svBar) {
-      svBar.style.display = oz.kalem > 0 ? '' : 'none';
+      var siparisAktif = (window._svKontrolSatirlari || []).length > 0;
+      svBar.style.display = (oz.kalem > 0 || siparisAktif) ? '' : 'none';
     }
   }
   var ozetEl = document.getElementById(prefix + 'SecimOzet');
