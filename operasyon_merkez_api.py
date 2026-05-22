@@ -103,8 +103,64 @@ def _siparis_gonderilmedi_kapat(cur: Any) -> int:
     """
     7 günü geçmiş bekleyen siparişleri 'gonderilmedi' olarak kapatır.
     hub-ozet her çağrıldığında çalışır (lazy kapatma).
+
+    FIX #4: Kapanış sırasında tahsis edilmiş rezervleri de serbest bırakır.
+    Aksi hâlde depo rezerv_adet sonsuza şişer (hayalet rezerv).
+
     Döner: kapatılan sipariş sayısı.
     """
+    # Önce kapatılacak siparişleri ve kalemlerini çek
+    cur.execute(
+        """
+        SELECT id, kalem_durumlari, hedef_depo_sube_id
+        FROM siparis_talep
+        WHERE durum = 'bekliyor'
+          AND tarih < CURRENT_DATE - (%s * INTERVAL '1 day')
+        """,
+        (OPS_STOK_DISIPLIN_BEKLEYEN_GUN,),
+    )
+    kapanacaklar = [dict(r) for r in (cur.fetchall() or [])]
+
+    for row in kapanacaklar:
+        kd = row.get("kalem_durumlari") or {}
+        depo_sube = (row.get("hedef_depo_sube_id") or "").strip() or None
+        if not isinstance(kd, dict):
+            continue
+        kalemler = kd.get("kalemler") or []
+        if not kalemler:
+            continue
+        for kalem in kalemler:
+            kk        = str(kalem.get("kalem_kodu") or "").strip()
+            tahsis_ad = int(kalem.get("tahsis_adet") or 0)
+            if not kk or tahsis_ad <= 0:
+                continue
+            # Rezervi serbest bırak: önce depoda ara, yoksa merkez stok kartında
+            try:
+                if depo_sube:
+                    cur.execute(
+                        """
+                        UPDATE sube_depo_stok
+                        SET rezerve_adet = GREATEST(0, COALESCE(rezerve_adet, 0) - %s),
+                            guncelleme   = NOW()
+                        WHERE sube_id = %s AND kalem_kodu = %s
+                        """,
+                        (tahsis_ad, depo_sube, kk),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE merkez_stok_kart
+                        SET rezerve_adet = GREATEST(0, COALESCE(rezerve_adet, 0) - %s),
+                            guncelleme   = NOW()
+                        WHERE kalem_kodu = %s
+                        """,
+                        (tahsis_ad, kk),
+                    )
+            except Exception as _e:
+                log.warning("gonderilmedi_kapat rezerv_serbest hata siparis=%s kalem=%s: %s",
+                            row.get("id"), kk, _e)
+
+    # Şimdi kapat
     cur.execute(
         """
         UPDATE siparis_talep

@@ -1912,11 +1912,10 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
             """
             SELECT COUNT(*) FROM siparis_talep t
             WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) = %s
-              AND t.sube_id <> %s
               AND t.tarih >= CURRENT_DATE - INTERVAL '21 days'
               AND t.durum NOT IN ('iptal', 'teslim_edildi', 'gonderilmedi', 'bekliyor', 'gonderildi')
             """,
-            (sube_id, sube_id),
+            (sube_id,),
         )
         dr = cur.fetchone()
         depo_hazirlik_bekleyen_sayisi = int(list(dr.values())[0]) if dr else 0
@@ -2669,21 +2668,41 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 """,
                 (siparis_talep_id,),
             )
+            # FIX #6: stok_yolda satırını kapat — kapatılmazsa sonsuza 'yolda' kalır
+            # ve uyumsuzluk raporunda temizlenemeyen hayalet satır oluşur.
+            try:
+                cur.execute(
+                    """
+                    UPDATE stok_yolda
+                    SET durum     = 'kabul_edildi',
+                        kabul_ts  = NOW(),
+                        kabul_adet = sevk_adet
+                    WHERE siparis_talep_id = %s
+                      AND sube_id = %s
+                      AND durum   = 'yolda'
+                    """,
+                    (siparis_talep_id, sube_id),
+                )
+            except Exception as _e:
+                log.warning("urun_sevk stok_yolda kapat hata: %s", _e)
         else:
             # FOR UPDATE: eş zamanlı sevk kaydı race condition'ını önler
             cur.execute(
                 f"""
                 SELECT id
                 FROM siparis_talep
-                WHERE sube_id=%s AND tarih=CURRENT_DATE
+                WHERE sube_id=%s
+                  AND tarih >= CURRENT_DATE - INTERVAL '21 days'
                   AND durum IN ('gonderildi','hazirlaniyor','bekliyor')
                   AND {SD_NOALIAS}
-                      IN ('gonderildi', 'kismi_hazirlandi', 'depoda_hazirlaniyor', 'hazirlaniyor', 'bekliyor')
+                      IN ('gonderildi', 'kismi_hazirlandi', 'depoda_hazirlaniyor',
+                          'hazirlaniyor', 'bekliyor', 'toptanciya_yonlendirildi')
                 ORDER BY
-                  CASE durum
-                    WHEN 'gonderildi' THEN 0
-                    WHEN 'hazirlaniyor' THEN 1
-                    ELSE 2
+                  CASE
+                    WHEN {SD_NOALIAS}='toptanciya_yonlendirildi' THEN 0
+                    WHEN durum='gonderildi' THEN 1
+                    WHEN durum='hazirlaniyor' THEN 2
+                    ELSE 3
                   END,
                   CASE
                     WHEN {SD_NOALIAS}='gonderildi' THEN 0
@@ -3103,16 +3122,19 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
             for k in STOK_KEYS
         }
 
-        def _uyumsuzluk_yaz(cur, sube_id, kalem_kodu, mevcut_oncesi, istenen):
+        def _uyumsuzluk_yaz(cur, sube_id, kalem_kodu, mevcut_oncesi, istenen, urun_ad_fallback=""):
             """Karşılıksız URUN_AC borcunu loglar.
             Aynı gün aynı kalem için kayıt varsa eksik_miktar toplanır (borç birikir).
             Sevkiyat geldiğinde sube_depo_stok_depo_giris_ekle bu borcu otomatik uygular.
             (Deferred Reconciliation — SAP/NetSuite/Dynamics 365 yaklaşımı)
             """
             import json as _json2
+            from operasyon_stok_motor import depo_kalem_gorunen_ad
+
             eksik = max(0, istenen - mevcut_oncesi)
             if eksik <= 0:
                 return
+            kalem_adi = depo_kalem_gorunen_ad(cur, sube_id, kalem_kodu, urun_ad_fallback)
             # Aynı gün aynı kalem için mevcut kayıt var mı?
             cur.execute("""
                 SELECT id, detay FROM sube_operasyon_uyari
@@ -3128,19 +3150,25 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                     try: eski_detay = _json2.loads(eski_detay)
                     except: eski_detay = {}
                 toplam_eksik = int(eski_detay.get("eksik_miktar") or 0) + eksik
-                yeni_detay = {**eski_detay, "eksik_miktar": toplam_eksik}
+                yeni_detay = {
+                    **eski_detay,
+                    "kalem_kodu": kalem_kodu,
+                    "kalem_adi": kalem_adi,
+                    "eksik_miktar": toplam_eksik,
+                }
                 cur.execute("""
                     UPDATE sube_operasyon_uyari
                     SET detay=%s, mesaj=%s
                     WHERE id=%s
                 """, (
                     _json2.dumps(yeni_detay, ensure_ascii=False),
-                    f"Karşılıksız açma: {kalem_kodu} — toplam {toplam_eksik} adet borç birikti.",
+                    f"Karşılıksız açma: {kalem_adi} — toplam {toplam_eksik} adet borç birikti.",
                     str(mevcut_kayit["id"]),
                 ))
             else:
                 detay = _json2.dumps({
                     "kalem_kodu": kalem_kodu,
+                    "kalem_adi": kalem_adi,
                     "eksik_miktar": eksik,
                     "mevcut_oncesi": mevcut_oncesi,
                     "istenen": istenen,
@@ -3151,7 +3179,7 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                     VALUES (%s, %s, CURRENT_DATE, 'URUN_AC_UYUMSUZLUK', 'kritik', %s, %s, %s)
                 """, (
                     str(_uuid.uuid4()), sube_id,
-                    f"Karşılıksız açma: {kalem_kodu} — depoda {mevcut_oncesi} adet varken {istenen} adet açıldı.",
+                    f"Karşılıksız açma: {kalem_adi} — depoda {mevcut_oncesi} adet varken {istenen} adet açıldı.",
                     kalem_kodu,
                     detay,
                 ))
@@ -3227,7 +3255,7 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
             _stok_r2 = cur.fetchone()
             _mevcut_oncesi2 = int(_stok_r2["mevcut_adet"] if _stok_r2 else 0)
             if _mevcut_oncesi2 < adet:
-                _uyumsuzluk_yaz(cur, sube_id, kk, _mevcut_oncesi2, adet)
+                _uyumsuzluk_yaz(cur, sube_id, kk, _mevcut_oncesi2, adet, str(k.get("urun_ad") or "").strip())
             sube_depo_stok_depo_cikis_dus(
                 cur,
                 sube_id,
@@ -3548,13 +3576,12 @@ def _depo_kalan_kalemleri_listesi(
         FROM siparis_talep t
         JOIN subeler ts ON ts.id = t.sube_id
         WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) = %s
-          AND t.sube_id <> %s
           AND t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
           AND t.durum IN ('hazirlaniyor', 'gonderildi')
         ORDER BY t.sevkiyat_ts DESC NULLS LAST, t.olusturma DESC NULLS LAST
         LIMIT %s
         """,
-        (depo_sube_id, depo_sube_id, gun_x, lim_i),
+        (depo_sube_id, gun_x, lim_i),
     )
     out: List[Dict[str, Any]] = []
     for r in cur.fetchall() or []:
@@ -3600,10 +3627,152 @@ def _depo_kalan_kalemleri_listesi(
     return out
 
 
+def _siparis_kalem_durum_ozet(kalem_durumlari: Any) -> List[Dict[str, Any]]:
+    """Kalem durumları JSON → panelde okunaklı satır listesi."""
+    raw = kalem_durumlari
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = []
+    if not isinstance(raw, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        kod = str(item.get("kalem_kodu") or item.get("urun_id") or "").strip()
+        ad = str(item.get("kalem_adi") or item.get("urun_ad") or kod or "—").strip()
+        dur = str(item.get("durum") or "bekliyor").strip().lower()
+        ist = int(item.get("istenen_adet") or item.get("adet") or 0)
+        gon = int(item.get("gonderilen_adet") or 0)
+        dur_tr = {
+            "var": "Depoda var / gönderildi",
+            "yok": "Depoda yok",
+            "kismi": "Kısmi",
+            "bekliyor": "Bekliyor",
+        }.get(dur, dur or "—")
+        out.append(
+            {
+                "kalem_kodu": kod,
+                "kalem_adi": ad,
+                "istenen_adet": ist,
+                "gonderilen_adet": gon,
+                "durum": dur,
+                "durum_metni": dur_tr,
+            }
+        )
+    return out
+
+
+def _depo_yolda_teslim_haritasi(cur: Any, sube_id: str, gun_i: int) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Alıcı şubede kabul bekleyen stok_yolda satırları.
+    Talep listesi LIMIT/tarih filtresinden bağımsız — yolda paket mutlaka panele düşer.
+    """
+    gun_x = max(1, min(90, int(gun_i)))
+    yolda_map: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        cur.execute(
+            """
+            SELECT y.siparis_talep_id, y.id, y.kalem_kodu, y.kalem_adi, y.sevk_adet,
+                   y.sevk_kaynak_depo_sube_id,
+                   COALESCE(ks.ad, '') AS sevk_kaynak_depo_adi
+            FROM stok_yolda y
+            JOIN siparis_talep t ON t.id = y.siparis_talep_id
+            LEFT JOIN subeler ks ON ks.id = y.sevk_kaynak_depo_sube_id
+            WHERE y.sube_id = %s
+              AND t.sube_id = %s
+              AND y.durum = 'yolda'
+              AND t.durum NOT IN ('teslim_edildi', 'iptal', 'gonderilmedi')
+              AND (
+                    t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                    OR COALESCE(y.sevk_ts, t.sevkiyat_ts, t.olusturma)
+                       >= NOW() - (%s * INTERVAL '1 day')
+                  )
+            ORDER BY COALESCE(y.sevk_ts, t.sevkiyat_ts) ASC NULLS LAST
+            """,
+            (sube_id, sube_id, gun_x, gun_x),
+        )
+        for yr in cur.fetchall() or []:
+            yy = dict(yr)
+            tid_y = str(yy.get("siparis_talep_id") or "").strip()
+            if not tid_y:
+                continue
+            yolda_map.setdefault(tid_y, []).append(
+                {
+                    "yolda_id": str(yy.get("id") or ""),
+                    "kalem_kodu": str(yy.get("kalem_kodu") or "").strip(),
+                    "kalem_adi": str(yy.get("kalem_adi") or "").strip(),
+                    "sevk_adet": int(yy.get("sevk_adet") or 0),
+                    "sevk_kaynak_depo_sube_id": str(
+                        yy.get("sevk_kaynak_depo_sube_id") or ""
+                    ).strip()
+                    or None,
+                    "sevk_kaynak_depo_adi": str(
+                        yy.get("sevk_kaynak_depo_adi") or ""
+                    ).strip()
+                    or None,
+                }
+            )
+    except Exception:
+        pass
+    return yolda_map
+
+
+def _siparis_akisi_talep_satir_isle(d: Dict[str, Any]) -> Dict[str, Any]:
+    """siparis-akisi talep satırını panel yanıtına dönüştür."""
+    if d.get("tarih"):
+        d["tarih"] = str(d["tarih"])
+    if d.get("olusturma"):
+        d["olusturma"] = str(d["olusturma"])
+    if d.get("sevkiyat_ts"):
+        d["sevkiyat_ts"] = str(d["sevkiyat_ts"])
+    if d.get("depo_sevkiyat_rapor_ts"):
+        d["depo_sevkiyat_rapor_ts"] = str(d["depo_sevkiyat_rapor_ts"])
+    oid = str(d.get("id") or "")
+    km_raw = d.get("kalemler")
+    kd_raw = d.get("kalem_durumlari")
+    ozet = _siparis_kalem_ozet_from_json(km_raw)
+    d.pop("kalemler", None)
+    d.pop("kalem_durumlari", None)
+    d["kalemler_ozet"] = ozet
+    d["kalem_durum_ozet"] = _siparis_kalem_durum_ozet(kd_raw)
+    d["id"] = oid
+    return d
+
+
+def _siparis_tamamlanabilir_yol(row: Dict[str, Any], panel_sube_id: str) -> str:
+    """Şube panelinde hangi ekrandan işlem tamamlanır."""
+    durum = str(row.get("durum") or "").strip().lower()
+    sd = sevkiyat_durumu_coz(row.get("sevkiyat_durumu"), row.get("sevkiyat_durum"))
+    hedef = str(row.get("hedef_depo_sube_id") or row.get("sevkiyat_sube_id") or "").strip()
+    talep_sube = str(row.get("sube_id") or row.get("talep_sube_id") or panel_sube_id).strip()
+    if durum in ("teslim_edildi", "iptal", "gonderilmedi"):
+        return "tamamlandi"
+    if sd == "toptanciya_yonlendirildi":
+        return "toptanci_teslim"
+    if row.get("teslim_bekleyen_kalemler"):
+        return "depo_kabul"
+    if durum == "bekliyor":
+        return "bekliyor_merkez"
+    if durum == "hazirlaniyor":
+        if hedef and talep_sube and hedef == talep_sube == panel_sube_id:
+            return "depo_hazirlik_ben"
+        return "depo_bekliyor"
+    if durum == "gonderildi":
+        if row.get("teslim_bekleyen_kalemler"):
+            return "depo_kabul"
+        return "depo_yolda_bekliyor"
+    return "islemde"
+
+
 def _siparis_asama_metni_sube_panel(row: Dict[str, Any]) -> str:
     """Şube paneli için tek satır İngilizce kod değil, okunaklı Türkçe aşama."""
     durum = str(row.get("durum") or "").strip().lower()
     sd = sevkiyat_durumu_coz(row.get("sevkiyat_durumu"), row.get("sevkiyat_durum"))
+    if sd == "toptanciya_yonlendirildi":
+        return "Toptancıya yönlendirildi — Ürün Teslim Al ile kapatın"
     if durum == "iptal":
         return "İptal edildi"
     if durum == "teslim_edildi":
@@ -3747,6 +3916,7 @@ def sube_siparis_akisi(
     lim = max(1, min(80, int(limit)))
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
+        yolda_map = _depo_yolda_teslim_haritasi(cur, sube_id, gun_i)
         q = f"""
             SELECT t.id, t.tarih, t.durum, t.bildirim_saati, t.olusturma,
                    {SD_T} AS sevkiyat_durumu,
@@ -3754,6 +3924,7 @@ def sube_siparis_akisi(
                    COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS hedef_depo_sube_id,
                    hd.ad AS hedef_depo_adi,
                    t.kalemler,
+                   t.kalem_durumlari,
                    t.sevkiyat_ts,
                    t.depo_sevkiyat_rapor_metni,
                    t.depo_sevkiyat_rapor_ts,
@@ -3775,57 +3946,52 @@ def sube_siparis_akisi(
         cur.execute(q, (sube_id, gun_i, lim))
         talepler: List[Dict[str, Any]] = []
         for r in cur.fetchall() or []:
-            d = dict(r)
-            if d.get("tarih"):
-                d["tarih"] = str(d["tarih"])
-            if d.get("olusturma"):
-                d["olusturma"] = str(d["olusturma"])
-            if d.get("sevkiyat_ts"):
-                d["sevkiyat_ts"] = str(d["sevkiyat_ts"])
-            if d.get("depo_sevkiyat_rapor_ts"):
-                d["depo_sevkiyat_rapor_ts"] = str(d["depo_sevkiyat_rapor_ts"])
-            oid = str(d.get("id") or "")
-            ozet = _siparis_kalem_ozet_from_json(d.get("kalemler"))
-            d.pop("kalemler", None)
-            d["kalemler_ozet"] = ozet
+            d = _siparis_akisi_talep_satir_isle(dict(r))
             d["asama_metni"] = _siparis_asama_metni_sube_panel(d)
-            d["id"] = oid
             talepler.append(d)
 
-        tids_tum = [str(d.get("id") or "").strip() for d in talepler if str(d.get("id") or "").strip()]
-        yolda_map: Dict[str, List[Dict[str, Any]]] = {}
-        if tids_tum:
-            # Çoklu depo: Tema sevk edip talep Zafer'e yönlendirilince durum hazirlaniyor olur;
-            # yoldaki paket yine de talep şubesinde (Köyceğiz) kabul edilmeli.
+        mevcut_ids = {str(d.get("id") or "").strip() for d in talepler}
+        eksik_yolda = [
+            tid
+            for tid in yolda_map.keys()
+            if tid and tid not in mevcut_ids
+        ]
+        if eksik_yolda:
             cur.execute(
-                """
-                SELECT y.siparis_talep_id, y.id, y.kalem_kodu, y.kalem_adi, y.sevk_adet,
-                       y.sevk_kaynak_depo_sube_id,
-                       COALESCE(ks.ad, '') AS sevk_kaynak_depo_adi
-                FROM stok_yolda y
-                LEFT JOIN subeler ks ON ks.id = y.sevk_kaynak_depo_sube_id
-                WHERE y.sube_id=%s AND y.durum='yolda' AND y.siparis_talep_id = ANY(%s)
-                ORDER BY y.sevk_ts ASC
+                f"""
+                SELECT t.id, t.tarih, t.durum, t.bildirim_saati, t.olusturma,
+                       {SD_T} AS sevkiyat_durumu,
+                       COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS hedef_depo_sube_id,
+                       hd.ad AS hedef_depo_adi,
+                       t.kalemler,
+                       t.kalem_durumlari,
+                       t.sevkiyat_ts,
+                       t.depo_sevkiyat_rapor_metni,
+                       t.depo_sevkiyat_rapor_ts,
+                       t.depo_sevkiyat_rapor_uyari,
+                       NULLIF(TRIM(t.operasyon_yonlendirme_talimati), '') AS operasyon_yonlendirme_talimati
+                FROM siparis_talep t
+                LEFT JOIN subeler hd ON hd.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
+                WHERE t.sube_id=%s AND t.id = ANY(%s)
                 """,
-                (sube_id, tids_tum),
+                (sube_id, eksik_yolda),
             )
-            for yr in cur.fetchall() or []:
-                yy = dict(yr)
-                tid_y = str(yy.get("siparis_talep_id") or "")
-                if not tid_y:
-                    continue
-                yolda_map.setdefault(tid_y, []).append(
-                    {
-                        "yolda_id": str(yy.get("id") or ""),
-                        "kalem_kodu": str(yy.get("kalem_kodu") or "").strip(),
-                        "kalem_adi": str(yy.get("kalem_adi") or "").strip(),
-                        "sevk_adet": int(yy.get("sevk_adet") or 0),
-                        "sevk_kaynak_depo_sube_id": str(yy.get("sevk_kaynak_depo_sube_id") or "").strip() or None,
-                        "sevk_kaynak_depo_adi": str(yy.get("sevk_kaynak_depo_adi") or "").strip() or None,
-                    }
-                )
+            ekstra: List[Dict[str, Any]] = []
+            for r in cur.fetchall() or []:
+                d = _siparis_akisi_talep_satir_isle(dict(r))
+                d["asama_metni"] = _siparis_asama_metni_sube_panel(d)
+                ekstra.append(d)
+            talepler = ekstra + talepler
+
         for d in talepler:
             d["teslim_bekleyen_kalemler"] = yolda_map.get(str(d.get("id") or ""), [])
+            d["tamamlanabilir_yol"] = _siparis_tamamlanabilir_yol(d, sube_id)
+            if d.get("teslim_bekleyen_kalemler"):
+                d["asama_metni"] = "Depodan çıktı — paket teslim kabulü bekliyor"
+
+        depo_paket_teslim_bekleyen = [
+            t for t in talepler if t.get("teslim_bekleyen_kalemler")
+        ]
 
         q_dep = f"""
             SELECT t.id, t.tarih, t.durum, t.bildirim_saati, t.olusturma,
@@ -3844,13 +4010,12 @@ def sube_siparis_akisi(
             FROM siparis_talep t
             JOIN subeler ts ON ts.id = t.sube_id
             WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) = %s
-              AND t.sube_id <> %s
               AND t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
               AND t.durum NOT IN ('iptal', 'teslim_edildi', 'gonderilmedi', 'bekliyor', 'gonderildi')
             ORDER BY t.sevkiyat_ts DESC NULLS LAST, t.olusturma DESC NULLS LAST, t.id DESC
             LIMIT %s
         """
-        cur.execute(q_dep, (sube_id, sube_id, gun_i, lim))
+        cur.execute(q_dep, (sube_id, gun_i, lim))
         depo_hazirlik: List[Dict[str, Any]] = []
         for r in cur.fetchall() or []:
             d = dict(r)
@@ -3870,9 +4035,11 @@ def sube_siparis_akisi(
             d.pop("kalem_durumlari", None)
             d["kalemler_ozet"] = ozet
             d["kalem_duzenle"] = _siparis_kalem_duzenle_panel(km_raw, kd_raw)
+            d["kalem_durum_ozet"] = _siparis_kalem_durum_ozet(kd_raw)
             sn = d.get("sevkiyat_notu")
             d["sevkiyat_notu"] = (str(sn).strip() if sn else "") or None
             d["asama_metni"] = _siparis_asama_metni_sube_panel(d)
+            d["benim_talebim"] = str(d.get("talep_sube_id") or "") == sube_id
             d["id"] = oid
             depo_hazirlik.append(d)
 
@@ -3881,11 +4048,10 @@ def sube_siparis_akisi(
                 """
                 SELECT COUNT(*) FROM siparis_talep t
                 WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) = %s
-                  AND t.sube_id <> %s
                   AND t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
                   AND t.durum NOT IN ('iptal', 'teslim_edildi', 'gonderilmedi', 'bekliyor', 'gonderildi')
                 """,
-                (sube_id, sube_id, gun_i),
+                (sube_id, gun_i),
             )
             drt = cur.fetchone()
             depo_hazirlik_toplam = int(list(drt.values())[0]) if drt else 0
@@ -3908,13 +4074,12 @@ def sube_siparis_akisi(
             FROM siparis_talep t
             JOIN subeler ts ON ts.id = t.sube_id
             WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) = %s
-              AND t.sube_id <> %s
               AND t.tarih >= CURRENT_DATE - INTERVAL '7 days'
               AND t.durum = 'gonderildi'
             ORDER BY t.sevkiyat_ts DESC NULLS LAST, t.id DESC
             LIMIT 40
             """,
-            (sube_id, sube_id),
+            (sube_id,),
         )
         depo_gonderilenler: List[Dict[str, Any]] = []
         for r in cur.fetchall() or []:
@@ -3925,10 +4090,16 @@ def sube_siparis_akisi(
             d["id"] = str(d.get("id") or "")
             depo_gonderilenler.append(d)
 
+        toptanci_teslim_bekleyen = [
+            t for t in talepler if t.get("tamamlanabilir_yol") == "toptanci_teslim"
+        ]
+
     return {
         "gun": gun_i,
         "tamamlanan_dahil": bool(tamamlanan_dahil),
         "talepler": talepler,
+        "depo_paket_teslim_bekleyen": depo_paket_teslim_bekleyen,
+        "toptanci_teslim_bekleyen": toptanci_teslim_bekleyen,
         "depo_hazirlik_talepleri": depo_hazirlik,
         "depo_hazirlik_sayisi": depo_hazirlik_toplam,
         "depo_gonderilenler": depo_gonderilenler,
@@ -3971,19 +4142,34 @@ def sube_siparis_teslim_kabul(sube_id: str, body: SubeSiparisTeslimKabulBody):
                 400,
                 f"Teslim onayı bu sipariş durumunda yapılamaz (şu an: {st or '—'})",
             )
+        # FIX #3: hazirlaniyor durumu iki anlama gelebiliyor:
+        #   (A) Depo hazırladı, yola çıkardı ama siparis_talep henüz 'gonderildi' olmadı
+        #   (B) Depo henüz çıkarış yapmadı, stok_yolda satırı hiç yok
+        # stok_yolda kontrolü ile (A)/(B) ayrımı yaparak net mesaj ver.
         if st == "hazirlaniyor":
             cur.execute(
                 """
-                SELECT 1 FROM stok_yolda
-                WHERE siparis_talep_id=%s AND sube_id=%s AND durum='yolda'
-                LIMIT 1
+                SELECT COUNT(*) AS toplam,
+                       SUM(CASE WHEN durum='yolda' THEN 1 ELSE 0 END) AS yolda_sayisi
+                FROM stok_yolda
+                WHERE siparis_talep_id=%s AND sube_id=%s
                 """,
                 (tid, sube_id),
             )
-            if not cur.fetchone():
+            _sy = dict(cur.fetchone() or {})
+            _yolda = int(_sy.get("yolda_sayisi") or 0)
+            _toplam = int(_sy.get("toplam") or 0)
+            if _yolda == 0:
+                if _toplam > 0:
+                    raise HTTPException(
+                        400,
+                        "Tüm kalemler zaten kabul edilmiş veya uyumsuzluk kaydı var — "
+                        "ops merkezinden durumu kontrol edin",
+                    )
                 raise HTTPException(
                     400,
-                    "Henüz yola çıkmış paket yok — depo sevk çıkışı bekleniyor",
+                    "Paket henüz yola çıkmamış: depo sevk çıkışı yapılmadı. "
+                    "Operasyon merkezi 'gönder' işlemini tamamlayana kadar bekleyin.",
                 )
         sonuc = sube_kabul_kaydet(
             cur,

@@ -398,6 +398,78 @@ def depo_kalem_kodu_resolve(cur: Any, urun_id: str, urun_ad_fallback: str = "") 
 
 
 
+
+
+def depo_kalem_gorunen_ad(
+    cur: Any,
+    sube_id: str,
+    kalem_kodu: str,
+    fallback_ad: str = "",
+) -> str:
+    """Stok kodu -> okunabilir Turkce ad."""
+    kk = str(kalem_kodu or "").strip()
+    if not kk:
+        return str(fallback_ad or "").strip() or "-"
+    fb = str(fallback_ad or "").strip()
+    if kk in STOK_LABEL_TR:
+        return STOK_LABEL_TR[kk]
+    if fb:
+        return fb
+    sid = str(sube_id or "").strip()
+    if sid:
+        try:
+            cur.execute(
+                """
+                SELECT NULLIF(TRIM(kalem_adi), '') AS kalem_adi
+                FROM sube_depo_stok
+                WHERE sube_id = %s AND kalem_kodu = %s
+                LIMIT 1
+                """,
+                (sid, kk),
+            )
+            row = cur.fetchone()
+            if row:
+                ad = str((dict(row) if not isinstance(row, dict) else row).get("kalem_adi") or "").strip()
+                if ad:
+                    return ad
+        except Exception:
+            pass
+    if _UUID_RE.match(kk):
+        try:
+            cur.execute(
+                "SELECT NULLIF(TRIM(ad), '') AS ad FROM siparis_urun WHERE id=%s LIMIT 1",
+                (kk,),
+            )
+            row = cur.fetchone()
+            if row:
+                ad = str((dict(row) if not isinstance(row, dict) else row).get("ad") or "").strip()
+                if ad:
+                    return ad
+        except Exception:
+            pass
+    try:
+        cur.execute(
+            """
+            SELECT NULLIF(TRIM(ad), '') AS ad
+            FROM merkez_stok_kart
+            WHERE kalem_kodu = %s
+            LIMIT 1
+            """,
+            (kk,),
+        )
+        row = cur.fetchone()
+        if row:
+            ad = str((dict(row) if not isinstance(row, dict) else row).get("ad") or "").strip()
+            if ad:
+                return ad
+    except Exception:
+        pass
+    sk = _stok_key_from_urun_ad(kk)
+    if sk and sk in STOK_LABEL_TR:
+        return STOK_LABEL_TR[sk]
+    return kk
+
+
 def stok_from_event_meta(meta_raw: Any, key: str = "acilis_stok_sayim") -> Dict[str, int]:
     m = _parse_meta(meta_raw)
     block = m.get(key) or m.get("stok_sayim")
@@ -2172,7 +2244,16 @@ def siparis_rezerve_kaynak_depoya_tasi(
     yeni = (yeni_kaynak_depo_sube_id or "").strip()
     if not yeni or eski == yeni:
         return
+    # FIX #7: tahsis_adet_map boşsa merkez rezervini yeni depoya geçiremiyorduk —
+    # sipariş yönlendirilince merkez rezerv sızıntısı oluşuyordu.
+    # Boş map durumunda eski=None (merkez) ise merkez rezervini temizle ve devam et.
     if not tahsis_adet_map:
+        if not eski:
+            # Merkeze bağlı siparişte map boş geldi — güvenli çıkış, sızıntı yok.
+            log.debug(
+                "siparis_rezerve_kaynak_depoya_tasi: tahsis_adet_map bos, "
+                "eski=None (merkez). Rezerv tasima atlandi. yeni=%s", yeni,
+            )
         return
     for kk_raw, adet_raw in tahsis_adet_map.items():
         kk = str(kk_raw or "").strip()
@@ -2596,13 +2677,43 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
             cur.execute(
                 """
                 UPDATE sube_depo_stok
-                SET mevcut_adet = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
+                SET mevcut_adet  = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
                     rezerve_adet = GREATEST(0, COALESCE(rezerve_adet, 0) - %s),
-                    guncelleme  = NOW()
+                    guncelleme   = NOW()
                 WHERE sube_id = %s AND kalem_kodu = %s
                 """,
                 (sevk_adet, sevk_adet, kaynak_depo, kalem_kodu),
             )
+            # FIX #5: 0 satır etkilendiyse kalem_kodu/depo uyumsuzluğu var — sessizce geçme
+            if cur.rowcount == 0:
+                log.warning(
+                    "sevk_cikti_kaydet: sube_depo_stok satiri bulunamadi — "
+                    "stok DUSULMEDI! siparis=%s depo=%s kalem_kodu=%s sevk_adet=%s",
+                    siparis_talep_id, kaynak_depo, kalem_kodu, sevk_adet,
+                )
+                # Uyarı kaydı oluştur (ops ekibi görebilsin)
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO sube_operasyon_uyari
+                            (sube_id, tarih, tip, mesaj, meta)
+                        VALUES (%s, CURRENT_DATE, 'STOK_DUSME_HATASI',
+                                'Sevk çıkışında stok satırı bulunamadı — kalem_kodu uyumsuzluğu',
+                                %s::jsonb)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (
+                            kaynak_depo,
+                            json.dumps({
+                                "siparis_talep_id": siparis_talep_id,
+                                "kalem_kodu": kalem_kodu,
+                                "sevk_adet": sevk_adet,
+                                "kaynak": "sevk_cikti_kaydet",
+                            }, ensure_ascii=False),
+                        ),
+                    )
+                except Exception:
+                    pass
         else:
             cur.execute(
                 """
@@ -2614,6 +2725,13 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                 """,
                 (sevk_adet, sevk_adet, kalem_kodu),
             )
+            # FIX #5: merkez stok kartında da kontrol et
+            if cur.rowcount == 0:
+                log.warning(
+                    "sevk_cikti_kaydet: merkez_stok_kart satiri bulunamadi — "
+                    "stok DUSULMEDI! siparis=%s kalem_kodu=%s sevk_adet=%s",
+                    siparis_talep_id, kalem_kodu, sevk_adet,
+                )
         # stok_yolda kaydı
         yid = str(uuid.uuid4())
         cur.execute(
@@ -2685,8 +2803,10 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
                 "UPDATE stok_yolda SET durum=%s, kabul_ts=NOW(), kabul_adet=%s WHERE id=%s",
                 (yolda_durum, kabul_adet, yolda_id),
             )
-        # Şube deposu yalnızca tam eşleşmede artar; uyuşmazlıkta operasyon merkezi çözene kadar askıda kalır.
-        if kabul_adet > 0 and yolda_durum == "kabul_edildi":
+        # FIX #2: Şube deposu kabul_adet kadar her zaman artar.
+        # Uyumsuzluk olsa bile şube fiilen teslim aldığı kadar stoğa girsin.
+        # Fark (sevk - kabul) için uyumsuzluk kaydı tutulur; ops merkezi takip eder.
+        if kabul_adet > 0:
             cur.execute(
                 """
                 INSERT INTO sube_depo_stok
@@ -2714,6 +2834,14 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
                 )
             except Exception:
                 pass
+            # Uyumsuzluk varsa: gelen fark için ek uyarı yaz (ops takip edebilsin)
+            if yolda_durum == "kabul_uyusmazlik":
+                eksik = sevk_adet - kabul_adet
+                log.info(
+                    "sube_kabul: uyumsuzluk — stok kabul_adet kadar yazildi, "
+                    "fark=%s askida. siparis=%s sube=%s kalem=%s",
+                    eksik, siparis_talep_id, sube_id, kalem_kodu,
+                )
         # Kabul farkı kontrolü
         if sevk_adet != kabul_adet:
             tam_mi = False
