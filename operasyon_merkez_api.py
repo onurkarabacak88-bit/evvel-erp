@@ -13353,6 +13353,25 @@ def truth_vardiya_bardak_pnl(sube_id: str, tarih: str):
         return _tm.aksam_vardiya_bardak_pnl(cur, sube_id, tarih)
 
 
+@router.get("/truth/gunluk-teyit/{sube_id}/{tarih}")
+def truth_gunluk_teyit(sube_id: str, tarih: str):
+    """Günlük Teyit + Bulgu Kartı — Her kontrol boyutunu sade Türkçe özetler.
+
+    Teknik kodlar (N1/N2/N3) yerine insan adları:
+      Sabah kasası | Akşam devir beyanı | Evo POS teyidi |
+      Gece bardak devamlılığı | Süt kullanımı |
+      Akşam vardiyası bardak dengesi | Kasa birikim trendi (30 gün)
+
+    Her kontrol: ✅ ok / ⚠️ uyari / 🚨 kritik
+    """
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.gunluk_teyit_karti(cur, sube_id, tarih)
+
+
 @router.get("/truth/olay-ozeti/{sube_id}/{tarih}")
 def truth_olay_ozeti(sube_id: str, tarih: str):
     """Tüm sprint bulgularını tek insan-okunabilir anlatıda birleştirir.

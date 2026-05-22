@@ -440,6 +440,7 @@ export default function TruthMotor() {
       {/* ========== GENEL ========== */}
       {aktifSekme === 'genel' && (
         <>
+          <GunlukTeyitKarti tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
           <OlayOzeti tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
           <SekmeBilgi
             icon="📋"
@@ -655,6 +656,149 @@ export default function TruthMotor() {
         </table>
       </div>
       </>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+//  GÜNLÜK TEYİT + BULGU KARTI — Tüm kontroller tek bakışta, sade Türkçe
+// ════════════════════════════════════════════════════════════════════════════
+
+const TEYIT_STIL = {
+  ok:     { bg: 'rgba(34,197,94,0.07)',   bord: 'rgba(34,197,94,0.25)',   renk: '#86efac' },
+  uyari:  { bg: 'rgba(245,158,11,0.09)',  bord: 'rgba(245,158,11,0.35)',  renk: '#fbbf24' },
+  kritik: { bg: 'rgba(239,68,68,0.11)',   bord: 'rgba(239,68,68,0.40)',   renk: '#fca5a5' },
+};
+
+function GunlukTeyitKarti({ tarih, subeler }) {
+  const [secSubeId, setSecSubeId] = useState('');
+  const [veri, setVeri]           = useState(null);
+  const [yukleniyor, setYukleniyor] = useState(false);
+  const [hata, setHata]           = useState('');
+
+  useEffect(() => {
+    if (!secSubeId && subeler.length > 0) setSecSubeId(subeler[0].id);
+  }, [subeler, secSubeId]);
+
+  const yukle = useCallback(async () => {
+    if (!secSubeId || !tarih) return;
+    setYukleniyor(true); setHata('');
+    try {
+      const d = await fetchJson(`${API}/api/ops/truth/gunluk-teyit/${secSubeId}/${tarih}`);
+      setVeri(d);
+    } catch (e) {
+      setHata(String(e.message || e));
+      setVeri(null);
+    } finally { setYukleniyor(false); }
+  }, [secSubeId, tarih]);
+
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const genel     = veri?.genel_durum || 'ok';
+  const kontroller = veri?.kontroller || [];
+  const ozet       = veri?.ozet || '';
+  const gecelSayi  = veri?.gecen_sayi ?? 0;
+  const toplamSayi = veri?.toplam_sayi ?? 0;
+  const kritikSayi = veri?.kritik_sayi ?? 0;
+  const uyariSayi  = veri?.uyari_sayi  ?? 0;
+
+  const genelStil  = TEYIT_STIL[genel] || TEYIT_STIL.ok;
+
+  return (
+    <div style={{ margin: '0 0 20px' }}>
+      {/* Başlık */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>📊 Günlük Teyit Kartı</h3>
+        <select className="input" value={secSubeId} onChange={e => setSecSubeId(e.target.value)}
+          style={{ fontSize: 12, padding: '3px 8px' }}>
+          {subeler.map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
+        </select>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>{tarih}</span>
+        <button className="btn btn-sm" onClick={yukle} style={{ fontSize: 11 }}>↻</button>
+      </div>
+
+      {hata && <div className="card" style={{ padding: 10, color: '#fca5a5', fontSize: 12 }}>⚠️ {hata}</div>}
+      {yukleniyor && <div className="card" style={{ padding: 14, textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>Kontroller yükleniyor…</div>}
+
+      {!yukleniyor && veri && (
+        <div className="card" style={{ padding: '14px 18px', borderLeft: `4px solid ${genelStil.bord}` }}>
+
+          {/* Özet satırı */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14,
+            paddingBottom: 10, borderBottom: '1px solid var(--border)',
+            flexWrap: 'wrap',
+          }}>
+            {/* Geçti/Toplam rozeti */}
+            <span style={{
+              fontSize: 13, fontWeight: 700, padding: '3px 10px', borderRadius: 4,
+              background: genelStil.bord, color: genel === 'ok' ? '#052e16' : '#fff',
+            }}>
+              {genel === 'ok' ? '✅' : genel === 'kritik' ? '🚨' : '⚠️'} {gecelSayi}/{toplamSayi}
+            </span>
+            {kritikSayi > 0 && (
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#fca5a5' }}>
+                🚨 {kritikSayi} kritik
+              </span>
+            )}
+            {uyariSayi > 0 && (
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#fbbf24' }}>
+                ⚠️ {uyariSayi} uyarı
+              </span>
+            )}
+            <span style={{ fontSize: 12, color: 'var(--text2)', flex: 1 }}>{ozet}</span>
+          </div>
+
+          {/* Kontrol satırları */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+            {kontroller.map((k, i) => {
+              const ks = TEYIT_STIL[k.durum] || TEYIT_STIL.ok;
+              return (
+                <div key={i} style={{
+                  padding: '7px 10px', borderRadius: 6,
+                  background: k.durum === 'ok' ? 'transparent' : ks.bg,
+                  borderLeft: k.durum !== 'ok' ? `3px solid ${ks.bord}` : '3px solid transparent',
+                }}>
+                  {/* Ana satır */}
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, minWidth: 18 }}>{k.ikon}</span>
+                    <span style={{ fontSize: 12, fontWeight: k.durum !== 'ok' ? 700 : 500, color: 'var(--text1)', minWidth: 190 }}>
+                      {k.ad}
+                    </span>
+                    {k.deger && (
+                      <span style={{ fontSize: 12, fontWeight: 700, color: k.durum !== 'ok' ? ks.renk : 'var(--text1)', minWidth: 48 }}>
+                        {k.deger}
+                      </span>
+                    )}
+                    <span style={{ fontSize: 11, color: k.durum !== 'ok' ? ks.renk : 'var(--text2)', flex: 1 }}>
+                      {k.detay}
+                    </span>
+                    {k.personel && (
+                      <span style={{
+                        fontSize: 10, color: 'var(--text3)', padding: '1px 6px',
+                        borderRadius: 3, background: 'rgba(120,120,120,0.12)',
+                      }}>
+                        {k.personel}
+                      </span>
+                    )}
+                  </div>
+                  {/* Tavsiye satırı */}
+                  {k.tavsiye && (
+                    <div style={{
+                      marginTop: 4, marginLeft: 24, fontSize: 11,
+                      color: k.durum === 'kritik' ? '#fca5a5' : '#fbbf24',
+                      fontStyle: 'italic',
+                    }}>
+                      {k.tavsiye}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );

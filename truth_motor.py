@@ -7098,6 +7098,336 @@ def aksam_bardak_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]
 #  OLAY ÖZETİ — Tüm sprint bulgularını tek insan-okunabilir anlatıda birleştir
 # ════════════════════════════════════════════════════════════════════════════
 
+def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
+    """Günlük Teyit + Bulgu Kartı — Her kontrol boyutunu sade Türkçe özetler.
+
+    Sistem N1/N2/N3 gibi teknik kodlar KULLANMAZ. Onun yerine:
+      N2 → "Sabah kasası"
+      N1 → "Akşam devir beyanı"
+      N3 → "Evo POS teyidi"
+
+    Her satır:
+      ✅  Normal / doğru
+      ⚠️  Dikkat / uyarı
+      🚨  Kritik / soruşturma
+
+    Returns:
+        {
+          "kontroller":   List[Dict],   # her satır: kod, ad, durum, ikon, deger, detay, tavsiye, personel
+          "genel_durum":  str,          # "ok" | "uyari" | "kritik"
+          "gecen_sayi":   int,
+          "uyari_sayi":   int,
+          "kritik_sayi":  int,
+          "toplam_sayi":  int,
+          "ozet":         str,
+          "tarih":        str,
+          "sube_id":      str,
+        }
+    """
+    from datetime import date, timedelta
+
+    kontroller: List[Dict[str, Any]] = []
+
+    def _k(kod: str, ad: str, durum: str, deger: str = "",
+           detay: str = "", tavsiye: str = None, personel: str = None):
+        ikon = {"ok": "✅", "uyari": "⚠️", "kritik": "🚨"}.get(durum, "—")
+        kontroller.append({
+            "kod": kod, "ad": ad, "durum": durum, "ikon": ikon,
+            "deger": deger or "", "detay": detay or "",
+            "tavsiye": tavsiye, "personel": personel,
+        })
+
+    try:
+        onceki = (date.fromisoformat(str(tarih)) - timedelta(days=1)).isoformat()
+    except Exception:
+        onceki = None
+
+    # ────────────────────────────────────────────────────────────────────────
+    # 1. SABAH KASASI (N2 = bugün ACILIS kör sayımı vs N1 = dün KAPANIS.devir)
+    # ────────────────────────────────────────────────────────────────────────
+    n1_val: Optional[float] = None
+    n2_val: Optional[float] = None
+    sabahci_ad: Optional[str] = None
+    aksamci_ad_dun: Optional[str] = None
+
+    try:
+        cur.execute("""
+            SELECT kasa_sayim, personel_ad FROM sube_operasyon_event
+            WHERE sube_id=%s AND tarih=%s::date AND tip='ACILIS' AND durum='tamamlandi'
+            ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+        """, (sube_id, tarih))
+        r = cur.fetchone()
+        if r:
+            rd = dict(r)
+            n2_val = float(rd.get("kasa_sayim") or 0)
+            sabahci_ad = (rd.get("personel_ad") or "").strip() or None
+    except Exception as e:
+        log.warning("gunluk_teyit sabah kasasi hata: %s", e)
+
+    if onceki:
+        try:
+            cur.execute("""
+                SELECT devir, personel_ad FROM sube_operasyon_event
+                WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
+                ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+            """, (sube_id, onceki))
+            r = cur.fetchone()
+            if r:
+                rd = dict(r)
+                n1_val = float(rd.get("devir") or 0)
+                aksamci_ad_dun = (rd.get("personel_ad") or "").strip() or None
+        except Exception as e:
+            log.warning("gunluk_teyit dun kapanis hata: %s", e)
+
+    if n2_val is not None and n1_val is not None:
+        fark = round(n2_val - n1_val, 2)
+        abs_fark = abs(fark)
+        if abs_fark <= 1.0:
+            _k("sabah_kasasi", "Sabah kasası", "ok",
+               f"{n2_val:.0f}₺",
+               f"Doğru — devir {n1_val:.0f}₺ ile uyumlu",
+               personel=sabahci_ad)
+        elif fark < -1.0:
+            _k("sabah_kasasi", "Sabah kasası", "uyari",
+               f"{n2_val:.0f}₺",
+               f"Açık — devir {n1_val:.0f}₺, bulundu {n2_val:.0f}₺ → {abs_fark:.0f}₺ eksik",
+               personel=sabahci_ad)
+        else:
+            _k("sabah_kasasi", "Sabah kasası", "uyari",
+               f"{n2_val:.0f}₺",
+               f"Fazla — devir {n1_val:.0f}₺, bulundu {n2_val:.0f}₺ → {abs_fark:.0f}₺ fazla",
+               personel=sabahci_ad)
+    elif n2_val is not None:
+        _k("sabah_kasasi", "Sabah kasası", "ok",
+           f"{n2_val:.0f}₺",
+           "Sayıldı — önceki gün deviri yok (karşılaştırma yapılamadı)",
+           personel=sabahci_ad)
+    else:
+        _k("sabah_kasasi", "Sabah kasası", "uyari", "—",
+           "Sabah sayımı henüz yapılmadı veya veri yok")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # 2. AKŞAM DEVİR BEYANI — Sprint G: dün akşamcı kasayı şişirdi mi?
+    # ────────────────────────────────────────────────────────────────────────
+    sprint_g: Dict[str, Any] = {}
+    try:
+        sprint_g = aksam_kasa_sisirme_tespit(cur, sube_id, tarih)
+    except Exception as e:
+        log.warning("gunluk_teyit sprint_g hata: %s", e)
+
+    if sprint_g.get("tani") == "AKSAM_KASAYI_SISIRDI":
+        aks_ad = sprint_g.get("aksamci_ad") or aksamci_ad_dun or "Akşamcı"
+        sisirme = sprint_g.get("sisirme_tl", 0)
+        sg_n1 = sprint_g.get("n1_aksam", 0)
+        sg_n2 = sprint_g.get("n2_sabah", 0)
+        _k("aksam_devir", "Akşam devir beyanı", "kritik",
+           f"{sg_n1:.0f}₺",
+           f"Şişirme — {aks_ad} {sg_n1:.0f}₺ devir bıraktım dedi, "
+           f"sabah {sg_n2:.0f}₺ bulundu → {sisirme:.0f}₺ fark",
+           tavsiye="→ Dünkü stok açığıyla örtüşüyor — zimmet soruşturması",
+           personel=aks_ad)
+    elif n1_val is not None:
+        _k("aksam_devir", "Akşam devir beyanı", "ok",
+           f"{n1_val:.0f}₺",
+           "Uyumlu — stok açığıyla çakışma yok",
+           personel=aksamci_ad_dun)
+    else:
+        _k("aksam_devir", "Akşam devir beyanı", "ok", "—",
+           "Önceki gün devir verisi yok (karşılaştırma yapılamadı)")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # 3. EVO POS TEYİDİ — truth_motor_kararlar: kasa boyutu
+    # ────────────────────────────────────────────────────────────────────────
+    r_evo = None
+    try:
+        cur.execute("""
+            SELECT tani, fark_n1_n2, guven_skoru FROM truth_motor_kararlar
+            WHERE sube_id=%s AND tarih=%s::date AND boyut='kasa'
+            ORDER BY olusturma DESC LIMIT 1
+        """, (sube_id, tarih))
+        r_evo = cur.fetchone()
+    except Exception as e:
+        log.warning("gunluk_teyit evo teyit hata: %s", e)
+
+    _UYUMLU_TANILER = ("UYUMLU", "IKRAM_EVO_TEYIT", "IKRAM_SURDURULEN")
+    _KRITIK_TANILER = ("AKSAM_KASAYI_SISIRDI", "ZIMMET_NAKIT_CEPTE",
+                       "ZIMMET_IPTAL_MANIPULASYON", "SWEETHEARTING_SINYAL")
+    if r_evo:
+        rd_evo = dict(r_evo)
+        evo_tani = str(rd_evo.get("tani") or "")
+        evo_guven = float(rd_evo.get("guven_skoru") or 0)
+        if evo_tani in _UYUMLU_TANILER:
+            _k("evo_teyit", "Evo POS teyidi", "ok", "",
+               f"Uyumlu (güven %{evo_guven:.0f})")
+        elif evo_tani in _KRITIK_TANILER:
+            _k("evo_teyit", "Evo POS teyidi", "kritik", "",
+               f"Uyumsuz — {evo_tani} (güven %{evo_guven:.0f})")
+        elif evo_tani in ("YETERSIZ_VERI",):
+            _k("evo_teyit", "Evo POS teyidi", "ok", "", "Veri yetersiz — motor çalıştırılmamış")
+        else:
+            _k("evo_teyit", "Evo POS teyidi", "uyari", "",
+               f"Anomali — {evo_tani} (güven %{evo_guven:.0f})")
+    else:
+        _k("evo_teyit", "Evo POS teyidi", "ok", "",
+           "Motor bu güne henüz çalışmamış — teyit bekliyor")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # 4. GECE BARDAK DEVAMLILIĞI — Sprint J: dün gece bardak eridi mi?
+    # ────────────────────────────────────────────────────────────────────────
+    sprint_j: Dict[str, Any] = {}
+    try:
+        sprint_j = aksam_bardak_sisirme_tespit(cur, sube_id, tarih)
+    except Exception as e:
+        log.warning("gunluk_teyit sprint_j hata: %s", e)
+
+    j_tani = sprint_j.get("tani") or "YETERSIZ_VERI"
+    if j_tani == "AKSAM_BARDAK_SISIRDI":
+        j_ad = sprint_j.get("aksamci_ad") or "Akşamcı"
+        j_kayip = sprint_j.get("toplam_kayip_adet", 0)
+        j_karar = sprint_j.get("karar_ozeti", "")
+        _k("gece_bardak", "Gece bardak devamlılığı", "kritik",
+           f"{j_kayip} adet fark",
+           f"Dün gece {j_kayip} adet bardak eridi — sabahçı kör sayımda tespit etti",
+           tavsiye=f"→ {j_karar}" if j_karar else "→ Akşamcı kapanışta şişirmiş olabilir",
+           personel=j_ad)
+    elif j_tani == "UYUMLU":
+        j_karton_kb = sprint_j.get("gece_karton_kaybi", 0)
+        j_plastik_kb = sprint_j.get("gece_plastik_kaybi", 0)
+        aks_nm = sprint_j.get("aksamci_ad") or aksamci_ad_dun or ""
+        sab_nm = sprint_j.get("sabahci_ad") or sabahci_ad or ""
+        ozet_parts = []
+        if sprint_j.get("dun_karton", 0) > 0:
+            ozet_parts.append(f"karton {sprint_j.get('dun_karton',0)}→{sprint_j.get('bugun_karton',0)}")
+        if sprint_j.get("dun_plastik", 0) > 0:
+            ozet_parts.append(f"plastik {sprint_j.get('dun_plastik',0)}→{sprint_j.get('bugun_plastik',0)}")
+        ozet_str = " | ".join(ozet_parts) if ozet_parts else "devamlılık normal"
+        _k("gece_bardak", "Gece bardak devamlılığı", "ok",
+           "",
+           f"Kayıp yok ({ozet_str})",
+           personel=aks_nm or None)
+    else:
+        _k("gece_bardak", "Gece bardak devamlılığı", "ok", "—",
+           "Önceki gün kapanış bardak verisi yok — kontrol yapılamadı")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # 5. SÜT KULLANIMI — Sprint F: gerçek vs teorik BOM
+    # ────────────────────────────────────────────────────────────────────────
+    sut: Dict[str, Any] = {}
+    try:
+        sut = sut_sapma_analiz(cur, sube_id, tarih)
+    except Exception as e:
+        log.warning("gunluk_teyit sut hata: %s", e)
+
+    sut_tani = sut.get("tani") or "VERI_YOK"
+    if sut_tani == "SUT_SAPMA":
+        gercek_sut = sut.get("gercek_tuketim", 0) or 0
+        teorik_sut = sut.get("teorik_tuketim", 0) or 0
+        sapma_l = sut.get("sapma_litre", 0) or 0
+        sapma_yz = sut.get("sapma_yuzde", 0) or 0
+        _k("sut_kullanimi", "Süt kullanımı", "uyari",
+           f"{gercek_sut:.1f}L",
+           f"Fazla — teorik {teorik_sut:.1f}L, kullanılan {gercek_sut:.1f}L → {sapma_l:.1f}L fazla (%{sapma_yz:.0f})",
+           tavsiye="→ Aşırı porsiyonlama veya kayıt dışı ürün olabilir")
+    elif sut_tani == "SUT_UYUMLU":
+        gercek_sut = sut.get("gercek_tuketim", 0) or 0
+        teorik_sut = sut.get("teorik_tuketim", 0) or 0
+        sapma_yz = sut.get("sapma_yuzde", 0) or 0
+        _k("sut_kullanimi", "Süt kullanımı", "ok",
+           f"{gercek_sut:.1f}L",
+           f"Normal — teorik {teorik_sut:.1f}L, kullanılan {gercek_sut:.1f}L (%{abs(sapma_yz):.0f} sapma)")
+    else:
+        _k("sut_kullanimi", "Süt kullanımı", "ok", "—",
+           "Süt sayım verisi yok — kontrol yapılamadı")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # 6. AKŞAM VARDIYASI BARDAK DENGESİ — Sprint H: devir→kapanis bardak P&L
+    # ────────────────────────────────────────────────────────────────────────
+    sprint_h: Dict[str, Any] = {}
+    try:
+        sprint_h = aksam_vardiya_bardak_pnl(cur, sube_id, tarih)
+    except Exception as e:
+        log.warning("gunluk_teyit sprint_h hata: %s", e)
+
+    h_tani = sprint_h.get("tani")
+    if h_tani == "AKSAM_VARDIYA_BARDAK_ACIK":
+        h_ad = sprint_h.get("aksamci_ad") or "Akşamcı"
+        h_k = sprint_h.get("karton_acik", 0) or 0
+        h_p = sprint_h.get("plastik_acik", 0) or 0
+        h_guven = sprint_h.get("guven", 0) or 0
+        _k("aksam_vardiya_bardak", "Akşam vardiyası bardak dengesi", "uyari",
+           "",
+           f"Açık — {h_k:.0f} karton + {h_p:.0f} plastik bardak Evo satışını aşıyor (güven %{h_guven:.0f})",
+           tavsiye="→ Kayıt dışı satış şüphesi — kamera inceleme",
+           personel=h_ad)
+    elif h_tani == "UYUMLU":
+        _k("aksam_vardiya_bardak", "Akşam vardiyası bardak dengesi", "ok",
+           "",
+           "Uyumlu — akşam vardiyası bardak kullanımı Evo satışıyla örtüşüyor")
+    else:
+        _k("aksam_vardiya_bardak", "Akşam vardiyası bardak dengesi", "ok", "—",
+           "Vardiya devri verisi yok — kontrol yapılamadı")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # 7. KASA BİRİKİM TRENDİ — Sprint I: 30 günde sistematik küçük açık
+    # ────────────────────────────────────────────────────────────────────────
+    sprint_i: Dict[str, Any] = {}
+    try:
+        sprint_i = kucuk_tutar_birikim_tespit(cur, sube_id=sube_id, gun=30)
+    except Exception as e:
+        log.warning("gunluk_teyit sprint_i hata: %s", e)
+
+    riskli_i = sprint_i.get("riskli_personeller") or []
+    if riskli_i:
+        top_rp = riskli_i[0]
+        i_ad = top_rp.get("personel_ad") or "Personel"
+        i_tl = abs(top_rp.get("toplam_fark", 0) or 0)
+        i_gun = top_rp.get("gun_sayisi", 0) or 0
+        i_guven = top_rp.get("guven", 0) or 0
+        _k("kasa_birikim_trendi", "Kasa birikim trendi (30 gün)", "uyari",
+           f"{i_tl:.0f}₺ toplam",
+           f"Dikkat — {i_ad} son {i_gun} günde kümülatif {i_tl:.0f}₺ açık (güven %{i_guven:.0f})",
+           tavsiye="→ Sistematik küçük tutarlı zimmet şüphesi — detay inceleme",
+           personel=i_ad)
+    else:
+        _k("kasa_birikim_trendi", "Kasa birikim trendi (30 gün)", "ok",
+           "",
+           "Normal — 30 günde şüpheli birikim pattern tespit edilmedi")
+
+    # ── Özet ────────────────────────────────────────────────────────────────
+    ok_sayi     = sum(1 for x in kontroller if x["durum"] == "ok")
+    uyari_sayi  = sum(1 for x in kontroller if x["durum"] == "uyari")
+    kritik_sayi = sum(1 for x in kontroller if x["durum"] == "kritik")
+    toplam      = len(kontroller)
+
+    if kritik_sayi > 0:
+        genel_durum = "kritik"
+    elif uyari_sayi > 0:
+        genel_durum = "uyari"
+    else:
+        genel_durum = "ok"
+
+    if genel_durum == "ok":
+        ozet = f"Tüm {toplam} kontrol geçti — gün normal seyirde."
+    elif genel_durum == "uyari":
+        sorunlar = [x["ad"] for x in kontroller if x["durum"] != "ok"]
+        ozet = f"{ok_sayi}/{toplam} kontrol geçti. Dikkat: {', '.join(sorunlar)}."
+    else:
+        kritik_adlar = [x["ad"] for x in kontroller if x["durum"] == "kritik"]
+        ozet = f"Kritik bulgu: {', '.join(kritik_adlar)}. Soruşturma gerekli."
+
+    return {
+        "kontroller":   kontroller,
+        "genel_durum":  genel_durum,
+        "gecen_sayi":   ok_sayi,
+        "uyari_sayi":   uyari_sayi,
+        "kritik_sayi":  kritik_sayi,
+        "toplam_sayi":  toplam,
+        "ozet":         ozet,
+        "tarih":        tarih,
+        "sube_id":      str(sube_id),
+    }
+
+
 def olay_ozeti_uret(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     """Tüm sprint sonuçlarını birleştirerek denetçi anlatısı üretir.
 
