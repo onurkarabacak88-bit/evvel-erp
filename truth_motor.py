@@ -6895,9 +6895,9 @@ def aksam_bardak_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]
     n1_devir  = float(dun.get("devir") or 0)
     aksamci_ad = str(dun.get("personel_ad") or "").strip() or None
 
-    # ── 2. Bugün ACILIS: bardak sayımı + kasa_sayim (N2) ────────────────────
+    # ── 2. Bugün ACILIS: bardak sayımı + kasa_sayim (N2) + sabahçı adı ────────
     cur.execute("""
-        SELECT meta, kasa_sayim
+        SELECT meta, kasa_sayim, personel_ad
         FROM sube_operasyon_event
         WHERE sube_id = %s
           AND tarih = %s::date
@@ -6914,6 +6914,7 @@ def aksam_bardak_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]
     bugun_meta = _meta_oku(bugun.get("meta"))
     bugun_stok = bugun_meta.get("acilis_stok_sayim") or {}
     n2_kasa    = float(bugun.get("kasa_sayim") or 0)
+    sabahci_ad = str(bugun.get("personel_ad") or "").strip() or None
 
     # ── 3. Bardak değerleri ──────────────────────────────────────────────────
     dun_kucuk   = float(dun_stok.get("bardak_kucuk",   0) or 0)
@@ -6950,6 +6951,7 @@ def aksam_bardak_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]
         "fark_n1_n2":         fark_n1_n2,
         "kasada_acik":        kasada_acik,
         "aksamci_ad":         aksamci_ad,
+        "sabahci_ad":         sabahci_ad,
         "onceki_tarih":       dun_tarih,
     })
 
@@ -6962,14 +6964,20 @@ def aksam_bardak_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]
     sonuc["plastik_anomali"] = plastik_anomali
 
     if not (karton_anomali or plastik_anomali):
+        aks_isim = aksamci_ad or "Akşamcı"
+        sab_isim = sabahci_ad or "Sabahçı"
         detay = (
             f"Gece bardak kaybı normal sınırlar içinde: "
             f"karton {gece_karton_kaybi:+d} adet, plastik {gece_plastik_kaybi:+d} adet. "
-            f"(dün KAPANIS → bugün ACILIS)"
+            f"(dün {aks_isim} KAPANIS → bugün {sab_isim} ACILIS) — uyumlu."
         )
-        sonuc["tani"]  = "UYUMLU"
-        sonuc["guven"] = 80.0
-        sonuc["detay"] = detay
+        sonuc["tani"]       = "UYUMLU"
+        sonuc["guven"]      = 80.0
+        sonuc["detay"]      = detay
+        sonuc["karar_ozeti"] = (
+            f"{aks_isim} kapanışı ile {sab_isim} açılışı örtüşüyor. "
+            f"Bardak sayımında anlamlı fark yok — her iki taraf uyumlu."
+        )
         return sonuc
 
     # ── 7. Güven skoru ───────────────────────────────────────────────────────
@@ -6982,36 +6990,253 @@ def aksam_bardak_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]
         guven += 3.0     # büyük fark → daha yüksek güven
     guven = min(guven, 96.0)
 
-    # ── 8. Detay metni ───────────────────────────────────────────────────────
-    aks_str = f" ({aksamci_ad})" if aksamci_ad else ""
+    # ── 8. İki senaryo analizi — kim suçlu? kasa hakem ──────────────────────
+    aks_isim = aksamci_ad or "Akşamcı"
+    sab_isim = sabahci_ad or "Sabahçı"
+    toplam_kayip_adet = max(0, gece_karton_kaybi) + max(0, gece_plastik_kaybi)
+
     anomali_parcalar = []
     if karton_anomali:
         anomali_parcalar.append(
-            f"karton {int(dun_karton)}→{int(bugun_karton)} ({gece_karton_kaybi:+d} adet gece eridi)"
+            f"karton {int(dun_karton)} → {int(bugun_karton)} ({gece_karton_kaybi:+d} adet)"
         )
     if plastik_anomali:
         anomali_parcalar.append(
-            f"plastik {int(dun_plastik)}→{int(bugun_plastik)} ({gece_plastik_kaybi:+d} adet gece eridi)"
+            f"plastik {int(dun_plastik)} → {int(bugun_plastik)} ({gece_plastik_kaybi:+d} adet)"
         )
+    fark_ozet = " | ".join(anomali_parcalar)
 
-    kasa_ek = ""
+    # Senaryo A: Akşamcı doğru saydı, sabahçı yanlış saydı → para kaybı yok
+    senaryo_a = {
+        "harf":    "A",
+        "baslik":  f"{sab_isim} sayım hatası",
+        "kim":     sab_isim,
+        "aciklama": (
+            f"{sab_isim} açılış kör sayımında {toplam_kayip_adet} bardak eksik gördü. "
+            f"{aks_isim} kapanışı doğru yapmış olabilir — para kaybı yok, sayım hatası."
+        ),
+        "kanitlar": (
+            ["Kasa dengede (N1≈N2) → para yerinde, sayım yanlış" ]
+            if not kasada_acik else []
+        ),
+        "zayiflatanlar": (
+            [f"Kasa da {abs(fark_n1_n2):.0f}₺ açık → para da eksik, sayım hatası tek başına açıklamaz"]
+            if kasada_acik else []
+        ),
+        "muhtemel": not kasada_acik,
+    }
+
+    # Senaryo B: Sabahçı doğru saydı, akşamcı şişirdi → zimmet
+    senaryo_b = {
+        "harf":    "B",
+        "baslik":  f"{aks_isim} kapanış şişirmesi",
+        "kim":     aks_isim,
+        "aciklama": (
+            f"{aks_isim} kapanışta bardak sayısını {toplam_kayip_adet} adet fazla yazdı. "
+            f"Kayıt dışı satış geliri gizlenmiş, para kasaya girmemiş olabilir."
+        ),
+        "kanitlar": (
+            [f"Kasa da açık: N1={n1_devir:.0f}₺ (devir) vs N2={n2_kasa:.0f}₺ (kör) = {abs(fark_n1_n2):.0f}₺ fark — çift sinyal"]
+            if kasada_acik else []
+        ),
+        "zayiflatanlar": (
+            ["Kasa dengede — para kaybı yok, bardak farkı tek başına sayım hatasından kaynaklanıyor olabilir"]
+            if not kasada_acik else []
+        ),
+        "muhtemel": kasada_acik,
+    }
+
+    # Hakem kararı: kasa cross-sinyali
+    kasa_fazla = fark_n1_n2 > 0.99   # N2 > N1 (sabahçı kasayı fazla buldu)
     if kasada_acik:
-        kasa_ek = (
-            f" Kasa cross-sinyal: N1={n1_devir:.0f}₺ (dün devir) vs N2={n2_kasa:.0f}₺ "
-            f"(bugün kör sayım) → {abs(fark_n1_n2):.0f}₺ açık. "
-            f"Akşamcı{aks_str} hem kasa hem bardak şişirdi → çok güçlü zimmet korelasyonu."
+        olasi_senaryo = "B"
+        karar_ozeti = (
+            f"⚖️ Kasa da açık ({abs(fark_n1_n2):.0f}₺): "
+            f"{aks_isim} {n1_devir:.0f}₺ devir bıraktı dedi, "
+            f"{sab_isim} {n2_kasa:.0f}₺ buldu. "
+            f"Hem bardak ({fark_ozet}) hem kasa açığı → "
+            f"Senaryo B daha muhtemel: {aks_isim} kasayı şişirdi."
+        )
+    elif kasa_fazla:
+        olasi_senaryo = "BELIRSIZ"
+        karar_ozeti = (
+            f"⚖️ Kasa fazla ({abs(fark_n1_n2):.0f}₺ — {sab_isim} beklenenden fazla buldu) + "
+            f"bardak eksik ({fark_ozet}). Her iki tarafın da hata yapmış olması mümkün. "
+            f"Fiziksel yeniden sayım gerekli."
+        )
+    else:
+        olasi_senaryo = "A"
+        karar_ozeti = (
+            f"⚖️ Kasa dengede (N1={n1_devir:.0f}₺ ≈ N2={n2_kasa:.0f}₺, para kaybı yok). "
+            f"Bardak farkı ({fark_ozet}) büyük ihtimalle "
+            f"{sab_isim}'in açılış kör sayım hatasıdır. "
+            f"Senaryo A daha muhtemel: eğitim yeterli, soruşturma gerekmez."
         )
 
+    # ── 9. Detay metni ───────────────────────────────────────────────────────
     detay = (
-        f"Dün akşamcı{aks_str} KAPANIS beyanı: {int(dun_karton)} karton + {int(dun_plastik)} plastik. "
-        f"Bugün sabahçı kör ACILIS sayımı: {int(bugun_karton)} karton + {int(bugun_plastik)} plastik. "
-        f"Gece arası bardak kaybolmaz → anomali: {'; '.join(anomali_parcalar)}."
-        f"{kasa_ek}"
+        f"Dün {aks_isim} KAPANIS beyanı: {int(dun_karton)} karton + {int(dun_plastik)} plastik. "
+        f"Bugün {sab_isim} kör ACILIS sayımı: {int(bugun_karton)} karton + {int(bugun_plastik)} plastik. "
+        f"Gece arası bardak kaybolmaz → {fark_ozet}. {karar_ozeti}"
     )
 
     sonuc.update({
-        "tani":  "AKSAM_BARDAK_SISIRDI",
-        "guven": round(guven, 1),
-        "detay": detay,
+        "tani":               "AKSAM_BARDAK_SISIRDI",
+        "guven":              round(guven, 1),
+        "detay":              detay,
+        "senaryo_a":          senaryo_a,
+        "senaryo_b":          senaryo_b,
+        "olasi_senaryo":      olasi_senaryo,
+        "karar_ozeti":        karar_ozeti,
+        "toplam_kayip_adet":  toplam_kayip_adet,
+        "sabahci_ad":         sabahci_ad,
     })
     return sonuc
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  OLAY ÖZETİ — Tüm sprint bulgularını tek insan-okunabilir anlatıda birleştir
+# ════════════════════════════════════════════════════════════════════════════
+
+def olay_ozeti_uret(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
+    """Tüm sprint sonuçlarını birleştirerek denetçi anlatısı üretir.
+
+    Sistemi "insan gibi konuşturan" katman:
+    - Kim ne yaptı (kişi adıyla)
+    - Kanıtlar (bardak + kasa + seri)
+    - Hangi senaryo daha muhtemel (hakem kararı)
+    - Ne yapılmalı
+
+    Returns:
+        {
+          "alarm":          str,
+          "anlatı":         str,   # paragraf metin (UI'de direkt göster)
+          "personeller":    List,  # tespit edilen kişiler
+          "sprint_ozet":    Dict,  # G/H/I/J sonuçları
+          "aksiyon":        str,
+        }
+    """
+    alarm   = "normal"
+    parcalar: List[str] = []
+    personeller: List[str] = []
+    aksiyonlar: List[str] = []
+
+    # ── Sprint G: Kasa şişirme ───────────────────────────────────────────────
+    sprint_g: Dict[str, Any] = {}
+    try:
+        sprint_g = aksam_kasa_sisirme_tespit(cur, sube_id, tarih)
+    except Exception:
+        pass
+
+    if sprint_g.get("tani") == "AKSAM_KASAYI_SISIRDI":
+        alarm = "kritik"
+        ad  = sprint_g.get("aksamci_ad") or "Akşamcı"
+        tl  = sprint_g.get("sisirme_tl", 0)
+        n1  = sprint_g.get("n1_aksam", 0)
+        n2  = sprint_g.get("n2_sabah", 0)
+        if ad not in personeller:
+            personeller.append(ad)
+        parcalar.append(
+            f"**Kasa şişirme ({ad}):** Dün akşam kasaya "
+            f"{n1:.0f}₺ devir bıraktım dedi, sabahçı {n2:.0f}₺ buldu → "
+            f"{tl:.0f}₺ açık. Dünkü stok açığıyla da örtüşüyor "
+            f"(güven %{sprint_g.get('guven', 0):.0f})."
+        )
+        aksiyonlar.append("Kasa baskını + güvenlik kamerası + soruşturma")
+
+    # ── Sprint J: Bardak şişirme (cross-day) ────────────────────────────────
+    sprint_j: Dict[str, Any] = {}
+    try:
+        sprint_j = aksam_bardak_sisirme_tespit(cur, sube_id, tarih)
+    except Exception:
+        pass
+
+    if sprint_j.get("tani") == "AKSAM_BARDAK_SISIRDI":
+        if alarm != "kritik":
+            alarm = "kritik"
+        j_ad  = sprint_j.get("aksamci_ad") or "Akşamcı"
+        s_ad  = sprint_j.get("sabahci_ad") or "Sabahçı"
+        j_karar = sprint_j.get("karar_ozeti", "")
+        j_kayip = sprint_j.get("toplam_kayip_adet", 0)
+        if j_ad not in personeller:
+            personeller.append(j_ad)
+        parcalar.append(
+            f"**Bardak şişirme:** {j_ad} kapanışta {j_kayip} adet bardak fazla yazdı. "
+            f"{s_ad} açılışta gerçek sayıyı buldu — gece bardak kaybolmaz. {j_karar}"
+        )
+        if sprint_j.get("olasi_senaryo") == "B":
+            aksiyonlar.append(f"{j_ad} ile görüşme + sayım tekrarı")
+
+    # ── Sprint H: Vardiya bardak P&L ─────────────────────────────────────────
+    sprint_h: Dict[str, Any] = {}
+    try:
+        sprint_h = aksam_vardiya_bardak_pnl(cur, sube_id, tarih)
+    except Exception:
+        pass
+
+    if sprint_h.get("tani") == "AKSAM_VARDIYA_BARDAK_ACIK":
+        if alarm not in ("kritik",):
+            alarm = "yuksek"
+        h_ad = sprint_h.get("aksamci_ad") or "Akşamcı"
+        h_k  = sprint_h.get("karton_acik", 0)
+        h_p  = sprint_h.get("plastik_acik", 0)
+        if h_ad not in personeller:
+            personeller.append(h_ad)
+        parcalar.append(
+            f"**Vardiya bardak açığı ({h_ad}):** Devir aldıktan sonra kapanışa kadar "
+            f"{h_k:.0f} karton + {h_p:.0f} plastik bardak Evo satışını aşan fiziksel kullanım var. "
+            f"Kayıt dışı satış şüphesi (güven %{sprint_h.get('guven', 0):.0f})."
+        )
+        aksiyonlar.append("Akşam vardiyası kamera inceleme")
+
+    # ── Sprint I: Küçük tutarlı birikim ──────────────────────────────────────
+    sprint_i: Dict[str, Any] = {}
+    try:
+        sprint_i = kucuk_tutar_birikim_tespit(cur, sube_id, gun=30)
+    except Exception:
+        pass
+
+    riskli_i = sprint_i.get("riskli_personeller") or []
+    if riskli_i:
+        if alarm not in ("kritik", "yuksek"):
+            alarm = "yuksek"
+        for rp in riskli_i[:2]:
+            i_ad  = rp.get("personel_ad") or "Personel"
+            i_tl  = rp.get("toplam_fark", 0)
+            i_gun = rp.get("gun_sayisi", 0)
+            if i_ad not in personeller:
+                personeller.append(i_ad)
+            parcalar.append(
+                f"**30 günlük birikim ({i_ad}):** Son {i_gun} günde "
+                f"kümülatif {i_tl:.0f}₺ kasa açığı — sistematik micro-skimming şüphesi "
+                f"(güven %{rp.get('guven', 0):.0f})."
+            )
+        aksiyonlar.append("30 gün detaylı kasa dökümü + birebir gözlem")
+
+    # ── Final anlatı ─────────────────────────────────────────────────────────
+    if not parcalar:
+        anlatı = "Bu gün için kayda değer anomali tespit edilmedi — tüm kontroller uyumlu."
+        aksiyon = "Rutin takip yeterli."
+    else:
+        tarih_str = str(tarih)
+        kim_str   = " & ".join(personeller) if personeller else "ilgili personel"
+        baslik = {
+            "kritik": f"⚠️ KRİTİK — {tarih_str} — Şüpheli: {kim_str}",
+            "yuksek": f"🟠 YÜKSEK RİSK — {tarih_str} — İnceleme: {kim_str}",
+        }.get(alarm, f"🟡 ORTA RİSK — {tarih_str}")
+
+        anlatı = baslik + "\n\n" + "\n\n".join(parcalar)
+        aksiyon = " | ".join(dict.fromkeys(aksiyonlar)) or "Soruşturma başlat"
+
+    return {
+        "alarm":       alarm,
+        "anlatı":      anlatı,
+        "personeller": personeller,
+        "aksiyon":     aksiyon,
+        "sprint_ozet": {
+            "sprint_g": sprint_g,
+            "sprint_h": sprint_h,
+            "sprint_j": sprint_j,
+            "sprint_i_riskli": len(riskli_i),
+        },
+    }

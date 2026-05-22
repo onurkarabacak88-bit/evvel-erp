@@ -440,9 +440,10 @@ export default function TruthMotor() {
       {/* ========== GENEL ========== */}
       {aktifSekme === 'genel' && (
         <>
+          <OlayOzeti tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
           <SekmeBilgi
             icon="📋"
-            baslik="Genel — Açık görevler ve takip"
+            baslik="Açık Görevler ve Takip"
             metin="Akıllı Denetim'in bulduğu anomaliler için açtığın görevlerin takibi. Görev aç → ata → çöz → kapat."
           />
           <AcikGorevler refreshKey={`${tarih}-${Object.keys(detay || {}).join('')}`} />
@@ -654,6 +655,117 @@ export default function TruthMotor() {
         </table>
       </div>
       </>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  OLAY ÖZETİ — Tüm sprint bulgularını tek anlatıda birleştir
+// ════════════════════════════════════════════════════════════════════════════
+
+function OlayOzeti({ tarih, subeler }) {
+  const [secSubeId, setSecSubeId] = useState('');
+  const [veri, setVeri] = useState(null);
+  const [yukleniyor, setYukleniyor] = useState(false);
+  const [hata, setHata] = useState('');
+
+  useEffect(() => {
+    if (!secSubeId && subeler.length > 0) setSecSubeId(subeler[0].id);
+  }, [subeler, secSubeId]);
+
+  const yukle = useCallback(async () => {
+    if (!secSubeId || !tarih) return;
+    setYukleniyor(true); setHata('');
+    try {
+      const d = await fetchJson(`${API}/api/ops/truth/olay-ozeti/${secSubeId}/${tarih}`);
+      setVeri(d);
+    } catch (e) {
+      setHata(String(e.message || e));
+      setVeri(null);
+    } finally { setYukleniyor(false); }
+  }, [secSubeId, tarih]);
+
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const alarm  = veri?.alarm || 'normal';
+  const stil   = ALARM_STIL[alarm] || ALARM_STIL.dusuk;
+  const anlatı = veri?.anlatı || '';
+  const kisi   = (veri?.personeller || []).join(', ');
+  const aksiyon = veri?.aksiyon || '';
+  const normal = alarm === 'normal' || alarm === 'dusuk';
+
+  // Anlatı satırlarını paragraf + bold desteğiyle render et
+  const AnlatıMetni = ({ text }) => {
+    if (!text) return null;
+    return (
+      <div style={{ fontSize: 12, lineHeight: 1.8, whiteSpace: 'pre-line', color: 'var(--text1)' }}>
+        {text.split('\n').map((satir, i) => {
+          // **bold** dönüşümü
+          const parcalar = satir.split(/(\*\*[^*]+\*\*)/g);
+          return (
+            <div key={i} style={{ marginBottom: satir.trim() === '' ? 4 : 0 }}>
+              {parcalar.map((p, j) =>
+                p.startsWith('**') && p.endsWith('**')
+                  ? <b key={j} style={{ color: alarm === 'kritik' ? '#fca5a5' : alarm === 'yuksek' ? '#fbbf24' : 'var(--text1)' }}>{p.slice(2, -2)}</b>
+                  : <span key={j}>{p}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ margin: '0 0 20px' }}>
+      {/* Başlık satırı */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>🧠 Olay Özeti — Ne Oldu?</h3>
+        <select className="input" value={secSubeId} onChange={e => setSecSubeId(e.target.value)}
+          style={{ fontSize: 12, padding: '3px 8px' }}>
+          {subeler.map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
+        </select>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>{tarih}</span>
+        <button className="btn btn-sm" onClick={yukle} style={{ fontSize: 11 }}>↻</button>
+      </div>
+
+      {hata && <div className="card" style={{ padding: 10, color: '#fca5a5', fontSize: 12 }}>⚠️ {hata}</div>}
+      {yukleniyor && <div className="card" style={{ padding: 14, textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>Analiz ediliyor…</div>}
+
+      {!yukleniyor && veri && (
+        <div className="card" style={{
+          padding: '14px 18px',
+          borderLeft: `4px solid ${stil.bord}`,
+          background: normal ? 'rgba(34,197,94,0.06)' : stil.bg,
+        }}>
+          {/* Alarm badge + kişi */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+            <span style={{
+              fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 4,
+              background: stil.bord, color: normal ? '#fff' : stil.renk,
+            }}>{stil.etiket}</span>
+            {kisi && (
+              <span style={{ fontSize: 12, color: 'var(--text2)' }}>
+                Şüpheli: <b style={{ color: alarm === 'kritik' ? '#fca5a5' : '#fbbf24' }}>{kisi}</b>
+              </span>
+            )}
+          </div>
+
+          {/* Ana anlatı */}
+          <AnlatıMetni text={anlatı} />
+
+          {/* Aksiyon */}
+          {aksiyon && !normal && (
+            <div style={{
+              marginTop: 12, padding: '8px 12px', borderRadius: 6,
+              background: 'rgba(0,0,0,0.15)', borderLeft: `3px solid ${stil.bord}`,
+              fontSize: 11, color: stil.renk, fontWeight: 600,
+            }}>
+              ⚡ Aksiyon: {aksiyon}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -1500,15 +1612,78 @@ function AksamBardakSisirme({ tarih, subeler }) {
             />
           </div>
 
-          {/* Kasa cross-sinyal (N1/N2) */}
-          {veri.kasada_acik && (
-            <div style={{ background: 'rgba(220,38,38,0.12)', borderRadius: 6, padding: '8px 12px', marginBottom: 10, fontSize: 11 }}>
-              <span style={{ color: '#fca5a5', fontWeight: 600 }}>Kasa Cross-Sinyal:</span>
-              {' '}N1 (dün devir) = <b>{Number(veri.n1_devir || 0).toFixed(0)}₺</b>
-              {' '}&gt;{' '}
-              N2 (bugün ACILIS kör sayım) = <b>{Number(veri.n2_kasa || 0).toFixed(0)}₺</b>
-              {' '}→ <b style={{ color: '#fca5a5' }}>{Math.abs(Number(veri.fark_n1_n2 || 0)).toFixed(0)}₺ açık</b>
-              {' '}— Akşamcı hem kasayı hem bardağı şişirdi.
+          {/* ── İki senaryo + hakem kararı ──────────────────────────────── */}
+          {sisirdi && veri.senaryo_a && veri.senaryo_b && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', fontWeight: 600, marginBottom: 6 }}>
+                Sistem Analizi — Kim Suçlu?
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                {/* Senaryo A */}
+                {[veri.senaryo_a, veri.senaryo_b].map(s => {
+                  const isMuhtemel = s.muhtemel;
+                  const sRenk = isMuhtemel
+                    ? (s.harf === 'B' ? '#fca5a5' : '#fbbf24')
+                    : 'var(--text3)';
+                  const sBg = isMuhtemel
+                    ? (s.harf === 'B' ? 'rgba(220,38,38,0.12)' : 'rgba(245,158,11,0.10)')
+                    : 'rgba(0,0,0,0.12)';
+                  const sBorder = isMuhtemel
+                    ? (s.harf === 'B' ? '#ef4444' : '#f59e0b')
+                    : '#444';
+                  return (
+                    <div key={s.harf} style={{
+                      borderRadius: 6, padding: '10px 12px',
+                      background: sBg, border: `1px solid ${sBorder}`,
+                      opacity: isMuhtemel ? 1 : 0.65,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: sRenk }}>
+                          Senaryo {s.harf}: {s.baslik}
+                        </span>
+                        {isMuhtemel && (
+                          <span style={{ fontSize: 10, background: sBorder, color: '#fff', borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>
+                            DAHA MUHTEMEL
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text2)', lineHeight: 1.5 }}>
+                        {s.aciklama}
+                      </div>
+                      {(s.kanitlar || []).map((k, i) => (
+                        <div key={i} style={{ fontSize: 10, color: '#86efac', marginTop: 4 }}>✓ {k}</div>
+                      ))}
+                      {(s.zayiflatanlar || []).map((z, i) => (
+                        <div key={i} style={{ fontSize: 10, color: '#fca5a5', marginTop: 4 }}>✗ {z}</div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Hakem kararı */}
+              {veri.karar_ozeti && (
+                <div style={{
+                  marginTop: 10, padding: '10px 14px', borderRadius: 6,
+                  background: veri.olasi_senaryo === 'B'
+                    ? 'rgba(220,38,38,0.14)'
+                    : veri.olasi_senaryo === 'A'
+                    ? 'rgba(245,158,11,0.10)'
+                    : 'rgba(100,100,100,0.12)',
+                  border: `1px solid ${veri.olasi_senaryo === 'B' ? '#ef4444' : veri.olasi_senaryo === 'A' ? '#f59e0b' : '#555'}`,
+                  fontSize: 12, lineHeight: 1.6,
+                  color: veri.olasi_senaryo === 'B' ? '#fca5a5' : veri.olasi_senaryo === 'A' ? '#fbbf24' : 'var(--text2)',
+                }}>
+                  {veri.karar_ozeti}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* UYUMLU: sadece karar özeti göster */}
+          {uyumlu && veri.karar_ozeti && (
+            <div style={{ fontSize: 11, color: '#86efac', lineHeight: 1.5, marginBottom: 8, padding: '8px 12px', background: 'rgba(34,197,94,0.06)', borderRadius: 6 }}>
+              {veri.karar_ozeti}
             </div>
           )}
 

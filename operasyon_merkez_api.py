@@ -13353,6 +13353,21 @@ def truth_vardiya_bardak_pnl(sube_id: str, tarih: str):
         return _tm.aksam_vardiya_bardak_pnl(cur, sube_id, tarih)
 
 
+@router.get("/truth/olay-ozeti/{sube_id}/{tarih}")
+def truth_olay_ozeti(sube_id: str, tarih: str):
+    """Tüm sprint bulgularını tek insan-okunabilir anlatıda birleştirir.
+
+    Kim ne yaptı, hangi senaryo daha muhtemel, ne yapılmalı.
+    Kasa + bardak + seri birikim → denetçi anlatısı.
+    """
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.olay_ozeti_uret(cur, sube_id, tarih)
+
+
 @router.get("/truth/bardak-sisirme/{sube_id}/{tarih}")
 def truth_bardak_sisirme(sube_id: str, tarih: str):
     """Sprint J — Cross-day bardak devamlılık kontrolü (akşamcı bardak şişirme tespiti).
