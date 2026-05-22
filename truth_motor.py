@@ -7101,40 +7101,369 @@ def aksam_bardak_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]
 def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     """Günlük Teyit + Bulgu Kartı — Her kontrol boyutunu sade Türkçe özetler.
 
-    Sistem N1/N2/N3 gibi teknik kodlar KULLANMAZ. Onun yerine:
-      N2 → "Sabah kasası"
-      N1 → "Akşam devir beyanı"
-      N3 → "Evo POS teyidi"
+    Her olası durum ve varyant için önceden tanımlanmış açıklama içerir:
+      - ne oldu (sayısal gerçek)
+      - ne anlama geliyor (yorum)
+      - olası nedenler (liste)
+      - ne yapılmalı (aksiyon)
+      - çapraz korelasyon (birden fazla kontrol tetiklenince bağlantı)
 
-    Her satır:
-      ✅  Normal / doğru
-      ⚠️  Dikkat / uyarı
-      🚨  Kritik / soruşturma
-
-    Returns:
-        {
-          "kontroller":   List[Dict],   # her satır: kod, ad, durum, ikon, deger, detay, tavsiye, personel
-          "genel_durum":  str,          # "ok" | "uyari" | "kritik"
-          "gecen_sayi":   int,
-          "uyari_sayi":   int,
-          "kritik_sayi":  int,
-          "toplam_sayi":  int,
-          "ozet":         str,
-          "tarih":        str,
-          "sube_id":      str,
-        }
+    Sistem N1/N2/N3 gibi teknik kodlar KULLANMAZ:
+      N2 → "Sabah kasası" | N1 → "Akşam devir" | N3 → "Evo POS teyidi"
     """
     from datetime import date, timedelta
 
+    # ════════════════════════════════════════════════════════════════════════
+    #  TÜM DURUM YORUMLARI — her state için önceden yazılmış açıklama
+    # ════════════════════════════════════════════════════════════════════════
+    _Y: Dict[str, Dict[str, Any]] = {
+
+        # ── 1. SABAH KASASI ──────────────────────────────────────────────────
+        "sabah_kasasi.dengede": {
+            "anlam": "Dünkü akşamcı kasayı doğru bırakmış, sabahçı da doğru saymış. Devir zinciri temiz — iki bağımsız kişi aynı değerde buluştu.",
+            "nedenler": [],
+            "aksiyon": "Rutin takip yeterli.",
+        },
+        "sabah_kasasi.kucuk_acik": {
+            "anlam": "1–20₺ aralığındaki farklar genellikle bozuk para sayım hatasından kaynaklanır. Kasa defteri ile çapraz bakılmalı. Tek başına zimmet göstergesi sayılmaz.",
+            "nedenler": ["Bozuk para yanlış sınıflandırıldı", "Sayım sırası karışıklığı", "İnce fark — fiş farkı"],
+            "aksiyon": "Kasayı tekrar say. Aynı kişide arka arkaya tekrarlanıyorsa bildir.",
+        },
+        "sabah_kasasi.orta_acik": {
+            "anlam": "20–100₺ aralığı sayım hatası için büyük, tek başına zimmet için küçük. İki senaryo var: (A) dünkü akşamcı deviri şişirdi — kasadan para almak için, (B) sabahçı gerçek sayım yaptı ama gece kasa açıldı. Bardak ve stok kontrolleriyle çapraz bakılıyor.",
+            "nedenler": [
+                "Akşamcı deviri fazla beyan etti (kasadan para almak için)",
+                "Sabahçı sayım hatası",
+                "Gece kasadan bilinmeyen nakit çıkışı",
+            ],
+            "aksiyon": "Akşam devir ve gece bardak kontrolüne bak. İkisi de tetiklendiyse soruşturma.",
+        },
+        "sabah_kasasi.buyuk_acik": {
+            "anlam": "100₺ üzeri fark ciddi. Bu düzeyde hata olasılığı düşüktür — devir şişirme veya gece kasa açma senaryoları güçlüdür. Kamera ve stok verisiyle çapraz doğrulama şart.",
+            "nedenler": [
+                "Akşamcı kasayı önemli miktarda şişirerek para cebe koymuş olabilir",
+                "Sabahçı önceki vardiyadan para almış olabilir",
+                "Kasa soyulmuş veya yetkisiz kişi girişi",
+            ],
+            "aksiyon": "Kamera inceleme + her iki personeli ayrı ayrı sorgula + stok kontrolü + soruşturma.",
+        },
+        "sabah_kasasi.kucuk_fazla": {
+            "anlam": "Sabahçı deviri beklenenden fazla bulmuş. 1–20₺ aralığında bozuk para ekstrası veya küçük ölçüm farkı olarak değerlendirilebilir. Nadir ama normal.",
+            "nedenler": ["Bozuk para sayım ekstrası", "Küçük nakit bırakıldı"],
+            "aksiyon": "Kayıt altına al, rutin takip.",
+        },
+        "sabah_kasasi.buyuk_fazla": {
+            "anlam": "Sabahçı deviri beklenenden belirgin şekilde fazla bulmuş. Nadir ama dikkat çekici: dünkü akşamcı deviri düşük beyan etmiş (kendi lehine koruma?) ya da bilinmeyen bir nakit kasaya girmiş.",
+            "nedenler": [
+                "Akşamcı deviri eksik beyan etti — kasada bırakıp defterini az yazdı",
+                "Kasaya bilinmeyen nakit girişi (iade, bağış, bulunan para)",
+                "Sabahçı sayım fazla okudu",
+            ],
+            "aksiyon": "Akşamcıyla birebir görüş — deviri neden düşük beyan ettiğini sor. Kasa defteri incele.",
+        },
+        "sabah_kasasi.acilis_yok": {
+            "anlam": "Açılış sayımı henüz sisteme girilmemiş. Mesai başlamamış, personel bekliyor ya da sistem kaydı yapılmadı.",
+            "nedenler": ["Erken saat — açılış yapılmamış", "Açılış yapıldı ama PIN girilmedi"],
+            "aksiyon": "Açılış PIN girişi tamamlandı mı kontrol et.",
+        },
+        "sabah_kasasi.ref_yok": {
+            "anlam": "Önceki gün kapanış kaydı bulunamadı. Karşılaştırma yapılamıyor. İlk gün veya dün kapanış kaydedilmemişse normaldir.",
+            "nedenler": ["Şube dün kapalıydı", "Kapanış sisteme kaydedilmedi", "İlk operasyon günü"],
+            "aksiyon": "Dünkü kapanış kaydını kontrol et.",
+        },
+
+        # ── 2. AKŞAM DEVİR BEYANI ─────────────────────────────────────────────
+        "aksam_devir.uyumlu": {
+            "anlam": "Dünkü akşamcının bıraktığı devir tutarı, sabahçının kör sayımıyla uyuşuyor ve dünkü stokta açık yoktu. Devir beyanı güvenilir.",
+            "nedenler": [],
+            "aksiyon": "Rutin takip yeterli.",
+        },
+        "aksam_devir.aksam_sisirdi": {
+            "anlam": "Akşamcı kasayı fazla göstermiş: devir olarak söylediği ile sabahçının bulduğu arasında fark var, üstelik dünkü stokta da açık çıkmış. Bu iki sinyal birlikte 'akşamcı kasadan para aldı, farkı devir tutarını şişirerek kapattı' senaryosuna işaret eder.",
+            "nedenler": [
+                "Akşamcı kayıt dışı satış gelirini cebe koydu, stok açığını devir şişirerek kapattı",
+                "İptal edilmeyen satış fişi — para cebe, kayıt kasada kaldı",
+                "Koordineli iki personel (akşamcı + bir diğeri) — daha az olası",
+            ],
+            "aksiyon": "Zimmet soruşturması: kamera inceleme + stok ve fiş çapraz tutma + personeli bildir + CFO bildirim.",
+        },
+        "aksam_devir.sabah_zimmet": {
+            "anlam": "N1>N2 farkı var, ama dünkü bardak sayımı uyumlu — bu, N1'in (akşamcı deviri) fiziksel stokla doğrulandığı anlamına gelir. Dolayısıyla sabahçı kasayı düşük saymış olabilir, para almış olabilir.",
+            "nedenler": [
+                "Sabahçı kör sayımda kasayı eksik beyan etti — açığı kapatmak için",
+                "Akşamcı doğru bıraktı, sabahçı parayı aldı",
+            ],
+            "aksiyon": "Sabahçı kamera inceleme + sayımın tekrar edilmesi + CFO bildirim.",
+        },
+        "aksam_devir.iptal_suphe": {
+            "anlam": "Kasa açığı var ama stok ve Evo'da açıklama yok. Bu 'hayalet iptal' senaryosuna işaret eder: satış yapıldı, sonra sisteme sahte iptal girildi, para cebe alındı.",
+            "nedenler": [
+                "Evo'da sahte iptal fişi oluşturuldu — gerçek satış iptali değil",
+                "Nakit satış gerçekleşti, iptal girilerek kasadan para çekildi",
+            ],
+            "aksiyon": "Evo satış panelinde o vardiya iptal fişlerini manuel kontrol et. Fiş ID'lerini kamera görüntüsüyle eşleştir.",
+        },
+        "aksam_devir.kucuk_fark": {
+            "anlam": "Devir ile sabah sayımı arasında küçük bir fark var ama dünkü stokta açık yok. Stok uyumluyken kasa farkının stok kayıpla bağı kurulamadı — büyük ihtimalle sayım hatası.",
+            "nedenler": ["Bozuk para sayım hatası", "Kasa defteri fark", "Küçük ölçüm sapması"],
+            "aksiyon": "Kasayı bir kez daha say. Tekrar ediyorsa stokla birlikte değerlendir.",
+        },
+        "aksam_devir.orta_fark_stoksuz": {
+            "anlam": "20–100₺ fark var ama dünkü stok açığı bulunamadı veya motor henüz çalışmamış. Stok verisini bekle — eşleşirse şişirme, eşleşmezse sayım hatası yönünde ilerle.",
+            "nedenler": [
+                "Devir şişirme ama stok verisi henüz mevcut değil",
+                "Sayım hatası — stok uyumlu çıkarsa bu güçlenir",
+            ],
+            "aksiyon": "Motoru çalıştır, stok verisini güncelle. Ardından tekrar değerlendir.",
+        },
+        "aksam_devir.buyuk_fark_stoksuz": {
+            "anlam": "100₺ üzeri devir farkı var ve stok analizi henüz yapılmamış veya açık çıkmadı. Bu büyüklükte hata sayım hatası olmaz — ama stok verisi yoksa kesin karar verilemez.",
+            "nedenler": [
+                "Devir şişirme — stok açığı gizlenmiş olabilir",
+                "Stok motor verisi eksik — yanıltıcı uyumluluk",
+                "Kasa soyulmuş (stok bozulmadan sadece nakit)",
+            ],
+            "aksiyon": "Acil: motoru çalıştır, stok ve kamera incele, personeli haberdar et.",
+        },
+        "aksam_devir.ref_yok": {
+            "anlam": "Önceki gün kapanış kaydı yok. Devir beyanının doğrulanacak referansı yok.",
+            "nedenler": ["İlk gün", "Dün kapanış girilmedi"],
+            "aksiyon": "Dünkü kapanış kaydını kontrol et.",
+        },
+
+        # ── 3. EVO POS TEYİDİ ─────────────────────────────────────────────────
+        "evo_teyit.uyumlu": {
+            "anlam": "Evo POS sistemi, kasa beyanını doğruluyor. Satış geliri, ikram ve nakit akışı kasa sayımıyla matematiksel olarak örtüşüyor. En güçlü bağımsız teyit.",
+            "nedenler": [],
+            "aksiyon": "Rutin takip.",
+        },
+        "evo_teyit.ikram_evo_teyit": {
+            "anlam": "Stok düştü ama POS'tan geçmiş (ikram veya satış olarak kayıtlı). Temiz zincir — hem ürün çıkışı hem kayıt uyumlu.",
+            "nedenler": [],
+            "aksiyon": "İkram politikasını gözden geçir — sık tekrarlanıyorsa ikram miktarı değerlendirilebilir.",
+        },
+        "evo_teyit.ikram_unutuldu": {
+            "anlam": "N1=N2 (sayım uyumlu) ama Evo beklenenden farklı. Ürün kullanıldı ama POS'a yazılmadı. İkram veya dahili tüketim kayıt dışı kalmış olabilir.",
+            "nedenler": ["İkram POS'a girilmedi", "Personel tüketimi kayıtsız", "Demo ürünler sisteme işlenmedi"],
+            "aksiyon": "Z raporu ve ikram defteri kontrol et. İkram politikasını hatırlat.",
+        },
+        "evo_teyit.sweethearting": {
+            "anlam": "Sayım uyumlu ama Evo'da açıklanamayan fazla nakit var. Klasik sweethearting: personel arkadaşına/tanıdığına ürünü verir, POS'a farklı (daha ucuz) şey girer. Nakit fark kasada kalmış.",
+            "nedenler": [
+                "Personel arkadaşına indirimli veya farklı ürün girdi — nakit fark kasada",
+                "Düşük fiyatlı ürün girilip yüksek fiyatlı verildi",
+                "Kasa farkı birikiyor ama stok bunu desteklemiyor",
+            ],
+            "aksiyon": "Kasa baskını başlat. Kamera inceleme: son 7 gün POS girişleriyle ürün çıkışlarını karşılaştır.",
+        },
+        "evo_teyit.stok_kacagi": {
+            "anlam": "Stok düştü, Evo (satış+ikram) bile yetmiyor. Ürün kullanıldı ama kayıt yok. Bu kasıtlı bir kayıt dışı kullanım veya ihmal olabilir.",
+            "nedenler": [
+                "Kayıt dışı satış — ürün verildi, POS atlandı, nakit alındı",
+                "Personel tüketimi (özellikle vardiya sonunda)",
+                "Fire olarak yazılması unutulmuş bozulma/zayi",
+            ],
+            "aksiyon": "Personeli sorgula: ikram mı yoksa kayıt dışı satış mı? Kamera bak. Fire kaydı var mı kontrol et.",
+        },
+        "evo_teyit.zimmet_nakit": {
+            "anlam": "Stok düştü, Evo eksik, kasa açık — ve sayısal eşleşme var. Bu 'nakit cepde' klasik zimmet üçgenlemesidir: ürün verildi, POS atlandı, para alındı.",
+            "nedenler": [
+                "Personel ürünü sattı, POS'a girmedi, parayı cebe koydu",
+                "Kasadan açık alındı ve stok bu açığı haklı kılıyor",
+            ],
+            "aksiyon": "Kasa baskını + güvenlik kamerası + soruşturma + hukuki süreç hazırlığı.",
+        },
+        "evo_teyit.sabah_hatali": {
+            "anlam": "Bu boyutta N1 ile N2 farklı, ve Evo N1'i destekliyor. Yani akşamcının söylediği değer POS verileriyle daha uyumlu — sabahçı saymış ama hata yapmış olabilir.",
+            "nedenler": ["Sabahçı sayım hatası", "Stok fiziksel transferi var mı?"],
+            "aksiyon": "Sabahçıyı çağır, yeniden PIN ile teyit et. Gerekirse üçüncü kişi say.",
+        },
+        "evo_teyit.aksam_hatali": {
+            "anlam": "N1 ile N2 farklı, Evo N2'yi destekliyor. Sabahçının bulduğu değer POS verileriyle daha uyumlu — akşamcı beyanı güvenilir değil.",
+            "nedenler": ["Akşamcı yanlış saydı veya kasıtlı beyan değiştirdi", "Devir anında stok değişmiş"],
+            "aksiyon": "Akşamcı çağır, PIN teyit et. Stok kontrol et.",
+        },
+        "evo_teyit.cozulmedi": {
+            "anlam": "Tek boyutta fark var, Evo nötr — ne N1 ne N2'yi destekliyor. Üçüncü bağımsız sayım gerekiyor.",
+            "nedenler": ["Evo verisi bu boyut için yeterli değil", "Her iki taraf da hatalı olabilir"],
+            "aksiyon": "Üçüncü kişi sayım talep et. Evo'yu güncelle.",
+        },
+        "evo_teyit.pos_sync": {
+            "anlam": "Kasa ve stok sayımları uyumlu ama Evo sürekli farklı değer gösteriyor. Büyük ihtimalle teknik senkronizasyon sorunu — gerçek bir zimmet değil.",
+            "nedenler": ["Evobulut bağlantı sorunu", "Rapor cache eski", "Farklı şube ID eşleşme hatası"],
+            "aksiyon": "IT/Evo destek: rapor cache'i temizle, şube ID eşleşmesini kontrol et.",
+        },
+        "evo_teyit.pos_bypass": {
+            "anlam": "Bardak düştü ama Evo'da hiç kayıt yok. POS tamamen atlanmış — ürün verildi, POS'a girilmedi, para alındı ama izler yok.",
+            "nedenler": [
+                "POS cihazı devre dışı bırakıldı veya atlandı",
+                "Ürün kayıt dışı verildi, nakit doğrudan alındı",
+                "Teknik arıza sırasında satış yapıldı",
+            ],
+            "aksiyon": "Evo yetki logları + manuel iade kontrol + kamera.",
+        },
+        "evo_teyit.motor_yok": {
+            "anlam": "Akıllı motor bu güne henüz çalışmamış. Evo karşılaştırması yapılamıyor. ACILIS tamamlandıktan sonra motor çalıştırılmalı.",
+            "nedenler": ["Motor henüz tetiklenmedi"],
+            "aksiyon": "Panelden 'Çalıştır' butonuna bas veya otomatik zamanlamayı kontrol et.",
+        },
+
+        # ── 4. GECE BARDAK DEVAMLILIĞI ─────────────────────────────────────────
+        "gece_bardak.uyumlu": {
+            "anlam": "Dün akşamcının saydığı bardak sayısıyla bugün sabahçının saydığı uyuşuyor. Gece bardak kaybolmaz — uyuşmaları her ikisinin de dürüst sayım yaptığını gösterir.",
+            "nedenler": [],
+            "aksiyon": "Rutin takip.",
+        },
+        "gece_bardak.sisirme_kasa_acik": {
+            "anlam": "Dün gece bardak eridi VE kasa açığı da var. İki sinyal birlikte çok güçlü: akşamcı hem bardak sayısını hem devir tutarını şişirdi — kayıt dışı satış gelirini böyle gizlemiş olabilir.",
+            "nedenler": [
+                "Akşamcı kayıt dışı sattı, stok farkını kapanışta bardak sayısını şişirerek kapattı",
+                "Deviri de fazla beyan etti, sabahçı her ikisini de gerçek değerde buldu",
+            ],
+            "aksiyon": "Kritik zimmet soruşturması: kamera + akşamcı sorgulama + CFO bildirim.",
+        },
+        "gece_bardak.sisirme_kasa_dengede": {
+            "anlam": "Gece bardak eridi AMA kasa dengede. Bu bir gerilim yaratıyor: bardak şişirmesi var ama kasada karşılığı yok. İki senaryo: (A) sabahçı bardakları yanlış saydı — para kaybı yok. (B) Akşamcı şişirdi ama gizledi. Kasa dengede olduğu için Senaryo A daha güçlü.",
+            "nedenler": [
+                "Senaryo A (daha muhtemel): Sabahçı açılış sayımında bardakları eksik saydı — yanlış kasa, yanlış yer",
+                "Senaryo B (daha az muhtemel): Akşamcı şişirdi ama paranın izini başka şekilde kapattı",
+            ],
+            "aksiyon": "Sabahçıya fiziksel yeniden sayım yaptır. Kasa dengeli kalıyorsa Senaryo A — tutanağa geç.",
+        },
+        "gece_bardak.veri_yok": {
+            "anlam": "Dün kapanış bardak sayımı veya bugün açılış bardak sayımı eksik. Kontrol yapılamıyor.",
+            "nedenler": ["Kapanış meta'sı bardak alanı boş", "Açılış meta'sı bardak alanı boş", "Personel doldurma atladı"],
+            "aksiyon": "Kapanış ve açılış ekranlarında bardak sayım alanlarının doldurulduğunu kontrol et.",
+        },
+
+        # ── 5. SÜT KULLANIMI ──────────────────────────────────────────────────
+        "sut_kullanimi.uyumlu": {
+            "anlam": "Gerçek süt tüketimi teorik değere (reçete × satış adedi) yakın. Baristaların porsiyonları düzgün yapıldığını, kayıt dışı ürün üretimi olmadığını gösterir.",
+            "nedenler": [],
+            "aksiyon": "Rutin takip.",
+        },
+        "sut_kullanimi.hafif_sapma": {
+            "anlam": "%30–50 sapma genellikle porsiyonlama tolerans aralığının dışına çıkmış demektir. Eğitim kaynaklı olabilir — barista reçeteyi ezberden yapıyor, ölçmüyor.",
+            "nedenler": [
+                "Barista sütü reçeteye göre değil gözle koyuyor — tutarsız porsiyon",
+                "Büyük boy fincan kullanımı yüksek",
+                "Özel içecek (sıcak süt, foam) kaydedilmedi",
+            ],
+            "aksiyon": "Barista porsiyonlama gözlemi + ölçüm fincancığı kullanımını kontrol et.",
+        },
+        "sut_kullanimi.ciddi_sapma": {
+            "anlam": "%50–80 sapma ciddi. Porsiyonlama hatasının bu kadar büyük olması çok düşük ihtimal — kayıt dışı ürün (özel müşteri için yapılan gizli içecek veya personel tüketimi) veya stok sayım hatası var.",
+            "nedenler": [
+                "Kayıt dışı içecek üretimi — POS'a girilmeden müşteriye verildi",
+                "Personel süt tüketimi (kahve, çay vs.) kaydedilmedi",
+                "Stok sayımında hata — gerçek tüketim farklı",
+            ],
+            "aksiyon": "Barista gözlem + POS kayıt dışı satış taraması + süt stok fiziksel kontrol.",
+        },
+        "sut_kullanimi.cok_ciddi_sapma": {
+            "anlam": "%80 üzeri sapma son derece yüksek. Bu ölçekte kayıt dışı satış veya organize süt israfı/hırsızlığı şüphesi doğuruyor.",
+            "nedenler": [
+                "Kayıt dışı toplu sipariş (catering, kurumsal — POS atlandı)",
+                "Süt çalınması veya dışarıya çıkarılması",
+                "Stok açılış/kapanış hatası — veri bütünlüğü sorunu",
+            ],
+            "aksiyon": "CFO bildirim + kamera + stok fiziksel sayım + fiş incele.",
+        },
+        "sut_kullanimi.az_tuketim": {
+            "anlam": "Gerçek tüketim teorik değerin altında. Evo'da teorik tüketimi haklı kılacak kadar satış görünüyor ama süt az kullanılmış. Ya Evo rakamları fazla ya da süt sayımı hatalı.",
+            "nedenler": [
+                "Evo satış adedi fazla kayıtlı (teknik hata veya çift kayıt)",
+                "Süt açılış/kapanış sayımı hatalı — ölçüm birimi karışıklığı (litre vs. paket)",
+                "İçecek reçetelerinde değişiklik ama BOM güncellenmedi",
+            ],
+            "aksiyon": "Evo satış adedini çapraz kontrol et. BOM reçetelerini gözden geçir.",
+        },
+        "sut_kullanimi.veri_yok": {
+            "anlam": "Süt sayım verisi yok — açılış veya kapanış meta'sında süt alanı boş. Kontrol yapılamıyor.",
+            "nedenler": ["Personel süt alanını doldurmadı", "Stok sayım ekranı atlandı"],
+            "aksiyon": "Açılış ve kapanış ekranlarında süt litre alanının zorunlu doldurulduğunu kontrol et.",
+        },
+
+        # ── 6. AKŞAM VARDIYASI BARDAK DENGESİ ─────────────────────────────────
+        "aksam_vardiya_bardak.uyumlu": {
+            "anlam": "Akşam vardiyasında devir alınan bardak sayısından kapanışa kadar kullanılan bardak, Evo'nun o saat dilimine ait satış tahminiyle uyuşuyor. Akşam vardiyası temiz.",
+            "nedenler": [],
+            "aksiyon": "Rutin takip.",
+        },
+        "aksam_vardiya_bardak.orta_acik": {
+            "anlam": "Akşam vardiyasında Evo satışından fazla bardak harcanmış. Orta düzey fark — kayıt dışı satış veya porsiyonlama sapması olabilir.",
+            "nedenler": [
+                "Kayıt dışı satış — bardak verildi, POS'a girilmedi",
+                "İkram veya personel tüketimi kaydedilmedi",
+                "Evo'nun akşam saatine ait satış tahmini düşük çıktı",
+            ],
+            "aksiyon": "Akşam vardiyası kamera inceleme + ikram kontrol.",
+        },
+        "aksam_vardiya_bardak.buyuk_acik": {
+            "anlam": "Akşam vardiyasında ciddi bardak açığı var. Bu ölçekte kayıt dışı satış veya bilinçli stok manipülasyonu olabilir.",
+            "nedenler": [
+                "Büyük kayıt dışı satış serisi — nakit alındı, POS atlandı",
+                "Toplu ikram veya etkinlik kayıt dışı yapıldı",
+                "Bardak çalındı veya dışarıya çıkarıldı",
+            ],
+            "aksiyon": "Kamera + akşamcı sorgulama + nakit ve POS fişlerini karşılaştır.",
+        },
+        "aksam_vardiya_bardak.veri_yok": {
+            "anlam": "Vardiya devri kaydı bulunamadı. Sabahçı → akşamcı bardak teslimi sisteme girilmemişse bu kontrol çalışmaz.",
+            "nedenler": ["Vardiya devri yapılmadı (tek vardiyalı gün)", "Devir kaydı sisteme girilmedi"],
+            "aksiyon": "Vardiya devri işleminin eksiksiz yapıldığını kontrol et.",
+        },
+
+        # ── 7. KASA BİRİKİM TRENDİ ───────────────────────────────────────────
+        "kasa_birikim_trendi.normal": {
+            "anlam": "Son 30 günde hiçbir personelde sistematik küçük kasa açığı pattern'i tespit edilmedi. Bu, kasıtlı küçük tutarlı zimmet (micro-skimming) olmadığını gösterir.",
+            "nedenler": [],
+            "aksiyon": "Aylık kontrol yeterli.",
+        },
+        "kasa_birikim_trendi.bir_kisi": {
+            "anlam": "Bir personel son 30 günde günlerin çoğunda küçük kasa açığı oluşturmuş ve bu birikmiş. Tek seferlik sayım hatası olmaz — sistematik bir pattern. 'Her gün az al, fark edilme' stratejisi.",
+            "nedenler": [
+                "Personel her gün az miktarda nakit alıyor — kasa açığını kasıtlı küçük tutuyor",
+                "Personel kasadan birikim yapıyor (uzun vadeli zimmet)",
+            ],
+            "aksiyon": "30 gün detaylı kasa dökümü + birebir izlem başlat + CFO'ya bildir.",
+        },
+        "kasa_birikim_trendi.cok_kisi": {
+            "anlam": "Birden fazla personelde aynı anda birikim pattern'i var. Bu koordineli bir aksiyon veya yönetimsel bir kontrol boşluğu işareti.",
+            "nedenler": [
+                "Personeller birbirleriyle koordineli — örgütlü zimmet",
+                "Kontrol sistemi zayıf — herkes küçük miktarlar alabiliyor",
+                "Kasa protokolü uygulanmıyor",
+            ],
+            "aksiyon": "Acil kasa protokolü denetimi + tüm personel ayrı ayrı sor + CFO + hukuki danışma.",
+        },
+        "kasa_birikim_trendi.veri_yok": {
+            "anlam": "30 günlük kasa verisi yetersiz. Trend analizi için en az 7–10 gün veri gerekir.",
+            "nedenler": ["Şube yeni açıldı", "Geçmiş kapanış kayıtları eksik"],
+            "aksiyon": "Kapanış kayıtlarının düzenli girildiğini kontrol et.",
+        },
+    }
+
+    # ════════════════════════════════════════════════════════════════════════
+    #  YARDIMCI FONKSIYON
+    # ════════════════════════════════════════════════════════════════════════
     kontroller: List[Dict[str, Any]] = []
 
-    def _k(kod: str, ad: str, durum: str, deger: str = "",
-           detay: str = "", tavsiye: str = None, personel: str = None):
+    def _k(kod: str, ad: str, durum: str, state_key: str,
+           deger: str = "", detay: str = "", personel: str = None):
         ikon = {"ok": "✅", "uyari": "⚠️", "kritik": "🚨"}.get(durum, "—")
+        yor = _Y.get(state_key) or {}
         kontroller.append({
-            "kod": kod, "ad": ad, "durum": durum, "ikon": ikon,
-            "deger": deger or "", "detay": detay or "",
-            "tavsiye": tavsiye, "personel": personel,
+            "kod":     kod,
+            "ad":      ad,
+            "durum":   durum,
+            "ikon":    ikon,
+            "deger":   deger or "",
+            "detay":   detay or "",
+            "anlam":   yor.get("anlam") or "",
+            "nedenler": yor.get("nedenler") or [],
+            "aksiyon": yor.get("aksiyon") or "",
+            "personel": personel,
         })
 
     try:
@@ -7143,7 +7472,7 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         onceki = None
 
     # ────────────────────────────────────────────────────────────────────────
-    # 1. SABAH KASASI (N2 = bugün ACILIS kör sayımı vs N1 = dün KAPANIS.devir)
+    # 1. SABAH KASASI
     # ────────────────────────────────────────────────────────────────────────
     n1_val: Optional[float] = None
     n2_val: Optional[float] = None
@@ -7179,35 +7508,44 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         except Exception as e:
             log.warning("gunluk_teyit dun kapanis hata: %s", e)
 
-    if n2_val is not None and n1_val is not None:
-        fark = round(n2_val - n1_val, 2)
+    if n2_val is None:
+        _k("sabah_kasasi", "Sabah kasası", "uyari", "sabah_kasasi.acilis_yok",
+           "—", "Sabah sayımı henüz yapılmadı")
+    elif n1_val is None:
+        _k("sabah_kasasi", "Sabah kasası", "ok", "sabah_kasasi.ref_yok",
+           f"{n2_val:.0f}₺", "Sayıldı — önceki gün deviri yok (ilk gün?)", personel=sabahci_ad)
+    else:
+        fark = round(n2_val - n1_val, 2)   # pozitif = sabahçı fazla buldu
         abs_fark = abs(fark)
         if abs_fark <= 1.0:
-            _k("sabah_kasasi", "Sabah kasası", "ok",
-               f"{n2_val:.0f}₺",
-               f"Doğru — devir {n1_val:.0f}₺ ile uyumlu",
-               personel=sabahci_ad)
+            _k("sabah_kasasi", "Sabah kasası", "ok", "sabah_kasasi.dengede",
+               f"{n2_val:.0f}₺", f"Doğru — devir {n1_val:.0f}₺ ile uyumlu", personel=sabahci_ad)
         elif fark < -1.0:
-            _k("sabah_kasasi", "Sabah kasası", "uyari",
+            if abs_fark <= 20:
+                sk = "sabah_kasasi.kucuk_acik"
+                du = "uyari"
+            elif abs_fark <= 100:
+                sk = "sabah_kasasi.orta_acik"
+                du = "uyari"
+            else:
+                sk = "sabah_kasasi.buyuk_acik"
+                du = "kritik"
+            _k("sabah_kasasi", "Sabah kasası", du, sk,
                f"{n2_val:.0f}₺",
                f"Açık — devir {n1_val:.0f}₺, bulundu {n2_val:.0f}₺ → {abs_fark:.0f}₺ eksik",
                personel=sabahci_ad)
-        else:
-            _k("sabah_kasasi", "Sabah kasası", "uyari",
+        else:  # fazla bulundu
+            if abs_fark <= 20:
+                sk = "sabah_kasasi.kucuk_fazla"; du = "ok"
+            else:
+                sk = "sabah_kasasi.buyuk_fazla"; du = "uyari"
+            _k("sabah_kasasi", "Sabah kasası", du, sk,
                f"{n2_val:.0f}₺",
                f"Fazla — devir {n1_val:.0f}₺, bulundu {n2_val:.0f}₺ → {abs_fark:.0f}₺ fazla",
                personel=sabahci_ad)
-    elif n2_val is not None:
-        _k("sabah_kasasi", "Sabah kasası", "ok",
-           f"{n2_val:.0f}₺",
-           "Sayıldı — önceki gün deviri yok (karşılaştırma yapılamadı)",
-           personel=sabahci_ad)
-    else:
-        _k("sabah_kasasi", "Sabah kasası", "uyari", "—",
-           "Sabah sayımı henüz yapılmadı veya veri yok")
 
     # ────────────────────────────────────────────────────────────────────────
-    # 2. AKŞAM DEVİR BEYANI — Sprint G: dün akşamcı kasayı şişirdi mi?
+    # 2. AKŞAM DEVİR BEYANI
     # ────────────────────────────────────────────────────────────────────────
     sprint_g: Dict[str, Any] = {}
     try:
@@ -7215,33 +7553,71 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     except Exception as e:
         log.warning("gunluk_teyit sprint_g hata: %s", e)
 
-    if sprint_g.get("tani") == "AKSAM_KASAYI_SISIRDI":
+    # Ek: truth_motor_kararlar'da SABAH_ZIMMET_SUPHE veya IPTAL_SUPHE var mı?
+    kararlar_tani: Optional[str] = None
+    try:
+        cur.execute("""
+            SELECT tani FROM truth_motor_kararlar
+            WHERE sube_id=%s AND tarih=%s::date AND boyut='kasa'
+            ORDER BY olusturma DESC LIMIT 1
+        """, (sube_id, tarih))
+        r_k = cur.fetchone()
+        if r_k:
+            kararlar_tani = str(dict(r_k).get("tani") or "")
+    except Exception as e:
+        log.warning("gunluk_teyit kararlar_tani hata: %s", e)
+
+    sg_tani = sprint_g.get("tani")
+    if sg_tani == "AKSAM_KASAYI_SISIRDI":
         aks_ad = sprint_g.get("aksamci_ad") or aksamci_ad_dun or "Akşamcı"
         sisirme = sprint_g.get("sisirme_tl", 0)
-        sg_n1 = sprint_g.get("n1_aksam", 0)
-        sg_n2 = sprint_g.get("n2_sabah", 0)
-        _k("aksam_devir", "Akşam devir beyanı", "kritik",
+        sg_n1   = sprint_g.get("n1_aksam", 0)
+        sg_n2   = sprint_g.get("n2_sabah", 0)
+        _k("aksam_devir", "Akşam devir beyanı", "kritik", "aksam_devir.aksam_sisirdi",
            f"{sg_n1:.0f}₺",
-           f"Şişirme — {aks_ad} {sg_n1:.0f}₺ devir bıraktım dedi, "
-           f"sabah {sg_n2:.0f}₺ bulundu → {sisirme:.0f}₺ fark",
-           tavsiye="→ Dünkü stok açığıyla örtüşüyor — zimmet soruşturması",
+           f"Şişirme — {aks_ad} {sg_n1:.0f}₺ devir dedi, sabah {sg_n2:.0f}₺ bulundu → {sisirme:.0f}₺ fark",
            personel=aks_ad)
-    elif n1_val is not None:
-        _k("aksam_devir", "Akşam devir beyanı", "ok",
-           f"{n1_val:.0f}₺",
-           "Uyumlu — stok açığıyla çakışma yok",
-           personel=aksamci_ad_dun)
+    elif kararlar_tani == "SABAH_ZIMMET_SUPHE":
+        sab_ad = sabahci_ad or "Sabahçı"
+        _k("aksam_devir", "Akşam devir beyanı", "kritik", "aksam_devir.sabah_zimmet",
+           f"{n1_val:.0f}₺" if n1_val else "—",
+           f"Sabahçı düşük beyan — dünkü bardak N1'i doğruluyor, {sab_ad} kasayı eksik saydı",
+           personel=sab_ad)
+    elif kararlar_tani == "IPTAL_SUPHE":
+        _k("aksam_devir", "Akşam devir beyanı", "uyari", "aksam_devir.iptal_suphe",
+           f"{n1_val:.0f}₺" if n1_val else "—",
+           "İptal şüphesi — kasa açığı Evo'da açıklanamıyor")
+    elif n1_val is not None and n2_val is not None:
+        fark_devir = round(n1_val - n2_val, 2)  # pozitif = akşamcı fazla beyan
+        if fark_devir <= 1.0:
+            _k("aksam_devir", "Akşam devir beyanı", "ok", "aksam_devir.uyumlu",
+               f"{n1_val:.0f}₺", "Uyumlu — stok açığıyla çakışma yok", personel=aksamci_ad_dun)
+        elif fark_devir <= 20:
+            _k("aksam_devir", "Akşam devir beyanı", "uyari", "aksam_devir.kucuk_fark",
+               f"{n1_val:.0f}₺",
+               f"Küçük fark — devir {n1_val:.0f}₺, bulundu {n2_val:.0f}₺ ({fark_devir:.0f}₺ fazla beyan?)",
+               personel=aksamci_ad_dun)
+        elif fark_devir <= 100:
+            _k("aksam_devir", "Akşam devir beyanı", "uyari", "aksam_devir.orta_fark_stoksuz",
+               f"{n1_val:.0f}₺",
+               f"Orta fark — {fark_devir:.0f}₺ açık, stok verisi bekleniyor",
+               personel=aksamci_ad_dun)
+        else:
+            _k("aksam_devir", "Akşam devir beyanı", "kritik", "aksam_devir.buyuk_fark_stoksuz",
+               f"{n1_val:.0f}₺",
+               f"Büyük fark — {fark_devir:.0f}₺ açık, stok verisi bekleniyor",
+               personel=aksamci_ad_dun)
     else:
-        _k("aksam_devir", "Akşam devir beyanı", "ok", "—",
-           "Önceki gün devir verisi yok (karşılaştırma yapılamadı)")
+        _k("aksam_devir", "Akşam devir beyanı", "ok", "aksam_devir.ref_yok",
+           "—", "Önceki gün devir verisi yok — karşılaştırma yapılamadı")
 
     # ────────────────────────────────────────────────────────────────────────
-    # 3. EVO POS TEYİDİ — truth_motor_kararlar: kasa boyutu
+    # 3. EVO POS TEYİDİ
     # ────────────────────────────────────────────────────────────────────────
     r_evo = None
     try:
         cur.execute("""
-            SELECT tani, fark_n1_n2, guven_skoru FROM truth_motor_kararlar
+            SELECT tani, guven_skoru FROM truth_motor_kararlar
             WHERE sube_id=%s AND tarih=%s::date AND boyut='kasa'
             ORDER BY olusturma DESC LIMIT 1
         """, (sube_id, tarih))
@@ -7249,30 +7625,46 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     except Exception as e:
         log.warning("gunluk_teyit evo teyit hata: %s", e)
 
-    _UYUMLU_TANILER = ("UYUMLU", "IKRAM_EVO_TEYIT", "IKRAM_SURDURULEN")
-    _KRITIK_TANILER = ("AKSAM_KASAYI_SISIRDI", "ZIMMET_NAKIT_CEPTE",
-                       "ZIMMET_IPTAL_MANIPULASYON", "SWEETHEARTING_SINYAL")
+    _EVO_STATE_MAP: Dict[str, tuple] = {
+        "UYUMLU":                    ("ok",     "evo_teyit.uyumlu"),
+        "IKRAM_EVO_TEYIT":           ("ok",     "evo_teyit.ikram_evo_teyit"),
+        "IKRAM_SURDURULEN":          ("ok",     "evo_teyit.ikram_evo_teyit"),
+        "IKRAM_UNUTULDU":            ("uyari",  "evo_teyit.ikram_unutuldu"),
+        "SWEETHEARTING_SINYAL":      ("kritik", "evo_teyit.sweethearting"),
+        "STOK_KACAGI_BEYANSIZ":      ("uyari",  "evo_teyit.stok_kacagi"),
+        "ZIMMET_NAKIT_CEPTE":        ("kritik", "evo_teyit.zimmet_nakit"),
+        "ZIMMET_IPTAL_MANIPULASYON": ("kritik", "evo_teyit.zimmet_nakit"),
+        "SABAH_HATALI":              ("uyari",  "evo_teyit.sabah_hatali"),
+        "AKSAM_HATALI":              ("uyari",  "evo_teyit.aksam_hatali"),
+        "SABAH_TOPYEKUN":            ("uyari",  "evo_teyit.sabah_hatali"),
+        "AKSAM_TOPYEKUN":            ("uyari",  "evo_teyit.aksam_hatali"),
+        "KAOS":                      ("kritik", "evo_teyit.zimmet_nakit"),
+        "COZULMEDI":                 ("uyari",  "evo_teyit.cozulmedi"),
+        "POS_SYNC_HATA":             ("uyari",  "evo_teyit.pos_sync"),
+        "POS_BYPASS":                ("kritik", "evo_teyit.pos_bypass"),
+        "AKSAM_ZIMMET_SINYALI":      ("kritik", "evo_teyit.zimmet_nakit"),
+        "AKSAM_KASAYI_SISIRDI":      ("kritik", "evo_teyit.zimmet_nakit"),
+        "SABAH_ZIMMET_SUPHE":        ("kritik", "evo_teyit.sabah_hatali"),
+        "IPTAL_SUPHE":               ("uyari",  "evo_teyit.pos_bypass"),
+        "YETERSIZ_VERI":             ("ok",     "evo_teyit.motor_yok"),
+    }
+
     if r_evo:
         rd_evo = dict(r_evo)
-        evo_tani = str(rd_evo.get("tani") or "")
-        evo_guven = float(rd_evo.get("guven_skoru") or 0)
-        if evo_tani in _UYUMLU_TANILER:
-            _k("evo_teyit", "Evo POS teyidi", "ok", "",
-               f"Uyumlu (güven %{evo_guven:.0f})")
-        elif evo_tani in _KRITIK_TANILER:
-            _k("evo_teyit", "Evo POS teyidi", "kritik", "",
-               f"Uyumsuz — {evo_tani} (güven %{evo_guven:.0f})")
-        elif evo_tani in ("YETERSIZ_VERI",):
-            _k("evo_teyit", "Evo POS teyidi", "ok", "", "Veri yetersiz — motor çalıştırılmamış")
-        else:
-            _k("evo_teyit", "Evo POS teyidi", "uyari", "",
-               f"Anomali — {evo_tani} (güven %{evo_guven:.0f})")
+        evo_tani   = str(rd_evo.get("tani") or "")
+        evo_guven  = float(rd_evo.get("guven_skoru") or 0)
+        evo_du, evo_sk = _EVO_STATE_MAP.get(evo_tani, ("uyari", "evo_teyit.cozulmedi"))
+        evo_detay = (
+            f"Uyumlu (güven %{evo_guven:.0f})" if evo_du == "ok"
+            else f"Anomali — {evo_tani} (güven %{evo_guven:.0f})"
+        )
+        _k("evo_teyit", "Evo POS teyidi", evo_du, evo_sk, "", evo_detay)
     else:
-        _k("evo_teyit", "Evo POS teyidi", "ok", "",
-           "Motor bu güne henüz çalışmamış — teyit bekliyor")
+        _k("evo_teyit", "Evo POS teyidi", "ok", "evo_teyit.motor_yok",
+           "", "Motor bu güne henüz çalışmamış — teyit bekliyor")
 
     # ────────────────────────────────────────────────────────────────────────
-    # 4. GECE BARDAK DEVAMLILIĞI — Sprint J: dün gece bardak eridi mi?
+    # 4. GECE BARDAK DEVAMLILIĞI
     # ────────────────────────────────────────────────────────────────────────
     sprint_j: Dict[str, Any] = {}
     try:
@@ -7282,35 +7674,32 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
 
     j_tani = sprint_j.get("tani") or "YETERSIZ_VERI"
     if j_tani == "AKSAM_BARDAK_SISIRDI":
-        j_ad = sprint_j.get("aksamci_ad") or "Akşamcı"
-        j_kayip = sprint_j.get("toplam_kayip_adet", 0)
-        j_karar = sprint_j.get("karar_ozeti", "")
-        _k("gece_bardak", "Gece bardak devamlılığı", "kritik",
+        j_ad      = sprint_j.get("aksamci_ad") or "Akşamcı"
+        j_kayip   = sprint_j.get("toplam_kayip_adet", 0)
+        kasada_acik_j = sprint_j.get("kasada_acik", False)
+        state_key  = ("gece_bardak.sisirme_kasa_acik" if kasada_acik_j
+                      else "gece_bardak.sisirme_kasa_dengede")
+        durum_j    = "kritik" if kasada_acik_j else "uyari"
+        _k("gece_bardak", "Gece bardak devamlılığı", durum_j, state_key,
            f"{j_kayip} adet fark",
            f"Dün gece {j_kayip} adet bardak eridi — sabahçı kör sayımda tespit etti",
-           tavsiye=f"→ {j_karar}" if j_karar else "→ Akşamcı kapanışta şişirmiş olabilir",
            personel=j_ad)
     elif j_tani == "UYUMLU":
-        j_karton_kb = sprint_j.get("gece_karton_kaybi", 0)
-        j_plastik_kb = sprint_j.get("gece_plastik_kaybi", 0)
-        aks_nm = sprint_j.get("aksamci_ad") or aksamci_ad_dun or ""
-        sab_nm = sprint_j.get("sabahci_ad") or sabahci_ad or ""
         ozet_parts = []
         if sprint_j.get("dun_karton", 0) > 0:
             ozet_parts.append(f"karton {sprint_j.get('dun_karton',0)}→{sprint_j.get('bugun_karton',0)}")
         if sprint_j.get("dun_plastik", 0) > 0:
             ozet_parts.append(f"plastik {sprint_j.get('dun_plastik',0)}→{sprint_j.get('bugun_plastik',0)}")
         ozet_str = " | ".join(ozet_parts) if ozet_parts else "devamlılık normal"
-        _k("gece_bardak", "Gece bardak devamlılığı", "ok",
-           "",
-           f"Kayıp yok ({ozet_str})",
-           personel=aks_nm or None)
+        _k("gece_bardak", "Gece bardak devamlılığı", "ok", "gece_bardak.uyumlu",
+           "", f"Kayıp yok ({ozet_str})",
+           personel=sprint_j.get("aksamci_ad") or aksamci_ad_dun or None)
     else:
-        _k("gece_bardak", "Gece bardak devamlılığı", "ok", "—",
-           "Önceki gün kapanış bardak verisi yok — kontrol yapılamadı")
+        _k("gece_bardak", "Gece bardak devamlılığı", "ok", "gece_bardak.veri_yok",
+           "—", "Önceki gün kapanış bardak verisi yok — kontrol yapılamadı")
 
     # ────────────────────────────────────────────────────────────────────────
-    # 5. SÜT KULLANIMI — Sprint F: gerçek vs teorik BOM
+    # 5. SÜT KULLANIMI
     # ────────────────────────────────────────────────────────────────────────
     sut: Dict[str, Any] = {}
     try:
@@ -7319,28 +7708,36 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         log.warning("gunluk_teyit sut hata: %s", e)
 
     sut_tani = sut.get("tani") or "VERI_YOK"
+    gercek_sut = float(sut.get("gercek_tuketim") or 0)
+    teorik_sut = float(sut.get("teorik_tuketim") or 0)
+    sapma_l    = float(sut.get("sapma_litre") or 0)
+    sapma_yz   = float(sut.get("sapma_yuzde") or 0)
+
     if sut_tani == "SUT_SAPMA":
-        gercek_sut = sut.get("gercek_tuketim", 0) or 0
-        teorik_sut = sut.get("teorik_tuketim", 0) or 0
-        sapma_l = sut.get("sapma_litre", 0) or 0
-        sapma_yz = sut.get("sapma_yuzde", 0) or 0
-        _k("sut_kullanimi", "Süt kullanımı", "uyari",
+        if sapma_yz >= 80:
+            sk_sut = "sut_kullanimi.cok_ciddi_sapma"; du_sut = "kritik"
+        elif sapma_yz >= 50:
+            sk_sut = "sut_kullanimi.ciddi_sapma"; du_sut = "uyari"
+        else:
+            sk_sut = "sut_kullanimi.hafif_sapma"; du_sut = "uyari"
+        _k("sut_kullanimi", "Süt kullanımı", du_sut, sk_sut,
            f"{gercek_sut:.1f}L",
-           f"Fazla — teorik {teorik_sut:.1f}L, kullanılan {gercek_sut:.1f}L → {sapma_l:.1f}L fazla (%{sapma_yz:.0f})",
-           tavsiye="→ Aşırı porsiyonlama veya kayıt dışı ürün olabilir")
+           f"Fazla — teorik {teorik_sut:.1f}L, kullanılan {gercek_sut:.1f}L → {sapma_l:.1f}L fazla (%{sapma_yz:.0f})")
     elif sut_tani == "SUT_UYUMLU":
-        gercek_sut = sut.get("gercek_tuketim", 0) or 0
-        teorik_sut = sut.get("teorik_tuketim", 0) or 0
-        sapma_yz = sut.get("sapma_yuzde", 0) or 0
-        _k("sut_kullanimi", "Süt kullanımı", "ok",
-           f"{gercek_sut:.1f}L",
-           f"Normal — teorik {teorik_sut:.1f}L, kullanılan {gercek_sut:.1f}L (%{abs(sapma_yz):.0f} sapma)")
+        if sapma_yz < 0:
+            _k("sut_kullanimi", "Süt kullanımı", "uyari", "sut_kullanimi.az_tuketim",
+               f"{gercek_sut:.1f}L",
+               f"Az tüketim — teorik {teorik_sut:.1f}L, kullanılan {gercek_sut:.1f}L (%{abs(sapma_yz):.0f} eksik)")
+        else:
+            _k("sut_kullanimi", "Süt kullanımı", "ok", "sut_kullanimi.uyumlu",
+               f"{gercek_sut:.1f}L",
+               f"Normal — teorik {teorik_sut:.1f}L, kullanılan {gercek_sut:.1f}L (%{abs(sapma_yz):.0f} sapma)")
     else:
-        _k("sut_kullanimi", "Süt kullanımı", "ok", "—",
-           "Süt sayım verisi yok — kontrol yapılamadı")
+        _k("sut_kullanimi", "Süt kullanımı", "ok", "sut_kullanimi.veri_yok",
+           "—", "Süt sayım verisi yok — kontrol yapılamadı")
 
     # ────────────────────────────────────────────────────────────────────────
-    # 6. AKŞAM VARDIYASI BARDAK DENGESİ — Sprint H: devir→kapanis bardak P&L
+    # 6. AKŞAM VARDIYASI BARDAK DENGESİ
     # ────────────────────────────────────────────────────────────────────────
     sprint_h: Dict[str, Any] = {}
     try:
@@ -7350,25 +7747,27 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
 
     h_tani = sprint_h.get("tani")
     if h_tani == "AKSAM_VARDIYA_BARDAK_ACIK":
-        h_ad = sprint_h.get("aksamci_ad") or "Akşamcı"
-        h_k = sprint_h.get("karton_acik", 0) or 0
-        h_p = sprint_h.get("plastik_acik", 0) or 0
-        h_guven = sprint_h.get("guven", 0) or 0
-        _k("aksam_vardiya_bardak", "Akşam vardiyası bardak dengesi", "uyari",
+        h_ad    = sprint_h.get("aksamci_ad") or "Akşamcı"
+        h_k     = float(sprint_h.get("karton_acik", 0) or 0)
+        h_p     = float(sprint_h.get("plastik_acik", 0) or 0)
+        h_guven = float(sprint_h.get("guven", 0) or 0)
+        toplam_acik = h_k + h_p
+        sk_h = "aksam_vardiya_bardak.buyuk_acik" if toplam_acik >= 10 else "aksam_vardiya_bardak.orta_acik"
+        _k("aksam_vardiya_bardak", "Akşam vardiyası bardak dengesi", "uyari", sk_h,
            "",
            f"Açık — {h_k:.0f} karton + {h_p:.0f} plastik bardak Evo satışını aşıyor (güven %{h_guven:.0f})",
-           tavsiye="→ Kayıt dışı satış şüphesi — kamera inceleme",
            personel=h_ad)
     elif h_tani == "UYUMLU":
         _k("aksam_vardiya_bardak", "Akşam vardiyası bardak dengesi", "ok",
-           "",
-           "Uyumlu — akşam vardiyası bardak kullanımı Evo satışıyla örtüşüyor")
+           "aksam_vardiya_bardak.uyumlu",
+           "", "Uyumlu — bardak kullanımı Evo satışıyla örtüşüyor")
     else:
-        _k("aksam_vardiya_bardak", "Akşam vardiyası bardak dengesi", "ok", "—",
-           "Vardiya devri verisi yok — kontrol yapılamadı")
+        _k("aksam_vardiya_bardak", "Akşam vardiyası bardak dengesi", "ok",
+           "aksam_vardiya_bardak.veri_yok",
+           "—", "Vardiya devri verisi yok — kontrol yapılamadı")
 
     # ────────────────────────────────────────────────────────────────────────
-    # 7. KASA BİRİKİM TRENDİ — Sprint I: 30 günde sistematik küçük açık
+    # 7. KASA BİRİKİM TRENDİ (30 gün)
     # ────────────────────────────────────────────────────────────────────────
     sprint_i: Dict[str, Any] = {}
     try:
@@ -7377,21 +7776,58 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         log.warning("gunluk_teyit sprint_i hata: %s", e)
 
     riskli_i = sprint_i.get("riskli_personeller") or []
-    if riskli_i:
-        top_rp = riskli_i[0]
-        i_ad = top_rp.get("personel_ad") or "Personel"
-        i_tl = abs(top_rp.get("toplam_fark", 0) or 0)
-        i_gun = top_rp.get("gun_sayisi", 0) or 0
-        i_guven = top_rp.get("guven", 0) or 0
+    if len(riskli_i) >= 2:
+        _k("kasa_birikim_trendi", "Kasa birikim trendi (30 gün)", "kritik",
+           "kasa_birikim_trendi.cok_kisi",
+           f"{len(riskli_i)} kişi",
+           f"Kritik — {len(riskli_i)} personelde aynı anda birikim pattern'i var")
+    elif len(riskli_i) == 1:
+        rp = riskli_i[0]
+        i_ad   = rp.get("personel_ad") or "Personel"
+        i_tl   = abs(rp.get("toplam_fark", 0) or 0)
+        i_gun  = rp.get("gun_sayisi", 0) or 0
+        i_guven = rp.get("guven", 0) or 0
         _k("kasa_birikim_trendi", "Kasa birikim trendi (30 gün)", "uyari",
+           "kasa_birikim_trendi.bir_kisi",
            f"{i_tl:.0f}₺ toplam",
            f"Dikkat — {i_ad} son {i_gun} günde kümülatif {i_tl:.0f}₺ açık (güven %{i_guven:.0f})",
-           tavsiye="→ Sistematik küçük tutarlı zimmet şüphesi — detay inceleme",
            personel=i_ad)
     else:
         _k("kasa_birikim_trendi", "Kasa birikim trendi (30 gün)", "ok",
-           "",
-           "Normal — 30 günde şüpheli birikim pattern tespit edilmedi")
+           "kasa_birikim_trendi.normal",
+           "", "Normal — 30 günde şüpheli birikim pattern yok")
+
+    # ════════════════════════════════════════════════════════════════════════
+    #  ÇAPRAZ KORELASYON — birden fazla sinyal aynı anda yanıyorsa bağlantı
+    # ════════════════════════════════════════════════════════════════════════
+    korelasyon: List[str] = []
+    dur = {k["kod"]: k["durum"] for k in kontroller}
+
+    # Kasa + bardak her ikisi de kritik → en güçlü zimmet sinyali
+    if dur.get("aksam_devir") == "kritik" and dur.get("gece_bardak") == "kritik":
+        korelasyon.append(
+            "🔴 Güçlü çapraz sinyal: Hem akşam devir şişirme hem bardak eridi bir arada. "
+            "Akşamcı kasadan para almış, izi hem kasa hem stokta gizlemeye çalışmış. Zimmet soruşturması acil."
+        )
+    # Kasa açık + bardak eridi ama kasa dengede (Senaryo A)
+    if dur.get("sabah_kasasi") in ("ok",) and dur.get("gece_bardak") in ("uyari",):
+        korelasyon.append(
+            "ℹ️ Kasa dengede + bardak farkı var: Para kaybı muhtemelen yok. Sabahçının açılış bardak sayımını bir kez daha kontrol et."
+        )
+    # Süt fazla + akşam bardak açık
+    if dur.get("sut_kullanimi") == "uyari" and dur.get("aksam_vardiya_bardak") == "uyari":
+        korelasyon.append(
+            "🟠 Akşam kayıt dışı satış pattern'i: Hem süt kullanımı fazla hem akşam vardiyası bardak açığı. "
+            "Akşam vardiyasında kayıt dışı içecek üretimi + nakit alma şüphesi."
+        )
+    # Kasa birikim + kasa açık
+    if dur.get("kasa_birikim_trendi") in ("uyari", "kritik") and dur.get("sabah_kasasi") in ("uyari", "kritik"):
+        korelasyon.append(
+            "🟠 Birikim + bugün açık: Aynı personel uzun süredir küçük tutarlı açık oluşturuyor ve bugün de açık var. Sistematik zimmet şüphesi güçlü."
+        )
+    # Tüm kontroller ok
+    if all(k["durum"] == "ok" for k in kontroller):
+        korelasyon.append("✅ Tüm kontroller geçti — beklenmedik bir çapraz sinyal yok. Gün temiz görünüyor.")
 
     # ── Özet ────────────────────────────────────────────────────────────────
     ok_sayi     = sum(1 for x in kontroller if x["durum"] == "ok")
@@ -7417,6 +7853,7 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
 
     return {
         "kontroller":   kontroller,
+        "korelasyon":   korelasyon,
         "genel_durum":  genel_durum,
         "gecen_sayi":   ok_sayi,
         "uyari_sayi":   uyari_sayi,

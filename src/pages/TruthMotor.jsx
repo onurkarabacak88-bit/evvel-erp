@@ -672,6 +672,107 @@ const TEYIT_STIL = {
   kritik: { bg: 'rgba(239,68,68,0.11)',   bord: 'rgba(239,68,68,0.40)',   renk: '#fca5a5' },
 };
 
+// Tek bir kontrol satırı (expandable)
+function TeyitSatiri({ k }) {
+  const [acik, setAcik] = useState(false);
+  const ks = TEYIT_STIL[k.durum] || TEYIT_STIL.ok;
+  const hasDetail = k.anlam || (k.nedenler && k.nedenler.length > 0) || k.aksiyon;
+
+  return (
+    <div style={{
+      borderRadius: 6,
+      background: k.durum === 'ok' ? 'transparent' : ks.bg,
+      borderLeft: k.durum !== 'ok' ? `3px solid ${ks.bord}` : '3px solid transparent',
+      overflow: 'hidden',
+    }}>
+      {/* Ana satır — tıklanabilir */}
+      <div
+        onClick={() => hasDetail && setAcik(a => !a)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px',
+          cursor: hasDetail ? 'pointer' : 'default',
+          flexWrap: 'wrap',
+        }}
+      >
+        <span style={{ fontSize: 13, minWidth: 18 }}>{k.ikon}</span>
+        <span style={{
+          fontSize: 12, fontWeight: k.durum !== 'ok' ? 700 : 500,
+          color: 'var(--text1)', minWidth: 190, flex: '0 0 auto',
+        }}>
+          {k.ad}
+        </span>
+        {k.deger && (
+          <span style={{
+            fontSize: 12, fontWeight: 700,
+            color: k.durum !== 'ok' ? ks.renk : 'var(--text1)',
+            minWidth: 48, flex: '0 0 auto',
+          }}>
+            {k.deger}
+          </span>
+        )}
+        <span style={{ fontSize: 11, color: k.durum !== 'ok' ? ks.renk : 'var(--text2)', flex: 1 }}>
+          {k.detay}
+        </span>
+        {k.personel && (
+          <span style={{
+            fontSize: 10, color: 'var(--text3)', padding: '1px 6px',
+            borderRadius: 3, background: 'rgba(120,120,120,0.12)',
+            flex: '0 0 auto',
+          }}>
+            {k.personel}
+          </span>
+        )}
+        {hasDetail && (
+          <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 4, flex: '0 0 auto' }}>
+            {acik ? '▲' : '▼'}
+          </span>
+        )}
+      </div>
+
+      {/* Expandable detay */}
+      {acik && hasDetail && (
+        <div style={{
+          padding: '10px 12px 12px 36px',
+          borderTop: `1px solid ${ks.bord}`,
+          background: 'rgba(0,0,0,0.08)',
+        }}>
+          {/* Ne anlama geliyor */}
+          {k.anlam && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Ne anlama geliyor?
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text1)', lineHeight: 1.6 }}>{k.anlam}</div>
+            </div>
+          )}
+          {/* Olası nedenler */}
+          {k.nedenler && k.nedenler.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Olası nedenler
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: 'var(--text2)', lineHeight: 1.8 }}>
+                {k.nedenler.map((n, ni) => <li key={ni}>{n}</li>)}
+              </ul>
+            </div>
+          )}
+          {/* Aksiyon */}
+          {k.aksiyon && (
+            <div style={{
+              marginTop: 6, padding: '6px 10px', borderRadius: 4,
+              background: k.durum === 'ok' ? 'rgba(34,197,94,0.08)' : ks.bg,
+              borderLeft: `2px solid ${ks.bord}`,
+              fontSize: 11, color: ks.renk, fontWeight: 600,
+            }}>
+              ⚡ {k.aksiyon}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GunlukTeyitKarti({ tarih, subeler }) {
   const [secSubeId, setSecSubeId] = useState('');
   const [veri, setVeri]           = useState(null);
@@ -696,14 +797,14 @@ function GunlukTeyitKarti({ tarih, subeler }) {
 
   useEffect(() => { yukle(); }, [yukle]);
 
-  const genel     = veri?.genel_durum || 'ok';
-  const kontroller = veri?.kontroller || [];
-  const ozet       = veri?.ozet || '';
-  const gecelSayi  = veri?.gecen_sayi ?? 0;
+  const genel      = veri?.genel_durum || 'ok';
+  const kontroller = veri?.kontroller  || [];
+  const korelasyon = veri?.korelasyon  || [];
+  const ozet       = veri?.ozet        || '';
+  const gecelSayi  = veri?.gecen_sayi  ?? 0;
   const toplamSayi = veri?.toplam_sayi ?? 0;
   const kritikSayi = veri?.kritik_sayi ?? 0;
   const uyariSayi  = veri?.uyari_sayi  ?? 0;
-
   const genelStil  = TEYIT_STIL[genel] || TEYIT_STIL.ok;
 
   return (
@@ -716,6 +817,7 @@ function GunlukTeyitKarti({ tarih, subeler }) {
           {subeler.map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
         </select>
         <span style={{ fontSize: 11, color: 'var(--text3)' }}>{tarih}</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)', fontStyle: 'italic' }}>satıra tıkla → açıklama</span>
         <button className="btn btn-sm" onClick={yukle} style={{ fontSize: 11 }}>↻</button>
       </div>
 
@@ -727,82 +829,55 @@ function GunlukTeyitKarti({ tarih, subeler }) {
 
           {/* Özet satırı */}
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14,
+            display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12,
             paddingBottom: 10, borderBottom: '1px solid var(--border)',
             flexWrap: 'wrap',
           }}>
-            {/* Geçti/Toplam rozeti */}
             <span style={{
               fontSize: 13, fontWeight: 700, padding: '3px 10px', borderRadius: 4,
               background: genelStil.bord, color: genel === 'ok' ? '#052e16' : '#fff',
             }}>
               {genel === 'ok' ? '✅' : genel === 'kritik' ? '🚨' : '⚠️'} {gecelSayi}/{toplamSayi}
             </span>
-            {kritikSayi > 0 && (
-              <span style={{ fontSize: 11, fontWeight: 700, color: '#fca5a5' }}>
-                🚨 {kritikSayi} kritik
-              </span>
-            )}
-            {uyariSayi > 0 && (
-              <span style={{ fontSize: 11, fontWeight: 700, color: '#fbbf24' }}>
-                ⚠️ {uyariSayi} uyarı
-              </span>
-            )}
+            {kritikSayi > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: '#fca5a5' }}>🚨 {kritikSayi} kritik</span>}
+            {uyariSayi  > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: '#fbbf24' }}>⚠️ {uyariSayi} uyarı</span>}
             <span style={{ fontSize: 12, color: 'var(--text2)', flex: 1 }}>{ozet}</span>
           </div>
 
-          {/* Kontrol satırları */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-            {kontroller.map((k, i) => {
-              const ks = TEYIT_STIL[k.durum] || TEYIT_STIL.ok;
-              return (
-                <div key={i} style={{
-                  padding: '7px 10px', borderRadius: 6,
-                  background: k.durum === 'ok' ? 'transparent' : ks.bg,
-                  borderLeft: k.durum !== 'ok' ? `3px solid ${ks.bord}` : '3px solid transparent',
-                }}>
-                  {/* Ana satır */}
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 13, minWidth: 18 }}>{k.ikon}</span>
-                    <span style={{ fontSize: 12, fontWeight: k.durum !== 'ok' ? 700 : 500, color: 'var(--text1)', minWidth: 190 }}>
-                      {k.ad}
-                    </span>
-                    {k.deger && (
-                      <span style={{ fontSize: 12, fontWeight: 700, color: k.durum !== 'ok' ? ks.renk : 'var(--text1)', minWidth: 48 }}>
-                        {k.deger}
-                      </span>
-                    )}
-                    <span style={{ fontSize: 11, color: k.durum !== 'ok' ? ks.renk : 'var(--text2)', flex: 1 }}>
-                      {k.detay}
-                    </span>
-                    {k.personel && (
-                      <span style={{
-                        fontSize: 10, color: 'var(--text3)', padding: '1px 6px',
-                        borderRadius: 3, background: 'rgba(120,120,120,0.12)',
-                      }}>
-                        {k.personel}
-                      </span>
-                    )}
-                  </div>
-                  {/* Tavsiye satırı */}
-                  {k.tavsiye && (
-                    <div style={{
-                      marginTop: 4, marginLeft: 24, fontSize: 11,
-                      color: k.durum === 'kritik' ? '#fca5a5' : '#fbbf24',
-                      fontStyle: 'italic',
-                    }}>
-                      {k.tavsiye}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+          {/* Kontrol satırları — expandable */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {kontroller.map((k, i) => <TeyitSatiri key={i} k={k} />)}
           </div>
+
+          {/* Çapraz korelasyon bölümü */}
+          {korelasyon.length > 0 && (
+            <div style={{
+              marginTop: 14, paddingTop: 12,
+              borderTop: '1px solid var(--border)',
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                🔗 Çapraz Analiz
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {korelasyon.map((kor, ki) => (
+                  <div key={ki} style={{
+                    fontSize: 12, color: 'var(--text1)', lineHeight: 1.6,
+                    padding: '6px 10px', borderRadius: 5,
+                    background: 'rgba(120,120,120,0.07)',
+                    borderLeft: `2px solid ${kor.startsWith('🔴') ? '#fca5a5' : kor.startsWith('🟠') ? '#fbbf24' : 'rgba(34,197,94,0.4)'}`,
+                  }}>
+                    {kor}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
+
 
 // ════════════════════════════════════════════════════════════════════════════
 //  OLAY ÖZETİ — Tüm sprint bulgularını tek anlatıda birleştir
