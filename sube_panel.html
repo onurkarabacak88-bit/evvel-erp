@@ -5821,22 +5821,36 @@ async function svSiparisKontrolYukle() {
 function renderSvSiparisKontrol() {
   var wrap = document.getElementById('svSiparisKontrolWrap');
   if (!wrap) return;
-  if (!_svKontrolSatirlari.length) {
-    wrap.innerHTML = '<div class="siparis-detay" style="font-size:12px;color:var(--muted)">Bugün onaylı siparişten gelen kontrol listesi bulunamadı.</div>';
+  var katHeader = document.getElementById('svKatalogHeader');
+  var katHelp = document.getElementById('svKatalogHelp');
+  var katWrap = document.getElementById('svKatalogWrap');
+  var hasOrder = _svKontrolSatirlari.length > 0;
+
+  // ── Mod A: Aktif sipariş YOK — katalog grid normal görünür, sipariş listesi gizli ──
+  if (!hasOrder) {
+    wrap.innerHTML = '';
+    if (katHeader) {
+      katHeader.style.display = '';
+      katHeader.innerHTML = '📦 Adım 2 — Gelen ürünleri seçin';
+    }
+    if (katHelp) katHelp.style.display = '';
+    if (katWrap) katWrap.style.display = '';
     return;
   }
+
+  // ── Mod B: Aktif sipariş VAR — sipariş listesi ana alan, katalog expander altında ──
   var h = '';
-  h += '<div class="siparis-detay sip-inner-panel" style="margin-bottom:10px">';
+  h += '<div class="siparis-detay sip-inner-panel" style="margin-bottom:10px;border-left:3px solid var(--ok);background:rgba(34,197,94,0.06)">';
   h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">';
-  h += '<div style="font-size:12px;font-weight:700">Sipariş kontrol listesi (tikleyin)</div>';
+  h += '<div style="font-size:13px;font-weight:800">📋 Sipariş kontrol listesi — geleni tikleyin</div>';
   h += '<button type="button" class="sip-mini-btn" id="svKontrolTumBtn">Tümünü işaretle</button>';
   h += '</div>';
-  h += '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Teslim alırken siparişte geçen kalemleri kontrol amaçlı tikleyin.</div>';
+  h += '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Siparişte geçen kalemler aşağıda. Gelenleri tikleyin; gelmeyenler boş kalsın.</div>';
   _svKontrolSatirlari.forEach(function(r, i){
-    h += '<label style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--border);font-size:12px">';
-    h += '<input type="checkbox" data-sv-kontrol="' + i + '" style="width:16px;height:16px;accent-color:var(--ok);flex-shrink:0" />';
+    h += '<label style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--border);font-size:12px;cursor:pointer">';
+    h += '<input type="checkbox" data-sv-kontrol="' + i + '" style="width:18px;height:18px;accent-color:var(--ok);flex-shrink:0" />';
     h += '<span style="flex:1">' + escHtml(r.urun_ad) + '</span>';
-    h += '<span class="mono" style="font-size:11px">x' + String(r.adet || 0) + '</span>';
+    h += '<span class="mono" style="font-size:11px;font-weight:700">x' + String(r.adet || 0) + '</span>';
     h += '</label>';
   });
   h += '</div>';
@@ -5845,6 +5859,26 @@ function renderSvSiparisKontrol() {
   if (tumBtn) {
     tumBtn.onclick = function() {
       wrap.querySelectorAll('input[data-sv-kontrol]').forEach(function(ch){ ch.checked = true; });
+    };
+  }
+
+  // Katalog'u expander modunda gizle — "Ek ürün geldi mi?" toggle butonu
+  if (katHeader) {
+    katHeader.style.display = '';
+    katHeader.innerHTML = '<button type="button" id="svKatalogToggleBtn" style="background:transparent;border:1px dashed var(--border);color:var(--accent);padding:10px 14px;border-radius:10px;cursor:pointer;width:100%;font-weight:600;font-size:12px;text-align:left;font-family:inherit">＋ Listede olmayan ek ürün geldi mi? (katalog aç/kapat)</button>';
+  }
+  if (katHelp) katHelp.style.display = 'none';
+  if (katWrap) katWrap.style.display = 'none';
+
+  var katToggle = document.getElementById('svKatalogToggleBtn');
+  if (katToggle) {
+    katToggle.onclick = function() {
+      var nowHidden = katWrap && katWrap.style.display === 'none';
+      if (katWrap) katWrap.style.display = nowHidden ? '' : 'none';
+      if (katHelp) katHelp.style.display = nowHidden ? '' : 'none';
+      katToggle.innerHTML = nowHidden
+        ? '− Katalog kapat'
+        : '＋ Listede olmayan ek ürün geldi mi? (katalog aç/kapat)';
     };
   }
 }
@@ -5983,13 +6017,15 @@ function renderStokForms(tip) {
         h += '<div class="form-group" style="margin:0"><label>Personel *</label><select id="svPers"></select></div>';
         h += '<div class="form-group" style="margin:0"><label>Onay kodu (PIN) *</label><input id="svPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>';
         h += '</div></div>';
-        // ── ADIM 2: Ne geldi? — katalog (hemen kimlik panelinin altında) ─────────────────
-        h += '<div style="margin:14px 0 4px;font-size:13px;font-weight:800;color:var(--text)">📦 Adım 2 — Gelen ürünleri seçin</div>';
-        h += '<p style="font-size:11px;color:var(--muted);margin:0 0 8px;line-height:1.45">Aşağıdaki kategorilere dokunun; her üründe gelen adedi girin. Seçimler altta özette görünür.</p>';
-        h += '<div id="svKatalogWrap"></div>';
-        // ── ADIM 3: Sipariş kontrol çapraz listesi ───────────────────────────────────────
+        // ── ADIM 2: Sipariş kontrol listesi (varsa) — önce burası, eski katalog'tan önce
         h += '<div id="svSiparisKontrolWrap"></div>';
         h += '<div id="svToptanciBekleyenWrap"></div>';
+        // ── ADIM 3: Katalog seçimi — sipariş yoksa ana alan, sipariş varsa expander altında
+        h += '<div id="svKatalogContainer">';
+        h += '<div id="svKatalogHeader" style="margin:14px 0 4px;font-size:13px;font-weight:800;color:var(--text)">📦 Adım 2 — Gelen ürünleri seçin</div>';
+        h += '<p id="svKatalogHelp" style="font-size:11px;color:var(--muted);margin:0 0 8px;line-height:1.45">Aşağıdaki kategorilere dokunun; her üründe gelen adedi girin. Seçimler altta özette görünür.</p>';
+        h += '<div id="svKatalogWrap"></div>';
+        h += '</div>';
         // ── ADIM 4: Tam mı geldi? + Açıklama ────────────────────────────────────────────
         h += '<div class="sv-teslim-durum-panel">';
         h += '<div class="sv-durum-baslik">Teslimat durumu <span style="color:#fda4af">*</span></div>';
