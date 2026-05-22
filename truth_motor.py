@@ -7799,35 +7799,193 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
 
     # ════════════════════════════════════════════════════════════════════════
     #  ÇAPRAZ KORELASYON — birden fazla sinyal aynı anda yanıyorsa bağlantı
+    #  Her korelasyon: kod, baslik, seviye, ikon, anlam, nedenler, aksiyon
     # ════════════════════════════════════════════════════════════════════════
-    korelasyon: List[str] = []
+    korelasyon: List[Dict[str, Any]] = []
     dur = {k["kod"]: k["durum"] for k in kontroller}
 
-    # Kasa + bardak her ikisi de kritik → en güçlü zimmet sinyali
-    if dur.get("aksam_devir") == "kritik" and dur.get("gece_bardak") == "kritik":
-        korelasyon.append(
-            "🔴 Güçlü çapraz sinyal: Hem akşam devir şişirme hem bardak eridi bir arada. "
-            "Akşamcı kasadan para almış, izi hem kasa hem stokta gizlemeye çalışmış. Zimmet soruşturması acil."
+    def _kor(kod: str, baslik: str, seviye: str,
+             anlam: str, nedenler: List[str], aksiyon: str):
+        ikon = {"kritik": "🔴", "uyari": "🟠", "bilgi": "ℹ️"}.get(seviye, "ℹ️")
+        korelasyon.append({
+            "kod":      kod,
+            "baslik":   baslik,
+            "seviye":   seviye,
+            "ikon":     ikon,
+            "anlam":    anlam,
+            "nedenler": nedenler,
+            "aksiyon":  aksiyon,
+        })
+
+    # ── 1. Devir şişirme + bardak eridi — çift kanal zimmet ─────────────────
+    if dur.get("aksam_devir") == "kritik" and dur.get("gece_bardak") in ("kritik", "uyari"):
+        _kor(
+            "devir_bardak_cift_kanal",
+            "Hem devir şişirme hem bardak eridi — çift kanal",
+            "kritik",
+            "Bu kombinasyon en güçlü zimmet sinyalidir. Akşamcı tek kanalı gizlemek yerine "
+            "iki kanalı aynı anda manipüle etmiş: N1 devir tutarını fazla yazarak kasa açığını kapattı, "
+            "kapanış bardak sayısını da fazla yazarak stok açığını kapattı. "
+            "Sabahçı kör sayımda her ikisini de gerçek değerde buldu.",
+            [
+                "Akşamcı kayıt dışı satış yaptı, parayı cebe koydu",
+                "Stok farkını gizlemek için kapanış bardak sayısını şişirdi",
+                "Kasa farkını gizlemek için devir tutarını şişirdi",
+                "Sabahçı bağımsız sayımda hem kasayı hem bardağı gerçek değerde buldu",
+            ],
+            "Kritik zimmet soruşturması: akşamcıyı ayır, güvenlik kamerası incele, "
+            "stok + kasa çapraz hesapla, CFO'ya bildir."
         )
-    # Kasa açık + bardak eridi ama kasa dengede (Senaryo A)
-    if dur.get("sabah_kasasi") in ("ok",) and dur.get("gece_bardak") in ("uyari",):
-        korelasyon.append(
-            "ℹ️ Kasa dengede + bardak farkı var: Para kaybı muhtemelen yok. Sabahçının açılış bardak sayımını bir kez daha kontrol et."
+
+    # ── 2. Kasa dengede ama bardak farkı var — büyük ihtimalle sayım hatası ─
+    elif dur.get("sabah_kasasi") == "ok" and dur.get("gece_bardak") == "uyari":
+        _kor(
+            "kasa_dengede_bardak_farki",
+            "Kasa dengede, bardak farkı var — sayım hatası daha muhtemel",
+            "bilgi",
+            "Önemli bir ayrım: kasa dengeli olduğu için bardak farkının parasal karşılığı görünmüyor. "
+            "Eğer akşamcı bardağı şişirip para almış olsaydı kasada da açık olması gerekirdi. "
+            "Kasanın dengeli çıkması Senaryo A'yı (sayım hatası) güçlendiriyor.",
+            [
+                "Sabahçı açılış bardak sayımını yanlış yerden veya eksik saydı",
+                "Dünkü akşamcı kapanış bardak sayımını fazla okudu (kasıtsız hata)",
+                "Bardaklar gece başka yere taşındı veya sayım alanları karıştı",
+            ],
+            "Sabahçıya fiziksel bardak sayımı tekrarı yaptır. "
+            "Kasa dengeli kalıyorsa para kaybı yok — tutanağa geç ve kapan."
         )
-    # Süt fazla + akşam bardak açık
-    if dur.get("sut_kullanimi") == "uyari" and dur.get("aksam_vardiya_bardak") == "uyari":
-        korelasyon.append(
-            "🟠 Akşam kayıt dışı satış pattern'i: Hem süt kullanımı fazla hem akşam vardiyası bardak açığı. "
-            "Akşam vardiyasında kayıt dışı içecek üretimi + nakit alma şüphesi."
+
+    # ── 3. Devir kritik + Evo de kritik — iki bağımsız sistem örtüşüyor ─────
+    if dur.get("aksam_devir") == "kritik" and dur.get("evo_teyit") == "kritik":
+        _kor(
+            "devir_evo_otuşuyor",
+            "Devir şişirme ile Evo anomalisi aynı günde örtüşüyor",
+            "kritik",
+            "İki tamamen bağımsız kaynak — akşamcının kendi beyanı (N1) ve Evo POS sistemi — "
+            "aynı güne işaret ediyor. N1 şişirmesi ile POS anomalisinin aynı anda tetiklenmesi "
+            "tesadüf değil, kasıtlı eylem izine işaret eder.",
+            [
+                "Akşamcı hem POS akışını manipüle etti hem deviri şişirdi",
+                "Kayıt dışı satış geliri: POS'ta kayıt yok, devire yansıtıldı",
+            ],
+            "İki tanı için ortak soruşturma başlat. "
+            "Evo iptal + devir beyanını birlikte incele. CFO + hukuki süreç."
         )
-    # Kasa birikim + kasa açık
-    if dur.get("kasa_birikim_trendi") in ("uyari", "kritik") and dur.get("sabah_kasasi") in ("uyari", "kritik"):
-        korelasyon.append(
-            "🟠 Birikim + bugün açık: Aynı personel uzun süredir küçük tutarlı açık oluşturuyor ve bugün de açık var. Sistematik zimmet şüphesi güçlü."
+
+    # ── 4. Süt fazla + akşam vardiya bardak açık — akşam shift pattern ──────
+    if dur.get("sut_kullanimi") in ("uyari", "kritik") and dur.get("aksam_vardiya_bardak") == "uyari":
+        _kor(
+            "sut_vardiya_bardak",
+            "Akşam vardiyasında kayıt dışı içecek paterni",
+            "uyari",
+            "Hem süt fazla kullanılmış hem de akşam vardiyasında bardak açığı var. "
+            "Bu iki sinyal birlikte 'akşam saatlerinde kayıt dışı içecek üretildi' "
+            "senaryosuna işaret eder: bardak verildi, POS girilmedi, süt harcandı. "
+            "Her iki kontrol de akşam vardiyasını gösteriyor.",
+            [
+                "Akşamcı müşteriye içecek yapıp POS'a girmedi — nakit aldı",
+                "Toplu sipariş (tablo, etkinlik) Evo'ya girilmedi",
+                "Personel tüketimi (kendi için yapılan içecek) sisteme yazılmadı",
+            ],
+            "Akşam vardiyası kamera inceleme + o saate ait POS fişlerini say + "
+            "süt tüketim saatini geriye dönük analiz et."
         )
-    # Tüm kontroller ok
+
+    # ── 5. Birikim trendi + bugün de açık — sistematik pattern ───────────────
+    if (dur.get("kasa_birikim_trendi") in ("uyari", "kritik")
+            and dur.get("sabah_kasasi") in ("uyari", "kritik")):
+        # İlgili personeli bul
+        birikim_p = next(
+            (k["personel"] for k in kontroller if k["kod"] == "kasa_birikim_trendi" and k["personel"]),
+            "İlgili personel"
+        )
+        _kor(
+            "birikim_ve_bugun_acik",
+            f"30 günlük birikim trendi + bugün de açık ({birikim_p})",
+            "uyari",
+            f"Aynı personel hem 30 günlük birikim pattern'ine giriyor hem bugün kasa açığı oluşturmuş. "
+            "Bu, 'her gün az al, tek seferinde çok değil' stratejisiyle uzun vadeli zimmet "
+            "yürütüldüğünü güçlü biçimde gösteriyor. Bugünkü açık bu pattern'in devamı.",
+            [
+                f"{birikim_p} her gün küçük miktarda kasa açığı oluşturuyor",
+                "Tek seferlik büyük bir eylem yerine düşük alarm eşiği altında kalan seri",
+                "Bugünkü açık aynı kişiye ait pattern ile örtüşüyor",
+            ],
+            "30 gün detaylı kasa dökümü + bugünkü açığı aynı dosyaya ekle + "
+            "birebir gözetleme başlat + CFO'ya bildir."
+        )
+
+    # ── 6. Evo anomali + kasa açık — bağımsız iki kaynak ────────────────────
+    if (dur.get("evo_teyit") in ("uyari", "kritik")
+            and dur.get("sabah_kasasi") in ("uyari", "kritik")
+            and dur.get("aksam_devir") != "kritik"):  # devir zaten kapsıyorsa tekrar etme
+        _kor(
+            "evo_ve_kasa_acik",
+            "Evo anomalisi ile kasa açığı aynı günde",
+            "uyari",
+            "Motor bir POS anomalisi tespit etti (kayıt dışı kullanım, sweethearting veya benzeri) "
+            "ve aynı gün sabah kasasında da açık var. İki bağımsız kontrol aynı güne işaret edince "
+            "tesadüf ihtimali düşer. Evo tanısı ve kasa açığının aynı kişiyle bağlantısı araştırılmalı.",
+            [
+                "POS anomalisi nakit kasa açığıyla doğrudan bağlantılı olabilir",
+                "Kayıt dışı satış → hem Evo'da iz bırakmadı hem kasada eksik kaldı",
+            ],
+            "Evo tanısına ve kasa açığına bak: aynı vardiya, aynı personel mi? "
+            "Birleşik soruşturma başlat."
+        )
+
+    # ── 7. Süt sapma + Evo anomali — içecek bazlı kayıt dışı ────────────────
+    if (dur.get("sut_kullanimi") in ("uyari", "kritik")
+            and dur.get("evo_teyit") in ("uyari", "kritik")
+            and dur.get("aksam_vardiya_bardak") != "uyari"):  # vardiya zaten kapsıyorsa tekrar etme
+        _kor(
+            "sut_ve_evo_anomali",
+            "Süt sapması Evo anomalisiyle aynı günde",
+            "uyari",
+            "Motor POS anomalisi tespit etmiş ve aynı gün süt de fazla kullanılmış. "
+            "Süt içecek bazlı kayıt dışı üretimin en somut izlerinden biri — "
+            "bardak ve POS girilmeden içecek yapılıp verildiğinde hem süt hem Evo etkilenir.",
+            [
+                "Kayıt dışı içecek üretimi — süt harcandı, POS atlandı",
+                "İki sinyal aynı müdahale noktasına işaret ediyor",
+            ],
+            "İçecek türü bazlı inceleme: hangi içecek hem süt yoğun hem POS anomalisiyle örtüşüyor?"
+        )
+
+    # ── 8. Çok sayıda kritik — koordineli eylem veya sistemik boşluk ─────────
+    kritik_kontroller = [k["ad"] for k in kontroller if k["durum"] == "kritik"]
+    if len(kritik_kontroller) >= 3:
+        _kor(
+            "cok_kritik_sinyal",
+            f"{len(kritik_kontroller)} kritik sinyal aynı anda — koordineli eylem şüphesi",
+            "kritik",
+            f"Aynı günde {len(kritik_kontroller)} farklı kontrol birden kritik seviyeye çıktı: "
+            f"{', '.join(kritik_kontroller)}. Bu kadar sayıda bağımsız sinyalin aynı anda "
+            "tetiklenmesi tek kişinin tek başına yapabileceği bir şey değildir. "
+            "Ya koordineli (birden fazla personel) ya da bir sistemik kontrol boşluğu var.",
+            [
+                "Birden fazla personel koordineli hareket ediyor",
+                "Kontrol mekanizmaları çökmüş — herkes fırsatçı davranıyor",
+                "Yönetimsel güven ortamı sistemik boşluk yaratmış",
+            ],
+            "Acil CFO bildirimi + dış denetçi + tüm vardiya personeli ayrı ayrı sorgulama. "
+            "Tek tek bakma — büyük resme bak."
+        )
+
+    # ── 9. Tüm kontroller temiz ───────────────────────────────────────────────
     if all(k["durum"] == "ok" for k in kontroller):
-        korelasyon.append("✅ Tüm kontroller geçti — beklenmedik bir çapraz sinyal yok. Gün temiz görünüyor.")
+        _kor(
+            "tum_temiz",
+            "Tüm 7 kontrol geçti — gün temiz",
+            "bilgi",
+            "Yedi bağımsız kontrol (kasa, devir, Evo, bardak devamlılığı, süt, vardiya bardak, "
+            "30 gün trendi) aynı sonuca ulaştı: anomali yok. Bu, sistemin beklendiği gibi "
+            "çalıştığını gösteriyor. Tek bir kontrol bile tesadüfen temiz çıkabilir — "
+            "ama yedisi birden temiz çıkması gerçekten sorun olmadığına işaret eder.",
+            [],
+            "Rutin aylık trend inceleme yeterli. "
+            "Kontrol frekansını düşürme — tespit edilemeyen düşük seviye şeyler olabilir."
+        )
 
     # ── Özet ────────────────────────────────────────────────────────────────
     ok_sayi     = sum(1 for x in kontroller if x["durum"] == "ok")

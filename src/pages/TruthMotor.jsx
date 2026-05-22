@@ -672,6 +672,85 @@ const TEYIT_STIL = {
   kritik: { bg: 'rgba(239,68,68,0.11)',   bord: 'rgba(239,68,68,0.40)',   renk: '#fca5a5' },
 };
 
+// Çapraz korelasyon satırı (expandable)
+function KorelasyonSatiri({ kor }) {
+  const [acik, setAcik] = useState(false);
+  const hasDetail = kor.anlam || (kor.nedenler && kor.nedenler.length > 0) || kor.aksiyon;
+
+  const SEVIYE_STIL = {
+    kritik: { bord: 'rgba(239,68,68,0.50)',   bg: 'rgba(239,68,68,0.08)',  renk: '#fca5a5' },
+    uyari:  { bord: 'rgba(245,158,11,0.45)',  bg: 'rgba(245,158,11,0.08)', renk: '#fbbf24' },
+    bilgi:  { bord: 'rgba(34,197,94,0.35)',   bg: 'rgba(34,197,94,0.06)',  renk: '#86efac' },
+  };
+  const ss = SEVIYE_STIL[kor.seviye] || SEVIYE_STIL.bilgi;
+
+  return (
+    <div style={{
+      borderRadius: 6,
+      background: ss.bg,
+      borderLeft: `3px solid ${ss.bord}`,
+      overflow: 'hidden',
+    }}>
+      {/* Ana satır */}
+      <div
+        onClick={() => hasDetail && setAcik(a => !a)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '8px 10px', cursor: hasDetail ? 'pointer' : 'default',
+          flexWrap: 'wrap',
+        }}
+      >
+        <span style={{ fontSize: 13, flex: '0 0 auto' }}>{kor.ikon || '🔗'}</span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: ss.renk, flex: 1 }}>
+          {kor.baslik}
+        </span>
+        {hasDetail && (
+          <span style={{ fontSize: 10, color: 'var(--text3)', flex: '0 0 auto' }}>
+            {acik ? '▲' : '▼'}
+          </span>
+        )}
+      </div>
+
+      {/* Expandable detay */}
+      {acik && hasDetail && (
+        <div style={{
+          padding: '10px 12px 12px 36px',
+          borderTop: `1px solid ${ss.bord}`,
+          background: 'rgba(0,0,0,0.08)',
+        }}>
+          {kor.anlam && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Ne anlama geliyor?
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text1)', lineHeight: 1.65 }}>{kor.anlam}</div>
+            </div>
+          )}
+          {kor.nedenler && kor.nedenler.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Olası nedenler
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: 'var(--text2)', lineHeight: 1.8 }}>
+                {kor.nedenler.map((n, ni) => <li key={ni}>{n}</li>)}
+              </ul>
+            </div>
+          )}
+          {kor.aksiyon && (
+            <div style={{
+              marginTop: 6, padding: '6px 10px', borderRadius: 4,
+              background: ss.bg, borderLeft: `2px solid ${ss.bord}`,
+              fontSize: 11, color: ss.renk, fontWeight: 600,
+            }}>
+              ⚡ {kor.aksiyon}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Tek bir kontrol satırı (expandable)
 function TeyitSatiri({ k }) {
   const [acik, setAcik] = useState(false);
@@ -851,24 +930,12 @@ function GunlukTeyitKarti({ tarih, subeler }) {
 
           {/* Çapraz korelasyon bölümü */}
           {korelasyon.length > 0 && (
-            <div style={{
-              marginTop: 14, paddingTop: 12,
-              borderTop: '1px solid var(--border)',
-            }}>
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                🔗 Çapraz Analiz
+                🔗 Çapraz Analiz — <span style={{ fontWeight: 400, textTransform: 'none' }}>satıra tıkla → açıklama</span>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {korelasyon.map((kor, ki) => (
-                  <div key={ki} style={{
-                    fontSize: 12, color: 'var(--text1)', lineHeight: 1.6,
-                    padding: '6px 10px', borderRadius: 5,
-                    background: 'rgba(120,120,120,0.07)',
-                    borderLeft: `2px solid ${kor.startsWith('🔴') ? '#fca5a5' : kor.startsWith('🟠') ? '#fbbf24' : 'rgba(34,197,94,0.4)'}`,
-                  }}>
-                    {kor}
-                  </div>
-                ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {korelasyon.map((kor, ki) => <KorelasyonSatiri key={ki} kor={kor} />)}
               </div>
             </div>
           )}
