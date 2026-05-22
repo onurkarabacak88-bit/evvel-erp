@@ -4326,6 +4326,14 @@ def sube_siparis_onay(sube_id: str, body: SiparisOnayBody):
         ku = dogrula_personel_panel_pin(cur, pid_in, pin)
         onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
         pid_panel = str(ku.get("id") or "").strip() or pid_in
+        # SORUN-1 FİX: check-then-insert zincirini advisory lock ile kilitle.
+        # Aynı şubeden eş zamanlı iki istek aynı anda hem "0 açık sipariş" okuyup
+        # hem insert yapamasın — biri lock alır, diğeri bekler.
+        # pg_try_advisory_xact_lock: transaction bitince otomatik serbest kalır.
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s))",
+            (f"siparis_onay_{sube_id}",),
+        )
         acik_n, _ref_oid, uyari_metni, ortak = sube_yeni_siparis_oncesi_cift_kontrol(cur, sube_id, temiz)
         if acik_n >= 1 and not bool(body.force_cift_siparis):
             raise HTTPException(

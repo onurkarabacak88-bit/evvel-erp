@@ -2348,16 +2348,44 @@ def merkez_tahsis_yap(cur: Any, siparis_talep_id: str,
         if adet == 0:
             return
         if adet > 0:
+            # FIX SORUN-2: Önce satırı FOR UPDATE ile kilitle, sonra güncelle.
+            # Eş zamanlı iki tahsis isteği artık sıralanır; biri bekler, diğeri önce biter.
             cur.execute(
                 """
                 INSERT INTO sube_depo_stok (sube_id, kalem_kodu, kalem_adi, mevcut_adet, rezerve_adet, min_stok)
-                VALUES (%s, %s, %s, 0, %s, 0)
-                ON CONFLICT (sube_id, kalem_kodu) DO UPDATE
-                SET rezerve_adet = COALESCE(sube_depo_stok.rezerve_adet, 0) + EXCLUDED.rezerve_adet,
-                    kalem_adi    = COALESCE(NULLIF(EXCLUDED.kalem_adi, ''), sube_depo_stok.kalem_adi),
-                    guncelleme   = NOW()
+                VALUES (%s, %s, %s, 0, 0, 0)
+                ON CONFLICT (sube_id, kalem_kodu) DO NOTHING
                 """,
-                (sube_id_local, kalem_kodu, kalem_adi, adet),
+                (sube_id_local, kalem_kodu, kalem_adi),
+            )
+            cur.execute(
+                """
+                SELECT mevcut_adet, COALESCE(rezerve_adet, 0) AS rezerve_adet
+                FROM sube_depo_stok
+                WHERE sube_id = %s AND kalem_kodu = %s
+                FOR UPDATE
+                """,
+                (sube_id_local, kalem_kodu),
+            )
+            stok_row = cur.fetchone()
+            mevcut = int((stok_row or {}).get("mevcut_adet") or 0)
+            mevcut_rezerve = int((stok_row or {}).get("rezerve_adet") or 0)
+            yeni_rezerve = mevcut_rezerve + adet
+            if yeni_rezerve > mevcut:
+                log.warning(
+                    "depo_rezerve_arttir: rezerve (%s) mevcut (%s) aşacak! "
+                    "depo=%s kalem=%s delta=%s — izin veriliyor ama uyarı var.",
+                    yeni_rezerve, mevcut, sube_id_local, kalem_kodu, adet,
+                )
+            cur.execute(
+                """
+                UPDATE sube_depo_stok
+                SET rezerve_adet = GREATEST(0, COALESCE(rezerve_adet, 0) + %s),
+                    kalem_adi    = COALESCE(NULLIF(%s, ''), kalem_adi),
+                    guncelleme   = NOW()
+                WHERE sube_id = %s AND kalem_kodu = %s
+                """,
+                (adet, kalem_adi, sube_id_local, kalem_kodu),
             )
         else:
             cur.execute(
@@ -2374,10 +2402,34 @@ def merkez_tahsis_yap(cur: Any, siparis_talep_id: str,
         if adet == 0:
             return
         if adet > 0:
+            # FIX SORUN-2: Merkez stok satırını FOR UPDATE ile kilitle.
+            # Eş zamanlı iki tahsis merkez stoğunu bağımsız okuyup üst üste yazamasın.
+            cur.execute(
+                """
+                SELECT mevcut_adet, COALESCE(rezerve_adet, 0) AS rezerve_adet
+                FROM merkez_stok_kart
+                WHERE kalem_kodu = %s
+                FOR UPDATE
+                """,
+                (kalem_kodu,),
+            )
+            mk_row = cur.fetchone()
+            if not mk_row:
+                log.warning("merkez_rezerve_arttir: kalem_kodu=%s merkez_stok_kart'ta yok", kalem_kodu)
+                return
+            mk_mevcut  = int((mk_row or {}).get("mevcut_adet") or 0)
+            mk_rezerve = int((mk_row or {}).get("rezerve_adet") or 0)
+            yeni_rezerve = mk_rezerve + adet
+            if yeni_rezerve > mk_mevcut:
+                log.warning(
+                    "merkez_rezerve_arttir: rezerve (%s) mevcut (%s) aşacak! "
+                    "kalem=%s delta=%s — izin veriliyor ama uyarı var.",
+                    yeni_rezerve, mk_mevcut, kalem_kodu, adet,
+                )
             cur.execute(
                 """
                 UPDATE merkez_stok_kart
-                SET rezerve_adet = COALESCE(rezerve_adet, 0) + %s,
+                SET rezerve_adet = GREATEST(0, COALESCE(rezerve_adet, 0) + %s),
                     guncelleme   = NOW()
                 WHERE kalem_kodu = %s
                 """,
