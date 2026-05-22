@@ -12049,6 +12049,181 @@ def ops_v2_bekleyen_siparisler(gun: int = Query(7, ge=1, le=30)):
 
 
 # ─────────────────────────────────────────────────────────────
+# SİPARİŞ BİRLEŞTİRME  (merkez kuyruğu çoklu seçim)
+# ─────────────────────────────────────────────────────────────
+
+class OpsSiparisBirlestirBody(BaseModel):
+    talep_idler: List[str]          # en az 2 talep id
+    not_aciklama: Optional[str] = None  # isteğe bağlı merkez notu
+
+
+@router.post("/siparis/birlestir")
+def ops_siparis_birlestir(body: OpsSiparisBirlestirBody):
+    """
+    Merkez kuyruğundaki 2+ bekleyen siparişi birleştirir.
+
+    Kurallar:
+    - Tüm talepler aynı sube_id'den olmalı
+    - Tüm talepler durum='bekliyor' ve henüz depoya yönlendirilmemiş olmalı
+      (hedef_depo_sube_id IS NULL)
+    - Aynı urun_id → adet toplanır; urun_id yoksa urun_ad.lower() eşleşir
+    - Eski talepler durum='iptal' yapılır, not olarak yeni id yazılır
+    - Yeni birleşik siparis_talep kaydı döner
+    """
+    log = logging.getLogger(__name__)
+    idler = [str(x).strip() for x in (body.talep_idler or []) if str(x).strip()]
+    if len(idler) < 2:
+        raise HTTPException(400, "En az 2 sipariş seçilmeli")
+    if len(idler) > 20:
+        raise HTTPException(400, "En fazla 20 sipariş birleştirilebilir")
+
+    with db() as (conn, cur):
+        # Kilitle ve veri çek
+        placeholders = ",".join(["%s"] * len(idler))
+        cur.execute(
+            f"""
+            SELECT id, sube_id, durum, kalemler,
+                   COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS hedef_depo_sube_id
+            FROM siparis_talep
+            WHERE id IN ({placeholders})
+            FOR UPDATE
+            """,
+            tuple(idler),
+        )
+        rows = cur.fetchall() or []
+        bulunan_idler = {str(r["id"]) for r in rows}
+        eksik = set(idler) - bulunan_idler
+        if eksik:
+            raise HTTPException(404, f"Bulunamayan talep(ler): {', '.join(sorted(eksik))}")
+
+        # Validasyon
+        sube_id_set = {str(r["sube_id"] or "") for r in rows}
+        if len(sube_id_set) > 1:
+            raise HTTPException(400, "Birleştirilecek siparişler aynı şubeden olmalı")
+
+        for r in rows:
+            if str(r.get("durum") or "") != "bekliyor":
+                raise HTTPException(
+                    400,
+                    f"Talep #{str(r['id'])[:8]} birleştirilemez — durumu: {r.get('durum')}"
+                )
+            hedef = str(r.get("hedef_depo_sube_id") or "").strip()
+            if hedef:
+                raise HTTPException(
+                    400,
+                    f"Talep #{str(r['id'])[:8]} zaten depoya yönlendirilmiş ({hedef}) — birleştirilemez"
+                )
+
+        sube_id = sube_id_set.pop()
+
+        # Şube adını al
+        cur.execute("SELECT ad FROM subeler WHERE id=%s", (sube_id,))
+        sr = cur.fetchone()
+        sube_adi = str(sr["ad"]) if sr else sube_id
+
+        # Kalemleri birleştir
+        # Öncelik: urun_id (varsa), yoksa urun_ad.lower()
+        bilesim: Dict[str, Dict] = {}  # anahtar → kalem dict
+        for r in rows:
+            kalemler_raw = r.get("kalemler") or []
+            if isinstance(kalemler_raw, str):
+                try:
+                    kalemler_raw = json.loads(kalemler_raw)
+                except Exception:
+                    kalemler_raw = []
+            if not isinstance(kalemler_raw, list):
+                kalemler_raw = []
+
+            for k in kalemler_raw:
+                if not isinstance(k, dict):
+                    continue
+                adet = max(0, int(k.get("adet") or k.get("istenen_adet") or 0))
+                if adet <= 0:
+                    continue
+
+                uid = str(k.get("urun_id") or "").strip()
+                urun_ad = str(k.get("urun_ad") or k.get("kalem_kodu") or "").strip()
+                kalem_kodu = str(k.get("kalem_kodu") or "").strip()
+
+                # Anahtar seç
+                anahtar = uid if uid else urun_ad.lower()
+                if not anahtar:
+                    continue
+
+                if anahtar in bilesim:
+                    bilesim[anahtar]["adet"] += adet
+                else:
+                    bilesim[anahtar] = {
+                        "urun_id": uid or None,
+                        "urun_ad": urun_ad,
+                        "kalem_kodu": kalem_kodu or None,
+                        "adet": adet,
+                        "kategori_kod": str(k.get("kategori_kod") or k.get("kategori") or "").strip() or None,
+                    }
+
+        kalem_listesi = list(bilesim.values())
+        if not kalem_listesi:
+            raise HTTPException(400, "Birleştirilecek siparişlerde geçerli kalem bulunamadı")
+
+        # Yeni birleşik sipariş oluştur
+        import uuid as _uuid
+        yeni_id = str(_uuid.uuid4())
+        orijinal_idler_str = ", ".join(f"#{str(i)[:8]}" for i in idler)
+        birlestir_notu = (body.not_aciklama or "").strip() or None
+        sistem_notu = f"Birleştirildi: {len(idler)} sipariş ({orijinal_idler_str})"
+        tam_not = f"{birlestir_notu} | {sistem_notu}" if birlestir_notu else sistem_notu
+
+        cur.execute(
+            """
+            INSERT INTO siparis_talep
+                (id, sube_id, tarih, durum, personel_id, personel_ad,
+                 bildirim_saati, not_aciklama, kalemler)
+            VALUES (%s, %s, CURRENT_DATE, 'bekliyor', %s, %s, %s, %s, %s::jsonb)
+            """,
+            (
+                yeni_id,
+                sube_id,
+                "merkez",
+                "Merkez — sipariş birleştirme",
+                _now_tr().strftime("%H:%M:%S"),
+                tam_not,
+                json.dumps(kalem_listesi, ensure_ascii=False),
+            ),
+        )
+
+        # Eski siparişleri iptal et
+        iptal_notu = f"Birleştirildi → #{yeni_id[:8]}"
+        cur.execute(
+            f"""
+            UPDATE siparis_talep
+            SET durum = 'iptal',
+                not_aciklama = CASE
+                    WHEN not_aciklama IS NOT NULL AND TRIM(not_aciklama) != ''
+                    THEN not_aciklama || ' | ' || %s
+                    ELSE %s
+                END
+            WHERE id IN ({placeholders})
+            """,
+            (iptal_notu, iptal_notu) + tuple(idler),
+        )
+
+        conn.commit()
+        log.info(
+            "siparis_birlestir: sube=%s, yeni=%s, birlesik=%s, kalem=%d",
+            sube_id, yeni_id, idler, len(kalem_listesi),
+        )
+
+    return {
+        "yeni_talep_id": yeni_id,
+        "sube_id": sube_id,
+        "sube_adi": sube_adi,
+        "kalem_sayisi": len(kalem_listesi),
+        "birlesik_talep_sayisi": len(idler),
+        "kalemler": kalem_listesi,
+    }
+
+
+# ─────────────────────────────────────────────────────────────
 # ANALİTİK DASHBOARD  (motor_analitik_olay + siparis_talep)
 # ─────────────────────────────────────────────────────────────
 

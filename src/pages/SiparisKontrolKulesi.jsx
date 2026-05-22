@@ -257,6 +257,11 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
   const [kuyrukBusy, setKuyrukBusy] = useState(null);
   const [islemSonuc, setIslemSonuc] = useState(null); // { basarili, mesaj }
 
+  // ── Birleştirme seçimi ──────────────────────────────────────
+  const [birlestirSecili, setBirlestirSecili] = useState({}); // talep_id → sube_id
+  const [birlestirNot, setBirlestirNot] = useState('');
+  const [birlestirBusy, setBirlestirBusy] = useState(false);
+
   const [uyumsuzluklar, setUyumsuzluklar] = useState([]);
   const [urunArama, setUrunArama] = useState('');
   const [urunGecmis, setUrunGecmis] = useState(null);
@@ -451,6 +456,54 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
   const islemSonucGoster = useCallback((basarili, mesaj) => {
     setIslemSonuc({ basarili, mesaj });
   }, []);
+
+  // Birleştirme işlemi
+  const secilenIdler = Object.keys(birlestirSecili);
+  const secilenSubeIdler = [...new Set(Object.values(birlestirSecili))];
+  const birlestirAktif = secilenIdler.length >= 2 && secilenSubeIdler.length === 1;
+
+  const birlestirToggle = (talepId, subeId) => {
+    setBirlestirSecili((prev) => {
+      const next = { ...prev };
+      if (next[talepId]) {
+        delete next[talepId];
+      } else {
+        next[talepId] = subeId;
+      }
+      return next;
+    });
+  };
+
+  const birlestirTemizle = () => {
+    setBirlestirSecili({});
+    setBirlestirNot('');
+  };
+
+  const birlestirGonder = async () => {
+    if (!birlestirAktif) return;
+    if (!window.confirm(`${secilenIdler.length} sipariş tek siparişe birleştirilecek. Eski siparişler iptal edilir. Devam?`)) return;
+    setBirlestirBusy(true);
+    try {
+      const r = await api('/ops/siparis/birlestir', {
+        method: 'POST',
+        body: {
+          talep_idler: secilenIdler,
+          not_aciklama: birlestirNot.trim() || null,
+        },
+      });
+      birlestirTemizle();
+      publishGlobalDataRefresh('siparis-birlestir');
+      islemSonucGoster(
+        true,
+        `${r.birlesik_talep_sayisi} sipariş birleştirildi → ${r.kalem_sayisi} kalem · Yeni: #${String(r.yeni_talep_id).slice(-8)}`
+      );
+      yukle();
+    } catch (e) {
+      islemSonucGoster(false, e.message || 'Birleştirme başarısız');
+    } finally {
+      setBirlestirBusy(false);
+    }
+  };
 
   const depoyaGonder = async (talepId) => {
     const depo = kuyrukDepo[talepId];
@@ -741,32 +794,107 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {bekleyenListe.length > 0 && (
                 <div className="card" style={{ padding: 12 }}>
-                  <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>
-                    📬 Merkez kuyruğu ({bekleyenListe.length})
+                  {/* Başlık + birleştir paneli */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, flex: 1 }}>
+                      📬 Merkez kuyruğu ({bekleyenListe.length})
+                    </div>
+                    {secilenIdler.length === 0 && (
+                      <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                        ☑ Birleştirmek için kutucuklara tıklayın
+                      </span>
+                    )}
+                    {secilenIdler.length > 0 && !birlestirAktif && (
+                      <span style={{ fontSize: 11, color: 'var(--warn)' }}>
+                        ⚠ Birleştirme için aynı şubeden en az 2 sipariş seçin
+                      </span>
+                    )}
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 420, overflowY: 'auto' }}>
-                    {bekleyenListe.map((sip) => (
-                      <div
-                        key={sip.id}
-                        data-ops-siparis-talep={sip.id}
-                        style={{
-                          border: '1px solid var(--border)',
-                          borderRadius: 8,
-                          padding: 10,
-                          background: 'var(--bg)',
-                        }}
-                      >
-                        <div style={{ fontWeight: 600, fontSize: 13 }}>{sip.sube_adi}</div>
-                        <SiparisGonderenSatiri kayit={sip} />
-                        <div style={{ fontSize: 11, color: 'var(--text3)' }}>{kisaTs(sip.olusturma)} · {kalemOzet(sip.kalemler)}</div>
-                        <KuyrukYonlendirmeKarti
+
+                  {/* Birleştir aksiyonu */}
+                  {birlestirAktif && (
+                    <div style={{
+                      background: 'rgba(59,130,246,0.1)',
+                      border: '1px solid rgba(59,130,246,0.3)',
+                      borderRadius: 8,
+                      padding: '10px 12px',
+                      marginBottom: 10,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 8,
+                    }}>
+                      <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--accent)' }}>
+                        🔗 {secilenIdler.length} sipariş birleştirilecek
+                      </div>
+                      <input
+                        className="input"
+                        placeholder="Birleştirme notu (isteğe bağlı)"
+                        value={birlestirNot}
+                        onChange={(e) => setBirlestirNot(e.target.value)}
+                        style={{ fontSize: 12 }}
+                      />
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          disabled={birlestirBusy}
+                          onClick={birlestirGonder}
+                          style={{ flex: 1 }}
+                        >
+                          {birlestirBusy ? '…' : `🔗 Birleştir (${secilenIdler.length})`}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={birlestirTemizle}
+                        >
+                          İptal
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 480, overflowY: 'auto' }}>
+                    {bekleyenListe.map((sip) => {
+                      const tid = String(sip.id || '');
+                      const isSecili = Boolean(birlestirSecili[tid]);
+                      // Farklı şubeden seçim varsa bu şubeyi pasif göster
+                      const farkliSube = secilenSubeIdler.length > 0 &&
+                        !secilenSubeIdler.includes(String(sip.sube_id || ''));
+                      return (
+                        <div
+                          key={sip.id}
+                          data-ops-siparis-talep={sip.id}
+                          style={{
+                            border: `1px solid ${isSecili ? 'rgba(59,130,246,0.5)' : 'var(--border)'}`,
+                            borderRadius: 8,
+                            padding: 10,
+                            background: isSecili ? 'rgba(59,130,246,0.06)' : 'var(--bg)',
+                            opacity: farkliSube ? 0.5 : 1,
+                            transition: 'border-color .15s, background .15s, opacity .15s',
+                          }}
+                        >
+                          {/* Checkbox + başlık */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                            <input
+                              type="checkbox"
+                              checked={isSecili}
+                              disabled={farkliSube}
+                              onChange={() => birlestirToggle(tid, String(sip.sube_id || ''))}
+                              style={{ width: 16, height: 16, cursor: farkliSube ? 'not-allowed' : 'pointer', flexShrink: 0 }}
+                              title={farkliSube ? 'Farklı şube — birleştirilemez' : 'Birleştirmek için seç'}
+                            />
+                            <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>{sip.sube_adi}</span>
+                          </div>
+                          <SiparisGonderenSatiri kayit={sip} />
+                          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>
+                            {kisaTs(sip.olusturma)} · {kalemOzet(sip.kalemler)}
+                          </div>
+                          <KuyrukYonlendirmeKarti
                             sip={sip}
                             depolar={depolar}
-                            mod={kuyrukMod[String(sip.id || '')] || 'depo'}
-                            onModChange={(m) => {
-                              const tid = String(sip.id || '');
-                              setKuyrukMod((p) => ({ ...p, [tid]: m }));
-                            }}
+                            mod={kuyrukMod[tid] || 'depo'}
+                            onModChange={(m) => setKuyrukMod((p) => ({ ...p, [tid]: m }))}
                             kuyrukDepo={kuyrukDepo}
                             setKuyrukDepo={setKuyrukDepo}
                             kuyrukTalimat={kuyrukTalimat}
@@ -782,8 +910,9 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                             toptanciyaYolla={toptanciyaYolla}
                             kalemIstenenAdet={kalemIstenenAdet}
                           />
-                      </div>
-                    ))}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
