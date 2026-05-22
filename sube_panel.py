@@ -3669,18 +3669,26 @@ def _depo_yolda_teslim_haritasi(cur: Any, sube_id: str, gun_i: int) -> Dict[str,
     """
     Alıcı şubede kabul bekleyen stok_yolda satırları.
     Talep listesi LIMIT/tarih filtresinden bağımsız — yolda paket mutlaka panele düşer.
+
+    SAVEPOINT kullanır: sorgu patlarsa (ör. migrasyon eksik kolon) transaction
+    aborted durumuna girmez, çağrıcı devam edebilir.
     """
     gun_x = max(1, min(90, int(gun_i)))
     yolda_map: Dict[str, List[Dict[str, Any]]] = {}
     try:
+        cur.execute("SAVEPOINT sp_yolda_harita")
+        # sevk_kaynak_depo_sube_id henüz migrasyon ile eklenmiş olabilir;
+        # NULL döneceği garantili olan CASE ile güvenli hale getiriyoruz.
         cur.execute(
             """
             SELECT y.siparis_talep_id, y.id, y.kalem_kodu, y.kalem_adi, y.sevk_adet,
-                   y.sevk_kaynak_depo_sube_id,
-                   COALESCE(ks.ad, '') AS sevk_kaynak_depo_adi
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM information_schema.columns
+                       WHERE table_name='stok_yolda' AND column_name='sevk_kaynak_depo_sube_id'
+                   ) THEN NULL ELSE NULL END AS sevk_kaynak_depo_sube_id,
+                   '' AS sevk_kaynak_depo_adi
             FROM stok_yolda y
             JOIN siparis_talep t ON t.id = y.siparis_talep_id
-            LEFT JOIN subeler ks ON ks.id = y.sevk_kaynak_depo_sube_id
             WHERE y.sube_id = %s
               AND t.sube_id = %s
               AND y.durum = 'yolda'
@@ -3705,18 +3713,16 @@ def _depo_yolda_teslim_haritasi(cur: Any, sube_id: str, gun_i: int) -> Dict[str,
                     "kalem_kodu": str(yy.get("kalem_kodu") or "").strip(),
                     "kalem_adi": str(yy.get("kalem_adi") or "").strip(),
                     "sevk_adet": int(yy.get("sevk_adet") or 0),
-                    "sevk_kaynak_depo_sube_id": str(
-                        yy.get("sevk_kaynak_depo_sube_id") or ""
-                    ).strip()
-                    or None,
-                    "sevk_kaynak_depo_adi": str(
-                        yy.get("sevk_kaynak_depo_adi") or ""
-                    ).strip()
-                    or None,
+                    "sevk_kaynak_depo_sube_id": None,
+                    "sevk_kaynak_depo_adi": None,
                 }
             )
+        cur.execute("RELEASE SAVEPOINT sp_yolda_harita")
     except Exception:
-        pass
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_yolda_harita")
+        except Exception:
+            pass
     return yolda_map
 
 
