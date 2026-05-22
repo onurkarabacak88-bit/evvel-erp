@@ -862,19 +862,44 @@ function GunlukTeyitKarti({ tarih, subeler }) {
     if (!secSubeId && subeler.length > 0) setSecSubeId(subeler[0].id);
   }, [subeler, secSubeId]);
 
+  const [gbYukleniyor, setGbYukleniyor] = useState(false);
+  const [gbMesaj, setGbMesaj]           = useState('');
+
   const yukle = useCallback(async () => {
     if (!secSubeId || !tarih) return;
-    setYukleniyor(true); setHata('');
+    setYukleniyor(true); setHata(''); setGbMesaj('');
     try {
-      const d = await fetchJson(`${API}/api/ops/truth/gunluk-teyit/${secSubeId}/${tarih}`);
+      // tam-analiz: teyit + senaryo + CFO + sinyal_vektor hepsini döner
+      const d = await fetchJson(`${API}/api/ops/truth/tam-analiz/${secSubeId}/${tarih}`);
       setVeri(d);
     } catch (e) {
-      setHata(String(e.message || e));
-      setVeri(null);
+      // fallback: eski endpoint
+      try {
+        const d = await fetchJson(`${API}/api/ops/truth/gunluk-teyit/${secSubeId}/${tarih}`);
+        setVeri(d);
+      } catch (e2) {
+        setHata(String(e2.message || e2));
+        setVeri(null);
+      }
     } finally { setYukleniyor(false); }
   }, [secSubeId, tarih]);
 
   useEffect(() => { yukle(); }, [yukle]);
+
+  const geriBildirimGonder = useCallback(async (kategori, gercekSenaryo = null) => {
+    if (!secSubeId || !tarih) return;
+    setGbYukleniyor(true); setGbMesaj('');
+    try {
+      const r = await fetchJson(`${API}/api/ops/truth/geri-bildirim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sube_id: secSubeId, tarih, kategori, gercek_senaryo: gercekSenaryo }),
+      });
+      setGbMesaj(r?.mesaj || 'Kaydedildi ✓');
+    } catch (e) {
+      setGbMesaj('Hata: ' + String(e.message || e));
+    } finally { setGbYukleniyor(false); }
+  }, [secSubeId, tarih]);
 
   const genel      = veri?.genel_durum || 'ok';
   const kontroller = veri?.kontroller  || [];
@@ -885,6 +910,10 @@ function GunlukTeyitKarti({ tarih, subeler }) {
   const kritikSayi = veri?.kritik_sayi ?? 0;
   const uyariSayi  = veri?.uyari_sayi  ?? 0;
   const genelStil  = TEYIT_STIL[genel] || TEYIT_STIL.ok;
+
+  // Senaryo + CFO verisi
+  const senaryo   = veri?.senaryo   || null;
+  const cfo       = veri?.cfo       || null;
 
   return (
     <div style={{ margin: '0 0 20px' }}>
@@ -936,6 +965,118 @@ function GunlukTeyitKarti({ tarih, subeler }) {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                 {korelasyon.map((kor, ki) => <KorelasyonSatiri key={ki} kor={kor} />)}
+              </div>
+            </div>
+          )}
+
+          {/* Senaryo Olasılıkları */}
+          {senaryo?.olasiliklar && Object.keys(senaryo.olasiliklar).length > 0 && (
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                🧠 Senaryo Motoru — Ne Olmuş Olabilir?
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {Object.entries(senaryo.olasiliklar)
+                  .sort((a, b) => b[1].yuzde - a[1].yuzde)
+                  .map(([key, s]) => {
+                    const enYuksek = key === senaryo.en_senaryo;
+                    const yuzde    = s.yuzde || 0;
+                    const barRenk  = enYuksek
+                      ? (yuzde >= 50 ? 'rgba(239,68,68,0.75)' : 'rgba(245,158,11,0.75)')
+                      : 'rgba(100,116,139,0.35)';
+                    return (
+                      <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 180, fontSize: 11, color: enYuksek ? 'var(--text1)' : 'var(--text3)', fontWeight: enYuksek ? 700 : 400, flexShrink: 0 }}>
+                          {enYuksek ? '▶ ' : '  '}{s.ad}
+                        </div>
+                        <div style={{ flex: 1, height: 10, background: 'rgba(255,255,255,0.06)', borderRadius: 5, overflow: 'hidden' }}>
+                          <div style={{ width: `${yuzde}%`, height: '100%', background: barRenk, borderRadius: 5, transition: 'width 0.4s ease' }} />
+                        </div>
+                        <div style={{ width: 34, fontSize: 11, textAlign: 'right', color: enYuksek ? 'var(--text1)' : 'var(--text3)', fontWeight: enYuksek ? 700 : 400 }}>
+                          %{yuzde}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+
+          {/* CFO Anlatısı */}
+          {cfo?.anlati && (
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                💬 CFO Analizi
+              </div>
+              {/* Başlık satırı (ilk satır) + gövde ayrı renklendir */}
+              {(() => {
+                const satirlar = (cfo.anlati || '').split('\n');
+                const baslik   = satirlar[0] || '';
+                const govde    = satirlar.slice(2).join('\n').trim();
+                return (
+                  <>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text1)', marginBottom: 6 }}>
+                      {baslik}
+                    </div>
+                    {govde && (
+                      <div style={{
+                        fontSize: 12, color: 'var(--text2)', lineHeight: 1.65,
+                        background: 'rgba(255,255,255,0.04)', borderRadius: 6,
+                        padding: '10px 12px', whiteSpace: 'pre-wrap',
+                      }}>
+                        {govde}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+              {/* Aksiyon kutusu */}
+              {cfo.aksiyon && (
+                <div style={{
+                  marginTop: 8, padding: '8px 12px', borderRadius: 6, fontSize: 12,
+                  background: 'rgba(245,158,11,0.10)', borderLeft: '3px solid rgba(245,158,11,0.5)',
+                  color: '#fbbf24',
+                }}>
+                  ⚡ <strong>Aksiyon:</strong> {cfo.aksiyon}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Geri Bildirim Butonları */}
+          {senaryo?.en_senaryo && (
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                📝 Bu Analizi Değerlendir
+                <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 6 }}>— Motor buradan öğrenir</span>
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                <button
+                  className="btn btn-sm"
+                  disabled={gbYukleniyor}
+                  onClick={() => geriBildirimGonder('onaylandi', senaryo.en_senaryo)}
+                  style={{ fontSize: 11, background: 'rgba(34,197,94,0.15)', borderColor: 'rgba(34,197,94,0.4)', color: '#86efac' }}
+                >
+                  ✅ Doğru Tespit
+                </button>
+                <button
+                  className="btn btn-sm"
+                  disabled={gbYukleniyor}
+                  onClick={() => geriBildirimGonder('yanlis_alarm')}
+                  style={{ fontSize: 11, background: 'rgba(100,116,139,0.15)', borderColor: 'rgba(100,116,139,0.4)', color: 'var(--text3)' }}
+                >
+                  ❌ Yanlış Alarm
+                </button>
+                <button
+                  className="btn btn-sm"
+                  disabled={gbYukleniyor}
+                  onClick={() => geriBildirimGonder('arastirildi')}
+                  style={{ fontSize: 11, background: 'rgba(245,158,11,0.12)', borderColor: 'rgba(245,158,11,0.4)', color: '#fbbf24' }}
+                >
+                  🔍 Soruşturma Başlatıldı
+                </button>
+                {gbYukleniyor && <span style={{ fontSize: 11, color: 'var(--text3)' }}>kaydediliyor…</span>}
+                {gbMesaj && <span style={{ fontSize: 11, color: '#86efac' }}>{gbMesaj}</span>}
               </div>
             </div>
           )}

@@ -8165,3 +8165,813 @@ def olay_ozeti_uret(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
             "sprint_i_riskli": len(riskli_i),
         },
     }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  KATMAN 2: SENARYO MOTORU — Bayesian olasılık hesabı
+#  KATMAN 3: CFO SESİ — Doğal Türkçe anlatı
+#  KATMAN 4: GÖZLEM KAYIT + ÖĞRENİM GERİ BİLDİRİMİ
+#
+#  Araştırma kaynakları:
+#    - ACFE 2024 Report to the Nations (baz oranlar)
+#    - NRF Loss Prevention Research (sinyal ağırlıkları)
+#    - ResearchGate: "Detecting Sweethearting in Retail" (sweethearting sinyalleri)
+#    - University of Florida: micro-skimming fark edilmeme süresi ~18 ay
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── DDL ─────────────────────────────────────────────────────────────────────
+_GOZLEM_DDL = """
+CREATE TABLE IF NOT EXISTS truth_gozlem (
+    id                      SERIAL PRIMARY KEY,
+    sube_id                 TEXT        NOT NULL,
+    tarih                   DATE        NOT NULL,
+    sinyal_vektor           JSONB       NOT NULL DEFAULT '{}',
+    senaryo_olasiliklari    JSONB                DEFAULT '{}',
+    en_olasilik_senaryo     TEXT,
+    en_olasilik_puan        FLOAT,
+    gercek_senaryo          TEXT,
+    olusturma_ts            TIMESTAMPTZ          DEFAULT NOW(),
+    UNIQUE (sube_id, tarih)
+);
+"""
+
+_GERI_BILDIRIM_DDL = """
+CREATE TABLE IF NOT EXISTS truth_geri_bildirim (
+    id                  SERIAL      PRIMARY KEY,
+    gozlem_id           INT         REFERENCES truth_gozlem(id) ON DELETE CASCADE,
+    sube_id             TEXT        NOT NULL,
+    tarih               DATE        NOT NULL,
+    kategori            TEXT        NOT NULL,
+    gercek_senaryo      TEXT,
+    notlar              TEXT,
+    giren_personel_id   TEXT,
+    ts                  TIMESTAMPTZ DEFAULT NOW()
+);
+"""
+
+# ── Senaryo tanımları ────────────────────────────────────────────────────────
+#
+#  agirlik_base  : ACFE/NRF baz oran (prior probability).
+#  sinyaller     : sinyal_vektor anahtar → log-skor katkısı.
+#                  Pozitif = bu sinyal görününce senaryo olası ↑
+#                  Negatif = görününce olası ↓
+#
+SENARYOLAR: Dict[str, Dict] = {
+
+    "insan_sayim_hatasi": {
+        "ad":           "İnsan / Sayım Hatası",
+        "aciklama":     "Kasıtsız sayım veya giriş hatası — personel dürüst, rakam yanlış",
+        "agirlik_base": 0.38,
+        "sinyaller": {
+            "fark_abs_kucuk":       +2.0,
+            "fark_abs_orta":        -0.5,
+            "fark_abs_buyuk":       -2.5,
+            "birikim_yok":          +1.5,
+            "birikim_var":          -3.0,
+            "evo_uyumlu":           +1.0,
+            "devir_tani_temiz":     +1.0,
+            "devir_tani_var":       -2.5,
+            "bardak_acik_buyuk":    -1.0,
+            "gece_bardak_sisirdi":  -2.0,
+        },
+    },
+
+    "n1_sisirme": {
+        "ad":           "N1 Şişirme (Akşam Zimmet)",
+        "aciklama":     "Akşamcı devir beyanını şişirdi — kasadan para aldı, rakamı büyük gösterdi",
+        "agirlik_base": 0.22,
+        "sinyaller": {
+            "n1_buyuk_n2_den":      +4.0,
+            "fark_abs_orta":        +1.5,
+            "fark_abs_buyuk":       +2.0,
+            "fark_abs_kucuk":       -1.5,
+            "bardak_acik_var":      +2.0,
+            "evo_uyumlu":           +0.5,
+            "devir_tani_var":       +3.0,
+            "birikim_var":          +1.0,
+            "gece_bardak_sisirdi":  +2.0,
+        },
+    },
+
+    "sweethearting": {
+        "ad":           "Sweethearting (Bedava Servis)",
+        "aciklama":     "Ürün bedelsiz verildi — kasa normal ama stok eridi; nakit değil ürün çalındı",
+        "agirlik_base": 0.11,
+        "sinyaller": {
+            "kasa_dengede":         +2.0,
+            "bardak_acik_var":      +2.5,
+            "sut_sapma_yuksek":     +2.0,
+            "evo_ikram_artis":      +2.5,
+            "evo_iptal_artis":      +1.5,
+            "fark_abs_kucuk":       +1.0,
+            "n1_buyuk_n2_den":      -2.0,
+            "birikim_var":          +0.5,
+            "vardiya_bardak_acik":  +2.0,
+        },
+    },
+
+    "stok_hirsizligi": {
+        "ad":           "Stok / Ürün Hırsızlığı",
+        "aciklama":     "Nakit değil ürün alındı — bardak/stok kayboldu ama kasa tutarlı",
+        "agirlik_base": 0.07,
+        "sinyaller": {
+            "kasa_dengede":         +2.5,
+            "bardak_acik_buyuk":    +3.0,
+            "gece_bardak_sisirdi":  +2.5,
+            "evo_uyumlu":           +1.0,
+            "sut_sapma_yuksek":     +1.5,
+            "n1_buyuk_n2_den":      -1.5,
+            "birikim_yok":          +0.5,
+            "vardiya_bardak_acik":  +2.0,
+        },
+    },
+
+    "kucuk_tutar_birikim": {
+        "ad":           "Küçük Tutarlı Birikim (Micro-skimming)",
+        "aciklama":     "Her gün küçük tutarda kasa açığı — gün içi fark edilmez, 30 günde birikir",
+        "agirlik_base": 0.14,
+        "sinyaller": {
+            "birikim_var":          +5.0,
+            "birikim_cok_kisi":     +1.5,
+            "fark_abs_kucuk":       +2.0,
+            "fark_abs_orta":        +0.5,
+            "fark_abs_buyuk":       -2.0,
+            "kasa_dengede":         -1.0,
+            "devir_tani_temiz":     +0.5,
+            "evo_uyumlu":           +1.0,
+        },
+    },
+
+    "koluzyon": {
+        "ad":           "Kolüzyon (İki Personel Anlaşması)",
+        "aciklama":     "Sabahçı ve akşamcı koordineli — her sinyal küçük ama birlikte pattern var",
+        "agirlik_base": 0.04,
+        "sinyaller": {
+            "birikim_cok_kisi":     +4.0,
+            "birikim_var":          +2.0,
+            "fark_abs_kucuk":       +1.5,
+            "tum_sinyaller_zayif":  +3.0,
+            "n1_buyuk_n2_den":      -1.0,
+            "devir_tani_var":       -1.0,
+            "evo_uyumlu":           +1.0,
+        },
+    },
+
+    "urun_bozulma_fire": {
+        "ad":           "Ürün Bozulması / Fire",
+        "aciklama":     "Stok açığı fire kaydı veya bozulmayla açıklanıyor — kasıt yok",
+        "agirlik_base": 0.04,
+        "sinyaller": {
+            "fire_kaydi_var":       +5.0,
+            "bardak_acik_var":      +1.0,
+            "kasa_dengede":         +1.5,
+            "birikim_yok":          +1.0,
+            "devir_tani_temiz":     +1.0,
+            "n1_buyuk_n2_den":      -2.0,
+        },
+    },
+}
+
+
+# ── Sinyal vektörü çıkarma ───────────────────────────────────────────────────
+
+def _sinyal_vektor_cikar(
+    teyit: Dict[str, Any],
+    sprint_g: Dict[str, Any],
+    sprint_h: Dict[str, Any],
+    sprint_i: Dict[str, Any],
+    sprint_j: Dict[str, Any],
+    evo_tani: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Tüm sprint çıktılarından normalize sinyal vektörü üret."""
+
+    kontroller = teyit.get("kontroller") or []
+
+    kasa_k    = next((k for k in kontroller if k.get("kod") == "sabah_kasasi"), {})
+    devir_k   = next((k for k in kontroller if k.get("kod") == "aksam_devir"),  {})
+    gece_k    = next((k for k in kontroller if k.get("kod") == "gece_bardak"),  {})
+    sut_k     = next((k for k in kontroller if k.get("kod") == "sut_sapma"),    {})
+    vardiya_k = next((k for k in kontroller if k.get("kod") == "vardiya_bardak"), {})
+    birikim_k = next((k for k in kontroller if k.get("kod") == "birikim"),      {})
+
+    kasa_durum    = kasa_k.get("durum", "ok")
+    devir_durum   = devir_k.get("durum", "ok")
+    gece_durum    = gece_k.get("durum", "ok")
+    vardiya_durum = vardiya_k.get("durum", "ok")
+    birikim_durum = birikim_k.get("durum", "ok")
+
+    # N1/N2 fark (sprint_g'den)
+    fark     = float(sprint_g.get("fark_n1_n2", 0) or 0)
+    fark_abs = abs(fark)
+
+    # Birikim detayı
+    riskli_personeller  = sprint_i.get("riskli_personeller") or []
+    birikim_kisi_sayisi = len(riskli_personeller)
+
+    # Evo sinyal
+    evo_anomali_var = bool(evo_tani) and evo_tani not in ("UYUMLU", "YETERSIZ_VERI")
+    evo_iptal_artis = evo_tani in ("ZIMMET_IPTAL_MANIPULASYON", "IPTAL_SUPHE")
+    evo_ikram_artis = evo_tani in ("SWEETHEARTING_SINYAL", "STOK_KACAGI_BEYANSIZ",
+                                   "IKRAM_EVO_TEYIT", "IKRAM_SURDURULEN")
+    fire_kaydi_var  = evo_tani in ("BELGELENMIS_IADE", "BELGELENMIS_FIRE")
+
+    # Devir tani tetiklendi mi
+    devir_tani_var = any(
+        str(sprint_g.get(alan) or "") in (
+            "AKSAM_KASAYI_SISIRDI", "SABAH_ZIMMET_SUPHE", "IPTAL_SUPHE"
+        )
+        for alan in ("tani", "sabah_zimmet_tani")
+    )
+
+    # Bardak sinyalleri
+    gece_kayip       = int(sprint_j.get("toplam_kayip_adet") or 0)
+    bardak_acik_var  = gece_kayip > 0 or gece_durum in ("uyari", "kritik")
+    bardak_acik_buyuk = gece_kayip > 10 or gece_durum == "kritik"
+    gece_state       = gece_k.get("state_key", "")
+    gece_bardak_sisirdi = "sisirdi" in gece_state
+
+    # Süt sapma yüzdesi
+    sut_sapma_yuz = 0.0
+    try:
+        sut_deger = str(sut_k.get("deger", ""))
+        if "%" in sut_deger:
+            pct_raw = sut_deger.split("(")[-1].replace("%)", "").replace("+", "").strip()
+            sut_sapma_yuz = abs(float(pct_raw))
+    except Exception:
+        pass
+
+    return {
+        # Fark
+        "fark_n1_n2":           round(fark, 2),
+        "fark_abs":             round(fark_abs, 2),
+        "fark_abs_kucuk":       fark_abs <= 20,
+        "fark_abs_orta":        20 < fark_abs <= 100,
+        "fark_abs_buyuk":       fark_abs > 100,
+        "n1_buyuk_n2_den":      fark < -20,
+        # Kasa
+        "kasa_dengede":         kasa_durum == "ok",
+        "kasa_kritik":          kasa_durum == "kritik",
+        # Devir
+        "devir_tani_var":       devir_tani_var,
+        "devir_tani_temiz":     not devir_tani_var and devir_durum == "ok",
+        # Bardak
+        "bardak_acik_var":      bardak_acik_var,
+        "bardak_acik_buyuk":    bardak_acik_buyuk,
+        "gece_bardak_sisirdi":  gece_bardak_sisirdi,
+        "vardiya_bardak_acik":  vardiya_durum != "ok",
+        # Evo
+        "evo_uyumlu":           not evo_anomali_var,
+        "evo_anomali_var":      evo_anomali_var,
+        "evo_iptal_artis":      evo_iptal_artis,
+        "evo_ikram_artis":      evo_ikram_artis,
+        "fire_kaydi_var":       fire_kaydi_var,
+        # Süt
+        "sut_sapma_yuksek":     sut_sapma_yuz > 30,
+        "sut_sapma_yuz":        sut_sapma_yuz,
+        # Birikim
+        "birikim_var":          birikim_durum != "ok",
+        "birikim_yok":          birikim_durum == "ok",
+        "birikim_kisi_sayisi":  birikim_kisi_sayisi,
+        "birikim_cok_kisi":     birikim_kisi_sayisi >= 2,
+        # Meta-sinyal: her şey küçük → kolüzyon
+        "tum_sinyaller_zayif": (
+            fark_abs <= 20
+            and not bardak_acik_buyuk
+            and not evo_anomali_var
+            and not devir_tani_var
+        ),
+    }
+
+
+# ── Bayesian olasılık hesabı ─────────────────────────────────────────────────
+
+def senaryo_olasiliklari(sinyal_vektor: Dict[str, Any]) -> Dict[str, float]:
+    """
+    P(senaryo | sinyaller) hesapla.
+    Log-linear skorlama (log prior + sinyal katkıları) → softmax → olasılık vektörü.
+    """
+    import math
+
+    skorlar: Dict[str, float] = {}
+    for senaryo_ad, senaryo in SENARYOLAR.items():
+        log_skor = math.log(max(senaryo["agirlik_base"], 1e-9))
+        for sinyal_ad, katki in senaryo["sinyaller"].items():
+            deger = sinyal_vektor.get(sinyal_ad)
+            if deger is True or (isinstance(deger, (int, float)) and deger > 0 and not isinstance(deger, bool)):
+                log_skor += katki
+        skorlar[senaryo_ad] = log_skor
+
+    # Softmax normalize (numerik kararlılık için maks çıkar)
+    maks = max(skorlar.values())
+    exp_s = {k: math.exp(v - maks) for k, v in skorlar.items()}
+    toplam = sum(exp_s.values())
+    return {k: round(v / toplam, 4) for k, v in exp_s.items()}
+
+
+# ── CFO Anlatı Şablonları ────────────────────────────────────────────────────
+
+_CFO_ANLATILARI: Dict[str, Dict[str, str]] = {
+
+    "insan_sayim_hatasi": {
+        "guclu": (
+            "Fark, sayım veya giriş hatası kapsamında. Küçük tutar, tekrarsız pattern ve "
+            "Evo uyumu — üç sinyal birlikte kasıtsız hataya işaret ediyor. "
+            "Rutin izleme yeterli, aksiyon gerekmez."
+        ),
+        "zayif": (
+            "Sinyaller belirsiz; sayım hatası mümkün ancak tam dışlanamıyor. "
+            "Yarın da benzer fark görülürse birikim takibine alınmalı."
+        ),
+        "gecmis": "Bu şubede son 7 günde sayım hatası senaryosu {gun} kez birincil çıktı.",
+        "aksiyon": "Rutin takip. Tekrar ederse 3. kişi sayımı.",
+    },
+
+    "n1_sisirme": {
+        "guclu": (
+            "Akşamcı devir beyanını şişirdi — sabahçı kasayı {fark:.0f}₺ eksik buldu. "
+            "İki bağımsız sayımın farkı bu tutarda kasıtlı olarak açıklanabilir: "
+            "akşamcı kasadan para alıp devir rakamını büyük yazdı. "
+            "Dünkü stok veya bardak açığı eşlik ediyorsa zimmet çok güçlü kanıtlanıyor."
+        ),
+        "zayif": (
+            "Akşam deviri sabah sayımını {fark:.0f}₺ aşıyor. "
+            "Tek sinyal — bardak veya Evo çapraz kanıtı olmadan sayım hatası da mümkün."
+        ),
+        "gecmis": "Bu akşamcıda/şubede son 7 günde {gun} kez N1>N2 farkı görüldü.",
+        "aksiyon": "Zimmet soruşturması: kamera + akşamcı görüşme + CFO bildirimi.",
+    },
+
+    "sweethearting": {
+        "guclu": (
+            "Kasa normal ama stok eridi — ürün bedelsiz verildi. "
+            "Evo ikram artışı ve bardak açığı birlikte: personel ürünü kayıt dışı "
+            "arkadaşına/tanıdığına servis etti. Nakit değil, ürün çalındı. "
+            "NRF verilerine göre QSR'lardaki kayıpların %11'i bu kategoride."
+        ),
+        "zayif": (
+            "Bardak açığı + süt sapması sweethearting'e işaret ediyor "
+            "ancak Evo teyidi net değil. İkram reçetesini kontrol et."
+        ),
+        "gecmis": "Bu şubede son 7 günde {gun} kez benzer bardak/süt pattern'i görüldü.",
+        "aksiyon": "İkram defteri + kamera + personele ikram politikası hatırlatma.",
+    },
+
+    "stok_hirsizligi": {
+        "guclu": (
+            "Kasa tutarlı ama bardak stoku açık veriyor — nakit değil ürün alındı. "
+            "Gece bardak kaybolmaz kuralı gereği cross-day fark kasıtlı eyleme işaret ediyor. "
+            "Kayıt dışı satış veya fiziksel çıkarma ihtimali yüksek."
+        ),
+        "zayif": (
+            "Bardak açığı var, kasa normal — stok hırsızlığı ihtimali mevcut "
+            "ama fire veya sayım hatası da dışlanamıyor."
+        ),
+        "gecmis": "Son 7 günde {gun} kez benzer bardak farkı görüldü.",
+        "aksiyon": "Bardak sayım tekrarı + kamera + fire kaydı sorgula.",
+    },
+
+    "kucuk_tutar_birikim": {
+        "guclu": (
+            "30 günlük kasa verisi sistematik mikro açık gösteriyor. "
+            "Her gün küçük tutarda — tek başına 'sayım hatası' denilebilecek boyutta, "
+            "ama ay sonunda toplam anlamlı. "
+            "ACFE verilerine göre bu pattern tespit edilene kadar ortalama 18 ay sürüyor. "
+            "Evvel bunu {gun} gün içinde yakaladı."
+        ),
+        "zayif": (
+            "Birikim sinyali var ancak güven eşiğinin hemen üzerinde. "
+            "Bir hafta daha gözlemle, pattern güçlenirse soruşturmaya al."
+        ),
+        "gecmis": "{gun} personelde aktif birikim sinyali görülüyor.",
+        "aksiyon": "30 gün kasa dökümü + birebir vardiya gözlemi + CFO haftalık özet.",
+    },
+
+    "koluzyon": {
+        "guclu": (
+            "Birden fazla personelde sistematik küçük anomali — tek başına eşik altı, "
+            "ama birlikte kolüzyon pattern'i oluşturuyor. "
+            "Sabahçı ve akşamcı koordineli hareket ediyorsa her sinyal kasıtlı olarak "
+            "küçük tutulmaktadır — en zor tespit edilen fraud türü. "
+            "Kontrol 1 rastgele zamanlaması bu anlaşmayı 3. kişiye genişletmeyi zorlaştırıyor."
+        ),
+        "zayif": (
+            "Zayıf kolüzyon sinyali. Birden fazla personelde küçük anomali "
+            "ancak kesin bulgu yok. Haftalık korelasyon takibi gerekli."
+        ),
+        "gecmis": "Son 7 günde {gun} kez çoklu personel anomalisi görüldü.",
+        "aksiyon": "CFO haftalık korelasyon raporu + vardiya çiftlerini değiştirmeyi değerlendir.",
+    },
+
+    "urun_bozulma_fire": {
+        "guclu": (
+            "Fire kaydı mevcut ve açığı açıklıyor. "
+            "Stok kayıpları bozulma veya iade ile belgelenmiş — zimmet şüphesi düşük. "
+            "Rutin fire takibi yeterli."
+        ),
+        "zayif": (
+            "Fire kaydı var ancak miktar veya zamanlama dikkat istiyor. "
+            "Sprint E analizi ile fire kaydının sahte olup olmadığını kontrol et."
+        ),
+        "gecmis": "Son 7 günde {gun} kez fire kaydı oluşturuldu.",
+        "aksiyon": "Fire kaydı doğrula + zaman-miktar makul mu kontrol et.",
+    },
+}
+
+_SUBE_AD_MAP = {
+    "2": "Zafer", "3": "Alsancak", "4": "Gazze", "5": "Köyceğiz",
+}
+
+
+def cfo_konusmasi(
+    cur,
+    sube_id: str,
+    tarih: str,
+    sinyal_vektor: Optional[Dict] = None,
+    olasiliklar: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
+    """
+    CFO için doğal Türkçe anlatı üretir.
+
+    sinyal_vektor ve olasiliklar verilmezse DB'den çekmeye çalışır.
+    Her iki veri de yoksa boş yanıt döner.
+    """
+    # DB'den çek (verilmemişse)
+    if sinyal_vektor is None or olasiliklar is None:
+        try:
+            cur.execute(_GOZLEM_DDL)
+            cur.execute(
+                "SELECT sinyal_vektor, senaryo_olasiliklari "
+                "FROM truth_gozlem WHERE sube_id=%s AND tarih=%s",
+                (sube_id, tarih),
+            )
+            row = cur.fetchone()
+            if row:
+                d = dict(row)
+                sinyal_vektor = sinyal_vektor or d.get("sinyal_vektor") or {}
+                olasiliklar   = olasiliklar   or d.get("senaryo_olasiliklari") or {}
+        except Exception:
+            pass
+
+    if not olasiliklar:
+        return {
+            "anlati":        "Bugün için senaryo analizi henüz çalışmadı.",
+            "en_senaryo":    None,
+            "guven_yuzde":   0,
+            "aksiyon":       "",
+            "tum_olasiliklar": {},
+        }
+
+    sinyal_vektor = sinyal_vektor or {}
+
+    # En yüksek 2 senaryo
+    sirali        = sorted(olasiliklar.items(), key=lambda x: -x[1])
+    en_senaryo, en_puan       = sirali[0]
+    ikinci_senaryo, ikinci_puan = sirali[1] if len(sirali) > 1 else (None, 0.0)
+
+    anlati_dict = _CFO_ANLATILARI.get(en_senaryo, {})
+
+    # Son 7 günlük geçmiş
+    gecmis_7gun: List[Dict] = []
+    try:
+        cur.execute(
+            "SELECT en_olasilik_senaryo FROM truth_gozlem "
+            "WHERE sube_id=%s AND tarih < %s ORDER BY tarih DESC LIMIT 7",
+            (sube_id, tarih),
+        )
+        gecmis_7gun = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception:
+        pass
+
+    gecmis_gun = sum(
+        1 for g in gecmis_7gun if g.get("en_olasilik_senaryo") == en_senaryo
+    )
+
+    fark       = abs(sinyal_vektor.get("fark_abs", 0))
+    guven_yuzde = round(en_puan * 100)
+    sube_adi   = _SUBE_AD_MAP.get(str(sube_id), f"Şube {sube_id}")
+
+    ana_metin = (
+        anlati_dict.get("guclu", "") if en_puan >= 0.50
+        else anlati_dict.get("zayif", "")
+    )
+    try:
+        ana_metin = ana_metin.format(fark=fark, gun=gecmis_gun)
+    except Exception:
+        pass
+
+    gecmis_metin = ""
+    if gecmis_gun >= 2:
+        try:
+            gecmis_metin = anlati_dict.get("gecmis", "").format(gun=gecmis_gun, fark=fark)
+        except Exception:
+            pass
+
+    belirsizlik_notu = ""
+    if en_puan < 0.50 and ikinci_senaryo:
+        ikinci_ad = SENARYOLAR.get(ikinci_senaryo, {}).get("ad", ikinci_senaryo)
+        belirsizlik_notu = (
+            f"İki senaryo yakın — %{guven_yuzde} vs %{round(ikinci_puan*100)} "
+            f"({SENARYOLAR[en_senaryo]['ad']} / {ikinci_ad}). Ek veri gerekiyor."
+        )
+
+    parcalar = [
+        f"{sube_adi} — {tarih} — {SENARYOLAR[en_senaryo]['ad']} (%{guven_yuzde})",
+        "",
+        ana_metin,
+    ]
+    if gecmis_metin:
+        parcalar += ["", gecmis_metin]
+    if belirsizlik_notu:
+        parcalar += ["", belirsizlik_notu]
+
+    return {
+        "anlati":             "\n".join(parcalar),
+        "en_senaryo":         en_senaryo,
+        "en_senaryo_ad":      SENARYOLAR[en_senaryo]["ad"],
+        "guven_yuzde":        guven_yuzde,
+        "ikinci_senaryo":     ikinci_senaryo,
+        "ikinci_guven_yuzde": round(ikinci_puan * 100),
+        "aksiyon":            anlati_dict.get("aksiyon", ""),
+        "gecmis_gun":         gecmis_gun,
+        "tum_olasiliklar":    {
+            k: {"ad": SENARYOLAR[k]["ad"], "yuzde": round(v * 100)}
+            for k, v in sirali
+        },
+    }
+
+
+# ── Gözlem Kayıt ────────────────────────────────────────────────────────────
+
+def gozlem_kaydet(
+    cur,
+    sube_id: str,
+    tarih: str,
+    sinyal_vektor: Dict[str, Any],
+    olasiliklar: Dict[str, float],
+) -> int:
+    """
+    Günün sinyal vektörü + senaryo olasılıklarını DB'ye yazar.
+    Zaten varsa günceller (UPSERT). Gözlem ID döner.
+    """
+    try:
+        cur.execute(_GOZLEM_DDL)
+    except Exception:
+        pass
+
+    sirali     = sorted(olasiliklar.items(), key=lambda x: -x[1])
+    en_senaryo = sirali[0][0] if sirali else None
+    en_puan    = sirali[0][1] if sirali else 0.0
+
+    try:
+        cur.execute(
+            """
+            INSERT INTO truth_gozlem
+                (sube_id, tarih, sinyal_vektor, senaryo_olasiliklari,
+                 en_olasilik_senaryo, en_olasilik_puan)
+            VALUES (%s, %s, %s::jsonb, %s::jsonb, %s, %s)
+            ON CONFLICT (sube_id, tarih) DO UPDATE SET
+                sinyal_vektor           = EXCLUDED.sinyal_vektor,
+                senaryo_olasiliklari    = EXCLUDED.senaryo_olasiliklari,
+                en_olasilik_senaryo     = EXCLUDED.en_olasilik_senaryo,
+                en_olasilik_puan        = EXCLUDED.en_olasilik_puan
+            RETURNING id
+            """,
+            (
+                sube_id, tarih,
+                json.dumps(sinyal_vektor, ensure_ascii=False, default=str),
+                json.dumps(olasiliklar,   ensure_ascii=False, default=str),
+                en_senaryo, en_puan,
+            ),
+        )
+        row = cur.fetchone()
+        return int((dict(row) if row else {}).get("id", 0))
+    except Exception as e:
+        log.warning("gozlem_kaydet hata: %s", e)
+        return 0
+
+
+# ── Geri Bildirim + Öğrenme ─────────────────────────────────────────────────
+
+def geri_bildirim_isle(
+    cur,
+    sube_id: str,
+    tarih: str,
+    kategori: str,
+    gercek_senaryo: Optional[str] = None,
+    notlar: Optional[str] = None,
+    giren_personel_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Yönetici geri bildirimini kaydet + gozlem tablosunu güncelle.
+
+    kategori: 'onaylandi' | 'yanlis_alarm' | 'bilinmiyor' | 'arastirildi'
+
+    Bu veriler ileriki sprint'te eşik kalibrasyonu için kullanılacak
+    (Öğrenme Katmanı — Katman 4 seed).
+    """
+    try:
+        cur.execute(_GOZLEM_DDL)
+        cur.execute(_GERI_BILDIRIM_DDL)
+    except Exception:
+        pass
+
+    gozlem_id: Optional[int] = None
+    try:
+        cur.execute(
+            "SELECT id FROM truth_gozlem WHERE sube_id=%s AND tarih=%s",
+            (sube_id, tarih),
+        )
+        row = cur.fetchone()
+        if row:
+            gozlem_id = int(dict(row).get("id", 0) or 0)
+    except Exception:
+        pass
+
+    if not gozlem_id:
+        return {
+            "kaydedildi": False,
+            "sebep":      "Gözlem bulunamadı — önce günlük tam analizi çalıştır",
+        }
+
+    if gercek_senaryo:
+        try:
+            cur.execute(
+                "UPDATE truth_gozlem SET gercek_senaryo=%s WHERE id=%s",
+                (gercek_senaryo, gozlem_id),
+            )
+        except Exception:
+            pass
+
+    try:
+        cur.execute(
+            """
+            INSERT INTO truth_geri_bildirim
+                (gozlem_id, sube_id, tarih, kategori,
+                 gercek_senaryo, notlar, giren_personel_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (gozlem_id, sube_id, tarih, kategori,
+             gercek_senaryo, notlar, giren_personel_id),
+        )
+    except Exception as e:
+        return {"kaydedildi": False, "hata": str(e)}
+
+    return {
+        "kaydedildi":     True,
+        "gozlem_id":      gozlem_id,
+        "kategori":       kategori,
+        "gercek_senaryo": gercek_senaryo,
+        "mesaj": (
+            "Geri bildirim kaydedildi. "
+            "Bu veri ileride senaryo eşiklerinin kalibrasyonunda kullanılacak."
+        ),
+    }
+
+
+def ogrenme_ozeti(cur, sube_id: str, son_gun: int = 90) -> Dict[str, Any]:
+    """
+    Son N günün gözlem + geri bildirim istatistiklerini özetle.
+    Hangi senaryolar ne sıklıkla görüldü, geri bildirim ve doğruluk oranları.
+    Bu özet motor'un 'ne kadar iyi öğrendiğini' gösterir.
+    """
+    try:
+        cur.execute(_GOZLEM_DDL)
+        cur.execute(_GERI_BILDIRIM_DDL)
+    except Exception:
+        pass
+
+    try:
+        cur.execute(
+            """
+            SELECT
+                g.en_olasilik_senaryo,
+                COUNT(*)                                                       AS toplam,
+                SUM(CASE WHEN gb.kategori = 'onaylandi'    THEN 1 ELSE 0 END) AS onaylandi,
+                SUM(CASE WHEN gb.kategori = 'yanlis_alarm' THEN 1 ELSE 0 END) AS yanlis_alarm,
+                AVG(g.en_olasilik_puan)                                        AS ort_guven
+            FROM truth_gozlem g
+            LEFT JOIN truth_geri_bildirim gb ON gb.gozlem_id = g.id
+            WHERE g.sube_id = %s
+              AND g.tarih >= CURRENT_DATE - (%s || ' days')::INTERVAL
+            GROUP BY g.en_olasilik_senaryo
+            ORDER BY toplam DESC
+            """,
+            (sube_id, str(son_gun)),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:
+        return {"hata": str(e)}
+
+    toplam_gun          = sum(int(r.get("toplam") or 0) for r in rows)
+    yanlis_alarm_toplam = sum(int(r.get("yanlis_alarm") or 0) for r in rows)
+    onaylandi_toplam    = sum(int(r.get("onaylandi") or 0) for r in rows)
+
+    # Her senaryo için senaryo adını ekle
+    for r in rows:
+        s = r.get("en_olasilik_senaryo") or ""
+        r["senaryo_ad"] = SENARYOLAR.get(s, {}).get("ad", s)
+        r["ort_guven_yuzde"] = round(float(r.get("ort_guven") or 0) * 100, 1)
+
+    return {
+        "son_gun":            son_gun,
+        "toplam_gozlem":      toplam_gun,
+        "onaylandi":          onaylandi_toplam,
+        "yanlis_alarm":       yanlis_alarm_toplam,
+        "yanlis_alarm_orani": round(yanlis_alarm_toplam / toplam_gun * 100, 1) if toplam_gun else 0,
+        "senaryo_dagilimi":   rows,
+        "mesaj": (
+            f"Son {son_gun} günde {toplam_gun} gözlem. "
+            f"{onaylandi_toplam} onaylı bulgu, {yanlis_alarm_toplam} yanlış alarm "
+            f"(%{round(yanlis_alarm_toplam/toplam_gun*100, 1) if toplam_gun else 0} yanlış alarm oranı)."
+        ),
+    }
+
+
+# ── MASTER: Tüm katmanları birleştiren tek çağrı ────────────────────────────
+
+def gunluk_tam_analiz(
+    cur,
+    sube_id: str,
+    tarih: str,
+    gozlem_kaydet_flag: bool = True,
+) -> Dict[str, Any]:
+    """
+    Katman 1-2-3-4 hepsini sırayla çalıştırır:
+
+      1. gunluk_teyit_karti  → 7 kontrol + korelasyon (Katman 1)
+      2. Sprint verileri      → G (N1 sisirme), H (vardiya bardak), I (birikim), J (gece bardak)
+      3. Sinyal vektörü       → _sinyal_vektor_cikar (Katman 2 girişi)
+      4. Senaryo olasılıkları → senaryo_olasiliklari  (Katman 2)
+      5. CFO anlatısı         → cfo_konusmasi          (Katman 3)
+      6. Gözlem kaydet        → gozlem_kaydet           (Katman 4)
+
+    Returns:
+        teyit + senaryo + cfo + sinyal_vektor — tek dict.
+    """
+    # 1. Teyit kartı
+    teyit: Dict[str, Any] = {}
+    try:
+        teyit = gunluk_teyit_karti(cur, sube_id, tarih)
+    except Exception as e:
+        teyit = {"hata": str(e)}
+
+    # 2. Sprint çıktıları
+    sprint_g: Dict[str, Any] = {}
+    sprint_h: Dict[str, Any] = {}
+    sprint_i: Dict[str, Any] = {}
+    sprint_j: Dict[str, Any] = {}
+    try:
+        sprint_g = aksam_kasa_sisirme_tespit(cur, sube_id, tarih)
+    except Exception:
+        pass
+    try:
+        sprint_h = aksam_vardiya_bardak_pnl(cur, sube_id, tarih)
+    except Exception:
+        pass
+    try:
+        sprint_i = kucuk_tutar_birikim_tespit(cur, sube_id, gun=30)
+    except Exception:
+        pass
+    try:
+        sprint_j = aksam_bardak_sisirme_tespit(cur, sube_id, tarih)
+    except Exception:
+        pass
+
+    # Evo tani — teyit kontrollerinden çek
+    kontroller = teyit.get("kontroller") or []
+    evo_k    = next((k for k in kontroller if k.get("kod") == "evo"), {})
+    evo_tani = (evo_k.get("state_key") or "").replace("evo.", "") or None
+
+    # 3. Sinyal vektörü
+    sinyal = _sinyal_vektor_cikar(teyit, sprint_g, sprint_h, sprint_i, sprint_j, evo_tani)
+
+    # 4. Senaryo olasılıkları
+    olasiliklar = senaryo_olasiliklari(sinyal)
+
+    # 5. CFO anlatısı
+    cfo = cfo_konusmasi(cur, sube_id, tarih, sinyal, olasiliklar)
+
+    # 6. Gözlem kaydet
+    gozlem_id = 0
+    if gozlem_kaydet_flag:
+        try:
+            gozlem_id = gozlem_kaydet(cur, sube_id, tarih, sinyal, olasiliklar)
+        except Exception as e:
+            log.warning("gunluk_tam_analiz gozlem_kaydet hata: %s", e)
+
+    return {
+        **teyit,
+        "senaryo": {
+            "olasiliklar":   cfo.get("tum_olasiliklar", {}),
+            "en_senaryo":    cfo.get("en_senaryo"),
+            "en_senaryo_ad": cfo.get("en_senaryo_ad"),
+            "guven_yuzde":   cfo.get("guven_yuzde", 0),
+        },
+        "cfo": {
+            "anlati":    cfo.get("anlati", ""),
+            "aksiyon":   cfo.get("aksiyon", ""),
+            "gecmis_gun": cfo.get("gecmis_gun", 0),
+        },
+        "sinyal_vektor": sinyal,
+        "gozlem_id":     gozlem_id,
+    }

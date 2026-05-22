@@ -3616,6 +3616,11 @@ def ops_urun_ac_uyumsuzluklar(
                 detay_raw = {}
             d["detay"] = detay_raw
             d["eksik_miktar"] = int(detay_raw.get("eksik_miktar") or 0)
+            from operasyon_stok_motor import depo_kalem_gorunen_ad
+            fb = str(detay_raw.get("kalem_adi") or detay_raw.get("urun_ad") or d.get("kalem_adi") or "").strip()
+            d["kalem_adi"] = depo_kalem_gorunen_ad(
+                cur, str(d.get("sube_id") or ""), str(d.get("kalem_kodu") or ""), fb
+            )
             satirlar.append(d)
 
     return {"satirlar": satirlar, "year_month": ym, "gun": gun_v or None}
@@ -13816,3 +13821,98 @@ def kasa_baskini_iptal(baskin_id: str, cfo_id: Optional[str] = Query(None)):
         except Exception:
             pass
     return {"ok": True, "id": baskin_id}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SENARYO MOTORU + CFO SESİ — Katman 2-3-4 endpoint'leri
+# ════════════════════════════════════════════════════════════════════════════
+
+@router.get("/truth/tam-analiz/{sube_id}/{tarih}")
+def truth_tam_analiz(sube_id: str, tarih: str, kaydet: bool = True):
+    """Tüm katmanları birleştiren tek çağrı.
+
+    Çalışma sırası:
+      1. Günlük teyit kartı (7 kontrol)
+      2. Sprint G/H/I/J verileri
+      3. Sinyal vektörü çıkar
+      4. Senaryo olasılıkları (Bayesian)
+      5. CFO Türkçe anlatı
+      6. Gözlemi DB'ye kaydet (kaydet=True ise)
+
+    Döndürür:
+      kontroller + korelasyon + senaryo + cfo + sinyal_vektor
+    """
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.gunluk_tam_analiz(cur, sube_id, tarih, gozlem_kaydet_flag=kaydet)
+
+
+@router.get("/truth/cfo-anlati/{sube_id}/{tarih}")
+def truth_cfo_anlati(sube_id: str, tarih: str):
+    """CFO doğal Türkçe anlatısı — hangi senaryo en olası, neden, ne yapılmalı.
+
+    Gözlem DB'de varsa oradan okur; yoksa boş yanıt döner.
+    Tam analiz için önce /truth/tam-analiz çağrılmalıdır.
+    """
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.cfo_konusmasi(cur, sube_id, tarih)
+
+
+class GeriBildirimBody(BaseModel):
+    sube_id:           str
+    tarih:             str
+    kategori:          str          # 'onaylandi' | 'yanlis_alarm' | 'bilinmiyor' | 'arastirildi'
+    gercek_senaryo:    Optional[str] = None
+    notlar:            Optional[str] = None
+    giren_personel_id: Optional[str] = None
+
+
+@router.post("/truth/geri-bildirim")
+def truth_geri_bildirim(body: GeriBildirimBody):
+    """Yönetici geri bildirimi — 'Bu bulgu doğru mu?' yanıtını kaydet.
+
+    Bu veriler ileriki sprint'te Öğrenme Katmanı kalibrasyonunda kullanılır.
+    Motor zamanla bu şubeye özgü eşikleri öğrenir.
+
+    kategori değerleri:
+      'onaylandi'   → Bulgu doğru, gerçekten bu senaryo gerçekleşti
+      'yanlis_alarm' → Yanlış tetiklenme, kasıt yoktu
+      'bilinmiyor'  → Araştırıldı, sonuçsuz kaldı
+      'arastirildi' → Soruşturma başlatıldı, devam ediyor
+    """
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.geri_bildirim_isle(
+            cur,
+            sube_id=body.sube_id,
+            tarih=body.tarih,
+            kategori=body.kategori,
+            gercek_senaryo=body.gercek_senaryo,
+            notlar=body.notlar,
+            giren_personel_id=body.giren_personel_id,
+        )
+
+
+@router.get("/truth/ogrenme-ozeti/{sube_id}")
+def truth_ogrenme_ozeti(sube_id: str, son_gun: int = 90):
+    """Öğrenme Katmanı özeti — motor ne kadar iyi öğrendi?
+
+    Son N günde hangi senaryolar kaç kez görüldü,
+    kaç onaylandı, yanlış alarm oranı nedir.
+    """
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        raise HTTPException(500, f"truth_motor import edilemedi: {e}")
+    with db() as (conn, cur):
+        return _tm.ogrenme_ozeti(cur, sube_id, son_gun=son_gun)
