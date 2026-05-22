@@ -4289,6 +4289,210 @@ def sube_siparis_ozel_talep(sube_id: str, body: SiparisOzelTalepBody):
     return {"success": True, "talep_id": tid}
 
 
+def _siparis_bekliyor_yonlendirilmemis(cur, sube_id: str) -> Optional[Dict]:
+    """
+    Bu şubenin depoya yönlendirilmemiş (bekliyor) en son siparişini döner.
+    Yönlendirme kriteri: hedef_depo_sube_id IS NULL VE sevkiyat_sube_id IS NULL.
+    Bulunamazsa None döner.
+    """
+    cur.execute(
+        """
+        SELECT id, kalemler
+        FROM siparis_talep
+        WHERE sube_id = %s
+          AND durum = 'bekliyor'
+          AND (hedef_depo_sube_id IS NULL OR hedef_depo_sube_id = '')
+          AND (sevkiyat_sube_id   IS NULL OR sevkiyat_sube_id   = '')
+        ORDER BY olusturma DESC
+        LIMIT 1
+        FOR UPDATE
+        """,
+        (sube_id,),
+    )
+    row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def _kalem_merge(mevcut: List[Dict], yeni: List[Dict]) -> List[Dict]:
+    """
+    İki kalem listesini birleştirir.
+    Aynı ürün (urun_id öncelikli, yoksa urun_ad normalize) varsa adet toplanır.
+    """
+    sonuc: Dict[str, Dict] = {}
+    for k in mevcut:
+        anahtar = (str(k.get("urun_id") or "").strip()
+                   or str(k.get("urun_ad") or "").strip().lower())
+        if not anahtar:
+            continue
+        sonuc[anahtar] = dict(k)
+
+    for k in yeni:
+        uid = str(k.get("urun_id") or "").strip()
+        uad = str(k.get("urun_ad") or "").strip()
+        anahtar = uid or uad.lower()
+        if not anahtar:
+            continue
+        if anahtar in sonuc:
+            sonuc[anahtar]["adet"] = int(sonuc[anahtar].get("adet") or 0) + int(k.get("adet") or 0)
+        else:
+            sonuc[anahtar] = dict(k)
+
+    return list(sonuc.values())
+
+
+@router.post("/{sube_id}/siparis-kalem-ekle")
+def sube_siparis_kalem_ekle(sube_id: str, body: SiparisOnayBody):
+    """
+    Akıllı sipariş ekleme — iş kuralı:
+
+      • Depoya yönlendirilmemiş (bekliyor) açık sipariş VAR
+        → Kalemler mevcut siparişe eklenir / adetler toplanır.
+        → Ops tek sipariş görür, kafa karışmaz.
+
+      • Açık sipariş YOK veya mevcut sipariş depoya yönlendirilmiş
+        → Otomatik yeni sipariş oluşturulur, 409 çıkmaz.
+
+    Şube panelinde "tekrar sipariş" butonu bu endpoint'i çağırmalı.
+    Klasik /siparis-onay yerine bu kullanılırsa çift sipariş sorunu ortadan kalkar.
+    """
+    pid_in = (body.personel_id or "").strip()
+    pin    = (body.pin or "").replace(" ", "")
+    if not pid_in or len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "personel_id ve 4 haneli PIN gerekli")
+
+    temiz: List[Dict[str, Any]] = []
+    for k in (body.kalemler or []):
+        ad   = (k.urun_ad or "").strip()
+        adet = int(k.adet or 0)
+        if not ad or adet <= 0:
+            continue
+        temiz.append({
+            "kategori_id": (k.kategori_id or "").strip(),
+            "urun_id":     (k.urun_id or "").strip(),
+            "urun_ad":     ad,
+            "aciklama":    (getattr(k, "aciklama", None) or "").strip() or None,
+            "adet":        adet,
+        })
+    if not temiz:
+        raise HTTPException(400, "En az bir kalemde adet girin")
+
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        if not _bugun_kasa_acildi_mi(cur, sube_id):
+            raise HTTPException(403, "Önce günlük kasa kilidini PIN ile açmalısınız.")
+        if not _bugun_sube_acildi_mi(cur, sube_id):
+            raise HTTPException(403, "Şube açılışı tamamlanmadan sipariş verilemez.")
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        onay_ad   = (ku.get("ad_soyad") or "").strip() or "—"
+        pid_panel = str(ku.get("id") or "").strip() or pid_in
+
+        # Advisory lock — aynı şubeden eş zamanlı istek sıralansın
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s))",
+            (f"siparis_onay_{sube_id}",),
+        )
+
+        acik = _siparis_bekliyor_yonlendirilmemis(cur, sube_id)
+
+        if acik:
+            # ── MERGE: mevcut siparişe ekle ──────────────────────────────
+            talep_id = str(acik["id"])
+            mevcut_kalemler = acik.get("kalemler") or []
+            if isinstance(mevcut_kalemler, str):
+                try:
+                    mevcut_kalemler = json.loads(mevcut_kalemler)
+                except Exception:
+                    mevcut_kalemler = []
+
+            birlesik = _kalem_merge(mevcut_kalemler, temiz)
+            eklenen_adetler = {
+                (k.get("urun_id") or k.get("urun_ad", "").lower()): k["adet"]
+                for k in temiz
+            }
+
+            cur.execute(
+                """
+                UPDATE siparis_talep
+                SET kalemler       = %s::jsonb,
+                    not_aciklama   = CASE
+                                       WHEN not_aciklama IS NULL THEN %s
+                                       ELSE not_aciklama || ' | ' || %s
+                                     END
+                WHERE id = %s
+                """,
+                (
+                    json.dumps(birlesik, ensure_ascii=False),
+                    (body.not_aciklama or "").strip() or None,
+                    (body.not_aciklama or "").strip() or None,
+                    talep_id,
+                ),
+            )
+
+            from operasyon_defter import operasyon_defter_ekle
+            tr_now = _now_tr()
+            operasyon_defter_ekle(
+                cur, sube_id, "SIPARIS_KALEM_EKLENDI",
+                f"Mevcut siparişe {len(temiz)} kalem eklendi — personel={onay_ad}",
+                personel_id=pid_panel, personel_ad=onay_ad,
+                bildirim_saati=tr_now.strftime("%H:%M:%S"),
+            )
+            audit(cur, "siparis_talep", talep_id, "SIPARIS_KALEM_EKLENDI")
+            conn.commit()
+            return {
+                "islem":              "eklendi",
+                "talep_id":           talep_id,
+                "eklenen_kalem_sayisi": len(temiz),
+                "toplam_kalem_sayisi":  len(birlesik),
+                "mesaj": (
+                    f"{len(temiz)} kalem mevcut siparişe eklendi. "
+                    "Ops ekibi tek sipariş olarak görüyor."
+                ),
+            }
+
+        else:
+            # ── YENİ SİPARİŞ: yönlendirilmiş veya hiç sipariş yok ───────
+            tr_now = _now_tr()
+            saat   = tr_now.strftime("%H:%M:%S")
+            tid    = str(uuid.uuid4())
+            cur.execute(
+                """
+                INSERT INTO siparis_talep
+                    (id, sube_id, tarih, durum, personel_id, personel_ad,
+                     bildirim_saati, not_aciklama, kalemler)
+                VALUES (%s, %s, CURRENT_DATE, 'bekliyor', %s, %s, %s, %s, %s::jsonb)
+                """,
+                (
+                    tid, sube_id, pid_panel, onay_ad, saat,
+                    (body.not_aciklama or "").strip() or None,
+                    json.dumps(temiz, ensure_ascii=False),
+                ),
+            )
+            audit(cur, "siparis_talep", tid, "SIPARIS_ONAY")
+            from operasyon_defter import operasyon_defter_ekle
+            operasyon_defter_ekle(
+                cur, sube_id, "SIPARIS_ONAY_PIN",
+                f"Yeni sipariş (önceki yönlendirilmişti) — personel={onay_ad} kalem={len(temiz)}",
+                personel_id=pid_panel, personel_ad=onay_ad,
+                bildirim_saati=saat,
+            )
+            try:
+                from operasyon_stok_motor import siparis_olustu_kaydet
+                siparis_olustu_kaydet(cur, tid, sube_id, temiz, pid_panel, onay_ad)
+            except Exception:
+                pass
+            conn.commit()
+            return {
+                "islem":              "yeni_siparis",
+                "talep_id":           tid,
+                "eklenen_kalem_sayisi": len(temiz),
+                "toplam_kalem_sayisi":  len(temiz),
+                "mesaj": (
+                    "Önceki sipariş depoya yönlendirilmişti — "
+                    "yeni sipariş oluşturuldu."
+                ),
+            }
+
+
 @router.post("/{sube_id}/siparis-onay")
 def sube_siparis_onay(sube_id: str, body: SiparisOnayBody):
     pid_in = (body.personel_id or "").strip()
@@ -4335,7 +4539,25 @@ def sube_siparis_onay(sube_id: str, body: SiparisOnayBody):
             (f"siparis_onay_{sube_id}",),
         )
         acik_n, _ref_oid, uyari_metni, ortak = sube_yeni_siparis_oncesi_cift_kontrol(cur, sube_id, temiz)
-        if acik_n >= 1 and not bool(body.force_cift_siparis):
+        # Güncellenen iş kuralı:
+        # 409 yalnızca depoya yönlendirilmemiş (bekliyor) açık sipariş varsa çıkar.
+        # Siparişler depoya yönlendirildiyse (hazirlaniyor / gonderildi) zaten
+        # ayrı akışta işleniyordur → yeni sipariş özgürce açılabilir.
+        yonlendirilmemis_var = False
+        if acik_n >= 1:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS c FROM siparis_talep
+                WHERE sube_id = %s
+                  AND durum = 'bekliyor'
+                  AND (hedef_depo_sube_id IS NULL OR hedef_depo_sube_id = '')
+                  AND (sevkiyat_sube_id   IS NULL OR sevkiyat_sube_id   = '')
+                """,
+                (sube_id,),
+            )
+            yonlendirilmemis_var = int((cur.fetchone() or {}).get("c") or 0) > 0
+
+        if yonlendirilmemis_var and not bool(body.force_cift_siparis):
             raise HTTPException(
                 status_code=409,
                 detail={
@@ -4343,6 +4565,7 @@ def sube_siparis_onay(sube_id: str, body: SiparisOnayBody):
                     "mesaj": uyari_metni or "Tamamlanmamış sipariş talebiniz var.",
                     "onceki_acik_sayisi": acik_n,
                     "ortak_urun_etiketleri": ortak,
+                    "ipucu": "Mevcut siparişe eklemek için /siparis-kalem-ekle kullanın.",
                 },
             )
         tr_now = _now_tr()
