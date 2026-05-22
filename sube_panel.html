@@ -1254,9 +1254,11 @@
     /* Toptancı teslim: sipariş paneli gibi yapışkan özet + gönder (sayfa sonunda kaybolmaz) */
     #svTeslimStickyBar {
       position: sticky;
-      top: 0;
+      bottom: 0;
+      top: auto;
       z-index: 55;
-      margin: 0 0 14px 0;
+      margin: 16px 0 0 0;
+      /* Alttan yapışık — katalog seçerken her zaman görünür */
     }
     .sv-teslim-sticky-panel {
       margin: 0;
@@ -4807,6 +4809,11 @@ window.solSekmeAc = function(id) {
   if (altBtn) altBtn.classList.add('active');
   // Stok formlarını doldur
   if (id === 'sevk' || id === 'ac' || id === 'fire') renderStokForms(id);
+  // Sekme açılınca orta alanı başa taşı (ürün listesi yukarıdan başlasın)
+  if (id === 'sevk' || id === 'siparis' || id === 'ac' || id === 'fire') {
+    var _orta = document.getElementById('orta');
+    if (_orta) _orta.scrollTop = 0;
+  }
   if (id === 'sevk') {
     siparisAkisLoad(true)
       .then(function (akis) {
@@ -5843,13 +5850,7 @@ function renderStokForms(tip) {
       Promise.all([tedarikcileriGetir(), siparisLoad()]).then(function(resp) {
         var katalog = (resp && resp[1]) || [];
         var h = '';
-        // Bilgilendirme notu
-        h += '<div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px;line-height:1.6;color:#93c5fd">';
-        h += '<strong>ℹ️ Ürün Teslim Al — Depo Kaydı</strong><br/>';
-        h += 'Bu form, tedarikçiden depoya gelen ürünleri kaydetmek içindir. ';
-        h += 'Girilen miktarlar <strong>aktif stoka girmez</strong> — depodaki potansiyel stok olarak izlenir. ';
-        h += 'Ürünü bardan/kullanıma açmak için <strong>Ürün Aç</strong> formunu kullanın.';
-        h += '</div>';
+        // ── ADIM 1: Kim teslim alıyor? (kimlik + tedarikçi) ──────────────────────────────
         h += '<div class="sv-toptanci-onay-panel">';
         h += '<div class="sv-toptanci-onay-baslik"><span aria-hidden="true">🚚</span> Toptancı / tedarikçi ve <strong style="color:#fff">teslimi onaylayan personel</strong></div>';
         h += '<p class="sv-toptanci-onay-alt">Önce <strong>tedarikçiyi</strong> seçin; ardından bu teslim kaydını imzalayacak <strong>personel</strong> ve <strong>4 haneli PIN</strong> girin.</p>';
@@ -5858,9 +5859,17 @@ function renderStokForms(tip) {
         h += '<div class="form-group" style="margin:0"><label>Personel *</label><select id="svPers"></select></div>';
         h += '<div class="form-group" style="margin:0"><label>Onay kodu (PIN) *</label><input id="svPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>';
         h += '</div></div>';
+        // ── ADIM 2: Ne geldi? — katalog (hemen kimlik panelinin altında) ─────────────────
+        h += '<div style="margin:14px 0 4px;font-size:13px;font-weight:800;color:var(--text)">📦 Adım 2 — Gelen ürünleri seçin</div>';
+        h += '<p style="font-size:11px;color:var(--muted);margin:0 0 8px;line-height:1.45">Aşağıdaki kategorilere dokunun; her üründe gelen adedi girin. Seçimler altta özette görünür.</p>';
+        h += '<div id="svKatalogWrap"></div>';
+        // ── ADIM 3: Sipariş kontrol çapraz listesi ───────────────────────────────────────
+        h += '<div id="svSiparisKontrolWrap"></div>';
+        h += '<div id="svToptanciBekleyenWrap"></div>';
+        // ── ADIM 4: Tam mı geldi? + Açıklama ────────────────────────────────────────────
         h += '<div class="sv-teslim-durum-panel">';
-        h += '<div class="sv-durum-baslik">Verilen sipariş tam geldi mi? <span style="color:#fda4af">*</span></div>';
-        h += '<p class="sv-durum-alt"><strong>Önce burayı işaretleyin:</strong> Paket siparişle birebir tam ise <strong>Tam geldi</strong>; kısmi veya farklı ise <strong>Eksik var</strong> — eksik seçince ekranın ortasında bilgi penceresi açılır. Tam geldi seçtiğinizde aşağıdaki kontrol listesinde <em>tüm</em> kalemleri tiklemeniz gerekir.</p>';
+        h += '<div class="sv-durum-baslik">Teslimat durumu <span style="color:#fda4af">*</span></div>';
+        h += '<p class="sv-durum-alt">Yukarıdaki ürünleri seçtikten sonra buradan durumu işaretleyin: birebir geldi ise <strong>Tam geldi</strong>; eksik veya yanlış ise <strong>Eksik var</strong>.</p>';
         h += '<div class="sv-durum-btn-row">';
         h += '<button type="button" class="sv-durum-btn sv-durum-tam" id="svDurumTamBtn" data-val="tam_geldi">✅ Tam geldi<br><span style="font-size:11px;font-weight:700;opacity:0.9">Sipariş eksiksiz</span></button>';
         h += '<button type="button" class="sv-durum-btn sv-durum-eksik" id="svDurumEksikBtn" data-val="eksik_var">⚠️ Eksik var<br><span style="font-size:11px;font-weight:700;opacity:0.9">Kısmi veya yanlış sevkiyat</span></button>';
@@ -5869,17 +5878,22 @@ function renderStokForms(tip) {
         h += '<div id="svEksikKayitChip" class="siparis-detay" style="display:none;margin-top:10px;padding:8px 10px;font-size:11px;border-radius:8px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.38);color:#86efac">✓ Eksik ürün bilgisi kaydedildi. Düzenlemek için tekrar <strong>Eksik var</strong>a tıklayın.</div>';
         h += '<div class="form-group" style="margin-top:12px;margin-bottom:0"><label>Teslim açıklaması *</label><textarea id="svTeslimAciklama" rows="2" placeholder="Teslimin genel durumunu yazın (zorunlu)."></textarea></div>';
         h += '</div>';
+        // ── ADIM 5: ÖZET + Gönder butonu (yapışık ALT — her zaman görünür) ─────────────
         h += '<div id="svTeslimStickyBar">';
         h += '<div class="sv-teslim-sticky-panel">';
         h += '<div class="sv-teslim-sticky-baslik"><span class="sv-teslim-sticky-tag">Özet</span><span>Teslim kaydı — gönder</span></div>';
-        h += '<p class="sv-teslim-sticky-alt">Aşağıdan ürün adetlerini girin. <strong>Personel ve PIN</strong> yukarıdaki mavi kutuda; buradan gönderince ortada onay penceresi açılır (sipariş ekranındaki gibi).</p>';
+        h += '<p class="sv-teslim-sticky-alt">Yukarıdan ürün seçin → adet girin → Onayla. <strong>Personel ve PIN</strong> zaten üstte girildi.</p>';
         h += '<div id="svSecimOzet" class="siparis-detay sv-teslim-sticky-ozet" style="color:var(--muted)">Henüz ürün seçilmedi.</div>';
         h += '<button type="button" class="btn btn-primary" id="svGonder">✅ Seçimleri Onayla ve Teslim Al</button>';
         h += '<div id="svMsg" style="margin-top:10px;font-size:13px"></div>';
         h += '</div></div>';
-        h += '<div id="svToptanciBekleyenWrap"></div>';
-        h += '<div id="svSiparisKontrolWrap"></div>';
-        h += '<div id="svKatalogWrap"></div>';
+        // ── Bilgilendirme notu (dipnot olarak en altta) ──────────────────────────────────
+        h += '<details style="margin-top:12px"><summary style="font-size:11px;color:var(--muted);cursor:pointer">ℹ️ Bu form hakkında</summary>';
+        h += '<div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;padding:10px 12px;margin-top:6px;font-size:11px;line-height:1.6;color:#93c5fd">';
+        h += 'Bu form, tedarikçiden depoya gelen ürünleri kaydetmek içindir. ';
+        h += 'Girilen miktarlar <strong>aktif stoka girmez</strong> — depodaki potansiyel stok olarak izlenir. ';
+        h += 'Ürünü bardan/kullanıma açmak için <strong>Ürün Aç</strong> formunu kullanın.';
+        h += '</div></details>';
         h += '<div id="svKatOverlay" class="overlay sip-kat-overlay" style="display:none" aria-hidden="true">';
         h += '<div class="overlay-kart sip-kat-modal-kart" id="svKatModalKart">';
         h += '<div id="svKatModalInner"></div>';
