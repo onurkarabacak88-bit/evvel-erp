@@ -2966,19 +2966,23 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                     "stok DUSULMEDI! siparis=%s depo=%s kalem_kodu=%s sevk_adet=%s",
                     siparis_talep_id, kaynak_depo, kalem_kodu, sevk_adet,
                 )
-                # Uyarı kaydı oluştur (ops ekibi görebilsin)
+                # Uyarı kaydı oluştur (ops ekibi görebilsin) — SAVEPOINT ile transaction zehirlenmesin
                 try:
+                    cur.execute("SAVEPOINT sp_stok_dusme_uyari")
                     cur.execute(
                         """
                         INSERT INTO sube_operasyon_uyari
-                            (sube_id, tarih, tip, mesaj, meta)
-                        VALUES (%s, CURRENT_DATE, 'STOK_DUSME_HATASI',
+                            (id, sube_id, tarih, tip, seviye, mesaj,
+                             siparis_talep_id, kalem_kodu, detay)
+                        VALUES (%s, %s, CURRENT_DATE, 'STOK_DUSME_HATASI', 'uyari',
                                 'Sevk çıkışında stok satırı bulunamadı — kalem_kodu uyumsuzluğu',
-                                %s::jsonb)
-                        ON CONFLICT DO NOTHING
+                                %s, %s, %s::jsonb)
                         """,
                         (
+                            str(uuid.uuid4()),
                             kaynak_depo,
+                            siparis_talep_id,
+                            kalem_kodu,
                             json.dumps({
                                 "siparis_talep_id": siparis_talep_id,
                                 "kalem_kodu": kalem_kodu,
@@ -2987,8 +2991,12 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                             }, ensure_ascii=False),
                         ),
                     )
+                    cur.execute("RELEASE SAVEPOINT sp_stok_dusme_uyari")
                 except Exception:
-                    pass
+                    try:
+                        cur.execute("ROLLBACK TO SAVEPOINT sp_stok_dusme_uyari")
+                    except Exception:
+                        pass
         else:
             cur.execute(
                 """
