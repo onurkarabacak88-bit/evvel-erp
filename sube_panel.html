@@ -5823,6 +5823,82 @@ function tedarikciSelectHTML(selectId) {
   return '<div class="form-group"><label>Tedarikçi *</label><select id="' + selectId + '">' + opts + '</select></div>';
 }
 
+/** Sipariş Ver — talep akışı satır HTML (toptancı/depo yönlendirme butonları dahil). */
+function siparisAkisTalepSatirHTML(t) {
+  var st = String(t.sevkiyat_durumu || t.durum || 'bekliyor');
+  var stCls =
+    st === 'teslim_edildi'
+      ? 'badge-ok'
+      : st === 'gonderildi' || st === 'toptanciya_yonlendirildi'
+        ? 'badge-blue'
+        : st === 'kismi_hazirlandi'
+          ? 'badge-warn'
+          : 'badge-gray';
+  var yol = String(t.tamamlanabilir_yol || '');
+  var h = '';
+  h += '<div style="font-size:12px;padding:10px 0;border-top:1px solid var(--border)">';
+  h +=
+    '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">';
+  h +=
+    '<span><strong>#' +
+    escHtml(String(t.id || '').slice(0, 8)) +
+    '…</strong> · ' +
+    escHtml(t.asama_metni || st) +
+    '</span>';
+  h +=
+    '<span class="badge ' +
+    stCls +
+    '" style="font-size:10px;text-transform:uppercase">' +
+    escHtml(st) +
+    '</span>';
+  h += '</div>';
+  if (t.operasyon_yonlendirme_talimati) {
+    h +=
+      '<div style="font-size:11px;margin-top:6px;padding:6px 8px;border-radius:6px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35)"><strong>Talimat:</strong> ' +
+      escHtml(t.operasyon_yonlendirme_talimati) +
+      '</div>';
+  }
+  if (t.depo_sevkiyat_rapor_metni) {
+    h +=
+      '<div style="font-size:11px;margin-top:6px;color:var(--muted);line-height:1.45"><strong>Depo raporu:</strong> ' +
+      escHtml(t.depo_sevkiyat_rapor_metni) +
+      '</div>';
+  }
+  var kd = t.kalem_durum_ozet || [];
+  if (kd.length) {
+    h += '<div style="font-size:11px;margin-top:6px;display:grid;gap:3px">';
+    kd.forEach(function (k) {
+      h +=
+        '<div style="display:flex;justify-content:space-between;gap:8px"><span>' +
+        escHtml(k.kalem_adi || k.kalem_kodu || '—') +
+        '</span><span style="opacity:.85">' +
+        escHtml(k.durum_metni || k.durum || '') +
+        (k.gonderilen_adet ? ' · gönd:' + k.gonderilen_adet : '') +
+        '</span></div>';
+    });
+    h += '</div>';
+  } else if ((t.kalemler_ozet || []).length) {
+    var oz = (t.kalemler_ozet || [])
+      .map(function (x) {
+        return escHtml(x.urun_ad || '') + ' ×' + String(x.adet || x.istenen_adet || 0);
+      })
+      .join(', ');
+    h += '<div style="font-size:11px;margin-top:6px;color:var(--muted)">' + oz + '</div>';
+  }
+  if (yol === 'depo_hazirlik_ben') {
+    h +=
+      '<div style="font-size:11px;margin-top:8px"><button type="button" class="sip-mini-btn" onclick="solSekmeAc(\'gonderilecek\')">→ Gönderilecek siparişler</button> <span style="color:var(--muted)">Kendi deponuz — hazırlayıp sevk edin</span></div>';
+  } else if (yol === 'toptanci_teslim') {
+    h +=
+      '<div style="font-size:11px;margin-top:8px"><button type="button" class="sip-mini-btn" onclick="solSekmeAc(\'sevk\')">→ Ürün Teslim Al</button> <span style="color:var(--muted)">Toptancıdan geleni kaydedip siparişi kapatın</span></div>';
+  } else if (yol === 'depo_kabul' || (t.teslim_bekleyen_kalemler || []).length) {
+    h +=
+      '<div style="font-size:11px;margin-top:8px"><button type="button" class="sip-mini-btn" onclick="solSekmeAc(\'depoTeslim\')">→ Depodan Gelen — Teslim Al</button></div>';
+  }
+  h += '</div>';
+  return h;
+}
+
 // ─── ÜRÜN TESLİM AL (tedarikçi / toptancı — izole modül) ───────────────────
 var UrunTeslimAl = (function () {
   var PREFIX = 'sv';
