@@ -317,6 +317,12 @@ def _stok_key_from_urun_ad(urun_ad: Any) -> Optional[str]:
     if "kapak" in n:
         return "kapak_adet"
     if "pecete" in n or "peçete" in n:
+        if n in ("z_pecete", "baskili_pecete"):
+            return None
+        if n.startswith("z ") or n.startswith("z pecete") or n.startswith("z peçete"):
+            return None
+        if "baskili" in n or "baskılı" in n:
+            return None
         return "pecete_paket"
     return None
 
@@ -327,6 +333,12 @@ def urun_ac_gorunen_ad(ad_or_key: Any) -> str:
     raw = str(ad_or_key or "").strip()
     if not raw:
         return ""
+    _KATALOG_OZEL = {
+        "z_pecete": "Z Peçete",
+        "baskili_pecete": "Baskılı Peçete",
+    }
+    if raw in _KATALOG_OZEL:
+        return _KATALOG_OZEL[raw]
     key = raw if raw in STOK_KEYS else _stok_key_from_urun_ad(raw)
     if key and key in STOK_LABEL_TR:
         return STOK_LABEL_TR[key]

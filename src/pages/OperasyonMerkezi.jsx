@@ -312,7 +312,11 @@ function magazaStokKeyFromUrunAd(ad) {
   if (n.includes('pasta')) return 'pasta_adet';
   if (n.includes('surup') || n.includes('şurup')) return 'surup_adet';
   if (n.includes('kapak')) return 'kapak_adet';
-  if (n.includes('pecete') || n.includes('peçete')) return 'pecete_paket';
+  if (n.includes('pecete') || n.includes('peçete')) {
+    if (n.startsWith('z ') || n.startsWith('z pecete') || n.startsWith('z peçete')) return null;
+    if (n.includes('baskili') || n.includes('baskılı')) return null;
+    return 'pecete_paket';
+  }
   return null;
 }
 

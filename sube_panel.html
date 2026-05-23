@@ -5797,6 +5797,7 @@ function stokNormAd(v){
 }
 function stokApiKeyFromAd(ad){
   var n = stokNormAd(ad);
+  if (n === 'z pecete' || n.indexOf('baskili pecete') >= 0) return null;
   var m = {
     'kucuk bardak':'bardak_kucuk',
     'buyuk bardak':'bardak_buyuk',
