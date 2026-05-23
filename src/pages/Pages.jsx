@@ -215,7 +215,7 @@ export function OnayKuyrugu() {
                   )}
                   <td><span className="badge badge-yellow">{o.islem_turu}</span></td>
                   <td>{o.aciklama}</td>
-                  <td style={{textAlign:'right'}} className="amount-neg">{o.tutar ? `${parseInt(o.tutar).toLocaleString('tr-TR')} ₺` : '---'}</td>
+                  <td style={{textAlign:'right'}} className={parseFloat(o.tutar) >= 0 ? 'amount-pos' : 'amount-neg'}>{o.tutar ? `${parseFloat(o.tutar).toLocaleString('tr-TR', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ₺` : '---'}</td>
                   <td className="mono" style={{fontSize:12}}>{o.tarih}</td>
                   {gorunum === 'gecmis' && (
                     <td>
@@ -233,9 +233,7 @@ export function OnayKuyrugu() {
                         <button className="btn btn-primary btn-sm" onClick={()=>onayla(o.id)}>✓ Onayla</button>
                         <button className="btn btn-danger btn-sm" onClick={()=>setReddetModal({id:o.id, aciklama:o.aciklama})}>✕ Reddet</button>
                       </div>
-                    ) : (
-                      <span style={{fontSize:11,color:'var(--text3)'}}>Tamamlandı</span>
-                    )}
+                    ) : null}
                   </td>
                 </tr>
               ))}
