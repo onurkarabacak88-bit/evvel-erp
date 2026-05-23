@@ -9,10 +9,13 @@ Operasyon stok / bardak tutarlılık motoru (davranış denetimi).
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+logger = logging.getLogger(__name__)
 
 from tr_saat import bugun_tr, dt_coerce_naive_tr, dt_now_tr_naive
 
@@ -2250,7 +2253,7 @@ def siparis_rezerve_kaynak_depoya_tasi(
     if not tahsis_adet_map:
         if not eski:
             # Merkeze bağlı siparişte map boş geldi — güvenli çıkış, sızıntı yok.
-            log.debug(
+            logger.debug(
                 "siparis_rezerve_kaynak_depoya_tasi: tahsis_adet_map bos, "
                 "eski=None (merkez). Rezerv tasima atlandi. yeni=%s", yeni,
             )
@@ -2372,7 +2375,7 @@ def merkez_tahsis_yap(cur: Any, siparis_talep_id: str,
             mevcut_rezerve = int((stok_row or {}).get("rezerve_adet") or 0)
             yeni_rezerve = mevcut_rezerve + adet
             if yeni_rezerve > mevcut:
-                log.warning(
+                logger.warning(
                     "depo_rezerve_arttir: rezerve (%s) mevcut (%s) aşacak! "
                     "depo=%s kalem=%s delta=%s — izin veriliyor ama uyarı var.",
                     yeni_rezerve, mevcut, sube_id_local, kalem_kodu, adet,
@@ -2415,13 +2418,13 @@ def merkez_tahsis_yap(cur: Any, siparis_talep_id: str,
             )
             mk_row = cur.fetchone()
             if not mk_row:
-                log.warning("merkez_rezerve_arttir: kalem_kodu=%s merkez_stok_kart'ta yok", kalem_kodu)
+                logger.warning("merkez_rezerve_arttir: kalem_kodu=%s merkez_stok_kart'ta yok", kalem_kodu)
                 return
             mk_mevcut  = int((mk_row or {}).get("mevcut_adet") or 0)
             mk_rezerve = int((mk_row or {}).get("rezerve_adet") or 0)
             yeni_rezerve = mk_rezerve + adet
             if yeni_rezerve > mk_mevcut:
-                log.warning(
+                logger.warning(
                     "merkez_rezerve_arttir: rezerve (%s) mevcut (%s) aşacak! "
                     "kalem=%s delta=%s — izin veriliyor ama uyarı var.",
                     yeni_rezerve, mk_mevcut, kalem_kodu, adet,
@@ -2946,7 +2949,7 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
             )
             # FIX #5: 0 satır etkilendiyse kalem_kodu/depo uyumsuzluğu var — sessizce geçme
             if cur.rowcount == 0:
-                log.warning(
+                logger.warning(
                     "sevk_cikti_kaydet: sube_depo_stok satiri bulunamadi — "
                     "stok DUSULMEDI! siparis=%s depo=%s kalem_kodu=%s sevk_adet=%s",
                     siparis_talep_id, kaynak_depo, kalem_kodu, sevk_adet,
@@ -2987,7 +2990,7 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
             )
             # FIX #5: merkez stok kartında da kontrol et
             if cur.rowcount == 0:
-                log.warning(
+                logger.warning(
                     "sevk_cikti_kaydet: merkez_stok_kart satiri bulunamadi — "
                     "stok DUSULMEDI! siparis=%s kalem_kodu=%s sevk_adet=%s",
                     siparis_talep_id, kalem_kodu, sevk_adet,
@@ -3121,7 +3124,7 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
                 pass
             if yolda_durum == "kabul_uyusmazlik":
                 eksik = sevk_adet - kabul_adet
-                log.info(
+                logger.info(
                     "sube_kabul: uyumsuzluk — stok kabul_adet kadar yazildi, "
                     "fark=%s askida. siparis=%s sube=%s kalem=%s",
                     eksik, siparis_talep_id, sube_id, kalem_kodu,

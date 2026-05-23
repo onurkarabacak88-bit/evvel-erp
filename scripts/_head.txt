@@ -1,0 +1,50 @@
+1|"""
+2|Operasyon stok / bardak tutarlılık motoru (davranış denetimi).
+3|
+4|- Açılış sayımları ve kapanış sayımları event meta (JSON) içinde tutulur.
+5|- URUN_STOK_EKLE satırları operasyon_defter'da JSON gövde ile append-only yazılır.
+6|- PIN düz metin deftere yazılmaz; satır HMAC'ı doğrulanmış personel işleminden sonra üretilir
+7|  (operasyon_defter modülündeki model — blueprint'teki hash(pin+data) yerine sunucu imzası + zincir).
+8|"""
+9|from __future__ import annotations
+10|
+11|import json
+12|import re
+13|import uuid
+14|from datetime import date, datetime
+15|from typing import Any, Dict, List, Optional, Set, Tuple
+16|
+17|from tr_saat import bugun_tr, dt_coerce_naive_tr, dt_now_tr_naive
+18|
+19|# UUID formatı — sube_depo_stok.kalem_kodu olarak doğrudan siparis_urun.id kullanılır
+20|_UUID_RE = re.compile(
+21|    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I
+22|)
+23|
+24|STOK_KEYS = (
+25|    "bardak_kucuk",
+26|    "bardak_buyuk",
+27|    "bardak_plastik",
+28|    "su_adet",
+29|    "redbull_adet",
+30|    "soda_adet",
+31|    "cookie_adet",
+32|    "pasta_adet",   # toplam pasta (eski uyumluluk; bireysel kalemler pasta_* ile gelir)
+33|    "sut_litre",
+34|    "surup_adet",
+35|    "kahve_paket",
+36|    "karton_bardak",
+37|    "kapak_adet",
+38|    "pecete_paket",
+39|    "diger_sarf",
+40|    # ── Pastalar (Excel listesi) ──────────────────────────────────
+41|    # Porsiyon Tatlılar
+42|    "pasta_porsiyon_sade",
+43|    "pasta_porsiyon_antep",
+44|    "pasta_porsiyon_cik",
+45|    # Magnolya
+46|    "pasta_mag_cilek",
+47|    "pasta_mag_lotus",
+48|    # Adet Tatlılar
+49|    "pasta_buyuk_tart",
+50|    "pasta_kucuk_tart",
