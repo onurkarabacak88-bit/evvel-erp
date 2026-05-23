@@ -2797,15 +2797,7 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
         )
         yolda_ids.append(yid)
 
-    if not already_gonderildi:
-        cur.execute(
-            """UPDATE siparis_talep
-               SET durum='gonderildi',
-                   sevkiyat_durumu='gonderildi',
-                   sevkiyat_durum='gonderildi'
-               WHERE id=%s""",
-            (siparis_talep_id,),
-        )
+    # durum/sevkiyat alanlari cagiran katmanda guncellenir.
     _disiplin_olay_yaz(cur, siparis_talep_id, sube_id, OLAY_SEVK_CIKTI,
                         yapan_id, yapan_ad, {"sevk_kalemleri": sevk_kalemleri})
     return yolda_ids
@@ -2818,7 +2810,6 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
                        yapan_id: Optional[str] = None,
                        yapan_ad: Optional[str] = None) -> Dict[str, Any]:
     """Şube depo stoğu artar. Eksik teslimatta KABUL_FARKI uyarısı üretilir."""
-    # İdempotency: sipariş zaten teslim edilmişse stok tekrar artırılmaz.
     cur.execute(
         "SELECT durum FROM siparis_talep WHERE id=%s FOR UPDATE",
         (siparis_talep_id,),
@@ -2827,37 +2818,69 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
     if mevcut and (mevcut.get("durum") or mevcut[0]) in ("teslim_edildi", "kabul_uyusmazlik", "uyumsuz_kabul"):
         return {"success": True, "idempotent": True, "mesaj": "Kabul zaten işlendi"}
 
+    cur.execute(
+        """
+        SELECT id, kalem_kodu, kalem_adi, sevk_adet
+        FROM stok_yolda
+        WHERE siparis_talep_id=%s AND sube_id=%s AND durum='yolda'
+        ORDER BY sevk_ts ASC NULLS LAST, id ASC
+        """,
+        (siparis_talep_id, sube_id),
+    )
+    yolda_rows = [dict(r) for r in (cur.fetchall() or [])]
+    yolda_by_id = {str(r.get("id") or ""): r for r in yolda_rows if str(r.get("id") or "")}
+    islenen_yolda: set = set()
+
     tam_mi = True
     uyumsuz_satirlar: List[Dict[str, Any]] = []
     for item in kabul_kalemleri:
-        kalem_kodu = str(item.get("kalem_kodu") or item.get("urun_id") or "").strip()
-        kalem_adi = str(item.get("kalem_adi") or item.get("urun_ad") or kalem_kodu).strip()
-        kabul_adet = max(0, int(item.get("kabul_adet") or item.get("adet") or 0))
-        if not kalem_kodu:
-            continue
-        # Yoldaki kaydı kapat
-        cur.execute(
-            """
-            SELECT id, sevk_adet FROM stok_yolda
-            WHERE siparis_talep_id=%s AND sube_id=%s AND kalem_kodu=%s AND durum='yolda'
-            ORDER BY sevk_ts DESC LIMIT 1
-            """,
-            (siparis_talep_id, sube_id, kalem_kodu),
-        )
-        yolda_row = cur.fetchone()
-        sevk_adet = 0
-        yolda_durum = "kabul_edildi"  # eşleşme varsayımı; yolda kaydı yoksa stok geçer
-        if yolda_row:
-            sevk_adet = int((yolda_row.get("sevk_adet") or yolda_row[1]) or 0)
-            yolda_id  = yolda_row.get("id") or yolda_row[0]
-            yolda_durum = "kabul_edildi" if sevk_adet == kabul_adet else "kabul_uyusmazlik"
-            cur.execute(
-                "UPDATE stok_yolda SET durum=%s, kabul_ts=NOW(), kabul_adet=%s WHERE id=%s",
-                (yolda_durum, kabul_adet, yolda_id),
+        yolda_id_in = str(item.get("yolda_id") or "").strip()
+        urun_id = str(item.get("urun_id") or "").strip()
+        kalem_adi_in = str(item.get("kalem_adi") or item.get("urun_ad") or "").strip()
+        kalem_kodu_in = str(item.get("kalem_kodu") or "").strip()
+        if urun_id and not kalem_kodu_in:
+            kalem_kodu_in = depo_kalem_kodu_resolve(cur, urun_id, kalem_adi_in) or urun_id
+        try:
+            kabul_adet = max(0, int(item.get("kabul_adet") or item.get("adet") or 0))
+        except (TypeError, ValueError):
+            kabul_adet = 0
+
+        yolda_row = None
+        if yolda_id_in and yolda_id_in in yolda_by_id:
+            yolda_row = yolda_by_id[yolda_id_in]
+        elif kalem_kodu_in:
+            for yr in yolda_rows:
+                yid = str(yr.get("id") or "")
+                if yid in islenen_yolda:
+                    continue
+                yk = str(yr.get("kalem_kodu") or "").strip()
+                if yk == kalem_kodu_in or (urun_id and yk == urun_id):
+                    yolda_row = yr
+                    break
+
+        if not yolda_row:
+            tam_mi = False
+            uyumsuz_satirlar.append(
+                {
+                    "kalem_kodu": kalem_kodu_in or yolda_id_in,
+                    "kalem_adi": kalem_adi_in,
+                    "sevk_adet": 0,
+                    "kabul_adet": kabul_adet,
+                    "fark_adet": -kabul_adet,
+                }
             )
-        # FIX #2: Şube deposu kabul_adet kadar her zaman artar.
-        # Uyumsuzluk olsa bile şube fiilen teslim aldığı kadar stoğa girsin.
-        # Fark (sevk - kabul) için uyumsuzluk kaydı tutulur; ops merkezi takip eder.
+            continue
+
+        yolda_id = str(yolda_row.get("id") or "")
+        islenen_yolda.add(yolda_id)
+        kalem_kodu = str(yolda_row.get("kalem_kodu") or kalem_kodu_in).strip()
+        kalem_adi = str(yolda_row.get("kalem_adi") or kalem_adi_in or kalem_kodu).strip()
+        sevk_adet = int(yolda_row.get("sevk_adet") or 0)
+        yolda_durum = "kabul_edildi" if sevk_adet == kabul_adet else "kabul_uyusmazlik"
+        cur.execute(
+            "UPDATE stok_yolda SET durum=%s, kabul_ts=NOW(), kabul_adet=%s WHERE id=%s",
+            (yolda_durum, kabul_adet, yolda_id),
+        )
         if kabul_adet > 0:
             cur.execute(
                 """
@@ -2870,7 +2893,6 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
                 """,
                 (str(uuid.uuid4()), sube_id, kalem_kodu, kalem_adi, kabul_adet),
             )
-            # Stok geldi → bugün bu kalem için açık stok/bitti uyarılarını kapat
             try:
                 cur.execute(
                     """
@@ -2886,7 +2908,6 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
                 )
             except Exception:
                 pass
-            # Uyumsuzluk varsa: gelen fark için ek uyarı yaz (ops takip edebilsin)
             if yolda_durum == "kabul_uyusmazlik":
                 eksik = sevk_adet - kabul_adet
                 log.info(
@@ -2894,7 +2915,6 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
                     "fark=%s askida. siparis=%s sube=%s kalem=%s",
                     eksik, siparis_talep_id, sube_id, kalem_kodu,
                 )
-        # Kabul farkı kontrolü
         if sevk_adet != kabul_adet:
             tam_mi = False
             fark = sevk_adet - kabul_adet
@@ -2912,9 +2932,43 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
                                 {"sevk": sevk_adet, "kabul": kabul_adet,
                                  "fark": fark})
 
+    for yr in yolda_rows:
+        yid = str(yr.get("id") or "")
+        if yid not in islenen_yolda:
+            tam_mi = False
+            uyumsuz_satirlar.append(
+                {
+                    "kalem_kodu": str(yr.get("kalem_kodu") or ""),
+                    "kalem_adi": str(yr.get("kalem_adi") or ""),
+                    "sevk_adet": int(yr.get("sevk_adet") or 0),
+                    "kabul_adet": 0,
+                    "fark_adet": int(yr.get("sevk_adet") or 0),
+                }
+            )
+
+    cur.execute(
+        """
+        SELECT COUNT(*) AS c FROM stok_yolda
+        WHERE siparis_talep_id=%s AND sube_id=%s AND durum='yolda'
+        """,
+        (siparis_talep_id, sube_id),
+    )
+    yolda_kalan = int((dict(cur.fetchone() or {}).get("c") or 0))
+
+    if yolda_kalan > 0:
+        genel_olay = OLAY_KABUL_EKSIK if not tam_mi else OLAY_KABUL_TAM
+        _disiplin_olay_yaz(cur, siparis_talep_id, sube_id, genel_olay,
+                            yapan_id, yapan_ad, {"tam_mi": tam_mi, "bekleyen_yolda": yolda_kalan})
+        return {
+            "durum": genel_olay,
+            "tam_mi": False,
+            "uyumsuz_satirlar": uyumsuz_satirlar,
+            "bekleyen_yolda": yolda_kalan,
+        }
+
     genel_olay = OLAY_KABUL_TAM if tam_mi else OLAY_KABUL_EKSIK
     sevk_durum = "teslim_edildi" if tam_mi else "kabul_uyusmazlik"
-    yeni_talep_durum = "teslim_edildi" if tam_mi else "kabul_uyusmazlik"
+    yeni_talep_durum = sevk_durum
     cur.execute(
         """
         UPDATE siparis_talep
@@ -2938,9 +2992,6 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
     _disiplin_olay_yaz(cur, siparis_talep_id, sube_id, genel_olay,
                         yapan_id, yapan_ad, {"tam_mi": tam_mi})
     return {"durum": genel_olay, "tam_mi": tam_mi, "uyumsuz_satirlar": uyumsuz_satirlar}
-
-
-# ── Aşama 5: Kullanım ────────────────────────────────────────────
 
 def gunluk_acilis_stok_sayim_map(cur: Any, sube_id: str) -> Dict[str, int]:
     """Bugün tamamlanmış ACILIS olayındaki depo sayımı (STOK_KEYS). Satır yoksa sıfır."""

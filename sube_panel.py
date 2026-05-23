@@ -86,6 +86,7 @@ class SubeDepoSevkiyatKaydetBody(BaseModel):
 
 
 class SubeTeslimKabulSatir(BaseModel):
+    yolda_id: Optional[str] = None
     kalem_kodu: str
     kalem_adi: str = ""
     kabul_adet: int = 0
@@ -3600,31 +3601,48 @@ def _depo_yolda_teslim_haritasi(cur: Any, sube_id: str, gun_i: int) -> Dict[str,
     yolda_map: Dict[str, List[Dict[str, Any]]] = {}
     try:
         cur.execute("SAVEPOINT sp_yolda_harita")
-        # sevk_kaynak_depo_sube_id henüz migrasyon ile eklenmiş olabilir;
-        # NULL döneceği garantili olan CASE ile güvenli hale getiriyoruz.
-        cur.execute(
-            """
+        yolda_sql_v2 = """
             SELECT y.siparis_talep_id, y.id, y.kalem_kodu, y.kalem_adi, y.sevk_adet,
-                   CASE WHEN EXISTS (
-                       SELECT 1 FROM information_schema.columns
-                       WHERE table_name='stok_yolda' AND column_name='sevk_kaynak_depo_sube_id'
-                   ) THEN NULL ELSE NULL END AS sevk_kaynak_depo_sube_id,
-                   '' AS sevk_kaynak_depo_adi
+                   y.sevk_kaynak_depo_sube_id,
+                   ks.ad AS sevk_kaynak_depo_adi
             FROM stok_yolda y
             JOIN siparis_talep t ON t.id = y.siparis_talep_id
+            LEFT JOIN subeler ks ON ks.id = y.sevk_kaynak_depo_sube_id
             WHERE y.sube_id = %s
               AND t.sube_id = %s
               AND y.durum = 'yolda'
-              AND t.durum NOT IN ('teslim_edildi', 'iptal', 'gonderilmedi')
+              AND t.durum NOT IN ('teslim_edildi', 'iptal', 'gonderilmedi', 'kabul_uyusmazlik')
               AND (
                     t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
                     OR COALESCE(y.sevk_ts, t.sevkiyat_ts, t.olusturma)
                        >= NOW() - (%s * INTERVAL '1 day')
                   )
-            ORDER BY COALESCE(y.sevk_ts, t.sevkiyat_ts) ASC NULLS LAST
-            """,
-            (sube_id, sube_id, gun_x, gun_x),
-        )
+            ORDER BY COALESCE(y.sevk_ts, t.sevkiyat_ts) ASC NULLS LAST, y.id ASC
+        """
+        yolda_sql_v1 = """
+            SELECT y.siparis_talep_id, y.id, y.kalem_kodu, y.kalem_adi, y.sevk_adet,
+                   NULL::text AS sevk_kaynak_depo_sube_id,
+                   NULL::text AS sevk_kaynak_depo_adi
+            FROM stok_yolda y
+            JOIN siparis_talep t ON t.id = y.siparis_talep_id
+            WHERE y.sube_id = %s
+              AND t.sube_id = %s
+              AND y.durum = 'yolda'
+              AND t.durum NOT IN ('teslim_edildi', 'iptal', 'gonderilmedi', 'kabul_uyusmazlik')
+              AND (
+                    t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                    OR COALESCE(y.sevk_ts, t.sevkiyat_ts, t.olusturma)
+                       >= NOW() - (%s * INTERVAL '1 day')
+                  )
+            ORDER BY COALESCE(y.sevk_ts, t.sevkiyat_ts) ASC NULLS LAST, y.id ASC
+        """
+        params = (sube_id, sube_id, gun_x, gun_x)
+        try:
+            cur.execute(yolda_sql_v2, params)
+        except Exception:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_yolda_harita")
+            cur.execute("SAVEPOINT sp_yolda_harita")
+            cur.execute(yolda_sql_v1, params)
         for yr in cur.fetchall() or []:
             yy = dict(yr)
             tid_y = str(yy.get("siparis_talep_id") or "").strip()
@@ -3636,8 +3654,8 @@ def _depo_yolda_teslim_haritasi(cur: Any, sube_id: str, gun_i: int) -> Dict[str,
                     "kalem_kodu": str(yy.get("kalem_kodu") or "").strip(),
                     "kalem_adi": str(yy.get("kalem_adi") or "").strip(),
                     "sevk_adet": int(yy.get("sevk_adet") or 0),
-                    "sevk_kaynak_depo_sube_id": None,
-                    "sevk_kaynak_depo_adi": None,
+                    "sevk_kaynak_depo_sube_id": str(yy.get("sevk_kaynak_depo_sube_id") or "").strip() or None,
+                    "sevk_kaynak_depo_adi": str(yy.get("sevk_kaynak_depo_adi") or "").strip() or None,
                 }
             )
         cur.execute("RELEASE SAVEPOINT sp_yolda_harita")
@@ -3940,7 +3958,23 @@ def sube_siparis_akisi(
             JOIN subeler ts ON ts.id = t.sube_id
             WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) = %s
               AND t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
-              AND t.durum NOT IN ('iptal', 'teslim_edildi', 'gonderilmedi', 'bekliyor', 'gonderildi')
+              AND t.durum NOT IN ('iptal', 'teslim_edildi', 'gonderilmedi', 'bekliyor', 'kabul_uyusmazlik')
+              AND (
+                    t.durum = 'hazirlaniyor'
+                    OR (
+                        t.durum = 'gonderildi'
+                        AND EXISTS (
+                            SELECT 1
+                            FROM jsonb_array_elements(COALESCE(t.kalem_durumlari, '[]'::jsonb)) kd
+                            WHERE LOWER(COALESCE(kd->>'durum', '')) IN ('bekliyor', 'kismi')
+                               OR GREATEST(
+                                    0,
+                                    COALESCE(NULLIF(kd->>'istenen_adet', '')::int, 0)
+                                    - COALESCE(NULLIF(kd->>'gonderilen_adet', '')::int, 0)
+                                  ) > 0
+                        )
+                    )
+                  )
             ORDER BY t.sevkiyat_ts DESC NULLS LAST, t.olusturma DESC NULLS LAST, t.id DESC
             LIMIT %s
         """
@@ -3978,7 +4012,23 @@ def sube_siparis_akisi(
                 SELECT COUNT(*) FROM siparis_talep t
                 WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) = %s
                   AND t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
-                  AND t.durum NOT IN ('iptal', 'teslim_edildi', 'gonderilmedi', 'bekliyor', 'gonderildi')
+                  AND t.durum NOT IN ('iptal', 'teslim_edildi', 'gonderilmedi', 'bekliyor', 'kabul_uyusmazlik')
+                  AND (
+                        t.durum = 'hazirlaniyor'
+                        OR (
+                            t.durum = 'gonderildi'
+                            AND EXISTS (
+                                SELECT 1
+                                FROM jsonb_array_elements(COALESCE(t.kalem_durumlari, '[]'::jsonb)) kd
+                                WHERE LOWER(COALESCE(kd->>'durum', '')) IN ('bekliyor', 'kismi')
+                                   OR GREATEST(
+                                        0,
+                                        COALESCE(NULLIF(kd->>'istenen_adet', '')::int, 0)
+                                        - COALESCE(NULLIF(kd->>'gonderilen_adet', '')::int, 0)
+                                      ) > 0
+                            )
+                        )
+                      )
                 """,
                 (sube_id, gun_i),
             )
@@ -4066,10 +4116,36 @@ def sube_siparis_teslim_kabul(sube_id: str, body: SubeSiparisTeslimKabulBody):
         st = str(row.get("durum") or row[1] or "").strip()
         if talep_sube != sube_id:
             raise HTTPException(403, "Bu sipariş bu şubeye ait değil")
-        if st not in ("gonderildi", "hazirlaniyor"):
+        if st not in ("gonderildi", "hazirlaniyor", "kabul_uyusmazlik"):
             raise HTTPException(
                 400,
                 f"Teslim onayı bu sipariş durumunda yapılamaz (şu an: {st or '—'})",
+            )
+        cur.execute(
+            """
+            SELECT id, kalem_kodu, kalem_adi, sevk_adet
+            FROM stok_yolda
+            WHERE siparis_talep_id=%s AND sube_id=%s AND durum='yolda'
+            ORDER BY sevk_ts ASC NULLS LAST, id ASC
+            """,
+            (tid, sube_id),
+        )
+        bekleyen_yolda = [dict(r) for r in (cur.fetchall() or [])]
+        if not bekleyen_yolda:
+            raise HTTPException(
+                400,
+                "Yolda bekleyen paket kalemi yok — depo sevk çıkışı tamamlanmamış olabilir.",
+            )
+        bekleyen_ids = {str(r.get("id") or "") for r in bekleyen_yolda}
+        gonderilen_ids = {
+            str((k.yolda_id or "").strip())
+            for k in body.kabul
+            if str((k.yolda_id or "").strip())
+        }
+        if bekleyen_ids != gonderilen_ids:
+            raise HTTPException(
+                400,
+                "Tüm yoldaki kalemler için adet girmelisiniz (eksik veya fazla satır var).",
             )
         # FIX #3: hazirlaniyor durumu iki anlama gelebiliyor:
         #   (A) Depo hazırladı, yola çıkardı ama siparis_talep henüz 'gonderildi' olmadı

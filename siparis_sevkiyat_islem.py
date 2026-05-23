@@ -15,7 +15,7 @@ from fastapi import HTTPException
 
 from kasa_service import audit
 from operasyon_defter import operasyon_defter_ekle
-from operasyon_stok_motor import sevk_cikti_kaydet as _disiplin_sevk_cikti
+from operasyon_stok_motor import depo_kalem_kodu_resolve, sevk_cikti_kaydet as _disiplin_sevk_cikti
 from tr_saat import dt_now_tr
 from sevkiyat_helpers import (
     sevkiyat_durumu_coz,
@@ -85,11 +85,40 @@ def hesapla_yeni_sevkiyat_durumu(
     kismi_var: bool,
     gonderildi: bool,
 ) -> str:
-    if bool(gonderildi) or (durumlar and not bekleyen_var):
+    if bool(gonderildi):
+        if bekleyen_var or kismi_var:
+            return "kismi_hazirlandi"
         return "gonderildi"
     if kismi_var:
         return "kismi_hazirlandi"
+    if durumlar and not bekleyen_var:
+        return "gonderildi"
     return "depoda_hazirlaniyor"
+
+
+def _sevk_kalem_satir(cur: Any, d: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Depo çıkışı için canonical kalem_kodu + sevk adedi."""
+    urun_id = str(d.get("urun_id") or "").strip()
+    urun_ad = str(d.get("urun_ad") or "").strip()
+    kk = str(d.get("kalem_kodu") or "").strip()
+    if urun_id:
+        kk = depo_kalem_kodu_resolve(cur, urun_id, urun_ad) or kk or urun_id
+    elif not kk:
+        kk = urun_ad
+    if not kk:
+        return None
+    try:
+        sevk_adet = max(0, int(d.get("gonderilen_adet") or 0))
+    except (TypeError, ValueError):
+        sevk_adet = 0
+    if sevk_adet <= 0:
+        return None
+    return {
+        "kalem_kodu": kk,
+        "kalem_adi": urun_ad or kk,
+        "sevk_adet": sevk_adet,
+        "urun_id": urun_id or None,
+    }
 
 
 def build_depo_sevkiyat_rapor(
@@ -207,9 +236,7 @@ def siparis_sevkiyat_kalem_guncelle_execute(
     mevcut_durum = str(row.get("durum") or "")
     if mevcut_durum == "teslim_edildi":
         raise HTTPException(409, "Talep zaten teslim edildi")
-    if mevcut_durum == "gonderildi":
-        raise HTTPException(409, "Bu sipariş zaten gönderildi — tekrar gönderilemez")
-    if yeni_durum == "gonderildi":
+    if bool(gonderildi):
         uyumsuz_sayi = _kaynak_depo_aktif_uyumsuzluk_sayisi(cur, sevk_sid, tid)
         if uyumsuz_sayi > 0:
             raise HTTPException(
@@ -221,35 +248,40 @@ def siparis_sevkiyat_kalem_guncelle_execute(
     rapor_metni, rapor_uyari = build_depo_sevkiyat_rapor(durumlar, personel_ad=personel_ad)
 
     sevk_kalemleri: List[Dict[str, Any]] = []
-    if yeni_durum == "gonderildi":
-        sevk_kalemleri = [
-            {
-                "kalem_kodu": str(d.get("urun_id") or d.get("kalem_kodu") or "").strip()
-                or str(d.get("urun_ad") or "").strip(),
-                "kalem_adi": str(d.get("urun_ad") or d.get("urun_id") or "").strip(),
-                "sevk_adet": d.get("gonderilen_adet") or 0,
-            }
-            for d in durumlar
-            if d.get("durum") in ("var", "kismi") and (d.get("gonderilen_adet") or 0) > 0
-        ]
-        if sevk_kalemleri:
-            try:
-                _disiplin_sevk_cikti(
-                    cur,
-                    tid,
-                    sevk_kalemleri,
-                    None,
-                    personel_ad,
-                )
-            except ValueError as exc:
-                raise HTTPException(404, str(exc).strip() or "Sevkiyat çıkışı yapılamadı") from exc
+    if bool(gonderildi):
+        for d in durumlar:
+            if str(d.get("durum") or "").strip().lower() not in ("var", "kismi"):
+                continue
+            satir = _sevk_kalem_satir(cur, d)
+            if satir:
+                sevk_kalemleri.append(satir)
+        if not sevk_kalemleri:
+            raise HTTPException(
+                400,
+                "Sevkiyat tamamlandı işaretli — en az bir kalemde «var/kısmi» ve gönderilen adet girin.",
+            )
+        try:
+            _disiplin_sevk_cikti(
+                cur,
+                tid,
+                sevk_kalemleri,
+                None,
+                personel_ad,
+            )
+        except ValueError as exc:
+            raise HTTPException(404, str(exc).strip() or "Sevkiyat çıkışı yapılamadı") from exc
+        yeni_durum = hesapla_yeni_sevkiyat_durumu(durumlar, bekleyen_var, kismi_var, gonderildi)
+        _sevk_durum_yeni, _sevk_durum_eski = sevkiyat_durumu_guncelle_params(yeni_durum)
+        eski_durum_karsilik = _sevk_durum_eski
+
+    talep_durum = "gonderildi" if yeni_durum == "gonderildi" else "hazirlaniyor"
 
     cur.execute(
         """
         UPDATE siparis_talep
         SET sevkiyat_durumu=%s,
             sevkiyat_durum=%s,
-            durum=CASE WHEN %s='gonderildi' THEN 'gonderildi' ELSE 'hazirlaniyor' END,
+            durum=%s,
             kalem_durumlari=%s::jsonb,
             sevkiyat_notu=COALESCE(%s, sevkiyat_notu),
             sevkiyat_notlari=COALESCE(%s, sevkiyat_notlari),
@@ -263,7 +295,7 @@ def siparis_sevkiyat_kalem_guncelle_execute(
         (
             _sevk_durum_yeni,
             _sevk_durum_eski,
-            yeni_durum,
+            talep_durum,
             json.dumps(durumlar, ensure_ascii=False),
             notu,
             notu,
@@ -281,12 +313,12 @@ def siparis_sevkiyat_kalem_guncelle_execute(
     operasyon_defter_ekle(
         cur,
         defter_sube_id,
-        "SIPARIS_SEVKIYAT_TAMAM" if yeni_durum == "gonderildi" else "OPS_SIPARIS_SEVKIYAT_GUNCELLE",
+        "SIPARIS_SEVKIYAT_TAMAM" if bool(gonderildi) else "OPS_SIPARIS_SEVKIYAT_GUNCELLE",
         defter_aciklama,
         bildirim_saati=saat,
     )
     talep_sube_id = str(row.get("sube_id") or "").strip()
-    if yeni_durum == "gonderildi" and talep_sube_id and talep_sube_id != defter_sube_id:
+    if bool(gonderildi) and talep_sube_id and talep_sube_id != defter_sube_id:
         operasyon_defter_ekle(
             cur,
             talep_sube_id,

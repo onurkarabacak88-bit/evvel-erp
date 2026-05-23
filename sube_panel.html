@@ -3930,7 +3930,7 @@ function buildDepoHazirlikHTML(depoHazirlik) {
     h += '</div>';
     h += '<div class="dep-haz-kart-foot">';
     h += '<div class="form-group" style="margin:0"><label for="depNot_' + tidEsc + '">Sevkiyat notu (tüm kart)</label><input id="depNot_' + tidEsc + '" value="' + escHtml(d.sevkiyat_notu||'') + '" placeholder="Opsiyonel genel not" /></div>';
-    h += '<label class="chk-row" style="margin:0"><input type="checkbox" id="depDone_' + tidEsc + '" /><span>Sevkiyat tamamlandı (gönderildi)</span></label>';
+    h += '<label class="chk-row" style="margin:0"><input type="checkbox" id="depDone_' + tidEsc + '" /><span>Sevkiyat tamamlandı (gönderildi) — işaretlenmeden stok yola çıkmaz</span></label>';
     h += '<div class="dep-haz-kaydet-row">';
     h += '<button type="button" class="btn btn-primary btn-sm" id="depKaydet_' + tidEsc + '">Depo sevkiyatını kaydet</button>';
     h += '</div>';
@@ -3979,6 +3979,15 @@ function wireDepKaydetHandlers(depoHazirlik) {
           };
         });
         if (!kalemler.length) throw new Error('En az bir kalem olmalı');
+        var gonderildiChk = document.getElementById('depDone_' + tid);
+        var gonderildiFlag = !!(gonderildiChk && gonderildiChk.checked);
+        var sevkVar = kalemler.some(function (x) {
+          var d = String(x.durum || '');
+          return (d === 'var' || d === 'kismi') && (parseInt(x.gonderilen_adet || 0, 10) || 0) > 0;
+        });
+        if (sevkVar && !gonderildiFlag) {
+          throw new Error('Fiziksel gönderim için «Sevkiyat tamamlandı (gönderildi)» kutusunu işaretleyin.');
+        }
         var ozetSatirlar = kalemler.map(function(x){
           return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:12px"><span>' + escHtml(x.urun_ad||'') + '</span><strong>×' + (x.gonderilen_adet||0) + '</strong></div>';
         }).join('');
@@ -4782,10 +4791,11 @@ function renderDepoKabulSection() {
     rows.forEach(function (row, idx) {
       var kk = String(row.kalem_kodu || '').trim();
       var ka = String(row.kalem_adi || row.kalem_kodu || '').trim();
+      var yid = String(row.yolda_id || '').trim();
       var inpId = 'teslimKab_' + tid.replace(/[^a-zA-Z0-9_-]/g, '_') + '_' + idx;
       h += '<div style="display:grid;grid-template-columns:minmax(0,1fr) 88px;gap:8px;align-items:start;font-size:12px">';
       h += '<span>' + escHtml(ka) + '</span>';
-      h += '<input class="teslim-kabul-adet" inputmode="numeric" id="' + escHtml(inpId) + '" value="" placeholder="Adet" data-kalem-kodu="' + escHtml(kk) + '" data-kalem-adi="' + escHtml(ka) + '" />';
+      h += '<input class="teslim-kabul-adet" inputmode="numeric" id="' + escHtml(inpId) + '" value="" placeholder="Adet" data-yolda-id="' + escHtml(yid) + '" data-kalem-kodu="' + escHtml(kk) + '" data-kalem-adi="' + escHtml(ka) + '" />';
       h += '</div>';
     });
     h += '</div>';
@@ -4812,6 +4822,7 @@ function renderDepoKabulSection() {
         if (!kart) throw new Error('Form bulunamadı');
         var kabul = [];
         kart.querySelectorAll('.teslim-kabul-adet').forEach(function (inp) {
+          var yolda_id = String(inp.getAttribute('data-yolda-id') || '').trim();
           var kalem_kodu = String(inp.getAttribute('data-kalem-kodu') || '').trim();
           var kalem_adi = String(inp.getAttribute('data-kalem-adi') || '').trim();
           var raw = String(inp.value || '').trim();
@@ -4820,8 +4831,8 @@ function renderDepoKabulSection() {
           if (isNaN(kabul_adet) || kabul_adet < 0) {
             throw new Error('Adet alanları 0 veya pozitif sayı olmalı');
           }
-          if (!kalem_kodu) return;
-          kabul.push({ kalem_kodu: kalem_kodu, kalem_adi: kalem_adi, kabul_adet: kabul_adet });
+          if (!yolda_id && !kalem_kodu) return;
+          kabul.push({ yolda_id: yolda_id || null, kalem_kodu: kalem_kodu, kalem_adi: kalem_adi, kabul_adet: kabul_adet });
         });
         if (!kabul.length) throw new Error('Kalem bulunamadı');
         var ozetSatirlarTk = kabul.map(function (x) {
