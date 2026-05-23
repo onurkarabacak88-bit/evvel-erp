@@ -1992,14 +1992,44 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
 
 def sube_personel_panel_public(payload: dict) -> dict:
     """
-    Personel şube paneli: ciro taslağı / özet kalemleri çıkarılır.
+    Personel şube paneli — KÖR FİLTRE: parasal ve ürünsel veriler çıkarılır.
     Kasa / ürün sayım tutarsızlığı şube panelinde gösterilmez (operasyon merkezi).
     Depo uyarıları (stok_alarmlari) geçirilir. Vardiya devri blob'u korunur (imza akışı).
     """
     p = dict(payload)
+    # Parasal alanlar — tamamen kaldır
     p.pop("ciro_ozet", None)
     p.pop("ciro_taslak", None)
     p.pop("anlik_gider_adet", None)
+    p.pop("bekleyen_gider_sayisi", None)
+    # Ürünsel alanlar — tamamen kaldır
+    p.pop("bugun_urun_ac_kayit", None)
+    # Kasa teslim geçmişi: tarih/isim bilgisi kalır, TL tutarı çıkar
+    kt = p.get("kasa_teslim_son_hareketler")
+    if isinstance(kt, list):
+        p["kasa_teslim_son_hareketler"] = [
+            {k: v for k, v in item.items() if k != "tutar"} for item in kt
+        ]
+    # Stok alarmlari: sevkiyat uyumsuzluğunda adet/fark sayıları çıkar
+    sa = p.get("stok_alarmlari")
+    if isinstance(sa, list):
+        temiz = []
+        for alarm in sa:
+            if alarm.get("tip") == "SEVKIYAT_UYUMSUZLUK":
+                alarm = {
+                    k: v for k, v in alarm.items()
+                    if k not in ("sevk_adet", "kabul_adet", "fark_adet")
+                }
+                alarm["mesaj"] = "Sevkiyat uyumsuzluğu var — depo ile kontrol edin."
+            temiz.append(alarm)
+        p["stok_alarmlari"] = temiz
+    # Kabul kayıtları: ürün adedi ve özeti çıkar, sadece tarih/personel kalır
+    sk = p.get("son_kabul_kayitlari")
+    if isinstance(sk, list):
+        p["son_kabul_kayitlari"] = [
+            {k: v for k, v in item.items() if k not in ("toplam_adet", "ozet")}
+            for item in sk
+        ]
     op = p.get("operasyon")
     if isinstance(op, dict):
         evs = op.get("events") or []
