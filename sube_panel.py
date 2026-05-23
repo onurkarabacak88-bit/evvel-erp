@@ -3612,11 +3612,6 @@ def _depo_yolda_teslim_haritasi(cur: Any, sube_id: str, gun_i: int) -> Dict[str,
               AND t.sube_id = %s
               AND y.durum = 'yolda'
               AND t.durum NOT IN ('teslim_edildi', 'iptal', 'gonderilmedi', 'kabul_uyusmazlik')
-              AND (
-                    t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
-                    OR COALESCE(y.sevk_ts, t.sevkiyat_ts, t.olusturma)
-                       >= NOW() - (%s * INTERVAL '1 day')
-                  )
             ORDER BY COALESCE(y.sevk_ts, t.sevkiyat_ts) ASC NULLS LAST, y.id ASC
         """
         yolda_sql_v1 = """
@@ -3629,14 +3624,9 @@ def _depo_yolda_teslim_haritasi(cur: Any, sube_id: str, gun_i: int) -> Dict[str,
               AND t.sube_id = %s
               AND y.durum = 'yolda'
               AND t.durum NOT IN ('teslim_edildi', 'iptal', 'gonderilmedi', 'kabul_uyusmazlik')
-              AND (
-                    t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
-                    OR COALESCE(y.sevk_ts, t.sevkiyat_ts, t.olusturma)
-                       >= NOW() - (%s * INTERVAL '1 day')
-                  )
             ORDER BY COALESCE(y.sevk_ts, t.sevkiyat_ts) ASC NULLS LAST, y.id ASC
         """
-        params = (sube_id, sube_id, gun_x, gun_x)
+        params = (sube_id, sube_id)
         try:
             cur.execute(yolda_sql_v2, params)
         except Exception:

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
 import { publishGlobalDataRefresh } from '../utils/globalDataRefresh';
 
@@ -78,6 +78,63 @@ export default function VeriTemizle() {
   const [busy, setBusy] = useState(false);
   const [sonuc, setSonuc] = useState(null);
   const [hata, setHata] = useState(null);
+  const [depoKalinti, setDepoKalinti] = useState(null);
+  const [depoBusy, setDepoBusy] = useState(false);
+  const [depoSonuc, setDepoSonuc] = useState(null);
+  const [depoHata, setDepoHata] = useState(null);
+
+  const depoKalintiYukle = async () => {
+    try {
+      const r = await api('/ops/siparis/depo-akisi-kalinti');
+      setDepoKalinti(r);
+    } catch (e) {
+      setDepoHata(e.message || 'Kalıntı özeti yüklenemedi');
+    }
+  };
+
+  useEffect(() => {
+    depoKalintiYukle();
+  }, []);
+
+  const presetSiparisDepo = () => {
+    setSecili(
+      new Set([
+        'stok_yolda',
+        'siparis_talep',
+        'siparis_ozel_talep',
+        'siparis_sevk_eksik',
+        'merkez_stok_sevk',
+      ]),
+    );
+    setSonuc(null);
+    setHata(null);
+  };
+
+  const depoAkisiTemizle = async () => {
+    setDepoHata(null);
+    setDepoSonuc(null);
+    if (onay.trim() !== ONAY_METNI) {
+      setDepoHata(`Onay kutusuna tam olarak «${ONAY_METNI}» yazın.`);
+      return;
+    }
+    setDepoBusy(true);
+    try {
+      const r = await api('/ops/siparis/depo-akisi-temizle', {
+        method: 'POST',
+        body: { onay: ONAY_METNI },
+      });
+      setDepoSonuc(r);
+      setOnay('');
+      await depoKalintiYukle();
+      try {
+        publishGlobalDataRefresh('veri-temizleme');
+      } catch (_) {}
+    } catch (e) {
+      setDepoHata(e.message || 'Temizlik başarısız');
+    } finally {
+      setDepoBusy(false);
+    }
+  };
 
   const seciliSayisi = secili.size;
 
@@ -208,6 +265,49 @@ export default function VeriTemizle() {
         <strong style={{ color: '#fecaca' }}>Üretim verisinde kullanmayın.</strong> Yedek alın. Bu işlem kalıcıdır.
       </div>
 
+      <div
+        style={{
+          padding: '14px 16px',
+          borderRadius: 8,
+          border: '1px solid rgba(245, 158, 11, 0.45)',
+          background: 'rgba(245, 158, 11, 0.08)',
+          marginBottom: 16,
+        }}
+      >
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>Depo sipariş akışı kalıntıları</div>
+        <p style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.55, margin: '0 0 10px' }}>
+          Eski kodlardan kalan yarım siparişler, <strong>stok_yolda</strong> ve panelde görünmeyen paketler buradan
+          temizlenir. <strong>Şube depo mevcut stok silinmez</strong> — yalnızca sipariş rezerveleri sıfırlanır.
+        </p>
+        {depoKalinti && (
+          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10, lineHeight: 1.6 }}>
+            Yolda (aktif): <strong>{depoKalinti.yolda_aktif ?? 0}</strong>
+            {' · '}
+            Panel dışı yolda: <strong>{depoKalinti.yolda_panel_disinda ?? 0}</strong>
+            {' · '}
+            Açık sipariş: <strong>{depoKalinti.acik_siparis ?? 0}</strong>
+            {' · '}
+            siparis_talep: <strong>{depoKalinti.siparis_talep ?? 0}</strong>
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={depoKalintiYukle}>
+            Özeti yenile
+          </button>
+          <button type="button" className="btn btn-warning btn-sm" disabled={depoBusy} onClick={depoAkisiTemizle}>
+            {depoBusy ? 'Temizleniyor…' : 'Depo sipariş akışını temizle'}
+          </button>
+        </div>
+        {depoHata && (
+          <div style={{ marginTop: 10, fontSize: 12, color: '#fecaca' }}>{depoHata}</div>
+        )}
+        {depoSonuc && (
+          <div style={{ marginTop: 10, fontSize: 12, color: '#86efac' }}>
+            {depoSonuc.mesaj || 'Depo akışı temizlendi.'}
+          </div>
+        )}
+      </div>
+
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
         <button type="button" className="btn btn-secondary btn-sm" onClick={() => tumunu(true)}>
           Tümünü seç
@@ -217,6 +317,9 @@ export default function VeriTemizle() {
         </button>
         <button type="button" className="btn btn-secondary btn-sm" onClick={presetOperasyon}>
           Ön ayar: operasyon + sipariş + stok
+        </button>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={presetSiparisDepo}>
+          Ön ayar: yalnız sipariş/sevk tabloları
         </button>
         <button type="button" className="btn btn-secondary btn-sm" onClick={presetFinans}>
           Ön ayar: finans

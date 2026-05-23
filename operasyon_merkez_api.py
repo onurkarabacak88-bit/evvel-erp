@@ -7421,6 +7421,37 @@ def ops_siparis_kabul_takip(gun: int = 7, limit: int = 120, sube_id: Optional[st
     return {"gun": gun_i, "sube_id": sid, "toplam": len(satirlar), "satirlar": satirlar}
 
 
+@router.get("/siparis/depo-akisi-kalinti")
+def ops_siparis_depo_akisi_kalinti(sube_id: Optional[str] = None):
+    """Eski / yarım kalmış depo sipariş akışı kayıtları — panelde görünmeyen yolda dahil."""
+    from siparis_depo_temizlik import siparis_depo_akisi_ozet
+
+    sid = (sube_id or "").strip() or None
+    with db() as (conn, cur):
+        return siparis_depo_akisi_ozet(cur, sid)
+
+
+class OpsSiparisDepoAkisiTemizleBody(BaseModel):
+    onay: str
+    sube_id: Optional[str] = None
+
+
+@router.post("/siparis/depo-akisi-temizle")
+def ops_siparis_depo_akisi_temizle(body: OpsSiparisDepoAkisiTemizleBody):
+    """
+    Depo yönlendirmeli sipariş kalıntılarını siler (stok_yolda, siparis_talep, …).
+    sube_depo_stok.mevcut_adet korunur; yalnızca rezerve sıfırlanır.
+    """
+    from siparis_depo_temizlik import siparis_depo_akisi_temizle
+
+    sid = (body.sube_id or "").strip() or None
+    try:
+        with db() as (conn, cur):
+            return siparis_depo_akisi_temizle(cur, sube_id=sid, onay=body.onay)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
 @router.get("/siparis/ozel-bekleyen")
 def ops_siparis_ozel_bekleyen():
     with db() as (conn, cur):
