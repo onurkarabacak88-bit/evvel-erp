@@ -79,6 +79,18 @@ def sevkiyat_kalem_durumlari_normalize(items: Any) -> Tuple[List[Dict[str, Any]]
     return durumlar, bekleyen_var, kismi_var
 
 
+def _sevk_satirlari_var_mi(durumlar: List[Dict[str, Any]]) -> bool:
+    """var/kısmi + gonderilen_adet>0 — fiziksel sevk gerektirir."""
+    for d in durumlar or []:
+        if not isinstance(d, dict):
+            continue
+        dur = str(d.get("durum") or "").strip().lower()
+        gon = max(0, int(d.get("gonderilen_adet") or 0))
+        if dur in ("var", "kismi") and gon > 0:
+            return True
+    return False
+
+
 def hesapla_yeni_sevkiyat_durumu(
     durumlar: List[Dict[str, Any]],
     bekleyen_var: bool,
@@ -89,10 +101,9 @@ def hesapla_yeni_sevkiyat_durumu(
         if bekleyen_var or kismi_var:
             return "kismi_hazirlandi"
         return "gonderildi"
+    # Taslak kayıt: asla «gonderildi» durumuna geçmez (stok_yolda olmadan yolda sanılmasın)
     if kismi_var:
         return "kismi_hazirlandi"
-    if durumlar and not bekleyen_var:
-        return "gonderildi"
     return "depoda_hazirlaniyor"
 
 
@@ -211,6 +222,20 @@ def siparis_sevkiyat_kalem_guncelle_execute(
     if not tid or not sevk_sid:
         raise HTTPException(400, "talep_id ve hedef_depo_sube_id zorunlu")
 
+    sevk_var = _sevk_satirlari_var_mi(durumlar)
+    if bool(gonderildi):
+        if not sevk_var:
+            raise HTTPException(
+                400,
+                "Yola çıkarmak için en az bir kalemde «var/kısmi» ve gönderilen adet girin.",
+            )
+    elif sevk_var:
+        raise HTTPException(
+            400,
+            "Gönderilen adet girilmiş kalemler var — «Yola çıkar» ile sevk edin. "
+            "Hazırlık kaydı yalnızca bekliyor / yok / not içindir.",
+        )
+
     yeni_durum = hesapla_yeni_sevkiyat_durumu(durumlar, bekleyen_var, kismi_var, gonderildi)
     # Tek noktadan canonical → legacy çifti üret
     _sevk_durum_yeni, _sevk_durum_eski = sevkiyat_durumu_guncelle_params(yeni_durum)
@@ -258,7 +283,7 @@ def siparis_sevkiyat_kalem_guncelle_execute(
         if not sevk_kalemleri:
             raise HTTPException(
                 400,
-                "Sevkiyat tamamlandı işaretli — en az bir kalemde «var/kısmi» ve gönderilen adet girin.",
+                "Yola çıkarmak için en az bir kalemde «var/kısmi» ve gönderilen adet girin.",
             )
         try:
             _disiplin_sevk_cikti(

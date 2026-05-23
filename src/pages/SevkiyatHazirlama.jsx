@@ -132,6 +132,21 @@ export default function SevkiyatHazirlama() {
       toast('En az bir kalem durumu seçin', 'red');
       return;
     }
+    const sevkVar = payload.some((x) => {
+      const d = String(x.durum || '').toLowerCase();
+      return (d === 'var' || d === 'kismi') && Number(x.gonderilen_adet || 0) > 0;
+    });
+    if (gonderildi && !sevkVar) {
+      toast('Yola çıkarmak için en az bir kalemde «var/kısmi» ve gönderilen adet girin.', 'red');
+      return;
+    }
+    if (!gonderildi && sevkVar) {
+      toast(
+        'Gönderilen adet girilmiş kalemler var — «Yola çıkar» ile sevk edin. Hazırlık kaydı yalnızca bekliyor / yok / not içindir.',
+        'red',
+      );
+      return;
+    }
     setBusy(true);
     try {
       await api('/ops/siparis/sevkiyat-guncelle', {
@@ -144,7 +159,11 @@ export default function SevkiyatHazirlama() {
           gonderildi,
         },
       });
-      toast(gonderildi ? 'Talep gönderildi olarak güncellendi' : 'Kalem durumları kaydedildi');
+      toast(
+        gonderildi
+          ? 'Yola çıkarıldı — talep şubesinde «Depodan Gelen» açıldı'
+          : 'Hazırlık kaydedildi (stok çıkmadı)',
+      );
       const ls = await api(
         `/ops/siparis/sevkiyat-listesi?durum=${encodeURIComponent(durum)}${
           sevkiyatSubeId ? `&sevkiyat_sube_id=${encodeURIComponent(sevkiyatSubeId)}` : ''
@@ -510,12 +529,12 @@ export default function SevkiyatHazirlama() {
                     onChange={(e) => setNotu(e.target.value)}
                   />
                 </div>
-                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
                   <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => kaydet(false)}>
-                    {busy ? '…' : 'Ara kaydet'}
+                    {busy ? '…' : 'Hazırlığı kaydet'}
                   </button>
                   <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => kaydet(true)}>
-                    {busy ? '…' : 'Gönderildi'}
+                    {busy ? '…' : 'Yola çıkar — teslim al aç'}
                   </button>
                 </div>
               </>

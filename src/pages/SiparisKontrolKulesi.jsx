@@ -628,6 +628,21 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
       toast('Kalem durumu seçin', 'red');
       return;
     }
+    const sevkVar = payload.some((x) => {
+      const d = String(x.durum || '').toLowerCase();
+      return (d === 'var' || d === 'kismi') && Number(x.gonderilen_adet || 0) > 0;
+    });
+    if (gonderildi && !sevkVar) {
+      toast('Yola çıkarmak için en az bir kalemde «var/kısmi» ve gönderilen adet girin.', 'red');
+      return;
+    }
+    if (!gonderildi && sevkVar) {
+      toast(
+        'Gönderilen adet girilmiş kalemler var — «Yola çıkar» ile sevk edin. Hazırlık kaydı yalnızca bekliyor / yok / not içindir.',
+        'red',
+      );
+      return;
+    }
     setDepoBusy(true);
     try {
       await api('/ops/siparis/sevkiyat-guncelle', {
@@ -640,7 +655,11 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
           gonderildi,
         },
       });
-      toast(gonderildi ? 'Gönderildi olarak kaydedildi' : 'Depo hazırlığı kaydedildi');
+      toast(
+        gonderildi
+          ? 'Yola çıkarıldı — talep şubesinde «Depodan Gelen» açıldı'
+          : 'Hazırlık kaydedildi (stok çıkmadı)',
+      );
       yukleDepoListe();
       yukle();
       setDepoSecili(null);
@@ -1292,12 +1311,12 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                   onChange={(e) => setDepoNot(e.target.value)}
                   style={{ width: '100%', marginTop: 8 }}
                 />
-                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
                   <button type="button" className="btn btn-secondary" disabled={depoBusy} onClick={() => depoKaydet(false)}>
-                    Kaydet
+                    Hazırlığı kaydet
                   </button>
                   <button type="button" className="btn btn-primary" disabled={depoBusy} onClick={() => depoKaydet(true)}>
-                    Gönderildi
+                    Yola çıkar — teslim al aç
                   </button>
                 </div>
               </>
