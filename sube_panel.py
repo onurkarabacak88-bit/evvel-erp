@@ -2454,7 +2454,7 @@ def sube_fire_bildir(sube_id: str, body: SubeFireBildirBody):
 # ─────────────────────────────────────────────────────────────
 
 class SubeSevkBody(BaseModel):
-    """Tedarikçi/toptancıdan gelen ürün teslim alımı. Aktif stoka girmez; URUN_SEVK defterine yazılır."""
+    """Tedarikçi/toptancıdan gelen ürün teslim alımı. Depo stoğuna yazar; URUN_SEVK defterine kaydedilir."""
     personel_id: str
     pin: str
     bardak_kucuk: Optional[int] = None
@@ -2511,9 +2511,9 @@ def _stok_kalemleri_temizle(kalemler: Optional[List[Dict[str, Any]]]) -> List[Di
 @router.post("/{sube_id}/urun-sevk")
 def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
     """
-    Tedarikçi/toptancı teslim kaydı (URUN_SEVK = potansiyel stok).
+    Tedarikçi/toptancı teslim kaydı (URUN_SEVK).
     Teslim alınan kalemler şube deposuna +stok olarak yazılır; aktif kullanım (Ürün Aç) ayrı akıştır.
-    Merkez bu kaydı sevk listesinde izler.
+    Merkez bu kaydı «Toptancıdan Gelenler» ekranında izler; sipariş kapatma şube tarafında yapılmaz.
     """
     from operasyon_stok_motor import (
         STOK_KEYS,
@@ -2639,78 +2639,7 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
         )
         audit(cur, "operasyon_defter", rid, "URUN_SEVK")
 
-        siparis_talep_id = (body.siparis_talep_id or "").strip() or None
-        if siparis_talep_id:
-            cur.execute(
-                f"""
-                SELECT id, durum, {SD_T} AS sevkiyat_durumu
-                FROM siparis_talep
-                WHERE id=%s AND sube_id=%s
-                LIMIT 1
-                FOR UPDATE
-                """,
-                (siparis_talep_id, sube_id),
-            )
-            _st = cur.fetchone()
-            if not _st:
-                raise HTTPException(400, "Geçersiz siparis_talep_id (şube ile eşleşmiyor)")
-            st_row = dict(_st)
-            st = str(st_row.get("durum") or "")
-            sd = sevkiyat_durumu_coz(
-                st_row.get("sevkiyat_durumu"), st_row.get("sevkiyat_durum")
-            )
-            if sd != "toptanciya_yonlendirildi":
-                raise HTTPException(
-                    409,
-                    "Bu sipariş depo akışında — kapatmak için «Depodan Gelen — Teslim Al» kullanın",
-                )
-            if st not in ("hazirlaniyor", "gonderildi", "bekliyor"):
-                raise HTTPException(409, "Sipariş talebi sevkiyat/teslim akışına uygun değil")
-            cur.execute(
-                """
-                UPDATE siparis_talep
-                SET durum='teslim_edildi',
-                    sevkiyat_durumu='teslim_edildi',
-                    sevkiyat_durum='teslim_edildi',
-                    sevkiyat_ts=NOW()
-                WHERE id=%s
-                """,
-                (siparis_talep_id,),
-            )
-            # Toptancı yönlendirmesinde stok_yolda satırı yoktur; yine de varsa kapat.
-            try:
-                cur.execute(
-                    """
-                    UPDATE stok_yolda
-                    SET durum     = 'kabul_edildi',
-                        kabul_ts  = NOW(),
-                        kabul_adet = sevk_adet
-                    WHERE siparis_talep_id = %s
-                      AND sube_id = %s
-                      AND durum   = 'yolda'
-                    """,
-                    (siparis_talep_id, sube_id),
-                )
-            except Exception as _e:
-                log.warning("urun_sevk stok_yolda kapat hata: %s", _e)
-        else:
-            # Yalnızca toptancıya yönlendirilmiş siparişleri otomatik eşleştir (depo paketi değil).
-            cur.execute(
-                f"""
-                SELECT id
-                FROM siparis_talep
-                WHERE sube_id=%s
-                  AND tarih >= CURRENT_DATE - INTERVAL '21 days'
-                  AND durum IN ('gonderildi','hazirlaniyor','bekliyor')
-                  AND {SD_NOALIAS} = 'toptanciya_yonlendirildi'
-                ORDER BY olusturma DESC NULLS LAST
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-                """,
-                (sube_id,),
-            )
-            rw = cur.fetchone()
-            siparis_talep_id = str((rw or {}).get("id") or "") or None
+        siparis_talep_id = None
 
         sevk_kalemleri = {k: max(0, int(delta.get(k) or 0)) for k in STOK_KEYS}
         if sum(sevk_kalemleri.values()) <= 0 and kalemler:
