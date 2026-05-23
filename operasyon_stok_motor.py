@@ -2750,6 +2750,10 @@ def siparis_talep_akisi_iptal(
     if not aid:
         raise ValueError("talep_id zorunlu")
 
+    from database import ensure_stok_yolda_columns
+
+    ensure_stok_yolda_columns(cur)
+
     cur.execute(
         """
         SELECT id, sube_id, durum, kalemler, kalem_durumlari, sevkiyat_notu,
@@ -2785,15 +2789,28 @@ def siparis_talep_akisi_iptal(
             "Kısmen kabul edilmiş veya uzlaşma bekleyen satırlar var — tam iptal yapılamaz"
         )
 
-    cur.execute(
-        """
-        SELECT id, kalem_kodu, kalem_adi, sevk_adet,
-               COALESCE(sevk_kaynak_depo_sube_id, %s) AS kaynak_depo_sube_id
-        FROM stok_yolda
-        WHERE siparis_talep_id=%s AND durum='yolda'
-        """,
-        (str(rd.get("kaynak_depo_sube_id") or "").strip() or None, aid),
-    )
+    fb_kaynak = str(rd.get("kaynak_depo_sube_id") or "").strip() or None
+    from database import stok_yolda_sevk_kaynak_col_exists
+
+    if stok_yolda_sevk_kaynak_col_exists(cur):
+        cur.execute(
+            """
+            SELECT id, kalem_kodu, kalem_adi, sevk_adet,
+                   COALESCE(sevk_kaynak_depo_sube_id, %s) AS kaynak_depo_sube_id
+            FROM stok_yolda
+            WHERE siparis_talep_id=%s AND durum='yolda'
+            """,
+            (fb_kaynak, aid),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT id, kalem_kodu, kalem_adi, sevk_adet, %s AS kaynak_depo_sube_id
+            FROM stok_yolda
+            WHERE siparis_talep_id=%s AND durum='yolda'
+            """,
+            (fb_kaynak, aid),
+        )
     yolda_rows = [dict(r) for r in (cur.fetchall() or [])]
     geri_verilen = 0
     for yr in yolda_rows:
@@ -2977,14 +2994,17 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                 )
         # stok_yolda kaydı
         yid = str(uuid.uuid4())
-        cur.execute(
-            """
-            INSERT INTO stok_yolda
-                (id, siparis_talep_id, sube_id, kalem_kodu, kalem_adi, sevk_adet, durum,
-                 sevk_kaynak_depo_sube_id)
-            VALUES (%s, %s, %s, %s, %s, %s, 'yolda', %s)
-            """,
-            (yid, siparis_talep_id, sube_id, kalem_kodu, kalem_adi, sevk_adet, kaynak_depo),
+        from database import stok_yolda_insert_row
+
+        stok_yolda_insert_row(
+            cur,
+            yid=yid,
+            siparis_talep_id=siparis_talep_id,
+            sube_id=sube_id,
+            kalem_kodu=kalem_kodu,
+            kalem_adi=kalem_adi,
+            sevk_adet=sevk_adet,
+            kaynak_depo=kaynak_depo,
         )
         yolda_ids.append(yid)
 

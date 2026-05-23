@@ -11,7 +11,7 @@ from typing import Optional, List, Any, Dict
 from datetime import date, datetime, timedelta
 import uuid, os, json, pathlib, calendar, threading
 from collections import defaultdict
-from database import db, init_db
+from database import db, init_db, ensure_stok_yolda_columns
 from operasyon_stok_motor import eksik_kullanim_kontrol, tum_subeler_skor_guncelle
 from tr_saat import bugun_tr, dt_now_tr_naive
 from kasa_service import (
@@ -255,6 +255,11 @@ def _gece_yarisi_scheduler():
 @app.on_event("startup")
 def startup():
     init_db()
+    try:
+        with db() as (conn, cur):
+            ensure_stok_yolda_columns(cur)
+    except Exception as e:
+        logger.warning("stok_yolda kolon migrasyonu (startup): %s", e)
     # Her başlatmada bu ay için plan üret (yoksa üretir, varsa atlar)
     bugun = bugun_tr()
     try:

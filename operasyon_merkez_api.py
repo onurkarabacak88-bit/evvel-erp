@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from database import db
+from database import db, ensure_stok_yolda_columns, stok_yolda_sevk_kaynak_col_exists
 from tr_saat import (
     bugun_tr,
     is_gunu_tr,
@@ -7422,6 +7422,15 @@ def ops_siparis_kabul_takip(gun: int = 7, limit: int = 120, sube_id: Optional[st
     return {"gun": gun_i, "sube_id": sid, "toplam": len(satirlar), "satirlar": satirlar}
 
 
+@router.post("/sistem/stok-yolda-migrate")
+def ops_sistem_stok_yolda_migrate():
+    """stok_yolda.sevk_kaynak_depo_sube_id kolonunu elle tetikler (deploy sonrası sorun devam ederse)."""
+    with db() as (conn, cur):
+        ensure_stok_yolda_columns(cur)
+        ok = stok_yolda_sevk_kaynak_col_exists(cur)
+    return {"success": ok, "sevk_kaynak_depo_sube_id": ok}
+
+
 @router.get("/siparis/depo-akisi-kalinti")
 def ops_siparis_depo_akisi_kalinti(sube_id: Optional[str] = None):
     """Eski / yarım kalmış depo sipariş akışı kayıtları — panelde görünmeyen yolda dahil."""
@@ -8127,6 +8136,7 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
     _tal = body.operasyon_yonlendirme_talimati
     talimat_param = (str(_tal).strip() if _tal is not None else None) or None
     with db() as (conn, cur):
+        ensure_stok_yolda_columns(cur)
         cur.execute("SELECT id, ad, sube_tipi, aktif FROM subeler WHERE id=%s", (sevk_sube_id,))
         sr = cur.fetchone()
         if not sr:
@@ -8336,6 +8346,7 @@ def ops_siparis_akisi_iptal(body: OpsSiparisMerkezIptalBody):
     if not tid:
         raise HTTPException(400, "talep_id zorunlu")
     with db() as (conn, cur):
+        ensure_stok_yolda_columns(cur)
         try:
             r = siparis_talep_akisi_iptal(
                 cur,
@@ -9405,6 +9416,7 @@ def ops_siparis_sevkiyat_guncelle(body: OpsSiparisSevkiyatGuncelleBody):
     durumlar, bekleyen_var, kismi_var = sevkiyat_kalem_durumlari_normalize(body.kalem_durumlari)
     notu = (body.sevkiyat_notu or body.not_aciklama or "").strip() or None
     with db() as (conn, cur):
+        ensure_stok_yolda_columns(cur)
         defter_sube = _ops_defter_sube_sevkiyat_hedef(sevk_sid, cur)
         return siparis_sevkiyat_kalem_guncelle_execute(
             cur,
@@ -9864,6 +9876,7 @@ def ops_v2_sevk_cikti(siparis_id: str, body: SevkBody):
     Merkez stoğu azalır, stok_yolda kaydı açılır.
     """
     with db() as (conn, cur):
+        ensure_stok_yolda_columns(cur)
         yolda_ids = sevk_cikti_kaydet(
             cur, siparis_id,
             [s.model_dump() for s in body.sevk],
@@ -9974,6 +9987,7 @@ def ops_siparis_kontrol_kulesi(
     if asm and asm not in ASAMA_LABEL:
         asm = None
     with db() as (conn, cur):
+        ensure_stok_yolda_columns(cur)
         data = siparis_kontrol_kulesi_yukle(
             cur,
             gun=gun,

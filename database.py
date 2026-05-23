@@ -4,6 +4,7 @@ import psycopg2
 import psycopg2.extras
 import psycopg2.pool
 from contextlib import contextmanager
+from typing import Optional
 import threading
 
 # Yerel geliştirme: kökte .env → Railway'deki DATABASE_URL (production'da Railway zaten env verir)
@@ -99,6 +100,73 @@ def db():
     finally:
         cur.close()
         pool.putconn(conn)
+
+
+def stok_yolda_sevk_kaynak_col_exists(cur) -> bool:
+    cur.execute(
+        """
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'stok_yolda'
+          AND column_name = 'sevk_kaynak_depo_sube_id'
+        LIMIT 1
+        """
+    )
+    return cur.fetchone() is not None
+
+
+def ensure_stok_yolda_columns(cur) -> None:
+    """
+    stok_yolda.sevk_kaynak_depo_sube_id — ayrı çağrılabilir migrasyon.
+    init_db tek transaction içinde sonradan hata olursa kolon eklenmemiş kalabilir.
+    """
+    if stok_yolda_sevk_kaynak_col_exists(cur):
+        return
+    try:
+        cur.execute(
+            """
+            ALTER TABLE stok_yolda
+                ADD COLUMN sevk_kaynak_depo_sube_id TEXT
+                REFERENCES subeler(id) ON DELETE SET NULL
+            """
+        )
+    except Exception as exc:
+        if "already exists" not in str(exc).lower():
+            raise
+
+
+def stok_yolda_insert_row(
+    cur,
+    *,
+    yid: str,
+    siparis_talep_id: str,
+    sube_id: str,
+    kalem_kodu: str,
+    kalem_adi: str,
+    sevk_adet: int,
+    kaynak_depo: Optional[str],
+) -> None:
+    """stok_yolda satırı — kolon yoksa migrasyon dener, yine yoksa kolonsuz INSERT."""
+    ensure_stok_yolda_columns(cur)
+    if stok_yolda_sevk_kaynak_col_exists(cur):
+        cur.execute(
+            """
+            INSERT INTO stok_yolda
+                (id, siparis_talep_id, sube_id, kalem_kodu, kalem_adi, sevk_adet, durum,
+                 sevk_kaynak_depo_sube_id)
+            VALUES (%s, %s, %s, %s, %s, %s, 'yolda', %s)
+            """,
+            (yid, siparis_talep_id, sube_id, kalem_kodu, kalem_adi, sevk_adet, kaynak_depo),
+        )
+    else:
+        cur.execute(
+            """
+            INSERT INTO stok_yolda
+                (id, siparis_talep_id, sube_id, kalem_kodu, kalem_adi, sevk_adet, durum)
+            VALUES (%s, %s, %s, %s, %s, %s, 'yolda')
+            """,
+            (yid, siparis_talep_id, sube_id, kalem_kodu, kalem_adi, sevk_adet),
+        )
 
 
 def init_db():
@@ -2493,15 +2561,7 @@ $$;
             CREATE INDEX IF NOT EXISTS idx_stok_yolda_talep
             ON stok_yolda (siparis_talep_id)
         """)
-        cur.execute("""
-            DO $$ BEGIN
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_name='stok_yolda' AND column_name='sevk_kaynak_depo_sube_id') THEN
-                    ALTER TABLE stok_yolda
-                        ADD COLUMN sevk_kaynak_depo_sube_id TEXT REFERENCES subeler(id) ON DELETE SET NULL;
-                END IF;
-            END $$;
-        """)
+        ensure_stok_yolda_columns(cur)
 
         # ── siparis_talep → otomatik gonderilmedi kapatma ─────
         cur.execute("""

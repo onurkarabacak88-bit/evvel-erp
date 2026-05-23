@@ -748,6 +748,30 @@
       0%,100% { border-color: rgba(239,68,68,.4); }
       50%      { border-color: var(--danger); box-shadow: 0 0 12px rgba(239,68,68,.3); }
     }
+    @keyframes kritikMetinGlow {
+      0%, 100% {
+        color: #86efac;
+        text-shadow: 0 0 8px rgba(74, 222, 128, 0.45);
+      }
+      50% {
+        color: #bbf7d0;
+        text-shadow: 0 0 18px rgba(74, 222, 128, 0.9), 0 0 4px rgba(255, 255, 255, 0.35);
+      }
+    }
+    @keyframes kritikBannerPulse {
+      0%, 100% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.35);
+        border-color: rgba(239, 68, 68, 0.55);
+      }
+      50% {
+        box-shadow: 0 0 22px 4px rgba(74, 222, 128, 0.28);
+        border-color: rgba(74, 222, 128, 0.7);
+      }
+    }
+    @keyframes kritikBaslikBlink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.72; }
+    }
     .mesaj-kritik { animation: msgPulse 1.2s ease-in-out infinite; }
     .merkez-mesaj-kutusu {
       min-height: 170px;
@@ -755,6 +779,54 @@
     }
     .merkez-mesaj-kutusu.yanip-sonen {
       animation: msgPulse 1.05s ease-in-out infinite;
+    }
+    .merkez-mesaj-kutusu.has-kritik {
+      border-color: rgba(239, 68, 68, 0.7) !important;
+      border-width: 2px;
+      animation: msgPulse 0.95s ease-in-out infinite;
+    }
+    .merkez-kritik-baslik-yanip {
+      color: #fca5a5;
+      font-weight: 800;
+      animation: kritikBaslikBlink 1.1s ease-in-out infinite;
+    }
+    .merkez-kritik-vurgu {
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      border-radius: var(--rs);
+      border: 2px solid rgba(239, 68, 68, 0.55);
+      background: linear-gradient(135deg, rgba(127, 29, 29, 0.42), rgba(20, 83, 45, 0.22));
+      animation: kritikBannerPulse 1.35s ease-in-out infinite;
+    }
+    .merkez-kritik-etiket {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #fecaca;
+      margin-bottom: 8px;
+    }
+    .merkez-kritik-metin {
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+      animation: kritikMetinGlow 1.15s ease-in-out infinite;
+    }
+    .merkez-kritik-aksiyon {
+      margin-top: 10px;
+      font-size: 12px;
+      color: #fde68a;
+      font-weight: 600;
+      line-height: 1.45;
+    }
+    .merkez-kritik-modal-metin {
+      font-size: 17px !important;
+      padding: 12px 14px;
+      border-radius: var(--rs);
+      background: rgba(20, 83, 45, 0.25);
+      border: 1px solid rgba(74, 222, 128, 0.35);
     }
     .merkez-mesaj-icerik {
       max-height: 240px;
@@ -778,6 +850,11 @@
     .merkez-msg-kisa.kritik {
       border-color: rgba(239,68,68,.5);
       background: rgba(239,68,68,.08);
+    }
+    .merkez-msg-kisa.kritik .mesaj-govde {
+      font-size: 15px;
+      font-weight: 700;
+      animation: kritikMetinGlow 1.15s ease-in-out infinite;
     }
     .merkez-msg-kisa .meta {
       margin-top: 6px;
@@ -1833,6 +1910,18 @@
       border-radius: var(--rs);
       margin-bottom: 10px;
     }
+    .merkez-marquee-bar.marquee-okunmadi {
+      background: linear-gradient(90deg, rgba(20, 83, 45, 0.96), rgba(127, 29, 29, 0.94));
+      font-size: 14px;
+      padding: 10px 14px;
+      border: 1px solid rgba(74, 222, 128, 0.35);
+      animation: kritikBannerPulse 1.35s ease-in-out infinite;
+    }
+    .merkez-marquee-bar.marquee-okunmadi .merkez-marquee-inner {
+      color: #86efac;
+      text-shadow: 0 0 10px rgba(74, 222, 128, 0.45);
+      animation: gonderMarqueeSlide 11s linear infinite;
+    }
     .merkez-marquee-inner {
       display: inline-block;
       white-space: nowrap;
@@ -2243,19 +2332,14 @@
         </div>
       </div>
 
-      <!-- Ürün Teslim Al — yalnızca tedarikçi / toptancı -->
+      <!-- Ürün Teslim Al — tedarikçi / toptancı (sade akış) -->
       <div class="sekme-icerik" id="tab-sevk">
-        <div class="teslim-onay-ortak" id="teslimOnayOrtakStrip">
-          <div class="teslim-onay-ortak-baslik">🔐 Tedarikçi teslim onayı — personel ve PIN</div>
-          <p class="teslim-onay-ortak-alt">Toptancı veya tedarikçiden gelen ürün kaydı için personel seçin ve 4 haneli onay kodunu girin.</p>
-          <div class="sv-toptanci-pin-grid">
-            <div class="form-group" style="margin:0"><label>Personel *</label><select id="svPers"></select></div>
-            <div class="form-group" style="margin:0"><label>Onay kodu (PIN) *</label><input id="svPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>
-          </div>
-        </div>
         <div class="kart teslim-panel-tedarikci">
-          <div class="kart-baslik"><span class="ico">🏭</span> Tedarikçiden Gelen — Ürün Teslim Al</div>
-          <p style="font-size:11px;color:var(--muted);margin:0 0 12px;line-height:1.45">Toptancıdan gelen ürünleri <strong>Sipariş Ver kataloğu</strong> ile sayıp kaydedin. Onay sonrası liste merkeze gider; şube deposu stoğu güncellenir. Sipariş takibi burada gösterilmez.</p>
+          <div class="kart-baslik"><span class="ico">📦</span> Ürün Teslim Al</div>
+          <p style="font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.5">
+            Toptancı veya tedarikçiden fiziksel olarak aldığınız ürünleri <strong>Sipariş Ver kataloğu</strong> ile sayın.
+            Onay sonrası kayıt merkeze düşer ve <strong>şube deposu stoğu</strong> artar.
+          </p>
           <div id="sevkForm"></div>
         </div>
       </div>
@@ -5917,57 +6001,24 @@ var UrunTeslimAl = (function () {
   function buildFormHTML() {
     var h = '';
     h += '<div class="urun-teslim-al-form">';
-    h += '<div class="sv-toptanci-onay-panel" style="margin-top:0">';
-    h += '<div class="sv-toptanci-onay-baslik"><span aria-hidden="true">🏭</span> <strong style="color:#fff">Tedarikçi</strong> seçimi</div>';
-    h += '<p class="sv-toptanci-onay-alt">Personel ve PIN alanı sayfanın <strong>en üstünde</strong>. Buradan yalnızca tedarikçiyi seçin.</p>';
     h += tedarikciSelectHTML('svTedarikci');
-    h += '</div>';
     h += '<div id="svKatalogContainer">';
-    h += '<div id="svKatalogHeader" style="margin:14px 0 4px;font-size:13px;font-weight:800;color:var(--text)">📦 Gelen ürünleri seçin</div>';
-    h += '<p id="svKatalogHelp" style="font-size:11px;color:var(--muted);margin:0 0 8px;line-height:1.45">Sipariş Ver ile aynı katalog — kategorilere dokunun, gelen adedi girin. Onay sonrası liste merkeze düşer ve şube deposu güncellenir.</p>';
+    h += '<div id="svKatalogHeader" style="margin:14px 0 4px;font-size:13px;font-weight:800;color:var(--text)">Gelen ürünler</div>';
+    h += '<p id="svKatalogHelp" style="font-size:11px;color:var(--muted);margin:0 0 8px;line-height:1.45">Kategoriye dokunun, gelen adedi girin.</p>';
     h += '<div id="svKatalogWrap"></div>';
     h += '</div>';
-    h += '<div class="sv-teslim-durum-panel">';
-    h += '<div class="sv-durum-baslik">Teslimat durumu <span style="color:#fda4af">*</span></div>';
-    h += '<p class="sv-durum-alt">Yukarıdaki ürünleri seçtikten sonra buradan durumu işaretleyin: birebir geldi ise <strong>Tam geldi</strong>; eksik veya yanlış ise <strong>Eksik var</strong>.</p>';
-    h += '<div class="sv-durum-btn-row">';
-        h += '<button type="button" class="sv-durum-btn sv-durum-tam" id="svDurumTamBtn" data-val="tam_geldi">✅ Tam geldi<br><span style="font-size:11px;font-weight:700;opacity:0.9">Eksiksiz teslimat</span></button>';
-    h += '<button type="button" class="sv-durum-btn sv-durum-eksik" id="svDurumEksikBtn" data-val="eksik_var">⚠️ Eksik var<br><span style="font-size:11px;font-weight:700;opacity:0.9">Kısmi veya yanlış sevkiyat</span></button>';
+    h += '<div id="svSecimOzet" class="siparis-detay" style="margin:12px 0;padding:10px 12px;font-size:13px;color:var(--muted)">Henüz ürün seçilmedi.</div>';
+    h += '<div class="form-group"><label>Not (isteğe bağlı)</label><textarea id="svNot" rows="2" placeholder="Örn: Sabah sevkiyatı, irsaliye no…"></textarea></div>';
+    h += '<div class="sv-toptanci-pin-grid" style="margin-top:12px">';
+    h += '<div class="form-group" style="margin:0"><label>Personel *</label><select id="svPers"></select></div>';
+    h += '<div class="form-group" style="margin:0"><label>PIN *</label><input id="svPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>';
     h += '</div>';
-    h += '<input type="hidden" id="svTeslimDurumu" value="" />';
-    h += '<div id="svEksikKayitChip" class="siparis-detay" style="display:none;margin-top:10px;padding:8px 10px;font-size:11px;border-radius:8px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.38);color:#86efac">✓ Eksik ürün bilgisi kaydedildi. Düzenlemek için tekrar <strong>Eksik var</strong>a tıklayın.</div>';
-    h += '<div class="form-group" style="margin-top:12px;margin-bottom:0"><label>Teslim açıklaması *</label><textarea id="svTeslimAciklama" rows="2" placeholder="Teslimin genel durumunu yazın (zorunlu)."></textarea></div>';
-    h += '</div>';
-    h += '<div id="svTeslimStickyBar">';
-    h += '<div class="sv-teslim-sticky-panel">';
-    h += '<div class="sv-teslim-sticky-baslik"><span class="sv-teslim-sticky-tag">Onay</span><span>Teslim kaydını gönder</span></div>';
-        h += '<p class="sv-teslim-sticky-alt">Katalogdan gelen ürünleri seçin. <strong>Personel + PIN</strong> sayfanın üstündeki mavi kutuda.</p>';
-    h += '<div id="svSecimOzet" class="siparis-detay sv-teslim-sticky-ozet" style="color:var(--muted)">Henüz ürün seçilmedi.</div>';
-    h += '<button type="button" class="btn btn-primary" id="svGonder">✅ Seçimleri Onayla ve Teslim Al</button>';
+    h += '<button type="button" class="btn btn-primary" id="svGonder" style="margin-top:14px;width:100%;max-width:420px">Teslim Al ve Kaydet</button>';
     h += '<div id="svMsg" style="margin-top:10px;font-size:13px"></div>';
-    h += '</div></div>';
-    h += '<div style="height:8px"></div>';
-    h += '<details style="margin-top:0"><summary style="font-size:11px;color:var(--muted);cursor:pointer">ℹ️ Bu form hakkında</summary>';
-    h += '<div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;padding:10px 12px;margin-top:6px;font-size:11px;line-height:1.6;color:#93c5fd">';
-        h += 'Toptancı/tedarikçiden fiziksel olarak aldığınız ürünleri buradan kaydedin. ';
-        h += 'Onay sonrası kabul listesi <strong>operasyon merkezine</strong> düşer ve <strong>şube deposu stoğu</strong> artar. ';
-        h += 'Barda kullanıma açmak için ayrıca <strong>Ürün Aç</strong> formunu kullanın.';
-    h += '</div></details>';
     h += '<div id="svKatOverlay" class="overlay sip-kat-overlay" style="display:none" aria-hidden="true">';
     h += '<div class="overlay-kart sip-kat-modal-kart" id="svKatModalKart">';
     h += '<div id="svKatModalInner"></div>';
     h += '</div></div>';
-    h += '<div id="svEksikModal" class="overlay sv-eksik-modal-overlay" style="display:none" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="svEksikModalTitle">';
-    h += '<div class="overlay-kart sv-eksik-modal-kart" onclick="event.stopPropagation()">';
-    h += '<h2 id="svEksikModalTitle" style="margin:0 0 8px;font-size:18px;font-weight:800">Eksik ürün bilgisi</h2>';
-    h += '<p style="color:var(--muted);font-size:13px;margin:0 0 14px;line-height:1.55">Zorunlu alanları doldurup <strong>Kaydet</strong> ile kapatın. <strong>İptal</strong> derseniz «Eksik var» seçimi ve yazdıklarınız silinir.</p>';
-    h += '<div class="form-group"><label>Eksik ürün sipariş formunda var mıydı? <span style="color:#fda4af">*</span></label>';
-    h += '<select id="svEksikKategori"><option value="">— Seçin —</option><option value="sipariste_vardi">Sipariş formunda vardı</option><option value="sipariste_yoktu">Sipariş formunda yoktu / yazılmadı</option></select></div>';
-    h += '<div class="form-group"><label>Gelmeyen ürünler açıklaması <span style="color:#fda4af">*</span></label><textarea id="svEksikAciklama" rows="4" placeholder="Örn: 2 koli soda, 1 koli su gelmedi."></textarea></div>';
-    h += '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap">';
-    h += '<button type="button" class="btn btn-secondary" id="svEksikModalIptal">İptal</button>';
-    h += '<button type="button" class="btn btn-success" id="svEksikModalKaydet">Kaydet</button>';
-    h += '</div></div></div>';
     h += '</div>';
     return h;
   }
@@ -6028,15 +6079,13 @@ var UrunTeslimAl = (function () {
 
   function updateSecimUI() {
     var oz = katalogOzeti();
-    var svBar = document.getElementById('svTeslimStickyBar');
-    if (svBar) svBar.style.display = '';
     var ozetEl = document.getElementById('svSecimOzet');
     if (ozetEl) {
       if ((oz.kalem || 0) > 0) {
         ozetEl.innerHTML =
           '✅ <strong>' +
           oz.kalem +
-          ' kalem</strong> seçildi · toplam <strong>' +
+          ' kalem</strong> · toplam <strong>' +
           oz.adet +
           ' adet</strong>';
         ozetEl.style.color = '#86efac';
@@ -6047,129 +6096,12 @@ var UrunTeslimAl = (function () {
     }
     var btn = document.getElementById('svGonder');
     if (btn) {
-      var baseTxt =
-        btn.getAttribute('data-btn-base') ||
-        '✅ Seçimleri Onayla ve Teslim Al';
-      if (!btn.getAttribute('data-btn-base')) btn.setAttribute('data-btn-base', baseTxt);
-      btn.textContent =
-        oz.kalem > 0 ? baseTxt + ' (' + oz.kalem + ' kalem)' : baseTxt;
       var canSubmit = oz.kalem > 0;
       btn.disabled = !canSubmit;
       btn.style.opacity = canSubmit ? '1' : '0.65';
       btn.title = !canSubmit
         ? 'Katalogdan en az bir üründe adet girin'
-        : 'Personel ve PIN sayfanın üstünde — gönderince merkeze bildirim gider';
-    }
-  }
-
-  function wireDurumUI() {
-    var tamBtn = document.getElementById('svDurumTamBtn');
-    var eksikBtn = document.getElementById('svDurumEksikBtn');
-    var hid = document.getElementById('svTeslimDurumu');
-    var modal = document.getElementById('svEksikModal');
-    if (!tamBtn || !eksikBtn || !hid) return;
-
-    function eksikModalKapat() {
-      if (modal) {
-        modal.style.display = 'none';
-        modal.setAttribute('aria-hidden', 'true');
-      }
-      try {
-        document.body.style.overflow = '';
-      } catch (_) {}
-    }
-
-    function eksikModalAc() {
-      if (!modal) return;
-      modal.style.display = 'flex';
-      modal.setAttribute('aria-hidden', 'false');
-      try {
-        document.body.style.overflow = 'hidden';
-      } catch (_) {}
-      var ta = document.getElementById('svEksikAciklama');
-      setTimeout(function () {
-        try {
-          if (ta) ta.focus();
-        } catch (_) {}
-      }, 80);
-    }
-
-    function setDurum(v) {
-      hid.value = v;
-      tamBtn.classList.toggle('is-active', v === 'tam_geldi');
-      eksikBtn.classList.toggle('is-active', v === 'eksik_var');
-      if (v !== 'eksik_var') {
-        eksikModalKapat();
-        var eksikKat = document.getElementById('svEksikKategori');
-        var eksikAcik = document.getElementById('svEksikAciklama');
-        if (eksikKat) eksikKat.value = '';
-        if (eksikAcik) eksikAcik.value = '';
-        var chip = document.getElementById('svEksikKayitChip');
-        if (chip) chip.style.display = 'none';
-      }
-    }
-
-    tamBtn.onclick = function () {
-      setDurum('tam_geldi');
-    };
-    eksikBtn.onclick = function () {
-      hid.value = 'eksik_var';
-      tamBtn.classList.remove('is-active');
-      eksikBtn.classList.add('is-active');
-      eksikModalAc();
-    };
-
-    var kaydet = document.getElementById('svEksikModalKaydet');
-    var iptal = document.getElementById('svEksikModalIptal');
-    if (kaydet) {
-      kaydet.onclick = function () {
-        var k = selVal('svEksikKategori');
-        var a = inpVal('svEksikAciklama').trim();
-        if (k !== 'sipariste_vardi' && k !== 'sipariste_yoktu') {
-          alert('Eksik ürün kategorisini seçin.');
-          return;
-        }
-        if (a.length < 3) {
-          alert('Gelmeyen ürünleri açıklamada yazın (en az 3 karakter).');
-          return;
-        }
-        eksikModalKapat();
-        var chip = document.getElementById('svEksikKayitChip');
-        if (chip) chip.style.display = '';
-      };
-    }
-    if (iptal) {
-      iptal.onclick = function () {
-        eksikModalKapat();
-        hid.value = '';
-        tamBtn.classList.remove('is-active');
-        eksikBtn.classList.remove('is-active');
-        var eksikKat = document.getElementById('svEksikKategori');
-        var eksikAcik = document.getElementById('svEksikAciklama');
-        if (eksikKat) eksikKat.value = '';
-        if (eksikAcik) eksikAcik.value = '';
-        var chip = document.getElementById('svEksikKayitChip');
-        if (chip) chip.style.display = 'none';
-      };
-    }
-    if (modal) {
-      modal.onclick = function (ev) {
-        if (ev.target === modal) eksikModalKapat();
-      };
-      if (!modal.dataset.escWired) {
-        modal.dataset.escWired = '1';
-        document.addEventListener('keydown', function (ev) {
-          if (ev.key !== 'Escape') return;
-          var m = document.getElementById('svEksikModal');
-          if (!m || m.style.display === 'none') return;
-          ev.preventDefault();
-          m.style.display = 'none';
-          m.setAttribute('aria-hidden', 'true');
-          try {
-            document.body.style.overflow = '';
-          } catch (_) {}
-        });
-      }
+        : 'Tedarikçi, personel ve PIN ile kaydedin';
     }
   }
 
@@ -6192,16 +6124,6 @@ var UrunTeslimAl = (function () {
     };
   }
 
-  function wirePinStrip() {
-    if (window.__teslimOnayOrtakWired) return;
-    window.__teslimOnayOrtakWired = true;
-    var strip = document.getElementById('teslimOnayOrtakStrip');
-    if (strip) {
-      strip.addEventListener('input', updateSecimUI, true);
-      strip.addEventListener('change', updateSecimUI, true);
-    }
-  }
-
   function resetAfterSuccess() {
     stokKalemDeger[PREFIX] = {};
     document.querySelectorAll('[data-stok-input^="' + PREFIX + '::"]').forEach(function (inp) {
@@ -6212,28 +6134,8 @@ var UrunTeslimAl = (function () {
     if (pinEl) pinEl.value = '';
     var tdEl = document.getElementById('svTedarikci');
     if (tdEl) tdEl.value = '';
-    var dEl = document.getElementById('svTeslimDurumu');
-    if (dEl) dEl.value = '';
-    var tdAcik = document.getElementById('svTeslimAciklama');
-    if (tdAcik) tdAcik.value = '';
-    var eksikKat = document.getElementById('svEksikKategori');
-    if (eksikKat) eksikKat.value = '';
-    var eksikAcik = document.getElementById('svEksikAciklama');
-    if (eksikAcik) eksikAcik.value = '';
-    var eksikModal = document.getElementById('svEksikModal');
-    if (eksikModal) {
-      eksikModal.style.display = 'none';
-      eksikModal.setAttribute('aria-hidden', 'true');
-    }
-    try {
-      document.body.style.overflow = '';
-    } catch (_) {}
-    var eksikChip = document.getElementById('svEksikKayitChip');
-    if (eksikChip) eksikChip.style.display = 'none';
-    var tamBtn = document.getElementById('svDurumTamBtn');
-    var eksikBtn = document.getElementById('svDurumEksikBtn');
-    if (tamBtn) tamBtn.classList.remove('is-active');
-    if (eksikBtn) eksikBtn.classList.remove('is-active');
+    var notEl = document.getElementById('svNot');
+    if (notEl) notEl.value = '';
   }
 
   async function validateAndSubmit() {
@@ -6248,32 +6150,23 @@ var UrunTeslimAl = (function () {
       if (sum <= 0) {
         throw new Error('Katalogdan en az bir üründe adet girin');
       }
-      if (!body.personel_id) throw new Error('Personel seçin (sayfanın üstündeki alan)');
-      if (body.pin.length !== 4) throw new Error('4 haneli onay kodu girin (sayfanın üstündeki alan)');
+      if (!body.personel_id) throw new Error('Personel seçin');
+      if (body.pin.length !== 4) throw new Error('4 haneli PIN girin');
 
       var td = selVal('svTedarikci');
       if (!td) throw new Error('Tedarikçi seçin');
-      var teslimDurumu = inpVal('svTeslimDurumu');
-      if (teslimDurumu !== 'tam_geldi' && teslimDurumu !== 'eksik_var') {
-        throw new Error('Teslim durumunu seçin');
-      }
-      var teslimAciklama = inpVal('svTeslimAciklama').trim();
-      if (teslimAciklama.length < 3) throw new Error('Teslim açıklaması zorunlu');
 
+      var not = inpVal('svNot').trim();
+      var oz = katalogOzeti();
+      var autoAcik =
+        (oz.kalem || 0) +
+        ' kalem, ' +
+        (oz.adet || 0) +
+        ' adet tedarikçi teslimi';
       body.tedarikci_id = td;
-      body.teslim_durumu = teslimDurumu;
-      body.teslim_aciklama = teslimAciklama;
-
-      if (teslimDurumu === 'eksik_var') {
-        var eksikKategori = selVal('svEksikKategori');
-        if (eksikKategori !== 'sipariste_vardi' && eksikKategori !== 'sipariste_yoktu') {
-          throw new Error('Eksik ürün kategorisini seçin');
-        }
-        var eksikAciklama = inpVal('svEksikAciklama').trim();
-        if (eksikAciklama.length < 3) throw new Error('Gelmeyen ürünleri açıklamada yazın');
-        body.eksik_kategori = eksikKategori;
-        body.eksik_aciklama = eksikAciklama;
-      }
+      body.teslim_durumu = 'tam_geldi';
+      body.teslim_aciklama = not.length >= 3 ? not : autoAcik;
+      if (not) body.not_aciklama = not;
 
       var apiResp = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/urun-sevk', {
         method: 'POST',
@@ -6318,10 +6211,8 @@ var UrunTeslimAl = (function () {
       el.dataset.built = '1';
       refreshStokKatalogUI(PREFIX);
       fillSels();
-      wireDurumUI();
       wireKatalogHandlers();
       wireSubmit();
-      wirePinStrip();
       updateSecimUI();
     } catch (e) {
       delete el.dataset.building;
@@ -6347,7 +6238,6 @@ var UrunTeslimAl = (function () {
 
   function open() {
     fillSels();
-    wirePinStrip();
     ensureBuilt();
   }
 
@@ -7425,19 +7315,25 @@ function _mmModalClearShown(id) {
 function renderMerkezMesajMarquee(mesajlar) {
   var bar = document.getElementById('merkezMesajMarqueeBar');
   if (!bar) return;
-  var kritikOkundu = (mesajlar || []).filter(function(m) {
-    return m.okundu && m.oncelik === 'kritik';
+  var kritikAktif = (mesajlar || []).filter(function(m) {
+    return m.oncelik === 'kritik' && _mmAktif(m);
   });
-  if (!kritikOkundu.length) {
+  var okunmamisKritik = kritikAktif.filter(function(m) { return !m.okundu; });
+  var okunduKritik = kritikAktif.filter(function(m) { return m.okundu; });
+  var goster = okunmamisKritik.length ? okunmamisKritik : okunduKritik;
+  if (!goster.length) {
     bar.style.display = 'none';
+    bar.className = 'merkez-marquee-bar';
     bar.innerHTML = '';
     return;
   }
-  var parcalar = kritikOkundu.map(function(m) {
+  var okunmadi = okunmamisKritik.length > 0;
+  var parcalar = goster.map(function(m) {
     var t = String(m.mesaj || '').trim();
     if (_mmMerkezSildi(m)) t += ' (merkez listeden kaldırdı)';
-    return '🚨 ' + t;
+    return (okunmadi ? '🚨 OKUNMADI — ' : '🚨 ') + t;
   });
+  bar.className = 'merkez-marquee-bar' + (okunmadi ? ' marquee-okunmadi' : '');
   bar.innerHTML = '<span class="merkez-marquee-inner">' + escHtml(parcalar.join('   ·   ')) + '</span>';
   bar.style.display = 'block';
 }
@@ -7460,9 +7356,9 @@ function merkezMesajModalAc(m) {
     modal.style.zIndex = '9200';
     modal.setAttribute('data-merkez-mesaj-id', mid);
     modal.innerHTML =
-      '<div class="modal-box" style="max-width:520px;border-color:' + (kritik ? 'rgba(239,68,68,.55)' : 'var(--border)') + '">' +
-        '<h3 style="margin:0 0 10px 0">' + (kritik ? '🚨 Kritik Merkez Mesajı' : '📩 Merkez Mesajı') + '</h3>' +
-        '<p style="font-size:14px;line-height:1.6;margin:0 0 16px 0;white-space:pre-wrap">' + metin + '</p>' +
+      '<div class="modal-box' + (kritik ? ' mesaj-kritik' : '') + '" style="max-width:560px;border-color:' + (kritik ? 'rgba(239,68,68,.65)' : 'var(--border)') + ';border-width:' + (kritik ? '2px' : '1px') + '">' +
+        '<h3 style="margin:0 0 10px 0;color:' + (kritik ? '#fca5a5' : 'inherit') + '">' + (kritik ? '🚨 KRİTİK MERKEZ MESAJI' : '📩 Merkez Mesajı') + '</h3>' +
+        '<p class="' + (kritik ? 'merkez-kritik-metin merkez-kritik-modal-metin' : '') + '" style="font-size:' + (kritik ? '17px' : '14px') + ';line-height:1.6;margin:0 0 16px 0;white-space:pre-wrap;font-weight:' + (kritik ? '700' : '400') + '">' + metin + '</p>' +
         '<div class="form-group" style="margin-bottom:8px"><label>Personel</label><select id="mmModalPers">' + perselOps + '</select></div>' +
         '<div class="form-group"><label>PIN — Okundu onayı</label><input id="mmModalPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="····" /></div>' +
         '<div id="mmModalMsg" class="err-text" style="min-height:18px;margin-top:6px"></div>' +
@@ -7533,9 +7429,19 @@ function renderMesajlariDiv(mesajlar, mode) {
   renderMerkezMesajMarquee(mesajlar || []);
   if (!mesajlar.length) { el.innerHTML = ''; return; }
   var okunmamis = mesajlar.filter(function(m) { return !m.okundu && _mmAktif(m); });
+  var kritikOkunmamis = okunmamis.filter(function(m) { return m.oncelik === 'kritik'; });
   var arsiv = mesajlar.filter(function(m) { return _mmMerkezSildi(m); });
   var kutu = document.getElementById('merkezMesajKutusu');
-  // Alt bar badge
+  if (kutu) {
+    kutu.classList.toggle('has-kritik', kritikOkunmamis.length > 0);
+    kutu.classList.toggle('yanip-sonen', okunmamis.length > 0 && kritikOkunmamis.length === 0);
+    var baslikEl = kutu.querySelector('.kart-baslik');
+    if (baslikEl) {
+      baslikEl.innerHTML = kritikOkunmamis.length
+        ? '<span class="ico">🚨</span> <span class="merkez-kritik-baslik-yanip">KRİTİK Merkez Mesajı</span>'
+        : '<span class="ico">📩</span> Merkez Mesajları';
+    }
+  }
   var badge = document.getElementById('mesajBadge');
   if (badge) {
     if (okunmamis.length) {
@@ -7545,7 +7451,6 @@ function renderMesajlariDiv(mesajlar, mode) {
       badge.style.display = 'none';
     }
   }
-  if (kutu) kutu.classList.toggle('yanip-sonen', okunmamis.length > 0);
   function renderArsivHtml() {
     if (!arsiv.length) return '';
     var hA = '<div style="font-size:11px;color:var(--muted);margin:12px 0 6px;font-weight:700">Panelde saklanan (merkez kaldırdı)</div>';
@@ -7567,7 +7472,16 @@ function renderMesajlariDiv(mesajlar, mode) {
   }
   if (mode === 'compact') {
     var hCompact = '';
-    if (okunmamis.length) {
+    if (kritikOkunmamis.length) {
+      kritikOkunmamis.forEach(function(m) {
+        var metin = escHtml(String(m.mesaj || '').trim());
+        hCompact += '<div class="merkez-kritik-vurgu">' +
+          '<div class="merkez-kritik-etiket">🚨 Kritik merkez mesajı — okunmadı</div>' +
+          '<div class="merkez-kritik-metin">' + metin + '</div>' +
+          '<div class="merkez-kritik-aksiyon">PIN ile okundu onayı verin. Modal açıldıysa onaylayın; yoksa alt menüden <strong>Mesaj</strong> sekmesine gidin.</div>' +
+          '</div>';
+      });
+    } else if (okunmamis.length) {
       hCompact += '<div class="merkez-mesaj-bos" style="padding:8px 2px;line-height:1.5">' +
         okunmamis.length + ' okunmamış mesaj — ekran ortasında onaylayın veya alt menüden <strong>Mesaj</strong> sekmesine gidin.</div>';
     } else {
@@ -7582,8 +7496,12 @@ function renderMesajlariDiv(mesajlar, mode) {
     var cls = m.oncelik === 'kritik' ? 'kart mesaj-kritik' : 'kart';
     var bc = m.oncelik === 'kritik' ? 'rgba(239,68,68,.4)' : 'rgba(245,158,11,.4)';
     h += '<div class="' + cls + '" style="border-color:' + bc + ';margin-bottom:12px">';
-    h += '<div class="kart-baslik"><span class="ico">' + (m.oncelik==='kritik'?'🚨':'📩') + '</span> Merkez Mesajı</div>';
-    h += '<p style="font-size:13px;margin-bottom:14px;line-height:1.6">' + (m.mesaj||'') + '</p>';
+    h += '<div class="kart-baslik"><span class="ico">' + (m.oncelik==='kritik'?'🚨':'📩') + '</span> ' + (m.oncelik==='kritik'?'KRİTİK Merkez Mesajı':'Merkez Mesajı') + '</div>';
+    if (m.oncelik === 'kritik') {
+      h += '<p class="merkez-kritik-metin mesaj-govde" style="margin-bottom:14px">' + escHtml(String(m.mesaj||'').trim()) + '</p>';
+    } else {
+      h += '<p style="font-size:13px;margin-bottom:14px;line-height:1.6">' + escHtml(String(m.mesaj||'').trim()) + '</p>';
+    }
     h += '<div class="form-group" style="margin-bottom:8px"><label>Personel</label><select id="mmSel_'+m.id+'"></select></div>';
     h += '<div class="form-group"><label>PIN — Onaylamak için girin</label><input id="mmPin_'+m.id+'" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
     h += '<button class="btn btn-danger btn-sm" id="mmBtn_'+m.id+'">Okudum, Onaylıyorum</button>';

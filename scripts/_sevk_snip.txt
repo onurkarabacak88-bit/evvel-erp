@@ -1,0 +1,102 @@
+﻿def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
+                       sevk_kalemleri: List[Dict[str, Any]],
+                       yapan_id: Optional[str] = None,
+                       yapan_ad: Optional[str] = None) -> List[str]:
+    """Hedef depo ■ubesinden ²k²■: ■ube deposu d³■er; atanmazsa merkez_stok_kart d³■er.
+    stok_yolda olu■ur (al²c² ■ube), siparis_talep 'gonderildi' olur."""
+    from database import ensure_stok_yolda_columns
+
+    ensure_stok_yolda_columns(cur)
+    cur.execute(
+        """
+        SELECT sube_id,
+               COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS kaynak_depo_sube_id,
+               durum
+        FROM siparis_talep WHERE id=%s
+        FOR UPDATE
+        """,
+        (siparis_talep_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise ValueError(f"siparis_talep bulunamad²: {siparis_talep_id}")
+    rd = dict(row)
+    already_gonderildi = str(rd.get("durum") or "").strip() == "gonderildi"
+    sube_id = str(rd.get("sube_id") or "")
+    kaynak_depo = str(rd.get("kaynak_depo_sube_id") or "").strip() or None
+
+    yolda_ids = []
+    for item in sevk_kalemleri:
+        kalem_kodu = str(item.get("kalem_kodu") or item.get("urun_id") or "").strip()
+        kalem_adi = str(item.get("kalem_adi") or item.get("urun_ad") or kalem_kodu).strip()
+        sevk_adet = max(0, int(item.get("sevk_adet") or item.get("adet") or 0))
+        if not kalem_kodu or sevk_adet <= 0:
+            continue
+        if kaynak_depo:
+            cur.execute(
+                """
+                UPDATE sube_depo_stok
+                SET mevcut_adet  = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
+                    rezerve_adet = GREATEST(0, COALESCE(rezerve_adet, 0) - %s),
+                    guncelleme   = NOW()
+                WHERE sube_id = %s AND kalem_kodu = %s
+                """,
+                (sevk_adet, sevk_adet, kaynak_depo, kalem_kodu),
+            )
+            # FIX #5: 0 sat²r etkilendiyse kalem_kodu/depo uyumsuzlu­u var ù sessizce geme
+            if cur.rowcount == 0:
+                log.warning(
+                    "sevk_cikti_kaydet: sube_depo_stok satiri bulunamadi ù "
+                    "stok DUSULMEDI! siparis=%s depo=%s kalem_kodu=%s sevk_adet=%s",
+                    siparis_talep_id, kaynak_depo, kalem_kodu, sevk_adet,
+                )
+                # Uyar² kayd² olu■tur (ops ekibi g÷rebilsin)
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO sube_operasyon_uyari
+                            (sube_id, tarih, tip, mesaj, meta)
+                        VALUES (%s, CURRENT_DATE, 'STOK_DUSME_HATASI',
+                                'Sevk ²k²■²nda stok sat²r² bulunamad² ù kalem_kodu uyumsuzlu­u',
+                                %s::jsonb)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (
+                            kaynak_depo,
+                            json.dumps({
+                                "siparis_talep_id": siparis_talep_id,
+                                "kalem_kodu": kalem_kodu,
+                                "sevk_adet": sevk_adet,
+                                "kaynak": "sevk_cikti_kaydet",
+                            }, ensure_ascii=False),
+                        ),
+                    )
+                except Exception:
+                    pass
+        else:
+            cur.execute(
+                """
+                UPDATE merkez_stok_kart
+                SET mevcut_adet  = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
+                    rezerve_adet = GREATEST(0, COALESCE(rezerve_adet, 0) - %s),
+                    guncelleme   = NOW()
+                WHERE kalem_kodu = %s
+                """,
+                (sevk_adet, sevk_adet, kalem_kodu),
+            )
+            # FIX #5: merkez stok kart²nda da kontrol et
+            if cur.rowcount == 0:
+                log.warning(
+                    "sevk_cikti_kaydet: merkez_stok_kart satiri bulunamadi ù "
+                    "stok DUSULMEDI! siparis=%s kalem_kodu=%s sevk_adet=%s",
+                    siparis_talep_id, kalem_kodu, sevk_adet,
+                )
+        # stok_yolda kayd²
+        yid = str(uuid.uuid4())
+        try:
+            cur.execute(
+                """
+                INSERT INTO stok_yolda
+                    (id, siparis_talep_id, sube_id, kalem_kodu, kalem_adi, sevk_adet, durum,
+                     sevk_kaynak_depo_sube_id)
+                VALUES (%s, %s
