@@ -255,6 +255,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
   const [kuyrukToptanciNot, setKuyrukToptanciNot] = useState({});
   const [kuyrukToptanciKalem, setKuyrukToptanciKalem] = useState({}); // `${talep_id}::${kalem}` → adet
   const [kuyrukBusy, setKuyrukBusy] = useState(null);
+  const [iptalBusy, setIptalBusy] = useState(null);
   const [islemSonuc, setIslemSonuc] = useState(null); // { basarili, mesaj }
 
   // ── Birleştirme seçimi ──────────────────────────────────────
@@ -401,6 +402,43 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
   );
 
   const kalemIstenenAdet = (k) => Math.max(0, Number(k?.istenen_adet ?? k?.adet ?? 0));
+
+  const iptalEdilebilirAsama = (asama) => asama === 'yolda' || asama === 'depoda';
+
+  const akisiIptal = async (talepId, subeAd, asama) => {
+    const tid = String(talepId || '').trim();
+    if (!tid) return;
+    const etiket = ASAMA_STIL[asama]?.label || asama || 'sipariş';
+    if (
+      !window.confirm(
+        `${subeAd || 'Bu sipariş'} — ${etiket} aşamasında iptal edilsin mi?\n\nYolda paketler kaldırılır; sevk edilmiş adetler kaynak depoya iade edilir.`,
+      )
+    ) {
+      return;
+    }
+    const aciklama = window.prompt('İptal nedeni (isteğe bağlı):', '') ?? '';
+    if (aciklama === null) return;
+    setIptalBusy(tid);
+    try {
+      const r = await api('/ops/siparis/akisi-iptal', {
+        method: 'POST',
+        body: { talep_id: tid, aciklama: aciklama.trim() || undefined },
+      });
+      if (secili?.id === tid) setSecili(null);
+      publishGlobalDataRefresh('siparis-akisi-iptal');
+      islemSonucGoster(
+        true,
+        r?.geri_verilen_adet
+          ? `Sipariş iptal edildi — ${r.geri_verilen_adet} adet kaynak depoya iade edildi.`
+          : 'Sipariş iptal edildi.',
+      );
+      yukle();
+    } catch (e) {
+      islemSonucGoster(false, e.message || 'İptal edilemedi');
+    } finally {
+      setIptalBusy(null);
+    }
+  };
 
   const kuyrukTalepTemizle = useCallback((talepId) => {
     const tid = String(talepId || '');
@@ -939,37 +977,62 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                     {satirlar.map((s) => {
                       const st = ASAMA_STIL[s.asama] || { renk: 'var(--text3)', ikon: '•' };
                       const aktif = secili?.id === s.id;
+                      const iptalGoster = iptalEdilebilirAsama(s.asama);
                       return (
-                        <button
+                        <div
                           key={s.id}
-                          type="button"
                           data-ops-siparis-talep={s.id}
-                          onClick={() => setSecili(s)}
                           style={{
-                            display: 'block',
-                            width: '100%',
-                            textAlign: 'left',
-                            padding: '10px 14px',
-                            border: 'none',
+                            display: 'flex',
+                            alignItems: 'stretch',
                             borderBottom: '1px solid var(--border)',
                             borderLeft: `3px solid ${st.renk}`,
                             background: aktif ? 'rgba(59,130,246,0.1)' : 'transparent',
-                            cursor: 'pointer',
                           }}
                         >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                            <span style={{ fontWeight: 600, fontSize: 13 }}>{s.sube_adi}</span>
-                            <span style={{ fontSize: 11, color: st.renk }}>{st.ikon}</span>
-                          </div>
-                          {s.hedef_depo_sube_adi && (
-                            <div style={{ fontSize: 11, color: 'var(--text3)' }}>→ {s.hedef_depo_sube_adi}</div>
+                          <button
+                            type="button"
+                            onClick={() => setSecili(s)}
+                            style={{
+                              display: 'block',
+                              flex: 1,
+                              textAlign: 'left',
+                              padding: '10px 14px',
+                              border: 'none',
+                              background: 'transparent',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                              <span style={{ fontWeight: 600, fontSize: 13 }}>{s.sube_adi}</span>
+                              <span style={{ fontSize: 11, color: st.renk }}>{st.ikon}</span>
+                            </div>
+                            {s.hedef_depo_sube_adi && (
+                              <div style={{ fontSize: 11, color: 'var(--text3)' }}>→ {s.hedef_depo_sube_adi}</div>
+                            )}
+                            <SiparisGonderenSatiri kayit={s} style={{ marginTop: 2 }} />
+                            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{s.asama_metni}</div>
+                            <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'monospace' }}>
+                              #{String(s.id).slice(-8)} · {kisaTs(s.olusturma)}
+                            </div>
+                          </button>
+                          {iptalGoster && (
+                            <div style={{ display: 'flex', alignItems: 'center', padding: '0 10px 0 0' }}>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-danger"
+                                disabled={iptalBusy === s.id}
+                                title="Yolda / depo kalıntısını iptal et"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  akisiIptal(s.id, s.sube_adi, s.asama);
+                                }}
+                              >
+                                {iptalBusy === s.id ? '…' : 'İptal'}
+                              </button>
+                            </div>
                           )}
-                          <SiparisGonderenSatiri kayit={s} style={{ marginTop: 2 }} />
-                          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{s.asama_metni}</div>
-                          <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'monospace' }}>
-                            #{String(s.id).slice(-8)} · {kisaTs(s.olusturma)}
-                          </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -1036,6 +1099,16 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                         }}
                       >
                         Depoda aç
+                      </button>
+                    )}
+                    {iptalEdilebilirAsama(secili.asama) && (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-danger"
+                        disabled={iptalBusy === secili.id}
+                        onClick={() => akisiIptal(secili.id, secili.sube_adi, secili.asama)}
+                      >
+                        {iptalBusy === secili.id ? 'İptal ediliyor…' : 'Siparişi iptal et'}
                       </button>
                     )}
                   </div>

@@ -62,6 +62,7 @@ from operasyon_stok_motor import (
     OLAY_SEVK_CIKTI,
     sevk_cikti_kaydet as _disiplin_sevk_cikti,
     siparis_talep_merkez_iptal,
+    siparis_talep_akisi_iptal,
 )
 from siparis_sevkiyat_islem import (
     sevkiyat_kalem_durumlari_normalize,
@@ -8322,6 +8323,31 @@ def ops_siparis_merkez_iptal(body: OpsSiparisMerkezIptalBody):
             code = 404 if "bulunamad" in msg.lower() else 409
             raise HTTPException(code, msg) from e
         audit(cur, "siparis_talep", tid, "OPS_SIPARIS_MERKEZ_IPTAL")
+    return r
+
+
+@router.post("/siparis/akisi-iptal")
+def ops_siparis_akisi_iptal(body: OpsSiparisMerkezIptalBody):
+    """
+    Sipariş Kontrol Kulesi: depoda hazırlık veya yolda kalmış talebi iptal eder.
+    Yolda stok satırları kaldırılır; sevk edilmiş adetler kaynak depoya iade edilir.
+    """
+    tid = (body.talep_id or "").strip()
+    if not tid:
+        raise HTTPException(400, "talep_id zorunlu")
+    with db() as (conn, cur):
+        try:
+            r = siparis_talep_akisi_iptal(
+                cur,
+                tid,
+                body.aciklama,
+                body.yapan_ad,
+            )
+        except ValueError as e:
+            msg = (str(e) or "İptal yapılamadı").strip()
+            code = 404 if "bulunamad" in msg.lower() else 409
+            raise HTTPException(code, msg) from e
+        audit(cur, "siparis_talep", tid, "OPS_SIPARIS_AKIS_IPTAL")
     return r
 
 

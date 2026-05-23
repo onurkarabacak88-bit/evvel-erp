@@ -2694,6 +2694,197 @@ def siparis_talep_merkez_iptal(
 
     return {"success": True, "talep_id": aid, "durum": "iptal"}
 
+
+def _yolda_iptal_stok_kaynak_geri_ver(
+    cur: Any,
+    kaynak_depo_sube_id: Optional[str],
+    kalem_kodu: str,
+    kalem_adi: str,
+    adet: int,
+) -> None:
+    """Sevk çıkışının tersi: yolda iptalinde kaynak depo / merkez stoğa iade."""
+    kk = (kalem_kodu or "").strip()
+    if not kk:
+        return
+    ad = max(0, int(adet or 0))
+    if ad <= 0:
+        return
+    lab = (STOK_LABEL_TR.get(kk) or (kalem_adi or "") or kk).strip() or kk
+    kaynak = (kaynak_depo_sube_id or "").strip() or None
+    if kaynak:
+        cur.execute(
+            """
+            INSERT INTO sube_depo_stok
+                (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet, rezerve_adet, min_stok)
+            VALUES (%s, %s, %s, %s, %s, 0, 0)
+            ON CONFLICT (sube_id, kalem_kodu) DO UPDATE
+            SET mevcut_adet = COALESCE(sube_depo_stok.mevcut_adet, 0) + EXCLUDED.mevcut_adet,
+                kalem_adi = COALESCE(NULLIF(EXCLUDED.kalem_adi, ''), sube_depo_stok.kalem_adi),
+                guncelleme = NOW()
+            """,
+            (str(uuid.uuid4()), kaynak, kk, lab, ad),
+        )
+    else:
+        cur.execute(
+            """
+            UPDATE merkez_stok_kart
+            SET mevcut_adet = COALESCE(mevcut_adet, 0) + %s,
+                guncelleme = NOW()
+            WHERE kalem_kodu = %s
+            """,
+            (ad, kk),
+        )
+
+
+def siparis_talep_akisi_iptal(
+    cur: Any,
+    siparis_talep_id: str,
+    aciklama: Optional[str] = None,
+    yapan_ad: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Kontrol kulesi: depoda hazırlık veya yolda kalmış siparişi merkez iptal eder.
+    Yolda satırları silinir; sevk edilmiş adetler kaynak depoya iade edilir.
+    """
+    aid = (siparis_talep_id or "").strip()
+    if not aid:
+        raise ValueError("talep_id zorunlu")
+
+    cur.execute(
+        """
+        SELECT id, sube_id, durum, kalemler, kalem_durumlari, sevkiyat_notu,
+               COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS kaynak_depo_sube_id
+        FROM siparis_talep
+        WHERE id=%s
+        FOR UPDATE
+        """,
+        (aid,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise ValueError(f"siparis_talep bulunamadı: {aid}")
+    rd = dict(row)
+    st = str(rd.get("durum") or "").strip().lower()
+    if st in ("iptal", "teslim_edildi", "gonderilmedi"):
+        raise ValueError(f"Bu sipariş iptal edilemez (durum={st or '—'})")
+    if st in ("bekliyor", "onaylandi"):
+        return siparis_talep_merkez_iptal(cur, aid, aciklama, yapan_ad)
+
+    cur.execute(
+        """
+        SELECT COUNT(*) AS c
+        FROM stok_yolda
+        WHERE siparis_talep_id=%s
+          AND durum NOT IN ('yolda')
+        """,
+        (aid,),
+    )
+    diger_yolda = int((dict(cur.fetchone() or {}) or {}).get("c") or 0)
+    if diger_yolda > 0:
+        raise ValueError(
+            "Kısmen kabul edilmiş veya uzlaşma bekleyen satırlar var — tam iptal yapılamaz"
+        )
+
+    cur.execute(
+        """
+        SELECT id, kalem_kodu, kalem_adi, sevk_adet,
+               COALESCE(sevk_kaynak_depo_sube_id, %s) AS kaynak_depo_sube_id
+        FROM stok_yolda
+        WHERE siparis_talep_id=%s AND durum='yolda'
+        """,
+        (str(rd.get("kaynak_depo_sube_id") or "").strip() or None, aid),
+    )
+    yolda_rows = [dict(r) for r in (cur.fetchall() or [])]
+    geri_verilen = 0
+    for yr in yolda_rows:
+        sevk_ad = max(0, int(yr.get("sevk_adet") or 0))
+        if sevk_ad <= 0:
+            continue
+        _yolda_iptal_stok_kaynak_geri_ver(
+            cur,
+            str(yr.get("kaynak_depo_sube_id") or "").strip() or None,
+            str(yr.get("kalem_kodu") or ""),
+            str(yr.get("kalem_adi") or ""),
+            sevk_ad,
+        )
+        geri_verilen += sevk_ad
+
+    if yolda_rows:
+        cur.execute(
+            "DELETE FROM stok_yolda WHERE siparis_talep_id=%s AND durum='yolda'",
+            (aid,),
+        )
+
+    sube_id = str(rd.get("sube_id") or "").strip()
+    yn = (yapan_ad or "").strip() or "Merkez"
+    tl = _tahsis_sifir_listesi_kalemlerden(rd.get("kalemler"))
+    if not tl:
+        tl = _tahsis_sifir_listesi_kalem_durumlarindan(rd.get("kalem_durumlari"))
+    if tl:
+        try:
+            merkez_tahsis_yap(cur, aid, tl, None, yn)
+        except Exception:
+            pass
+
+    eski_not = str(rd.get("sevkiyat_notu") or "").strip()
+    frag = f"AKIS_IPTAL: {yn}"
+    ac = (aciklama or "").strip()
+    if ac:
+        frag += f" — {ac}"
+    if geri_verilen > 0:
+        frag += f" (yolda {geri_verilen} adet kaynağa iade)"
+    yeni_not = (eski_not + " | " + frag) if eski_not else frag
+
+    cur.execute(
+        """
+        UPDATE siparis_talep
+        SET durum='iptal',
+            sevkiyat_notu=%s,
+            sevkiyat_durumu='iptal',
+            sevkiyat_durum='iptal'
+        WHERE id=%s
+        """,
+        (yeni_not, aid),
+    )
+    try:
+        _disiplin_olay_yaz(
+            cur,
+            aid,
+            sube_id,
+            "SIPARIS_AKIS_IPTAL",
+            None,
+            yn,
+            {"aciklama": ac or None, "geri_verilen_adet": geri_verilen},
+        )
+    except Exception:
+        pass
+    try:
+        mesaj = (
+            "Sipariş talebiniz operasyon merkezi tarafından iptal edildi "
+            f"(talep {aid[:10]}…)."
+        )
+        if ac:
+            mesaj += f" Neden: {ac}"
+        cur.execute(
+            """
+            INSERT INTO sube_operasyon_uyari
+                (id, sube_id, tarih, tip, seviye, mesaj, siparis_talep_id)
+            VALUES (%s, %s, %s::date, 'SIPARIS_AKIS_IPTAL', 'uyari', %s, %s)
+            """,
+            (str(uuid.uuid4()), sube_id, str(bugun_tr()), mesaj, aid),
+        )
+    except Exception:
+        pass
+
+    return {
+        "success": True,
+        "talep_id": aid,
+        "durum": "iptal",
+        "yolda_satir": len(yolda_rows),
+        "geri_verilen_adet": geri_verilen,
+    }
+
+
 def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                        sevk_kalemleri: List[Dict[str, Any]],
                        yapan_id: Optional[str] = None,
