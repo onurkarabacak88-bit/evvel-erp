@@ -1148,8 +1148,9 @@
     .stok-pin-dock .pin-input {
       max-width: 120px;
     }
-    /* Ürün Teslim Al — toptancı: tedarikçi + personel + PIN vurgu kutusu */
-    .sv-toptanci-onay-panel {
+    /* Ürün Teslim Al — form stilleri (#tab-sevk / .urun-teslim-al-form) */
+    #tab-sevk .sv-toptanci-onay-panel,
+    .urun-teslim-al-form .sv-toptanci-onay-panel {
       margin: 0 0 16px 0;
       padding: 14px 16px;
       border-radius: 12px;
@@ -1198,7 +1199,8 @@
       background: rgba(15, 23, 42, 0.45) !important;
     }
     /* Sipariş tam geldi / eksik — üstte büyük seçim */
-    .sv-teslim-durum-panel {
+    #tab-sevk .sv-teslim-durum-panel,
+    .urun-teslim-al-form .sv-teslim-durum-panel {
       margin: 0 0 16px 0;
       padding: 14px 16px;
       border-radius: 12px;
@@ -1255,7 +1257,7 @@
       box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.3);
     }
     /* Toptancı teslim: sipariş paneli gibi yapışkan özet + gönder (sayfa sonunda kaybolmaz) */
-    #svTeslimStickyBar {
+    #tab-sevk #svTeslimStickyBar {
       position: sticky;
       bottom: 0;
       top: auto;
@@ -1314,10 +1316,12 @@
       font-size: 15px;
       font-weight: 800;
     }
-    .sv-eksik-modal-overlay {
+    #tab-sevk .sv-eksik-modal-overlay,
+    .urun-teslim-al-form .sv-eksik-modal-overlay {
       z-index: 9300;
     }
-    .sv-eksik-modal-kart {
+    #tab-sevk .sv-eksik-modal-kart,
+    .urun-teslim-al-form .sv-eksik-modal-kart {
       max-width: 520px;
     }
     @media (max-width: 520px) {
@@ -5096,37 +5100,12 @@ window.solSekmeAc = function(id) {
   var altBtn = document.getElementById('altTab-' + id);
   if (altBtn) altBtn.classList.add('active');
   // Stok formlarını doldur
-  if (id === 'sevk' || id === 'ac' || id === 'fire') renderStokForms(id);
+  if (id === 'ac' || id === 'fire') renderStokForms(id);
+  if (id === 'sevk') UrunTeslimAl.open();
   // Sekme açılınca orta alanı başa taşı (ürün listesi yukarıdan başlasın)
   if (id === 'sevk' || id === 'depoTeslim' || id === 'siparis' || id === 'ac' || id === 'fire') {
     var _orta = document.getElementById('orta');
     if (_orta) _orta.scrollTop = 0;
-  }
-  if (id === 'sevk') {
-    fillSels();
-    if (!window.__teslimOnayOrtakWired) {
-      window.__teslimOnayOrtakWired = true;
-      var strip = document.getElementById('teslimOnayOrtakStrip');
-      if (strip) {
-        var ortakYenile = function () {
-          stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []);
-        };
-        strip.addEventListener('input', ortakYenile, true);
-        strip.addEventListener('change', ortakYenile, true);
-      }
-    }
-    siparisAkisLoad(true)
-      .then(function (akis) {
-        siparisAkisCache = akis;
-        return svSiparisKontrolYukle().then(function () {
-          renderSvSiparisKontrol();
-          renderSvToptanciBekleyenPanel();
-          stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []);
-        });
-      })
-      .catch(function () {
-        renderSvToptanciBekleyenPanel();
-      });
   }
   if (id === 'depoTeslim') {
     if (!window.__depoTeslimOnayWired) {
@@ -5844,113 +5823,393 @@ function tedarikciSelectHTML(selectId) {
   return '<div class="form-group"><label>Tedarikçi *</label><select id="' + selectId + '">' + opts + '</select></div>';
 }
 
-var _svKontrolSatirlari = [];
-var _svAktifSiparisTalepId = null;
+// ─── ÜRÜN TESLİM AL (tedarikçi / toptancı — izole modül) ───────────────────
+var UrunTeslimAl = (function () {
+  var PREFIX = 'sv';
+  var FIXED_KEYS = [
+    'bardak_kucuk', 'bardak_buyuk', 'bardak_plastik', 'su_adet', 'redbull_adet',
+    'soda_adet', 'cookie_adet', 'pasta_adet', 'sut_litre', 'surup_adet',
+    'kahve_paket', 'karton_bardak', 'kapak_adet', 'pecete_paket', 'diger_sarf',
+  ].concat(_PASTA_KEYS);
 
-/** Ürün Teslim Al kontrol listesine yalnızca toptancıya yönlendirilmiş siparişler dahil. */
-function _svTedarikciKontrolTalepMi(t) {
-  if (!t || typeof t !== 'object') return false;
-  if ((t.teslim_bekleyen_kalemler || []).length > 0) return false;
-  var yol = String(t.tamamlanabilir_yol || '');
-  if (yol === 'toptanci_teslim') return true;
-  var sd = String(t.sevkiyat_durumu || t.sevkiyat_durum || '').toLowerCase();
-  return sd === 'toptanciya_yonlendirildi';
-}
+  var state = {
+    katalog: [],
+    kontrolSatirlari: [],
+    aktifSiparisId: null,
+    lastAkis: null,
+  };
 
-function siparisAkisTalepSatirHTML(t) {
-  var st = String(t.sevkiyat_durumu || t.durum || 'bekliyor');
-  var stCls =
-    st === 'teslim_edildi'
-      ? 'badge-ok'
-      : st === 'gonderildi' || st === 'toptanciya_yonlendirildi'
-        ? 'badge-blue'
-        : st === 'kismi_hazirlandi'
-          ? 'badge-warn'
-          : 'badge-gray';
-  var yol = String(t.tamamlanabilir_yol || '');
-  var h = '';
-  h += '<div style="font-size:12px;padding:10px 0;border-top:1px solid var(--border)">';
-  h +=
-    '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">';
-  h +=
-    '<span><strong>#' +
-    escHtml(String(t.id || '').slice(0, 8)) +
-    '…</strong> · ' +
-    escHtml(t.asama_metni || st) +
-    '</span>';
-  h +=
-    '<span class="badge ' +
-    stCls +
-    '" style="font-size:10px;text-transform:uppercase">' +
-    escHtml(st) +
-    '</span>';
-  h += '</div>';
-  if (t.operasyon_yonlendirme_talimati) {
-    h +=
-      '<div style="font-size:11px;margin-top:6px;padding:6px 8px;border-radius:6px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35)"><strong>Talimat:</strong> ' +
-      escHtml(t.operasyon_yonlendirme_talimati) +
-      '</div>';
+  function mountEl() {
+    return document.getElementById('sevkForm');
   }
-  if (t.depo_sevkiyat_rapor_metni) {
-    h +=
-      '<div style="font-size:11px;margin-top:6px;color:var(--muted);line-height:1.45"><strong>Depo raporu:</strong> ' +
-      escHtml(t.depo_sevkiyat_rapor_metni) +
-      '</div>';
+
+  function tedarikciKontrolTalepMi(t) {
+    if (!t || typeof t !== 'object') return false;
+    if ((t.teslim_bekleyen_kalemler || []).length > 0) return false;
+    if (String(t.tamamlanabilir_yol || '') === 'toptanci_teslim') return true;
+    var sd = String(t.sevkiyat_durumu || t.sevkiyat_durum || '').toLowerCase();
+    return sd === 'toptanciya_yonlendirildi';
   }
-  var kd = t.kalem_durum_ozet || [];
-  if (kd.length) {
-    h += '<div style="font-size:11px;margin-top:6px;display:grid;gap:3px">';
-    kd.forEach(function (k) {
+
+  function buildFormHTML() {
+    var h = '';
+    h += '<div class="urun-teslim-al-form">';
+    h += '<div class="sv-toptanci-onay-panel" style="margin-top:0">';
+    h += '<div class="sv-toptanci-onay-baslik"><span aria-hidden="true">🏭</span> <strong style="color:#fff">Tedarikçi</strong> seçimi</div>';
+    h += '<p class="sv-toptanci-onay-alt">Personel ve PIN alanı sayfanın <strong>en üstünde</strong>. Buradan yalnızca tedarikçiyi seçin.</p>';
+    h += tedarikciSelectHTML('svTedarikci');
+    h += '</div>';
+    h += '<div id="svSiparisKontrolWrap"></div>';
+    h += '<div id="svToptanciBekleyenWrap"></div>';
+    h += '<div id="svKatalogContainer">';
+    h += '<div id="svKatalogHeader" style="margin:14px 0 4px;font-size:13px;font-weight:800;color:var(--text)">📦 Adım 2 — Gelen ürünleri seçin</div>';
+    h += '<p id="svKatalogHelp" style="font-size:11px;color:var(--muted);margin:0 0 8px;line-height:1.45">Aşağıdaki kategorilere dokunun; her üründe gelen adedi girin. Seçimler altta özette görünür.</p>';
+    h += '<div id="svKatalogWrap"></div>';
+    h += '</div>';
+    h += '<div class="sv-teslim-durum-panel">';
+    h += '<div class="sv-durum-baslik">Teslimat durumu <span style="color:#fda4af">*</span></div>';
+    h += '<p class="sv-durum-alt">Yukarıdaki ürünleri seçtikten sonra buradan durumu işaretleyin: birebir geldi ise <strong>Tam geldi</strong>; eksik veya yanlış ise <strong>Eksik var</strong>.</p>';
+    h += '<div class="sv-durum-btn-row">';
+    h += '<button type="button" class="sv-durum-btn sv-durum-tam" id="svDurumTamBtn" data-val="tam_geldi">✅ Tam geldi<br><span style="font-size:11px;font-weight:700;opacity:0.9">Sipariş eksiksiz</span></button>';
+    h += '<button type="button" class="sv-durum-btn sv-durum-eksik" id="svDurumEksikBtn" data-val="eksik_var">⚠️ Eksik var<br><span style="font-size:11px;font-weight:700;opacity:0.9">Kısmi veya yanlış sevkiyat</span></button>';
+    h += '</div>';
+    h += '<input type="hidden" id="svTeslimDurumu" value="" />';
+    h += '<div id="svEksikKayitChip" class="siparis-detay" style="display:none;margin-top:10px;padding:8px 10px;font-size:11px;border-radius:8px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.38);color:#86efac">✓ Eksik ürün bilgisi kaydedildi. Düzenlemek için tekrar <strong>Eksik var</strong>a tıklayın.</div>';
+    h += '<div class="form-group" style="margin-top:12px;margin-bottom:0"><label>Teslim açıklaması *</label><textarea id="svTeslimAciklama" rows="2" placeholder="Teslimin genel durumunu yazın (zorunlu)."></textarea></div>';
+    h += '</div>';
+    h += '<div id="svTeslimStickyBar">';
+    h += '<div class="sv-teslim-sticky-panel">';
+    h += '<div class="sv-teslim-sticky-baslik"><span class="sv-teslim-sticky-tag">Onay</span><span>Teslim kaydını gönder</span></div>';
+    h += '<p class="sv-teslim-sticky-alt">Ürünleri seçin veya sipariş kontrol listesini tikleyin. <strong>Personel + PIN</strong> sayfanın üstündeki mavi kutuda.</p>';
+    h += '<div id="svSecimOzet" class="siparis-detay sv-teslim-sticky-ozet" style="color:var(--muted)">Henüz ürün seçilmedi.</div>';
+    h += '<button type="button" class="btn btn-primary" id="svGonder">✅ Seçimleri Onayla ve Teslim Al</button>';
+    h += '<div id="svMsg" style="margin-top:10px;font-size:13px"></div>';
+    h += '</div></div>';
+    h += '<div style="height:8px"></div>';
+    h += '<details style="margin-top:0"><summary style="font-size:11px;color:var(--muted);cursor:pointer">ℹ️ Bu form hakkında</summary>';
+    h += '<div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;padding:10px 12px;margin-top:6px;font-size:11px;line-height:1.6;color:#93c5fd">';
+    h += 'Bu form yalnızca <strong>tedarikçi / toptancı</strong> teslimatını kaydetmek içindir. ';
+    h += 'Girilen miktarlar <strong>aktif stoka girmez</strong> — potansiyel stok olarak izlenir. ';
+    h += 'Ürünü bardan/kullanıma açmak için <strong>Ürün Aç</strong> formunu kullanın.';
+    h += '</div></details>';
+    h += '<div id="svKatOverlay" class="overlay sip-kat-overlay" style="display:none" aria-hidden="true">';
+    h += '<div class="overlay-kart sip-kat-modal-kart" id="svKatModalKart">';
+    h += '<div id="svKatModalInner"></div>';
+    h += '</div></div>';
+    h += '<div id="svEksikModal" class="overlay sv-eksik-modal-overlay" style="display:none" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="svEksikModalTitle">';
+    h += '<div class="overlay-kart sv-eksik-modal-kart" onclick="event.stopPropagation()">';
+    h += '<h2 id="svEksikModalTitle" style="margin:0 0 8px;font-size:18px;font-weight:800">Eksik ürün bilgisi</h2>';
+    h += '<p style="color:var(--muted);font-size:13px;margin:0 0 14px;line-height:1.55">Zorunlu alanları doldurup <strong>Kaydet</strong> ile kapatın. <strong>İptal</strong> derseniz «Eksik var» seçimi ve yazdıklarınız silinir.</p>';
+    h += '<div class="form-group"><label>Eksik ürün sipariş formunda var mıydı? <span style="color:#fda4af">*</span></label>';
+    h += '<select id="svEksikKategori"><option value="">— Seçin —</option><option value="sipariste_vardi">Sipariş formunda vardı</option><option value="sipariste_yoktu">Sipariş formunda yoktu / yazılmadı</option></select></div>';
+    h += '<div class="form-group"><label>Gelmeyen ürünler açıklaması <span style="color:#fda4af">*</span></label><textarea id="svEksikAciklama" rows="4" placeholder="Örn: 2 koli soda, 1 koli su gelmedi."></textarea></div>';
+    h += '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap">';
+    h += '<button type="button" class="btn btn-secondary" id="svEksikModalIptal">İptal</button>';
+    h += '<button type="button" class="btn btn-success" id="svEksikModalKaydet">Kaydet</button>';
+    h += '</div></div></div>';
+    h += '</div>';
+    return h;
+  }
+
+  function kontrolSeciliAdet() {
+    var wrap = document.getElementById('svSiparisKontrolWrap');
+    if (!wrap || !state.kontrolSatirlari.length) return 0;
+    var n = 0;
+    state.kontrolSatirlari.forEach(function (r, i) {
+      var ch = wrap.querySelector('input[data-sv-kontrol="' + i + '"]');
+      if (ch && ch.checked) n += 1;
+    });
+    return n;
+  }
+
+  function kontrolEksikSatirlar() {
+    var wrap = document.getElementById('svSiparisKontrolWrap');
+    if (!wrap || !state.kontrolSatirlari.length) return [];
+    var out = [];
+    state.kontrolSatirlari.forEach(function (r, i) {
+      var ch = wrap.querySelector('input[data-sv-kontrol="' + i + '"]');
+      if (!ch || !ch.checked) out.push(r);
+    });
+    return out;
+  }
+
+  function syncKontrolSatirlari(akis) {
+    var acc = {};
+    ((akis && akis.toptanci_teslim_bekleyen) || []).filter(tedarikciKontrolTalepMi).forEach(function (s) {
+      (s.kalemler_ozet || []).forEach(function (k) {
+        var ad = String(k.urun_ad || '').trim();
+        var adet = parseInt(k.adet || k.istenen_adet || 0, 10) || 0;
+        if (!ad || adet <= 0) return;
+        var norm = ad.toLocaleLowerCase('tr-TR');
+        if (!acc[norm]) acc[norm] = { urun_ad: ad, adet: 0 };
+        acc[norm].adet += adet;
+      });
+    });
+    state.kontrolSatirlari = Object.keys(acc)
+      .map(function (key) {
+        return { key: key, urun_ad: acc[key].urun_ad, adet: acc[key].adet };
+      })
+      .sort(function (a, b) {
+        return a.urun_ad.localeCompare(b.urun_ad, 'tr');
+      });
+    if (state.aktifSiparisId) {
+      var halaVar = ((akis && akis.toptanci_teslim_bekleyen) || []).some(function (t) {
+        return String(t.id || '').trim() === state.aktifSiparisId;
+      });
+      if (!halaVar) state.aktifSiparisId = null;
+    }
+  }
+
+  function katalogOzeti() {
+    var data = state.katalog || [];
+    var stShowPasif = stokKartState(PREFIX).showPasif;
+    var kalem = 0;
+    var adet = 0;
+    (data || []).forEach(function (kat) {
+      (kat.items || []).forEach(function (it) {
+        if (it.aktif === false && !stShowPasif) return;
+        var key = PREFIX + '::' + kat.id + '::' + it.id;
+        var n = parseInt((stokKalemDeger[PREFIX] && stokKalemDeger[PREFIX][key]) || 0, 10);
+        if (isNaN(n) || n <= 0) return;
+        kalem += 1;
+        adet += n;
+      });
+    });
+    return { kalem: kalem, adet: adet };
+  }
+
+  function appendKatalogKalemler(body, data) {
+    var stShowPasif = stokKartState(PREFIX).showPasif;
+    (data || []).forEach(function (kat) {
+      (kat.items || []).forEach(function (it) {
+        if (it.aktif === false && !stShowPasif) return;
+        var key = PREFIX + '::' + kat.id + '::' + it.id;
+        var adet = parseInt((stokKalemDeger[PREFIX] && stokKalemDeger[PREFIX][key]) || 0, 10);
+        if (isNaN(adet) || adet <= 0) return;
+        body.kalemler.push({
+          kategori_id: kat.id,
+          urun_id: it.id,
+          urun_ad: it.ad,
+          aciklama: it.aciklama || null,
+          adet: adet,
+        });
+        var apiKey = stokApiKeyFromAd(it.ad);
+        if (apiKey) body[apiKey] = (body[apiKey] || 0) + adet;
+      });
+    });
+  }
+
+  function appendKontrolKalemler(body, data) {
+    if (!state.kontrolSatirlari.length) return;
+    var siparisWrap = document.getElementById('svSiparisKontrolWrap');
+    if (!siparisWrap) return;
+    var katalogIndex = {};
+    (data || []).forEach(function (kat) {
+      (kat.items || []).forEach(function (it) {
+        var norm = String(it.ad || '').toLocaleLowerCase('tr-TR').trim();
+        if (norm) {
+          katalogIndex[norm] = {
+            kategori_id: kat.id,
+            urun_id: it.id,
+            urun_ad: it.ad,
+            aciklama: it.aciklama || null,
+          };
+        }
+      });
+    });
+    var eklenenIds = {};
+    body.kalemler.forEach(function (k) {
+      if (k.urun_id) eklenenIds[k.urun_id] = true;
+    });
+    state.kontrolSatirlari.forEach(function (r, i) {
+      var ch = siparisWrap.querySelector('input[data-sv-kontrol="' + i + '"]');
+      if (!ch || !ch.checked) return;
+      var siparisAd = String(r.urun_ad || '').trim();
+      var siparisAdet = parseInt(r.adet || 0, 10) || 0;
+      if (!siparisAd || siparisAdet <= 0) return;
+      var norm = siparisAd.toLocaleLowerCase('tr-TR');
+      var matched = katalogIndex[norm];
+      if (matched && eklenenIds[matched.urun_id]) return;
+      body.kalemler.push(
+        matched
+          ? {
+              kategori_id: matched.kategori_id,
+              urun_id: matched.urun_id,
+              urun_ad: matched.urun_ad,
+              aciklama: matched.aciklama,
+              adet: siparisAdet,
+              _kaynak: 'siparis_kontrol',
+            }
+          : { urun_ad: siparisAd, adet: siparisAdet, _kaynak: 'siparis_kontrol' }
+      );
+      if (matched) {
+        eklenenIds[matched.urun_id] = true;
+        var apiKey = stokApiKeyFromAd(matched.urun_ad);
+        if (apiKey) body[apiKey] = (body[apiKey] || 0) + siparisAdet;
+      }
+    });
+  }
+
+  function buildPayload() {
+    var data = state.katalog || [];
+    var body = {
+      personel_id: selVal('svPers'),
+      pin: inpVal('svPin').replace(/\D/g, '').slice(0, 4),
+      not_aciklama: null,
+      kalemler: [],
+    };
+    FIXED_KEYS.forEach(function (k) {
+      body[k] = 0;
+    });
+    appendKatalogKalemler(body, data);
+    appendKontrolKalemler(body, data);
+    return body;
+  }
+
+  function updateSecimUI() {
+    var oz = katalogOzeti();
+    var ks = kontrolSeciliAdet();
+    var svBar = document.getElementById('svTeslimStickyBar');
+    if (svBar) svBar.style.display = '';
+    var ozetEl = document.getElementById('svSecimOzet');
+    if (ozetEl) {
+      if ((oz.kalem || 0) > 0) {
+        ozetEl.innerHTML =
+          '✅ <strong>' +
+          oz.kalem +
+          ' kalem</strong> seçildi · toplam <strong>' +
+          oz.adet +
+          ' adet</strong>';
+        ozetEl.style.color = '#86efac';
+      } else if (ks > 0) {
+        ozetEl.innerHTML =
+          '✅ Sipariş kontrol listesinde <strong>' +
+          ks +
+          ' kalem</strong> tiklendi — altta onaylayın';
+        ozetEl.style.color = '#86efac';
+      } else {
+        ozetEl.textContent = 'Ürün seçin veya sipariş kontrol listesini tikleyin.';
+        ozetEl.style.color = 'var(--muted)';
+      }
+    }
+    var btn = document.getElementById('svGonder');
+    if (btn) {
+      var baseTxt =
+        btn.getAttribute('data-btn-base') ||
+        '✅ Seçimleri Onayla ve Teslim Al';
+      if (!btn.getAttribute('data-btn-base')) btn.setAttribute('data-btn-base', baseTxt);
+      var gosterAdet = oz.kalem > 0 ? oz.kalem : ks;
+      btn.textContent = gosterAdet > 0 ? baseTxt + ' (' + gosterAdet + ' kalem)' : baseTxt;
+      var siparisAktif = state.kontrolSatirlari.length > 0;
+      var canSubmit = oz.kalem > 0 || ks > 0 || !!state.aktifSiparisId;
+      btn.disabled = !canSubmit;
+      btn.style.opacity = canSubmit ? '1' : '0.65';
+      btn.title = !canSubmit
+        ? siparisAktif
+          ? 'Kontrol listesinde gelenleri tikleyin veya katalogdan adet girin'
+          : 'Katalogdan en az bir üründe adet girin'
+        : 'Personel ve PIN sayfanın üstünde — gönderince kayıt oluşur';
+    }
+  }
+
+  function renderKontrolListesi() {
+    var wrap = document.getElementById('svSiparisKontrolWrap');
+    if (!wrap) return;
+    var katHeader = document.getElementById('svKatalogHeader');
+    var katHelp = document.getElementById('svKatalogHelp');
+    var katWrap = document.getElementById('svKatalogWrap');
+    var hasOrder = state.kontrolSatirlari.length > 0;
+
+    if (!hasOrder) {
+      wrap.innerHTML = '';
+      if (katHeader) {
+        katHeader.style.display = '';
+        katHeader.innerHTML = '📦 Adım 2 — Gelen ürünleri seçin';
+      }
+      if (katHelp) katHelp.style.display = '';
+      if (katWrap) katWrap.style.display = '';
+      updateSecimUI();
+      return;
+    }
+
+    var h = '';
+    h +=
+      '<div class="siparis-detay sip-inner-panel" style="margin-bottom:10px;border-left:3px solid var(--ok);background:rgba(34,197,94,0.06)">';
+    h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">';
+    h += '<div style="font-size:13px;font-weight:800">📋 Sipariş kontrol listesi — geleni tikleyin</div>';
+    h += '<button type="button" class="sip-mini-btn" id="svKontrolTumBtn">Tümünü işaretle</button>';
+    h += '</div>';
+    h +=
+      '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Siparişte geçen kalemler aşağıda. Gelenleri tikleyin; gelmeyenler boş kalsın.</div>';
+    state.kontrolSatirlari.forEach(function (r, i) {
       h +=
-        '<div style="display:flex;justify-content:space-between;gap:8px"><span>' +
-        escHtml(k.kalem_adi || k.kalem_kodu || '—') +
-        '</span><span style="opacity:.85">' +
-        escHtml(k.durum_metni || k.durum || '') +
-        (k.gonderilen_adet ? ' · gönd:' + k.gonderilen_adet : '') +
-        '</span></div>';
+        '<label style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--border);font-size:12px;cursor:pointer">';
+      h +=
+        '<input type="checkbox" data-sv-kontrol="' +
+        i +
+        '" style="width:18px;height:18px;accent-color:var(--ok);flex-shrink:0" />';
+      h += '<span style="flex:1">' + escHtml(r.urun_ad) + '</span>';
+      h += '<span class="mono" style="font-size:11px;font-weight:700">x' + String(r.adet || 0) + '</span>';
+      h += '</label>';
     });
     h += '</div>';
-  } else if ((t.kalemler_ozet || []).length) {
-    var oz = (t.kalemler_ozet || [])
-      .map(function (x) {
-        return escHtml(x.urun_ad || '') + ' ×' + String(x.adet || x.istenen_adet || 0);
-      })
-      .join(', ');
-    h += '<div style="font-size:11px;margin-top:6px;color:var(--muted)">' + oz + '</div>';
-  }
-  if (yol === 'depo_hazirlik_ben') {
-    h +=
-      '<div style="font-size:11px;margin-top:8px"><button type="button" class="sip-mini-btn" onclick="solSekmeAc(\'gonderilecek\')">→ Gönderilecek siparişler</button> <span style="color:var(--muted)">Kendi deponuz — hazırlayıp sevk edin</span></div>';
-  } else if (yol === 'toptanci_teslim') {
-    h +=
-      '<div style="font-size:11px;margin-top:8px"><button type="button" class="sip-mini-btn" onclick="solSekmeAc(\'sevk\')">→ Ürün Teslim Al</button> <span style="color:var(--muted)">Toptancıdan geleni kaydedip siparişi kapatın</span></div>';
-  } else if (yol === 'depo_kabul' || (t.teslim_bekleyen_kalemler || []).length) {
-    h +=
-      '<div style="font-size:11px;margin-top:8px"><button type="button" class="sip-mini-btn" onclick="solSekmeAc(\'depoTeslim\')">→ Depodan Gelen — Teslim Al</button></div>';
-  }
-  h += '</div>';
-  return h;
-}
+    wrap.innerHTML = h;
 
-async function renderSvToptanciBekleyenPanel() {
-  var wrap = document.getElementById('svToptanciBekleyenWrap');
-  if (!wrap) return;
-  try {
-    var akis = await siparisAkisLoad(false);
-    var liste = (akis && akis.toptanci_teslim_bekleyen) || [];
+    var tumBtn = document.getElementById('svKontrolTumBtn');
+    if (tumBtn) {
+      tumBtn.onclick = function () {
+        wrap.querySelectorAll('input[data-sv-kontrol]').forEach(function (ch) {
+          ch.checked = true;
+        });
+        updateSecimUI();
+      };
+    }
+    wrap.querySelectorAll('input[data-sv-kontrol]').forEach(function (ch) {
+      ch.addEventListener('change', updateSecimUI);
+    });
+
+    if (katHeader) {
+      katHeader.style.display = '';
+      katHeader.innerHTML =
+        '<button type="button" id="svKatalogToggleBtn" style="background:transparent;border:1px dashed var(--border);color:var(--accent);padding:10px 14px;border-radius:10px;cursor:pointer;width:100%;font-weight:600;font-size:12px;text-align:left;font-family:inherit">＋ Listede olmayan ek ürün geldi mi? (katalog aç/kapat)</button>';
+    }
+    if (katHelp) katHelp.style.display = 'none';
+    if (katWrap) katWrap.style.display = 'none';
+
+    var katToggle = document.getElementById('svKatalogToggleBtn');
+    if (katToggle) {
+      katToggle.onclick = function () {
+        var nowHidden = katWrap && katWrap.style.display === 'none';
+        if (katWrap) katWrap.style.display = nowHidden ? '' : 'none';
+        if (katHelp) katHelp.style.display = nowHidden ? '' : 'none';
+        katToggle.innerHTML = nowHidden
+          ? '− Katalog kapat'
+          : '＋ Listede olmayan ek ürün geldi mi? (katalog aç/kapat)';
+      };
+    }
+    updateSecimUI();
+  }
+
+  function renderToptanciPanel() {
+    var wrap = document.getElementById('svToptanciBekleyenWrap');
+    if (!wrap) return;
+    var liste = (state.lastAkis && state.lastAkis.toptanci_teslim_bekleyen) || [];
     if (!liste.length) {
       wrap.innerHTML = '';
-      _svAktifSiparisTalepId = null;
+      state.aktifSiparisId = null;
+      updateSecimUI();
       return;
     }
     var h = '';
-    h += '<div class="siparis-detay" style="border-left:3px solid rgba(234,179,8,.65);padding-left:12px;margin-bottom:14px;background:rgba(234,179,8,.08)">';
-    h += '<div style="font-size:12px;font-weight:700;margin-bottom:6px">🚚 Toptancıya yönlendirilen siparişler — kapatılması gerekiyor</div>';
+    h +=
+      '<div class="siparis-detay" style="border-left:3px solid rgba(234,179,8,.65);padding-left:12px;margin-bottom:14px;background:rgba(234,179,8,.08)">';
+    h +=
+      '<div style="font-size:12px;font-weight:700;margin-bottom:6px">🚚 Toptancıya yönlendirilen siparişler — kapatılması gerekiyor</div>';
     h +=
       '<p style="font-size:11px;color:var(--muted);margin:0 0 8px;line-height:1.45">Tedarikçiden teslim aldığınız ürünleri aşağıdaki formdan kaydedin. Siparişi kapatmak için ilgili satırı seçin; gönderimde otomatik eşleşir.</p>';
     liste.forEach(function (t) {
       var tid = String(t.id || '').trim();
-      var secili = _svAktifSiparisTalepId === tid;
+      var secili = state.aktifSiparisId === tid;
       var oz = (t.kalemler_ozet || [])
         .map(function (x) {
           return escHtml(x.urun_ad || '') + ' ×' + String(x.adet || 0);
@@ -5974,398 +6233,360 @@ async function renderSvToptanciBekleyenPanel() {
     wrap.querySelectorAll('.sv-toptanci-sec-btn').forEach(function (btn) {
       btn.onclick = function () {
         var tid = String(btn.getAttribute('data-sv-talep-id') || '').trim();
-        _svAktifSiparisTalepId = _svAktifSiparisTalepId === tid ? null : tid;
-        renderSvToptanciBekleyenPanel();
-        stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []);
+        state.aktifSiparisId = state.aktifSiparisId === tid ? null : tid;
+        renderToptanciPanel();
+        updateSecimUI();
       };
     });
-    stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []);
-  } catch (e) {
-    wrap.innerHTML = '';
+    updateSecimUI();
   }
-}
 
-async function svSiparisKontrolYukle() {
-  try {
-    var acc = {};
-    function mergeKaynak(liste) {
-      (liste || []).filter(_svTedarikciKontrolTalepMi).forEach(function (s) {
-        (s.kalemler_ozet || []).forEach(function (k) {
-          var ad = String(k.urun_ad || '').trim();
-          var adet = parseInt(k.adet || k.istenen_adet || 0, 10) || 0;
-          if (!ad || adet <= 0) return;
-          var norm = ad.toLocaleLowerCase('tr-TR');
-          if (!acc[norm]) acc[norm] = { urun_ad: ad, adet: 0 };
-          acc[norm].adet += adet;
-        });
-      });
+  function wireDurumUI() {
+    var tamBtn = document.getElementById('svDurumTamBtn');
+    var eksikBtn = document.getElementById('svDurumEksikBtn');
+    var hid = document.getElementById('svTeslimDurumu');
+    var modal = document.getElementById('svEksikModal');
+    if (!tamBtn || !eksikBtn || !hid) return;
+
+    function eksikModalKapat() {
+      if (modal) {
+        modal.style.display = 'none';
+        modal.setAttribute('aria-hidden', 'true');
+      }
+      try {
+        document.body.style.overflow = '';
+      } catch (_) {}
     }
-    try {
-      var akis = await siparisAkisLoad(false);
-      mergeKaynak((akis && akis.toptanci_teslim_bekleyen) || []);
-    } catch (e2) {}
-    _svKontrolSatirlari = Object.keys(acc)
-      .map(function (key) {
-        return { key: key, urun_ad: acc[key].urun_ad, adet: acc[key].adet };
-      })
-      .sort(function (a, b) {
-        return a.urun_ad.localeCompare(b.urun_ad, 'tr');
-      });
-  } catch (e) {
-    _svKontrolSatirlari = [];
-  }
-}
 
-function svKontrolSeciliAdet() {
-  var wrap = document.getElementById('svSiparisKontrolWrap');
-  if (!wrap || !_svKontrolSatirlari.length) return 0;
-  var n = 0;
-  _svKontrolSatirlari.forEach(function (r, i) {
-    var ch = wrap.querySelector('input[data-sv-kontrol="' + i + '"]');
-    if (ch && ch.checked) n += 1;
-  });
-  return n;
-}
-
-function renderSvSiparisKontrol() {
-  var wrap = document.getElementById('svSiparisKontrolWrap');
-  if (!wrap) return;
-  var katHeader = document.getElementById('svKatalogHeader');
-  var katHelp = document.getElementById('svKatalogHelp');
-  var katWrap = document.getElementById('svKatalogWrap');
-  var hasOrder = _svKontrolSatirlari.length > 0;
-
-  // ── Mod A: Aktif sipariş YOK — katalog grid normal görünür, sipariş listesi gizli ──
-  if (!hasOrder) {
-    wrap.innerHTML = '';
-    if (katHeader) {
-      katHeader.style.display = '';
-      katHeader.innerHTML = '📦 Adım 2 — Gelen ürünleri seçin';
+    function eksikModalAc() {
+      if (!modal) return;
+      modal.style.display = 'flex';
+      modal.setAttribute('aria-hidden', 'false');
+      try {
+        document.body.style.overflow = 'hidden';
+      } catch (_) {}
+      var ta = document.getElementById('svEksikAciklama');
+      setTimeout(function () {
+        try {
+          if (ta) ta.focus();
+        } catch (_) {}
+      }, 80);
     }
-    if (katHelp) katHelp.style.display = '';
-    if (katWrap) katWrap.style.display = '';
-    return;
-  }
 
-  // ── Mod B: Aktif sipariş VAR — sipariş listesi ana alan, katalog expander altında ──
-  var h = '';
-  h += '<div class="siparis-detay sip-inner-panel" style="margin-bottom:10px;border-left:3px solid var(--ok);background:rgba(34,197,94,0.06)">';
-  h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">';
-  h += '<div style="font-size:13px;font-weight:800">📋 Sipariş kontrol listesi — geleni tikleyin</div>';
-  h += '<button type="button" class="sip-mini-btn" id="svKontrolTumBtn">Tümünü işaretle</button>';
-  h += '</div>';
-  h += '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Siparişte geçen kalemler aşağıda. Gelenleri tikleyin; gelmeyenler boş kalsın.</div>';
-  _svKontrolSatirlari.forEach(function(r, i){
-    h += '<label style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--border);font-size:12px;cursor:pointer">';
-    h += '<input type="checkbox" data-sv-kontrol="' + i + '" style="width:18px;height:18px;accent-color:var(--ok);flex-shrink:0" />';
-    h += '<span style="flex:1">' + escHtml(r.urun_ad) + '</span>';
-    h += '<span class="mono" style="font-size:11px;font-weight:700">x' + String(r.adet || 0) + '</span>';
-    h += '</label>';
-  });
-  h += '</div>';
-  wrap.innerHTML = h;
-  var tumBtn = document.getElementById('svKontrolTumBtn');
-  if (tumBtn) {
-    tumBtn.onclick = function() {
-      wrap.querySelectorAll('input[data-sv-kontrol]').forEach(function(ch){ ch.checked = true; });
-      stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []);
+    function setDurum(v) {
+      hid.value = v;
+      tamBtn.classList.toggle('is-active', v === 'tam_geldi');
+      eksikBtn.classList.toggle('is-active', v === 'eksik_var');
+      if (v !== 'eksik_var') {
+        eksikModalKapat();
+        var eksikKat = document.getElementById('svEksikKategori');
+        var eksikAcik = document.getElementById('svEksikAciklama');
+        if (eksikKat) eksikKat.value = '';
+        if (eksikAcik) eksikAcik.value = '';
+        var chip = document.getElementById('svEksikKayitChip');
+        if (chip) chip.style.display = 'none';
+      }
+    }
+
+    tamBtn.onclick = function () {
+      setDurum('tam_geldi');
     };
-  }
-  wrap.querySelectorAll('input[data-sv-kontrol]').forEach(function (ch) {
-    ch.addEventListener('change', function () {
-      stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []);
-    });
-  });
-
-  // Katalog'u expander modunda gizle — "Ek ürün geldi mi?" toggle butonu
-  if (katHeader) {
-    katHeader.style.display = '';
-    katHeader.innerHTML = '<button type="button" id="svKatalogToggleBtn" style="background:transparent;border:1px dashed var(--border);color:var(--accent);padding:10px 14px;border-radius:10px;cursor:pointer;width:100%;font-weight:600;font-size:12px;text-align:left;font-family:inherit">＋ Listede olmayan ek ürün geldi mi? (katalog aç/kapat)</button>';
-  }
-  if (katHelp) katHelp.style.display = 'none';
-  if (katWrap) katWrap.style.display = 'none';
-
-  var katToggle = document.getElementById('svKatalogToggleBtn');
-  if (katToggle) {
-    katToggle.onclick = function() {
-      var nowHidden = katWrap && katWrap.style.display === 'none';
-      if (katWrap) katWrap.style.display = nowHidden ? '' : 'none';
-      if (katHelp) katHelp.style.display = nowHidden ? '' : 'none';
-      katToggle.innerHTML = nowHidden
-        ? '− Katalog kapat'
-        : '＋ Listede olmayan ek ürün geldi mi? (katalog aç/kapat)';
+    eksikBtn.onclick = function () {
+      hid.value = 'eksik_var';
+      tamBtn.classList.remove('is-active');
+      eksikBtn.classList.add('is-active');
+      eksikModalAc();
     };
-  }
 
-  // Sipariş kontrol listesi YÜKLENDİĞİ an sticky onay bar'ı güncelle
-  // (Mod B'de katalog tıklanmadan da onay gerek)
-  if (typeof stokSecimBilgiYenile === 'function') {
-    try { stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []); } catch (e) {}
-  }
-}
-
-function svKontrolEksikSatirlar() {
-  var wrap = document.getElementById('svSiparisKontrolWrap');
-  if (!wrap || !_svKontrolSatirlari.length) return [];
-  var out = [];
-  _svKontrolSatirlari.forEach(function(r, i){
-    var ch = wrap.querySelector('input[data-sv-kontrol="' + i + '"]');
-    if (!ch || !ch.checked) out.push(r);
-  });
-  return out;
-}
-
-function wireSevkTeslimDurumuUI() {
-  var tamBtn = document.getElementById('svDurumTamBtn');
-  var eksikBtn = document.getElementById('svDurumEksikBtn');
-  var hid = document.getElementById('svTeslimDurumu');
-  var modal = document.getElementById('svEksikModal');
-  if (!tamBtn || !eksikBtn || !hid) return;
-  function svEksikModalKapat() {
+    var kaydet = document.getElementById('svEksikModalKaydet');
+    var iptal = document.getElementById('svEksikModalIptal');
+    if (kaydet) {
+      kaydet.onclick = function () {
+        var k = selVal('svEksikKategori');
+        var a = inpVal('svEksikAciklama').trim();
+        if (k !== 'sipariste_vardi' && k !== 'sipariste_yoktu') {
+          alert('Eksik ürün kategorisini seçin.');
+          return;
+        }
+        if (a.length < 3) {
+          alert('Gelmeyen ürünleri açıklamada yazın (en az 3 karakter).');
+          return;
+        }
+        eksikModalKapat();
+        var chip = document.getElementById('svEksikKayitChip');
+        if (chip) chip.style.display = '';
+      };
+    }
+    if (iptal) {
+      iptal.onclick = function () {
+        eksikModalKapat();
+        hid.value = '';
+        tamBtn.classList.remove('is-active');
+        eksikBtn.classList.remove('is-active');
+        var eksikKat = document.getElementById('svEksikKategori');
+        var eksikAcik = document.getElementById('svEksikAciklama');
+        if (eksikKat) eksikKat.value = '';
+        if (eksikAcik) eksikAcik.value = '';
+        var chip = document.getElementById('svEksikKayitChip');
+        if (chip) chip.style.display = 'none';
+      };
+    }
     if (modal) {
-      modal.style.display = 'none';
-      modal.setAttribute('aria-hidden', 'true');
+      modal.onclick = function (ev) {
+        if (ev.target === modal) eksikModalKapat();
+      };
+      if (!modal.dataset.escWired) {
+        modal.dataset.escWired = '1';
+        document.addEventListener('keydown', function (ev) {
+          if (ev.key !== 'Escape') return;
+          var m = document.getElementById('svEksikModal');
+          if (!m || m.style.display === 'none') return;
+          ev.preventDefault();
+          m.style.display = 'none';
+          m.setAttribute('aria-hidden', 'true');
+          try {
+            document.body.style.overflow = '';
+          } catch (_) {}
+        });
+      }
+    }
+  }
+
+  function wireKatalogHandlers() {
+    var el = mountEl();
+    if (!el || el.dataset.urunTeslimKatWired === '1') return;
+    el.dataset.urunTeslimKatWired = '1';
+    attachStokKatalogDelegatedHandlers(el, PREFIX);
+    wireStokInputDelegation(el, PREFIX);
+    el.addEventListener('input', updateSecimUI);
+    el.addEventListener('change', updateSecimUI);
+  }
+
+  function wireSubmit() {
+    var btn = document.getElementById('svGonder');
+    if (!btn || btn.dataset.urunTeslimSubmitWired === '1') return;
+    btn.dataset.urunTeslimSubmitWired = '1';
+    btn.onclick = function () {
+      validateAndSubmit().catch(function () {});
+    };
+  }
+
+  function wirePinStrip() {
+    if (window.__teslimOnayOrtakWired) return;
+    window.__teslimOnayOrtakWired = true;
+    var strip = document.getElementById('teslimOnayOrtakStrip');
+    if (strip) {
+      strip.addEventListener('input', updateSecimUI, true);
+      strip.addEventListener('change', updateSecimUI, true);
+    }
+  }
+
+  async function loadAkis(force) {
+    var akis = await siparisAkisLoad(!!force);
+    state.lastAkis = akis;
+    syncKontrolSatirlari(akis);
+    return akis;
+  }
+
+  function renderAll() {
+    renderKontrolListesi();
+    renderToptanciPanel();
+    updateSecimUI();
+  }
+
+  function resetAfterSuccess() {
+    stokKalemDeger[PREFIX] = {};
+    document.querySelectorAll('[data-stok-input^="' + PREFIX + '::"]').forEach(function (inp) {
+      inp.value = '0';
+    });
+    refreshStokKatalogUI(PREFIX);
+    var pinEl = document.getElementById('svPin');
+    if (pinEl) pinEl.value = '';
+    var tdEl = document.getElementById('svTedarikci');
+    if (tdEl) tdEl.value = '';
+    var dEl = document.getElementById('svTeslimDurumu');
+    if (dEl) dEl.value = '';
+    var tdAcik = document.getElementById('svTeslimAciklama');
+    if (tdAcik) tdAcik.value = '';
+    var eksikKat = document.getElementById('svEksikKategori');
+    if (eksikKat) eksikKat.value = '';
+    var eksikAcik = document.getElementById('svEksikAciklama');
+    if (eksikAcik) eksikAcik.value = '';
+    var eksikModal = document.getElementById('svEksikModal');
+    if (eksikModal) {
+      eksikModal.style.display = 'none';
+      eksikModal.setAttribute('aria-hidden', 'true');
     }
     try {
       document.body.style.overflow = '';
     } catch (_) {}
+    var eksikChip = document.getElementById('svEksikKayitChip');
+    if (eksikChip) eksikChip.style.display = 'none';
+    var tamBtn = document.getElementById('svDurumTamBtn');
+    var eksikBtn = document.getElementById('svDurumEksikBtn');
+    if (tamBtn) tamBtn.classList.remove('is-active');
+    if (eksikBtn) eksikBtn.classList.remove('is-active');
+    document.querySelectorAll('#svSiparisKontrolWrap input[data-sv-kontrol]').forEach(function (ch) {
+      ch.checked = false;
+    });
+    state.aktifSiparisId = null;
+    siparisAkisCache = null;
   }
-  function svEksikModalAc() {
-    if (!modal) return;
-    modal.style.display = 'flex';
-    modal.setAttribute('aria-hidden', 'false');
+
+  async function validateAndSubmit() {
+    var btn = document.getElementById('svGonder');
+    setMsg('svMsg', '', '');
+    if (btn) btn.disabled = true;
     try {
-      document.body.style.overflow = 'hidden';
-    } catch (_) {}
-    var ta = document.getElementById('svEksikAciklama');
-    setTimeout(function () {
-      try {
-        if (ta) ta.focus();
-      } catch (_) {}
-    }, 80);
-  }
-  function setDurum(v) {
-    hid.value = v;
-    tamBtn.classList.toggle('is-active', v === 'tam_geldi');
-    eksikBtn.classList.toggle('is-active', v === 'eksik_var');
-    if (v !== 'eksik_var') {
-      svEksikModalKapat();
-      var eksikKat = document.getElementById('svEksikKategori');
-      var eksikAcik = document.getElementById('svEksikAciklama');
-      if (eksikKat) eksikKat.value = '';
-      if (eksikAcik) eksikAcik.value = '';
-      var chip = document.getElementById('svEksikKayitChip');
-      if (chip) chip.style.display = 'none';
-    }
-  }
-  tamBtn.onclick = function () {
-    setDurum('tam_geldi');
-  };
-  eksikBtn.onclick = function () {
-    hid.value = 'eksik_var';
-    tamBtn.classList.remove('is-active');
-    eksikBtn.classList.add('is-active');
-    svEksikModalAc();
-  };
-  var kaydet = document.getElementById('svEksikModalKaydet');
-  var iptal = document.getElementById('svEksikModalIptal');
-  if (kaydet) {
-    kaydet.onclick = function () {
-      var k = selVal('svEksikKategori');
-      var a = inpVal('svEksikAciklama').trim();
-      if (k !== 'sipariste_vardi' && k !== 'sipariste_yoktu') {
-        alert('Eksik ürün kategorisini seçin.');
-        return;
+      var body = buildPayload();
+      var sum = (body.kalemler || []).reduce(function (s, x) {
+        return s + (parseInt(x.adet || 0, 10) || 0);
+      }, 0);
+      if (sum <= 0) {
+        if (state.kontrolSatirlari.length && kontrolSeciliAdet() <= 0) {
+          throw new Error('Sipariş kontrol listesinde gelen ürünleri tikleyin veya katalogdan adet girin');
+        }
+        throw new Error('En az bir kalemde adet girin veya kontrol listesini tikleyin');
       }
-      if (a.length < 3) {
-        alert('Gelmeyen ürünleri açıklamada yazın (en az 3 karakter).');
-        return;
+      if (!body.personel_id) throw new Error('Personel seçin (sayfanın üstündeki alan)');
+      if (body.pin.length !== 4) throw new Error('4 haneli onay kodu girin (sayfanın üstündeki alan)');
+
+      var td = selVal('svTedarikci');
+      if (!td) throw new Error('Tedarikçi seçin');
+      var teslimDurumu = inpVal('svTeslimDurumu');
+      if (teslimDurumu !== 'tam_geldi' && teslimDurumu !== 'eksik_var') {
+        throw new Error('Teslim durumunu seçin');
       }
-      svEksikModalKapat();
-      var chip = document.getElementById('svEksikKayitChip');
-      if (chip) chip.style.display = '';
-    };
-  }
-  if (iptal) {
-    iptal.onclick = function () {
-      svEksikModalKapat();
-      hid.value = '';
-      tamBtn.classList.remove('is-active');
-      eksikBtn.classList.remove('is-active');
-      var eksikKat = document.getElementById('svEksikKategori');
-      var eksikAcik = document.getElementById('svEksikAciklama');
-      if (eksikKat) eksikKat.value = '';
-      if (eksikAcik) eksikAcik.value = '';
-      var chip = document.getElementById('svEksikKayitChip');
-      if (chip) chip.style.display = 'none';
-    };
-  }
-  if (modal) {
-    modal.onclick = function (ev) {
-      if (ev.target === modal) svEksikModalKapat();
-    };
-    if (!modal.dataset.escWired) {
-      modal.dataset.escWired = '1';
-      document.addEventListener('keydown', function (ev) {
-        if (ev.key !== 'Escape') return;
-        var m = document.getElementById('svEksikModal');
-        if (!m || m.style.display === 'none') return;
-        ev.preventDefault();
-        m.style.display = 'none';
-        m.setAttribute('aria-hidden', 'true');
-        try {
-          document.body.style.overflow = '';
-        } catch (_) {}
+      var teslimAciklama = inpVal('svTeslimAciklama').trim();
+      if (teslimAciklama.length < 3) throw new Error('Teslim açıklaması zorunlu');
+
+      body.tedarikci_id = td;
+      body.teslim_durumu = teslimDurumu;
+      body.teslim_aciklama = teslimAciklama;
+
+      var eksikSatirlar = kontrolEksikSatirlar();
+      if (teslimDurumu === 'tam_geldi' && state.kontrolSatirlari.length && eksikSatirlar.length) {
+        throw new Error('Tam geldi için sipariş kontrol listesindeki tüm kalemleri tikleyin');
+      }
+      if (teslimDurumu === 'eksik_var') {
+        var eksikKategori = selVal('svEksikKategori');
+        if (eksikKategori !== 'sipariste_vardi' && eksikKategori !== 'sipariste_yoktu') {
+          throw new Error('Eksik ürün kategorisini seçin');
+        }
+        var eksikAciklama = inpVal('svEksikAciklama').trim();
+        if (eksikAciklama.length < 3) throw new Error('Gelmeyen ürünleri açıklamada yazın');
+        body.eksik_kategori = eksikKategori;
+        if (eksikSatirlar.length) {
+          var oto = eksikSatirlar
+            .map(function (x) {
+              return x.urun_ad + ' x' + x.adet;
+            })
+            .join(', ');
+          body.eksik_aciklama = (eksikAciklama + ' | Kontrol listesi gelmeyen: ' + oto).slice(0, 3900);
+        } else {
+          body.eksik_aciklama = eksikAciklama;
+        }
+      }
+      if (state.aktifSiparisId) body.siparis_talep_id = state.aktifSiparisId;
+
+      var apiResp = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/urun-sevk', {
+        method: 'POST',
+        body: body,
+        islemBasariliMesaji: '✅ Tedarikçi teslimi kaydedildi.',
       });
+      var okMsg = (apiResp && apiResp.mesaj) ? apiResp.mesaj : '✅ Tedarikçi teslimi kaydedildi.';
+      setMsg('svMsg', okMsg, 'msg-ok');
+      resetAfterSuccess();
+      await loadAkis(true);
+      siparisAkisCache = state.lastAkis;
+      renderAll();
+      if (typeof refresh === 'function') refresh().catch(function () {});
+    } catch (e) {
+      if (e.status === 429) handle429(document.getElementById('svMsg'), e);
+      else setMsg('svMsg', e.message || 'Hata', 'msg-err');
+    } finally {
+      updateSecimUI();
     }
   }
-}
+
+  async function refresh(forceAkis) {
+    var el = mountEl();
+    if (!el || el.dataset.built !== '1') return ensureBuilt();
+    try {
+      await loadAkis(!!forceAkis);
+      siparisAkisCache = state.lastAkis;
+      renderAll();
+    } catch (e) {
+      renderToptanciPanel();
+    }
+  }
+
+  async function ensureBuilt() {
+    var el = mountEl();
+    if (!el) return;
+    if (el.dataset.built === '1') return refresh(false);
+    if (el.dataset.building === '1') return;
+    el.dataset.building = '1';
+    el.innerHTML =
+      '<div class="merkez-mesaj-bos" style="padding:16px 0">Teslim formu yükleniyor…</div>';
+    try {
+      var resp = await Promise.all([tedarikcileriGetir(), siparisLoad()]);
+      var katalog = (resp && resp[1]) || [];
+      state.katalog = katalog;
+      _stokKatalogByPrefix.sv = katalog;
+      stokKalemDeger.sv = stokKalemDeger.sv || {};
+      stokKartState(PREFIX).openKat = null;
+      el.innerHTML = buildFormHTML();
+      delete el.dataset.building;
+      el.dataset.built = '1';
+      refreshStokKatalogUI(PREFIX);
+      fillSels();
+      wireDurumUI();
+      wireKatalogHandlers();
+      wireSubmit();
+      wirePinStrip();
+      await loadAkis(false);
+      siparisAkisCache = state.lastAkis;
+      renderAll();
+    } catch (e) {
+      delete el.dataset.building;
+      delete el.dataset.built;
+      el.innerHTML =
+        '<div class="siparis-detay" style="border-color:var(--red);padding:12px">' +
+        '<p style="color:var(--red);font-weight:700;margin:0 0 8px">Teslim formu yüklenemedi</p>' +
+        '<p style="font-size:12px;color:var(--muted);margin:0 0 10px">' +
+        escHtml((e && e.message) || 'Bağlantı hatası') +
+        '</p>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="svFormYenidenBtn">Yeniden dene</button>' +
+        '</div>';
+      var retry = document.getElementById('svFormYenidenBtn');
+      if (retry) {
+        retry.onclick = function () {
+          delete el.dataset.built;
+          delete el.dataset.building;
+          ensureBuilt();
+        };
+      }
+    }
+  }
+
+  function open() {
+    fillSels();
+    wirePinStrip();
+    ensureBuilt().then(function () {
+      return refresh(true);
+    });
+  }
+
+  return {
+    open: open,
+    refresh: refresh,
+    ensureBuilt: ensureBuilt,
+  };
+})();
 
 function renderStokForms(tip) {
-  if (tip === 'sevk') {
-    var el = document.getElementById('sevkForm');
-    if (el && el.dataset.built === '1') {
-      svSiparisKontrolYukle()
-        .then(function () {
-          renderSvSiparisKontrol();
-          renderSvToptanciBekleyenPanel();
-          stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []);
-        })
-        .catch(function () {});
-      return;
-    }
-    if (el && !el.dataset.built && !el.dataset.building) {
-      el.dataset.building = '1';
-      el.innerHTML =
-        '<div class="merkez-mesaj-bos" style="padding:16px 0">Teslim formu yükleniyor…</div>';
-      Promise.all([tedarikcileriGetir(), siparisLoad()])
-        .then(function (resp) {
-          delete el.dataset.building;
-          el.dataset.built = '1';
-          var katalog = (resp && resp[1]) || [];
-        var h = '';
-        // ── ADIM 1: Tedarikçi seçimi (personel/PIN sayfa üstünde — teslimOnayOrtakStrip) ──
-        h += '<div class="sv-toptanci-onay-panel" style="margin-top:0">';
-        h += '<div class="sv-toptanci-onay-baslik"><span aria-hidden="true">🏭</span> <strong style="color:#fff">Tedarikçi</strong> seçimi</div>';
-        h += '<p class="sv-toptanci-onay-alt">Personel ve PIN alanı sayfanın <strong>en üstünde</strong>. Buradan yalnızca tedarikçiyi seçin.</p>';
-        h += tedarikciSelectHTML('svTedarikci');
-        h += '</div>';
-        // ── ADIM 2: Sipariş kontrol listesi (varsa) — önce burası, eski katalog'tan önce
-        h += '<div id="svSiparisKontrolWrap"></div>';
-        h += '<div id="svToptanciBekleyenWrap"></div>';
-        // ── ADIM 3: Katalog seçimi — sipariş yoksa ana alan, sipariş varsa expander altında
-        h += '<div id="svKatalogContainer">';
-        h += '<div id="svKatalogHeader" style="margin:14px 0 4px;font-size:13px;font-weight:800;color:var(--text)">📦 Adım 2 — Gelen ürünleri seçin</div>';
-        h += '<p id="svKatalogHelp" style="font-size:11px;color:var(--muted);margin:0 0 8px;line-height:1.45">Aşağıdaki kategorilere dokunun; her üründe gelen adedi girin. Seçimler altta özette görünür.</p>';
-        h += '<div id="svKatalogWrap"></div>';
-        h += '</div>';
-        // ── ADIM 4: Tam mı geldi? + Açıklama ────────────────────────────────────────────
-        h += '<div class="sv-teslim-durum-panel">';
-        h += '<div class="sv-durum-baslik">Teslimat durumu <span style="color:#fda4af">*</span></div>';
-        h += '<p class="sv-durum-alt">Yukarıdaki ürünleri seçtikten sonra buradan durumu işaretleyin: birebir geldi ise <strong>Tam geldi</strong>; eksik veya yanlış ise <strong>Eksik var</strong>.</p>';
-        h += '<div class="sv-durum-btn-row">';
-        h += '<button type="button" class="sv-durum-btn sv-durum-tam" id="svDurumTamBtn" data-val="tam_geldi">✅ Tam geldi<br><span style="font-size:11px;font-weight:700;opacity:0.9">Sipariş eksiksiz</span></button>';
-        h += '<button type="button" class="sv-durum-btn sv-durum-eksik" id="svDurumEksikBtn" data-val="eksik_var">⚠️ Eksik var<br><span style="font-size:11px;font-weight:700;opacity:0.9">Kısmi veya yanlış sevkiyat</span></button>';
-        h += '</div>';
-        h += '<input type="hidden" id="svTeslimDurumu" value="" />';
-        h += '<div id="svEksikKayitChip" class="siparis-detay" style="display:none;margin-top:10px;padding:8px 10px;font-size:11px;border-radius:8px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.38);color:#86efac">✓ Eksik ürün bilgisi kaydedildi. Düzenlemek için tekrar <strong>Eksik var</strong>a tıklayın.</div>';
-        h += '<div class="form-group" style="margin-top:12px;margin-bottom:0"><label>Teslim açıklaması *</label><textarea id="svTeslimAciklama" rows="2" placeholder="Teslimin genel durumunu yazın (zorunlu)."></textarea></div>';
-        h += '</div>';
-        // ── ADIM 5: ÖZET + Gönder butonu — ürün seçilince görünür (başta gizli) ─────────
-        h += '<div id="svTeslimStickyBar">';
-        h += '<div class="sv-teslim-sticky-panel">';
-        h += '<div class="sv-teslim-sticky-baslik"><span class="sv-teslim-sticky-tag">Onay</span><span>Teslim kaydını gönder</span></div>';
-        h += '<p class="sv-teslim-sticky-alt">Ürünleri seçin veya sipariş kontrol listesini tikleyin. <strong>Personel + PIN</strong> sayfanın üstündeki mavi kutuda.</p>';
-        h += '<div id="svSecimOzet" class="siparis-detay sv-teslim-sticky-ozet" style="color:var(--muted)">Henüz ürün seçilmedi.</div>';
-        h += '<button type="button" class="btn btn-primary" id="svGonder">✅ Seçimleri Onayla ve Teslim Al</button>';
-        h += '<div id="svMsg" style="margin-top:10px;font-size:13px"></div>';
-        h += '</div></div>';
-        // ── Bilgilendirme notu (dipnot olarak en altta, sticky bar'dan önce gelen alan) ─
-        h += '<div style="height:8px"></div>'; /* sticky bar altındaki son görünür içerik */
-        h += '<details style="margin-top:0"><summary style="font-size:11px;color:var(--muted);cursor:pointer">ℹ️ Bu form hakkında</summary>';
-        h += '<div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;padding:10px 12px;margin-top:6px;font-size:11px;line-height:1.6;color:#93c5fd">';
-        h += 'Bu form yalnızca <strong>tedarikçi / toptancı</strong> teslimatını kaydetmek içindir. ';
-        h += 'Girilen miktarlar <strong>aktif stoka girmez</strong> — potansiyel stok olarak izlenir. ';
-        h += 'Ürünü bardan/kullanıma açmak için <strong>Ürün Aç</strong> formunu kullanın.';
-        h += '</div></details>';
-        h += '<div id="svKatOverlay" class="overlay sip-kat-overlay" style="display:none" aria-hidden="true">';
-        h += '<div class="overlay-kart sip-kat-modal-kart" id="svKatModalKart">';
-        h += '<div id="svKatModalInner"></div>';
-        h += '</div></div>';
-        h += '<div id="svEksikModal" class="overlay sv-eksik-modal-overlay" style="display:none" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="svEksikModalTitle">';
-        h += '<div class="overlay-kart sv-eksik-modal-kart" onclick="event.stopPropagation()">';
-        h += '<h2 id="svEksikModalTitle" style="margin:0 0 8px;font-size:18px;font-weight:800">Eksik ürün bilgisi</h2>';
-        h += '<p style="color:var(--muted);font-size:13px;margin:0 0 14px;line-height:1.55">Zorunlu alanları doldurup <strong>Kaydet</strong> ile kapatın. <strong>İptal</strong> derseniz «Eksik var» seçimi ve yazdıklarınız silinir.</p>';
-        h += '<div class="form-group"><label>Eksik ürün sipariş formunda var mıydı? <span style="color:#fda4af">*</span></label>';
-        h += '<select id="svEksikKategori"><option value="">— Seçin —</option><option value="sipariste_vardi">Sipariş formunda vardı</option><option value="sipariste_yoktu">Sipariş formunda yoktu / yazılmadı</option></select></div>';
-        h += '<div class="form-group"><label>Gelmeyen ürünler açıklaması <span style="color:#fda4af">*</span></label><textarea id="svEksikAciklama" rows="4" placeholder="Örn: 2 koli soda, 1 koli su gelmedi."></textarea></div>';
-        h += '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap">';
-        h += '<button type="button" class="btn btn-secondary" id="svEksikModalIptal">İptal</button>';
-        h += '<button type="button" class="btn btn-success" id="svEksikModalKaydet">Kaydet</button>';
-        h += '</div></div></div>';
-        el.innerHTML = h;
-        _stokKatalogByPrefix.sv = katalog;
-        stokKartState('sv').openKat = null;
-        refreshStokKatalogUI('sv');
-        fillSels();
-        wireSevkTeslimDurumuUI();
-        svSiparisKontrolYukle().then(function () {
-          renderSvSiparisKontrol();
-          renderSvToptanciBekleyenPanel();
-        });
-        wireStokBtn('sv', katalog, '/urun-sevk', '✅ Tedarikçi teslimi kaydedildi.', function(body){
-          var td = selVal('svTedarikci');
-          if (!td) throw new Error('Tedarikçi seçin');
-          var teslimDurumu = inpVal('svTeslimDurumu');
-          if (teslimDurumu !== 'tam_geldi' && teslimDurumu !== 'eksik_var') throw new Error('Teslim durumunu seçin');
-          var teslimAciklama = inpVal('svTeslimAciklama').trim();
-          if (teslimAciklama.length < 3) throw new Error('Teslim açıklaması zorunlu');
-          body.tedarikci_id = td;
-          body.teslim_durumu = teslimDurumu;
-          body.teslim_aciklama = teslimAciklama;
-          var eksikSatirlar = svKontrolEksikSatirlar();
-          if (teslimDurumu === 'tam_geldi' && _svKontrolSatirlari.length && eksikSatirlar.length) {
-            throw new Error('Tam geldi için sipariş kontrol listesindeki tüm kalemleri tikleyin');
-          }
-          if (teslimDurumu === 'eksik_var') {
-            var eksikKategori = selVal('svEksikKategori');
-            if (eksikKategori !== 'sipariste_vardi' && eksikKategori !== 'sipariste_yoktu') throw new Error('Eksik ürün kategorisini seçin');
-            var eksikAciklama = inpVal('svEksikAciklama').trim();
-            if (eksikAciklama.length < 3) throw new Error('Gelmeyen ürünleri açıklamada yazın');
-            body.eksik_kategori = eksikKategori;
-            if (eksikSatirlar.length) {
-              var oto = eksikSatirlar.map(function(x){ return x.urun_ad + ' x' + x.adet; }).join(', ');
-              body.eksik_aciklama = (eksikAciklama + ' | Kontrol listesi gelmeyen: ' + oto).slice(0, 3900);
-            } else {
-              body.eksik_aciklama = eksikAciklama;
-            }
-          }
-          if (_svAktifSiparisTalepId) body.siparis_talep_id = _svAktifSiparisTalepId;
-        });
-        stokSecimBilgiYenile('sv', katalog);
-      })
-        .catch(function (e) {
-          delete el.dataset.building;
-          delete el.dataset.built;
-          el.innerHTML =
-            '<div class="siparis-detay" style="border-color:var(--red);padding:12px">' +
-            '<p style="color:var(--red);font-weight:700;margin:0 0 8px">Teslim formu yüklenemedi</p>' +
-            '<p style="font-size:12px;color:var(--muted);margin:0 0 10px">' +
-            escHtml((e && e.message) || 'Bağlantı hatası') +
-            '</p>' +
-            '<button type="button" class="btn btn-secondary btn-sm" id="svFormYenidenBtn">Yeniden dene</button>' +
-            '</div>';
-          var retry = document.getElementById('svFormYenidenBtn');
-          if (retry) {
-            retry.onclick = function () {
-              delete el.dataset.built;
-              delete el.dataset.building;
-              renderStokForms('sevk');
-            };
-          }
-        });
-    }
-  } else if (tip === 'ac') {
+  if (tip === 'ac') {
     var el = document.getElementById('acForm');
     if (el && !el.dataset.built) {
       el.dataset.built = '1';
@@ -6653,42 +6874,6 @@ function stokBody(prefix, data, credsOverride) {
       if (apiKey) body[apiKey] = (body[apiKey] || 0) + adet;
     });
   });
-  // ── sv (teslim al) modu: aktif sipariş varsa TİKLİ kontrol kalemlerini body.kalemler'e ekle ──
-  // Katalog'tan ürün seçilmemiş olsa bile sipariş onayı geçer (sum > 0 olur)
-  if (prefix === 'sv' && (window._svKontrolSatirlari || []).length > 0) {
-    var siparisWrap = document.getElementById('svSiparisKontrolWrap');
-    if (siparisWrap) {
-      // Kataloğu ad bazlı index'le (urun_id/kategori_id eşleşmesi için)
-      var katalogIndex = {};
-      (data || []).forEach(function(kat){
-        (kat.items || []).forEach(function(it){
-          var norm = String(it.ad || '').toLocaleLowerCase('tr-TR').trim();
-          if (norm) katalogIndex[norm] = { kategori_id: kat.id, urun_id: it.id, urun_ad: it.ad, aciklama: it.aciklama || null };
-        });
-      });
-      // Duplicate engelle (aynı urun_id katalogtan da eklenmiş olabilir)
-      var eklenenIds = {};
-      body.kalemler.forEach(function(k){ if (k.urun_id) eklenenIds[k.urun_id] = true; });
-      _svKontrolSatirlari.forEach(function(r, i) {
-        var ch = siparisWrap.querySelector('input[data-sv-kontrol="' + i + '"]');
-        if (!ch || !ch.checked) return; // tiksiz = gelmedi
-        var siparisAd = String(r.urun_ad || '').trim();
-        var siparisAdet = parseInt(r.adet || 0, 10) || 0;
-        if (!siparisAd || siparisAdet <= 0) return;
-        var norm = siparisAd.toLocaleLowerCase('tr-TR');
-        var matched = katalogIndex[norm];
-        if (matched && eklenenIds[matched.urun_id]) return; // zaten kataloğa eklenmiş
-        body.kalemler.push(matched
-          ? { kategori_id: matched.kategori_id, urun_id: matched.urun_id, urun_ad: matched.urun_ad, aciklama: matched.aciklama, adet: siparisAdet, _kaynak: 'siparis_kontrol' }
-          : { urun_ad: siparisAd, adet: siparisAdet, _kaynak: 'siparis_kontrol' });
-        if (matched) {
-          eklenenIds[matched.urun_id] = true;
-          var apiKey = stokApiKeyFromAd(matched.urun_ad);
-          if (apiKey) body[apiKey] = (body[apiKey] || 0) + siparisAdet;
-        }
-      });
-    }
-  }
   return body;
 }
 
@@ -6717,32 +6902,9 @@ function stokSecimBilgiYenile(prefix, data) {
       notWrap.setAttribute('aria-hidden', acOnayGoster ? 'false' : 'true');
     }
   }
-  // sv (teslim al) — onay çubuğu ve gönder düğmesi
-  if (prefix === 'sv') {
-    var svBar = document.getElementById('svTeslimStickyBar');
-    var siparisAktif = (window._svKontrolSatirlari || []).length > 0;
-    var kontrolSecili = svKontrolSeciliAdet();
-    var toptanciSec = !!_svAktifSiparisTalepId;
-    var canSubmit = (oz.kalem || 0) > 0 || kontrolSecili > 0 || toptanciSec;
-    if (svBar) svBar.style.display = '';
-  }
   var ozetEl = document.getElementById(prefix + 'SecimOzet');
   if (ozetEl) {
-    if (prefix === 'sv') {
-      var ks = svKontrolSeciliAdet();
-      if ((oz.kalem || 0) > 0) {
-        ozetEl.innerHTML =
-          '✅ <strong>' + oz.kalem + ' kalem</strong> seçildi · toplam <strong>' + oz.adet + ' adet</strong>';
-        ozetEl.style.color = '#86efac';
-      } else if (ks > 0) {
-        ozetEl.innerHTML =
-          '✅ Sipariş kontrol listesinde <strong>' + ks + ' kalem</strong> tiklendi — altta onaylayın';
-        ozetEl.style.color = '#86efac';
-      } else {
-        ozetEl.textContent = 'Ürün seçin veya sipariş kontrol listesini tikleyin.';
-        ozetEl.style.color = 'var(--muted)';
-      }
-    } else if (oz.kalem > 0) {
+    if (oz.kalem > 0) {
       ozetEl.innerHTML = '✅ <strong>' + oz.kalem + ' kalem</strong> seçildi · toplam <strong>' + oz.adet + ' adet</strong>';
       ozetEl.style.color = '#86efac';
     } else {
@@ -6761,21 +6923,11 @@ function stokSecimBilgiYenile(prefix, data) {
     var asText = btn.getAttribute('data-btn-base') || btn.textContent || 'Onayla';
     var baseTxt = asText.replace(/\s+\(\d+\s+kalem\)$/,'').trim();
     if (!btn.getAttribute('data-btn-base')) btn.setAttribute('data-btn-base', baseTxt);
-    var gosterAdet = oz.kalem > 0 ? oz.kalem : svKontrolSeciliAdet();
+    var gosterAdet = oz.kalem;
     btn.textContent = gosterAdet > 0
       ? (baseTxt + ' (' + gosterAdet + ' kalem)')
       : baseTxt;
-    if (prefix === 'sv') {
-      var siparisAktifSv = (window._svKontrolSatirlari || []).length > 0;
-      var canSubmitSv = (oz.kalem || 0) > 0 || svKontrolSeciliAdet() > 0 || !!_svAktifSiparisTalepId;
-      btn.disabled = !canSubmitSv;
-      btn.style.opacity = canSubmitSv ? '1' : '0.65';
-      btn.title = !canSubmitSv
-        ? (siparisAktifSv
-          ? 'Kontrol listesinde gelenleri tikleyin veya katalogdan adet girin'
-          : 'Katalogdan en az bir üründe adet girin')
-        : 'Personel ve PIN sayfanın üstünde — gönderince kayıt oluşur';
-    } else if (prefix === 'ac') {
+    if (prefix === 'ac') {
       btn.disabled = oz.kalem <= 0;
       btn.style.opacity = oz.kalem > 0 ? '1' : '0.65';
       btn.title = !oz.kalem
@@ -6808,7 +6960,7 @@ function urunAcBekleyenSecimVarMi() {
 }
 
 function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
-  var formEl = document.getElementById(prefix === 'sv' ? 'sevkForm' : (prefix === 'fr' ? 'fireForm' : 'acForm'));
+  var formEl = document.getElementById(prefix === 'fr' ? 'fireForm' : 'acForm');
   if (formEl) {
     attachStokKatalogDelegatedHandlers(formEl, prefix);
     wireStokInputDelegation(formEl, prefix);
@@ -6819,7 +6971,7 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
     btn.setAttribute('data-btn-base', (btn.textContent || '').replace(/\s+\(\d+\s+kalem\)$/,'').trim());
   }
   stokSecimBilgiYenile(prefix, data);
-  var formWatch = document.getElementById(prefix === 'sv' ? 'sevkForm' : (prefix === 'fr' ? 'fireForm' : 'acForm'));
+  var formWatch = document.getElementById(prefix === 'fr' ? 'fireForm' : 'acForm');
   if (formWatch && formWatch.dataset['stokMeta_' + prefix] !== '1') {
     formWatch.dataset['stokMeta_' + prefix] = '1';
     formWatch.addEventListener('input', function(){ stokSecimBilgiYenile(prefix, data); });
@@ -6851,14 +7003,7 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
       } else {
         body = stokBody(prefix, data);
         sum = (body.kalemler || []).reduce(function(s,x){ return s + (parseInt(x.adet||0,10)||0); }, 0);
-        if (prefix === 'sv' && sum <= 0) {
-          if ((window._svKontrolSatirlari || []).length && svKontrolSeciliAdet() <= 0) {
-            throw new Error('Sipariş kontrol listesinde gelen ürünleri tikleyin veya katalogdan adet girin');
-          }
-          if (sum <= 0) throw new Error('En az bir kalemde adet girin veya kontrol listesini tikleyin');
-        } else if (sum <= 0) {
-          throw new Error('En az bir kalemde adet girin');
-        }
+        if (sum <= 0) throw new Error('En az bir kalemde adet girin');
         var _pid = selVal(prefix + 'Pers');
         var _pin = inpVal(prefix + 'Pin').replace(/\D/g, '').slice(0, 4);
         if (!_pid) throw new Error('Personel seçin (sayfanın üstündeki alan)');
@@ -6938,40 +7083,6 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
         delete body.iade_musteri_telefon;
         delete body.fis_no;
         delete body.iade_zaman;
-      }
-      if (prefix === 'sv') {
-        var tdEl = document.getElementById('svTedarikci');
-        if (tdEl) tdEl.value = '';
-        var dEl = document.getElementById('svTeslimDurumu');
-        if (dEl) dEl.value = '';
-        var tdAcik = document.getElementById('svTeslimAciklama');
-        if (tdAcik) tdAcik.value = '';
-        var eksikKat = document.getElementById('svEksikKategori');
-        if (eksikKat) eksikKat.value = '';
-        var eksikAcik = document.getElementById('svEksikAciklama');
-        if (eksikAcik) eksikAcik.value = '';
-        var eksikModal = document.getElementById('svEksikModal');
-        if (eksikModal) {
-          eksikModal.style.display = 'none';
-          eksikModal.setAttribute('aria-hidden', 'true');
-        }
-        try {
-          document.body.style.overflow = '';
-        } catch (_) {}
-        var eksikChip = document.getElementById('svEksikKayitChip');
-        if (eksikChip) eksikChip.style.display = 'none';
-        var tamBtn = document.getElementById('svDurumTamBtn');
-        var eksikBtn = document.getElementById('svDurumEksikBtn');
-        if (tamBtn) tamBtn.classList.remove('is-active');
-        if (eksikBtn) eksikBtn.classList.remove('is-active');
-        document.querySelectorAll('#svSiparisKontrolWrap input[data-sv-kontrol]').forEach(function(ch){ ch.checked = false; });
-        _svAktifSiparisTalepId = null;
-        siparisAkisCache = null;
-        svSiparisKontrolYukle().then(function () {
-          renderSvSiparisKontrol();
-          renderSvToptanciBekleyenPanel();
-        });
-        if (typeof refresh === 'function') refresh().catch(function () {});
       }
     } catch(e) {
       if (e.status===429) handle429(document.getElementById(prefix+'Msg'), e);
@@ -7404,18 +7515,7 @@ function renderMain(data) {
       renderGonderilecekPanel().catch(function () {});
     }
     if (aktifAltSekme === 'sevk' || aktifSolSekme === 'sevk') {
-      siparisAkisLoad(true)
-        .then(function (akis) {
-          siparisAkisCache = akis;
-          return svSiparisKontrolYukle().then(function () {
-            renderSvSiparisKontrol();
-            renderSvToptanciBekleyenPanel();
-            stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []);
-          });
-        })
-        .catch(function () {
-          renderSvToptanciBekleyenPanel();
-        });
+      UrunTeslimAl.refresh(true);
     }
     if (aktifAltSekme === 'depoTeslim' || aktifSolSekme === 'depoTeslim') {
       if (!depoTeslimPanelPeriyotikYenilemeAtla()) {

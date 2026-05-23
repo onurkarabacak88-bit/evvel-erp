@@ -2450,11 +2450,11 @@ def sube_fire_bildir(sube_id: str, body: SubeFireBildirBody):
 
 
 # ─────────────────────────────────────────────────────────────
-# SEVK — Depoya teslim alınan ürün (potansiyel stok)
+# SEVK — Tedarikçi/toptancı teslimi (potansiyel stok, URUN_SEVK)
 # ─────────────────────────────────────────────────────────────
 
 class SubeSevkBody(BaseModel):
-    """Tedarikçiden/depodan gelen ürün teslim alımı. Aktif stoka girmez; SEVK defterine yazılır."""
+    """Tedarikçi/toptancıdan gelen ürün teslim alımı. Aktif stoka girmez; URUN_SEVK defterine yazılır."""
     personel_id: str
     pin: str
     bardak_kucuk: Optional[int] = None
@@ -2511,8 +2511,8 @@ def _stok_kalemleri_temizle(kalemler: Optional[List[Dict[str, Any]]]) -> List[Di
 @router.post("/{sube_id}/urun-sevk")
 def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
     """
-    Depoya/şubeye teslim alınan ürün kaydı (SEVK = potansiyel stok).
-    Teslim/kabul edilen kalemler şube deposuna +stok olarak yazılır ve deftere URUN_SEVK etiketiyle kaydedilir.
+    Tedarikçi/toptancı teslim kaydı (URUN_SEVK = potansiyel stok).
+    Teslim alınan kalemler şube deposuna +stok olarak yazılır; aktif kullanım (Ürün Aç) ayrı akıştır.
     Merkez bu kaydı sevk listesinde izler.
     """
     from operasyon_stok_motor import (
