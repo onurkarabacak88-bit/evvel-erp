@@ -279,8 +279,8 @@ def _ciro_insert_aktif_ve_kasa(
 def _bugun_anlik_gider_sayisi(cur, sube_id: str) -> int:
     cur.execute("""
         SELECT COUNT(*) as adet FROM anlik_giderler
-        WHERE sube=%s AND tarih=CURRENT_DATE AND durum='aktif'
-    """, (sube_id,))
+        WHERE sube=%s AND tarih=%s AND durum='aktif'
+    """, (sube_id, is_gunu_tr()))
     return int(cur.fetchone()['adet'])
 
 
@@ -293,10 +293,10 @@ def _bugun_bekleyen_gider_sayisi(cur, sube_id: str) -> int:
           AND durum = 'bekliyor'
           AND kaynak_id IN (
               SELECT id FROM anlik_giderler
-              WHERE sube = %s AND tarih = CURRENT_DATE
+              WHERE sube = %s AND tarih = %s
           )
         """,
-        (sube_id,),
+        (sube_id, is_gunu_tr()),
     )
     return int((cur.fetchone() or {}).get("adet") or 0)
 
