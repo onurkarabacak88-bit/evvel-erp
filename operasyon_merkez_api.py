@@ -6647,6 +6647,49 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
             except ValueError as ex:
                 raise HTTPException(400, str(ex)) from ex
 
+        # 4b. CASCADE — korelasyonlu uyarıları aynı transaction içinde yeniden hesapla.
+        #
+        # acilis_yanlis      → aynı günün KAPANIS etkilenir   (acilis_kasa formülde var)
+        # devir_yanlis/ACILIS → dünün KAPANIS etkilenir        (dünkü devir değişti)
+        # devir_yanlis/KAPANIS→ ertesi günün ACILIS etkilenir  (beklenen = bu günün deviri)
+        cascade_sonuclari: list = []
+        if sebep not in ("gercek_acik",):
+            try:
+                from datetime import date as _dc, timedelta as _td
+
+                def _cascade(c_tarih_str: str, c_tip: str) -> Optional[dict]:
+                    cur.execute(
+                        "SELECT id FROM sube_operasyon_uyari "
+                        "WHERE sube_id=%s AND tarih=%s::date AND tip=%s LIMIT 1",
+                        (sube_id, c_tarih_str, c_tip),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        return None
+                    kasa_gun_lock(cur, sube_id, c_tarih_str)
+                    try:
+                        r = _kf_recalc(cur, str(dict(row)["id"]), kim_pid=pid, kim_ad=pad)
+                        return {"cascade_tip": c_tip, "tarih": c_tarih_str, **r}
+                    except Exception:
+                        return None
+
+                _tarih_d = _dc.fromisoformat(tarih[:10])
+                if sebep == "acilis_yanlis":
+                    r = _cascade(tarih, "KAPANIS_KASA_FARK")
+                    if r:
+                        cascade_sonuclari.append(r)
+                elif sebep == "devir_yanlis":
+                    if uyari_tip == "ACILIS_KASA_FARK":
+                        r = _cascade(str(_tarih_d - _td(days=1)), "KAPANIS_KASA_FARK")
+                        if r:
+                            cascade_sonuclari.append(r)
+                    elif uyari_tip == "KAPANIS_KASA_FARK":
+                        r = _cascade(str(_tarih_d + _td(days=1)), "ACILIS_KASA_FARK")
+                        if r:
+                            cascade_sonuclari.append(r)
+            except Exception:
+                pass
+
         # 5. Audit
         _kk_audit_yaz(
             cur, uyari, sebep, hedef,
@@ -6685,6 +6728,7 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
         "onay_durumu_eski": recalc.get("onay_durumu_eski"),
         "onay_durumu_yeni": recalc.get("onay_durumu_yeni"),
         "hedef": hedef,
+        "cascade": cascade_sonuclari,
     }
 
 
