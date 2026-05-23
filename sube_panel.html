@@ -5118,8 +5118,11 @@ window.solSekmeAc = function(id) {
     siparisAkisLoad(true)
       .then(function (akis) {
         siparisAkisCache = akis;
-        renderSvToptanciBekleyenPanel();
-        stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []);
+        return svSiparisKontrolYukle().then(function () {
+          renderSvSiparisKontrol();
+          renderSvToptanciBekleyenPanel();
+          stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []);
+        });
       })
       .catch(function () {
         renderSvToptanciBekleyenPanel();
@@ -5844,17 +5847,14 @@ function tedarikciSelectHTML(selectId) {
 var _svKontrolSatirlari = [];
 var _svAktifSiparisTalepId = null;
 
-/** Ürün Teslim Al kontrol listesine yalnızca tedarikçi/toptancı akışı dahil — depo paketi kabulü hariç. */
+/** Ürün Teslim Al kontrol listesine yalnızca toptancıya yönlendirilmiş siparişler dahil. */
 function _svTedarikciKontrolTalepMi(t) {
   if (!t || typeof t !== 'object') return false;
   if ((t.teslim_bekleyen_kalemler || []).length > 0) return false;
   var yol = String(t.tamamlanabilir_yol || '');
-  if (yol === 'depo_kabul' || yol === 'depo_hazirlik_ben' || yol === 'depo_bekliyor' || yol === 'depo_yolda_bekliyor') return false;
-  if (yol === 'toptanci_teslim' || yol === 'bekliyor_merkez') return true;
+  if (yol === 'toptanci_teslim') return true;
   var sd = String(t.sevkiyat_durumu || t.sevkiyat_durum || '').toLowerCase();
-  if (sd === 'toptanciya_yonlendirildi') return true;
-  if (!yol && String(t.durum || '').toLowerCase() === 'bekliyor') return true;
-  return false;
+  return sd === 'toptanciya_yonlendirildi';
 }
 
 function siparisAkisTalepSatirHTML(t) {
@@ -5989,7 +5989,7 @@ async function svSiparisKontrolYukle() {
   try {
     var acc = {};
     function mergeKaynak(liste) {
-      (liste || []).forEach(function (s) {
+      (liste || []).filter(_svTedarikciKontrolTalepMi).forEach(function (s) {
         (s.kalemler_ozet || []).forEach(function (k) {
           var ad = String(k.urun_ad || '').trim();
           var adet = parseInt(k.adet || k.istenen_adet || 0, 10) || 0;
@@ -6000,11 +6000,8 @@ async function svSiparisKontrolYukle() {
         });
       });
     }
-    var br = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-bekleyen-liste');
-    mergeKaynak((br && br.bekleyen) || []);
     try {
       var akis = await siparisAkisLoad(false);
-      mergeKaynak(((akis && akis.talepler) || []).filter(_svTedarikciKontrolTalepMi));
       mergeKaynak((akis && akis.toptanci_teslim_bekleyen) || []);
     } catch (e2) {}
     _svKontrolSatirlari = Object.keys(acc)
@@ -7410,8 +7407,11 @@ function renderMain(data) {
       siparisAkisLoad(true)
         .then(function (akis) {
           siparisAkisCache = akis;
-          renderSvToptanciBekleyenPanel();
-          stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []);
+          return svSiparisKontrolYukle().then(function () {
+            renderSvSiparisKontrol();
+            renderSvToptanciBekleyenPanel();
+            stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []);
+          });
         })
         .catch(function () {
           renderSvToptanciBekleyenPanel();
