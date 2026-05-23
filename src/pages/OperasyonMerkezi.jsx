@@ -10512,7 +10512,7 @@ export default function OperasyonMerkezi() {
                     </span>
                   )}
                 </div>
-                {cozuldu ? <CozulduRozet u={u} /> : (
+                {!cozuldu && (
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button type="button" className="btn btn-sm"
                       style={{ padding: '4px 10px', background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', fontWeight: 600, fontSize: 12 }}
@@ -10618,7 +10618,7 @@ export default function OperasyonMerkezi() {
                     </span>
                   )}
                 </div>
-                {cozuldu ? <CozulduRozet u={u} /> : (
+                {!cozuldu && (
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button type="button" className="btn btn-sm"
                       style={{ padding: '4px 10px', background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', fontWeight: 600, fontSize: 12 }}
@@ -10642,7 +10642,7 @@ export default function OperasyonMerkezi() {
                   {/* Formül satırı: Açılış + Z Nakit − Gider − Teslim − Devir = Fark */}
                   <div style={{ padding: '8px 14px 4px', fontSize: 10, color: 'var(--text3)', borderBottom: `1px solid ${r.sep}` }}>
                     <span style={{ fontFamily: 'monospace', letterSpacing: '0.03em' }}>
-                      Açılış Kasası + Z Nakit − Nakit Gider − Teslim − Devir = 0 (beklenen)
+                      Açılış Kasası + Z Nakit − Nakit Gider{araTeslim > 0 ? ' − Ara Teslim' : ''} − Teslim − Devir = 0 (beklenen)
                     </span>
                   </div>
                   {/* 5 kutu grid — her tutarın yanında veriyi giren personel */}
