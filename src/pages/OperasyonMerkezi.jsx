@@ -162,6 +162,58 @@ function magazaCanliDepoSatirMeta(st, kategoriler) {
   return { baslik, alt, kod: kk };
 }
 
+/** Canlı depo satırının katalog kategorisi (eşleşmezse havuz / diğer). */
+function magazaCanliDepoSatirKategori(st, kategoriler) {
+  const kk = String(st?.kalem_kodu || '').trim();
+  const kats = Array.isArray(kategoriler) ? kategoriler : [];
+  for (let ki = 0; ki < kats.length; ki += 1) {
+    const kat = kats[ki];
+    const katId = String(kat.id || '').trim();
+    if (!katId) continue;
+    const items = Array.isArray(kat.items) ? kat.items : [];
+    const it = items.find(
+      (x) => String(x?.id || '') === kk
+        || String(x?.depo_stok_kalem_kodu || '').trim() === kk
+        || magazaDepoKalemKodu(x) === kk,
+    );
+    if (it) {
+      return {
+        katId,
+        katLabel: String(kat.label || kat.ad || katId).trim() || katId,
+      };
+    }
+  }
+  if (MAGAZA_DEPO_HAVUZ_ETIKET_TR[kk]) {
+    return { katId: '__havuz__', katLabel: 'Genel havuz' };
+  }
+  return { katId: '__diger__', katLabel: 'Diğer' };
+}
+
+/** Canlı depo satırlarını kategori sekmeleri için gruplar (katalog sırasına göre). */
+function magazaCanliDepoKategoriGruplari(satirlar, kategoriler) {
+  const gruplar = new Map();
+  (satirlar || []).forEach((st) => {
+    const { katId, katLabel } = magazaCanliDepoSatirKategori(st, kategoriler);
+    if (!gruplar.has(katId)) {
+      gruplar.set(katId, { katId, katLabel, satirlar: [] });
+    }
+    gruplar.get(katId).satirlar.push(st);
+  });
+  const ordered = [];
+  const kats = Array.isArray(kategoriler) ? kategoriler : [];
+  kats.forEach((kat) => {
+    const kid = String(kat.id || '').trim();
+    if (kid && gruplar.has(kid)) ordered.push(gruplar.get(kid));
+  });
+  ['__havuz__', '__diger__'].forEach((kid) => {
+    if (gruplar.has(kid)) ordered.push(gruplar.get(kid));
+  });
+  gruplar.forEach((g, id) => {
+    if (!ordered.some((x) => x.katId === id)) ordered.push(g);
+  });
+  return ordered;
+}
+
 function magazaDepoMetinBardakMi(s) {
   const n = magazaAdNorm(String(s || ''));
   return n.includes('bardak');
@@ -2283,6 +2335,8 @@ export default function OperasyonMerkezi() {
   const [magazaKatalogSadeceKritik, setMagazaKatalogSadeceKritik] = useState(false);
   /** depo kartı iç görünüm: katalog | uyari | canli */
   const [magazaDepoAltSekme, setMagazaDepoAltSekme] = useState({});
+  /** Canlı depo sekmesi: slug → kategori id (katalog kat.id | __havuz__ | __diger__) */
+  const [magazaDepoCanliKatSekme, setMagazaDepoCanliKatSekme] = useState({});
   /** `${subeKey}::${urunId}` -> onay bekleyen stok değişikliği */
   const [magazaStokOnayBekleyen, setMagazaStokOnayBekleyen] = useState({});
   /** `${subeKey}::${urunId}` -> onay API çağrısı in-flight */
@@ -7628,60 +7682,132 @@ export default function OperasyonMerkezi() {
                         )}
                       </div>
                     )}
-                    {panelSekme === 'canli' && (
-                    <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>
-                        Canlı depo stok kaydı (şube paneli ürün kabul)
-                      </div>
-                      <p style={{ fontSize: 10, color: 'var(--text3)', margin: '0 0 8px', lineHeight: 1.4 }}>
-                        Şube panelinde <strong>ürün teslim/kabul</strong> ile depoya eklenen kalemler burada tutulur.
-                        Katalog eşleşen satırlarda tam ürün adı + kategori; şurup/kahve gibi havuz satırlarında tür (ör. şurup havuzu) ve kısa etiket ayrı gösterilir.
-                      </p>
-                      {canliStokSatirlari.length === 0 ? (
-                        <div style={{ fontSize: 11, color: 'var(--text3)' }}>Bu şube için depo kayıt satırı yok.</div>
-                      ) : (
-                        <div style={{ display: 'grid', gap: 6, maxHeight: 220, overflow: 'auto', paddingRight: 2 }}>
-                          {canliStokSatirlari.map((st) => {
-                            const metaC = magazaCanliDepoSatirMeta(st, katList);
-                            return (
+                    {panelSekme === 'canli' && (() => {
+                      const canliGruplar = magazaCanliDepoKategoriGruplari(canliStokSatirlari, katList);
+                      const varsayilanKat = canliGruplar[0]?.katId || '';
+                      const aktifKat = magazaDepoCanliKatSekme[m.slug] ?? varsayilanKat;
+                      const aktifGrup = canliGruplar.find((g) => g.katId === aktifKat) || canliGruplar[0];
+                      const gosterilenSatirlar = aktifGrup?.satirlar || [];
+                      const aktifToplam = gosterilenSatirlar.reduce(
+                        (s, st) => s + Number(st?.mevcut_adet || 0),
+                        0,
+                      );
+                      return (
+                        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>
+                            Canlı depo stok kaydı (şube paneli ürün kabul)
+                          </div>
+                          <p style={{ fontSize: 10, color: 'var(--text3)', margin: '0 0 8px', lineHeight: 1.4 }}>
+                            Şube panelinde <strong>ürün teslim/kabul</strong> ile depoya eklenen kalemler burada tutulur.
+                            Kategoriler arasında geçmek için üstteki sekmeleri kullanın.
+                          </p>
+                          {canliStokSatirlari.length === 0 ? (
+                            <div style={{ fontSize: 11, color: 'var(--text3)' }}>Bu şube için depo kayıt satırı yok.</div>
+                          ) : (
+                            <>
                               <div
-                                key={`${m.slug}-canli-${st.kalem_kodu}`}
                                 style={{
-                                  display: 'grid',
-                                  gridTemplateColumns: 'minmax(0,1fr) auto',
-                                  gap: 8,
-                                  alignItems: 'start',
-                                  padding: '6px 0',
-                                  borderBottom: '1px dashed var(--border)',
-                                  fontSize: 11,
+                                  display: 'flex',
+                                  gap: 6,
+                                  flexWrap: 'nowrap',
+                                  overflowX: 'auto',
+                                  WebkitOverflowScrolling: 'touch',
+                                  paddingBottom: 4,
+                                  marginBottom: 8,
                                 }}
                               >
-                                <div style={{ minWidth: 0 }}>
-                                  <div
-                                    style={{ fontWeight: 700, lineHeight: 1.3 }}
-                                    title={`${metaC.baslik}${metaC.alt ? ` — ${metaC.alt}` : ''}`}
-                                  >
-                                    {metaC.baslik}
-                                  </div>
-                                  {metaC.alt ? (
-                                    <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 3, lineHeight: 1.35 }}>
-                                      {metaC.alt}
-                                    </div>
-                                  ) : null}
-                                  <div className="mono" style={{ fontSize: 9, color: 'var(--text3)', marginTop: 2 }}>
-                                    {metaC.kod}
-                                  </div>
-                                </div>
-                                <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, paddingTop: 2 }}>
-                                  {magazaFmtStok(st.mevcut_adet)}
-                                </div>
+                                {canliGruplar.map((gr) => {
+                                  const secili = aktifKat === gr.katId;
+                                  return (
+                                    <button
+                                      key={`${m.slug}-canli-kat-${gr.katId}`}
+                                      type="button"
+                                      className={`btn btn-sm ${secili ? 'btn-primary' : 'btn-secondary'}`}
+                                      style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
+                                      onClick={() => setMagazaDepoCanliKatSekme((prev) => ({ ...prev, [m.slug]: gr.katId }))}
+                                    >
+                                      {gr.katLabel}
+                                      <span style={{ marginLeft: 6, opacity: 0.85, fontSize: 10 }}>
+                                        ({gr.satirlar.length})
+                                      </span>
+                                    </button>
+                                  );
+                                })}
                               </div>
-                            );
-                          })}
+                              {aktifGrup ? (
+                                <div
+                                  style={{
+                                    fontSize: 10,
+                                    color: 'var(--text3)',
+                                    marginBottom: 6,
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    gap: 8,
+                                    flexWrap: 'wrap',
+                                  }}
+                                >
+                                  <span>
+                                    <strong style={{ color: 'var(--text2)' }}>{aktifGrup.katLabel}</strong>
+                                    {' · '}
+                                    {gosterilenSatirlar.length} kalem
+                                  </span>
+                                  <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                                    Toplam adet: <strong>{magazaFmtStok(aktifToplam)}</strong>
+                                  </span>
+                                </div>
+                              ) : null}
+                              <div
+                                style={{
+                                  display: 'grid',
+                                  gap: 6,
+                                  maxHeight: magazaDepoOdakSlug === m.slug ? 420 : 260,
+                                  overflow: 'auto',
+                                  paddingRight: 2,
+                                }}
+                              >
+                                {gosterilenSatirlar.map((st) => {
+                                  const metaC = magazaCanliDepoSatirMeta(st, katList);
+                                  return (
+                                    <div
+                                      key={`${m.slug}-canli-${st.kalem_kodu}`}
+                                      style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: 'minmax(0,1fr) auto',
+                                        gap: 8,
+                                        alignItems: 'start',
+                                        padding: '6px 0',
+                                        borderBottom: '1px dashed var(--border)',
+                                        fontSize: 11,
+                                      }}
+                                    >
+                                      <div style={{ minWidth: 0 }}>
+                                        <div
+                                          style={{ fontWeight: 700, lineHeight: 1.3 }}
+                                          title={`${metaC.baslik}${metaC.alt ? ` — ${metaC.alt}` : ''}`}
+                                        >
+                                          {metaC.baslik}
+                                        </div>
+                                        {metaC.alt ? (
+                                          <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 3, lineHeight: 1.35 }}>
+                                            {metaC.alt}
+                                          </div>
+                                        ) : null}
+                                        <div className="mono" style={{ fontSize: 9, color: 'var(--text3)', marginTop: 2 }}>
+                                          {metaC.kod}
+                                        </div>
+                                      </div>
+                                      <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, paddingTop: 2 }}>
+                                        {magazaFmtStok(st.mevcut_adet)}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          )}
                         </div>
-                      )}
-                    </div>
-                    )}
+                      );
+                    })()}
                 </div>
               );
             })}
