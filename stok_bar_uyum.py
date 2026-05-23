@@ -7,7 +7,12 @@ import json
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-from operasyon_stok_motor import STOK_LABEL_TR, stok_from_event_meta
+from operasyon_stok_motor import (
+    STOK_LABEL_TR,
+    _stok_key_from_urun_ad,
+    depo_kalem_gorunen_ad,
+    stok_from_event_meta,
+)
 from operasyon_defter import operasyon_defter_ekle
 
 _BAR_KEYS = [
@@ -66,6 +71,7 @@ def _stok_uyum_id(tip: str, sube_id: str, tarih: str, kalem: str = "") -> str:
 
 
 def _urun_ac_delta_parse(aciklama: str) -> Dict[str, int]:
+    """URUN_AC defter satırı — delta + kalemler (operasyon_merkez_api ile aynı mantık)."""
     if not aciklama:
         return {}
     raw = aciklama
@@ -82,14 +88,32 @@ def _urun_ac_delta_parse(aciklama: str) -> Dict[str, int]:
     delta = obj.get("delta") or {}
     if not isinstance(delta, dict):
         delta = {}
+    kalemler = obj.get("kalemler") or []
+    if not isinstance(kalemler, list):
+        kalemler = []
+    s_map: Dict[str, int] = {k: 0 for k in _BAR_KEYS}
+    for item in kalemler:
+        if not isinstance(item, dict):
+            continue
+        urun_ad = str(item.get("urun_ad") or item.get("kalem_adi") or item.get("kalem_kodu") or "").strip()
+        try:
+            adet = max(0, int(item.get("adet") or 0))
+        except (TypeError, ValueError):
+            adet = 0
+        if not urun_ad or adet <= 0:
+            continue
+        stok_key = _stok_key_from_urun_ad(urun_ad)
+        if stok_key and stok_key in _BAR_KEYS:
+            s_map[stok_key] += adet
     result: Dict[str, int] = {}
     for k in _BAR_KEYS:
         try:
-            v = max(0, int(delta.get(k) or 0))
+            dv = max(0, int(delta.get(k) or 0))
         except (TypeError, ValueError):
-            v = 0
-        if v > 0:
-            result[k] = v
+            dv = 0
+        merged = max(dv, int(s_map.get(k) or 0))
+        if merged > 0:
+            result[k] = merged
     return result
 
 
@@ -159,10 +183,10 @@ def fetch_bar_satirlar_gun(
         urun_params.append(sube_id)
     cur.execute(
         f"""
-        SELECT sube_id, (olay_ts AT TIME ZONE 'Europe/Istanbul')::date AS tarih, aciklama
+        SELECT sube_id, tarih::text AS tarih, aciklama
         FROM operasyon_defter
         WHERE etiket='URUN_AC'
-          AND (olay_ts AT TIME ZONE 'Europe/Istanbul')::date = %s::date
+          AND tarih = %s::date
           {urun_sube_filter}
         """,
         urun_params,
@@ -410,8 +434,13 @@ def build_stok_uyum_liste(
         if efektif is None:
             efektif = d.get("fark_tl")
         d["efektif_fark_tl"] = efektif
-        d["kalem_adi"] = (d.get("detay_json") or {}).get("kalem_adi") or STOK_LABEL_TR.get(
-            str(d.get("kalem_kodu") or ""), str(d.get("kalem_kodu") or "")
+        det = d.get("detay_json") or {}
+        fb_ad = str(det.get("kalem_adi") or det.get("urun_ad") or "").strip()
+        d["kalem_adi"] = depo_kalem_gorunen_ad(
+            cur,
+            str(d.get("sube_id") or ""),
+            str(d.get("kalem_kodu") or ""),
+            fb_ad,
         )
         tum_satirlar.append(d)
 
