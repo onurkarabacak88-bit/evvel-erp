@@ -2134,9 +2134,12 @@
       </button>
       <div class="sol-divider"></div>
       <div class="panel-title">Stok İşlemleri</div>
-      <button class="sol-btn" id="solSevkBtn" onclick="solSekmeAc('sevk')" style="position:relative">
+      <button class="sol-btn" id="solSevkBtn" onclick="solSekmeAc('sevk')">
         <span class="ico">📦</span> Ürün Teslim Al
-        <span id="solSevkBadge" style="display:none;position:absolute;right:10px;top:50%;transform:translateY(-50%);min-width:18px;height:18px;padding:0 6px;border-radius:999px;background:#22c55e;color:#fff;font-size:11px;font-weight:800;line-height:18px;text-align:center;animation:pulse 1.2s ease-in-out infinite">0</span>
+      </button>
+      <button class="sol-btn" id="solDepoTeslimBtn" onclick="solSekmeAc('depoTeslim')" style="position:relative">
+        <span class="ico">🚚</span> Depodan Gelen — Teslim Al
+        <span id="solDepoTeslimBadge" style="display:none;position:absolute;right:10px;top:50%;transform:translateY(-50%);min-width:18px;height:18px;padding:0 6px;border-radius:999px;background:#22c55e;color:#fff;font-size:11px;font-weight:800;line-height:18px;text-align:center;animation:pulse 1.2s ease-in-out infinite">0</span>
       </button>
       <button class="sol-btn" id="solSiparisBtn" onclick="solSekmeAc('siparis')" style="position:relative">
         <span class="ico">🛒</span> Sipariş Ver
@@ -2306,54 +2309,41 @@
         </div>
       </div>
 
-      <!-- Sol panel sekme içerikleri (orta alanda görünür) -->
+      <!-- Ürün Teslim Al — yalnızca tedarikçi / toptancı -->
       <div class="sekme-icerik" id="tab-sevk">
         <div class="teslim-onay-ortak" id="teslimOnayOrtakStrip">
-          <div class="teslim-onay-ortak-baslik">🔐 Teslim onayı — personel ve PIN</div>
-          <p class="teslim-onay-ortak-alt">Depodan gelen paket kabulü ve tedarikçi teslim kaydı için <strong>buradan</strong> personel seçin ve 4 haneli onay kodunu girin.</p>
+          <div class="teslim-onay-ortak-baslik">🔐 Tedarikçi teslim onayı — personel ve PIN</div>
+          <p class="teslim-onay-ortak-alt">Toptancı veya tedarikçiden gelen ürün kaydı için personel seçin ve 4 haneli onay kodunu girin.</p>
           <div class="sv-toptanci-pin-grid">
             <div class="form-group" style="margin:0"><label>Personel *</label><select id="svPers"></select></div>
             <div class="form-group" style="margin:0"><label>Onay kodu (PIN) *</label><input id="svPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>
           </div>
         </div>
-        <div class="teslim-split teslim-split--solo" id="teslimSplit">
-          <!-- SOL: DEPODAN GELEN (kör denetim, öncelik 1) — yolda paket varsa görünür -->
-          <div class="teslim-panel teslim-panel-depo" id="depoKabulKart" style="display:none">
-            <div class="teslim-panel-baslik">
-              <div class="teslim-panel-baslik-sol">
-                <span class="teslim-panel-baslik-ico">🚚</span>
-                <div>
-                  <div class="teslim-panel-baslik-title">Depodan Gelen — Kabul Sayımı</div>
-                  <div class="teslim-panel-baslik-alt">Kör denetim · 1 elma istedim, 1 elma geldi mi?</div>
-                </div>
-              </div>
-              <div class="teslim-panel-baslik-sag">
-                <span class="teslim-panel-baslik-tag">ÖNCELİK 1</span>
-                <span class="teslim-panel-baslik-count" id="depoKabulCount">0</span>
-              </div>
-            </div>
-            <div class="teslim-panel-body">
-              <div id="depoKabulSection"></div>
-            </div>
+        <div class="kart teslim-panel-tedarikci">
+          <div class="kart-baslik"><span class="ico">🏭</span> Tedarikçiden Gelen — Ürün Teslim Al</div>
+          <p style="font-size:11px;color:var(--muted);margin:0 0 12px;line-height:1.45">Toptancı / tedarikçi teslimatını buradan kaydedin. Bu kayıt <strong>aktif stoka girmez</strong>; depo potansiyel stok olarak izlenir.</p>
+          <div id="sevkForm"></div>
+        </div>
+      </div>
+
+      <!-- Depodan Gelen — kör denetim kabul (ayrı akış) -->
+      <div class="sekme-icerik" id="tab-depoTeslim">
+        <div class="teslim-onay-ortak" id="depoTeslimOnayStrip">
+          <div class="teslim-onay-ortak-baslik">🔐 Depo paketi kabul onayı — personel ve PIN</div>
+          <p class="teslim-onay-ortak-alt">Başka depodan size gelen sipariş paketlerini sayıp kabul ederken buradan personel ve onay kodunu girin.</p>
+          <div class="sv-toptanci-pin-grid">
+            <div class="form-group" style="margin:0"><label>Personel *</label><select id="dkPers"></select></div>
+            <div class="form-group" style="margin:0"><label>Onay kodu (PIN) *</label><input id="dkPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>
           </div>
-          <!-- SAĞ: TEDARİKÇİDEN GELEN (her zaman görünür) -->
-          <div class="teslim-panel teslim-panel-tedarikci">
-            <div class="teslim-panel-baslik">
-              <div class="teslim-panel-baslik-sol">
-                <span class="teslim-panel-baslik-ico">🏭</span>
-                <div>
-                  <div class="teslim-panel-baslik-title">Tedarikçiden Gelen</div>
-                  <div class="teslim-panel-baslik-alt">Toptancı / tedarikçi teslimatı — depoya kayıt</div>
-                </div>
-              </div>
-              <div class="teslim-panel-baslik-sag">
-                <span class="teslim-panel-baslik-tag">ÖNCELİK 2</span>
-              </div>
-            </div>
-            <div class="teslim-panel-body">
-              <div id="sevkForm"></div>
-            </div>
+        </div>
+        <div class="kart teslim-panel-depo">
+          <div class="kart-baslik">
+            <span class="ico">🚚</span> Depodan Gelen — Teslim Al
+            <span id="depoKabulCount" class="badge badge-blue" style="margin-left:8px;font-size:11px">0</span>
           </div>
+          <p style="font-size:11px;color:var(--muted);margin:0 0 12px;line-height:1.45">Kör denetim: siparişteki miktar gösterilmez — fiziksel pakette saydığınız adedi girin. Yolda olan her paket burada listelenir.</p>
+          <div id="depoKabulSection"></div>
+          <div id="depoTeslimMsg" style="margin-top:8px;font-size:12px"></div>
         </div>
       </div>
 
@@ -2962,9 +2952,9 @@ function _teslimBekleyenPaketFiltre(akis) {
     return (t.teslim_bekleyen_kalemler || []).length > 0;
   });
 }
-/** Sol menü «Ürün Teslim Al» rozeti — bekleyen depo paketi sayısı (Ürün Aç rozeti gibi). */
-function solSevkTeslimBekleyenRozetGuncelle(akis) {
-  var badge = document.getElementById('solSevkBadge');
+/** Sol menü «Depodan Gelen — Teslim Al» rozeti — bekleyen depo paketi sayısı. */
+function solDepoTeslimRozetGuncelle(akis) {
+  var badge = document.getElementById('solDepoTeslimBadge');
   if (!badge) return;
   if (!akis || typeof akis !== 'object') {
     badge.style.display = 'none';
@@ -2977,6 +2967,27 @@ function solSevkTeslimBekleyenRozetGuncelle(akis) {
   }
   badge.textContent = n > 99 ? '99+' : String(n);
   badge.style.display = '';
+}
+
+function depoTeslimSekmeYukle(force) {
+  fillSels();
+  return siparisAkisLoad(!!force)
+    .then(function (akis) {
+      siparisAkisCache = akis;
+      _teslimKabulListe = _teslimBekleyenPaketFiltre(akis);
+      renderDepoKabulSection();
+      solDepoTeslimRozetGuncelle(akis);
+      return akis;
+    })
+    .catch(function () {
+      renderDepoKabulSection();
+      solDepoTeslimRozetGuncelle(siparisAkisCache);
+    });
+}
+
+/** Eski ad — geriye dönük çağrılar */
+function solSevkTeslimBekleyenRozetGuncelle(akis) {
+  solDepoTeslimRozetGuncelle(akis);
 }
 /** Sol menü «Sipariş Ver» rozeti — yönlendirilmemiş bekleyen sipariş sayısı. */
 function solSiparisBadgeGuncelle(n) {
@@ -3236,7 +3247,7 @@ function kontrolYeniUyari(data) {
       : 'Sistem bu adımı tamamlamanızı bekliyor.';
     gosterUyariToast(etiket, aciklama);
   } else if (yeniSevk.length > 0) {
-    gosterUyariToast('🚚 Yeni Sevkiyat', 'Depodan siparişiniz geldi — lütfen kabul işlemi yapın.');
+    gosterUyariToast('🚚 Yeni Sevkiyat', 'Depodan siparişiniz geldi — sol menüden «Depodan Gelen — Teslim Al» sekmesine gidin.');
   } else if (yeniMesaj.length > 0) {
     merkezMesajYeniModalKontrol(data.merkez_mesajlar || []);
   } else if (yeniDepoSay > eskiDepoSay) {
@@ -3625,7 +3636,7 @@ async function siparisGonderSolBlokGuncelle(akisOptional) {
   if (btn) btn.classList.toggle('sol-gonder-yanip', shouldBlink);
   if (bar) bar.style.display = shouldBlink ? 'block' : 'none';
 
-  solSevkTeslimBekleyenRozetGuncelle(akis);
+  solDepoTeslimRozetGuncelle(akis);
 }
 
 function gonderilecekAckBlink() {
@@ -4241,9 +4252,26 @@ function siparisPanelPeriyotikYenilemeAtla() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
     }
     var dk = document.getElementById('depoKabulSection');
+    var dkRoot = document.getElementById('tab-depoTeslim');
+    if (dkRoot && dkRoot.contains(ae)) {
+      var dtag = (ae.tagName || '').toUpperCase();
+      if (dtag === 'INPUT' || dtag === 'TEXTAREA' || dtag === 'SELECT') return true;
+    }
     if (dk && dk.contains(ae)) {
       var ttag = (ae.tagName || '').toUpperCase();
       if (ttag === 'INPUT' || ttag === 'TEXTAREA' || ttag === 'SELECT') return true;
+    }
+  }
+  return false;
+}
+/** Depodan Gelen sekmesinde form doldurulurken periyotik yenilemeyi atla. */
+function depoTeslimPanelPeriyotikYenilemeAtla() {
+  var ae = document.activeElement;
+  if (ae && typeof ae.closest === 'function') {
+    var root = document.getElementById('tab-depoTeslim');
+    if (root && root.contains(ae)) {
+      var tag = (ae.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
     }
   }
   return false;
@@ -4310,17 +4338,20 @@ async function renderSiparisPanel() {
   var acik = data.find(function(k){ return k.id === siparisOpenKat; }) || null;
   var teslimKabulListe = _teslimBekleyenPaketFiltre(akis);
   _teslimKabulListe = teslimKabulListe;
-  renderDepoKabulSection();
+  solDepoTeslimRozetGuncelle(akis);
+  if (aktifSolSekme === 'depoTeslim' || aktifAltSekme === 'depoTeslim') {
+    renderDepoKabulSection();
+  }
   var h = '';
   if (teslimKabulListe.length) {
     h +=
-      '<div class="sip-geliyor-banner" role="button" tabindex="0" onclick="solSekmeAc(\'sevk\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();solSekmeAc(\'sevk\');}">';
+      '<div class="sip-geliyor-banner" role="button" tabindex="0" onclick="solSekmeAc(\'depoTeslim\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();solSekmeAc(\'depoTeslim\');}">';
     h += '<span class="sip-geliyor-etiket">Depo sevk</span>';
     h += '<div class="sip-geliyor-baslik">Siparişiniz geliyor</div>';
     h +=
       '<p class="sip-geliyor-alt">Depo siparişiniz yola çıktı — <strong>' +
       teslimKabulListe.length +
-      '</strong> paket teslim kabulü bekliyor. Fiziksel sayım için <strong>Ürün Teslim Al</strong> sekmesine geçin (tıklayın).</p>';
+      '</strong> paket teslim kabulü bekliyor. Fiziksel sayım için <strong>Depodan Gelen — Teslim Al</strong> sekmesine geçin (tıklayın).</p>';
     h += '</div>';
   }
   var tekSipler = bekListe.filter(function(b){ return b.tur === 'tek_sefer'; });
@@ -4815,23 +4846,16 @@ async function renderSiparisTakipPanel() {
 
 function renderDepoKabulSection() {
   var el = document.getElementById('depoKabulSection');
-  var kart = document.getElementById('depoKabulKart');
-  var split = document.getElementById('teslimSplit');
   var sayacEl = document.getElementById('depoKabulCount');
   if (!el) return;
   var liste = _teslimKabulListe || [];
+  if (sayacEl) sayacEl.textContent = String(liste.length);
+  solDepoTeslimRozetGuncelle(siparisAkisCache);
   if (!liste.length) {
-    el.innerHTML = '';
-    if (kart) kart.style.display = 'none';
-    if (split) split.classList.add('teslim-split--solo');
-    if (sayacEl) sayacEl.textContent = '0';
-    solSevkTeslimBekleyenRozetGuncelle(siparisAkisCache);
+    el.innerHTML =
+      '<div class="merkez-mesaj-bos" style="padding:16px 0;line-height:1.5">Şu an yolda bekleyen depo paketi yok. Merkez sevk çıkışı yaptığında paketler burada listelenir.</div>';
     return;
   }
-  if (kart) kart.style.display = '';
-  if (split) split.classList.remove('teslim-split--solo');
-  if (sayacEl) sayacEl.textContent = String(liste.length);
-  solSevkTeslimBekleyenRozetGuncelle(siparisAkisCache);
   var h = '';
   h +=
     '<p style="font-size:11px;color:var(--muted);margin:0 0 12px;line-height:1.45">Her kalemi <strong>bağımsız olarak sayın</strong> ve saydığınız adedi girin (kör denetim). Depo kısmi gönderdiyse kutuya <strong>fiziki paketteki</strong> adedi yazın. Siparişteki miktar burada gösterilmez; uyuşmazlıkta operasyon merkezi çözümüne kadar askıda kalabilir.</p>';
@@ -4893,9 +4917,9 @@ function renderDepoKabulSection() {
         }).join('');
         var ozetHtmlTk = '<div style="max-height:62vh;overflow:auto">' + ozetSatirlarTk + '</div>';
         var creds = await ensureTopCredentials(
-          'svPers',
-          'svPin',
-          '📥 Teslim kabul için onay',
+          'dkPers',
+          'dkPin',
+          '📥 Depo paketi kabul onayı',
           ozetHtmlTk
         );
         if (!creds) throw new Error('Onay bilgisi gerekli');
@@ -4913,7 +4937,7 @@ function renderDepoKabulSection() {
           body: { talep_id: tid, personel_id: creds.personel_id, pin: creds.pin, kabul: kabul },
         });
         siparisAkisCache = null;
-        var pinEl = document.getElementById('svPin');
+        var pinEl = document.getElementById('dkPin');
         if (pinEl) pinEl.value = '';
         setMsg(msgId, 'Teslim kabul kaydedildi.', 'msg-ok');
         await refresh();
@@ -5157,7 +5181,7 @@ window.solSekmeAc = function(id) {
   // Stok formlarını doldur
   if (id === 'sevk' || id === 'ac' || id === 'fire') renderStokForms(id);
   // Sekme açılınca orta alanı başa taşı (ürün listesi yukarıdan başlasın)
-  if (id === 'sevk' || id === 'siparis' || id === 'ac' || id === 'fire') {
+  if (id === 'sevk' || id === 'depoTeslim' || id === 'siparis' || id === 'ac' || id === 'fire') {
     var _orta = document.getElementById('orta');
     if (_orta) _orta.scrollTop = 0;
   }
@@ -5177,14 +5201,23 @@ window.solSekmeAc = function(id) {
     siparisAkisLoad(true)
       .then(function (akis) {
         siparisAkisCache = akis;
-        _teslimKabulListe = _teslimBekleyenPaketFiltre(akis);
-        renderDepoKabulSection();
         renderSvToptanciBekleyenPanel();
+        stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []);
       })
       .catch(function () {
-        renderDepoKabulSection();
         renderSvToptanciBekleyenPanel();
       });
+  }
+  if (id === 'depoTeslim') {
+    if (!window.__depoTeslimOnayWired) {
+      window.__depoTeslimOnayWired = true;
+      var dkStrip = document.getElementById('depoTeslimOnayStrip');
+      if (dkStrip) {
+        dkStrip.addEventListener('input', function () { fillSels(); }, true);
+        dkStrip.addEventListener('change', function () { fillSels(); }, true);
+      }
+    }
+    depoTeslimSekmeYukle(true).catch(function () {});
   }
   if (id === 'siparis') renderSiparisPanel().catch(function(e){ setMsg('siparisMsg', e.message || 'Hata', 'msg-err'); });
   if (id === 'siparisTakip') renderSiparisTakipPanel().catch(function(e){ setMsg('siparisTakipMsg', e.message || 'Hata', 'msg-err'); });
@@ -5252,7 +5285,7 @@ function fillSels() {
              'xrPers','puanPers',
              'dvPers1','dvPers2','kapPers',
              'kasaUser','ktPers',
-             'svPers','frPers'];
+             'svPers','frPers','dkPers'];
   ids.forEach(function(id){
     var el = document.getElementById(id); if (!el || el.tagName !== 'SELECT') return;
     var cur = el.value;
@@ -5963,7 +5996,7 @@ function siparisAkisTalepSatirHTML(t) {
       '<div style="font-size:11px;margin-top:8px"><button type="button" class="sip-mini-btn" onclick="solSekmeAc(\'sevk\')">→ Ürün Teslim Al</button> <span style="color:var(--muted)">Toptancıdan geleni kaydedip siparişi kapatın</span></div>';
   } else if (yol === 'depo_kabul' || (t.teslim_bekleyen_kalemler || []).length) {
     h +=
-      '<div style="font-size:11px;margin-top:8px"><button type="button" class="sip-mini-btn" onclick="solSekmeAc(\'sevk\')">→ Depo paketi kabul</button></div>';
+      '<div style="font-size:11px;margin-top:8px"><button type="button" class="sip-mini-btn" onclick="solSekmeAc(\'depoTeslim\')">→ Depodan Gelen — Teslim Al</button></div>';
   }
   h += '</div>';
   return h;
@@ -7447,13 +7480,17 @@ function renderMain(data) {
       siparisAkisLoad(true)
         .then(function (akis) {
           siparisAkisCache = akis;
-          _teslimKabulListe = _teslimBekleyenPaketFiltre(akis);
-          renderDepoKabulSection();
           renderSvToptanciBekleyenPanel();
+          stokSecimBilgiYenile('sv', _stokKatalogByPrefix.sv || []);
         })
         .catch(function () {
-          renderDepoKabulSection();
+          renderSvToptanciBekleyenPanel();
         });
+    }
+    if (aktifAltSekme === 'depoTeslim' || aktifSolSekme === 'depoTeslim') {
+      if (!depoTeslimPanelPeriyotikYenilemeAtla()) {
+        depoTeslimSekmeYukle(false).catch(function () {});
+      }
     }
   }).catch(function () {});
   renderSiparisRedBildirimleri(data);
@@ -8479,7 +8516,7 @@ async function refresh() {
     renderMain(data);
     // ▼ Yolda paket badge'i + Sipariş Takip aktif sayacı — sol menü rozetlerini canlı tut
     siparisAkisLoad(false).then(function(akis){
-      try { solSevkTeslimBekleyenRozetGuncelle(akis); } catch(_) {}
+      try { solDepoTeslimRozetGuncelle(akis); } catch(_) {}
       try {
         // Sipariş Takip badge'i: bekliyor + hazirlaniyor + yolda toplamı
         var talepler = (akis && (akis.talepler || akis.siparis_akis)) || [];
