@@ -4180,15 +4180,13 @@ async function renderGonderilecekPanel() {
   }
   var depoHazirlik = (akis && akis.depo_hazirlik_talepleri) || [];
   var depoGonderilenler = (akis && akis.depo_gonderilenler) || [];
-  var depoKalan = (akis && akis.depo_kalan_kalemleri) || [];
   var bulkWrap = document.getElementById('gonderilecekBulkBarWrap');
   if (bulkWrap) {
     bulkWrap.innerHTML = depoHazirlik.length ? buildGonderilecekBulkBarHTML() : '';
   }
   root.innerHTML =
     buildDepoHazirlikHTML(depoHazirlik) +
-    buildDepoGonderilenHTML(depoGonderilenler) +
-    buildDepoKalanHTML(depoKalan);
+    buildDepoGonderilenHTML(depoGonderilenler);
   fillSels();
   document.querySelectorAll('[id^="depTaslak_"],[id^="depSevk_"]').forEach(function (b) {
     delete b.dataset.wired;

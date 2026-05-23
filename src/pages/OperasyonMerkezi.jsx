@@ -323,22 +323,28 @@ function magazaStokKeyFromUrunAd(ad) {
 /** ``sube_depo_stok.kalem_kodu`` — backend ``depo_kalem_kodu_resolve`` ile aynı öncelik.
  *
  *  Öncelik:
- *  1. elle atanmış havuz kodu (depo_stok_kalem_kodu)
- *  2. STOK_KEYS eşleşmesi (bardak_buyuk, sut_litre, vb.)
- *  3. UUID katalog öğesi → UUID'in kendisi (1-to-1 migration satır garantisi var;
- *     JS NFD slug ile Py norm_ad arasındaki Türkçe karakter uyumsuzluğunu önler)
- *  4. Slug (eski / UUID olmayan özel kodlar için fallback)
+ *  1. fiziksel havuz kodu (depo_stok_kalem_kodu ∈ bardak_buyuk, sut_litre, …)
+ *  2. ürün adından fiziksel havuz eşleşmesi
+ *  3. UUID katalog öğesi (1-to-1 migration satır garantisi)
+ *  4. kalan havuz / slug fallback
  */
+const _DEPO_FIZIKSEL_HAVUZ = new Set([
+  'bardak_kucuk', 'bardak_buyuk', 'bardak_plastik', 'su_adet',
+  'redbull_adet', 'soda_adet', 'cookie_adet', 'pasta_adet',
+  'sut_litre', 'surup_adet', 'kahve_paket', 'karton_bardak',
+  'kapak_adet', 'pecete_paket', 'diger_sarf',
+]);
 const _UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function magazaDepoKalemKodu(it) {
   if (!it || typeof it !== 'object') return '';
   const havuz = it.depo_stok_kalem_kodu ? String(it.depo_stok_kalem_kodu).trim() : '';
-  if (havuz) return havuz;
+  if (havuz && _DEPO_FIZIKSEL_HAVUZ.has(havuz)) return havuz;
   const sk = magazaStokKeyFromUrunAd(it.ad);
-  if (sk && sk !== 'kahve_paket') return sk;
+  if (sk && _DEPO_FIZIKSEL_HAVUZ.has(sk)) return sk;
   const uid = String(it.id || '').trim();
-  // UUID katalog öğesi: doğrudan UUID kullan — Türkçe slug normalizasyon farkını önler
   if (_UUID_PATTERN.test(uid)) return uid;
+  if (havuz) return havuz;
+  if (sk && sk !== 'kahve_paket') return sk;
   // Eski / özel kod: slug
   const slug = magazaDepoSlugifyTr(it.ad);
   if (slug && slug !== 'urun') return slug;

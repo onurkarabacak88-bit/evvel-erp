@@ -85,6 +85,14 @@ STOK_KEYS = (
 # Pasta anahtarları — açılış/kapanış/devir formu için
 PASTA_KEYS: Tuple[str, ...] = STOK_KEYS[16:]
 
+# Fiziksel havuz satırları (depo_stok_duplike_temizlik_v1'de korunan legacy kodlar).
+_DEPO_FIZIKSEL_HAVUZ_KODLARI = frozenset({
+    "bardak_kucuk", "bardak_buyuk", "bardak_plastik", "su_adet",
+    "redbull_adet", "soda_adet", "cookie_adet", "pasta_adet",
+    "sut_litre", "surup_adet", "kahve_paket", "karton_bardak",
+    "kapak_adet", "pecete_paket", "diger_sarf",
+})
+
 # Pasta UI grupları — (grup_adi, [key1, key2, ...])
 PASTA_GRUPLAR: List[Tuple[str, List[str]]] = [
     ("Porsiyon Tatlılar", ["pasta_porsiyon_sade", "pasta_porsiyon_antep", "pasta_porsiyon_cik"]),
@@ -395,18 +403,22 @@ def depo_kalem_kodu_resolve(cur: Any, urun_id: str, urun_ad_fallback: str = "") 
         row = cur.fetchone()
         if row:
             d = dict(row) if not isinstance(row, dict) else row
-            # 1. Elle atanmış havuz kodu varsa onu kullan
+            # 1. Elle atanmış fiziksel havuz kodu
             ov = str(d.get("depo_stok_kalem_kodu") or "").strip()
-            if ov:
-                return ov
             db_ad = str(d.get("ad") or "").strip()
             if db_ad:
                 ad_src = db_ad
+            if ov and ov in _DEPO_FIZIKSEL_HAVUZ_KODLARI:
+                return ov
             sk = _stok_key_from_urun_ad(ad_src)
-            if sk and sk != "kahve_paket":
+            if sk and sk in _DEPO_FIZIKSEL_HAVUZ_KODLARI:
                 return sk
             if _UUID_RE.match(uid):
                 return uid
+            if ov:
+                return ov
+            if sk and sk != "kahve_paket":
+                return sk
     except Exception:
         pass
     return depo_kalem_kodu_panel_katalog(uid, ad_src or uid)
@@ -2949,6 +2961,8 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
         if not kalem_kodu or sevk_adet <= 0:
             continue
         if kaynak_depo:
+            urun_id_item = str(item.get("urun_id") or "").strip()
+            dusulecek_kod = kalem_kodu
             cur.execute(
                 """
                 UPDATE sube_depo_stok
@@ -2957,8 +2971,34 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                     guncelleme   = NOW()
                 WHERE sube_id = %s AND kalem_kodu = %s
                 """,
-                (sevk_adet, sevk_adet, kaynak_depo, kalem_kodu),
+                (sevk_adet, sevk_adet, kaynak_depo, dusulecek_kod),
             )
+            if cur.rowcount == 0 and urun_id_item and urun_id_item != dusulecek_kod:
+                alt_kod = depo_kalem_kodu_resolve(cur, urun_id_item, kalem_adi)
+                if alt_kod and alt_kod != dusulecek_kod:
+                    dusulecek_kod = alt_kod
+                    cur.execute(
+                        """
+                        UPDATE sube_depo_stok
+                        SET mevcut_adet  = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
+                            rezerve_adet = GREATEST(0, COALESCE(rezerve_adet, 0) - %s),
+                            guncelleme   = NOW()
+                        WHERE sube_id = %s AND kalem_kodu = %s
+                        """,
+                        (sevk_adet, sevk_adet, kaynak_depo, dusulecek_kod),
+                    )
+            if cur.rowcount == 0 and _UUID_RE.match(urun_id_item):
+                dusulecek_kod = urun_id_item
+                cur.execute(
+                    """
+                    UPDATE sube_depo_stok
+                    SET mevcut_adet  = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
+                        rezerve_adet = GREATEST(0, COALESCE(rezerve_adet, 0) - %s),
+                        guncelleme   = NOW()
+                    WHERE sube_id = %s AND kalem_kodu = %s
+                    """,
+                    (sevk_adet, sevk_adet, kaynak_depo, dusulecek_kod),
+                )
             # FIX #5: 0 satır etkilendiyse kalem_kodu/depo uyumsuzluğu var — sessizce geçme
             if cur.rowcount == 0:
                 logger.warning(
