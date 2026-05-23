@@ -1763,10 +1763,13 @@ def _onayla_tx(cur, oid: str):
     GIDER_TURLERI = {'KART_ODEME', 'ANLIK_GIDER', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER', 'BORC_TAKSIT', 'FATURA_ODEMESI', 'ODEME_PLANI'}
     GELIR_TURLERI = {'CIRO', 'CIRO_DUZELTME', 'DIS_KAYNAK', 'KASA_GIRIS', 'KASA_DUZELTME'}
     islem_turu = onay['islem_turu']
+    KASA_FARK_TURLERI = {'KAPANIS_KASA_FARK', 'ACILIS_KASA_FARK'}
     if islem_turu in GIDER_TURLERI:
         signed_tutar = -abs(tutar)
     elif islem_turu in GELIR_TURLERI:
         signed_tutar = abs(tutar)
+    elif islem_turu in KASA_FARK_TURLERI:
+        signed_tutar = tutar  # işaret korunur; kasaya yazılmayacak
     else:
         signed_tutar = tutar
         logger.warning(f"Bilinmeyen işlem türü onaylandı: {islem_turu}, tutar={tutar}")
@@ -1869,6 +1872,10 @@ def _onayla_tx(cur, oid: str):
                 gunluk_ozet_yenile(cur, str(_ag["sube"]), _ag.get("tarih"), kaynak='event_gider')
         except Exception:
             pass
+    elif islem_turu in KASA_FARK_TURLERI:
+        # Kasa farkı onayı = "Merkez gördü ve kabul etti" — kasa bakiyesini ETKİLEMEZ.
+        # Gerçek fiziksel açık varsa Operasyon Merkezi → Kasa Uyumsuzluğu → "Gerçek Açık" akışı kullanılır.
+        pass
     elif islem_turu in ("CIRO", "CIRO_DUZELTME"):
         # Ciro kaynak kaydı varsa satırı kilitleyerek eşzamanlı onay/yazım çakışmasını azalt.
         if (onay.get("kaynak_tablo") or "") == "ciro" and onay.get("kaynak_id"):
