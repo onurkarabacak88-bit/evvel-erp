@@ -2642,8 +2642,8 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
         siparis_talep_id = (body.siparis_talep_id or "").strip() or None
         if siparis_talep_id:
             cur.execute(
-                """
-                SELECT id, durum
+                f"""
+                SELECT id, durum, {SD_T} AS sevkiyat_durumu
                 FROM siparis_talep
                 WHERE id=%s AND sube_id=%s
                 LIMIT 1
@@ -2654,7 +2654,16 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             _st = cur.fetchone()
             if not _st:
                 raise HTTPException(400, "Geçersiz siparis_talep_id (şube ile eşleşmiyor)")
-            st = str(dict(_st).get("durum") or "")
+            st_row = dict(_st)
+            st = str(st_row.get("durum") or "")
+            sd = sevkiyat_durumu_coz(
+                st_row.get("sevkiyat_durumu"), st_row.get("sevkiyat_durum")
+            )
+            if sd != "toptanciya_yonlendirildi":
+                raise HTTPException(
+                    409,
+                    "Bu sipariş depo akışında — kapatmak için «Depodan Gelen — Teslim Al» kullanın",
+                )
             if st not in ("hazirlaniyor", "gonderildi", "bekliyor"):
                 raise HTTPException(409, "Sipariş talebi sevkiyat/teslim akışına uygun değil")
             cur.execute(
@@ -2668,8 +2677,7 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 """,
                 (siparis_talep_id,),
             )
-            # FIX #6: stok_yolda satırını kapat — kapatılmazsa sonsuza 'yolda' kalır
-            # ve uyumsuzluk raporunda temizlenemeyen hayalet satır oluşur.
+            # Toptancı yönlendirmesinde stok_yolda satırı yoktur; yine de varsa kapat.
             try:
                 cur.execute(
                     """
@@ -2686,7 +2694,7 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             except Exception as _e:
                 log.warning("urun_sevk stok_yolda kapat hata: %s", _e)
         else:
-            # FOR UPDATE: eş zamanlı sevk kaydı race condition'ını önler
+            # Yalnızca toptancıya yönlendirilmiş siparişleri otomatik eşleştir (depo paketi değil).
             cur.execute(
                 f"""
                 SELECT id
@@ -2694,22 +2702,8 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 WHERE sube_id=%s
                   AND tarih >= CURRENT_DATE - INTERVAL '21 days'
                   AND durum IN ('gonderildi','hazirlaniyor','bekliyor')
-                  AND {SD_NOALIAS}
-                      IN ('gonderildi', 'kismi_hazirlandi', 'depoda_hazirlaniyor',
-                          'hazirlaniyor', 'bekliyor', 'toptanciya_yonlendirildi')
-                ORDER BY
-                  CASE
-                    WHEN {SD_NOALIAS}='toptanciya_yonlendirildi' THEN 0
-                    WHEN durum='gonderildi' THEN 1
-                    WHEN durum='hazirlaniyor' THEN 2
-                    ELSE 3
-                  END,
-                  CASE
-                    WHEN {SD_NOALIAS}='gonderildi' THEN 0
-                    WHEN {SD_NOALIAS}='kismi_hazirlandi' THEN 1
-                    ELSE 2
-                  END,
-                  olusturma DESC NULLS LAST
+                  AND {SD_NOALIAS} = 'toptanciya_yonlendirildi'
+                ORDER BY olusturma DESC NULLS LAST
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
                 """,
