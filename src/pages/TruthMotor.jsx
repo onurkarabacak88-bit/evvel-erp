@@ -860,7 +860,7 @@ function GunlukTeyitKarti({ tarih, subeler }) {
 
   useEffect(() => {
     if (!secSubeId && subeler.length > 0) setSecSubeId(subeler[0].id);
-  }, [subeler, secSubeId]);
+  }, [subeler]);
 
   const [gbYukleniyor, setGbYukleniyor] = useState(false);
   const [gbMesaj, setGbMesaj]           = useState('');
@@ -1012,7 +1012,7 @@ function GunlukTeyitKarti({ tarih, subeler }) {
               {(() => {
                 const satirlar = (cfo.anlati || '').split('\n');
                 const baslik   = satirlar[0] || '';
-                const govde    = satirlar.slice(2).join('\n').trim();
+                const govde    = satirlar.length > 1 ? satirlar.slice(1).join('\n').trim() : '';
                 return (
                   <>
                     <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text1)', marginBottom: 6 }}>
@@ -1099,7 +1099,7 @@ function OlayOzeti({ tarih, subeler }) {
 
   useEffect(() => {
     if (!secSubeId && subeler.length > 0) setSecSubeId(subeler[0].id);
-  }, [subeler, secSubeId]);
+  }, [subeler]);
 
   const yukle = useCallback(async () => {
     if (!secSubeId || !tarih) return;
@@ -1211,7 +1211,7 @@ function VardiyaPL({ tarih, subeler }) {
   // İlk şubeyi otomatik seç
   useEffect(() => {
     if (!secSubeId && subeler.length > 0) setSecSubeId(subeler[0].id);
-  }, [subeler, secSubeId]);
+  }, [subeler]);
 
   const yukle = useCallback(async () => {
     if (!secSubeId || !tarih) return;
@@ -1357,7 +1357,7 @@ function VardiyaBardakPNL({ tarih, subeler }) {
 
   useEffect(() => {
     if (!secSubeId && subeler.length > 0) setSecSubeId(subeler[0].id);
-  }, [subeler, secSubeId]);
+  }, [subeler]);
 
   const yukle = useCallback(async () => {
     if (!secSubeId || !tarih) return;
@@ -1745,7 +1745,7 @@ function BomVaryans({ tarih, subeler }) {
 
   useEffect(() => {
     if (!secSubeId && subeler.length > 0) setSecSubeId(subeler[0].id);
-  }, [subeler, secSubeId]);
+  }, [subeler]);
 
   const yukle = useCallback(async () => {
     if (!secSubeId || !tarih) return;
@@ -1921,7 +1921,7 @@ function AksamBardakSisirme({ tarih, subeler }) {
 
   useEffect(() => {
     if (!secSubeId && subeler.length > 0) setSecSubeId(subeler[0].id);
-  }, [subeler, secSubeId]);
+  }, [subeler]);
 
   const yukle = useCallback(async () => {
     if (!secSubeId || !tarih) return;
