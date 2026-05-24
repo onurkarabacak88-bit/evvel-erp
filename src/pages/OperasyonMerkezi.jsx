@@ -2244,10 +2244,13 @@ export default function OperasyonMerkezi() {
   const [kuyrukDepolar, setKuyrukDepolar] = useState([]);
   const [kuyrukBusy, setKuyrukBusy] = useState(null);
   const [kuyrukAsama, setKuyrukAsama] = useState({}); // talep_id -> detay | depo | toptanci
-  const [kuyrukToptanciTedarikci, setKuyrukToptanciTedarikci] = useState({}); // talep_id -> tedarikci_ad (eski global alan, artık fallback)
+  const [kuyrukToptanciTedarikci, setKuyrukToptanciTedarikci] = useState({}); // talep_id -> aktif toptancı adı
   const [kuyrukToptanciNot, setKuyrukToptanciNot] = useState({}); // talep_id -> not
-  const [kuyrukToptanciKalemDeger, setKuyrukToptanciKalemDeger] = useState({}); // `${talep_id}::${kalem}` -> adet
-  const [kuyrukToptanciKalemTedarikci, setKuyrukToptanciKalemTedarikci] = useState({}); // `${talep_id}::${kalem}` -> toptanci_ad (per-kalem)
+  const [kuyrukToptanciKalemDeger, setKuyrukToptanciKalemDeger] = useState({}); // `${talep_id}::${kk}` -> adet override
+  const [kuyrukToptanciKalemTedarikci, setKuyrukToptanciKalemTedarikci] = useState({}); // legacy
+  const [toptanciSecili, setToptanciSecili] = useState({});    // `${talep_id}::${kk}` -> bool
+  const [toptanciAtanmis, setToptanciAtanmis] = useState({});  // `${talep_id}::${kk}` -> listeNo
+  const [toptanciListeler, setToptanciListeler] = useState({}); // talep_id -> [{listeNo,toptanciAd,kalemler,ts}]
   const [toptanciSiparisListe, setToptanciSiparisListe] = useState({
     gun: 30,
     donem: 'gun_30',
@@ -13664,90 +13667,97 @@ export default function OperasyonMerkezi() {
                 setKuyrukBusy(null);
               }
             };
-            // Kalem bazlı gruplama: per-kalem toptancı adı → yoksa global → 'Atanmamış'
-            const _toptanciGrupla = (sip) => {
-              const talepId = String(sip?.id || '').trim();
+            // Tek liste için temiz yazdırma penceresi
+            const _yazdirTekListe = (liste, subeAd, tarih, not_aciklama) => {
+              const satirlar = liste.kalemler.map((k, idx) =>
+                `<tr><td style="padding:12px 14px;font-size:18px;border-bottom:1px solid #e0e0e0">${idx + 1}. ${k.urun_ad}</td><td style="padding:12px 16px;font-size:22px;font-weight:900;text-align:right;border-bottom:1px solid #e0e0e0">× ${k.adet}</td></tr>`
+              ).join('');
+              const tarihStr = String(tarih || '').slice(0, 10) || new Date().toLocaleDateString('tr-TR');
+              const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+                <title>${liste.toptanciAd} — ${subeAd}</title>
+                <style>*{box-sizing:border-box;margin:0;padding:0}body{background:#fff;font-family:Arial,sans-serif}@media print{@page{margin:12mm}}</style>
+                </head><body>
+                <div style="padding:40px 44px;max-width:640px">
+                  <div style="border-bottom:3px solid #111;padding-bottom:16px;margin-bottom:24px">
+                    <div style="font-size:11px;color:#888;letter-spacing:0.1em;margin-bottom:8px">TOPTANCI SİPARİŞ LİSTESİ · Liste #${liste.listeNo}</div>
+                    <div style="font-size:26px;font-weight:900">${subeAd}</div>
+                    <div style="font-size:20px;font-weight:800;margin-top:8px">▸ ${liste.toptanciAd}</div>
+                    <div style="font-size:13px;color:#666;margin-top:10px">📅 ${tarihStr} · ${liste.ts || ''}</div>
+                  </div>
+                  <table style="width:100%;border-collapse:collapse">${satirlar}</table>
+                  ${not_aciklama ? `<div style="margin-top:24px;padding:12px 14px;background:#f5f5f5;border-radius:8px;font-size:13px;color:#555">Not: ${not_aciklama}</div>` : ''}
+                  <div style="margin-top:28px;border-top:1px solid #ccc;padding-top:12px;font-size:12px;color:#aaa">
+                    ${liste.kalemler.length} kalem · ${liste.kalemler.reduce((a, k) => a + k.adet, 0)} toplam adet
+                  </div>
+                </div>
+                <script>window.onload=function(){window.print()};<\/script></body></html>`;
+              const w = window.open('', '_blank', 'width=700,height=920');
+              if (!w) { toast('Popup engellendi — tarayıcı izin ayarlarını kontrol edin.'); return; }
+              w.document.write(html); w.document.close();
+            };
+
+            // Seçili kalemleri toptancı listesine ekle + ekrandan kaldır
+            const listeOlustur = (sip) => {
+              const talepId = String(sip?.id || '');
+              const toptanciAd = (kuyrukToptanciTedarikci[talepId] || '').trim();
+              if (!toptanciAd) { toast('Önce toptancı adını girin.'); return; }
               const rows = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
-              const gruplar = {};
+              const kalemler = [];
               rows.forEach((k, i) => {
                 const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
                 const key = `${talepId}::${kk}`;
-                const adetRaw = kuyrukToptanciKalemDeger[key];
-                const adet = Math.max(0, parseInt(String(adetRaw ?? k?.istenen_adet ?? 0), 10) || 0);
-                if (adet <= 0) return;
-                const toptanciAd = (kuyrukToptanciKalemTedarikci[key] || kuyrukToptanciTedarikci[talepId] || '').trim() || 'Atanmamış';
-                if (!gruplar[toptanciAd]) gruplar[toptanciAd] = [];
-                gruplar[toptanciAd].push({
-                  urun_ad: String(k?.urun_ad || k?.ad || kk),
-                  adet,
-                  kalem_kodu: kk,
-                  kategori_kod: String(k?.kategori_kod || k?.kategori || k?.kategori_id || '').trim() || null,
-                });
+                if (!toptanciSecili[key]) return;
+                if (toptanciAtanmis[key]) return;
+                const adetRaw = kuyrukToptanciKalemDeger[key] ?? String(k?.istenen_adet || 0);
+                const adet = Math.max(0, parseInt(String(adetRaw), 10) || 0);
+                if (adet <= 0) { toast(`${k.urun_ad || kk} için adet 0 — atlandı.`); return; }
+                kalemler.push({ urun_ad: String(k?.urun_ad || k?.ad || kk), adet, kalem_kodu: kk, kategori_kod: String(k?.kategori_kod || '').trim() || null });
               });
-              return gruplar;
+              if (!kalemler.length) { toast('Hiç kalem seçilmedi ya da adetler 0.'); return; }
+              const listeNo = (toptanciListeler[talepId] || []).length + 1;
+              const yeniListe = { listeNo, toptanciAd, kalemler, ts: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) };
+              setToptanciListeler(prev => ({ ...prev, [talepId]: [...(prev[talepId] || []), yeniListe] }));
+              // Atanmış olarak işaretle
+              setToptanciAtanmis(prev => {
+                const next = { ...prev };
+                kalemler.forEach(k => { next[`${talepId}::${k.kalem_kodu}`] = listeNo; });
+                return next;
+              });
+              // Seçimi temizle
+              setToptanciSecili(prev => {
+                const next = { ...prev };
+                kalemler.forEach(k => { next[`${talepId}::${k.kalem_kodu}`] = false; });
+                return next;
+              });
+              // Toptancı adı inputunu temizle
+              setKuyrukToptanciTedarikci(prev => ({ ...prev, [talepId]: '' }));
+              // Otomatik yazdır
+              _yazdirTekListe(yeniListe, sip.sube_adi || 'Şube', sip.tarih || '', (kuyrukToptanciNot[talepId] || '').trim());
             };
 
-            // Temiz yazdırılabilir pencere — her toptancı ayrı bölüm
-            const toptanciListesiYazdır = (sip) => {
-              const gruplar = _toptanciGrupla(sip);
-              const entries = Object.entries(gruplar);
-              if (!entries.length) { toast('Yazdırılacak kalem yok — önce adet girin.'); return; }
-              const subeAd = String(sip?.sube_adi || '').trim() || 'Şube';
-              const tarih = String(sip?.tarih || '').slice(0, 10) || new Date().toLocaleDateString('tr-TR');
-              const notAciklama = (kuyrukToptanciNot[sip.id] || '').trim();
-              const bloklar = entries.map(([toptanciAd, kalemler], bi) => {
-                const satirlar = kalemler.map((k, idx) =>
-                  `<tr><td style="padding:10px 14px;font-size:17px;border-bottom:1px solid #e0e0e0">${idx + 1}. ${k.urun_ad}</td><td style="padding:10px 16px;font-size:20px;font-weight:900;text-align:right;border-bottom:1px solid #e0e0e0">× ${k.adet}</td></tr>`
-                ).join('');
-                const isLast = bi === entries.length - 1;
-                return `<div style="padding:36px 40px;font-family:Arial,sans-serif;color:#111;max-width:620px;${isLast ? '' : 'page-break-after:always'}">
-                  <div style="border-bottom:3px solid #111;padding-bottom:14px;margin-bottom:22px">
-                    <div style="font-size:11px;color:#888;letter-spacing:0.08em;margin-bottom:6px">TOPTANCI SİPARİŞ LİSTESİ</div>
-                    <div style="font-size:24px;font-weight:900;margin-bottom:2px">${subeAd}</div>
-                    <div style="font-size:19px;font-weight:800;color:#222;margin-top:6px">▸ ${toptanciAd}</div>
-                    <div style="font-size:13px;color:#666;margin-top:8px">📅 ${tarih}</div>
-                  </div>
-                  <table style="width:100%;border-collapse:collapse">${satirlar}</table>
-                  ${notAciklama ? `<div style="margin-top:22px;padding:12px 14px;background:#f7f7f7;border-radius:8px;font-size:13px;color:#555;border-left:3px solid #bbb">Not: ${notAciklama}</div>` : ''}
-                  <div style="margin-top:26px;border-top:1px solid #ccc;padding-top:10px;font-size:12px;color:#aaa">
-                    ${kalemler.length} kalem · ${kalemler.reduce((a, k) => a + k.adet, 0)} toplam adet
-                  </div>
-                </div>`;
-              }).join('');
-              const w = window.open('', '_blank', 'width=700,height=920');
-              if (!w) { toast('Popup engellendi — tarayıcı izin ayarlarını kontrol edin.'); return; }
-              w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Toptancı Siparişleri — ${subeAd}</title>
-                <style>*{box-sizing:border-box;margin:0;padding:0}body{background:#fff}@media print{@page{margin:10mm}}</style>
-                </head><body>${bloklar}<script>window.onload=function(){window.print()};<\/script></body></html>`);
-              w.document.close();
-            };
-
-            const gonderilenleIlgiliToptanciyaYolla = async (sip) => {
+            // Son adım: tüm listeler sisteme kaydedilir, şubeye bildirim gider
+            const toptanciyaYollaVeKapat = async (sip) => {
               const talepId = String(sip?.id || '').trim();
-              if (!talepId) return;
-              const gruplar = _toptanciGrupla(sip);
-              const entries = Object.entries(gruplar);
-              if (!entries.length) {
-                toast('Toptancı formunda en az 1 kalem için adet girin.');
-                return;
-              }
+              const listeler = toptanciListeler[talepId] || [];
+              if (!listeler.length) { toast('Önce en az bir liste oluşturun.'); return; }
               setKuyrukBusy(talepId);
               try {
-                for (const [toptanciAd, kalemler] of entries) {
+                for (const liste of listeler) {
                   await api('/ops/siparis/toptanciya-yolla', {
                     method: 'POST',
                     body: {
                       talep_id: talepId,
-                      tedarikci_ad: toptanciAd === 'Atanmamış' ? null : toptanciAd,
+                      tedarikci_ad: liste.toptanciAd,
                       not_aciklama: (kuyrukToptanciNot[talepId] || '').trim() || null,
-                      kalemler,
+                      kalemler: liste.kalemler,
                     },
                   });
                 }
-                toast(`${entries.length} toptancıya yönlendirildi ✓`, 'green');
+                const adlar = listeler.map(l => l.toptanciAd).join(', ');
+                toast(`✓ ${listeler.length} toptancıya yönlendirildi — Şubeye bildirildi (${adlar})`, 'green');
                 yukleDisiplin();
               } catch (e) {
-                toast(e.message || 'Toptancıya gönderim hatası');
+                toast(e.message || 'Gönderim hatası');
               } finally {
                 setKuyrukBusy(null);
               }
@@ -14097,121 +14107,144 @@ export default function OperasyonMerkezi() {
                       </>
                     )}
 
-                    {asama === 'toptanci' && (
-                      <div style={{ padding: '14px 16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
-                        {/* Başlık */}
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: 13 }}>🚚 Toptancı Ayrıştırma</div>
-                          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
-                            Her kalem için toptancı adını girin. Farklı toptancılar → otomatik ayrı liste
-                          </div>
-                        </div>
+                    {asama === 'toptanci' && (() => {
+                      const talepId = String(sip.id || '');
+                      const listeler = toptanciListeler[talepId] || [];
+                      const rows = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
+                      const atanmamisRows = rows.filter((k, i) => !toptanciAtanmis[`${talepId}::${String(k?.kalem_kodu || k?.urun_id || 'k_' + i)}`]);
+                      const seciliSayisi = atanmamisRows.filter((k, i) => toptanciSecili[`${talepId}::${String(k?.kalem_kodu || k?.urun_id || 'k_' + i)}`]).length;
+                      const hepsiAtandi = atanmamisRows.length === 0 && rows.length > 0;
+                      return (
+                        <div style={{ padding: '14px 16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-                        {/* Kalem tablosu */}
-                        <div style={{ overflowX: 'auto' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 480 }}>
-                            <thead>
-                              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                                <th style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 600, textAlign: 'left', padding: '4px 8px' }}>Ürün</th>
-                                <th style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 600, textAlign: 'center', padding: '4px 8px', whiteSpace: 'nowrap' }}>Şube istedi</th>
-                                <th style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 600, textAlign: 'center', padding: '4px 8px', whiteSpace: 'nowrap' }}>Gönderilecek</th>
-                                <th style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 600, textAlign: 'left', padding: '4px 8px' }}>Toptancı</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {detayRows.map((k, ki) => {
-                                const kk = String(k?.kalem_kodu || k?.urun_id || `k_${ki}`);
-                                const key = `${sip.id}::${kk}`;
-                                const adetVal = kuyrukToptanciKalemDeger[key] ?? String(Number(k?.istenen_adet || 0));
-                                const toptanciVal = kuyrukToptanciKalemTedarikci[key] || '';
-                                const subeIstedi = Number(k?.istened_adet || k?.istenen_adet || 0);
-                                const gonderilecek = parseInt(String(adetVal || '0'), 10) || 0;
-                                const farkliMiktar = gonderilecek > 0 && gonderilecek !== subeIstedi;
-                                return (
-                                  <tr key={`${sip.id}-topf-${kk}`} style={{ borderBottom: '1px solid var(--border)' }}>
-                                    <td style={{ padding: '8px 8px', fontSize: 13 }}>{k.urun_ad || k.ad || kk}</td>
-                                    <td style={{ padding: '8px 8px', fontSize: 13, textAlign: 'center', color: 'var(--text3)' }}>{subeIstedi}</td>
-                                    <td style={{ padding: '6px 8px', textAlign: 'center' }}>
-                                      <input
-                                        className="input"
-                                        inputMode="numeric"
-                                        value={adetVal}
-                                        style={{ width: 72, textAlign: 'center', fontSize: 14, fontWeight: 700,
-                                          borderColor: farkliMiktar ? 'var(--warn)' : undefined,
-                                          color: farkliMiktar ? 'var(--warn)' : undefined }}
+                          {/* Başlık */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                            <div>
+                              <span style={{ fontWeight: 700, fontSize: 13 }}>🚚 Toptancı Ayırma</span>
+                              <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 10 }}>
+                                Kalem seç → toptancı yaz → Liste Oluştur → fotoğrafla → tekrarla
+                              </span>
+                            </div>
+                            {listeler.length > 0 && (
+                              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--ok)' }}>✓ {listeler.length} liste oluşturuldu</span>
+                            )}
+                          </div>
+
+                          {/* Oluşturulan listeler */}
+                          {listeler.length > 0 && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Oluşturulan Listeler</div>
+                              {listeler.map((liste) => (
+                                <div key={liste.listeNo} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'rgba(34,197,94,0.07)', border: '1px solid rgba(34,197,94,0.22)', borderRadius: 8 }}>
+                                  <span style={{ fontWeight: 800, fontSize: 13, color: 'var(--ok)', flexShrink: 0 }}>#{liste.listeNo}</span>
+                                  <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>{liste.toptanciAd}</span>
+                                  <span style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{liste.kalemler.length} kalem · {liste.kalemler.reduce((a, k) => a + k.adet, 0)} adet</span>
+                                  <button className="btn btn-sm btn-secondary" style={{ fontSize: 11, padding: '3px 10px', flexShrink: 0 }}
+                                    onClick={() => _yazdirTekListe(liste, sip.sube_adi || 'Şube', sip.tarih || '', (kuyrukToptanciNot[talepId] || '').trim())}>
+                                    🖨️ Tekrar Yazdır
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Kalan kalemler */}
+                          {hepsiAtandi ? (
+                            <div style={{ padding: '12px 14px', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.28)', borderRadius: 10, fontSize: 13, color: 'var(--ok)', fontWeight: 700 }}>
+                              ✅ Tüm kalemler toptancılara atandı — aşağıdan gönderebilirsiniz
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+                                  Kalan Kalemler ({atanmamisRows.length})
+                                </span>
+                                {atanmamisRows.length > 1 && (
+                                  <button className="btn btn-sm btn-secondary" style={{ fontSize: 11, padding: '2px 10px' }}
+                                    onClick={() => {
+                                      const next = { ...toptanciSecili };
+                                      rows.forEach((k, i) => {
+                                        const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
+                                        if (!toptanciAtanmis[`${talepId}::${kk}`]) next[`${talepId}::${kk}`] = true;
+                                      });
+                                      setToptanciSecili(next);
+                                    }}>
+                                    Tümünü Seç
+                                  </button>
+                                )}
+                              </div>
+
+                              <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+                                {atanmamisRows.map((k, i) => {
+                                  const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
+                                  const key = `${talepId}::${kk}`;
+                                  const secili = !!toptanciSecili[key];
+                                  const adetVal = kuyrukToptanciKalemDeger[key] ?? String(k?.istenen_adet || 0);
+                                  const subeIstedi = Number(k?.istened_adet || k?.istenen_adet || 0);
+                                  const gonderilecek = parseInt(String(adetVal || '0'), 10) || 0;
+                                  const farkli = gonderilecek > 0 && gonderilecek !== subeIstedi;
+                                  return (
+                                    <div key={key}
+                                      style={{ display: 'grid', gridTemplateColumns: '32px 1fr 72px 80px', alignItems: 'center', gap: 8, padding: '8px 12px',
+                                        borderBottom: i < atanmamisRows.length - 1 ? '1px solid var(--border)' : 'none',
+                                        background: secili ? 'rgba(59,130,246,0.08)' : 'transparent', cursor: 'pointer' }}
+                                      onClick={() => setToptanciSecili(prev => ({ ...prev, [key]: !prev[key] }))}>
+                                      <input type="checkbox" checked={secili} readOnly style={{ width: 18, height: 18, accentColor: 'var(--accent)', cursor: 'pointer' }} />
+                                      <span style={{ fontSize: 13, fontWeight: secili ? 700 : 400 }}>{k.urun_ad || k.ad || kk}</span>
+                                      <span style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'center' }}>× {subeIstedi}</span>
+                                      <input className="input" inputMode="numeric" value={adetVal}
+                                        style={{ width: 72, textAlign: 'center', fontSize: 13, fontWeight: 700,
+                                          borderColor: farkli ? 'var(--warn)' : undefined, color: farkli ? 'var(--warn)' : undefined }}
+                                        onClick={e => e.stopPropagation()}
                                         onChange={(e) => {
                                           const v = String(e.target.value || '').replace(/[^\d]/g, '');
-                                          setKuyrukToptanciKalemDeger((prev) => ({ ...prev, [key]: v }));
-                                        }}
-                                      />
-                                    </td>
-                                    <td style={{ padding: '6px 8px' }}>
-                                      <input
-                                        className="input"
-                                        list={`toptanci-datalist-${sip.id}`}
-                                        placeholder="Toptancı adı…"
-                                        value={toptanciVal}
-                                        style={{ minWidth: 160, fontSize: 12 }}
-                                        onChange={(e) => {
-                                          const v = e.target.value;
-                                          setKuyrukToptanciKalemTedarikci((prev) => ({ ...prev, [key]: v }));
-                                        }}
-                                      />
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                          {/* Önceki gönderimlerden toptancı adı önerileri (datalist) */}
-                          <datalist id={`toptanci-datalist-${sip.id}`}>
-                            {(toptanciSiparisListe?.gonderimler || [])
-                              .map((g) => (g.tedarikci_ad || '').trim()).filter(Boolean)
-                              .filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 20)
-                              .map((v) => <option key={v} value={v} />)}
-                          </datalist>
-                        </div>
+                                          setKuyrukToptanciKalemDeger(prev => ({ ...prev, [key]: v }));
+                                        }} />
+                                    </div>
+                                  );
+                                })}
+                              </div>
 
-                        {/* Not */}
-                        <label style={{ margin: 0 }}>
-                          <span style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>Not (tüm toptancılar için)</span>
-                          <textarea
-                            className="input"
-                            rows={2}
-                            style={{ width: '100%', maxWidth: 560, resize: 'vertical', fontSize: 12 }}
-                            placeholder="Toptancı sipariş notu..."
-                            value={kuyrukToptanciNot[sip.id] || ''}
-                            onChange={(e) => setKuyrukToptanciNot((prev) => ({ ...prev, [sip.id]: e.target.value }))}
-                          />
-                        </label>
+                              {/* Seçili kalemler → toptancı adı → liste oluştur */}
+                              {seciliSayisi > 0 && (
+                                <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8, flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)', whiteSpace: 'nowrap' }}>{seciliSayisi} kalem seçili →</span>
+                                  <input className="input" list={`toptanci-dl-${talepId}`} placeholder="Toptancı adı…"
+                                    value={kuyrukToptanciTedarikci[talepId] || ''}
+                                    style={{ flex: 1, minWidth: 140, fontSize: 13 }}
+                                    onChange={(e) => setKuyrukToptanciTedarikci(prev => ({ ...prev, [talepId]: e.target.value }))} />
+                                  <datalist id={`toptanci-dl-${talepId}`}>
+                                    {(toptanciSiparisListe?.gonderimler || []).map(g => (g.tedarikci_ad || '').trim()).filter(Boolean)
+                                      .filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 20).map(v => <option key={v} value={v} />)}
+                                  </datalist>
+                                  <button className="btn btn-sm btn-primary" style={{ whiteSpace: 'nowrap' }} onClick={() => listeOlustur(sip)}>
+                                    📋 Liste Oluştur & Yazdır
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
 
-                        {/* Butonlar + özet */}
-                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                          <button
-                            className="btn btn-sm btn-secondary"
-                            onClick={() => toptanciListesiYazdır(sip)}
-                          >
-                            🖨️ Listeyi Yazdır / Fotoğrafla
-                          </button>
-                          <button
-                            className="btn btn-sm btn-primary"
-                            disabled={kuyrukBusy === sip.id}
-                            onClick={() => gonderilenleIlgiliToptanciyaYolla(sip)}
-                          >
-                            {kuyrukBusy === sip.id ? '…' : '⇢ Toptancıya Yolla & Kaydet'}
-                          </button>
-                          <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-                            {(() => {
-                              const gruplar = _toptanciGrupla(sip);
-                              const sayisi = Object.keys(gruplar).length;
-                              if (!sayisi) return null;
-                              const isimler = Object.keys(gruplar).join(' + ');
-                              return `→ ${sayisi} toptancı: ${isimler}`;
-                            })()}
-                          </span>
+                          {/* Not + Final */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <textarea className="input" rows={2} style={{ width: '100%', resize: 'vertical', fontSize: 12 }}
+                              placeholder="Genel not (listelerde görünür)…"
+                              value={kuyrukToptanciNot[talepId] || ''}
+                              onChange={(e) => setKuyrukToptanciNot(prev => ({ ...prev, [talepId]: e.target.value }))} />
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                              <button className="btn btn-sm btn-primary"
+                                disabled={kuyrukBusy === talepId || listeler.length === 0}
+                                style={{ opacity: listeler.length === 0 ? 0.45 : 1 }}
+                                onClick={() => toptanciyaYollaVeKapat(sip)}>
+                                {kuyrukBusy === talepId ? '…' : `⇢ Toptancıya Yolla & Şubeye Bildir (${listeler.length} liste)`}
+                              </button>
+                              {listeler.length === 0 && <span style={{ fontSize: 11, color: 'var(--text3)' }}>Önce en az bir liste oluşturun</span>}
+                            </div>
+                          </div>
+
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
                 );
                 })}
