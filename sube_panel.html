@@ -4640,7 +4640,7 @@ async function siparisLoad(force) {
 }
 async function siparisAkisLoad(force) {
   if (!force && siparisAkisCache && typeof siparisAkisCache === 'object') return siparisAkisCache;
-  var d = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-akisi?gun=21&limit=40');
+  var d = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-akisi?gun=21&limit=60&tamamlanan_dahil=true');
   siparisAkisCache = d || {
     talepler: [],
     depo_paket_teslim_bekleyen: [],
