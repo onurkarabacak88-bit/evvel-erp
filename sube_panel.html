@@ -2786,6 +2786,92 @@
       .sv-urun-adet { height: 56px; font-size: 24px; }
     }
 
+    /* ═══════════════════════════════════════════════════════
+       ÜRÜN AÇ — POS kasa ekranı (tek kolon, yeşil tema)
+       ═══════════════════════════════════════════════════════ */
+    .ac-hero {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 12px 16px;
+      margin: -16px -16px 18px;
+      background: linear-gradient(135deg, #14532d 0%, #166534 55%, #0f2a18 100%);
+      border-radius: 14px 14px 0 0;
+      position: relative;
+      overflow: hidden;
+    }
+    .ac-hero::before {
+      content: '';
+      position: absolute;
+      top: -30%;
+      right: -5%;
+      width: 130px;
+      height: 130px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(34,197,94,0.18) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .ac-hero-baslik { font-size: 17px; font-weight: 900; color: #bbf7d0; margin: 0 0 3px; }
+    .ac-hero-alt    { font-size: 12px; color: #86efac; margin: 0; opacity: 0.85; }
+
+    /* Seçim özeti kutusu */
+    .ac-secim-ozet {
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(34,197,94,0.05);
+      border: 1px solid rgba(34,197,94,0.15);
+      font-size: 15px;
+      font-weight: 700;
+      min-height: 50px;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 14px 0 10px;
+    }
+
+    /* Not input */
+    .ac-not-input {
+      width: 100%;
+      height: 52px;
+      padding: 0 14px;
+      font-size: 16px;
+      border-radius: 12px;
+      border: 2px solid rgba(255,255,255,0.1);
+      background: rgba(15,23,42,0.5);
+      color: var(--text);
+      box-sizing: border-box;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+    .ac-not-input:focus { outline: none; border-color: rgba(34,197,94,0.45); box-shadow: 0 0 0 3px rgba(34,197,94,0.1); }
+
+    /* Katalog tile'ları */
+    #acKatalogWrap .siparis-kat-grid {
+      grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+      gap: 10px;
+    }
+    #acKatalogWrap .sip-kat-kart { min-height: 100px; border-radius: 14px; padding: 10px 8px; }
+    #acKatalogWrap .sip-kat-kart .ico { font-size: 26px; margin-bottom: 2px; }
+    #acKatalogWrap .sip-kat-kart .ttl { font-size: 12px; font-weight: 800; }
+    #acKatalogWrap .sip-kat-kart .sub { font-size: 10px; }
+
+    /* Sticky top bar — "Seçimleri Onayla" büyük buton */
+    #urunAcStickyBar #acGonder {
+      min-height: 52px !important;
+      font-size: 16px !important;
+      font-weight: 800 !important;
+      padding: 10px 24px !important;
+      border-radius: 10px !important;
+      touch-action: manipulation;
+    }
+    #urunAcStickyBar .siparis-sticky-onay-panel { border-radius: 12px; }
+
+    /* Modal kasa optimizasyonu */
+    #acKatModalKart { max-width: 640px; width: 92vw; }
+    #acKatModalKart .sip-kat-modal-body { max-height: 60vh; }
+    #acKatModalKart #acKatModalTamam { height: 70px !important; font-size: 18px !important; }
+
     /* ── Tile boyutu: scroll olmadan sığacak ── */
     #svKatalogWrap .siparis-kat-grid {
       grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
@@ -3196,8 +3282,7 @@
             </div>
           </div>
         </div>
-        <div class="kart">
-          <div class="kart-baslik"><span class="ico">🔓</span> Ürün Aç <span style="font-size:11px;color:var(--muted);font-weight:400">(Depodan aktif kullanıma)</span></div>
+        <div class="kart" style="padding-top:16px">
           <div id="acForm"></div>
         </div>
       </div>
@@ -6375,6 +6460,93 @@ function stokKartState(prefix) {
   if (!stokKartUiState[prefix]) stokKartUiState[prefix] = { openKat: null, showPasif: false };
   return stokKartUiState[prefix];
 }
+/* ── Ürün Aç: per-kategori seçim sayısı ── */
+function acKatSeciliSayisi(katId) {
+  var data = _stokKatalogByPrefix.ac || [];
+  var kat = data.find(function(k) { return k.id === katId; });
+  if (!kat) return 0;
+  var count = 0;
+  (kat.items || []).forEach(function(it) {
+    var key = 'ac::' + katId + '::' + it.id;
+    var n = parseInt((stokKalemDeger.ac && stokKalemDeger.ac[key]) || 0, 10);
+    if (!isNaN(n) && n > 0) count++;
+  });
+  return count;
+}
+
+/* ── Ürün Aç: kategori kartları — badge'li ── */
+function acKatalogKartBlockHTML(data) {
+  if (!data || !data.length) return '<div class="merkez-mesaj-bos">Kategori bulunamadı.</div>';
+  var st = stokKartState('ac');
+  if (st.openKat && !data.some(function(k) { return k.id === st.openKat; })) st.openKat = null;
+  var h = '<div class="siparis-kat-grid">';
+  data.forEach(function(k, i) {
+    var p = siparisLabelParts(k.label || k.ad);
+    var attrKat = 'ac::' + escHtml(k.id);
+    var tone = ' sip-tone-' + (i % 4);
+    var secili = acKatSeciliSayisi(k.id);
+    var seciliCls = secili > 0 ? ' sv-kat-secili' : '';
+    h += '<button type="button" class="sip-kat-kart' + tone + seciliCls + (k.id === st.openKat ? ' active' : '') + '" data-stok-kat="' + attrKat + '">';
+    if (secili > 0) h += '<span class="sv-kat-badge">' + secili + '</span>';
+    h += '<span class="ico">' + p.ico + '</span>';
+    h += '<span class="ttl">' + p.ttl + '</span>';
+    h += '<span class="sub">' + siparisAktifAdet(k) + ' aktif · Dokun → liste</span>';
+    h += '</button>';
+  });
+  h += '</div>';
+  h += '<div class="siparis-detay" style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.45">Kategoriye dokunun, adet girin, Tamam deyin.</div>';
+  return h;
+}
+
+/* ── Ürün Aç: +/− butonlu modal satırları ── */
+function acStokKatalogRowsHTML(katId, rows) {
+  var h = '';
+  rows.forEach(function(it) {
+    var key = 'ac::' + katId + '::' + it.id;
+    var val = (stokKalemDeger.ac && stokKalemDeger.ac[key] != null)
+      ? parseInt(stokKalemDeger.ac[key], 10) : 0;
+    if (isNaN(val)) val = 0;
+    var doluCls = val > 0 ? ' sv-dolu' : '';
+    var rowDolu = val > 0 ? ' sv-urun-dolu' : '';
+    var safeKey = escHtml(key);
+    h += '<div class="sv-urun-row' + (it.aktif === false ? ' pasif' : '') + rowDolu + '">';
+    h += '<span class="sv-urun-ad">' + escHtml(it.ad) + '</span>';
+    h += '<button type="button" class="sv-urun-btn sv-minus" data-sv-minus="' + safeKey + '" aria-label="Azalt">−</button>';
+    h += '<input type="text" inputmode="numeric" class="sv-urun-adet' + doluCls + '" data-stok-input="' + safeKey + '" value="' + val + '" />';
+    h += '<button type="button" class="sv-urun-btn sv-plus" data-sv-plus="' + safeKey + '" aria-label="Artır">+</button>';
+    h += '</div>';
+  });
+  return h;
+}
+
+/* ── Ürün Aç: +/− tıklamalarını acForm'da yakala ── */
+function wireAcPlusMinusDelegation(formEl) {
+  if (!formEl || formEl.dataset.acPlusMinusWired === '1') return;
+  formEl.dataset.acPlusMinusWired = '1';
+  formEl.addEventListener('click', function(ev) {
+    var plusBtn  = ev.target.closest('[data-sv-plus]');
+    var minusBtn = ev.target.closest('[data-sv-minus]');
+    var key = null, delta = 0;
+    if (plusBtn  && formEl.contains(plusBtn))  { key = plusBtn.getAttribute('data-sv-plus');   delta =  1; }
+    if (minusBtn && formEl.contains(minusBtn)) { key = minusBtn.getAttribute('data-sv-minus'); delta = -1; }
+    if (!key || key.indexOf('ac::') !== 0) return;
+    if (!stokKalemDeger.ac) stokKalemDeger.ac = {};
+    var cur  = parseInt(stokKalemDeger.ac[key] || 0, 10);
+    var next = Math.max(0, (isNaN(cur) ? 0 : cur) + delta);
+    stokKalemDeger.ac[key] = next;
+    var safeKey = key.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    var inp = formEl.querySelector('[data-stok-input="' + safeKey + '"]');
+    if (inp) {
+      inp.value = String(next);
+      inp.classList.toggle('sv-dolu', next > 0);
+    }
+    var row = (plusBtn || minusBtn).closest('.sv-urun-row');
+    if (row) row.classList.toggle('sv-urun-dolu', next > 0);
+    stokSecimBilgiYenile('ac', _stokKatalogByPrefix.ac || []);
+    refreshStokKatalogUI('ac');
+  });
+}
+
 function acStokKategoriModalInnerHTML(acik) {
   var st = stokKartState('ac');
   var bas = escHtml(String(acik.label || acik.ad || 'Kategori'));
@@ -6389,16 +6561,16 @@ function acStokKategoriModalInnerHTML(acik) {
   var aktifRows = (acik.items || []).filter(function(it){ return it.aktif !== false; });
   var pasifRows = (acik.items || []).filter(function(it){ return it.aktif === false; });
   h += '<div class="sip-alt-baslik">Aktif ürünler</div>';
-  h += stokKatalogRowsHTML('ac', acik.id, aktifRows);
+  h += acStokKatalogRowsHTML(acik.id, aktifRows);
   if (!aktifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride aktif ürün yok.</div>';
   if (st.showPasif) {
     h += '<div class="sip-alt-baslik">Pasif ürünler</div>';
-    h += stokKatalogRowsHTML('ac', acik.id, pasifRows);
+    h += acStokKatalogRowsHTML(acik.id, pasifRows);
     if (!pasifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride pasif ürün yok.</div>';
   }
   h += '</div>';
   h += '<div class="sip-kat-modal-foot">';
-  h += '<button type="button" class="btn btn-primary" style="width:100%" id="acKatModalTamam">Tamam</button>';
+  h += '<button type="button" class="btn btn-primary" style="width:100%" id="acKatModalTamam">✓ Tamam</button>';
   h += '</div>';
   return h;
 }
@@ -6648,8 +6820,8 @@ function refreshStokKatalogUI(prefix) {
     }
     return;
   }
-  wrap.innerHTML = (prefix === 'sv')
-    ? svKatalogKartBlockHTML(data)
+  wrap.innerHTML = (prefix === 'sv') ? svKatalogKartBlockHTML(data)
+    : (prefix === 'ac') ? acKatalogKartBlockHTML(data)
     : stokKatalogKartBlockHTML(prefix, data);
   if (prefix === 'ac') acStokKatalogModalSync();
   if (prefix === 'sv') svStokKatalogModalSync();
@@ -7207,25 +7379,33 @@ function renderStokForms(tip) {
       el.dataset.built = '1';
       siparisLoad().then(function(katalog){
         var h = '';
-        h += '<div style="background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.2);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px;line-height:1.6;color:#86efac">';
-        h += '<strong>ℹ️ Ürün Aç — Aktif Kullanıma Al</strong><br/>';
-        h += 'Depodan bar veya aktif kullanım alanına çıkan ürünleri girin. ';
-        h += 'Bu kayıt teorik stok hesabına dahil edilir: ';
-        h += '<em>Açılış + Ürün Aç = Beklenen kapanış stoku</em>';
+        // ── Hero başlık ──────────────────────────────────────────
+        h += '<div class="ac-hero">';
+        h += '<span style="font-size:28px;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.3))">🔓</span>';
+        h += '<div><p class="ac-hero-baslik">Ürün Aç — Aktif Kullanıma Al</p>';
+        h += '<p class="ac-hero-alt">Depodan bara/sahaya çıkan ürünleri sayın · Personel+PIN üst kutuda istenir</p></div>';
         h += '</div>';
-        h += '<div class="siparis-detay" style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.45">Ürün adı ve adet <strong>aynı satırda</strong>; kategori tam ekran pencerede açılır. Seçim varken <strong>üstteki vurgulu kutuda</strong> özet görünür; personel ve PIN yalnızca <strong>Seçimleri Onayla</strong> ile açılan pencerelerde girilir (Sipariş Ver ile aynı).</div>';
+
+        // ── Katalog ──────────────────────────────────────────────
         h += '<div id="acKatalogWrap"></div>';
         h += '<div id="acKatOverlay" class="overlay sip-kat-overlay" style="display:none" aria-hidden="true">';
         h += '<div class="overlay-kart sip-kat-modal-kart" id="acKatModalKart">';
         h += '<div id="acKatModalInner"></div>';
         h += '</div></div>';
-        h += '<div id="acSecimOzet" class="siparis-detay" style="margin-top:10px;font-size:12px;color:var(--muted)">Henüz ürün seçilmedi.</div>';
-        h += '<div id="acOnayNotWrap" class="siparis-detay" style="display:none" aria-hidden="true">';
-        h += '<div style="font-size:12px;font-weight:700;margin-bottom:6px">Ürün aç notu (opsiyonel)</div>';
-        h += '<p style="font-size:11px;color:var(--muted);margin:0 0 10px;line-height:1.45"><strong>Personel ve PIN</strong> yalnızca onay penceresinde istenir. Göndermek için <strong>üstteki</strong> kutudaki <strong>Seçimleri Onayla</strong> düğmesine basın.</p>';
-        h += '<div class="form-group"><label>Not</label><input id="acNot" placeholder="Opsiyonel" /></div>';
+
+        // ── Seçim özeti ──────────────────────────────────────────
+        h += '<div id="acSecimOzet" class="ac-secim-ozet">';
+        h += '<span style="color:var(--muted);font-size:14px">Henüz ürün seçilmedi</span>';
         h += '</div>';
-        h += '<div id="acMsg" style="margin-top:8px;font-size:12px"></div>';
+
+        // ── Not (seçim yapılınca görünür) ────────────────────────
+        h += '<div id="acOnayNotWrap" style="display:none" aria-hidden="true">';
+        h += '<p class="sv-pos-label" style="margin:0 0 8px">Not <span style="font-size:10px;font-weight:500;text-transform:none;letter-spacing:0">(isteğe bağlı)</span></p>';
+        h += '<input id="acNot" class="ac-not-input" placeholder="Opsiyonel açıklama…" />';
+        h += '</div>';
+
+        // ── Mesaj ────────────────────────────────────────────────
+        h += '<div id="acMsg" style="margin-top:10px;font-size:14px"></div>';
         el.innerHTML = h;
         _stokKatalogByPrefix.ac = katalog || [];
         stokKartState('ac').openKat = null;
@@ -7520,8 +7700,17 @@ function stokSecimBilgiYenile(prefix, data) {
   var ozetEl = document.getElementById(prefix + 'SecimOzet');
   if (ozetEl) {
     if (oz.kalem > 0) {
-      ozetEl.innerHTML = '✅ <strong>' + oz.kalem + ' kalem</strong> seçildi · toplam <strong>' + oz.adet + ' adet</strong>';
-      ozetEl.style.color = '#86efac';
+      if (prefix === 'ac') {
+        ozetEl.innerHTML =
+          '<span style="font-size:28px;font-weight:900;color:#86efac;line-height:1">' + oz.kalem + '</span>' +
+          '<span style="font-size:13px;color:var(--muted)"> kalem &nbsp;·&nbsp; </span>' +
+          '<span style="font-size:22px;font-weight:900;color:#86efac;line-height:1">' + oz.adet + '</span>' +
+          '<span style="font-size:13px;color:var(--muted)"> adet aktif kullanıma alınacak</span>';
+        ozetEl.style.color = '';
+      } else {
+        ozetEl.innerHTML = '✅ <strong>' + oz.kalem + ' kalem</strong> seçildi · toplam <strong>' + oz.adet + ' adet</strong>';
+        ozetEl.style.color = '#86efac';
+      }
     } else {
       ozetEl.textContent = 'Henüz ürün seçilmedi.';
       ozetEl.style.color = 'var(--muted)';
@@ -7579,6 +7768,7 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
   if (formEl) {
     attachStokKatalogDelegatedHandlers(formEl, prefix);
     wireStokInputDelegation(formEl, prefix);
+    if (prefix === 'ac') wireAcPlusMinusDelegation(formEl);
   }
   var btn = document.getElementById(prefix + 'Gonder');
   if (!btn) return;
