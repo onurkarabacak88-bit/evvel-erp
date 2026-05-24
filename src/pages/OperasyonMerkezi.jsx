@@ -12627,6 +12627,7 @@ export default function OperasyonMerkezi() {
                         <th>Toptancı</th>
                         <th>Kalemler</th>
                         <th style={{ textAlign: 'right' }}>Adet</th>
+                        <th></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -12643,6 +12644,40 @@ export default function OperasyonMerkezi() {
                             ) : null}
                           </td>
                           <td style={{ textAlign: 'right', fontWeight: 600 }}>{Number(g.toplam_adet || 0)}</td>
+                          <td style={{ whiteSpace: 'nowrap' }}>
+                            <button className="btn btn-sm btn-secondary" style={{ fontSize: 11, padding: '3px 10px' }}
+                              onClick={() => {
+                                const kalemler = Array.isArray(g.kalemler) ? g.kalemler : [];
+                                if (!kalemler.length) { toast('Bu kayıtta kalem detayı yok.'); return; }
+                                const satirlar = kalemler.map((k, idx) =>
+                                  `<tr><td style="padding:12px 14px;font-size:18px;border-bottom:1px solid #e0e0e0">${idx + 1}. ${k.urun_ad || k.ad || '—'}</td><td style="padding:12px 16px;font-size:22px;font-weight:900;text-align:right;border-bottom:1px solid #e0e0e0">× ${k.adet || 0}</td></tr>`
+                                ).join('');
+                                const subeAd = String(g.sube_adi || '').trim() || 'Şube';
+                                const tarihStr = String(g.tarih || '').slice(0, 10);
+                                const saatStr = g.saat ? String(g.saat).slice(0, 5) : '';
+                                const notAciklama = String(g.not_aciklama || '').trim();
+                                const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${g.tedarikci_ad || 'Toptancı'} — ${subeAd}</title>
+                                  <style>*{box-sizing:border-box;margin:0;padding:0}body{background:#fff;font-family:Arial,sans-serif}@media print{@page{margin:12mm}}</style>
+                                  </head><body><div style="padding:40px 44px;max-width:640px">
+                                  <div style="border-bottom:3px solid #111;padding-bottom:16px;margin-bottom:24px">
+                                    <div style="font-size:11px;color:#888;letter-spacing:0.1em;margin-bottom:8px">TOPTANCI SİPARİŞ LİSTESİ</div>
+                                    <div style="font-size:26px;font-weight:900">${subeAd}</div>
+                                    <div style="font-size:20px;font-weight:800;margin-top:8px">▸ ${g.tedarikci_ad || '—'}</div>
+                                    <div style="font-size:13px;color:#666;margin-top:10px">📅 ${tarihStr}${saatStr ? ' · ' + saatStr : ''}</div>
+                                  </div>
+                                  <table style="width:100%;border-collapse:collapse">${satirlar}</table>
+                                  ${notAciklama ? `<div style="margin-top:24px;padding:12px 14px;background:#f5f5f5;border-radius:8px;font-size:13px;color:#555">Not: ${notAciklama}</div>` : ''}
+                                  <div style="margin-top:28px;border-top:1px solid #ccc;padding-top:12px;font-size:12px;color:#aaa">
+                                    ${kalemler.length} kalem · ${kalemler.reduce((a, k) => a + (k.adet || 0), 0)} toplam adet
+                                  </div></div>
+                                  <script>window.onload=function(){window.print()};<\/script></body></html>`;
+                                const w = window.open('', '_blank', 'width=700,height=920');
+                                if (!w) { toast('Popup engellendi.'); return; }
+                                w.document.write(html); w.document.close();
+                              }}>
+                              🖨️ Yazdır
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
