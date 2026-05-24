@@ -4162,10 +4162,15 @@ def sube_siparis_teslim_kabul(sube_id: str, body: SubeSiparisTeslimKabulBody):
             for k in body.kabul
             if str((k.yolda_id or "").strip())
         }
-        if bekleyen_ids != gonderilen_ids:
+        # Sadece DB'de olmayan yabancı ID'leri reddet; eksik veya kısmi gönderim
+        # sube_kabul_kaydet() içindeki dual-matching (ID → kalem_kodu) tarafından
+        # graceful işlenir ve gerekirse kabul_uyusmazlik kaydı açılır.
+        extra_ids = gonderilen_ids - bekleyen_ids
+        if extra_ids:
             raise HTTPException(
                 400,
-                "Tüm yoldaki kalemler için adet girmelisiniz (eksik veya fazla satır var).",
+                f"Kabul listesinde tanınmayan yolda_id var ({len(extra_ids)} adet). "
+                "Sayfayı yenileyip tekrar deneyin.",
             )
         # FIX #3: hazirlaniyor durumu iki anlama gelebiliyor:
         #   (A) Depo hazırladı, yola çıkardı ama siparis_talep henüz 'gonderildi' olmadı
