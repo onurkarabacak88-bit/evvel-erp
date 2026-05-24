@@ -4313,13 +4313,17 @@ function siparisPanelPeriyotikYenilemeAtla() {
 }
 /** Depodan Gelen sekmesinde form doldurulurken periyotik yenilemeyi atla. */
 function depoTeslimPanelPeriyotikYenilemeAtla() {
+  var root = document.getElementById('tab-depoTeslim');
+  if (!root) return false;
+  // Herhangi bir adet inputu doldurulmuşsa yenilemeyi atla — focus olmasa da korur
+  var inputs = root.querySelectorAll('.teslim-kabul-adet');
+  for (var i = 0; i < inputs.length; i++) {
+    if ((inputs[i].value || '').trim()) return true;
+  }
   var ae = document.activeElement;
-  if (ae && typeof ae.closest === 'function') {
-    var root = document.getElementById('tab-depoTeslim');
-    if (root && root.contains(ae)) {
-      var tag = (ae.tagName || '').toUpperCase();
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-    }
+  if (ae && typeof ae.closest === 'function' && root.contains(ae)) {
+    var tag = (ae.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
   }
   return false;
 }
