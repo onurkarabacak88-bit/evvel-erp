@@ -2248,6 +2248,349 @@
       cursor: pointer;
     }
     .dk-msg { margin: 0 14px 12px; font-size: 13px; }
+
+    /* ═══════════════════════════════════════════════════════════════
+       ÜRÜN TESLİM AL — Profesyonel Dokunmatik Tasarım (sv-* prefix)
+       ═══════════════════════════════════════════════════════════════ */
+    /* Hero başlık */
+    .sv-hero {
+      background: linear-gradient(135deg, #1a3557 0%, #0f2236 55%, #101c2e 100%);
+      border-radius: 14px 14px 0 0;
+      padding: 22px 20px 18px;
+      margin: -16px -16px 22px;
+      border-bottom: 1px solid rgba(59,130,246,0.28);
+      position: relative;
+      overflow: hidden;
+    }
+    .sv-hero::before {
+      content: '';
+      position: absolute;
+      top: -30%;
+      right: -8%;
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(59,130,246,0.18) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .sv-hero::after {
+      content: '';
+      position: absolute;
+      bottom: -20%;
+      left: 30%;
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .sv-hero-ico { font-size: 30px; margin-bottom: 8px; display: block; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.4)); }
+    .sv-hero-baslik { font-size: 19px; font-weight: 900; color: #f0f9ff; margin: 0 0 5px; letter-spacing: -0.3px; }
+    .sv-hero-alt { font-size: 12px; color: #93c5fd; margin: 0; line-height: 1.55; opacity: 0.9; }
+
+    /* Adım çubuğu (stepper) */
+    .sv-stepper { display: flex; gap: 5px; margin: 0 0 22px; align-items: center; }
+    .sv-step {
+      flex: 1;
+      height: 5px;
+      border-radius: 5px;
+      background: rgba(255,255,255,0.1);
+      transition: background 0.35s ease;
+    }
+    .sv-step.done { background: linear-gradient(90deg, #16a34a, #22c55e); }
+    .sv-step.active {
+      background: linear-gradient(90deg, #2563eb, #60a5fa);
+      animation: svStepPulse 1.6s ease-in-out infinite;
+    }
+    @keyframes svStepPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    /* Bölüm başlıkları */
+    .sv-bolum { margin: 0 0 22px; }
+    .sv-bolum-baslik {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin: 0 0 10px;
+    }
+    .sv-bolum-sayi {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: rgba(59,130,246,0.18);
+      border: 1.5px solid rgba(59,130,246,0.45);
+      color: #93c5fd;
+      font-size: 11px;
+      font-weight: 900;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.3s, border-color 0.3s, color 0.3s;
+    }
+    .sv-bolum-sayi.done {
+      background: rgba(34,197,94,0.2);
+      border-color: rgba(34,197,94,0.55);
+      color: #86efac;
+    }
+
+    /* Tedarikçi select — büyük dokunmatik */
+    #svTedarikci {
+      width: 100%;
+      height: 52px;
+      padding: 0 42px 0 16px;
+      font-size: 15px;
+      font-weight: 700;
+      border-radius: 12px;
+      border: 2px solid rgba(59,130,246,0.3);
+      background: rgba(15,23,42,0.65);
+      color: var(--text);
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20' fill='%236b7280'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 14px center;
+      cursor: pointer;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    #svTedarikci:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59,130,246,0.18);
+    }
+    #svTedarikci.sv-td-dolu {
+      border-color: rgba(34,197,94,0.55);
+      background-color: rgba(34,197,94,0.05);
+    }
+
+    /* Kategori kartları — sv-specific geliştirme */
+    #svKatalogWrap .siparis-kat-grid { gap: 10px; }
+    #svKatalogWrap .sip-kat-kart {
+      min-height: 90px;
+      border-radius: 14px;
+      transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.2s ease;
+      position: relative;
+      overflow: hidden;
+    }
+    #svKatalogWrap .sip-kat-kart:active { transform: scale(0.96); }
+    #svKatalogWrap .sip-kat-kart.sv-kat-secili {
+      border-color: #22c55e !important;
+      box-shadow: 0 0 0 2px rgba(34,197,94,0.3), 0 4px 18px rgba(0,0,0,0.25) !important;
+    }
+    /* Kategori seçim badge */
+    .sv-kat-badge {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      min-width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #16a34a, #22c55e);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 900;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 5px;
+      line-height: 1;
+      animation: svBadgeIn 0.2s cubic-bezier(0.34,1.56,0.64,1);
+      box-shadow: 0 2px 8px rgba(34,197,94,0.55);
+    }
+    @keyframes svBadgeIn {
+      from { transform: scale(0.4); opacity: 0; }
+      to   { transform: scale(1);   opacity: 1; }
+    }
+
+    /* Modal içi — ürün satırları +/− */
+    .sv-urun-row {
+      display: grid;
+      grid-template-columns: 1fr 48px 70px 48px;
+      gap: 6px;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      transition: background 0.15s;
+    }
+    .sv-urun-row:last-child { border-bottom: none; }
+    .sv-urun-row.sv-urun-dolu { background: rgba(34,197,94,0.05); border-radius: 8px; }
+    .sv-urun-ad {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.35;
+      padding-right: 4px;
+    }
+    .sv-urun-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 11px;
+      border: 2px solid rgba(255,255,255,0.13);
+      background: rgba(255,255,255,0.07);
+      color: var(--text);
+      font-size: 22px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s, transform 0.1s;
+      touch-action: manipulation;
+      user-select: none;
+      line-height: 1;
+    }
+    .sv-urun-btn:active { transform: scale(0.92); }
+    .sv-urun-btn.sv-plus { border-color: rgba(59,130,246,0.4); color: #93c5fd; }
+    .sv-urun-btn.sv-plus:active { background: rgba(59,130,246,0.25); border-color: #3b82f6; }
+    .sv-urun-btn.sv-minus { border-color: rgba(239,68,68,0.3); color: #fca5a5; }
+    .sv-urun-btn.sv-minus:active { background: rgba(239,68,68,0.25); border-color: #ef4444; }
+    .sv-urun-adet {
+      height: 48px;
+      border-radius: 10px;
+      border: 2px solid rgba(255,255,255,0.13);
+      background: rgba(15,23,42,0.55);
+      color: var(--text);
+      font-size: 20px;
+      font-weight: 800;
+      text-align: center;
+      width: 100%;
+      transition: border-color 0.2s, background 0.2s, color 0.2s;
+    }
+    .sv-urun-adet.sv-dolu {
+      border-color: rgba(34,197,94,0.6);
+      background: rgba(34,197,94,0.1);
+      color: #86efac;
+    }
+
+    /* Not textarea */
+    #svNot {
+      width: 100%;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.5;
+      border-radius: 12px;
+      border: 2px solid rgba(255,255,255,0.1);
+      background: rgba(15,23,42,0.5);
+      color: var(--text);
+      resize: none;
+      font-family: inherit;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      box-sizing: border-box;
+    }
+    #svNot:focus {
+      outline: none;
+      border-color: rgba(59,130,246,0.45);
+      box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+    }
+
+    /* Yapışkan onay barı — alta sabitlenir */
+    #svTeslimStickyBar {
+      position: sticky;
+      bottom: 0;
+      z-index: 55;
+      margin: 22px -16px -16px;
+    }
+    .sv-sticky {
+      background: rgba(9,14,28,0.97);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-top: 2px solid rgba(59,130,246,0.45);
+      padding: 16px 16px 18px;
+      box-shadow: 0 -6px 28px rgba(0,0,0,0.55);
+    }
+    .sv-sticky-ozet {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 14px;
+      font-weight: 700;
+      color: #e0f2fe;
+      margin: 0 0 14px;
+      line-height: 1.35;
+      min-height: 24px;
+    }
+    .sv-sticky-tag {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 3px 9px;
+      border-radius: 6px;
+      background: linear-gradient(180deg, #1d4ed8, #1e40af);
+      color: #fff;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(29,78,216,0.4);
+    }
+    .sv-sticky-pin-grid {
+      display: grid;
+      grid-template-columns: 1fr 140px;
+      gap: 10px;
+      margin: 0 0 14px;
+    }
+    .sv-sticky-pin-grid label {
+      font-size: 10px;
+      font-weight: 800;
+      color: #7dd3fc;
+      margin-bottom: 5px;
+      display: block;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .sv-sticky-pin-grid select,
+    .sv-sticky-pin-grid input {
+      width: 100%;
+      height: 50px;
+      font-size: 15px;
+      border-radius: 11px;
+      border: 2px solid rgba(125,211,252,0.35);
+      background: rgba(15,23,42,0.75);
+      color: var(--text);
+      padding: 0 12px;
+      box-sizing: border-box;
+    }
+    .sv-sticky-pin-grid input {
+      font-size: 22px;
+      letter-spacing: 0.18em;
+      text-align: center;
+      padding: 0 8px;
+    }
+    .sv-btn-gonder {
+      width: 100%;
+      height: 58px;
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      border-radius: 13px;
+      border: none;
+      background: linear-gradient(135deg, #1e40af 0%, #2563eb 50%, #3b82f6 100%);
+      color: #fff;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.12s, box-shadow 0.2s;
+      box-shadow: 0 4px 22px rgba(37,99,235,0.45);
+      touch-action: manipulation;
+    }
+    .sv-btn-gonder:hover:not(:disabled) {
+      box-shadow: 0 6px 30px rgba(37,99,235,0.65);
+      transform: translateY(-1px);
+    }
+    .sv-btn-gonder:active:not(:disabled) { transform: scale(0.985); }
+    .sv-btn-gonder:disabled {
+      opacity: 0.38;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    @media (max-width: 480px) {
+      .sv-sticky-pin-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -2484,12 +2827,7 @@
 
       <!-- Ürün Teslim Al — tedarikçi / toptancı (sade akış) -->
       <div class="sekme-icerik" id="tab-sevk">
-        <div class="kart teslim-panel-tedarikci">
-          <div class="kart-baslik"><span class="ico">📦</span> Ürün Teslim Al</div>
-          <p style="font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.5">
-            Toptancı veya tedarikçiden fiziksel olarak aldığınız ürünleri <strong>Sipariş Ver kataloğu</strong> ile sayın.
-            Onay sonrası kayıt merkeze düşer ve <strong>şube deposu stoğu</strong> artar.
-          </p>
+        <div class="kart teslim-panel-tedarikci" style="padding-top:16px">
           <div id="sevkForm"></div>
         </div>
       </div>
@@ -5833,6 +6171,84 @@ function acStokKatalogModalSync() {
     ov.setAttribute('aria-hidden', 'true');
   }
 }
+/* ── Ürün Teslim Al: +/− butonlu modal satırları ── */
+function svStokKatalogRowsHTML(prefix, katId, rows) {
+  var h = '';
+  rows.forEach(function(it) {
+    var key = prefix + '::' + katId + '::' + it.id;
+    var val = (stokKalemDeger[prefix] && stokKalemDeger[prefix][key] != null)
+      ? parseInt(stokKalemDeger[prefix][key], 10) : 0;
+    if (isNaN(val)) val = 0;
+    var doluCls = val > 0 ? ' sv-dolu' : '';
+    var rowDolu = val > 0 ? ' sv-urun-dolu' : '';
+    var safeKey = escHtml(key);
+    h += '<div class="sv-urun-row' + (it.aktif === false ? ' pasif' : '') + rowDolu + '">';
+    h += '<span class="sv-urun-ad">' + escHtml(it.ad) + '</span>';
+    h += '<button type="button" class="sv-urun-btn sv-minus" data-sv-minus="' + safeKey + '" aria-label="Azalt">−</button>';
+    h += '<input type="text" inputmode="numeric" class="sv-urun-adet' + doluCls + '" data-stok-input="' + safeKey + '" value="' + val + '" />';
+    h += '<button type="button" class="sv-urun-btn sv-plus" data-sv-plus="' + safeKey + '" aria-label="Artır">+</button>';
+    h += '</div>';
+  });
+  return h;
+}
+
+/* ── Ürün Teslim Al: kategori kartları — seçim badge'li ── */
+function svKatSeciliSayisi(katId) {
+  var data = _stokKatalogByPrefix.sv || [];
+  var kat = data.find(function(k) { return k.id === katId; });
+  if (!kat) return 0;
+  var count = 0;
+  (kat.items || []).forEach(function(it) {
+    var key = 'sv::' + katId + '::' + it.id;
+    var n = parseInt((stokKalemDeger.sv && stokKalemDeger.sv[key]) || 0, 10);
+    if (!isNaN(n) && n > 0) count++;
+  });
+  return count;
+}
+
+function svKatalogKartBlockHTML(data) {
+  if (!data || !data.length) return '<div class="merkez-mesaj-bos">Kategori bulunamadı.</div>';
+  var st = stokKartState('sv');
+  if (st.openKat && !data.some(function(k) { return k.id === st.openKat; })) st.openKat = null;
+  var h = '<div class="siparis-kat-grid">';
+  data.forEach(function(k, i) {
+    var p = siparisLabelParts(k.label || k.ad);
+    var attrKat = 'sv::' + escHtml(k.id);
+    var tone = ' sip-tone-' + (i % 4);
+    var secili = svKatSeciliSayisi(k.id);
+    var seciliCls = secili > 0 ? ' sv-kat-secili' : '';
+    h += '<button type="button" class="sip-kat-kart' + tone + seciliCls + (k.id === st.openKat ? ' active' : '') + '" data-stok-kat="' + attrKat + '">';
+    if (secili > 0) {
+      h += '<span class="sv-kat-badge">' + secili + '</span>';
+    }
+    h += '<span class="ico">' + p.ico + '</span>';
+    h += '<span class="ttl">' + p.ttl + '</span>';
+    h += '<span class="sub">' + siparisAktifAdet(k) + ' aktif ürün · Dokun → liste</span>';
+    h += '</button>';
+  });
+  h += '</div>';
+  h += '<div class="siparis-detay" style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.45">';
+  h += 'Kategoriye dokunun, ürünleri sayın ve Tamam deyin.</div>';
+  return h;
+}
+
+/* ── Stepper & tedarikçi rengi güncelleme (global, IIFE dışından da çağrılabilir) ── */
+function svStepperGuncelle(oz) {
+  var td = document.getElementById('svTedarikci');
+  var step1Done = !!(td && td.value);
+  var step2Done = oz ? (oz.kalem || 0) > 0 : false;
+
+  function setCls(id, cls) { var el = document.getElementById(id); if (el) el.className = cls; }
+  function setTxt(id, txt, cls) { var el = document.getElementById(id); if (el) { el.textContent = txt; el.className = cls; } }
+
+  setCls('svStep1', 'sv-step ' + (step1Done ? 'done' : 'active'));
+  setCls('svStep2', 'sv-step ' + (step2Done ? 'done' : (step1Done ? 'active' : '')));
+  setCls('svStep3', 'sv-step ' + (step1Done && step2Done ? 'active' : ''));
+  setTxt('svSayi1', step1Done ? '✓' : '1', 'sv-bolum-sayi' + (step1Done ? ' done' : ''));
+  setTxt('svSayi2', step2Done ? '✓' : '2', 'sv-bolum-sayi' + (step2Done ? ' done' : ''));
+  if (td) td.classList.toggle('sv-td-dolu', step1Done);
+}
+
 function svStokKategoriModalInnerHTML(acik) {
   var st = stokKartState('sv');
   var bas = escHtml(String(acik.label || acik.ad || 'Kategori'));
@@ -5847,16 +6263,16 @@ function svStokKategoriModalInnerHTML(acik) {
   var aktifRows = (acik.items || []).filter(function(it){ return it.aktif !== false; });
   var pasifRows = (acik.items || []).filter(function(it){ return it.aktif === false; });
   h += '<div class="sip-alt-baslik">Aktif ürünler</div>';
-  h += stokKatalogRowsHTML('sv', acik.id, aktifRows);
+  h += svStokKatalogRowsHTML('sv', acik.id, aktifRows);
   if (!aktifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride aktif ürün yok.</div>';
   if (st.showPasif) {
     h += '<div class="sip-alt-baslik">Pasif ürünler</div>';
-    h += stokKatalogRowsHTML('sv', acik.id, pasifRows);
+    h += svStokKatalogRowsHTML('sv', acik.id, pasifRows);
     if (!pasifRows.length) h += '<div class="merkez-mesaj-bos">Bu kategoride pasif ürün yok.</div>';
   }
   h += '</div>';
   h += '<div class="sip-kat-modal-foot">';
-  h += '<button type="button" class="btn btn-primary" style="width:100%" id="svKatModalTamam">Tamam</button>';
+  h += '<button type="button" class="btn btn-primary" style="width:100%;height:52px;font-size:15px" id="svKatModalTamam">✓ Tamam</button>';
   h += '</div>';
   return h;
 }
@@ -5958,7 +6374,9 @@ function refreshStokKatalogUI(prefix) {
     }
     return;
   }
-  wrap.innerHTML = stokKatalogKartBlockHTML(prefix, data);
+  wrap.innerHTML = (prefix === 'sv')
+    ? svKatalogKartBlockHTML(data)
+    : stokKatalogKartBlockHTML(prefix, data);
   if (prefix === 'ac') acStokKatalogModalSync();
   if (prefix === 'sv') svStokKatalogModalSync();
 }
@@ -6163,24 +6581,65 @@ var UrunTeslimAl = (function () {
   function buildFormHTML() {
     var h = '';
     h += '<div class="urun-teslim-al-form">';
-    h += tedarikciSelectHTML('svTedarikci');
-    h += '<div id="svKatalogContainer">';
-    h += '<div id="svKatalogHeader" style="margin:14px 0 4px;font-size:13px;font-weight:800;color:var(--text)">Gelen ürünler</div>';
-    h += '<p id="svKatalogHelp" style="font-size:11px;color:var(--muted);margin:0 0 8px;line-height:1.45">Kategoriye dokunun, gelen adedi girin.</p>';
+
+    // ── Hero başlık ──────────────────────────────────────────────────────
+    h += '<div class="sv-hero">';
+    h += '<span class="sv-hero-ico">📦</span>';
+    h += '<p class="sv-hero-baslik">Ürün Teslim Al</p>';
+    h += '<p class="sv-hero-alt">Toptancı veya tedarikçiden gelen ürünleri sayın ve kaydedin.</p>';
+    h += '</div>';
+
+    // ── Adım çubuğu ──────────────────────────────────────────────────────
+    h += '<div class="sv-stepper">';
+    h += '<div class="sv-step active" id="svStep1"></div>';
+    h += '<div class="sv-step" id="svStep2"></div>';
+    h += '<div class="sv-step" id="svStep3"></div>';
+    h += '</div>';
+
+    // ── Adım 1: Tedarikçi ────────────────────────────────────────────────
+    h += '<div class="sv-bolum">';
+    h += '<div class="sv-bolum-baslik"><span class="sv-bolum-sayi" id="svSayi1">1</span> Tedarikçi</div>';
+    var tdOpts = '<option value="">— Tedarikçi seçin —</option>';
+    (_tedarikciler || []).forEach(function(t) {
+      tdOpts += '<option value="' + escHtml(t.id || '') + '">' + escHtml(t.ad) + (t.kategori ? ' · ' + escHtml(t.kategori) : '') + '</option>';
+    });
+    h += '<select id="svTedarikci">' + tdOpts + '</select>';
+    h += '</div>';
+
+    // ── Adım 2: Ürünler ──────────────────────────────────────────────────
+    h += '<div class="sv-bolum">';
+    h += '<div class="sv-bolum-baslik"><span class="sv-bolum-sayi" id="svSayi2">2</span> Gelen ürünler</div>';
+    h += '<p style="font-size:11px;color:var(--muted);margin:0 0 10px;line-height:1.5">Kategoriye dokunun → tam ekran listeden adet girin.</p>';
     h += '<div id="svKatalogWrap"></div>';
     h += '</div>';
-    h += '<div id="svSecimOzet" class="siparis-detay" style="margin:12px 0;padding:10px 12px;font-size:13px;color:var(--muted)">Henüz ürün seçilmedi.</div>';
-    h += '<div class="form-group"><label>Not (isteğe bağlı)</label><textarea id="svNot" rows="2" placeholder="Örn: Sabah sevkiyatı, irsaliye no…"></textarea></div>';
-    h += '<div class="sv-toptanci-pin-grid" style="margin-top:12px">';
-    h += '<div class="form-group" style="margin:0"><label>Personel *</label><select id="svPers"></select></div>';
-    h += '<div class="form-group" style="margin:0"><label>PIN *</label><input id="svPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>';
+
+    // ── Adım 3: Not ──────────────────────────────────────────────────────
+    h += '<div class="sv-bolum">';
+    h += '<div class="sv-bolum-baslik"><span class="sv-bolum-sayi" id="svSayi3">3</span>';
+    h += ' Not <span style="font-size:10px;font-weight:600;color:var(--muted);text-transform:none;letter-spacing:0">(isteğe bağlı)</span>';
     h += '</div>';
-    h += '<button type="button" class="btn btn-primary" id="svGonder" style="margin-top:14px;width:100%;max-width:420px">Teslim Al ve Kaydet</button>';
-    h += '<div id="svMsg" style="margin-top:10px;font-size:13px"></div>';
+    h += '<textarea id="svNot" rows="2" placeholder="Örn: Sabah sevkiyatı, irsaliye no…"></textarea>';
+    h += '</div>';
+
+    // ── Yapışkan onay barı ───────────────────────────────────────────────
+    h += '<div id="svTeslimStickyBar"><div class="sv-sticky">';
+    h += '<div class="sv-sticky-ozet" id="svSecimOzet">';
+    h += '<span style="color:var(--muted)">Henüz ürün seçilmedi — katalogdan adet girin</span>';
+    h += '</div>';
+    h += '<div class="sv-sticky-pin-grid">';
+    h += '<div><label>Personel *</label><select id="svPers"></select></div>';
+    h += '<div><label>PIN *</label><input id="svPin" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>';
+    h += '</div>';
+    h += '<button type="button" class="sv-btn-gonder" id="svGonder" disabled>📦 Teslim Al ve Kaydet</button>';
+    h += '<div id="svMsg" style="margin-top:12px;font-size:13px"></div>';
+    h += '</div></div>';
+
+    // ── Katalog modal overlay ────────────────────────────────────────────
     h += '<div id="svKatOverlay" class="overlay sip-kat-overlay" style="display:none" aria-hidden="true">';
     h += '<div class="overlay-kart sip-kat-modal-kart" id="svKatModalKart">';
     h += '<div id="svKatModalInner"></div>';
     h += '</div></div>';
+
     h += '</div>';
     return h;
   }
@@ -6245,26 +6704,25 @@ var UrunTeslimAl = (function () {
     if (ozetEl) {
       if ((oz.kalem || 0) > 0) {
         ozetEl.innerHTML =
-          '✅ <strong>' +
-          oz.kalem +
-          ' kalem</strong> · toplam <strong>' +
-          oz.adet +
-          ' adet</strong>';
+          '<span class="sv-sticky-tag">Seçim</span>' +
+          ' <strong>' + oz.kalem + ' kalem</strong>' +
+          ' · toplam <strong>' + oz.adet + ' adet</strong>';
         ozetEl.style.color = '#86efac';
       } else {
-        ozetEl.textContent = 'Katalogdan gelen ürünleri seçin.';
-        ozetEl.style.color = 'var(--muted)';
+        ozetEl.innerHTML = '<span style="color:var(--muted)">Henüz ürün seçilmedi — katalogdan adet girin</span>';
+        ozetEl.style.color = '';
       }
     }
     var btn = document.getElementById('svGonder');
     if (btn) {
       var canSubmit = oz.kalem > 0;
       btn.disabled = !canSubmit;
-      btn.style.opacity = canSubmit ? '1' : '0.65';
       btn.title = !canSubmit
         ? 'Katalogdan en az bir üründe adet girin'
         : 'Tedarikçi, personel ve PIN ile kaydedin';
     }
+    // Stepper + tedarikçi rengi
+    if (typeof svStepperGuncelle === 'function') svStepperGuncelle(oz);
   }
 
   function wireKatalogHandlers() {
@@ -6273,8 +6731,44 @@ var UrunTeslimAl = (function () {
     el.dataset.urunTeslimKatWired = '1';
     attachStokKatalogDelegatedHandlers(el, PREFIX);
     wireStokInputDelegation(el, PREFIX);
-    el.addEventListener('input', updateSecimUI);
-    el.addEventListener('change', updateSecimUI);
+
+    // Input: özet + kategori badge'lerini güncelle
+    el.addEventListener('input', function(ev) {
+      var inp = ev.target;
+      if (inp && inp.getAttribute && inp.getAttribute('data-stok-input')) {
+        var v = parseInt(inp.value || 0, 10);
+        inp.classList.toggle('sv-dolu', !isNaN(v) && v > 0);
+      }
+      updateSecimUI();
+      refreshStokKatalogUI(PREFIX);
+    });
+    el.addEventListener('change', function() { updateSecimUI(); });
+
+    // +/− buton delegasyonu (modal içi)
+    el.addEventListener('click', function(ev) {
+      var plusBtn = ev.target.closest('[data-sv-plus]');
+      var minusBtn = ev.target.closest('[data-sv-minus]');
+      var key = null, delta = 0;
+      if (plusBtn && el.contains(plusBtn))  { key = plusBtn.getAttribute('data-sv-plus');  delta =  1; }
+      if (minusBtn && el.contains(minusBtn)) { key = minusBtn.getAttribute('data-sv-minus'); delta = -1; }
+      if (!key) return;
+      if (!stokKalemDeger[PREFIX]) stokKalemDeger[PREFIX] = {};
+      var cur  = parseInt(stokKalemDeger[PREFIX][key] || 0, 10);
+      var next = Math.max(0, (isNaN(cur) ? 0 : cur) + delta);
+      stokKalemDeger[PREFIX][key] = next;
+      // Input'u bul ve güncelle
+      var safeKey = key.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      var inp = el.querySelector('[data-stok-input="' + safeKey + '"]');
+      if (inp) {
+        inp.value = String(next);
+        inp.classList.toggle('sv-dolu', next > 0);
+      }
+      // Satır rengini güncelle
+      var row = (plusBtn || minusBtn).closest('.sv-urun-row');
+      if (row) row.classList.toggle('sv-urun-dolu', next > 0);
+      updateSecimUI();
+      refreshStokKatalogUI(PREFIX);
+    });
   }
 
   function wireSubmit() {
