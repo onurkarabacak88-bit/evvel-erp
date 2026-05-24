@@ -193,11 +193,11 @@ def kontrol_gunluk_gider_limit(cur, sube_id: str) -> List[dict]:
         SELECT kategori, SUM(tutar) AS toplam, COUNT(*) AS adet
         FROM anlik_giderler
         WHERE sube = %s
-          AND tarih = CURRENT_DATE
+          AND tarih = %s
           AND durum IN ('aktif', 'onay_bekliyor')
         GROUP BY kategori
         """,
-        (sube_id,),
+        (sube_id, is_gunu_tr()),
     )
     kat_map = {r["kategori"]: float(r["toplam"]) for r in cur.fetchall()}
     gunluk_toplam = sum(kat_map.values())

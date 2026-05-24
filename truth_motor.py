@@ -1196,8 +1196,8 @@ def motor_calistir(cur, sube_id: str, tarih: str,
             "UPDATE truth_motor_ayar SET son_calisma=NOW() WHERE sube_id=%s",
             (sube_id,),
         )
-    except Exception:
-        pass
+    except Exception as _e:
+        log.warning("truth_motor_ayar güncelleme başarısız sube=%s: %s", sube_id, _e)
 
     log.info("truth_motor sube=%s tarih=%s mod=%s kaydedildi=%d",
              sube_id, tarih, mod, kaydedildi)
@@ -2539,8 +2539,8 @@ def vardiya_bazli_uzlasma(cur, sube_id: str, tarih: str,
             if evvel_lower and (evvel_lower in elow or elow in evvel_lower):
                 evo_sube_id = eid
                 break
-    except Exception:
-        pass
+    except Exception as _e:
+        log.warning("evo_sync import veya şube eşleştirme başarısız sube=%s: %s", sube_id, _e)
 
     # 3. Tüm günün Evo satışlarını saatli al (vardiyaya bölümlemek için)
     # evo_dahil=False ise atla (pattern detection'da batch için)
@@ -8050,8 +8050,8 @@ def olay_ozeti_uret(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     sprint_g: Dict[str, Any] = {}
     try:
         sprint_g = aksam_kasa_sisirme_tespit(cur, sube_id, tarih)
-    except Exception:
-        pass
+    except Exception as _e:
+        log.warning("Sprint G (kasa şişirme) başarısız sube=%s tarih=%s: %s", sube_id, tarih, _e)
 
     if sprint_g.get("tani") == "AKSAM_KASAYI_SISIRDI":
         alarm = "kritik"
@@ -8073,8 +8073,8 @@ def olay_ozeti_uret(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     sprint_j: Dict[str, Any] = {}
     try:
         sprint_j = aksam_bardak_sisirme_tespit(cur, sube_id, tarih)
-    except Exception:
-        pass
+    except Exception as _e:
+        log.warning("Sprint J (bardak şişirme) başarısız sube=%s tarih=%s: %s", sube_id, tarih, _e)
 
     if sprint_j.get("tani") == "AKSAM_BARDAK_SISIRDI":
         if alarm != "kritik":
@@ -8096,8 +8096,8 @@ def olay_ozeti_uret(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     sprint_h: Dict[str, Any] = {}
     try:
         sprint_h = aksam_vardiya_bardak_pnl(cur, sube_id, tarih)
-    except Exception:
-        pass
+    except Exception as _e:
+        log.warning("Sprint H (vardiya bardak P&L) başarısız sube=%s tarih=%s: %s", sube_id, tarih, _e)
 
     if sprint_h.get("tani") == "AKSAM_VARDIYA_BARDAK_ACIK":
         if alarm not in ("kritik",):
@@ -8118,8 +8118,8 @@ def olay_ozeti_uret(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     sprint_i: Dict[str, Any] = {}
     try:
         sprint_i = kucuk_tutar_birikim_tespit(cur, sube_id, gun=30)
-    except Exception:
-        pass
+    except Exception as _e:
+        log.warning("Sprint I (küçük tutar birikim) başarısız sube=%s tarih=%s: %s", sube_id, tarih, _e)
 
     riskli_i = sprint_i.get("riskli_personeller") or []
     if riskli_i:
