@@ -3697,6 +3697,12 @@ def _siparis_akisi_talep_satir_isle(d: Dict[str, Any]) -> Dict[str, Any]:
         d["sevkiyat_ts"] = str(d["sevkiyat_ts"])
     if d.get("depo_sevkiyat_rapor_ts"):
         d["depo_sevkiyat_rapor_ts"] = str(d["depo_sevkiyat_rapor_ts"])
+    if d.get("tahsis_ts"):
+        d["tahsis_ts"] = str(d["tahsis_ts"])
+    # DB → frontend normalizasyonu: TAHSIS_TAM → tam, TAHSIS_KISMI → kismi, TAHSIS_YOK → yok
+    td = str(d.get("tahsis_durum") or "").strip()
+    if td:
+        d["tahsis_durum"] = td.replace("TAHSIS_", "").lower()
     oid = str(d.get("id") or "")
     km_raw = d.get("kalemler")
     kd_raw = d.get("kalem_durumlari")
@@ -3896,7 +3902,10 @@ def sube_siparis_akisi(
                    t.depo_sevkiyat_rapor_metni,
                    t.depo_sevkiyat_rapor_ts,
                    t.depo_sevkiyat_rapor_uyari,
-                   NULLIF(TRIM(t.operasyon_yonlendirme_talimati), '') AS operasyon_yonlendirme_talimati
+                   NULLIF(TRIM(t.operasyon_yonlendirme_talimati), '') AS operasyon_yonlendirme_talimati,
+                   t.tahsis_durum,
+                   t.tahsis_ts,
+                   t.tahsis_yapan_ad
             FROM siparis_talep t
             LEFT JOIN subeler hd ON hd.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
             WHERE t.sube_id=%s
@@ -3936,7 +3945,10 @@ def sube_siparis_akisi(
                        t.depo_sevkiyat_rapor_metni,
                        t.depo_sevkiyat_rapor_ts,
                        t.depo_sevkiyat_rapor_uyari,
-                       NULLIF(TRIM(t.operasyon_yonlendirme_talimati), '') AS operasyon_yonlendirme_talimati
+                       NULLIF(TRIM(t.operasyon_yonlendirme_talimati), '') AS operasyon_yonlendirme_talimati,
+                       t.tahsis_durum,
+                       t.tahsis_ts,
+                       t.tahsis_yapan_ad
                 FROM siparis_talep t
                 LEFT JOIN subeler hd ON hd.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
                 WHERE t.sube_id=%s AND t.id = ANY(%s)
