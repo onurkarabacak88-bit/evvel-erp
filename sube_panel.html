@@ -2591,6 +2591,187 @@
     @media (max-width: 480px) {
       .sv-sticky-pin-grid { grid-template-columns: 1fr; }
     }
+
+    /* ═══════════════════════════════════════════════════════════════
+       POS KASA EKRANI KATMANI — sol katalog / sağ sabit onay paneli
+       15-21" dokunmatik monitör: 64-80px tap hedefleri, 16px+ font
+       ═══════════════════════════════════════════════════════════════ */
+    .urun-teslim-al-form { display: flex; flex-direction: column; }
+
+    /* Hero — yatay dar şerit */
+    .sv-hero {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 20px;
+      margin-bottom: 0;
+      border-radius: 14px 14px 0 0;
+    }
+    .sv-hero-ico { font-size: 34px; margin: 0; }
+    .sv-hero-baslik { font-size: 22px; }
+    .sv-hero-alt { font-size: 13px; }
+
+    /* İki kolon gövde */
+    .sv-pos-body {
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      flex: 1;
+      gap: 0;
+    }
+
+    /* Sol: katalog tile'ları */
+    .sv-pos-sol {
+      padding: 18px 16px 18px 0;
+      border-right: 1px solid rgba(255,255,255,0.07);
+      overflow-y: auto;
+    }
+
+    /* Sağ: sabit onay paneli */
+    .sv-pos-sag {
+      padding: 18px 0 18px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      position: sticky;
+      top: 0;
+      align-self: start;
+    }
+
+    .sv-pos-label {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin: 0 0 7px;
+    }
+
+    /* Sağ panel: select büyük */
+    .sv-pos-sag select {
+      width: 100%;
+      height: 58px;
+      font-size: 16px;
+      font-weight: 700;
+      border-radius: 12px;
+      border: 2px solid rgba(255,255,255,0.12);
+      background: rgba(15,23,42,0.7);
+      color: var(--text);
+      padding: 0 14px;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20' fill='%236b7280'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      box-sizing: border-box;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .sv-pos-sag select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.18); }
+    #svTedarikci.sv-td-dolu { border-color: rgba(34,197,94,0.55) !important; background-color: rgba(34,197,94,0.05) !important; }
+
+    /* Özet kutusu */
+    .sv-pos-ozet {
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.09);
+      font-size: 15px;
+      font-weight: 700;
+      min-height: 52px;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    /* Not textarea */
+    .sv-pos-sag textarea {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 14px;
+      line-height: 1.5;
+      border-radius: 10px;
+      border: 2px solid rgba(255,255,255,0.1);
+      background: rgba(15,23,42,0.5);
+      color: var(--text);
+      resize: none;
+      font-family: inherit;
+      box-sizing: border-box;
+      transition: border-color 0.2s;
+    }
+    .sv-pos-sag textarea:focus { outline: none; border-color: rgba(59,130,246,0.45); }
+
+    /* PIN input */
+    .sv-pos-pin {
+      width: 100%;
+      height: 62px;
+      font-size: 28px;
+      letter-spacing: 0.2em;
+      text-align: center;
+      border-radius: 12px;
+      border: 2px solid rgba(125,211,252,0.35);
+      background: rgba(15,23,42,0.7);
+      color: var(--text);
+      box-sizing: border-box;
+      margin-top: 8px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .sv-pos-pin:focus { outline: none; border-color: #7dd3fc; box-shadow: 0 0 0 3px rgba(125,211,252,0.15); }
+
+    /* Ana gönder butonu — kasa büyük */
+    .sv-pos-btn-gonder {
+      width: 100%;
+      height: 72px;
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: 0.02em;
+      border-radius: 14px;
+      border: none;
+      background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 55%, #3b82f6 100%);
+      color: #fff;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.12s, box-shadow 0.2s;
+      box-shadow: 0 5px 26px rgba(37,99,235,0.5);
+      touch-action: manipulation;
+      margin-top: auto;
+    }
+    .sv-pos-btn-gonder:hover:not(:disabled) { box-shadow: 0 8px 34px rgba(37,99,235,0.7); transform: translateY(-2px); }
+    .sv-pos-btn-gonder:active:not(:disabled) { transform: scale(0.985); }
+    .sv-pos-btn-gonder:disabled { opacity: 0.32; cursor: not-allowed; box-shadow: none; transform: none; }
+
+    /* Kategori kartları — kasa büyük tile */
+    #svKatalogWrap .siparis-kat-grid {
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 12px;
+    }
+    #svKatalogWrap .sip-kat-kart {
+      min-height: 140px;
+      border-radius: 18px;
+    }
+    #svKatalogWrap .sip-kat-kart .ico { font-size: 34px; margin-bottom: 4px; }
+    #svKatalogWrap .sip-kat-kart .ttl { font-size: 14px; font-weight: 800; line-height: 1.25; }
+    #svKatalogWrap .sip-kat-kart .sub { font-size: 11px; }
+
+    /* Modal ürün satırları — kasa büyük +/− */
+    .sv-urun-row { grid-template-columns: 1fr 72px 90px 72px; gap: 8px; padding: 12px 0; }
+    .sv-urun-ad { font-size: 16px; }
+    .sv-urun-btn { width: 72px; height: 72px; font-size: 28px; border-radius: 14px; }
+    .sv-urun-adet { height: 72px; font-size: 32px; font-weight: 900; }
+
+    /* Modal kasa optimizasyonu — daha geniş, daha yüksek buton */
+    #svKatModalKart { max-width: 640px; width: 92vw; }
+    #svKatModalKart .sip-kat-modal-body { max-height: 60vh; }
+    #svKatModalKart #svKatModalTamam { height: 70px !important; font-size: 18px !important; }
+
+    /* Küçük ekran fallback (tablet / telefon) */
+    @media (max-width: 680px) {
+      .sv-pos-body { grid-template-columns: 1fr; }
+      .sv-pos-sol { border-right: none; padding-right: 0; border-bottom: 1px solid rgba(255,255,255,0.07); padding-bottom: 16px; margin-bottom: 4px; }
+      .sv-pos-sag { padding-left: 0; position: static; }
+      #svKatalogWrap .siparis-kat-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+      #svKatalogWrap .sip-kat-kart { min-height: 100px; }
+      .sv-urun-row { grid-template-columns: 1fr 56px 72px 56px; }
+      .sv-urun-btn { width: 56px; height: 56px; font-size: 22px; }
+      .sv-urun-adet { height: 56px; font-size: 24px; }
+    }
   </style>
 </head>
 <body>
@@ -6582,23 +6763,32 @@ var UrunTeslimAl = (function () {
     var h = '';
     h += '<div class="urun-teslim-al-form">';
 
-    // ── Hero başlık ──────────────────────────────────────────────────────
+    // ── Hero başlık (tam genişlik, yatay) ─────────────────────────────────
     h += '<div class="sv-hero">';
     h += '<span class="sv-hero-ico">📦</span>';
-    h += '<p class="sv-hero-baslik">Ürün Teslim Al</p>';
-    h += '<p class="sv-hero-alt">Toptancı veya tedarikçiden gelen ürünleri sayın ve kaydedin.</p>';
+    h += '<div><p class="sv-hero-baslik">Ürün Teslim Al</p>';
+    h += '<p class="sv-hero-alt">Toptancı / tedarikçiden gelen ürünleri sayın ve kaydedin</p></div>';
     h += '</div>';
 
-    // ── Adım çubuğu ──────────────────────────────────────────────────────
-    h += '<div class="sv-stepper">';
+    // ── İki kolon gövde ───────────────────────────────────────────────────
+    h += '<div class="sv-pos-body">';
+
+    // SOL: Adım çubuğu + ürün katalog tile'ları
+    h += '<div class="sv-pos-sol">';
+    h += '<div class="sv-stepper" style="margin-bottom:16px">';
     h += '<div class="sv-step active" id="svStep1"></div>';
     h += '<div class="sv-step" id="svStep2"></div>';
-    h += '<div class="sv-step" id="svStep3"></div>';
     h += '</div>';
+    h += '<p class="sv-pos-label" style="margin-bottom:12px">📋 Gelen ürünler — kategoriye dokun</p>';
+    h += '<div id="svKatalogWrap"></div>';
+    h += '</div>'; // sv-pos-sol
 
-    // ── Adım 1: Tedarikçi ────────────────────────────────────────────────
-    h += '<div class="sv-bolum">';
-    h += '<div class="sv-bolum-baslik"><span class="sv-bolum-sayi" id="svSayi1">1</span> Tedarikçi</div>';
+    // SAĞ: Sabit onay paneli
+    h += '<div class="sv-pos-sag">';
+
+    // 1. Tedarikçi
+    h += '<div>';
+    h += '<p class="sv-pos-label"><span class="sv-bolum-sayi" id="svSayi1">1</span> &nbsp;Tedarikçi</p>';
     var tdOpts = '<option value="">— Tedarikçi seçin —</option>';
     (_tedarikciler || []).forEach(function(t) {
       tdOpts += '<option value="' + escHtml(t.id || '') + '">' + escHtml(t.ad) + (t.kategori ? ' · ' + escHtml(t.kategori) : '') + '</option>';
@@ -6606,41 +6796,38 @@ var UrunTeslimAl = (function () {
     h += '<select id="svTedarikci">' + tdOpts + '</select>';
     h += '</div>';
 
-    // ── Adım 2: Ürünler ──────────────────────────────────────────────────
-    h += '<div class="sv-bolum">';
-    h += '<div class="sv-bolum-baslik"><span class="sv-bolum-sayi" id="svSayi2">2</span> Gelen ürünler</div>';
-    h += '<p style="font-size:11px;color:var(--muted);margin:0 0 10px;line-height:1.5">Kategoriye dokunun → tam ekran listeden adet girin.</p>';
-    h += '<div id="svKatalogWrap"></div>';
+    // Seçim özeti
+    h += '<div class="sv-pos-ozet" id="svSecimOzet">';
+    h += '<span style="color:var(--muted);font-size:14px">Henüz ürün seçilmedi</span>';
     h += '</div>';
 
-    // ── Adım 3: Not ──────────────────────────────────────────────────────
-    h += '<div class="sv-bolum">';
-    h += '<div class="sv-bolum-baslik"><span class="sv-bolum-sayi" id="svSayi3">3</span>';
-    h += ' Not <span style="font-size:10px;font-weight:600;color:var(--muted);text-transform:none;letter-spacing:0">(isteğe bağlı)</span>';
-    h += '</div>';
-    h += '<textarea id="svNot" rows="2" placeholder="Örn: Sabah sevkiyatı, irsaliye no…"></textarea>';
+    // Not
+    h += '<div>';
+    h += '<p class="sv-pos-label">Not <span style="font-size:10px;font-weight:500;text-transform:none;letter-spacing:0">(isteğe bağlı)</span></p>';
+    h += '<textarea id="svNot" rows="2" placeholder="İrsaliye no, özel not…"></textarea>';
     h += '</div>';
 
-    // ── Yapışkan onay barı ───────────────────────────────────────────────
-    h += '<div id="svTeslimStickyBar"><div class="sv-sticky">';
-    h += '<div class="sv-sticky-ozet" id="svSecimOzet">';
-    h += '<span style="color:var(--muted)">Henüz ürün seçilmedi — katalogdan adet girin</span>';
+    // 2. Personel + PIN
+    h += '<div>';
+    h += '<p class="sv-pos-label"><span class="sv-bolum-sayi" id="svSayi2">2</span> &nbsp;Personel</p>';
+    h += '<select id="svPers"></select>';
+    h += '<input id="svPin" class="sv-pos-pin" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="• • • •" />';
     h += '</div>';
-    h += '<div class="sv-sticky-pin-grid">';
-    h += '<div><label>Personel *</label><select id="svPers"></select></div>';
-    h += '<div><label>PIN *</label><input id="svPin" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>';
-    h += '</div>';
-    h += '<button type="button" class="sv-btn-gonder" id="svGonder" disabled>📦 Teslim Al ve Kaydet</button>';
-    h += '<div id="svMsg" style="margin-top:12px;font-size:13px"></div>';
-    h += '</div></div>';
 
-    // ── Katalog modal overlay ────────────────────────────────────────────
+    // Gönder
+    h += '<button type="button" class="sv-pos-btn-gonder" id="svGonder" disabled>📦 Teslim Al ve Kaydet</button>';
+    h += '<div id="svMsg" style="font-size:14px;text-align:center;min-height:20px"></div>';
+
+    h += '</div>'; // sv-pos-sag
+    h += '</div>'; // sv-pos-body
+
+    // Katalog modal overlay
     h += '<div id="svKatOverlay" class="overlay sip-kat-overlay" style="display:none" aria-hidden="true">';
     h += '<div class="overlay-kart sip-kat-modal-kart" id="svKatModalKart">';
     h += '<div id="svKatModalInner"></div>';
     h += '</div></div>';
 
-    h += '</div>';
+    h += '</div>'; // urun-teslim-al-form
     return h;
   }
 
@@ -6704,13 +6891,12 @@ var UrunTeslimAl = (function () {
     if (ozetEl) {
       if ((oz.kalem || 0) > 0) {
         ozetEl.innerHTML =
-          '<span class="sv-sticky-tag">Seçim</span>' +
-          ' <strong>' + oz.kalem + ' kalem</strong>' +
-          ' · toplam <strong>' + oz.adet + ' adet</strong>';
-        ozetEl.style.color = '#86efac';
+          '<span style="font-size:28px;font-weight:900;color:#86efac;line-height:1">' + oz.kalem + '</span>' +
+          '<span style="font-size:13px;color:var(--muted)"> kalem &nbsp;·&nbsp; </span>' +
+          '<span style="font-size:22px;font-weight:900;color:#86efac;line-height:1">' + oz.adet + '</span>' +
+          '<span style="font-size:13px;color:var(--muted)"> adet</span>';
       } else {
-        ozetEl.innerHTML = '<span style="color:var(--muted)">Henüz ürün seçilmedi — katalogdan adet girin</span>';
-        ozetEl.style.color = '';
+        ozetEl.innerHTML = '<span style="color:var(--muted);font-size:14px">Henüz ürün seçilmedi</span>';
       }
     }
     var btn = document.getElementById('svGonder');
