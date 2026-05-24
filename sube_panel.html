@@ -2977,7 +2977,11 @@ function depoTeslimPaketleriSenkronize(akis, opts) {
   solDepoTeslimRozetGuncelle(akis || siparisAkisCache);
   var depoSekmeAcik = aktifSolSekme === 'depoTeslim' || aktifAltSekme === 'depoTeslim';
   if (opts.renderSection !== false && depoSekmeAcik) {
-    renderDepoKabulSection();
+    // renderSection===true (sekme geçişi): zorla yenile
+    // renderSection===undefined (arka plan güncelleme): form dolduruluyorsa atla
+    if (opts.renderSection === true || !depoTeslimPanelPeriyotikYenilemeAtla()) {
+      renderDepoKabulSection();
+    }
   }
 }
 
