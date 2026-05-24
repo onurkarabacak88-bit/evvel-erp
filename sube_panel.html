@@ -2098,6 +2098,156 @@
       border-left: 4px solid var(--tedarikci);
       background: linear-gradient(95deg, rgba(249, 115, 22, 0.05), var(--bg1) 35%);
     }
+
+    /* ── DEPO KABUL — dokunmatik yeniden tasarım ─────────────────────────── */
+    .dk-kart {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      margin-bottom: 16px;
+      background: var(--bg2);
+    }
+    .dk-kart-baslik {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 13px 16px;
+      background: linear-gradient(135deg, rgba(139,92,246,.18), var(--bg2));
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .dk-kart-baslik-alt {
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 400;
+      margin-top: 2px;
+    }
+    .dk-kalemler {
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .dk-kalem {
+      background: var(--bg1);
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 12px 10px;
+      transition: border-color .15s;
+    }
+    .dk-kalem.dk-dolu { border-color: #22c55e; }
+    .dk-kalem-ad {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 10px;
+      line-height: 1.3;
+    }
+    .dk-adet-wrap {
+      display: grid;
+      grid-template-columns: 52px 1fr 52px;
+      gap: 6px;
+      align-items: center;
+    }
+    .dk-adet-btn {
+      height: 52px;
+      font-size: 26px;
+      font-weight: 700;
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg2);
+      color: var(--text2);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+      transition: background .1s;
+    }
+    .dk-adet-btn:active { background: var(--bg3, #374151); }
+    .dk-adet {
+      height: 52px;
+      font-size: 24px;
+      font-weight: 700;
+      text-align: center;
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg2);
+      color: var(--text);
+      width: 100%;
+      min-width: 0;
+      transition: border-color .15s, color .15s;
+    }
+    .dk-adet:focus { outline: none; border-color: #818cf8; }
+    .dk-adet.dk-dolu { border-color: #22c55e; color: #4ade80; }
+    .dk-progress-wrap {
+      padding: 10px 14px 12px;
+      border-top: 1px solid var(--border);
+    }
+    .dk-progress-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 5px;
+    }
+    .dk-progress-bg {
+      height: 6px;
+      background: var(--bg1);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .dk-progress-fill {
+      height: 100%;
+      background: #22c55e;
+      border-radius: 3px;
+      transition: width .25s ease;
+    }
+    .dk-kimlik {
+      padding: 12px 14px;
+      border-top: 1px solid var(--border);
+      background: rgba(0,0,0,.12);
+      display: grid;
+      grid-template-columns: 1fr 110px;
+      gap: 8px;
+      align-items: end;
+    }
+    .dk-kimlik label {
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+    }
+    .dk-kimlik select,
+    .dk-pin {
+      height: 48px;
+      font-size: 15px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg2);
+      color: var(--text);
+      width: 100%;
+      padding: 0 10px;
+    }
+    .dk-pin { text-align: center; font-size: 20px; letter-spacing: 4px; }
+    .dk-btn-kabul {
+      display: block;
+      margin: 10px 14px 14px;
+      width: calc(100% - 28px);
+      height: 56px;
+      font-size: 16px;
+      font-weight: 800;
+      border-radius: 10px;
+      letter-spacing: .3px;
+      cursor: pointer;
+    }
+    .dk-msg { margin: 0 14px 12px; font-size: 13px; }
   </style>
 </head>
 <body>
@@ -2346,20 +2496,16 @@
 
       <!-- Depodan Gelen — kör denetim kabul (ayrı akış) -->
       <div class="sekme-icerik" id="tab-depoTeslim">
-        <div class="teslim-onay-ortak" id="depoTeslimOnayStrip">
-          <div class="teslim-onay-ortak-baslik">🔐 Depo paketi kabul onayı — personel ve PIN</div>
-          <p class="teslim-onay-ortak-alt">Başka depodan size gelen sipariş paketlerini sayıp kabul ederken buradan personel ve onay kodunu girin.</p>
-          <div class="sv-toptanci-pin-grid">
-            <div class="form-group" style="margin:0"><label>Personel *</label><select id="dkPers"></select></div>
-            <div class="form-group" style="margin:0"><label>Onay kodu (PIN) *</label><input id="dkPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>
-          </div>
+        <!-- Eski strip — dkPers/dkPin geriye dönük uyumluluk için DOM'da kalır, gizlenir -->
+        <div id="depoTeslimOnayStrip" style="display:none" aria-hidden="true">
+          <select id="dkPers"></select>
+          <input id="dkPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" />
         </div>
         <div class="kart teslim-panel-depo">
           <div class="kart-baslik">
-            <span class="ico">🚚</span> Depodan Gelen — Teslim Al
+            <span class="ico">📦</span> Depodan Gelen — Teslim Al
             <span id="depoKabulCount" class="badge badge-blue" style="margin-left:8px;font-size:11px">0</span>
           </div>
-          <p style="font-size:11px;color:var(--muted);margin:0 0 12px;line-height:1.45">Kör denetim: siparişteki miktar gösterilmez — fiziksel pakette saydığınız adedi girin. Yolda olan her paket burada listelenir.</p>
           <div id="depoKabulSection"></div>
           <div id="depoTeslimMsg" style="margin-top:8px;font-size:12px"></div>
         </div>
@@ -4879,103 +5025,170 @@ function renderDepoKabulSection() {
   var liste = _teslimKabulListe || [];
   if (sayacEl) sayacEl.textContent = String(liste.length);
   if (!liste.length) {
-    el.innerHTML =
-      '<div class="merkez-mesaj-bos" style="padding:16px 0;line-height:1.5">Şu an yolda bekleyen depo paketi yok. Merkez sevk çıkışı yaptığında paketler burada listelenir.</div>';
+    el.innerHTML = '<div class="merkez-mesaj-bos" style="padding:20px 0;line-height:1.6">📭 Yolda bekleyen depo paketi yok.<br><span style="font-size:11px;color:var(--muted)">Merkez sevk çıkışı yaptığında paketler burada listelenir.</span></div>';
     return;
   }
+
+  var personelOplar = '<option value="">— Personel seçin —</option>';
+  (panelDropdownPersonel() || []).forEach(function (u) {
+    personelOplar += '<option value="' + escHtml(String(u.id || '')) + '">' + escHtml(u.ad || u.id) + '</option>';
+  });
+
   var h = '';
-  h +=
-    '<p style="font-size:11px;color:var(--muted);margin:0 0 12px;line-height:1.45">Her kalemi <strong>bağımsız olarak sayın</strong> ve saydığınız adedi girin (kör denetim). Depo kısmi gönderdiyse kutuya <strong>fiziki paketteki</strong> adedi yazın. Siparişteki miktar burada gösterilmez; uyuşmazlıkta operasyon merkezi çözümüne kadar askıda kalabilir.</p>';
   liste.forEach(function (t) {
     var tid = String(t.id || '').trim();
+    var tidK = tid.replace(/[^a-zA-Z0-9_-]/g, '_');
     var rows = t.teslim_bekleyen_kalemler || [];
-    var hedefDepo = escHtml(t.hedef_depo_adi || t.hedef_depo_sube_id || '—');
-    h += '<div class="sip-teslim-kart" id="sipTeslimKart_' + escHtml(tid) + '" data-talep-id="' + escHtml(tid) + '" style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:10px;background:var(--bg2)">';
-    h += '<div style="font-size:12px;margin-bottom:8px"><strong>#' + escHtml(tid.slice(0, 8)) + '…</strong> · Depo: ' + hedefDepo + '</div>';
-    h += '<div style="display:grid;gap:6px;margin-bottom:8px">';
+    var hedefDepo = escHtml(t.hedef_depo_adi || '—');
+    var kalemSayisi = rows.length;
+
+    h += '<div class="dk-kart" id="sipTeslimKart_' + escHtml(tid) + '" data-talep-id="' + escHtml(tid) + '" data-kalem-sayisi="' + kalemSayisi + '">';
+
+    /* ── Başlık ── */
+    h += '<div class="dk-kart-baslik">';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div>📦 ' + hedefDepo + ' <span style="opacity:.55;font-weight:400;font-size:11px">· #' + escHtml(tid.slice(0, 8)) + '…</span></div>';
+    h += '<div class="dk-kart-baslik-alt">Gelen paketi kalem kalem sayıp adet girin — kör denetim</div>';
+    h += '</div>';
+    h += '<div style="font-size:11px;color:var(--muted);white-space:nowrap">' + kalemSayisi + ' kalem</div>';
+    h += '</div>';
+
+    /* ── Kalemler ── */
+    h += '<div class="dk-kalemler">';
     rows.forEach(function (row, idx) {
-      var kk = String(row.kalem_kodu || '').trim();
-      var ka = String(row.kalem_adi || row.kalem_kodu || '').trim();
-      var yid = String(row.yolda_id || '').trim();
-      var inpId = 'teslimKab_' + tid.replace(/[^a-zA-Z0-9_-]/g, '_') + '_' + idx;
-      h += '<div style="display:grid;grid-template-columns:minmax(0,1fr) 88px;gap:8px;align-items:start;font-size:12px">';
-      h += '<span>' + escHtml(ka) + '</span>';
-      h += '<input class="teslim-kabul-adet" inputmode="numeric" id="' + escHtml(inpId) + '" value="" placeholder="Adet" data-yolda-id="' + escHtml(yid) + '" data-kalem-kodu="' + escHtml(kk) + '" data-kalem-adi="' + escHtml(ka) + '" />';
+      var kk = escHtml(String(row.kalem_kodu || '').trim());
+      var ka = escHtml(String(row.kalem_adi || row.kalem_kodu || '').trim());
+      var yid = escHtml(String(row.yolda_id || '').trim());
+      var inpId = 'teslimKab_' + tidK + '_' + idx;
+      var minusId = 'dkMinus_' + tidK + '_' + idx;
+      var plusId  = 'dkPlus_'  + tidK + '_' + idx;
+      h += '<div class="dk-kalem" id="dkKalem_' + tidK + '_' + idx + '">';
+      h += '<div class="dk-kalem-ad">' + ka + '</div>';
+      h += '<div class="dk-adet-wrap">';
+      h += '<button type="button" class="dk-adet-btn" id="' + minusId + '" data-inp="' + inpId + '" aria-label="Azalt">−</button>';
+      h += '<input class="teslim-kabul-adet dk-adet" type="tel" inputmode="numeric" id="' + escHtml(inpId) + '" value="" placeholder="0" data-yolda-id="' + yid + '" data-kalem-kodu="' + kk + '" data-kalem-adi="' + ka + '" data-tid="' + escHtml(tid) + '" />';
+      h += '<button type="button" class="dk-adet-btn" id="' + plusId + '" data-inp="' + inpId + '" aria-label="Artır">+</button>';
+      h += '</div>';
       h += '</div>';
     });
     h += '</div>';
-    h += '<div class="sip-teslim-pin-dock">';
-    h += '<div style="font-size:11px;color:var(--muted);margin-bottom:6px">Sayfanın <strong>en üstündeki</strong> Personel + Onay Kodu alanını doldurun, adetleri girin, ardından onaylayın.</div>';
-    h += '<div style="display:flex;justify-content:flex-end;margin-top:8px">';
-    h += '<button type="button" class="btn btn-success btn-sm teslim-kabul-btn" data-talep-id="' + escHtml(tid) + '">Paketi kabul et</button>';
+
+    /* ── İlerleme çubuğu ── */
+    h += '<div class="dk-progress-wrap">';
+    h += '<div class="dk-progress-meta"><span id="dkPrgLabel_' + tidK + '">0 / ' + kalemSayisi + ' kalem sayıldı</span><span id="dkPrgPct_' + tidK + '">%0</span></div>';
+    h += '<div class="dk-progress-bg"><div class="dk-progress-fill" id="dkPrgBar_' + tidK + '" style="width:0%"></div></div>';
     h += '</div>';
-    h += '<div id="teslimMsg_' + escHtml(tid) + '" style="margin-top:6px;font-size:12px"></div>';
+
+    /* ── Kimlik (personel + PIN) ── */
+    h += '<div class="dk-kimlik">';
+    h += '<div><label>👤 Personel</label><select class="teslimPers_dk" id="teslimPers_' + escHtml(tidK) + '">' + personelOplar + '</select></div>';
+    h += '<div><label>🔑 PIN</label><input class="dk-pin" id="dkPinKart_' + escHtml(tidK) + '" type="password" maxlength="4" inputmode="numeric" autocomplete="one-time-code" placeholder="••••" /></div>';
     h += '</div>';
-    h += '</div>';
+
+    /* ── Buton + mesaj ── */
+    h += '<button type="button" class="btn btn-success dk-btn-kabul teslim-kabul-btn" data-talep-id="' + escHtml(tid) + '" data-tidk="' + escHtml(tidK) + '">✓ Paketi Kabul Et</button>';
+    h += '<div class="dk-msg" id="teslimMsg_' + escHtml(tid) + '"></div>';
+    h += '</div>'; /* /dk-kart */
   });
+
   el.innerHTML = h;
   fillSels();
-  document.querySelectorAll('#depoKabulSection .teslim-kabul-btn').forEach(function (btn) {
-    btn.onclick = async function () {
+
+  /* ── +/− buton ve input event bağlantıları ── */
+  el.querySelectorAll('.dk-adet-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var inp = document.getElementById(btn.dataset.inp);
+      if (!inp) return;
+      var v = parseInt(inp.value, 10) || 0;
+      var delta = btn.textContent.trim() === '+' ? 1 : -1;
+      var nv = Math.max(0, v + delta);
+      inp.value = String(nv);
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  });
+
+  el.querySelectorAll('.teslim-kabul-adet').forEach(function (inp) {
+    inp.addEventListener('input', function () {
+      var raw = (inp.value || '').trim();
+      var dolu = raw !== '' && raw !== '0' ? raw !== '' : false;
+      // 0 da geçerli — boş olmadıkça dolu say
+      dolu = raw !== '';
+      inp.classList.toggle('dk-dolu', dolu);
+      // Kalem kartı border
+      var tidStr = inp.dataset.tid || '';
+      var tidK2 = tidStr.replace(/[^a-zA-Z0-9_-]/g, '_');
+      var kart = inp.closest('.dk-kart');
+      if (!kart) return;
+      var tumInp = kart.querySelectorAll('.teslim-kabul-adet');
+      var dolulu = 0;
+      tumInp.forEach(function (i) { if ((i.value || '').trim() !== '') dolulu++; });
+      var toplam = tumInp.length;
+      var pct = toplam ? Math.round((dolulu / toplam) * 100) : 0;
+      var lbl = document.getElementById('dkPrgLabel_' + tidK2);
+      var pctEl = document.getElementById('dkPrgPct_' + tidK2);
+      var bar = document.getElementById('dkPrgBar_' + tidK2);
+      if (lbl) lbl.textContent = dolulu + ' / ' + toplam + ' kalem sayıldı';
+      if (pctEl) pctEl.textContent = '%' + pct;
+      if (bar) bar.style.width = pct + '%';
+      // Kalem bloğu border
+      var kalemEl = inp.closest('.dk-kalem');
+      if (kalemEl) kalemEl.classList.toggle('dk-dolu', (inp.value || '').trim() !== '');
+    });
+  });
+
+  /* ── Kabul butonu ── */
+  el.querySelectorAll('.teslim-kabul-btn').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
       var tid = String(btn.getAttribute('data-talep-id') || '').trim();
+      var tidK = String(btn.getAttribute('data-tidk') || '').trim();
       var msgId = 'teslimMsg_' + tid;
       setMsg(msgId, '', '');
+
+      var kart = document.getElementById('sipTeslimKart_' + tid);
+      if (!kart) { setMsg(msgId, 'Form bulunamadı', 'msg-err'); return; }
+
+      /* Adetleri topla — boş input varsa vurgula */
+      var kabul = [];
+      var eksikVar = false;
+      kart.querySelectorAll('.teslim-kabul-adet').forEach(function (inp) {
+        var raw = (inp.value || '').trim();
+        if (!raw) { inp.classList.add('dk-dolu'); inp.style.borderColor = '#ef4444'; eksikVar = true; return; }
+        inp.style.borderColor = '';
+        var adet = parseInt(raw.replace(/\D/g, ''), 10);
+        if (isNaN(adet) || adet < 0) { inp.style.borderColor = '#ef4444'; eksikVar = true; return; }
+        var yolda_id   = (inp.getAttribute('data-yolda-id') || '').trim();
+        var kalem_kodu = (inp.getAttribute('data-kalem-kodu') || '').trim();
+        var kalem_adi  = (inp.getAttribute('data-kalem-adi') || '').trim();
+        if (!yolda_id && !kalem_kodu) return;
+        kabul.push({ yolda_id: yolda_id || null, kalem_kodu: kalem_kodu, kalem_adi: kalem_adi, kabul_adet: adet });
+      });
+
+      if (eksikVar) { setMsg(msgId, 'Tüm ürünler için adet girin (kırmızı alanları doldurun).', 'msg-err'); return; }
+      if (!kabul.length) { setMsg(msgId, 'Kalem bulunamadı.', 'msg-err'); return; }
+
+      /* Personel + PIN — kartın içinden oku */
+      var pid = (document.getElementById('teslimPers_' + tidK) || {}).value || '';
+      var pin = ((document.getElementById('dkPinKart_' + tidK) || {}).value || '').replace(/\D/g, '').slice(0, 4);
+      if (!pid) { setMsg(msgId, 'Personel seçin.', 'msg-err'); return; }
+      if (pin.length !== 4) { setMsg(msgId, 'PIN 4 haneli olmalı.', 'msg-err'); return; }
+
       btn.disabled = true;
+      btn.textContent = '⏳ Kaydediliyor…';
       try {
-        if (!tid) throw new Error('Talep bulunamadı');
-        var kart = document.getElementById('sipTeslimKart_' + tid);
-        if (!kart) throw new Error('Form bulunamadı');
-        var kabul = [];
-        kart.querySelectorAll('.teslim-kabul-adet').forEach(function (inp) {
-          var yolda_id = String(inp.getAttribute('data-yolda-id') || '').trim();
-          var kalem_kodu = String(inp.getAttribute('data-kalem-kodu') || '').trim();
-          var kalem_adi = String(inp.getAttribute('data-kalem-adi') || '').trim();
-          var raw = String(inp.value || '').trim();
-          if (!raw) throw new Error('Her ürün için teslim alınan adedi girin');
-          var kabul_adet = parseInt(raw.replace(/\D/g, ''), 10);
-          if (isNaN(kabul_adet) || kabul_adet < 0) {
-            throw new Error('Adet alanları 0 veya pozitif sayı olmalı');
-          }
-          if (!yolda_id && !kalem_kodu) return;
-          kabul.push({ yolda_id: yolda_id || null, kalem_kodu: kalem_kodu, kalem_adi: kalem_adi, kabul_adet: kabul_adet });
-        });
-        if (!kabul.length) throw new Error('Kalem bulunamadı');
-        var ozetSatirlarTk = kabul.map(function (x) {
-          var et = escHtml(x.kalem_adi || x.kalem_kodu || '?');
-          return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:12px"><span>' + et + '</span><strong>×' + x.kabul_adet + '</strong></div>';
-        }).join('');
-        var ozetHtmlTk = '<div style="max-height:62vh;overflow:auto">' + ozetSatirlarTk + '</div>';
-        var creds = await ensureTopCredentials(
-          'dkPers',
-          'dkPin',
-          '📥 Depo paketi kabul onayı',
-          ozetHtmlTk
-        );
-        if (!creds) throw new Error('Onay bilgisi gerekli');
-        var modalResTk = await pinOnayModalAc({
-          baslik: '📥 Depo paketi teslim kabulü',
-          ozetHtml: ozetHtmlTk,
-          askCredentials: false,
-        });
-        if (!modalResTk || !modalResTk.ok) {
-          setMsg(msgId, 'İşlem iptal edildi.', 'msg-warn');
-          return;
-        }
         await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-teslim-kabul', {
           method: 'POST',
-          body: { talep_id: tid, personel_id: creds.personel_id, pin: creds.pin, kabul: kabul },
+          body: { talep_id: tid, personel_id: pid, pin: pin, kabul: kabul },
         });
         siparisAkisCache = null;
-        var pinEl = document.getElementById('dkPin');
-        if (pinEl) pinEl.value = '';
-        setMsg(msgId, 'Teslim kabul kaydedildi.', 'msg-ok');
+        setMsg(msgId, '✅ Teslim kabul kaydedildi!', 'msg-ok');
         await refresh();
       } catch (e) {
         if (e.status === 429) handle429(document.getElementById(msgId), e);
-        else setMsg(msgId, e.message || 'Hata', 'msg-err');
+        else setMsg(msgId, e.message || 'Hata oluştu', 'msg-err');
+        btn.disabled = false;
+        btn.textContent = '✓ Paketi Kabul Et';
       }
-      btn.disabled = false;
-    };
+    });
   });
 }
 
