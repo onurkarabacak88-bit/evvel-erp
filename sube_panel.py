@@ -3705,8 +3705,12 @@ def _siparis_akisi_talep_satir_isle(d: Dict[str, Any]) -> Dict[str, Any]:
     td = str(d.get("tahsis_durum") or "").strip()
     if td:
         d["tahsis_durum"] = td.replace("TAHSIS_", "").lower()
-    # kabul_durum: siparis_talep.durum'dan türet (stok_yolda join'i olmadan hızlı yol)
-    if not d.get("kabul_durum"):
+    # kabul_durum: önce stok_yolda gerçek sayımından al (eski stuck kayıtları da yakalar)
+    stok_kabul = str(d.pop("stok_kabul_durum", None) or "").strip() or None
+    if stok_kabul:
+        d["kabul_durum"] = stok_kabul
+    elif not d.get("kabul_durum"):
+        # Fallback: siparis_talep.durum'dan türet
         _talep_durum = str(d.get("durum") or "").strip()
         if _talep_durum == "teslim_edildi":
             d["kabul_durum"] = "kabul_tam"
@@ -3916,7 +3920,20 @@ def sube_siparis_akisi(
                    t.tahsis_ts,
                    t.tahsis_yapan_ad,
                    (SELECT MAX(y.kabul_ts) FROM stok_yolda y
-                    WHERE y.siparis_talep_id = t.id AND y.sube_id = t.sube_id) AS kabul_ts
+                    WHERE y.siparis_talep_id = t.id AND y.sube_id = t.sube_id) AS kabul_ts,
+                   (SELECT
+                      CASE
+                        WHEN SUM(CASE WHEN y.durum='yolda'           THEN 1 ELSE 0 END) = 0
+                             AND SUM(CASE WHEN y.durum IN ('kabul_edildi','kabul_uyusmazlik') THEN 1 ELSE 0 END) > 0
+                        THEN CASE WHEN SUM(CASE WHEN y.durum='kabul_uyusmazlik' THEN 1 ELSE 0 END) > 0
+                                  THEN 'kabul_uyusmazlik' ELSE 'kabul_tam' END
+                        WHEN SUM(CASE WHEN y.durum='kabul_edildi'    THEN 1 ELSE 0 END) > 0
+                        THEN 'kabul_kismi'
+                        ELSE NULL
+                      END
+                    FROM stok_yolda y
+                    WHERE y.siparis_talep_id = t.id AND y.sube_id = t.sube_id
+                   ) AS stok_kabul_durum
             FROM siparis_talep t
             LEFT JOIN subeler hd ON hd.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
             WHERE t.sube_id=%s
@@ -3961,7 +3978,20 @@ def sube_siparis_akisi(
                        t.tahsis_ts,
                        t.tahsis_yapan_ad,
                        (SELECT MAX(y.kabul_ts) FROM stok_yolda y
-                        WHERE y.siparis_talep_id = t.id AND y.sube_id = t.sube_id) AS kabul_ts
+                        WHERE y.siparis_talep_id = t.id AND y.sube_id = t.sube_id) AS kabul_ts,
+                       (SELECT
+                          CASE
+                            WHEN SUM(CASE WHEN y.durum='yolda'           THEN 1 ELSE 0 END) = 0
+                                 AND SUM(CASE WHEN y.durum IN ('kabul_edildi','kabul_uyusmazlik') THEN 1 ELSE 0 END) > 0
+                            THEN CASE WHEN SUM(CASE WHEN y.durum='kabul_uyusmazlik' THEN 1 ELSE 0 END) > 0
+                                      THEN 'kabul_uyusmazlik' ELSE 'kabul_tam' END
+                            WHEN SUM(CASE WHEN y.durum='kabul_edildi'    THEN 1 ELSE 0 END) > 0
+                            THEN 'kabul_kismi'
+                            ELSE NULL
+                          END
+                        FROM stok_yolda y
+                        WHERE y.siparis_talep_id = t.id AND y.sube_id = t.sube_id
+                       ) AS stok_kabul_durum
                 FROM siparis_talep t
                 LEFT JOIN subeler hd ON hd.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
                 WHERE t.sube_id=%s AND t.id = ANY(%s)
