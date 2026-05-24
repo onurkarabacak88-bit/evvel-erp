@@ -2945,6 +2945,63 @@
       0%,100% { box-shadow: 0 0 0 3px rgba(59,130,246,0.14); }
       50%      { box-shadow: 0 0 0 7px rgba(59,130,246,0.05); }
     }
+
+    /* ── Sipariş Ver — POS dokunmatik ekran overrides ── */
+    #siparisPanel .siparis-kat-grid {
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 12px;
+    }
+    #siparisPanel .sip-kat-kart {
+      min-height: 140px;
+      border-radius: 16px;
+      padding: 14px 10px;
+      flex-direction: column;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      position: relative;
+    }
+    #siparisPanel .sip-kat-kart .ico  { font-size: 32px; margin-bottom: 4px; }
+    #siparisPanel .sip-kat-kart .ttl  { font-size: 14px; font-weight: 800; line-height: 1.25; text-align: center; }
+    #siparisPanel .sip-kat-kart .sub  { font-size: 11px; text-align: center; }
+    #siparisPanel .sip-kat-kart.sip-kat-secili {
+      border-color: #22c55e !important;
+      background: rgba(34,197,94,0.08) !important;
+    }
+    /* Modal — büyük +/- satırları */
+    #sipKatModalKart { max-width: 640px; width: 92vw; }
+    #sipKatModalKart .sip-urun-row {
+      display: grid;
+      grid-template-columns: 1fr 72px 90px 72px;
+      gap: 6px;
+      align-items: center;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    #sipKatModalKart .sip-urun-row .nm { font-size: 14px; font-weight: 600; line-height: 1.35; }
+    #sipKatModalKart .sv-urun-adet {
+      width: 90px !important;
+      height: 72px !important;
+      font-size: 28px !important;
+      font-weight: 900 !important;
+      text-align: center !important;
+      border-radius: 12px !important;
+    }
+    #sipKatModalKart .sv-urun-btn { width: 72px; height: 72px; font-size: 28px; }
+    #sipKatModalTamam { height: 70px !important; font-size: 18px !important; font-weight: 800 !important; border-radius: 12px !important; }
+    /* Seçimleri Onayla — büyük dokunmatik */
+    #siparisOnayBtnUst {
+      min-height: 52px !important;
+      font-size: 16px !important;
+      font-weight: 800 !important;
+      border-radius: 12px !important;
+      padding: 0 24px !important;
+    }
+    @media (max-width: 600px) {
+      #siparisPanel .siparis-kat-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+      #siparisPanel .sip-kat-kart { min-height: 100px; }
+    }
   </style>
 </head>
 <body>
@@ -5077,14 +5134,79 @@ function siparisLabelParts(label) {
     ttl: hasIco ? (p.slice(1).join(' ') || t) : t
   };
 }
+/** Bir kategoride kaç farklı ürün seçildi (siparisDegerler'den okur) */
+function siparisKatSeciliSayisi(katId) {
+  var prefix = katId + '::';
+  var say = 0;
+  Object.keys(siparisDegerler).forEach(function(k) {
+    if (k.indexOf(prefix) === 0) {
+      var adet = parseInt(siparisDegerler[k] || 0, 10);
+      if (!isNaN(adet) && adet > 0) say++;
+    }
+  });
+  return say;
+}
+/** renderSiparisPanel kapsamı dışından da çağrılabilir global özet güncelleyici */
+function siparisSeciliOzetGuncelleGlobal() {
+  var seciliKalem = 0;
+  var toplamAdet  = 0;
+  Object.keys(siparisDegerler).forEach(function(key) {
+    var adet = parseInt(siparisDegerler[key] || 0, 10);
+    if (!isNaN(adet) && adet > 0) { seciliKalem += 1; toplamAdet += adet; }
+  });
+  var secimVar  = seciliKalem > 0;
+  var ozetTxt   = 'Seçili ürün: ' + seciliKalem + ' kalem · toplam ' + toplamAdet + ' adet';
+  var btnTxt    = secimVar ? ('Seçimleri Onayla (' + seciliKalem + ' kalem)') : 'Seçimleri Onayla';
+  var onayBtn   = document.getElementById('siparisOnayBtnUst');
+  var ustBar    = document.getElementById('siparisStickyBar');
+  var ustOzet   = document.getElementById('sipSeciliUstOzet');
+  var formWrap  = document.getElementById('siparisOnayFormWrap');
+  if (onayBtn) {
+    onayBtn.textContent = btnTxt;
+    onayBtn.disabled    = !secimVar;
+    onayBtn.style.opacity = secimVar ? '1' : '0.65';
+    onayBtn.title = !secimVar ? 'Önce en az bir üründe adet girin' : 'Personel ve PIN yalnızca açılacak güvenli onay penceresinde';
+  }
+  if (ustOzet)  ustOzet.textContent = ozetTxt;
+  if (ustBar)   ustBar.style.display  = secimVar ? 'block' : 'none';
+  if (formWrap) formWrap.style.display = secimVar ? 'block' : 'none';
+}
+/** sipKatOverlay üzerindeki +/- buton tıklamalarını yakala (bir kez wired) */
+function sipKatOverlayPlusMinusWire() {
+  var ov = document.getElementById('sipKatOverlay');
+  if (!ov || ov.dataset.sipPlusWired === '1') return;
+  ov.dataset.sipPlusWired = '1';
+  ov.addEventListener('click', function(ev) {
+    var t = ev.target;
+    if (!t || !t.getAttribute) return;
+    var plusKey  = t.getAttribute('data-sip-plus');
+    var minusKey = t.getAttribute('data-sip-minus');
+    var key = plusKey || minusKey;
+    if (!key) return;
+    ev.stopPropagation();
+    var cur = parseInt(siparisDegerler[key] || 0, 10);
+    if (isNaN(cur)) cur = 0;
+    cur = minusKey ? Math.max(0, cur - 1) : cur + 1;
+    siparisDegerler[key] = cur;
+    var inp = ov.querySelector('[data-sip-input="' + key + '"]');
+    if (inp) {
+      inp.value = cur > 0 ? String(cur) : '';
+      var row = typeof inp.closest === 'function' ? inp.closest('.sip-urun-row') : null;
+      if (row) { cur > 0 ? row.classList.add('sv-urun-secili') : row.classList.remove('sv-urun-secili'); }
+    }
+    siparisSeciliOzetGuncelleGlobal();
+  });
+}
 function siparisUrunRowsHTML(katId, rows) {
   var h = '';
   rows.forEach(function(it){
     var key = katId + '::' + it.id;
     var val = siparisDegerler[key] != null ? siparisDegerler[key] : 0;
-    h += '<div class="sip-urun-row' + (it.aktif===false ? ' pasif' : '') + '">';
+    h += '<div class="sip-urun-row' + (it.aktif===false ? ' pasif' : '') + (val > 0 ? ' sv-urun-secili' : '') + '">';
     h += '<span class="nm">' + escHtml(it.ad) + '</span>';
-    h += '<input type="text" inputmode="numeric" data-sip-input="' + escHtml(key) + '" value="' + val + '" />';
+    h += '<button type="button" class="sv-urun-btn" data-sip-minus="' + escHtml(key) + '">−</button>';
+    h += '<input type="text" inputmode="numeric" class="sv-urun-adet" data-sip-input="' + escHtml(key) + '" value="' + (val > 0 ? val : '') + '" />';
+    h += '<button type="button" class="sv-urun-btn" data-sip-plus="' + escHtml(key) + '">+</button>';
     h += '</div>';
   });
   return h;
@@ -5282,10 +5404,13 @@ async function renderSiparisPanel() {
     data.forEach(function(k, i){
       var p = siparisLabelParts(k.label || k.ad);
       var tone = ' sip-tone-' + (i % 4);
-      h += '<button class="sip-kat-kart' + tone + (k.id===siparisOpenKat ? ' active' : '') + '" data-sip-kat="' + k.id + '">';
+      var badge = siparisKatSeciliSayisi(k.id);
+      var seciliCls = badge > 0 ? ' sip-kat-secili' : '';
+      h += '<button class="sip-kat-kart' + tone + seciliCls + (k.id===siparisOpenKat ? ' active' : '') + '" data-sip-kat="' + k.id + '">';
       h += '<span class="ico">' + p.ico + '</span>';
+      if (badge > 0) h += '<span class="sv-kat-badge">' + badge + '</span>';
       h += '<span class="ttl">' + p.ttl + '</span>';
-      h += '<span class="sub">' + siparisAktifAdet(k) + ' aktif ürün • Dokun → pencere</span>';
+      h += '<span class="sub">' + siparisAktifAdet(k) + ' aktif ürün</span>';
       h += '</button>';
     });
     h += '</div>';
@@ -5331,6 +5456,7 @@ async function renderSiparisPanel() {
   root.innerHTML = h;
   fillSels();
   siparisKatOverlayBackdropWire();
+  sipKatOverlayPlusMinusWire();
   var ov = document.getElementById('sipKatOverlay');
   var inner = document.getElementById('sipKatModalInner');
   if (acik && inner) {
@@ -5365,12 +5491,14 @@ async function renderSiparisPanel() {
         siparisDegerler[k] = 0;
         this.value = '';
         siparisSeciliOzetGuncelle();
+        siparisSeciliOzetGuncelleGlobal();
         return;
       }
       var n = parseInt(digits, 10);
       siparisDegerler[k] = isNaN(n) ? 0 : n;
       this.value = String(siparisDegerler[k]);
       siparisSeciliOzetGuncelle();
+      siparisSeciliOzetGuncelleGlobal();
     };
   });
   function siparisSeciliOzetGuncelle() {
