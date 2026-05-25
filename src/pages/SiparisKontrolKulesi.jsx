@@ -85,13 +85,25 @@ function ToptanciModal({
   });
   const datalistId = `toptanci-tedarikci-${talepId}`;
 
+  // Modalı kapatmadan önce atanmamış kalem varsa uyar
+  const handleKapat = () => {
+    if (kalanlar.length > 0 && listeler.length > 0) {
+      // En az bir liste oluşturulmuş ama hâlâ atanmamış kalem var
+      const devam = window.confirm(
+        `⚠️ ${kalanlar.length} kalem henüz bir toptancıya atanmadı.\n\nModalı kapatırsanız bu kalemler kaybolmaz — sipariş kuyrukta kalır ve modalı tekrar açabilirsiniz.\n\nKapatmak için "Tamam" tıklayın.`
+      );
+      if (!devam) return;
+    }
+    onKapat();
+  };
+
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 9900,
       background: 'rgba(0,0,0,0.65)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       padding: 16,
-    }} onClick={(e) => { if (e.target === e.currentTarget) onKapat(); }}>
+    }} onClick={(e) => { if (e.target === e.currentTarget) handleKapat(); }}>
       <div style={{
         background: 'var(--bg)',
         borderRadius: 16,
@@ -114,7 +126,7 @@ function ToptanciModal({
           </div>
           <button
             type="button"
-            onClick={onKapat}
+            onClick={handleKapat}
             style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: 'var(--text3)', lineHeight: 1, padding: '2px 6px' }}
           >✕</button>
         </div>
@@ -253,7 +265,7 @@ function ToptanciModal({
 
         {/* ── Alt butonlar ── */}
         <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', background: 'var(--bg2)', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button type="button" className="btn btn-secondary" style={{ fontSize: 14 }} onClick={onKapat}>
+          <button type="button" className="btn btn-secondary" style={{ fontSize: 14 }} onClick={handleKapat}>
             Kapat
           </button>
           <button type="button" className="btn btn-primary"
@@ -839,6 +851,20 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
     if (!talepId) return;
     const listeler = kuyrukToptanciListeler[talepId] || [];
     if (!listeler.length) { toast('Önce en az bir liste oluşturun.', 'red'); return; }
+
+    // Atanmamış kalem kontrolü — bazı kalemler hiç listeye eklenmeden geçilirse uyar
+    const tumKalemler = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
+    const atanmamisSayisi = tumKalemler.filter((k, i) => {
+      const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
+      return !kuyrukToptanciAtanmis[`${talepId}::${kk}`];
+    }).length;
+    if (atanmamisSayisi > 0) {
+      const devamMi = window.confirm(
+        `⚠️ ${atanmamisSayisi} kalem hiçbir toptancıya atanmadı.\n\nModalı kapatıp eksik kalemleri tamamlamak ister misiniz?\n\nDevam etmek için "Tamam", iptal için "İptal" tıklayın.`
+      );
+      if (!devamMi) return;
+    }
+
     setKuyrukBusy(talepId);
     try {
       let toplamAdet = 0;
