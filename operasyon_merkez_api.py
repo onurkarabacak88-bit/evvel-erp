@@ -12345,7 +12345,7 @@ def ops_siparis_birlestir(body: OpsSiparisBirlestirBody):
                 sube_id,
                 "merkez",
                 "Merkez — sipariş birleştirme",
-                _now_tr().strftime("%H:%M:%S"),
+                dt_now_tr().strftime("%H:%M:%S"),
                 tam_not,
                 json.dumps(kalem_listesi, ensure_ascii=False),
             ),
