@@ -4569,7 +4569,7 @@
 
         <!-- ③ Durum chip'leri -->
         <div class="ana-stat-row">
-          <button class="ana-stat-chip siparis-chip" type="button" id="anaChipSiparis" onclick="solSekmeAc('siparis')">
+          <button class="ana-stat-chip siparis-chip" type="button" id="anaChipSiparis" onclick="solSekmeAc('siparisTakip')">
             <span class="ana-stat-val" id="anaStatSiparis">—</span>
             <span class="ana-stat-lbl">Bekleyen Sipariş</span>
           </button>
@@ -4584,7 +4584,6 @@
         </div>
 
         <!-- ④ Bildirimler (dinamik) -->
-        <div id="anaSiparisBilgiWrap" class="kart sip-ana-sip-banner" style="display:none" role="status" aria-live="polite"></div>
         <div id="siparisRedBildirimWrap" style="display:none" role="alert" aria-live="polite"></div>
 
         <!-- ⑤ Bilgi kartları: Mesajlar + Stok -->
@@ -11015,7 +11014,6 @@ function renderMain(data) {
   renderMesajlariDiv(data.merkez_mesajlar || [], 'compact');
   merkezMesajYeniModalKontrol(data.merkez_mesajlar || []);
 
-  renderAnaSiparisHatirlat(data);
   solSiparisBadgeGuncelle(parseInt(data.bekleyen_siparis_sayisi, 10) || 0);
   var _polledDepoSay = data.depo_hazirlik_bekleyen_sayisi || 0;
   var _yoldaAlarmVar = (data.stok_alarmlari || []).some(function (a) {
