@@ -994,6 +994,9 @@
       border: 2px solid rgba(255,255,255,.09);
       background: rgba(255,255,255,.04);
       cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none; -webkit-user-select: none;
       transition: border-color .18s, background .18s, transform .12s;
       text-align: center;
       min-height: 90px;
@@ -9178,12 +9181,8 @@ function renderStokForms(tip) {
       });
     }
   } else if (tip === 'fire') {
-    var frRoot = document.getElementById('frWizRoot');
-    // Wizard daha önce başlatılmadıysa başlat; tekrar tab'a basılınca sıfırlama
-    if (!frRoot || !frRoot.dataset.wizBuilt) {
-      if (frRoot) frRoot.dataset.wizBuilt = '1';
-      frWizBas();
-    }
+    // Her Fire sekmesi açılışında wizard'ı sıfırla (katalog cache'li olduğu için hızlı)
+    frWizBas();
   }
 }
 
@@ -9234,6 +9233,18 @@ function frWizBas() {
   var root = document.getElementById('frWizRoot');
   if (!root) return;
   _frWiz.step=1; _frWiz.sebep=null; _frWiz.seciliUrun=null; _frWiz.adet=1; _frWiz.busy=false; _frWiz.aramaMetni='';
+  // Katalog zaten cacheliyse anında render — loading spinner yok
+  if (Array.isArray(siparisKatalogCache) && siparisKatalogCache.length) {
+    var flatCached = [];
+    siparisKatalogCache.forEach(function(kat) {
+      (kat.items || []).forEach(function(it) {
+        if (it.aktif !== false) flatCached.push({ id: it.id, ad: it.ad, kategori: kat.label, kalem_kodu: it.depo_stok_kalem_kodu || it.id });
+      });
+    });
+    _frWiz.katalog = flatCached;
+    frWizRender(false);
+    return;
+  }
   root.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);font-size:13px">⏳ Yükleniyor…</div>';
   siparisLoad().then(function(kategoriler) {
     var flat = [];
@@ -9245,7 +9256,11 @@ function frWizBas() {
     _frWiz.katalog = flat;
     frWizRender(false);
   }).catch(function(e) {
-    root.innerHTML = '<div style="padding:20px;color:#fca5a5;font-size:13px">⚠️ Katalog yüklenemedi: ' + escHtml(e.message || String(e)) + '</div>';
+    if (!root.parentNode) return;
+    root.innerHTML = '<div style="padding:24px 16px;text-align:center">'
+      + '<div style="color:#fca5a5;font-size:13px;margin-bottom:14px">⚠️ Yüklenemedi: ' + escHtml(e.message || String(e)) + '</div>'
+      + '<button onclick="frWizBas()" style="padding:10px 24px;border-radius:10px;border:none;background:rgba(239,68,68,.8);color:#fff;font-size:13px;font-weight:700;cursor:pointer">🔄 Tekrar dene</button>'
+      + '</div>';
   });
 }
 
