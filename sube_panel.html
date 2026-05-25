@@ -317,22 +317,43 @@
       border-color: var(--accent) !important;
     }
     .kabul-kart-click:active { transform: translateY(0); }
+    /* Kompakt kart satırı */
+    .kabul-compact-row {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 7px 0; border-bottom: 1px solid var(--border);
+    }
+    .kabul-compact-row:last-of-type { border-bottom: none; }
+    .kabul-compact-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: #10b981; flex-shrink: 0; margin-top: 4px;
+      box-shadow: 0 0 0 2px rgba(16,185,129,.2);
+    }
+    /* Modal kart */
     .kabul-modal-row {
       background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 12px; padding: 14px 16px; margin-bottom: 8px;
+      border-radius: 12px; padding: 14px 16px; border-left-width: 3px;
     }
-    .kabul-modal-row:last-child { margin-bottom: 0; }
     .kabul-modal-meta {
-      display: flex; justify-content: space-between; align-items: center;
-      margin-bottom: 8px; gap: 8px;
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
     }
     .kabul-modal-no {
       background: var(--accent); color: #fff; border-radius: 6px;
       padding: 2px 8px; font-size: 11px; font-weight: 800;
     }
-    .kabul-modal-tarih { font-size: 11px; color: var(--muted); }
-    .kabul-modal-personel { font-size: 14px; font-weight: 800; color: var(--text); margin-bottom: 4px; }
-    .kabul-modal-ozet { font-size: 12px; color: var(--text2); line-height: 1.5; }
+    /* Personel avatar */
+    .kabul-avatar {
+      width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 800; letter-spacing: -.5px;
+    }
+    /* Item pills */
+    .kabul-pill {
+      display: inline-block;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 100px; padding: 3px 10px;
+      font-size: 11px; font-weight: 600; color: var(--text2);
+      white-space: nowrap;
+    }
 
     .sipmet-row {
       display: flex; gap: 8px; align-items: center;
@@ -4633,9 +4654,10 @@
         <div class="kart kabul-kart-click" id="kabulTakipKart" style="display:none" onclick="kabulTakipModalAc()" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();kabulTakipModalAc()}" aria-label="Son Teslim ve Kabul kayıtlarını göster">
           <div class="kart-baslik" style="font-size:11px;pointer-events:none">
             <span class="ico">📥</span> Son Teslim / Kabul
-            <span style="margin-left:auto;font-size:10px;color:var(--muted);font-weight:400">Detay →</span>
+            <span id="kabulTakipSayiBadge" style="display:none;background:var(--accent);color:#fff;border-radius:100px;padding:1px 7px;font-size:10px;font-weight:800;margin-left:6px"></span>
+            <span style="margin-left:auto;font-size:10px;color:var(--accent);font-weight:700">Detay →</span>
           </div>
-          <div id="kabulTakipListesi" class="merkez-mesaj-icerik" style="max-height:130px;pointer-events:none">
+          <div id="kabulTakipListesi" style="max-height:140px;overflow:hidden;pointer-events:none;padding:4px 0 0">
             <div class="merkez-mesaj-bos">Yükleniyor…</div>
           </div>
         </div>
@@ -10721,6 +10743,7 @@ function renderDepoStokListe() {
 function renderKabulTakipListe() {
   var el = document.getElementById('kabulTakipListesi');
   var kart = document.getElementById('kabulTakipKart');
+  var badge = document.getElementById('kabulTakipSayiBadge');
   if (!el || !lastData) return;
   var rows = lastData.son_kabul_kayitlari || [];
   if (!rows.length) {
@@ -10729,18 +10752,34 @@ function renderKabulTakipListe() {
     return;
   }
   if (kart) kart.style.display = '';
+  /* Sayı badge */
+  if (badge) { badge.textContent = rows.length; badge.style.display = ''; }
   /* Kompakt — max 3 satır, gerisini modal'a bırak */
   var goster = rows.slice(0, 3);
   var kalan  = rows.length - goster.length;
+  var dotColors = ['#10b981','#3b82f6','#8b5cf6'];
   var h = '';
-  goster.forEach(function (r) {
-    h += '<div class="sipmet-row" style="pointer-events:none">';
-    h += '<span class="sipmet-tarih" style="min-width:56px">' + escHtml(String(r.tarih||'—').slice(5)) + '</span>';
-    h += '<span style="flex:1;font-size:12px"><strong>' + escHtml(String(r.personel||'?')) + '</strong> — ' + escHtml(String(r.ozet||'')) + '</span>';
+  goster.forEach(function(r, i) {
+    var tarihKisa = String(r.tarih||'').slice(5).replace('-', '.'); /* MM.DD */
+    var saat = String(r.saat||'');
+    var zaman = tarihKisa + (saat && saat !== '—' ? ' ' + saat : '');
+    var dotColor = dotColors[i % dotColors.length];
+    var adetBadge = (r.toplam_adet > 0)
+      ? '<span style="background:' + dotColor + '22;color:' + dotColor + ';border:1px solid ' + dotColor + '44;border-radius:100px;padding:1px 7px;font-size:10px;font-weight:800">' + r.toplam_adet + ' adet</span>'
+      : '';
+    h += '<div class="kabul-compact-row" style="pointer-events:none">';
+    h += '<span class="kabul-compact-dot" style="background:' + dotColor + ';box-shadow:0 0 0 2px ' + dotColor + '33"></span>';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">';
+    h += '<span style="font-size:12px;font-weight:700;color:var(--text)">' + escHtml(String(r.personel||'?')) + '</span>';
+    h += adetBadge;
+    h += '</div>';
+    h += '<div style="font-size:10px;color:var(--muted);margin-top:2px">🕐 ' + escHtml(zaman || '—') + '</div>';
+    h += '</div>';
     h += '</div>';
   });
   if (kalan > 0) {
-    h += '<div style="text-align:right;font-size:11px;color:var(--accent);padding-top:4px;font-weight:700">+' + kalan + ' kayıt daha →</div>';
+    h += '<div style="text-align:right;font-size:11px;color:var(--accent);padding-top:6px;font-weight:700;pointer-events:none">+' + kalan + ' kayıt daha →</div>';
   }
   el.innerHTML = h;
 }
@@ -10791,27 +10830,64 @@ window.anaStokModalAc = function() {
 /* ── Son Teslim / Kabul Modal ── */
 window.kabulTakipModalAc = function() {
   var rows = (lastData && lastData.son_kabul_kayitlari) || [];
+  var accentColors = ['#10b981','#3b82f6','#8b5cf6','#f59e0b','#ef4444','#06b6d4'];
   var icerik;
   if (!rows.length) {
-    icerik = '<div style="text-align:center;padding:36px 0 28px;color:var(--muted)">Henüz teslim / kabul kaydı yok.</div>';
+    icerik = '<div style="text-align:center;padding:36px 0 28px"><div style="font-size:40px;margin-bottom:12px">📥</div><div style="font-size:14px;color:var(--muted)">Henüz teslim / kabul kaydı yok.</div></div>';
   } else {
-    icerik = '<div style="max-height:65vh;overflow-y:auto;padding-right:2px">' +
+    icerik = '<div style="max-height:65vh;overflow-y:auto;padding-right:4px;display:flex;flex-direction:column;gap:10px">' +
       rows.map(function(r, i) {
-        var tarih   = escHtml(String(r.tarih||'—'));
-        var saat    = escHtml(String(r.saat||''));
-        var personel= escHtml(String(r.personel||'?'));
-        var ozet    = escHtml(String(r.ozet||'—'));
-        var tip     = escHtml(String(r.tip||''));
-        var tipBadge = tip
-          ? '<span style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:1px 7px;font-size:10px;color:var(--muted);margin-left:6px">' + tip + '</span>'
+        var tarih    = String(r.tarih||'—');
+        var saat     = String(r.saat||'');
+        var personel = escHtml(String(r.personel||'?'));
+        var toplam   = r.toplam_adet || 0;
+        var kalemler = Array.isArray(r.kalemler_liste) ? r.kalemler_liste : [];
+        var accent   = accentColors[i % accentColors.length];
+        /* DD.MM.YYYY gösterimi */
+        var tarihGoster = tarih;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(tarih)) {
+          var tp = tarih.split('-');
+          tarihGoster = tp[2] + '.' + tp[1] + '.' + tp[0];
+        }
+        /* Personel baş harfleri */
+        var initials = personel.replace(/<[^>]*>/g,'').split(/\s+/).filter(Boolean)
+          .slice(0,2).map(function(w){return w[0];}).join('').toUpperCase() || '?';
+        /* Ürün pilleri */
+        var pillsHtml = kalemler.length
+          ? kalemler.map(function(p){
+              return '<span class="kabul-pill" style="border-color:' + accent + '44;color:var(--text)">' + escHtml(String(p)) + '</span>';
+            }).join('')
+          : (r.ozet && r.ozet !== 'Kayıt'
+              ? '<span class="kabul-pill" style="color:var(--muted)">' + escHtml(String(r.ozet)) + '</span>'
+              : '');
+        /* Toplam adet badge */
+        var adetBadge = toplam > 0
+          ? '<span style="background:' + accent + '22;color:' + accent + ';border:1px solid ' + accent + '55;border-radius:100px;padding:2px 10px;font-size:11px;font-weight:800">' + toplam + ' adet</span>'
           : '';
-        return '<div class="kabul-modal-row">' +
+        return '<div class="kabul-modal-row" style="border-left-color:' + accent + '">' +
+          /* ── Başlık satırı ── */
           '<div class="kabul-modal-meta">' +
-            '<div><span class="kabul-modal-no">#' + (i+1) + '</span>' + tipBadge + '</div>' +
-            '<span class="kabul-modal-tarih">🕐 ' + tarih + (saat ? ' ' + saat : '') + '</span>' +
+            '<div style="display:flex;align-items:center;gap:8px">' +
+              '<span class="kabul-modal-no" style="background:' + accent + '">#' + (i+1) + '</span>' +
+              '<span style="font-size:12px;font-weight:600;color:var(--text2)">Teslimat</span>' +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:8px">' +
+              '<span style="font-size:11px;color:var(--muted)">🕐 ' + escHtml(tarihGoster) + (saat && saat !== '—' ? ' ' + escHtml(saat) : '') + '</span>' +
+              adetBadge +
+            '</div>' +
           '</div>' +
-          '<div class="kabul-modal-personel">👤 ' + personel + '</div>' +
-          '<div class="kabul-modal-ozet">' + ozet + '</div>' +
+          /* ── Personel satırı ── */
+          '<div style="display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">' +
+            '<div class="kabul-avatar" style="background:' + accent + '18;color:' + accent + ';border:1.5px solid ' + accent + '44">' + initials + '</div>' +
+            '<div>' +
+              '<div style="font-size:10px;color:var(--muted);margin-bottom:1px">Teslim eden / kaydeden</div>' +
+              '<div style="font-size:13px;font-weight:800;color:var(--text)">' + personel + '</div>' +
+            '</div>' +
+          '</div>' +
+          /* ── Ürün pilleri ── */
+          (pillsHtml
+            ? '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:5px">' + pillsHtml + '</div>'
+            : '') +
         '</div>';
       }).join('') +
     '</div>';
@@ -10819,10 +10895,13 @@ window.kabulTakipModalAc = function() {
   var modal = document.createElement('div');
   modal.className = 'modal-acik';
   modal.style.zIndex = '9950';
+  var sayiBadge = rows.length
+    ? '<span style="background:var(--accent);color:#fff;border-radius:100px;padding:1px 9px;font-size:11px;font-weight:800;margin-left:8px">' + rows.length + '</span>'
+    : '';
   modal.innerHTML =
     '<div class="modal-box" style="max-width:600px">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">' +
-        '<h3 style="margin:0">📥 Son Teslim / Kabul</h3>' +
+        '<h3 style="margin:0;display:flex;align-items:center">📥 Son Teslim / Kabul' + sayiBadge + '</h3>' +
         '<button onclick="this.closest(\'.modal-acik\').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted);padding:2px 8px;line-height:1">✕</button>' +
       '</div>' +
       icerik +

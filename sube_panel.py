@@ -1889,6 +1889,7 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
                     "personel": rd.get("personel_ad") or rd.get("personel_id") or "Personel ?",
                     "toplam_adet": toplam_adet,
                     "ozet": ozet or "Kayıt",
+                    "kalemler_liste": parcalar,
                 }
             )
     except Exception:
