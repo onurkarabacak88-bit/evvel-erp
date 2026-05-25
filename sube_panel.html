@@ -5948,7 +5948,12 @@ async function renderSiparisTakipPanel() {
     // Her adımın durumunu hesapla
     var tahsisCls, tahsisDot, tahsisSub;
     if (!t.tahsis_durum) {
-      tahsisCls = 'st-aktif'; tahsisDot = '⏳'; tahsisSub = 'Merkez onayında';
+      // Tahsis kaydı yok ama sipariş ilerlemişse (sevk/kabul) — tahsis fiilen tamamlanmış say
+      if (t.sevkiyat_durumu === 'gonderildi' || t.sevkiyat_durumu === 'toptanciya_yonlendirildi' || t.kabul_durum) {
+        tahsisCls = 'st-done'; tahsisDot = '✓'; tahsisSub = 'Tamamlandı';
+      } else {
+        tahsisCls = 'st-aktif'; tahsisDot = '⏳'; tahsisSub = 'Merkez onayında';
+      }
     } else if (t.tahsis_durum === 'tam') {
       tahsisCls = 'st-done';  tahsisDot = '✓';  tahsisSub = t.tahsis_yapan_ad || 'Tamamlandı';
     } else if (t.tahsis_durum === 'kismi') {
