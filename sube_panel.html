@@ -1624,6 +1624,109 @@
       color: rgba(21, 128, 61, 0.95);
     }
 
+    /* ── Yeni gönderilecek kalem satırı (v2 — dokunmatik) ── */
+    .dep-k2-row {
+      display: flex; flex-direction: column; gap: 10px;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: 2px solid var(--border);
+      background: var(--bg2);
+      transition: border-color .18s, background .18s;
+    }
+    .dep-k2-row.dep-kalem-row--ok {
+      border-color: rgba(74,222,128,.65);
+      background: rgba(74,222,128,.07);
+    }
+    .dep-k2-top {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+    }
+    .dep-k2-urun { font-size: 16px; font-weight: 800; }
+    .dep-k2-ist  { font-size: 12px; color: var(--muted); flex-shrink: 0; }
+    .dep-k2-durgrp { display: flex; gap: 6px; }
+    .dep-k2-durbtn {
+      flex: 1; padding: 12px 6px;
+      font-size: 14px; font-weight: 700;
+      border-radius: 10px;
+      border: 2px solid var(--border);
+      background: var(--bg); color: var(--text2);
+      cursor: pointer; transition: all .1s;
+      line-height: 1;
+    }
+    .dep-k2-durbtn:active { transform: scale(.96); }
+    .dep-k2-var.dep-k2-aktif  { background: rgba(74,222,128,.2);  border-color: #4ade80; color: #4ade80; }
+    .dep-k2-kismi.dep-k2-aktif{ background: rgba(251,191,36,.18); border-color: #fbbf24; color: #fbbf24; }
+    .dep-k2-yok.dep-k2-aktif  { background: rgba(248,113,113,.18);border-color: #f87171; color: #f87171; }
+    .dep-k2-stepper {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .dep-k2-step-btn {
+      width: 48px; height: 48px; font-size: 24px; font-weight: 900;
+      border-radius: 10px; border: 2px solid var(--border);
+      background: var(--bg); color: var(--text);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: background .1s;
+    }
+    .dep-k2-step-btn:active { background: var(--border); }
+    .dep-k2-step-inp {
+      width: 64px; text-align: center;
+      font-size: 22px; font-weight: 900;
+      border-radius: 10px; border: 2px solid var(--border);
+      background: var(--bg); color: var(--text);
+      padding: 8px 4px;
+    }
+    .dep-k2-step-max { font-size: 13px; color: var(--muted); }
+    .dep-k2-not-inp {
+      font-size: 12px; color: var(--text2);
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 12px; background: var(--bg); width: 100%;
+    }
+    /* Bulk bar v2 */
+    .dep-bulk2-bar {
+      display: flex; gap: 8px; flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .dep-bulk2-tam {
+      flex: 1; padding: 13px 16px;
+      font-size: 15px; font-weight: 800;
+      border-radius: 12px; border: none;
+      background: rgba(74,222,128,.22); color: #4ade80;
+      border: 2px solid rgba(74,222,128,.5);
+      cursor: pointer; transition: all .1s;
+    }
+    .dep-bulk2-tam:active { transform: scale(.98); }
+    .dep-bulk2-tam.dep-bulk2-aktif {
+      background: rgba(74,222,128,.38); border-color: #4ade80;
+    }
+    .dep-bulk2-kismi {
+      padding: 13px 16px;
+      font-size: 14px; font-weight: 700;
+      border-radius: 12px;
+      background: var(--bg2); color: var(--text2);
+      border: 2px solid var(--border);
+      cursor: pointer; transition: all .1s;
+    }
+    .dep-bulk2-kismi.dep-bulk2-aktif {
+      background: rgba(251,191,36,.18); border-color: #fbbf24; color: #fbbf24;
+    }
+    /* Yola çıkar büyük butonu */
+    .dep-sevk-buyuk {
+      width: 100%; padding: 16px;
+      font-size: 17px; font-weight: 800;
+      border-radius: 14px; border: none;
+      background: var(--accent); color: #fff;
+      cursor: pointer; margin-top: 6px;
+      transition: opacity .15s;
+    }
+    .dep-sevk-buyuk:disabled { opacity: .45; }
+    .dep-taslak-kucuk {
+      width: 100%; padding: 11px;
+      font-size: 13px; font-weight: 600;
+      border-radius: 10px;
+      background: var(--bg2); color: var(--text2);
+      border: 1px solid var(--border);
+      cursor: pointer; margin-top: 4px;
+    }
+
     #gonderilecekPanel > .depo-kalan-blok {
       margin-top: 18px;
     }
@@ -3448,12 +3551,8 @@
       <div class="sekme-icerik" id="tab-gonderilecek">
         <div class="kart">
           <div class="kart-baslik"><span class="ico">📤</span> Gönderilecek siparişler</div>
-          <div class="gonderilecek-uyari-banner" role="alert">
-            <span style="flex-shrink:0;font-size:16px;line-height:1" aria-hidden="true">⚠️</span>
-            <div>
-              <strong>Dikkat — depo kaydı talep şubesinin stok akışını etkiler.</strong>
-              Her satırda <strong>durum</strong> ve <strong>gönderilen adet</strong> dikkatle girilmelidir. Kısmi veya «yok» gönderimde satırları tek tek kontrol edin; hemen alttaki <strong>Hızlı işlem</strong> toplu kısayolları tam gönderim senaryoları içindir.
-            </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:10px;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg2)">
+            ⚠️ <strong style="color:var(--text2)">Yola çıkar</strong> stok düşürür ve şubede «Depodan Gelen» açılır. <strong style="color:var(--text2)">Hazırlığı kaydet</strong> sadece taslak — stok çıkmaz.
           </div>
           <div id="gonderilecekBulkBarWrap" aria-live="polite"></div>
           <div id="gonderilecekPanel"></div>
@@ -4749,6 +4848,55 @@ function _depAccHeadKey(ev, el) {
 window._depAccToggleFromEl = _depAccToggleFromEl;
 window._depAccHeadKey = _depAccHeadKey;
 
+/* ── Yeni dokunmatik kalem kontrolleri ── */
+function depDurBtnlariGuncelle(rid) {
+  var inp = document.getElementById('depDur_' + rid);
+  if (!inp) return;
+  var durum = inp.value || 'bekliyor';
+  var row = document.getElementById('depKalemRow_' + rid);
+  if (!row) return;
+  row.querySelectorAll('.dep-k2-durbtn').forEach(function(btn) {
+    btn.classList.remove('dep-k2-aktif');
+    if (btn.classList.contains('dep-k2-' + durum)) btn.classList.add('dep-k2-aktif');
+  });
+  var stepRow = document.getElementById('depStepRow_' + rid);
+  if (stepRow) stepRow.style.display = (durum === 'yok') ? 'none' : 'flex';
+}
+function depDurSec(rid, durum) {
+  var inp = document.getElementById('depDur_' + rid);
+  if (!inp) return;
+  inp.value = durum;
+  depDurBtnlariGuncelle(rid);
+  /* VAR seçince adet = istened otomatik doldur */
+  if (durum === 'var') {
+    var adInp = document.getElementById('depAd_' + rid);
+    if (adInp) {
+      var ist = parseInt(adInp.getAttribute('data-istened') || adInp.getAttribute('data-istened') || '0', 10) || 0;
+      if (ist > 0) adInp.value = String(ist);
+    }
+  }
+  /* YOK seçince adet sıfırla */
+  if (durum === 'yok') {
+    var adInp2 = document.getElementById('depAd_' + rid);
+    if (adInp2) adInp2.value = '0';
+  }
+  gonderilecekDepoTaslakDirty = true;
+  depKalemSatirRenkGuncelle(rid);
+}
+function depAdetDegistir(rid, delta) {
+  var inp = document.getElementById('depAd_' + rid);
+  if (!inp) return;
+  var ist = parseInt(inp.getAttribute('data-istened') || inp.getAttribute('data-istened') || '0', 10) || 0;
+  var cur = parseInt(inp.value || '0', 10);
+  if (isNaN(cur)) cur = 0;
+  cur = Math.max(0, Math.min(ist > 0 ? ist : 9999, cur + delta));
+  inp.value = String(cur);
+  gonderilecekDepoTaslakDirty = true;
+  depKalemSatirRenkGuncelle(rid);
+}
+window.depDurSec = depDurSec;
+window.depAdetDegistir = depAdetDegistir;
+
 function depKalemSatirTamamMi(rid) {
   var sel = document.getElementById('depDur_' + rid);
   var adInp = document.getElementById('depAd_' + rid);
@@ -4807,6 +4955,7 @@ function gonderilecekDepoSnapshotUygula(snap) {
     if (durEl && k.durum != null) durEl.value = k.durum;
     if (adEl && k.adet != null) adEl.value = k.adet;
     if (ntEl && k.not != null) ntEl.value = k.not;
+    depDurBtnlariGuncelle(rid);
     depKalemSatirRenkGuncelle(rid);
   });
   Object.keys(snap.kartlar || {}).forEach(function (tid) {
@@ -4816,15 +4965,12 @@ function gonderilecekDepoSnapshotUygula(snap) {
   });
 }
 function gonderilecekBulkBarAktifSiniflari() {
-  ['gonderilecekBulkBtnKismi', 'gonderilecekBulkBtnTam'].forEach(function (bid) {
-    var b = document.getElementById(bid);
-    if (b) b.classList.remove('gonderilecek-bulk-btn--aktif');
-  });
-  var map = { kismi: 'gonderilecekBulkBtnKismi', tam: 'gonderilecekBulkBtnTam' };
-  if (gonderilecekHizliIslemModu && map[gonderilecekHizliIslemModu]) {
-    var el = document.getElementById(map[gonderilecekHizliIslemModu]);
-    if (el) el.classList.add('gonderilecek-bulk-btn--aktif');
-  }
+  var bTam   = document.getElementById('gonderilecekBulkBtnTam');
+  var bKismi = document.getElementById('gonderilecekBulkBtnKismi');
+  if (bTam)   { bTam.classList.remove('dep-bulk2-aktif',   'gonderilecek-bulk-btn--aktif'); }
+  if (bKismi) { bKismi.classList.remove('dep-bulk2-aktif', 'gonderilecek-bulk-btn--aktif'); }
+  if (gonderilecekHizliIslemModu === 'tam'   && bTam)   bTam.classList.add('dep-bulk2-aktif');
+  if (gonderilecekHizliIslemModu === 'kismi' && bKismi) bKismi.classList.add('dep-bulk2-aktif');
 }
 function gonderilecekHizliIslemSifirla() {
   gonderilecekHizliIslemModu = null;
@@ -4843,12 +4989,13 @@ function gonderilecekBulkTamGonder() {
   gonderilecekHizliIslemModu = 'tam';
   gonderilecekDepoTaslakDirty = true;
   document.querySelectorAll('#gonderilecekPanel input[id^="depAd_"]').forEach(function (inp) {
-    var ist = parseInt(String(inp.getAttribute('data-istenen') || '0').replace(/\D/g, ''), 10);
+    var ist = parseInt(String(inp.getAttribute('data-istened') || inp.getAttribute('data-istenen') || '0').replace(/\D/g, ''), 10);
     var rid = String(inp.id || '').replace(/^depAd_/, '');
     var sel = document.getElementById('depDur_' + rid);
     if (sel) sel.value = 'var';
     if (!isNaN(ist) && ist > 0) inp.value = String(ist);
     else inp.value = '0';
+    depDurBtnlariGuncelle(rid);
     depKalemSatirRenkGuncelle(rid);
   });
   gonderilecekBulkBarAktifSiniflari();
@@ -4870,7 +5017,7 @@ function gonderilecekKismiSatirlariUygula() {
   gonderilecekDepoTaslakDirty = true;
   document.querySelectorAll('#gonderilecekPanel input[id^="depAd_"]').forEach(function (inp) {
     var rid = String(inp.id || '').replace(/^depAd_/, '');
-    var ist = parseInt(String(inp.getAttribute('data-istenen') || '0').replace(/\D/g, ''), 10) || 0;
+    var ist = parseInt(String(inp.getAttribute('data-istened') || inp.getAttribute('data-istenen') || '0').replace(/\D/g, ''), 10) || 0;
     var gRaw = parseInt(String(inp.value || '0').replace(/\D/g, ''), 10);
     var g = isNaN(gRaw) ? 0 : gRaw;
     var sel = document.getElementById('depDur_' + rid);
@@ -4887,6 +5034,7 @@ function gonderilecekKismiSatirlariUygula() {
       sel.value = 'kismi';
       inp.value = String(g);
     }
+    depDurBtnlariGuncelle(rid);
     depKalemSatirRenkGuncelle(rid);
   });
   gonderilecekBulkBarAktifSiniflari();
@@ -4946,15 +5094,10 @@ function buildDepoKalanHTML(kalanListe) {
 }
 
 function buildGonderilecekBulkBarHTML() {
-  var h = '';
-  h += '<div class="gonderilecek-bulk-bar">';
-  h += '<span>Hızlı işlem</span>';
-  h +=
-    '<button type="button" id="gonderilecekBulkBtnKismi" class="btn btn-secondary btn-sm" onclick="gonderilecekKismiSatirlariUygula();return false;" title="İlk tık: gönderilen adetlere göre satır durumu. Yeşilken tekrar: önceki değerlere dön.">Kısmi gönder (satırları düzenle)</button>';
-  h +=
-    '<button type="button" id="gonderilecekBulkBtnTam" class="btn btn-warning btn-sm" onclick="gonderilecekBulkTamGonder();return false;" title="İlk tık: tüm satırlarda «var» + istenen adet. Yeşilken tekrar: önceki değerlere dön.">Tüm kalemlerde tam gönder (var)</button>';
-  h += '</div>';
-  return h;
+  return '<div class="dep-bulk2-bar">' +
+    '<button type="button" id="gonderilecekBulkBtnTam" class="dep-bulk2-tam" onclick="gonderilecekBulkTamGonder();return false;">✅ Tümünü Tam Gönder</button>' +
+    '<button type="button" id="gonderilecekBulkBtnKismi" class="dep-bulk2-kismi" onclick="gonderilecekKismiSatirlariUygula();return false;">≈ Kısmi Ayarla</button>' +
+    '</div>';
 }
 
 function buildDepoHazirlikHTML(depoHazirlik) {
@@ -4963,83 +5106,87 @@ function buildDepoHazirlikHTML(depoHazirlik) {
     return '<div class="merkez-mesaj-bos" style="padding:12px 0">Şu an size yönlendirilmiş gönderilecek sipariş yok.</div>';
   }
   var h = '';
-  h += '<div class="gonderilecek-sect-eyebrow">Hazırlık listesi</div>';
-  h +=
-    '<div class="gonderilecek-hazirlik-ozet"><span>🏪 ' +
-    dh.length +
-    ' sipariş</span><span class="badge badge-gray" style="font-weight:700">Kart başlığına tıklayın · aç / kapat</span></div>';
+  h += '<div class="gonderilecek-sect-eyebrow">Hazırlık listesi &nbsp;<span style="font-weight:400;color:var(--muted)">(' + dh.length + ' sipariş)</span></div>';
   dh.forEach(function (d, idx) {
     var tid = String(d.id || '');
     var rows = Array.isArray(d.kalem_duzenle) ? d.kalem_duzenle : [];
     var durum = escHtml(d.sevkiyat_durumu || d.durum || 'hazirlaniyor');
     var subeAd = escHtml(d.talep_sube_adi || d.talep_sube_id || '—');
-    var kalemOzet = rows.map(function(k){ return escHtml(k.urun_ad||k.urun_id||'?') + ' ×' + (k.istenen_adet||0); }).join(', ');
+    var kalemOzet = rows.map(function(k){ return escHtml(k.urun_ad||k.urun_id||'?') + ' ×' + (k.istenen_adet||0); }).join(' · ');
     var isFirst = idx === 0;
     var tidEsc = escHtml(tid);
+
     h += '<div class="dep-haz-kart">';
-    h +=
-      '<div class="dep-haz-acc-head" role="button" tabindex="0" data-dep-tid="' +
-      tidEsc +
-      '" onclick="_depAccToggleFromEl(this)" onkeydown="_depAccHeadKey(event,this)" aria-expanded="' +
-      (isFirst ? 'true' : 'false') +
-      '" aria-controls="depAcc_' +
-      tidEsc +
-      '">';
+    /* accordion başlık */
+    h += '<div class="dep-haz-acc-head" role="button" tabindex="0" data-dep-tid="' + tidEsc + '"' +
+      ' onclick="_depAccToggleFromEl(this)" onkeydown="_depAccHeadKey(event,this)"' +
+      ' aria-expanded="' + (isFirst ? 'true' : 'false') + '" aria-controls="depAcc_' + tidEsc + '">';
     h += '<div class="dep-haz-acc-head-main">';
-    h += '<div class="dep-haz-acc-sube">' + subeAd + ' <span class="mono dep-haz-acc-id">#' + escHtml(tid.slice(0,8)) + '…</span></div>';
-    h += '<div class="dep-haz-acc-kalem">' + kalemOzet + '</div>';
+    h += '<div class="dep-haz-acc-sube" style="font-size:16px;font-weight:800">' + subeAd +
+      ' <span class="mono dep-haz-acc-id" style="font-size:12px;font-weight:400">#' + escHtml(tid.slice(0,8)) + '…</span></div>';
+    h += '<div class="dep-haz-acc-kalem" style="font-size:12px;color:var(--muted);margin-top:3px">' + kalemOzet + '</div>';
     h += '</div>';
     h += '<div class="dep-haz-acc-meta">';
     h += '<span class="badge badge-blue">' + durum + '</span>';
-    h += '<span id="depArrow_' + tidEsc + '" class="dep-haz-acc-arrow" aria-hidden="true">' + (isFirst ? '▼' : '▶') + '</span>';
+    h += '<span id="depArrow_' + tidEsc + '" class="dep-haz-acc-arrow">' + (isFirst ? '▼' : '▶') + '</span>';
     h += '</div></div>';
+
+    /* accordion gövde */
     h += '<div id="depAcc_' + tidEsc + '" class="dep-haz-acc-body" style="' + (isFirst ? '' : 'display:none') + '">';
+
     if (d.benim_talebim) {
-      h +=
-        '<div class="dep-haz-talimat" style="background:rgba(59,130,246,.1);border-color:rgba(59,130,246,.35)"><strong>Kendi deponuz için sipariş</strong> — durum/not için «Hazırlığı kaydet»; fiziksel sevk için «Yola çıkar».</div>';
+      h += '<div class="dep-haz-talimat" style="background:rgba(59,130,246,.1);border-color:rgba(59,130,246,.35)"><strong>Kendi deponuz için sipariş</strong> — durum/not için «Hazırlığı kaydet»; fiziksel sevk için «Yola çıkar».</div>';
     }
     if (d.operasyon_yonlendirme_talimati) {
       h += '<div class="dep-haz-talimat"><strong>Talimat:</strong> ' + escHtml(d.operasyon_yonlendirme_talimati) + '</div>';
     }
-    h += '<div style="display:grid;gap:10px;margin-bottom:4px">';
+
+    /* kalem satırları */
+    h += '<div style="display:flex;flex-direction:column;gap:10px;margin-bottom:10px">';
     rows.forEach(function (k, i) {
       var rid = tid + '_' + i;
       var ridEsc = escHtml(rid);
-      var ist = Number(k.istenen_adet || 0);
+      var ist = Number(k.istened_adet || k.istenen_adet || 0);
       var gon = Number(k.gonderilen_adet || 0);
       var d0 = String(k.durum || 'bekliyor');
-      h += '<div class="dep-kalem-row" id="depKalemRow_' + ridEsc + '" data-dep-rid="' + ridEsc + '">';
-      h += '<div class="dep-kalem-cols">';
-      h += '<div class="dep-kalem-urun">';
-      h += '<span class="dep-kalem-urun-txt">' + escHtml(k.urun_ad || k.urun_id || 'Kalem ' + (i + 1)) + '</span>';
-      h += '<span class="dep-kalem-urun-ist mono">İstenen: <strong>' + ist + '</strong> adet</span>';
+      var showStepper = (d0 !== 'yok') ? '' : 'display:none';
+
+      h += '<div class="dep-k2-row dep-kalem-row" id="depKalemRow_' + ridEsc + '" data-dep-rid="' + ridEsc + '">';
+      /* üst satır: ürün adı + istenen */
+      h += '<div class="dep-k2-top">';
+      h += '<span class="dep-k2-urun">' + escHtml(k.urun_ad || k.urun_id || 'Kalem ' + (i+1)) + '</span>';
+      h += '<span class="dep-k2-ist">İstenen: <strong>' + ist + '</strong></span>';
       h += '</div>';
-      h += '<div class="dep-kalem-field">';
-      h += '<label class="dep-kalem-lbl" for="depDur_' + ridEsc + '">Durum</label>';
-      h += '<select id="depDur_' + ridEsc + '"><option value="var"' + (d0==='var'?' selected':'') + '>var</option><option value="kismi"' + (d0==='kismi'?' selected':'') + '>kısmi</option><option value="yok"' + (d0==='yok'?' selected':'') + '>yok</option><option value="bekliyor"' + (d0==='bekliyor'?' selected':'') + '>bekliyor</option></select>';
+      /* gizli durum input */
+      h += '<input type="hidden" id="depDur_' + ridEsc + '" value="' + escHtml(d0) + '" />';
+      /* durum butonları */
+      h += '<div class="dep-k2-durgrp">';
+      h += '<button type="button" class="dep-k2-durbtn dep-k2-var' + (d0==='var'?' dep-k2-aktif':'') + '" onclick="depDurSec(\'' + ridEsc + '\',\'var\')">✓ VAR</button>';
+      h += '<button type="button" class="dep-k2-durbtn dep-k2-kismi' + (d0==='kismi'?' dep-k2-aktif':'') + '" onclick="depDurSec(\'' + ridEsc + '\',\'kismi\')">≈ KISMİ</button>';
+      h += '<button type="button" class="dep-k2-durbtn dep-k2-yok' + (d0==='yok'?' dep-k2-aktif':'') + '" onclick="depDurSec(\'' + ridEsc + '\',\'yok\')">✗ YOK</button>';
       h += '</div>';
-      h += '<div class="dep-kalem-field">';
-      h += '<label class="dep-kalem-lbl" for="depAd_' + ridEsc + '">Gönderilen</label>';
-      h += '<input class="dep-kalem-adet" id="depAd_' + ridEsc + '" data-istenen="' + String(ist) + '" inputmode="numeric" value="' + String(gon||0) + '" placeholder="0" />';
+      /* adet stepper */
+      h += '<div class="dep-k2-stepper" id="depStepRow_' + ridEsc + '" style="' + showStepper + '">';
+      h += '<button type="button" class="dep-k2-step-btn" onclick="depAdetDegistir(\'' + ridEsc + '\',-1)">−</button>';
+      h += '<input class="dep-k2-step-inp" id="depAd_' + ridEsc + '" inputmode="numeric" value="' + String(gon||0) + '" data-istened="' + String(ist) + '" data-istenen="' + String(ist) + '" />';
+      h += '<button type="button" class="dep-k2-step-btn" onclick="depAdetDegistir(\'' + ridEsc + '\',+1)">+</button>';
+      h += '<span class="dep-k2-step-max">/ ' + ist + '</span>';
       h += '</div>';
-      h += '<div class="dep-kalem-field dep-kalem-field--wide">';
-      h += '<label class="dep-kalem-lbl" for="depNt_' + ridEsc + '">Kalem notu</label>';
-      h += '<input id="depNt_' + ridEsc + '" type="text" placeholder="Opsiyonel" value="' + escHtml(k.not||'') + '" />';
+      /* kalem notu */
+      h += '<input class="dep-k2-not-inp" id="depNt_' + ridEsc + '" type="text" placeholder="Kalem notu (opsiyonel)" value="' + escHtml(k.not||'') + '" />';
       h += '</div>';
-      h += '</div></div>';
     });
     h += '</div>';
-    h += '<div class="dep-haz-kart-foot">';
-    h += '<div class="form-group" style="margin:0"><label for="depNot_' + tidEsc + '">Sevkiyat notu (tüm kart)</label><input id="depNot_' + tidEsc + '" value="' + escHtml(d.sevkiyat_notu||'') + '" placeholder="Opsiyonel genel not" /></div>';
-    h += '<p style="font-size:11px;color:var(--muted);margin:10px 0 0;line-height:1.45"><strong>Hazırlığı kaydet</strong> stok çıkarmaz. Fiziksel gönderim için <strong>Yola çıkar</strong> — talep şubesinde «Depodan Gelen» açılır.</p>';
-    h += '<div class="dep-haz-kaydet-row" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">';
-    h += '<button type="button" class="btn btn-secondary btn-sm" id="depTaslak_' + tidEsc + '">Hazırlığı kaydet</button>';
-    h += '<button type="button" class="btn btn-primary btn-sm" id="depSevk_' + tidEsc + '">Yola çıkar — teslim al aç</button>';
+
+    /* alt not + butonlar */
+    h += '<div style="display:flex;flex-direction:column;gap:6px">';
+    h += '<input id="depNot_' + tidEsc + '" value="' + escHtml(d.sevkiyat_notu||'') + '" placeholder="Sevkiyat notu (opsiyonel)" style="border:1px solid var(--border);border-radius:8px;padding:9px 12px;background:var(--bg);font-size:13px;color:var(--text2)" />';
+    h += '<button type="button" class="dep-sevk-buyuk" id="depSevk_' + tidEsc + '">🚚 Yola Çıkar — Teslim Al Açılır</button>';
+    h += '<button type="button" class="dep-taslak-kucuk" id="depTaslak_' + tidEsc + '">📝 Hazırlığı Kaydet (stok çıkmaz)</button>';
     h += '</div>';
-    h += '<div id="depMsg_' + tidEsc + '"></div>';
-    h += '</div>';
-    h += '</div>';
-    h += '</div>';
+    h += '<div id="depMsg_' + tidEsc + '" style="margin-top:6px"></div>';
+    h += '</div>'; /* acc-body */
+    h += '</div>'; /* dep-haz-kart */
   });
   return h;
 }
