@@ -939,7 +939,7 @@
     .at-basari-yazi { font-size: 22px; font-weight: 900; color: var(--ok); margin-bottom: 6px; }
     .at-basari-tutar { font-size: 40px; font-weight: 900; color: #fff; letter-spacing: -.02em; }
 
-    /* ===== FIRE BİLDİRİM WİZARD ===== */
+    /* ===== FIRE BİLDİRİM WİZARD v2 ===== */
     #tab-fire { padding: 0 !important; }
     #tab-fire > .kart { display: none !important; }
     #frWizRoot { display: block; }
@@ -1140,6 +1140,60 @@
     .fr-basari-check { font-size: 56px; display: block; margin-bottom: 10px; }
     .fr-basari-yazi { font-size: 20px; font-weight: 900; color: var(--ok); margin-bottom: 6px; }
     .fr-basari-alt { font-size: 13px; color: var(--muted); }
+
+    /* Önerilen ürünler grid */
+    .fr-oneri-baslik {
+      font-size: 10px; color: #f87171; font-weight: 800;
+      text-transform: uppercase; letter-spacing: .07em;
+      margin-bottom: 8px; display: flex; align-items: center; gap: 5px;
+    }
+    .fr-oneri-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px;
+    }
+    .fr-oneri-tile {
+      background: rgba(255,255,255,.05); border: 1.5px solid rgba(255,255,255,.1);
+      border-radius: 12px; padding: 12px 10px 10px; text-align: center;
+      transition: border-color .15s, background .15s;
+    }
+    .fr-oneri-tile.fr-oneri-sel {
+      background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.45);
+    }
+    .fr-oneri-ad {
+      font-size: 12px; font-weight: 700; color: #e2e8f0;
+      margin-bottom: 8px; line-height: 1.25; min-height: 28px;
+    }
+    .fr-oneri-stepper { display: flex; align-items: center; justify-content: center; gap: 4px; }
+    .fr-step-btn-plus {
+      width: 36px; height: 36px; border-radius: 8px; border: none;
+      background: rgba(239,68,68,.3); color: #fff; font-size: 18px; font-weight: 700;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    .fr-step-btn-plus:active { background: rgba(239,68,68,.6); }
+    .fr-diger-baslik {
+      font-size: 10px; color: var(--muted); font-weight: 700;
+      text-transform: uppercase; letter-spacing: .06em;
+      margin-bottom: 8px; margin-top: 4px;
+    }
+
+    /* Step 2 nav — personel + PIN + gönder */
+    .fr-nav2-form {
+      flex: 1; display: flex; align-items: center; gap: 0;
+      background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14);
+      border-radius: 12px; overflow: hidden; min-width: 0;
+    }
+    .fr-nav2-sel {
+      flex: 1; background: transparent; border: none; border-right: 1px solid rgba(255,255,255,.14);
+      color: #fff; font-size: 12px; padding: 0 10px; height: 44px;
+      outline: none; -webkit-appearance: none; appearance: none; min-width: 0;
+    }
+    .fr-nav2-sel option { background: #1e2330; }
+    .fr-nav2-pin-inp {
+      width: 56px; flex-shrink: 0;
+      background: transparent; border: none;
+      color: #f87171; font-size: 20px; font-weight: 900;
+      text-align: center; outline: none; padding: 0 6px; height: 44px;
+      letter-spacing: 2px;
+    }
     /* ===== / FIRE WİZARD ===== */
 
     @keyframes pulse {
@@ -9099,7 +9153,7 @@ function renderStokForms(tip) {
   }
 }
 
-/* ===== FIRE BİLDİRİM WİZARD ===== */
+/* ===== FIRE BİLDİRİM WİZARD v2 — 2 adım ===== */
 var FR_SEBEPLER = [
   { kod: 'kirma_dokulme',   ico: '💔', ad: 'Kırma / Dökülme',    alt: 'Bardak, kap kırılması' },
   { kod: 'skt_bozulma',     ico: '🟡', ad: 'SKT / Bozulma',      alt: 'Son kullanma tarihi geçti' },
@@ -9108,15 +9162,23 @@ var FR_SEBEPLER = [
   { kod: 'sayim_hatasi',    ico: '🔢', ad: 'Sayım Hatası',       alt: 'Sistem düzeltmesi' },
   { kod: 'diger',           ico: '❓', ad: 'Diğer',               alt: 'Açıklama zorunlu' }
 ];
-var _frWiz = { step: 1, sebep: null, kalemler: {}, katalog: [], busy: false, aramaMetni: '', personelList: [] };
+// Sebebe göre önerilen stok kalem kodları (önce gösterilen ürünler)
+var FR_SEBEP_ONERILEN = {
+  kirma_dokulme:   ['bardak_kucuk', 'bardak_buyuk', 'bardak_plastik', 'kapak_adet', 'pecete_paket'],
+  skt_bozulma:     ['sut_litre', 'surup_adet', 'kahve_paket', 'cookie_adet', 'pasta_adet'],
+  iade:            ['bardak_kucuk', 'bardak_buyuk', 'pasta_adet', 'cookie_adet', 'sut_litre'],
+  hazirlik_deneme: ['sut_litre', 'surup_adet', 'bardak_kucuk', 'bardak_buyuk', 'kahve_paket'],
+  sayim_hatasi:    [],
+  diger:           [],
+};
+var _frWiz = { step: 1, sebep: null, kalemler: {}, katalog: [], busy: false, aramaMetni: '' };
 
 function frWizBas() {
   var root = document.getElementById('frWizRoot');
   if (!root) return;
-  // reset state
   _frWiz.step = 1; _frWiz.sebep = null; _frWiz.kalemler = {};
   _frWiz.busy = false; _frWiz.aramaMetni = '';
-  // load catalog then render — flatten nested categories into a plain item list
+  root.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);font-size:13px">⏳ Yükleniyor…</div>';
   siparisLoad().then(function(kategoriler) {
     var flat = [];
     (kategoriler || []).forEach(function(kat) {
@@ -9135,13 +9197,13 @@ function frWizRender(geriAnim) {
   var root = document.getElementById('frWizRoot');
   if (!root) return;
   var step = _frWiz.step;
-  // dot states
-  var dots = [1, 2, 3].map(function(i) {
+  // 2 adım — dot indicators
+  var dots = [1, 2].map(function(i) {
     var cls = i < step ? 'tamam' : (i === step ? 'aktif' : '');
     return '<span class="fr-wiz-adim-dot ' + cls + '"></span>';
   }).join('');
-  var basliklar = ['Sebep', 'Ürünler', 'Detay & İmza'];
-  var altlar = ['Ne oldu?', 'Hangi ürünler?', 'Personel onayı'];
+  var basliklar = ['Sebep', 'Ürünler & Detay'];
+  var altlar = ['Ne oldu?', 'Ürünleri seç, onayla'];
   var h = '<div class="fr-wiz-header">';
   h += '<div class="fr-wiz-ico">🔥</div>';
   h += '<div class="fr-wiz-baslik">';
@@ -9154,35 +9216,33 @@ function frWizRender(geriAnim) {
   var bodyClass = 'fr-wiz-body' + (geriAnim ? ' geri-anim' : '');
   h += '<div class="' + bodyClass + '" id="frWizBody">';
   if (step === 1) h += frWizStep1HTML();
-  else if (step === 2) h += frWizStep2HTML();
-  else h += frWizStep3HTML();
+  else h += frWizStep2HTML();
   h += '</div>';
-  // nav bar
-  h += '<div class="fr-nav-bar">';
-  if (step > 1) {
+  // nav bar — sadece step 2'de göster; personel + PIN + gönder
+  if (step === 2) {
+    var persList = (typeof panelDropdownPersonel === 'function') ? panelDropdownPersonel() : [];
+    var persOpts = '<option value="">— Personel —</option>';
+    persList.forEach(function(p) {
+      persOpts += '<option value="' + escHtml(String(p.id)) + '">' + escHtml(p.ad || p.ad_soyad || String(p.id)) + '</option>';
+    });
+    h += '<div class="fr-nav-bar">';
     h += '<button class="fr-nav-geri" onclick="frWizGeri()" type="button">‹</button>';
+    h += '<div class="fr-nav2-form">';
+    h += '<select class="fr-nav2-sel" id="frDetayPers">' + persOpts + '</select>';
+    h += '<input class="fr-nav2-pin-inp" id="frDetayPin" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" />';
+    h += '</div>';
+    h += '<button class="fr-nav-ileri gonder" id="frNavGonder" onclick="frWizGonder()" type="button">🔥 Gönder</button>';
+    h += '</div>';
   }
-  if (step < 3) {
-    h += '<button class="fr-nav-ileri" id="frNavIleri" onclick="frWizIleri()" type="button">';
-    if (step === 1) h += ((_frWiz.sebep ? '✓ ' + FR_SEBEPLER.find(function(s){return s.kod===_frWiz.sebep;}).ad : 'Sebep Seç')) + ' ›';
-    else h += frWizSecilenAdet() + ' kalem seçildi  ›';
-    h += '</button>';
-  } else {
-    h += '<button class="fr-nav-ileri gonder" id="frNavGonder" onclick="frWizGonder()" type="button">🔥 Bildirimi Gönder</button>';
-  }
-  h += '</div>';
   root.innerHTML = h;
-  // wire step-specific interactions
   if (step === 2) frWizWireStep2();
-  if (step === 3) frWizWireStep3();
 }
 
 function frWizStep1HTML() {
-  var h = '';
-  h += '<div class="fr-sebep-grid">';
+  var h = '<div class="fr-sebep-grid">';
   FR_SEBEPLER.forEach(function(s) {
-    var sel = _frWiz.sebep === s.kod ? ' secili' : '';
-    h += '<div class="fr-sebep-kart' + sel + '" onclick="frWizSebepSec(\'' + s.kod + '\')">';
+    // onclick → direkt adım 2'ye geç; kart seçimi animasyonu için kısa active sınıfı
+    h += '<div class="fr-sebep-kart" onclick="frWizKartSec(\'' + s.kod + '\')">';
     h += '<div class="fr-sebep-kart-ico">' + s.ico + '</div>';
     h += '<div class="fr-sebep-kart-yazi">' + escHtml(s.ad) + '</div>';
     h += '<div class="fr-sebep-kart-alt">' + escHtml(s.alt) + '</div>';
@@ -9194,50 +9254,78 @@ function frWizStep1HTML() {
 
 function frWizStep2HTML() {
   var h = '';
-  h += '<input class="fr-ara-inp" id="frAraInp" type="search" inputmode="search" placeholder="🔍  Ürün ara…" value="' + escHtml(_frWiz.aramaMetni) + '" oninput="frWizAra(this.value)" autocomplete="off" />';
-  var liste = _frWiz.katalog;
-  var ara = (_frWiz.aramaMetni || '').toLowerCase().trim();
-  if (ara) liste = liste.filter(function(u) { return (u.ad || u.urun_adi || '').toLowerCase().indexOf(ara) >= 0; });
-  if (!liste.length) {
-    h += '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">Ürün bulunamadı</div>';
-    return h;
-  }
-  liste.forEach(function(u) {
-    var uid = escHtml(String(u.id || ''));
-    var ad = u.ad || uid;
-    var adet = parseInt(_frWiz.kalemler[String(u.id || '')] || 0, 10);
-    var secili = adet > 0 ? ' secili' : '';
-    h += '<div class="fr-urun-satir' + secili + '" id="frUs_' + uid + '">';
-    h += '<div class="fr-urun-ad">' + escHtml(ad);
-    if (u.kategori) h += '<div class="fr-urun-alt">' + escHtml(u.kategori) + '</div>';
-    h += '</div>';
-    h += '<div class="fr-stepper">';
-    h += '<button class="fr-step-btn" type="button" onclick="frWizAdet(\'' + uid + '\',-1)">−</button>';
-    h += '<span class="fr-step-sayi" id="frAd_' + uid + '">' + (adet || 0) + '</span>';
-    h += '<button class="fr-step-btn" type="button" onclick="frWizAdet(\'' + uid + '\',1)">+</button>';
-    h += '</div>';
-    h += '</div>';
-  });
-  return h;
-}
-
-function frWizStep3HTML() {
-  var secilenler = Object.keys(_frWiz.kalemler).filter(function(k){ return _frWiz.kalemler[k] > 0; });
-  var toplamAdet = secilenler.reduce(function(s, k){ return s + _frWiz.kalemler[k]; }, 0);
   var sebepObj = FR_SEBEPLER.find(function(s){ return s.kod === _frWiz.sebep; }) || {};
-  var h = '';
-  // Özet pill
-  h += '<div class="fr-ozet-satir">';
-  h += '<span class="fr-ozet-ico">' + (sebepObj.ico || '🔥') + '</span>';
-  h += '<span class="fr-ozet-yazi"><strong>' + escHtml(sebepObj.ad || _frWiz.sebep) + '</strong></span>';
-  h += '<span class="fr-ozet-badge">' + toplamAdet + ' adet / ' + secilenler.length + ' kalem</span>';
+  var onerilKodlar = FR_SEBEP_ONERILEN[_frWiz.sebep] || [];
+
+  // Önerilen ürünler — sebebe özel ön plana çıkan stok kalemleri
+  var onerilenler = [];
+  onerilKodlar.forEach(function(kod) {
+    var u = _frWiz.katalog.find(function(x){ return x.kalem_kodu === kod || x.id === kod; });
+    if (u) onerilenler.push(u);
+  });
+
+  if (onerilenler.length) {
+    h += '<div class="fr-oneri-baslik">⚡ ' + escHtml(sebepObj.ico || '') + ' ' + escHtml(sebepObj.ad || 'Önerilen') + '</div>';
+    h += '<div class="fr-oneri-grid">';
+    onerilenler.forEach(function(u) {
+      var uid = escHtml(String(u.id || ''));
+      var adet = parseInt(_frWiz.kalemler[String(u.id || '')] || 0, 10);
+      var selCls = adet > 0 ? ' fr-oneri-sel' : '';
+      h += '<div class="fr-oneri-tile' + selCls + '" id="frOt_' + uid + '">';
+      h += '<div class="fr-oneri-ad">' + escHtml(u.ad || '') + '</div>';
+      h += '<div class="fr-oneri-stepper">';
+      h += '<button class="fr-step-btn-plus" type="button" onclick="frWizAdet(\'' + uid + '\',1)">+</button>';
+      h += '<span class="fr-step-sayi" id="frOtc_' + uid + '">' + (adet || 0) + '</span>';
+      h += '</div>';
+      h += '</div>';
+    });
+    h += '</div>';
+  }
+
+  // Diğer ürünler — önerilen dışındaki tüm kalemler
+  var oneriIdSet = {};
+  onerilenler.forEach(function(u){ oneriIdSet[String(u.id || '')] = true; });
+  var digerListe = _frWiz.katalog.filter(function(u){ return !oneriIdSet[String(u.id || '')]; });
+
+  if (digerListe.length && onerilenler.length) {
+    h += '<div class="fr-diger-baslik">Diğer ürünler</div>';
+  }
+  h += '<input class="fr-ara-inp" id="frAraInp" type="search" inputmode="search" placeholder="🔍  Ürün ara…" value="' + escHtml(_frWiz.aramaMetni) + '" oninput="frWizAra(this.value)" autocomplete="off" />';
+
+  var ara = (_frWiz.aramaMetni || '').toLowerCase().trim();
+  var filtrelenmis = ara
+    ? _frWiz.katalog.filter(function(u){ return !oneriIdSet[String(u.id||'')] && (u.ad||'').toLowerCase().indexOf(ara) >= 0; })
+    : digerListe;
+
+  h += '<div id="frUrunListesi">';
+  if (!filtrelenmis.length) {
+    if (ara) h += '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">Ürün bulunamadı</div>';
+  } else {
+    filtrelenmis.forEach(function(u) {
+      var uid = escHtml(String(u.id || ''));
+      var ad = u.ad || uid;
+      var adet = parseInt(_frWiz.kalemler[String(u.id || '')] || 0, 10);
+      var secili = adet > 0 ? ' secili' : '';
+      h += '<div class="fr-urun-satir' + secili + '" id="frUs_' + uid + '">';
+      h += '<div class="fr-urun-ad">' + escHtml(ad);
+      if (u.kategori) h += '<div class="fr-urun-alt">' + escHtml(u.kategori) + '</div>';
+      h += '</div>';
+      h += '<div class="fr-stepper">';
+      h += '<button class="fr-step-btn" type="button" onclick="frWizAdet(\'' + uid + '\',-1)">−</button>';
+      h += '<span class="fr-step-sayi" id="frAd_' + uid + '">' + (adet || 0) + '</span>';
+      h += '<button class="fr-step-btn" type="button" onclick="frWizAdet(\'' + uid + '\',1)">+</button>';
+      h += '</div></div>';
+    });
+  }
   h += '</div>';
+
   // Açıklama
-  h += '<div class="fr-detay-alan">';
+  h += '<div class="fr-detay-alan" style="margin-top:16px">';
   h += '<div class="fr-detay-etiket">📝 Açıklama' + (_frWiz.sebep === 'diger' ? ' <span style="color:#f87171">* min. 10 karakter</span>' : '') + '</div>';
-  h += '<textarea class="fr-detay-textarea" id="frDetayAcik" rows="3" placeholder="Ne oldu? Kısa not girin' + (_frWiz.sebep === 'diger' ? ' (zorunlu)' : ' (opsiyonel)') + '"></textarea>';
+  h += '<textarea class="fr-detay-textarea" id="frDetayAcik" rows="2" placeholder="' + (_frWiz.sebep === 'diger' ? 'Zorunlu — ne oldu?' : 'Kısa not (opsiyonel)') + '"></textarea>';
   h += '</div>';
-  // İade extra fields (conditional)
+
+  // İade extra fields
   if (_frWiz.sebep === 'iade') {
     h += '<div class="fr-iade-kart" id="frIadeKart">';
     h += '<div class="fr-iade-baslik">↩️ İade bilgileri — zorunlu alanlar</div>';
@@ -9254,46 +9342,25 @@ function frWizStep3HTML() {
     h += '</div>';
     h += '</div>';
   }
+
   // Ek not
   h += '<div class="fr-detay-alan">';
   h += '<div class="fr-detay-etiket">📌 Ek not (opsiyonel)</div>';
   h += '<input class="fr-detay-inp" id="frDetayNot" placeholder="Eklemek istediğiniz not" autocomplete="off" />';
   h += '</div>';
-  // Personel
-  h += '<div class="fr-detay-alan">';
-  h += '<div class="fr-detay-etiket">👤 Onaylayan Personel <span style="color:#f87171">*</span></div>';
-  h += '<select class="fr-detay-sel" id="frDetayPers"><option value="">— Seçin —</option>';
-  (_frWiz.personelList || []).forEach(function(p) {
-    h += '<option value="' + escHtml(String(p.id)) + '">' + escHtml(p.ad || p.ad_soyad || String(p.id)) + '</option>';
-  });
-  h += '</select>';
-  h += '</div>';
-  // PIN
-  h += '<div class="at-pin-kart" style="margin-bottom:12px">';
-  h += '<div class="at-pin-ust"><span class="at-pin-etiket">🔐 PIN</span>';
-  h += '<div class="at-pin-dots" id="frPinDots">';
-  h += '<span class="at-pin-dot"></span><span class="at-pin-dot"></span>';
-  h += '<span class="at-pin-dot"></span><span class="at-pin-dot"></span>';
-  h += '</div></div>';
-  h += '<input id="frDetayPin" class="at-pin-inp" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="• • • •" />';
-  h += '</div>';
-  // msg
+
+  // Hata mesajı alanı
   h += '<div id="frWizMsg" style="margin-top:4px;font-size:12px;color:#fca5a5;min-height:16px"></div>';
   return h;
 }
 
-function frWizSebepSec(kod) {
+// Kart tıklaması → sebep seç + direkt adım 2'ye geç
+function frWizKartSec(kod) {
   _frWiz.sebep = kod;
-  // update card visuals without full re-render
-  document.querySelectorAll('.fr-sebep-kart').forEach(function(el) {
-    el.classList.toggle('secili', el.getAttribute('onclick') === 'frWizSebepSec(\'' + kod + '\')');
-  });
-  // update nav button label
-  var btn = document.getElementById('frNavIleri');
-  if (btn) {
-    var s = FR_SEBEPLER.find(function(x){ return x.kod === kod; });
-    btn.innerHTML = (s ? s.ico + ' ' + s.ad : kod) + ' ›';
-  }
+  _frWiz.kalemler = {};
+  _frWiz.aramaMetni = '';
+  _frWiz.step = 2;
+  frWizRender(false);
 }
 
 function frWizAdet(uid, delta) {
@@ -9301,34 +9368,37 @@ function frWizAdet(uid, delta) {
   var nxt = Math.max(0, cur + delta);
   if (nxt === 0) delete _frWiz.kalemler[uid];
   else _frWiz.kalemler[uid] = nxt;
-  // DOM-direct update — no re-render
-  var sayiEl = document.getElementById('frAd_' + uid);
-  if (sayiEl) sayiEl.textContent = nxt;
+  // Önerilen tile sayacı
+  var tileCount = document.getElementById('frOtc_' + uid);
+  if (tileCount) tileCount.textContent = nxt;
+  var tile = document.getElementById('frOt_' + uid);
+  if (tile) tile.classList.toggle('fr-oneri-sel', nxt > 0);
+  // Liste satırı sayacı + rengi
+  var listCount = document.getElementById('frAd_' + uid);
+  if (listCount) listCount.textContent = nxt;
   var satir = document.getElementById('frUs_' + uid);
   if (satir) satir.classList.toggle('secili', nxt > 0);
-  // update nav button
-  var btn = document.getElementById('frNavIleri');
-  if (btn) {
-    var toplam = frWizSecilenAdet();
-    btn.innerHTML = toplam + ' kalem seçildi  ›';
-  }
 }
 
 function frWizAra(val) {
   _frWiz.aramaMetni = val || '';
-  var body = document.getElementById('frWizBody');
-  if (!body) return;
-  body.classList.remove('geri-anim');
-  // replace only the list part (everything after the search input)
-  var safeVal = escHtml(_frWiz.aramaMetni);
-  var liste = _frWiz.katalog;
+  var listesi = document.getElementById('frUrunListesi');
+  if (!listesi) return;
+  // Önerilen ürünleri dışla — onlar her zaman grid'de görünür
+  var onerilKodlar = FR_SEBEP_ONERILEN[_frWiz.sebep] || [];
+  var oneriIdSet = {};
+  onerilKodlar.forEach(function(kod) {
+    var u = _frWiz.katalog.find(function(x){ return x.kalem_kodu === kod || x.id === kod; });
+    if (u) oneriIdSet[String(u.id || '')] = true;
+  });
   var ara = (_frWiz.aramaMetni || '').toLowerCase().trim();
-  if (ara) liste = liste.filter(function(u) { return (u.ad || u.urun_adi || '').toLowerCase().indexOf(ara) >= 0; });
+  var base = _frWiz.katalog.filter(function(u){ return !oneriIdSet[String(u.id||'')]; });
+  var filtrelenmis = ara ? base.filter(function(u){ return (u.ad||'').toLowerCase().indexOf(ara) >= 0; }) : base;
   var rows = '';
-  if (!liste.length) {
-    rows = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">Ürün bulunamadı</div>';
+  if (!filtrelenmis.length) {
+    if (ara) rows = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">Ürün bulunamadı</div>';
   } else {
-    liste.forEach(function(u) {
+    filtrelenmis.forEach(function(u) {
       var uid = escHtml(String(u.id || ''));
       var ad = u.ad || uid;
       var adet = parseInt(_frWiz.kalemler[String(u.id || '')] || 0, 10);
@@ -9344,36 +9414,11 @@ function frWizAra(val) {
       rows += '</div></div>';
     });
   }
-  // update input value and list in place
-  var inp = document.getElementById('frAraInp');
-  if (inp && inp.value !== _frWiz.aramaMetni) inp.value = _frWiz.aramaMetni;
-  // replace list part (everything after the input)
-  var tmp = document.createElement('div');
-  tmp.innerHTML = rows;
-  // remove old rows
-  var children = Array.prototype.slice.call(body.children);
-  children.forEach(function(c) { if (c !== inp) body.removeChild(c); });
-  while (tmp.firstChild) body.appendChild(tmp.firstChild);
+  listesi.innerHTML = rows;
 }
 
 function frWizSecilenAdet() {
   return Object.keys(_frWiz.kalemler).filter(function(k){ return _frWiz.kalemler[k] > 0; }).length;
-}
-
-function frWizIleri() {
-  var step = _frWiz.step;
-  if (step === 1) {
-    if (!_frWiz.sebep) { frWizFlashMsg('Önce bir sebep seçin'); return; }
-  }
-  if (step === 2) {
-    if (frWizSecilenAdet() === 0) { frWizFlashMsg('En az bir ürün seçin'); return; }
-  }
-  _frWiz.step++;
-  if (_frWiz.step === 3) {
-    // preload personel list from the same source fillSels() uses
-    _frWiz.personelList = (typeof panelDropdownPersonel === 'function') ? panelDropdownPersonel() : [];
-  }
-  frWizRender(false);
 }
 
 function frWizGeri() {
@@ -9383,18 +9428,11 @@ function frWizGeri() {
 }
 
 function frWizWireStep2() {
-  var inp = document.getElementById('frAraInp');
-  if (inp) inp.focus();
-}
-
-function frWizWireStep3() {
-  // PIN dots
+  // Nav bar'daki PIN inputu için placeholder dots göster (native password field)
   var pinInp = document.getElementById('frDetayPin');
-  var dots = document.querySelectorAll('#frPinDots .at-pin-dot');
-  if (pinInp && dots.length) {
+  if (pinInp) {
     pinInp.addEventListener('input', function() {
-      var len = pinInp.value.replace(/\D/g, '').length;
-      dots.forEach(function(d, i) { d.classList.toggle('dolu', i < len); });
+      // PIN 4 hane girilince otomatik gönder değil; sadece UX için.
     });
   }
 }
@@ -9497,7 +9535,7 @@ function frWizGonder() {
     })
     .catch(function(e) {
       _frWiz.busy = false;
-      if (btn) { btn.disabled = false; btn.innerHTML = '🔥 Bildirimi Gönder'; }
+      if (btn) { btn.disabled = false; btn.innerHTML = '🔥 Gönder'; }
       frWizFlashMsg(e.message || 'Gönderim başarısız');
     });
 }
