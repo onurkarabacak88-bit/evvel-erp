@@ -8518,6 +8518,15 @@ def ops_siparis_toptanci_geri_al(talep_id: str):
             """,
             (tid,),
         )
+        # Toptancı defter kayıtlarını da temizle — listeden kalksın
+        cur.execute(
+            """
+            DELETE FROM operasyon_defter
+             WHERE etiket = 'SIPARIS_TOPTANCI_YONLENDIRME'
+               AND ref_event_id = %s
+            """,
+            (tid,),
+        )
         audit(cur, "siparis_talep", tid, "OPS_SIPARIS_TOPTANCI_GERI_AL")
     return {"ok": True, "talep_id": tid, "yeni_durum": "bekliyor"}
 
