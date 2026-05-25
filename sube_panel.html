@@ -661,14 +661,92 @@
     .toast-item.toast-err  { border-color: rgba(239,68,68,.4);  color: #fca5a5; }
     @keyframes toastIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
 
-    /* ── EKSİK ÜRÜNLER başlık tıklanabilir ──────────── */
+    /* ── EKSİK ÜRÜNLER ──────────────────────────────── */
+    #solEksikWrap {
+      margin: 4px 8px 6px;
+      border-radius: 10px;
+      border: 1px solid rgba(239,68,68,.28);
+      background: rgba(239,68,68,.06);
+      overflow: hidden;
+    }
     .eksik-baslik {
       cursor: pointer; user-select: none;
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 8px 14px; color: #fca5a5;
-      font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+      display: flex; align-items: center; gap: 8px;
+      padding: 9px 12px;
+      background: rgba(239,68,68,.10);
+      border-bottom: 1px solid rgba(239,68,68,.18);
     }
-    .eksik-baslik:hover { background: rgba(252,165,165,.06); }
+    .eksik-baslik:hover { background: rgba(239,68,68,.16); }
+    .eksik-baslik-pulse {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #f87171; flex-shrink: 0;
+      animation: eksikPulse 1.8s ease-in-out infinite;
+    }
+    @keyframes eksikPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.6); }
+      50%       { box-shadow: 0 0 0 5px rgba(239,68,68,0); }
+    }
+    .eksik-baslik-yazi {
+      flex: 1; font-size: 10px; font-weight: 800;
+      text-transform: uppercase; letter-spacing: .08em; color: #fca5a5;
+    }
+    .eksik-baslik-sayi {
+      font-size: 11px; font-weight: 800;
+      background: rgba(239,68,68,.25); color: #fca5a5;
+      border-radius: 20px; padding: 1px 7px; border: 1px solid rgba(239,68,68,.35);
+    }
+    .eksik-baslik-chev {
+      font-size: 9px; color: #fca5a5; transition: transform .2s; flex-shrink: 0;
+    }
+    /* Ürün satırı */
+    .eksik-pill {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 10px 7px 12px;
+      border-bottom: 1px solid rgba(239,68,68,.10);
+      position: relative;
+    }
+    .eksik-pill::before {
+      content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+      width: 3px; background: linear-gradient(180deg, #ef4444, #f97316);
+      border-radius: 0 2px 2px 0;
+    }
+    .eksik-pill-ad {
+      flex: 1; font-size: 12px; font-weight: 600; color: var(--text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .eksik-pill-zero {
+      flex-shrink: 0; font-size: 10px; font-weight: 700;
+      color: #f87171; background: rgba(239,68,68,.15);
+      border-radius: 6px; padding: 1px 5px;
+    }
+    /* Daha fazla */
+    .eksik-daha {
+      padding: 5px 12px 6px; font-size: 11px; color: var(--muted);
+      cursor: pointer; text-align: center;
+      border-bottom: 1px solid rgba(239,68,68,.10);
+    }
+    .eksik-daha:hover { color: #fca5a5; }
+    /* Sipariş Ver butonu */
+    .eksik-sip-btn {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      width: 100%; padding: 9px 12px;
+      background: rgba(59,130,246,.12);
+      border: none; cursor: pointer;
+      color: #93c5fd; font-size: 12px; font-weight: 700;
+      transition: background .15s;
+    }
+    .eksik-sip-btn:hover { background: rgba(59,130,246,.22); }
+    /* Sipariş verildi durumu */
+    .eksik-verildi {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 12px;
+      color: var(--ok); font-size: 12px; font-weight: 700;
+      animation: eksikVerildiIn .3s ease;
+    }
+    @keyframes eksikVerildiIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
     @keyframes pulse {
       0%, 100% { transform: scale(1); opacity: .92; }
       50% { transform: scale(1.06); opacity: 1; }
@@ -3540,17 +3618,16 @@
         </button>
       </div>
 
-      <!-- Eksik Ürünler listesi — sadece isimler, sipariş verilince temizlenir -->
+      <!-- Eksik Ürünler listesi — stok=0 olanlar, sipariş verilince temizlenir -->
+      <div class="sol-divider"></div>
       <div id="solEksikWrap" style="display:none">
-        <div class="sol-divider"></div>
         <div class="eksik-baslik" onclick="eksikListeToggle()">
-          <span>📋 Eksik Ürünler</span>
-          <span style="display:flex;align-items:center;gap:6px">
-            <span id="solEksikSayi" style="background:rgba(252,165,165,0.2);border-radius:10px;padding:1px 8px;font-size:11px;font-weight:700"></span>
-            <span id="solEksikChevron" style="font-size:10px;transition:transform .2s">▼</span>
-          </span>
+          <span class="eksik-baslik-pulse"></span>
+          <span class="eksik-baslik-yazi">Eksik Ürünler</span>
+          <span class="eksik-baslik-sayi" id="solEksikSayi"></span>
+          <span class="eksik-baslik-chev" id="solEksikChevron">▼</span>
         </div>
-        <div id="solEksikListe" style="padding:2px 10px 10px;font-size:12px"></div>
+        <div id="solEksikListe"></div>
       </div>
 
       <div class="sol-divider"></div>
@@ -8969,9 +9046,10 @@ function eksikListeToggle() {
 }
 
 function renderSolEksikListe() {
-  var wrap  = document.getElementById('solEksikWrap');
-  var el    = document.getElementById('solEksikListe');
-  var sayi  = document.getElementById('solEksikSayi');
+  var wrap = document.getElementById('solEksikWrap');
+  var el   = document.getElementById('solEksikListe');
+  var sayi = document.getElementById('solEksikSayi');
+  var chev = document.getElementById('solEksikChevron');
   if (!el) return;
 
   var rows = (lastData && lastData.stok_alarmlari || []).filter(function(a) {
@@ -8986,26 +9064,32 @@ function renderSolEksikListe() {
   }
   if (wrap) wrap.style.display = '';
 
+  /* ── Sipariş verildi durumu ── */
   if (sipVerildi) {
     if (sayi) sayi.textContent = '';
-    el.innerHTML = '<div style="color:var(--ok);font-size:11px;padding:4px 0">✅ Sipariş talep edildi</div>';
+    el.innerHTML =
+      '<div class="eksik-verildi">✅ Sipariş talep edildi</div>';
     return;
   }
 
+  /* ── Normal liste ── */
   if (sayi) sayi.textContent = rows.length;
+  if (chev) chev.style.transform = _eksikListeAcik ? 'rotate(180deg)' : '';
+
   var gorunen = _eksikListeAcik ? rows : rows.slice(0, _EKSIK_LISTE_MAX_KAPALI);
   var h = '';
   gorunen.forEach(function(a) {
     var ad = a.urun_adi || String(a.mesaj || '').split('—')[0].trim();
-    h += '<div style="display:flex;align-items:center;gap:6px;padding:2px 0;line-height:1.5">';
-    h += '<span style="color:#fca5a5;font-size:9px;flex-shrink:0">●</span>';
-    h += '<span style="color:var(--text)">' + escHtml(ad) + '</span>';
+    h += '<div class="eksik-pill">';
+    h += '<span class="eksik-pill-ad" title="' + escHtml(ad) + '">' + escHtml(ad) + '</span>';
+    h += '<span class="eksik-pill-zero">0</span>';
     h += '</div>';
   });
   if (!_eksikListeAcik && rows.length > _EKSIK_LISTE_MAX_KAPALI) {
-    h += '<div style="color:var(--muted);font-size:11px;padding:4px 0 2px;cursor:pointer" onclick="eksikListeToggle()">+'
-      + (rows.length - _EKSIK_LISTE_MAX_KAPALI) + ' daha göster ▾</div>';
+    h += '<div class="eksik-daha" onclick="eksikListeToggle()">+'
+      + (rows.length - _EKSIK_LISTE_MAX_KAPALI) + ' ürün daha ▾</div>';
   }
+  h += '<button class="eksik-sip-btn" onclick="solSekmeAc(\'siparis\')">📦 Sipariş Ver</button>';
   el.innerHTML = h;
 }
 
