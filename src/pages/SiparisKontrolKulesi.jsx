@@ -75,6 +75,7 @@ function KuyrukYonlendirmeKarti({
   kuyrukToptanciListeler,
   toptanciListeOlustur,
   toptanciYazdirListe,
+  toptanciListeyiGeriAl,
   kuyrukBusy,
   depoyaGonder,
   toptanciyaYolla,
@@ -152,14 +153,25 @@ function KuyrukYonlendirmeKarti({
                   ✅ Oluşturulan listeler ({listeler.length})
                 </div>
                 {listeler.map((lst) => (
-                  <div key={lst.listeNo} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', fontSize: 12 }}>
-                    <span>#{lst.listeNo} — <strong>{lst.toptanciAd}</strong> ({lst.kalemler.length} kalem · {lst.ts})</span>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      style={{ fontSize: 11, padding: '2px 8px', marginLeft: 6 }}
-                      onClick={() => toptanciYazdirListe(lst, sip.sube_adi || 'Şube', sip.olusturma || '', (kuyrukToptanciNot[talepId] || '').trim())}
-                    >🖨️ Yazdır</button>
+                  <div key={lst.listeNo} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', fontSize: 12, borderBottom: '1px solid #c8e6c9', gap: 6 }}>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <strong>#{lst.listeNo}</strong> — {lst.toptanciAd}
+                      <span style={{ color: '#555', marginLeft: 6 }}>({lst.kalemler.length} kalem · {lst.ts})</span>
+                    </span>
+                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        style={{ fontSize: 11, padding: '2px 8px' }}
+                        onClick={() => toptanciYazdirListe(lst, sip.sube_adi || 'Şube', sip.olusturma || '', (kuyrukToptanciNot[talepId] || '').trim())}
+                      >🖨️ Yazdır</button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        style={{ fontSize: 11, padding: '2px 8px', background: '#fff3f3', color: '#c62828', border: '1px solid #ffcdd2' }}
+                        onClick={() => toptanciListeyiGeriAl(sip, lst.listeNo)}
+                      >↩ Geri Al</button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -705,6 +717,28 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
     toptanciYazdirListe(yeniListe, sip.sube_adi || 'Şube', sip.olusturma || '', (kuyrukToptanciNot[talepId] || '').trim());
   };
 
+  // Oluşturulan bir listeyi geri al — kalemler tekrar serbest, liste siliniyor
+  const toptanciListeyiGeriAl = (sip, listeNo) => {
+    const talepId = String(sip?.id || '');
+    const hedefListe = (kuyrukToptanciListeler[talepId] || []).find(l => l.listeNo === listeNo);
+    if (!hedefListe) return;
+    setKuyrukToptanciListeler(prev => ({
+      ...prev,
+      [talepId]: (prev[talepId] || []).filter(l => l.listeNo !== listeNo),
+    }));
+    setKuyrukToptanciAtanmis(prev => {
+      const next = { ...prev };
+      hedefListe.kalemler.forEach(k => { delete next[`${talepId}::${k.kalem_kodu}`]; });
+      return next;
+    });
+    setKuyrukToptanciSecili(prev => {
+      const next = { ...prev };
+      hedefListe.kalemler.forEach(k => { delete next[`${talepId}::${k.kalem_kodu}`]; });
+      return next;
+    });
+    toast(`Liste #${listeNo} (${hedefListe.toptanciAd}) geri alındı — kalemler tekrar seçilebilir.`, 'green');
+  };
+
   // Son adım: tüm listeler sisteme kaydedilir, şubeye bildirim gider
   const toptanciyaYolla = async (sip) => {
     const talepId = String(sip?.id || '').trim();
@@ -1085,6 +1119,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                             kuyrukToptanciListeler={kuyrukToptanciListeler}
                             toptanciListeOlustur={toptanciListeOlustur}
                             toptanciYazdirListe={toptanciYazdirListe}
+                            toptanciListeyiGeriAl={toptanciListeyiGeriAl}
                             kuyrukBusy={kuyrukBusy}
                             depoyaGonder={depoyaGonder}
                             toptanciyaYolla={toptanciyaYolla}
