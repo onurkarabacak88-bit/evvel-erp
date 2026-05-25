@@ -8511,7 +8511,7 @@ def ops_siparis_toptanci_geri_al(talep_id: str):
             UPDATE siparis_talep
                SET durum            = 'bekliyor',
                    sevkiyat_durumu  = NULL,
-                   sevkiyat_durum   = NULL,
+                   sevkiyat_durum   = 'bekliyor',
                    sevkiyat_notu    = NULL,
                    sevkiyat_ts      = NULL
              WHERE id = %s
