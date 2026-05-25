@@ -3779,7 +3779,7 @@ def siparis_akis_ozet(cur: Any, limit: int = 50) -> List[Dict[str, Any]]:
                st.olusturma,
                st.sevkiyat_ts, st.sevkiyat_personel_ad,
                st.sevkiyat_sube_id, st.hedef_depo_sube_id,
-               st.sevkiyat_durumu,
+               COALESCE(NULLIF(TRIM(st.sevkiyat_durumu), ''), st.sevkiyat_durum, 'bekliyor') AS sevkiyat_durumu,
                COALESCE(sd.ad, sd2.ad) AS sevk_sube_adi,
                (SELECT etiket FROM operasyon_defter
                 WHERE ref_event_id=st.id ORDER BY olay_ts DESC LIMIT 1) AS son_olay,

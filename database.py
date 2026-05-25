@@ -3344,27 +3344,53 @@ $$;
                     pass
                 print(f"[MIGRATION WARN] rapor_cache {_ddl_ad}: {_e}")
 
-        # ── FIX: kismi_hazirlandi + stok_yolda → gonderildi ─────
-        # hesapla_yeni_sevkiyat_durumu hatası nedeniyle "Yola Çıkar" basılmış ama
-        # bekleyen_var/kismi_var True olduğu için sevkiyat_durumu='kismi_hazirlandi',
-        # durum='hazirlaniyor' olarak kalmış kayıtları düzelt.
-        # Güvenlik kriteri: stok_yolda kaydı var → fiilen araç yola çıktı.
+        # ── FIX: kismi_hazirlandi + stok_yolda → gonderildi / teslim_edildi ───
+        # hesapla_yeni_sevkiyat_durumu hatası: "Yola Çıkar" basılmış ama bekleyen_var/
+        # kismi_var True olduğu için sevkiyat_durumu='kismi_hazirlandi' kalmış.
+        # Güvenlik kriteri: stok_yolda kaydı var → stok fiilen depodan çıktı (araç yola çıktı).
+        # SAVEPOINT: migration başarısız olursa sadece bu blok geri alınır, server başlar.
         try:
+            cur.execute("SAVEPOINT sp_fix_kismi_hazirlandi")
+            # 1) Hâlâ yolda olan veya kabul'ü karışık olan → gonderildi
             cur.execute("""
                 UPDATE siparis_talep t
                 SET sevkiyat_durumu = 'gonderildi',
                     sevkiyat_durum  = 'gonderildi',
                     durum           = 'gonderildi'
                 WHERE t.sevkiyat_durumu = 'kismi_hazirlandi'
-                  AND t.durum           = 'hazirlaniyor'
+                  AND t.durum IN ('hazirlaniyor', 'bekliyor')
                   AND EXISTS (
                       SELECT 1 FROM stok_yolda sy
                       WHERE sy.siparis_talep_id = t.id
-                        AND sy.durum = 'yolda'
                   )
             """)
-            fixed = cur.rowcount
-            if fixed:
-                print(f"[MIGRATION] kismi_hazirlandi→gonderildi: {fixed} kayıt düzeltildi")
+            fixed1 = cur.rowcount
+            # 2) Tüm stok_yolda kalemleri kabul edilmiş ama durum hâlâ hazirlaniyor →
+            #    teslim_edildi (stok_yolda en az 1 kayıt, hepsi kabul_edildi veya uzlasildi)
+            cur.execute("""
+                UPDATE siparis_talep t
+                SET sevkiyat_durumu = 'teslim_edildi',
+                    sevkiyat_durum  = 'teslim_edildi',
+                    durum           = 'teslim_edildi'
+                WHERE t.sevkiyat_durumu IN ('kismi_hazirlandi', 'gonderildi')
+                  AND t.durum IN ('hazirlaniyor', 'gonderildi')
+                  AND EXISTS (
+                      SELECT 1 FROM stok_yolda sy
+                      WHERE sy.siparis_talep_id = t.id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM stok_yolda sy
+                      WHERE sy.siparis_talep_id = t.id
+                        AND sy.durum NOT IN ('kabul_edildi', 'uzlasildi')
+                  )
+            """)
+            fixed2 = cur.rowcount
+            cur.execute("RELEASE SAVEPOINT sp_fix_kismi_hazirlandi")
+            if fixed1 or fixed2:
+                print(f"[MIGRATION] stuck-sevkiyat fix: {fixed1} → gonderildi, {fixed2} → teslim_edildi")
         except Exception as _fix_e:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_fix_kismi_hazirlandi")
+            except Exception:
+                pass
             print(f"[MIGRATION WARN] kismi_hazirlandi fix: {_fix_e}")
