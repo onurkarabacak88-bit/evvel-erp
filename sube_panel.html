@@ -750,8 +750,10 @@
 
     /* ══ ARA TESLİM ══════════════════════════════════════ */
     #tab-araTeslim {
-      display: flex; flex-direction: column; gap: 12px; padding: 2px 0 16px;
+      /* display kaldırıldı — sekme-icerik{display:none} devralır; aktif olunca aşağıdaki kural flex yapar */
+      flex-direction: column; gap: 12px; padding: 2px 0 16px;
     }
+    #tab-araTeslim.aktif { display: flex; }
 
     /* ── Hero tutar kartı ── */
     .at-hero {
@@ -9088,7 +9090,12 @@ function renderStokForms(tip) {
       });
     }
   } else if (tip === 'fire') {
-    frWizBas();
+    var frRoot = document.getElementById('frWizRoot');
+    // Wizard daha önce başlatılmadıysa başlat; tekrar tab'a basılınca sıfırlama
+    if (!frRoot || !frRoot.dataset.wizBuilt) {
+      if (frRoot) frRoot.dataset.wizBuilt = '1';
+      frWizBas();
+    }
   }
 }
 
@@ -9482,9 +9489,11 @@ function frWizGonder() {
         ov.style.transition = 'opacity .3s'; ov.style.opacity = '0';
         setTimeout(function() { ov.parentNode && ov.parentNode.removeChild(ov); }, 320);
       }, 2200);
-      // reset wizard
+      // reset wizard — guard'ı da temizle ki frRoot yeniden başlatılabilsin
       _frWiz.step = 1; _frWiz.sebep = null; _frWiz.kalemler = {};
-      frWizRender(false);
+      var frRoot2 = document.getElementById('frWizRoot');
+      if (frRoot2) delete frRoot2.dataset.wizBuilt;
+      frWizBas();
     })
     .catch(function(e) {
       _frWiz.busy = false;
