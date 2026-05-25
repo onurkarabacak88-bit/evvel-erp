@@ -9387,6 +9387,7 @@ var FR_SEBEPLER = [
   { kod: 'yanlis_urun',     ico: '🔄', ad: 'Yanlış Ürün',        alt: 'Değişim / hatalı hazırlık' },
   { kod: 'hazirlik_deneme', ico: '📦', ad: 'Hazırlık / Deneme',  alt: 'Eğitim, test üretimi' },
   { kod: 'sayim_hatasi',    ico: '🔢', ad: 'Sayım Hatası',       alt: 'Sistem düzeltmesi' },
+  { kod: 'ikram',           ico: '🎁', ad: 'İkram',               alt: 'Müşteriye bedava verilen ürün' },
   { kod: 'diger',           ico: '❓', ad: 'Diğer',               alt: 'Açıklama zorunlu' },
 ];
 /* Yanlış Ürün — Senaryo tipleri */
@@ -9440,6 +9441,11 @@ var FR_URUNLER = {
     { ad: '8oz Bardak',    ico: '🍵', kalem_kodu: 'bardak_kucuk'  },
   ],
   yanlis_urun:  [],    /* özel sub-adım akışı kullanır */
+  ikram: [
+    { ad: 'Plastik Bardak', ico: '🥤', kalem_kodu: 'bardak_plastik' },
+    { ad: '14oz Bardak',    ico: '🫗', kalem_kodu: 'bardak_buyuk'   },
+    { ad: '8oz Bardak',     ico: '🍵', kalem_kodu: 'bardak_kucuk'   },
+  ],
   sayim_hatasi: null,
   diger:        null,
 };
@@ -9610,8 +9616,9 @@ function frWizRender(geriAnim) {
 function frWizStep1HTML() {
   var h = '<div class="fr-sebep-grid">';
   FR_SEBEPLER.forEach(function(s) {
-    /* "Diğer" tam genişlik — grid son satırında tek başına */
-    var span = (s.kod==='diger') ? ' style="grid-column:1/-1;flex-direction:row;text-align:left;gap:14px;min-height:64px;padding:14px 18px"' : '';
+    /* "İkram" ve "Diğer" tam genişlik — grid son satırlarında */
+    var isFullW = (s.kod==='diger' || s.kod==='ikram');
+    var span = isFullW ? ' style="grid-column:1/-1;flex-direction:row;text-align:left;gap:14px;min-height:64px;padding:14px 18px"' : '';
     h += '<div class="fr-sebep-kart" data-fr data-fr-kart="'+s.kod+'"'+span+'>';
     h += '<div class="fr-sebep-kart-ico">' + s.ico + '</div>';
     h += '<div>';
