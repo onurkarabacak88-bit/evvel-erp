@@ -3394,3 +3394,39 @@ $$;
             except Exception:
                 pass
             print(f"[MIGRATION WARN] kismi_hazirlandi fix: {_fix_e}")
+
+        # Fix: kalem_durumlari içinde «bekliyor» kalan siparişler → «yok» ile kapat
+        # Yola Çıkar sonrası dokunulmayan kalemler artık «yok» olarak kaydedilecek;
+        # bu migration eski kayıtlardaki bekliyor→yok dönüşümünü uygular.
+        try:
+            cur.execute("SAVEPOINT sp_fix_bekliyor_kalemler")
+            cur.execute("""
+                UPDATE siparis_talep t
+                SET kalem_durumlari = (
+                    SELECT jsonb_agg(
+                        CASE
+                          WHEN LOWER(COALESCE(kd->>'durum','')) = 'bekliyor'
+                          THEN kd || jsonb_build_object('durum','yok','gonderilen_adet',0)
+                          ELSE kd
+                        END
+                    )
+                    FROM jsonb_array_elements(COALESCE(t.kalem_durumlari, '[]'::jsonb)) AS kd
+                )
+                WHERE t.durum = 'gonderildi'
+                  AND t.kalem_durumlari IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM jsonb_array_elements(t.kalem_durumlari) kd
+                      WHERE LOWER(COALESCE(kd->>'durum','')) = 'bekliyor'
+                  )
+            """)
+            fixed3 = cur.rowcount
+            cur.execute("RELEASE SAVEPOINT sp_fix_bekliyor_kalemler")
+            if fixed3:
+                print(f"[MIGRATION] bekliyor→yok fix: {fixed3} sipariş kalem_durumlari güncellendi")
+        except Exception as _fix3_e:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_fix_bekliyor_kalemler")
+            except Exception:
+                pass
+            print(f"[MIGRATION WARN] bekliyor→yok fix: {_fix3_e}")

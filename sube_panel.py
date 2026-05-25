@@ -4043,11 +4043,6 @@ def sube_siparis_akisi(
                             SELECT 1
                             FROM jsonb_array_elements(COALESCE(t.kalem_durumlari, '[]'::jsonb)) kd
                             WHERE LOWER(COALESCE(kd->>'durum', '')) IN ('bekliyor', 'kismi')
-                               OR GREATEST(
-                                    0,
-                                    COALESCE(NULLIF(kd->>'istenen_adet', '')::int, 0)
-                                    - COALESCE(NULLIF(kd->>'gonderilen_adet', '')::int, 0)
-                                  ) > 0
                         )
                     )
                   )
@@ -4097,11 +4092,6 @@ def sube_siparis_akisi(
                                 SELECT 1
                                 FROM jsonb_array_elements(COALESCE(t.kalem_durumlari, '[]'::jsonb)) kd
                                 WHERE LOWER(COALESCE(kd->>'durum', '')) IN ('bekliyor', 'kismi')
-                                   OR GREATEST(
-                                        0,
-                                        COALESCE(NULLIF(kd->>'istenen_adet', '')::int, 0)
-                                        - COALESCE(NULLIF(kd->>'gonderilen_adet', '')::int, 0)
-                                      ) > 0
                             )
                         )
                       )

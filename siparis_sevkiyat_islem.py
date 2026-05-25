@@ -299,6 +299,14 @@ def siparis_sevkiyat_kalem_guncelle_execute(
         yeni_durum = hesapla_yeni_sevkiyat_durumu(durumlar, bekleyen_var, kismi_var, gonderildi)
         _sevk_durum_yeni, _sevk_durum_eski = sevkiyat_durumu_guncelle_params(yeni_durum)
         eski_durum_karsilik = _sevk_durum_eski
+        # «Yola Çıkar»: wizard'da dokunulmayan «bekliyor» kalemleri bu sevkiyata dahil edilmedi.
+        # Bunları «yok» olarak kapat — depo_hazirlik_talepleri sorgusunun tekrar eşleşmemesi için.
+        durumlar = [
+            {**d, "durum": "yok", "gonderilen_adet": 0}
+            if str(d.get("durum") or "").strip().lower() == "bekliyor"
+            else d
+            for d in durumlar
+        ]
 
     talep_durum = "gonderildi" if yeni_durum == "gonderildi" else "hazirlaniyor"
 
