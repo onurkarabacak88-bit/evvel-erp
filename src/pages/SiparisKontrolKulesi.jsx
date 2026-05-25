@@ -148,7 +148,11 @@ function ToptanciModal({
                   </span>
                   <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                     <button type="button" className="btn btn-sm btn-secondary" style={{ fontSize: 12, padding: '4px 12px' }}
-                      onClick={() => toptanciYazdirListe(lst, sip.sube_adi || 'Şube', sip.olusturma || '', (kuyrukToptanciNot[talepId] || '').trim())}>
+                      onClick={() => toptanciYazdirListe(lst, sip.sube_adi || 'Şube', sip.olusturma || '', (kuyrukToptanciNot[talepId] || '').trim(), false)}>
+                      👁 Detay
+                    </button>
+                    <button type="button" className="btn btn-sm btn-secondary" style={{ fontSize: 12, padding: '4px 12px' }}
+                      onClick={() => toptanciYazdirListe(lst, sip.sube_adi || 'Şube', sip.olusturma || '', (kuyrukToptanciNot[talepId] || '').trim(), true)}>
                       🖨️ Yazdır
                     </button>
                     <button type="button" className="btn btn-sm" style={{ fontSize: 12, padding: '4px 12px', background: '#fff3f3', color: '#c62828', border: '1px solid #ffcdd2' }}
@@ -764,10 +768,11 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
   };
 
   // Tek liste için temiz yazdırma penceresi
-  const toptanciYazdirListe = (liste, subeAd, tarih, notAciklama) => {
+  const toptanciYazdirListe = (liste, subeAd, tarih, notAciklama, yazdirMi = true) => {
     const satirlar = liste.kalemler.map((k, idx) =>
       `<tr><td style="padding:12px 14px;font-size:18px;border-bottom:1px solid #e0e0e0">${idx + 1}. ${k.urun_ad || '—'}</td><td style="padding:12px 16px;font-size:22px;font-weight:900;text-align:right;border-bottom:1px solid #e0e0e0">× ${k.adet || 0}</td></tr>`
     ).join('');
+    const printScript = yazdirMi ? `<script>window.onload=function(){window.print()};<\/script>` : '';
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${liste.toptanciAd} — ${subeAd}</title>
       <style>*{box-sizing:border-box;margin:0;padding:0}body{background:#fff;font-family:Arial,sans-serif}@media print{@page{margin:12mm}}</style>
       </head><body><div style="padding:40px 44px;max-width:640px">
@@ -782,7 +787,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
       <div style="margin-top:28px;border-top:1px solid #ccc;padding-top:12px;font-size:12px;color:#aaa">
         ${liste.kalemler.length} kalem · ${liste.kalemler.reduce((a, k) => a + (k.adet || 0), 0)} toplam adet
       </div></div>
-      <script>window.onload=function(){window.print()};<\/script></body></html>`;
+      ${printScript}</body></html>`;
     const w = window.open('', '_blank', 'width=700,height=920');
     if (!w) { toast('Popup engellendi — tarayıcı izin ayarlarını kontrol edin.', 'red'); return; }
     w.document.write(html); w.document.close();
