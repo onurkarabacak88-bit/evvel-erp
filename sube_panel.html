@@ -1727,6 +1727,169 @@
       cursor: pointer; margin-top: 4px;
     }
 
+    /* ══ Compact kart (wizard öncesi liste) ══ */
+    .dep-compact-kart {
+      background: var(--bg2); border-radius: 14px;
+      border: 1px solid var(--border);
+      padding: 16px 18px; margin-bottom: 10px;
+      display: flex; align-items: center; gap: 14px;
+    }
+    .dep-compact-ico { font-size: 28px; flex-shrink: 0; }
+    .dep-compact-info { flex: 1; min-width: 0; }
+    .dep-compact-sube { font-size: 17px; font-weight: 800; }
+    .dep-compact-ozet { font-size: 12px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .dep-compact-bas {
+      flex-shrink: 0; padding: 14px 18px;
+      font-size: 15px; font-weight: 800;
+      border-radius: 12px; border: none;
+      background: var(--accent); color: #fff;
+      cursor: pointer; white-space: nowrap;
+    }
+    .dep-compact-bas:active { opacity: .82; }
+
+    /* ══ Wizard tam ekran overlay ══ */
+    #depGonderOverlay {
+      position: fixed; inset: 0; z-index: 9900;
+      background: var(--bg);
+      flex-direction: column; overflow: hidden;
+    }
+    .dep-wiz-hdr {
+      flex-shrink: 0; padding: 14px 18px;
+      border-bottom: 2px solid var(--border);
+      background: var(--bg2);
+      display: flex; align-items: center; gap: 12px;
+    }
+    .dep-wiz-hdr-close {
+      width: 44px; height: 44px; border-radius: 50%;
+      border: 1px solid var(--border); background: var(--bg);
+      font-size: 20px; cursor: pointer; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .dep-wiz-hdr-info { flex: 1; min-width: 0; }
+    .dep-wiz-hdr-sube { font-size: 16px; font-weight: 800; }
+    .dep-wiz-hdr-adim { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .dep-wiz-dots { display: flex; gap: 6px; flex-shrink: 0; }
+    .dep-wiz-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--border); transition: background .2s;
+    }
+    .dep-wiz-dot.aktif { background: var(--accent); }
+    .dep-wiz-dot.tamam { background: #4ade80; }
+    .dep-wiz-body {
+      flex: 1; overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 20px 18px;
+    }
+    .dep-wiz-foot {
+      flex-shrink: 0; padding: 14px 18px;
+      border-top: 2px solid var(--border);
+      background: var(--bg2);
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    /* Adım 1 — liste */
+    .dep-wiz-liste-item {
+      display: flex; align-items: center;
+      padding: 18px 0; border-bottom: 1px solid var(--border);
+      gap: 12px;
+    }
+    .dep-wiz-liste-item:last-child { border-bottom: none; }
+    .dep-wiz-liste-no {
+      width: 32px; height: 32px; border-radius: 50%;
+      background: var(--bg2); border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; color: var(--muted); flex-shrink: 0;
+    }
+    .dep-wiz-liste-urun { flex: 1; font-size: 19px; font-weight: 700; }
+    .dep-wiz-liste-adet {
+      font-size: 26px; font-weight: 900;
+      color: var(--accent); flex-shrink: 0;
+    }
+    /* Adım 2 — giriş kalem kutusu */
+    .dep-wiz-kalem-kart {
+      border-radius: 16px; border: 2px solid var(--border);
+      background: var(--bg2); padding: 18px;
+      margin-bottom: 12px;
+      transition: border-color .2s, background .2s;
+    }
+    .dep-wiz-kalem-kart.ok  { border-color: rgba(74,222,128,.6);  background: rgba(74,222,128,.06); }
+    .dep-wiz-kalem-kart.yok { border-color: rgba(248,113,113,.5); background: rgba(248,113,113,.05); }
+    .dep-wiz-kalem-urun { font-size: 18px; font-weight: 800; margin-bottom: 3px; }
+    .dep-wiz-kalem-ist  { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+    .dep-wiz-durgrp { display: flex; gap: 8px; margin-bottom: 14px; }
+    .dep-wiz-durbtn {
+      flex: 1; padding: 14px 8px;
+      font-size: 15px; font-weight: 800;
+      border-radius: 12px; border: 2px solid var(--border);
+      background: var(--bg); color: var(--text2);
+      cursor: pointer; transition: all .12s; line-height: 1.1;
+    }
+    .dep-wiz-durbtn:active { transform: scale(.95); }
+    .dep-wiz-durbtn.var-ak   { background: rgba(74,222,128,.22);  border-color: #4ade80; color: #4ade80; }
+    .dep-wiz-durbtn.kismi-ak { background: rgba(251,191,36,.2);   border-color: #fbbf24; color: #fbbf24; }
+    .dep-wiz-durbtn.yok-ak   { background: rgba(248,113,113,.2);  border-color: #f87171; color: #f87171; }
+    .dep-wiz-stepper { display: flex; align-items: center; gap: 10px; }
+    .dep-wiz-step-btn {
+      width: 52px; height: 52px; font-size: 26px; font-weight: 900;
+      border-radius: 12px; border: 2px solid var(--border);
+      background: var(--bg); color: var(--text);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    .dep-wiz-step-btn:active { background: var(--border); }
+    .dep-wiz-step-val {
+      min-width: 64px; text-align: center;
+      font-size: 26px; font-weight: 900; color: var(--text);
+      padding: 10px 4px; border-radius: 10px;
+      border: 2px solid var(--border); background: var(--bg);
+    }
+    .dep-wiz-step-max { font-size: 13px; color: var(--muted); }
+    .dep-wiz-not {
+      width: 100%; margin-top: 10px; padding: 10px 12px;
+      font-size: 13px; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text2);
+    }
+    /* Adım 3 — özet */
+    .dep-wiz-ozet-satir {
+      display: flex; align-items: center; gap: 10px;
+      padding: 14px 0; border-bottom: 1px solid var(--border);
+    }
+    .dep-wiz-ozet-satir:last-child { border-bottom: none; }
+    .dep-wiz-ozet-ico { font-size: 20px; flex-shrink: 0; }
+    .dep-wiz-ozet-urun { flex: 1; font-size: 15px; font-weight: 700; }
+    .dep-wiz-ozet-sag { font-size: 14px; font-weight: 800; flex-shrink: 0; }
+    /* Wizard butonları */
+    .dep-wiz-btn-ileri {
+      width: 100%; padding: 17px; font-size: 17px; font-weight: 800;
+      border-radius: 14px; border: none;
+      background: var(--accent); color: #fff; cursor: pointer;
+    }
+    .dep-wiz-btn-ileri:active { opacity: .85; }
+    .dep-wiz-btn-yola {
+      width: 100%; padding: 17px; font-size: 17px; font-weight: 800;
+      border-radius: 14px; border: none;
+      background: #16a34a; color: #fff; cursor: pointer;
+    }
+    .dep-wiz-btn-yola:active { opacity: .85; }
+    .dep-wiz-btn-kaydet {
+      width: 100%; padding: 13px; font-size: 14px; font-weight: 700;
+      border-radius: 12px;
+      background: var(--bg2); color: var(--text2);
+      border: 1px solid var(--border); cursor: pointer;
+    }
+    .dep-wiz-btn-geri {
+      width: 100%; padding: 11px; font-size: 13px;
+      border-radius: 10px; border: none;
+      background: none; color: var(--muted); cursor: pointer;
+    }
+    .dep-wiz-sayfa-gos {
+      text-align: center; font-size: 12px; color: var(--muted); padding: 2px 0;
+    }
+    .dep-wiz-uyari {
+      padding: 12px 14px; border-radius: 10px;
+      border: 1px solid rgba(251,191,36,.5);
+      background: rgba(251,191,36,.1); color: #fbbf24;
+      font-size: 13px; margin-bottom: 10px;
+    }
+
     #gonderilecekPanel > .depo-kalan-blok {
       margin-top: 18px;
     }
@@ -4848,6 +5011,328 @@ function _depAccHeadKey(ev, el) {
 window._depAccToggleFromEl = _depAccToggleFromEl;
 window._depAccHeadKey = _depAccHeadKey;
 
+/* ══════════════════════════════════════════
+   WIZARD — Gönderilecek Siparişler (3 adım)
+   ══════════════════════════════════════════ */
+var _depoHazirlikCache = [];
+var _depWiz = {
+  tid: null, step: 1, pageIdx: 0,
+  kart: null, degerler: {}, sevkNot: '', busy: false
+};
+var DEP_WIZ_PER_PAGE = 3;
+
+function depWizOverlayEnsure() {
+  if (document.getElementById('depGonderOverlay')) return;
+  var el = document.createElement('div');
+  el.id = 'depGonderOverlay';
+  el.style.display = 'none';
+  el.innerHTML =
+    '<div id="depWizHdr" class="dep-wiz-hdr"></div>' +
+    '<div id="depWizBody" class="dep-wiz-body"></div>' +
+    '<div id="depWizFoot" class="dep-wiz-foot"></div>';
+  document.body.appendChild(el);
+}
+
+function depWizAc(tid) {
+  var kart = _depoHazirlikCache.find(function(d){ return String(d.id||'') === tid; });
+  if (!kart) { panelToast('Sipariş bulunamadı', 4000); return; }
+  var rows = Array.isArray(kart.kalem_duzenle) ? kart.kalem_duzenle : [];
+  _depWiz.tid = tid; _depWiz.step = 1; _depWiz.pageIdx = 0;
+  _depWiz.kart = kart; _depWiz.sevkNot = kart.sevkiyat_notu || '';
+  _depWiz.busy = false;
+  _depWiz.degerler = {};
+  rows.forEach(function(k, i) {
+    var rid = tid + '_' + i;
+    _depWiz.degerler[rid] = {
+      durum: String(k.durum || 'bekliyor'),
+      adet: Number(k.gonderilen_adet || 0),
+      not: String(k.not || ''),
+      ist: Number(k.istened_adet || k.istenen_adet || 0),
+      urun_ad: String(k.urun_ad || k.urun_id || 'Kalem '+(i+1)),
+      urun_id: k.urun_id || null,
+    };
+  });
+  var ov = document.getElementById('depGonderOverlay');
+  if (ov) { ov.style.display = 'flex'; ov.scrollTop = 0; }
+  depWizRender();
+}
+window.depWizAc = depWizAc;
+
+function depWizKapat() {
+  var ov = document.getElementById('depGonderOverlay');
+  if (ov) ov.style.display = 'none';
+  _depWiz.tid = null;
+}
+window.depWizKapat = depWizKapat;
+
+function depWizRender() {
+  var kart = _depWiz.kart;
+  var rows = Array.isArray(kart && kart.kalem_duzenle) ? kart.kalem_duzenle : [];
+  var step = _depWiz.step;
+  var totalPages = Math.ceil(rows.length / DEP_WIZ_PER_PAGE) || 1;
+  var adimAdlar = ['Hazırlık Listesi', 'Kalem Girişi', 'Özet & Gönder'];
+  var tamamSayisi = Object.values(_depWiz.degerler).filter(function(d){ return d.durum !== 'bekliyor'; }).length;
+  var toplamKalem = rows.length;
+
+  /* ── HEADER ── */
+  var hdr = document.getElementById('depWizHdr');
+  if (hdr) {
+    var dots = [1,2,3].map(function(s){
+      var cls = s < step ? 'tamam' : (s === step ? 'aktif' : '');
+      return '<div class="dep-wiz-dot ' + cls + '"></div>';
+    }).join('');
+    hdr.innerHTML =
+      '<button class="dep-wiz-hdr-close" onclick="depWizKapat()">✕</button>' +
+      '<div class="dep-wiz-hdr-info">' +
+        '<div class="dep-wiz-hdr-sube">' + escHtml(kart.talep_sube_adi || kart.talep_sube_id || '—') + '</div>' +
+        '<div class="dep-wiz-hdr-adim">Adım ' + step + '/3 — ' + adimAdlar[step-1] +
+          (step === 2 ? ' &nbsp;·&nbsp; <strong>' + tamamSayisi + '/' + toplamKalem + ' kalem</strong>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="dep-wiz-dots">' + dots + '</div>';
+  }
+
+  /* ── BODY ── */
+  var body = document.getElementById('depWizBody');
+  if (!body) return;
+  body.scrollTop = 0;
+  if (step === 1) body.innerHTML = depWizStep1HTML(kart, rows);
+  else if (step === 2) body.innerHTML = depWizStep2HTML(rows);
+  else body.innerHTML = depWizStep3HTML(rows);
+
+  /* ── FOOTER ── */
+  var foot = document.getElementById('depWizFoot');
+  if (!foot) return;
+  if (step === 1) {
+    foot.innerHTML =
+      '<button class="dep-wiz-btn-ileri" onclick="depWizIleri()">📋 Hazırladım — Giriş Yap →</button>';
+  } else if (step === 2) {
+    var isLastPage = (_depWiz.pageIdx + 1) >= totalPages;
+    var sayfaGos = totalPages > 1
+      ? '<div class="dep-wiz-sayfa-gos">Sayfa ' + (_depWiz.pageIdx+1) + ' / ' + totalPages + '</div>' : '';
+    foot.innerHTML =
+      '<button class="dep-wiz-btn-ileri" onclick="depWizIleri()">' +
+        (isLastPage ? 'Özete Geç →' : 'Sonraki Sayfa →') +
+      '</button>' +
+      sayfaGos +
+      '<button class="dep-wiz-btn-geri" onclick="depWizGeri()">← Geri</button>';
+  } else {
+    var bekleyenVar = Object.values(_depWiz.degerler).some(function(d){ return d.durum === 'bekliyor'; });
+    foot.innerHTML =
+      (bekleyenVar ? '<div class="dep-wiz-uyari">⚠️ Bazı kalemler henüz işaretlenmedi — kontrol et.</div>' : '') +
+      '<textarea id="depWizNotInp" placeholder="Sevkiyat notu (opsiyonel)" style="width:100%;border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;background:var(--bg);color:var(--text2);resize:none;height:56px;margin-bottom:0">' +
+        escHtml(_depWiz.sevkNot) + '</textarea>' +
+      '<button class="dep-wiz-btn-yola" onclick="depWizSubmit(true)">🚚 Yola Çıkar — Teslim Al Açılır</button>' +
+      '<button class="dep-wiz-btn-kaydet" onclick="depWizSubmit(false)">📝 Hazırlığı Kaydet (stok çıkmaz)</button>' +
+      '<button class="dep-wiz-btn-geri" onclick="depWizGeri()">← Geri</button>';
+  }
+}
+
+function depWizStep1HTML(kart, rows) {
+  var h = '<div style="margin-bottom:18px">';
+  h += '<div style="font-size:13px;color:var(--muted);margin-bottom:16px;padding:10px 12px;border-radius:10px;background:var(--bg2);border:1px solid var(--border)">';
+  h += '📸 Bu listeyi fotoğraflayın, ürünleri hazırlayın, sonra «Giriş Yap» ile devam edin.';
+  h += '</div>';
+  rows.forEach(function(k, i) {
+    var ist = Number(k.istened_adet || k.istenen_adet || 0);
+    h += '<div class="dep-wiz-liste-item">';
+    h += '<div class="dep-wiz-liste-no">' + (i+1) + '</div>';
+    h += '<div class="dep-wiz-liste-urun">' + escHtml(k.urun_ad || k.urun_id || 'Kalem '+(i+1)) + '</div>';
+    h += '<div class="dep-wiz-liste-adet">×' + ist + '</div>';
+    h += '</div>';
+  });
+  h += '</div>';
+  return h;
+}
+
+function depWizStep2HTML(rows) {
+  var pageStart = _depWiz.pageIdx * DEP_WIZ_PER_PAGE;
+  var pageRows = rows.slice(pageStart, pageStart + DEP_WIZ_PER_PAGE);
+  var h = '';
+  pageRows.forEach(function(k, pi) {
+    var i = pageStart + pi;
+    var rid = _depWiz.tid + '_' + i;
+    var d = _depWiz.degerler[rid] || { durum:'bekliyor', adet:0, not:'', ist:0, urun_ad:'' };
+    var ist = d.ist;
+    var durumCls = d.durum === 'var' ? 'ok' : (d.durum === 'yok' ? 'yok' : '');
+    h += '<div class="dep-wiz-kalem-kart ' + durumCls + '" id="depWizKart_' + escHtml(rid) + '">';
+    h += '<div class="dep-wiz-kalem-urun">' + escHtml(d.urun_ad) + '</div>';
+    h += '<div class="dep-wiz-kalem-ist">İstenen: <strong>' + ist + '</strong> adet</div>';
+    h += '<div class="dep-wiz-durgrp">';
+    h += '<button class="dep-wiz-durbtn' + (d.durum==='var'?' var-ak':'') + '" onclick="depWizSetDurum(\'' + escHtml(rid) + '\',\'var\')">✓<br>VAR</button>';
+    h += '<button class="dep-wiz-durbtn' + (d.durum==='kismi'?' kismi-ak':'') + '" onclick="depWizSetDurum(\'' + escHtml(rid) + '\',\'kismi\')">≈<br>KISMİ</button>';
+    h += '<button class="dep-wiz-durbtn' + (d.durum==='yok'?' yok-ak':'') + '" onclick="depWizSetDurum(\'' + escHtml(rid) + '\',\'yok\')">✗<br>YOK</button>';
+    h += '</div>';
+    if (d.durum !== 'yok') {
+      h += '<div class="dep-wiz-stepper">';
+      h += '<button class="dep-wiz-step-btn" onclick="depWizSetAdet(\'' + escHtml(rid) + '\',-1)">−</button>';
+      h += '<div class="dep-wiz-step-val" id="depWizAdet_' + escHtml(rid) + '">' + d.adet + '</div>';
+      h += '<button class="dep-wiz-step-btn" onclick="depWizSetAdet(\'' + escHtml(rid) + '\',+1)">+</button>';
+      h += '<span class="dep-wiz-step-max">/ ' + ist + '</span>';
+      h += '</div>';
+    }
+    h += '<input class="dep-wiz-not" placeholder="Kalem notu (opsiyonel)" value="' + escHtml(d.not) + '"' +
+      ' oninput="_depWizNotGuncelle(\'' + escHtml(rid) + '\',this.value)" />';
+    h += '</div>';
+  });
+  return h;
+}
+
+function depWizStep3HTML(rows) {
+  var h = '<div style="margin-bottom:8px">';
+  rows.forEach(function(k, i) {
+    var rid = _depWiz.tid + '_' + i;
+    var d = _depWiz.degerler[rid] || {};
+    var ico, renk, sag;
+    if (d.durum === 'var')    { ico='✅'; renk='#4ade80'; sag='×' + d.adet + ' VAR'; }
+    else if (d.durum==='kismi'){ ico='🟡'; renk='#fbbf24'; sag='×' + d.adet + ' KISMİ'; }
+    else if (d.durum==='yok') { ico='❌'; renk='#f87171'; sag='YOK'; }
+    else                       { ico='⏳'; renk='var(--muted)'; sag='Belirsiz'; }
+    h += '<div class="dep-wiz-ozet-satir">';
+    h += '<div class="dep-wiz-ozet-ico">' + ico + '</div>';
+    h += '<div class="dep-wiz-ozet-urun">' + escHtml(d.urun_ad || k.urun_ad || '') + '</div>';
+    h += '<div class="dep-wiz-ozet-sag" style="color:' + renk + '">' + sag + '</div>';
+    h += '</div>';
+  });
+  h += '</div>';
+  return h;
+}
+
+function depWizSetDurum(rid, durum) {
+  if (!_depWiz.degerler[rid]) return;
+  _depWiz.degerler[rid].durum = durum;
+  if (durum === 'var') {
+    var ist = _depWiz.degerler[rid].ist;
+    if (ist > 0) _depWiz.degerler[rid].adet = ist;
+  }
+  if (durum === 'yok') _depWiz.degerler[rid].adet = 0;
+  depWizRender();
+}
+window.depWizSetDurum = depWizSetDurum;
+
+function depWizSetAdet(rid, delta) {
+  if (!_depWiz.degerler[rid]) return;
+  var d = _depWiz.degerler[rid];
+  d.adet = Math.max(0, Math.min(d.ist > 0 ? d.ist : 9999, (d.adet||0) + delta));
+  var el = document.getElementById('depWizAdet_' + rid);
+  if (el) el.textContent = d.adet;
+}
+window.depWizSetAdet = depWizSetAdet;
+
+function _depWizNotGuncelle(rid, val) {
+  if (_depWiz.degerler[rid]) _depWiz.degerler[rid].not = val;
+}
+window._depWizNotGuncelle = _depWizNotGuncelle;
+
+function depWizIleri() {
+  var rows = Array.isArray(_depWiz.kart && _depWiz.kart.kalem_duzenle) ? _depWiz.kart.kalem_duzenle : [];
+  var totalPages = Math.ceil(rows.length / DEP_WIZ_PER_PAGE) || 1;
+  if (_depWiz.step === 1) {
+    _depWiz.step = 2; _depWiz.pageIdx = 0;
+  } else if (_depWiz.step === 2) {
+    if (_depWiz.pageIdx + 1 < totalPages) {
+      _depWiz.pageIdx++;
+    } else {
+      _depWiz.step = 3;
+    }
+  }
+  depWizRender();
+}
+window.depWizIleri = depWizIleri;
+
+function depWizGeri() {
+  if (_depWiz.step === 3) {
+    _depWiz.step = 2;
+    var rows = Array.isArray(_depWiz.kart && _depWiz.kart.kalem_duzenle) ? _depWiz.kart.kalem_duzenle : [];
+    _depWiz.pageIdx = Math.max(0, Math.ceil(rows.length / DEP_WIZ_PER_PAGE) - 1);
+  } else if (_depWiz.step === 2 && _depWiz.pageIdx > 0) {
+    _depWiz.pageIdx--;
+  } else {
+    _depWiz.step = Math.max(1, _depWiz.step - 1);
+    _depWiz.pageIdx = 0;
+  }
+  depWizRender();
+}
+window.depWizGeri = depWizGeri;
+
+async function depWizSubmit(gonderildi) {
+  if (_depWiz.busy) return;
+  var notInp = document.getElementById('depWizNotInp');
+  if (notInp) _depWiz.sevkNot = notInp.value || '';
+  var tid = _depWiz.tid;
+  var kalemler = Object.keys(_depWiz.degerler).map(function(rid) {
+    var d = _depWiz.degerler[rid];
+    var durum = d.durum || 'bekliyor';
+    var adet = Number(d.adet || 0);
+    var ist = Number(d.ist || 0);
+    if (durum === 'var' && adet <= 0 && ist > 0) adet = ist;
+    if (durum === 'yok') adet = 0;
+    if (ist > 0 && adet > ist) adet = ist;
+    return {
+      urun_id: d.urun_id || null,
+      urun_ad: d.urun_ad || null,
+      istenen_adet: ist,
+      durum: durum,
+      gonderilen_adet: adet,
+      not_aciklama: d.not || null,
+    };
+  });
+  var sevkVar = kalemler.some(function(x) {
+    var dv = String(x.durum||'');
+    return (dv==='var'||dv==='kismi') && Number(x.gonderilen_adet||0) > 0;
+  });
+  try {
+    if (gonderildi && !sevkVar) throw new Error('En az bir kalemde VAR veya KISMİ seçili olmalı.');
+    if (!gonderildi && sevkVar) throw new Error('Gönderilen kalem var — «Yola Çıkar» kullanın.');
+    if (kalemler.some(function(x){ return x.durum==='kismi' && Number(x.gonderilen_adet||0)<=0; })) {
+      throw new Error('KISMİ seçilen kalemlere adet girmelisiniz.');
+    }
+  } catch(e) { panelToast('⚠️ ' + e.message, 5000); return; }
+
+  var ozetHtml = kalemler.filter(function(x){
+    return (x.durum==='var'||x.durum==='kismi') && Number(x.gonderilen_adet||0)>0;
+  }).map(function(x){
+    return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:4px 0">' +
+      '<span>' + escHtml(x.urun_ad||'') + '</span><strong>×' + x.gonderilen_adet + '</strong></div>';
+  }).join('');
+
+  var modalRes = await pinOnayModalAc({
+    baslik: gonderildi ? '🚚 Yola çıkar — stok düşer' : '📝 Hazırlığı kaydet',
+    ozetHtml: '<p style="margin:0 0 8px;font-size:12px;color:var(--muted)">' +
+      (gonderildi ? 'Çıkacak kalemler:' : 'Taslak — stok çıkmaz.') + '</p>' +
+      '<div style="max-height:55vh;overflow:auto">' + (ozetHtml || '') + '</div>',
+    askCredentials: true,
+  });
+  if (!modalRes || !modalRes.ok) { panelToast('İptal edildi.', 3000); return; }
+
+  _depWiz.busy = true;
+  try {
+    await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-depo-sevkiyat-kaydet', {
+      method: 'POST',
+      body: {
+        talep_id: tid,
+        personel_id: modalRes.personel_id,
+        pin: modalRes.pin,
+        kalemler: kalemler,
+        sevkiyat_notu: _depWiz.sevkNot || null,
+        gonderildi: !!gonderildi,
+      },
+    });
+    depWizKapat();
+    panelToast(gonderildi ? '✅ Yola çıkarıldı — şubede Depodan Gelen açıldı!' : '✅ Hazırlık kaydedildi.', 5500);
+    siparisAkisCache = null;
+    await renderGonderilecekPanel();
+    await renderSiparisPanel();
+    await siparisGonderSolBlokGuncelle(null);
+  } catch(e) {
+    panelToast('❌ ' + (e.message || 'Hata'), 5000);
+  } finally {
+    _depWiz.busy = false;
+  }
+}
+window.depWizSubmit = depWizSubmit;
+/* ══ Wizard sonu ══ */
+
 /* ── Yeni dokunmatik kalem kontrolleri ── */
 function depDurBtnlariGuncelle(rid) {
   var inp = document.getElementById('depDur_' + rid);
@@ -5094,10 +5579,7 @@ function buildDepoKalanHTML(kalanListe) {
 }
 
 function buildGonderilecekBulkBarHTML() {
-  return '<div class="dep-bulk2-bar">' +
-    '<button type="button" id="gonderilecekBulkBtnTam" class="dep-bulk2-tam" onclick="gonderilecekBulkTamGonder();return false;">✅ Tümünü Tam Gönder</button>' +
-    '<button type="button" id="gonderilecekBulkBtnKismi" class="dep-bulk2-kismi" onclick="gonderilecekKismiSatirlariUygula();return false;">≈ Kısmi Ayarla</button>' +
-    '</div>';
+  return ''; // Wizard akışında bulk bar kullanılmıyor
 }
 
 function buildDepoHazirlikHTML(depoHazirlik) {
@@ -5105,8 +5587,30 @@ function buildDepoHazirlikHTML(depoHazirlik) {
   if (!dh.length) {
     return '<div class="merkez-mesaj-bos" style="padding:12px 0">Şu an size yönlendirilmiş gönderilecek sipariş yok.</div>';
   }
+  var h = '<div class="gonderilecek-sect-eyebrow" style="margin-bottom:12px">📋 Hazırlanacak siparişler <span style="font-weight:400;color:var(--muted)">(' + dh.length + ')</span></div>';
+  dh.forEach(function (d) {
+    var tid = String(d.id || '');
+    var rows = Array.isArray(d.kalem_duzenle) ? d.kalem_duzenle : [];
+    var subeAd = escHtml(d.talep_sube_adi || d.talep_sube_id || '—');
+    var kalemSayisi = rows.length;
+    var toplamAdet = rows.reduce(function(s,k){ return s + Number(k.istened_adet || k.istenen_adet || 0); }, 0);
+    var ozet = rows.slice(0,3).map(function(k){ return escHtml(k.urun_ad||k.urun_id||'?') + ' ×' + (k.istened_adet||k.istenen_adet||0); }).join(' · ') + (rows.length > 3 ? ' …' : '');
+    var tidEsc = escHtml(tid);
+    h += '<div class="dep-compact-kart">';
+    h += '<div class="dep-compact-ico">📦</div>';
+    h += '<div class="dep-compact-info">';
+    h += '<div class="dep-compact-sube">' + subeAd + '</div>';
+    h += '<div class="dep-compact-ozet">' + kalemSayisi + ' kalem · ' + toplamAdet + ' adet &nbsp;—&nbsp; ' + ozet + '</div>';
+    h += '</div>';
+    h += '<button class="dep-compact-bas" onclick="depWizAc(\'' + tidEsc + '\')">▶ Hazırlığa<br>Başla</button>';
+    h += '</div>';
+  });
+  return h;
+}
+function buildDepoHazirlikHTML__UNUSED(depoHazirlik) {
+  var dh = depoHazirlik || [];
+  if (!dh.length) { return ''; }
   var h = '';
-  h += '<div class="gonderilecek-sect-eyebrow">Hazırlık listesi &nbsp;<span style="font-weight:400;color:var(--muted)">(' + dh.length + ' sipariş)</span></div>';
   dh.forEach(function (d, idx) {
     var tid = String(d.id || '');
     var rows = Array.isArray(d.kalem_duzenle) ? d.kalem_duzenle : [];
@@ -5371,18 +5875,14 @@ async function renderGonderilecekPanel() {
   }
   var depoHazirlik = (akis && akis.depo_hazirlik_talepleri) || [];
   var depoGonderilenler = (akis && akis.depo_gonderilenler) || [];
+  _depoHazirlikCache = depoHazirlik; // wizard için global cache
   var bulkWrap = document.getElementById('gonderilecekBulkBarWrap');
-  if (bulkWrap) {
-    bulkWrap.innerHTML = depoHazirlik.length ? buildGonderilecekBulkBarHTML() : '';
-  }
+  if (bulkWrap) bulkWrap.innerHTML = '';
   root.innerHTML =
     buildDepoHazirlikHTML(depoHazirlik) +
     buildDepoGonderilenHTML(depoGonderilenler);
+  depWizOverlayEnsure();
   fillSels();
-  document.querySelectorAll('[id^="depTaslak_"],[id^="depSevk_"]').forEach(function (b) {
-    delete b.dataset.wired;
-  });
-  wireDepSevkiyatHandlers(depoHazirlik);
   depKalemTumSatirlariYenile();
   if (!window.__depKalemVurguBound) {
     window.__depKalemVurguBound = true;
