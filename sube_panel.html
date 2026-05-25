@@ -1729,52 +1729,90 @@
 
     /* ══ Compact kart (wizard öncesi liste) ══ */
     .dep-compact-kart {
-      background: var(--bg2); border-radius: 14px;
+      background: var(--bg2); border-radius: 16px;
       border: 1px solid var(--border);
-      padding: 16px 18px; margin-bottom: 10px;
-      display: flex; align-items: center; gap: 14px;
+      padding: 18px 18px 18px 0;
+      margin-bottom: 12px;
+      display: flex; align-items: center; gap: 0;
+      overflow: hidden; position: relative;
+      transition: border-color .2s, box-shadow .2s;
     }
-    .dep-compact-ico { font-size: 28px; flex-shrink: 0; }
+    .dep-compact-kart:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .dep-compact-sol {
+      width: 6px; align-self: stretch; flex-shrink: 0;
+      background: linear-gradient(180deg, var(--accent), #a78bfa);
+      border-radius: 0 4px 4px 0; margin-right: 16px;
+    }
+    .dep-compact-ico {
+      font-size: 32px; flex-shrink: 0; margin-right: 14px;
+      filter: drop-shadow(0 2px 6px rgba(0,0,0,.3));
+    }
     .dep-compact-info { flex: 1; min-width: 0; }
-    .dep-compact-sube { font-size: 17px; font-weight: 800; }
-    .dep-compact-ozet { font-size: 12px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .dep-compact-bas {
-      flex-shrink: 0; padding: 14px 18px;
-      font-size: 15px; font-weight: 800;
-      border-radius: 12px; border: none;
-      background: var(--accent); color: #fff;
-      cursor: pointer; white-space: nowrap;
+    .dep-compact-sube { font-size: 18px; font-weight: 900; letter-spacing: -.01em; }
+    .dep-compact-meta {
+      display: flex; gap: 8px; align-items: center; margin-top: 4px; flex-wrap: wrap;
     }
-    .dep-compact-bas:active { opacity: .82; }
+    .dep-compact-badge {
+      font-size: 11px; font-weight: 700; padding: 3px 8px;
+      border-radius: 20px; background: rgba(99,102,241,.18);
+      color: #a5b4fc; border: 1px solid rgba(99,102,241,.35);
+    }
+    .dep-compact-ozet { font-size: 12px; color: var(--muted); }
+    .dep-compact-bas {
+      flex-shrink: 0; padding: 16px 20px; margin-left: 8px;
+      font-size: 15px; font-weight: 900; line-height: 1.2;
+      border-radius: 14px; border: none;
+      background: linear-gradient(135deg, var(--accent), #7c3aed);
+      color: #fff; cursor: pointer; white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(99,102,241,.4);
+      transition: transform .12s, box-shadow .12s;
+    }
+    .dep-compact-bas:active { transform: scale(.95); box-shadow: 0 2px 8px rgba(99,102,241,.3); }
 
     /* ══ Wizard tam ekran overlay ══ */
+    @keyframes depWizSlideUp {
+      from { transform: translateY(40px); opacity: 0; }
+      to   { transform: translateY(0);    opacity: 1; }
+    }
+    @keyframes depWizFadeStep {
+      from { opacity: 0; transform: translateX(18px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
     #depGonderOverlay {
       position: fixed; inset: 0; z-index: 9900;
       background: var(--bg);
       flex-direction: column; overflow: hidden;
     }
+    #depGonderOverlay.aciyor {
+      animation: depWizSlideUp .28s cubic-bezier(.22,.68,0,1.2) both;
+    }
+    .dep-wiz-body-anim { animation: depWizFadeStep .2s ease both; }
+
     .dep-wiz-hdr {
       flex-shrink: 0; padding: 14px 18px;
       border-bottom: 2px solid var(--border);
-      background: var(--bg2);
+      background: linear-gradient(135deg, var(--bg2) 60%, rgba(99,102,241,.06));
       display: flex; align-items: center; gap: 12px;
     }
     .dep-wiz-hdr-close {
-      width: 44px; height: 44px; border-radius: 50%;
+      width: 46px; height: 46px; border-radius: 50%;
       border: 1px solid var(--border); background: var(--bg);
       font-size: 20px; cursor: pointer; flex-shrink: 0;
       display: flex; align-items: center; justify-content: center;
+      transition: background .15s;
     }
+    .dep-wiz-hdr-close:active { background: rgba(248,113,113,.2); }
     .dep-wiz-hdr-info { flex: 1; min-width: 0; }
-    .dep-wiz-hdr-sube { font-size: 16px; font-weight: 800; }
+    .dep-wiz-hdr-sube { font-size: 17px; font-weight: 900; }
     .dep-wiz-hdr-adim { font-size: 12px; color: var(--muted); margin-top: 2px; }
-    .dep-wiz-dots { display: flex; gap: 6px; flex-shrink: 0; }
+    .dep-wiz-dots { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
     .dep-wiz-dot {
-      width: 10px; height: 10px; border-radius: 50%;
-      background: var(--border); transition: background .2s;
+      height: 8px; border-radius: 4px;
+      background: var(--border); transition: all .3s cubic-bezier(.22,.68,0,1.2);
+      width: 8px;
     }
-    .dep-wiz-dot.aktif { background: var(--accent); }
-    .dep-wiz-dot.tamam { background: #4ade80; }
+    .dep-wiz-dot.aktif { background: var(--accent); width: 22px; }
+    .dep-wiz-dot.tamam { background: #4ade80; width: 8px; }
     .dep-wiz-body {
       flex: 1; overflow-y: auto;
       -webkit-overflow-scrolling: touch;
@@ -5053,17 +5091,37 @@ function depWizAc(tid) {
     };
   });
   var ov = document.getElementById('depGonderOverlay');
-  if (ov) { ov.style.display = 'flex'; ov.scrollTop = 0; }
+  if (ov) {
+    ov.style.display = 'flex';
+    ov.scrollTop = 0;
+    // Animate entrance
+    ov.classList.remove('aciyor');
+    void ov.offsetWidth; // force reflow
+    ov.classList.add('aciyor');
+  }
+  // Push history state so browser back button closes wizard instead of leaving page
+  history.pushState({ depWizOpen: true }, '');
   depWizRender();
 }
 window.depWizAc = depWizAc;
 
-function depWizKapat() {
+function depWizKapat(_fromPopstate) {
   var ov = document.getElementById('depGonderOverlay');
   if (ov) ov.style.display = 'none';
   _depWiz.tid = null;
+  // If closed by user (not by popstate), pop the history state we pushed
+  if (!_fromPopstate && history.state && history.state.depWizOpen) {
+    history.back();
+  }
 }
 window.depWizKapat = depWizKapat;
+
+// Back button closes wizard instead of leaving the page
+window.addEventListener('popstate', function(e) {
+  if (_depWiz.tid) {
+    depWizKapat(true); // true = called from popstate, don't call history.back() again
+  }
+});
 
 function depWizRender() {
   var kart = _depWiz.kart;
@@ -5099,6 +5157,10 @@ function depWizRender() {
   if (step === 1) body.innerHTML = depWizStep1HTML(kart, rows);
   else if (step === 2) body.innerHTML = depWizStep2HTML(rows);
   else body.innerHTML = depWizStep3HTML(rows);
+  // Trigger step transition animation
+  body.classList.remove('dep-wiz-body-anim');
+  void body.offsetWidth;
+  body.classList.add('dep-wiz-body-anim');
 
   /* ── FOOTER ── */
   var foot = document.getElementById('depWizFoot');
@@ -5597,10 +5659,15 @@ function buildDepoHazirlikHTML(depoHazirlik) {
     var ozet = rows.slice(0,3).map(function(k){ return escHtml(k.urun_ad||k.urun_id||'?') + ' ×' + (k.istened_adet||k.istenen_adet||0); }).join(' · ') + (rows.length > 3 ? ' …' : '');
     var tidEsc = escHtml(tid);
     h += '<div class="dep-compact-kart">';
+    h += '<div class="dep-compact-sol"></div>';
     h += '<div class="dep-compact-ico">📦</div>';
     h += '<div class="dep-compact-info">';
     h += '<div class="dep-compact-sube">' + subeAd + '</div>';
-    h += '<div class="dep-compact-ozet">' + kalemSayisi + ' kalem · ' + toplamAdet + ' adet &nbsp;—&nbsp; ' + ozet + '</div>';
+    h += '<div class="dep-compact-meta">';
+    h += '<span class="dep-compact-badge">' + kalemSayisi + ' kalem</span>';
+    h += '<span class="dep-compact-badge">' + toplamAdet + ' adet</span>';
+    h += '</div>';
+    h += '<div class="dep-compact-ozet">' + ozet + '</div>';
     h += '</div>';
     h += '<button class="dep-compact-bas" onclick="depWizAc(\'' + tidEsc + '\')">▶ Hazırlığa<br>Başla</button>';
     h += '</div>';
