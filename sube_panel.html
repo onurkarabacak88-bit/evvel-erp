@@ -9212,10 +9212,12 @@ var FR_URUNLER = {
     { ad: 'Kahve',   ico: '☕', kalem_kodu: 'kahve_paket' },
   ],
   iade: [
-    { ad: '14oz Bardak', ico: '☕', kalem_kodu: 'bardak_buyuk' },
-    { ad: '8oz Bardak',  ico: '🍵', kalem_kodu: 'bardak_kucuk' },
-    { ad: 'Kahve',       ico: '☕', kalem_kodu: 'kahve_paket'  },
-    { ad: 'Pasta',       ico: '🎂', kalem_kodu: 'pasta_adet'   },
+    { ad: 'Plastik Bardak',  ico: '🥤', kalem_kodu: 'bardak_plastik' },
+    { ad: '8oz Karton',      ico: '🍵', kalem_kodu: 'bardak_kucuk'   },
+    { ad: 'Pasta',           ico: '🎂', kalem_kodu: 'pasta_adet'     },
+    { ad: 'Soda',            ico: '🫧', kalem_kodu: 'soda_adet'      },
+    { ad: 'Su',              ico: '💧', kalem_kodu: 'su_sise'        },
+    { ad: 'Red Bull',        ico: '🐂', kalem_kodu: 'redbull_adet'   },
   ],
   hazirlik_deneme: [
     { ad: 'Süt 1L',      ico: '🥛', kalem_kodu: 'sut_litre'    },
@@ -9396,18 +9398,25 @@ function frWizStep3HTML() {
   h += '<div class="at-pin-dots" id="frPinDots"><span class="at-pin-dot"></span><span class="at-pin-dot"></span><span class="at-pin-dot"></span><span class="at-pin-dot"></span></div></div>';
   h += '<input id="frDetayPin" class="at-pin-inp" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="• • • •" />';
   h += '</div>';
-  h += '<div class="fr-detay-alan"><div class="fr-detay-etiket">📝 Açıklama'+(_frWiz.sebep==='diger'?' <span style="color:#f87171">* min. 10 karakter</span>':' (opsiyonel)')+'</div>';
-  h += '<textarea class="fr-detay-textarea" id="frDetayAcik" rows="2" placeholder="'+(_frWiz.sebep==='diger'?'Zorunlu — ne oldu?':'Kısa not ekle')+'"></textarea></div>';
+  // İade bilgileri — personel/PIN'den ÖNCE gelir (müşteri akışı için)
   if (_frWiz.sebep==='iade') {
-    h += '<div class="fr-iade-kart"><div class="fr-iade-baslik">↩️ İade bilgileri — zorunlu alanlar</div>';
-    h += '<div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.45">Ad/telefon yalnızca operasyon merkezinde saklanır.</div>';
+    h += '<div class="fr-iade-kart">';
+    h += '<div class="fr-iade-baslik">↩️ Müşteri İade Bilgileri</div>';
+    h += '<div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.5">Ad ve telefon yalnızca operasyon merkezinde saklanır — şube panelinde görünmez.</div>';
     h += '<div class="fr-iade-grid">';
-    h += '<div class="fr-detay-alan" style="margin-bottom:0"><div class="fr-detay-etiket">Fiş no <span style="color:#f87171">*</span></div><input class="fr-detay-inp" id="frIadeFis" inputmode="numeric" autocomplete="off" placeholder="Kasa fiş no" /></div>';
-    h += '<div class="fr-detay-alan" style="margin-bottom:0"><div class="fr-detay-etiket">İade zamanı <span style="color:#f87171">*</span></div><input class="fr-detay-inp" id="frIadeZaman2" type="datetime-local" value="'+escHtml(frIadeZamanVarsayilan())+'" /></div>';
-    h += '<div class="fr-detay-alan" style="margin-bottom:0"><div class="fr-detay-etiket">Müşteri adı <span style="color:#f87171">*</span></div><input class="fr-detay-inp" id="frIadeMad" autocomplete="name" placeholder="Ad soyad" /></div>';
-    h += '<div class="fr-detay-alan" style="margin-bottom:0"><div class="fr-detay-etiket">Telefon <span style="color:#f87171">*</span></div><input class="fr-detay-inp" id="frIadeMtel" inputmode="tel" autocomplete="tel" placeholder="5XX XXX XX XX" /></div>';
+    h += '<div class="fr-detay-alan" style="margin-bottom:0"><div class="fr-detay-etiket">Fiş / Sipariş no <span style="color:#f87171">*</span></div>';
+    h += '<input class="fr-detay-inp" id="frIadeFis" inputmode="numeric" autocomplete="off" placeholder="Kasa fiş no" /></div>';
+    h += '<div class="fr-detay-alan" style="margin-bottom:0"><div class="fr-detay-etiket">İade zamanı <span style="color:#f87171">*</span></div>';
+    h += '<input class="fr-detay-inp" id="frIadeZaman2" type="datetime-local" value="'+escHtml(frIadeZamanVarsayilan())+'" /></div>';
+    h += '<div class="fr-detay-alan" style="margin-bottom:0"><div class="fr-detay-etiket">Müşteri adı <span style="color:#f87171">*</span></div>';
+    h += '<input class="fr-detay-inp" id="frIadeMad" autocomplete="name" placeholder="Ad Soyad" /></div>';
+    h += '<div class="fr-detay-alan" style="margin-bottom:0"><div class="fr-detay-etiket">Telefon <span style="color:#f87171">*</span></div>';
+    h += '<input class="fr-detay-inp" id="frIadeMtel" inputmode="tel" autocomplete="tel" placeholder="5XX XXX XX XX" /></div>';
     h += '</div></div>';
   }
+  // Açıklama
+  h += '<div class="fr-detay-alan"><div class="fr-detay-etiket">📝 Açıklama'+(_frWiz.sebep==='diger'?' <span style="color:#f87171">* min. 10 karakter</span>':_frWiz.sebep==='iade'?' — iade nedeni (opsiyonel)':' (opsiyonel)')+'</div>';
+  h += '<textarea class="fr-detay-textarea" id="frDetayAcik" rows="2" placeholder="'+(_frWiz.sebep==='diger'?'Zorunlu — ne oldu?':_frWiz.sebep==='iade'?'Bozuk, beğenmedi, yanlış ürün…':'Kısa not ekle')+'"></textarea></div>';
   h += '<div id="frWizMsg" style="margin-top:4px;font-size:12px;color:#fca5a5;min-height:16px"></div>';
   return h;
 }
