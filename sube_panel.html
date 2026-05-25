@@ -1201,6 +1201,75 @@
     .fr-iade-baslik { font-size: 13px; font-weight: 800; color: #fdba74; margin-bottom: 12px; }
     .fr-iade-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
+    /* ── İade Detay Ekranı (Step 2a) ─────────────────────── */
+    .fr-iade-sebep-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 20px;
+    }
+    .fr-iade-sebep-kart {
+      display: flex; align-items: center; gap: 10px;
+      padding: 13px 14px; border-radius: 14px;
+      border: 1.5px solid rgba(255,255,255,.1);
+      background: rgba(255,255,255,.05);
+      cursor: pointer; touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none; -webkit-user-select: none;
+      transition: background .15s, border-color .15s, transform .1s;
+    }
+    .fr-iade-sebep-kart:active,
+    .fr-iade-sebep-kart.fr-tapped {
+      transform: scale(.93); background: rgba(239,68,68,.14);
+      border-color: rgba(239,68,68,.4);
+    }
+    .fr-iade-sebep-kart.secili {
+      background: rgba(239,68,68,.2);
+      border-color: rgba(239,68,68,.65);
+      box-shadow: 0 0 0 3px rgba(239,68,68,.18);
+    }
+    .fr-iade-sebep-ico { font-size: 22px; line-height: 1; flex-shrink: 0; }
+    .fr-iade-sebep-ad { font-size: 13px; font-weight: 700; color: #f1f5f9; line-height: 1.25; }
+
+    /* Tel display */
+    .fr-tel-display {
+      background: rgba(0,0,0,.35); border: 1.5px solid rgba(255,255,255,.12);
+      border-radius: 14px; padding: 16px 20px; margin-bottom: 12px;
+      text-align: center; min-height: 58px;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Courier New', monospace;
+    }
+    /* Numpad */
+    .fr-numpad {
+      display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; margin-bottom: 4px;
+    }
+    .fr-numpad-btn {
+      padding: 0; height: 60px; font-size: 22px; font-weight: 700;
+      border-radius: 14px; border: 1.5px solid rgba(255,255,255,.1);
+      background: rgba(255,255,255,.07); color: #fff;
+      cursor: pointer; touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      transition: background .1s, transform .08s;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .fr-numpad-btn:active { background: rgba(239,68,68,.3); transform: scale(.9); }
+    .fr-numpad-bos { height: 60px; }
+    .fr-numpad-del {
+      height: 60px; font-size: 20px; font-weight: 700;
+      border-radius: 14px; border: 1.5px solid rgba(239,68,68,.25);
+      background: rgba(239,68,68,.1); color: #f87171;
+      cursor: pointer; touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      transition: background .1s, transform .08s;
+      display: flex; align-items: center; justify-content: center; width: 100%;
+    }
+    .fr-numpad-del:active { background: rgba(239,68,68,.35); transform: scale(.9); }
+
+    /* İade özet chip (step 4 üstünde görünür) */
+    .fr-iade-ozet {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 10px 14px; margin-bottom: 14px;
+      background: rgba(249,115,22,.12); border: 1px solid rgba(249,115,22,.3);
+      border-radius: 12px; font-size: 13px; color: #fdba74; font-weight: 600;
+    }
+
     /* Ozet pill */
     .fr-ozet-satir {
       display: flex; align-items: center; gap: 8px;
@@ -9318,7 +9387,16 @@ var FR_URUNLER = {
   sayim_hatasi: null,
   diger:        null,
 };
-var _frWiz = { step:1, sebep:null, seciliUrun:null, adet:1, aramaMetni:'', katalog:[], busy:false };
+var IADE_SEBEPLER_DETAY = [
+  { kod: 'begenmedi',  ico: '😒', ad: 'Beğenmedi'      },
+  { kod: 'sicaklik',   ico: '🌡️', ad: 'Sıcaklık'       },
+  { kod: 'yanlis',     ico: '❌', ad: 'Yanlış Ürün'    },
+  { kod: 'yabanci',    ico: '🐛', ad: 'Yabancı Madde'  },
+  { kod: 'bekleme',    ico: '⏱️', ad: 'Uzun Bekleme'   },
+  { kod: 'hasar',      ico: '📦', ad: 'Hasar / Ambalaj' },
+];
+var _frWiz = { step:1, sebep:null, seciliUrun:null, adet:1, aramaMetni:'', katalog:[], busy:false,
+               iadeSebep:null, musteriNo:'', iadeSubAdim:0 };
 
 /* ── Event delegation: tek listener, sıfır inline onclick ── */
 function _frWizWire(root) {
@@ -9352,6 +9430,12 @@ function _frWizWire(root) {
     if (el) { frWizAdetDegis(parseInt(el.getAttribute('data-fr-adet'), 10)); return; }
     el = e.target.closest('[data-fr-retry]');
     if (el) { frWizBas(); return; }
+    el = e.target.closest('[data-fr-iade-sebep]');
+    if (el) { frWizIadeSebepSec(el.getAttribute('data-fr-iade-sebep')); return; }
+    el = e.target.closest('[data-fr-num]');
+    if (el) { frWizNumpadGir(el.getAttribute('data-fr-num')); return; }
+    el = e.target.closest('[data-fr-num-del]');
+    if (el) { frWizNumpadSil(); return; }
   });
 }
 
@@ -9359,6 +9443,7 @@ function frWizBas() {
   var root = document.getElementById('frWizRoot');
   if (!root) return;
   _frWiz.step=1; _frWiz.sebep=null; _frWiz.seciliUrun=null; _frWiz.adet=1; _frWiz.busy=false; _frWiz.aramaMetni='';
+  _frWiz.iadeSebep=null; _frWiz.musteriNo=''; _frWiz.iadeSubAdim=0;
   _frWizWire(root); /* listener'ı bir kez bağla */
   /* Katalog cache'liyse anında render */
   if (Array.isArray(siparisKatalogCache) && siparisKatalogCache.length) {
@@ -9396,35 +9481,53 @@ function frWizRender(geriAnim) {
   var root = document.getElementById('frWizRoot');
   if (!root) return;
   var step = _frWiz.step;
-  var dots = [1,2,3].map(function(i){
-    var cls = i<step ? 'tamam' : (i===step ? 'aktif' : '');
-    return '<span class="fr-wiz-adim-dot '+cls+'">'+(i<step?'✓':String(i))+'</span>';
-  }).join('');
-  var basliklar = ['Sebep','Ürün','Onay'];
-  var altlar    = ['Ne oldu?','Hangi ürün?','Adet & imza'];
+  var isIade = _frWiz.sebep === 'iade';
+  /* Virtual step + total steps for display */
+  var vStep, totalSteps;
+  if (isIade) {
+    totalSteps = 4;
+    if (step===1) vStep=1;
+    else if (step===2 && _frWiz.iadeSubAdim===0) vStep=2;
+    else if (step===2 && _frWiz.iadeSubAdim===1) vStep=3;
+    else vStep=4;
+  } else {
+    totalSteps = 3; vStep = step;
+  }
+  var dots = '';
+  for (var di=1; di<=totalSteps; di++) {
+    var dc = di<vStep ? 'tamam' : (di===vStep ? 'aktif' : '');
+    dots += '<span class="fr-wiz-adim-dot '+dc+'">'+(di<vStep?'✓':String(di))+'</span>';
+  }
+  var basliklar = isIade ? ['Sebep','Müşteri','Ürün','Onay'] : ['Sebep','Ürün','Onay'];
+  var altlar    = isIade ? ['Ne oldu?','İade bilgileri','Hangi ürün?','Adet & imza'] : ['Ne oldu?','Hangi ürün?','Adet & imza'];
   var h = '<div class="fr-wiz-header">';
   h += '<div class="fr-wiz-ico">🔥</div>';
   h += '<div class="fr-wiz-baslik">';
-  h += '<div class="fr-wiz-baslik-yazi">Fire Bildirimi — '+basliklar[step-1]+'</div>';
-  h += '<div class="fr-wiz-baslik-alt">'+altlar[step-1]+'</div>';
+  h += '<div class="fr-wiz-baslik-yazi">Fire Bildirimi — '+basliklar[vStep-1]+'</div>';
+  h += '<div class="fr-wiz-baslik-alt">'+altlar[vStep-1]+'</div>';
   h += '</div>';
   h += '<div class="fr-wiz-adimlar">'+dots+'</div>';
   h += '</div>';
   var bodyClass = 'fr-wiz-body'+(geriAnim?' geri-anim':'');
   h += '<div class="'+bodyClass+'" id="frWizBody">';
   if (step===1) h += frWizStep1HTML();
-  else if (step===2) h += frWizStep2HTML();
+  else if (step===2) {
+    if (isIade && _frWiz.iadeSubAdim===0) h += frWizIadeDetayHTML();
+    else h += frWizStep2HTML();
+  }
   else h += frWizStep3HTML();
   h += '</div>';
   h += '<div class="fr-nav-bar">';
-  if (step>1) h += '<button class="fr-nav-geri" data-fr-geri type="button">‹</button>';
-  if (step===2 && FR_URUNLER[_frWiz.sebep]===null)
+  if (vStep>1) h += '<button class="fr-nav-geri" data-fr-geri type="button">‹</button>';
+  /* Devam: iade detay → ürün; katalog modu */
+  var showDevam = (isIade && step===2 && _frWiz.iadeSubAdim===0)
+               || (step===2 && FR_URUNLER[_frWiz.sebep]===null);
+  if (showDevam)
     h += '<button class="fr-nav-ileri" id="frNavDevam" data-fr-devam type="button">Devam ›</button>';
   if (step===3)
     h += '<button class="fr-nav-ileri gonder" id="frNavGonder" data-fr-gonder type="button">🔥 Fire Kaydet</button>';
   h += '</div>';
   root.innerHTML = h;
-  /* Scroll to top */
   var orta = document.getElementById('orta');
   if (orta) orta.scrollTop = 0;
   if (step===3) frWizWireStep3();
@@ -9441,6 +9544,83 @@ function frWizStep1HTML() {
   });
   h += '</div>';
   return h;
+}
+
+function frWizIadeDetayHTML() {
+  var h = '';
+  /* İade sebebi */
+  h += '<div style="font-size:11px;color:var(--muted);font-weight:800;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">İade Sebebi <span style="color:#f87171">*</span></div>';
+  h += '<div class="fr-iade-sebep-grid">';
+  IADE_SEBEPLER_DETAY.forEach(function(s) {
+    var sel = _frWiz.iadeSebep===s.kod ? ' secili' : '';
+    h += '<div class="fr-iade-sebep-kart'+sel+'" data-fr data-fr-iade-sebep="'+s.kod+'">';
+    h += '<span class="fr-iade-sebep-ico">'+s.ico+'</span>';
+    h += '<span class="fr-iade-sebep-ad">'+escHtml(s.ad)+'</span>';
+    h += '</div>';
+  });
+  h += '</div>';
+  /* Müşteri numarası */
+  h += '<div style="font-size:11px;color:var(--muted);font-weight:800;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">';
+  h += 'Müşteri Numarası <span style="font-size:10px;font-weight:400;color:var(--muted)">(opsiyonel)</span></div>';
+  var no = _frWiz.musteriNo || '';
+  var dispHtml;
+  if (no.length===0) {
+    dispHtml = '<span style="color:rgba(255,255,255,.28);font-size:17px">05__ ___ __ __</span>';
+  } else if (no.length===11) {
+    /* Maskeli — sadece son 2 hane görünür */
+    dispHtml = '<span style="color:#f87171;font-size:21px;font-weight:800;letter-spacing:2.5px">05** *** **'+escHtml(no.slice(9))+'</span>'
+             + '<span style="font-size:10px;color:var(--muted);display:block;margin-top:4px">🔒 Tam numara yalnızca merkezde görünür</span>';
+  } else {
+    var dots=''; for (var i=0;i<no.length;i++) { dots+='●'; if(i===1||i===4||i===7) dots+=' '; }
+    dispHtml = '<span style="font-size:21px;font-weight:700;letter-spacing:2.5px;color:#fff">'+dots+'</span>';
+  }
+  h += '<div class="fr-tel-display" id="frTelDisplay">'+dispHtml+'</div>';
+  if (no.length<11) {
+    h += '<div class="fr-numpad">';
+    var keys = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
+    keys.forEach(function(d) {
+      if (d==='') h += '<div class="fr-numpad-bos"></div>';
+      else if (d==='⌫') h += '<button class="fr-numpad-del" data-fr data-fr-num-del type="button">⌫</button>';
+      else h += '<button class="fr-numpad-btn" data-fr data-fr-num="'+d+'" type="button">'+d+'</button>';
+    });
+    h += '</div>';
+  } else {
+    h += '<div style="text-align:center;margin-top:8px"><button class="fr-numpad-del" data-fr data-fr-num-del style="width:auto;padding:12px 28px;border-radius:20px;font-size:13px;height:auto" type="button">✕ Numarayı Sil</button></div>';
+  }
+  return h;
+}
+
+function frWizIadeSebepSec(kod) {
+  _frWiz.iadeSebep = kod;
+  document.querySelectorAll('[data-fr-iade-sebep]').forEach(function(el) {
+    el.classList.toggle('secili', el.getAttribute('data-fr-iade-sebep')===kod);
+  });
+}
+
+function frWizNumpadGir(d) {
+  if (_frWiz.musteriNo.length>=11) return;
+  _frWiz.musteriNo += d;
+  if (_frWiz.musteriNo.length===11) { frWizRender(false); return; }
+  frWizUpdateTelDisplay();
+}
+
+function frWizNumpadSil() {
+  var wasComplete = _frWiz.musteriNo.length>=11;
+  _frWiz.musteriNo = _frWiz.musteriNo.slice(0,-1);
+  if (wasComplete) { frWizRender(false); return; }
+  frWizUpdateTelDisplay();
+}
+
+function frWizUpdateTelDisplay() {
+  var el = document.getElementById('frTelDisplay');
+  if (!el) return;
+  var no = _frWiz.musteriNo;
+  if (no.length===0) {
+    el.innerHTML = '<span style="color:rgba(255,255,255,.28);font-size:17px">05__ ___ __ __</span>';
+  } else {
+    var dots=''; for (var i=0;i<no.length;i++) { dots+='●'; if(i===1||i===4||i===7) dots+=' '; }
+    el.innerHTML = '<span style="font-size:21px;font-weight:700;letter-spacing:2.5px;color:#fff">'+dots+'</span>';
+  }
 }
 
 function frWizStep2HTML() {
@@ -9482,6 +9662,7 @@ function frWizStep2HTML() {
 
 function frWizKartSec(kod) {
   _frWiz.sebep=kod; _frWiz.seciliUrun=null; _frWiz.adet=1; _frWiz.aramaMetni=''; _frWiz.step=2;
+  if (kod==='iade') { _frWiz.iadeSubAdim=0; _frWiz.iadeSebep=null; _frWiz.musteriNo=''; }
   frWizRender(false);
 }
 
@@ -9512,6 +9693,12 @@ function frWizUrunSecKatalog(uid) {
 }
 
 function frWizDevam() {
+  /* İade detay → ürün seç */
+  if (_frWiz.sebep==='iade' && _frWiz.iadeSubAdim===0) {
+    if (!_frWiz.iadeSebep) { frWizFlashMsg('İade sebebini seçin'); return; }
+    _frWiz.iadeSubAdim=1; frWizRender(false); return;
+  }
+  /* Katalog modu → onay */
   if (!_frWiz.seciliUrun) { frWizFlashMsg('Önce bir ürün seçin'); return; }
   _frWiz.adet=1; _frWiz.step=3; frWizRender(false);
 }
@@ -9544,18 +9731,20 @@ function frWizStep3HTML() {
   h += '<input id="frDetayPin" class="at-pin-inp" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="• • • •" />';
   h += '</div>';
   if (_frWiz.sebep==='iade') {
+    /* Özet chip — step 2'de girilen bilgiler */
+    var iadeObj = IADE_SEBEPLER_DETAY.find(function(s){ return s.kod===_frWiz.iadeSebep; })||{};
+    h += '<div class="fr-iade-ozet">';
+    h += (iadeObj.ico||'↩️')+' '+escHtml(iadeObj.ad||_frWiz.iadeSebep||'');
+    if (_frWiz.musteriNo.length===11) h += ' · 📱 05** *** **'+escHtml(_frWiz.musteriNo.slice(9));
+    h += '</div>';
+    /* Fiş + zaman */
     h += '<div class="fr-iade-kart">';
-    h += '<div class="fr-iade-baslik">↩️ Müşteri İade Bilgileri</div>';
-    h += '<div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.5">Ad ve telefon yalnızca operasyon merkezinde saklanır.</div>';
+    h += '<div class="fr-iade-baslik">↩️ İade Kayıt Bilgileri</div>';
     h += '<div class="fr-iade-grid">';
     h += '<div class="fr-detay-alan" style="margin-bottom:0"><div class="fr-detay-etiket">Fiş / Sipariş no <span style="color:#f87171">*</span></div>';
     h += '<input class="fr-detay-inp" id="frIadeFis" inputmode="numeric" autocomplete="off" placeholder="Kasa fiş no" /></div>';
     h += '<div class="fr-detay-alan" style="margin-bottom:0"><div class="fr-detay-etiket">İade zamanı <span style="color:#f87171">*</span></div>';
     h += '<input class="fr-detay-inp" id="frIadeZaman2" type="datetime-local" value="'+escHtml(frIadeZamanVarsayilan())+'" /></div>';
-    h += '<div class="fr-detay-alan" style="margin-bottom:0"><div class="fr-detay-etiket">Müşteri adı <span style="color:#f87171">*</span></div>';
-    h += '<input class="fr-detay-inp" id="frIadeMad" autocomplete="name" placeholder="Ad Soyad" /></div>';
-    h += '<div class="fr-detay-alan" style="margin-bottom:0"><div class="fr-detay-etiket">Telefon <span style="color:#f87171">*</span></div>';
-    h += '<input class="fr-detay-inp" id="frIadeMtel" inputmode="tel" autocomplete="tel" placeholder="5XX XXX XX XX" /></div>';
     h += '</div></div>';
   }
   h += '<div class="fr-detay-alan"><div class="fr-detay-etiket">📝 Açıklama'+(_frWiz.sebep==='diger'?' <span style="color:#f87171">* min. 10 karakter</span>':_frWiz.sebep==='iade'?' (opsiyonel)':' (opsiyonel)')+'</div>';
@@ -9592,6 +9781,11 @@ function frWizAra(val) {
 
 function frWizGeri() {
   if (_frWiz.step<=1) return;
+  if (_frWiz.sebep==='iade') {
+    if (_frWiz.step===3) { _frWiz.step=2; _frWiz.iadeSubAdim=1; _frWiz.adet=1; frWizRender(true); return; }
+    if (_frWiz.step===2 && _frWiz.iadeSubAdim===1) { _frWiz.iadeSubAdim=0; _frWiz.seciliUrun=null; frWizRender(true); return; }
+    if (_frWiz.step===2 && _frWiz.iadeSubAdim===0) { _frWiz.step=1; frWizRender(true); return; }
+  }
   _frWiz.step--;
   if (_frWiz.step===2) { _frWiz.seciliUrun=null; _frWiz.adet=1; }
   frWizRender(true);
@@ -9631,18 +9825,17 @@ function frWizGonder() {
   var pin=((document.getElementById('frDetayPin')||{}).value||'').replace(/\D/g,'');
   if (pin.length!==4) { frWizFlashMsg('4 haneli PIN girin'); return; }
   if (_frWiz.sebep==='iade') {
+    if (!_frWiz.iadeSebep) { frWizFlashMsg('İade sebebi seçilmedi'); return; }
     if (!((document.getElementById('frIadeFis')||{}).value||'').trim()) { frWizFlashMsg('Fiş numarası zorunlu'); return; }
     if (!((document.getElementById('frIadeZaman2')||{}).value||'').trim()) { frWizFlashMsg('İade zamanı zorunlu'); return; }
-    if (((document.getElementById('frIadeMad')||{}).value||'').trim().length<2) { frWizFlashMsg('Müşteri adı zorunlu'); return; }
-    if (!((document.getElementById('frIadeMtel')||{}).value||'').replace(/\D/g,'')) { frWizFlashMsg('Müşteri telefonu zorunlu'); return; }
   }
   var kalemlerArr=[{ urun_id:_frWiz.seciliUrun.urun_id, kalem_kodu:_frWiz.seciliUrun.kalem_kodu, adet:_frWiz.adet }];
   var body={ sebep_kodu:_frWiz.sebep, aciklama:acik||null, kalemler:kalemlerArr, personel_id:parseInt(pid,10)||pid, pin:pin };
   if (_frWiz.sebep==='iade') {
-    body.fis_no=(document.getElementById('frIadeFis')||{}).value.trim();
-    body.iade_zaman=(document.getElementById('frIadeZaman2')||{}).value.trim();
-    body.iade_musteri_ad=(document.getElementById('frIadeMad')||{}).value.trim();
-    body.iade_musteri_telefon=(document.getElementById('frIadeMtel')||{}).value.trim();
+    body.iade_sebep_kodu = _frWiz.iadeSebep;
+    body.iade_musteri_telefon = _frWiz.musteriNo || null;
+    body.fis_no = (document.getElementById('frIadeFis')||{}).value.trim();
+    body.iade_zaman = (document.getElementById('frIadeZaman2')||{}).value.trim();
   }
   _frWiz.busy=true;
   var btn=document.getElementById('frNavGonder');
