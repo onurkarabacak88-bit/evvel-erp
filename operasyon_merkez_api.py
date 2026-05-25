@@ -8489,6 +8489,39 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
     }
 
 
+@router.post("/siparis/{talep_id}/toptanci-geri-al")
+def ops_siparis_toptanci_geri_al(talep_id: str):
+    """Toptancıya yönlendirilmiş siparişi geri alır → durum=bekliyor, kuyruga döner."""
+    tid = (talep_id or "").strip()
+    if not tid:
+        raise HTTPException(400, "talep_id zorunlu")
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT id, durum, sevkiyat_durumu FROM siparis_talep WHERE id = %s",
+            (tid,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Sipariş bulunamadı")
+        sevk_dur = str(row.get("sevkiyat_durumu") or "").strip()
+        if sevk_dur != "toptanciya_yonlendirildi":
+            raise HTTPException(400, "Bu sipariş toptancıya yönlendirilmemiş — geri alınamaz")
+        cur.execute(
+            """
+            UPDATE siparis_talep
+               SET durum            = 'bekliyor',
+                   sevkiyat_durumu  = NULL,
+                   sevkiyat_durum   = NULL,
+                   sevkiyat_notu    = NULL,
+                   sevkiyat_ts      = NULL
+             WHERE id = %s
+            """,
+            (tid,),
+        )
+        audit(cur, "siparis_talep", tid, "OPS_SIPARIS_TOPTANCI_GERI_AL")
+    return {"ok": True, "talep_id": tid, "yeni_durum": "bekliyor"}
+
+
 def _toptanci_liste_tarih_araligi(
     donem: Optional[str],
     gun: int,

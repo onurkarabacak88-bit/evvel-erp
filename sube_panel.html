@@ -5816,10 +5816,11 @@ function _siparisTakipFmt(ts) {
   } catch(e) { return String(ts).slice(0, 16); }
 }
 function _siparisTakipDurumChip(t) {
-  // 4 adımlı durum tespiti
+  // 5 adımlı durum tespiti
   if (t.kabul_durum === 'kabul_uyusmazlik') return { bg: 'rgba(239,68,68,0.15)', border: 'rgba(239,68,68,0.55)', col: '#fca5a5', txt: '⚠ Uyumsuzluk' };
   if (t.kabul_durum === 'kabul_tam' || t.durum === 'teslim_edildi') return { bg: 'rgba(34,197,94,0.15)', border: 'rgba(34,197,94,0.5)', col: '#86efac', txt: '✅ Teslim alındı' };
   if (t.kabul_durum === 'kabul_kismi') return { bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.5)', col: '#fcd34d', txt: '⚠ Kısmi teslim' };
+  if (t.sevkiyat_durumu === 'toptanciya_yonlendirildi') return { bg: 'rgba(14,165,163,0.15)', border: 'rgba(14,165,163,0.5)', col: '#5eead4', txt: '🚚 Toptancıya Verildi' };
   if (t.sevkiyat_durumu === 'gonderildi') return { bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.5)', col: '#93c5fd', txt: '🚚 Yolda' };
   if (t.tahsis_durum === 'tam' || t.tahsis_durum === 'kismi') return { bg: 'rgba(139,92,246,0.15)', border: 'rgba(139,92,246,0.5)', col: '#c4b5fd', txt: '📦 Hazırlanıyor' };
   if (t.tahsis_durum === 'yok') return { bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.4)', col: '#fca5a5', txt: '❌ Stok yok' };
@@ -5828,9 +5829,10 @@ function _siparisTakipDurumChip(t) {
 function _siparisTakipFiltrele(talepler, key) {
   if (key === 'tumu') return talepler;
   return talepler.filter(function(t){
-    if (key === 'bekliyor') return !t.tahsis_ts && t.durum !== 'teslim_edildi';
-    if (key === 'hazirlaniyor') return (t.tahsis_durum === 'tam' || t.tahsis_durum === 'kismi') && t.sevkiyat_durumu !== 'gonderildi';
-    if (key === 'yolda') return t.sevkiyat_durumu === 'gonderildi' && !t.kabul_durum;
+    var toptanciVerildi = t.sevkiyat_durumu === 'toptanciya_yonlendirildi';
+    if (key === 'bekliyor') return !t.tahsis_ts && t.durum !== 'teslim_edildi' && !toptanciVerildi;
+    if (key === 'hazirlaniyor') return (t.tahsis_durum === 'tam' || t.tahsis_durum === 'kismi') && t.sevkiyat_durumu !== 'gonderildi' && !toptanciVerildi;
+    if (key === 'yolda') return (t.sevkiyat_durumu === 'gonderildi' || toptanciVerildi) && !t.kabul_durum;
     if (key === 'teslim') return t.kabul_durum === 'kabul_tam' || t.durum === 'teslim_edildi';
     if (key === 'sorun') return t.kabul_durum === 'kabul_uyusmazlik' || t.tahsis_durum === 'yok';
     return true;
