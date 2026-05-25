@@ -747,6 +747,195 @@
       from { opacity: 0; transform: translateY(-4px); }
       to   { opacity: 1; transform: translateY(0); }
     }
+
+    /* ══ ARA TESLİM ══════════════════════════════════════ */
+    #tab-araTeslim {
+      display: flex; flex-direction: column; gap: 12px; padding: 2px 0 16px;
+    }
+
+    /* ── Hero tutar kartı ── */
+    .at-hero {
+      background: linear-gradient(145deg, #0c2245 0%, #173670 60%, #1e4080 100%);
+      border: 1px solid rgba(59,130,246,.35);
+      border-radius: 20px; padding: 24px 20px 18px;
+      text-align: center; position: relative; overflow: hidden;
+      box-shadow: 0 8px 32px rgba(37,99,235,.2);
+    }
+    .at-hero::before {
+      content: '₺'; position: absolute; right: -8px; bottom: -16px;
+      font-size: 110px; font-weight: 900;
+      color: rgba(59,130,246,.07); line-height: 1; pointer-events: none;
+    }
+    .at-hero-etiket {
+      font-size: 11px; font-weight: 800; text-transform: uppercase;
+      letter-spacing: .1em; color: #60a5fa; margin-bottom: 12px;
+    }
+    .at-hero-rakam {
+      font-size: 54px; font-weight: 900; color: #fff;
+      letter-spacing: -.025em; line-height: 1; margin-bottom: 18px;
+      transition: transform .15s, color .15s;
+    }
+    .at-hero-rakam.ping {
+      animation: atRakamPing .22s cubic-bezier(.22,.68,0,1.4);
+    }
+    @keyframes atRakamPing {
+      0%   { transform: scale(1); }
+      45%  { transform: scale(1.09); color: #93c5fd; }
+      100% { transform: scale(1); }
+    }
+    .at-tutar-inp {
+      width: 100%;
+      background: rgba(255,255,255,.07);
+      border: 1.5px solid rgba(255,255,255,.15);
+      border-radius: 14px; color: #fff;
+      font-size: 22px; font-weight: 800;
+      text-align: center; padding: 14px 16px;
+      outline: none; transition: border-color .15s, background .15s, box-shadow .15s;
+      caret-color: #60a5fa;
+    }
+    .at-tutar-inp:focus {
+      border-color: #3b82f6;
+      background: rgba(59,130,246,.12);
+      box-shadow: 0 0 0 3px rgba(59,130,246,.18);
+    }
+    .at-tutar-inp::placeholder { color: rgba(255,255,255,.25); font-size: 17px; font-weight: 400; }
+
+    /* ── Seçim alanları ── */
+    .at-sel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .at-sel-grup { display: flex; flex-direction: column; gap: 5px; }
+    .at-sel-etiket {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .08em; color: var(--muted); padding: 0 4px;
+    }
+    .at-sel {
+      width: 100%;
+      background: var(--bg2); border: 1.5px solid var(--border);
+      border-radius: 12px; color: var(--text);
+      font-size: 13px; font-weight: 600; padding: 14px 36px 14px 12px;
+      outline: none; cursor: pointer;
+      transition: border-color .15s, background .15s, box-shadow .15s;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%237a8ba8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 12px center;
+    }
+    .at-sel:focus { border-color: var(--accent); background-color: var(--bg3); box-shadow: 0 0 0 3px rgba(59,130,246,.14); }
+
+    /* ── PIN kartı ── */
+    .at-pin-kart {
+      background: var(--bg2); border: 1.5px solid var(--border);
+      border-radius: 16px; padding: 14px 16px 16px;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    .at-pin-ust {
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .at-pin-etiket {
+      font-size: 10px; font-weight: 800; text-transform: uppercase;
+      letter-spacing: .1em; color: var(--muted);
+    }
+    .at-pin-dots { display: flex; gap: 12px; align-items: center; }
+    .at-pin-dot {
+      width: 18px; height: 18px; border-radius: 50%;
+      border: 2px solid rgba(99,120,160,.35);
+      background: transparent;
+      transition: background .12s, border-color .12s, transform .15s cubic-bezier(.22,.68,0,1.4);
+    }
+    .at-pin-dot.dolu {
+      background: var(--accent); border-color: var(--accent);
+      transform: scale(1.2);
+      box-shadow: 0 0 8px rgba(59,130,246,.5);
+    }
+    .at-pin-dot.hata { border-color: var(--danger); animation: atPinSalla .35s ease; }
+    @keyframes atPinSalla {
+      0%,100% { transform: translateX(0); }
+      20%     { transform: translateX(-5px); }
+      60%     { transform: translateX(5px); }
+    }
+    .at-pin-inp {
+      width: 100%;
+      background: var(--bg3); border: 1.5px solid var(--border);
+      border-radius: 12px; color: var(--text);
+      font-size: 26px; letter-spacing: 10px; text-align: center;
+      padding: 13px 16px; outline: none;
+      transition: border-color .15s, box-shadow .15s;
+      font-family: monospace;
+    }
+    .at-pin-inp:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,.14); }
+
+    /* ── Açıklama ── */
+    .at-acik-inp {
+      width: 100%;
+      background: var(--bg2); border: 1.5px solid var(--border);
+      border-radius: 12px; color: var(--text);
+      font-size: 13px; padding: 13px 14px; outline: none;
+      transition: border-color .15s, box-shadow .15s;
+      font-family: inherit;
+    }
+    .at-acik-inp:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,.14); }
+    .at-acik-inp::placeholder { color: var(--muted); }
+
+    /* ── Gönder butonu ── */
+    .at-kaydet-btn {
+      width: 100%; display: flex; align-items: center;
+      justify-content: space-between; padding: 18px 20px;
+      background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+      border: none; border-radius: 18px; color: #fff; cursor: pointer;
+      box-shadow: 0 6px 24px rgba(37,99,235,.4);
+      transition: transform .12s, box-shadow .12s;
+      position: relative; overflow: hidden;
+    }
+    .at-kaydet-btn::after {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,.1), transparent 60%);
+      pointer-events: none;
+    }
+    .at-kaydet-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 32px rgba(37,99,235,.5); }
+    .at-kaydet-btn:active:not(:disabled) { transform: scale(.97); }
+    .at-kaydet-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+    .at-kaydet-sol { display: flex; align-items: center; gap: 12px; }
+    .at-kaydet-ico { font-size: 26px; }
+    .at-kaydet-yazi { font-size: 17px; font-weight: 900; letter-spacing: -.01em; }
+    .at-kaydet-tutar-pill {
+      font-size: 17px; font-weight: 900;
+      background: rgba(255,255,255,.18); border-radius: 10px;
+      padding: 6px 14px; min-width: 80px; text-align: center;
+      letter-spacing: -.01em;
+      transition: background .15s;
+    }
+
+    /* ── Mesaj & bilgi satırı ── */
+    .at-msg { font-size: 13px; text-align: center; min-height: 20px; }
+    .at-bilgi-satir { font-size: 11px; color: var(--muted); text-align: center; margin: 0; line-height: 1.5; }
+
+    /* ── Başarı overlay ── */
+    .at-basari-overlay {
+      position: fixed; inset: 0; z-index: 9950;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,.65); backdrop-filter: blur(4px);
+      animation: atBasariOverlayIn .25s ease;
+    }
+    @keyframes atBasariOverlayIn { from { opacity: 0; } to { opacity: 1; } }
+    .at-basari-kart {
+      background: var(--bg1); border-radius: 28px;
+      padding: 44px 52px; text-align: center;
+      border: 1px solid rgba(34,197,94,.3);
+      box-shadow: 0 20px 60px rgba(0,0,0,.5);
+      animation: atBasariKartIn .4s cubic-bezier(.22,.68,0,1.2);
+    }
+    @keyframes atBasariKartIn {
+      from { transform: scale(.75) translateY(20px); opacity: 0; }
+      to   { transform: scale(1)   translateY(0);    opacity: 1; }
+    }
+    .at-basari-check {
+      font-size: 72px; display: block; margin-bottom: 16px;
+      animation: atCheckBounce .5s cubic-bezier(.22,.68,0,1.4) .1s both;
+    }
+    @keyframes atCheckBounce {
+      from { transform: scale(0) rotate(-20deg); }
+      to   { transform: scale(1) rotate(0deg);   }
+    }
+    .at-basari-yazi { font-size: 22px; font-weight: 900; color: var(--ok); margin-bottom: 6px; }
+    .at-basari-tutar { font-size: 40px; font-weight: 900; color: #fff; letter-spacing: -.02em; }
     @keyframes pulse {
       0%, 100% { transform: scale(1); opacity: .92; }
       50% { transform: scale(1.06); opacity: 1; }
@@ -3868,23 +4057,60 @@
 
 
       <div class="sekme-icerik" id="tab-araTeslim">
-        <div class="kart">
-          <div class="kart-baslik"><span class="ico">💵</span> Kasa teslim <span style="font-size:11px;color:var(--muted);font-weight:400">(Ara + kapanış aynı akış)</span></div>
-          <p id="ktBilgiSatir" style="font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.5"></p>
-          <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:12px;line-height:1.55;color:var(--text)">
-            <strong>Kayıt tarihi</strong> merkez ile aynı <strong>iş günü</strong> (<code>tarih</code>) olarak yazılır; <strong>saat</strong> İstanbul sunucu zamanıdır.
-            <strong>PIN</strong> gönderim anında doğrulanır — kapanışta oluşan <strong>gün sonu teslim</strong> satırları da aşağıdaki listede görünür.
-          </div>
-          <div class="form-group"><label>Tutar (₺)</label><input id="ktTutar" inputmode="decimal" placeholder="0" autocomplete="off" /></div>
-          <div class="form-group"><label>Teslim alan</label><select id="ktAlan"><option value="">— Teslim alıcı seçin —</option></select></div>
-          <div class="form-group"><label>Personel</label><select id="ktPers"><option value="">— Personel seçin —</option></select></div>
-          <div class="form-group"><label>PIN (4 hane)</label><input id="ktPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="••••" /></div>
-          <div class="form-group"><label>Açıklama <span style="color:var(--muted);font-size:11px">(opsiyonel)</span></label><input id="ktAcik" placeholder="Örn: fazla nakit" autocomplete="off" /></div>
-          <button type="button" class="btn btn-primary btn-sm" id="ktGonder">💵 Ara teslimi kaydet</button>
-          <div id="ktMsg" style="margin-top:8px;font-size:12px"></div>
-          <!-- Son hareketler tablosu kör denetim gereği gizlendi — operasyon merkezinden takip edilir -->
-          <div id="ktListeWrap" style="display:none"></div>
+
+        <!-- ① TUTAR HERO KARTI -->
+        <div class="at-hero">
+          <div class="at-hero-etiket">💵 Teslim Tutarı</div>
+          <div class="at-hero-rakam" id="atHeroRakam">₺ 0</div>
+          <input id="ktTutar" class="at-tutar-inp" inputmode="decimal" type="text"
+                 placeholder="0,00" autocomplete="off" />
         </div>
+
+        <!-- ② KİME + KİM -->
+        <div class="at-sel-grid">
+          <div class="at-sel-grup">
+            <div class="at-sel-etiket">📥 Teslim Alan</div>
+            <select id="ktAlan" class="at-sel"><option value="">— Seçin —</option></select>
+          </div>
+          <div class="at-sel-grup">
+            <div class="at-sel-etiket">👤 Teslim Eden</div>
+            <select id="ktPers" class="at-sel"><option value="">— Seçin —</option></select>
+          </div>
+        </div>
+
+        <!-- ③ PIN -->
+        <div class="at-pin-kart">
+          <div class="at-pin-ust">
+            <span class="at-pin-etiket">🔐 PIN</span>
+            <div class="at-pin-dots" id="atPinDots">
+              <span class="at-pin-dot"></span>
+              <span class="at-pin-dot"></span>
+              <span class="at-pin-dot"></span>
+              <span class="at-pin-dot"></span>
+            </div>
+          </div>
+          <input id="ktPin" class="at-pin-inp" maxlength="4"
+                 inputmode="numeric" type="password"
+                 autocomplete="one-time-code" placeholder="• • • •" />
+        </div>
+
+        <!-- ④ AÇIKLAMA -->
+        <input id="ktAcik" class="at-acik-inp"
+               placeholder="Açıklama (opsiyonel — örn: fazla nakit)"
+               autocomplete="off" />
+
+        <!-- ⑤ KAYDET BUTONU -->
+        <button type="button" class="at-kaydet-btn" id="ktGonder">
+          <span class="at-kaydet-sol">
+            <span class="at-kaydet-ico">💵</span>
+            <span class="at-kaydet-yazi">Teslimi Kaydet</span>
+          </span>
+          <span class="at-kaydet-tutar-pill" id="atKaydetTutar">₺ 0</span>
+        </button>
+
+        <div id="ktMsg" class="at-msg"></div>
+        <p id="ktBilgiSatir" class="at-bilgi-satir"></p>
+        <div id="ktListeWrap" style="display:none"></div>
       </div>
 
       <div class="sekme-icerik" id="tab-xr">
@@ -7457,51 +7683,110 @@ function wireKasaTeslimTabHandler() {
   var btn = document.getElementById('ktGonder');
   if (!btn || btn.dataset.ktWired) return;
   btn.dataset.ktWired = '1';
+
+  /* ── Tutar display senkronu ── */
+  var tutarInp = document.getElementById('ktTutar');
+  var heroRakam = document.getElementById('atHeroRakam');
+  var kaydetTutar = document.getElementById('atKaydetTutar');
+  function atFormatTutar(v) {
+    var n = parseFloat(String(v || '0').replace(',', '.'));
+    if (!n || isNaN(n)) return '₺ 0';
+    return '₺ ' + n.toLocaleString('tr-TR', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
+  function atSyncTutar() {
+    var fmt = atFormatTutar((tutarInp || {}).value);
+    if (heroRakam) {
+      heroRakam.textContent = fmt;
+      heroRakam.classList.remove('ping');
+      void heroRakam.offsetWidth;
+      heroRakam.classList.add('ping');
+    }
+    if (kaydetTutar) kaydetTutar.textContent = fmt;
+  }
+  if (tutarInp) {
+    tutarInp.addEventListener('input', atSyncTutar);
+    tutarInp.addEventListener('change', atSyncTutar);
+  }
+
+  /* ── PIN nokta göstergesi ── */
+  var pinInp = document.getElementById('ktPin');
+  var pinDots = document.querySelectorAll('#atPinDots .at-pin-dot');
+  function atSyncPin() {
+    var len = String((pinInp || {}).value || '').replace(/\D/g, '').length;
+    pinDots.forEach(function(dot, i) {
+      dot.classList.toggle('dolu', i < len);
+    });
+  }
+  if (pinInp) {
+    pinInp.addEventListener('input', atSyncPin);
+    pinInp.addEventListener('keyup', atSyncPin);
+  }
+
+  /* ── Başarı animasyonu ── */
+  function atBasariGoster(tutar) {
+    var ov = document.createElement('div');
+    ov.className = 'at-basari-overlay';
+    ov.innerHTML =
+      '<div class="at-basari-kart">' +
+        '<span class="at-basari-check">✅</span>' +
+        '<div class="at-basari-yazi">Teslim Kaydedildi!</div>' +
+        '<div class="at-basari-tutar">' + tutar + '</div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    setTimeout(function() {
+      ov.style.transition = 'opacity .3s';
+      ov.style.opacity = '0';
+      setTimeout(function() { ov.parentNode && ov.parentNode.removeChild(ov); }, 320);
+    }, 2200);
+  }
+
+  /* ── Gönder ── */
   btn.addEventListener('click', async function () {
     var msgEl = document.getElementById('ktMsg');
     function setM(t, cls) {
-      if (msgEl) {
-        msgEl.textContent = t || '';
-        msgEl.className = cls || '';
-      }
+      if (msgEl) { msgEl.textContent = t || ''; msgEl.className = 'at-msg ' + (cls || ''); }
     }
     var tutar = parseFloat(
       String((document.getElementById('ktTutar') || {}).value || '0').replace(',', '.')
     );
     var alan = String((document.getElementById('ktAlan') || {}).value || '').trim();
     var pers = String((document.getElementById('ktPers') || {}).value || '').trim();
-    var pin = String((document.getElementById('ktPin') || {}).value || '')
-      .replace(/\D/g, '')
-      .slice(0, 4);
+    var pin  = String((document.getElementById('ktPin')  || {}).value || '').replace(/\D/g,'').slice(0,4);
     var acik = String((document.getElementById('ktAcik') || {}).value || '').trim();
-    if (!tutar || tutar <= 0) return setM('Tutar giriniz.', 'msg-err');
-    if (!alan) return setM('Teslim alanı seçiniz.', 'msg-err');
-    if (!pers) return setM('Personel seçiniz.', 'msg-err');
-    if (pin.length !== 4) return setM('4 haneli PIN giriniz.', 'msg-err');
+
+    if (!tutar || tutar <= 0) {
+      setM('⚠️ Tutar giriniz.', 'msg-err');
+      if (tutarInp) { tutarInp.focus(); tutarInp.classList.add('hata'); setTimeout(function(){ tutarInp.classList.remove('hata'); }, 600); }
+      return;
+    }
+    if (!alan) return setM('⚠️ Teslim alanı seçiniz.', 'msg-err');
+    if (!pers) return setM('⚠️ Personel seçiniz.', 'msg-err');
+    if (pin.length !== 4) {
+      setM('⚠️ 4 haneli PIN giriniz.', 'msg-err');
+      pinDots.forEach(function(d){ d.classList.add('hata'); });
+      setTimeout(function(){ pinDots.forEach(function(d){ d.classList.remove('hata'); }); }, 500);
+      return;
+    }
     btn.disabled = true;
     setM('Gönderiliyor…', '');
     try {
       await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/ara-kasa-teslim', {
         method: 'POST',
-        body: {
-          tutar: tutar,
-          teslim_alan_id: alan,
-          personel_id: pers,
-          pin: pin,
-          aciklama: acik || null,
-        },
+        body: { tutar: tutar, teslim_alan_id: alan, personel_id: pers, pin: pin, aciklama: acik || null },
       });
-      setM('✅ Ara teslim kaydedildi.', 'msg-ok');
-      var tEl = document.getElementById('ktTutar');
-      if (tEl) tEl.value = '';
-      var pEl = document.getElementById('ktPin');
-      if (pEl) pEl.value = '';
-      var aEl = document.getElementById('ktAcik');
-      if (aEl) aEl.value = '';
+      var tutarFmt = atFormatTutar(tutar);
+      /* Başarı */
+      atBasariGoster(tutarFmt);
+      setM('', '');
+      /* Formu sıfırla */
+      ['ktTutar','ktPin','ktAcik'].forEach(function(id){
+        var el = document.getElementById(id); if (el) el.value = '';
+      });
+      atSyncTutar(); atSyncPin();
       setTimeout(refresh, 600);
     } catch (e) {
       if (e.status === 429 && msgEl) handle429(msgEl, e);
-      else setM(e.message || 'Hata oluştu.', 'msg-err');
+      else setM('❌ ' + (e.message || 'Hata oluştu.'), 'msg-err');
     } finally {
       btn.disabled = false;
     }
