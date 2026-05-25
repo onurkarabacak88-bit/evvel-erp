@@ -7569,6 +7569,7 @@ function _siparisTakipDurumChip(t) {
   if (t.kabul_durum === 'kabul_kismi') return { bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.5)', col: '#fcd34d', txt: '⚠ Kısmi teslim' };
   if (t.sevkiyat_durumu === 'toptanciya_yonlendirildi') return { bg: 'rgba(14,165,163,0.15)', border: 'rgba(14,165,163,0.5)', col: '#5eead4', txt: '🚚 Toptancıya Verildi' };
   if (t.sevkiyat_durumu === 'gonderildi') return { bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.5)', col: '#93c5fd', txt: '🚚 Yolda' };
+  if (t.sevkiyat_durumu === 'kismi_hazirlandi') return { bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.5)', col: '#fcd34d', txt: '⚠ Kısmi Hazır' };
   if (t.tahsis_durum === 'tam' || t.tahsis_durum === 'kismi') return { bg: 'rgba(139,92,246,0.15)', border: 'rgba(139,92,246,0.5)', col: '#c4b5fd', txt: '📦 Hazırlanıyor' };
   if (t.tahsis_durum === 'yok') return { bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.4)', col: '#fca5a5', txt: '❌ Stok yok' };
   return { bg: 'rgba(100,116,139,0.18)', border: 'rgba(100,116,139,0.4)', col: '#cbd5e1', txt: '⏳ Bekliyor' };
@@ -7578,7 +7579,7 @@ function _siparisTakipFiltrele(talepler, key) {
   return talepler.filter(function(t){
     var toptanciVerildi = t.sevkiyat_durumu === 'toptanciya_yonlendirildi';
     if (key === 'bekliyor') return !t.tahsis_ts && t.durum !== 'teslim_edildi' && !toptanciVerildi;
-    if (key === 'hazirlaniyor') return (t.tahsis_durum === 'tam' || t.tahsis_durum === 'kismi') && t.sevkiyat_durumu !== 'gonderildi' && !toptanciVerildi;
+    if (key === 'hazirlaniyor') return ((t.tahsis_durum === 'tam' || t.tahsis_durum === 'kismi') || t.sevkiyat_durumu === 'kismi_hazirlandi') && t.sevkiyat_durumu !== 'gonderildi' && !toptanciVerildi;
     if (key === 'yolda') return (t.sevkiyat_durumu === 'gonderildi' || toptanciVerildi) && !t.kabul_durum;
     if (key === 'teslim') return t.kabul_durum === 'kabul_tam' || t.durum === 'teslim_edildi';
     if (key === 'sorun') return t.kabul_durum === 'kabul_uyusmazlik' || t.tahsis_durum === 'yok';
@@ -7712,17 +7713,22 @@ async function renderSiparisTakipPanel() {
     }
 
     var tahsisBitti = (tahsisCls === 'st-done' || tahsisCls === 'st-warn');
+    var _sevkGonderildi = (t.sevkiyat_durumu === 'gonderildi');
+    var _sevkKismiHazir = (t.sevkiyat_durumu === 'kismi_hazirlandi');
     var sevkCls, sevkDot, sevkSub;
     if (!tahsisBitti) {
       sevkCls = ''; sevkDot = '·'; sevkSub = '—';
-    } else if (t.sevkiyat_durumu === 'gonderildi') {
+    } else if (_sevkGonderildi) {
       sevkCls = 'st-info'; sevkDot = '✓'; sevkSub = t.sevkiyat_personel_ad || 'Gönderildi';
+    } else if (_sevkKismiHazir) {
+      // Eski kayıt (backend bug öncesi) — kısmi hazır ama stok çıkışı yapılmış olabilir
+      sevkCls = 'st-warn'; sevkDot = '⚠'; sevkSub = 'Kısmi — teyit edin';
     } else {
       sevkCls = 'st-aktif'; sevkDot = '⏳'; sevkSub = 'Depo hazırlıyor';
     }
 
     var kabulCls, kabulDot, kabulSub;
-    if (t.sevkiyat_durumu !== 'gonderildi') {
+    if (!_sevkGonderildi && !_sevkKismiHazir) {
       kabulCls = ''; kabulDot = '·'; kabulSub = '—';
     } else if (t.kabul_durum === 'kabul_tam') {
       kabulCls = 'st-done'; kabulDot = '✓'; kabulSub = 'Tam teslim';

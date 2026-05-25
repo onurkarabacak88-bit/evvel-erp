@@ -3343,3 +3343,28 @@ $$;
                 except Exception:
                     pass
                 print(f"[MIGRATION WARN] rapor_cache {_ddl_ad}: {_e}")
+
+        # ── FIX: kismi_hazirlandi + stok_yolda → gonderildi ─────
+        # hesapla_yeni_sevkiyat_durumu hatası nedeniyle "Yola Çıkar" basılmış ama
+        # bekleyen_var/kismi_var True olduğu için sevkiyat_durumu='kismi_hazirlandi',
+        # durum='hazirlaniyor' olarak kalmış kayıtları düzelt.
+        # Güvenlik kriteri: stok_yolda kaydı var → fiilen araç yola çıktı.
+        try:
+            cur.execute("""
+                UPDATE siparis_talep t
+                SET sevkiyat_durumu = 'gonderildi',
+                    sevkiyat_durum  = 'gonderildi',
+                    durum           = 'gonderildi'
+                WHERE t.sevkiyat_durumu = 'kismi_hazirlandi'
+                  AND t.durum           = 'hazirlaniyor'
+                  AND EXISTS (
+                      SELECT 1 FROM stok_yolda sy
+                      WHERE sy.siparis_talep_id = t.id
+                        AND sy.durum = 'yolda'
+                  )
+            """)
+            fixed = cur.rowcount
+            if fixed:
+                print(f"[MIGRATION] kismi_hazirlandi→gonderildi: {fixed} kayıt düzeltildi")
+        except Exception as _fix_e:
+            print(f"[MIGRATION WARN] kismi_hazirlandi fix: {_fix_e}")

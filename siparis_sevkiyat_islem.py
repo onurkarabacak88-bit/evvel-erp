@@ -98,8 +98,9 @@ def hesapla_yeni_sevkiyat_durumu(
     gonderildi: bool,
 ) -> str:
     if bool(gonderildi):
-        if bekleyen_var or kismi_var:
-            return "kismi_hazirlandi"
+        # «Yola Çıkar» basıldı: araç yola çıktı. Stok çıkışı _disiplin_sevk_cikti ile zaten
+        # yapıldı. Bekleyen/kısmi kalemler bu sevkiyata dahil edilmedi — ama sevkiyat fiilen
+        # gerçekleşti. bekleyen_var / kismi_var bu durumda «gonderildi» statüsünü engellemez.
         return "gonderildi"
     # Taslak kayıt: asla «gonderildi» durumuna geçmez (stok_yolda olmadan yolda sanılmasın)
     if kismi_var:
