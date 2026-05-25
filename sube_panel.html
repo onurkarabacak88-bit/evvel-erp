@@ -1036,42 +1036,43 @@
 
     /* ── Step 1 — Sebep kartları ────────────────────────── */
     .fr-sebep-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
       margin-top: 4px;
     }
     .fr-sebep-kart {
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 8px; padding: 20px 12px 18px;
-      border-radius: 18px;
-      border: 2px solid rgba(255,255,255,.1);
-      background: linear-gradient(145deg, rgba(255,255,255,.07) 0%, rgba(255,255,255,.03) 100%);
+      display: flex; flex-direction: row; align-items: center; justify-content: flex-start;
+      gap: 12px; padding: 13px 14px;
+      border-radius: 14px;
+      border: 1.5px solid rgba(255,255,255,.1);
+      background: linear-gradient(135deg, rgba(255,255,255,.07) 0%, rgba(255,255,255,.03) 100%);
       cursor: pointer;
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
       user-select: none; -webkit-user-select: none;
       transition: border-color .18s, background .18s, transform .12s, box-shadow .18s;
-      text-align: center;
-      min-height: 110px;
+      text-align: left;
+      min-height: 64px;
     }
     .fr-sebep-kart:active,
     .fr-sebep-kart.fr-tapped {
-      transform: scale(.93);
+      transform: scale(.95);
       border-color: rgba(239,68,68,.55);
-      background: linear-gradient(145deg, rgba(239,68,68,.16) 0%, rgba(239,68,68,.08) 100%);
-      box-shadow: 0 0 0 4px rgba(239,68,68,.2);
+      background: linear-gradient(135deg, rgba(239,68,68,.16) 0%, rgba(239,68,68,.08) 100%);
+      box-shadow: 0 0 0 3px rgba(239,68,68,.2);
     }
-    .fr-sebep-kart-ico { font-size: 36px; line-height: 1; }
-    .fr-sebep-kart-yazi { font-size: 14px; font-weight: 800; color: #f1f5f9; line-height: 1.25; }
-    .fr-sebep-kart-alt { font-size: 11px; color: var(--muted); line-height: 1.35; }
+    .fr-sebep-kart-ico { font-size: 26px; line-height: 1; flex-shrink: 0; }
+    .fr-sebep-kart-yazi { font-size: 13px; font-weight: 800; color: #f1f5f9; line-height: 1.2; }
+    .fr-sebep-kart-alt { font-size: 10px; color: var(--muted); line-height: 1.3; margin-top: 2px; }
 
     /* ── Step 2 — Ürün tile'ları ────────────────────────── */
-    .fr-urun-tile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .fr-urun-tile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+    .fr-urun-tile-grid.uc-kolon { grid-template-columns: 1fr 1fr 1fr; }
     .fr-urun-tile {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 10px; padding: 24px 10px 20px; border-radius: 18px;
-      border: 2px solid rgba(255,255,255,.12);
+      gap: 7px; padding: 14px 8px 12px; border-radius: 14px;
+      border: 1.5px solid rgba(255,255,255,.12);
       background: linear-gradient(145deg, rgba(255,255,255,.08) 0%, rgba(255,255,255,.03) 100%);
-      cursor: pointer; min-height: 130px; text-align: center;
+      cursor: pointer; min-height: 90px; text-align: center;
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
       user-select: none; -webkit-user-select: none;
@@ -1082,10 +1083,10 @@
       animation: frTileSelect .22s ease-out both;
       border-color: rgba(239,68,68,.65);
       background: linear-gradient(145deg, rgba(239,68,68,.2) 0%, rgba(239,68,68,.08) 100%);
-      box-shadow: 0 0 0 4px rgba(239,68,68,.25), inset 0 1px 0 rgba(255,255,255,.1);
+      box-shadow: 0 0 0 3px rgba(239,68,68,.22), inset 0 1px 0 rgba(255,255,255,.1);
     }
-    .fr-urun-tile-ico { font-size: 40px; line-height: 1; }
-    .fr-urun-tile-ad { font-size: 14px; font-weight: 800; color: #f1f5f9; line-height: 1.3; }
+    .fr-urun-tile-ico { font-size: 28px; line-height: 1; }
+    .fr-urun-tile-ad { font-size: 12px; font-weight: 800; color: #f1f5f9; line-height: 1.25; }
 
     /* Step 2 — Katalog arama (sayim_hatasi / diger için) */
     .fr-ara-inp {
@@ -1118,41 +1119,41 @@
 
     /* ── Step 3 — Detay & Onay ──────────────────────────── */
     .fr-onay-ozet {
-      display: flex; align-items: center; gap: 14px;
-      background: linear-gradient(135deg, rgba(239,68,68,.16) 0%, rgba(220,38,38,.08) 100%);
-      border: 1.5px solid rgba(239,68,68,.35);
-      border-radius: 16px; padding: 16px 18px; margin-bottom: 20px;
+      display: flex; align-items: center; gap: 12px;
+      background: linear-gradient(135deg, rgba(239,68,68,.14) 0%, rgba(220,38,38,.07) 100%);
+      border: 1.5px solid rgba(239,68,68,.3);
+      border-radius: 13px; padding: 11px 14px; margin-bottom: 14px;
       animation: frBodyGel .28s ease-out both;
     }
-    .fr-onay-ozet-ico { font-size: 36px; line-height: 1; }
+    .fr-onay-ozet-ico { font-size: 28px; line-height: 1; }
     .fr-onay-ozet-yazi { flex: 1; min-width: 0; }
     .fr-onay-ozet-sebep {
       font-size: 10px; color: #fca5a5; font-weight: 800;
-      text-transform: uppercase; letter-spacing: .08em; margin-bottom: 4px;
+      text-transform: uppercase; letter-spacing: .07em; margin-bottom: 2px;
     }
-    .fr-onay-ozet-urun { font-size: 20px; font-weight: 900; color: #fff; line-height: 1.2; }
+    .fr-onay-ozet-urun { font-size: 17px; font-weight: 900; color: #fff; line-height: 1.2; }
 
-    .fr-adet-blok { text-align: center; margin-bottom: 26px; }
+    .fr-adet-blok { text-align: center; margin-bottom: 16px; }
     .fr-adet-etiket {
-      font-size: 11px; color: var(--muted); text-transform: uppercase;
-      letter-spacing: .07em; margin-bottom: 12px; font-weight: 700;
+      font-size: 10px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: .07em; margin-bottom: 8px; font-weight: 700;
     }
     .fr-adet-stepper { display: flex; align-items: center; justify-content: center; gap: 4px; }
     .fr-adet-btn {
-      width: 72px; height: 72px; border-radius: 16px; border: none;
-      background: rgba(255,255,255,.1); color: #fff; font-size: 32px;
+      width: 62px; height: 62px; border-radius: 14px; border: none;
+      background: rgba(255,255,255,.1); color: #fff; font-size: 28px;
       cursor: pointer; display: flex; align-items: center; justify-content: center;
       touch-action: manipulation; -webkit-tap-highlight-color: transparent;
       transition: background .12s, transform .1s;
     }
     .fr-adet-btn:active { background: rgba(239,68,68,.45); transform: scale(.9); }
     .fr-adet-sayi {
-      width: 100px; height: 72px; display: flex; align-items: center; justify-content: center;
-      font-size: 48px; font-weight: 900; color: #f87171;
-      text-shadow: 0 2px 12px rgba(239,68,68,.4);
+      width: 84px; height: 62px; display: flex; align-items: center; justify-content: center;
+      font-size: 40px; font-weight: 900; color: #f87171;
+      text-shadow: 0 2px 10px rgba(239,68,68,.4);
     }
 
-    .fr-detay-alan { margin-bottom: 14px; }
+    .fr-detay-alan { margin-bottom: 10px; }
     .fr-detay-etiket {
       font-size: 11px; color: var(--muted); text-transform: uppercase;
       letter-spacing: .06em; margin-bottom: 6px; font-weight: 700;
@@ -9628,9 +9629,9 @@ function frWizRender(geriAnim) {
 function frWizStep1HTML() {
   var h = '<div class="fr-sebep-grid">';
   FR_SEBEPLER.forEach(function(s) {
-    /* "İkram" ve "Diğer" tam genişlik — grid son satırlarında */
-    var isFullW = (s.kod==='diger' || s.kod==='ikram' || s.kod==='personel_kullanim');
-    var span = isFullW ? ' style="grid-column:1/-1;flex-direction:row;text-align:left;gap:14px;min-height:64px;padding:14px 18px"' : '';
+    /* Sadece "Diğer" tam genişlik — diğer tüm kartlar normal 2-kolon grid */
+    var isFullW = (s.kod==='diger');
+    var span = isFullW ? ' style="grid-column:1/-1"' : '';
     h += '<div class="fr-sebep-kart" data-fr data-fr-kart="'+s.kod+'"'+span+'>';
     h += '<div class="fr-sebep-kart-ico">' + s.ico + '</div>';
     h += '<div>';
@@ -9797,7 +9798,8 @@ function frWizStep2HTML() {
     }
     h += '</div>';
   } else {
-    h += '<div class="fr-urun-tile-grid">';
+    var ucKolon = (urunler.length > 5) ? ' uc-kolon' : '';
+    h += '<div class="fr-urun-tile-grid'+ucKolon+'">';
     urunler.forEach(function(u) {
       h += '<div class="fr-urun-tile" data-fr data-fr-tile="'+escHtml(u.kalem_kodu)+'" data-fr-ad="'+escHtml(u.ad)+'" data-fr-ico="'+escHtml(u.ico)+'">';
       h += '<div class="fr-urun-tile-ico">'+u.ico+'</div>';
