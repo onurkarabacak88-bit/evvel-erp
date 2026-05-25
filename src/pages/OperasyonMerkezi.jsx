@@ -12646,8 +12646,8 @@ export default function OperasyonMerkezi() {
                           <td style={{ textAlign: 'right', fontWeight: 600 }}>{Number(g.toplam_adet || 0)}</td>
                           <td style={{ whiteSpace: 'nowrap' }}>
                             <div style={{ display: 'flex', gap: 4 }}>
-                              <button className="btn btn-sm btn-secondary" style={{ fontSize: 11, padding: '3px 10px' }}
-                                onClick={() => {
+                              {(() => {
+                                const _toptanciHtmlAc = (yazdirMi) => {
                                   const kalemler = Array.isArray(g.kalemler) ? g.kalemler : [];
                                   if (!kalemler.length) { toast('Bu kayıtta kalem detayı yok.'); return; }
                                   const satirlar = kalemler.map((k, idx) =>
@@ -12657,6 +12657,7 @@ export default function OperasyonMerkezi() {
                                   const tarihStr = String(g.tarih || '').slice(0, 10);
                                   const saatStr = g.saat ? String(g.saat).slice(0, 5) : '';
                                   const notAciklama = String(g.not_aciklama || '').trim();
+                                  const printScript = yazdirMi ? `<script>window.onload=function(){window.print()};<\/script>` : '';
                                   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${g.tedarikci_ad || 'Toptancı'} — ${subeAd}</title>
                                     <style>*{box-sizing:border-box;margin:0;padding:0}body{background:#fff;font-family:Arial,sans-serif}@media print{@page{margin:12mm}}</style>
                                     </head><body><div style="padding:40px 44px;max-width:640px">
@@ -12671,13 +12672,23 @@ export default function OperasyonMerkezi() {
                                     <div style="margin-top:28px;border-top:1px solid #ccc;padding-top:12px;font-size:12px;color:#aaa">
                                       ${kalemler.length} kalem · ${kalemler.reduce((a, k) => a + (k.adet || 0), 0)} toplam adet
                                     </div></div>
-                                    <script>window.onload=function(){window.print()};<\/script></body></html>`;
+                                    ${printScript}</body></html>`;
                                   const w = window.open('', '_blank', 'width=700,height=920');
                                   if (!w) { toast('Popup engellendi.'); return; }
                                   w.document.write(html); w.document.close();
-                                }}>
-                                🖨️ Yazdır
-                              </button>
+                                };
+                                return (<>
+                                  <button className="btn btn-sm btn-secondary" style={{ fontSize: 11, padding: '3px 10px' }}
+                                    onClick={() => _toptanciHtmlAc(false)}>
+                                    👁 Detay
+                                  </button>
+                                  <button className="btn btn-sm btn-secondary" style={{ fontSize: 11, padding: '3px 10px' }}
+                                    onClick={() => _toptanciHtmlAc(true)}>
+                                    🖨️ Yazdır
+                                  </button>
+                                </>);
+                              })()}
+
                               {g.talep_id && (
                                 <button className="btn btn-sm" style={{ fontSize: 11, padding: '3px 10px', background: '#fff3f3', color: '#c62828', border: '1px solid #ffcdd2' }}
                                   onClick={async () => {
