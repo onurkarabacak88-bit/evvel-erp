@@ -8016,7 +8016,7 @@ function pinOnayModalAc(opts) {
   return new Promise(function(resolve){
     var modal = document.createElement('div');
     modal.className = 'modal-acik';
-    modal.style.zIndex = '350';
+    modal.style.zIndex = String(opts.zIndex || 9950);
     modal.innerHTML =
       '<div class="modal-box" style="max-width:760px;max-height:88vh;overflow:auto">' +
         '<h3 style="margin:0 0 10px 0">' + escHtml(baslik) + '</h3>' +
