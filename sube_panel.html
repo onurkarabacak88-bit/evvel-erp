@@ -7915,18 +7915,26 @@ function altSekmeAc(id) {
   var btn = document.getElementById('altTab-' + id);
   if (btn) btn.classList.add('active');
   document.querySelectorAll('#orta .sekme-icerik').forEach(function(el){ el.classList.remove('aktif'); });
-  var ic = document.getElementById('tab-' + id);
+  // tab-mesaj diye bir div yok; mesaj içeriği tab-ana içindeki #mesajlarDiv'de yaşıyor
+  var tabId = (id === 'mesaj') ? 'ana' : id;
+  var ic = document.getElementById('tab-' + tabId);
   if (ic) ic.classList.add('aktif');
   // Sol panel senkronizasyonu
   document.querySelectorAll('#sol .sol-btn').forEach(function(b){ b.classList.remove('active'); });
   var solBtn = document.getElementById('sol' + id.charAt(0).toUpperCase() + id.slice(1) + 'Btn');
   if (solBtn) solBtn.classList.add('active');
-  else if (id === 'ana') {
+  else if (id === 'ana' || id === 'mesaj') {
     var anaBtn = document.getElementById('solAnaBtn');
     if (anaBtn) anaBtn.classList.add('active');
   }
-  // Mobil: mesaj sekmesi için özel
-  if (id === 'mesaj') renderMesajSekme();
+  // Mesaj sekmesi: mesajları güncelle ve kutuya kaydır
+  if (id === 'mesaj') {
+    renderMesajSekme();
+    setTimeout(function() {
+      var mk = document.getElementById('merkezMesajKutusu');
+      if (mk) mk.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 60);
+  }
 }
 
 window.solSekmeAc = function(id) {
