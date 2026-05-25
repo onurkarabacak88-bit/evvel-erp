@@ -284,21 +284,55 @@
     .ana-stat-chip.mesaj-chip.aktif { border-color: rgba(34,197,94,.45); background: rgba(34,197,94,.06); }
 
     /* Bilgi kartları kompakt */
-    .ana-bilgi-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;
-    }
-    @media (max-width: 700px) { .ana-bilgi-grid { grid-template-columns: 1fr; } }
     .ana-bilgi-kart {
       background: var(--bg2); border: 1px solid var(--border); border-radius: 14px;
-      padding: 12px 14px; overflow: hidden;
+      padding: 12px 14px; overflow: hidden; margin-bottom: 12px;
     }
-    .ana-bilgi-kart.uyari { border-color: rgba(239,68,68,.3); }
-    .ana-bilgi-kart.uyari.yanip-sonen { animation: msgPulse 1.05s ease-in-out infinite; }
     .ana-bilgi-baslik {
       font-size: 11px; font-weight: 800; letter-spacing:.04em;
       margin-bottom: 8px; display: flex; align-items: center; gap: 6px;
     }
     .ana-bilgi-icerik { max-height: 180px; overflow-y: auto; }
+
+    /* Stok modal */
+    .stok-modal-row {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--bg); border: 1px solid rgba(239,68,68,.25);
+      border-radius: 10px; padding: 10px 14px; margin-bottom: 6px;
+    }
+    .stok-modal-row:last-child { margin-bottom: 0; }
+    .stok-modal-sifir {
+      background: var(--danger); color: #fff; border-radius: 6px;
+      padding: 2px 10px; font-size: 11px; font-weight: 800; flex-shrink: 0;
+    }
+
+    /* Kabul kart tıklanabilir */
+    .kabul-kart-click {
+      cursor: pointer;
+      transition: box-shadow .18s, transform .12s, border-color .15s;
+    }
+    .kabul-kart-click:hover {
+      box-shadow: 0 4px 18px rgba(0,0,0,.18);
+      transform: translateY(-2px);
+      border-color: var(--accent) !important;
+    }
+    .kabul-kart-click:active { transform: translateY(0); }
+    .kabul-modal-row {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 12px; padding: 14px 16px; margin-bottom: 8px;
+    }
+    .kabul-modal-row:last-child { margin-bottom: 0; }
+    .kabul-modal-meta {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 8px; gap: 8px;
+    }
+    .kabul-modal-no {
+      background: var(--accent); color: #fff; border-radius: 6px;
+      padding: 2px 8px; font-size: 11px; font-weight: 800;
+    }
+    .kabul-modal-tarih { font-size: 11px; color: var(--muted); }
+    .kabul-modal-personel { font-size: 14px; font-weight: 800; color: var(--text); margin-bottom: 4px; }
+    .kabul-modal-ozet { font-size: 12px; color: var(--text2); line-height: 1.5; }
 
     .sipmet-row {
       display: flex; gap: 8px; align-items: center;
@@ -4573,7 +4607,7 @@
             <span class="ana-stat-val" id="anaStatSiparis">—</span>
             <span class="ana-stat-lbl">Bekleyen Sipariş</span>
           </button>
-          <button class="ana-stat-chip stok-chip" type="button" id="anaChipStok" onclick="solSekmeAc('siparis')">
+          <button class="ana-stat-chip stok-chip" type="button" id="anaChipStok" onclick="anaStokModalAc()">
             <span class="ana-stat-val" id="anaStatStok">—</span>
             <span class="ana-stat-lbl">Stok Uyarısı</span>
           </button>
@@ -4586,30 +4620,22 @@
         <!-- ④ Bildirimler (dinamik) -->
         <div id="siparisRedBildirimWrap" style="display:none" role="alert" aria-live="polite"></div>
 
-        <!-- ⑤ Bilgi kartları: Mesajlar + Stok -->
-        <div class="ana-bilgi-grid">
-          <!-- Merkez Mesajları -->
-          <div class="merkez-mesaj-kutusu ana-bilgi-kart" id="merkezMesajKutusu">
-            <div class="ana-bilgi-baslik"><span>📩</span> Merkez Mesajları</div>
-            <div id="merkezMesajMarqueeBar" class="merkez-marquee-bar" style="display:none" aria-live="polite"></div>
-            <div id="mesajlarDiv" class="ana-bilgi-icerik merkez-mesaj-icerik">
-              <div class="merkez-mesaj-bos">Yükleniyor…</div>
-            </div>
-          </div>
-
-          <!-- Stok Uyarısı -->
-          <div class="merkez-mesaj-kutusu ana-bilgi-kart uyari" id="depoStokKart">
-            <div class="ana-bilgi-baslik"><span>⚠️</span> Stok Uyarısı</div>
-            <div id="depoStokListesi" class="ana-bilgi-icerik merkez-mesaj-icerik">
-              <div class="merkez-mesaj-bos">Yükleniyor…</div>
-            </div>
+        <!-- ⑤ Bilgi kartı: Merkez Mesajları (tam genişlik) -->
+        <div class="merkez-mesaj-kutusu ana-bilgi-kart" id="merkezMesajKutusu">
+          <div class="ana-bilgi-baslik"><span>📩</span> Merkez Mesajları</div>
+          <div id="merkezMesajMarqueeBar" class="merkez-marquee-bar" style="display:none" aria-live="polite"></div>
+          <div id="mesajlarDiv" class="ana-bilgi-icerik merkez-mesaj-icerik">
+            <div class="merkez-mesaj-bos">Yükleniyor…</div>
           </div>
         </div>
 
-        <!-- ⑥ Son kabul (kompakt, sadece kayıt varsa görünür) -->
-        <div class="kart" id="kabulTakipKart" style="display:none">
-          <div class="kart-baslik" style="font-size:11px"><span class="ico">📥</span> Son Teslim / Kabul</div>
-          <div id="kabulTakipListesi" class="merkez-mesaj-icerik" style="max-height:160px">
+        <!-- ⑥ Son kabul (kompakt, tıklanınca modal, sadece kayıt varsa görünür) -->
+        <div class="kart kabul-kart-click" id="kabulTakipKart" style="display:none" onclick="kabulTakipModalAc()" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();kabulTakipModalAc()}" aria-label="Son Teslim ve Kabul kayıtlarını göster">
+          <div class="kart-baslik" style="font-size:11px;pointer-events:none">
+            <span class="ico">📥</span> Son Teslim / Kabul
+            <span style="margin-left:auto;font-size:10px;color:var(--muted);font-weight:400">Detay →</span>
+          </div>
+          <div id="kabulTakipListesi" class="merkez-mesaj-icerik" style="max-height:130px;pointer-events:none">
             <div class="merkez-mesaj-bos">Yükleniyor…</div>
           </div>
         </div>
@@ -10697,15 +10723,107 @@ function renderKabulTakipListe() {
     return;
   }
   if (kart) kart.style.display = '';
+  /* Kompakt — max 3 satır, gerisini modal'a bırak */
+  var goster = rows.slice(0, 3);
+  var kalan  = rows.length - goster.length;
   var h = '';
-  rows.forEach(function (r) {
-    h += '<div class="sipmet-row">';
-    h += '<span class="sipmet-tarih">' + escHtml(String(r.tarih||'—')) + ' ' + escHtml(String(r.saat||'')) + '</span>';
-    h += '<span style="flex:1"><strong>' + escHtml(String(r.personel||'?')) + '</strong> — ' + escHtml(String(r.ozet||'')) + '</span>';
+  goster.forEach(function (r) {
+    h += '<div class="sipmet-row" style="pointer-events:none">';
+    h += '<span class="sipmet-tarih" style="min-width:56px">' + escHtml(String(r.tarih||'—').slice(5)) + '</span>';
+    h += '<span style="flex:1;font-size:12px"><strong>' + escHtml(String(r.personel||'?')) + '</strong> — ' + escHtml(String(r.ozet||'')) + '</span>';
     h += '</div>';
   });
+  if (kalan > 0) {
+    h += '<div style="text-align:right;font-size:11px;color:var(--accent);padding-top:4px;font-weight:700">+' + kalan + ' kayıt daha →</div>';
+  }
   el.innerHTML = h;
 }
+
+/* ── Stok Uyarısı Modal ── */
+window.anaStokModalAc = function() {
+  var rows = (lastData && lastData.stok_alarmlari || []).filter(function(a){
+    return String(a.tip||'') === 'STOK_ALARM';
+  });
+  var sayiBadge = rows.length
+    ? '<span style="background:var(--danger);color:#fff;border-radius:100px;padding:2px 9px;font-size:11px;font-weight:800;margin-left:8px">' + rows.length + '</span>'
+    : '';
+  var icerik;
+  if (!rows.length) {
+    icerik = '<div style="text-align:center;padding:36px 0 28px"><div style="font-size:36px;margin-bottom:10px">✅</div><div style="font-size:14px;color:var(--ok);font-weight:700">Depo stoğu tam</div><div style="font-size:12px;color:var(--muted);margin-top:4px">Eksik ürün yok.</div></div>';
+  } else {
+    var satirlar = rows.map(function(a) {
+      var ad = a.urun_adi || String(a.mesaj||'').split('—')[0].trim();
+      return '<div class="stok-modal-row">' +
+        '<span style="font-size:18px;flex-shrink:0">📦</span>' +
+        '<span style="flex:1;font-size:13px;font-weight:700;color:var(--text)">' + escHtml(ad) + '</span>' +
+        '<span class="stok-modal-sifir">Stok: 0</span>' +
+        '</div>';
+    }).join('');
+    icerik =
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">Depoda mevcut adedi sıfır olan ürünler — sipariş ver.</div>' +
+      '<div style="max-height:52vh;overflow-y:auto;padding-right:2px">' + satirlar + '</div>' +
+      '<div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px">' +
+        '<button class="btn btn-secondary" onclick="this.closest(\'.modal-acik\').remove()">Kapat</button>' +
+        '<button class="btn btn-primary" onclick="this.closest(\'.modal-acik\').remove();solSekmeAc(\'siparis\')">📦 Sipariş Ver →</button>' +
+      '</div>';
+  }
+  var modal = document.createElement('div');
+  modal.className = 'modal-acik';
+  modal.style.zIndex = '9950';
+  modal.innerHTML =
+    '<div class="modal-box" style="max-width:500px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">' +
+        '<h3 style="margin:0;display:flex;align-items:center">⚠️ Stok Uyarısı' + sayiBadge + '</h3>' +
+        '<button onclick="this.closest(\'.modal-acik\').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted);padding:2px 8px;line-height:1">✕</button>' +
+      '</div>' +
+      icerik +
+    '</div>';
+  modal.addEventListener('click', function(e){ if (e.target === modal) modal.remove(); });
+  document.body.appendChild(modal);
+};
+
+/* ── Son Teslim / Kabul Modal ── */
+window.kabulTakipModalAc = function() {
+  var rows = (lastData && lastData.son_kabul_kayitlari) || [];
+  var icerik;
+  if (!rows.length) {
+    icerik = '<div style="text-align:center;padding:36px 0 28px;color:var(--muted)">Henüz teslim / kabul kaydı yok.</div>';
+  } else {
+    icerik = '<div style="max-height:65vh;overflow-y:auto;padding-right:2px">' +
+      rows.map(function(r, i) {
+        var tarih   = escHtml(String(r.tarih||'—'));
+        var saat    = escHtml(String(r.saat||''));
+        var personel= escHtml(String(r.personel||'?'));
+        var ozet    = escHtml(String(r.ozet||'—'));
+        var tip     = escHtml(String(r.tip||''));
+        var tipBadge = tip
+          ? '<span style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:1px 7px;font-size:10px;color:var(--muted);margin-left:6px">' + tip + '</span>'
+          : '';
+        return '<div class="kabul-modal-row">' +
+          '<div class="kabul-modal-meta">' +
+            '<div><span class="kabul-modal-no">#' + (i+1) + '</span>' + tipBadge + '</div>' +
+            '<span class="kabul-modal-tarih">🕐 ' + tarih + (saat ? ' ' + saat : '') + '</span>' +
+          '</div>' +
+          '<div class="kabul-modal-personel">👤 ' + personel + '</div>' +
+          '<div class="kabul-modal-ozet">' + ozet + '</div>' +
+        '</div>';
+      }).join('') +
+    '</div>';
+  }
+  var modal = document.createElement('div');
+  modal.className = 'modal-acik';
+  modal.style.zIndex = '9950';
+  modal.innerHTML =
+    '<div class="modal-box" style="max-width:600px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">' +
+        '<h3 style="margin:0">📥 Son Teslim / Kabul</h3>' +
+        '<button onclick="this.closest(\'.modal-acik\').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted);padding:2px 8px;line-height:1">✕</button>' +
+      '</div>' +
+      icerik +
+    '</div>';
+  modal.addEventListener('click', function(e){ if (e.target === modal) modal.remove(); });
+  document.body.appendChild(modal);
+};
 
 function renderEksikListesi() {
   var el = document.getElementById('eksikListesi');
