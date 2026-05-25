@@ -9387,8 +9387,9 @@ var FR_SEBEPLER = [
   { kod: 'yanlis_urun',     ico: '🔄', ad: 'Yanlış Ürün',        alt: 'Değişim / hatalı hazırlık' },
   { kod: 'hazirlik_deneme', ico: '📦', ad: 'Hazırlık / Deneme',  alt: 'Eğitim, test üretimi' },
   { kod: 'sayim_hatasi',    ico: '🔢', ad: 'Sayım Hatası',       alt: 'Sistem düzeltmesi' },
-  { kod: 'ikram',           ico: '🎁', ad: 'İkram',               alt: 'Müşteriye bedava verilen ürün' },
-  { kod: 'diger',           ico: '❓', ad: 'Diğer',               alt: 'Açıklama zorunlu' },
+  { kod: 'personel_kullanim', ico: '👤', ad: 'Personel Ürün Kullanımı', alt: 'Personel tüketim kaydı' },
+  { kod: 'ikram',             ico: '🎁', ad: 'İkram',                   alt: 'Müşteriye bedava verilen ürün' },
+  { kod: 'diger',             ico: '❓', ad: 'Diğer',                   alt: 'Açıklama zorunlu' },
 ];
 /* Yanlış Ürün — Senaryo tipleri */
 var YANLIS_SENARYO_TIPLER = [
@@ -9441,6 +9442,17 @@ var FR_URUNLER = {
     { ad: '8oz Bardak',    ico: '🍵', kalem_kodu: 'bardak_kucuk'  },
   ],
   yanlis_urun:  [],    /* özel sub-adım akışı kullanır */
+  personel_kullanim: [
+    { ad: 'Su',               ico: '💧', kalem_kodu: 'su_sise'         },
+    { ad: 'Soda',             ico: '🫧', kalem_kodu: 'soda_adet'       },
+    { ad: 'Küçük Boy Kahve',  ico: '🍵', kalem_kodu: 'kahve_kucuk'     },
+    { ad: 'Büyük Boy Kahve',  ico: '☕', kalem_kodu: 'kahve_buyuk'     },
+    { ad: 'Soğuk İçecek',     ico: '🥤', kalem_kodu: 'bardak_plastik'  },
+    { ad: 'Pasta',            ico: '🎂', kalem_kodu: 'pasta_adet'      },
+    { ad: 'Süt',              ico: '🥛', kalem_kodu: 'sut_litre'       },
+    { ad: 'Ananas Suyu',      ico: '🍍', kalem_kodu: 'ananas_suyu'     },
+    { ad: 'Portakal Suyu',    ico: '🍊', kalem_kodu: 'portakal_suyu'   },
+  ],
   ikram: [
     { ad: 'Plastik Bardak', ico: '🥤', kalem_kodu: 'bardak_plastik' },
     { ad: '14oz Bardak',    ico: '🫗', kalem_kodu: 'bardak_buyuk'   },
@@ -9617,7 +9629,7 @@ function frWizStep1HTML() {
   var h = '<div class="fr-sebep-grid">';
   FR_SEBEPLER.forEach(function(s) {
     /* "İkram" ve "Diğer" tam genişlik — grid son satırlarında */
-    var isFullW = (s.kod==='diger' || s.kod==='ikram');
+    var isFullW = (s.kod==='diger' || s.kod==='ikram' || s.kod==='personel_kullanim');
     var span = isFullW ? ' style="grid-column:1/-1;flex-direction:row;text-align:left;gap:14px;min-height:64px;padding:14px 18px"' : '';
     h += '<div class="fr-sebep-kart" data-fr data-fr-kart="'+s.kod+'"'+span+'>';
     h += '<div class="fr-sebep-kart-ico">' + s.ico + '</div>';
