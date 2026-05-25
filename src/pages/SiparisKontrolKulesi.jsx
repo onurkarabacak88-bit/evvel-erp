@@ -54,6 +54,222 @@ function SiparisGonderenSatiri({ kayit, style = {} }) {
   );
 }
 
+// ── Toptancı Modal ──────────────────────────────────────────────────────────
+function ToptanciModal({
+  sip,
+  tedarikciListesi,
+  onKapat,
+  kuyrukToptanciTedarikci, setKuyrukToptanciTedarikci,
+  kuyrukToptanciNot, setKuyrukToptanciNot,
+  kuyrukToptanciKalem, setKuyrukToptanciKalem,
+  kuyrukToptanciSecili, setKuyrukToptanciSecili,
+  kuyrukToptanciAtanmis,
+  kuyrukToptanciListeler,
+  toptanciListeOlustur,
+  toptanciYazdirListe,
+  toptanciListeyiGeriAl,
+  toptanciyaYolla,
+  kalemIstenenAdet,
+  kuyrukBusy,
+}) {
+  const talepId = String(sip?.id || '');
+  const detayRows = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
+  const listeler = kuyrukToptanciListeler?.[talepId] || [];
+  const kalanlar = detayRows.filter((k, i) => {
+    const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
+    return !kuyrukToptanciAtanmis?.[`${talepId}::${kk}`];
+  });
+  const herhangiSecili = detayRows.some((k, i) => {
+    const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
+    return kuyrukToptanciSecili?.[`${talepId}::${kk}`];
+  });
+  const datalistId = `toptanci-tedarikci-${talepId}`;
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 9900,
+      background: 'rgba(0,0,0,0.65)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 16,
+    }} onClick={(e) => { if (e.target === e.currentTarget) onKapat(); }}>
+      <div style={{
+        background: 'var(--bg)',
+        borderRadius: 16,
+        width: 'min(860px, 100%)',
+        maxHeight: '90vh',
+        display: 'flex',
+        flexDirection: 'column',
+        boxShadow: '0 24px 80px rgba(0,0,0,0.45)',
+        overflow: 'hidden',
+      }}>
+        {/* ── Başlık ── */}
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, background: 'var(--bg2)' }}>
+          <div>
+            <div style={{ fontSize: 11, color: 'var(--text3)', letterSpacing: '0.06em', marginBottom: 4 }}>🚚 TOPTANCI SİPARİŞİ</div>
+            <div style={{ fontWeight: 800, fontSize: 18 }}>{sip?.sube_adi || '—'}</div>
+            <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 3 }}>
+              {String(sip?.olusturma || '').slice(0, 10)} · {detayRows.length} kalem
+              {sip?.personel_ad ? <span style={{ marginLeft: 8, color: 'var(--text3)' }}>👤 {sip.personel_ad}</span> : null}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onKapat}
+            style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: 'var(--text3)', lineHeight: 1, padding: '2px 6px' }}
+          >✕</button>
+        </div>
+
+        {/* ── İçerik (scrollable) ── */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+          {/* Oluşturulan listeler */}
+          {listeler.length > 0 && (
+            <div style={{ background: '#edf7ed', border: '1px solid #b2dfb2', borderRadius: 10, padding: '12px 14px' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#1b5e20', marginBottom: 8 }}>
+                ✅ Oluşturulan listeler ({listeler.length})
+              </div>
+              {listeler.map((lst) => (
+                <div key={lst.listeNo} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #c8e6c9', gap: 8 }}>
+                  <span style={{ flex: 1, fontSize: 13 }}>
+                    <strong>#{lst.listeNo}</strong> — {lst.toptanciAd}
+                    <span style={{ color: '#555', marginLeft: 8, fontSize: 12 }}>{lst.kalemler.length} kalem · {lst.ts}</span>
+                  </span>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                    <button type="button" className="btn btn-sm btn-secondary" style={{ fontSize: 12, padding: '4px 12px' }}
+                      onClick={() => toptanciYazdirListe(lst, sip.sube_adi || 'Şube', sip.olusturma || '', (kuyrukToptanciNot[talepId] || '').trim())}>
+                      🖨️ Yazdır
+                    </button>
+                    <button type="button" className="btn btn-sm" style={{ fontSize: 12, padding: '4px 12px', background: '#fff3f3', color: '#c62828', border: '1px solid #ffcdd2' }}
+                      onClick={() => toptanciListeyiGeriAl(sip, lst.listeNo)}>
+                      ↩ Geri Al
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Kalem listesi */}
+          <div style={{ background: 'var(--bg2)', borderRadius: 10, padding: '12px 14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>
+                Kalemler {kalanlar.length < detayRows.length ? `(${kalanlar.length} kalan / ${detayRows.length} toplam)` : `(${detayRows.length})`}
+              </span>
+              {kalanlar.length > 0 && (
+                <button type="button"
+                  style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                  onClick={() => setKuyrukToptanciSecili((prev) => {
+                    const next = { ...prev };
+                    detayRows.forEach((k, i) => {
+                      const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
+                      const key = `${talepId}::${kk}`;
+                      if (!kuyrukToptanciAtanmis?.[key]) next[key] = true;
+                    });
+                    return next;
+                  })}>
+                  Tümünü seç
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              {detayRows.map((k, i) => {
+                const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
+                const key = `${talepId}::${kk}`;
+                const atanmisNo = kuyrukToptanciAtanmis?.[key];
+                const isSecili = kuyrukToptanciSecili?.[key] || false;
+                const val = kuyrukToptanciKalem[key] ?? String(kalemIstenenAdet(k));
+                return (
+                  <div key={key} style={{
+                    display: 'grid', gridTemplateColumns: '28px minmax(0,1fr) 80px',
+                    gap: 8, alignItems: 'center',
+                    opacity: atanmisNo ? 0.4 : 1,
+                    padding: '6px 8px',
+                    borderRadius: 8,
+                    background: isSecili ? 'rgba(34,197,94,0.08)' : 'transparent',
+                    border: isSecili ? '1px solid rgba(34,197,94,0.25)' : '1px solid transparent',
+                  }}>
+                    <input type="checkbox"
+                      style={{ width: 18, height: 18, cursor: atanmisNo ? 'default' : 'pointer', accentColor: 'var(--accent)' }}
+                      checked={!!isSecili} disabled={!!atanmisNo}
+                      onChange={(e) => setKuyrukToptanciSecili((prev) => ({ ...prev, [key]: e.target.checked }))}
+                    />
+                    <span style={{ fontSize: 14, textDecoration: atanmisNo ? 'line-through' : 'none' }}>
+                      {k.urun_ad || k.ad || kk}
+                      {atanmisNo ? <span style={{ fontSize: 11, color: '#2a7a2a', marginLeft: 6 }}>→ Liste #{atanmisNo}</span> : null}
+                    </span>
+                    <input className="input" inputMode="numeric"
+                      style={{ fontSize: 14, padding: '6px 8px', textAlign: 'center', fontWeight: 700 }}
+                      value={val} disabled={!!atanmisNo}
+                      onChange={(e) => {
+                        const v = String(e.target.value || '').replace(/[^\d]/g, '');
+                        setKuyrukToptanciKalem((prev) => ({ ...prev, [key]: v }));
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Toptancı seç + Liste oluştur */}
+          {herhangiSecili && (
+            <div style={{ background: 'var(--bg2)', borderRadius: 10, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)' }}>Seçilen kalemleri hangi toptancıya gönderiyorsunuz?</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ flex: 1, position: 'relative' }}>
+                  <input
+                    className="input"
+                    list={datalistId}
+                    style={{ width: '100%', fontSize: 14, padding: '8px 12px' }}
+                    placeholder="Toptancı seç veya yaz…"
+                    value={kuyrukToptanciTedarikci[talepId] || ''}
+                    onChange={(e) => setKuyrukToptanciTedarikci((prev) => ({ ...prev, [talepId]: e.target.value }))}
+                  />
+                  <datalist id={datalistId}>
+                    {(tedarikciListesi || []).map((t) => (
+                      <option key={t.id} value={t.ad} />
+                    ))}
+                  </datalist>
+                </div>
+                <button type="button" className="btn btn-primary"
+                  style={{ whiteSpace: 'nowrap', fontSize: 14, padding: '8px 18px' }}
+                  onClick={() => toptanciListeOlustur(sip)}>
+                  📋 Liste Oluştur & Yazdır
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Not */}
+          <div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 4 }}>Genel sipariş notu (isteğe bağlı)</div>
+            <textarea className="input" rows={2}
+              style={{ fontSize: 13, resize: 'vertical', width: '100%' }}
+              value={kuyrukToptanciNot[talepId] || ''}
+              onChange={(e) => setKuyrukToptanciNot((prev) => ({ ...prev, [talepId]: e.target.value }))}
+            />
+          </div>
+        </div>
+
+        {/* ── Alt butonlar ── */}
+        <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', background: 'var(--bg2)', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <button type="button" className="btn btn-secondary" style={{ fontSize: 14 }} onClick={onKapat}>
+            Kapat
+          </button>
+          <button type="button" className="btn btn-primary"
+            style={{ fontSize: 14, padding: '10px 24px', opacity: listeler.length === 0 ? 0.45 : 1 }}
+            disabled={kuyrukBusy === talepId || listeler.length === 0}
+            onClick={async () => { await toptanciyaYolla(sip); onKapat(); }}>
+            {kuyrukBusy === talepId
+              ? '⏳ Kaydediliyor…'
+              : `⇢ Toptancıya Yolla & Şubeye Bildir${listeler.length > 0 ? ` (${listeler.length} liste)` : ''}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function KuyrukYonlendirmeKarti({
   sip,
   depolar,
@@ -63,26 +279,15 @@ function KuyrukYonlendirmeKarti({
   setKuyrukDepo,
   kuyrukTalimat,
   setKuyrukTalimat,
-  kuyrukToptanciTedarikci,
-  setKuyrukToptanciTedarikci,
-  kuyrukToptanciNot,
-  setKuyrukToptanciNot,
-  kuyrukToptanciKalem,
-  setKuyrukToptanciKalem,
-  kuyrukToptanciSecili,
-  setKuyrukToptanciSecili,
-  kuyrukToptanciAtanmis,
   kuyrukToptanciListeler,
-  toptanciListeOlustur,
-  toptanciYazdirListe,
-  toptanciListeyiGeriAl,
+  kuyrukToptanciNot,
   kuyrukBusy,
   depoyaGonder,
   toptanciyaYolla,
-  kalemIstenenAdet,
+  onToptanciModalAc,
 }) {
   const talepId = String(sip?.id || '');
-  const detayRows = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
+  const listeler = kuyrukToptanciListeler?.[talepId] || [];
   return (
     <>
       <div style={{ display: 'flex', gap: 4, marginTop: 8, flexWrap: 'wrap' }}>
@@ -134,157 +339,38 @@ function KuyrukYonlendirmeKarti({
             </button>
           </div>
         </div>
-      ) : (() => {
-        const listeler = kuyrukToptanciListeler?.[talepId] || [];
-        const kalanlar = detayRows.filter((k, i) => {
-          const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
-          return !kuyrukToptanciAtanmis?.[`${talepId}::${kk}`];
-        });
-        const herhangiSecili = detayRows.some((k, i) => {
-          const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
-          return kuyrukToptanciSecili?.[`${talepId}::${kk}`];
-        });
-        return (
-          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {/* ── Oluşturulan listeler ── */}
-            {listeler.length > 0 && (
-              <div style={{ background: '#edf7ed', border: '1px solid #b2dfb2', borderRadius: 8, padding: '8px 10px' }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#2a7a2a', marginBottom: 4 }}>
-                  ✅ Oluşturulan listeler ({listeler.length})
-                </div>
-                {listeler.map((lst) => (
-                  <div key={lst.listeNo} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', fontSize: 12, borderBottom: '1px solid #c8e6c9', gap: 6 }}>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <strong>#{lst.listeNo}</strong> — {lst.toptanciAd}
-                      <span style={{ color: '#555', marginLeft: 6 }}>({lst.kalemler.length} kalem · {lst.ts})</span>
-                    </span>
-                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        style={{ fontSize: 11, padding: '2px 8px' }}
-                        onClick={() => toptanciYazdirListe(lst, sip.sube_adi || 'Şube', sip.olusturma || '', (kuyrukToptanciNot[talepId] || '').trim())}
-                      >🖨️ Yazdır</button>
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        style={{ fontSize: 11, padding: '2px 8px', background: '#fff3f3', color: '#c62828', border: '1px solid #ffcdd2' }}
-                        onClick={() => toptanciListeyiGeriAl(sip, lst.listeNo)}
-                      >↩ Geri Al</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* ── Kalem listesi (checkbox) ── */}
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)' }}>
-                  Kalemler {kalanlar.length < detayRows.length ? `(${kalanlar.length} kalan)` : ''}
-                </span>
-                {kalanlar.length > 0 && (
-                  <button
-                    type="button"
-                    style={{ fontSize: 11, background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
-                    onClick={() => setKuyrukToptanciSecili((prev) => {
-                      const next = { ...prev };
-                      detayRows.forEach((k, i) => {
-                        const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
-                        const key = `${talepId}::${kk}`;
-                        if (!kuyrukToptanciAtanmis?.[key]) next[key] = true;
-                      });
-                      return next;
-                    })}
-                  >Tümünü seç</button>
-                )}
-              </div>
-              <div style={{ display: 'grid', gap: 4, maxHeight: 190, overflowY: 'auto' }}>
-                {detayRows.length === 0 ? (
-                  <span style={{ fontSize: 11, color: 'var(--text3)' }}>Kalem yok</span>
-                ) : (
-                  detayRows.map((k, i) => {
-                    const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
-                    const key = `${talepId}::${kk}`;
-                    const atanmisNo = kuyrukToptanciAtanmis?.[key];
-                    const isSecili = kuyrukToptanciSecili?.[key] || false;
-                    const val = kuyrukToptanciKalem[key] ?? String(kalemIstenenAdet(k));
-                    return (
-                      <div key={key} style={{ display: 'grid', gridTemplateColumns: '20px minmax(0,1fr) 62px', gap: 5, alignItems: 'center', opacity: atanmisNo ? 0.4 : 1 }}>
-                        <input
-                          type="checkbox"
-                          style={{ width: 16, height: 16, cursor: atanmisNo ? 'default' : 'pointer', accentColor: 'var(--accent)' }}
-                          checked={!!isSecili}
-                          disabled={!!atanmisNo}
-                          onChange={(e) => setKuyrukToptanciSecili((prev) => ({ ...prev, [key]: e.target.checked }))}
-                        />
-                        <span style={{ fontSize: 12, textDecoration: atanmisNo ? 'line-through' : 'none' }}>
-                          {k.urun_ad || k.ad || kk}
-                          {atanmisNo ? <span style={{ fontSize: 10, color: '#2a7a2a', marginLeft: 4 }}>→ #{atanmisNo}</span> : null}
-                        </span>
-                        <input
-                          className="input"
-                          inputMode="numeric"
-                          style={{ fontSize: 12, padding: '4px 5px' }}
-                          value={val}
-                          disabled={!!atanmisNo}
-                          onChange={(e) => {
-                            const v = String(e.target.value || '').replace(/[^\d]/g, '');
-                            setKuyrukToptanciKalem((prev) => ({ ...prev, [key]: v }));
-                          }}
-                        />
-                      </div>
-                    );
-                  })
-                )}
-              </div>
+      ) : (
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Özet: kaç liste var */}
+          {listeler.length > 0 ? (
+            <div style={{ background: '#edf7ed', border: '1px solid #b2dfb2', borderRadius: 8, padding: '8px 10px', fontSize: 12 }}>
+              <div style={{ fontWeight: 700, color: '#1b5e20', marginBottom: 4 }}>✅ {listeler.length} liste hazır</div>
+              {listeler.map((l) => (
+                <div key={l.listeNo} style={{ color: '#2e7d32' }}>#{l.listeNo} {l.toptanciAd} — {l.kalemler.length} kalem</div>
+              ))}
             </div>
-
-            {/* ── Toptancı adı + Liste oluştur (sadece bir şey seçiliyse göster) ── */}
-            {herhangiSecili && (
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <input
-                  className="input"
-                  style={{ flex: 1, fontSize: 12 }}
-                  placeholder="Toptancı adı…"
-                  value={kuyrukToptanciTedarikci[talepId] || ''}
-                  onChange={(e) => setKuyrukToptanciTedarikci((prev) => ({ ...prev, [talepId]: e.target.value }))}
-                />
-                <button
-                  type="button"
-                  className="btn btn-sm btn-secondary"
-                  style={{ whiteSpace: 'nowrap' }}
-                  onClick={() => toptanciListeOlustur(sip)}
-                >📋 Liste Oluştur & Yazdır</button>
-              </div>
-            )}
-
-            {/* ── Not ── */}
-            <textarea
-              className="input"
-              rows={2}
-              placeholder="Genel sipariş notu (isteğe bağlı)"
-              style={{ fontSize: 11, resize: 'vertical' }}
-              value={kuyrukToptanciNot[talepId] || ''}
-              onChange={(e) => setKuyrukToptanciNot((prev) => ({ ...prev, [talepId]: e.target.value }))}
-            />
-
-            {/* ── Son: Toptancıya yolla & Şubeye bildir ── */}
-            <button
-              type="button"
-              className="btn btn-sm btn-primary"
-              disabled={kuyrukBusy === talepId || listeler.length === 0}
-              onClick={() => toptanciyaYolla(sip)}
-            >
-              {kuyrukBusy === talepId
-                ? '⏳ Kaydediliyor…'
-                : listeler.length > 0
-                  ? `⇢ Toptancıya Yolla & Şubeye Bildir (${listeler.length} liste)`
-                  : '⇢ Toptancıya Yolla & Şubeye Bildir'}
-            </button>
-          </div>
-        );
-      })()}
+          ) : (
+            <div style={{ fontSize: 11, color: 'var(--text3)' }}>Henüz liste oluşturulmadı.</div>
+          )}
+          {/* Modalı aç */}
+          <button type="button" className="btn btn-sm btn-secondary" onClick={onToptanciModalAc}>
+            🚚 Toptancı Siparişini Düzenle
+          </button>
+          {/* Son gönder */}
+          <button
+            type="button"
+            className="btn btn-sm btn-primary"
+            disabled={kuyrukBusy === talepId || listeler.length === 0}
+            onClick={() => toptanciyaYolla(sip)}
+          >
+            {kuyrukBusy === talepId
+              ? '⏳ Kaydediliyor…'
+              : listeler.length > 0
+                ? `⇢ Toptancıya Yolla & Şubeye Bildir (${listeler.length} liste)`
+                : '⇢ Toptancıya Yolla & Şubeye Bildir'}
+          </button>
+        </div>
+      )}
     </>
   );
 }
@@ -345,6 +431,8 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
   const [kuyrukToptanciSecili, setKuyrukToptanciSecili] = useState({});   // `${talep_id}::${kk}` → bool
   const [kuyrukToptanciAtanmis, setKuyrukToptanciAtanmis] = useState({}); // `${talep_id}::${kk}` → listeNo
   const [kuyrukToptanciListeler, setKuyrukToptanciListeler] = useState({}); // talep_id → [{listeNo,toptanciAd,kalemler,ts}]
+  const [toptanciModalSip, setToptanciModalSip] = useState(null); // modal için açık sip | null
+  const [tedarikciListesi, setTedarikciListesi] = useState([]);
   const [kuyrukBusy, setKuyrukBusy] = useState(null);
   const [iptalBusy, setIptalBusy] = useState(null);
   const [islemSonuc, setIslemSonuc] = useState(null); // { basarili, mesaj }
@@ -411,6 +499,12 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
   useEffect(() => {
     yukle();
   }, [yukle]);
+
+  useEffect(() => {
+    api('/tedarikciler?aktif=true')
+      .then((r) => setTedarikciListesi(r.tedarikciler || []))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (gorunum === 'depo') yukleDepoListe();
@@ -878,6 +972,29 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
           onKapat={() => setIslemSonuc(null)}
         />
       )}
+      {toptanciModalSip && (
+        <ToptanciModal
+          sip={toptanciModalSip}
+          tedarikciListesi={tedarikciListesi}
+          onKapat={() => setToptanciModalSip(null)}
+          kuyrukToptanciTedarikci={kuyrukToptanciTedarikci}
+          setKuyrukToptanciTedarikci={setKuyrukToptanciTedarikci}
+          kuyrukToptanciNot={kuyrukToptanciNot}
+          setKuyrukToptanciNot={setKuyrukToptanciNot}
+          kuyrukToptanciKalem={kuyrukToptanciKalem}
+          setKuyrukToptanciKalem={setKuyrukToptanciKalem}
+          kuyrukToptanciSecili={kuyrukToptanciSecili}
+          setKuyrukToptanciSecili={setKuyrukToptanciSecili}
+          kuyrukToptanciAtanmis={kuyrukToptanciAtanmis}
+          kuyrukToptanciListeler={kuyrukToptanciListeler}
+          toptanciListeOlustur={toptanciListeOlustur}
+          toptanciYazdirListe={toptanciYazdirListe}
+          toptanciListeyiGeriAl={toptanciListeyiGeriAl}
+          toptanciyaYolla={toptanciyaYolla}
+          kalemIstenenAdet={kalemIstenenAdet}
+          kuyrukBusy={kuyrukBusy}
+        />
+      )}
       {msg && <div className={`alert-box ${msg.t} mb-8`}>{msg.m}</div>}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
@@ -1107,23 +1224,12 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                             setKuyrukDepo={setKuyrukDepo}
                             kuyrukTalimat={kuyrukTalimat}
                             setKuyrukTalimat={setKuyrukTalimat}
-                            kuyrukToptanciTedarikci={kuyrukToptanciTedarikci}
-                            setKuyrukToptanciTedarikci={setKuyrukToptanciTedarikci}
-                            kuyrukToptanciNot={kuyrukToptanciNot}
-                            setKuyrukToptanciNot={setKuyrukToptanciNot}
-                            kuyrukToptanciKalem={kuyrukToptanciKalem}
-                            setKuyrukToptanciKalem={setKuyrukToptanciKalem}
-                            kuyrukToptanciSecili={kuyrukToptanciSecili}
-                            setKuyrukToptanciSecili={setKuyrukToptanciSecili}
-                            kuyrukToptanciAtanmis={kuyrukToptanciAtanmis}
                             kuyrukToptanciListeler={kuyrukToptanciListeler}
-                            toptanciListeOlustur={toptanciListeOlustur}
-                            toptanciYazdirListe={toptanciYazdirListe}
-                            toptanciListeyiGeriAl={toptanciListeyiGeriAl}
+                            kuyrukToptanciNot={kuyrukToptanciNot}
                             kuyrukBusy={kuyrukBusy}
                             depoyaGonder={depoyaGonder}
                             toptanciyaYolla={toptanciyaYolla}
-                            kalemIstenenAdet={kalemIstenenAdet}
+                            onToptanciModalAc={() => setToptanciModalSip(sip)}
                           />
                         </div>
                       );
