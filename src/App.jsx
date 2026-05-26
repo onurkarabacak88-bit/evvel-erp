@@ -18,6 +18,7 @@ import ExcelImport from './pages/ExcelImport';
 import DisKaynak from './pages/DisKaynak';
 import Rapor from './pages/Rapor';
 import KartMerkez from './pages/KartMerkez';
+import KartEkstreAnaliz from './pages/KartEkstreAnaliz';
 import VardiyaPlanlamaV2 from './pages/VardiyaPlanlamaV2';
 import SubePanelPinleri from './pages/SubePanelPinleri';
 import Tedarikciler from './pages/Tedarikciler';
@@ -56,6 +57,7 @@ const NAV = [
   { group: 'Tanımlar', items: [
     { id: 'kartlar',          label: 'Kartlar',             icon: '💳' },
     { id: 'kart-merkez',      label: 'Kart Merkezi',        icon: '💳' },
+    { id: 'kart-analiz',      label: 'Ekstre Analizi',      icon: '📂' },
     { id: 'personel',         label: 'Personel',            icon: '👥' },
     { id: 'borclar',          label: 'Borç Envanteri',      icon: '🏦' },
     { id: 'sabit-giderler',   label: 'Sabit Giderler',      icon: '🏠' },
@@ -88,7 +90,7 @@ const PAGES = {
   excel:              ExcelImport,
   'teslim-kayit':     TeslimKayit,
   kartlar:            Kartlar,
-  'kart-analiz':      KartMerkez,
+  'kart-analiz':      KartEkstreAnaliz,
   personel:           Personel,
   borclar:            Borclar,
   'sabit-giderler':   SabitGiderler,
