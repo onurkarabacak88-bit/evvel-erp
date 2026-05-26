@@ -1804,13 +1804,13 @@ def acilis_kasa_takip(tarih: Optional[str] = None):
             "acilis_tamam": tamam,
             "acilis_ts": str(ats) if ats else "",
             "personel_saat": str(acil.get("personel_saat") or ""),
-            "personel_ad": str(acil.get("personel_ad") or uyum.get("acilis_personel_ad") or ""),
+            "personel_ad": str(acil.get("personel_ad") or (uyum or {}).get("acilis_personel_ad") or ""),
             "panel_acilis": panel_acilis,
             "acilis_kasa_tl": acilis_kasa,
             "beklenen_devir_tl": bek,
             "dunku_kapanis_tarih": dunku,
             "dunku_kapanis_personel": str(
-                kap.get("kapanis_personel_ad") or uyum.get("kapanis_personel_ad") or ""
+                kap.get("kapanis_personel_ad") or (uyum or {}).get("kapanis_personel_ad") or ""
             ),
             "fark_tl": fark,
             "fark_seviye": fark_seviye,
