@@ -1095,6 +1095,25 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     "devir":          devir_kayit,
                     "fark":           mutabakat_fark,
                 }, ensure_ascii=False)
+                # ── O sabahki ACILIS personelini de yakala (KAPANIS_KASA_FARK ikili sorumluluk) ──
+                # Kasa formülünde acilis_kasa varsa, yanlış sayan SABAHÇI da sorumlu.
+                # Personel takibinin doğru çalışması için her iki personel kaydedilmeli.
+                _ackf_pid = None
+                _ackf_pad = None
+                try:
+                    cur.execute(
+                        """SELECT personel_id, personel_ad FROM sube_operasyon_event
+                           WHERE sube_id=%s AND tarih=%s AND tip='ACILIS' AND durum='tamamlandi'
+                           ORDER BY cevap_ts DESC NULLS LAST LIMIT 1""",
+                        (sube_id, tarih_ev_ciro),
+                    )
+                    _ac_row = cur.fetchone()
+                    if _ac_row:
+                        _ackf_pid = (_ac_row.get("personel_id") or "").strip() or None
+                        _ackf_pad = (_ac_row.get("personel_ad") or "").strip() or None
+                except Exception:
+                    pass
+
                 cur.execute(
                     "SELECT id FROM sube_operasyon_uyari WHERE sube_id=%s AND tarih=%s AND tip='KAPANIS_KASA_FARK' LIMIT 1",
                     (sube_id, tarih_ev_ciro),
@@ -1104,20 +1123,24 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     cur.execute(
                         """UPDATE sube_operasyon_uyari
                            SET seviye=%s, beklenen_tl=0, gercek_tl=%s, fark_tl=%s, mesaj=%s,
+                               acilis_personel_id=%s, acilis_personel_ad=%s,
                                kapanis_personel_id=%s, kapanis_personel_ad=%s,
                                detay_json=%s::jsonb, okundu=FALSE
                            WHERE id=%s""",
                         (sev_kf, mutabakat_fark, kasa_acigi, mesaj_kf,
+                         _ackf_pid, _ackf_pad,
                          pid_panel, onay_ad, detay_json, mevcut_kkf["id"]),
                     )
                 else:
                     cur.execute(
                         """INSERT INTO sube_operasyon_uyari
                            (id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj,
+                            acilis_personel_id, acilis_personel_ad,
                             kapanis_personel_id, kapanis_personel_ad, detay_json)
-                           VALUES (%s, %s, %s, 'KAPANIS_KASA_FARK', %s, 0, %s, %s, %s, %s, %s, %s::jsonb)""",
+                           VALUES (%s, %s, %s, 'KAPANIS_KASA_FARK', %s, 0, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)""",
                         (str(uuid.uuid4()), sube_id, tarih_ev_ciro,
                          sev_kf, mutabakat_fark, kasa_acigi, mesaj_kf,
+                         _ackf_pid, _ackf_pad,
                          pid_panel, onay_ad, detay_json),
                     )
 

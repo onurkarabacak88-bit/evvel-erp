@@ -7035,30 +7035,73 @@ def ops_kasa_acik_analiz(gun_sayi: int = 30):
     gun_sayi = max(7, min(int(gun_sayi), 90))
     with db() as (conn, cur):
         # ── Personel bazlı gruplama ──────────────────────────────────────────
+        # KAPANIS_KASA_FARK ve ACILIS_KASA_FARK için HER İKİ personeli de takip et:
+        #   - kapanış kasa farkı → kapanış personeli + (o sabahki) açılış personeli
+        #   - açılış kasa farkı  → açılış personeli (sabahçı yanlış saydı) + dünkü kapanış
+        # UNION ile her uyariyi her sorumlu için ayrı satır olarak değerlendir.
         cur.execute(
             """
+            WITH sorumluluklar AS (
+                -- KAPANIS_KASA_FARK → kapanış personeli sorumlu
+                SELECT u.id, u.sube_id, u.tarih, u.fark_tl,
+                       u.kapanis_personel_id AS personel_id,
+                       u.kapanis_personel_ad AS personel_ad,
+                       'kapanis' AS rol
+                FROM sube_operasyon_uyari u
+                WHERE u.tip = 'KAPANIS_KASA_FARK'
+                  AND u.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                  AND u.kapanis_personel_id IS NOT NULL
+                UNION ALL
+                -- KAPANIS_KASA_FARK → (o sabahki) açılış personeli de sorumlu
+                SELECT u.id, u.sube_id, u.tarih, u.fark_tl,
+                       u.acilis_personel_id AS personel_id,
+                       u.acilis_personel_ad AS personel_ad,
+                       'acilis' AS rol
+                FROM sube_operasyon_uyari u
+                WHERE u.tip = 'KAPANIS_KASA_FARK'
+                  AND u.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                  AND u.acilis_personel_id IS NOT NULL
+                UNION ALL
+                -- ACILIS_KASA_FARK → açılış personeli sorumlu (sabahçı yanlış saydı)
+                SELECT u.id, u.sube_id, u.tarih, u.fark_tl,
+                       u.acilis_personel_id AS personel_id,
+                       u.acilis_personel_ad AS personel_ad,
+                       'acilis' AS rol
+                FROM sube_operasyon_uyari u
+                WHERE u.tip = 'ACILIS_KASA_FARK'
+                  AND u.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                  AND u.acilis_personel_id IS NOT NULL
+                UNION ALL
+                -- ACILIS_KASA_FARK → (dünkü) kapanış personeli de sorumlu
+                SELECT u.id, u.sube_id, u.tarih, u.fark_tl,
+                       u.kapanis_personel_id AS personel_id,
+                       u.kapanis_personel_ad AS personel_ad,
+                       'kapanis_dun' AS rol
+                FROM sube_operasyon_uyari u
+                WHERE u.tip = 'ACILIS_KASA_FARK'
+                  AND u.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                  AND u.kapanis_personel_id IS NOT NULL
+            )
             SELECT
-                u.kapanis_personel_id                                  AS personel_id,
-                COALESCE(u.kapanis_personel_ad, '—')                   AS personel_ad,
-                COALESCE(s.ad, u.sube_id::text)                        AS sube_adi,
-                u.sube_id,
-                COUNT(*)                                               AS toplam_adet,
-                COUNT(*) FILTER (WHERE ABS(u.fark_tl) > 50)           AS elli_ustu_adet,
-                COALESCE(SUM(ABS(u.fark_tl)), 0)                      AS toplam_abs_fark,
-                MAX(ABS(u.fark_tl))                                    AS max_tek_fark,
-                MAX(u.tarih)                                           AS son_tarih
-            FROM sube_operasyon_uyari u
-            LEFT JOIN subeler s ON s.id = u.sube_id
-            WHERE u.tip = 'KAPANIS_KASA_FARK'
-              AND u.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
-              AND u.kapanis_personel_id IS NOT NULL
-            GROUP BY u.kapanis_personel_id, u.kapanis_personel_ad, u.sube_id, s.ad
+                sr.personel_id,
+                COALESCE(sr.personel_ad, '—')                          AS personel_ad,
+                COALESCE(s.ad, sr.sube_id::text)                       AS sube_adi,
+                sr.sube_id,
+                COUNT(DISTINCT sr.id)                                  AS toplam_adet,
+                COUNT(DISTINCT sr.id) FILTER (WHERE ABS(sr.fark_tl) > 50) AS elli_ustu_adet,
+                COALESCE(SUM(ABS(sr.fark_tl)), 0)                      AS toplam_abs_fark,
+                MAX(ABS(sr.fark_tl))                                   AS max_tek_fark,
+                MAX(sr.tarih)                                          AS son_tarih,
+                STRING_AGG(DISTINCT sr.rol, ',' ORDER BY sr.rol)        AS roller
+            FROM sorumluluklar sr
+            LEFT JOIN subeler s ON s.id = sr.sube_id
+            GROUP BY sr.personel_id, sr.personel_ad, sr.sube_id, s.ad
             HAVING
-                COUNT(*) FILTER (WHERE ABS(u.fark_tl) > 50) >= 2
-                OR MAX(ABS(u.fark_tl)) > 150
+                COUNT(DISTINCT sr.id) FILTER (WHERE ABS(sr.fark_tl) > 50) >= 2
+                OR MAX(ABS(sr.fark_tl)) > 150
             ORDER BY elli_ustu_adet DESC, toplam_abs_fark DESC
             """,
-            (gun_sayi,),
+            (gun_sayi, gun_sayi, gun_sayi, gun_sayi),
         )
         takip_listesi = []
         for row in cur.fetchall():
@@ -7077,17 +7120,24 @@ def ops_kasa_acik_analiz(gun_sayi: int = 30):
                 d["durum"] = "izleme"
             takip_listesi.append(d)
 
-        # ── Son N günde tüm >20₺ açıklar ────────────────────────────────────
+        # ── Son N günde tüm >20₺ açıklar (ACILIS + KAPANIS ikisi de) ────────
         cur.execute(
             """
             SELECT
-                u.id, u.tarih,
-                COALESCE(s.ad, u.sube_id::text)   AS sube_adi,
-                COALESCE(u.kapanis_personel_ad, '—') AS personel_ad,
+                u.id, u.tarih, u.tip,
+                COALESCE(s.ad, u.sube_id::text)        AS sube_adi,
+                COALESCE(u.acilis_personel_ad, '—')    AS acilis_personel_ad,
+                COALESCE(u.kapanis_personel_ad, '—')   AS kapanis_personel_ad,
+                -- Geriye uyumluluk: 'personel_ad' alanı en sorumlu personeli verir
+                CASE u.tip
+                    WHEN 'KAPANIS_KASA_FARK' THEN COALESCE(u.kapanis_personel_ad, u.acilis_personel_ad, '—')
+                    WHEN 'ACILIS_KASA_FARK'  THEN COALESCE(u.acilis_personel_ad, u.kapanis_personel_ad, '—')
+                    ELSE '—'
+                END AS personel_ad,
                 u.fark_tl, u.beklenen_tl, u.gercek_tl, u.seviye, u.okundu
             FROM sube_operasyon_uyari u
             LEFT JOIN subeler s ON s.id = u.sube_id
-            WHERE u.tip = 'KAPANIS_KASA_FARK'
+            WHERE u.tip IN ('KAPANIS_KASA_FARK', 'ACILIS_KASA_FARK')
               AND ABS(COALESCE(u.fark_tl, 0)) > 20
               AND u.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
             ORDER BY u.tarih DESC, ABS(u.fark_tl) DESC
