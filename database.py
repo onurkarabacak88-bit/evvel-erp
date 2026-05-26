@@ -3250,6 +3250,92 @@ $$;
         except Exception as _mig_e:
             print(f"[MIGRATION WARN] katalog_stok_birebir_v1: {_mig_e}")
 
+        # ─── MIGRATION: depo_stok_duplike_temizlik_v3 (UUID-havuz çakışmaları) ────
+        # katalog_stok_birebir_v1 her siparis_urun için UUID satırı yarattı.
+        # Bardak/su/soda gibi "fiziksel havuz" ürünler zaten su_adet/bardak_kucuk
+        # gibi text-kodlu satırlarla izleniyor — UUID satırı ikinci bir giriş yapıyor.
+        # Bu migration:
+        #  1. Havuz ürünlerinin UUID sube_depo_stok satırlarındaki adet varsa havuz
+        #     satırına aktarır.
+        #  2. UUID satırlarını siler.
+        #  3. siparis_urun.depo_stok_kalem_kodu = havuz kodu ile işaretler
+        #     (gelecekte _sube_katalog_stok_garantile tekrar UUID satırı eklemesin).
+        try:
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log WHERE ad='depo_stok_duplike_temizlik_v3' LIMIT 1
+            """)
+            if not cur.fetchone():
+                try:
+                    from operasyon_stok_motor import _stok_key_from_urun_ad as _v3_sk_fn
+                except Exception:
+                    _v3_sk_fn = None
+
+                _HAVUZ_V3 = frozenset({
+                    "bardak_kucuk", "bardak_buyuk", "bardak_plastik", "su_adet",
+                    "redbull_adet", "soda_adet", "cookie_adet", "pasta_adet",
+                    "sut_litre", "surup_adet", "kahve_paket", "karton_bardak",
+                    "kapak_adet", "pecete_paket", "diger_sarf",
+                })
+
+                _v3_silinen = 0
+                _v3_merge = 0
+
+                if _v3_sk_fn is not None:
+                    cur.execute("SELECT id, ad FROM siparis_urun")
+                    _v3_urunler = cur.fetchall()
+                    for _v3r in _v3_urunler:
+                        _v3_uid = str(_v3r["id"])
+                        _v3_ad  = str(_v3r.get("ad") or "")
+                        _v3_hk  = _v3_sk_fn(_v3_ad)
+                        if not _v3_hk or _v3_hk not in _HAVUZ_V3:
+                            continue
+
+                        # 1. siparis_urun.depo_stok_kalem_kodu işaretle
+                        cur.execute("""
+                            UPDATE siparis_urun
+                            SET depo_stok_kalem_kodu = %s
+                            WHERE id = %s
+                              AND (depo_stok_kalem_kodu IS NULL OR depo_stok_kalem_kodu = '')
+                        """, (_v3_hk, _v3_uid))
+
+                        # 2. UUID satırındaki adet > 0 ise havuz satırına ekle
+                        cur.execute("""
+                            UPDATE sube_depo_stok dst
+                            SET mevcut_adet = dst.mevcut_adet
+                                    + COALESCE((
+                                        SELECT mevcut_adet FROM sube_depo_stok
+                                        WHERE sube_id = dst.sube_id
+                                          AND kalem_kodu = %s
+                                          AND mevcut_adet > 0
+                                      ), 0),
+                                guncelleme  = NOW()
+                            WHERE dst.kalem_kodu = %s
+                              AND EXISTS (
+                                  SELECT 1 FROM sube_depo_stok
+                                  WHERE sube_id = dst.sube_id
+                                    AND kalem_kodu = %s
+                                    AND mevcut_adet > 0
+                              )
+                        """, (_v3_uid, _v3_hk, _v3_uid))
+                        _v3_merge += cur.rowcount
+
+                        # 3. UUID satırlarını sil
+                        cur.execute(
+                            "DELETE FROM sube_depo_stok WHERE kalem_kodu = %s",
+                            (_v3_uid,),
+                        )
+                        _v3_silinen += cur.rowcount
+
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay) VALUES (%s, %s::jsonb)
+                """, (
+                    'depo_stok_duplike_temizlik_v3',
+                    f'{{"silinen": {_v3_silinen}, "merge": {_v3_merge}}}',
+                ))
+                print(f"[MIGRATION] depo_stok_duplike_temizlik_v3: silinen={_v3_silinen}, merge={_v3_merge}")
+        except Exception as _mig_e:
+            print(f"[MIGRATION WARN] depo_stok_duplike_temizlik_v3: {_mig_e}")
+
         # ─── RAPOR CACHE TABLOLARI (raporlama hızlandırma) — savepoint ile safe ──
         # Her CREATE ayrı savepoint'te — biri patlasa diğerleri etkilenmez.
         for _ddl_ad, _ddl in [

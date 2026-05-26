@@ -7311,14 +7311,26 @@ def _siparis_urun_insert(cur, kategori_kod: str, urun_adi: str, aciklama: Option
     )
     row = dict(cur.fetchone())
     # 1-to-1 eşleştirme: yeni/reaktive ürün → tüm aktif şubeler için stok satırı garantile
+    # Fiziksel havuz ürünleri (su_adet, bardak vb.) UUID satırı almaz — text-kodlu izlenir.
     try:
-        cur.execute("""
-            INSERT INTO sube_depo_stok (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet)
-            SELECT gen_random_uuid()::text, s.id, %s, %s, 0
-            FROM subeler s
-            WHERE s.aktif = TRUE
-            ON CONFLICT (sube_id, kalem_kodu) DO NOTHING
-        """, (str(row["id"]), row["ad"]))
+        from operasyon_stok_motor import _stok_key_from_urun_ad as _sk_fn_v2
+        _HAVUZ_V2 = frozenset({
+            "bardak_kucuk", "bardak_buyuk", "bardak_plastik", "su_adet",
+            "redbull_adet", "soda_adet", "cookie_adet", "pasta_adet",
+            "sut_litre", "surup_adet", "kahve_paket", "karton_bardak",
+            "kapak_adet", "pecete_paket", "diger_sarf",
+        })
+        _urun_hk = _sk_fn_v2(row.get("ad") or "")
+        _urun_ovr = str(row.get("depo_stok_kalem_kodu") or "").strip()
+        _is_havuz = (_urun_hk and _urun_hk in _HAVUZ_V2) or (_urun_ovr and _urun_ovr in _HAVUZ_V2)
+        if not _is_havuz:
+            cur.execute("""
+                INSERT INTO sube_depo_stok (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet)
+                SELECT gen_random_uuid()::text, s.id, %s, %s, 0
+                FROM subeler s
+                WHERE s.aktif = TRUE
+                ON CONFLICT (sube_id, kalem_kodu) DO NOTHING
+            """, (str(row["id"]), row["ad"]))
     except Exception:
         pass  # stok satırı oluşturma kritik değil — migration v1 de yapar
     return row

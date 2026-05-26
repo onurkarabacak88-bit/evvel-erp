@@ -4214,14 +4214,23 @@ def subeler():
 
 def _sube_katalog_stok_garantile(cur, sube_id: str) -> int:
     """Verilen şube için tüm aktif siparis_urun kayıtlarına karşılık sube_depo_stok satırı ekler.
+    Fiziksel havuz ürünleri (su_adet, bardak vb.) atlanır — onlar text-kodlu satırlarla izlenir.
     Mevcut satırları değiştirmez (ON CONFLICT DO NOTHING). Eklenen satır sayısını döner."""
+    _HAVUZ = (
+        'bardak_kucuk', 'bardak_buyuk', 'bardak_plastik', 'su_adet',
+        'redbull_adet', 'soda_adet', 'cookie_adet', 'pasta_adet',
+        'sut_litre', 'surup_adet', 'kahve_paket', 'karton_bardak',
+        'kapak_adet', 'pecete_paket', 'diger_sarf',
+    )
     cur.execute("""
         INSERT INTO sube_depo_stok (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet)
         SELECT gen_random_uuid()::text, %s, su.id::text, su.ad, 0
         FROM siparis_urun su
         WHERE su.aktif = TRUE
+          AND (su.depo_stok_kalem_kodu IS NULL
+               OR su.depo_stok_kalem_kodu NOT IN %s)
         ON CONFLICT (sube_id, kalem_kodu) DO NOTHING
-    """, (sube_id,))
+    """, (sube_id, _HAVUZ))
     return cur.rowcount
 
 
