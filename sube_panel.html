@@ -7885,7 +7885,10 @@ async function renderSiparisTakipPanel() {
     }
 
     var tahsisBitti = (tahsisCls === 'st-done' || tahsisCls === 'st-warn');
-    var _sevkGonderildi = (t.sevkiyat_durumu === 'gonderildi');
+    // durum='teslim_edildi' olan kayıtlarda sevkiyat_durumu eksik kalabilir —
+    // chip ile tutarlı olması için teslim_edildi'yi gönderildi ile eşdeğer tut.
+    var _teslimEdildi  = (t.durum === 'teslim_edildi');
+    var _sevkGonderildi = (t.sevkiyat_durumu === 'gonderildi' || _teslimEdildi);
     var _sevkKismiHazir = (t.sevkiyat_durumu === 'kismi_hazirlandi');
     var sevkCls, sevkDot, sevkSub;
     if (!tahsisBitti) {
@@ -7902,7 +7905,8 @@ async function renderSiparisTakipPanel() {
     var kabulCls, kabulDot, kabulSub;
     if (!_sevkGonderildi && !_sevkKismiHazir) {
       kabulCls = ''; kabulDot = '·'; kabulSub = '—';
-    } else if (t.kabul_durum === 'kabul_tam') {
+    } else if (t.kabul_durum === 'kabul_tam' || _teslimEdildi) {
+      // chip ile aynı mantık: kabul_durum yoksa durum='teslim_edildi' yeterli
       kabulCls = 'st-done'; kabulDot = '✓'; kabulSub = 'Tam teslim';
     } else if (t.kabul_durum === 'kabul_kismi') {
       kabulCls = 'st-warn'; kabulDot = '✓'; kabulSub = 'Kısmi kabul';
