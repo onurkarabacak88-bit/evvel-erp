@@ -3,12 +3,13 @@ kart_analiz.py — PDF kredi kartı ekstresi parser + analiz API
 Desteklenen bankalar: Enpara, Garanti BBVA, Yapı Kredi, Ziraat
 """
 from __future__ import annotations
-import re, io, json
+import re, io, json, uuid
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import date, datetime
 import pdfplumber
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/kart-analiz", tags=["kart-analiz"])
 
@@ -410,3 +411,105 @@ async def parse_pdf_endpoint(files: List[UploadFile] = File(...)):
         'tekrarlayan': recurring,
         'hatalar': errors,
     }
+
+# ─── Kartlar listesi — eşleştirme için ───────────────────────────────────────
+@router.get("/kartlar-listesi")
+def kartlar_listesi():
+    """Mevcut kart tanımlarını döndürür (ekstre eşleştirme için)."""
+    from database import db
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT k.id, k.kart_adi, k.banka, k.son_dort_hane,
+                   k.limit_tutar, k.faiz_orani,
+                   COALESCE(
+                       (SELECT SUM(h.tutar) FROM kart_hareketleri h
+                        WHERE h.kart_id = k.id AND h.durum = 'aktif'
+                          AND h.islem_turu NOT IN ('ODEME','FAIZ')),
+                       0
+                   ) AS guncel_borc
+            FROM kartlar k
+            WHERE k.aktif = TRUE
+            ORDER BY k.banka, k.kart_adi
+        """)
+        return [dict(r) for r in cur.fetchall()]
+
+# ─── Aktarım: eşleştirilmiş PDF işlemlerini kart_hareketleri'ne yaz ──────────
+class AktarimKalem(BaseModel):
+    tarih: str
+    aciklama: str
+    tutar: float
+    kategori: str = ''
+
+class AktarimBody(BaseModel):
+    kart_id: str
+    islemler: List[AktarimKalem]
+
+@router.post("/aktar")
+def aktar(body: AktarimBody):
+    """
+    Eşleştirilmiş PDF harcamalarını kart_hareketleri'ne HARCAMA olarak yazar.
+    Duplike kontrolü: aynı kart + tarih + tutar + açıklama varsa atlanır.
+    """
+    from database import db
+    with db() as (conn, cur):
+        cur.execute("SELECT id, kart_adi FROM kartlar WHERE id=%s AND aktif=TRUE", (body.kart_id,))
+        kart = cur.fetchone()
+        if not kart:
+            raise HTTPException(404, detail="Kart bulunamadı")
+
+        yazilan = 0
+        atlanan = 0
+        for tx in body.islemler:
+            aciklama_tam = tx.aciklama[:180]
+            if tx.kategori:
+                aciklama_tam = aciklama_tam + ' [' + tx.kategori + ']'
+            aciklama_tam = aciklama_tam[:200]
+
+            # Duplike kontrolü
+            cur.execute("""
+                SELECT 1 FROM kart_hareketleri
+                WHERE kart_id=%s AND tarih=%s AND tutar=%s
+                  AND LEFT(aciklama,60) = LEFT(%s,60)
+                  AND islem_turu='HARCAMA'
+                LIMIT 1
+            """, (body.kart_id, tx.tarih, round(tx.tutar, 2), aciklama_tam))
+            if cur.fetchone():
+                atlanan += 1
+                continue
+
+            h_id = str(uuid.uuid4())
+            cur.execute("""
+                INSERT INTO kart_hareketleri
+                    (id, kart_id, tarih, islem_turu, tutar, aciklama, durum)
+                VALUES (%s, %s, %s, 'HARCAMA', %s, %s, 'aktif')
+            """, (h_id, body.kart_id, tx.tarih, round(tx.tutar, 2), aciklama_tam))
+            yazilan += 1
+
+        conn.commit()
+    return {
+        'success': True,
+        'kart_adi': kart['kart_adi'],
+        'yazilan': yazilan,
+        'atlanan': atlanan,
+        'toplam': len(body.islemler),
+    }
+
+# ─── Son 4 hane kaydet ────────────────────────────────────────────────────────
+class SonDortHaneBody(BaseModel):
+    kart_id: str
+    son_dort_hane: str
+
+@router.post("/kaydet-son-dort-hane")
+def kaydet_son_dort_hane(body: SonDortHaneBody):
+    """Kartın son 4 hanesini güncelle (PDF eşleştirme için)."""
+    from database import db
+    s4 = re.sub(r'[^0-9]', '', body.son_dort_hane)[-4:]
+    if len(s4) != 4:
+        raise HTTPException(400, detail="Geçerli 4 haneli sayı girin")
+    with db() as (conn, cur):
+        cur.execute("UPDATE kartlar SET son_dort_hane=%s WHERE id=%s AND aktif=TRUE",
+                    (s4, body.kart_id))
+        if cur.rowcount == 0:
+            raise HTTPException(404, detail="Kart bulunamadı")
+        conn.commit()
+    return {'success': True}

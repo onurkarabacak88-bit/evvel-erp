@@ -1313,6 +1313,7 @@ class KartModel(BaseModel):
     faiz_orani: float = 0.0          # Akdi (yıllık) faiz oranı %
     asgari_oran: float = 40.0        # Bankanın asgari ödeme oranı (%)
     gecikme_faiz_orani: float = 0.0  # Asgari altı ödemede uygulanan yıllık % (0 → akdi×1.3 fallback)
+    son_dort_hane: Optional[str] = None  # PDF ekstre eşleştirme için son 4 hane
 
 @app.get("/api/kartlar")
 def kartlar_listele():
@@ -1424,10 +1425,11 @@ def kartlar_listele():
 def kart_ekle(k: KartModel):
     with db() as (conn, cur):
         kid = str(uuid.uuid4())
-        cur.execute("""INSERT INTO kartlar (id,kart_adi,banka,limit_tutar,kesim_gunu,son_odeme_gunu,faiz_orani,asgari_oran,gecikme_faiz_orani)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        cur.execute("""INSERT INTO kartlar (id,kart_adi,banka,limit_tutar,kesim_gunu,son_odeme_gunu,faiz_orani,asgari_oran,gecikme_faiz_orani,son_dort_hane)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (kid, k.kart_adi, k.banka, k.limit_tutar, k.kesim_gunu, k.son_odeme_gunu,
-             k.faiz_orani, k.asgari_oran, k.gecikme_faiz_orani))
+             k.faiz_orani, k.asgari_oran, k.gecikme_faiz_orani,
+             k.son_dort_hane.strip()[-4:] if k.son_dort_hane else None))
         audit(cur, 'kartlar', kid, 'INSERT')
     return {"id": kid, "success": True}
 
@@ -1438,10 +1440,12 @@ def kart_guncelle(kid: str, k: KartModel):
         eski = cur.fetchone()
         if not eski: raise HTTPException(404)
         cur.execute("""UPDATE kartlar SET kart_adi=%s,banka=%s,limit_tutar=%s,
-            kesim_gunu=%s,son_odeme_gunu=%s,faiz_orani=%s,asgari_oran=%s,gecikme_faiz_orani=%s
+            kesim_gunu=%s,son_odeme_gunu=%s,faiz_orani=%s,asgari_oran=%s,gecikme_faiz_orani=%s,
+            son_dort_hane=%s
             WHERE id=%s""",
             (k.kart_adi, k.banka, k.limit_tutar, k.kesim_gunu, k.son_odeme_gunu,
-             k.faiz_orani, k.asgari_oran, k.gecikme_faiz_orani, kid))
+             k.faiz_orani, k.asgari_oran, k.gecikme_faiz_orani,
+             k.son_dort_hane.strip()[-4:] if k.son_dort_hane else None, kid))
         audit(cur, 'kartlar', kid, 'UPDATE', eski=eski)
     return {"success": True}
 

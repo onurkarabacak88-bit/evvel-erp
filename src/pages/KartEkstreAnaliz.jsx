@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -25,6 +25,23 @@ function ayLabel(ym) {
   if (!ym) return ym;
   const [yil, ay] = ym.split('-');
   return `${TR_AY[parseInt(ay)] || ay} ${yil}`;
+}
+
+// ── Banka adı normalize (fuzzy eşleştirme) ────────────────────────────────────
+function bankaNorm(s) {
+  return (s || '').toLowerCase()
+    .replace(/\s+/g, '').replace(/bankası?|bank|bbva/g, '');
+}
+function bankaEslesiyor(a, b) {
+  const na = bankaNorm(a), nb = bankaNorm(b);
+  return na === nb || na.includes(nb) || nb.includes(na);
+}
+
+// PDF kart_no'sundan son 4 haneyi çıkar
+function son4PDF(kartNo) {
+  if (!kartNo) return '';
+  const sadece = kartNo.replace(/[^0-9]/g, '');
+  return sadece.slice(-4);
 }
 
 // ── Header gradienti ───────────────────────────────────────────────────────────
@@ -58,6 +75,21 @@ export default function KartEkstreAnaliz() {
   const [secilenBnk, setSecilenBnk] = useState('Tümü');
   const [surukle, setSurukle]       = useState(false);
   const fileRef = useRef();
+
+  // ── Mevcut kartlar (eşleştirme için) ─────────────────────────────────────────
+  const [kartlar, setKartlar]         = useState([]);
+  // eslesmeler: { 'Enpara::1234': kart_id, ... }
+  const [eslesmeler, setEslesmeler]   = useState({});
+  // aktarimSonuclari: { 'Enpara::1234': { yazilan, atlanan, kart_adi } }
+  const [aktarimSonuclari, setAktarimSonuclari] = useState({});
+  const [aktarimLoading, setAktarimLoading] = useState('');
+
+  useEffect(() => {
+    fetch('/kart-analiz/kartlar-listesi')
+      .then(r => r.ok ? r.json() : [])
+      .then(setKartlar)
+      .catch(() => {});
+  }, []);
 
   // ── Dosya ekleme ─────────────────────────────────────────────────────────────
   function dosyaEkle(files) {
@@ -93,7 +125,24 @@ export default function KartEkstreAnaliz() {
         const err = await r.json().catch(() => ({ detail: r.statusText }));
         throw new Error(err.detail || r.statusText);
       }
-      setSonuc(await r.json());
+      const data = await r.json();
+      setSonuc(data);
+      setAktarimSonuclari({});
+      // Auto-eşleştir: banka adı + son 4 hane uyuşuyorsa direkt seç
+      if (kartlar.length > 0) {
+        const oto = {};
+        (data.islemler || []).forEach(tx => {
+          const key = tx.banka + '::' + son4PDF(tx.kart_no);
+          if (oto[key]) return;
+          const s4 = son4PDF(tx.kart_no);
+          const eslesen = kartlar.find(k =>
+            bankaEslesiyor(k.banka, tx.banka) &&
+            (k.son_dort_hane === s4 || (!k.son_dort_hane && !s4))
+          ) || kartlar.find(k => bankaEslesiyor(k.banka, tx.banka));
+          if (eslesen) oto[key] = eslesen.id;
+        });
+        setEslesmeler(oto);
+      }
     } catch (e) {
       setHata(e.message);
     } finally {
@@ -121,6 +170,59 @@ export default function KartEkstreAnaliz() {
   // Tekrarlayan gruplama
   const abonelikler = tekrarlayan.filter(t => t['tür'] === 'İptal Edilebilir Abonelik');
   const sabitler    = tekrarlayan.filter(t => t['tür'] === 'Sabit Yükümlülük');
+
+  // ── PDF'ten okunan benzersiz kart listesi (banka + son4) ──────────────────────
+  const pdfKartlar = (() => {
+    const seen = new Set();
+    const list = [];
+    islemler.forEach(tx => {
+      const s4 = son4PDF(tx.kart_no);
+      const key = tx.banka + '::' + s4;
+      if (!seen.has(key)) {
+        seen.add(key);
+        list.push({ key, banka: tx.banka, s4, kart_no: tx.kart_no });
+      }
+    });
+    return list;
+  })();
+
+  // Aktarım: bir PDF kartının tüm harcamalarını gönder
+  async function aktarYap(pdfKey, kartId) {
+    if (!kartId) return;
+    setAktarimLoading(pdfKey);
+    try {
+      const [banka, s4] = pdfKey.split('::');
+      const secilen = islemler.filter(tx =>
+        !tx.odeme_mi &&
+        tx.banka === banka &&
+        son4PDF(tx.kart_no) === s4
+      );
+      const r = await fetch('/kart-analiz/aktar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kart_id: kartId, islemler: secilen }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || r.statusText);
+      setAktarimSonuclari(prev => ({ ...prev, [pdfKey]: d }));
+    } catch (e) {
+      setAktarimSonuclari(prev => ({ ...prev, [pdfKey]: { hata: e.message } }));
+    } finally {
+      setAktarimLoading('');
+    }
+  }
+
+  // Son 4 haneyi karta kaydet
+  async function son4Kaydet(kartId, s4) {
+    await fetch('/kart-analiz/kaydet-son-dort-hane', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kart_id: kartId, son_dort_hane: s4 }),
+    });
+    // kartlar listesini yenile
+    const fresh = await fetch('/kart-analiz/kartlar-listesi').then(r => r.json()).catch(() => kartlar);
+    setKartlar(fresh);
+  }
 
   // Filtre seçenekleri
   const bankaListesi = ['Tümü', ...new Set(islemler.map(i => i.banka))];
@@ -239,6 +341,109 @@ export default function KartEkstreAnaliz() {
               </div>
             ))}
           </div>
+
+          {/* ── Kart Eşleştirme Paneli ── */}
+          {pdfKartlar.length > 0 && kartlar.length > 0 && (
+            <div className="card" style={{ marginBottom: 24, border: '1px solid rgba(99,102,241,0.35)' }}>
+              <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>🔗 Kart Eşleştirme</h3>
+              <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 14, marginTop: 0 }}>
+                PDF'ten okunan her kartı mevcut kart tanımınızla eşleştirin. Harcamaları &nbsp;
+                <strong style={{ color: 'var(--primary)' }}>Kart Hareketleri</strong>'ne aktarabilirsiniz.
+              </p>
+
+              {pdfKartlar.map(pk => {
+                const eslKartId = eslesmeler[pk.key] || '';
+                const eslKart   = kartlar.find(k => k.id === eslKartId);
+                const sonuc_    = aktarimSonuclari[pk.key];
+                const isLoading = aktarimLoading === pk.key;
+                const txCount   = islemler.filter(tx => !tx.odeme_mi && tx.banka === pk.banka && son4PDF(tx.kart_no) === pk.s4).length;
+
+                return (
+                  <div key={pk.key} style={{
+                    padding: '14px 16px', marginBottom: 10, borderRadius: 10,
+                    background: 'var(--bg3)', border: '1px solid var(--border)',
+                  }}>
+                    {/* Sol: PDF kart kimliği */}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
+                      <div style={{ minWidth: 160 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>
+                          {pk.banka} {pk.s4 ? <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text3)' }}>**** {pk.s4}</span> : ''}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                          PDF'te {txCount} harcama
+                        </div>
+                      </div>
+
+                      <div style={{ fontSize: 18, color: 'var(--text3)', paddingTop: 4 }}>→</div>
+
+                      {/* Dropdown */}
+                      <div style={{ flex: 1, minWidth: 200 }}>
+                        <select
+                          value={eslKartId}
+                          onChange={e => {
+                            const yeni = e.target.value;
+                            setEslesmeler(prev => ({ ...prev, [pk.key]: yeni }));
+                            // Son 4 haneyi otomatik kaydet (eğer kart tanımında yoksa)
+                            const secilenK = kartlar.find(k => k.id === yeni);
+                            if (yeni && pk.s4 && secilenK && !secilenK.son_dort_hane)
+                              son4Kaydet(yeni, pk.s4);
+                          }}
+                          style={{
+                            width: '100%', padding: '8px 10px', borderRadius: 6,
+                            background: 'var(--bg2)', border: `1px solid ${eslKartId ? 'var(--primary)' : 'var(--border)'}`,
+                            color: 'var(--text1)', fontSize: 13,
+                          }}>
+                          <option value="">— Kart seçin —</option>
+                          {kartlar.map(k => (
+                            <option key={k.id} value={k.id}>
+                              {k.kart_adi} ({k.banka}{k.son_dort_hane ? ' ****' + k.son_dort_hane : ''})
+                            </option>
+                          ))}
+                        </select>
+
+                        {/* Eşleşen kartın metrikleri */}
+                        {eslKart && (
+                          <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+                            {[
+                              { label: 'Limit', val: fmt(eslKart.limit_tutar), renk: 'var(--text2)' },
+                              { label: 'Faiz', val: `%${eslKart.faiz_orani}`, renk: 'var(--yellow)' },
+                              { label: 'Mevcut Borç', val: fmt(eslKart.guncel_borc), renk: 'var(--red)' },
+                            ].map(m => (
+                              <div key={m.label} style={{ fontSize: 11, color: 'var(--text3)' }}>
+                                {m.label}: <strong style={{ color: m.renk }}>{m.val}</strong>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Aktarım butonu */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                        <button
+                          onClick={() => aktarYap(pk.key, eslKartId)}
+                          disabled={!eslKartId || isLoading || !!sonuc_?.yazilan}
+                          className="btn btn-primary btn-sm"
+                          style={{ height: 38, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', minWidth: 110 }}>
+                          {isLoading ? '⏳ Aktarılıyor…' : sonuc_?.yazilan != null ? '✅ Aktarıldı' : '⬆ Aktar'}
+                        </button>
+
+                        {/* Sonuç */}
+                        {sonuc_ && !sonuc_.hata && (
+                          <div style={{ fontSize: 11, textAlign: 'right', color: 'var(--green)', lineHeight: 1.4 }}>
+                            {sonuc_.yazilan} yeni kayıt
+                            {sonuc_.atlanan > 0 && <span style={{ color: 'var(--text3)' }}> · {sonuc_.atlanan} duplike atlandı</span>}
+                          </div>
+                        )}
+                        {sonuc_?.hata && (
+                          <div style={{ fontSize: 11, color: 'var(--red)' }}>⚠ {sonuc_.hata}</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Aylık + Kategori grafikleri */}
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2fr) minmax(0,1fr)', gap: 16, marginBottom: 24 }}>

@@ -3570,3 +3570,21 @@ $$;
                 print(f"[MIGRATION] sarf sira güncellendi: {cur.rowcount} satır")
         except Exception as _fix5_e:
             print(f"[MIGRATION WARN] sarf sira: {_fix5_e}")
+
+        # ── Migration: kartlar.son_dort_hane — PDF ekstre eşleştirme ──
+        try:
+            cur.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name='kartlar' AND column_name='son_dort_hane'
+                    ) THEN
+                        ALTER TABLE kartlar ADD COLUMN son_dort_hane TEXT;
+                        RAISE NOTICE 'kartlar.son_dort_hane kolonu eklendi';
+                    END IF;
+                END $$;
+            """)
+            print("[MIGRATION] kartlar.son_dort_hane kolonu kontrol edildi")
+        except Exception as _fix6_e:
+            print(f"[MIGRATION WARN] kartlar son_dort_hane: {_fix6_e}")
