@@ -10514,13 +10514,17 @@ function frWizFlashMsg(msg) {
   var el=document.getElementById('frWizMsg');
   if (!el) {
     var fl=document.createElement('div');
-    fl.style.cssText='position:fixed;bottom:72px;left:50%;transform:translateX(-50%);background:rgba(220,38,38,.9);color:#fff;border-radius:20px;padding:8px 18px;font-size:13px;font-weight:700;z-index:9999;white-space:nowrap';
-    fl.textContent=msg; document.body.appendChild(fl);
-    setTimeout(function(){ fl.parentNode&&fl.parentNode.removeChild(fl); },1800);
+    // Yukarıda fixed + uzun mesaj sığar + tıkla kapat + 5sn gösterim
+    fl.style.cssText='position:fixed;top:24px;left:50%;transform:translateX(-50%);background:rgba(220,38,38,.95);color:#fff;border-radius:10px;padding:14px 20px;font-size:14px;font-weight:700;z-index:99999;max-width:80vw;min-width:240px;text-align:center;line-height:1.4;box-shadow:0 8px 32px rgba(0,0,0,.5);cursor:pointer;border:1px solid rgba(255,255,255,0.15)';
+    fl.textContent='⚠ ' + msg;
+    fl.title = 'Kapatmak için tıkla';
+    fl.onclick = function(){ if (fl.parentNode) fl.parentNode.removeChild(fl); };
+    document.body.appendChild(fl);
+    setTimeout(function(){ if (fl.parentNode) fl.parentNode.removeChild(fl); },5000);
     return;
   }
   el.textContent=msg;
-  setTimeout(function(){ if(el.textContent===msg) el.textContent=''; },3000);
+  setTimeout(function(){ if(el.textContent===msg) el.textContent=''; },5000);
 }
 
 function frWizGonder() {
@@ -10552,7 +10556,9 @@ function frWizGonder() {
   _frWiz.busy=true;
   var btn=document.getElementById('frNavGonder');
   if (btn) { btn.disabled=true; btn.textContent='⏳ Kaydediliyor…'; }
-  api('/sube-panel/'+SUBE_ID+'/fire-bildir',{ method:'POST', body:body, sessizIslemToast:true })
+  // sessizIslemToast KALDIRILDI → api'nin sağlam hata toast'ı çalışsın
+  // (frWizFlashMsg yedek olarak da gösterir — kullanıcı kesin görür)
+  api('/sube-panel/'+SUBE_ID+'/fire-bildir',{ method:'POST', body:body })
     .then(function(){
       _frWiz.busy=false;
       var sebepObj=FR_SEBEPLER.find(function(s){ return s.kod===_frWiz.sebep; })||{};
