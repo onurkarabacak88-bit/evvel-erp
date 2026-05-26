@@ -6772,6 +6772,9 @@ def ops_kasa_duzeltme_tarihce(uyari_id: str):
     """Belirli bir uyari için yapılan tüm kaynak düzeltmelerin audit tarihçesi."""
     with db() as (_, cur):
         _kkd_tablo_garantile(cur)
+        # ▼ Yeni kolonların lazy migration'ını burada da çağır
+        # (POST /geri-al ilk kez çağrılmadan önce GET tarihce çağrılınca kolon yok hatası önlenir)
+        _kkd_geri_alma_kolonlari_garantile(cur)
         cur.execute(
             """
             SELECT id, sebep, hedef_tablo, hedef_id,

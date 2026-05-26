@@ -5212,7 +5212,7 @@ export default function OperasyonMerkezi() {
   // ─── Tarihçe modal: audit listesi + geri al ───────────────────────────
   async function kkTarihceModalAc(uyari) {
     if (!uyari?.id) return;
-    setKkTarihceModal({ uyari, tarihce: [], yukleniyor: true, geriAlBusyId: null });
+    setKkTarihceModal({ uyari, tarihce: [], yukleniyor: true, geriAlBusyId: null, hata: null });
     try {
       const r = await api(`/ops/kasa-uyumsuzluk/${encodeURIComponent(uyari.id)}/duzeltme-tarihce`);
       setKkTarihceModal({
@@ -5220,10 +5220,15 @@ export default function OperasyonMerkezi() {
         tarihce: Array.isArray(r?.tarihce) ? r.tarihce : [],
         yukleniyor: false,
         geriAlBusyId: null,
+        hata: null,
       });
     } catch (e) {
-      toast(e.message || 'Tarihçe yüklenemedi', 'red');
-      setKkTarihceModal(null);
+      // Modal'ı KAPATMA — hata içeride göster, kullanıcı tekrar deneyebilsin
+      setKkTarihceModal((prev) => prev ? {
+        ...prev,
+        yukleniyor: false,
+        hata: e.message || 'Tarihçe yüklenemedi',
+      } : prev);
     }
   }
 
@@ -15287,7 +15292,25 @@ export default function OperasyonMerkezi() {
               <div style={{ padding: 20, textAlign: 'center', color: 'var(--text3)' }}>Yükleniyor…</div>
             )}
 
-            {!kkTarihceModal.yukleniyor && (!kkTarihceModal.tarihce || kkTarihceModal.tarihce.length === 0) && (
+            {!kkTarihceModal.yukleniyor && kkTarihceModal.hata && (
+              <div style={{
+                padding: '14px 16px', textAlign: 'left',
+                background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.40)',
+                borderRadius: 8, fontSize: 13, color: '#fca5a5', marginBottom: 12,
+              }}>
+                <strong>⚠ Tarihçe yüklenemedi:</strong><br />
+                {kkTarihceModal.hata}
+                <button
+                  type="button" className="btn btn-sm"
+                  style={{ marginTop: 10, padding: '4px 12px', fontSize: 12 }}
+                  onClick={() => kkTarihceModalAc(kkTarihceModal.uyari)}
+                >
+                  ↺ Tekrar dene
+                </button>
+              </div>
+            )}
+
+            {!kkTarihceModal.yukleniyor && !kkTarihceModal.hata && (!kkTarihceModal.tarihce || kkTarihceModal.tarihce.length === 0) && (
               <div style={{
                 padding: 20, textAlign: 'center', color: 'var(--text3)',
                 background: 'rgba(100,116,139,0.08)', border: '1px dashed var(--border)',
