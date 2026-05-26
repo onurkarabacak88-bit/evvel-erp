@@ -6084,7 +6084,7 @@ def ops_kasa_uyumsuzluk_listesi(
             LEFT JOIN subeler s ON s.id = u.sube_id
             WHERE u.tip IN ('ACILIS_KASA_FARK', 'KAPANIS_KASA_FARK')
               AND u.tarih = %s
-              AND ABS(COALESCE(u.cozum_duzeltilen_tl, u.fark_tl, 0)) >= %s
+              AND ABS(COALESCE(u.fark_tl, 0)) >= %s
               AND (%s = FALSE OR u.okundu = FALSE)
               AND (%s = FALSE OR u.okundu = TRUE)
             ORDER BY u.okundu ASC, ABS(COALESCE(u.cozum_duzeltilen_tl, u.fark_tl)) DESC NULLS LAST, u.olusturma DESC
