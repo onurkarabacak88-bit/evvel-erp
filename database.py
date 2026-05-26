@@ -3280,13 +3280,31 @@ $$;
                 _v3_silinen = 0
                 _v3_merge = 0
 
+                # Flavoring/ingredient kategorileri hariç (ör. Cookie şurubu → cookie_adet ile karıştırılmamalı)
+                _V3_ATLANACAK_KAT = frozenset({'surup', 'sos', 'pure', 'toz', 'sut', 'pasta'})
+
                 if _v3_sk_fn is not None:
-                    cur.execute("SELECT id, ad FROM siparis_urun")
+                    cur.execute("""
+                        SELECT su.id, su.ad, su.depo_stok_kalem_kodu,
+                               sk.kod AS kategori_kod
+                        FROM siparis_urun su
+                        LEFT JOIN siparis_kategori sk ON sk.id = su.kategori_id
+                    """)
                     _v3_urunler = cur.fetchall()
                     for _v3r in _v3_urunler:
-                        _v3_uid = str(_v3r["id"])
-                        _v3_ad  = str(_v3r.get("ad") or "")
-                        _v3_hk  = _v3_sk_fn(_v3_ad)
+                        _v3_uid  = str(_v3r["id"])
+                        _v3_ad   = str(_v3r.get("ad") or "")
+                        _v3_kat  = str(_v3r.get("kategori_kod") or "").strip().lower()
+                        _v3_ovr  = str(_v3r.get("depo_stok_kalem_kodu") or "").strip()
+
+                        # Şurup/sos/pure/toz/sut/pasta kategorileri atlansın
+                        if _v3_kat in _V3_ATLANACAK_KAT:
+                            continue
+                        # Zaten farklı bir norm_ad koduna bağlıysa atla (birebir takip ediliyor)
+                        if _v3_ovr and _v3_ovr != _v3_uid:
+                            continue
+
+                        _v3_hk = _v3_sk_fn(_v3_ad)
                         if not _v3_hk or _v3_hk not in _HAVUZ_V3:
                             continue
 

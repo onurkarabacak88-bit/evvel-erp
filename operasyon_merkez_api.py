@@ -7310,6 +7310,7 @@ def _siparis_urun_insert(cur, kategori_kod: str, urun_adi: str, aciklama: Option
         (kategori_db_id, ad, norm, kategori_db_id, aciklama_val),
     )
     row = dict(cur.fetchone())
+    row["kategori_kod"] = kategori_kod.strip()   # kategori bağlamı havuz kontrolünde kullanılır
     # 1-to-1 eşleştirme: yeni/reaktive ürün → tüm aktif şubeler için stok satırı garantile
     # Fiziksel havuz ürünleri (su_adet, bardak vb.) UUID satırı almaz — text-kodlu izlenir.
     try:
@@ -7320,9 +7321,15 @@ def _siparis_urun_insert(cur, kategori_kod: str, urun_adi: str, aciklama: Option
             "sut_litre", "surup_adet", "kahve_paket", "karton_bardak",
             "kapak_adet", "pecete_paket", "diger_sarf",
         })
+        # Şurup/sos/pure/toz/sut/pasta kategorileri kendi UUID satırını korur
+        _ATLANACAK_KAT_V2 = frozenset({'surup', 'sos', 'pure', 'toz', 'sut', 'pasta'})
+        _urun_kat = str(row.get("kategori_kod") or "").strip().lower()
         _urun_hk = _sk_fn_v2(row.get("ad") or "")
         _urun_ovr = str(row.get("depo_stok_kalem_kodu") or "").strip()
-        _is_havuz = (_urun_hk and _urun_hk in _HAVUZ_V2) or (_urun_ovr and _urun_ovr in _HAVUZ_V2)
+        _is_havuz = (
+            _urun_kat not in _ATLANACAK_KAT_V2
+            and ((_urun_hk and _urun_hk in _HAVUZ_V2) or (_urun_ovr and _urun_ovr in _HAVUZ_V2))
+        )
         if not _is_havuz:
             cur.execute("""
                 INSERT INTO sube_depo_stok (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet)
