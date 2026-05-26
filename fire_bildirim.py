@@ -28,6 +28,10 @@ FIRE_SEBEP: Dict[str, str] = {
     "skt_bozulma":      "SKT / bozulma",
     "hazirlik_deneme":  "Hazırlık / deneme / eğitim",
     "kirilma_dokulme":  "Kırılma / dökülme",
+    "kirma_dokulme":    "Kırma / dökülme",  # ← Frontend alias (kirma vs kirilma uyumu)
+    "yanlis_urun":      "Yanlış ürün / değişim / hatalı hazırlık",
+    "personel_kullanim":"Personel ürün kullanımı (tüketim kaydı)",
+    "ikram":            "İkram (müşteriye bedava verilen ürün)",
     "diger":            "Diğer",
 }
 
