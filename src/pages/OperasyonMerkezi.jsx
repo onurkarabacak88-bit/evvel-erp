@@ -5315,7 +5315,24 @@ export default function OperasyonMerkezi() {
 
   return (
     <div className="page">
-      {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
+      {msg && (
+        <div
+          className={`alert-box ${msg.t}`}
+          style={{
+            position: 'fixed',
+            top: 20,
+            right: 20,
+            zIndex: 99999,
+            maxWidth: 480,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            cursor: 'pointer',
+          }}
+          onClick={() => setMsg(null)}
+          role="alert"
+        >
+          {msg.m}
+        </div>
+      )}
       <div className="page-header flex items-center justify-between">
         <div>
           <h2>📡 Operasyon Merkezi</h2>
