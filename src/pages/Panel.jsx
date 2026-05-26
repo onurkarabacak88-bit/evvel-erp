@@ -751,9 +751,18 @@ export default function Panel({ onNavigate }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
           {panel.bugun_odemeler.map((u, i) => {
             const gecikme = u.gun_farki < 0;
+            const gecikmeGun = gecikme ? Math.abs(u.gun_farki) : 0;
+            const urgencyClass = gecikme
+              ? gecikmeGun >= 15 ? 'urgency-high'
+              : gecikmeGun >= 8  ? 'urgency-mid'
+              : 'urgency-low'
+              : '';
+            const urgencyColor = gecikme
+              ? gecikmeGun >= 15 ? 'var(--red)'
+              : gecikmeGun >= 8  ? 'var(--orange)'
+              : 'var(--yellow)'
+              : 'var(--red)';
             const sabit = ['sabit_giderler', 'personel'].includes(u.kaynak_tablo);
-            const bg = gecikme ? 'rgba(180,20,20,0.12)' : 'rgba(220,50,50,0.07)';
-            const border = gecikme ? '2px solid var(--red)' : '1px solid var(--red)';
             // Sabit giderler için ikon ve etiket
             const kaynak_etiketi = {
               sabit_giderler: { ikon: '🏠', etiket: 'Sabit Gider', renk: 'var(--yellow)' },
@@ -763,9 +772,7 @@ export default function Panel({ onNavigate }) {
             }[u.kaynak_tablo] || { ikon: '💳', etiket: 'Ödeme', renk: 'var(--text3)' };
 
             return (
-              <div key={i} className="blink" style={{
-                background: bg, border: border,
-                borderLeft: gecikme ? '4px solid var(--red)' : '3px solid var(--red)',
+              <div key={i} className={`blink ${urgencyClass}`} style={{
                 borderRadius: 8, padding: '12px 16px',
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12
               }}>
@@ -779,8 +786,8 @@ export default function Panel({ onNavigate }) {
                       {kaynak_etiketi.ikon} {kaynak_etiketi.etiket}
                       {u.tip === 'degisken' && ' — Değişken'}
                     </span>
-                    <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--red)' }}>
-                      {gecikme ? `⛔ ${Math.abs(u.gun_farki)} GÜN GECİKMİŞ` : '🚨 BUGÜN'}
+                    <span className="urgency-badge" style={{ fontWeight: 700, fontSize: 13, color: urgencyColor }}>
+                      {gecikme ? `⛔ ${gecikmeGun} GÜN GECİKMİŞ` : '🚨 BUGÜN'}
                     </span>
                   </div>
                   <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 3 }}>{u.aciklama}</div>
