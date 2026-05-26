@@ -5113,8 +5113,9 @@ export default function OperasyonMerkezi() {
       }
     }
     if (sebep === 'acilis_yanlis') {
-      if (!Number.isFinite(Number(p.yeni_acilis_kasa))) {
-        return 'Yeni açılış kasa sayımı (₺) zorunlu.';
+      // Boş input → 0 değil, undefined olmalı; ayrıca >= 0 koşulu
+      if (p.yeni_acilis_kasa == null || !Number.isFinite(Number(p.yeni_acilis_kasa)) || Number(p.yeni_acilis_kasa) < 0) {
+        return 'Yeni açılış kasa sayımı (₺) zorunlu — 0 veya pozitif sayı girin.';
       }
     }
     if (sebep === 'devir_yanlis') {
@@ -5126,10 +5127,19 @@ export default function OperasyonMerkezi() {
       if (uyariTip === 'ACILIS_KASA_FARK') {
         return 'Devir uyumsuzluğu için gider eklenemez.';
       }
-      if (!Number.isFinite(Number(p.tutar)) || Number(p.tutar) <= 0) {
+      if (p.tutar == null || !Number.isFinite(Number(p.tutar)) || Number(p.tutar) <= 0) {
         return 'Gider tutarı 0\'dan büyük olmalı.';
       }
     }
+    if (sebep === 'ciro_fazla') {
+      if (uyariTip === 'ACILIS_KASA_FARK') {
+        return 'Devir uyumsuzluğu için ciro fazla eklenemez.';
+      }
+      if (p.tutar == null || !Number.isFinite(Number(p.tutar)) || Number(p.tutar) <= 0) {
+        return 'Ciroya eklenecek tutar 0\'dan büyük olmalı.';
+      }
+    }
+    // 'gercek_acik' validate gerek yok — sadece bilgilendirme, kaynak değişmez
     return null;
   }
 
@@ -5163,10 +5173,21 @@ export default function OperasyonMerkezi() {
       const onayDurum = r?.onay_durumu_yeni
         ? ` · Onay kuyruğu: ${r.onay_durumu_yeni}`
         : '';
+      // Cascade bilgisi — diğer günleri etkilediyse kullanıcıya bildir
+      const cascade = Array.isArray(r?.cascade) ? r.cascade : [];
+      let cascadeMsg = '';
+      if (cascade.length > 0) {
+        const cozulen = cascade.filter(c => c?.otomatik_cozuldu).length;
+        const acik = cascade.length - cozulen;
+        const parts = [];
+        if (cozulen > 0) parts.push(`${cozulen} cascade çözüldü`);
+        if (acik > 0) parts.push(`${acik} cascade hala açık`);
+        cascadeMsg = ` · 🔗 Bağlı uyarılar: ${parts.join(', ')}`;
+      }
       toast(
         r?.otomatik_cozuldu
-          ? `✅ Düzeltildi, fark sıfırlandı (eski ${fmt(eski)}₺ → 0₺)${onayDurum}`
-          : `🔧 Düzeltildi: ${fmt(eski)}₺ → ${fmt(yeni)}₺${onayDurum}`,
+          ? `✅ Düzeltildi, fark sıfırlandı (eski ${fmt(eski)}₺ → 0₺)${onayDurum}${cascadeMsg}`
+          : `🔧 Düzeltildi: ${fmt(eski)}₺ → ${fmt(yeni)}₺${onayDurum}${cascadeMsg}`,
         'green'
       );
       publishGlobalDataRefresh('ops-kasa-uyumsuzluk-cozuldu');
@@ -14945,12 +14966,12 @@ export default function OperasyonMerkezi() {
               <label style={{ fontSize: 12, display: 'block', marginBottom: 14 }}>
                 Yeni açılış kasa sayımı (₺)
                 <input
-                  type="number" step="0.01" className="input"
+                  type="number" step="0.01" min="0" className="input"
                   disabled={kkDuzeltBusy}
                   value={kkDuzeltModal.payload.yeni_acilis_kasa ?? ''}
                   onChange={(e) => setKkDuzeltModal((prev) => ({
                     ...prev,
-                    payload: { ...prev.payload, yeni_acilis_kasa: Number(e.target.value) },
+                    payload: { ...prev.payload, yeni_acilis_kasa: e.target.value === '' ? undefined : Number(e.target.value) },
                   }))}
                   style={{ width: '100%', marginTop: 4, padding: '8px 10px' }}
                   required
@@ -15005,12 +15026,12 @@ export default function OperasyonMerkezi() {
                 <label style={{ fontSize: 11, color: 'var(--text3)' }}>
                   Tutar (₺)
                   <input
-                    type="number" step="0.01" className="input"
+                    type="number" step="0.01" min="0" className="input"
                     disabled={kkDuzeltBusy}
                     value={kkDuzeltModal.payload.tutar ?? ''}
                     onChange={(e) => setKkDuzeltModal((prev) => ({
                       ...prev,
-                      payload: { ...prev.payload, tutar: Number(e.target.value) },
+                      payload: { ...prev.payload, tutar: e.target.value === '' ? undefined : Number(e.target.value) },
                     }))}
                     placeholder={Math.abs(Number(kkDuzeltModal.uyari?.fark_tl||0)).toFixed(2)}
                     style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
@@ -15056,7 +15077,7 @@ export default function OperasyonMerkezi() {
                       value={kkDuzeltModal.payload.tutar ?? ''}
                       onChange={(e) => setKkDuzeltModal((prev) => ({
                         ...prev,
-                        payload: { ...prev.payload, tutar: Number(e.target.value) },
+                        payload: { ...prev.payload, tutar: e.target.value === '' ? undefined : Number(e.target.value) },
                       }))}
                       placeholder={farkAbs.toFixed(2)}
                       style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}

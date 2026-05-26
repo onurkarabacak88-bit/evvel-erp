@@ -6670,8 +6670,18 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
                     try:
                         r = _kf_recalc(cur, str(dict(row)["id"]), kim_pid=pid, kim_ad=pad)
                         return {"cascade_tip": c_tip, "tarih": c_tarih_str, **r}
-                    except Exception:
-                        return None
+                    except Exception as cascade_ex:
+                        # SESSIZ DEĞIL — log + frontend'e hata bilgisi göster
+                        log.warning(
+                            "kasa fark cascade hata: sube=%s tarih=%s tip=%s hata=%s",
+                            sube_id, c_tarih_str, c_tip, cascade_ex,
+                        )
+                        return {
+                            "cascade_tip": c_tip,
+                            "tarih": c_tarih_str,
+                            "hata": str(cascade_ex),
+                            "otomatik_cozuldu": False,
+                        }
 
                 _tarih_d = _dc.fromisoformat(tarih[:10])
                 if sebep == "acilis_yanlis":
