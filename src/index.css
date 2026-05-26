@@ -186,13 +186,39 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .tab-pill{padding:5px 14px;border-radius:20px;cursor:pointer;font-size:12px;color:var(--text3);background:var(--bg3);border:1px solid var(--border);transition:all .15s}
 .tab-pill.active{background:var(--accent-dim);color:var(--accent);border-color:var(--accent-border)}
 
-/* CFO Panel — gecikme derecesi (0-7 gün sarı, 8-14 turuncu, 15+ kırmızı) */
+/* CFO Panel — gecikme derecesi (legacy; yeni cfo-card sınıfları kullanılıyor) */
 .urgency-low{border-left:3px solid var(--yellow)!important;background:rgba(232,197,71,.04)!important}
 .urgency-mid{border-left:3px solid var(--orange)!important;background:rgba(212,137,58,.06)!important}
 .urgency-high{border-left:3px solid var(--red)!important;background:rgba(224,92,92,.06)!important}
 .urgency-low .urgency-badge{color:var(--yellow)}
 .urgency-mid .urgency-badge{color:var(--orange)}
 .urgency-high .urgency-badge{color:var(--red)}
+
+/* CFO Panel v2 — triage tasarımı */
+@keyframes cfoBadgePulse{0%,100%{box-shadow:0 0 0 0 rgba(224,92,92,.5)}50%{box-shadow:0 0 0 5px rgba(224,92,92,.0)}}
+.cfo-kritik-badge{animation:cfoBadgePulse 2.2s ease-in-out infinite}
+
+@keyframes cfoCardIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+
+.cfo-section{margin-bottom:4px}
+.cfo-section-hdr{display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:7px;cursor:pointer;user-select:none;transition:background .12s;margin-bottom:3px}
+.cfo-section-hdr:hover{background:rgba(255,255,255,.03)}
+
+.cfo-card{
+  display:flex;align-items:center;gap:10px;
+  padding:9px 13px;border-radius:7px;
+  border:1px solid var(--border);
+  margin-bottom:3px;
+  transition:transform .13s ease,box-shadow .13s ease;
+  animation:cfoCardIn .2s ease both;
+}
+.cfo-card:hover{transform:translateY(-1px);box-shadow:0 5px 18px rgba(0,0,0,.22)}
+.cfo-card.kritik{border-left:3px solid var(--red);background:rgba(224,92,92,.05)}
+.cfo-card.uyari{border-left:3px solid var(--orange);background:rgba(212,137,58,.05)}
+.cfo-card.bilgi{border-left:3px solid var(--yellow);background:rgba(232,197,71,.04)}
+.cfo-card.bugun{border-left:3px solid var(--accent);background:var(--accent-dim)}
+
+.cfo-total-strip{display:flex;align-items:center;gap:12px;padding:8px 2px 10px;font-size:12px;color:var(--text3);border-bottom:1px solid var(--border);margin-bottom:12px;flex-wrap:wrap}
 
 /* Vardiya v2 — slot hücresi: üst üste avatar + iptal (hover’da belirgin) */
 .slot-avatar-stack{display:flex;align-items:center;flex-wrap:nowrap;gap:0;overflow-x:auto;overflow-y:visible;padding:8px 2px 6px;margin-top:2px;border-top:1px dashed var(--border);-webkit-overflow-scrolling:touch}
