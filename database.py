@@ -3430,3 +3430,117 @@ $$;
             except Exception:
                 pass
             print(f"[MIGRATION WARN] bekliyor→yok fix: {_fix3_e}")
+
+        # ── Fix: Zafer şubesi hatalı Ürün Aç kaydı — Pipet ↔ Plastik Bardak takas ──
+        # 2026-05-25 tarihinde Pipet alanına 48 girildi, Plastik Bardak girilmedi.
+        # Doğrusu: Pipet=0, Plastik Bardak=48.
+        # operasyon_defter append-only olduğu için trigger geçici devre dışı bırakılır.
+        try:
+            import json as _jfix
+            # Zafer şubesinin sube_id'sini bul
+            cur.execute("SELECT id FROM subeler WHERE LOWER(ad) LIKE '%zafer%' LIMIT 1")
+            _zafer_row = cur.fetchone()
+            if _zafer_row:
+                _zafer_sid = _zafer_row["id"]
+                cur.execute("""
+                    SELECT id, aciklama
+                    FROM operasyon_defter
+                    WHERE sube_id = %s
+                      AND etiket = 'URUN_AC'
+                      AND tarih >= CURRENT_DATE - INTERVAL '3 days'
+                      AND aciklama LIKE '%%pipet%%'
+                    ORDER BY olusturma DESC
+                    LIMIT 1
+                """, (_zafer_sid,))
+                _ac_row = cur.fetchone()
+                if _ac_row:
+                    _rec_id = _ac_row["id"]
+                    _aciklama = str(_ac_row["aciklama"] or "")
+                    # JSON'u ayır
+                    _prefix = ""
+                    _raw = _aciklama
+                    if _aciklama.startswith("URUN_AC_JSON:"):
+                        _prefix = "URUN_AC_JSON:"
+                        _raw = _aciklama[len("URUN_AC_JSON:"):]
+                    _suffix = ""
+                    if " | " in _raw:
+                        _parts = _raw.split(" | ", 1)
+                        _raw = _parts[0].strip()
+                        _suffix = " | " + _parts[1]
+                    try:
+                        _payload = _jfix.loads(_raw)
+                    except Exception:
+                        _payload = {}
+                    if _payload:
+                        _kalemler = _payload.get("kalemler") or []
+                        # Sadece gerçekten hatalı kayıt varsa düzelt (idempotens)
+                        _pipet_yanlis = any(
+                            "pipet" in str(it.get("urun_ad") or "").lower()
+                            and int(it.get("adet") or 0) > 0
+                            for it in _kalemler
+                            if isinstance(it, dict)
+                        )
+                        if _pipet_yanlis:
+                            # Trigger'ı geçici durdur
+                            cur.execute(
+                                "ALTER TABLE operasyon_defter "
+                                "DISABLE TRIGGER tr_operasyon_defter_append_only"
+                            )
+                            try:
+                                _plastik_bulundu = False
+                                _yeni_kalemler = []
+                                for _it in _kalemler:
+                                    if not isinstance(_it, dict):
+                                        _yeni_kalemler.append(_it)
+                                        continue
+                                    _ad = str(_it.get("urun_ad") or "").strip().lower()
+                                    if "pipet" in _ad:
+                                        _it = dict(_it)
+                                        _it["adet"] = 0
+                                    elif "plastik" in _ad and "bardak" in _ad:
+                                        _it = dict(_it)
+                                        _it["adet"] = 48
+                                        _plastik_bulundu = True
+                                    _yeni_kalemler.append(_it)
+                                if not _plastik_bulundu:
+                                    _yeni_kalemler.append({"urun_ad": "Plastik Bardak", "adet": 48})
+                                _payload["kalemler"] = _yeni_kalemler
+                                # delta alanını da düzelt
+                                _delta = _payload.get("delta") or {}
+                                if isinstance(_delta, dict):
+                                    for _dk in list(_delta.keys()):
+                                        if "pipet" in str(_dk).lower():
+                                            _delta[_dk] = 0
+                                    _delta["bardak_plastik"] = 48
+                                    _payload["delta"] = _delta
+                                _yeni_aciklama = _prefix + _jfix.dumps(
+                                    _payload, ensure_ascii=False, separators=(",", ":")
+                                ) + _suffix
+                                cur.execute(
+                                    "UPDATE operasyon_defter SET aciklama = %s WHERE id = %s",
+                                    (_yeni_aciklama, _rec_id),
+                                )
+                                print(f"[MIGRATION] Zafer Ürün Aç düzeltmesi: pipet→0, plastik_bardak→48 (id={_rec_id})")
+                            finally:
+                                cur.execute(
+                                    "ALTER TABLE operasyon_defter "
+                                    "ENABLE TRIGGER tr_operasyon_defter_append_only"
+                                )
+                        else:
+                            print("[MIGRATION] Zafer Ürün Aç: pipet değeri zaten 0, düzeltme gerekmedi")
+                    else:
+                        print("[MIGRATION] Zafer Ürün Aç: JSON parse edilemedi, atlandı")
+                else:
+                    print("[MIGRATION] Zafer Ürün Aç: son 3 günde pipet içeren kayıt bulunamadı")
+            else:
+                print("[MIGRATION] Zafer Ürün Aç: Zafer şubesi DB'de bulunamadı")
+        except Exception as _fix4_e:
+            # Trigger mutlaka tekrar etkinleştir
+            try:
+                cur.execute(
+                    "ALTER TABLE operasyon_defter "
+                    "ENABLE TRIGGER tr_operasyon_defter_append_only"
+                )
+            except Exception:
+                pass
+            print(f"[MIGRATION WARN] Zafer Ürün Aç düzeltmesi: {_fix4_e}")
