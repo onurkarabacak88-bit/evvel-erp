@@ -15008,6 +15008,51 @@ export default function OperasyonMerkezi() {
               </span>
             </p>
 
+            {/* ── Onaysız ciro uyarısı (z_nakit=0 + KAPANIS) ── */}
+            {kkDuzeltModal.uyari?.tip === 'KAPANIS_KASA_FARK' &&
+              (kkDuzeltModal.uyari?.detay_json?.z_nakit ?? -1) === 0 &&
+              Math.abs(Number(kkDuzeltModal.uyari?.fark_tl || 0)) > 50 && (
+              <div style={{
+                background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.4)',
+                borderRadius: 8, padding: '10px 13px', marginBottom: 16,
+                display: 'flex', gap: 10, alignItems: 'flex-start',
+              }}>
+                <span style={{ fontSize: 18, lineHeight: 1.2, flexShrink: 0 }}>⚠️</span>
+                <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  <strong style={{ color: '#fbbf24', display: 'block', marginBottom: 2 }}>
+                    Z Nakit 0₺ görünüyor — önce ciro onayını kontrol et
+                  </strong>
+                  <span style={{ color: 'var(--text3)' }}>
+                    Şube ciro girişi henüz onaylanmamış olabilir. Ciro onaylanırsa fark otomatik kapanır — buradaki düzeltmeye gerek kalmaz.
+                  </span>
+                  <button
+                    onClick={() => { setKkDuzeltModal(null); acOpsModul('ciro-onay', 'finans-kasa'); }}
+                    style={{
+                      display: 'inline-block', marginTop: 7, padding: '4px 10px',
+                      fontSize: 11, fontWeight: 600, borderRadius: 5, cursor: 'pointer',
+                      background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.4)',
+                      color: '#fbbf24',
+                    }}>
+                    → Bekleyen Ciro Onayları'na git
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ── Devir uyumsuzluğu için de z_nakit kontrolü — ACILIS ── */}
+            {kkDuzeltModal.uyari?.tip === 'ACILIS_KASA_FARK' && (
+              <div style={{
+                background: 'rgba(99,179,237,0.08)', border: '1px solid rgba(99,179,237,0.25)',
+                borderRadius: 8, padding: '9px 13px', marginBottom: 16,
+                fontSize: 11, color: 'var(--text3)', lineHeight: 1.55,
+              }}>
+                💡 <strong style={{ color: 'var(--text2)' }}>Devir uyumsuzluğu:</strong>{' '}
+                Sabahçı az saydıysa → <em>Sabahçı sayımı yanlış</em> seç, doğru tutarı gir.
+                Akşamcı yanlış bıraktıysa → <em>Akşamcı devir/teslim yanlış</em> seç.
+                Emin değilsen önce <em>Gerçek açık</em>'ı seç ve notu yaz.
+              </div>
+            )}
+
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Sebep</label>
             <select
               className="input"
