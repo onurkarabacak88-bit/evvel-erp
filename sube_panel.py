@@ -2409,7 +2409,7 @@ class SubeFireBildirBody(BaseModel):
     personel_id: str
     pin: str
     sebep_kodu: str
-    aciklama: str
+    aciklama: Optional[str] = ""  # backward-compat: bazı sebepler için boş geçilebilir; backend zorunluluk kontrolü iş katmanında
     kalemler: List[Dict[str, Any]] = []
     not_aciklama: Optional[str] = None
     fis_no: Optional[str] = None

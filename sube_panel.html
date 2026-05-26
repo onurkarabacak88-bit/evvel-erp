@@ -10543,7 +10543,8 @@ function frWizGonder() {
   }
   if (_frWiz.sebep==='yanlis_urun' && !_frWiz.yanlisSenaryo) { frWizFlashMsg('Senaryo bilgisi eksik'); return; }
   var kalemlerArr=[{ urun_id:_frWiz.seciliUrun.urun_id, kalem_kodu:_frWiz.seciliUrun.kalem_kodu, adet:_frWiz.adet }];
-  var body={ sebep_kodu:_frWiz.sebep, aciklama:acik||null, kalemler:kalemlerArr, personel_id:parseInt(pid,10)||pid, pin:pin };
+  // personel_id: backend str bekler → String() zorla. aciklama: boş ise '' (null değil)
+  var body={ sebep_kodu:_frWiz.sebep, aciklama:String(acik||''), kalemler:kalemlerArr, personel_id:String(pid), pin:pin };
   if (_frWiz.sebep==='iade') {
     body.iade_sebep_kodu = _frWiz.iadeSebep;
     body.iade_musteri_telefon = _frWiz.musteriNo || null;
