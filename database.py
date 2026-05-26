@@ -2216,7 +2216,7 @@ def init_db():
                     ('pure','Çilek','cilek',10),('pure','Muz','muz',20),('pure','Orman Meyvesi','orman_meyvesi',30),('pure','Frambuaz','frambuaz',40),('pure','Karpuz','karpuz',50),('pure','Mango','mango',60),('pure','Kavun','kavun',70),('pure','Ananas','ananas',80),('pure','Ejder Meyvesi','ejder_meyvesi',90),
                     ('icecek','Redbull','redbull',10),('icecek','Portakal Suyu','portakal_suyu',20),('icecek','Ananas Suyu','ananas_suyu',30),('icecek','Sprite','sprite',40),('icecek','Power Up','power_up',50),('icecek','Limonata','limonata',60),('icecek','Su','su',70),('icecek','Bardak Su','bardak_su',80),('icecek','Sade Maden Suyu','sade_maden_suyu',90),('icecek','Limon Maden Suyu','limon_maden_suyu',100),('icecek','Çilek Maden Suyu','cilek_maden_suyu',110),('icecek','Elma Maden Suyu','elma_maden_suyu',120),
                     ('temizlik','Köpük Sabun','kopuk_sabun',10),('temizlik','Sıvı Sabun','sivi_sabun',20),('temizlik','Yüzey Temizleyici','yuzey_temizleyici',30),('temizlik','Z Peçete','z_pecete',40),('temizlik','Tuvalet Kağıdı','tuvalet_kagidi',50),('temizlik','Oda Parfümü','oda_parfumu',60),('temizlik','Eldiven','eldiven',70),('temizlik','Sarı Güç','sari_guc',80),('temizlik','Porçöz','porcoz',90),('temizlik','Çöp Poşeti','cop_poseti',100),
-                    ('sarf','Pipet','pipet',10),('sarf','POS Kağıdı','pos_kagidi',20),('sarf','Kalem','kalem',30),('sarf','Filtre Kağıdı','filtre_kagidi',40),('sarf','14oz Bardak','14oz_bardak',50),('sarf','8oz Bardak','8oz_bardak',60),('sarf','Plastik Bardak','plastik_bardak',70),('sarf','Dido Trio','dido_trio',80),('sarf','Oreo','oreo',90),('sarf','Kese Kağıdı','kese_kagidi',100),('sarf','Streç Film','strec_film',110),('sarf','Baskılı Peçete','baskili_pecete',120),('sarf','Baskılı Şeker','baskili_seker',130),('sarf','Bardak Çantası','bardak_cantasi',140),('sarf','Islak Mendil','islak_mendil',150),('sarf','Cam Bezi','cam_bezi',160),('sarf','Zımba Teli','zimba_teli',170),('sarf','Ahşap Karıştırıcı','ahsap_karistirici',180),
+                    ('sarf','Plastik Bardak','plastik_bardak',5),('sarf','14oz Bardak','14oz_bardak',10),('sarf','8oz Bardak','8oz_bardak',15),('sarf','Pipet','pipet',20),('sarf','POS Kağıdı','pos_kagidi',30),('sarf','Kalem','kalem',40),('sarf','Filtre Kağıdı','filtre_kagidi',50),('sarf','Dido Trio','dido_trio',80),('sarf','Oreo','oreo',90),('sarf','Kese Kağıdı','kese_kagidi',100),('sarf','Streç Film','strec_film',110),('sarf','Baskılı Peçete','baskili_pecete',120),('sarf','Baskılı Şeker','baskili_seker',130),('sarf','Bardak Çantası','bardak_cantasi',140),('sarf','Islak Mendil','islak_mendil',150),('sarf','Cam Bezi','cam_bezi',160),('sarf','Zımba Teli','zimba_teli',170),('sarf','Ahşap Karıştırıcı','ahsap_karistirici',180),
                     ('bitki_cayi','Papatya','papatya',10),('bitki_cayi','Kış Çayı','kis_cayi',20),('bitki_cayi','Yeşil Çay','yesil_cay',30),('bitki_cayi','Melisa','melisa',40),('bitki_cayi','Ihlamur','ihlamur',50),
                     ('pasta','San Sebastian (Porsiyon)','pasta_porsiyon_sade',10),
                     ('pasta','Antep Fıstıklı San Sebastian (Porsiyon)','pasta_porsiyon_antep',20),
@@ -3544,3 +3544,29 @@ $$;
             except Exception:
                 pass
             print(f"[MIGRATION WARN] Zafer Ürün Aç düzeltmesi: {_fix4_e}")
+
+        # ── Fix: sarf kategorisinde bardak sıralarını öne al ──
+        # Plastik Bardak=5, 14oz Bardak=10, 8oz Bardak=15, Pipet=20
+        # Yanlış giriş riskini azaltmak: en sık kullanılan malzeme en üstte.
+        try:
+            cur.execute("""
+                UPDATE siparis_urun su
+                SET sira = v.yeni_sira
+                FROM (VALUES
+                    ('plastik_bardak', 5),
+                    ('14oz_bardak',    10),
+                    ('8oz_bardak',     15),
+                    ('pipet',          20),
+                    ('pos_kagidi',     30),
+                    ('kalem',          40),
+                    ('filtre_kagidi',  50)
+                ) AS v(norm_ad, yeni_sira)
+                JOIN siparis_kategori sk ON sk.id = su.kategori_id
+                WHERE sk.kod = 'sarf'
+                  AND su.norm_ad = v.norm_ad
+                  AND su.sira <> v.yeni_sira
+            """)
+            if cur.rowcount:
+                print(f"[MIGRATION] sarf sira güncellendi: {cur.rowcount} satır")
+        except Exception as _fix5_e:
+            print(f"[MIGRATION WARN] sarf sira: {_fix5_e}")

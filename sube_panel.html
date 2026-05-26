@@ -8724,7 +8724,26 @@ function wireAcPlusMinusDelegation(formEl) {
     var row = (plusBtn || minusBtn).closest('.sv-urun-row');
     if (row) row.classList.toggle('sv-urun-dolu', next > 0);
     stokSecimBilgiYenile('ac', _stokKatalogByPrefix.ac || []);
-    refreshStokKatalogUI('ac');
+    // Sadece kategori kartı badge'ini güncelle — refreshStokKatalogUI('ac') tüm modal
+    // içeriğini sıfırdan rebuild ettiği için scroll pozisyonunu başa atıyordu.
+    var _katId = key.split('::')[1];
+    var _katBtn = document.querySelector('[data-stok-kat="ac::' + _katId + '"]');
+    if (_katBtn) {
+      var _sayisi = acKatSeciliSayisi(_katId);
+      var _badge = _katBtn.querySelector('.sv-kat-badge');
+      if (_sayisi > 0) {
+        if (!_badge) {
+          _badge = document.createElement('span');
+          _badge.className = 'sv-kat-badge';
+          _katBtn.insertBefore(_badge, _katBtn.firstChild);
+        }
+        _badge.textContent = String(_sayisi);
+        _katBtn.classList.add('sv-kat-secili');
+      } else {
+        if (_badge) _badge.parentNode.removeChild(_badge);
+        _katBtn.classList.remove('sv-kat-secili');
+      }
+    }
   });
 }
 
