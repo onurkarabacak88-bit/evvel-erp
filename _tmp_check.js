@@ -4570,12 +4570,8 @@ function renderStokForms(tip) {
       });
     }
   } else if (tip === 'fire') {
-    var frRoot = document.getElementById('frWizRoot');
-    // Wizard daha önce başlatılmadıysa başlat; tekrar tab'a basılınca sıfırlama
-    if (!frRoot || !frRoot.dataset.wizBuilt) {
-      if (frRoot) frRoot.dataset.wizBuilt = '1';
-      frWizBas();
-    }
+    // Her Fire sekmesi açılışında wizard'ı sıfırla (katalog cache'li olduğu için hızlı)
+    frWizBas();
   }
 }
 
@@ -4622,11 +4618,59 @@ var FR_URUNLER = {
 };
 var _frWiz = { step:1, sebep:null, seciliUrun:null, adet:1, aramaMetni:'', katalog:[], busy:false };
 
+/* ── Event delegation: tek listener, sıfır inline onclick ── */
+function _frWizWire(root) {
+  if (root._frWired) return;
+  root._frWired = true;
+  /* Touch: anında görsel geri bildirim (gecikme yok) */
+  root.addEventListener('touchstart', function(e) {
+    var el = e.target.closest('[data-fr]');
+    if (el) el.classList.add('fr-tapped');
+  }, { passive: true });
+  root.addEventListener('touchend', function(e) {
+    var el = e.target.closest('[data-fr]');
+    if (el) setTimeout(function(){ el.classList.remove('fr-tapped'); }, 250);
+  }, { passive: true });
+  /* Click: tüm aksiyonları yönet */
+  root.addEventListener('click', function(e) {
+    var el;
+    el = e.target.closest('[data-fr-kart]');
+    if (el) { frWizKartSec(el.getAttribute('data-fr-kart')); return; }
+    el = e.target.closest('[data-fr-tile]');
+    if (el) { frWizUrunSec(el.getAttribute('data-fr-tile'), el.getAttribute('data-fr-ad'), el.getAttribute('data-fr-ico')); return; }
+    el = e.target.closest('[data-fr-uid]');
+    if (el) { frWizUrunSecKatalog(el.getAttribute('data-fr-uid')); return; }
+    el = e.target.closest('[data-fr-geri]');
+    if (el) { frWizGeri(); return; }
+    el = e.target.closest('[data-fr-devam]');
+    if (el) { frWizDevam(); return; }
+    el = e.target.closest('[data-fr-gonder]');
+    if (el) { frWizGonder(); return; }
+    el = e.target.closest('[data-fr-adet]');
+    if (el) { frWizAdetDegis(parseInt(el.getAttribute('data-fr-adet'), 10)); return; }
+    el = e.target.closest('[data-fr-retry]');
+    if (el) { frWizBas(); return; }
+  });
+}
+
 function frWizBas() {
   var root = document.getElementById('frWizRoot');
   if (!root) return;
   _frWiz.step=1; _frWiz.sebep=null; _frWiz.seciliUrun=null; _frWiz.adet=1; _frWiz.busy=false; _frWiz.aramaMetni='';
-  root.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);font-size:13px">⏳ Yükleniyor…</div>';
+  _frWizWire(root); /* listener'ı bir kez bağla */
+  /* Katalog cache'liyse anında render */
+  if (Array.isArray(siparisKatalogCache) && siparisKatalogCache.length) {
+    var flatC = [];
+    siparisKatalogCache.forEach(function(kat) {
+      (kat.items || []).forEach(function(it) {
+        if (it.aktif !== false) flatC.push({ id: it.id, ad: it.ad, kategori: kat.label, kalem_kodu: it.depo_stok_kalem_kodu || it.id });
+      });
+    });
+    _frWiz.katalog = flatC;
+    frWizRender(false);
+    return;
+  }
+  root.innerHTML = '<div style="padding:48px 16px;text-align:center;color:var(--muted);font-size:14px">⏳ Yükleniyor…</div>';
   siparisLoad().then(function(kategoriler) {
     var flat = [];
     (kategoriler || []).forEach(function(kat) {
@@ -4637,7 +4681,12 @@ function frWizBas() {
     _frWiz.katalog = flat;
     frWizRender(false);
   }).catch(function(e) {
-    root.innerHTML = '<div style="padding:20px;color:#fca5a5;font-size:13px">⚠️ Katalog yüklenemedi: ' + escHtml(e.message || String(e)) + '</div>';
+    if (!root.parentNode) return;
+    root.innerHTML = '<div style="padding:32px 16px;text-align:center">'
+      + '<div style="font-size:32px;margin-bottom:12px">⚠️</div>'
+      + '<div style="color:#fca5a5;font-size:14px;margin-bottom:16px">' + escHtml(e.message || 'Yüklenemedi') + '</div>'
+      + '<button data-fr-retry style="padding:14px 28px;border-radius:14px;border:none;background:rgba(239,68,68,.85);color:#fff;font-size:15px;font-weight:800;cursor:pointer;touch-action:manipulation">🔄 Tekrar Dene</button>'
+      + '</div>';
   });
 }
 
@@ -4647,7 +4696,7 @@ function frWizRender(geriAnim) {
   var step = _frWiz.step;
   var dots = [1,2,3].map(function(i){
     var cls = i<step ? 'tamam' : (i===step ? 'aktif' : '');
-    return '<span class="fr-wiz-adim-dot '+cls+'"></span>';
+    return '<span class="fr-wiz-adim-dot '+cls+'">'+(i<step?'✓':String(i))+'</span>';
   }).join('');
   var basliklar = ['Sebep','Ürün','Onay'];
   var altlar    = ['Ne oldu?','Hangi ürün?','Adet & imza'];
@@ -4666,21 +4715,23 @@ function frWizRender(geriAnim) {
   else h += frWizStep3HTML();
   h += '</div>';
   h += '<div class="fr-nav-bar">';
-  if (step>1) h += '<button class="fr-nav-geri" onclick="frWizGeri()" type="button">‹</button>';
+  if (step>1) h += '<button class="fr-nav-geri" data-fr-geri type="button">‹</button>';
   if (step===2 && FR_URUNLER[_frWiz.sebep]===null)
-    h += '<button class="fr-nav-ileri" id="frNavDevam" onclick="frWizDevam()" type="button">Devam ›</button>';
+    h += '<button class="fr-nav-ileri" id="frNavDevam" data-fr-devam type="button">Devam ›</button>';
   if (step===3)
-    h += '<button class="fr-nav-ileri gonder" id="frNavGonder" onclick="frWizGonder()" type="button">🔥 Fire Kaydet</button>';
+    h += '<button class="fr-nav-ileri gonder" id="frNavGonder" data-fr-gonder type="button">🔥 Fire Kaydet</button>';
   h += '</div>';
   root.innerHTML = h;
+  /* Scroll to top */
+  var orta = document.getElementById('orta');
+  if (orta) orta.scrollTop = 0;
   if (step===3) frWizWireStep3();
 }
 
 function frWizStep1HTML() {
   var h = '<div class="fr-sebep-grid">';
   FR_SEBEPLER.forEach(function(s) {
-    // onclick → direkt adım 2'ye geç; kart seçimi animasyonu için kısa active sınıfı
-    h += '<div class="fr-sebep-kart" onclick="frWizKartSec(\'' + s.kod + '\')">';
+    h += '<div class="fr-sebep-kart" data-fr data-fr-kart="'+s.kod+'">';
     h += '<div class="fr-sebep-kart-ico">' + s.ico + '</div>';
     h += '<div class="fr-sebep-kart-yazi">' + escHtml(s.ad) + '</div>';
     h += '<div class="fr-sebep-kart-alt">' + escHtml(s.alt) + '</div>';
@@ -4694,18 +4745,18 @@ function frWizStep2HTML() {
   var urunler = FR_URUNLER[_frWiz.sebep];
   var h = '';
   if (urunler === null) {
-    h += '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Hangi ürün etkilendi?</div>';
+    h += '<div style="font-size:13px;color:var(--muted);margin-bottom:12px">Hangi ürün etkilendi?</div>';
     h += '<input class="fr-ara-inp" id="frAraInp" type="search" inputmode="search" placeholder="🔍  Ürün ara…" value="'+escHtml(_frWiz.aramaMetni)+'" oninput="frWizAra(this.value)" autocomplete="off" />';
     h += '<div id="frUrunListesi">';
     var ara = (_frWiz.aramaMetni||'').toLowerCase().trim();
     var liste = ara ? _frWiz.katalog.filter(function(u){ return (u.ad||'').toLowerCase().indexOf(ara)>=0; }) : _frWiz.katalog;
     if (!liste.length) {
-      h += '<div style="padding:16px;text-align:center;color:var(--muted);font-size:12px">'+(ara?'Ürün bulunamadı':'Katalog boş')+'</div>';
+      h += '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">'+(ara?'Ürün bulunamadı':'Katalog boş')+'</div>';
     } else {
       liste.forEach(function(u) {
-        var uid = escHtml(String(u.id||''));
+        var uid = String(u.id||'');
         var sel = (_frWiz.seciliUrun && String(_frWiz.seciliUrun.urun_id)===uid) ? ' secili' : '';
-        h += '<div class="fr-urun-satir'+sel+'" id="frUs_'+uid+'" onclick="frWizUrunSecKatalog(\''+uid+'\')">';
+        h += '<div class="fr-urun-satir'+sel+'" data-fr data-fr-uid="'+escHtml(uid)+'" id="frUs_'+escHtml(uid)+'">';
         h += '<div class="fr-urun-ad">'+escHtml(u.ad||uid);
         if (u.kategori) h += '<div class="fr-urun-alt">'+escHtml(u.kategori)+'</div>';
         h += '</div>';
@@ -4717,7 +4768,7 @@ function frWizStep2HTML() {
   } else {
     h += '<div class="fr-urun-tile-grid">';
     urunler.forEach(function(u) {
-      h += '<div class="fr-urun-tile" onclick="frWizUrunSec(\''+escHtml(u.kalem_kodu)+'\',\''+escHtml(u.ad)+'\',\''+u.ico+'\')">';
+      h += '<div class="fr-urun-tile" data-fr data-fr-tile="'+escHtml(u.kalem_kodu)+'" data-fr-ad="'+escHtml(u.ad)+'" data-fr-ico="'+escHtml(u.ico)+'">';
       h += '<div class="fr-urun-tile-ico">'+u.ico+'</div>';
       h += '<div class="fr-urun-tile-ad">'+escHtml(u.ad)+'</div>';
       h += '</div>';
@@ -4755,7 +4806,7 @@ function frWizUrunSecKatalog(uid) {
     row.appendChild(ck2);
   }
   var btn=document.getElementById('frNavDevam');
-  if (btn) btn.innerHTML='✓ '+escHtml(u.ad)+' — Devam ›';
+  if (btn) btn.textContent='✓ '+u.ad+' — Devam ›';
 }
 
 function frWizDevam() {
@@ -4776,9 +4827,9 @@ function frWizStep3HTML() {
   h += '<div class="fr-adet-blok">';
   h += '<div class="fr-adet-etiket">Adet</div>';
   h += '<div class="fr-adet-stepper">';
-  h += '<button class="fr-adet-btn" type="button" onclick="frWizAdetDegis(-1)">−</button>';
+  h += '<button class="fr-adet-btn" data-fr data-fr-adet="-1" type="button">−</button>';
   h += '<div class="fr-adet-sayi" id="frAdetSayi">'+_frWiz.adet+'</div>';
-  h += '<button class="fr-adet-btn" type="button" onclick="frWizAdetDegis(1)">+</button>';
+  h += '<button class="fr-adet-btn" data-fr data-fr-adet="1" type="button">+</button>';
   h += '</div></div>';
   var persList = (typeof panelDropdownPersonel==='function') ? panelDropdownPersonel() : [];
   h += '<div class="fr-detay-alan"><div class="fr-detay-etiket">👤 Onaylayan Personel <span style="color:#f87171">*</span></div>';
@@ -4790,11 +4841,10 @@ function frWizStep3HTML() {
   h += '<div class="at-pin-dots" id="frPinDots"><span class="at-pin-dot"></span><span class="at-pin-dot"></span><span class="at-pin-dot"></span><span class="at-pin-dot"></span></div></div>';
   h += '<input id="frDetayPin" class="at-pin-inp" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="• • • •" />';
   h += '</div>';
-  // İade bilgileri — personel/PIN'den ÖNCE gelir (müşteri akışı için)
   if (_frWiz.sebep==='iade') {
     h += '<div class="fr-iade-kart">';
     h += '<div class="fr-iade-baslik">↩️ Müşteri İade Bilgileri</div>';
-    h += '<div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.5">Ad ve telefon yalnızca operasyon merkezinde saklanır — şube panelinde görünmez.</div>';
+    h += '<div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.5">Ad ve telefon yalnızca operasyon merkezinde saklanır.</div>';
     h += '<div class="fr-iade-grid">';
     h += '<div class="fr-detay-alan" style="margin-bottom:0"><div class="fr-detay-etiket">Fiş / Sipariş no <span style="color:#f87171">*</span></div>';
     h += '<input class="fr-detay-inp" id="frIadeFis" inputmode="numeric" autocomplete="off" placeholder="Kasa fiş no" /></div>';
@@ -4806,8 +4856,7 @@ function frWizStep3HTML() {
     h += '<input class="fr-detay-inp" id="frIadeMtel" inputmode="tel" autocomplete="tel" placeholder="5XX XXX XX XX" /></div>';
     h += '</div></div>';
   }
-  // Açıklama
-  h += '<div class="fr-detay-alan"><div class="fr-detay-etiket">📝 Açıklama'+(_frWiz.sebep==='diger'?' <span style="color:#f87171">* min. 10 karakter</span>':_frWiz.sebep==='iade'?' — iade nedeni (opsiyonel)':' (opsiyonel)')+'</div>';
+  h += '<div class="fr-detay-alan"><div class="fr-detay-etiket">📝 Açıklama'+(_frWiz.sebep==='diger'?' <span style="color:#f87171">* min. 10 karakter</span>':_frWiz.sebep==='iade'?' (opsiyonel)':' (opsiyonel)')+'</div>';
   h += '<textarea class="fr-detay-textarea" id="frDetayAcik" rows="2" placeholder="'+(_frWiz.sebep==='diger'?'Zorunlu — ne oldu?':_frWiz.sebep==='iade'?'Bozuk, beğenmedi, yanlış ürün…':'Kısa not ekle')+'"></textarea></div>';
   h += '<div id="frWizMsg" style="margin-top:4px;font-size:12px;color:#fca5a5;min-height:16px"></div>';
   return h;
@@ -4830,8 +4879,8 @@ function frWizAra(val) {
     rows = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">'+(ara?'Ürün bulunamadı':'Katalog boş')+'</div>';
   } else {
     filtrelenmis.forEach(function(u){
-      var uid=escHtml(String(u.id||''));
-      rows += '<div class="fr-urun-satir" id="frUs_'+uid+'" onclick="frWizUrunSecKatalog(\''+uid+'\')"><div class="fr-urun-ad">'+escHtml(u.ad||uid);
+      var uid = String(u.id||'');
+      rows += '<div class="fr-urun-satir" data-fr data-fr-uid="'+escHtml(uid)+'" id="frUs_'+escHtml(uid)+'"><div class="fr-urun-ad">'+escHtml(u.ad||uid);
       if (u.kategori) rows += '<div class="fr-urun-alt">'+escHtml(u.kategori)+'</div>';
       rows += '</div></div>';
     });

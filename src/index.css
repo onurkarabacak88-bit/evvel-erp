@@ -1,11 +1,14 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap');
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
   --bg:#0f1117;--bg2:#1a1d24;--bg3:#22262f;
   --border:#2a2d35;--text:#e8e9ec;--text2:#b0b3bc;--text3:#6b6f7a;
   --green:#4caf84;--red:#e05c5c;--yellow:#e8c547;--blue:#5b9bd6;--purple:#9b72d4;
+  --orange:#D4893A;
+  --accent:#C8956A;--accent-dim:rgba(200,149,106,.12);--accent-border:rgba(200,149,106,.3);
   --font-mono:'JetBrains Mono',monospace;
 }
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+body{font-family:'Instrument Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
 .app{display:flex;height:100vh;overflow:hidden}
 .sidebar{width:220px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
 .sidebar-logo{padding:20px 16px 16px;border-bottom:1px solid var(--border)}
@@ -16,7 +19,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .nav-label{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:1px;padding:0 8px;margin-bottom:6px}
 .nav-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:7px;cursor:pointer;color:var(--text2);font-size:13px;transition:all .15s}
 .nav-item:hover{background:var(--bg3);color:var(--text)}
-.nav-item.active{background:rgba(76,175,132,.15);color:var(--green);font-weight:500}
+.nav-item.active{background:var(--accent-dim);color:var(--accent);font-weight:500}
 .nav-item .icon{font-size:14px;width:18px;text-align:center}
 .sidebar-footer{padding:12px 16px;font-size:11px;color:var(--text3);border-top:1px solid var(--border)}
 .main{flex:1;overflow-y:auto;background:var(--bg)}
@@ -49,7 +52,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .badge-blue{background:rgba(91,155,214,.15);color:var(--blue)}
 .badge-gray{background:rgba(255,255,255,.08);color:var(--text3)}
 .btn{padding:7px 14px;border-radius:7px;border:none;font-size:13px;cursor:pointer;font-weight:500;transition:all .15s}
-.btn-primary{background:var(--green);color:#fff}
+.btn-primary{background:var(--accent);color:#fff}
 .btn-primary:hover{opacity:.9}
 .btn-secondary{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
 .btn-secondary:hover{border-color:var(--text3)}
