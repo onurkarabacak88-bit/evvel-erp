@@ -50,7 +50,8 @@ export default function Panel({ onNavigate }) {
   const [bankaYatirimModal, setBankaYatirimModal] = useState(false);
   const [bankaYatirimListe, setBankaYatirimListe] = useState([]);
   const [bankaYatirimYukleniyor, setBankaYatirimYukleniyor] = useState(false);
-  const [cfoAcikBolumler, setCfoAcikBolumler] = useState({ uyari: false, bilgi: false });
+  const [cfoAcikBolumler, setCfoAcikBolumler] = useState({ uyari: false, bilgi: false, kira: false, motor: false, sistem: false });
+  const [cfoTrayOpen, setCfoTrayOpen] = useState(null); // null=auto(open if kritik), bool=user override
 
   const detayGetir = (tip) => {
     api(`/vadeli-odeme-detay?kaynak=${tip}`)
@@ -504,102 +505,61 @@ export default function Panel({ onNavigate }) {
         </div>
       )}
 
-      {/* ── KATMAN 1: DURUM & ALARM ── */}
+      {/* ── COMMAND BAR — tek satır, tüm kritik sayılar ── */}
       <div style={{
-        background: dc.bg, border: `1px solid ${dc.renk}`,
-        borderRadius: 10, padding: '14px 18px', marginBottom: 16,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        flexWrap: 'wrap', gap: 12,
+        background: dc.bg, border: `1px solid ${dc.renk}44`,
+        borderLeft: `4px solid ${dc.renk}`,
+        borderRadius: 10, padding: '12px 18px', marginBottom: 12,
       }}>
+        {/* Sol: durum */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 28 }}>{dc.ikon}</span>
+          <span style={{ fontSize: 22 }}>{dc.ikon}</span>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 17, color: dc.renk }}>{dc.label}</div>
-            <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-              {panel.ozet?.kritik > 0 ? `${panel.ozet.kritik} kritik · ` : ''}
-              {panel.ozet?.uyari > 0 ? `${panel.ozet.uyari} uyarı · ` : ''}
+            <div style={{ fontWeight: 700, fontSize: 15, color: dc.renk, lineHeight: 1.1 }}>{dc.label}</div>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
               {new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })}
+              {(panel.ozet?.kritik > 0 || panel.ozet?.uyari > 0) && ` · ${[panel.ozet?.kritik > 0 ? `${panel.ozet.kritik} kritik` : '', panel.ozet?.uyari > 0 ? `${panel.ozet.uyari} uyarı` : ''].filter(Boolean).join(' · ')}`}
             </div>
           </div>
         </div>
+        {/* Orta: hero sayılar */}
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0 }}>
+          {[
+            { label: 'Kasa', value: fmt(kasa), color: riskRenk },
+            { label: 'Serbest', value: fmt(serbest), color: serbest >= 0 ? 'var(--green)' : 'var(--red)' },
+            { label: 'Net / 30g', value: (netAkis >= 0 ? '+' : '') + fmt(netAkis), color: netAkis >= 0 ? 'var(--green)' : 'var(--red)' },
+          ].map((n, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center' }}>
+              {i > 0 && <div style={{ width: 1, height: 26, background: `${dc.renk}30`, margin: '0 18px' }} />}
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.5px' }}>{n.label}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 15, fontWeight: 800, color: n.color, lineHeight: 1.1 }}>{n.value}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* Sağ: badge'ler + yenile */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {onaylar.length > 0 && (
-            <span className="badge badge-yellow" style={{ cursor: 'pointer' }} onClick={() => nav('onay')}>
-              🔔 {onaylar.length} onay bekliyor
-            </span>
+            <button onClick={() => nav('onay')} style={{
+              fontSize: 11, padding: '4px 12px', borderRadius: 10, cursor: 'pointer', fontWeight: 600,
+              background: 'rgba(232,197,71,.15)', border: '1px solid rgba(232,197,71,.4)', color: 'var(--yellow)',
+            }}>🔔 {onaylar.length} onay</button>
           )}
           {anomali?.sorunlu > 0 && (
-            <span className="badge badge-red" style={{ cursor: 'pointer' }} onClick={() => nav('ledger')}>
-              ⚠️ {anomali.sorunlu} kasa anomalisi
-            </span>
+            <button onClick={() => nav('ledger')} style={{
+              fontSize: 11, padding: '4px 12px', borderRadius: 10, cursor: 'pointer', fontWeight: 600,
+              background: 'rgba(220,50,50,.12)', border: '1px solid rgba(220,50,50,.3)', color: 'var(--red)',
+            }}>⚠️ {anomali.sorunlu} anomali</button>
           )}
-          <button className="btn btn-secondary btn-sm" onClick={load}>↻ Yenile</button>
           {panel.plan_son_uretim && (
-            <span style={{ fontSize: 11, color: 'var(--text3)', alignSelf: 'center' }}>
-              📋 Plan: {panel.plan_son_uretim.replace('T', ' ')}
-            </span>
+            <span style={{ fontSize: 10, color: 'var(--text3)' }}>📋 {panel.plan_son_uretim.slice(0, 16).replace('T', ' ')}</span>
           )}
+          <button className="btn btn-secondary btn-sm" onClick={load}>↻</button>
         </div>
       </div>
-
-      {(parseFloat(panel.bu_ay_banka_yatirim) || 0) > 0 && (
-        <div className="alert-box yellow mb-16">
-          Bu ay bankaya aktarılan <strong>{fmt(panel.bu_ay_banka_yatirim || 0)}</strong> kasadan ayrılmıştır ancak yatırım hesabında takip edilmektedir.
-        </div>
-      )}
-
-      {/* Kira/Sözleşme Uyarıları */}
-      {sabitGiderUyarilar.length > 0 && (
-        <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:16}}>
-          {sabitGiderUyarilar.map((u,i)=>{
-            const kritik = u.seviye === 'KRITIK';
-            const renk = kritik ? 'var(--red)' : 'var(--yellow)';
-            const bgRenk = kritik ? 'rgba(220,50,50,0.07)' : 'rgba(220,160,0,0.07)';
-            const btnLabel = u.aksiyon === 'TUTAR_GUNCELLE' ? '📈 Tutar Güncelle' : '🔄 Sözleşmeyi Uzat';
-            return (
-              <div key={i} style={{
-                background: bgRenk, border: `1px solid ${renk}`,
-                borderRadius:8, padding:'12px 16px',
-                display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:12
-              }}>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:700,fontSize:13,color:renk}}>{u.mesaj}</div>
-                  {u.alt_mesaj && (
-                    <div style={{fontSize:11,color:'var(--text2)',marginTop:4}}>{u.alt_mesaj}</div>
-                  )}
-                  <div style={{fontSize:11,color:'var(--text3)',marginTop:4}}>
-                    <span style={{marginRight:6}}>
-                      {u.aksiyon === 'TUTAR_GUNCELLE' ? '📈 Kira Artışı' : '📋 Sözleşme Bitişi'}
-                    </span>
-                    · Tarih: {u.tarih} ·{' '}
-                    {u.gun_kalan >= 0
-                      ? <span style={{color:'var(--yellow)'}}>{u.gun_kalan} gün kaldı</span>
-                      : <span style={{color:'var(--red)',fontWeight:600}}>{Math.abs(u.gun_kalan)} gün geçti</span>
-                    }
-                    {u.durduruldu && (
-                      <span style={{marginLeft:8,color:'var(--red)',fontWeight:700}}>
-                        · ⛔ Plan durduruldu
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <button className="btn btn-sm" style={{
-                  background:renk, color:'#fff', border:'none', whiteSpace:'nowrap', flexShrink:0
-                }} onClick={()=>{
-                  setKiraModal(u);
-                  setKiraForm({
-                    tutar: u.tutar || '',
-                    gecerlilik_tarihi: new Date().toISOString().split('T')[0],
-                    kira_artis_periyot: '',
-                    sozlesme_sure_ay: '',
-                  });
-                }}>
-                  {btnLabel}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       {/* Kira / Sözleşme Güncelleme Modal */}
       {kiraModal && (
@@ -747,9 +707,10 @@ export default function Panel({ onNavigate }) {
         </div>
       )}
 
-      {/* ── CFO TRIAGE v2 — gecikmiş ödemeler (3 kademe, progressive disclosure) ── */}
-      {panel.bugun_odemeler?.length > 0 && (() => {
-        const liste = panel.bugun_odemeler;
+      {/* ── ALERT TRAY — tüm bildirimler tek noktada ── */}
+      {(() => {
+        const bugunListe = panel.bugun_odemeler || [];
+        const liste = bugunListe;
         const gKritikler = liste.filter(u => u.gun_farki <= -15);
         const gUyarilar  = liste.filter(u => u.gun_farki >= -14 && u.gun_farki <= -8);
         const gBilgiler  = liste.filter(u => u.gun_farki >= -7 && u.gun_farki < 0);
@@ -846,275 +807,201 @@ export default function Panel({ onNavigate }) {
           );
         };
 
-        return (
-          <div style={{ marginBottom: 14 }}>
-            <div className="cfo-total-strip">
-              <span>Gecikmiş toplam:</span>
-              <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--red)', fontSize: 13 }}>
-                {fmt(toplamGecikmisTutar)}
-              </strong>
-              <span style={{ color: 'var(--border)' }}>·</span>
-              {gKritikler.length > 0 && <span style={{ color: 'var(--red)',    fontWeight: 600 }}>● {gKritikler.length} kritik</span>}
-              {gUyarilar.length  > 0 && <span style={{ color: 'var(--orange)', fontWeight: 600 }}>● {gUyarilar.length} uyarı</span>}
-              {gBilgiler.length  > 0 && <span style={{ color: 'var(--yellow)', fontWeight: 600 }}>● {gBilgiler.length} bilgi</span>}
-              {gBugunler.length  > 0 && <span style={{ color: 'var(--accent)', fontWeight: 600 }}>● {gBugunler.length} bugün</span>}
-            </div>
-            {renderBolum('KRİTİK',  gKritikler, 'kritik', '#e05c5c', true)}
-            {renderBolum('UYARI',   gUyarilar,  'uyari',  '#D4893A')}
-            {renderBolum('BİLGİ',   gBilgiler,  'bilgi',  '#e8c547')}
-            {renderBolum('BUGÜN',   gBugunler,  'bugun',  '#C8956A', true)}
-          </div>
-        );
-      })()}
+        // ─── Tüm sinyal sayıları ───
+        const sinyalKarar = (panel.kararlar || []).filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI').length;
+        const sinyalMesaj = (panel.merkez_mesajlar || []).filter(m => !m.okundu && m.aktif !== false).length;
+        const sinyalCiro  = Array.isArray(panel.ciro_eksik_gunler) ? panel.ciro_eksik_gunler.length : 0;
+        const toplamSinyal = gKritikler.length + gUyarilar.length + gBilgiler.length + gBugunler.length + sinyalKarar + sinyalMesaj + sinyalCiro;
+        const trayAcik = cfoTrayOpen !== null ? cfoTrayOpen : (gKritikler.length > 0 || (panel.kararlar || []).some(k => k.seviye === 'KRITIK'));
 
-      {/* Karar motoru uyarıları — akan yazı (ticker) */}
-      {panel.kararlar?.filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI').length > 0 && (() => {
-        const kritikVar = panel.kararlar.some(k => k.seviye === 'KRITIK');
-        const renk = kritikVar ? 'var(--red)' : 'var(--yellow)';
-        const bg = kritikVar ? 'rgba(220,50,50,0.08)' : 'rgba(220,160,0,0.07)';
-        const mesajlar = panel.kararlar
-          .filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI')
-          .map(k => `${k.seviye === 'KRITIK' ? '🚨' : '⚠️'} ${k.baslik}: ${k.mesaj}`)
-          .join('     ·     ');
-        const tickerText = mesajlar + '     ·     ' + mesajlar;
-        return (
-          <div style={{
-            background: bg,
-            border: `1px solid ${renk}44`,
-            borderLeft: `3px solid ${renk}`,
-            borderRadius: 8,
-            marginBottom: 14,
-            overflow: 'hidden',
-            display: 'flex',
-            alignItems: 'center',
-            height: 36,
-          }}>
-            <div style={{
-              flexShrink: 0,
-              padding: '0 12px',
-              fontSize: 10,
-              fontWeight: 700,
-              color: renk,
-              textTransform: 'uppercase',
-              letterSpacing: '1px',
-              borderRight: `1px solid ${renk}44`,
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              whiteSpace: 'nowrap',
-            }}>
-              {kritikVar ? '🚨 KRİTİK' : '⚠️ UYARI'}
-            </div>
-            <div style={{ overflow: 'hidden', flex: 1 }}>
-              <div style={{
-                display: 'inline-block',
-                whiteSpace: 'nowrap',
-                fontSize: 12,
-                fontWeight: 500,
-                color: renk,
-                animation: 'ticker 18s linear infinite',
-                paddingLeft: '100%',
-              }}>
-                {tickerText}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+        // ─── Yaklaşan ödeme pilleri ───
+        const yaklaşanPill = (panel.yaklasan_odemeler || []).filter(u => u.gun_farki > 0).sort((a, b) => a.gun_farki - b.gun_farki);
+        const pillTip = { sabit_giderler: { ikon: '🏠', renk: '#f59e0b' }, personel: { ikon: '👤', renk: '#4a9eff' }, vadeli_alimlar: { ikon: '📦', renk: '#f97316' }, borc_envanteri: { ikon: '🏦', renk: '#e879f9' } };
 
-      {/* ── RED BİLDİRİMLERİ (merkez_mesajlar — okunmamış) ── */}
-      {(panel.merkez_mesajlar || []).filter(m => !m.okundu && m.aktif !== false).length > 0 && (
-        <div style={{ marginBottom: 14 }}>
-          {(panel.merkez_mesajlar).filter(m => !m.okundu && m.aktif !== false).map((m, i) => (
-            <div key={m.id || i} style={{
-              display: 'flex', alignItems: 'flex-start', gap: 10,
-              background: 'rgba(239,68,68,0.08)',
-              border: '1px solid rgba(239,68,68,0.35)',
-              borderLeft: '3px solid var(--red)',
-              borderRadius: 8, padding: '10px 14px', marginBottom: 8,
-            }}>
-              <span style={{ fontSize: 18, flexShrink: 0 }}>❌</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, color: 'var(--text1)', fontWeight: 500, lineHeight: 1.4 }}>{m.mesaj}</div>
-                {m.olusturma && (
-                  <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
-                    {new Date(m.olusturma).toLocaleString('tr-TR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}
+        return (
+          <>
+            {/* ─── UNIFIED ALERT TRAY ─── */}
+            {toplamSinyal > 0 && (
+              <div style={{ marginBottom: 12, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+                {/* Header — toggle */}
+                <button
+                  onClick={() => setCfoTrayOpen(prev => prev === null ? !trayAcik : !prev)}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '9px 14px', background: 'var(--bg2)', border: 'none',
+                    cursor: 'pointer', textAlign: 'left',
+                    borderBottom: trayAcik ? '1px solid var(--border)' : 'none',
+                  }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text2)', flex: 1 }}>🔔 Bildirimler</span>
+                  {gKritikler.length > 0 && (
+                    <span style={{ background: 'rgba(220,38,38,0.15)', color: 'var(--red)', borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>
+                      {gKritikler.length} kritik
+                    </span>
+                  )}
+                  {gUyarilar.length > 0 && (
+                    <span style={{ background: 'rgba(212,137,58,0.15)', color: '#D4893A', borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>
+                      {gUyarilar.length} uyarı
+                    </span>
+                  )}
+                  {(gBilgiler.length + gBugunler.length + sinyalKarar + sinyalMesaj + sinyalCiro) > 0 && (
+                    <span style={{ background: 'var(--bg3)', color: 'var(--text3)', borderRadius: 4, padding: '2px 8px', fontSize: 11 }}>
+                      +{gBilgiler.length + gBugunler.length + sinyalKarar + sinyalMesaj + sinyalCiro}
+                    </span>
+                  )}
+                  <span style={{ fontSize: 11, color: 'var(--text3)', userSelect: 'none' }}>{trayAcik ? '▲' : '▼'}</span>
+                </button>
+
+                {/* Body */}
+                {trayAcik && (
+                  <div style={{ padding: '10px 12px' }}>
+
+                    {/* Gecikmiş ödemeler */}
+                    {(gKritikler.length + gUyarilar.length + gBilgiler.length + gBugunler.length) > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6, display: 'flex', gap: 10 }}>
+                          <span>GECİKMİŞ ÖDEMELER</span>
+                          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(toplamGecikmisTutar)}</span>
+                        </div>
+                        {renderBolum('KRİTİK (15+ gün)',  gKritikler, 'kritik', '#e05c5c', true)}
+                        {renderBolum('UYARI (8–14 gün)',  gUyarilar,  'uyari',  '#D4893A')}
+                        {renderBolum('BİLGİ (0–7 gün)',   gBilgiler,  'bilgi',  '#e8c547')}
+                        {renderBolum('BUGÜN',             gBugunler,  'bugun',  '#C8956A', true)}
+                      </div>
+                    )}
+
+                    {/* Karar motoru */}
+                    {sinyalKarar > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>KARAR MOTORU</div>
+                        {(panel.kararlar || []).filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI').map((k, i) => (
+                          <div key={i} style={{
+                            display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 10px', marginBottom: 4, borderRadius: 6,
+                            background: k.seviye === 'KRITIK' ? 'rgba(220,38,38,0.07)' : 'rgba(212,137,58,0.07)',
+                            borderLeft: `3px solid ${k.seviye === 'KRITIK' ? 'var(--red)' : '#D4893A'}`,
+                          }}>
+                            <span style={{ flexShrink: 0 }}>{k.seviye === 'KRITIK' ? '🚨' : '⚠️'}</span>
+                            <div>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text1)' }}>{k.baslik}</div>
+                              <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>{k.mesaj}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Sistem bildirimleri */}
+                    {sinyalMesaj > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>SİSTEM BİLDİRİMLERİ</div>
+                        {(panel.merkez_mesajlar || []).filter(m => !m.okundu && m.aktif !== false).map((m, i) => (
+                          <div key={m.id || i} style={{
+                            display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 10px', marginBottom: 4, borderRadius: 6,
+                            background: 'rgba(239,68,68,0.07)', borderLeft: '3px solid var(--red)',
+                          }}>
+                            <span style={{ flexShrink: 0 }}>❌</span>
+                            <div>
+                              <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text1)' }}>{m.mesaj}</div>
+                              {m.olusturma && (
+                                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
+                                  {new Date(m.olusturma).toLocaleString('tr-TR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Ciro eksikleri */}
+                    {sinyalCiro > 0 && (
+                      <div style={{ marginBottom: 4 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>CİRO EKSİKLERİ</div>
+                        <div style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+                          padding: '8px 10px', borderRadius: 6, background: 'rgba(239,68,68,0.07)', borderLeft: '3px solid var(--red)',
+                        }}>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--red)' }}>⚠️ {sinyalCiro} günde ciro girilmemiş</div>
+                            <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>
+                              {panel.ciro_eksik_gunler.map(g => `${g.tarih}${g.kritik ? ' ●' : ''}`).join(' · ')}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                            <button className="btn btn-primary btn-sm" onClick={() => nav('ciro')}>📈 Ciro Girişi</button>
+                            <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('ciro')}>➕ Hızlı Gir</button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                   </div>
                 )}
               </div>
+            )}
+
+            {/* ─── YAKLAŞAN ÖDEME PİLLERİ ─── */}
+            {yaklaşanPill.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>
+                  📅 Yaklaşan Ödemeler ({yaklaşanPill.length})
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {yaklaşanPill.slice(0, 14).map((u, i) => {
+                    const t = pillTip[u.kaynak_tablo] || { ikon: '💳', renk: '#94a3b8' };
+                    const urgColor = u.gun_farki <= 3 ? 'var(--red)' : u.gun_farki <= 7 ? '#D4893A' : 'var(--text3)';
+                    return (
+                      <div key={i} onClick={() => nav('sabit-giderler')} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 5,
+                        padding: '4px 10px', borderRadius: 20,
+                        background: 'var(--bg2)', border: `1px solid ${t.renk}44`,
+                        cursor: 'pointer', fontSize: 11,
+                        transition: 'transform 0.12s, box-shadow 0.12s',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = `0 3px 10px ${t.renk}30`; }}
+                      onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; }}
+                      >
+                        <span>{t.ikon}</span>
+                        <span style={{ color: 'var(--text1)', fontWeight: 500, maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.aciklama}</span>
+                        <span style={{ color: 'var(--text3)', margin: '0 1px' }}>·</span>
+                        <span style={{ color: urgColor, fontWeight: 700, fontFamily: 'var(--font-mono)', fontSize: 10 }}>{u.gun_farki}g</span>
+                      </div>
+                    );
+                  })}
+                  {yaklaşanPill.length > 14 && (
+                    <div style={{ padding: '4px 10px', borderRadius: 20, background: 'var(--bg2)', border: '1px solid var(--border)', fontSize: 11, color: 'var(--text3)' }}>
+                      +{yaklaşanPill.length - 14} daha
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ─── HIZLI AKSİYON BARI ─── */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 14, padding: '10px 14px', background: 'var(--bg2)', borderRadius: 8, border: '1px solid var(--border)', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'center', marginRight: 4 }}>Hızlı:</span>
+              <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('ciro')}>➕ Ciro Gir</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('gider')} style={{ position: 'relative' }}>
+                ➖ Gider Gir
+                {Number(panel.bekleyen_gider_sayisi || 0) > 0 && (
+                  <span style={{
+                    position: 'absolute', top: -6, right: -6,
+                    background: 'var(--yellow)', color: '#000',
+                    borderRadius: '50%', width: 16, height: 16,
+                    fontSize: 10, fontWeight: 700,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    lineHeight: 1,
+                  }}>{panel.bekleyen_gider_sayisi}</span>
+                )}
+              </button>
+              <button className="btn btn-secondary btn-sm" onClick={() => nav('kart-hareketleri')}>💳 Kart Hareketi</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => nav('dis-kaynak')}>💰 Dış Kaynak</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => nav('onay')}>✅ Onay Kuyruğu</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => nav('ledger')}>📒 Ledger</button>
             </div>
-          ))}
-        </div>
-      )}
-
-      {/* ── BU AY ÖDEMELER — 2 BANT ── */}
-      {panel.yaklasan_odemeler?.length > 0 && (() => {
-        const liste = panel.yaklasan_odemeler.filter(u => u.gun_farki > 0);
-
-        // Renk ve ikon — borç tipine göre
-        const tipRenk = {
-          sabit_giderler: { ikon: '🏠', renk: '#f59e0b', etiket: 'Sabit' },
-          personel:       { ikon: '👤', renk: '#4a9eff', etiket: 'Maaş'  },
-          vadeli_alimlar: { ikon: '📦', renk: '#f97316', etiket: 'Vadeli' },
-          borc_envanteri: { ikon: '🏦', renk: '#e879f9', etiket: 'Kredi'  },
-        };
-        const getTip = kt => tipRenk[kt] || { ikon: '💳', renk: '#94a3b8', etiket: 'Kart' };
-
-        // Şerit 1: Bu ayın tüm ödemeleri (8+ gün)
-        const aylik = liste.filter(u => u.gun_farki > 7);
-        // Şerit 2: Son 7 gün (acil) -> son 3 gün kırmızı ayrı bant
-        const son3 = liste.filter(u => u.gun_farki <= 3);
-        const acil = liste.filter(u => u.gun_farki > 3 && u.gun_farki <= 7);
-
-        // Tek renkli ticker yerine — her öğeye renkli span yazıyoruz
-        // Ama ticker div içinde HTML olamaz, bu yüzden rengi etiketle gösteriyoruz
-        const aylikMetni = aylik.map(u => {
-          const t = getTip(u.kaynak_tablo);
-          const tutar = ['sabit_giderler','personel'].includes(u.kaynak_tablo)
-            ? fmt(u.tutar) : `${fmt(u.tutar)} / asg ${fmt(u.asgari)}`;
-          return `${t.ikon} ${u.aciklama}  ${tutar}  [${u.gun_farki} gün]`;
-        }).join('     ·     ');
-
-        const acilMetni = acil.map(u => {
-          const t = getTip(u.kaynak_tablo);
-          const gun = u.gun_farki === 1 ? 'YARIN' : `${u.gun_farki} GÜN`;
-          const tutar = ['sabit_giderler','personel'].includes(u.kaynak_tablo)
-            ? fmt(u.tutar) : `${fmt(u.tutar)} / asg ${fmt(u.asgari)}`;
-          return `${t.ikon} ${u.aciklama}  ${tutar}  ⚡${gun}`;
-        }).join('     ·     ');
-
-        const son3Metni = son3.map(u => {
-          const t = getTip(u.kaynak_tablo);
-          const gun = u.gun_farki <= 1 ? 'ACİL' : `${u.gun_farki} GÜN`;
-          const tutar = ['sabit_giderler','personel'].includes(u.kaynak_tablo)
-            ? fmt(u.tutar) : `${fmt(u.tutar)} / asg ${fmt(u.asgari)}`;
-          return `${t.ikon} ${u.aciklama}  ${tutar}  🔴${gun}`;
-        }).join('     ·     ');
-
-        return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
-
-            {/* Şerit 1 — Bu ay tüm ödemeler */}
-            {aylik.length > 0 && (
-              <div style={{
-                background: 'rgba(91,155,214,0.07)',
-                border: '1px solid rgba(91,155,214,0.25)',
-                borderLeft: '3px solid var(--blue)',
-                borderRadius: 8, overflow: 'hidden',
-                display: 'flex', alignItems: 'center', height: 34,
-              }}>
-                <div style={{
-                  flexShrink: 0, padding: '0 10px', fontSize: 9, fontWeight: 700,
-                  color: 'var(--blue)', textTransform: 'uppercase', letterSpacing: '1px',
-                  borderRight: '1px solid rgba(91,155,214,0.25)',
-                  height: '100%', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap',
-                }}>
-                  📅 BU AY · {aylik.length}
-                </div>
-                <div style={{ overflow: 'hidden', flex: 1 }}>
-                  <div style={{
-                    display: 'inline-block', whiteSpace: 'nowrap',
-                    fontSize: 11, fontWeight: 500, color: 'var(--blue)',
-                    animation: 'ticker 42s linear infinite', paddingLeft: '100%',
-                  }}>
-                    {aylikMetni + '          ·          ' + aylikMetni}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Şerit 2 — Son 7 gün acil */}
-            {acil.length > 0 && (
-              <div style={{
-                background: 'rgba(249,115,22,0.08)',
-                border: '1px solid rgba(249,115,22,0.35)',
-                borderLeft: '3px solid var(--orange, #f97316)',
-                borderRadius: 8, overflow: 'hidden',
-                display: 'flex', alignItems: 'center', height: 34,
-              }}>
-                <div style={{
-                  flexShrink: 0, padding: '0 10px', fontSize: 9, fontWeight: 700,
-                  color: '#f97316', textTransform: 'uppercase', letterSpacing: '1px',
-                  borderRight: '1px solid rgba(249,115,22,0.3)',
-                  height: '100%', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap',
-                }}>
-                  ⚡ 7 GÜN · {acil.length}
-                </div>
-                <div style={{ overflow: 'hidden', flex: 1 }}>
-                  <div style={{
-                    display: 'inline-block', whiteSpace: 'nowrap',
-                    fontSize: 11, fontWeight: 600, color: '#f97316',
-                    animation: 'ticker 30s linear infinite', paddingLeft: '100%',
-                  }}>
-                    {acilMetni + '          ·          ' + acilMetni}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Şerit 3 — Son 3 gün kritik (kırmızı, daha yavaş) */}
-            {son3.length > 0 && (
-              <div style={{
-                background: 'rgba(220,38,38,0.12)',
-                border: '1px solid rgba(220,38,38,0.45)',
-                borderLeft: '3px solid var(--red)',
-                borderRadius: 8, overflow: 'hidden',
-                display: 'flex', alignItems: 'center', height: 36,
-              }}>
-                <div style={{
-                  flexShrink: 0, padding: '0 10px', fontSize: 9, fontWeight: 800,
-                  color: 'var(--red)', textTransform: 'uppercase', letterSpacing: '1px',
-                  borderRight: '1px solid rgba(220,38,38,0.35)',
-                  height: '100%', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap',
-                }}>
-                  🚨 SON 3 GÜN · {son3.length}
-                </div>
-                <div style={{ overflow: 'hidden', flex: 1 }}>
-                  <div style={{
-                    display: 'inline-block', whiteSpace: 'nowrap',
-                    fontSize: 11, fontWeight: 700, color: 'var(--red)',
-                    animation: 'ticker 38s linear infinite', paddingLeft: '100%',
-                  }}>
-                    {son3Metni + '          ·          ' + son3Metni}
-                  </div>
-                </div>
-              </div>
-            )}
-
-          </div>
+          </>
         );
       })()}
-
-      {/* Son 7 günde ciro girilmeyen günler — panel ortası belirgin uyarı */}
-      {Array.isArray(panel.ciro_eksik_gunler) && panel.ciro_eksik_gunler.length > 0 && (
-        <div style={{
-          marginBottom: 16,
-          borderRadius: 10,
-          border: '2px solid rgba(239,68,68,0.45)',
-          background: 'rgba(239,68,68,0.10)',
-          boxShadow: '0 0 0 1px rgba(239,68,68,0.12) inset',
-          padding: '12px 14px',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--red)', marginBottom: 4 }}>
-                ⚠️ Son 7 günde ciro girilmeyen günler var ({panel.ciro_eksik_gunler.length})
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text2)' }}>
-                {panel.ciro_eksik_gunler.map(g => `${g.tarih}${g.kritik ? ' (son 3 gün)' : ''}`).join(' · ')}
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-primary btn-sm" onClick={() => nav('ciro')}>
-                📈 Ciro Girişi Sayfasına Git
-              </button>
-              <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('ciro')}>
-                ➕ Hızlı Ciro Gir
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── KATMAN 2: ÇEKİRDEK METRİKLER (drill-down) ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
@@ -1258,8 +1145,8 @@ export default function Panel({ onNavigate }) {
               onKartClick: vadelihDetayGetir,
             };
           })(),
-        ].map(({ label, value, sub, renk, page, overlay, nakit, kart, toplam, kirılım, onKartClick, bankaYatirim }) => (
-          <div key={label} className="metric-card" style={{ borderTop: `3px solid ${renk}`, cursor: 'pointer' }}
+        ].map(({ label, value, sub, renk, page, overlay, nakit, kart, toplam, kirılım, onKartClick, bankaYatirim }, i) => (
+          <div key={label} className="metric-card" style={{ borderTop: `3px solid ${renk}`, cursor: 'pointer', animation: 'metricIn 0.35s ease both', animationDelay: `${i * 0.045}s` }}
             onClick={() => {
               if (bankaYatirim) { bankaYatirimAc(); return; }
               if (onKartClick) { onKartClick(); return; }
@@ -1407,31 +1294,6 @@ export default function Panel({ onNavigate }) {
           </div>
         </div>
       )}
-
-      {/* ── HIZLI AKSİYON BARI ── */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, padding: '10px 14px', background: 'var(--bg2)', borderRadius: 8, border: '1px solid var(--border)', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'center', marginRight: 4 }}>Hızlı:</span>
-        <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('ciro')}>➕ Ciro Gir</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('gider')} style={{ position: 'relative' }}>
-          ➖ Gider Gir
-          {Number(panel.bekleyen_gider_sayisi || 0) > 0 && (
-            <span style={{
-              position: 'absolute', top: -6, right: -6,
-              background: 'var(--yellow)', color: '#000',
-              borderRadius: '50%', width: 16, height: 16,
-              fontSize: 10, fontWeight: 700,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              lineHeight: 1,
-            }}>
-              {panel.bekleyen_gider_sayisi}
-            </span>
-          )}
-        </button>
-        <button className="btn btn-secondary btn-sm" onClick={() => nav('kart-hareketleri')}>💳 Kart Hareketi</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => nav('dis-kaynak')}>💰 Dış Kaynak</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => nav('onay')}>✅ Onay Kuyruğu</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => nav('ledger')}>📒 Ledger</button>
-      </div>
 
       {/* ── KATMAN 3: RİSK & BASKI ── */}
       <div className="card" style={{ marginBottom: 16 }}>
