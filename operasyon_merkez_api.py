@@ -6240,7 +6240,12 @@ def _kk_uyari_getir(cur, uyari_id: str) -> Dict[str, Any]:
 
 
 def _kk_ciro_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """ciro tablosunu güncelle (nakit/pos/online). Mevcut kaydı bulup üzerine yazar."""
+    """ciro tablosunu güncelle (nakit/pos/online). Mevcut kayıt varsa UPDATE, yoksa INSERT.
+
+    UPSERT mantığı: Kasa farkı uyarısı ciro YOKKEN de oluşabilir (örn. açılış kasa varken
+    Z raporu girilmemiş senaryosu). Bu durumda kullanıcının düzeltme yapabilmesi için
+    girdiği değerlerle yeni ciro satırı oluşturulur (kaynak='kasa_fark_kaynak_duzeltme').
+    """
     yeni_nakit = payload.get("yeni_nakit")
     yeni_pos = payload.get("yeni_pos")
     yeni_online = payload.get("yeni_online")
@@ -6256,7 +6261,27 @@ def _kk_ciro_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> D
     )
     row = cur.fetchone()
     if not row:
-        raise HTTPException(404, "Bu şube/tarih için aktif ciro kaydı yok — önce ciro girilmeli")
+        # ── UPSERT: ciro yok → kullanıcı girdiği değerlerle yeni satır oluştur ──
+        # Boş alanlar 0 olur. toplam = nakit + pos + online (otomatik hesap).
+        ins_nakit = float(yeni_nakit) if yeni_nakit is not None else 0.0
+        ins_pos = float(yeni_pos) if yeni_pos is not None else 0.0
+        ins_online = float(yeni_online) if yeni_online is not None else 0.0
+        ins_toplam = round(ins_nakit + ins_pos + ins_online, 2)
+        cid = str(uuid.uuid4())
+        cur.execute(
+            """
+            INSERT INTO ciro (id, sube_id, tarih, nakit, pos, online, toplam, durum, kaynak)
+            VALUES (%s, %s, %s::date, %s, %s, %s, %s, 'aktif', 'kasa_fark_kaynak_duzeltme')
+            """,
+            (cid, sube_id, tarih, ins_nakit, ins_pos, ins_online, ins_toplam),
+        )
+        return {
+            "hedef_tablo": "ciro",
+            "hedef_id": cid,
+            "eski": None,
+            "yeni": {"nakit": ins_nakit, "pos": ins_pos, "online": ins_online, "toplam": ins_toplam},
+            "yeni_ciro_olusturuldu": True,
+        }
     r = dict(row)
     eski = {"nakit": float(r["nakit"] or 0), "pos": float(r["pos"] or 0), "online": float(r["online"] or 0)}
     yeni = {
