@@ -83,6 +83,9 @@ export default function KartEkstreAnaliz() {
   // aktarimSonuclari: { 'Enpara::1234': { yazilan, atlanan, kart_adi } }
   const [aktarimSonuclari, setAktarimSonuclari] = useState({});
   const [aktarimLoading, setAktarimLoading] = useState('');
+  // yeniKartFormlar: { 'Enpara::1234': { kart_adi, limit_tutar, faiz_orani, kesim_gunu, son_odeme_gunu, yukleniyor, hata } }
+  const [yeniKartFormlar, setYeniKartFormlar] = useState({});
+  const [yeniKartEklenenler, setYeniKartEklenenler] = useState({});  // key → kart_adi
 
   useEffect(() => {
     fetch('/kart-analiz/kartlar-listesi')
@@ -219,9 +222,34 @@ export default function KartEkstreAnaliz() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kart_id: kartId, son_dort_hane: s4 }),
     });
-    // kartlar listesini yenile
     const fresh = await fetch('/kart-analiz/kartlar-listesi').then(r => r.json()).catch(() => kartlar);
     setKartlar(fresh);
+  }
+
+  // Yeni kart ekle (PDF'ten gelen meta → /api/kartlar)
+  async function yeniKartEkle(pk, form) {
+    const r = await fetch('/api/kartlar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kart_adi:           form.kart_adi,
+        banka:              pk.banka,
+        limit_tutar:        parseFloat(form.limit_tutar) || 0,
+        kesim_gunu:         parseInt(form.kesim_gunu)   || 15,
+        son_odeme_gunu:     parseInt(form.son_odeme_gunu) || 25,
+        faiz_orani:         parseFloat(form.faiz_orani) || 0,
+        asgari_oran:        40,
+        gecikme_faiz_orani: 0,
+        son_dort_hane:      pk.s4 || '',
+      }),
+    });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+    const d = await r.json();
+    // kartlar listesini yenile ve otomatik eşleştir
+    const fresh = await fetch('/kart-analiz/kartlar-listesi').then(r2 => r2.json()).catch(() => kartlar);
+    setKartlar(fresh);
+    setEslesmeler(prev => ({ ...prev, [pk.key]: d.id }));
+    return d.id;
   }
 
   // Filtre seçenekleri
@@ -342,58 +370,95 @@ export default function KartEkstreAnaliz() {
             ))}
           </div>
 
-          {/* ── Kart Eşleştirme Paneli ── */}
-          {pdfKartlar.length > 0 && kartlar.length > 0 && (
+          {/* ── Kart Tanımlama + Eşleştirme Paneli ── */}
+          {pdfKartlar.length > 0 && (
             <div className="card" style={{ marginBottom: 24, border: '1px solid rgba(99,102,241,0.35)' }}>
-              <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>🔗 Kart Eşleştirme</h3>
+              <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>🔗 Kart Tanımlama & Eşleştirme</h3>
               <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 14, marginTop: 0 }}>
-                PDF'ten okunan her kartı mevcut kart tanımınızla eşleştirin. Harcamaları &nbsp;
-                <strong style={{ color: 'var(--primary)' }}>Kart Hareketleri</strong>'ne aktarabilirsiniz.
+                PDF'ten okunan her kart için eşleştirme yapın veya sisteme yeni ekleyin.
+                Eklenen kartlar <strong style={{ color: 'var(--primary)' }}>Kart Merkezi</strong>'nde de görünür.
               </p>
 
               {pdfKartlar.map(pk => {
-                const eslKartId = eslesmeler[pk.key] || '';
-                const eslKart   = kartlar.find(k => k.id === eslKartId);
-                const sonuc_    = aktarimSonuclari[pk.key];
-                const isLoading = aktarimLoading === pk.key;
-                const txCount   = islemler.filter(tx => !tx.odeme_mi && tx.banka === pk.banka && son4PDF(tx.kart_no) === pk.s4).length;
+                const eslKartId  = eslesmeler[pk.key] || '';
+                const eslKart    = kartlar.find(k => k.id === eslKartId);
+                const sonuc_     = aktarimSonuclari[pk.key];
+                const isLoading  = aktarimLoading === pk.key;
+                const txCount    = islemler.filter(tx => !tx.odeme_mi && tx.banka === pk.banka && son4PDF(tx.kart_no) === pk.s4).length;
+                const eklendi    = yeniKartEklenenler[pk.key];
+                const yeniForm   = yeniKartFormlar[pk.key];
+                // Sistemde bu kart var mı?
+                const zatenVar   = kartlar.some(k =>
+                  bankaEslesiyor(k.banka, pk.banka) &&
+                  (k.son_dort_hane === pk.s4 || (!pk.s4 && !k.son_dort_hane))
+                );
+
+                function formGuncelle(field, val) {
+                  setYeniKartFormlar(prev => ({
+                    ...prev,
+                    [pk.key]: { ...prev[pk.key], [field]: val },
+                  }));
+                }
+
+                async function formGonder() {
+                  formGuncelle('yukleniyor', true);
+                  formGuncelle('hata', '');
+                  try {
+                    const kid = await yeniKartEkle(pk, yeniKartFormlar[pk.key] || {});
+                    setYeniKartEklenenler(prev => ({
+                      ...prev,
+                      [pk.key]: yeniKartFormlar[pk.key]?.kart_adi || pk.banka,
+                    }));
+                    setYeniKartFormlar(prev => { const n = {...prev}; delete n[pk.key]; return n; });
+                  } catch(e) {
+                    formGuncelle('hata', e.message);
+                  } finally {
+                    formGuncelle('yukleniyor', false);
+                  }
+                }
 
                 return (
                   <div key={pk.key} style={{
                     padding: '14px 16px', marginBottom: 10, borderRadius: 10,
-                    background: 'var(--bg3)', border: '1px solid var(--border)',
+                    background: 'var(--bg3)',
+                    border: `1px solid ${eklendi ? 'var(--green)' : eslKartId ? 'rgba(99,102,241,0.4)' : 'var(--border)'}`,
                   }}>
-                    {/* Sol: PDF kart kimliği */}
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
-                      <div style={{ minWidth: 160 }}>
-                        <div style={{ fontWeight: 700, fontSize: 13 }}>
-                          {pk.banka} {pk.s4 ? <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text3)' }}>**** {pk.s4}</span> : ''}
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
-                          PDF'te {txCount} harcama
-                        </div>
+
+                    {/* ── Başlık satırı ── */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+                      <div>
+                        <span style={{ fontWeight: 700, fontSize: 13 }}>{pk.banka}</span>
+                        {pk.s4 && <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text3)', fontSize: 12, marginLeft: 6 }}>**** {pk.s4}</span>}
+                        <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 10 }}>{txCount} harcama</span>
                       </div>
+                      {/* Durum chip */}
+                      {eklendi ? (
+                        <span style={{ fontSize: 11, color: 'var(--green)', fontWeight: 700 }}>✅ {eklendi} eklendi</span>
+                      ) : eslKartId ? (
+                        <span style={{ fontSize: 11, color: '#a5b4fc', fontWeight: 700 }}>🔗 {eslKart?.kart_adi}</span>
+                      ) : (
+                        <span style={{ fontSize: 11, color: 'var(--yellow)', fontWeight: 600 }}>⚠ Sistemde tanımsız</span>
+                      )}
+                    </div>
 
-                      <div style={{ fontSize: 18, color: 'var(--text3)', paddingTop: 4 }}>→</div>
-
-                      {/* Dropdown */}
-                      <div style={{ flex: 1, minWidth: 200 }}>
+                    {/* ── Eşleştirme satırı (sistemde kart varsa) ── */}
+                    {kartlar.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap', marginBottom: eslKartId ? 8 : 0 }}>
                         <select
                           value={eslKartId}
                           onChange={e => {
                             const yeni = e.target.value;
                             setEslesmeler(prev => ({ ...prev, [pk.key]: yeni }));
-                            // Son 4 haneyi otomatik kaydet (eğer kart tanımında yoksa)
                             const secilenK = kartlar.find(k => k.id === yeni);
                             if (yeni && pk.s4 && secilenK && !secilenK.son_dort_hane)
                               son4Kaydet(yeni, pk.s4);
                           }}
                           style={{
-                            width: '100%', padding: '8px 10px', borderRadius: 6,
+                            flex: 1, minWidth: 180, padding: '7px 10px', borderRadius: 6,
                             background: 'var(--bg2)', border: `1px solid ${eslKartId ? 'var(--primary)' : 'var(--border)'}`,
-                            color: 'var(--text1)', fontSize: 13,
+                            color: 'var(--text1)', fontSize: 12,
                           }}>
-                          <option value="">— Kart seçin —</option>
+                          <option value="">— Mevcut kartla eşleştir —</option>
                           {kartlar.map(k => (
                             <option key={k.id} value={k.id}>
                               {k.kart_adi} ({k.banka}{k.son_dort_hane ? ' ****' + k.son_dort_hane : ''})
@@ -401,44 +466,109 @@ export default function KartEkstreAnaliz() {
                           ))}
                         </select>
 
-                        {/* Eşleşen kartın metrikleri */}
-                        {eslKart && (
-                          <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
-                            {[
-                              { label: 'Limit', val: fmt(eslKart.limit_tutar), renk: 'var(--text2)' },
-                              { label: 'Faiz', val: `%${eslKart.faiz_orani}`, renk: 'var(--yellow)' },
-                              { label: 'Mevcut Borç', val: fmt(eslKart.guncel_borc), renk: 'var(--red)' },
-                            ].map(m => (
-                              <div key={m.label} style={{ fontSize: 11, color: 'var(--text3)' }}>
-                                {m.label}: <strong style={{ color: m.renk }}>{m.val}</strong>
-                              </div>
-                            ))}
-                          </div>
+                        {eslKartId && (
+                          <button
+                            onClick={() => aktarYap(pk.key, eslKartId)}
+                            disabled={isLoading || !!sonuc_?.yazilan}
+                            className="btn btn-primary btn-sm"
+                            style={{ height: 36, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                            {isLoading ? '⏳' : sonuc_?.yazilan != null ? '✅ Aktarıldı' : '⬆ Aktar'}
+                          </button>
                         )}
                       </div>
+                    )}
 
-                      {/* Aktarım butonu */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-                        <button
-                          onClick={() => aktarYap(pk.key, eslKartId)}
-                          disabled={!eslKartId || isLoading || !!sonuc_?.yazilan}
-                          className="btn btn-primary btn-sm"
-                          style={{ height: 38, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', minWidth: 110 }}>
-                          {isLoading ? '⏳ Aktarılıyor…' : sonuc_?.yazilan != null ? '✅ Aktarıldı' : '⬆ Aktar'}
-                        </button>
-
-                        {/* Sonuç */}
+                    {/* Eşleşen kart metrikleri */}
+                    {eslKart && (
+                      <div style={{ display: 'flex', gap: 12, marginBottom: 6, flexWrap: 'wrap' }}>
+                        {[
+                          { label: 'Limit', val: fmt(eslKart.limit_tutar), renk: 'var(--text2)' },
+                          { label: 'Faiz', val: `%${eslKart.faiz_orani}`, renk: 'var(--yellow)' },
+                          { label: 'Mevcut Borç', val: fmt(eslKart.guncel_borc), renk: 'var(--red)' },
+                        ].map(m => (
+                          <div key={m.label} style={{ fontSize: 11, color: 'var(--text3)' }}>
+                            {m.label}: <strong style={{ color: m.renk }}>{m.val}</strong>
+                          </div>
+                        ))}
                         {sonuc_ && !sonuc_.hata && (
-                          <div style={{ fontSize: 11, textAlign: 'right', color: 'var(--green)', lineHeight: 1.4 }}>
-                            {sonuc_.yazilan} yeni kayıt
-                            {sonuc_.atlanan > 0 && <span style={{ color: 'var(--text3)' }}> · {sonuc_.atlanan} duplike atlandı</span>}
+                          <div style={{ fontSize: 11, color: 'var(--green)', marginLeft: 'auto' }}>
+                            {sonuc_.yazilan} kayıt aktarıldı
+                            {sonuc_.atlanan > 0 && <span style={{ color: 'var(--text3)' }}> · {sonuc_.atlanan} duplike</span>}
                           </div>
                         )}
-                        {sonuc_?.hata && (
-                          <div style={{ fontSize: 11, color: 'var(--red)' }}>⚠ {sonuc_.hata}</div>
+                      </div>
+                    )}
+
+                    {/* ── Yeni Kart Ekleme Formu ── */}
+                    {!eklendi && !eslKartId && (
+                      <div style={{ marginTop: 8 }}>
+                        {!yeniForm ? (
+                          <button
+                            onClick={() => setYeniKartFormlar(prev => ({
+                              ...prev,
+                              [pk.key]: {
+                                kart_adi: pk.banka + (pk.s4 ? ' ****' + pk.s4 : ''),
+                                limit_tutar: '', faiz_orani: '',
+                                kesim_gunu: '15', son_odeme_gunu: '25',
+                              },
+                            }))}
+                            className="btn btn-secondary btn-sm"
+                            style={{ fontSize: 12, height: 34 }}>
+                            ➕ Sisteme Kart Olarak Ekle
+                          </button>
+                        ) : (
+                          <div style={{
+                            padding: '12px 14px', background: 'rgba(99,102,241,0.07)',
+                            borderRadius: 8, border: '1px solid rgba(99,102,241,0.25)',
+                          }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 10, color: '#a5b4fc' }}>
+                              ➕ Yeni Kart Tanımı — {pk.banka} {pk.s4 && `**** ${pk.s4}`}
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+                              {[
+                                { label: 'Kart Adı *', field: 'kart_adi', span: 2, ph: 'ör. Enpara Ana Kartım' },
+                                { label: 'Limit (₺) *', field: 'limit_tutar', ph: '25000' },
+                                { label: 'Yıllık Faiz (%) *', field: 'faiz_orani', ph: '2.5' },
+                                { label: 'Kesim Günü', field: 'kesim_gunu', ph: '15' },
+                                { label: 'Son Ödeme Günü', field: 'son_odeme_gunu', ph: '25' },
+                              ].map(({ label, field, span, ph }) => (
+                                <div key={field} style={{ gridColumn: span === 2 ? '1 / -1' : undefined }}>
+                                  <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 3 }}>{label}</div>
+                                  <input
+                                    value={yeniForm[field] || ''}
+                                    onChange={e => formGuncelle(field, e.target.value)}
+                                    placeholder={ph}
+                                    style={{
+                                      width: '100%', padding: '7px 10px', boxSizing: 'border-box',
+                                      background: 'var(--bg2)', border: '1px solid var(--border)',
+                                      borderRadius: 6, color: 'var(--text1)', fontSize: 12,
+                                    }}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                            {yeniForm.hata && (
+                              <div style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>⚠ {yeniForm.hata}</div>
+                            )}
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              <button
+                                onClick={formGonder}
+                                disabled={yeniForm.yukleniyor || !yeniForm.kart_adi || !yeniForm.limit_tutar}
+                                className="btn btn-primary btn-sm"
+                                style={{ height: 36, fontSize: 12, fontWeight: 700 }}>
+                                {yeniForm.yukleniyor ? '⏳ Kaydediliyor…' : '💾 Kaydet & Eşleştir'}
+                              </button>
+                              <button
+                                onClick={() => setYeniKartFormlar(prev => { const n={...prev}; delete n[pk.key]; return n; })}
+                                className="btn btn-ghost btn-sm"
+                                style={{ height: 36, fontSize: 12 }}>
+                                İptal
+                              </button>
+                            </div>
+                          </div>
                         )}
                       </div>
-                    </div>
+                    )}
                   </div>
                 );
               })}
