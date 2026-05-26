@@ -2530,6 +2530,8 @@ export default function OperasyonMerkezi() {
 
   // Kasa Farkı Kaynak Düzeltme Modal
   const [kkDuzeltModal, setKkDuzeltModal] = useState(null); // { uyari, sebep, payload }
+  // Tarihçe modal: { uyari, tarihce: [], yukleniyor: bool, geriAlBusyId: string|null }
+  const [kkTarihceModal, setKkTarihceModal] = useState(null);
   const [tahsisCozModal, setTahsisCozModal] = useState(null); // { talep_id, urun_id, kalem_adi, talep_adet, tahsis_adet }
   const [tahsisCozBusy, setTahsisCozBusy] = useState(false);
   const [kkDuzeltBusy, setKkDuzeltBusy] = useState(false);
@@ -5204,6 +5206,77 @@ export default function OperasyonMerkezi() {
       toast(e.message || 'Düzeltme başarısız', 'red');
     } finally {
       setKkDuzeltBusy(false);
+    }
+  }
+
+  // ─── Tarihçe modal: audit listesi + geri al ───────────────────────────
+  async function kkTarihceModalAc(uyari) {
+    if (!uyari?.id) return;
+    setKkTarihceModal({ uyari, tarihce: [], yukleniyor: true, geriAlBusyId: null });
+    try {
+      const r = await api(`/ops/kasa-uyumsuzluk/${encodeURIComponent(uyari.id)}/duzeltme-tarihce`);
+      setKkTarihceModal({
+        uyari,
+        tarihce: Array.isArray(r?.tarihce) ? r.tarihce : [],
+        yukleniyor: false,
+        geriAlBusyId: null,
+      });
+    } catch (e) {
+      toast(e.message || 'Tarihçe yüklenemedi', 'red');
+      setKkTarihceModal(null);
+    }
+  }
+
+  async function kkTarihceGeriAl(auditKayit) {
+    if (!auditKayit?.id) return;
+    if (auditKayit.geri_alindi_mi) {
+      toast('Bu düzeltme zaten geri alınmış', 'yellow');
+      return;
+    }
+    const eskiFark = Number(auditKayit.eski_fark_tl || 0);
+    const yeniFark = Number(auditKayit.yeni_fark_tl || 0);
+    const fmt = (n) => n.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const onayMsg = `Bu düzeltmeyi geri almak istediğinden emin misin?\n\n` +
+      `Sebep: ${auditKayit.sebep}\n` +
+      `Fark: ${fmt(eskiFark)}₺ → ${fmt(yeniFark)}₺ (geri alınca: ${fmt(eskiFark)}₺)\n` +
+      `Hedef: ${auditKayit.hedef_tablo || '(kaynak değişmedi)'}\n\n` +
+      `İşlem: ilgili tabloda eski değerler RESTORE edilir, fark yeniden hesaplanır.`;
+    if (!window.confirm(onayMsg)) return;
+    const notu = window.prompt('Geri alma sebebi (opsiyonel):') ?? '';
+
+    setKkTarihceModal((prev) => prev ? { ...prev, geriAlBusyId: auditKayit.id } : prev);
+    try {
+      const r = await api(`/ops/kasa-uyumsuzluk/duzeltme/${encodeURIComponent(auditKayit.id)}/geri-al`, {
+        method: 'POST',
+        body: { notu: notu.trim() || null },
+      });
+      const yfFmt = fmt(Number(r?.yeni_fark || 0));
+      toast(
+        r?.otomatik_cozuldu
+          ? `↶ Geri alındı, fark sıfırlandı (yeni: 0₺) · ${r?.restore || ''}`
+          : `↶ Geri alındı, yeni fark: ${yfFmt}₺ · ${r?.restore || ''}`,
+        'green'
+      );
+      publishGlobalDataRefresh('ops-kasa-uyumsuzluk-geri-alindi');
+      // Tarihçeyi yenile
+      const tarihce = await api(`/ops/kasa-uyumsuzluk/${encodeURIComponent(kkTarihceModal?.uyari?.id)}/duzeltme-tarihce`);
+      setKkTarihceModal((prev) => prev ? {
+        ...prev,
+        tarihce: Array.isArray(tarihce?.tarihce) ? tarihce.tarihce : [],
+        geriAlBusyId: null,
+      } : prev);
+      // Hafta + gün verisini de yenile
+      const hedefKu = (kasaUyumAramaTarih || bugunIsoTarih()).trim();
+      const [haftaData, gunData] = await Promise.all([
+        kasaUyumHaftaYukle().catch(() => []),
+        kasaUyumGunYukle(hedefKu, { durum: kasaUyumDurumFiltre }).catch(() => null),
+      ]);
+      setKasaUyumHaftaSatirlari(haftaData);
+      if (gunData) setKasaUyumAramaSonuc(gunData);
+      await yukleOnayMerkez();
+    } catch (e) {
+      toast(e.message || 'Geri alma başarısız', 'red');
+      setKkTarihceModal((prev) => prev ? { ...prev, geriAlBusyId: null } : prev);
     }
   }
 
@@ -10564,6 +10637,13 @@ export default function OperasyonMerkezi() {
                       🔧 Kaynağı Düzelt
                     </button>
                     <button type="button" className="btn btn-sm"
+                      style={{ padding: '4px 10px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.4)', color: '#c4b5fd', fontWeight: 600, fontSize: 12 }}
+                      disabled={!!onayBusyId || kkDuzeltBusy}
+                      title="Yapılan düzeltme tarihçesi - Geri Al seçeneği"
+                      onClick={() => kkTarihceModalAc(u)}>
+                      📜 Tarihçe
+                    </button>
+                    <button type="button" className="btn btn-sm"
                       style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
                       disabled={!!onayBusyId}
                       onClick={() => kasaUyumsuzlukCoz(u.id, u.fark_tl)}>
@@ -10668,6 +10748,13 @@ export default function OperasyonMerkezi() {
                       title="Sebebi bul, kaynağı düzelt, fark otomatik yeniden hesaplanır"
                       onClick={() => kkDuzeltModalAc(u)}>
                       🔧 Kaynağı Düzelt
+                    </button>
+                    <button type="button" className="btn btn-sm"
+                      style={{ padding: '4px 10px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.4)', color: '#c4b5fd', fontWeight: 600, fontSize: 12 }}
+                      disabled={!!onayBusyId || kkDuzeltBusy}
+                      title="Yapılan düzeltme tarihçesi - Geri Al seçeneği"
+                      onClick={() => kkTarihceModalAc(u)}>
+                      📜 Tarihçe
                     </button>
                     <button type="button" className="btn btn-sm"
                       style={{ padding: '4px 12px', background: 'rgba(74,158,255,0.15)', border: '1px solid rgba(74,158,255,0.4)', color: '#93c5fd', fontWeight: 600, fontSize: 12 }}
@@ -15161,6 +15248,138 @@ export default function OperasyonMerkezi() {
             <p style={{ fontSize: 10, color: 'var(--text3)', margin: '14px 0 0', lineHeight: 1.5 }}>
               💡 Kaynak güncellenecek → kasa formülü otomatik yeniden hesaplanır → onay kuyruğundaki KASA_FARK kaydı
               senkronize olur. Yeni fark 0₺ olursa kayıt otomatik "çözüldü" işaretlenir ve onay iptal edilir.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ─── TARİHÇE MODAL — düzeltme audit + geri al ─────────────────────── */}
+      {kkTarihceModal && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200,
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setKkTarihceModal(null); }}
+        >
+          <div className="card" style={{ width: 720, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', padding: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>
+                📜 Düzeltme Tarihçesi
+              </h3>
+              <button
+                type="button" className="btn btn-sm"
+                style={{ padding: '4px 10px', fontSize: 12 }}
+                onClick={() => setKkTarihceModal(null)}
+              >
+                ✕ Kapat
+              </button>
+            </div>
+            <p style={{ margin: '0 0 18px', fontSize: 12, color: 'var(--text3)' }}>
+              {kkTarihceModal.uyari?.sube_adi} · {kkTarihceModal.uyari?.tarih}
+              {' · '}
+              <span style={{ color: 'var(--text2)' }}>
+                {kkTarihceModal.tarihce?.length || 0} düzeltme
+              </span>
+            </p>
+
+            {kkTarihceModal.yukleniyor && (
+              <div style={{ padding: 20, textAlign: 'center', color: 'var(--text3)' }}>Yükleniyor…</div>
+            )}
+
+            {!kkTarihceModal.yukleniyor && (!kkTarihceModal.tarihce || kkTarihceModal.tarihce.length === 0) && (
+              <div style={{
+                padding: 20, textAlign: 'center', color: 'var(--text3)',
+                background: 'rgba(100,116,139,0.08)', border: '1px dashed var(--border)',
+                borderRadius: 8, fontSize: 13,
+              }}>
+                Bu uyarı için henüz kaynak düzeltmesi yapılmamış.
+              </div>
+            )}
+
+            {!kkTarihceModal.yukleniyor && kkTarihceModal.tarihce && kkTarihceModal.tarihce.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {kkTarihceModal.tarihce.map((a) => {
+                  const fmtN = (n) => Number(n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                  const olusma = a.olusturma ? String(a.olusturma).slice(0, 16).replace('T', ' ') : '—';
+                  const geriAlindi = !!a.geri_alindi_mi;
+                  const busy = kkTarihceModal.geriAlBusyId === a.id;
+                  return (
+                    <div key={a.id} style={{
+                      background: geriAlindi ? 'rgba(100,116,139,0.08)' : 'rgba(34,197,94,0.04)',
+                      border: `1px solid ${geriAlindi ? 'var(--border)' : 'rgba(34,197,94,0.25)'}`,
+                      borderRadius: 10,
+                      padding: '12px 14px',
+                      opacity: geriAlindi ? 0.7 : 1,
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                            <span style={{
+                              background: geriAlindi ? 'rgba(148,163,184,0.2)' : 'rgba(245,158,11,0.18)',
+                              color: geriAlindi ? '#94a3b8' : '#fcd34d',
+                              padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+                            }}>
+                              {a.sebep}
+                            </span>
+                            {geriAlindi && (
+                              <span style={{
+                                background: 'rgba(239,68,68,0.15)', color: '#fca5a5',
+                                padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+                              }}>
+                                ↶ GERİ ALINDI
+                              </span>
+                            )}
+                            <span style={{ fontSize: 11, color: 'var(--text3)' }}>{olusma}</span>
+                          </div>
+                          <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 4 }}>
+                            <strong className="mono">Fark:</strong>{' '}
+                            <span className="mono">{fmtN(a.eski_fark_tl)}₺</span>
+                            {' → '}
+                            <span className="mono" style={{ color: Math.abs(Number(a.yeni_fark_tl||0)) < 0.01 ? '#86efac' : '#fcd34d' }}>
+                              {fmtN(a.yeni_fark_tl)}₺
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                            <strong>Hedef:</strong> {a.hedef_tablo || '(kaynak değişmedi)'}
+                            {a.personel_ad && <> · <strong>Yapan:</strong> {a.personel_ad}</>}
+                          </div>
+                          {a.notu && (
+                            <div style={{ marginTop: 6, padding: '6px 10px', background: 'var(--bg2)', borderRadius: 6, fontSize: 11, color: 'var(--text2)', fontStyle: 'italic' }}>
+                              💬 {a.notu}
+                            </div>
+                          )}
+                          {geriAlindi && a.geri_alma_ts && (
+                            <div style={{ marginTop: 6, fontSize: 10, color: 'var(--text3)' }}>
+                              Geri alındı: {String(a.geri_alma_ts).slice(0, 16).replace('T', ' ')}
+                              {a.geri_alan_personel_ad && <> · {a.geri_alan_personel_ad}</>}
+                            </div>
+                          )}
+                        </div>
+                        {!geriAlindi && (
+                          <button
+                            type="button" className="btn btn-sm"
+                            style={{
+                              padding: '6px 12px', background: 'rgba(239,68,68,0.15)',
+                              border: '1px solid rgba(239,68,68,0.4)', color: '#fca5a5',
+                              fontSize: 12, fontWeight: 700, flexShrink: 0,
+                            }}
+                            disabled={busy || !!kkTarihceModal.geriAlBusyId}
+                            onClick={() => kkTarihceGeriAl(a)}
+                          >
+                            {busy ? '…' : '↶ Geri Al'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <p style={{ fontSize: 10, color: 'var(--text3)', margin: '16px 0 0', lineHeight: 1.5 }}>
+              💡 Geri Al: ilgili tabloda eski değerler restore edilir, kasa farkı yeniden hesaplanır. Audit kaydı silinmez,
+              "geri alındı" olarak işaretlenir (her şey log'da kalır).
             </p>
           </div>
         </div>

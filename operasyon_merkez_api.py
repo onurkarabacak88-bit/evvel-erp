@@ -6779,7 +6779,8 @@ def ops_kasa_duzeltme_tarihce(uyari_id: str):
                    eski_fark_tl::float, yeni_fark_tl::float,
                    notu, personel_id, personel_ad,
                    onay_durumu_eski, onay_durumu_yeni,
-                   olusturma
+                   olusturma,
+                   geri_alindi_mi, geri_alma_ts, geri_alan_personel_ad
             FROM kasa_fark_kaynak_duzeltme
             WHERE uyari_id=%s
             ORDER BY olusturma DESC
@@ -6790,8 +6791,228 @@ def ops_kasa_duzeltme_tarihce(uyari_id: str):
         for r in (cur.fetchall() or []):
             d = dict(r)
             d["olusturma"] = str(d["olusturma"]) if d.get("olusturma") else None
+            d["geri_alma_ts"] = str(d["geri_alma_ts"]) if d.get("geri_alma_ts") else None
             kayitlar.append(d)
     return {"uyari_id": uyari_id, "tarihce": kayitlar}
+
+
+class KasaGeriAlBody(BaseModel):
+    personel_id: Optional[str] = None
+    personel_ad: Optional[str] = None
+    notu: Optional[str] = None
+
+
+@router.post("/kasa-uyumsuzluk/duzeltme/{audit_id}/geri-al")
+def ops_kasa_duzeltme_geri_al(audit_id: str, body: KasaGeriAlBody = KasaGeriAlBody()):
+    """
+    Bir kasa farkı kaynak düzeltmesini geri al.
+
+    Akış:
+      1) Audit kaydını oku (eski_deger_json + hedef_tablo + sebep)
+      2) Zaten geri alınmış mı kontrol et
+      3) hedef_tablo'ya göre eski değerleri RESTORE et:
+         - ciro tablosu: UPDATE (eski varsa) veya DELETE (yeni INSERT'di)
+         - sube_operasyon_event (ACILIS/KAPANIS): UPDATE eski değerlerle
+         - anlik_giderler: DELETE (gider_eksik INSERT'iydi)
+         - hedef_tablo NULL (gercek_acik): uyari.cozum_* alanlarını reset
+      4) kasa_fark_recalc.yeniden_hesapla() ile fark yeniden hesapla
+      5) Audit'i 'geri alındı' işaretle + yeni audit kaydı ekle (revize log)
+      6) Cascade aynı şubenin diğer uyarılarını da senkronize et
+
+    Tek atomik transaction — hata olursa hiç bir değişiklik kalmaz.
+    """
+    pid = (body.personel_id or "").strip() or None
+    pad = (body.personel_ad or "").strip() or None
+    notu_ek = (body.notu or "").strip() or None
+
+    from kasa_fark_recalc import yeniden_hesapla as _kf_recalc, kasa_gun_lock
+
+    with db() as (conn, cur):
+        _kkd_tablo_garantile(cur)
+        _kkd_geri_alma_kolonlari_garantile(cur)
+
+        # 1. Audit kaydı al
+        cur.execute(
+            """
+            SELECT id, uyari_id, sube_id::text, tarih::text, tip, sebep,
+                   hedef_tablo, hedef_id,
+                   eski_deger_json, yeni_deger_json,
+                   eski_fark_tl::float, yeni_fark_tl::float,
+                   geri_alindi_mi
+            FROM kasa_fark_kaynak_duzeltme
+            WHERE id=%s
+            FOR UPDATE
+            """,
+            (audit_id,),
+        )
+        audit_row = cur.fetchone()
+        if not audit_row:
+            raise HTTPException(404, "Audit kaydı bulunamadı")
+        a = dict(audit_row)
+        if a.get("geri_alindi_mi"):
+            raise HTTPException(409, "Bu düzeltme zaten geri alınmış")
+
+        uyari_id = a["uyari_id"]
+        sube_id = a["sube_id"]
+        tarih = a["tarih"]
+        sebep = str(a["sebep"] or "")
+        hedef_tablo = a.get("hedef_tablo") or ""
+        hedef_id = a.get("hedef_id")
+        eski_deger = a.get("eski_deger_json") or {}
+        yeni_deger = a.get("yeni_deger_json") or {}
+
+        # Aynı şube+tarih kilidi
+        kasa_gun_lock(cur, sube_id, tarih)
+
+        # 2. hedef_tablo'ya göre RESTORE
+        restore_aciklama = ""
+        if hedef_tablo == "ciro":
+            # eski_deger None → yeni INSERT'di → DELETE
+            # eski_deger var → UPDATE'di → eski değerlere UPDATE
+            if eski_deger is None or not eski_deger:
+                if hedef_id:
+                    cur.execute("DELETE FROM ciro WHERE id=%s", (hedef_id,))
+                    restore_aciklama = f"ciro satırı silindi (id={hedef_id[:8]}…)"
+            else:
+                if hedef_id:
+                    cur.execute(
+                        "UPDATE ciro SET nakit=%s, pos=%s, online=%s WHERE id=%s",
+                        (
+                            float(eski_deger.get("nakit") or 0),
+                            float(eski_deger.get("pos") or 0),
+                            float(eski_deger.get("online") or 0),
+                            hedef_id,
+                        ),
+                    )
+                    restore_aciklama = (
+                        f"ciro eski değerlere döndürüldü "
+                        f"(nakit {eski_deger.get('nakit')}, pos {eski_deger.get('pos')}, "
+                        f"online {eski_deger.get('online')})"
+                    )
+        elif hedef_tablo.startswith("sube_operasyon_event(ACILIS)"):
+            if hedef_id and eski_deger:
+                cur.execute(
+                    "UPDATE sube_operasyon_event SET kasa_sayim=%s WHERE id=%s",
+                    (float(eski_deger.get("kasa_sayim") or 0), hedef_id),
+                )
+                restore_aciklama = f"açılış kasa_sayim eski değer: {eski_deger.get('kasa_sayim')}"
+        elif hedef_tablo.startswith("sube_operasyon_event(KAPANIS)"):
+            if hedef_id and eski_deger:
+                cur.execute(
+                    "UPDATE sube_operasyon_event SET teslim=%s, devir=%s WHERE id=%s",
+                    (
+                        float(eski_deger.get("teslim") or 0),
+                        float(eski_deger.get("devir") or 0),
+                        hedef_id,
+                    ),
+                )
+                restore_aciklama = (
+                    f"kapanış teslim={eski_deger.get('teslim')}, "
+                    f"devir={eski_deger.get('devir')} eski değerlere döndürüldü"
+                )
+        elif hedef_tablo == "anlik_giderler":
+            # gider_eksik INSERT'iydi → DELETE
+            if hedef_id:
+                cur.execute("DELETE FROM anlik_giderler WHERE id=%s", (hedef_id,))
+                restore_aciklama = f"anlık gider silindi (id={hedef_id[:8]}…)"
+        elif not hedef_tablo:
+            # gercek_acik için kaynak değişmemişti → uyari'daki cozum_* alanlarını sıfırla
+            cur.execute(
+                """
+                UPDATE sube_operasyon_uyari
+                SET okundu=FALSE,
+                    cozum_notu=NULL, cozum_ts=NULL,
+                    cozum_personel_id=NULL, cozum_personel_ad=NULL,
+                    cozum_duzeltilen_tl=NULL
+                WHERE id=%s
+                """,
+                (uyari_id,),
+            )
+            restore_aciklama = "uyari 'çözüldü' işareti kaldırıldı"
+        else:
+            raise HTTPException(400, f"Bilinmeyen hedef_tablo geri alınamaz: {hedef_tablo}")
+
+        # 3. Recalc (gercek_acik dışı için)
+        if hedef_tablo:
+            try:
+                recalc = _kf_recalc(cur, uyari_id, kim_pid=pid, kim_ad=pad)
+            except ValueError as ex:
+                raise HTTPException(400, f"Geri alma sonrası recalc başarısız: {ex}") from ex
+            yeni_fark = float(recalc.get("yeni_fark") or 0)
+        else:
+            yeni_fark = float(a.get("yeni_fark_tl") or 0)
+            recalc = {"yeni_fark": yeni_fark, "otomatik_cozuldu": False}
+
+        # 4. Audit'i 'geri alındı' işaretle
+        cur.execute(
+            """
+            UPDATE kasa_fark_kaynak_duzeltme
+            SET geri_alindi_mi=TRUE, geri_alma_ts=NOW(),
+                geri_alan_personel_id=%s, geri_alan_personel_ad=%s,
+                geri_alma_notu=%s
+            WHERE id=%s
+            """,
+            (pid, pad, notu_ek, audit_id),
+        )
+
+        # 5. Operasyon defteri kaydı
+        try:
+            operasyon_defter_ekle(
+                cur, sube_id,
+                "KASA_FARK_KAYNAK_GERI_AL",
+                (f"audit_id={audit_id[:8]}… sebep={sebep} restore: {restore_aciklama} "
+                 f"yeni_fark={yeni_fark:+,.2f}")[:480],
+                None,
+                personel_id=pid, personel_ad=pad,
+                bildirim_saati=dt_now_tr().strftime("%H:%M"),
+            )
+        except Exception:
+            pass
+
+        # 6. Rapor cache
+        try:
+            from rapor_cache import gunluk_ozet_yenile
+            gunluk_ozet_yenile(cur, sube_id, tarih, kaynak='event_kasa_geri_al')
+        except Exception:
+            pass
+
+    return {
+        "success": True,
+        "audit_id": audit_id,
+        "uyari_id": uyari_id,
+        "restore": restore_aciklama,
+        "yeni_fark": yeni_fark,
+        "otomatik_cozuldu": bool(recalc.get("otomatik_cozuldu")),
+    }
+
+
+_KKD_GERI_ALMA_KONTROL = False  # process-level cache
+
+
+def _kkd_geri_alma_kolonlari_garantile(cur) -> None:
+    """Lazy migration: geri alma kolonları yoksa ekle."""
+    global _KKD_GERI_ALMA_KONTROL
+    if _KKD_GERI_ALMA_KONTROL:
+        return
+    try:
+        cur.execute("SAVEPOINT sp_kkd_geri")
+        for ddl in [
+            "ALTER TABLE kasa_fark_kaynak_duzeltme ADD COLUMN IF NOT EXISTS geri_alindi_mi BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE kasa_fark_kaynak_duzeltme ADD COLUMN IF NOT EXISTS geri_alma_ts TIMESTAMPTZ",
+            "ALTER TABLE kasa_fark_kaynak_duzeltme ADD COLUMN IF NOT EXISTS geri_alan_personel_id TEXT",
+            "ALTER TABLE kasa_fark_kaynak_duzeltme ADD COLUMN IF NOT EXISTS geri_alan_personel_ad TEXT",
+            "ALTER TABLE kasa_fark_kaynak_duzeltme ADD COLUMN IF NOT EXISTS geri_alma_notu TEXT",
+        ]:
+            cur.execute(ddl)
+        cur.execute("RELEASE SAVEPOINT sp_kkd_geri")
+        _KKD_GERI_ALMA_KONTROL = True
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_kkd_geri")
+        except Exception:
+            pass
+        log.warning("kasa_fark_kaynak_duzeltme geri alma kolonları eklenemedi: %s", e)
+        _KKD_GERI_ALMA_KONTROL = False
 
 
 @router.get("/kasa-acik-analiz")
