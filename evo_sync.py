@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from database import db
 from tr_saat import bugun_tr
@@ -2430,6 +2431,74 @@ def evo_personel_cache_listesi():
     with _per_ad_lock:
         kayitlar = [{"personel_id": k, "ad": v} for k, v in sorted(_per_ad_cache.items())]
     return {"toplam": len(kayitlar), "kayitlar": kayitlar}
+
+
+class PersonelIsimBody(BaseModel):
+    personel_id: str
+    ad: str
+
+
+@router.post("/personel-isim-gir")
+def personel_isim_gir(body: PersonelIsimBody):
+    """
+    Elle personel ismi kaydet.
+    Evo'da ortak kasa hesabı kullanan personelin ismi SATIS_PER'de gelmez;
+    bu endpoint ile CFO sayısal ID → isim eşleşmesini manuel girebilir.
+    """
+    pid = body.personel_id.strip()
+    ad  = body.ad.strip()
+    if not pid or not ad:
+        raise HTTPException(400, "personel_id ve ad boş olamaz")
+    _per_ad_guncelle({pid: ad})
+    return {"durum": "ok", "personel_id": pid, "ad": ad}
+
+
+@router.get("/personel-evo-listesi")
+def personel_evo_listesi():
+    """
+    Evo REST API personel modülünden tüm personel listesini çeker ve cache'e yazar.
+    Başarılı olursa personel sayısını döner; başarısız olursa boş liste döner.
+    """
+    _personel_cache_yukle()
+    try:
+        data = _evo_post("personel", {"cmd": "jq_list", "ara": "", "sayfa": "0"})
+    except Exception as exc:
+        log.warning("Evo personel listesi çekilemedi: %s", exc)
+        return {"durum": "hata", "mesaj": str(exc), "kayitlar": []}
+
+    veri = data.get("veri") or {}
+    ana: list = []
+    if isinstance(veri, dict):
+        ana = veri.get("Ana") or []
+    elif isinstance(veri, list):
+        ana = veri
+
+    if not ana:
+        return {"durum": "bos", "mesaj": "Evo personel listesi boş döndü", "kayitlar": []}
+
+    # Evo'nun personel modülündeki olası alan adları — birini deneriz
+    yeni: Dict[str, str] = {}
+    for p in ana:
+        pid = str(p.get("id") or p.get("a_id") or p.get("personel_id") or "").strip()
+        ad  = (str(p.get("a_adi") or p.get("ad") or p.get("a_ad") or
+                   p.get("personel_adi") or p.get("SATIS_PER") or "")).strip()
+        if pid and pid != "0" and ad:
+            yeni[pid] = ad
+
+    if yeni:
+        _per_ad_guncelle(yeni)
+
+    with _per_ad_lock:
+        kayitlar = [{"personel_id": k, "ad": v} for k, v in sorted(_per_ad_cache.items())]
+
+    return {
+        "durum": "ok",
+        "evo_satir_sayisi": len(ana),
+        "yeni_eslestirilen": len(yeni),
+        "cache_toplam": len(kayitlar),
+        "kayitlar": kayitlar,
+        "ornek_ham": ana[:2],   # hangi alanlar geldiğini görmek için
+    }
 
 
 @router.get("/grup-pasta-ham")

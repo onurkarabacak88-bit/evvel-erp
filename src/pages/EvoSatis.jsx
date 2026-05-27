@@ -115,6 +115,8 @@ export default function EvoSatis() {
   const [tabAnimKey, setTabAnimKey] = useState(0);
   const [perSyncYukleniyor, setPerSyncYukleniyor] = useState(false);
   const [perSyncSonuc, setPerSyncSonuc] = useState(null);
+  const [isimDuzenle, setIsimDuzenle] = useState(null); // {personel_id, gecici_ad}
+  const [isimKayitYukleniyor, setIsimKayitYukleniyor] = useState(false);
 
   const popupRef = useRef(null);
   const pollRef = useRef(null);
@@ -204,12 +206,28 @@ export default function EvoSatis() {
     try {
       const r = await api('/evo/personel-sync?gunler=14', { method: 'POST' });
       setPerSyncSonuc({ ok: true, mesaj: `✅ ${r.cache_boyutu} personel kaydı güncellendi` });
-      // Şube verisini yenile: isimler değişmiş olabilir
       subeAnalızYukle();
     } catch (e) {
       setPerSyncSonuc({ ok: false, mesaj: `Hata: ${e.message || e}` });
     } finally {
       setPerSyncYukleniyor(false);
+    }
+  }
+
+  async function isimKaydet(personelId, yeniAd) {
+    if (!yeniAd?.trim()) return;
+    setIsimKayitYukleniyor(true);
+    try {
+      await api('/evo/personel-isim-gir', {
+        method: 'POST',
+        body: JSON.stringify({ personel_id: personelId, ad: yeniAd.trim() }),
+      });
+      setIsimDuzenle(null);
+      subeAnalızYukle();
+    } catch (e) {
+      alert(`Kayıt hatası: ${e.message || e}`);
+    } finally {
+      setIsimKayitYukleniyor(false);
     }
   }
 
@@ -637,19 +655,72 @@ export default function EvoSatis() {
                             )}
                           </div>
                           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            {subeUrunler.personel.map((p, i) => (
-                              <div key={p.personel_id} style={{
-                                padding: '6px 10px', borderRadius: 6, fontSize: 12,
-                                background: 'var(--bg2)', border: '1px solid var(--border)',
-                                animation: 'fadeSlideUp 0.18s ease both',
-                                animationDelay: `${i * 28}ms`,
-                              }}>
-                                <strong>{p.ad}</strong>
-                                <span style={{ marginLeft: 6, color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
-                                  {p.fis_sayisi} fiş · {fmtTL(p.ciro)}
-                                </span>
-                              </div>
-                            ))}
+                            {subeUrunler.personel.map((p, i) => {
+                              const sayisalMi = /^\d+$/.test(p.ad);
+                              const duzenlemede = isimDuzenle?.personel_id === p.personel_id;
+                              return (
+                                <div key={p.personel_id} style={{
+                                  padding: '6px 10px', borderRadius: 6, fontSize: 12,
+                                  background: sayisalMi ? 'var(--bg3)' : 'var(--bg2)',
+                                  border: sayisalMi ? '1px dashed var(--border)' : '1px solid var(--border)',
+                                  animation: 'fadeSlideUp 0.18s ease both',
+                                  animationDelay: `${i * 28}ms`,
+                                }}>
+                                  {duzenlemede ? (
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                      <input
+                                        autoFocus
+                                        defaultValue=""
+                                        placeholder="Personel adı..."
+                                        onKeyDown={e => {
+                                          if (e.key === 'Enter') isimKaydet(p.personel_id, e.target.value);
+                                          if (e.key === 'Escape') setIsimDuzenle(null);
+                                        }}
+                                        style={{
+                                          fontSize: 12, padding: '2px 6px', borderRadius: 4,
+                                          border: '1px solid var(--accent)', background: 'var(--bg1)',
+                                          color: 'var(--text1)', width: 110,
+                                        }}
+                                      />
+                                      <button
+                                        onClick={e => {
+                                          const inp = e.currentTarget.parentElement.querySelector('input');
+                                          isimKaydet(p.personel_id, inp?.value);
+                                        }}
+                                        disabled={isimKayitYukleniyor}
+                                        style={{
+                                          padding: '2px 6px', borderRadius: 4, fontSize: 10,
+                                          background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer',
+                                        }}
+                                      >✓</button>
+                                      <button
+                                        onClick={() => setIsimDuzenle(null)}
+                                        style={{
+                                          padding: '2px 4px', borderRadius: 4, fontSize: 10,
+                                          background: 'var(--bg3)', color: 'var(--text2)', border: 'none', cursor: 'pointer',
+                                        }}
+                                      >✕</button>
+                                    </span>
+                                  ) : (
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                      <strong style={{ color: sayisalMi ? 'var(--text3)' : 'var(--text1)' }}>
+                                        {sayisalMi ? `#${p.ad}` : p.ad}
+                                      </strong>
+                                      {sayisalMi && (
+                                        <span
+                                          onClick={() => setIsimDuzenle({ personel_id: p.personel_id })}
+                                          title="İsim gir"
+                                          style={{ cursor: 'pointer', fontSize: 10, opacity: 0.6 }}
+                                        >✏️</span>
+                                      )}
+                                      <span style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
+                                        {p.fis_sayisi} fiş · {fmtTL(p.ciro)}
+                                      </span>
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       )}
