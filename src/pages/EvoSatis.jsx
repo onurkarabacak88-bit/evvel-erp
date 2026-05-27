@@ -556,98 +556,6 @@ export default function EvoSatis() {
                     </div>
                   </div>
 
-                  {/* Cross-branch × product matrix */}
-                  {(() => {
-                    if (subeAdlari.length === 0) return null;
-                    const sb = subeAnaliz.subeler || {};
-                    const urunMap = {};
-                    subeAdlari.forEach(sad => {
-                      (sb[sad]?.cok_satilan || []).forEach(u => {
-                        const k = u.stok_kodu || u.ad;
-                        if (!urunMap[k]) urunMap[k] = { stok_kodu: u.stok_kodu, ad: u.ad, grup: u.grup, toplam: 0, toplam_ciro: 0, subeler: {} };
-                        urunMap[k].toplam += Number(u.adet || 0);
-                        urunMap[k].toplam_ciro += Number(u.ciro || 0);
-                        urunMap[k].subeler[sad] = (urunMap[k].subeler[sad] || 0) + Number(u.adet || 0);
-                      });
-                    });
-                    const urunList = Object.values(urunMap).sort((a, b) => b.toplam - a.toplam);
-                    if (urunList.length === 0) return null;
-
-                    return (
-                      <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 16, animation: 'fadeSlideUp 0.3s ease both', animationDelay: '210ms' }}>
-                        <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <strong style={{ fontSize: 13 }}>📊 Şube × Ürün Karşılaştırma</strong>
-                          <span style={{ fontSize: 11, color: 'var(--muted)' }}>({urunList.length} ürün, sıralı: toplam adet)</span>
-                        </div>
-                        <div style={{ overflowX: 'auto', maxHeight: 480, overflowY: 'auto' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                            <thead style={{ background: 'rgba(255,255,255,0.03)', position: 'sticky', top: 0 }}>
-                              <tr>
-                                {['#', 'Ürün', 'Grup', '✦ Toplam', ...subeAdlari.map(s => s.replace(' Şubesi', ''))].map((h, i) => (
-                                  <th key={i} style={{
-                                    padding: '7px 10px',
-                                    textAlign: i >= 3 ? 'right' : i === 2 ? 'center' : 'left',
-                                    fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px',
-                                    color: i === 3 ? 'var(--green)' : 'var(--muted)',
-                                    borderRight: i === 3 ? '2px solid var(--border)' : undefined,
-                                  }}>{h}</th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {urunList.slice(0, 100).map((u, i) => {
-                                const grpRenk = GRUP_RENK[u.grup] || '#94a3b8';
-                                const maks = Math.max(...subeAdlari.map(s => u.subeler[s] || 0));
-                                return (
-                                  <tr key={u.stok_kodu || u.ad}
-                                    style={{ borderTop: '1px solid rgba(255,255,255,0.04)', transition: 'background 0.1s' }}
-                                    onMouseEnter={e => e.currentTarget.style.background = 'var(--bg2)'}
-                                    onMouseLeave={e => e.currentTarget.style.background = ''}>
-                                    <td style={{ padding: '5px 10px', color: 'var(--muted)', fontSize: 10, width: 28 }}>{i + 1}</td>
-                                    <td style={{ padding: '5px 10px', fontWeight: i < 5 ? 700 : 400 }}>
-                                      {u.ad}
-                                      {u.stok_kodu && <span style={{ marginLeft: 5, fontSize: 9, color: 'var(--muted)', fontFamily: 'monospace' }}>{u.stok_kodu}</span>}
-                                    </td>
-                                    <td style={{ padding: '5px 10px', textAlign: 'center' }}>
-                                      {u.grup && (
-                                        <span style={{ padding: '1px 6px', borderRadius: 3, fontSize: 9, fontWeight: 700, background: grpRenk + '22', color: grpRenk, border: `1px solid ${grpRenk}44` }}>
-                                          {u.grup}
-                                        </span>
-                                      )}
-                                    </td>
-                                    <td style={{ padding: '5px 10px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, color: 'var(--green)', borderRight: '2px solid var(--border)' }}>
-                                      {Math.round(u.toplam)}
-                                      <div style={{ fontSize: 9, color: 'var(--muted)', fontWeight: 400 }}>{fmtTL(u.toplam_ciro)}</div>
-                                    </td>
-                                    {subeAdlari.map(sad => {
-                                      const v = u.subeler[sad] || 0;
-                                      const yogunluk = maks > 0 ? v / maks : 0;
-                                      return (
-                                        <td key={sad} style={{
-                                          padding: '5px 10px', textAlign: 'right', fontFamily: 'monospace',
-                                          background: v === 0 ? 'transparent' : `rgba(34,197,94,${0.05 + yogunluk * 0.18})`,
-                                          color: v === 0 ? 'var(--muted)' : 'inherit',
-                                          fontWeight: v === maks && v > 0 ? 700 : 400,
-                                        }}>
-                                          {v === 0 ? '—' : Math.round(v)}
-                                        </td>
-                                      );
-                                    })}
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                        {urunList.length > 100 && (
-                          <div style={{ padding: '6px 14px', fontSize: 10, color: 'var(--muted)', textAlign: 'center' }}>
-                            … {urunList.length - 100} ürün daha (ilk 100 gösteriliyor)
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-
                   {/* Selected branch detail */}
                   {secilenSube && subeUrunler && (
                     <div className="card" style={{ padding: 0, marginBottom: 16, animation: 'fadeSlideUp 0.22s ease both' }}>
@@ -793,6 +701,98 @@ export default function EvoSatis() {
                       )}
                     </div>
                   )}
+
+                  {/* Cross-branch × product matrix */}
+                  {(() => {
+                    if (subeAdlari.length === 0) return null;
+                    const sb = subeAnaliz.subeler || {};
+                    const urunMap = {};
+                    subeAdlari.forEach(sad => {
+                      (sb[sad]?.cok_satilan || []).forEach(u => {
+                        const k = u.stok_kodu || u.ad;
+                        if (!urunMap[k]) urunMap[k] = { stok_kodu: u.stok_kodu, ad: u.ad, grup: u.grup, toplam: 0, toplam_ciro: 0, subeler: {} };
+                        urunMap[k].toplam += Number(u.adet || 0);
+                        urunMap[k].toplam_ciro += Number(u.ciro || 0);
+                        urunMap[k].subeler[sad] = (urunMap[k].subeler[sad] || 0) + Number(u.adet || 0);
+                      });
+                    });
+                    const urunList = Object.values(urunMap).sort((a, b) => b.toplam - a.toplam);
+                    if (urunList.length === 0) return null;
+
+                    return (
+                      <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 16, animation: 'fadeSlideUp 0.3s ease both', animationDelay: '210ms' }}>
+                        <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <strong style={{ fontSize: 13 }}>📊 Şube × Ürün Karşılaştırma</strong>
+                          <span style={{ fontSize: 11, color: 'var(--muted)' }}>({urunList.length} ürün, sıralı: toplam adet)</span>
+                        </div>
+                        <div style={{ overflowX: 'auto', maxHeight: 480, overflowY: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                            <thead style={{ background: 'rgba(255,255,255,0.03)', position: 'sticky', top: 0 }}>
+                              <tr>
+                                {['#', 'Ürün', 'Grup', '✦ Toplam', ...subeAdlari.map(s => s.replace(' Şubesi', ''))].map((h, i) => (
+                                  <th key={i} style={{
+                                    padding: '7px 10px',
+                                    textAlign: i >= 3 ? 'right' : i === 2 ? 'center' : 'left',
+                                    fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px',
+                                    color: i === 3 ? 'var(--green)' : 'var(--muted)',
+                                    borderRight: i === 3 ? '2px solid var(--border)' : undefined,
+                                  }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {urunList.slice(0, 100).map((u, i) => {
+                                const grpRenk = GRUP_RENK[u.grup] || '#94a3b8';
+                                const maks = Math.max(...subeAdlari.map(s => u.subeler[s] || 0));
+                                return (
+                                  <tr key={u.stok_kodu || u.ad}
+                                    style={{ borderTop: '1px solid rgba(255,255,255,0.04)', transition: 'background 0.1s' }}
+                                    onMouseEnter={e => e.currentTarget.style.background = 'var(--bg2)'}
+                                    onMouseLeave={e => e.currentTarget.style.background = ''}>
+                                    <td style={{ padding: '5px 10px', color: 'var(--muted)', fontSize: 10, width: 28 }}>{i + 1}</td>
+                                    <td style={{ padding: '5px 10px', fontWeight: i < 5 ? 700 : 400 }}>
+                                      {u.ad}
+                                      {u.stok_kodu && <span style={{ marginLeft: 5, fontSize: 9, color: 'var(--muted)', fontFamily: 'monospace' }}>{u.stok_kodu}</span>}
+                                    </td>
+                                    <td style={{ padding: '5px 10px', textAlign: 'center' }}>
+                                      {u.grup && (
+                                        <span style={{ padding: '1px 6px', borderRadius: 3, fontSize: 9, fontWeight: 700, background: grpRenk + '22', color: grpRenk, border: `1px solid ${grpRenk}44` }}>
+                                          {u.grup}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td style={{ padding: '5px 10px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, color: 'var(--green)', borderRight: '2px solid var(--border)' }}>
+                                      {Math.round(u.toplam)}
+                                      <div style={{ fontSize: 9, color: 'var(--muted)', fontWeight: 400 }}>{fmtTL(u.toplam_ciro)}</div>
+                                    </td>
+                                    {subeAdlari.map(sad => {
+                                      const v = u.subeler[sad] || 0;
+                                      const yogunluk = maks > 0 ? v / maks : 0;
+                                      return (
+                                        <td key={sad} style={{
+                                          padding: '5px 10px', textAlign: 'right', fontFamily: 'monospace',
+                                          background: v === 0 ? 'transparent' : `rgba(34,197,94,${0.05 + yogunluk * 0.18})`,
+                                          color: v === 0 ? 'var(--muted)' : 'inherit',
+                                          fontWeight: v === maks && v > 0 ? 700 : 400,
+                                        }}>
+                                          {v === 0 ? '—' : Math.round(v)}
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        {urunList.length > 100 && (
+                          <div style={{ padding: '6px 14px', fontSize: 10, color: 'var(--muted)', textAlign: 'center' }}>
+                            … {urunList.length - 100} ürün daha (ilk 100 gösteriliyor)
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Kategori + En çok satılan */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20, animation: 'fadeSlideUp 0.3s ease both', animationDelay: '230ms' }}>
