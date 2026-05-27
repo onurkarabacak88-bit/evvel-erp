@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
@@ -53,6 +53,7 @@ export default function Panel({ onNavigate }) {
   const [cfoAcikBolumler, setCfoAcikBolumler] = useState({ uyari: false, bilgi: false, kira: false, motor: false, sistem: false });
   const [cfoTrayOpen, setCfoTrayOpen] = useState(null); // null=auto(open if kritik), bool=user override
   const [panelTab, setPanelTab] = useState('ozet'); // 'ozet' | 'odemeler' | 'strateji'
+  const [notifModalOpen, setNotifModalOpen] = useState(false);
 
   const detayGetir = (tip) => {
     api(`/vadeli-odeme-detay?kaynak=${tip}`)
@@ -498,6 +499,139 @@ export default function Panel({ onNavigate }) {
   const riskBar = Math.min(100, yuk30 > 0 ? (yuk30 / Math.max(kasa, 1)) * 100 : 0);
   const riskRenk = kasa < yuk7 ? 'var(--red)' : kasa < yuk30 ? 'var(--yellow)' : 'var(--green)';
 
+  // ── Yaklaşan ödeme pilleri (IIFE dışında, sidebar + modal paylaşır) ──
+  const yaklaşanPill = (panel.yaklasan_odemeler || []).filter(u => u.gun_farki > 0).sort((a, b) => a.gun_farki - b.gun_farki);
+  const pillTip = { sabit_giderler: { ikon: '🏠', renk: '#f59e0b' }, personel: { ikon: '👤', renk: '#4a9eff' }, vadeli_alimlar: { ikon: '📦', renk: '#f97316' }, borc_envanteri: { ikon: '🏦', renk: '#e879f9' } };
+
+  // ── Alert Tray renderer — modal içinden çağrılır ──
+  const renderAlertTray = () => {
+    const bugunListe = panel.bugun_odemeler || [];
+    const gK = bugunListe.filter(u => u.gun_farki <= -15);
+    const gU = bugunListe.filter(u => u.gun_farki >= -14 && u.gun_farki <= -8);
+    const gB = bugunListe.filter(u => u.gun_farki >= -7 && u.gun_farki < 0);
+    const gBug = bugunListe.filter(u => u.gun_farki >= 0);
+    const toplamGec = bugunListe.filter(u => u.gun_farki < 0).reduce((s, u) => s + parseFloat(u.asgari_kalan ?? u.asgari ?? u.tutar ?? 0), 0);
+    const ETIKET2 = {
+      sabit_giderler: { ikon: '🏠', etiket: 'Sabit Gider', renk: 'var(--yellow)' },
+      personel:       { ikon: '👤', etiket: 'Maaş',        renk: '#4a9eff'        },
+      vadeli_alimlar: { ikon: '📦', etiket: 'Vadeli Borç', renk: 'var(--orange)'  },
+      borc_envanteri: { ikon: '🏦', etiket: 'Kredi/Borç',  renk: '#e879f9'        },
+    };
+    const sK = (panel.kararlar || []).filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI').length;
+    const sM = (panel.merkez_mesajlar || []).filter(m => !m.okundu && m.aktif !== false).length;
+    const sC = Array.isArray(panel.ciro_eksik_gunler) ? panel.ciro_eksik_gunler.length : 0;
+    const toplam = gK.length + gU.length + gB.length + gBug.length + sK + sM + sC;
+
+    const rKart = (u, i, tier) => {
+      const et = ETIKET2[u.kaynak_tablo] || { ikon: '💳', etiket: 'Ödeme', renk: 'var(--text3)' };
+      const gecGun = u.gun_farki < 0 ? Math.abs(u.gun_farki) : 0;
+      const uColor = tier === 'kritik' ? 'var(--red)' : tier === 'uyari' ? 'var(--orange)' : tier === 'bilgi' ? 'var(--yellow)' : 'var(--accent)';
+      const tutar2 = u.tip === 'degisken' ? (u.tutar > 0 ? u.tutar : null) : (u.asgari_kalan ?? u.asgari ?? u.tutar ?? 0);
+      return (
+        <div key={i} className={`cfo-card ${tier}`} style={{ marginBottom: 3 }}>
+          <span style={{ fontSize: 16, flexShrink: 0 }}>{et.ikon}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text1)' }}>{u.aciklama}</div>
+            <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+              {et.etiket} · {u.tarih ? new Date(u.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) : '—'}
+              {gecGun > 0 && <span style={{ color: uColor, fontWeight: 700 }}> · {gecGun}g gecikmiş</span>}
+            </div>
+          </div>
+          {gecGun > 0 && <span style={{ fontSize: 11, fontWeight: 700, flexShrink: 0, color: uColor }}>{gecGun} gün</span>}
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
+            {tutar2 != null ? fmt(tutar2) : <span style={{ color: 'var(--text3)', fontSize: 11 }}>bekleniyor</span>}
+          </span>
+          <div style={{ flexShrink: 0 }}>
+            {u.tip === 'degisken'
+              ? <button className="btn btn-secondary btn-sm" onClick={() => { sessionStorage.setItem('sabit_gider_fatura_id', u.kaynak_id || ''); nav('sabit-giderler'); }}>Öde →</button>
+              : <button className="btn btn-secondary btn-sm" onClick={() => yonlendir(u)}>{yonlendirLabel(u)}</button>
+            }
+          </div>
+        </div>
+      );
+    };
+
+    const rBolum = (baslik, items, tier, renk, acik = true) => {
+      if (!items.length) return null;
+      return (
+        <div className="cfo-section" style={{ marginBottom: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', background: `${renk}10`, borderRadius: 6, marginBottom: 4 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: renk, flexShrink: 0 }} />
+            <span style={{ fontSize: 11, fontWeight: 700, color: renk, textTransform: 'uppercase', letterSpacing: '.6px' }}>{baslik}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, padding: '1px 8px', borderRadius: 10, background: `${renk}25`, color: renk }}>{items.length}</span>
+          </div>
+          <div style={{ paddingLeft: 4 }}>{items.map((u, i) => rKart(u, i, tier))}</div>
+        </div>
+      );
+    };
+
+    if (toplam === 0) return (
+      <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text3)' }}>
+        <div style={{ fontSize: 36, marginBottom: 10 }}>✅</div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text2)' }}>Temiz</div>
+        <div style={{ fontSize: 12, marginTop: 4 }}>Bekleyen bildirim yok</div>
+      </div>
+    );
+
+    return (
+      <div>
+        {/* Gecikmiş ödemeler */}
+        {(gK.length + gU.length + gB.length + gBug.length) > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <div className="panel-section-hdr">
+              <span>GECİKMİŞ ÖDEMELER</span>
+              <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--red)', fontSize: 12, fontWeight: 700 }}>{fmt(toplamGec)}</span>
+            </div>
+            {rBolum('KRİTİK (15+ gün)',  gK,   'kritik', '#e05c5c')}
+            {rBolum('UYARI (8–14 gün)',   gU,   'uyari',  '#D4893A')}
+            {rBolum('BİLGİ (0–7 gün)',   gB,   'bilgi',  '#e8c547')}
+            {rBolum('BUGÜN',             gBug, 'bugun',  '#C8956A')}
+          </div>
+        )}
+        {/* Karar motoru */}
+        {sK > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <div className="panel-section-hdr"><span>KARAR MOTORU</span></div>
+            {(panel.kararlar || []).filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI').map((k, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, padding: '8px 10px', marginBottom: 4, borderRadius: 6, background: k.seviye === 'KRITIK' ? 'rgba(220,38,38,0.07)' : 'rgba(212,137,58,0.07)', borderLeft: `3px solid ${k.seviye === 'KRITIK' ? 'var(--red)' : '#D4893A'}` }}>
+                <span>{k.seviye === 'KRITIK' ? '🚨' : '⚠️'}</span>
+                <div><div style={{ fontSize: 12, fontWeight: 600 }}>{k.baslik}</div><div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>{k.mesaj}</div></div>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* Sistem bildirimleri */}
+        {sM > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <div className="panel-section-hdr"><span>SİSTEM BİLDİRİMLERİ</span></div>
+            {(panel.merkez_mesajlar || []).filter(m => !m.okundu && m.aktif !== false).map((m, i) => (
+              <div key={m.id || i} style={{ display: 'flex', gap: 8, padding: '8px 10px', marginBottom: 4, borderRadius: 6, background: 'rgba(239,68,68,0.07)', borderLeft: '3px solid var(--red)' }}>
+                <span>❌</span>
+                <div><div style={{ fontSize: 12 }}>{m.mesaj}</div>{m.olusturma && <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>{new Date(m.olusturma).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* Ciro eksikleri */}
+        {sC > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <div className="panel-section-hdr"><span>CİRO EKSİKLERİ</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '8px 10px', borderRadius: 6, background: 'rgba(239,68,68,0.07)', borderLeft: '3px solid var(--red)' }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--red)' }}>⚠️ {sC} günde ciro girilmemiş</div>
+                <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>{panel.ciro_eksik_gunler.map(g => `${g.tarih}${g.kritik ? ' ●' : ''}`).join(' · ')}</div>
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                <button className="btn btn-primary btn-sm" onClick={() => nav('ciro')}>📈 Ciro Girişi</button>
+                <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('ciro')}>➕ Hızlı Gir</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="page">
       {msg && (
@@ -708,301 +842,69 @@ export default function Panel({ onNavigate }) {
         </div>
       )}
 
-      {/* ── ALERT TRAY — tüm bildirimler tek noktada ── */}
-      {(() => {
-        const bugunListe = panel.bugun_odemeler || [];
-        const liste = bugunListe;
-        const gKritikler = liste.filter(u => u.gun_farki <= -15);
-        const gUyarilar  = liste.filter(u => u.gun_farki >= -14 && u.gun_farki <= -8);
-        const gBilgiler  = liste.filter(u => u.gun_farki >= -7 && u.gun_farki < 0);
-        const gBugunler  = liste.filter(u => u.gun_farki >= 0);
+      {/* ── 2-KOLON LAYOUT: Sol = Ana İçerik, Sağ = Bildirim Paneli ── */}
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
 
-        const toplamGecikmisTutar = liste
-          .filter(u => u.gun_farki < 0)
-          .reduce((s, u) => s + parseFloat(u.asgari_kalan ?? u.asgari ?? u.tutar ?? 0), 0);
-
-        const ETIKET = {
-          sabit_giderler: { ikon: '🏠', etiket: 'Sabit Gider', renk: 'var(--yellow)' },
-          personel:       { ikon: '👤', etiket: 'Maaş',        renk: '#4a9eff'        },
-          vadeli_alimlar: { ikon: '📦', etiket: 'Vadeli Borç', renk: 'var(--orange)'  },
-          borc_envanteri: { ikon: '🏦', etiket: 'Kredi/Borç',  renk: '#e879f9'        },
-        };
-
-        const renderKart = (u, i, tier) => {
-          const et = ETIKET[u.kaynak_tablo] || { ikon: '💳', etiket: 'Ödeme', renk: 'var(--text3)' };
-          const gecikmeGun = u.gun_farki < 0 ? Math.abs(u.gun_farki) : 0;
-          const urgencyColor = tier === 'kritik' ? 'var(--red)' : tier === 'uyari' ? 'var(--orange)' : tier === 'bilgi' ? 'var(--yellow)' : 'var(--accent)';
-          const tutar = u.tip === 'degisken'
-            ? (u.tutar > 0 ? u.tutar : null)
-            : (u.asgari_kalan ?? u.asgari ?? u.tutar ?? 0);
-
-          return (
-            <div key={i} className={`cfo-card ${tier}`} style={{ animationDelay: `${i * 0.045}s` }}>
-              <span style={{
-                fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3, flexShrink: 0,
-                background: `${et.renk}22`, color: et.renk, border: `1px solid ${et.renk}33`,
-                whiteSpace: 'nowrap'
-              }}>
-                {et.ikon} {et.etiket}{u.tip === 'degisken' ? ' ~' : ''}
-              </span>
-              <div style={{ flex: 1, fontWeight: 600, fontSize: 13, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {u.aciklama}
-              </div>
-              {gecikmeGun > 0 && (
-                <span style={{ fontSize: 11, fontWeight: 700, flexShrink: 0, color: urgencyColor, whiteSpace: 'nowrap' }}>
-                  {gecikmeGun} gün
-                </span>
-              )}
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
-                {tutar != null
-                  ? fmt(tutar)
-                  : <span style={{ color: 'var(--text3)', fontSize: 11, fontFamily: 'inherit' }}>bekleniyor</span>}
-              </span>
-              <div style={{ flexShrink: 0 }}>
-                {u.tip === 'degisken' ? (
-                  <button className="btn btn-secondary btn-sm" onClick={() => { sessionStorage.setItem('sabit_gider_fatura_id', u.kaynak_id || ''); nav('sabit-giderler'); }}>
-                    Öde →
-                  </button>
-                ) : (
-                  <button className="btn btn-secondary btn-sm" onClick={() => yonlendir(u)}>
-                    {yonlendirLabel(u)}
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        };
-
-        const renderBolum = (baslik, items, tier, renk, herzamanAcik = false) => {
-          if (!items.length) return null;
-          const acik = herzamanAcik || cfoAcikBolumler[tier];
-          const toggle = herzamanAcik ? null : () => setCfoAcikBolumler(s => ({ ...s, [tier]: !s[tier] }));
-          return (
-            <div className="cfo-section">
-              <div className="cfo-section-hdr" onClick={toggle}
-                style={{ background: acik ? `${renk}0d` : 'transparent', cursor: herzamanAcik ? 'default' : 'pointer' }}>
-                <span style={{
-                  width: 8, height: 8, borderRadius: '50%', background: renk, flexShrink: 0,
-                  boxShadow: tier === 'kritik' && acik ? `0 0 0 3px ${renk}35` : 'none'
-                }} />
-                <span style={{ fontSize: 11, fontWeight: 700, color: renk, textTransform: 'uppercase', letterSpacing: '.7px' }}>
-                  {baslik}
-                </span>
-                <span className={tier === 'kritik' ? 'cfo-kritik-badge' : ''} style={{
-                  fontSize: 11, fontWeight: 700, padding: '1px 8px', borderRadius: 10,
-                  background: `${renk}25`, color: renk
-                }}>
-                  {items.length}
-                </span>
-                <div style={{ flex: 1, height: 1, background: `${renk}20` }} />
-                {!herzamanAcik && (
-                  <span style={{ fontSize: 12, color: 'var(--text3)', transition: 'transform .15s', display: 'inline-block', transform: acik ? 'rotate(90deg)' : 'none' }}>›</span>
-                )}
-              </div>
-              {acik && (
-                <div style={{ paddingLeft: 6 }}>
-                  {items.map((u, i) => renderKart(u, i, tier))}
-                </div>
-              )}
-            </div>
-          );
-        };
-
-        // ─── Tüm sinyal sayıları ───
-        const sinyalKarar = (panel.kararlar || []).filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI').length;
-        const sinyalMesaj = (panel.merkez_mesajlar || []).filter(m => !m.okundu && m.aktif !== false).length;
-        const sinyalCiro  = Array.isArray(panel.ciro_eksik_gunler) ? panel.ciro_eksik_gunler.length : 0;
-        const toplamSinyal = gKritikler.length + gUyarilar.length + gBilgiler.length + gBugunler.length + sinyalKarar + sinyalMesaj + sinyalCiro;
-        const trayAcik = cfoTrayOpen !== null ? cfoTrayOpen : (gKritikler.length > 0 || (panel.kararlar || []).some(k => k.seviye === 'KRITIK'));
-
-        // ─── Yaklaşan ödeme pilleri ───
-        const yaklaşanPill = (panel.yaklasan_odemeler || []).filter(u => u.gun_farki > 0).sort((a, b) => a.gun_farki - b.gun_farki);
-        const pillTip = { sabit_giderler: { ikon: '🏠', renk: '#f59e0b' }, personel: { ikon: '👤', renk: '#4a9eff' }, vadeli_alimlar: { ikon: '📦', renk: '#f97316' }, borc_envanteri: { ikon: '🏦', renk: '#e879f9' } };
-
-        return (
-          <>
-            {/* ─── UNIFIED ALERT TRAY ─── */}
-            {toplamSinyal > 0 && (
-              <div style={{ marginBottom: 12, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-                {/* Header — toggle */}
-                <button
-                  onClick={() => setCfoTrayOpen(prev => prev === null ? !trayAcik : !prev)}
-                  style={{
-                    width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-                    padding: '9px 14px', background: 'var(--bg2)', border: 'none',
-                    cursor: 'pointer', textAlign: 'left',
-                    borderBottom: trayAcik ? '1px solid var(--border)' : 'none',
-                  }}
+      {/* ── YAKLAŞAN ÖDEME PİLLERİ ── */}
+      {yaklaşanPill.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>
+            📅 Yaklaşan Ödemeler ({yaklaşanPill.length})
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {yaklaşanPill.slice(0, 14).map((u, i) => {
+              const t = pillTip[u.kaynak_tablo] || { ikon: '💳', renk: '#94a3b8' };
+              const urgColor = u.gun_farki <= 3 ? 'var(--red)' : u.gun_farki <= 7 ? '#D4893A' : 'var(--text3)';
+              return (
+                <div key={i} onClick={() => nav('sabit-giderler')} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: '4px 10px', borderRadius: 20,
+                  background: 'var(--bg2)', border: `1px solid ${t.renk}44`,
+                  cursor: 'pointer', fontSize: 11,
+                  transition: 'transform 0.12s, box-shadow 0.12s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = `0 3px 10px ${t.renk}30`; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; }}
                 >
-                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text2)', flex: 1 }}>🔔 Bildirimler</span>
-                  {gKritikler.length > 0 && (
-                    <span style={{ background: 'rgba(220,38,38,0.15)', color: 'var(--red)', borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>
-                      {gKritikler.length} kritik
-                    </span>
-                  )}
-                  {gUyarilar.length > 0 && (
-                    <span style={{ background: 'rgba(212,137,58,0.15)', color: '#D4893A', borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>
-                      {gUyarilar.length} uyarı
-                    </span>
-                  )}
-                  {(gBilgiler.length + gBugunler.length + sinyalKarar + sinyalMesaj + sinyalCiro) > 0 && (
-                    <span style={{ background: 'var(--bg3)', color: 'var(--text3)', borderRadius: 4, padding: '2px 8px', fontSize: 11 }}>
-                      +{gBilgiler.length + gBugunler.length + sinyalKarar + sinyalMesaj + sinyalCiro}
-                    </span>
-                  )}
-                  <span style={{ fontSize: 11, color: 'var(--text3)', userSelect: 'none' }}>{trayAcik ? '▲' : '▼'}</span>
-                </button>
-
-                {/* Body */}
-                {trayAcik && (
-                  <div style={{ padding: '10px 12px' }}>
-
-                    {/* Gecikmiş ödemeler */}
-                    {(gKritikler.length + gUyarilar.length + gBilgiler.length + gBugunler.length) > 0 && (
-                      <div style={{ marginBottom: 8 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6, display: 'flex', gap: 10 }}>
-                          <span>GECİKMİŞ ÖDEMELER</span>
-                          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(toplamGecikmisTutar)}</span>
-                        </div>
-                        {renderBolum('KRİTİK (15+ gün)',  gKritikler, 'kritik', '#e05c5c', true)}
-                        {renderBolum('UYARI (8–14 gün)',  gUyarilar,  'uyari',  '#D4893A')}
-                        {renderBolum('BİLGİ (0–7 gün)',   gBilgiler,  'bilgi',  '#e8c547')}
-                        {renderBolum('BUGÜN',             gBugunler,  'bugun',  '#C8956A', true)}
-                      </div>
-                    )}
-
-                    {/* Karar motoru */}
-                    {sinyalKarar > 0 && (
-                      <div style={{ marginBottom: 8 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>KARAR MOTORU</div>
-                        {(panel.kararlar || []).filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI').map((k, i) => (
-                          <div key={i} style={{
-                            display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 10px', marginBottom: 4, borderRadius: 6,
-                            background: k.seviye === 'KRITIK' ? 'rgba(220,38,38,0.07)' : 'rgba(212,137,58,0.07)',
-                            borderLeft: `3px solid ${k.seviye === 'KRITIK' ? 'var(--red)' : '#D4893A'}`,
-                          }}>
-                            <span style={{ flexShrink: 0 }}>{k.seviye === 'KRITIK' ? '🚨' : '⚠️'}</span>
-                            <div>
-                              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text1)' }}>{k.baslik}</div>
-                              <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>{k.mesaj}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Sistem bildirimleri */}
-                    {sinyalMesaj > 0 && (
-                      <div style={{ marginBottom: 8 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>SİSTEM BİLDİRİMLERİ</div>
-                        {(panel.merkez_mesajlar || []).filter(m => !m.okundu && m.aktif !== false).map((m, i) => (
-                          <div key={m.id || i} style={{
-                            display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 10px', marginBottom: 4, borderRadius: 6,
-                            background: 'rgba(239,68,68,0.07)', borderLeft: '3px solid var(--red)',
-                          }}>
-                            <span style={{ flexShrink: 0 }}>❌</span>
-                            <div>
-                              <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text1)' }}>{m.mesaj}</div>
-                              {m.olusturma && (
-                                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
-                                  {new Date(m.olusturma).toLocaleString('tr-TR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Ciro eksikleri */}
-                    {sinyalCiro > 0 && (
-                      <div style={{ marginBottom: 4 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>CİRO EKSİKLERİ</div>
-                        <div style={{
-                          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
-                          padding: '8px 10px', borderRadius: 6, background: 'rgba(239,68,68,0.07)', borderLeft: '3px solid var(--red)',
-                        }}>
-                          <div>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--red)' }}>⚠️ {sinyalCiro} günde ciro girilmemiş</div>
-                            <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>
-                              {panel.ciro_eksik_gunler.map(g => `${g.tarih}${g.kritik ? ' ●' : ''}`).join(' · ')}
-                            </div>
-                          </div>
-                          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                            <button className="btn btn-primary btn-sm" onClick={() => nav('ciro')}>📈 Ciro Girişi</button>
-                            <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('ciro')}>➕ Hızlı Gir</button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                  </div>
-                )}
+                  <span>{t.ikon}</span>
+                  <span style={{ color: 'var(--text1)', fontWeight: 500, maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.aciklama}</span>
+                  <span style={{ color: 'var(--text3)', margin: '0 1px' }}>·</span>
+                  <span style={{ color: urgColor, fontWeight: 700, fontFamily: 'var(--font-mono)', fontSize: 10 }}>{u.gun_farki}g</span>
+                </div>
+              );
+            })}
+            {yaklaşanPill.length > 14 && (
+              <div style={{ padding: '4px 10px', borderRadius: 20, background: 'var(--bg2)', border: '1px solid var(--border)', fontSize: 11, color: 'var(--text3)' }}>
+                +{yaklaşanPill.length - 14} daha
               </div>
             )}
+          </div>
+        </div>
+      )}
 
-            {/* ─── YAKLAŞAN ÖDEME PİLLERİ ─── */}
-            {yaklaşanPill.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>
-                  📅 Yaklaşan Ödemeler ({yaklaşanPill.length})
-                </div>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {yaklaşanPill.slice(0, 14).map((u, i) => {
-                    const t = pillTip[u.kaynak_tablo] || { ikon: '💳', renk: '#94a3b8' };
-                    const urgColor = u.gun_farki <= 3 ? 'var(--red)' : u.gun_farki <= 7 ? '#D4893A' : 'var(--text3)';
-                    return (
-                      <div key={i} onClick={() => nav('sabit-giderler')} style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 5,
-                        padding: '4px 10px', borderRadius: 20,
-                        background: 'var(--bg2)', border: `1px solid ${t.renk}44`,
-                        cursor: 'pointer', fontSize: 11,
-                        transition: 'transform 0.12s, box-shadow 0.12s',
-                      }}
-                      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = `0 3px 10px ${t.renk}30`; }}
-                      onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; }}
-                      >
-                        <span>{t.ikon}</span>
-                        <span style={{ color: 'var(--text1)', fontWeight: 500, maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.aciklama}</span>
-                        <span style={{ color: 'var(--text3)', margin: '0 1px' }}>·</span>
-                        <span style={{ color: urgColor, fontWeight: 700, fontFamily: 'var(--font-mono)', fontSize: 10 }}>{u.gun_farki}g</span>
-                      </div>
-                    );
-                  })}
-                  {yaklaşanPill.length > 14 && (
-                    <div style={{ padding: '4px 10px', borderRadius: 20, background: 'var(--bg2)', border: '1px solid var(--border)', fontSize: 11, color: 'var(--text3)' }}>
-                      +{yaklaşanPill.length - 14} daha
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* ─── HIZLI AKSİYON BARI ─── */}
-            <div style={{ display: 'flex', gap: 8, marginBottom: 14, padding: '10px 14px', background: 'var(--bg2)', borderRadius: 8, border: '1px solid var(--border)', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'center', marginRight: 4 }}>Hızlı:</span>
-              <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('ciro')}>➕ Ciro Gir</button>
-              <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('gider')} style={{ position: 'relative' }}>
-                ➖ Gider Gir
-                {Number(panel.bekleyen_gider_sayisi || 0) > 0 && (
-                  <span style={{
-                    position: 'absolute', top: -6, right: -6,
-                    background: 'var(--yellow)', color: '#000',
-                    borderRadius: '50%', width: 16, height: 16,
-                    fontSize: 10, fontWeight: 700,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    lineHeight: 1,
-                  }}>{panel.bekleyen_gider_sayisi}</span>
-                )}
-              </button>
-              <button className="btn btn-secondary btn-sm" onClick={() => nav('kart-hareketleri')}>💳 Kart Hareketi</button>
-              <button className="btn btn-secondary btn-sm" onClick={() => nav('dis-kaynak')}>💰 Dış Kaynak</button>
-              <button className="btn btn-secondary btn-sm" onClick={() => nav('onay')}>✅ Onay Kuyruğu</button>
-              <button className="btn btn-secondary btn-sm" onClick={() => nav('ledger')}>📒 Ledger</button>
-            </div>
-          </>
-        );
-      })()}
+      {/* ── HIZLI AKSİYON BARI ── */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, padding: '10px 14px', background: 'var(--bg2)', borderRadius: 8, border: '1px solid var(--border)', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'center', marginRight: 4 }}>Hızlı:</span>
+        <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('ciro')}>➕ Ciro Gir</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('gider')} style={{ position: 'relative' }}>
+          ➖ Gider Gir
+          {Number(panel.bekleyen_gider_sayisi || 0) > 0 && (
+            <span style={{
+              position: 'absolute', top: -6, right: -6,
+              background: 'var(--yellow)', color: '#000',
+              borderRadius: '50%', width: 16, height: 16,
+              fontSize: 10, fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              lineHeight: 1,
+            }}>{panel.bekleyen_gider_sayisi}</span>
+          )}
+        </button>
+        <button className="btn btn-secondary btn-sm" onClick={() => nav('kart-hareketleri')}>💳 Kart Hareketi</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => nav('dis-kaynak')}>💰 Dış Kaynak</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => nav('onay')}>✅ Onay Kuyruğu</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => nav('ledger')}>📒 Ledger</button>
+      </div>
 
       {/* ── PANEL SEKME NAVİGASYONU ── */}
       {(() => {
@@ -1824,6 +1726,115 @@ export default function Panel({ onNavigate }) {
       )}
 
       </div>)} {/* /strateji tab */}
+
+      </div>{/* /sol kolon */}
+
+      {/* ── SAĞ SIDEBAR: Bildirimler + Onay + Anomali ── */}
+      <div style={{ width: 268, flexShrink: 0, position: 'sticky', top: 80, display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+        {/* Bildirim paneli — tıkla → tam ekran modal */}
+        {(() => {
+          const bL = panel.bugun_odemeler || [];
+          const kritikCnt = bL.filter(u => u.gun_farki <= -15).length +
+            (panel.kararlar || []).filter(k => k.seviye === 'KRITIK').length;
+          const cnt = bL.length +
+            (panel.kararlar || []).filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI').length +
+            (panel.merkez_mesajlar || []).filter(m => !m.okundu && m.aktif !== false).length +
+            (Array.isArray(panel.ciro_eksik_gunler) ? panel.ciro_eksik_gunler.length : 0);
+          return (
+            <button
+              onClick={() => setNotifModalOpen(true)}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                padding: '14px 16px', borderRadius: 10,
+                background: kritikCnt > 0 ? 'rgba(220,38,38,0.07)' : cnt > 0 ? 'var(--bg2)' : 'rgba(34,197,94,0.06)',
+                border: `1px solid ${kritikCnt > 0 ? 'rgba(220,38,38,0.25)' : 'var(--border)'}`,
+                borderLeft: `4px solid ${kritikCnt > 0 ? 'var(--red)' : cnt > 0 ? 'var(--yellow)' : 'var(--green)'}`,
+                cursor: 'pointer', textAlign: 'left',
+                transition: 'box-shadow 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 14px rgba(0,0,0,0.15)'; }}
+              onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; }}
+            >
+              <span style={{ fontSize: 24 }}>{kritikCnt > 0 ? '🚨' : cnt > 0 ? '🔔' : '✅'}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text1)', marginBottom: 2 }}>Bildirimler</div>
+                <div style={{ fontSize: 11, color: kritikCnt > 0 ? 'var(--red)' : cnt > 0 ? 'var(--text2)' : 'var(--green)', fontWeight: kritikCnt > 0 ? 700 : 400 }}>
+                  {cnt === 0 ? 'Temiz — bildirim yok ✓' : `${cnt} bekleyen${kritikCnt > 0 ? ` · ${kritikCnt} kritik` : ''}`}
+                </div>
+              </div>
+              <span style={{ fontSize: 13, color: 'var(--text3)', fontWeight: 600 }}>›</span>
+            </button>
+          );
+        })()}
+
+        {/* Onay Kuyruğu */}
+        <div
+          onClick={() => nav('onay')}
+          style={{
+            padding: '12px 14px', borderRadius: 10, background: 'var(--bg2)',
+            border: '1px solid var(--border)', cursor: 'pointer',
+            transition: 'box-shadow 0.15s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 14px rgba(0,0,0,0.12)'; }}
+          onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text1)' }}>✅ Onay Kuyruğu</span>
+            {onaylar.length > 0 && (
+              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: 'rgba(232,197,71,.2)', color: 'var(--yellow)' }}>
+                {onaylar.length}
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+            {onaylar.length === 0 ? 'Bekleyen onay yok ✓' : `${onaylar.length} işlem onay bekliyor`}
+          </div>
+        </div>
+
+        {/* Anomali / Kasa Kontrol */}
+        <div
+          onClick={() => nav('kasa-kontrol')}
+          style={{
+            padding: '12px 14px', borderRadius: 10, background: 'var(--bg2)',
+            border: `1px solid ${anomali?.length > 0 ? 'rgba(220,38,38,0.25)' : 'var(--border)'}`,
+            cursor: 'pointer',
+            transition: 'box-shadow 0.15s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 14px rgba(0,0,0,0.12)'; }}
+          onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text1)' }}>🔍 Kasa Kontrol</span>
+            {anomali?.length > 0 && (
+              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: 'rgba(220,38,38,0.15)', color: 'var(--red)' }}>
+                {anomali.length}
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+            {!anomali?.length ? 'Anomali tespit edilmedi ✓' : `${anomali.length} anomali bulundu`}
+          </div>
+        </div>
+
+      </div>{/* /sağ sidebar */}
+
+      </div>{/* /2-kolon layout */}
+
+      {/* ── BİLDİRİM MODALI ── */}
+      {notifModalOpen && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setNotifModalOpen(false)}>
+          <div className="modal" style={{ maxWidth: 680, maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header" style={{ flexShrink: 0 }}>
+              <h3>🔔 Bildirimler</h3>
+              <button className="modal-close" onClick={() => setNotifModalOpen(false)}>✕</button>
+            </div>
+            <div className="modal-body" style={{ overflowY: 'auto', flex: 1 }}>
+              {renderAlertTray()}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── ÖDEME ONAY MODALI ── */}
       {odemeModal && (
