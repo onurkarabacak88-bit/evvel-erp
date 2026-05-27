@@ -888,35 +888,6 @@ export default function Panel({ onNavigate }) {
         </div>
       )}
 
-      {/* ── FİNANSMAN MALİYETİ ── */}
-      {panel.bu_ay_finansman_maliyeti > 0 && (
-        <div style={{ marginBottom: 14, padding: '12px 14px', background: 'rgba(220,50,50,0.05)', border: '1px solid rgba(220,50,50,0.2)', borderLeft: '4px solid var(--red)', borderRadius: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)' }}>🔥 Bu Ay Finansman Maliyeti</span>
-            {panel.bu_ay_sadece_ciro > 0 && (
-              <span style={{ fontSize: 11, color: 'var(--yellow)', fontWeight: 600 }}>
-                Ciroya oranı %{((panel.bu_ay_finansman_maliyeti / panel.bu_ay_sadece_ciro) * 100).toFixed(1)}
-              </span>
-            )}
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            {[
-              { label: '💳 POS Kesintisi', val: panel.bu_ay_pos_kesinti || 0 },
-              ...(panel.bu_ay_online_kesinti > 0 ? [{ label: '🌐 Online Kesinti', val: panel.bu_ay_online_kesinti }] : []),
-              { label: '📈 Kart Faizi', val: panel.bu_ay_kart_faizi || 0 },
-            ].map(({ label, val }) => (
-              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', background: 'var(--bg2)', borderRadius: 6, border: '1px solid var(--border)' }}>
-                <span style={{ fontSize: 11, color: 'var(--text3)' }}>{label}</span>
-                <span style={{ fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(val)}</span>
-              </div>
-            ))}
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 11, color: 'var(--text3)' }}>Toplam</span>
-              <span style={{ fontSize: 15, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(panel.bu_ay_finansman_maliyeti)}</span>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── PANEL SEKME NAVİGASYONU ── */}
       {(() => {
@@ -1175,6 +1146,37 @@ export default function Panel({ onNavigate }) {
                 </span>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Finansman Maliyeti — Ciro Dağılımı altında kompakt satır */}
+        {panel.bu_ay_finansman_maliyeti > 0 && (
+          <div style={{
+            gridColumn: '1 / -1',
+            background: 'var(--bg2)', border: '1px solid var(--border)',
+            borderLeft: '3px solid var(--red)',
+            borderRadius: 8, padding: '8px 16px',
+            display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap'
+          }}>
+            <span style={{ fontSize: 12, color: 'var(--text3)', fontWeight: 600 }}>🔥 Finansman Maliyeti:</span>
+            {[
+              { label: 'POS Kesinti', val: panel.bu_ay_pos_kesinti || 0 },
+              ...(panel.bu_ay_online_kesinti > 0 ? [{ label: 'Online Kesinti', val: panel.bu_ay_online_kesinti }] : []),
+              { label: 'Kart Faizi', val: panel.bu_ay_kart_faizi || 0 },
+            ].map(({ label, val }) => val > 0 ? (
+              <div key={label} style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                <span style={{ fontSize: 11, color: 'var(--text3)' }}>{label}:</span>
+                <span style={{ fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(val)}</span>
+              </div>
+            ) : null)}
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+              {panel.bu_ay_sadece_ciro > 0 && (
+                <span style={{ fontSize: 10, color: 'var(--yellow)', fontWeight: 600 }}>
+                  %{((panel.bu_ay_finansman_maliyeti / panel.bu_ay_sadece_ciro) * 100).toFixed(1)} ciro
+                </span>
+              )}
+              <span style={{ fontSize: 13, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(panel.bu_ay_finansman_maliyeti)}</span>
+            </div>
           </div>
         )}
 
