@@ -2671,7 +2671,117 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
         )
         audit(cur, "operasyon_defter", rid, "URUN_SEVK")
 
-        siparis_talep_id = None
+        # ── BODY'den siparis_talep_id'yi al — toptancıdan gelen ürünü siparişle eşleştir ──
+        # Eğer dolu ise: bu sevk kaydı belirli bir şube siparişine karşılık geliyor demek.
+        # Siparişi 'teslim_edildi' olarak kapat, kabul timestamp/personel kaydet.
+        siparis_talep_id = (body.siparis_talep_id or "").strip() or None
+        siparis_kapama_sonucu: Optional[Dict[str, Any]] = None
+        if siparis_talep_id:
+            cur.execute(
+                """
+                SELECT id, sube_id, durum, sevkiyat_durumu, kalemler_ozet
+                FROM siparis_talep
+                WHERE id=%s
+                FOR UPDATE
+                """,
+                (siparis_talep_id,),
+            )
+            _talep_row = cur.fetchone()
+            if not _talep_row:
+                raise HTTPException(404, "Eşleştirilecek sipariş bulunamadı (talep_id geçersiz)")
+            _talep = dict(_talep_row)
+            _talep_sube = str(_talep.get("sube_id") or "")
+            if _talep_sube != sube_id:
+                raise HTTPException(403, "Bu sipariş bu şubeye ait değil")
+            _talep_durum = str(_talep.get("durum") or "")
+            _talep_sevkiyat = str(_talep.get("sevkiyat_durumu") or "")
+            # Toptancıdan yönlendirilmiş sipariş uygun mu kontrol
+            if _talep_sevkiyat != "toptanciya_yonlendirildi":
+                raise HTTPException(
+                    400,
+                    f"Bu sipariş toptancıya yönlendirilmemiş (sevkiyat_durumu: {_talep_sevkiyat or '—'}). "
+                    "Depodan gelen siparişler için 'Depo Kabul' kullanın.",
+                )
+            if _talep_durum in ("teslim_edildi", "iptal"):
+                raise HTTPException(
+                    400,
+                    f"Bu sipariş zaten kapatılmış (durum: {_talep_durum}). Yeniden teslim alınamaz.",
+                )
+            # Sipariş kalemleriyle kabul kalemlerini karşılaştır → uyuşmazlık varsa uyarı (kör denetim)
+            try:
+                _orig_kalemler = _talep.get("kalemler_ozet") or []
+                if isinstance(_orig_kalemler, str):
+                    import json as _j2
+                    _orig_kalemler = _j2.loads(_orig_kalemler)
+                _orig_map = {}
+                for _ok in (_orig_kalemler or []):
+                    _ad = str(_ok.get("urun_ad") or "").strip().lower()
+                    if _ad:
+                        _orig_map[_ad] = _orig_map.get(_ad, 0) + int(_ok.get("adet") or 0)
+                _kabul_map = {}
+                for _kk in kalemler:
+                    _ad = str(_kk.get("urun_ad") or "").strip().lower()
+                    if _ad:
+                        _kabul_map[_ad] = _kabul_map.get(_ad, 0) + int(_kk.get("adet") or 0)
+                _uyusmazlik_satirlar = []
+                for _ad, _ist in _orig_map.items():
+                    _kab = _kabul_map.get(_ad, 0)
+                    if _kab != _ist:
+                        _uyusmazlik_satirlar.append({
+                            "urun_ad": _ad, "istenen": _ist, "kabul": _kab, "fark": _kab - _ist,
+                        })
+                # Sadece sipariş listesinde olmayan ekstra ürün de uyarı (fazladan ürün?)
+                for _ad, _kab in _kabul_map.items():
+                    if _ad not in _orig_map:
+                        _uyusmazlik_satirlar.append({
+                            "urun_ad": _ad, "istenen": 0, "kabul": _kab, "fark": _kab,
+                            "ekstra": True,
+                        })
+                if _uyusmazlik_satirlar:
+                    import json as _j3
+                    _uyari_id = str(uuid.uuid4())
+                    cur.execute(
+                        """
+                        INSERT INTO sube_operasyon_uyari
+                            (id, sube_id, tarih, tip, seviye, mesaj, detay_json,
+                             kapanis_personel_id, kapanis_personel_ad)
+                        VALUES (%s, %s, CURRENT_DATE, 'TOPTANCI_KABUL_FARKI', 'uyari', %s, %s::jsonb, %s, %s)
+                        """,
+                        (
+                            _uyari_id, sube_id,
+                            f"Toptancı teslim kabulü uyuşmazlık ({len(_uyusmazlik_satirlar)} kalem)",
+                            _j3.dumps({
+                                "siparis_talep_id": siparis_talep_id,
+                                "uyusmazlik_satirlar": _uyusmazlik_satirlar,
+                                "tedarikci_id": tedarikci_id,
+                                "tedarikci_ad": tedarikci_ad,
+                            }, ensure_ascii=False),
+                            pid_panel, onay_ad,
+                        ),
+                    )
+            except Exception:
+                pass  # Uyuşmazlık tespit hatası kabul'u engellemez
+
+            # Siparişi kapat
+            _yeni_durum = "kabul_uyusmazlik" if (teslim_durumu == "eksik_var") else "teslim_edildi"
+            _kabul_durum = "kabul_uyusmazlik" if (teslim_durumu == "eksik_var") else "kabul_tam"
+            cur.execute(
+                """
+                UPDATE siparis_talep
+                SET durum=%s,
+                    kabul_durum=%s,
+                    kabul_ts=NOW(),
+                    kabul_personel_id=%s,
+                    kabul_personel_ad=%s
+                WHERE id=%s
+                """,
+                (_yeni_durum, _kabul_durum, pid_panel, onay_ad, siparis_talep_id),
+            )
+            siparis_kapama_sonucu = {
+                "kapatildi": True,
+                "yeni_durum": _yeni_durum,
+                "kabul_durum": _kabul_durum,
+            }
 
         sevk_kalemleri = {k: max(0, int(delta.get(k) or 0)) for k in STOK_KEYS}
         if sum(sevk_kalemleri.values()) <= 0 and kalemler:
