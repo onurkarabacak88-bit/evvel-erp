@@ -2354,7 +2354,7 @@ def init_db():
             FROM ciro c
             LEFT JOIN kasa_hareketleri kh
                 ON kh.ref_id = c.id
-                AND kh.ref_type = 'CIRO'
+                AND kh.ref_type IN ('CIRO', 'CIRO_GUNCELLEME')
                 AND kh.islem_turu = 'CIRO'
                 AND kh.durum = 'aktif'
             WHERE c.durum = 'aktif'
