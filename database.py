@@ -3665,9 +3665,10 @@ $$;
                     ('pos_kagidi',     30),
                     ('kalem',          40),
                     ('filtre_kagidi',  50)
-                ) AS v(norm_ad, yeni_sira)
-                JOIN siparis_kategori sk ON sk.id = su.kategori_id
-                WHERE sk.kod = 'sarf'
+                ) AS v(norm_ad, yeni_sira),
+                siparis_kategori sk
+                WHERE sk.id = su.kategori_id
+                  AND sk.kod = 'sarf'
                   AND su.norm_ad = v.norm_ad
                   AND su.sira <> v.yeni_sira
             """)
@@ -3713,45 +3714,48 @@ $$;
         # ── YARIŞMA SİSTEMİ ──────────────────────────────────────────────────
         # CFO her dönem yeni yarışma tanımlar (ürün, grup veya toplam metrik).
         # Şube paneli aktif yarışmayı + sıralamayı personele gösterir.
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS yarisma (
-                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-                baslik          TEXT NOT NULL,
-                aciklama        TEXT,
-                odul            TEXT,
-                metrik          TEXT NOT NULL DEFAULT 'adet'
-                                CHECK (metrik IN ('adet','ciro','fis_sayisi')),
-                filtre_turu     TEXT NOT NULL DEFAULT 'tumu'
-                                CHECK (filtre_turu IN ('tumu','grup','urun_adi')),
-                filtre_deger    TEXT,
-                bastar          DATE NOT NULL,
-                bittar          DATE NOT NULL,
-                aktif           BOOLEAN NOT NULL DEFAULT TRUE,
-                tum_subeler     BOOLEAN NOT NULL DEFAULT TRUE,
-                olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                guncelleme      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_yarisma_aktif_tarih
-            ON yarisma (aktif, bittar DESC)
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS yarisma_skor (
-                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-                yarisma_id      TEXT NOT NULL REFERENCES yarisma(id) ON DELETE CASCADE,
-                personel_id     TEXT NOT NULL,
-                personel_ad     TEXT NOT NULL,
-                sube_id         TEXT,
-                sube_ad         TEXT,
-                deger           NUMERIC(14,2) NOT NULL DEFAULT 0,
-                sira            INT,
-                guncelleme      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                UNIQUE (yarisma_id, personel_id)
-            )
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_yarisma_skor_yarisma_sira
-            ON yarisma_skor (yarisma_id, sira)
-        """)
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS yarisma (
+                    id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                    baslik          TEXT NOT NULL,
+                    aciklama        TEXT,
+                    odul            TEXT,
+                    metrik          TEXT NOT NULL DEFAULT 'adet'
+                                    CHECK (metrik IN ('adet','ciro','fis_sayisi')),
+                    filtre_turu     TEXT NOT NULL DEFAULT 'tumu'
+                                    CHECK (filtre_turu IN ('tumu','grup','urun_adi')),
+                    filtre_deger    TEXT,
+                    bastar          DATE NOT NULL,
+                    bittar          DATE NOT NULL,
+                    aktif           BOOLEAN NOT NULL DEFAULT TRUE,
+                    tum_subeler     BOOLEAN NOT NULL DEFAULT TRUE,
+                    olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    guncelleme      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_yarisma_aktif_tarih
+                ON yarisma (aktif, bittar DESC)
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS yarisma_skor (
+                    id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                    yarisma_id      TEXT NOT NULL REFERENCES yarisma(id) ON DELETE CASCADE,
+                    personel_id     TEXT NOT NULL,
+                    personel_ad     TEXT NOT NULL,
+                    sube_id         TEXT,
+                    sube_ad         TEXT,
+                    deger           NUMERIC(14,2) NOT NULL DEFAULT 0,
+                    sira            INT,
+                    guncelleme      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (yarisma_id, personel_id)
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_yarisma_skor_yarisma_sira
+                ON yarisma_skor (yarisma_id, sira)
+            """)
+            print("[MIGRATION] yarisma + yarisma_skor tabloları kontrol edildi")
+        except Exception as _yar_e:
+            print(f"[MIGRATION WARN] yarisma tabloları: {_yar_e}")
