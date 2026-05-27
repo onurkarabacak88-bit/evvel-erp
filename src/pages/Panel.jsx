@@ -888,28 +888,35 @@ export default function Panel({ onNavigate }) {
         </div>
       )}
 
-      {/* ── HIZLI AKSİYON BARI ── */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14, padding: '10px 14px', background: 'var(--bg2)', borderRadius: 8, border: '1px solid var(--border)', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'center', marginRight: 4 }}>Hızlı:</span>
-        <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('ciro')}>➕ Ciro Gir</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => setHizliModal('gider')} style={{ position: 'relative' }}>
-          ➖ Gider Gir
-          {Number(panel.bekleyen_gider_sayisi || 0) > 0 && (
-            <span style={{
-              position: 'absolute', top: -6, right: -6,
-              background: 'var(--yellow)', color: '#000',
-              borderRadius: '50%', width: 16, height: 16,
-              fontSize: 10, fontWeight: 700,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              lineHeight: 1,
-            }}>{panel.bekleyen_gider_sayisi}</span>
-          )}
-        </button>
-        <button className="btn btn-secondary btn-sm" onClick={() => nav('kart-hareketleri')}>💳 Kart Hareketi</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => nav('dis-kaynak')}>💰 Dış Kaynak</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => nav('onay')}>✅ Onay Kuyruğu</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => nav('ledger')}>📒 Ledger</button>
-      </div>
+      {/* ── FİNANSMAN MALİYETİ ── */}
+      {panel.bu_ay_finansman_maliyeti > 0 && (
+        <div style={{ marginBottom: 14, padding: '12px 14px', background: 'rgba(220,50,50,0.05)', border: '1px solid rgba(220,50,50,0.2)', borderLeft: '4px solid var(--red)', borderRadius: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)' }}>🔥 Bu Ay Finansman Maliyeti</span>
+            {panel.bu_ay_sadece_ciro > 0 && (
+              <span style={{ fontSize: 11, color: 'var(--yellow)', fontWeight: 600 }}>
+                Ciroya oranı %{((panel.bu_ay_finansman_maliyeti / panel.bu_ay_sadece_ciro) * 100).toFixed(1)}
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            {[
+              { label: '💳 POS Kesintisi', val: panel.bu_ay_pos_kesinti || 0 },
+              ...(panel.bu_ay_online_kesinti > 0 ? [{ label: '🌐 Online Kesinti', val: panel.bu_ay_online_kesinti }] : []),
+              { label: '📈 Kart Faizi', val: panel.bu_ay_kart_faizi || 0 },
+            ].map(({ label, val }) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', background: 'var(--bg2)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 11, color: 'var(--text3)' }}>{label}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(val)}</span>
+              </div>
+            ))}
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>Toplam</span>
+              <span style={{ fontSize: 15, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(panel.bu_ay_finansman_maliyeti)}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── PANEL SEKME NAVİGASYONU ── */}
       {(() => {
@@ -1216,36 +1223,6 @@ export default function Panel({ onNavigate }) {
         )}
 
       </div>
-
-      {/* ── FİNANSMAN MALİYETİ ── */}
-      {panel.bu_ay_finansman_maliyeti > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <div className="panel-section-hdr">
-            <span>🔥 Bu Ay Finansman Maliyeti</span>
-            {panel.bu_ay_sadece_ciro > 0 && (
-              <span style={{ fontSize: 11, color: 'var(--yellow)', fontWeight: 600 }}>
-                Ciroya oranı %{((panel.bu_ay_finansman_maliyeti / panel.bu_ay_sadece_ciro) * 100).toFixed(1)}
-              </span>
-            )}
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
-            {[
-              { label: '💳 POS Kesintisi', val: panel.bu_ay_pos_kesinti || 0 },
-              ...(panel.bu_ay_online_kesinti > 0 ? [{ label: '🌐 Online Kesinti', val: panel.bu_ay_online_kesinti }] : []),
-              { label: '📈 Kart Faizi', val: panel.bu_ay_kart_faizi || 0 },
-            ].map(({ label, val }) => (
-              <div key={label} style={{ background: 'var(--bg2)', border: '1px solid rgba(220,50,50,0.18)', borderTop: '2px solid rgba(220,50,50,0.4)', borderRadius: 8, padding: '10px 12px' }}>
-                <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 5 }}>{label}</div>
-                <div style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(val)}</div>
-              </div>
-            ))}
-            <div style={{ background: 'rgba(220,50,50,0.07)', border: '1px solid rgba(220,50,50,0.35)', borderTop: '2px solid var(--red)', borderRadius: 8, padding: '10px 12px' }}>
-              <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 5 }}>🔥 Toplam Yanan</div>
-              <div style={{ fontSize: 18, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(panel.bu_ay_finansman_maliyeti)}</div>
-            </div>
-          </div>
-        </div>
-      )}
 
       </div>)} {/* /özet tab */}
 
