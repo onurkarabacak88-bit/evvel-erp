@@ -864,17 +864,21 @@ def panel():
             ozet['genel_nakit_toplam'] = ozet['anlik_nakit'] + ozet['sabit_nakit'] + ozet['vadeli_nakit']
             ozet['genel_kart_toplam']  = ozet['anlik_kart']  + ozet['sabit_kart']  + ozet['vadeli_kart']
 
-            # BU AY TOPLAM KASA ÇIKIŞI — tüm negatif hareketlerin toplamı (tek kaynak)
+            # BU AY TOPLAM KASA ÇIKIŞI — ciro düzeltme/iptal ledger kayıtları hariç gerçek giderler
+            # CIRO_DUZELTME: ciro güncellenince oluşan ters kayıt (teknik, gerçek gider değil)
+            # CIRO_IPTAL: ciro iptal edilince oluşan ters kayıt (teknik, gerçek gider değil)
             cur.execute("""
                 SELECT COALESCE(SUM(ABS(tutar)), 0) as toplam_cikis
                 FROM kasa_hareketleri
                 WHERE kasa_etkisi = true AND durum = 'aktif' AND tutar < 0
+                AND islem_turu NOT IN ('CIRO_DUZELTME', 'CIRO_IPTAL')
                 AND EXTRACT(YEAR  FROM tarih) = EXTRACT(YEAR  FROM CURRENT_DATE)
                 AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
             """)
             ozet['bu_ay_toplam_cikis'] = float(cur.fetchone()['toplam_cikis'])
 
             # BU AY TOPLAM KASA GİRİŞİ — tüm pozitif hareketlerin toplamı
+            # (Güncellenmiş ciro için yeni CIRO kaydı islem_turu='CIRO' olarak gelir, doğru sayılır)
             cur.execute("""
                 SELECT COALESCE(SUM(tutar), 0) as toplam_giris
                 FROM kasa_hareketleri
@@ -4361,7 +4365,7 @@ def kasa_onizle(sid: str, baslangic: date, bitis: date = None):
                    kh.tutar as kasa_tutar, kh.id as kasa_id
             FROM ciro c
             JOIN kasa_hareketleri kh ON kh.ref_id = c.id
-                AND kh.ref_type = 'CIRO'
+                AND kh.ref_type IN ('CIRO', 'CIRO_GUNCELLEME')
                 AND kh.islem_turu = 'CIRO'
                 AND kh.durum = 'aktif'
             WHERE c.sube_id = %s AND c.durum = 'aktif'
@@ -4422,7 +4426,7 @@ def kasa_duzelt(sid: str, body: KasaDuzeltModel):
                    kh.id as kasa_id, kh.tutar as kasa_tutar
             FROM ciro c
             JOIN kasa_hareketleri kh ON kh.ref_id = c.id
-                AND kh.ref_type = 'CIRO'
+                AND kh.ref_type IN ('CIRO', 'CIRO_GUNCELLEME')
                 AND kh.islem_turu = 'CIRO'
                 AND kh.durum = 'aktif'
             WHERE c.sube_id = %s AND c.durum = 'aktif'
