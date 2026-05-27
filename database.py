@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import psycopg2
@@ -3211,7 +3212,7 @@ $$;
                     INSERT INTO finans_migration_log (ad, detay) VALUES (%s, %s::jsonb)
                 """, (
                     'depo_stok_duplike_temizlik_v2',
-                    f'{{"sds_silinen": {s1}, "msk_silinen": {s2}, "kodlar": {_typo_kodlar}}}',
+                    json.dumps({"sds_silinen": s1, "msk_silinen": s2, "kodlar": _typo_kodlar}),
                 ))
                 print(f"[MIGRATION] depo_stok_duplike_temizlik_v2: sds={s1}, msk={s2}")
         except Exception as _mig_e:
@@ -3697,10 +3698,60 @@ $$;
         # Evo POS'ta personel kendi hesabıyla giriş yaptığında SATIS_PER ismi gelir.
         # Ortak hesap kullanıldığında SATIS_PER boş kalır; bu tablo geçmiş taramasıyla
         # doldurulan bir hafıza görevi görür: bir kez isim geldi mi, sonra da kullanılır.
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS evo_personel_cache (
+                    personel_id TEXT PRIMARY KEY,
+                    ad          TEXT NOT NULL,
+                    guncelleme  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            print("[MIGRATION] evo_personel_cache tablosu kontrol edildi")
+        except Exception as _epc_e:
+            print(f"[MIGRATION WARN] evo_personel_cache: {_epc_e}")
+
+        # ── YARIŞMA SİSTEMİ ──────────────────────────────────────────────────
+        # CFO her dönem yeni yarışma tanımlar (ürün, grup veya toplam metrik).
+        # Şube paneli aktif yarışmayı + sıralamayı personele gösterir.
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS evo_personel_cache (
-                personel_id TEXT PRIMARY KEY,
-                ad          TEXT NOT NULL,
-                guncelleme  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            CREATE TABLE IF NOT EXISTS yarisma (
+                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                baslik          TEXT NOT NULL,
+                aciklama        TEXT,
+                odul            TEXT,
+                metrik          TEXT NOT NULL DEFAULT 'adet'
+                                CHECK (metrik IN ('adet','ciro','fis_sayisi')),
+                filtre_turu     TEXT NOT NULL DEFAULT 'tumu'
+                                CHECK (filtre_turu IN ('tumu','grup','urun_adi')),
+                filtre_deger    TEXT,
+                bastar          DATE NOT NULL,
+                bittar          DATE NOT NULL,
+                aktif           BOOLEAN NOT NULL DEFAULT TRUE,
+                tum_subeler     BOOLEAN NOT NULL DEFAULT TRUE,
+                olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                guncelleme      TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_yarisma_aktif_tarih
+            ON yarisma (aktif, bittar DESC)
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS yarisma_skor (
+                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                yarisma_id      TEXT NOT NULL REFERENCES yarisma(id) ON DELETE CASCADE,
+                personel_id     TEXT NOT NULL,
+                personel_ad     TEXT NOT NULL,
+                sube_id         TEXT,
+                sube_ad         TEXT,
+                deger           NUMERIC(14,2) NOT NULL DEFAULT 0,
+                sira            INT,
+                guncelleme      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (yarisma_id, personel_id)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_yarisma_skor_yarisma_sira
+            ON yarisma_skor (yarisma_id, sira)
         """)
