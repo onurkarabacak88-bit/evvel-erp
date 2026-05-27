@@ -377,7 +377,12 @@ export default function Panel({ onNavigate }) {
     setGecmisOverlay({ baslik, endpoint });
     try {
       const data = await api(endpoint);
-      setGecmisData(Array.isArray(data) ? data.slice(0, 20) : []);
+      // Endpoint array döndürebilir (örn. dis-kaynak) ya da
+      // nesne içinde liste (örn. /kasa → { hareketler: [...] })
+      const liste = Array.isArray(data)
+        ? data
+        : (data.hareketler || data.satirlar || data.liste || data.kayitlar || []);
+      setGecmisData(liste.slice(0, 20));
     } catch { setGecmisData([]); }
   }
 
@@ -2399,10 +2404,32 @@ function BankaYatirimModal({ liste, yukleniyor, onKapat, onYenile, toast }) {
 }
 
 // İşlem geçmişi overlay
+const ISLEM_ETIKETI = {
+  CIRO: { label: 'Ciro', ikon: '📈' },
+  CIRO_DUZELTME: { label: 'Ciro Düzeltme', ikon: '✏️' },
+  CIRO_IPTAL: { label: 'Ciro İptal', ikon: '❌' },
+  DIS_KAYNAK: { label: 'Dış Kaynak', ikon: '💰' },
+  DIS_KAYNAK_IPTAL: { label: 'Dış Kaynak İptal', ikon: '❌' },
+  ANLIK_GIDER: { label: 'Anlık Gider', ikon: '💸' },
+  ANLIK_GIDER_IPTAL: { label: 'Gider İptal', ikon: '↩️' },
+  SABIT_GIDER: { label: 'Sabit Gider', ikon: '🏠' },
+  PERSONEL_MAAS: { label: 'Maaş', ikon: '👤' },
+  KART_ODEME: { label: 'Kart Ödemesi', ikon: '💳' },
+  KART_ODEME_IPTAL: { label: 'Kart Ödeme İptal', ikon: '↩️' },
+  KART_FAIZ: { label: 'Kart Faizi', ikon: '📊' },
+  VADELI_ODEME: { label: 'Vadeli Ödeme', ikon: '📦' },
+  VADELI_IPTAL: { label: 'Vadeli İptal', ikon: '↩️' },
+  FATURA_ODEMESI: { label: 'Fatura Ödemesi', ikon: '🧾' },
+  BORC_TAKSIT: { label: 'Borç Taksit', ikon: '🏦' },
+  KASA_GIRIS: { label: 'Kasa Girişi', ikon: '✅' },
+  KASA_DUZELTME: { label: 'Kasa Düzeltme', ikon: '🔧' },
+  DEVIR: { label: 'Ay Devri', ikon: '🔄' },
+};
+
 function GecmisOverlay({ baslik, data, onKapat }) {
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onKapat()}>
-      <div className="modal" style={{ maxWidth: 520 }}>
+      <div className="modal" style={{ maxWidth: 540 }}>
         <div className="modal-header">
           <h3>📋 {baslik}</h3>
           <button className="modal-close" onClick={onKapat}>✕</button>
@@ -2411,29 +2438,33 @@ function GecmisOverlay({ baslik, data, onKapat }) {
           {data.length === 0 ? (
             <div className="empty" style={{ padding: 32 }}><p>Kayıt yok</p></div>
           ) : (
-            <div style={{ maxHeight: 400, overflowY: 'auto' }}>
-              {data.map((r, i) => (
-                <div key={i} style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  padding: '10px 16px', borderBottom: '1px solid var(--border)'
-                }}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600 }}>{r.islem_turu || r.aciklama || r.kategori || '—'}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{r.tarih} {r.aciklama && r.islem_turu ? `· ${r.aciklama}` : ''}</div>
-                  </div>
-                  <div style={{
-                    fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 700,
-                    color: (parseFloat(r.tutar) || parseFloat(r.toplam) || 0) >= 0 ? 'var(--green)' : 'var(--red)'
+            <div style={{ maxHeight: 460, overflowY: 'auto' }}>
+              {data.map((r, i) => {
+                const tutar = parseFloat(r.tutar ?? r.toplam ?? 0);
+                const pozitif = tutar >= 0;
+                const et = ISLEM_ETIKETI[r.islem_turu] || { label: r.islem_turu || '—', ikon: '•' };
+                return (
+                  <div key={i} style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '10px 16px', borderBottom: '1px solid var(--border)',
+                    background: i % 2 === 0 ? 'transparent' : 'var(--bg2)'
                   }}>
-                    {r.tutar !== undefined
-                      ? ((parseFloat(r.tutar) >= 0 ? '+' : '') + parseFloat(r.tutar).toLocaleString('tr-TR') + ' ₺')
-                      : r.toplam
-                        ? ('+' + parseFloat(r.toplam).toLocaleString('tr-TR') + ' ₺')
-                        : '—'
-                    }
+                    <span style={{ fontSize: 18, flexShrink: 0 }}>{et.ikon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text1)' }}>{et.label}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {r.tarih}{r.aciklama ? ` · ${r.aciklama}` : ''}
+                      </div>
+                    </div>
+                    <div style={{
+                      fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, flexShrink: 0,
+                      color: pozitif ? 'var(--green)' : 'var(--red)'
+                    }}>
+                      {(pozitif ? '+' : '') + tutar.toLocaleString('tr-TR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
