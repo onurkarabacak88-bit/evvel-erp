@@ -88,7 +88,8 @@ def audit(cur, tablo, kayit_id, islem, eski=None, yeni=None):
 
 KASA_IPTAL_MAP = {
     "ANLIK_GIDER_IPTAL": True,
-    "CIRO_IPTAL": True,
+    "CIRO_IPTAL": False,       # Orijinal zaten 'iptal' yapılıyor — CIRO_IPTAL sadece audit kaydı
+    "CIRO_DUZELTME": False,    # Orijinal zaten 'iptal' yapılıyor — CIRO_DUZELTME sadece audit kaydı
     "DIS_KAYNAK_IPTAL": True,
     "KART_ODEME_IPTAL": True,
     "VADELI_IPTAL": True,

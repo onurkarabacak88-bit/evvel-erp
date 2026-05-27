@@ -875,7 +875,7 @@ def panel():
                 AND EXTRACT(YEAR  FROM tarih) = EXTRACT(YEAR  FROM CURRENT_DATE)
                 AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
             """)
-            ozet['bu_ay_toplam_cikis'] = float(cur.fetchone()['toplam_cikis'])
+            ozet['bu_ay_nakit_cikis'] = float(cur.fetchone()['toplam_cikis'])
 
             # BU AY TOPLAM KASA GİRİŞİ — tüm pozitif hareketlerin toplamı
             # (Güncellenmiş ciro için yeni CIRO kaydı islem_turu='CIRO' olarak gelir, doğru sayılır)
@@ -886,10 +886,10 @@ def panel():
                 AND EXTRACT(YEAR  FROM tarih) = EXTRACT(YEAR  FROM CURRENT_DATE)
                 AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
             """)
-            ozet['bu_ay_toplam_giris'] = float(cur.fetchone()['toplam_giris'])
+            ozet['bu_ay_nakit_giris'] = float(cur.fetchone()['toplam_giris'])
 
-            # NET (gelir - gider)
-            ozet['bu_ay_net'] = ozet['bu_ay_toplam_giris'] - ozet['bu_ay_toplam_cikis']
+            # NET (nakit giriş - nakit çıkış)
+            ozet['bu_ay_net'] = ozet['bu_ay_nakit_giris'] - ozet['bu_ay_nakit_cikis']
 
         return ozet
     except Exception as e:

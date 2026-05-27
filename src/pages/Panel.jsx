@@ -947,11 +947,11 @@ export default function Panel({ onNavigate }) {
           { label: '📈 Bu Ay Ciro', value: fmt(buAyCiro), sub: new Date().toLocaleDateString('tr-TR', { month: 'long' }), renk: 'var(--text1)', page: 'ciro' },
           { label: '🔄 Geçen Ay Devir', value: fmt(panel.bu_ay_devir || 0), sub: panel.bu_ay_devir > 0 ? 'Devir aktarıldı ✓' : 'Devir yok', renk: panel.bu_ay_devir > 0 ? 'var(--yellow)' : 'var(--text3)', page: 'ledger' },
           (() => {
-            const cikis = parseFloat(panel.bu_ay_toplam_cikis) || 0;
-            const giris = parseFloat(panel.bu_ay_toplam_giris) || 0;
+            const cikis = parseFloat(panel.bu_ay_nakit_cikis) || 0;
+            const giris = parseFloat(panel.bu_ay_nakit_giris) || 0;
             const net   = parseFloat(panel.bu_ay_net) || 0;
             return {
-              label: '📉 Bu Ay Toplam Gider',
+              label: '📉 Bu Ay Nakit Çıkışı',
               value: fmt(cikis),
               sub: cikis > 0
                 ? (net >= 0 ? `Net: +${fmt(net)}` : `Net: -${fmt(Math.abs(net))}`)
