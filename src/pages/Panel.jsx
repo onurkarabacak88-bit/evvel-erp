@@ -52,6 +52,7 @@ export default function Panel({ onNavigate }) {
   const [bankaYatirimYukleniyor, setBankaYatirimYukleniyor] = useState(false);
   const [cfoAcikBolumler, setCfoAcikBolumler] = useState({ uyari: false, bilgi: false, kira: false, motor: false, sistem: false });
   const [cfoTrayOpen, setCfoTrayOpen] = useState(null); // null=auto(open if kritik), bool=user override
+  const [panelTab, setPanelTab] = useState('ozet'); // 'ozet' | 'odemeler' | 'strateji'
 
   const detayGetir = (tip) => {
     api(`/vadeli-odeme-detay?kaynak=${tip}`)
@@ -1003,6 +1004,55 @@ export default function Panel({ onNavigate }) {
         );
       })()}
 
+      {/* ── PANEL SEKME NAVİGASYONU ── */}
+      {(() => {
+        const odemeBadge = (tumUyarilar?.length || 0);
+        const stratejiBadge = (onaylar?.length || 0) + (panel.oneriler?.length || 0);
+        const tabs = [
+          { id: 'ozet',     label: '📊 Özet',     badge: null },
+          { id: 'odemeler', label: '💸 Ödemeler', badge: odemeBadge > 0 ? odemeBadge : null },
+          { id: 'strateji', label: '🧠 Strateji', badge: stratejiBadge > 0 ? stratejiBadge : null },
+        ];
+        return (
+          <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '1px solid var(--border)' }}>
+            {tabs.map(({ id, label, badge }) => {
+              const isActive = panelTab === id;
+              return (
+                <button key={id}
+                  onClick={() => setPanelTab(id)}
+                  style={{
+                    padding: '10px 20px', border: 'none', background: 'transparent', cursor: 'pointer',
+                    fontSize: 13, fontWeight: isActive ? 700 : 500,
+                    color: isActive ? 'var(--text1)' : 'var(--text3)',
+                    borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
+                    marginBottom: -1,
+                    transition: 'color 0.15s, border-color 0.15s',
+                    display: 'flex', alignItems: 'center', gap: 7,
+                    borderRadius: '4px 4px 0 0',
+                    outline: 'none',
+                  }}
+                  onMouseEnter={e => { if (!isActive) e.currentTarget.style.color = 'var(--text1)'; }}
+                  onMouseLeave={e => { if (!isActive) e.currentTarget.style.color = 'var(--text3)'; }}
+                >
+                  {label}
+                  {badge != null && (
+                    <span style={{
+                      background: badge > 3 ? 'rgba(220,50,50,0.85)' : 'rgba(220,160,0,0.85)',
+                      color: '#fff', fontSize: 10, fontWeight: 700,
+                      borderRadius: 10, padding: '1px 6px', minWidth: 18, textAlign: 'center', lineHeight: '16px',
+                    }}>{badge}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        );
+      })()}
+
+      {/* ── ÖZET TABI ── */}
+      {panelTab === 'ozet' && (
+      <div className="tab-panel">
+
       {/* ── KATMAN 2: ÇEKİRDEK METRİKLER (drill-down) ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
         {[
@@ -1261,7 +1311,7 @@ export default function Panel({ onNavigate }) {
       </div>
 
       {/* ── FİNANSMAN MALİYETİ ── */}
-      {(panel.bu_ay_finansman_maliyeti > 0) && (
+      {panel.bu_ay_finansman_maliyeti > 0 && (
         <div style={{ marginBottom: 16 }}>
           <div className="panel-section-hdr">
             <span>🔥 Bu Ay Finansman Maliyeti</span>
@@ -1289,6 +1339,12 @@ export default function Panel({ onNavigate }) {
           </div>
         </div>
       )}
+
+      </div>)} {/* /özet tab */}
+
+      {/* ── ÖDEMELER TABI ── */}
+      {panelTab === 'odemeler' && (
+      <div className="tab-panel">
 
       {/* ── KATMAN 3: RİSK & BASKI ── */}
       <div style={{ marginBottom: 16 }}>
@@ -1618,6 +1674,20 @@ export default function Panel({ onNavigate }) {
         </div>
       </div>
 
+      </div>)} {/* /ödemeler tab */}
+
+      {/* ── STRATEJİ TABI ── */}
+      {panelTab === 'strateji' && (
+      <div className="tab-panel">
+
+      {!panel.oneriler?.length && !onaylar.length && !(gelir30 > 0 || gider30 > 0) && (
+        <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text3)' }}>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>✅</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text2)', marginBottom: 6 }}>Her şey yolunda</div>
+          <div style={{ fontSize: 12 }}>Bekleyen öneri veya onay yok.</div>
+        </div>
+      )}
+
       {/* ── STRATEJİ ÖNERİLERİ ── */}
       {panel.oneriler?.length > 0 && (
         <div style={{ marginBottom: 16 }}>
@@ -1752,6 +1822,8 @@ export default function Panel({ onNavigate }) {
           )}
         </div>
       )}
+
+      </div>)} {/* /strateji tab */}
 
       {/* ── ÖDEME ONAY MODALI ── */}
       {odemeModal && (

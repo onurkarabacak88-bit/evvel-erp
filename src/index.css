@@ -208,6 +208,8 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
 @keyframes cfoCardIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
 @keyframes metricIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+@keyframes tabFadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.tab-panel{animation:tabFadeIn 0.18s ease both}
 
 .cfo-section{margin-bottom:4px}
 .cfo-section-hdr{display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:7px;cursor:pointer;user-select:none;transition:background .12s;margin-bottom:3px}
