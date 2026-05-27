@@ -1934,12 +1934,22 @@ def hs_rapor_sube_bazli(bastar: date, bittar: date) -> Dict[str, Any]:
                 pass
             pid = str(f.get("a_per_id") or "0")
             satis_per = str(f.get("SATIS_PER") or "").strip()
-            # Gerçek isim geldiyse cache'e ekle
-            if satis_per and pid and pid != "0":
-                yeni_per_eslesme[pid] = satis_per
-            # Görüntülenecek ad: SATIS_PER → cache → pid sayısı
-            pad = _per_ad_bul(pid, satis_per)
-            p = personel_map.setdefault(pid, {"ad": pad, "ciro": 0.0, "fis_sayisi": 0})
+
+            # ── Gruplama anahtarı ──────────────────────────────────────────────
+            # Hızlı Satış modunda a_per_id=0 gelir ama SATIS_PER ismi taşır.
+            # Bu durumda herkesi "0" bucket'ında birleştirmek yerine ismi anahtar
+            # olarak kullanıyoruz — böylece her personel ayrı satırda görünür.
+            if pid == "0" and satis_per:
+                gruplama_k = f"isim:{satis_per}"
+                pad = satis_per
+            else:
+                gruplama_k = pid
+                # Gerçek isim geldiyse cache'e ekle (a_per_id biliniyorsa)
+                if satis_per and pid and pid != "0":
+                    yeni_per_eslesme[pid] = satis_per
+                pad = _per_ad_bul(pid, satis_per)
+
+            p = personel_map.setdefault(gruplama_k, {"ad": pad, "personel_id": pid, "ciro": 0.0, "fis_sayisi": 0})
             # Eğer cache'den daha iyi bir isim geldiyse güncelle
             if pad != pid and p["ad"] == pid:
                 p["ad"] = pad
@@ -2004,9 +2014,9 @@ def hs_rapor_sube_bazli(bastar: date, bittar: date) -> Dict[str, Any]:
                 kart += tut
 
         personel_listesi = [
-            {"personel_id": pid, "ad": p["ad"],
+            {"personel_id": p.get("personel_id", k), "ad": p["ad"],
              "ciro": round(p["ciro"], 2), "fis_sayisi": p["fis_sayisi"]}
-            for pid, p in personel_map.items() if p["fis_sayisi"] > 0
+            for k, p in personel_map.items() if p["fis_sayisi"] > 0
         ]
         personel_listesi.sort(key=lambda x: -x["ciro"])
 
