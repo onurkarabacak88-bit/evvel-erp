@@ -228,6 +228,33 @@ export default function App() {
         <div className="sidebar-footer">EVVEL v2.4 · 27.03.2026</div>
       </aside>
       <main className="main" ref={mainRef}>
+        {page !== 'panel' && (
+          <div style={{
+            position: 'sticky', top: 0, zIndex: 40,
+            background: 'var(--bg1)',
+            borderBottom: '1px solid var(--border)',
+            padding: '6px 20px',
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <button
+              onClick={() => navigate('panel')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '4px 12px', borderRadius: 6,
+                background: 'var(--bg2)', border: '1px solid var(--border)',
+                color: 'var(--text2)', fontSize: 12, fontWeight: 600,
+                cursor: 'pointer', transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--bg3)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'var(--bg2)'}
+            >
+              ← CFO Paneli
+            </button>
+            <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+              {NAV.flatMap(g => g.items).find(i => i.id === page)?.label || page}
+            </span>
+          </div>
+        )}
         <Page onNavigate={navigate} />
       </main>
     </div>
