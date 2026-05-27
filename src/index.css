@@ -198,6 +198,10 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .urgency-mid .urgency-badge{color:var(--orange)}
 .urgency-high .urgency-badge{color:var(--red)}
 
+/* Panel bölüm başlığı — görsel ayırıcı */
+.panel-section-hdr{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.panel-section-hdr>span:first-child{font-size:12px;font-weight:700;color:var(--text2);letter-spacing:-.1px}
+
 /* CFO Panel v2 — triage + Mission Control */
 @keyframes cfoBadgePulse{0%,100%{box-shadow:0 0 0 0 rgba(224,92,92,.5)}50%{box-shadow:0 0 0 5px rgba(224,92,92,.0)}}
 .cfo-kritik-badge{animation:cfoBadgePulse 2.2s ease-in-out infinite}

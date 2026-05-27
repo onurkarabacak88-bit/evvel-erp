@@ -1262,90 +1262,93 @@ export default function Panel({ onNavigate }) {
 
       {/* ── FİNANSMAN MALİYETİ ── */}
       {(panel.bu_ay_finansman_maliyeti > 0) && (
-        <div style={{
-          display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap',
-          marginBottom: 16, padding: '12px 16px',
-          background: 'rgba(220,50,50,0.06)', border: '1px solid rgba(220,50,50,0.3)',
-          borderRadius: 8
-        }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--red)' }}>🔥 Bu Ay Finansman Maliyeti</span>
-          <div style={{ display: 'flex', gap: 20, flex: 1, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 12, color: 'var(--text2)' }}>
-              💳 POS Kesintisi: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(panel.bu_ay_pos_kesinti || 0)}</strong>
-            </span>
-            {(panel.bu_ay_online_kesinti > 0) && (
-            <span style={{ fontSize: 12, color: 'var(--text2)' }}>
-              🌐 Online Kesinti: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(panel.bu_ay_online_kesinti || 0)}</strong>
-            </span>
-            )}
-            <span style={{ fontSize: 12, color: 'var(--text2)' }}>
-              📈 Kart Faizi: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{fmt(panel.bu_ay_kart_faizi || 0)}</strong>
-            </span>
-            <span style={{ fontSize: 12, color: 'var(--text2)' }}>
-              🔥 Toplam Yanan: <strong style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)', fontSize: 14 }}>{fmt(panel.bu_ay_finansman_maliyeti)}</strong>
-            </span>
+        <div style={{ marginBottom: 16 }}>
+          <div className="panel-section-hdr">
+            <span>🔥 Bu Ay Finansman Maliyeti</span>
             {panel.bu_ay_sadece_ciro > 0 && (
-              <span style={{ fontSize: 12, color: 'var(--text3)' }}>
-                Ciroya oranı: <strong style={{ color: 'var(--yellow)' }}>
-                  %{((panel.bu_ay_finansman_maliyeti / panel.bu_ay_sadece_ciro) * 100).toFixed(1)}
-                </strong>
+              <span style={{ fontSize: 11, color: 'var(--yellow)', fontWeight: 600 }}>
+                Ciroya oranı %{((panel.bu_ay_finansman_maliyeti / panel.bu_ay_sadece_ciro) * 100).toFixed(1)}
               </span>
             )}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
+            {[
+              { label: '💳 POS Kesintisi', val: panel.bu_ay_pos_kesinti || 0 },
+              ...(panel.bu_ay_online_kesinti > 0 ? [{ label: '🌐 Online Kesinti', val: panel.bu_ay_online_kesinti }] : []),
+              { label: '📈 Kart Faizi', val: panel.bu_ay_kart_faizi || 0 },
+            ].map(({ label, val }) => (
+              <div key={label} style={{ background: 'var(--bg2)', border: '1px solid rgba(220,50,50,0.18)', borderTop: '2px solid rgba(220,50,50,0.4)', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 5 }}>{label}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(val)}</div>
+              </div>
+            ))}
+            <div style={{ background: 'rgba(220,50,50,0.07)', border: '1px solid rgba(220,50,50,0.35)', borderTop: '2px solid var(--red)', borderRadius: 8, padding: '10px 12px' }}>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 5 }}>🔥 Toplam Yanan</div>
+              <div style={{ fontSize: 18, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(panel.bu_ay_finansman_maliyeti)}</div>
+            </div>
           </div>
         </div>
       )}
 
       {/* ── KATMAN 3: RİSK & BASKI ── */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <h3 style={{ fontSize: 13, fontWeight: 600 }}>⚡ Ödeme Baskısı</h3>
-          {riskGunu && (
-            <span style={{
-              fontSize: 11, color: 'var(--red)',
-              background: 'rgba(220,50,50,0.12)', padding: '4px 10px',
-              borderRadius: 4, fontWeight: 700, cursor: 'pointer'
-            }} onClick={() => nav('ledger')}>
-              💣 {riskGunu} — kasa sıfır
-            </span>
-          )}
+      <div style={{ marginBottom: 16 }}>
+        <div className="panel-section-hdr">
+          <span>⚡ Ödeme Baskısı</span>
+          {riskGunu
+            ? <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--red)', background: 'rgba(220,50,50,0.12)', padding: '3px 10px', borderRadius: 4, cursor: 'pointer' }} onClick={() => nav('ledger')}>💣 {riskGunu} — kasa sıfır</span>
+            : <span style={{ fontSize: 11, color: 'var(--text3)' }}>Baskı: <strong style={{ color: riskRenk }}>{riskBar.toFixed(0)}%</strong></span>
+          }
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
-          {[
-            { gun: '7 gün', tutar: yuk7 },
-            { gun: '15 gün', tutar: yuk15 },
-            { gun: '30 gün', tutar: yuk30 },
-          ].map(({ gun, tutar }) => {
-            const yetersiz = kasa < tutar;
-            return (
-              <div key={gun} style={{
-                background: 'var(--bg3)', borderRadius: 6, padding: '10px 12px', textAlign: 'center',
-                borderLeft: `3px solid ${yetersiz ? 'var(--red)' : 'var(--border)'}`
-              }}>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{gun}</div>
-                <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--font-mono)', color: yetersiz ? 'var(--red)' : 'var(--text1)' }}>{fmt(tutar)}</div>
-                <div style={{ fontSize: 10, color: yetersiz ? 'var(--red)' : 'var(--text3)', marginTop: 3 }}>
-                  {yetersiz ? '⚠️ Yetersiz' : tutar > 0 ? `%${((tutar / Math.max(kasa, 1)) * 100).toFixed(0)} kasa` : '—'}
+        <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
+            {[
+              { gun: '7 gün', tutar: yuk7 },
+              { gun: '15 gün', tutar: yuk15 },
+              { gun: '30 gün', tutar: yuk30 },
+            ].map(({ gun, tutar }) => {
+              const yetersiz = kasa < tutar;
+              return (
+                <div key={gun} style={{
+                  background: yetersiz ? 'rgba(220,50,50,0.06)' : 'var(--bg3)',
+                  borderRadius: 8, padding: '10px 12px', textAlign: 'center',
+                  borderTop: `2px solid ${yetersiz ? 'var(--red)' : 'var(--border)'}`,
+                }}>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{gun} yük</div>
+                  <div style={{ fontSize: 17, fontWeight: 700, fontFamily: 'var(--font-mono)', color: yetersiz ? 'var(--red)' : 'var(--text1)' }}>{fmt(tutar)}</div>
+                  <div style={{ fontSize: 10, marginTop: 4, fontWeight: 600, color: yetersiz ? 'var(--red)' : 'var(--text3)' }}>
+                    {yetersiz ? '⚠️ Kasa yetersiz' : tutar > 0 ? `%${((tutar / Math.max(kasa, 1)) * 100).toFixed(0)} kasa` : '—'}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
-        <div style={{ height: 8, background: 'var(--bg3)', borderRadius: 4, overflow: 'hidden' }}>
-          <div style={{ height: '100%', borderRadius: 4, width: `${Math.min(100, riskBar)}%`, background: riskRenk, transition: 'width 0.6s' }} />
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text3)', marginTop: 5 }}>
-          <span>Kasa: <strong style={{ color: riskRenk }}>{fmt(kasa)}</strong></span>
-          <span>Baskı: <strong style={{ color: riskRenk }}>{riskBar.toFixed(0)}%</strong></span>
-          <span>30 gün yük: <strong>{fmt(yuk30)}</strong></span>
+              );
+            })}
+          </div>
+          <div style={{ height: 6, background: 'var(--bg3)', borderRadius: 3, overflow: 'hidden', marginBottom: 8 }}>
+            <div style={{ height: '100%', borderRadius: 3, width: `${Math.min(100, riskBar)}%`, background: riskRenk, transition: 'width 0.8s ease' }} />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text3)' }}>
+            <span>Kasa: <strong style={{ color: riskRenk, fontFamily: 'var(--font-mono)' }}>{fmt(kasa)}</strong></span>
+            <span style={{ color: 'var(--text3)' }}>30g yük / kasa oranı</span>
+            <span>30g yük: <strong style={{ fontFamily: 'var(--font-mono)' }}>{fmt(yuk30)}</strong></span>
+          </div>
         </div>
       </div>
 
       {/* ── KATMAN 4: KARAR ALANI ── */}
+      <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
+        <span>📋 Karar Alanı</span>
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
 
         {/* SOL: ÖDEMELER */}
         <div className="card">
-          <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>📅 Yaklaşan Ödemeler</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 600 }}>📅 Yaklaşan Ödemeler</h3>
+            {tumUyarilar.length > 0 && (
+              <span style={{ fontSize: 11, color: 'var(--text3)', background: 'var(--bg3)', borderRadius: 4, padding: '2px 8px' }}>
+                {tumUyarilar.length} ödeme
+              </span>
+            )}
+          </div>
           {tumUyarilar.length === 0 ? (
             <div className="empty"><p>Yaklaşan ödeme yok</p></div>
           ) : (
@@ -1531,45 +1534,63 @@ export default function Panel({ onNavigate }) {
       </div>
 
       {/* ── GERÇEKLEŞMİŞ SABİT GİDERLER ── */}
-      {odenenGiderler.length > 0 && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <h3 style={{ fontSize: 13, fontWeight: 600 }}>✅ Bu Ay Ödenen Sabit Giderler</h3>
-            <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--red)' }}>
-              -{parseInt(odenenGiderler.reduce((s,g) => s + parseFloat(g.odenen_tutar||g.odenecek_tutar||0), 0)).toLocaleString('tr-TR')} ₺
-            </span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 220, overflowY: 'auto' }}>
-            {odenenGiderler.map((g, i) => (
-              <div key={i} style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '7px 12px', borderRadius: 6, background: 'var(--bg3)'
-              }}>
-                <div>
-                  <div style={{ fontWeight: 500, fontSize: 12 }}>{g.gider_adi}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-                    {g.kategori} · {g.odeme_tarihi?.slice(0,10) || '—'}
+      {odenenGiderler.length > 0 && (() => {
+        const toplamOdenen = odenenGiderler.reduce((s,g) => s + parseFloat(g.odenen_tutar||g.odenecek_tutar||0), 0);
+        return (
+          <div style={{ marginBottom: 16 }}>
+            <div className="panel-section-hdr">
+              <span>✅ Bu Ay Ödenen Sabit Giderler</span>
+              <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--green)' }}>
+                {odenenGiderler.length} kalem · {parseInt(toplamOdenen).toLocaleString('tr-TR')} ₺
+              </span>
+            </div>
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 220, overflowY: 'auto' }}>
+                {odenenGiderler.map((g, i) => (
+                  <div key={i} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '9px 14px',
+                    borderBottom: i < odenenGiderler.length - 1 ? '1px solid var(--border)' : 'none',
+                    transition: 'background 0.1s',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--bg3)'}
+                  onMouseLeave={e => e.currentTarget.style.background = ''}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 15, flexShrink: 0 }}>✅</span>
+                      <div>
+                        <div style={{ fontWeight: 500, fontSize: 12, color: 'var(--text1)' }}>{g.gider_adi}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 1 }}>
+                          {g.kategori} · {g.odeme_tarihi?.slice(0,10) || '—'}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ fontWeight: 700, color: 'var(--text1)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
+                      {parseInt(g.odenen_tutar||g.odenecek_tutar||0).toLocaleString('tr-TR')} ₺
+                    </div>
                   </div>
-                </div>
-                <div style={{ fontWeight: 700, color: 'var(--red)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
-                  -{parseInt(g.odenen_tutar||g.odenecek_tutar||0).toLocaleString('tr-TR')} ₺
-                </div>
+                ))}
               </div>
-            ))}
+              {/* Toplam satırı */}
+              <div style={{ padding: '8px 14px', background: 'var(--bg3)', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 11, color: 'var(--text3)' }}>Toplam ödenen</span>
+                <span style={{ fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>−{parseInt(toplamOdenen).toLocaleString('tr-TR')} ₺</span>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── SİMÜLASYON GRAFİĞİ ── */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <h3 style={{ fontSize: 13, fontWeight: 600 }}>📉 30 Günlük Kasa Projeksiyonu — Ne zaman batıyorum?</h3>
-          <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--text3)' }}>
-            <span><span style={{ color: 'var(--green)' }}>━</span> Mevcut</span>
-            <span><span style={{ color: 'var(--yellow)' }}>╌</span> Önerili</span>
-            <span><span style={{ color: 'var(--red)' }}>╌</span> Sıfır hattı</span>
-          </div>
+      <div className="panel-section-hdr" style={{ marginBottom: 10 }}>
+        <span>📉 30 Günlük Kasa Projeksiyonu</span>
+        <div style={{ display: 'flex', gap: 14, fontSize: 11, color: 'var(--text3)' }}>
+          <span><span style={{ color: 'var(--green)' }}>━</span> Mevcut</span>
+          <span><span style={{ color: 'var(--yellow)' }}>╌</span> Önerili</span>
+          <span><span style={{ color: 'var(--red)' }}>╌</span> Sıfır</span>
         </div>
+      </div>
+      <div className="card" style={{ marginBottom: 16 }}>
         <div className="chart-container">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={simData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
@@ -1599,9 +1620,13 @@ export default function Panel({ onNavigate }) {
 
       {/* ── STRATEJİ ÖNERİLERİ ── */}
       {panel.oneriler?.length > 0 && (
-        <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 16 }}>
+          <div className="panel-section-hdr">
+            <span>🧠 Strateji Motoru</span>
+          </div>
+        <div className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h3 style={{ fontSize: 13, fontWeight: 600 }}>🧠 Strateji Motoru</h3>
+            <span style={{ fontSize: 12, color: 'var(--text3)' }}>{panel.oneriler.length} öneri</span>
             {panel.oneriler.filter(o => o.odeme_id && o.tavsiye_tutar > 0).length > 1 && (
               <button className="btn btn-primary btn-sm" disabled={topluUygula}
                 onClick={topluOnerUygula}
@@ -1650,14 +1675,19 @@ export default function Panel({ onNavigate }) {
             })}
           </div>
         </div>
+        </div>
       )}
 
       {/* ── ONAY MERKEZİ ── */}
       {onaylar.length > 0 && (
-        <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--yellow)' }}>
-          <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--yellow)', marginBottom: 12 }}>
-            🔔 Onay Merkezi — {onaylar.length} bekleyen işlem
-          </h3>
+        <div style={{ marginBottom: 16 }}>
+          <div className="panel-section-hdr">
+            <span>🔔 Onay Merkezi</span>
+            <span style={{ background: 'rgba(240,192,64,0.18)', color: 'var(--yellow)', borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>
+              {onaylar.length} bekleyen
+            </span>
+          </div>
+        <div className="card" style={{ borderLeft: '3px solid var(--yellow)' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {onaylar.map(o => (
               <div key={o.id} style={{
@@ -1684,32 +1714,35 @@ export default function Panel({ onNavigate }) {
             ))}
           </div>
         </div>
+        </div>
       )}
 
       {/* ── KASA DETAY ── */}
       {(gelir30 > 0 || gider30 > 0) && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h3 style={{ fontSize: 13, fontWeight: 600 }}>🔍 Kasa Detay (30 gün)</h3>
-            <button className="btn btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => nav('ledger')}>Ledger →</button>
+        <div style={{ marginBottom: 16 }}>
+          <div className="panel-section-hdr">
+            <span>🔍 Kasa Özeti — Son 30 Gün</span>
+            <button className="btn btn-secondary btn-sm" style={{ fontSize: 10 }} onClick={() => nav('ledger')}>Ledger →</button>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
             {[
-              { label: '↑ Toplam Gelir', value: gelir30, renk: 'var(--green)' },
-              { label: '↓ Toplam Gider', value: gider30, renk: 'var(--red)' },
-              { label: '= Net', value: netAkis, renk: netAkis >= 0 ? 'var(--green)' : 'var(--red)' },
-            ].map(({ label, value, renk }) => (
-              <div key={label} style={{ background: 'var(--bg3)', borderRadius: 6, padding: '10px 14px', textAlign: 'center' }}>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{label}</div>
-                <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--font-mono)', color: renk }}>{fmt(value)}</div>
+              { label: '↑ Gelir', value: gelir30, renk: 'var(--green)', bg: 'rgba(76,175,132,0.07)', border: 'rgba(76,175,132,0.25)' },
+              { label: '↓ Gider', value: gider30, renk: 'var(--red)',   bg: 'rgba(220,50,50,0.07)',  border: 'rgba(220,50,50,0.25)' },
+              { label: '= Net',  value: netAkis, renk: netAkis >= 0 ? 'var(--green)' : 'var(--red)',
+                bg: netAkis >= 0 ? 'rgba(76,175,132,0.07)' : 'rgba(220,50,50,0.07)',
+                border: netAkis >= 0 ? 'rgba(76,175,132,0.25)' : 'rgba(220,50,50,0.25)' },
+            ].map(({ label, value, renk, bg, border }) => (
+              <div key={label} style={{ background: bg, border: `1px solid ${border}`, borderRadius: 10, padding: '12px 14px', textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</div>
+                <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--font-mono)', color: renk }}>{fmt(value)}</div>
               </div>
             ))}
           </div>
           {anomali?.sorunlu > 0 && (
             <div style={{
-              marginTop: 10, padding: '10px 14px',
+              marginTop: 8, padding: '10px 14px',
               background: 'rgba(220,50,50,0.1)', border: '1px solid var(--red)',
-              borderRadius: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+              borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center'
             }}>
               <span style={{ fontSize: 12, color: 'var(--red)', fontWeight: 600 }}>
                 🚨 {anomali.sorunlu} ciro kaydının kasa karşılığı eksik!
