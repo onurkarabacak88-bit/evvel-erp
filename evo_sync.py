@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -228,6 +229,73 @@ def _evo_post(modul: str, body: dict) -> dict:
             pass
         raise HTTPException(502, f"evobulut /{modul} hata: {mesaj or data.get('status')}")
     return data
+
+
+# ─────────────────────────────────────────────
+# 1c. PERSONEL ADI CACHE
+# a_per_id → SATIS_PER (isim) eşleşmesini bellekte + DB'de tutar.
+# Evo'da ortak kasa hesabı kullanıldığında SATIS_PER boş gelir.
+# Personel en az bir kez kendi hesabıyla giriş yaptığında isim
+# cache'e düşer; sonraki ortak-hesap satışlarında da aynı isim gösterilir.
+# ─────────────────────────────────────────────
+_per_ad_cache: Dict[str, str] = {}       # personel_id → ad
+_per_ad_lock  = threading.Lock()
+_per_ad_cache_loaded = False
+
+
+def _personel_cache_yukle() -> None:
+    """DB'deki evo_personel_cache'i belleğe yükler. Bir kez çalışır."""
+    global _per_ad_cache_loaded
+    if _per_ad_cache_loaded:
+        return
+    try:
+        with db() as (conn, cur):
+            cur.execute("SELECT personel_id, ad FROM evo_personel_cache")
+            rows = cur.fetchall()
+        with _per_ad_lock:
+            for r in rows:
+                if r["personel_id"] and r["ad"]:
+                    _per_ad_cache[r["personel_id"]] = r["ad"]
+        _per_ad_cache_loaded = True
+        log.info("evo_personel_cache: %d kayıt yüklendi", len(_per_ad_cache))
+    except Exception as exc:
+        log.warning("evo_personel_cache yüklenemedi: %s", exc)
+
+
+def _per_ad_bul(pid: str, satis_per: str) -> str:
+    """
+    Personel adını döndürür.
+    Öncelik: SATIS_PER (canlı) → DB cache → pid sayısı (fallback).
+    """
+    if satis_per and satis_per != pid:
+        return satis_per
+    if not _per_ad_cache_loaded:
+        _personel_cache_yukle()
+    with _per_ad_lock:
+        return _per_ad_cache.get(pid, pid)
+
+
+def _per_ad_guncelle(yeni: Dict[str, str]) -> None:
+    """
+    Yeni pid→ad eşleşmelerini bellek cache'e ve DB'ye yazar.
+    Thread-safe; arka planda çağrılabilir.
+    """
+    if not yeni:
+        return
+    with _per_ad_lock:
+        _per_ad_cache.update(yeni)
+    try:
+        with db() as (conn, cur):
+            for pid, pad in yeni.items():
+                cur.execute("""
+                    INSERT INTO evo_personel_cache (personel_id, ad, guncelleme)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (personel_id) DO UPDATE
+                        SET ad = EXCLUDED.ad, guncelleme = NOW()
+                """, (pid, pad))
+        log.info("evo_personel_cache: %d ad güncellendi", len(yeni))
+    except Exception as exc:
+        log.warning("evo_personel_cache DB yazma hatası: %s", exc)
 
 
 # ─────────────────────────────────────────────
@@ -1856,6 +1924,7 @@ def hs_rapor_sube_bazli(bastar: date, bittar: date) -> Dict[str, Any]:
         ciro_top = 0.0
         iskonto_top = 0.0
         personel_map: Dict[str, Dict[str, Any]] = {}
+        yeni_per_eslesme: Dict[str, str] = {}  # bu çekimde ilk kez görülen gerçek isimler
         for f in s_list:
             try:
                 ciro_top += float(f.get("a_tutar") or 0)
@@ -1863,8 +1932,16 @@ def hs_rapor_sube_bazli(bastar: date, bittar: date) -> Dict[str, Any]:
             except (TypeError, ValueError):
                 pass
             pid = str(f.get("a_per_id") or "0")
-            pad = str(f.get("SATIS_PER") or "").strip() or pid
+            satis_per = str(f.get("SATIS_PER") or "").strip()
+            # Gerçek isim geldiyse cache'e ekle
+            if satis_per and pid and pid != "0":
+                yeni_per_eslesme[pid] = satis_per
+            # Görüntülenecek ad: SATIS_PER → cache → pid sayısı
+            pad = _per_ad_bul(pid, satis_per)
             p = personel_map.setdefault(pid, {"ad": pad, "ciro": 0.0, "fis_sayisi": 0})
+            # Eğer cache'den daha iyi bir isim geldiyse güncelle
+            if pad != pid and p["ad"] == pid:
+                p["ad"] = pad
             try:
                 p["ciro"] += float(f.get("a_tutar") or 0)
             except (TypeError, ValueError):
@@ -1943,9 +2020,14 @@ def hs_rapor_sube_bazli(bastar: date, bittar: date) -> Dict[str, Any]:
                         for g, v in gruplar.items() if v["adet"] > 0},
             "cok_satilan": cok[:50],
             "personel_satislar": personel_listesi,
+            "_yeni_per": yeni_per_eslesme,  # iç kullanım: cache güncelleme
         }
 
+    # Personel cache ilk istekte DB'den yüklensin
+    _personel_cache_yukle()
+
     # Paralel çek — 4 şube
+    tum_yeni_per: Dict[str, str] = {}
     with ThreadPoolExecutor(max_workers=4) as exe:
         futures = {exe.submit(_sube_cek, eid, ad): (eid, ad)
                    for eid, ad in EVO_SUBE_ID_MAP.items()}
@@ -1953,7 +2035,14 @@ def hs_rapor_sube_bazli(bastar: date, bittar: date) -> Dict[str, Any]:
             eid, ad = futures[fut]
             res = fut.result()
             if res is not None:
+                # Yeni eşleşmeleri topla
+                tum_yeni_per.update(res.pop("_yeni_per", {}))
                 sonuc_subeler[ad] = res
+
+    # Yeni isim eşleşmeleri varsa cache + DB'ye yaz (arka planda)
+    if tum_yeni_per:
+        t = threading.Thread(target=_per_ad_guncelle, args=(tum_yeni_per,), daemon=True)
+        t.start()
 
     return {
         "tarih_bas": str(bastar),
@@ -2306,6 +2395,41 @@ def evo_sube_grup_detay(
     except ValueError:
         raise HTTPException(400, "Tarih formatı YYYY-MM-DD")
     return hs_rapor_sube_bazli(bs, bt)
+
+
+@router.post("/personel-sync")
+def evo_personel_sync(gunler: int = Query(default=7, ge=1, le=30)):
+    """
+    Son N günün Evo verisini tarayarak personel ID → isim cache'ini günceller.
+    Her /sube-grup-detay çağrısı zaten otomatik günceller; bu endpoint
+    ilk kurulumda veya cache boşken geçmişe yönelik manuel tetiklemek içindir.
+    """
+    bugun = bugun_tr()
+    bastar = bugun - timedelta(days=gunler - 1)
+    _personel_cache_yukle()
+    # hs_rapor_sube_bazli içinde otomatik cache yazma tetiklenir
+    try:
+        hs_rapor_sube_bazli(bastar, bugun)
+    except Exception as exc:
+        raise HTTPException(500, f"Evo veri çekme hatası: {exc}")
+    with _per_ad_lock:
+        cache_boyutu = len(_per_ad_cache)
+    return {
+        "durum": "ok",
+        "taranan_gun": gunler,
+        "tarih_bas": str(bastar),
+        "tarih_bit": str(bugun),
+        "cache_boyutu": cache_boyutu,
+    }
+
+
+@router.get("/personel-cache")
+def evo_personel_cache_listesi():
+    """Bellekteki personel ID → ad eşleşmelerini döndürür (debug/kontrol için)."""
+    _personel_cache_yukle()
+    with _per_ad_lock:
+        kayitlar = [{"personel_id": k, "ad": v} for k, v in sorted(_per_ad_cache.items())]
+    return {"toplam": len(kayitlar), "kayitlar": kayitlar}
 
 
 @router.get("/grup-pasta-ham")

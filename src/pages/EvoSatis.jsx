@@ -113,6 +113,8 @@ export default function EvoSatis() {
   const [sonGuncelleme, setSonGuncelleme] = useState(null);
   const [aktifSekme, setAktifSekme] = useState('urun'); // 'urun' | 'sube'
   const [tabAnimKey, setTabAnimKey] = useState(0);
+  const [perSyncYukleniyor, setPerSyncYukleniyor] = useState(false);
+  const [perSyncSonuc, setPerSyncSonuc] = useState(null);
 
   const popupRef = useRef(null);
   const pollRef = useRef(null);
@@ -194,6 +196,21 @@ export default function EvoSatis() {
   function subeSecOlayı(ad) {
     setSecilenSube(ad);
     _subeUrunlerFromAnaliz(subeAnaliz, ad);
+  }
+
+  async function perSyncCalistir() {
+    setPerSyncYukleniyor(true);
+    setPerSyncSonuc(null);
+    try {
+      const r = await api('/evo/personel-sync?gunler=14', { method: 'POST' });
+      setPerSyncSonuc({ ok: true, mesaj: `✅ ${r.cache_boyutu} personel kaydı güncellendi` });
+      // Şube verisini yenile: isimler değişmiş olabilir
+      subeAnalızYukle();
+    } catch (e) {
+      setPerSyncSonuc({ ok: false, mesaj: `Hata: ${e.message || e}` });
+    } finally {
+      setPerSyncYukleniyor(false);
+    }
   }
 
   function handleTabSwitch(key) {
@@ -598,11 +615,29 @@ export default function EvoSatis() {
                       {/* Personel */}
                       {subeUrunler.personel?.length > 0 && (
                         <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            👤 Personel Satışları
+                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span>👤 Personel Satışları</span>
+                            <button
+                              onClick={perSyncCalistir}
+                              disabled={perSyncYukleniyor}
+                              title="Evo'dan personel isimlerini güncelle (son 14 gün)"
+                              style={{
+                                padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                                background: 'var(--bg3)', border: '1px solid var(--border)',
+                                color: 'var(--text2)', cursor: perSyncYukleniyor ? 'wait' : 'pointer',
+                                opacity: perSyncYukleniyor ? 0.6 : 1,
+                              }}
+                            >
+                              {perSyncYukleniyor ? '⏳' : '🔄'} İsimleri Güncelle
+                            </button>
+                            {perSyncSonuc && (
+                              <span style={{ fontSize: 10, color: perSyncSonuc.ok ? 'var(--green)' : 'var(--red)', fontWeight: 400 }}>
+                                {perSyncSonuc.mesaj}
+                              </span>
+                            )}
                           </div>
                           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            {subeUrunler.personel.slice(0, 8).map((p, i) => (
+                            {subeUrunler.personel.map((p, i) => (
                               <div key={p.personel_id} style={{
                                 padding: '6px 10px', borderRadius: 6, fontSize: 12,
                                 background: 'var(--bg2)', border: '1px solid var(--border)',

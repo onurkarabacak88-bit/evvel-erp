@@ -3692,3 +3692,15 @@ $$;
             print("[MIGRATION] kartlar.son_dort_hane kolonu kontrol edildi")
         except Exception as _fix6_e:
             print(f"[MIGRATION WARN] kartlar son_dort_hane: {_fix6_e}")
+
+        # ── EVO PERSONEL CACHE — a_per_id → SATIS_PER (isim) eşleşmesi ──
+        # Evo POS'ta personel kendi hesabıyla giriş yaptığında SATIS_PER ismi gelir.
+        # Ortak hesap kullanıldığında SATIS_PER boş kalır; bu tablo geçmiş taramasıyla
+        # doldurulan bir hafıza görevi görür: bir kez isim geldi mi, sonra da kullanılır.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS evo_personel_cache (
+                personel_id TEXT PRIMARY KEY,
+                ad          TEXT NOT NULL,
+                guncelleme  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
