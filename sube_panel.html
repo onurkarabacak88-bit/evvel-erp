@@ -4559,6 +4559,128 @@
       #siparisPanel .siparis-kat-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
       #siparisPanel .sip-kat-kart { min-height: 100px; }
     }
+
+    /* ══ SOL PANEL — PREMIUM GÜN SONU KARTLARI ════════════════
+       Devir & Kapanış için gradient action cards              */
+    .sol-aksiyon-kart {
+      margin: 5px 8px;
+      border-radius: 12px;
+      overflow: hidden;
+      cursor: pointer;
+      position: relative;
+      border: 1.5px solid transparent;
+      transition: transform .12s ease, box-shadow .2s ease;
+      text-align: left;
+      display: block;
+      width: calc(100% - 16px);
+      background: none;
+      padding: 0;
+    }
+    .sol-aksiyon-kart:hover { transform: translateY(-1px); }
+    .sol-aksiyon-kart:active { transform: scale(0.97); }
+    .sol-aksiyon-kart.devir-kart {
+      background: linear-gradient(140deg,#064e3b 0%,#059669 60%,#10b981 100%);
+      box-shadow: 0 4px 14px rgba(5,150,105,.28);
+      border-color: rgba(16,185,129,.3);
+    }
+    .sol-aksiyon-kart.devir-kart:hover { box-shadow: 0 6px 20px rgba(5,150,105,.5); }
+    .sol-aksiyon-kart.kapanis-kart {
+      background: linear-gradient(140deg,#1e1b4b 0%,#4c1d95 45%,#7c3aed 80%,#a855f7 100%);
+      box-shadow: 0 4px 14px rgba(124,58,237,.28);
+      border-color: rgba(168,85,247,.35);
+    }
+    .sol-aksiyon-kart.kapanis-kart:hover { box-shadow: 0 6px 20px rgba(124,58,237,.5); }
+    .sol-aksiyon-kart-ic {
+      padding: 11px 13px 12px;
+      display: flex;
+      flex-direction: column;
+    }
+    .sol-ak-ico {
+      width: 30px; height: 30px; border-radius: 8px;
+      background: rgba(255,255,255,.16);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px; margin-bottom: 7px; flex-shrink: 0;
+    }
+    .sol-ak-ttl { font-size: 12px; font-weight: 800; color: #fff; letter-spacing: -.2px; }
+    .sol-ak-sub { font-size: 10px; color: rgba(255,255,255,.6); line-height: 1.35; margin-top: 2px; }
+    .sol-ak-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 9px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase;
+      background: rgba(0,0,0,.2); color: rgba(255,255,255,.78);
+      padding: 2px 7px; border-radius: 100px; margin-top: 7px; align-self: flex-start;
+      border: 1px solid rgba(255,255,255,.12);
+    }
+    .sol-ak-chip.bekliyor {
+      background: rgba(245,158,11,.28); border-color: rgba(245,158,11,.4);
+      color: #fde68a; animation: solAkPulse 1.5s ease-in-out infinite;
+    }
+    .sol-ak-chip.tamam   { background: rgba(16,185,129,.22); border-color: rgba(16,185,129,.3); color: #6ee7b7; }
+    .sol-ak-chip.gecikti { background: rgba(239,68,68,.25);  border-color: rgba(239,68,68,.4);  color: #fca5a5; animation: solAkPulse .9s ease-in-out infinite; }
+    @keyframes solAkPulse { 0%,100%{opacity:1} 50%{opacity:.72} }
+
+    /* ══ İŞLEM OVERLAY MODAL (devir + kapanış) ════════════════ */
+    .islem-overlay {
+      position: fixed; inset: 0;
+      background: rgba(5,8,18,.9);
+      backdrop-filter: blur(14px);
+      display: none; align-items: center; justify-content: center;
+      z-index: 9250; padding: 16px;
+    }
+    .islem-overlay.acik { display: flex; animation: islemOvGel .18s ease; }
+    @keyframes islemOvGel { from{opacity:0} to{opacity:1} }
+    .islem-kart {
+      width: 100%; max-width: 510px;
+      background: var(--bg2);
+      border: 1px solid rgba(99,120,160,.22);
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 32px 80px rgba(0,0,0,.72);
+      animation: islemKartGel .26s cubic-bezier(.22,.68,0,1.12) both;
+      display: flex; flex-direction: column; max-height: 92vh;
+    }
+    @keyframes islemKartGel {
+      from{opacity:0;transform:scale(.94) translateY(12px)}
+      to  {opacity:1;transform:scale(1)   translateY(0)}
+    }
+    .islem-hdr {
+      padding: 17px 20px 15px;
+      display: flex; align-items: center; gap: 14px; flex-shrink: 0;
+    }
+    .islem-hdr.devir-renk   { background: linear-gradient(135deg,#064e3b 0%,#059669 55%,#10b981 100%); }
+    .islem-hdr.kapanis-renk { background: linear-gradient(135deg,#1e1b4b 0%,#4c1d95 45%,#7c3aed 80%,#a855f7 100%); }
+    .islem-logo {
+      width: 44px; height: 44px; border-radius: 13px; flex-shrink: 0;
+      background: rgba(255,255,255,.17);
+      display: flex; align-items: center; justify-content: center; font-size: 21px;
+    }
+    .islem-ttl { color: #fff; font-size: 16px; font-weight: 900; letter-spacing: -.3px; }
+    .islem-sub { color: rgba(255,255,255,.63); font-size: 11px; margin-top: 2px; }
+    .islem-kapat-btn {
+      margin-left: auto; flex-shrink: 0;
+      width: 34px; height: 34px; border-radius: 50%;
+      background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.15);
+      color: rgba(255,255,255,.85); font-size: 16px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .15s; line-height: 1;
+    }
+    .islem-kapat-btn:hover { background: rgba(255,255,255,.24); }
+    .islem-govde { padding: 16px 18px 20px; overflow-y: auto; flex: 1; }
+    /* progress dots inside islem modal (kapanış steps) */
+    .islem-progress-row {
+      display: flex; align-items: center; padding: 14px 18px 0; gap: 0; flex-shrink: 0;
+      border-top: 1px solid var(--border);
+    }
+    .islem-step-dot {
+      width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 800;
+      border: 2px solid var(--border); background: var(--bg); color: var(--muted);
+      transition: all .25s;
+    }
+    .islem-step-dot.done   { background: var(--ok); border-color: var(--ok); color: #fff; }
+    .islem-step-dot.active { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: 0 0 0 3px rgba(59,130,246,.2); }
+    .islem-step-line { flex: 1; height: 2px; background: var(--border); transition: background .3s; }
+    .islem-step-line.done { background: var(--ok); }
   </style>
 </head>
 <body>
@@ -4659,9 +4781,37 @@
       </div>
 
       <div class="sol-divider"></div>
-      <div class="panel-title">Kasa teslim</div>
-      <button class="sol-btn" id="solAraTeslimBtn" onclick="solSekmeAc('araTeslim')">
-        <span class="ico">💵</span> Ara teslim
+      <div class="panel-title">Gün Sonu</div>
+
+      <!-- Kasa Devri premium card -->
+      <div class="sol-aksiyon-kart devir-kart" role="button" tabindex="0" id="solDevirKart"
+           onclick="devirModalAc()"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();devirModalAc();}">
+        <div class="sol-aksiyon-kart-ic">
+          <div class="sol-ak-ico">💵</div>
+          <div class="sol-ak-ttl">Kasa Devri</div>
+          <div class="sol-ak-sub">Vardiya nakit teslim &amp; devir</div>
+          <div class="sol-ak-chip" id="solDevirChip">● Bekliyor</div>
+        </div>
+      </div>
+
+      <div style="height:5px"></div>
+
+      <!-- Günü Kapat premium card -->
+      <div class="sol-aksiyon-kart kapanis-kart" role="button" tabindex="0" id="solKapanisKart"
+           onclick="kapanisModalAc()"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();kapanisModalAc();}">
+        <div class="sol-aksiyon-kart-ic">
+          <div class="sol-ak-ico">🌙</div>
+          <div class="sol-ak-ttl">Günü Kapat</div>
+          <div class="sol-ak-sub">Ciro, stok &amp; kapanış protokolü</div>
+          <div class="sol-ak-chip" id="solKapanisChip">● 5 adım</div>
+        </div>
+      </div>
+
+      <!-- Ara Teslim (plain button kept) -->
+      <button class="sol-btn" id="solAraTeslimBtn" onclick="solSekmeAc('araTeslim')" style="margin-top:4px">
+        <span class="ico">💵</span> Ara Teslim
       </button>
 
       <div class="sol-divider"></div>
@@ -5016,97 +5166,36 @@
     <!-- SAĞ PANEL -->
     <div id="sag">
       <div class="sag-tab-bar">
-        <button class="sag-tab active" id="sagTab-kasa" onclick="sagSekmeAc('kasa')">
+        <button class="sag-tab active" id="sagTab-kasa" onclick="devirModalAc()">
           <span class="ico">💵</span>
           <span class="ttl">Kasa Devri</span>
-          <span class="sub">Devir adımlarını aç ve tamamla</span>
+          <span class="sub">Tıkla → form açılır</span>
         </button>
-        <button class="sag-tab" id="sagTab-kapanis" onclick="sagSekmeAc('kapanis')">
+        <button class="sag-tab" id="sagTab-kapanis" onclick="kapanisModalAc()">
           <span class="ico">🌙</span>
           <span class="ttl">Kapanış</span>
-          <span class="sub">Ciro ve stok kapanış kaydı</span>
+          <span class="sub">Tıkla → form açılır</span>
         </button>
       </div>
 
-      <!-- Kasa devri -->
+      <!-- Kasa devri — içerik modal'a taşındı -->
       <div class="sag-content sekme-icerik aktif" id="sagTab-kasa-ic">
-        <div id="kasaDevirDurum"></div>
-        <div id="kasaDevirForm"></div>
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:14px;padding:24px 16px;text-align:center">
+          <div style="width:52px;height:52px;border-radius:50%;background:rgba(5,150,105,.12);border:1.5px solid rgba(16,185,129,.25);display:flex;align-items:center;justify-content:center;font-size:24px">💵</div>
+          <div style="font-size:14px;font-weight:700;color:var(--text)">Kasa Devri</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.5">Sol paneldeki <strong style="color:var(--ok)">Kasa Devri</strong> kartına veya yukarıdaki butona tıkla.</div>
+          <button class="btn btn-primary" onclick="devirModalAc()" style="width:100%;height:44px;font-size:13px;font-weight:800;border-radius:10px">💵 Kasa Devrini Aç</button>
+        </div>
       </div>
 
-      <!-- Kapanış -->
+      <!-- Kapanış — içerik modal'a taşındı -->
       <div class="sag-content sekme-icerik" id="sagTab-kapanis-ic">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Adımlı kapanış protokolü: 1) Kasa Say → 2) Bardak Say → 3) Ürün Say → 4) Pasta Say → 5) Bitir.</div>
-        <div id="kapStep1" class="siparis-detay">
-          <div class="sip-alt-baslik">Adım 1 / 5 — Kasa Say</div>
-          <div style="font-size:11px;color:var(--muted);line-height:1.45;margin:-6px 0 10px;padding:8px 10px;background:rgba(0,0,0,.12);border-radius:8px;border:1px solid var(--border)">
-            <strong>X Nakit / POS / Online</strong> → merkezde yalnızca <strong>ciro onayı</strong> kuyruğuna gider (aynı rakamlar).
-            <strong>Teslim, devir, sayım, kime teslim</strong> → kapanış kaydı + <strong>kasa teslim</strong> defteri; ciro satırına yazılmaz.
-          </div>
-          <div class="form-group"><label>X Nakit (₺)</label><input id="kapN" inputmode="decimal" placeholder="0" /></div>
-          <div class="form-group"><label>X POS (₺)</label><input id="kapP" inputmode="decimal" placeholder="0" /></div>
-          <div class="form-group"><label>X Online (₺)</label><input id="kapO" inputmode="decimal" placeholder="0" /></div>
-          <div class="form-group"><label>Teslim Kasa (₺)</label><input id="kapTeslim" inputmode="decimal" /></div>
-          <div class="form-group">
-            <label>Devir (₺) — yarın için kasada bıraktığınız tutar <span style="color:var(--red)">*</span></label>
-            <input id="kapDevir" inputmode="decimal" placeholder="Zorunlu — sonraki vardiyaya bıraktığınız miktar" />
-          </div>
-          <div class="form-group">
-            <label>Kasada sayılan toplam (₺) <span style="color:var(--red)">*</span></label>
-            <input id="kapToplam" inputmode="decimal" placeholder="Zorunlu — önce sayın, sonra girin" />
-            <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">Kasanızdaki tüm nakit tutarını bağımsız sayıp girin. Beklenen rakam bu ekranda gösterilmez.</div>
-          </div>
-          <div class="form-group"><label>Kasa Kime Teslim</label><select id="kapKimeTeslim"></select></div>
-          <button class="btn btn-primary btn-sm" id="kapNext1">Bardak Sayımına Geç</button>
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:14px;padding:24px 16px;text-align:center">
+          <div style="width:52px;height:52px;border-radius:50%;background:rgba(124,58,237,.1);border:1.5px solid rgba(168,85,247,.25);display:flex;align-items:center;justify-content:center;font-size:24px">🌙</div>
+          <div style="font-size:14px;font-weight:700;color:var(--text)">Günü Kapat</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.5">Sol paneldeki <strong style="color:#c084fc">Günü Kapat</strong> kartına veya yukarıdaki butona tıkla.</div>
+          <button class="btn btn-primary" onclick="kapanisModalAc()" style="width:100%;height:44px;font-size:13px;font-weight:800;border-radius:10px;background:linear-gradient(135deg,#4c1d95,#7c3aed);border-color:rgba(168,85,247,.4)">🌙 Kapanışı Başlat</button>
         </div>
-        <div id="kapStep2" class="siparis-detay" style="display:none">
-          <div class="sip-alt-baslik">Adım 2 / 5 — Bardak Say</div>
-          <div class="stok-grid">
-            <div class="stok-item"><label>K.Bardak</label><input id="kapBk" inputmode="numeric" placeholder="0" /></div>
-            <div class="stok-item"><label>B.Bardak</label><input id="kapBb" inputmode="numeric" placeholder="0" /></div>
-            <div class="stok-item"><label>Plastik</label><input id="kapBp" inputmode="numeric" placeholder="0" /></div>
-          </div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost btn-sm" id="kapBack2" type="button">Geri</button>
-            <button class="btn btn-primary btn-sm" id="kapNext2" type="button">Ürün Sayımına Geç</button>
-          </div>
-        </div>
-        <div id="kapStep3" class="siparis-detay" style="display:none">
-          <div class="sip-alt-baslik">Adım 3 / 5 — Ürün Say</div>
-          <div class="stok-grid">
-            <div class="stok-item"><label>Su</label><input id="kapSu" inputmode="numeric" placeholder="0" /></div>
-            <div class="stok-item"><label>Süt</label><input id="kapSut" inputmode="numeric" placeholder="0" /></div>
-            <div class="stok-item"><label>Redbull</label><input id="kapRb" inputmode="numeric" placeholder="0" /></div>
-            <div class="stok-item"><label>Soda</label><input id="kapSo" inputmode="numeric" placeholder="0" /></div>
-            <div class="stok-item"><label>Cookie</label><input id="kapCk" inputmode="numeric" placeholder="0" /></div>
-          </div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost btn-sm" id="kapBack3" type="button">Geri</button>
-            <button class="btn btn-primary btn-sm" id="kapNext3" type="button">Pasta Sayımına Geç</button>
-          </div>
-        </div>
-        <div id="kapStep4" class="siparis-detay" style="display:none">
-          <div class="sip-alt-baslik">Adım 4 / 5 — Pasta Say</div>
-          <div class="form-group">
-            <label>Pasta (toplam adet)</label>
-            <input id="kapPastaAdet" inputmode="numeric" placeholder="0" />
-          </div>
-          <div style="display:flex;gap:8px;margin-top:10px">
-            <button class="btn btn-ghost btn-sm" id="kapBack4" type="button">Geri</button>
-            <button class="btn btn-primary btn-sm" id="kapNext4" type="button">Bitir Adımına Geç</button>
-          </div>
-        </div>
-        <div id="kapStep5" class="siparis-detay" style="display:none">
-          <div class="sip-alt-baslik">Adım 5 / 5 — Bitir ve Gönder</div>
-          <label class="chk-row"><input type="checkbox" id="kapXRapor" /><span>X raporu gönderildi</span></label>
-          <div class="form-group"><label>Onaylayan Personel</label><select id="kapPers"></select></div>
-          <div class="form-group"><label>PIN</label><input id="kapPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost btn-sm" id="kapBack5" type="button">Geri</button>
-            <button class="btn btn-success btn-sm" id="kapGonder">Kapanışı Gönder</button>
-          </div>
-        </div>
-        <div id="kapMsg"></div>
       </div>
 
       <!-- Eksik listesi -->
@@ -5215,6 +5304,127 @@
     <div id="opFields"></div>
     <div id="opErr" class="err-text"></div>
     <button class="btn btn-primary" id="opSubmit" style="margin-top:14px">Kaydet ve Tamamla</button>
+  </div>
+</div>
+
+<!-- ── MODAL: KASA DEVRİ ──────────────────────────────────────
+     Sağ panelden çıkarıldı — sol panel kart + sağ panel tab açar  -->
+<div id="devirModal" class="islem-overlay">
+  <div class="islem-kart">
+    <div class="islem-hdr devir-renk">
+      <div class="islem-logo">💵</div>
+      <div>
+        <div class="islem-ttl">Kasa Devri</div>
+        <div class="islem-sub">Vardiya nakit teslim &amp; devir protokolü</div>
+      </div>
+      <button class="islem-kapat-btn" onclick="devirModalKapat()" title="Kapat">✕</button>
+    </div>
+    <div class="islem-govde">
+      <div id="kasaDevirDurum"></div>
+      <div id="kasaDevirForm"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: KAPANIŞ ─────────────────────────────────────────
+     5 adımlı kapanış protokolü — center overlay               -->
+<div id="kapanisModal" class="islem-overlay">
+  <div class="islem-kart">
+    <div class="islem-hdr kapanis-renk">
+      <div class="islem-logo">🌙</div>
+      <div>
+        <div class="islem-ttl">Günü Kapat</div>
+        <div class="islem-sub">Ciro · Stok · Kapanış protokolü</div>
+      </div>
+      <button class="islem-kapat-btn" onclick="kapanisModalKapat()" title="Kapat">✕</button>
+    </div>
+    <!-- Adım göstergesi -->
+    <div class="islem-progress-row" id="kapProgRow">
+      <div class="islem-step-dot active" id="kapDot1">1</div>
+      <div class="islem-step-line"       id="kapLine1"></div>
+      <div class="islem-step-dot"        id="kapDot2">2</div>
+      <div class="islem-step-line"       id="kapLine2"></div>
+      <div class="islem-step-dot"        id="kapDot3">3</div>
+      <div class="islem-step-line"       id="kapLine3"></div>
+      <div class="islem-step-dot"        id="kapDot4">4</div>
+      <div class="islem-step-line"       id="kapLine4"></div>
+      <div class="islem-step-dot"        id="kapDot5">5</div>
+    </div>
+    <div class="islem-govde">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.45">
+        Adımlı kapanış: 1) Kasa Say → 2) Bardak → 3) Ürün → 4) Pasta → 5) Bitir &amp; Gönder
+      </div>
+      <div id="kapStep1" class="siparis-detay">
+        <div class="sip-alt-baslik">Adım 1 / 5 — Kasa Say</div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.45;margin:-6px 0 10px;padding:8px 10px;background:rgba(0,0,0,.12);border-radius:8px;border:1px solid var(--border)">
+          <strong>X Nakit / POS / Online</strong> → merkezde yalnızca <strong>ciro onayı</strong> kuyruğuna gider (aynı rakamlar).
+          <strong>Teslim, devir, sayım, kime teslim</strong> → kapanış kaydı + <strong>kasa teslim</strong> defteri; ciro satırına yazılmaz.
+        </div>
+        <div class="form-group"><label>X Nakit (₺)</label><input id="kapN" inputmode="decimal" placeholder="0" /></div>
+        <div class="form-group"><label>X POS (₺)</label><input id="kapP" inputmode="decimal" placeholder="0" /></div>
+        <div class="form-group"><label>X Online (₺)</label><input id="kapO" inputmode="decimal" placeholder="0" /></div>
+        <div class="form-group"><label>Teslim Kasa (₺)</label><input id="kapTeslim" inputmode="decimal" /></div>
+        <div class="form-group">
+          <label>Devir (₺) — yarın için kasada bıraktığınız tutar <span style="color:var(--danger)">*</span></label>
+          <input id="kapDevir" inputmode="decimal" placeholder="Zorunlu — sonraki vardiyaya bıraktığınız miktar" />
+        </div>
+        <div class="form-group">
+          <label>Kasada sayılan toplam (₺) <span style="color:var(--danger)">*</span></label>
+          <input id="kapToplam" inputmode="decimal" placeholder="Zorunlu — önce sayın, sonra girin" />
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">Kasanızdaki tüm nakit tutarını bağımsız sayıp girin. Beklenen rakam bu ekranda gösterilmez.</div>
+        </div>
+        <div class="form-group"><label>Kasa Kime Teslim</label><select id="kapKimeTeslim"></select></div>
+        <button class="btn btn-primary btn-sm" id="kapNext1">Bardak Sayımına Geç →</button>
+      </div>
+      <div id="kapStep2" class="siparis-detay" style="display:none">
+        <div class="sip-alt-baslik">Adım 2 / 5 — Bardak Say</div>
+        <div class="stok-grid">
+          <div class="stok-item"><label>K.Bardak</label><input id="kapBk" inputmode="numeric" placeholder="0" /></div>
+          <div class="stok-item"><label>B.Bardak</label><input id="kapBb" inputmode="numeric" placeholder="0" /></div>
+          <div class="stok-item"><label>Plastik</label><input id="kapBp" inputmode="numeric" placeholder="0" /></div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost btn-sm" id="kapBack2" type="button">← Geri</button>
+          <button class="btn btn-primary btn-sm" id="kapNext2" type="button">Ürün Sayımına Geç →</button>
+        </div>
+      </div>
+      <div id="kapStep3" class="siparis-detay" style="display:none">
+        <div class="sip-alt-baslik">Adım 3 / 5 — Ürün Say</div>
+        <div class="stok-grid">
+          <div class="stok-item"><label>Su</label><input id="kapSu" inputmode="numeric" placeholder="0" /></div>
+          <div class="stok-item"><label>Süt</label><input id="kapSut" inputmode="numeric" placeholder="0" /></div>
+          <div class="stok-item"><label>Redbull</label><input id="kapRb" inputmode="numeric" placeholder="0" /></div>
+          <div class="stok-item"><label>Soda</label><input id="kapSo" inputmode="numeric" placeholder="0" /></div>
+          <div class="stok-item"><label>Cookie</label><input id="kapCk" inputmode="numeric" placeholder="0" /></div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost btn-sm" id="kapBack3" type="button">← Geri</button>
+          <button class="btn btn-primary btn-sm" id="kapNext3" type="button">Pasta Sayımına Geç →</button>
+        </div>
+      </div>
+      <div id="kapStep4" class="siparis-detay" style="display:none">
+        <div class="sip-alt-baslik">Adım 4 / 5 — Pasta Say</div>
+        <div class="form-group">
+          <label>Pasta (toplam adet)</label>
+          <input id="kapPastaAdet" inputmode="numeric" placeholder="0" />
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn btn-ghost btn-sm" id="kapBack4" type="button">← Geri</button>
+          <button class="btn btn-primary btn-sm" id="kapNext4" type="button">Bitir Adımına Geç →</button>
+        </div>
+      </div>
+      <div id="kapStep5" class="siparis-detay" style="display:none">
+        <div class="sip-alt-baslik">Adım 5 / 5 — Bitir ve Gönder</div>
+        <label class="chk-row"><input type="checkbox" id="kapXRapor" /><span>X raporu gönderildi</span></label>
+        <div class="form-group"><label>Onaylayan Personel</label><select id="kapPers"></select></div>
+        <div class="form-group"><label>PIN</label><input id="kapPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost btn-sm" id="kapBack5" type="button">← Geri</button>
+          <button class="btn btn-success btn-sm" id="kapGonder">✔ Kapanışı Gönder</button>
+        </div>
+      </div>
+      <div id="kapMsg"></div>
+    </div>
   </div>
 </div>
 
@@ -5910,7 +6120,17 @@ function setKapanisStep(step) {
     if (!el) return;
     el.style.display = (i === step) ? '' : 'none';
   });
-  // step 4 = pasta_adet tek satır (grup yok)
+  // Modal progress dots güncelle
+  [1,2,3,4,5].forEach(function(i){
+    var dot  = document.getElementById('kapDot'  + i);
+    var line = document.getElementById('kapLine' + i);
+    if (dot) {
+      if (i < step)       { dot.className = 'islem-step-dot done';   dot.textContent = '✓'; }
+      else if (i === step){ dot.className = 'islem-step-dot active'; dot.textContent = String(i); }
+      else                { dot.className = 'islem-step-dot';        dot.textContent = String(i); }
+    }
+    if (line) line.className = 'islem-step-line' + (i < step ? ' done' : '');
+  });
 }
 function wireKapanisStepFlow() {
   var n1 = document.getElementById('kapNext1');
@@ -8422,6 +8642,9 @@ window.solSekmeAc = function(id) {
 };
 
 window.sagSekmeAc = function(id) {
+  // Kasa devri & kapanış artık center modal üzerinden çalışıyor
+  if (id === 'kasa')    { devirModalAc();   return; }
+  if (id === 'kapanis') { kapanisModalAc(); return; }
   aktifSagSekme = id;
   document.querySelectorAll('.sag-tab').forEach(function(b){ b.classList.remove('active'); });
   var tab = document.getElementById('sagTab-' + id);
@@ -8429,15 +8652,72 @@ window.sagSekmeAc = function(id) {
   document.querySelectorAll('.sag-content').forEach(function(el){ el.classList.remove('aktif'); });
   var ic = document.getElementById('sagTab-' + id + '-ic');
   if (ic) ic.classList.add('aktif');
-  if (id === 'kapanis') {
-    wireKapanisStepFlow();
-    setKapanisStep(1);
-  }
-  if (id === 'kasa' && document.getElementById('dvStep1')) {
-    setDvAdim1Step(1);
-  }
-
 };
+
+// ─── DEVIR MODAL ──────────────────────────────────────────────
+window.devirModalAc = function() {
+  var m = document.getElementById('devirModal');
+  if (!m) return;
+  m.classList.add('acik');
+  // Devir içeriğini yükle
+  if (!kasaDevirPeriyotikYenilemeAtla()) {
+    renderKasaDevir();
+  }
+  // Sağ paneldeki tab butonunu aktif göster (görsel tutarlılık)
+  document.querySelectorAll('.sag-tab').forEach(function(b){ b.classList.remove('active'); });
+  var t = document.getElementById('sagTab-kasa');
+  if (t) t.classList.add('active');
+};
+
+window.devirModalKapat = function() {
+  var m = document.getElementById('devirModal');
+  if (!m) return;
+  m.classList.remove('acik');
+  document.querySelectorAll('.sag-tab').forEach(function(b){ b.classList.remove('active'); });
+};
+
+// ─── KAPANIS MODAL ────────────────────────────────────────────
+window.kapanisModalAc = function() {
+  var m = document.getElementById('kapanisModal');
+  if (!m) return;
+  m.classList.add('acik');
+  // Formu ilk adıma sıfırla ve handler'ları bağla
+  wireKapanisStepFlow();
+  setKapanisStep(1);
+  // Sağ paneldeki tab butonunu aktif göster
+  document.querySelectorAll('.sag-tab').forEach(function(b){ b.classList.remove('active'); });
+  var t = document.getElementById('sagTab-kapanis');
+  if (t) t.classList.add('active');
+};
+
+window.kapanisModalKapat = function() {
+  var m = document.getElementById('kapanisModal');
+  if (!m) return;
+  m.classList.remove('acik');
+  document.querySelectorAll('.sag-tab').forEach(function(b){ b.classList.remove('active'); });
+};
+
+// ESC tuşuyla modal kapatma
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Escape') return;
+  var dm = document.getElementById('devirModal');
+  var km = document.getElementById('kapanisModal');
+  if (dm && dm.classList.contains('acik')) { devirModalKapat(); return; }
+  if (km && km.classList.contains('acik')) { kapanisModalKapat(); return; }
+});
+
+// Overlay arka plana tıklayınca kapat (kart dışı)
+(function() {
+  function _overlayClick(id, kapatFn) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('click', function(e) {
+      if (e.target === el) kapatFn();
+    });
+  }
+  _overlayClick('devirModal', window.devirModalKapat);
+  _overlayClick('kapanisModal', window.kapanisModalKapat);
+})();
 
 // ─── FILL SEL ────────────────────────────────────────────────
 /** PIN tanımlı personel + tüm aktif personel — tekrarsız; isim için önce PIN listesi (pk). */
@@ -11268,6 +11548,52 @@ function kapanisOperasyonEventIdBul() {
   return null;
 }
 
+/** Sol panel Gün Sonu kartlarındaki durum chip'lerini canlı veriye göre günceller */
+function updateSolAksiyonChips(data) {
+  if (!data) return;
+  // ── Devir chip ──
+  var devirChip = document.getElementById('solDevirChip');
+  if (devirChip) {
+    var vdRow = data.vardiya_devir && data.vardiya_devir.vardiya_devir;
+    var vdDurum = vdRow ? String(vdRow.durum || '').toLowerCase() : '';
+    if (vdDurum === 'tamamlandi') {
+      devirChip.textContent = '✓ Tamamlandı';
+      devirChip.className = 'sol-ak-chip tamam';
+    } else if (vdDurum === 'acilis_bekliyor') {
+      devirChip.textContent = '⏳ Onay Bekleniyor';
+      devirChip.className = 'sol-ak-chip bekliyor';
+    } else {
+      devirChip.textContent = '● Bekliyor';
+      devirChip.className = 'sol-ak-chip bekliyor';
+    }
+  }
+  // ── Kapanış chip ──
+  var kapChip = document.getElementById('solKapanisChip');
+  if (kapChip) {
+    var op = data.operasyon || {};
+    var aktif = op.aktif || null;
+    var kapTip = aktif && String(aktif.tip || '').toUpperCase() === 'KAPANIS';
+    var kapDurum = kapTip ? String(aktif.durum || '').toLowerCase() : '';
+    var evListesi = [].concat(op.events || [], op.events_ozet || []);
+    var kapBitti = evListesi.some(function(ev){
+      return ev && String(ev.tip||'').toUpperCase()==='KAPANIS' && String(ev.durum||'').toLowerCase()==='tamamlandi';
+    });
+    if (kapBitti) {
+      kapChip.textContent = '✓ Kapandı';
+      kapChip.className = 'sol-ak-chip tamam';
+    } else if (kapDurum === 'gecikti') {
+      kapChip.textContent = '⚠ Gecikti';
+      kapChip.className = 'sol-ak-chip gecikti';
+    } else if (kapDurum === 'bekliyor' || kapDurum === 'aktif' || kapDurum === 'devam') {
+      kapChip.textContent = '● Zamanı Geldi';
+      kapChip.className = 'sol-ak-chip bekliyor';
+    } else {
+      kapChip.textContent = '● 5 adım';
+      kapChip.className = 'sol-ak-chip';
+    }
+  }
+}
+
 function renderKasaDevir() {
   var vd = lastData && (lastData.vardiya_devir || {});
   var row = vd && vd.vardiya_devir;
@@ -11600,6 +11926,9 @@ function renderMain(data) {
   if (!kasaDevirPeriyotikYenilemeAtla()) {
     renderKasaDevir();
   }
+
+  // Sol panel aksiyon kartı chip'lerini güncelle
+  updateSolAksiyonChips(data);
 
   // Fillsels
   fillSels();
