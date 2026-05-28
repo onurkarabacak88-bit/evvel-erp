@@ -12085,7 +12085,8 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
         cur.execute("""
             SELECT su.id, su.ad, COALESCE(su.birim_fiyat_tl, 0) AS f,
                    sk.kod AS kategori_kod, sk.ad AS kategori_ad,
-                   COALESCE(su.aktif, TRUE) AS aktif
+                   COALESCE(su.aktif, TRUE) AS aktif,
+                   su.depo_stok_kalem_kodu
             FROM siparis_urun su
             LEFT JOIN siparis_kategori sk ON sk.id = su.kategori_id
         """)
@@ -12093,13 +12094,19 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
         urun_meta = {}
         for r in cur.fetchall():
             kid = str(r["id"])
-            global_fiyat[kid] = float(r["f"] or 0)
-            urun_meta[kid] = {
+            meta_entry = {
                 "ad": r["ad"],
                 "kategori_kod": r.get("kategori_kod") or "",
                 "kategori_ad": r.get("kategori_ad") or "",
                 "aktif": bool(r.get("aktif")) if r.get("aktif") is not None else True,
             }
+            global_fiyat[kid] = float(r["f"] or 0)
+            urun_meta[kid] = meta_entry
+            # Fiziksel havuz kodları (bardak_buyuk, kahve_paket vb.) için de eşleştir
+            depo_kod = str(r.get("depo_stok_kalem_kodu") or "").strip()
+            if depo_kod and depo_kod not in urun_meta:
+                global_fiyat[depo_kod] = float(r["f"] or 0)
+                urun_meta[depo_kod] = meta_entry
 
         # Son N gün URUN_AC olayları — kalem_kodu bazında topla
         cur.execute("""
