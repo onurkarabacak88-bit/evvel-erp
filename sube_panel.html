@@ -4709,8 +4709,8 @@
     .kap-bolum-ic   { padding: 10px 13px 12px; }
 
     /* Grid düzenleri */
-    .kap-para-grid  { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; }
-    .kap-row2       { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+    .kap-para-grid  { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; margin-bottom: 6px; }
+    .kap-row2       { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 6px; }
     .kap-stok3      { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
     .kap-stok5      { display: grid; grid-template-columns: repeat(5,1fr); gap: 7px; }
 
@@ -4720,8 +4720,8 @@
                 color: var(--muted); margin-bottom: 5px !important; display: block; }
 
     /* Para input — altın ton, dokunmatik boyut */
-    .kap-inp-para { font-size: 16px !important; font-weight: 800 !important;
-                    height: 42px !important; padding: 0 8px !important;
+    .kap-inp-para { font-size: 15px !important; font-weight: 800 !important;
+                    height: 38px !important; padding: 0 6px !important;
                     border-color: rgba(245,158,11,.28) !important;
                     background: rgba(245,158,11,.05) !important; }
     .kap-inp-para:focus { border-color: rgba(245,158,11,.65) !important;
@@ -4769,7 +4769,10 @@
 
     /* ─── GLOBAL DOKUNMATIK SAYI PANELİ ────────────────────── */
     #sayiPaneli {
-      position: fixed; top: 50%; right: 0; left: auto; bottom: auto;
+      position: fixed;
+      top: var(--sp-top, 50%);
+      right: 0; left: auto; bottom: auto;
+      height: var(--sp-h, auto);
       transform: translateY(200%);
       z-index: 99999;
       width: min(360px, 50vw);
@@ -4780,9 +4783,10 @@
       box-shadow: -6px -6px 32px rgba(0,0,0,.7);
       transition: transform .25s cubic-bezier(.4,0,.2,1);
       user-select: none; -webkit-user-select: none;
+      display: flex; flex-direction: column;
     }
     #sayiPaneli.acik {
-      transform: translateY(-50%);
+      transform: translateY(var(--sp-ty, -50%));
     }
     #spHeader {
       display: flex; align-items: center; justify-content: space-between;
@@ -4815,8 +4819,10 @@
     #spEkran.sp-bos { color: rgba(148,163,184,.35); font-size: 16px; font-weight: 400; letter-spacing: 0; }
     #spGrid {
       display: grid;
+      flex: 1;
       grid-template-columns: repeat(4, 1fr);
-      grid-auto-rows: 72px;
+      grid-template-rows: repeat(4, 1fr);
+      min-height: 288px;
       gap: 1px;
       background: rgba(255,255,255,.06);
       border-top: 1px solid rgba(255,255,255,.06);
@@ -5491,7 +5497,7 @@
 
 <!-- ── MODAL: KAPANIŞ ────────────────────────────────────── -->
 <div id="kapanisModal" class="islem-overlay" style="padding:12px">
-  <div class="islem-kart" style="max-width:min(720px, calc(100vw - 24px)); width:100%; max-height:96vh">
+  <div class="islem-kart" style="max-width:min(720px, calc(100vw - 24px)); width:100%; max-height:96vh; min-height:500px; display:flex; flex-direction:column">
     <div class="islem-hdr kapanis-renk">
       <div class="islem-logo">🌙</div>
       <div>
@@ -13394,7 +13400,21 @@ window.addEventListener('beforeunload', function (e) {
     }
 
     var panel = document.getElementById('sayiPaneli');
-    if (panel) panel.classList.add('acik');
+    if (panel) {
+      // Kapanış modalı açıksa sayı panelini modal hizasına kilitle
+      var kapOverlay = document.getElementById('kapanisModal');
+      if (kapOverlay && kapOverlay.classList.contains('acik')) {
+        var kart = kapOverlay.querySelector('.islem-kart');
+        if (kart) {
+          var rect = kart.getBoundingClientRect();
+          panel.style.setProperty('--sp-top', rect.top + 'px');
+          panel.style.setProperty('--sp-h', rect.height + 'px');
+          panel.style.setProperty('--sp-ty', '0px');
+          panel.style.borderRadius = '16px 0 0 16px';
+        }
+      }
+      panel.classList.add('acik');
+    }
   };
 
   function _spCommit() {
@@ -13421,7 +13441,14 @@ window.addEventListener('beforeunload', function (e) {
 
   window.spKapat = function(commit) {
     var panel = document.getElementById('sayiPaneli');
-    if (panel) panel.classList.remove('acik');
+    if (panel) {
+      panel.classList.remove('acik');
+      // Modal hizası sıfırla
+      panel.style.removeProperty('--sp-top');
+      panel.style.removeProperty('--sp-h');
+      panel.style.removeProperty('--sp-ty');
+      panel.style.borderRadius = '';
+    }
     if (commit) {
       _spCommit();
     } else {
