@@ -4753,6 +4753,86 @@
                     border: 1px solid rgba(255,255,255,.1);
                     box-shadow: 0 6px 20px rgba(0,0,0,.55); }
     .tip-q:hover::after { opacity: 1; }
+
+    /* ─── GLOBAL DOKUNMATIK SAYI PANELİ ────────────────────── */
+    #sayiPaneli {
+      position: fixed; bottom: 0; left: 50%;
+      transform: translateX(-50%) translateY(100%);
+      z-index: 99999;
+      width: min(420px, 100vw);
+      background: #0f172a;
+      border: 1px solid rgba(255,255,255,.1);
+      border-bottom: none;
+      border-radius: 20px 20px 0 0;
+      box-shadow: 0 -8px 40px rgba(0,0,0,.7);
+      transition: transform .25s cubic-bezier(.4,0,.2,1);
+      user-select: none;
+      -webkit-user-select: none;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    #sayiPaneli.acik {
+      transform: translateX(-50%) translateY(0);
+    }
+    #spHeader {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 16px 6px;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      gap: 8px;
+    }
+    #spAlanAdi {
+      font-size: 11px; font-weight: 700; color: rgba(148,163,184,.8);
+      text-transform: uppercase; letter-spacing: .5px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      flex: 1;
+    }
+    #spKapatBtn {
+      background: rgba(255,255,255,.08); border: none; cursor: pointer;
+      color: rgba(148,163,184,.8);
+      width: 26px; height: 26px; border-radius: 50%;
+      font-size: 13px; display: flex;
+      align-items: center; justify-content: center; flex-shrink: 0;
+      transition: background .15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #spKapatBtn:hover, #spKapatBtn:active { background: rgba(255,255,255,.18); }
+    #spEkran {
+      font-size: 30px; font-weight: 800; color: #f8fafc;
+      text-align: right; padding: 8px 18px 6px;
+      min-height: 48px; letter-spacing: -1px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #spEkran.sp-bos { color: rgba(148,163,184,.35); font-size: 16px; font-weight: 400; letter-spacing: 0; }
+    #spGrid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      grid-auto-rows: 72px;
+      gap: 1px;
+      background: rgba(255,255,255,.06);
+      border-top: 1px solid rgba(255,255,255,.06);
+    }
+    .sp-tus {
+      background: #1e293b;
+      border: none; outline: none;
+      color: #f1f5f9;
+      font-size: 22px; font-weight: 700;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .1s;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    .sp-tus:active, .sp-tus.sp-basildi { background: #2d3f55; }
+    .sp-tus.sp-sil    { color: #f59e0b; font-size: 20px; }
+    .sp-tus.sp-ok     {
+      background: rgba(16,185,129,.12);
+      color: #34d399; font-size: 28px;
+      grid-row: span 2;
+    }
+    .sp-tus.sp-ok:active, .sp-tus.sp-ok.sp-basildi { background: rgba(16,185,129,.28); }
+    .sp-tus.sp-nokta  { font-size: 28px; font-weight: 900; }
+    .sp-tus.sp-sifir2 { font-size: 18px; }
+    .sp-tus:disabled  { color: rgba(148,163,184,.2); cursor: not-allowed; }
+    .sp-tus:disabled:active { background: #1e293b; }
   </style>
 </head>
 <body>
@@ -13227,6 +13307,263 @@ window.addEventListener('beforeunload', function (e) {
   }
 })();
 
+// ─── GLOBAL DOKUNMATIK SAYI PANELİ ──────────────────────────
+(function(){
+  var spAktifEl  = null;    // şu an odakta olan input
+  var spDeger    = '';      // panelde gösterilen string
+  var spModDes   = false;   // true = ondalık (decimal) mode
+  var spIlkGiris = false;   // true = ilk rakam tuşu eski değeri siler
+
+  function shouldShowNumpad(el) {
+    if (!el) return false;
+    var tag = (el.tagName || '').toUpperCase();
+    if (tag !== 'INPUT') return false;
+    var type = (el.type || '').toLowerCase();
+    if (type === 'password' || type === 'checkbox' || type === 'radio' ||
+        type === 'file'     || type === 'submit'   || type === 'button' ||
+        type === 'hidden'   || type === 'range') return false;
+    var mode = (el.getAttribute('inputmode') || '').toLowerCase();
+    return mode === 'decimal' || mode === 'numeric';
+  }
+
+  function spEkranGuncelle() {
+    var el = document.getElementById('spEkran');
+    if (!el) return;
+    if (spDeger === '') {
+      el.textContent = 'Girin…';
+      el.className = 'sp-bos';
+    } else {
+      el.textContent = spDeger;
+      el.className = '';
+    }
+  }
+
+  function spGetLabel(el) {
+    if (!el) return '';
+    var id = el.id;
+    if (id) {
+      var lbl = document.querySelector('label[for="' + id + '"]');
+      if (lbl) return lbl.textContent.replace(/[?!*]/g,'').trim();
+    }
+    var prev = el.previousElementSibling;
+    if (prev) {
+      var pc = prev.className || '';
+      if (prev.tagName === 'LABEL' || pc.indexOf('lbl') >= 0 || pc.indexOf('Lbl') >= 0) {
+        return prev.textContent.replace(/[?!*]/g,'').trim();
+      }
+    }
+    var par = el.parentElement;
+    if (par) {
+      var parPrev = par.previousElementSibling;
+      if (parPrev) {
+        var ppc = parPrev.className || '';
+        if (parPrev.tagName === 'LABEL' || ppc.indexOf('lbl') >= 0) {
+          return parPrev.textContent.replace(/[?!*]/g,'').trim();
+        }
+      }
+    }
+    return el.placeholder || el.name || '';
+  }
+
+  window.spAc = function(el) {
+    if (!el || !shouldShowNumpad(el)) return;
+    if (el === spAktifEl) return;
+    // Önceki alanı commit et
+    if (spAktifEl) _spCommit();
+
+    spAktifEl  = el;
+    spModDes   = (el.getAttribute('inputmode') === 'decimal');
+    var mevcut = (el.value || '').trim();
+    spDeger    = mevcut;
+    spIlkGiris = mevcut !== '';
+
+    // Alan adını göster
+    var lblEl = document.getElementById('spAlanAdi');
+    if (lblEl) lblEl.textContent = spGetLabel(el) || 'Değer girin';
+
+    // Nokta tuşu
+    var noktaTus = document.getElementById('spNoktaTus');
+    if (noktaTus) {
+      if (spModDes) {
+        noktaTus.removeAttribute('disabled');
+        noktaTus.style.opacity = '';
+      } else {
+        noktaTus.setAttribute('disabled', 'disabled');
+        noktaTus.style.opacity = '0.25';
+      }
+    }
+
+    spEkranGuncelle();
+
+    // Touch cihazlarda sistem klavyesini bastır
+    var isTouch = (navigator.maxTouchPoints > 0 || 'ontouchstart' in window);
+    if (isTouch) {
+      if (!el.hasAttribute('data-sp-orig-mode')) {
+        el.setAttribute('data-sp-orig-mode', el.getAttribute('inputmode') || '__none__');
+      }
+      el.setAttribute('inputmode', 'none');
+    }
+
+    var panel = document.getElementById('sayiPaneli');
+    if (panel) panel.classList.add('acik');
+  };
+
+  function _spCommit() {
+    if (!spAktifEl) return;
+    var finalVal = spDeger;
+    if (finalVal.endsWith('.')) finalVal = finalVal.slice(0, -1);
+    spAktifEl.value = finalVal;
+    try { spAktifEl.dispatchEvent(new Event('input',  {bubbles:true})); } catch(e){}
+    try { spAktifEl.dispatchEvent(new Event('change', {bubbles:true})); } catch(e){}
+    _spInputmodeGeriYukle(spAktifEl);
+    spAktifEl  = null;
+    spDeger    = '';
+    spIlkGiris = false;
+  }
+
+  function _spInputmodeGeriYukle(el) {
+    if (!el) return;
+    var orig = el.getAttribute('data-sp-orig-mode');
+    if (orig === null) return;
+    if (orig === '__none__') el.removeAttribute('inputmode');
+    else                     el.setAttribute('inputmode', orig);
+    el.removeAttribute('data-sp-orig-mode');
+  }
+
+  window.spKapat = function(commit) {
+    var panel = document.getElementById('sayiPaneli');
+    if (panel) panel.classList.remove('acik');
+    if (commit) {
+      _spCommit();
+    } else {
+      _spInputmodeGeriYukle(spAktifEl);
+      spAktifEl  = null;
+      spDeger    = '';
+      spIlkGiris = false;
+    }
+  };
+
+  window.spTus = function(v) {
+    if (!spAktifEl) return;
+    // Hafif titreşim (destekleniyorsa)
+    try { if (navigator.vibrate) navigator.vibrate(8); } catch(e){}
+
+    if (v === 'DEL') {
+      spIlkGiris = false;
+      spDeger    = spDeger.slice(0, -1);
+    } else if (v === 'CLR') {
+      spDeger    = '';
+      spIlkGiris = false;
+    } else if (v === '.') {
+      if (!spModDes) return;
+      if (spDeger.indexOf('.') >= 0) return;
+      if (spIlkGiris) { spDeger = '0'; spIlkGiris = false; }
+      if (spDeger === '') spDeger = '0';
+      spDeger += '.';
+    } else if (v === '00') {
+      if (spIlkGiris) { spDeger = ''; spIlkGiris = false; }
+      if (spDeger === '' || spDeger === '0') { spDeger = '0'; }
+      else if (spDeger.replace(/[^0-9]/g,'').length < 9) { spDeger += '00'; }
+    } else {
+      // 0-9 rakamı
+      if (spIlkGiris) { spDeger = ''; spIlkGiris = false; }
+      var dotPos = spDeger.indexOf('.');
+      var intLen = (dotPos >= 0 ? dotPos : spDeger.length);
+      var decLen = (dotPos >= 0 ? spDeger.length - dotPos - 1 : 0);
+      if (intLen >= 8 && dotPos === -1) return;  // max 8 integer digits
+      if (dotPos >= 0 && decLen >= 2)   return;  // max 2 decimal digits
+      // Leading-zero engelle
+      if (spDeger === '0') { spDeger = v; }
+      else spDeger += v;
+    }
+
+    // Gerçek zamanlı input event (kapDotlarGuncelle, hero rakamı vb.)
+    if (spAktifEl) {
+      var tmp = spDeger;
+      if (tmp.endsWith('.')) tmp = tmp; // nokta tek başına geçici olarak kalsın
+      spAktifEl.value = tmp;
+      try { spAktifEl.dispatchEvent(new Event('input', {bubbles:true})); } catch(e){}
+    }
+
+    spEkranGuncelle();
+  };
+
+  // ─── Focusin delegasyonu (statik + dinamik inputlar)
+  document.addEventListener('focusin', function(e) {
+    var el    = e.target;
+    var panel = document.getElementById('sayiPaneli');
+    // Panel kendi içindeyse dokunma
+    if (panel && panel.contains(el)) return;
+
+    if (!shouldShowNumpad(el)) {
+      // Numpad olmayan bir alana geçildi → aktif alanı commit et
+      if (spAktifEl && spAktifEl !== el) spKapat(true);
+      return;
+    }
+    spAc(el);
+    // İmleç sona
+    try { el.setSelectionRange(el.value.length, el.value.length); } catch(e){}
+  }, true);
+
+  // Panel dışına mousedown/touchstart → commit ederek kapat
+  document.addEventListener('mousedown', function(e) {
+    var panel = document.getElementById('sayiPaneli');
+    if (!panel || !panel.classList.contains('acik')) return;
+    if (panel.contains(e.target)) return;
+    if (spAktifEl && spAktifEl === e.target) return;
+    spKapat(true);
+  }, true);
+  document.addEventListener('touchstart', function(e) {
+    var panel = document.getElementById('sayiPaneli');
+    if (!panel || !panel.classList.contains('acik')) return;
+    if (panel.contains(e.target)) return;
+    if (spAktifEl && e.target === spAktifEl) return;
+    spKapat(true);
+  }, {capture:true, passive:true});
+
+  // Desktop klavye senkronizasyonu
+  document.addEventListener('keydown', function(e) {
+    var panel = document.getElementById('sayiPaneli');
+    if (!panel || !panel.classList.contains('acik')) return;
+    var k = e.key;
+    if (/^[0-9]$/.test(k))      { e.preventDefault(); spTus(k);     return; }
+    if (k === 'Backspace')       { e.preventDefault(); spTus('DEL'); return; }
+    if (k === 'Delete')          { e.preventDefault(); spTus('CLR'); return; }
+    if (k === '.' || k === ',')  { e.preventDefault(); spTus('.');   return; }
+    if (k === 'Escape')          { e.preventDefault(); spKapat(false); return; }
+    if (k === 'Enter') {
+      e.preventDefault(); spKapat(true); return;
+    }
+    if (k === 'Tab') {
+      e.preventDefault();
+      var prev = spAktifEl;
+      spKapat(true);
+      var next = spBulSonrakiInput(prev, e.shiftKey);
+      if (next) setTimeout(function(){ next.focus(); }, 40);
+      return;
+    }
+  }, true);
+
+  // Sonraki / önceki numpad input bul
+  window.spBulSonrakiInput = function(currentEl, reverse) {
+    var all = Array.from(document.querySelectorAll(
+      'input[inputmode="decimal"], input[inputmode="numeric"], input[data-sp-orig-mode]'
+    )).filter(function(el) {
+      return !el.disabled && !el.readOnly &&
+             el.type !== 'hidden' && el.type !== 'password';
+    });
+    if (all.length === 0) return null;
+    if (!currentEl) return reverse ? all[all.length-1] : all[0];
+    var idx = all.indexOf(currentEl);
+    if (idx === -1) return reverse ? all[all.length-1] : all[0];
+    var next = reverse ? idx - 1 : idx + 1;
+    if (next < 0)            next = all.length - 1;
+    if (next >= all.length)  next = 0;
+    return all[next];
+  };
+
+})();
+
 // ─── BOOT ────────────────────────────────────────────────────
 if (!getApiBase() && window.location.protocol==='file:') {
   document.getElementById('apiSetup').style.display='flex';
@@ -13243,5 +13580,34 @@ if (!getApiBase() && window.location.protocol==='file:') {
 })();
 </script>
 <div id="toastContainer"></div>
+
+<!-- ─── GLOBAL DOKUNMATIK SAYI PANELİ ───────────────────────── -->
+<div id="sayiPaneli" role="dialog" aria-modal="true" aria-label="Sayı giriş paneli">
+  <div id="spHeader">
+    <span id="spAlanAdi">—</span>
+    <button id="spKapatBtn" onclick="spKapat(false)" aria-label="Kapat">✕</button>
+  </div>
+  <div id="spEkran" class="sp-bos">Girin…</div>
+  <div id="spGrid">
+    <!-- satır 1 -->
+    <button class="sp-tus" onclick="spTus('7')">7</button>
+    <button class="sp-tus" onclick="spTus('8')">8</button>
+    <button class="sp-tus" onclick="spTus('9')">9</button>
+    <button class="sp-tus sp-sil" onclick="spTus('DEL')">⌫</button>
+    <!-- satır 2 -->
+    <button class="sp-tus" onclick="spTus('4')">4</button>
+    <button class="sp-tus" onclick="spTus('5')">5</button>
+    <button class="sp-tus" onclick="spTus('6')">6</button>
+    <button class="sp-tus sp-ok" onclick="spKapat(true)">✓</button>
+    <!-- satır 3 (✓ col-4 row-3'ü kaplar) -->
+    <button class="sp-tus" onclick="spTus('1')">1</button>
+    <button class="sp-tus" onclick="spTus('2')">2</button>
+    <button class="sp-tus" onclick="spTus('3')">3</button>
+    <!-- satır 4 -->
+    <button class="sp-tus" onclick="spTus('0')">0</button>
+    <button class="sp-tus sp-sifir2" onclick="spTus('00')">00</button>
+    <button id="spNoktaTus" class="sp-tus sp-nokta" onclick="spTus('.')">.</button>
+  </div>
+</div>
 </body>
 </html>
