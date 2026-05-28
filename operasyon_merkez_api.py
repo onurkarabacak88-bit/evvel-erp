@@ -12083,7 +12083,7 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
 
         # Katalog fiyatları (siparis_urun) — sube_depo_stok'ta birim_fiyat 0 ise fallback
         cur.execute("""
-            SELECT su.id, su.ad, COALESCE(su.birim_fiyat_tl, 0) AS f,
+            SELECT su.id, su.ad, su.norm_ad, COALESCE(su.birim_fiyat_tl, 0) AS f,
                    sk.kod AS kategori_kod, sk.ad AS kategori_ad,
                    COALESCE(su.aktif, TRUE) AS aktif,
                    su.depo_stok_kalem_kodu
@@ -12092,6 +12092,9 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
         """)
         global_fiyat = {}
         urun_meta = {}
+        # norm_ad → uuid ve uuid → norm_ad çift yönlü harita (tüketim eşleştirmesi için)
+        norm_to_uuid: Dict[str, str] = {}
+        uuid_to_norm: Dict[str, str] = {}
         for r in cur.fetchall():
             kid = str(r["id"])
             meta_entry = {
@@ -12102,6 +12105,20 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
             }
             global_fiyat[kid] = float(r["f"] or 0)
             urun_meta[kid] = meta_entry
+            # norm_ad varsa haritaya ekle
+            norm_ad = str(r.get("norm_ad") or "").strip() if r.get("norm_ad") else ""
+            if not norm_ad:
+                # norm_ad kolonu boşsa ad'dan türet (eski kayıtlar için fallback)
+                norm_ad = re.sub(r'[^a-z0-9]+', '_',
+                    str(r["ad"]).lower()
+                    .replace('ğ','g').replace('ü','u').replace('ş','s')
+                    .replace('ı','i').replace('ö','o').replace('ç','c')
+                ).strip('_')
+            if norm_ad:
+                norm_to_uuid[norm_ad] = kid
+                uuid_to_norm[kid] = norm_ad
+                if norm_ad not in urun_meta:
+                    urun_meta[norm_ad] = meta_entry
             # Fiziksel havuz kodları (bardak_buyuk, kahve_paket vb.) için de eşleştir
             depo_kod = str(r.get("depo_stok_kalem_kodu") or "").strip()
             if depo_kod and depo_kod not in urun_meta:
@@ -12117,7 +12134,7 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
               AND sube_id = ANY(%s)
         """, (bas, bugun, sube_ids))
 
-        # harcama[sid][kod] = adet
+        # harcama[sid][kod] = adet — kod her zaman UUID veya havuz kodu (normalize edilmiş)
         harcama: Dict[str, Dict[str, int]] = {sid: {} for sid in sube_ids}
         for row in cur.fetchall():
             ack = row.get("aciklama") or ""
@@ -12140,6 +12157,9 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
                 kod = str(k.get("kalem_kodu") or "").strip()
                 if not kod:
                     continue
+                # norm_ad olarak geldiyse UUID'ye çevir (eski kayıtlar uyumluluğu)
+                if kod in norm_to_uuid:
+                    kod = norm_to_uuid[kod]
                 try:
                     adet = int(k.get("adet") or 0)
                 except (TypeError, ValueError):
