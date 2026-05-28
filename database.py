@@ -3355,6 +3355,91 @@ $$;
         except Exception as _mig_e:
             print(f"[MIGRATION WARN] depo_stok_duplike_temizlik_v3: {_mig_e}")
 
+        # ─── MIGRATION: depo_stok_duplike_temizlik_v4 (kaçan norm_ad satırları) ──
+        # v1 yalnızca UUID karşılığı olan norm_ad satırlarını temizledi.
+        # Sonradan eklenen ürünler veya v1'in atladığı durumlar için tekrar tarar:
+        #   1. norm_ad satırı + UUID satırı AYNI ANDA varsa → adet UUID'ye aktarılır,
+        #      norm_ad satırı silinir (gerçek çift satır = çift düşme riski).
+        #   2. norm_ad satırı var, UUID satırı YOK → kalem_kodu UUID'ye güncellenir
+        #      (orphan satır, kayıp stok riski).
+        try:
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log WHERE ad='depo_stok_duplike_temizlik_v4' LIMIT 1
+            """)
+            if not cur.fetchone():
+                # Havuz kodları ve UUID formatındakiler bu migration'ın dışında
+                _HAVUZ_KODLAR = (
+                    'bardak_kucuk','bardak_buyuk','bardak_plastik','su_adet',
+                    'redbull_adet','soda_adet','cookie_adet','pasta_adet',
+                    'sut_litre','surup_adet','kahve_paket','karton_bardak',
+                    'kapak_adet','pecete_paket','diger_sarf',
+                )
+
+                # Tüm norm_ad bazlı satırları bul (UUID değil, havuz kodu değil)
+                cur.execute("""
+                    SELECT sds.sube_id, sds.kalem_kodu AS norm_kod,
+                           sds.mevcut_adet, sds.min_stok, sds.alis_fiyati_tl,
+                           su.id AS uuid_kod, su.ad AS urun_ad
+                    FROM sube_depo_stok sds
+                    JOIN siparis_urun su ON su.norm_ad = sds.kalem_kodu
+                    WHERE sds.kalem_kodu != ALL(%s)
+                      AND sds.kalem_kodu !~ '^[0-9a-f]{8}-[0-9a-f]{4}-'
+                """, (_HAVUZ_KODLAR,))
+                v4_rows = cur.fetchall()
+
+                v4_merge = 0
+                v4_guncelle = 0
+                v4_silinen = 0
+
+                for row in v4_rows:
+                    sid       = str(row["sube_id"])
+                    norm_kod  = str(row["norm_kod"])
+                    uuid_kod  = str(row["uuid_kod"])
+                    eski_adet = int(row["mevcut_adet"] or 0)
+
+                    # UUID satırı var mı?
+                    cur.execute("""
+                        SELECT mevcut_adet FROM sube_depo_stok
+                        WHERE sube_id=%s AND kalem_kodu=%s
+                    """, (sid, uuid_kod))
+                    uuid_row = cur.fetchone()
+
+                    if uuid_row is not None:
+                        # Durum 1: Çift satır — norm_ad adetini UUID'ye ekle, norm_ad'ı sil
+                        if eski_adet > 0:
+                            cur.execute("""
+                                UPDATE sube_depo_stok
+                                SET mevcut_adet = mevcut_adet + %s, guncelleme = NOW()
+                                WHERE sube_id=%s AND kalem_kodu=%s
+                            """, (eski_adet, sid, uuid_kod))
+                            v4_merge += 1
+                        cur.execute("""
+                            DELETE FROM sube_depo_stok
+                            WHERE sube_id=%s AND kalem_kodu=%s
+                        """, (sid, norm_kod))
+                        v4_silinen += cur.rowcount
+                    else:
+                        # Durum 2: Orphan satır — kalem_kodu'nu UUID'ye güncelle
+                        cur.execute("""
+                            UPDATE sube_depo_stok
+                            SET kalem_kodu=%s, kalem_adi=%s, guncelleme=NOW()
+                            WHERE sube_id=%s AND kalem_kodu=%s
+                        """, (uuid_kod, row["urun_ad"], sid, norm_kod))
+                        v4_guncelle += cur.rowcount
+
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay) VALUES (%s, %s::jsonb)
+                """, (
+                    'depo_stok_duplike_temizlik_v4',
+                    json.dumps({"cift_satir_silinen": v4_silinen,
+                                "cift_satir_merge": v4_merge,
+                                "orphan_guncellenen": v4_guncelle}),
+                ))
+                print(f"[MIGRATION] depo_stok_duplike_temizlik_v4: "
+                      f"cift_silinen={v4_silinen}, merge={v4_merge}, orphan={v4_guncelle}")
+        except Exception as _mig_e:
+            print(f"[MIGRATION WARN] depo_stok_duplike_temizlik_v4: {_mig_e}")
+
         # ─── RAPOR CACHE TABLOLARI (raporlama hızlandırma) — savepoint ile safe ──
         # Her CREATE ayrı savepoint'te — biri patlasa diğerleri etkilenmez.
         for _ddl_ad, _ddl in [
