@@ -6289,11 +6289,13 @@ def _kk_ciro_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> D
         "pos": float(yeni_pos) if yeni_pos is not None else eski["pos"],
         "online": float(yeni_online) if yeni_online is not None else eski["online"],
     }
+    yeni_toplam = round(yeni["nakit"] + yeni["pos"] + yeni["online"], 2)
     cur.execute(
-        "UPDATE ciro SET nakit=%s, pos=%s, online=%s WHERE id=%s",
-        (yeni["nakit"], yeni["pos"], yeni["online"], r["id"]),
+        "UPDATE ciro SET nakit=%s, pos=%s, online=%s, toplam=%s WHERE id=%s",
+        (yeni["nakit"], yeni["pos"], yeni["online"], yeni_toplam, r["id"]),
     )
-    return {"hedef_tablo": "ciro", "hedef_id": r["id"], "eski": eski, "yeni": yeni}
+    return {"hedef_tablo": "ciro", "hedef_id": r["id"], "eski": eski,
+            "yeni": {**yeni, "toplam": yeni_toplam}}
 
 
 def _kk_acilis_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> Dict[str, Any]:

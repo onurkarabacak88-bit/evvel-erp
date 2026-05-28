@@ -15133,33 +15133,55 @@ export default function OperasyonMerkezi() {
               </label>
             )}
 
-            {kkDuzeltModal.sebep === 'devir_yanlis' && (
-              <>
-                {kkDuzeltModal.uyari?.tip === 'ACILIS_KASA_FARK' && (
-                  <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 10px', lineHeight: 1.45 }}>
-                    Devir uyumsuzluğu: düzeltme <strong>önceki günün kapanış</strong> teslim/devir kaydına yazılır.
-                  </p>
-                )}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
-                  {['yeni_teslim', 'yeni_devir'].map((k) => (
-                    <label key={k} style={{ fontSize: 11, color: 'var(--text3)' }}>
-                      {k === 'yeni_teslim' ? 'Müdüre teslim (₺)' : 'Kasada kalan / devir (₺)'}
-                      <input
-                        type="number" step="0.01" className="input"
-                        placeholder="Boş = değiştirme"
-                        disabled={kkDuzeltBusy}
-                        value={kkDuzeltModal.payload[k] ?? ''}
-                        onChange={(e) => setKkDuzeltModal((prev) => ({
-                          ...prev,
-                          payload: { ...prev.payload, [k]: e.target.value === '' ? undefined : Number(e.target.value) },
-                        }))}
-                        style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
-                      />
-                    </label>
-                  ))}
-                </div>
-              </>
-            )}
+            {kkDuzeltModal.sebep === 'devir_yanlis' && (() => {
+              const _dj = kkDuzeltModal.uyari?.detay_json || {};
+              const _mevTeslim = _dj.teslim != null ? Number(_dj.teslim) : null;
+              const _mevDevir  = _dj.devir  != null ? Number(_dj.devir)  : null;
+              const _fmtMev = (v) => v != null
+                ? `Mevcut: ${v.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺ — boş bırakırsan korunur`
+                : 'Boş bırakırsan değişmez';
+              return (
+                <>
+                  {kkDuzeltModal.uyari?.tip === 'ACILIS_KASA_FARK' && (
+                    <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 10px', lineHeight: 1.45 }}>
+                      Devir uyumsuzluğu: düzeltme <strong>önceki günün kapanış</strong> teslim/devir kaydına yazılır.
+                    </p>
+                  )}
+                  <div style={{
+                    background: 'rgba(251,191,36,0.07)', border: '1px solid rgba(251,191,36,0.25)',
+                    borderRadius: 7, padding: '7px 11px', marginBottom: 12, fontSize: 11, color: '#fde68a', lineHeight: 1.5,
+                  }}>
+                    ⚠️ <strong>Dikkat:</strong> 0 (sıfır) girersen o alan sıfırlanır — değiştirmek istemediğin alanı boş bırak.
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+                    {[
+                      { k: 'yeni_teslim', label: 'Müdüre teslim (₺)', mev: _mevTeslim },
+                      { k: 'yeni_devir',  label: 'Kasada kalan / devir (₺)', mev: _mevDevir },
+                    ].map(({ k, label, mev }) => (
+                      <label key={k} style={{ fontSize: 11, color: 'var(--text3)' }}>
+                        {label}
+                        {mev != null && (
+                          <span style={{ marginLeft: 6, fontSize: 10, color: 'rgba(251,191,36,.7)', fontWeight: 600 }}>
+                            (şu an: {mev.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺)
+                          </span>
+                        )}
+                        <input
+                          type="number" step="0.01" className="input"
+                          placeholder={_fmtMev(mev)}
+                          disabled={kkDuzeltBusy}
+                          value={kkDuzeltModal.payload[k] ?? ''}
+                          onChange={(e) => setKkDuzeltModal((prev) => ({
+                            ...prev,
+                            payload: { ...prev.payload, [k]: e.target.value === '' ? undefined : Number(e.target.value) },
+                          }))}
+                          style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </>
+              );
+            })()}
 
             {kkDuzeltModal.sebep === 'gider_eksik' && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
