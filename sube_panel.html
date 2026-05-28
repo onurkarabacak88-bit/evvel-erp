@@ -6563,12 +6563,10 @@ function siparisNormalize(raw) {
   });
 }
 
-/** Aynı depo stok kalemi veya aynı stokApiKey (bardak vb.) için yalnızca tek satır — Ürün Aç / teslim katalogunda çift görünümü engeller. */
+/** Yalnızca depo_stok_kalem_kodu açıkça set edilmiş ürünler dedup'a girer — isme bakarak otomatik eşleştirme sipariş kataloğunu daraltır. */
 function stokKatalogDedupeAnahtar(it) {
   var kod = String((it && it.depo_stok_kalem_kodu) || '').trim().toLowerCase();
   if (kod) return 'depo:' + kod;
-  var api = stokApiKeyFromAd(it && it.ad);
-  if (api) return 'stok:' + api;
   return '';
 }
 function siparisKatalogDedupeStokSatirlari(data) {
