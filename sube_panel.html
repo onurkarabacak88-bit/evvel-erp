@@ -4732,6 +4732,11 @@
                     border-color: rgba(13,148,136,.25) !important; }
     .kap-inp-stok:focus { border-color: rgba(13,148,136,.6) !important;
                           box-shadow: 0 0 0 3px rgba(13,148,136,.1) !important; }
+    /* Kasa sayım input — teal ton (para boyutunda) */
+    .kap-inp-teal { border-color: rgba(13,148,136,.3) !important;
+                    background: rgba(13,148,136,.06) !important; }
+    .kap-inp-teal:focus { border-color: rgba(13,148,136,.65) !important;
+                          box-shadow: 0 0 0 3px rgba(13,148,136,.12) !important; }
 
     /* Tooltip soru işareti */
     .tip-q { display: inline-flex; align-items: center; justify-content: center;
@@ -5478,8 +5483,7 @@
   </div>
 </div>
 
-<!-- ── MODAL: KAPANIŞ ─────────────────────────────────────────
-     Tek ekran kapanış formu — tüm bölümler aynı anda görünür  -->
+<!-- ── MODAL: KAPANIŞ ────────────────────────────────────── -->
 <div id="kapanisModal" class="islem-overlay">
   <div class="islem-kart">
     <div class="islem-hdr kapanis-renk">
@@ -5502,31 +5506,68 @@
       <div class="islem-step-line"       id="kapLine4"></div>
       <div class="islem-step-dot"        id="kapDot5">5</div>
     </div>
-    <div class="islem-govde">
-      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.45">
-        Adımlı kapanış: 1) Kasa Say → 2) Bardak → 3) Ürün → 4) Pasta → 5) Bitir &amp; Gönder
-      </div>
-      <div id="kapStep1" class="siparis-detay">
-        <div class="sip-alt-baslik">Adım 1 / 5 — Kasa Say</div>
-        <div style="font-size:11px;color:var(--muted);line-height:1.45;margin:-6px 0 10px;padding:8px 10px;background:rgba(0,0,0,.12);border-radius:8px;border:1px solid var(--border)">
-          <strong>X Nakit / POS / Online</strong> → merkezde yalnızca <strong>ciro onayı</strong> kuyruğuna gider (aynı rakamlar).
-          <strong>Teslim, devir, sayım, kime teslim</strong> → kapanış kaydı + <strong>kasa teslim</strong> defteri; ciro satırına yazılmaz.
+    <div class="islem-govde" style="padding:10px 14px 14px">
+
+      <div id="kapStep1">
+
+        <!-- ── X Raporu Ciro ──────────────────────────── -->
+        <div style="margin-bottom:10px">
+          <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#fbbf24;margin-bottom:6px;display:flex;align-items:center;gap:5px">
+            ◈ X Raporu Ciro
+            <span class="tip-q" data-tip="X raporundan okuduğunuz nakit, POS ve online satış toplamları. Bu rakamlar merkeze ciro onayı olarak gider.">?</span>
+          </div>
+          <div class="kap-para-grid">
+            <div>
+              <div class="kap-lbl">Nakit (₺)</div>
+              <input id="kapN" class="kap-inp-para" inputmode="decimal" placeholder="0.00" />
+            </div>
+            <div>
+              <div class="kap-lbl">POS (₺)</div>
+              <input id="kapP" class="kap-inp-para" inputmode="decimal" placeholder="0.00" />
+            </div>
+            <div>
+              <div class="kap-lbl">Online (₺)</div>
+              <input id="kapO" class="kap-inp-para" inputmode="decimal" placeholder="0.00" />
+            </div>
+          </div>
         </div>
-        <div class="form-group"><label>X Nakit (₺)</label><input id="kapN" inputmode="decimal" placeholder="0" /></div>
-        <div class="form-group"><label>X POS (₺)</label><input id="kapP" inputmode="decimal" placeholder="0" /></div>
-        <div class="form-group"><label>X Online (₺)</label><input id="kapO" inputmode="decimal" placeholder="0" /></div>
-        <div class="form-group"><label>Teslim Kasa (₺)</label><input id="kapTeslim" inputmode="decimal" /></div>
-        <div class="form-group">
-          <label>Devir (₺) — yarın için kasada bıraktığınız tutar <span style="color:var(--danger)">*</span></label>
-          <input id="kapDevir" inputmode="decimal" placeholder="Zorunlu — sonraki vardiyaya bıraktığınız miktar" />
+
+        <!-- ── Kasa Sayımı ───────────────────────────── -->
+        <div style="margin-bottom:10px">
+          <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#2dd4bf;margin-bottom:6px;display:flex;align-items:center;gap:5px">
+            ◈ Kasa Sayımı
+            <span class="tip-q" data-tip="Teslim ve devir ciro satırına yazılmaz — sadece kasa teslim defterine işlenir. Sayılan toplam kör sayımdır, beklenen rakam gösterilmez.">?</span>
+          </div>
+          <div class="kap-para-grid">
+            <div>
+              <div class="kap-lbl">Teslim (₺)</div>
+              <input id="kapTeslim" class="kap-inp-para kap-inp-teal" inputmode="decimal" placeholder="0.00" />
+            </div>
+            <div>
+              <div class="kap-lbl">Devir (₺) <span style="color:var(--danger)">*</span></div>
+              <input id="kapDevir" class="kap-inp-para kap-inp-teal" inputmode="decimal" placeholder="Zorunlu" />
+            </div>
+            <div>
+              <div class="kap-lbl">Sayılan Toplam <span style="color:var(--danger)">*</span>
+                <span class="tip-q" data-tip="Kör sayım — kasanızdaki tüm nakiti BĞIMSİZ sayın, beklenen rakama bakmadan girin.">?</span>
+              </div>
+              <input id="kapToplam" class="kap-inp-para kap-inp-teal" inputmode="decimal" placeholder="Kör say →" />
+            </div>
+          </div>
         </div>
-        <div class="form-group">
-          <label>Kasada sayılan toplam (₺) <span style="color:var(--danger)">*</span></label>
-          <input id="kapToplam" inputmode="decimal" placeholder="Zorunlu — önce sayın, sonra girin" />
-          <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">Kasanızdaki tüm nakit tutarını bağımsız sayıp girin. Beklenen rakam bu ekranda gösterilmez.</div>
+
+        <!-- ── Kime Teslim + İleri ───────────────────── -->
+        <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:flex-end">
+          <div>
+            <div class="kap-lbl">Kime Teslim</div>
+            <select id="kapKimeTeslim" style="height:36px;font-size:13px;font-weight:600"></select>
+          </div>
+          <button class="btn btn-primary btn-sm" id="kapNext1"
+                  style="height:36px;padding:0 14px;font-weight:800;white-space:nowrap">
+            Bardak → &nbsp;›
+          </button>
         </div>
-        <div class="form-group"><label>Kasa Kime Teslim</label><select id="kapKimeTeslim"></select></div>
-        <button class="btn btn-primary btn-sm" id="kapNext1">Bardak Sayımına Geç →</button>
+
       </div>
       <div id="kapStep2" class="siparis-detay" style="display:none">
         <div class="sip-alt-baslik">Adım 2 / 5 — Bardak Say</div>
