@@ -13404,17 +13404,25 @@ window.addEventListener('beforeunload', function (e) {
 
     var panel = document.getElementById('sayiPaneli');
     if (panel) {
-      // Kapanış modalı açıksa sayı panelini modal hizasına kilitle
-      var kapOverlay = document.getElementById('kapanisModal');
-      if (kapOverlay && kapOverlay.classList.contains('acik')) {
-        var kart = kapOverlay.querySelector('.islem-kart');
-        if (kart) {
-          var rect = kart.getBoundingClientRect();
-          panel.style.setProperty('--sp-top', rect.top + 'px');
-          panel.style.setProperty('--sp-h', rect.height + 'px');
-          panel.style.setProperty('--sp-ty', '0px');
-          panel.style.borderRadius = '16px 0 0 16px';
-        }
+      // Açık olan modalı bul (kapanış · devir · açılış · kasa)
+      var kart = null;
+      var islemAcik = document.querySelector('.islem-overlay.acik');
+      if (islemAcik) {
+        kart = islemAcik.querySelector('.islem-kart');
+      }
+      if (!kart) {
+        ['acilisOverlay', 'kasaOverlay'].forEach(function(id) {
+          if (kart) return;
+          var ov = document.getElementById(id);
+          if (ov && ov.style.display === 'flex') kart = ov.querySelector('.overlay-kart');
+        });
+      }
+      if (kart) {
+        var rect = kart.getBoundingClientRect();
+        panel.style.setProperty('--sp-top', rect.top + 'px');
+        panel.style.setProperty('--sp-h', rect.height + 'px');
+        panel.style.setProperty('--sp-ty', '0px');
+        panel.style.borderRadius = '16px 0 0 16px';
       }
       panel.classList.add('acik');
     }
