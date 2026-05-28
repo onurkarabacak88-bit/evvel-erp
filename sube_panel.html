@@ -4720,8 +4720,8 @@
                 color: var(--muted); margin-bottom: 5px !important; display: block; }
 
     /* Para input — altın ton, dokunmatik boyut */
-    .kap-inp-para { font-size: 17px !important; font-weight: 800 !important;
-                    height: 46px !important; padding: 0 10px !important;
+    .kap-inp-para { font-size: 16px !important; font-weight: 800 !important;
+                    height: 42px !important; padding: 0 8px !important;
                     border-color: rgba(245,158,11,.28) !important;
                     background: rgba(245,158,11,.05) !important; }
     .kap-inp-para:focus { border-color: rgba(245,158,11,.65) !important;
@@ -4762,22 +4762,23 @@
 
     /* ─── GLOBAL DOKUNMATIK SAYI PANELİ ────────────────────── */
     #sayiPaneli {
-      position: fixed; bottom: 0; left: 50%;
-      transform: translateX(-50%) translateY(100%);
+      position: fixed; bottom: 0; right: 0; left: auto;
+      transform: translateY(100%);
       z-index: 99999;
-      width: min(420px, 100vw);
+      width: min(380px, 100vw);
       background: #0f172a;
       border: 1px solid rgba(255,255,255,.1);
       border-bottom: none;
-      border-radius: 20px 20px 0 0;
-      box-shadow: 0 -8px 40px rgba(0,0,0,.7);
+      border-right: none;
+      border-radius: 20px 0 0 0;
+      box-shadow: -8px -8px 40px rgba(0,0,0,.7);
       transition: transform .25s cubic-bezier(.4,0,.2,1);
       user-select: none;
       -webkit-user-select: none;
       padding-bottom: env(safe-area-inset-bottom, 0px);
     }
     #sayiPaneli.acik {
-      transform: translateX(-50%) translateY(0);
+      transform: translateY(0);
     }
     #spHeader {
       display: flex; align-items: center; justify-content: space-between;
@@ -5485,8 +5486,8 @@
 </div>
 
 <!-- ── MODAL: KAPANIŞ ────────────────────────────────────── -->
-<div id="kapanisModal" class="islem-overlay" style="padding:10px">
-  <div class="islem-kart" style="max-width:min(720px, calc(100vw - 20px)); width:100%">
+<div id="kapanisModal" class="islem-overlay" style="padding:10px;align-items:flex-end;padding-bottom:0">
+  <div class="islem-kart" style="max-width:min(720px, calc(100vw - 20px)); width:100%; max-height:98vh; border-radius:20px 20px 0 0">
     <div class="islem-hdr kapanis-renk">
       <div class="islem-logo">🌙</div>
       <div>
@@ -5560,8 +5561,11 @@
         <!-- ── Kime Teslim + İleri ───────────────────── -->
         <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:flex-end">
           <div>
-            <div class="kap-lbl">Kime Teslim</div>
-            <select id="kapKimeTeslim" style="height:46px;font-size:14px;font-weight:600"></select>
+            <div class="kap-lbl" style="color:#a78bfa">👤 Kime Teslim</div>
+            <select id="kapKimeTeslim" style="height:46px;font-size:14px;font-weight:600;
+              border-color:rgba(139,92,246,.45)!important;
+              background:rgba(139,92,246,.08)!important;
+              color:var(--text)"></select>
           </div>
           <button class="btn btn-primary btn-sm" id="kapNext1"
                   style="height:46px;padding:0 18px;font-size:14px;font-weight:800;white-space:nowrap">
