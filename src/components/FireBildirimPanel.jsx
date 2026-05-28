@@ -299,6 +299,9 @@ function FireKart({ k, onayBusyId, gorulduIsaretle, idx }) {
                 <BilgiSatir label="İade Sebebi" deger={IADE_SEBEP_LABEL[k.iade_sebep_kodu] || k.iade_sebep_kodu} vurgu />
                 <BilgiSatir label="Fiş no" deger={k.fis_no} />
                 <BilgiSatir label="İade zamanı" deger={k.iade_zaman} />
+                {k.iade_musteri_ad && (
+                  <BilgiSatir label="Müşteri Adı" deger={k.iade_musteri_ad} vurgu />
+                )}
                 {k.iade_musteri_telefon && (
                   <div>
                     <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)', fontWeight: 700, marginBottom: 3 }}>Telefon 🔒</div>

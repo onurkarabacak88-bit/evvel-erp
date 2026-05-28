@@ -10439,7 +10439,10 @@ function frWizStep3HTML() {
     h += '<input class="fr-detay-inp" id="frIadeFis" inputmode="numeric" autocomplete="off" placeholder="Kasa fiş no" /></div>';
     h += '<div class="fr-detay-alan" style="margin-bottom:0"><div class="fr-detay-etiket">İade zamanı <span style="color:#f87171">*</span></div>';
     h += '<input class="fr-detay-inp" id="frIadeZaman2" type="datetime-local" value="'+escHtml(frIadeZamanVarsayilan())+'" /></div>';
-    h += '</div></div>';
+    h += '</div>';
+    h += '<div class="fr-detay-alan" style="margin-top:10px;margin-bottom:0"><div class="fr-detay-etiket">Müşteri Adı <span style="color:var(--muted);font-weight:400">(opsiyonel)</span></div>';
+    h += '<input class="fr-detay-inp" id="frIadeMusteriAd" type="text" autocomplete="off" placeholder="Ad Soyad" maxlength="80" /></div>';
+    h += '</div>';
   }
   if (_frWiz.sebep==='yanlis_urun') {
     var ysen = YANLIS_SENARYO_TIPLER.find(function(s){ return s.kod===_frWiz.yanlisSenaryo; })||{};
@@ -10548,6 +10551,7 @@ function frWizGonder() {
   if (_frWiz.sebep==='iade') {
     body.iade_sebep_kodu = _frWiz.iadeSebep;
     body.iade_musteri_telefon = _frWiz.musteriNo || null;
+    body.iade_musteri_ad = ((document.getElementById('frIadeMusteriAd')||{}).value||'').trim() || null;
     body.fis_no = (document.getElementById('frIadeFis')||{}).value.trim();
     body.iade_zaman = (document.getElementById('frIadeZaman2')||{}).value.trim();
   }
