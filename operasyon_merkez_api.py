@@ -10981,11 +10981,17 @@ def ops_v2_sube_depo(sube_id: str):
             SELECT s.kalem_kodu, s.kalem_adi, s.mevcut_adet, s.min_stok,
                    COALESCE(s.alis_fiyati_tl, 0) AS alis_fiyati_tl,
                    s.guncelleme,
-                   sk.kod AS kategori_kod,
-                   sk.ad AS kategori_ad
+                   COALESCE(sk1.kod, sk2.kod) AS kategori_kod,
+                   COALESCE(sk1.ad,  sk2.ad)  AS kategori_ad
             FROM sube_depo_stok s
-            LEFT JOIN siparis_urun su ON su.id = s.kalem_kodu
-            LEFT JOIN siparis_kategori sk ON sk.id = su.kategori_id
+            LEFT JOIN siparis_urun su1 ON su1.id = s.kalem_kodu
+            LEFT JOIN siparis_kategori sk1 ON sk1.id = su1.kategori_id
+            LEFT JOIN LATERAL (
+                SELECT su.kategori_id FROM siparis_urun su
+                WHERE su.depo_stok_kalem_kodu = s.kalem_kodu
+                LIMIT 1
+            ) su2_lat ON sk1.id IS NULL
+            LEFT JOIN siparis_kategori sk2 ON sk2.id = su2_lat.kategori_id
             WHERE s.sube_id=%s
             ORDER BY s.kalem_adi
         """, (sube_id,))
