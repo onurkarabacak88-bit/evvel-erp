@@ -5485,8 +5485,8 @@
 </div>
 
 <!-- ── MODAL: KAPANIŞ ────────────────────────────────────── -->
-<div id="kapanisModal" class="islem-overlay">
-  <div class="islem-kart">
+<div id="kapanisModal" class="islem-overlay" style="padding:10px">
+  <div class="islem-kart" style="max-width:min(720px, calc(100vw - 20px)); width:100%">
     <div class="islem-hdr kapanis-renk">
       <div class="islem-logo">🌙</div>
       <div>
@@ -5571,53 +5571,67 @@
 
       </div>
       <div id="kapStep2" class="siparis-detay" style="display:none">
-        <div class="sip-alt-baslik">Adım 2 / 5 — Bardak Say</div>
-        <div class="stok-grid">
-          <div class="stok-item"><label>K.Bardak</label><input id="kapBk" inputmode="numeric" placeholder="0" /></div>
-          <div class="stok-item"><label>B.Bardak</label><input id="kapBb" inputmode="numeric" placeholder="0" /></div>
-          <div class="stok-item"><label>Plastik</label><input id="kapBp" inputmode="numeric" placeholder="0" /></div>
+        <div class="sip-alt-baslik" style="font-size:13px;margin-bottom:14px">Adım 2 / 5 — Bardak Say</div>
+        <div class="kap-stok3" style="margin-bottom:16px">
+          <div><div class="kap-lbl">K. Bardak</div><input id="kapBk" class="kap-inp-stok" inputmode="numeric" placeholder="0" /></div>
+          <div><div class="kap-lbl">B. Bardak</div><input id="kapBb" class="kap-inp-stok" inputmode="numeric" placeholder="0" /></div>
+          <div><div class="kap-lbl">Plastik</div><input id="kapBp" class="kap-inp-stok" inputmode="numeric" placeholder="0" /></div>
         </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-ghost btn-sm" id="kapBack2" type="button">← Geri</button>
-          <button class="btn btn-primary btn-sm" id="kapNext2" type="button">Ürün Sayımına Geç →</button>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-ghost" id="kapBack2" type="button" style="height:46px;flex:0 0 100px;font-size:14px">← Geri</button>
+          <button class="btn btn-primary" id="kapNext2" type="button" style="height:46px;flex:1;font-size:14px;font-weight:800">Ürün Sayımına Geç →</button>
         </div>
       </div>
       <div id="kapStep3" class="siparis-detay" style="display:none">
-        <div class="sip-alt-baslik">Adım 3 / 5 — Ürün Say</div>
-        <div class="stok-grid">
-          <div class="stok-item"><label>Su</label><input id="kapSu" inputmode="numeric" placeholder="0" /></div>
-          <div class="stok-item"><label>Süt</label><input id="kapSut" inputmode="numeric" placeholder="0" /></div>
-          <div class="stok-item"><label>Redbull</label><input id="kapRb" inputmode="numeric" placeholder="0" /></div>
-          <div class="stok-item"><label>Soda</label><input id="kapSo" inputmode="numeric" placeholder="0" /></div>
-          <div class="stok-item"><label>Cookie</label><input id="kapCk" inputmode="numeric" placeholder="0" /></div>
+        <div class="sip-alt-baslik" style="font-size:13px;margin-bottom:14px">Adım 3 / 5 — Ürün Say</div>
+        <div class="kap-stok5" style="margin-bottom:16px">
+          <div><div class="kap-lbl">Su</div><input id="kapSu" class="kap-inp-stok" inputmode="numeric" placeholder="0" /></div>
+          <div><div class="kap-lbl">Süt</div><input id="kapSut" class="kap-inp-stok" inputmode="numeric" placeholder="0" /></div>
+          <div><div class="kap-lbl">Redbull</div><input id="kapRb" class="kap-inp-stok" inputmode="numeric" placeholder="0" /></div>
+          <div><div class="kap-lbl">Soda</div><input id="kapSo" class="kap-inp-stok" inputmode="numeric" placeholder="0" /></div>
+          <div><div class="kap-lbl">Cookie</div><input id="kapCk" class="kap-inp-stok" inputmode="numeric" placeholder="0" /></div>
         </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-ghost btn-sm" id="kapBack3" type="button">← Geri</button>
-          <button class="btn btn-primary btn-sm" id="kapNext3" type="button">Pasta Sayımına Geç →</button>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-ghost" id="kapBack3" type="button" style="height:46px;flex:0 0 100px;font-size:14px">← Geri</button>
+          <button class="btn btn-primary" id="kapNext3" type="button" style="height:46px;flex:1;font-size:14px;font-weight:800">Pasta Sayımına Geç →</button>
         </div>
       </div>
       <div id="kapStep4" class="siparis-detay" style="display:none">
-        <div class="sip-alt-baslik">Adım 4 / 5 — Pasta Say</div>
-        <div class="form-group">
-          <label>Pasta (toplam adet)</label>
-          <input id="kapPastaAdet" inputmode="numeric" placeholder="0" />
+        <div class="sip-alt-baslik" style="font-size:13px;margin-bottom:14px">Adım 4 / 5 — Pasta Say</div>
+        <div style="max-width:220px;margin-bottom:16px">
+          <div class="kap-lbl">Pasta (toplam adet)</div>
+          <input id="kapPastaAdet" class="kap-inp-stok" inputmode="numeric" placeholder="0"
+                 style="font-size:22px!important;height:52px!important;text-align:center" />
         </div>
-        <div style="display:flex;gap:8px;margin-top:10px">
-          <button class="btn btn-ghost btn-sm" id="kapBack4" type="button">← Geri</button>
-          <button class="btn btn-primary btn-sm" id="kapNext4" type="button">Bitir Adımına Geç →</button>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-ghost" id="kapBack4" type="button" style="height:46px;flex:0 0 100px;font-size:14px">← Geri</button>
+          <button class="btn btn-primary" id="kapNext4" type="button" style="height:46px;flex:1;font-size:14px;font-weight:800">Bitir Adımına Geç →</button>
         </div>
       </div>
       <div id="kapStep5" class="siparis-detay" style="display:none">
-        <div class="sip-alt-baslik">Adım 5 / 5 — Bitir ve Gönder</div>
-        <label class="chk-row"><input type="checkbox" id="kapXRapor" /><span>X raporu gönderildi</span></label>
-        <div class="form-group"><label>Onaylayan Personel</label><select id="kapPers"></select></div>
-        <div class="form-group"><label>PIN</label><input id="kapPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-ghost btn-sm" id="kapBack5" type="button">← Geri</button>
-          <button class="btn btn-success btn-sm" id="kapGonder">✔ Kapanışı Gönder</button>
+        <div class="sip-alt-baslik" style="font-size:13px;margin-bottom:14px">Adım 5 / 5 — Bitir ve Gönder</div>
+        <label class="chk-row" style="margin-bottom:14px;font-size:14px;gap:10px">
+          <input type="checkbox" id="kapXRapor" style="width:20px;height:20px" />
+          <span style="font-weight:600">X raporu yazıcıdan çıktı alındı ve gönderildi</span>
+        </label>
+        <div class="kap-row2" style="margin-bottom:12px">
+          <div>
+            <div class="kap-lbl">Onaylayan Personel</div>
+            <select id="kapPers" style="height:46px;font-size:14px;font-weight:600"></select>
+          </div>
+          <div>
+            <div class="kap-lbl">PIN</div>
+            <input id="kapPin" class="pin-input kap-inp-stok" maxlength="4" inputmode="numeric"
+                   type="password" autocomplete="one-time-code"
+                   style="height:46px!important;font-size:22px!important;text-align:center;letter-spacing:6px" />
+          </div>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-ghost" id="kapBack5" type="button" style="height:46px;flex:0 0 100px;font-size:14px">← Geri</button>
+          <button class="btn btn-success" id="kapGonder" style="height:46px;flex:1;font-size:15px;font-weight:900">✔ Kapanışı Gönder</button>
         </div>
       </div>
-      <div id="kapMsg"></div>
+      <div id="kapMsg" style="margin-top:8px"></div>
     </div>
   </div>
 </div>
