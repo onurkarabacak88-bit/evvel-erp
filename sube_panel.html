@@ -4762,23 +4762,22 @@
 
     /* ─── GLOBAL DOKUNMATIK SAYI PANELİ ────────────────────── */
     #sayiPaneli {
-      position: fixed; bottom: 0; right: 0; left: auto;
-      transform: translateY(100%);
+      position: fixed; bottom: 0;
+      left: 50%; transform: translateX(-50%) translateY(100%);
       z-index: 99999;
-      width: min(380px, 100vw);
+      width: min(720px, 100vw);
       background: #0f172a;
       border: 1px solid rgba(255,255,255,.1);
       border-bottom: none;
-      border-right: none;
-      border-radius: 20px 0 0 0;
-      box-shadow: -8px -8px 40px rgba(0,0,0,.7);
+      border-radius: 20px 20px 0 0;
+      box-shadow: 0 -8px 40px rgba(0,0,0,.7);
       transition: transform .25s cubic-bezier(.4,0,.2,1);
       user-select: none;
       -webkit-user-select: none;
       padding-bottom: env(safe-area-inset-bottom, 0px);
     }
     #sayiPaneli.acik {
-      transform: translateY(0);
+      transform: translateX(-50%) translateY(0);
     }
     #spHeader {
       display: flex; align-items: center; justify-content: space-between;
