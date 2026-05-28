@@ -5700,6 +5700,12 @@ var acilisStep = 1, acilisKasa = null, acilisStok = {};
 var acilisWizStep = 1;
 var acilisWizKasa = null;
 var acilisWizStok = {};
+/**
+ * Sistem-önceden-oluşturulmuş AÇILIŞ eventi varsa ID buraya yazılır.
+ * Son adımda /acilis yerine /operasyon/event/{id}/tamamla endpoint'i kullanılır.
+ * null ise klasik /acilis endpoint'i kullanılır.
+ */
+var acilisWizEventId = null;
 /** Pasta alt adımları (0 … _PASTA_GRUPLAR.length-1) — açılış / kapanış / vardiya */
 var acilisWizPastaSub = 0;
 /** Slide yönü takibi: önceki adım numarası */
@@ -12834,7 +12840,11 @@ document.getElementById('acilisWizIleri').onclick = async function(){
         pin: pin
     };
     _PASTA_KEYS.forEach(function(k){ _acilisBody[k] = acilisWizStok[k]||0; });
-    await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/acilis', {
+    // Sistem-önceden-oluşturulmuş event varsa (örn. Alsancak) → event endpoint'ini kullan
+    var _acilisUrl = acilisWizEventId
+      ? '/sube-panel/'+encodeURIComponent(SUBE_ID)+'/operasyon/event/'+encodeURIComponent(acilisWizEventId)+'/tamamla'
+      : '/sube-panel/'+encodeURIComponent(SUBE_ID)+'/acilis';
+    await api(_acilisUrl, {
       method: 'POST',
       body: _acilisBody,
       islemBasariliMesaji: 'Şube açılışı kaydedildi.',
@@ -12896,14 +12906,14 @@ async function refresh() {
     var op = data.operasyon || {};
     var aktif = op.aktif;
 
-    // Şube açılmadı
+    // Şube açılmadı — premium açılış animasyonunu her zaman göster
     if (!data.sube_acik) {
+      // Aktif ACILIS eventi varsa (Alsancak gibi sistemden önceden oluşturulanlar):
+      // event ID'yi kaydet, wizard son adımda event/tamamla endpoint'ini kullanacak.
       if (aktif && aktif.tip==='ACILIS' && (aktif.durum==='bekliyor'||aktif.durum==='gecikti')) {
-        document.getElementById('acilisOverlay').style.display='none';
-        renderMain(data);
-        if (!opAktifEvent || opAktifEvent.id !== aktif.id) showOpOverlay(aktif, op);
-        else updateOpDurum(op, aktif);
-        return;
+        acilisWizEventId = aktif.id;
+      } else {
+        acilisWizEventId = null;
       }
       hideOpOverlay();
       document.getElementById('acilisOverlay').style.display='flex';
