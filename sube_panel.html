@@ -4709,26 +4709,27 @@
     .kap-bolum-ic   { padding: 10px 13px 12px; }
 
     /* Grid düzenleri */
-    .kap-para-grid  { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; margin-bottom: 7px; }
-    .kap-row2       { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 7px; }
-    .kap-stok3      { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; }
-    .kap-stok5      { display: grid; grid-template-columns: repeat(5,1fr); gap: 6px; }
+    .kap-para-grid  { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+    .kap-row2       { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+    .kap-stok3      { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+    .kap-stok5      { display: grid; grid-template-columns: repeat(5,1fr); gap: 7px; }
 
     /* Küçük etiket */
-    .kap-lbl { font-size: 10px !important; font-weight: 700 !important;
+    .kap-lbl { font-size: 11px !important; font-weight: 700 !important;
                 text-transform: uppercase; letter-spacing: .4px;
-                color: var(--muted); margin-bottom: 4px !important; }
+                color: var(--muted); margin-bottom: 5px !important; display: block; }
 
-    /* Para input — altın ton */
-    .kap-inp-para { font-size: 15px !important; font-weight: 700 !important;
+    /* Para input — altın ton, dokunmatik boyut */
+    .kap-inp-para { font-size: 17px !important; font-weight: 800 !important;
+                    height: 46px !important; padding: 0 10px !important;
                     border-color: rgba(245,158,11,.28) !important;
                     background: rgba(245,158,11,.05) !important; }
     .kap-inp-para:focus { border-color: rgba(245,158,11,.65) !important;
                           box-shadow: 0 0 0 3px rgba(245,158,11,.1) !important; }
 
     /* Stok input — teal ton, ortalı */
-    .kap-inp-stok { font-size: 14px !important; font-weight: 700 !important;
-                    text-align: center;
+    .kap-inp-stok { font-size: 16px !important; font-weight: 700 !important;
+                    height: 44px !important; text-align: center;
                     border-color: rgba(13,148,136,.25) !important; }
     .kap-inp-stok:focus { border-color: rgba(13,148,136,.6) !important;
                           box-shadow: 0 0 0 3px rgba(13,148,136,.1) !important; }
@@ -5560,11 +5561,11 @@
         <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:flex-end">
           <div>
             <div class="kap-lbl">Kime Teslim</div>
-            <select id="kapKimeTeslim" style="height:36px;font-size:13px;font-weight:600"></select>
+            <select id="kapKimeTeslim" style="height:46px;font-size:14px;font-weight:600"></select>
           </div>
           <button class="btn btn-primary btn-sm" id="kapNext1"
-                  style="height:36px;padding:0 14px;font-weight:800;white-space:nowrap">
-            Bardak → &nbsp;›
+                  style="height:46px;padding:0 18px;font-size:14px;font-weight:800;white-space:nowrap">
+            Bardak →
           </button>
         </div>
 
