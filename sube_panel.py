@@ -1150,7 +1150,7 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                         INSERT INTO sube_operasyon_uyari
                             (id, sube_id, tarih, tip, seviye, mesaj,
                              acilis_personel_id, acilis_personel_ad, kapanis_personel_id, kapanis_personel_ad)
-                        VALUES (%s, %s, CURRENT_DATE, 'ACILIS_STOK_FARK', %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, CURRENT_DATE, 'ACILIS_STOK_FARK', %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             str(uuid.uuid4()), sube_id, sev,
