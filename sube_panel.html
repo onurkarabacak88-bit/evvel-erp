@@ -9337,13 +9337,15 @@ function buildAcilisWizFields() {
   );
 
   if (acilisWizStep===4) {
-    var _g  = _PASTA_GRUPLAR[acilisWizPastaSub];
-    var _gi = (acilisWizPastaSub + 1) + ' / ' + _PASTA_GRUPLAR.length;
-    var _extra = _g ? escHtml(_g.ad) + ' (' + _gi + ')' : '';
+    var _pv = (acilisWizStok && acilisWizStok.pasta_adet) ? acilisWizStok.pasta_adet : '';
     return (
       '<div class="acilis-wiz-inner">' +
-      _awStepHdr(4, _extra) +
-      buildPastaOneGroupHTML('aw', acilisWizPastaSub) +
+      _awStepHdr(4) +
+      '<div style="max-width:220px;margin:0 auto 8px">' +
+        '<div class="kap-lbl" style="text-align:center">Pasta (toplam adet)</div>' +
+        '<input id="awPastaAdet" inputmode="numeric" placeholder="0" value="'+_pv+'" ' +
+          'style="font-size:22px;font-weight:800;height:52px;text-align:center;width:100%;box-sizing:border-box" />' +
+      '</div>' +
       '</div>'
     );
   }
@@ -9408,8 +9410,7 @@ function renderAcilisWiz() {
     bs.textContent = _now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' });
   }
 
-  /* Pasta stok doldur */
-  if (acilisWizStep === 4) pastaGrupKeysStoktanDoldur('aw', acilisWizStok, acilisWizPastaSub);
+  /* Pasta: tek toplam giriş (grup grup sorulmaz) */
 
   /* Geri/İleri butonları */
   if (geri) geri.style.display = acilisWizStep > 1 ? 'inline-block' : 'none';
@@ -13075,18 +13076,12 @@ document.getElementById('acilisWizGeri').onclick = function(){
   if (acilisWizStep<=1) return;
   if (acilisWizStep===5) {
     acilisWizStep = 4;
-    acilisWizPastaSub = _PASTA_GRUPLAR.length - 1;
     renderAcilisWiz();
     return;
   }
-  if (acilisWizStep===4 && acilisWizPastaSub > 0) {
-    pastaGrupKeysStokaYaz('aw', acilisWizStok, acilisWizPastaSub);
-    acilisWizPastaSub--;
-    renderAcilisWiz();
-    return;
-  }
-  if (acilisWizStep===4 && acilisWizPastaSub===0) {
-    pastaGrupKeysStokaYaz('aw', acilisWizStok, acilisWizPastaSub);
+  if (acilisWizStep===4) {
+    var _pIn = document.getElementById('awPastaAdet');
+    if (_pIn) acilisWizStok.pasta_adet = parseInt((_pIn.value||'').replace(/\D/g,''),10) || 0;
     acilisWizStep = 3;
     renderAcilisWiz();
     return;
@@ -13120,20 +13115,14 @@ document.getElementById('acilisWizIleri').onclick = async function(){
       acilisWizStok.redbull_adet = reqInt('awRb', 'Redbull');
       acilisWizStok.soda_adet = reqInt('awSo', 'Soda');
       acilisWizStok.cookie_adet = reqInt('awCk', 'Cookie');
-      acilisWizPastaSub = 0;
       acilisWizStep = 4;
       renderAcilisWiz();
       return;
     }
     if (acilisWizStep===4) {
-      pastaGrupKeysStokaYaz('aw', acilisWizStok, acilisWizPastaSub);
-      if (acilisWizPastaSub < _PASTA_GRUPLAR.length - 1) {
-        acilisWizPastaSub++;
-        renderAcilisWiz();
-        return;
-      }
-      acilisWizStok.pasta_adet = _PASTA_KEYS.reduce(function(s,k){return s+(acilisWizStok[k]||0);},0);
-      acilisWizPastaSub = 0;
+      acilisWizStok.pasta_adet = reqInt('awPastaAdet', 'Pasta adedi');
+      // Tek toplam giriş: bireysel pasta kalemleri kullanılmıyor → sıfırla
+      _PASTA_KEYS.forEach(function(k){ acilisWizStok[k] = 0; });
       acilisWizStep = 5;
       renderAcilisWiz();
       return;
