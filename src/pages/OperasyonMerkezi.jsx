@@ -2489,6 +2489,7 @@ export default function OperasyonMerkezi() {
   const [kapanisTakipTarih, setKapanisTakipTarih] = useState(isGunuIsoIstanbul());
   const [kapanisTakipSonGuncelleme, setKapanisTakipSonGuncelleme] = useState(null);
   const [kapanisTakipKaynak, setKapanisTakipKaynak] = useState(null);  // 'cache' | 'live'
+  const [kapanisTakipSubeSec, setKapanisTakipSubeSec] = useState(null);  // seçili şube_id | null (tümü)
   const kapanisTakipIntervalRef = useRef(null);
   const [acilisKasaTakip, setAcilisKasaTakip] = useState(null);
   const [acilisKasaTakipYukleniyor, setAcilisKasaTakipYukleniyor] = useState(false);
@@ -9130,6 +9131,14 @@ export default function OperasyonMerkezi() {
         const bekleyenSayisi      = satirlar.filter(r => r.taslak_var && r.taslak_durum === 'bekliyor').length;
         const tamamSayisi         = satirlar.filter(r => r.ciro_onaylandi).length;
 
+        // Seçili şube varsa kart/toplam alanları yalnız o şubeye göre hesaplanır.
+        const subeSecili = kapanisTakipSubeSec != null
+          && satirlar.some(r => String(r.sube_id) === String(kapanisTakipSubeSec))
+          ? String(kapanisTakipSubeSec) : null;
+        const aktifSatirlar = subeSecili
+          ? satirlar.filter(r => String(r.sube_id) === subeSecili)
+          : satirlar;
+
         const ktOnlineCift = (r) => {
           const n = Number(r.nakit) || 0;
           const p = Number(r.pos) || 0;
@@ -9147,15 +9156,15 @@ export default function OperasyonMerkezi() {
           }
           return n + p + o;
         };
-        const topNakit  = satirlar.reduce((s, r) => s + (r.nakit  || 0), 0);
-        const topPos    = satirlar.reduce((s, r) => s + (r.pos    || 0), 0);
-        const topOnline = satirlar.reduce((s, r) => s + ktOnlineNet(r), 0);
-        const topCiro   = satirlar.reduce((s, r) => s + ktCiroToplam(r), 0);
-        const topSabah  = satirlar.reduce((s, r) => s + (Number(r.sabah_kasa_tl) || 0), 0);
-        const topTeslim = satirlar.reduce((s, r) => s + (Number(r.teslim_kasa_tl) || 0), 0);
-        const topDevir  = satirlar.reduce((s, r) => s + (Number(r.devir) || 0), 0);
-        const topAraTeslim = satirlar.reduce((s, r) => s + (Number(r.ara_teslim_tl) || 0), 0);
-        const topAgider = satirlar.reduce((s, r) => s + (Number(r.anlik_gider_nakit_tl) || 0), 0);
+        const topNakit  = aktifSatirlar.reduce((s, r) => s + (r.nakit  || 0), 0);
+        const topPos    = aktifSatirlar.reduce((s, r) => s + (r.pos    || 0), 0);
+        const topOnline = aktifSatirlar.reduce((s, r) => s + ktOnlineNet(r), 0);
+        const topCiro   = aktifSatirlar.reduce((s, r) => s + ktCiroToplam(r), 0);
+        const topSabah  = aktifSatirlar.reduce((s, r) => s + (Number(r.sabah_kasa_tl) || 0), 0);
+        const topTeslim = aktifSatirlar.reduce((s, r) => s + (Number(r.teslim_kasa_tl) || 0), 0);
+        const topDevir  = aktifSatirlar.reduce((s, r) => s + (Number(r.devir) || 0), 0);
+        const topAraTeslim = aktifSatirlar.reduce((s, r) => s + (Number(r.ara_teslim_tl) || 0), 0);
+        const topAgider = aktifSatirlar.reduce((s, r) => s + (Number(r.anlik_gider_nakit_tl) || 0), 0);
 
         const fmt  = (v) => Number(v || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 });
         const fmtFark = (v) => {
@@ -9308,6 +9317,44 @@ export default function OperasyonMerkezi() {
               </div>
             )}
 
+            {/* ── Şube seçici çipler ── tıklayınca alttaki kartlar + toplamlar o şubeye odaklanır */}
+            {satirlar.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }}>Şube</span>
+                <button
+                  onClick={() => setKapanisTakipSubeSec(null)}
+                  style={{
+                    cursor: 'pointer', borderRadius: 999, padding: '5px 14px', fontSize: 12, fontWeight: 700,
+                    background: subeSecili == null ? 'rgba(99,102,241,0.15)' : 'var(--bg2)',
+                    color: subeSecili == null ? '#818cf8' : 'var(--text2)',
+                    border: `1px solid ${subeSecili == null ? '#818cf8' : 'var(--border)'}`,
+                  }}
+                >
+                  Tümü · {satirlar.length}
+                </button>
+                {satirlar.map((r) => {
+                  const sec = subeSecili === String(r.sube_id);
+                  const acc = !r.kapanis_tamam ? '#e85d5d' : !r.ciro_onaylandi && !r.taslak_var ? '#f97316' : r.taslak_var && r.taslak_durum === 'bekliyor' ? '#fbbf24' : '#22c55e';
+                  return (
+                    <button
+                      key={r.sube_id}
+                      onClick={() => setKapanisTakipSubeSec((prev) => (String(prev) === String(r.sube_id) ? null : String(r.sube_id)))}
+                      style={{
+                        cursor: 'pointer', borderRadius: 999, padding: '5px 14px', fontSize: 12, fontWeight: 700,
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                        background: sec ? 'rgba(99,102,241,0.15)' : 'var(--bg2)',
+                        color: sec ? 'var(--text)' : 'var(--text2)',
+                        border: `1px solid ${sec ? '#818cf8' : 'var(--border)'}`,
+                      }}
+                    >
+                      <span style={{ width: 8, height: 8, borderRadius: 999, background: acc, flexShrink: 0 }} />
+                      {r.sube_adi}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             {/* ── Yükleniyor / boş durum ── */}
             {kapanisTakipYukleniyor && !kt && (
               <div style={{ textAlign: 'center', padding: 50, color: 'var(--text3)' }}>Yükleniyor...</div>
@@ -9417,8 +9464,8 @@ export default function OperasyonMerkezi() {
                   <span style={{ fontSize: 11, color: 'var(--text3)' }}>· {sayi} şube</span>
                 </div>
               );
-              const aksiyonlar = satirlar.filter((r) => _oncelik(r) < 3);
-              const tamamlar = satirlar.filter((r) => _oncelik(r) === 3);
+              const aksiyonlar = aktifSatirlar.filter((r) => _oncelik(r) < 3);
+              const tamamlar = aktifSatirlar.filter((r) => _oncelik(r) === 3);
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                   {aksiyonlar.length > 0 && (
@@ -9434,7 +9481,11 @@ export default function OperasyonMerkezi() {
                     </div>
                   )}
                   {/* Gün toplamı şeridi */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(115px, 1fr))', gap: 10, borderTop: '2px solid var(--border)', paddingTop: 12 }}>
+                  <div style={{ borderTop: '2px solid var(--border)', paddingTop: 12, marginTop: 2 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                    {subeSecili ? `${aktifSatirlar[0]?.sube_adi || 'Şube'} toplamı` : 'Gün toplamı · tüm şubeler'}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(115px, 1fr))', gap: 10 }}>
                     {[
                       ['Toplam ciro', topCiro, '#22c55e'],
                       ['Sabah kasa', topSabah, 'var(--text)'],
@@ -9448,6 +9499,7 @@ export default function OperasyonMerkezi() {
                         <div style={{ fontSize: 15, fontWeight: 800, color: c, fontVariantNumeric: 'tabular-nums' }}>{fmt(v)} ₺</div>
                       </div>
                     ))}
+                  </div>
                   </div>
                 </div>
               );
