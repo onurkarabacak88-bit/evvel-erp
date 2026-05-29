@@ -207,22 +207,22 @@ export default function KasaTeslim() {
               tabIndex={0}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setTurFiltre((prev) => (prev === c.tag ? '' : c.tag)); }}
               style={{
-                background: c.bg,
-                border: `1px solid ${aktif ? c.ring : c.border}`,
+                background: aktif ? 'rgba(34,197,94,.12)' : c.bg,
+                border: `1px solid ${aktif ? 'rgb(34,197,94)' : c.border}`,
                 borderRadius: 12,
                 padding: '14px 16px',
                 cursor: 'pointer',
-                transition: 'box-shadow .12s, transform .12s, border-color .12s',
-                boxShadow: aktif ? `0 0 0 2px ${c.ring} inset` : 'none',
+                transition: 'box-shadow .12s, transform .12s, border-color .12s, background .12s',
+                boxShadow: aktif ? '0 0 0 2px rgb(34,197,94) inset' : 'none',
                 transform: aktif ? 'translateY(-1px)' : 'none',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                 <span style={{ fontSize: 18 }}>{c.ikon}</span>
-                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontWeight: 600 }}>{c.etiket}</span>
+                <span style={{ fontSize: 12, color: aktif ? 'rgb(22,163,74)' : 'var(--color-text-secondary)', fontWeight: 600 }}>{c.etiket}</span>
                 {aktif && (
-                  <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, color: c.renk, background: 'var(--color-background-primary)', borderRadius: 999, padding: '1px 7px', border: `1px solid ${c.ring}` }}>
-                    FİLTRE AÇIK
+                  <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 800, color: 'rgb(22,163,74)' }}>
+                    ✓
                   </span>
                 )}
               </div>
