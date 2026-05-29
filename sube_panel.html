@@ -6573,15 +6573,18 @@ function stokKatalogDedupeAnahtar(it) {
   return '';
 }
 function siparisKatalogDedupeStokSatirlari(data) {
+  // Yalnızca aynı UUID'li ürünler birden fazla kategoride varsa ilkini sakla.
+  // depo_stok_kalem_kodu'ya göre dedup YAPMA: aynı havuzu paylaşan farklı ürünler
+  // (örn. Filtre, Espresso, Türk, Dibek — hepsi kahve_paket) ayrı ayrı gösterilmeli.
   if (!Array.isArray(data) || !data.length) return data;
   var gordu = Object.create(null);
   return data
     .map(function(kat) {
       var items = (kat.items || []).filter(function(it) {
-        var dk = stokKatalogDedupeAnahtar(it);
-        if (!dk) return true;
-        if (gordu[dk]) return false;
-        gordu[dk] = true;
+        var uid = it && it.id;
+        if (!uid) return true;          // id yoksa sakla (edge case)
+        if (gordu[uid]) return false;   // aynı UUID ikinci kez çıkarsa gizle
+        gordu[uid] = true;
         return true;
       });
       return { id: kat.id, label: kat.label, items: items };
