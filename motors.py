@@ -12,6 +12,7 @@ from finans_core import (
     kesim_tarihi_hesapla,
     zorunlu_gider_tahmini, serbest_nakit, net_akis_30_gun,
     kac_gun_dayanir, kasa_bakiyesi_tarihte,
+    kasa_detay_breakdown,
 )
 
 def fmt(n):

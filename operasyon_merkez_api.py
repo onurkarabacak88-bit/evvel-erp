@@ -3579,7 +3579,7 @@ def ops_bar_ozet(
 
                 if evo_yenile:
                     _hs_web_token_temizle()
-                evo_pack = evo_bar_adet_by_sube_id(cur, hedef_tarih)
+                evo_pack = evo_bar_adet_by_sube_id(cur, gun_v)
                 evo_by_sube = evo_pack.get("by_sube") or {}
                 evo_veri_geldi = bool(evo_pack.get("evo_veri_geldi"))
                 evo_mesaj = evo_pack.get("evo_mesaj")
