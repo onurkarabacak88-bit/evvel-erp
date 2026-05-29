@@ -2355,10 +2355,6 @@ export default function OperasyonMerkezi() {
   const [magazaStokOnayBekleyen, setMagazaStokOnayBekleyen] = useState({});
   /** `${subeKey}::${urunId}` -> onay API çağrısı in-flight */
   const [magazaStokOnayBusy, setMagazaStokOnayBusy] = useState({});
-  /** Katalog ürünü depo havuzu taslak metni `urun_id` → string (sunucudan farklıysa düzenleniyor). */
-  const [magazaDepoHavuzTaslak, setMagazaDepoHavuzTaslak] = useState({});
-  /** `urun_id` → havuz kodu kaydı API bekliyor */
-  const [magazaDepoHavuzBusy, setMagazaDepoHavuzBusy] = useState({});
   /** Şube anahtarı → katalog dışı manuel satırlar (yerel; API yok). */
   const [magazaManuelSatirlar, setMagazaManuelSatirlar] = useState({});
   /** Depo stokları: üst seviye — şube kartları | genel depo özeti (GET /ops/v2/depo-ozet). */
@@ -3900,58 +3896,6 @@ export default function OperasyonMerkezi() {
       });
     }
   }, [toast]);
-
-  const magazaDepoHavuzKaydet = useCallback(
-    async ({ kategoriKod, urunId, depoStokKalemKoduRaw }) => {
-      const uid = String(urunId || '').trim();
-      const kk = String(kategoriKod || '').trim();
-      if (!uid || !kk) {
-        toast('Kategori / ürün bilgisi eksik.', 'red');
-        return;
-      }
-      setMagazaDepoHavuzBusy((prev) => ({ ...prev, [uid]: true }));
-      try {
-        const r = await api('/ops/siparis/urun-depo-kalem', {
-          method: 'POST',
-          body: {
-            kategori_kod: kk,
-            urun_id: uid,
-            depo_stok_kalem_kodu: String(depoStokKalemKoduRaw ?? '').trim() || null,
-          },
-        });
-        const saved = r?.depo_stok_kalem_kodu != null && String(r.depo_stok_kalem_kodu).trim()
-          ? String(r.depo_stok_kalem_kodu).trim()
-          : null;
-        setMagazaDepoKatalogState((prev) => {
-          const cats = Array.isArray(prev.kategoriler)
-            ? prev.kategoriler.map((c) => ({
-              ...c,
-              items: (c.items || []).map((it) => {
-                if (String(it?.id || '') !== uid) return it;
-                return { ...it, depo_stok_kalem_kodu: saved };
-              }),
-            }))
-            : [];
-          return { ...prev, kategoriler: cats };
-        });
-        setMagazaDepoHavuzTaslak((prev) => {
-          const n = { ...prev };
-          delete n[uid];
-          return n;
-        });
-        toast('Depo havuz kodu kaydedildi ✓', 'green');
-      } catch (e) {
-        toast(e?.message || 'Depo havuz kodu kaydedilemedi.', 'red');
-      } finally {
-        setMagazaDepoHavuzBusy((prev) => {
-          const n = { ...prev };
-          delete n[uid];
-          return n;
-        });
-      }
-    },
-    [toast],
-  );
 
   const yenileDetayKart = useCallback(
     async (subeId, f = filtre) => {
@@ -7360,11 +7304,6 @@ export default function OperasyonMerkezi() {
                     data-magaza-depo-katalog-root
                     style={{ borderTop: '1px dashed var(--border)', paddingTop: 10, marginTop: 2 }}
                   >
-                    <datalist id="magaza-depo-havuz-datalist-global">
-                      {MAGAZA_DEPO_STOK_ANAHTARLARI.map((opt) => (
-                        <option key={opt} value={opt} />
-                      ))}
-                    </datalist>
                     <div
                       style={{
                         fontSize: 11,
@@ -7379,8 +7318,6 @@ export default function OperasyonMerkezi() {
                     >
                       <strong style={{ display: 'block', marginBottom: 4, fontSize: 11 }}>Şube deposunda otomatik ve elle ne demek?</strong>
                       <span style={{ color: 'var(--text3)', fontSize: 10 }}>
-                        <strong style={{ color: 'var(--text2)' }}>Havuz (Alan «otomatik»)</strong>
-                        {' — Boş bırakılırsa sistem ürün adına ve katalogdaki ayara göre depo kalemini kendisi seçer; listeden anahtar yazarsanız o havuzda birleştirirsiniz. '}
                         <strong style={{ color: 'var(--text2)' }}>Elle stok</strong>
                         {' — Bu şube için yazdığınız hedef adettir; depoyu güncellemek için satırdaki '}
                         <strong>Onay</strong>
@@ -7486,11 +7423,6 @@ export default function OperasyonMerkezi() {
                                   const satirToplam = stokSayi != null && efektifBirimFiyat != null && Number.isFinite(efektifBirimFiyat)
                                     ? stokSayi * efektifBirimFiyat
                                     : null;
-                                  const havuzDb = it.depo_stok_kalem_kodu ? String(it.depo_stok_kalem_kodu).trim() : '';
-                                  const havuzTaslakHam = magazaDepoHavuzTaslak[it.id];
-                                  const havuzInput = havuzTaslakHam !== undefined ? havuzTaslakHam : havuzDb;
-                                  const havuzKaydetGerekli = String(havuzInput || '').trim() !== havuzDb;
-                                  const havuzBusy = !!magazaDepoHavuzBusy[it.id];
                                   return (
                                     <li
                                       key={`${kk}-${it.id}`}
@@ -7515,60 +7447,8 @@ export default function OperasyonMerkezi() {
                                         ) : it.stok != null ? (
                                           <span style={{ fontSize: 9, color: 'var(--text3)' }}>Sistem: {magazaFmtStok(it.stok)}</span>
                                         ) : (
-                                          <span style={{ fontSize: 9, color: 'var(--text3)' }}>Depoda kayıt yok · havuz: {magazaDepoKalemKodu(it)}</span>
+                                          <span style={{ fontSize: 9, color: 'var(--text3)' }}>Depoda kayıt yok</span>
                                         )}
-                                        <div
-                                          style={{
-                                            marginTop: 6,
-                                            display: 'flex',
-                                            flexWrap: 'wrap',
-                                            gap: 6,
-                                            alignItems: 'center',
-                                          }}
-                                          title="Boş = otomatik havuz (ürün adı). Sabit havuz veya başka ürün UUID."
-                                        >
-                                          <span style={{ fontSize: 9, color: 'var(--text3)', flexShrink: 0 }}>Havuz</span>
-                                          <input
-                                            type="text"
-                                            className="input"
-                                            list="magaza-depo-havuz-datalist-global"
-                                            placeholder="otomatik"
-                                            value={havuzInput}
-                                            disabled={it.aktif === false}
-                                            onChange={(e) => {
-                                              const v = e.target.value;
-                                              setMagazaDepoHavuzTaslak((prev) => {
-                                                if (String(v).trim() === havuzDb) {
-                                                  const n = { ...prev };
-                                                  delete n[it.id];
-                                                  return n;
-                                                }
-                                                return { ...prev, [it.id]: v };
-                                              });
-                                            }}
-                                            style={{
-                                              fontSize: 10,
-                                              padding: '2px 6px',
-                                              minWidth: 0,
-                                              flex: '1 1 100px',
-                                              maxWidth: 220,
-                                            }}
-                                          />
-                                          <button
-                                            type="button"
-                                            className={`btn btn-sm ${havuzKaydetGerekli ? 'btn-primary' : 'btn-secondary'}`}
-                                            disabled={it.aktif === false || !havuzKaydetGerekli || havuzBusy}
-                                            title={havuzKaydetGerekli ? 'Depo havuz kodunu kaydet' : 'Değişiklik yok'}
-                                            onClick={() => magazaDepoHavuzKaydet({
-                                              kategoriKod: kat.id,
-                                              urunId: it.id,
-                                              depoStokKalemKoduRaw: havuzInput,
-                                            })}
-                                            style={{ padding: '2px 8px', fontSize: 10 }}
-                                          >
-                                            {havuzBusy ? '…' : (havuzKaydetGerekli ? 'Kaydet' : '✓')}
-                                          </button>
-                                        </div>
                                       </div>
                                       <input
                                         type="text"
