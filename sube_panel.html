@@ -7975,7 +7975,14 @@ async function renderSiparisPanel() {
   var ov = document.getElementById('sipKatOverlay');
   var inner = document.getElementById('sipKatModalInner');
   if (acik && inner) {
+    // Modal zaten açık ve aynı kategorideyse scroll pozisyonunu koru
+    var _sipBody = inner.querySelector('.sip-kat-modal-body');
+    var _sipScroll = (_sipBody && ov && ov.style.display === 'flex') ? _sipBody.scrollTop : 0;
     inner.innerHTML = siparisKategoriModalInnerHTML(acik);
+    if (_sipScroll > 0) {
+      var _sipBodyAfter = inner.querySelector('.sip-kat-modal-body');
+      if (_sipBodyAfter) _sipBodyAfter.scrollTop = _sipScroll;
+    }
     if (ov) {
       ov.style.display = 'flex';
       ov.setAttribute('aria-hidden', 'false');
@@ -9546,9 +9553,16 @@ function acStokKatalogModalSync() {
   var acik = (data && st.openKat && data.find(function(k){ return k.id === st.openKat; })) || null;
   acKatOverlayBackdropWire();
   if (acik) {
+    // Modal zaten açık ve aynı kategorideyse scroll pozisyonunu koru
+    var _body = inner.querySelector('.sip-kat-modal-body');
+    var _savedScroll = (_body && ov.style.display === 'flex') ? _body.scrollTop : 0;
     inner.innerHTML = acStokKategoriModalInnerHTML(acik);
     ov.style.display = 'flex';
     ov.setAttribute('aria-hidden', 'false');
+    if (_savedScroll > 0) {
+      var _bodyAfter = inner.querySelector('.sip-kat-modal-body');
+      if (_bodyAfter) _bodyAfter.scrollTop = _savedScroll;
+    }
     var tm = document.getElementById('acKatModalTamam');
     if (tm) tm.onclick = function(){ acKatModalKapat(); };
   } else {
@@ -9694,9 +9708,16 @@ function svStokKatalogModalSync() {
   var acik = (data && st.openKat && data.find(function(k){ return k.id === st.openKat; })) || null;
   svKatOverlayBackdropWire();
   if (acik) {
+    // Modal zaten açık ve aynı kategorideyse scroll pozisyonunu koru
+    var _body = inner.querySelector('.sip-kat-modal-body');
+    var _savedScroll = (_body && ov.style.display === 'flex') ? _body.scrollTop : 0;
     inner.innerHTML = svStokKategoriModalInnerHTML(acik);
     ov.style.display = 'flex';
     ov.setAttribute('aria-hidden', 'false');
+    if (_savedScroll > 0) {
+      var _bodyAfter = inner.querySelector('.sip-kat-modal-body');
+      if (_bodyAfter) _bodyAfter.scrollTop = _savedScroll;
+    }
     var tm = document.getElementById('svKatModalTamam');
     if (tm) tm.onclick = function(){ svKatModalKapat(); };
   } else {
@@ -9766,9 +9787,13 @@ function refreshStokKatalogUI(prefix) {
     }
     return;
   }
+  // Scroll pozisyonunu koru — innerHTML rebuild scroll'u başa atıyor
+  var _scrollEl = wrap.closest('.sip-kat-modal-body') || wrap.closest('[style*="overflow"]') || wrap.parentElement;
+  var _savedScroll = _scrollEl ? _scrollEl.scrollTop : 0;
   wrap.innerHTML = (prefix === 'sv') ? svKatalogKartBlockHTML(data)
     : (prefix === 'ac') ? acKatalogKartBlockHTML(data)
     : stokKatalogKartBlockHTML(prefix, data);
+  if (_scrollEl && _savedScroll > 0) _scrollEl.scrollTop = _savedScroll;
   if (prefix === 'ac') acStokKatalogModalSync();
   if (prefix === 'sv') svStokKatalogModalSync();
 }
