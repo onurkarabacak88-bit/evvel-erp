@@ -58,6 +58,29 @@ def _vardiya_imza_personel_dogrula(cur, personel_id: str, pin: Optional[str]) ->
     return dogrula_personel_panel_pin(cur, personel_id, pin or "")
 
 
+def _korumali_yan_etki(cur, etiket: str, fn) -> None:
+    """İkincil yan etkiyi (defter kaydı, plan vb.) SAVEPOINT içinde çalıştırır.
+
+    KRİTİK: Bir yan etki SQL hatası verirse psycopg2 tüm işlemi 'aborted' yapar
+    ve sonraki ``conn.commit()`` sessizce ROLLBACK'e döner — yani ana imza/devir
+    kaydı da geri alınır (panel 'tamamlandı' der ama hiçbir şey kaydedilmez).
+    SAVEPOINT ile yalnızca yan etki geri alınır; ana devir kaydı korunur.
+    """
+    sp = "sp_yan_etki"
+    cur.execute(f"SAVEPOINT {sp}")
+    try:
+        fn()
+        cur.execute(f"RELEASE SAVEPOINT {sp}")
+    except Exception:
+        try:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+            cur.execute(f"RELEASE SAVEPOINT {sp}")
+        except Exception:
+            pass
+        import logging as _lg
+        _lg.getLogger(__name__).exception("vardiya devri yan etki başarısız: %s", etiket)
+
+
 def vardiya_devri_tamamlandi_mi(cur, sube_id: str) -> bool:
     """Bugün bu şubede sabah→akşam devir kaydı kilitlendi mi?"""
     cur.execute(
@@ -510,19 +533,22 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
         audit(cur, "kapanis_kayit", kid, "VARDIYA_DEVIR_ADIM1_SABAH")
         from operasyon_defter import operasyon_defter_ekle
 
-        operasyon_defter_ekle(
-            cur,
-            sube_id,
-            "VARDIYA_DEVIR_IMZA1_PIN",
-            (
-                f"Vardiya devri 1. imza (PIN) — personel={onay_ad} "
-                f"tarih={bugun_tr()} saat={simdi.strftime('%H:%M:%S')}"
-            ),
-            ref_event_id=kid,
-            personel_id=body.sabahci_devreden_id,
-            personel_ad=onay_ad,
-            bildirim_saati=simdi.strftime("%H:%M:%S"),
-        )
+        def _defter1():
+            operasyon_defter_ekle(
+                cur,
+                sube_id,
+                "VARDIYA_DEVIR_IMZA1_PIN",
+                (
+                    f"Vardiya devri 1. imza (PIN) — personel={onay_ad} "
+                    f"tarih={bugun_tr()} saat={simdi.strftime('%H:%M:%S')}"
+                ),
+                ref_event_id=kid,
+                personel_id=body.sabahci_devreden_id,
+                personel_ad=onay_ad,
+                bildirim_saati=simdi.strftime("%H:%M:%S"),
+            )
+
+        _korumali_yan_etki(cur, "defter_imza1", _defter1)
 
     return {
         "success": True,
@@ -573,29 +599,34 @@ def vardiya_devri_adim2(sube_id: str, body: VardiyaDevirAdim2):
             (simdi, body.aksamci_devralan_id, kk["id"]),
         )
         audit(cur, "kapanis_kayit", kk["id"], "VARDIYA_DEVIR_ADIM2_AKSAM")
-        from operasyon_defter import operasyon_defter_ekle
-
-        operasyon_defter_ekle(
-            cur,
-            sube_id,
-            "VARDIYA_DEVIR_IMZA2_PIN",
-            (
-                f"Vardiya devri 2. imza (PIN) — personel={onay_ad} "
-                f"tarih={bugun_tr()} saat={simdi.strftime('%H:%M:%S')}"
-            ),
-            ref_event_id=kk["id"],
-            personel_id=body.aksamci_devralan_id,
-            personel_ad=onay_ad,
-            bildirim_saati=simdi.strftime("%H:%M:%S"),
-        )
         kid_out = kk["id"]
 
+        # --- İkincil yan etkiler: SAVEPOINT ile korunur (ana devir kaydını geri almasın) ---
+        from operasyon_defter import operasyon_defter_ekle
+
+        def _defter():
+            operasyon_defter_ekle(
+                cur,
+                sube_id,
+                "VARDIYA_DEVIR_IMZA2_PIN",
+                (
+                    f"Vardiya devri 2. imza (PIN) — personel={onay_ad} "
+                    f"tarih={bugun_tr()} saat={simdi.strftime('%H:%M:%S')}"
+                ),
+                ref_event_id=kk["id"],
+                personel_id=body.aksamci_devralan_id,
+                personel_ad=onay_ad,
+                bildirim_saati=simdi.strftime("%H:%M:%S"),
+            )
+
+        _korumali_yan_etki(cur, "defter_imza2", _defter)
+
         # Devir tamamlandı — 1 saat sonrası için ansızın kasa sayımı planla
-        try:
+        def _plan():
             from sube_operasyon import plan_kontrol_after_devir
             plan_kontrol_after_devir(cur, sube_id, simdi)
-        except Exception:
-            pass
+
+        _korumali_yan_etki(cur, "plan_kontrol_after_devir", _plan)
 
     return {"success": True, "kapanis_id": kid_out, "durum": "tamamlandi"}
 
