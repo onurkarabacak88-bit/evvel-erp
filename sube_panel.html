@@ -5497,6 +5497,19 @@
     <div class="islem-govde">
       <div id="kasaDevirDurum"></div>
       <div id="kasaDevirForm"></div>
+      <div id="kasaDevirKurtarWrap" style="margin-top:14px;border-top:1px dashed var(--border,#444);padding-top:12px">
+        <button type="button" class="btn btn-ghost btn-sm" id="kurtarAcBtn" style="font-size:12px">🛟 Takılı devri kurtar (yönetici)</button>
+        <div id="kurtarPanel" style="display:none;margin-top:10px">
+          <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:10px">Sistemsel hata nedeniyle 1. imza atılmış ama tamamlanamamış bir devri, gerçek devralan akşamçı + yönetici onayıyla tamamlar. Çift imza korunur, deftere KURTARMA olarak yazılır.</div>
+          <div class="form-group"><label>İş Günü (boş = bugün)</label><input id="kurtarTarih" type="date" /></div>
+          <div class="form-group"><label>Devralan (Akşamçı)</label><select id="kurtarAksamci"></select></div>
+          <div class="form-group"><label>Akşamçı PIN</label><input id="kurtarAksamciPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>
+          <div class="form-group"><label>Onaylayan Yönetici</label><select id="kurtarYonetici"></select></div>
+          <div class="form-group"><label>Yönetici PIN</label><input id="kurtarYoneticiPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>
+          <button class="btn btn-warn btn-sm" type="button" id="kurtarBtn">Devri Kurtar ve Tamamla</button>
+          <div id="kurtarMsg"></div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -9020,7 +9033,8 @@ function fillSels() {
              'xrPers','puanPers',
              'dvPers1','dvPers2','kapPers',
              'kasaUser','ktPers',
-             'svPers','frPers','dkPers'];
+             'svPers','frPers','dkPers',
+             'kurtarAksamci','kurtarYonetici'];
   ids.forEach(function(id){
     var el = document.getElementById(id); if (!el || el.tagName !== 'SELECT') return;
     var cur = el.value;
@@ -11920,6 +11934,43 @@ function updateSolAksiyonChips(data) {
   }
 }
 
+function wireKurtar() {
+  var acBtn = document.getElementById('kurtarAcBtn');
+  var panel = document.getElementById('kurtarPanel');
+  if (!acBtn || !panel || acBtn._wired) { if (typeof fillSels === 'function') fillSels(); return; }
+  acBtn._wired = true;
+  acBtn.onclick = function(){
+    var acik = panel.style.display !== 'none';
+    panel.style.display = acik ? 'none' : 'block';
+    if (!acik) fillSels();
+  };
+  var btn = document.getElementById('kurtarBtn');
+  if (btn) btn.onclick = async function(){
+    setMsg('kurtarMsg','',''); btn.disabled = true;
+    try {
+      var aks = selVal('kurtarAksamci');
+      var aksPin = inpVal('kurtarAksamciPin').replace(/\D/g,'').slice(0,4);
+      var yon = selVal('kurtarYonetici');
+      var yonPin = inpVal('kurtarYoneticiPin').replace(/\D/g,'').slice(0,4);
+      var tarih = inpVal('kurtarTarih');
+      if (!aks) throw new Error('Devralan akşamçıyı seçin');
+      if (aksPin.length !== 4) throw new Error('Akşamçı 4 haneli PIN girin');
+      if (!yon) throw new Error('Onaylayan yöneticiyi seçin');
+      if (yonPin.length !== 4) throw new Error('Yönetici 4 haneli PIN girin');
+      if (aks === yon) throw new Error('Akşamçı ile yönetici farklı kişi olmalı');
+      var body = { aksamci_devralan_id: aks, pin: aksPin, yetkili_id: yon, yetkili_pin: yonPin };
+      if (tarih) body.tarih = tarih;
+      await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/vardiya-devri/kurtar',{method:'POST',body:body});
+      setMsg('kurtarMsg','Devir kurtarıldı ve tamamlandı. Artık kapanış yapılabilir.','msg-ok');
+      setTimeout(refresh, 900);
+    } catch(e) {
+      if (e.status===429) handle429(document.getElementById('kurtarMsg'),e);
+      else setMsg('kurtarMsg', e.message || 'Hata', 'msg-err');
+    }
+    btn.disabled = false;
+  };
+}
+
 function renderKasaDevir() {
   var vd = lastData && (lastData.vardiya_devir || {});
   var row = vd && vd.vardiya_devir;
@@ -11927,6 +11978,8 @@ function renderKasaDevir() {
   var durEl = document.getElementById('kasaDevirDurum');
   var frmEl = document.getElementById('kasaDevirForm');
   if (!durEl || !frmEl) return;
+
+  wireKurtar();
 
   // TAMAMLANDI
   if (durum === 'tamamlandi') {

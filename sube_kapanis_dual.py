@@ -366,6 +366,20 @@ class VardiyaDevirAdim2(BaseModel):
     pin: str
 
 
+class VardiyaDevirKurtarma(BaseModel):
+    """Sistem hatasıyla 'acilis_bekliyor'da takılı kalmış devri yönetici onayıyla tamamlar.
+
+    Çift imza korunur: gerçekte devralan akşamçı (aksamci_devralan_id + pin) +
+    ayrı bir panel yöneticisi onayı (yetkili_id + yetkili_pin). Olay deftere
+    'KURTARMA' olarak işlenir.
+    """
+    aksamci_devralan_id: str
+    pin: str
+    yetkili_id: str
+    yetkili_pin: str
+    tarih: Optional[str] = None  # YYYY-MM-DD; boşsa bugünkü iş günü
+
+
 @router.get("/{sube_id}/vardiya-devri/durum")
 def vardiya_devri_durum(sube_id: str):
     with db() as (conn, cur):
@@ -629,6 +643,92 @@ def vardiya_devri_adim2(sube_id: str, body: VardiyaDevirAdim2):
         _korumali_yan_etki(cur, "plan_kontrol_after_devir", _plan)
 
     return {"success": True, "kapanis_id": kid_out, "durum": "tamamlandi"}
+
+
+@router.post("/{sube_id}/vardiya-devri/kurtar")
+def vardiya_devri_kurtar(sube_id: str, body: VardiyaDevirKurtarma):
+    """Takılı kalmış (acilis_bekliyor) devri yönetici onayıyla tamamlar.
+
+    Geçmişte yaşanan sistemsel hata (yan etki kaydı işlemi geri alıyordu)
+    nedeniyle 1. imza atılmış ama 2. imza kaydedilememiş devirler için
+    kurtarma yolu. Çift imza bütünlüğü korunur: gerçek devralan akşamçı +
+    ayrı bir panel yöneticisi onayı; olay deftere 'KURTARMA' olarak yazılır.
+    """
+    simdi = dt_now_tr_naive()
+    if body.tarih:
+        try:
+            hedef_tarih = date.fromisoformat(body.tarih.strip()[:10])
+        except ValueError:
+            raise HTTPException(400, "tarih formatı YYYY-MM-DD olmalı")
+    else:
+        hedef_tarih = is_gunu_tr()
+
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        cur.execute(
+            """
+            SELECT * FROM kapanis_kayit
+            WHERE sube_id=%s AND tarih=%s AND olay='vardiya_sabah_aksam_devri'
+            FOR UPDATE
+            """,
+            (sube_id, hedef_tarih),
+        )
+        kk = cur.fetchone()
+        if not kk:
+            raise HTTPException(404, "Bu tarihte vardiya devri kaydı yok")
+        kk = dict(kk)
+        if kk["durum"] == "tamamlandi":
+            return {"success": True, "kapanis_id": kk["id"], "durum": "tamamlandi", "not": "Zaten tamamlanmış"}
+        if kk["durum"] != "acilis_bekliyor":
+            raise HTTPException(400, "Bu kayıt kurtarılabilir durumda değil")
+
+        # Yönetici onayı (ayrı kişi)
+        yon = dogrula_personel_panel_yonetici(cur, body.yetkili_id, (body.yetkili_pin or "").strip())
+        yon_ad = (yon.get("ad_soyad") or "").strip() or "—"
+
+        # Gerçek devralan akşamçı imzası (PIN)
+        ku = _vardiya_imza_personel_dogrula(cur, body.aksamci_devralan_id, body.pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+
+        sabah_pid = kk.get("sabahci_personel_id") or kk.get("kapanisci_id")
+        if sabah_pid and str(body.aksamci_devralan_id) == str(sabah_pid):
+            raise HTTPException(
+                400,
+                "Akşamçı (devralan) sabahçı ile aynı kişi olamaz — iki farklı kişi gerekir.",
+            )
+
+        cur.execute(
+            """
+            UPDATE kapanis_kayit
+            SET acilisci_id=NULL, acilisci_onay_ts=%s,
+                aksamci_personel_id=%s, durum='tamamlandi'
+            WHERE id=%s
+            """,
+            (simdi, body.aksamci_devralan_id, kk["id"]),
+        )
+        audit(cur, "kapanis_kayit", kk["id"], "VARDIYA_DEVIR_KURTARMA")
+
+        from operasyon_defter import operasyon_defter_ekle
+
+        def _defter_kurtar():
+            operasyon_defter_ekle(
+                cur,
+                sube_id,
+                "VARDIYA_DEVIR_KURTARMA",
+                (
+                    f"Vardiya devri KURTARMA (sistemsel hata sonrası) — "
+                    f"devralan akşamçı={onay_ad}, yönetici onayı={yon_ad}, "
+                    f"is_gunu={hedef_tarih.isoformat()} saat={simdi.strftime('%H:%M:%S')}"
+                ),
+                ref_event_id=kk["id"],
+                personel_id=body.aksamci_devralan_id,
+                personel_ad=onay_ad,
+                bildirim_saati=simdi.strftime("%H:%M:%S"),
+            )
+
+        _korumali_yan_etki(cur, "defter_kurtarma", _defter_kurtar)
+
+    return {"success": True, "kapanis_id": kk["id"], "durum": "tamamlandi", "kurtarma": True}
 
 
 @router.get("/{sube_id}/kapanis/dual/durum")
