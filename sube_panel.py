@@ -2799,60 +2799,8 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 "kabul_durum": _kabul_durum,
             }
 
-        sevk_kalemleri = {k: max(0, int(delta.get(k) or 0)) for k in STOK_KEYS}
-
-        # UUID kalemler için pool key'e yazılmış miktarları sevk_kalemleri'nden düş.
-        # (Frontend eski sürümde pool key + kalemler ikisine de yazıyordu → çift giriş riski)
-        import re as _re_sevk
-        _uuid_pat = _re_sevk.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-', _re_sevk.IGNORECASE)
-        for _it in kalemler:
-            if not isinstance(_it, dict):
-                continue
-            _uid = str(_it.get("urun_id") or "").strip()
-            if not _uuid_pat.match(_uid):
-                continue  # UUID değil — eskiden pool'a yazılıyordu, dokunma
-            _uad = str(_it.get("urun_ad") or "").strip()
-            _sk = _stok_key_from_urun_ad(_uad)
-            if _sk and int(sevk_kalemleri.get(_sk) or 0) > 0:
-                try:
-                    _adet_cikar = max(0, int(_it.get("adet") or 0))
-                    sevk_kalemleri[_sk] = max(0, int(sevk_kalemleri[_sk]) - _adet_cikar)
-                except (TypeError, ValueError):
-                    pass
-
-        if sum(sevk_kalemleri.values()) <= 0 and kalemler:
-            for it in kalemler:
-                if not isinstance(it, dict):
-                    continue
-                # Katalog satırı (urun_id var): ad üzerinden kahve_paket vb. toplama yapma;
-                # aşağıda depo_kalem_kodu_resolve ile depoya yazılır (DB adı / depo_stok_kalem_kodu | kahve id).
-                if str(it.get("urun_id") or "").strip():
-                    continue
-                key = _stok_key_from_urun_ad(it.get("urun_ad"))
-                if not key:
-                    continue
-                try:
-                    sevk_kalemleri[key] = sevk_kalemleri.get(key, 0) + max(0, int(it.get("adet") or 0))
-                except (TypeError, ValueError):
-                    continue
-
-        for kalem_kodu, adet in sevk_kalemleri.items():
-            adet_i = int(adet or 0)
-            if adet_i <= 0:
-                continue
-            cur.execute(
-                """
-                INSERT INTO merkez_stok_sevk
-                    (id, sube_id, kalem_kodu, adet, siparis_talep_id, tarih)
-                VALUES
-                    (%s, %s, %s, %s, %s, CURRENT_DATE)
-                """,
-                (str(uuid.uuid4()), sube_id, str(kalem_kodu), adet_i, siparis_talep_id),
-            )
-            # Şube paneli kabulü: depo stoğa doğrudan + yazılır.
-            sube_depo_stok_depo_giris_ekle(cur, sube_id, str(kalem_kodu), None, adet_i)
-
-        # STOK_KEYS dışındaki katalog/özel kalemleri de depoda iz olarak tut.
+        # Havuz (pool) mantığı tamamen kaldırıldı — her ürün kendi UUID'siyle işlenir.
+        # STOK_KEYS döngüsü yok; sadece kalemler listesindeki UUID satırlar işlenir.
         for it in kalemler:
             if not isinstance(it, dict):
                 continue
@@ -3289,59 +3237,8 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                     detay,
                 ))
 
-        # 1) STOK_KEYS kalemleri — kalemler listesinde zaten düşülen adetleri çıkarılmış eff_delta
-        for kalem_kodu, miktar in eff_delta.items():
-            if not miktar or int(miktar) <= 0:
-                continue
-            miktar = int(miktar)
-            # Depo stoku açmadan önce kontrol — yetersizse uyumsuzluk logla
-            cur.execute("SELECT mevcut_adet FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s",
-                        (sube_id, kalem_kodu))
-            _stok_r = cur.fetchone()
-            _mevcut_oncesi = int(_stok_r["mevcut_adet"] if _stok_r else 0)
-            if _mevcut_oncesi < miktar:
-                _uyumsuzluk_yaz(cur, sube_id, kalem_kodu, _mevcut_oncesi, miktar)
-            sube_depo_stok_depo_cikis_dus(cur, sube_id, kalem_kodu, None, miktar)
-            # Alarm: min_stok'a düştü mü?
-            cur.execute(
-                """
-                SELECT mevcut_adet, min_stok, kalem_adi FROM sube_depo_stok
-                WHERE sube_id = %s AND kalem_kodu = %s
-                  AND mevcut_adet <= GREATEST(1, min_stok)
-                """,
-                (sube_id, kalem_kodu),
-            )
-            alarm_r = cur.fetchone()
-            if alarm_r:
-                mevcut = int(alarm_r.get("mevcut_adet") or 0)
-                min_s   = int(alarm_r.get("min_stok")   or 0)
-                k_adi   = alarm_r.get("kalem_adi") or kalem_kodu
-                # Aynı gün aynı kalem için tekrar yazma
-                cur.execute(
-                    """
-                    SELECT 1 FROM sube_operasyon_uyari
-                    WHERE sube_id=%s AND tip='STOK_ALARM'
-                      AND tarih=CURRENT_DATE
-                      AND mesaj LIKE %s
-                    LIMIT 1
-                    """,
-                    (sube_id, f"%{kalem_kodu}%"),
-                )
-                if not cur.fetchone():
-                    seviye = "kritik" if mevcut == 0 else "uyari"
-                    cur.execute(
-                        """
-                        INSERT INTO sube_operasyon_uyari
-                            (id, sube_id, tarih, tip, seviye, mesaj)
-                        VALUES (%s, %s, CURRENT_DATE, 'STOK_ALARM', %s, %s)
-                        """,
-                        (
-                            str(_uuid.uuid4()), sube_id, seviye,
-                            f"Depo stok azaldı: {k_adi} — mevcut {mevcut} adet (min {min_s}). Sipariş gerekebilir.",
-                        ),
-                    )
-
-        # 2) Katalog kalemleri (kalemler listesi — STOK_KEYS dışı ürünler)
+        # Havuz (STOK_KEYS) döngüsü kaldırıldı — sadece UUID kalemler işlenir.
+        # UUID katalog kalemleri
         _islendi_kalemler: set = set()  # Aynı kalem_kodu'nun tek request'te iki kez düşmesini önler
         for k in kalemler:
             uid = str(k.get("urun_id") or "").strip()

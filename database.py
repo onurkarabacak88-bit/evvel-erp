@@ -3512,6 +3512,29 @@ $$;
                     VALUES ('sube_depo_stok_havuz_sifirla_v6b', %s::jsonb)
                 """, (f'{{"sifirlanan_satir": {v6b_count}}}',))
                 print(f"[MIGRATION] sube_depo_stok_havuz_sifirla_v6b: {v6b_count} havuz satırı sıfırlandı")
+
+            # Migration v7: havuz satırlarını tamamen sil (sıfır değil DELETE)
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log
+                WHERE ad='sube_depo_stok_havuz_delete_v7' LIMIT 1
+            """)
+            if not cur.fetchone():
+                _havuz_kodlari = (
+                    'kahve_paket','bardak_kucuk','bardak_buyuk','bardak_plastik',
+                    'su_adet','redbull_adet','soda_adet','cookie_adet','pasta_adet',
+                    'sut_litre','surup_adet','karton_bardak','kapak_adet',
+                    'pecete_paket','diger_sarf',
+                )
+                cur.execute("""
+                    DELETE FROM sube_depo_stok
+                    WHERE kalem_kodu = ANY(%s)
+                """, (_havuz_kodlari,))
+                v7_count = cur.rowcount
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay)
+                    VALUES ('sube_depo_stok_havuz_delete_v7', %s::jsonb)
+                """, (f'{{"silinen_satir": {v7_count}}}',))
+                print(f"[MIGRATION] sube_depo_stok_havuz_delete_v7: {v7_count} havuz satırı tamamen silindi")
         except Exception as _mig_e:
             print(f"[MIGRATION WARN] siparis_urun_depo_kalem_kodu_uuid_v5: {_mig_e}")
 

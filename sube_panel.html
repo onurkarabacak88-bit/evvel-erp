@@ -10019,11 +10019,7 @@ function tedarikciSelectHTML(selectId) {
 // ─── ÜRÜN TESLİM AL (tedarikçi / toptancı — izole modül) ───────────────────
 var UrunTeslimAl = (function () {
   var PREFIX = 'sv';
-  var FIXED_KEYS = [
-    'bardak_kucuk', 'bardak_buyuk', 'bardak_plastik', 'su_adet', 'redbull_adet',
-    'soda_adet', 'cookie_adet', 'pasta_adet', 'sut_litre', 'surup_adet',
-    'kahve_paket', 'karton_bardak', 'kapak_adet', 'pecete_paket', 'diger_sarf',
-  ].concat(_PASTA_KEYS);
+  // FIXED_KEYS (havuz kodları) kaldırıldı — artık sadece UUID kalemler gönderilir
 
   var state = {
     katalog: [],
@@ -10158,9 +10154,6 @@ var UrunTeslimAl = (function () {
       not_aciklama: null,
       kalemler: [],
     };
-    FIXED_KEYS.forEach(function (k) {
-      body[k] = 0;
-    });
     appendKatalogKalemler(body, data);
     return body;
   }
