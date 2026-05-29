@@ -115,6 +115,28 @@ export default function KasaTeslim() {
     };
   }, [gosterilen]);
 
+  /** Şube bazında toplam — CFO "hangi şube ne kadar teslim etti" görünümü */
+  const subeOzet = useMemo(() => {
+    const m = new Map();
+    gosterilen.forEach((s) => {
+      const ad = s.sube_adi || '—';
+      const cur = m.get(ad) || { ad, toplam: 0, adet: 0 };
+      cur.toplam += Number(s.tutar) || 0;
+      cur.adet += 1;
+      m.set(ad, cur);
+    });
+    return [...m.values()].sort((a, b) => b.toplam - a.toplam);
+  }, [gosterilen]);
+
+  /** Tarih bazında toplam — tabloda gün ayıracı için */
+  const gunToplam = useMemo(() => {
+    const m = {};
+    gosterilen.forEach((s) => {
+      m[s.tarih] = (m[s.tarih] || 0) + (Number(s.tutar) || 0);
+    });
+    return m;
+  }, [gosterilen]);
+
   async function aliciKaydet() {
     if (!aliciForm.ad.trim()) {
       toast('Ad zorunlu', 'red');
@@ -170,28 +192,40 @@ export default function KasaTeslim() {
       </div>
 
       {/* Özet kartlar */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginBottom: 16 }}>
-        <div className="metric-card">
-          <div className="metric-label">Ara Teslim</div>
-          <div className="metric-val" style={{ color: '#BA7517' }}>
-            {fmt(ozet.ara_toplam)}
-            <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6 }}>({ozet.ara_adet} adet)</span>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 16 }}>
+        {[
+          { ikon: '🔄', etiket: 'Ara Teslim', tutar: ozet.ara_toplam, adet: ozet.ara_adet, renk: '#BA7517', bg: 'rgba(186,117,23,.10)', border: 'rgba(186,117,23,.30)' },
+          { ikon: '🌙', etiket: 'Gün Sonu', tutar: ozet.sonu_toplam, adet: ozet.sonu_adet, renk: 'var(--color-text-primary)', bg: 'var(--color-background-secondary)', border: 'var(--color-border-tertiary)' },
+          { ikon: '💰', etiket: 'Genel Toplam', tutar: ozet.genel_toplam, adet: ozet.ara_adet + ozet.sonu_adet, renk: 'var(--color-text-success)', bg: 'rgba(34,197,94,.08)', border: 'rgba(34,197,94,.28)' },
+        ].map((c) => (
+          <div key={c.etiket} style={{ background: c.bg, border: `1px solid ${c.border}`, borderRadius: 12, padding: '14px 16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 18 }}>{c.ikon}</span>
+              <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontWeight: 600 }}>{c.etiket}</span>
+            </div>
+            <div style={{ fontSize: 26, fontWeight: 800, color: c.renk, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>{fmt(c.tutar)} ₺</div>
+            <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 3 }}>{c.adet} teslim</div>
           </div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Gün Sonu</div>
-          <div className="metric-val">
-            {fmt(ozet.sonu_toplam)}
-            <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6 }}>({ozet.sonu_adet} adet)</span>
-          </div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Genel Toplam</div>
-          <div className="metric-val" style={{ color: 'var(--color-text-success)' }}>
-            {fmt(ozet.genel_toplam)}
-          </div>
-        </div>
+        ))}
       </div>
+
+      {/* Şube bazında kırılım */}
+      {subeOzet.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            Şube bazında · {subeOzet.length} şube
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {subeOzet.map((s) => (
+              <div key={s.ad} style={{ display: 'flex', flexDirection: 'column', minWidth: 130, padding: '9px 13px', borderRadius: 10, background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)' }}>
+                <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>🏪 {s.ad}</span>
+                <span style={{ fontSize: 17, fontWeight: 800, fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>{fmt(s.toplam)} ₺</span>
+                <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>{s.adet} teslim</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Filtreler */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginBottom: 16 }}>
@@ -275,45 +309,64 @@ export default function KasaTeslim() {
               </tr>
             </thead>
             <tbody>
-              {gosterilen.map((s) => {
-                const tur = TUR_LABEL[s.teslim_turu] || TUR_LABEL.gun_sonu;
-                const saat = s.olusturma
-                  ? new Date(s.olusturma).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
-                  : '—';
-                return (
-                  <tr key={s.id} style={{ background: tur.bg }}>
-                    <td className="mono" style={{ fontSize: 12 }}>
-                      {s.tarih}
-                    </td>
-                    <td className="mono" style={{ fontSize: 12 }}>
-                      {saat}
-                    </td>
-                    <td style={{ fontWeight: 500 }}>{s.sube_adi}</td>
-                    <td>
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          padding: '2px 8px',
-                          borderRadius: 4,
-                          fontSize: 11,
-                          fontWeight: 500,
-                          background: s.teslim_turu === 'ara' ? 'rgba(186,117,23,.15)' : 'var(--color-background-secondary)',
-                          color: tur.renk,
-                          border: `1px solid ${
-                            s.teslim_turu === 'ara' ? 'rgba(186,117,23,.3)' : 'var(--color-border-tertiary)'
-                          }`,
-                        }}
-                      >
-                        {tur.label}
-                      </span>
-                    </td>
-                    <td style={{ fontSize: 13 }}>{s.teslim_eden_ad || '—'}</td>
-                    <td style={{ fontSize: 13 }}>{s.teslim_alan_ad || '—'}</td>
-                    <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 500 }}>{fmt(s.tutar)}</td>
-                    <td style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{s.aciklama || '—'}</td>
-                  </tr>
-                );
-              })}
+              {(() => {
+                const out = [];
+                let sonTarih = null;
+                gosterilen.forEach((s) => {
+                  if (s.tarih !== sonTarih) {
+                    sonTarih = s.tarih;
+                    out.push(
+                      <tr key={`gun-${s.tarih}`} style={{ background: 'var(--color-background-secondary)' }}>
+                        <td colSpan={6} style={{ padding: '7px 10px', fontSize: 12, fontWeight: 700, color: 'var(--color-text-secondary)', borderTop: '2px solid var(--color-border-tertiary)' }}>
+                          📅 {s.tarih}
+                        </td>
+                        <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 12, borderTop: '2px solid var(--color-border-tertiary)' }}>
+                          {fmt(gunToplam[s.tarih])} ₺
+                        </td>
+                        <td style={{ borderTop: '2px solid var(--color-border-tertiary)' }} />
+                      </tr>
+                    );
+                  }
+                  const tur = TUR_LABEL[s.teslim_turu] || TUR_LABEL.gun_sonu;
+                  const saat = s.olusturma
+                    ? new Date(s.olusturma).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+                    : '—';
+                  out.push(
+                    <tr key={s.id} style={{ background: tur.bg }}>
+                      <td className="mono" style={{ fontSize: 12 }}>
+                        {s.tarih}
+                      </td>
+                      <td className="mono" style={{ fontSize: 12 }}>
+                        {saat}
+                      </td>
+                      <td style={{ fontWeight: 500 }}>🏪 {s.sube_adi}</td>
+                      <td>
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            padding: '2px 8px',
+                            borderRadius: 999,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            background: s.teslim_turu === 'ara' ? 'rgba(186,117,23,.15)' : 'var(--color-background-secondary)',
+                            color: tur.renk,
+                            border: `1px solid ${
+                              s.teslim_turu === 'ara' ? 'rgba(186,117,23,.3)' : 'var(--color-border-tertiary)'
+                            }`,
+                          }}
+                        >
+                          {s.teslim_turu === 'ara' ? '🔄' : '🌙'} {tur.label}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: 13 }}>{s.teslim_eden_ad || '—'}</td>
+                      <td style={{ fontSize: 13 }}>{s.teslim_alan_ad || '—'}</td>
+                      <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmt(s.tutar)} ₺</td>
+                      <td style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{s.aciklama || '—'}</td>
+                    </tr>
+                  );
+                });
+                return out;
+              })()}
             </tbody>
             <tfoot>
               <tr style={{ fontWeight: 500 }}>
