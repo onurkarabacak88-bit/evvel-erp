@@ -366,8 +366,23 @@ export default function KasaTeslim() {
                         <td colSpan={6} style={{ padding: '7px 10px', fontSize: 12, fontWeight: 700, color: 'var(--color-text-secondary)', borderTop: '2px solid var(--color-border-tertiary)' }}>
                           📅 {s.tarih}
                         </td>
-                        <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 12, color: 'rgb(22,163,74)', borderTop: '2px solid var(--color-border-tertiary)' }}>
-                          {fmt(gunToplam[s.tarih])} ₺
+                        <td style={{ textAlign: 'right', borderTop: '2px solid var(--color-border-tertiary)' }}>
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              fontFamily: 'var(--font-mono)',
+                              fontWeight: 800,
+                              fontSize: 12,
+                              color: 'rgb(79,70,229)',
+                              background: 'rgba(99,102,241,.12)',
+                              border: '1px solid rgba(99,102,241,.30)',
+                              borderRadius: 8,
+                              padding: '2px 9px',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            Σ {fmt(gunToplam[s.tarih])} ₺
+                          </span>
                         </td>
                         <td style={{ borderTop: '2px solid var(--color-border-tertiary)' }} />
                       </tr>
