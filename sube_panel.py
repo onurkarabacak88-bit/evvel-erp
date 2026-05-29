@@ -3251,7 +3251,7 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
         # eski kalemler yüklenir (istemci programatik sıfırlamada input/change tetiklenmeyebilir).
         cur.execute("DELETE FROM urun_ac_taslak WHERE sube_id = %s", (sube_id,))
 
-    return {"success": True, "defter_id": rid, "delta": delta, "kalemler": kalemler, "tip": "URUN_AC"}
+    return {"success": True, "defter_id": rid, "delta": {}, "kalemler": kalemler, "tip": "URUN_AC"}
 
 
 # ─────────────────────────────────────────────────────────────
