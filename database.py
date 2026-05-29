@@ -3463,6 +3463,32 @@ $$;
                     VALUES ('siparis_urun_depo_kalem_kodu_uuid_v5', %s::jsonb)
                 """, (f'{{"guncellenen_urun": {v5_count}}}',))
                 print(f"[MIGRATION] siparis_urun_depo_kalem_kodu_uuid_v5: {v5_count} ürüne UUID atandı")
+
+            # Migration v6: havuz koduna kilitli ürünler de kendi UUID'lerine kavuşur
+            # v5 sadece NULL olanları düzeltti; kahve_paket/bardak_kucuk vb. pool koda
+            # explicit bağlı ürünler (filtre, dibek, espresso...) hâlâ 71 gösteriyordu.
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log
+                WHERE ad='siparis_urun_depo_kalem_kodu_uuid_v6' LIMIT 1
+            """)
+            if not cur.fetchone():
+                _havuz_kodlari = (
+                    'kahve_paket','bardak_kucuk','bardak_buyuk','bardak_plastik',
+                    'su_adet','redbull_adet','soda_adet','cookie_adet','pasta_adet',
+                )
+                cur.execute("""
+                    UPDATE siparis_urun
+                    SET depo_stok_kalem_kodu = id::text,
+                        guncelleme = NOW()
+                    WHERE depo_stok_kalem_kodu = ANY(%s)
+                      AND aktif = TRUE
+                """, (_havuz_kodlari,))
+                v6_count = cur.rowcount
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay)
+                    VALUES ('siparis_urun_depo_kalem_kodu_uuid_v6', %s::jsonb)
+                """, (f'{{"guncellenen_urun": {v6_count}}}',))
+                print(f"[MIGRATION] siparis_urun_depo_kalem_kodu_uuid_v6: {v6_count} ürün havuz kodundan UUID'ye geçirildi")
         except Exception as _mig_e:
             print(f"[MIGRATION WARN] siparis_urun_depo_kalem_kodu_uuid_v5: {_mig_e}")
 
