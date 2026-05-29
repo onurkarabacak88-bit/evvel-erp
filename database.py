@@ -3440,6 +3440,32 @@ $$;
         except Exception as _mig_e:
             print(f"[MIGRATION WARN] depo_stok_duplike_temizlik_v4: {_mig_e}")
 
+        # ─── MIGRATION v5: siparis_urun.depo_stok_kalem_kodu = id (explicit UUID ataması) ──
+        # depo_stok_kalem_kodu NULL olan tüm aktif ürünlere kendi UUID'lerini ata.
+        # Böylece isim bazlı otomatik çözme mantığına hiç düşülmez; her ürün kendi
+        # satırını kontrol eder. Havuza bağlanması gerekenler admin panelinden elle ayarlanır.
+        try:
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log
+                WHERE ad='siparis_urun_depo_kalem_kodu_uuid_v5' LIMIT 1
+            """)
+            if not cur.fetchone():
+                cur.execute("""
+                    UPDATE siparis_urun
+                    SET depo_stok_kalem_kodu = id::text,
+                        guncelleme = NOW()
+                    WHERE depo_stok_kalem_kodu IS NULL
+                      AND aktif = TRUE
+                """)
+                v5_count = cur.rowcount
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay)
+                    VALUES ('siparis_urun_depo_kalem_kodu_uuid_v5', %s::jsonb)
+                """, (f'{{"guncellenen_urun": {v5_count}}}',))
+                print(f"[MIGRATION] siparis_urun_depo_kalem_kodu_uuid_v5: {v5_count} ürüne UUID atandı")
+        except Exception as _mig_e:
+            print(f"[MIGRATION WARN] siparis_urun_depo_kalem_kodu_uuid_v5: {_mig_e}")
+
         # ─── RAPOR CACHE TABLOLARI (raporlama hızlandırma) — savepoint ile safe ──
         # Her CREATE ayrı savepoint'te — biri patlasa diğerleri etkilenmez.
         for _ddl_ad, _ddl in [
