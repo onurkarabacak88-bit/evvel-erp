@@ -366,7 +366,7 @@ export default function KasaTeslim() {
                         <td colSpan={6} style={{ padding: '7px 10px', fontSize: 12, fontWeight: 700, color: 'var(--color-text-secondary)', borderTop: '2px solid var(--color-border-tertiary)' }}>
                           📅 {s.tarih}
                         </td>
-                        <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 12, borderTop: '2px solid var(--color-border-tertiary)' }}>
+                        <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 12, color: 'rgb(22,163,74)', borderTop: '2px solid var(--color-border-tertiary)' }}>
                           {fmt(gunToplam[s.tarih])} ₺
                         </td>
                         <td style={{ borderTop: '2px solid var(--color-border-tertiary)' }} />
@@ -409,9 +409,27 @@ export default function KasaTeslim() {
                           {s.teslim_turu === 'ara' ? '🔄' : '🌙'} {tur.label}
                         </span>
                       </td>
-                      <td style={{ fontSize: 13 }}>{s.teslim_eden_ad || '—'}</td>
-                      <td style={{ fontSize: 13 }}>{s.teslim_alan_ad || '—'}</td>
-                      <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmt(s.tutar)} ₺</td>
+                      <td style={{ fontSize: 13, padding: '9px 12px' }}>{s.teslim_eden_ad || '—'}</td>
+                      <td style={{ fontSize: 13, padding: '9px 12px' }}>{s.teslim_alan_ad || '—'}</td>
+                      <td style={{ textAlign: 'right', padding: '9px 12px' }}>
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            fontFamily: 'var(--font-mono)',
+                            fontWeight: 800,
+                            fontVariantNumeric: 'tabular-nums',
+                            fontSize: 13,
+                            color: 'rgb(22,163,74)',
+                            background: 'rgba(34,197,94,.12)',
+                            border: '1px solid rgba(34,197,94,.30)',
+                            borderRadius: 8,
+                            padding: '3px 10px',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {fmt(s.tutar)} ₺
+                        </span>
+                      </td>
                       <td style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{s.aciklama || '—'}</td>
                     </tr>
                   );
@@ -424,7 +442,7 @@ export default function KasaTeslim() {
                 <td colSpan={6} style={{ textAlign: 'right', paddingRight: 12, fontSize: 13 }}>
                   Toplam
                 </td>
-                <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmt(ozet.genel_toplam)}</td>
+                <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 800, color: 'rgb(22,163,74)' }}>{fmt(ozet.genel_toplam)} ₺</td>
                 <td />
               </tr>
             </tfoot>
