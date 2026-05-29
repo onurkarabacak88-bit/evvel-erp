@@ -12851,10 +12851,9 @@ function buildOpFields(tip, ev) {
     '<div class="form-group"><label>PIN</label><input id="opKontrolPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>'
   );
   if (tip==='KAPANIS') {
-    // Kapanış → sağ panele yönlendir
-    sagSekmeAc('kapanis');
-    var ov = document.getElementById('opOverlay'); if(ov) ov.style.display='none';
-    return '<p style="color:var(--ok);font-size:13px">Kapanış formu sağ panelde açıldı →</p>';
+    // KAPANIS overlay gösterilmez — polling zaten bu kola girmiyor
+    // (otomatik popup sorunu: polling KAPANIS'i yakaladığında hideOpOverlay + toast kullanır)
+    return '<p style="color:var(--muted);font-size:13px">Kapanış için sol paneldeki Günü Kapat kartına tıklayın.</p>';
   }
   return '<p style="color:var(--muted);font-size:13px">Bu olay tipi için form yok.</p>';
 }
@@ -13219,6 +13218,16 @@ async function refresh() {
     // Aktif operasyon eventi
     if (aktif && (aktif.durum==='bekliyor'||aktif.durum==='gecikti')) {
       renderMain(data);
+      // KAPANIS eventi otomatik modal açmaz — sadece badge/toast ile bildirim yapar
+      // Kullanıcı kendi tıklayınca açar (otomatik popup sorunu giderildi)
+      if (String(aktif.tip||'').toUpperCase() === 'KAPANIS') {
+        if (!window._kapanisBildirimGosterildi || window._kapanisBildirimGosterildi !== aktif.id) {
+          window._kapanisBildirimGosterildi = aktif.id;
+          showToast('🌙 Kapanış zamanı geldi — hazır olduğunuzda Günü Kapat kartına tıklayın.', 'info', 6000);
+        }
+        hideOpOverlay();
+        return;
+      }
       if (!opAktifEvent || opAktifEvent.id !== aktif.id) showOpOverlay(aktif, op);
       else updateOpDurum(op, aktif);
       return;
@@ -13321,7 +13330,10 @@ function startPolling() {
       }
       renderMain(data);
       if (aktif && (aktif.durum==='bekliyor'||aktif.durum==='gecikti')) {
-        if (!opAktifEvent || opAktifEvent.id!==aktif.id) showOpOverlay(aktif, op);
+        // KAPANIS otomatik açılmaz — sadece badge güncellenir (polling popup sorunu)
+        if (String(aktif.tip||'').toUpperCase() !== 'KAPANIS') {
+          if (!opAktifEvent || opAktifEvent.id!==aktif.id) showOpOverlay(aktif, op);
+        }
       }
     } catch(e) {}
   }, POLL_MS);
