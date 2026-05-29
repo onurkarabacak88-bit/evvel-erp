@@ -407,17 +407,19 @@ def depo_kalem_kodu_resolve(cur: Any, urun_id: str, urun_ad_fallback: str = "") 
             db_ad = str(d.get("ad") or "").strip()
             if db_ad:
                 ad_src = db_ad
-            # 1. Elle atanmış kod — havuz kodu VEYA başka ürün UUID'si (en yüksek öncelik)
-            #    migration v5 sonrası her ürünün kendi UUID'si burada set edilmiş gelir
-            if ov:
-                if ov in _DEPO_FIZIKSEL_HAVUZ_KODLARI:
-                    return ov          # gerçek havuz kodu (bardak_buyuk, kahve_paket vb.)
-                if _UUID_RE.match(ov):
-                    return ov          # başka ürüne veya kendine bağlı UUID
-            # 2. Bu ürünün kendi UUID'si — explicit atama yoksa fallback olarak kullan
+            # 1. ÜRÜNÜN KENDİ UUID'si HER ZAMAN ÖNCELİKLİDİR.
+            #    Havuz mantığı kaldırıldı; depo_stok_kalem_kodu başka bir ürünün UUID'sine
+            #    (çapraz bağ) işaret ediyor olsa bile YOK SAYILIR — aksi halde birden fazla
+            #    ürün aynı satıra toplanır (dibek+türk kahvesi+... = tek kod = 5 hatası).
+            #    Her katalog ürünü kendi id'siyle tekil stok satırına yazılır.
             if _UUID_RE.match(uid):
                 return uid
-            # 3. İsim bazlı çözme — yalnızca UUID olmayan eski kalemler için son çare
+            # 2. uid UUID DEĞİL (eski non-UUID kod) — geriye dönük çözme mantığı
+            if ov:
+                if ov in _DEPO_FIZIKSEL_HAVUZ_KODLARI:
+                    return ov          # gerçek havuz kodu (eski kurulum)
+                if _UUID_RE.match(ov):
+                    return ov
             sk = _stok_key_from_urun_ad(ad_src)
             if sk and sk in _DEPO_FIZIKSEL_HAVUZ_KODLARI:
                 return sk
