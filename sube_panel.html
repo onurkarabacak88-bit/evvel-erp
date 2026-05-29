@@ -9797,6 +9797,37 @@ function refreshStokKatalogUI(prefix) {
   var data = _stokKatalogByPrefix[prefix];
   var wrap = document.getElementById(prefix + 'KatalogWrap');
   if (!wrap) return;
+
+  // ── Aktif düzenleme koruması ──────────────────────────────────────────
+  // Bu fonksiyon her tuş vuruşunda (input event) çağrılıyor ve listeyi
+  // innerHTML ile baştan kuruyor. Yazılan adet kutusu o anda DOM'dan
+  // koparılınca ekran numpad'i hedefini kaybediyor ve "sadece tek hane
+  // giriliyor" hatası oluşuyordu. Kullanıcı yazarken (numpad açıkken veya
+  // kutu odaktayken) ağır rebuild'i ertele; düzenleme bitince bir kez kur.
+  var _spPanel = document.getElementById('sayiPaneli');
+  var _numpadAcik = !!(_spPanel && _spPanel.classList.contains('acik'));
+  var _aktif = document.activeElement;
+  var _aktifIcerde = !!(_aktif && _aktif.tagName === 'INPUT' && wrap.contains(_aktif));
+  if (_numpadAcik || _aktifIcerde) {
+    wrap.dataset._stokRefreshBekliyor = '1';
+    if (!wrap._stokRefreshTimer) {
+      wrap._stokRefreshTimer = setInterval(function () {
+        var p2 = document.getElementById('sayiPaneli');
+        var na = !!(p2 && p2.classList.contains('acik'));
+        var a2 = document.activeElement;
+        var ic = !!(a2 && a2.tagName === 'INPUT' && wrap.contains(a2));
+        if (na || ic) return;            // hâlâ düzenleniyor → bekle
+        clearInterval(wrap._stokRefreshTimer);
+        wrap._stokRefreshTimer = null;
+        if (wrap.dataset._stokRefreshBekliyor === '1') {
+          delete wrap.dataset._stokRefreshBekliyor;
+          refreshStokKatalogUI(prefix);  // düzenleme bitti → tek sefer kur
+        }
+      }, 250);
+    }
+    return;
+  }
+
   if (!data || !data.length) {
     wrap.innerHTML = '<div class="merkez-mesaj-bos">Katalog yüklenemedi.</div>';
     if (prefix === 'ac') {
