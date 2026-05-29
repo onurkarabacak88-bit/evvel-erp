@@ -3322,6 +3322,7 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                     )
 
         # 2) Katalog kalemleri (kalemler listesi — STOK_KEYS dışı ürünler)
+        _islendi_kalemler: set = set()  # Aynı kalem_kodu'nun tek request'te iki kez düşmesini önler
         for k in kalemler:
             uid = str(k.get("urun_id") or "").strip()
             uad = str(k.get("urun_ad") or "").strip()
@@ -3332,6 +3333,10 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                 continue
             if not kk:
                 continue
+            # Aynı kalem_kodu bu request'te zaten işlendiyse atla
+            if kk in _islendi_kalemler:
+                continue
+            _islendi_kalemler.add(kk)
             adet = max(0, int(k.get("adet") or 0))
             if adet <= 0:
                 continue
