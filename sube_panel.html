@@ -13221,7 +13221,10 @@ async function refresh() {
       // KAPANIS eventi otomatik modal açmaz — sadece badge/toast ile bildirim yapar
       // Kullanıcı kendi tıklayınca açar (otomatik popup sorunu giderildi)
       if (String(aktif.tip||'').toUpperCase() === 'KAPANIS') {
-        if (!window._kapanisBildirimGosterildi || window._kapanisBildirimGosterildi !== aktif.id) {
+        // Toast yalnızca 23:45'ten sonra (veya gece yarısını geçmişse) göster
+        var _su = new Date(); var _h = _su.getHours(); var _dk = _su.getMinutes();
+        var _sonrasi = (_h === 23 && _dk >= 45) || (_h < 4); // 23:45–03:59 arası
+        if (_sonrasi && (!window._kapanisBildirimGosterildi || window._kapanisBildirimGosterildi !== aktif.id)) {
           window._kapanisBildirimGosterildi = aktif.id;
           showToast('🌙 Kapanış zamanı geldi — hazır olduğunuzda Günü Kapat kartına tıklayın.', 'info', 6000);
         }
