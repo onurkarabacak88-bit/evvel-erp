@@ -337,12 +337,18 @@ const _DEPO_FIZIKSEL_HAVUZ = new Set([
 const _UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function magazaDepoKalemKodu(it) {
   if (!it || typeof it !== 'object') return '';
+  const uid = String(it.id || '').trim();
+  // ── Havuz mantığı kaldırıldı ──
+  // Ürünün KENDİ UUID'si HER ZAMAN önceliklidir. Aksi halde isim grubu
+  // (kapak, bardak, kahve…) aynı fiziksel havuz koduna çöker ve birine
+  // yazılan değer hepsinde görünür. Backend depo_kalem_kodu_resolve ile aynı.
+  if (_UUID_PATTERN.test(uid)) return uid;
   const havuz = it.depo_stok_kalem_kodu ? String(it.depo_stok_kalem_kodu).trim() : '';
+  if (_UUID_PATTERN.test(havuz)) return havuz;
+  // UUID değil (eski non-UUID kayıt) — geriye dönük havuz çözümü
   if (havuz && _DEPO_FIZIKSEL_HAVUZ.has(havuz)) return havuz;
   const sk = magazaStokKeyFromUrunAd(it.ad);
   if (sk && _DEPO_FIZIKSEL_HAVUZ.has(sk)) return sk;
-  const uid = String(it.id || '').trim();
-  if (_UUID_PATTERN.test(uid)) return uid;
   if (havuz) return havuz;
   if (sk && sk !== 'kahve_paket') return sk;
   // Eski / özel kod: slug
