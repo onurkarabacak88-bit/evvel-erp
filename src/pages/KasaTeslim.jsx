@@ -191,22 +191,46 @@ export default function KasaTeslim() {
         </button>
       </div>
 
-      {/* Özet kartlar */}
+      {/* Özet kartlar — tıklanabilir filtre */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 16 }}>
         {[
-          { ikon: '🔄', etiket: 'Ara Teslim', tutar: ozet.ara_toplam, adet: ozet.ara_adet, renk: '#BA7517', bg: 'rgba(186,117,23,.10)', border: 'rgba(186,117,23,.30)' },
-          { ikon: '🌙', etiket: 'Gün Sonu', tutar: ozet.sonu_toplam, adet: ozet.sonu_adet, renk: 'var(--color-text-primary)', bg: 'var(--color-background-secondary)', border: 'var(--color-border-tertiary)' },
-          { ikon: '💰', etiket: 'Genel Toplam', tutar: ozet.genel_toplam, adet: ozet.ara_adet + ozet.sonu_adet, renk: 'var(--color-text-success)', bg: 'rgba(34,197,94,.08)', border: 'rgba(34,197,94,.28)' },
-        ].map((c) => (
-          <div key={c.etiket} style={{ background: c.bg, border: `1px solid ${c.border}`, borderRadius: 12, padding: '14px 16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <span style={{ fontSize: 18 }}>{c.ikon}</span>
-              <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontWeight: 600 }}>{c.etiket}</span>
+          { ikon: '🔄', etiket: 'Ara Teslim', tag: 'ara', tutar: ozet.ara_toplam, adet: ozet.ara_adet, renk: '#BA7517', bg: 'rgba(186,117,23,.10)', border: 'rgba(186,117,23,.30)', ring: '#BA7517' },
+          { ikon: '🌙', etiket: 'Gün Sonu', tag: 'gun_sonu', tutar: ozet.sonu_toplam, adet: ozet.sonu_adet, renk: 'var(--color-text-primary)', bg: 'var(--color-background-secondary)', border: 'var(--color-border-tertiary)', ring: 'var(--color-text-primary)' },
+          { ikon: '💰', etiket: 'Genel Toplam', tag: '', tutar: ozet.genel_toplam, adet: ozet.ara_adet + ozet.sonu_adet, renk: 'var(--color-text-success)', bg: 'rgba(34,197,94,.08)', border: 'rgba(34,197,94,.28)', ring: 'rgb(34,197,94)' },
+        ].map((c) => {
+          const aktif = turFiltre === c.tag;
+          return (
+            <div
+              key={c.etiket}
+              onClick={() => setTurFiltre((prev) => (prev === c.tag ? '' : c.tag))}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setTurFiltre((prev) => (prev === c.tag ? '' : c.tag)); }}
+              style={{
+                background: c.bg,
+                border: `1px solid ${aktif ? c.ring : c.border}`,
+                borderRadius: 12,
+                padding: '14px 16px',
+                cursor: 'pointer',
+                transition: 'box-shadow .12s, transform .12s, border-color .12s',
+                boxShadow: aktif ? `0 0 0 2px ${c.ring} inset` : 'none',
+                transform: aktif ? 'translateY(-1px)' : 'none',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 18 }}>{c.ikon}</span>
+                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontWeight: 600 }}>{c.etiket}</span>
+                {aktif && (
+                  <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, color: c.renk, background: 'var(--color-background-primary)', borderRadius: 999, padding: '1px 7px', border: `1px solid ${c.ring}` }}>
+                    FİLTRE AÇIK
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: c.renk, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>{fmt(c.tutar)} ₺</div>
+              <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 3 }}>{c.adet} teslim</div>
             </div>
-            <div style={{ fontSize: 26, fontWeight: 800, color: c.renk, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>{fmt(c.tutar)} ₺</div>
-            <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 3 }}>{c.adet} teslim</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Şube bazında kırılım */}
@@ -227,52 +251,77 @@ export default function KasaTeslim() {
         </div>
       )}
 
-      {/* Filtreler */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginBottom: 16 }}>
-        <div className="form-group">
-          <label>Tarih Başlangıç</label>
-          <input type="date" value={tarihBas} onChange={(e) => setTarihBas(e.target.value)} />
-        </div>
-        <div className="form-group">
-          <label>Tarih Bitiş</label>
-          <input type="date" value={tarihBit} onChange={(e) => setTarihBit(e.target.value)} />
-        </div>
-        <div className="form-group">
-          <label>Şube</label>
-          <select value={subeFiltre} onChange={(e) => setSubeFiltre(e.target.value)}>
-            <option value="">Tüm Şubeler</option>
-            {subeler.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.ad}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="form-group">
-          <label>Tür</label>
-          <select value={turFiltre} onChange={(e) => setTurFiltre(e.target.value)}>
-            <option value="">Tümü</option>
-            <option value="ara">Ara Teslim</option>
-            <option value="gun_sonu">Gün Sonu</option>
-          </select>
-        </div>
-        <div className="form-group">
-          <label>Teslim Alan</label>
-          <select value={aliciFiltre} onChange={(e) => setAliciFiltre(e.target.value)}>
-            <option value="">Tümü</option>
-            {alicilar.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.ad}
-                {a.unvan ? ` — ${a.unvan}` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="form-group">
-          <label>Teslim Eden</label>
-          <input value={edenFiltre} onChange={(e) => setEdenFiltre(e.target.value)} placeholder="İsim ara..." />
-        </div>
-      </div>
+      {/* Filtreler — kompakt araç çubuğu */}
+      {(() => {
+        const fld = { display: 'flex', flexDirection: 'column', gap: 3 };
+        const lbl = { fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--color-text-secondary)' };
+        const ctrl = { height: 34, padding: '0 9px', fontSize: 13, borderRadius: 8, border: '1px solid var(--color-border-tertiary)', background: 'var(--color-background-primary)', color: 'var(--color-text-primary)' };
+        const filtreVar = subeFiltre || turFiltre || aliciFiltre || edenFiltre;
+        return (
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'flex-end',
+              gap: 10,
+              marginBottom: 16,
+              padding: '12px 14px',
+              borderRadius: 12,
+              background: 'var(--color-background-secondary)',
+              border: '1px solid var(--color-border-tertiary)',
+            }}
+          >
+            <div style={fld}>
+              <span style={lbl}>Başlangıç</span>
+              <input type="date" value={tarihBas} onChange={(e) => setTarihBas(e.target.value)} style={ctrl} />
+            </div>
+            <div style={fld}>
+              <span style={lbl}>Bitiş</span>
+              <input type="date" value={tarihBit} onChange={(e) => setTarihBit(e.target.value)} style={ctrl} />
+            </div>
+            <div style={fld}>
+              <span style={lbl}>Şube</span>
+              <select value={subeFiltre} onChange={(e) => setSubeFiltre(e.target.value)} style={{ ...ctrl, minWidth: 130 }}>
+                <option value="">Tüm Şubeler</option>
+                {subeler.map((s) => (
+                  <option key={s.id} value={s.id}>{s.ad}</option>
+                ))}
+              </select>
+            </div>
+            <div style={fld}>
+              <span style={lbl}>Tür</span>
+              <select value={turFiltre} onChange={(e) => setTurFiltre(e.target.value)} style={{ ...ctrl, minWidth: 120 }}>
+                <option value="">Tümü</option>
+                <option value="ara">Ara Teslim</option>
+                <option value="gun_sonu">Gün Sonu</option>
+              </select>
+            </div>
+            <div style={fld}>
+              <span style={lbl}>Teslim Alan</span>
+              <select value={aliciFiltre} onChange={(e) => setAliciFiltre(e.target.value)} style={{ ...ctrl, minWidth: 140 }}>
+                <option value="">Tümü</option>
+                {alicilar.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.ad}{a.unvan ? ` — ${a.unvan}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={fld}>
+              <span style={lbl}>Teslim Eden</span>
+              <input value={edenFiltre} onChange={(e) => setEdenFiltre(e.target.value)} placeholder="İsim ara…" style={{ ...ctrl, minWidth: 130 }} />
+            </div>
+            {filtreVar && (
+              <button
+                onClick={() => { setSubeFiltre(''); setTurFiltre(''); setAliciFiltre(''); setEdenFiltre(''); }}
+                style={{ ...ctrl, cursor: 'pointer', fontWeight: 600, color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: 5 }}
+              >
+                ✕ Temizle
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Tablo */}
       {loading ? (
@@ -285,27 +334,24 @@ export default function KasaTeslim() {
           <p>Kayıt bulunamadı</p>
         </div>
       ) : (
-        <div className="table-wrap">
+        <div className="table-wrap" style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid var(--color-border-tertiary)' }}>
           {fallbackModu && (
             <div
-              className="alert-box yellow mb-16"
-              style={{ padding: '10px 14px', fontSize: 13 }}
+              className="alert-box yellow"
+              style={{ padding: '10px 14px', fontSize: 13, margin: 0, borderRadius: 0 }}
             >
               Seçili tarih ve filtrelerde kayıt yok; <strong>en son kasa teslim hareketleri</strong> (tarih filtresi
               dışında, son 200) listeleniyor.
             </div>
           )}
-          <table>
+          <table style={{ borderCollapse: 'collapse', width: '100%' }}>
             <thead>
-              <tr>
-                <th>Tarih</th>
-                <th>Saat</th>
-                <th>Şube</th>
-                <th>Tür</th>
-                <th>Teslim Eden</th>
-                <th>Teslim Alan</th>
-                <th style={{ textAlign: 'right' }}>Tutar</th>
-                <th>Açıklama</th>
+              <tr style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+                {['Tarih', 'Saat', 'Şube', 'Tür', 'Teslim Eden', 'Teslim Alan'].map((h) => (
+                  <th key={h} style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--color-text-secondary)', background: 'var(--color-background-secondary)', padding: '10px 12px', borderBottom: '2px solid var(--color-border-tertiary)' }}>{h}</th>
+                ))}
+                <th style={{ textAlign: 'right', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--color-text-secondary)', background: 'var(--color-background-secondary)', padding: '10px 12px', borderBottom: '2px solid var(--color-border-tertiary)' }}>Tutar</th>
+                <th style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--color-text-secondary)', background: 'var(--color-background-secondary)', padding: '10px 12px', borderBottom: '2px solid var(--color-border-tertiary)' }}>Açıklama</th>
               </tr>
             </thead>
             <tbody>
@@ -332,14 +378,19 @@ export default function KasaTeslim() {
                     ? new Date(s.olusturma).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
                     : '—';
                   out.push(
-                    <tr key={s.id} style={{ background: tur.bg }}>
-                      <td className="mono" style={{ fontSize: 12 }}>
+                    <tr
+                      key={s.id}
+                      style={{ background: tur.bg, transition: 'background .1s', borderBottom: '1px solid var(--color-border-tertiary)' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-background-secondary)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = tur.bg; }}
+                    >
+                      <td className="mono" style={{ fontSize: 12, padding: '9px 12px' }}>
                         {s.tarih}
                       </td>
-                      <td className="mono" style={{ fontSize: 12 }}>
+                      <td className="mono" style={{ fontSize: 12, padding: '9px 12px' }}>
                         {saat}
                       </td>
-                      <td style={{ fontWeight: 500 }}>🏪 {s.sube_adi}</td>
+                      <td style={{ fontWeight: 500, padding: '9px 12px' }}>🏪 {s.sube_adi}</td>
                       <td>
                         <span
                           style={{
