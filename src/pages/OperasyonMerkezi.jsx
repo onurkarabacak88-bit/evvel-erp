@@ -9262,22 +9262,28 @@ export default function OperasyonMerkezi() {
                 />
               </div>
             </div>
-            <p style={{ margin: 0, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
-              Varsayılan tarih <strong>iş günü</strong> (İstanbul'da gece 02:00'ye kadar önceki takvim günü). Kapanış son teslim: ertesi gün{' '}
-              {Number(kt?.kapanis_son_teslim_saat) === 2 || kt?.kapanis_son_teslim_saat == null ? '02:00' : `${String(kt?.kapanis_son_teslim_saat)}:00`}.
-              {kt?.takvim_tr && kt?.is_gunu_tr && String(kt.takvim_tr) !== String(kt.is_gunu_tr) ? (
-                <span> Takvim: <span className="mono">{kt.takvim_tr}</span> · İş günü: <span className="mono">{kt.is_gunu_tr}</span></span>
-              ) : null}
-            </p>
-            <p style={{ margin: 0, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
-              <strong>Ciro sütunları:</strong> kapanış yapılmış şubede şubenin panelde girdiği <strong>X nakit / POS / online</strong> (kapanış kaydı).
-              Online satış yoksa <strong>0</strong> görünür. Merkez onayında yanlışlıkla nakit+POS toplamının online’a yazılması düzeltilir (çift sayım uyarısı).
-              <strong>Toplam</strong> = Nakit + POS + Online. Devir / teslim / sabah kasa bu sütunlara girmez.
-            </p>
-            <p style={{ margin: 0, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
-              <strong>Nakit Δ:</strong> sabah kasa + <em>X nakit</em> − teslim − devir − ara teslim − <em>anlık gider (nakit)</em>.
-              Gider düşülmezse sahte kasa açığı çıkar. POS ve online Δ’ye dahil değildir.
-            </p>
+            {kt?.takvim_tr && kt?.is_gunu_tr && String(kt.takvim_tr) !== String(kt.is_gunu_tr) ? (
+              <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                Takvim: <span className="mono">{kt.takvim_tr}</span> · İş günü: <span className="mono">{kt.is_gunu_tr}</span>
+              </div>
+            ) : null}
+            <details style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.5 }}>
+              <summary style={{ cursor: 'pointer', fontWeight: 700, color: 'var(--text2)' }}>ℹ️ Bu ekran nasıl okunur?</summary>
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6, paddingLeft: 4 }}>
+                <p style={{ margin: 0 }}>
+                  Varsayılan tarih <strong>iş günü</strong> (İstanbul'da gece 02:00'ye kadar önceki takvim günü). Kapanış son teslim: ertesi gün{' '}
+                  {Number(kt?.kapanis_son_teslim_saat) === 2 || kt?.kapanis_son_teslim_saat == null ? '02:00' : `${String(kt?.kapanis_son_teslim_saat)}:00`}.
+                </p>
+                <p style={{ margin: 0 }}>
+                  <strong>Ciro:</strong> kapanış yapılmış şubede panelde girilen <strong>Nakit / POS / Online</strong> (Toplam = üçünün toplamı).
+                  Online satış yoksa 0 görünür; yanlışlıkla nakit+POS toplamı online'a yazılırsa düzeltilir.
+                </p>
+                <p style={{ margin: 0 }}>
+                  <strong>Para akışı / Nakit Δ:</strong> sabah kasa + <em>Nakit (X)</em> − teslim − devir − ara teslim − <em>anlık gider (nakit)</em>.
+                  Pozitif Δ = kasa açığı, negatif Δ = kasa fazlası. POS ve online Δ'ye dahil değildir.
+                </p>
+              </div>
+            </details>
 
             {/* ── Özet metrik kartları ── */}
             {kt && (
@@ -9311,9 +9317,141 @@ export default function OperasyonMerkezi() {
               </div>
             )}
 
-            {/* ── Ana tablo ── */}
+            {/* ── Şube kartları (varsayılan görünüm) ── */}
+            {satirlar.length > 0 && (() => {
+              const oncAksan = (r) => { const o = _oncelik(r); return o === 0 ? '#e85d5d' : o === 1 ? '#f97316' : o === 2 ? '#fbbf24' : '#22c55e'; };
+              const rozet = (c) => ({ background: 'var(--bg2)', color: c, border: `1px solid ${c}`, borderRadius: 999, padding: '2px 10px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' });
+              const durumRozetleri = (r) => {
+                const out = [];
+                out.push(
+                  r.kapanis_tamam
+                    ? <span key="k" style={rozet('#22c55e')}>✅ Kapandı</span>
+                    : r.acildi
+                    ? <span key="k" style={rozet('#e85d5d')}>🔴 Kapanmadı</span>
+                    : <span key="k" style={rozet('var(--text3)')}>Açılmadı</span>
+                );
+                if (r.ciro_onaylandi) out.push(<span key="c" style={rozet('#22c55e')}>✓ Ciro onaylı</span>);
+                else if (r.taslak_var && r.taslak_durum === 'bekliyor') out.push(<span key="c" style={rozet('#fbbf24')}>⏳ Onayda</span>);
+                else if (r.kapanis_tamam) out.push(<span key="c" style={rozet('#e85d5d')}>❌ Ciro yok</span>);
+                return out;
+              };
+              const akisSerit = (r) => {
+                if (!r.kapanis_tamam) {
+                  return (
+                    <div style={{ fontSize: 12, fontWeight: 700, color: r.acildi ? '#e85d5d' : 'var(--text3)', padding: '8px 0' }}>
+                      {r.acildi ? '⛔ Kapanış yapılmadı — kasa hareketi henüz yok' : '○ Şube bugün açılmadı'}
+                    </div>
+                  );
+                }
+                const adimlar = [
+                  { e: 'Sabah kasa', v: Number(r.sabah_kasa_tl) || 0, s: '', c: 'var(--text2)' },
+                  { e: 'Nakit (X)', v: Number(r.nakit) || 0, s: '+', c: '#22c55e' },
+                  { e: 'Teslim', v: Number(r.teslim_kasa_tl) || 0, s: '−', c: '#e85d5d' },
+                  { e: 'Devir', v: Number(r.devir) || 0, s: '−', c: '#60a5fa' },
+                ];
+                if ((Number(r.ara_teslim_tl) || 0) > 0) adimlar.push({ e: 'Ara teslim', v: Number(r.ara_teslim_tl), s: '−', c: '#e85d5d' });
+                if ((Number(r.anlik_gider_nakit_tl) || 0) > 0) adimlar.push({ e: 'Gider (N)', v: Number(r.anlik_gider_nakit_tl), s: '−', c: '#f59e0b' });
+                return (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'stretch', gap: 6 }}>
+                    {adimlar.map((a, i) => (
+                      <div key={i} style={{ display: 'flex', flexDirection: 'column', minWidth: 62, padding: '5px 9px', borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)' }}>
+                        <span style={{ fontSize: 9, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{a.e}</span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: a.c, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{a.s}{fmt(a.v)} ₺</span>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', alignItems: 'center', fontSize: 18, color: 'var(--text3)', fontWeight: 700 }}>=</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 88, padding: '5px 11px', borderRadius: 8, background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.3)' }}>
+                      <span style={{ fontSize: 9, color: 'var(--text3)' }}>Nakit Δ</span>
+                      {nakitDeltaHucre(r)}
+                    </div>
+                  </div>
+                );
+              };
+              const kart = (r) => {
+                const toplam = ktCiroToplam(r);
+                const onlineNet = ktOnlineNet(r);
+                return (
+                  <div key={r.sube_id} style={{ border: '1px solid var(--border)', borderLeft: `4px solid ${oncAksan(r)}`, borderRadius: 12, padding: '14px 16px', background: 'var(--bg)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 16, fontWeight: 800 }}>🏪 {r.sube_adi}</span>
+                      <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>{durumRozetleri(r)}</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 18, flexWrap: 'wrap' }}>
+                      <div>
+                        <div style={{ fontSize: 10, color: 'var(--text3)' }}>Toplam ciro</div>
+                        <div style={{ fontSize: 24, fontWeight: 800, color: r.ciro_onaylandi ? '#22c55e' : 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{toplam > 0 ? `${fmt(toplam)} ₺` : '—'}</div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 16 }}>
+                        {[['Nakit', Number(r.nakit) || 0], ['POS', Number(r.pos) || 0], ['Online', onlineNet]].map(([e, v]) => (
+                          <div key={e}>
+                            <div style={{ fontSize: 9, color: 'var(--text3)' }}>{e}</div>
+                            <div style={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{v > 0 ? `${fmt(v)} ₺` : '—'}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    {akisSerit(r)}
+                    <div style={{ fontSize: 11, color: 'var(--text3)', display: 'flex', gap: 14, flexWrap: 'wrap', borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+                      <span>🕐 {saat(r.kapanis_ts) || '—'}</span>
+                      <span>👤 {r.kapanis_personel || '—'}</span>
+                      {r.gonderen_ad ? <span>📤 {r.gonderen_ad}</span> : null}
+                    </div>
+                  </div>
+                );
+              };
+              const grid = (arr) => (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(390px, 1fr))', gap: 12 }}>
+                  {arr.map(kart)}
+                </div>
+              );
+              const grupBaslik = (txt, renk, sayi) => (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 0' }}>
+                  <span style={{ width: 9, height: 9, borderRadius: 999, background: renk, flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{txt}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text3)' }}>· {sayi} şube</span>
+                </div>
+              );
+              const aksiyonlar = satirlar.filter((r) => _oncelik(r) < 3);
+              const tamamlar = satirlar.filter((r) => _oncelik(r) === 3);
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  {aksiyonlar.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {grupBaslik('Aksiyon bekleyen', '#e85d5d', aksiyonlar.length)}
+                      {grid(aksiyonlar)}
+                    </div>
+                  )}
+                  {tamamlar.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {grupBaslik('Tamamlanan', '#22c55e', tamamlar.length)}
+                      {grid(tamamlar)}
+                    </div>
+                  )}
+                  {/* Gün toplamı şeridi */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(115px, 1fr))', gap: 10, borderTop: '2px solid var(--border)', paddingTop: 12 }}>
+                    {[
+                      ['Toplam ciro', topCiro, '#22c55e'],
+                      ['Sabah kasa', topSabah, 'var(--text)'],
+                      ['Teslim', topTeslim, 'var(--text)'],
+                      ['Devir', topDevir, 'var(--text)'],
+                      ['Ara teslim', topAraTeslim, 'var(--text)'],
+                      ['Gider (N)', topAgider, 'var(--text)'],
+                    ].map(([e, v, c]) => (
+                      <div key={e} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px' }}>
+                        <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 2 }}>{e}</div>
+                        <div style={{ fontSize: 15, fontWeight: 800, color: c, fontVariantNumeric: 'tabular-nums' }}>{fmt(v)} ₺</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── Detaylı tablo (açılır) ── */}
             {satirlar.length > 0 && (
-              <div style={{ overflowX: 'auto', borderRadius: 10, border: '1px solid var(--border)' }}>
+              <details style={{ marginTop: 4 }}>
+                <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: 'var(--text2)', padding: '6px 2px' }}>📋 Detaylı tablo — tüm sütunlar</summary>
+              <div style={{ overflowX: 'auto', borderRadius: 10, border: '1px solid var(--border)', marginTop: 8 }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr style={{ background: 'var(--bg2)' }}>
@@ -9480,6 +9618,7 @@ export default function OperasyonMerkezi() {
                   )}
                 </table>
               </div>
+              </details>
             )}
 
             {/* Alt not */}
