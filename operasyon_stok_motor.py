@@ -3401,6 +3401,13 @@ def sube_depo_stok_depo_giris_ekle(
     if ad <= 0:
         return
     lab = (STOK_LABEL_TR.get(kk) or (kalem_adi or "") or kk).strip() or kk
+    # İzlenebilirlik: giriş öncesi mevcut adedi oku (hareket log onceki/sonraki için)
+    cur.execute(
+        "SELECT COALESCE(mevcut_adet, 0) AS m FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s",
+        (sube_id, kk),
+    )
+    _onceki_row = cur.fetchone()
+    _onceki = float((dict(_onceki_row).get("m") if _onceki_row else 0) or 0)
     cur.execute(
         """
         INSERT INTO sube_depo_stok
@@ -3413,6 +3420,20 @@ def sube_depo_stok_depo_giris_ekle(
         """,
         (str(uuid.uuid4()), sube_id, kk, lab, ad),
     )
+    # Hareket kaydı — her teslim al girişi izlenebilir (çoklu yazma teşhisi için)
+    try:
+        cur.execute(
+            """
+            INSERT INTO sube_depo_stok_hareket
+                (id, sube_id, kalem_kodu, kalem_adi, hareket_turu,
+                 miktar, onceki_miktar, sonraki_miktar, kaynak_tip, aciklama)
+            VALUES (%s, %s, %s, %s, 'TESLIM_GIRIS', %s, %s, %s, 'teslim_al', %s)
+            """,
+            (str(uuid.uuid4()), sube_id, kk, lab, float(ad), _onceki, _onceki + ad,
+             f"Teslim al — {lab} +{ad}"),
+        )
+    except Exception:
+        pass  # hareket log kritik değil, ana girişi engelleme
     sube_depo_stok_alarm_sonrasi_temizle(cur, sube_id, kk, lab)
 
     # ── Deferred Reconciliation ────────────────────────────────────────────────

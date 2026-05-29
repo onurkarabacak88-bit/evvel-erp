@@ -3625,6 +3625,26 @@ $$;
                     print("[MIGRATION] ✓ DOĞRULANDI: her ürün kendine ait tekil UUID'ye bağlı, çakışma yok")
                 else:
                     print(f"[MIGRATION] ⚠ UYARI: çakışma={_dup}, kendine_bagli_olmayan={_bad} — incelenmeli")
+
+            # Migration v10: temiz test zemini — tüm şube depo stoklarını sıfırla
+            # (önceki tekrarlı testlerden biriken değerleri temizle; kullanıcı tek temiz
+            #  teslim al ile doğrulayabilsin)
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log
+                WHERE ad='sube_depo_stok_temiz_zemin_v10' LIMIT 1
+            """)
+            if not cur.fetchone():
+                cur.execute("""
+                    UPDATE sube_depo_stok
+                    SET mevcut_adet = 0, rezerve_adet = 0, guncelleme = NOW()
+                    WHERE mevcut_adet <> 0 OR rezerve_adet <> 0
+                """)
+                v10_count = cur.rowcount
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay)
+                    VALUES ('sube_depo_stok_temiz_zemin_v10', %s::jsonb)
+                """, (f'{{"sifirlanan_satir": {v10_count}}}',))
+                print(f"[MIGRATION] sube_depo_stok_temiz_zemin_v10: {v10_count} stok satırı sıfırlandı")
         except Exception as _mig_e:
             print(f"[MIGRATION WARN] siparis_urun_depo_kalem_kodu_uuid_v5: {_mig_e}")
 
