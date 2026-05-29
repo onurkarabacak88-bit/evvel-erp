@@ -8488,7 +8488,7 @@ function renderDepoKabulSection() {
       h += '<div class="dk-kalem-ad">' + ka + '</div>';
       h += '<div class="dk-adet-wrap">';
       h += '<button type="button" class="dk-adet-btn" id="' + minusId + '" data-inp="' + inpId + '" aria-label="Azalt">−</button>';
-      h += '<input class="teslim-kabul-adet dk-adet" type="tel" inputmode="numeric" id="' + escHtml(inpId) + '" value="" placeholder="0" data-yolda-id="' + yid + '" data-kalem-kodu="' + kk + '" data-kalem-adi="' + ka + '" data-tid="' + escHtml(tid) + '" />';
+      h += '<input class="teslim-kabul-adet dk-adet" type="text" inputmode="numeric" autocomplete="off" id="' + escHtml(inpId) + '" value="" placeholder="0" data-yolda-id="' + yid + '" data-kalem-kodu="' + kk + '" data-kalem-adi="' + ka + '" data-tid="' + escHtml(tid) + '" />';
       h += '<button type="button" class="dk-adet-btn" id="' + plusId + '" data-inp="' + inpId + '" aria-label="Artır">+</button>';
       h += '</div>';
       h += '</div>';
@@ -8518,7 +8518,9 @@ function renderDepoKabulSection() {
 
   /* ── +/− buton ve input event bağlantıları ── */
   el.querySelectorAll('.dk-adet-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
+    var _holdTimer = null;
+    var _holdInterval = null;
+    function _doStep() {
       var inp = document.getElementById(btn.dataset.inp);
       if (!inp) return;
       var v = parseInt(inp.value, 10) || 0;
@@ -8526,7 +8528,23 @@ function renderDepoKabulSection() {
       var nv = Math.max(0, v + delta);
       inp.value = String(nv);
       inp.dispatchEvent(new Event('input', { bubbles: true }));
-    });
+    }
+    function _startHold() {
+      _holdTimer = setTimeout(function() {
+        _holdInterval = setInterval(_doStep, 80); // hızlı tekrar
+      }, 400); // 400ms sonra hızlanma başlar
+    }
+    function _stopHold() {
+      if (_holdTimer)    { clearTimeout(_holdTimer);   _holdTimer = null; }
+      if (_holdInterval) { clearInterval(_holdInterval); _holdInterval = null; }
+    }
+    btn.addEventListener('click', _doStep);
+    btn.addEventListener('mousedown',  _startHold);
+    btn.addEventListener('touchstart', _startHold, { passive: true });
+    btn.addEventListener('mouseup',    _stopHold);
+    btn.addEventListener('mouseleave', _stopHold);
+    btn.addEventListener('touchend',   _stopHold);
+    btn.addEventListener('touchcancel',_stopHold);
   });
 
   el.querySelectorAll('.teslim-kabul-adet').forEach(function (inp) {
@@ -13457,11 +13475,23 @@ window.addEventListener('beforeunload', function (e) {
         });
       }
       if (kart) {
+        // Modal içindeyse karta yapıştır
         var rect = kart.getBoundingClientRect();
         panel.style.setProperty('--sp-top', rect.top + 'px');
         panel.style.setProperty('--sp-h', rect.height + 'px');
         panel.style.setProperty('--sp-ty', '0px');
         panel.style.borderRadius = '16px 0 0 16px';
+      } else {
+        // Normal tab (teslim al, ürün aç vb.) — inputun yanına sabitle
+        var elRect = el.getBoundingClientRect();
+        var vh = window.innerHeight || document.documentElement.clientHeight;
+        // Inputun altında yeterli yer yoksa üstünde göster
+        var topPos = elRect.bottom + 8;
+        if (topPos + 320 > vh) topPos = Math.max(8, elRect.top - 328);
+        panel.style.setProperty('--sp-top', topPos + 'px');
+        panel.style.setProperty('--sp-h', '320px');
+        panel.style.setProperty('--sp-ty', '0px');
+        panel.style.borderRadius = '16px';
       }
       panel.classList.add('acik');
     }
