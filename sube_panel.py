@@ -2800,6 +2800,26 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             }
 
         sevk_kalemleri = {k: max(0, int(delta.get(k) or 0)) for k in STOK_KEYS}
+
+        # UUID kalemler için pool key'e yazılmış miktarları sevk_kalemleri'nden düş.
+        # (Frontend eski sürümde pool key + kalemler ikisine de yazıyordu → çift giriş riski)
+        import re as _re_sevk
+        _uuid_pat = _re_sevk.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-', _re_sevk.IGNORECASE)
+        for _it in kalemler:
+            if not isinstance(_it, dict):
+                continue
+            _uid = str(_it.get("urun_id") or "").strip()
+            if not _uuid_pat.match(_uid):
+                continue  # UUID değil — eskiden pool'a yazılıyordu, dokunma
+            _uad = str(_it.get("urun_ad") or "").strip()
+            _sk = _stok_key_from_urun_ad(_uad)
+            if _sk and int(sevk_kalemleri.get(_sk) or 0) > 0:
+                try:
+                    _adet_cikar = max(0, int(_it.get("adet") or 0))
+                    sevk_kalemleri[_sk] = max(0, int(sevk_kalemleri[_sk]) - _adet_cikar)
+                except (TypeError, ValueError):
+                    pass
+
         if sum(sevk_kalemleri.values()) <= 0 and kalemler:
             for it in kalemler:
                 if not isinstance(it, dict):
