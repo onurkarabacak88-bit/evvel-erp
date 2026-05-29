@@ -3579,6 +3579,52 @@ $$;
                     VALUES ('sube_depo_stok_sifirla_v8b', %s::jsonb)
                 """, (f'{{"sifirlanan_satir": {v8b_count}}}',))
                 print(f"[MIGRATION] sube_depo_stok_sifirla_v8b: {v8b_count} stok satırı sıfırlandı")
+
+            # Migration v9: TÜM ürünler (pasif dahil) kendi UUID'sine + doğrulama
+            # v8 sadece aktif ürünleri kapsadı. Pasif bir ürün tekrar aktifleştirilirse
+            # çapraz bağ geri gelebilirdi. Burada koşulsuz herkesi kendi UUID'sine sabitliyoruz
+            # ve sonrasında çakışma (aynı kodu paylaşan ürün) kalmadığını doğrulayıp logluyoruz.
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log
+                WHERE ad='siparis_urun_depo_kalem_kodu_uuid_v9' LIMIT 1
+            """)
+            if not cur.fetchone():
+                cur.execute("""
+                    UPDATE siparis_urun
+                    SET depo_stok_kalem_kodu = id::text,
+                        guncelleme = NOW()
+                    WHERE depo_stok_kalem_kodu IS DISTINCT FROM id::text
+                """)
+                v9_count = cur.rowcount
+                # Doğrulama: aynı depo_stok_kalem_kodu'yu paylaşan ürün kaldı mı?
+                cur.execute("""
+                    SELECT COUNT(*) AS dup FROM (
+                        SELECT depo_stok_kalem_kodu
+                        FROM siparis_urun
+                        WHERE depo_stok_kalem_kodu IS NOT NULL
+                        GROUP BY depo_stok_kalem_kodu
+                        HAVING COUNT(*) > 1
+                    ) t
+                """)
+                _dup_row = cur.fetchone()
+                _dup = int((dict(_dup_row).get("dup") if _dup_row else 0) or 0)
+                # Doğrulama: kendi UUID'sine bağlı OLMAYAN ürün kaldı mı?
+                cur.execute("""
+                    SELECT COUNT(*) AS bad FROM siparis_urun
+                    WHERE depo_stok_kalem_kodu IS DISTINCT FROM id::text
+                """)
+                _bad_row = cur.fetchone()
+                _bad = int((dict(_bad_row).get("bad") if _bad_row else 0) or 0)
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay)
+                    VALUES ('siparis_urun_depo_kalem_kodu_uuid_v9', %s::jsonb)
+                """, (f'{{"guncellenen_urun": {v9_count}, "kalan_cakisma": {_dup}, "kendine_bagli_olmayan": {_bad}}}',))
+                print(f"[MIGRATION] siparis_urun_depo_kalem_kodu_uuid_v9: "
+                      f"{v9_count} ürün sabitlendi | kalan_cakisma={_dup} | kendine_bagli_olmayan={_bad}")
+                if _dup == 0 and _bad == 0:
+                    print("[MIGRATION] ✓ DOĞRULANDI: her ürün kendine ait tekil UUID'ye bağlı, çakışma yok")
+                else:
+                    print(f"[MIGRATION] ⚠ UYARI: çakışma={_dup}, kendine_bagli_olmayan={_bad} — incelenmeli")
         except Exception as _mig_e:
             print(f"[MIGRATION WARN] siparis_urun_depo_kalem_kodu_uuid_v5: {_mig_e}")
 
