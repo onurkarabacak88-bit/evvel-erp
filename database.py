@@ -3535,6 +3535,50 @@ $$;
                     VALUES ('sube_depo_stok_havuz_delete_v7', %s::jsonb)
                 """, (f'{{"silinen_satir": {v7_count}}}',))
                 print(f"[MIGRATION] sube_depo_stok_havuz_delete_v7: {v7_count} havuz satırı tamamen silindi")
+
+            # Migration v8: HER aktif ürün KOŞULSUZ kendi UUID'sine bağlanır (1-to-1 zorlama)
+            # v6 sadece havuz kodlu ürünleri düzeltti; ama bir ürün BAŞKA bir ürünün
+            # UUID'sine bağlıysa (örn. dibek → filtre.id) ikisi aynı satıra çözümleniyordu;
+            # depo ekranı toplamı iki ürünün de karşısına yazıyordu. Bu migration her ürünü
+            # kendi UUID'sine sabitleyerek çapraz bağ kalıntılarını siler.
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log
+                WHERE ad='siparis_urun_depo_kalem_kodu_uuid_v8' LIMIT 1
+            """)
+            if not cur.fetchone():
+                cur.execute("""
+                    UPDATE siparis_urun
+                    SET depo_stok_kalem_kodu = id::text,
+                        guncelleme = NOW()
+                    WHERE aktif = TRUE
+                      AND depo_stok_kalem_kodu IS DISTINCT FROM id::text
+                """)
+                v8_count = cur.rowcount
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay)
+                    VALUES ('siparis_urun_depo_kalem_kodu_uuid_v8', %s::jsonb)
+                """, (f'{{"guncellenen_urun": {v8_count}}}',))
+                print(f"[MIGRATION] siparis_urun_depo_kalem_kodu_uuid_v8: {v8_count} ürün kendi UUID'sine sabitlendi")
+
+            # Migration v8b: çapraz bağ döneminden kalan tüm sube_depo_stok satırlarını sıfırla
+            # Artık her ürün kendi UUID'sinde; eski karışık (toplanmış) değerler yanlış.
+            # Kullanıcı teslim al'dan gerçek adetleri yeniden girecek.
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log
+                WHERE ad='sube_depo_stok_sifirla_v8b' LIMIT 1
+            """)
+            if not cur.fetchone():
+                cur.execute("""
+                    UPDATE sube_depo_stok
+                    SET mevcut_adet = 0, rezerve_adet = 0, guncelleme = NOW()
+                    WHERE mevcut_adet <> 0 OR rezerve_adet <> 0
+                """)
+                v8b_count = cur.rowcount
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay)
+                    VALUES ('sube_depo_stok_sifirla_v8b', %s::jsonb)
+                """, (f'{{"sifirlanan_satir": {v8b_count}}}',))
+                print(f"[MIGRATION] sube_depo_stok_sifirla_v8b: {v8b_count} stok satırı sıfırlandı")
         except Exception as _mig_e:
             print(f"[MIGRATION WARN] siparis_urun_depo_kalem_kodu_uuid_v5: {_mig_e}")
 
