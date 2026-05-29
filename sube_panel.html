@@ -4715,7 +4715,10 @@
     .kap-para-grid  { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; margin-bottom: 6px; }
     .kap-row2       { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 6px; }
     .kap-stok3      { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
-    .kap-stok5      { display: grid; grid-template-columns: repeat(5,1fr); gap: 7px; }
+    /* Ürün sayım ızgarası — 3'lü düzen (5 ürün = 3 üst + 2 alt) ki hepsi aynı anda görünsün, yatay kaydırma olmasın */
+    .kap-stok5      { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; }
+    .kap-stok5 > div { min-width: 0; }
+    .kap-stok5 input { width: 100%; box-sizing: border-box; min-width: 0; }
 
     /* Küçük etiket */
     .kap-lbl { font-size: 11px !important; font-weight: 700 !important;
@@ -5497,19 +5500,6 @@
     <div class="islem-govde">
       <div id="kasaDevirDurum"></div>
       <div id="kasaDevirForm"></div>
-      <div id="kasaDevirKurtarWrap" style="margin-top:14px;border-top:1px dashed var(--border,#444);padding-top:12px">
-        <button type="button" class="btn btn-ghost btn-sm" id="kurtarAcBtn" style="font-size:12px">🛟 Takılı devri kurtar (yönetici)</button>
-        <div id="kurtarPanel" style="display:none;margin-top:10px">
-          <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:10px">Sistemsel hata nedeniyle 1. imza atılmış ama tamamlanamamış bir devri, gerçek devralan akşamçı + yönetici onayıyla tamamlar. Çift imza korunur, deftere KURTARMA olarak yazılır.</div>
-          <div class="form-group"><label>İş Günü (boş = bugün)</label><input id="kurtarTarih" type="date" /></div>
-          <div class="form-group"><label>Devralan (Akşamçı)</label><select id="kurtarAksamci"></select></div>
-          <div class="form-group"><label>Akşamçı PIN</label><input id="kurtarAksamciPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>
-          <div class="form-group"><label>Onaylayan Yönetici</label><select id="kurtarYonetici"></select></div>
-          <div class="form-group"><label>Yönetici PIN</label><input id="kurtarYoneticiPin" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>
-          <button class="btn btn-warn btn-sm" type="button" id="kurtarBtn">Devri Kurtar ve Tamamla</button>
-          <div id="kurtarMsg"></div>
-        </div>
-      </div>
     </div>
   </div>
 </div>
@@ -9033,8 +9023,7 @@ function fillSels() {
              'xrPers','puanPers',
              'dvPers1','dvPers2','kapPers',
              'kasaUser','ktPers',
-             'svPers','frPers','dkPers',
-             'kurtarAksamci','kurtarYonetici'];
+             'svPers','frPers','dkPers'];
   ids.forEach(function(id){
     var el = document.getElementById(id); if (!el || el.tagName !== 'SELECT') return;
     var cur = el.value;
@@ -9337,7 +9326,7 @@ function buildAcilisWizFields() {
   if (acilisWizStep===3) return (
     '<div class="acilis-wiz-inner">' +
     _awStepHdr(3) +
-    '<div class="stok-grid">' +
+    '<div class="kap-stok5">' +
     '<div class="stok-item"><label>Su</label><input id="awSu" inputmode="numeric" placeholder="0" /></div>' +
     '<div class="stok-item"><label>Süt</label><input id="awSut" inputmode="numeric" placeholder="0" /></div>' +
     '<div class="stok-item"><label>Redbull</label><input id="awRb" inputmode="numeric" placeholder="0" /></div>' +
@@ -11934,43 +11923,6 @@ function updateSolAksiyonChips(data) {
   }
 }
 
-function wireKurtar() {
-  var acBtn = document.getElementById('kurtarAcBtn');
-  var panel = document.getElementById('kurtarPanel');
-  if (!acBtn || !panel || acBtn._wired) { if (typeof fillSels === 'function') fillSels(); return; }
-  acBtn._wired = true;
-  acBtn.onclick = function(){
-    var acik = panel.style.display !== 'none';
-    panel.style.display = acik ? 'none' : 'block';
-    if (!acik) fillSels();
-  };
-  var btn = document.getElementById('kurtarBtn');
-  if (btn) btn.onclick = async function(){
-    setMsg('kurtarMsg','',''); btn.disabled = true;
-    try {
-      var aks = selVal('kurtarAksamci');
-      var aksPin = inpVal('kurtarAksamciPin').replace(/\D/g,'').slice(0,4);
-      var yon = selVal('kurtarYonetici');
-      var yonPin = inpVal('kurtarYoneticiPin').replace(/\D/g,'').slice(0,4);
-      var tarih = inpVal('kurtarTarih');
-      if (!aks) throw new Error('Devralan akşamçıyı seçin');
-      if (aksPin.length !== 4) throw new Error('Akşamçı 4 haneli PIN girin');
-      if (!yon) throw new Error('Onaylayan yöneticiyi seçin');
-      if (yonPin.length !== 4) throw new Error('Yönetici 4 haneli PIN girin');
-      if (aks === yon) throw new Error('Akşamçı ile yönetici farklı kişi olmalı');
-      var body = { aksamci_devralan_id: aks, pin: aksPin, yetkili_id: yon, yetkili_pin: yonPin };
-      if (tarih) body.tarih = tarih;
-      await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/vardiya-devri/kurtar',{method:'POST',body:body});
-      setMsg('kurtarMsg','Devir kurtarıldı ve tamamlandı. Artık kapanış yapılabilir.','msg-ok');
-      setTimeout(refresh, 900);
-    } catch(e) {
-      if (e.status===429) handle429(document.getElementById('kurtarMsg'),e);
-      else setMsg('kurtarMsg', e.message || 'Hata', 'msg-err');
-    }
-    btn.disabled = false;
-  };
-}
-
 function renderKasaDevir() {
   var vd = lastData && (lastData.vardiya_devir || {});
   var row = vd && vd.vardiya_devir;
@@ -11978,8 +11930,6 @@ function renderKasaDevir() {
   var durEl = document.getElementById('kasaDevirDurum');
   var frmEl = document.getElementById('kasaDevirForm');
   if (!durEl || !frmEl) return;
-
-  wireKurtar();
 
   // TAMAMLANDI
   if (durum === 'tamamlandi') {
@@ -12055,7 +12005,7 @@ function renderKasaDevir() {
     '</div></div>' +
     '<div id="dvStep3" class="siparis-detay" style="display:none">' +
     '<div class="sip-alt-baslik">Adım 3 / 5 — Ürün Say</div>' +
-    '<div class="stok-grid">' +
+    '<div class="kap-stok5">' +
     '<div class="stok-item"><label>Su</label><input id="dvSu" inputmode="numeric" placeholder="0" /></div>' +
     '<div class="stok-item"><label>Redbull</label><input id="dvRb" inputmode="numeric" placeholder="0" /></div>' +
     '<div class="stok-item"><label>Soda</label><input id="dvSo" inputmode="numeric" placeholder="0" /></div>' +
@@ -12904,7 +12854,7 @@ function buildOpFields(tip, ev) {
     );
     if (opAcilisStep===3) return (
       '<p style="color:var(--muted);font-size:12px;margin-bottom:12px">3 / 4 · Ürün sayımları</p>' +
-      '<div class="stok-grid">' +
+      '<div class="kap-stok5">' +
       '<div class="stok-item"><label>Su</label><input id="opSu" inputmode="numeric" placeholder="0" /></div>' +
       '<div class="stok-item"><label>Süt</label><input id="opSut" inputmode="numeric" placeholder="0" /></div>' +
       '<div class="stok-item"><label>Redbull</label><input id="opRb" inputmode="numeric" placeholder="0" /></div>' +
