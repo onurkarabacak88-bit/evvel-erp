@@ -9875,6 +9875,10 @@ function wireStokInputDelegation(formEl, prefix) {
     var n = parseInt(digits, 10);
     stokKalemDeger[prefix][k] = isNaN(n) ? 0 : n;
     inp.value = String(stokKalemDeger[prefix][k]);
+    // Fiziksel klavye girişini sayiPaneli'ye bildir — kapanışta overwrite etmesin
+    if (window._spSyncDeger && inp === document.activeElement) {
+      window._spSyncDeger(inp.value);
+    }
   });
 }
 function stokNormAd(v){
@@ -13523,8 +13527,23 @@ window.addEventListener('beforeunload', function (e) {
     }
   };
 
+  // Fiziksel klavye girişinde spDeger'i senkronize et
+  // wireStokInputDelegation veya diğer input handler'lar buradan çağırır
+  window._spSyncDeger = function(val) {
+    if (!spAktifEl) return;
+    spDeger = String(val || '');
+    spIlkGiris = false;
+    spEkranGuncelle();
+  };
+
   function _spCommit() {
     if (!spAktifEl) return;
+    // Fiziksel klavye ile yazıldıysa spDeger güncel olmayabilir;
+    // alan değeri spDeger'den farklıysa alan değerini kullan
+    var aktuelDeger = (spAktifEl.value || '').trim();
+    if (aktuelDeger !== spDeger && aktuelDeger !== '') {
+      spDeger = aktuelDeger;
+    }
     var finalVal = spDeger;
     if (finalVal.endsWith('.')) finalVal = finalVal.slice(0, -1);
     spAktifEl.value = finalVal;
