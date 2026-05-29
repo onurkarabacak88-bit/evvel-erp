@@ -403,16 +403,18 @@ def depo_kalem_kodu_resolve(cur: Any, urun_id: str, urun_ad_fallback: str = "") 
         row = cur.fetchone()
         if row:
             d = dict(row) if not isinstance(row, dict) else row
-            # 1. Elle atanmış fiziksel havuz kodu (admin açıkça set ettiyse — en yüksek öncelik)
             ov = str(d.get("depo_stok_kalem_kodu") or "").strip()
             db_ad = str(d.get("ad") or "").strip()
             if db_ad:
                 ad_src = db_ad
-            if ov and ov in _DEPO_FIZIKSEL_HAVUZ_KODLARI:
-                return ov
-            # 2. UUID → UUID'nin kendisi kalem_kodu olur (isme göre auto-resolve'dan önce gelir)
-            #    Böylece "Filtre Kahve" ve "Espresso" ayrı satırlara gider, aynı havuzu
-            #    paylaşmaları için admin açıkça depo_stok_kalem_kodu atamalıdır.
+            # 1. Elle atanmış kod — havuz kodu VEYA başka ürün UUID'si (en yüksek öncelik)
+            #    migration v5 sonrası her ürünün kendi UUID'si burada set edilmiş gelir
+            if ov:
+                if ov in _DEPO_FIZIKSEL_HAVUZ_KODLARI:
+                    return ov          # gerçek havuz kodu (bardak_buyuk, kahve_paket vb.)
+                if _UUID_RE.match(ov):
+                    return ov          # başka ürüne veya kendine bağlı UUID
+            # 2. Bu ürünün kendi UUID'si — explicit atama yoksa fallback olarak kullan
             if _UUID_RE.match(uid):
                 return uid
             # 3. İsim bazlı çözme — yalnızca UUID olmayan eski kalemler için son çare

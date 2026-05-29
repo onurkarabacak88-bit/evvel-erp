@@ -284,11 +284,12 @@ def _kalemler_to_cikis(
         if adet_k <= 0:
             continue
         if uid and uid in STOK_KEYS:
-            kk = uid
+            kk = uid          # doğrudan pool kodu (bardak_kucuk vb.)
         elif uid:
             kk = depo_kalem_kodu_resolve(cur, uid, uad) or ""
         else:
-            kk = _stok_key_from_urun_ad(uad) or ""
+            # urun_id eksik — migration v5 sonrası olmamalı; isme çözme YOK
+            continue
         if not kk:
             continue
         merged[kk] = merged.get(kk, 0) + adet_k

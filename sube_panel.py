@@ -3187,7 +3187,11 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
             if uid:
                 kk = depo_kalem_kodu_resolve(cur, uid, uad) or ""
             else:
-                kk = _kf_urun_ac(uad) or ""
+                # urun_id eksik — migration v5 sonrası olmamalı; isme göre çözme YOK
+                # Defter için logluyoruz; pool kaplama'ya dahil edilmez
+                import logging as _lg; _lg.getLogger(__name__).warning(
+                    "urun-ac: kalemler[%s] urun_id eksik, atlandı (urun_ad=%s)", k, uad)
+                continue
             if kk not in kaplanan:
                 continue
             try:
@@ -3324,7 +3328,8 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
             if uid:
                 kk = depo_kalem_kodu_resolve(cur, uid, uad)
             else:
-                kk = _kf_urun_ac(uad) or ""
+                # urun_id eksik — isme göre çözme artık YOK (migration v5 sonrası her ürün UUID'li)
+                continue
             if not kk:
                 continue
             adet = max(0, int(k.get("adet") or 0))

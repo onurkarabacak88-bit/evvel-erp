@@ -11256,8 +11256,14 @@ function stokBody(prefix, data, credsOverride) {
       var adet = parseInt((stokKalemDeger[prefix] && stokKalemDeger[prefix][key]) || 0, 10);
       if (isNaN(adet) || adet <= 0) return;
       body.kalemler.push({ kategori_id: kat.id, urun_id: it.id, urun_ad: it.ad, aciklama: it.aciklama || null, adet: adet });
-      var apiKey = stokApiKeyFromAd(it.ad);
-      if (apiKey) body[apiKey] = (body[apiKey] || 0) + adet;
+      // UUID ürünler YALNIZCA kalemler listesine girer; eski pool key alanlarına (kahve_paket vb.)
+      // YAZMA — aksi halde backend hem kalemler hem delta üzerinden çift düşme yapar.
+      // Pool key yalnızca katalogsuz ürünler için (it.id UUID değilse) gereklidir.
+      var _isUuid = it.id && /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(String(it.id));
+      if (!_isUuid) {
+        var apiKey = stokApiKeyFromAd(it.ad);
+        if (apiKey) body[apiKey] = (body[apiKey] || 0) + adet;
+      }
     });
   });
   return body;
