@@ -8789,6 +8789,14 @@ var aktifAltSekme = 'ana';
 var aktifSolSekme = '';
 var aktifSagSekme = 'kasa';
 
+function _pingAktivite() {
+  // Latent kasa kontrol eventlerini aktive et — hata sessizce yutulur, kritik değil
+  if (typeof SUBE_ID === 'undefined' || !SUBE_ID) return;
+  if (window._aktivitePingTs && (Date.now() - window._aktivitePingTs) < 60000) return; // 1dk throttle
+  window._aktivitePingTs = Date.now();
+  fetch('/api/sube-panel/' + encodeURIComponent(SUBE_ID) + '/aktivite', { method: 'POST' }).catch(function(){});
+}
+
 function altSekmeAc(id) {
   if (aktifAltSekme === 'ac' && id !== 'ac') {
     var acOz = stokSecimOzeti('ac', _stokKatalogByPrefix.ac || []);
@@ -8797,6 +8805,7 @@ function altSekmeAc(id) {
       if (!ok) return;
     }
   }
+  _pingAktivite();
   aktifAltSekme = id;
   document.querySelectorAll('.alt-tab').forEach(function(b){ b.classList.remove('active'); });
   var btn = document.getElementById('altTab-' + id);
@@ -8832,6 +8841,7 @@ window.solSekmeAc = function(id) {
       if (!ok) return;
     }
   }
+  _pingAktivite();
   aktifSolSekme = id;
   document.querySelectorAll('#sol .sol-btn').forEach(function(b){ b.classList.remove('active'); });
   var btn = document.getElementById('sol' + id.charAt(0).toUpperCase() + id.slice(1) + 'Btn');

@@ -222,31 +222,30 @@ def _sync_kontrol_slot_after_acilis(cur, sube_id: str) -> None:
     rk = cur.fetchone()
     if rk:
         return
-    delay_min = secrets.randbelow(121) + 60  # 60–180 dk (min 1 saat)
-    pencere_min = secrets.randbelow(38) + 18  # 18–55
-    slot = ac_cevap + timedelta(minutes=delay_min)
-    deadline = slot + timedelta(minutes=pencere_min)
+    pencere_min = secrets.randbelow(38) + 18  # 18–55 — aktivasyon anında kullanılır
     meta_obj = {
         "denetim_mod": "kasa_only",
         "rastgele_kontrol": True,
         "tetikleyen": "acilis",
-        "acilis_sonrasi_dk": delay_min,
         "cevap_penceresi_dk": pencere_min,
+        # Not: slot zamanı yok — panel aktivitesi gelince o anda hesaplanır (latent model)
     }
     meta_sql = json.dumps(meta_obj, ensure_ascii=False)
     eid = str(uuid.uuid4())
+    # Gelecekte çok uzak bir slot — aktivasyon olmadan asla "gecikti" olmayacak
+    _uzak_slot = dt_now_tr_naive() + timedelta(days=3650)
     cur.execute(
         """
         INSERT INTO sube_operasyon_event
             (id, sube_id, tarih, tip, sira_no, sistem_slot_ts, son_teslim_ts, durum, meta)
-        VALUES (%s, %s, CURRENT_DATE, 'KONTROL', 1, %s, %s, 'bekliyor', %s)
+        VALUES (%s, %s, CURRENT_DATE, 'KONTROL', 1, %s, %s, 'latent', %s)
         """,
-        (eid, sube_id, slot, deadline, meta_sql),
+        (eid, sube_id, _uzak_slot, _uzak_slot, meta_sql),
     )
 
 
 def plan_kontrol_after_devir(cur, sube_id: str, devir_ts) -> None:
-    """Vardiya devri tamamlanınca 60–120 dk sonrası için ansızın kasa sayımı planlar (sira_no=2)."""
+    """Vardiya devri tamamlanınca latent kasa sayımı planlar (sira_no=2). Panel aktivitesinde canlanır."""
     cur.execute(
         """
         SELECT id FROM sube_operasyon_event
@@ -257,26 +256,67 @@ def plan_kontrol_after_devir(cur, sube_id: str, devir_ts) -> None:
     )
     if cur.fetchone():
         return
-    delay_min = secrets.randbelow(61) + 60  # 60–120 dk (min 1 saat)
+    delay_min = secrets.randbelow(61) + 60  # 60–120 dk — aktivasyon anında hesaplanır
     pencere_min = secrets.randbelow(38) + 18  # 18–55
-    slot = devir_ts + timedelta(minutes=delay_min)
-    deadline = slot + timedelta(minutes=pencere_min)
     meta_obj = {
         "denetim_mod": "kasa_only",
         "rastgele_kontrol": True,
         "tetikleyen": "vardiya_devir",
         "devir_sonrasi_dk": delay_min,
         "cevap_penceresi_dk": pencere_min,
+        # Not: slot zamanı yok — panel aktivitesi gelince o anda hesaplanır (latent model)
     }
     eid = str(uuid.uuid4())
+    _uzak_slot = dt_now_tr_naive() + timedelta(days=3650)
     cur.execute(
         """
         INSERT INTO sube_operasyon_event
             (id, sube_id, tarih, tip, sira_no, sistem_slot_ts, son_teslim_ts, durum, meta)
-        VALUES (%s, %s, CURRENT_DATE, 'KONTROL', 2, %s, %s, 'bekliyor', %s)
+        VALUES (%s, %s, CURRENT_DATE, 'KONTROL', 2, %s, %s, 'latent', %s)
         """,
-        (eid, sube_id, slot, deadline, json.dumps(meta_obj, ensure_ascii=False)),
+        (eid, sube_id, _uzak_slot, _uzak_slot, json.dumps(meta_obj, ensure_ascii=False)),
     )
+
+
+def aktivasyon_kontrol(cur, sube_id: str) -> None:
+    """Panel aktivitesi sinyali gelince latent KONTROL eventlerini 'bekliyor' durumuna geçirir.
+
+    - Bugüne ait latent KONTROL eventlerini bulur
+    - Her biri için o anda deadline hesaplar: NOW() + cevap_penceresi_dk
+    - durum='bekliyor', sistem_slot_ts=NOW(), son_teslim_ts=NOW()+pencere olarak günceller
+    - Böylece gecikti durumu yalnızca personelin panelde aktifken tepki vermemesi durumunda oluşur
+    """
+    cur.execute(
+        """
+        SELECT id, meta FROM sube_operasyon_event
+        WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='KONTROL' AND durum='latent'
+        ORDER BY sira_no
+        """,
+        (sube_id,),
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return
+    now = dt_now_tr_naive()
+    for row in rows:
+        eid = row["id"]
+        try:
+            meta = json.loads(row["meta"] or "{}")
+        except Exception:
+            meta = {}
+        pencere_min = int(meta.get("cevap_penceresi_dk", 30))
+        slot_ts = now
+        deadline_ts = now + timedelta(minutes=pencere_min)
+        cur.execute(
+            """
+            UPDATE sube_operasyon_event
+            SET durum='bekliyor',
+                sistem_slot_ts=%s,
+                son_teslim_ts=%s
+            WHERE id=%s AND durum='latent'
+            """,
+            (slot_ts, deadline_ts, eid),
+        )
 
 
 def _sync_acilis_event_if_acik(cur, sube_id: str) -> None:

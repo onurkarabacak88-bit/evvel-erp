@@ -2101,6 +2101,22 @@ def sube_panel_getir(sube_id: str):
         return _build_sube_panel_payload(cur, sube_id)
 
 
+@router.post("/{sube_id}/aktivite")
+def sube_panel_aktivite(sube_id: str):
+    """Panel sekme hareketi sinyali — latent KONTROL eventlerini aktive eder.
+
+    Frontend her sekme değişikliğinde bu endpoint'e POST atar.
+    Mevcut latent KONTROL eventleri varsa 'bekliyor' durumuna geçirilir ve
+    gerçek deadline hesaplanır (NOW + cevap_penceresi_dk).
+    Sonuç: kasa kontrol uyarısı yalnızca personel panelde aktifken çıkar.
+    """
+    from sube_operasyon import aktivasyon_kontrol
+    with db() as (conn, cur):
+        aktivasyon_kontrol(cur, sube_id)
+        conn.commit()
+    return {"ok": True}
+
+
 class SubeCiroModel(BaseModel):
     nakit:       float = 0
     pos:         float = 0
