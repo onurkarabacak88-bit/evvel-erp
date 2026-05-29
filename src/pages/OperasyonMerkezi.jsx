@@ -3757,9 +3757,11 @@ export default function OperasyonMerkezi() {
     }
   }, [filtre, aktifSekme, ayFiltre, gunFiltre]);
 
-  const magazaDepoTamYenile = useCallback(async () => {
-    setYukleniyor(true);
-    setMagazaDepoKatalogState((s) => ({ ...s, yukleniyor: true }));
+  const magazaDepoTamYenile = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) {
+      setYukleniyor(true);
+      setMagazaDepoKatalogState((s) => ({ ...s, yukleniyor: true }));
+    }
     try {
       const dash = await yukle(filtre);
       const catRes = await api('/ops/siparis/katalog').catch(() => ({ kategoriler: [] }));
@@ -3806,9 +3808,13 @@ export default function OperasyonMerkezi() {
         }
       }
     } catch {
-      setMagazaDepoKatalogState({ yukleniyor: false, kategoriler: [] });
-      setMagazaDepoCanliStok({});
-      setMagazaDepoDepoMeta({});
+      // Sessiz (otomatik) yenilemede geçici hata olursa mevcut veriyi silme —
+      // sadece elle/sekme yüklemesinde temiz boş duruma düş.
+      if (!silent) {
+        setMagazaDepoKatalogState({ yukleniyor: false, kategoriler: [] });
+        setMagazaDepoCanliStok({});
+        setMagazaDepoDepoMeta({});
+      }
     }
   }, [filtre, yukle]);
 
@@ -4284,6 +4290,27 @@ export default function OperasyonMerkezi() {
     if (aktifSekme !== 'magaza-kartlari') return;
     magazaDepoTamYenile();
   }, [aktifSekme, filtre, magazaDepoTamYenile]);
+
+  // Şube Depoları sekmesi açıkken canlı depoyu otomatik tazele —
+  // şube panelinden kabul/teslim yapılınca admin sayfayı yenilemeden görür.
+  // Sekme görünür değilken (başka tab) boşa istek atmamak için durdurulur.
+  useEffect(() => {
+    if (aktifSekme !== 'magaza-kartlari') return undefined;
+    const id = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      magazaDepoTamYenile({ silent: true });
+    }, 20000);
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        magazaDepoTamYenile({ silent: true });
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [aktifSekme, magazaDepoTamYenile]);
 
   useEffect(() => {
     if (aktifSekme !== 'magaza-kartlari') return undefined;
