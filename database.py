@@ -3489,6 +3489,29 @@ $$;
                     VALUES ('siparis_urun_depo_kalem_kodu_uuid_v6', %s::jsonb)
                 """, (f'{{"guncellenen_urun": {v6_count}}}',))
                 print(f"[MIGRATION] siparis_urun_depo_kalem_kodu_uuid_v6: {v6_count} ürün havuz kodundan UUID'ye geçirildi")
+
+            # Migration v6b: artık hiçbir ürünün kullanmadığı pool satırlarını sıfırla
+            # (kahve_paket=71 gibi sahipsiz girişler temizlenir)
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log
+                WHERE ad='sube_depo_stok_havuz_sifirla_v6b' LIMIT 1
+            """)
+            if not cur.fetchone():
+                _havuz_kodlari = (
+                    'kahve_paket','bardak_kucuk','bardak_buyuk','bardak_plastik',
+                    'su_adet','redbull_adet','soda_adet','cookie_adet','pasta_adet',
+                )
+                cur.execute("""
+                    UPDATE sube_depo_stok
+                    SET mevcut_adet = 0, rezerve_adet = 0, guncelleme = NOW()
+                    WHERE kalem_kodu = ANY(%s)
+                """, (_havuz_kodlari,))
+                v6b_count = cur.rowcount
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay)
+                    VALUES ('sube_depo_stok_havuz_sifirla_v6b', %s::jsonb)
+                """, (f'{{"sifirlanan_satir": {v6b_count}}}',))
+                print(f"[MIGRATION] sube_depo_stok_havuz_sifirla_v6b: {v6b_count} havuz satırı sıfırlandı")
         except Exception as _mig_e:
             print(f"[MIGRATION WARN] siparis_urun_depo_kalem_kodu_uuid_v5: {_mig_e}")
 
