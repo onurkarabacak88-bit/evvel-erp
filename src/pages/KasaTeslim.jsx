@@ -373,11 +373,11 @@ export default function KasaTeslim() {
                               fontFamily: 'var(--font-mono)',
                               fontWeight: 800,
                               fontSize: 12,
-                              color: 'rgb(79,70,229)',
-                              background: 'rgba(99,102,241,.12)',
-                              border: '1px solid rgba(99,102,241,.30)',
+                              color: '#fff',
+                              background: 'rgb(99,102,241)',
+                              border: '1px solid rgb(79,70,229)',
                               borderRadius: 8,
-                              padding: '2px 9px',
+                              padding: '3px 10px',
                               whiteSpace: 'nowrap',
                             }}
                           >
