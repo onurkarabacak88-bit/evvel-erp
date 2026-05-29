@@ -2564,9 +2564,6 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
     Merkez bu kaydı «Toptancıdan Gelenler» ekranında izler; sipariş kapatma şube tarafında yapılmaz.
     """
     from operasyon_stok_motor import (
-        STOK_KEYS,
-        normalize_delta_body,
-        _stok_key_from_urun_ad,
         depo_kalem_kodu_resolve,
         sube_depo_stok_depo_giris_ekle,
     )
@@ -2596,20 +2593,9 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
 
     delta_raw = body.model_dump()
     kalemler = _stok_kalemleri_temizle(delta_raw.get("kalemler"))
-    try:
-        delta = normalize_delta_body(delta_raw)
-    except ValueError:
-        delta = {
-            "bardak_kucuk": 0,
-            "bardak_buyuk": 0,
-            "bardak_plastik": 0,
-            "su_adet": 0,
-            "redbull_adet": 0,
-            "soda_adet": 0,
-            "cookie_adet": 0,
-            "pasta_adet": 0,
-        }
-    if sum(int(v or 0) for v in delta.values()) <= 0 and not kalemler:
+    # Havuz (pool) kaldırıldı — artık sadece kalemler listesi geçerli
+    delta: dict = {}
+    if not kalemler:
         raise HTTPException(400, "En az bir stok kaleminde pozitif adet girin")
 
     with db() as (conn, cur):
@@ -2829,9 +2815,7 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                     cur, sube_id, depo_kalem, urun_ad, adet_i
                 )
                 continue
-            stok_key = _stok_key_from_urun_ad(urun_ad)
-            if stok_key and int(sevk_kalemleri.get(stok_key) or 0) > 0:
-                continue
+            # urun_id eksik → ozel__ prefixli fallback kalem (migration v5 sonrası oluşmamalı)
             kalem_kodu = f"ozel__{_norm_ad_tr(urun_ad)}"
             sube_depo_stok_depo_giris_ekle(cur, sube_id, kalem_kodu, urun_ad, adet_i)
 
@@ -3064,11 +3048,8 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
     Bu kayıt teorik stok hesabına girer: açılış + URUN_STOK_EKLE + URUN_AC = beklenen stok.
     """
     from operasyon_stok_motor import (
-        STOK_KEYS,
         depo_kalem_kodu_resolve,
-        normalize_delta_body,
         sube_depo_stok_depo_cikis_dus,
-        _stok_key_from_urun_ad as _kf_urun_ac,
     )
 
     pid_in = (body.personel_id or "").strip()
@@ -3080,20 +3061,8 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
 
     body_raw = body.model_dump()
     kalemler = _stok_kalemleri_temizle(body_raw.get("kalemler"))
-    try:
-        delta = normalize_delta_body(body_raw)
-    except ValueError:
-        delta = {
-            "bardak_kucuk": 0,
-            "bardak_buyuk": 0,
-            "bardak_plastik": 0,
-            "su_adet": 0,
-            "redbull_adet": 0,
-            "soda_adet": 0,
-            "cookie_adet": 0,
-            "pasta_adet": 0,
-        }
-    if sum(int(v or 0) for v in delta.values()) <= 0 and not kalemler:
+    # Havuz (pool) kaldırıldı — artık sadece kalemler listesi geçerli
+    if not kalemler:
         raise HTTPException(400, "En az bir stok kaleminde pozitif adet girin")
 
     with db() as (conn, cur):
@@ -3124,7 +3093,7 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
 
         tr_now = _now_tr()
         saat_sistem = tr_now.strftime("%H:%M:%S")
-        payload = _json.dumps({"delta": delta, "kalemler": kalemler}, ensure_ascii=False, separators=(",", ":"))
+        payload = _json.dumps({"kalemler": kalemler}, ensure_ascii=False, separators=(",", ":"))
         acik = "URUN_AC_JSON:" + payload
         if (body.not_aciklama or "").strip():
             acik += " | " + (body.not_aciklama or "").strip()[:400]
@@ -3143,37 +3112,8 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
         audit(cur, "operasyon_defter", rid, "URUN_AC")
 
         # ── Şube deposundan düş — bara giren ürün depoda azalır ──
-        # Panel `stokBody` aynı satırı hem `kalemler` dizisine hem üst düzey STOK_KEYS (delta) alanlarına
-        # yazar; aksi halde bardak vb. için depo iki kez düşülürdü. Defter JSON'daki delta aynı kalır
-        # (teorik toplamlar / sum_urun_ac_tarih), depo çıkışı yalnızca kalemler + delta farkı ile yapılır.
+        # Havuz (pool) kaldırıldı. Depo çıkışı yalnızca kalemler[] UUID satırlarıyla yapılır.
         import uuid as _uuid
-
-        kaplanan: Dict[str, int] = {k: 0 for k in STOK_KEYS}
-        for k in kalemler:
-            uid = str(k.get("urun_id") or "").strip()
-            uad = str(k.get("urun_ad") or "").strip()
-            if uid:
-                kk = depo_kalem_kodu_resolve(cur, uid, uad) or ""
-            else:
-                # urun_id eksik — migration v5 sonrası olmamalı; isme göre çözme YOK
-                # Defter için logluyoruz; pool kaplama'ya dahil edilmez
-                import logging as _lg; _lg.getLogger(__name__).warning(
-                    "urun-ac: kalemler[%s] urun_id eksik, atlandı (urun_ad=%s)", k, uad)
-                continue
-            if kk not in kaplanan:
-                continue
-            try:
-                adet_k = max(0, int(k.get("adet") or 0))
-            except (TypeError, ValueError):
-                adet_k = 0
-            if adet_k <= 0:
-                continue
-            kaplanan[kk] += adet_k
-
-        eff_delta = {
-            k: max(0, int(delta.get(k) or 0) - int(kaplanan.get(k) or 0))
-            for k in STOK_KEYS
-        }
 
         def _uyumsuzluk_yaz(cur, sube_id, kalem_kodu, mevcut_oncesi, istenen, urun_ad_fallback=""):
             """Karşılıksız URUN_AC borcunu loglar.
