@@ -136,6 +136,62 @@ def ensure_stok_yolda_columns(cur) -> None:
             raise
 
 
+def ensure_dusum_modu(cur) -> None:
+    """siparis_urun.dusum_modu + sube_kullanimda_urun — ayrı, kendi
+    transaction'ında çalışabilen migrasyon. init_db tek transaction içinde
+    geç bir hatayla geri sarılırsa bu kolon eklenmemiş kalmasın diye startup'ta
+    da bağımsız çağrılır."""
+    cur.execute("""
+        ALTER TABLE siparis_urun
+        ADD COLUMN IF NOT EXISTS dusum_modu TEXT NOT NULL DEFAULT 'acilinca'
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sube_kullanimda_urun (
+            id                 TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            sube_id            TEXT NOT NULL,
+            urun_id            TEXT,
+            kalem_kodu         TEXT,
+            urun_ad            TEXT,
+            adet               INT  NOT NULL DEFAULT 1,
+            durum              TEXT NOT NULL DEFAULT 'kullanimda',
+            acan_personel_id   TEXT,
+            acan_personel_ad   TEXT,
+            ac_ts              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            biten_personel_id  TEXT,
+            biten_personel_ad  TEXT,
+            bitti_ts           TIMESTAMPTZ
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_kullanimda_sube_durum
+        ON sube_kullanimda_urun (sube_id, durum, ac_ts DESC)
+    """)
+    # Tek seferlik seed — hiç 'bitince' yoksa uygula (manuel değişiklikleri ezmez)
+    cur.execute("SELECT 1 FROM siparis_urun WHERE dusum_modu = 'bitince' LIMIT 1")
+    if cur.fetchone() is None:
+        cur.execute("""
+            UPDATE siparis_urun su
+            SET dusum_modu = 'bitince', guncelleme = NOW()
+            FROM siparis_kategori sk
+            WHERE su.kategori_id = sk.id
+              AND (
+                  sk.kod = 'bitki_cayi'
+                  OR (sk.kod = 'temizlik' AND su.norm_ad NOT IN ('z_pecete', 'cop_poseti'))
+              )
+        """)
+        cur.execute("""
+            UPDATE siparis_urun su
+            SET dusum_modu = 'bitince', guncelleme = NOW()
+            FROM siparis_kategori sk
+            WHERE su.kategori_id = sk.id
+              AND sk.kod = 'sarf'
+              AND su.norm_ad IN (
+                  'filtre_kagidi','strec_film','islak_mendil','kese_kagidi',
+                  'bardak_cantasi','ahsap_karistirici','cam_bezi','zimba_teli'
+              )
+        """)
+
+
 def stok_yolda_insert_row(
     cur,
     *,
@@ -2278,13 +2334,16 @@ def init_db():
         # panelden yapılan manuel mod değişikliklerini ezmez.
         cur.execute("SELECT 1 FROM siparis_urun WHERE dusum_modu = 'bitince' LIMIT 1")
         if cur.fetchone() is None:
-            # Tüm Temizlik + tüm Bitki Çayları → bitince
+            # Temizlik (Z Peçete + Çöp Poşeti hariç) + tüm Bitki Çayları → bitince
             cur.execute("""
                 UPDATE siparis_urun su
                 SET dusum_modu = 'bitince', guncelleme = NOW()
                 FROM siparis_kategori sk
                 WHERE su.kategori_id = sk.id
-                  AND sk.kod IN ('temizlik', 'bitki_cayi')
+                  AND (
+                      sk.kod = 'bitki_cayi'
+                      OR (sk.kod = 'temizlik' AND su.norm_ad NOT IN ('z_pecete', 'cop_poseti'))
+                  )
             """)
             # Sarf'tan seçili ürünler → bitince (norm_ad ile)
             cur.execute("""
