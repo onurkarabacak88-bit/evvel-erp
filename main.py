@@ -5673,6 +5673,74 @@ def aylik_rapor(yil: int = None, ay: int = None):
         except Exception:
             pass
 
+        # ── FAZ 2-B: NAKİT AKIŞ & PROJEKSİYON ──
+        projeksiyon = {
+            "mevcut_kasa": float(ozet.get('bitis_kasa') or 0),
+            "gunluk_gelir": 0.0, "gunluk_gider": 0.0, "net_gunluk": 0.0,
+            "aylik_sabit_gider": 0.0, "aylik_maas": 0.0,
+            "bekleyen_taksit_90": 0.0,
+            "ufuklar": [], "runway_gun": None,
+        }
+        try:
+            # 90 günlük run-rate (gelir/gider)
+            cur.execute("""
+                SELECT COALESCE(SUM(CASE WHEN tutar>0 AND islem_turu!='DEVIR' THEN tutar ELSE 0 END),0) AS gelir,
+                       COALESCE(SUM(CASE WHEN tutar<0 THEN ABS(tutar) ELSE 0 END),0) AS gider
+                FROM kasa_hareketleri
+                WHERE durum='aktif' AND kasa_etkisi=true AND tarih >= CURRENT_DATE - INTERVAL '90 days'
+            """)
+            rr = dict(cur.fetchone() or {})
+            g_gelir = float(rr.get("gelir") or 0) / 90.0
+            g_gider = float(rr.get("gider") or 0) / 90.0
+            projeksiyon["gunluk_gelir"] = round(g_gelir, 2)
+            projeksiyon["gunluk_gider"] = round(g_gider, 2)
+            projeksiyon["net_gunluk"] = round(g_gelir - g_gider, 2)
+
+            # Bilinen sabit yükler
+            try:
+                cur.execute("SELECT COALESCE(SUM(tutar),0) AS v FROM sabit_giderler WHERE aktif=TRUE")
+                projeksiyon["aylik_sabit_gider"] = float(dict(cur.fetchone() or {}).get("v") or 0)
+            except Exception:
+                pass
+            try:
+                cur.execute("SELECT COALESCE(SUM(maas),0) AS v FROM personel WHERE aktif=TRUE")
+                projeksiyon["aylik_maas"] = float(dict(cur.fetchone() or {}).get("v") or 0)
+            except Exception:
+                pass
+
+            # Bekleyen taksitler — ufuk bazlı (kesin tarihli yük)
+            tk = {30: 0.0, 60: 0.0, 90: 0.0}
+            try:
+                cur.execute("""
+                    SELECT
+                      COALESCE(SUM(CASE WHEN odeme_tarihi <= CURRENT_DATE + INTERVAL '30 days' THEN odenecek_tutar ELSE 0 END),0) AS t30,
+                      COALESCE(SUM(CASE WHEN odeme_tarihi <= CURRENT_DATE + INTERVAL '60 days' THEN odenecek_tutar ELSE 0 END),0) AS t60,
+                      COALESCE(SUM(CASE WHEN odeme_tarihi <= CURRENT_DATE + INTERVAL '90 days' THEN odenecek_tutar ELSE 0 END),0) AS t90
+                    FROM odeme_plani
+                    WHERE durum='bekliyor' AND odeme_tarihi >= CURRENT_DATE
+                      AND odeme_tarihi <= CURRENT_DATE + INTERVAL '90 days'
+                """)
+                trow = dict(cur.fetchone() or {})
+                tk = {30: float(trow.get("t30") or 0), 60: float(trow.get("t60") or 0), 90: float(trow.get("t90") or 0)}
+            except Exception:
+                pass
+            projeksiyon["bekleyen_taksit_90"] = tk[90]
+
+            mevcut = projeksiyon["mevcut_kasa"]
+            net_g = projeksiyon["net_gunluk"]
+            for n in (30, 60, 90):
+                projeksiyon["ufuklar"].append({
+                    "gun": n,
+                    "beklenen_gelir": round(g_gelir * n, 2),
+                    "beklenen_gider": round(g_gider * n, 2),
+                    "bekleyen_taksit": round(tk[n], 2),
+                    "projekte_kasa": round(mevcut + net_g * n, 2),
+                })
+            if net_g < 0:
+                projeksiyon["runway_gun"] = int(mevcut / abs(net_g)) if abs(net_g) > 0 else None
+        except Exception:
+            pass
+
         # Yönetici özeti — otomatik cümleler
         yonetici_ozeti = []
         onc_ciro = float(onceki.get('ciro') or 0)
@@ -5722,6 +5790,18 @@ def aylik_rapor(yil: int = None, ay: int = None):
                 "tip": "uyari",
                 "metin": f"{denetim_ozeti['uyumsuzluk']['acik_adet']} çözülmemiş sevkiyat uyumsuzluğu var (toplam {denetim_ozeti['uyumsuzluk']['bekleyen_fark']} adet fark).",
             })
+        if projeksiyon["net_gunluk"] < 0 and projeksiyon["runway_gun"] is not None:
+            yonetici_ozeti.append({
+                "tip": "uyari",
+                "metin": f"Nakit erime uyarısı: günlük net −{_tl(abs(projeksiyon['net_gunluk']))}, mevcut kasa ~{projeksiyon['runway_gun']} gün sonra tükenir.",
+            })
+        elif projeksiyon["net_gunluk"] > 0:
+            _p90 = next((u for u in projeksiyon["ufuklar"] if u["gun"] == 90), None)
+            if _p90:
+                yonetici_ozeti.append({
+                    "tip": "iyi",
+                    "metin": f"Nakit trendi pozitif: günlük net +{_tl(projeksiyon['net_gunluk'])}, 90 gün projeksiyon ~{_tl(_p90['projekte_kasa'])}.",
+                })
 
     aylar = ['','Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık']
     return {
@@ -5741,6 +5821,7 @@ def aylik_rapor(yil: int = None, ay: int = None):
         "sube_karne": sube_karne,
         "yonetici_ozeti": yonetici_ozeti,
         "denetim_ozeti": denetim_ozeti,
+        "projeksiyon": projeksiyon,
     }
 
 @app.get("/api/rapor/aylik/excel")

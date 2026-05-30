@@ -259,6 +259,63 @@ export default function Rapor() {
           );
         })()}
 
+        {/* 🔮 NAKİT AKIŞ & PROJEKSİYON */}
+        {rapor.projeksiyon && (() => {
+          const p = rapor.projeksiyon;
+          const negatif = (p.net_gunluk || 0) < 0;
+          return (
+            <div className="card" style={{ marginBottom: 16, borderLeft: `3px solid ${negatif ? 'var(--red)' : 'var(--green)'}` }}>
+              <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>🔮 Nakit Akış & Projeksiyon</h3>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
+                {[
+                  { l: 'Günlük Gelir (90g ort.)', v: fmt(p.gunluk_gelir), c: 'var(--green)' },
+                  { l: 'Günlük Gider (90g ort.)', v: fmt(p.gunluk_gider), c: 'var(--red)' },
+                  { l: 'Günlük Net', v: (negatif ? '−' : '+') + fmt(Math.abs(p.net_gunluk || 0)), c: negatif ? 'var(--red)' : 'var(--green)' },
+                  { l: negatif ? 'Kasa Tükenme' : 'Nakit Trendi', v: negatif ? `~${p.runway_gun ?? '—'} gün` : 'Pozitif ▲', c: negatif ? 'var(--red)' : 'var(--green)' },
+                ].map(({ l, v, c }) => (
+                  <div key={l} style={{ background: 'var(--bg3)', borderRadius: 8, padding: '12px 14px' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{l}</div>
+                    <div style={{ fontSize: 17, fontWeight: 700, color: c, fontFamily: 'var(--font-mono)' }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Ufuk projeksiyon tablosu */}
+              {p.ufuklar?.length > 0 && (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 14 }}>
+                  <thead><tr style={{ background: 'var(--bg3)' }}>
+                    {['Ufuk', 'Beklenen Gelir', 'Beklenen Gider', 'Bekleyen Taksit', 'Projekte Kasa'].map(h => (
+                      <th key={h} style={{ padding: '7px 10px', textAlign: h === 'Ufuk' ? 'left' : 'right', fontWeight: 600, color: 'var(--text2)' }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {p.ufuklar.map((u, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '7px 10px', fontWeight: 600 }}>{u.gun} gün</td>
+                        <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--green)' }}>{fmt(u.beklenen_gelir)}</td>
+                        <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(u.beklenen_gider)}</td>
+                        <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--text3)' }}>{u.bekleyen_taksit > 0 ? fmt(u.bekleyen_taksit) : '—'}</td>
+                        <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 700, color: (u.projekte_kasa || 0) >= 0 ? 'var(--text1)' : 'var(--red)' }}>{fmt(u.projekte_kasa)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+
+              {/* Bilinen sabit yükler */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 11 }}>
+                <span style={{ background: 'var(--bg3)', borderRadius: 100, padding: '4px 10px' }}>🏠 Aylık sabit gider: <strong>{fmt(p.aylik_sabit_gider)}</strong></span>
+                <span style={{ background: 'var(--bg3)', borderRadius: 100, padding: '4px 10px' }}>👥 Aylık maaş yükü: <strong>{fmt(p.aylik_maas)}</strong></span>
+                <span style={{ background: 'var(--bg3)', borderRadius: 100, padding: '4px 10px' }}>💳 Bekleyen taksit (90g): <strong>{fmt(p.bekleyen_taksit_90)}</strong></span>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 8 }}>
+                Projeksiyon son 90 günün günlük ortalama gelir/gider hızına (run-rate) dayanır — tahminidir.
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ÖZET KARTLARI */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
           {[
