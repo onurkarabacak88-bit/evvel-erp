@@ -329,20 +329,24 @@ def yeniden_hesapla(
              uyari_id),
         )
 
-    # onay_kuyrugu senkronizasyonu (yalnızca KAPANIS_KASA_FARK'ta var)
+    # onay_kuyrugu senkronizasyonu — HEM ACILIS_KASA_FARK HEM KAPANIS_KASA_FARK.
+    # (Önceden yalnız KAPANIS senkronlanıyordu; ACILIS düzeltilince kuyrukta eski
+    #  tutarla hayalet 'bekliyor' kayıt kalıyordu — düzeltildi.)
+    # Eşleştirme sağlamlaştırıldı: aciklama '[sube_id]' ile BAŞLAR (alt-dizgi çakışması yok),
+    # ve 'bekliyor' kayıt 'iptal'/'onaylandi'dan önce gelir.
     onay_durumu_eski = None
     onay_durumu_yeni = None
-    if tip == "KAPANIS_KASA_FARK":
+    if True:
         cur.execute(
             """
             SELECT id, durum FROM onay_kuyrugu
-            WHERE islem_turu='KAPANIS_KASA_FARK'
+            WHERE islem_turu=%s
               AND kaynak_tablo='kasa_farki'
               AND tarih=%s::date
               AND aciklama LIKE %s
-            ORDER BY olusturma DESC LIMIT 1
+            ORDER BY (durum='bekliyor') DESC, olusturma DESC LIMIT 1
             """,
-            (str(tarih), f"%{sube_id}%"),
+            (tip, str(tarih), f"[{sube_id}]%"),
         )
         onay_row = cur.fetchone()
         if onay_row:
@@ -368,7 +372,7 @@ def yeniden_hesapla(
                         """,
                         (
                             yeni_fark,
-                            f"[{sube_id}] Kapanış kasa farkı (yeniden hesap): {yeni_fark:+,.2f}₺",
+                            f"[{sube_id}] {'Açılış' if tip == 'ACILIS_KASA_FARK' else 'Kapanış'} kasa farkı (yeniden hesap): {yeni_fark:+,.2f}₺",
                             onay_id,
                         ),
                     )
@@ -395,16 +399,18 @@ def yeniden_hesapla(
                 if not otomatik_cozuldu:
                     # Yeni bekliyor kayıt — merkez yeniden onaylasın
                     yeni_onay_id = str(_uuid.uuid4())
+                    _fark_etiket = "Açılış" if tip == "ACILIS_KASA_FARK" else "Kapanış"
                     cur.execute(
                         """
                         INSERT INTO onay_kuyrugu
                             (id, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih, durum)
-                        VALUES (%s, 'KAPANIS_KASA_FARK', 'kasa_farki', %s, %s, %s, %s::date, 'bekliyor')
+                        VALUES (%s, %s, 'kasa_farki', %s, %s, %s, %s::date, 'bekliyor')
                         """,
                         (
                             yeni_onay_id,
+                            tip,
                             yeni_onay_id,
-                            (f"[{sube_id}] Kapanış kasa farkı (REVİZE — eski onay "
+                            (f"[{sube_id}] {_fark_etiket} kasa farkı (REVİZE — eski onay "
                              f"{onay_id[:8]}…): {yeni_fark:+,.2f}₺"),
                             yeni_fark,
                             str(tarih),

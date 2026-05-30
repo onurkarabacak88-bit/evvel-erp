@@ -6724,8 +6724,12 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
                         r = _cascade(str(_tarih_d + _td(days=1)), "ACILIS_KASA_FARK")
                         if r:
                             cascade_sonuclari.append(r)
-            except Exception:
-                pass
+            except Exception as _casc_setup_ex:
+                log.warning(
+                    "kasa fark cascade kurulum hatası: sube=%s tarih=%s sebep=%s hata=%s",
+                    sube_id, tarih, sebep, _casc_setup_ex,
+                )
+                cascade_sonuclari.append({"hata": str(_casc_setup_ex), "asama": "cascade_setup"})
 
         # 5. Audit
         _kk_audit_yaz(
