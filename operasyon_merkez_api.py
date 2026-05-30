@@ -6439,29 +6439,43 @@ def _kk_ciro_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> D
     )
     row = cur.fetchone()
     if not row:
-        # ── UPSERT: ciro yok → kullanıcı girdiği değerlerle yeni satır oluştur ──
-        # Boş alanlar 0 olur. toplam = nakit + pos + online (otomatik hesap).
-        ins_nakit = float(yeni_nakit) if yeni_nakit is not None else 0.0
-        ins_pos = float(yeni_pos) if yeni_pos is not None else 0.0
-        ins_online = float(yeni_online) if yeni_online is not None else 0.0
-        ins_toplam = round(ins_nakit + ins_pos + ins_online, 2)
-        cid = str(uuid.uuid4())
+        # ── ONAY DURUMUNA SAYGI (state-aware) ──
+        # Aktif (onaylı) ciro YOK. İLKE: onaylanmamış ciro kasaya yazılamaz.
+        # 1) Onay bekleyen TASLAK varsa → TASLAĞI düzelt; kasaya DOKUNMA, yeni aktif ciro AÇMA.
+        #    Taslak onaylanınca doğru tutarla kasaya yazılır (tek tutarlı akış).
         cur.execute(
             """
-            INSERT INTO ciro (id, sube_id, tarih, nakit, pos, online, toplam, durum, kaynak)
-            VALUES (%s, %s, %s::date, %s, %s, %s, %s, 'aktif', 'kasa_fark_kaynak_duzeltme')
+            SELECT id::text, nakit::float, pos::float, online::float
+            FROM ciro_taslak
+            WHERE sube_id=%s AND tarih=%s::date AND durum='bekliyor'
+            ORDER BY olusturma DESC LIMIT 1 FOR UPDATE
             """,
-            (cid, sube_id, tarih, ins_nakit, ins_pos, ins_online, ins_toplam),
+            (sube_id, tarih),
         )
-        # KASA DEFTERİ SENKRON: yeni ciro → net tutar kasaya yazılır
-        _kk_ciro_kasa_senkron(cur, sube_id, tarih, cid, ins_nakit, ins_pos, ins_online, yeni_satir=True)
-        return {
-            "hedef_tablo": "ciro",
-            "hedef_id": cid,
-            "eski": None,
-            "yeni": {"nakit": ins_nakit, "pos": ins_pos, "online": ins_online, "toplam": ins_toplam},
-            "yeni_ciro_olusturuldu": True,
-        }
+        t = cur.fetchone()
+        if t:
+            t = dict(t)
+            esk = {"nakit": float(t["nakit"] or 0), "pos": float(t["pos"] or 0), "online": float(t["online"] or 0)}
+            yn = float(yeni_nakit) if yeni_nakit is not None else esk["nakit"]
+            yp = float(yeni_pos) if yeni_pos is not None else esk["pos"]
+            yo = float(yeni_online) if yeni_online is not None else esk["online"]
+            cur.execute(
+                "UPDATE ciro_taslak SET nakit=%s, pos=%s, online=%s WHERE id=%s",
+                (yn, yp, yo, t["id"]),
+            )
+            return {
+                "hedef_tablo": "ciro_taslak",
+                "hedef_id": t["id"],
+                "eski": esk,
+                "yeni": {"nakit": yn, "pos": yp, "online": yo, "toplam": round(yn + yp + yo, 2)},
+                "taslak_duzeltildi": True,
+            }
+        # 2) Ne aktif ciro ne taslak → onaysız aktif ciro+kasa AÇMA. Yönlendir.
+        raise HTTPException(
+            409,
+            "Bu gün için onaylı ciro da onay bekleyen taslak da yok. Önce ciroyu girin/onaylayın; "
+            "onaysız ciro kasaya yazılamaz (düzeltme onay akışını atlayamaz).",
+        )
     r = dict(row)
     eski = {"nakit": float(r["nakit"] or 0), "pos": float(r["pos"] or 0), "online": float(r["online"] or 0)}
     yeni = {
@@ -6885,6 +6899,23 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
                 "onay_durumu_eski": None,
                 "onay_durumu_yeni": None,
             }
+        elif hedef.get("taslak_duzeltildi"):
+            # Ciro TASLAĞI düzeltildi (onaysız) → aktif ciro/kasa değişmedi; recalc ÇALIŞTIRMA.
+            # Fark, taslak onaylanınca netleşir. Uyarıyı çözülmüş sayma; bilgi notu düş.
+            cur.execute(
+                """
+                UPDATE sube_operasyon_uyari
+                SET cozum_notu = COALESCE(cozum_notu, %s)
+                WHERE id=%s
+                """,
+                (("Ciro taslağı düzeltildi (onay bekliyor) — onaylanınca kasa ve fark netleşir. "
+                  + (notu or "")).strip(), uyari_id),
+            )
+            recalc = {
+                "uyari_id": uyari_id, "eski_fark": eski_fark, "yeni_fark": eski_fark,
+                "otomatik_cozuldu": False, "onay_durumu_eski": None, "onay_durumu_yeni": None,
+                "taslak_duzeltildi": True,
+            }
         else:
             try:
                 recalc = _kf_recalc(cur, uyari_id, kim_pid=pid, kim_ad=pad)
@@ -6897,7 +6928,7 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
         # devir_yanlis/ACILIS → dünün KAPANIS etkilenir        (dünkü devir değişti)
         # devir_yanlis/KAPANIS→ ertesi günün ACILIS etkilenir  (beklenen = bu günün deviri)
         cascade_sonuclari: list = []
-        if sebep not in ("gercek_acik",):
+        if sebep not in ("gercek_acik",) and not recalc.get("taslak_duzeltildi"):
             try:
                 from datetime import date as _dc, timedelta as _td
 
@@ -7125,6 +7156,20 @@ def ops_kasa_duzeltme_geri_al(audit_id: str, body: KasaGeriAlBody = KasaGeriAlBo
                         f"(nakit {eski_deger.get('nakit')}, pos {eski_deger.get('pos')}, "
                         f"online {eski_deger.get('online')})"
                     )
+        elif hedef_tablo == "ciro_taslak":
+            # Taslak düzeltmesi geri alınıyor → taslağı eski değerlere döndür. Kasaya DOKUNMA
+            # (taslak onaysız, kasada zaten yok).
+            if hedef_id and eski_deger:
+                _t_nakit = float(eski_deger.get("nakit") or 0)
+                _t_pos = float(eski_deger.get("pos") or 0)
+                _t_online = float(eski_deger.get("online") or 0)
+                cur.execute(
+                    "UPDATE ciro_taslak SET nakit=%s, pos=%s, online=%s WHERE id=%s",
+                    (_t_nakit, _t_pos, _t_online, hedef_id),
+                )
+                restore_aciklama = (
+                    f"ciro taslağı eski değerlere döndürüldü (nakit {_t_nakit}, pos {_t_pos}, online {_t_online}) — kasa etkilenmedi"
+                )
         elif hedef_tablo.startswith("sube_operasyon_event(ACILIS)"):
             if hedef_id and eski_deger:
                 cur.execute(
