@@ -68,7 +68,7 @@ from siparis_sevkiyat_islem import (
     sevkiyat_kalem_durumlari_normalize,
     siparis_sevkiyat_kalem_guncelle_execute,
 )
-from kasa_service import audit
+from kasa_service import audit, insert_kasa_hareketi, iptal_kasa_hareketi
 from sube_panel import (
     _bugun_ciro_taslak_bekliyor,
     _bugun_ciro_var_mi,
@@ -6387,6 +6387,28 @@ def _kk_uyari_getir(cur, uyari_id: str) -> Dict[str, Any]:
     return dict(r)
 
 
+def _kk_ciro_kasa_senkron(cur, sube_id, tarih, cid, nakit, pos, online, yeni_satir=False):
+    """KRİTİK: kaynak-düzelt ile ciro değişince KASA DEFTERİNİ (kasa_hareketleri) de senkronla.
+    Önceden yalnız ciro tablosu güncelleniyordu → kasa bakiyesi eski yanlış değerde kalıyordu.
+    ciro_guncelle ile AYNI immutable-ledger deseni: eski hareketi ters kayıtla iptal + yeni net yaz.
+    net = nakit + pos*(1−pos_oran) + online*(1−online_oran)."""
+    cur.execute("SELECT COALESCE(pos_oran,0) AS po, COALESCE(online_oran,0) AS oo FROM subeler WHERE id=%s", (sube_id,))
+    o = dict(cur.fetchone() or {})
+    po = float(o.get("po") or 0)
+    oo = float(o.get("oo") or 0)
+    net = round(float(nakit) + (float(pos) - float(pos) * po / 100.0) + (float(online) - float(online) * oo / 100.0), 2)
+    if not yeni_satir:
+        try:
+            iptal_kasa_hareketi(cur, cid, 'ciro', 'CIRO', 'CIRO_DUZELTME',
+                                'Kasa fark kaynak düzeltme — eski ciro kasa hareketi iptal')
+        except Exception:
+            pass  # iptal edilecek hareket yoksa (ilk kez) sorun değil
+    insert_kasa_hareketi(cur, str(tarih), 'CIRO', net,
+                         'Kasa fark kaynak düzeltme (net)', 'ciro', cid,
+                         ref_id=cid, ref_type='CIRO_GUNCELLEME')
+    return net
+
+
 def _kk_ciro_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """ciro tablosunu güncelle (nakit/pos/online). Mevcut kayıt varsa UPDATE, yoksa INSERT.
 
@@ -6431,6 +6453,8 @@ def _kk_ciro_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> D
             """,
             (cid, sube_id, tarih, ins_nakit, ins_pos, ins_online, ins_toplam),
         )
+        # KASA DEFTERİ SENKRON: yeni ciro → net tutar kasaya yazılır
+        _kk_ciro_kasa_senkron(cur, sube_id, tarih, cid, ins_nakit, ins_pos, ins_online, yeni_satir=True)
         return {
             "hedef_tablo": "ciro",
             "hedef_id": cid,
@@ -6450,6 +6474,8 @@ def _kk_ciro_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> D
         "UPDATE ciro SET nakit=%s, pos=%s, online=%s, toplam=%s WHERE id=%s",
         (yeni["nakit"], yeni["pos"], yeni["online"], yeni_toplam, r["id"]),
     )
+    # KASA DEFTERİ SENKRON: eski hareketi iptal + yeni net yaz (kasa bakiyesi düzelir)
+    _kk_ciro_kasa_senkron(cur, sube_id, tarih, r["id"], yeni["nakit"], yeni["pos"], yeni["online"], yeni_satir=False)
     return {"hedef_tablo": "ciro", "hedef_id": r["id"], "eski": eski,
             "yeni": {**yeni, "toplam": yeni_toplam}}
 
@@ -6592,6 +6618,8 @@ def _kk_ciro_artir(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> Di
             "UPDATE ciro SET nakit=%s, toplam=%s WHERE id=%s",
             (yeni_nakit, yeni_toplam, r["id"]),
         )
+        # KASA DEFTERİ SENKRON: nakit arttı → kasa hareketi yeniden yazılır
+        _kk_ciro_kasa_senkron(cur, sube_id, tarih, r["id"], yeni_nakit, float(r["pos"] or 0), float(r["online"] or 0), yeni_satir=False)
         return {"hedef_tablo": "ciro", "hedef_id": r["id"],
                 "eski": {"nakit": eski_nakit, "toplam": float(r["toplam"] or 0)},
                 "yeni": {"nakit": yeni_nakit, "toplam": yeni_toplam,
@@ -6605,6 +6633,8 @@ def _kk_ciro_artir(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> Di
         """,
         (cid, sube_id, tarih, ek_tutar, ek_tutar),
     )
+    # KASA DEFTERİ SENKRON: yeni nakit ciro → kasaya yaz
+    _kk_ciro_kasa_senkron(cur, sube_id, tarih, cid, ek_tutar, 0, 0, yeni_satir=True)
     return {"hedef_tablo": "ciro", "hedef_id": cid,
             "eski": None, "yeni": {"nakit": ek_tutar, "toplam": ek_tutar,
                                     "eklenen": ek_tutar, "yon": "fazla"}}
@@ -7071,19 +7101,25 @@ def ops_kasa_duzeltme_geri_al(audit_id: str, body: KasaGeriAlBody = KasaGeriAlBo
             # eski_deger var → UPDATE'di → eski değerlere UPDATE
             if eski_deger is None or not eski_deger:
                 if hedef_id:
+                    # KASA DEFTERİ: yeni eklenmiş ciroydu → önce kasa hareketini iptal et, sonra sil
+                    try:
+                        iptal_kasa_hareketi(cur, hedef_id, 'ciro', 'CIRO', 'CIRO_IPTAL',
+                                            'Kasa fark düzeltme geri alındı — ciro kasa hareketi iptal')
+                    except Exception:
+                        pass
                     cur.execute("DELETE FROM ciro WHERE id=%s", (hedef_id,))
                     restore_aciklama = f"ciro satırı silindi (id={hedef_id[:8]}…)"
             else:
                 if hedef_id:
+                    _e_nakit = float(eski_deger.get("nakit") or 0)
+                    _e_pos = float(eski_deger.get("pos") or 0)
+                    _e_online = float(eski_deger.get("online") or 0)
                     cur.execute(
-                        "UPDATE ciro SET nakit=%s, pos=%s, online=%s WHERE id=%s",
-                        (
-                            float(eski_deger.get("nakit") or 0),
-                            float(eski_deger.get("pos") or 0),
-                            float(eski_deger.get("online") or 0),
-                            hedef_id,
-                        ),
+                        "UPDATE ciro SET nakit=%s, pos=%s, online=%s, toplam=%s WHERE id=%s",
+                        (_e_nakit, _e_pos, _e_online, round(_e_nakit + _e_pos + _e_online, 2), hedef_id),
                     )
+                    # KASA DEFTERİ SENKRON: eski hareketi iptal + ESKİ net değerle yaz
+                    _kk_ciro_kasa_senkron(cur, sube_id, tarih, hedef_id, _e_nakit, _e_pos, _e_online, yeni_satir=False)
                     restore_aciklama = (
                         f"ciro eski değerlere döndürüldü "
                         f"(nakit {eski_deger.get('nakit')}, pos {eski_deger.get('pos')}, "
