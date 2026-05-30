@@ -764,10 +764,13 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                         f"(beklenen {bek:,.0f}₺ → gerçek {ks:,.0f}₺, {sev})"
                     )
                     # Upsert: aynı gün için tek ACILIS_KASA_FARK (panel + operasyon yolu çakışmasın)
+                    # ÖNEMLİ: Açılış event'i is_gunu (tarih_ev) ile tarihlenir; uyarı da AYNI iş
+                    # gününü kullanmalı. Önceden CURRENT_DATE (takvim) kullanılıyordu → gece 00:00–02:00
+                    # arası uyarı yanlış güne yazılıyor, recalc açılış event'ini bulamıyordu.
                     cur.execute(
                         "SELECT id FROM sube_operasyon_uyari "
-                        "WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='ACILIS_KASA_FARK' LIMIT 1",
-                        (sube_id,),
+                        "WHERE sube_id=%s AND tarih=%s AND tip='ACILIS_KASA_FARK' LIMIT 1",
+                        (sube_id, tarih_ev),
                     )
                     mevcut_kf = cur.fetchone()
                     if mevcut_kf:
@@ -790,11 +793,12 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                                     id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj,
                                     acilis_personel_id, acilis_personel_ad, kapanis_personel_id, kapanis_personel_ad
                                 )
-                            VALUES (%s, %s, CURRENT_DATE, 'ACILIS_KASA_FARK', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, 'ACILIS_KASA_FARK', %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 str(uuid.uuid4()),
                                 sube_id,
+                                tarih_ev,
                                 sev,
                                 bek,
                                 ks,
@@ -1190,7 +1194,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                         """SELECT 1 FROM onay_kuyrugu
                            WHERE kaynak_tablo='kasa_farki' AND islem_turu='KAPANIS_KASA_FARK'
                              AND tarih=%s AND aciklama LIKE %s AND durum='bekliyor' LIMIT 1""",
-                        (tarih_ev_ciro, f"%{sube_id}%"),
+                        (tarih_ev_ciro, f"[{sube_id}]%"),
                     )
                     if not cur.fetchone():
                         onay_ekle(

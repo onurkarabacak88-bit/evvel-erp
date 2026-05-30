@@ -1078,10 +1078,13 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                         f"(beklenen {bek:,.0f}₺ → gerçek {ks:,.0f}₺, {sev})"
                     )
                     # Upsert: aynı gün için tek ACILIS_KASA_FARK kaydı (iki açılış yolu çakışmasın)
+                    # Açılış event'i is_gunu_tr() ile tarihlenir → uyarı da AYNI iş gününü kullanmalı.
+                    # (CURRENT_DATE takvim günüydü; gece 00:00–02:00 arası yanlış güne yazıyordu.)
+                    _kf_isgun = is_gunu_tr()
                     cur.execute(
                         "SELECT id FROM sube_operasyon_uyari "
-                        "WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='ACILIS_KASA_FARK' LIMIT 1",
-                        (sube_id,),
+                        "WHERE sube_id=%s AND tarih=%s AND tip='ACILIS_KASA_FARK' LIMIT 1",
+                        (sube_id, _kf_isgun),
                     )
                     mevcut_kf = cur.fetchone()
                     if mevcut_kf:
@@ -1102,10 +1105,10 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                             INSERT INTO sube_operasyon_uyari
                                 (id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj,
                                  acilis_personel_id, acilis_personel_ad, kapanis_personel_id, kapanis_personel_ad)
-                            VALUES (%s, %s, CURRENT_DATE, 'ACILIS_KASA_FARK', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, 'ACILIS_KASA_FARK', %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
-                                str(uuid.uuid4()), sube_id, sev,
+                                str(uuid.uuid4()), sube_id, _kf_isgun, sev,
                                 bek, ks, fark, mesaj_kf,
                                 pid, onay_ad, kap_pid, kap_pad,
                             ),
@@ -1127,8 +1130,8 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                             cur.execute(
                                 """INSERT INTO personel_risk_sinyal
                                        (id, personel_id, sube_id, tarih, sinyal_turu, agirlik, aciklama, referans_id)
-                                   VALUES (%s, %s, %s, CURRENT_DATE, 'ACILIS_KASA_FARK', %s, %s, %s)""",
-                                (str(uuid.uuid4()), pid, sube_id,
+                                   VALUES (%s, %s, %s, %s, 'ACILIS_KASA_FARK', %s, %s, %s)""",
+                                (str(uuid.uuid4()), pid, sube_id, _kf_isgun,
                                  agirlik_kf, mesaj_kf[:1800], str(sube_id)),
                             )
                         except Exception:
@@ -5186,17 +5189,19 @@ def _kasa_farki_onay_kuyruguna_ekle(
     if fark == 0:
         return None
 
-    # Aynı gün aynı tip zaten varsa atla
+    # Aynı gün aynı tip zaten varsa atla — İŞ GÜNÜ bazlı (uyarı/recalc ile tutarlı).
+    # aciklama '[sube_id]' ile başlar → alt-dizgi çakışması olmadan eşleşir.
+    _onay_isgun = is_gunu_tr()
     cur.execute(
         """
         SELECT 1 FROM onay_kuyrugu
         WHERE kaynak_tablo='kasa_farki' AND islem_turu=%s
-          AND tarih=CURRENT_DATE
+          AND tarih=%s
           AND aciklama LIKE %s
           AND durum='bekliyor'
         LIMIT 1
         """,
-        (tip, f"%{sube_id}%"),
+        (tip, _onay_isgun, f"[{sube_id}]%"),
     )
     if cur.fetchone():
         return None
@@ -5210,6 +5215,6 @@ def _kasa_farki_onay_kuyruguna_ekle(
         fark_id,
         tam_acik[:500],
         fark,
-        bugun_tr(),
+        _onay_isgun,
     )
     return fark_id
