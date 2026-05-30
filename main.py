@@ -5624,7 +5624,7 @@ def aylik_rapor(yil: int = None, ay: int = None):
                        COUNT(*) AS olay,
                        COALESCE(SUM(CASE WHEN u.fark_tl < 0 THEN ABS(u.fark_tl) ELSE 0 END),0) AS acik_tl,
                        COALESCE(SUM(CASE WHEN u.fark_tl > 0 THEN u.fark_tl ELSE 0 END),0) AS fazla_tl,
-                       COUNT(*) FILTER (WHERE u.fark_tl < 0) AS acik_gun
+                       COUNT(DISTINCT u.tarih) FILTER (WHERE u.fark_tl < 0) AS acik_gun
                 FROM sube_operasyon_uyari u LEFT JOIN subeler s ON s.id=u.sube_id
                 WHERE u.tarih BETWEEN %s AND %s
                   AND u.fark_tl IS NOT NULL AND u.fark_tl <> 0
@@ -5715,7 +5715,7 @@ def aylik_rapor(yil: int = None, ay: int = None):
         if _kasa_acik > 0:
             yonetici_ozeti.append({
                 "tip": "uyari",
-                "metin": f"Kasa açığı: {denetim_ozeti['kasa']['acik_gun']} gün, toplam {_tl(_kasa_acik)} eksik kaydedildi.",
+                "metin": f"Kasa açığı: {denetim_ozeti['kasa']['acik_gun']} şube-gün, toplam {_tl(_kasa_acik)} eksik kaydedildi.",
             })
         if denetim_ozeti["uyumsuzluk"]["acik_adet"] > 0:
             yonetici_ozeti.append({

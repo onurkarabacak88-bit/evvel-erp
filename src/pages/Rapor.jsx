@@ -203,7 +203,7 @@ export default function Rapor() {
               <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>🛡️ Denetim & Risk Özeti</h3>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: d.kasa_sube?.length || d.fire?.sebepler?.length ? 16 : 0 }}>
                 {[
-                  { l: '💰 Kasa Açığı', big: fmt(kasaAcik), sub: `${d.kasa?.acik_gun || 0} gün · fazla: ${fmt(d.kasa?.fazla_tl || 0)}`, bad: kasaAcik > 0 },
+                  { l: '💰 Kasa Açığı', big: fmt(kasaAcik), sub: `${d.kasa?.acik_gun || 0} şube-gün · fazla: ${fmt(d.kasa?.fazla_tl || 0)}`, bad: kasaAcik > 0 },
                   { l: '🔥 Fire / Zayi', big: `${fireTop} bildirim`, sub: `${d.fire?.toplam_adet || 0} ürün`, bad: fireTop > 0 },
                   { l: '⚠️ Çözülmemiş Uyumsuzluk', big: `${uyum} kayıt`, sub: `${d.uyumsuzluk?.bekleyen_fark || 0} adet fark`, bad: uyum > 0 },
                 ].map(({ l, big, sub, bad }) => (
