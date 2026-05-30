@@ -316,6 +316,24 @@ def yeniden_hesapla(
              json.dumps(detay_json_yeni, ensure_ascii=False),
              yeni_fark, kim_pid, kim_ad, uyari_id),
         )
+        # ── PREMATURE SİNYAL TEMİZLİĞİ ──
+        # Düzeltme sonrası gerçek fark ~0 → bu bir SAYIM HATASIYDI (kayıp yok).
+        # Kapanış/açılış anında ham veriden tetiklenen personel "kasa açık" sinyalini
+        # ŞÜPHE → DİSİPLİN'e indir: özensizlik olarak izlenir ama hırsızlık paternine SAYILMAZ.
+        try:
+            cur.execute(
+                """
+                UPDATE personel_risk_sinyal
+                SET sinyal_turu = 'SAYIM_OZENSIZLIK',
+                    agirlik = LEAST(COALESCE(agirlik, 0), 3),
+                    aciklama = COALESCE(aciklama, '') ||
+                               ' | [Düzeltme sonrası fark 0 — sayım özensizliği, kayıp yok]'
+                WHERE sube_id = %s AND tarih = %s::date AND sinyal_turu = %s
+                """,
+                (sube_id, str(tarih), tip),
+            )
+        except Exception as _ex_sig:
+            log.warning("premature risk sinyali yeniden sınıflanamadı: %s", _ex_sig)
     else:
         cur.execute(
             """
