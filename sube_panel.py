@@ -4244,17 +4244,10 @@ def sube_siparis_akisi(
             WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) = %s
               AND t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
               AND t.durum NOT IN ('iptal', 'teslim_edildi', 'gonderilmedi', 'bekliyor', 'kabul_uyusmazlik')
-              AND (
-                    t.durum = 'hazirlaniyor'
-                    OR (
-                        t.durum = 'gonderildi'
-                        AND EXISTS (
-                            SELECT 1
-                            FROM jsonb_array_elements(COALESCE(t.kalem_durumlari, '[]'::jsonb)) kd
-                            WHERE LOWER(COALESCE(kd->>'durum', '')) IN ('bekliyor', 'kismi')
-                        )
-                    )
-                  )
+              -- Yalnızca HENÜZ sevk edilmemiş (hazirlaniyor) talepler «Gönderilecek»te kalır.
+              -- «Yola Çıkar» basıldığında durum=gonderildi olur ve kart bu listeden KAPANIR;
+              -- kısmi/eksik kalemler depo sevkiyat raporuyla merkeze bildirilir (gönderilenler geçmişinde görünür).
+              AND t.durum = 'hazirlaniyor'
             ORDER BY t.sevkiyat_ts DESC NULLS LAST, t.olusturma DESC NULLS LAST, t.id DESC
             LIMIT %s
         """
@@ -4293,17 +4286,7 @@ def sube_siparis_akisi(
                 WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) = %s
                   AND t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
                   AND t.durum NOT IN ('iptal', 'teslim_edildi', 'gonderilmedi', 'bekliyor', 'kabul_uyusmazlik')
-                  AND (
-                        t.durum = 'hazirlaniyor'
-                        OR (
-                            t.durum = 'gonderildi'
-                            AND EXISTS (
-                                SELECT 1
-                                FROM jsonb_array_elements(COALESCE(t.kalem_durumlari, '[]'::jsonb)) kd
-                                WHERE LOWER(COALESCE(kd->>'durum', '')) IN ('bekliyor', 'kismi')
-                            )
-                        )
-                      )
+                  AND t.durum = 'hazirlaniyor'
                 """,
                 (sube_id, gun_i),
             )
