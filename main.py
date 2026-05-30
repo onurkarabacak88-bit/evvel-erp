@@ -5893,6 +5893,57 @@ def aylik_rapor_muhurle(body: RaporMuhurleBody):
         """, (donem_key, payload, ad, h))
     return {"success": True, "donem": donem_key, "hash": h, "muhurleyen_ad": ad}
 
+@app.get("/api/banka-mutabakat")
+def banka_mutabakat(yil: int = None, ay: int = None):
+    """Üçlü nakit mutabakatı (kasa→teslim→banka): dönem boyunca şubelerden TESLİM
+    alınan nakit (ara teslim + kapanış teslimi) vs BANKAYA yatan; ayrıca kümülatif
+    'elde/yolda nakit' (henüz bankaya gitmemiş havuz). Gösterge amaçlı."""
+    import calendar as cal
+    bugun = bugun_tr()
+    yil = yil or bugun.year
+    ay = ay or bugun.month
+    ay_basi = date(yil, ay, 1)
+    ay_son = date(yil, ay, cal.monthrange(yil, ay)[1])
+    with db() as (conn, cur):
+        cur.execute("SELECT COALESCE(SUM(tutar),0) AS v FROM kasa_teslim WHERE tarih BETWEEN %s AND %s", (ay_basi, ay_son))
+        teslim_ara = float(cur.fetchone()["v"])
+        cur.execute("""SELECT COALESCE(SUM(teslim),0) AS v FROM sube_operasyon_event
+                       WHERE tip='KAPANIS' AND durum='tamamlandi' AND tarih BETWEEN %s AND %s""", (ay_basi, ay_son))
+        teslim_kap = float(cur.fetchone()["v"])
+        donem_teslim = round(teslim_ara + teslim_kap, 2)
+        cur.execute("SELECT COALESCE(SUM(tutar),0) AS v, COUNT(*) AS c FROM banka_yatirimlari WHERE tarih BETWEEN %s AND %s", (ay_basi, ay_son))
+        _y = dict(cur.fetchone())
+        donem_yatan = float(_y["v"]); yatan_adet = int(_y["c"])
+        # Kümülatif elde nakit (tüm zaman teslim − tüm zaman yatan)
+        cur.execute("SELECT COALESCE(SUM(tutar),0) AS v FROM kasa_teslim WHERE tarih <= %s", (ay_son,))
+        kum_ara = float(cur.fetchone()["v"])
+        cur.execute("""SELECT COALESCE(SUM(teslim),0) AS v FROM sube_operasyon_event
+                       WHERE tip='KAPANIS' AND durum='tamamlandi' AND tarih <= %s""", (ay_son,))
+        kum_kap = float(cur.fetchone()["v"])
+        cur.execute("SELECT COALESCE(SUM(tutar),0) AS v FROM banka_yatirimlari WHERE tarih <= %s", (ay_son,))
+        kum_yatan = float(cur.fetchone()["v"])
+        elde_nakit = round((kum_ara + kum_kap) - kum_yatan, 2)
+        # Şube bazlı dönem teslim
+        cur.execute("""
+            SELECT COALESCE(s.ad,'?') AS sube,
+              COALESCE((SELECT SUM(kt.tutar) FROM kasa_teslim kt WHERE kt.sube_id=s.id AND kt.tarih BETWEEN %s AND %s),0)
+            + COALESCE((SELECT SUM(e.teslim) FROM sube_operasyon_event e WHERE e.sube_id=s.id AND e.tip='KAPANIS' AND e.durum='tamamlandi' AND e.tarih BETWEEN %s AND %s),0) AS teslim
+            FROM subeler s ORDER BY teslim DESC
+        """, (ay_basi, ay_son, ay_basi, ay_son))
+        sube_teslim = [{"sube": r["sube"], "teslim": float(r["teslim"] or 0)} for r in cur.fetchall() if float(r["teslim"] or 0) > 0]
+    return {
+        "donem": f"{yil}-{ay:02d}",
+        "donem_teslim": donem_teslim,
+        "teslim_ara": round(teslim_ara, 2),
+        "teslim_kapanis": round(teslim_kap, 2),
+        "donem_yatan": round(donem_yatan, 2),
+        "yatan_adet": yatan_adet,
+        "donem_fark": round(donem_teslim - donem_yatan, 2),
+        "elde_nakit": elde_nakit,
+        "sube_teslim": sube_teslim,
+    }
+
+
 @app.get("/api/rapor/aylik/excel")
 def aylik_rapor_excel(yil: int = None, ay: int = None):
     """

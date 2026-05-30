@@ -2273,7 +2273,14 @@ function BankaYatirimModal({ liste, yukleniyor, onKapat, onYenile, toast }) {
   const bugun = new Date().toISOString().slice(0, 10);
   const [form, setForm] = useState({ tarih: bugun, tutar: '', yatiran_ad: '', aciklama: '' });
   const [kaydediyor, setKaydediyor] = useState(false);
+  const [mut, setMut] = useState(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  useEffect(() => {
+    api('/banka-mutabakat').then(setMut).catch(() => setMut(null));
+  }, [liste]);
+
+  const tlfmt = (n) => (Number(n) || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 }) + ' ₺';
 
   async function kaydet(e) {
     e?.preventDefault();
@@ -2320,6 +2327,44 @@ function BankaYatirimModal({ liste, yukleniyor, onKapat, onYenile, toast }) {
           <p className="muted" style={{ fontSize: 12, margin: 0 }}>
             Aşağıda son yatırımlar listelenir. Kayıtlar yalnızca takip içindir; kasa bakiyesini etkilemez.
           </p>
+
+          {/* ── ÜÇLÜ MUTABAKAT: kasa→teslim→banka ── */}
+          {mut && (
+            <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+              <div style={{ padding: '8px 12px', background: 'var(--bg3)', fontSize: 12, fontWeight: 700, color: 'var(--text2)' }}>
+                🔁 Bu ay nakit mutabakatı (kasa → teslim → banka)
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 1, background: 'var(--border)' }}>
+                {[
+                  { l: 'Teslim alınan nakit', v: mut.donem_teslim, c: 'var(--text1)', sub: `ara ${tlfmt(mut.teslim_ara)} + kapanış ${tlfmt(mut.teslim_kapanis)}` },
+                  { l: 'Bankaya yatan', v: mut.donem_yatan, c: 'var(--green)', sub: `${mut.yatan_adet} kayıt` },
+                  { l: 'Fark (yatmayı bekleyen)', v: mut.donem_fark, c: (mut.donem_fark || 0) > 0 ? 'var(--yellow,#e0a020)' : 'var(--green)', sub: 'teslim − yatan' },
+                ].map(({ l, v, c, sub }) => (
+                  <div key={l} style={{ background: 'var(--bg2)', padding: '10px 12px' }}>
+                    <div style={{ fontSize: 10, color: 'var(--text3)' }}>{l}</div>
+                    <div style={{ fontSize: 17, fontWeight: 800, fontFamily: 'monospace', color: c }}>{tlfmt(v)}</div>
+                    <div style={{ fontSize: 9.5, color: 'var(--text3)', marginTop: 2 }}>{sub}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, borderTop: '1px solid var(--border)' }}>
+                <span style={{ color: 'var(--text3)' }}>🏦 Kümülatif elde/yolda nakit (henüz bankaya gitmemiş)</span>
+                <strong style={{ fontFamily: 'monospace', color: (mut.elde_nakit || 0) > 0 ? 'var(--yellow,#e0a020)' : 'var(--text1)' }}>{tlfmt(mut.elde_nakit)}</strong>
+              </div>
+              {(mut.sube_teslim || []).length > 0 && (
+                <div style={{ padding: '4px 12px 10px', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {mut.sube_teslim.map((s, i) => (
+                    <span key={i} style={{ fontSize: 10, background: 'var(--bg3)', borderRadius: 100, padding: '2px 9px' }}>
+                      {s.sube}: <strong>{tlfmt(s.teslim)}</strong>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div style={{ padding: '0 12px 10px', fontSize: 9.5, color: 'var(--text3)' }}>
+                Not: Gösterge amaçlı. Pozitif fark = teslim alınmış ama henüz bankaya yatmamış nakit; sürekli/büyüyen fark dikkat gerektirir.
+              </div>
+            </div>
+          )}
           <form onSubmit={kaydet} style={{
             padding: 12, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg3)',
             display: 'flex', flexDirection: 'column', gap: 10,
