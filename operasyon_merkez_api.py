@@ -6177,18 +6177,25 @@ def ops_kasa_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyu
             raise HTTPException(404, "Kasa uyumsuzluk kaydı bulunamadı")
         if bool(r.get("okundu")):
             return {"success": True, "durum": "zaten_cozulmus", "id": uyari_id}
+        # #3: /coz YALNIZCA "görüldü/onaylandı" işaretler. Gerçek farkı maskeleyen
+        # keyfi cozum_duzeltilen_tl ARTIK yazılmaz — efektif fark gerçek kalır.
+        # Tutar değişimi yalnız /kaynak-duzelt ile (kanıtlı + geri alınabilir) yapılır.
+        # İddia edilen tutar varsa izlenebilirlik için NOTA eklenir, fark'a etki etmez.
+        _coz_not = (notu or None)
+        if duz is not None:
+            _iddia = f"[Bilgi: beyan edilen düzeltilmiş fark {duz:+,.2f}₺ — kaynak düzeltmesi yapılmadı]"
+            _coz_not = (f"{notu} {_iddia}".strip() if notu else _iddia)
         cur.execute(
             """
             UPDATE sube_operasyon_uyari
             SET okundu=TRUE,
-                cozum_duzeltilen_tl=%s,
                 cozum_notu=%s,
                 cozum_ts=NOW(),
                 cozum_personel_id=%s,
                 cozum_personel_ad=%s
             WHERE id=%s
             """,
-            (duz, (notu or None), pid, pad, uyari_id),
+            (_coz_not, pid, pad, uyari_id),
         )
         bek = float(r.get("beklenen_tl") or 0)
         ger = float(r.get("gercek_tl") or 0)
@@ -6251,6 +6258,14 @@ def _kk_ciro_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> D
     yeni_online = payload.get("yeni_online")
     if yeni_nakit is None and yeni_pos is None and yeni_online is None:
         raise HTTPException(400, "ciro_yanlis: yeni_nakit / yeni_pos / yeni_online'dan en az biri zorunlu")
+    # #5: recalc o günün TÜM aktif ciro satırlarını toplar; düzeltme ise tek satırı
+    # değiştirir. Birden fazla aktif satır varsa sessiz tutarsızlık yerine net uyar.
+    cur.execute(
+        "SELECT COUNT(*) AS c FROM ciro WHERE sube_id=%s AND tarih=%s::date AND durum='aktif'",
+        (sube_id, tarih),
+    )
+    if int((dict(cur.fetchone() or {}).get("c") or 0)) > 1:
+        raise HTTPException(409, "Bu gün için birden fazla aktif ciro kaydı var — düzeltme tek satıra uygulanırsa fark yanlış hesaplanır. Önce ciro kayıtlarını tekilleştirin.")
     cur.execute(
         """
         SELECT id::text, nakit::float, pos::float, online::float
@@ -6408,6 +6423,13 @@ def _kk_ciro_artir(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> Di
     if ek_tutar <= 0:
         raise HTTPException(400, "ciro_fazla: tutar > 0 olmalı (eklenecek nakit)")
 
+    # #5: çoklu aktif ciro satırı → tek satıra ekleme recalc ile uyuşmaz, net uyar.
+    cur.execute(
+        "SELECT COUNT(*) AS c FROM ciro WHERE sube_id=%s AND tarih=%s::date AND durum='aktif'",
+        (sube_id, tarih),
+    )
+    if int((dict(cur.fetchone() or {}).get("c") or 0)) > 1:
+        raise HTTPException(409, "Bu gün için birden fazla aktif ciro kaydı var — fazla ekleme tek satıra uygulanırsa fark yanlış hesaplanır. Önce ciro kayıtlarını tekilleştirin.")
     cur.execute(
         """
         SELECT id::text, COALESCE(nakit,0) AS nakit, COALESCE(pos,0) AS pos,
@@ -6660,6 +6682,27 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
                 """,
                 (notu or 'Gerçek kasa açığı — kaynak düzeltme yapılmadı', pid, pad, uyari_id),
             )
+            # #4: Gerçek açık ONAYLANMIŞ KAYIP olarak SORUMLULUĞA bağlanır.
+            # Mali defterleri (ciro/gider/kasa) bilinçli DEĞİŞTİRMEYİZ (sign/çift-sayım riski).
+            # Kayıp zaten orijinal uyarının gerçek fark_tl'i ile Denetim Özeti açık roll-up'ında
+            # görünür (uyari okundu=TRUE ama fark_tl korunur). Ek olarak: sorumlu personele
+            # risk sinyali yazılır → personel karnesine/​raporlarına yansır.
+            _acik_tl = abs(eski_fark)
+            if eski_fark < 0 and _acik_tl > 0.01 and pid:
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO personel_risk_sinyal
+                            (id, personel_id, sube_id, tarih, sinyal_turu, agirlik, aciklama, referans_id)
+                        VALUES (%s, %s, %s, %s::date, 'KASA_GERCEK_ACIK', %s, %s, %s)
+                        """,
+                        (str(uuid.uuid4()), pid, sube_id, tarih,
+                         20 if _acik_tl >= 200 else 12,
+                         f"Onaylanmış kasa açığı {_acik_tl:,.2f}₺"
+                         + (f" | {notu[:150]}" if notu else ""), uyari_id),
+                    )
+                except Exception as _ex_loss:
+                    log.warning("gercek_acik personel risk sinyali yazılamadı: %s", _ex_loss)
             recalc = {
                 "uyari_id": uyari_id,
                 "eski_fark": eski_fark,
