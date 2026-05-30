@@ -6586,6 +6586,11 @@ def _kk_gider_ekle(cur, sube_id: str, tarih: str, payload: Dict[str, Any],
         """,
         (gid, tarih, kategori, tutar, aciklama, sube_id, pid, gid),
     )
+    # KASA DEFTERİ SENKRON: nakit gider kasayı azaltır (normal anlık gider akışı gibi).
+    # Önceden yalnız anlik_giderler'e yazılıyordu → kasa bakiyesi gider kadar fazla kalıyordu.
+    insert_kasa_hareketi(cur, str(tarih), 'ANLIK_GIDER', -abs(tutar),
+                         f"Kasa farkı kaynak düzeltme — eksik nakit gider: {aciklama}"[:200],
+                         'anlik_giderler', gid)
     return {"hedef_tablo": "anlik_giderler", "hedef_id": gid,
             "eski": None, "yeni": {"kategori": kategori, "tutar": tutar, "aciklama": aciklama}}
 
@@ -6638,7 +6643,26 @@ def _kk_ciro_artir(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> Di
                 "eski": {"nakit": eski_nakit, "toplam": float(r["toplam"] or 0)},
                 "yeni": {"nakit": yeni_nakit, "toplam": yeni_toplam,
                          "eklenen": ek_tutar, "yon": "fazla"}}
-    # Ciro satırı yok — yeni nakit-only satır
+    # Aktif ciro yok — ONAY DURUMUNA SAYGI: onay bekleyen TASLAK varsa fazlayı TASLAĞA ekle
+    # (kasaya dokunma, yeni aktif ciro açma). Onaylanınca doğru tutarla kasaya yazılır.
+    cur.execute(
+        """
+        SELECT id::text, nakit::float FROM ciro_taslak
+        WHERE sube_id=%s AND tarih=%s::date AND durum='bekliyor'
+        ORDER BY olusturma DESC LIMIT 1 FOR UPDATE
+        """,
+        (sube_id, tarih),
+    )
+    t = cur.fetchone()
+    if t:
+        t = dict(t)
+        t_eski = float(t["nakit"] or 0)
+        t_yeni = round(t_eski + ek_tutar, 2)
+        cur.execute("UPDATE ciro_taslak SET nakit=%s WHERE id=%s", (t_yeni, t["id"]))
+        return {"hedef_tablo": "ciro_taslak", "hedef_id": t["id"],
+                "eski": {"nakit": t_eski}, "yeni": {"nakit": t_yeni, "eklenen": ek_tutar, "yon": "fazla"},
+                "taslak_duzeltildi": True}
+    # Ne aktif ne taslak → işletme-PIN onaylı düzeltmeyle yeni nakit ciro (Z hiç basılmamış)
     cid = str(uuid.uuid4())
     cur.execute(
         """
@@ -7192,10 +7216,15 @@ def ops_kasa_duzeltme_geri_al(audit_id: str, body: KasaGeriAlBody = KasaGeriAlBo
                     f"devir={eski_deger.get('devir')} eski değerlere döndürüldü"
                 )
         elif hedef_tablo == "anlik_giderler":
-            # gider_eksik INSERT'iydi → DELETE
+            # gider_eksik INSERT'iydi → önce kasa hareketini iptal et, sonra gideri sil
             if hedef_id:
+                try:
+                    iptal_kasa_hareketi(cur, hedef_id, 'anlik_giderler', 'ANLIK_GIDER', 'ANLIK_GIDER_IPTAL',
+                                        'Kasa fark düzeltme geri alındı — eksik gider kasa hareketi iptal')
+                except Exception:
+                    pass
                 cur.execute("DELETE FROM anlik_giderler WHERE id=%s", (hedef_id,))
-                restore_aciklama = f"anlık gider silindi (id={hedef_id[:8]}…)"
+                restore_aciklama = f"anlık gider silindi + kasa hareketi iptal (id={hedef_id[:8]}…)"
         elif not hedef_tablo:
             # gercek_acik için kaynak değişmemişti → uyari'daki cozum_* alanlarını sıfırla
             cur.execute(
