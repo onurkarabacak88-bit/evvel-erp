@@ -2035,6 +2035,13 @@ def init_db():
                 END IF;
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'siparis_urun'
+                      AND column_name = 'dusum_modu'
+                ) THEN
+                    ALTER TABLE siparis_urun ADD COLUMN dusum_modu TEXT NOT NULL DEFAULT 'acilinca';
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
                     WHERE table_schema = 'public' AND table_name = 'subeler'
                       AND column_name = 'sube_tipi'
                 ) THEN
@@ -2264,6 +2271,58 @@ def init_db():
             WHERE su.kategori_id = sk.id
               AND sk.kod IN ('pasta', 'sut')
               AND su.depo_stok_kalem_kodu IS NULL
+        """)
+
+        # ── DÜŞÜM MODU TEK SEFERLİK SEED (bitince vs açılınca) ─────
+        # Yalnızca hiç 'bitince' işaretli ürün yoksa çalışır → sonradan
+        # panelden yapılan manuel mod değişikliklerini ezmez.
+        cur.execute("SELECT 1 FROM siparis_urun WHERE dusum_modu = 'bitince' LIMIT 1")
+        if cur.fetchone() is None:
+            # Tüm Temizlik + tüm Bitki Çayları → bitince
+            cur.execute("""
+                UPDATE siparis_urun su
+                SET dusum_modu = 'bitince', guncelleme = NOW()
+                FROM siparis_kategori sk
+                WHERE su.kategori_id = sk.id
+                  AND sk.kod IN ('temizlik', 'bitki_cayi')
+            """)
+            # Sarf'tan seçili ürünler → bitince (norm_ad ile)
+            cur.execute("""
+                UPDATE siparis_urun su
+                SET dusum_modu = 'bitince', guncelleme = NOW()
+                FROM siparis_kategori sk
+                WHERE su.kategori_id = sk.id
+                  AND sk.kod = 'sarf'
+                  AND su.norm_ad IN (
+                      'filtre_kagidi','strec_film','islak_mendil','kese_kagidi',
+                      'bardak_cantasi','ahsap_karistirici','cam_bezi','zimba_teli'
+                  )
+            """)
+
+        # ── KULLANIMDA ÜRÜN (bitince modu) ─────────────────────
+        # 'bitince' modlu ürünler "Ürün Aç"ta depodan DÜŞMEZ; buraya
+        # 'kullanimda' kaydı girer. "Bitti" denince URUN_AC yazılır,
+        # depo düşülür ve sipariş alarmı o an tetiklenir.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_kullanimda_urun (
+                id                 TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                sube_id            TEXT NOT NULL,
+                urun_id            TEXT,
+                kalem_kodu         TEXT,
+                urun_ad            TEXT,
+                adet               INT  NOT NULL DEFAULT 1,
+                durum              TEXT NOT NULL DEFAULT 'kullanimda',
+                acan_personel_id   TEXT,
+                acan_personel_ad   TEXT,
+                ac_ts              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                biten_personel_id  TEXT,
+                biten_personel_ad  TEXT,
+                bitti_ts           TIMESTAMPTZ
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_kullanimda_sube_durum
+            ON sube_kullanimda_urun (sube_id, durum, ac_ts DESC)
         """)
 
         # ── PERSONEL AYLIK KAYIT ───────────────────────────────

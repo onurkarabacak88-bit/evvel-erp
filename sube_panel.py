@@ -2902,6 +2902,14 @@ class SubeUrunAcTaslakBody(BaseModel):
     personel_id: Optional[str] = None
 
 
+class SubeUrunBittiBody(BaseModel):
+    """'bitince' modlu kullanımdaki ürün bitti → depodan düş + sipariş alarmı."""
+    personel_id: str
+    pin: str
+    kullanim_id: str
+    not_aciklama: Optional[str] = None
+
+
 def _taslak_ozet_metin(kalemler: List[Dict[str, Any]], not_aciklama: Optional[str]) -> str:
     rows = kalemler or []
     secili = []
@@ -3093,23 +3101,44 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
 
         tr_now = _now_tr()
         saat_sistem = tr_now.strftime("%H:%M:%S")
-        payload = _json.dumps({"kalemler": kalemler}, ensure_ascii=False, separators=(",", ":"))
-        acik = "URUN_AC_JSON:" + payload
-        if (body.not_aciklama or "").strip():
-            acik += " | " + (body.not_aciklama or "").strip()[:400]
-
         _talep_id = (body.siparis_talep_id or "").strip() or None
-        rid = operasyon_defter_ekle(
-            cur,
-            sube_id,
-            "URUN_AC",
-            acik,
-            ref_event_id=_talep_id,
-            personel_id=pid_panel,
-            personel_ad=onay_ad,
-            bildirim_saati=saat_sistem,
-        )
-        audit(cur, "operasyon_defter", rid, "URUN_AC")
+        _not_ek = ""
+        if (body.not_aciklama or "").strip():
+            _not_ek = " | " + (body.not_aciklama or "").strip()[:400]
+
+        # ── Düşüm modunu ürün bazında çöz (bitince vs açılınca) ──
+        _urun_ids = [str(k.get("urun_id") or "").strip() for k in kalemler if str(k.get("urun_id") or "").strip()]
+        _mod_map: dict = {}
+        if _urun_ids:
+            cur.execute(
+                "SELECT id, dusum_modu FROM siparis_urun WHERE id = ANY(%s)",
+                (_urun_ids,),
+            )
+            for _r in cur.fetchall():
+                _mod_map[str(_r["id"])] = (str(_r.get("dusum_modu") or "acilinca").strip() or "acilinca")
+
+        def _is_bitince(k) -> bool:
+            return _mod_map.get(str(k.get("urun_id") or "").strip(), "acilinca") == "bitince"
+
+        acilinca_kalemler = [k for k in kalemler if not _is_bitince(k)]
+        bitince_kalemler = [k for k in kalemler if _is_bitince(k)]
+
+        # Açılınca modu: teorik stoğa giren klasik URUN_AC kaydı (depodan düşer)
+        rid = None
+        if acilinca_kalemler:
+            payload = _json.dumps({"kalemler": acilinca_kalemler}, ensure_ascii=False, separators=(",", ":"))
+            acik = "URUN_AC_JSON:" + payload + _not_ek
+            rid = operasyon_defter_ekle(
+                cur,
+                sube_id,
+                "URUN_AC",
+                acik,
+                ref_event_id=_talep_id,
+                personel_id=pid_panel,
+                personel_ad=onay_ad,
+                bildirim_saati=saat_sistem,
+            )
+            audit(cur, "operasyon_defter", rid, "URUN_AC")
 
         # ── Şube deposundan düş — bara giren ürün depoda azalır ──
         # Havuz (pool) kaldırıldı. Depo çıkışı yalnızca kalemler[] UUID satırlarıyla yapılır.
@@ -3178,9 +3207,9 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                 ))
 
         # Havuz (STOK_KEYS) döngüsü kaldırıldı — sadece UUID kalemler işlenir.
-        # UUID katalog kalemleri
+        # UUID katalog kalemleri (yalnızca AÇILINCA modu depodan düşer)
         _islendi_kalemler: set = set()  # Aynı kalem_kodu'nun tek request'te iki kez düşmesini önler
-        for k in kalemler:
+        for k in acilinca_kalemler:
             uid = str(k.get("urun_id") or "").strip()
             uad = str(k.get("urun_ad") or "").strip()
             if uid:
@@ -3247,11 +3276,197 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                         ),
                     )
 
+        # ── BİTİNCE modu: depodan DÜŞME — "kullanımda" kaydı aç ──
+        # Sipariş alarmı bu ürünlerde ürün açılınca DEĞİL, "Bitti" denince tetiklenir.
+        for k in bitince_kalemler:
+            uid = str(k.get("urun_id") or "").strip()
+            uad = str(k.get("urun_ad") or "").strip()
+            adet = max(0, int(k.get("adet") or 0))
+            if adet <= 0:
+                continue
+            kk = depo_kalem_kodu_resolve(cur, uid, uad) if uid else ""
+            cur.execute(
+                """
+                INSERT INTO sube_kullanimda_urun
+                    (sube_id, urun_id, kalem_kodu, urun_ad, adet,
+                     acan_personel_id, acan_personel_ad)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (sube_id, uid or None, (kk or None), uad or None, adet, pid_panel, onay_ad),
+            )
+        if bitince_kalemler:
+            _bit_payload = _json.dumps(
+                {"kalemler": bitince_kalemler}, ensure_ascii=False, separators=(",", ":")
+            )
+            _bit_rid = operasyon_defter_ekle(
+                cur,
+                sube_id,
+                "URUN_KULLANIMA_AL",
+                "URUN_KULLANIMA_AL_JSON:" + _bit_payload + _not_ek,
+                personel_id=pid_panel,
+                personel_ad=onay_ad,
+                bildirim_saati=saat_sistem,
+            )
+            audit(cur, "operasyon_defter", _bit_rid, "URUN_KULLANIMA_AL")
+            if rid is None:
+                rid = _bit_rid
+
         # PIN onaylı URUN_AC tamamlandı: taslak satırını sil — aksi halde panel tekrar açılınca GET ile
         # eski kalemler yüklenir (istemci programatik sıfırlamada input/change tetiklenmeyebilir).
         cur.execute("DELETE FROM urun_ac_taslak WHERE sube_id = %s", (sube_id,))
 
-    return {"success": True, "defter_id": rid, "delta": {}, "kalemler": kalemler, "tip": "URUN_AC"}
+    return {
+        "success": True,
+        "defter_id": rid,
+        "delta": {},
+        "kalemler": kalemler,
+        "acilinca_adet": sum(max(0, int(k.get("adet") or 0)) for k in acilinca_kalemler),
+        "bitince_adet": sum(max(0, int(k.get("adet") or 0)) for k in bitince_kalemler),
+        "tip": "URUN_AC",
+    }
+
+
+@router.get("/{sube_id}/kullanimda")
+def sube_kullanimda_listele(sube_id: str):
+    """Şubede 'bitince' modunda açılmış, henüz bitmemiş ürünler."""
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        cur.execute(
+            """
+            SELECT id, urun_id, kalem_kodu, urun_ad, adet,
+                   acan_personel_ad, ac_ts
+            FROM sube_kullanimda_urun
+            WHERE sube_id = %s AND durum = 'kullanimda'
+            ORDER BY ac_ts DESC
+            """,
+            (sube_id,),
+        )
+        items = [
+            {
+                "id": str(r["id"]),
+                "urun_id": (str(r["urun_id"]) if r.get("urun_id") else None),
+                "urun_ad": (r.get("urun_ad") or "").strip() or "—",
+                "adet": int(r.get("adet") or 0),
+                "acan": (r.get("acan_personel_ad") or "").strip() or "—",
+                "ac_ts": (r["ac_ts"].isoformat() if r.get("ac_ts") else None),
+            }
+            for r in cur.fetchall()
+        ]
+    return {"success": True, "items": items, "adet": len(items)}
+
+
+@router.post("/{sube_id}/urun-bitti")
+def sube_urun_bitti(sube_id: str, body: SubeUrunBittiBody):
+    """'bitince' modlu kullanımdaki ürün bitti:
+    şimdi URUN_AC yazılır, depodan düşülür ve sipariş alarmı tetiklenir."""
+    from operasyon_stok_motor import (
+        depo_kalem_kodu_resolve,
+        sube_depo_stok_depo_cikis_dus,
+    )
+    import uuid as _uuid
+
+    pid_in = (body.personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    kid = (body.kullanim_id or "").strip()
+    if not pid_in:
+        raise HTTPException(400, "personel_id gerekli")
+    if len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "4 haneli panel PIN gerekli")
+    if not kid:
+        raise HTTPException(400, "kullanim_id gerekli")
+
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        pid_panel = str(ku.get("id") or "").strip() or pid_in
+
+        cur.execute(
+            """
+            SELECT id, urun_id, kalem_kodu, urun_ad, adet, durum
+            FROM sube_kullanimda_urun
+            WHERE id = %s AND sube_id = %s
+            """,
+            (kid, sube_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Kullanımda kaydı bulunamadı.")
+        if (row.get("durum") or "") != "kullanimda":
+            raise HTTPException(409, "Bu kayıt zaten bitmiş.")
+
+        uid = str(row.get("urun_id") or "").strip()
+        uad = (row.get("urun_ad") or "").strip()
+        adet = max(1, int(row.get("adet") or 1))
+        kk = (str(row.get("kalem_kodu") or "").strip()
+              or (depo_kalem_kodu_resolve(cur, uid, uad) if uid else ""))
+
+        from operasyon_defter import operasyon_defter_ekle
+        import json as _json
+
+        saat_sistem = _now_tr().strftime("%H:%M:%S")
+        _not_ek = ""
+        if (body.not_aciklama or "").strip():
+            _not_ek = " | " + (body.not_aciklama or "").strip()[:400]
+        kalemler = [{"urun_id": uid, "urun_ad": uad, "adet": adet}]
+        acik = ("URUN_AC_JSON:"
+                + _json.dumps({"kalemler": kalemler}, ensure_ascii=False, separators=(",", ":"))
+                + " | [BİTTİ] " + uad + _not_ek)
+        rid = operasyon_defter_ekle(
+            cur, sube_id, "URUN_AC", acik,
+            personel_id=pid_panel, personel_ad=onay_ad, bildirim_saati=saat_sistem,
+        )
+        audit(cur, "operasyon_defter", rid, "URUN_AC")
+
+        # Depodan düş — bitince ürünü artık tüketildi sayılır
+        if kk:
+            sube_depo_stok_depo_cikis_dus(cur, sube_id, kk, uad or None, adet)
+            # Sipariş alarmı — depo eşiğin altına indiyse tetikle
+            cur.execute(
+                """
+                SELECT mevcut_adet, min_stok, kalem_adi FROM sube_depo_stok
+                WHERE sube_id = %s AND kalem_kodu = %s
+                  AND mevcut_adet <= GREATEST(1, min_stok)
+                """,
+                (sube_id, kk),
+            )
+            alarm_r = cur.fetchone()
+            if alarm_r:
+                mevcut = int(alarm_r.get("mevcut_adet") or 0)
+                min_s = int(alarm_r.get("min_stok") or 0)
+                k_adi = alarm_r.get("kalem_adi") or uad or kk
+                cur.execute(
+                    """
+                    SELECT 1 FROM sube_operasyon_uyari
+                    WHERE sube_id=%s AND tip='STOK_ALARM'
+                      AND tarih=CURRENT_DATE AND mesaj LIKE %s
+                    LIMIT 1
+                    """,
+                    (sube_id, f"%{kk}%"),
+                )
+                if not cur.fetchone():
+                    seviye = "kritik" if mevcut == 0 else "uyari"
+                    cur.execute(
+                        """
+                        INSERT INTO sube_operasyon_uyari
+                            (id, sube_id, tarih, tip, seviye, mesaj)
+                        VALUES (%s, %s, CURRENT_DATE, 'STOK_ALARM', %s, %s)
+                        """,
+                        (str(_uuid.uuid4()), sube_id, seviye,
+                         f"Depo stok azaldı: {k_adi} — mevcut {mevcut} adet (min {min_s}). Sipariş gerekebilir."),
+                    )
+
+        cur.execute(
+            """
+            UPDATE sube_kullanimda_urun
+            SET durum = 'bitti', biten_personel_id = %s,
+                biten_personel_ad = %s, bitti_ts = NOW()
+            WHERE id = %s
+            """,
+            (pid_panel, onay_ad, kid),
+        )
+
+    return {"success": True, "defter_id": rid, "urun_ad": uad, "adet": adet, "tip": "URUN_BITTI"}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -3383,7 +3598,7 @@ def _siparis_katalog_getir(cur) -> List[Dict[str, Any]]:
         cur.execute(
             """
             SELECT id, ad, aktif, sira, birim_fiyat_tl,
-                   depo_stok_kalem_kodu, aciklama
+                   depo_stok_kalem_kodu, aciklama, dusum_modu
             FROM siparis_urun
             WHERE kategori_id=%s AND aktif=TRUE
             ORDER BY sira ASC, ad ASC
@@ -3402,6 +3617,7 @@ def _siparis_katalog_getir(cur) -> List[Dict[str, Any]]:
                     else None
                 ),
                 "aciklama": (str(x["aciklama"]).strip() if x.get("aciklama") else None),
+                "dusum_modu": (str(x["dusum_modu"]).strip() if x.get("dusum_modu") else "acilinca"),
             }
             for x in cur.fetchall()
         ]

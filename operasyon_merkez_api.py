@@ -7699,7 +7699,7 @@ def ops_siparis_katalog(tumunu_goster: bool = False):
         for k in kats:
             cur.execute(
                 """
-                SELECT id, ad, aktif, sira, birim_fiyat_tl, depo_stok_kalem_kodu, aciklama
+                SELECT id, ad, aktif, sira, birim_fiyat_tl, depo_stok_kalem_kodu, aciklama, dusum_modu
                 FROM siparis_urun
                 WHERE kategori_id=%s AND aktif=TRUE
                 ORDER BY sira ASC, ad ASC
@@ -7714,6 +7714,7 @@ def ops_siparis_katalog(tumunu_goster: bool = False):
                     "birim_fiyat_tl": (float(x["birim_fiyat_tl"]) if x.get("birim_fiyat_tl") is not None else None),
                     "depo_stok_kalem_kodu": (str(x["depo_stok_kalem_kodu"]).strip() if x.get("depo_stok_kalem_kodu") else None),
                     "aciklama": (str(x["aciklama"]).strip() if x.get("aciklama") else None),
+                    "dusum_modu": (str(x["dusum_modu"]).strip() if x.get("dusum_modu") else "acilinca"),
                 }
                 for x in cur.fetchall()
             ]
@@ -8049,6 +8050,45 @@ def ops_siparis_urun_durum(body: OpsSiparisUrunDurumBody):
             except Exception:
                 pass
     return {"success": True, "urun_id": str(ud["id"]), "aktif": bool(ud["aktif"])}
+
+
+class OpsSiparisUrunDusumModuBody(BaseModel):
+    urun_id: str
+    dusum_modu: str  # 'acilinca' | 'bitince'
+
+
+@router.post("/siparis/urun-dusum-modu")
+def ops_siparis_urun_dusum_modu(body: OpsSiparisUrunDusumModuBody):
+    """Ürünün stok düşüm modunu değiştir: açılınca ⇄ bitince."""
+    mod = (body.dusum_modu or "").strip().lower()
+    if mod not in ("acilinca", "bitince"):
+        raise HTTPException(400, "dusum_modu 'acilinca' veya 'bitince' olmalı")
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            UPDATE siparis_urun SET dusum_modu=%s, guncelleme=NOW()
+            WHERE id=%s
+            RETURNING id, ad, dusum_modu
+            """,
+            (mod, (body.urun_id or "").strip()),
+        )
+        ur = cur.fetchone()
+        if not ur:
+            raise HTTPException(404, "Ürün bulunamadı")
+        ud = dict(ur)
+        audit(cur, "siparis_urun", str(ud["id"]), "OPS_SIPARIS_URUN_DUSUM_MODU")
+        from operasyon_defter import operasyon_defter_ekle
+
+        sid = _ops_sube_anchor(cur)
+        saat = dt_now_tr().strftime("%H:%M:%S")
+        operasyon_defter_ekle(
+            cur,
+            sid,
+            "OPS_SIPARIS_URUN_DUSUM_MODU",
+            f"Merkez — düşüm modu={ud['dusum_modu']} urun={ud['ad']}",
+            bildirim_saati=saat,
+        )
+    return {"success": True, "urun_id": str(ud["id"]), "dusum_modu": str(ud["dusum_modu"])}
 
 
 @router.post("/siparis/urun-fiyat")
