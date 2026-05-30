@@ -5570,8 +5570,7 @@ def aylik_rapor(yil: int = None, ay: int = None):
                 SELECT COALESCE(s.ad,'Tanımsız') AS sube, COUNT(*) AS c
                 FROM sube_operasyon_uyari u LEFT JOIN subeler s ON s.id=u.sube_id
                 WHERE u.tarih BETWEEN %s AND %s
-                  AND u.tip IN ('ACILIS_KASA_FARK','SATIS_ANOMALI','FIRE_TESPITI',
-                                'URUN_AC_UYUMSUZLUK','PATTERN_UYARI')
+                  AND u.tip IN ('ACILIS_KASA_FARK','FIRE_TESPITI')
                 GROUP BY s.ad
             """, (ay_basi, ay_son))
             _risk_sube = {r['sube']: int(r['c']) for r in cur.fetchall()}
@@ -5598,10 +5597,12 @@ def aylik_rapor(yil: int = None, ay: int = None):
             buyume = round((bu_gunluk - onc_gunluk) / onc_gunluk * 100, 1) if onc_gunluk > 0 else None
             risk = int(_risk_sube.get(ad, 0))
             pay = round(ci / ciro_t * 100, 1) if ciro_t else 0.0
-            skor = 78.0
+            skor = 80.0
             if buyume is not None:
                 skor += max(-15.0, min(15.0, buyume))
-            skor -= min(40.0, risk * 8.0)
+            # Risk: ham sayı değil, gün başına sıklık (her gün kasa farkı = ağır ceza)
+            risk_siklik = (risk / gecen_gun) if gecen_gun else 0.0
+            skor -= min(30.0, risk_siklik * 40.0)
             sube_karne.append({
                 "sube": ad, "ciro": ci, "pay_yuzde": pay, "buyume_yuzde": buyume,
                 "risk_sinyali": risk, "islem_sayisi": s.get('islem_sayisi') or 0,
