@@ -827,6 +827,14 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 bildirim_saati=saat_sistem,
             )
 
+            # ── AKILLI DENETİM FİŞİ ── Açılış (N2 kör sayım) tamamlandı → truth_motor'u
+            # otomatik tetikle. Güvenli sarmalayıcı: hata yutar, açılışı asla bozmaz.
+            try:
+                import truth_motor as _tm
+                _tm.otomatik_calistir(cur, sube_id, str(tarih_ev))
+            except Exception:
+                pass  # otomatik_calistir zaten hata yutar; import güvenliği için
+
         elif tip == "KONTROL":
             from personel_panel_auth import dogrula_personel_panel_pin
 

@@ -943,6 +943,31 @@ def veri_topla(cur, sube_id: str, tarih: str) -> List[BoyutVeri]:
 #  PUBLIC API — entry point
 # ════════════════════════════════════════════════════════════════════════════
 
+def otomatik_calistir(cur, sube_id: str, tarih: str) -> Optional[Dict[str, Any]]:
+    """Açılış tamamlanınca güvenli otomatik tetik (N2 sabah kör sayım hazır anı).
+    HİÇBİR hata fırlatmaz — çağıran akışı (açılış) asla bozmaz. Pasifse/koşul yoksa None.
+    read_only modda yalnız append-only truth_motor_kararlar'a yazar; mevcut akışı etkilemez."""
+    try:
+        if not _global_aktif():
+            return None
+        if not sube_aktif_mi(cur, sube_id):
+            return None
+        # İdempotent: aynı gün tekrar tetiklenirse mükerrer karar oluşmasın —
+        # o güne ait önceki kararları sil, taze tanı setiyle yeniden yaz.
+        try:
+            cur.execute(
+                "DELETE FROM truth_motor_kararlar WHERE sube_id=%s AND tarih=%s::date",
+                (sube_id, str(tarih)),
+            )
+        except Exception:
+            pass
+        veriler = veri_topla(cur, sube_id, str(tarih))
+        return motor_calistir(cur, sube_id, str(tarih), veriler)
+    except Exception as e:
+        log.warning("truth_motor otomatik_calistir hata (sube=%s tarih=%s): %s", sube_id, tarih, e)
+        return None
+
+
 def motor_calistir(cur, sube_id: str, tarih: str,
                    veriler: List[BoyutVeri]) -> Dict[str, Any]:
     """
