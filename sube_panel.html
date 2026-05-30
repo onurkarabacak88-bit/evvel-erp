@@ -4756,6 +4756,41 @@
       box-shadow:0 3px 10px rgba(34,197,94,.4); }
     .kullanimda-bitti-btn:disabled { opacity:.5; cursor:default; }
 
+    /* ── Ana Sayfa kompakt varyant (ambient awareness) ──
+       Sakin ama net: ince amber sol-şerit, yanıp sönme yok, kompakt satırlar.
+       Dokunma hedefi 44px korunur ama görsel olarak ekranı ezmez. */
+    .kullanimda-kart.kompakt {
+      padding: 0; border-radius: 14px; border: 1px solid var(--border);
+      border-left: 4px solid #f59e0b;
+      background: linear-gradient(180deg, rgba(245,158,11,0.07), rgba(245,158,11,0.02));
+      box-shadow: none; animation: none; margin-bottom: 14px; overflow: hidden;
+    }
+    .kullanimda-kart.kompakt .kullanimda-head {
+      margin: 0; padding: 11px 14px; border-bottom: 1px solid rgba(245,158,11,0.18);
+      background: rgba(245,158,11,0.06);
+    }
+    .kullanimda-kart.kompakt .kullanimda-baslik {
+      font-size: 13px; font-weight: 700; color: #fbbf24; letter-spacing: .2px;
+      display: flex; align-items: center; gap: 7px;
+    }
+    .kullanimda-kart.kompakt .kullanimda-rozet {
+      min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px;
+      font-size: 12px; font-weight: 800; box-shadow: none;
+    }
+    .kullanimda-kart.kompakt .kullanimda-aciklama { display: none; }
+    .kullanimda-kart.kompakt #anaKullanimdaWrap { padding: 6px 8px; }
+    .kullanimda-kart.kompakt .sv-urun-row {
+      background: transparent; border: none; border-radius: 8px;
+      padding: 7px 8px; margin: 0; gap: 10px;
+    }
+    .kullanimda-kart.kompakt .sv-urun-row + .sv-urun-row { border-top: 1px solid rgba(255,255,255,0.04); }
+    .kullanimda-kart.kompakt .sv-urun-ad { font-size: 13.5px; font-weight: 600; }
+    .kullanimda-kart.kompakt .kullanimda-bitti-btn {
+      min-height: 36px; padding: 0 14px; font-size: 13px; font-weight: 700;
+      border-radius: 9px; box-shadow: none;
+      background: linear-gradient(135deg,#22c55e,#16a34a);
+    }
+
     /* Küçük etiket */
     .kap-lbl { font-size: 11px !important; font-weight: 700 !important;
                 text-transform: uppercase; letter-spacing: .4px;
@@ -5102,15 +5137,12 @@
           </button>
         </div>
 
-        <!-- ②.5 Kullanımda olan ürünler (bitince → Bitti) -->
-        <div id="anaKullanimdaKart" class="kullanimda-kart" style="display:none">
+        <!-- ②.5 Kullanımda olan ürünler (bitince → Bitti) — ambient/kompakt -->
+        <div id="anaKullanimdaKart" class="kullanimda-kart kompakt" style="display:none">
           <div class="kullanimda-head">
-            <span class="kullanimda-baslik">🪣 KULLANIMDA — bitince “Bitti” deyin!</span>
+            <span class="kullanimda-baslik"><span>🪣</span> Kullanımda — bittiğinde “Bitti” deyin</span>
             <span id="anaKullanimdaSayi" class="kullanimda-rozet">0</span>
           </div>
-          <p class="kullanimda-aciklama">
-            ⚠️ Bu ürünler açılınca stoktan <strong>İNMEZ</strong>. Bittiğinde mutlaka <strong>Bitti ✓</strong> deyin — yoksa depo düşmez ve <strong>sipariş gelmez!</strong>
-          </p>
           <div id="anaKullanimdaWrap"></div>
         </div>
 
