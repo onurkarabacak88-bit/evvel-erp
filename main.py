@@ -5505,7 +5505,11 @@ def aylik_rapor(yil: int = None, ay: int = None):
         net_t = float(ozet.get('net_kar_zarar') or 0)
         pos_ciro = float(ozet.get('ciro_pos') or 0)
         pos_kesinti = float(ozet.get('pos_kesinti_toplam') or 0)
-        gun_say = ay_son.day
+        # Devam eden ayda geçen güne kadar; geçmiş ayda tam ay gün sayısı (adil run-rate)
+        ay_suruyor = (bugun.year == yil and bugun.month == ay)
+        gecen_gun = bugun.day if ay_suruyor else ay_son.day
+        onc_gun = os_.day  # önceki ayın gün sayısı
+        gun_say = gecen_gun
         gunluk_gider = (gider_t / gun_say) if gun_say else 0.0
         kpi = {
             "net_kar_marji": round(net_t / gelir_t * 100, 1) if gelir_t else None,
@@ -5588,13 +5592,16 @@ def aylik_rapor(yil: int = None, ay: int = None):
             ad = s['sube']
             ci = float(s.get('ciro') or 0)
             onc_ci = _onc_sube.get(ad, 0.0)
-            buyume = round((ci - onc_ci) / onc_ci * 100, 1) if onc_ci > 0 else None
+            # Adil kıyas: günlük ortalama (run-rate) — yarım ay tam ayı haksız ezmesin
+            bu_gunluk = (ci / gecen_gun) if gecen_gun else 0.0
+            onc_gunluk = (onc_ci / onc_gun) if onc_gun else 0.0
+            buyume = round((bu_gunluk - onc_gunluk) / onc_gunluk * 100, 1) if onc_gunluk > 0 else None
             risk = int(_risk_sube.get(ad, 0))
             pay = round(ci / ciro_t * 100, 1) if ciro_t else 0.0
-            skor = 72.0
+            skor = 78.0
             if buyume is not None:
-                skor += max(-25.0, min(20.0, buyume))
-            skor -= min(30.0, risk * 5.0)
+                skor += max(-15.0, min(15.0, buyume))
+            skor -= min(40.0, risk * 8.0)
             sube_karne.append({
                 "sube": ad, "ciro": ci, "pay_yuzde": pay, "buyume_yuzde": buyume,
                 "risk_sinyali": risk, "islem_sayisi": s.get('islem_sayisi') or 0,
@@ -5605,11 +5612,12 @@ def aylik_rapor(yil: int = None, ay: int = None):
         # Yönetici özeti — otomatik cümleler
         yonetici_ozeti = []
         onc_ciro = float(onceki.get('ciro') or 0)
-        if onc_ciro > 0:
-            cd = (ciro_t - onc_ciro) / onc_ciro * 100
+        if onc_ciro > 0 and gecen_gun and onc_gun:
+            cd = ((ciro_t / gecen_gun) - (onc_ciro / onc_gun)) / (onc_ciro / onc_gun) * 100
+            _kiyas_not = " (günlük ortalama, ay sürüyor)" if ay_suruyor else ""
             yonetici_ozeti.append({
                 "tip": "iyi" if cd >= 0 else "uyari",
-                "metin": f"Ciro geçen aya göre %{abs(cd):.1f} {'arttı' if cd >= 0 else 'azaldı'} ({_tl(ciro_t)}).",
+                "metin": f"Ciro geçen aya göre %{abs(cd):.1f} {'yüksek' if cd >= 0 else 'düşük'} hızda ({_tl(ciro_t)}){_kiyas_not}.",
             })
         else:
             yonetici_ozeti.append({"tip": "notr", "metin": f"Bu ay ciro: {_tl(ciro_t)}."})
