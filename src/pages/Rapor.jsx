@@ -69,6 +69,17 @@ export default function Rapor() {
     finally { setExcelLoading(false); }
   }
 
+  const muhurlu = rapor?.muhur?.muhurlu;
+  async function muhurle() {
+    if (!window.confirm(`${rapor?.donem_label} dönemini mühürlemek istediğinize emin misiniz?\n\nMühürlenen dönem değişmez bir kayda dönüşür ve bir daha düzenlenemez (dönem kapanışı).`)) return;
+    try {
+      await api('/rapor/aylik/muhurle', { method: 'POST', body: { yil, ay } });
+      toast('Dönem mühürlendi 🔒');
+      yukle();
+    } catch (e) { toast(e.message, 'red'); }
+  }
+  function yazdir() { window.print(); }
+
   const yillar = Array.from({ length: 3 }, (_, i) => bugun.getFullYear() - i);
   const o = rapor?.ozet || {};
   const onc = rapor?.onceki_ay || {};
@@ -82,7 +93,7 @@ export default function Rapor() {
           <h2>Aylık Performans Karnesi</h2>
           <p style={{ fontSize: 12, color: 'var(--text3)' }}>{rapor ? rapor.donem_label : '—'} · Ciro, kâr, trend & şube karnesi</p>
         </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <div className="no-print" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <select value={ay} onChange={e => setAy(+e.target.value)}
             style={{ padding: '6px 10px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text1)', fontSize: 13 }}>
             {AYLAR.map((a, i) => <option key={i} value={i + 1}>{a}</option>)}
@@ -94,12 +105,31 @@ export default function Rapor() {
           <button className="btn btn-primary" onClick={excelIndir} disabled={excelLoading || !rapor}>
             {excelLoading ? '⏳...' : '⬇ Excel'}
           </button>
+          <button className="btn" onClick={yazdir} disabled={!rapor}>🖨️ PDF</button>
+          {!muhurlu && <button className="btn" onClick={muhurle} disabled={!rapor}>🔒 Mühürle</button>}
         </div>
       </div>
+
+      <style>{`@media print {
+        .no-print { display: none !important; }
+        aside, nav, .sidebar, .app-sidebar, .side-nav { display: none !important; }
+        body, .page { background: #fff !important; color: #000 !important; }
+        .card, .stat-card { break-inside: avoid; }
+      }`}</style>
 
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><div className="spinner" /></div>
       ) : !rapor ? null : (<>
+
+        {/* 🔒 MÜHÜR BANNER */}
+        {muhurlu && (
+          <div className="card" style={{ marginBottom: 16, borderLeft: '3px solid var(--green)', background: 'rgba(0,200,100,0.06)' }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--green)' }}>🔒 Bu dönem mühürlendi</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 3 }}>
+              {rapor.muhur.muhurleyen_ad} · {String(rapor.muhur.muhur_ts || '').slice(0, 16).replace('T', ' ')} — değişmez dönem kapanış kaydı
+            </div>
+          </div>
+        )}
 
         {/* 🧾 YÖNETİCİ ÖZETİ */}
         {(rapor.yonetici_ozeti?.length > 0) && (

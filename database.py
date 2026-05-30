@@ -192,6 +192,22 @@ def ensure_dusum_modu(cur) -> None:
         """)
 
 
+def ensure_rapor_kapanis(cur) -> None:
+    """Aylık rapor kapanış mührü tablosu (NRF dönem kapanışı). init_db tek
+    transaction içinde geç hatayla geri sarılırsa kaybolmasın diye startup'ta
+    bağımsız da çağrılır."""
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS rapor_kapanis (
+            donem          TEXT PRIMARY KEY,            -- 'YYYY-MM'
+            ozet_json      JSONB NOT NULL,
+            muhurleyen_id  TEXT,
+            muhurleyen_ad  TEXT,
+            muhur_ts       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            hash           TEXT
+        )
+    """)
+
+
 def ensure_operasyon_event_durum_latent(cur) -> None:
     """sube_operasyon_event.durum CHECK kısıtına 'latent' ekler.
 

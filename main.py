@@ -9,9 +9,9 @@ from fastapi import Request
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any, Dict
 from datetime import date, datetime, timedelta
-import uuid, os, json, pathlib, calendar, threading
+import uuid, os, json, pathlib, calendar, threading, hashlib
 from collections import defaultdict
-from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent
+from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis
 from operasyon_stok_motor import eksik_kullanim_kontrol, tum_subeler_skor_guncelle
 from tr_saat import bugun_tr, dt_now_tr_naive
 from kasa_service import (
@@ -272,6 +272,11 @@ def startup():
             ensure_operasyon_event_durum_latent(cur)
     except Exception as e:
         logger.warning("operasyon_event durum=latent migrasyonu (startup): %s", e)
+    try:
+        with db() as (conn, cur):
+            ensure_rapor_kapanis(cur)
+    except Exception as e:
+        logger.warning("rapor_kapanis migrasyonu (startup): %s", e)
     # Her başlatmada bu ay için plan üret (yoksa üretir, varsa atlar)
     bugun = bugun_tr()
     try:
@@ -5358,7 +5363,28 @@ def aylik_rapor(yil: int = None, ay: int = None):
     ay_basi = date(yil, ay, 1)
     ay_son  = date(yil, ay, cal.monthrange(yil, ay)[1])
 
+    donem_key = f"{yil}-{ay:02d}"
+
     with db() as (conn, cur):
+        # Mühürlü dönem mi? → değişmez snapshot'ı döndür (NRF dönem kapanışı)
+        try:
+            cur.execute("SELECT ozet_json, muhurleyen_ad, muhur_ts FROM rapor_kapanis WHERE donem=%s", (donem_key,))
+            _seal = cur.fetchone()
+        except Exception:
+            _seal = None
+        if _seal:
+            sd = dict(_seal)
+            snap = sd.get("ozet_json")
+            if isinstance(snap, str):
+                snap = json.loads(snap)
+            if isinstance(snap, dict):
+                snap["muhur"] = {
+                    "muhurlu": True,
+                    "muhurleyen_ad": sd.get("muhurleyen_ad"),
+                    "muhur_ts": str(sd.get("muhur_ts") or ""),
+                }
+                return snap
+
         # 0. Ay başı kasa
         cur.execute("SELECT COALESCE(SUM(tutar),0) as v FROM kasa_hareketleri WHERE kasa_etkisi=true AND durum='aktif' AND tarih < %s", (ay_basi,))
         baslangic_kasa = float(cur.fetchone()['v'])
@@ -5829,7 +5855,43 @@ def aylik_rapor(yil: int = None, ay: int = None):
         "yonetici_ozeti": yonetici_ozeti,
         "denetim_ozeti": denetim_ozeti,
         "projeksiyon": projeksiyon,
+        "muhur": {"muhurlu": False},
     }
+
+
+class RaporMuhurleBody(BaseModel):
+    yil: int
+    ay: int
+    muhurleyen_ad: Optional[str] = None
+
+
+@app.post("/api/rapor/aylik/muhurle")
+def aylik_rapor_muhurle(body: RaporMuhurleBody):
+    """Aylık raporu mühürle — değişmez snapshot al (NRF dönem kapanışı).
+    Mühürlü dönem bir daha değişmez; GET artık snapshot'ı döndürür."""
+    yil, ay = int(body.yil), int(body.ay)
+    donem_key = f"{yil}-{ay:02d}"
+    with db() as (conn, cur):
+        ensure_rapor_kapanis(cur)
+        cur.execute("SELECT 1 FROM rapor_kapanis WHERE donem=%s", (donem_key,))
+        if cur.fetchone():
+            raise HTTPException(409, "Bu dönem zaten mühürlenmiş.")
+
+    # Canlı raporu hesapla (mühür yokken live döner) ve dondur
+    snap = aylik_rapor(yil, ay)
+    snap.pop("muhur", None)
+    payload = json.dumps(snap, ensure_ascii=False, sort_keys=True, default=str)
+    h = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    ad = (body.muhurleyen_ad or "CFO").strip() or "CFO"
+
+    with db() as (conn, cur):
+        ensure_rapor_kapanis(cur)
+        cur.execute("""
+            INSERT INTO rapor_kapanis (donem, ozet_json, muhurleyen_ad, hash)
+            VALUES (%s, %s::jsonb, %s, %s)
+            ON CONFLICT (donem) DO NOTHING
+        """, (donem_key, payload, ad, h))
+    return {"success": True, "donem": donem_key, "hash": h, "muhurleyen_ad": ad}
 
 @app.get("/api/rapor/aylik/excel")
 def aylik_rapor_excel(yil: int = None, ay: int = None):
