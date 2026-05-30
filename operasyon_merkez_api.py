@@ -5998,6 +5998,56 @@ def ops_bekleyen_merkez(
     }
 
 
+@router.get("/ciro-onay-mutabakat")
+def ops_ciro_onay_mutabakat(sube_id: str, tarih: str):
+    """READ-ONLY deterministik kasa mutabakat önizlemesi (ciro onayı için).
+    Kasaya HİÇBİR şey yazmaz; o şube/gün için kapanışta zaten hesaplanmış
+    KAPANIS_KASA_FARK kaydını döndürür → CFO ciroyu kör değil hesaplı onaylar.
+    Karar deterministik mutabakata dayanır; fraud motoru (truth) buraya KARIŞMAZ."""
+    sid = (sube_id or "").strip()
+    t = (tarih or "").strip()[:10]
+    if not sid or not t:
+        raise HTTPException(400, "sube_id ve tarih zorunlu")
+    with db() as (_, cur):
+        cur.execute(
+            """
+            SELECT id::text, fark_tl, beklenen_tl, gercek_tl, seviye, mesaj,
+                   detay_json, okundu
+            FROM sube_operasyon_uyari
+            WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS_KASA_FARK'
+            ORDER BY olusturma DESC LIMIT 1
+            """,
+            (sid, t),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {
+                "sube_id": sid, "tarih": t, "veri_var": False,
+                "mutabik": None,
+                "mesaj": "Bu gün için kapanış kasa mutabakatı bulunamadı (kapanış yapılmamış olabilir).",
+            }
+        d = dict(row)
+        dj = d.get("detay_json")
+        if isinstance(dj, str):
+            try:
+                dj = json.loads(dj)
+            except Exception:
+                dj = None
+        fark = float(d.get("fark_tl") or 0)
+        return {
+            "sube_id": sid, "tarih": t, "veri_var": True,
+            "mutabik": abs(fark) <= 0.01,
+            "cozuldu": bool(d.get("okundu")),
+            "fark_tl": fark,
+            "beklenen_tl": float(d.get("beklenen_tl") or 0),
+            "gercek_tl": float(d.get("gercek_tl") or 0),
+            "seviye": d.get("seviye"),
+            "mesaj": d.get("mesaj"),
+            "detay": dj,   # açılış / z_nakit / gider / teslim / devir / ara_teslim
+            "uyari_id": d.get("id"),
+        }
+
+
 @router.get("/kasa-uyumsuzluk")
 def ops_kasa_uyumsuzluk_listesi(
     tarih: Optional[str] = None,
