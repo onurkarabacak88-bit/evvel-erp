@@ -5488,6 +5488,158 @@ def aylik_rapor(yil: int = None, ay: int = None):
 
         en_karli = max(sube_ciro, key=lambda x: x['ciro']) if sube_ciro else None
 
+        # ───────────────────────────────────────────────────────────────
+        # FAZ 1 KARNE — KPI'lar + 12 aylık trend + şube karnesi + yön. özeti
+        # ───────────────────────────────────────────────────────────────
+        aylar_kisa = ['', 'Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara']
+
+        def _tl(v):
+            try:
+                return f"{float(v):,.0f} ₺".replace(',', '.')
+            except Exception:
+                return "0 ₺"
+
+        ciro_t = float(ozet.get('ciro_toplam') or 0)
+        gelir_t = float(ozet.get('toplam_gelir') or 0)
+        gider_t = float(ozet.get('toplam_gider') or 0)
+        net_t = float(ozet.get('net_kar_zarar') or 0)
+        pos_ciro = float(ozet.get('ciro_pos') or 0)
+        pos_kesinti = float(ozet.get('pos_kesinti_toplam') or 0)
+        gun_say = ay_son.day
+        gunluk_gider = (gider_t / gun_say) if gun_say else 0.0
+        kpi = {
+            "net_kar_marji": round(net_t / gelir_t * 100, 1) if gelir_t else None,
+            "gider_ciro_orani": round(gider_t / ciro_t * 100, 1) if ciro_t else None,
+            "pos_yanan_orani": round(pos_kesinti / pos_ciro * 100, 2) if pos_ciro else None,
+            "pos_kesinti_toplam": round(pos_kesinti, 2),
+            "gunluk_ortalama_gider": round(gunluk_gider, 2),
+            "runway_gun": int(float(ozet.get('bitis_kasa') or 0) / gunluk_gider) if gunluk_gider > 0 else None,
+            "bitis_kasa": float(ozet.get('bitis_kasa') or 0),
+        }
+
+        # 12 aylık trend
+        ty12, tm12 = yil, ay - 11
+        while tm12 <= 0:
+            tm12 += 12
+            ty12 -= 1
+        trend_basi = date(ty12, tm12, 1)
+        cur.execute("""
+            SELECT to_char(date_trunc('month', tarih),'YYYY-MM') AS ay,
+                   COALESCE(SUM(CASE WHEN islem_turu='CIRO' THEN tutar ELSE 0 END),0) AS ciro,
+                   COALESCE(SUM(CASE WHEN tutar>0 AND islem_turu!='DEVIR' THEN tutar ELSE 0 END),0) AS gelir,
+                   COALESCE(SUM(CASE WHEN tutar<0 THEN ABS(tutar) ELSE 0 END),0) AS gider
+            FROM kasa_hareketleri
+            WHERE durum='aktif' AND kasa_etkisi=true AND tarih BETWEEN %s AND %s
+            GROUP BY 1 ORDER BY 1
+        """, (trend_basi, ay_son))
+        _tr_map = {r['ay']: dict(r) for r in cur.fetchall()}
+        trend12 = []
+        _cy, _cm = ty12, tm12
+        for _ in range(12):
+            key = f"{_cy}-{_cm:02d}"
+            row = _tr_map.get(key)
+            ge = float(row['gelir']) if row else 0.0
+            gi = float(row['gider']) if row else 0.0
+            trend12.append({
+                "ay": key,
+                "ay_kisa": aylar_kisa[_cm],
+                "ciro": float(row['ciro']) if row else 0.0,
+                "gelir": ge, "gider": gi, "net": ge - gi,
+            })
+            _cm += 1
+            if _cm > 12:
+                _cm = 1
+                _cy += 1
+
+        # Önceki ay şube ciro (büyüme için)
+        cur.execute("""
+            SELECT COALESCE(s.ad,'Tanımsız') AS sube, COALESCE(SUM(c.toplam),0) AS ciro
+            FROM ciro c LEFT JOIN subeler s ON s.id=c.sube_id
+            WHERE c.durum='aktif' AND c.tarih BETWEEN %s AND %s GROUP BY s.ad
+        """, (ob, os_))
+        _onc_sube = {r['sube']: float(r['ciro']) for r in cur.fetchall()}
+
+        # Şube risk sinyalleri (denetim uyarıları aylık roll-up)
+        _risk_sube = {}
+        try:
+            cur.execute("""
+                SELECT COALESCE(s.ad,'Tanımsız') AS sube, COUNT(*) AS c
+                FROM sube_operasyon_uyari u LEFT JOIN subeler s ON s.id=u.sube_id
+                WHERE u.tarih BETWEEN %s AND %s
+                  AND u.tip IN ('ACILIS_KASA_FARK','SATIS_ANOMALI','FIRE_TESPITI',
+                                'URUN_AC_UYUMSUZLUK','PATTERN_UYARI')
+                GROUP BY s.ad
+            """, (ay_basi, ay_son))
+            _risk_sube = {r['sube']: int(r['c']) for r in cur.fetchall()}
+        except Exception:
+            _risk_sube = {}
+
+        def _harf(skor):
+            if skor >= 85:
+                return "A"
+            if skor >= 70:
+                return "B"
+            if skor >= 55:
+                return "C"
+            return "D"
+
+        sube_karne = []
+        for s in sube_ciro:
+            ad = s['sube']
+            ci = float(s.get('ciro') or 0)
+            onc_ci = _onc_sube.get(ad, 0.0)
+            buyume = round((ci - onc_ci) / onc_ci * 100, 1) if onc_ci > 0 else None
+            risk = int(_risk_sube.get(ad, 0))
+            pay = round(ci / ciro_t * 100, 1) if ciro_t else 0.0
+            skor = 72.0
+            if buyume is not None:
+                skor += max(-25.0, min(20.0, buyume))
+            skor -= min(30.0, risk * 5.0)
+            sube_karne.append({
+                "sube": ad, "ciro": ci, "pay_yuzde": pay, "buyume_yuzde": buyume,
+                "risk_sinyali": risk, "islem_sayisi": s.get('islem_sayisi') or 0,
+                "harf": _harf(skor), "skor": round(skor),
+            })
+        sube_karne.sort(key=lambda x: x['ciro'], reverse=True)
+
+        # Yönetici özeti — otomatik cümleler
+        yonetici_ozeti = []
+        onc_ciro = float(onceki.get('ciro') or 0)
+        if onc_ciro > 0:
+            cd = (ciro_t - onc_ciro) / onc_ciro * 100
+            yonetici_ozeti.append({
+                "tip": "iyi" if cd >= 0 else "uyari",
+                "metin": f"Ciro geçen aya göre %{abs(cd):.1f} {'arttı' if cd >= 0 else 'azaldı'} ({_tl(ciro_t)}).",
+            })
+        else:
+            yonetici_ozeti.append({"tip": "notr", "metin": f"Bu ay ciro: {_tl(ciro_t)}."})
+        yonetici_ozeti.append({
+            "tip": "iyi" if net_t >= 0 else "uyari",
+            "metin": f"Net {'kâr' if net_t >= 0 else 'zarar'}: {_tl(abs(net_t))} (gelir {_tl(gelir_t)} − gider {_tl(gider_t)}).",
+        })
+        if en_karli:
+            yonetici_ozeti.append({
+                "tip": "iyi",
+                "metin": f"En güçlü şube: {en_karli['sube']} ({_tl(float(en_karli['ciro']))}).",
+            })
+        if _risk_sube:
+            _en_risk = max(_risk_sube.items(), key=lambda kv: kv[1])
+            if _en_risk[1] > 0:
+                yonetici_ozeti.append({
+                    "tip": "uyari",
+                    "metin": f"Dikkat: {_en_risk[0]} şubesinde {_en_risk[1]} denetim sinyali (kasa farkı / anomali / fire).",
+                })
+        if kpi["runway_gun"] is not None:
+            yonetici_ozeti.append({
+                "tip": "iyi" if kpi["runway_gun"] >= 30 else "uyari",
+                "metin": f"Ay sonu kasa {_tl(kpi['bitis_kasa'])} — mevcut gider hızıyla ~{kpi['runway_gun']} gün dayanır.",
+            })
+        if kpi["pos_yanan_orani"]:
+            yonetici_ozeti.append({
+                "tip": "notr",
+                "metin": f"POS kesintisi cironun %{kpi['pos_yanan_orani']:.2f}'i ({_tl(pos_kesinti)}).",
+            })
+
     aylar = ['','Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık']
     return {
         "donem": f"{yil}-{ay:02d}",
@@ -5501,6 +5653,10 @@ def aylik_rapor(yil: int = None, ay: int = None):
         "gunluk": gunluk,
         "onceki_ay": onceki,
         "en_karli_sube": en_karli,
+        "kpi": kpi,
+        "trend12": trend12,
+        "sube_karne": sube_karne,
+        "yonetici_ozeti": yonetici_ozeti,
     }
 
 @app.get("/api/rapor/aylik/excel")

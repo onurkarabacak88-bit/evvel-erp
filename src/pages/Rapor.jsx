@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 import { api, fmt } from '../utils/api';
 
 const AYLAR = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
@@ -79,8 +79,8 @@ export default function Rapor() {
 
       <div className="page-header flex items-center justify-between" style={{ marginBottom: 20 }}>
         <div>
-          <h2>Aylık Finansal Rapor</h2>
-          <p style={{ fontSize: 12, color: 'var(--text3)' }}>{rapor ? rapor.donem_label : '—'} · Gerçekleşen veriler</p>
+          <h2>Aylık Performans Karnesi</h2>
+          <p style={{ fontSize: 12, color: 'var(--text3)' }}>{rapor ? rapor.donem_label : '—'} · Ciro, kâr, trend & şube karnesi</p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <select value={ay} onChange={e => setAy(+e.target.value)}
@@ -100,6 +100,97 @@ export default function Rapor() {
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><div className="spinner" /></div>
       ) : !rapor ? null : (<>
+
+        {/* 🧾 YÖNETİCİ ÖZETİ */}
+        {(rapor.yonetici_ozeti?.length > 0) && (
+          <div className="card" style={{ marginBottom: 16, borderLeft: '3px solid var(--accent, #4a9eff)' }}>
+            <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>🧾 Ayın Özeti</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+              {rapor.yonetici_ozeti.map((s, i) => (
+                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 13 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', marginTop: 5, flexShrink: 0,
+                    background: s.tip === 'iyi' ? 'var(--green)' : s.tip === 'uyari' ? 'var(--red)' : 'var(--text3)' }} />
+                  <span style={{ color: 'var(--text1)', lineHeight: 1.5 }}>{s.metin}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 📊 GERÇEK KPI'LAR */}
+        {rapor.kpi && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
+            {[
+              { l: 'Net Kâr Marjı', v: rapor.kpi.net_kar_marji, suf: '%', good: (rapor.kpi.net_kar_marji ?? 0) >= 0 },
+              { l: 'Gider / Ciro', v: rapor.kpi.gider_ciro_orani, suf: '%', good: (rapor.kpi.gider_ciro_orani ?? 100) <= 80 },
+              { l: 'POS Yanan Para', v: rapor.kpi.pos_yanan_orani, suf: '%', sub: fmt(rapor.kpi.pos_kesinti_toplam), good: (rapor.kpi.pos_yanan_orani ?? 0) <= 1.5 },
+              { l: 'Kasa Dayanıklılık', v: rapor.kpi.runway_gun, suf: ' gün', sub: `Kasa: ${fmt(rapor.kpi.bitis_kasa)}`, good: (rapor.kpi.runway_gun ?? 0) >= 30 },
+            ].map(({ l, v, suf, sub, good }) => (
+              <div key={l} className="stat-card" style={{ borderTop: `3px solid ${good ? 'var(--green)' : 'var(--red)'}` }}>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{l}</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: good ? 'var(--green)' : 'var(--red)', fontFamily: 'var(--font-mono)' }}>
+                  {v === null || v === undefined ? '—' : `${v}${suf}`}
+                </div>
+                {sub && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>{sub}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* 📈 12 AYLIK TREND */}
+        {rapor.trend12?.length > 0 && (
+          <div className="card" style={{ marginBottom: 16 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>📈 12 Aylık Trend</h3>
+            <ResponsiveContainer width="100%" height={230}>
+              <LineChart data={rapor.trend12} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                <XAxis dataKey="ay_kisa" tick={{ fontSize: 10 }} />
+                <YAxis tick={{ fontSize: 10 }} tickFormatter={v => (v / 1000).toFixed(0) + 'K'} width={45} />
+                <Tooltip formatter={(v, n) => [fmt(v), n]}
+                  contentStyle={{ background: 'var(--bg2)', border: '1px solid var(--border)', fontSize: 11 }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Line type="monotone" dataKey="ciro" name="Ciro" stroke="#2ecc71" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="gider" name="Gider" stroke="#e05252" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="net" name="Net Kâr" stroke="#4a9eff" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* 🏪 ŞUBE KARNESİ */}
+        {rapor.sube_karne?.length > 0 && (
+          <div className="card" style={{ marginBottom: 16 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>🏪 Şube Karnesi</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {rapor.sube_karne.map((s, i) => {
+                const grColor = s.harf === 'A' ? '#27ae60' : s.harf === 'B' ? '#2ecc71' : s.harf === 'C' ? '#e08020' : '#e05252';
+                const bpos = (s.buyume_yuzde ?? 0) >= 0;
+                return (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'var(--bg3)', borderRadius: 8 }}>
+                    <div style={{ width: 34, height: 34, borderRadius: 8, background: grColor, color: '#fff',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 16, flexShrink: 0 }}>{s.harf}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{s.sube}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)' }}>%{s.pay_yuzde} ciro payı · {s.islem_sayisi} işlem</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 14 }}>{fmt(s.ciro)}</div>
+                      <div style={{ fontSize: 11 }}>
+                        {s.buyume_yuzde !== null && s.buyume_yuzde !== undefined
+                          ? <span style={{ color: bpos ? 'var(--green)' : 'var(--red)', fontWeight: 700 }}>{bpos ? '▲' : '▼'} %{Math.abs(s.buyume_yuzde).toFixed(1)}</span>
+                          : <span style={{ color: 'var(--text3)' }}>yeni</span>}
+                        {s.risk_sinyali > 0 && <span style={{ marginLeft: 8, color: 'var(--red)', fontWeight: 700 }}>⚠️ {s.risk_sinyali}</span>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 8 }}>
+              Harf notu (A–D): ciro büyümesi + denetim sinyalleri (kasa farkı, anomali, fire) baz alınır.
+            </div>
+          </div>
+        )}
 
         {/* ÖZET KARTLARI */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
