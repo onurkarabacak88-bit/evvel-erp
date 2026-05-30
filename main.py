@@ -5691,10 +5691,7 @@ def aylik_rapor(yil: int = None, ay: int = None):
             """)
             rr = dict(cur.fetchone() or {})
             g_gelir = float(rr.get("gelir") or 0) / 90.0
-            g_gider = float(rr.get("gider") or 0) / 90.0
-            projeksiyon["gunluk_gelir"] = round(g_gelir, 2)
-            projeksiyon["gunluk_gider"] = round(g_gider, 2)
-            projeksiyon["net_gunluk"] = round(g_gelir - g_gider, 2)
+            g_gider_runrate = float(rr.get("gider") or 0) / 90.0
 
             # Bilinen sabit yükler
             try:
@@ -5707,6 +5704,16 @@ def aylik_rapor(yil: int = None, ay: int = None):
                 projeksiyon["aylik_maas"] = float(dict(cur.fetchone() or {}).get("v") or 0)
             except Exception:
                 pass
+
+            # Günlük gider TABANI: bilinen sabit yükler kasaya tam işlenmemiş olabilir.
+            # Run-rate ile (sabit+maaş)/30'un büyüğünü al — ne eksik say, ne çift say.
+            sabit_gunluk = (projeksiyon["aylik_sabit_gider"] + projeksiyon["aylik_maas"]) / 30.0
+            g_gider = max(g_gider_runrate, sabit_gunluk)
+            projeksiyon["gunluk_gelir"] = round(g_gelir, 2)
+            projeksiyon["gunluk_gider"] = round(g_gider, 2)
+            projeksiyon["gunluk_gider_runrate"] = round(g_gider_runrate, 2)
+            projeksiyon["gunluk_gider_sabit_taban"] = round(sabit_gunluk, 2)
+            projeksiyon["net_gunluk"] = round(g_gelir - g_gider, 2)
 
             # Bekleyen taksitler — ufuk bazlı (kesin tarihli yük)
             tk = {30: 0.0, 60: 0.0, 90: 0.0}

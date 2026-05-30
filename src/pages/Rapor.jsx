@@ -310,7 +310,7 @@ export default function Rapor() {
                 <span style={{ background: 'var(--bg3)', borderRadius: 100, padding: '4px 10px' }}>💳 Bekleyen taksit (90g): <strong>{fmt(p.bekleyen_taksit_90)}</strong></span>
               </div>
               <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 8 }}>
-                Projeksiyon son 90 günün günlük ortalama gelir/gider hızına (run-rate) dayanır — tahminidir.
+                Projeksiyon son 90 günün gelir hızına dayanır; günlük gider, run-rate ile bilinen sabit yükler (sabit gider + maaş) tabanının büyüğüdür — fazla iyimser tahmini önler. Tahminidir.
               </div>
             </div>
           );
