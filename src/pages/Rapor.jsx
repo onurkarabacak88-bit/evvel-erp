@@ -192,6 +192,73 @@ export default function Rapor() {
           </div>
         )}
 
+        {/* 🛡️ DENETİM & RİSK ÖZETİ */}
+        {rapor.denetim_ozeti && (() => {
+          const d = rapor.denetim_ozeti;
+          const kasaAcik = d.kasa?.acik_tl || 0;
+          const fireTop = d.fire?.toplam_bildirim || 0;
+          const uyum = d.uyumsuzluk?.acik_adet || 0;
+          return (
+            <div className="card" style={{ marginBottom: 16, borderLeft: '3px solid #e08020' }}>
+              <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>🛡️ Denetim & Risk Özeti</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: d.kasa_sube?.length || d.fire?.sebepler?.length ? 16 : 0 }}>
+                {[
+                  { l: '💰 Kasa Açığı', big: fmt(kasaAcik), sub: `${d.kasa?.acik_gun || 0} gün · fazla: ${fmt(d.kasa?.fazla_tl || 0)}`, bad: kasaAcik > 0 },
+                  { l: '🔥 Fire / Zayi', big: `${fireTop} bildirim`, sub: `${d.fire?.toplam_adet || 0} ürün`, bad: fireTop > 0 },
+                  { l: '⚠️ Çözülmemiş Uyumsuzluk', big: `${uyum} kayıt`, sub: `${d.uyumsuzluk?.bekleyen_fark || 0} adet fark`, bad: uyum > 0 },
+                ].map(({ l, big, sub, bad }) => (
+                  <div key={l} style={{ background: 'var(--bg3)', borderRadius: 8, padding: '12px 14px', borderTop: `3px solid ${bad ? 'var(--red)' : 'var(--green)'}` }}>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{l}</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: bad ? 'var(--red)' : 'var(--green)', fontFamily: 'var(--font-mono)' }}>{big}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 3 }}>{sub}</div>
+                  </div>
+                ))}
+              </div>
+
+              {d.kasa_sube?.length > 0 && (
+                <div style={{ marginBottom: d.fire?.sebepler?.length ? 14 : 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 8 }}>Şube bazlı kasa farkı</div>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <thead><tr style={{ background: 'var(--bg3)' }}>
+                      {['Şube', 'Açık (₺)', 'Fazla (₺)', 'Açık gün'].map(h => (
+                        <th key={h} style={{ padding: '7px 10px', textAlign: h === 'Şube' ? 'left' : 'right', fontWeight: 600, color: 'var(--text2)' }}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {d.kasa_sube.map((s, i) => (
+                        <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '7px 10px', fontWeight: 600 }}>{s.sube}</td>
+                          <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: s.acik_tl > 0 ? 'var(--red)' : 'var(--text3)' }}>{fmt(s.acik_tl)}</td>
+                          <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--text3)' }}>{fmt(s.fazla_tl)}</td>
+                          <td style={{ padding: '7px 10px', textAlign: 'right' }}>{s.acik_gun}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {d.fire?.sebepler?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 8 }}>Fire sebep dağılımı</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {d.fire.sebepler.map((s, i) => (
+                      <span key={i} style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 100, padding: '4px 10px', fontSize: 11 }}>
+                        {s.sebep} <strong style={{ color: 'var(--text1)' }}>{s.adet}</strong>
+                        {s.urun_adet > 0 && <span style={{ color: 'var(--text3)' }}> · {s.urun_adet} adet</span>}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {kasaAcik === 0 && fireTop === 0 && uyum === 0 && (
+                <div style={{ fontSize: 12, color: 'var(--green)', fontWeight: 600 }}>✅ Bu ay denetim sinyali yok — kasa, fire ve sevkiyat temiz.</div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* ÖZET KARTLARI */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
           {[

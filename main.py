@@ -5610,6 +5610,69 @@ def aylik_rapor(yil: int = None, ay: int = None):
             })
         sube_karne.sort(key=lambda x: x['ciro'], reverse=True)
 
+        # ── FAZ 2-A: DENETİM & RİSK ÖZETİ (aylık roll-up) ──
+        denetim_ozeti = {
+            "kasa": {"acik_tl": 0.0, "fazla_tl": 0.0, "acik_gun": 0, "olay": 0},
+            "kasa_sube": [],
+            "fire": {"toplam_bildirim": 0, "toplam_adet": 0, "sebepler": []},
+            "uyumsuzluk": {"acik_adet": 0, "bekleyen_fark": 0},
+        }
+        # 1) Kasa disiplini (fark_tl: negatif=açık, pozitif=fazla)
+        try:
+            cur.execute("""
+                SELECT COALESCE(s.ad,'Tanımsız') AS sube,
+                       COUNT(*) AS olay,
+                       COALESCE(SUM(CASE WHEN u.fark_tl < 0 THEN ABS(u.fark_tl) ELSE 0 END),0) AS acik_tl,
+                       COALESCE(SUM(CASE WHEN u.fark_tl > 0 THEN u.fark_tl ELSE 0 END),0) AS fazla_tl,
+                       COUNT(*) FILTER (WHERE u.fark_tl < 0) AS acik_gun
+                FROM sube_operasyon_uyari u LEFT JOIN subeler s ON s.id=u.sube_id
+                WHERE u.tarih BETWEEN %s AND %s
+                  AND u.fark_tl IS NOT NULL AND u.fark_tl <> 0
+                GROUP BY s.ad ORDER BY acik_tl DESC
+            """, (ay_basi, ay_son))
+            for r in cur.fetchall():
+                rd = dict(r)
+                denetim_ozeti["kasa_sube"].append({
+                    "sube": rd["sube"],
+                    "acik_tl": float(rd["acik_tl"]), "fazla_tl": float(rd["fazla_tl"]),
+                    "acik_gun": int(rd["acik_gun"]), "olay": int(rd["olay"]),
+                })
+            denetim_ozeti["kasa"]["acik_tl"] = round(sum(x["acik_tl"] for x in denetim_ozeti["kasa_sube"]), 2)
+            denetim_ozeti["kasa"]["fazla_tl"] = round(sum(x["fazla_tl"] for x in denetim_ozeti["kasa_sube"]), 2)
+            denetim_ozeti["kasa"]["acik_gun"] = sum(x["acik_gun"] for x in denetim_ozeti["kasa_sube"])
+            denetim_ozeti["kasa"]["olay"] = sum(x["olay"] for x in denetim_ozeti["kasa_sube"])
+        except Exception:
+            pass
+        # 2) Fire / zayi (sebep dağılımı)
+        try:
+            cur.execute("""
+                SELECT sebep_label, COUNT(*) AS adet, COALESCE(SUM(toplam_adet),0) AS urun_adet
+                FROM sube_fire_bildirim
+                WHERE tarih BETWEEN %s AND %s
+                GROUP BY sebep_label ORDER BY adet DESC
+            """, (ay_basi, ay_son))
+            sebepler = [dict(r) for r in cur.fetchall()]
+            denetim_ozeti["fire"]["sebepler"] = [
+                {"sebep": s["sebep_label"], "adet": int(s["adet"]), "urun_adet": int(s["urun_adet"])}
+                for s in sebepler
+            ]
+            denetim_ozeti["fire"]["toplam_bildirim"] = sum(s["adet"] for s in denetim_ozeti["fire"]["sebepler"])
+            denetim_ozeti["fire"]["toplam_adet"] = sum(s["urun_adet"] for s in denetim_ozeti["fire"]["sebepler"])
+        except Exception:
+            pass
+        # 3) Çözülmemiş sevkiyat uyumsuzluğu (şu an açık — dönemden bağımsız risk)
+        try:
+            cur.execute("""
+                SELECT COUNT(*) AS adet,
+                       COALESCE(SUM(GREATEST(0, COALESCE(sevk_adet,0)-COALESCE(kabul_adet,0))),0) AS bekleyen_fark
+                FROM stok_yolda WHERE durum='kabul_uyusmazlik'
+            """)
+            ur = dict(cur.fetchone() or {})
+            denetim_ozeti["uyumsuzluk"]["acik_adet"] = int(ur.get("adet") or 0)
+            denetim_ozeti["uyumsuzluk"]["bekleyen_fark"] = int(ur.get("bekleyen_fark") or 0)
+        except Exception:
+            pass
+
         # Yönetici özeti — otomatik cümleler
         yonetici_ozeti = []
         onc_ciro = float(onceki.get('ciro') or 0)
@@ -5648,6 +5711,17 @@ def aylik_rapor(yil: int = None, ay: int = None):
                 "tip": "notr",
                 "metin": f"POS kesintisi cironun %{kpi['pos_yanan_orani']:.2f}'i ({_tl(pos_kesinti)}).",
             })
+        _kasa_acik = denetim_ozeti["kasa"]["acik_tl"]
+        if _kasa_acik > 0:
+            yonetici_ozeti.append({
+                "tip": "uyari",
+                "metin": f"Kasa açığı: {denetim_ozeti['kasa']['acik_gun']} gün, toplam {_tl(_kasa_acik)} eksik kaydedildi.",
+            })
+        if denetim_ozeti["uyumsuzluk"]["acik_adet"] > 0:
+            yonetici_ozeti.append({
+                "tip": "uyari",
+                "metin": f"{denetim_ozeti['uyumsuzluk']['acik_adet']} çözülmemiş sevkiyat uyumsuzluğu var (toplam {denetim_ozeti['uyumsuzluk']['bekleyen_fark']} adet fark).",
+            })
 
     aylar = ['','Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık']
     return {
@@ -5666,6 +5740,7 @@ def aylik_rapor(yil: int = None, ay: int = None):
         "trend12": trend12,
         "sube_karne": sube_karne,
         "yonetici_ozeti": yonetici_ozeti,
+        "denetim_ozeti": denetim_ozeti,
     }
 
 @app.get("/api/rapor/aylik/excel")
