@@ -6063,6 +6063,7 @@ def ops_kasa_uyumsuzluk_listesi(
                 u.tarih, u.seviye, u.fark_tl, u.beklenen_tl, u.gercek_tl,
                 u.mesaj, u.okundu, u.olusturma,
                 u.acilis_personel_ad, u.kapanis_personel_ad,
+                u.acilis_personel_id::text, u.kapanis_personel_id::text,
                 u.detay_json,
                 u.cozum_duzeltilen_tl, u.cozum_notu, u.cozum_ts,
                 u.cozum_personel_id, u.cozum_personel_ad,
@@ -6113,7 +6114,73 @@ def ops_kasa_uyumsuzluk_listesi(
                 except Exception:
                     dj = None
             d["detay_json"] = dj
+            # Sorumlu sayım personeli: ACILIS→açan, KAPANIS→kapatan
+            if str(d.get("tip")) == "ACILIS_KASA_FARK":
+                d["sorumlu_personel_id"] = d.get("acilis_personel_id")
+                d["sorumlu_personel_ad"] = d.get("acilis_personel_ad")
+            else:
+                d["sorumlu_personel_id"] = d.get("kapanis_personel_id")
+                d["sorumlu_personel_ad"] = d.get("kapanis_personel_ad")
+            d["personel_patern"] = None
             rows.append(d)
+
+        # ── #3 KİŞİ-PATERN: tutar değil, AYNI PERSONELDE TEKRAR asıl sinyal ──
+        # Sorumlu personelin son 30 günde kaç kasa farkı + yönü (hep açık mı?).
+        # Küçük tutarlar (para üstü gürültüsü) tek başına kovalanmaz; ama bir kişide
+        # tekrar ediyorsa "dikkat" işaretlenir.
+        _pids = sorted({str(d.get("sorumlu_personel_id")) for d in rows
+                        if d.get("sorumlu_personel_id")})
+        if _pids:
+            try:
+                cur.execute(
+                    """
+                    SELECT
+                        COALESCE(NULLIF(u.acilis_personel_id::text,''), u.kapanis_personel_id::text) AS pid,
+                        u.tip, u.fark_tl,
+                        u.acilis_personel_id::text AS apid, u.kapanis_personel_id::text AS kpid
+                    FROM sube_operasyon_uyari u
+                    WHERE u.tip IN ('ACILIS_KASA_FARK','KAPANIS_KASA_FARK')
+                      AND u.tarih >= CURRENT_DATE - INTERVAL '30 days'
+                      AND u.fark_tl IS NOT NULL AND u.fark_tl <> 0
+                      AND (u.acilis_personel_id::text = ANY(%s) OR u.kapanis_personel_id::text = ANY(%s))
+                    """,
+                    (_pids, _pids),
+                )
+                _agg: Dict[str, Dict[str, int]] = {}
+                for rr in (cur.fetchall() or []):
+                    rd = dict(rr)
+                    # Sorumlu kişi = o uyarının tipine göre (ACILIS→apid, KAPANIS→kpid)
+                    sp = rd.get("apid") if str(rd.get("tip")) == "ACILIS_KASA_FARK" else rd.get("kpid")
+                    if not sp or sp not in _pids:
+                        continue
+                    g = _agg.setdefault(sp, {"adet": 0, "acik": 0, "fazla": 0})
+                    g["adet"] += 1
+                    try:
+                        f = float(rd.get("fark_tl") or 0)
+                    except (TypeError, ValueError):
+                        f = 0.0
+                    if f < 0:
+                        g["acik"] += 1
+                    elif f > 0:
+                        g["fazla"] += 1
+                for d in rows:
+                    sp = str(d.get("sorumlu_personel_id") or "")
+                    g = _agg.get(sp)
+                    if not g:
+                        continue
+                    adet = g["adet"]
+                    hep_acik = g["acik"] >= 3 and g["fazla"] == 0
+                    # Kronik: 30g'de ≥4 fark VEYA ≥3 hep-açık → dikkat
+                    kronik = adet >= 4 or hep_acik
+                    d["personel_patern"] = {
+                        "son_30g_adet": adet,
+                        "acik_adet": g["acik"],
+                        "fazla_adet": g["fazla"],
+                        "hep_acik": hep_acik,
+                        "kronik": kronik,
+                    }
+            except Exception as _ex_pat:
+                log.warning("kasa uyumsuzluk kişi-patern hesabı başarısız: %s", _ex_pat)
 
     return {
         "tarih": str(hedef_tarih),

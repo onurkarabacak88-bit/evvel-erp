@@ -10689,6 +10689,18 @@ export default function OperasyonMerkezi() {
           </div>
         );
 
+        // #3 Kişi-patern rozeti: tutar küçük olsa da AYNI KİŞİDE tekrar = dikkat
+        const PersonelPaternRozet = ({ p }) => {
+          if (!p || !p.kronik) return null;
+          const yon = p.hep_acik ? ' · hep açık' : '';
+          return (
+            <span title={`Sorumlu personel son 30 günde ${p.son_30g_adet} kasa farkı (açık ${p.acik_adet} / fazla ${p.fazla_adet})`}
+              style={{ background: 'rgba(234,88,12,0.18)', color: '#fdba74', borderRadius: 5, padding: '2px 8px', fontSize: 10, fontWeight: 800 }}>
+              ⚠️ Bu kişi: {p.son_30g_adet}× / 30 gün{yon}
+            </span>
+          );
+        };
+
         // Kronik rozet
         const KronikRozet = ({ adet }) => adet >= 3 ? (
           <span title={`Bu şubede son 7 günde (çözülenler dahil) ${adet} kasa uyarısı`} style={{ background: 'rgba(220,38,38,0.2)', color: '#fca5a5', borderRadius: 5, padding: '1px 7px', fontSize: 10, fontWeight: 700 }}>
@@ -10737,6 +10749,7 @@ export default function OperasyonMerkezi() {
                     {fark > 0 ? '+' : ''}{fmt(fark)}
                   </span>
                   <KronikRozet adet={u.son_7g_adet} />
+                  <PersonelPaternRozet p={u.personel_patern} />
                   {cozuldu ? <CozulduRozet u={u} /> : (
                     <span style={{ fontSize: 10, color: 'var(--text3)', padding: '1px 7px', border: '1px solid var(--border)', borderRadius: 4 }}>
                       Devir uyumsuzluğu — çözüm bekliyor
@@ -10850,6 +10863,7 @@ export default function OperasyonMerkezi() {
                     {fark > 0 ? '+' : ''}{fmt(fark)}
                   </span>
                   <KronikRozet adet={u.son_7g_adet} />
+                  <PersonelPaternRozet p={u.personel_patern} />
                   {cozuldu ? <CozulduRozet u={u} /> : (
                     <span style={{ fontSize: 10, color: 'var(--text3)', padding: '1px 7px', border: '1px solid var(--border)', borderRadius: 4 }}>
                       Kasa mutabakat farkı — çözüm bekliyor
