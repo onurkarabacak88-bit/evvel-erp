@@ -192,6 +192,26 @@ def ensure_dusum_modu(cur) -> None:
         """)
 
 
+def ensure_operasyon_event_durum_latent(cur) -> None:
+    """sube_operasyon_event.durum CHECK kısıtına 'latent' ekler.
+
+    Latent kontrol modeli (açılışta/devirde planlanan, panel aktivitesinde
+    canlanan KONTROL eventleri) durum='latent' kullanıyor; ama tablonun
+    orijinal CHECK kısıtı yalnızca bekliyor/tamamlandi/gecikti/iptal kabul
+    ediyordu. Bu yüzden açılış sonrası KONTROL insert'i 500 veriyor ve panel
+    refresh'i takılıyordu. init_db tek transaction olduğundan bu migrasyon
+    startup'ta kendi transaction'ında da bağımsız çağrılır."""
+    cur.execute(
+        "ALTER TABLE sube_operasyon_event "
+        "DROP CONSTRAINT IF EXISTS sube_operasyon_event_durum_check"
+    )
+    cur.execute(
+        "ALTER TABLE sube_operasyon_event "
+        "ADD CONSTRAINT sube_operasyon_event_durum_check "
+        "CHECK (durum IN ('latent','bekliyor','tamamlandi','gecikti','iptal'))"
+    )
+
+
 def stok_yolda_insert_row(
     cur,
     *,
@@ -344,7 +364,7 @@ def init_db():
                 son_teslim_ts      TIMESTAMP NOT NULL,
                 cevap_ts           TIMESTAMP,
                 durum              TEXT NOT NULL DEFAULT 'bekliyor'
-                    CHECK (durum IN ('bekliyor','tamamlandi','gecikti','iptal')),
+                    CHECK (durum IN ('latent','bekliyor','tamamlandi','gecikti','iptal')),
                 personel_saat      TEXT,
                 kasa_sayim         NUMERIC(14,2),
                 teslim             NUMERIC(14,2),
