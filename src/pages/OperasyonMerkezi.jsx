@@ -5137,6 +5137,9 @@ export default function OperasyonMerkezi() {
       return;
     }
     const { _notu, ...apiPayload } = payload || {};
+    // #2 Yetki: mali kayıt değiştirilecek → işletme (Merve Karabacak) PIN onayı
+    const onayPin = (window.prompt('İşletme onayı — Merve Karabacak PIN (4 hane):') || '').trim();
+    if (!onayPin) { toast('İşletme onayı iptal edildi', 'red'); return; }
     setKkDuzeltBusy(true);
     try {
       const r = await api(`/ops/kasa-uyumsuzluk/${encodeURIComponent(uyari.id)}/kaynak-duzelt`, {
@@ -5145,6 +5148,7 @@ export default function OperasyonMerkezi() {
           sebep,
           payload: apiPayload,
           notu: (_notu || '').trim() || null,
+          onay_pin: onayPin,
         },
       });
       const eski = Number(r?.eski_fark || 0);
@@ -5226,12 +5230,15 @@ export default function OperasyonMerkezi() {
       `İşlem: ilgili tabloda eski değerler RESTORE edilir, fark yeniden hesaplanır.`;
     if (!window.confirm(onayMsg)) return;
     const notu = window.prompt('Geri alma sebebi (opsiyonel):') ?? '';
+    // #2 Yetki: geri alma mali kaydı geri yazar → işletme (Merve) PIN onayı
+    const onayPin = (window.prompt('İşletme onayı — Merve Karabacak PIN (4 hane):') || '').trim();
+    if (!onayPin) { toast('İşletme onayı iptal edildi', 'red'); return; }
 
     setKkTarihceModal((prev) => prev ? { ...prev, geriAlBusyId: auditKayit.id } : prev);
     try {
       const r = await api(`/ops/kasa-uyumsuzluk/duzeltme/${encodeURIComponent(auditKayit.id)}/geri-al`, {
         method: 'POST',
-        body: { notu: notu.trim() || null },
+        body: { notu: notu.trim() || null, onay_pin: onayPin },
       });
       const yfFmt = fmt(Number(r?.yeni_fark || 0));
       toast(

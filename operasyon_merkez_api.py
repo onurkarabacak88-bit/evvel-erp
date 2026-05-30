@@ -438,6 +438,7 @@ class KasaKaynakDuzeltmeBody(BaseModel):
     #   devir_yanlis: { yeni_teslim?, yeni_devir? }
     #   gercek_acik: {} (kaynak değişmez, sadece audit + okundu)
     payload: Dict[str, Any] = {}
+    onay_pin: Optional[str] = None  # İşletme onayı (Merve Karabacak PIN) — mali kayıt değiştirir
 
 
 def _coerce_year_month(ym: Optional[str]) -> str:
@@ -6230,6 +6231,29 @@ def ops_kasa_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyu
 _SEBEPLER = {"ciro_yanlis", "acilis_yanlis", "gider_eksik", "ciro_fazla", "devir_yanlis", "gercek_acik"}
 
 
+def _isletme_onay_dogrula(cur, onay_pin: Optional[str]) -> Dict[str, Any]:
+    """#2 Yetki: mali kasa düzeltmeleri/geri-al için İŞLETME onayı (Merve Karabacak PIN) şart.
+    Para kayıtlarını (ciro/açılış/gider/devir) değiştiren uçlarda çağrılır."""
+    from personel_panel_auth import dogrula_personel_panel_pin
+    pin = (onay_pin or "").replace(" ", "")
+    if len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(403, "İşletme onayı için Merve Karabacak'ın 4 haneli PIN'i gerekli")
+    cur.execute(
+        """
+        SELECT id, ad_soyad FROM personel
+        WHERE aktif=TRUE AND ad_soyad ILIKE '%merve%karabacak%'
+        ORDER BY ad_soyad LIMIT 2
+        """
+    )
+    rows = [dict(x) for x in (cur.fetchall() or [])]
+    if not rows:
+        raise HTTPException(403, "İşletme onay yetkilisi (Merve Karabacak) tanımlı değil.")
+    if len(rows) > 1:
+        raise HTTPException(409, "Birden fazla 'Merve Karabacak' kaydı var — merkeze bildirin.")
+    dogrula_personel_panel_pin(cur, str(rows[0]["id"]), pin)  # PIN hatalıysa 403 fırlatır
+    return rows[0]
+
+
 def _kk_uyari_getir(cur, uyari_id: str) -> Dict[str, Any]:
     cur.execute(
         """
@@ -6607,6 +6631,9 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
         # Kilit transaction commit/rollback olunca otomatik düşer.
         kasa_gun_lock(cur, _pre["sube_id"], _pre["tarih"])
 
+        # #2 Yetki: mali kayıt değiştiriliyor → İşletme (Merve Karabacak) PIN onayı şart
+        _isletme_onay_dogrula(cur, body.onay_pin)
+
         # Kilidi aldıktan sonra row'u FOR UPDATE ile yeniden oku (en güncel hali)
         uyari = _kk_uyari_getir(cur, uyari_id)
         sube_id = uyari["sube_id"]
@@ -6852,6 +6879,7 @@ class KasaGeriAlBody(BaseModel):
     personel_id: Optional[str] = None
     personel_ad: Optional[str] = None
     notu: Optional[str] = None
+    onay_pin: Optional[str] = None  # İşletme onayı (Merve Karabacak PIN)
 
 
 @router.post("/kasa-uyumsuzluk/duzeltme/{audit_id}/geri-al")
@@ -6903,6 +6931,9 @@ def ops_kasa_duzeltme_geri_al(audit_id: str, body: KasaGeriAlBody = KasaGeriAlBo
         a = dict(audit_row)
         if a.get("geri_alindi_mi"):
             raise HTTPException(409, "Bu düzeltme zaten geri alınmış")
+
+        # #2 Yetki: geri alma mali kaydı geri yazar → İşletme (Merve) PIN onayı şart
+        _isletme_onay_dogrula(cur, body.onay_pin)
 
         uyari_id = a["uyari_id"]
         sube_id = a["sube_id"]
