@@ -5102,6 +5102,18 @@
           </button>
         </div>
 
+        <!-- ②.5 Kullanımda olan ürünler (bitince → Bitti) -->
+        <div id="anaKullanimdaKart" class="kullanimda-kart" style="display:none">
+          <div class="kullanimda-head">
+            <span class="kullanimda-baslik">🪣 KULLANIMDA — bitince “Bitti” deyin!</span>
+            <span id="anaKullanimdaSayi" class="kullanimda-rozet">0</span>
+          </div>
+          <p class="kullanimda-aciklama">
+            ⚠️ Bu ürünler açılınca stoktan <strong>İNMEZ</strong>. Bittiğinde mutlaka <strong>Bitti ✓</strong> deyin — yoksa depo düşmez ve <strong>sipariş gelmez!</strong>
+          </p>
+          <div id="anaKullanimdaWrap"></div>
+        </div>
+
         <!-- ③ Durum chip'leri -->
         <div class="ana-stat-row">
           <button class="ana-stat-chip siparis-chip" type="button" id="anaChipSiparis" onclick="solSekmeAc('siparisTakip')">
@@ -9552,37 +9564,47 @@ function _kullanimdaSaatKisa(iso) {
   } catch (_) { return ''; }
 }
 async function kullanimdaYukle() {
-  var kart = document.getElementById('kullanimdaKart');
-  var wrap = document.getElementById('kullanimdaWrap');
-  var sayiEl = document.getElementById('kullanimdaSayi');
-  if (!kart || !wrap) return;
+  // Hem Ürün Aç sekmesindeki hem Ana Sayfa'daki kartı doldur
+  var hedefler = [
+    { kart: 'kullanimdaKart',    wrap: 'kullanimdaWrap',    sayi: 'kullanimdaSayi' },
+    { kart: 'anaKullanimdaKart', wrap: 'anaKullanimdaWrap', sayi: 'anaKullanimdaSayi' }
+  ];
+  var aktifHedefler = hedefler.filter(function(h){ return document.getElementById(h.kart) && document.getElementById(h.wrap); });
+  if (!aktifHedefler.length) return;
   var data;
   try {
     data = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/kullanimda', { sessizIslemToast: true });
   } catch (_) { return; }
   var items = (data && data.items) || [];
-  if (!items.length) {
-    kart.style.display = 'none';
-    if (sayiEl) sayiEl.textContent = '0';
-    wrap.innerHTML = '';
-    return;
-  }
-  kart.style.display = '';
-  if (sayiEl) sayiEl.textContent = String(items.length);
   var h = '';
-  items.forEach(function(it) {
-    var saat = _kullanimdaSaatKisa(it.ac_ts);
-    var alt = (it.acan && it.acan !== '—' ? it.acan : '') + (saat ? ' · ' + saat : '');
-    h += '<div class="sv-urun-row" style="align-items:center">';
-    h += '<span class="sv-urun-ad">' + escHtml(it.urun_ad)
-       + (it.adet > 1 ? ' <strong>×' + it.adet + '</strong>' : '')
-       + (alt ? '<br><span style="font-size:11px;color:var(--muted)">' + escHtml(alt) + '</span>' : '')
-       + '</span>';
-    h += '<button type="button" class="kullanimda-bitti-btn" data-bitti-id="' + escHtml(it.id) + '" data-bitti-ad="' + escHtml(it.urun_ad) + '">Bitti ✓</button>';
-    h += '</div>';
+  if (items.length) {
+    items.forEach(function(it) {
+      var saat = _kullanimdaSaatKisa(it.ac_ts);
+      var alt = (it.acan && it.acan !== '—' ? it.acan : '') + (saat ? ' · ' + saat : '');
+      h += '<div class="sv-urun-row" style="align-items:center">';
+      h += '<span class="sv-urun-ad">' + escHtml(it.urun_ad)
+         + (it.adet > 1 ? ' <strong>×' + it.adet + '</strong>' : '')
+         + (alt ? '<br><span style="font-size:11px;color:var(--muted)">' + escHtml(alt) + '</span>' : '')
+         + '</span>';
+      h += '<button type="button" class="kullanimda-bitti-btn" data-bitti-id="' + escHtml(it.id) + '" data-bitti-ad="' + escHtml(it.urun_ad) + '">Bitti ✓</button>';
+      h += '</div>';
+    });
+  }
+  aktifHedefler.forEach(function(t) {
+    var kart = document.getElementById(t.kart);
+    var wrap = document.getElementById(t.wrap);
+    var sayiEl = document.getElementById(t.sayi);
+    if (!items.length) {
+      kart.style.display = 'none';
+      if (sayiEl) sayiEl.textContent = '0';
+      wrap.innerHTML = '';
+      return;
+    }
+    kart.style.display = '';
+    if (sayiEl) sayiEl.textContent = String(items.length);
+    wrap.innerHTML = h;
+    _wireKullanimdaBitti(wrap);
   });
-  wrap.innerHTML = h;
-  _wireKullanimdaBitti(wrap);
 }
 function _wireKullanimdaBitti(wrap) {
   if (!wrap || wrap.dataset.bittiWired === '1') return;
@@ -13336,6 +13358,9 @@ async function refresh() {
       return;
     }
     document.getElementById('kasaOverlay').style.display='none';
+
+    // Kullanımda (bitince) ürünleri ana sayfa + Ürün Aç sekmesinde güncelle
+    try { kullanimdaYukle(); } catch (_) {}
 
     var op = data.operasyon || {};
     var aktif = op.aktif;
