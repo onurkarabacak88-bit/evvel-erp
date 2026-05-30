@@ -1890,8 +1890,23 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
                     "toplam_adet": toplam_adet,
                     "ozet": ozet or "Kayıt",
                     "kalemler_liste": parcalar,
+                    "geri_alindi": False,
                 }
             )
+        # Geri alınmış (URUN_SEVK_IPTAL) kayıtları işaretle — UI pasif gösterir.
+        if son_kabul_kayitlari:
+            cur.execute(
+                """
+                SELECT ref_event_id FROM operasyon_defter
+                WHERE sube_id=%s AND etiket='URUN_SEVK_IPTAL' AND ref_event_id IS NOT NULL
+                  AND tarih >= CURRENT_DATE - INTERVAL '7 days'
+                """,
+                (sube_id,),
+            )
+            _iptal_set = {str(x.get("ref_event_id")) for x in (cur.fetchall() or [])}
+            for _k in son_kabul_kayitlari:
+                if str(_k.get("id")) in _iptal_set:
+                    _k["geri_alindi"] = True
     except Exception:
         son_kabul_kayitlari = []
 
@@ -2866,6 +2881,187 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             )
 
     return {"success": True, "defter_id": rid, "delta": delta, "kalemler": kalemler, "tip": "SEVK"}
+
+
+# ─────────────────────────────────────────────────────────────
+# HATALI TESLİM GERİ AL — yanlış "Ürün Teslim Al" (URUN_SEVK) kaydını
+# işletme (Merve Karabacak) çift onayıyla tersine çevir.
+# ─────────────────────────────────────────────────────────────
+def _isletme_onay_personel(cur: Any) -> Dict[str, Any]:
+    """Geri-al gibi hassas işlemler için sabit işletme (sahip) onay kişisi: Merve Karabacak.
+    İsimle bulunur; tam tek eşleşme şarttır. İşletme hesabı mantığı."""
+    cur.execute(
+        """
+        SELECT id, ad_soyad
+        FROM personel
+        WHERE aktif = TRUE AND ad_soyad ILIKE '%merve%karabacak%'
+        ORDER BY ad_soyad
+        LIMIT 2
+        """
+    )
+    rows = [dict(x) for x in (cur.fetchall() or [])]
+    if not rows:
+        raise HTTPException(403, "İşletme onay yetkilisi (Merve Karabacak) tanımlı değil.")
+    if len(rows) > 1:
+        raise HTTPException(409, "Birden fazla 'Merve Karabacak' kaydı var — merkeze bildirin.")
+    return rows[0]
+
+
+def _urun_sevk_payload_coz(aciklama: str) -> Dict[str, Any]:
+    """'URUN_SEVK_JSON:{...} | ...' biçiminden JSON gövdesini güvenli ayıkla."""
+    acik = str(aciklama or "")
+    pre = "URUN_SEVK_JSON:"
+    if not acik.startswith(pre):
+        raise HTTPException(400, "Bu kayıt bir teslim alım (URUN_SEVK) kaydı değil.")
+    govde = acik[len(pre):]
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(govde)
+    except Exception:
+        raise HTTPException(400, "Teslim kaydı çözümlenemedi.")
+    if not isinstance(obj, dict):
+        raise HTTPException(400, "Teslim kaydı çözümlenemedi.")
+    return obj
+
+
+class SubeSevkGeriAlBody(BaseModel):
+    """Hatalı 'Ürün Teslim Al' (URUN_SEVK) kaydını geri al — çift imza."""
+    defter_id: str
+    personel_id: str          # işlemi yapan operatör
+    pin: str                  # operatör PIN
+    onay_pin: str             # İŞLETME onayı — her zaman Merve Karabacak PIN'i
+    sebep: str                # neden geri alınıyor (zorunlu)
+
+
+@router.post("/{sube_id}/urun-sevk-geri-al")
+def sube_urun_sevk_geri_al(sube_id: str, body: SubeSevkGeriAlBody):
+    """
+    Yanlış kullanılan 'Ürün Teslim Al' (URUN_SEVK) kaydını tersine çevirir:
+    eklenen depo stoğunu düşer, dengeleyici ters defter kaydı (URUN_SEVK_IPTAL) yazar.
+    İki imza gerekir: işlemi yapan personel + işletme onayı (Merve Karabacak).
+    Bir siparişi kapatmış (talep_id'li) sevk buradan geri alınamaz — o merkez işidir.
+    """
+    from operasyon_stok_motor import (
+        depo_kalem_kodu_resolve,
+        sube_depo_stok_depo_cikis_dus,
+    )
+    from operasyon_defter import operasyon_defter_ekle
+
+    did = (body.defter_id or "").strip()
+    pid_in = (body.personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    onay_pin = (body.onay_pin or "").replace(" ", "")
+    sebep = (body.sebep or "").strip()
+    if not did:
+        raise HTTPException(400, "defter_id gerekli")
+    if not pid_in or len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "İşlemi yapan personel + 4 haneli PIN gerekli")
+    if len(onay_pin) != 4 or not onay_pin.isdigit():
+        raise HTTPException(400, "İşletme onayı için 4 haneli PIN gerekli")
+    if len(sebep) < 3:
+        raise HTTPException(400, "Geri alma sebebi zorunlu (en az 3 karakter)")
+
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        if not _bugun_kasa_acildi_mi(cur, sube_id):
+            raise HTTPException(403, "Önce günlük kasa kilidini PIN ile açmalısınız.")
+        # 1) Operatör imzası
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        op_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        op_id = str(ku.get("id") or "").strip() or pid_in
+        # 2) İşletme (Merve Karabacak) imzası — her zaman zorunlu
+        merve = _isletme_onay_personel(cur)
+        if str(merve.get("id")) == op_id:
+            raise HTTPException(409, "İşletme onayı operatörden farklı kişi (Merve Karabacak) olmalı.")
+        dogrula_personel_panel_pin(cur, str(merve["id"]), onay_pin)
+        merve_ad = (merve.get("ad_soyad") or "Merve Karabacak").strip()
+
+        # 3) Orijinal kaydı yükle
+        cur.execute(
+            "SELECT id, sube_id, etiket, aciklama FROM operasyon_defter WHERE id=%s",
+            (did,),
+        )
+        rr = cur.fetchone()
+        if not rr:
+            raise HTTPException(404, "Teslim kaydı bulunamadı")
+        orig = dict(rr)
+        if str(orig.get("sube_id") or "") != sube_id:
+            raise HTTPException(403, "Bu kayıt bu şubeye ait değil")
+        if str(orig.get("etiket") or "") != "URUN_SEVK":
+            raise HTTPException(400, "Yalnızca 'Ürün Teslim Al' (URUN_SEVK) kayıtları geri alınabilir.")
+
+        # 4) Zaten geri alınmış mı?
+        cur.execute(
+            """
+            SELECT 1 FROM operasyon_defter
+            WHERE sube_id=%s AND etiket='URUN_SEVK_IPTAL' AND ref_event_id=%s
+            LIMIT 1
+            """,
+            (sube_id, did),
+        )
+        if cur.fetchone():
+            raise HTTPException(409, "Bu teslim kaydı zaten geri alınmış.")
+
+        payload = _urun_sevk_payload_coz(orig.get("aciklama") or "")
+        _stid = payload.get("siparis_talep_id")
+        if isinstance(_stid, str):
+            _stid = _stid.strip()
+        if _stid:
+            raise HTTPException(
+                409,
+                "Bu teslim bir siparişi kapatmış — buradan geri alınamaz. "
+                "Operasyon Merkezi üzerinden düzeltilmelidir.",
+            )
+
+        kalemler = payload.get("kalemler") if isinstance(payload.get("kalemler"), list) else []
+        if not kalemler:
+            raise HTTPException(400, "Geri alınacak kalem bulunamadı.")
+
+        # 5) Stok düşümü (eklenen miktarları geri al)
+        geri_ozet: List[str] = []
+        for it in kalemler:
+            if not isinstance(it, dict):
+                continue
+            urun_ad = str(it.get("urun_ad") or "").strip()
+            try:
+                adet_i = max(0, int(it.get("adet") or 0))
+            except (TypeError, ValueError):
+                adet_i = 0
+            if not urun_ad or adet_i <= 0:
+                continue
+            urun_id = str(it.get("urun_id") or "").strip()
+            if urun_id:
+                depo_kalem = depo_kalem_kodu_resolve(cur, urun_id, urun_ad)
+            else:
+                depo_kalem = f"ozel__{_norm_ad_tr(urun_ad)}"
+            # Depo stoğundan eklenen miktarı geri düş (merkez_stok_sevk tarihsel kayıt olarak kalır)
+            sube_depo_stok_depo_cikis_dus(cur, sube_id, depo_kalem, urun_ad, adet_i)
+            geri_ozet.append(f"{adet_i} {urun_ad}")
+
+        if not geri_ozet:
+            raise HTTPException(400, "Geri alınacak geçerli kalem yok.")
+
+        # 6) Ters defter kaydı (append-only — orijinale ref'li)
+        tr_now = _now_tr()
+        saat_sistem = tr_now.strftime("%H:%M:%S")
+        ozet_metin = ", ".join(geri_ozet[:8]) + (f" · +{len(geri_ozet) - 8} kalem" if len(geri_ozet) > 8 else "")
+        aci = (
+            "Hatalı teslim al GERİ ALINDI — " + ozet_metin
+            + f" | sebep: {sebep[:300]}"
+            + f" | işletme onayı: {merve_ad}"
+        )
+        rid = operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "URUN_SEVK_IPTAL",
+            aci,
+            ref_event_id=did,
+            personel_id=op_id,
+            personel_ad=op_ad,
+            bildirim_saati=saat_sistem,
+        )
+        audit(cur, "operasyon_defter", rid, "URUN_SEVK_IPTAL")
+
+    return {"success": True, "defter_id": rid, "geri_alinan": geri_ozet}
 
 
 # ─────────────────────────────────────────────────────────────
