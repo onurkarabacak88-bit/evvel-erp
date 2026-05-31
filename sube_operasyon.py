@@ -827,13 +827,10 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 bildirim_saati=saat_sistem,
             )
 
-            # ── AKILLI DENETİM FİŞİ ── Açılış (N2 kör sayım) tamamlandı → truth_motor'u
-            # otomatik tetikle. Güvenli sarmalayıcı: hata yutar, açılışı asla bozmaz.
-            try:
-                import truth_motor as _tm
-                _tm.otomatik_calistir(cur, sube_id, str(tarih_ev))
-            except Exception:
-                pass  # otomatik_calistir zaten hata yutar; import güvenliği için
+            # NOT: truth_motor otomatik tetiği KALDIRILDI — açılış transaction'ı içinde
+            # bir SQL hatası transaction'ı zehirleyip açılışın geri sarılmasına (overlay
+            # takılması) yol açabiliyordu. Akıllı Denetim ayrı/manuel çalıştırılmalı
+            # (kendi transaction'ında), açılış commit'inden SONRA — açılışı asla riske atmadan.
 
         elif tip == "KONTROL":
             from personel_panel_auth import dogrula_personel_panel_pin
