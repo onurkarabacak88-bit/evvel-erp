@@ -1081,51 +1081,67 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                     # Açılış event'i is_gunu_tr() ile tarihlenir → uyarı da AYNI iş gününü kullanmalı.
                     # (CURRENT_DATE takvim günüydü; gece 00:00–02:00 arası yanlış güne yazıyordu.)
                     _kf_isgun = is_gunu_tr()
-                    cur.execute(
-                        "SELECT id FROM sube_operasyon_uyari "
-                        "WHERE sube_id=%s AND tarih=%s AND tip='ACILIS_KASA_FARK' LIMIT 1",
-                        (sube_id, _kf_isgun),
-                    )
-                    mevcut_kf = cur.fetchone()
-                    if mevcut_kf:
+                    # SAVEPOINT: uyarı yazımı hata verse bile açılış çekirdeği geri sarılmasın
+                    try:
+                        cur.execute("SAVEPOINT sp_acilis_kfuyari")
                         cur.execute(
-                            """UPDATE sube_operasyon_uyari
-                               SET seviye=%s, beklenen_tl=%s, gercek_tl=%s, fark_tl=%s, mesaj=%s,
-                                   acilis_personel_id=%s, acilis_personel_ad=%s,
-                                   kapanis_personel_id=%s, kapanis_personel_ad=%s,
-                                   okundu=FALSE
-                               WHERE id=%s""",
-                            (sev, bek, ks, fark, mesaj_kf,
-                             pid, onay_ad, kap_pid, kap_pad,
-                             mevcut_kf["id"]),
+                            "SELECT id FROM sube_operasyon_uyari "
+                            "WHERE sube_id=%s AND tarih=%s AND tip='ACILIS_KASA_FARK' LIMIT 1",
+                            (sube_id, _kf_isgun),
                         )
-                    else:
-                        cur.execute(
-                            """
-                            INSERT INTO sube_operasyon_uyari
-                                (id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj,
-                                 acilis_personel_id, acilis_personel_ad, kapanis_personel_id, kapanis_personel_ad)
-                            VALUES (%s, %s, %s, 'ACILIS_KASA_FARK', %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            """,
-                            (
-                                str(uuid.uuid4()), sube_id, _kf_isgun, sev,
-                                bek, ks, fark, mesaj_kf,
-                                pid, onay_ad, kap_pid, kap_pad,
-                            ),
-                        )
+                        mevcut_kf = cur.fetchone()
+                        if mevcut_kf:
+                            cur.execute(
+                                """UPDATE sube_operasyon_uyari
+                                   SET seviye=%s, beklenen_tl=%s, gercek_tl=%s, fark_tl=%s, mesaj=%s,
+                                       acilis_personel_id=%s, acilis_personel_ad=%s,
+                                       kapanis_personel_id=%s, kapanis_personel_ad=%s,
+                                       okundu=FALSE
+                                   WHERE id=%s""",
+                                (sev, bek, ks, fark, mesaj_kf,
+                                 pid, onay_ad, kap_pid, kap_pad,
+                                 mevcut_kf["id"]),
+                            )
+                        else:
+                            cur.execute(
+                                """
+                                INSERT INTO sube_operasyon_uyari
+                                    (id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj,
+                                     acilis_personel_id, acilis_personel_ad, kapanis_personel_id, kapanis_personel_ad)
+                                VALUES (%s, %s, %s, 'ACILIS_KASA_FARK', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                """,
+                                (
+                                    str(uuid.uuid4()), sube_id, _kf_isgun, sev,
+                                    bek, ks, fark, mesaj_kf,
+                                    pid, onay_ad, kap_pid, kap_pad,
+                                ),
+                            )
+                        cur.execute("RELEASE SAVEPOINT sp_acilis_kfuyari")
+                    except Exception:
+                        try:
+                            cur.execute("ROLLBACK TO SAVEPOINT sp_acilis_kfuyari")
+                        except Exception:
+                            pass
 
                     # ── Onay kuyruğuna ekle (hem update hem insert yolunda) ──
+                    # SAVEPOINT: hata transaction'ı zehirlemesin → açılış geri sarılmasın
                     try:
+                        cur.execute("SAVEPOINT sp_acilis_onay")
                         _kasa_farki_onay_kuyruguna_ekle(
                             cur, sube_id, "ACILIS_KASA_FARK",
                             float(bek), float(ks), pid, onay_ad, mesaj_kf,
                         )
+                        cur.execute("RELEASE SAVEPOINT sp_acilis_onay")
                     except Exception:
-                        pass  # onay_kuyrugu yazımı kritik değil
+                        try:
+                            cur.execute("ROLLBACK TO SAVEPOINT sp_acilis_onay")
+                        except Exception:
+                            pass  # onay_kuyrugu yazımı kritik değil
 
                     # ── Personel risk sinyali ──
                     if pid:
                         try:
+                            cur.execute("SAVEPOINT sp_acilis_risk")
                             agirlik_kf = 20 if sev == "kritik" else 10
                             cur.execute(
                                 """INSERT INTO personel_risk_sinyal
@@ -1134,51 +1150,72 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                                 (str(uuid.uuid4()), pid, sube_id, _kf_isgun,
                                  agirlik_kf, mesaj_kf[:1800], str(sube_id)),
                             )
+                            cur.execute("RELEASE SAVEPOINT sp_acilis_risk")
                         except Exception:
-                            pass  # risk sinyal yazımı kritik değil
+                            try:
+                                cur.execute("ROLLBACK TO SAVEPOINT sp_acilis_risk")
+                            except Exception:
+                                pass  # risk sinyal yazımı kritik değil
 
-            # ── 2. STOK FARK KONTROLÜ ──
-            bek_stok = beklenen_dunku_kapanis_stok(cur, sube_id)
-            if bek_stok is not None:
-                for kalem, acilis_adet in stok.items():
-                    beklenen_adet = int(bek_stok.get(kalem) or 0)
-                    fark_adet = acilis_adet - beklenen_adet
-                    if abs(fark_adet) == 0:
-                        continue
-                    sev = stok_tolerans_seviyesi(fark_adet)
-                    if sev == "normal":
-                        continue
-                    cur.execute(
-                        """
-                        INSERT INTO sube_operasyon_uyari
-                            (id, sube_id, tarih, tip, seviye, mesaj,
-                             acilis_personel_id, acilis_personel_ad, kapanis_personel_id, kapanis_personel_ad)
-                        VALUES (%s, %s, CURRENT_DATE, 'ACILIS_STOK_FARK', %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            str(uuid.uuid4()), sube_id, sev,
-                            f"Stok uyumsuzluğu [{kalem}]: dün kapanış {beklenen_adet} adet, "
-                            f"bugün açılış {acilis_adet} adet, fark {fark_adet:+d} ({sev})",
-                            pid, onay_ad, kap_pid, kap_pad,
-                        ),
-                    )
+            # ── 2. STOK FARK KONTROLÜ ── (SAVEPOINT: açılışı asla riske atma)
+            try:
+                cur.execute("SAVEPOINT sp_acilis_stokfark")
+                bek_stok = beklenen_dunku_kapanis_stok(cur, sube_id)
+                if bek_stok is not None:
+                    for kalem, acilis_adet in stok.items():
+                        beklenen_adet = int(bek_stok.get(kalem) or 0)
+                        fark_adet = acilis_adet - beklenen_adet
+                        if abs(fark_adet) == 0:
+                            continue
+                        sev = stok_tolerans_seviyesi(fark_adet)
+                        if sev == "normal":
+                            continue
+                        cur.execute(
+                            """
+                            INSERT INTO sube_operasyon_uyari
+                                (id, sube_id, tarih, tip, seviye, mesaj,
+                                 acilis_personel_id, acilis_personel_ad, kapanis_personel_id, kapanis_personel_ad)
+                            VALUES (%s, %s, CURRENT_DATE, 'ACILIS_STOK_FARK', %s, %s, %s, %s, %s, %s)
+                            """,
+                            (
+                                str(uuid.uuid4()), sube_id, sev,
+                                f"Stok uyumsuzluğu [{kalem}]: dün kapanış {beklenen_adet} adet, "
+                                f"bugün açılış {acilis_adet} adet, fark {fark_adet:+d} ({sev})",
+                                pid, onay_ad, kap_pid, kap_pad,
+                            ),
+                        )
+                cur.execute("RELEASE SAVEPOINT sp_acilis_stokfark")
+            except Exception:
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_acilis_stokfark")
+                except Exception:
+                    pass
 
-            operasyon_defter_ekle(
-                cur,
-                sube_id,
-                "ACILIS_TAMAM",
-                (
-                    f"Şube panel sayımlı açılış — {onay_ad} — tarih={bugun_tr()} saat={saat_sistem} "
-                    f"kasa_sayim={ks} | bardak(k/b/p)=({stok['bardak_kucuk']}/"
-                    f"{stok['bardak_buyuk']}/{stok['bardak_plastik']}) "
-                    f"urun(su/sut/r/s/c/p)=({stok['su_adet']}/{stok['sut_litre']}/"
-                    f"{stok['redbull_adet']}/{stok['soda_adet']}/{stok['cookie_adet']}/{stok['pasta_adet']})"
-                ),
-                aid,
-                personel_id=pid,
-                personel_ad=onay_ad,
-                bildirim_saati=saat_sistem,
-            )
+            # SAVEPOINT: defter (hash-zincir) yazımı hata verse bile açılış geri sarılmasın
+            try:
+                cur.execute("SAVEPOINT sp_acilis_defter")
+                operasyon_defter_ekle(
+                    cur,
+                    sube_id,
+                    "ACILIS_TAMAM",
+                    (
+                        f"Şube panel sayımlı açılış — {onay_ad} — tarih={bugun_tr()} saat={saat_sistem} "
+                        f"kasa_sayim={ks} | bardak(k/b/p)=({stok['bardak_kucuk']}/"
+                        f"{stok['bardak_buyuk']}/{stok['bardak_plastik']}) "
+                        f"urun(su/sut/r/s/c/p)=({stok['su_adet']}/{stok['sut_litre']}/"
+                        f"{stok['redbull_adet']}/{stok['soda_adet']}/{stok['cookie_adet']}/{stok['pasta_adet']})"
+                    ),
+                    aid,
+                    personel_id=pid,
+                    personel_ad=onay_ad,
+                    bildirim_saati=saat_sistem,
+                )
+                cur.execute("RELEASE SAVEPOINT sp_acilis_defter")
+            except Exception:
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_acilis_defter")
+                except Exception:
+                    pass
 
             return {
                 "success": True,
