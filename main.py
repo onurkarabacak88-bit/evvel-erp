@@ -1641,6 +1641,40 @@ class VadeliOdeModel(BaseModel):
     odeme_yontemi: str = 'nakit'  # 'nakit' veya 'kart'
     kart_id: Optional[str] = None
 
+
+def _personel_maas_odeme_guard(cur, plan: dict) -> None:
+    """FAZ 0 #3: Personel maaş planı ödenmeden önce o ayın kaydı 'onaylandi' olmalı.
+    Taslak/tahmini ödeme = fazla mesai dahil edilmeden eksik ödeme riski. Sadece
+    kaynak_tablo='personel' planlarına uygulanır; kira/borç/kart etkilenmez."""
+    if (plan.get('kaynak_tablo') or '') != 'personel':
+        return
+    kid = plan.get('kaynak_id')
+    ref = plan.get('referans_ay')
+    if not kid or not ref:
+        return  # eski/bağlanamayan kayıt — engelleme
+    cur.execute(
+        "SELECT durum FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
+        (kid, ref.year, ref.month),
+    )
+    r = cur.fetchone()
+    durum = (r or {}).get('durum')
+    if durum == 'onaylandi':
+        return
+    cur.execute("SELECT ad_soyad FROM personel WHERE id=%s", (kid,))
+    ad = (cur.fetchone() or {}).get('ad_soyad') or 'Personel'
+    if not r:
+        raise HTTPException(
+            400,
+            f"{ad}: bu ayın maaş kaydı henüz girilmedi. Ödeme öncesi 'Vardiyadan Aktar' "
+            f"+ 'Onayla' yapın (fazla mesai dahil edilip tutar kilitlensin).",
+        )
+    raise HTTPException(
+        400,
+        f"{ad}: maaş kaydı '{durum}' durumda. Ödemeden önce 'Onayla' gerekli "
+        f"(tutarı kilitler, fazla mesai dahil olur).",
+    )
+
+
 @app.post("/api/odeme-plani/{oid}/ode")
 def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = VadeliOdeModel()):
     with db() as (conn, cur):
@@ -1649,6 +1683,9 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
         plan = cur.fetchone()
         if not plan: raise HTTPException(404)
         if plan['durum'] == 'odendi': raise HTTPException(400, "Zaten ödendi")
+
+        # FAZ 0 #3: personel maaşı onaysız ödenemez
+        _personel_maas_odeme_guard(cur, dict(plan))
 
         # KART seçildiyse ve kaynak vadeli_alimlar ise kart akışına yönlendir
         if body.odeme_yontemi == 'kart' and body.kart_id and plan.get('kaynak_tablo') == 'vadeli_alimlar':
@@ -5175,6 +5212,9 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
         cur.execute("SELECT * FROM odeme_plani WHERE id=%s AND durum IN ('bekliyor','onay_bekliyor') FOR UPDATE", (oid,))
         plan = cur.fetchone()
         if not plan: raise HTTPException(404, "Plan bulunamadı veya zaten ödendi")
+
+        # FAZ 0 #3: personel maaşı onaysız (kısmi de olsa) ödenemez
+        _personel_maas_odeme_guard(cur, dict(plan))
 
         toplam = float(plan['odenecek_tutar'])
         odenen = body.odenen_tutar
