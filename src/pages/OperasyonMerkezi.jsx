@@ -458,10 +458,10 @@ const FILTRELER = [
 const UST_SEKMELER = [
   { id: 'canli', label: 'Canlı Operasyon' },
   { id: 'urun-ac', label: '🟢 Ürün Aç Akışı' },
-  { id: 'acilis-takip', label: '⏰ Açılış Zamanı' },
+  { id: 'acilis-takip', label: '⏰ Açılış Takip' },
   { id: 'kullanilan-urunler', label: '🟠 Kullanılan Ürünler' },
   { id: 'kapanis-takip', label: '📊 Kapanış Takip' },
-  { id: 'acilis-kasa-takip', label: '💰 Açılış Kasası' },
+  { id: 'acilis-kasa-takip', label: '💰 Açılış Takip' },
   { id: 'ciro-onay', label: '💳 Bekleyen Ciro Onayları' },
   { id: 'kasa-uyumsuzluk', label: '🔴 Kasa Uyumsuzluğu' },
   { id: 'kasa-personel-takip', label: '👥 Personel Kasa Takibi' },
@@ -593,10 +593,10 @@ const MODULLER = [
   },
   {
     id: 'envanter',
-    label: '📦 Envanter & Stok',
+    label: '📦 Envanter',
     renk: '#f08040',
-    desc: 'Stok sayımı, ürün açma, kullanılan ürünler, ürün uyumsuzluğu, fire & kayıp analizi',
-    tabs: ['magaza-kartlari', 'stok-hareketi', 'sayim', 'urun-ac', 'kullanilan-urunler', 'urun-uyumsuzluk', 'stok-kayip', 'fire-bildirim'],
+    desc: 'Stok sayımı, ürün açma, fire & kayıp analizi',
+    tabs: ['magaza-kartlari', 'stok-hareketi', 'sayim', 'urun-ac', 'stok-kayip', 'fire-bildirim'],
   },
   {
     id: 'siparis-tedarik',
@@ -607,10 +607,10 @@ const MODULLER = [
   },
   {
     id: 'finans-kasa',
-    label: '💳 Kasa & Ciro',
+    label: '💳 Finans & Kasa',
     renk: '#e85d5d',
-    desc: 'Açılış/kapanış kasası, ciro onayı, kasa uyumsuzluğu ve fiş kontrol',
-    tabs: ['acilis-kasa-takip', 'kapanis-takip', 'ciro-onay', 'kasa-uyumsuzluk', 'fis'],
+    desc: 'Açılış/kapanış kasası, kullanılan ürünler, ciro, kasa & stok uyumsuzlukları, fiş kontrol',
+    tabs: ['acilis-kasa-takip', 'kapanis-takip', 'kullanilan-urunler', 'ciro-onay', 'kasa-uyumsuzluk', 'urun-uyumsuzluk', 'kasa-personel-takip', 'fis'],
   },
   {
     id: 'personel',
