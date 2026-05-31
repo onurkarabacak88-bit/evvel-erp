@@ -711,6 +711,7 @@ export default function VardiyaPlanlamaV2() {
   /** Sürükle-bırak sonrası saat seçimi + check/atama */
   const [dropSaatModal, setDropSaatModal] = useState(null);
   const [izinModal, setIzinModal] = useState(false);
+  const [serbestModal, setSerbestModal] = useState(false);
   /** Seçili haftada izin kaydı olmayan aktif personel (yasal hatırlatma) */
   const [izinHaftaOzet, setIzinHaftaOzet] = useState(null);
   const [overrideModal, setOverrideModal] = useState(null); // {payload, uyarilar, ozetMetni?, transferAtamaId?} | null
@@ -2221,6 +2222,7 @@ export default function VardiyaPlanlamaV2() {
             <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text3)' }}>Personel · şube · saat · tek ekran</p>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => setSerbestModal(true)} title="Slot kurmadan, serbest saatle hızlı vardiya ata">⚡ Serbest Vardiya</button>
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => setIzinModal(true)}>🌴 İzinler</button>
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => setRaporAcik((v) => !v)}>📊 Raporlar</button>
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => setLogPanel(true)}>📜 Override Log</button>
@@ -3467,6 +3469,12 @@ export default function VardiyaPlanlamaV2() {
       {izinModal && <IzinModal
         personeller={(gunPlani?.personel_havuzu) || []}
         onClose={() => { setIzinModal(false); yukleGun(); void yukleIzinHaftaOzet(); }}
+      />}
+      {serbestModal && <SerbestVardiyaModal
+        personeller={(gunPlani?.personel_havuzu) || []}
+        subeler={subeler}
+        varsayilanTarih={tarih}
+        onClose={(degisti) => { setSerbestModal(false); if (degisti) yukleGun(); }}
       />}
       {uyariOnayModal && (
         <UyariOnayModal
@@ -4724,6 +4732,92 @@ function Modal({ children, onClose, title, geniş = false }) {
         <div className="modal-body">{children}</div>
       </div>
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SERBEST VARDİYA — slot kurmadan, şube + özel saatle hızlı atama
+// ═══════════════════════════════════════════════════════════════════
+function SerbestVardiyaModal({ personeller, subeler, varsayilanTarih, onClose }) {
+  const [pid, setPid] = useState('');
+  const [subeId, setSubeId] = useState((subeler && subeler[0] && subeler[0].id) || '');
+  const [gun, setGun] = useState(varsayilanTarih || isoToday());
+  const [bas, setBas] = useState('09:00');
+  const [bit, setBit] = useState('18:30');
+  const [busy, setBusy] = useState(false);
+  const [hata, setHata] = useState('');
+  const gece = !!bas && !!bit && bit < bas;
+
+  async function kaydet(force) {
+    if (!pid) { setHata('Personel seçin'); return; }
+    if (!subeId) { setHata('Şube seçin'); return; }
+    if (!bas || !bit) { setHata('Başlangıç ve bitiş saatini girin'); return; }
+    setBusy(true); setHata('');
+    try {
+      await api('/vardiya/v2/atama-serbest', {
+        method: 'POST',
+        body: {
+          personel_id: pid, sube_id: subeId, tarih: gun,
+          baslangic_saat: bas, bitis_saat: bit, override: !!force,
+        },
+      });
+      onClose(true);
+    } catch (e) {
+      setHata(String(e?.message || 'Kayıt hatası') + ' — kural uyarısı varsa «Override ile ata» kullanın.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal onClose={() => onClose(false)} title="⚡ Serbest Vardiya (slot kurmadan)">
+      <p style={{ fontSize: 12, color: 'var(--text3)', marginTop: 0, lineHeight: 1.45 }}>
+        Slot ayarlamadan, doğrudan <strong>şube + saat</strong> seç. Gün penceresi atamaya göre şekillenir;
+        bitiş başlangıçtan erkense (örn. <strong>01:30</strong>) <strong>gece vardiyası otomatik</strong> sayılır.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div className="form-group" style={{ gridColumn: '1/-1' }}>
+          <label>Personel</label>
+          <select className="input" value={pid} onChange={e => setPid(e.target.value)}>
+            <option value="">— seç —</option>
+            {(personeller || []).map(p => <option key={p.id} value={p.id}>{p.ad} {p.soyad || ''}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label>Şube</label>
+          <select className="input" value={subeId} onChange={e => setSubeId(e.target.value)}>
+            {(subeler || []).map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label>Tarih</label>
+          <input className="input" type="date" value={gun} onChange={e => setGun(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label>Başlangıç</label>
+          <input className="input" type="time" value={bas} onChange={e => setBas(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label>Bitiş {gece && <span style={{ color: '#a855f7', fontWeight: 700 }}>· gece (ertesi gün)</span>}</label>
+          <input className="input" type="time" value={bit} onChange={e => setBit(e.target.value)} />
+        </div>
+      </div>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginTop: 10 }}>Hızlı şablonlar</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+        {SAAT_SABLONLARI.map(h => (
+          <button key={h.etiket} type="button" className="btn btn-sm btn-secondary"
+            onClick={() => { setBas(h.bas); setBit(h.bit); }} title={`${h.etiket}: ${h.bas}–${h.bit}`}>
+            {h.etiket} ({h.bas}–{h.bit})
+          </button>
+        ))}
+      </div>
+      {hata && <div style={{ color: '#dc2626', fontSize: 12, marginTop: 10, lineHeight: 1.4 }}>{hata}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
+        <button type="button" className="btn btn-secondary" onClick={() => onClose(false)} disabled={busy}>İptal</button>
+        {hata && <button type="button" className="btn btn-secondary" onClick={() => kaydet(true)} disabled={busy} title="Kural uyarılarını override log'a yazarak ata">🔓 Override ile ata</button>}
+        <button type="button" className="btn btn-primary" onClick={() => kaydet(false)} disabled={busy}>{busy ? '…' : 'Ata'}</button>
+      </div>
+    </Modal>
   );
 }
 
