@@ -1446,6 +1446,33 @@ def init_db():
             END $$;
         """)
 
+        # Migration: odeme_plani mükerrer engeli (FAZ 0 #2 — çift ödeme riski)
+        # Aynı kaynak (personel/kira/borç) + aynı ay için yalnızca 1 AKTİF plan olabilir.
+        # İptal kayıtlar serbest (geçmiş silinmez). kart_id'siz kart planları (kaynak_id NULL) etkilenmez.
+        # GÜVENLİK: aktif mükerrer varsa index KURULMAZ (CREATE patlamasın) — sadece NOTICE.
+        cur.execute("""
+            DO $$
+            DECLARE
+                dup_count INTEGER;
+            BEGIN
+                SELECT COUNT(*) INTO dup_count FROM (
+                    SELECT kaynak_tablo, kaynak_id, referans_ay
+                    FROM odeme_plani
+                    WHERE durum <> 'iptal' AND kaynak_id IS NOT NULL AND referans_ay IS NOT NULL
+                    GROUP BY kaynak_tablo, kaynak_id, referans_ay
+                    HAVING COUNT(*) > 1
+                ) d;
+
+                IF dup_count = 0 THEN
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_odeme_plani_kaynak_ay_aktif
+                    ON odeme_plani (kaynak_tablo, kaynak_id, referans_ay)
+                    WHERE durum <> 'iptal' AND kaynak_id IS NOT NULL AND referans_ay IS NOT NULL;
+                ELSE
+                    RAISE NOTICE 'uq_odeme_plani_kaynak_ay_aktif KURULMADI: % aktif mukerrer grup var', dup_count;
+                END IF;
+            END $$;
+        """)
+
         # ── ONAY KUYRUĞU ───────────────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS onay_kuyrugu (

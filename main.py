@@ -3173,6 +3173,37 @@ def odeme_plani_gecmis_temizle(baslangic: str = "2026-06-01", uygula: bool = Fal
         }
 
 
+@app.get("/api/odeme-plani/mukerrer-tara")
+def odeme_plani_mukerrer_tara():
+    """Tanı (read-only): aktif mükerrer ödeme planı grupları + mükerrer-engel index'i kurulu mu.
+    Aynı (kaynak_tablo, kaynak_id, referans_ay) için >1 aktif (iptal değil) plan = çift ödeme riski."""
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT kaynak_tablo, kaynak_id, referans_ay::text AS referans_ay,
+                   COUNT(*) AS adet,
+                   ARRAY_AGG(id::text) AS plan_idler,
+                   ARRAY_AGG(durum) AS durumlar,
+                   ARRAY_AGG(aciklama) AS aciklamalar
+            FROM odeme_plani
+            WHERE durum <> 'iptal' AND kaynak_id IS NOT NULL AND referans_ay IS NOT NULL
+            GROUP BY kaynak_tablo, kaynak_id, referans_ay
+            HAVING COUNT(*) > 1
+            ORDER BY adet DESC
+            """
+        )
+        gruplar = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(
+            "SELECT 1 FROM pg_indexes WHERE indexname = 'uq_odeme_plani_kaynak_ay_aktif'"
+        )
+        index_var = cur.fetchone() is not None
+    return {
+        "mukerrer_grup_adet": len(gruplar),
+        "mukerrer_engel_index_kurulu": index_var,
+        "gruplar": gruplar,
+    }
+
+
 # ── FATURA ÖDEMESİ ────────────────────────────────────────────
 
 class FaturaOdemeModel(BaseModel):
