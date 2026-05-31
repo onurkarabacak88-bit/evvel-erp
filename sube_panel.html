@@ -9051,6 +9051,19 @@ window.devirModalKapat = function() {
 
 // ─── KAPANIS MODAL ────────────────────────────────────────────
 window.kapanisModalAc = function() {
+  // 🔒 MÜHÜR: bugünün kapanışı tamamlandıysa formu tekrar açma (çift kapanış engeli)
+  try {
+    var _op = (typeof lastData !== 'undefined' && lastData && lastData.operasyon) || {};
+    var _evL = [].concat(_op.events || [], _op.events_ozet || []);
+    var _kapBitti = _evL.some(function(ev){
+      return ev && String(ev.tip || '').toUpperCase() === 'KAPANIS'
+             && String(ev.durum || '').toLowerCase() === 'tamamlandi';
+    });
+    if (_kapBitti) {
+      showToast('🔒 Bugünün kapanışı tamamlandı ve mühürlendi — tekrar kapanış yapılamaz.', 'info', 5000);
+      return;
+    }
+  } catch (e) { /* veri yoksa normal akışa devam */ }
   var m = document.getElementById('kapanisModal');
   if (!m) return;
   m.classList.add('acik');
@@ -12173,10 +12186,14 @@ function updateSolAksiyonChips(data) {
     var kapBitti = evListesi.some(function(ev){
       return ev && String(ev.tip||'').toUpperCase()==='KAPANIS' && String(ev.durum||'').toLowerCase()==='tamamlandi';
     });
+    var kapKart = document.getElementById('solKapanisKart');
     if (kapBitti) {
-      kapChip.textContent = '✓ Kapandı';
+      kapChip.textContent = '🔒 Mühürlendi';
       kapChip.className = 'sol-ak-chip tamam';
-    } else if (kapDurum === 'gecikti') {
+      if (kapKart) { kapKart.style.opacity = '0.6'; kapKart.style.pointerEvents = 'none'; }
+    } else if (kapKart) { kapKart.style.opacity = ''; kapKart.style.pointerEvents = ''; }
+    if (kapBitti) { /* kapandı: aşağıdaki dallar atlanır */ }
+    else if (kapDurum === 'gecikti') {
       kapChip.textContent = '⚠ Gecikti';
       kapChip.className = 'sol-ak-chip gecikti';
     } else if (kapDurum === 'bekliyor' || kapDurum === 'aktif' || kapDurum === 'devam') {
