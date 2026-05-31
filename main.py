@@ -2643,8 +2643,8 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
             UPDATE odeme_plani SET odenecek_tutar=%s, asgari_tutar=%s
             WHERE kaynak_tablo='personel' AND kaynak_id=%s
             AND durum IN ('bekliyor','onay_bekliyor')
-            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
-        """, (net, net, pid))
+            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', MAKE_DATE(%s, %s, 1))
+        """, (net, net, pid, yil, ay))
 
         audit(cur, 'personel_aylik', kid, 'KAYDET', yeni={'net': net, 'yil': yil, 'ay': ay})
     return {"success": True, "hesaplanan_net": net}
@@ -2725,8 +2725,8 @@ def personel_aylik_vardiya_aktar(pid: str, yil: int = None, ay: int = None):
             UPDATE odeme_plani SET odenecek_tutar=%s, asgari_tutar=%s
             WHERE kaynak_tablo='personel' AND kaynak_id=%s
             AND durum IN ('bekliyor','onay_bekliyor')
-            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
-        """, (net, net, pid))
+            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', MAKE_DATE(%s, %s, 1))
+        """, (net, net, pid, yil, ay))
 
         audit(cur, 'personel_aylik', kid, 'VARDIYA_AKTAR', yeni={'net': net, 'yil': yil, 'ay': ay})
     return {"success": True, "hesaplanan_net": net, "vardiya": vk}
@@ -2828,8 +2828,8 @@ def personel_aylik_sil(pid: str, yil: int = None, ay: int = None):
                 UPDATE odeme_plani SET odenecek_tutar=%s, asgari_tutar=%s
                 WHERE kaynak_tablo='personel' AND kaynak_id=%s
                 AND durum IN ('bekliyor','onay_bekliyor')
-                AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
-            """, (tahmini, tahmini, pid))
+                AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', MAKE_DATE(%s, %s, 1))
+            """, (tahmini, tahmini, pid, yil, ay))
         audit(cur, 'personel_aylik', str(kayit['id']), 'DELETE')
     return {"success": True}
 
