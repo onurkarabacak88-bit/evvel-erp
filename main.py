@@ -3204,6 +3204,86 @@ def odeme_plani_mukerrer_tara():
     }
 
 
+@app.post("/api/odeme-plani/mukerrer-temizle")
+def odeme_plani_mukerrer_temizle(uygula: bool = False):
+    """Aktif mükerrer ödeme planlarını teke indirir (en eski kalır, fazlalar 'iptal').
+    Ödenmiş kopyaların PARA ayağı da geri alınır (geri alınabilir, hiçbir şey silinmez):
+      - kasa_hareketleri: kaynak_id=plan_id (idempotency) ile iptal (nakit ödenmişse).
+      - kart_hareketleri: kart talimatı (kaynak_tablo=sabit_giderler) için eşleşen fazla HARCAMA iptal.
+    uygula=False → önizleme. Mükerrer kalmazsa UNIQUE index kurulur."""
+    rapor = {"onizleme": (not uygula), "gruplar": [], "iptal_plan": [],
+             "iptal_kart_hareketi": [], "iptal_kasa": [], "index_kuruldu": False}
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT kaynak_tablo, kaynak_id, referans_ay
+            FROM odeme_plani
+            WHERE durum <> 'iptal' AND kaynak_id IS NOT NULL AND referans_ay IS NOT NULL
+            GROUP BY kaynak_tablo, kaynak_id, referans_ay
+            HAVING COUNT(*) > 1
+        """)
+        gruplar = [dict(r) for r in (cur.fetchall() or [])]
+        for g in gruplar:
+            cur.execute("""
+                SELECT id::text, durum, odenecek_tutar, kart_id, aciklama
+                FROM odeme_plani
+                WHERE durum <> 'iptal'
+                  AND kaynak_tablo IS NOT DISTINCT FROM %s
+                  AND kaynak_id = %s AND referans_ay = %s
+                ORDER BY olusturma ASC, id ASC
+            """, (g["kaynak_tablo"], g["kaynak_id"], g["referans_ay"]))
+            rows = [dict(r) for r in (cur.fetchall() or [])]
+            tutulan, fazlalar = rows[0], rows[1:]
+            rapor["gruplar"].append({
+                "kaynak_tablo": g["kaynak_tablo"], "referans_ay": str(g["referans_ay"]),
+                "toplam": len(rows), "tutulan_plan": tutulan["id"],
+                "iptal_edilecek": [f["id"] for f in fazlalar],
+                "aciklama": str(tutulan.get("aciklama") or "")[:50],
+            })
+            if not uygula:
+                continue
+            for f in fazlalar:
+                cur.execute("""UPDATE odeme_plani SET durum='iptal',
+                    aciklama = COALESCE(aciklama,'') || ' · iptal: mukerrer temizlik'
+                    WHERE id=%s""", (f["id"],))
+                rapor["iptal_plan"].append({"id": f["id"],
+                    "tutar": float(f["odenecek_tutar"] or 0), "onceki_durum": f["durum"]})
+                if f["durum"] == "odendi":
+                    cur.execute("""UPDATE kasa_hareketleri SET durum='iptal'
+                        WHERE kaynak_id=%s AND durum='aktif' RETURNING id::text, tutar""", (f["id"],))
+                    for kr in (cur.fetchall() or []):
+                        rapor["iptal_kasa"].append({"id": kr["id"], "tutar": float(kr["tutar"])})
+                    if g["kaynak_tablo"] == "sabit_giderler":
+                        cur.execute("""
+                            UPDATE kart_hareketleri SET durum='iptal'
+                            WHERE id = (
+                                SELECT id FROM kart_hareketleri
+                                WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+                                  AND islem_turu='HARCAMA' AND durum='aktif'
+                                  AND ABS(tutar - %s) < 0.01
+                                ORDER BY tarih DESC, id DESC LIMIT 1
+                            )
+                            RETURNING id::text, tutar
+                        """, (g["kaynak_id"], float(f["odenecek_tutar"] or 0)))
+                        for kr in (cur.fetchall() or []):
+                            rapor["iptal_kart_hareketi"].append({"id": kr["id"], "tutar": float(kr["tutar"])})
+        if uygula:
+            cur.execute("""
+                SELECT COUNT(*) AS n FROM (
+                  SELECT 1 FROM odeme_plani
+                  WHERE durum <> 'iptal' AND kaynak_id IS NOT NULL AND referans_ay IS NOT NULL
+                  GROUP BY kaynak_tablo, kaynak_id, referans_ay HAVING COUNT(*)>1
+                ) d
+            """)
+            if int(cur.fetchone()["n"]) == 0:
+                cur.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_odeme_plani_kaynak_ay_aktif
+                    ON odeme_plani (kaynak_tablo, kaynak_id, referans_ay)
+                    WHERE durum <> 'iptal' AND kaynak_id IS NOT NULL AND referans_ay IS NOT NULL
+                """)
+                rapor["index_kuruldu"] = True
+    return rapor
+
+
 # ── FATURA ÖDEMESİ ────────────────────────────────────────────
 
 class FaturaOdemeModel(BaseModel):
