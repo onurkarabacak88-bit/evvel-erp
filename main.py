@@ -2509,6 +2509,7 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
             cur.execute(
                 """
                 SELECT
+                    op.id::text AS odeme_id,
                     op.durum AS odeme_durumu,
                     op.tarih AS odeme_tarihi,
                     op.odenecek_tutar,
@@ -2561,6 +2562,7 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                 'not_aciklama': kayit.get('not_aciklama'),
                 'hesaplanan_net': net,
                 'durum': durum,
+                'odeme_id': plan.get('odeme_id'),
                 'odeme_durumu': plan.get('odeme_durumu'),
                 'odeme_tarihi': plan.get('odeme_tarihi'),
                 'odenecek_tutar': float(plan.get('odenecek_tutar') or 0),
@@ -2733,6 +2735,41 @@ def personel_aylik_onayla(pid: str, yil: int = None, ay: int = None):
         "kasa_etkisi": False,
         "odeme_durumu": (plan or {}).get("odeme_durumu"),
     }
+
+@app.post("/api/personel-aylik/{pid}/kilit-ac")
+def personel_aylik_kilit_ac(pid: str, yil: int = None, ay: int = None):
+    """Onaylanmış (kilitli) maaş kaydını düzeltme için taslağa döndürür — son dakika
+    fazla mesai/raporlu gibi durumlar için. ÖDENMİŞSE açılmaz (geçmiş değişmez;
+    o durumda ek ödeme/mahsup gerekir)."""
+    bugun = bugun_tr()
+    yil = yil or bugun.year
+    ay  = ay  or bugun.month
+    with db() as (conn, cur):
+        # Ödenmiş mi? Ödendiyse kilit açılmaz.
+        cur.execute(
+            """
+            SELECT 1 FROM odeme_plani
+            WHERE kaynak_tablo='personel' AND kaynak_id=%s AND durum='odendi'
+              AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', MAKE_DATE(%s, %s, 1))
+            LIMIT 1
+            """,
+            (pid, yil, ay),
+        )
+        if cur.fetchone():
+            raise HTTPException(
+                400,
+                "Bu ayın maaşı ödenmiş — kilit açılamaz. Düzeltme için ek ödeme / "
+                "gelecek aydan mahsup gerekir (geçmiş kayıt değişmez).",
+            )
+        cur.execute(
+            "UPDATE personel_aylik SET durum='taslak' WHERE personel_id=%s AND yil=%s AND ay=%s AND durum='onaylandi'",
+            (pid, yil, ay),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(400, "Onaylı kayıt bulunamadı (zaten taslak olabilir).")
+        audit(cur, 'personel_aylik', pid, 'KILIT_AC', yeni={'yil': yil, 'ay': ay})
+    return {"success": True, "mesaj": "Kilit açıldı — düzeltip tekrar onaylayın."}
+
 
 @app.delete("/api/personel-aylik/{pid}")
 def personel_aylik_sil(pid: str, yil: int = None, ay: int = None):

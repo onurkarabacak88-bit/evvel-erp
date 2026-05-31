@@ -163,6 +163,27 @@ export default function Personel() {
     } catch(e) { toast(e.message, 'red'); }
   }
 
+  async function maasOde(pid, odemeId, net) {
+    if (!odemeId) { toast('Ödeme planı bulunamadı — önce Onayla.', 'red'); return; }
+    if (!confirm(`Maaş ödemesi yapılsın mı? Kasadan ${parseInt(net||0).toLocaleString('tr-TR')} ₺ düşülecek.`)) return;
+    try {
+      await api(`/odeme-plani/${odemeId}/ode`, { method:'POST', body:{ odeme_yontemi:'nakit' } });
+      toast('💰 Ödendi — kasadan düşüldü', 'green');
+      publishGlobalDataRefresh('personel-maas-ode');
+      loadAylik();
+    } catch(e) { toast(e.message, 'red'); }
+  }
+
+  async function maasKilitAc(pid) {
+    if (!confirm('Kilidi aç — kayıt taslağa döner, düzeltip tekrar onaylayabilirsin. (Ödenmişse açılmaz.) Devam?')) return;
+    try {
+      await api(`/personel-aylik/${pid}/kilit-ac?yil=${aylikYil}&ay=${aylikAy}`, { method:'POST' });
+      toast('🔓 Kilit açıldı — düzeltip tekrar onayla.', 'yellow');
+      publishGlobalDataRefresh('personel-maas-kilit-ac');
+      loadAylik();
+    } catch(e) { toast(e.message, 'red'); }
+  }
+
   async function maasKayitSil(pid) {
     if (!confirm('Bu aylık maaş kaydını silmek istiyor musunuz? Kayıt taslak durumuna dönecek.')) return;
     try {
@@ -488,6 +509,17 @@ export default function Personel() {
                         {durum === 'taslak' && (
                           <button className="btn btn-danger btn-sm" onClick={()=>maasKayitSil(p.personel_id)}>
                             🗑️ Sil
+                          </button>
+                        )}
+                        {onaylandi && odemeDurum !== 'odendi' && (
+                          <button className="btn btn-primary btn-sm"
+                            onClick={()=>maasOde(p.personel_id, p.odeme_id, p.hesaplanan_net)}>
+                            💰 Öde
+                          </button>
+                        )}
+                        {onaylandi && odemeDurum !== 'odendi' && (
+                          <button className="btn btn-ghost btn-sm" onClick={()=>maasKilitAc(p.personel_id)}>
+                            🔓 Kilidi Aç
                           </button>
                         )}
                       </div>
