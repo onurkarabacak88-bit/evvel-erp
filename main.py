@@ -2439,6 +2439,36 @@ class PersonelAylikModel(BaseModel):
     manuel_duzeltme: float = 0
     not_aciklama: Optional[str] = None
 
+def _maas_kayit_kilit_guard(cur, pid: str, yil: int, ay: int) -> None:
+    """FAZ 0 #5: Onaylı (kilitli) veya ödenmiş maaş kaydı sessizce taslağa
+    döndürülemez. Düzeltme için kullanıcı önce '🔓 Kilidi Aç' demeli."""
+    cur.execute(
+        "SELECT durum FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
+        (pid, yil, ay),
+    )
+    r = cur.fetchone()
+    if r and (r.get("durum") == "onaylandi"):
+        raise HTTPException(
+            400,
+            "Maaş kaydı onaylı (kilitli). Değiştirmek için önce '🔓 Kilidi Aç' yapın.",
+        )
+    cur.execute(
+        """
+        SELECT 1 FROM odeme_plani
+        WHERE kaynak_tablo='personel' AND kaynak_id=%s AND durum='odendi'
+          AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', MAKE_DATE(%s, %s, 1))
+        LIMIT 1
+        """,
+        (pid, yil, ay),
+    )
+    if cur.fetchone():
+        raise HTTPException(
+            400,
+            "Bu ayın maaşı ödenmiş — kayıt değiştirilemez. Düzeltme için ek ödeme / "
+            "gelecek aydan mahsup gerekir (geçmiş kayıt değişmez).",
+        )
+
+
 def maas_hesapla(p: dict, kayit: dict) -> float:
     """
     Personelin aylık net maaşını hesaplar.
@@ -2584,6 +2614,7 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
         cur.execute("SELECT * FROM personel WHERE id=%s AND aktif=TRUE", (pid,))
         p = cur.fetchone()
         if not p: raise HTTPException(404, "Personel bulunamadı")
+        _maas_kayit_kilit_guard(cur, pid, yil, ay)
 
         kayit_dict = body.dict()
         net = maas_hesapla(dict(p), kayit_dict)
@@ -2636,6 +2667,7 @@ def personel_aylik_vardiya_aktar(pid: str, yil: int = None, ay: int = None):
         p = cur.fetchone()
         if not p:
             raise HTTPException(404, "Personel bulunamadı")
+        _maas_kayit_kilit_guard(cur, pid, yil, ay)
 
         vk = _vv2.personel_ay_vardiya_maas_kaynagi(cur, pid, yil, ay)
         cur.execute(
