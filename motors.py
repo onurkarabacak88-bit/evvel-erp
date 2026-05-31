@@ -611,20 +611,25 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
             if toplam_maas <= 0:
                 continue
 
+            # ARREARS (geçmiş ay) bordro: çalışma dönemi = (yil, ay).
+            # Ödeme tarihi = ertesi ayın 1'i. Kayıt↔plan bağı referans_ay (çalışma ayı) üzerinden.
+            calisma_ref = date(yil, ay, 1)
+            odeme_tarihi = date(yil + 1, 1, 1) if ay == 12 else date(yil, ay + 1, 1)
             pid = str(_uuid.uuid4())
             cur.execute("""
                 INSERT INTO odeme_plani (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum, kaynak_tablo, kaynak_id)
-                SELECT %s, NULL, %s, DATE_TRUNC('month', %s::date), %s, %s, %s, 'bekliyor', 'personel', %s
+                SELECT %s, NULL, %s, %s::date, %s, %s, %s, 'bekliyor', 'personel', %s
                 WHERE NOT EXISTS (
                     SELECT 1 FROM odeme_plani
                     WHERE kaynak_id = %s
-                    AND referans_ay = DATE_TRUNC('month', %s::date)
+                    AND referans_ay = %s::date
                     AND durum != 'iptal'
                 )
-            """, (pid, odeme_tarihi, str(odeme_tarihi), toplam_maas, toplam_maas,
-                  f"Personel Maaş: {p['ad_soyad']}", p['id'], p['id'], str(odeme_tarihi)))
+            """, (pid, odeme_tarihi, str(calisma_ref), toplam_maas, toplam_maas,
+                  f"Personel Maaş: {p['ad_soyad']} ({calisma_ref:%Y-%m} dönemi)",
+                  p['id'], p['id'], str(calisma_ref)))
             if cur.rowcount > 0:
-                uretilen.append(f"Maaş: {p['ad_soyad']} — {odeme_tarihi}")
+                uretilen.append(f"Maaş: {p['ad_soyad']} — {calisma_ref:%Y-%m} dönemi, ödeme {odeme_tarihi}")
 
         # 3. KREDİ / BORÇ TAKSİTLERİ
         cur.execute("SELECT * FROM borc_envanteri WHERE aktif=TRUE AND aylik_taksit > 0")

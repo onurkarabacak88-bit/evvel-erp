@@ -328,6 +328,19 @@ export default function Personel() {
             )}
           </div>
 
+          {/* Arrears bilgi şeridi — kafa karışmasın */}
+          <div style={{
+            display:'flex',alignItems:'center',gap:8,marginBottom:14,padding:'9px 13px',
+            borderRadius:8,background:'rgba(74,158,255,0.08)',border:'1px solid rgba(74,158,255,0.25)',
+            fontSize:12,color:'var(--text2)'
+          }}>
+            <span style={{fontSize:15}}>📅</span>
+            <span>
+              <strong style={{color:'#4a9eff'}}>{AY_ADLARI[aylikAy]} {aylikYil}</strong> çalışma dönemi —
+              vardiya saatleri bu aydan gelir, ödeme <strong style={{color:'var(--text1)'}}>1 {AY_ADLARI[aylikAy===12?1:aylikAy+1]} {aylikAy===12?aylikYil+1:aylikYil}</strong>'de yapılır <span style={{color:'var(--text3)'}}>(geçmiş ay modeli)</span>.
+            </span>
+          </div>
+
           {aylikLoading ? (
             <div style={{textAlign:'center',padding:40,color:'var(--text3)'}}>Yükleniyor...</div>
           ) : aylikData && (
@@ -494,6 +507,7 @@ export default function Personel() {
                       <div style={{fontSize:16,fontWeight:700,color:'#4a9eff'}}>
                         Net: {fmt(p.hesaplanan_net)}
                         {durum === 'tahmini' && <span style={{fontSize:10,color:'var(--text3)',marginLeft:4}}>TAHMİNİ</span>}
+                        {p.odeme_tarihi && <span style={{fontSize:10,color:'var(--text3)',marginLeft:6}}>· ödeme {new Date(p.odeme_tarihi).toLocaleDateString('tr-TR',{day:'numeric',month:'short'})}</span>}
                       </div>
                       <div style={{display:'flex',gap:8}}>
                         {!onaylandi && (

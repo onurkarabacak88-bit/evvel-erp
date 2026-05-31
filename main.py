@@ -2456,7 +2456,7 @@ def _maas_kayit_kilit_guard(cur, pid: str, yil: int, ay: int) -> None:
         """
         SELECT 1 FROM odeme_plani
         WHERE kaynak_tablo='personel' AND kaynak_id=%s AND durum='odendi'
-          AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', MAKE_DATE(%s, %s, 1))
+          AND referans_ay = MAKE_DATE(%s, %s, 1)
         LIMIT 1
         """,
         (pid, yil, ay),
@@ -2548,7 +2548,7 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                 WHERE op.kaynak_tablo='personel'
                   AND op.kaynak_id=%s
                   AND op.durum != 'iptal'
-                  AND DATE_TRUNC('month', op.tarih) = DATE_TRUNC('month', MAKE_DATE(%s, %s, 1))
+                  AND op.referans_ay = MAKE_DATE(%s, %s, 1)
                 ORDER BY
                     CASE WHEN op.durum='odendi' THEN 0 WHEN op.durum='onay_bekliyor' THEN 1 ELSE 2 END,
                     op.olusturma DESC
@@ -2643,7 +2643,7 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
             UPDATE odeme_plani SET odenecek_tutar=%s, asgari_tutar=%s
             WHERE kaynak_tablo='personel' AND kaynak_id=%s
             AND durum IN ('bekliyor','onay_bekliyor')
-            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', MAKE_DATE(%s, %s, 1))
+            AND referans_ay = MAKE_DATE(%s, %s, 1)
         """, (net, net, pid, yil, ay))
 
         audit(cur, 'personel_aylik', kid, 'KAYDET', yeni={'net': net, 'yil': yil, 'ay': ay})
@@ -2725,7 +2725,7 @@ def personel_aylik_vardiya_aktar(pid: str, yil: int = None, ay: int = None):
             UPDATE odeme_plani SET odenecek_tutar=%s, asgari_tutar=%s
             WHERE kaynak_tablo='personel' AND kaynak_id=%s
             AND durum IN ('bekliyor','onay_bekliyor')
-            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', MAKE_DATE(%s, %s, 1))
+            AND referans_ay = MAKE_DATE(%s, %s, 1)
         """, (net, net, pid, yil, ay))
 
         audit(cur, 'personel_aylik', kid, 'VARDIYA_AKTAR', yeni={'net': net, 'yil': yil, 'ay': ay})
@@ -2752,7 +2752,7 @@ def personel_aylik_onayla(pid: str, yil: int = None, ay: int = None):
             WHERE kaynak_tablo='personel'
               AND kaynak_id=%s
               AND durum != 'iptal'
-              AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', MAKE_DATE(%s, %s, 1))
+              AND referans_ay = MAKE_DATE(%s, %s, 1)
             ORDER BY
               CASE WHEN durum='odendi' THEN 0 WHEN durum='onay_bekliyor' THEN 1 ELSE 2 END,
               olusturma DESC
@@ -2782,7 +2782,7 @@ def personel_aylik_kilit_ac(pid: str, yil: int = None, ay: int = None):
             """
             SELECT 1 FROM odeme_plani
             WHERE kaynak_tablo='personel' AND kaynak_id=%s AND durum='odendi'
-              AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', MAKE_DATE(%s, %s, 1))
+              AND referans_ay = MAKE_DATE(%s, %s, 1)
             LIMIT 1
             """,
             (pid, yil, ay),
@@ -2828,7 +2828,7 @@ def personel_aylik_sil(pid: str, yil: int = None, ay: int = None):
                 UPDATE odeme_plani SET odenecek_tutar=%s, asgari_tutar=%s
                 WHERE kaynak_tablo='personel' AND kaynak_id=%s
                 AND durum IN ('bekliyor','onay_bekliyor')
-                AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', MAKE_DATE(%s, %s, 1))
+                AND referans_ay = MAKE_DATE(%s, %s, 1)
             """, (tahmini, tahmini, pid, yil, ay))
         audit(cur, 'personel_aylik', str(kayit['id']), 'DELETE')
     return {"success": True}
@@ -3388,6 +3388,31 @@ def odeme_plani_mukerrer_temizle(uygula: bool = False):
                 """)
                 rapor["index_kuruldu"] = True
     return rapor
+
+
+@app.post("/api/odeme-plani/personel-arrears-tarih-duzelt")
+def personel_arrears_tarih_duzelt(uygula: bool = False):
+    """Mevcut bekleyen PERSONEL maaş planlarının ödeme tarihini arrears (geçmiş ay)
+    modeline çeker: tarih = çalışma ayı (referans_ay) + 1 ay'ın 1'i. Ödenmişlere
+    dokunmaz. İdempotent (zaten ileri tarihliyse atlar). uygula=False önizleme."""
+    with db() as (conn, cur):
+        sec = """
+            FROM odeme_plani
+            WHERE kaynak_tablo='personel' AND durum IN ('bekliyor','onay_bekliyor')
+              AND referans_ay IS NOT NULL
+              AND tarih < (referans_ay + INTERVAL '1 month')::date
+        """
+        cur.execute(
+            "SELECT id::text, referans_ay::text AS calisma_ay, tarih::text AS eski_tarih, "
+            "((referans_ay + INTERVAL '1 month')::date)::text AS yeni_tarih, aciklama " + sec
+            + " ORDER BY referans_ay"
+        )
+        adaylar = [dict(r) for r in (cur.fetchall() or [])]
+        if uygula:
+            cur.execute(
+                "UPDATE odeme_plani SET tarih = (referans_ay + INTERVAL '1 month')::date " + sec
+            )
+        return {"onizleme": (not uygula), "adet": len(adaylar), "kayitlar": adaylar}
 
 
 # ── FATURA ÖDEMESİ ────────────────────────────────────────────
