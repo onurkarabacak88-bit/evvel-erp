@@ -370,6 +370,67 @@ def ops_personel_takip_liste(sube_id: Optional[str] = None):
     return {"satirlar": rows}
 
 
+@router.get("/kasiyer-karne")
+def ops_kasiyer_karne(gun: int = 30, sube_id: Optional[str] = None):
+    """Kasiyer doğruluk karnesi — ÖZENSİZLİK ≠ ŞÜPHE ayrımıyla.
+    personel_risk_sinyal'i kişi bazında özetler:
+      - SAYIM_OZENSIZLIK → disiplin (düzeltilince fark 0; dürüst ama özensiz)
+      - KASA_GERCEK_ACIK → onaylanmış kayıp (şüphe)
+      - ACILIS/KAPANIS_KASA_FARK → henüz çözülmemiş ham kasa farkı
+    Profil: 🟢 temiz / 🟠 disiplin / 🟡 izle / 🔴 incele."""
+    gun_sayi = max(1, min(365, int(gun or 30)))
+    sid = (sube_id or "").strip() or None
+    with db() as (conn, cur):
+        q = """
+            SELECT s.personel_id,
+                   COALESCE(p.ad_soyad, u.ad, s.personel_id) AS personel_ad,
+                   COUNT(*) FILTER (WHERE s.sinyal_turu='SAYIM_OZENSIZLIK') AS ozensizlik,
+                   COUNT(*) FILTER (WHERE s.sinyal_turu='KASA_GERCEK_ACIK') AS gercek_acik,
+                   COUNT(*) FILTER (WHERE s.sinyal_turu IN ('ACILIS_KASA_FARK','KAPANIS_KASA_FARK')) AS ham_kasa_fark,
+                   COUNT(*) AS toplam_sinyal,
+                   COALESCE(SUM(s.agirlik),0) AS toplam_agirlik,
+                   MAX(s.tarih) AS son_sinyal
+            FROM personel_risk_sinyal s
+            LEFT JOIN personel p ON p.id = s.personel_id
+            LEFT JOIN sube_panel_kullanici u ON u.id = s.personel_id
+            WHERE s.tarih >= (CURRENT_DATE - (%s * INTERVAL '1 day'))
+        """
+        qp: List[Any] = [gun_sayi]
+        if sid:
+            q += " AND s.sube_id = %s"
+            qp.append(sid)
+        q += " GROUP BY s.personel_id, personel_ad ORDER BY gercek_acik DESC, ham_kasa_fark DESC, ozensizlik DESC"
+        cur.execute(q, tuple(qp))
+        karne = []
+        for r in cur.fetchall():
+            d = dict(r)
+            ozen = int(d.get("ozensizlik") or 0)
+            gercek = int(d.get("gercek_acik") or 0)
+            ham = int(d.get("ham_kasa_fark") or 0)
+            # Şüphe skoru: gerçek açık ağır, çözülmemiş ham fark orta; özensizlik şüpheye GİRMEZ
+            suphe_skor = gercek * 10 + ham * 3
+            if gercek >= 1 or suphe_skor >= 15:
+                profil = "incele"; profil_emoji = "🔴"; profil_metin = "İncele (gerçek açık / yoğun fark)"
+            elif ham >= 3:
+                profil = "izle"; profil_emoji = "🟡"; profil_metin = "İzle (çözülmemiş kasa farkları)"
+            elif ozen >= 3:
+                profil = "disiplin"; profil_emoji = "🟠"; profil_metin = "Disiplin (özensiz ama dürüst — kayıp yok)"
+            else:
+                profil = "temiz"; profil_emoji = "🟢"; profil_metin = "Temiz"
+            d["ozensizlik"] = ozen
+            d["gercek_acik"] = gercek
+            d["ham_kasa_fark"] = ham
+            d["toplam_sinyal"] = int(d.get("toplam_sinyal") or 0)
+            d["toplam_agirlik"] = int(d.get("toplam_agirlik") or 0)
+            d["suphe_skor"] = suphe_skor
+            d["profil"] = profil
+            d["profil_emoji"] = profil_emoji
+            d["profil_metin"] = profil_metin
+            d["son_sinyal"] = str(d["son_sinyal"]) if d.get("son_sinyal") else None
+            karne.append(d)
+    return {"gun": gun_sayi, "sube_id": sid, "toplam_kasiyer": len(karne), "karne": karne}
+
+
 @router.get("/personel-risk-sinyal")
 def ops_personel_risk_sinyal(personel_id: str, gun: int = 30):
     pid = (personel_id or "").strip()

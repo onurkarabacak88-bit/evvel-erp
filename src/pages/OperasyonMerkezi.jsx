@@ -2530,6 +2530,7 @@ export default function OperasyonMerkezi() {
   const [kasaUyumHaftaYukleniyor, setKasaUyumHaftaYukleniyor] = useState(false);
   const [kasaAcikAnaliz, setKasaAcikAnaliz] = useState({ takip_listesi: [], acik_listesi: [] });
   const [kasaAcikAnalizYukleniyor, setKasaAcikAnalizYukleniyor] = useState(false);
+  const [kasiyerKarne, setKasiyerKarne] = useState([]);
 
   // Kasa Farkı Kaynak Düzeltme Modal
   const [kkDuzeltModal, setKkDuzeltModal] = useState(null); // { uyari, sebep, payload }
@@ -4203,6 +4204,9 @@ export default function OperasyonMerkezi() {
       .then(setKasaAcikAnaliz)
       .catch((e) => toast(e.message || 'Personel kasa analizi yüklenemedi'))
       .finally(() => { setKasaAcikAnalizYukleniyor(false); setYukleniyor(false); });
+    api('/ops/kasiyer-karne?gun=30')
+      .then((d) => setKasiyerKarne(d.karne || []))
+      .catch(() => setKasiyerKarne([]));
   }, [aktifSekme, toast]);
 
   useEffect(() => {
@@ -11119,6 +11123,41 @@ export default function OperasyonMerkezi() {
               {' '}<strong style={{ color: '#fde68a' }}>2'den fazla kez 50₺+ açık</strong> veren kasiyerler otomatik takip listesine düşer.
               Durum seviyesi <strong style={{ color: '#fdba74' }}>harekete geç</strong>'e ulaşırsa birebir görüşme,
               {' '}<strong style={{ color: '#fca5a5' }}>kritik</strong>'te resmi inceleme protokolü devreye girer. <em style={{ fontSize: 11 }}>(NRF / McDonald's / Starbucks Cash Accountability standardı)</em>
+            </div>
+
+            {/* ── KASİYER KARNESİ (özensizlik ≠ şüphe) ── */}
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+                <span style={{ fontSize: 14, fontWeight: 800 }}>🪪 Kasiyer Karnesi</span>
+                <span style={{ fontSize: 11, color: 'var(--text3)' }}>Son 30 gün · özensizlik ≠ hırsızlık ayrımı</span>
+              </div>
+              {kasiyerKarne.length === 0 ? (
+                <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 13, color: '#4ade80', fontWeight: 600 }}>
+                  ✓ Son 30 günde kasa sinyali olan kasiyer yok
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12 }}>
+                  {kasiyerKarne.map((k, i) => {
+                    const renk = k.profil === 'incele' ? '#fca5a5' : k.profil === 'izle' ? '#fde68a' : k.profil === 'disiplin' ? '#fdba74' : '#4ade80';
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'var(--bg)', borderRadius: 8, borderLeft: `4px solid ${renk}` }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 13 }}>{k.personel_emoji || k.profil_emoji} {k.personel_ad}</div>
+                          <div style={{ fontSize: 11, color: renk, fontWeight: 600 }}>{k.profil_metin}</div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                          {k.gercek_acik > 0 && <span style={{ fontSize: 11, background: 'rgba(220,38,38,0.18)', color: '#fca5a5', borderRadius: 100, padding: '2px 9px', fontWeight: 700 }}>🔴 gerçek açık {k.gercek_acik}</span>}
+                          {k.ham_kasa_fark > 0 && <span style={{ fontSize: 11, background: 'rgba(234,179,8,0.15)', color: '#fde68a', borderRadius: 100, padding: '2px 9px', fontWeight: 700 }}>🟡 çözülmemiş fark {k.ham_kasa_fark}</span>}
+                          {k.ozensizlik > 0 && <span style={{ fontSize: 11, background: 'rgba(240,128,64,0.15)', color: '#fdba74', borderRadius: 100, padding: '2px 9px', fontWeight: 700 }}>🟠 özensizlik {k.ozensizlik}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                    🟠 Özensizlik = düzeltilince fark 0 (dürüst ama dikkatsiz) · 🔴 Gerçek açık = onaylanmış kayıp · 🟡 = henüz çözülmemiş kasa farkı. Özensizlik şüphe/hırsızlık paternine SAYILMAZ.
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* ── PERSONEL TAKİP TABLOSU ── */}
