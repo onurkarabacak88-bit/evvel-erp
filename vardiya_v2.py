@@ -1790,6 +1790,35 @@ def override_log_yaz(
 # ATAMA OLUŞTUR / İPTAL
 # ═══════════════════════════════════════════════════════════════════
 
+def serbest_slot_getir_olustur(cur, sube_id: str) -> str:
+    """Şubeye ait geniş 'Serbest' slot — yoksa oluşturur, varsa id döner.
+    Tam gün bandı (00:00–23:59), min_personel=0, ideal=1, tüm günler.
+    Amaç: kullanıcının her vardiya için elle slot kurmasına gerek kalmadan,
+    serbest saatle (08:30 başla / ertesi gün 01:30 bitir gibi) doğrudan atama.
+    Bant tam gün olduğu için 'slot bandı dışında' uyarısı çıkmaz; gece geçişi
+    atama saatinden hesaplanır (atama_olustur)."""
+    cur.execute(
+        "SELECT id FROM vardiya_slot WHERE sube_id=%s AND ad='Serbest' AND aktif=TRUE "
+        "ORDER BY olusturma ASC LIMIT 1",
+        (sube_id,),
+    )
+    r = cur.fetchone()
+    if r:
+        return r["id"] if isinstance(r, dict) else r[0]
+    sid = str(_uuid.uuid4())
+    cur.execute(
+        """
+        INSERT INTO vardiya_slot
+            (id, sube_id, ad, tip, baslangic_saat, bitis_saat, gece_vardiyasi,
+             min_personel, ideal_personel, aktif_gunler, aktif, sira)
+        VALUES (%s, %s, 'Serbest', 'normal', '00:00', '23:59', FALSE,
+                0, 1, '{1,2,3,4,5,6,7}', TRUE, 999)
+        """,
+        (sid, sube_id),
+    )
+    return sid
+
+
 def atama_olustur(
     cur,
     personel_id: str,
@@ -1861,7 +1890,14 @@ def atama_olustur(
         return {"basarili": False, "atama_id": None, "uyarilar": uyarilar,
                 "mesaj": "Kritik uyarı(lar) override gerektirir."}
 
+    # Gece vardiyası: slot bayrağı VEYA atama saati gün aşımı (bitiş < başlangıç → ertesi güne taşar).
+    # Böylece serbest saatte 'ertesi gün 01:30' gibi atamalar slot'a bakmadan doğru hesaplanır.
     gece = bool(slot.get('gece_vardiyasi'))
+    try:
+        if bas is not None and bit is not None and bit < bas:
+            gece = True
+    except Exception:
+        pass
 
     _durum = durum if durum in ("planli", "onayli") else "planli"
 

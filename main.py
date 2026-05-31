@@ -6791,6 +6791,38 @@ def v2_assign(a: _V2AtamaIn):
     return v2_atama_olustur(a)
 
 
+class _V2AtamaSerbestIn(BaseModel):
+    """Serbest-saat atama: slot seçmeden, şube + özel saatle. Gün penceresi atamaya göre şekillenir."""
+    personel_id: str
+    sube_id: str
+    tarih: str            # "YYYY-MM-DD"
+    baslangic_saat: str   # "08:30"
+    bitis_saat: str       # "01:30" → ertesi gün (gece otomatik)
+    override: bool = False
+    aciklama: Optional[str] = None
+    kesinlestir: bool = False
+
+
+@app.post("/api/vardiya/v2/atama-serbest")
+def v2_atama_serbest(a: _V2AtamaSerbestIn):
+    """Slot kurma derdi olmadan serbest saatle atama. Şubenin 'Serbest' slot'unu
+    otomatik kullanır/oluşturur; bitiş < başlangıç ise gece vardiyası otomatik."""
+    from datetime import datetime as _dt
+    t = _dt.strptime(a.tarih, "%Y-%m-%d").date()
+    with db() as (conn, cur):
+        slot_id = _vv2.serbest_slot_getir_olustur(cur, a.sube_id)
+        sonuc = _vv2.atama_olustur(
+            cur, a.personel_id, slot_id, t,
+            _t(a.baslangic_saat), _t(a.bitis_saat),
+            override=a.override,
+            aciklama=a.aciklama,
+            durum="onayli" if bool(a.kesinlestir) else "planli",
+        )
+        if not sonuc.get('basarili'):
+            raise HTTPException(409, sonuc)
+        return sonuc
+
+
 @app.delete("/api/vardiya/v2/atama/{aid}")
 def v2_atama_iptal(aid: str):
     with db() as (conn, cur):
