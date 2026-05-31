@@ -711,7 +711,6 @@ export default function VardiyaPlanlamaV2() {
   /** Sürükle-bırak sonrası saat seçimi + check/atama */
   const [dropSaatModal, setDropSaatModal] = useState(null);
   const [izinModal, setIzinModal] = useState(false);
-  const [serbestModal, setSerbestModal] = useState(false);
   const [vardiyaYenile, setVardiyaYenile] = useState(0);
   /** Seçili haftada izin kaydı olmayan aktif personel (yasal hatırlatma) */
   const [izinHaftaOzet, setIzinHaftaOzet] = useState(null);
@@ -880,7 +879,18 @@ export default function VardiyaPlanlamaV2() {
   }, [gunPlani, tamamlaNormalAtama, yukleGun]);
 
   useEffect(() => { yukleSubeler(); }, [yukleSubeler]);
+  // Slot kurma derdi olmadan grid'de sürükle-bırak: her şubeye 'Serbest' satırı garantile,
+  // sonra günü tazele (satırlar görünür). Bir kez, mount'ta.
+  useEffect(() => {
+    let iptal = false;
+    api('/vardiya/v2/serbest-slot-hazirla', { method: 'POST' })
+      .catch(() => {})
+      .finally(() => { if (!iptal) yukleGun(); });
+    return () => { iptal = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { yukleGun(); }, [yukleGun]);
+  // Atama değişince (gunPlani tazelenince) İşçilik panelini de yenile
+  useEffect(() => { setVardiyaYenile((v) => v + 1); }, [gunPlani]);
   useEffect(() => { void yukleIzinHaftaOzet(); }, [yukleIzinHaftaOzet]);
 
   useEffect(() => {
@@ -2223,7 +2233,6 @@ export default function VardiyaPlanlamaV2() {
             <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text3)' }}>Personel · şube · saat · tek ekran</p>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button type="button" className="btn btn-primary btn-sm" onClick={() => setSerbestModal(true)} title="Slot kurmadan, serbest saatle hızlı vardiya ata">⚡ Serbest Vardiya</button>
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => setIzinModal(true)}>🌴 İzinler</button>
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => setRaporAcik((v) => !v)}>📊 Raporlar</button>
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => setLogPanel(true)}>📜 Override Log</button>
@@ -3471,12 +3480,6 @@ export default function VardiyaPlanlamaV2() {
       {izinModal && <IzinModal
         personeller={(gunPlani?.personel_havuzu) || []}
         onClose={() => { setIzinModal(false); yukleGun(); void yukleIzinHaftaOzet(); }}
-      />}
-      {serbestModal && <SerbestVardiyaModal
-        personeller={(gunPlani?.personel_havuzu) || []}
-        subeler={subeler}
-        varsayilanTarih={tarih}
-        onClose={(degisti) => { setSerbestModal(false); if (degisti) { yukleGun(); setVardiyaYenile((v) => v + 1); } }}
       />}
       {uyariOnayModal && (
         <UyariOnayModal

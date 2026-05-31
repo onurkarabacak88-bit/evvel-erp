@@ -6803,6 +6803,18 @@ class _V2AtamaSerbestIn(BaseModel):
     kesinlestir: bool = False
 
 
+@app.post("/api/vardiya/v2/serbest-slot-hazirla")
+def v2_serbest_slot_hazirla():
+    """Her aktif şubeye 'Serbest' satırı (slot) oluşturur/garantiler — kullanıcı slot
+    kurmadan grid'de her şubede hazır bir satıra sürükleyip atayabilsin. İdempotent."""
+    with db() as (conn, cur):
+        cur.execute("SELECT id FROM subeler WHERE aktif=TRUE")
+        sids = [dict(r)["id"] for r in (cur.fetchall() or [])]
+        for sid in sids:
+            _vv2.serbest_slot_getir_olustur(cur, sid)
+    return {"success": True, "hazirlanan_sube": len(sids)}
+
+
 @app.get("/api/vardiya/v2/iscilik-ozet")
 def v2_iscilik_ozet(tarih: str):
     """Gün bazında işçilik maliyeti + ciro tahminine göre işçilik % (şube + toplam)."""
