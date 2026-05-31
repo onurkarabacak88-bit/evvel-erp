@@ -198,14 +198,15 @@ def _sync_kontrol_slot_after_acilis(cur, sube_id: str) -> None:
     - meta.denetim_mod: her zaman kasa_only (yalnızca kasa sayımı + PIN).
     Mevcut bekleyen satırın slotunu güncellemez (tahmin edilebilir kaymayı önler).
     """
+    _isg = is_gunu_tr()  # iş günü (gece 00:00–02:00 → önceki gün); event'ler bununla tarihlenir
     cur.execute(
         """
         SELECT cevap_ts FROM sube_operasyon_event
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='ACILIS' AND durum='tamamlandi'
+        WHERE sube_id=%s AND tarih=%s AND tip='ACILIS' AND durum='tamamlandi'
         ORDER BY cevap_ts DESC NULLS LAST
         LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, _isg),
     )
     ra = cur.fetchone()
     if not ra or not ra.get("cevap_ts"):
@@ -214,10 +215,10 @@ def _sync_kontrol_slot_after_acilis(cur, sube_id: str) -> None:
     cur.execute(
         """
         SELECT id, durum FROM sube_operasyon_event
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='KONTROL' AND sira_no=1
+        WHERE sube_id=%s AND tarih=%s AND tip='KONTROL' AND sira_no=1
         LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, _isg),
     )
     rk = cur.fetchone()
     if rk:
@@ -238,21 +239,22 @@ def _sync_kontrol_slot_after_acilis(cur, sube_id: str) -> None:
         """
         INSERT INTO sube_operasyon_event
             (id, sube_id, tarih, tip, sira_no, sistem_slot_ts, son_teslim_ts, durum, meta)
-        VALUES (%s, %s, CURRENT_DATE, 'KONTROL', 1, %s, %s, 'latent', %s)
+        VALUES (%s, %s, %s, 'KONTROL', 1, %s, %s, 'latent', %s)
         """,
-        (eid, sube_id, _uzak_slot, _uzak_slot, meta_sql),
+        (eid, sube_id, _isg, _uzak_slot, _uzak_slot, meta_sql),
     )
 
 
 def plan_kontrol_after_devir(cur, sube_id: str, devir_ts) -> None:
     """Vardiya devri tamamlanınca latent kasa sayımı planlar (sira_no=2). Panel aktivitesinde canlanır."""
+    _isg = is_gunu_tr()
     cur.execute(
         """
         SELECT id FROM sube_operasyon_event
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='KONTROL' AND sira_no=2
+        WHERE sube_id=%s AND tarih=%s AND tip='KONTROL' AND sira_no=2
         LIMIT 1
         """,
-        (sube_id,),
+        (sube_id, _isg),
     )
     if cur.fetchone():
         return
@@ -272,9 +274,9 @@ def plan_kontrol_after_devir(cur, sube_id: str, devir_ts) -> None:
         """
         INSERT INTO sube_operasyon_event
             (id, sube_id, tarih, tip, sira_no, sistem_slot_ts, son_teslim_ts, durum, meta)
-        VALUES (%s, %s, CURRENT_DATE, 'KONTROL', 2, %s, %s, 'latent', %s)
+        VALUES (%s, %s, %s, 'KONTROL', 2, %s, %s, 'latent', %s)
         """,
-        (eid, sube_id, _uzak_slot, _uzak_slot, json.dumps(meta_obj, ensure_ascii=False)),
+        (eid, sube_id, _isg, _uzak_slot, _uzak_slot, json.dumps(meta_obj, ensure_ascii=False)),
     )
 
 
@@ -289,10 +291,10 @@ def aktivasyon_kontrol(cur, sube_id: str) -> None:
     cur.execute(
         """
         SELECT id, meta FROM sube_operasyon_event
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='KONTROL' AND durum='latent'
+        WHERE sube_id=%s AND tarih=%s AND tip='KONTROL' AND durum='latent'
         ORDER BY sira_no
         """,
-        (sube_id,),
+        (sube_id, is_gunu_tr()),
     )
     rows = cur.fetchall()
     if not rows:
@@ -320,12 +322,13 @@ def aktivasyon_kontrol(cur, sube_id: str) -> None:
 
 
 def _sync_acilis_event_if_acik(cur, sube_id: str) -> None:
+    _isg = is_gunu_tr()
     cur.execute(
         """
         SELECT 1 FROM sube_acilis
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='acildi'
+        WHERE sube_id=%s AND tarih=%s AND durum='acildi'
         """,
-        (sube_id,),
+        (sube_id, _isg),
     )
     if not cur.fetchone():
         return
@@ -334,10 +337,10 @@ def _sync_acilis_event_if_acik(cur, sube_id: str) -> None:
         UPDATE sube_operasyon_event
         SET durum='tamamlandi',
             cevap_ts = COALESCE(cevap_ts, NOW())
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='ACILIS'
+        WHERE sube_id=%s AND tarih=%s AND tip='ACILIS'
           AND durum IN ('bekliyor','gecikti')
         """,
-        (sube_id,),
+        (sube_id, _isg),
     )
 
 
@@ -346,35 +349,38 @@ def _refresh_durum(cur, sube_id: str) -> None:
         """
         UPDATE sube_operasyon_event
         SET durum='gecikti'
-        WHERE sube_id=%s AND tarih=CURRENT_DATE
+        WHERE sube_id=%s AND tarih=%s
           AND durum='bekliyor'
           AND cevap_ts IS NULL
           AND NOW() > son_teslim_ts
         """,
-        (sube_id,),
+        (sube_id, is_gunu_tr()),
     )
 
 
 def _list_events(cur, sube_id: str) -> List[dict]:
     """
-    Bugünün operasyon satırları + bir önceki takvim gününden henüz bitmemiş KAPANIS
-    (00:00–02:00 arası kasa/kapanış hâlâ önceki iş gününe yazılabilir).
+    Bu İŞ GÜNÜnün operasyon satırları + bir önceki iş gününden henüz bitmemiş KAPANIS.
+    İş günü (is_gunu_tr) gece 00:00–02:00 arası hâlâ önceki gündür; event'ler bununla
+    tarihlendiği için 'bugün' = is_gunu (takvim günü değil). Witching saatinde de
+    açılış/kontrol/kapanış tam görünür.
     """
+    _isg = is_gunu_tr()
     cur.execute(
         """
         SELECT * FROM sube_operasyon_event
         WHERE sube_id=%s
           AND (
-            tarih = CURRENT_DATE
+            tarih = %s
             OR (
-              tarih = (CURRENT_DATE - INTERVAL '1 day')::date
+              tarih = (%s::date - INTERVAL '1 day')::date
               AND tip = 'KAPANIS'
               AND durum IN ('bekliyor', 'gecikti')
             )
           )
         ORDER BY tarih DESC, sistem_slot_ts, tip
         """,
-        (sube_id,),
+        (sube_id, _isg, _isg),
     )
     return [_row_event(r) for r in cur.fetchall()]
 
@@ -531,10 +537,10 @@ def _insert_acilis_if_needed(cur, sube_id: str, personel_id: Optional[str], acik
         SELECT a.sube_id, COALESCE(s.ad, a.sube_id) AS sube_adi, a.tarih
         FROM sube_acilis a
         LEFT JOIN subeler s ON s.id = a.sube_id
-        WHERE a.personel_id=%s AND a.tarih=CURRENT_DATE AND a.durum='acildi' AND a.sube_id<>%s
+        WHERE a.personel_id=%s AND a.tarih=%s AND a.durum='acildi' AND a.sube_id<>%s
         LIMIT 1
         """,
-        (pid, sube_id),
+        (pid, is_gunu_tr(), sube_id),
     )
     diger = cur.fetchone()
     if diger:
@@ -546,12 +552,13 @@ def _insert_acilis_if_needed(cur, sube_id: str, personel_id: Optional[str], acik
                 f"{diger.get('sube_adi') or diger.get('sube_id')}"
             ),
         )
+    _isg = is_gunu_tr()
     cur.execute(
         """
         SELECT id FROM sube_acilis
-        WHERE sube_id=%s AND tarih=CURRENT_DATE AND durum='acildi'
+        WHERE sube_id=%s AND tarih=%s AND durum='acildi'
         """,
-        (sube_id,),
+        (sube_id, _isg),
     )
     if cur.fetchone():
         return
@@ -561,9 +568,9 @@ def _insert_acilis_if_needed(cur, sube_id: str, personel_id: Optional[str], acik
         """
         INSERT INTO sube_acilis
             (id, sube_id, tarih, acilis_saati, personel_id, durum, aciklama)
-        VALUES (%s, %s, CURRENT_DATE, %s, %s, 'acildi', %s)
+        VALUES (%s, %s, %s, %s, %s, 'acildi', %s)
         """,
-        (aid, sube_id, saat_str, pid, aciklama),
+        (aid, sube_id, _isg, saat_str, pid, aciklama),
     )
     audit(cur, "sube_acilis", aid, "ACILIS_OPERASYON")
 
@@ -749,11 +756,11 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                         WHERE sube_id=%s
                           AND tip='KAPANIS'
                           AND durum='tamamlandi'
-                          AND tarih=(CURRENT_DATE - INTERVAL '1 day')
+                          AND tarih=(%s::date - INTERVAL '1 day')
                         ORDER BY cevap_ts DESC NULLS LAST, id DESC
                         LIMIT 1
                         """,
-                        (sube_id,),
+                        (sube_id, tarih_ev),
                     )
                     prev_kap = cur.fetchone()
                     if prev_kap:
@@ -1352,10 +1359,10 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                             """
                             INSERT INTO sube_operasyon_uyari
                                 (id, sube_id, tarih, tip, seviye, mesaj)
-                            VALUES (%s, %s, CURRENT_DATE, 'URUN_AC_EKSIK_KAYIT', 'uyari', %s)
+                            VALUES (%s, %s, %s, 'URUN_AC_EKSIK_KAYIT', 'uyari', %s)
                             ON CONFLICT (id) DO NOTHING
                             """,
-                            (f"uac-missing:{sube_id}:{bugun_tr()}", sube_id, msg),
+                            (f"uac-missing:{sube_id}:{is_gunu_tr()}", sube_id, is_gunu_tr(), msg),
                         )
             except Exception:
                 pass
@@ -1399,11 +1406,11 @@ def operasyon_alarm_arttir(sube_id: str, event_id: str):
             """
             UPDATE sube_operasyon_event
             SET alarm_sayisi = COALESCE(alarm_sayisi, 0) + 1
-            WHERE id=%s AND sube_id=%s AND tarih=CURRENT_DATE
+            WHERE id=%s AND sube_id=%s AND tarih=%s
               AND durum IN ('bekliyor', 'gecikti')
             RETURNING alarm_sayisi
             """,
-            (event_id, sube_id),
+            (event_id, sube_id, is_gunu_tr()),
         )
         r = cur.fetchone()
         if not r:
@@ -1416,6 +1423,7 @@ def operasyon_alarm_arttir(sube_id: str, event_id: str):
 def operasyon_cikis_baslat(sube_id: str):
     """Anlık çıkış olayı (deadline birkaç dakika)."""
     simdi = dt_now_tr_naive()
+    _isg = is_gunu_tr()
     with db() as (conn, cur):
         sube = _sube_getir(cur, sube_id)
         blob = build_panel_operasyon_blob(cur, sube_id, sube)
@@ -1428,9 +1436,9 @@ def operasyon_cikis_baslat(sube_id: str):
         cur.execute(
             """
             SELECT id FROM sube_operasyon_event
-            WHERE sube_id=%s AND tarih=CURRENT_DATE AND tip='CIKIS' AND durum IN ('bekliyor','gecikti')
+            WHERE sube_id=%s AND tarih=%s AND tip='CIKIS' AND durum IN ('bekliyor','gecikti')
             """,
-            (sube_id,),
+            (sube_id, _isg),
         )
         if cur.fetchone():
             raise HTTPException(400, "Açık bir çıkış olayı zaten var")
@@ -1439,11 +1447,12 @@ def operasyon_cikis_baslat(sube_id: str):
             """
             INSERT INTO sube_operasyon_event
                 (id, sube_id, tarih, tip, sira_no, sistem_slot_ts, son_teslim_ts, durum)
-            VALUES (%s, %s, CURRENT_DATE, 'CIKIS', 0, %s, %s, 'bekliyor')
+            VALUES (%s, %s, %s, 'CIKIS', 0, %s, %s, 'bekliyor')
             """,
             (
                 eid,
                 sube_id,
+                _isg,
                 simdi,
                 simdi + timedelta(minutes=CIKIS_TOLERANS_DK),
             ),
