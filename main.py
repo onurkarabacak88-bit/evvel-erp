@@ -3106,6 +3106,73 @@ def sabit_gider_odemeler(ay: str = None):
             }
         }
 
+@app.post("/api/odeme-plani/gecmis-temizle")
+def odeme_plani_gecmis_temizle(baslangic: str = "2026-06-01", uygula: bool = False):
+    """Sistem başlangıç tarihinden ÖNCEKİ bekleyen/onay_bekleyen ödeme planlarını
+    borç listesinden çıkarır (durum='iptal' — SİLİNMEZ, geri alınabilir).
+
+    - uygula=False (varsayılan): yalnızca önizleme — neyin iptal edileceğini listeler.
+    - uygula=True: iptal işlemini uygular.
+    Haziran (ve sonrası) ödemelere dokunmaz. 'odendi' kayıtlar korunur.
+    """
+    from datetime import date as _date
+    try:
+        kesim = _date.fromisoformat(baslangic)
+    except Exception:
+        raise HTTPException(400, "baslangic tarihi geçersiz (YYYY-MM-DD bekleniyor)")
+
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT id::text, tarih, odenecek_tutar, durum, kaynak_tablo, aciklama
+            FROM odeme_plani
+            WHERE durum IN ('bekliyor','onay_bekliyor') AND tarih < %s
+            ORDER BY tarih ASC
+            """,
+            (kesim,),
+        )
+        adaylar = [dict(r) for r in (cur.fetchall() or [])]
+        toplam = sum(float(r["odenecek_tutar"] or 0) for r in adaylar)
+        liste = [
+            {
+                "tarih": str(r["tarih"])[:10],
+                "tutar": float(r["odenecek_tutar"] or 0),
+                "durum": r["durum"],
+                "kaynak": r["kaynak_tablo"],
+                "aciklama": str(r["aciklama"] or "")[:60],
+            }
+            for r in adaylar
+        ]
+
+        if not uygula:
+            return {
+                "onizleme": True,
+                "baslangic": str(kesim),
+                "iptal_edilecek_adet": len(adaylar),
+                "iptal_edilecek_tutar": round(toplam, 2),
+                "kayitlar": liste,
+                "not": "uygula=true ile iptal edilir. Hiçbiri silinmez, durum='iptal' olur.",
+            }
+
+        cur.execute(
+            """
+            UPDATE odeme_plani
+            SET durum='iptal',
+                aciklama = COALESCE(aciklama,'') || ' · iptal: sistem başlangıcı ' || %s
+            WHERE durum IN ('bekliyor','onay_bekliyor') AND tarih < %s
+            """,
+            (str(kesim), kesim),
+        )
+        iptal_adet = cur.rowcount
+        return {
+            "onizleme": False,
+            "baslangic": str(kesim),
+            "iptal_edilen_adet": iptal_adet,
+            "iptal_edilen_tutar": round(toplam, 2),
+            "kayitlar": liste,
+        }
+
+
 # ── FATURA ÖDEMESİ ────────────────────────────────────────────
 
 class FaturaOdemeModel(BaseModel):

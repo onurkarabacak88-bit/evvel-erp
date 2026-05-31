@@ -4,6 +4,13 @@ from database import db
 from datetime import date, timedelta, datetime
 
 from tr_saat import bugun_tr
+
+# ── SİSTEM BAŞLANGIÇ TARİHİ ────────────────────────────────────────────────
+# Ödeme planı motoru bu tarihten ÖNCESİ için plan üretmez; bu tarih öncesi
+# bekleyen kayıtlar borç/gecikme sayılmaz (geçmiş veri silinmez, 'iptal' edilir).
+# Kullanıcı kararı: sistem 1 Haziran 2026'dan itibaren çalışmaya başlar.
+SISTEM_BASLANGIC = date(2026, 6, 1)
+
 from finans_core import (
     kasa_bakiyesi, odeme_yuku, gunluk_ciro_ortalama,
     nakit_akis_sim, kart_borc, tum_kart_borclari,
@@ -402,6 +409,17 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
 
     uretilen = []
     atlanan = []
+
+    # SİSTEM BAŞLANGIÇ EŞİĞİ — bu tarihten önceki aylar için plan üretme
+    if date(yil, ay, 1) < date(SISTEM_BASLANGIC.year, SISTEM_BASLANGIC.month, 1):
+        return {
+            "uretilen": [],
+            "atlanan": [
+                f"⏸️ {yil}-{ay:02d} atlandı: sistem başlangıcı {SISTEM_BASLANGIC} — "
+                f"bu tarihten önce ödeme planı üretilmez."
+            ],
+            "toplam": 0,
+        }
 
     with db() as (conn, cur):
 
