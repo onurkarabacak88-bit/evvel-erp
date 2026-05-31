@@ -3396,21 +3396,20 @@ def personel_arrears_tarih_duzelt(uygula: bool = False):
     modeline çeker: tarih = çalışma ayı (referans_ay) + 1 ay'ın 1'i. Ödenmişlere
     dokunmaz. İdempotent (zaten ileri tarihliyse atlar). uygula=False önizleme."""
     with db() as (conn, cur):
-        sec = """
-            FROM odeme_plani
+        where = """
             WHERE kaynak_tablo='personel' AND durum IN ('bekliyor','onay_bekliyor')
               AND referans_ay IS NOT NULL
               AND tarih < (referans_ay + INTERVAL '1 month')::date
         """
         cur.execute(
             "SELECT id::text, referans_ay::text AS calisma_ay, tarih::text AS eski_tarih, "
-            "((referans_ay + INTERVAL '1 month')::date)::text AS yeni_tarih, aciklama " + sec
-            + " ORDER BY referans_ay"
+            "((referans_ay + INTERVAL '1 month')::date)::text AS yeni_tarih, aciklama "
+            "FROM odeme_plani " + where + " ORDER BY referans_ay"
         )
         adaylar = [dict(r) for r in (cur.fetchall() or [])]
         if uygula:
             cur.execute(
-                "UPDATE odeme_plani SET tarih = (referans_ay + INTERVAL '1 month')::date " + sec
+                "UPDATE odeme_plani SET tarih = (referans_ay + INTERVAL '1 month')::date " + where
             )
         return {"onizleme": (not uygula), "adet": len(adaylar), "kayitlar": adaylar}
 
