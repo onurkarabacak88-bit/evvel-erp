@@ -3987,9 +3987,8 @@ function SistemPresetYonetimModal({ onClose, onDegisti }) {
 // GANTT GÖRÜNÜMÜ — saat ekseni × şube grupları × personel çubukları
 // ═══════════════════════════════════════════════════════════════════
 function GanttGorunumu({ gunPlani, filtrelenmisSubeler, tarih, havuzById }) {
-  // Saat ekseni: 06:00 → 24:00 (eksen tamamı). Slot ve atamalara göre dinamik daraltabiliriz.
-  const SAAT_BAS = 6;   // 06:00
-  const SAAT_BIT = 24;  // 24:00 (gece slotu varsa +24 olarak hesaplanır)
+  // Saat ekseni DİNAMİK: varsayılan 09:00–24:00; atamalara göre uzar (slot'a değil ATAMAYA bağlı).
+  // Erken başlangıç (08:30) → eksen aşağı; gece/ertesi gün bitiş (01:30) → eksen yukarı (25:30) uzar.
   const SAAT_GENISLIK = 60; // her saat için piksel
   const SATIR_YUKSEKLIK = 32;
 
@@ -4002,6 +4001,27 @@ function GanttGorunumu({ gunPlani, filtrelenmisSubeler, tarih, havuzById }) {
   if (subeler.length === 0) {
     return <div className="empty" style={{ padding: 24 }}><p>Şube yok</p></div>;
   }
+
+  // ── Dinamik gün penceresi: atamaların en erken başlangıcı → en geç bitişi (gece dahil) ──
+  // Varsayılan 09:00–24:00; atama bu bandı aşıyorsa eksen otomatik genişler. Gece biten
+  // vardiya (örn. 01:30) artık kırpılmaz; ertesi güne taşan saat eksende görünür.
+  let _minDk = 9 * 60, _maxDk = 24 * 60;
+  const _psSaat = (str) => {
+    if (!str) return null;
+    const [h, m] = String(str).split(':').map((n) => parseInt(n, 10));
+    return (h || 0) * 60 + (m || 0);
+  };
+  subeler.forEach((s) => (s.slotlar || []).forEach((sv) => (sv.atamalar || []).forEach((a) => {
+    const sb = _psSaat(a.baslangic_saat);
+    let eb = _psSaat(a.bitis_saat);
+    if (sb == null || eb == null) return;
+    const gece = !!a.gece_vardiyasi || eb < sb;
+    if (gece) eb += 24 * 60;
+    if (sb < _minDk) _minDk = sb;
+    if (eb > _maxDk) _maxDk = eb;
+  })));
+  const SAAT_BAS = Math.max(0, Math.floor(_minDk / 60));
+  const SAAT_BIT = Math.ceil(_maxDk / 60);
 
   const dkToPix = (hh, mm) => Math.max(0, ((hh - SAAT_BAS) * 60 + mm) * (SAAT_GENISLIK / 60));
   const saatToPix = (saatStr, gece = false) => {
@@ -4041,7 +4061,7 @@ function GanttGorunumu({ gunPlani, filtrelenmisSubeler, tarih, havuzById }) {
                   transform: 'translateX(-50%)',
                 }}
               >
-                {String(h).padStart(2, '0')}:00
+                {String(h % 24).padStart(2, '0')}:00{h >= 24 ? ' ⁺¹' : ''}
               </div>
             ))}
           </div>
