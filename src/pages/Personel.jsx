@@ -153,6 +153,16 @@ export default function Personel() {
     } catch(e) { toast(e.message, 'red'); }
   }
 
+  async function maasOnayla(pid) {
+    if (!confirm('Maaş hesabını ONAYLA — tutar kilitlenir ve ödeme yapılabilir hâle gelir. Devam?')) return;
+    try {
+      await api(`/personel-aylik/${pid}/onayla?yil=${aylikYil}&ay=${aylikAy}`, { method:'POST' });
+      toast('✅ Onaylandı — tutar kilitlendi. Ödeme CFO Panel’den yapılır.', 'green');
+      publishGlobalDataRefresh('personel-maas-onayla');
+      loadAylik();
+    } catch(e) { toast(e.message, 'red'); }
+  }
+
   async function maasKayitSil(pid) {
     if (!confirm('Bu aylık maaş kaydını silmek istiyor musunuz? Kayıt taslak durumuna dönecek.')) return;
     try {
@@ -468,6 +478,11 @@ export default function Personel() {
                         {!onaylandi && (
                           <button className="btn btn-primary btn-sm" onClick={()=>maasKaydet(p.personel_id)}>
                             💾 Kaydet
+                          </button>
+                        )}
+                        {durum === 'taslak' && (
+                          <button className="btn btn-success btn-sm" onClick={()=>maasOnayla(p.personel_id)}>
+                            ✅ Onayla (kilitle)
                           </button>
                         )}
                         {durum === 'taslak' && (
