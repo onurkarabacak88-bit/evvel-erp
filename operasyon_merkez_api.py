@@ -6640,9 +6640,11 @@ def _kk_ciro_artir(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> Di
         # KASA DEFTERİ SENKRON: nakit arttı → kasa hareketi yeniden yazılır
         _kk_ciro_kasa_senkron(cur, sube_id, tarih, r["id"], yeni_nakit, float(r["pos"] or 0), float(r["online"] or 0), yeni_satir=False)
         return {"hedef_tablo": "ciro", "hedef_id": r["id"],
-                "eski": {"nakit": eski_nakit, "toplam": float(r["toplam"] or 0)},
-                "yeni": {"nakit": yeni_nakit, "toplam": yeni_toplam,
-                         "eklenen": ek_tutar, "yon": "fazla"}}
+                # GERİ-AL için TAM eski değer (pos/online dahil) — yoksa geri-alma pos/online'ı sıfırlardı.
+                "eski": {"nakit": eski_nakit, "pos": float(r["pos"] or 0), "online": float(r["online"] or 0),
+                         "toplam": float(r["toplam"] or 0)},
+                "yeni": {"nakit": yeni_nakit, "pos": float(r["pos"] or 0), "online": float(r["online"] or 0),
+                         "toplam": yeni_toplam, "eklenen": ek_tutar, "yon": "fazla"}}
     # Aktif ciro yok — ONAY DURUMUNA SAYGI: onay bekleyen TASLAK varsa fazlayı TASLAĞA ekle
     # (kasaya dokunma, yeni aktif ciro açma). Onaylanınca doğru tutarla kasaya yazılır.
     cur.execute(
@@ -6984,9 +6986,15 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
 
                 _tarih_d = _dc.fromisoformat(tarih[:10])
                 if sebep == "acilis_yanlis":
-                    r = _cascade(tarih, "KAPANIS_KASA_FARK")
-                    if r:
-                        cascade_sonuclari.append(r)
+                    # Açılış kasa_sayim HEM aynı günün ACILIS farkını (sabah_kasa)
+                    # HEM KAPANIS farkını (acilis_kasa bileşeni) etkiler.
+                    # Düzeltme hangisinden başlatıldıysa, DİĞERİNİ de yeniden hesapla.
+                    for _ct in ("ACILIS_KASA_FARK", "KAPANIS_KASA_FARK"):
+                        if _ct == uyari_tip:
+                            continue  # birincil zaten recalc edildi
+                        r = _cascade(tarih, _ct)
+                        if r:
+                            cascade_sonuclari.append(r)
                 elif sebep == "devir_yanlis":
                     if uyari_tip == "ACILIS_KASA_FARK":
                         r = _cascade(str(_tarih_d - _td(days=1)), "KAPANIS_KASA_FARK")
