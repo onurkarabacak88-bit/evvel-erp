@@ -6803,6 +6803,15 @@ class _V2AtamaSerbestIn(BaseModel):
     kesinlestir: bool = False
 
 
+@app.get("/api/vardiya/v2/iscilik-ozet")
+def v2_iscilik_ozet(tarih: str):
+    """Gün bazında işçilik maliyeti + ciro tahminine göre işçilik % (şube + toplam)."""
+    from datetime import datetime as _dt
+    t = _dt.strptime(tarih, "%Y-%m-%d").date()
+    with db() as (conn, cur):
+        return _vv2.iscilik_ozet(cur, t)
+
+
 @app.post("/api/vardiya/v2/atama-serbest")
 def v2_atama_serbest(a: _V2AtamaSerbestIn):
     """Slot kurma derdi olmadan serbest saatle atama. Şubenin 'Serbest' slot'unu

@@ -712,6 +712,7 @@ export default function VardiyaPlanlamaV2() {
   const [dropSaatModal, setDropSaatModal] = useState(null);
   const [izinModal, setIzinModal] = useState(false);
   const [serbestModal, setSerbestModal] = useState(false);
+  const [vardiyaYenile, setVardiyaYenile] = useState(0);
   /** Seçili haftada izin kaydı olmayan aktif personel (yasal hatırlatma) */
   const [izinHaftaOzet, setIzinHaftaOzet] = useState(null);
   const [overrideModal, setOverrideModal] = useState(null); // {payload, uyarilar, ozetMetni?, transferAtamaId?} | null
@@ -2228,6 +2229,7 @@ export default function VardiyaPlanlamaV2() {
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => setLogPanel(true)}>📜 Override Log</button>
           </div>
         </div>
+        <IscilikPaneli tarih={tarih} yenileSayac={vardiyaYenile} />
         {izinHaftaOzet && (
           <div
             role="status"
@@ -3474,7 +3476,7 @@ export default function VardiyaPlanlamaV2() {
         personeller={(gunPlani?.personel_havuzu) || []}
         subeler={subeler}
         varsayilanTarih={tarih}
-        onClose={(degisti) => { setSerbestModal(false); if (degisti) yukleGun(); }}
+        onClose={(degisti) => { setSerbestModal(false); if (degisti) { yukleGun(); setVardiyaYenile((v) => v + 1); } }}
       />}
       {uyariOnayModal && (
         <UyariOnayModal
@@ -4751,6 +4753,43 @@ function Modal({ children, onClose, title, geniş = false }) {
         </div>
         <div className="modal-body">{children}</div>
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// İŞÇİLİK PANELİ — günün işçilik maliyeti + ciro tahminine göre işçilik %
+// ═══════════════════════════════════════════════════════════════════
+function IscilikPaneli({ tarih, yenileSayac }) {
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const yukle = useCallback(async () => {
+    setBusy(true);
+    try { setD(await api(`/vardiya/v2/iscilik-ozet?tarih=${encodeURIComponent(tarih)}`)); }
+    catch { setD(null); }
+    finally { setBusy(false); }
+  }, [tarih]);
+  useEffect(() => { yukle(); }, [yukle, yenileSayac]);
+  if (!d) return null;
+  const t = d.toplam || {};
+  const renkY = (y) => (y == null ? 'var(--text3)' : y <= 25 ? '#22c55e' : y <= 35 ? '#eab308' : '#ef4444');
+  const tl = (n) => (Number(n) || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 }) + ' ₺';
+  const yzd = (y) => (y == null ? '—' : '%' + y);
+  return (
+    <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', fontSize: 12, background: 'var(--bg2)' }}>
+      <span style={{ fontWeight: 800, color: 'var(--text2)' }}>💰 İşçilik</span>
+      <span>Toplam <strong>{tl(t.iscilik)}</strong> · {t.saat || 0}s</span>
+      <span>Ciro tah. <strong>{tl(t.ciro_tahmini)}</strong></span>
+      <span>İşçilik <strong style={{ color: renkY(t.iscilik_yuzde) }}>{yzd(t.iscilik_yuzde)}</strong></span>
+      <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {(d.subeler || []).map((s) => (
+          <span key={s.sube_id} style={{ background: 'var(--bg3)', borderRadius: 100, padding: '2px 9px' }}>
+            {s.sube_ad}: <strong style={{ color: renkY(s.iscilik_yuzde) }}>{yzd(s.iscilik_yuzde)}</strong>
+          </span>
+        ))}
+      </span>
+      <span style={{ fontSize: 10, color: 'var(--text3)' }}>Hedef ≤%25 🟢 · ≤%35 🟡 · üstü 🔴</span>
+      <button type="button" className="btn btn-sm btn-secondary" onClick={yukle} disabled={busy} style={{ marginLeft: 'auto' }}>{busy ? '…' : '🔄'}</button>
     </div>
   );
 }

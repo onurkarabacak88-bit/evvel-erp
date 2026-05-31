@@ -1819,6 +1819,95 @@ def serbest_slot_getir_olustur(cur, sube_id: str) -> str:
     return sid
 
 
+def iscilik_ozet(cur, tarih) -> Dict[str, Any]:
+    """Gün bazında işçilik maliyeti + ciro tahminine göre işçilik % (şube + toplam).
+    Saatlik ücret: saatlik_ucret>0 → o; değilse maas/225 (≈ aylık çalışma saati, yaklaşık).
+    Ciro tahmini: o şubenin aynı hafta gününün son 8 haftalık ortalaması; yoksa 28 günlük ort.
+    Saat: slot_sure_saat (gece geçişi otomatik). READ-ONLY — sadece hesap döndürür."""
+    cur.execute(
+        """
+        SELECT a.personel_id, a.baslangic_saat, a.bitis_saat,
+               s.sube_id, COALESCE(su.ad, s.sube_id) AS sube_ad,
+               COALESCE(p.saatlik_ucret, 0) AS saatlik, COALESCE(p.maas, 0) AS maas
+        FROM vardiya_atama a
+        JOIN vardiya_slot s ON s.id = a.slot_id
+        LEFT JOIN subeler su ON su.id = s.sube_id
+        LEFT JOIN personel p ON p.id = a.personel_id
+        WHERE a.tarih = %s::date AND a.durum <> 'iptal'
+        """,
+        (str(tarih),),
+    )
+    per: Dict[str, Dict[str, Any]] = {}
+    top_saat = 0.0
+    top_iscilik = 0.0
+    for r in (cur.fetchall() or []):
+        d = dict(r)
+        try:
+            saat = slot_sure_saat(d["baslangic_saat"], d["bitis_saat"])
+        except Exception:
+            saat = 0.0
+        saatlik = float(d.get("saatlik") or 0)
+        maas = float(d.get("maas") or 0)
+        hourly = saatlik if saatlik > 0 else (round(maas / 225.0, 2) if maas > 0 else 0.0)
+        maliyet = round(saat * hourly, 2)
+        sid = str(d.get("sube_id") or "")
+        g = per.setdefault(sid, {"sube_id": sid, "sube_ad": d.get("sube_ad") or sid,
+                                 "saat": 0.0, "iscilik": 0.0, "kisi": set()})
+        g["saat"] += saat
+        g["iscilik"] += maliyet
+        g["kisi"].add(d.get("personel_id"))
+        top_saat += saat
+        top_iscilik += maliyet
+
+    subeler_out = []
+    top_ciro = 0.0
+    for sid, g in per.items():
+        # Ciro tahmini — aynı hafta günü son 8 hafta ort; yoksa 28g ort
+        cur.execute(
+            """
+            SELECT COALESCE(AVG(toplam), 0) AS v FROM (
+                SELECT toplam FROM ciro
+                WHERE sube_id=%s AND durum='aktif'
+                  AND EXTRACT(DOW FROM tarih) = EXTRACT(DOW FROM %s::date)
+                  AND tarih < %s::date
+                ORDER BY tarih DESC LIMIT 8
+            ) t
+            """,
+            (sid, str(tarih), str(tarih)),
+        )
+        ciro_tah = float((dict(cur.fetchone() or {}).get("v") or 0))
+        if ciro_tah <= 0:
+            cur.execute(
+                """
+                SELECT COALESCE(AVG(toplam), 0) AS v FROM ciro
+                WHERE sube_id=%s AND durum='aktif'
+                  AND tarih >= %s::date - INTERVAL '28 days' AND tarih < %s::date
+                """,
+                (sid, str(tarih), str(tarih)),
+            )
+            ciro_tah = float((dict(cur.fetchone() or {}).get("v") or 0))
+        iscilik = round(g["iscilik"], 2)
+        yuzde = round(iscilik / ciro_tah * 100, 1) if ciro_tah > 0 else None
+        top_ciro += ciro_tah
+        subeler_out.append({
+            "sube_id": sid, "sube_ad": g["sube_ad"],
+            "saat": round(g["saat"], 2), "kisi": len(g["kisi"]),
+            "iscilik": iscilik, "ciro_tahmini": round(ciro_tah, 2),
+            "iscilik_yuzde": yuzde,
+        })
+    subeler_out.sort(key=lambda x: x["iscilik"], reverse=True)
+    return {
+        "tarih": str(tarih),
+        "toplam": {
+            "saat": round(top_saat, 2),
+            "iscilik": round(top_iscilik, 2),
+            "ciro_tahmini": round(top_ciro, 2),
+            "iscilik_yuzde": round(top_iscilik / top_ciro * 100, 1) if top_ciro > 0 else None,
+        },
+        "subeler": subeler_out,
+    }
+
+
 def atama_olustur(
     cur,
     personel_id: str,
