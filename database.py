@@ -3061,6 +3061,38 @@ $$;
             "ON vardiya_atama (slot_id, tarih, durum)"
         )
 
+        # Migration: vardiya_atama.slot_id FK CASCADE → SET NULL (geçmiş atama koruması)
+        # Slot silinince/yeniden üretilince atamalar SİLİNMEZ; sadece slot bağı NULL olur.
+        # Atamanın kendi tarih/saat/personel kaydı durur → maaş hesabı bozulmaz.
+        cur.execute("""
+            DO $$
+            DECLARE r record;
+            BEGIN
+                -- slot_id üzerindeki mevcut FK'(lar)ı (CASCADE dahil) bul ve düşür
+                FOR r IN
+                    SELECT con.conname
+                    FROM pg_constraint con
+                    JOIN pg_class c ON c.oid = con.conrelid
+                    WHERE c.relname = 'vardiya_atama' AND con.contype = 'f'
+                      AND 'slot_id' = ANY (
+                          SELECT attname FROM pg_attribute
+                          WHERE attrelid = con.conrelid AND attnum = ANY (con.conkey)
+                      )
+                LOOP
+                    EXECUTE format('ALTER TABLE vardiya_atama DROP CONSTRAINT %I', r.conname);
+                END LOOP;
+                -- slot_id nullable (SET NULL için şart)
+                BEGIN
+                    ALTER TABLE vardiya_atama ALTER COLUMN slot_id DROP NOT NULL;
+                EXCEPTION WHEN others THEN NULL;
+                END;
+                -- yeni FK: ON DELETE SET NULL
+                ALTER TABLE vardiya_atama
+                    ADD CONSTRAINT vardiya_atama_slot_id_setnull
+                    FOREIGN KEY (slot_id) REFERENCES vardiya_slot(id) ON DELETE SET NULL;
+            END $$;
+        """)
+
         # 4) Personel izin — tarih bazlı
         cur.execute("""
             CREATE TABLE IF NOT EXISTS personel_izin (
