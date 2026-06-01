@@ -1775,6 +1775,74 @@ def kart_borc_kocu(strateji: str = "cig", nakit: float = 0):
         }
 
 
+@app.get("/api/kartlar/borc-projeksiyon")
+def kart_borc_projeksiyon(aylik: float, strateji: str = "cig"):
+    """Borç kurtuluş projeksiyonu: aylık X ödersen kaç ayda biter + toplam faiz;
+    sadece asgari ödersen ne kadar faiz/ay kaybedersin. Gerçek faiz simülasyonu
+    (çığ/kartopu). Standart çerçeve — kişiye özel mali tavsiye değildir."""
+    from datetime import date as _d
+    bugun = bugun_tr()
+    with db() as (conn, cur):
+        cur.execute("SELECT id::text, faiz_orani, asgari_oran FROM kartlar WHERE aktif=TRUE")
+        kl = [dict(r) for r in (cur.fetchall() or [])]
+        kartlar = []
+        for k in kl:
+            b = float(kart_borc(cur, k["id"]) or 0)
+            if b <= 0.5:
+                continue
+            cur.execute("SELECT asgari_tutar FROM kart_ekstre_donem WHERE kart_id=%s ORDER BY donem DESC LIMIT 1", (k["id"],))
+            sr = cur.fetchone()
+            asg = float((dict(sr).get("asgari_tutar") if sr else 0) or 0) or round(b * float(k.get("asgari_oran") or 40) / 100, 2)
+            kartlar.append({"borc": b, "oran": float(k.get("faiz_orani") or 0) / 100 / 12, "asgari": asg})
+
+    toplam_borc = round(sum(c["borc"] for c in kartlar), 2)
+    toplam_asgari = round(sum(c["asgari"] for c in kartlar), 2)
+
+    def simule(butce):
+        cs = [dict(c) for c in kartlar]
+        cs.sort(key=(lambda x: x["borc"]) if strateji == "kartopu" else (lambda x: -x["oran"]))
+        ay = 0; tfaiz = 0.0; onceki = sum(c["borc"] for c in cs)
+        while sum(c["borc"] for c in cs) > 1 and ay < 360:
+            ay += 1
+            for c in cs:
+                f = c["borc"] * c["oran"]; c["borc"] += f; tfaiz += f
+            kalan = butce
+            for c in cs:
+                if kalan <= 0:
+                    break
+                p = min(c["asgari"], c["borc"], kalan); c["borc"] = round(c["borc"] - p, 2); kalan = round(kalan - p, 2)
+            for c in cs:
+                if kalan <= 0:
+                    break
+                e = min(kalan, c["borc"]); c["borc"] = round(c["borc"] - e, 2); kalan = round(kalan - e, 2)
+            simdi = sum(c["borc"] for c in cs)
+            if simdi >= onceki - 0.01:  # bütçe faizi karşılamıyor → borç azalmıyor
+                return {"ay": None, "toplam_faiz": round(tfaiz, 2), "bitmedi": True}
+            onceki = simdi
+        return {"ay": ay, "toplam_faiz": round(tfaiz, 2), "bitmedi": sum(c["borc"] for c in cs) > 1}
+
+    def bitis(ay):
+        if not ay:
+            return None
+        m = bugun.month - 1 + ay
+        return str(_d(bugun.year + m // 12, m % 12 + 1, 1))
+
+    verilen = simule(float(aylik or 0))
+    asgari_only = simule(toplam_asgari)
+    tasarruf = None
+    erken_ay = None
+    if verilen.get("ay") and asgari_only.get("ay"):
+        tasarruf = round(asgari_only["toplam_faiz"] - verilen["toplam_faiz"], 2)
+        erken_ay = asgari_only["ay"] - verilen["ay"]
+    return {
+        "aylik": float(aylik or 0), "strateji": "kartopu" if strateji == "kartopu" else "cig",
+        "toplam_borc": toplam_borc, "toplam_asgari": toplam_asgari,
+        "verilen": {**verilen, "bitis_tarihi": bitis(verilen.get("ay"))},
+        "asgari_only": {**asgari_only, "bitis_tarihi": bitis(asgari_only.get("ay"))},
+        "tasarruf_faiz": tasarruf, "erken_ay": erken_ay,
+    }
+
+
 @app.get("/api/kartlar/analiz")
 def kart_analiz_ozet():
     """Faz: saf ANALİZ görünümü — içe aktarılmış veriden (kart_hareketleri +

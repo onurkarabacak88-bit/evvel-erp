@@ -68,12 +68,15 @@ function BorcKocu() {
   const [strateji, setStrateji] = useState('cig');
   const [nakit, setNakit] = useState('');
   const [d, setD] = useState(null);
+  const [proj, setProj] = useState(null);
   const [loading, setLoading] = useState(false);
 
   function yukle() {
     setLoading(true);
-    api(`/kartlar/borc-kocu?strateji=${strateji}&nakit=${parseFloat(nakit) || 0}`)
-      .then(setD).catch(() => {}).finally(() => setLoading(false));
+    const n = parseFloat(nakit) || 0;
+    api(`/kartlar/borc-kocu?strateji=${strateji}&nakit=${n}`).then(setD).catch(() => {}).finally(() => setLoading(false));
+    if (n > 0) api(`/kartlar/borc-projeksiyon?aylik=${n}&strateji=${strateji}`).then(setProj).catch(() => setProj(null));
+    else setProj(null);
   }
   useEffect(() => { yukle(); /* eslint-disable-next-line */ }, [strateji]);
 
@@ -130,6 +133,30 @@ function BorcKocu() {
           )}
           {Number(nakit) > 0 && d.artan_nakit > 0 && (
             <div style={{ fontSize: 12, color: 'var(--green)', marginTop: 8 }}>✓ Tüm asgariler + öncelik kapandı, {fmt(d.artan_nakit)} nakit arttı (sıradakine yatır).</div>
+          )}
+        </div>
+      )}
+
+      {/* Kurtuluş Projeksiyonu */}
+      {proj && (
+        <div className="card mb-16" style={{ padding: 16, border: '1px solid var(--green)' }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>🚀 Kurtuluş Projeksiyonu (aylık {fmt(proj.aylik)})</h3>
+          {proj.verilen?.ay ? (
+            <>
+              <div style={{ fontSize: 15 }}>
+                Bu tempoyla borç <strong style={{ color: 'var(--green)' }}>{proj.verilen.ay} ayda</strong> biter
+                {proj.verilen.bitis_tarihi && <> (≈ <strong>{proj.verilen.bitis_tarihi.slice(0, 7)}</strong>)</>},
+                toplam faiz <strong style={{ color: 'var(--orange)' }}>{fmt(proj.verilen.toplam_faiz)}</strong>.
+              </div>
+              {proj.tasarruf_faiz != null && proj.erken_ay != null && (
+                <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 8, padding: '8px 10px', background: 'var(--bg3)', borderRadius: 6 }}>
+                  💡 Sadece asgari ödesen: {proj.asgari_only.ay} ay + {fmt(proj.asgari_only.toplam_faiz)} faiz.
+                  Bu plan sana <strong style={{ color: 'var(--green)' }}>{fmt(proj.tasarruf_faiz)} faiz</strong> + <strong style={{ color: 'var(--green)' }}>{proj.erken_ay} ay</strong> kazandırır.
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="alert-box red">⚠️ Aylık {fmt(proj.aylik)} faizi bile karşılamıyor — borç azalmaz, büyür. Toplam asgari ({fmt(proj.toplam_asgari)}) üstünde bir tutar gir.</div>
           )}
         </div>
       )}
