@@ -611,6 +611,74 @@ def tum_subeler_durum():
     }
 
 
+class KapanisGeriAlBody(BaseModel):
+    onay_pin: Optional[str] = None     # İşletme onayı (Merve Karabacak 4 haneli PIN)
+    tarih: Optional[str] = None        # YYYY-MM-DD; boşsa bugünün iş günü
+    sebep: Optional[str] = None
+
+
+@router.post("/{sube_id}/kapanis-geri-al")
+def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
+    """Merkez: bir şubenin BUGÜNKÜ (veya verilen tarihteki) mühürlenmiş kapanışını geri al.
+    İşletme onayı (Merve Karabacak PIN) şart — mali/operasyon kaydını değiştirir, auditli.
+    Geri alır: (1) bekleyen ciro taslağı → iptal, (2) kapanış/devir kaydı → iptal,
+    (3) KAPANIS operasyon olayı → 'bekliyor' (cevap sıfırlanır) → şube yeniden kapanış yapabilir.
+    Kasaya dokunmaz (taslak onaylanmadığı için kasa hareketi yoktur)."""
+    from operasyon_merkez_api import _isletme_onay_dogrula
+    tarih = (body.tarih or str(is_gunu_tr()))[:10]
+    with db() as (conn, cur):
+        cur.execute("SELECT ad FROM subeler WHERE id=%s AND aktif=TRUE", (sube_id,))
+        s = cur.fetchone()
+        if not s:
+            raise HTTPException(404, "Şube bulunamadı")
+        sube_adi = dict(s)["ad"]
+        onayci = _isletme_onay_dogrula(cur, body.onay_pin)  # PIN hatalı → 403
+
+        # 1) Bekleyen ciro taslağı → iptal
+        cur.execute(
+            "UPDATE ciro_taslak SET durum='iptal' "
+            "WHERE sube_id=%s AND tarih=%s AND durum='bekliyor'",
+            (sube_id, tarih),
+        )
+        taslak_iptal = cur.rowcount
+
+        # 2) Kapanış / vardiya devri kayıtları → iptal
+        cur.execute(
+            "UPDATE kapanis_kayit SET durum='iptal' "
+            "WHERE sube_id=%s AND tarih=%s AND durum='tamamlandi' "
+            "AND olay IN ('vardiya_sabah_aksam_devri','gun_sonu')",
+            (sube_id, tarih),
+        )
+        kapanis_iptal = cur.rowcount
+
+        # 3) KAPANIS operasyon olayını yeniden aç (panel kapanışı tekrar görsün)
+        cur.execute(
+            "UPDATE sube_operasyon_event "
+            "SET durum='bekliyor', cevap_ts=NULL "
+            "WHERE sube_id=%s AND tarih=%s AND tip='KAPANIS' AND sira_no=0 "
+            "AND durum IN ('tamamlandi','gecikti')",
+            (sube_id, tarih),
+        )
+        event_acildi = cur.rowcount
+
+        audit(cur, "sube_operasyon_event", f"{sube_id}|{tarih}|KAPANIS", "KAPANIS_GERI_AL",
+              yeni={"onayci": onayci.get("ad_soyad"), "sebep": body.sebep,
+                    "taslak_iptal": taslak_iptal, "kapanis_iptal": kapanis_iptal,
+                    "event_acildi": event_acildi})
+
+    return {
+        "success": True,
+        "sube": sube_adi,
+        "tarih": tarih,
+        "geri_alindi": {
+            "ciro_taslak_iptal": taslak_iptal,
+            "kapanis_kayit_iptal": kapanis_iptal,
+            "kapanis_olayi_acildi": event_acildi,
+        },
+        "not": "Şube artık bu gün için kapanışı yeniden yapabilir.",
+    }
+
+
 class SubeAcilisModel(BaseModel):
     """
     Manuel şube açılış kaydı.

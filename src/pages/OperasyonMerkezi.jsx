@@ -9301,6 +9301,28 @@ export default function OperasyonMerkezi() {
               >
                 {kapanisTakipYukleniyor ? '⏳' : '🔄'} Yenile
               </button>
+              <button
+                className="btn btn-sm"
+                style={{ height: 32, borderColor: 'var(--orange)', color: 'var(--orange)' }}
+                title="Seçili şubenin bu günkü mühürlü kapanışını geri al (İşletme PIN gerekir)"
+                onClick={async () => {
+                  const sid = kapanisTakipSubeSec;
+                  if (!sid) { toast('Önce alttan bir şube seç, sonra Kapanışı Geri Al.', 'red'); return; }
+                  const satir = tumSatirlar.find(r => String(r.sube_id) === String(sid));
+                  const ad = satir?.sube_adi || sid;
+                  if (!window.confirm(`${ad} — ${kapanisTakipTarih}\n\nKapanışı GERİ AL?\nBekleyen ciro taslağı iptal edilir, şube kapanışı yeniden yapabilir. Kasaya dokunmaz.`)) return;
+                  const pin = window.prompt('İşletme onayı — Merve Karabacak 4 haneli PIN:');
+                  if (!pin) return;
+                  try {
+                    const r = await api(`/sube-panel/${sid}/kapanis-geri-al`, { method: 'POST', body: { onay_pin: pin, tarih: kapanisTakipTarih, sebep: 'Merkez: hatalı/erken kapanış geri alındı' } });
+                    const g = r.geri_alindi || {};
+                    toast(`✓ ${ad} kapanışı geri alındı (taslak ${g.ciro_taslak_iptal||0}, kayıt ${g.kapanis_kayit_iptal||0}). Şube yeniden kapanış yapabilir.`, 'green');
+                    yukleKapanisTakip(kapanisTakipTarih);
+                  } catch (e) { toast(e.message || 'Geri alınamadı', 'red'); }
+                }}
+              >
+                🔓 Kapanışı Geri Al
+              </button>
               {bugunMu && (
                 <span style={{ fontSize: 11, color: 'var(--text3)', alignSelf: 'center' }}>
                   Her 2 dk otomatik güncellenir
