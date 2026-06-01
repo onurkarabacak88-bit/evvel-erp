@@ -1686,6 +1686,75 @@ def kart_ekstre_ping():
         return {"ok": False, "hata": str(e), "marker": "e0-sync-v2"}
 
 
+@app.get("/api/kartlar/borc-kocu")
+def kart_borc_kocu(strateji: str = "cig", nakit: float = 0):
+    """Borç ödeme koçu: hangi kartı önce kapat (çığ=en yüksek faiz / kartopu=en küçük
+    borç), aylık faiz kaybı, eldeki nakitle bu ayki dağıtım önerisi.
+    Standart borç-yönetimi çerçeveleri — kişiye özel mali tavsiye değildir."""
+    from finans_core import son_odeme_tarihi_hesapla, kesim_tarihi_hesapla
+    bugun = bugun_tr()
+    with db() as (conn, cur):
+        cur.execute("SELECT id::text, kart_adi, banka, COALESCE(sahip,'İşletme') AS sahip, "
+                    "limit_tutar, faiz_orani, asgari_oran, kesim_gunu, son_odeme_gunu "
+                    "FROM kartlar WHERE aktif=TRUE")
+        kl = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("SELECT DISTINCT ON (kart_id) kart_id::text AS kid, asgari_tutar, "
+                    "son_odeme_tarihi::text AS sot FROM kart_ekstre_donem ORDER BY kart_id, donem DESC")
+        snap = {r["kid"]: dict(r) for r in (cur.fetchall() or [])}
+        kartlar = []
+        for k in kl:
+            borc = float(kart_borc(cur, k["id"]) or 0)
+            if borc <= 0.5:
+                continue
+            faiz_y = float(k.get("faiz_orani") or 0)
+            aylik_faiz = round(borc * (faiz_y / 100 / 12), 2)
+            s = snap.get(k["id"], {})
+            asgari = float(s.get("asgari_tutar") or 0) or round(borc * float(k.get("asgari_oran") or 40) / 100, 2)
+            so = s.get("sot")
+            if not so:
+                try:
+                    kt = kesim_tarihi_hesapla(bugun.year, bugun.month, int(k.get("kesim_gunu") or 1))
+                    so = str(son_odeme_tarihi_hesapla(kt, int(k.get("son_odeme_gunu") or 10)))
+                except Exception:
+                    so = None
+            kartlar.append({
+                "kart_id": k["id"], "kart_adi": k["kart_adi"], "sahip": k["sahip"],
+                "borc": round(borc, 2), "faiz_yillik": faiz_y, "aylik_faiz": aylik_faiz,
+                "asgari": round(asgari, 2), "son_odeme": so, "faiz_belirsiz": faiz_y <= 0,
+                "onerilen_odeme": 0.0,
+            })
+        if strateji == "kartopu":
+            kartlar.sort(key=lambda x: x["borc"])
+        else:
+            strateji = "cig"
+            kartlar.sort(key=lambda x: (-x["faiz_yillik"], -x["borc"]))
+        toplam_borc = round(sum(x["borc"] for x in kartlar), 2)
+        toplam_aylik_faiz = round(sum(x["aylik_faiz"] for x in kartlar), 2)
+        toplam_asgari = round(sum(x["asgari"] for x in kartlar), 2)
+        kalan = float(nakit or 0)
+        if kalan > 0:
+            for x in kartlar:  # önce tüm asgariler (öncelik sırasıyla)
+                pay = min(x["asgari"], x["borc"], kalan)
+                x["onerilen_odeme"] = round(pay, 2); kalan = round(kalan - pay, 2)
+                if kalan <= 0:
+                    break
+            for x in kartlar:  # kalanı önceliğe (çığ/kartopu sırası)
+                if kalan <= 0:
+                    break
+                ek = min(kalan, round(x["borc"] - x["onerilen_odeme"], 2))
+                if ek > 0:
+                    x["onerilen_odeme"] = round(x["onerilen_odeme"] + ek, 2); kalan = round(kalan - ek, 2)
+        return {
+            "strateji": strateji, "nakit": float(nakit or 0),
+            "toplam_borc": toplam_borc, "toplam_aylik_faiz": toplam_aylik_faiz,
+            "toplam_asgari": toplam_asgari,
+            "asgari_karsilaniyor": (float(nakit or 0) >= toplam_asgari) if nakit else None,
+            "artan_nakit": round(kalan, 2) if nakit else 0,
+            "oncelik": kartlar[0] if kartlar else None,
+            "kartlar": kartlar,
+        }
+
+
 @app.get("/api/kartlar/analiz")
 def kart_analiz_ozet():
     """Faz: saf ANALİZ görünümü — içe aktarılmış veriden (kart_hareketleri +
