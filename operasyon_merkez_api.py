@@ -7114,6 +7114,62 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
     }
 
 
+@router.post("/kasa-uyumsuzluk/{uyari_id}/yeniden-hesapla")
+def ops_kasa_yeniden_hesapla(uyari_id: str):
+    """Kaynağı DEĞİŞTİRMEDEN uyarıyı canlı veriyle yeniden hesaplar — bayat/donmuş
+    dökümü (açılış/devir/teslim) güncel hâle getirir. Komşu güne dokunmaz; tek uyarı."""
+    from kasa_fark_recalc import yeniden_hesapla as _kf_recalc, kasa_gun_lock
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT sube_id::text, tarih::text FROM sube_operasyon_uyari "
+            "WHERE id=%s AND tip IN ('ACILIS_KASA_FARK','KAPANIS_KASA_FARK')",
+            (uyari_id,),
+        )
+        pre = cur.fetchone()
+        if not pre:
+            raise HTTPException(404, "Kasa uyumsuzluk kaydı bulunamadı")
+        pre = dict(pre)
+        kasa_gun_lock(cur, pre["sube_id"], pre["tarih"])
+        try:
+            return _kf_recalc(cur, uyari_id)
+        except ValueError as ex:
+            raise HTTPException(400, str(ex)) from ex
+
+
+@router.post("/kasa-uyumsuzluk/gun-tazele")
+def ops_kasa_gun_tazele(sube_id: str, tarih: str):
+    """Verilen şube+gün (ve devirden etkilenen komşu günler: ±1) için AÇIK tüm kasa
+    fark uyarılarını canlı veriyle yeniden hesaplar. Düzeltme sonrası bayat kalan
+    uyarıları topluca tazeler; kaynak (ciro/gider/açılış) DEĞİŞMEZ."""
+    from kasa_fark_recalc import yeniden_hesapla as _kf_recalc, kasa_gun_lock
+    from datetime import date as _d, timedelta as _td
+    try:
+        d0 = _d.fromisoformat(str(tarih)[:10])
+    except Exception:
+        raise HTTPException(400, "tarih geçersiz (YYYY-MM-DD)")
+    gunler = [str(d0 - _td(days=1)), str(d0), str(d0 + _td(days=1))]
+    sonuc = []
+    with db() as (conn, cur):
+        cur.execute(
+            """SELECT id::text, tarih::text, tip FROM sube_operasyon_uyari
+               WHERE sube_id=%s AND tip IN ('ACILIS_KASA_FARK','KAPANIS_KASA_FARK')
+                 AND tarih = ANY(%s::date[]) AND okundu = FALSE
+               ORDER BY tarih, tip""",
+            (sube_id, gunler),
+        )
+        hedefler = [dict(r) for r in (cur.fetchall() or [])]
+        for h in hedefler:
+            kasa_gun_lock(cur, sube_id, h["tarih"])
+            try:
+                r = _kf_recalc(cur, h["id"])
+                sonuc.append({"tarih": h["tarih"], "tip": h["tip"],
+                              "eski_fark": r.get("eski_fark"), "yeni_fark": r.get("yeni_fark"),
+                              "cozuldu": r.get("otomatik_cozuldu")})
+            except Exception as ex:
+                sonuc.append({"tarih": h["tarih"], "tip": h["tip"], "hata": str(ex)})
+    return {"tazelenen": len(sonuc), "sonuc": sonuc}
+
+
 @router.get("/kasa-uyumsuzluk/{uyari_id}/duzeltme-tarihce")
 def ops_kasa_duzeltme_tarihce(uyari_id: str):
     """Belirli bir uyari için yapılan tüm kaynak düzeltmelerin audit tarihçesi."""
