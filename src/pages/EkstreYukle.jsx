@@ -9,6 +9,7 @@ export default function EkstreYukle() {
   const [secili, setSecili] = useState(() => new Set());
   const [impBusy, setImpBusy] = useState(false);
   const [impSonuc, setImpSonuc] = useState(null);
+  const [devirBusy, setDevirBusy] = useState(false);
   const [lastFile, setLastFile] = useState(null);
   const [kartEkleBusy, setKartEkleBusy] = useState(false);
   // ── Manuel ekstre girişi (PDF okunamayan kartlar: Axess gibi)
@@ -102,6 +103,26 @@ export default function EkstreYukle() {
 
   function toggle(i) {
     setSecili(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
+  }
+
+  async function devirKabul(k) {
+    if (!k?.id) return;
+    setDevirBusy(true); setHata(null);
+    try {
+      const r = await fetch(`/api/kartlar/${k.id}/manuel-ekstre`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          donem: sonuc.kesim_tarihi, son_odeme: sonuc.son_odeme_tarihi || null,
+          donem_borcu: sonuc.donem_borcu, asgari_tutar: sonuc.asgari_tutar || null,
+          faiz_orani: sonuc.akdi_faiz_yillik || null,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Devir kaydedilemedi');
+      const yeniBorc = d.yeni_borc;
+      setSonuc(s => ({ ...s, mutabakat: { ...s.mutabakat, sistem_borc: yeniBorc, fark: 0, tutar_uyumlu: true } }));
+      setImpSonuc({ yazilan: 0, atlanan_veya_mevcut: 0, yeni_sistem_borc: yeniBorc, devir: true });
+    } catch (e) { setHata(e.message); } finally { setDevirBusy(false); }
   }
   function tumYeni() {
     setSecili(prev => prev.size === yeniIdx.length ? new Set() : new Set(yeniIdx));
@@ -212,6 +233,16 @@ export default function EkstreYukle() {
                   </div>
                 ))}
               </div>
+              {!m?.tutar_uyumlu && (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                  <button className="btn btn-primary btn-sm" disabled={devirBusy} onClick={() => devirKabul(kart)}>
+                    {devirBusy ? '…' : `📌 Bu borcu açılış/devir olarak kabul et (${fmt(sonuc.donem_borcu)})`}
+                  </button>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+                    Kartın borcunu ekstredeki <strong>{fmt(sonuc.donem_borcu)}</strong>'ye eşitler — <strong>açılış/devir</strong> olarak (gider sayılmaz, kasaya dokunmaz). İşlemleri tek tek aktarmana gerek kalmaz; aylık devreden borç için ideal.
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="alert-box yellow mb-16">
@@ -265,7 +296,9 @@ export default function EkstreYukle() {
 
           {impSonuc && (
             <div className="alert-box green mb-16">
-              ✅ {impSonuc.yazilan} işlem içe aktarıldı{impSonuc.atlanan_veya_mevcut ? ` (${impSonuc.atlanan_veya_mevcut} zaten vardı/atlandı)` : ''}. Yeni sistem borcu: <strong>{fmt(impSonuc.yeni_sistem_borc)}</strong>.
+              {impSonuc.devir
+                ? <>📌 Borç <strong>açılış/devir</strong> olarak kaydedildi (gider sayılmaz, kasaya dokunmaz). Kartın güncel borcu: <strong>{fmt(impSonuc.yeni_sistem_borc)}</strong>.</>
+                : <>✅ {impSonuc.yazilan} işlem içe aktarıldı{impSonuc.atlanan_veya_mevcut ? ` (${impSonuc.atlanan_veya_mevcut} zaten vardı/atlandı)` : ''}. Yeni sistem borcu: <strong>{fmt(impSonuc.yeni_sistem_borc)}</strong>.</>}
             </div>
           )}
 

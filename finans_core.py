@@ -80,13 +80,14 @@ def kasa_detay_breakdown(cur) -> dict:
 def kart_borc(cur, kart_id: str) -> float:
     """
     Tek bir kartın guncel borcu.
-    HARCAMA + FAIZ borcu artırır, ODEME düşürür.
+    HARCAMA + FAIZ + DEVIR borcu artırır, ODEME düşürür.
+    DEVIR = açılış/devreden borç (gider DEĞİL, kasaya dokunmaz; sadece borç).
     Bu formül sistemin tek kart borç kaynağıdır.
     """
     cur.execute("""
         SELECT COALESCE(SUM(
             CASE
-                WHEN islem_turu IN ('HARCAMA', 'FAIZ') THEN tutar
+                WHEN islem_turu IN ('HARCAMA', 'FAIZ', 'DEVIR') THEN tutar
                 WHEN islem_turu = 'ODEME'              THEN -tutar
                 ELSE 0
             END
@@ -106,7 +107,7 @@ def tum_kart_borclari(cur) -> dict:
         SELECT kart_id,
                COALESCE(SUM(
                    CASE
-                       WHEN islem_turu IN ('HARCAMA', 'FAIZ') THEN tutar
+                       WHEN islem_turu IN ('HARCAMA', 'FAIZ', 'DEVIR') THEN tutar
                        WHEN islem_turu = 'ODEME'              THEN -tutar
                        ELSE 0
                    END

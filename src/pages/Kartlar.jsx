@@ -99,12 +99,27 @@ export default function Kartlar() {
     return acc;
   }, { odeme: 0, harcama: 0 });
 
+  async function bozukTemizle() {
+    if (!window.confirm('TÜM kartların hareket kayıtları iptal edilecek (borçlar sıfırlanır).\n\nBu, açılış devri kurmadan önceki temizliktir. Kasaya dokunmaz. Devam?')) return;
+    const pin = window.prompt('İşletme onayı — Merve Karabacak 4 haneli PIN:');
+    if (!pin) return;
+    try {
+      const r = await api('/kartlar/__hepsi__/ledger-sifirla', { method: 'POST', body: { onay_pin: pin, hepsi: true } });
+      setMsg({ t: 'green', m: `✓ ${r.kart_sayisi} kart temizlendi (${r.iptal_edilen_hareket} hareket iptal). Şimdi her karta ekstre yükleyip "devir olarak kabul et" diyebilirsin.` });
+      load();
+    } catch (e) { setMsg({ t: 'red', m: e.message || 'Temizlenemedi' }); }
+  }
+
   return (
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
       <div className="page-header flex items-center justify-between">
         <div><h2>Kartlar</h2><p>{aktifKartlar.length} aktif kart</p></div>
-        <button className="btn btn-primary" onClick={() => { setForm(BOSH); setDuzenleId(null); setShowModal(true); }}>+ Kart Ekle</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-sm" style={{ borderColor: 'var(--orange)', color: 'var(--orange)' }}
+            title="Bozuk/karışık kart hareketlerini temizle (açılış devri öncesi)" onClick={bozukTemizle}>🧹 Bozuk Kayıtları Temizle</button>
+          <button className="btn btn-primary" onClick={() => { setForm(BOSH); setDuzenleId(null); setShowModal(true); }}>+ Kart Ekle</button>
+        </div>
       </div>
 
       <div className="card mb-16" style={{ padding: 12 }}>

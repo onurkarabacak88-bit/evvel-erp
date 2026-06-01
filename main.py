@@ -2242,18 +2242,19 @@ def kart_manuel_ekstre(kid: str, body: ManuelEkstreBody):
         if not kr:
             raise HTTPException(404, "Kart bulunamadı")
         kart_adi = dict(kr)["kart_adi"]
-        # 1) Borcu hedef değere çek — tek değiştirilebilir düzeltme kaydı
-        manid = "man_" + kid
-        cur.execute("DELETE FROM kart_hareketleri WHERE id=%s", (manid,))
+        # 1) Borcu hedef değere çek — tek değiştirilebilir DEVİR kaydı.
+        #    DEVIR = açılış/devreden borç: gider sayılmaz, kasaya dokunmaz, borca eklenir.
+        manid = "devir_" + kid
+        cur.execute("DELETE FROM kart_hareketleri WHERE id IN (%s, %s)", (manid, "man_" + kid))
         diger = float(kart_borc(cur, kid) or 0)
         adj = round(borc - diger, 2)
         if abs(adj) > 0.01:
             cur.execute(
                 """INSERT INTO kart_hareketleri
                    (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama, kaynak_tablo, kaynak_id)
-                   VALUES (%s,%s,%s::date,%s,%s,1,%s,'manuel_ekstre',%s)""",
-                (manid, kid, sot, ("HARCAMA" if adj > 0 else "ODEME"), abs(adj),
-                 "Manuel ekstre — dönem borcu düzeltme", manid),
+                   VALUES (%s,%s,%s::date,'DEVIR',%s,1,%s,'devir',%s)""",
+                (manid, kid, sot, adj,
+                 "Açılış / devreden borç (ekstre bakiyesi)", manid),
             )
         # 2) snapshot
         cur.execute(
@@ -2287,6 +2288,48 @@ def kart_manuel_ekstre(kid: str, body: ManuelEkstreBody):
                         (body.faiz_orani, body.gecikme_faiz_orani, kid))
         yeni_borc = kart_borc(cur, kid)
     return {"success": True, "yeni_borc": round(yeni_borc, 2)}
+
+
+class KartLedgerSifirlaBody(BaseModel):
+    onay_pin: Optional[str] = None     # İşletme onayı (Merve Karabacak PIN)
+    hepsi: bool = False                # True → tüm kartlar; False → tek kart
+
+
+@app.post("/api/kartlar/{kid}/ledger-sifirla")
+def kart_ledger_sifirla(kid: str, body: KartLedgerSifirlaBody):
+    """Bozuk/karışık kart hareketlerini temizler (durum='iptal') → kart borcu sıfırlanır.
+    Açılış devri kurmadan ÖNCE çalıştırılır. İşletme onayı (Merve Karabacak PIN) şart.
+    Bağlı kasa hareketleri (KART_ODEME/KART_FAIZ) da iptal edilir. Auditli.
+    kid='__hepsi__' veya hepsi=True → tüm aktif kartlar."""
+    from operasyon_merkez_api import _isletme_onay_dogrula
+    with db() as (conn, cur):
+        onayci = _isletme_onay_dogrula(cur, body.onay_pin)  # PIN hatalı → 403
+        tum = body.hepsi or kid == "__hepsi__"
+        if tum:
+            cur.execute("SELECT id::text FROM kartlar WHERE aktif=TRUE")
+            kart_ids = [dict(r)["id"] for r in (cur.fetchall() or [])]
+        else:
+            cur.execute("SELECT id::text FROM kartlar WHERE id=%s AND aktif=TRUE", (kid,))
+            r = cur.fetchone()
+            if not r:
+                raise HTTPException(404, "Kart bulunamadı")
+            kart_ids = [dict(r)["id"]]
+        toplam_iptal = 0
+        for k in kart_ids:
+            # bağlı kasa hareketlerini iptal et (varsa)
+            cur.execute(
+                """UPDATE kasa_hareketleri SET durum='iptal'
+                   WHERE kaynak_tablo='kart_hareketleri' AND durum='aktif'
+                     AND kaynak_id IN (SELECT id FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif')""",
+                (k,),
+            )
+            cur.execute(
+                "UPDATE kart_hareketleri SET durum='iptal' WHERE kart_id=%s AND durum='aktif'", (k,),
+            )
+            toplam_iptal += cur.rowcount
+            audit(cur, "kart_hareketleri", k, "LEDGER_SIFIRLA",
+                  yeni={"onayci": onayci.get("ad_soyad"), "iptal_adet": cur.rowcount})
+    return {"success": True, "kart_sayisi": len(kart_ids), "iptal_edilen_hareket": toplam_iptal}
 
 
 class EkstreImportIslem(BaseModel):
