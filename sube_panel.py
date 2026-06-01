@@ -658,6 +658,11 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
         )
         devir_geri_yuklendi = cur.rowcount
 
+        # 2c) O günün kasa teslim kayıtları (gün sonu + gün içi 'ara' teslim) → sil.
+        #     kasa_teslim kasaya doğrudan dokunmaz; yeniden kapanışta tekrar yazılır.
+        cur.execute("DELETE FROM kasa_teslim WHERE sube_id=%s AND tarih=%s", (sube_id, tarih))
+        teslim_silindi = cur.rowcount
+
         # 3) KAPANIS operasyon olayını yeniden aç (panel kapanışı tekrar görsün)
         cur.execute(
             "UPDATE sube_operasyon_event "
@@ -671,7 +676,8 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
         audit(cur, "sube_operasyon_event", f"{sube_id}|{tarih}|KAPANIS", "KAPANIS_GERI_AL",
               yeni={"onayci": onayci.get("ad_soyad"), "sebep": body.sebep,
                     "taslak_iptal": taslak_iptal, "kapanis_iptal": kapanis_iptal,
-                    "event_acildi": event_acildi, "devir_geri_yuklendi": devir_geri_yuklendi})
+                    "event_acildi": event_acildi, "devir_geri_yuklendi": devir_geri_yuklendi,
+                    "teslim_silindi": teslim_silindi})
 
     return {
         "success": True,
@@ -682,6 +688,7 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
             "kapanis_kayit_iptal": kapanis_iptal,
             "kapanis_olayi_acildi": event_acildi,
             "vardiya_devri_geri_yuklendi": devir_geri_yuklendi,
+            "kasa_teslim_silindi": teslim_silindi,
         },
         "not": "Kapanış geri alındı; vardiya/kasa devrine dokunulmadı (varsa önceki yanlış iptal geri yüklendi). Şube kapanışı yeniden yapabilir.",
     }
