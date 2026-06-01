@@ -116,6 +116,7 @@ def parse_worldcard(text: str) -> Dict[str, Any]:
         "kart_sahibi": (sahip or "").strip().title() or None,
     }
     out["islemler"] = _worldcard_islemler(text)
+    out["donem_faizi"] = round(sum(float(i["tutar"] or 0) for i in out["islemler"] if i.get("tip") == "FAIZ"), 2)
     return out
 
 
@@ -172,6 +173,10 @@ def parse_enpara(text: str) -> Dict[str, Any]:
         "kart_sahibi": (g(r"Ad soyad\s*(.+)") or "").strip() or None,
     }
     out["islemler"] = _enpara_islemler(text)
+    # Enpara: faiz başlıkta "Faiz, vergiler, ücreler ve diğer ... 925,57" satırında
+    fm = re.search(r"Faiz[,\s].*?([\d.]+,\d{2})\s*TL", text)
+    out["donem_faizi"] = _num(fm.group(1)) if fm else round(
+        sum(float(i["tutar"] or 0) for i in out["islemler"] if i.get("tip") == "FAIZ"), 2)
     return out
 
 

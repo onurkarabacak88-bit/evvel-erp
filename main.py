@@ -11,7 +11,7 @@ from typing import Optional, List, Any, Dict
 from datetime import date, datetime, timedelta
 import uuid, os, json, pathlib, calendar, threading, hashlib
 from collections import defaultdict
-from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns
+from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem
 from operasyon_stok_motor import eksik_kullanim_kontrol, tum_subeler_skor_guncelle
 from tr_saat import bugun_tr, dt_now_tr_naive
 from kasa_service import (
@@ -272,6 +272,11 @@ def startup():
             ensure_kart_kategori_columns(cur)
     except Exception as e:
         logger.warning("kart kategori (harcama_tipi/sahip) migrasyonu (startup): %s", e)
+    try:
+        with db() as (conn, cur):
+            ensure_kart_ekstre_donem(cur)
+    except Exception as e:
+        logger.warning("kart_ekstre_donem migrasyonu (startup): %s", e)
     try:
         with db() as (conn, cur):
             ensure_operasyon_event_durum_latent(cur)
@@ -1681,6 +1686,54 @@ def kart_ekstre_ping():
         return {"ok": False, "hata": str(e), "marker": "e0-sync-v2"}
 
 
+@app.get("/api/kartlar/borc-faiz-ozet")
+def kart_borc_faiz_ozet():
+    """Faz KX: kart başına ve toplam — güncel borç + ekstrelerden toplam ödenen banka
+    faizi + bu dönem ekstresi yüklendi mi (aylık mekanizma takibi)."""
+    from datetime import date as _date
+    bugun = bugun_tr()
+    with db() as (conn, cur):
+        cur.execute("SELECT id::text, kart_adi, banka, COALESCE(sahip,'İşletme') AS sahip, "
+                    "limit_tutar, kesim_gunu, son_odeme_gunu, son_dort_hane FROM kartlar WHERE aktif=TRUE ORDER BY kart_adi")
+        kartlar = [dict(r) for r in (cur.fetchall() or [])]
+        borc_map = tum_kart_borclari(cur)
+        # ekstre snapshot toplamları (faiz) + son dönem
+        cur.execute("""
+            SELECT kart_id::text,
+                   COALESCE(SUM(donem_faizi),0)::float AS toplam_faiz,
+                   MAX(donem)::text AS son_donem,
+                   COUNT(*)::int AS donem_adet
+            FROM kart_ekstre_donem GROUP BY kart_id
+        """)
+        snap = {r["kart_id"]: dict(r) for r in (cur.fetchall() or [])}
+        bu_ay = str(_date(bugun.year, bugun.month, 1))
+        satirlar, toplam_borc, toplam_faiz, eksik = [], 0.0, 0.0, []
+        for k in kartlar:
+            b = float(borc_map.get(k["id"], 0) or 0)
+            s = snap.get(k["id"], {})
+            tf = float(s.get("toplam_faiz") or 0)
+            son_donem = s.get("son_donem")
+            bu_ay_var = bool(son_donem and son_donem[:7] == bu_ay[:7])
+            toplam_borc += b; toplam_faiz += tf
+            if not bu_ay_var:
+                eksik.append(k["kart_adi"])
+            satirlar.append({
+                "kart_id": k["id"], "kart_adi": k["kart_adi"], "banka": k["banka"],
+                "sahip": k["sahip"], "limit": float(k["limit_tutar"] or 0),
+                "guncel_borc": round(b, 2), "toplam_odenen_faiz": round(tf, 2),
+                "son_ekstre_donem": son_donem, "ekstre_adet": int(s.get("donem_adet") or 0),
+                "bu_ay_ekstre_var": bu_ay_var,
+            })
+        satirlar.sort(key=lambda x: -x["guncel_borc"])
+        return {
+            "toplam_borc": round(toplam_borc, 2),
+            "toplam_odenen_faiz": round(toplam_faiz, 2),
+            "kart_adet": len(kartlar),
+            "bu_ay_eksik_ekstre": eksik,
+            "kartlar": satirlar,
+        }
+
+
 @app.post("/api/kartlar/ekstre-yukle")
 def kart_ekstre_yukle(dosya: UploadFile = File(...)):
     """Faz E0: Banka kredi kartı ekstresi (PDF) yükle → ayrıştır → mutabakat ÖNİZLEME.
@@ -1759,6 +1812,32 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
                     isl["durum"] = "yeni"
                     yeni_adet += 1
             sonuc["mutabakat"]["yeni_islem_adet"] = yeni_adet
+
+            # Aylık ekstre SNAPSHOT'ı kaydet (kesim ayına göre; idempotent upsert)
+            kt = sonuc.get("kesim_tarihi")
+            if kt:
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO kart_ekstre_donem
+                            (kart_id, donem, kesim_tarihi, son_odeme_tarihi, donem_borcu,
+                             asgari_tutar, onceki_borc, donem_harcama, donem_odeme, donem_faizi, kalan_taksit)
+                        VALUES (%s, DATE_TRUNC('month', %s::date), %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (kart_id, donem) DO UPDATE SET
+                            kesim_tarihi=EXCLUDED.kesim_tarihi, son_odeme_tarihi=EXCLUDED.son_odeme_tarihi,
+                            donem_borcu=EXCLUDED.donem_borcu, asgari_tutar=EXCLUDED.asgari_tutar,
+                            onceki_borc=EXCLUDED.onceki_borc, donem_harcama=EXCLUDED.donem_harcama,
+                            donem_odeme=EXCLUDED.donem_odeme, donem_faizi=EXCLUDED.donem_faizi,
+                            kalan_taksit=EXCLUDED.kalan_taksit
+                        """,
+                        (kart["id"], kt, kt, sonuc.get("son_odeme_tarihi"),
+                         sonuc.get("donem_borcu"), sonuc.get("asgari_tutar"), sonuc.get("onceki_borc"),
+                         sonuc.get("donem_harcama"), sonuc.get("donem_odeme"),
+                         sonuc.get("donem_faizi") or 0, sonuc.get("kalan_taksit")),
+                    )
+                    sonuc["donem_kaydedildi"] = True
+                except Exception:
+                    sonuc["donem_kaydedildi"] = False
         elif son4:
             sonuc["eslestrme_notu"] = f"Son 4 hane '{son4}' ile eşleşen kart yok — kart tanımına son 4 haneyi girin."
     return sonuc

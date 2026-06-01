@@ -208,6 +208,33 @@ def ensure_kart_kategori_columns(cur) -> None:
     )
 
 
+def ensure_kart_ekstre_donem(cur) -> None:
+    """Faz KX: her ay yüklenen banka ekstresinin SNAPSHOT'ı — borç/asgari/faiz takibi
+    ve aylık mekanizmanın omurgası. Bağımsız migration (startup'ta güvenli)."""
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kart_ekstre_donem (
+            id               TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            kart_id          TEXT NOT NULL,
+            donem            DATE NOT NULL,
+            kesim_tarihi     DATE,
+            son_odeme_tarihi DATE,
+            donem_borcu      NUMERIC(14,2),
+            asgari_tutar     NUMERIC(14,2),
+            onceki_borc      NUMERIC(14,2),
+            donem_harcama    NUMERIC(14,2),
+            donem_odeme      NUMERIC(14,2),
+            donem_faizi      NUMERIC(14,2) DEFAULT 0,
+            kalan_taksit     NUMERIC(14,2),
+            kaynak           TEXT DEFAULT 'ekstre',
+            olusturma        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    cur.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_kart_ekstre_donem "
+        "ON kart_ekstre_donem (kart_id, donem)"
+    )
+
+
 def ensure_rapor_kapanis(cur) -> None:
     """Aylık rapor kapanış mührü tablosu (NRF dönem kapanışı). init_db tek
     transaction içinde geç hatayla geri sarılırsa kaybolmasın diye startup'ta
