@@ -28,6 +28,7 @@ import TruthMotor from './pages/TruthMotor';
 import EvoSatis from './pages/EvoSatis';
 import TeslimKayit from './pages/TeslimKayit';
 import KasaTeslim from './pages/KasaTeslim';
+import EkstreYukle from './pages/EkstreYukle';
 import './index.css';
 
 const NAV = [
@@ -54,6 +55,7 @@ const NAV = [
     { id: 'kartlar',          label: 'Kartlar',             icon: '💳' },
     { id: 'kart-hareketleri', label: 'Kart Hareketi',       icon: '🧾' },
     { id: 'kart-analiz',      label: 'Ekstre Analizi',      icon: '📂' },
+    { id: 'ekstre-yukle',     label: 'Ekstre Yükle (PDF)',  icon: '📄' },
   ]},
   { group: 'Personel & Vardiya', gicon: '👥', items: [
     { id: 'personel',         label: 'Personel & Maaş',     icon: '👥' },
@@ -97,6 +99,7 @@ const PAGES = {
   'teslim-kayit':     TeslimKayit,
   kartlar:            Kartlar,
   'kart-analiz':      KartEkstreAnaliz,
+  'ekstre-yukle':     EkstreYukle,
   personel:           Personel,
   borclar:            Borclar,
   'sabit-giderler':   SabitGiderler,

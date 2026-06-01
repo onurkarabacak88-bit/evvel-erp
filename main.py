@@ -1671,6 +1671,63 @@ def kart_harcama_ozet():
         }
 
 
+@app.post("/api/kartlar/ekstre-yukle")
+async def kart_ekstre_yukle(dosya: UploadFile = File(...)):
+    """Faz E0: Banka kredi kartı ekstresi (PDF) yükle → ayrıştır → mutabakat ÖNİZLEME.
+    DB'ye HİÇBİR ŞEY yazmaz — sadece okuyup gösterir. Worldcard + Enpara desteklenir."""
+    import io
+    try:
+        import pdfplumber
+    except Exception:
+        raise HTTPException(500, "pdfplumber yüklü değil (sunucu).")
+    raw = await dosya.read()
+    metin = ""
+    try:
+        with pdfplumber.open(io.BytesIO(raw)) as pdf:
+            for pg in pdf.pages:
+                metin += (pg.extract_text() or "") + "\n"
+    except Exception as e:
+        raise HTTPException(400, f"PDF okunamadı: {e}")
+    if len(metin.strip()) < 40:
+        raise HTTPException(400, "PDF'den metin çıkmadı — taranmış/görüntü ekstre olabilir (Axess gibi → OCR gerekir).")
+
+    from ekstre_parser import parse_ekstre
+    sonuc = parse_ekstre(metin)
+    if sonuc.get("hata"):
+        raise HTTPException(422, sonuc["hata"])
+
+    # Kart eşleştirme (son 4 hane) + mutabakat
+    sonuc["eslesen_kart"] = None
+    sonuc["mutabakat"] = None
+    son4 = sonuc.get("son_dort")
+    with db() as (conn, cur):
+        kart = None
+        if son4:
+            cur.execute(
+                "SELECT id::text, kart_adi, banka, COALESCE(sahip,'İşletme') AS sahip, son_dort_hane "
+                "FROM kartlar WHERE son_dort_hane=%s AND aktif=TRUE LIMIT 1",
+                (son4,),
+            )
+            kart = cur.fetchone()
+        if kart:
+            kart = dict(kart)
+            sistem_borc = kart_borc(cur, kart["id"])
+            ekstre_borc = sonuc.get("donem_borcu") or 0
+            sonuc["eslesen_kart"] = {
+                "id": kart["id"], "kart_adi": kart["kart_adi"],
+                "banka": kart["banka"], "sahip": kart["sahip"],
+            }
+            sonuc["mutabakat"] = {
+                "sistem_borc": round(sistem_borc, 2),
+                "ekstre_borc": round(ekstre_borc, 2),
+                "fark": round(ekstre_borc - sistem_borc, 2),
+                "tutar_uyumlu": abs(ekstre_borc - sistem_borc) < 1.0,
+            }
+        elif son4:
+            sonuc["eslestrme_notu"] = f"Son 4 hane '{son4}' ile eşleşen kart yok — kart tanımına son 4 haneyi girin."
+    return sonuc
+
+
 # ── ÖDEME PLANI ────────────────────────────────────────────────
 class OdemePlani(BaseModel):
     kart_id: str
