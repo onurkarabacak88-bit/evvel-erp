@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { fmt } from '../utils/api';
 
 export default function EkstreYukle() {
@@ -9,6 +9,38 @@ export default function EkstreYukle() {
   const [secili, setSecili] = useState(() => new Set());
   const [impBusy, setImpBusy] = useState(false);
   const [impSonuc, setImpSonuc] = useState(null);
+  // ── Manuel ekstre girişi (PDF okunamayan kartlar: Axess gibi)
+  const [manOpen, setManOpen] = useState(false);
+  const [kartlar, setKartlar] = useState([]);
+  const [mForm, setMForm] = useState({ kart_id: '', donem: '', son_odeme: '', donem_borcu: '', asgari_tutar: '', faiz_orani: '' });
+  const [mBusy, setMBusy] = useState(false);
+  const [mSonuc, setMSonuc] = useState(null);
+  const [mHata, setMHata] = useState(null);
+
+  useEffect(() => {
+    fetch('/api/kartlar').then(r => r.json()).then(setKartlar).catch(() => {});
+  }, []);
+
+  async function manuelKaydet() {
+    if (!mForm.kart_id || !mForm.donem || !mForm.donem_borcu) {
+      setMHata('Kart, kesim tarihi ve dönem borcu zorunlu.'); return;
+    }
+    setMBusy(true); setMHata(null); setMSonuc(null);
+    try {
+      const r = await fetch(`/api/kartlar/${mForm.kart_id}/manuel-ekstre`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          donem: mForm.donem, son_odeme: mForm.son_odeme || null,
+          donem_borcu: parseFloat(mForm.donem_borcu),
+          asgari_tutar: mForm.asgari_tutar ? parseFloat(mForm.asgari_tutar) : null,
+          faiz_orani: mForm.faiz_orani ? parseFloat(mForm.faiz_orani) : null,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Kaydedilemedi');
+      setMSonuc(d);
+    } catch (e) { setMHata(e.message); } finally { setMBusy(false); }
+  }
 
   async function yukle(file) {
     if (!file) return;
@@ -74,7 +106,7 @@ export default function EkstreYukle() {
         onDrop={e => { e.preventDefault(); yukle(e.dataTransfer.files?.[0]); }}>
         <div style={{ fontSize: 34, marginBottom: 8 }}>📥</div>
         <div style={{ color: 'var(--text2)', marginBottom: 12, fontSize: 13 }}>
-          PDF ekstreyi buraya sürükle veya seç · <span style={{ color: 'var(--text3)' }}>Worldcard & Enpara desteklenir (Axess → OCR, yakında)</span>
+          PDF ekstreyi buraya sürükle veya seç · <span style={{ color: 'var(--text3)' }}>Worldcard & Enpara PDF olarak desteklenir · Axess gibi okunamayanlar için aşağıdaki Manuel Giriş</span>
         </div>
         <label className="btn btn-primary" style={{ cursor: 'pointer' }}>
           PDF Seç
@@ -82,6 +114,38 @@ export default function EkstreYukle() {
             onChange={e => yukle(e.target.files?.[0])} />
         </label>
         {dosyaAdi && <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 10 }}>📎 {dosyaAdi}</div>}
+      </div>
+
+      {/* Manuel ekstre girişi — PDF okunamayan kartlar (Axess gibi) için */}
+      <div className="card mb-16" style={{ padding: 0 }}>
+        <button onClick={() => setManOpen(o => !o)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', padding: '14px 16px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontWeight: 700 }}>🖊️ Manuel Ekstre Girişi <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text3)' }}>· PDF okunamayan kartlar (Axess) için borç/asgari/son ödeme elle gir</span></span>
+          <span style={{ fontSize: 18, color: 'var(--text3)' }}>{manOpen ? '−' : '+'}</span>
+        </button>
+        {manOpen && (
+          <div style={{ padding: '0 16px 16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 12 }}>
+              <div className="form-group">
+                <label>Kart *</label>
+                <select value={mForm.kart_id} onChange={e => setMForm({ ...mForm, kart_id: e.target.value })}>
+                  <option value="">— seç —</option>
+                  {kartlar.map(k => <option key={k.id} value={k.id}>{k.kart_adi} ({k.banka})</option>)}
+                </select>
+              </div>
+              <div className="form-group"><label>Kesim tarihi *</label><input type="date" value={mForm.donem} onChange={e => setMForm({ ...mForm, donem: e.target.value })} /></div>
+              <div className="form-group"><label>Son ödeme tarihi</label><input type="date" value={mForm.son_odeme} onChange={e => setMForm({ ...mForm, son_odeme: e.target.value })} /></div>
+              <div className="form-group"><label>Dönem borcu (₺) *</label><input type="number" step="0.01" value={mForm.donem_borcu} onChange={e => setMForm({ ...mForm, donem_borcu: e.target.value })} /></div>
+              <div className="form-group"><label>Asgari tutar (₺)</label><input type="number" step="0.01" value={mForm.asgari_tutar} onChange={e => setMForm({ ...mForm, asgari_tutar: e.target.value })} /></div>
+              <div className="form-group"><label>Aylık faiz oranı (%)</label><input type="number" step="0.01" value={mForm.faiz_orani} onChange={e => setMForm({ ...mForm, faiz_orani: e.target.value })} /></div>
+            </div>
+            {mHata && <div className="alert-box red" style={{ marginTop: 8 }}>⚠️ {mHata}</div>}
+            {mSonuc && <div className="alert-box green" style={{ marginTop: 8 }}>✅ Kaydedildi. Kartın güncel borcu: <strong>{fmt(mSonuc.yeni_borc)}</strong> · CFO ödeme planı + snapshot oluşturuldu.</div>}
+            <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button className="btn btn-primary btn-sm" disabled={mBusy} onClick={manuelKaydet}>{mBusy ? '…' : 'Kaydet'}</button>
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>Borç tek bir düzeltme kaydıyla hedef değere çekilir (tekrar girişte değişir, birikmez). Kasaya dokunmaz.</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {yukleniyor && <div className="card" style={{ padding: 20, textAlign: 'center' }}><span className="spinner" /> Ayrıştırılıyor…</div>}

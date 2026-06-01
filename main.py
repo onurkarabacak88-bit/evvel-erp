@@ -2180,6 +2180,77 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
     return sonuc
 
 
+class ManuelEkstreBody(BaseModel):
+    donem: str                              # kesim tarihi YYYY-MM-DD
+    son_odeme: Optional[str] = None
+    donem_borcu: float
+    asgari_tutar: Optional[float] = None
+    faiz_orani: Optional[float] = None
+    gecikme_faiz_orani: Optional[float] = None
+
+
+@app.post("/api/kartlar/{kid}/manuel-ekstre")
+def kart_manuel_ekstre(kid: str, body: ManuelEkstreBody):
+    """PDF okunamayan kartlar (Axess gibi) için ekstre özetini ELLE gir → aynı
+    pipeline: snapshot + CFO ödeme planı + faiz + kart borcunu doğru değere çek.
+    Borç düzeltmesi tek değiştirilebilir kayıtla yapılır (man_<id>); kasaya dokunmaz."""
+    kesim = (body.donem or "")[:10]
+    sot = (body.son_odeme or kesim)[:10]
+    borc = float(body.donem_borcu or 0)
+    asg = float(body.asgari_tutar or 0)
+    with db() as (conn, cur):
+        cur.execute("SELECT kart_adi FROM kartlar WHERE id=%s AND aktif=TRUE", (kid,))
+        kr = cur.fetchone()
+        if not kr:
+            raise HTTPException(404, "Kart bulunamadı")
+        kart_adi = dict(kr)["kart_adi"]
+        # 1) Borcu hedef değere çek — tek değiştirilebilir düzeltme kaydı
+        manid = "man_" + kid
+        cur.execute("DELETE FROM kart_hareketleri WHERE id=%s", (manid,))
+        diger = float(kart_borc(cur, kid) or 0)
+        adj = round(borc - diger, 2)
+        if abs(adj) > 0.01:
+            cur.execute(
+                """INSERT INTO kart_hareketleri
+                   (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama, kaynak_tablo, kaynak_id)
+                   VALUES (%s,%s,%s::date,%s,%s,1,%s,'manuel_ekstre',%s)""",
+                (manid, kid, sot, ("HARCAMA" if adj > 0 else "ODEME"), abs(adj),
+                 "Manuel ekstre — dönem borcu düzeltme", manid),
+            )
+        # 2) snapshot
+        cur.execute(
+            """INSERT INTO kart_ekstre_donem
+                (kart_id, donem, kesim_tarihi, son_odeme_tarihi, donem_borcu, asgari_tutar, kaynak)
+               VALUES (%s, DATE_TRUNC('month',%s::date), %s::date, %s::date, %s, %s, 'manuel')
+               ON CONFLICT (kart_id, donem) DO UPDATE SET
+                 kesim_tarihi=EXCLUDED.kesim_tarihi, son_odeme_tarihi=EXCLUDED.son_odeme_tarihi,
+                 donem_borcu=EXCLUDED.donem_borcu, asgari_tutar=EXCLUDED.asgari_tutar, kaynak='manuel'""",
+            (kid, kesim, kesim, sot, borc, asg),
+        )
+        # 3) CFO ödeme planı
+        if asg or borc:
+            acik = f"Kart ekstresi (manuel): {kart_adi} — asgari {asg}"
+            cur.execute(
+                """UPDATE odeme_plani SET tarih=%s::date, odenecek_tutar=%s, asgari_tutar=%s,
+                    aciklama=%s, referans_ay=DATE_TRUNC('month',%s::date)
+                   WHERE kart_id=%s AND durum IN ('bekliyor','onay_bekliyor')
+                     AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)""",
+                (sot, (borc or asg), asg, acik, sot, kid, sot),
+            )
+            if cur.rowcount == 0:
+                cur.execute(
+                    """INSERT INTO odeme_plani (id,kart_id,tarih,referans_ay,odenecek_tutar,asgari_tutar,aciklama,durum)
+                       VALUES (%s,%s,%s::date,DATE_TRUNC('month',%s::date),%s,%s,%s,'bekliyor')""",
+                    (str(uuid.uuid4()), kid, sot, sot, (borc or asg), asg, acik),
+                )
+        # 4) faiz oranı
+        if body.faiz_orani is not None and body.faiz_orani > 0:
+            cur.execute("UPDATE kartlar SET faiz_orani=%s, gecikme_faiz_orani=COALESCE(%s,gecikme_faiz_orani) WHERE id=%s",
+                        (body.faiz_orani, body.gecikme_faiz_orani, kid))
+        yeni_borc = kart_borc(cur, kid)
+    return {"success": True, "yeni_borc": round(yeni_borc, 2)}
+
+
 class EkstreImportIslem(BaseModel):
     tarih: Optional[str] = None
     tutar: float
