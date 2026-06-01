@@ -31,42 +31,44 @@ import KasaTeslim from './pages/KasaTeslim';
 import './index.css';
 
 const NAV = [
-  { group: 'Ana', items: [
+  { group: 'Yönetim & Karar', gicon: '📊', items: [
     { id: 'panel',            label: 'CFO Panel',           icon: '⬛' },
     { id: 'ops-merkez',       label: 'Operasyon Merkezi',   icon: '📡' },
-    { id: 'evo-satis',        label: 'Ürün Satışları',      icon: '☕' },
-    { id: 'kasa-teslim',      label: 'Kasa Teslim',         icon: '💰' },
-    { id: 'rapor',            label: 'Aylık Rapor',         icon: '📊' },
-    { id: 'strateji',         label: 'Strateji Motoru',     icon: '🧠' },
+    { id: 'akilli-denetim',   label: 'Akıllı Denetim',      icon: '🧠' },
+    { id: 'strateji',         label: 'Strateji Motoru',     icon: '🎯' },
+    { id: 'rapor',            label: 'Aylık Rapor',         icon: '📈' },
+  ]},
+  { group: 'Onay Bekleyenler', gicon: '✅', items: [
     { id: 'onay',             label: 'Onay Kuyruğu',        icon: '✅' },
     { id: 'ciro-taslak-onay', label: 'Ciro Onayı',          icon: '📋' },
+  ]},
+  { group: 'Para Hareketleri', gicon: '💰', items: [
+    { id: 'ciro',             label: 'Ciro Girişi',         icon: '📈' },
+    { id: 'evo-satis',        label: 'Ürün Satışları',      icon: '☕' },
+    { id: 'kasa-teslim',      label: 'Kasa Teslim',         icon: '💵' },
+    { id: 'anlik-gider',      label: 'Anlık Gider',         icon: '💸' },
+    { id: 'kart-hareketleri', label: 'Kart Hareketi',       icon: '💳' },
+    { id: 'dis-kaynak',       label: 'Dış Kaynak Geliri',   icon: '🪙' },
+    { id: 'vadeli',           label: 'Vadeli Alım',         icon: '📦' },
     { id: 'ledger',           label: 'İşlem Defteri',       icon: '📒' },
   ]},
-  { group: 'Denetim Motorları', items: [
-    { id: 'akilli-denetim',   label: 'Akıllı Denetim',      icon: '🧠' },
-  ]},
-  { group: 'Veri Girişi', items: [
-    { id: 'ciro',             label: 'Ciro Girişi',         icon: '📈' },
-    { id: 'kart-hareketleri', label: 'Kart Hareketi',       icon: '💳' },
-    { id: 'anlik-gider',      label: 'Anlık Gider',         icon: '💸' },
-    { id: 'dis-kaynak',       label: 'Dış Kaynak Geliri',   icon: '💰' },
-    { id: 'vadeli',           label: 'Vadeli Alım',         icon: '📦' },
-    { id: 'excel',            label: 'Excel Import',        icon: '📊' },
-    { id: 'teslim-kayit',     label: 'Bilgi Teslim',        icon: '📦' },
-  ]},
-  { group: 'Tanımlar', items: [
-    { id: 'kartlar',          label: 'Kartlar',             icon: '💳' },
-    { id: 'kart-merkez',      label: 'Kart Merkezi',        icon: '💳' },
-    { id: 'kart-analiz',      label: 'Ekstre Analizi',      icon: '📂' },
-    { id: 'personel',         label: 'Personel',            icon: '👥' },
-    { id: 'borclar',          label: 'Borç Envanteri',      icon: '🏦' },
-    { id: 'sabit-giderler',   label: 'Sabit Giderler',      icon: '🏠' },
+  { group: 'Personel & Vardiya', gicon: '👥', items: [
+    { id: 'personel',         label: 'Personel & Maaş',     icon: '👥' },
     { id: 'vardiya-planlamasi',label: 'Vardiya Planlaması', icon: '🗓️' },
-    { id: 'sube-panel-pin',   label: 'Personel panel PIN',  icon: '🔐' },
+    { id: 'sube-panel-pin',   label: 'Personel Panel PIN',  icon: '🔐' },
+  ]},
+  { group: 'Tanımlar', gicon: '🗂️', items: [
+    { id: 'kartlar',          label: 'Kartlar',             icon: '💳' },
+    { id: 'kart-merkez',      label: 'Kart Merkezi',        icon: '🏧' },
+    { id: 'kart-analiz',      label: 'Ekstre Analizi',      icon: '📂' },
+    { id: 'sabit-giderler',   label: 'Sabit Giderler',      icon: '🏠' },
+    { id: 'borclar',          label: 'Borç Envanteri',      icon: '🏦' },
     { id: 'tedarikciler',     label: 'Tedarikçiler',        icon: '🚚' },
   ]},
-  { group: 'Sistem', items: [
-    { id: 'veri-temizle',     label: 'Veri temizle',        icon: '🧹' },
+  { group: 'Veri & Sistem', gicon: '🔧', items: [
+    { id: 'excel',            label: 'Excel Import',        icon: '📊' },
+    { id: 'teslim-kayit',     label: 'Bilgi Teslim',        icon: '📨' },
+    { id: 'veri-temizle',     label: 'Veri Temizle',        icon: '🧹' },
   ]},
 ];
 
@@ -188,7 +190,7 @@ export default function App() {
         <nav className="sidebar-nav">
           {NAV.map(g => (
             <div key={g.group} className="nav-group">
-              <div className="nav-label">{g.group}</div>
+              <div className="nav-label">{g.gicon && <span className="gico">{g.gicon}</span>}{g.group}</div>
               {g.items.map(item => (
                 <div
                   key={item.id}
