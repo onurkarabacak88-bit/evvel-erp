@@ -5075,6 +5075,33 @@ export default function OperasyonMerkezi() {
     }
   }
 
+  // Kasa farkını canlı veriyle yeniden hesapla (kaynağı değiştirmez — bayat dökümü tazeler)
+  async function kkYenidenHesapla(uid) {
+    setOnayBusyId(`kuyh:${uid}`);
+    try {
+      const r = await api(`/ops/kasa-uyumsuzluk/${encodeURIComponent(uid)}/yeniden-hesapla`, { method: 'POST' });
+      const yeni = Number(r?.yeni_fark ?? 0);
+      toast(
+        r?.otomatik_cozuldu
+          ? '🔄 Yeniden hesaplandı — fark eşik altına düştü, çözüldü.'
+          : `🔄 Yeniden hesaplandı — güncel fark: ${yeni.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺`,
+        'green'
+      );
+      publishGlobalDataRefresh('ops-kasa-uyumsuzluk-yeniden-hesap');
+      const hedefKu = (kasaUyumAramaTarih || bugunIsoTarih()).trim();
+      const [haftaData, gunData] = await Promise.all([
+        kasaUyumHaftaYukle().catch(() => []),
+        kasaUyumGunYukle(hedefKu, { durum: kasaUyumDurumFiltre }).catch(() => null),
+      ]);
+      setKasaUyumHaftaSatirlari(haftaData);
+      if (gunData) setKasaUyumAramaSonuc(gunData);
+    } catch (e) {
+      toast(e.message || 'Yeniden hesaplanamadı');
+    } finally {
+      setOnayBusyId(null);
+    }
+  }
+
   // Kasa farkı kaynak düzeltme — modal açar
   function kkDuzeltModalAc(uyari) {
     const tip = String(uyari?.tip || '');
@@ -10763,6 +10790,13 @@ export default function OperasyonMerkezi() {
                 {!cozuldu && (
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button type="button" className="btn btn-sm"
+                      style={{ padding: '4px 10px', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.4)', color: '#86efac', fontWeight: 600, fontSize: 12 }}
+                      disabled={!!onayBusyId || kkDuzeltBusy}
+                      title="Kaynağı değiştirmeden güncel veriyle yeniden hesapla — donmuş/bayat dökümü tazeler"
+                      onClick={() => kkYenidenHesapla(u.id)}>
+                      {onayBusyId === `kuyh:${u.id}` ? '…' : '🔄 Yeniden Hesapla'}
+                    </button>
+                    <button type="button" className="btn btn-sm"
                       style={{ padding: '4px 10px', background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', fontWeight: 600, fontSize: 12 }}
                       disabled={!!onayBusyId || kkDuzeltBusy}
                       title="Sebebi bul, kaynağı düzelt, fark otomatik yeniden hesaplanır"
@@ -10876,6 +10910,13 @@ export default function OperasyonMerkezi() {
                 </div>
                 {!cozuldu && (
                   <div style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" className="btn btn-sm"
+                      style={{ padding: '4px 10px', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.4)', color: '#86efac', fontWeight: 600, fontSize: 12 }}
+                      disabled={!!onayBusyId || kkDuzeltBusy}
+                      title="Kaynağı değiştirmeden güncel veriyle yeniden hesapla — donmuş/bayat dökümü tazeler"
+                      onClick={() => kkYenidenHesapla(u.id)}>
+                      {onayBusyId === `kuyh:${u.id}` ? '…' : '🔄 Yeniden Hesapla'}
+                    </button>
                     <button type="button" className="btn btn-sm"
                       style={{ padding: '4px 10px', background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', fontWeight: 600, fontSize: 12 }}
                       disabled={!!onayBusyId || kkDuzeltBusy}

@@ -7072,6 +7072,38 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
                 )
                 cascade_sonuclari.append({"hata": str(_casc_setup_ex), "asama": "cascade_setup"})
 
+        # 4c. GÜNÜ TAZELE — pencere (±1 gün) içindeki AÇIK diğer uyarıları da canlı
+        #     veriyle yeniden hesapla. Hedefli cascade'in atladığı bağımsız bayat/donmuş
+        #     uyarıların (ör. açılış sonradan dolunca güncellenmeyen kapanış farkı) kalmasını önler.
+        if sebep not in ("gercek_acik",) and not recalc.get("taslak_duzeltildi"):
+            try:
+                from datetime import date as _dc2, timedelta as _td2
+                _t0 = _dc2.fromisoformat(tarih[:10])
+                _win = [str(_t0 - _td2(days=1)), str(_t0), str(_t0 + _td2(days=1))]
+                _islenen = {uyari_id} | {
+                    str(c.get("uyari_id")) for c in cascade_sonuclari if c.get("uyari_id")
+                }
+                cur.execute(
+                    """SELECT id::text, tarih::text FROM sube_operasyon_uyari
+                       WHERE sube_id=%s AND tip IN ('ACILIS_KASA_FARK','KAPANIS_KASA_FARK')
+                         AND tarih = ANY(%s::date[]) AND okundu = FALSE""",
+                    (sube_id, _win),
+                )
+                for _r in (cur.fetchall() or []):
+                    _rd = dict(_r)
+                    if _rd["id"] in _islenen:
+                        continue
+                    kasa_gun_lock(cur, sube_id, _rd["tarih"])
+                    try:
+                        _rr = _kf_recalc(cur, _rd["id"], kim_pid=pid, kim_ad=pad)
+                        cascade_sonuclari.append(
+                            {"cascade_tip": "gun_tazele", "tarih": _rd["tarih"], **_rr}
+                        )
+                    except Exception as _swex:
+                        log.warning("gun-tazele recalc hata: %s %s", _rd["id"], _swex)
+            except Exception as _sw_setup:
+                log.warning("gun-tazele kurulum hata: %s", _sw_setup)
+
         # 5. Audit
         _kk_audit_yaz(
             cur, uyari, sebep, hedef,
