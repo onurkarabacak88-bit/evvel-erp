@@ -31,6 +31,16 @@ router = APIRouter(prefix="/api/sube-panel", tags=["sube-operasyon"])
 ACILIS_TOLERANS_DK = 10
 # KONTROL: açılış sonrası sabit saat yok — rastgele gecikme + rastgele cevap penceresi; tamamlamada yalnızca kasa sayımı + PIN.
 CIKIS_TOLERANS_DK = 5
+# Kapanış en erken başlatma saati (TR). Bundan önce kapanış tamamlanamaz —
+# hatalı/erken kapanışı önler. Gece 00:00–02:00 önceki iş gününün kapanışı sayılır → izinli.
+KAPANIS_EN_ERKEN = (22, 30)
+
+
+def _kapanis_saat_uygun_mu(simdi) -> bool:
+    """Kapanış yalnızca 22:30–02:00 penceresinde başlatılabilir."""
+    h, m = simdi.hour, simdi.minute
+    eh, em = KAPANIS_EN_ERKEN
+    return (h > eh) or (h == eh and m >= em) or (h < 2)
 
 
 def _sube_getir(cur, sube_id: str) -> dict:
@@ -918,6 +928,13 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             from personel_panel_auth import dogrula_personel_panel_pin
             from sube_kapanis_dual import _upsert_ciro_taslak, vardiya_devri_tamamlandi_mi
 
+            # SAAT KİLİDİ: kapanış 22:30'dan önce başlatılamaz (erken/hatalı kapanışı önler).
+            if not _kapanis_saat_uygun_mu(simdi):
+                raise HTTPException(
+                    400,
+                    "Kapanış işlemi yalnızca saat 22:30'dan sonra başlatılabilir "
+                    "(erken/yanlış kapanışı önlemek için).",
+                )
             if vardiya_devri_bugun_baslamis_mi(
                 cur, sube_id
             ) and not vardiya_devri_tamamlandi_mi(cur, sube_id):
