@@ -162,7 +162,7 @@ export default function EkstreYukle() {
             </div>
             <div className="table-wrap">
               <table>
-                <thead><tr><th></th><th>Tarih</th><th>İşlem</th><th>Açıklama</th><th>Taksit</th><th style={{ textAlign: 'right' }}>Tutar</th><th>Durum</th></tr></thead>
+                <thead><tr><th></th><th>Tarih</th><th>İşlem</th><th>Açıklama</th><th>Kategori</th><th>Taksit</th><th style={{ textAlign: 'right' }}>Tutar</th><th>Durum</th></tr></thead>
                 <tbody>
                   {(sonuc.islemler || []).map((x, i) => (
                     <tr key={i} style={{ background: x.durum === 'yeni' ? 'rgba(212,137,58,0.06)' : undefined }}>
@@ -172,6 +172,7 @@ export default function EkstreYukle() {
                       <td className="mono" style={{ fontSize: 12 }}>{x.tarih || '—'}</td>
                       <td><span className={`badge ${x.tip === 'ODEME' ? 'badge-blue' : x.tip === 'FAIZ' ? 'badge-red' : 'badge-yellow'}`}>{x.tip}</span></td>
                       <td style={{ fontSize: 12, color: 'var(--text2)' }}>{x.aciklama}</td>
+                      <td style={{ fontSize: 11, color: 'var(--text3)' }}>{x.kategori || '—'}</td>
                       <td style={{ fontSize: 12, color: 'var(--text3)' }}>{x.taksit || '—'}</td>
                       <td style={{ textAlign: 'right' }} className="mono">{fmt(x.tutar)}</td>
                       <td style={{ fontSize: 11 }}>

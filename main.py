@@ -1733,6 +1733,23 @@ def kart_borc_faiz_ozet():
         }
 
 
+def _ekstre_txn_map(t: dict) -> dict:
+    """kart_analiz işlem dict → birleşik ekstre işlem formatı (tip/tutar/tarih/kategori)."""
+    odeme = bool(t.get("odeme_mi"))
+    kat = (t.get("kategori") or "")
+    acik = (t.get("aciklama") or "")
+    faiz = ("faiz" in kat.lower()) or ("faiz" in acik.lower()) or ("DÖNEM FAİZİ" in acik.upper())
+    tip = "ODEME" if odeme else ("FAIZ" if faiz else "HARCAMA")
+    return {
+        "tarih": t.get("tarih"),
+        "tutar": abs(float(t.get("tutar") or 0)),
+        "tip": tip,
+        "aciklama": acik,
+        "kategori": kat or None,
+        "taksit": t.get("taksit"),
+    }
+
+
 @app.post("/api/kartlar/ekstre-yukle")
 def kart_ekstre_yukle(dosya: UploadFile = File(...)):
     """Faz E0: Banka kredi kartı ekstresi (PDF) yükle → ayrıştır → mutabakat ÖNİZLEME.
@@ -1756,9 +1773,21 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
     if len(metin.strip()) < 40:
         raise HTTPException(400, "PDF'den metin çıkmadı — taranmış/görüntü ekstre olabilir (Axess gibi → OCR gerekir).")
 
+    # BİRLEŞİK PARSER: başlık (borç/asgari/faiz/son4) = ekstre_parser;
+    # işlemler = kart_analiz (4 banka + kategori) — tek transaction motoru.
     from ekstre_parser import parse_ekstre
     sonuc = parse_ekstre(metin)
-    if sonuc.get("hata"):
+    try:
+        import kart_analiz
+        txns = kart_analiz.parse_pdf(raw)
+    except Exception:
+        txns = None
+    if txns:
+        sonuc["islemler"] = [_ekstre_txn_map(t) for t in txns]
+        if not sonuc.get("banka_format") or sonuc.get("banka_format") == "bilinmiyor":
+            sonuc["banka_format"] = (txns[0].get("banka") if txns else None) or sonuc.get("banka_format")
+        sonuc.pop("hata", None)  # işlem bulunduysa parse başarısız sayma
+    if sonuc.get("hata") and not txns:
         raise HTTPException(422, sonuc["hata"])
 
     # Kart eşleştirme (son 4 hane) + mutabakat
