@@ -29,6 +29,7 @@ import EvoSatis from './pages/EvoSatis';
 import TeslimKayit from './pages/TeslimKayit';
 import KasaTeslim from './pages/KasaTeslim';
 import EkstreYukle from './pages/EkstreYukle';
+import KartYonetimi from './pages/KartYonetimi';
 import './index.css';
 
 const NAV = [
@@ -51,11 +52,7 @@ const NAV = [
     { id: 'vadeli',           label: 'Vadeli Alım',         icon: '📦' },
   ]},
   { group: 'Kartlar', gicon: '💳', items: [
-    { id: 'kart-merkez',      label: 'Kart Merkezi',        icon: '🏧' },
-    { id: 'kartlar',          label: 'Kartlar',             icon: '💳' },
-    { id: 'kart-hareketleri', label: 'Kart Hareketi',       icon: '🧾' },
-    { id: 'kart-analiz',      label: 'Ekstre Analizi',      icon: '📂' },
-    { id: 'ekstre-yukle',     label: 'Ekstre Yükle (PDF)',  icon: '📄' },
+    { id: 'kart-yonetimi',    label: 'Kart Yönetimi',       icon: '💳' },
   ]},
   { group: 'Personel & Vardiya', gicon: '👥', items: [
     { id: 'personel',         label: 'Personel & Maaş',     icon: '👥' },
@@ -100,6 +97,7 @@ const PAGES = {
   kartlar:            Kartlar,
   'kart-analiz':      KartEkstreAnaliz,
   'ekstre-yukle':     EkstreYukle,
+  'kart-yonetimi':    KartYonetimi,
   personel:           Personel,
   borclar:            Borclar,
   'sabit-giderler':   SabitGiderler,
