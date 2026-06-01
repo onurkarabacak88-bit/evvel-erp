@@ -1672,15 +1672,18 @@ def kart_harcama_ozet():
 
 
 @app.post("/api/kartlar/ekstre-yukle")
-async def kart_ekstre_yukle(dosya: UploadFile = File(...)):
+def kart_ekstre_yukle(dosya: UploadFile = File(...)):
     """Faz E0: Banka kredi kartı ekstresi (PDF) yükle → ayrıştır → mutabakat ÖNİZLEME.
-    DB'ye HİÇBİR ŞEY yazmaz — sadece okuyup gösterir. Worldcard + Enpara desteklenir."""
+    DB'ye HİÇBİR ŞEY yazmaz — sadece okuyup gösterir. Worldcard + Enpara desteklenir.
+    Sync def: FastAPI threadpool'da çalışır, pdfplumber event-loop'u bloklamaz."""
     import io
     try:
         import pdfplumber
     except Exception:
         raise HTTPException(500, "pdfplumber yüklü değil (sunucu).")
-    raw = await dosya.read()
+    raw = dosya.file.read()
+    if not raw:
+        raise HTTPException(400, "Dosya boş veya yüklenemedi.")
     metin = ""
     try:
         with pdfplumber.open(io.BytesIO(raw)) as pdf:
