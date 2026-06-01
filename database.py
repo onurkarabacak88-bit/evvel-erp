@@ -227,6 +227,39 @@ def ensure_kart_satici_kural(cur) -> None:
     """)
 
 
+def ensure_kart_devir_islem_turu(cur) -> None:
+    """kart_hareketleri.islem_turu CHECK kısıtına 'DEVIR' ekler (açılış/devreden borç).
+    Bağımsız migration — init_db tek transaction olduğundan burada GARANTİ uygulanır.
+    Eski CHECK 'DEVIR' içermiyorsa düşürüp DEVIR'li haliyle yeniden kurar."""
+    cur.execute("""
+        DO $$
+        DECLARE r RECORD;
+        BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables
+                       WHERE table_schema='public' AND table_name='kart_hareketleri') THEN
+                FOR r IN
+                    SELECT c.conname FROM pg_constraint c
+                    JOIN pg_class t ON c.conrelid=t.oid
+                    WHERE t.relname='kart_hareketleri' AND c.contype='c'
+                      AND pg_get_constraintdef(c.oid) ILIKE '%islem_turu%'
+                      AND pg_get_constraintdef(c.oid) NOT ILIKE '%DEVIR%'
+                LOOP
+                    EXECUTE format('ALTER TABLE kart_hareketleri DROP CONSTRAINT IF EXISTS %I', r.conname);
+                END LOOP;
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint c JOIN pg_class t ON c.conrelid=t.oid
+                    WHERE t.relname='kart_hareketleri' AND c.contype='c'
+                      AND pg_get_constraintdef(c.oid) ILIKE '%islem_turu%'
+                ) THEN
+                    ALTER TABLE kart_hareketleri
+                        ADD CONSTRAINT kart_hareketleri_islem_turu_check
+                        CHECK (islem_turu IN ('HARCAMA','ODEME','FAIZ','DEVIR'));
+                END IF;
+            END IF;
+        END $$;
+    """)
+
+
 def ensure_kart_ekstre_donem(cur) -> None:
     """Faz KX: her ay yüklenen banka ekstresinin SNAPSHOT'ı — borç/asgari/faiz takibi
     ve aylık mekanizmanın omurgası. Bağımsız migration (startup'ta güvenli)."""
@@ -1408,7 +1441,7 @@ def init_db():
                     ) THEN
                         ALTER TABLE kart_hareketleri
                             ADD CONSTRAINT kart_hareketleri_islem_turu_check
-                            CHECK (islem_turu IN ('HARCAMA', 'ODEME', 'FAIZ'));
+                            CHECK (islem_turu IN ('HARCAMA', 'ODEME', 'FAIZ', 'DEVIR'));
                     END IF;
                 END IF;
             END $$;

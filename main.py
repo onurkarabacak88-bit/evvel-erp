@@ -11,7 +11,7 @@ from typing import Optional, List, Any, Dict
 from datetime import date, datetime, timedelta
 import uuid, os, json, pathlib, calendar, threading, hashlib
 from collections import defaultdict
-from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem, ensure_kart_satici_kural
+from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem, ensure_kart_satici_kural, ensure_kart_devir_islem_turu
 from operasyon_stok_motor import eksik_kullanim_kontrol, tum_subeler_skor_guncelle
 from tr_saat import bugun_tr, dt_now_tr_naive
 from kasa_service import (
@@ -284,6 +284,11 @@ def startup():
         logger.warning("kart_satici_kural migrasyonu (startup): %s", e)
     try:
         with db() as (conn, cur):
+            ensure_kart_devir_islem_turu(cur)
+    except Exception as e:
+        logger.warning("kart_devir_islem_turu migrasyonu (startup): %s", e)
+    try:
+        with db() as (conn, cur):
             ensure_operasyon_event_durum_latent(cur)
     except Exception as e:
         logger.warning("operasyon_event durum=latent migrasyonu (startup): %s", e)
@@ -548,7 +553,7 @@ def odeme_plani_kontrol(referans_tarih: Optional[date] = None) -> dict:
             WHERE k.aktif = TRUE
             AND (
                 SELECT COALESCE(SUM(
-                    CASE WHEN kh.islem_turu IN ('HARCAMA','FAIZ') THEN kh.tutar
+                    CASE WHEN kh.islem_turu IN ('HARCAMA','FAIZ','DEVIR') THEN kh.tutar
                          WHEN kh.islem_turu='ODEME' THEN -kh.tutar ELSE 0 END
                 ), 0) FROM kart_hareketleri kh
                 WHERE kh.kart_id = k.id AND kh.durum = 'aktif'
