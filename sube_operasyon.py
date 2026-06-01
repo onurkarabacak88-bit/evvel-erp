@@ -436,12 +436,21 @@ def build_panel_operasyon_blob(cur, sube_id: str, sube: dict) -> Dict[str, Any]:
     simdi_display = _display_now_tr()
     rows = _list_events(cur, sube_id)
     aktif = _pick_aktif(rows, simdi)
+    # İŞ GÜNÜNE göre kapanış tamamlandı mı? (gün dönümünde liste filtresinden bağımsız,
+    # güvenilir mühür sinyali — panel 'Günü Kapat'ı buna göre kilitler)
+    cur.execute(
+        "SELECT 1 FROM sube_operasyon_event "
+        "WHERE sube_id=%s AND tarih=%s AND tip='KAPANIS' AND sira_no=0 AND durum='tamamlandi'",
+        (sube_id, is_gunu_tr()),
+    )
+    kapanis_bugun_bitti = cur.fetchone() is not None
     out = {
         "sunucu_saati": simdi_display.strftime("%H:%M:%S"),
         "sunucu_iso": simdi_display.isoformat(timespec="seconds"),
         "events": rows,
         "aktif": aktif,
         "esikler": {"suphe": 5, "kritik": 10},
+        "kapanis_tamamlandi_bugun": kapanis_bugun_bitti,
     }
     if aktif:
         st = datetime.fromisoformat(aktif["sistem_slot_ts"].replace(" ", "T"))

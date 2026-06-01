@@ -9055,7 +9055,7 @@ window.kapanisModalAc = function() {
   try {
     var _op = (typeof lastData !== 'undefined' && lastData && lastData.operasyon) || {};
     var _evL = [].concat(_op.events || [], _op.events_ozet || []);
-    var _kapBitti = _evL.some(function(ev){
+    var _kapBitti = (_op.kapanis_tamamlandi_bugun === true) || _evL.some(function(ev){
       return ev && String(ev.tip || '').toUpperCase() === 'KAPANIS'
              && String(ev.durum || '').toLowerCase() === 'tamamlandi';
     });
@@ -12183,7 +12183,7 @@ function updateSolAksiyonChips(data) {
     var kapTip = aktif && String(aktif.tip || '').toUpperCase() === 'KAPANIS';
     var kapDurum = kapTip ? String(aktif.durum || '').toLowerCase() : '';
     var evListesi = [].concat(op.events || [], op.events_ozet || []);
-    var kapBitti = evListesi.some(function(ev){
+    var kapBitti = (op.kapanis_tamamlandi_bugun === true) || evListesi.some(function(ev){
       return ev && String(ev.tip||'').toUpperCase()==='KAPANIS' && String(ev.durum||'').toLowerCase()==='tamamlandi';
     });
     var kapKart = document.getElementById('solKapanisKart');
