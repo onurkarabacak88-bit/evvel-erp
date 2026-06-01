@@ -2211,6 +2211,7 @@ def sube_personel_panel_public(payload: dict) -> dict:
             "aktif_kritik": op.get("aktif_kritik"),
             "aktif_suphe": op.get("aktif_suphe"),
             "alarm_politikasi": op.get("alarm_politikasi"),
+            "kapanis_tamamlandi_bugun": op.get("kapanis_tamamlandi_bugun"),
             "events_ozet": [
                 {
                     "id": e.get("id"),
