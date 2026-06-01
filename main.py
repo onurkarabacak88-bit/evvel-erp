@@ -1940,13 +1940,22 @@ def _ekstre_txn_map(t: dict) -> dict:
     acik = (t.get("aciklama") or "")
     faiz = ("faiz" in kat.lower()) or ("faiz" in acik.lower()) or ("DÖNEM FAİZİ" in acik.upper())
     tip = "ODEME" if odeme else ("FAIZ" if faiz else "HARCAMA")
+    tks = t.get("taksit")
+    tsay = None
+    if tks and "/" in str(tks):
+        try:
+            tsay = int(str(tks).split("/")[1])
+        except (ValueError, IndexError):
+            tsay = None
     return {
         "tarih": t.get("tarih"),
         "tutar": abs(float(t.get("tutar") or 0)),
         "tip": tip,
         "aciklama": acik,
         "kategori": kat or None,
-        "taksit": t.get("taksit"),
+        "taksit": tks,
+        "taksit_anapara": t.get("taksit_anapara"),
+        "taksit_sayisi": tsay,
     }
 
 
@@ -2029,26 +2038,44 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
             }
             # İşlem-bazlı mutabakat: her ekstre satırını sistemdeki harekete eşle
             cur.execute(
-                "SELECT tarih::text AS t, ROUND(tutar::numeric,2)::float AS tu, islem_turu "
+                "SELECT tarih::text AS t, ROUND(tutar::numeric,2)::float AS tu, islem_turu, "
+                "taksit_sayisi, baslangic_tarihi::text AS bas "
                 "FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'",
                 (kart["id"],),
             )
-            mevcut = {}
+            mevcut = {}          # tek çekim / ödeme / faiz: (tarih, tutar, tip)
+            mevcut_taksit = {}   # taksit: (baslangic, toplam, taksit_sayisi)
             for r in (cur.fetchall() or []):
                 r = dict(r)
-                key = (r["t"], round(float(r["tu"]), 2), r["islem_turu"])
-                mevcut[key] = mevcut.get(key, 0) + 1
+                if int(r.get("taksit_sayisi") or 1) > 1:
+                    tk = (r.get("bas") or r["t"], round(float(r["tu"]), 2), int(r["taksit_sayisi"]))
+                    mevcut_taksit[tk] = mevcut_taksit.get(tk, 0) + 1
+                else:
+                    key = (r["t"], round(float(r["tu"]), 2), r["islem_turu"])
+                    mevcut[key] = mevcut.get(key, 0) + 1
             yeni_adet = 0
             for isl in sonuc.get("islemler", []):
-                key = (isl.get("tarih"), round(float(isl.get("tutar") or 0), 2), isl.get("tip"))
-                if isl.get("taksit"):
-                    isl["durum"] = "taksit"  # v1: taksit satırları içe alınmaz
-                elif mevcut.get(key, 0) > 0:
-                    mevcut[key] -= 1
-                    isl["durum"] = "eslesti"
+                tsay = isl.get("taksit_sayisi")
+                if tsay and tsay > 1 and isl.get("tip") == "HARCAMA":
+                    # Taksitli: toplam (taksit_anapara) + başlangıç (tarih) + taksit sayısı ile eşle
+                    total = round(float(isl.get("taksit_anapara") or 0), 2)
+                    tk = (isl.get("tarih"), total, int(tsay))
+                    if total <= 0:
+                        isl["durum"] = "taksit"  # toplam bilinmiyor → elle
+                    elif mevcut_taksit.get(tk, 0) > 0:
+                        mevcut_taksit[tk] -= 1
+                        isl["durum"] = "eslesti"
+                    else:
+                        isl["durum"] = "yeni"
+                        yeni_adet += 1
                 else:
-                    isl["durum"] = "yeni"
-                    yeni_adet += 1
+                    key = (isl.get("tarih"), round(float(isl.get("tutar") or 0), 2), isl.get("tip"))
+                    if mevcut.get(key, 0) > 0:
+                        mevcut[key] -= 1
+                        isl["durum"] = "eslesti"
+                    else:
+                        isl["durum"] = "yeni"
+                        yeni_adet += 1
             sonuc["mutabakat"]["yeni_islem_adet"] = yeni_adet
 
             # Faiz oranlarını ekstreden GÜNCELLE (her ay otomatik — elle girmeye gerek yok)
@@ -2121,6 +2148,8 @@ class EkstreImportIslem(BaseModel):
     aciklama: Optional[str] = None
     harcama_tipi: Optional[str] = None  # isletme | sahsi | belirsiz
     kategori: Optional[str] = None      # ekstre kategorisi (Market, Akaryakıt...)
+    taksit_sayisi: Optional[int] = None # taksitli alımda toplam taksit (Y)
+    taksit_anapara: Optional[float] = None  # taksitli alımın TOPLAM tutarı
 
 
 class EkstreImportBody(BaseModel):
@@ -2143,7 +2172,14 @@ def kart_ekstre_import(body: EkstreImportBody):
             tip = (isl.tip or "HARCAMA").upper()
             if tip not in ("HARCAMA", "ODEME", "FAIZ"):
                 atlanan += 1; continue
-            tutar = abs(float(isl.tutar or 0))
+            # TAKSİTLİ alım: tutar=TOPLAM (taksit_anapara), taksit_sayisi=Y, baslangic=tarih
+            tsay = int(isl.taksit_sayisi or 1)
+            is_taksit = tip == "HARCAMA" and tsay > 1 and float(isl.taksit_anapara or 0) > 0
+            if is_taksit:
+                tutar = round(abs(float(isl.taksit_anapara)), 2)
+            else:
+                tsay = 1
+                tutar = abs(float(isl.tutar or 0))
             if tutar <= 0:
                 atlanan += 1; continue
             tarih = (isl.tarih or str(bugun_tr()))[:10]
@@ -2160,15 +2196,16 @@ def kart_ekstre_import(body: EkstreImportBody):
                     htip = htip or "belirsiz"
                 else:
                     htip = "isletme"
-            anahtar = f"{body.kart_id}|{tarih}|{tutar:.2f}|{tip}|{(isl.aciklama or '')[:40]}"
+            anahtar = f"{body.kart_id}|{tarih}|{tutar:.2f}|{tip}|{tsay}|{(isl.aciklama or '')[:40]}"
             hid = "eks_" + hashlib.md5(anahtar.encode("utf-8")).hexdigest()[:24]
             cur.execute(
                 """INSERT INTO kart_hareketleri
-                   (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama,
+                   (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, baslangic_tarihi, aciklama,
                     harcama_tipi, kategori, kaynak_tablo, kaynak_id)
-                   VALUES (%s,%s,%s,%s,%s,1,%s,%s,%s,'ekstre_import',%s)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'ekstre_import',%s)
                    ON CONFLICT (id) DO NOTHING""",
-                (hid, body.kart_id, tarih, tip, tutar,
+                (hid, body.kart_id, tarih, tip, tutar, tsay,
+                 (tarih if is_taksit else None),
                  (isl.aciklama or "Ekstre içe aktarım")[:200], htip,
                  (isl.kategori or None), hid),
             )

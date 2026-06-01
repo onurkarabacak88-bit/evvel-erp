@@ -39,7 +39,7 @@ export default function EkstreYukle() {
   async function iceAktar() {
     if (!kart?.id) return;
     const islemler = [...secili].map(i => sonuc.islemler[i]).filter(x => x && x.durum === 'yeni')
-      .map(x => ({ tarih: x.tarih, tutar: x.tutar, tip: x.tip, aciklama: x.aciklama, kategori: x.kategori, harcama_tipi: x.oneri_tipi || undefined }));
+      .map(x => ({ tarih: x.tarih, tutar: x.tutar, tip: x.tip, aciklama: x.aciklama, kategori: x.kategori, harcama_tipi: x.oneri_tipi || undefined, taksit_sayisi: x.taksit_sayisi || undefined, taksit_anapara: x.taksit_anapara || undefined }));
     if (!islemler.length) return;
     setImpBusy(true); setHata(null);
     try {
@@ -189,7 +189,7 @@ export default function EkstreYukle() {
           </div>
 
           <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 12 }}>
-            ℹ️ "İçe Aktar" yalnızca <strong>eksik (sistemde yok)</strong> işlemleri kart hareketlerine yazar — kasaya dokunmaz, çift yazmaz. Taksitli satırlar v1'de elle eklenir. İçe aktardıktan sonra harcamaları Kart Hareketleri'nde 🏢/👤 ile sınıflandırabilirsin.
+            ℹ️ "İçe Aktar" yalnızca <strong>eksik (sistemde yok)</strong> işlemleri kart hareketlerine yazar — kasaya dokunmaz, çift yazmaz. Taksitli satırlar **toplam tutar + taksit sayısıyla** doğru aktarılır (idempotent). İçe aktardıktan sonra harcamaları Kart Hareketleri'nde 🏢/👤 ile sınıflandırabilirsin.
           </div>
         </>
       )}
