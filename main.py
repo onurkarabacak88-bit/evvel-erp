@@ -1736,9 +1736,92 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
                 "fark": round(ekstre_borc - sistem_borc, 2),
                 "tutar_uyumlu": abs(ekstre_borc - sistem_borc) < 1.0,
             }
+            # İşlem-bazlı mutabakat: her ekstre satırını sistemdeki harekete eşle
+            cur.execute(
+                "SELECT tarih::text AS t, ROUND(tutar::numeric,2)::float AS tu, islem_turu "
+                "FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'",
+                (kart["id"],),
+            )
+            mevcut = {}
+            for r in (cur.fetchall() or []):
+                r = dict(r)
+                key = (r["t"], round(float(r["tu"]), 2), r["islem_turu"])
+                mevcut[key] = mevcut.get(key, 0) + 1
+            yeni_adet = 0
+            for isl in sonuc.get("islemler", []):
+                key = (isl.get("tarih"), round(float(isl.get("tutar") or 0), 2), isl.get("tip"))
+                if isl.get("taksit"):
+                    isl["durum"] = "taksit"  # v1: taksit satırları içe alınmaz
+                elif mevcut.get(key, 0) > 0:
+                    mevcut[key] -= 1
+                    isl["durum"] = "eslesti"
+                else:
+                    isl["durum"] = "yeni"
+                    yeni_adet += 1
+            sonuc["mutabakat"]["yeni_islem_adet"] = yeni_adet
         elif son4:
             sonuc["eslestrme_notu"] = f"Son 4 hane '{son4}' ile eşleşen kart yok — kart tanımına son 4 haneyi girin."
     return sonuc
+
+
+class EkstreImportIslem(BaseModel):
+    tarih: Optional[str] = None
+    tutar: float
+    tip: str = "HARCAMA"      # HARCAMA | ODEME | FAIZ
+    aciklama: Optional[str] = None
+    harcama_tipi: Optional[str] = None  # isletme | sahsi | belirsiz
+
+
+class EkstreImportBody(BaseModel):
+    kart_id: str
+    islemler: List[EkstreImportIslem]
+
+
+@app.post("/api/kartlar/ekstre-import")
+def kart_ekstre_import(body: EkstreImportBody):
+    """Faz E1: Ekstreden seçilen EKSİK işlemleri kart_hareketleri'ne yazar.
+    İdempotent (deterministik id → çift import yok). Kasaya DOKUNMAZ (sadece kart
+    borcu); taksit satırları kabul edilmez (v1). HARCAMA/ODEME/FAIZ."""
+    import hashlib
+    with db() as (conn, cur):
+        cur.execute("SELECT id FROM kartlar WHERE id=%s AND aktif=TRUE", (body.kart_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Kart bulunamadı")
+        yazilan, atlanan = 0, 0
+        for isl in body.islemler:
+            tip = (isl.tip or "HARCAMA").upper()
+            if tip not in ("HARCAMA", "ODEME", "FAIZ"):
+                atlanan += 1; continue
+            tutar = abs(float(isl.tutar or 0))
+            if tutar <= 0:
+                atlanan += 1; continue
+            tarih = (isl.tarih or str(bugun_tr()))[:10]
+            htip = (isl.harcama_tipi or "").strip().lower()
+            if htip not in ("isletme", "sahsi", "belirsiz"):
+                htip = "belirsiz" if tip == "HARCAMA" else "isletme"
+            anahtar = f"{body.kart_id}|{tarih}|{tutar:.2f}|{tip}|{(isl.aciklama or '')[:40]}"
+            hid = "eks_" + hashlib.md5(anahtar.encode("utf-8")).hexdigest()[:24]
+            cur.execute(
+                """INSERT INTO kart_hareketleri
+                   (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama,
+                    harcama_tipi, kaynak_tablo, kaynak_id)
+                   VALUES (%s,%s,%s,%s,%s,1,%s,%s,'ekstre_import',%s)
+                   ON CONFLICT (id) DO NOTHING""",
+                (hid, body.kart_id, tarih, tip, tutar,
+                 (isl.aciklama or "Ekstre içe aktarım")[:200], htip, hid),
+            )
+            if cur.rowcount > 0:
+                yazilan += 1
+            else:
+                atlanan += 1  # zaten var (idempotent)
+        if yazilan:
+            try:
+                from motors import kart_plan_guncelle_tx
+                kart_plan_guncelle_tx(cur)
+            except Exception:
+                pass
+        yeni_borc = kart_borc(cur, body.kart_id)
+    return {"yazilan": yazilan, "atlanan_veya_mevcut": atlanan, "yeni_sistem_borc": round(yeni_borc, 2)}
 
 
 # ── ÖDEME PLANI ────────────────────────────────────────────────
