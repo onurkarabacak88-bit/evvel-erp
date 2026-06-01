@@ -228,6 +228,19 @@ export default function EkstreYukle() {
             </div>
           )}
 
+          {/* Çift yükleme uyarısı — bu kart için bu ayın ekstresi zaten var */}
+          {sonuc.donem_zaten_yuklendi && (
+            <div className="alert-box red mb-16">
+              ⛔ <strong>Bu kartın {sonuc.donem_zaten_yuklendi.donem} ekstresi daha önce yüklenmiş</strong>
+              {sonuc.donem_zaten_yuklendi.onceki_borc ? ` (kayıtlı borç ${fmt(sonuc.donem_zaten_yuklendi.onceki_borc)})` : ''}.
+              <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 6 }}>
+                İşlemler çift yazılmaz (sistem aynı işlemi tekrar eklemez) — bu yüzden aşağıda çoğu satır
+                "✓ sistemde" görünür ve İçe Aktar sayısı 0 olur. <strong>Aynı ekstreyi tekrar yüklemene gerek yok.</strong>
+                Sadece düzeltilmiş/yeni bir ekstre yüklüyorsan devam et.
+              </div>
+            </div>
+          )}
+
           {/* Ekstre başlık verisi */}
           <div className="card mb-16" style={{ padding: 16 }}>
             <div style={{ fontWeight: 700, marginBottom: 10 }}>{formatAd} · Kart …{sonuc.son_dort}</div>

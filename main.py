@@ -2081,6 +2081,26 @@ def _ekstre_eslesme_mutabakat(sonuc):
             kart = cur.fetchone()
         if kart:
             kart = dict(kart)
+            # ── ÇİFT YÜKLEME KORUMASI: bu kart için bu ayın ekstresi zaten var mı?
+            #    (işlemler zaten idempotent yazılır; bu sadece kullanıcıyı net uyarır)
+            kt_chk = sonuc.get("kesim_tarihi")
+            if kt_chk:
+                try:
+                    cur.execute(
+                        "SELECT donem_borcu, kaynak FROM kart_ekstre_donem "
+                        "WHERE kart_id=%s AND donem=DATE_TRUNC('month', %s::date)",
+                        (kart["id"], kt_chk),
+                    )
+                    _prev = cur.fetchone()
+                    if _prev:
+                        _prev = dict(_prev)
+                        sonuc["donem_zaten_yuklendi"] = {
+                            "donem": kt_chk[:7],
+                            "onceki_borc": float(_prev.get("donem_borcu") or 0),
+                            "kaynak": _prev.get("kaynak"),
+                        }
+                except Exception:
+                    pass
             sistem_borc = kart_borc(cur, kart["id"])
             ekstre_borc = sonuc.get("donem_borcu") or 0
             sonuc["eslesen_kart"] = {
