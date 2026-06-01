@@ -39,7 +39,7 @@ export default function EkstreYukle() {
   async function iceAktar() {
     if (!kart?.id) return;
     const islemler = [...secili].map(i => sonuc.islemler[i]).filter(x => x && x.durum === 'yeni')
-      .map(x => ({ tarih: x.tarih, tutar: x.tutar, tip: x.tip, aciklama: x.aciklama, kategori: x.kategori }));
+      .map(x => ({ tarih: x.tarih, tutar: x.tutar, tip: x.tip, aciklama: x.aciklama, kategori: x.kategori, harcama_tipi: x.oneri_tipi || undefined }));
     if (!islemler.length) return;
     setImpBusy(true); setHata(null);
     try {
@@ -177,7 +177,7 @@ export default function EkstreYukle() {
                       <td style={{ textAlign: 'right' }} className="mono">{fmt(x.tutar)}</td>
                       <td style={{ fontSize: 11 }}>
                         {x.durum === 'eslesti' ? <span style={{ color: 'var(--green)' }}>✓ sistemde</span>
-                          : x.durum === 'yeni' ? <span style={{ color: 'var(--orange)', fontWeight: 600 }}>● eksik</span>
+                          : x.durum === 'yeni' ? <span style={{ color: 'var(--orange)', fontWeight: 600 }}>● eksik{x.oneri_tipi ? (x.oneri_tipi === 'isletme' ? ' · 🏢' : ' · 👤') : ''}</span>
                           : x.durum === 'taksit' ? <span style={{ color: 'var(--text3)' }}>taksit (elle)</span>
                           : <span style={{ color: 'var(--text3)' }}>—</span>}
                       </td>

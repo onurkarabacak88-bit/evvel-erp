@@ -211,6 +211,19 @@ def ensure_kart_kategori_columns(cur) -> None:
     )
 
 
+def ensure_kart_satici_kural(cur) -> None:
+    """Şahsi/dükkan SATICI HAFIZASI: bir harcamayı sınıflandırınca o satıcı (örn.
+    METRO) hatırlanır → sonraki aynı satıcı otomatik aynı tip önerilir. Bağımsız migration."""
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kart_satici_kural (
+            anahtar      TEXT PRIMARY KEY,
+            harcama_tipi TEXT NOT NULL,
+            adet         INT NOT NULL DEFAULT 1,
+            guncelleme   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+
+
 def ensure_kart_ekstre_donem(cur) -> None:
     """Faz KX: her ay yüklenen banka ekstresinin SNAPSHOT'ı — borç/asgari/faiz takibi
     ve aylık mekanizmanın omurgası. Bağımsız migration (startup'ta güvenli)."""

@@ -11,7 +11,7 @@ from typing import Optional, List, Any, Dict
 from datetime import date, datetime, timedelta
 import uuid, os, json, pathlib, calendar, threading, hashlib
 from collections import defaultdict
-from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem
+from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem, ensure_kart_satici_kural
 from operasyon_stok_motor import eksik_kullanim_kontrol, tum_subeler_skor_guncelle
 from tr_saat import bugun_tr, dt_now_tr_naive
 from kasa_service import (
@@ -277,6 +277,11 @@ def startup():
             ensure_kart_ekstre_donem(cur)
     except Exception as e:
         logger.warning("kart_ekstre_donem migrasyonu (startup): %s", e)
+    try:
+        with db() as (conn, cur):
+            ensure_kart_satici_kural(cur)
+    except Exception as e:
+        logger.warning("kart_satici_kural migrasyonu (startup): %s", e)
     try:
         with db() as (conn, cur):
             ensure_operasyon_event_durum_latent(cur)
@@ -1635,11 +1640,26 @@ def kart_hareket_tip_belirle(hid: str, tip: str):
     if t not in ('isletme', 'sahsi', 'belirsiz'):
         raise HTTPException(400, "tip: isletme | sahsi | belirsiz")
     with db() as (conn, cur):
-        cur.execute("UPDATE kart_hareketleri SET harcama_tipi=%s WHERE id=%s AND durum='aktif'", (t, hid))
-        if cur.rowcount == 0:
+        cur.execute("UPDATE kart_hareketleri SET harcama_tipi=%s WHERE id=%s AND durum='aktif' RETURNING aciklama", (t, hid))
+        row = cur.fetchone()
+        if not row:
             raise HTTPException(404, "Hareket bulunamadı")
+        # SATICI HAFIZASI: bu satıcıyı öğren → sonraki aynı satıcı otomatik önerilsin
+        ogrenildi = None
+        if t in ("isletme", "sahsi"):
+            anahtar = _satici_anahtar(dict(row).get("aciklama"))
+            if anahtar:
+                cur.execute(
+                    """INSERT INTO kart_satici_kural (anahtar, harcama_tipi, adet)
+                       VALUES (%s, %s, 1)
+                       ON CONFLICT (anahtar) DO UPDATE SET
+                         harcama_tipi=EXCLUDED.harcama_tipi,
+                         adet=kart_satici_kural.adet+1, guncelleme=NOW()""",
+                    (anahtar, t),
+                )
+                ogrenildi = anahtar
         audit(cur, 'kart_hareketleri', hid, 'HARCAMA_TIPI', yeni={'tip': t})
-    return {"success": True, "harcama_tipi": t}
+    return {"success": True, "harcama_tipi": t, "ogrenilen_satici": ogrenildi}
 
 
 @app.get("/api/kartlar/harcama-ozet")
@@ -1833,6 +1853,18 @@ def kart_borc_faiz_ozet():
         }
 
 
+def _satici_anahtar(aciklama: Optional[str]) -> Optional[str]:
+    """Açıklamadan satıcı anahtarı (ilk anlamlı kelime) — hafıza eşleşmesi için.
+    'METRO METRO GROSMARKET KOKONYA TR' → 'METRO'."""
+    import re as _re
+    s = (aciklama or "").upper().strip()
+    s = _re.sub(r"[^A-ZÇĞİÖŞÜ0-9 ]", " ", s)
+    for tok in s.split():
+        if len(tok) >= 3 and not tok.isdigit():
+            return tok
+    return None
+
+
 def _ekstre_txn_map(t: dict) -> dict:
     """kart_analiz işlem dict → birleşik ekstre işlem formatı (tip/tutar/tarih/kategori)."""
     odeme = bool(t.get("odeme_mi"))
@@ -1895,6 +1927,16 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
     sonuc["mutabakat"] = None
     son4 = sonuc.get("son_dort")
     with db() as (conn, cur):
+        # SATICI HAFIZASI: her işleme öneri tipi (hepsi 'belirsiz' başlar, hafıza öğrendikçe önerir)
+        try:
+            cur.execute("SELECT anahtar, harcama_tipi FROM kart_satici_kural")
+            _kurallar = {r["anahtar"]: r["harcama_tipi"] for r in (cur.fetchall() or [])}
+        except Exception:
+            _kurallar = {}
+        for _isl in sonuc.get("islemler", []):
+            if _isl.get("tip") == "HARCAMA":
+                _ak = _satici_anahtar(_isl.get("aciklama"))
+                _isl["oneri_tipi"] = _kurallar.get(_ak) if _ak else None
         kart = None
         if son4:
             cur.execute(
@@ -1977,6 +2019,28 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
                     sonuc["donem_kaydedildi"] = True
                 except Exception:
                     sonuc["donem_kaydedildi"] = False
+
+            # A) ASGARİ/SON ÖDEME → CFO ödeme planı (gerçek banka değeriyle; çift olmaz, update-in-place)
+            sot = sonuc.get("son_odeme_tarihi")
+            asg = sonuc.get("asgari_tutar")
+            brc = sonuc.get("donem_borcu")
+            if sot and (asg or brc):
+                acik = f"Kart ekstresi: {kart['kart_adi']} — asgari {asg}"
+                cur.execute(
+                    """UPDATE odeme_plani SET tarih=%s::date, odenecek_tutar=%s, asgari_tutar=%s,
+                        aciklama=%s, referans_ay=DATE_TRUNC('month', %s::date)
+                       WHERE kart_id=%s AND durum IN ('bekliyor','onay_bekliyor')
+                         AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)""",
+                    (sot, (brc or asg), asg, acik, sot, kart["id"], sot),
+                )
+                if cur.rowcount == 0:
+                    cur.execute(
+                        """INSERT INTO odeme_plani
+                            (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum)
+                           VALUES (%s, %s, %s::date, DATE_TRUNC('month', %s::date), %s, %s, %s, 'bekliyor')""",
+                        (str(uuid.uuid4()), kart["id"], sot, sot, (brc or asg), asg, acik),
+                    )
+                sonuc["cfo_odeme_plani"] = {"son_odeme": sot, "asgari": asg, "borc": brc}
         elif son4:
             sonuc["eslestrme_notu"] = f"Son 4 hane '{son4}' ile eşleşen kart yok — kart tanımına son 4 haneyi girin."
     return sonuc
@@ -2017,7 +2081,17 @@ def kart_ekstre_import(body: EkstreImportBody):
             tarih = (isl.tarih or str(bugun_tr()))[:10]
             htip = (isl.harcama_tipi or "").strip().lower()
             if htip not in ("isletme", "sahsi", "belirsiz"):
-                htip = "belirsiz" if tip == "HARCAMA" else "isletme"
+                if tip == "HARCAMA":
+                    htip = None
+                    _ak = _satici_anahtar(isl.aciklama)
+                    if _ak:
+                        cur.execute("SELECT harcama_tipi FROM kart_satici_kural WHERE anahtar=%s", (_ak,))
+                        _r = cur.fetchone()
+                        if _r:
+                            htip = dict(_r)["harcama_tipi"]
+                    htip = htip or "belirsiz"
+                else:
+                    htip = "isletme"
             anahtar = f"{body.kart_id}|{tarih}|{tutar:.2f}|{tip}|{(isl.aciklama or '')[:40]}"
             hid = "eks_" + hashlib.md5(anahtar.encode("utf-8")).hexdigest()[:24]
             cur.execute(
