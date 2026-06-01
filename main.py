@@ -1671,6 +1671,16 @@ def kart_harcama_ozet():
         }
 
 
+@app.get("/api/kartlar/ekstre-ping")
+def kart_ekstre_ping():
+    """Teşhis: pdfplumber yüklü mü + yeni kod canlı mı (deploy doğrulama)."""
+    try:
+        import pdfplumber
+        return {"ok": True, "pdfplumber": getattr(pdfplumber, "__version__", "?"), "marker": "e0-sync-v2"}
+    except Exception as e:
+        return {"ok": False, "hata": str(e), "marker": "e0-sync-v2"}
+
+
 @app.post("/api/kartlar/ekstre-yukle")
 def kart_ekstre_yukle(dosya: UploadFile = File(...)):
     """Faz E0: Banka kredi kartı ekstresi (PDF) yükle → ayrıştır → mutabakat ÖNİZLEME.
