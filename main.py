@@ -11,7 +11,7 @@ from typing import Optional, List, Any, Dict
 from datetime import date, datetime, timedelta
 import uuid, os, json, pathlib, calendar, threading, hashlib
 from collections import defaultdict
-from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis
+from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns
 from operasyon_stok_motor import eksik_kullanim_kontrol, tum_subeler_skor_guncelle
 from tr_saat import bugun_tr, dt_now_tr_naive
 from kasa_service import (
@@ -267,6 +267,11 @@ def startup():
             ensure_dusum_modu(cur)
     except Exception as e:
         logger.warning("dusum_modu migrasyonu (startup): %s", e)
+    try:
+        with db() as (conn, cur):
+            ensure_kart_kategori_columns(cur)
+    except Exception as e:
+        logger.warning("kart kategori (harcama_tipi/sahip) migrasyonu (startup): %s", e)
     try:
         with db() as (conn, cur):
             ensure_operasyon_event_durum_latent(cur)

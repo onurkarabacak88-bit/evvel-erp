@@ -192,6 +192,22 @@ def ensure_dusum_modu(cur) -> None:
         """)
 
 
+def ensure_kart_kategori_columns(cur) -> None:
+    """Faz K-A: kart_hareketleri.harcama_tipi (şahsi/işletme) + kartlar.sahip.
+    Bağımsız migration — init_db tek transaction'ı geç bir hatayla geri sarılırsa
+    bu kolonlar yine de eklensin diye startup'ta ayrıca çağrılır."""
+    cur.execute(
+        "ALTER TABLE kart_hareketleri ADD COLUMN IF NOT EXISTS harcama_tipi TEXT NOT NULL DEFAULT 'belirsiz'"
+    )
+    cur.execute(
+        "ALTER TABLE kartlar ADD COLUMN IF NOT EXISTS sahip TEXT NOT NULL DEFAULT 'İşletme'"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_kart_hareketleri_tip "
+        "ON kart_hareketleri (kart_id, harcama_tipi, durum)"
+    )
+
+
 def ensure_rapor_kapanis(cur) -> None:
     """Aylık rapor kapanış mührü tablosu (NRF dönem kapanışı). init_db tek
     transaction içinde geç hatayla geri sarılırsa kaybolmasın diye startup'ta
