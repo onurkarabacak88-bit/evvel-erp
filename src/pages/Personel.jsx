@@ -328,6 +328,25 @@ export default function Personel() {
             )}
           </div>
 
+          {/* KPI özet şeridi — bakışta öncelik */}
+          {aylikData && (() => {
+            let odenecek = 0, onayli = 0, odendi = 0, bekleyen = 0;
+            aylikData.personeller.forEach(p => {
+              const od = String(p.odeme_durumu || '');
+              if (od === 'odendi') odendi++;
+              else if (p.durum === 'onaylandi') { onayli++; odenecek += Number(p.hesaplanan_net || 0); }
+              else bekleyen++;
+            });
+            return (
+              <div className="maas-kpi-wrap">
+                <div className="maas-kpi"><div className="lbl">💸 Ödenecek (onaylı)</div><div className="val" style={{color:'var(--blue)'}}>{fmt(odenecek)}</div></div>
+                <div className="maas-kpi"><div className="lbl">✅ Öde hazır</div><div className="val" style={{color:'var(--green)'}}>{onayli}</div></div>
+                <div className="maas-kpi"><div className="lbl">💰 Ödendi</div><div className="val" style={{color:'var(--blue)'}}>{odendi}</div></div>
+                <div className="maas-kpi"><div className="lbl">⏳ Hazırlanacak</div><div className="val" style={{color:'var(--text2)'}}>{bekleyen}</div></div>
+              </div>
+            );
+          })()}
+
           {/* Arrears bilgi şeridi — kafa karışmasın */}
           <div style={{
             display:'flex',alignItems:'center',gap:8,marginBottom:14,padding:'9px 13px',
@@ -345,16 +364,17 @@ export default function Personel() {
             <div style={{textAlign:'center',padding:40,color:'var(--text3)'}}>Yükleniyor...</div>
           ) : aylikData && (
             <div style={{display:'flex',flexDirection:'column',gap:12}}>
-              {aylikData.personeller.map(p => {
+              {aylikData.personeller.map((p, _i) => {
                 const f = kayitForm[p.personel_id] || {};
                 const durum = p.durum;
                 const onaylandi = durum === 'onaylandi';
                 const odemeDurum = String(p.odeme_durumu || '');
+                const stage = odemeDurum === 'odendi' ? 'odendi' : onaylandi ? 'onayli' : durum === 'taslak' ? 'taslak' : 'tahmini';
+                const stageOrder = { tahmini: 0, taslak: 1, onayli: 2, odendi: 3 }[stage];
+                const stageSteps = [['tahmini', 'Girilmedi'], ['taslak', 'Taslak'], ['onayli', 'Onaylı'], ['odendi', 'Ödendi']];
                 return (
-                  <div key={p.personel_id} style={{
-                    background:'var(--bg2)',border:`1px solid ${onaylandi?'var(--green)':'var(--border)'}`,
-                    borderRadius:10,padding:'14px 16px'
-                  }}>
+                  <div key={p.personel_id} className={`maas-card stage-${stage}`}
+                    style={{ animationDelay: `${Math.min(_i * 45, 360)}ms` }}>
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
                       <div>
                         <span style={{fontWeight:700,fontSize:14}}>{p.ad_soyad}</span>
@@ -365,13 +385,17 @@ export default function Personel() {
                         </span>
                       </div>
                       <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                        <span style={{
-                          fontSize:11,padding:'3px 8px',borderRadius:4,fontWeight:600,
-                          background: onaylandi?'rgba(0,200,100,0.15)': durum==='taslak'?'rgba(250,200,0,0.15)':'rgba(150,150,150,0.15)',
-                          color: onaylandi?'var(--green)': durum==='taslak'?'var(--yellow)':'var(--text3)'
-                        }}>
-                          {onaylandi?'✓ Hesap kilitli': durum==='taslak'?'Taslak kaydedildi':'Girilmedi'}
-                        </span>
+                        <div className="maas-pipe">
+                          {stageSteps.map(([k, lbl], si) => {
+                            const cls = si < stageOrder ? 'seg done'
+                              : si === stageOrder ? `seg ${stage === 'odendi' ? 'paid' : 'active'}`
+                              : 'seg';
+                            return [
+                              si > 0 ? <span key={'a' + k} className="arw">›</span> : null,
+                              <span key={k} className={cls}>{si < stageOrder ? '✓ ' : ''}{lbl}</span>,
+                            ];
+                          })}
+                        </div>
                         {!odemeDurum ? (
                           <span className="badge badge-gray">— Plan yok</span>
                         ) : odemeDurum === 'odendi' ? (
@@ -462,6 +486,7 @@ export default function Personel() {
                         </div>
                       </>)}
 
+                      {p.calisma_turu === 'surekli' && (<>
                       <div>
                         <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:3}}>Fazla Mesai (saat)</label>
                         <input type="number" min={0} step={0.5}
@@ -481,6 +506,7 @@ export default function Personel() {
                             background:onaylandi?'var(--bg3)':'var(--bg1)',color:'var(--text1)'}}/>
                         <span style={{fontSize:10,color:'#f97316'}}>×2 ücret (dini bayram)</span>
                       </div>
+                      </>)}
 
                       <div>
                         <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:3}}>Manuel Düzeltme (₺)</label>
@@ -513,10 +539,12 @@ export default function Personel() {
                           : `Saatlik: ${fmt(p.saatlik_ucret)} · Yan: ${fmt(p.yemek_ucreti+p.yol_ucreti)}`
                         }
                       </div>
-                      <div style={{fontSize:16,fontWeight:700,color:'#4a9eff'}}>
-                        Net: {fmt(p.hesaplanan_net)}
-                        {durum === 'tahmini' && <span style={{fontSize:10,color:'var(--text3)',marginLeft:4}}>TAHMİNİ</span>}
-                        {p.odeme_tarihi && <span style={{fontSize:10,color:'var(--text3)',marginLeft:6}}>· ödeme {new Date(p.odeme_tarihi).toLocaleDateString('tr-TR',{day:'numeric',month:'short'})}</span>}
+                      <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',lineHeight:1.2}}>
+                        <span className={`maas-net ${stage==='odendi'?'paid':''}`}>{fmt(p.hesaplanan_net)}</span>
+                        <span style={{fontSize:10,color:'var(--text3)',marginTop:2}}>
+                          {durum === 'tahmini' ? 'TAHMİNİ NET' : 'NET'}
+                          {p.odeme_tarihi && ` · ödeme ${new Date(p.odeme_tarihi).toLocaleDateString('tr-TR',{day:'numeric',month:'short'})}`}
+                        </span>
                       </div>
                       <div style={{display:'flex',gap:8}}>
                         {!onaylandi && (

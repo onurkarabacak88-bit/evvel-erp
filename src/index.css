@@ -243,3 +243,25 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .slot-avatar-wrap:hover .slot-av-remove{opacity:1}
 .slot-avatar-face{cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none}
 .slot-avatar-face:active{cursor:grabbing}
+
+/* ── Maaş / Bordro alanı — Faz 1.5 profesyonel tasarım ── */
+@keyframes maasIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.maas-card{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--border);border-radius:11px;padding:14px 16px;opacity:0;animation:maasIn .36s cubic-bezier(.2,.7,.3,1) forwards;transition:border-color .2s ease,box-shadow .2s ease,transform .12s ease}
+.maas-card:hover{box-shadow:0 8px 26px rgba(0,0,0,.30);transform:translateY(-1px)}
+.maas-card.stage-tahmini{border-left-color:var(--text3)}
+.maas-card.stage-taslak{border-left-color:var(--yellow)}
+.maas-card.stage-onayli{border-left-color:var(--green)}
+.maas-card.stage-odendi{border-left-color:var(--blue)}
+.maas-pipe{display:flex;align-items:center;flex-wrap:wrap;gap:0}
+.maas-pipe .seg{font-size:10.5px;font-weight:600;color:var(--text3);padding:3px 10px;border-radius:999px;background:var(--bg3);white-space:nowrap;transition:all .28s ease}
+.maas-pipe .seg.done{color:var(--green);background:rgba(76,175,132,.12)}
+.maas-pipe .seg.active{color:#0f1117;background:var(--accent);box-shadow:0 2px 10px rgba(200,149,106,.45)}
+.maas-pipe .seg.paid{color:#0f1117;background:var(--blue);box-shadow:0 2px 10px rgba(91,155,214,.45)}
+.maas-pipe .arw{color:var(--text3);font-size:11px;margin:0 4px;opacity:.55}
+.maas-net{font-family:var(--font-mono);font-size:19px;font-weight:700;letter-spacing:-.4px;color:var(--blue)}
+.maas-net.paid{color:var(--green)}
+.maas-kpi-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.maas-kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;animation:maasIn .3s ease forwards;transition:transform .13s ease,box-shadow .13s ease}
+.maas-kpi:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.25)}
+.maas-kpi .lbl{font-size:11px;color:var(--text3);font-weight:600;margin-bottom:5px;display:flex;align-items:center;gap:5px}
+.maas-kpi .val{font-family:var(--font-mono);font-size:21px;font-weight:700;letter-spacing:-.5px}
