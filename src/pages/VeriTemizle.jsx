@@ -82,6 +82,49 @@ export default function VeriTemizle() {
   const [depoBusy, setDepoBusy] = useState(false);
   const [depoSonuc, setDepoSonuc] = useState(null);
   const [depoHata, setDepoHata] = useState(null);
+  // 1 Haziran canlı başlangıç araçları
+  const [kasaTutar, setKasaTutar] = useState('45000');
+  const [glPin, setGlPin] = useState('');
+  const [glBusy, setGlBusy] = useState('');
+  const [glMsg, setGlMsg] = useState(null);
+
+  const presetCanliBaslangic = () => {
+    // SADECE işlemsel veriler — TANIMLAR korunur (sabit_gider, borc/krediler, kartlar, personel)
+    setSecili(new Set([
+      'ciro', 'ciro_taslak', 'kasa', 'kart_hareketleri', 'anlik_gider',
+      'vadeli_alim', 'banka_yatirimlari', 'odeme_plani', 'onay_kuyrugu', 'x_rapor_kayit',
+      'sube_acilis', 'sube_operasyon_event', 'sube_operasyon_uyari', 'sube_operasyon_ozet',
+      'kapanis_kayit', 'kasa_teslim',
+    ]));
+    setSonuc(null); setHata(null);
+  };
+
+  const kasaAcilisKur = async () => {
+    setGlMsg(null);
+    const t = parseFloat(kasaTutar);
+    if (!(t >= 0)) { setGlMsg({ t: 'red', m: 'Geçerli bir kasa tutarı girin.' }); return; }
+    if (!glPin) { setGlMsg({ t: 'red', m: 'İşletme PIN gerekli (Merve Karabacak).' }); return; }
+    setGlBusy('kasa');
+    try {
+      const r = await api('/kasa/acilis-devri', { method: 'POST', body: { tutar: t, onay_pin: glPin, tarih: '2026-06-01' } });
+      setGlMsg({ t: 'green', m: `✓ Açılış kasası kuruldu. Kasa bakiyesi: ${r.kasa_bakiye?.toLocaleString('tr-TR')} ₺` });
+      publishGlobalDataRefresh('kasa-acilis');
+    } catch (e) { setGlMsg({ t: 'red', m: e.message || 'Kasa açılışı kurulamadı' }); }
+    finally { setGlBusy(''); }
+  };
+
+  const topluDevirKur = async () => {
+    setGlMsg(null);
+    if (!glPin) { setGlMsg({ t: 'red', m: 'İşletme PIN gerekli (Merve Karabacak).' }); return; }
+    setGlBusy('devir');
+    try {
+      const r = await api('/kartlar/toplu-devir', { method: 'POST', body: { onay_pin: glPin } });
+      const ozet = (r.kartlar || []).map(k => `${k.kart}: ${k.devir_borc?.toLocaleString('tr-TR')}`).join(' · ');
+      setGlMsg({ t: 'green', m: `✓ ${r.kart_sayisi} kart devri kuruldu. ${ozet}` });
+      publishGlobalDataRefresh('kart-devir');
+    } catch (e) { setGlMsg({ t: 'red', m: e.message || 'Toplu devir kurulamadı' }); }
+    finally { setGlBusy(''); }
+  };
 
   const depoKalintiYukle = async () => {
     try {
@@ -263,6 +306,40 @@ export default function VeriTemizle() {
         }}
       >
         <strong style={{ color: '#fecaca' }}>Üretim verisinde kullanmayın.</strong> Yedek alın. Bu işlem kalıcıdır.
+      </div>
+
+      {/* ── 1 HAZİRAN CANLI BAŞLANGIÇ ───────────────────────────── */}
+      <div style={{ padding: '14px 16px', borderRadius: 8, border: '1px solid rgba(34,197,94,0.45)', background: 'rgba(34,197,94,0.08)', marginBottom: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>🚀 1 Haziran Canlı Başlangıç</div>
+        <p style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6, margin: '0 0 10px' }}>
+          Sıra: <strong>1)</strong> Aşağıdaki <strong>"Ön ayar: canlı başlangıç temizliği"</strong>ni seç → onay kutusuna <span className="mono">{ONAY_METNI}</span> yaz → sil.
+          Bu <strong>tanımları korur</strong> (krediler, sabit giderler, kartlar, personel, ekstre snapshot'ları); sadece işlemsel/test verisini siler (bugün gelen onaylanmamış akışlar dahil).
+          <strong> 2)</strong> Kasa açılışını kur. <strong>3)</strong> Kart devirlerini kur. Hepsi İşletme PIN ister.
+        </p>
+        <button type="button" className="btn btn-secondary btn-sm" style={{ marginBottom: 12 }} onClick={presetCanliBaslangic}>
+          Ön ayar: canlı başlangıç temizliği (tanımları korur)
+        </button>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 12, marginBottom: 10 }}>
+          <div style={{ background: 'var(--bg2)', borderRadius: 6, padding: 12 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>💵 2) Kasa açılışı (devir)</div>
+            <input className="input" type="number" value={kasaTutar} onChange={(e) => setKasaTutar(e.target.value)}
+              placeholder="45000" style={{ width: '100%', marginBottom: 8 }} />
+            <button type="button" className="btn btn-primary btn-sm" disabled={glBusy === 'kasa'} onClick={kasaAcilisKur}>
+              {glBusy === 'kasa' ? '…' : 'Kasayı bu tutara kur'}
+            </button>
+          </div>
+          <div style={{ background: 'var(--bg2)', borderRadius: 6, padding: 12 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>💳 3) Kart devirleri (snapshot'tan)</div>
+            <p style={{ fontSize: 11, color: 'var(--text3)', margin: '0 0 8px' }}>Her kartın son ekstre borcunu açılış devri olarak kurar (gider/kasa etkilenmez).</p>
+            <button type="button" className="btn btn-primary btn-sm" disabled={glBusy === 'devir'} onClick={topluDevirKur}>
+              {glBusy === 'devir' ? '…' : 'Tüm kartlara devir kur'}
+            </button>
+          </div>
+        </div>
+        <input className="input" type="password" value={glPin} onChange={(e) => setGlPin(e.target.value)}
+          placeholder="İşletme PIN (Merve Karabacak)" autoComplete="off" style={{ maxWidth: 280 }} />
+        {glMsg && <div style={{ marginTop: 10, fontSize: 12, color: glMsg.t === 'green' ? '#86efac' : '#fecaca' }}>{glMsg.m}</div>}
       </div>
 
       <div

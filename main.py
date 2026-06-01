@@ -2332,6 +2332,81 @@ def kart_ledger_sifirla(kid: str, body: KartLedgerSifirlaBody):
     return {"success": True, "kart_sayisi": len(kart_ids), "iptal_edilen_hareket": toplam_iptal}
 
 
+class KasaAcilisBody(BaseModel):
+    tutar: float
+    onay_pin: Optional[str] = None
+    tarih: Optional[str] = None        # default 2026-06-01
+
+
+@app.post("/api/kasa/acilis-devri")
+def kasa_acilis_devri(body: KasaAcilisBody):
+    """Sistemin AÇILIŞ kasasını (devir) belirler — kasayı tek kayıtla gerçek tutara çeker.
+    Önceki açılış kaydını siler, yenisini yazar. İşletme onayı (Merve Karabacak PIN) şart.
+    NOT: Diğer kasa hareketlerine dokunmaz; sadece açılış/devir kalemini kurar. Auditli."""
+    from operasyon_merkez_api import _isletme_onay_dogrula
+    from finans_core import kasa_bakiyesi
+    tarih = (body.tarih or "2026-06-01")[:10]
+    with db() as (conn, cur):
+        onayci = _isletme_onay_dogrula(cur, body.onay_pin)  # PIN hatalı → 403
+        cur.execute("DELETE FROM kasa_hareketleri WHERE islem_turu='ACILIS_DEVRI'")
+        insert_kasa_hareketi(
+            cur, tarih, "ACILIS_DEVRI", float(body.tutar),
+            "Sistem açılış kasası (1 Haziran devri)", "sistem", "acilis_devri",
+            idempotency_key=f"acilis_devri_{tarih}_{uuid.uuid4().hex[:10]}",
+        )
+        audit(cur, "kasa_hareketleri", "acilis_devri", "KASA_ACILIS",
+              yeni={"tutar": float(body.tutar), "tarih": tarih, "onayci": onayci.get("ad_soyad")})
+        yeni_bakiye = kasa_bakiyesi(cur)
+    return {"success": True, "kasa_bakiye": round(yeni_bakiye, 2)}
+
+
+class TopluDevirBody(BaseModel):
+    onay_pin: Optional[str] = None
+
+
+@app.post("/api/kartlar/toplu-devir")
+def kartlar_toplu_devir(body: TopluDevirBody):
+    """Her kartın en son ekstre snapshot'ındaki (kart_ekstre_donem) dönem borcunu
+    AÇILIŞ DEVRİ (islem_turu='DEVIR') olarak kurar → kart borçları Haziran'a temiz taşınır.
+    Gider sayılmaz, kasaya dokunmaz. İşletme onayı şart. Auditli. Tekrar çalıştırılabilir."""
+    from operasyon_merkez_api import _isletme_onay_dogrula
+    with db() as (conn, cur):
+        onayci = _isletme_onay_dogrula(cur, body.onay_pin)
+        cur.execute("SELECT id::text, kart_adi FROM kartlar WHERE aktif=TRUE")
+        kartlar = [dict(r) for r in (cur.fetchall() or [])]
+        sonuc = []
+        for k in kartlar:
+            kid = k["id"]
+            cur.execute(
+                """SELECT donem_borcu, kesim_tarihi::text AS kt
+                   FROM kart_ekstre_donem WHERE kart_id=%s ORDER BY donem DESC LIMIT 1""",
+                (kid,),
+            )
+            r = cur.fetchone()
+            if not r:
+                continue
+            r = dict(r)
+            if r.get("donem_borcu") is None:
+                continue
+            borc = float(r["donem_borcu"])
+            manid = "devir_" + kid
+            cur.execute("DELETE FROM kart_hareketleri WHERE id IN (%s, %s)", (manid, "man_" + kid))
+            diger = float(kart_borc(cur, kid) or 0)
+            adj = round(borc - diger, 2)
+            if abs(adj) > 0.01:
+                cur.execute(
+                    """INSERT INTO kart_hareketleri
+                       (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama, kaynak_tablo, kaynak_id)
+                       VALUES (%s,%s,%s::date,'DEVIR',%s,1,%s,'devir',%s)""",
+                    (manid, kid, (r.get("kt") or "2026-05-31"), adj,
+                     "Açılış / devreden borç (son ekstre bakiyesi)", manid),
+                )
+            sonuc.append({"kart": k["kart_adi"], "devir_borc": round(kart_borc(cur, kid), 2)})
+        audit(cur, "kart_hareketleri", "toplu", "TOPLU_DEVIR",
+              yeni={"adet": len(sonuc), "onayci": onayci.get("ad_soyad")})
+    return {"success": True, "kart_sayisi": len(sonuc), "kartlar": sonuc}
+
+
 class EkstreImportIslem(BaseModel):
     tarih: Optional[str] = None
     tutar: float
