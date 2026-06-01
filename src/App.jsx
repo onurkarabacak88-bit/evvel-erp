@@ -36,7 +36,6 @@ const NAV = [
     { id: 'ops-merkez',       label: 'Operasyon Merkezi',   icon: '📡' },
     { id: 'akilli-denetim',   label: 'Akıllı Denetim',      icon: '🧠' },
     { id: 'strateji',         label: 'Strateji Motoru',     icon: '🎯' },
-    { id: 'rapor',            label: 'Aylık Rapor',         icon: '📈' },
   ]},
   { group: 'Onay Bekleyenler', gicon: '✅', items: [
     { id: 'onay',             label: 'Onay Kuyruğu',        icon: '✅' },
@@ -49,7 +48,6 @@ const NAV = [
     { id: 'anlik-gider',      label: 'Anlık Gider',         icon: '💸' },
     { id: 'dis-kaynak',       label: 'Dış Kaynak Geliri',   icon: '🪙' },
     { id: 'vadeli',           label: 'Vadeli Alım',         icon: '📦' },
-    { id: 'ledger',           label: 'İşlem Defteri',       icon: '📒' },
   ]},
   { group: 'Kartlar', gicon: '💳', items: [
     { id: 'kart-merkez',      label: 'Kart Merkezi',        icon: '🏧' },
@@ -66,6 +64,10 @@ const NAV = [
     { id: 'sabit-giderler',   label: 'Sabit Giderler',      icon: '🏠' },
     { id: 'borclar',          label: 'Borç Envanteri',      icon: '🏦' },
     { id: 'tedarikciler',     label: 'Tedarikçiler',        icon: '🚚' },
+  ]},
+  { group: 'Rapor & Defter', gicon: '📒', items: [
+    { id: 'rapor',            label: 'Aylık Rapor',         icon: '📈' },
+    { id: 'ledger',           label: 'İşlem Defteri',       icon: '📒' },
   ]},
   { group: 'Veri & Sistem', gicon: '🔧', items: [
     { id: 'excel',            label: 'Excel Import',        icon: '📊' },
