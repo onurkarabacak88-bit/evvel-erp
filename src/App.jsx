@@ -47,10 +47,15 @@ const NAV = [
     { id: 'evo-satis',        label: 'Ürün Satışları',      icon: '☕' },
     { id: 'kasa-teslim',      label: 'Kasa Teslim',         icon: '💵' },
     { id: 'anlik-gider',      label: 'Anlık Gider',         icon: '💸' },
-    { id: 'kart-hareketleri', label: 'Kart Hareketi',       icon: '💳' },
     { id: 'dis-kaynak',       label: 'Dış Kaynak Geliri',   icon: '🪙' },
     { id: 'vadeli',           label: 'Vadeli Alım',         icon: '📦' },
     { id: 'ledger',           label: 'İşlem Defteri',       icon: '📒' },
+  ]},
+  { group: 'Kartlar', gicon: '💳', items: [
+    { id: 'kart-merkez',      label: 'Kart Merkezi',        icon: '🏧' },
+    { id: 'kartlar',          label: 'Kartlar',             icon: '💳' },
+    { id: 'kart-hareketleri', label: 'Kart Hareketi',       icon: '🧾' },
+    { id: 'kart-analiz',      label: 'Ekstre Analizi',      icon: '📂' },
   ]},
   { group: 'Personel & Vardiya', gicon: '👥', items: [
     { id: 'personel',         label: 'Personel & Maaş',     icon: '👥' },
@@ -58,9 +63,6 @@ const NAV = [
     { id: 'sube-panel-pin',   label: 'Personel Panel PIN',  icon: '🔐' },
   ]},
   { group: 'Tanımlar', gicon: '🗂️', items: [
-    { id: 'kartlar',          label: 'Kartlar',             icon: '💳' },
-    { id: 'kart-merkez',      label: 'Kart Merkezi',        icon: '🏧' },
-    { id: 'kart-analiz',      label: 'Ekstre Analizi',      icon: '📂' },
     { id: 'sabit-giderler',   label: 'Sabit Giderler',      icon: '🏠' },
     { id: 'borclar',          label: 'Borç Envanteri',      icon: '🏦' },
     { id: 'tedarikciler',     label: 'Tedarikçiler',        icon: '🚚' },
