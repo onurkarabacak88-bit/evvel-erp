@@ -8957,6 +8957,14 @@ function altSekmeAc(id) {
 }
 
 window.solSekmeAc = function(id) {
+  // 🔒 GÜN KAPANDI: yalnızca «Depodan Gelen — Teslim Al» (+ Ana sayfa / Sipariş Takip görüntüleme) açık.
+  try {
+    var _opK = (typeof lastData !== 'undefined' && lastData && lastData.operasyon) || {};
+    if (_opK.kapanis_tamamlandi_bugun === true && ['depoTeslim', 'ana', 'siparisTakip'].indexOf(id) === -1) {
+      showToast('🔒 Gün kapandı — yalnızca «Depodan Gelen — Teslim Al» kullanılabilir.', 'info', 4500);
+      return;
+    }
+  } catch (e) { /* veri yoksa normal akış */ }
   if (aktifAltSekme === 'ac' && id !== 'ac') {
     var acOz = stokSecimOzeti('ac', _stokKatalogByPrefix.ac || []);
     if (acOz.kalem > 0) {
@@ -9029,6 +9037,14 @@ window.sagSekmeAc = function(id) {
 
 // ─── DEVIR MODAL ──────────────────────────────────────────────
 window.devirModalAc = function() {
+  // 🔒 Gün kapandıysa kasa devri de açılmaz (yalnızca depodan teslim al).
+  try {
+    var _opD = (typeof lastData !== 'undefined' && lastData && lastData.operasyon) || {};
+    if (_opD.kapanis_tamamlandi_bugun === true) {
+      showToast('🔒 Gün kapandı — yalnızca «Depodan Gelen — Teslim Al» kullanılabilir.', 'info', 4500);
+      return;
+    }
+  } catch (e) { /* */ }
   var m = document.getElementById('devirModal');
   if (!m) return;
   m.classList.add('acik');
@@ -12192,6 +12208,14 @@ function updateSolAksiyonChips(data) {
       kapChip.className = 'sol-ak-chip tamam';
       if (kapKart) { kapKart.style.opacity = '0.6'; kapKart.style.pointerEvents = 'none'; }
     } else if (kapKart) { kapKart.style.opacity = ''; kapKart.style.pointerEvents = ''; }
+    // 🔒 Gün kapandıysa: kasa devri kartı + aksiyon butonları soluk (yalnızca Depodan Teslim Al / Ana / Takip açık).
+    var _devKart = document.getElementById('solDevirKart');
+    if (_devKart) { _devKart.style.opacity = kapBitti ? '0.6' : ''; _devKart.style.pointerEvents = kapBitti ? 'none' : ''; }
+    var _acikIds = ['solAnaBtn', 'solDepoTeslimBtn', 'solSiparisTakipBtn'];
+    document.querySelectorAll('#sol .sol-btn').forEach(function (b) {
+      if (_acikIds.indexOf(b.id) !== -1) { b.style.opacity = ''; return; }
+      b.style.opacity = kapBitti ? '0.45' : '';
+    });
     if (kapBitti) { /* kapandı: aşağıdaki dallar atlanır */ }
     else if (kapDurum === 'gecikti') {
       kapChip.textContent = '⚠ Gecikti';
