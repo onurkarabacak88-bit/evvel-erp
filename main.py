@@ -1696,7 +1696,6 @@ def kart_borc_faiz_ozet():
         cur.execute("SELECT id::text, kart_adi, banka, COALESCE(sahip,'İşletme') AS sahip, "
                     "limit_tutar, kesim_gunu, son_odeme_gunu, son_dort_hane FROM kartlar WHERE aktif=TRUE ORDER BY kart_adi")
         kartlar = [dict(r) for r in (cur.fetchall() or [])]
-        borc_map = tum_kart_borclari(cur)
         # ekstre snapshot toplamları (faiz) + son dönem
         cur.execute("""
             SELECT kart_id::text,
@@ -1709,7 +1708,7 @@ def kart_borc_faiz_ozet():
         bu_ay = str(_date(bugun.year, bugun.month, 1))
         satirlar, toplam_borc, toplam_faiz, eksik = [], 0.0, 0.0, []
         for k in kartlar:
-            b = float(borc_map.get(k["id"], 0) or 0)
+            b = float(kart_borc(cur, k["id"]) or 0)
             s = snap.get(k["id"], {})
             tf = float(s.get("toplam_faiz") or 0)
             son_donem = s.get("son_donem")
