@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
 
 const BOSH = { kart_adi: '', banka: '', limit_tutar: '', kesim_gunu: 15, son_odeme_gunu: 25,
-  faiz_orani: '', asgari_oran: 40, gecikme_faiz_orani: '', sahip: 'İşletme' };
+  faiz_orani: '', asgari_oran: 40, gecikme_faiz_orani: '', sahip: 'İşletme', ortak_limit_grup: '' };
 
 export default function Kartlar() {
   const [kartlar, setKartlar] = useState([]);
@@ -51,7 +51,8 @@ export default function Kartlar() {
       faiz_orani: k.faiz_orani,
       asgari_oran: k.asgari_oran ?? 40,
       gecikme_faiz_orani: k.gecikme_faiz_orani ?? 0,
-      sahip: k.sahip ?? 'İşletme' });
+      sahip: k.sahip ?? 'İşletme',
+      ortak_limit_grup: k.ortak_limit_grup ?? '' });
     setDuzenleId(k.id); setShowModal(true);
   }
 
@@ -227,6 +228,7 @@ export default function Kartlar() {
                   ['Faiz / Asgari Oranı', `%${k.faiz_orani} / %${k.asgari_oran ?? 40}`],
                   ['Ham Kesim/Son Öd.', `${k.kesim_gunu}/${k.son_odeme_gunu}. gün`],
                   ['Kart Sahibi', k.sahip || 'İşletme'],
+                  ...(k.ortak_grup_uye ? [[`🔗 Ortak Limit (${k.ortak_grup_uye} kart)`, `${fmt(k.ortak_grup_borc)} / ${fmt(k.ortak_grup_limit)}`]] : []),
                 ].map(([label, val]) => (
                   <div key={label} style={{ background: 'var(--bg3)', borderRadius: 6, padding: '7px 10px' }}>
                     <div style={{ color: 'var(--text3)', marginBottom: 2, fontSize: 11 }}>{label}</div>
@@ -267,6 +269,11 @@ export default function Kartlar() {
                   <label>Kart Sahibi</label>
                   <input placeholder="İşletme, Annem, Onur..." value={form.sahip}
                     onChange={e => setForm({ ...form, sahip: e.target.value })}/>
+                </div>
+                <div className="form-group">
+                  <label>Ortak Limit Grubu</label>
+                  <input placeholder="Aynı krediyi paylaşan kartlara aynı etiket" value={form.ortak_limit_grup}
+                    onChange={e => setForm({ ...form, ortak_limit_grup: e.target.value })}/>
                 </div>
                 <div className="form-group">
                   <label>Limit (₺)</label>

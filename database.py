@@ -206,6 +206,9 @@ def ensure_kart_kategori_columns(cur) -> None:
         "ALTER TABLE kartlar ADD COLUMN IF NOT EXISTS sahip TEXT NOT NULL DEFAULT 'İşletme'"
     )
     cur.execute(
+        "ALTER TABLE kartlar ADD COLUMN IF NOT EXISTS ortak_limit_grup TEXT"
+    )
+    cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_kart_hareketleri_tip "
         "ON kart_hareketleri (kart_id, harcama_tipi, durum)"
     )

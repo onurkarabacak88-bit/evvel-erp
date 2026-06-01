@@ -1349,6 +1349,7 @@ class KartModel(BaseModel):
     gecikme_faiz_orani: float = 0.0  # Asgari altı ödemede uygulanan yıllık % (0 → akdi×1.3 fallback)
     son_dort_hane: Optional[str] = None  # PDF ekstre eşleştirme için son 4 hane
     sahip: Optional[str] = None      # Kart sahibi (İşletme / Annem / ...) — sorumluluk ayrımı
+    ortak_limit_grup: Optional[str] = None  # Aynı krediyi paylaşan kartlar (aynı etiket = ortak limit)
 
 @app.get("/api/kartlar")
 def kartlar_listele():
@@ -1454,18 +1455,38 @@ def kartlar_listele():
                 "blink": gun_kaldi <= 0 and yaklasan is not None,
                 "yaklasan_odeme": dict(yaklasan) if yaklasan else None
             })
+        # ── ORTAK LİMİT HAVUZU: aynı grubu paylaşan kartlarda kalan limiti TEK
+        #    havuzdan hesapla (çift sayma). grup_limit = gruptaki en büyük limit.
+        gruplar = {}
+        for s in sonuc:
+            g = (s.get("ortak_limit_grup") or "").strip()
+            if g:
+                gruplar.setdefault(g, []).append(s)
+        for g, uyeler in gruplar.items():
+            if len(uyeler) < 2:
+                continue
+            grup_limit = max(float(u.get("limit_tutar") or 0) for u in uyeler)
+            grup_borc = sum(float(u.get("guncel_borc") or 0) for u in uyeler)
+            grup_kalan = grup_limit - grup_borc
+            for u in uyeler:
+                u["ortak_grup_limit"] = round(grup_limit, 2)
+                u["ortak_grup_borc"] = round(grup_borc, 2)
+                u["ortak_grup_uye"] = len(uyeler)
+                u["kalan_limit"] = round(grup_kalan, 2)  # paylaşılan → çift sayma yok
+                u["limit_doluluk"] = (grup_borc / grup_limit) if grup_limit > 0 else 0
         return sonuc
 
 @app.post("/api/kartlar")
 def kart_ekle(k: KartModel):
     with db() as (conn, cur):
         kid = str(uuid.uuid4())
-        cur.execute("""INSERT INTO kartlar (id,kart_adi,banka,limit_tutar,kesim_gunu,son_odeme_gunu,faiz_orani,asgari_oran,gecikme_faiz_orani,son_dort_hane,sahip)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        cur.execute("""INSERT INTO kartlar (id,kart_adi,banka,limit_tutar,kesim_gunu,son_odeme_gunu,faiz_orani,asgari_oran,gecikme_faiz_orani,son_dort_hane,sahip,ortak_limit_grup)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (kid, k.kart_adi, k.banka, k.limit_tutar, k.kesim_gunu, k.son_odeme_gunu,
              k.faiz_orani, k.asgari_oran, k.gecikme_faiz_orani,
              k.son_dort_hane.strip()[-4:] if k.son_dort_hane else None,
-             (k.sahip or 'İşletme').strip() or 'İşletme'))
+             (k.sahip or 'İşletme').strip() or 'İşletme',
+             (k.ortak_limit_grup or '').strip() or None))
         audit(cur, 'kartlar', kid, 'INSERT')
     return {"id": kid, "success": True}
 
@@ -1477,12 +1498,13 @@ def kart_guncelle(kid: str, k: KartModel):
         if not eski: raise HTTPException(404)
         cur.execute("""UPDATE kartlar SET kart_adi=%s,banka=%s,limit_tutar=%s,
             kesim_gunu=%s,son_odeme_gunu=%s,faiz_orani=%s,asgari_oran=%s,gecikme_faiz_orani=%s,
-            son_dort_hane=%s,sahip=%s
+            son_dort_hane=%s,sahip=%s,ortak_limit_grup=%s
             WHERE id=%s""",
             (k.kart_adi, k.banka, k.limit_tutar, k.kesim_gunu, k.son_odeme_gunu,
              k.faiz_orani, k.asgari_oran, k.gecikme_faiz_orani,
              k.son_dort_hane.strip()[-4:] if k.son_dort_hane else None,
-             (k.sahip or 'İşletme').strip() or 'İşletme', kid))
+             (k.sahip or 'İşletme').strip() or 'İşletme',
+             (k.ortak_limit_grup or '').strip() or None, kid))
         audit(cur, 'kartlar', kid, 'UPDATE', eski=eski)
     return {"success": True}
 
