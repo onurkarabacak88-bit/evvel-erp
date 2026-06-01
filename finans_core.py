@@ -233,6 +233,36 @@ def son_kapanan_kesim(kesim_gunu: int, son_odeme_gunu: int, as_of: date):
     return None
 
 
+def _taksit_payi_ref(cur, kart_id: str, ref_date: date) -> float:
+    """Belirtilen referans ayda HÂLÂ DEVAM EDEN taksitlerin aylık pay toplamı.
+    Biten taksit (kalan=0) dahil EDİLMEZ — ekstre, faiz, ödeme planı ve forecast
+    artık TEK bu mantığı kullanır (eskiden ekstre taksiti süresiz faturalıyordu).
+
+    Bir taksitli alım, [başlangıç ayı, başlangıç+taksit_sayisi-1] arasındaki aylarda
+    aylık payını (tutar/taksit_sayisi) biller; bu pencere dışında 0.
+    """
+    cur.execute(
+        """
+        SELECT COALESCE(baslangic_tarihi, tarih) AS bas, tutar, taksit_sayisi
+        FROM kart_hareketleri
+        WHERE kart_id = %s AND durum = 'aktif'
+          AND islem_turu = 'HARCAMA' AND taksit_sayisi > 1
+        """,
+        (kart_id,),
+    )
+    toplam = 0.0
+    for r in cur.fetchall():
+        r = dict(r)
+        bas = r["bas"]
+        n = int(r["taksit_sayisi"] or 1)
+        if n <= 1 or not bas:
+            continue
+        idx = (ref_date.year - bas.year) * 12 + (ref_date.month - bas.month)
+        if 0 <= idx < n:
+            toplam += float(r["tutar"]) / n
+    return round(toplam, 2)
+
+
 def kart_ekstre(cur, kart_id: str, kesim_gunu: int, kesim_tarihi: date = None) -> dict:
     """
     Kartın bir kesim dönemine ait ekstresi: tek çekim + taksit payı + devreden faiz.
@@ -263,13 +293,8 @@ def kart_ekstre(cur, kart_id: str, kesim_gunu: int, kesim_tarihi: date = None) -
         """, (kart_id, kesim_gunu, kesim_gunu))
         tek_cekim = float(cur.fetchone()['tek_cekim'])
 
-        cur.execute("""
-            SELECT COALESCE(SUM(tutar::float / NULLIF(taksit_sayisi, 0)), 0) AS aylik_taksit
-            FROM kart_hareketleri
-            WHERE kart_id = %s AND durum = 'aktif'
-            AND islem_turu = 'HARCAMA' AND taksit_sayisi > 1
-        """, (kart_id,))
-        aylik_taksit = float(cur.fetchone()['aylik_taksit'])
+        # Taksit payı: SADECE bu ay hâlâ devam eden taksitler (biten taksit faturalanmaz)
+        aylik_taksit = _taksit_payi_ref(cur, kart_id, _safe_date(bugun_tr().year, bugun_tr().month, kesim_gunu))
 
         cur.execute("""
             SELECT COALESCE(SUM(tutar), 0) AS devreden_faiz
@@ -294,15 +319,8 @@ def kart_ekstre(cur, kart_id: str, kesim_gunu: int, kesim_tarihi: date = None) -
         """, (kart_id, kesim_tarihi, kesim_tarihi))
         tek_cekim = float(cur.fetchone()['tek_cekim'])
 
-        # Taksitli — kesim_tarihi'nden ÖNCE açılmış olanların aylık payı
-        cur.execute("""
-            SELECT COALESCE(SUM(tutar::float / NULLIF(taksit_sayisi, 0)), 0) AS aylik_taksit
-            FROM kart_hareketleri
-            WHERE kart_id = %s AND durum = 'aktif'
-            AND islem_turu = 'HARCAMA' AND taksit_sayisi > 1
-            AND tarih <= %s::date
-        """, (kart_id, kesim_tarihi))
-        aylik_taksit = float(cur.fetchone()['aylik_taksit'])
+        # Taksit payı: bu KESİM ayında hâlâ devam eden taksitler (biten taksit faturalanmaz)
+        aylik_taksit = _taksit_payi_ref(cur, kart_id, kesim_tarihi)
 
         cur.execute("""
             SELECT COALESCE(SUM(tutar), 0) AS devreden_faiz
