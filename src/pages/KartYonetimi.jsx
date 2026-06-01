@@ -148,10 +148,14 @@ function BorcKocu() {
                 {proj.verilen.bitis_tarihi && <> (≈ <strong>{proj.verilen.bitis_tarihi.slice(0, 7)}</strong>)</>},
                 toplam faiz <strong style={{ color: 'var(--orange)' }}>{fmt(proj.verilen.toplam_faiz)}</strong>.
               </div>
-              {proj.tasarruf_faiz != null && proj.erken_ay != null && (
+              {proj.aylik < proj.toplam_asgari && (
+                <div className="alert-box yellow" style={{ marginTop: 8 }}>
+                  ⚠️ Girdiğin tutar toplam asgarinin ({fmt(proj.toplam_asgari)}) altında — gecikme faizi/risk doğar. Mümkünse asgari üstüne çık.
+                </div>
+              )}
+              {proj.erken_ay > 0 && proj.tasarruf_faiz > 0 && (
                 <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 8, padding: '8px 10px', background: 'var(--bg3)', borderRadius: 6 }}>
-                  💡 Sadece asgari ödesen: {proj.asgari_only.ay} ay + {fmt(proj.asgari_only.toplam_faiz)} faiz.
-                  Bu plan sana <strong style={{ color: 'var(--green)' }}>{fmt(proj.tasarruf_faiz)} faiz</strong> + <strong style={{ color: 'var(--green)' }}>{proj.erken_ay} ay</strong> kazandırır.
+                  💡 Sadece asgari ödesen {proj.asgari_only.ay} ay sürerdi. Bu plan sana <strong style={{ color: 'var(--green)' }}>{fmt(proj.tasarruf_faiz)} faiz</strong> + <strong style={{ color: 'var(--green)' }}>{proj.erken_ay} ay</strong> kazandırır.
                 </div>
               )}
             </>
