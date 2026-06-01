@@ -2510,13 +2510,12 @@ def maas_hesapla(p: dict, kayit: dict) -> float:
         fazla_ucret = (fazla_normal * saatlik) + (fazla_bayram * saatlik * 2)
         net = maas - kesinti + fazla_ucret + yemek + yol + manuel
     else:
-        # Part-time: saatlik ücret direkt
+        # PART-TIME: ay boyunca çalıştığı TOPLAM saat × saatlik ücret.
+        # Fazla mesai kavramı YOK — tüm saatler zaten saat başı ödeniyor (limit/ek mesai
+        # sadece sürekli/maaşlı için anlamlı). Yemek yok, yol + manuel düzeltme eklenir.
         saatlik = float(p.get('saatlik_ucret') or 0)
         saat    = float(kayit.get('calisma_saati') or 0)
-        normal  = saat * saatlik
-        fazla_ucret = (fazla_normal * saatlik) + (fazla_bayram * saatlik * 2)
-        # Part-time: yemek yok, yol var
-        net = normal + fazla_ucret + yol + manuel
+        net = (saat * saatlik) + yol + manuel
 
     return round(max(0, net), 2)
 
@@ -2686,9 +2685,13 @@ def personel_aylik_vardiya_aktar(pid: str, yil: int = None, ay: int = None):
 
         ct = (p.get("calisma_turu") or "surekli")
         if ct == "surekli":
+            # Sürekli: maaş sabit; vardiyadan yalnızca LİMİT ÜSTÜ ek mesai alınır.
             fazla = float(vk["ek_mesai_haftalik_toplam"])
         else:
+            # Part-time: ay boyunca çalışılan TOPLAM saat. Fazla/bayram yok (çift sayım olmasın).
             calisma = float(vk["toplam_ay_saat"])
+            fazla = 0.0
+            bayram = 0.0
 
         kayit_dict = {
             "calisma_saati": calisma,

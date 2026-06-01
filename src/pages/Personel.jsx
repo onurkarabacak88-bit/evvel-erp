@@ -392,11 +392,20 @@ export default function Personel() {
                     }}>
                       <span>
                         <strong style={{color:'var(--text2)'}}>Vardiya:</strong>{' '}
-                        Ay toplam <strong style={{color:'var(--text1)'}}>{Number(p.vardiya_ay_toplam_saat ?? 0).toFixed(1)}</strong> sa
-                        {' · '}
-                        Limit üstü ek mesai <strong style={{color:'var(--text1)'}}>{Number(p.vardiya_ek_mesai_saat ?? 0).toFixed(1)}</strong> sa
-                        {' · '}
-                        Haftalık limit <strong style={{color:'var(--text1)'}}>{Number(p.vardiya_haftalik_limit ?? 0).toFixed(0)}</strong> sa
+                        {p.calisma_turu === 'surekli' ? (
+                          <>
+                            Ay toplam <strong style={{color:'var(--text1)'}}>{Number(p.vardiya_ay_toplam_saat ?? 0).toFixed(1)}</strong> sa
+                            {' · '}
+                            Limit üstü <strong style={{color:'var(--text1)'}}>{Number(p.vardiya_ek_mesai_saat ?? 0).toFixed(1)}</strong> sa ek mesai
+                            {' · '}
+                            Haftalık limit <strong style={{color:'var(--text1)'}}>{Number(p.vardiya_haftalik_limit ?? 0).toFixed(0)}</strong> sa
+                          </>
+                        ) : (
+                          <>
+                            Ay toplam <strong style={{color:'var(--text1)'}}>{Number(p.vardiya_ay_toplam_saat ?? 0).toFixed(1)}</strong> sa
+                            {' '}<span style={{color:'#4a9eff',fontWeight:600}}>(maaşa esas — saat × ücret)</span>
+                          </>
+                        )}
                       </span>
                       {!onaylandi && (
                         <button
