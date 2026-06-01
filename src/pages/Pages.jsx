@@ -1834,6 +1834,58 @@ export function KartHareketleri() {
     } catch (e) { toast(e.message || 'Sınıflandırılamadı', 'red'); }
   }
 
+  // Sınıflandırılmamış (belirsiz) HARCAMA mı? — bunlar listede hep üstte kalır.
+  const belirsizMi = (h) => h.islem_turu === 'HARCAMA' && (h.harcama_tipi || 'belirsiz') === 'belirsiz';
+
+  // Kart bazlı gruplar (alt alta bloklar). Belirsizi olan kartlar + belirsiz satırlar üstte.
+  const kartGruplari = (() => {
+    const g = {};
+    for (const h of hareketlerFiltreli) {
+      const key = h.kart_id ?? h.kart_adi ?? '—';
+      if (!g[key]) g[key] = { key, kart_adi: h.kart_adi || 'Kart', items: [] };
+      g[key].items.push(h);
+    }
+    return Object.values(g).map((grup) => {
+      const items = [...grup.items].sort((a, b) => {
+        const ab = belirsizMi(a) ? 0 : 1, bb = belirsizMi(b) ? 0 : 1;
+        if (ab !== bb) return ab - bb;                               // belirsiz üstte
+        return String(b.tarih || '').localeCompare(String(a.tarih || '')); // yeni → eski
+      });
+      const belirsizSay = items.filter(belirsizMi).length;
+      const harcama = items.filter(x => x.islem_turu === 'HARCAMA').reduce((s, x) => s + (parseFloat(x.tutar) || 0), 0);
+      const odeme = items.filter(x => x.islem_turu === 'ODEME').reduce((s, x) => s + (parseFloat(x.tutar) || 0), 0);
+      return { ...grup, items, belirsizSay, harcama, odeme };
+    }).sort((a, b) => {
+      if ((b.belirsizSay > 0) !== (a.belirsizSay > 0)) return (b.belirsizSay > 0 ? 1 : 0) - (a.belirsizSay > 0 ? 1 : 0); // belirsizli kart bloğu üstte
+      if (b.belirsizSay !== a.belirsizSay) return b.belirsizSay - a.belirsizSay;
+      return String(a.kart_adi).localeCompare(String(b.kart_adi), 'tr');
+    });
+  })();
+
+  const renderSatir = (h) => (
+    <tr key={h.id} style={belirsizMi(h) ? { background: 'rgba(212,137,58,0.07)' } : undefined}>
+      <td className="mono" style={{ fontSize: 12 }}>{h.tarih}</td>
+      <td><span className={`badge ${h.islem_turu === 'HARCAMA' ? 'badge-yellow' : 'badge-blue'}`}>{h.islem_turu}</span></td>
+      <td style={{ textAlign: 'right' }} className={h.islem_turu === 'HARCAMA' ? 'amount-neg' : 'amount-pos'}>{parseInt(h.tutar).toLocaleString('tr-TR')} ₺</td>
+      <td style={{ fontSize: 12, color: 'var(--text3)' }}>{h.taksit_sayisi > 1 ? `${h.taksit_sayisi} taksit` : 'Tek çekim'}</td>
+      <td>
+        {h.islem_turu !== 'HARCAMA' ? <span style={{ fontSize: 11, color: 'var(--text3)' }}>—</span> : (
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <button title="İşletme" onClick={() => siniflandir(h.id, 'isletme')}
+              className={`badge ${(h.harcama_tipi || 'belirsiz') === 'isletme' ? 'badge-green' : ''}`}
+              style={{ cursor: 'pointer', border: 'none', opacity: (h.harcama_tipi || 'belirsiz') === 'isletme' ? 1 : 0.45 }}>🏢</button>
+            <button title="Şahsi" onClick={() => siniflandir(h.id, 'sahsi')}
+              className="badge"
+              style={{ cursor: 'pointer', border: 'none', opacity: h.harcama_tipi === 'sahsi' ? 1 : 0.45, background: h.harcama_tipi === 'sahsi' ? 'rgba(155,114,212,.22)' : undefined, color: h.harcama_tipi === 'sahsi' ? 'var(--purple)' : undefined }}>👤</button>
+            {belirsizMi(h) && <span style={{ fontSize: 10, color: 'var(--orange)', fontWeight: 600 }}>❓ seçilmedi</span>}
+          </div>
+        )}
+      </td>
+      <td style={{ fontSize: 12, color: 'var(--text3)' }}>{h.aciklama || '---'}</td>
+      <td><button className="btn btn-danger btn-sm" onClick={() => iptal(h.id)}>İptal</button></td>
+    </tr>
+  );
+
   async function kaydet(){
     try{
       await api('/kart-hareketleri',{method:'POST',body:form});
@@ -1908,37 +1960,28 @@ export function KartHareketleri() {
           <button className="btn btn-secondary btn-sm" onClick={() => setFiltre({ kart_id:'', islem_turu:'TUM', harcama_tipi:'TUM', baslangic:'', bitis:'', q:'' })}>Filtreyi Temizle</button>
         </div>
       </div>
-      <div className="table-wrap">
-        <table>
-          <thead><tr><th>Tarih</th><th>Kart</th><th>İşlem</th><th style={{textAlign:'right'}}>Tutar</th><th>Taksit</th><th>Tür</th><th>Açıklama</th><th></th></tr></thead>
-          <tbody>
-            {!hareketlerFiltreli.length?(<tr><td colSpan={8}><div className="empty"><p>Filtreye uygun hareket yok</p></div></td></tr>):
-            hareketlerFiltreli.map(h=>(
-              <tr key={h.id}>
-                <td className="mono" style={{fontSize:12}}>{h.tarih}</td>
-                <td style={{fontSize:12}}>{h.kart_adi}</td>
-                <td><span className={`badge ${h.islem_turu==='HARCAMA'?'badge-yellow':'badge-blue'}`}>{h.islem_turu}</span></td>
-                <td style={{textAlign:'right'}} className={h.islem_turu==='HARCAMA'?'amount-neg':'amount-pos'}>{parseInt(h.tutar).toLocaleString('tr-TR')} ₺</td>
-                <td style={{fontSize:12,color:'var(--text3)'}}>{h.taksit_sayisi>1?`${h.taksit_sayisi} taksit`:'Tek çekim'}</td>
-                <td>
-                  {h.islem_turu!=='HARCAMA' ? <span style={{fontSize:11,color:'var(--text3)'}}>—</span> : (
-                    <div style={{display:'flex',gap:4,alignItems:'center'}}>
-                      <button title="İşletme" onClick={()=>siniflandir(h.id,'isletme')}
-                        className={`badge ${(h.harcama_tipi||'belirsiz')==='isletme'?'badge-green':''}`}
-                        style={{cursor:'pointer',border:'none',opacity:(h.harcama_tipi||'belirsiz')==='isletme'?1:0.45}}>🏢</button>
-                      <button title="Şahsi" onClick={()=>siniflandir(h.id,'sahsi')}
-                        className="badge"
-                        style={{cursor:'pointer',border:'none',opacity:h.harcama_tipi==='sahsi'?1:0.45,background:h.harcama_tipi==='sahsi'?'rgba(155,114,212,.22)':undefined,color:h.harcama_tipi==='sahsi'?'var(--purple)':undefined}}>👤</button>
-                    </div>
-                  )}
-                </td>
-                <td style={{fontSize:12,color:'var(--text3)'}}>{h.aciklama||'---'}</td>
-                <td><button className="btn btn-danger btn-sm" onClick={()=>iptal(h.id)}>İptal</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {!hareketlerFiltreli.length ? (
+        <div className="card"><div className="empty"><p>Filtreye uygun hareket yok</p></div></div>
+      ) : kartGruplari.map((grup) => (
+        <div className="card mb-16" key={grup.key} style={{ padding: 0, borderLeft: grup.belirsizSay > 0 ? '3px solid var(--orange)' : '3px solid var(--border)' }}>
+          <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, borderBottom: '1px solid var(--border)' }}>
+            <div style={{ fontWeight: 700 }}>💳 {grup.kart_adi}
+              <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text3)', marginLeft: 8 }}>{grup.items.length} hareket</span>
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {grup.belirsizSay > 0 && <span className="badge" style={{ background: 'var(--orange)', color: '#fff' }}>❓ {grup.belirsizSay} sınıflandırılmamış</span>}
+              <span className="badge badge-yellow">Harcama: {fmt(grup.harcama)}</span>
+              <span className="badge badge-blue">Ödeme: {fmt(grup.odeme)}</span>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Tarih</th><th>İşlem</th><th style={{ textAlign: 'right' }}>Tutar</th><th>Taksit</th><th>Tür</th><th>Açıklama</th><th></th></tr></thead>
+              <tbody>{grup.items.map(renderSatir)}</tbody>
+            </table>
+          </div>
+        </div>
+      ))}
       {showModal && (
         <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowModal(false)}>
           <div className="modal">
