@@ -1686,6 +1686,37 @@ def kart_ekstre_ping():
         return {"ok": False, "hata": str(e), "marker": "e0-sync-v2"}
 
 
+@app.get("/api/kartlar/analiz")
+def kart_analiz_ozet():
+    """Faz: saf ANALİZ görünümü — içe aktarılmış veriden (kart_hareketleri +
+    kart_ekstre_donem). Yükleme yok; tek yükleme noktası Ekstre Yükle."""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT donem::text AS donem,
+                   COALESCE(SUM(donem_borcu),0)::float AS borc,
+                   COALESCE(SUM(donem_faizi),0)::float AS faiz
+            FROM kart_ekstre_donem GROUP BY donem ORDER BY donem
+        """)
+        aylik = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("""
+            SELECT COALESCE(NULLIF(kategori,''),'Diğer') AS kategori,
+                   COALESCE(SUM(tutar),0)::float AS tutar, COUNT(*)::int AS adet
+            FROM kart_hareketleri
+            WHERE durum='aktif' AND islem_turu='HARCAMA' AND kategori IS NOT NULL
+            GROUP BY COALESCE(NULLIF(kategori,''),'Diğer') ORDER BY tutar DESC
+        """)
+        kategori = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("""
+            SELECT k.kart_adi, COALESCE(SUM(kh.tutar),0)::float AS harcama
+            FROM kart_hareketleri kh JOIN kartlar k ON k.id=kh.kart_id
+            WHERE kh.durum='aktif' AND kh.islem_turu='HARCAMA' AND k.aktif=TRUE
+            GROUP BY k.kart_adi HAVING SUM(kh.tutar) > 0 ORDER BY harcama DESC
+        """)
+        kart_bazli = [dict(r) for r in (cur.fetchall() or [])]
+        return {"aylik": aylik, "kategori": kategori, "kart_bazli": kart_bazli,
+                "veri_var": bool(aylik or kategori or kart_bazli)}
+
+
 @app.get("/api/kartlar/borc-faiz-ozet")
 def kart_borc_faiz_ozet():
     """Faz KX: kart başına ve toplam — güncel borç + ekstrelerden toplam ödenen banka
@@ -1877,6 +1908,7 @@ class EkstreImportIslem(BaseModel):
     tip: str = "HARCAMA"      # HARCAMA | ODEME | FAIZ
     aciklama: Optional[str] = None
     harcama_tipi: Optional[str] = None  # isletme | sahsi | belirsiz
+    kategori: Optional[str] = None      # ekstre kategorisi (Market, Akaryakıt...)
 
 
 class EkstreImportBody(BaseModel):
@@ -1911,11 +1943,12 @@ def kart_ekstre_import(body: EkstreImportBody):
             cur.execute(
                 """INSERT INTO kart_hareketleri
                    (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama,
-                    harcama_tipi, kaynak_tablo, kaynak_id)
-                   VALUES (%s,%s,%s,%s,%s,1,%s,%s,'ekstre_import',%s)
+                    harcama_tipi, kategori, kaynak_tablo, kaynak_id)
+                   VALUES (%s,%s,%s,%s,%s,1,%s,%s,%s,'ekstre_import',%s)
                    ON CONFLICT (id) DO NOTHING""",
                 (hid, body.kart_id, tarih, tip, tutar,
-                 (isl.aciklama or "Ekstre içe aktarım")[:200], htip, hid),
+                 (isl.aciklama or "Ekstre içe aktarım")[:200], htip,
+                 (isl.kategori or None), hid),
             )
             if cur.rowcount > 0:
                 yazilan += 1

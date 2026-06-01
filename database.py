@@ -200,6 +200,9 @@ def ensure_kart_kategori_columns(cur) -> None:
         "ALTER TABLE kart_hareketleri ADD COLUMN IF NOT EXISTS harcama_tipi TEXT NOT NULL DEFAULT 'belirsiz'"
     )
     cur.execute(
+        "ALTER TABLE kart_hareketleri ADD COLUMN IF NOT EXISTS kategori TEXT"
+    )
+    cur.execute(
         "ALTER TABLE kartlar ADD COLUMN IF NOT EXISTS sahip TEXT NOT NULL DEFAULT 'İşletme'"
     )
     cur.execute(

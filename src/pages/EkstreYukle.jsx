@@ -39,7 +39,7 @@ export default function EkstreYukle() {
   async function iceAktar() {
     if (!kart?.id) return;
     const islemler = [...secili].map(i => sonuc.islemler[i]).filter(x => x && x.durum === 'yeni')
-      .map(x => ({ tarih: x.tarih, tutar: x.tutar, tip: x.tip, aciklama: x.aciklama }));
+      .map(x => ({ tarih: x.tarih, tutar: x.tutar, tip: x.tip, aciklama: x.aciklama, kategori: x.kategori }));
     if (!islemler.length) return;
     setImpBusy(true); setHata(null);
     try {
