@@ -117,6 +117,11 @@ def parse_worldcard(text: str) -> Dict[str, Any]:
     }
     out["islemler"] = _worldcard_islemler(text)
     out["donem_faizi"] = round(sum(float(i["tutar"] or 0) for i in out["islemler"] if i.get("tip") == "FAIZ"), 2)
+    # Faiz oranları (ekstreden — her ay otomatik güncellenir): "Akdi Faiz Oranı %3,75 / %45,00"
+    fa = re.search(r"Akdi Faiz Oranı\s*%[\d.,]+\s*/\s*%([\d.,]+)", text)
+    fg = re.search(r"Gecikme Faiz Oranı\s*%[\d.,]+\s*/\s*%([\d.,]+)", text)
+    out["akdi_faiz_yillik"] = _num(fa.group(1)) if fa else None
+    out["gecikme_faiz_yillik"] = _num(fg.group(1)) if fg else None
     return out
 
 

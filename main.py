@@ -1941,6 +1941,17 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
                     yeni_adet += 1
             sonuc["mutabakat"]["yeni_islem_adet"] = yeni_adet
 
+            # Faiz oranlarını ekstreden GÜNCELLE (her ay otomatik — elle girmeye gerek yok)
+            akdi = sonuc.get("akdi_faiz_yillik")
+            gec = sonuc.get("gecikme_faiz_yillik")
+            if akdi is not None and akdi > 0:
+                cur.execute(
+                    "UPDATE kartlar SET faiz_orani=%s, "
+                    "gecikme_faiz_orani=COALESCE(%s, gecikme_faiz_orani) WHERE id=%s",
+                    (akdi, gec, kart["id"]),
+                )
+                sonuc["faiz_guncellendi"] = {"faiz_orani": akdi, "gecikme_faiz_orani": gec}
+
             # Aylık ekstre SNAPSHOT'ı kaydet (kesim ayına göre; idempotent upsert)
             kt = sonuc.get("kesim_tarihi")
             if kt:
