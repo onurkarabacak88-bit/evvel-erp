@@ -2402,9 +2402,16 @@ def kartlar_toplu_devir(body: TopluDevirBody):
                      "Açılış / devreden borç (son ekstre bakiyesi)", manid),
                 )
             sonuc.append({"kart": k["kart_adi"], "devir_borc": round(kart_borc(cur, kid), 2)})
+        # Haziran ödeme planlarını (CFO hatırlatıcıları) üret — kart son ödeme günü + borç
+        plan_sonuc = []
+        try:
+            from kasa_service import kart_plan_guncelle_tx
+            plan_sonuc = kart_plan_guncelle_tx(cur)
+        except Exception:
+            pass
         audit(cur, "kart_hareketleri", "toplu", "TOPLU_DEVIR",
-              yeni={"adet": len(sonuc), "onayci": onayci.get("ad_soyad")})
-    return {"success": True, "kart_sayisi": len(sonuc), "kartlar": sonuc}
+              yeni={"adet": len(sonuc), "plan": len(plan_sonuc), "onayci": onayci.get("ad_soyad")})
+    return {"success": True, "kart_sayisi": len(sonuc), "kartlar": sonuc, "odeme_plani_uretildi": len(plan_sonuc)}
 
 
 class EkstreImportIslem(BaseModel):
