@@ -9,6 +9,8 @@ export default function EkstreYukle() {
   const [secili, setSecili] = useState(() => new Set());
   const [impBusy, setImpBusy] = useState(false);
   const [impSonuc, setImpSonuc] = useState(null);
+  const [lastFile, setLastFile] = useState(null);
+  const [kartEkleBusy, setKartEkleBusy] = useState(false);
   // ── Manuel ekstre girişi (PDF okunamayan kartlar: Axess gibi)
   const [manOpen, setManOpen] = useState(false);
   const [kartlar, setKartlar] = useState([]);
@@ -42,8 +44,45 @@ export default function EkstreYukle() {
     } catch (e) { setMHata(e.message); } finally { setMBusy(false); }
   }
 
+  const BANKA_AD = { axess: 'Axess', worldcard: 'Yapı Kredi', enpara: 'Enpara' };
+  function gunCikar(d) {
+    if (!d) return 1;
+    const s = String(d);
+    let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return parseInt(m[3], 10);
+    m = s.match(/(\d{1,2})[./](\d{1,2})[./](\d{2,4})/);
+    if (m) return parseInt(m[1], 10);
+    return 1;
+  }
+
+  async function kartiEkle() {
+    if (!sonuc) return;
+    const bankaLabel = BANKA_AD[sonuc.banka_format] || sonuc.banka_format || 'Banka';
+    const body = {
+      kart_adi: `${bankaLabel} ${sonuc.kart_sahibi || ''} ${sonuc.son_dort || ''}`.replace(/\s+/g, ' ').trim(),
+      banka: bankaLabel,
+      limit_tutar: sonuc.limit || 0,
+      kesim_gunu: gunCikar(sonuc.kesim_tarihi),
+      son_odeme_gunu: gunCikar(sonuc.son_odeme_tarihi),
+      faiz_orani: sonuc.akdi_faiz_yillik || 0,
+      asgari_oran: sonuc.asgari_oran || 40,
+      gecikme_faiz_orani: sonuc.gecikme_faiz_yillik || 0,
+      son_dort_hane: sonuc.son_dort || null,
+      sahip: sonuc.kart_sahibi || 'İşletme',
+    };
+    setKartEkleBusy(true); setHata(null);
+    try {
+      const r = await fetch('/api/kartlar', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Kart eklenemedi'); }
+      if (lastFile) await yukle(lastFile);  // kart eklendi → tekrar eşleştir + mutabakat
+    } catch (e) { setHata(e.message); } finally { setKartEkleBusy(false); }
+  }
+
   async function yukle(file) {
     if (!file) return;
+    setLastFile(file);
     setDosyaAdi(file.name); setHata(null); setSonuc(null); setImpSonuc(null); setSecili(new Set()); setYukleniyor(true);
     const fd = new FormData();
     fd.append('dosya', file);
@@ -176,7 +215,16 @@ export default function EkstreYukle() {
             </div>
           ) : (
             <div className="alert-box yellow mb-16">
-              🔎 Son 4 hane <strong>{sonuc.son_dort || '—'}</strong> ile eşleşen kart yok. Kart tanımına son 4 haneyi gir, tekrar yükle.
+              <div>🔎 Son 4 hane <strong>{sonuc.son_dort || '—'}</strong> ile eşleşen kart yok.</div>
+              <div style={{ fontSize: 12, color: 'var(--text2)', margin: '8px 0' }}>
+                Ekstreden okunan bilgilerle bu kartı tek tıkla ekleyebilirsin:
+                <strong> {(BANKA_AD[sonuc.banka_format] || sonuc.banka_format)} {sonuc.kart_sahibi || ''} …{sonuc.son_dort}</strong>
+                {sonuc.limit ? ` · limit ${fmt(sonuc.limit)}` : ''}
+                {sonuc.akdi_faiz_yillik ? ` · faiz %${sonuc.akdi_faiz_yillik}` : ''}
+              </div>
+              <button className="btn btn-primary btn-sm" disabled={kartEkleBusy} onClick={kartiEkle}>
+                {kartEkleBusy ? '…' : '+ Bu Kartı Ekle ve Eşleştir'}
+              </button>
             </div>
           )}
 
