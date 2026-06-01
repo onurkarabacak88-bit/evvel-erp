@@ -17,7 +17,11 @@ const TABS = [
 
 function BorcFaizOzet() {
   const [d, setD] = useState(null);
-  useEffect(() => { api('/kartlar/borc-faiz-ozet').then(setD).catch(() => {}); }, []);
+  const [ho, setHo] = useState(null);   // şahsi/işletme/belirsiz kırılımı
+  useEffect(() => {
+    api('/kartlar/borc-faiz-ozet').then(setD).catch(() => {});
+    api('/kartlar/harcama-ozet').then(setHo).catch(() => {});
+  }, []);
   if (!d) return null;
   return (
     <div style={{ padding: '14px 16px 0' }}>
@@ -60,6 +64,41 @@ function BorcFaizOzet() {
           </table>
         </div>
       </div>
+
+      {/* ŞAHSİ / İŞLETME / BELİRSİZ KIRILIMI (sadece HARCAMA) */}
+      {ho && (
+        <div className="card" style={{ padding: 0, marginBottom: 12 }}>
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+            <div style={{ fontWeight: 700 }}>🏢 İşletme vs 👤 Şahsi Kırılımı <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text3)' }}>(kart harcamaları)</span></div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <span className="badge badge-green" title="İşletme">🏢 {fmt(ho.genel.isletme)}</span>
+              <span className="badge" style={{ background: 'rgba(155,114,212,.18)', color: 'var(--purple)' }} title="Şahsi">👤 {fmt(ho.genel.sahsi)}</span>
+              {ho.genel.belirsiz > 0 && <span className="badge" style={{ background: 'var(--orange)', color: '#fff' }} title="Sınıflandırılmamış">❓ {fmt(ho.genel.belirsiz)}</span>}
+            </div>
+          </div>
+          {ho.genel.belirsiz > 0 && (
+            <div style={{ padding: '8px 16px', fontSize: 12, color: 'var(--orange)', borderBottom: '1px solid var(--border)' }}>
+              ❓ {fmt(ho.genel.belirsiz)} henüz şahsi/işletme olarak işaretlenmedi — Hareketler sekmesinden sınıflandır.
+            </div>
+          )}
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Kart</th><th>Sahip</th><th style={{ textAlign: 'right' }}>🏢 İşletme</th><th style={{ textAlign: 'right' }}>👤 Şahsi</th><th style={{ textAlign: 'right' }}>❓ Belirsiz</th></tr></thead>
+              <tbody>
+                {ho.kartlar.map(k => (
+                  <tr key={k.kart_id}>
+                    <td style={{ fontSize: 12, fontWeight: 600 }}>{k.kart_adi}</td>
+                    <td style={{ fontSize: 12, color: 'var(--text3)' }}>{k.sahip}</td>
+                    <td style={{ textAlign: 'right' }} className="mono">{k.isletme > 0 ? fmt(k.isletme) : '—'}</td>
+                    <td style={{ textAlign: 'right' }} className="mono">{k.sahsi > 0 ? <span style={{ color: 'var(--purple)' }}>{fmt(k.sahsi)}</span> : '—'}</td>
+                    <td style={{ textAlign: 'right' }} className="mono">{k.belirsiz > 0 ? <span style={{ color: 'var(--orange)' }}>{fmt(k.belirsiz)}</span> : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
