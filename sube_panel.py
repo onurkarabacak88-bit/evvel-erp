@@ -642,14 +642,21 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
         )
         taslak_iptal = cur.rowcount
 
-        # 2) Kapanış / vardiya devri kayıtları → iptal
+        # 2) Yalnızca GÜN SONU kapanış kaydı → iptal. VARDİYA/KASA DEVRİNE DOKUNMA.
         cur.execute(
             "UPDATE kapanis_kayit SET durum='iptal' "
-            "WHERE sube_id=%s AND tarih=%s AND durum='tamamlandi' "
-            "AND olay IN ('vardiya_sabah_aksam_devri','gun_sonu')",
+            "WHERE sube_id=%s AND tarih=%s AND durum='tamamlandi' AND olay='gun_sonu'",
             (sube_id, tarih),
         )
         kapanis_iptal = cur.rowcount
+
+        # 2b) DÜZELTME: önceki hatalı geri-al vardiya/kasa devrini iptal ettiyse geri yükle.
+        cur.execute(
+            "UPDATE kapanis_kayit SET durum='tamamlandi' "
+            "WHERE sube_id=%s AND tarih=%s AND olay='vardiya_sabah_aksam_devri' AND durum='iptal'",
+            (sube_id, tarih),
+        )
+        devir_geri_yuklendi = cur.rowcount
 
         # 3) KAPANIS operasyon olayını yeniden aç (panel kapanışı tekrar görsün)
         cur.execute(
@@ -664,7 +671,7 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
         audit(cur, "sube_operasyon_event", f"{sube_id}|{tarih}|KAPANIS", "KAPANIS_GERI_AL",
               yeni={"onayci": onayci.get("ad_soyad"), "sebep": body.sebep,
                     "taslak_iptal": taslak_iptal, "kapanis_iptal": kapanis_iptal,
-                    "event_acildi": event_acildi})
+                    "event_acildi": event_acildi, "devir_geri_yuklendi": devir_geri_yuklendi})
 
     return {
         "success": True,
@@ -674,8 +681,9 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
             "ciro_taslak_iptal": taslak_iptal,
             "kapanis_kayit_iptal": kapanis_iptal,
             "kapanis_olayi_acildi": event_acildi,
+            "vardiya_devri_geri_yuklendi": devir_geri_yuklendi,
         },
-        "not": "Şube artık bu gün için kapanışı yeniden yapabilir.",
+        "not": "Kapanış geri alındı; vardiya/kasa devrine dokunulmadı (varsa önceki yanlış iptal geri yüklendi). Şube kapanışı yeniden yapabilir.",
     }
 
 
