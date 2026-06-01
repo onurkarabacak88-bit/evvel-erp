@@ -1986,6 +1986,12 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
     # işlemler = kart_analiz (4 banka + kategori) — tek transaction motoru.
     from ekstre_parser import parse_ekstre
     sonuc = parse_ekstre(metin)
+    # ekstre_parser TAKSİT çıkarır (kart_analiz çıkarmaz) → taksit bilgisini sakla
+    _taksit_lk = {}
+    for _e in sonuc.get("islemler", []):
+        if _e.get("taksit") and _e.get("tip") == "HARCAMA":
+            _taksit_lk[(_e.get("tarih"), round(float(_e.get("tutar") or 0), 2))] = (
+                _e.get("taksit"), _e.get("taksit_anapara"))
     try:
         import kart_analiz
         txns = kart_analiz.parse_pdf(raw)
@@ -1993,6 +1999,17 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
         txns = None
     if txns:
         sonuc["islemler"] = [_ekstre_txn_map(t) for t in txns]
+        # kart_analiz (kategori) + ekstre_parser (taksit) BİRLEŞTİR
+        for _isl in sonuc["islemler"]:
+            if _isl.get("tip") == "HARCAMA":
+                _info = _taksit_lk.get((_isl.get("tarih"), round(float(_isl.get("tutar") or 0), 2)))
+                if _info:
+                    _isl["taksit"] = _info[0]
+                    _isl["taksit_anapara"] = _info[1]
+                    try:
+                        _isl["taksit_sayisi"] = int(str(_info[0]).split("/")[1])
+                    except (ValueError, IndexError):
+                        pass
         if not sonuc.get("banka_format") or sonuc.get("banka_format") == "bilinmiyor":
             sonuc["banka_format"] = (txns[0].get("banka") if txns else None) or sonuc.get("banka_format")
         sonuc.pop("hata", None)  # işlem bulunduysa parse başarısız sayma
