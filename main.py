@@ -1994,6 +1994,19 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
     raw = dosya.file.read()
     if not raw:
         raise HTTPException(400, "Dosya boş veya yüklenemedi.")
+
+    # ── AXESS/AKBANK: gömülü-font EBCDIC PDF → özel parser (OCR'a gerek yok).
+    #    Diğer bankalardan ÖNCE dene; pdfplumber bunu çöp olarak okur.
+    try:
+        from ekstre_parser import is_axess, parse_axess
+        if is_axess(raw):
+            sonuc = parse_axess(raw)
+            return _ekstre_eslesme_mutabakat(sonuc)
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # fitz yok / parse hatası → normal akışa düş
+
     metin = ""
     try:
         with pdfplumber.open(io.BytesIO(raw)) as pdf:
@@ -2038,7 +2051,12 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
     if sonuc.get("hata") and not txns:
         raise HTTPException(422, sonuc["hata"])
 
-    # Kart eşleştirme (son 4 hane) + mutabakat
+    return _ekstre_eslesme_mutabakat(sonuc)
+
+
+def _ekstre_eslesme_mutabakat(sonuc):
+    """Ekstre sonucu → kart eşleştir (son 4 hane) + mutabakat + faiz/snapshot/CFO yaz.
+    Hem normal (Worldcard/Enpara) hem Axess akışının ortak son adımı."""
     sonuc["eslesen_kart"] = None
     sonuc["mutabakat"] = None
     son4 = sonuc.get("son_dort")

@@ -92,7 +92,7 @@ export default function EkstreYukle() {
       setSecili(new Set());
     } catch (e) { setHata(e.message); } finally { setImpBusy(false); }
   }
-  const formatAd = { worldcard: 'Worldcard / Yapı Kredi', enpara: 'Enpara' }[sonuc?.banka_format] || sonuc?.banka_format;
+  const formatAd = { worldcard: 'Worldcard / Yapı Kredi', enpara: 'Enpara', axess: 'Axess / Akbank' }[sonuc?.banka_format] || sonuc?.banka_format;
 
   return (
     <div className="page">
@@ -106,7 +106,7 @@ export default function EkstreYukle() {
         onDrop={e => { e.preventDefault(); yukle(e.dataTransfer.files?.[0]); }}>
         <div style={{ fontSize: 34, marginBottom: 8 }}>📥</div>
         <div style={{ color: 'var(--text2)', marginBottom: 12, fontSize: 13 }}>
-          PDF ekstreyi buraya sürükle veya seç · <span style={{ color: 'var(--text3)' }}>Worldcard & Enpara PDF olarak desteklenir · Axess gibi okunamayanlar için aşağıdaki Manuel Giriş</span>
+          PDF ekstreyi buraya sürükle veya seç · <span style={{ color: 'var(--text3)' }}>Worldcard · Enpara · Garanti · Ziraat · Axess/Akbank desteklenir · okunamayan diğer bankalar için aşağıdaki Manuel Giriş</span>
         </div>
         <label className="btn btn-primary" style={{ cursor: 'pointer' }}>
           PDF Seç

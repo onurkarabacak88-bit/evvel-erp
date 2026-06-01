@@ -223,3 +223,157 @@ def parse_ekstre(text: str) -> Dict[str, Any]:
                 "(Axess gibi taranmış/gömülü-font PDF'ler OCR gerektirir).",
         "islemler": [],
     }
+
+
+# ════════════════════════════════════════════════════════════════════
+# AXESS / AKBANK  (gömülü-font, EBCDIC kodlamalı PDF — OCR'a gerek yok)
+#   PDF metni özel font yüzünden bozuk görünür; aslında EBCDIC (cp037).
+#   pymupdf ile sayfa metni alınır, glyph-arası satırsonları atılır,
+#   bayt-bayt cp037 çözülür → temiz metin. Sayı formatı US (1,234.56).
+# ════════════════════════════════════════════════════════════════════
+
+_AXESS_DUZELT = str.maketrans({"Ð": "İ", "Ý": "Ş", "Þ": "ı", "ý": "ı", "ð": "ş"})
+
+
+def _axess_decode(raw: bytes) -> str:
+    import fitz  # pymupdf
+    doc = fitz.open(stream=raw, filetype="pdf")
+    parcalar = []
+    for pg in doc:
+        s = pg.get_text()
+        b = bytes((ord(c) & 0xFF) for c in s if ord(c) not in (0x0A, 0x0D))
+        parcalar.append(b.decode("cp037", errors="replace"))
+    return " ".join(parcalar)
+
+
+def is_axess(raw: bytes) -> bool:
+    """Ham PDF baytlarını EBCDIC çözüp Axess/Akbank ekstresi mi diye bakar."""
+    try:
+        t = _axess_decode(raw)
+    except Exception:
+        return False
+    return ("Axess" in t) or ("Hesap Kesim Tarihi" in t and "Akbank" in t)
+
+
+def _ax_num(s: Optional[str]) -> Optional[float]:
+    """US format: '34,335.59' → 34335.59"""
+    if s is None:
+        return None
+    try:
+        return float(str(s).replace(",", "").strip())
+    except ValueError:
+        return None
+
+
+def _ax_faiz(s: Optional[str]) -> Optional[float]:
+    """TR yüzde: '%45,00' → 45.0"""
+    if s is None:
+        return None
+    try:
+        return float(str(s).replace(".", "").replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _ax_tarih(s: Optional[str]) -> Optional[str]:
+    """'08/05/2026' → '2026-05-08'"""
+    if not s:
+        return None
+    m = re.match(r"(\d{2})/(\d{2})/(\d{4})", s)
+    return f"{m.group(3)}-{m.group(2)}-{m.group(1)}" if m else None
+
+
+def parse_axess(raw: bytes) -> Dict[str, Any]:
+    """Axess (Akbank) ekstresi → birleşik sonuç (başlık + birleşik-format işlemler)."""
+    t = _axess_decode(raw)
+
+    def gs(p, grp=1):
+        m = re.search(p, t)
+        return m.group(grp) if m else None
+
+    def gn(p, grp=1, f=_ax_num):
+        m = re.search(p, t)
+        return f(m.group(grp)) if m else None
+
+    son4 = gs(r"Kart Numaras.\s*\d{4} \d{2}\*+ \*+ (\d{4})")
+    borc = gn(r"Dönem Borcu([\d,]+\.\d{2}) TL")
+    asgari = gn(r"En Az Ödeme Tutar.([\d,]+\.\d{2}) TL")
+    sot = _ax_tarih(gs(r"Son Ödeme Tarihi(\d{2}/\d{2}/\d{4})"))
+    kesim = _ax_tarih(gs(r"Hesap Kesim Tarihi(\d{2}/\d{2}/\d{4})"))
+    limit = gn(r"Kart Limiti([\d,]+\.\d{2}) TL")
+    onceki = gn(r"Bakiyesi([\d,]+\.\d{2})")
+    akdi = gn(r"Akdi Faiz Oran.\*?%[\d,]+\s*Y.ll.k:\s*%([\d,]+)", f=_ax_faiz)
+    gec = gn(r"Gecikme Faiz\s*Oran.\*?\s*%[\d,]+\s*Y.ll.k:\s*%([\d,]+)", f=_ax_faiz)
+    sahip = gs(r"içerir\.([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜ ]+?)(?=[a-zçğıöşü])")
+    donem_faizi = sum(
+        _ax_num(x) or 0
+        for x in re.findall(r"(?:Toplam Dönem Faizi|Otomatik Fatura Ödeme Faizi)\s*([\d,]+\.\d{2})", t)
+    )
+
+    # ── İşlemler: "Önceki ... Bakiyesi<tutar>" ile "Toplam<tutar>" arası
+    islemler: List[Dict[str, Any]] = []
+    reg = re.search(r"Bakiyesi[\d,]+\.\d{2}(.*?)Toplam[\d,]+\.\d{2}", t, re.S)
+    if reg:
+        region = re.sub(r"\*+ \*+ \*+ \d{4} .*?Harcamalar.", "|", reg.group(1))
+        for c in re.split(r"(?=\d{2}/\d{2}/\d{4})", region):
+            md = re.match(r"(\d{2}/\d{2}/\d{4})(.*)", c.strip().lstrip("|").strip(), re.S)
+            if not md:
+                continue
+            rest = md.group(2)
+            tk = re.search(r"\(([\d.,]+) TL\)\s*(\d+)/(\d+)\.taksit\s*([\d,]+\.\d{2})", rest)
+            odeme = "(-)" in rest
+            anapara = tsay = taks = None
+            if tk:
+                anapara = _ax_num(tk.group(1))
+                tsay = int(tk.group(2))        # toplam taksit adedi
+                no = int(tk.group(3))          # kaçıncı taksit
+                tutar = _ax_num(tk.group(4))   # bu dönem ödenen taksit payı
+                taks = f"{no}/{tsay}"
+            else:
+                am = re.search(r"[\d,]+\.\d{2}", rest)
+                tutar = _ax_num(am.group(0)) if am else None
+            tip = "ODEME" if odeme else ("FAIZ" if "Faiz" in rest else "HARCAMA")
+            desc = re.sub(r"\([\d.,]+ TL\)\s*\d+/\d+\.taksit", "", rest)
+            desc = re.sub(r"[\d,]+\.\d{2}", "", desc).replace("(-)", "").strip()
+            desc = re.sub(r"\s{2,}", " ", desc).translate(_AXESS_DUZELT)[:60]
+            if tutar is None or tutar == 0:
+                continue
+            islemler.append({
+                "tarih": _ax_tarih(md.group(1)),
+                "tutar": abs(tutar),
+                "tip": tip,
+                "aciklama": desc,
+                "kategori": None,
+                "taksit": taks,
+                "taksit_anapara": anapara,
+                "taksit_sayisi": tsay,
+            })
+
+    # Dönem faizini de işlem olarak ekle (FAIZ → kart borcuna yansısın)
+    for et, tut in re.findall(r"(Toplam Dönem Faizi|Otomatik Fatura Ödeme Faizi)\s*([\d,]+\.\d{2})", t):
+        v = _ax_num(tut)
+        if v:
+            islemler.append({
+                "tarih": kesim, "tutar": v, "tip": "FAIZ", "aciklama": et,
+                "kategori": "Faiz", "taksit": None, "taksit_anapara": None, "taksit_sayisi": None,
+            })
+
+    return {
+        "banka_format": "axess",
+        "son_dort": son4,
+        "kesim_tarihi": kesim,
+        "son_odeme_tarihi": sot,
+        "donem_borcu": borc,
+        "asgari_tutar": asgari,
+        "asgari_oran": None,
+        "limit": limit,
+        "onceki_borc": onceki,
+        "donem_harcama": round(sum(i["tutar"] for i in islemler if i["tip"] == "HARCAMA"), 2),
+        "donem_odeme": round(sum(i["tutar"] for i in islemler if i["tip"] == "ODEME"), 2),
+        "donem_faizi": round(donem_faizi, 2),
+        "kalan_taksit": None,
+        "kart_sahibi": (sahip or "").strip() or None,
+        "akdi_faiz_yillik": akdi,
+        "gecikme_faiz_yillik": gec,
+        "islemler": islemler,
+    }
