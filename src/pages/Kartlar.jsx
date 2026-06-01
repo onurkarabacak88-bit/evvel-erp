@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
 
 const BOSH = { kart_adi: '', banka: '', limit_tutar: '', kesim_gunu: 15, son_odeme_gunu: 25,
-  faiz_orani: '', asgari_oran: 40, gecikme_faiz_orani: '' };
+  faiz_orani: '', asgari_oran: 40, gecikme_faiz_orani: '', sahip: 'İşletme' };
 
 export default function Kartlar() {
   const [kartlar, setKartlar] = useState([]);
@@ -50,7 +50,8 @@ export default function Kartlar() {
       kesim_gunu: k.kesim_gunu, son_odeme_gunu: k.son_odeme_gunu,
       faiz_orani: k.faiz_orani,
       asgari_oran: k.asgari_oran ?? 40,
-      gecikme_faiz_orani: k.gecikme_faiz_orani ?? 0 });
+      gecikme_faiz_orani: k.gecikme_faiz_orani ?? 0,
+      sahip: k.sahip ?? 'İşletme' });
     setDuzenleId(k.id); setShowModal(true);
   }
 
@@ -225,6 +226,7 @@ export default function Kartlar() {
                   ['Bu Ekstre', fmt(k.bu_ekstre)],
                   ['Faiz / Asgari Oranı', `%${k.faiz_orani} / %${k.asgari_oran ?? 40}`],
                   ['Ham Kesim/Son Öd.', `${k.kesim_gunu}/${k.son_odeme_gunu}. gün`],
+                  ['Kart Sahibi', k.sahip || 'İşletme'],
                 ].map(([label, val]) => (
                   <div key={label} style={{ background: 'var(--bg3)', borderRadius: 6, padding: '7px 10px' }}>
                     <div style={{ color: 'var(--text3)', marginBottom: 2, fontSize: 11 }}>{label}</div>
@@ -260,6 +262,11 @@ export default function Kartlar() {
                   <label>Banka</label>
                   <input placeholder="Garanti, Yapıkredi..." value={form.banka}
                     onChange={e => setForm({ ...form, banka: e.target.value })}/>
+                </div>
+                <div className="form-group">
+                  <label>Kart Sahibi</label>
+                  <input placeholder="İşletme, Annem, Onur..." value={form.sahip}
+                    onChange={e => setForm({ ...form, sahip: e.target.value })}/>
                 </div>
                 <div className="form-group">
                   <label>Limit (₺)</label>

@@ -1333,6 +1333,7 @@ class KartModel(BaseModel):
     asgari_oran: float = 40.0        # Bankanın asgari ödeme oranı (%)
     gecikme_faiz_orani: float = 0.0  # Asgari altı ödemede uygulanan yıllık % (0 → akdi×1.3 fallback)
     son_dort_hane: Optional[str] = None  # PDF ekstre eşleştirme için son 4 hane
+    sahip: Optional[str] = None      # Kart sahibi (İşletme / Annem / ...) — sorumluluk ayrımı
 
 @app.get("/api/kartlar")
 def kartlar_listele():
@@ -1444,11 +1445,12 @@ def kartlar_listele():
 def kart_ekle(k: KartModel):
     with db() as (conn, cur):
         kid = str(uuid.uuid4())
-        cur.execute("""INSERT INTO kartlar (id,kart_adi,banka,limit_tutar,kesim_gunu,son_odeme_gunu,faiz_orani,asgari_oran,gecikme_faiz_orani,son_dort_hane)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        cur.execute("""INSERT INTO kartlar (id,kart_adi,banka,limit_tutar,kesim_gunu,son_odeme_gunu,faiz_orani,asgari_oran,gecikme_faiz_orani,son_dort_hane,sahip)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (kid, k.kart_adi, k.banka, k.limit_tutar, k.kesim_gunu, k.son_odeme_gunu,
              k.faiz_orani, k.asgari_oran, k.gecikme_faiz_orani,
-             k.son_dort_hane.strip()[-4:] if k.son_dort_hane else None))
+             k.son_dort_hane.strip()[-4:] if k.son_dort_hane else None,
+             (k.sahip or 'İşletme').strip() or 'İşletme'))
         audit(cur, 'kartlar', kid, 'INSERT')
     return {"id": kid, "success": True}
 
@@ -1460,11 +1462,12 @@ def kart_guncelle(kid: str, k: KartModel):
         if not eski: raise HTTPException(404)
         cur.execute("""UPDATE kartlar SET kart_adi=%s,banka=%s,limit_tutar=%s,
             kesim_gunu=%s,son_odeme_gunu=%s,faiz_orani=%s,asgari_oran=%s,gecikme_faiz_orani=%s,
-            son_dort_hane=%s
+            son_dort_hane=%s,sahip=%s
             WHERE id=%s""",
             (k.kart_adi, k.banka, k.limit_tutar, k.kesim_gunu, k.son_odeme_gunu,
              k.faiz_orani, k.asgari_oran, k.gecikme_faiz_orani,
-             k.son_dort_hane.strip()[-4:] if k.son_dort_hane else None, kid))
+             k.son_dort_hane.strip()[-4:] if k.son_dort_hane else None,
+             (k.sahip or 'İşletme').strip() or 'İşletme', kid))
         audit(cur, 'kartlar', kid, 'UPDATE', eski=eski)
     return {"success": True}
 
@@ -1560,6 +1563,7 @@ class KartHareket(BaseModel):
     ana_para: float = 0
     aciklama: Optional[str] = None
     baslangic_tarihi: Optional[date] = None  # taksitli alımlar için
+    harcama_tipi: Optional[str] = None       # 'isletme' | 'sahsi' | 'belirsiz'
 
 @app.get("/api/kart-hareketleri")
 def kart_hareketleri(kart_id: Optional[str] = None, limit: int = 200):
@@ -1582,11 +1586,14 @@ def kart_hareket_ekle(h: KartHareket):
         ana  = abs(h.ana_para)   if h.ana_para   else 0
         # Taksitli alımda baslangic_tarihi = hareket tarihi (girilmemişse)
         bas_tarih = h.baslangic_tarihi or (h.tarih if h.taksit_sayisi > 1 else None)
+        _htip = (h.harcama_tipi or '').strip().lower()
+        if _htip not in ('isletme', 'sahsi', 'belirsiz'):
+            _htip = 'belirsiz' if h.islem_turu == 'HARCAMA' else 'isletme'
         cur.execute("""INSERT INTO kart_hareketleri
-            (id,kart_id,tarih,islem_turu,tutar,taksit_sayisi,faiz_tutari,ana_para,aciklama,baslangic_tarihi)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (id,kart_id,tarih,islem_turu,tutar,taksit_sayisi,faiz_tutari,ana_para,aciklama,baslangic_tarihi,harcama_tipi)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (hid, h.kart_id, h.tarih, h.islem_turu, h.tutar,
-             h.taksit_sayisi, faiz, ana, h.aciklama, bas_tarih))
+             h.taksit_sayisi, faiz, ana, h.aciklama, bas_tarih, _htip))
         if h.islem_turu == 'ODEME':
             insert_kasa_hareketi(cur, str(h.tarih), 'KART_ODEME', -abs(h.tutar),
                 h.aciklama or 'Kart ödemesi',
@@ -1609,6 +1616,55 @@ def kart_hareket_iptal(hid: str):
             iptal_kasa_hareketi(cur, hid, 'kart_hareketleri', 'KART_ODEME', 'KART_ODEME_IPTAL', 'Kart ödemesi iptali')
         audit(cur, 'kart_hareketleri', hid, 'IPTAL', eski=eski)
     return {"success": True}
+
+
+@app.post("/api/kart-hareketleri/{hid}/harcama-tipi")
+def kart_hareket_tip_belirle(hid: str, tip: str):
+    """Bir kart harcamasını şahsi / işletme / belirsiz olarak sınıflandırır (Faz K-A)."""
+    t = (tip or '').strip().lower()
+    if t not in ('isletme', 'sahsi', 'belirsiz'):
+        raise HTTPException(400, "tip: isletme | sahsi | belirsiz")
+    with db() as (conn, cur):
+        cur.execute("UPDATE kart_hareketleri SET harcama_tipi=%s WHERE id=%s AND durum='aktif'", (t, hid))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Hareket bulunamadı")
+        audit(cur, 'kart_hareketleri', hid, 'HARCAMA_TIPI', yeni={'tip': t})
+    return {"success": True, "harcama_tipi": t}
+
+
+@app.get("/api/kartlar/harcama-ozet")
+def kart_harcama_ozet():
+    """Şahsi/işletme/belirsiz kırılımı — kart başına ve toplam (sadece HARCAMA, aktif).
+    'İşletmenin gerçek kart yükü' ile şahsi karışıklığı ayırır."""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT k.id::text AS kart_id, k.kart_adi, COALESCE(k.sahip,'İşletme') AS sahip,
+                   kh.harcama_tipi,
+                   COALESCE(SUM(kh.tutar),0)::float AS toplam,
+                   COUNT(*)::int AS adet
+            FROM kart_hareketleri kh
+            JOIN kartlar k ON k.id = kh.kart_id
+            WHERE kh.durum='aktif' AND kh.islem_turu='HARCAMA' AND k.aktif=TRUE
+            GROUP BY k.id, k.kart_adi, k.sahip, kh.harcama_tipi
+            ORDER BY k.kart_adi
+        """)
+        kartlar = {}
+        gen = {'isletme': 0.0, 'sahsi': 0.0, 'belirsiz': 0.0}
+        for r in (cur.fetchall() or []):
+            r = dict(r)
+            kid = r['kart_id']
+            tip = r['harcama_tipi'] if r['harcama_tipi'] in gen else 'belirsiz'
+            k = kartlar.setdefault(kid, {
+                'kart_id': kid, 'kart_adi': r['kart_adi'], 'sahip': r['sahip'],
+                'isletme': 0.0, 'sahsi': 0.0, 'belirsiz': 0.0, 'adet': 0,
+            })
+            k[tip] += float(r['toplam']); k['adet'] += int(r['adet'])
+            gen[tip] += float(r['toplam'])
+        return {
+            "genel": {**gen, "toplam": round(sum(gen.values()), 2)},
+            "kartlar": sorted(kartlar.values(), key=lambda x: -(x['isletme'] + x['sahsi'] + x['belirsiz'])),
+        }
+
 
 # ── ÖDEME PLANI ────────────────────────────────────────────────
 class OdemePlani(BaseModel):

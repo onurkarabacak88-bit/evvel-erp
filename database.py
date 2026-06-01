@@ -1302,6 +1302,25 @@ def init_db():
                 END IF;
             END $$;
         """)
+        # Migration (Faz K-A): harcama_tipi (şahsi/işletme ayrımı) + kart sahibi
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='kart_hareketleri' AND column_name='harcama_tipi')
+                THEN
+                    ALTER TABLE kart_hareketleri ADD COLUMN harcama_tipi TEXT NOT NULL DEFAULT 'belirsiz';
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='kartlar' AND column_name='sahip')
+                THEN
+                    ALTER TABLE kartlar ADD COLUMN sahip TEXT NOT NULL DEFAULT 'İşletme';
+                END IF;
+            END $$;
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_kart_hareketleri_tip
+            ON kart_hareketleri (kart_id, harcama_tipi, durum)
+        """)
         # Migration: islem_turu CHECK — FAIZ dahil tek tanım (isim farklı eski constraint'leri pg_constraint ile düşürür).
         cur.execute("""
             DO $$
