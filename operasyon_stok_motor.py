@@ -3166,32 +3166,10 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
             (yolda_durum, kabul_adet, yolda_id),
         )
         if kabul_adet > 0:
-            cur.execute(
-                """
-                INSERT INTO sube_depo_stok
-                    (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (sube_id, kalem_kodu) DO UPDATE
-                SET mevcut_adet = sube_depo_stok.mevcut_adet + EXCLUDED.mevcut_adet,
-                    guncelleme  = NOW()
-                """,
-                (str(uuid.uuid4()), sube_id, kalem_kodu, kalem_adi, kabul_adet),
-            )
-            try:
-                cur.execute(
-                    """
-                    UPDATE sube_operasyon_uyari
-                    SET okundu = TRUE
-                    WHERE sube_id = %s
-                      AND tarih  = CURRENT_DATE
-                      AND tip    IN ('STOK_ALARM', 'STOK_BITTI', 'URUN_AC_UYUMSUZLUK')
-                      AND mesaj  ILIKE %s
-                      AND okundu = FALSE
-                    """,
-                    (sube_id, f"%{kalem_kodu}%"),
-                )
-            except Exception:
-                pass
+            # Tek kanonik depo girişi: INSERT + hareket log + alarm temizle + DEFERRED
+            # RECONCILIATION (bekleyen URUN_AC borcunu mahsup eder). Tedarikçi sevkiyle
+            # AYNI motor → inter-şube kabul de artık tutarlı (eskiden depoyu fazla sayıyordu).
+            sube_depo_stok_depo_giris_ekle(cur, sube_id, kalem_kodu, kalem_adi, kabul_adet)
             if yolda_durum == "kabul_uyusmazlik":
                 eksik = sevk_adet - kabul_adet
                 logger.info(
@@ -3450,9 +3428,10 @@ def sube_depo_stok_depo_giris_ekle(
             """
             SELECT id, detay FROM sube_operasyon_uyari
             WHERE sube_id = %s AND kalem_kodu = %s
-              AND tarih = CURRENT_DATE
+              AND tarih >= CURRENT_DATE - INTERVAL '7 days'
               AND tip = 'URUN_AC_UYUMSUZLUK'
               AND okundu = FALSE
+            ORDER BY tarih ASC
             """,
             (sube_id, kk),
         )
