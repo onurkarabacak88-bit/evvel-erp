@@ -15280,6 +15280,62 @@ export default function OperasyonMerkezi() {
               </div>
             )}
 
+            {/* 🔢 DEĞERİ DÜZELT — yanlış kutuyu değiştir, sistem otomatik algılar */}
+            {(() => {
+              const dj = kkDuzeltModal.uyari?.detay_json || {};
+              const tip = kkDuzeltModal.uyari?.tip;
+              const kutular = [{ label: '🌅 Açılış kasası', sebep: 'acilis_yanlis', pkey: 'yeni_acilis_kasa', val: dj.acilis_kasa }];
+              if (tip === 'KAPANIS_KASA_FARK') kutular.push({ label: '📝 Nakit ciro (Z)', sebep: 'ciro_yanlis', pkey: 'yeni_nakit', val: dj.z_nakit });
+              kutular.push({ label: '💵 Müdüre teslim', sebep: 'devir_yanlis', pkey: 'yeni_teslim', val: dj.teslim });
+              kutular.push({ label: '🌙 Kasada kalan (devir)', sebep: 'devir_yanlis', pkey: 'yeni_devir', val: dj.devir });
+              const fmtMev = (v) => (v != null && Number.isFinite(Number(v))) ? Number(v).toLocaleString('tr-TR') : '—';
+              const fark = Number(kkDuzeltModal.uyari?.fark_tl || 0);
+              const gercekFazla = (tip === 'ACILIS_KASA_FARK' ? fark > 0 : fark < 0);
+              return (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10, lineHeight: 1.5 }}>
+                    Sadece <strong>yanlış olan kutuyu</strong> değiştir; sistem hangisini değiştirdiğini otomatik anlar, gerçek kaydı düzeltip farkı yeniden hesaplar.
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    {kutular.map((k) => {
+                      const editVal = (kkDuzeltModal.sebep === k.sebep) ? kkDuzeltModal.payload?.[k.pkey] : undefined;
+                      const aktif = editVal != null;
+                      return (
+                        <label key={k.pkey} style={{ fontSize: 11, color: 'var(--text3)' }}>
+                          {k.label} <span style={{ color: 'var(--text2)' }}>· mevcut {fmtMev(k.val)}</span>
+                          <input
+                            type="number" step="0.01" className="input" disabled={kkDuzeltBusy}
+                            value={editVal ?? (k.val ?? '')}
+                            onChange={(e) => {
+                              const v = e.target.value === '' ? undefined : Number(e.target.value);
+                              setKkDuzeltModal((prev) => ({ ...prev, gelismis: false, sebep: k.sebep, payload: { [k.pkey]: v } }));
+                            }}
+                            style={{ width: '100%', marginTop: 3, padding: '7px 9px', borderColor: aktif ? 'var(--accent)' : undefined, fontWeight: aktif ? 700 : undefined }}
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button" disabled={kkDuzeltBusy}
+                    onClick={() => setKkDuzeltModal((prev) => ({ ...prev, gelismis: false, sebep: 'gercek_acik', payload: {} }))}
+                    style={{ marginTop: 10, width: '100%', padding: '8px', fontSize: 12, borderRadius: 7, cursor: 'pointer',
+                      background: kkDuzeltModal.sebep === 'gercek_acik' ? 'rgba(220,38,38,0.18)' : 'var(--bg2)',
+                      border: '1px solid ' + (kkDuzeltModal.sebep === 'gercek_acik' ? 'rgba(220,38,38,0.5)' : 'var(--border)'),
+                      color: kkDuzeltModal.sebep === 'gercek_acik' ? '#fca5a5' : 'var(--text2)', fontWeight: kkDuzeltModal.sebep === 'gercek_acik' ? 700 : 500 }}>
+                    ⚠️ Veri doğru, fark gerçek {gercekFazla ? 'fazla' : 'açık'} (kaynak değişmez, çözüldü işaretle)
+                  </button>
+                  <button
+                    type="button" disabled={kkDuzeltBusy}
+                    onClick={() => setKkDuzeltModal((prev) => ({ ...prev, gelismis: !prev.gelismis }))}
+                    style={{ marginTop: 8, fontSize: 11, background: 'none', border: 'none', color: 'var(--text3)', cursor: 'pointer', textDecoration: 'underline' }}>
+                    {kkDuzeltModal.gelismis ? '▲ Gelişmişi gizle' : '⚙️ Gelişmiş (eksik gider / Z fazla / sebep seç)'}
+                  </button>
+                </div>
+              );
+            })()}
+
+            {kkDuzeltModal.gelismis && (<>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Sebep</label>
             <select
               className="input"
@@ -15508,6 +15564,7 @@ export default function OperasyonMerkezi() {
                 </div>
               );
             })()}
+            </>)}
 
             {/* Not */}
             <label style={{ display: 'block', fontSize: 12, marginBottom: 18 }}>
