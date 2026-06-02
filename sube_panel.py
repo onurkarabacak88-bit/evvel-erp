@@ -621,9 +621,10 @@ class KapanisGeriAlBody(BaseModel):
 def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
     """Merkez: bir şubenin BUGÜNKÜ (veya verilen tarihteki) mühürlenmiş kapanışını geri al.
     İşletme onayı (Merve Karabacak PIN) şart — mali/operasyon kaydını değiştirir, auditli.
-    Geri alır: (1) bekleyen ciro taslağı → iptal, (2) kapanış/devir kaydı → iptal,
-    (3) KAPANIS operasyon olayı → 'bekliyor' (cevap sıfırlanır) → şube yeniden kapanış yapabilir.
-    Kasaya dokunmaz (taslak onaylanmadığı için kasa hareketi yoktur)."""
+    Geri alır: (1) yalnızca GÜN SONU kapanış kaydı → iptal, (2) KAPANIS operasyon olayı →
+    'bekliyor' (mühür açılır), (3) o günün kasa teslim kayıtları → sil.
+    KORUR: ciro taslağı (günün satış verisi) + vardiya/kasa devri (varsa yanlış iptali geri yükler).
+    Kasaya dokunmaz."""
     from operasyon_merkez_api import _isletme_onay_dogrula
     tarih = (body.tarih or str(is_gunu_tr()))[:10]
     with db() as (conn, cur):
@@ -634,13 +635,15 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
         sube_adi = dict(s)["ad"]
         onayci = _isletme_onay_dogrula(cur, body.onay_pin)  # PIN hatalı → 403
 
-        # 1) Bekleyen ciro taslağı → iptal
+        # 1) Ciro taslağı KORUNUR — günün satış verisi (nakit/pos/online) silinmemeli.
+        #    Mührü açmak ciroyu uçurmamalı; yeniden kapanışta veri hazır olur (upsert günceller).
         cur.execute(
-            "UPDATE ciro_taslak SET durum='iptal' "
+            "SELECT COUNT(*) AS n FROM ciro_taslak "
             "WHERE sube_id=%s AND tarih=%s AND durum='bekliyor'",
             (sube_id, tarih),
         )
-        taslak_iptal = cur.rowcount
+        taslak_korunan = int(dict(cur.fetchone())["n"])
+        taslak_iptal = 0  # artık iptal edilmiyor
 
         # 2) Yalnızca GÜN SONU kapanış kaydı → iptal. VARDİYA/KASA DEVRİNE DOKUNMA.
         cur.execute(
@@ -677,20 +680,20 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
               yeni={"onayci": onayci.get("ad_soyad"), "sebep": body.sebep,
                     "taslak_iptal": taslak_iptal, "kapanis_iptal": kapanis_iptal,
                     "event_acildi": event_acildi, "devir_geri_yuklendi": devir_geri_yuklendi,
-                    "teslim_silindi": teslim_silindi})
+                    "teslim_silindi": teslim_silindi, "taslak_korunan": taslak_korunan})
 
     return {
         "success": True,
         "sube": sube_adi,
         "tarih": tarih,
         "geri_alindi": {
-            "ciro_taslak_iptal": taslak_iptal,
+            "ciro_taslak_korundu": taslak_korunan,
             "kapanis_kayit_iptal": kapanis_iptal,
             "kapanis_olayi_acildi": event_acildi,
             "vardiya_devri_geri_yuklendi": devir_geri_yuklendi,
             "kasa_teslim_silindi": teslim_silindi,
         },
-        "not": "Kapanış geri alındı; vardiya/kasa devrine dokunulmadı (varsa önceki yanlış iptal geri yüklendi). Şube kapanışı yeniden yapabilir.",
+        "not": "Kapanış mührü açıldı. Ciro/satış verisi KORUNDU, vardiya/kasa devrine dokunulmadı. Şube kapanışı yeniden yapabilir; ciro hazır gelir.",
     }
 
 
