@@ -2584,6 +2584,7 @@ export default function OperasyonMerkezi() {
   const [urunUyumDurumFiltre, setUrunUyumDurumFiltre] = useState('all');
   const [urunUyumHaftaSatirlari, setUrunUyumHaftaSatirlari] = useState([]);
   const [urunUyumHaftaYukleniyor, setUrunUyumHaftaYukleniyor] = useState(false);
+  const [fireBugun, setFireBugun] = useState({ gun_toplam: 0, kayitlar: [] });
   const [fireAramaTarih, setFireAramaTarih] = useState(bugunIsoTarih());
   const [fireAramaYukleniyor, setFireAramaYukleniyor] = useState(false);
   const [fireAramaSonuc, setFireAramaSonuc] = useState({ tarih: '', gun_toplam: 0, kayitlar: [] });
@@ -4830,6 +4831,10 @@ export default function OperasyonMerkezi() {
         yuklePersonelVardiyaUyumBugun({ silent: true }).catch(() => {});
         yukleUrunUyumBugun({ silent: true }).catch(() => {});
         yukleSevkiyatUyumBugun({ silent: true }).catch(() => {});
+        yukleSevkiyatUyumOzet({ silent: true }).catch(() => {});
+        fireGunYukle(bugunIsoTarih(), { sebep: '' })
+          .then((d) => setFireBugun({ gun_toplam: Number(d?.gun_toplam || (d?.kayitlar || []).length || 0), kayitlar: d?.kayitlar || [] }))
+          .catch(() => {});
       }
     };
     loadOzet();
@@ -4842,7 +4847,7 @@ export default function OperasyonMerkezi() {
       clearInterval(id);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [hubOzetIsle, opsMerkezPencere, yukleUrunAcBugun, yukleGecAcilanBugun, yukleGecKalanPersonelBugun, yukleKullanilanBugun, yukleCiroOnayBugun, yukleKasaUyumBugun, yuklePersonelVardiyaUyumBugun, yukleUrunUyumBugun, yukleSevkiyatUyumBugun]);
+  }, [hubOzetIsle, opsMerkezPencere, yukleUrunAcBugun, yukleGecAcilanBugun, yukleGecKalanPersonelBugun, yukleKullanilanBugun, yukleCiroOnayBugun, yukleKasaUyumBugun, yuklePersonelVardiyaUyumBugun, yukleUrunUyumBugun, yukleSevkiyatUyumBugun, yukleSevkiyatUyumOzet, fireGunYukle]);
 
   const acOpsModul = useCallback((id, modulId) => {
     const bolumler = OPS_MODUL_BOLUM[id] || [{ id: 'icerik', label: 'İçerik' }];
@@ -6206,6 +6211,10 @@ export default function OperasyonMerkezi() {
         const urunDevirSube = new Set(_stokKayit.filter(u => u.tip === 'STOK_BAR_DEVIR_FARK').map(u => u.sube_id)).size;
         const kayitsizSube = new Set(_stokKayit.filter(u => u.tip === 'STOK_BAR_GUN_ICI_FARK').map(u => u.sube_id)).size;
         const karsiliksizSube = new Set(_stokKayit.filter(u => u.tip === 'URUN_AC_UYUMSUZLUK').map(u => u.sube_id)).size;
+        // Sevkiyat / Personel vardiya / Fire — kart detayında vardı, artık üst rozet
+        const sevkiyatUyumSayi = Number(sevkiyatUyumOzet?.adet || 0);
+        const personelVardiyaSayi = Number(personelVardiyaUyumBugun?.toplam || 0);
+        const fireSayi = Number(fireBugun?.gun_toplam || 0);
         const toplamUyari = kritikSayi + gecikSayi + gecAlert + kapanmayanSayi + guvenlikSayi + devirFarkSayi;
         const uyariParcalar = [
           gecAlert > 0 && `${gecAlert} geç açılış`,
@@ -6355,6 +6364,69 @@ export default function OperasyonMerkezi() {
                 ⚠️ Depoda Yok&nbsp;
                 <span style={{ fontWeight: 800 }}>
                   {karsiliksizSube > 0 ? `${karsiliksizSube} şube` : '✓'}
+                </span>
+              </button>
+              {/* 🚚 Sevkiyat Uyumsuzluğu — sipariş ≠ kabul (son 30 gün) */}
+              <button
+                type="button"
+                className="tab-pill"
+                style={{
+                  borderColor: sevkiyatUyumSayi === 0 ? 'var(--green)' : '#f08040',
+                  color: sevkiyatUyumSayi === 0 ? 'var(--green)' : '#f08040',
+                  fontWeight: sevkiyatUyumSayi > 0 ? 800 : undefined,
+                }}
+                title={
+                  sevkiyatUyumSayi === 0
+                    ? 'Sevkiyat uyumsuzluğu yok (sipariş = kabul)'
+                    : `${sevkiyatUyumSayi} sevk satırı uzlaştırılmamış (sipariş ≠ kabul)`
+                }
+                onClick={() => acOpsModul('sevkiyat-uyumsuzluk', 'siparis-kontrol')}
+              >
+                🚚 Sevkiyat&nbsp;
+                <span style={{ fontWeight: 800 }}>
+                  {sevkiyatUyumSayi > 0 ? sevkiyatUyumSayi : '✓'}
+                </span>
+              </button>
+              {/* 👥 Personel Vardiya Uyumsuzluğu */}
+              <button
+                type="button"
+                className="tab-pill"
+                style={{
+                  borderColor: personelVardiyaSayi === 0 ? 'var(--green)' : '#be185d',
+                  color: personelVardiyaSayi === 0 ? 'var(--green)' : '#be185d',
+                  fontWeight: personelVardiyaSayi > 0 ? 800 : undefined,
+                }}
+                title={
+                  personelVardiyaSayi === 0
+                    ? 'Vardiya planı ile gerçekleşen uyumlu'
+                    : `${personelVardiyaSayi} personel vardiya uyumsuzluğu (plan ≠ gerçek)`
+                }
+                onClick={() => acOpsModul('personel-vardiya-uyumsuzluk', 'personel')}
+              >
+                👥 Vardiya&nbsp;
+                <span style={{ fontWeight: 800 }}>
+                  {personelVardiyaSayi > 0 ? personelVardiyaSayi : '✓'}
+                </span>
+              </button>
+              {/* 🔥 Fire Tespiti — bugün bildirilen fire kayıtları */}
+              <button
+                type="button"
+                className="tab-pill"
+                style={{
+                  borderColor: fireSayi === 0 ? 'var(--green)' : '#f59e0b',
+                  color: fireSayi === 0 ? 'var(--green)' : '#f59e0b',
+                  fontWeight: fireSayi > 0 ? 800 : undefined,
+                }}
+                title={
+                  fireSayi === 0
+                    ? 'Bugün fire bildirimi yok'
+                    : `${fireSayi} fire kaydı bildirildi (bugün)`
+                }
+                onClick={() => acOpsModul('fire-bildirim', 'envanter')}
+              >
+                🔥 Fire&nbsp;
+                <span style={{ fontWeight: 800 }}>
+                  {fireSayi > 0 ? fireSayi : '✓'}
                 </span>
               </button>
               {/* Toplam Uyarı — tıklanabilir, drawer açar */}
