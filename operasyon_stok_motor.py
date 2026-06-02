@@ -1551,8 +1551,12 @@ def sube_operasyon_ozet_yaz(cur: Any, sube_id: str, kapanis_stok: Dict[str, int]
 def build_virtual_merkez_uyarilari(cur: Any, sube_id: str, simdi: Any) -> List[Dict[str, Any]]:
     u1 = acilis_vs_dunku_kapanis_uyarilari(cur, sube_id)
     u2 = kontrol_gecikme_uyarilari(cur, sube_id, simdi)
-    u3 = sevk_vs_ac_uyarilari(cur, sube_id)
-    return u1 + u2 + u3
+    # NOT: sevk_vs_ac_uyarilari (bugünkü sevk vs bugünkü aç) KULLANILMIYOR — kusurlu proxy.
+    # 'Karşılıksız ürün açma' zaten ürün-aç anında GERÇEK depo stoğuna göre kontrol ediliyor
+    # (sube_urun_ac → _uyumsuzluk_yaz, deferred reconciliation / SAP-NetSuite deseni). Dünden
+    # gelen ya da şubeler-arası sevkle dolan depo, bu doğru kontrolde karşılık olarak görülür;
+    # bugün-pencereli proxy ise yanlış 'karşılıksız' alarmı üretiyordu.
+    return u1 + u2
 
 
 def normalize_delta_body(body: Dict[str, Any]) -> Dict[str, int]:
