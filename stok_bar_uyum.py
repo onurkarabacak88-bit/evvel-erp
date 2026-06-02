@@ -137,33 +137,10 @@ def gelen_sevk_bar_map(cur: Any, sube_id: str, tarihler) -> Dict[str, int]:
         (sube_id, tlist),
     )
     toplam: Dict[str, int] = {k: 0 for k in _BAR_KEYS}
-    # (a) Tedarikçi/toptancı kabulü → operasyon_defter URUN_SEVK
     for r in cur.fetchall():
         m = _urun_sevk_delta_parse(str(dict(r).get("aciklama") or ""))
         for k in _BAR_KEYS:
             toplam[k] += int(m.get(k) or 0)
-    # (b) Şubeler-arası depo teslim → stok_yolda kabulü (kabul_ts dolu)
-    try:
-        cur.execute(
-            "SELECT kalem_adi, COALESCE(kabul_adet, sevk_adet, 0) AS adet "
-            "FROM stok_yolda "
-            "WHERE sube_id=%s AND kabul_ts IS NOT NULL AND kabul_ts::date = ANY(%s::date[])",
-            (sube_id, tlist),
-        )
-        for r in cur.fetchall():
-            rd = dict(r)
-            ad = str(rd.get("kalem_adi") or "").strip()
-            try:
-                adet = max(0, int(rd.get("adet") or 0))
-            except (TypeError, ValueError):
-                adet = 0
-            if not ad or adet <= 0:
-                continue
-            sk = _stok_key_from_urun_ad(ad)
-            if sk and sk in _BAR_KEYS:
-                toplam[sk] += adet
-    except Exception:
-        pass
     return {k: v for k, v in toplam.items() if v > 0}
 
 
