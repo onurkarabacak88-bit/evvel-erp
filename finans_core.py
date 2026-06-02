@@ -678,6 +678,7 @@ def nakit_akis_sim(cur, gun_sayisi: int = 15) -> list:
         FROM odeme_plani
         WHERE durum IN ('bekliyor', 'onay_bekliyor')
         AND tarih < %s
+        AND tarih >= DATE '2026-06-01'   -- sistem başlangıcı: Haziran öncesi overdue sayılmaz
     """, (bugun,))
     gecikmus_toplam = float(cur.fetchone()['toplam'] or 0)
     if gecikmus_toplam > 0:

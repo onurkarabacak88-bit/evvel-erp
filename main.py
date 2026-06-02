@@ -4124,6 +4124,7 @@ def sabit_gider_odemeler(ay: str = None):
             LEFT JOIN sabit_giderler sg ON sg.id = op.kaynak_id
             WHERE op.kaynak_tablo = 'sabit_giderler'
             AND op.durum IN ('bekliyor', 'onay_bekliyor')
+            AND op.tarih >= DATE '2026-06-01'   -- sistem başlangıcı: Haziran öncesi gösterilmez
             ORDER BY op.tarih ASC
         """)
         bekleyenler = [dict(r) for r in cur.fetchall()]
@@ -6160,10 +6161,11 @@ def vadeli_ozet():
         toplam_bekleyen = float(row['toplam_bekleyen'])
         bekleyen_adet = int(row['adet'])
 
-        # Geciken vadeli alımlar
+        # Geciken vadeli alımlar (sistem başlangıcı: Haziran öncesi sayılmaz)
         cur.execute("""
             SELECT COUNT(*) as adet FROM vadeli_alimlar
             WHERE durum = 'bekliyor' AND vade_tarihi < CURRENT_DATE
+              AND vade_tarihi >= DATE '2026-06-01'
         """)
         geciken_adet = int(cur.fetchone()['adet'])
 
