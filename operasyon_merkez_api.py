@@ -3596,30 +3596,18 @@ def ops_bar_ozet(
             prev_key = (sid, _bar_prev_calendar_iso(tarih_str))
             dun_blk = kapanis_dun_map.get(prev_key)
             onceki_kapanis_yok = dun_blk is None
-            # GELEN SEVK: dün kapanış ile bugün açılış arasında şubeye gelen kabul
-            # (tedarikçi + şubeler-arası depo teslim) → beklenen açılış = dün kapanış + gelen sevk.
-            # Böylece transferle gelen ürün (örn. Tema→Zafer redbull) "karşılıksız" sayılmaz.
-            try:
-                from stok_bar_uyum import gelen_sevk_bar_map as _gelen_sevk
-                gelen_sevk = _gelen_sevk(cur, sid, [_bar_prev_calendar_iso(tarih_str), tarih_str])
-            except Exception:
-                gelen_sevk = {}
             devir_uyumsuz_kalemleri: List[str] = []
             devir_farklari: Dict[str, Dict[str, int]] = {}
             if dun_blk is not None:
                 for k2 in _BAR_KEYS:
                     vd = int(dun_blk.get(k2, 0) or 0)
                     va = int(acilis.get(k2, 0) or 0)
-                    gs = int(gelen_sevk.get(k2, 0) or 0)
-                    beklenen = vd + gs  # dün kapanış + gelen sevk
-                    if va != beklenen:
+                    if vd != va:
                         devir_uyumsuz_kalemleri.append(k2)
                         devir_farklari[k2] = {
                             "dun_kapanis": vd,
-                            "gelen_sevk": gs,
-                            "beklenen": beklenen,
                             "bugun_acilis": va,
-                            "fark": va - beklenen,
+                            "fark": va - vd,
                         }
             devir_uyumsuz_var = bool(devir_uyumsuz_kalemleri) or onceki_kapanis_yok
 
