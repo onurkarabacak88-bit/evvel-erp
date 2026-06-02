@@ -40,6 +40,14 @@ def _num(s: Optional[str]) -> Optional[float]:
         return None
 
 
+def _tarih_ddmmyyyy(s: Optional[str]) -> Optional[str]:
+    """'18/05/2026' → '2026-05-18'"""
+    if not s:
+        return None
+    m = re.search(r"(\d{2})/(\d{2})/(\d{4})", s)
+    return f"{m.group(3)}-{m.group(2)}-{m.group(1)}" if m else None
+
+
 def _tarih_tr_uzun(s: str) -> Optional[str]:
     """'8 Şubat 2026' → '2026-02-08'"""
     m = re.search(r"(\d{1,2})\s+([A-Za-zÇĞİÖŞÜçğıöşü]+)\s+(\d{4})", s)
@@ -77,6 +85,9 @@ def _son_dort(text: str) -> Optional[str]:
 
 def detect_bank(text: str) -> str:
     t = text.lower()
+    # Ziraat (Bankkart) — worldcard generic kontrolünden ÖNCE (ikisinde de 'hesap kesim'+'dönem borcu' var)
+    if "bankkart" in t or "önceki aydan devir" in t or ("ziraat" in t and "dönem borcu" in t):
+        return "ziraat"
     if "worldpuan" in t or ("hesap kesim tarihi" in t and "dönem borcu" in t):
         return "worldcard"
     if "enpara" in t or ("ekstre borcu" in t and "minimum ödeme" in t):
@@ -211,10 +222,45 @@ def _enpara_islemler(text: str) -> List[Dict[str, Any]]:
     return islemler
 
 
+def parse_ziraat(text: str) -> Dict[str, Any]:
+    """Ziraat Bankkart ekstresi başlığı. İşlemler kart_analiz'den gelir (ekstre-yukle birleştirir)."""
+    def g(pat, grp=1):
+        m = re.search(pat, text, re.I)
+        return m.group(grp).strip() if m else None
+
+    # Kart no: "4446-####-####-3696" → son 4 = 3696
+    son4 = g(r"\d{4}-#+-#+-(\d{4})")
+    # Sahip (PDF'te maskeli olabilir, ör. 'F**** K********') — yine de al
+    sahip = g(r"Say[ıi]n\s+([^\n]+)")
+    if not sahip:
+        sahip = g(r"KART NO\s*:.*?/\s*([^\n]+)")
+    return {
+        "banka_format": "ziraat",
+        "son_dort": son4,
+        "kesim_tarihi": _tarih_ddmmyyyy(g(r"Hesap Kesim Tarihi\s*:?\s*(\d{2}/\d{2}/\d{4})")),
+        "son_odeme_tarihi": _tarih_ddmmyyyy(g(r"Son Ödeme Tarihi\s*:?\s*(\d{2}/\d{2}/\d{4})")),
+        "donem_borcu": _num(g(r"Dönem Borcu TL\s*:?\s*([\d.,]+)\s*TL")),
+        "asgari_tutar": _num(g(r"Asgari Ödeme Tutar[ıi] TL\s*:?\s*([\d.,]+)\s*TL")),
+        "asgari_oran": None,
+        "limit": _num(g(r"Kart Limiti\s*:?\s*([\d.,]+)")),
+        "onceki_borc": _num(g(r"ÖNCEK[İI] AYDAN DEV[İI]R\s*([\d.,]+)")),
+        "donem_harcama": None,
+        "donem_odeme": None,
+        "kalan_taksit": None,
+        "donem_faizi": 0,
+        "kart_sahibi": (sahip or "").strip() or None,
+        "akdi_faiz_yillik": None,
+        "gecikme_faiz_yillik": None,
+        "islemler": [],
+    }
+
+
 def parse_ekstre(text: str) -> Dict[str, Any]:
     banka = detect_bank(text)
     if banka == "worldcard":
         return parse_worldcard(text)
+    if banka == "ziraat":
+        return parse_ziraat(text)
     if banka == "enpara":
         return parse_enpara(text)
     return {
