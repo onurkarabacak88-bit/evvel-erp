@@ -1603,7 +1603,8 @@ def net_akis_30_gun(cur) -> dict:
         FROM kasa_hareketleri
         WHERE kasa_etkisi = true AND durum = 'aktif'
         AND islem_turu NOT IN ('CIRO_DUZELTME', 'CIRO_IPTAL', 'ACILIS_DEVRI')
-        AND tarih >= CURRENT_DATE - INTERVAL '30 days'
+        -- Sistem başlangıcından (1 Haziran) öncesine inme — eski/test verisi akışa girmesin
+        AND tarih >= GREATEST(CURRENT_DATE - INTERVAL '30 days', DATE '2026-06-01')
     """)
     r = cur.fetchone()
     gelir = float(r['gelir'])
