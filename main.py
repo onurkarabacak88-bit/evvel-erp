@@ -2217,13 +2217,37 @@ def _ekstre_eslesme_mutabakat(sonuc):
                         isl["durum"] = "yeni"
                         yeni_adet += 1
                 else:
-                    key = (isl.get("tarih"), round(float(isl.get("tutar") or 0), 2), isl.get("tip"))
+                    tutar_r = round(float(isl.get("tutar") or 0), 2)
+                    tip_i = isl.get("tip")
+                    key = (isl.get("tarih"), tutar_r, tip_i)
                     if mevcut.get(key, 0) > 0:
                         mevcut[key] -= 1
                         isl["durum"] = "eslesti"
                     else:
-                        isl["durum"] = "yeni"
-                        yeni_adet += 1
+                        # BULANIK EŞLEŞME (banka mutabakatı std): aynı tutar+tip, tarih ±3 gün.
+                        # Banka işlem tarihi ile elle giriş tarihi farklı olabilir; açıklama umursanmaz.
+                        _eslesti = False
+                        try:
+                            _it = date.fromisoformat(str(isl.get("tarih"))[:10])
+                        except Exception:
+                            _it = None
+                        if _it:
+                            for _k in list(mevcut.keys()):
+                                if mevcut[_k] <= 0 or _k[1] != tutar_r or _k[2] != tip_i:
+                                    continue
+                                try:
+                                    _kd = date.fromisoformat(str(_k[0])[:10])
+                                except Exception:
+                                    continue
+                                if abs((_it - _kd).days) <= 3:
+                                    mevcut[_k] -= 1
+                                    isl["durum"] = "eslesti"
+                                    isl["fuzzy_eslesme"] = True
+                                    _eslesti = True
+                                    break
+                        if not _eslesti:
+                            isl["durum"] = "yeni"
+                            yeni_adet += 1
             sonuc["mutabakat"]["yeni_islem_adet"] = yeni_adet
 
             # Faiz oranlarını ekstreden GÜNCELLE (her ay otomatik — elle girmeye gerek yok)
