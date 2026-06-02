@@ -6201,9 +6201,11 @@ export default function OperasyonMerkezi() {
         const hepsiGirdi = ciroGiren === kartlar.length && kartlar.length > 0;
         const devirFarkSayi = kasaUyumBugun?.toplam || 0;
         const devirFarkMaxAbs = Math.max(0, ...((kasaUyumBugun?.kayitlar || []).map(u => Math.abs(Number(u?.fark_tl || 0)))));
-        // ÜRÜN/STOK devir farkı (açılış↔kapanış sayım, STOK_BAR_DEVIR_FARK) — kasadan AYRI sinyal
-        const urunDevirKayit = (urunUyumBugun?.kayitlar || []).filter(u => u.tip === 'STOK_BAR_DEVIR_FARK' && !u.cozuldu);
-        const urunDevirSube = new Set(urunDevirKayit.map(u => u.sube_id)).size;
+        // 3 stok sinyali — hepsi aynı kaynaktan (urunUyumBugun.kayitlar), şube bazında ayrı pill
+        const _stokKayit = (urunUyumBugun?.kayitlar || []).filter(u => !u.cozuldu);
+        const urunDevirSube = new Set(_stokKayit.filter(u => u.tip === 'STOK_BAR_DEVIR_FARK').map(u => u.sube_id)).size;
+        const kayitsizSube = new Set(_stokKayit.filter(u => u.tip === 'STOK_BAR_GUN_ICI_FARK').map(u => u.sube_id)).size;
+        const karsiliksizSube = new Set(_stokKayit.filter(u => u.tip === 'URUN_AC_UYUMSUZLUK').map(u => u.sube_id)).size;
         const toplamUyari = kritikSayi + gecikSayi + gecAlert + kapanmayanSayi + guvenlikSayi + devirFarkSayi;
         const uyariParcalar = [
           gecAlert > 0 && `${gecAlert} geç açılış`,
@@ -6310,6 +6312,49 @@ export default function OperasyonMerkezi() {
                 📦 Ürün Devir&nbsp;
                 <span style={{ fontWeight: 800 }}>
                   {urunDevirSube > 0 ? `${urunDevirSube} şube` : '✓'}
+                </span>
+              </button>
+              {/* 📋 Kayıtsız Kullanım — gün içi, ürün aç girilmeden çekilmiş (STOK_BAR_GUN_ICI_FARK) */}
+              <button
+                type="button"
+                className="tab-pill"
+                style={{
+                  borderColor: kayitsizSube === 0 ? 'var(--green)' : '#a78bfa',
+                  color: kayitsizSube === 0 ? 'var(--green)' : '#a78bfa',
+                  fontWeight: kayitsizSube > 0 ? 800 : undefined,
+                }}
+                title={
+                  kayitsizSube === 0
+                    ? 'Kayıtsız kullanım yok (ürün aç kayıtları tutarlı)'
+                    : `${kayitsizSube} şubede ürün aç kaydı eksik (çekilmiş ama girilmemiş)`
+                }
+                onClick={() => acOpsModul('urun-uyumsuzluk', 'finans-kasa')}
+              >
+                📋 Kayıtsız Kullanım&nbsp;
+                <span style={{ fontWeight: 800 }}>
+                  {kayitsizSube > 0 ? `${kayitsizSube} şube` : '✓'}
+                </span>
+              </button>
+              {/* ⚠️ Depoda Yok, Açılmış — karşılıksız açma (URUN_AC_UYUMSUZLUK) */}
+              <button
+                type="button"
+                className="tab-pill"
+                style={{
+                  borderColor: karsiliksizSube === 0 ? 'var(--green)' : 'var(--red)',
+                  color: karsiliksizSube === 0 ? 'var(--green)' : 'var(--red)',
+                  fontWeight: karsiliksizSube > 0 ? 800 : undefined,
+                  animation: karsiliksizSube > 0 ? 'pulse 1.2s infinite' : undefined,
+                }}
+                title={
+                  karsiliksizSube === 0
+                    ? 'Karşılıksız açma yok (depo stoğu tutarlı)'
+                    : `${karsiliksizSube} şubede depoda olmayan ürün açılmış`
+                }
+                onClick={() => acOpsModul('urun-uyumsuzluk', 'finans-kasa')}
+              >
+                ⚠️ Depoda Yok&nbsp;
+                <span style={{ fontWeight: 800 }}>
+                  {karsiliksizSube > 0 ? `${karsiliksizSube} şube` : '✓'}
                 </span>
               </button>
               {/* Toplam Uyarı — tıklanabilir, drawer açar */}
