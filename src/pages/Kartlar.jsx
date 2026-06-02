@@ -44,6 +44,15 @@ export default function Kartlar() {
     try { await api(`/kartlar/${id}`, { method: 'DELETE' }); toast('Kart pasife alındı'); load(); }
     catch (e) { toast(e.message, 'red'); }
   }
+  async function kaliciSil(k) {
+    if (!confirm(`"${k.kart_adi}" kartı KALICI olarak silinecek (geri alınamaz).\n\nYalnızca işlemi olmayan (test/yanlış) kartlar silinebilir. Devam?`)) return;
+    const pin = window.prompt('İşletme onayı — Merve Karabacak 4 haneli PIN:');
+    if (!pin) return;
+    try {
+      const r = await api(`/kartlar/${k.id}/kalici-sil`, { method: 'POST', body: { onay_pin: pin } });
+      toast(`"${r.kart_adi}" kalıcı silindi`); load();
+    } catch (e) { toast(e.message || 'Silinemedi — işlemi olan kart için "Pasife Al" kullanın', 'red'); }
+  }
 
   function duzenle(k) {
     setForm({ kart_adi: k.kart_adi, banka: k.banka, limit_tutar: k.limit_tutar,
@@ -255,6 +264,7 @@ export default function Kartlar() {
               <div className="flex gap-8" style={{ marginTop: 12 }}>
                 <button className="btn btn-secondary btn-sm" onClick={() => duzenle(k)}>✏️ Düzenle</button>
                 <button className="btn btn-danger btn-sm" onClick={() => sil(k.id)}>Pasife Al</button>
+                <button className="btn btn-danger btn-sm" title="Kalıcı sil (yalnızca işlemsiz kart)" onClick={() => kaliciSil(k)} style={{ background: 'transparent', color: 'var(--red)' }}>🗑 Sil</button>
               </div>
             </div>
           );

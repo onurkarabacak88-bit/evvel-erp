@@ -1524,6 +1524,41 @@ def kart_sil(kid: str):
         audit(cur, 'kartlar', kid, 'PASIF', eski=eski)
     return {"success": True}
 
+class KartKaliciSilBody(BaseModel):
+    onay_pin: Optional[str] = None
+
+
+@app.post("/api/kartlar/{kid}/kalici-sil")
+def kart_kalici_sil(kid: str, body: KartKaliciSilBody):
+    """Kartı KALICI siler (kayıtlardan tamamen kaldırır). Yalnızca AKTİF işlemi
+    olmayan kartlar (test/yanlış eklenen) silinebilir; işlemi olan kart silinemez →
+    'Pasife Al' kullanılır (defter bütünlüğü). İşletme onayı (Merve Karabacak PIN) şart."""
+    from operasyon_merkez_api import _isletme_onay_dogrula
+    with db() as (conn, cur):
+        cur.execute("SELECT id, kart_adi FROM kartlar WHERE id=%s", (kid,))
+        k = cur.fetchone()
+        if not k:
+            raise HTTPException(404, "Kart bulunamadı")
+        kart_adi = dict(k)["kart_adi"]
+        onayci = _isletme_onay_dogrula(cur, body.onay_pin)  # PIN hatalı → 403
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'", (kid,)
+        )
+        if int(dict(cur.fetchone())["n"]) > 0:
+            raise HTTPException(
+                409,
+                "Bu kartın aktif hareketleri var → kalıcı silinemez. Önce hareketleri "
+                "temizleyin ya da 'Pasife Al' kullanın (defter korunur).",
+            )
+        # İşlemsiz kart → bağlı (iptal) kayıtları + snapshot + plan temizle, sonra kartı sil
+        cur.execute("DELETE FROM kart_hareketleri WHERE kart_id=%s", (kid,))
+        cur.execute("DELETE FROM kart_ekstre_donem WHERE kart_id=%s", (kid,))
+        cur.execute("DELETE FROM odeme_plani WHERE kart_id=%s AND durum IN ('bekliyor','onay_bekliyor')", (kid,))
+        cur.execute("DELETE FROM kartlar WHERE id=%s", (kid,))
+        audit(cur, "kartlar", kid, "KALICI_SIL", yeni={"kart_adi": kart_adi, "onayci": onayci.get("ad_soyad")})
+    return {"success": True, "kart_adi": kart_adi}
+
+
 @app.get("/api/kartlar/{kid}/taksitler")
 def kart_taksitler(kid: str):
     """
