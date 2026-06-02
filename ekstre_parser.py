@@ -85,10 +85,15 @@ def _son_dort(text: str) -> Optional[str]:
 
 def detect_bank(text: str) -> str:
     t = text.lower()
-    # Ziraat (Bankkart) — worldcard generic kontrolünden ÖNCE (ikisinde de 'hesap kesim'+'dönem borcu' var)
-    if "bankkart" in t or "önceki aydan devir" in t or ("ziraat" in t and "dönem borcu" in t):
+    # 1) Worldcard kesin işareti (Worldpuan) ÖNCE → worldcard hiçbir zaman ziraat'a kaçmaz
+    if "worldpuan" in t:
+        return "worldcard"
+    # 2) Ziraat — yalnızca Ziraat'a ÖZGÜ güçlü işaretler ('bankkart' / 'ziraat'); 'önceki aydan
+    #    devir' gibi GENEL ifadeler kullanılmaz (başka banka ekstresine kaçmasın)
+    if "bankkart" in t or "ziraat" in t:
         return "ziraat"
-    if "worldpuan" in t or ("hesap kesim tarihi" in t and "dönem borcu" in t):
+    # 3) Generic worldcard (Yapı Kredi/Garanti vb. — worldpuan yok ama klasik başlık var)
+    if "hesap kesim tarihi" in t and "dönem borcu" in t:
         return "worldcard"
     if "enpara" in t or ("ekstre borcu" in t and "minimum ödeme" in t):
         return "enpara"
