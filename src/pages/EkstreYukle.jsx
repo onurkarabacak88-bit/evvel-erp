@@ -45,7 +45,7 @@ export default function EkstreYukle() {
     } catch (e) { setMHata(e.message); } finally { setMBusy(false); }
   }
 
-  const BANKA_AD = { axess: 'Axess', worldcard: 'Yapı Kredi', enpara: 'Enpara', ziraat: 'Ziraat' };
+  const BANKA_AD = { axess: 'Axess', worldcard: 'Yapı Kredi', enpara: 'Enpara', ziraat: 'Ziraat', garanti: 'Garanti' };
   function gunCikar(d) {
     if (!d) return 1;
     const s = String(d);
@@ -152,7 +152,7 @@ export default function EkstreYukle() {
       setSecili(new Set());
     } catch (e) { setHata(e.message); } finally { setImpBusy(false); }
   }
-  const formatAd = { worldcard: 'Worldcard / Yapı Kredi', enpara: 'Enpara', axess: 'Axess / Akbank', ziraat: 'Ziraat Bankkart' }[sonuc?.banka_format] || sonuc?.banka_format;
+  const formatAd = { worldcard: 'Worldcard / Yapı Kredi', enpara: 'Enpara', axess: 'Axess / Akbank', ziraat: 'Ziraat Bankkart', garanti: 'Garanti Bonus' }[sonuc?.banka_format] || sonuc?.banka_format;
 
   return (
     <div className="page">

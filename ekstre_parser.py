@@ -92,6 +92,9 @@ def detect_bank(text: str) -> str:
     #    devir' gibi GENEL ifadeler kullanılmaz (başka banka ekstresine kaçmasın)
     if "bankkart" in t or "ziraat" in t:
         return "ziraat"
+    # 2b) Garanti (Bonus) — Yapı Kredi worldcard generic'inden ÖNCE
+    if "bbva" in t or "bonus fb card" in t or "dönem borcunuz" in t:
+        return "garanti"
     # 3) Generic worldcard (Yapı Kredi/Garanti vb. — worldpuan yok ama klasik başlık var)
     if "hesap kesim tarihi" in t and "dönem borcu" in t:
         return "worldcard"
@@ -260,10 +263,42 @@ def parse_ziraat(text: str) -> Dict[str, Any]:
     }
 
 
+def parse_garanti(text: str) -> Dict[str, Any]:
+    """Garanti BBVA (Bonus) ekstresi başlığı. İşlemler kart_analiz'den gelir."""
+    def g(pat, grp=1):
+        m = re.search(pat, text, re.I)
+        return m.group(grp).strip() if m else None
+
+    son4 = g(r"\d{4}\s+\d{2}\*+\s+\*+\s+(\d{4})") or _son_dort(text)
+    _sm = re.search(r"Say[ıi]n\s+([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜ ]{3,})", text)
+    sahip = _sm.group(1).strip() if _sm else None
+    return {
+        "banka_format": "garanti",
+        "son_dort": son4,
+        "kesim_tarihi": _tarih_tr_uzun(g(r"Hesap Kesim Tarihi\s*:?\s*(\d{1,2}\s+[A-Za-zÇĞİÖŞÜçğıöşü]+\s+\d{4})") or ""),
+        "son_odeme_tarihi": _tarih_tr_uzun(g(r"Son Ödeme Tarihi\s*:?\s*(\d{1,2}\s+[A-Za-zÇĞİÖŞÜçğıöşü]+\s+\d{4})") or ""),
+        "donem_borcu": _num(g(r"Dönem Borcunuz\s*:?\s*([\d.,]+)")),
+        "asgari_tutar": _num(g(r"Min\.?\s*Ödeme Tutar[ıi]\s*:?\s*([\d.,]+)")),
+        "asgari_oran": None,
+        "limit": _num(g(r"Kart Limiti\s*:?\s*([\d.,]+)")),
+        "onceki_borc": None,
+        "donem_harcama": None,
+        "donem_odeme": None,
+        "kalan_taksit": None,
+        "donem_faizi": 0,
+        "kart_sahibi": (sahip or "").strip().title() or None,
+        "akdi_faiz_yillik": None,
+        "gecikme_faiz_yillik": None,
+        "islemler": [],
+    }
+
+
 def parse_ekstre(text: str) -> Dict[str, Any]:
     banka = detect_bank(text)
     if banka == "worldcard":
         return parse_worldcard(text)
+    if banka == "garanti":
+        return parse_garanti(text)
     if banka == "ziraat":
         return parse_ziraat(text)
     if banka == "enpara":
