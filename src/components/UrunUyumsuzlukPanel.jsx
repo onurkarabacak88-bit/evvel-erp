@@ -38,6 +38,7 @@ export default function UrunUyumsuzlukPanel({
 }) {
   const [duzeltModal, setDuzeltModal] = useState(null);
   const [duzeltBusy, setDuzeltBusy] = useState(false);
+  const [tipSekme, setTipSekme] = useState('devir'); // 'devir' | 'stok'
 
   const bugunStr = bugunIsoTarih();
   const secilenTarih = aramaTarih || bugunStr;
@@ -305,9 +306,43 @@ export default function UrunUyumsuzlukPanel({
         </div>
       )}
 
-      {devirKayitlar.length > 0 && (
+      {/* TİP SEKMELERİ — 3 grup, başlıklar ne ölçtüğünü açık anlatır */}
+      {gorunenKayitlar.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '4px 0 14px' }}>
+          {[
+            { key: 'devir', ad: '🌙 Devir Farkı', alt: 'Akşam bırakılan ≠ sabah bulunan', n: devirKayitlar.length, renk: '#fdba74' },
+            { key: 'eksik', ad: '📋 Kayıtsız Kullanım', alt: "Kullanılmış ama 'ürün aç' girilmemiş", n: gunIciKayitlar.length, renk: '#ddd6fe' },
+            { key: 'karsiliksiz', ad: '⚠️ Depoda Yok, Açılmış', alt: 'Depoda olmayan ürün açılmış', n: urunAcKayitlar.length, renk: '#fca5a5' },
+          ].map((t) => (
+            <button key={t.key} type="button" onClick={() => setTipSekme(t.key)}
+              style={{
+                flex: '1 1 200px', textAlign: 'left', padding: '9px 13px', borderRadius: 9, cursor: 'pointer',
+                border: '1.5px solid ' + (tipSekme === t.key ? t.renk : 'var(--border)'),
+                background: tipSekme === t.key ? 'rgba(255,255,255,0.05)' : 'var(--bg2)',
+              }}>
+              <div style={{ fontWeight: 800, fontSize: 13, color: tipSekme === t.key ? t.renk : 'var(--text)' }}>
+                {t.ad} <span style={{ opacity: 0.8 }}>({t.n})</span>
+              </div>
+              <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 2 }}>{t.alt}</div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {gorunenKayitlar.length > 0 && (
+        (tipSekme === 'devir' && devirKayitlar.length === 0) ||
+        (tipSekme === 'eksik' && gunIciKayitlar.length === 0) ||
+        (tipSekme === 'karsiliksiz' && urunAcKayitlar.length === 0)
+      ) && (
+        <div style={{ padding: 16, textAlign: 'center', color: 'var(--text3)', background: 'var(--bg2)', borderRadius: 10 }}>
+          Bu kategoride uyumsuzluk yok — diğer sekmelere bak.
+        </div>
+      )}
+
+      {tipSekme === 'devir' && devirKayitlar.length > 0 && (
         <div>
-          <div style={{ fontSize: 11, fontWeight: 800, color: '#fdba74', marginBottom: 8, textTransform: 'uppercase' }}>💰 Devir uyumsuzluğu</div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: '#fdba74', marginBottom: 2 }}>🌙 Devir Farkı — akşam bırakılan ≠ sabah bulunan</div>
+          <div style={{ fontSize: 10.5, color: 'var(--text3)', marginBottom: 8 }}>Akşamcının kapanışta saydığı ile sabahçının açılışta saydığı tutmuyor. Sayım hatası mı, gece eksilme/manipülasyon mu?</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {devirKayitlar.map((u) => {
               const d = u.detay_json || {};
@@ -327,9 +362,10 @@ export default function UrunUyumsuzlukPanel({
         </div>
       )}
 
-      {gunIciKayitlar.length > 0 && (
+      {tipSekme === 'eksik' && gunIciKayitlar.length > 0 && (
         <div>
-          <div style={{ fontSize: 11, fontWeight: 800, color: '#ddd6fe', marginBottom: 8, textTransform: 'uppercase' }}>📋 Ürün aç kaydı eksik (depo stok hatası)</div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: '#ddd6fe', marginBottom: 2 }}>📋 Kayıtsız Kullanım — kullanılmış ama 'ürün aç' girilmemiş</div>
+          <div style={{ fontSize: 10.5, color: 'var(--text3)', marginBottom: 8 }}>Bar boşalmış (açılış+ürün aç, kapanıştan az) ama depodan bara çıkış için "Ürün Aç" panele girilmemiş. Eksik kayıt → depo stoğu yanlış görünür.</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {gunIciKayitlar.map((u) => {
               const d = u.detay_json || {};
@@ -351,9 +387,10 @@ export default function UrunUyumsuzlukPanel({
         </div>
       )}
 
-      {urunAcKayitlar.length > 0 && (
+      {tipSekme === 'karsiliksiz' && urunAcKayitlar.length > 0 && (
         <div>
-          <div style={{ fontSize: 11, fontWeight: 800, color: '#fca5a5', marginBottom: 8, textTransform: 'uppercase' }}>⚠ Karşılıksız ürün aç</div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: '#fca5a5', marginBottom: 2 }}>⚠️ Depoda Yok, Açılmış — depoda olmayan ürün barda açılmış</div>
+          <div style={{ fontSize: 10.5, color: 'var(--text3)', marginBottom: 8 }}>Depo stoğu yokken bara ürün açılmış. Dışarıdan habersiz giriş / sayım hatası / başka yerden borç ürün olabilir. Sevk gelince "Depo girişi" ile kapatılır.</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {urunAcKayitlar.map((u) => {
               const eksik = Number((u.detay_json || {}).eksik_miktar || Math.abs(u.fark_tl || 0) || 0);
