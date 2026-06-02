@@ -1485,6 +1485,17 @@ def kartlar_listele():
 @app.post("/api/kartlar")
 def kart_ekle(k: KartModel):
     with db() as (conn, cur):
+        # ÇİFT KART KORUMASI: aynı son 4 haneli AKTİF kart varsa yenisini AÇMA — mevcuti döndür.
+        # (son_dort_hane eşleştirme anahtarı; çiftlenirse mutabakat bozulur. "Kartı Ekle"ye
+        #  iki kez basmak / iki ekstreyi arka arkaya atmak güvenli → idempotent.)
+        if k.son_dort_hane:
+            _s4 = k.son_dort_hane.strip()[-4:]
+            cur.execute("SELECT id::text, kart_adi FROM kartlar WHERE son_dort_hane=%s AND aktif=TRUE LIMIT 1", (_s4,))
+            _ex = cur.fetchone()
+            if _ex:
+                _ex = dict(_ex)
+                return {"id": _ex["id"], "success": True, "mevcut": True,
+                        "mesaj": f"Bu son 4 hane (…{_s4}) zaten kayıtlı: {_ex['kart_adi']} — eşleştirildi, yeni kart açılmadı."}
         kid = str(uuid.uuid4())
         cur.execute("""INSERT INTO kartlar (id,kart_adi,banka,limit_tutar,kesim_gunu,son_odeme_gunu,faiz_orani,asgari_oran,gecikme_faiz_orani,son_dort_hane,sahip,ortak_limit_grup)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
