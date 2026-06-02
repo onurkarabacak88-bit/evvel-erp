@@ -3612,6 +3612,10 @@ def ops_bar_ozet(
             devir_farklari: Dict[str, Dict[str, int]] = {}
             if dun_blk is not None:
                 for k2 in _BAR_KEYS:
+                    # Pasta TOPLAM (pasta_adet) üzerinden takip edilir — 33 ayrı çeşit
+                    # devirde kıyaslanmaz (çeşitler günlük taze; gürültü yapar).
+                    if k2.startswith("pasta_") and k2 != "pasta_adet":
+                        continue
                     vd = int(dun_blk.get(k2, 0) or 0)
                     va = int(acilis.get(k2, 0) or 0)
                     kb = int(kopru.get(k2, 0) or 0)
