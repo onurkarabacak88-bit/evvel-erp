@@ -666,6 +666,22 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
         cur.execute("DELETE FROM kasa_teslim WHERE sube_id=%s AND tarih=%s", (sube_id, tarih))
         teslim_silindi = cur.rowcount
 
+        # 2d) Kasa fark uyarısı (KAPANIS_KASA_FARK) + onay kuyruğu → temizle.
+        #     Kapanış geri alındı → eski fark geçersiz; yeniden kapanışta doğru hesaplanır.
+        #     Bunlar bilgi/onay kaydı, kasaya dokunmaz → silmek güvenli.
+        cur.execute(
+            "DELETE FROM sube_operasyon_uyari "
+            "WHERE sube_id=%s AND tarih=%s AND tip='KAPANIS_KASA_FARK'",
+            (sube_id, tarih),
+        )
+        kasa_fark_temiz = cur.rowcount
+        cur.execute(
+            "UPDATE onay_kuyrugu SET durum='reddedildi' "
+            "WHERE islem_turu='KAPANIS_KASA_FARK' AND kaynak_tablo='kasa_farki' "
+            "AND tarih=%s AND aciklama LIKE %s AND durum='bekliyor'",
+            (tarih, f"[{sube_id}]%"),
+        )
+
         # 3) KAPANIS operasyon olayını yeniden aç (panel kapanışı tekrar görsün)
         cur.execute(
             "UPDATE sube_operasyon_event "
@@ -680,7 +696,8 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
               yeni={"onayci": onayci.get("ad_soyad"), "sebep": body.sebep,
                     "taslak_iptal": taslak_iptal, "kapanis_iptal": kapanis_iptal,
                     "event_acildi": event_acildi, "devir_geri_yuklendi": devir_geri_yuklendi,
-                    "teslim_silindi": teslim_silindi, "taslak_korunan": taslak_korunan})
+                    "teslim_silindi": teslim_silindi, "taslak_korunan": taslak_korunan,
+                    "kasa_fark_temiz": kasa_fark_temiz})
 
     return {
         "success": True,
@@ -692,6 +709,7 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
             "kapanis_olayi_acildi": event_acildi,
             "vardiya_devri_geri_yuklendi": devir_geri_yuklendi,
             "kasa_teslim_silindi": teslim_silindi,
+            "kasa_fark_uyarisi_temizlendi": kasa_fark_temiz,
         },
         "not": "Kapanış mührü açıldı. Ciro/satış verisi KORUNDU, vardiya/kasa devrine dokunulmadı. Şube kapanışı yeniden yapabilir; ciro hazır gelir.",
     }
