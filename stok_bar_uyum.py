@@ -117,6 +117,33 @@ def _urun_ac_delta_parse(aciklama: str) -> Dict[str, int]:
     return result
 
 
+def _urun_sevk_delta_parse(aciklama: str) -> Dict[str, int]:
+    """URUN_SEVK defter satırı (gelen kabul) → bar anahtarları. URUN_AC ile aynı JSON formatı."""
+    if aciklama and aciklama.startswith("URUN_SEVK_JSON:"):
+        return _urun_ac_delta_parse("URUN_AC_JSON:" + aciklama[len("URUN_SEVK_JSON:"):])
+    return {}
+
+
+def gelen_sevk_bar_map(cur: Any, sube_id: str, tarihler) -> Dict[str, int]:
+    """Verilen tarih(ler)de şubeye GELEN kabul (URUN_SEVK: tedarikçi + şubeler-arası depo
+    teslim) kalemlerini bar anahtarlarına toplar. Devir karşılaştırmasında
+    'beklenen açılış = dün kapanış + gelen sevk' için kullanılır → transferler 'karşılıksız' sayılmaz."""
+    tlist = [str(t)[:10] for t in (tarihler or []) if t]
+    if not tlist:
+        return {}
+    cur.execute(
+        "SELECT aciklama FROM operasyon_defter "
+        "WHERE sube_id=%s AND etiket='URUN_SEVK' AND tarih = ANY(%s::date[])",
+        (sube_id, tlist),
+    )
+    toplam: Dict[str, int] = {k: 0 for k in _BAR_KEYS}
+    for r in cur.fetchall():
+        m = _urun_sevk_delta_parse(str(dict(r).get("aciklama") or ""))
+        for k in _BAR_KEYS:
+            toplam[k] += int(m.get(k) or 0)
+    return {k: v for k, v in toplam.items() if v > 0}
+
+
 def fetch_bar_satirlar_gun(
     cur: Any,
     hedef_tarih: date,
