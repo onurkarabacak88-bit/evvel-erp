@@ -6201,6 +6201,9 @@ export default function OperasyonMerkezi() {
         const hepsiGirdi = ciroGiren === kartlar.length && kartlar.length > 0;
         const devirFarkSayi = kasaUyumBugun?.toplam || 0;
         const devirFarkMaxAbs = Math.max(0, ...((kasaUyumBugun?.kayitlar || []).map(u => Math.abs(Number(u?.fark_tl || 0)))));
+        // ÜRÜN/STOK devir farkı (açılış↔kapanış sayım, STOK_BAR_DEVIR_FARK) — kasadan AYRI sinyal
+        const urunDevirKayit = (urunUyumBugun?.kayitlar || []).filter(u => u.tip === 'STOK_BAR_DEVIR_FARK' && !u.cozuldu);
+        const urunDevirSube = new Set(urunDevirKayit.map(u => u.sube_id)).size;
         const toplamUyari = kritikSayi + gecikSayi + gecAlert + kapanmayanSayi + guvenlikSayi + devirFarkSayi;
         const uyariParcalar = [
           gecAlert > 0 && `${gecAlert} geç açılış`,
@@ -6278,14 +6281,35 @@ export default function OperasyonMerkezi() {
                 }}
                 title={
                   devirFarkSayi === 0
-                    ? 'Tüm devir sayımları eşleşti'
-                    : `${devirFarkSayi} şubede açılış devir farkı var · max ${devirFarkMaxAbs.toFixed(0)}₺`
+                    ? 'Kasa (para) açılış-kapanış farkı yok'
+                    : `${devirFarkSayi} şubede kasa (para) farkı · max ${devirFarkMaxAbs.toFixed(0)}₺`
                 }
                 onClick={() => acOpsModul('kasa-uyumsuzluk', 'finans-kasa')}
               >
-                💰 Devir Farkı&nbsp;
+                💰 Kasa Farkı&nbsp;
                 <span style={{ fontWeight: 800 }}>
                   {devirFarkSayi > 0 ? `${devirFarkSayi} şube` : '✓'}
+                </span>
+              </button>
+              {/* 📦 Ürün Devir Farkı — açılış↔kapanış stok sayımı (STOK_BAR_DEVIR_FARK) */}
+              <button
+                type="button"
+                className="tab-pill"
+                style={{
+                  borderColor: urunDevirSube === 0 ? 'var(--green)' : '#f08040',
+                  color: urunDevirSube === 0 ? 'var(--green)' : '#f08040',
+                  fontWeight: urunDevirSube > 0 ? 800 : undefined,
+                }}
+                title={
+                  urunDevirSube === 0
+                    ? 'Ürün devir sayımları eşleşti (akşam kapanış = sabah açılış)'
+                    : `${urunDevirSube} şubede ürün devir farkı (akşam ≠ sabah sayım)`
+                }
+                onClick={() => acOpsModul('urun-uyumsuzluk', 'finans-kasa')}
+              >
+                📦 Ürün Devir&nbsp;
+                <span style={{ fontWeight: 800 }}>
+                  {urunDevirSube > 0 ? `${urunDevirSube} şube` : '✓'}
                 </span>
               </button>
               {/* Toplam Uyarı — tıklanabilir, drawer açar */}
