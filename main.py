@@ -2351,18 +2351,25 @@ def kasa_acilis_devri(body: KasaAcilisBody):
     from operasyon_merkez_api import _isletme_onay_dogrula
     from finans_core import kasa_bakiyesi
     tarih = (body.tarih or "2026-06-01")[:10]
+    hedef = float(body.tutar)
     with db() as (conn, cur):
         onayci = _isletme_onay_dogrula(cur, body.onay_pin)  # PIN hatalı → 403
+        # Önceki açılış kaydını sil, kalan kasayı hesapla, FARK kadar düzeltme yaz →
+        # kasa tam HEDEF tutara çekilir (mevcut hareketler ne olursa olsun, üstüne EKLEMEZ).
         cur.execute("DELETE FROM kasa_hareketleri WHERE islem_turu='ACILIS_DEVRI'")
+        mevcut = kasa_bakiyesi(cur)
+        duzeltme = round(hedef - mevcut, 2)
         insert_kasa_hareketi(
-            cur, tarih, "ACILIS_DEVRI", float(body.tutar),
-            "Sistem açılış kasası (1 Haziran devri)", "sistem", "acilis_devri",
+            cur, tarih, "ACILIS_DEVRI", duzeltme,
+            f"Sistem açılış kasası (1 Haziran) — {hedef:,.0f}₺'ye çekildi",
+            "sistem", "acilis_devri",
             idempotency_key=f"acilis_devri_{tarih}_{uuid.uuid4().hex[:10]}",
         )
         audit(cur, "kasa_hareketleri", "acilis_devri", "KASA_ACILIS",
-              yeni={"tutar": float(body.tutar), "tarih": tarih, "onayci": onayci.get("ad_soyad")})
+              yeni={"hedef": hedef, "onceki": round(mevcut, 2), "duzeltme": duzeltme,
+                    "tarih": tarih, "onayci": onayci.get("ad_soyad")})
         yeni_bakiye = kasa_bakiyesi(cur)
-    return {"success": True, "kasa_bakiye": round(yeni_bakiye, 2)}
+    return {"success": True, "kasa_bakiye": round(yeni_bakiye, 2), "duzeltme": duzeltme}
 
 
 class TopluDevirBody(BaseModel):
