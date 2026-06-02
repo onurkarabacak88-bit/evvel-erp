@@ -2095,6 +2095,17 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
                         pass
         if not sonuc.get("banka_format") or sonuc.get("banka_format") == "bilinmiyor":
             sonuc["banka_format"] = (txns[0].get("banka") if txns else None) or sonuc.get("banka_format")
+        # Kart sahibi header'dan gelmediyse kart_analiz'den al + temizle (Garanti vb.)
+        if not (sonuc.get("kart_sahibi") or "").strip():
+            for _t in txns:
+                _s = (_t.get("kart_sahibi") or "").strip()
+                if not _s:
+                    continue
+                _s = _s.split("\n")[0].strip()
+                _s = re.sub(r"(?i)\s*(müşteri|musteri|kart)\s*limiti.*$", "", _s).strip()
+                if _s:
+                    sonuc["kart_sahibi"] = _s.title()
+                    break
         sonuc.pop("hata", None)  # işlem bulunduysa parse başarısız sayma
     if sonuc.get("hata") and not txns:
         raise HTTPException(422, sonuc["hata"])
