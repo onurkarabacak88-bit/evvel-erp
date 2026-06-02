@@ -117,6 +117,35 @@ def _urun_ac_delta_parse(aciklama: str) -> Dict[str, int]:
     return result
 
 
+def bridging_urun_ac_bar_map(cur: Any, sube_id: str, ts_from, ts_to) -> Dict[str, int]:
+    """Dün kapanış ile bugün açılış ARASINDA yapılan URUN_AC'leri bar anahtarlarına toplar.
+    Bar açılışı = dün kapanış + bu köprü kadar meşru artabilir (depodan bara ürün açma).
+    ts_from yoksa açılış öncesi 1 günlük pencere kullanılır (güvenli fallback)."""
+    if not ts_to:
+        return {}
+    try:
+        if ts_from:
+            cur.execute(
+                "SELECT aciklama FROM operasyon_defter WHERE sube_id=%s AND etiket='URUN_AC' "
+                "AND olay_ts > %s AND olay_ts <= %s",
+                (sube_id, ts_from, ts_to),
+            )
+        else:
+            cur.execute(
+                "SELECT aciklama FROM operasyon_defter WHERE sube_id=%s AND etiket='URUN_AC' "
+                "AND olay_ts <= %s AND olay_ts > (%s::timestamptz - INTERVAL '1 day')",
+                (sube_id, ts_to, ts_to),
+            )
+    except Exception:
+        return {}
+    toplam: Dict[str, int] = {k: 0 for k in _BAR_KEYS}
+    for r in cur.fetchall():
+        m = _urun_ac_delta_parse(str(dict(r).get("aciklama") or ""))
+        for k in _BAR_KEYS:
+            toplam[k] += int(m.get(k) or 0)
+    return {k: v for k, v in toplam.items() if v > 0}
+
+
 def fetch_bar_satirlar_gun(
     cur: Any,
     hedef_tarih: date,

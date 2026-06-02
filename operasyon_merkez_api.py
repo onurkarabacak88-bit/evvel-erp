@@ -3515,13 +3515,14 @@ def ops_bar_ozet(
                 prev_pairs.append(pk)
 
         kapanis_dun_map: Dict[Tuple[str, str], Dict[str, int]] = {}
+        kapanis_dun_ts_map: Dict[Tuple[str, str], Any] = {}
         if prev_pairs:
             sid_list = [p[0] for p in prev_pairs]
             tarih_list = [date.fromisoformat(p[1]) for p in prev_pairs]
             cur.execute(
                 """
                 SELECT DISTINCT ON (e.sube_id, e.tarih)
-                       e.sube_id, e.tarih::text, e.meta AS kapanis_meta
+                       e.sube_id, e.tarih::text, e.meta AS kapanis_meta, e.cevap_ts AS kapanis_ts
                 FROM sube_operasyon_event e
                 INNER JOIN (
                     SELECT * FROM unnest(%s::text[], %s::date[]) AS j(sube_id, tarih)
@@ -3534,6 +3535,7 @@ def ops_bar_ozet(
             for r in cur.fetchall() or []:
                 kk = (str(r["sube_id"]), str(r["tarih"]))
                 kapanis_dun_map[kk] = _bar_stok_from_meta(r.get("kapanis_meta"), "kapanis_stok_sayim")
+                kapanis_dun_ts_map[kk] = r.get("kapanis_ts")
 
             # Fallback: KAPANIS eventi olmayan önceki günler için vardiya devri
             missing_dun = [p for p in prev_pairs if p not in kapanis_dun_map]
@@ -3596,18 +3598,32 @@ def ops_bar_ozet(
             prev_key = (sid, _bar_prev_calendar_iso(tarih_str))
             dun_blk = kapanis_dun_map.get(prev_key)
             onceki_kapanis_yok = dun_blk is None
+            # KÖPRÜ ÜRÜN AÇ: dün kapanış → bugün açılış arasında depodan bara açılan ürün.
+            # Beklenen açılış = dün kapanış + köprü. Böylece meşru "ürün aç" devir farkı sayılmaz;
+            # ürün aç kaydı YOKKEN açılış fazlaysa (manipülasyon/hata) doğru şekilde işaretlenir.
+            kopru = {}
+            if dun_blk is not None:
+                try:
+                    from stok_bar_uyum import bridging_urun_ac_bar_map as _bridge
+                    kopru = _bridge(cur, sid, kapanis_dun_ts_map.get(prev_key), ac_row.get("acilis_ts"))
+                except Exception:
+                    kopru = {}
             devir_uyumsuz_kalemleri: List[str] = []
             devir_farklari: Dict[str, Dict[str, int]] = {}
             if dun_blk is not None:
                 for k2 in _BAR_KEYS:
                     vd = int(dun_blk.get(k2, 0) or 0)
                     va = int(acilis.get(k2, 0) or 0)
-                    if vd != va:
+                    kb = int(kopru.get(k2, 0) or 0)
+                    beklenen = vd + kb  # dün kapanış + köprü ürün aç
+                    if va != beklenen:
                         devir_uyumsuz_kalemleri.append(k2)
                         devir_farklari[k2] = {
                             "dun_kapanis": vd,
+                            "kopru_urun_ac": kb,
+                            "beklenen": beklenen,
                             "bugun_acilis": va,
-                            "fark": va - vd,
+                            "fark": va - beklenen,
                         }
             devir_uyumsuz_var = bool(devir_uyumsuz_kalemleri) or onceki_kapanis_yok
 
