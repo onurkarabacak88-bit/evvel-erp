@@ -906,7 +906,7 @@ def panel():
                 SELECT COALESCE(SUM(ABS(tutar)), 0) as toplam_cikis
                 FROM kasa_hareketleri
                 WHERE kasa_etkisi = true AND durum = 'aktif' AND tutar < 0
-                AND islem_turu NOT IN ('CIRO_DUZELTME', 'CIRO_IPTAL')
+                AND islem_turu NOT IN ('CIRO_DUZELTME', 'CIRO_IPTAL', 'ACILIS_DEVRI')
                 AND EXTRACT(YEAR  FROM tarih) = EXTRACT(YEAR  FROM CURRENT_DATE)
                 AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
             """)
@@ -918,6 +918,7 @@ def panel():
                 SELECT COALESCE(SUM(tutar), 0) as toplam_giris
                 FROM kasa_hareketleri
                 WHERE kasa_etkisi = true AND durum = 'aktif' AND tutar > 0
+                AND islem_turu NOT IN ('CIRO_DUZELTME', 'CIRO_IPTAL', 'ACILIS_DEVRI')
                 AND EXTRACT(YEAR  FROM tarih) = EXTRACT(YEAR  FROM CURRENT_DATE)
                 AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
             """)

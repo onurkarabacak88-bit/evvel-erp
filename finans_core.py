@@ -1602,6 +1602,7 @@ def net_akis_30_gun(cur) -> dict:
             COALESCE(SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END), 0) AS gider
         FROM kasa_hareketleri
         WHERE kasa_etkisi = true AND durum = 'aktif'
+        AND islem_turu NOT IN ('CIRO_DUZELTME', 'CIRO_IPTAL', 'ACILIS_DEVRI')
         AND tarih >= CURRENT_DATE - INTERVAL '30 days'
     """)
     r = cur.fetchone()
