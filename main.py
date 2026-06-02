@@ -1553,7 +1553,14 @@ def kart_kalici_sil(kid: str, body: KartKaliciSilBody):
         # İşlemsiz kart → bağlı (iptal) kayıtları + snapshot + plan temizle, sonra kartı sil
         cur.execute("DELETE FROM kart_hareketleri WHERE kart_id=%s", (kid,))
         cur.execute("DELETE FROM kart_ekstre_donem WHERE kart_id=%s", (kid,))
-        cur.execute("DELETE FROM odeme_plani WHERE kart_id=%s AND durum IN ('bekliyor','onay_bekliyor')", (kid,))
+        # onay_kuyrugu odeme_plani'na bağlı olabilir → önce o kartın planlarına ait
+        # bekleyen onay kayıtlarını temizle, sonra TÜM odeme_plani (her durum) sil (FK).
+        cur.execute(
+            "UPDATE onay_kuyrugu SET durum='reddedildi' "
+            "WHERE durum='bekliyor' AND kaynak_id IN (SELECT id FROM odeme_plani WHERE kart_id=%s)",
+            (kid,),
+        )
+        cur.execute("DELETE FROM odeme_plani WHERE kart_id=%s", (kid,))
         cur.execute("DELETE FROM kartlar WHERE id=%s", (kid,))
         audit(cur, "kartlar", kid, "KALICI_SIL", yeni={"kart_adi": kart_adi, "onayci": onayci.get("ad_soyad")})
     return {"success": True, "kart_adi": kart_adi}
