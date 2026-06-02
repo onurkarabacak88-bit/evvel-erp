@@ -709,12 +709,13 @@ export function SabitGiderler() {
     // Geçmiş ödemeleri yükle — son tutarı otomatik öneri olarak kullan (tekrarlılık şablonu)
     const gecmis = await api(`/fatura-gecmis/${g.id}`).catch(() => []);
     setFaturaGecmis(gecmis);
-    const sonTutar = gecmis?.[0]?.tutar;
+    // Değişken (fatura): son ödenen tutarı öner. Sabit (kira vb.): tanımlı sabit tutarı öner.
+    const sonTutar = gecmis?.[0]?.tutar ?? (g.tip !== 'degisken' ? g.tutar : null);
     setFaturaForm({
       tutar: sonTutar ? String(Math.round(Number(sonTutar))) : '',
       tarih: new Date().toISOString().split('T')[0],
-      odeme_yontemi: 'nakit',
-      kart_id: '',
+      odeme_yontemi: g.odeme_yontemi || 'nakit',
+      kart_id: g.kart_id || '',
     });
   }
 
@@ -818,8 +819,10 @@ export function SabitGiderler() {
                 <td><span className={`badge ${g.aktif?'badge-green':'badge-gray'}`}>{g.aktif?'Aktif':'Pasif'}</span></td>
                 <td>
                   <div className="flex gap-8">
-                    {g.tip === 'degisken' && (
-                      <button className="btn btn-primary btn-sm" onClick={()=>faturaOdeAc(g)}>💰 Fatura Öde</button>
+                    {g.aktif && (
+                      <button className="btn btn-primary btn-sm" onClick={()=>faturaOdeAc(g)}>
+                        {g.tip === 'degisken' ? '💰 Fatura Öde' : '💰 Öde'}
+                      </button>
                     )}
                     <button className="btn btn-ghost btn-sm" onClick={async()=>{
                       setSabitGecmisModal(g); setSabitGecmisData(null);
