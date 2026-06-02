@@ -2097,12 +2097,13 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
             sonuc["banka_format"] = (txns[0].get("banka") if txns else None) or sonuc.get("banka_format")
         # Kart sahibi header'dan gelmediyse kart_analiz'den al + temizle (Garanti vb.)
         if not (sonuc.get("kart_sahibi") or "").strip():
+            import re as _re
             for _t in txns:
                 _s = (_t.get("kart_sahibi") or "").strip()
                 if not _s:
                     continue
                 _s = _s.split("\n")[0].strip()
-                _s = re.sub(r"(?i)\s*(müşteri|musteri|kart)\s*limiti.*$", "", _s).strip()
+                _s = _re.sub(r"(?i)\s*(müşteri|musteri|kart)\s*limiti.*$", "", _s).strip()
                 if _s:
                     sonuc["kart_sahibi"] = _s.title()
                     break
