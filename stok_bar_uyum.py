@@ -33,8 +33,10 @@ _BAR_KEYS = [
 # Gün sonu denetimi: açılış + ürün aç − kapanış < 0 → ürün aç kaydı eksik (depo hatası)
 GUN_ICI_DENETIM_KEYS = frozenset({
     "bardak_kucuk", "bardak_buyuk", "bardak_plastik",
-    "su_adet", "sut_litre", "redbull_adet", "soda_adet", "pasta_adet",
-    *[k for k in _BAR_KEYS if k.startswith("pasta_")],
+    "su_adet", "sut_litre", "redbull_adet", "soda_adet",
+    # Pasta: çeşit değil TOPLAM sayı üzerinden denetlenir (devir kuralıyla aynı hiza).
+    # pasta_* çeşitleri kasıtlı olarak hariç — sadece pasta_adet (toplam).
+    "pasta_adet",
 })
 
 STOK_UYUM_TIPS = ("STOK_BAR_DEVIR_FARK", "STOK_BAR_GUN_ICI_FARK", "URUN_AC_UYUMSUZLUK")
