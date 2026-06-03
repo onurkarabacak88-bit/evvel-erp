@@ -141,11 +141,12 @@ export default function KartMerkez({ onNavigate }) {
     </div>
   );
 
+  // Aciliyet/sıklık sırası: günlük bakılan + zaman-kritik üstte, analiz altta
   const TABS = [
     { id: 'genel', label: '📊 Genel Durum' },
-    { id: 'strateji', label: '🤖 Strateji Motoru' },
-    { id: 'oncelik', label: '🎯 Öncelik Sırası' },
     { id: 'takvim', label: '📅 Ödeme Takvimi' },
+    { id: 'oncelik', label: '🎯 Öncelik Sırası' },
+    { id: 'strateji', label: '🤖 Strateji Motoru' },
     { id: 'plan', label: '🗓 Kapanış Planı' },
   ];
 
@@ -154,7 +155,7 @@ export default function KartMerkez({ onNavigate }) {
       <div className="page-header flex items-center justify-between" style={{ marginBottom: 16 }}>
         <div>
           <h2>💳 Kart Kontrol Merkezi</h2>
-          <p style={{ fontSize: 12, color: 'var(--text3)' }}>{kartlar.length} aktif kart · Toplam borç: <strong style={{ color: 'var(--red)' }}>{fmt(toplamBorc)}</strong></p>
+          <p style={{ fontSize: 12, color: 'var(--text3)' }}>{kartlar.length} aktif kart · Kullanım: <strong style={{ color: toplamLimit > 0 && toplamBorc / toplamLimit > 0.85 ? 'var(--red)' : 'var(--text2)' }}>%{toplamLimit > 0 ? Math.round(toplamBorc / toplamLimit * 100) : 0}</strong></p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexDirection: 'column', alignItems: 'flex-end' }}>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -175,7 +176,6 @@ export default function KartMerkez({ onNavigate }) {
       {/* ÖZET METRİKLER */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 20 }}>
         {[
-          { label: '💳 Toplam Borç', val: toplamBorc, renk: 'var(--red)' },
           { label: '🟢 Boş Limit', val: bosLimit, renk: bosLimit > 0 ? 'var(--green)' : 'var(--red)' },
           { label: '📋 Bu Ekstre', val: toplamEkstre, renk: 'var(--yellow)' },
           { label: '⚡ Asgari Toplam', val: toplamAsgari, renk: 'var(--text1)' },
