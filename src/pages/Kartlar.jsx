@@ -6,27 +6,15 @@ const BOSH = { kart_adi: '', banka: '', limit_tutar: '', kesim_gunu: 15, son_ode
 
 export default function Kartlar() {
   const [kartlar, setKartlar] = useState([]);
-  const [hareketler, setHareketler] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState(BOSH);
   const [duzenleId, setDuzenleId] = useState(null);
   const [msg, setMsg] = useState(null);
-  const [filtreAcik, setFiltreAcik] = useState(false); // hareket filtresi varsayılan kapalı (ikincil)
-  const [filtre, setFiltre] = useState({
-    kart_id: '',
-    islem_turu: 'TUM',
-    baslangic: '',
-    bitis: '',
-    q: '',
-  });
+  // Kart-odaklı araç çubuğu: arama + sıralama (bu sayfada işe yarayan şey budur)
+  const [arama, setArama] = useState('');
+  const [sirala, setSirala] = useState('borc'); // borc | kullanim | sonodeme | ad
 
-  const load = () => Promise.all([
-    api('/kartlar'),
-    api('/kart-hareketleri'),
-  ]).then(([k, h]) => {
-    setKartlar(k || []);
-    setHareketler(h || []);
-  });
+  const load = () => api('/kartlar').then((k) => setKartlar(k || []));
   useEffect(() => { load(); }, []);
 
   const toast = (m, t = 'green') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 3000); };
@@ -90,24 +78,22 @@ export default function Kartlar() {
   };
 
   const aktifKartlar = kartlar.filter((k) => k.aktif);
-  const hareketlerFiltreli = hareketler.filter((h) => {
-    if (filtre.kart_id && String(h.kart_id) !== String(filtre.kart_id)) return false;
-    if (filtre.islem_turu !== 'TUM' && h.islem_turu !== filtre.islem_turu) return false;
-    if (filtre.baslangic && String(h.tarih) < filtre.baslangic) return false;
-    if (filtre.bitis && String(h.tarih) > filtre.bitis) return false;
-    const q = (filtre.q || '').trim().toLowerCase();
-    if (q) {
-      const alan = `${h.kart_adi || ''} ${h.aciklama || ''} ${h.islem_turu || ''}`.toLowerCase();
-      if (!alan.includes(q)) return false;
-    }
-    return true;
-  });
-  const ozet = hareketlerFiltreli.reduce((acc, h) => {
-    const t = Number(h.tutar) || 0;
-    if (h.islem_turu === 'ODEME') acc.odeme += t;
-    else acc.harcama += t;
-    return acc;
-  }, { odeme: 0, harcama: 0 });
+
+  // Üst özet — kart bazlı (bu sayfada anlamlı olan)
+  const toplamBorc = aktifKartlar.reduce((s, k) => s + (parseFloat(k.guncel_borc) || 0), 0);
+  const toplamLimit = aktifKartlar.reduce((s, k) => s + (parseFloat(k.limit_tutar) || 0), 0);
+  const bosLimit = toplamLimit - toplamBorc;
+
+  // Arama + sıralama → gösterilen kartlar
+  const q = arama.trim().toLowerCase();
+  const gosterilenKartlar = aktifKartlar
+    .filter((k) => !q || `${k.kart_adi || ''} ${k.banka || ''} ${k.sahip || ''}`.toLowerCase().includes(q))
+    .sort((a, b) => {
+      if (sirala === 'ad') return String(a.kart_adi || '').localeCompare(String(b.kart_adi || ''), 'tr');
+      if (sirala === 'kullanim') return (b.limit_doluluk || 0) - (a.limit_doluluk || 0);
+      if (sirala === 'sonodeme') return (a.gun_kaldi ?? 99) - (b.gun_kaldi ?? 99);
+      return (parseFloat(b.guncel_borc) || 0) - (parseFloat(a.guncel_borc) || 0); // borc (vars.)
+    });
 
   async function bozukTemizle() {
     if (!window.confirm('TÜM kartların hareket kayıtları iptal edilecek (borçlar sıfırlanır).\n\nBu, açılış devri kurmadan önceki temizliktir. Kasaya dokunmaz. Devam?')) return;
@@ -130,59 +116,58 @@ export default function Kartlar() {
         </div>
       </div>
 
-      {/* Hareket filtresi — ikincil, katlanabilir (asıl liste 'Hareketler' sekmesinde). Özet hep görünür. */}
-      <div className="card mb-16" style={{ padding: '10px 12px' }}>
-        <div className="flex items-center justify-between" style={{ gap: 10, flexWrap: 'wrap', cursor: 'pointer' }}
-          onClick={() => setFiltreAcik(v => !v)}>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontWeight: 700, fontSize: 13 }}>{filtreAcik ? '▾' : '▸'} Hareket Özeti</span>
-            <span className="badge badge-blue">Ödeme: {fmt(ozet.odeme)}</span>
-            <span className="badge badge-yellow">Harcama: {fmt(ozet.harcama)}</span>
-            <span className="badge">Net: {fmt(ozet.harcama - ozet.odeme)}</span>
-            <span className="badge">{hareketlerFiltreli.length} kayıt</span>
-          </div>
-          <span style={{ fontSize: 11, color: 'var(--text3)' }}>{filtreAcik ? 'gizle' : 'filtrele'}</span>
+      {/* Kart araç çubuğu — arama + sıralama + kart-bazlı özet (bu sayfaya özgü işlevsel) */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        marginBottom: 16, padding: '10px 12px', background: 'var(--bg2)',
+        border: '1px solid var(--border)', borderRadius: 10,
+      }}>
+        <div style={{ position: 'relative', flex: '1 1 220px', minWidth: 180 }}>
+          <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--text3)', fontSize: 13, pointerEvents: 'none' }}>🔍</span>
+          <input
+            value={arama} onChange={(e) => setArama(e.target.value)}
+            placeholder="Kart / banka / sahip ara…"
+            style={{ width: '100%', padding: '9px 12px 9px 32px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text1)', fontSize: 13 }}
+          />
+          {arama && (
+            <button onClick={() => setArama('')} title="Temizle"
+              style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'none', color: 'var(--text3)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+          )}
         </div>
-        {filtreAcik && (<>
-        <div className="form-row cols-5" style={{ alignItems: 'end', marginTop: 10 }}>
-          <div className="form-group">
-            <label>Kart</label>
-            <select value={filtre.kart_id} onChange={(e) => setFiltre({ ...filtre, kart_id: e.target.value })}>
-              <option value="">Tümü</option>
-              {aktifKartlar.map((k) => <option key={k.id} value={k.id}>{k.kart_adi}</option>)}
-            </select>
-          </div>
-          <div className="form-group">
-            <label>İşlem</label>
-            <select value={filtre.islem_turu} onChange={(e) => setFiltre({ ...filtre, islem_turu: e.target.value })}>
-              <option value="TUM">Tümü</option>
-              <option value="ODEME">Ödeme</option>
-              <option value="HARCAMA">Harcama</option>
-            </select>
-          </div>
-          <div className="form-group">
-            <label>Başlangıç</label>
-            <input type="date" value={filtre.baslangic} onChange={(e) => setFiltre({ ...filtre, baslangic: e.target.value })} />
-          </div>
-          <div className="form-group">
-            <label>Bitiş</label>
-            <input type="date" value={filtre.bitis} onChange={(e) => setFiltre({ ...filtre, bitis: e.target.value })} />
-          </div>
-          <div className="form-group">
-            <label>Ara</label>
-            <input placeholder="kart/açıklama" value={filtre.q} onChange={(e) => setFiltre({ ...filtre, q: e.target.value })} />
-          </div>
+
+        {/* Sıralama — segmentli butonlar (dropdown'dan hızlı) */}
+        <div style={{ display: 'flex', gap: 3, background: 'var(--bg3)', borderRadius: 8, padding: 3 }}>
+          {[
+            { k: 'borc', l: '💸 Borç' },
+            { k: 'kullanim', l: '📊 Kullanım' },
+            { k: 'sonodeme', l: '⏰ Son Ödeme' },
+            { k: 'ad', l: 'A–Z' },
+          ].map((o) => (
+            <button key={o.k} onClick={() => setSirala(o.k)}
+              style={{
+                padding: '6px 11px', fontSize: 12, fontWeight: sirala === o.k ? 700 : 500,
+                border: 'none', borderRadius: 6, cursor: 'pointer',
+                background: sirala === o.k ? 'var(--primary)' : 'transparent',
+                color: sirala === o.k ? '#fff' : 'var(--text2)', transition: 'background .15s',
+              }}>{o.l}</button>
+          ))}
         </div>
-        <div className="flex items-center justify-end" style={{ marginTop: 6 }}>
-          <button className="btn btn-secondary btn-sm" onClick={() => setFiltre({ kart_id: '', islem_turu: 'TUM', baslangic: '', bitis: '', q: '' })}>
-            Filtreyi Temizle
-          </button>
+
+        {/* Kart-bazlı özet */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginLeft: 'auto', fontSize: 12 }}>
+          <span className="badge">{gosterilenKartlar.length}{q ? `/${aktifKartlar.length}` : ''} kart</span>
+          <span className="badge badge-red" title="Toplam güncel borç">Borç: {fmt(toplamBorc)}</span>
+          <span className="badge badge-green" title="Toplam boş limit">Boş: {fmt(bosLimit)}</span>
         </div>
-        </>)}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(300px,1fr))', gap: 14 }}>
-        {aktifKartlar.map(k => {
+        {gosterilenKartlar.length === 0 && (
+          <div className="card" style={{ gridColumn: '1/-1', padding: 24, textAlign: 'center', color: 'var(--text3)' }}>
+            {q ? `"${arama}" ile eşleşen kart yok` : 'Aktif kart yok — “+ Kart Ekle” ile başla'}
+          </div>
+        )}
+        {gosterilenKartlar.map(k => {
           const risk = riskClass(k.limit_doluluk || 0);
           const onceki = oncekiDurumEtiket(k.onceki_durum);
           return (
