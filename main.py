@@ -2599,10 +2599,15 @@ def kart_ekstre_import(body: EkstreImportBody):
         if not cur.fetchone():
             raise HTTPException(404, "Kart bulunamadı")
         yazilan, atlanan = 0, 0
+        faiz_donemleri: set = set()  # ekstreden faiz gelen YYYY-MM dönemleri (motor tahmini iptali için)
         for isl in body.islemler:
             tip = (isl.tip or "HARCAMA").upper()
             if tip not in ("HARCAMA", "ODEME", "FAIZ"):
                 atlanan += 1; continue
+            if tip == "FAIZ":
+                _ft = (isl.tarih or str(bugun_tr()))[:7]
+                if len(_ft) == 7:
+                    faiz_donemleri.add(_ft)
             # TAKSİTLİ alım: tutar=TOPLAM (taksit_anapara), taksit_sayisi=Y, baslangic=tarih
             tsay = int(isl.taksit_sayisi or 1)
             is_taksit = tip == "HARCAMA" and tsay > 1 and float(isl.taksit_anapara or 0) > 0
@@ -2644,14 +2649,39 @@ def kart_ekstre_import(body: EkstreImportBody):
                 yazilan += 1
             else:
                 atlanan += 1  # zaten var (idempotent)
-        if yazilan:
+
+        # ── OTOMATİK: ekstreden GERÇEK banka faizi geldiyse, o dönem için motorun
+        #    TAHMİNİ faizini iptal et (çift faiz olmasın). Motor faizi açıklamasında
+        #    "kesim faizi" işaretini taşır; ekstre faizi (DÖNEM FAİZİ/Kredi faizi/KKDF…)
+        #    taşımaz → yalnızca tahmin iptal olur, banka gerçeği kalır. İdempotent.
+        motor_faizi_iptal = 0
+        for _donem in faiz_donemleri:
+            cur.execute(
+                """
+                UPDATE kart_hareketleri
+                SET durum='iptal',
+                    aciklama = aciklama || ' [ekstre gerçeği geldi — motor tahmini iptal]'
+                WHERE kart_id=%s AND islem_turu='FAIZ' AND durum='aktif'
+                  AND aciklama LIKE '%% kesim faizi %%'
+                  AND to_char(tarih, 'YYYY-MM') = %s
+                """,
+                (body.kart_id, _donem),
+            )
+            motor_faizi_iptal += cur.rowcount or 0
+
+        if yazilan or motor_faizi_iptal:
             try:
                 from motors import kart_plan_guncelle_tx
                 kart_plan_guncelle_tx(cur)
             except Exception:
                 pass
         yeni_borc = kart_borc(cur, body.kart_id)
-    return {"yazilan": yazilan, "atlanan_veya_mevcut": atlanan, "yeni_sistem_borc": round(yeni_borc, 2)}
+    return {
+        "yazilan": yazilan,
+        "atlanan_veya_mevcut": atlanan,
+        "motor_tahmini_faiz_iptal": motor_faizi_iptal,
+        "yeni_sistem_borc": round(yeni_borc, 2),
+    }
 
 
 # ── ÖDEME PLANI ────────────────────────────────────────────────
