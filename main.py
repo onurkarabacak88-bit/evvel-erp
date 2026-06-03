@@ -3198,9 +3198,15 @@ class CiroModel(BaseModel):
     force: bool = False
 
 @app.get("/api/ciro")
-def ciro_listele(limit: int = 200):
+def ciro_listele(limit: int = 200, ay: str = None):
+    import re as _re_ay
+    ay_v = (ay or "").strip()
+    ay_cond, ay_params = "", []
+    if ay_v and ay_v.lower() != "hepsi" and _re_ay.match(r"^\d{4}-\d{2}$", ay_v):
+        ay_cond = " AND to_char(c.tarih, 'YYYY-MM') = %s"
+        ay_params = [ay_v]
     with db() as (conn, cur):
-        cur.execute("""
+        cur.execute(f"""
             SELECT
                 c.*,
                 s.ad as sube_adi,
@@ -3212,10 +3218,10 @@ def ciro_listele(limit: int = 200):
                       c.online * COALESCE(s.online_oran, 0) / 100.0, 2) as toplam_yanan
             FROM ciro c
             LEFT JOIN subeler s ON s.id = c.sube_id
-            WHERE c.durum = 'aktif'
+            WHERE c.durum = 'aktif'{ay_cond}
             ORDER BY c.tarih DESC
             LIMIT %s
-        """, (limit,))
+        """, ay_params + [limit])
         return [dict(r) for r in cur.fetchall()]
 
 @app.post("/api/ciro")

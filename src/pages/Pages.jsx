@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
+import AyFiltre, { buGununAyi } from '../components/AyFiltre';
 
 export function Strateji() {
   const [data, setData] = useState(null);
@@ -2023,9 +2024,10 @@ export function Ciro() {
   const [form, setForm] = useState({tarih:new Date().toISOString().split('T')[0],sube_id:'',nakit:0,pos:0,online:0,aciklama:''});
   const [msg, setMsg] = useState(null);
   const [dupUyari, setDupUyari] = useState(null);
+  const [ay, setAy] = useState(buGununAyi());
 
-  const load=()=>{api('/ciro').then(setListe);api('/subeler').then(setSubeler);};
-  useEffect(()=>{load();},[]);
+  const load=()=>{api(`/ciro?ay=${encodeURIComponent(ay)}`).then(setListe);api('/subeler').then(setSubeler);};
+  useEffect(()=>{load();},[ay]);
   const toast=(m,t='green')=>{setMsg({m,t});setTimeout(()=>setMsg(null),3000);};
 
   async function kaydet(force=false){
@@ -2052,7 +2054,10 @@ export function Ciro() {
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
       <div className="page-header flex items-center justify-between">
         <div><h2>Ciro Girişi</h2><p>Ciro girildiğinde otomatik merkez kasaya eklenir</p></div>
-        <button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ Ciro Gir</button>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <AyFiltre value={ay} onChange={setAy} allowAll />
+          <button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ Ciro Gir</button>
+        </div>
       </div>
       <div className="table-wrap">
         <table>
