@@ -2161,6 +2161,14 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
             garanti_faiz_enjekte(sonuc, metin)
         except Exception:
             pass  # faiz enjeksiyonu başarısız olsa da ekstre okuması devam etsin
+    # ZİRAAT/Bankkart: faiz satırları tarihli (kart_analiz FAIZ olarak yakalar) → burada
+    # sadece dönem faizi özetini + yıllık oranları tamamla.
+    elif sonuc.get("banka_format") == "ziraat":
+        try:
+            from ekstre_parser import ziraat_faiz_finalize
+            ziraat_faiz_finalize(sonuc, metin)
+        except Exception:
+            pass
 
     return _ekstre_eslesme_mutabakat(sonuc)
 

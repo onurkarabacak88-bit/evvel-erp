@@ -361,6 +361,30 @@ def garanti_faiz_enjekte(sonuc: Dict[str, Any], text: str) -> None:
                 break
 
 
+def ziraat_faiz_finalize(sonuc: Dict[str, Any], text: str) -> None:
+    """Ziraat/Bankkart: faiz satırları TARİHLİ olduğu için kart_analiz onları FAIZ olarak
+    zaten yakalıyor (Kredi faizi, Taksit faizi, KKDF, BSMV). Burada yalnızca eksik kalan
+    iki ÖZET alanını tamamlarız: dönem faizini işlemlerden yeniden hesapla + yıllık oranlar.
+    sonuc'u yerinde değiştirir. Idempotent."""
+    isl = sonuc.get("islemler") or []
+    sonuc["donem_faizi"] = round(
+        sum(float(i["tutar"] or 0) for i in isl if i.get("tip") == "FAIZ"), 2)
+    # Yıllık oranlar: "Yıllık Faiz Oranları: Alışveriş Faizi %51,00; Alışveriş Gecikme Faizi %54,60"
+    for ln in text.splitlines():
+        low = ln.lower()
+        if "y" in low and "ll" in low and "faiz oran" in low and "%" in ln:
+            a = re.search(r"al[ıi]şveriş faizi\s*%(\d[\d.]*,\d{2})", ln, re.I)
+            g = re.search(r"al[ıi]şveriş gecikme faizi\s*%(\d[\d.]*,\d{2})", ln, re.I)
+            av = _num(a.group(1)) if a else None
+            gv = _num(g.group(1)) if g else None
+            if av is not None and av > 20:
+                if sonuc.get("akdi_faiz_yillik") is None:
+                    sonuc["akdi_faiz_yillik"] = av
+                if gv is not None and sonuc.get("gecikme_faiz_yillik") is None:
+                    sonuc["gecikme_faiz_yillik"] = gv
+                break
+
+
 def parse_ekstre(text: str) -> Dict[str, Any]:
     banka = detect_bank(text)
     if banka == "worldcard":
