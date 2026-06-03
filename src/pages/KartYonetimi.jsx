@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { api, fmt } from '../utils/api';
 import KartMerkez from './KartMerkez';
 import Kartlar from './Kartlar';
@@ -15,37 +15,120 @@ const TABS = [
   { id: 'analiz',       label: 'Ekstre Analizi',  icon: '📂', C: KartEkstreAnaliz },
 ];
 
-function BorcFaizOzet() {
+// En sık kullanılan aksiyonlar — her sekmeden tek tık erişim
+const QUICK = [
+  { id: 'ekstre-yukle', label: 'Ekstre Yükle', icon: '📄', renk: 'var(--accent)' },
+  { id: 'koc',          label: 'Öde / Plan',   icon: '💸', renk: 'var(--green)' },
+  { id: 'kartlar',      label: 'Kart Ekle',    icon: '➕', renk: 'var(--blue, #4a9eff)' },
+];
+
+const ANIM_CSS = `
+  @keyframes kyFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes kyPop  { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+  .ky-content { animation: kyFade .26s cubic-bezier(.22,.61,.36,1); }
+  .ky-tab { position: relative; display: flex; align-items: center; gap: 7px; padding: 11px 16px;
+    font-size: 13px; cursor: pointer; border: none; background: transparent; color: var(--text3);
+    white-space: nowrap; transition: color .18s ease; border-radius: 8px 8px 0 0; }
+  .ky-tab:hover { color: var(--text2); background: var(--bg2); }
+  .ky-tab.active { color: var(--accent); font-weight: 700; }
+  .ky-tab .ky-ico { font-size: 15px; transition: transform .25s cubic-bezier(.34,1.56,.64,1); }
+  .ky-tab.active .ky-ico { transform: scale(1.18); }
+  .ky-ind { position: absolute; bottom: -1px; height: 2.5px; border-radius: 3px; background: var(--accent);
+    transition: transform .3s cubic-bezier(.22,.61,.36,1), width .3s cubic-bezier(.22,.61,.36,1);
+    box-shadow: 0 0 8px var(--accent); }
+  .ky-quick { display: flex; align-items: center; gap: 6px; padding: 6px 13px; font-size: 12.5px;
+    font-weight: 600; border-radius: 999px; cursor: pointer; border: 1px solid var(--border);
+    background: var(--bg2); color: var(--text2); transition: transform .15s ease, box-shadow .15s ease, border-color .15s; }
+  .ky-quick:hover { transform: translateY(-1px); border-color: currentColor;
+    box-shadow: 0 3px 12px rgba(0,0,0,.18); }
+  .ky-kpi { animation: kyPop .4s cubic-bezier(.22,.61,.36,1) both; transition: transform .18s ease, box-shadow .18s ease; }
+  .ky-kpi:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.16); }
+  .ky-bar { height: 9px; border-radius: 5px; overflow: hidden; display: flex; background: var(--bg3); }
+  .ky-bar > span { height: 100%; transition: width .5s cubic-bezier(.22,.61,.36,1); }
+`;
+
+function BorcFaizOzet({ onJump }) {
   const [d, setD] = useState(null);
-  const [ho, setHo] = useState(null);   // şahsi/işletme/belirsiz kırılımı
+  const [ho, setHo] = useState(null);
   useEffect(() => {
     api('/kartlar/borc-faiz-ozet').then(setD).catch(() => {});
     api('/kartlar/harcama-ozet').then(setHo).catch(() => {});
   }, []);
-  if (!d) return null;
+  if (!d) {
+    return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text3)' }}><div className="spinner" /></div>;
+  }
+
+  const eksik = d.bu_ay_eksik_ekstre || [];
+  // İşletme/şahsi/belirsiz oranları (görsel bar)
+  const g = ho?.genel || { isletme: 0, sahsi: 0, belirsiz: 0 };
+  const topHarcama = (g.isletme || 0) + (g.sahsi || 0) + (g.belirsiz || 0);
+  const pct = (v) => topHarcama > 0 ? Math.round((v / topHarcama) * 100) : 0;
+
+  const kpi = [
+    { label: '💳 Toplam Kart Borcu', val: fmt(d.toplam_borc), renk: 'var(--red)', big: true,
+      sub: 'tüm aktif kartlar' },
+    { label: '📈 Bankaya Ödenen Faiz', val: fmt(d.toplam_odenen_faiz), renk: 'var(--orange)',
+      sub: 'ekstrelerden birikimli' },
+  ];
+
   return (
-    <div style={{ padding: '14px 16px 0' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 10, marginBottom: 12 }}>
-        <div className="card" style={{ padding: '12px 14px' }}>
-          <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>💳 TOPLAM KART BORCU</div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 22, fontWeight: 800, color: 'var(--red)' }}>{fmt(d.toplam_borc)}</div>
-        </div>
-        <div className="card" style={{ padding: '12px 14px' }}>
-          <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>📈 BANKAYA ÖDENEN TOPLAM FAİZ</div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 22, fontWeight: 800, color: 'var(--orange)' }}>{fmt(d.toplam_odenen_faiz)}</div>
-          <div style={{ fontSize: 10, color: 'var(--text3)' }}>ekstrelerden birikimli</div>
-        </div>
-        <div className="card" style={{ padding: '12px 14px' }}>
-          <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>📄 BU AY EKSTRE</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: d.bu_ay_eksik_ekstre?.length ? 'var(--yellow)' : 'var(--green)', marginTop: 6 }}>
-            {d.bu_ay_eksik_ekstre?.length ? `${d.bu_ay_eksik_ekstre.length} kart eksik` : '✓ Hepsi yüklü'}
+    <div className="ky-content" style={{ padding: '14px 16px 0' }}>
+      {/* HERO KPI + eksik ekstre aksiyon çipi */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12, marginBottom: 14 }}>
+        {kpi.map((k, i) => (
+          <div key={k.label} className="card ky-kpi" style={{ padding: '14px 16px', borderTop: `3px solid ${k.renk}`, animationDelay: `${i * 60}ms` }}>
+            <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 700, letterSpacing: .3 }}>{k.label}</div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: k.big ? 30 : 24, fontWeight: 800, color: k.renk, lineHeight: 1.1, marginTop: 4 }}>{k.val}</div>
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>{k.sub}</div>
           </div>
-          {d.bu_ay_eksik_ekstre?.length > 0 && (
-            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>{d.bu_ay_eksik_ekstre.slice(0, 4).join(', ')}{d.bu_ay_eksik_ekstre.length > 4 ? '…' : ''}</div>
+        ))}
+        {/* Eksik ekstre — aksiyon kartı */}
+        <div
+          className="card ky-kpi"
+          onClick={() => eksik.length && onJump('ekstre-yukle')}
+          style={{
+            padding: '14px 16px', cursor: eksik.length ? 'pointer' : 'default',
+            borderTop: `3px solid ${eksik.length ? 'var(--yellow)' : 'var(--green)'}`, animationDelay: '120ms',
+          }}
+        >
+          <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 700, letterSpacing: .3 }}>📄 Bu Ay Ekstre Durumu</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: eksik.length ? 'var(--yellow)' : 'var(--green)', marginTop: 6 }}>
+            {eksik.length ? `${eksik.length} kart eksik` : '✓ Hepsi yüklü'}
+          </div>
+          {eksik.length > 0 && (
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
+              {eksik.slice(0, 4).join(', ')}{eksik.length > 4 ? '…' : ''} · <span style={{ color: 'var(--accent)' }}>yüklemek için tıkla →</span>
+            </div>
           )}
         </div>
       </div>
-      <div className="card" style={{ padding: 0, marginBottom: 12 }}>
+
+      {/* İŞLETME / ŞAHSİ / BELİRSİZ — görsel bar */}
+      {ho && topHarcama > 0 && (
+        <div className="card ky-kpi" style={{ padding: '14px 16px', marginBottom: 14, animationDelay: '180ms' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>🏢 İşletme vs 👤 Şahsi Kırılımı <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text3)' }}>(kart harcamaları)</span></div>
+            {g.belirsiz > 0 && (
+              <button className="ky-quick" style={{ color: 'var(--orange)' }} onClick={() => onJump('hareketler')}>
+                ❓ {fmt(g.belirsiz)} sınıflandır →
+              </button>
+            )}
+          </div>
+          <div className="ky-bar">
+            <span style={{ width: `${pct(g.isletme)}%`, background: 'var(--green)' }} title={`İşletme ${fmt(g.isletme)}`} />
+            <span style={{ width: `${pct(g.sahsi)}%`, background: 'var(--purple)' }} title={`Şahsi ${fmt(g.sahsi)}`} />
+            <span style={{ width: `${pct(g.belirsiz)}%`, background: 'var(--orange)' }} title={`Belirsiz ${fmt(g.belirsiz)}`} />
+          </div>
+          <div style={{ display: 'flex', gap: 16, marginTop: 8, flexWrap: 'wrap', fontSize: 12 }}>
+            <span style={{ color: 'var(--green)' }}>🏢 İşletme <strong>{fmt(g.isletme)}</strong> · %{pct(g.isletme)}</span>
+            <span style={{ color: 'var(--purple)' }}>👤 Şahsi <strong>{fmt(g.sahsi)}</strong> · %{pct(g.sahsi)}</span>
+            {g.belirsiz > 0 && <span style={{ color: 'var(--orange)' }}>❓ Belirsiz <strong>{fmt(g.belirsiz)}</strong> · %{pct(g.belirsiz)}</span>}
+          </div>
+        </div>
+      )}
+
+      {/* KART BAZLI TABLO */}
+      <div className="card ky-kpi" style={{ padding: 0, marginBottom: 12, animationDelay: '240ms' }}>
         <div className="table-wrap">
           <table>
             <thead><tr><th>Kart</th><th>Sahip</th><th style={{ textAlign: 'right' }}>Güncel Borç</th><th style={{ textAlign: 'right' }}>Ödenen Faiz</th><th>Son Ekstre</th><th>Bu Ay</th></tr></thead>
@@ -55,7 +138,7 @@ function BorcFaizOzet() {
                   <td style={{ fontSize: 12, fontWeight: 600 }}>{k.kart_adi}</td>
                   <td style={{ fontSize: 12, color: 'var(--text3)' }}>{k.sahip}</td>
                   <td style={{ textAlign: 'right' }} className="mono">{fmt(k.guncel_borc)}</td>
-                  <td style={{ textAlign: 'right' }} className="mono" >{k.toplam_odenen_faiz > 0 ? <span style={{ color: 'var(--orange)' }}>{fmt(k.toplam_odenen_faiz)}</span> : '—'}</td>
+                  <td style={{ textAlign: 'right' }} className="mono">{k.toplam_odenen_faiz > 0 ? <span style={{ color: 'var(--orange)' }}>{fmt(k.toplam_odenen_faiz)}</span> : '—'}</td>
                   <td style={{ fontSize: 11, color: 'var(--text3)' }}>{k.son_ekstre_donem ? k.son_ekstre_donem.slice(0, 7) : '—'}</td>
                   <td>{k.bu_ay_ekstre_var ? <span className="badge badge-green">✓</span> : <span className="badge badge-yellow">eksik</span>}</td>
                 </tr>
@@ -64,41 +147,6 @@ function BorcFaizOzet() {
           </table>
         </div>
       </div>
-
-      {/* ŞAHSİ / İŞLETME / BELİRSİZ KIRILIMI (sadece HARCAMA) */}
-      {ho && (
-        <div className="card" style={{ padding: 0, marginBottom: 12 }}>
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-            <div style={{ fontWeight: 700 }}>🏢 İşletme vs 👤 Şahsi Kırılımı <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text3)' }}>(kart harcamaları)</span></div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <span className="badge badge-green" title="İşletme">🏢 {fmt(ho.genel.isletme)}</span>
-              <span className="badge" style={{ background: 'rgba(155,114,212,.18)', color: 'var(--purple)' }} title="Şahsi">👤 {fmt(ho.genel.sahsi)}</span>
-              {ho.genel.belirsiz > 0 && <span className="badge" style={{ background: 'var(--orange)', color: '#fff' }} title="Sınıflandırılmamış">❓ {fmt(ho.genel.belirsiz)}</span>}
-            </div>
-          </div>
-          {ho.genel.belirsiz > 0 && (
-            <div style={{ padding: '8px 16px', fontSize: 12, color: 'var(--orange)', borderBottom: '1px solid var(--border)' }}>
-              ❓ {fmt(ho.genel.belirsiz)} henüz şahsi/işletme olarak işaretlenmedi — Hareketler sekmesinden sınıflandır.
-            </div>
-          )}
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Kart</th><th>Sahip</th><th style={{ textAlign: 'right' }}>🏢 İşletme</th><th style={{ textAlign: 'right' }}>👤 Şahsi</th><th style={{ textAlign: 'right' }}>❓ Belirsiz</th></tr></thead>
-              <tbody>
-                {ho.kartlar.map(k => (
-                  <tr key={k.kart_id}>
-                    <td style={{ fontSize: 12, fontWeight: 600 }}>{k.kart_adi}</td>
-                    <td style={{ fontSize: 12, color: 'var(--text3)' }}>{k.sahip}</td>
-                    <td style={{ textAlign: 'right' }} className="mono">{k.isletme > 0 ? fmt(k.isletme) : '—'}</td>
-                    <td style={{ textAlign: 'right' }} className="mono">{k.sahsi > 0 ? <span style={{ color: 'var(--purple)' }}>{fmt(k.sahsi)}</span> : '—'}</td>
-                    <td style={{ textAlign: 'right' }} className="mono">{k.belirsiz > 0 ? <span style={{ color: 'var(--orange)' }}>{fmt(k.belirsiz)}</span> : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -120,24 +168,21 @@ function BorcKocu() {
   useEffect(() => { yukle(); /* eslint-disable-next-line */ }, [strateji]);
 
   return (
-    <div style={{ padding: '14px 16px' }}>
+    <div className="ky-content" style={{ padding: '14px 16px' }}>
       {/* KPI'lar */}
       {d && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 10, marginBottom: 14 }}>
-          <div className="card" style={{ padding: '12px 14px' }}>
-            <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>💳 TOPLAM BORÇ</div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 22, fontWeight: 800, color: 'var(--red)' }}>{fmt(d.toplam_borc)}</div>
-          </div>
-          <div className="card" style={{ padding: '12px 14px' }}>
-            <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>🩸 AYLIK FAİZ KAYBI</div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 22, fontWeight: 800, color: 'var(--orange)' }}>{fmt(d.toplam_aylik_faiz)}</div>
-            <div style={{ fontSize: 10, color: 'var(--text3)' }}>hiçbir şey yapmazsan her ay bankaya</div>
-          </div>
-          <div className="card" style={{ padding: '12px 14px' }}>
-            <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>📋 TOPLAM ASGARİ</div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 22, fontWeight: 800, color: 'var(--text1)' }}>{fmt(d.toplam_asgari)}</div>
-            <div style={{ fontSize: 10, color: 'var(--text3)' }}>bu ay en az ödenmesi gereken</div>
-          </div>
+          {[
+            { l: '💳 TOPLAM BORÇ', v: fmt(d.toplam_borc), c: 'var(--red)', s: '' },
+            { l: '🩸 AYLIK FAİZ KAYBI', v: fmt(d.toplam_aylik_faiz), c: 'var(--orange)', s: 'hiçbir şey yapmazsan her ay bankaya' },
+            { l: '📋 TOPLAM ASGARİ', v: fmt(d.toplam_asgari), c: 'var(--text1)', s: 'bu ay en az ödenmesi gereken' },
+          ].map((k, i) => (
+            <div key={k.l} className="card ky-kpi" style={{ padding: '12px 14px', animationDelay: `${i * 60}ms` }}>
+              <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>{k.l}</div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 22, fontWeight: 800, color: k.c }}>{k.v}</div>
+              {k.s && <div style={{ fontSize: 10, color: 'var(--text3)' }}>{k.s}</div>}
+            </div>
+          ))}
         </div>
       )}
 
@@ -243,6 +288,22 @@ export default function KartYonetimi({ onNavigate }) {
   const aktif = TABS.find(t => t.id === tab) || TABS[0];
   const Active = aktif.C;
 
+  // Kayan aktif sekme göstergesi
+  const tabRefs = useRef({});
+  const [ind, setInd] = useState({ left: 0, width: 0 });
+  useLayoutEffect(() => {
+    const el = tabRefs.current[aktif.id];
+    if (el) setInd({ left: el.offsetLeft, width: el.offsetWidth });
+  }, [aktif.id, tab]);
+  useEffect(() => {
+    const onResize = () => {
+      const el = tabRefs.current[aktif.id];
+      if (el) setInd({ left: el.offsetLeft, width: el.offsetWidth });
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [aktif.id]);
+
   function sec(id) {
     setTab(id);
     try { sessionStorage.setItem('kart_yonetimi_tab', id); } catch { /* */ }
@@ -250,31 +311,41 @@ export default function KartYonetimi({ onNavigate }) {
 
   return (
     <div>
+      <style>{ANIM_CSS}</style>
       <div style={{
         position: 'sticky', top: 0, zIndex: 30, background: 'var(--bg)',
-        borderBottom: '1px solid var(--border)', padding: '10px 16px 0',
-        display: 'flex', gap: 4, flexWrap: 'wrap',
+        borderBottom: '1px solid var(--border)', padding: '8px 16px 0',
       }}>
-        {TABS.map(t => {
-          const a = t.id === aktif.id;
-          return (
-            <button key={t.id} type="button" onClick={() => sec(t.id)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 7,
-                padding: '9px 16px', fontSize: 13, fontWeight: a ? 700 : 500,
-                cursor: 'pointer', border: 'none', background: 'transparent',
-                color: a ? 'var(--accent)' : 'var(--text3)',
-                borderBottom: a ? '2px solid var(--accent)' : '2px solid transparent',
-                marginBottom: -1, borderRadius: '7px 7px 0 0',
-                transition: 'color .15s, border-color .15s',
-              }}>
-              <span style={{ fontSize: 15 }}>{t.icon}</span>{t.label}
-            </button>
-          );
-        })}
+        {/* Üst satır: sekmeler + hızlı erişim */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ position: 'relative', display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            {TABS.map(t => (
+              <button
+                key={t.id} type="button" onClick={() => sec(t.id)}
+                ref={(el) => { tabRefs.current[t.id] = el; }}
+                className={`ky-tab ${t.id === aktif.id ? 'active' : ''}`}
+              >
+                <span className="ky-ico">{t.icon}</span>{t.label}
+              </button>
+            ))}
+            <div className="ky-ind" style={{ width: ind.width, transform: `translateX(${ind.left}px)` }} />
+          </div>
+
+          {/* Hızlı erişim çubuğu */}
+          <div style={{ display: 'flex', gap: 7, paddingBottom: 8, flexWrap: 'wrap' }}>
+            {QUICK.filter(q => q.id !== aktif.id).map(q => (
+              <button key={q.id} type="button" className="ky-quick" style={{ color: q.renk }} onClick={() => sec(q.id)}>
+                <span style={{ fontSize: 14 }}>{q.icon}</span>{q.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
-      {aktif.id === 'genel' && <BorcFaizOzet />}
-      <Active onNavigate={onNavigate} />
+
+      {aktif.id === 'genel' && <BorcFaizOzet onJump={sec} />}
+      <div key={tab} className="ky-content">
+        <Active onNavigate={onNavigate} />
+      </div>
     </div>
   );
 }
