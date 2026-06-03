@@ -1786,14 +1786,13 @@ export function KartHareketleri() {
       const kid = sessionStorage.getItem('kart_hareket_odeme_kart_id');
       const open = sessionStorage.getItem('kart_hareket_odeme_modal');
       if (!kid && open !== '1') return;
+      // Ödeme deep-link: kart seçili olsun olmasın işlem türünü ÖDEME hazır aç.
       setForm((f) => ({
         ...f,
-        ...(kid ? {
-          kart_id: kid,
-          islem_turu: 'ODEME',
-          tutar: '',
-          aciklama: 'Panel — asgari / kart borcu ödemesi',
-        } : {}),
+        islem_turu: 'ODEME',
+        tutar: '',
+        aciklama: 'Kart borcu ödemesi',
+        ...(kid ? { kart_id: kid } : {}),
       }));
       if (open === '1') setShowModal(true);
       sessionStorage.removeItem('kart_hareket_odeme_kart_id');

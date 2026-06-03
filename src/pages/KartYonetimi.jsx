@@ -18,7 +18,8 @@ const TABS = [
 // En sık kullanılan aksiyonlar — her sekmeden tek tık erişim
 const QUICK = [
   { id: 'ekstre-yukle', label: 'Ekstre Yükle', icon: '📄', renk: 'var(--accent)' },
-  { id: 'koc',          label: 'Öde / Plan',   icon: '💸', renk: 'var(--green)' },
+  { id: 'hareketler',   label: 'Öde',          icon: '💸', renk: 'var(--green)', odeme: true },
+  { id: 'koc',          label: 'Borç Koçu',    icon: '🧭', renk: 'var(--purple)' },
   { id: 'kartlar',      label: 'Kart Ekle',    icon: '➕', renk: 'var(--blue, #4a9eff)' },
 ];
 
@@ -334,7 +335,11 @@ export default function KartYonetimi({ onNavigate }) {
           {/* Hızlı erişim çubuğu */}
           <div style={{ display: 'flex', gap: 7, paddingBottom: 8, flexWrap: 'wrap' }}>
             {QUICK.filter(q => q.id !== aktif.id).map(q => (
-              <button key={q.id} type="button" className="ky-quick" style={{ color: q.renk }} onClick={() => sec(q.id)}>
+              <button key={q.id} type="button" className="ky-quick" style={{ color: q.renk }}
+                onClick={() => {
+                  if (q.odeme) { try { sessionStorage.setItem('kart_hareket_odeme_modal', '1'); } catch (_) {} }
+                  sec(q.id);
+                }}>
                 <span style={{ fontSize: 14 }}>{q.icon}</span>{q.label}
               </button>
             ))}
