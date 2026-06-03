@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
+import AyFiltre, { buGununAyi } from '../components/AyFiltre';
 
 const TUR_RENK = {
   CIRO: 'green',
@@ -46,15 +47,17 @@ export default function Ledger() {
   const [ozet, setOzet] = useState({});
   const [sekme, setSekme] = useState('hareketler'); // 'hareketler' | 'breakdown'
   const [breakdown, setBreakdown] = useState(null);
+  const [ay, setAy] = useState(buGununAyi()); // YYYY-MM | 'hepsi'
 
   useEffect(() => {
-    api('/ledger?limit=500').then(data => {
-      if (Array.isArray(data)) { setRows(data); }
+    api(`/ledger?limit=500&ay=${encodeURIComponent(ay)}`).then(data => {
+      if (Array.isArray(data)) { setRows(data); setOzet({}); }
       else { setRows(data.rows || []); setOzet(data.ozet || {}); }
     });
     api('/kasa').then(d => setKasa(d.guncel_bakiye));
     api('/kasa-detay').then(setBreakdown).catch(() => {});
-  }, []);
+  }, [ay]);
+  const ayAktif = ay && ay !== 'hepsi';
 
   const filtered = filtre ? rows.filter(r => r.islem_turu === filtre) : rows;
   const turler = [...new Set(rows.map(r => r.islem_turu))];
@@ -69,16 +72,17 @@ export default function Ledger() {
       <div className="page-header flex items-center justify-between">
         <div>
           <h2>📒 İşlem Defteri</h2>
-          <p>Tüm kasa hareketleri · Güncel bakiye: <strong style={{ color: 'var(--green)' }}>{fmt(kasa)}</strong></p>
+          <p>Kasa hareketleri · Güncel bakiye: <strong style={{ color: 'var(--green)' }}>{fmt(kasa)}</strong> <span style={{color:'var(--text3)'}}>(gerçek, tüm zamanlar)</span></p>
         </div>
+        <AyFiltre value={ay} onChange={setAy} allowAll />
       </div>
 
       {/* Özet kartlar */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
         {[
           { label: '🏦 Güncel Bakiye', val: kasa, renk: kasa >= 0 ? 'var(--green)' : 'var(--red)', sub: 'Gerçek kasa' },
-          { label: '↑ Toplam Gelir', val: toplamGelir, renk: 'var(--green)', sub: 'Tüm zamanlar' },
-          { label: '↓ Toplam Gider', val: toplamGider, renk: 'var(--red)', sub: toplamIptal > 0 ? `+${fmt(toplamIptal)} iptal ayrı` : 'Tüm zamanlar' },
+          { label: '↑ Gelir', val: toplamGelir, renk: 'var(--green)', sub: ayAktif ? 'Bu ay' : 'Tüm zamanlar' },
+          { label: '↓ Gider', val: toplamGider, renk: 'var(--red)', sub: toplamIptal > 0 ? `+${fmt(toplamIptal)} iptal ayrı` : (ayAktif ? 'Bu ay' : 'Tüm zamanlar') },
           { label: toplamIptal > 0 ? '🔄 İptal Edilen' : '= Net', val: toplamIptal > 0 ? toplamIptal : toplamGelir - toplamGider, renk: 'var(--yellow)', sub: toplamIptal > 0 ? 'Gelir iptali' : 'Gelir − Gider' },
         ].map(({ label, val, renk, sub }) => (
           <div key={label} className="metric-card" style={{ borderTop: `3px solid ${renk}` }}>

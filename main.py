@@ -5901,17 +5901,47 @@ def kasa_duzelt(sid: str, body: KasaDuzeltModel):
 
 # ── İŞLEM DEFTERİ (LEDGER) ─────────────────────────────────────
 @app.get("/api/ledger")
-def ledger(limit: int = 200, islem_turu: Optional[str] = None):
+def ledger(limit: int = 200, islem_turu: Optional[str] = None, ay: str = None):
+    import re as _re_ay
+    ay_v = (ay or "").strip()
+    ay_aktif = bool(ay_v and ay_v.lower() != "hepsi" and _re_ay.match(r"^\d{4}-\d{2}$", ay_v))
     with db() as (conn, cur):
         sql = "SELECT * FROM kasa_hareketleri WHERE durum='aktif'"
-        params = []
+        params: list = []
         if islem_turu:
             sql += " AND islem_turu=%s"
             params.append(islem_turu)
+        if ay_aktif:
+            sql += " AND to_char(tarih, 'YYYY-MM') = %s"
+            params.append(ay_v)
         sql += " ORDER BY tarih DESC, olusturma DESC LIMIT %s"
         params.append(limit)
         cur.execute(sql, params)
-        return [dict(r) for r in cur.fetchall()]
+        rows = [dict(r) for r in cur.fetchall()]
+
+        # Ay verildiyse {rows, ozet} döner (kartlar aylık olsun); yoksa geriye uyum: düz dizi.
+        if not ay_aktif:
+            return rows
+        cur.execute(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END), 0)        AS toplam_gelir,
+                COALESCE(SUM(CASE WHEN tutar < 0 THEN -tutar ELSE 0 END), 0)       AS toplam_gider,
+                COALESCE(SUM(CASE WHEN islem_turu LIKE '%%IPTAL%%' THEN ABS(tutar) ELSE 0 END), 0) AS toplam_iptal
+            FROM kasa_hareketleri
+            WHERE durum='aktif' AND to_char(tarih, 'YYYY-MM') = %s
+            """,
+            (ay_v,),
+        )
+        oz = dict(cur.fetchone() or {})
+        return {
+            "rows": rows,
+            "ozet": {
+                "toplam_gelir": float(oz.get("toplam_gelir") or 0),
+                "toplam_gider": float(oz.get("toplam_gider") or 0),
+                "toplam_iptal": float(oz.get("toplam_iptal") or 0),
+            },
+        }
 
 # ── EXCEL IMPORT ───────────────────────────────────────────────
 from fastapi import UploadFile, File
