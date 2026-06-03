@@ -636,7 +636,10 @@ def _ozet_events(events: List[dict]) -> Dict[str, Any]:
 def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, Any]:
     sid = sube_row["id"]
     sube = dict(sube_row)
-    operasyon = build_panel_operasyon_blob(cur, sid, sube)
+    # ensure=False: dashboard salt-okuma poll'üdür; günlük event satırı oluşturma
+    # scheduler(02:30)+startup tarafından garanti edilir. Dinamik durum sync'leri (gecikti
+    # geçişi vb.) yine çalışır. Bu, her 25 sn'lik poll'de koşulsuz yazmayı kaldırır.
+    operasyon = build_panel_operasyon_blob(cur, sid, sube, ensure=False)
     events = operasyon.get("events") or []
     ozet = _ozet_events(events)
 

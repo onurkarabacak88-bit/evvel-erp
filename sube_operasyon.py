@@ -427,8 +427,35 @@ def _pick_aktif(rows: List[dict], simdi: datetime) -> Optional[dict]:
     return cands[0]
 
 
-def build_panel_operasyon_blob(cur, sube_id: str, sube: dict) -> Dict[str, Any]:
-    _ensure_events(cur, sube_id, sube)
+def ensure_events_tum_subeler(cur) -> int:
+    """Tüm aktif şubeler için bugünün ACILIS/KAPANIS event satırlarını oluşturur.
+    Scheduler (02:30) ve startup tarafından çağrılır — böylece günlük satır oluşturma
+    GET isteklerinin (dashboard polling) hot-path'inden çıkar. is_gunu_tr() doğru iş
+    gününü döndürdüğü saatlerde (02:00 sonrası) çağrılmalıdır. Idempotent."""
+    cur.execute("SELECT * FROM subeler WHERE aktif=TRUE")
+    subeler = cur.fetchall()
+    n = 0
+    for s in subeler:
+        try:
+            cur.execute("SAVEPOINT sp_ensure_ev")
+            _ensure_events(cur, str(s["id"]), dict(s))
+            cur.execute("RELEASE SAVEPOINT sp_ensure_ev")
+            n += 1
+        except Exception:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_ensure_ev")
+            except Exception:
+                pass
+    return n
+
+
+def build_panel_operasyon_blob(cur, sube_id: str, sube: dict, ensure: bool = True) -> Dict[str, Any]:
+    # ensure=True: günlük event satırlarını oluştur (panel + yazma yollarında). Dashboard
+    # gibi salt-okuma pollerinde ensure=False → satır oluşturma scheduler/startup'a bırakılır.
+    # Dinamik sync'ler (_refresh_durum gecikti geçişi dahil) HER ZAMAN çalışır; bunlar
+    # gerçek-zamanlı durum makinesidir ve dashboard'ın "geç şube" sinyalinin kaynağıdır.
+    if ensure:
+        _ensure_events(cur, sube_id, sube)
     _sync_acilis_event_if_acik(cur, sube_id)
     _sync_kontrol_slot_after_acilis(cur, sube_id)
     _refresh_durum(cur, sube_id)

@@ -249,6 +249,24 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler rapor cache hatası: {e}")
 
+            # ── OPERASYON EVENT — bugünün açılış/kapanış satırları ──
+            # Gece yarısı (00:00–02:00) is_gunu_tr() hâlâ ÖNCEKİ iş gününü döndürür
+            # (kapanış 02:00'a kadar düne sayılır). Bu yüzden bugünün satırlarını
+            # 02:30'da oluştururuz — o saatte is_gunu_tr() = bugün. Dashboard (ensure=False)
+            # bu satırları hazır bulur. Idempotent; restart olursa startup telafi eder.
+            try:
+                hedef = datetime.combine(bugun_tr(), datetime.min.time()) + timedelta(hours=2, minutes=30)
+                _bekle2 = (hedef - dt_now_tr_naive()).total_seconds()
+                if _bekle2 > 0:
+                    _time.sleep(_bekle2)
+                from sube_operasyon import ensure_events_tum_subeler
+                with db() as (conn, cur):
+                    _ne = ensure_events_tum_subeler(cur)
+                    conn.commit()
+                logger.info(f"⏰ Scheduler: operasyon event satırları oluşturuldu — {_ne} şube")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler operasyon event hatası: {e}")
+
         except Exception as e:
             logger.error(f"⏰ Scheduler genel hata: {e}")
             import time as _t
@@ -332,6 +350,18 @@ def startup():
                 logger.info("✅ Kasa tutarlılık kontrolü: Tüm ciro kayıtları kasa'ya yansımış.")
     except Exception as e:
         logger.warning(f"Kasa kontrol yapılamadı: {e}")
+
+    # Operasyon event satırları (bugünün ACILIS/KAPANIS) — startup'ta garantile.
+    # Böylece dashboard salt-okuma (ensure=False) ile çalışsa bile satırlar hazır olur.
+    # is_gunu_tr() startup anında doğru iş gününü döndürür.
+    try:
+        from sube_operasyon import ensure_events_tum_subeler
+        with db() as (conn, cur):
+            _n = ensure_events_tum_subeler(cur)
+            conn.commit()
+        logger.info(f"✅ Operasyon event satırları garanti edildi: {_n} şube")
+    except Exception as e:
+        logger.warning(f"Operasyon event ensure (startup) hatası: {e}")
 
     # Scheduler başlat — restart bağımlılığını kaldırır
     _scheduler_thread = threading.Thread(target=_gece_yarisi_scheduler, daemon=True)
