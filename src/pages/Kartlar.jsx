@@ -11,6 +11,7 @@ export default function Kartlar() {
   const [form, setForm] = useState(BOSH);
   const [duzenleId, setDuzenleId] = useState(null);
   const [msg, setMsg] = useState(null);
+  const [filtreAcik, setFiltreAcik] = useState(false); // hareket filtresi varsayılan kapalı (ikincil)
   const [filtre, setFiltre] = useState({
     kart_id: '',
     islem_turu: 'TUM',
@@ -125,15 +126,25 @@ export default function Kartlar() {
       <div className="page-header flex items-center justify-between">
         <div><h2>Kartlar</h2><p>{aktifKartlar.length} aktif kart</p></div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" style={{ borderColor: 'var(--orange)', color: 'var(--orange)' }}
-            title="Bozuk/karışık kart hareketlerini temizle (açılış devri öncesi)" onClick={bozukTemizle}>🧹 Bozuk Kayıtları Temizle</button>
           <button className="btn btn-primary" onClick={() => { setForm(BOSH); setDuzenleId(null); setShowModal(true); }}>+ Kart Ekle</button>
         </div>
       </div>
 
-      <div className="card mb-16" style={{ padding: 12 }}>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>Kart Hareket Filtreleri</div>
-        <div className="form-row cols-5" style={{ alignItems: 'end' }}>
+      {/* Hareket filtresi — ikincil, katlanabilir (asıl liste 'Hareketler' sekmesinde). Özet hep görünür. */}
+      <div className="card mb-16" style={{ padding: '10px 12px' }}>
+        <div className="flex items-center justify-between" style={{ gap: 10, flexWrap: 'wrap', cursor: 'pointer' }}
+          onClick={() => setFiltreAcik(v => !v)}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontWeight: 700, fontSize: 13 }}>{filtreAcik ? '▾' : '▸'} Hareket Özeti</span>
+            <span className="badge badge-blue">Ödeme: {fmt(ozet.odeme)}</span>
+            <span className="badge badge-yellow">Harcama: {fmt(ozet.harcama)}</span>
+            <span className="badge">Net: {fmt(ozet.harcama - ozet.odeme)}</span>
+            <span className="badge">{hareketlerFiltreli.length} kayıt</span>
+          </div>
+          <span style={{ fontSize: 11, color: 'var(--text3)' }}>{filtreAcik ? 'gizle' : 'filtrele'}</span>
+        </div>
+        {filtreAcik && (<>
+        <div className="form-row cols-5" style={{ alignItems: 'end', marginTop: 10 }}>
           <div className="form-group">
             <label>Kart</label>
             <select value={filtre.kart_id} onChange={(e) => setFiltre({ ...filtre, kart_id: e.target.value })}>
@@ -162,17 +173,12 @@ export default function Kartlar() {
             <input placeholder="kart/açıklama" value={filtre.q} onChange={(e) => setFiltre({ ...filtre, q: e.target.value })} />
           </div>
         </div>
-        <div className="flex items-center justify-between" style={{ marginTop: 6, gap: 10, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <span className="badge badge-blue">Ödeme: {fmt(ozet.odeme)}</span>
-            <span className="badge badge-yellow">Harcama: {fmt(ozet.harcama)}</span>
-            <span className="badge">Net: {fmt(ozet.harcama - ozet.odeme)}</span>
-            <span className="badge">{hareketlerFiltreli.length} kayıt</span>
-          </div>
+        <div className="flex items-center justify-end" style={{ marginTop: 6 }}>
           <button className="btn btn-secondary btn-sm" onClick={() => setFiltre({ kart_id: '', islem_turu: 'TUM', baslangic: '', bitis: '', q: '' })}>
             Filtreyi Temizle
           </button>
         </div>
+        </>)}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(300px,1fr))', gap: 14 }}>
@@ -269,6 +275,14 @@ export default function Kartlar() {
             </div>
           );
         })}
+      </div>
+
+      {/* Bakım / nadir işlemler — en altta, kazara tıklanmasın */}
+      <div style={{ marginTop: 22, paddingTop: 14, borderTop: '1px dashed var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
+        <button className="btn btn-sm" style={{ borderColor: 'var(--orange)', color: 'var(--orange)', background: 'transparent' }}
+          title="Bozuk/karışık kart hareketlerini temizle (açılış devri öncesi)" onClick={bozukTemizle}>
+          🧹 Bozuk Kayıtları Temizle
+        </button>
       </div>
 
       {showModal && (
