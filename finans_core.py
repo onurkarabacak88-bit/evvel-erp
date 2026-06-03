@@ -1386,11 +1386,13 @@ def faiz_hesapla_ve_yaz(cur, kart_id: str, donem: str = None) -> dict:
     donem_str = kesim_tarihi.strftime('%Y-%m')
 
     # Duplicate kontrolü — bu kesim için faiz zaten yazıldı mı?
-    # Pencere: (kesim_tarihi, kesim_tarihi + 32 gün] — bir sonraki kesimden önce
+    # Pencere: [kesim_tarihi, kesim_tarihi + 32 gün] — bir sonraki kesimden önce.
+    # >= (kapsayıcı): faiz artık KESİM tarihiyle yazılıyor; ayrıca ekstreden gelen
+    # faiz de (tarih=kesim) bu pencerede görülür → motor mükerrer/çift faiz yazmaz.
     cur.execute("""
         SELECT id FROM kart_hareketleri
         WHERE kart_id = %s AND islem_turu = 'FAIZ' AND durum = 'aktif'
-        AND tarih >  %s::date
+        AND tarih >= %s::date
         AND tarih <= %s::date + INTERVAL '32 days'
     """, (kart_id, kesim_tarihi, kesim_tarihi))
     if cur.fetchone():
@@ -1463,7 +1465,10 @@ def faiz_hesapla_ve_yaz(cur, kart_id: str, donem: str = None) -> dict:
             "durum": "faiz_cok_kucuk", "faiz": 0,
         }
 
-    # Yaz — kasaya dokunma. Tarih = bugün (faizin yazıldığı an).
+    # Yaz — kasaya dokunma. Tarih = KESİM TARİHİ (faizin ait olduğu dönem),
+    # 'bugün' DEĞİL. Böylece faiz hesaplandığı güne değil ait olduğu aya düşer →
+    # CFO panelindeki "bu ay finansman maliyeti" her ay doğru sıfırlanır ve
+    # ekstreden gelen faizle (tarih=kesim) aynı hizada olur.
     fid = str(_uuid.uuid4())
     aciklama = (
         f"{donem_str} kesim faizi [{faiz_turu.upper()}] "
@@ -1476,7 +1481,7 @@ def faiz_hesapla_ve_yaz(cur, kart_id: str, donem: str = None) -> dict:
         INSERT INTO kart_hareketleri
             (id, kart_id, tarih, islem_turu, tutar, faiz_tutari, aciklama)
         VALUES (%s, %s, %s, 'FAIZ', %s, %s, %s)
-    """, (fid, kart_id, str(bugun), faiz_tutari, faiz_tutari, aciklama))
+    """, (fid, kart_id, str(kesim_tarihi), faiz_tutari, faiz_tutari, aciklama))
 
     return {
         "id":               fid,
