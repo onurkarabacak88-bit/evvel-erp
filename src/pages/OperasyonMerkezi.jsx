@@ -1353,10 +1353,26 @@ function SubeKart({ k, onDetay, personelRisk }) {
         </div>
       )}
 
-      {/* Vardiya + özet bayraklar — tek satır */}
+      {/* ŞU AN VARDİYADA — kim var? */}
+      {Array.isArray(k.vardiya_su_an) && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 12 }}>
+          <span style={{ color: 'var(--text3)' }}>👥 Vardiyada:</span>
+          {k.vardiya_su_an.length === 0 ? (
+            <span style={{ color: 'var(--text3)', fontStyle: 'italic' }}>şu an kayıtlı kimse yok</span>
+          ) : (
+            k.vardiya_su_an.map((v, i) => (
+              <span key={i} className="badge badge-green" title={v.bas ? `${v.bas}–${v.bit}` : ''}>
+                {v.ad}{v.bas ? ` · ${v.bas}–${v.bit}` : ''}
+              </span>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Vardiya devri + özet bayraklar — tek satır */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 12 }}>
         <span style={{ color: k.vardiya_devri_tamam ? 'var(--green)' : k.vardiya_devri_basladi ? 'var(--yellow)' : 'var(--text3)' }}>
-          {k.vardiya_devri_tamam ? '✓ Vardiya' : k.vardiya_devri_basladi ? '⏳ Vardiya' : '— Vardiya'}
+          {k.vardiya_devri_tamam ? '✓ Devir' : k.vardiya_devri_basladi ? '⏳ Devir' : '— Devir'}
         </span>
         {(b.kritik || kritikler.length > 0) && (
           <span className="badge badge-red" title={kritikler.map(u => temizMesaj(u.mesaj)).join('\n')}>

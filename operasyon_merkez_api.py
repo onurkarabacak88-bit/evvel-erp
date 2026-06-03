@@ -1099,7 +1099,44 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
         except Exception:
             pass
 
+    # ── ŞU AN VARDİYADA OLAN PERSONEL — kartta "kim var" göstergesi ──
+    # LOCALTIME (session TZ=İstanbul) slotun başlangıç/bitiş aralığındaysa o kişi vardiyada.
+    # Gece vardiyası (bitiş ertesi gün): now >= başlangıç VEYA now < bitiş.
+    vardiya_su_an: List[Dict[str, Any]] = []
+    try:
+        cur.execute("SAVEPOINT sp_vardiya_suan")
+        cur.execute(
+            """
+            SELECT DISTINCT p.ad_soyad AS ad,
+                   to_char(va.baslangic_saat, 'HH24:MI') AS bas,
+                   to_char(va.bitis_saat, 'HH24:MI')     AS bit
+            FROM vardiya_atama va
+            JOIN vardiya_slot vs ON vs.id = va.slot_id
+            JOIN personel p      ON p.id  = va.personel_id
+            WHERE vs.sube_id = %s
+              AND va.tarih = CURRENT_DATE
+              AND va.durum != 'iptal'
+              AND (
+                    (NOT va.gece_vardiyasi AND LOCALTIME >= va.baslangic_saat AND LOCALTIME < va.bitis_saat)
+                 OR (va.gece_vardiyasi AND (LOCALTIME >= va.baslangic_saat OR LOCALTIME < va.bitis_saat))
+              )
+            ORDER BY bas
+            """,
+            (sid,),
+        )
+        vardiya_su_an = [
+            {"ad": str(r.get("ad") or "").strip(), "bas": r.get("bas"), "bit": r.get("bit")}
+            for r in (cur.fetchall() or [])
+        ]
+        cur.execute("RELEASE SAVEPOINT sp_vardiya_suan")
+    except Exception:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_vardiya_suan")
+        except Exception:
+            pass
+
     return {
+        "vardiya_su_an": vardiya_su_an,
         "sube_id": sid,
         "sube_adi": sube.get("ad"),
         "kasa_acik": kasa_acik,
