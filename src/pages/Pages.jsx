@@ -1768,6 +1768,7 @@ export function KartHareketleri() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({kart_id:'',tarih:new Date().toISOString().split('T')[0],islem_turu:'HARCAMA',tutar:'',taksit_sayisi:1,aciklama:'',harcama_tipi:'isletme'});
   const [msg, setMsg] = useState(null);
+  const [filtreAcik, setFiltreAcik] = useState(false); // detay filtre varsayılan kapalı
   const [filtre, setFiltre] = useState({
     kart_id: '',
     islem_turu: 'TUM',
@@ -1911,8 +1912,39 @@ export function KartHareketleri() {
         <div><h2>Kart Hareketleri</h2><p>❗ Harcama kasayı etkilemez · Ödeme anında kasadan düşer</p></div>
         <button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ Hareket Ekle</button>
       </div>
-      <div className="card mb-16" style={{ padding: 12 }}>
-        <div className="form-row cols-5" style={{ alignItems: 'end' }}>
+
+      {/* Sınıflandırma aksiyon banner'ı — bu sayfanın birincil işi: belirsizleri işaretle */}
+      {(() => {
+        const bel = hareketler.filter(h => h.islem_turu === 'HARCAMA' && (h.harcama_tipi || 'belirsiz') === 'belirsiz');
+        if (!bel.length) return null;
+        const tut = bel.reduce((s, x) => s + (parseFloat(x.tutar) || 0), 0);
+        const aktif = filtre.harcama_tipi === 'belirsiz';
+        return (
+          <div className="alert-box yellow mb-16" style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}
+            onClick={() => setFiltre(f => ({ ...f, harcama_tipi: aktif ? 'TUM' : 'belirsiz' }))}>
+            <span>❓ <strong>{bel.length}</strong> harcama sınıflandırılmamış ({fmt(tut)}) — işletme mi, şahsi mi?</span>
+            <strong style={{ color: 'var(--accent)' }}>{aktif ? '↩ Tümünü göster' : 'Sadece bunları göster →'}</strong>
+          </div>
+        );
+      })()}
+
+      <div className="card mb-16" style={{ padding: '10px 12px' }}>
+        <div className="flex items-center justify-between" style={{ gap: 10, flexWrap: 'wrap', cursor: 'pointer' }}
+          onClick={() => setFiltreAcik(v => !v)}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontWeight: 700, fontSize: 13 }}>{filtreAcik ? '▾' : '▸'} Filtre &amp; Özet</span>
+            <span className="badge badge-blue">Ödeme: {fmt(ozet.odeme)}</span>
+            <span className="badge badge-yellow">Harcama: {fmt(ozet.harcama)}</span>
+            <span className="badge">{hareketlerFiltreli.length} kayıt</span>
+            <span style={{ width: 1, height: 16, background: 'var(--border)', margin: '0 2px' }} />
+            <span className="badge badge-green" title="İşletme">🏢 {fmt(tipOzet.isletme)}</span>
+            <span className="badge" style={{ background: 'rgba(155,114,212,.18)', color: 'var(--purple)' }} title="Şahsi">👤 {fmt(tipOzet.sahsi)}</span>
+            {tipOzet.belirsiz > 0 && <span className="badge" title="Belirsiz">❓ {fmt(tipOzet.belirsiz)}</span>}
+          </div>
+          <span style={{ fontSize: 11, color: 'var(--text3)' }}>{filtreAcik ? 'gizle' : 'filtrele'}</span>
+        </div>
+        {filtreAcik && (<>
+        <div className="form-row cols-5" style={{ alignItems: 'end', marginTop: 10 }}>
           <div className="form-group">
             <label>Kart</label>
             <select value={filtre.kart_id} onChange={e => setFiltre({ ...filtre, kart_id: e.target.value })}>
@@ -1950,19 +1982,10 @@ export function KartHareketleri() {
             <input value={filtre.q} onChange={e => setFiltre({ ...filtre, q: e.target.value })} placeholder="örn. asgari, bonus..." />
           </div>
         </div>
-        <div className="flex items-center justify-between" style={{ marginTop: 6, gap: 10, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <span className="badge badge-blue">Ödeme: {fmt(ozet.odeme)}</span>
-            <span className="badge badge-yellow">Harcama: {fmt(ozet.harcama)}</span>
-            <span className="badge">Net: {fmt(ozet.harcama - ozet.odeme)}</span>
-            <span className="badge">{hareketlerFiltreli.length} kayıt</span>
-            <span style={{width:1,height:16,background:'var(--border)',margin:'0 2px'}} />
-            <span className="badge badge-green" title="İşletme harcaması">🏢 {fmt(tipOzet.isletme)}</span>
-            <span className="badge" style={{background:'rgba(155,114,212,.18)',color:'var(--purple)'}} title="Şahsi harcama">👤 {fmt(tipOzet.sahsi)}</span>
-            {tipOzet.belirsiz > 0 && <span className="badge" title="Sınıflandırılmamış">❓ {fmt(tipOzet.belirsiz)}</span>}
-          </div>
+        <div className="flex items-center justify-end" style={{ marginTop: 8 }}>
           <button className="btn btn-secondary btn-sm" onClick={() => setFiltre({ kart_id:'', islem_turu:'TUM', harcama_tipi:'TUM', baslangic:'', bitis:'', q:'' })}>Filtreyi Temizle</button>
         </div>
+        </>)}
       </div>
       {!hareketlerFiltreli.length ? (
         <div className="card"><div className="empty"><p>Filtreye uygun hareket yok</p></div></div>
