@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
+import AyFiltre, { buGununAyi } from '../components/AyFiltre';
 
 const KATEGORILER = [
   'Aile Desteği',
@@ -21,9 +22,10 @@ export default function DisKaynak() {
   });
   const [msg, setMsg] = useState(null);
   const [dupUyari, setDupUyari] = useState(null);
+  const [ay, setAy] = useState(buGununAyi());
 
-  const load = () => api('/dis-kaynak').then(setListe);
-  useEffect(() => { load(); }, []);
+  const load = () => api(`/dis-kaynak?ay=${encodeURIComponent(ay)}`).then(setListe);
+  useEffect(() => { load(); }, [ay]);
   const toast = (m, t = 'green') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 3000); };
 
   async function kaydet(force=false) {
@@ -55,9 +57,12 @@ export default function DisKaynak() {
       <div className="page-header flex items-center justify-between">
         <div>
           <h2>💰 Dış Kaynak Geliri</h2>
-          <p>Ciro dışı nakit girişleri — aile, kredi, ortak, vb. · Toplam: {fmt(toplam)}</p>
+          <p>Ciro dışı nakit girişleri — aile, kredi, ortak, vb. · Bu ay: {fmt(toplam)}</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Gelir Ekle</button>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <AyFiltre value={ay} onChange={setAy} allowAll />
+          <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Gelir Ekle</button>
+        </div>
       </div>
 
       <div className="table-wrap">

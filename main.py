@@ -1105,11 +1105,17 @@ class DisKaynakGelir(BaseModel):
     force: bool = False
 
 @app.get("/api/dis-kaynak")
-def dis_kaynak_listele():
+def dis_kaynak_listele(ay: str = None):
+    import re as _re_ay
+    ay_v = (ay or "").strip()
+    ay_cond, ay_params = "", []
+    if ay_v and ay_v.lower() != "hepsi" and _re_ay.match(r"^\d{4}-\d{2}$", ay_v):
+        ay_cond = " AND to_char(tarih, 'YYYY-MM') = %s"
+        ay_params = [ay_v]
     with db() as (conn, cur):
-        cur.execute("""SELECT * FROM kasa_hareketleri
-            WHERE islem_turu='DIS_KAYNAK' AND durum='aktif'
-            ORDER BY tarih DESC LIMIT 200""")
+        cur.execute(f"""SELECT * FROM kasa_hareketleri
+            WHERE islem_turu='DIS_KAYNAK' AND durum='aktif'{ay_cond}
+            ORDER BY tarih DESC LIMIT 200""", ay_params)
         return [dict(r) for r in cur.fetchall()]
 
 @app.post("/api/dis-kaynak")
