@@ -1318,7 +1318,8 @@ def ops_dashboard(
         def _stok_es(k):
             for u in k.get("uyarilar") or []:
                 t = (u.get("tip") or "")
-                if t.startswith("STOK_") or t == "KONTROL_CEVAP_GECIKME":
+                # STOK_* (devir/gün-içi/alarm) + karşılıksız açma + KONTROL gecikmesi
+                if t.startswith("STOK_") or t == "URUN_AC_UYUMSUZLUK" or t == "KONTROL_CEVAP_GECIKME":
                     return True
             return False
 
