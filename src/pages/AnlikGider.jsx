@@ -11,6 +11,7 @@ export default function AnlikGider({ onNavigate }) {
   const [subeBekleyenOzet, setSubeBekleyenOzet] = useState({ adet: 0, toplam: 0 });
   const [durumFiltre, setDurumFiltre] = useState('hepsi'); // hepsi | aktif | onay_bekliyor
   const [ay, setAy] = useState(buGununAyi()); // YYYY-MM | 'hepsi' — ay ayrımı
+  const [arama, setArama] = useState(''); // açıklama/kategori/şube arama
   const [kartlar, setKartlar] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({tarih: new Date().toISOString().split('T')[0], kategori:'Diğer', tutar:'', aciklama:'', sube:'MERKEZ', odeme_yontemi:'nakit', kart_id:'', kaynak_id:null, kaynak_tablo:null});
@@ -102,6 +103,11 @@ export default function AnlikGider({ onNavigate }) {
   const toplamAy = liste
     .filter(g => g.durum === 'aktif')
     .reduce((s,g)=>s+parseFloat(g.tutar||0),0);
+  // Arama — açıklama/kategori/şube/kart (tabloyu süzer, toplamları etkilemez)
+  const q = arama.trim().toLowerCase();
+  const gosterilen = q
+    ? liste.filter(g => `${g.aciklama||''} ${g.kategori||''} ${g.sube||''} ${g.kart_adi||''}`.toLowerCase().includes(q))
+    : liste;
 
   return (
     <div className="page">
@@ -112,6 +118,13 @@ export default function AnlikGider({ onNavigate }) {
           <p>Beklenmeyen giderler · Bugün: {fmt(toplamBugün)} · Bu ay: {fmt(toplamAy)}</p>
         </div>
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}>
+          <div style={{ position:'relative' }}>
+            <span style={{ position:'absolute', left:9, top:'50%', transform:'translateY(-50%)', color:'var(--text3)', fontSize:12, pointerEvents:'none' }}>🔍</span>
+            <input value={arama} onChange={e=>setArama(e.target.value)} placeholder="Açıklama / kategori / şube ara…"
+              style={{ padding:'7px 26px 7px 28px', borderRadius:8, border:'1px solid var(--border)', background:'var(--bg3)', color:'var(--text1)', fontSize:12, width:210 }} />
+            {arama && <button onClick={()=>setArama('')} title="Temizle"
+              style={{ position:'absolute', right:6, top:'50%', transform:'translateY(-50%)', border:'none', background:'none', color:'var(--text3)', cursor:'pointer', fontSize:13 }}>✕</button>}
+          </div>
           <AyFiltre value={ay} onChange={setAy} allowAll />
           <button
             className={`btn btn-sm ${durumFiltre==='hepsi'?'btn-primary':'btn-ghost'}`}
@@ -153,8 +166,8 @@ export default function AnlikGider({ onNavigate }) {
         <table>
           <thead><tr><th>Tarih</th><th>Kategori</th><th>Açıklama</th><th>Şube</th><th>Durum</th><th>Ödeme</th><th style={{textAlign:'right'}}>Tutar</th><th></th></tr></thead>
           <tbody>
-            {!liste.length ? (<tr><td colSpan={8}><div className="empty"><p>Anlık gider yok</p></div></td></tr>) :
-            liste.map(g => (
+            {!gosterilen.length ? (<tr><td colSpan={8}><div className="empty"><p>{q ? `"${arama}" ile eşleşen gider yok` : 'Anlık gider yok'}</p></div></td></tr>) :
+            gosterilen.map(g => (
               <tr key={g.id}>
                 <td className="mono" style={{fontSize:12}}>{fmtDate(g.tarih)}</td>
                 <td><span className="badge badge-yellow">{g.kategori}</span></td>
