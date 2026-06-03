@@ -24,6 +24,11 @@ function tarihTrISOGunOnce(iso, gun) {
   return tarihTrISO(t);
 }
 
+/** İçinde bulunulan İstanbul ayının 1'i (YYYY-MM-01) — aktif ay başlangıcı */
+function ayBasiTrISO() {
+  return tarihTrISO().slice(0, 7) + '-01';
+}
+
 const TUR_LABEL = {
   ara: { label: 'Ara Teslim', renk: '#BA7517', bg: 'rgba(186,117,23,.10)' },
   gun_sonu: { label: 'Gün Sonu', renk: 'var(--color-text-primary)', bg: 'var(--color-background-secondary)' },
@@ -43,7 +48,8 @@ export default function KasaTeslim() {
   const [turFiltre, setTurFiltre] = useState('');
   const [aliciFiltre, setAliciFiltre] = useState('');
   const [edenFiltre, setEdenFiltre] = useState('');
-  const [tarihBas, setTarihBas] = useState(() => tarihTrISOGunOnce(tarihTrISO(), 13));
+  // Varsayılan: AKTİF AY (ayın 1'i → bugün). Mount'ta hesaplanır → ay atlayınca otomatik bu aya geçer.
+  const [tarihBas, setTarihBas] = useState(() => ayBasiTrISO());
   const [tarihBit, setTarihBit] = useState(() => tarihTrISO());
 
   // Teslim alıcı yönetimi
@@ -278,6 +284,13 @@ export default function KasaTeslim() {
             <div style={fld}>
               <span style={lbl}>Bitiş</span>
               <input type="date" value={tarihBit} onChange={(e) => setTarihBit(e.target.value)} style={ctrl} />
+            </div>
+            <div style={fld}>
+              <span style={lbl}>&nbsp;</span>
+              <button type="button" className="btn btn-secondary btn-sm"
+                title="Aralığı bu aya (ayın 1'i → bugün) döndür"
+                onClick={() => { setTarihBas(ayBasiTrISO()); setTarihBit(tarihTrISO()); }}
+                style={{ ...ctrl, cursor: 'pointer' }}>📅 Bu Ay</button>
             </div>
             <div style={fld}>
               <span style={lbl}>Şube</span>
