@@ -1234,7 +1234,7 @@ def anlik_gider_kart_oneri(tutar: float = 0):
         return sonuc
 
 @app.get("/api/anlik-gider")
-def anlik_gider_listele(durum: str = "aktif", include_pending: bool = False, include_summary: bool = False):
+def anlik_gider_listele(durum: str = "aktif", include_pending: bool = False, include_summary: bool = False, ay: str = None):
     # Geriye uyum: eski include_pending=true => hepsi
     d = (durum or "aktif").strip().lower()
     if include_pending and d == "aktif":
@@ -1242,32 +1242,34 @@ def anlik_gider_listele(durum: str = "aktif", include_pending: bool = False, inc
     if d not in ("aktif", "onay_bekliyor", "hepsi"):
         raise HTTPException(400, "durum: aktif | onay_bekliyor | hepsi")
 
+    # AY FİLTRESİ (YYYY-MM): verilirse o aya ait kayıtlar; 'hepsi'/boş => tüm aylar (geriye uyum)
+    import re as _re_ay
+    ay_v = (ay or "").strip()
+    ay_cond = ""
+    ay_params: list = []
+    if ay_v and ay_v.lower() != "hepsi" and _re_ay.match(r"^\d{4}-\d{2}$", ay_v):
+        ay_cond = " AND to_char(ag.tarih, 'YYYY-MM') = %s"
+        ay_params = [ay_v]
+
+    if d == "hepsi":
+        durum_cond = "ag.durum IN ('aktif','onay_bekliyor')"
+        limit = 300
+    elif d == "onay_bekliyor":
+        durum_cond = "ag.durum='onay_bekliyor'"
+        limit = 300
+    else:
+        durum_cond = "ag.durum='aktif'"
+        limit = 200
+
     with db() as (conn, cur):
-        if d == "hepsi":
-            cur.execute("""
-                SELECT ag.*, k.kart_adi, k.banka
-                FROM anlik_giderler ag
-                LEFT JOIN kartlar k ON k.id = ag.kart_id
-                WHERE ag.durum IN ('aktif','onay_bekliyor')
-                ORDER BY ag.tarih DESC, ag.olusturma DESC
-                LIMIT 300
-            """)
-        elif d == "onay_bekliyor":
-            cur.execute("""
-                SELECT ag.*, k.kart_adi, k.banka
-                FROM anlik_giderler ag
-                LEFT JOIN kartlar k ON k.id = ag.kart_id
-                WHERE ag.durum='onay_bekliyor'
-                ORDER BY ag.tarih DESC, ag.olusturma DESC
-                LIMIT 300
-            """)
-        else:
-            cur.execute("""
-                SELECT ag.*, k.kart_adi, k.banka
-                FROM anlik_giderler ag
-                LEFT JOIN kartlar k ON k.id = ag.kart_id
-                WHERE ag.durum='aktif' ORDER BY ag.tarih DESC LIMIT 200
-            """)
+        cur.execute(f"""
+            SELECT ag.*, k.kart_adi, k.banka
+            FROM anlik_giderler ag
+            LEFT JOIN kartlar k ON k.id = ag.kart_id
+            WHERE {durum_cond}{ay_cond}
+            ORDER BY ag.tarih DESC, ag.olusturma DESC
+            LIMIT {limit}
+        """, ay_params)
         satirlar = [dict(r) for r in cur.fetchall()]
 
         if include_summary:

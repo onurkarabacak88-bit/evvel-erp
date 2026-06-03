@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
+import AyFiltre, { buGununAyi } from '../components/AyFiltre';
 
 const KATEGORILER = ['Nakit Alım','Market','Fatura','Kargo','Yemek','Yakıt','Bakım','Diğer'];
 
@@ -9,6 +10,7 @@ export default function AnlikGider({ onNavigate }) {
   const [liste, setListe] = useState([]);
   const [subeBekleyenOzet, setSubeBekleyenOzet] = useState({ adet: 0, toplam: 0 });
   const [durumFiltre, setDurumFiltre] = useState('hepsi'); // hepsi | aktif | onay_bekliyor
+  const [ay, setAy] = useState(buGununAyi()); // YYYY-MM | 'hepsi' — ay ayrımı
   const [kartlar, setKartlar] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({tarih: new Date().toISOString().split('T')[0], kategori:'Diğer', tutar:'', aciklama:'', sube:'MERKEZ', odeme_yontemi:'nakit', kart_id:'', kaynak_id:null, kaynak_tablo:null});
@@ -20,7 +22,7 @@ export default function AnlikGider({ onNavigate }) {
   const [gecmisData, setGecmisData] = useState(null);
 
   const load = () =>
-    api(`/anlik-gider?durum=${durumFiltre}&include_summary=true`).then((r) => {
+    api(`/anlik-gider?durum=${durumFiltre}&include_summary=true&ay=${encodeURIComponent(ay)}`).then((r) => {
       if (Array.isArray(r)) {
         setListe(r);
         setSubeBekleyenOzet({ adet: 0, toplam: 0 });
@@ -31,7 +33,7 @@ export default function AnlikGider({ onNavigate }) {
     });
   useEffect(() => {
     load();
-  }, [durumFiltre]);
+  }, [durumFiltre, ay]);
 
   useEffect(() => {
     api('/kartlar').then(setKartlar);
@@ -54,7 +56,7 @@ export default function AnlikGider({ onNavigate }) {
   useEffect(() => {
     const unsub = subscribeGlobalDataRefresh(() => load());
     return unsub;
-  }, [durumFiltre]);
+  }, [durumFiltre, ay]);
   const toast = (m, t='green') => { setMsg({m,t}); setTimeout(()=>setMsg(null),3000); };
 
   async function kaydet(force=false) {
@@ -96,6 +98,10 @@ export default function AnlikGider({ onNavigate }) {
   const toplamBugün = liste
     .filter(g => g.tarih === new Date().toISOString().split('T')[0] && g.durum === 'aktif')
     .reduce((s,g)=>s+parseFloat(g.tutar),0);
+  // Seçili ayın aktif gider toplamı (liste zaten aya filtreli geliyor)
+  const toplamAy = liste
+    .filter(g => g.durum === 'aktif')
+    .reduce((s,g)=>s+parseFloat(g.tutar||0),0);
 
   return (
     <div className="page">
@@ -103,9 +109,10 @@ export default function AnlikGider({ onNavigate }) {
       <div className="page-header flex items-center justify-between">
         <div>
           <h2>Anlık Gider</h2>
-          <p>Beklenmeyen giderler · Bugün: {fmt(toplamBugün)}</p>
+          <p>Beklenmeyen giderler · Bugün: {fmt(toplamBugün)} · Bu ay: {fmt(toplamAy)}</p>
         </div>
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}>
+          <AyFiltre value={ay} onChange={setAy} allowAll />
           <button
             className={`btn btn-sm ${durumFiltre==='hepsi'?'btn-primary':'btn-ghost'}`}
             onClick={()=>setDurumFiltre('hepsi')}
