@@ -1052,7 +1052,11 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
     # ── Bugünkü beklenen açılış: vardiya atamasındaki en erken slot ──────────
     beklenen_acilis_saati: Optional[str] = None
     beklenen_acilis_personel: str = ""
+    # NOT: _kart_uret tek transaction'da şube döngüsünde çağrılıyor. Burada tam rollback
+    # YAPILMAZ — önceki şubelerin senkronize event'lerini siler. Bunun yerine SAVEPOINT:
+    # sadece bu sorgu geri alınır, transaction'ın geri kalanı korunur.
     try:
+        cur.execute("SAVEPOINT sp_bek_acilis")
         cur.execute(
             """
             WITH en_erken AS (
@@ -1085,9 +1089,10 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
                 beklenen_acilis_saati = _s
             beklened_pers = str(va_row.get("personel_listesi") or "").strip()
             beklenen_acilis_personel = beklened_pers
+        cur.execute("RELEASE SAVEPOINT sp_bek_acilis")
     except Exception:
         try:
-            cur.connection.rollback()
+            cur.execute("ROLLBACK TO SAVEPOINT sp_bek_acilis")
         except Exception:
             pass
 
@@ -1134,6 +1139,7 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
             "guvenlik_alarm": bool(guvenlik.get("alarm_goster")),
             "siparis_bekleyen": (sip_bek + sip_ozel_bek) > 0,
             "taslak_gecikti": taslak_gecikti,
+            "teknik_hata": False,
         },
     }
 
@@ -1200,13 +1206,17 @@ def ops_dashboard(
                         "satis_tahmin_json": {},
                         "teorik_stok_json": {},
                         "kapanis_stok_json": {},
+                        # NOT: kritik/geciken FALSE — bu bir OPERASYON sorunu değil, TEKNİK
+                        # kart üretim hatası. Sahte "şube kritik!" alarmı basmamak için ayrı
+                        # bayrak (teknik_hata) kullanılır; operatör alarmı ile karışmaz.
                         "bayraklar": {
-                            "kritik": True,
-                            "geciken": True,
+                            "kritik": False,
+                            "geciken": False,
                             "fark_var": False,
                             "fark_tl": None,
                             "guvenlik_alarm": False,
                             "siparis_bekleyen": False,
+                            "teknik_hata": True,
                         },
                     }
                 )
