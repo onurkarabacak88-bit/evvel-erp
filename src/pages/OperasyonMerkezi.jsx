@@ -12423,7 +12423,12 @@ export default function OperasyonMerkezi() {
           gorunenKayitlar={urunUyumGorunenKayitlar}
           onayBusyId={onayBusyId}
           setOnayBusyId={setOnayBusyId}
-          onRefreshHub={yukleOnayMerkez}
+          onRefreshHub={async () => {
+            // Çözüm sonrası HEM onay merkezini HEM de canlı operasyon ürün-uyum
+            // rozetlerini (📦/📋/⚠️ → urunUyumBugun) tazele ki sayı anında düşsün.
+            try { await yukleOnayMerkez(); } catch (_) {}
+            try { await yukleUrunUyumBugun({ silent: true }); } catch (_) {}
+          }}
         />
       )}
 
