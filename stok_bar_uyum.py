@@ -655,11 +655,14 @@ def _event_guncelle_stok_kalem(
     kalem: str,
     yeni_adet: int,
 ) -> Optional[str]:
+    # NOT: 'tamamlandi' şartı KALDIRILDI — kaynak düzeltmesi sonradan yapılır; düzeltilecek
+    # açılış/kapanış kaydı her durumda (bekliyor/gecikti/tamamlandi) sayım meta'sı taşır.
+    # Şart kalsaydı, kayıt tamamlanmış değilse düzeltme SESSİZCE hiçbir şey yapmazdı.
     cur.execute(
         """
         SELECT id, meta FROM sube_operasyon_event
-        WHERE sube_id=%s AND tarih=%s::date AND tip=%s AND durum='tamamlandi'
-        ORDER BY cevap_ts DESC NULLS LAST, id DESC
+        WHERE sube_id=%s AND tarih=%s::date AND tip=%s
+        ORDER BY (durum='tamamlandi') DESC, cevap_ts DESC NULLS LAST, id DESC
         LIMIT 1
         FOR UPDATE
         """,
@@ -766,18 +769,21 @@ def stok_uyum_kaynak_duzelt(
         adet = payload.get("yeni_acilis_adet")
         if adet is None:
             raise ValueError("yeni_acilis_adet zorunlu")
-        _event_guncelle_stok_kalem(cur, sube_id, tarih, "ACILIS", "acilis_stok_sayim", kalem, int(adet))
+        if _event_guncelle_stok_kalem(cur, sube_id, tarih, "ACILIS", "acilis_stok_sayim", kalem, int(adet)) is None:
+            raise ValueError("Bu güne ait AÇILIŞ kaydı bulunamadı — şube açılış sayımı girmemiş olabilir.")
     elif sebep == "kapanis_yanlis":
         adet = payload.get("yeni_kapanis_adet")
         if adet is None:
             raise ValueError("yeni_kapanis_adet zorunlu")
-        _event_guncelle_stok_kalem(cur, sube_id, tarih, "KAPANIS", "kapanis_stok_sayim", kalem, int(adet))
+        if _event_guncelle_stok_kalem(cur, sube_id, tarih, "KAPANIS", "kapanis_stok_sayim", kalem, int(adet)) is None:
+            raise ValueError("Bu güne ait KAPANIŞ kaydı bulunamadı — şube kapanış sayımı girmemiş olabilir.")
     elif sebep == "devir_yanlis":
         adet = payload.get("yeni_dun_kapanis_adet")
         if adet is None:
             raise ValueError("yeni_dun_kapanis_adet zorunlu")
         prev = _bar_prev_calendar_iso(tarih)
-        _event_guncelle_stok_kalem(cur, sube_id, prev, "KAPANIS", "kapanis_stok_sayim", kalem, int(adet))
+        if _event_guncelle_stok_kalem(cur, sube_id, prev, "KAPANIS", "kapanis_stok_sayim", kalem, int(adet)) is None:
+            raise ValueError("Dünkü KAPANIŞ kaydı bulunamadı — önceki gün kapanış sayımı yok. 'Bugün açılış sayımı yanlış' seçeneğini deneyin.")
     elif sebep == "urun_ac_yanlis":
         raise ValueError("Ürün aç düzeltmesi henüz desteklenmiyor — şube panelinden düzeltin")
     else:
