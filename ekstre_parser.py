@@ -293,6 +293,74 @@ def parse_garanti(text: str) -> Dict[str, Any]:
     }
 
 
+# Garanti/Bonus özet kutusundaki TARİHSİZ faiz & ücret satırları. kart_analiz yalnızca
+# tarihli satırları okuduğu için bunlar kaçıyordu → FAIZ işlemi olarak enjekte edilir.
+_GARANTI_FAIZ_AMT = re.compile(r"^([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜ +/&]+?)\s+([\d.]+,\d{2})\s*$")
+
+
+def garanti_faiz_enjekte(sonuc: Dict[str, Any], text: str) -> None:
+    """Garanti/Bonus ekstresinde özet kutusundaki tarihsiz faiz/ücret satırlarını
+    (DÖNEM FAİZİ, GEÇ ÖDEME FAİZİ, LİMİT AŞIM FAİZİ, NAKİT AVANS FAİZİ, KKDF+BSMV)
+    FAIZ işlemi olarak ekler ve yıllık faiz oranlarını çıkarır. sonuc'u yerinde değiştirir.
+    Idempotent: aynı (açıklama,tutar) zaten varsa eklemez. (Axess deseniyle aynı yaklaşım.)"""
+    kesim = sonuc.get("kesim_tarihi")
+    islemler = sonuc.setdefault("islemler", [])
+    mevcut = {(str(i.get("aciklama", "")).strip().upper(), round(float(i.get("tutar") or 0), 2))
+              for i in islemler}
+    eklenen_toplam = 0.0
+    for ln in text.splitlines():
+        L = ln.strip()
+        if not L or "%" in L or "ORAN" in L.upper():
+            continue
+        m = _GARANTI_FAIZ_AMT.match(L)
+        if not m:
+            continue
+        etiket = m.group(1).strip()
+        et_up = etiket.upper()
+        # Sadece faiz/ücret/vergi satırları (DEVİR, harcama başlıkları HARİÇ)
+        if not any(k in et_up for k in ("FAİZ", "FAIZ", "KKDF", "BSMV")):
+            continue
+        tutar = _num(m.group(2))
+        if tutar is None or tutar <= 0:
+            continue
+        if (et_up, round(tutar, 2)) in mevcut:
+            continue
+        islemler.append({
+            "tarih": kesim,
+            "aciklama": etiket,
+            "tutar": tutar,
+            "tip": "FAIZ",
+            "kategori": "Faiz",
+            "taksit": None,
+            "taksit_anapara": None,
+            "taksit_sayisi": None,
+        })
+        mevcut.add((et_up, round(tutar, 2)))
+        eklenen_toplam += tutar
+
+    # Dönem faizini işlemlerden (yeni eklenenler dahil) yeniden hesapla
+    sonuc["donem_faizi"] = round(
+        sum(float(i["tutar"] or 0) for i in islemler if i.get("tip") == "FAIZ"), 2)
+
+    # Yıllık faiz oranları — "Yıllık güncel faiz oranları: Akdi faiz: %51,00, Gecikme faizi: %54,60"
+    # Satır-bazlı + toleranslı: hem 'yıllık' hem 'akdi faiz' içeren satırı bul.
+    for ln in text.splitlines():
+        low = ln.lower()
+        if ("y" in low and "ll" in low and "akdi faiz" in low and "%" in ln):
+            # 'yıllık' satırı (aylık satırından ayır: yıllık oranlar > %40)
+            a = re.search(r"akdi faiz:\s*%(\d[\d.]*,\d{2})", ln, re.I)
+            g = re.search(r"gecikme faizi:\s*%(\d[\d.]*,\d{2})", ln, re.I)
+            av = _num(a.group(1)) if a else None
+            gv = _num(g.group(1)) if g else None
+            # Yıllık satırı: akdi oranı yüksek (>20). Aylık satırını atla.
+            if av is not None and av > 20:
+                if sonuc.get("akdi_faiz_yillik") is None:
+                    sonuc["akdi_faiz_yillik"] = av
+                if gv is not None and sonuc.get("gecikme_faiz_yillik") is None:
+                    sonuc["gecikme_faiz_yillik"] = gv
+                break
+
+
 def parse_ekstre(text: str) -> Dict[str, Any]:
     banka = detect_bank(text)
     if banka == "worldcard":

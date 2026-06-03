@@ -2152,6 +2152,16 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
     if sonuc.get("hata") and not txns:
         raise HTTPException(422, sonuc["hata"])
 
+    # GARANTİ/BONUS: özet kutusundaki TARİHSİZ faiz/ücret satırları (DÖNEM FAİZİ vb.)
+    # kart_analiz tarihli satır beklediği için kaçıyor → FAIZ işlemi olarak enjekte et.
+    # (kart_analiz override'ından SONRA çağrılır ki işlemler silinmesin.)
+    if sonuc.get("banka_format") == "garanti":
+        try:
+            from ekstre_parser import garanti_faiz_enjekte
+            garanti_faiz_enjekte(sonuc, metin)
+        except Exception:
+            pass  # faiz enjeksiyonu başarısız olsa da ekstre okuması devam etsin
+
     return _ekstre_eslesme_mutabakat(sonuc)
 
 
