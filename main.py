@@ -4530,19 +4530,22 @@ def fatura_ode(body: FaturaOdemeModel):
         gider = cur.fetchone()
         if not gider:
             raise HTTPException(404, "Gider bulunamadı")
-        if gider.get('tip') != 'degisken':
-            raise HTTPException(400, "Bu endpoint sadece değişken giderler için kullanılır")
+        _tip = (gider.get('tip') or 'sabit')
+        if _tip not in ('degisken', 'sabit'):
+            raise HTTPException(400, "Geçersiz gider tipi")
+        # Değişken (elektrik/su) → FATURA_ODEMESI · Sabit (kira vb.) → SABIT_GIDER
+        _kasa_turu = 'FATURA_ODEMESI' if _tip == 'degisken' else 'SABIT_GIDER'
 
-        # Bu ay zaten ödendi mi?
+        # Bu ay zaten ödendi mi? (kendi türüne göre)
         cur.execute("""
             SELECT 1 FROM kasa_hareketleri
             WHERE kaynak_id=%s AND kaynak_tablo='sabit_giderler'
-            AND islem_turu='FATURA_ODEMESI' AND kasa_etkisi=true AND durum='aktif'
+            AND islem_turu=%s AND kasa_etkisi=true AND durum='aktif'
             AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM %s::date)
             AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM %s::date)
-        """, (body.sabit_gider_id, str(body.tarih), str(body.tarih)))
+        """, (body.sabit_gider_id, _kasa_turu, str(body.tarih), str(body.tarih)))
         if cur.fetchone():
-            raise HTTPException(400, "Bu ay için zaten fatura ödemesi yapılmış")
+            raise HTTPException(400, "Bu ay için zaten ödeme yapılmış")
 
         aciklama = body.aciklama or f"Fatura: {gider['gider_adi']}"
 
@@ -4570,9 +4573,9 @@ def fatura_ode(body: FaturaOdemeModel):
         else:
             # Kasaya yaz
             fid = str(uuid.uuid4())   # nakit yolunda fid = kasa_hareketleri kaydı
-            insert_kasa_hareketi(cur, str(body.tarih), 'FATURA_ODEMESI', -abs(body.tutar),
+            insert_kasa_hareketi(cur, str(body.tarih), _kasa_turu, -abs(body.tutar),
                 aciklama, 'sabit_giderler', body.sabit_gider_id,
-                ref_id=fid, ref_type='FATURA_ODEMESI')
+                ref_id=fid, ref_type=_kasa_turu)
 
         audit(cur, 'sabit_giderler', body.sabit_gider_id, 'FATURA_ODENDI',
               yeni={'tutar': body.tutar, 'tarih': str(body.tarih)})
@@ -4586,7 +4589,7 @@ def fatura_gecmis(gider_id: str):
             SELECT tarih, ABS(tutar) as tutar, aciklama, 'nakit' as yontem
             FROM kasa_hareketleri
             WHERE kaynak_id=%s AND kaynak_tablo='sabit_giderler'
-            AND islem_turu='FATURA_ODEMESI' AND kasa_etkisi=true AND durum='aktif'
+            AND islem_turu IN ('FATURA_ODEMESI','SABIT_GIDER') AND kasa_etkisi=true AND durum='aktif'
             ORDER BY tarih DESC LIMIT 12
         """, (gider_id,))
         nakit = [dict(r) for r in cur.fetchall()]
