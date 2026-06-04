@@ -363,6 +363,16 @@ def startup():
     except Exception as e:
         logger.warning(f"Operasyon event ensure (startup) hatası: {e}")
 
+    # Jenerik 'Kapak' (kapak_adet) merkez katalogdan kaldırıldı — ayrıştırılmış kapaklar
+    # (8oz/14oz/plastik) kalır. Mevcut satırı temizle (idempotent; seed artık eklemiyor).
+    try:
+        with db() as (conn, cur):
+            cur.execute("DELETE FROM merkez_stok_kart WHERE kalem_kodu='kapak_adet'")
+            cur.execute("DELETE FROM sube_depo_stok WHERE kalem_kodu='kapak_adet'")
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"kapak_adet katalog temizliği (startup): {e}")
+
     # Scheduler başlat — restart bağımlılığını kaldırır
     _scheduler_thread = threading.Thread(target=_gece_yarisi_scheduler, daemon=True)
     _scheduler_thread.start()

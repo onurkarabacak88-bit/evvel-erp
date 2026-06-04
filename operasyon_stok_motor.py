@@ -93,6 +93,12 @@ _DEPO_FIZIKSEL_HAVUZ_KODLARI = frozenset({
     "kapak_adet", "pecete_paket", "diger_sarf",
 })
 
+# Merkez depo kataloğunda GİZLENECEK eski/jenerik kodlar — ürün ayrıştırılmış
+# (8oz/14oz/plastik kapak ayrı kalemler) olduğu için jenerik 'Kapak' katalogdan kaldırıldı.
+# STOK_KEYS'e dokunulmaz (açılış/kapanış DTO + PASTA_KEYS index'i korunur); sadece
+# merkez_stok_kart görünümünden çıkarılır.
+MERKEZ_GIZLI_KODLAR = frozenset({"kapak_adet"})
+
 # Pasta UI grupları — (grup_adi, [key1, key2, ...])
 PASTA_GRUPLAR: List[Tuple[str, List[str]]] = [
     ("Porsiyon Tatlılar", ["pasta_porsiyon_sade", "pasta_porsiyon_antep", "pasta_porsiyon_cik"]),
@@ -322,8 +328,9 @@ def _stok_key_from_urun_ad(urun_ad: Any) -> Optional[str]:
         return "surup_adet"
     if "kahve" in n:
         return "kahve_paket"
-    if "kapak" in n:
-        return "kapak_adet"
+    # NOT: jenerik 'kapak' → kapak_adet ezmesi KALDIRILDI. Kapaklar artık ayrıştırılmış
+    # (8oz/14oz/plastik kapak) kendi UUID kalemleriyle izlenir; isimden jenerik koda
+    # toplanmaz. Böylece ayrı kapaklar tek 'Kapak' altında kaybolmaz.
     if "pecete" in n or "peçete" in n:
         if n in ("z_pecete", "baskili_pecete"):
             return None
@@ -834,6 +841,8 @@ def merkez_stok_kart_guncelle(cur: Any) -> List[Dict[str, Any]]:
 
     rows: List[Dict[str, Any]] = []
     for k in STOK_KEYS:
+        if k in MERKEZ_GIZLI_KODLAR:
+            continue  # jenerik 'Kapak' merkez katalogda gösterilmez (ayrıştırılmış kapaklar kalır)
         sev = int(sevk.get(k) or 0)
         kull = max(0, int(kullanilan.get(k) or 0))
         kal = max(0, sev - kull)
@@ -868,7 +877,7 @@ def merkez_stok_kart_guncelle(cur: Any) -> List[Dict[str, Any]]:
             "SELECT kalem_kodu FROM merkez_stok_kart WHERE kalem_kodu LIKE 'katalog__%' OR kalem_kodu LIKE 'urun__%'"
         )
         eski = {row["kalem_kodu"] for row in cur.fetchall()}
-        silincekler = eski - aktif_kodlar
+        silincekler = (eski - aktif_kodlar) | set(MERKEZ_GIZLI_KODLAR)
         if silincekler:
             cur.execute(
                 "DELETE FROM merkez_stok_kart WHERE kalem_kodu = ANY(%s)",
