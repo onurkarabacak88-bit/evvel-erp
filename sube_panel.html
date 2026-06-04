@@ -6120,6 +6120,8 @@ const URUN_AC_LAST_ACTION_KEY = 'sube_panel_urun_ac_last_action';
 const URUN_AC_HATIR_KAPAT_KEY = 'sube_panel_urun_ac_hatir_kapat';
 /** Ürün Aç POST çift tıklama / yarış önleme */
 var urunAcApiInFlight = false;
+/** Bayrağın set edildiği an — askıda kalan istek/arka plan sekmesi buton'u kalıcı kilitlemesin */
+var urunAcInFlightTs = 0;
 
 /** Adet / tutar: alanda sadece 0 varken odakta sıfır silinir; imleç en başta iken rakam «10» oluşturmasın diye 0 yerine yazar. PIN alanlarında çalışmaz. */
 (function panelSayiGirisSifirDuzelt() {
@@ -11685,11 +11687,11 @@ function wireStokBtn(prefix, data, endpoint, successMsg, extraFn) {
           return;
         }
       }
-      if (prefix === 'ac' && urunAcApiInFlight) {
+      if (prefix === 'ac' && urunAcApiInFlight && (Date.now() - urunAcInFlightTs) < 45000) {
         setMsg(prefix + 'Msg', 'Kayıt zaten gönderiliyor, lütfen bekleyin.', 'msg-warn');
         return;
       }
-      if (prefix === 'ac') urunAcApiInFlight = true;
+      if (prefix === 'ac') { urunAcApiInFlight = true; urunAcInFlightTs = Date.now(); }
       var apiResp = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + endpoint, {
         method: 'POST',
         body: body,
