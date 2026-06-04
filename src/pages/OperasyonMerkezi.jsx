@@ -10319,65 +10319,53 @@ export default function OperasyonMerkezi() {
             {hubAcKapBucket.saatTr != null && (
               <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 500 }}>TR {hubAcKapBucket.saatTr}:xx itibarıyla</div>
             )}
-            {hubAcKapBucket.acilisGecikti.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#f87171', marginBottom: 6 }}>🔴 AÇILMADI ({hubAcKapBucket.acilisGecikti.length})</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {hubAcKapBucket.acilisGecikti.map(r => (
-                    <div key={`cd-gec-${r.sid}`} style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, background: 'rgba(220,38,38,0.18)', border: '1px solid rgba(220,38,38,0.5)', color: '#fca5a5' }}>
-                      {r.ad}{r.gecikme_dk ? ` +${Math.round(r.gecikme_dk)}dk` : ''}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {hubAcKapBucket.acilisGecAcildi.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#fbbf24', marginBottom: 6 }}>🟡 GEÇ AÇILDI ({hubAcKapBucket.acilisGecAcildi.length})</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {hubAcKapBucket.acilisGecAcildi.map(r => (
-                    <div key={`cd-gecac-${r.sid}`} style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, background: 'rgba(251,191,36,0.14)', border: '1px solid rgba(251,191,36,0.4)', color: '#fde68a' }}>
-                      {r.ad}{r.gecikme_dk ? ` +${Math.round(r.gecikme_dk)}dk` : ''}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* Per-şube açılış kartları — kapanış takip ile aynı tasarım dili */}
             {(() => {
-              const sorunluIds = new Set([
-                ...hubAcKapBucket.acilisGecikti.map(r => r.sid),
-                ...hubAcKapBucket.acilisGecAcildi.map(r => r.sid),
-                ...hubAcKapBucket.acilisBekliyor.map(r => r.sid),
-              ]);
-              const normalAcilanlar = (Array.isArray(kartlar) ? kartlar : []).filter(k => {
+              const gecMap = new Map(hubAcKapBucket.acilisGecikti.map(r => [String(r.sid), r]));
+              const gecAcMap = new Map(hubAcKapBucket.acilisGecAcildi.map(r => [String(r.sid), r]));
+              const bekSet = new Set(hubAcKapBucket.acilisBekliyor.map(r => String(r.sid)));
+              const list = (Array.isArray(kartlar) ? kartlar : []).map((k) => {
+                const sid = String(k.sube_id);
                 const oz = k.ozet || {};
-                return oz.acilis_tamam && !sorunluIds.has(k.sube_id);
+                let durum, acc;
+                if (gecMap.has(sid)) { durum = 'acilmadi'; acc = '#e85d5d'; }
+                else if (gecAcMap.has(sid)) { durum = 'gec'; acc = '#f97316'; }
+                else if (oz.acilis_tamam) { durum = 'acildi'; acc = '#22c55e'; }
+                else { durum = 'bekliyor'; acc = '#94a3b8'; }
+                const g = gecMap.get(sid) || gecAcMap.get(sid);
+                return { k, sid, durum, acc, gecikme: g?.gecikme_dk, bek: bekSet.has(sid) };
               });
-              return normalAcilanlar.length > 0 ? (
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: '#4ade80', marginBottom: 6 }}>✅ AÇILDI ({normalAcilanlar.length})</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {normalAcilanlar.map(k => (
-                      <div key={`cd-ok-${k.sube_id}`} style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.25)', color: '#86efac' }}>
-                        {String(k.sube_adi || k.sube_id || '').trim()}
+              const ord = { acilmadi: 0, gec: 1, bekliyor: 2, acildi: 3 };
+              list.sort((a, b) => (ord[a.durum] - ord[b.durum]) || String(a.k.sube_adi || '').localeCompare(String(b.k.sube_adi || ''), 'tr'));
+              if (!list.length) return <div className="empty"><p>Kartlar yükleniyor…</p></div>;
+              const rozet = (c) => ({ background: 'var(--bg2)', color: c, border: `1px solid ${c}`, borderRadius: 999, padding: '2px 10px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' });
+              const durumRozet = (d) => d === 'acildi' ? <span style={rozet('#22c55e')}>✅ Açıldı</span>
+                : d === 'gec' ? <span style={rozet('#f97316')}>🟡 Geç açıldı</span>
+                : d === 'acilmadi' ? <span style={rozet('#e85d5d')}>🔴 Açılmadı</span>
+                : <span style={rozet('#94a3b8')}>⏳ Bekliyor</span>;
+              return (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 12 }}>
+                  {list.map(({ k, sid, durum, acc, gecikme }) => (
+                    <div key={`acd-${sid}`} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderLeft: `4px solid ${acc}`, borderRadius: 10, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontWeight: 700, fontSize: 14 }}>{k.sube_adi || sid}</span>
+                        {durumRozet(durum)}
                       </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null;
-            })()}
-            {hubAcKapBucket.acilisBekliyor.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 6 }}>⏳ AÇILIŞ BEKLİYOR ({hubAcKapBucket.acilisBekliyor.length})</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {hubAcKapBucket.acilisBekliyor.map(r => (
-                    <div key={`cd-bek-${r.sid}`} style={{ padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: 'var(--bg2)', border: '1px solid var(--border)', color: 'var(--text3)' }}>
-                      {r.ad}
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {k.acilis_saat && <span style={rozet('var(--text2)')}>⏰ {String(k.acilis_saat).slice(0, 5)}</span>}
+                        {k.beklenen_acilis_saati && <span style={rozet('var(--text3)')}>plan {k.beklenen_acilis_saati}</span>}
+                        {gecikme > 0 && <span style={rozet('#f97316')}>+{Math.round(gecikme)} dk</span>}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                        {k.acilis_personel_ad
+                          ? `👤 ${k.acilis_personel_ad}`
+                          : (k.beklenen_acilis_personel ? `👤 plan: ${k.beklenen_acilis_personel}` : '—')}
+                      </div>
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              );
+            })()}
             {(hubAcKapBucket.saatTr >= 22 || hubAcKapBucket.saatTr < 2) && (
               <>
                 {hubAcKapBucket.kapanisGecikti.length > 0 && (
