@@ -664,18 +664,21 @@ export default function Panel({ onNavigate }) {
             </div>
           </div>
         </div>
-        {/* Orta: hero sayılar */}
+        {/* Orta: hero sayılar — Kasa lider, diğerleri ikincil */}
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0 }}>
           {[
-            { label: 'Kasa', value: fmt(kasa), color: riskRenk },
-            { label: 'Serbest', value: fmt(serbest), color: serbest >= 0 ? 'var(--green)' : 'var(--red)' },
-            { label: 'Net / 30g', value: (netAkis >= 0 ? '+' : '') + fmt(netAkis), color: netAkis >= 0 ? 'var(--green)' : 'var(--red)' },
+            { label: 'Kasa', value: fmt(kasa), color: riskRenk, hero: true },
+            { label: 'Serbest Nakit', value: fmt(serbest), color: serbest >= 0 ? 'var(--green)' : 'var(--red)' },
+            { label: 'Net Akış / 30g', value: (netAkis >= 0 ? '+' : '') + fmt(netAkis), color: netAkis >= 0 ? 'var(--green)' : 'var(--red)' },
+            ...(panel.bu_ay_finansman_maliyeti > 0
+              ? [{ label: 'Finansman Mal.', value: fmt(panel.bu_ay_finansman_maliyeti), color: 'var(--red)' }]
+              : []),
           ].map((n, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center' }}>
-              {i > 0 && <div style={{ width: 1, height: 26, background: `${dc.renk}30`, margin: '0 18px' }} />}
+              {i > 0 && <div style={{ width: 1, height: n.hero ? 34 : 26, background: `${dc.renk}30`, margin: '0 18px' }} />}
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.5px' }}>{n.label}</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 15, fontWeight: 800, color: n.color, lineHeight: 1.1 }}>{n.value}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: n.hero ? 21 : 15, fontWeight: 800, color: n.color, lineHeight: 1.1 }}>{n.value}</div>
               </div>
             </div>
           ))}
@@ -862,7 +865,7 @@ export default function Panel({ onNavigate }) {
               const t = pillTip[u.kaynak_tablo] || { ikon: '💳', renk: '#94a3b8' };
               const urgColor = u.gun_farki <= 3 ? 'var(--red)' : u.gun_farki <= 7 ? '#D4893A' : 'var(--text3)';
               return (
-                <div key={i} onClick={() => nav('sabit-giderler')} style={{
+                <div key={i} onClick={() => yonlendir(u)} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
                   padding: '4px 10px', borderRadius: 20,
                   background: 'var(--bg2)', border: `1px solid ${t.renk}44`,
@@ -939,6 +942,10 @@ export default function Panel({ onNavigate }) {
       <div className="tab-panel">
 
       {/* ── KATMAN 2: ÇEKİRDEK METRİKLER (drill-down) ── */}
+      <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
+        <span>💼 Bu Ayın Para Akışı</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>Kart → detay · sağ tık → sayfa</span>
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
         {[
             { label: '💰 Güncel Kasa', value: fmt(kasa), sub: kasDayan < 999 ? `${kasDayan} gün dayanır` : 'Stabil', renk: kasa >= 0 ? 'var(--green)' : 'var(--red)', page: 'ledger', overlay: { baslik: 'Son Kasa Hareketleri', endpoint: '/kasa?limit=20' } },
