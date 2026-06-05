@@ -5064,6 +5064,13 @@ def vadeli_gecmis(limit: int = 120):
 
 @app.post("/api/vadeli-alimlar")
 def vadeli_ekle(v: VadeliAlim):
+    try:
+        if float(v.tutar) <= 0:
+            raise HTTPException(400, "Tutar 0'dan büyük olmalı")
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Geçerli bir tutar girin")
+    if not (v.tedarikci or "").strip():
+        raise HTTPException(400, "Tedarikçi zorunlu")
     with db() as (conn, cur):
         birlestir = (v.birlestir_vadeli_id or "").strip()
         karar = (v.tedarikci_karari or "").strip().lower()
@@ -5128,6 +5135,11 @@ def vadeli_ekle(v: VadeliAlim):
 
 @app.put("/api/vadeli-alimlar/{vid}")
 def vadeli_guncelle(vid: str, v: VadeliAlim):
+    try:
+        if float(v.tutar) <= 0:
+            raise HTTPException(400, "Tutar 0'dan büyük olmalı")
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Geçerli bir tutar girin")
     with db() as (conn, cur):
         cur.execute("SELECT * FROM vadeli_alimlar WHERE id=%s", (vid,))
         eski = cur.fetchone()
@@ -5320,20 +5332,9 @@ def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
         v = cur.fetchone()
         if not v: raise HTTPException(404)
 
-        # KART seçildiyse validasyon
-        if body.odeme_yontemi == 'kart':
-            if not body.kart_id:
-                raise HTTPException(400, "Kart seçimi zorunlu")
-            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE FOR UPDATE", (body.kart_id,))
-            kart = cur.fetchone()
-            if not kart: raise HTTPException(404, "Kart bulunamadı")
-            borc = kart_borc(cur, body.kart_id)
-            kalan_limit = float(kart['limit_tutar']) - borc
-            if kalan_limit < float(v['tutar']):
-                raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
-
-        # ÇİFT ÖDEME GUARD — bağlı aktif odeme_plani varsa zaten ödenmemiş demektir
-        # Aktif plan yoksa ve kasa kaydı tam tutarı kapıyorsa engelle
+        # ÇİFT ÖDEME GUARD — bağlı aktif odeme_plani varsa zaten ödenmemiş demektir.
+        # Önce planı bul ki ödenecek GERÇEK tutarı (plan) belirleyelim; kart limiti de
+        # bu tutara göre kontrol edilsin (vadeli_alimlar.tutar ile ayrışırsa yanlış kontrol olmasın).
         cur.execute("""
             SELECT id, odenecek_tutar FROM odeme_plani
             WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
@@ -5345,20 +5346,30 @@ def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
             odenen = vadeli_kasadan_odenen_toplam(cur, vid)
             if odenen >= float(v['tutar']):
                 raise HTTPException(400, "Bu vadeli alım zaten tam olarak kasaya işlenmiş, tekrar ödeme yapılamaz.")
-
-        # Onay kuyruğunda bekleyen VADELI_ODEME varsa kapat
-        cur.execute("""
-            UPDATE onay_kuyrugu SET durum='reddedildi'
-            WHERE kaynak_id=%s AND islem_turu='VADELI_ODEME' AND durum='bekliyor'
-        """, (vid,))
-
-        # Aktif plan — guard'da zaten bulundu, tekrar sorgulama
         plan = aktif_plan
         if not plan:
             raise HTTPException(400, "Bu vadeli alım için ödeme planı bulunamadı")
 
         bugun = str(bugun_tr())
         tutar = float(plan['odenecek_tutar'])  # vadeli_alimlar.tutar değil, planın tutarı
+
+        # KART seçildiyse validasyon + limit kontrolü (PLAN tutarı üzerinden)
+        if body.odeme_yontemi == 'kart':
+            if not body.kart_id:
+                raise HTTPException(400, "Kart seçimi zorunlu")
+            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE FOR UPDATE", (body.kart_id,))
+            kart = cur.fetchone()
+            if not kart: raise HTTPException(404, "Kart bulunamadı")
+            borc = kart_borc(cur, body.kart_id)
+            kalan_limit = float(kart['limit_tutar']) - borc
+            if kalan_limit < tutar:
+                raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
+
+        # Onay kuyruğunda bekleyen VADELI_ODEME varsa kapat
+        cur.execute("""
+            UPDATE onay_kuyrugu SET durum='reddedildi'
+            WHERE kaynak_id=%s AND islem_turu='VADELI_ODEME' AND durum='bekliyor'
+        """, (vid,))
 
         if body.odeme_yontemi == 'kart':
             # KART: kart borcuna HARCAMA ekle — kasaya yazma yok
@@ -5412,7 +5423,7 @@ def vadeli_kismi_ode(vid: str, body: KismiOdeModel):
         if body.odeme_yontemi == 'kart':
             if not body.kart_id:
                 raise HTTPException(400, "Kart seçimi zorunlu")
-            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE", (body.kart_id,))
+            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE FOR UPDATE", (body.kart_id,))
             kart = cur.fetchone()
             if not kart: raise HTTPException(404, "Kart bulunamadı")
             borc = kart_borc(cur, body.kart_id)

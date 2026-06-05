@@ -3,6 +3,9 @@ import { api, fmt, fmtDate } from '../utils/api';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
 import AyFiltre, { buGununAyi } from '../components/AyFiltre';
 
+// Vadeli ödeme çift-tık / yarış önleme (modül seviyesi — tek bileşen örneği)
+let _vadeliOdemeInFlight = false;
+
 export function Strateji() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1268,6 +1271,8 @@ export function VadeliAlimlar() {
   }
 
   async function odemeOnayla() {
+    if (_vadeliOdemeInFlight) { toast('Ödeme gönderiliyor, lütfen bekleyin', 'red'); return; }
+    _vadeliOdemeInFlight = true;
     try {
       if (odemeModal.tip === 'tam') {
         await api(`/vadeli-alimlar/${odemeModal.id}/ode`, {
@@ -1301,7 +1306,9 @@ export function VadeliAlimlar() {
       }
       odemeModalKapat();
       load();
+      publishGlobalDataRefresh('vadeli-odeme'); // Panel/dashboard anında tazelensin
     } catch(e) { toast(e.message, 'red'); }
+    finally { _vadeliOdemeInFlight = false; }
   }
 
   async function kaydet(force=false){
