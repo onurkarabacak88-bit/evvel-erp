@@ -5538,20 +5538,28 @@ def borc_ode(bid: str, body: BorcOdemeBody):
 
         tarih = (body.tarih or date.today().isoformat())[:10]
 
-        # Aynı ay için çift ödemeyi engelle
+        # ÇİFT ÖDEME KAPISI: bu ay manuel VEYA plan/onay yolundan ödenmiş mi?
+        # Plan ödemesi kasaya kaynak_tablo='odeme_plani' (kaynak_id=plan_id) yazar; manuel
+        # ise kaynak_tablo='borc_envanteri'. İkisini birlikte kontrol et — yoksa aynı taksit
+        # iki yoldan ödenip kasadan iki kez düşer, kalan vade fazladan azalır.
         cur.execute(
             """
-            SELECT 1 FROM kasa_hareketleri
-            WHERE kaynak_tablo='borc_envanteri' AND kaynak_id=%s
-              AND kasa_etkisi=TRUE AND tutar < 0 AND durum='aktif'
-              AND EXTRACT(YEAR FROM tarih)  = EXTRACT(YEAR FROM %s::date)
-              AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM %s::date)
+            SELECT 1 FROM kasa_hareketleri kh
+            WHERE kh.islem_turu='BORC_TAKSIT' AND kh.kasa_etkisi=TRUE AND kh.durum='aktif'
+              AND EXTRACT(YEAR FROM kh.tarih)  = EXTRACT(YEAR FROM %s::date)
+              AND EXTRACT(MONTH FROM kh.tarih) = EXTRACT(MONTH FROM %s::date)
+              AND (
+                    (kh.kaynak_tablo='borc_envanteri' AND kh.kaynak_id=%s)
+                 OR (kh.kaynak_tablo='odeme_plani' AND kh.kaynak_id IN (
+                        SELECT id FROM odeme_plani
+                        WHERE kaynak_tablo='borc_envanteri' AND kaynak_id=%s))
+              )
             LIMIT 1
             """,
-            (bid, tarih, tarih),
+            (tarih, tarih, bid, bid),
         )
         if cur.fetchone():
-            raise HTTPException(409, "Bu ay için zaten ödeme kaydı var")
+            raise HTTPException(409, "Bu ay için zaten ödeme kaydı var (manuel veya plandan)")
 
         aciklama = (body.aciklama or f"{borc['kurum']} — {borc['borc_turu']} taksiti").strip()
         ref_id = str(uuid.uuid4())
@@ -6640,6 +6648,19 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
                 WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
                 AND islem_turu='VADELI_ODEME' AND durum='bekliyor'
             """, (plan['kaynak_id'],))
+
+        # Kaynak borc_envanteri ise: toplam_borc'u ÖDENEN kadar düş. Kısmi ödeme TAM taksit
+        # sayılmaz → kalan_vade düşürülmez (kalan için aşağıda yeni plan açılıyor). Önceden bu
+        # güncelleme hiç yapılmıyordu → kasadan para çıkıp borç hep yüksek görünüyordu.
+        if kaynak == 'borc_envanteri' and plan.get('kaynak_id') and odenen > 0:
+            cur.execute(
+                """
+                UPDATE borc_envanteri
+                SET toplam_borc = GREATEST(0, COALESCE(toplam_borc, 0) - %s)
+                WHERE id=%s
+                """,
+                (odenen, plan['kaynak_id']),
+            )
 
         # 3. Kalan için yeni plan oluştur
         # referans_ay: yeni vade tarihinin ayı — eski planın ay'ını kopyalama, motor o ayı tekrar üretmesin diye
