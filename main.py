@@ -5572,7 +5572,8 @@ def borc_ode(bid: str, body: BorcOdemeBody):
         # Borç kaydını güncelle
         yeni_kalan = (kalan_vade - 1) if borc['kalan_vade'] is not None else None
         yeni_toplam = max(0.0, float(borc['toplam_borc'] or 0) - tutar)
-        kapansin = (yeni_kalan is not None and yeni_kalan <= 0)
+        # Vade ile kapan; vade tanımsızsa (NULL) toplam borç sıfırlanınca kapan.
+        kapansin = (yeni_kalan is not None and yeni_kalan <= 0) or (yeni_kalan is None and yeni_toplam <= 0)
         cur.execute(
             """
             UPDATE borc_envanteri
@@ -5607,8 +5608,28 @@ def borc_ode(bid: str, body: BorcOdemeBody):
             "kapandi":    kapansin,
         }
 
+def _borc_validate(b: BorcModel):
+    """Borç ekle/güncelle ortak doğrulaması — negatif/tutarsız değerleri reddet."""
+    if not (b.kurum or "").strip():
+        raise HTTPException(400, "Kurum/alacaklı adı zorunlu")
+    if b.aylik_taksit is None or float(b.aylik_taksit) <= 0:
+        raise HTTPException(400, "Aylık taksit 0'dan büyük olmalı")
+    if b.toplam_borc is not None and float(b.toplam_borc) < 0:
+        raise HTTPException(400, "Toplam borç negatif olamaz")
+    if not (1 <= int(b.odeme_gunu or 0) <= 31):
+        raise HTTPException(400, "Ödeme günü 1–31 arası olmalı")
+    if b.kalan_vade is not None and int(b.kalan_vade) < 0:
+        raise HTTPException(400, "Kalan vade negatif olamaz")
+    if b.toplam_vade is not None and int(b.toplam_vade) < 0:
+        raise HTTPException(400, "Toplam vade negatif olamaz")
+    if (b.kalan_vade is not None and b.toplam_vade is not None
+            and int(b.kalan_vade) > int(b.toplam_vade)):
+        raise HTTPException(400, "Kalan vade, toplam vadeden büyük olamaz")
+
+
 @app.post("/api/borclar")
 def borc_ekle(b: BorcModel):
+    _borc_validate(b)
     with db() as (conn, cur):
         bid = str(uuid.uuid4())
         cur.execute("""INSERT INTO borc_envanteri (id,kurum,borc_turu,toplam_borc,aylik_taksit,kalan_vade,toplam_vade,baslangic_tarihi,odeme_gunu)
@@ -5619,6 +5640,7 @@ def borc_ekle(b: BorcModel):
 
 @app.put("/api/borclar/{bid}")
 def borc_guncelle(bid: str, b: BorcModel):
+    _borc_validate(b)
     with db() as (conn, cur):
         cur.execute("SELECT * FROM borc_envanteri WHERE id=%s", (bid,))
         eski = cur.fetchone()
@@ -5626,6 +5648,32 @@ def borc_guncelle(bid: str, b: BorcModel):
         cur.execute("""UPDATE borc_envanteri SET kurum=%s,borc_turu=%s,toplam_borc=%s,aylik_taksit=%s,
             kalan_vade=%s,toplam_vade=%s,baslangic_tarihi=%s,odeme_gunu=%s WHERE id=%s""",
             (b.kurum, b.borc_turu, b.toplam_borc, b.aylik_taksit, b.kalan_vade, b.toplam_vade, b.baslangic_tarihi, b.odeme_gunu, bid))
+
+        # Bekleyen ödeme planı senkronu — eski tutar/yetim plan kalmasın
+        if b.kalan_vade is not None and int(b.kalan_vade) <= 0:
+            # Borç bitti → bu giderin bekleyen planlarını + onaylarını iptal et
+            cur.execute(
+                """UPDATE odeme_plani SET durum='iptal'
+                   WHERE kaynak_tablo='borc_envanteri' AND kaynak_id=%s
+                     AND durum IN ('bekliyor','onay_bekliyor')""",
+                (bid,),
+            )
+            cur.execute(
+                """UPDATE onay_kuyrugu SET durum='reddedildi', onay_tarihi=NOW()
+                   WHERE kaynak_tablo='odeme_plani' AND durum='bekliyor'
+                     AND kaynak_id IN (SELECT id FROM odeme_plani
+                                       WHERE kaynak_tablo='borc_envanteri' AND kaynak_id=%s)""",
+                (bid,),
+            )
+        else:
+            # Aktif borç → bekleyen planların tutarını yeni aylık taksite çek (eski tutarla ödenmesin)
+            cur.execute(
+                """UPDATE odeme_plani
+                   SET odenecek_tutar=%s, asgari_tutar=%s
+                   WHERE kaynak_tablo='borc_envanteri' AND kaynak_id=%s
+                     AND durum IN ('bekliyor','onay_bekliyor')""",
+                (b.aylik_taksit, b.aylik_taksit, bid),
+            )
         audit(cur, 'borc_envanteri', bid, 'UPDATE', eski=eski)
     return {"success": True}
 
@@ -5683,8 +5731,8 @@ def borc_gecmis(bid: str):
         aylik_taksit    = float(borc['aylik_taksit'] or 0)
         kalan_vade      = int(borc['kalan_vade'] or 0)
         toplam_vade     = int(borc['toplam_vade'] or 0)
-        gecen_taksit    = toplam_vade - kalan_vade if toplam_vade else len(odenenler)
-        ilerleme_pct    = round(gecen_taksit / toplam_vade * 100) if toplam_vade else 0
+        gecen_taksit    = max(0, toplam_vade - kalan_vade) if toplam_vade else len(odenenler)
+        ilerleme_pct    = min(100, max(0, round(gecen_taksit / toplam_vade * 100))) if toplam_vade else 0
 
         return {
             "borc": {
