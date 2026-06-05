@@ -4233,24 +4233,54 @@ def sabit_gider_uyarilar():
 
 @app.get("/api/sabit-giderler/odenenler")
 def sabit_gider_odenenler():
-    """Gerçekleşmiş sabit gider ödemeleri — CFO görünürlük katmanı"""
+    """Gerçekleşmiş sabit gider ödemeleri — CFO görünürlük katmanı.
+    İki yol birleştirilir: (a) ödeme planından ödenenler (odeme_plani),
+    (b) manuel /fatura-ode ile ödenenler (kasa SABIT_GIDER, kaynak_tablo=sabit_giderler).
+    Plan-nakit kasa kaydı kaynak_tablo='odeme_plani' taşıdığından çakışmaz; ayrıca aynı
+    gider+ay için plan ödemesi varsa manuel satır NOT EXISTS ile elenir (çift sayım yok)."""
     with db() as (conn, cur):
         cur.execute("""
-            SELECT
-                op.id,
-                op.aciklama,
-                op.odenen_tutar,
-                op.odenecek_tutar,
-                op.odeme_tarihi,
-                op.tarih as plan_tarihi,
-                op.kaynak_id,
-                COALESCE(sg.gider_adi, op.aciklama) as gider_adi,
-                COALESCE(sg.kategori, '') as kategori
-            FROM odeme_plani op
-            LEFT JOIN sabit_giderler sg ON sg.id = op.kaynak_id
-            WHERE op.durum = 'odendi'
-            AND op.kaynak_tablo = 'sabit_giderler'
-            ORDER BY op.odeme_tarihi DESC
+            SELECT * FROM (
+                SELECT
+                    op.id,
+                    op.aciklama,
+                    op.odenen_tutar,
+                    op.odenecek_tutar,
+                    op.odeme_tarihi,
+                    op.tarih as plan_tarihi,
+                    op.kaynak_id,
+                    COALESCE(sg.gider_adi, op.aciklama) as gider_adi,
+                    COALESCE(sg.kategori, '') as kategori
+                FROM odeme_plani op
+                LEFT JOIN sabit_giderler sg ON sg.id = op.kaynak_id
+                WHERE op.durum = 'odendi'
+                AND op.kaynak_tablo = 'sabit_giderler'
+
+                UNION ALL
+
+                SELECT
+                    kh.id,
+                    kh.aciklama,
+                    ABS(kh.tutar) as odenen_tutar,
+                    ABS(kh.tutar) as odenecek_tutar,
+                    kh.tarih as odeme_tarihi,
+                    kh.tarih as plan_tarihi,
+                    kh.kaynak_id,
+                    COALESCE(sg.gider_adi, kh.aciklama) as gider_adi,
+                    COALESCE(sg.kategori, '') as kategori
+                FROM kasa_hareketleri kh
+                LEFT JOIN sabit_giderler sg ON sg.id = kh.kaynak_id
+                WHERE kh.islem_turu = 'SABIT_GIDER'
+                AND kh.kasa_etkisi = true AND kh.durum = 'aktif'
+                AND kh.kaynak_tablo = 'sabit_giderler'
+                AND NOT EXISTS (
+                    SELECT 1 FROM odeme_plani op2
+                    WHERE op2.kaynak_tablo='sabit_giderler' AND op2.kaynak_id=kh.kaynak_id
+                      AND op2.durum='odendi'
+                      AND op2.referans_ay = DATE_TRUNC('month', kh.tarih)
+                )
+            ) t
+            ORDER BY t.odeme_tarihi DESC
             LIMIT 50
         """)
         return [dict(r) for r in cur.fetchall()]

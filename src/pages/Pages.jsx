@@ -708,7 +708,7 @@ export function SabitGiderler() {
     setFaturaModal({gider_id: g.id, gider_adi: g.gider_adi});
     setFaturaKartOneri(null);
     // Geçmiş ödemeleri yükle — son tutarı otomatik öneri olarak kullan (tekrarlılık şablonu)
-    const gecmis = await api(`/fatura-gecmis/${g.id}`).catch(() => []);
+    const gecmis = await api(`/fatura-gecmis/${g.id}`).catch((e) => { console.warn('fatura-gecmis yüklenemedi:', e?.message || e); return []; });
     setFaturaGecmis(gecmis);
     // Değişken (fatura): son ödenen tutarı öner. Sabit (kira vb.): tanımlı sabit tutarı öner.
     const sonTutar = gecmis?.[0]?.tutar ?? (g.tip !== 'degisken' ? g.tutar : null);
@@ -827,7 +827,7 @@ export function SabitGiderler() {
                     )}
                     <button className="btn btn-ghost btn-sm" onClick={async()=>{
                       setSabitGecmisModal(g); setSabitGecmisData(null);
-                      const r = await api(`/sabit-giderler/${g.id}/gecmis`).catch(()=>null);
+                      const r = await api(`/sabit-giderler/${g.id}/gecmis`).catch((e)=>{ console.warn('sabit gider geçmişi yüklenemedi:', e?.message || e); return null; });
                       setSabitGecmisData(r);
                     }}>📋 Geçmiş</button>
                     <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({gider_adi:g.gider_adi,kategori:g.kategori,tip:g.tip||'sabit',tutar:g.tutar,periyot:g.periyot,odeme_gunu:g.odeme_gunu,baslangic_tarihi:g.baslangic_tarihi?.slice(0,10)||'',sube_id:g.sube_id||'',gecerlilik_tarihi:'',sozlesme_sure_ay:g.sozlesme_sure_ay||'',kira_artis_periyot:g.kira_artis_periyot||'',odeme_yontemi:g.odeme_yontemi||'nakit',kart_id:g.kart_id||''});setDuzenleId(g.id);setHatalar({});setShowModal(true);}}>✏️</button>
