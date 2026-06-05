@@ -2771,6 +2771,28 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
         # FAZ 0 #3: personel maaşı onaysız ödenemez
         _personel_maas_odeme_guard(cur, dict(plan))
 
+        # ÇİFT ÖDEME KAPISI (ters yön): sabit gider planı ödenmeden önce, o ay manuel
+        # /fatura-ode ile (nakit veya kart) zaten ödendiyse engelle.
+        if plan.get('kaynak_tablo') == 'sabit_giderler' and plan.get('kaynak_id'):
+            cur.execute(
+                """
+                SELECT 1 FROM kasa_hareketleri
+                WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+                  AND islem_turu IN ('SABIT_GIDER','FATURA_ODEMESI')
+                  AND kasa_etkisi=true AND durum='aktif'
+                  AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+                UNION ALL
+                SELECT 1 FROM kart_hareketleri
+                WHERE kaynak_tablo='fatura_giderleri' AND kaynak_id=%s
+                  AND islem_turu='HARCAMA' AND durum='aktif'
+                  AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+                LIMIT 1
+                """,
+                (plan['kaynak_id'], plan.get('referans_ay'), plan['kaynak_id'], plan.get('referans_ay')),
+            )
+            if cur.fetchone():
+                raise HTTPException(400, "Bu gider bu ay zaten manuel ödenmiş — plan tekrar ödenemez")
+
         # KART seçildiyse ve kaynak vadeli_alimlar ise kart akışına yönlendir
         if body.odeme_yontemi == 'kart' and body.kart_id and plan.get('kaynak_tablo') == 'vadeli_alimlar':
             bugun = str(bugun_tr())
@@ -4075,8 +4097,33 @@ def sabit_gider_sil(gid: str):
         eski = cur.fetchone()
         if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten pasif")
         cur.execute("UPDATE sabit_giderler SET aktif=FALSE WHERE id=%s", (gid,))
+        # Bekleyen ödeme planlarını iptal et — yetim plan kasayı/borç projeksiyonunu şişirmesin
+        cur.execute(
+            """
+            UPDATE odeme_plani SET durum='iptal'
+            WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+              AND durum IN ('bekliyor','onay_bekliyor')
+            """,
+            (gid,),
+        )
+        iptal_plan = cur.rowcount or 0
+        # İlişkili bekleyen onay kuyruğu kayıtlarını da iptal et
+        try:
+            cur.execute(
+                """
+                UPDATE onay_kuyrugu SET durum='iptal'
+                WHERE kaynak_tablo='odeme_plani' AND durum='bekliyor'
+                  AND kaynak_id IN (
+                    SELECT id FROM odeme_plani
+                    WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+                  )
+                """,
+                (gid,),
+            )
+        except Exception:
+            pass
         audit(cur, 'sabit_giderler', gid, 'PASIF', eski=eski)
-    return {"success": True}
+    return {"success": True, "iptal_edilen_plan": iptal_plan}
 
 @app.get("/api/sabit-giderler/uyarilar")
 def sabit_gider_uyarilar():
@@ -4524,6 +4571,12 @@ def fatura_ode(body: FaturaOdemeModel):
     Değişken sabit gider (elektrik, su vb.) fatura ödemesi.
     Kasaya FATURA_ODEMESI olarak yazılır, kaynak sabit_giderler tablosuna bağlanır.
     """
+    try:
+        _tutar_chk = float(body.tutar)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Geçerli bir tutar girin")
+    if _tutar_chk <= 0:
+        raise HTTPException(400, "Tutar 0'dan büyük olmalı")
     with db() as (conn, cur):
         # Sabit gideri kontrol et
         cur.execute("SELECT * FROM sabit_giderler WHERE id=%s AND aktif=TRUE", (body.sabit_gider_id,))
@@ -4536,7 +4589,10 @@ def fatura_ode(body: FaturaOdemeModel):
         # Değişken (elektrik/su) → FATURA_ODEMESI · Sabit (kira vb.) → SABIT_GIDER
         _kasa_turu = 'FATURA_ODEMESI' if _tip == 'degisken' else 'SABIT_GIDER'
 
-        # Bu ay zaten ödendi mi? (kendi türüne göre)
+        # Bu ay zaten ödendi mi? (a) manuel kasa ödemesi (b) ödeme planından ödenmiş.
+        # ÇİFT ÖDEME KAPISI: plan yolu kasaya kaynak_id=plan_id yazar; bu yüzden manuel
+        # dedup'ı plan ödemesini de görmeli — yoksa aynı kira iki yoldan ödenip kasadan
+        # iki kez düşer.
         cur.execute("""
             SELECT 1 FROM kasa_hareketleri
             WHERE kaynak_id=%s AND kaynak_tablo='sabit_giderler'
@@ -4546,6 +4602,15 @@ def fatura_ode(body: FaturaOdemeModel):
         """, (body.sabit_gider_id, _kasa_turu, str(body.tarih), str(body.tarih)))
         if cur.fetchone():
             raise HTTPException(400, "Bu ay için zaten ödeme yapılmış")
+        # Bu giderin bu ayki ödeme planı zaten ödenmiş mi? (kart veya nakit — her yöntem)
+        cur.execute("""
+            SELECT 1 FROM odeme_plani
+            WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+              AND durum='odendi'
+              AND referans_ay = DATE_TRUNC('month', %s::date)
+        """, (body.sabit_gider_id, str(body.tarih)))
+        if cur.fetchone():
+            raise HTTPException(400, "Bu ay için ödeme planından zaten ödendi — tekrar ödeme yapılamaz")
 
         aciklama = body.aciklama or f"Fatura: {gider['gider_adi']}"
 

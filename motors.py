@@ -506,7 +506,7 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                 cur.execute("""
                     SELECT k.limit_tutar,
                         COALESCE(SUM(
-                            CASE WHEN kh.islem_turu IN ('HARCAMA','FAIZ') THEN kh.tutar
+                            CASE WHEN kh.islem_turu IN ('HARCAMA','FAIZ','DEVIR') THEN kh.tutar
                                  WHEN kh.islem_turu='ODEME' THEN -kh.tutar ELSE 0 END
                         ), 0) as borc
                     FROM kartlar k
