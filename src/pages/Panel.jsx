@@ -3,6 +3,7 @@ import { api, fmt, fmtDate } from '../utils/api';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
 import IslemSonucOverlay from '../components/IslemSonucOverlay';
+import KartSecimListesi from '../components/KartSecimListesi';
 
 export default function Panel({ onNavigate }) {
   const nav = onNavigate || (() => {});
@@ -639,7 +640,7 @@ export default function Panel({ onNavigate }) {
           <div style={{ marginBottom: 12 }}>
             <div className="panel-section-hdr"><span>KARAR MOTORU</span></div>
             {(panel.kararlar || []).filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI').map((k, i) => (
-              <div key={i} style={{ display: 'flex', gap: 8, padding: '8px 10px', marginBottom: 4, borderRadius: 6, background: k.seviye === 'KRITIK' ? 'rgba(220,38,38,0.07)' : 'rgba(212,137,58,0.07)', borderLeft: `3px solid ${k.seviye === 'KRITIK' ? 'var(--red)' : 'var(--orange)'}` }}>
+              <div key={i} style={{ display: 'flex', gap: 8, padding: '8px 10px', marginBottom: 4, borderRadius: 8, border: `1px solid ${k.seviye === 'KRITIK' ? 'rgba(220,38,38,0.35)' : 'rgba(212,137,58,0.35)'}`, background: k.seviye === 'KRITIK' ? 'rgba(220,38,38,0.07)' : 'rgba(212,137,58,0.07)' }}>
                 <span>{k.seviye === 'KRITIK' ? '🚨' : '⚠️'}</span>
                 <div><div style={{ fontSize: 12, fontWeight: 600 }}>{k.baslik}</div><div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>{k.mesaj}</div></div>
               </div>
@@ -651,7 +652,7 @@ export default function Panel({ onNavigate }) {
           <div style={{ marginBottom: 12 }}>
             <div className="panel-section-hdr"><span>SİSTEM BİLDİRİMLERİ</span></div>
             {(panel.merkez_mesajlar || []).filter(m => !m.okundu && m.aktif !== false).map((m, i) => (
-              <div key={m.id || i} style={{ display: 'flex', gap: 8, padding: '8px 10px', marginBottom: 4, borderRadius: 6, background: 'rgba(239,68,68,0.07)', borderLeft: '3px solid var(--red)' }}>
+              <div key={m.id || i} style={{ display: 'flex', gap: 8, padding: '8px 10px', marginBottom: 4, borderRadius: 8, border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.07)' }}>
                 <span>❌</span>
                 <div><div style={{ fontSize: 12 }}>{m.mesaj}</div>{m.olusturma && <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>{new Date(m.olusturma).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>}</div>
               </div>
@@ -662,7 +663,7 @@ export default function Panel({ onNavigate }) {
         {sC > 0 && (
           <div style={{ marginBottom: 12 }}>
             <div className="panel-section-hdr"><span>CİRO EKSİKLERİ</span></div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '8px 10px', borderRadius: 6, background: 'rgba(239,68,68,0.07)', borderLeft: '3px solid var(--red)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.07)' }}>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--red)' }}>⚠️ {sC} günde ciro girilmemiş</div>
                 <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>{panel.ciro_eksik_gunler.map(g => `${g.tarih}${g.kritik ? ' ●' : ''}`).join(' · ')}</div>
@@ -977,9 +978,9 @@ export default function Panel({ onNavigate }) {
         const odemeBadge = (tumUyarilar?.length || 0);
         const stratejiBadge = (onaylar?.length || 0) + (panel.oneriler?.length || 0);
         const tabs = [
-          { id: 'ozet',     label: '📊 Özet',     badge: null },
-          { id: 'odemeler', label: '💸 Ödemeler', badge: odemeBadge > 0 ? odemeBadge : null },
-          { id: 'strateji', label: '🧠 Strateji', badge: stratejiBadge > 0 ? stratejiBadge : null },
+          { id: 'ozet',     label: 'Özet',     badge: null },
+          { id: 'odemeler', label: 'Ödemeler', badge: odemeBadge > 0 ? odemeBadge : null },
+          { id: 'strateji', label: 'Strateji', badge: stratejiBadge > 0 ? stratejiBadge : null },
         ];
         return (
           <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '1px solid var(--border)' }}>
@@ -1029,7 +1030,7 @@ export default function Panel({ onNavigate }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
         {[
             { label: '💰 Güncel Kasa', value: fmt(kasa), sub: kasDayan < 999 ? `${kasDayan} gün dayanır` : 'Stabil', renk: kasa >= 0 ? 'var(--green)' : 'var(--red)', page: 'ledger', overlay: { baslik: 'Son Kasa Hareketleri', endpoint: '/kasa?limit=20' } },
-          { label: '🆓 Serbest Nakit', value: fmt(serbest), sub: '7 günlük yük düşülmüş', renk: serbest >= 0 ? 'var(--green)' : 'var(--red)', page: 'vadeli' },
+          { label: '💵 Serbest Nakit', value: fmt(serbest), sub: '7 günlük yük düşülmüş', renk: serbest >= 0 ? 'var(--green)' : 'var(--red)', page: 'vadeli' },
           { label: '📊 Net Akış (30 gün)', value: fmt(netAkis), sub: netAkis >= 0 ? 'Son 30 gün gelir−gider ✓' : '⚠️ Son 30 gün açık', renk: netAkis >= 0 ? 'var(--green)' : 'var(--red)', page: 'ledger' },
           { label: '📈 Bu Ay Ciro', value: fmt(buAyCiro), sub: new Date().toLocaleDateString('tr-TR', { month: 'long' }), renk: 'var(--text1)', page: 'ciro' },
           { label: '🔄 Geçen Ay Devir', value: fmt(panel.bu_ay_devir || 0), sub: panel.bu_ay_devir > 0 ? 'Devir aktarıldı ✓' : 'Devir yok', renk: panel.bu_ay_devir > 0 ? 'var(--yellow)' : 'var(--text3)', page: 'ledger' },
@@ -1240,8 +1241,7 @@ export default function Panel({ onNavigate }) {
         {panel.bu_ay_finansman_maliyeti > 0 && (
           <div style={{
             gridColumn: '1 / -1',
-            background: 'var(--bg2)', border: '1px solid var(--border)',
-            borderLeft: '3px solid var(--red)',
+            background: 'rgba(224,92,92,0.06)', border: '1px solid rgba(224,92,92,0.3)',
             borderRadius: 8, padding: '8px 16px',
             display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap'
           }}>
@@ -1384,9 +1384,9 @@ export default function Panel({ onNavigate }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
               {tumUyarilar.map((u, i) => (
                 <div key={i} style={{
-                  padding: '10px 12px', borderRadius: 6,
+                  padding: '10px 12px', borderRadius: 8,
                   background: u.seviye === 'KRITIK' ? 'rgba(220,50,50,0.06)' : u.seviye === 'UYARI' ? 'rgba(220,160,0,0.06)' : 'var(--bg3)',
-                  borderLeft: `3px solid ${u.seviye === 'KRITIK' ? 'var(--red)' : u.seviye === 'UYARI' ? 'var(--yellow)' : 'var(--border)'}`,
+                  border: `1px solid ${u.seviye === 'KRITIK' ? 'rgba(220,50,50,0.3)' : u.seviye === 'UYARI' ? 'rgba(220,160,0,0.25)' : 'var(--border)'}`,
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                     <div style={{ flex: 1 }}>
@@ -1534,7 +1534,7 @@ export default function Panel({ onNavigate }) {
                 return (
                   <div key={k.kart_adi} className={k.blink ? 'blink' : ''} style={{
                     background: 'var(--bg3)', borderRadius: 8, padding: '12px 14px',
-                    borderLeft: `3px solid ${renk}`, cursor: 'pointer'
+                    border: `1px solid ${renk}44`, cursor: 'pointer'
                   }} onClick={() => nav('kart-analiz')}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                       <div>
@@ -1686,8 +1686,8 @@ export default function Panel({ onNavigate }) {
               const kasaSonrasi = kasaEtkisi ? kasa + kasaEtkisi : null;
               return (
                 <div key={i} style={{
-                  padding: '10px 14px', borderRadius: 6, background: 'var(--bg3)',
-                  borderLeft: `3px solid ${renk}`
+                  padding: '10px 14px', borderRadius: 8, background: 'var(--bg3)',
+                  border: `1px solid ${renk}44`
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                     <div style={{ flex: 1 }}>
@@ -1730,14 +1730,14 @@ export default function Panel({ onNavigate }) {
               {onaylar.length} bekleyen
             </span>
           </div>
-        <div className="card" style={{ borderLeft: '3px solid var(--yellow)' }}>
+        <div className="card" style={{ borderColor: 'rgba(232,197,71,0.3)' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {onaylar.map(o => (
               <div key={o.id} style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '10px 14px', borderRadius: 6,
+                padding: '10px 14px', borderRadius: 8,
                 background: o.seviye === 'KRITIK' ? 'rgba(220,50,50,0.07)' : 'var(--bg3)',
-                borderLeft: `3px solid ${o.seviye === 'KRITIK' ? 'var(--red)' : o.seviye === 'UYARI' ? 'var(--yellow)' : 'var(--border)'}`
+                border: `1px solid ${o.seviye === 'KRITIK' ? 'rgba(220,50,50,0.3)' : o.seviye === 'UYARI' ? 'rgba(232,197,71,0.25)' : 'var(--border)'}`
               }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 12, fontWeight: 600 }}>
@@ -1980,48 +1980,13 @@ export default function Panel({ onNavigate }) {
 
               {/* ADIM 2: Kart seç */}
               {kartOneriAdim === 2 && (
-                <div>
-                  {kartOneriYukleniyor && <div style={{ textAlign: 'center', padding: 24, color: 'var(--text3)' }}>Kartlar yükleniyor...</div>}
-                  {kartOneriData && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {kartOneriData.kartlar.map(k => (
-                        <button key={k.kart_id} disabled={!k.uygun}
-                          onClick={() => { if (k.uygun) { setSeciliKartId(k.kart_id); setKartOneriAdim(3); } }}
-                          style={{
-                            textAlign: 'left', padding: '12px 14px', borderRadius: 8,
-                            cursor: k.uygun ? 'pointer' : 'not-allowed',
-                            border: `2px solid ${seciliKartId === k.kart_id ? 'var(--primary)' : 'var(--border)'}`,
-                            background: k.uygun ? 'var(--bg2)' : 'var(--bg3)',
-                            opacity: k.uygun ? 1 : 0.5,
-                          }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                              <span style={{ fontWeight: 600, fontSize: 13 }}>{k.banka}</span>
-                              <span style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 8 }}>{k.kart_adi}</span>
-                              {k.oneri && k.uygun && <span className="badge badge-green" style={{ marginLeft: 8, fontSize: 10 }}>Önerilen</span>}
-                            </div>
-                            <div style={{ textAlign: 'right', fontSize: 12 }}>
-                              <div style={{ color: 'var(--green)', fontWeight: 600 }}>{parseInt(k.kalan_limit).toLocaleString('tr-TR')} ₺ limit</div>
-                              <div style={{ color: 'var(--text3)' }}>%{k.faiz_orani} faiz</div>
-                            </div>
-                          </div>
-                          {k.uygun ? (
-                            <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text3)', display: 'flex', gap: 16 }}>
-                              <span>Kesim: {k.kesim_uzakligi} gün sonra</span>
-                              <span>Son ödeme: {k.son_odeme_uzakligi} gün sonra</span>
-                              <span>Doluluk: %{Math.round(k.limit_doluluk * 100)}</span>
-                            </div>
-                          ) : (
-                            <div style={{ marginTop: 4, fontSize: 11, color: 'var(--red)' }}>{k.uygun_degil_neden}</div>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <div style={{ marginTop: 12 }}>
-                    <button className="btn btn-ghost btn-sm" onClick={() => setKartOneriAdim(1)}>← Geri</button>
-                  </div>
-                </div>
+                <KartSecimListesi
+                  kartlar={kartOneriData?.kartlar}
+                  seciliKartId={seciliKartId}
+                  yukleniyor={kartOneriYukleniyor}
+                  onSec={(id) => { setSeciliKartId(id); setKartOneriAdim(3); }}
+                  onGeri={() => setKartOneriAdim(1)}
+                />
               )}
 
               {/* ADIM 3: Onay özeti */}
@@ -2167,47 +2132,13 @@ export default function Panel({ onNavigate }) {
 
               {/* ADIM 3: Kart seç */}
               {kismiAdim === 3 && (
-                <div>
-                  {kismiKartYukleniyor && <div style={{ textAlign: 'center', padding: 24, color: 'var(--text3)' }}>Kartlar yükleniyor...</div>}
-                  {kismiKartData && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {kismiKartData.kartlar.map(k => (
-                        <button key={k.kart_id} disabled={!k.uygun}
-                          onClick={() => { if (k.uygun) setKismiSeciliKartId(k.kart_id); }}
-                          style={{
-                            textAlign: 'left', padding: '12px 14px', borderRadius: 8,
-                            cursor: k.uygun ? 'pointer' : 'not-allowed',
-                            border: `2px solid ${kismiSeciliKartId === k.kart_id ? 'var(--primary)' : 'var(--border)'}`,
-                            background: k.uygun ? 'var(--bg2)' : 'var(--bg3)',
-                            opacity: k.uygun ? 1 : 0.5,
-                          }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                              <span style={{ fontWeight: 600, fontSize: 13 }}>{k.banka}</span>
-                              <span style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 8 }}>{k.kart_adi}</span>
-                              {k.oneri && k.uygun && <span className="badge badge-green" style={{ marginLeft: 8, fontSize: 10 }}>Önerilen</span>}
-                            </div>
-                            <div style={{ textAlign: 'right', fontSize: 12 }}>
-                              <div style={{ color: 'var(--green)', fontWeight: 600 }}>{parseInt(k.kalan_limit).toLocaleString('tr-TR')} ₺ limit</div>
-                              <div style={{ color: 'var(--text3)' }}>%{k.faiz_orani} faiz</div>
-                            </div>
-                          </div>
-                          {k.uygun ? (
-                            <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text3)', display: 'flex', gap: 16 }}>
-                              <span>Kesim: {k.kesim_uzakligi} gün sonra</span>
-                              <span>Doluluk: %{Math.round(k.limit_doluluk * 100)}</span>
-                            </div>
-                          ) : (
-                            <div style={{ marginTop: 4, fontSize: 11, color: 'var(--red)' }}>{k.uygun_degil_neden}</div>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <div style={{ marginTop: 12 }}>
-                    <button className="btn btn-ghost btn-sm" onClick={() => setKismiAdim(2)}>← Geri</button>
-                  </div>
-                </div>
+                <KartSecimListesi
+                  kartlar={kismiKartData?.kartlar}
+                  seciliKartId={kismiSeciliKartId}
+                  yukleniyor={kismiKartYukleniyor}
+                  onSec={(id) => setKismiSeciliKartId(id)}
+                  onGeri={() => setKismiAdim(2)}
+                />
               )}
             </div>
 

@@ -245,17 +245,29 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
 .cfo-card{
   display:flex;align-items:center;gap:10px;
-  padding:9px 13px;border-radius:7px;
+  padding:9px 13px;border-radius:8px;
   border:1px solid var(--border);
   margin-bottom:3px;
-  transition:transform .13s ease,box-shadow .13s ease;
+  transition:transform .13s ease,box-shadow .13s ease,border-color .13s ease;
   animation:cfoCardIn .2s ease both;
 }
 .cfo-card:hover{transform:translateY(-1px);box-shadow:0 5px 18px rgba(0,0,0,.22)}
-.cfo-card.kritik{border-left:3px solid var(--red);background:rgba(224,92,92,.05)}
-.cfo-card.uyari{border-left:3px solid var(--orange);background:rgba(212,137,58,.05)}
-.cfo-card.bilgi{border-left:3px solid var(--yellow);background:rgba(232,197,71,.04)}
-.cfo-card.bugun{border-left:3px solid var(--accent);background:var(--accent-dim)}
+/* Tier rengi: kenar + arka plan tonu — border-left AI slop pattern'inden arındırıldı */
+.cfo-card.kritik{border-color:rgba(224,92,92,.35);background:rgba(224,92,92,.06)}
+.cfo-card.uyari{border-color:rgba(212,137,58,.35);background:rgba(212,137,58,.05)}
+.cfo-card.bilgi{border-color:rgba(232,197,71,.25);background:rgba(232,197,71,.04)}
+.cfo-card.bugun{border-color:var(--accent-border);background:var(--accent-dim)}
+
+/* CFO card içi tipografi — inline fontSize kalabalığından arındırma */
+.cfo-card .cfo-card-title{font-size:13px;font-weight:600;color:var(--text1);line-height:1.3}
+.cfo-card .cfo-card-sub{font-size:11px;color:var(--text3);margin-top:2px}
+.cfo-card .cfo-card-tutar{font-family:var(--font-mono);font-size:13px;font-weight:700;flex-shrink:0}
+.cfo-card.kritik .cfo-card-tutar{color:var(--red)}
+.cfo-card.uyari .cfo-card-tutar{color:var(--orange)}
+.cfo-card.bilgi .cfo-card-tutar{color:var(--yellow)}
+.cfo-card.bugun .cfo-card-tutar{color:var(--accent)}
+/* Kritik tier başlığı biraz daha büyük — hiyerarşi için */
+.cfo-card.kritik .cfo-card-title{font-size:14px;font-weight:700}
 
 .cfo-total-strip{display:flex;align-items:center;gap:12px;padding:8px 2px 10px;font-size:12px;color:var(--text3);border-bottom:1px solid var(--border);margin-bottom:12px;flex-wrap:wrap}
 
