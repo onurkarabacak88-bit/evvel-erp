@@ -1530,8 +1530,29 @@ def kartlar_listele():
                 u["limit_doluluk"] = (grup_borc / grup_limit) if grup_limit > 0 else 0
         return sonuc
 
+def _kart_validate(k: KartModel):
+    """Kart ekle/güncelle ortak doğrulaması — bozuk değerleri reddet."""
+    if not (k.kart_adi or "").strip():
+        raise HTTPException(400, "Kart adı zorunlu")
+    if not (k.banka or "").strip():
+        raise HTTPException(400, "Banka zorunlu")
+    if float(k.limit_tutar or 0) < 0:
+        raise HTTPException(400, "Limit negatif olamaz")
+    if not (1 <= int(k.kesim_gunu or 0) <= 31):
+        raise HTTPException(400, "Kesim günü 1–31 arası olmalı")
+    if not (1 <= int(k.son_odeme_gunu or 0) <= 31):
+        raise HTTPException(400, "Son ödeme günü 1–31 arası olmalı")
+    if not (0 <= float(k.faiz_orani or 0) <= 500):
+        raise HTTPException(400, "Faiz oranı 0–500 arası olmalı (yıllık %)")
+    if not (0 <= float(k.gecikme_faiz_orani or 0) <= 500):
+        raise HTTPException(400, "Gecikme faiz oranı 0–500 arası olmalı")
+    if not (10 <= float(k.asgari_oran or 0) <= 100):
+        raise HTTPException(400, "Asgari oran 10–100 arası olmalı (%)")
+
+
 @app.post("/api/kartlar")
 def kart_ekle(k: KartModel):
+    _kart_validate(k)
     with db() as (conn, cur):
         # ÇİFT KART KORUMASI: aynı son 4 haneli AKTİF kart varsa yenisini AÇMA — mevcuti döndür.
         # (son_dort_hane eşleştirme anahtarı; çiftlenirse mutabakat bozulur. "Kartı Ekle"ye
@@ -1557,6 +1578,7 @@ def kart_ekle(k: KartModel):
 
 @app.put("/api/kartlar/{kid}")
 def kart_guncelle(kid: str, k: KartModel):
+    _kart_validate(k)
     with db() as (conn, cur):
         cur.execute("SELECT * FROM kartlar WHERE id=%s", (kid,))
         eski = cur.fetchone()
@@ -1840,6 +1862,7 @@ def kart_borc_kocu(strateji: str = "cig", nakit: float = 0):
     """Borç ödeme koçu: hangi kartı önce kapat (çığ=en yüksek faiz / kartopu=en küçük
     borç), aylık faiz kaybı, eldeki nakitle bu ayki dağıtım önerisi.
     Standart borç-yönetimi çerçeveleri — kişiye özel mali tavsiye değildir."""
+    nakit = max(0.0, float(nakit or 0))  # negatif nakit anlamsız → 0'a kırp
     from finans_core import son_odeme_tarihi_hesapla, kesim_tarihi_hesapla
     bugun = bugun_tr()
     with db() as (conn, cur):
@@ -1909,6 +1932,7 @@ def kart_borc_projeksiyon(aylik: float, strateji: str = "cig"):
     """Borç kurtuluş projeksiyonu: aylık X ödersen kaç ayda biter + toplam faiz;
     sadece asgari ödersen ne kadar faiz/ay kaybedersin. Gerçek faiz simülasyonu
     (çığ/kartopu). Standart çerçeve — kişiye özel mali tavsiye değildir."""
+    aylik = max(0.0, float(aylik or 0))  # negatif aylık anlamsız → 0'a kırp
     from datetime import date as _d
     bugun = bugun_tr()
     with db() as (conn, cur):
@@ -2617,10 +2641,6 @@ def kart_ekstre_import(body: EkstreImportBody):
             tip = (isl.tip or "HARCAMA").upper()
             if tip not in ("HARCAMA", "ODEME", "FAIZ"):
                 atlanan += 1; continue
-            if tip == "FAIZ":
-                _ft = (isl.tarih or str(bugun_tr()))[:7]
-                if len(_ft) == 7:
-                    faiz_donemleri.add(_ft)
             # TAKSİTLİ alım: tutar=TOPLAM (taksit_anapara), taksit_sayisi=Y, baslangic=tarih
             tsay = int(isl.taksit_sayisi or 1)
             is_taksit = tip == "HARCAMA" and tsay > 1 and float(isl.taksit_anapara or 0) > 0
@@ -2631,6 +2651,12 @@ def kart_ekstre_import(body: EkstreImportBody):
                 tutar = abs(float(isl.tutar or 0))
             if tutar <= 0:
                 atlanan += 1; continue
+            # Faiz dönemini SADECE tutar>0 geçerli satır için işaretle (motor tahmini iptali);
+            # sıfır tutarlı satır atlanırsa o dönem yanlışlıkla iptal tetiklenmesin.
+            if tip == "FAIZ":
+                _ft = (isl.tarih or str(bugun_tr()))[:7]
+                if len(_ft) == 7:
+                    faiz_donemleri.add(_ft)
             tarih = (isl.tarih or str(bugun_tr()))[:10]
             htip = (isl.harcama_tipi or "").strip().lower()
             if htip not in ("isletme", "sahsi", "belirsiz"):

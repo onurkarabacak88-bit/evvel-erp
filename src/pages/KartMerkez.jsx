@@ -49,6 +49,12 @@ export default function KartMerkez({ onNavigate }) {
       });
   }, []);
 
+  // Strateji sekmesine girilince otomatik yükle (manuel "Üret" gerektirmesin)
+  useEffect(() => {
+    if (aktifTab === 'strateji' && !strateji && !stratejiLoading) stratejiYukle();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aktifTab]);
+
   // ── HESAPLAMALAR ──────────────────────────────────────────────
 
   // Çığ kartopu — en yüksek faizli kartı önce öde (avalanche method)
@@ -78,24 +84,29 @@ export default function KartMerkez({ onNavigate }) {
       ay++;
       let kalanButce = aylikOdeme;
 
-      // Önce tüm kartlara asgari öde
-      for (let k of kartDurum) {
+      // 1) FAİZ TAHAKKUK — ödeme ÖNCESİ, her kart için bir kez (faiz üstüne faiz binmesin,
+      //    toplamFaiz tek seferde sayılsın).
+      for (const k of kartDurum) {
+        if (k.borc > 0) {
+          const f = k.borc * (k.faiz / 100 / 12);
+          k.borc += f;
+          toplamFaiz += f;
+        }
+      }
+
+      // 2) Tüm kartlara asgari öde
+      for (const k of kartDurum) {
         if (k.borc <= 0) continue;
         const odeme = Math.min(k.asgari, k.borc);
         k.borc -= odeme;
         kalanButce -= odeme;
-        // Faiz ekle
-        if (k.borc > 0) {
-          k.borc += k.borc * (k.faiz / 100 / 12);
-          toplamFaiz += k.borc * (k.faiz / 100 / 12);
-        }
         if (k.borc <= 0.01) {
           k.borc = 0;
           if (!kapanisAylari[k.id]) kapanisAylari[k.id] = ay;
         }
       }
 
-      // Fazla parayı en yüksek faizliye ver
+      // 3) Fazla parayı en yüksek faizliye ver (kartDurum zaten faize göre sıralı)
       const hedef = kartDurum.find(k => k.borc > 0);
       if (hedef && kalanButce > 0) {
         hedef.borc -= Math.min(kalanButce, hedef.borc);
@@ -157,12 +168,9 @@ export default function KartMerkez({ onNavigate }) {
           <h2>💳 Kart Kontrol Merkezi</h2>
           <p style={{ fontSize: 12, color: 'var(--text3)' }}>{kartlar.length} aktif kart · Kullanım: <strong style={{ color: toplamLimit > 0 && toplamBorc / toplamLimit > 0.85 ? 'var(--red)' : 'var(--text2)' }}>%{toplamLimit > 0 ? Math.round(toplamBorc / toplamLimit * 100) : 0}</strong></p>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexDirection: 'column', alignItems: 'flex-end' }}>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-primary btn-sm" onClick={faizUret} title="Manuel telafi (otomatik scheduler her gece çalışır)">💰 Faiz Yokla</button>
-            <button className="btn btn-secondary btn-sm" onClick={() => nav('kartlar')}>⚙️ Kart Tanımları</button>
-          </div>
-          {faizMsg && <div style={{ fontSize: 11, color: 'var(--green)' }}>{faizMsg}</div>}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button className="btn btn-primary btn-sm" onClick={faizUret} title="Son ödemesi geçen kartlara eksik faizi hesaplayıp yazar (otomatik scheduler her gece de çalışır)">💰 Eksik Faizi Hesapla</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => nav('kartlar')}>⚙️ Kart Tanımları</button>
         </div>
       </div>
 

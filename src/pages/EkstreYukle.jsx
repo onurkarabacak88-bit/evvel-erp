@@ -21,7 +21,7 @@ export default function EkstreYukle() {
   const [mHata, setMHata] = useState(null);
 
   useEffect(() => {
-    fetch('/api/kartlar').then(r => r.json()).then(setKartlar).catch(() => {});
+    fetch('/api/kartlar').then(r => r.json()).then(d => setKartlar(Array.isArray(d) ? d : [])).catch(() => {});
   }, []);
 
   async function manuelKaydet() {
@@ -196,7 +196,7 @@ export default function EkstreYukle() {
               <div className="form-group"><label>Son ödeme tarihi</label><input type="date" value={mForm.son_odeme} onChange={e => setMForm({ ...mForm, son_odeme: e.target.value })} /></div>
               <div className="form-group"><label>Dönem borcu (₺) *</label><input type="number" step="0.01" value={mForm.donem_borcu} onChange={e => setMForm({ ...mForm, donem_borcu: e.target.value })} /></div>
               <div className="form-group"><label>Asgari tutar (₺)</label><input type="number" step="0.01" value={mForm.asgari_tutar} onChange={e => setMForm({ ...mForm, asgari_tutar: e.target.value })} /></div>
-              <div className="form-group"><label>Aylık faiz oranı (%)</label><input type="number" step="0.01" value={mForm.faiz_orani} onChange={e => setMForm({ ...mForm, faiz_orani: e.target.value })} /></div>
+              <div className="form-group"><label>Yıllık akdi faiz oranı (%)</label><input type="number" step="0.01" placeholder="örn. 51" value={mForm.faiz_orani} onChange={e => setMForm({ ...mForm, faiz_orani: e.target.value })} /></div>
             </div>
             {mHata && <div className="alert-box red" style={{ marginTop: 8 }}>⚠️ {mHata}</div>}
             {mSonuc && <div className="alert-box green" style={{ marginTop: 8 }}>✅ Kaydedildi. Kartın güncel borcu: <strong>{fmt(mSonuc.yeni_borc)}</strong> · CFO ödeme planı + snapshot oluşturuldu.</div>}
