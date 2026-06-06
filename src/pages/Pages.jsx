@@ -823,11 +823,13 @@ export function SabitGiderler() {
                 <td><span className={`badge ${g.aktif?'badge-green':'badge-gray'}`}>{g.aktif?'Aktif':'Pasif'}</span></td>
                 <td>
                   <div className="flex gap-8">
-                    {g.aktif && (
+                    {g.aktif && (g.bu_ay_odendi ? (
+                      <span className="badge badge-green" style={{alignSelf:'center'}}>✓ Bu ay ödendi</span>
+                    ) : (
                       <button className="btn btn-primary btn-sm" onClick={()=>faturaOdeAc(g)}>
                         {g.tip === 'degisken' ? '💰 Fatura Öde' : '💰 Öde'}
                       </button>
-                    )}
+                    ))}
                     <button className="btn btn-ghost btn-sm" onClick={async()=>{
                       setSabitGecmisModal(g); setSabitGecmisData(null);
                       const r = await api(`/sabit-giderler/${g.id}/gecmis`).catch((e)=>{ console.warn('sabit gider geçmişi yüklenemedi:', e?.message || e); return null; });

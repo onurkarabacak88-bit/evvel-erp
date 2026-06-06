@@ -4066,8 +4066,32 @@ KIRA_ARTIS_PERIYOT_MAP = {"6ay": 6, "1yil": 12, "2yil": 24, "5yil": 60}
 @app.get("/api/sabit-giderler")
 def sabit_giderler_listele():
     with db() as (conn, cur):
-        cur.execute("""SELECT sg.*, s.ad as sube_adi FROM sabit_giderler sg
-            LEFT JOIN subeler s ON s.id=sg.sube_id ORDER BY sg.kategori, sg.gider_adi""")
+        cur.execute("""
+            SELECT sg.*, s.ad as sube_adi,
+              -- Bu ay ödendi mi? Nakit kasa / kart talimatı / ödenmiş plan — herhangi biri.
+              (
+                EXISTS (
+                  SELECT 1 FROM kasa_hareketleri kh
+                  WHERE kh.kaynak_tablo='sabit_giderler' AND kh.kaynak_id=sg.id
+                    AND kh.islem_turu='SABIT_GIDER' AND kh.kasa_etkisi=true AND kh.durum='aktif'
+                    AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', CURRENT_DATE)
+                )
+                OR EXISTS (
+                  SELECT 1 FROM kart_hareketleri kt
+                  WHERE kt.kaynak_tablo='fatura_giderleri' AND kt.kaynak_id=sg.id
+                    AND kt.islem_turu='HARCAMA' AND kt.durum='aktif'
+                    AND DATE_TRUNC('month', kt.tarih) = DATE_TRUNC('month', CURRENT_DATE)
+                )
+                OR EXISTS (
+                  SELECT 1 FROM odeme_plani op
+                  WHERE op.kaynak_tablo='sabit_giderler' AND op.kaynak_id=sg.id
+                    AND op.durum='odendi'
+                    AND op.referans_ay = DATE_TRUNC('month', CURRENT_DATE)
+                )
+              ) AS bu_ay_odendi
+            FROM sabit_giderler sg
+            LEFT JOIN subeler s ON s.id=sg.sube_id
+            ORDER BY sg.kategori, sg.gider_adi""")
         return [dict(r) for r in cur.fetchall()]
 
 @app.post("/api/sabit-giderler")
