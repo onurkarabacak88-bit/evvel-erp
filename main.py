@@ -4562,14 +4562,20 @@ def sabit_gider_odenmis_plan_esitle(uygula: bool = False):
         if not uygula:
             return {"onizleme": True, "esitlenecek_adet": len(adaylar), "kayitlar": liste,
                     "not": "uygula=true ile bu planlar 'odendi' yapılır."}
-        ids = [r["id"] for r in adaylar]
         esit = 0
-        if ids:
+        if adaylar:
             cur.execute("""
-                UPDATE odeme_plani SET durum='odendi',
-                    odeme_tarihi=COALESCE(odeme_tarihi, CURRENT_DATE)
-                WHERE id = ANY(%s::uuid[])
-            """, (ids,))
+                UPDATE odeme_plani op SET durum='odendi',
+                    odeme_tarihi=COALESCE(op.odeme_tarihi, CURRENT_DATE)
+                WHERE op.kaynak_tablo='sabit_giderler'
+                  AND op.durum IN ('bekliyor','onay_bekliyor')
+                  AND EXISTS (
+                      SELECT 1 FROM kasa_hareketleri kh
+                      WHERE kh.kaynak_tablo='sabit_giderler' AND kh.kaynak_id=op.kaynak_id
+                        AND kh.islem_turu='SABIT_GIDER' AND kh.kasa_etkisi=true AND kh.durum='aktif'
+                        AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih)
+                  )
+            """)
             esit = cur.rowcount
             # İlişkili bekleyen onayları da kapat
             cur.execute("""
