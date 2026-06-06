@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -11,20 +11,50 @@ const RENKLER = [
   '#a78bfa', '#34d399', '#fbbf24', '#f87171', '#c084fc',
 ];
 
+const AY_TR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+function ayEtiket(donem) {
+  if (!donem) return '—';
+  const [y, m] = donem.slice(0, 7).split('-');
+  const mi = parseInt(m, 10) - 1;
+  return `${AY_TR[mi] || m} ${y}`;
+}
+function trTarih(s) {
+  if (!s) return '—';
+  const [y, m, g] = s.slice(0, 10).split('-');
+  return `${g}.${m}.${y}`;
+}
+
 export default function KartEkstreAnaliz() {
   const [d, setD] = useState(null);
   const [yukleniyor, setYukleniyor] = useState(true);
+  const [arsiv, setArsiv] = useState(null);
+  const [arsivYukleniyor, setArsivYukleniyor] = useState(true);
+  const [acikKart, setAcikKart] = useState(null);
 
   useEffect(() => {
     api('/kartlar/analiz').then(setD).catch(() => setD(null)).finally(() => setYukleniyor(false));
+    api('/kartlar/ekstre-arsiv').then(setArsiv).catch(() => setArsiv(null)).finally(() => setArsivYukleniyor(false));
   }, []);
 
   if (yukleniyor) return <div className="page"><div style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}><span className="spinner" /> Yükleniyor…</div></div>;
 
   const bosVeri = !d || !d.veri_var;
+  const arsivKartlar = arsiv?.kartlar || [];
 
   return (
     <div className="page">
+      <style>{`
+        .ea-row { cursor: pointer; transition: background .15s ease; }
+        .ea-row:hover { background: var(--bg2); }
+        .ea-plus { display: inline-flex; align-items: center; justify-content: center;
+          width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--border);
+          background: var(--bg3); color: var(--text2); font-size: 15px; font-weight: 700;
+          line-height: 1; transition: transform .2s cubic-bezier(.34,1.56,.64,1), background .15s ease; }
+        .ea-row:hover .ea-plus { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .ea-plus.acik { transform: rotate(45deg); }
+        .ea-detay { animation: eaFade .26s cubic-bezier(.22,.61,.36,1); }
+        @keyframes eaFade { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+      `}</style>
       <div className="page-header">
         <h2>📂 Ekstre Analizi</h2>
         <p>İçe aktarılmış kart verisinden kategori, trend ve dağılım. <strong>Yükleme “Ekstre Yükle” sekmesinden yapılır.</strong></p>
@@ -109,6 +139,111 @@ export default function KartEkstreAnaliz() {
           )}
         </>
       )}
+
+      {/* ── KART × AY EKSTRE ARŞİVİ (accordion) ── */}
+      <div className="card" style={{ padding: 0, marginTop: 16 }}>
+        <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ fontWeight: 700 }}>🗂 Kart × Ay Ekstre Arşivi</div>
+          {!arsivYukleniyor && arsivKartlar.length > 0 && (
+            <div style={{ fontSize: 11.5, color: 'var(--text3)' }}>
+              {arsivKartlar.length} kart · ekstre saklanan aylar — bir karta tıklayıp <strong>+</strong> ile aylık geçmişi açın
+            </div>
+          )}
+        </div>
+
+        {arsivYukleniyor ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--text3)' }}><span className="spinner" /> Arşiv yükleniyor…</div>
+        ) : arsivKartlar.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--text3)', fontSize: 12.5 }}>
+            Henüz arşivlenmiş ekstre yok. <strong>Ekstre Yükle</strong> sekmesinden ekstre yükleyince her kart ve her ay burada ay ay birikir.
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 34 }}></th>
+                  <th>Kart</th>
+                  <th>Sahip</th>
+                  <th style={{ textAlign: 'right' }}>Ay Sayısı</th>
+                  <th>Son Ekstre</th>
+                  <th style={{ textAlign: 'right' }}>Toplam Faiz</th>
+                </tr>
+              </thead>
+              <tbody>
+                {arsivKartlar.map((k) => {
+                  const acik = acikKart === k.kart_id;
+                  return (
+                    <Fragment key={k.kart_id}>
+                      <tr className="ea-row" onClick={() => setAcikKart(acik ? null : k.kart_id)}>
+                        <td><span className={`ea-plus${acik ? ' acik' : ''}`}>+</span></td>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{k.kart_adi}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                            {k.banka}{k.son_dort_hane ? ` ····${k.son_dort_hane}` : ''}
+                          </div>
+                        </td>
+                        <td style={{ fontSize: 12, color: 'var(--text3)' }}>{k.sahip}</td>
+                        <td style={{ textAlign: 'right' }} className="mono">{k.donem_adet}</td>
+                        <td style={{ fontSize: 12 }}>{ayEtiket(k.son_donem)}</td>
+                        <td style={{ textAlign: 'right' }} className="mono">{fmt(k.toplam_faiz)}</td>
+                      </tr>
+                      {acik && (
+                        <tr className="ea-detay">
+                          <td colSpan={6} style={{ background: 'var(--bg2)', padding: '10px 16px 14px' }}>
+                            <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 8, fontWeight: 600 }}>
+                              {k.kart_adi} — Aylık Ekstre Geçmişi
+                            </div>
+                            <div className="table-wrap">
+                              <table>
+                                <thead>
+                                  <tr>
+                                    <th>Dönem</th>
+                                    <th>Kesim</th>
+                                    <th>Son Ödeme</th>
+                                    <th style={{ textAlign: 'right' }}>Dönem Borcu</th>
+                                    <th style={{ textAlign: 'right' }}>Asgari</th>
+                                    <th style={{ textAlign: 'right' }}>Faiz</th>
+                                    <th style={{ textAlign: 'right' }}>Harcama</th>
+                                    <th style={{ textAlign: 'right' }}>Ödeme</th>
+                                    <th>Kaynak</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {k.donemler.map((s, j) => (
+                                    <tr key={j}>
+                                      <td style={{ fontWeight: 600 }}>{ayEtiket(s.donem)}</td>
+                                      <td style={{ fontSize: 12 }}>{trTarih(s.kesim_tarihi)}</td>
+                                      <td style={{ fontSize: 12 }}>{trTarih(s.son_odeme_tarihi)}</td>
+                                      <td style={{ textAlign: 'right' }} className="mono">{fmt(s.donem_borcu)}</td>
+                                      <td style={{ textAlign: 'right' }} className="mono">{fmt(s.asgari_tutar)}</td>
+                                      <td style={{ textAlign: 'right' }} className="mono" >
+                                        <span style={{ color: s.donem_faizi > 0 ? 'var(--red)' : 'var(--text3)' }}>{fmt(s.donem_faizi)}</span>
+                                      </td>
+                                      <td style={{ textAlign: 'right' }} className="mono">{s.donem_harcama ? fmt(s.donem_harcama) : '—'}</td>
+                                      <td style={{ textAlign: 'right' }} className="mono">{s.donem_odeme ? fmt(s.donem_odeme) : '—'}</td>
+                                      <td>
+                                        <span style={{ fontSize: 10.5, padding: '1px 7px', borderRadius: 5, border: '1px solid var(--border)',
+                                          color: s.kaynak === 'manuel' ? 'var(--orange)' : 'var(--text3)' }}>
+                                          {s.kaynak === 'manuel' ? 'Manuel' : 'Ekstre'}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

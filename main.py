@@ -2027,6 +2027,60 @@ def kart_analiz_ozet():
                 "veri_var": bool(aylik or kategori or kart_bazli)}
 
 
+@app.get("/api/kartlar/ekstre-arsiv")
+def kart_ekstre_arsiv():
+    """Faz: kart × ay ekstre ARŞİVİ — her kart için tüm aylık ekstre snapshot'ları
+    (kart_ekstre_donem). Her (kart, donem) ayrı satır; aylar birikir. Salt görünürlük."""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT ked.kart_id::text AS kart_id,
+                   k.kart_adi, k.banka, COALESCE(k.sahip,'İşletme') AS sahip,
+                   k.son_dort_hane,
+                   ked.donem::text            AS donem,
+                   ked.kesim_tarihi::text     AS kesim_tarihi,
+                   ked.son_odeme_tarihi::text AS son_odeme_tarihi,
+                   COALESCE(ked.donem_borcu,0)::float   AS donem_borcu,
+                   COALESCE(ked.asgari_tutar,0)::float  AS asgari_tutar,
+                   COALESCE(ked.onceki_borc,0)::float   AS onceki_borc,
+                   COALESCE(ked.donem_harcama,0)::float AS donem_harcama,
+                   COALESCE(ked.donem_odeme,0)::float   AS donem_odeme,
+                   COALESCE(ked.donem_faizi,0)::float   AS donem_faizi,
+                   COALESCE(ked.kalan_taksit,0)::float  AS kalan_taksit,
+                   ked.kaynak
+            FROM kart_ekstre_donem ked
+            JOIN kartlar k ON k.id = ked.kart_id
+            ORDER BY k.kart_adi, ked.donem DESC
+        """)
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+        kartlar = {}
+        for r in rows:
+            kid = r["kart_id"]
+            grup = kartlar.get(kid)
+            if grup is None:
+                grup = {
+                    "kart_id": kid, "kart_adi": r["kart_adi"], "banka": r["banka"],
+                    "sahip": r["sahip"], "son_dort_hane": r["son_dort_hane"],
+                    "donemler": [], "donem_adet": 0,
+                    "toplam_faiz": 0.0, "son_donem": None,
+                }
+                kartlar[kid] = grup
+            grup["donemler"].append({
+                "donem": r["donem"], "kesim_tarihi": r["kesim_tarihi"],
+                "son_odeme_tarihi": r["son_odeme_tarihi"],
+                "donem_borcu": r["donem_borcu"], "asgari_tutar": r["asgari_tutar"],
+                "onceki_borc": r["onceki_borc"], "donem_harcama": r["donem_harcama"],
+                "donem_odeme": r["donem_odeme"], "donem_faizi": r["donem_faizi"],
+                "kalan_taksit": r["kalan_taksit"], "kaynak": r["kaynak"],
+            })
+            grup["donem_adet"] += 1
+            grup["toplam_faiz"] = round(grup["toplam_faiz"] + r["donem_faizi"], 2)
+            if grup["son_donem"] is None:  # donemler DESC sıralı → ilk gelen en yeni
+                grup["son_donem"] = r["donem"]
+        kart_list = sorted(kartlar.values(), key=lambda g: g["kart_adi"] or "")
+        return {"kartlar": kart_list, "kart_adet": len(kart_list),
+                "veri_var": bool(kart_list)}
+
+
 @app.get("/api/kartlar/borc-faiz-ozet")
 def kart_borc_faiz_ozet():
     """Faz KX: kart başına ve toplam — güncel borç + ekstrelerden toplam ödenen banka
