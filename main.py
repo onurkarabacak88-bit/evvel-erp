@@ -122,6 +122,7 @@ def _gece_yarisi_scheduler():
     - Ay başı: aylık ödeme planı üret
     - Ay sonu: faiz hesapla
     - Her gece: kasa anomali kontrolü
+    - Her gece 00:15: WhatsApp günlük özet (şubeler kapanışı tamamlar)
     """
     import time as _time
 
@@ -248,6 +249,21 @@ def _gece_yarisi_scheduler():
                 logger.info(f"⏰ Rapor cache: dün={sayac_dun} bugün={sayac_bugun} aylık={ym_bu}")
             except Exception as e:
                 logger.warning(f"⏰ Scheduler rapor cache hatası: {e}")
+
+            # ── WHATSAPP GÜNLÜK ÖZET — gece 00:15 ──
+            # Şubeler kapanışı 00:00–00:15 arası tamamlar, o yüzden 15 dk bekle.
+            try:
+                _time.sleep(15 * 60)  # 15 dakika
+                from whatsapp_bildirim import gunluk_ozet_gonder
+                from tr_saat import bugun_tr as _bugun_tr
+                _dun = _bugun_tr() - timedelta(days=1)
+                sonuc = gunluk_ozet_gonder(_dun)
+                if sonuc.get("basarili"):
+                    logger.info("⏰ WhatsApp: Günlük özet gönderildi")
+                else:
+                    logger.warning(f"⏰ WhatsApp: Gönderilemedi — {sonuc.get('hata', '?')}")
+            except Exception as e:
+                logger.warning(f"⏰ WhatsApp hatası: {e}")
 
             # ── OPERASYON EVENT — bugünün açılış/kapanış satırları ──
             # Gece yarısı (00:00–02:00) is_gunu_tr() hâlâ ÖNCEKİ iş gününü döndürür
@@ -9125,6 +9141,36 @@ def v2_override_log_liste(limit: int = 100, personel_id: Optional[str] = None):
             d["personel_soyad"] = s
             kayitlar.append(d)
         return {"kayitlar": kayitlar}
+
+
+# ── WhatsApp Endpoints ──────────────────────────────────────────────────────
+
+@app.get("/api/whatsapp/onizle")
+def whatsapp_onizle(tarih: Optional[str] = None):
+    """Mesaj içeriğini gönderme olmadan önizler (test amaçlı)."""
+    from whatsapp_bildirim import gunluk_ozet_mesaj_olustur
+    hedef = date.fromisoformat(tarih) if tarih else None
+    try:
+        mesaj = gunluk_ozet_mesaj_olustur(hedef)
+        return {"mesaj": mesaj}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/whatsapp/gonder")
+def whatsapp_manuel_gonder(tarih: Optional[str] = None):
+    """Mesajı hemen gönderir (manuel tetikleme, test amaçlı)."""
+    from whatsapp_bildirim import gunluk_ozet_gonder
+    hedef = date.fromisoformat(tarih) if tarih else None
+    try:
+        sonuc = gunluk_ozet_gonder(hedef)
+        if not sonuc.get("basarili"):
+            raise HTTPException(status_code=500, detail=sonuc.get("hata", "Gönderim başarısız"))
+        return sonuc
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Frontend
