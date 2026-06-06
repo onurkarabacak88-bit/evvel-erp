@@ -11,7 +11,15 @@
   --sev-uyari:#f97316;--sev-uyari-bg:rgba(249,115,22,0.10);
   --sev-bilgi:var(--blue);--sev-bilgi-bg:rgba(91,155,214,0.10);
   --accent:#C8956A;--accent-dim:rgba(200,149,106,.12);--accent-border:rgba(200,149,106,.3);
+  /* Kategori renkleri — Panel genelinde tutarlı kaynak */
+  --clr-personel:#4a9eff;--clr-personel-bg:rgba(74,158,255,0.10);
+  --clr-vadeli:#f97316;--clr-vadeli-bg:rgba(249,115,22,0.10);
+  --clr-borc:#e879f9;--clr-borc-bg:rgba(232,121,249,0.10);
+  --clr-kira:#f59e0b;--clr-kira-bg:rgba(245,158,11,0.10);
+  --clr-banka:#0ea5e9;--clr-banka-bg:rgba(14,165,233,0.10);
   --font-mono:'JetBrains Mono',monospace;
+  /* Spacing ölçeği — 4px base */
+  --sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:20px;--sp-6:24px;--sp-8:32px;--sp-10:40px;
 }
 body{font-family:'Instrument Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
 .app{display:flex;height:100vh;overflow:hidden}
@@ -31,12 +39,12 @@ body{font-family:'Instrument Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',s
 .nav-item .icon{font-size:14px;width:18px;text-align:center;transition:transform .15s ease}
 .sidebar-footer{padding:12px 16px;font-size:11px;color:var(--text3);border-top:1px solid var(--border)}
 .main{flex:1;overflow-y:auto;background:var(--bg)}
-.page{padding:24px;max-width:1200px;margin:0 auto}
-.page-header{margin-bottom:24px}
+.page{padding:var(--sp-6);max-width:1200px;margin:0 auto}
+.page-header{margin-bottom:var(--sp-6)}
 .page-header h2{font-size:20px;font-weight:600;letter-spacing:-0.5px}
-.page-header p{color:var(--text3);font-size:13px;margin-top:4px}
-.metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:24px}
-.metric-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;transition:transform .13s ease,box-shadow .13s ease,border-color .13s ease}
+.page-header p{color:var(--text3);font-size:13px;margin-top:var(--sp-1)}
+.metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:var(--sp-3);margin-bottom:var(--sp-6)}
+.metric-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:var(--sp-3) var(--sp-4);transition:transform .13s ease,box-shadow .13s ease,border-color .13s ease}
 .metric-card:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,.22);border-color:rgba(255,255,255,.12)}
 .metric-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
 .metric-value{font-size:20px;font-weight:700;font-family:var(--font-mono)}
@@ -209,8 +217,17 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .urgency-mid .urgency-badge{color:var(--orange)}
 .urgency-high .urgency-badge{color:var(--red)}
 
+/* ── Typography yardımcı sınıflar — Panel genelinde tutarlı boyut sistemi ──
+   xs=10  sm=12  md=13  base=14  lg=16  xl=20
+   Kullanım: className="txt-sm txt-muted" vb. */
+.txt-xs{font-size:10px}.txt-sm{font-size:12px}.txt-md{font-size:13px}.txt-base{font-size:14px}.txt-lg{font-size:16px}.txt-xl{font-size:20px}
+.txt-muted{color:var(--text3)}.txt-sub{color:var(--text2)}.txt-primary{color:var(--text1)}
+.txt-bold{font-weight:700}.txt-semi{font-weight:600}.txt-medium{font-weight:500}
+.txt-mono{font-family:var(--font-mono)}
+.txt-upper{text-transform:uppercase;letter-spacing:.6px}
+
 /* Panel bölüm başlığı — görsel ayırıcı */
-.panel-section-hdr{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.panel-section-hdr{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3);margin-bottom:var(--sp-2);padding-bottom:var(--sp-2);border-bottom:1px solid var(--border)}
 .panel-section-hdr>span:first-child{font-size:12px;font-weight:700;color:var(--text2);letter-spacing:-.1px}
 
 /* CFO Panel v2 — triage + Mission Control */

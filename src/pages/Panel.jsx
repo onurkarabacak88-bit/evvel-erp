@@ -55,6 +55,7 @@ export default function Panel({ onNavigate }) {
   const [cfoTrayOpen, setCfoTrayOpen] = useState(null); // null=auto(open if kritik), bool=user override
   const [panelTab, setPanelTab] = useState('ozet'); // 'ozet' | 'odemeler' | 'strateji'
   const [notifModalOpen, setNotifModalOpen] = useState(false);
+  const [onayModal, setOnayModal] = useState(null); // {baslik, mesaj, uyari, onOnayla}
 
   const detayGetir = (tip) => {
     api(`/vadeli-odeme-detay?kaynak=${tip}`)
@@ -277,8 +278,23 @@ export default function Panel({ onNavigate }) {
         hedefTarih.setDate(hedefTarih.getDate() + 4);
         hedefTarih = hedefTarih.toISOString().split('T')[0];
 
-        const ok = confirm('4 gün sonraya erteledin emin misin?');
-        if (!ok) return;
+        setLoadingBtn(false);
+        setOnayModal({
+          baslik: 'Erteleme Onayı',
+          mesaj: `Seçilen tarih çok yakın. Ödeme otomatik olarak 4 gün sonraya (${new Date(hedefTarih).toLocaleDateString('tr-TR')}) ertelenecek.`,
+          onOnayla: async () => {
+            setOnayModal(null);
+            setLoadingBtn(true);
+            try {
+              const res2 = await api(`/odeme-plani/${erteleModal.odemeId}/ertele?yeni_tarih=${hedefTarih}`, { method: 'POST' });
+              const yeni = res2?.yeni_tarih || hedefTarih;
+              toast(`Ödeme ${new Date(yeni).toLocaleDateString('tr-TR')} tarihine ertelendi`);
+              setErteleModal(null); setErteleTarih(''); load();
+            } catch (e2) { toast(e2.message, 'red'); }
+            finally { setLoadingBtn(false); }
+          },
+        });
+        return;
       }
 
       const res = await api(
@@ -420,23 +436,27 @@ export default function Panel({ onNavigate }) {
     const toplamTutar = uygulanabilir.reduce((s, o) => s + o.tavsiye_tutar, 0);
     const kasaSonrasi = kasa - toplamTutar;
     const uyari = kasaSonrasi < 0 ? `\n⚠️ UYARI: Kasa eksiye düşecek! (${kasaSonrasi.toLocaleString('tr-TR')} ₺)` : '';
-    if (!confirm(`${uygulanabilir.length} ödeme tek seferde uygulanacak.\nToplam: ${toplamTutar.toLocaleString('tr-TR')} ₺\nİşlem sonrası kasa: ${kasaSonrasi.toLocaleString('tr-TR')} ₺${uyari}\n\nOnaylıyor musunuz?`)) return;
-    setTopluUygula(true);
-    try {
-      // Tek transaction — biri başarısız olursa hepsi rollback
-      const r = await api('/toplu-odeme', {
-        method: 'POST',
-        body: {
-          odemeler: uygulanabilir.map(o => ({ odeme_id: o.odeme_id, tutar: o.tavsiye_tutar }))
+    setOnayModal({
+      baslik: `${uygulanabilir.length} Ödeme Uygulanacak`,
+      mesaj: `Toplam: ${toplamTutar.toLocaleString('tr-TR')} ₺ · İşlem sonrası kasa: ${kasaSonrasi.toLocaleString('tr-TR')} ₺`,
+      uyari: kasaSonrasi < 0 ? `Kasa eksiye düşecek! (${kasaSonrasi.toLocaleString('tr-TR')} ₺)` : null,
+      onOnayla: async () => {
+        setOnayModal(null);
+        setTopluUygula(true);
+        try {
+          const r = await api('/toplu-odeme', {
+            method: 'POST',
+            body: { odemeler: uygulanabilir.map(o => ({ odeme_id: o.odeme_id, tutar: o.tavsiye_tutar })) }
+          });
+          toast(`✓ ${r.uygulanan}/${uygulanabilir.length} ödeme uygulandı`);
+          load();
+        } catch (e) {
+          toast(`Toplu ödeme başarısız: ${e.message}`, 'red');
+        } finally {
+          setTopluUygula(false);
         }
-      });
-      toast(`✓ ${r.uygulanan}/${uygulanabilir.length} ödeme uygulandı`);
-      load();
-    } catch (e) {
-      toast(`Toplu ödeme başarısız: ${e.message}`, 'red');
-    } finally {
-      setTopluUygula(false);
-    }
+      },
+    });
   }
 
   async function hizliKaydet(tip, form) {
@@ -507,7 +527,7 @@ export default function Panel({ onNavigate }) {
 
   // ── Yaklaşan ödeme pilleri (IIFE dışında, sidebar + modal paylaşır) ──
   const yaklaşanPill = (panel.yaklasan_odemeler || []).filter(u => u.gun_farki > 0).sort((a, b) => a.gun_farki - b.gun_farki);
-  const pillTip = { sabit_giderler: { ikon: '🏠', renk: '#f59e0b' }, personel: { ikon: '👤', renk: '#4a9eff' }, vadeli_alimlar: { ikon: '📦', renk: '#f97316' }, borc_envanteri: { ikon: '🏦', renk: '#e879f9' } };
+  const pillTip = { sabit_giderler: { ikon: '🏠', renk: 'var(--clr-kira)' }, personel: { ikon: '👤', renk: 'var(--clr-personel)' }, vadeli_alimlar: { ikon: '📦', renk: 'var(--clr-vadeli)' }, borc_envanteri: { ikon: '🏦', renk: 'var(--clr-borc)' } };
 
   // ── Alert Tray renderer — modal içinden çağrılır ──
   const renderAlertTray = () => {
@@ -519,9 +539,9 @@ export default function Panel({ onNavigate }) {
     const toplamGec = bugunListe.filter(u => u.gun_farki < 0).reduce((s, u) => s + parseFloat(u.asgari_kalan ?? u.asgari ?? u.tutar ?? 0), 0);
     const ETIKET2 = {
       sabit_giderler: { ikon: '🏠', etiket: 'Sabit Gider', renk: 'var(--yellow)' },
-      personel:       { ikon: '👤', etiket: 'Maaş',        renk: '#4a9eff'        },
-      vadeli_alimlar: { ikon: '📦', etiket: 'Vadeli Borç', renk: 'var(--orange)'  },
-      borc_envanteri: { ikon: '🏦', etiket: 'Kredi/Borç',  renk: '#e879f9'        },
+      personel:       { ikon: '👤', etiket: 'Maaş',        renk: 'var(--clr-personel)' },
+      vadeli_alimlar: { ikon: '📦', etiket: 'Vadeli Borç', renk: 'var(--clr-vadeli)'   },
+      borc_envanteri: { ikon: '🏦', etiket: 'Kredi/Borç',  renk: 'var(--clr-borc)'    },
     };
     const sK = (panel.kararlar || []).filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI').length;
     const sM = (panel.merkez_mesajlar || []).filter(m => !m.okundu && m.aktif !== false).length;
@@ -533,24 +553,44 @@ export default function Panel({ onNavigate }) {
       const gecGun = u.gun_farki < 0 ? Math.abs(u.gun_farki) : 0;
       const uColor = tier === 'kritik' ? 'var(--red)' : tier === 'uyari' ? 'var(--orange)' : tier === 'bilgi' ? 'var(--yellow)' : 'var(--accent)';
       const tutar2 = u.tip === 'degisken' ? (u.tutar > 0 ? u.tutar : null) : (u.asgari_kalan ?? u.asgari ?? u.tutar ?? 0);
-      return (
-        <div key={i} className={`cfo-card ${tier}`} style={{ marginBottom: 3 }}>
-          <span style={{ fontSize: 16, flexShrink: 0 }}>{et.ikon}</span>
+      // Kritik tier → büyük kart. Diğerleri → kompakt satır
+      const isKritik = tier === 'kritik';
+      return isKritik ? (
+        <div key={i} className={`cfo-card ${tier}`} style={{ marginBottom: 6, padding: '10px 12px' }}>
+          <span style={{ fontSize: 18, flexShrink: 0 }}>{et.ikon}</span>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text1)' }}>{u.aciklama}</div>
-            <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text1)' }}>{u.aciklama}</div>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
               {et.etiket} · {u.tarih ? new Date(u.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) : '—'}
-              {gecGun > 0 && <span style={{ color: uColor, fontWeight: 700 }}> · {gecGun}g gecikmiş</span>}
+              {gecGun > 0 && <span style={{ color: uColor, fontWeight: 700 }}> · {gecGun} gün gecikmiş</span>}
             </div>
           </div>
-          {gecGun > 0 && <span style={{ fontSize: 11, fontWeight: 700, flexShrink: 0, color: uColor }}>{gecGun} gün</span>}
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
-            {tutar2 != null ? fmt(tutar2) : <span style={{ color: 'var(--text3)', fontSize: 11 }}>bekleniyor</span>}
+          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 800, color: uColor }}>
+              {tutar2 != null ? fmt(tutar2) : <span style={{ color: 'var(--text3)', fontSize: 11 }}>bekleniyor</span>}
+            </div>
+            <div style={{ marginTop: 4 }}>
+              {u.tip === 'degisken'
+                ? <button className="btn btn-secondary btn-sm" onClick={() => { sessionStorage.setItem('sabit_gider_fatura_id', u.kaynak_id || ''); nav('sabit-giderler'); }}>Öde →</button>
+                : <button className="btn btn-secondary btn-sm" onClick={() => yonlendir(u)}>{yonlendirLabel(u)}</button>
+              }
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div key={i} className={`cfo-card ${tier}`} style={{ marginBottom: 2, padding: '6px 10px' }}>
+          <span style={{ fontSize: 13, flexShrink: 0 }}>{et.ikon}</span>
+          <div style={{ flex: 1, fontSize: 11, color: 'var(--text1)', fontWeight: 500 }}>
+            {u.aciklama}
+            {gecGun > 0 && <span style={{ color: uColor, fontWeight: 700 }}> · {gecGun}g</span>}
+          </div>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, flexShrink: 0, color: uColor }}>
+            {tutar2 != null ? fmt(tutar2) : '—'}
           </span>
           <div style={{ flexShrink: 0 }}>
             {u.tip === 'degisken'
-              ? <button className="btn btn-secondary btn-sm" onClick={() => { sessionStorage.setItem('sabit_gider_fatura_id', u.kaynak_id || ''); nav('sabit-giderler'); }}>Öde →</button>
-              : <button className="btn btn-secondary btn-sm" onClick={() => yonlendir(u)}>{yonlendirLabel(u)}</button>
+              ? <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => { sessionStorage.setItem('sabit_gider_fatura_id', u.kaynak_id || ''); nav('sabit-giderler'); }}>Öde</button>
+              : <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => yonlendir(u)}>Git →</button>
             }
           </div>
         </div>
@@ -589,7 +629,7 @@ export default function Panel({ onNavigate }) {
               <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--red)', fontSize: 12, fontWeight: 700 }}>{fmt(toplamGec)}</span>
             </div>
             {rBolum('KRİTİK (15+ gün)',  gK,   'kritik', '#e05c5c')}
-            {rBolum('UYARI (8–14 gün)',   gU,   'uyari',  '#D4893A')}
+            {rBolum('UYARI (8–14 gün)',   gU,   'uyari',  'var(--orange)')}
             {rBolum('BİLGİ (0–7 gün)',   gB,   'bilgi',  '#e8c547')}
             {rBolum('BUGÜN',             gBug, 'bugun',  '#C8956A')}
           </div>
@@ -599,7 +639,7 @@ export default function Panel({ onNavigate }) {
           <div style={{ marginBottom: 12 }}>
             <div className="panel-section-hdr"><span>KARAR MOTORU</span></div>
             {(panel.kararlar || []).filter(k => k.seviye === 'KRITIK' || k.seviye === 'UYARI').map((k, i) => (
-              <div key={i} style={{ display: 'flex', gap: 8, padding: '8px 10px', marginBottom: 4, borderRadius: 6, background: k.seviye === 'KRITIK' ? 'rgba(220,38,38,0.07)' : 'rgba(212,137,58,0.07)', borderLeft: `3px solid ${k.seviye === 'KRITIK' ? 'var(--red)' : '#D4893A'}` }}>
+              <div key={i} style={{ display: 'flex', gap: 8, padding: '8px 10px', marginBottom: 4, borderRadius: 6, background: k.seviye === 'KRITIK' ? 'rgba(220,38,38,0.07)' : 'rgba(212,137,58,0.07)', borderLeft: `3px solid ${k.seviye === 'KRITIK' ? 'var(--red)' : 'var(--orange)'}` }}>
                 <span>{k.seviye === 'KRITIK' ? '🚨' : '⚠️'}</span>
                 <div><div style={{ fontSize: 12, fontWeight: 600 }}>{k.baslik}</div><div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>{k.mesaj}</div></div>
               </div>
@@ -707,6 +747,42 @@ export default function Panel({ onNavigate }) {
           <button className="btn btn-secondary btn-sm" onClick={load}>↻</button>
         </div>
       </div>
+
+      {/* ── ONAY MODAL — confirm() yerine ── */}
+      {onayModal && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setOnayModal(null)}>
+          <div className="modal" style={{ maxWidth: 400, textAlign: 'center' }}>
+            <div className="modal-body" style={{ padding: '28px 28px 20px' }}>
+              <div style={{ fontSize: 28, marginBottom: 12 }}>
+                {onayModal.uyari ? '⚠️' : '💬'}
+              </div>
+              <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 10, color: 'var(--text1)' }}>
+                {onayModal.baslik}
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.5, marginBottom: onayModal.uyari ? 12 : 0 }}>
+                {onayModal.mesaj}
+              </div>
+              {onayModal.uyari && (
+                <div style={{ padding: '8px 14px', borderRadius: 8, background: 'rgba(220,50,50,0.1)', border: '1px solid rgba(220,50,50,0.3)', color: 'var(--red)', fontSize: 12, fontWeight: 600, marginTop: 8 }}>
+                  {onayModal.uyari}
+                </div>
+              )}
+            </div>
+            <div className="modal-footer" style={{ justifyContent: 'center', gap: 12 }}>
+              <button className="btn btn-secondary" style={{ minWidth: 100 }} onClick={() => setOnayModal(null)}>
+                İptal
+              </button>
+              <button
+                className="btn btn-primary"
+                style={{ minWidth: 100, background: onayModal.uyari ? 'var(--red)' : undefined, borderColor: onayModal.uyari ? 'var(--red)' : undefined }}
+                onClick={onayModal.onOnayla}
+              >
+                Onayla
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Kira / Sözleşme Güncelleme Modal */}
       {kiraModal && (
@@ -867,7 +943,7 @@ export default function Panel({ onNavigate }) {
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {yaklaşanPill.slice(0, 14).map((u, i) => {
               const t = pillTip[u.kaynak_tablo] || { ikon: '💳', renk: '#94a3b8' };
-              const urgColor = u.gun_farki <= 3 ? 'var(--red)' : u.gun_farki <= 7 ? '#D4893A' : 'var(--text3)';
+              const urgColor = u.gun_farki <= 3 ? 'var(--red)' : u.gun_farki <= 7 ? 'var(--orange)' : 'var(--text3)';
               return (
                 <div key={i} onClick={() => yonlendir(u)} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
@@ -971,7 +1047,7 @@ export default function Panel({ onNavigate }) {
               page: 'ledger',
             };
           })(),
-          { label: '💰 Dış Kaynak (Bu Ay)', value: fmt(panel.bu_ay_dis_kaynak || 0), sub: 'Ciro dışı gelir', renk: panel.bu_ay_dis_kaynak > 0 ? '#4a9eff' : 'var(--text3)', page: 'dis-kaynak' },
+          { label: '💰 Dış Kaynak (Bu Ay)', value: fmt(panel.bu_ay_dis_kaynak || 0), sub: 'Ciro dışı gelir', renk: panel.bu_ay_dis_kaynak > 0 ? 'var(--clr-personel)' : 'var(--text3)', page: 'dis-kaynak' },
           (() => {
             const b = parseFloat(panel.bu_ay_banka_yatirim) || 0;
             const adet = parseInt(panel.bu_ay_banka_yatirim_adet, 10) || 0;
@@ -979,7 +1055,7 @@ export default function Panel({ onNavigate }) {
               label: '🏦 Bankaya yatırılan',
               value: fmt(b),
               sub: adet > 0 ? `${adet} yatırım · bu ay` : 'Bu ay kayıt yok · tıkla',
-              renk: b > 0 ? '#0ea5e9' : 'var(--text3)',
+              renk: b > 0 ? 'var(--clr-banka)' : 'var(--text3)',
               page: 'ledger',
               bankaYatirim: true,
             };
@@ -1052,7 +1128,7 @@ export default function Panel({ onNavigate }) {
               label: '👤 Personel Maaşları',
               value: fmt(gosterilen),
               sub: subText,
-              renk: bekleyen_kayit > 0 ? 'var(--yellow)' : gercek > 0 ? '#4a9eff' : 'var(--text3)',
+              renk: bekleyen_kayit > 0 ? 'var(--yellow)' : gercek > 0 ? 'var(--clr-personel)' : 'var(--text3)',
               page: 'personel',
               nakit: gosterilen, kart: 0, toplam: gosterilen,
               kirılım: false,
@@ -1118,7 +1194,7 @@ export default function Panel({ onNavigate }) {
                       onClick={e => { e.stopPropagation(); detayGetir('kart'); }}
                       title="Kart ödemelerini gör"
                     >💳 Kart</span>
-                    <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: '#4a9eff' }}>{fmt(kart)}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--clr-personel)' }}>{fmt(kart)}</span>
                   </div>
                 )}
                 {nakit > 0 && kart > 0 && (
@@ -1144,7 +1220,7 @@ export default function Panel({ onNavigate }) {
             <span style={{ fontSize: 12, color: 'var(--text3)', fontWeight: 600 }}>Bu Ay Ciro Dağılımı:</span>
             {[
               { label: '💵 Nakit', val: panel.bu_ay_nakit || 0, renk: 'var(--green)' },
-              { label: '💳 POS', val: panel.bu_ay_pos || 0, renk: '#4a9eff' },
+              { label: '💳 POS', val: panel.bu_ay_pos || 0, renk: 'var(--clr-personel)' },
               { label: '🌐 Online', val: panel.bu_ay_online || 0, renk: 'var(--yellow)' },
             ].map(({ label, val, renk }) => (
               <div key={label} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -1214,7 +1290,7 @@ export default function Panel({ onNavigate }) {
             {panel.genel_kart_toplam > 0 && (
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <span style={{ fontSize: 12, color: 'var(--text3)' }}>💳 Kart:</span>
-                <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)', color: '#4a9eff' }}>{fmt(panel.genel_kart_toplam)}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--clr-personel)' }}>{fmt(panel.genel_kart_toplam)}</span>
                 {(panel.genel_nakit_toplam + panel.genel_kart_toplam) > 0 && (
                   <span style={{ fontSize: 10, color: 'var(--text3)' }}>
                     %{((panel.genel_kart_toplam / (panel.genel_nakit_toplam + panel.genel_kart_toplam)) * 100).toFixed(0)}
@@ -1228,7 +1304,7 @@ export default function Panel({ onNavigate }) {
               return (
                 <div style={{ flex: 1, minWidth: 120, height: 6, borderRadius: 3, background: 'var(--bg3)', overflow: 'hidden', display: 'flex' }}>
                   <div style={{ width: `${(panel.genel_nakit_toplam/t*100).toFixed(0)}%`, background: 'var(--green)', borderRadius: '3px 0 0 3px' }} />
-                  <div style={{ flex: 1, background: '#4a9eff', borderRadius: '0 3px 3px 0' }} />
+                  <div style={{ flex: 1, background: 'var(--clr-personel)', borderRadius: '0 3px 3px 0' }} />
                 </div>
               );
             })()}
@@ -1751,12 +1827,30 @@ export default function Panel({ onNavigate }) {
               onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 14px rgba(0,0,0,0.15)'; }}
               onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; }}
             >
-              <span style={{ fontSize: 24 }}>{kritikCnt > 0 ? '🚨' : cnt > 0 ? '🔔' : '✅'}</span>
+              <span style={{ fontSize: 22 }}>{kritikCnt > 0 ? '🚨' : cnt > 0 ? '🔔' : '✅'}</span>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text1)', marginBottom: 2 }}>Bildirimler</div>
-                <div style={{ fontSize: 11, color: kritikCnt > 0 ? 'var(--red)' : cnt > 0 ? 'var(--text2)' : 'var(--green)', fontWeight: kritikCnt > 0 ? 700 : 400 }}>
-                  {cnt === 0 ? 'Temiz — bildirim yok ✓' : `${cnt} bekleyen${kritikCnt > 0 ? ` · ${kritikCnt} kritik` : ''}`}
-                </div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text1)', marginBottom: 4 }}>Bildirimler</div>
+                {cnt === 0 ? (
+                  <div style={{ fontSize: 11, color: 'var(--green)', fontWeight: 600 }}>Temiz ✓</div>
+                ) : (
+                  <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                    {kritikCnt > 0 && (
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: 'rgba(220,38,38,0.2)', color: 'var(--red)' }}>
+                        {kritikCnt} kritik
+                      </span>
+                    )}
+                    {bL.filter(u => u.gun_farki >= -14 && u.gun_farki <= -8).length > 0 && (
+                      <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10, background: 'rgba(212,137,58,0.15)', color: 'var(--orange)' }}>
+                        {bL.filter(u => u.gun_farki >= -14 && u.gun_farki <= -8).length} uyarı
+                      </span>
+                    )}
+                    {(cnt - kritikCnt - bL.filter(u => u.gun_farki >= -14 && u.gun_farki <= -8).length) > 0 && (
+                      <span style={{ fontSize: 10, fontWeight: 500, padding: '2px 7px', borderRadius: 10, background: 'rgba(255,255,255,0.06)', color: 'var(--text3)' }}>
+                        {cnt - kritikCnt - bL.filter(u => u.gun_farki >= -14 && u.gun_farki <= -8).length} diğer
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               <span style={{ fontSize: 13, color: 'var(--text3)', fontWeight: 600 }}>›</span>
             </button>
@@ -1870,7 +1964,7 @@ export default function Panel({ onNavigate }) {
                     </div>
                   </div>
                   {odemeModal.kaynak_tablo === 'borc_envanteri' && (
-                    <div style={{ fontSize: 11, color: '#4a9eff', background: 'rgba(74,158,255,0.08)', border: '1px solid rgba(74,158,255,0.3)', borderRadius: 6, padding: '8px 12px', marginBottom: 12 }}>
+                    <div style={{ fontSize: 11, color: 'var(--clr-personel)', background: 'rgba(74,158,255,0.08)', border: '1px solid rgba(74,158,255,0.3)', borderRadius: 6, padding: '8px 12px', marginBottom: 12 }}>
                       🏦 Kredi/Borç taksiti — EFT veya havale ile ödendikten sonra buradan onaylayın. Kasadan düşülecek.
                     </div>
                   )}
@@ -2203,7 +2297,7 @@ export default function Panel({ onNavigate }) {
                                   {o.banka && ` · ${o.banka} ${o.kart_adi || ''}`}
                                 </span>
                               </div>
-                              <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: o.yontem === 'kart' ? '#4a9eff' : 'var(--green)' }}>
+                              <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: o.yontem === 'kart' ? 'var(--clr-personel)' : 'var(--green)' }}>
                                 {fmt(o.tutar)}
                               </span>
                             </div>
@@ -2233,7 +2327,7 @@ export default function Panel({ onNavigate }) {
                 <>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', marginBottom: 8, background: 'var(--bg2)', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>
                     <span>Toplam</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', color: '#4a9eff' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--clr-personel)' }}>
                       {fmt(detay.reduce((s, d) => s + parseFloat(d.tutar || 0), 0))}
                     </span>
                   </div>
@@ -2245,7 +2339,7 @@ export default function Panel({ onNavigate }) {
                           {fmtDate(d.tarih)}{d.banka ? ` · ${d.banka}` : ''}{d.kart_adi ? ` ${d.kart_adi}` : ''}
                         </div>
                       </div>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: '#4a9eff' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--clr-personel)' }}>
                         {fmt(d.tutar)}
                       </span>
                     </div>
@@ -2422,7 +2516,7 @@ function BankaYatirimModal({ liste, yukleniyor, onKapat, onYenile, toast }) {
                       <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 4 }}>{r.aciklama}</div>
                     ) : null}
                   </div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 700, color: '#0ea5e9', whiteSpace: 'nowrap' }}>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 700, color: 'var(--clr-banka)', whiteSpace: 'nowrap' }}>
                     {fmt(r.tutar)}
                   </div>
                 </div>
