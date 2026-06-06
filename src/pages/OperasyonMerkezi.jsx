@@ -2441,6 +2441,11 @@ export default function OperasyonMerkezi() {
   const [mSubeOperasyonKalite, setMSubeOperasyonKalite] = useState(null);
   const [mFinansOzet, setMFinansOzet] = useState(null);
   const [mStokTedarik, setMStokTedarik] = useState(null);
+  // ADDITIVE — yeni salt-okunur görünümler (mevcut state'ler değişmedi)
+  const [mKpiDelta, setMKpiDelta] = useState(null);
+  const [mKpiDeltaDonem, setMKpiDeltaDonem] = useState('hafta');
+  const [mPersonelMetrikSube, setMPersonelMetrikSube] = useState(null);
+  const [mSubeKarne, setMSubeKarne] = useState(null);
   const [kontrolData, setKontrolData] = useState(null);
   const [kontrolKategori, setKontrolKategori] = useState('');
   const [kontrolSadeceAlarmlar, setKontrolSadeceAlarmlar] = useState(false);
@@ -3704,23 +3709,39 @@ export default function OperasyonMerkezi() {
 
   const yukleMetrics = useCallback(async () => {
     try {
-      const [pv, sk, fo, st] = await Promise.all([
+      const [pv, sk, fo, st, kd, pms, kn] = await Promise.all([
         api('/ops/metrics/personel-verimlilik?gun=30').catch((e) => { console.warn('personel-verimlilik:', e?.message); return null; }),
         api('/ops/metrics/sube-operasyon-kalite?gun=30').catch((e) => { console.warn('sube-operasyon-kalite:', e?.message); return null; }),
         api('/ops/metrics/finans-ozet?gun=30').catch((e) => { console.warn('finans-ozet:', e?.message); return null; }),
         api('/ops/metrics/stok-tedarik?gun=30').catch((e) => { console.warn('stok-tedarik:', e?.message); return null; }),
+        api(`/ops/kpi-delta?donem=${encodeURIComponent(mKpiDeltaDonem)}`).catch((e) => { console.warn('kpi-delta:', e?.message); return null; }),
+        api('/ops/personel-metrik-sube?gun=30').catch((e) => { console.warn('personel-metrik-sube:', e?.message); return null; }),
+        api('/ops/sube-karne?gun=30').catch((e) => { console.warn('sube-karne:', e?.message); return null; }),
       ]);
       setMPersonelVerimlilik(pv);
       setMSubeOperasyonKalite(sk);
       setMFinansOzet(fo);
       setMStokTedarik(st);
+      setMKpiDelta(kd);
+      setMPersonelMetrikSube(pms);
+      setMSubeKarne(kn);
       markGuncel('metrics');
     } catch (e) {
       console.error('yukleMetrics hata:', e);
     } finally {
       setYukleniyor(false);
     }
-  }, [markGuncel]);
+  }, [markGuncel, mKpiDeltaDonem]);
+
+  // KPI delta dönem değişince yalnız delta rozetlerini tazele (diğer metrikleri yeniden çekme)
+  useEffect(() => {
+    if (aktifSekme !== 'metrics') return;
+    let iptal = false;
+    api(`/ops/kpi-delta?donem=${encodeURIComponent(mKpiDeltaDonem)}`)
+      .then((r) => { if (!iptal) setMKpiDelta(r); })
+      .catch((e) => { console.warn('kpi-delta:', e?.message); });
+    return () => { iptal = true; };
+  }, [mKpiDeltaDonem, aktifSekme]);
 
   const yukleKontrolOzet = useCallback(async () => {
     try {
@@ -8302,6 +8323,90 @@ export default function OperasyonMerkezi() {
                 yenileniyor={yukleniyor}
               />
             </div>
+
+            {/* ADDITIVE — Önceki döneme göre KPI delta rozetleri */}
+            <div className="card" style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>📈 KPI — önceki döneme göre</h3>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[['bugun', 'Bugün'], ['hafta', 'Hafta'], ['ay', 'Ay']].map(([id, lbl]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setMKpiDeltaDonem(id)}
+                      style={{
+                        padding: '4px 10px', fontSize: 12, borderRadius: 6, cursor: 'pointer',
+                        border: '1px solid var(--border)',
+                        background: mKpiDeltaDonem === id ? 'var(--accent, #4a9eff)' : 'transparent',
+                        color: mKpiDeltaDonem === id ? '#fff' : 'var(--text2)',
+                        fontWeight: mKpiDeltaDonem === id ? 700 : 500,
+                      }}
+                    >{lbl}</button>
+                  ))}
+                </div>
+              </div>
+              {Array.isArray(mKpiDelta?.kpilar) && mKpiDelta.kpilar.length > 0 ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
+                  {mKpiDelta.kpilar.map((k) => {
+                    const dp = k?.delta_pct;
+                    const yeni = dp == null;
+                    const renk = k?.yon === 'iyi' ? 'var(--green, #2ecc71)' : k?.yon === 'kotu' ? 'var(--red, #e74c3c)' : 'var(--text3)';
+                    const ok = yeni ? '•' : (dp > 0 ? '▲' : dp < 0 ? '▼' : '■');
+                    return (
+                      <div key={k?.anahtar} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{k?.etiket || k?.anahtar}</div>
+                        <div style={{ fontSize: 18, fontWeight: 800, marginTop: 2 }}>{metricNum(k?.simdi, 0)}</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: renk, marginTop: 2 }}>
+                          {ok} {yeni ? 'yeni' : `${Math.abs(dp)}%`}
+                          <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 500, marginLeft: 4 }}>
+                            (önceki {metricNum(k?.onceki, 0)})
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : <div style={{ fontSize: 12, color: 'var(--text3)' }}>Delta verisi yok veya yeterli geçmiş kayıt yok.</div>}
+            </div>
+
+            {/* ADDITIVE — Şube benchmark / karne tablosu */}
+            <div className="card" style={{ marginBottom: 12 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>🏆 Şube karne (son 30 gün)</h3>
+              {Array.isArray(mSubeKarne?.satirlar) && mSubeKarne.satirlar.length > 0 ? (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Şube</th>
+                        <th style={{ textAlign: 'right' }}>Skor</th>
+                        <th style={{ textAlign: 'right' }}>Ciro</th>
+                        <th style={{ textAlign: 'right' }}>Uyarı</th>
+                        <th style={{ textAlign: 'right' }}>Vardiya Eksik %</th>
+                        <th style={{ textAlign: 'right' }}>Kontrol Gecikme</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mSubeKarne.satirlar.map((r) => (
+                        <tr key={r?.sube_id || r?.sube_adi}>
+                          <td style={{ fontWeight: 600 }}>{r?.sube_adi || r?.sube_id}</td>
+                          <td className="mono" style={{ textAlign: 'right', fontWeight: 800, color: (r?.skor || 0) >= 66 ? 'var(--green)' : (r?.skor || 0) >= 40 ? 'var(--orange)' : 'var(--red)' }}>
+                            {metricNum(r?.skor, 0)}
+                          </td>
+                          <td className="mono" style={{ textAlign: 'right' }}>{metricNum(r?.ciro_toplam, 0)}</td>
+                          <td className="mono" style={{ textAlign: 'right' }}>{r?.uyari_adet ?? 0}</td>
+                          <td className="mono" style={{ textAlign: 'right' }}>{metricNum(r?.vardiya_eksik_oran, 1)}%</td>
+                          <td className="mono" style={{ textAlign: 'right' }}>{r?.kontrol_gecikme_adet ?? 0}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+                    Skor: ciro (yüksek=iyi), uyarı/vardiya eksik/kontrol gecikme (düşük=iyi) — şubeler arası normalize, eşit ağırlık.
+                  </div>
+                </div>
+              ) : <div style={{ fontSize: 12, color: 'var(--text3)' }}>Karne verisi yok.</div>}
+            </div>
+
             {opsIcBolum === 'personel' && (
             <div className="card">
               <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Personel verimlilik</h3>
@@ -8312,6 +8417,35 @@ export default function OperasyonMerkezi() {
                   Kasa fark frekansı: <strong>{metricNum(mPersonelVerimlilik.kasa_fark_frekans, 2)}%</strong>
                 </div>
               ) : <div style={{ fontSize: 12, color: 'var(--text3)' }}>Veri yüklenemedi veya yeterli kayıt yok.</div>}
+
+              {/* ADDITIVE — Personel metrikleri şube kırılımı */}
+              {Array.isArray(mPersonelMetrikSube?.subeler) && mPersonelMetrikSube.subeler.length > 0 && (
+                <div className="table-wrap" style={{ margin: '12px 0 0' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                    🏪 Şube kırılımı (son 30 gün)
+                  </div>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Şube</th>
+                        <th style={{ textAlign: 'right' }}>Açılış Sapma (dk)</th>
+                        <th style={{ textAlign: 'right' }}>Kontrol Cevap (dk)</th>
+                        <th style={{ textAlign: 'right' }}>Aktif Personel</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mPersonelMetrikSube.subeler.map((r) => (
+                        <tr key={r?.sube_id || r?.sube_adi}>
+                          <td style={{ fontWeight: 600 }}>{r?.sube_adi || r?.sube_id}</td>
+                          <td className="mono" style={{ textAlign: 'right' }}>{r?.acilis_sapma_ort_dk != null ? metricNum(r.acilis_sapma_ort_dk, 2) : '—'}</td>
+                          <td className="mono" style={{ textAlign: 'right' }}>{r?.kontrol_cevap_ort_dk != null ? metricNum(r.kontrol_cevap_ort_dk, 2) : '—'}</td>
+                          <td className="mono" style={{ textAlign: 'right' }}>{r?.aktif_personel_adet ?? 0}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
             )}
             {opsIcBolum === 'sube' && (

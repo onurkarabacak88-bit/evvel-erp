@@ -15257,3 +15257,395 @@ def truth_ogrenme_ozeti(sube_id: str, son_gun: int = 90):
         raise HTTPException(500, f"truth_motor import edilemedi: {e}")
     with db() as (conn, cur):
         return _tm.ogrenme_ozeti(cur, sube_id, son_gun=son_gun)
+
+
+# ===========================================================================
+# ADDITIVE — Operasyon Merkezi ek görünümler (salt-okunur, mevcut hiçbir
+# endpoint/sorgu/davranış değiştirilmedi). Hepsi SELECT; şema değişikliği yok.
+# Şube id eşlemesi DB'deki `subeler` tablosundan canlı okunur (uydurma yok).
+# ===========================================================================
+
+# Önceki-dönem deltası için pencere tanımları (gün cinsinden).
+_OPS_DELTA_DONEM = {
+    "bugun": 1,
+    "hafta": 7,
+    "ay": 30,
+}
+
+
+def _ops_delta_pct(simdi: float, onceki: float) -> Optional[float]:
+    """Önceki=0 ise None ('yeni'); aksi halde yüzde değişim (2 hane)."""
+    try:
+        o = float(onceki or 0.0)
+        s = float(simdi or 0.0)
+    except Exception:
+        return None
+    if abs(o) < 1e-9:
+        return None
+    return round(((s - o) / abs(o)) * 100.0, 2)
+
+
+@router.get("/kpi-delta")
+def ops_kpi_delta(donem: str = Query("hafta", description="bugun | hafta | ay")):
+    """
+    Üst KPI'lar için önceki-döneme göre % değişim rozetleri.
+
+    Her KPI: {simdi, onceki, delta_pct, yon}
+      - yon: 'iyi' | 'kotu' | 'notr'  (UI'da yeşil/kırmızı/gri)
+      - delta_pct None ise 'yeni' (önceki dönem sıfır) demektir.
+
+    Yön semantiği metriğe göre değişir:
+      - ciro artışı  -> iyi (yon_yukari_iyi=True)
+      - uyumsuzluk/uyari/gider artışı -> kotu (yon_yukari_iyi=False)
+
+    Salt-okunur. Mevcut sorguların kolon/filtre desenleri birebir kullanıldı:
+      ciro: ciro(durum='aktif', tarih, sube_id, SUM(toplam))
+      gider: anlik_giderler(durum='aktif', tarih, SUM(tutar))
+      uyari: sube_operasyon_uyari(tarih, seviye IN ('uyari','kritik'))
+      vardiya: kapanis_kayit(olay='vardiya_sabah_aksam_devri', tarih, eksik tik)
+    """
+    d = (donem or "hafta").strip().lower()
+    if d not in _OPS_DELTA_DONEM:
+        d = "hafta"
+    n = _OPS_DELTA_DONEM[d]
+
+    def _pair(cur, sql: str) -> Tuple[float, float]:
+        """sql: 'simdi' = son n gün, 'onceki' = ondan önceki n gün ([2n..n) aralığı).
+        Param sırası: (n_simdi, n_onceki_ust, n_onceki_alt, n_alt_sinir).
+          - simdi FILTER: tarih >= CURRENT_DATE - n
+          - onceki FILTER: tarih < CURRENT_DATE - n  AND  tarih >= CURRENT_DATE - 2n
+          - dış WHERE: tarih >= CURRENT_DATE - 2n  (her iki pencere de kapsanır)
+        """
+        try:
+            cur.execute(sql, (n, n, 2 * n, 2 * n))
+            row = dict(cur.fetchone() or {})
+            return _safe_float(row.get("simdi")), _safe_float(row.get("onceki"))
+        except Exception:
+            try:
+                cur.connection.rollback()
+            except Exception:
+                pass
+            return 0.0, 0.0
+
+    def _kpi(ad: str, etiket: str, simdi: float, onceki: float, yon_yukari_iyi: bool) -> Dict[str, Any]:
+        dp = _ops_delta_pct(simdi, onceki)
+        if dp is None or abs(dp) < 1e-9:
+            yon = "notr"
+        else:
+            artiyor = dp > 0
+            yon = "iyi" if (artiyor == yon_yukari_iyi) else "kotu"
+        return {
+            "anahtar": ad,
+            "etiket": etiket,
+            "simdi": round(simdi, 2),
+            "onceki": round(onceki, 2),
+            "delta_pct": dp,
+            "yon": yon,
+            "yon_yukari_iyi": yon_yukari_iyi,
+        }
+
+    kpilar: List[Dict[str, Any]] = []
+    try:
+        with db() as (conn, cur):
+            # Ciro (yukarı = iyi)
+            c_s, c_o = _pair(cur, """
+                SELECT
+                  COALESCE(SUM(toplam) FILTER (
+                    WHERE tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                  ), 0)::numeric AS simdi,
+                  COALESCE(SUM(toplam) FILTER (
+                    WHERE tarih < CURRENT_DATE - (%s * INTERVAL '1 day')
+                      AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                  ), 0)::numeric AS onceki
+                FROM ciro
+                WHERE durum='aktif'
+                  AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            """)
+            kpilar.append(_kpi("ciro", "Ciro", c_s, c_o, yon_yukari_iyi=True))
+
+            # Gider (yukarı = kötü) — DİKKAT: anlik_giderler kolonu `sube`, burada sube kullanılmıyor
+            g_s, g_o = _pair(cur, """
+                SELECT
+                  COALESCE(SUM(tutar) FILTER (
+                    WHERE tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                  ), 0)::numeric AS simdi,
+                  COALESCE(SUM(tutar) FILTER (
+                    WHERE tarih < CURRENT_DATE - (%s * INTERVAL '1 day')
+                      AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                  ), 0)::numeric AS onceki
+                FROM anlik_giderler
+                WHERE durum='aktif'
+                  AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            """)
+            kpilar.append(_kpi("gider", "Gider", g_s, g_o, yon_yukari_iyi=False))
+
+            # Uyumsuzluk / uyari adedi (yukarı = kötü)
+            u_s, u_o = _pair(cur, """
+                SELECT
+                  COUNT(*) FILTER (
+                    WHERE tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                  )::numeric AS simdi,
+                  COUNT(*) FILTER (
+                    WHERE tarih < CURRENT_DATE - (%s * INTERVAL '1 day')
+                      AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                  )::numeric AS onceki
+                FROM sube_operasyon_uyari
+                WHERE seviye IN ('uyari','kritik')
+                  AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            """)
+            kpilar.append(_kpi("uyumsuzluk", "Uyarı / Uyumsuzluk", u_s, u_o, yon_yukari_iyi=False))
+
+            # Vardiya devri eksik tik adedi (yukarı = kötü)
+            v_s, v_o = _pair(cur, """
+                SELECT
+                  COUNT(*) FILTER (
+                    WHERE tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                      AND (durum!='tamamlandi' OR acilisci_onay_ts IS NULL OR kapanisci_onay_ts IS NULL)
+                  )::numeric AS simdi,
+                  COUNT(*) FILTER (
+                    WHERE tarih < CURRENT_DATE - (%s * INTERVAL '1 day')
+                      AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                      AND (durum!='tamamlandi' OR acilisci_onay_ts IS NULL OR kapanisci_onay_ts IS NULL)
+                  )::numeric AS onceki
+                FROM kapanis_kayit
+                WHERE olay='vardiya_sabah_aksam_devri'
+                  AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            """)
+            kpilar.append(_kpi("vardiya_eksik", "Vardiya Eksik Tik", v_s, v_o, yon_yukari_iyi=False))
+    except Exception:
+        log.exception("ops_kpi_delta: kritik hata")
+        return {"donem": d, "gun": n, "kpilar": [], "hata": True}
+
+    return {"donem": d, "gun": n, "kpilar": kpilar}
+
+
+def _ops_aktif_subeler(cur) -> List[Dict[str, Any]]:
+    cur.execute("SELECT id, ad FROM subeler WHERE aktif=TRUE ORDER BY ad")
+    return [dict(r) for r in (cur.fetchall() or [])]
+
+
+@router.get("/personel-metrik-sube")
+def ops_personel_metrik_sube(gun: int = Query(30, ge=7, le=365)):
+    """
+    Personel/vardiya metriklerinin ŞUBE bazında kırılımı (Zafer/Alsancak/Gazze/Köyceğiz).
+
+    Her şube için:
+      - acilis_sapma_ort_dk : açılış cevap-slot sapması ortalaması (dk)
+      - kontrol_cevap_ort_dk: KONTROL cevap süresi ortalaması (dk)
+      - aktif_personel_adet : son N günde olaya katılan farklı personel
+      - acilis_ornek / kontrol_ornek: örnek sayıları
+
+    Salt-okunur. Sorgu desenleri ops_metrics_personel_verimlilik'ten kopyalandı.
+    """
+    n = max(7, min(365, int(gun)))
+    out: List[Dict[str, Any]] = []
+    try:
+        with db() as (conn, cur):
+            subeler = _ops_aktif_subeler(cur)
+            for s in subeler:
+                sid = str(s.get("id") or "")
+                sad = str(s.get("ad") or sid)
+                rec: Dict[str, Any] = {
+                    "sube_id": sid,
+                    "sube_adi": sad,
+                    "acilis_sapma_ort_dk": None,
+                    "kontrol_cevap_ort_dk": None,
+                    "acilis_ornek": 0,
+                    "kontrol_ornek": 0,
+                    "aktif_personel_adet": 0,
+                }
+                try:
+                    cur.execute("""
+                        WITH ep AS (
+                            SELECT DISTINCT ON (e.id)
+                                e.id, d.personel_id,
+                                EXTRACT(EPOCH FROM (e.cevap_ts - e.sistem_slot_ts)) / 60.0 AS fark_dk
+                            FROM sube_operasyon_event e
+                            JOIN operasyon_defter d ON d.ref_event_id = e.id
+                            WHERE e.tip='ACILIS' AND e.cevap_ts IS NOT NULL
+                              AND e.sistem_slot_ts IS NOT NULL AND d.personel_id IS NOT NULL
+                              AND e.sube_id=%s
+                              AND e.tarih >= (CURRENT_DATE - (%s * INTERVAL '1 day'))
+                            ORDER BY e.id, d.olay_ts DESC
+                        )
+                        SELECT COUNT(*)::int AS ornek,
+                               ROUND(AVG(fark_dk)::numeric, 2) AS ort,
+                               COUNT(DISTINCT personel_id)::int AS personel
+                        FROM ep
+                    """, (sid, n))
+                    a = dict(cur.fetchone() or {})
+                    rec["acilis_ornek"] = int(a.get("ornek") or 0)
+                    rec["acilis_sapma_ort_dk"] = (float(a["ort"]) if a.get("ort") is not None else None)
+                    a_pers = int(a.get("personel") or 0)
+                except Exception:
+                    try:
+                        cur.connection.rollback()
+                    except Exception:
+                        pass
+                    a_pers = 0
+                try:
+                    cur.execute("""
+                        WITH ep AS (
+                            SELECT DISTINCT ON (e.id)
+                                e.id, d.personel_id,
+                                EXTRACT(EPOCH FROM (e.cevap_ts - e.sistem_slot_ts)) / 60.0 AS cevap_dk
+                            FROM sube_operasyon_event e
+                            JOIN operasyon_defter d ON d.ref_event_id = e.id
+                            WHERE e.tip='KONTROL' AND e.cevap_ts IS NOT NULL
+                              AND e.sistem_slot_ts IS NOT NULL AND d.personel_id IS NOT NULL
+                              AND e.sube_id=%s
+                              AND e.tarih >= (CURRENT_DATE - (%s * INTERVAL '1 day'))
+                            ORDER BY e.id, d.olay_ts DESC
+                        )
+                        SELECT COUNT(*)::int AS ornek,
+                               ROUND(AVG(cevap_dk)::numeric, 2) AS ort,
+                               COUNT(DISTINCT personel_id)::int AS personel
+                        FROM ep
+                    """, (sid, n))
+                    k = dict(cur.fetchone() or {})
+                    rec["kontrol_ornek"] = int(k.get("ornek") or 0)
+                    rec["kontrol_cevap_ort_dk"] = (float(k["ort"]) if k.get("ort") is not None else None)
+                    k_pers = int(k.get("personel") or 0)
+                except Exception:
+                    try:
+                        cur.connection.rollback()
+                    except Exception:
+                        pass
+                    k_pers = 0
+                rec["aktif_personel_adet"] = max(a_pers, k_pers)
+                out.append(rec)
+    except Exception:
+        log.exception("ops_personel_metrik_sube: kritik hata")
+        return {"gun": n, "subeler": [], "hata": True}
+
+    return {"gun": n, "subeler": out}
+
+
+@router.get("/sube-karne")
+def ops_sube_karne(gun: int = Query(30, ge=7, le=365)):
+    """
+    Şube benchmark/karne tablosu — şubeleri yan yana kıyaslayan tek matris + basit skor.
+
+    Metrikler (son N gün, salt-okunur):
+      - ciro_toplam          : ciro(durum='aktif', SUM(toplam))         [yüksek iyi]
+      - uyari_adet           : sube_operasyon_uyari (uyari+kritik)      [düşük iyi]
+      - vardiya_eksik_oran   : kapanis_kayit eksik tik %                [düşük iyi]
+      - kontrol_gecikme_adet : sube_operasyon_event KONTROL gecikti     [düşük iyi]
+
+    skor: 0-100 — her metrik şubeler arası min-max normalize edilip
+    yön düzeltmesiyle eşit ağırlıkla toplanır. Tek şube/veri yoksa 50 (nötr).
+    """
+    n = max(7, min(365, int(gun)))
+    satirlar: List[Dict[str, Any]] = []
+    try:
+        with db() as (conn, cur):
+            subeler = _ops_aktif_subeler(cur)
+            # Toplu ciro
+            ciro_map: Dict[str, float] = {}
+            try:
+                cur.execute("""
+                    SELECT sube_id::text AS sid, COALESCE(SUM(toplam),0)::numeric AS v
+                    FROM ciro WHERE durum='aktif'
+                      AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                    GROUP BY sube_id
+                """, (n,))
+                for r in cur.fetchall() or []:
+                    ciro_map[str(r["sid"])] = _safe_float(r["v"])
+            except Exception:
+                try: cur.connection.rollback()
+                except Exception: pass
+            # Uyari adedi
+            uyari_map: Dict[str, int] = {}
+            try:
+                cur.execute("""
+                    SELECT sube_id::text AS sid, COUNT(*)::int AS v
+                    FROM sube_operasyon_uyari
+                    WHERE seviye IN ('uyari','kritik')
+                      AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                    GROUP BY sube_id
+                """, (n,))
+                for r in cur.fetchall() or []:
+                    uyari_map[str(r["sid"])] = int(r["v"] or 0)
+            except Exception:
+                try: cur.connection.rollback()
+                except Exception: pass
+            # Vardiya eksik oran
+            vardiya_map: Dict[str, float] = {}
+            try:
+                cur.execute("""
+                    SELECT sube_id::text AS sid,
+                           COUNT(*)::int AS toplam,
+                           COUNT(*) FILTER (
+                             WHERE durum!='tamamlandi' OR acilisci_onay_ts IS NULL OR kapanisci_onay_ts IS NULL
+                           )::int AS eksik
+                    FROM kapanis_kayit
+                    WHERE olay='vardiya_sabah_aksam_devri'
+                      AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                    GROUP BY sube_id
+                """, (n,))
+                for r in cur.fetchall() or []:
+                    t = int(r["toplam"] or 0)
+                    e = int(r["eksik"] or 0)
+                    vardiya_map[str(r["sid"])] = round((e * 100.0 / t), 2) if t > 0 else 0.0
+            except Exception:
+                try: cur.connection.rollback()
+                except Exception: pass
+            # Kontrol gecikme adedi
+            gecikme_map: Dict[str, int] = {}
+            try:
+                cur.execute("""
+                    SELECT sube_id::text AS sid, COUNT(*)::int AS v
+                    FROM sube_operasyon_event
+                    WHERE tip='KONTROL' AND durum='gecikti'
+                      AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                    GROUP BY sube_id
+                """, (n,))
+                for r in cur.fetchall() or []:
+                    gecikme_map[str(r["sid"])] = int(r["v"] or 0)
+            except Exception:
+                try: cur.connection.rollback()
+                except Exception: pass
+
+            for s in subeler:
+                sid = str(s.get("id") or "")
+                satirlar.append({
+                    "sube_id": sid,
+                    "sube_adi": str(s.get("ad") or sid),
+                    "ciro_toplam": round(ciro_map.get(sid, 0.0), 2),
+                    "uyari_adet": uyari_map.get(sid, 0),
+                    "vardiya_eksik_oran": vardiya_map.get(sid, 0.0),
+                    "kontrol_gecikme_adet": gecikme_map.get(sid, 0),
+                })
+
+        # Basit skor: min-max normalize + yön (yüksek-iyi/düşük-iyi), eşit ağırlık.
+        def _norm(rows, key, yuksek_iyi):
+            vals = [float(r.get(key) or 0.0) for r in rows]
+            lo, hi = (min(vals), max(vals)) if vals else (0.0, 0.0)
+            rng = hi - lo
+            for r in rows:
+                v = float(r.get(key) or 0.0)
+                if rng < 1e-9:
+                    nv = 0.5  # tek şube / hepsi eşit -> nötr
+                else:
+                    nv = (v - lo) / rng
+                    if not yuksek_iyi:
+                        nv = 1.0 - nv
+                r.setdefault("_skor_parca", {})[key] = round(nv * 100.0, 1)
+
+        if satirlar:
+            _norm(satirlar, "ciro_toplam", True)
+            _norm(satirlar, "uyari_adet", False)
+            _norm(satirlar, "vardiya_eksik_oran", False)
+            _norm(satirlar, "kontrol_gecikme_adet", False)
+            for r in satirlar:
+                parca = r.pop("_skor_parca", {}) or {}
+                if parca:
+                    r["skor"] = round(sum(parca.values()) / len(parca), 1)
+                else:
+                    r["skor"] = 50.0
+            satirlar.sort(key=lambda x: x.get("skor", 0), reverse=True)
+    except Exception:
+        log.exception("ops_sube_karne: kritik hata")
+        return {"gun": n, "satirlar": [], "hata": True}
+
+    return {"gun": n, "satirlar": satirlar}
