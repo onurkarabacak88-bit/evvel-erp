@@ -2,6 +2,7 @@
 import { api, fmt, fmtDate } from '../utils/api';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
+import IslemSonucOverlay from '../components/IslemSonucOverlay';
 
 export default function Panel({ onNavigate }) {
   const nav = onNavigate || (() => {});
@@ -18,7 +19,7 @@ export default function Panel({ onNavigate }) {
   const [topluUygula, setTopluUygula] = useState(false);
   const [loadingBtn, setLoadingBtn] = useState(false);
   const [manuelTutar, setManuelTutar] = useState('');
-  const [msg, setMsg] = useState(null);
+  const [islemSonuc, setIslemSonuc] = useState(null); // {m, t}
   const [sabitGiderOzet, setSabitGiderOzet] = useState({});
   const [vadeliOzet, setVadeliOzet] = useState({});
   const [sabitGiderUyarilar, setSabitGiderUyarilar] = useState([]);
@@ -137,7 +138,7 @@ export default function Panel({ onNavigate }) {
     };
   }, []);
 
-  const toast = (m, t = 'green') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 3500); };
+  const toast = (m, t = 'green') => setIslemSonuc({ m, t });
 
   /** Kredi kartı uyarıları: panelden ödeme yok — Kart Hareketleri sayfasına (ödeme modalı ön seçimli) yönlendir */
   function kartHareketleriOdemeSayfasi(kartId) {
@@ -639,10 +640,13 @@ export default function Panel({ onNavigate }) {
 
   return (
     <div className="page">
-      {msg && (
-        <div className={`alert-box ${msg.t}`} style={{ position: 'sticky', top: 0, zIndex: 20, marginBottom: 12 }}>
-          {msg.m}
-        </div>
+      {islemSonuc && (
+        <IslemSonucOverlay
+          tip={islemSonuc.t}
+          mesaj={islemSonuc.m}
+          sureMs={3500}
+          onKapat={() => setIslemSonuc(null)}
+        />
       )}
 
       {/* ── COMMAND BAR — tek satır, tüm kritik sayılar ── */}
