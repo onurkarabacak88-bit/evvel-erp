@@ -185,11 +185,11 @@ def _yarin_odemeler(cur, tarih: date) -> list:
     """Yarın vadesi gelen ödeme planı kalemleri."""
     yarin = tarih + timedelta(days=1)
     cur.execute("""
-        SELECT op.aciklama, op.tutar, op.kaynak_tablo
+        SELECT op.aciklama, op.odenecek_tutar AS tutar, op.kaynak_tablo
         FROM odeme_plani op
-        WHERE op.planlanan_tarih = %s
-          AND op.durum = 'bekliyor'
-        ORDER BY op.tutar DESC
+        WHERE op.tarih = %s
+          AND op.durum IN ('bekliyor', 'onay_bekliyor')
+        ORDER BY op.odenecek_tutar DESC
         LIMIT 10
     """, (yarin,))
     return [dict(r) for r in (cur.fetchall() or [])]
