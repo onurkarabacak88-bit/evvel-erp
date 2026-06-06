@@ -6333,8 +6333,146 @@ export default function OperasyonMerkezi() {
         ].filter(Boolean);
         return (
           <>
-            {/* 6 canlı alert pill'i */}
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+            {/* ════ SİNYAL ROZETLERİ — ambient awareness (Linear/Stripe deseni) ════
+                 Katman 1: DURUM rozetleri (her zaman, nötr)
+                 Katman 2: UYARI rozetleri (yalnızca değeri > 0, renkli)
+                 Katman 3: "✓ N kontrol temiz" katlaması (0/✓ olanlar)
+                 + 🚨 Toplam Uyarı drawer rozeti korunur */}
+            {(() => {
+              // Uyarı kontrolleri — veri odaklı tanım (onClick + title AYNEN korunur)
+              const uyariKontrolleri = [
+                {
+                  key: 'gec',
+                  aktif: gecAlert > 0,
+                  emoji: '⏰',
+                  ad: 'Geç/Açılmayan',
+                  deger: gecAlert,
+                  renk: 'var(--red)',
+                  pulse: false,
+                  onClick: () => acModulTab('acilis-takip'),
+                  title: `${Number(gecAcilanBugun?.toplam || 0)} geç · ${Number(gecAcilanBugun?.acilmayan_toplam || 0)} açılmadı`,
+                  temizAd: 'Geç açılış',
+                },
+                {
+                  key: 'guvenlik',
+                  aktif: guvenlikSayi > 0,
+                  emoji: '🔐',
+                  ad: 'Güvenlik',
+                  deger: guvenlikSayi,
+                  renk: '#be185d',
+                  pulse: false,
+                  onClick: () => acOpsModul('guvenlik-alarmlar', 'denetim-uyum'),
+                  title: 'Aktif PIN / kilit alarmı',
+                  temizAd: 'Güvenlik',
+                },
+                {
+                  key: 'kasaFark',
+                  aktif: devirFarkSayi > 0,
+                  emoji: '💰',
+                  ad: 'Kasa Farkı',
+                  deger: `${devirFarkSayi} şube`,
+                  renk: devirFarkMaxAbs >= 200 ? 'var(--red)' : '#f08040',
+                  pulse: devirFarkMaxAbs >= 200,
+                  onClick: () => acOpsModul('kasa-uyumsuzluk', 'finans-kasa'),
+                  title: devirFarkSayi === 0
+                    ? 'Kasa (para) açılış-kapanış farkı yok'
+                    : `${devirFarkSayi} şubede kasa (para) farkı · max ${devirFarkMaxAbs.toFixed(0)}₺`,
+                  temizAd: 'Kasa farkı',
+                },
+                {
+                  key: 'urunDevir',
+                  aktif: urunDevirSube > 0,
+                  emoji: '📦',
+                  ad: 'Ürün Devir',
+                  deger: `${urunDevirSube} şube`,
+                  renk: '#f08040',
+                  pulse: false,
+                  onClick: () => acOpsModul('urun-uyumsuzluk', 'finans-kasa'),
+                  title: urunDevirSube === 0
+                    ? 'Ürün devir sayımları eşleşti (akşam kapanış = sabah açılış)'
+                    : `${urunDevirSube} şubede ürün devir farkı (akşam ≠ sabah sayım)`,
+                  temizAd: 'Ürün devir',
+                },
+                {
+                  key: 'kayitsiz',
+                  aktif: kayitsizSube > 0,
+                  emoji: '📋',
+                  ad: 'Kayıtsız Kullanım',
+                  deger: `${kayitsizSube} şube`,
+                  renk: '#a78bfa',
+                  pulse: false,
+                  onClick: () => acOpsModul('urun-uyumsuzluk', 'finans-kasa'),
+                  title: kayitsizSube === 0
+                    ? 'Kayıtsız kullanım yok (ürün aç kayıtları tutarlı)'
+                    : `${kayitsizSube} şubede ürün aç kaydı eksik (çekilmiş ama girilmemiş)`,
+                  temizAd: 'Kayıtsız kullanım',
+                },
+                {
+                  key: 'karsiliksiz',
+                  aktif: karsiliksizSube > 0,
+                  emoji: '⚠️',
+                  ad: 'Depoda Yok',
+                  deger: `${karsiliksizSube} şube`,
+                  renk: 'var(--red)',
+                  pulse: karsiliksizSube > 0,
+                  onClick: () => acOpsModul('urun-uyumsuzluk', 'finans-kasa'),
+                  title: karsiliksizSube === 0
+                    ? 'Karşılıksız açma yok (depo stoğu tutarlı)'
+                    : `${karsiliksizSube} şubede depoda olmayan ürün açılmış`,
+                  temizAd: 'Depoda yok',
+                },
+                {
+                  key: 'sevkiyat',
+                  aktif: sevkiyatUyumSayi > 0,
+                  emoji: '🚚',
+                  ad: 'Sevkiyat',
+                  deger: sevkiyatUyumSayi,
+                  renk: '#f08040',
+                  pulse: false,
+                  onClick: () => acOpsModul('sevkiyat-uyumsuzluk', 'siparis-kontrol'),
+                  title: sevkiyatUyumSayi === 0
+                    ? 'Sevkiyat uyumsuzluğu yok (sipariş = kabul)'
+                    : `${sevkiyatUyumSayi} sevk satırı uzlaştırılmamış (sipariş ≠ kabul)`,
+                  temizAd: 'Sevkiyat',
+                },
+                {
+                  key: 'vardiya',
+                  aktif: personelVardiyaSayi > 0,
+                  emoji: '👥',
+                  ad: 'Vardiya',
+                  deger: personelVardiyaSayi,
+                  renk: '#be185d',
+                  pulse: false,
+                  onClick: () => acOpsModul('personel-vardiya-uyumsuzluk', 'personel'),
+                  title: personelVardiyaSayi === 0
+                    ? 'Vardiya planı ile gerçekleşen uyumlu'
+                    : `${personelVardiyaSayi} personel vardiya uyumsuzluğu (plan ≠ gerçek)`,
+                  temizAd: 'Vardiya',
+                },
+                {
+                  key: 'fire',
+                  aktif: fireSayi > 0,
+                  emoji: '🔥',
+                  ad: 'Fire',
+                  deger: fireSayi,
+                  renk: '#f59e0b',
+                  pulse: false,
+                  onClick: () => acOpsModul('fire-bildirim', 'envanter'),
+                  title: fireSayi === 0
+                    ? 'Bugün fire bildirimi yok'
+                    : `${fireSayi} fire kaydı bildirildi (bugün)`,
+                  temizAd: 'Fire',
+                },
+              ];
+              const aktifUyarilar = uyariKontrolleri.filter(u => u.aktif);
+              const temizKontroller = uyariKontrolleri.filter(u => !u.aktif);
+              const temizSayi = temizKontroller.length;
+              const temizTitle = temizSayi === uyariKontrolleri.length
+                ? 'Tüm kontroller temiz: ' + uyariKontrolleri.map(u => u.temizAd).join(', ')
+                : 'Temiz kontroller: ' + temizKontroller.map(u => u.temizAd).join(', ');
+              return (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14, alignItems: 'center' }}>
+              {/* ── DURUM rozetleri (her zaman, nötr/sakin) ── */}
               {/* Aktif Şube */}
               <div
                 className="tab-pill"
@@ -6344,39 +6482,6 @@ export default function OperasyonMerkezi() {
                 🏢 Aktif Şube&nbsp;
                 <span style={{ fontWeight: 800 }}>{subeAcikSayi}/{kartlar.length || '—'}</span>
               </div>
-              {/* Geç / Açılmayan */}
-              <button
-                type="button"
-                className="tab-pill"
-                style={{ borderColor: gecAlert > 0 ? 'var(--red)' : undefined, color: gecAlert > 0 ? 'var(--red)' : undefined }}
-                onClick={() => acModulTab('acilis-takip')}
-                title={`${Number(gecAcilanBugun?.toplam || 0)} geç · ${Number(gecAcilanBugun?.acilmayan_toplam || 0)} açılmadı`}
-              >
-                ⏰ Geç/Açılmayan&nbsp;
-                <span style={{ fontWeight: 800 }}>{gecAlert}</span>
-              </button>
-              {/* Kapanmayan */}
-              <button
-                type="button"
-                className="tab-pill"
-                style={{ borderColor: kapanmayanSayi > 0 ? '#f08040' : undefined, color: kapanmayanSayi > 0 ? '#f08040' : undefined }}
-                onClick={() => acOpsModul('kapanis-takip', 'finans-kasa')}
-                title="Kapanış tamamlanmayan şubeler"
-              >
-                🔒 Kapanmayan&nbsp;
-                <span style={{ fontWeight: 800 }}>{kapanmayanSayi}</span>
-              </button>
-              {/* Güvenlik */}
-              <button
-                type="button"
-                className="tab-pill"
-                style={{ borderColor: guvenlikSayi > 0 ? '#be185d' : undefined, color: guvenlikSayi > 0 ? '#be185d' : undefined }}
-                onClick={() => acOpsModul('guvenlik-alarmlar', 'denetim-uyum')}
-                title="Aktif PIN / kilit alarmı"
-              >
-                🔐 Güvenlik&nbsp;
-                <span style={{ fontWeight: 800 }}>{guvenlikSayi}</span>
-              </button>
               {/* Ciro Girişi */}
               <button
                 type="button"
@@ -6388,160 +6493,59 @@ export default function OperasyonMerkezi() {
                 📋 Ciro&nbsp;
                 <span style={{ fontWeight: 800 }}>{ciroGiren}/{kartlar.length}</span>
               </button>
-              {/* 💰 Devir Farkı */}
+              {/* Kapanmayan */}
               <button
                 type="button"
                 className="tab-pill"
-                style={{
-                  borderColor: devirFarkSayi === 0 ? 'var(--green)' : devirFarkMaxAbs >= 200 ? 'var(--red)' : '#f08040',
-                  color: devirFarkSayi === 0 ? 'var(--green)' : devirFarkMaxAbs >= 200 ? 'var(--red)' : '#f08040',
-                  fontWeight: devirFarkSayi > 0 ? 800 : undefined,
-                  animation: devirFarkMaxAbs >= 200 ? 'pulse 1.2s infinite' : undefined,
-                }}
-                title={
-                  devirFarkSayi === 0
-                    ? 'Kasa (para) açılış-kapanış farkı yok'
-                    : `${devirFarkSayi} şubede kasa (para) farkı · max ${devirFarkMaxAbs.toFixed(0)}₺`
-                }
-                onClick={() => acOpsModul('kasa-uyumsuzluk', 'finans-kasa')}
+                style={{ borderColor: kapanmayanSayi > 0 ? '#f08040' : undefined, color: kapanmayanSayi > 0 ? '#f08040' : 'var(--text3)' }}
+                onClick={() => acOpsModul('kapanis-takip', 'finans-kasa')}
+                title="Kapanış tamamlanmayan şubeler"
               >
-                💰 Kasa Farkı&nbsp;
-                <span style={{ fontWeight: 800 }}>
-                  {devirFarkSayi > 0 ? `${devirFarkSayi} şube` : '✓'}
-                </span>
+                🔒 Kapanmayan&nbsp;
+                <span style={{ fontWeight: 800 }}>{kapanmayanSayi}</span>
               </button>
-              {/* 📦 Ürün Devir Farkı — açılış↔kapanış stok sayımı (STOK_BAR_DEVIR_FARK) */}
+
+              {/* ── ayraç ── */}
+              {(aktifUyarilar.length > 0 || temizSayi > 0) && (
+                <span style={{ width: 1, alignSelf: 'stretch', background: 'var(--border, #2a2a2a)', margin: '0 2px' }} aria-hidden="true" />
+              )}
+
+              {/* ── UYARI rozetleri (yalnızca değeri > 0 olanlar, renkli) ── */}
+              {aktifUyarilar.map((u) => (
+                <button
+                  key={u.key}
+                  type="button"
+                  className="tab-pill"
+                  style={{
+                    borderColor: u.renk,
+                    color: u.renk,
+                    fontWeight: 800,
+                    animation: u.pulse ? 'pulse 1.2s infinite' : undefined,
+                  }}
+                  title={u.title}
+                  onClick={u.onClick}
+                >
+                  {u.emoji} {u.ad}&nbsp;
+                  <span style={{ fontWeight: 800 }}>{u.deger}</span>
+                </button>
+              ))}
+
+              {/* ── "Temiz" katlaması (0/✓ olan uyarı kontrolleri) ── */}
+              {temizSayi > 0 && (
+                <span
+                  className="tab-pill"
+                  style={{ borderColor: 'var(--border, #2a2a2a)', color: 'var(--text3)', cursor: 'default', fontWeight: 600 }}
+                  title={temizTitle}
+                >
+                  ✓ {temizSayi === uyariKontrolleri.length ? 'Tüm kontroller temiz' : `${temizSayi} kontrol temiz`}
+                </span>
+              )}
+
+              {/* 🚨 Toplam Uyarı — tıklanabilir, drawer açar */}
               <button
                 type="button"
                 className="tab-pill"
-                style={{
-                  borderColor: urunDevirSube === 0 ? 'var(--green)' : '#f08040',
-                  color: urunDevirSube === 0 ? 'var(--green)' : '#f08040',
-                  fontWeight: urunDevirSube > 0 ? 800 : undefined,
-                }}
-                title={
-                  urunDevirSube === 0
-                    ? 'Ürün devir sayımları eşleşti (akşam kapanış = sabah açılış)'
-                    : `${urunDevirSube} şubede ürün devir farkı (akşam ≠ sabah sayım)`
-                }
-                onClick={() => acOpsModul('urun-uyumsuzluk', 'finans-kasa')}
-              >
-                📦 Ürün Devir&nbsp;
-                <span style={{ fontWeight: 800 }}>
-                  {urunDevirSube > 0 ? `${urunDevirSube} şube` : '✓'}
-                </span>
-              </button>
-              {/* 📋 Kayıtsız Kullanım — gün içi, ürün aç girilmeden çekilmiş (STOK_BAR_GUN_ICI_FARK) */}
-              <button
-                type="button"
-                className="tab-pill"
-                style={{
-                  borderColor: kayitsizSube === 0 ? 'var(--green)' : '#a78bfa',
-                  color: kayitsizSube === 0 ? 'var(--green)' : '#a78bfa',
-                  fontWeight: kayitsizSube > 0 ? 800 : undefined,
-                }}
-                title={
-                  kayitsizSube === 0
-                    ? 'Kayıtsız kullanım yok (ürün aç kayıtları tutarlı)'
-                    : `${kayitsizSube} şubede ürün aç kaydı eksik (çekilmiş ama girilmemiş)`
-                }
-                onClick={() => acOpsModul('urun-uyumsuzluk', 'finans-kasa')}
-              >
-                📋 Kayıtsız Kullanım&nbsp;
-                <span style={{ fontWeight: 800 }}>
-                  {kayitsizSube > 0 ? `${kayitsizSube} şube` : '✓'}
-                </span>
-              </button>
-              {/* ⚠️ Depoda Yok, Açılmış — karşılıksız açma (URUN_AC_UYUMSUZLUK) */}
-              <button
-                type="button"
-                className="tab-pill"
-                style={{
-                  borderColor: karsiliksizSube === 0 ? 'var(--green)' : 'var(--red)',
-                  color: karsiliksizSube === 0 ? 'var(--green)' : 'var(--red)',
-                  fontWeight: karsiliksizSube > 0 ? 800 : undefined,
-                  animation: karsiliksizSube > 0 ? 'pulse 1.2s infinite' : undefined,
-                }}
-                title={
-                  karsiliksizSube === 0
-                    ? 'Karşılıksız açma yok (depo stoğu tutarlı)'
-                    : `${karsiliksizSube} şubede depoda olmayan ürün açılmış`
-                }
-                onClick={() => acOpsModul('urun-uyumsuzluk', 'finans-kasa')}
-              >
-                ⚠️ Depoda Yok&nbsp;
-                <span style={{ fontWeight: 800 }}>
-                  {karsiliksizSube > 0 ? `${karsiliksizSube} şube` : '✓'}
-                </span>
-              </button>
-              {/* 🚚 Sevkiyat Uyumsuzluğu — sipariş ≠ kabul (son 30 gün) */}
-              <button
-                type="button"
-                className="tab-pill"
-                style={{
-                  borderColor: sevkiyatUyumSayi === 0 ? 'var(--green)' : '#f08040',
-                  color: sevkiyatUyumSayi === 0 ? 'var(--green)' : '#f08040',
-                  fontWeight: sevkiyatUyumSayi > 0 ? 800 : undefined,
-                }}
-                title={
-                  sevkiyatUyumSayi === 0
-                    ? 'Sevkiyat uyumsuzluğu yok (sipariş = kabul)'
-                    : `${sevkiyatUyumSayi} sevk satırı uzlaştırılmamış (sipariş ≠ kabul)`
-                }
-                onClick={() => acOpsModul('sevkiyat-uyumsuzluk', 'siparis-kontrol')}
-              >
-                🚚 Sevkiyat&nbsp;
-                <span style={{ fontWeight: 800 }}>
-                  {sevkiyatUyumSayi > 0 ? sevkiyatUyumSayi : '✓'}
-                </span>
-              </button>
-              {/* 👥 Personel Vardiya Uyumsuzluğu */}
-              <button
-                type="button"
-                className="tab-pill"
-                style={{
-                  borderColor: personelVardiyaSayi === 0 ? 'var(--green)' : '#be185d',
-                  color: personelVardiyaSayi === 0 ? 'var(--green)' : '#be185d',
-                  fontWeight: personelVardiyaSayi > 0 ? 800 : undefined,
-                }}
-                title={
-                  personelVardiyaSayi === 0
-                    ? 'Vardiya planı ile gerçekleşen uyumlu'
-                    : `${personelVardiyaSayi} personel vardiya uyumsuzluğu (plan ≠ gerçek)`
-                }
-                onClick={() => acOpsModul('personel-vardiya-uyumsuzluk', 'personel')}
-              >
-                👥 Vardiya&nbsp;
-                <span style={{ fontWeight: 800 }}>
-                  {personelVardiyaSayi > 0 ? personelVardiyaSayi : '✓'}
-                </span>
-              </button>
-              {/* 🔥 Fire Tespiti — bugün bildirilen fire kayıtları */}
-              <button
-                type="button"
-                className="tab-pill"
-                style={{
-                  borderColor: fireSayi === 0 ? 'var(--green)' : '#f59e0b',
-                  color: fireSayi === 0 ? 'var(--green)' : '#f59e0b',
-                  fontWeight: fireSayi > 0 ? 800 : undefined,
-                }}
-                title={
-                  fireSayi === 0
-                    ? 'Bugün fire bildirimi yok'
-                    : `${fireSayi} fire kaydı bildirildi (bugün)`
-                }
-                onClick={() => acOpsModul('fire-bildirim', 'envanter')}
-              >
-                🔥 Fire&nbsp;
-                <span style={{ fontWeight: 800 }}>
-                  {fireSayi > 0 ? fireSayi : '✓'}
-                </span>
-              </button>
-              {/* Toplam Uyarı — tıklanabilir, drawer açar */}
-              <button
-                type="button"
-                className="tab-pill"
-                style={{ borderColor: toplamUyari > 0 ? 'var(--red)' : 'var(--green)', color: toplamUyari > 0 ? 'var(--red)' : 'var(--green)' }}
+                style={{ borderColor: toplamUyari > 0 ? 'var(--red)' : 'var(--green)', color: toplamUyari > 0 ? 'var(--red)' : 'var(--green)', fontWeight: 800, marginLeft: 'auto' }}
                 title={toplamUyari === 0 ? 'Tüm şubeler normal — tıkla' : uyariParcalar.join(' · ')}
                 onClick={() => setAlertDrawerAcik(true)}
               >
@@ -6549,6 +6553,8 @@ export default function OperasyonMerkezi() {
                 <span style={{ fontWeight: 800 }}>{toplamUyari}</span>
               </button>
             </div>
+              );
+            })()}
 
             {/* ════ ALERT DRAWER ════ */}
             {alertDrawerAcik && (() => {
