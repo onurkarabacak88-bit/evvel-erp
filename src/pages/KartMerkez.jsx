@@ -152,13 +152,13 @@ export default function KartMerkez({ onNavigate }) {
     </div>
   );
 
-  // Aciliyet/sıklık sırası: günlük bakılan + zaman-kritik üstte, analiz altta
+  // Aciliyet/sıklık sırası: günlük bakılan + zaman-kritik üstte, analiz altta.
+  // Öncelik Sırası + Kapanış Planı KALDIRILDI → tek borç motoru "Borç Koçu" sekmesinde
+  // (çığ/kartopu + kurtuluş projeksiyonu, backend hesaplı). Tekrar/iki motor tutarsızlığı bitti.
   const TABS = [
     { id: 'genel', label: '📊 Genel Durum' },
     { id: 'takvim', label: '📅 Ödeme Takvimi' },
-    { id: 'oncelik', label: '🎯 Öncelik Sırası' },
     { id: 'strateji', label: '🤖 Strateji Motoru' },
-    { id: 'plan', label: '🗓 Kapanış Planı' },
   ];
 
   return (
@@ -196,19 +196,24 @@ export default function KartMerkez({ onNavigate }) {
         ))}
       </div>
 
-      {/* TABS */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
-        {TABS.map(t => (
-          <button key={t.id} onClick={() => setAktifTab(t.id)}
-            style={{
-              padding: '8px 14px', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer',
-              background: aktifTab === t.id ? 'var(--primary)' : 'transparent',
-              color: aktifTab === t.id ? '#fff' : 'var(--text2)',
-              borderRadius: '6px 6px 0 0',
-            }}>
-            {t.label}
-          </button>
-        ))}
+      {/* TABS — segment kontrol (kabuktaki kart yönetimi tasarım diliyle tutarlı) */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'inline-flex', gap: 3, background: 'var(--bg3)', borderRadius: 9, padding: 3 }}>
+          {TABS.map(t => (
+            <button key={t.id} type="button" onClick={() => setAktifTab(t.id)}
+              style={{
+                padding: '7px 13px', fontSize: 12.5, fontWeight: aktifTab === t.id ? 700 : 500,
+                border: 'none', borderRadius: 6, cursor: 'pointer',
+                background: aktifTab === t.id ? 'var(--primary)' : 'transparent',
+                color: aktifTab === t.id ? '#fff' : 'var(--text2)', transition: 'background .15s',
+              }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <span style={{ fontSize: 11.5, color: 'var(--text3)' }}>
+          🧭 Borç kapatma planı (çığ/kartopu) için üstteki <strong style={{ color: 'var(--purple)' }}>Borç Koçu</strong> sekmesi
+        </span>
       </div>
 
       {/* TAB: GENEL DURUM */}
