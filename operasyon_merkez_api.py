@@ -6962,6 +6962,18 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
         pl_raw = body.payload or {}
         payload = {k: v for k, v in pl_raw.items() if not str(k).startswith("_")}
 
+        # ÇİFT MALİ KAYIT KAPISI: uyarı zaten çözülmüşse (okundu=TRUE) ikinci /kaynak-duzelt
+        # çağrısı (iki sekme, ağ retry, geri-gönder) yeni gider/ciro YAZMASIN. /coz ile simetrik.
+        # 'gercek_acik' idempotent (COALESCE) olduğundan muaf.
+        if uyari.get("okundu") and sebep != "gercek_acik":
+            return {
+                "durum": "zaten_cozulmus",
+                "uyari_id": uyari_id,
+                "eski_fark": eski_fark,
+                "yeni_fark": eski_fark,
+                "otomatik_cozuldu": True,
+            }
+
         # 1+2. Sebebe göre kaynak düzeltme
         if sebep == "ciro_yanlis":
             if uyari_tip == "ACILIS_KASA_FARK":

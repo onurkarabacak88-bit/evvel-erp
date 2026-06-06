@@ -4151,6 +4151,7 @@ export default function OperasyonMerkezi() {
     // Bugünkü görünümde 2 dakikada bir otomatik yenile
     if (kapanisTakipTarih === isGunuIsoIstanbul()) {
       kapanisTakipIntervalRef.current = setInterval(() => {
+        if (document.hidden) return;  // arka plan sekmesinde boşa istek/yazma yapma
         yukleKapanisTakip(kapanisTakipTarih, { silent: true });
       }, 120_000);
     }
@@ -4173,6 +4174,7 @@ export default function OperasyonMerkezi() {
     yukleAcilisKasaTakip(acilisKasaTakipTarih);
     if (acilisKasaTakipTarih === isGunuIsoIstanbul()) {
       acilisKasaTakipIntervalRef.current = setInterval(() => {
+        if (document.hidden) return;  // arka plan sekmesinde boşa istek yapma
         yukleAcilisKasaTakip(acilisKasaTakipTarih, { silent: true });
       }, 120_000);
     }
@@ -4854,7 +4856,7 @@ export default function OperasyonMerkezi() {
       }
     };
     loadOzet();
-    const id = setInterval(loadOzet, 25000);
+    const id = setInterval(() => { if (!document.hidden) loadOzet(); }, 25000);
     const onVis = () => {
       if (document.visibilityState === 'visible') loadOzet();
     };
