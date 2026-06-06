@@ -3166,14 +3166,22 @@ def _onayla_tx(cur, oid: str):
         insert_kasa_hareketi(cur, tarih, islem_turu, signed_tutar,
             f"Onaylandı: {onay['aciklama']}", onay['kaynak_tablo'], onay['kaynak_id'],
             ref_id=oid, ref_type='ONAY')
-        # SABIT_GIDER / BORC_TAKSIT: bağlı odeme_plani'nı odendi yap — yuk_7'den çıksın
+        # SABIT_GIDER / BORC_TAKSIT: bağlı odeme_plani'nı odendi yap — yuk_7'den çıksın.
+        # KÖK DÜZELTME: önceden "aynı ay" (DATE_TRUNC) eşleşmesi kullanılıyordu; ödeme
+        # planın vade ayından farklı ayda yapılınca (geç/erken ödeme) hiçbir plan
+        # kapanmıyor, panelde "vadesi geçmiş" kalıyordu. Artık ay'dan bağımsız olarak
+        # bu kaynağın EN ESKİ açık planı kapatılır (bir ödeme = en eski yükümlülük).
         if islem_turu in ('SABIT_GIDER', 'BORC_TAKSIT', 'PERSONEL_MAAS'):
             cur.execute("""
                 UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s
-                WHERE kaynak_tablo=%s AND kaynak_id=%s
-                AND durum IN ('bekliyor','onay_bekliyor')
-                AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
-            """, (tarih, onay['kaynak_tablo'], onay['kaynak_id'], tarih))
+                WHERE id = (
+                    SELECT id FROM odeme_plani
+                    WHERE kaynak_tablo=%s AND kaynak_id=%s
+                    AND durum IN ('bekliyor','onay_bekliyor')
+                    ORDER BY tarih ASC
+                    LIMIT 1
+                )
+            """, (tarih, onay['kaynak_tablo'], onay['kaynak_id']))
     # Onay durumunu güncelle — vadeli_alim_kapat bazı kayıtları önceden onaylanmış yapabilir
     cur.execute("UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW() WHERE id=%s AND durum='bekliyor'", (oid,))
     if cur.rowcount == 0:
@@ -4906,18 +4914,29 @@ def fatura_ode(body: FaturaOdemeModel):
 
         # Bağlı ödeme planını ÖDENDİ yap — yoksa kasa kaydı oluşsa da plan 'bekliyor'
         # kalıp CFO panelde "vadesi geçmiş borç" + ödenmedi olarak görünür (çift gösterim).
+        # KÖK DÜZELTME: "aynı ay" filtresi yerine ay'dan bağımsız EN ESKİ açık plan
+        # kapatılır (geç/erken ödemede de doğru çalışır). Üstteki dedup guard'ları aynı
+        # ay için ikinci ödemeyi zaten engellediğinden tek plan kapanır.
         cur.execute("""
             UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s
-            WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
-            AND durum IN ('bekliyor','onay_bekliyor')
-            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
-        """, (str(body.tarih), body.sabit_gider_id, str(body.tarih)))
-        # Aynı gider+ay için bekleyen onay kuyruğu kaydını kapat — onay merkezden düşsün.
+            WHERE id = (
+                SELECT id FROM odeme_plani
+                WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+                AND durum IN ('bekliyor','onay_bekliyor')
+                ORDER BY tarih ASC
+                LIMIT 1
+            )
+        """, (str(body.tarih), body.sabit_gider_id))
+        # Bekleyen onay kuyruğu kaydını kapat (en eski) — onay merkezden düşsün.
         cur.execute("""
             UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
-            WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s AND durum='bekliyor'
-            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
-        """, (body.sabit_gider_id, str(body.tarih)))
+            WHERE id = (
+                SELECT id FROM onay_kuyrugu
+                WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s AND durum='bekliyor'
+                ORDER BY tarih ASC
+                LIMIT 1
+            )
+        """, (body.sabit_gider_id,))
 
         audit(cur, 'sabit_giderler', body.sabit_gider_id, 'FATURA_ODENDI',
               yeni={'tutar': body.tutar, 'tarih': str(body.tarih)})
