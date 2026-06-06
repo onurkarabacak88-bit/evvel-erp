@@ -9157,6 +9157,7 @@ def whatsapp_onizle(tarih: Optional[str] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/whatsapp/gonder")
 @app.post("/api/whatsapp/gonder")
 def whatsapp_manuel_gonder(tarih: Optional[str] = None):
     """Mesajı hemen gönderir (manuel tetikleme, test amaçlı)."""
