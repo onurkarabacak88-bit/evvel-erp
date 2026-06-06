@@ -50,41 +50,64 @@ def _trend(simdiki, onceki) -> str:
 
 # ── Veri Toplama ──────────────────────────────────────────────────────────────
 
+def _sube_ciro_tarih(cur, tarih: date) -> dict:
+    """
+    Bir tarihin şube bazlı ciro toplamları.
+    Önce onaylı ciro (ciro.durum='aktif', toplam kolonu).
+    Yoksa onay bekleyen taslak (ciro_taslak.durum='bekliyor', nakit+pos+online).
+    Panel ile aynı mantık.
+    """
+    # Onaylı ciro
+    cur.execute("""
+        SELECT sube_id, COALESCE(SUM(toplam), 0) AS tutar
+        FROM ciro
+        WHERE tarih = %s AND durum = 'aktif'
+        GROUP BY sube_id
+    """, (tarih,))
+    aktif = {str(r["sube_id"]): float(r["tutar"] or 0) for r in (cur.fetchall() or [])}
+
+    # Taslak (onay bekleyen) — aktif ciro olmayan şubeler için
+    cur.execute("""
+        SELECT sube_id,
+               COALESCE(SUM(COALESCE(nakit,0) + COALESCE(pos,0) + COALESCE(online,0)), 0) AS tutar
+        FROM ciro_taslak
+        WHERE tarih = %s AND durum = 'bekliyor'
+        GROUP BY sube_id
+    """, (tarih,))
+    for r in (cur.fetchall() or []):
+        sid = str(r["sube_id"])
+        if sid not in aktif:  # aktif ciro varsa taslağı kullanma
+            aktif[sid] = float(r["tutar"] or 0)
+
+    return aktif  # {sube_id: tutar}
+
+
 def _ciro_verileri(cur, tarih: date) -> dict:
     """O günün şube bazlı ciroları + dünle karşılaştırma."""
     dun = tarih - timedelta(days=1)
 
-    cur.execute("""
-        SELECT s.ad AS sube_adi, s.id AS sube_id,
-               COALESCE(SUM(c.nakit + c.pos + c.online), 0) AS toplam
-        FROM subeler s
-        LEFT JOIN ciro c ON c.sube_id = s.id AND c.tarih = %s
-        WHERE s.aktif = TRUE
-        GROUP BY s.id, s.ad
-        ORDER BY s.ad
-    """, (tarih,))
-    bugun_rows = {r["sube_id"]: r for r in (cur.fetchall() or [])}
+    # Aktif şubeler
+    cur.execute("SELECT id, ad FROM subeler WHERE aktif = TRUE ORDER BY ad")
+    subeler_liste = cur.fetchall() or []
 
-    cur.execute("""
-        SELECT sube_id, COALESCE(SUM(nakit + pos + online), 0) AS toplam
-        FROM ciro WHERE tarih = %s GROUP BY sube_id
-    """, (dun,))
-    dun_rows = {r["sube_id"]: float(r["toplam"] or 0) for r in (cur.fetchall() or [])}
+    bugun_map = _sube_ciro_tarih(cur, tarih)
+    dun_map   = _sube_ciro_tarih(cur, dun)
 
     subeler = []
     toplam_bugun = 0
     toplam_dun = 0
 
-    for sid, row in bugun_rows.items():
-        ciro = float(row["toplam"] or 0)
-        d = dun_rows.get(sid, 0)
+    for row in subeler_liste:
+        sid = str(row["id"])
+        ciro = bugun_map.get(sid, 0)
+        d    = dun_map.get(sid, 0)
         toplam_bugun += ciro
-        toplam_dun += d
+        toplam_dun   += d
         subeler.append({
-            "ad": row["sube_adi"],
-            "ciro": ciro,
-            "dun": d,
-            "trend": _trend(ciro, d),
+            "ad":      row["ad"],
+            "ciro":    ciro,
+            "dun":     d,
+            "trend":   _trend(ciro, d),
             "girilmis": ciro > 0,
         })
 
@@ -158,15 +181,33 @@ def _yarin_odemeler(cur, tarih: date) -> list:
 
 
 def _bu_ay_ciro(cur, tarih: date) -> float:
-    """Bu ayın başından bugüne kümülatif ciro."""
+    """Bu ayın başından bugüne kümülatif ciro — aktif + taslak (panel mantığıyla)."""
     ay_basi = tarih.replace(day=1)
+
+    # Onaylı cirolar
     cur.execute("""
-        SELECT COALESCE(SUM(nakit + pos + online), 0) AS toplam
+        SELECT COALESCE(SUM(toplam), 0) AS tutar
         FROM ciro
-        WHERE tarih >= %s AND tarih <= %s
+        WHERE tarih >= %s AND tarih <= %s AND durum = 'aktif'
     """, (ay_basi, tarih))
-    row = cur.fetchone()
-    return float(row["toplam"] or 0) if row else 0
+    aktif = float((cur.fetchone() or {}).get("tutar") or 0)
+
+    # Taslak — o gün için aktif ciro olmayan şube/gün çiftleri
+    cur.execute("""
+        SELECT COALESCE(SUM(COALESCE(ct.nakit,0) + COALESCE(ct.pos,0) + COALESCE(ct.online,0)), 0) AS tutar
+        FROM ciro_taslak ct
+        WHERE ct.tarih >= %s AND ct.tarih <= %s
+          AND ct.durum = 'bekliyor'
+          AND NOT EXISTS (
+              SELECT 1 FROM ciro c
+              WHERE c.sube_id = ct.sube_id
+                AND c.tarih = ct.tarih
+                AND c.durum = 'aktif'
+          )
+    """, (ay_basi, tarih))
+    taslak = float((cur.fetchone() or {}).get("tutar") or 0)
+
+    return aktif + taslak
 
 
 def _toptanci_teslimler(cur, tarih: date) -> list:
