@@ -8903,7 +8903,7 @@ export default function OperasyonMerkezi() {
                 </div>
                 {/* Tablo */}
                 <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                  <table className="table" style={{ fontSize: 12 }}>
                     <thead>
                       <tr style={{ background: 'var(--bg2)' }}>
                         <th style={{ padding: '5px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600, fontSize: 11 }}>Ürün</th>
@@ -8972,7 +8972,7 @@ export default function OperasyonMerkezi() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {urunAcHaftaYukleniyor && urunAcHaftaSatirlari.length === 0 ? (
-                <div className="empty" style={{ padding: '14px 12px' }}><p style={{ margin: 0 }}>Haftalık özet yükleniyor…</p></div>
+                <div className="loading" style={{ padding: '14px 12px' }}><div className="spinner" />Haftalık özet yükleniyor…</div>
               ) : (urunAcHaftaSatirlari.length ? urunAcHaftaSatirlari : Array.from({ length: 7 }, (_, i) => ({
                 tarih: isoTariheGunEkle(bugunIsoTarih(), -i),
                 toplam_islem: 0,
@@ -9197,7 +9197,7 @@ export default function OperasyonMerkezi() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {kullanilanHaftaYukleniyor && kullanilanHaftaSatirlari.length === 0 ? (
-                <div className="empty" style={{ padding: '14px 12px' }}><p style={{ margin: 0 }}>Haftalık özet yükleniyor…</p></div>
+                <div className="loading" style={{ padding: '14px 12px' }}><div className="spinner" />Haftalık özet yükleniyor…</div>
               ) : (kullanilanHaftaSatirlari.length ? kullanilanHaftaSatirlari : Array.from({ length: 7 }, (_, i) => ({
                 tarih: isoTariheGunEkle(bugunIsoTarih(), -i),
                 toplam_islem: 0,
@@ -9418,7 +9418,7 @@ export default function OperasyonMerkezi() {
                       </div>
                     </div>
                     <div style={{ overflowX: 'auto' }}>
-                      <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                      <table className="table" style={{ fontSize: 12 }}>
                         <thead>
                           <tr style={{ background: 'var(--bg2)' }}>
                             <th style={{ padding: '5px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600, fontSize: 11 }}>Ürün</th>
@@ -9920,7 +9920,7 @@ export default function OperasyonMerkezi() {
               <details style={{ marginTop: 4 }}>
                 <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: 'var(--text2)', padding: '6px 2px' }}>📋 Detaylı tablo — tüm sütunlar</summary>
               <div style={{ overflowX: 'auto', borderRadius: 10, border: '1px solid var(--border)', marginTop: 8 }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <table className="table">
                   <thead>
                     <tr style={{ background: 'var(--bg2)' }}>
                       {['Şube', 'Kapanış', 'Saat', 'Kapanış Personeli', 'Ciro Durumu', 'Gönderen', 'Nakit', 'POS', 'Online', 'Toplam', 'Sabah kasa', 'Teslim', 'Devir', 'Ara teslim', 'A.gider (N)', 'Nakit Δ'].map((h, i) => (
@@ -10228,7 +10228,7 @@ export default function OperasyonMerkezi() {
 
             {akt && satirlar.length > 0 && (
               <div style={{ overflowX: 'auto', borderRadius: 10, border: '1px solid var(--border)' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 980 }}>
+                <table className="table" style={{ minWidth: 980 }}>
                   <thead>
                     <tr style={{ background: 'var(--bg2)' }}>
                       {['Şube', 'Durum', 'Saat', 'Sabahçı', 'Dün devir (beklenen)', 'Sayılan kasa', 'Fark', 'Uyumsuzluk'].map((h) => (
@@ -10530,7 +10530,7 @@ export default function OperasyonMerkezi() {
               });
               const ord = { acilmadi: 0, gec: 1, bekliyor: 2, acildi: 3 };
               list.sort((a, b) => (ord[a.durum] - ord[b.durum]) || String(a.k.sube_adi || '').localeCompare(String(b.k.sube_adi || ''), 'tr'));
-              if (!list.length) return <div className="empty"><p>Kartlar yükleniyor…</p></div>;
+              if (!list.length) return <div className="loading"><div className="spinner" />Kartlar yükleniyor…</div>;
               const rozet = (c) => ({ background: 'var(--bg2)', color: c, border: `1px solid ${c}`, borderRadius: 999, padding: '2px 10px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' });
               const durumRozet = (d) => d === 'acildi' ? <span style={rozet('#22c55e')}>✅ Açıldı</span>
                 : d === 'gec' ? <span style={rozet('#f97316')}>🟡 Geç açıldı</span>
@@ -10588,7 +10588,7 @@ export default function OperasyonMerkezi() {
               </>
             )}
             {hubAcKapBucket.subeSayisi === 0 && (
-              <div className="empty"><p>Kartlar yükleniyor…</p></div>
+              <div className="loading"><div className="spinner" />Kartlar yükleniyor…</div>
             )}
           </div>
           )}
@@ -10628,7 +10628,7 @@ export default function OperasyonMerkezi() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {gecAcilanHaftaYukleniyor && gecAcilanHaftaSatirlari.length === 0 ? (
-                <div className="empty" style={{ padding: '14px 12px' }}><p style={{ margin: 0 }}>Haftalık özet yükleniyor…</p></div>
+                <div className="loading" style={{ padding: '14px 12px' }}><div className="spinner" />Haftalık özet yükleniyor…</div>
               ) : (gecAcilanHaftaSatirlari.length ? gecAcilanHaftaSatirlari : Array.from({ length: 7 }, (_, i) => ({
                 tarih: isoTariheGunEkle(bugunIsoTarih(), -i),
                 gec_toplam: 0, acilmayan_toplam: 0, ozetMetin: '', plan_kayitsiz_toplam: 0, planOzetMetin: '',
@@ -10764,7 +10764,7 @@ export default function OperasyonMerkezi() {
           {gecAcilanGorunenKayitlar.length > 0 ? (
             <div style={{ overflowX: 'auto' }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text3)', marginBottom: 6 }}>Geç tamamlanan açılışlar</div>
-              <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+              <table className="table" style={{ fontSize: 12 }}>
                 <thead>
                   <tr style={{ background: 'var(--bg2)' }}>
                     <th style={{ padding: '7px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600 }}>Şube</th>
@@ -10841,7 +10841,7 @@ export default function OperasyonMerkezi() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {gecAcilanHaftaYukleniyor && gecAcilanHaftaSatirlari.length === 0 ? (
-                <div className="empty" style={{ padding: '14px 12px' }}><p style={{ margin: 0 }}>Haftalık özet yükleniyor…</p></div>
+                <div className="loading" style={{ padding: '14px 12px' }}><div className="spinner" />Haftalık özet yükleniyor…</div>
               ) : (gecAcilanHaftaSatirlari.length ? gecAcilanHaftaSatirlari : Array.from({ length: 7 }, (_, i) => ({
                 tarih: isoTariheGunEkle(bugunIsoTarih(), -i), plan_kayitsiz_toplam: 0, planOzetMetin: '',
               }))).map((s) => {
@@ -10901,7 +10901,7 @@ export default function OperasyonMerkezi() {
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text3)', marginBottom: 6 }}>Vardiya planı var ama ACILIS eventi henüz oluşmamış</div>
-              <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+              <table className="table" style={{ fontSize: 12 }}>
                 <thead>
                   <tr style={{ background: 'var(--bg2)' }}>
                     <th style={{ padding: '7px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600 }}>Şube</th>
@@ -10996,7 +10996,7 @@ export default function OperasyonMerkezi() {
 
                     {acik && (
                       <div style={{ marginTop: 10, overflowX: 'auto' }}>
-                        <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                        <table className="table" style={{ fontSize: 12 }}>
                           <thead>
                             <tr style={{ background: 'var(--bg2)' }}>
                               <th style={{ padding: '6px 8px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600 }}>Tarih</th>
@@ -11600,7 +11600,7 @@ export default function OperasyonMerkezi() {
                 </div>
               ) : (
                 <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <table className="table">
                     <thead>
                       <tr style={{ borderBottom: '2px solid var(--border)', background: 'var(--bg)' }}>
                         {[['Personel', 'left'], ['Şube', 'left'], ['50₺+ açık', 'center'], ['Toplam açık', 'right'], ['En yüksek', 'right'], ['Son', 'center'], ['Durum', 'center']].map(([h, a]) => (
@@ -11654,7 +11654,7 @@ export default function OperasyonMerkezi() {
                 </div>
               ) : (
                 <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <table className="table" style={{ fontSize: 12 }}>
                     <thead>
                       <tr style={{ borderBottom: '2px solid var(--border)', background: 'var(--bg)' }}>
                         {[['Tarih','left'],['Şube','left'],['Kasiyer','left'],['Sistem beklentisi','right'],['Kasiyer beyanı','right'],['Açık','right'],['Seviye','center']].map(([h,a]) => (
@@ -11870,7 +11870,7 @@ export default function OperasyonMerkezi() {
                     </div>
                   ) : (
                     <div style={{ overflowX: 'auto' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <table className="table" style={{ fontSize: 12 }}>
                         <thead>
                           <tr style={{ background: 'var(--bg2)', borderBottom: '2px solid var(--border)' }}>
                             {['Tarih', 'Şube', 'Ciro', 'Teorik Maliyet', 'Food Cost %', 'Stok Değeri', 'Alış Fiyatlı Kalem'].map(h => (
@@ -12026,7 +12026,7 @@ export default function OperasyonMerkezi() {
                   </div>
                 ) : (
                   <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <table className="table" style={{ fontSize: 12 }}>
                       <thead>
                         <tr style={{ background: 'var(--bg2)', borderBottom: '2px solid var(--border)' }}>
                           {['Kalem', 'Birim', 'Birim Maliyet', 'Geçerlilik', 'Tedarikçi', 'Notlar'].map(h => (
@@ -12363,7 +12363,7 @@ export default function OperasyonMerkezi() {
               </div>
             ) : (
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <table className="table" style={{ fontSize: 12 }}>
                   <thead>
                     <tr style={{ background: 'var(--bg2)', borderBottom: '2px solid var(--border)' }}>
                       {['Zaman', 'Şube', 'Kalem', 'Tür', 'Miktar', 'Önce → Sonra', 'Kaynak', 'Açıklama'].map(h => (
@@ -12443,7 +12443,7 @@ export default function OperasyonMerkezi() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {personelVardiyaUyumHaftaYukleniyor && personelVardiyaUyumHaftaSatirlari.length === 0 ? (
-                <div className="empty" style={{ padding: '14px 12px' }}><p style={{ margin: 0 }}>Haftalık özet yükleniyor…</p></div>
+                <div className="loading" style={{ padding: '14px 12px' }}><div className="spinner" />Haftalık özet yükleniyor…</div>
               ) : (personelVardiyaUyumHaftaSatirlari.length ? personelVardiyaUyumHaftaSatirlari : Array.from({ length: 7 }, (_, i) => ({
                 tarih: isoTariheGunEkle(bugunIsoTarih(), -i),
                 adet: 0,
