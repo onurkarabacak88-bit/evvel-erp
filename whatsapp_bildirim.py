@@ -96,30 +96,33 @@ def _ciro_verileri(cur, tarih: date) -> dict:
 
 
 def _kasa_verileri(cur, tarih: date) -> dict:
-    """Güncel kasa, bugün giren/çıkan."""
-    # En son kasa bakiyesi
+    """Güncel kasa bakiyesi (tüm zamanlar SUM) + bugün giren/çıkan."""
+    # Anlık kasa = kasa_etkisi=true olan tüm hareketlerin toplamı
     cur.execute("""
-        SELECT bakiye FROM kasa_hareketleri
-        ORDER BY olusturma DESC LIMIT 1
+        SELECT COALESCE(SUM(tutar), 0) AS bakiye
+        FROM kasa_hareketleri
+        WHERE kasa_etkisi = TRUE
     """)
     row = cur.fetchone()
     kasa = float(row["bakiye"] or 0) if row else 0
 
-    # Bugün giren (ciro + dış kaynak)
+    # Bugün giren (pozitif hareketler)
     cur.execute("""
         SELECT COALESCE(SUM(tutar), 0) AS toplam
         FROM kasa_hareketleri
         WHERE DATE(olusturma AT TIME ZONE 'Europe/Istanbul') = %s
-          AND tur IN ('ciro', 'dis_kaynak', 'giris', 'devir')
+          AND tutar > 0
+          AND kasa_etkisi = TRUE
     """, (tarih,))
     giren = float((cur.fetchone() or {}).get("toplam") or 0)
 
-    # Bugün çıkan (gider, ödeme vb.)
+    # Bugün çıkan (negatif hareketler)
     cur.execute("""
         SELECT COALESCE(SUM(ABS(tutar)), 0) AS toplam
         FROM kasa_hareketleri
         WHERE DATE(olusturma AT TIME ZONE 'Europe/Istanbul') = %s
           AND tutar < 0
+          AND kasa_etkisi = TRUE
     """, (tarih,))
     cikan = float((cur.fetchone() or {}).get("toplam") or 0)
 
