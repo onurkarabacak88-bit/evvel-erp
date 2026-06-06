@@ -1240,8 +1240,8 @@ function SubeKart({ k, onDetay, personelRisk, haftaTrend }) {
 
   // Kart rengi
   let borderColor = 'var(--border)';
-  if (b.kritik)       borderColor = 'var(--red)';
-  else if (b.geciken) borderColor = '#f08040';
+  if (b.kritik)       borderColor = 'var(--sev-kritik)';
+  else if (b.geciken) borderColor = 'var(--sev-uyari)';
 
   // Operasyon olaylarının durumu
   const allEv = op.events || [];
@@ -1707,8 +1707,8 @@ function DetayModal({ kart, onKapat, filtre, onYenileDetay }) {
 // ─── STOK KAYIP PANELİ ───────────────────────────────────────────────────────
 
 const RISK_CFG = {
-  yuksek: { label: 'Yüksek Risk', renk: '#ef4444', bg: 'rgba(239,68,68,0.1)', icon: '🔴' },
-  orta:   { label: 'Orta Risk',   renk: '#f97316', bg: 'rgba(249,115,22,0.1)', icon: '🟠' },
+  yuksek: { label: 'Yüksek Risk', renk: 'var(--sev-kritik)', bg: 'var(--sev-kritik-bg)', icon: '🔴' },
+  orta:   { label: 'Orta Risk',   renk: 'var(--sev-uyari)', bg: 'var(--sev-uyari-bg)', icon: '🟠' },
   dusuk:  { label: 'Düşük',       renk: '#94a3b8', bg: 'rgba(148,163,184,0.1)', icon: '⚪' },
 };
 

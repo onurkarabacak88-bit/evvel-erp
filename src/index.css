@@ -5,6 +5,11 @@
   --border:#2a2d35;--text:#e8e9ec;--text2:#b0b3bc;--text3:#6b6f7a;
   --green:#4caf84;--red:#e05c5c;--yellow:#e8c547;--blue:#5b9bd6;--purple:#9b72d4;
   --orange:#D4893A;
+  /* Şiddet (severity) token sözlüğü — Operasyon Merkezi şiddet renkleri için tek kaynak.
+     kritik=kırmızı, uyari=turuncu/amber, bilgi=mavi. Mevcut palet tonlarıyla uyumlu. */
+  --sev-kritik:#ef4444;--sev-kritik-bg:rgba(239,68,68,0.10);
+  --sev-uyari:#f97316;--sev-uyari-bg:rgba(249,115,22,0.10);
+  --sev-bilgi:var(--blue);--sev-bilgi-bg:rgba(91,155,214,0.10);
   --accent:#C8956A;--accent-dim:rgba(200,149,106,.12);--accent-border:rgba(200,149,106,.3);
   --font-mono:'JetBrains Mono',monospace;
 }
