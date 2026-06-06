@@ -4615,6 +4615,73 @@ def sabit_gider_odenmis_plan_esitle(uygula: bool = False):
         return {"onizleme": False, "esitlenen_adet": esit, "kayitlar": liste}
 
 
+@app.post("/api/odeme-plani/odenmis-plan-esitle")
+def odeme_plani_odenmis_esitle(uygula: bool = False):
+    """Geri-doldurma (TÜM kaynaklar): kasada ÖDENMİŞ kasa hareketi olduğu hâlde bağlı
+    ödeme planı hâlâ 'bekliyor'/'onay_bekliyor' kalmış kayıtları 'odendi' yapar.
+    /api/sabit-giderler/odenmis-plan-esitle'nin genel hâli — borc_envanteri, vadeli_alimlar,
+    personel ve sabit_giderler için de çalışır.
+
+    Sebep: ödeme yolları planı 'odendi' yaparken DATE_TRUNC('month', plan.tarih)=ödeme ayı
+    filtresi kullanır; ödeme planın vade ayından farklı bir ayda yapıldıysa UPDATE 0 satır
+    eşler → para kasadan çıkar ama plan 'bekliyor' kalır, panelde gecikmiş borç görünür.
+
+    Kasa kaydı iki şekilde bağlanmış olabilir:
+      (a) kaynak_tablo='odeme_plani' AND kaynak_id=plan.id (borç/kart anapara)
+      (b) kaynak_tablo=plan.kaynak_tablo AND kaynak_id=plan.kaynak_id (sabit/vadeli/personel)
+    Sadece kart_id'siz (nakit/kaynak bağlı) planlar — kart planlarının kendi guard'ı vardır.
+    Önizleme (uygula=False) → liste; uygula=True → düzeltir + ilişkili onay kuyruğunu kapatır."""
+    _esit_kosul = """
+        op.kart_id IS NULL
+        AND op.kaynak_id IS NOT NULL
+        AND op.durum IN ('bekliyor','onay_bekliyor')
+        AND EXISTS (
+            SELECT 1 FROM kasa_hareketleri kh
+            WHERE kh.kasa_etkisi = TRUE AND kh.durum = 'aktif'
+              AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih)
+              AND (
+                    (kh.kaynak_tablo = 'odeme_plani' AND kh.kaynak_id = op.id)
+                 OR (kh.kaynak_tablo = op.kaynak_tablo AND kh.kaynak_id = op.kaynak_id)
+              )
+        )
+    """
+    with db() as (conn, cur):
+        cur.execute(f"""
+            SELECT op.id::text, op.tarih, op.odenecek_tutar, op.durum,
+                   op.kaynak_tablo, op.kaynak_id::text, op.aciklama
+            FROM odeme_plani op
+            WHERE {_esit_kosul}
+            ORDER BY op.tarih ASC
+        """)
+        adaylar = [dict(r) for r in (cur.fetchall() or [])]
+        liste = [{"tarih": str(r["tarih"])[:10], "tutar": float(r["odenecek_tutar"] or 0),
+                  "durum": r["durum"], "kaynak_tablo": r["kaynak_tablo"],
+                  "aciklama": r["aciklama"]} for r in adaylar]
+        if not uygula:
+            return {"onizleme": True, "esitlenecek_adet": len(adaylar), "kayitlar": liste,
+                    "not": "uygula=true ile bu planlar 'odendi' yapılır."}
+        esit = 0
+        if adaylar:
+            cur.execute(f"""
+                UPDATE odeme_plani op SET durum='odendi',
+                    odeme_tarihi=COALESCE(op.odeme_tarihi, CURRENT_DATE)
+                WHERE {_esit_kosul}
+            """)
+            esit = cur.rowcount
+            # İlişkili bekleyen onayları da kapat (plan id veya kaynak id ile bağlı)
+            cur.execute("""
+                UPDATE onay_kuyrugu ok SET durum='onaylandi', onay_tarihi=NOW()
+                WHERE ok.durum='bekliyor'
+                AND EXISTS (
+                    SELECT 1 FROM odeme_plani op
+                    WHERE op.durum='odendi'
+                      AND (ok.kaynak_id = op.id::text OR
+                           (ok.kaynak_tablo = op.kaynak_tablo AND ok.kaynak_id = op.kaynak_id::text))
+                )
+            """)
+        return {"onizleme": False, "esitlenen_adet": esit, "kayitlar": liste}
+
+
 @app.get("/api/odeme-plani/mukerrer-tara")
 def odeme_plani_mukerrer_tara():
     """Tanı (read-only): aktif mükerrer ödeme planı grupları + mükerrer-engel index'i kurulu mu.

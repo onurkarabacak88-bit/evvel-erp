@@ -1263,13 +1263,37 @@ def finans_ozet_motoru():
         bu_ay_ciro = float(cur.fetchone()['ciro'])
 
         # ── BUGÜN VE GECİKMİŞ ÖDEMELER (gerçek veri — kırmızı alan) ──
+        # DEFANSİF: Plan 'bekliyor' kalmış olsa bile, kasada o gider/borç için aynı
+        # ay ÖDENMİŞ bir kasa hareketi varsa gecikmiş gösterme. Sebep: tüm ödeme
+        # yolları planı 'odendi' yaparken DATE_TRUNC('month', plan.tarih)=ödeme ayı
+        # filtresi kullanır; ödeme planın vade ayından farklı bir ayda yapılırsa
+        # (geç/erken ödeme) UPDATE 0 satır eşler, para kasadan çıkar ama plan
+        # 'bekliyor' kalır → panelde "vadesi geçmiş borç" olarak çift görünür.
+        # Kasa kaydı iki şekilde bağlanmış olabilir:
+        #   (a) kaynak_tablo='odeme_plani' AND kaynak_id=plan.id  (borç/kart anapara)
+        #   (b) kaynak_tablo=plan.kaynak_tablo AND kaynak_id=plan.kaynak_id (sabit/vadeli/personel)
+        # Sadece kart_id'siz (nakit/kaynak bağlı) planlar için uygulanır — kart
+        # planlarının kendi kart_bu_ay_odenen guard'ı zaten aşağıda var.
         cur.execute("""
-            SELECT id, aciklama, tarih::TEXT, odenecek_tutar, asgari_tutar,
-                   kaynak_tablo, kaynak_id, kart_id
-            FROM odeme_plani
-            WHERE durum IN ('bekliyor','onay_bekliyor')
-            AND tarih <= CURRENT_DATE
-            ORDER BY tarih ASC
+            SELECT op.id, op.aciklama, op.tarih::TEXT, op.odenecek_tutar, op.asgari_tutar,
+                   op.kaynak_tablo, op.kaynak_id, op.kart_id
+            FROM odeme_plani op
+            WHERE op.durum IN ('bekliyor','onay_bekliyor')
+            AND op.tarih <= CURRENT_DATE
+            AND NOT (
+                op.kart_id IS NULL
+                AND op.kaynak_id IS NOT NULL
+                AND EXISTS (
+                    SELECT 1 FROM kasa_hareketleri kh
+                    WHERE kh.kasa_etkisi = TRUE AND kh.durum = 'aktif'
+                      AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih)
+                      AND (
+                            (kh.kaynak_tablo = 'odeme_plani' AND kh.kaynak_id = op.id)
+                         OR (kh.kaynak_tablo = op.kaynak_tablo AND kh.kaynak_id = op.kaynak_id)
+                      )
+                )
+            )
+            ORDER BY op.tarih ASC
         """)
         bugun_odemeler = []
         for r in cur.fetchall():
@@ -1308,14 +1332,29 @@ def finans_ozet_motoru():
             bugun_odemeler.append(row_bo)
 
         # ── YAKLAŞAN ÖDEMELER (yarın+ 30 gün — mavi bant) ──────
+        # Aynı defansif "zaten ödenmiş" guard'ı yaklaşanlara da uygula — erken
+        # ödenen (vade ayı içinde önceden kapatılan) plan mavi bantta görünmesin.
         cur.execute("""
-            SELECT id, aciklama, tarih::TEXT, odenecek_tutar, asgari_tutar,
-                   kaynak_tablo, kaynak_id, kart_id
-            FROM odeme_plani
-            WHERE durum IN ('bekliyor','onay_bekliyor')
-            AND tarih BETWEEN CURRENT_DATE + INTERVAL '1 day'
+            SELECT op.id, op.aciklama, op.tarih::TEXT, op.odenecek_tutar, op.asgari_tutar,
+                   op.kaynak_tablo, op.kaynak_id, op.kart_id
+            FROM odeme_plani op
+            WHERE op.durum IN ('bekliyor','onay_bekliyor')
+            AND op.tarih BETWEEN CURRENT_DATE + INTERVAL '1 day'
                           AND CURRENT_DATE + INTERVAL '30 days'
-            ORDER BY tarih ASC
+            AND NOT (
+                op.kart_id IS NULL
+                AND op.kaynak_id IS NOT NULL
+                AND EXISTS (
+                    SELECT 1 FROM kasa_hareketleri kh
+                    WHERE kh.kasa_etkisi = TRUE AND kh.durum = 'aktif'
+                      AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih)
+                      AND (
+                            (kh.kaynak_tablo = 'odeme_plani' AND kh.kaynak_id = op.id)
+                         OR (kh.kaynak_tablo = op.kaynak_tablo AND kh.kaynak_id = op.kaynak_id)
+                      )
+                )
+            )
+            ORDER BY op.tarih ASC
         """)
         yaklasan_odemeler = []
         for r in cur.fetchall():
