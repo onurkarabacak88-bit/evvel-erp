@@ -2357,7 +2357,9 @@ def _ekstre_eslesme_mutabakat(sonuc):
             sot = sonuc.get("son_odeme_tarihi")
             asg = sonuc.get("asgari_tutar")
             brc = sonuc.get("donem_borcu")
-            if sot and (asg or brc):
+            # Sistem başlangıcı 2026-06-01: Haziran ÖNCESİ son ödemeli ekstreden plan üretilmez
+            # (eski ekstre tekrar yüklense bile hayalet 'vadesi geçmiş' oluşmasın).
+            if sot and (asg or brc) and str(sot)[:10] >= '2026-06-01':
                 acik = f"Kart ekstresi: {kart['kart_adi']} — asgari {asg}"
                 cur.execute(
                     """UPDATE odeme_plani SET tarih=%s::date, odenecek_tutar=%s, asgari_tutar=%s,
@@ -2427,8 +2429,9 @@ def kart_manuel_ekstre(kid: str, body: ManuelEkstreBody):
                  donem_borcu=EXCLUDED.donem_borcu, asgari_tutar=EXCLUDED.asgari_tutar, kaynak='manuel'""",
             (kid, kesim, kesim, sot, borc, asg),
         )
-        # 3) CFO ödeme planı
-        if asg or borc:
+        # 3) CFO ödeme planı — sistem başlangıcı 2026-06-01: Haziran öncesi son ödemeli
+        #    ekstreden plan üretilmez (eski ekstre tekrar girilse de hayalet vadesi geçmiş olmasın)
+        if (asg or borc) and str(sot)[:10] >= '2026-06-01':
             acik = f"Kart ekstresi (manuel): {kart_adi} — asgari {asg}"
             cur.execute(
                 """UPDATE odeme_plani SET tarih=%s::date, odenecek_tutar=%s, asgari_tutar=%s,
