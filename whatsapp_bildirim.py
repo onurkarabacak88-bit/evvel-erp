@@ -171,11 +171,10 @@ def _kasa_verileri(cur, tarih: date) -> dict:
 def _anlik_giderler(cur, tarih: date) -> list:
     """O günün anlık gider kalemleri."""
     cur.execute("""
-        SELECT aciklama, kategori,
-               COALESCE(nakit, 0) + COALESCE(kart, 0) AS tutar
+        SELECT aciklama, kategori, COALESCE(tutar, 0) AS tutar
         FROM anlik_giderler
-        WHERE DATE(olusturma AT TIME ZONE 'Europe/Istanbul') = %s
-          AND (durum IS NULL OR durum != 'iptal')
+        WHERE tarih = %s
+          AND (durum IS NULL OR durum NOT IN ('iptal', 'red'))
         ORDER BY olusturma DESC
         LIMIT 20
     """, (tarih,))
