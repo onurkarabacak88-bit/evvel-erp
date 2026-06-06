@@ -573,7 +573,13 @@ export default function Panel({ onNavigate }) {
             <div style={{ marginTop: 4 }}>
               {u.tip === 'degisken'
                 ? <button className="btn btn-secondary btn-sm" onClick={() => { sessionStorage.setItem('sabit_gider_fatura_id', u.kaynak_id || ''); nav('sabit-giderler'); }}>Öde →</button>
-                : <button className="btn btn-secondary btn-sm" onClick={() => yonlendir(u)}>{yonlendirLabel(u)}</button>
+                : u.odeme_id
+                  ? <div style={{ display: 'flex', gap: 4, marginTop: 2 }}>
+                      <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 6px' }} onClick={() => odemeModalAcVadeliKontrol(u)}>Öde</button>
+                      <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 6px' }} onClick={() => odemeErteleAc(u.odeme_id, u.aciklama, u.tarih)}>Ertele</button>
+                      <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 6px' }} onClick={() => kismiModalAc(u)}>Kısmi</button>
+                    </div>
+                  : <button className="btn btn-secondary btn-sm" onClick={() => yonlendir(u)}>{yonlendirLabel(u)}</button>
               }
             </div>
           </div>
@@ -591,7 +597,13 @@ export default function Panel({ onNavigate }) {
           <div style={{ flexShrink: 0 }}>
             {u.tip === 'degisken'
               ? <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => { sessionStorage.setItem('sabit_gider_fatura_id', u.kaynak_id || ''); nav('sabit-giderler'); }}>Öde</button>
-              : <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => yonlendir(u)}>Git →</button>
+              : u.odeme_id
+                ? <div style={{ display: 'flex', gap: 3 }}>
+                    <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 6px' }} onClick={() => odemeModalAcVadeliKontrol(u)}>Öde</button>
+                    <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 6px' }} onClick={() => odemeErteleAc(u.odeme_id, u.aciklama, u.tarih)}>Ertele</button>
+                    <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 6px' }} onClick={() => kismiModalAc(u)}>Kısmi</button>
+                  </div>
+                : <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => yonlendir(u)}>Git →</button>
             }
           </div>
         </div>
