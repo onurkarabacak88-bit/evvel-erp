@@ -1013,6 +1013,53 @@ export function SabitGiderler() {
         </div>
       )}
 
+      {sabitGecmisModal && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setSabitGecmisModal(null)}>
+          <div className="modal" style={{maxWidth:620,width:'95%'}}>
+            <div className="modal-header">
+              <h3>📋 {sabitGecmisModal.gider_adi} — Ödeme Geçmişi</h3>
+              <button className="modal-close" onClick={()=>setSabitGecmisModal(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              {!sabitGecmisData && <div style={{textAlign:'center',padding:40}}><div className="spinner"/></div>}
+              {sabitGecmisData && (<>
+                <div className="grid grid-2" style={{gap:12,marginBottom:16}}>
+                  <div className="stat-box"><div className="stat-label">Toplam Ödenen</div><div className="stat-value" style={{color:'var(--green)'}}>{parseInt(sabitGecmisData.ozet?.toplam_odenen||0).toLocaleString('tr-TR')} ₺</div></div>
+                  <div className="stat-box"><div className="stat-label">Ödeme Adedi</div><div className="stat-value">{sabitGecmisData.ozet?.odeme_adedi||0}</div></div>
+                </div>
+                {(sabitGecmisData.bekleyenler||[]).length > 0 && (<>
+                  <h4 style={{fontSize:12,fontWeight:600,color:'var(--text2)',marginBottom:8}}>⏳ Bekleyen ({sabitGecmisData.bekleyenler.length})</h4>
+                  <div style={{marginBottom:16}}>
+                    {sabitGecmisData.bekleyenler.map((o,i)=>(
+                      <div key={i} className="flex" style={{justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid var(--border)',fontSize:13}}>
+                        <span>{o.tarih?.slice(0,10)}</span>
+                        <span style={{fontWeight:600}}>{parseInt(o.tutar||0).toLocaleString('tr-TR')} ₺</span>
+                        <span><span className="badge badge-gray">{o.durum==='onay_bekliyor'?'Onay bekliyor':'Bekliyor'}</span></span>
+                      </div>
+                    ))}
+                  </div>
+                </>)}
+                {(sabitGecmisData.odenenler||[]).length > 0 ? (<>
+                  <h4 style={{fontSize:12,fontWeight:600,color:'var(--text2)',marginBottom:8}}>✅ Ödenenler ({sabitGecmisData.odenenler.length})</h4>
+                  <div>
+                    {sabitGecmisData.odenenler.map((o,i)=>(
+                      <div key={i} className="flex" style={{justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid var(--border)',fontSize:13}}>
+                        <span>{o.tarih?.slice(0,10)}</span>
+                        <span style={{fontWeight:600}}>{parseInt(o.tutar||0).toLocaleString('tr-TR')} ₺</span>
+                        <span><span className="badge badge-green">✓ Ödendi</span></span>
+                      </div>
+                    ))}
+                  </div>
+                </>) : <div className="empty"><p>Henüz ödeme kaydı yok</p></div>}
+              </>)}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={()=>setSabitGecmisModal(null)}>Kapat</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showModal && (
         <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowModal(false)}>
           <div className="modal">

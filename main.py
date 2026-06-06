@@ -4533,6 +4533,58 @@ def odeme_plani_gecmis_temizle(baslangic: str = "2026-06-01", uygula: bool = Fal
         }
 
 
+@app.post("/api/sabit-giderler/odenmis-plan-esitle")
+def sabit_gider_odenmis_plan_esitle(uygula: bool = False):
+    """Geri-doldurma: kasada ÖDENMİŞ (SABIT_GIDER) kaydı olduğu hâlde bağlı ödeme planı
+    hâlâ 'bekliyor'/'onay_bekliyor' kalmış sabit giderleri 'odendi' yapar.
+    Bunlar 'ödenmiş giderler'de görünüp panelde aynı anda 'vadesi geçmiş borç' görünen
+    çift-gösterim kayıtlarıdır. Önizleme (uygula=False) → liste; uygula=True → düzeltir.
+    İlişkili bekleyen onay kuyruğu da kapatılır."""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT op.id::text, op.tarih, op.odenecek_tutar, op.durum, op.kaynak_id::text,
+                   COALESCE(sg.gider_adi, op.aciklama) AS gider_adi
+            FROM odeme_plani op
+            LEFT JOIN sabit_giderler sg ON sg.id = op.kaynak_id
+            WHERE op.kaynak_tablo='sabit_giderler'
+              AND op.durum IN ('bekliyor','onay_bekliyor')
+              AND EXISTS (
+                  SELECT 1 FROM kasa_hareketleri kh
+                  WHERE kh.kaynak_tablo='sabit_giderler' AND kh.kaynak_id=op.kaynak_id
+                    AND kh.islem_turu='SABIT_GIDER' AND kh.kasa_etkisi=true AND kh.durum='aktif'
+                    AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih)
+              )
+            ORDER BY op.tarih ASC
+        """)
+        adaylar = [dict(r) for r in (cur.fetchall() or [])]
+        liste = [{"tarih": str(r["tarih"])[:10], "tutar": float(r["odenecek_tutar"] or 0),
+                  "durum": r["durum"], "gider_adi": r["gider_adi"]} for r in adaylar]
+        if not uygula:
+            return {"onizleme": True, "esitlenecek_adet": len(adaylar), "kayitlar": liste,
+                    "not": "uygula=true ile bu planlar 'odendi' yapılır."}
+        ids = [r["id"] for r in adaylar]
+        esit = 0
+        if ids:
+            cur.execute("""
+                UPDATE odeme_plani SET durum='odendi',
+                    odeme_tarihi=COALESCE(odeme_tarihi, CURRENT_DATE)
+                WHERE id = ANY(%s::uuid[])
+            """, (ids,))
+            esit = cur.rowcount
+            # İlişkili bekleyen onayları da kapat
+            cur.execute("""
+                UPDATE onay_kuyrugu ok SET durum='onaylandi', onay_tarihi=NOW()
+                WHERE ok.kaynak_tablo='sabit_giderler' AND ok.durum='bekliyor'
+                AND EXISTS (
+                    SELECT 1 FROM kasa_hareketleri kh
+                    WHERE kh.kaynak_tablo='sabit_giderler' AND kh.kaynak_id=ok.kaynak_id
+                      AND kh.islem_turu='SABIT_GIDER' AND kh.kasa_etkisi=true AND kh.durum='aktif'
+                      AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', ok.tarih)
+                )
+            """)
+        return {"onizleme": False, "esitlenen_adet": esit, "kayitlar": liste}
+
+
 @app.get("/api/odeme-plani/mukerrer-tara")
 def odeme_plani_mukerrer_tara():
     """Tanı (read-only): aktif mükerrer ödeme planı grupları + mükerrer-engel index'i kurulu mu.
@@ -4754,6 +4806,21 @@ def fatura_ode(body: FaturaOdemeModel):
             insert_kasa_hareketi(cur, str(body.tarih), _kasa_turu, -abs(body.tutar),
                 aciklama, 'sabit_giderler', body.sabit_gider_id,
                 ref_id=fid, ref_type=_kasa_turu)
+
+        # Bağlı ödeme planını ÖDENDİ yap — yoksa kasa kaydı oluşsa da plan 'bekliyor'
+        # kalıp CFO panelde "vadesi geçmiş borç" + ödenmedi olarak görünür (çift gösterim).
+        cur.execute("""
+            UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s
+            WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+            AND durum IN ('bekliyor','onay_bekliyor')
+            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+        """, (str(body.tarih), body.sabit_gider_id, str(body.tarih)))
+        # Aynı gider+ay için bekleyen onay kuyruğu kaydını kapat — onay merkezden düşsün.
+        cur.execute("""
+            UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
+            WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s AND durum='bekliyor'
+            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+        """, (body.sabit_gider_id, str(body.tarih)))
 
         audit(cur, 'sabit_giderler', body.sabit_gider_id, 'FATURA_ODENDI',
               yeni={'tutar': body.tutar, 'tarih': str(body.tarih)})
