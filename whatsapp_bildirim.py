@@ -53,33 +53,49 @@ def _trend(simdiki, onceki) -> str:
 def _sube_ciro_tarih(cur, tarih: date) -> dict:
     """
     Bir tarihin şube bazlı ciro toplamları.
-    Önce onaylı ciro (ciro.durum='aktif', toplam kolonu).
-    Yoksa onay bekleyen taslak (ciro_taslak.durum='bekliyor', nakit+pos+online).
-    Panel ile aynı mantık.
+    Öncelik sırası (onay durumundan bağımsız — kapanış takip esası):
+      1. kapanis_kayit — şubenin kapanışta girdiği nakit+pos+online (en güvenilir)
+      2. ciro — onaylı ciro (aktif)
+      3. ciro_taslak — onay bekleyen taslak
     """
-    # Onaylı ciro
+    sonuc = {}
+
+    # 1. Kapanış kayıtları — iptal olmayanlar, onay bekliyor olsa da alınır
+    cur.execute("""
+        SELECT sube_id,
+               COALESCE(nakit, 0) + COALESCE(pos, 0) + COALESCE(online, 0) AS tutar
+        FROM kapanis_kayit
+        WHERE tarih = %s AND durum != 'iptal'
+    """, (tarih,))
+    for r in (cur.fetchall() or []):
+        sonuc[str(r["sube_id"])] = float(r["tutar"] or 0)
+
+    # 2. Onaylı ciro — kapanış kaydı yoksa
     cur.execute("""
         SELECT sube_id, COALESCE(SUM(toplam), 0) AS tutar
         FROM ciro
         WHERE tarih = %s AND durum = 'aktif'
         GROUP BY sube_id
     """, (tarih,))
-    aktif = {str(r["sube_id"]): float(r["tutar"] or 0) for r in (cur.fetchall() or [])}
+    for r in (cur.fetchall() or []):
+        sid = str(r["sube_id"])
+        if sid not in sonuc:
+            sonuc[sid] = float(r["tutar"] or 0)
 
-    # Taslak (onay bekleyen) — aktif ciro olmayan şubeler için
+    # 3. Taslak — ikisi de yoksa
     cur.execute("""
         SELECT sube_id,
-               COALESCE(SUM(COALESCE(nakit,0) + COALESCE(pos,0) + COALESCE(online,0)), 0) AS tutar
+               COALESCE(SUM(COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0)), 0) AS tutar
         FROM ciro_taslak
         WHERE tarih = %s AND durum = 'bekliyor'
         GROUP BY sube_id
     """, (tarih,))
     for r in (cur.fetchall() or []):
         sid = str(r["sube_id"])
-        if sid not in aktif:  # aktif ciro varsa taslağı kullanma
-            aktif[sid] = float(r["tutar"] or 0)
+        if sid not in sonuc:
+            sonuc[sid] = float(r["tutar"] or 0)
 
-    return aktif  # {sube_id: tutar}
+    return sonuc  # {sube_id: tutar}
 
 
 def _ciro_verileri(cur, tarih: date) -> dict:
@@ -181,33 +197,53 @@ def _yarin_odemeler(cur, tarih: date) -> list:
 
 
 def _bu_ay_ciro(cur, tarih: date) -> float:
-    """Bu ayın başından bugüne kümülatif ciro — aktif + taslak (panel mantığıyla)."""
+    """
+    Bu ayın başından bugüne kümülatif ciro.
+    Her şube+gün için: kapanış kaydı → onaylı ciro → taslak (öncelik sırasıyla).
+    """
     ay_basi = tarih.replace(day=1)
 
-    # Onaylı cirolar
+    # Kapanış kayıtlarından gelen (iptal olmayanlar)
     cur.execute("""
-        SELECT COALESCE(SUM(toplam), 0) AS tutar
+        SELECT sube_id, tarih,
+               COALESCE(nakit,0) + COALESCE(pos,0) + COALESCE(online,0) AS tutar
+        FROM kapanis_kayit
+        WHERE tarih >= %s AND tarih <= %s AND durum != 'iptal'
+    """, (ay_basi, tarih))
+    kapanis_map = {(str(r["sube_id"]), str(r["tarih"])): float(r["tutar"] or 0)
+                   for r in (cur.fetchall() or [])}
+
+    # Onaylı ciro — kapanış kaydı olmayan gün/şube çiftleri için
+    cur.execute("""
+        SELECT sube_id, tarih::date AS tarih, COALESCE(SUM(toplam), 0) AS tutar
         FROM ciro
         WHERE tarih >= %s AND tarih <= %s AND durum = 'aktif'
+        GROUP BY sube_id, tarih::date
     """, (ay_basi, tarih))
-    aktif = float((cur.fetchone() or {}).get("tutar") or 0)
+    aktif_map = {}
+    for r in (cur.fetchall() or []):
+        k = (str(r["sube_id"]), str(r["tarih"]))
+        if k not in kapanis_map:
+            aktif_map[k] = float(r["tutar"] or 0)
 
-    # Taslak — o gün için aktif ciro olmayan şube/gün çiftleri
+    # Taslak — ikisi de yoksa
     cur.execute("""
-        SELECT COALESCE(SUM(COALESCE(ct.nakit,0) + COALESCE(ct.pos,0) + COALESCE(ct.online,0)), 0) AS tutar
+        SELECT ct.sube_id, ct.tarih::date AS tarih,
+               COALESCE(SUM(COALESCE(ct.nakit,0)+COALESCE(ct.pos,0)+COALESCE(ct.online,0)),0) AS tutar
         FROM ciro_taslak ct
-        WHERE ct.tarih >= %s AND ct.tarih <= %s
-          AND ct.durum = 'bekliyor'
-          AND NOT EXISTS (
-              SELECT 1 FROM ciro c
-              WHERE c.sube_id = ct.sube_id
-                AND c.tarih = ct.tarih
-                AND c.durum = 'aktif'
-          )
+        WHERE ct.tarih >= %s AND ct.tarih <= %s AND ct.durum = 'bekliyor'
+        GROUP BY ct.sube_id, ct.tarih::date
     """, (ay_basi, tarih))
-    taslak = float((cur.fetchone() or {}).get("tutar") or 0)
+    taslak_map = {}
+    for r in (cur.fetchall() or []):
+        k = (str(r["sube_id"]), str(r["tarih"]))
+        if k not in kapanis_map and k not in aktif_map:
+            taslak_map[k] = float(r["tutar"] or 0)
 
-    return aktif + taslak
+    toplam = (sum(kapanis_map.values()) +
+              sum(aktif_map.values()) +
+              sum(taslak_map.values()))
+    return toplam
 
 
 def _toptanci_teslimler(cur, tarih: date) -> list:
