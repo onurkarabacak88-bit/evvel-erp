@@ -534,10 +534,6 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
             if kapanis_p:
                 saat_ek = f" · {kapanis_s}" if kapanis_s else ""
                 s.append(f"    └ Kapanış: {kapanis_p}{saat_ek}")
-            # Yarın açılışçıları
-            yarin_ac = vd.get("yarin_acilis", [])
-            if yarin_ac:
-                s.append(f"    └ Yarın açılış: {', '.join(yarin_ac)}")
     trend_t = f"  {ciro['toplam_trend']}" if ciro["toplam_trend"] else ""
     s.append(f"  {'Toplam':<14} *{_fmt(ciro['toplam'])}*{trend_t}")
     s.append("")
@@ -580,8 +576,25 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
         s.append("  Ödeme yok ✓")
     s.append("")
 
+    # Yarın açılışçılar — ayrı bölüm
+    yarin_satirlar = []
+    for sub in ciro["subeler"]:
+        sid = sub.get("sid", "")
+        vd  = vardiya.get(sid, {})
+        yarin_ac = vd.get("yarin_acilis", [])
+        if yarin_ac:
+            yarin_satirlar.append(f"  {sub['ad']}: {', '.join(yarin_ac)}")
+    yarin_tarih_bas = f"{(tarih + timedelta(days=1)).day} {_AY[(tarih + timedelta(days=1)).month - 1]}"
+    s.append("")
+    s.append(f"*{yarin_tarih_bas} AÇILIŞLARI*")
+    if yarin_satirlar:
+        s.extend(yarin_satirlar)
+    else:
+        s.append("  Açılış bilgisi henüz girilmedi")
+
     # Bu ay ciro
     ay_adi = _AY[tarih.month - 1]
+    s.append("")
     s.append(f"{ay_adi} ayı cirosu: *{_fmt(ay_ciro)}*")
 
     # Dış kaynak (kira gelirleri)
