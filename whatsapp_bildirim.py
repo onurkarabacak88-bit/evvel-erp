@@ -255,6 +255,40 @@ def _anlik_giderler(cur, tarih: date) -> list:
     return [dict(r) for r in (cur.fetchall() or [])]
 
 
+# ── Dış kaynak (kira gelirleri) ──────────────────────────────────────────────
+
+def _dis_kaynak_verileri(cur, tarih: date) -> dict:
+    """
+    Kira gelirleri ve diğer dış kaynaklar.
+    Bugün gelen + bu ay toplam.
+    Kaynak: kasa_hareketleri WHERE islem_turu='DIS_KAYNAK'
+    """
+    # Bugün gelen dış kaynak
+    cur.execute("""
+        SELECT COALESCE(SUM(tutar),0) AS toplam,
+               COUNT(*) AS adet
+        FROM kasa_hareketleri
+        WHERE islem_turu = 'DIS_KAYNAK'
+          AND kasa_etkisi = TRUE
+          AND tarih = %s
+    """, (tarih,))
+    row = cur.fetchone() or {}
+    bugun = float(row.get("toplam") or 0)
+    bugun_adet = int(row.get("adet") or 0)
+
+    # Bu ay toplam dış kaynak
+    cur.execute("""
+        SELECT COALESCE(SUM(tutar),0) AS toplam
+        FROM kasa_hareketleri
+        WHERE islem_turu = 'DIS_KAYNAK'
+          AND kasa_etkisi = TRUE
+          AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+    """, (tarih,))
+    ay_toplam = float((cur.fetchone() or {}).get("toplam") or 0)
+
+    return {"bugun": bugun, "bugun_adet": bugun_adet, "ay_toplam": ay_toplam}
+
+
 # ── Yarın ödemeler ───────────────────────────────────────────────────────────
 
 def _yarin_odemeler(cur, tarih: date) -> list:
@@ -353,6 +387,7 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
         giderler    = _anlik_giderler(cur, tarih)
         yarin       = _yarin_odemeler(cur, tarih)
         ay_ciro     = _bu_ay_ciro(cur, tarih)
+        dis_kaynak  = _dis_kaynak_verileri(cur, tarih)
         kt_liste    = _kasa_teslimler(cur, tarih)
         toptanci    = _toptanci_teslimler(cur, tarih)
 
@@ -415,6 +450,14 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
 
     # Bu ay ciro
     s.append(f"Bu ay: *{_fmt(ay_ciro)}*")
+
+    # Dış kaynak (kira gelirleri)
+    if dis_kaynak["ay_toplam"] > 0 or dis_kaynak["bugun"] > 0:
+        s.append("")
+        s.append("*KİRA GELİRLERİ*")
+        s.append(f"  Bu ay toplam:  {_fmt(dis_kaynak['ay_toplam'])}")
+        if dis_kaynak["bugun"] > 0:
+            s.append(f"  Bugün gelen:   {_fmt(dis_kaynak['bugun'])}")
 
     # Kasa teslimler
     if kt_liste:
