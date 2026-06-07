@@ -192,23 +192,25 @@ def _bu_ay_ciro(cur, tarih: date) -> float:
 
 def _kasa_verileri(cur, tarih: date) -> dict:
     """
-    finans_core.kasa_bakiyesi: SUM(tutar) WHERE kasa_etkisi=TRUE
-    Giren/çıkan: o günün kasa hareketleri (islem_turu bazlı)
+    Kasa bakiyesi + bugünün ciro tutarı + çıkan.
+    Dış kaynak (kira gelirleri vb.) ayrı kanal — mesaja dahil edilmiyor.
     """
+    # Anlık kasa bakiyesi
     cur.execute("""
         SELECT COALESCE(SUM(tutar),0) AS bakiye
         FROM kasa_hareketleri WHERE kasa_etkisi=TRUE
     """)
     kasa = float((cur.fetchone() or {}).get("bakiye") or 0)
 
-    # Bugün kasa'ya giren (ciro + dış kaynak)
+    # Bugün kasa'ya giren SADECE CİRO (dış kaynak hariç)
     cur.execute("""
         SELECT COALESCE(SUM(tutar),0) AS toplam
         FROM kasa_hareketleri
         WHERE kasa_etkisi=TRUE AND tutar>0
+          AND islem_turu = 'CIRO'
           AND tarih = %s
     """, (tarih,))
-    giren = float((cur.fetchone() or {}).get("toplam") or 0)
+    bugun_ciro = float((cur.fetchone() or {}).get("toplam") or 0)
 
     # Bugün kasa'dan çıkan
     cur.execute("""
@@ -219,7 +221,19 @@ def _kasa_verileri(cur, tarih: date) -> dict:
     """, (tarih,))
     cikan = float((cur.fetchone() or {}).get("toplam") or 0)
 
-    return {"kasa": kasa, "giren": giren, "cikan": cikan}
+    # Dün ciro (trend için)
+    dun = tarih - timedelta(days=1)
+    cur.execute("""
+        SELECT COALESCE(SUM(tutar),0) AS toplam
+        FROM kasa_hareketleri
+        WHERE kasa_etkisi=TRUE AND tutar>0
+          AND islem_turu = 'CIRO'
+          AND tarih = %s
+    """, (dun,))
+    dun_ciro = float((cur.fetchone() or {}).get("toplam") or 0)
+
+    return {"kasa": kasa, "bugun_ciro": bugun_ciro, "cikan": cikan,
+            "ciro_trend": _trend(bugun_ciro, dun_ciro)}
 
 
 # ── Anlık gider — panel ile aynı kaynak ──────────────────────────────────────
@@ -365,8 +379,9 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
     s.append("")
 
     # Kasa
+    ciro_trend_str = f"  {kasa['ciro_trend']}" if kasa.get("ciro_trend") else ""
     s.append(f"*KASA: {_fmt(kasa['kasa'])}*")
-    s.append(f"  Bugün giren:  +{_fmt(kasa['giren'])}")
+    s.append(f"  Bugün ciro:   +{_fmt(kasa['bugun_ciro'])}{ciro_trend_str}")
     s.append(f"  Bugün çıkan:  -{_fmt(kasa['cikan'])}")
     s.append("")
 
