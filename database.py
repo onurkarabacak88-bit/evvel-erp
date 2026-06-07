@@ -4381,7 +4381,13 @@ $$;
             print(f"[MIGRATION WARN] yarisma tabloları: {_yar_e}")
 
         # ── GÖREV ÇİZELGESİ ─────────────────────────────────────
-        ensure_gorev_tablolari(cur)
+        try:
+            cur.execute("SAVEPOINT gorev_tablolari_sp")
+            ensure_gorev_tablolari(cur)
+            cur.execute("RELEASE SAVEPOINT gorev_tablolari_sp")
+        except Exception as _ge:
+            cur.execute("ROLLBACK TO SAVEPOINT gorev_tablolari_sp")
+            print(f"[MIGRATION WARN] gorev_tablolari: {_ge}")
 
         conn.commit()
 
