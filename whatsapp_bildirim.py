@@ -42,50 +42,76 @@ def _trend(simdiki, onceki) -> str:
         return ""
 
 
-# ── Ciro: kapanış takip öncelikli ────────────────────────────────────────────
+# ── Ciro: /kapanis-takip ile birebir aynı mantık ─────────────────────────────
 
-def _kapanis_ciro_map(cur, tarih_bas: date, tarih_son: date) -> dict:
+def _x_rapor_ciro(kap: dict) -> dict:
     """
-    kapanis_kayit'ten şube+gün bazlı ciro.
-    Gece kapanışlar tarih veya tarih+1'e yazılabilir (is_gunu_tr mantığı).
+    sube_operasyon_event satırından X raporu nakit/pos/online.
+    Önce meta.x_rapor, yoksa snap_nakit/snap_pos/snap_online.
+    Kapanış Takip sayfasıyla aynı fonksiyon.
     """
-    cur.execute("""
-        SELECT sube_id, tarih,
-               COALESCE(nakit,0) + COALESCE(pos,0) + COALESCE(online,0) AS tutar
-        FROM kapanis_kayit
-        WHERE tarih >= %s AND tarih <= %s AND durum != 'iptal'
-    """, (tarih_bas, tarih_son + timedelta(days=1)))
-    return {(str(r["sube_id"]), str(r["tarih"])): float(r["tutar"] or 0)
-            for r in (cur.fetchall() or [])}
+    meta = {}
+    try:
+        m = kap.get("meta")
+        if isinstance(m, str):
+            meta = json.loads(m)
+        elif isinstance(m, dict):
+            meta = m
+    except Exception:
+        pass
+    xr = meta.get("x_rapor") if isinstance(meta.get("x_rapor"), dict) else {}
+    out = {}
+    for key, snap_key in (("nakit","snap_nakit"),("pos","snap_pos"),("online","snap_online")):
+        val = None
+        if isinstance(xr, dict) and key in xr and xr.get(key) is not None:
+            val = float(xr.get(key) or 0)
+        elif kap.get(snap_key) is not None:
+            val = float(kap.get(snap_key) or 0)
+        out[key] = val
+    return out
 
 def _sube_ciro_gun(cur, tarih: date) -> dict:
     """
-    Tek gün için şube bazlı ciro.
-    Öncelik: kapanis_kayit → ciro aktif → ciro_taslak
+    Tek gün şube bazlı ciro — /kapanis-takip endpoint ile birebir:
+    1. sube_operasyon_event KAPANIS tamamlandi → X raporu (meta.x_rapor / snap_*)
+    2. ciro aktif
+    3. ciro_taslak (bekliyor veya onaylandi)
     """
-    # 1. Kapanış (tarih veya tarih+1)
+    # 1. Kapanış event — o gün veya ertesi gün tamamlananlar (gece geç kapanış)
     cur.execute("""
-        SELECT sube_id,
-               COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0) AS tutar
-        FROM kapanis_kayit
-        WHERE tarih IN (%s,%s) AND durum != 'iptal'
+        SELECT DISTINCT ON (e.sube_id)
+               e.sube_id::text,
+               e.snap_nakit, e.snap_pos, e.snap_online, e.meta
+        FROM sube_operasyon_event e
+        WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
+          AND e.tarih IN (%s, %s)
+        ORDER BY e.sube_id, e.cevap_ts DESC NULLS LAST
     """, (tarih, tarih + timedelta(days=1)))
-    sonuc = {str(r["sube_id"]): float(r["tutar"] or 0) for r in (cur.fetchall() or [])}
+    sonuc = {}
+    for r in (cur.fetchall() or []):
+        sid = str(r["sube_id"])
+        xr  = _x_rapor_ciro(dict(r))
+        if xr.get("nakit") is not None:
+            t = (float(xr["nakit"] or 0) + float(xr["pos"] or 0) +
+                 float(xr["online"] or 0))
+            sonuc[sid] = t
 
-    # 2. Onaylı ciro
+    # 2. Onaylı ciro — kapanış event yoksa
     cur.execute("""
-        SELECT sube_id, COALESCE(SUM(toplam),0) AS tutar
+        SELECT sube_id::text, COALESCE(SUM(toplam),0) AS tutar
         FROM ciro WHERE tarih=%s AND durum='aktif' GROUP BY sube_id
     """, (tarih,))
     for r in (cur.fetchall() or []):
         if str(r["sube_id"]) not in sonuc:
             sonuc[str(r["sube_id"])] = float(r["tutar"] or 0)
 
-    # 3. Taslak
+    # 3. Taslak — ikisi de yoksa
     cur.execute("""
-        SELECT sube_id,
-               COALESCE(SUM(COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0)),0) AS tutar
-        FROM ciro_taslak WHERE tarih=%s AND durum='bekliyor' GROUP BY sube_id
+        SELECT DISTINCT ON (t.sube_id) t.sube_id::text,
+               COALESCE(t.nakit,0)+COALESCE(t.pos,0)+COALESCE(t.online,0) AS tutar
+        FROM ciro_taslak t
+        WHERE t.tarih=%s AND t.durum IN ('bekliyor','onaylandi')
+        ORDER BY t.sube_id, CASE t.durum WHEN 'onaylandi' THEN 0 ELSE 1 END, t.olusturma DESC
     """, (tarih,))
     for r in (cur.fetchall() or []):
         if str(r["sube_id"]) not in sonuc:
@@ -112,12 +138,12 @@ def _ciro_verileri(cur, tarih: date) -> dict:
             "toplam_trend": _trend(toplam_bugun, toplam_dun)}
 
 
-# ── Bu ay ciro — CFO Panel ile aynı kaynak (ciro.durum='aktif') ──────────────
+# ── Bu ay ciro — motors.py finans_ozet_motoru ile aynı ──────────────────────
 
 def _bu_ay_ciro(cur, tarih: date) -> float:
     """
-    motors.py finans_ozet_motoru ile birebir aynı sorgu:
-    ciro WHERE durum='aktif' AND bu ay
+    finans_ozet_motoru: ciro WHERE durum='aktif' AND bu ay.
+    Bu değer CFO Panel'deki 'Bu Ay Ciro' ile birebir aynı.
     """
     cur.execute("""
         SELECT COALESCE(SUM(toplam), 0) AS ciro
