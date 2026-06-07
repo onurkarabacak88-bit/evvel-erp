@@ -395,19 +395,6 @@ def _yarin_odemeler(cur, tarih: date) -> list:
         FROM odeme_plani op
         WHERE op.durum IN ('bekliyor','onay_bekliyor')
           AND op.tarih = %s
-          AND NOT (
-              op.kart_id IS NULL
-              AND op.kaynak_id IS NOT NULL
-              AND EXISTS (
-                  SELECT 1 FROM kasa_hareketleri kh
-                  WHERE kh.kasa_etkisi = TRUE AND kh.durum = 'aktif'
-                    AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih)
-                    AND (
-                          (kh.kaynak_tablo = 'odeme_plani' AND kh.kaynak_id = op.id)
-                       OR (kh.kaynak_tablo = op.kaynak_tablo AND kh.kaynak_id = op.kaynak_id)
-                    )
-              )
-          )
         ORDER BY op.odenecek_tutar DESC
         LIMIT 10
     """, (yarin,))
