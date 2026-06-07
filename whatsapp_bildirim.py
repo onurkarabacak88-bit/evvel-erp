@@ -278,24 +278,17 @@ def _anlik_giderler(cur, tarih: date) -> list:
 
 def _vardiya_personel(cur, tarih: date) -> dict:
     """
-    O günün açılış + kapanış personeli şube bazlı.
-    kapanis-takip ile aynı kaynak: sube_operasyon_event.
-    Döner: {sube_id: {acilis: "Ad Soyad", kapanis: "Ad Soyad"}}
-    """
-    # Açılış — o günün ilk tamamlanan ACILIS
-    cur.execute("""
-        SELECT DISTINCT ON (e.sube_id)
-               e.sube_id::text,
-               COALESCE(e.personel_ad,'') AS personel_ad,
-               (e.cevap_ts AT TIME ZONE 'Europe/Istanbul') AS ts
-        FROM sube_operasyon_event e
-        WHERE e.tip = 'ACILIS' AND e.durum = 'tamamlandi'
-          AND e.tarih = %s
-        ORDER BY e.sube_id, e.cevap_ts ASC NULLS LAST, e.id ASC
-    """, (tarih,))
-    acilis = {str(r["sube_id"]): str(r["personel_ad"] or "") for r in (cur.fetchall() or [])}
+    O günün kapanış + yarının açılış personeli şube bazlı.
 
-    # Kapanış — o günün en son tamamlanan KAPANIS (tarih veya tarih+1)
+    Kapanış: tarih günü KAPANIS tamamlandi event → personel_ad + saat
+    Yarın açılış: kapanis_kayit.sabahci_personel_id + aksamci_personel_id
+                  (vardiya devir formunda girilen sabah personeli = yarın açacak kişi)
+                  Yoksa tarih+1 ACILIS event (sabah erken girilmişse)
+
+    Döner: {sube_id: {kapanis: "Ad", kapanis_saat: "23:47",
+                       yarin_acilis: ["Ad1", "Ad2"]}}
+    """
+    # Kapanış event (bugün)
     cur.execute("""
         SELECT DISTINCT ON (e.sube_id)
                e.sube_id::text,
@@ -306,19 +299,62 @@ def _vardiya_personel(cur, tarih: date) -> dict:
           AND e.tarih IN (%s, %s)
         ORDER BY e.sube_id, e.cevap_ts DESC NULLS LAST, e.id DESC
     """, (tarih, tarih + timedelta(days=1)))
-    kapanis = {str(r["sube_id"]): {"ad": str(r["personel_ad"] or ""), "ts": r["ts"]}
-               for r in (cur.fetchall() or [])}
+    kapanis_map = {}
+    for r in (cur.fetchall() or []):
+        ts = r["ts"]
+        kapanis_map[str(r["sube_id"])] = {
+            "ad":   str(r["personel_ad"] or ""),
+            "saat": ts.strftime("%H:%M") if ts else "",
+        }
 
-    # Şube id → {acilis, kapanis, kapanis_saat}
+    # Yarın açılışçılar: kapanis_kayit sabahci + aksamci personel (bugünkü kapanış kaydından)
+    # sabahci_personel_id = yarın açacak kişi, aksamci_personel_id = bu akşam kapatan
+    cur.execute("""
+        SELECT k.sube_id::text,
+               COALESCE(ps.ad_soyad, k.sabahci_personel_id) AS sabahci_ad,
+               COALESCE(pa.ad_soyad, k.aksamci_personel_id) AS aksamci_ad
+        FROM kapanis_kayit k
+        LEFT JOIN personel ps ON ps.id = k.sabahci_personel_id
+        LEFT JOIN personel pa ON pa.id = k.aksamci_personel_id
+        WHERE k.tarih = %s AND k.durum != 'iptal'
+    """, (tarih,))
+    kk_map = {}
+    for r in (cur.fetchall() or []):
+        isimler = []
+        for f in ["sabahci_ad", "aksamci_ad"]:
+            ad = str(r.get(f) or "").strip()
+            if ad and ad not in isimler:
+                isimler.append(ad)
+        kk_map[str(r["sube_id"])] = isimler
+
+    # Yedek: tarih+1 ACILIS event (sabah erken girilmişse)
+    cur.execute("""
+        SELECT e.sube_id::text, COALESCE(e.personel_ad,'') AS personel_ad
+        FROM sube_operasyon_event e
+        WHERE e.tip = 'ACILIS' AND e.durum = 'tamamlandi'
+          AND e.tarih = %s
+        ORDER BY e.cevap_ts ASC
+    """, (tarih + timedelta(days=1),))
+    yarin_acilis_map = {}
+    for r in (cur.fetchall() or []):
+        sid = str(r["sube_id"])
+        ad  = str(r["personel_ad"] or "").strip()
+        if ad:
+            yarin_acilis_map.setdefault(sid, [])
+            if ad not in yarin_acilis_map[sid]:
+                yarin_acilis_map[sid].append(ad)
+
+    # Birleştir
     sonuc = {}
-    tum_sidler = set(acilis.keys()) | set(kapanis.keys())
-    for sid in tum_sidler:
-        kap = kapanis.get(sid, {})
-        ts  = kap.get("ts")
+    tum = set(kapanis_map) | set(kk_map) | set(yarin_acilis_map)
+    for sid in tum:
+        kap = kapanis_map.get(sid, {})
+        # Yarın açılışçıları: önce kapanis_kayit, yoksa event
+        yarin = kk_map.get(sid) or yarin_acilis_map.get(sid) or []
         sonuc[sid] = {
-            "acilis":       acilis.get(sid, ""),
             "kapanis":      kap.get("ad", ""),
-            "kapanis_saat": ts.strftime("%H:%M") if ts else "",
+            "kapanis_saat": kap.get("saat", ""),
+            "yarin_acilis": yarin,
         }
     return sonuc
 
@@ -486,7 +522,6 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
     for sub in ciro["subeler"]:
         sid = sub.get("sid", "")
         vd  = vardiya.get(sid, {})
-        acilis_p  = vd.get("acilis", "")
         kapanis_p = vd.get("kapanis", "")
         kapanis_s = vd.get("kapanis_saat", "")
 
@@ -495,16 +530,14 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
         else:
             trend = f"  {sub['trend']}" if sub["trend"] else ""
             s.append(f"  {sub['ad']:<14} *{_fmt(sub['ciro'])}*{trend}")
-            # Vardiya personeli
-            if acilis_p or kapanis_p:
-                if acilis_p and kapanis_p and acilis_p != kapanis_p:
-                    saat_ek = f" {kapanis_s}" if kapanis_s else ""
-                    s.append(f"    └ {acilis_p} → {kapanis_p}{saat_ek}")
-                elif kapanis_p:
-                    saat_ek = f" {kapanis_s}" if kapanis_s else ""
-                    s.append(f"    └ Kapanış: {kapanis_p}{saat_ek}")
-                elif acilis_p:
-                    s.append(f"    └ Açılış: {acilis_p}")
+            # Kapanış personeli + saat
+            if kapanis_p:
+                saat_ek = f" · {kapanis_s}" if kapanis_s else ""
+                s.append(f"    └ Kapanış: {kapanis_p}{saat_ek}")
+            # Yarın açılışçıları
+            yarin_ac = vd.get("yarin_acilis", [])
+            if yarin_ac:
+                s.append(f"    └ Yarın açılış: {', '.join(yarin_ac)}")
     trend_t = f"  {ciro['toplam_trend']}" if ciro["toplam_trend"] else ""
     s.append(f"  {'Toplam':<14} *{_fmt(ciro['toplam'])}*{trend_t}")
     s.append("")
