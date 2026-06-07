@@ -248,6 +248,19 @@ def _bu_ay_ciro(cur, tarih: date) -> float:
     return toplam
 
 
+def _kasa_teslimler(cur, tarih: date) -> list:
+    """O gün yapılan kasa teslimler."""
+    cur.execute("""
+        SELECT kt.tutar, kt.teslim_eden_ad, kt.teslim_alan_ad,
+               kt.teslim_turu, s.ad AS sube_adi
+        FROM kasa_teslim kt
+        JOIN subeler s ON s.id = kt.sube_id
+        WHERE kt.tarih IN (%s, %s)
+        ORDER BY kt.olusturma
+    """, (tarih, tarih + timedelta(days=1)))
+    return [dict(r) for r in (cur.fetchall() or [])]
+
+
 def _toptanci_teslimler(cur, tarih: date) -> list:
     """O gün yapılan ürün teslim alımları (URUN_SEVK kayıtları)."""
     cur.execute("""
@@ -316,6 +329,7 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
         giderler = _anlik_giderler(cur, tarih)
         yarin = _yarin_odemeler(cur, tarih)
         ay_ciro = _bu_ay_ciro(cur, tarih)
+        kasa_teslim_listesi = _kasa_teslimler(cur, tarih)
         teslimler = _toptanci_teslimler(cur, tarih)
 
     tarih_str = tarih.strftime("%-d %B").replace(
@@ -385,6 +399,24 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
 
     # ── Bu ay kümülatif ciro ──
     satirlar.append(f"Bu ay: *{_fmt(ay_ciro)}*")
+
+    # ── Kasa teslimler ──
+    if kasa_teslim_listesi:
+        satirlar.append("")
+        satirlar.append("*KASA TESLİMLER*")
+        toplam_teslim = 0
+        tur_etiket = {'ara': 'Ara Teslim', 'kapanis': 'Kapanış', 'acilis': 'Açılış', 'diger': 'Diğer'}
+        for t in kasa_teslim_listesi:
+            tutar = float(t.get("tutar") or 0)
+            toplam_teslim += tutar
+            tur = tur_etiket.get(t.get("teslim_turu") or "", t.get("teslim_turu") or "")
+            eden = str(t.get("teslim_eden_ad") or "").strip() or "—"
+            alan = str(t.get("teslim_alan_ad") or "").strip() or "—"
+            sube = str(t.get("sube_adi") or "").strip()
+            satirlar.append(f"  • {sube} — {tur}: {_fmt(tutar)}")
+            satirlar.append(f"    {eden} → {alan}")
+        if len(kasa_teslim_listesi) > 1:
+            satirlar.append(f"  Toplam: *{_fmt(toplam_teslim)}*")
 
     # ── Toptancı teslimler ──
     if teslimler:
