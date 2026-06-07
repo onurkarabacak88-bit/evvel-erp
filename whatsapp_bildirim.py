@@ -57,16 +57,19 @@ def _sube_ciro_tarih(cur, tarih: date) -> dict:
       1. kapanis_kayit — şubenin kapanışta girdiği nakit+pos+online (en güvenilir)
       2. ciro — onaylı ciro (aktif)
       3. ciro_taslak — onay bekleyen taslak
+
+    NOT: is_gunu_tr() mantığı — gece kapanışları ertesi günün ilk saatlerinde
+    girildiğinde tarih=bugün veya tarih=dün olabilir. Her ikisi de kontrol edilir.
     """
     sonuc = {}
 
-    # 1. Kapanış kayıtları — iptal olmayanlar, onay bekliyor olsa da alınır
+    # 1. Kapanış kayıtları — tarih veya tarih+1 (gece geç girilen kapanışlar)
     cur.execute("""
         SELECT sube_id,
                COALESCE(nakit, 0) + COALESCE(pos, 0) + COALESCE(online, 0) AS tutar
         FROM kapanis_kayit
-        WHERE tarih = %s AND durum != 'iptal'
-    """, (tarih,))
+        WHERE tarih IN (%s, %s) AND durum != 'iptal'
+    """, (tarih, tarih + timedelta(days=1)))
     for r in (cur.fetchall() or []):
         sonuc[str(r["sube_id"])] = float(r["tutar"] or 0)
 
@@ -202,13 +205,13 @@ def _bu_ay_ciro(cur, tarih: date) -> float:
     """
     ay_basi = tarih.replace(day=1)
 
-    # Kapanış kayıtlarından gelen (iptal olmayanlar)
+    # Kapanış kayıtları — tarih+1 dahil (gece geç girilen kapanışlar)
     cur.execute("""
         SELECT sube_id, tarih,
                COALESCE(nakit,0) + COALESCE(pos,0) + COALESCE(online,0) AS tutar
         FROM kapanis_kayit
         WHERE tarih >= %s AND tarih <= %s AND durum != 'iptal'
-    """, (ay_basi, tarih))
+    """, (ay_basi, tarih + timedelta(days=1)))
     kapanis_map = {(str(r["sube_id"]), str(r["tarih"])): float(r["tutar"] or 0)
                    for r in (cur.fetchall() or [])}
 
