@@ -95,26 +95,37 @@ def _sube_ciro_gun(cur, tarih: date) -> dict:
     for r in (cur.fetchall() or []):
         sid = str(r["sube_id"])
         xr  = _x_rapor_ciro(dict(r))
+        ts  = r["kapanis_ts"]
+        saat_str  = ts.strftime("%H:%M") if ts else ""
+        personel  = str(r["personel_ad"] or "").strip()
+        # Kapanış event var — personel + saat kaydedilir
+        # Ama tutar için: x_rapor > 0 ise onu kullan, değilse ciro tablosuna bırak
         if xr.get("nakit") is not None:
             t = float(xr["nakit"] or 0) + float(xr["pos"] or 0) + float(xr["online"] or 0)
-            ts = r["kapanis_ts"]
-            saat_str = ts.strftime("%H:%M") if ts else ""
-            sonuc[sid] = {
-                "tutar":    t,
-                "personel": str(r["personel_ad"] or "").strip(),
-                "saat":     saat_str,
-            }
+            if t > 0:
+                sonuc[sid] = {"tutar": t, "personel": personel, "saat": saat_str}
+            else:
+                # tutar 0 geldi — personel/saati sakla, tutar ciro tablosundan gelecek
+                sonuc[sid] = {"tutar": 0, "personel": personel, "saat": saat_str, "_tutar_eksik": True}
+        else:
+            sonuc[sid] = {"tutar": 0, "personel": personel, "saat": saat_str, "_tutar_eksik": True}
 
-    # 2. Onaylı ciro — kapanış yoksa
+    # 2. Onaylı ciro — kapanış yoksa veya kapanışta tutar eksikse
     cur.execute("""
         SELECT sube_id::text, COALESCE(SUM(toplam),0) AS tutar
         FROM ciro WHERE tarih=%s AND durum='aktif' GROUP BY sube_id
     """, (tarih,))
     for r in (cur.fetchall() or []):
-        if str(r["sube_id"]) not in sonuc:
-            sonuc[str(r["sube_id"])] = {"tutar": float(r["tutar"] or 0), "personel": "", "saat": ""}
+        sid = str(r["sube_id"])
+        tutar = float(r["tutar"] or 0)
+        if sid not in sonuc:
+            sonuc[sid] = {"tutar": tutar, "personel": "", "saat": ""}
+        elif sonuc[sid].get("_tutar_eksik") and tutar > 0:
+            # Kapanış event var (personel/saat biliniyor) ama tutar eksikti
+            sonuc[sid]["tutar"] = tutar
+            sonuc[sid].pop("_tutar_eksik", None)
 
-    # 3. Taslak — ikisi de yoksa
+    # 3. Taslak — hâlâ eksikse
     cur.execute("""
         SELECT DISTINCT ON (t.sube_id) t.sube_id::text,
                COALESCE(t.nakit,0)+COALESCE(t.pos,0)+COALESCE(t.online,0) AS tutar
@@ -123,8 +134,13 @@ def _sube_ciro_gun(cur, tarih: date) -> dict:
         ORDER BY t.sube_id, CASE t.durum WHEN 'onaylandi' THEN 0 ELSE 1 END, t.olusturma DESC
     """, (tarih,))
     for r in (cur.fetchall() or []):
-        if str(r["sube_id"]) not in sonuc:
-            sonuc[str(r["sube_id"])] = {"tutar": float(r["tutar"] or 0), "personel": "", "saat": ""}
+        sid = str(r["sube_id"])
+        tutar = float(r["tutar"] or 0)
+        if sid not in sonuc:
+            sonuc[sid] = {"tutar": tutar, "personel": "", "saat": ""}
+        elif sonuc[sid].get("_tutar_eksik") and tutar > 0:
+            sonuc[sid]["tutar"] = tutar
+            sonuc[sid].pop("_tutar_eksik", None)
 
     return sonuc
 
