@@ -79,20 +79,38 @@ def _sube_ciro_gun(cur, tarih: date) -> dict:
     3. ciro_taslak
     Döner: {sube_id: {tutar, personel, saat}}
     """
-    # 1. Kapanış event
+    # 1. Kapanış event — kapanis-takip ile birebir aynı sorgu
+    # Önce o günü, yoksa ertesi günü dene (gece 02:00'e kadar önceki iş günü)
     cur.execute("""
         SELECT DISTINCT ON (e.sube_id)
                e.sube_id::text,
                e.snap_nakit, e.snap_pos, e.snap_online, e.meta,
-               e.personel_ad,
+               COALESCE(e.personel_ad, '') AS personel_ad,
                (e.cevap_ts AT TIME ZONE 'Europe/Istanbul') AS kapanis_ts
         FROM sube_operasyon_event e
         WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
-          AND e.tarih IN (%s, %s)
-        ORDER BY e.sube_id, e.cevap_ts DESC NULLS LAST
-    """, (tarih, tarih + timedelta(days=1)))
-    sonuc = {}
+          AND e.tarih = %s
+        ORDER BY e.sube_id, e.cevap_ts DESC NULLS LAST, e.id DESC
+    """, (tarih,))
+    rows = list(cur.fetchall() or [])
+    # Eksik şubeler için ertesi günü de kontrol et
+    bulunan = {str(r["sube_id"]) for r in rows}
+    cur.execute("""
+        SELECT DISTINCT ON (e.sube_id)
+               e.sube_id::text,
+               e.snap_nakit, e.snap_pos, e.snap_online, e.meta,
+               COALESCE(e.personel_ad, '') AS personel_ad,
+               (e.cevap_ts AT TIME ZONE 'Europe/Istanbul') AS kapanis_ts
+        FROM sube_operasyon_event e
+        WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
+          AND e.tarih = %s
+        ORDER BY e.sube_id, e.cevap_ts DESC NULLS LAST, e.id DESC
+    """, (tarih + timedelta(days=1),))
     for r in (cur.fetchall() or []):
+        if str(r["sube_id"]) not in bulunan:
+            rows.append(r)
+    sonuc = {}
+    for r in rows:
         sid = str(r["sube_id"])
         xr  = _x_rapor_ciro(dict(r))
         ts  = r["kapanis_ts"]
