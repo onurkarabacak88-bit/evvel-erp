@@ -1,7 +1,9 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date
+import io, os
 from database import db
 
 router = APIRouter()
@@ -135,3 +137,63 @@ def gorev_ozet(tarih: str):
             ORDER BY s.ad, gs.vardiya_tip
         """, (t,))
         return [dict(r) for r in cur.fetchall()]
+
+
+# ── QR Kod endpoint'leri ──────────────────────────────────────────────────────
+
+BASE_URL = os.getenv("APP_URL", "https://evvel-erp-production.up.railway.app")
+
+@router.get("/api/gorev/qr/{sube_id}")
+def gorev_qr_uret(sube_id: str):
+    """Şube için QR kod PNG üretir. Tarayıcıda direkt görüntülenir/indirilir."""
+    try:
+        import qrcode
+        from qrcode.image.pure import PyPNGImage
+    except ImportError:
+        raise HTTPException(status_code=500, detail="qrcode kütüphanesi yüklü değil")
+
+    with db() as (conn, cur):
+        cur.execute("SELECT ad FROM subeler WHERE id = %s AND aktif = TRUE", (sube_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Şube bulunamadı")
+        sube_ad = row["ad"]
+
+    url = f"{BASE_URL}/gorev-giris/{sube_id}"
+
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="image/png",
+        headers={"Content-Disposition": f'inline; filename="{sube_ad}_qr.png"'},
+    )
+
+
+@router.get("/api/gorev/qr-liste")
+def gorev_qr_liste():
+    """Tüm aktif şubelerin QR bilgilerini döner (ID, ad, URL)."""
+    with db() as (conn, cur):
+        cur.execute("SELECT id, ad FROM subeler WHERE aktif = TRUE ORDER BY ad")
+        subeler = [dict(r) for r in cur.fetchall()]
+    return [
+        {
+            "sube_id": s["id"],
+            "sube_ad": s["ad"],
+            "qr_url": f"{BASE_URL}/api/gorev/qr/{s['id']}",
+            "giris_url": f"{BASE_URL}/gorev-giris/{s['id']}",
+        }
+        for s in subeler
+    ]
