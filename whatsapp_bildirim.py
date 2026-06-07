@@ -72,16 +72,20 @@ def _x_rapor_ciro(kap: dict) -> dict:
 
 def _sube_ciro_gun(cur, tarih: date) -> dict:
     """
-    Tek gün şube bazlı ciro — /kapanis-takip endpoint ile birebir:
-    1. sube_operasyon_event KAPANIS tamamlandi → X raporu (meta.x_rapor / snap_*)
+    Tek gün şube bazlı ciro + kapanış yapan kişi + saat.
+    /kapanis-takip ile birebir:
+    1. sube_operasyon_event KAPANIS tamamlandi → X raporu + personel + saat
     2. ciro aktif
-    3. ciro_taslak (bekliyor veya onaylandi)
+    3. ciro_taslak
+    Döner: {sube_id: {tutar, personel, saat}}
     """
-    # 1. Kapanış event — o gün veya ertesi gün tamamlananlar (gece geç kapanış)
+    # 1. Kapanış event
     cur.execute("""
         SELECT DISTINCT ON (e.sube_id)
                e.sube_id::text,
-               e.snap_nakit, e.snap_pos, e.snap_online, e.meta
+               e.snap_nakit, e.snap_pos, e.snap_online, e.meta,
+               e.personel_ad,
+               (e.cevap_ts AT TIME ZONE 'Europe/Istanbul') AS kapanis_ts
         FROM sube_operasyon_event e
         WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
           AND e.tarih IN (%s, %s)
@@ -92,18 +96,23 @@ def _sube_ciro_gun(cur, tarih: date) -> dict:
         sid = str(r["sube_id"])
         xr  = _x_rapor_ciro(dict(r))
         if xr.get("nakit") is not None:
-            t = (float(xr["nakit"] or 0) + float(xr["pos"] or 0) +
-                 float(xr["online"] or 0))
-            sonuc[sid] = t
+            t = float(xr["nakit"] or 0) + float(xr["pos"] or 0) + float(xr["online"] or 0)
+            ts = r["kapanis_ts"]
+            saat_str = ts.strftime("%H:%M") if ts else ""
+            sonuc[sid] = {
+                "tutar":    t,
+                "personel": str(r["personel_ad"] or "").strip(),
+                "saat":     saat_str,
+            }
 
-    # 2. Onaylı ciro — kapanış event yoksa
+    # 2. Onaylı ciro — kapanış yoksa
     cur.execute("""
         SELECT sube_id::text, COALESCE(SUM(toplam),0) AS tutar
         FROM ciro WHERE tarih=%s AND durum='aktif' GROUP BY sube_id
     """, (tarih,))
     for r in (cur.fetchall() or []):
         if str(r["sube_id"]) not in sonuc:
-            sonuc[str(r["sube_id"])] = float(r["tutar"] or 0)
+            sonuc[str(r["sube_id"])] = {"tutar": float(r["tutar"] or 0), "personel": "", "saat": ""}
 
     # 3. Taslak — ikisi de yoksa
     cur.execute("""
@@ -115,7 +124,7 @@ def _sube_ciro_gun(cur, tarih: date) -> dict:
     """, (tarih,))
     for r in (cur.fetchall() or []):
         if str(r["sube_id"]) not in sonuc:
-            sonuc[str(r["sube_id"])] = float(r["tutar"] or 0)
+            sonuc[str(r["sube_id"])] = {"tutar": float(r["tutar"] or 0), "personel": "", "saat": ""}
 
     return sonuc
 
@@ -127,13 +136,22 @@ def _ciro_verileri(cur, tarih: date) -> dict:
 
     subeler, toplam_bugun, toplam_dun = [], 0, 0
     for row in subeler_liste:
-        sid = str(row["id"])
-        ciro = bugun_map.get(sid, 0)
-        d    = dun_map.get(sid, 0)
+        sid   = str(row["id"])
+        bg    = bugun_map.get(sid, {})
+        ciro  = bg.get("tutar", 0) if isinstance(bg, dict) else float(bg or 0)
+        dg    = dun_map.get(sid, {})
+        d     = dg.get("tutar", 0) if isinstance(dg, dict) else float(dg or 0)
         toplam_bugun += ciro
         toplam_dun   += d
-        subeler.append({"ad": row["ad"], "ciro": ciro, "dun": d,
-                        "trend": _trend(ciro, d), "girilmis": ciro > 0})
+        subeler.append({
+            "ad":       row["ad"],
+            "ciro":     ciro,
+            "dun":      d,
+            "trend":    _trend(ciro, d),
+            "girilmis": ciro > 0,
+            "personel": bg.get("personel", "") if isinstance(bg, dict) else "",
+            "saat":     bg.get("saat", "") if isinstance(bg, dict) else "",
+        })
     return {"subeler": subeler, "toplam": toplam_bugun,
             "toplam_trend": _trend(toplam_bugun, toplam_dun)}
 
@@ -315,10 +333,17 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
     s.append("*CİROLAR*")
     for sub in ciro["subeler"]:
         if not sub["girilmis"]:
-            s.append(f"⚠️ {sub['ad']:<14} kapanış girilmedi")
+            s.append(f"⚠️ {sub['ad']} — kapanış girilmedi")
         else:
-            trend = f"  {sub['trend']}" if sub["trend"] else ""
-            s.append(f"  {sub['ad']:<14} {_fmt(sub['ciro'])}{trend}")
+            trend    = f"  {sub['trend']}" if sub["trend"] else ""
+            personel = sub.get("personel") or ""
+            saat     = sub.get("saat") or ""
+            s.append(f"  {sub['ad']:<14} *{_fmt(sub['ciro'])}*{trend}")
+            if personel or saat:
+                bilgi = []
+                if personel: bilgi.append(personel)
+                if saat:     bilgi.append(saat)
+                s.append(f"    └ {' · '.join(bilgi)}")
     trend_t = f"  {ciro['toplam_trend']}" if ciro["toplam_trend"] else ""
     s.append(f"  {'Toplam':<14} *{_fmt(ciro['toplam'])}*{trend_t}")
     s.append("")
