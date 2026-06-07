@@ -307,25 +307,26 @@ def _vardiya_personel(cur, tarih: date) -> dict:
             "saat": ts.strftime("%H:%M") if ts else "",
         }
 
-    # Yarın açılışçılar: vardiya_atama tablosundan slot tip='acilis' olanlar
-    # vardiya_v2.py ile aynı filtreler: aktif slot + aktif_gunler + planli/onayli
+    # Yarın açılışçılar: vardiya_v2.gun_planini_getir ile aynı sorgu
+    # slot.tip IN ('acilis','normal') — sabah vardiyasındaki herkesi al
+    # haftanin_gunu: Python weekday()+1 → 1=Pzt..7=Paz
     yarin = tarih + timedelta(days=1)
-    # PostgreSQL: ISODOW → 1=Pzt..7=Paz (aktif_gunler int[] ile eşleşiyor)
-    yarin_gun = yarin.isoweekday()  # Python: 1=Pzt..7=Paz — aynı
+    yarin_haftanin_gunu = yarin.weekday() + 1
     cur.execute("""
         SELECT vs.sube_id::text,
                COALESCE(NULLIF(TRIM(p.ad_soyad),''), va.personel_id::text) AS personel_ad,
-               va.baslangic_saat
+               vs.tip AS slot_tip,
+               vs.baslangic_saat
         FROM vardiya_atama va
         JOIN vardiya_slot vs ON vs.id = va.slot_id
         JOIN personel p ON p.id = va.personel_id
         WHERE va.tarih = %s
           AND va.durum IN ('planli','onayli')
-          AND vs.tip = 'acilis'
           AND vs.aktif = TRUE
           AND %s = ANY(vs.aktif_gunler)
-        ORDER BY vs.sube_id, vs.sira NULLS LAST, va.baslangic_saat
-    """, (yarin, yarin_gun))
+          AND vs.baslangic_saat < '14:00'
+        ORDER BY vs.sube_id, vs.baslangic_saat, vs.sira NULLS LAST
+    """, (yarin, yarin_haftanin_gunu))
     yarin_map = {}
     for r in (cur.fetchall() or []):
         sid = str(r["sube_id"])
