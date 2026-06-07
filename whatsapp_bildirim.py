@@ -310,12 +310,30 @@ def _dis_kaynak_verileri(cur, tarih: date) -> dict:
 # ── Yarın ödemeler ───────────────────────────────────────────────────────────
 
 def _yarin_odemeler(cur, tarih: date) -> list:
+    """
+    Yarın vadesi gelen ödemeler — motors.py yaklasan_odemeler ile aynı defansif filtre.
+    Zaten kasadan ödenmiş planlar gösterilmez.
+    """
     yarin = tarih + timedelta(days=1)
     cur.execute("""
-        SELECT aciklama, odenecek_tutar AS tutar, kaynak_tablo
-        FROM odeme_plani
-        WHERE tarih = %s AND durum IN ('bekliyor','onay_bekliyor')
-        ORDER BY odenecek_tutar DESC
+        SELECT op.aciklama, op.odenecek_tutar AS tutar, op.kaynak_tablo
+        FROM odeme_plani op
+        WHERE op.durum IN ('bekliyor','onay_bekliyor')
+          AND op.tarih = %s
+          AND NOT (
+              op.kart_id IS NULL
+              AND op.kaynak_id IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM kasa_hareketleri kh
+                  WHERE kh.kasa_etkisi = TRUE AND kh.durum = 'aktif'
+                    AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih)
+                    AND (
+                          (kh.kaynak_tablo = 'odeme_plani' AND kh.kaynak_id = op.id)
+                       OR (kh.kaynak_tablo = op.kaynak_tablo AND kh.kaynak_id = op.kaynak_id)
+                    )
+              )
+          )
+        ORDER BY op.odenecek_tutar DESC
         LIMIT 10
     """, (yarin,))
     return [dict(r) for r in (cur.fetchall() or [])]
@@ -451,9 +469,10 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
             s.append(f"  {'Toplam':<32} {_fmt(toplam_g)}")
         s.append("")
 
-    # Yarın ödemeler
+    # Yarın ödemeler — her zaman göster
+    yarin_tarih_str = f"{(tarih + timedelta(days=1)).day} {_AY[(tarih + timedelta(days=1)).month - 1]}"
+    s.append(f"*{yarin_tarih_str} ÖDEMELERİ*")
     if yarin:
-        s.append("*YARIN ÖDEMELER*")
         toplam_y = 0
         for o in yarin:
             ad    = str(o.get("aciklama") or "")[:28]
@@ -464,10 +483,13 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
             s.append(f"  • {ad}{ek}  {_fmt(t)}")
         if len(yarin) > 1:
             s.append(f"  Toplam: *{_fmt(toplam_y)}*")
-        s.append("")
+    else:
+        s.append("  Ödeme yok ✓")
+    s.append("")
 
     # Bu ay ciro
-    s.append(f"Bu ay: *{_fmt(ay_ciro)}*")
+    ay_adi = _AY[tarih.month - 1]
+    s.append(f"{ay_adi} ayı cirosu: *{_fmt(ay_ciro)}*")
 
     # Dış kaynak (kira gelirleri)
     if dis_kaynak["ay_toplam"] > 0 or dis_kaynak["bugun"] > 0:
