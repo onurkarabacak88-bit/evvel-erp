@@ -8,6 +8,7 @@ import CacheFreshnessBadge from '../components/CacheFreshnessBadge';
 import SiparisKontrolKulesi from './SiparisKontrolKulesi';
 import UrunUyumsuzlukPanel from '../components/UrunUyumsuzlukPanel';
 import FireBildirimPanel from '../components/FireBildirimPanel';
+import GorevListesi from '../components/GorevListesi';
 
 /** Backend'in statik şube paneli (`GET /sube-panel/{id}`) — API ile aynı kök (VITE_API_URL). */
 function subePanelHariciUrl(subeId) {
@@ -10229,6 +10230,27 @@ export default function OperasyonMerkezi() {
               Nakit/POS/Online tutarlar ciro taslağından gelir; kırmızı satır = acil aksiyon gerektiriyor.
               {bugunMu && ' · Tablo 2 dakikada bir otomatik yenilenir.'}
             </div>
+
+            {/* Görev çizelgesi — seçili şube varsa kapanış görevleri */}
+            {subeSecili && (
+              <div style={{ marginTop: 24, padding: '16px 0', borderTop: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginBottom: 4 }}>
+                  {satirlar.find(r => String(r.sube_id) === subeSecili)?.sube_adi || subeSecili} — Vardiya Görev Çizelgesi
+                </div>
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                  {['sabahci', 'ara_vardiya', 'kapanis'].map((vt) => (
+                    <div key={vt} style={{ flex: '1 1 260px', minWidth: 240 }}>
+                      <GorevListesi
+                        subeId={subeSecili}
+                        vardiyaTip={vt}
+                        tarih={(tarih || isGunuIsoIstanbul()).trim()}
+                        personelId={null}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
           </div>
         );

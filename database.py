@@ -4379,3 +4379,41 @@ $$;
             print("[MIGRATION] yarisma + yarisma_skor tabloları kontrol edildi")
         except Exception as _yar_e:
             print(f"[MIGRATION WARN] yarisma tabloları: {_yar_e}")
+
+        # ── GÖREV ÇİZELGESİ ─────────────────────────────────────
+        ensure_gorev_tablolari(cur)
+
+        conn.commit()
+
+
+def ensure_gorev_tablolari(cur) -> None:
+    """Görev şablonu + günlük tamamlama tablolarını oluşturur."""
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS gorev_sablonu (
+            id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            vardiya_tip TEXT NOT NULL CHECK (vardiya_tip IN ('sabahci','ara_vardiya','kapanis')),
+            sira        INT NOT NULL DEFAULT 0,
+            alan        TEXT NOT NULL,
+            gorev       TEXT NOT NULL,
+            siklik      TEXT,
+            aktif       BOOLEAN NOT NULL DEFAULT TRUE,
+            olusturma   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS gorev_tamamlama (
+            id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            tarih           DATE NOT NULL,
+            sube_id         TEXT NOT NULL REFERENCES subeler(id),
+            sablonid        TEXT NOT NULL REFERENCES gorev_sablonu(id),
+            tamamlandi      BOOLEAN NOT NULL DEFAULT FALSE,
+            personel_id     TEXT,
+            tamamlanma_ts   TIMESTAMPTZ,
+            olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (tarih, sube_id, sablonid)
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_gorev_tamamlama_tarih_sube
+        ON gorev_tamamlama (tarih, sube_id)
+    """)
