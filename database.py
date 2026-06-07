@@ -4380,16 +4380,15 @@ $$;
         except Exception as _yar_e:
             print(f"[MIGRATION WARN] yarisma tabloları: {_yar_e}")
 
-        # ── GÖREV ÇİZELGESİ ─────────────────────────────────────
-        try:
-            cur.execute("SAVEPOINT gorev_tablolari_sp")
-            ensure_gorev_tablolari(cur)
-            cur.execute("RELEASE SAVEPOINT gorev_tablolari_sp")
-        except Exception as _ge:
-            cur.execute("ROLLBACK TO SAVEPOINT gorev_tablolari_sp")
-            print(f"[MIGRATION WARN] gorev_tablolari: {_ge}")
-
         conn.commit()
+
+    # ── GÖREV ÇİZELGESİ — ayrı bağlantıda (aborted tx'den etkilenmesin) ──
+    try:
+        with db() as (_gc, _gcur):
+            ensure_gorev_tablolari(_gcur)
+            _gc.commit()
+    except Exception as _ge:
+        print(f"[MIGRATION WARN] gorev_tablolari: {_ge}")
 
 
 def ensure_gorev_tablolari(cur) -> None:
