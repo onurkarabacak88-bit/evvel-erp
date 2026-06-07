@@ -2438,7 +2438,51 @@ function BankaYatirimModal({ liste, yukleniyor, onKapat, onYenile, toast }) {
               {kaydediyor ? 'Kaydediliyor…' : 'Kaydet'}
             </button>
           </form>
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)' }}>Kayıtlar</div>
+          {/* ── AY AY ÖZET ── */}
+          {!yukleniyor && liste.length > 0 && (() => {
+            const ayMap = {};
+            liste.forEach(r => {
+              const ay = String(r.tarih || '').slice(0, 7); // "2025-06"
+              if (!ay) return;
+              if (!ayMap[ay]) ayMap[ay] = { toplam: 0, adet: 0 };
+              ayMap[ay].toplam += parseFloat(r.tutar || 0);
+              ayMap[ay].adet += 1;
+            });
+            const aylar = Object.keys(ayMap).sort().reverse();
+            const AY_ADI = ['', 'Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+            return (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginBottom: 6 }}>
+                  Aylık özet
+                </div>
+                <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+                  {aylar.map((ay, i) => {
+                    const [yil, ayNo] = ay.split('-');
+                    const ad = `${AY_ADI[parseInt(ayNo)]} ${yil}`;
+                    const { toplam, adet } = ayMap[ay];
+                    return (
+                      <div key={ay} style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '8px 14px',
+                        borderBottom: i < aylar.length - 1 ? '1px solid var(--border)' : 'none',
+                        background: i === 0 ? 'var(--accent-dim)' : 'var(--bg2)',
+                      }}>
+                        <div>
+                          <span style={{ fontSize: 13, fontWeight: i === 0 ? 700 : 500, color: 'var(--text1)' }}>{ad}</span>
+                          <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 8 }}>{adet} kayıt</span>
+                        </div>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 700, color: 'var(--clr-banka)' }}>
+                          {fmt(toplam)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)' }}>Tüm kayıtlar</div>
           {yukleniyor ? (
             <div className="loading" style={{ padding: 24 }}><div className="spinner" />Yükleniyor…</div>
           ) : liste.length === 0 ? (
