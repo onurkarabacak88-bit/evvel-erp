@@ -1,255 +1,203 @@
 """
 Evvel ERP — WhatsApp Günlük Özet Bildirimi
-Green API üzerinden ortaklar grubuna gece 00:15'te gönderilir.
+Green API üzerinden ortaklar grubuna gece 00:30'da gönderilir.
 
-Ortam değişkenleri (.env):
-    WA_INSTANCE_ID   — Green API instance ID (örn: 1101XXXXXX)
+Veri kaynakları (CFO Panel ile birebir):
+  Cirolar    → kapanis_kayit (öncelikli) → ciro aktif → ciro_taslak bekliyor
+  Kasa       → kasa_hareketleri WHERE kasa_etkisi=TRUE (finans_core.kasa_bakiyesi ile aynı)
+  Bu ay ciro → ciro WHERE durum='aktif' (motors.py finans_ozet_motoru ile aynı)
+  Anlık gider→ kasa_hareketleri WHERE islem_turu='ANLIK_GIDER' (panel ile aynı)
+  Ödemeler   → odeme_plani (odenecek_tutar, tarih, durum)
+  Kasa teslim→ kasa_teslim
+  Toptancı   → operasyon_defter WHERE etiket='URUN_SEVK'
+
+Ortam değişkenleri:
+    WA_INSTANCE_ID   — Green API instance ID
     WA_TOKEN         — Green API API token
-    WA_GROUP_ID      — Grup chat ID (örn: 905XXXXXXXXX-1234567890@g.us)
-
-Green API ücretsiz: https://green-api.com  (100 msg/gün yeterli)
+    WA_GROUP_ID      — Grup chat ID (@g.us ile biten)
 """
 
-import os
-import json
-import logging
-import urllib.request
-import urllib.error
+import os, json, logging, urllib.request, urllib.error
 from datetime import date, timedelta
 from database import db
 
 logger = logging.getLogger(__name__)
 
 
-# ── Yardımcı ──────────────────────────────────────────────────────────────────
+# ── Yardımcı ─────────────────────────────────────────────────────────────────
 
 def _fmt(val) -> str:
-    """Sayıyı Türkçe formatlı stringe çevir: 12500 → '12.500 ₺'"""
     try:
         return f"{int(float(val or 0)):,}".replace(",", ".") + " ₺"
     except Exception:
         return "— ₺"
 
-
 def _trend(simdiki, onceki) -> str:
-    """Yüzde değişim oku: ▲ +12% veya ▼ -8% veya —"""
     try:
-        s = float(simdiki or 0)
-        o = float(onceki or 0)
-        if o == 0:
-            return ""
+        s, o = float(simdiki or 0), float(onceki or 0)
+        if o == 0: return ""
         pct = round((s - o) / o * 100)
-        if pct > 0:
-            return f"▲ +{pct}%"
-        elif pct < 0:
-            return f"▼ {pct}%"
-        return "→ 0%"
+        return f"▲ +{pct}%" if pct > 0 else (f"▼ {pct}%" if pct < 0 else "→ 0%")
     except Exception:
         return ""
 
 
-# ── Veri Toplama ──────────────────────────────────────────────────────────────
+# ── Ciro: kapanış takip öncelikli ────────────────────────────────────────────
 
-def _sube_ciro_tarih(cur, tarih: date) -> dict:
+def _kapanis_ciro_map(cur, tarih_bas: date, tarih_son: date) -> dict:
     """
-    Bir tarihin şube bazlı ciro toplamları.
-    Öncelik sırası (onay durumundan bağımsız — kapanış takip esası):
-      1. kapanis_kayit — şubenin kapanışta girdiği nakit+pos+online (en güvenilir)
-      2. ciro — onaylı ciro (aktif)
-      3. ciro_taslak — onay bekleyen taslak
-
-    NOT: is_gunu_tr() mantığı — gece kapanışları ertesi günün ilk saatlerinde
-    girildiğinde tarih=bugün veya tarih=dün olabilir. Her ikisi de kontrol edilir.
+    kapanis_kayit'ten şube+gün bazlı ciro.
+    Gece kapanışlar tarih veya tarih+1'e yazılabilir (is_gunu_tr mantığı).
     """
-    sonuc = {}
-
-    # 1. Kapanış kayıtları — tarih veya tarih+1 (gece geç girilen kapanışlar)
     cur.execute("""
-        SELECT sube_id,
-               COALESCE(nakit, 0) + COALESCE(pos, 0) + COALESCE(online, 0) AS tutar
+        SELECT sube_id, tarih,
+               COALESCE(nakit,0) + COALESCE(pos,0) + COALESCE(online,0) AS tutar
         FROM kapanis_kayit
-        WHERE tarih IN (%s, %s) AND durum != 'iptal'
-    """, (tarih, tarih + timedelta(days=1)))
-    for r in (cur.fetchall() or []):
-        sonuc[str(r["sube_id"])] = float(r["tutar"] or 0)
+        WHERE tarih >= %s AND tarih <= %s AND durum != 'iptal'
+    """, (tarih_bas, tarih_son + timedelta(days=1)))
+    return {(str(r["sube_id"]), str(r["tarih"])): float(r["tutar"] or 0)
+            for r in (cur.fetchall() or [])}
 
-    # 2. Onaylı ciro — kapanış kaydı yoksa
-    cur.execute("""
-        SELECT sube_id, COALESCE(SUM(toplam), 0) AS tutar
-        FROM ciro
-        WHERE tarih = %s AND durum = 'aktif'
-        GROUP BY sube_id
-    """, (tarih,))
-    for r in (cur.fetchall() or []):
-        sid = str(r["sube_id"])
-        if sid not in sonuc:
-            sonuc[sid] = float(r["tutar"] or 0)
-
-    # 3. Taslak — ikisi de yoksa
+def _sube_ciro_gun(cur, tarih: date) -> dict:
+    """
+    Tek gün için şube bazlı ciro.
+    Öncelik: kapanis_kayit → ciro aktif → ciro_taslak
+    """
+    # 1. Kapanış (tarih veya tarih+1)
     cur.execute("""
         SELECT sube_id,
-               COALESCE(SUM(COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0)), 0) AS tutar
-        FROM ciro_taslak
-        WHERE tarih = %s AND durum = 'bekliyor'
-        GROUP BY sube_id
+               COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0) AS tutar
+        FROM kapanis_kayit
+        WHERE tarih IN (%s,%s) AND durum != 'iptal'
+    """, (tarih, tarih + timedelta(days=1)))
+    sonuc = {str(r["sube_id"]): float(r["tutar"] or 0) for r in (cur.fetchall() or [])}
+
+    # 2. Onaylı ciro
+    cur.execute("""
+        SELECT sube_id, COALESCE(SUM(toplam),0) AS tutar
+        FROM ciro WHERE tarih=%s AND durum='aktif' GROUP BY sube_id
     """, (tarih,))
     for r in (cur.fetchall() or []):
-        sid = str(r["sube_id"])
-        if sid not in sonuc:
-            sonuc[sid] = float(r["tutar"] or 0)
+        if str(r["sube_id"]) not in sonuc:
+            sonuc[str(r["sube_id"])] = float(r["tutar"] or 0)
 
-    return sonuc  # {sube_id: tutar}
+    # 3. Taslak
+    cur.execute("""
+        SELECT sube_id,
+               COALESCE(SUM(COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0)),0) AS tutar
+        FROM ciro_taslak WHERE tarih=%s AND durum='bekliyor' GROUP BY sube_id
+    """, (tarih,))
+    for r in (cur.fetchall() or []):
+        if str(r["sube_id"]) not in sonuc:
+            sonuc[str(r["sube_id"])] = float(r["tutar"] or 0)
 
+    return sonuc
 
 def _ciro_verileri(cur, tarih: date) -> dict:
-    """O günün şube bazlı ciroları + dünle karşılaştırma."""
-    dun = tarih - timedelta(days=1)
-
-    # Aktif şubeler
-    cur.execute("SELECT id, ad FROM subeler WHERE aktif = TRUE ORDER BY ad")
+    cur.execute("SELECT id, ad FROM subeler WHERE aktif=TRUE ORDER BY ad")
     subeler_liste = cur.fetchall() or []
+    bugun_map = _sube_ciro_gun(cur, tarih)
+    dun_map   = _sube_ciro_gun(cur, tarih - timedelta(days=1))
 
-    bugun_map = _sube_ciro_tarih(cur, tarih)
-    dun_map   = _sube_ciro_tarih(cur, dun)
-
-    subeler = []
-    toplam_bugun = 0
-    toplam_dun = 0
-
+    subeler, toplam_bugun, toplam_dun = [], 0, 0
     for row in subeler_liste:
         sid = str(row["id"])
         ciro = bugun_map.get(sid, 0)
         d    = dun_map.get(sid, 0)
         toplam_bugun += ciro
         toplam_dun   += d
-        subeler.append({
-            "ad":      row["ad"],
-            "ciro":    ciro,
-            "dun":     d,
-            "trend":   _trend(ciro, d),
-            "girilmis": ciro > 0,
-        })
+        subeler.append({"ad": row["ad"], "ciro": ciro, "dun": d,
+                        "trend": _trend(ciro, d), "girilmis": ciro > 0})
+    return {"subeler": subeler, "toplam": toplam_bugun,
+            "toplam_trend": _trend(toplam_bugun, toplam_dun)}
 
-    return {
-        "subeler": subeler,
-        "toplam": toplam_bugun,
-        "toplam_trend": _trend(toplam_bugun, toplam_dun),
-    }
 
+# ── Bu ay ciro — CFO Panel ile aynı kaynak (ciro.durum='aktif') ──────────────
+
+def _bu_ay_ciro(cur, tarih: date) -> float:
+    """
+    motors.py finans_ozet_motoru ile birebir aynı sorgu:
+    ciro WHERE durum='aktif' AND bu ay
+    """
+    cur.execute("""
+        SELECT COALESCE(SUM(toplam), 0) AS ciro
+        FROM ciro
+        WHERE durum = 'aktif'
+          AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+    """, (tarih,))
+    return float((cur.fetchone() or {}).get("ciro") or 0)
+
+
+# ── Kasa — finans_core.kasa_bakiyesi ile aynı ────────────────────────────────
 
 def _kasa_verileri(cur, tarih: date) -> dict:
-    """Güncel kasa bakiyesi (tüm zamanlar SUM) + bugün giren/çıkan."""
-    # Anlık kasa = kasa_etkisi=true olan tüm hareketlerin toplamı
+    """
+    finans_core.kasa_bakiyesi: SUM(tutar) WHERE kasa_etkisi=TRUE
+    Giren/çıkan: o günün kasa hareketleri (islem_turu bazlı)
+    """
     cur.execute("""
-        SELECT COALESCE(SUM(tutar), 0) AS bakiye
-        FROM kasa_hareketleri
-        WHERE kasa_etkisi = TRUE
+        SELECT COALESCE(SUM(tutar),0) AS bakiye
+        FROM kasa_hareketleri WHERE kasa_etkisi=TRUE
     """)
-    row = cur.fetchone()
-    kasa = float(row["bakiye"] or 0) if row else 0
+    kasa = float((cur.fetchone() or {}).get("bakiye") or 0)
 
-    # Bugün giren (pozitif hareketler)
+    # Bugün kasa'ya giren (ciro + dış kaynak)
     cur.execute("""
-        SELECT COALESCE(SUM(tutar), 0) AS toplam
+        SELECT COALESCE(SUM(tutar),0) AS toplam
         FROM kasa_hareketleri
-        WHERE DATE(olusturma AT TIME ZONE 'Europe/Istanbul') = %s
-          AND tutar > 0
-          AND kasa_etkisi = TRUE
+        WHERE kasa_etkisi=TRUE AND tutar>0
+          AND tarih = %s
     """, (tarih,))
     giren = float((cur.fetchone() or {}).get("toplam") or 0)
 
-    # Bugün çıkan (negatif hareketler)
+    # Bugün kasa'dan çıkan
     cur.execute("""
-        SELECT COALESCE(SUM(ABS(tutar)), 0) AS toplam
+        SELECT COALESCE(SUM(ABS(tutar)),0) AS toplam
         FROM kasa_hareketleri
-        WHERE DATE(olusturma AT TIME ZONE 'Europe/Istanbul') = %s
-          AND tutar < 0
-          AND kasa_etkisi = TRUE
+        WHERE kasa_etkisi=TRUE AND tutar<0
+          AND tarih = %s
     """, (tarih,))
     cikan = float((cur.fetchone() or {}).get("toplam") or 0)
 
     return {"kasa": kasa, "giren": giren, "cikan": cikan}
 
 
+# ── Anlık gider — panel ile aynı kaynak ──────────────────────────────────────
+
 def _anlik_giderler(cur, tarih: date) -> list:
-    """O günün anlık gider kalemleri."""
+    """
+    Panel: kasa_hareketleri WHERE islem_turu='ANLIK_GIDER' bu ay.
+    Mesaj için: o günün anlık giderleri, onay durumundan bağımsız
+    (şube panelinden girilmiş, kasa_hareketleri'ne düşmemiş olabilir).
+    """
     cur.execute("""
-        SELECT aciklama, kategori, COALESCE(tutar, 0) AS tutar
+        SELECT aciklama, kategori, COALESCE(tutar,0) AS tutar
         FROM anlik_giderler
         WHERE tarih = %s
-          AND (durum IS NULL OR durum NOT IN ('iptal', 'red'))
+          AND (durum IS NULL OR durum NOT IN ('iptal','red'))
         ORDER BY olusturma DESC
         LIMIT 20
     """, (tarih,))
     return [dict(r) for r in (cur.fetchall() or [])]
 
 
+# ── Yarın ödemeler ───────────────────────────────────────────────────────────
+
 def _yarin_odemeler(cur, tarih: date) -> list:
-    """Yarın vadesi gelen ödeme planı kalemleri."""
     yarin = tarih + timedelta(days=1)
     cur.execute("""
-        SELECT op.aciklama, op.odenecek_tutar AS tutar, op.kaynak_tablo
-        FROM odeme_plani op
-        WHERE op.tarih = %s
-          AND op.durum IN ('bekliyor', 'onay_bekliyor')
-        ORDER BY op.odenecek_tutar DESC
+        SELECT aciklama, odenecek_tutar AS tutar, kaynak_tablo
+        FROM odeme_plani
+        WHERE tarih = %s AND durum IN ('bekliyor','onay_bekliyor')
+        ORDER BY odenecek_tutar DESC
         LIMIT 10
     """, (yarin,))
     return [dict(r) for r in (cur.fetchall() or [])]
 
 
-def _bu_ay_ciro(cur, tarih: date) -> float:
-    """
-    Bu ayın başından bugüne kümülatif ciro.
-    Her şube+gün için: kapanış kaydı → onaylı ciro → taslak (öncelik sırasıyla).
-    """
-    ay_basi = tarih.replace(day=1)
-
-    # Kapanış kayıtları — tarih+1 dahil (gece geç girilen kapanışlar)
-    cur.execute("""
-        SELECT sube_id, tarih,
-               COALESCE(nakit,0) + COALESCE(pos,0) + COALESCE(online,0) AS tutar
-        FROM kapanis_kayit
-        WHERE tarih >= %s AND tarih <= %s AND durum != 'iptal'
-    """, (ay_basi, tarih + timedelta(days=1)))
-    kapanis_map = {(str(r["sube_id"]), str(r["tarih"])): float(r["tutar"] or 0)
-                   for r in (cur.fetchall() or [])}
-
-    # Onaylı ciro — kapanış kaydı olmayan gün/şube çiftleri için
-    cur.execute("""
-        SELECT sube_id, tarih::date AS tarih, COALESCE(SUM(toplam), 0) AS tutar
-        FROM ciro
-        WHERE tarih >= %s AND tarih <= %s AND durum = 'aktif'
-        GROUP BY sube_id, tarih::date
-    """, (ay_basi, tarih))
-    aktif_map = {}
-    for r in (cur.fetchall() or []):
-        k = (str(r["sube_id"]), str(r["tarih"]))
-        if k not in kapanis_map:
-            aktif_map[k] = float(r["tutar"] or 0)
-
-    # Taslak — ikisi de yoksa
-    cur.execute("""
-        SELECT ct.sube_id, ct.tarih::date AS tarih,
-               COALESCE(SUM(COALESCE(ct.nakit,0)+COALESCE(ct.pos,0)+COALESCE(ct.online,0)),0) AS tutar
-        FROM ciro_taslak ct
-        WHERE ct.tarih >= %s AND ct.tarih <= %s AND ct.durum = 'bekliyor'
-        GROUP BY ct.sube_id, ct.tarih::date
-    """, (ay_basi, tarih))
-    taslak_map = {}
-    for r in (cur.fetchall() or []):
-        k = (str(r["sube_id"]), str(r["tarih"]))
-        if k not in kapanis_map and k not in aktif_map:
-            taslak_map[k] = float(r["tutar"] or 0)
-
-    toplam = (sum(kapanis_map.values()) +
-              sum(aktif_map.values()) +
-              sum(taslak_map.values()))
-    return toplam
-
+# ── Kasa teslimler ───────────────────────────────────────────────────────────
 
 def _kasa_teslimler(cur, tarih: date) -> list:
-    """O gün yapılan kasa teslimler."""
     cur.execute("""
         SELECT kt.tutar, kt.teslim_eden_ad, kt.teslim_alan_ad,
                kt.teslim_turu, s.ad AS sube_adi
@@ -261,224 +209,197 @@ def _kasa_teslimler(cur, tarih: date) -> list:
     return [dict(r) for r in (cur.fetchall() or [])]
 
 
+# ── Toptancı teslimler ───────────────────────────────────────────────────────
+
 def _toptanci_teslimler(cur, tarih: date) -> list:
-    """O gün yapılan ürün teslim alımları (URUN_SEVK kayıtları)."""
     cur.execute("""
         SELECT d.sube_id, s.ad AS sube_adi, d.aciklama
         FROM operasyon_defter d
         JOIN subeler s ON s.id = d.sube_id
         WHERE d.etiket = 'URUN_SEVK'
-          AND d.tarih = %s
+          AND d.tarih IN (%s, %s)
           AND d.aciklama LIKE 'URUN_SEVK_JSON:%%'
         ORDER BY d.olay_ts
-    """, (tarih,))
+    """, (tarih, tarih + timedelta(days=1)))
     rows = cur.fetchall() or []
 
     teslimler = []
     for r in rows:
-        aciklama = str(r["aciklama"] or "")
         payload = {}
         try:
-            json_str = aciklama[len("URUN_SEVK_JSON:"):].split(" | ")[0].strip()
+            json_str = str(r["aciklama"])[len("URUN_SEVK_JSON:"):].split(" | ")[0].strip()
             payload = json.loads(json_str)
         except Exception:
             pass
-
-        tedarikci = str(payload.get("tedarikci") or "").strip() or "—"
-        kalemler = payload.get("kalemler") or []
-        delta = payload.get("delta") or {}
-
-        kalem_metni = []
-        for k in (kalemler if isinstance(kalemler, list) else []):
+        kalemler = []
+        for k in (payload.get("kalemler") or []):
             ad = str(k.get("urun_ad") or k.get("ad") or "").strip()
             adet = int(k.get("adet") or 0)
             if ad and adet > 0:
-                kalem_metni.append(f"{ad} {adet} adet")
-        if not kalem_metni and isinstance(delta, dict):
-            for k, v in delta.items():
+                kalemler.append(f"{ad} {adet} adet")
+        if not kalemler:
+            for k, v in (payload.get("delta") or {}).items():
                 try:
-                    adet = int(v or 0)
-                    if adet > 0:
-                        kalem_metni.append(f"{k} {adet}")
+                    if int(v) > 0: kalemler.append(f"{k} {v}")
                 except Exception:
                     pass
-
         teslimler.append({
             "sube": r["sube_adi"],
-            "tedarikci": tedarikci,
-            "kalemler": kalem_metni[:5],  # max 5 kalem
+            "tedarikci": str(payload.get("tedarikci") or "").strip() or "—",
+            "kalemler": kalemler[:5],
         })
-
     return teslimler
 
 
 # ── Mesaj Oluşturma ───────────────────────────────────────────────────────────
 
+_AY = ["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran",
+       "Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"]
+
+_KAYNAK_ETIKET = {
+    "sabit_giderler": "Sabit Gider",
+    "personel": "Maaş",
+    "vadeli_alimlar": "Vadeli",
+    "borc_envanteri": "Kredi/Borç",
+}
+
+_TESLIM_TUR = {
+    "ara": "Ara Teslim", "kapanis": "Kapanış",
+    "acilis": "Açılış", "diger": "Diğer",
+}
+
 def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
-    """
-    Verilen tarih için (varsayılan: dün) günlük özet mesajını oluşturur.
-    00:15'te çağrılır — tarih = bugün - 1 gün (kapanan günün özeti).
-    """
     from tr_saat import bugun_tr
     if tarih is None:
         tarih = bugun_tr() - timedelta(days=1)
 
     with db() as (conn, cur):
-        ciro = _ciro_verileri(cur, tarih)
-        kasa = _kasa_verileri(cur, tarih)
-        giderler = _anlik_giderler(cur, tarih)
-        yarin = _yarin_odemeler(cur, tarih)
-        ay_ciro = _bu_ay_ciro(cur, tarih)
-        kasa_teslim_listesi = _kasa_teslimler(cur, tarih)
-        teslimler = _toptanci_teslimler(cur, tarih)
+        ciro        = _ciro_verileri(cur, tarih)
+        kasa        = _kasa_verileri(cur, tarih)
+        giderler    = _anlik_giderler(cur, tarih)
+        yarin       = _yarin_odemeler(cur, tarih)
+        ay_ciro     = _bu_ay_ciro(cur, tarih)
+        kt_liste    = _kasa_teslimler(cur, tarih)
+        toptanci    = _toptanci_teslimler(cur, tarih)
 
-    tarih_str = tarih.strftime("%-d %B").replace(
-        "January", "Ocak").replace("February", "Şubat").replace(
-        "March", "Mart").replace("April", "Nisan").replace(
-        "May", "Mayıs").replace("June", "Haziran").replace(
-        "July", "Temmuz").replace("August", "Ağustos").replace(
-        "September", "Eylül").replace("October", "Ekim").replace(
-        "November", "Kasım").replace("December", "Aralık")
+    tarih_str = f"{tarih.day} {_AY[tarih.month - 1]}"
+    s = [f"🌙 *Evvel — {tarih_str} Günlük Özet*", ""]
 
-    satirlar = [f"🌙 *Evvel — {tarih_str} Günlük Özet*", ""]
-
-    # ── Cirolar ──
-    satirlar.append("*CİROLAR*")
-    eksik_subeler = []
-    for s in ciro["subeler"]:
-        if not s["girilmis"]:
-            eksik_subeler.append(s["ad"])
-            satirlar.append(f"⚠️ {s['ad']:<12} kapanış girilmedi")
+    # Cirolar
+    s.append("*CİROLAR*")
+    for sub in ciro["subeler"]:
+        if not sub["girilmis"]:
+            s.append(f"⚠️ {sub['ad']:<14} kapanış girilmedi")
         else:
-            trend = f"  {s['trend']}" if s["trend"] else ""
-            satirlar.append(f"  {s['ad']:<12} {_fmt(s['ciro'])}{trend}")
+            trend = f"  {sub['trend']}" if sub["trend"] else ""
+            s.append(f"  {sub['ad']:<14} {_fmt(sub['ciro'])}{trend}")
+    trend_t = f"  {ciro['toplam_trend']}" if ciro["toplam_trend"] else ""
+    s.append(f"  {'Toplam':<14} *{_fmt(ciro['toplam'])}*{trend_t}")
+    s.append("")
 
-    trend_toplam = f"  {ciro['toplam_trend']}" if ciro["toplam_trend"] else ""
-    satirlar.append(f"  {'Toplam':<12} *{_fmt(ciro['toplam'])}*{trend_toplam}")
-    satirlar.append("")
+    # Kasa
+    s.append(f"*KASA: {_fmt(kasa['kasa'])}*")
+    s.append(f"  Bugün giren:  +{_fmt(kasa['giren'])}")
+    s.append(f"  Bugün çıkan:  -{_fmt(kasa['cikan'])}")
+    s.append("")
 
-    # ── Kasa ──
-    satirlar.append(f"*KASA: {_fmt(kasa['kasa'])}*")
-    satirlar.append(f"  Bugün giren:  +{_fmt(kasa['giren'])}")
-    satirlar.append(f"  Bugün çıkan:  -{_fmt(kasa['cikan'])}")
-    satirlar.append("")
-
-    # ── Anlık giderler ──
+    # Anlık giderler
     if giderler:
-        satirlar.append("*ANLIK GİDERLER*")
-        toplam_gider = 0
+        s.append("*ANLIK GİDERLER*")
+        toplam_g = 0
         for g in giderler:
             ad = str(g.get("aciklama") or g.get("kategori") or "Gider")[:30]
-            tutar = float(g.get("tutar") or 0)
-            toplam_gider += tutar
-            satirlar.append(f"  • {ad:<28} {_fmt(tutar)}")
+            t  = float(g.get("tutar") or 0)
+            toplam_g += t
+            s.append(f"  • {ad:<30} {_fmt(t)}")
         if len(giderler) > 1:
-            satirlar.append(f"  {'Toplam':<30} {_fmt(toplam_gider)}")
-        satirlar.append("")
+            s.append(f"  {'Toplam':<32} {_fmt(toplam_g)}")
+        s.append("")
 
-    # ── Yarın ödemeler ──
+    # Yarın ödemeler
     if yarin:
-        satirlar.append("*YARIN ÖDEMELER*")
-        toplam_yarin = 0
-        kaynak_etiket = {
-            "sabit_giderler": "Sabit Gider",
-            "personel": "Maaş",
-            "vadeli_alimlar": "Vadeli",
-            "borc_envanteri": "Kredi/Borç",
-        }
+        s.append("*YARIN ÖDEMELER*")
+        toplam_y = 0
         for o in yarin:
-            ad = str(o.get("aciklama") or "")[:28]
-            tutar = float(o.get("tutar") or 0)
-            toplam_yarin += tutar
-            kaynak = kaynak_etiket.get(o.get("kaynak_tablo") or "", "")
-            etiket = f" ({kaynak})" if kaynak else ""
-            satirlar.append(f"  • {ad}{etiket}  {_fmt(tutar)}")
+            ad    = str(o.get("aciklama") or "")[:28]
+            t     = float(o.get("tutar") or 0)
+            toplam_y += t
+            etiket = _KAYNAK_ETIKET.get(o.get("kaynak_tablo") or "", "")
+            ek = f" ({etiket})" if etiket else ""
+            s.append(f"  • {ad}{ek}  {_fmt(t)}")
         if len(yarin) > 1:
-            satirlar.append(f"  Toplam: *{_fmt(toplam_yarin)}*")
-        satirlar.append("")
+            s.append(f"  Toplam: *{_fmt(toplam_y)}*")
+        s.append("")
 
-    # ── Bu ay kümülatif ciro ──
-    satirlar.append(f"Bu ay: *{_fmt(ay_ciro)}*")
+    # Bu ay ciro
+    s.append(f"Bu ay: *{_fmt(ay_ciro)}*")
 
-    # ── Kasa teslimler ──
-    if kasa_teslim_listesi:
-        satirlar.append("")
-        satirlar.append("*KASA TESLİMLER*")
-        toplam_teslim = 0
-        tur_etiket = {'ara': 'Ara Teslim', 'kapanis': 'Kapanış', 'acilis': 'Açılış', 'diger': 'Diğer'}
-        for t in kasa_teslim_listesi:
-            tutar = float(t.get("tutar") or 0)
-            toplam_teslim += tutar
-            tur = tur_etiket.get(t.get("teslim_turu") or "", t.get("teslim_turu") or "")
-            eden = str(t.get("teslim_eden_ad") or "").strip() or "—"
-            alan = str(t.get("teslim_alan_ad") or "").strip() or "—"
-            sube = str(t.get("sube_adi") or "").strip()
-            satirlar.append(f"  • {sube} — {tur}: {_fmt(tutar)}")
-            satirlar.append(f"    {eden} → {alan}")
-        if len(kasa_teslim_listesi) > 1:
-            satirlar.append(f"  Toplam: *{_fmt(toplam_teslim)}*")
+    # Kasa teslimler
+    if kt_liste:
+        s.append("")
+        s.append("*KASA TESLİMLER*")
+        toplam_kt = 0
+        for t in kt_liste:
+            tutar  = float(t.get("tutar") or 0)
+            toplam_kt += tutar
+            tur    = _TESLIM_TUR.get(t.get("teslim_turu") or "", t.get("teslim_turu") or "")
+            eden   = str(t.get("teslim_eden_ad") or "").strip() or "—"
+            alan   = str(t.get("teslim_alan_ad") or "").strip() or "—"
+            sube   = str(t.get("sube_adi") or "").strip()
+            s.append(f"  • {sube} — {tur}: {_fmt(tutar)}")
+            s.append(f"    {eden} → {alan}")
+        if len(kt_liste) > 1:
+            s.append(f"  Toplam: *{_fmt(toplam_kt)}*")
 
-    # ── Toptancı teslimler ──
-    if teslimler:
-        satirlar.append("")
-        satirlar.append("*BUGÜN TESLİM ALINAN*")
-        for t in teslimler:
-            kalem_str = ", ".join(t["kalemler"]) if t["kalemler"] else "—"
-            satirlar.append(f"  • {t['sube']} — {t['tedarikci']}")
+    # Toptancı teslimler
+    if toptanci:
+        s.append("")
+        s.append("*BUGÜN TESLİM ALINAN*")
+        for t in toptanci:
+            s.append(f"  • {t['sube']} — {t['tedarikci']}")
             if t["kalemler"]:
-                satirlar.append(f"    {kalem_str}")
+                s.append(f"    {', '.join(t['kalemler'])}")
 
-    return "\n".join(satirlar)
+    return "\n".join(s)
 
 
 # ── Green API Gönderim ────────────────────────────────────────────────────────
 
 def whatsapp_gonder(mesaj: str) -> bool:
-    """
-    Green API üzerinden grup mesajı gönderir.
-    Başarıda True, hata durumunda False döner (exception fırlatmaz).
-    """
     instance_id = os.getenv("WA_INSTANCE_ID", "").strip()
-    token = os.getenv("WA_TOKEN", "").strip()
-    group_id = os.getenv("WA_GROUP_ID", "").strip()
+    token       = os.getenv("WA_TOKEN", "").strip()
+    group_id    = os.getenv("WA_GROUP_ID", "").strip()
 
     if not all([instance_id, token, group_id]):
-        logger.warning("WhatsApp: WA_INSTANCE_ID, WA_TOKEN veya WA_GROUP_ID eksik — mesaj atlanıyor")
+        logger.warning("WhatsApp: ortam değişkenleri eksik — atlanıyor")
         return False
 
-    url = f"https://api.green-api.com/waInstance{instance_id}/sendMessage/{token}"
+    url     = f"https://api.green-api.com/waInstance{instance_id}/sendMessage/{token}"
     payload = json.dumps({"chatId": group_id, "message": mesaj}).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    req     = urllib.request.Request(url, data=payload,
+                                     headers={"Content-Type": "application/json"},
+                                     method="POST")
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            body = resp.read().decode("utf-8")
-            data = json.loads(body)
+            data = json.loads(resp.read().decode("utf-8"))
             if data.get("idMessage"):
-                logger.info(f"WhatsApp: Mesaj gönderildi — {data['idMessage']}")
+                logger.info(f"WhatsApp: gönderildi — {data['idMessage']}")
                 return True
-            logger.warning(f"WhatsApp: Beklenmedik yanıt — {body[:200]}")
+            logger.warning(f"WhatsApp: beklenmedik yanıt — {str(data)[:200]}")
             return False
     except urllib.error.HTTPError as e:
-        logger.error(f"WhatsApp HTTP hatası: {e.code} — {e.read().decode()[:200]}")
+        logger.error(f"WhatsApp HTTP hatası: {e.code}")
         return False
     except Exception as e:
-        logger.error(f"WhatsApp gönderim hatası: {e}")
+        logger.error(f"WhatsApp hatası: {e}")
         return False
 
 
-# ── Manuel Test / FastAPI Endpoint için ──────────────────────────────────────
-
 def gunluk_ozet_gonder(tarih: date | None = None) -> dict:
-    """Mesajı oluştur ve gönder. Scheduler ve test endpoint'i buradan çağırır."""
     try:
-        mesaj = gunluk_ozet_mesaj_olustur(tarih)
+        mesaj    = gunluk_ozet_mesaj_olustur(tarih)
         basarili = whatsapp_gonder(mesaj)
-        return {"basarili": basarili, "mesaj_onizleme": mesaj[:300] + "..."}
+        return {"basarili": basarili, "mesaj_onizleme": mesaj[:400] + "..."}
     except Exception as e:
         logger.error(f"WhatsApp günlük özet hatası: {e}")
         return {"basarili": False, "hata": str(e)}

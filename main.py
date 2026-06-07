@@ -250,10 +250,10 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler rapor cache hatası: {e}")
 
-            # ── WHATSAPP GÜNLÜK ÖZET — gece 00:15 ──
-            # Şubeler kapanışı 00:00–00:15 arası tamamlar, o yüzden 15 dk bekle.
+            # ── WHATSAPP GÜNLÜK ÖZET — gece 00:30 ──
+            # Şubeler kapanışı 00:00–00:30 arası tamamlar, o yüzden 30 dk bekle.
             try:
-                _time.sleep(15 * 60)  # 15 dakika
+                _time.sleep(30 * 60)  # 30 dakika
                 from whatsapp_bildirim import gunluk_ozet_gonder
                 from tr_saat import bugun_tr as _bugun_tr
                 _dun = _bugun_tr() - timedelta(days=1)
