@@ -308,20 +308,24 @@ def _vardiya_personel(cur, tarih: date) -> dict:
         }
 
     # Yarın açılışçılar: vardiya_atama tablosundan slot tip='acilis' olanlar
-    # Vardiya planı önceden girildiği için dükkan açılmadan önce bilinir
+    # vardiya_v2.py ile aynı filtreler: aktif slot + aktif_gunler + planli/onayli
     yarin = tarih + timedelta(days=1)
+    # PostgreSQL: ISODOW → 1=Pzt..7=Paz (aktif_gunler int[] ile eşleşiyor)
+    yarin_gun = yarin.isoweekday()  # Python: 1=Pzt..7=Paz — aynı
     cur.execute("""
         SELECT vs.sube_id::text,
-               COALESCE(p.ad_soyad, va.personel_id) AS personel_ad,
+               COALESCE(NULLIF(TRIM(p.ad_soyad),''), va.personel_id::text) AS personel_ad,
                va.baslangic_saat
         FROM vardiya_atama va
         JOIN vardiya_slot vs ON vs.id = va.slot_id
         JOIN personel p ON p.id = va.personel_id
         WHERE va.tarih = %s
-          AND va.durum != 'iptal'
+          AND va.durum IN ('planli','onayli')
           AND vs.tip = 'acilis'
-        ORDER BY vs.sube_id, va.baslangic_saat
-    """, (yarin,))
+          AND vs.aktif = TRUE
+          AND %s = ANY(vs.aktif_gunler)
+        ORDER BY vs.sube_id, vs.sira NULLS LAST, va.baslangic_saat
+    """, (yarin, yarin_gun))
     yarin_map = {}
     for r in (cur.fetchall() or []):
         sid = str(r["sube_id"])
