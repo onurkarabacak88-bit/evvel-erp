@@ -480,7 +480,8 @@ _KAYNAK_ETIKET = {
 
 _TESLIM_TUR = {
     "ara": "Ara Teslim", "kapanis": "Kapanış",
-    "acilis": "Açılış", "diger": "Diğer",
+    "acilis": "Açılış", "gun_sonu": "Gün Sonu",
+    "diger": "Diğer",
 }
 
 def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
@@ -559,7 +560,6 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
             s.append(f"  Toplam: *{_fmt(toplam_y)}*")
     else:
         s.append("  Ödeme yok ✓")
-    s.append("")
 
     # Yarın açılışçılar — ayrı bölüm
     yarin_satirlar = []
