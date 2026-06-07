@@ -178,6 +178,7 @@ def _ciro_verileri(cur, tarih: date) -> dict:
         toplam_bugun += ciro
         toplam_dun   += d
         subeler.append({
+            "sid":      sid,
             "ad":       row["ad"],
             "ciro":     ciro,
             "dun":      d,
@@ -271,6 +272,55 @@ def _anlik_giderler(cur, tarih: date) -> list:
         LIMIT 20
     """, (tarih,))
     return [dict(r) for r in (cur.fetchall() or [])]
+
+
+# ── Vardiya personeli ────────────────────────────────────────────────────────
+
+def _vardiya_personel(cur, tarih: date) -> dict:
+    """
+    O günün açılış + kapanış personeli şube bazlı.
+    kapanis-takip ile aynı kaynak: sube_operasyon_event.
+    Döner: {sube_id: {acilis: "Ad Soyad", kapanis: "Ad Soyad"}}
+    """
+    # Açılış — o günün ilk tamamlanan ACILIS
+    cur.execute("""
+        SELECT DISTINCT ON (e.sube_id)
+               e.sube_id::text,
+               COALESCE(e.personel_ad,'') AS personel_ad,
+               (e.cevap_ts AT TIME ZONE 'Europe/Istanbul') AS ts
+        FROM sube_operasyon_event e
+        WHERE e.tip = 'ACILIS' AND e.durum = 'tamamlandi'
+          AND e.tarih = %s
+        ORDER BY e.sube_id, e.cevap_ts ASC NULLS LAST, e.id ASC
+    """, (tarih,))
+    acilis = {str(r["sube_id"]): str(r["personel_ad"] or "") for r in (cur.fetchall() or [])}
+
+    # Kapanış — o günün en son tamamlanan KAPANIS (tarih veya tarih+1)
+    cur.execute("""
+        SELECT DISTINCT ON (e.sube_id)
+               e.sube_id::text,
+               COALESCE(e.personel_ad,'') AS personel_ad,
+               (e.cevap_ts AT TIME ZONE 'Europe/Istanbul') AS ts
+        FROM sube_operasyon_event e
+        WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
+          AND e.tarih IN (%s, %s)
+        ORDER BY e.sube_id, e.cevap_ts DESC NULLS LAST, e.id DESC
+    """, (tarih, tarih + timedelta(days=1)))
+    kapanis = {str(r["sube_id"]): {"ad": str(r["personel_ad"] or ""), "ts": r["ts"]}
+               for r in (cur.fetchall() or [])}
+
+    # Şube id → {acilis, kapanis, kapanis_saat}
+    sonuc = {}
+    tum_sidler = set(acilis.keys()) | set(kapanis.keys())
+    for sid in tum_sidler:
+        kap = kapanis.get(sid, {})
+        ts  = kap.get("ts")
+        sonuc[sid] = {
+            "acilis":       acilis.get(sid, ""),
+            "kapanis":      kap.get("ad", ""),
+            "kapanis_saat": ts.strftime("%H:%M") if ts else "",
+        }
+    return sonuc
 
 
 # ── Dış kaynak (kira gelirleri) ──────────────────────────────────────────────
@@ -426,6 +476,7 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
         dis_kaynak  = _dis_kaynak_verileri(cur, tarih)
         kt_liste    = _kasa_teslimler(cur, tarih)
         toptanci    = _toptanci_teslimler(cur, tarih)
+        vardiya     = _vardiya_personel(cur, tarih)
 
     tarih_str = f"{tarih.day} {_AY[tarih.month - 1]}"
     s = [f"🌙 *Evvel — {tarih_str} Günlük Özet*", ""]
@@ -433,18 +484,27 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
     # Cirolar
     s.append("*CİROLAR*")
     for sub in ciro["subeler"]:
+        sid = sub.get("sid", "")
+        vd  = vardiya.get(sid, {})
+        acilis_p  = vd.get("acilis", "")
+        kapanis_p = vd.get("kapanis", "")
+        kapanis_s = vd.get("kapanis_saat", "")
+
         if not sub["girilmis"]:
             s.append(f"⚠️ {sub['ad']} — kapanış girilmedi")
         else:
-            trend    = f"  {sub['trend']}" if sub["trend"] else ""
-            personel = sub.get("personel") or ""
-            saat     = sub.get("saat") or ""
+            trend = f"  {sub['trend']}" if sub["trend"] else ""
             s.append(f"  {sub['ad']:<14} *{_fmt(sub['ciro'])}*{trend}")
-            if personel or saat:
-                bilgi = []
-                if personel: bilgi.append(personel)
-                if saat:     bilgi.append(saat)
-                s.append(f"    └ {' · '.join(bilgi)}")
+            # Vardiya personeli
+            if acilis_p or kapanis_p:
+                if acilis_p and kapanis_p and acilis_p != kapanis_p:
+                    saat_ek = f" {kapanis_s}" if kapanis_s else ""
+                    s.append(f"    └ {acilis_p} → {kapanis_p}{saat_ek}")
+                elif kapanis_p:
+                    saat_ek = f" {kapanis_s}" if kapanis_s else ""
+                    s.append(f"    └ Kapanış: {kapanis_p}{saat_ek}")
+                elif acilis_p:
+                    s.append(f"    └ Açılış: {acilis_p}")
     trend_t = f"  {ciro['toplam_trend']}" if ciro["toplam_trend"] else ""
     s.append(f"  {'Toplam':<14} *{_fmt(ciro['toplam'])}*{trend_t}")
     s.append("")
