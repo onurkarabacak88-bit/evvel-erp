@@ -307,54 +307,39 @@ def _vardiya_personel(cur, tarih: date) -> dict:
             "saat": ts.strftime("%H:%M") if ts else "",
         }
 
-    # Yarın açılışçılar: kapanis_kayit sabahci + aksamci personel (bugünkü kapanış kaydından)
-    # sabahci_personel_id = yarın açacak kişi, aksamci_personel_id = bu akşam kapatan
+    # Yarın açılışçılar: vardiya_atama tablosundan slot tip='acilis' olanlar
+    # Vardiya planı önceden girildiği için dükkan açılmadan önce bilinir
+    yarin = tarih + timedelta(days=1)
     cur.execute("""
-        SELECT k.sube_id::text,
-               COALESCE(ps.ad_soyad, k.sabahci_personel_id) AS sabahci_ad,
-               COALESCE(pa.ad_soyad, k.aksamci_personel_id) AS aksamci_ad
-        FROM kapanis_kayit k
-        LEFT JOIN personel ps ON ps.id = k.sabahci_personel_id
-        LEFT JOIN personel pa ON pa.id = k.aksamci_personel_id
-        WHERE k.tarih = %s AND k.durum != 'iptal'
-    """, (tarih,))
-    kk_map = {}
-    for r in (cur.fetchall() or []):
-        isimler = []
-        for f in ["sabahci_ad", "aksamci_ad"]:
-            ad = str(r.get(f) or "").strip()
-            if ad and ad not in isimler:
-                isimler.append(ad)
-        kk_map[str(r["sube_id"])] = isimler
-
-    # Yedek: tarih+1 ACILIS event (sabah erken girilmişse)
-    cur.execute("""
-        SELECT e.sube_id::text, COALESCE(e.personel_ad,'') AS personel_ad
-        FROM sube_operasyon_event e
-        WHERE e.tip = 'ACILIS' AND e.durum = 'tamamlandi'
-          AND e.tarih = %s
-        ORDER BY e.cevap_ts ASC
-    """, (tarih + timedelta(days=1),))
-    yarin_acilis_map = {}
+        SELECT vs.sube_id::text,
+               COALESCE(p.ad_soyad, va.personel_id) AS personel_ad,
+               va.baslangic_saat
+        FROM vardiya_atama va
+        JOIN vardiya_slot vs ON vs.id = va.slot_id
+        JOIN personel p ON p.id = va.personel_id
+        WHERE va.tarih = %s
+          AND va.durum != 'iptal'
+          AND vs.tip = 'acilis'
+        ORDER BY vs.sube_id, va.baslangic_saat
+    """, (yarin,))
+    yarin_map = {}
     for r in (cur.fetchall() or []):
         sid = str(r["sube_id"])
         ad  = str(r["personel_ad"] or "").strip()
         if ad:
-            yarin_acilis_map.setdefault(sid, [])
-            if ad not in yarin_acilis_map[sid]:
-                yarin_acilis_map[sid].append(ad)
+            yarin_map.setdefault(sid, [])
+            if ad not in yarin_map[sid]:
+                yarin_map[sid].append(ad)
 
     # Birleştir
     sonuc = {}
-    tum = set(kapanis_map) | set(kk_map) | set(yarin_acilis_map)
+    tum = set(kapanis_map) | set(yarin_map)
     for sid in tum:
         kap = kapanis_map.get(sid, {})
-        # Yarın açılışçıları: önce kapanis_kayit, yoksa event
-        yarin = kk_map.get(sid) or yarin_acilis_map.get(sid) or []
         sonuc[sid] = {
             "kapanis":      kap.get("ad", ""),
             "kapanis_saat": kap.get("saat", ""),
-            "yarin_acilis": yarin,
+            "yarin_acilis": yarin_map.get(sid, []),
         }
     return sonuc
 
