@@ -216,7 +216,7 @@ def _kasa_verileri(cur, tarih: date) -> dict:
     # Anlık kasa bakiyesi
     cur.execute("""
         SELECT COALESCE(SUM(tutar),0) AS bakiye
-        FROM kasa_hareketleri WHERE kasa_etkisi=TRUE
+        FROM kasa_hareketleri WHERE kasa_etkisi=TRUE AND durum='aktif'
     """)
     kasa = float((cur.fetchone() or {}).get("bakiye") or 0)
 
@@ -224,7 +224,7 @@ def _kasa_verileri(cur, tarih: date) -> dict:
     cur.execute("""
         SELECT COALESCE(SUM(tutar),0) AS toplam
         FROM kasa_hareketleri
-        WHERE kasa_etkisi=TRUE AND tutar>0
+        WHERE kasa_etkisi=TRUE AND durum='aktif' AND tutar>0
           AND islem_turu = 'CIRO'
           AND tarih = %s
     """, (tarih,))
@@ -234,7 +234,7 @@ def _kasa_verileri(cur, tarih: date) -> dict:
     cur.execute("""
         SELECT COALESCE(SUM(ABS(tutar)),0) AS toplam
         FROM kasa_hareketleri
-        WHERE kasa_etkisi=TRUE AND tutar<0
+        WHERE kasa_etkisi=TRUE AND durum='aktif' AND tutar<0
           AND tarih = %s
     """, (tarih,))
     cikan = float((cur.fetchone() or {}).get("toplam") or 0)
@@ -244,7 +244,7 @@ def _kasa_verileri(cur, tarih: date) -> dict:
     cur.execute("""
         SELECT COALESCE(SUM(tutar),0) AS toplam
         FROM kasa_hareketleri
-        WHERE kasa_etkisi=TRUE AND tutar>0
+        WHERE kasa_etkisi=TRUE AND durum='aktif' AND tutar>0
           AND islem_turu = 'CIRO'
           AND tarih = %s
     """, (dun,))
@@ -287,7 +287,7 @@ def _dis_kaynak_verileri(cur, tarih: date) -> dict:
                COUNT(*) AS adet
         FROM kasa_hareketleri
         WHERE islem_turu = 'DIS_KAYNAK'
-          AND kasa_etkisi = TRUE
+          AND kasa_etkisi = TRUE AND durum = 'aktif'
           AND tarih = %s
     """, (tarih,))
     row = cur.fetchone() or {}
@@ -299,7 +299,7 @@ def _dis_kaynak_verileri(cur, tarih: date) -> dict:
         SELECT COALESCE(SUM(tutar),0) AS toplam
         FROM kasa_hareketleri
         WHERE islem_turu = 'DIS_KAYNAK'
-          AND kasa_etkisi = TRUE
+          AND kasa_etkisi = TRUE AND durum = 'aktif'
           AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
     """, (tarih,))
     ay_toplam = float((cur.fetchone() or {}).get("toplam") or 0)
