@@ -390,6 +390,8 @@ def _yarin_odemeler(cur, tarih: date) -> list:
     Zaten kasadan ödenmiş planlar gösterilmez.
     """
     yarin = tarih + timedelta(days=1)
+
+    # 1. odeme_plani kaydı olanlar
     cur.execute("""
         SELECT op.aciklama, op.odenecek_tutar AS tutar, op.kaynak_tablo
         FROM odeme_plani op
@@ -398,7 +400,36 @@ def _yarin_odemeler(cur, tarih: date) -> list:
         ORDER BY op.odenecek_tutar DESC
         LIMIT 10
     """, (yarin,))
-    return [dict(r) for r in (cur.fetchall() or [])]
+    liste = [dict(r) for r in (cur.fetchall() or [])]
+
+    # 2. sabit_giderler degisken tipi — motors.py ile aynı mantık
+    # odeme_gunu = ayın kaçıncı günü; yarın o güne denk gelenler
+    import calendar as _cal
+    yarin_gun = yarin.day
+    yarin_ay_son = _cal.monthrange(yarin.year, yarin.month)[1]
+    cur.execute("""
+        SELECT id, gider_adi, odeme_gunu, tutar
+        FROM sabit_giderler
+        WHERE aktif = TRUE AND tip = 'degisken'
+          AND LEAST(odeme_gunu, %s) = %s
+    """, (yarin_ay_son, yarin_gun))
+    for g in (cur.fetchall() or []):
+        # Bu ay zaten ödendi mi?
+        cur.execute("""
+            SELECT 1 FROM kasa_hareketleri
+            WHERE kaynak_id = %s AND kaynak_tablo = 'sabit_giderler'
+              AND islem_turu = 'FATURA_ODEMESI' AND kasa_etkisi = TRUE AND durum = 'aktif'
+              AND EXTRACT(YEAR FROM tarih) = %s AND EXTRACT(MONTH FROM tarih) = %s
+        """, (str(g['id']), yarin.year, yarin.month))
+        if cur.fetchone():
+            continue
+        liste.append({
+            'aciklama': g['gider_adi'],
+            'tutar': float(g['tutar'] or 0),
+            'kaynak_tablo': 'sabit_giderler',
+        })
+
+    return sorted(liste, key=lambda x: float(x.get('tutar') or 0), reverse=True)[:10]
 
 
 # ── Kasa teslimler ───────────────────────────────────────────────────────────
