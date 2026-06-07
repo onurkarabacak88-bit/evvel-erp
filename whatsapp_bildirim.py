@@ -403,16 +403,15 @@ def _yarin_odemeler(cur, tarih: date) -> list:
     liste = [dict(r) for r in (cur.fetchall() or [])]
 
     # 2. sabit_giderler degisken tipi — motors.py ile aynı mantık
-    # odeme_gunu = ayın kaçıncı günü; yarın o güne denk gelenler
+    # odeme_gunu <= yarin.day + 3 (panel ile aynı pencere)
     import calendar as _cal
     yarin_gun = yarin.day
-    yarin_ay_son = _cal.monthrange(yarin.year, yarin.month)[1]
     cur.execute("""
         SELECT id, gider_adi, odeme_gunu, tutar
         FROM sabit_giderler
         WHERE aktif = TRUE AND tip = 'degisken'
-          AND LEAST(odeme_gunu, %s) = %s
-    """, (yarin_ay_son, yarin_gun))
+          AND odeme_gunu BETWEEN %s AND %s
+    """, (yarin_gun, yarin_gun + 3))
     for g in (cur.fetchall() or []):
         # Bu ay zaten ödendi mi?
         cur.execute("""
