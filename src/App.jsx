@@ -22,6 +22,7 @@ import KartEkstreAnaliz from './pages/KartEkstreAnaliz';
 import VardiyaPlanlamaV2 from './pages/VardiyaPlanlamaV2';
 import SubePanelPinleri from './pages/SubePanelPinleri';
 import GorevQR from './pages/GorevQR';
+import GorevGiris from './pages/GorevGiris';
 import Tedarikciler from './pages/Tedarikciler';
 import VeriTemizle from './pages/VeriTemizle.jsx';
 import OperasyonMerkezi from './pages/OperasyonMerkezi';
@@ -143,6 +144,12 @@ function syncHashForPage(pageId) {
 }
 
 export default function App() {
+  // QR giriş sayfası — sidebar olmadan tam ekran
+  const gorevGirisMatch = window.location.pathname.match(/^\/gorev-giris\/(.+)$/);
+  if (gorevGirisMatch) {
+    return <GorevGiris subeId={gorevGirisMatch[1]} />;
+  }
+
   const [page, setPage] = useState(() => readPageFromHash() ?? 'panel');
   const mainRef = useRef(null);
   const Page = PAGES[page] || Panel;

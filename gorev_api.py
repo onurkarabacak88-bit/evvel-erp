@@ -139,6 +139,130 @@ def gorev_ozet(tarih: str):
         return [dict(r) for r in cur.fetchall()]
 
 
+# ── Personel giriş + görev dağılımı ──────────────────────────────────────────
+
+@router.get("/api/gorev/sube-personel/{sube_id}")
+def gorev_sube_personeli(sube_id: str):
+    """O şubedeki aktif personel listesi (QR giriş sayfasında seçim için)."""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT id, ad_soyad,
+                   CASE WHEN panel_pin_hash IS NOT NULL AND panel_pin_salt IS NOT NULL
+                        THEN TRUE ELSE FALSE END AS pin_tanimli
+            FROM personel
+            WHERE sube_id = %s AND aktif = TRUE
+            ORDER BY ad_soyad
+        """, (sube_id,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+class GorevPinGirisBody(BaseModel):
+    sube_id: str
+    personel_id: str
+    pin: str
+
+
+@router.post("/api/gorev/pin-giris")
+def gorev_pin_giris(body: GorevPinGirisBody):
+    """Personel PIN doğrulaması. Başarılıysa personel bilgisi + bugünkü vardiyasını döner."""
+    from personel_panel_auth import dogrula_personel_panel_pin
+    from tr_saat import is_gunu_tr
+    from datetime import datetime as _dt
+    import pytz
+
+    with db() as (conn, cur):
+        personel = dogrula_personel_panel_pin(cur, body.personel_id, body.pin)
+
+        # Bugünkü vardiya tipini belirle (saate göre)
+        tz = pytz.timezone("Europe/Istanbul")
+        saat = _dt.now(tz).hour
+        if saat < 12:
+            vardiya_tip = "sabahci"
+        elif saat < 18:
+            vardiya_tip = "ara_vardiya"
+        else:
+            vardiya_tip = "kapanis"
+
+        tarih = str(is_gunu_tr())
+
+        return {
+            "personel_id": personel["id"],
+            "ad_soyad": personel["ad_soyad"],
+            "sube_id": body.sube_id,
+            "tarih": tarih,
+            "vardiya_tip": vardiya_tip,
+        }
+
+
+@router.get("/api/gorev/personel-gorevleri")
+def gorev_personel_gorevleri(
+    tarih: str, sube_id: str, vardiya_tip: str, personel_id: str
+):
+    """
+    Vardiya planına göre personele düşen görevler.
+    Vardiyada kaç kişi varsa görevler eşit bölüştürülür.
+    """
+    from datetime import date as _date
+    t = _date.fromisoformat(tarih)
+
+    with db() as (conn, cur):
+        # O vardiyada planlanan tüm personeller
+        haftanin_gunu = t.weekday() + 1
+        cur.execute("""
+            SELECT va.personel_id, COALESCE(NULLIF(TRIM(p.ad_soyad),''), va.personel_id) AS ad
+            FROM vardiya_atama va
+            JOIN vardiya_slot vs ON vs.id = va.slot_id
+            JOIN personel p ON p.id = va.personel_id
+            WHERE va.tarih = %s
+              AND vs.sube_id = %s
+              AND va.durum IN ('planli','onayli')
+              AND vs.aktif = TRUE
+              AND %s = ANY(vs.aktif_gunler)
+              AND (
+                  (vs.tip = 'acilis' AND %s = 'sabahci') OR
+                  (vs.tip = 'normal' AND %s IN ('sabahci','ara_vardiya')) OR
+                  (vs.tip = 'kapanis' AND %s = 'kapanis') OR
+                  (vs.tip IN ('acilis','normal','kapanis'))
+              )
+            ORDER BY va.personel_id
+        """, (t, sube_id, haftanin_gunu, vardiya_tip, vardiya_tip, vardiya_tip))
+        vardiya_personel = [dict(r) for r in cur.fetchall()]
+
+        # Tüm görevleri al
+        cur.execute("""
+            SELECT gs.id, gs.sira, gs.alan, gs.gorev, gs.siklik,
+                   COALESCE(gt.tamamlandi, FALSE) AS tamamlandi,
+                   gt.tamamlanma_ts, gt.personel_id AS tamamlayan_id
+            FROM gorev_sablonu gs
+            LEFT JOIN gorev_tamamlama gt
+                ON gt.sablonid = gs.id AND gt.tarih = %s AND gt.sube_id = %s
+            WHERE gs.vardiya_tip = %s AND gs.aktif = TRUE
+            ORDER BY gs.sira
+        """, (t, sube_id, vardiya_tip))
+        tum_gorevler = [dict(r) for r in cur.fetchall()]
+
+        # Görev bölüştürme: varsa vardiya kişi sayısına göre, yoksa hepsini ver
+        personel_listesi = [p["personel_id"] for p in vardiya_personel]
+        kisi_sayisi = len(personel_listesi)
+
+        if kisi_sayisi > 1 and personel_id in personel_listesi:
+            idx = personel_listesi.index(personel_id)
+            kisi_gorevler = [g for i, g in enumerate(tum_gorevler) if i % kisi_sayisi == idx]
+        else:
+            kisi_gorevler = tum_gorevler
+
+        tamamlanan = sum(1 for g in kisi_gorevler if g["tamamlandi"])
+        return {
+            "gorevler": kisi_gorevler,
+            "toplam": len(kisi_gorevler),
+            "tamamlanan": tamamlanan,
+            "eksik": len(kisi_gorevler) - tamamlanan,
+            "vardiya_personel": vardiya_personel,
+            "vardiya_tip": vardiya_tip,
+            "tarih": tarih,
+        }
+
+
 # ── QR Kod endpoint'leri ──────────────────────────────────────────────────────
 
 BASE_URL = os.getenv("APP_URL", "https://evvel-erp-production.up.railway.app")
