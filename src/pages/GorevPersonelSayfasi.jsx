@@ -14,7 +14,7 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
 
   const load = () => {
     const { tarih, sube_id, vardiya_tip, personel_id } = oturum;
-    api(`/gorev/personel-gorevleri?tarih=${tarih}&sube_id=${sube_id}&vardiya_tip=${vardiya_tip}&personel_id=${personel_id}`)
+    api(`/gorev/personel-vardiya?tarih=${tarih}&sube_id=${sube_id}&vardiya_tip=${vardiya_tip}&personel_id=${personel_id}`)
       .then(setData).catch(console.error).finally(() => setYukleniyor(false));
   };
 

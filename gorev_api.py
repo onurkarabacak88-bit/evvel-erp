@@ -91,6 +91,81 @@ def gorev_vardiya_getir(tarih: str, sube_id: str, vardiya_tip: str):
         }
 
 
+@router.get("/api/gorev/personel-vardiya")
+def gorev_personel_vardiya(tarih: str, sube_id: str, vardiya_tip: str, personel_id: str):
+    """
+    Belirli bir personelin o vardiyaki görevleri.
+    Vardiya planında kaç kişi atanmışsa görevler eşit bölüştürülür.
+    """
+    from datetime import date as _date
+    t = _date.fromisoformat(tarih)
+    haftanin_gunu = t.weekday() + 1
+
+    with db() as (conn, cur):
+        # O vardiyada bu şubede atanan personeller (vardiya planından)
+        VT_SLOT_MAP = {
+            'sabahci': ['acilis', 'normal'],
+            'ara_vardiya': ['yogun'],
+            'kapanis': ['kapanis'],
+        }
+        slot_tipler = VT_SLOT_MAP.get(vardiya_tip, ['normal'])
+        tip_placeholder = ','.join(['%s'] * len(slot_tipler))
+        cur.execute(f"""
+            SELECT DISTINCT va.personel_id::text,
+                   COALESCE(NULLIF(TRIM(p.ad_soyad),''), va.personel_id::text) AS ad
+            FROM vardiya_atama va
+            JOIN vardiya_slot vs ON vs.id = va.slot_id
+            JOIN personel p ON p.id = va.personel_id
+            WHERE va.tarih = %s
+              AND vs.sube_id = %s
+              AND va.durum IN ('planli','onayli')
+              AND vs.tip IN ({tip_placeholder})
+              AND vs.aktif = TRUE
+              AND %s = ANY(vs.aktif_gunler)
+            ORDER BY va.personel_id
+        """, (t, sube_id, *slot_tipler, haftanin_gunu))
+        vardiya_personel = [dict(r) for r in (cur.fetchall() or [])]
+
+        # Tüm görevleri al
+        cur.execute("""
+            SELECT gs.id, gs.sira, gs.alan, gs.gorev, gs.siklik,
+                   COALESCE(gt.tamamlandi, FALSE) AS tamamlandi,
+                   gt.tamamlanma_ts, gt.personel_id AS tamamlayan_id
+            FROM gorev_sablonu gs
+            LEFT JOIN gorev_tamamlama gt
+                ON gt.sablonid = gs.id AND gt.tarih = %s AND gt.sube_id = %s
+            WHERE gs.vardiya_tip = %s AND gs.aktif = TRUE
+            ORDER BY gs.sira
+        """, (t, sube_id, vardiya_tip))
+        tum_gorevler = [dict(r) for r in (cur.fetchall() or [])]
+
+    # Görev bölüşümü
+    kisi_sayisi = len(vardiya_personel)
+    if kisi_sayisi <= 1:
+        # Tek kişi ya da plan yok — hepsini göster
+        benim_gorevler = tum_gorevler
+    else:
+        # Personeli sırala, indeksini bul → görevleri böl
+        pid_listesi = [p['personel_id'] for p in vardiya_personel]
+        if personel_id in pid_listesi:
+            idx = pid_listesi.index(personel_id)
+        else:
+            idx = 0
+            kisi_sayisi = 1
+        # Round-robin dağıtım: görev sırası % kişi sayısı == personel indexi
+        benim_gorevler = [g for i, g in enumerate(tum_gorevler) if i % kisi_sayisi == idx]
+
+    tamamlanan = sum(1 for g in benim_gorevler if g['tamamlandi'])
+    return {
+        "gorevler": benim_gorevler,
+        "toplam": len(benim_gorevler),
+        "tamamlanan": tamamlanan,
+        "eksik": len(benim_gorevler) - tamamlanan,
+        "vardiya_personel": vardiya_personel,
+        "kisi_sayisi": kisi_sayisi,
+    }
+
+
 class GorevTamamlaBody(BaseModel):
     tarih: str
     sube_id: str
@@ -115,6 +190,55 @@ def gorev_tamamla(body: GorevTamamlaBody):
               _dt.utcnow() if body.tamamlandi else None))
         conn.commit()
     return {"basarili": True}
+
+
+@router.get("/api/gorev/sube-personel/{sube_id}")
+def gorev_sube_personel(sube_id: str):
+    """Şubede aktif personel listesi (PIN tanımlı olanlar önce)."""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT id::text, ad_soyad,
+                   (panel_pin_hash IS NOT NULL AND panel_pin_salt IS NOT NULL) AS pin_tanimli
+            FROM personel
+            WHERE sube_id = %s AND aktif = TRUE
+            ORDER BY pin_tanimli DESC, ad_soyad
+        """, (sube_id,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+class PinGirisBody(BaseModel):
+    sube_id: str
+    personel_id: str
+    pin: str
+    vardiya_tip: Optional[str] = None  # sabahci | ara_vardiya | kapanis
+
+
+@router.post("/api/gorev/pin-giris")
+def gorev_pin_giris(body: PinGirisBody):
+    """PIN doğrula, oturum token'ı döndür."""
+    from personel_panel_auth import dogrula_personel_panel_pin
+    from tr_saat import is_gunu_tr
+    with db() as (conn, cur):
+        kullanici = dogrula_personel_panel_pin(cur, body.personel_id, body.pin)
+    # Vardiya tipini belirle: body'den geldiyse kullan, yoksa saate göre tahmin
+    if body.vardiya_tip:
+        vardiya_tip = body.vardiya_tip
+    else:
+        from datetime import datetime
+        saat = datetime.now().hour
+        if saat < 14:
+            vardiya_tip = 'sabahci'
+        elif saat < 20:
+            vardiya_tip = 'ara_vardiya'
+        else:
+            vardiya_tip = 'kapanis'
+    return {
+        "personel_id": body.personel_id,
+        "ad_soyad":    kullanici.get("ad_soyad", ""),
+        "sube_id":     body.sube_id,
+        "vardiya_tip": vardiya_tip,
+        "tarih":       str(is_gunu_tr()),
+    }
 
 
 @router.get("/api/gorev/ozet")

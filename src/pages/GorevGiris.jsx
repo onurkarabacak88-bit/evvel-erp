@@ -7,7 +7,7 @@ import GorevPersonelSayfasi from './GorevPersonelSayfasi';
  * Sidebar/nav yok — tam ekran, mobil öncelikli.
  */
 export default function GorevGiris({ subeId }) {
-  const [adim, setAdim] = useState('personel-sec'); // personel-sec | pin-gir | gorevler
+  const [adim, setAdim] = useState('personel-sec'); // personel-sec | pin-gir | vardiya-sec | gorevler
   const [subeBilgi, setSubeBilgi] = useState(null);
   const [personelListe, setPersonelListe] = useState([]);
   const [seciliPersonel, setSeciliPersonel] = useState(null);
@@ -39,6 +39,8 @@ export default function GorevGiris({ subeId }) {
     if (yeni.length === 4) girisYap(yeni);
   };
 
+  const [pinDogruOturum, setPinDogruOturum] = useState(null);
+
   const girisYap = async (pinVal) => {
     setHata('');
     setYukleniyor(true);
@@ -47,14 +49,19 @@ export default function GorevGiris({ subeId }) {
         method: 'POST',
         body: { sube_id: subeId, personel_id: seciliPersonel.id, pin: pinVal },
       });
-      setOturum(sonuc);
-      setAdim('gorevler');
+      setPinDogruOturum(sonuc);
+      setAdim('vardiya-sec');
     } catch (e) {
       setHata(e.message || 'PIN hatalı');
       setPin('');
     } finally {
       setYukleniyor(false);
     }
+  };
+
+  const vardiyaSec = (vt) => {
+    setOturum({ ...pinDogruOturum, vardiya_tip: vt });
+    setAdim('gorevler');
   };
 
   const cikis = () => {
@@ -140,6 +147,40 @@ export default function GorevGiris({ subeId }) {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Adım 2.5: Vardiya seç */}
+        {adim === 'vardiya-sec' && (
+          <div>
+            <div style={{ textAlign: 'center', marginBottom: 24 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#e8e9ec' }}>
+                Hangi vardiya?
+              </div>
+              <div style={{ fontSize: 12, color: '#6b6f7a', marginTop: 4 }}>
+                {pinDogruOturum?.ad_soyad}
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {[
+                { id: 'sabahci',     label: '🌅 Sabahçı',     alt: 'Açılış ve sabah görevleri',  renk: '#4a9eff' },
+                { id: 'ara_vardiya', label: '☀️ Ara Vardiya',  alt: 'Depo, stok ve tuvalet',       renk: '#f59e0b' },
+                { id: 'kapanis',     label: '🌙 Kapanış',     alt: 'Temizlik ve kapanış görevleri', renk: '#C8956A' },
+              ].map(vt => (
+                <button key={vt.id} onClick={() => vardiyaSec(vt.id)}
+                  style={{
+                    padding: '16px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+                    background: '#22262f', border: `1px solid ${vt.renk}33`,
+                    transition: 'background 0.15s',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#2a2d35'}
+                  onMouseLeave={e => e.currentTarget.style.background = '#22262f'}
+                >
+                  <div style={{ fontSize: 15, fontWeight: 700, color: vt.renk }}>{vt.label}</div>
+                  <div style={{ fontSize: 11, color: '#6b6f7a', marginTop: 3 }}>{vt.alt}</div>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

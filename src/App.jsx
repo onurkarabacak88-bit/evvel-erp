@@ -23,6 +23,7 @@ import VardiyaPlanlamaV2 from './pages/VardiyaPlanlamaV2';
 import SubePanelPinleri from './pages/SubePanelPinleri';
 import GorevQR from './pages/GorevQR';
 import GorevGiris from './pages/GorevGiris';
+import GorevOzet from './pages/GorevOzet';
 import Tedarikciler from './pages/Tedarikciler';
 import VeriTemizle from './pages/VeriTemizle.jsx';
 import OperasyonMerkezi from './pages/OperasyonMerkezi';
@@ -61,6 +62,7 @@ const NAV = [
     { id: 'vardiya-planlamasi',label: 'Vardiya Planlaması', icon: '🗓️' },
     { id: 'sube-panel-pin',   label: 'Personel Panel PIN',  icon: '🔐' },
     { id: 'gorev-qr',         label: 'Görev QR Kodları',    icon: '📱' },
+    { id: 'gorev-ozet',       label: 'Görev Takibi',        icon: '✅' },
   ]},
   { group: 'Tanımlar', gicon: '🗂️', items: [
     { id: 'sabit-giderler',   label: 'Sabit Giderler',      icon: '🏠' },
@@ -107,6 +109,7 @@ const PAGES = {
   'vardiya-planlamasi': VardiyaPlanlamaV2,
   'sube-panel-pin':   SubePanelPinleri,
   'gorev-qr':         GorevQR,
+  'gorev-ozet':       GorevOzet,
   tedarikciler:       Tedarikciler,
   'veri-temizle':     VeriTemizle,
 };
