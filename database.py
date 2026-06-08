@@ -3690,6 +3690,7 @@ $$;
         #   2. norm_ad satırı var, UUID satırı YOK → kalem_kodu UUID'ye güncellenir
         #      (orphan satır, kayıp stok riski).
         try:
+            cur.execute("SAVEPOINT sp_v4_duplike")
             cur.execute("""
                 SELECT 1 FROM finans_migration_log WHERE ad='depo_stok_duplike_temizlik_v4' LIMIT 1
             """)
@@ -3709,9 +3710,9 @@ $$;
                            su.id AS uuid_kod, su.ad AS urun_ad
                     FROM sube_depo_stok sds
                     JOIN siparis_urun su ON su.norm_ad = sds.kalem_kodu
-                    WHERE sds.kalem_kodu != ALL(%s)
+                    WHERE sds.kalem_kodu != ALL(%s::text[])
                       AND sds.kalem_kodu !~ '^[0-9a-f]{8}-[0-9a-f]{4}-'
-                """, (_HAVUZ_KODLAR,))
+                """, (list(_HAVUZ_KODLAR),))
                 v4_rows = cur.fetchall()
 
                 v4_merge = 0
@@ -3764,7 +3765,10 @@ $$;
                 ))
                 print(f"[MIGRATION] depo_stok_duplike_temizlik_v4: "
                       f"cift_silinen={v4_silinen}, merge={v4_merge}, orphan={v4_guncelle}")
+            cur.execute("RELEASE SAVEPOINT sp_v4_duplike")
         except Exception as _mig_e:
+            try: cur.execute("ROLLBACK TO SAVEPOINT sp_v4_duplike")
+            except Exception: pass
             print(f"[MIGRATION WARN] depo_stok_duplike_temizlik_v4: {_mig_e}")
 
         # ─── MIGRATION v5: siparis_urun.depo_stok_kalem_kodu = id (explicit UUID ataması) ──
