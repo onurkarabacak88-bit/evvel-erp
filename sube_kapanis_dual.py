@@ -550,6 +550,23 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
 
         _korumali_yan_etki(cur, "defter_imza1", _defter1)
 
+        # Sabah vardiyası cirosunu taslak olarak kaydet (ciro_gonderildi=True veya nakit+pos > 0 ise)
+        ciro_toplam = (body.nakit or 0) + (body.pos or 0) + (body.online or 0)
+        if body.ciro_gonderildi or ciro_toplam > 0:
+            def _ciro_taslak():
+                _upsert_ciro_taslak(
+                    cur=cur,
+                    sube_id=sube_id,
+                    tarih=gun,
+                    nakit=body.nakit or 0,
+                    pos=body.pos or 0,
+                    online=body.online or 0,
+                    aciklama=f"Sabah vardiyası devri — {onay_ad}",
+                    personel_id=body.sabahci_devreden_id,
+                    gonderen_ad=onay_ad,
+                )
+            _korumali_yan_etki(cur, "ciro_taslak_devir", _ciro_taslak)
+
     return {
         "success": True,
         "kapanis_id": kid,

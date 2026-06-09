@@ -994,11 +994,14 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     JOIN personel p ON p.id::text = gy.personel_id
                     WHERE gy.sube_id = %s AND gy.tarih = CURRENT_DATE
                       AND gy.vardiya_tip = 'kapanis'
+                      AND gy.cikis_ts IS NULL
                     ORDER BY gy.giris_ts DESC LIMIT 1
                 """, (sube_id,))
                 yoklama_row = cur.fetchone()
-                onay_ad = (yoklama_row["ad_soyad"] if yoklama_row else "QR Onay").strip() or "QR Onay"
-                pid_panel = str(yoklama_row["personel_id"]) if yoklama_row else None
+                if not yoklama_row:
+                    raise HTTPException(400, "Kapanış için QR onaylayan kapanış personeli bulunamadı. Lütfen kapanışçı telefonda QR'ı okutup onaylamalı.")
+                onay_ad = (yoklama_row["ad_soyad"]).strip() or "—"
+                pid_panel = str(yoklama_row["personel_id"])
             else:
                 pin = (body.pin or "").replace(" ", "")
                 if not pid_in:

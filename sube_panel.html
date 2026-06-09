@@ -12460,6 +12460,12 @@ function renderKasaDevir() {
     '</div></div>' +
     '<div id="dvStep5" class="siparis-detay" style="display:none">' +
     '<div class="sip-alt-baslik">Adım 5 / 5 — Bitir ve İmzala</div>' +
+    '<div style="font-size:11px;color:var(--muted);margin:-4px 0 10px;line-height:1.5">Sabah vardiyası cirosu (X Raporu'ndan):</div>' +
+    '<div class="kap-stok5" style="margin-bottom:12px">' +
+    '<div class="stok-item"><label>Nakit (₺)</label><input id="dvNakit" inputmode="decimal" placeholder="0" /></div>' +
+    '<div class="stok-item"><label>POS (₺)</label><input id="dvPos" inputmode="decimal" placeholder="0" /></div>' +
+    '<div class="stok-item"><label>Online (₺)</label><input id="dvOnline" inputmode="decimal" placeholder="0" /></div>' +
+    '</div>' +
     '<label class="chk-row"><input type="checkbox" id="dvKasaSayim" /><span>Kasadaki nakit sayımını doğruladım</span></label>' +
     '<div class="form-group"><label>Devreden (Sabahçı)</label><select id="dvPers1"></select></div>' +
     '<div style="display:flex;gap:8px;margin-bottom:10px">' +
@@ -12489,15 +12495,18 @@ function renderKasaDevir() {
       if (kasadakiNakit < 0) throw new Error('Kasadaki nakit negatif olamaz');
       var sayimEl = document.getElementById('dvKasaSayim') || document.getElementById('dvXRapor');
       if (!sayimEl || !sayimEl.checked) throw new Error('Kasa sayımı doğrulama onayı gerekli');
+      var dvNakitVal = parseNum(inpVal('dvNakit')) || 0;
+      var dvPosVal   = parseNum(inpVal('dvPos'))   || 0;
+      var dvOnlineVal= parseNum(inpVal('dvOnline'))|| 0;
       var body = {
         sabahci_devreden_id: pid1, pin: pin1,
-        nakit: 0,
-        pos: 0,
-        online: 0,
+        nakit: dvNakitVal,
+        pos:   dvPosVal,
+        online: dvOnlineVal,
         teslim: kasadakiNakit, devir: 0,
         kasa_sayim_dogrulandi: true,
         x_raporu_gonderildi: true,
-        ciro_gonderildi: false,
+        ciro_gonderildi: (dvNakitVal + dvPosVal + dvOnlineVal) > 0,
         bardak_kucuk:   pInt('dvBk','Küçük bardak'),
         bardak_buyuk:   pInt('dvBb','Büyük bardak'),
         bardak_plastik: pInt('dvBp','Plastik bardak'),

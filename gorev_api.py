@@ -345,6 +345,32 @@ def gorev_pin_giris(body: GorevPinGirisBody):
         asil_sube_id = personel.get("sube_id") or body.sube_id
         vardiya_disi = str(asil_sube_id) != str(body.sube_id) or not vardiya_tanimli
 
+        # Aynı kişinin aynı şubede aynı gün zaten kaydı var mı? (vardiya_tip farklı olsa bile)
+        cur.execute("""
+            SELECT id, vardiya_tip, giris_ts FROM gorev_yoklama
+            WHERE sube_id = %s AND personel_id = %s AND tarih = %s
+            LIMIT 1
+        """, (body.sube_id, body.personel_id, tarih))
+        mevcut_yoklama = cur.fetchone()
+        if mevcut_yoklama:
+            # Zaten giriş yapılmış — mevcut kaydı döndür, yeni kayıt açma
+            mevcut_vardiya_tip = mevcut_yoklama["vardiya_tip"]
+            return {
+                "personel_id": personel["id"],
+                "ad_soyad": personel["ad_soyad"],
+                "sube_id": body.sube_id,
+                "tarih": tarih,
+                "vardiya_tip": mevcut_vardiya_tip,
+                "konum_onaylandi": konum_onaylandi,
+                "konum_mesafe_m": round(konum_mesafe_m) if konum_mesafe_m else None,
+                "vardiya_disi": vardiya_disi,
+                "calisma_turu": calisma_turu,
+                "planlanan_saat": round(planlanan_saat, 2),
+                "yemek_mola_hakki": (calisma_turu == "surekli") or (planlanan_saat >= 9.5),
+                "vardiya_tanimli": vardiya_tanimli,
+                "zaten_giris_yapildi": True,
+            }
+
         # Yoklama kaydı
         cur.execute("""
             INSERT INTO gorev_yoklama
@@ -982,6 +1008,21 @@ def kapanis_sifirla(sube_id: str):
         etkilenen = cur.rowcount
         conn.commit()
     return {"mesaj": f"{etkilenen} kapanış kaydı sıfırlandı.", "sube_id": sube_id, "tarih": tarih}
+
+
+@router.patch("/api/gorev/yoklama/{yoklama_id}/cikis-sifirla")
+def yoklama_cikis_sifirla(yoklama_id: str):
+    """Belirli bir yoklama kaydının cikis bilgisini sıfırlar (hata düzeltme için)."""
+    with db() as (conn, cur):
+        cur.execute("""
+            UPDATE gorev_yoklama
+            SET cikis_ts = NULL, cikis_tip = NULL
+            WHERE id = %s
+        """, (yoklama_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Yoklama kaydı bulunamadı")
+        conn.commit()
+    return {"mesaj": "Çıkış bilgisi sıfırlandı.", "yoklama_id": yoklama_id}
 
 
 @router.delete("/api/gorev/yoklama/{sube_id}")
