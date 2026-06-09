@@ -603,15 +603,19 @@ def yemek_durum(sube_id: str, personel_id: str):
 
 
 @router.delete("/api/gorev/yoklama/{sube_id}")
-def gorev_yoklama_sil(sube_id: str, tarih: Optional[str] = None):
-    """Şube yoklama kaydını sil (test/sıfırlama). tarih verilmezse bugün."""
+def gorev_yoklama_sil(sube_id: str, tarih: Optional[str] = None, kasa_da: bool = False):
+    """Şube yoklama kaydını sil (test/sıfırlama). kasa_da=true ile kasa kaydını da siler."""
     from tr_saat import is_gunu_tr
     t = tarih or str(is_gunu_tr())
     with db() as (conn, cur):
         cur.execute("DELETE FROM gorev_yoklama WHERE sube_id=%s AND tarih=%s", (sube_id, t))
-        silinen = cur.rowcount
+        silinen_yoklama = cur.rowcount
+        silinen_kasa = 0
+        if kasa_da:
+            cur.execute("DELETE FROM sube_kasa_gun_acma WHERE sube_id=%s AND tarih=%s", (sube_id, t))
+            silinen_kasa = cur.rowcount
         conn.commit()
-    return {"silinen": silinen, "sube_id": sube_id, "tarih": t}
+    return {"silinen_yoklama": silinen_yoklama, "silinen_kasa": silinen_kasa, "sube_id": sube_id, "tarih": t}
 
 
 # ── PERSONEL VARDİYA TAKİP ───────────────────────────────────────────────────
