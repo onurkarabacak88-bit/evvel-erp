@@ -784,6 +784,126 @@ def devir_kabul(body: DevirKabulBody):
     return {"basarili": True, "mesaj": "Devir kabul edildi. Vardiyaya hos geldin!"}
 
 
+class DevirGirisBody(BaseModel):
+    sube_id: str
+    personel_id: str
+    devir_id: str
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+@router.post("/api/gorev/devir-giris")
+def devir_giris(body: DevirGirisBody):
+    """
+    QR ile devir kabulu - PIN gerektirmez.
+    Yoklama olusturur + devri onaylar, oturum bilgisi doner.
+    """
+    from tr_saat import is_gunu_tr, dt_now_tr
+    from datetime import date as _d2
+    tarih = str(is_gunu_tr())
+    bugun = _d2.fromisoformat(tarih)
+
+    with db() as (conn, cur):
+        # Devir kaydını kontrol et
+        cur.execute("""
+            SELECT id, durum, devreden_id FROM kasa_devir_onay
+            WHERE id=%s AND sube_id=%s
+        """, (body.devir_id, body.sube_id))
+        devir = cur.fetchone()
+        if not devir:
+            raise HTTPException(404, "Devir kaydı bulunamadı.")
+        if devir["durum"] != 'bekliyor':
+            raise HTTPException(400, "Bu devir zaten onaylandı.")
+
+        # Personel bilgisi
+        cur.execute("SELECT * FROM personel WHERE id::text=%s", (body.personel_id,))
+        p = cur.fetchone()
+        if not p:
+            raise HTTPException(404, "Personel bulunamadı.")
+
+        # Konum kontrolü (şubede koordinat varsa)
+        konum_mesafe_m = None
+        konum_onaylandi = False
+        yonetici = bool(p.get("panel_yonetici"))
+        cur.execute("SELECT lat, lng, konum_radius_m FROM subeler WHERE id=%s", (body.sube_id,))
+        sube = cur.fetchone()
+        if sube and sube["lat"] and sube["lng"] and not yonetici:
+            if body.lat is not None and body.lng is not None:
+                konum_mesafe_m = _haversine_m(body.lat, body.lng, sube["lat"], sube["lng"])
+                radius = sube["konum_radius_m"] or 150
+                if konum_mesafe_m > radius:
+                    raise HTTPException(403,
+                        f"sube_disinda|Şubeye çok uzaksın ({int(konum_mesafe_m)} m).")
+                konum_onaylandi = True
+        else:
+            konum_onaylandi = True
+
+        # Vardiya planından tip belirle
+        SLOT_TIP_MAP = {'acilis': 'sabahci', 'normal': 'sabahci',
+                        'yogun': 'ara_vardiya', 'kapanis': 'kapanis'}
+        haftanin_gunu = bugun.weekday() + 1
+        cur.execute("""
+            SELECT vs.tip, va.baslangic_saat,
+                   EXTRACT(EPOCH FROM (
+                       CASE WHEN va.bitis_saat <= va.baslangic_saat
+                            THEN (va.bitis_saat::time + INTERVAL '24h') - va.baslangic_saat::time
+                            ELSE va.bitis_saat::time - va.baslangic_saat::time END
+                   ))/3600.0 AS planlanan_saat
+            FROM vardiya_atama va
+            JOIN vardiya_slot vs ON vs.id = va.slot_id
+            WHERE va.personel_id=%s AND va.tarih=%s
+              AND vs.sube_id=%s AND va.durum IN ('planli','onayli')
+              AND vs.aktif=TRUE
+            ORDER BY va.baslangic_saat LIMIT 1
+        """, (body.personel_id, bugun, body.sube_id))
+        slot_row = cur.fetchone()
+        vardiya_tip = SLOT_TIP_MAP.get(slot_row["tip"], "sabahci") if slot_row else "sabahci"
+        planlanan_saat = float(slot_row["planlanan_saat"] or 0) if slot_row else 0.0
+        vardiya_tanimli = bool(slot_row)
+        calisma_turu = p.get("calisma_turu") or "surekli"
+        asil_sube_id = p.get("sube_id") or body.sube_id
+        vardiya_disi = str(asil_sube_id) != str(body.sube_id) or not vardiya_tanimli
+
+        # Yoklama kaydı oluştur (zaten varsa güncelleme yok, tekrar giremez)
+        cur.execute("""
+            SELECT id FROM gorev_yoklama
+            WHERE sube_id=%s AND personel_id=%s AND tarih=%s
+        """, (body.sube_id, body.personel_id, tarih))
+        if cur.fetchone():
+            raise HTTPException(400, "Bu şube için bugün zaten giriş kaydın var.")
+
+        import uuid as _uuid2
+        giris_ts = dt_now_tr()
+        cur.execute("""
+            INSERT INTO gorev_yoklama
+                (id, tarih, sube_id, personel_id, vardiya_tip, konum_mesafe_m,
+                 konum_onaylandi, vardiya_disi, asil_sube_id, giris_ts)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (str(_uuid2.uuid4()), tarih, body.sube_id, body.personel_id, vardiya_tip,
+              konum_mesafe_m, konum_onaylandi, vardiya_disi, str(asil_sube_id), giris_ts))
+
+        # Devri onayla
+        cur.execute("""
+            UPDATE kasa_devir_onay
+            SET kabul_eden_id=%s, kabul_ts=%s, durum='onaylandi'
+            WHERE id=%s
+        """, (body.personel_id, giris_ts, body.devir_id))
+        conn.commit()
+
+    return {
+        "personel_id": str(p["id"]),
+        "ad_soyad": p["ad_soyad"],
+        "sube_id": body.sube_id,
+        "tarih": tarih,
+        "vardiya_tip": vardiya_tip,
+        "vardiya_tanimli": vardiya_tanimli,
+        "planlanan_saat": planlanan_saat,
+        "calisma_turu": calisma_turu,
+        "yemek_mola_hakki": True,
+        "giris_ts": str(giris_ts),
+        "devir_kabul": True,
+    }
+
+
 @router.delete("/api/gorev/yoklama/{sube_id}")
 def gorev_yoklama_sil(sube_id: str, tarih: Optional[str] = None, kasa_da: bool = False):
     """Şube yoklama kaydını sil (test/sıfırlama). kasa_da=true ile kasa kaydını da siler."""
