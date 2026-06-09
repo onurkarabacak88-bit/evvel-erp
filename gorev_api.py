@@ -12,7 +12,7 @@ router = APIRouter()
 # Başlangıç günü (10 Haziran): o gün çalışan herkes tam+doğru çalışmış sayılır
 # (gecikme=0, fazla mesai=0, yemek=tam, haftalık izin=var)
 from datetime import date as _SYSTEM_DATE
-SISTEM_BASLANGIC = _SYSTEM_DATE(2025, 6, 10)
+SISTEM_BASLANGIC = _SYSTEM_DATE(2025, 6, 1)
 
 SABLON_SEED = [
     # (vardiya_tip, sira, alan, gorev, siklik)
@@ -832,8 +832,8 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                     planlanan = float(v["planlanan_saat"] or 0)
                     toplam_planlanan += planlanan
 
-                    # Sistem başlangıç günü — herkes tam+doğru çalışmış sayılır
-                    baslangic_gunu = (tarih == SISTEM_BASLANGIC)
+                    # Sistem kurulum öncesi (1-9 Haziran) — herkes tam+doğru çalışmış sayılır
+                    baslangic_gunu = (tarih <= _SYSTEM_DATE(2025, 6, 9))
 
                     if baslangic_gunu:
                         # Tam çalışmış gibi: gecikme=0, fazla=0, yemek=hak kazanmış
