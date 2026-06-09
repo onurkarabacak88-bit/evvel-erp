@@ -296,11 +296,18 @@ function PersonelKart({ p, acik, onToggle, yil, ay, onYenile }) {
                       marginBottom: 8, letterSpacing: 0.5 }}>
                       💰 ÜCRET HESABI
                     </div>
-                    {d.taban_maas != null && satir('Taban Maaş', fmt2(d.taban_maas), null)}
-                    {d.saatlik_ucret > 0 && satir('Saatlik Ücret (maaş/285)', fmt2(d.saatlik_ucret), 'var(--text3)')}
+                    {d.taban_maas != null && (
+                      d.ay_tamam
+                        ? satir('Taban Maaş (tam ay)', fmt2(d.taban_maas), null)
+                        : satir(`Taban Maaş (${d.gecen_gun}/30 gün)`, fmt2(d.kazanilan_taban), null, true)
+                    )}
+                    {d.saatlik_ucret > 0 && satir('Saatlik Ücret (maaş÷285)', fmt2(d.saatlik_ucret), 'var(--text3)')}
                     {d.calisma_saati != null && satir(`Çalışma (${d.calisma_saati}s × ${fmt2(d.saatlik_ucret)}/s)`, fmt2(d.normal_ucret), null)}
                     {d.fazla_mesai_saat > 0 && satir(`Fazla Mesai (${d.fazla_mesai_saat}s)`, '+' + fmt2(d.fazla_mesai_ucret), '#f59e0b')}
-                    {d.yemek_ucret > 0 && satir('Yemek Ücreti', '+' + fmt2(d.yemek_ucret), '#4caf84')}
+                    {(d.yemek_ucret_gun > 0 || d.yemek_ucret > 0) && satir(
+                      `🍽️ Yemek (${d.yemek_ucret_gun ?? p.yemek_ucret_gun} gün × ${fmt2(d.yemek_ucret_birim ?? 0)})`,
+                      '+' + fmt2(d.yemek_ucret), '#4caf84'
+                    )}
                     {d.yol_ucret > 0 && satir('Yol Ücreti', '+' + fmt2(d.yol_ucret), null)}
                     <div style={{ display: 'flex', justifyContent: 'space-between',
                       padding: '8px 0 0', marginTop: 4 }}>

@@ -825,6 +825,13 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             """, (pid, d1, p_d2))
             acilislar = {str(r["tarih"]): dict(r) for r in cur.fetchall()}
 
+            # İzin listesi (yemek ücreti için)
+            cur.execute("""
+                SELECT baslangic_tarih, bitis_tarih FROM personel_izin
+                WHERE personel_id=%s AND bitis_tarih >= %s AND baslangic_tarih <= %s
+            """, (pid, d1, p_d2))
+            izin_listesi = [dict(r) for r in cur.fetchall()]
+
             # Haftalık izin analizi — her Pazartesi başlayan haftayı tara
             # Kural: 7 günlük haftada HİÇ boş gün yoksa → haftalık izin kullanılmamış
             from datetime import date as _date2, timedelta as _td
@@ -922,8 +929,18 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                         toplam_fazla_saat += fazla
 
                         # Yemek ücreti hakkı
+                        # İzinli gün: personel_izin tablosunda varsa yemek hakkı var
+                        izinli_gun = any(
+                            iz["baslangic_tarih"] <= tarih <= iz["bitis_tarih"]
+                            for iz in izin_listesi
+                        ) if izin_listesi else False
+
                         yemek_hak = False
-                        if m and m.get("ucret_hakki") is True:
+                        if izinli_gun and not is_part:
+                            # İzinli sürekli personele yemek ödenir
+                            yemek_hak = True
+                            yemek_ucret_gun += 1
+                        elif m and m.get("ucret_hakki") is True:
                             if part_tam or not is_part:
                                 yemek_hak = True
                                 yemek_ucret_gun += 1
@@ -945,31 +962,53 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
 
                 tarih += timedelta(days=1)
 
-            yemek_ucret_tutari = yemek_ucret_gun * float(p.get("yemek_ucreti") or 0)
+            yemek_ucret_birim = float(p.get("yemek_ucreti") or 0)
+            yemek_ucret_tutari = yemek_ucret_gun * yemek_ucret_birim
 
             # ── ÜCRET HESABI — İş Kanunu standardı (30 gün) ──────────
             GUNLUK_SAAT = 9.5
-            AYLIK_GUN   = 30.0   # İş Kanunu: izin günleri dahil
+            AYLIK_GUN   = 30.0
             AYLIK_SAAT  = GUNLUK_SAAT * AYLIK_GUN  # 285
             is_surekli  = (p.get("calisma_turu") or "surekli") == "surekli"
             maas_taban  = float(p.get("maas") or 0)
             saatlik_ucr = float(p.get("saatlik_ucret") or 0)
             yol_ucr     = float(p.get("yol_ucreti") or 0)
 
+            # Bugüne kadar geçen gün (ay bitmemişse orantılı)
+            from datetime import date as _today_d
+            bugun_d = _today_d.today()
+            ay_son  = p_d2
+            gecen_gun = min((bugun_d - d1).days + 1, (ay_son - d1).days + 1)
+            gecen_gun = max(1, gecen_gun)
+            ay_toplam_gun = (ay_son - d1).days + 1
+            ay_tamam = bugun_d >= ay_son  # ay bittiyse tam, bitmemişse orantılı
+
             if is_surekli:
                 saatlik     = maas_taban / AYLIK_SAAT if AYLIK_SAAT > 0 else 0
                 gunluk      = maas_taban / AYLIK_GUN  if AYLIK_GUN  > 0 else 0
                 fazla_ucret = toplam_fazla_saat * saatlik
-                net_hesap   = maas_taban + fazla_ucret + yemek_ucret_tutari + yol_ucr
+
+                # Bugüne kadar kazanılan taban (ay bitmemişse orantılı)
+                if ay_tamam:
+                    kazanilan_taban = maas_taban
+                else:
+                    kazanilan_taban = round(gunluk * gecen_gun, 2)
+
+                net_hesap = kazanilan_taban + fazla_ucret + yemek_ucret_tutari + yol_ucr
                 ucret_detay = {
-                    "taban_maas":       round(maas_taban, 2),
-                    "saatlik_ucret":    round(saatlik, 2),
-                    "gunluk_ucret":     round(gunluk, 2),
-                    "fazla_mesai_saat": round(toplam_fazla_saat, 2),
-                    "fazla_mesai_ucret":round(fazla_ucret, 2),
-                    "yemek_ucret":      round(yemek_ucret_tutari, 2),
-                    "yol_ucret":        round(yol_ucr, 2),
-                    "net_hakediş":      round(net_hesap, 2),
+                    "taban_maas":         round(maas_taban, 2),
+                    "kazanilan_taban":    round(kazanilan_taban, 2),
+                    "saatlik_ucret":      round(saatlik, 2),
+                    "gunluk_ucret":       round(gunluk, 2),
+                    "gecen_gun":          gecen_gun,
+                    "ay_tamam":           ay_tamam,
+                    "fazla_mesai_saat":   round(toplam_fazla_saat, 2),
+                    "fazla_mesai_ucret":  round(fazla_ucret, 2),
+                    "yemek_ucret_gun":    yemek_ucret_gun,
+                    "yemek_ucret_birim":  round(yemek_ucret_birim, 2),
+                    "yemek_ucret":        round(yemek_ucret_tutari, 2),
+                    "yol_ucret":          round(yol_ucr, 2),
+                    "net_hakediş":        round(net_hesap, 2),
                 }
             else:
                 # Part-time: toplam planlanan saat × saatlik ücret
@@ -977,9 +1016,13 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 normal_ucret  = calisma_saati * saatlik_ucr
                 net_hesap     = normal_ucret + yemek_ucret_tutari + yol_ucr
                 ucret_detay = {
-                    "saatlik_ucret":    round(saatlik_ucr, 4),
+                    "saatlik_ucret":    round(saatlik_ucr, 2),
                     "calisma_saati":    round(calisma_saati, 2),
                     "normal_ucret":     round(normal_ucret, 2),
+                    "gecen_gun":        gecen_gun,
+                    "ay_tamam":         ay_tamam,
+                    "yemek_ucret_gun":  yemek_ucret_gun,
+                    "yemek_ucret_birim":round(yemek_ucret_birim, 2),
                     "yemek_ucret":      round(yemek_ucret_tutari, 2),
                     "yol_ucret":        round(yol_ucr, 2),
                     "net_hakediş":      round(net_hesap, 2),
