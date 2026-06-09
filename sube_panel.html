@@ -13156,8 +13156,21 @@ function startYoklamaPolling() {
       var d = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/yoklama-durum');
       if (d && d.yoklama_var) {
         stopYoklamaPolling();
-        // Sayfayı yenile — kasa kilidi ekranına geçsin
-        yuklePanelVerisi();
+        document.getElementById('yoklamaOverlay').style.display = 'none';
+        // Asıl panel verisini çek — kasa kilidi ekranına geçsin
+        var data = await api('/sube-personel/' + encodeURIComponent(SUBE_ID) + '/durum');
+        lastData = data;
+        pk = data.panel_pin_kullanicilar || [];
+        fillSels();
+        if (data.kasa_kilitli) {
+          document.getElementById('kasaOverlay').style.display = 'flex';
+        } else if (!data.sube_acik) {
+          document.getElementById('acilisOverlay').style.display = 'flex';
+          resetAcilisWiz();
+          renderAcilisWiz();
+        } else {
+          renderMain(data);
+        }
       }
     } catch(_) {}
   }, 5000);
