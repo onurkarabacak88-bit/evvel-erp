@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+﻿from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -8,7 +8,7 @@ from database import db
 
 router = APIRouter()
 
-# Sistem başlangıç tarihi — bu tarihten önceki veriler hesaba katılmaz
+# Sistem başlangıç tarihi - bu tarihten önceki veriler hesaba katılmaz
 # Başlangıç günü (10 Haziran): o gün çalışan herkes tam+doğru çalışmış sayılır
 # (gecikme=0, fazla mesai=0, yemek=tam, haftalık izin=var)
 from datetime import date as _SYSTEM_DATE
@@ -148,7 +148,7 @@ def gorev_personel_vardiya(tarih: str, sube_id: str, vardiya_tip: str, personel_
     # Görev bölüşümü
     kisi_sayisi = len(vardiya_personel)
     if kisi_sayisi <= 1:
-        # Tek kişi ya da plan yok — hepsini göster
+        # Tek kişi ya da plan yok - hepsini göster
         benim_gorevler = tum_gorevler
     else:
         # Personeli sırala, indeksini bul → görevleri böl
@@ -200,13 +200,13 @@ def gorev_tamamla(body: GorevTamamlaBody):
 
 @router.get("/api/gorev/sube-personel/{sube_id}")
 def gorev_sube_personel(sube_id: str):
-    """Tüm aktif personel — şube personeli önce, diğerleri sonra."""
+    """Tüm aktif personel - şube personeli önce, diğerleri sonra."""
     with db() as (conn, cur):
         cur.execute("""
             SELECT p.id::text, p.ad_soyad,
                    (p.panel_pin_hash IS NOT NULL AND p.panel_pin_salt IS NOT NULL) AS pin_tanimli,
                    (p.sube_id = %s) AS bu_sube,
-                   COALESCE(s.ad, '—') AS sube_adi
+                   COALESCE(s.ad, '-') AS sube_adi
             FROM personel p
             LEFT JOIN subeler s ON s.id = p.sube_id
             WHERE p.aktif = TRUE
@@ -271,7 +271,7 @@ def gorev_pin_giris(body: GorevPinGirisBody):
         cur.execute("SELECT lat, lng, konum_radius_m FROM subeler WHERE id = %s", (body.sube_id,))
         sube = cur.fetchone()
 
-        # Yönetici mi kontrol et — yöneticiler konum kısıtından muaf
+        # Yönetici mi kontrol et - yöneticiler konum kısıtından muaf
         cur.execute("SELECT panel_yonetici FROM personel WHERE id::text = %s", (body.personel_id,))
         p_row = cur.fetchone()
         yonetici = bool(p_row and p_row["panel_yonetici"])
@@ -340,7 +340,7 @@ def gorev_pin_giris(body: GorevPinGirisBody):
             vardiya_tanimli = False
 
         # Planlanan saat ayrıca sorgulama gerekiyorsa (slot_row'dan alındı, tekrar sorgulamaya gerek yok)
-        if False:  # placeholder — artık slot_row'dan geliyor
+        if False:  # placeholder - artık slot_row'dan geliyor
             cur.execute("""
             SELECT EXTRACT(EPOCH FROM (
                 CASE WHEN va.bitis_saat <= va.baslangic_saat
@@ -549,7 +549,7 @@ def gorev_yoklama_listesi(tarih: str, sube_id: Optional[str] = None, sadece_vard
         return [dict(r) for r in cur.fetchall()]
 
 
-YEMEK_KONUM_RADIUS = 150  # metre — şube büyüklüğü 100m + 50m GPS toleransı
+YEMEK_KONUM_RADIUS = 150  # metre - şube büyüklüğü 100m + 50m GPS toleransı
 
 
 class YemekMolasiBody(BaseModel):
@@ -576,11 +576,11 @@ def _konum_kontrol(cur, sube_id: str, lat, lng, hata_prefix: str):
 
 @router.post("/api/gorev/yemek-baslat")
 def yemek_baslat(body: YemekMolasiBody):
-    """Personel yemeğe gidiyor — konum kontrolü + mola başlangıcını kaydet."""
+    """Personel yemeğe gidiyor - konum kontrolü + mola başlangıcını kaydet."""
     from tr_saat import is_gunu_tr
     tarih = str(is_gunu_tr())
     with db() as (conn, cur):
-        # Konum kontrolü — şubeden uzaksa başlatma
+        # Konum kontrolü - şubeden uzaksa başlatma
         _konum_kontrol(cur, body.sube_id, body.lat, body.lng, "Yemek molası başlatma")
         # Yoklama kaydı var mı
         cur.execute("SELECT 1 FROM gorev_yoklama WHERE sube_id=%s AND personel_id=%s AND tarih=%s",
@@ -604,11 +604,11 @@ def yemek_baslat(body: YemekMolasiBody):
 
 @router.post("/api/gorev/yemek-bitis")
 def yemek_bitis(body: YemekMolasiBody):
-    """Personel yemekten döndü — konum kontrolü + mola bitiş + ücret hakkı hesapla."""
+    """Personel yemekten döndü - konum kontrolü + mola bitiş + ücret hakkı hesapla."""
     from tr_saat import is_gunu_tr, dt_now_tr
     tarih = str(is_gunu_tr())
     with db() as (conn, cur):
-        # Konum kontrolü — şubede değilse kapatma
+        # Konum kontrolü - şubede değilse kapatma
         _konum_kontrol(cur, body.sube_id, body.lat, body.lng, "Yemek molası kapatma")
         cur.execute("""
             SELECT ym.id, ym.baslangic_ts, s.yemek_mola_limit_dk
@@ -632,7 +632,7 @@ def yemek_bitis(body: YemekMolasiBody):
         "sure_dk": round(sure_dk, 1),
         "limit_dk": limit_dk,
         "ucret_hakki": ucret_hakki,
-        "mesaj": f"{'✅ Yemek ücreti hakkı kazanıldı' if ucret_hakki else f'❌ Mola süresi ({int(sure_dk)} dk) limitini aştı — yemek ücreti bu gün ödenmez'}",
+        "mesaj": f"{'✅ Yemek ücreti hakkı kazanıldı' if ucret_hakki else f'❌ Mola süresi ({int(sure_dk)} dk) limitini aştı - yemek ücreti bu gün ödenmez'}",
     }
 
 
@@ -672,7 +672,7 @@ class MesaiCikisBody(BaseModel):
 
 @router.post("/api/gorev/mesai-cikis")
 def mesai_cikis(body: MesaiCikisBody):
-    """Personel mesai çıkışı — kasa devri veya kapanışta QR onayıyla."""
+    """Personel mesai çıkışı - kasa devri veya kapanışta QR onayıyla."""
     from tr_saat import is_gunu_tr, dt_now_tr
     tarih = str(is_gunu_tr())
     with db() as (conn, cur):
@@ -707,7 +707,7 @@ def mesai_cikis(body: MesaiCikisBody):
         "cikis_tip": body.cikis_tip,
         "sure_dk": sure_dk,
         "vardiya_tip": row["vardiya_tip"],
-        "mesaj": f"✅ Mesai çıkışı kaydedildi — çalışma süresi: {sure_dk//60}s {sure_dk%60}dk" if sure_dk else "✅ Mesai çıkışı kaydedildi.",
+        "mesaj": f"✅ Mesai çıkışı kaydedildi - çalışma süresi: {sure_dk//60}s {sure_dk%60}dk" if sure_dk else "✅ Mesai çıkışı kaydedildi.",
     }
 
 
@@ -832,7 +832,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             """, (pid, d1, p_d2))
             izin_listesi = [dict(r) for r in cur.fetchall()]
 
-            # Haftalık izin analizi — her Pazartesi başlayan haftayı tara
+            # Haftalık izin analizi - her Pazartesi başlayan haftayı tara
             # Kural: 7 günlük haftada HİÇ boş gün yoksa → haftalık izin kullanılmamış
             from datetime import date as _date2, timedelta as _td
             haftalik_izin_kullanilmadi = 0  # kaç haftada izin kullanılmamış
@@ -884,7 +884,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                     planlanan = float(v["planlanan_saat"] or 0)
                     toplam_planlanan += planlanan
 
-                    # Sistem kurulum öncesi (1-9 Haziran) — herkes tam+doğru çalışmış sayılır
+                    # Sistem kurulum öncesi (1-9 Haziran) - herkes tam+doğru çalışmış sayılır
                     baslangic_gunu = (tarih <= _SYSTEM_DATE(2025, 6, 9))
 
                     if baslangic_gunu:
@@ -965,7 +965,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             yemek_ucret_birim = float(p.get("yemek_ucreti") or 0)
             yemek_ucret_tutari = yemek_ucret_gun * yemek_ucret_birim
 
-            # ── ÜCRET HESABI — İş Kanunu standardı (30 gün) ──────────
+            # ── ÜCRET HESABI - İş Kanunu standardı (30 gün) ──────────
             GUNLUK_SAAT = 9.5
             AYLIK_GUN   = 30.0
             AYLIK_SAAT  = GUNLUK_SAAT * AYLIK_GUN  # 285
@@ -1130,7 +1130,7 @@ def gecikme_eksik_gun_isle(body: GecikmeEksikGunBody):
 @router.get("/api/gorev/izin-alacagi")
 def izin_alacagi(personel_id: Optional[str] = None):
     """
-    Birikimli haftalık izin alacağı — sistem başlangıcından (2025-06-10) bugüne.
+    Birikimli haftalık izin alacağı - sistem başlangıcından (2025-06-10) bugüne.
     Verilen izin günleri (personel_izin tablosu) düşülür.
     """
     from datetime import date as _date, timedelta as _td
@@ -1165,7 +1165,7 @@ def izin_alacagi(personel_id: Optional[str] = None):
             """, (pid, d1, bugun))
             calisma_gunleri = {r["tarih"] for r in cur.fetchall()}
 
-            # Haftalık izin tarama — Pazartesi başlayan haftalar (sistem başlangıcından itibaren)
+            # Haftalık izin tarama - Pazartesi başlayan haftalar (sistem başlangıcından itibaren)
             haftalik_borclar = []
             borclu_hafta = 0
             _tarama_bas = max(d1, SISTEM_BASLANGIC)
@@ -1181,7 +1181,7 @@ def izin_alacagi(personel_id: Optional[str] = None):
                     if str(hafta + _td(days=i)) in calisma_gunleri
                 )
                 toplam_gun = (hafta_bit - hafta).days + 1
-                # Sistem başlangıç haftasını borçlu sayma — o hafta temiz başlangıç
+                # Sistem başlangıç haftasını borçlu sayma - o hafta temiz başlangıç
                 baslangic_haftasi = (hafta <= SISTEM_BASLANGIC <= hafta + _td(days=6))
                 # Tam hafta (6+ gün) ve hiç boş gün yoksa borç
                 if not baslangic_haftasi and toplam_gun >= 6 and calisilan >= toplam_gun:
