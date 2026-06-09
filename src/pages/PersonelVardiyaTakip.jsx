@@ -31,10 +31,13 @@ function Badge({ renk, label }) {
 }
 
 function PersonelKart({ p, acik, onToggle }) {
+  const ayrildi = !p.aktif;
   return (
     <div style={{
       marginBottom: 10, borderRadius: 12, overflow: 'hidden',
-      border: '1px solid var(--border)', background: 'var(--bg2)',
+      border: `1px solid ${ayrildi ? 'rgba(107,111,122,0.3)' : 'var(--border)'}`,
+      background: ayrildi ? 'rgba(107,111,122,0.04)' : 'var(--bg2)',
+      opacity: ayrildi ? 0.8 : 1,
     }}>
       {/* Özet satır */}
       <div onClick={onToggle} style={{
@@ -42,9 +45,18 @@ function PersonelKart({ p, acik, onToggle }) {
         alignItems: 'center', gap: 10, flexWrap: 'wrap',
       }}>
         <div style={{ flex: 1, minWidth: 140 }}>
-          <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text1)' }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: ayrildi ? 'var(--text3)' : 'var(--text1)', display: 'flex', alignItems: 'center', gap: 8 }}>
             {p.ad_soyad}
-            <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+            {ayrildi && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 8,
+                background: 'rgba(107,111,122,0.15)', color: 'var(--text3)',
+                border: '1px solid rgba(107,111,122,0.3)',
+              }}>
+                Ayrıldı{p.cikis_tarihi ? ` · ${new Date(p.cikis_tarihi).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}
+              </span>
+            )}
+            <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
               {p.calisma_turu === 'surekli' ? 'Sürekli' : 'Part-time'}
             </span>
           </div>
@@ -206,6 +218,7 @@ export default function PersonelVardiyaTakip() {
   const [yukleniyor, setYukleniyor] = useState(false);
   const [aciklar, setAciklar] = useState({});
   const [izinAlacagi, setIzinAlacagi] = useState(null);
+  const [filtre, setFiltre] = useState('aktif'); // 'aktif' | 'ayrildi' | 'hepsi'
 
   const yukle = () => {
     setYukleniyor(true);
@@ -223,7 +236,12 @@ export default function PersonelVardiyaTakip() {
   const toggle = (pid) => setAciklar(p => ({ ...p, [pid]: !p[pid] }));
 
   const personeller = veri?.personeller || [];
-  const uyarilar = personeller.filter(p => p.part_tam_gun > 0 || p.toplam_gecikme_dk > 60 || p.haftalik_izin_kullanilmadi > 0);
+  const filtrelenmis = personeller.filter(p =>
+    filtre === 'hepsi' ? true :
+    filtre === 'ayrildi' ? !p.aktif :
+    p.aktif !== false
+  );
+  const uyarilar = personeller.filter(p => p.aktif !== false && (p.part_tam_gun > 0 || p.toplam_gecikme_dk > 60 || p.haftalik_izin_kullanilmadi > 0));
 
   return (
     <div className="page">
@@ -243,6 +261,17 @@ export default function PersonelVardiyaTakip() {
           {AY_ADLARI.slice(1).map((ad, i) => <option key={i+1} value={i+1}>{ad}</option>)}
         </select>
         {yukleniyor && <div className="spinner" style={{ width: 16, height: 16 }} />}
+        <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+          {[['aktif','Aktif'], ['ayrildi','Ayrıldı'], ['hepsi','Tümü']].map(([k, l]) => (
+            <button key={k} onClick={() => setFiltre(k)} style={{
+              padding: '6px 12px', borderRadius: 7, border: 'none', cursor: 'pointer',
+              fontSize: 12, fontWeight: 600,
+              background: filtre === k ? 'var(--accent)' : 'var(--bg2)',
+              color: filtre === k ? '#fff' : 'var(--text3)',
+              border: `1px solid ${filtre === k ? 'var(--accent)' : 'var(--border)'}`,
+            }}>{l}</button>
+          ))}
+        </div>
       </div>
 
       {/* Uyarı özeti */}
@@ -339,8 +368,12 @@ export default function PersonelVardiyaTakip() {
         <div style={{ textAlign: 'center', padding: 60, color: 'var(--text3)' }}>
           Bu ay için veri bulunamadı.
         </div>
+      ) : filtrelenmis.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>
+          {filtre === 'ayrildi' ? 'Bu dönemde ayrılan personel bulunamadı.' : 'Veri bulunamadı.'}
+        </div>
       ) : (
-        personeller.map(p => (
+        filtrelenmis.map(p => (
           <PersonelKart
             key={p.personel_id}
             p={p}

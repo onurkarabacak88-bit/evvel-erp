@@ -637,14 +637,14 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
         if personel_id:
             cur.execute("""
                 SELECT id::text, ad_soyad, calisma_turu, maas, saatlik_ucret,
-                       yemek_ucreti, yol_ucreti
-                FROM personel WHERE id::text=%s AND aktif=TRUE
+                       yemek_ucreti, yol_ucreti, aktif, cikis_tarihi
+                FROM personel WHERE id::text=%s
             """, (personel_id,))
         else:
             cur.execute("""
                 SELECT id::text, ad_soyad, calisma_turu, maas, saatlik_ucret,
-                       yemek_ucreti, yol_ucreti
-                FROM personel WHERE aktif=TRUE ORDER BY ad_soyad
+                       yemek_ucreti, yol_ucreti, aktif, cikis_tarihi
+                FROM personel ORDER BY aktif DESC, ad_soyad
             """)
         personeller = [dict(r) for r in cur.fetchall()]
 
@@ -854,6 +854,8 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 "haftalik_izin_detay": haftalik_izin_detay,
                 "ucret_detay": ucret_detay,
                 "net_hakediş": ucret_detay["net_hakediş"],
+                "aktif": bool(p.get("aktif", True)),
+                "cikis_tarihi": str(p["cikis_tarihi"]) if p.get("cikis_tarihi") else None,
                 "gunler": gunler,
             })
 
