@@ -519,7 +519,7 @@ def sube_konum_guncelle(sube_id: str, body: SubeKonumBody):
 
 @router.get("/api/gorev/yoklama")
 def gorev_yoklama_listesi(tarih: str, sube_id: Optional[str] = None, sadece_vardiya_disi: bool = False):
-    """Günlük yoklama listesi — CFO özet dashboard için."""
+    """Gunluk yoklama listesi - CFO ozet dashboard icin."""
     from datetime import date as _date
     t = _date.fromisoformat(tarih)
     with db() as (conn, cur):
