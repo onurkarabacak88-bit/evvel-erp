@@ -5143,6 +5143,12 @@
             <span class="ana-aksiyon-ttl">Merkez Notu</span>
             <span class="ana-aksiyon-sub">Operasyona bildir</span>
           </button>
+          <button class="ana-aksiyon-btn" type="button" onclick="molaQrAc()"
+            style="background:linear-gradient(135deg,rgba(245,158,11,0.15),rgba(245,158,11,0.08));border-color:rgba(245,158,11,0.4)">
+            <span class="ana-aksiyon-ico">🍽️</span>
+            <span class="ana-aksiyon-ttl">Mola QR</span>
+            <span class="ana-aksiyon-sub">Personel okutarak mola açar/kapar</span>
+          </button>
         </div>
 
         <!-- ②.5 Kullanımda olan ürünler (bitince → Bitti) — ambient/kompakt -->
@@ -5506,6 +5512,33 @@
         <span id="mesajBadge" class="badge" style="display:none;position:absolute;top:-2px;right:-2px;background:var(--danger);color:#fff;font-size:9px;min-width:16px;height:16px;border-radius:8px;align-items:center;justify-content:center;padding:0 3px"></span>
       </button>
     </div>
+  </div>
+</div>
+
+<!-- ── OVERLAY: MOLA QR ──────────────────── -->
+<div id="molaQrOverlay" class="overlay" style="display:none;z-index:9600">
+  <div class="overlay-kart" style="text-align:center;max-width:380px;position:relative">
+    <button onclick="molaQrKapat()" style="
+      position:absolute;top:12px;right:12px;background:none;border:none;
+      color:var(--muted);cursor:pointer;font-size:22px;line-height:1">×</button>
+    <div style="font-size:32px;margin-bottom:8px">🍽️</div>
+    <h2 style="margin-bottom:4px">Yemek Molası QR</h2>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:18px;line-height:1.6">
+      Personel bu kodu telefonuyla okutup<br>
+      <strong>Yemeğe Gidiyorum</strong> veya <strong>Yemekten Döndüm</strong> butonuna basar.
+    </p>
+    <div style="background:#fff;border-radius:12px;padding:14px;display:inline-block;
+      box-shadow:0 4px 20px rgba(0,0,0,0.25);margin-bottom:16px">
+      <img id="molaQrImg" src="" alt="Mola QR"
+        style="width:220px;height:220px;display:block" />
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:20px">
+      Konum doğrulamalı — şube dışından mola açılamaz/kapanamaz
+    </div>
+    <button onclick="molaQrKapat()" class="btn btn-ghost"
+      style="width:100%;padding:12px;font-size:14px">
+      Kapat
+    </button>
   </div>
 </div>
 
@@ -13140,6 +13173,18 @@ function wirePuanHandler() {
 
 // ─── OPERASyon OVERLAY ───────────────────────────────────────
 var opAcilisStep=1, opAcilisKasa=null, opAcilisStok={};
+
+// ── MOLA QR ─────────────────────────────────────────────────────────
+function molaQrAc() {
+  var img = document.getElementById('molaQrImg');
+  if (img && !img.src.includes('/api/gorev/qr/')) {
+    img.src = '/api/gorev/qr/' + encodeURIComponent(SUBE_ID);
+  }
+  document.getElementById('molaQrOverlay').style.display = 'flex';
+}
+function molaQrKapat() {
+  document.getElementById('molaQrOverlay').style.display = 'none';
+}
 
 // ── QR YOKLAMA POLLİNG ───────────────────────────────────────────────
 var _yoklamaTimer = null;
