@@ -28,16 +28,16 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
       .finally(() => setYukleniyor(false));
   }, []);
 
-  const ayarla = (kat_id, urun) => (delta) => {
+  const ayarla = (kat_db_id, urun) => (delta) => {
     setSepet(prev => {
-      const key = urun.id || urun.urun_ad;
+      const key = urun.id;
       const mevcut = prev[key]?.adet || 0;
       const yeni = Math.max(0, mevcut + delta);
       if (yeni === 0) {
         const { [key]: _, ...rest } = prev;
         return rest;
       }
-      return { ...prev, [key]: { urun_ad: urun.urun_ad || urun.ad, kategori_id: kat_id, urun_id: urun.id || '', adet: yeni } };
+      return { ...prev, [key]: { urun_ad: urun.ad, kategori_id: kat_db_id, urun_id: urun.id, adet: yeni } };
     });
   };
 
@@ -128,46 +128,54 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
         <div style={{ paddingBottom: 120 }}>
           {/* Kategori sekmeler */}
           <div style={{ display: 'flex', gap: 8, padding: '12px 16px', overflowX: 'auto', borderBottom: '1px solid #2a2d35' }}>
-            {katalog.map(kat => (
-              <button key={kat.id} onClick={() => setAcikKat(kat.id)}
-                style={{
-                  padding: '7px 14px', borderRadius: 20, border: 'none', cursor: 'pointer',
-                  fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
-                  background: acikKat === kat.id ? '#C8956A' : '#22262f',
-                  color: acikKat === kat.id ? '#fff' : '#b0b3bc',
-                }}>
-                {kat.ad}
-              </button>
-            ))}
+            {katalog.map(kat => {
+              const seciliSayisi = (kat.items || []).reduce((s, u) => s + (sepet[u.id]?.adet || 0), 0);
+              return (
+                <button key={kat.id} onClick={() => setAcikKat(kat.id)}
+                  style={{
+                    padding: '7px 14px', borderRadius: 20, border: 'none', cursor: 'pointer',
+                    fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', position: 'relative',
+                    background: acikKat === kat.id ? '#C8956A' : '#22262f',
+                    color: acikKat === kat.id ? '#fff' : '#b0b3bc',
+                  }}>
+                  {kat.label || kat.ad}
+                  {seciliSayisi > 0 && (
+                    <span style={{
+                      marginLeft: 6, background: acikKat === kat.id ? 'rgba(255,255,255,0.3)' : '#C8956A',
+                      borderRadius: 10, padding: '1px 6px', fontSize: 10, fontWeight: 800, color: '#fff',
+                    }}>{seciliSayisi}</span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           {/* Ürünler */}
-          <div style={{ padding: '12px 16px' }}>
+          <div style={{ padding: '8px 16px' }}>
             {katalog.filter(k => k.id === acikKat).map(kat =>
-              (kat.urunler || []).map(urun => {
-                const key = urun.id || urun.urun_ad;
-                const adet = sepet[key]?.adet || 0;
+              (kat.items || []).filter(u => u.aktif !== false).map(urun => {
+                const adet = sepet[urun.id]?.adet || 0;
                 return (
-                  <div key={key} style={{
+                  <div key={urun.id} style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '12px 0', borderBottom: '1px solid #1e2028',
+                    padding: '13px 0', borderBottom: '1px solid #1e2028',
                   }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 14, fontWeight: adet > 0 ? 700 : 400, color: adet > 0 ? '#e8e9ec' : '#b0b3bc' }}>
-                        {urun.urun_ad || urun.ad}
+                        {urun.ad}
                       </div>
-                      {urun.birim && <div style={{ fontSize: 11, color: '#6b6f7a' }}>{urun.birim}</div>}
+                      {urun.aciklama && <div style={{ fontSize: 11, color: '#6b6f7a', marginTop: 2 }}>{urun.aciklama}</div>}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                       {adet > 0 && (
                         <>
-                          <button onClick={ayarla(kat.id, urun)(-1)}
-                            style={{ width: 36, height: 36, borderRadius: 8, border: '1px solid #2a2d35', background: '#22262f', color: '#e8e9ec', fontSize: 18, cursor: 'pointer' }}>−</button>
-                          <span style={{ fontSize: 16, fontWeight: 700, minWidth: 24, textAlign: 'center', color: '#C8956A' }}>{adet}</span>
+                          <button onClick={ayarla(kat.db_kategori_id || kat.id, urun)(-1)}
+                            style={{ width: 40, height: 40, borderRadius: 8, border: '1px solid #2a2d35', background: '#22262f', color: '#e8e9ec', fontSize: 20, cursor: 'pointer', fontWeight: 700 }}>−</button>
+                          <span style={{ fontSize: 18, fontWeight: 800, minWidth: 28, textAlign: 'center', color: '#C8956A' }}>{adet}</span>
                         </>
                       )}
-                      <button onClick={ayarla(kat.id, urun)(+1)}
-                        style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: adet > 0 ? '#C8956A' : '#22262f', color: '#fff', fontSize: 18, cursor: 'pointer' }}>+</button>
+                      <button onClick={ayarla(kat.db_kategori_id || kat.id, urun)(+1)}
+                        style={{ width: 40, height: 40, borderRadius: 8, border: 'none', background: adet > 0 ? '#C8956A' : '#2a2d35', color: '#fff', fontSize: 20, cursor: 'pointer', fontWeight: 700 }}>+</button>
                     </div>
                   </div>
                 );
