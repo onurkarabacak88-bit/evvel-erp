@@ -675,6 +675,109 @@ function VardiyamEkrani({ oturum }) {
   );
 }
 
+// ── Kapanış Mühür Bandı (sadece kapanış vardiyası için) ──────────────────────
+function KapanisMuhurBandi({ oturum }) {
+  const [durum, setDurum] = useState(null); // null | 'onay' | 'muhürlendi'
+  const [yukleniyor, setYukleniyor] = useState(false);
+  const [hata, setHata] = useState('');
+  const [konum, setKonum] = useState(null);
+
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      p => setKonum({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      () => {}, { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, []);
+
+  const muhurle = async () => {
+    setYukleniyor(true);
+    setHata('');
+    try {
+      await api('/gorev/mesai-cikis', {
+        method: 'POST',
+        body: {
+          sube_id: oturum.sube_id,
+          personel_id: oturum.personel_id,
+          cikis_tip: 'kapalis',
+          lat: konum?.lat ?? null,
+          lng: konum?.lng ?? null,
+        },
+      });
+      setDurum('muhürlendi');
+    } catch (e) {
+      const msg = e.message || '';
+      if (msg.startsWith('sube_disinda|')) setHata('📍 ' + msg.split('|')[1]);
+      else if (msg === 'Mesai çıkışı zaten yapılmış.') setDurum('muhürlendi');
+      else setHata(msg || 'Hata oluştu');
+    } finally {
+      setYukleniyor(false);
+    }
+  };
+
+  if (durum === 'muhürlendi') return (
+    <div style={{
+      margin: '0 0 0 0', padding: '14px 20px',
+      background: 'rgba(76,175,132,0.1)', borderBottom: '1px solid rgba(76,175,132,0.3)',
+      display: 'flex', alignItems: 'center', gap: 10,
+    }}>
+      <span style={{ fontSize: 20 }}>🔒</span>
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: '#4caf84' }}>Kapanış Mühürlendi</div>
+        <div style={{ fontSize: 11, color: '#6b6f7a' }}>Sistem kapanışı kaydetti · {oturum.ad_soyad}</div>
+      </div>
+    </div>
+  );
+
+  if (durum === 'onay') return (
+    <div style={{
+      margin: 0, padding: '14px 20px',
+      background: 'rgba(200,149,106,0.1)', borderBottom: '1px solid rgba(200,149,106,0.4)',
+    }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: '#C8956A', marginBottom: 8 }}>
+        🔲 Kapanışı mühürlemek istediğine emin misin?
+      </div>
+      <div style={{ fontSize: 11, color: '#b0b3bc', marginBottom: 12, lineHeight: 1.6 }}>
+        QR bağlantınla sisteme girdin. Kasa kapanışını mühürleyince değiştirilemez.
+      </div>
+      {hata && <div style={{ fontSize: 12, color: '#e05c5c', marginBottom: 8 }}>{hata}</div>}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button onClick={muhurle} disabled={yukleniyor} style={{
+          flex: 1, padding: '12px', borderRadius: 8, border: 'none', cursor: 'pointer',
+          background: '#C8956A', color: '#fff', fontWeight: 800, fontSize: 14,
+        }}>
+          {yukleniyor ? '…' : '🔒 Evet, Mühürle'}
+        </button>
+        <button onClick={() => { setDurum(null); setHata(''); }} style={{
+          padding: '12px 16px', borderRadius: 8, border: '1px solid #2a2d35',
+          background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 13,
+        }}>
+          İptal
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{
+      margin: 0, padding: '10px 20px',
+      background: 'rgba(200,149,106,0.06)', borderBottom: '1px solid rgba(200,149,106,0.25)',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    }}>
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#C8956A' }}>🌙 Kapanış Vardiyası</div>
+        <div style={{ fontSize: 11, color: '#6b6f7a' }}>Görevleri tamamla, sonra kapanışı mühürle</div>
+      </div>
+      <button onClick={() => setDurum('onay')} style={{
+        padding: '9px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
+        background: '#C8956A', color: '#fff', fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap',
+      }}>
+        🔲 Kapanışı Yap
+      </button>
+    </div>
+  );
+}
+
 // ── Ana Görev Sayfası ────────────────────────────────────────────────────────
 export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
   const [data, setData] = useState(null);
@@ -768,6 +871,11 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
         </div>
       </div>
 
+      {/* Kapanış Mühür Bandı — sadece kapanış vardiyasında göster */}
+      {oturum.vardiya_tip === 'kapanis' && (
+        <KapanisMuhurBandi oturum={oturum} />
+      )}
+
       {/* İlerleme */}
       {data && (
         <div style={{ padding: '14px 20px', borderBottom: '1px solid #2a2d35' }}>
@@ -809,7 +917,8 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
       {sekme === 'gorevler' && (
         <>
           {oturum.yemek_mola_hakki !== false && <YemekMolasiButon oturum={oturum} />}
-          <MesaiCikisButon oturum={oturum} />
+          {/* Kapanış vardiyasında üstteki bant kullanılır, buton tekrar gösterilmez */}
+          {oturum.vardiya_tip !== 'kapanis' && <MesaiCikisButon oturum={oturum} />}
         </>
       )}
 
