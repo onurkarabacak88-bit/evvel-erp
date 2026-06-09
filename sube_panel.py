@@ -827,13 +827,6 @@ def kasa_kilit_ac(sube_id: str, body: KasaKilitAcModel):
         raise HTTPException(400, "4 haneli PIN gerekli")
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
-        # Yoklama yapılmadan kasa açılamaz
-        cur.execute("""
-            SELECT 1 FROM gorev_yoklama
-            WHERE sube_id=%s AND tarih=%s LIMIT 1
-        """, (sube_id, is_gunu_tr()))
-        if not cur.fetchone():
-            raise HTTPException(403, "yoklama_eksik|Kasa açılışı için önce personelin QR kodu telefona okutması gerekiyor.")
         ku = dogrula_personel_panel_pin(cur, pid, pin)
         onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
         pid_v = str(ku.get("id") or pid).strip()
@@ -2269,6 +2262,21 @@ def sube_personel_panel_public(payload: dict) -> dict:
         "Depo stok uyarıları Ana ekranda listelenir."
     )
     return p
+
+
+@router.post("/{sube_id}/kasa-yoklama-ac")
+def kasa_yoklama_ile_ac(sube_id: str):
+    """QR yoklama onaylandıktan sonra kasa kilidini PIN'siz aç."""
+    with db() as (conn, cur):
+        # Bugün yoklama var mı kontrol et
+        cur.execute("SELECT personel_id FROM gorev_yoklama WHERE sube_id=%s AND tarih=%s ORDER BY giris_ts LIMIT 1", (sube_id, is_gunu_tr()))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(403, "Yoklama kaydı bulunamadı")
+        pid = str(row["personel_id"])
+        _kasa_gunu_pin_sonrasi_ac(cur, sube_id, pid, "QR Yoklama")
+        conn.commit()
+    return {"success": True}
 
 
 @router.get("/{sube_id}/yoklama-durum")

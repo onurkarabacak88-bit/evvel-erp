@@ -194,14 +194,17 @@ def gorev_tamamla(body: GorevTamamlaBody):
 
 @router.get("/api/gorev/sube-personel/{sube_id}")
 def gorev_sube_personel(sube_id: str):
-    """Şubede aktif personel listesi (PIN tanımlı olanlar önce)."""
+    """Tüm aktif personel — şube personeli önce, diğerleri sonra."""
     with db() as (conn, cur):
         cur.execute("""
-            SELECT id::text, ad_soyad,
-                   (panel_pin_hash IS NOT NULL AND panel_pin_salt IS NOT NULL) AS pin_tanimli
-            FROM personel
-            WHERE sube_id = %s AND aktif = TRUE
-            ORDER BY pin_tanimli DESC, ad_soyad
+            SELECT p.id::text, p.ad_soyad,
+                   (p.panel_pin_hash IS NOT NULL AND p.panel_pin_salt IS NOT NULL) AS pin_tanimli,
+                   (p.sube_id = %s) AS bu_sube,
+                   COALESCE(s.ad, '—') AS sube_adi
+            FROM personel p
+            LEFT JOIN subeler s ON s.id = p.sube_id
+            WHERE p.aktif = TRUE
+            ORDER BY bu_sube DESC, pin_tanimli DESC, p.ad_soyad
         """, (sube_id,))
         return [dict(r) for r in cur.fetchall()]
 
@@ -292,13 +295,33 @@ def gorev_pin_giris(body: GorevPinGirisBody):
 
         tarih = str(is_gunu_tr())
 
-        # Yoklama kaydı — UNIQUE kısıtı sayesinde aynı gün/vardiya için tekrar yazılmaz
+        # Personelin asıl şubesi
+        asil_sube_id = personel.get("sube_id") or body.sube_id
+        vardiya_disi = str(asil_sube_id) != str(body.sube_id)
+
+        # Vardiya planında bu personel var mı?
+        from datetime import date as _date
+        bugun = _date.fromisoformat(tarih)
+        haftanin_gunu = bugun.weekday() + 1
+        cur.execute("""
+            SELECT 1 FROM vardiya_atama va
+            JOIN vardiya_slot vs ON vs.id = va.slot_id
+            WHERE va.personel_id = %s AND va.tarih = %s
+              AND vs.sube_id = %s AND va.durum IN ('planli','onayli')
+              AND vs.aktif = TRUE AND %s = ANY(vs.aktif_gunler)
+            LIMIT 1
+        """, (body.personel_id, bugun, body.sube_id, haftanin_gunu))
+        vardiya_planinda = cur.fetchone() is not None
+        if not vardiya_planinda:
+            vardiya_disi = True
+
+        # Yoklama kaydı
         cur.execute("""
             INSERT INTO gorev_yoklama
-                (tarih, sube_id, personel_id, vardiya_tip, konum_mesafe_m, konum_onaylandi)
-            VALUES (%s, %s, %s, %s, %s, %s)
+                (tarih, sube_id, personel_id, vardiya_tip, konum_mesafe_m, konum_onaylandi, vardiya_disi, asil_sube_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (tarih, sube_id, personel_id, vardiya_tip) DO NOTHING
-        """, (tarih, body.sube_id, body.personel_id, vardiya_tip, konum_mesafe_m, konum_onaylandi))
+        """, (tarih, body.sube_id, body.personel_id, vardiya_tip, konum_mesafe_m, konum_onaylandi, vardiya_disi, asil_sube_id))
         conn.commit()
 
         return {
@@ -309,6 +332,7 @@ def gorev_pin_giris(body: GorevPinGirisBody):
             "vardiya_tip": vardiya_tip,
             "konum_onaylandi": konum_onaylandi,
             "konum_mesafe_m": round(konum_mesafe_m) if konum_mesafe_m else None,
+            "vardiya_disi": vardiya_disi,
         }
 
 
@@ -444,27 +468,32 @@ def sube_konum_guncelle(sube_id: str, body: SubeKonumBody):
 
 
 @router.get("/api/gorev/yoklama")
-def gorev_yoklama_listesi(tarih: str, sube_id: Optional[str] = None):
+def gorev_yoklama_listesi(tarih: str, sube_id: Optional[str] = None, sadece_vardiya_disi: bool = False):
     """Günlük yoklama listesi — CFO özet dashboard için."""
     from datetime import date as _date
     t = _date.fromisoformat(tarih)
     with db() as (conn, cur):
+        filtre = "AND gy.vardiya_disi = TRUE" if sadece_vardiya_disi else ""
         if sube_id:
-            cur.execute("""
-                SELECT gy.*, p.ad_soyad, s.ad AS sube_adi
+            cur.execute(f"""
+                SELECT gy.*, p.ad_soyad, s.ad AS sube_adi,
+                       ps.ad AS asil_sube_adi
                 FROM gorev_yoklama gy
                 JOIN personel p ON p.id::text = gy.personel_id
                 JOIN subeler s ON s.id = gy.sube_id
-                WHERE gy.tarih = %s AND gy.sube_id = %s
+                LEFT JOIN subeler ps ON ps.id = gy.asil_sube_id
+                WHERE gy.tarih = %s AND gy.sube_id = %s {filtre}
                 ORDER BY gy.giris_ts
             """, (t, sube_id))
         else:
-            cur.execute("""
-                SELECT gy.*, p.ad_soyad, s.ad AS sube_adi
+            cur.execute(f"""
+                SELECT gy.*, p.ad_soyad, s.ad AS sube_adi,
+                       ps.ad AS asil_sube_adi
                 FROM gorev_yoklama gy
                 JOIN personel p ON p.id::text = gy.personel_id
                 JOIN subeler s ON s.id = gy.sube_id
-                WHERE gy.tarih = %s
+                LEFT JOIN subeler ps ON ps.id = gy.asil_sube_id
+                WHERE gy.tarih = %s {filtre}
                 ORDER BY s.ad, gy.giris_ts
             """, (t,))
         return [dict(r) for r in cur.fetchall()]

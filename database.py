@@ -4451,8 +4451,20 @@ def ensure_gorev_tablolari(cur) -> None:
             giris_ts        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             konum_mesafe_m  DOUBLE PRECISION,
             konum_onaylandi BOOLEAN NOT NULL DEFAULT FALSE,
+            vardiya_disi    BOOLEAN NOT NULL DEFAULT FALSE,
+            asil_sube_id    TEXT,
             UNIQUE (tarih, sube_id, personel_id, vardiya_tip)
         )
+    """)
+    cur.execute("""
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name='gorev_yoklama' AND column_name='vardiya_disi')
+            THEN ALTER TABLE gorev_yoklama ADD COLUMN vardiya_disi BOOLEAN NOT NULL DEFAULT FALSE; END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name='gorev_yoklama' AND column_name='asil_sube_id')
+            THEN ALTER TABLE gorev_yoklama ADD COLUMN asil_sube_id TEXT; END IF;
+        END $$;
     """)
     cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_gorev_yoklama_tarih_sube

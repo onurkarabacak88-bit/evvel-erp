@@ -13157,14 +13157,14 @@ function startYoklamaPolling() {
       if (d && d.yoklama_var) {
         stopYoklamaPolling();
         document.getElementById('yoklamaOverlay').style.display = 'none';
-        // Asıl panel verisini çek — kasa kilidi ekranına geçsin
+        // Kasa kilidini otomatik aç (PIN'siz)
+        try { await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/kasa-yoklama-ac', {method:'POST'}); } catch(_) {}
+        // Panel verisini yenile
         var data = await api('/sube-personel/' + encodeURIComponent(SUBE_ID) + '/durum');
         lastData = data;
         pk = data.panel_pin_kullanicilar || [];
         fillSels();
-        if (data.kasa_kilitli) {
-          document.getElementById('kasaOverlay').style.display = 'flex';
-        } else if (!data.sube_acik) {
+        if (!data.sube_acik) {
           document.getElementById('acilisOverlay').style.display = 'flex';
           resetAcilisWiz();
           renderAcilisWiz();
