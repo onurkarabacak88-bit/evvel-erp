@@ -968,6 +968,22 @@ def kapanis_muhurle(body: KapanisMuhurleBody):
     return {"mesaj": "Kapanis muhürlendi.", "zaten_muhürlü": False}
 
 
+@router.post("/api/gorev/kapanis-sifirla")
+def kapanis_sifirla(sube_id: str):
+    """Bugunun kapanis cikis_ts'ini temizler - tekrar yapilabilir hale getirir."""
+    from tr_saat import is_gunu_tr
+    tarih = str(is_gunu_tr())
+    with db() as (conn, cur):
+        cur.execute("""
+            UPDATE gorev_yoklama
+            SET cikis_ts = NULL, cikis_tip = NULL
+            WHERE sube_id = %s AND tarih = %s AND vardiya_tip = 'kapanis'
+        """, (sube_id, tarih))
+        etkilenen = cur.rowcount
+        conn.commit()
+    return {"mesaj": f"{etkilenen} kapanış kaydı sıfırlandı.", "sube_id": sube_id, "tarih": tarih}
+
+
 @router.delete("/api/gorev/yoklama/{sube_id}")
 def gorev_yoklama_sil(sube_id: str, tarih: Optional[str] = None, kasa_da: bool = False):
     """Şube yoklama kaydını sil (test/sıfırlama). kasa_da=true ile kasa kaydını da siler."""
