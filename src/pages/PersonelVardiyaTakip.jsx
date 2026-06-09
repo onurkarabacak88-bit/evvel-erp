@@ -73,6 +73,9 @@ function PersonelKart({ p, acik, onToggle }) {
             <div style={{ color: 'var(--text3)', fontSize: 10 }}>Yemek</div>
           </div>
           {p.part_tam_gun > 0 && <Badge renk="sari" label={`${p.part_tam_gun}g Part-Tam`} />}
+          {p.haftalik_izin_kullanilmadi > 0 && (
+            <Badge renk="kirmizi" label={`${p.haftalik_izin_kullanilmadi} hafta izinsiz`} />
+          )}
         </div>
 
         <span style={{ color: 'var(--text3)', fontSize: 12 }}>{acik ? '▲' : '▼'}</span>
@@ -121,6 +124,42 @@ function PersonelKart({ p, acik, onToggle }) {
               ))}
             </tbody>
           </table>
+
+          {/* Haftalık izin özeti */}
+          {(p.haftalik_izin_detay || []).length > 0 && (
+            <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', background: 'var(--bg3)' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 8, letterSpacing: 0.5 }}>
+                HAFTALIK İZİN TAKİBİ
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {p.haftalik_izin_detay.map((h, i) => (
+                  <div key={i} style={{
+                    padding: '6px 10px', borderRadius: 8, fontSize: 11,
+                    background: h.izin_var
+                      ? 'rgba(76,175,132,0.08)' : 'rgba(224,92,92,0.08)',
+                    border: `1px solid ${h.izin_var ? 'rgba(76,175,132,0.3)' : 'rgba(224,92,92,0.3)'}`,
+                  }}>
+                    <span style={{ color: 'var(--text3)' }}>
+                      {new Date(h.hafta).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })} haftası
+                    </span>
+                    <span style={{ marginLeft: 6, fontWeight: 700, color: h.izin_var ? '#4caf84' : '#e05c5c' }}>
+                      {h.izin_var ? '✓ İzin var' : `⚠️ ${h.calisilan_gun}/${h.toplam_gun} gün — İZİN ALACAĞI`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {p.haftalik_izin_kullanilmadi > 0 && (
+                <div style={{
+                  marginTop: 10, padding: '8px 12px', borderRadius: 8,
+                  background: 'rgba(224,92,92,0.08)', border: '1px solid rgba(224,92,92,0.3)',
+                  fontSize: 12, color: '#e05c5c', fontWeight: 600,
+                }}>
+                  🔴 {p.haftalik_izin_kullanilmadi} haftalık izin alacağı birikti —
+                  bu personele <strong>{p.haftalik_izin_kullanilmadi} günlük ücretli izin</strong> verilmeli.
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -146,7 +185,7 @@ export default function PersonelVardiyaTakip() {
   const toggle = (pid) => setAciklar(p => ({ ...p, [pid]: !p[pid] }));
 
   const personeller = veri?.personeller || [];
-  const uyarilar = personeller.filter(p => p.part_tam_gun > 0 || p.toplam_gecikme_dk > 60);
+  const uyarilar = personeller.filter(p => p.part_tam_gun > 0 || p.toplam_gecikme_dk > 60 || p.haftalik_izin_kullanilmadi > 0);
 
   return (
     <div className="page">
@@ -181,6 +220,7 @@ export default function PersonelVardiyaTakip() {
               <strong>{p.ad_soyad}</strong>
               {p.part_tam_gun > 0 && ` · ${p.part_tam_gun}g part-tam`}
               {p.toplam_gecikme_dk > 60 && ` · ${fmt(p.toplam_gecikme_dk, true)} gecikme`}
+              {p.haftalik_izin_kullanilmadi > 0 && ` · ${p.haftalik_izin_kullanilmadi} hafta izinsiz`}
             </span>
           ))}
         </div>

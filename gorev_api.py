@@ -696,6 +696,37 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             """, (pid, d1, d2))
             acilislar = {str(r["tarih"]): dict(r) for r in cur.fetchall()}
 
+            # Haftalık izin analizi — her Pazartesi başlayan haftayı tara
+            # Kural: 7 günlük haftada HİÇ boş gün yoksa → haftalık izin kullanılmamış
+            from datetime import date as _date2, timedelta as _td
+            haftalik_izin_kullanilmadi = 0  # kaç haftada izin kullanılmamış
+            haftalik_izin_detay = []        # [{hafta_baslangic, calisilan_gun, izin_var}]
+
+            # Ayın ilk Pazartesisini bul (veya d1'den geriye git)
+            hafta_bas = d1 - _td(days=d1.weekday())
+            while hafta_bas <= d2:
+                hafta_bit = hafta_bas + _td(days=6)
+                # Bu haftanın ay içindeki günleri
+                kontrol_bas = max(hafta_bas, d1)
+                kontrol_bit = min(hafta_bit, d2)
+                calisilan = 0
+                gün = kontrol_bas
+                while gün <= kontrol_bit:
+                    if str(gün) in vardiyalar:
+                        calisilan += 1
+                    gün += _td(days=1)
+                hafta_gun_sayisi = (kontrol_bit - kontrol_bas).days + 1
+                izin_var = calisilan < hafta_gun_sayisi  # en az 1 gün boş
+                if not izin_var and hafta_gun_sayisi >= 6:  # tam hafta kontrolü
+                    haftalik_izin_kullanilmadi += 1
+                haftalik_izin_detay.append({
+                    "hafta": str(hafta_bas),
+                    "calisilan_gun": calisilan,
+                    "toplam_gun": hafta_gun_sayisi,
+                    "izin_var": izin_var,
+                })
+                hafta_bas += _td(days=7)
+
             # Günlük analiz
             gunler = []
             toplam_planlanan = 0.0
@@ -775,6 +806,8 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 "yemek_ucret_gun": yemek_ucret_gun,
                 "yemek_ucret_tutari": yemek_ucret_tutari,
                 "part_tam_gun": part_tam_gun,
+                "haftalik_izin_kullanilmadi": haftalik_izin_kullanilmadi,
+                "haftalik_izin_detay": haftalik_izin_detay,
                 "gunler": gunler,
             })
 

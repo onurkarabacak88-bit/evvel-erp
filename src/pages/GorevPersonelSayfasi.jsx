@@ -396,6 +396,23 @@ function VardiyamEkrani({ oturum }) {
             <K label="Yemek Ücreti" val={`${aylik.yemek_ucret_gun} gün`} renk="#4caf84"
                alt={aylik.yemek_ucret_tutari > 0 ? `${aylik.yemek_ucret_tutari.toLocaleString('tr-TR')} ₺` : null} />
           </div>
+
+          {aylik.haftalik_izin_kullanilmadi > 0 && (
+            <div style={{
+              marginTop: 12, padding: '12px 14px', borderRadius: 10,
+              background: 'rgba(224,92,92,0.08)', border: '1px solid rgba(224,92,92,0.3)',
+              fontSize: 13,
+            }}>
+              <div style={{ fontWeight: 700, color: '#e05c5c', marginBottom: 4 }}>
+                🔴 Haftalık İzin Alacağın Var
+              </div>
+              <div style={{ color: '#b0b3bc', fontSize: 12, lineHeight: 1.6 }}>
+                Bu ay <strong style={{ color: '#e8e9ec' }}>{aylik.haftalik_izin_kullanilmadi} hafta</strong> boyunca
+                haftalık izin kullanmadın. Her çalışanın haftada en az 1 gün dinlenme hakkı var.
+                Yöneticinle konuş.
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
