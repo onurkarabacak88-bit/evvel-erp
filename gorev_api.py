@@ -255,9 +255,7 @@ class GorevPinGirisBody(BaseModel):
 def gorev_pin_giris(body: GorevPinGirisBody):
     """Personel PIN doğrulaması. Konum varsa şube yakınlığı kontrol edilir. Yoklama kaydedilir."""
     from personel_panel_auth import dogrula_personel_panel_pin
-    from tr_saat import is_gunu_tr
-    from datetime import datetime as _dt
-    import pytz
+    from tr_saat import is_gunu_tr, dt_now_tr
 
     with db() as (conn, cur):
         # Şube koordinatlarını al
@@ -284,8 +282,7 @@ def gorev_pin_giris(body: GorevPinGirisBody):
 
         personel = dogrula_personel_panel_pin(cur, body.personel_id, body.pin)
 
-        tz = pytz.timezone("Europe/Istanbul")
-        saat = _dt.now(tz).hour
+        saat = dt_now_tr().hour
         if saat < 12:
             vardiya_tip = "sabahci"
         elif saat < 18:
