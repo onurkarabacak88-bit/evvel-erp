@@ -2021,6 +2021,10 @@
       overflow: auto;
     }
 
+    @keyframes molaPulse {
+      0%, 100% { box-shadow: 0 4px 16px rgba(245,158,11,0.45); transform: scale(1); }
+      50%       { box-shadow: 0 6px 24px rgba(245,158,11,0.7);  transform: scale(1.02); }
+    }
     @keyframes kasaPulse {
       0%,100% { border-color: var(--orange); box-shadow: 0 0 0 0 rgba(249,115,22,.3); }
       50%      { border-color: #fb923c;       box-shadow: 0 0 0 6px rgba(249,115,22,.1); }
@@ -5144,10 +5148,12 @@
             <span class="ana-aksiyon-sub">Operasyona bildir</span>
           </button>
           <button class="ana-aksiyon-btn" type="button" onclick="molaQrAc()"
-            style="background:linear-gradient(135deg,rgba(245,158,11,0.15),rgba(245,158,11,0.08));border-color:rgba(245,158,11,0.4)">
-            <span class="ana-aksiyon-ico">🍽️</span>
-            <span class="ana-aksiyon-ttl">Mola QR</span>
-            <span class="ana-aksiyon-sub">Personel okutarak mola açar/kapar</span>
+            style="background:linear-gradient(135deg,#f59e0b,#d97706);
+                   border-color:#f59e0b;box-shadow:0 4px 16px rgba(245,158,11,0.45);
+                   animation:molaPulse 2s ease-in-out infinite">
+            <span class="ana-aksiyon-ico" style="filter:drop-shadow(0 0 6px rgba(255,255,255,0.6))">🍽️</span>
+            <span class="ana-aksiyon-ttl" style="color:#fff;font-size:15px">Yemek Molası</span>
+            <span class="ana-aksiyon-sub" style="color:rgba(255,255,255,0.8)">QR okut → mola başlat/bitir</span>
           </button>
         </div>
 
@@ -13281,16 +13287,16 @@ function mesaiCikisQrKapat() {
 }
 
 // ── MOLA QR ─────────────────────────────────────────────────────────
-function molaQrAc() {
+window.molaQrAc = function() {
   var img = document.getElementById('molaQrImg');
   if (img && !img.src.includes('/api/gorev/qr/')) {
     img.src = '/api/gorev/qr/' + encodeURIComponent(SUBE_ID);
   }
   document.getElementById('molaQrOverlay').style.display = 'flex';
-}
-function molaQrKapat() {
+};
+window.molaQrKapat = function() {
   document.getElementById('molaQrOverlay').style.display = 'none';
-}
+};
 
 // ── QR YOKLAMA POLLİNG ───────────────────────────────────────────────
 var _yoklamaTimer = null;
