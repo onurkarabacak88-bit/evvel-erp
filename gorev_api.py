@@ -509,6 +509,99 @@ def gorev_yoklama_listesi(tarih: str, sube_id: Optional[str] = None, sadece_vard
         return [dict(r) for r in cur.fetchall()]
 
 
+class YemekMolasiBody(BaseModel):
+    sube_id: str
+    personel_id: str
+
+
+@router.post("/api/gorev/yemek-baslat")
+def yemek_baslat(body: YemekMolasiBody):
+    """Personel yemeğe gidiyor — mola başlangıcını kaydet."""
+    from tr_saat import is_gunu_tr, dt_now_tr
+    tarih = str(is_gunu_tr())
+    with db() as (conn, cur):
+        # Yoklama kaydı var mı kontrol
+        cur.execute("SELECT 1 FROM gorev_yoklama WHERE sube_id=%s AND personel_id=%s AND tarih=%s",
+                    (body.sube_id, body.personel_id, tarih))
+        if not cur.fetchone():
+            raise HTTPException(403, "Önce QR ile giriş yapılmalı.")
+        # Mevcut açık mola var mı
+        cur.execute("SELECT id, bitis_ts FROM yemek_molasi WHERE sube_id=%s AND personel_id=%s AND tarih=%s",
+                    (body.sube_id, body.personel_id, tarih))
+        mevcut = cur.fetchone()
+        if mevcut and mevcut["bitis_ts"] is None:
+            raise HTTPException(400, "Zaten açık bir yemek molası var.")
+        if mevcut:
+            raise HTTPException(400, "Bu gün için yemek molası zaten kaydedildi.")
+        cur.execute("""
+            INSERT INTO yemek_molasi (tarih, sube_id, personel_id, baslangic_ts)
+            VALUES (%s, %s, %s, NOW())
+        """, (tarih, body.sube_id, body.personel_id))
+        conn.commit()
+    return {"basarili": True, "durum": "mola_basladi"}
+
+
+@router.post("/api/gorev/yemek-bitis")
+def yemek_bitis(body: YemekMolasiBody):
+    """Personel yemekten döndü — mola bitiş + ücret hakkı hesapla."""
+    from tr_saat import is_gunu_tr, dt_now_tr
+    tarih = str(is_gunu_tr())
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT ym.id, ym.baslangic_ts, s.yemek_mola_limit_dk
+            FROM yemek_molasi ym
+            JOIN subeler s ON s.id = ym.sube_id
+            WHERE ym.sube_id=%s AND ym.personel_id=%s AND ym.tarih=%s AND ym.bitis_ts IS NULL
+        """, (body.sube_id, body.personel_id, tarih))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(400, "Açık yemek molası bulunamadı. Önce 'Yemeğe Git' yapın.")
+        limit_dk = int(row["yemek_mola_limit_dk"] or 60)
+        from datetime import datetime, timezone
+        simdi = dt_now_tr()
+        sure_dk = (simdi.replace(tzinfo=None) - row["baslangic_ts"].replace(tzinfo=None)).total_seconds() / 60
+        ucret_hakki = sure_dk <= limit_dk
+        cur.execute("""
+            UPDATE yemek_molasi
+            SET bitis_ts=NOW(), sure_dk=%s, ucret_hakki=%s
+            WHERE id=%s
+        """, (round(sure_dk, 1), ucret_hakki, row["id"]))
+        conn.commit()
+    return {
+        "basarili": True,
+        "sure_dk": round(sure_dk, 1),
+        "limit_dk": limit_dk,
+        "ucret_hakki": ucret_hakki,
+        "mesaj": f"{'✅ Yemek ücreti hakkı kazanıldı' if ucret_hakki else f'❌ Mola süresi ({int(sure_dk)} dk) limitini aştı — yemek ücreti bu gün ödenmez'}",
+    }
+
+
+@router.get("/api/gorev/yemek-durum")
+def yemek_durum(sube_id: str, personel_id: str):
+    """Personelin bugünkü yemek molası durumu."""
+    from tr_saat import is_gunu_tr
+    tarih = str(is_gunu_tr())
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT ym.*, s.yemek_mola_limit_dk
+            FROM yemek_molasi ym
+            JOIN subeler s ON s.id = ym.sube_id
+            WHERE ym.sube_id=%s AND ym.personel_id=%s AND ym.tarih=%s
+        """, (sube_id, personel_id, tarih))
+        row = cur.fetchone()
+        if not row:
+            return {"durum": "yok", "ucret_hakki": None}
+        d = dict(row)
+        if d["bitis_ts"] is None:
+            return {"durum": "devam", "baslangic_ts": str(d["baslangic_ts"]), "ucret_hakki": None}
+        return {
+            "durum": "bitti",
+            "sure_dk": float(d["sure_dk"] or 0),
+            "limit_dk": int(d["yemek_mola_limit_dk"] or 60),
+            "ucret_hakki": d["ucret_hakki"],
+        }
+
+
 @router.delete("/api/gorev/yoklama/{sube_id}")
 def gorev_yoklama_sil(sube_id: str, tarih: Optional[str] = None):
     """Şube yoklama kaydını sil (test/sıfırlama). tarih verilmezse bugün."""
@@ -519,6 +612,173 @@ def gorev_yoklama_sil(sube_id: str, tarih: Optional[str] = None):
         silinen = cur.rowcount
         conn.commit()
     return {"silinen": silinen, "sube_id": sube_id, "tarih": t}
+
+
+# ── PERSONEL VARDİYA TAKİP ───────────────────────────────────────────────────
+
+@router.get("/api/gorev/vardiya-takip")
+def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
+    """
+    Aylık personel vardiya takip raporu.
+    Her gün için: planlanan saat, çalışılan saat, gecikme, fazla mesai,
+    yemek molası durumu, part-tam uyarısı.
+    """
+    from calendar import monthrange
+    from datetime import date as _date, timedelta
+    d1 = _date(yil, ay, 1)
+    d2 = _date(yil, ay, monthrange(yil, ay)[1])
+
+    with db() as (conn, cur):
+        # Personel listesi
+        if personel_id:
+            cur.execute("""
+                SELECT id::text, ad_soyad, calisma_turu, maas, saatlik_ucret, yemek_ucreti
+                FROM personel WHERE id::text=%s AND aktif=TRUE
+            """, (personel_id,))
+        else:
+            cur.execute("""
+                SELECT id::text, ad_soyad, calisma_turu, maas, saatlik_ucret, yemek_ucreti
+                FROM personel WHERE aktif=TRUE ORDER BY ad_soyad
+            """)
+        personeller = [dict(r) for r in cur.fetchall()]
+
+        sonuclar = []
+        for p in personeller:
+            pid = p["id"]
+            is_part = (p.get("calisma_turu") or "").lower() in ("part", "part_time", "part-time")
+
+            # Vardiya atamaları bu ay
+            cur.execute("""
+                SELECT va.tarih, va.baslangic_saat, va.bitis_saat,
+                       vs.sube_id, s.acilis_saati AS sube_acilis,
+                       EXTRACT(EPOCH FROM (
+                           CASE WHEN va.bitis_saat <= va.baslangic_saat
+                                THEN (va.bitis_saat::time + INTERVAL '24h') - va.baslangic_saat::time
+                                ELSE va.bitis_saat::time - va.baslangic_saat::time END
+                       ))/3600.0 AS planlanan_saat
+                FROM vardiya_atama va
+                JOIN vardiya_slot vs ON vs.id = va.slot_id
+                JOIN subeler s ON s.id = vs.sube_id
+                WHERE va.personel_id=%s AND va.tarih BETWEEN %s AND %s
+                  AND va.durum IN ('planli','onayli')
+                ORDER BY va.tarih
+            """, (pid, d1, d2))
+            vardiyalar = {str(r["tarih"]): dict(r) for r in cur.fetchall()}
+
+            # Yoklama kayıtları (giriş saatleri)
+            cur.execute("""
+                SELECT tarih::text, giris_ts, vardiya_tip
+                FROM gorev_yoklama
+                WHERE personel_id=%s AND tarih BETWEEN %s AND %s
+                ORDER BY tarih, giris_ts
+            """, (pid, d1, d2))
+            yoklamalar = {}
+            for r in cur.fetchall():
+                t = str(r["tarih"])
+                if t not in yoklamalar:
+                    yoklamalar[t] = dict(r)
+
+            # Yemek molaları
+            cur.execute("""
+                SELECT tarih::text, sure_dk, ucret_hakki
+                FROM yemek_molasi
+                WHERE personel_id=%s AND tarih BETWEEN %s AND %s
+            """, (pid, d1, d2))
+            molalar = {str(r["tarih"]): dict(r) for r in cur.fetchall()}
+
+            # Şube açılış gecikmeleri
+            cur.execute("""
+                SELECT sa.tarih::text, sa.acilis_saati, s.acilis_saati AS planlanan_acilis,
+                       sa.personel_id
+                FROM sube_acilis sa
+                JOIN subeler s ON s.id = sa.sube_id
+                WHERE sa.personel_id=%s AND sa.tarih BETWEEN %s AND %s AND sa.durum='acildi'
+            """, (pid, d1, d2))
+            acilislar = {str(r["tarih"]): dict(r) for r in cur.fetchall()}
+
+            # Günlük analiz
+            gunler = []
+            toplam_planlanan = 0.0
+            toplam_gecikme_dk = 0.0
+            toplam_fazla_saat = 0.0
+            yemek_ucret_gun = 0
+            part_tam_gun = 0
+            STANDART = 9.5
+
+            tarih = d1
+            while tarih <= d2:
+                t = str(tarih)
+                v = vardiyalar.get(t)
+                y = yoklamalar.get(t)
+                m = molalar.get(t)
+                a = acilislar.get(t)
+
+                if v:
+                    planlanan = float(v["planlanan_saat"] or 0)
+                    toplam_planlanan += planlanan
+
+                    # Part ama tam (9.5h) yazılmış mı?
+                    part_tam = is_part and planlanan >= 9.4
+
+                    # Gecikme: planlanan başlangıç vs giriş
+                    gecikme_dk = 0.0
+                    if y and v.get("baslangic_saat"):
+                        plan_bas_str = str(v["baslangic_saat"])[:5]  # "09:00"
+                        giris_ts = y["giris_ts"]
+                        if giris_ts:
+                            from datetime import datetime
+                            plan_h, plan_m = int(plan_bas_str[:2]), int(plan_bas_str[3:5])
+                            plan_dt = datetime(tarih.year, tarih.month, tarih.day, plan_h, plan_m)
+                            if hasattr(giris_ts, 'replace'):
+                                giris_naive = giris_ts.replace(tzinfo=None)
+                            else:
+                                giris_naive = giris_ts
+                            fark = (giris_naive - plan_dt).total_seconds() / 60
+                            gecikme_dk = max(0.0, fark)
+                    toplam_gecikme_dk += gecikme_dk
+
+                    # Fazla mesai
+                    fazla = max(0.0, planlanan - STANDART)
+                    toplam_fazla_saat += fazla
+
+                    # Yemek ücreti hakkı
+                    yemek_hak = False
+                    if m and m.get("ucret_hakki") is True:
+                        if part_tam or not is_part:
+                            yemek_hak = True
+                            yemek_ucret_gun += 1
+
+                    if part_tam:
+                        part_tam_gun += 1
+
+                    gunler.append({
+                        "tarih": t,
+                        "planlanan_saat": round(planlanan, 2),
+                        "gecikme_dk": round(gecikme_dk, 1),
+                        "fazla_mesai_saat": round(fazla, 2),
+                        "yemek_ucret_hakki": yemek_hak,
+                        "yemek_sure_dk": float(m["sure_dk"]) if m and m.get("sure_dk") else None,
+                        "part_tam_uyari": part_tam,
+                        "giris_var": y is not None,
+                    })
+
+                tarih += timedelta(days=1)
+
+            yemek_ucret_tutari = yemek_ucret_gun * float(p.get("yemek_ucreti") or 0)
+            sonuclar.append({
+                "personel_id": pid,
+                "ad_soyad": p["ad_soyad"],
+                "calisma_turu": p.get("calisma_turu"),
+                "toplam_planlanan_saat": round(toplam_planlanan, 2),
+                "toplam_gecikme_dk": round(toplam_gecikme_dk, 1),
+                "toplam_fazla_mesai_saat": round(toplam_fazla_saat, 2),
+                "yemek_ucret_gun": yemek_ucret_gun,
+                "yemek_ucret_tutari": yemek_ucret_tutari,
+                "part_tam_gun": part_tam_gun,
+                "gunler": gunler,
+            })
+
+        return {"yil": yil, "ay": ay, "personeller": sonuclar}
 
 
 @router.get("/api/gorev/qr-liste")

@@ -227,6 +227,82 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
   );
 }
 
+// ── Yemek Molası Butonu ──────────────────────────────────────────────────────
+function YemekMolasiButon({ oturum }) {
+  const [durum, setDurum] = useState(null); // null | 'devam' | 'bitti'
+  const [sure, setSure] = useState(null);
+  const [ucretHakki, setUcretHakki] = useState(null);
+  const [yukleniyor, setYukleniyor] = useState(false);
+  const [mesaj, setMesaj] = useState('');
+
+  useEffect(() => {
+    api(`/gorev/yemek-durum?sube_id=${oturum.sube_id}&personel_id=${oturum.personel_id}`)
+      .then(d => {
+        setDurum(d.durum);
+        if (d.sure_dk) setSure(d.sure_dk);
+        if (d.ucret_hakki !== null) setUcretHakki(d.ucret_hakki);
+      }).catch(() => {});
+  }, []);
+
+  const tikla = async () => {
+    setYukleniyor(true);
+    setMesaj('');
+    try {
+      const endpoint = durum === 'devam' ? '/gorev/yemek-bitis' : '/gorev/yemek-baslat';
+      const res = await api(endpoint, {
+        method: 'POST',
+        body: { sube_id: oturum.sube_id, personel_id: oturum.personel_id },
+      });
+      if (durum === 'devam') {
+        setDurum('bitti');
+        setSure(res.sure_dk);
+        setUcretHakki(res.ucret_hakki);
+        setMesaj(res.mesaj);
+      } else {
+        setDurum('devam');
+      }
+    } catch (e) {
+      setMesaj(e.message || 'Hata oluştu');
+    } finally {
+      setYukleniyor(false);
+    }
+  };
+
+  if (durum === 'bitti') return (
+    <div style={{
+      margin: '10px 16px', padding: '10px 14px', borderRadius: 10,
+      background: ucretHakki ? 'rgba(76,175,132,0.08)' : 'rgba(224,92,92,0.08)',
+      border: `1px solid ${ucretHakki ? 'rgba(76,175,132,0.3)' : 'rgba(224,92,92,0.3)'}`,
+      fontSize: 13,
+    }}>
+      🍽️ Yemek molası: <strong>{Math.round(sure)} dk</strong>
+      <span style={{ marginLeft: 8, color: ucretHakki ? '#4caf84' : '#e05c5c', fontWeight: 700 }}>
+        {ucretHakki ? '✅ Yemek ücreti hakkı kazanıldı' : '❌ Yemek ücreti ödenmez'}
+      </span>
+    </div>
+  );
+
+  return (
+    <div style={{ margin: '10px 16px' }}>
+      <button onClick={tikla} disabled={yukleniyor} style={{
+        width: '100%', padding: '12px', borderRadius: 10, border: 'none', cursor: 'pointer',
+        background: durum === 'devam' ? 'rgba(245,158,11,0.15)' : 'rgba(74,158,255,0.1)',
+        border: `1px solid ${durum === 'devam' ? 'rgba(245,158,11,0.4)' : 'rgba(74,158,255,0.3)'}`,
+        color: durum === 'devam' ? '#f59e0b' : '#4a9eff',
+        fontWeight: 700, fontSize: 14,
+      }}>
+        {yukleniyor ? '…' : durum === 'devam' ? '🍽️ Yemekten Döndüm' : '🍽️ Yemeğe Gidiyorum'}
+      </button>
+      {durum === 'devam' && (
+        <div style={{ fontSize: 11, color: '#6b6f7a', textAlign: 'center', marginTop: 6 }}>
+          Mola sayacı çalışıyor — dönünce tekrar bas
+        </div>
+      )}
+      {mesaj && <div style={{ fontSize: 12, marginTop: 6, textAlign: 'center', color: '#6b6f7a' }}>{mesaj}</div>}
+    </div>
+  );
+}
+
 // ── Ana Görev Sayfası ────────────────────────────────────────────────────────
 export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
   const [data, setData] = useState(null);
@@ -339,6 +415,9 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
           </div>
         </div>
       )}
+
+      {/* Yemek Molası */}
+      <YemekMolasiButon oturum={oturum} />
 
       {/* Görev listesi */}
       <div style={{ padding: '12px 16px', paddingBottom: 80 }}>

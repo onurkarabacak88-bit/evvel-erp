@@ -4470,3 +4470,47 @@ def ensure_gorev_tablolari(cur) -> None:
         CREATE INDEX IF NOT EXISTS idx_gorev_yoklama_tarih_sube
         ON gorev_yoklama (tarih, sube_id)
     """)
+
+    # ── YEMEK MOLASI TAKİBİ ────────────────────────────────────────────
+    # Şube bazlı yemek molası süresi tanımı
+    cur.execute("""
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name='subeler' AND column_name='yemek_mola_limit_dk')
+            THEN ALTER TABLE subeler ADD COLUMN yemek_mola_limit_dk INT NOT NULL DEFAULT 60; END IF;
+        END $$;
+    """)
+    # Personel yemek molası kayıtları
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS yemek_molasi (
+            id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            tarih           DATE NOT NULL,
+            sube_id         TEXT NOT NULL REFERENCES subeler(id),
+            personel_id     TEXT NOT NULL,
+            baslangic_ts    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            bitis_ts        TIMESTAMPTZ,
+            sure_dk         NUMERIC(6,1),
+            ucret_hakki     BOOLEAN,
+            olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (tarih, sube_id, personel_id)
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_yemek_molasi_tarih_sube
+        ON yemek_molasi (tarih, sube_id)
+    """)
+
+    # ── PERSONEL AYLIK — gecikme + yemek kolonları ─────────────────────
+    cur.execute("""
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name='personel_aylik' AND column_name='gecikme_dk_toplam')
+            THEN ALTER TABLE personel_aylik ADD COLUMN gecikme_dk_toplam NUMERIC(8,1) DEFAULT 0; END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name='personel_aylik' AND column_name='yemek_ucret_gun')
+            THEN ALTER TABLE personel_aylik ADD COLUMN yemek_ucret_gun INT DEFAULT 0; END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name='personel_aylik' AND column_name='yemek_ucret_toplam')
+            THEN ALTER TABLE personel_aylik ADD COLUMN yemek_ucret_toplam NUMERIC(14,2) DEFAULT 0; END IF;
+        END $$;
+    """)
