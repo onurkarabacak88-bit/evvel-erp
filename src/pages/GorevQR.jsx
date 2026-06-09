@@ -9,6 +9,7 @@ function KonumAyar({ sube }) {
   const [kayit, setKayit] = useState(null); // 'yukleniyor' | 'ok' | 'hata'
 
   const konumAl = () => {
+    if (!navigator.geolocation) { setKayit('hata'); return; }
     setKayit('yukleniyor');
     navigator.geolocation.getCurrentPosition(
       (pos) => {
@@ -16,9 +17,18 @@ function KonumAyar({ sube }) {
         setLng(pos.coords.longitude.toFixed(7));
         setKayit(null);
       },
-      () => setKayit('hata'),
+      () => setKayit('gps-hata'),
       { enableHighAccuracy: true, timeout: 10000 }
     );
+  };
+
+  // Google Maps'ten yapıştırılan koordinat metnini parse et
+  // Desteklenen format: "37.1234567, 28.9876543"
+  const [yapistir, setYapistir] = useState('');
+  const yapistirParse = (val) => {
+    setYapistir(val);
+    const m = val.match(/([-\d.]+)[,\s]+([-\d.]+)/);
+    if (m) { setLat(m[1].trim()); setLng(m[2].trim()); }
   };
 
   const kaydet = async () => {
@@ -58,7 +68,32 @@ function KonumAyar({ sube }) {
       </button>
 
       {acik && (
-        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+          {/* Yöntem 1: Google Maps'ten yapıştır (önerilen) */}
+          <div style={{
+            padding: '10px 12px', borderRadius: 8,
+            background: 'rgba(74,158,255,0.06)', border: '1px solid rgba(74,158,255,0.2)',
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#4a9eff', marginBottom: 6 }}>
+              📌 Google Maps'ten yapıştır (önerilen)
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 8, lineHeight: 1.5 }}>
+              maps.google.com'da şubeye sağ tıkla → koordinatı kopyala → aşağıya yapıştır
+            </div>
+            <input
+              value={yapistir}
+              onChange={e => yapistirParse(e.target.value)}
+              placeholder='Örn: 37.1234567, 28.9876543'
+              style={{
+                width: '100%', padding: '7px 10px', borderRadius: 6, fontSize: 12,
+                background: 'var(--bg3)', border: '1px solid rgba(74,158,255,0.3)',
+                color: 'var(--text1)', boxSizing: 'border-box',
+              }}
+            />
+          </div>
+
+          {/* Yöntem 2: GPS */}
           <button
             onClick={konumAl}
             disabled={kayit === 'yukleniyor'}
@@ -68,9 +103,15 @@ function KonumAyar({ sube }) {
               color: 'var(--text2)',
             }}
           >
-            {kayit === 'yukleniyor' ? '…' : '📡 Şu anki konumumu al'}
+            {kayit === 'yukleniyor' ? '…' : '📡 Şu anki GPS konumumu al'}
           </button>
+          {kayit === 'gps-hata' && (
+            <div style={{ fontSize: 11, color: '#e05c5c', lineHeight: 1.5 }}>
+              Tarayıcı konum iznini reddetti. Yukarıdaki Google Maps yöntemini kullan.
+            </div>
+          )}
 
+          {/* Koordinat göstergesi */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
             <div>
               <label style={{ fontSize: 10, color: 'var(--text3)', display: 'block', marginBottom: 3 }}>Enlem (lat)</label>
