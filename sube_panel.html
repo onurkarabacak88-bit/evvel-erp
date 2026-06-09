@@ -13710,6 +13710,12 @@ function startPolling() {
         fillSels();
         return;
       }
+      // Yoklama overlay aktifse — polling bunu kontrol ediyor, panel poll karışmasın
+      var yoklamaOv = document.getElementById('yoklamaOverlay');
+      if (yoklamaOv && yoklamaOv.style.display==='flex') {
+        fillSels();
+        return;
+      }
       var kasaOv = document.getElementById('kasaOverlay');
       if (kasaOv && kasaOv.style.display==='flex') {
         fillSels();
@@ -13722,6 +13728,12 @@ function startPolling() {
       }
       fillSels();
       urunAcHatirlaticiYenile();
+      if (data.kasa_kilitli && !data.yoklama_var) {
+        document.getElementById('kasaOverlay').style.display='none';
+        document.getElementById('yoklamaOverlay').style.display='flex';
+        startYoklamaPolling();
+        return;
+      }
       if (data.kasa_kilitli) {
         document.getElementById('kasaOverlay').style.display='flex';
         return;

@@ -140,18 +140,24 @@ export default function GorevGiris({ subeId }) {
         <div style={{ fontSize: 16, fontWeight: 700, color: '#e8e9ec', marginBottom: 8 }}>
           Konum İzni Gerekli
         </div>
-        <div style={{ fontSize: 13, color: '#6b6f7a', lineHeight: 1.6 }}>
+        <div style={{ fontSize: 13, color: '#6b6f7a', lineHeight: 1.6, marginBottom: 16 }}>
           Bu şubeye giriş yalnızca şube içinden yapılabilir.
-          Konum iznini açıp sayfayı yenile.
+        </div>
+        <div style={{ fontSize: 12, color: '#4a9eff', lineHeight: 1.7, textAlign: 'left',
+          background: 'rgba(74,158,255,0.08)', border: '1px solid rgba(74,158,255,0.2)',
+          borderRadius: 8, padding: '10px 14px', marginBottom: 20 }}>
+          <strong>Nasıl izin verilir?</strong><br/>
+          <strong>Chrome:</strong> Adres çubuğu → 🔒 kilit → Site ayarları → Konum → İzin ver<br/>
+          <strong>Safari:</strong> Ayarlar → Safari → Konum → İzin ver
         </div>
         <button
           onClick={() => window.location.reload()}
           style={{
-            marginTop: 20, padding: '12px 24px', borderRadius: 10, cursor: 'pointer',
-            background: '#C8956A', border: 'none', color: '#fff', fontWeight: 700, fontSize: 14,
+            width: '100%', padding: '14px', borderRadius: 10, cursor: 'pointer',
+            background: '#C8956A', border: 'none', color: '#fff', fontWeight: 700, fontSize: 15,
           }}
         >
-          Yenile
+          İzin verdim, tekrar dene
         </button>
       </div>
     </div>
