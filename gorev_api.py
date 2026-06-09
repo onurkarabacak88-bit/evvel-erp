@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date
-import io, os
+import io, os, math
 from database import db
 
 router = APIRouter()
@@ -206,39 +206,6 @@ def gorev_sube_personel(sube_id: str):
         return [dict(r) for r in cur.fetchall()]
 
 
-class PinGirisBody(BaseModel):
-    sube_id: str
-    personel_id: str
-    pin: str
-    vardiya_tip: Optional[str] = None  # sabahci | ara_vardiya | kapanis
-
-
-@router.post("/api/gorev/pin-giris")
-def gorev_pin_giris(body: PinGirisBody):
-    """PIN doğrula, oturum token'ı döndür."""
-    from personel_panel_auth import dogrula_personel_panel_pin
-    from tr_saat import is_gunu_tr
-    with db() as (conn, cur):
-        kullanici = dogrula_personel_panel_pin(cur, body.personel_id, body.pin)
-    # Vardiya tipini belirle: body'den geldiyse kullan, yoksa saate göre tahmin
-    if body.vardiya_tip:
-        vardiya_tip = body.vardiya_tip
-    else:
-        from datetime import datetime
-        saat = datetime.now().hour
-        if saat < 14:
-            vardiya_tip = 'sabahci'
-        elif saat < 20:
-            vardiya_tip = 'ara_vardiya'
-        else:
-            vardiya_tip = 'kapanis'
-    return {
-        "personel_id": body.personel_id,
-        "ad_soyad":    kullanici.get("ad_soyad", ""),
-        "sube_id":     body.sube_id,
-        "vardiya_tip": vardiya_tip,
-        "tarih":       str(is_gunu_tr()),
-    }
 
 
 @router.get("/api/gorev/ozet")
@@ -265,39 +232,58 @@ def gorev_ozet(tarih: str):
 
 # ── Personel giriş + görev dağılımı ──────────────────────────────────────────
 
-@router.get("/api/gorev/sube-personel/{sube_id}")
-def gorev_sube_personeli(sube_id: str):
-    """O şubedeki aktif personel listesi (QR giriş sayfasında seçim için)."""
-    with db() as (conn, cur):
-        cur.execute("""
-            SELECT id, ad_soyad,
-                   CASE WHEN panel_pin_hash IS NOT NULL AND panel_pin_salt IS NOT NULL
-                        THEN TRUE ELSE FALSE END AS pin_tanimli
-            FROM personel
-            WHERE sube_id = %s AND aktif = TRUE
-            ORDER BY ad_soyad
-        """, (sube_id,))
-        return [dict(r) for r in cur.fetchall()]
+
+def _haversine_m(lat1, lng1, lat2, lng2) -> float:
+    """İki koordinat arasındaki mesafeyi metre cinsinden döner (Haversine)."""
+    R = 6_371_000
+    p = math.pi / 180
+    a = (math.sin((lat2 - lat1) * p / 2) ** 2
+         + math.cos(lat1 * p) * math.cos(lat2 * p)
+         * math.sin((lng2 - lng1) * p / 2) ** 2)
+    return 2 * R * math.asin(math.sqrt(a))
 
 
 class GorevPinGirisBody(BaseModel):
     sube_id: str
     personel_id: str
     pin: str
+    lat: Optional[float] = None
+    lng: Optional[float] = None
 
 
 @router.post("/api/gorev/pin-giris")
 def gorev_pin_giris(body: GorevPinGirisBody):
-    """Personel PIN doğrulaması. Başarılıysa personel bilgisi + bugünkü vardiyasını döner."""
+    """Personel PIN doğrulaması. Konum varsa şube yakınlığı kontrol edilir. Yoklama kaydedilir."""
     from personel_panel_auth import dogrula_personel_panel_pin
     from tr_saat import is_gunu_tr
     from datetime import datetime as _dt
     import pytz
 
     with db() as (conn, cur):
+        # Şube koordinatlarını al
+        cur.execute("SELECT lat, lng, konum_radius_m FROM subeler WHERE id = %s", (body.sube_id,))
+        sube = cur.fetchone()
+
+        # Konum doğrulama: şubede koordinat tanımlıysa ve kullanıcı konum gönderdiyse kontrol et
+        konum_mesafe_m = None
+        konum_onaylandi = False
+        if sube and sube["lat"] and sube["lng"]:
+            if body.lat is None or body.lng is None:
+                raise HTTPException(
+                    status_code=403,
+                    detail="konum_gerekli|Bu şubeye giriş için konum izni gereklidir."
+                )
+            konum_mesafe_m = _haversine_m(body.lat, body.lng, sube["lat"], sube["lng"])
+            radius = sube["konum_radius_m"] or 150
+            if konum_mesafe_m > radius:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"sube_disinda|Şubeye çok uzaksın ({int(konum_mesafe_m)} m). Giriş yalnızca şube içinden yapılabilir."
+                )
+            konum_onaylandi = True
+
         personel = dogrula_personel_panel_pin(cur, body.personel_id, body.pin)
 
-        # Bugünkü vardiya tipini belirle (saate göre)
         tz = pytz.timezone("Europe/Istanbul")
         saat = _dt.now(tz).hour
         if saat < 12:
@@ -309,12 +295,23 @@ def gorev_pin_giris(body: GorevPinGirisBody):
 
         tarih = str(is_gunu_tr())
 
+        # Yoklama kaydı — UNIQUE kısıtı sayesinde aynı gün/vardiya için tekrar yazılmaz
+        cur.execute("""
+            INSERT INTO gorev_yoklama
+                (tarih, sube_id, personel_id, vardiya_tip, konum_mesafe_m, konum_onaylandi)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (tarih, sube_id, personel_id, vardiya_tip) DO NOTHING
+        """, (tarih, body.sube_id, body.personel_id, vardiya_tip, konum_mesafe_m, konum_onaylandi))
+        conn.commit()
+
         return {
             "personel_id": personel["id"],
             "ad_soyad": personel["ad_soyad"],
             "sube_id": body.sube_id,
             "tarih": tarih,
             "vardiya_tip": vardiya_tip,
+            "konum_onaylandi": konum_onaylandi,
+            "konum_mesafe_m": round(konum_mesafe_m) if konum_mesafe_m else None,
         }
 
 
@@ -428,6 +425,52 @@ def gorev_qr_uret(sube_id: str):
         media_type="image/png",
         headers={"Content-Disposition": f'inline; filename="{sube_ad}_qr.png"'},
     )
+
+
+class SubeKonumBody(BaseModel):
+    lat: float
+    lng: float
+    konum_radius_m: Optional[int] = 150
+
+
+@router.put("/api/gorev/sube-konum/{sube_id}")
+def sube_konum_guncelle(sube_id: str, body: SubeKonumBody):
+    """Şube GPS koordinatı ve radius ayarla (CFO / admin)."""
+    with db() as (conn, cur):
+        cur.execute("""
+            UPDATE subeler SET lat=%s, lng=%s, konum_radius_m=%s WHERE id=%s
+        """, (body.lat, body.lng, body.konum_radius_m, sube_id))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Şube bulunamadı")
+        conn.commit()
+    return {"basarili": True}
+
+
+@router.get("/api/gorev/yoklama")
+def gorev_yoklama_listesi(tarih: str, sube_id: Optional[str] = None):
+    """Günlük yoklama listesi — CFO özet dashboard için."""
+    from datetime import date as _date
+    t = _date.fromisoformat(tarih)
+    with db() as (conn, cur):
+        if sube_id:
+            cur.execute("""
+                SELECT gy.*, p.ad_soyad, s.ad AS sube_adi
+                FROM gorev_yoklama gy
+                JOIN personel p ON p.id::text = gy.personel_id
+                JOIN subeler s ON s.id = gy.sube_id
+                WHERE gy.tarih = %s AND gy.sube_id = %s
+                ORDER BY gy.giris_ts
+            """, (t, sube_id))
+        else:
+            cur.execute("""
+                SELECT gy.*, p.ad_soyad, s.ad AS sube_adi
+                FROM gorev_yoklama gy
+                JOIN personel p ON p.id::text = gy.personel_id
+                JOIN subeler s ON s.id = gy.sube_id
+                WHERE gy.tarih = %s
+                ORDER BY s.ad, gy.giris_ts
+            """, (t,))
+        return [dict(r) for r in cur.fetchall()]
 
 
 @router.get("/api/gorev/qr-liste")

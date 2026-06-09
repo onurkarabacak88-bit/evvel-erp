@@ -15,6 +15,21 @@ export default function GorevGiris({ subeId }) {
   const [hata, setHata] = useState('');
   const [yukleniyor, setYukleniyor] = useState(true);
   const [oturum, setOturum] = useState(null);
+  const [konum, setKonum] = useState(null); // { lat, lng } | null
+  const [konumHata, setKonumHata] = useState(null);
+
+  // Sayfa açılır açılmaz konum iste
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setKonumHata('Tarayıcın konum desteklemiyor.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setKonum({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => setKonumHata('Konum izni reddedildi. Şubeye giriş için konum gereklidir.'),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, []);
 
   useEffect(() => {
     if (!subeId) return;
@@ -47,12 +62,25 @@ export default function GorevGiris({ subeId }) {
     try {
       const sonuc = await api('/gorev/pin-giris', {
         method: 'POST',
-        body: { sube_id: subeId, personel_id: seciliPersonel.id, pin: pinVal },
+        body: {
+          sube_id: subeId,
+          personel_id: seciliPersonel.id,
+          pin: pinVal,
+          lat: konum?.lat ?? null,
+          lng: konum?.lng ?? null,
+        },
       });
       setPinDogruOturum(sonuc);
       setAdim('vardiya-sec');
     } catch (e) {
-      setHata(e.message || 'PIN hatalı');
+      const msg = e.message || '';
+      if (msg.startsWith('sube_disinda|')) {
+        setHata('📍 ' + msg.split('|')[1]);
+      } else if (msg.startsWith('konum_gerekli|')) {
+        setHata('📍 ' + msg.split('|')[1]);
+      } else {
+        setHata(msg || 'PIN hatalı');
+      }
       setPin('');
     } finally {
       setYukleniyor(false);
@@ -98,6 +126,33 @@ export default function GorevGiris({ subeId }) {
     <div style={PAGE}>
       <div style={{ fontSize: 32, marginBottom: 12 }}>☕</div>
       <div style={{ fontSize: 14, color: '#6b6f7a' }}>Yükleniyor…</div>
+    </div>
+  );
+
+  // Konum izni reddedildiyse engelle
+  if (konumHata) return (
+    <div style={PAGE}>
+      <div style={{ ...KART, textAlign: 'center' }}>
+        <div style={{ fontSize: 36, marginBottom: 16 }}>📍</div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: '#e8e9ec', marginBottom: 8 }}>
+          Konum İzni Gerekli
+        </div>
+        <div style={{ fontSize: 13, color: '#6b6f7a', lineHeight: 1.6 }}>
+          {konumHata}
+        </div>
+        <div style={{ fontSize: 12, color: '#4a5568', marginTop: 16 }}>
+          Tarayıcı ayarlarından konum iznini açıp sayfayı yenile.
+        </div>
+        <button
+          onClick={() => window.location.reload()}
+          style={{
+            marginTop: 20, padding: '12px 24px', borderRadius: 10, cursor: 'pointer',
+            background: '#C8956A', border: 'none', color: '#fff', fontWeight: 700, fontSize: 14,
+          }}
+        >
+          Yenile
+        </button>
+      </div>
     </div>
   );
 

@@ -4426,3 +4426,35 @@ def ensure_gorev_tablolari(cur) -> None:
         CREATE INDEX IF NOT EXISTS idx_gorev_tamamlama_tarih_sube
         ON gorev_tamamlama (tarih, sube_id)
     """)
+    # Şube koordinat kolonları (konum doğrulama için)
+    cur.execute("""
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name='subeler' AND column_name='lat')
+            THEN ALTER TABLE subeler ADD COLUMN lat DOUBLE PRECISION; END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name='subeler' AND column_name='lng')
+            THEN ALTER TABLE subeler ADD COLUMN lng DOUBLE PRECISION; END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name='subeler' AND column_name='konum_radius_m')
+            THEN ALTER TABLE subeler ADD COLUMN konum_radius_m INT NOT NULL DEFAULT 150; END IF;
+        END $$;
+    """)
+    # Personel yoklama kaydı (QR giriş = şubede fiziksel bulunma kanıtı)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS gorev_yoklama (
+            id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            tarih           DATE NOT NULL,
+            sube_id         TEXT NOT NULL REFERENCES subeler(id),
+            personel_id     TEXT NOT NULL,
+            vardiya_tip     TEXT NOT NULL,
+            giris_ts        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            konum_mesafe_m  DOUBLE PRECISION,
+            konum_onaylandi BOOLEAN NOT NULL DEFAULT FALSE,
+            UNIQUE (tarih, sube_id, personel_id, vardiya_tip)
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_gorev_yoklama_tarih_sube
+        ON gorev_yoklama (tarih, sube_id)
+    """)
