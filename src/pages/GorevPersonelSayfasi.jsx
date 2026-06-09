@@ -303,12 +303,112 @@ function YemekMolasiButon({ oturum }) {
   );
 }
 
+// ── Vardiyam Ekranı ──────────────────────────────────────────────────────────
+function VardiyamEkrani({ oturum }) {
+  const [bugun, setBugun] = useState(null);
+  const [aylik, setAylik] = useState(null);
+  const [yukleniyor, setYukleniyor] = useState(true);
+
+  useEffect(() => {
+    const simdi = new Date();
+    const yil = simdi.getFullYear();
+    const ay = simdi.getMonth() + 1;
+    Promise.all([
+      api(`/gorev/vardiya-takip?yil=${yil}&ay=${ay}&personel_id=${oturum.personel_id}`).catch(() => null),
+    ]).then(([takip]) => {
+      const kisi = takip?.personeller?.[0];
+      if (kisi) {
+        const bugunVeri = kisi.gunler?.find(g => g.tarih === oturum.tarih);
+        setBugun(bugunVeri || null);
+        setAylik(kisi);
+      }
+    }).finally(() => setYukleniyor(false));
+  }, []);
+
+  const PAGE = { minHeight: '100vh', background: '#0f1117', color: '#e8e9ec', fontFamily: 'Instrument Sans, sans-serif' };
+
+  const K = ({ label, val, renk, alt }) => (
+    <div style={{
+      background: '#1a1d24', border: '1px solid #2a2d35', borderRadius: 12,
+      padding: '14px 16px', flex: 1, minWidth: 100,
+    }}>
+      <div style={{ fontSize: 20, fontWeight: 800, color: renk || '#e8e9ec' }}>{val}</div>
+      <div style={{ fontSize: 11, color: '#b0b3bc', marginTop: 3 }}>{label}</div>
+      {alt && <div style={{ fontSize: 10, color: '#6b6f7a', marginTop: 2 }}>{alt}</div>}
+    </div>
+  );
+
+  if (yukleniyor) return (
+    <div style={{ ...PAGE, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="spinner" />
+    </div>
+  );
+
+  const fmtDk = (dk) => {
+    if (!dk) return '0 dk';
+    const h = Math.floor(dk / 60), m = Math.round(dk % 60);
+    return h > 0 ? `${h}s ${m}dk` : `${m}dk`;
+  };
+
+  return (
+    <div style={{ ...PAGE, paddingBottom: 40 }}>
+      {/* Bugün */}
+      <div style={{ padding: '16px 20px', borderBottom: '1px solid #2a2d35' }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#6b6f7a', marginBottom: 10, letterSpacing: 1 }}>
+          BUGÜN · {new Date(oturum.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' })}
+        </div>
+        {bugun ? (
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <K label="Planlanan" val={`${bugun.planlanan_saat?.toFixed(1)}s`} renk="#4a9eff" />
+            <K label="Gecikme"
+               val={bugun.gecikme_dk > 0 ? fmtDk(bugun.gecikme_dk) : '✓ Zamanında'}
+               renk={bugun.gecikme_dk > 0 ? '#e05c5c' : '#4caf84'} />
+            <K label="Fazla Mesai"
+               val={bugun.fazla_mesai_saat > 0 ? `+${bugun.fazla_mesai_saat.toFixed(1)}s` : '—'}
+               renk={bugun.fazla_mesai_saat > 0 ? '#f59e0b' : '#6b6f7a'} />
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, color: '#6b6f7a' }}>Bugün için vardiya kaydı bulunamadı.</div>
+        )}
+        {bugun?.part_tam_uyari && (
+          <div style={{
+            marginTop: 10, padding: '8px 12px', borderRadius: 8, fontSize: 12,
+            background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
+            color: '#f59e0b',
+          }}>
+            ⚠️ Part-time kaydınız var ama bugün tam mesai (9.5 saat) yazılmış.
+          </div>
+        )}
+      </div>
+
+      {/* Bu ay */}
+      {aylik && (
+        <div style={{ padding: '16px 20px' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#6b6f7a', marginBottom: 10, letterSpacing: 1 }}>
+            BU AY
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+            <K label="Toplam Mesai" val={`${aylik.toplam_planlanan_saat?.toFixed(1)}s`} renk="#4a9eff" />
+            <K label="Fazla Mesai" val={aylik.toplam_fazla_mesai_saat > 0 ? `+${aylik.toplam_fazla_mesai_saat.toFixed(1)}s` : '—'} renk={aylik.toplam_fazla_mesai_saat > 0 ? '#f59e0b' : '#6b6f7a'} />
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <K label="Toplam Gecikme" val={fmtDk(aylik.toplam_gecikme_dk)} renk={aylik.toplam_gecikme_dk > 30 ? '#e05c5c' : '#6b6f7a'} />
+            <K label="Yemek Ücreti" val={`${aylik.yemek_ucret_gun} gün`} renk="#4caf84"
+               alt={aylik.yemek_ucret_tutari > 0 ? `${aylik.yemek_ucret_tutari.toLocaleString('tr-TR')} ₺` : null} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Ana Görev Sayfası ────────────────────────────────────────────────────────
 export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
   const [data, setData] = useState(null);
   const [yukleniyor, setYukleniyor] = useState(true);
   const [islem, setIslem] = useState({});
   const [siparisAcik, setSiparisAcik] = useState(false);
+  const [sekme, setSekme] = useState('gorevler'); // 'gorevler' | 'vardiyam'
 
   const load = () => {
     const { tarih, sube_id, vardiya_tip, personel_id } = oturum;
@@ -416,11 +516,27 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
         </div>
       )}
 
-      {/* Yemek Molası */}
-      <YemekMolasiButon oturum={oturum} />
+      {/* Sekmeler */}
+      <div style={{ display: 'flex', borderBottom: '1px solid #2a2d35' }}>
+        {[['gorevler','✅ Görevlerim'], ['vardiyam','⏱️ Vardiyam']].map(([id, label]) => (
+          <button key={id} onClick={() => setSekme(id)} style={{
+            flex: 1, padding: '12px', border: 'none', cursor: 'pointer',
+            background: 'transparent', fontSize: 13, fontWeight: sekme === id ? 700 : 500,
+            color: sekme === id ? '#C8956A' : '#6b6f7a',
+            borderBottom: sekme === id ? '2px solid #C8956A' : '2px solid transparent',
+            transition: 'all 0.15s',
+          }}>{label}</button>
+        ))}
+      </div>
 
-      {/* Görev listesi */}
-      <div style={{ padding: '12px 16px', paddingBottom: 80 }}>
+      {/* Vardiyam sekmesi */}
+      {sekme === 'vardiyam' && <VardiyamEkrani oturum={oturum} />}
+
+      {/* Yemek Molası — her iki sekmede de görünür */}
+      {sekme === 'gorevler' && <YemekMolasiButon oturum={oturum} />}
+
+      {/* Görev listesi — sadece görevlerim sekmesinde */}
+      {sekme !== 'gorevler' ? null : <div style={{ padding: '12px 16px', paddingBottom: 80 }}>
         {yukleniyor ? (
           <div style={{ textAlign: 'center', padding: 40, color: '#6b6f7a' }}>
             <div className="spinner" style={{ margin: '0 auto 12px' }} />
@@ -471,10 +587,10 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
             </div>
           ))
         )}
-      </div>
+      </div>}
 
       {/* Alt bant */}
-      {data?.eksik === 0 && (
+      {sekme === 'gorevler' && data?.eksik === 0 && (
         <div style={{
           position: 'fixed', bottom: 0, left: 0, right: 0,
           background: 'rgba(76,175,132,0.15)', borderTop: '1px solid rgba(76,175,132,0.3)',
