@@ -632,12 +632,14 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
         # Personel listesi
         if personel_id:
             cur.execute("""
-                SELECT id::text, ad_soyad, calisma_turu, maas, saatlik_ucret, yemek_ucreti
+                SELECT id::text, ad_soyad, calisma_turu, maas, saatlik_ucret,
+                       yemek_ucreti, yol_ucreti
                 FROM personel WHERE id::text=%s AND aktif=TRUE
             """, (personel_id,))
         else:
             cur.execute("""
-                SELECT id::text, ad_soyad, calisma_turu, maas, saatlik_ucret, yemek_ucreti
+                SELECT id::text, ad_soyad, calisma_turu, maas, saatlik_ucret,
+                       yemek_ucreti, yol_ucreti
                 FROM personel WHERE aktif=TRUE ORDER BY ad_soyad
             """)
         personeller = [dict(r) for r in cur.fetchall()]
@@ -796,6 +798,44 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 tarih += timedelta(days=1)
 
             yemek_ucret_tutari = yemek_ucret_gun * float(p.get("yemek_ucreti") or 0)
+
+            # ── ÜCRET HESABI ──────────────────────────────────────────
+            GUNLUK_SAAT = 9.5
+            AYLIK_SAAT  = 247.0  # 26 gün × 9.5
+            is_surekli  = (p.get("calisma_turu") or "surekli") == "surekli"
+            maas_taban  = float(p.get("maas") or 0)
+            saatlik_ucr = float(p.get("saatlik_ucret") or 0)
+            yol_ucr     = float(p.get("yol_ucreti") or 0)
+
+            if is_surekli:
+                saatlik     = maas_taban / AYLIK_SAAT if AYLIK_SAAT > 0 else 0
+                fazla_ucret = toplam_fazla_saat * saatlik  # ×1 (iş anlaşması)
+                net_hesap   = maas_taban + fazla_ucret + yemek_ucret_tutari + yol_ucr
+                ucret_detay = {
+                    "taban_maas":       round(maas_taban, 2),
+                    "saatlik_ucret":    round(saatlik, 4),
+                    "fazla_mesai_saat": round(toplam_fazla_saat, 2),
+                    "fazla_mesai_ucret":round(fazla_ucret, 2),
+                    "yemek_ucret":      round(yemek_ucret_tutari, 2),
+                    "yol_ucret":        round(yol_ucr, 2),
+                    "net_hakediş":      round(net_hesap, 2),
+                    "not": "Fazla mesai ×1 saatlik ücret (iş sözleşmesi bazlı)",
+                }
+            else:
+                # Part-time: toplam planlanan saat × saatlik ücret
+                calisma_saati = toplam_planlanan
+                normal_ucret  = calisma_saati * saatlik_ucr
+                net_hesap     = normal_ucret + yemek_ucret_tutari + yol_ucr
+                ucret_detay = {
+                    "saatlik_ucret":    round(saatlik_ucr, 4),
+                    "calisma_saati":    round(calisma_saati, 2),
+                    "normal_ucret":     round(normal_ucret, 2),
+                    "yemek_ucret":      round(yemek_ucret_tutari, 2),
+                    "yol_ucret":        round(yol_ucr, 2),
+                    "net_hakediş":      round(net_hesap, 2),
+                    "not": "Part-time: toplam saat × saatlik ücret",
+                }
+
             sonuclar.append({
                 "personel_id": pid,
                 "ad_soyad": p["ad_soyad"],
@@ -808,6 +848,8 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 "part_tam_gun": part_tam_gun,
                 "haftalik_izin_kullanilmadi": haftalik_izin_kullanilmadi,
                 "haftalik_izin_detay": haftalik_izin_detay,
+                "ucret_detay": ucret_detay,
+                "net_hakediş": ucret_detay["net_hakediş"],
                 "gunler": gunler,
             })
 

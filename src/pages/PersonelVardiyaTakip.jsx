@@ -158,6 +158,39 @@ function PersonelKart({ p, acik, onToggle }) {
                   bu personele <strong>{p.haftalik_izin_kullanilmadi} günlük ücretli izin</strong> verilmeli.
                 </div>
               )}
+
+              {/* Ücret hesabı döküm */}
+              {p.ucret_detay && (() => {
+                const d = p.ucret_detay;
+                const fmt2 = n => new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 2 }).format(n) + ' ₺';
+                const satir = (label, val, renk, bold) => (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0',
+                    borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ color: 'var(--text3)', fontSize: 12 }}>{label}</span>
+                    <span style={{ fontWeight: bold ? 800 : 600, fontSize: 12, color: renk || 'var(--text1)' }}>{val}</span>
+                  </div>
+                );
+                return (
+                  <div style={{ marginTop: 12, padding: '12px 16px', borderRadius: 10,
+                    background: 'var(--bg3)', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)',
+                      marginBottom: 8, letterSpacing: 0.5 }}>
+                      💰 ÜCRET HESABI
+                    </div>
+                    {d.taban_maas != null && satir('Taban Maaş', fmt2(d.taban_maas), null)}
+                    {d.calisma_saati != null && satir(`Çalışma (${d.calisma_saati}s × ${fmt2(d.saatlik_ucret)}/s)`, fmt2(d.normal_ucret), null)}
+                    {d.fazla_mesai_saat > 0 && satir(`Fazla Mesai (${d.fazla_mesai_saat}s)`, '+' + fmt2(d.fazla_mesai_ucret), '#f59e0b')}
+                    {d.yemek_ucret > 0 && satir('Yemek Ücreti', '+' + fmt2(d.yemek_ucret), '#4caf84')}
+                    {d.yol_ucret > 0 && satir('Yol Ücreti', '+' + fmt2(d.yol_ucret), null)}
+                    <div style={{ display: 'flex', justifyContent: 'space-between',
+                      padding: '8px 0 0', marginTop: 4 }}>
+                      <span style={{ fontWeight: 800, fontSize: 13, color: 'var(--text1)' }}>NET HAKEDİŞ</span>
+                      <span style={{ fontWeight: 800, fontSize: 15, color: '#4caf84' }}>{fmt2(d['net_hakediş'])}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>{d.not}</div>
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>
@@ -234,6 +267,7 @@ export default function PersonelVardiyaTakip() {
             { label: 'Toplam Fazla Mesai', val: fmt(personeller.reduce((s,p)=>s+p.toplam_fazla_mesai_saat,0))+'s', renk: '#f59e0b' },
             { label: 'Part-Tam Uyarı', val: personeller.filter(p=>p.part_tam_gun>0).length + ' kişi', renk: '#f59e0b' },
             { label: 'Yemek Ücreti Toplam', val: new Intl.NumberFormat('tr-TR').format(personeller.reduce((s,p)=>s+p.yemek_ucret_tutari,0))+'₺', renk: '#4caf84' },
+        { label: 'Toplam Net Hakediş', val: new Intl.NumberFormat('tr-TR').format(Math.round(personeller.reduce((s,p)=>s+(p['net_hakediş']||0),0)))+'₺', renk: '#4caf84' },
           ].map(k => (
             <div key={k.label} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>
               <div style={{ fontSize: 18, fontWeight: 800, color: k.renk }}>{k.val}</div>
