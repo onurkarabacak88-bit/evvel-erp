@@ -448,14 +448,31 @@ def _gorev_listesi_uret(
     ciro_taslak_bekliyor: bool = False,
     kasa_acildi_mi: bool = True,
     kasa_acma_kaydi: Optional[dict] = None,
+    yoklama_yapildi_mi: bool = False,
 ) -> list:
-    """Günlük görev listesi. Önce kasa PIN, sonra şube açılış (sube_acilis)."""
+    """Günlük görev listesi. Önce QR yoklama, sonra kasa PIN, sonra şube açılış."""
     _ = anlik_adet
     simdi = _now_tr().strftime("%H:%M")
     gorevler = []
 
     acilis = sube.get("acilis_saati") or "09:00"
     kapanis = sube.get("kapanis_saati") or "22:00"
+
+    # ── QR Yoklama (kasa açılışından önce zorunlu) ─────────────────────
+    if yoklama_yapildi_mi:
+        yoklama_aciklama = "Personel girişi QR ile doğrulandı. Görevler telefona iletildi."
+    else:
+        yoklama_aciklama = "Kasa açılışı için önce personelin QR kodu telefona okutması gerekiyor."
+
+    gorevler.append({
+        "id":       "yoklama_qr",
+        "baslik":   "Personel QR Girişi",
+        "aciklama": yoklama_aciklama,
+        "saat":     acilis,
+        "tur":      "yoklama_qr",
+        "tamamlandi": yoklama_yapildi_mi,
+        "aksiyon":  "yoklama_bekle" if not yoklama_yapildi_mi else None,
+    })
 
     kasa_aciklama = "Günlük kasa kilitlidir. Sabah personel, kayıtlı PIN ile kilidi açmalıdır."
     if kasa_acildi_mi and kasa_acma_kaydi:
@@ -474,7 +491,8 @@ def _gorev_listesi_uret(
         "saat":     acilis,
         "tur":      "kasa_kilit",
         "tamamlandi": kasa_acildi_mi,
-        "aksiyon":  "kasa_ac" if not kasa_acildi_mi else None,
+        # Yoklama yapılmadan kasa açılamaz
+        "aksiyon":  "kasa_ac" if (yoklama_yapildi_mi and not kasa_acildi_mi) else None,
     })
 
     gorevler.append({
@@ -809,6 +827,13 @@ def kasa_kilit_ac(sube_id: str, body: KasaKilitAcModel):
         raise HTTPException(400, "4 haneli PIN gerekli")
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
+        # Yoklama yapılmadan kasa açılamaz
+        cur.execute("""
+            SELECT 1 FROM gorev_yoklama
+            WHERE sube_id=%s AND tarih=%s LIMIT 1
+        """, (sube_id, is_gunu_tr()))
+        if not cur.fetchone():
+            raise HTTPException(403, "yoklama_eksik|Kasa açılışı için önce personelin QR kodu telefona okutması gerekiyor.")
         ku = dogrula_personel_panel_pin(cur, pid, pin)
         onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
         pid_v = str(ku.get("id") or pid).strip()
@@ -1637,6 +1662,13 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
     )
     ciro_ozet = dict(cur.fetchone())
 
+    # Bugün bu şubede yoklama kaydı var mı?
+    cur.execute("""
+        SELECT 1 FROM gorev_yoklama
+        WHERE sube_id=%s AND tarih=%s LIMIT 1
+    """, (sube_id, is_gunu_tr()))
+    yoklama_yapildi_mi = cur.fetchone() is not None
+
     gorevler = _gorev_listesi_uret(
         sube,
         ciro_girildi,
@@ -1645,6 +1677,7 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
         ciro_taslak_bekliyor,
         kasa_acildi_mi=kasa_acildi_mi,
         kasa_acma_kaydi=kasa_acma,
+        yoklama_yapildi_mi=yoklama_yapildi_mi,
     )
     panel_pin_kullanicilar = list_personel_panel_secim(cur)
     panel_yonetici_sayisi = count_personel_panel_yonetici(cur)
@@ -2094,6 +2127,7 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
         "kapanis_saati": sube.get("kapanis_saati") or "22:00",
         "tarih": str(bugun_tr()),
         "kasa_kilitli": kasa_kilitli,
+        "yoklama_var": yoklama_yapildi_mi,
         "kasa_acma": kasa_acma,
         "sube_acik": sube_acildi_mi,
         "panel_kilitli": panel_blok,
@@ -2235,6 +2269,27 @@ def sube_personel_panel_public(payload: dict) -> dict:
         "Depo stok uyarıları Ana ekranda listelenir."
     )
     return p
+
+
+@router.get("/{sube_id}/yoklama-durum")
+def sube_panel_yoklama_durum(sube_id: str):
+    """Panel sayfası polling için: bugün yoklama var mı + QR URL."""
+    import os as _os
+    base = _os.getenv("APP_URL", "https://evvel-erp-production.up.railway.app")
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT personel_id, vardiya_tip, giris_ts, konum_onaylandi
+            FROM gorev_yoklama
+            WHERE sube_id=%s AND tarih=%s
+            ORDER BY giris_ts DESC LIMIT 1
+        """, (sube_id, is_gunu_tr()))
+        row = cur.fetchone()
+    return {
+        "yoklama_var": row is not None,
+        "son_giris": dict(row) if row else None,
+        "qr_url": f"{base}/api/gorev/qr/{sube_id}",
+        "giris_url": f"{base}/gorev-giris/{sube_id}",
+    }
 
 
 @router.get("/{sube_id}")

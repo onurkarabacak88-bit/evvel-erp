@@ -5509,6 +5509,28 @@
   </div>
 </div>
 
+<!-- ── OVERLAY: QR YOKLAMA ──────────────────── -->
+<div id="yoklamaOverlay" class="overlay" style="display:none">
+  <div class="overlay-kart" style="text-align:center;max-width:360px">
+    <div style="font-size:36px;margin-bottom:12px">📱</div>
+    <h2 style="margin-bottom:8px">Personel Girişi Gerekli</h2>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.6">
+      Kasa açılışından önce bir personelin aşağıdaki QR kodu<br>
+      telefonuyla okutuması gerekiyor.
+    </p>
+    <div id="yoklamaQrWrap" style="background:#fff;border-radius:12px;padding:12px;display:inline-block;margin-bottom:16px;box-shadow:0 2px 16px rgba(0,0,0,0.2)">
+      <img id="yoklamaQrImg" src="" alt="QR" style="width:200px;height:200px;display:block" />
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">
+      Personel kodu okutunca bu ekran otomatik geçer.
+    </div>
+    <div id="yoklamaBekle" style="display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;color:var(--muted)">
+      <div class="spinner" style="width:14px;height:14px"></div>
+      <span>Bekleniyor…</span>
+    </div>
+  </div>
+</div>
+
 <!-- ── OVERLAY: KASA KİLİT ──────────────────── -->
 <div id="kasaOverlay" class="overlay" style="display:none">
   <div class="overlay-kart kasa-kilit-kart">
@@ -13119,6 +13141,32 @@ function wirePuanHandler() {
 // ─── OPERASyon OVERLAY ───────────────────────────────────────
 var opAcilisStep=1, opAcilisKasa=null, opAcilisStok={};
 
+// ── QR YOKLAMA POLLİNG ───────────────────────────────────────────────
+var _yoklamaTimer = null;
+
+function startYoklamaPolling() {
+  // QR img yükle (bir kez)
+  var img = document.getElementById('yoklamaQrImg');
+  if (img && !img.src.includes('/api/gorev/qr/')) {
+    img.src = '/api/gorev/qr/' + encodeURIComponent(SUBE_ID);
+  }
+  if (_yoklamaTimer) return;
+  _yoklamaTimer = setInterval(async function() {
+    try {
+      var d = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/yoklama-durum');
+      if (d && d.yoklama_var) {
+        stopYoklamaPolling();
+        // Sayfayı yenile — kasa kilidi ekranına geçsin
+        yuklePanelVerisi();
+      }
+    } catch(_) {}
+  }, 5000);
+}
+
+function stopYoklamaPolling() {
+  if (_yoklamaTimer) { clearInterval(_yoklamaTimer); _yoklamaTimer = null; }
+}
+
 function hideOpOverlay() {
   stopAlarm();
   var el = document.getElementById('opOverlay');
@@ -13512,6 +13560,18 @@ async function refresh() {
     lastPersonelSecim = data.personel_operasyon_secim || [];
     fillSels();
     urunAcHatirlaticiYenile();
+
+    // QR Yoklama — kasa açılmadan önce kontrol et
+    if (data.kasa_kilitli && !data.yoklama_var) {
+      hideOpOverlay();
+      document.getElementById('kasaOverlay').style.display='none';
+      document.getElementById('acilisOverlay').style.display='none';
+      document.getElementById('yoklamaOverlay').style.display='flex';
+      startYoklamaPolling();
+      return;
+    }
+    document.getElementById('yoklamaOverlay').style.display='none';
+    stopYoklamaPolling();
 
     // Kasa kilidi
     if (data.kasa_kilitli) {
