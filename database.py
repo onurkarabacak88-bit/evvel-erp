@@ -3227,6 +3227,14 @@ $$;
             "CREATE INDEX IF NOT EXISTS idx_personel_izin_personel "
             "ON personel_izin (personel_id, baslangic_tarih, bitis_tarih)"
         )
+        # Yarım gün izin desteği
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel_izin' AND column_name='gun_kesri')
+                THEN ALTER TABLE personel_izin ADD COLUMN gun_kesri NUMERIC(3,1) NOT NULL DEFAULT 1.0; END IF;
+            END $$;
+        """)
 
         # 5) Override log — audit
         cur.execute("""

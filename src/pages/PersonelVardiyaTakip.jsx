@@ -187,7 +187,6 @@ function PersonelKart({ p, acik, onToggle }) {
                       <span style={{ fontWeight: 800, fontSize: 13, color: 'var(--text1)' }}>NET HAKEDİŞ</span>
                       <span style={{ fontWeight: 800, fontSize: 15, color: '#4caf84' }}>{fmt2(d['net_hakediş'])}</span>
                     </div>
-                    <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>{d.not}</div>
                   </div>
                 );
               })()}
@@ -206,11 +205,17 @@ export default function PersonelVardiyaTakip() {
   const [veri, setVeri] = useState(null);
   const [yukleniyor, setYukleniyor] = useState(false);
   const [aciklar, setAciklar] = useState({});
+  const [izinAlacagi, setIzinAlacagi] = useState(null);
 
   const yukle = () => {
     setYukleniyor(true);
-    api(`/gorev/vardiya-takip?yil=${yil}&ay=${ay}`)
-      .then(setVeri).catch(console.error).finally(() => setYukleniyor(false));
+    Promise.all([
+      api(`/gorev/vardiya-takip?yil=${yil}&ay=${ay}`),
+      api(`/gorev/izin-alacagi`).catch(() => null),
+    ]).then(([v, iz]) => {
+      setVeri(v);
+      setIzinAlacagi(iz);
+    }).catch(console.error).finally(() => setYukleniyor(false));
   };
 
   useEffect(() => { yukle(); }, [yil, ay]);
@@ -276,6 +281,54 @@ export default function PersonelVardiyaTakip() {
           ))}
         </div>
       )}
+
+      {/* Birikimli Haftalık İzin Alacağı */}
+      {izinAlacagi && (() => {
+        const birikmisler = (izinAlacagi.personeller || []).filter(p => p.net_alacak_gun > 0);
+        if (!birikmisler.length) return null;
+        return (
+          <div style={{
+            marginBottom: 16, borderRadius: 12, overflow: 'hidden',
+            border: '1px solid rgba(224,92,92,0.3)', background: 'rgba(224,92,92,0.04)',
+          }}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(224,92,92,0.2)',
+              display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 16 }}>🔴</span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: '#e05c5c' }}>
+                  Birikmiş Haftalık İzin Alacağı
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                  {izinAlacagi.baslangic} tarihinden bugüne · Verilen izinler düşülmüş
+                </div>
+              </div>
+            </div>
+            <div style={{ padding: '8px 0' }}>
+              {birikmisler.map(p => (
+                <div key={p.personel_id} style={{
+                  padding: '10px 16px', borderBottom: '1px solid var(--border)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text1)' }}>{p.ad_soyad}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                      {p.borclu_hafta_sayisi} hafta izinsiz çalışma
+                      {p.verilen_izin_gun > 0 && ` · ${p.verilen_izin_gun} gün izin verildi`}
+                    </div>
+                  </div>
+                  <div style={{
+                    padding: '5px 12px', borderRadius: 20,
+                    background: 'rgba(224,92,92,0.12)', border: '1px solid rgba(224,92,92,0.3)',
+                    fontWeight: 800, fontSize: 14, color: '#e05c5c',
+                  }}>
+                    {p.net_alacak_gun} gün alacak
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Personel listesi */}
       {yukleniyor ? (

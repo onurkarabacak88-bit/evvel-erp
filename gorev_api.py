@@ -856,6 +856,120 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
         return {"yil": yil, "ay": ay, "personeller": sonuclar}
 
 
+@router.get("/api/gorev/izin-alacagi")
+def izin_alacagi(personel_id: Optional[str] = None, baslangic_yil: int = 2025):
+    """
+    Birikimli haftalık izin alacağı.
+    baslangic_yil'den bugüne kadar tüm haftaları tarar.
+    Verilen izin günleri (personel_izin tablosu) düşülür.
+    """
+    from datetime import date as _date, timedelta as _td
+    from calendar import monthrange
+
+    bugun = _date.today()
+    d1 = _date(baslangic_yil, 1, 1)
+
+    with db() as (conn, cur):
+        if personel_id:
+            cur.execute("""
+                SELECT id::text, ad_soyad FROM personel
+                WHERE id::text=%s AND aktif=TRUE
+            """, (personel_id,))
+        else:
+            cur.execute("""
+                SELECT id::text, ad_soyad FROM personel WHERE aktif=TRUE ORDER BY ad_soyad
+            """)
+        personeller = [dict(r) for r in cur.fetchall()]
+
+        sonuclar = []
+        for p in personeller:
+            pid = p["id"]
+
+            # Tüm vardiya atama günleri (hangi günler çalışma var)
+            cur.execute("""
+                SELECT DISTINCT va.tarih::text
+                FROM vardiya_atama va
+                JOIN vardiya_slot vs ON vs.id = va.slot_id
+                WHERE va.personel_id = %s
+                  AND va.tarih BETWEEN %s AND %s
+                  AND va.durum IN ('planli','onayli')
+            """, (pid, d1, bugun))
+            calisma_gunleri = {r["tarih"] for r in cur.fetchall()}
+
+            # Haftalık izin tarama — Pazartesi başlayan haftalar
+            haftalik_borclar = []
+            borclu_hafta = 0
+
+            hafta = d1 - _td(days=d1.weekday())
+            while hafta <= bugun:
+                hafta_bit = hafta + _td(days=6)
+                if hafta_bit > bugun:
+                    hafta_bit = bugun
+                # Bu haftanın çalışma günleri
+                calisilan = sum(
+                    1 for i in range((hafta_bit - hafta).days + 1)
+                    if str(hafta + _td(days=i)) in calisma_gunleri
+                )
+                toplam_gun = (hafta_bit - hafta).days + 1
+                # Tam hafta (6+ gün) ve hiç boş gün yoksa borç
+                if toplam_gun >= 6 and calisilan >= toplam_gun:
+                    borclu_hafta += 1
+                    haftalik_borclar.append({
+                        "hafta": str(hafta),
+                        "calisilan": calisilan,
+                        "toplam": toplam_gun,
+                    })
+                hafta += _td(days=7)
+
+            # Verilen izin günleri (personel_izin tablosu, tüm tipler haftalık izin hesabında sayılır)
+            cur.execute("""
+                SELECT baslangic_tarih, bitis_tarih,
+                       COALESCE(gun_kesri, 1.0) AS gun_kesri, tip
+                FROM personel_izin
+                WHERE personel_id = %s
+                  AND baslangic_tarih >= %s AND baslangic_tarih <= %s
+                ORDER BY baslangic_tarih
+            """, (pid, d1, bugun))
+            izinler = [dict(r) for r in cur.fetchall()]
+
+            # Verilen toplam izin günü (gün kesrini dikkate alarak)
+            verilen_izin_gun = 0.0
+            for iz in izinler:
+                bas = iz["baslangic_tarih"]
+                bit = iz["bitis_tarih"]
+                gun_sayisi = (bit - bas).days + 1
+                # gun_kesri tek günlük izinlerde 0.5 olabilir
+                if gun_sayisi == 1:
+                    verilen_izin_gun += float(iz["gun_kesri"])
+                else:
+                    verilen_izin_gun += gun_sayisi  # çok günlük izinde tam gün sayılır
+
+            net_alacak = max(0.0, borclu_hafta - verilen_izin_gun)
+
+            sonuclar.append({
+                "personel_id": pid,
+                "ad_soyad": p["ad_soyad"],
+                "borclu_hafta_sayisi": borclu_hafta,
+                "verilen_izin_gun": round(verilen_izin_gun, 1),
+                "net_alacak_gun": round(net_alacak, 1),
+                "izinler": [
+                    {
+                        "tarih": str(iz["baslangic_tarih"]),
+                        "gun": float(iz["gun_kesri"]) if (iz["bitis_tarih"] - iz["baslangic_tarih"]).days == 0
+                               else (iz["bitis_tarih"] - iz["baslangic_tarih"]).days + 1,
+                        "tip": iz["tip"],
+                    } for iz in izinler
+                ],
+                "borclu_haftalar": haftalik_borclar[-12:],  # son 12 hafta
+            })
+
+        return {
+            "baslangic": str(d1),
+            "bitis": str(bugun),
+            "personeller": sonuclar,
+        }
+
+
 @router.get("/api/gorev/qr-liste")
 def gorev_qr_liste():
     """Tüm aktif şubelerin QR bilgilerini döner (ID, ad, URL)."""
