@@ -3962,6 +3962,13 @@ class SiparisOnayBody(BaseModel):
     force_cift_siparis: bool = False
 
 
+class SiparisYoklamaBody(BaseModel):
+    kalemler: List[SiparisOnayKalem]
+    personel_id: str
+    not_aciklama: Optional[str] = None
+    force_cift_siparis: bool = False
+
+
 class PanelPinDogrulaBody(BaseModel):
     """Şube panelinde yalnızca PIN doğrulama (ör. adet girilmiş sipariş modalını kapatma)."""
 
@@ -5280,7 +5287,7 @@ def sube_siparis_onay(sube_id: str, body: SiparisOnayBody):
 
 
 @router.post("/{sube_id}/siparis-yoklama")
-def sube_siparis_yoklama(sube_id: str, body: SiparisOnayBody):
+def sube_siparis_yoklama(sube_id: str, body: SiparisYoklamaBody):
     """QR yoklama oturumu ile sipariş ver — PIN gerekmez, yoklama kaydı yeterli."""
     pid_in = (body.personel_id or "").strip()
     if not pid_in:
