@@ -132,36 +132,6 @@ export default function GorevGiris({ subeId }) {
     </div>
   );
 
-  // Koordinat tanımlı şubede konum izni reddedildiyse engelle
-  if (konumGerekli && konumHata) return (
-    <div style={PAGE}>
-      <div style={{ ...KART, textAlign: 'center' }}>
-        <div style={{ fontSize: 36, marginBottom: 16 }}>📍</div>
-        <div style={{ fontSize: 16, fontWeight: 700, color: '#e8e9ec', marginBottom: 8 }}>
-          Konum İzni Gerekli
-        </div>
-        <div style={{ fontSize: 13, color: '#6b6f7a', lineHeight: 1.6, marginBottom: 16 }}>
-          Bu şubeye giriş yalnızca şube içinden yapılabilir.
-        </div>
-        <div style={{ fontSize: 12, color: '#4a9eff', lineHeight: 1.7, textAlign: 'left',
-          background: 'rgba(74,158,255,0.08)', border: '1px solid rgba(74,158,255,0.2)',
-          borderRadius: 8, padding: '10px 14px', marginBottom: 20 }}>
-          <strong>Nasıl izin verilir?</strong><br/>
-          <strong>Chrome:</strong> Adres çubuğu → 🔒 kilit → Site ayarları → Konum → İzin ver<br/>
-          <strong>Safari:</strong> Ayarlar → Safari → Konum → İzin ver
-        </div>
-        <button
-          onClick={() => window.location.reload()}
-          style={{
-            width: '100%', padding: '14px', borderRadius: 10, cursor: 'pointer',
-            background: '#C8956A', border: 'none', color: '#fff', fontWeight: 700, fontSize: 15,
-          }}
-        >
-          İzin verdim, tekrar dene
-        </button>
-      </div>
-    </div>
-  );
 
 
   return (
@@ -177,6 +147,22 @@ export default function GorevGiris({ subeId }) {
             Görev Listesi
           </div>
         </div>
+
+        {/* Konum uyarısı — yöneticiler PIN girerek geçebilir */}
+        {konumGerekli && konumHata && adim === 'personel-sec' && (
+          <div style={{
+            marginBottom: 14, padding: '10px 12px', borderRadius: 8,
+            background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
+            fontSize: 12, color: '#f59e0b', lineHeight: 1.6,
+          }}>
+            ⚠️ Konum izni alınamadı. Yöneticiler girişe devam edebilir.
+            <button onClick={() => window.location.reload()}
+              style={{ display: 'block', marginTop: 6, background: 'none', border: 'none',
+                color: '#4a9eff', cursor: 'pointer', fontSize: 11, padding: 0 }}>
+              Tekrar dene →
+            </button>
+          </div>
+        )}
 
         {/* Adım 1: Personel seç */}
         {adim === 'personel-sec' && (

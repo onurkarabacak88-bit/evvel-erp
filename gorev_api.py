@@ -265,10 +265,15 @@ def gorev_pin_giris(body: GorevPinGirisBody):
         cur.execute("SELECT lat, lng, konum_radius_m FROM subeler WHERE id = %s", (body.sube_id,))
         sube = cur.fetchone()
 
-        # Konum doğrulama: şubede koordinat tanımlıysa ve kullanıcı konum gönderdiyse kontrol et
+        # Yönetici mi kontrol et — yöneticiler konum kısıtından muaf
+        cur.execute("SELECT panel_yonetici FROM personel WHERE id = %s::uuid", (body.personel_id,))
+        p_row = cur.fetchone()
+        yonetici = bool(p_row and p_row["panel_yonetici"])
+
+        # Konum doğrulama: şubede koordinat tanımlıysa VE yönetici değilse kontrol et
         konum_mesafe_m = None
         konum_onaylandi = False
-        if sube and sube["lat"] and sube["lng"]:
+        if sube and sube["lat"] and sube["lng"] and not yonetici:
             if body.lat is None or body.lng is None:
                 raise HTTPException(
                     status_code=403,
@@ -282,6 +287,8 @@ def gorev_pin_giris(body: GorevPinGirisBody):
                     detail=f"sube_disinda|Şubeye çok uzaksın ({int(konum_mesafe_m)} m). Giriş yalnızca şube içinden yapılabilir."
                 )
             konum_onaylandi = True
+        elif yonetici:
+            konum_onaylandi = True  # yönetici her zaman onaylı
 
         personel = dogrula_personel_panel_pin(cur, body.personel_id, body.pin)
 
