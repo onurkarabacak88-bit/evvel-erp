@@ -493,6 +493,7 @@ def build_panel_operasyon_blob(cur, sube_id: str, sube: dict, ensure: bool = Tru
 
 class OperasyonTamamla(BaseModel):
     personel_saat: Optional[str] = None
+    qr_onaylandi: bool = False  # QR ile onaylandıysa PIN atlanır
     kasa_sayim: Optional[float] = None
     teslim: Optional[float] = None
     devir: Optional[float] = None
@@ -985,14 +986,28 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             if not body.x_raporu_gonderildi:
                 raise HTTPException(400, "Kapanış: X raporu gönderildi onayı gerekli.")
             pid_in = (body.personel_id or "").strip()
-            pin = (body.pin or "").replace(" ", "")
-            if not pid_in:
-                raise HTTPException(400, "Kapanış: onaylayan personel seçilmeli.")
-            if len(pin) != 4 or not pin.isdigit():
-                raise HTTPException(400, "Kapanış: 4 haneli PIN gerekli.")
-            ku = dogrula_personel_panel_pin(cur, pid_in, pin)
-            onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
-            pid_panel = str(ku.get("id") or "").strip() or None
+            if body.qr_onaylandi:
+                # QR ile onaylandı — PIN atla, yoklama kaydından personel bul
+                cur.execute("""
+                    SELECT gy.personel_id, p.ad_soyad
+                    FROM gorev_yoklama gy
+                    JOIN personel p ON p.id::text = gy.personel_id
+                    WHERE gy.sube_id = %s AND gy.tarih = CURRENT_DATE
+                      AND gy.vardiya_tip = 'kapanis'
+                    ORDER BY gy.giris_ts DESC LIMIT 1
+                """, (sube_id,))
+                yoklama_row = cur.fetchone()
+                onay_ad = (yoklama_row["ad_soyad"] if yoklama_row else "QR Onay").strip() or "QR Onay"
+                pid_panel = str(yoklama_row["personel_id"]) if yoklama_row else None
+            else:
+                pin = (body.pin or "").replace(" ", "")
+                if not pid_in:
+                    raise HTTPException(400, "Kapanış: onaylayan personel seçilmeli.")
+                if len(pin) != 4 or not pin.isdigit():
+                    raise HTTPException(400, "Kapanış: 4 haneli PIN gerekli.")
+                ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+                onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+                pid_panel = str(ku.get("id") or "").strip() or None
             bildirim_saat = (body.personel_saat or "").strip() or simdi_tr.strftime("%H:%M:%S")
 
             for ad, deger in (
