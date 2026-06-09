@@ -8,6 +8,10 @@ from database import db
 
 router = APIRouter()
 
+# Sistem başlangıç tarihi — bu tarihten önceki veriler hesaba katılmaz
+from datetime import date as _SYSTEM_DATE
+SISTEM_BASLANGIC = _SYSTEM_DATE(2025, 6, 10)
+
 SABLON_SEED = [
     # (vardiya_tip, sira, alan, gorev, siklik)
     ('sabahci', 1, 'Bar', 'Espresso makinesi açılır ve çalışmaya hazır hale getirilir.', 'Açılış'),
@@ -700,6 +704,9 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
     from datetime import date as _date, timedelta
     d1 = _date(yil, ay, 1)
     d2 = _date(yil, ay, monthrange(yil, ay)[1])
+    # Sistem başlangıcından önce veri hesaplanmaz
+    if d1 < SISTEM_BASLANGIC:
+        d1 = SISTEM_BASLANGIC
 
     with db() as (conn, cur):
         # Personel listesi
@@ -932,17 +939,16 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
 
 
 @router.get("/api/gorev/izin-alacagi")
-def izin_alacagi(personel_id: Optional[str] = None, baslangic_yil: int = 2025):
+def izin_alacagi(personel_id: Optional[str] = None):
     """
-    Birikimli haftalık izin alacağı.
-    baslangic_yil'den bugüne kadar tüm haftaları tarar.
+    Birikimli haftalık izin alacağı — sistem başlangıcından (2025-06-10) bugüne.
     Verilen izin günleri (personel_izin tablosu) düşülür.
     """
     from datetime import date as _date, timedelta as _td
     from calendar import monthrange
 
     bugun = _date.today()
-    d1 = _date(baslangic_yil, 1, 1)
+    d1 = SISTEM_BASLANGIC
 
     with db() as (conn, cur):
         if personel_id:
@@ -971,11 +977,12 @@ def izin_alacagi(personel_id: Optional[str] = None, baslangic_yil: int = 2025):
             """, (pid, d1, bugun))
             calisma_gunleri = {r["tarih"] for r in cur.fetchall()}
 
-            # Haftalık izin tarama — Pazartesi başlayan haftalar
+            # Haftalık izin tarama — Pazartesi başlayan haftalar (sistem başlangıcından itibaren)
             haftalik_borclar = []
             borclu_hafta = 0
+            _tarama_bas = max(d1, SISTEM_BASLANGIC)
 
-            hafta = d1 - _td(days=d1.weekday())
+            hafta = _tarama_bas - _td(days=_tarama_bas.weekday())
             while hafta <= bugun:
                 hafta_bit = hafta + _td(days=6)
                 if hafta_bit > bugun:
@@ -1004,7 +1011,7 @@ def izin_alacagi(personel_id: Optional[str] = None, baslangic_yil: int = 2025):
                 WHERE personel_id = %s
                   AND baslangic_tarih >= %s AND baslangic_tarih <= %s
                 ORDER BY baslangic_tarih
-            """, (pid, d1, bugun))
+            """, (pid, SISTEM_BASLANGIC, bugun))
             izinler = [dict(r) for r in cur.fetchall()]
 
             # Verilen toplam izin günü (gün kesrini dikkate alarak)
