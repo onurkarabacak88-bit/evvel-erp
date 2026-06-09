@@ -3702,11 +3702,12 @@ def maas_hesapla(p: dict, kayit: dict) -> float:
     Personelin aylık net maaşını hesaplar.
 
     SÜREKLİ:
-      - Günlük standart: 9.5 saat, haftada 1 izin → aylık 26 gün × 9.5 = 247 saat
-      - Saatlik ücret = maaş / 247
-      - Fazla mesai: 9.5 saat üstü çalışma, ×1 (maaş zaten 9.5h sistemi içeriyor)
+      - Günlük standart: 9.5 saat, aylık 30 gün (izin günleri dahil, İş Kanunu standardı)
+      - Aylık saat: 30 × 9.5 = 285 saat
+      - Saatlik ücret = maaş / 285  → 28.000 / 285 = 98,25 ₺/saat
+      - Fazla mesai: 9.5 saat üstü çalışma × saatlik ücret
       - Bayram mesaisi: ×2
-      - Eksik gün kesintisi: saatlik × 9.5 × eksik_gün
+      - Eksik gün kesintisi: (maaş / 30) × eksik_gün  → 28.000/30 = 933 ₺/gün
 
     PART-TIME:
       - Saatlik ücret belirlenir
@@ -3716,8 +3717,8 @@ def maas_hesapla(p: dict, kayit: dict) -> float:
       - Yemek yok, yol var
     """
     GUNLUK_SAAT   = 9.5
-    AYLIK_GUN     = 26        # haftada 1 izin → 30 - 4 ≈ 26
-    AYLIK_SAAT    = GUNLUK_SAAT * AYLIK_GUN   # 247
+    AYLIK_GUN     = 30        # İş Kanunu standardı: izin günleri dahil 30 gün
+    AYLIK_SAAT    = GUNLUK_SAAT * AYLIK_GUN   # 285
 
     yol    = float(p.get('yol_ucreti') or 0)
     manuel = float(kayit.get('manuel_duzeltme') or 0)
@@ -3731,9 +3732,10 @@ def maas_hesapla(p: dict, kayit: dict) -> float:
         maas    = float(p.get('maas') or 0)
         yemek   = float(p.get('yemek_ucreti') or 0)
         saatlik = maas / AYLIK_SAAT if AYLIK_SAAT > 0 else 0
+        gunluk  = maas / AYLIK_GUN  if AYLIK_GUN  > 0 else 0
 
         kesinti_gun = eksik + (raporlu if rapor_kesinti else 0)
-        kesinti     = saatlik * GUNLUK_SAAT * kesinti_gun  # tam gün kesintisi
+        kesinti     = gunluk * kesinti_gun  # günlük ücret × eksik gün (İş Kanunu)
 
         fazla_ucret = (fazla_normal * saatlik) + (fazla_bayram * saatlik * 2)
         net = maas - kesinti + fazla_ucret + yemek + yol + manuel

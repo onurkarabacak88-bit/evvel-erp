@@ -947,9 +947,10 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
 
             yemek_ucret_tutari = yemek_ucret_gun * float(p.get("yemek_ucreti") or 0)
 
-            # ── ÜCRET HESABI ──────────────────────────────────────────
+            # ── ÜCRET HESABI — İş Kanunu standardı (30 gün) ──────────
             GUNLUK_SAAT = 9.5
-            AYLIK_SAAT  = 247.0  # 26 gün × 9.5
+            AYLIK_GUN   = 30.0   # İş Kanunu: izin günleri dahil
+            AYLIK_SAAT  = GUNLUK_SAAT * AYLIK_GUN  # 285
             is_surekli  = (p.get("calisma_turu") or "surekli") == "surekli"
             maas_taban  = float(p.get("maas") or 0)
             saatlik_ucr = float(p.get("saatlik_ucret") or 0)
@@ -957,17 +958,18 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
 
             if is_surekli:
                 saatlik     = maas_taban / AYLIK_SAAT if AYLIK_SAAT > 0 else 0
-                fazla_ucret = toplam_fazla_saat * saatlik  # ×1 (iş anlaşması)
+                gunluk      = maas_taban / AYLIK_GUN  if AYLIK_GUN  > 0 else 0
+                fazla_ucret = toplam_fazla_saat * saatlik
                 net_hesap   = maas_taban + fazla_ucret + yemek_ucret_tutari + yol_ucr
                 ucret_detay = {
                     "taban_maas":       round(maas_taban, 2),
-                    "saatlik_ucret":    round(saatlik, 4),
+                    "saatlik_ucret":    round(saatlik, 2),
+                    "gunluk_ucret":     round(gunluk, 2),
                     "fazla_mesai_saat": round(toplam_fazla_saat, 2),
                     "fazla_mesai_ucret":round(fazla_ucret, 2),
                     "yemek_ucret":      round(yemek_ucret_tutari, 2),
                     "yol_ucret":        round(yol_ucr, 2),
                     "net_hakediş":      round(net_hesap, 2),
-                    "not": "Fazla mesai ×1 saatlik ücret (iş sözleşmesi bazlı)",
                 }
             else:
                 # Part-time: toplam planlanan saat × saatlik ücret

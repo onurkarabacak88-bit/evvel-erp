@@ -202,6 +202,7 @@ function PersonelKart({ p, acik, onToggle }) {
                       💰 ÜCRET HESABI
                     </div>
                     {d.taban_maas != null && satir('Taban Maaş', fmt2(d.taban_maas), null)}
+                    {d.saatlik_ucret > 0 && satir('Saatlik Ücret (maaş/285)', fmt2(d.saatlik_ucret), 'var(--text3)')}
                     {d.calisma_saati != null && satir(`Çalışma (${d.calisma_saati}s × ${fmt2(d.saatlik_ucret)}/s)`, fmt2(d.normal_ucret), null)}
                     {d.fazla_mesai_saat > 0 && satir(`Fazla Mesai (${d.fazla_mesai_saat}s)`, '+' + fmt2(d.fazla_mesai_ucret), '#f59e0b')}
                     {d.yemek_ucret > 0 && satir('Yemek Ücreti', '+' + fmt2(d.yemek_ucret), '#4caf84')}
