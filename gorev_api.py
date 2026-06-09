@@ -732,6 +732,16 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             pid = p["id"]
             is_part = (p.get("calisma_turu") or "").lower() in ("part", "part_time", "part-time")
 
+            # Çıkmış personel için son gün dahil, sonrasını hesaplama
+            cikis = p.get("cikis_tarihi")
+            if cikis and not p.get("aktif", True):
+                if isinstance(cikis, str):
+                    from datetime import date as _d
+                    cikis = _d.fromisoformat(cikis)
+                p_d2 = min(d2, cikis)  # cikis_tarihi günü dahil
+            else:
+                p_d2 = d2
+
             # Vardiya atamaları bu ay
             cur.execute("""
                 SELECT va.tarih, va.baslangic_saat, va.bitis_saat,
@@ -747,7 +757,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 WHERE va.personel_id=%s AND va.tarih BETWEEN %s AND %s
                   AND va.durum IN ('planli','onayli')
                 ORDER BY va.tarih
-            """, (pid, d1, d2))
+            """, (pid, d1, p_d2))
             vardiyalar = {str(r["tarih"]): dict(r) for r in cur.fetchall()}
 
             # Yoklama kayıtları (giriş saatleri)
@@ -756,7 +766,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 FROM gorev_yoklama
                 WHERE personel_id=%s AND tarih BETWEEN %s AND %s
                 ORDER BY tarih, giris_ts
-            """, (pid, d1, d2))
+            """, (pid, d1, p_d2))
             yoklamalar = {}
             for r in cur.fetchall():
                 t = str(r["tarih"])
@@ -768,7 +778,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 SELECT tarih::text, sure_dk, ucret_hakki
                 FROM yemek_molasi
                 WHERE personel_id=%s AND tarih BETWEEN %s AND %s
-            """, (pid, d1, d2))
+            """, (pid, d1, p_d2))
             molalar = {str(r["tarih"]): dict(r) for r in cur.fetchall()}
 
             # Şube açılış gecikmeleri
@@ -778,7 +788,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 FROM sube_acilis sa
                 JOIN subeler s ON s.id = sa.sube_id
                 WHERE sa.personel_id=%s AND sa.tarih BETWEEN %s AND %s AND sa.durum='acildi'
-            """, (pid, d1, d2))
+            """, (pid, d1, p_d2))
             acilislar = {str(r["tarih"]): dict(r) for r in cur.fetchall()}
 
             # Haftalık izin analizi — her Pazartesi başlayan haftayı tara
@@ -822,7 +832,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             STANDART = 9.5
 
             tarih = d1
-            while tarih <= d2:
+            while tarih <= p_d2:
                 t = str(tarih)
                 v = vardiyalar.get(t)
                 y = yoklamalar.get(t)
