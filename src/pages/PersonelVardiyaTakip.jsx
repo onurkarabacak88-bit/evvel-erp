@@ -30,8 +30,90 @@ function Badge({ renk, label }) {
   );
 }
 
-function PersonelKart({ p, acik, onToggle }) {
+function EksikGunModal({ p, yil, ay, onKapat, onTamam }) {
+  const [gun, setGun] = useState(0.5);
+  const [not, setNot] = useState('');
+  const [yukleniyor, setYukleniyor] = useState(false);
+  const [sonuc, setSonuc] = useState(null);
+
+  const kaydet = async () => {
+    setYukleniyor(true);
+    try {
+      const res = await api('/gorev/gecikme-eksik-gun', {
+        method: 'POST',
+        body: { personel_id: p.personel_id, yil, ay, eksik_gun: gun, not_aciklama: not || null },
+      });
+      setSonuc(res);
+      setTimeout(() => { onTamam(); onKapat(); }, 1500);
+    } catch (e) {
+      alert(e.message || 'Hata');
+    } finally {
+      setYukleniyor(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+    }}>
+      <div style={{
+        background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 14,
+        padding: 24, maxWidth: 380, width: '90%',
+      }}>
+        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>Eksik Güne Çevir</div>
+        <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16 }}>
+          {p.ad_soyad} · {['','Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'][ay]} {yil}
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>Kaç gün eksik sayılacak?</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {[0.5, 1.0].map(g => (
+              <button key={g} onClick={() => setGun(g)} style={{
+                flex: 1, padding: '10px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                background: gun === g ? 'var(--accent)' : 'var(--bg3)',
+                color: gun === g ? '#fff' : 'var(--text2)', fontWeight: 700, fontSize: 14,
+              }}>
+                {g === 0.5 ? '½ Gün' : '1 Tam Gün'}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 4 }}>Kesinti: <strong style={{ color: '#e05c5c' }}>-{(28000/30*gun).toFixed(0)} ₺</strong> (maaş/30×{gun})</div>
+          <textarea value={not} onChange={e => setNot(e.target.value)}
+            placeholder="Not (opsiyonel) — örn: 3 kez geç giriş birikimi"
+            rows={2} style={{
+              width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 12,
+              background: 'var(--bg3)', border: '1px solid var(--border)',
+              color: 'var(--text1)', resize: 'none', boxSizing: 'border-box',
+            }} />
+        </div>
+        {sonuc && (
+          <div style={{ fontSize: 12, color: '#4caf84', marginBottom: 8, fontWeight: 700 }}>
+            ✅ İşlendi — Yeni net: {new Intl.NumberFormat('tr-TR').format(sonuc.hesaplanan_net)} ₺
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={onKapat} style={{
+            flex: 1, padding: '10px', borderRadius: 8, border: '1px solid var(--border)',
+            background: 'none', color: 'var(--text3)', cursor: 'pointer',
+          }}>İptal</button>
+          <button onClick={kaydet} disabled={yukleniyor} style={{
+            flex: 2, padding: '10px', borderRadius: 8, border: 'none',
+            background: '#e05c5c', color: '#fff', fontWeight: 700, cursor: 'pointer',
+          }}>
+            {yukleniyor ? 'İşleniyor…' : `Eksik Güne Çevir (-${(28000/30*gun).toFixed(0)} ₺)`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PersonelKart({ p, acik, onToggle, yil, ay, onYenile }) {
   const ayrildi = !p.aktif;
+  const [eksikModal, setEksikModal] = useState(false);
   return (
     <div style={{
       marginBottom: 10, borderRadius: 12, overflow: 'hidden',
@@ -39,6 +121,11 @@ function PersonelKart({ p, acik, onToggle }) {
       background: ayrildi ? 'rgba(107,111,122,0.04)' : 'var(--bg2)',
       opacity: ayrildi ? 0.8 : 1,
     }}>
+      {eksikModal && (
+        <EksikGunModal p={p} yil={yil} ay={ay}
+          onKapat={() => setEksikModal(false)}
+          onTamam={onYenile} />
+      )}
       {/* Özet satır */}
       <div onClick={onToggle} style={{
         padding: '14px 16px', cursor: 'pointer', display: 'flex',
@@ -79,6 +166,14 @@ function PersonelKart({ p, acik, onToggle }) {
               {fmt(p.toplam_gecikme_dk, true)}
             </div>
             <div style={{ color: 'var(--text3)', fontSize: 10 }}>Gecikme</div>
+            {p.toplam_gecikme_dk > 30 && (
+              <button onClick={e => { e.stopPropagation(); setEksikModal(true); }}
+                style={{ fontSize: 9, padding: '2px 6px', borderRadius: 6, border: 'none',
+                  background: 'rgba(224,92,92,0.15)', color: '#e05c5c', cursor: 'pointer',
+                  marginTop: 2, fontWeight: 700 }}>
+                Eksik Güne Çevir
+              </button>
+            )}
           </div>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontWeight: 700, color: '#4caf84' }}>{p.yemek_ucret_gun} gün</div>
@@ -390,6 +485,9 @@ export default function PersonelVardiyaTakip() {
           <PersonelKart
             key={p.personel_id}
             p={p}
+            yil={yil}
+            ay={ay}
+            onYenile={yukle}
             acik={!!aciklar[p.personel_id]}
             onToggle={() => toggle(p.personel_id)}
           />

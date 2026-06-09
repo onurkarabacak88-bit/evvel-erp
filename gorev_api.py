@@ -1008,6 +1008,82 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
         return {"yil": yil, "ay": ay, "personeller": sonuclar}
 
 
+class GecikmeEksikGunBody(BaseModel):
+    personel_id: str
+    yil: int
+    ay: int
+    eksik_gun: float          # kaç gün sayılacak (0.5 veya 1.0)
+    not_aciklama: Optional[str] = None
+
+
+@router.post("/api/gorev/gecikme-eksik-gun")
+def gecikme_eksik_gun_isle(body: GecikmeEksikGunBody):
+    """
+    Yönetici kararıyla gecikmeyi eksik gün olarak işler.
+    personel_aylik tablosunu günceller, net maaş yeniden hesaplanır.
+    """
+    with db() as (conn, cur):
+        # Personel bilgisi
+        cur.execute("SELECT * FROM personel WHERE id::text=%s", (body.personel_id,))
+        p = cur.fetchone()
+        if not p:
+            raise HTTPException(404, "Personel bulunamadı")
+
+        # Mevcut aylık kaydı
+        cur.execute("""
+            SELECT * FROM personel_aylik
+            WHERE personel_id=%s AND yil=%s AND ay=%s
+        """, (body.personel_id, body.yil, body.ay))
+        mevcut = cur.fetchone()
+
+        if mevcut and mevcut.get("durum") == "onaylandi":
+            raise HTTPException(400, "Onaylı kayıt değiştirilemez. Önce kilidi aç.")
+
+        mevcut_eksik = float((mevcut or {}).get("eksik_gun") or 0)
+        yeni_eksik   = round(mevcut_eksik + body.eksik_gun, 1)
+
+        # Maaş yeniden hesapla
+        import uuid as _uuid
+        GUNLUK_SAAT = 9.5
+        AYLIK_GUN   = 30.0
+        AYLIK_SAAT  = GUNLUK_SAAT * AYLIK_GUN
+        maas   = float(p.get("maas") or 0)
+        yemek  = float(p.get("yemek_ucreti") or 0)
+        yol    = float(p.get("yol_ucreti") or 0)
+        gunluk = maas / AYLIK_GUN
+
+        mevcut_dict = dict(mevcut) if mevcut else {}
+        fazla  = float(mevcut_dict.get("fazla_mesai_saat") or 0)
+        bayram = float(mevcut_dict.get("bayram_mesai_saat") or 0)
+        saatlik = maas / AYLIK_SAAT
+        net = maas - (gunluk * yeni_eksik) + (fazla * saatlik) + (bayram * saatlik * 2) + yemek + yol
+
+        not_ekle = body.not_aciklama or f"Gecikme → {body.eksik_gun} eksik gün olarak işlendi"
+        kid = str(_uuid.uuid4())
+        cur.execute("""
+            INSERT INTO personel_aylik
+                (id, personel_id, yil, ay, calisma_saati, fazla_mesai_saat,
+                 bayram_mesai_saat, eksik_gun, hesaplanan_net, not_aciklama, durum)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'taslak')
+            ON CONFLICT (personel_id, yil, ay) DO UPDATE SET
+                eksik_gun = %s,
+                hesaplanan_net = %s,
+                not_aciklama = COALESCE(personel_aylik.not_aciklama,'') || ' | ' || %s,
+                durum = 'taslak'
+        """, (kid, body.personel_id, body.yil, body.ay,
+              float(mevcut_dict.get("calisma_saati") or 0), fazla, bayram,
+              yeni_eksik, round(net, 2), not_ekle,
+              yeni_eksik, round(net, 2), not_ekle))
+        conn.commit()
+
+    return {
+        "basarili": True,
+        "yeni_eksik_gun": yeni_eksik,
+        "hesaplanan_net": round(net, 2),
+        "kesinti": round(gunluk * body.eksik_gun, 2),
+    }
+
+
 @router.get("/api/gorev/izin-alacagi")
 def izin_alacagi(personel_id: Optional[str] = None):
     """
