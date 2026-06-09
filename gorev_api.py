@@ -473,6 +473,18 @@ def gorev_yoklama_listesi(tarih: str, sube_id: Optional[str] = None):
         return [dict(r) for r in cur.fetchall()]
 
 
+@router.delete("/api/gorev/yoklama/{sube_id}")
+def gorev_yoklama_sil(sube_id: str, tarih: Optional[str] = None):
+    """Şube yoklama kaydını sil (test/sıfırlama). tarih verilmezse bugün."""
+    from tr_saat import is_gunu_tr
+    t = tarih or str(is_gunu_tr())
+    with db() as (conn, cur):
+        cur.execute("DELETE FROM gorev_yoklama WHERE sube_id=%s AND tarih=%s", (sube_id, t))
+        silinen = cur.rowcount
+        conn.commit()
+    return {"silinen": silinen, "sube_id": sube_id, "tarih": t}
+
+
 @router.get("/api/gorev/qr-liste")
 def gorev_qr_liste():
     """Tüm aktif şubelerin QR bilgilerini döner (ID, ad, URL)."""
