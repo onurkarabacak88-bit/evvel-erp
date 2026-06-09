@@ -266,7 +266,7 @@ def gorev_pin_giris(body: GorevPinGirisBody):
         sube = cur.fetchone()
 
         # Yönetici mi kontrol et — yöneticiler konum kısıtından muaf
-        cur.execute("SELECT panel_yonetici FROM personel WHERE id = %s::uuid", (body.personel_id,))
+        cur.execute("SELECT panel_yonetici FROM personel WHERE id::text = %s", (body.personel_id,))
         p_row = cur.fetchone()
         yonetici = bool(p_row and p_row["panel_yonetici"])
 

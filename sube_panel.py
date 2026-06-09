@@ -5314,7 +5314,7 @@ def sube_siparis_yoklama(sube_id: str, body: SiparisOnayBody):
         if not cur.fetchone():
             raise HTTPException(403, "Bu şube için geçerli QR yoklama kaydı bulunamadı. Önce QR okutun.")
         # Personel adını al
-        cur.execute("SELECT ad_soyad FROM personel WHERE id=%s::uuid", (pid_in,))
+        cur.execute("SELECT ad_soyad FROM personel WHERE id::text=%s", (pid_in,))
         p_row = cur.fetchone()
         onay_ad = (p_row["ad_soyad"] if p_row else pid_in).strip() or "—"
 
