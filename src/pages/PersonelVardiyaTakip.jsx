@@ -109,7 +109,8 @@ function PersonelKart({ p, acik, onToggle }) {
                 <tr key={g.tarih} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'transparent' : 'var(--bg3)' }}>
                   <td style={{ padding: '8px 12px', color: 'var(--text2)' }}>
                     {new Date(g.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', weekday: 'short' })}
-                    {!g.giris_var && <span style={{ marginLeft: 6, color: '#e05c5c', fontSize: 10 }}>giriş yok</span>}
+                    {g.baslangic_gunu && <span style={{ marginLeft: 6, fontSize: 10, color: '#4a9eff', fontWeight: 700 }}>Sistem başlangıcı</span>}
+                    {!g.baslangic_gunu && !g.giris_var && <span style={{ marginLeft: 6, color: '#e05c5c', fontSize: 10 }}>giriş yok</span>}
                   </td>
                   <td style={{ padding: '8px 12px', color: 'var(--text1)', fontWeight: 600 }}>{fmt(g.planlanan_saat)}s</td>
                   <td style={{ padding: '8px 12px' }}>

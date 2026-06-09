@@ -9,6 +9,8 @@ from database import db
 router = APIRouter()
 
 # Sistem başlangıç tarihi — bu tarihten önceki veriler hesaba katılmaz
+# Başlangıç günü (10 Haziran): o gün çalışan herkes tam+doğru çalışmış sayılır
+# (gecikme=0, fazla mesai=0, yemek=tam, haftalık izin=var)
 from datetime import date as _SYSTEM_DATE
 SISTEM_BASLANGIC = _SYSTEM_DATE(2025, 6, 10)
 
@@ -830,50 +832,71 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                     planlanan = float(v["planlanan_saat"] or 0)
                     toplam_planlanan += planlanan
 
-                    # Part ama tam (9.5h) yazılmış mı?
-                    part_tam = is_part and planlanan >= 9.4
+                    # Sistem başlangıç günü — herkes tam+doğru çalışmış sayılır
+                    baslangic_gunu = (tarih == SISTEM_BASLANGIC)
 
-                    # Gecikme: planlanan başlangıç vs giriş
-                    gecikme_dk = 0.0
-                    if y and v.get("baslangic_saat"):
-                        plan_bas_str = str(v["baslangic_saat"])[:5]  # "09:00"
-                        giris_ts = y["giris_ts"]
-                        if giris_ts:
-                            from datetime import datetime
-                            plan_h, plan_m = int(plan_bas_str[:2]), int(plan_bas_str[3:5])
-                            plan_dt = datetime(tarih.year, tarih.month, tarih.day, plan_h, plan_m)
-                            if hasattr(giris_ts, 'replace'):
-                                giris_naive = giris_ts.replace(tzinfo=None)
-                            else:
-                                giris_naive = giris_ts
-                            fark = (giris_naive - plan_dt).total_seconds() / 60
-                            gecikme_dk = max(0.0, fark)
-                    toplam_gecikme_dk += gecikme_dk
-
-                    # Fazla mesai
-                    fazla = max(0.0, planlanan - STANDART)
-                    toplam_fazla_saat += fazla
-
-                    # Yemek ücreti hakkı
-                    yemek_hak = False
-                    if m and m.get("ucret_hakki") is True:
-                        if part_tam or not is_part:
-                            yemek_hak = True
+                    if baslangic_gunu:
+                        # Tam çalışmış gibi: gecikme=0, fazla=0, yemek=hak kazanmış
+                        gecikme_dk = 0.0
+                        fazla = 0.0
+                        part_tam = False
+                        yemek_hak = not is_part  # sürekli personele yemek ücreti ver
+                        if yemek_hak:
                             yemek_ucret_gun += 1
+                        gunler.append({
+                            "tarih": t,
+                            "planlanan_saat": round(planlanan, 2),
+                            "gecikme_dk": 0.0,
+                            "fazla_mesai_saat": 0.0,
+                            "yemek_ucret_hakki": yemek_hak,
+                            "yemek_sure_dk": None,
+                            "part_tam_uyari": False,
+                            "giris_var": True,
+                            "baslangic_gunu": True,
+                        })
+                    else:
+                        # Normal hesaplama
+                        part_tam = is_part and planlanan >= 9.4
 
-                    if part_tam:
-                        part_tam_gun += 1
+                        # Gecikme: planlanan başlangıç vs giriş
+                        gecikme_dk = 0.0
+                        if y and v.get("baslangic_saat"):
+                            plan_bas_str = str(v["baslangic_saat"])[:5]
+                            giris_ts = y["giris_ts"]
+                            if giris_ts:
+                                from datetime import datetime
+                                plan_h, plan_m = int(plan_bas_str[:2]), int(plan_bas_str[3:5])
+                                plan_dt = datetime(tarih.year, tarih.month, tarih.day, plan_h, plan_m)
+                                giris_naive = giris_ts.replace(tzinfo=None) if hasattr(giris_ts, 'replace') else giris_ts
+                                fark = (giris_naive - plan_dt).total_seconds() / 60
+                                gecikme_dk = max(0.0, fark)
+                        toplam_gecikme_dk += gecikme_dk
 
-                    gunler.append({
-                        "tarih": t,
-                        "planlanan_saat": round(planlanan, 2),
-                        "gecikme_dk": round(gecikme_dk, 1),
-                        "fazla_mesai_saat": round(fazla, 2),
-                        "yemek_ucret_hakki": yemek_hak,
-                        "yemek_sure_dk": float(m["sure_dk"]) if m and m.get("sure_dk") else None,
-                        "part_tam_uyari": part_tam,
-                        "giris_var": y is not None,
-                    })
+                        # Fazla mesai
+                        fazla = max(0.0, planlanan - STANDART)
+                        toplam_fazla_saat += fazla
+
+                        # Yemek ücreti hakkı
+                        yemek_hak = False
+                        if m and m.get("ucret_hakki") is True:
+                            if part_tam or not is_part:
+                                yemek_hak = True
+                                yemek_ucret_gun += 1
+
+                        if part_tam:
+                            part_tam_gun += 1
+
+                        gunler.append({
+                            "tarih": t,
+                            "planlanan_saat": round(planlanan, 2),
+                            "gecikme_dk": round(gecikme_dk, 1),
+                            "fazla_mesai_saat": round(fazla, 2),
+                            "yemek_ucret_hakki": yemek_hak,
+                            "yemek_sure_dk": float(m["sure_dk"]) if m and m.get("sure_dk") else None,
+                            "part_tam_uyari": part_tam,
+                            "giris_var": y is not None,
+                            "baslangic_gunu": False,
+                        })
 
                 tarih += timedelta(days=1)
 
@@ -993,8 +1016,10 @@ def izin_alacagi(personel_id: Optional[str] = None):
                     if str(hafta + _td(days=i)) in calisma_gunleri
                 )
                 toplam_gun = (hafta_bit - hafta).days + 1
+                # Sistem başlangıç haftasını borçlu sayma — o hafta temiz başlangıç
+                baslangic_haftasi = (hafta <= SISTEM_BASLANGIC <= hafta + _td(days=6))
                 # Tam hafta (6+ gün) ve hiç boş gün yoksa borç
-                if toplam_gun >= 6 and calisilan >= toplam_gun:
+                if not baslangic_haftasi and toplam_gun >= 6 and calisilan >= toplam_gun:
                     borclu_hafta += 1
                     haftalik_borclar.append({
                         "hafta": str(hafta),
