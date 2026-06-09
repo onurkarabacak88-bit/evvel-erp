@@ -291,34 +291,58 @@ function MesaiCikisButon({ oturum }) {
           padding: '14px', borderRadius: 10, background: '#1a1d24',
           border: '1px solid #2a2d35',
         }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: '#e8e9ec', marginBottom: 12, textAlign: 'center' }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: '#e8e9ec', marginBottom: 4, textAlign: 'center' }}>
             Vardiyandan çıkış yapıyorsun
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => cikisYap('kasa_devri')} disabled={yukleniyor}
-              style={{
-                flex: 1, padding: '12px 8px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                background: 'rgba(74,158,255,0.15)', color: '#4a9eff', fontWeight: 700, fontSize: 13,
-                border: '1px solid rgba(74,158,255,0.3)',
-              }}>
-              💰 Kasa Devri
-            </button>
-            <button onClick={() => cikisYap('kapalis')} disabled={yukleniyor}
-              style={{
-                flex: 1, padding: '12px 8px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                background: 'rgba(200,149,106,0.15)', color: '#C8956A', fontWeight: 700, fontSize: 13,
-                border: '1px solid rgba(200,149,106,0.3)',
-              }}>
-              🔒 Kapanış
-            </button>
-            <button onClick={() => setOnayModal(false)}
-              style={{
-                padding: '12px', borderRadius: 8, border: '1px solid #2a2d35',
-                background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 13,
-              }}>
-              ✕
-            </button>
+          <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 12, textAlign: 'center' }}>
+            {oturum.vardiya_tip === 'kapanis'
+              ? 'Kapanış vardiyası — kafe kapanıyor'
+              : 'Yeni vardiya geliyor mu?'}
           </div>
+
+          {oturum.vardiya_tip === 'kapanis' ? (
+            /* Kapanış vardiyası — sadece kapanış */
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => cikisYap('kapalis')} disabled={yukleniyor}
+                style={{
+                  flex: 1, padding: '13px 8px', borderRadius: 8, cursor: 'pointer',
+                  background: 'rgba(200,149,106,0.15)', color: '#C8956A', fontWeight: 700, fontSize: 14,
+                  border: '1px solid rgba(200,149,106,0.3)',
+                }}>
+                🔒 Kapanış ile Bitir
+              </button>
+              <button onClick={() => setOnayModal(false)}
+                style={{ padding: '12px', borderRadius: 8, border: '1px solid #2a2d35', background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 13 }}>
+                ✕
+              </button>
+            </div>
+          ) : (
+            /* Sabahçı / ara vardiya — kasa devri önce, kapanış ikinci seçenek */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => cikisYap('kasa_devri')} disabled={yukleniyor}
+                  style={{
+                    flex: 1, padding: '13px 8px', borderRadius: 8, cursor: 'pointer',
+                    background: 'rgba(74,158,255,0.15)', color: '#4a9eff', fontWeight: 700, fontSize: 14,
+                    border: '1px solid rgba(74,158,255,0.3)',
+                  }}>
+                  💰 Kasa Devri ile Bitir
+                </button>
+                <button onClick={() => setOnayModal(false)}
+                  style={{ padding: '12px', borderRadius: 8, border: '1px solid #2a2d35', background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 13 }}>
+                  ✕
+                </button>
+              </div>
+              <button onClick={() => cikisYap('kapalis')} disabled={yukleniyor}
+                style={{
+                  width: '100%', padding: '9px', borderRadius: 8, cursor: 'pointer',
+                  background: 'none', color: '#6b6f7a', fontWeight: 600, fontSize: 12,
+                  border: '1px solid #2a2d35',
+                }}>
+                🔒 Tek başımayım, kapanışla bitir
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <button onClick={() => setOnayModal(true)} disabled={yukleniyor} style={{

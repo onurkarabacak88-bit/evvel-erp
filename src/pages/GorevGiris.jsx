@@ -6,18 +6,29 @@ import GorevPersonelSayfasi from './GorevPersonelSayfasi';
  * QR kod okutunca açılan sayfa: /gorev-giris/:subeId
  * Sidebar/nav yok — tam ekran, mobil öncelikli.
  */
-export default function GorevGiris({ subeId }) {
-  const [adim, setAdim] = useState('personel-sec'); // personel-sec | pin-gir | vardiya-sec | gorevler
+export default function GorevGiris({ subeId: subeIdProp }) {
+  const [adim, setAdim] = useState(subeIdProp ? 'personel-sec' : 'sube-sec'); // sube-sec | personel-sec | pin-gir | vardiya-sec | gorevler
+  const [subeId, setSubeId] = useState(subeIdProp || null);
+  const [subeler, setSubeler] = useState([]);
   const [subeBilgi, setSubeBilgi] = useState(null);
   const [personelListe, setPersonelListe] = useState([]);
   const [seciliPersonel, setSeciliPersonel] = useState(null);
   const [pin, setPin] = useState('');
   const [hata, setHata] = useState('');
-  const [yukleniyor, setYukleniyor] = useState(true);
+  const [yukleniyor, setYukleniyor] = useState(!!subeIdProp);
   const [oturum, setOturum] = useState(null);
   const [konum, setKonum] = useState(null); // { lat, lng } | null
   const [konumGerekli, setKonumGerekli] = useState(false); // şubede koordinat tanımlıysa true
   const [konumHata, setKonumHata] = useState(false);
+
+  // Şube listesini yükle (QR'sız mod için)
+  useEffect(() => {
+    if (subeIdProp) return;
+    api('/subeler').then(d => {
+      const liste = Array.isArray(d) ? d : d.subeler || [];
+      setSubeler(liste.filter(s => s.aktif !== false));
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!subeId) return;
@@ -102,11 +113,41 @@ export default function GorevGiris({ subeId }) {
   };
 
   const cikis = () => {
-    setAdim('personel-sec');
+    setAdim(subeIdProp ? 'personel-sec' : 'sube-sec');
     setSeciliPersonel(null);
     setPin('');
     setOturum(null);
     setHata('');
+    if (!subeIdProp) {
+      setSubeId(null);
+      setSubeBilgi(null);
+      setPersonelListe([]);
+    }
+  };
+
+  const subeSec = (sube) => {
+    setSubeId(sube.id);
+    setSubeBilgi(sube);
+    setYukleniyor(true);
+    // Personel listesini yükle
+    Promise.all([
+      api(`/gorev/sube-personel/${sube.id}`),
+    ]).then(([personeller]) => {
+      setPersonelListe(personeller || []);
+      if (sube.lat && sube.lng) {
+        setKonumGerekli(true);
+        if (!navigator.geolocation) {
+          setKonumHata(true);
+        } else {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => setKonum({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+            () => setKonumHata(true),
+            { enableHighAccuracy: true, timeout: 10000 }
+          );
+        }
+      }
+      setAdim('personel-sec');
+    }).catch(console.error).finally(() => setYukleniyor(false));
   };
 
   // ── Görevler ekranı ──
@@ -167,6 +208,38 @@ export default function GorevGiris({ subeId }) {
                 color: '#4a9eff', cursor: 'pointer', fontSize: 11, padding: 0 }}>
               Tekrar dene →
             </button>
+          </div>
+        )}
+
+        {/* Adım 0: Şube seç (QR'sız mod) */}
+        {adim === 'sube-sec' && (
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#b0b3bc', marginBottom: 12 }}>
+              Hangi şube?
+            </div>
+            {subeler.length === 0 ? (
+              <div style={{ fontSize: 13, color: '#6b6f7a', textAlign: 'center', padding: 20 }}>
+                <div className="spinner" style={{ margin: '0 auto 12px' }} />Şubeler yükleniyor…
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {subeler.map(s => (
+                  <button key={s.id}
+                    onClick={() => subeSec(s)}
+                    style={{
+                      padding: '14px 16px', borderRadius: 10, cursor: 'pointer',
+                      background: '#22262f', border: '1px solid #2a2d35',
+                      color: '#e8e9ec', fontSize: 15, fontWeight: 600, textAlign: 'left',
+                      transition: 'background 0.15s',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#2a2d35'}
+                    onMouseLeave={e => e.currentTarget.style.background = '#22262f'}
+                  >
+                    ☕ {s.ad}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

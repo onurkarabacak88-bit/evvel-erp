@@ -298,6 +298,29 @@ export default function GorevQR() {
         Personel sabah vardiyasına gelince telefonuyla okutur, adını seçer ve görevlerini görür.
         Konum tanımlıysa sistem personelin şubede olup olmadığını doğrular.
       </div>
+
+      <div style={{
+        marginTop: 12, padding: '12px 16px', borderRadius: 10,
+        background: 'rgba(74,158,255,0.06)', border: '1px solid rgba(74,158,255,0.2)',
+        fontSize: 12, color: 'var(--text2)', lineHeight: 1.8,
+      }}>
+        📱 <strong>QR'sız giriş:</strong> Personel QR taramadan da girebilir.
+        Aşağıdaki linki telefona kaydetin veya paylaşın:
+        <div style={{ marginTop: 8 }}>
+          <a
+            href={`${window.location.origin}/gorev-pin`}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              display: 'inline-block', padding: '7px 14px', borderRadius: 8,
+              background: 'rgba(74,158,255,0.12)', border: '1px solid rgba(74,158,255,0.3)',
+              color: '#4a9eff', fontWeight: 700, fontSize: 12, textDecoration: 'none',
+            }}
+          >
+            🔗 {window.location.origin}/gorev-pin
+          </a>
+        </div>
+      </div>
     </div>
   );
 }

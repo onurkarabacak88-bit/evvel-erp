@@ -155,6 +155,10 @@ export default function App() {
   if (gorevGirisMatch) {
     return <GorevGiris subeId={gorevGirisMatch[1]} />;
   }
+  // QR'sız direkt giriş — şube seçimli
+  if (window.location.pathname === '/gorev-pin') {
+    return <GorevGiris subeId={null} />;
+  }
 
   const [page, setPage] = useState(() => readPageFromHash() ?? 'panel');
   const mainRef = useRef(null);
