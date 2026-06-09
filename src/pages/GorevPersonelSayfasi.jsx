@@ -229,11 +229,12 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
 
 // ── Mesai Çıkış Butonu ───────────────────────────────────────────────────────
 function MesaiCikisButon({ oturum }) {
-  const [durum, setDurum] = useState(null); // null | 'onaylandi'
+  const [durum, setDurum] = useState(null); // null | 'qr-onay' | 'onaylandi'
   const [mesaj, setMesaj] = useState('');
   const [yukleniyor, setYukleniyor] = useState(false);
   const [onayModal, setOnayModal] = useState(false);
   const [konum, setKonum] = useState(null);
+  const [subeQrUrl, setSubeQrUrl] = useState(null);
 
   useEffect(() => {
     if (!navigator.geolocation) return;
@@ -258,15 +259,24 @@ function MesaiCikisButon({ oturum }) {
           lng: konum?.lng ?? null,
         },
       });
-      // Kasa devri ise devir kaydı oluştur (gelen vardiya kabul etmeli)
       if (tip === 'kasa_devri') {
+        // Devir kaydı oluştur — gelen kişi QR'dan kabul edecek
         await api('/gorev/devir-baslat', {
           method: 'POST',
           body: { sube_id: oturum.sube_id, devreden_id: oturum.personel_id },
-        }).catch(() => {}); // hata görünmesine gerek yok, yoklama zaten kaydedildi
+        }).catch(() => {});
+        setMesaj(res.mesaj || '✅ Kasa devri kaydedildi');
+        setDurum('onaylandi');
+      } else if (tip === 'kapalis') {
+        // Kapanış → QR onay ekranı göster
+        const origin = window.location.origin;
+        setSubeQrUrl(`${origin}/api/gorev/qr/${oturum.sube_id}`);
+        setMesaj(res.mesaj || '✅ Kapanış kaydedildi');
+        setDurum('qr-onay');
+      } else {
+        setMesaj(res.mesaj || '✅ Çıkış kaydedildi');
+        setDurum('onaylandi');
       }
-      setDurum('onaylandi');
-      setMesaj(res.mesaj || '✅ Çıkış kaydedildi');
     } catch (e) {
       const msg = e.message || '';
       if (msg.startsWith('sube_disinda|')) setMesaj('📍 ' + msg.split('|')[1]);
@@ -276,6 +286,35 @@ function MesaiCikisButon({ oturum }) {
       setYukleniyor(false);
     }
   };
+
+  // Kapanış sonrası QR onay ekranı
+  if (durum === 'qr-onay') return (
+    <div style={{
+      margin: '8px 16px', padding: '16px', borderRadius: 12,
+      background: '#1a1d24', border: '1px solid rgba(200,149,106,0.4)',
+      textAlign: 'center',
+    }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: '#C8956A', marginBottom: 4 }}>
+        🔒 Kapanış Tamamlandı
+      </div>
+      <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 12, lineHeight: 1.6 }}>
+        Şube QR kodunu okut — onay verildi
+      </div>
+      {subeQrUrl && (
+        <img src={subeQrUrl} alt="Şube QR" style={{ width: 140, height: 140, borderRadius: 8, marginBottom: 12 }} />
+      )}
+      <div style={{ fontSize: 11, color: '#4caf84', fontWeight: 600 }}>
+        ✅ {mesaj}
+      </div>
+      <button onClick={() => setDurum('onaylandi')}
+        style={{
+          marginTop: 12, padding: '8px 20px', borderRadius: 8, fontSize: 12,
+          background: 'none', border: '1px solid #2a2d35', color: '#6b6f7a', cursor: 'pointer',
+        }}>
+        Kapat
+      </button>
+    </div>
+  );
 
   if (durum === 'onaylandi') return (
     <div style={{
@@ -303,20 +342,20 @@ function MesaiCikisButon({ oturum }) {
           </div>
           <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 12, textAlign: 'center' }}>
             {oturum.vardiya_tip === 'kapanis'
-              ? 'Kapanış vardiyası — kafe kapanıyor'
+              ? 'Görevleri tamamladın, kapanışı onayla'
               : 'Yeni vardiya geliyor mu?'}
           </div>
 
           {oturum.vardiya_tip === 'kapanis' ? (
-            /* Kapanış vardiyası — sadece kapanış */
+            /* Kapanış → QR ile Onayla */
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => cikisYap('kapalis')} disabled={yukleniyor}
                 style={{
-                  flex: 1, padding: '13px 8px', borderRadius: 8, cursor: 'pointer',
-                  background: 'rgba(200,149,106,0.15)', color: '#C8956A', fontWeight: 700, fontSize: 14,
-                  border: '1px solid rgba(200,149,106,0.3)',
+                  flex: 1, padding: '15px 8px', borderRadius: 8, cursor: 'pointer',
+                  background: 'rgba(200,149,106,0.15)', color: '#C8956A', fontWeight: 800, fontSize: 15,
+                  border: '1px solid rgba(200,149,106,0.4)',
                 }}>
-                🔒 Kapanış ile Bitir
+                🔲 QR ile Onayla
               </button>
               <button onClick={() => setOnayModal(false)}
                 style={{ padding: '12px', borderRadius: 8, border: '1px solid #2a2d35', background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 13 }}>
@@ -324,7 +363,7 @@ function MesaiCikisButon({ oturum }) {
               </button>
             </div>
           ) : (
-            /* Sabahçı / ara vardiya — kasa devri önce, kapanış ikinci seçenek */
+            /* Sabahçı / ara vardiya */
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={() => cikisYap('kasa_devri')} disabled={yukleniyor}
