@@ -722,7 +722,8 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             cur.execute("""
                 SELECT id::text, ad_soyad, calisma_turu, maas, saatlik_ucret,
                        yemek_ucreti, yol_ucreti, aktif, cikis_tarihi
-                FROM personel ORDER BY aktif DESC, ad_soyad
+                FROM personel
+                ORDER BY aktif DESC, ad_soyad
             """)
         personeller = [dict(r) for r in cur.fetchall()]
 
@@ -976,12 +977,11 @@ def izin_alacagi(personel_id: Optional[str] = None):
     with db() as (conn, cur):
         if personel_id:
             cur.execute("""
-                SELECT id::text, ad_soyad FROM personel
-                WHERE id::text=%s AND aktif=TRUE
+                SELECT id::text, ad_soyad FROM personel WHERE id::text=%s
             """, (personel_id,))
         else:
             cur.execute("""
-                SELECT id::text, ad_soyad FROM personel WHERE aktif=TRUE ORDER BY ad_soyad
+                SELECT id::text, ad_soyad FROM personel ORDER BY ad_soyad
             """)
         personeller = [dict(r) for r in cur.fetchall()]
 
