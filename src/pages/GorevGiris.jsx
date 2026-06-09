@@ -74,7 +74,13 @@ export default function GorevGiris({ subeId }) {
         },
       });
       setPinDogruOturum(sonuc);
-      setAdim('vardiya-sec');
+      // Vardiya planından otomatik algılandıysa seçim ekranını atla
+      if (sonuc.vardiya_tanimli) {
+        setOturum(sonuc);
+        setAdim('gorevler');
+      } else {
+        setAdim('vardiya-sec');
+      }
     } catch (e) {
       const msg = e.message || '';
       if (msg.startsWith('sube_disinda|')) {

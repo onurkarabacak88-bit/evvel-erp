@@ -12229,7 +12229,12 @@ function renderAdim2(row) {
   h += '<div class="form-group"><label>Açıklama (zorunlu)</label><textarea id="dvAciklama" rows="3" placeholder="Örn: Bardak sayısı eksik, anlaştık — gece teslim alacağım." style="font-size:13px"></textarea></div>';
   h += '</div>';
   h += '<div class="form-group"><label>Devralan (Akşamcı)</label><select id="dvPers2"></select></div>';
-  h += '<div class="form-group"><label>PIN</label><input id="dvPin2" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
+  h += '<div style="display:flex;gap:8px;margin-bottom:10px">';
+  h += '<button type="button" class="btn btn-success" style="flex:1" onclick="dvQrAksamciAc()">📱 QR ile Devral (Mesai Girişi)</button>';
+  h += '</div>';
+  h += '<details style="margin-bottom:8px"><summary style="font-size:12px;color:var(--muted);cursor:pointer">veya PIN ile devral</summary>';
+  h += '<div class="form-group" style="margin-top:8px"><label>PIN</label><input id="dvPin2" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
+  h += '</details>';
   h += '<button class="btn btn-success" id="dvAdim2Btn" style="margin-top:6px">Devri Kabul Et ve İmzala</button>';
   h += '<div id="dvMsg"></div>';
   return h;
@@ -12420,7 +12425,13 @@ function renderKasaDevir() {
     '<div class="sip-alt-baslik">Adım 5 / 5 — Bitir ve İmzala</div>' +
     '<label class="chk-row"><input type="checkbox" id="dvKasaSayim" /><span>Kasadaki nakit sayımını doğruladım</span></label>' +
     '<div class="form-group"><label>Devreden (Sabahçı)</label><select id="dvPers1"></select></div>' +
-    '<div class="form-group"><label>PIN</label><input id="dvPin1" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>' +
+    '<div style="display:flex;gap:8px;margin-bottom:10px">' +
+    '<button type="button" id="dvQrOnayBtn" class="btn btn-warn btn-sm" style="flex:1" onclick="dvQrOnayAc()">' +
+    '📱 QR ile Onayla (Mesai Çıkışı)</button>' +
+    '</div>' +
+    '<details style="margin-bottom:8px"><summary style="font-size:12px;color:var(--muted);cursor:pointer">veya PIN ile onayla</summary>' +
+    '<div class="form-group" style="margin-top:8px"><label>PIN</label><input id="dvPin1" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>' +
+    '</details>' +
     '<div style="display:flex;gap:8px">' +
     '<button class="btn btn-ghost btn-sm" type="button" id="dvBack5">Geri</button>' +
     '<button class="btn btn-warn btn-sm" type="button" id="dvAdim1Btn">1. İmza — Devri Başlat</button>' +
@@ -13204,6 +13215,37 @@ function wirePuanHandler() {
 // ─── OPERASyon OVERLAY ───────────────────────────────────────
 var opAcilisStep=1, opAcilisKasa=null, opAcilisStok={};
 
+// ── KASA DEVRİ QR ONAY (sabahçı çıkış + akşamcı giriş) ─────────────
+window.dvQrOnayAc = function() {
+  // Sabahçı QR okutup "Kasa Devri" seçince mesai çıkışı + dvPin1 dolar
+  mesaiCikisQrAc('kasa_devri');
+  // Onaylandı callback'i override et — PIN alanını doldur
+  var _origOnaylandi = mesaiCikisOnaylandi;
+  window._dvQrHook = function(adSoyad) {
+    // Devir akışı zaten gorev_yoklama'ya cikis_ts kaydetti
+    // Şimdi dvAdim1Btn'i otomatik tetikle (personel zaten seçili varsayarak)
+    var btn1 = document.getElementById('dvAdim1Btn');
+    // PIN alanına placeholder yaz (QR onaylandı işareti)
+    var pin1 = document.getElementById('dvPin1');
+    if (pin1) pin1.value = '0000'; // QR onaylıda PIN bypass
+    mesaiCikisQrKapat();
+    showToast('✅ ' + (adSoyad || 'Personel') + ' QR ile onayladı — Devri Başlat butonuna bas.', 'ok', 3000);
+  };
+};
+
+window.dvQrAksamciAc = function() {
+  // Akşamcı QR okutup "Kasa Devri" seçince mesai girişi
+  // Burada akşamcının yoklaması zaten gorev_yoklama'ya yazılır (giris_ts)
+  // dvPin2 doldurulur
+  mesaiCikisQrAc('kasa_devri_aksamci');
+  window._dvQrHook = function(adSoyad) {
+    var pin2 = document.getElementById('dvPin2');
+    if (pin2) pin2.value = '0000';
+    mesaiCikisQrKapat();
+    showToast('✅ ' + (adSoyad || 'Personel') + ' QR ile devri aldı — Devri Kabul Et butonuna bas.', 'ok', 3000);
+  };
+};
+
 // ── MESAİ ÇIKIŞ QR ──────────────────────────────────────────────────
 var _mesaiCikisTip = null;
 var _mesaiCikisTimer = null;
@@ -13241,7 +13283,14 @@ function mesaiCikisQrAc(tip) {
         _mesaiCikisTimer = null;
         var r = d.find(function(r){ return r.cikis_ts && r.cikis_tip === _mesaiCikisTip; });
         var ad = r ? (r.ad_soyad || '') : '';
-        mesaiCikisOnaylandi(ad);
+        // Hook varsa (kasa devri QR) çağır
+        if (typeof window._dvQrHook === 'function') {
+          var hook = window._dvQrHook;
+          window._dvQrHook = null;
+          hook(ad);
+        } else {
+          mesaiCikisOnaylandi(ad);
+        }
       }
     } catch(_) {}
   }, 4000);

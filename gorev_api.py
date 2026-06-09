@@ -298,20 +298,50 @@ def gorev_pin_giris(body: GorevPinGirisBody):
 
         personel = dogrula_personel_panel_pin(cur, body.personel_id, body.pin)
 
-        saat = dt_now_tr().hour
-        if saat < 12:
-            vardiya_tip = "sabahci"
-        elif saat < 18:
-            vardiya_tip = "ara_vardiya"
-        else:
-            vardiya_tip = "kapanis"
-
         tarih = str(is_gunu_tr())
-
-        # Bugünkü planlanan mesai süresi (yemek molası hak kontrolü için)
         from datetime import date as _d2
         bugun = _d2.fromisoformat(tarih)
+
+        # Vardiya planından otomatik algıla
+        SLOT_TIP_MAP = {
+            'acilis': 'sabahci', 'normal': 'sabahci',
+            'yogun': 'ara_vardiya', 'kapanis': 'kapanis',
+        }
         cur.execute("""
+            SELECT vs.tip, va.baslangic_saat,
+                   EXTRACT(EPOCH FROM (
+                       CASE WHEN va.bitis_saat <= va.baslangic_saat
+                            THEN (va.bitis_saat::time + INTERVAL '24h') - va.baslangic_saat::time
+                            ELSE va.bitis_saat::time - va.baslangic_saat::time END
+                   ))/3600.0 AS planlanan_saat
+            FROM vardiya_atama va
+            JOIN vardiya_slot vs ON vs.id = va.slot_id
+            WHERE va.personel_id = %s AND va.tarih = %s
+              AND vs.sube_id = %s AND va.durum IN ('planli','onayli')
+              AND vs.aktif = TRUE
+            ORDER BY va.baslangic_saat LIMIT 1
+        """, (body.personel_id, bugun, body.sube_id))
+        slot_row = cur.fetchone()
+
+        if slot_row:
+            vardiya_tip = SLOT_TIP_MAP.get(slot_row["tip"], "sabahci")
+            planlanan_saat = float(slot_row["planlanan_saat"] or 0)
+            vardiya_tanimli = True
+        else:
+            # Plandan bulunamadı → saate göre tahmin, seçim ekranı çıksın
+            saat = dt_now_tr().hour
+            if saat < 12:
+                vardiya_tip = "sabahci"
+            elif saat < 18:
+                vardiya_tip = "ara_vardiya"
+            else:
+                vardiya_tip = "kapanis"
+            planlanan_saat = 0.0
+            vardiya_tanimli = False
+
+        # Planlanan saat ayrıca sorgulama gerekiyorsa (slot_row'dan alındı, tekrar sorgulamaya gerek yok)
+        if False:  # placeholder — artık slot_row'dan geliyor
+            cur.execute("""
             SELECT EXTRACT(EPOCH FROM (
                 CASE WHEN va.bitis_saat <= va.baslangic_saat
                      THEN (va.bitis_saat::time + INTERVAL '24h') - va.baslangic_saat::time
@@ -321,31 +351,11 @@ def gorev_pin_giris(body: GorevPinGirisBody):
             JOIN vardiya_slot vs ON vs.id = va.slot_id
             WHERE va.personel_id = %s AND va.tarih = %s
               AND va.durum IN ('planli','onayli')
-            ORDER BY planlanan_saat DESC LIMIT 1
-        """, (body.personel_id, bugun))
-        vs_row = cur.fetchone()
-        planlanan_saat = float(vs_row["planlanan_saat"]) if vs_row else 0.0
         calisma_turu = personel.get("calisma_turu") or "surekli"
 
-        # Personelin asıl şubesi
+        # Personelin asıl şubesi + vardiya dışı kontrolü
         asil_sube_id = personel.get("sube_id") or body.sube_id
-        vardiya_disi = str(asil_sube_id) != str(body.sube_id)
-
-        # Vardiya planında bu personel var mı?
-        from datetime import date as _date
-        bugun = _date.fromisoformat(tarih)
-        haftanin_gunu = bugun.weekday() + 1
-        cur.execute("""
-            SELECT 1 FROM vardiya_atama va
-            JOIN vardiya_slot vs ON vs.id = va.slot_id
-            WHERE va.personel_id = %s AND va.tarih = %s
-              AND vs.sube_id = %s AND va.durum IN ('planli','onayli')
-              AND vs.aktif = TRUE AND %s = ANY(vs.aktif_gunler)
-            LIMIT 1
-        """, (body.personel_id, bugun, body.sube_id, haftanin_gunu))
-        vardiya_planinda = cur.fetchone() is not None
-        if not vardiya_planinda:
-            vardiya_disi = True
+        vardiya_disi = str(asil_sube_id) != str(body.sube_id) or not vardiya_tanimli
 
         # Yoklama kaydı
         cur.execute("""
@@ -367,8 +377,9 @@ def gorev_pin_giris(body: GorevPinGirisBody):
             "vardiya_disi": vardiya_disi,
             "calisma_turu": calisma_turu,
             "planlanan_saat": round(planlanan_saat, 2),
-            # Part personel yemek molası hakkı: 9.5 saat+ vardiya gerekir
             "yemek_mola_hakki": (calisma_turu == "surekli") or (planlanan_saat >= 9.5),
+            "vardiya_tanimli": vardiya_tanimli,
+            # vardiya_tanimli=False ise frontend seçim ekranı gösterir
         }
 
 
