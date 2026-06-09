@@ -622,6 +622,55 @@ def yemek_durum(sube_id: str, personel_id: str):
         }
 
 
+class MesaiCikisBody(BaseModel):
+    sube_id: str
+    personel_id: str
+    cikis_tip: Optional[str] = "manuel"  # kasa_devri | kapalis | manuel
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+@router.post("/api/gorev/mesai-cikis")
+def mesai_cikis(body: MesaiCikisBody):
+    """Personel mesai çıkışı — kasa devri veya kapanışta QR onayıyla."""
+    from tr_saat import is_gunu_tr, dt_now_tr
+    tarih = str(is_gunu_tr())
+    with db() as (conn, cur):
+        # Konum kontrolü (koordinat tanımlıysa)
+        _konum_kontrol(cur, body.sube_id, body.lat, body.lng, "Mesai çıkışı")
+        # Bugün bu şubede aktif yoklama var mı?
+        cur.execute("""
+            SELECT id, giris_ts, cikis_ts, vardiya_tip
+            FROM gorev_yoklama
+            WHERE sube_id=%s AND personel_id=%s AND tarih=%s
+            ORDER BY giris_ts DESC LIMIT 1
+        """, (body.sube_id, body.personel_id, tarih))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Bugün bu şube için giriş kaydı bulunamadı.")
+        if row["cikis_ts"]:
+            raise HTTPException(400, "Mesai çıkışı zaten yapılmış.")
+        cikis_ts = dt_now_tr()
+        cur.execute("""
+            UPDATE gorev_yoklama
+            SET cikis_ts=%s, cikis_tip=%s
+            WHERE id=%s
+        """, (cikis_ts, body.cikis_tip, row["id"]))
+        conn.commit()
+        # Çalışılan süreyi hesapla
+        giris = row["giris_ts"].replace(tzinfo=None) if row["giris_ts"] else None
+        cikis_naive = cikis_ts.replace(tzinfo=None)
+        sure_dk = round((cikis_naive - giris).total_seconds() / 60) if giris else None
+    return {
+        "basarili": True,
+        "cikis_ts": str(cikis_ts),
+        "cikis_tip": body.cikis_tip,
+        "sure_dk": sure_dk,
+        "vardiya_tip": row["vardiya_tip"],
+        "mesaj": f"✅ Mesai çıkışı kaydedildi — çalışma süresi: {sure_dk//60}s {sure_dk%60}dk" if sure_dk else "✅ Mesai çıkışı kaydedildi.",
+    }
+
+
 @router.delete("/api/gorev/yoklama/{sube_id}")
 def gorev_yoklama_sil(sube_id: str, tarih: Optional[str] = None, kasa_da: bool = False):
     """Şube yoklama kaydını sil (test/sıfırlama). kasa_da=true ile kasa kaydını da siler."""

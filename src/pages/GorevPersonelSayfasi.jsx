@@ -227,6 +227,112 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
   );
 }
 
+// ── Mesai Çıkış Butonu ───────────────────────────────────────────────────────
+function MesaiCikisButon({ oturum }) {
+  const [durum, setDurum] = useState(null); // null | 'onaylandi'
+  const [mesaj, setMesaj] = useState('');
+  const [yukleniyor, setYukleniyor] = useState(false);
+  const [onayModal, setOnayModal] = useState(false);
+  const [konum, setKonum] = useState(null);
+
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      p => setKonum({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, []);
+
+  const cikisYap = async (tip) => {
+    setYukleniyor(true);
+    setOnayModal(false);
+    try {
+      const res = await api('/gorev/mesai-cikis', {
+        method: 'POST',
+        body: {
+          sube_id: oturum.sube_id,
+          personel_id: oturum.personel_id,
+          cikis_tip: tip,
+          lat: konum?.lat ?? null,
+          lng: konum?.lng ?? null,
+        },
+      });
+      setDurum('onaylandi');
+      setMesaj(res.mesaj || '✅ Çıkış kaydedildi');
+    } catch (e) {
+      const msg = e.message || '';
+      if (msg.startsWith('sube_disinda|')) setMesaj('📍 ' + msg.split('|')[1]);
+      else if (msg.startsWith('konum_gerekli|')) setMesaj('📍 Konum izni gerekli.');
+      else setMesaj(msg || 'Hata oluştu');
+    } finally {
+      setYukleniyor(false);
+    }
+  };
+
+  if (durum === 'onaylandi') return (
+    <div style={{
+      margin: '8px 16px', padding: '10px 14px', borderRadius: 10,
+      background: 'rgba(76,175,132,0.08)', border: '1px solid rgba(76,175,132,0.3)',
+      fontSize: 13, color: '#4caf84', fontWeight: 600,
+    }}>
+      {mesaj}
+    </div>
+  );
+
+  return (
+    <div style={{ margin: '8px 16px' }}>
+      {mesaj && (
+        <div style={{ fontSize: 12, color: '#e05c5c', marginBottom: 6, textAlign: 'center' }}>{mesaj}</div>
+      )}
+
+      {onayModal ? (
+        <div style={{
+          padding: '14px', borderRadius: 10, background: '#1a1d24',
+          border: '1px solid #2a2d35',
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: '#e8e9ec', marginBottom: 12, textAlign: 'center' }}>
+            Vardiyandan çıkış yapıyorsun
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => cikisYap('kasa_devri')} disabled={yukleniyor}
+              style={{
+                flex: 1, padding: '12px 8px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                background: 'rgba(74,158,255,0.15)', color: '#4a9eff', fontWeight: 700, fontSize: 13,
+                border: '1px solid rgba(74,158,255,0.3)',
+              }}>
+              💰 Kasa Devri
+            </button>
+            <button onClick={() => cikisYap('kapalis')} disabled={yukleniyor}
+              style={{
+                flex: 1, padding: '12px 8px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                background: 'rgba(200,149,106,0.15)', color: '#C8956A', fontWeight: 700, fontSize: 13,
+                border: '1px solid rgba(200,149,106,0.3)',
+              }}>
+              🔒 Kapanış
+            </button>
+            <button onClick={() => setOnayModal(false)}
+              style={{
+                padding: '12px', borderRadius: 8, border: '1px solid #2a2d35',
+                background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 13,
+              }}>
+              ✕
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setOnayModal(true)} disabled={yukleniyor} style={{
+          width: '100%', padding: '12px', borderRadius: 10,
+          background: 'rgba(224,92,92,0.08)', border: '1px solid rgba(224,92,92,0.25)',
+          color: '#e05c5c', fontWeight: 700, fontSize: 14, cursor: 'pointer',
+        }}>
+          {yukleniyor ? '…' : '🏁 Vardiyamı Bitir'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Yemek Molası Butonu ──────────────────────────────────────────────────────
 function YemekMolasiButon({ oturum }) {
   const [durum, setDurum] = useState(null); // null | 'devam' | 'bitti'
@@ -572,8 +678,13 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
       {/* Vardiyam sekmesi */}
       {sekme === 'vardiyam' && <VardiyamEkrani oturum={oturum} />}
 
-      {/* Yemek Molası — her iki sekmede de görünür */}
-      {sekme === 'gorevler' && <YemekMolasiButon oturum={oturum} />}
+      {/* Yemek Molası + Mesai Çıkış */}
+      {sekme === 'gorevler' && (
+        <>
+          <YemekMolasiButon oturum={oturum} />
+          <MesaiCikisButon oturum={oturum} />
+        </>
+      )}
 
       {/* Görev listesi — sadece görevlerim sekmesinde */}
       {sekme !== 'gorevler' ? null : <div style={{ padding: '12px 16px', paddingBottom: 80 }}>

@@ -5515,6 +5515,46 @@
   </div>
 </div>
 
+<!-- ── OVERLAY: MESAİ ÇIKIŞ QR ──────────────────── -->
+<div id="mesaiCikisQrOverlay" class="overlay" style="display:none;z-index:9700">
+  <div class="overlay-kart" style="text-align:center;max-width:380px;position:relative">
+    <div id="mesaiCikisQrIcerik">
+      <!-- QR ekranı — personel okumadan önce -->
+      <div id="mesaiCikisQrBekle">
+        <div style="font-size:32px;margin-bottom:8px" id="mesaiCikisIkon">💰</div>
+        <h2 style="margin-bottom:4px" id="mesaiCikisBaslik">Kasa Devri</h2>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:18px;line-height:1.6" id="mesaiCikisAciklama">
+          Kasa devrini yapacak personel QR kodu telefonuyla okutup onaylasın.
+        </p>
+        <div style="background:#fff;border-radius:12px;padding:14px;display:inline-block;
+          box-shadow:0 4px 20px rgba(0,0,0,0.25);margin-bottom:16px">
+          <img id="mesaiCikisQrImg" src="" alt="QR"
+            style="width:220px;height:220px;display:block" />
+        </div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;
+          font-size:13px;color:var(--muted);margin-bottom:16px">
+          <div class="spinner" style="width:14px;height:14px"></div>
+          <span>Personel onayı bekleniyor…</span>
+        </div>
+        <button onclick="mesaiCikisQrKapat()" class="btn btn-ghost"
+          style="width:100%;padding:12px;font-size:14px">
+          İptal
+        </button>
+      </div>
+      <!-- Onaylandı ekranı -->
+      <div id="mesaiCikisOnaylandi" style="display:none">
+        <div style="font-size:48px;margin-bottom:16px">✅</div>
+        <h2 style="margin-bottom:8px">Mesai Çıkışı Onaylandı</h2>
+        <p id="mesaiCikisOnayMesaj" style="font-size:13px;color:var(--muted);margin-bottom:24px"></p>
+        <button id="mesaiCikisDevamBtn" class="btn btn-primary"
+          style="width:100%;padding:14px;font-size:15px;font-weight:800">
+          Devam Et →
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ── OVERLAY: MOLA QR ──────────────────── -->
 <div id="molaQrOverlay" class="overlay" style="display:none;z-index:9600">
   <div class="overlay-kart" style="text-align:center;max-width:380px;position:relative">
@@ -9102,17 +9142,8 @@ window.devirModalAc = function() {
       return;
     }
   } catch (e) { /* */ }
-  var m = document.getElementById('devirModal');
-  if (!m) return;
-  m.classList.add('acik');
-  // Devir içeriğini yükle
-  if (!kasaDevirPeriyotikYenilemeAtla()) {
-    renderKasaDevir();
-  }
-  // Sağ paneldeki tab butonunu aktif göster (görsel tutarlılık)
-  document.querySelectorAll('.sag-tab').forEach(function(b){ b.classList.remove('active'); });
-  var t = document.getElementById('sagTab-kasa');
-  if (t) t.classList.add('active');
+  // QR mesai çıkış overlay'ini göster — personel okutunca devir açılır
+  mesaiCikisQrAc('kasa_devri');
 };
 
 window.devirModalKapat = function() {
@@ -9137,15 +9168,8 @@ window.kapanisModalAc = function() {
       return;
     }
   } catch (e) { /* veri yoksa normal akışa devam */ }
-  var m = document.getElementById('kapanisModal');
-  if (!m) return;
-  m.classList.add('acik');
-  wireKapanisStepFlow();
-  setKapanisStep(1);
-  // Sağ paneldeki tab butonunu aktif göster
-  document.querySelectorAll('.sag-tab').forEach(function(b){ b.classList.remove('active'); });
-  var t = document.getElementById('sagTab-kapanis');
-  if (t) t.classList.add('active');
+  // QR mesai çıkış overlay'ini göster — personel okutunca kapanış açılır
+  mesaiCikisQrAc('kapalis');
 };
 
 window.kapanisModalKapat = function() {
@@ -13173,6 +13197,88 @@ function wirePuanHandler() {
 
 // ─── OPERASyon OVERLAY ───────────────────────────────────────
 var opAcilisStep=1, opAcilisKasa=null, opAcilisStok={};
+
+// ── MESAİ ÇIKIŞ QR ──────────────────────────────────────────────────
+var _mesaiCikisTip = null;
+var _mesaiCikisTimer = null;
+
+function mesaiCikisQrAc(tip) {
+  _mesaiCikisTip = tip;
+  var ikon = tip === 'kasa_devri' ? '💰' : '🔒';
+  var baslik = tip === 'kasa_devri' ? 'Kasa Devri Onayı' : 'Kapanış Onayı';
+  var aciklama = tip === 'kasa_devri'
+    ? 'Devri yapan personel QR kodu okutup "Kasa Devri" butonuna bassın.'
+    : 'Kapanışı yapan personel QR kodu okutup "Kapanış" butonuna bassın.';
+  var el = document.getElementById('mesaiCikisIkon'); if (el) el.textContent = ikon;
+  el = document.getElementById('mesaiCikisBaslik'); if (el) el.textContent = baslik;
+  el = document.getElementById('mesaiCikisAciklama'); if (el) el.textContent = aciklama;
+  // QR resmi
+  var img = document.getElementById('mesaiCikisQrImg');
+  if (img) img.src = '/api/gorev/qr/' + encodeURIComponent(SUBE_ID);
+  // Ekranları sıfırla
+  var bekle = document.getElementById('mesaiCikisQrBekle');
+  var onay = document.getElementById('mesaiCikisOnaylandi');
+  if (bekle) bekle.style.display = 'block';
+  if (onay) onay.style.display = 'none';
+  // Overlay aç
+  document.getElementById('mesaiCikisQrOverlay').style.display = 'flex';
+  // Polling başlat — yoklamada bugün cikis_ts doldu mu?
+  _mesaiCikisTimer = setInterval(async function() {
+    try {
+      var bugun = new Date().toISOString().slice(0,10);
+      var d = await api('/gorev/yoklama?tarih=' + bugun + '&sube_id=' + encodeURIComponent(SUBE_ID));
+      var cikisBitti = Array.isArray(d) && d.some(function(r) {
+        return r.cikis_ts && r.cikis_tip === _mesaiCikisTip;
+      });
+      if (cikisBitti) {
+        clearInterval(_mesaiCikisTimer);
+        _mesaiCikisTimer = null;
+        var r = d.find(function(r){ return r.cikis_ts && r.cikis_tip === _mesaiCikisTip; });
+        var ad = r ? (r.ad_soyad || '') : '';
+        mesaiCikisOnaylandi(ad);
+      }
+    } catch(_) {}
+  }, 4000);
+}
+
+function mesaiCikisOnaylandi(adSoyad) {
+  var bekle = document.getElementById('mesaiCikisQrBekle');
+  var onay = document.getElementById('mesaiCikisOnaylandi');
+  if (bekle) bekle.style.display = 'none';
+  if (onay) onay.style.display = 'block';
+  var mesajEl = document.getElementById('mesaiCikisOnayMesaj');
+  if (mesajEl) mesajEl.textContent = adSoyad
+    ? adSoyad + ' mesai çıkışını onayladı.'
+    : 'Mesai çıkışı kaydedildi.';
+  var devamBtn = document.getElementById('mesaiCikisDevamBtn');
+  if (devamBtn) devamBtn.onclick = function() {
+    mesaiCikisQrKapat();
+    // Asıl işlemi aç
+    if (_mesaiCikisTip === 'kasa_devri') {
+      var m = document.getElementById('devirModal');
+      if (m) {
+        m.classList.add('acik');
+        if (!kasaDevirPeriyotikYenilemeAtla()) renderKasaDevir();
+        document.querySelectorAll('.sag-tab').forEach(function(b){ b.classList.remove('active'); });
+        var t = document.getElementById('sagTab-kasa'); if (t) t.classList.add('active');
+      }
+    } else if (_mesaiCikisTip === 'kapalis') {
+      var mk = document.getElementById('kapanisModal');
+      if (mk) {
+        mk.classList.add('acik');
+        if (typeof wireKapanisStepFlow === 'function') wireKapanisStepFlow();
+        if (typeof setKapanisStep === 'function') setKapanisStep(1);
+        document.querySelectorAll('.sag-tab').forEach(function(b){ b.classList.remove('active'); });
+        var tk = document.getElementById('sagTab-kapanis'); if (tk) tk.classList.add('active');
+      }
+    }
+  };
+}
+
+function mesaiCikisQrKapat() {
+  if (_mesaiCikisTimer) { clearInterval(_mesaiCikisTimer); _mesaiCikisTimer = null; }
+  document.getElementById('mesaiCikisQrOverlay').style.display = 'none';
+}
 
 // ── MOLA QR ─────────────────────────────────────────────────────────
 function molaQrAc() {

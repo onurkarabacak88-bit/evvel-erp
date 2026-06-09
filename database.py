@@ -4472,6 +4472,13 @@ def ensure_gorev_tablolari(cur) -> None:
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_name='gorev_yoklama' AND column_name='asil_sube_id')
             THEN ALTER TABLE gorev_yoklama ADD COLUMN asil_sube_id TEXT; END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name='gorev_yoklama' AND column_name='cikis_ts')
+            THEN ALTER TABLE gorev_yoklama ADD COLUMN cikis_ts TIMESTAMPTZ; END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name='gorev_yoklama' AND column_name='cikis_tip')
+            THEN ALTER TABLE gorev_yoklama ADD COLUMN cikis_tip TEXT; END IF;
+            -- 'kasa_devri' | 'kapalis' | 'manuel'
         END $$;
     """)
     cur.execute("""
