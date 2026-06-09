@@ -23,7 +23,6 @@ export default function Panel({ onNavigate }) {
   const [islemSonuc, setIslemSonuc] = useState(null); // {m, t}
   const [sabitGiderOzet, setSabitGiderOzet] = useState({});
   const [vadeliOzet, setVadeliOzet] = useState({});
-  const [vardiyaDisiGirisler, setVardiyaDisiGirisler] = useState([]);
   const [izinAlacagi, setIzinAlacagi] = useState([]);
   const [sabitGiderUyarilar, setSabitGiderUyarilar] = useState([]);
   const [kiraModal, setKiraModal] = useState(null);
@@ -91,16 +90,14 @@ export default function Panel({ onNavigate }) {
       api('/sabit-giderler/uyarilar').catch(() => null),
       api('/sabit-giderler/odenenler').catch(() => null),
       api('/vadeli-alimlar/ozet').catch(() => null),
-      api(`/gorev/yoklama?tarih=${new Date().toISOString().slice(0,10)}&sadece_vardiya_disi=true`).catch(() => []),
       api('/gorev/izin-alacagi').catch(() => null),
-    ]).then(([p, u, o, a, sg, su, og, vo, vd, ia]) => {
+    ]).then(([p, u, o, a, sg, su, og, vo, ia]) => {
       if (p) setPanel(p);
       setUyarilar(u || []); setOnaylar(o || []); setAnomali(a);
       setSabitGiderOzet(sg?.ozet || {});
       setSabitGiderUyarilar(su?.uyarilar || []);
       setOdenenGiderler(og || []);
       setVadeliOzet(vo || {});
-      setVardiyaDisiGirisler(vd || []);
       setIzinAlacagi((ia?.personeller || []).filter(p => p.net_alacak_gun > 0));
       setLoading(false);
     }).catch((e) => {
@@ -706,36 +703,6 @@ export default function Panel({ onNavigate }) {
           sureMs={3500}
           onKapat={() => setIslemSonuc(null)}
         />
-      )}
-
-      {/* ── VARDİYA DIŞI GİRİŞ UYARILARI ── */}
-      {vardiyaDisiGirisler.length > 0 && (
-        <div style={{
-          marginBottom: 12, padding: '10px 14px', borderRadius: 10,
-          background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
-        }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#f59e0b', marginBottom: 8 }}>
-            ⚠️ Vardiya Dışı Personel Girişi — Bugün {vardiyaDisiGirisler.length} kayıt
-          </div>
-          {vardiyaDisiGirisler.map((g, i) => (
-            <div key={i} style={{
-              fontSize: 12, color: 'var(--text2)', padding: '5px 0',
-              borderBottom: i < vardiyaDisiGirisler.length - 1 ? '1px solid var(--border)' : 'none',
-              display: 'flex', gap: 8, alignItems: 'center',
-            }}>
-              <span style={{ fontWeight: 600, color: 'var(--text1)' }}>{g.ad_soyad}</span>
-              <span style={{ color: 'var(--text3)' }}>→</span>
-              <span>{g.sube_adi}</span>
-              {g.asil_sube_adi && g.asil_sube_adi !== g.sube_adi && (
-                <span style={{ color: '#f59e0b', fontSize: 11 }}>(asıl: {g.asil_sube_adi})</span>
-              )}
-              <span style={{ color: 'var(--text3)', fontSize: 11, marginLeft: 'auto' }}>
-                {g.vardiya_tip === 'sabahci' ? '🌅 Sabah' : g.vardiya_tip === 'ara_vardiya' ? '☀️ Ara' : '🌙 Kapanış'}
-                {' · '}{new Date(g.giris_ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
-              </span>
-            </div>
-          ))}
-        </div>
       )}
 
       {/* ── BİRİKMİŞ HAFTALIK İZİN ALACAĞI ── */}

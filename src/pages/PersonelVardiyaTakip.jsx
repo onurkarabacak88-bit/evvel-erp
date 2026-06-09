@@ -334,15 +334,19 @@ export default function PersonelVardiyaTakip() {
   const [aciklar, setAciklar] = useState({});
   const [izinAlacagi, setIzinAlacagi] = useState(null);
   const [filtre, setFiltre] = useState('aktif'); // 'aktif' | 'ayrildi' | 'hepsi'
+  const [vardiyaDisiGirisler, setVardiyaDisiGirisler] = useState([]);
 
   const yukle = () => {
     setYukleniyor(true);
+    const bugunTarih = new Date().toISOString().slice(0, 10);
     Promise.all([
       api(`/gorev/vardiya-takip?yil=${yil}&ay=${ay}`),
       api(`/gorev/izin-alacagi`).catch(() => null),
-    ]).then(([v, iz]) => {
+      api(`/gorev/yoklama?tarih=${bugunTarih}&sadece_vardiya_disi=true`).catch(() => []),
+    ]).then(([v, iz, vd]) => {
       setVeri(v);
       setIzinAlacagi(iz);
+      setVardiyaDisiGirisler(vd || []);
     }).catch(console.error).finally(() => setYukleniyor(false));
   };
 
@@ -405,6 +409,48 @@ export default function PersonelVardiyaTakip() {
               {p.haftalik_izin_kullanilmadi > 0 && ` · ${p.haftalik_izin_kullanilmadi} hafta izinsiz`}
             </span>
           ))}
+        </div>
+      )}
+
+      {/* Bugün Vardiya Dışı Girişler */}
+      {vardiyaDisiGirisler.length > 0 && (
+        <div style={{
+          marginBottom: 16, borderRadius: 12, overflow: 'hidden',
+          border: '1px solid rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.05)',
+        }}>
+          <div style={{
+            padding: '10px 16px', borderBottom: '1px solid rgba(245,158,11,0.2)',
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{ fontSize: 15 }}>🔀</span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#f59e0b' }}>
+                Bugün Vardiya Dışı Girişler — {vardiyaDisiGirisler.length} kayıt
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                Kendi şubesi dışında çalışan personeller
+              </div>
+            </div>
+          </div>
+          <div style={{ padding: '4px 0' }}>
+            {vardiyaDisiGirisler.map((g, i) => (
+              <div key={i} style={{
+                padding: '9px 16px', display: 'flex', alignItems: 'center', gap: 10,
+                borderBottom: i < vardiyaDisiGirisler.length - 1 ? '1px solid var(--border)' : 'none',
+              }}>
+                <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--text1)', minWidth: 140 }}>
+                  {g.ad_soyad}
+                </span>
+                <span style={{ fontSize: 12, color: 'var(--text3)' }}>asıl: {g.asil_sube_adi || '—'}</span>
+                <span style={{ color: 'var(--text3)' }}>→</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#f59e0b' }}>{g.sube_adi}</span>
+                <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
+                  {g.vardiya_tip === 'sabahci' ? '🌅 Sabah' : g.vardiya_tip === 'ara_vardiya' ? '☀️ Ara' : '🌙 Kapanış'}
+                  {' · '}{new Date(g.giris_ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
