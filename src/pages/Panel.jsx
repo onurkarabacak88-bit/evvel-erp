@@ -24,6 +24,7 @@ export default function Panel({ onNavigate }) {
   const [sabitGiderOzet, setSabitGiderOzet] = useState({});
   const [vadeliOzet, setVadeliOzet] = useState({});
   const [vardiyaDisiGirisler, setVardiyaDisiGirisler] = useState([]);
+  const [izinAlacagi, setIzinAlacagi] = useState([]);
   const [sabitGiderUyarilar, setSabitGiderUyarilar] = useState([]);
   const [kiraModal, setKiraModal] = useState(null);
   const [kiraForm, setKiraForm] = useState({});
@@ -91,7 +92,8 @@ export default function Panel({ onNavigate }) {
       api('/sabit-giderler/odenenler').catch(() => null),
       api('/vadeli-alimlar/ozet').catch(() => null),
       api(`/gorev/yoklama?tarih=${new Date().toISOString().slice(0,10)}&sadece_vardiya_disi=true`).catch(() => []),
-    ]).then(([p, u, o, a, sg, su, og, vo, vd]) => {
+      api('/gorev/izin-alacagi').catch(() => null),
+    ]).then(([p, u, o, a, sg, su, og, vo, vd, ia]) => {
       if (p) setPanel(p);
       setUyarilar(u || []); setOnaylar(o || []); setAnomali(a);
       setSabitGiderOzet(sg?.ozet || {});
@@ -99,6 +101,7 @@ export default function Panel({ onNavigate }) {
       setOdenenGiderler(og || []);
       setVadeliOzet(vo || {});
       setVardiyaDisiGirisler(vd || []);
+      setIzinAlacagi((ia?.personeller || []).filter(p => p.net_alacak_gun > 0));
       setLoading(false);
     }).catch((e) => {
       console.error("PANEL LOAD ERROR:", e);
@@ -729,6 +732,37 @@ export default function Panel({ onNavigate }) {
               <span style={{ color: 'var(--text3)', fontSize: 11, marginLeft: 'auto' }}>
                 {g.vardiya_tip === 'sabahci' ? '🌅 Sabah' : g.vardiya_tip === 'ara_vardiya' ? '☀️ Ara' : '🌙 Kapanış'}
                 {' · '}{new Date(g.giris_ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── BİRİKMİŞ HAFTALIK İZİN ALACAĞI ── */}
+      {izinAlacagi.length > 0 && (
+        <div style={{
+          marginBottom: 12, padding: '10px 14px', borderRadius: 10,
+          background: 'rgba(224,92,92,0.06)', border: '1px solid rgba(224,92,92,0.25)',
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#e05c5c', marginBottom: 8 }}>
+            🔴 Birikmiş Haftalık İzin Alacağı — {izinAlacagi.length} personel
+          </div>
+          {izinAlacagi.map((p, i) => (
+            <div key={p.personel_id} style={{
+              fontSize: 12, color: 'var(--text2)', padding: '4px 0',
+              borderBottom: i < izinAlacagi.length - 1 ? '1px solid var(--border)' : 'none',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <span style={{ fontWeight: 600, color: 'var(--text1)' }}>{p.ad_soyad}</span>
+              <span style={{ color: 'var(--text3)', fontSize: 11 }}>
+                {p.borclu_hafta_sayisi} hafta izinsiz
+                {p.verilen_izin_gun > 0 && ` · ${p.verilen_izin_gun}g verildi`}
+              </span>
+              <span style={{
+                fontWeight: 800, color: '#e05c5c', fontSize: 13,
+                background: 'rgba(224,92,92,0.1)', padding: '2px 8px', borderRadius: 8,
+              }}>
+                {p.net_alacak_gun} gün alacak
               </span>
             </div>
           ))}
