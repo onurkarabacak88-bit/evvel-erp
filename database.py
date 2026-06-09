@@ -4529,3 +4529,22 @@ def ensure_gorev_tablolari(cur) -> None:
             THEN ALTER TABLE personel_aylik ADD COLUMN yemek_ucret_toplam NUMERIC(14,2) DEFAULT 0; END IF;
         END $$;
     """)
+
+    # ── KASA DEVİR ONAYI ──────────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kasa_devir_onay (
+            id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            sube_id         TEXT NOT NULL,
+            tarih           DATE NOT NULL,
+            devreden_id     TEXT NOT NULL,
+            devreden_ts     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            kabul_eden_id   TEXT,
+            kabul_ts        TIMESTAMPTZ,
+            durum           TEXT NOT NULL DEFAULT 'bekliyor',
+            not_aciklama    TEXT
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_kasa_devir_onay_sube_tarih
+        ON kasa_devir_onay (sube_id, tarih)
+    """)

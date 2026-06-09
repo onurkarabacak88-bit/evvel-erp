@@ -699,6 +699,91 @@ def mesai_cikis(body: MesaiCikisBody):
     }
 
 
+# ── KASA DEVİR ONAYI ─────────────────────────────────────────────────────────
+
+class DevirBaslatBody(BaseModel):
+    sube_id: str
+    devreden_id: str
+    not_aciklama: Optional[str] = None
+
+class DevirKabulBody(BaseModel):
+    sube_id: str
+    kabul_eden_id: str
+    devir_id: str
+
+@router.post("/api/gorev/devir-baslat")
+def devir_baslat(body: DevirBaslatBody):
+    """Sabahci/ara vardiya cikarken kasa devir kaydini olusturur (durum=bekliyor)."""
+    from tr_saat import is_gunu_tr
+    tarih = str(is_gunu_tr())
+    with db() as (conn, cur):
+        # Bugün bu şube için zaten bekleyen devir var mı?
+        cur.execute("""
+            SELECT id FROM kasa_devir_onay
+            WHERE sube_id=%s AND tarih=%s AND durum='bekliyor'
+        """, (body.sube_id, tarih))
+        mevcut = cur.fetchone()
+        if mevcut:
+            return {"devir_id": mevcut["id"], "yeni": False,
+                    "mesaj": "Zaten bekleyen devir kaydı var."}
+        import uuid as _uuid
+        devir_id = str(_uuid.uuid4())
+        cur.execute("""
+            INSERT INTO kasa_devir_onay (id, sube_id, tarih, devreden_id, not_aciklama)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (devir_id, body.sube_id, tarih, body.devreden_id, body.not_aciklama))
+        conn.commit()
+    return {"devir_id": devir_id, "yeni": True,
+            "mesaj": "Devir kaydı oluşturuldu. Gelen vardiya kabul etmeli."}
+
+@router.get("/api/gorev/devir-bekleyen")
+def devir_bekleyen(sube_id: str):
+    """Bu şubede bugün bekleyen devir kaydı var mı?"""
+    from tr_saat import is_gunu_tr
+    tarih = str(is_gunu_tr())
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT d.id, d.devreden_id, d.devreden_ts, d.not_aciklama,
+                   COALESCE(p.ad_soyad, d.devreden_id) AS devreden_ad
+            FROM kasa_devir_onay d
+            LEFT JOIN personel p ON p.id::text = d.devreden_id
+            WHERE d.sube_id=%s AND d.tarih=%s AND d.durum='bekliyor'
+            ORDER BY d.devreden_ts DESC LIMIT 1
+        """, (sube_id, tarih))
+        row = cur.fetchone()
+        if not row:
+            return {"bekliyor": False}
+        return {
+            "bekliyor": True,
+            "devir_id": row["id"],
+            "devreden_ad": row["devreden_ad"],
+            "devreden_ts": str(row["devreden_ts"]),
+            "not_aciklama": row["not_aciklama"],
+        }
+
+@router.post("/api/gorev/devir-kabul")
+def devir_kabul(body: DevirKabulBody):
+    """Gelen vardiya devri onaylar."""
+    from tr_saat import is_gunu_tr, dt_now_tr
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT id, durum FROM kasa_devir_onay
+            WHERE id=%s AND sube_id=%s
+        """, (body.devir_id, body.sube_id))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Devir kaydı bulunamadı.")
+        if row["durum"] != 'bekliyor':
+            raise HTTPException(400, f"Devir zaten {row['durum']} durumunda.")
+        cur.execute("""
+            UPDATE kasa_devir_onay
+            SET kabul_eden_id=%s, kabul_ts=%s, durum='onaylandi'
+            WHERE id=%s
+        """, (body.kabul_eden_id, dt_now_tr(), body.devir_id))
+        conn.commit()
+    return {"basarili": True, "mesaj": "Devir kabul edildi. Vardiyaya hos geldin!"}
+
+
 @router.delete("/api/gorev/yoklama/{sube_id}")
 def gorev_yoklama_sil(sube_id: str, tarih: Optional[str] = None, kasa_da: bool = False):
     """Şube yoklama kaydını sil (test/sıfırlama). kasa_da=true ile kasa kaydını da siler."""

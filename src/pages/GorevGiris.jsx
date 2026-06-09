@@ -7,7 +7,7 @@ import GorevPersonelSayfasi from './GorevPersonelSayfasi';
  * Sidebar/nav yok — tam ekran, mobil öncelikli.
  */
 export default function GorevGiris({ subeId: subeIdProp }) {
-  const [adim, setAdim] = useState(subeIdProp ? 'personel-sec' : 'sube-sec'); // sube-sec | personel-sec | pin-gir | vardiya-sec | gorevler
+  const [adim, setAdim] = useState(subeIdProp ? 'personel-sec' : 'sube-sec'); // sube-sec | personel-sec | pin-gir | devir-kabul | vardiya-sec | gorevler
   const [subeId, setSubeId] = useState(subeIdProp || null);
   const [subeler, setSubeler] = useState([]);
   const [subeBilgi, setSubeBilgi] = useState(null);
@@ -69,6 +69,8 @@ export default function GorevGiris({ subeId: subeIdProp }) {
   };
 
   const [pinDogruOturum, setPinDogruOturum] = useState(null);
+  const [bekleyenDevir, setBekleyenDevir] = useState(null);
+  const [devirYukleniyor, setDevirYukleniyor] = useState(false);
 
   const girisYap = async (pinVal) => {
     setHata('');
@@ -85,6 +87,15 @@ export default function GorevGiris({ subeId: subeIdProp }) {
         },
       });
       setPinDogruOturum(sonuc);
+      // Bekleyen devir var mı kontrol et
+      try {
+        const devir = await api(`/gorev/devir-bekleyen?sube_id=${subeId}`);
+        if (devir.bekliyor) {
+          setBekleyenDevir(devir);
+          setAdim('devir-kabul');
+          return;
+        }
+      } catch (_) {}
       // Vardiya planından otomatik algılandıysa seçim ekranını atla
       if (sonuc.vardiya_tanimli) {
         setOturum(sonuc);
@@ -110,6 +121,40 @@ export default function GorevGiris({ subeId: subeIdProp }) {
   const vardiyaSec = (vt) => {
     setOturum({ ...pinDogruOturum, vardiya_tip: vt });
     setAdim('gorevler');
+  };
+
+  const devirKabul = async () => {
+    if (!bekleyenDevir || !pinDogruOturum) return;
+    setDevirYukleniyor(true);
+    try {
+      await api('/gorev/devir-kabul', {
+        method: 'POST',
+        body: {
+          sube_id: subeId,
+          kabul_eden_id: pinDogruOturum.personel_id,
+          devir_id: bekleyenDevir.devir_id,
+        },
+      });
+    } catch (_) {}
+    // Devir kabul sonrası normal akışa devam
+    if (pinDogruOturum.vardiya_tanimli) {
+      setOturum(pinDogruOturum);
+      setAdim('gorevler');
+    } else {
+      setAdim('vardiya-sec');
+    }
+    setDevirYukleniyor(false);
+  };
+
+  const devirAtla = () => {
+    // Devir onaysız geç (yönetici / istisnai durum)
+    setBekleyenDevir(null);
+    if (pinDogruOturum.vardiya_tanimli) {
+      setOturum(pinDogruOturum);
+      setAdim('gorevler');
+    } else {
+      setAdim('vardiya-sec');
+    }
   };
 
   const cikis = () => {
@@ -275,6 +320,57 @@ export default function GorevGiris({ subeId: subeIdProp }) {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Adım Devir Kabul */}
+        {adim === 'devir-kabul' && bekleyenDevir && (
+          <div>
+            <div style={{
+              textAlign: 'center', marginBottom: 20,
+              padding: '14px', borderRadius: 10,
+              background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
+            }}>
+              <div style={{ fontSize: 22, marginBottom: 8 }}>🔄</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#f59e0b', marginBottom: 4 }}>
+                Devir Seni Bekliyor
+              </div>
+              <div style={{ fontSize: 13, color: '#b0b3bc', lineHeight: 1.6 }}>
+                <strong style={{ color: '#e8e9ec' }}>{bekleyenDevir.devreden_ad}</strong> vardiyayı
+                sana devretti.
+              </div>
+              {bekleyenDevir.not_aciklama && (
+                <div style={{
+                  marginTop: 10, padding: '8px 10px', borderRadius: 8,
+                  background: 'rgba(255,255,255,0.04)', fontSize: 12, color: '#e8e9ec',
+                  textAlign: 'left',
+                }}>
+                  📝 {bekleyenDevir.not_aciklama}
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={devirKabul}
+              disabled={devirYukleniyor}
+              style={{
+                width: '100%', padding: '15px', borderRadius: 10, border: 'none',
+                background: '#f59e0b', color: '#fff', fontWeight: 800, fontSize: 16,
+                cursor: 'pointer', marginBottom: 10,
+              }}
+            >
+              {devirYukleniyor ? '…' : '✅ Devri Kabul Et, Vardiyama Başla'}
+            </button>
+
+            <button
+              onClick={devirAtla}
+              style={{
+                width: '100%', padding: '9px', borderRadius: 8, border: '1px solid #2a2d35',
+                background: 'none', color: '#6b6f7a', fontSize: 12, cursor: 'pointer',
+              }}
+            >
+              Atla (yönetici / istisnai durum)
+            </button>
           </div>
         )}
 

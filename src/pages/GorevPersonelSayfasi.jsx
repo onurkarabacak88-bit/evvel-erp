@@ -258,6 +258,13 @@ function MesaiCikisButon({ oturum }) {
           lng: konum?.lng ?? null,
         },
       });
+      // Kasa devri ise devir kaydı oluştur (gelen vardiya kabul etmeli)
+      if (tip === 'kasa_devri') {
+        await api('/gorev/devir-baslat', {
+          method: 'POST',
+          body: { sube_id: oturum.sube_id, devreden_id: oturum.personel_id },
+        }).catch(() => {}); // hata görünmesine gerek yok, yoklama zaten kaydedildi
+      }
       setDurum('onaylandi');
       setMesaj(res.mesaj || '✅ Çıkış kaydedildi');
     } catch (e) {
