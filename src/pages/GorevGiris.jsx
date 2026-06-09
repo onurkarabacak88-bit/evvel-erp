@@ -2,6 +2,66 @@ import { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import GorevPersonelSayfasi from './GorevPersonelSayfasi';
 
+// Kapanış onay butonu — QR okutunca karşılaşılan mühürleme ekranı
+function KapaниsOnayButonu({ kp, subeId, konum }) {
+  const [durum, setDurum] = useState(null); // null | 'yukleniyor' | 'tamam' | 'hata'
+  const [hata, setHata] = useState('');
+
+  const muhurle = async () => {
+    setDurum('yukleniyor');
+    try {
+      await api('/gorev/kapanis-muhurle', {
+        method: 'POST',
+        body: {
+          sube_id: subeId,
+          personel_id: kp.personel_id,
+          lat: konum?.lat ?? null,
+          lng: konum?.lng ?? null,
+        },
+      });
+      setDurum('tamam');
+    } catch (e) {
+      const msg = e.message || '';
+      if (msg.includes('zaten')) { setDurum('tamam'); return; }
+      setHata(msg || 'Hata oluştu');
+      setDurum('hata');
+    }
+  };
+
+  if (durum === 'tamam') return (
+    <div style={{
+      padding: '14px 16px', borderRadius: 10, marginBottom: 8,
+      background: 'rgba(76,175,132,0.1)', border: '1px solid rgba(76,175,132,0.3)',
+      display: 'flex', alignItems: 'center', gap: 10,
+    }}>
+      <span style={{ fontSize: 18 }}>🔒</span>
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#4caf84' }}>Kapanış Mühürlendi</div>
+        <div style={{ fontSize: 11, color: '#6b6f7a' }}>{kp.ad_soyad}</div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <button
+        onClick={muhurle}
+        disabled={durum === 'yukleniyor'}
+        style={{
+          display: 'block', width: '100%', padding: '14px 16px', borderRadius: 10,
+          cursor: 'pointer', background: 'rgba(200,149,106,0.1)',
+          border: '1px solid rgba(200,149,106,0.4)', color: '#e8e9ec',
+          fontSize: 15, fontWeight: 600, textAlign: 'left',
+        }}>
+        {durum === 'yukleniyor' ? '…' : `🔒 ${kp.ad_soyad} — Kapanışı Mühürle`}
+      </button>
+      {durum === 'hata' && (
+        <div style={{ fontSize: 11, color: '#e05c5c', marginTop: 4, paddingLeft: 4 }}>{hata}</div>
+      )}
+    </div>
+  );
+}
+
 /**
  * QR kod okutunca açılan sayfa: /gorev-giris/:subeId
  *
@@ -20,6 +80,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
   const [adim, setAdim] = useState(subeIdProp ? 'yukleniyor' : 'sube-sec');
 
   const [bekleyenDevir, setBekleyenDevir] = useState(null);
+  const [bekleyenKapanis, setBekleyenKapanis] = useState([]); // Kapanis mühür bekleyenler
   const [seciliPersonel, setSeciliPersonel] = useState(null);
 
   // PIN akışı state
@@ -48,7 +109,8 @@ export default function GorevGiris({ subeId: subeIdProp }) {
       api(`/gorev/sube-personel/${subeId}`),
       api(`/subeler`).catch(() => null),
       api(`/gorev/devir-bekleyen?sube_id=${subeId}`).catch(() => null),
-    ]).then(([personeller, subelerRes, devirBilgi]) => {
+      api(`/gorev/kapanis-bekleyen?sube_id=${subeId}`).catch(() => null),
+    ]).then(([personeller, subelerRes, devirBilgi, kapanisBilgi]) => {
       setPersonelListe(personeller || []);
 
       if (subelerRes) {
@@ -65,11 +127,17 @@ export default function GorevGiris({ subeId: subeIdProp }) {
         }
       }
 
-      if (devirBilgi?.bekliyor) {
+      const kapanisBekleyenler = kapanisBilgi?.bekleyen || [];
+
+      if (kapanisBekleyenler.length > 0) {
+        // Önce kapanış onayı: biri QR okutarak buraya geldi → mühürle ekranı
+        setBekleyenKapanis(kapanisBekleyenler);
+        setAdim('kapanis-onay');
+      } else if (devirBilgi?.bekliyor) {
         setBekleyenDevir(devirBilgi);
         setAdim('devir-kabul');  // Devir varsa → direkt devir ekranı
       } else {
-        setAdim('pin-giris');    // Devir yoksa → PIN (kapanış / tek kişi)
+        setAdim('pin-giris');    // Devir yoksa → PIN
       }
     }).catch(() => setAdim('pin-giris'));
   }, [subeId]);
@@ -190,7 +258,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
             {subeBilgi?.ad || 'Evvel Cafe'}
           </div>
           <div style={{ fontSize: 12, color: '#6b6f7a', marginTop: 4 }}>
-            {adim === 'devir-kabul' ? 'Vardiya Devri' : 'Vardiya Girişi'}
+            {adim === 'kapanis-onay' ? 'Kapanış Onayı' : adim === 'devir-kabul' ? 'Vardiya Devri' : 'Vardiya Girişi'}
           </div>
         </div>
 
@@ -223,6 +291,44 @@ export default function GorevGiris({ subeId: subeIdProp }) {
           <div style={{ textAlign: 'center', padding: 20, color: '#6b6f7a' }}>
             <div className="spinner" style={{ margin: '0 auto 12px' }} />
             Kontrol ediliyor…
+          </div>
+        )}
+
+        {/* ── KAPANIŞ ONAY — QR okutuldu, mühürle ── */}
+        {adim === 'kapanis-onay' && (
+          <div>
+            <div style={{
+              padding: '14px', borderRadius: 10, marginBottom: 20,
+              background: 'rgba(200,149,106,0.08)', border: '1px solid rgba(200,149,106,0.35)',
+              textAlign: 'center',
+            }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#C8956A', marginBottom: 4 }}>
+                🌙 Kapanış Onayı
+              </div>
+              <div style={{ fontSize: 11, color: '#6b6f7a', lineHeight: 1.6 }}>
+                Bu şubede kapanış bekleyen personel var.<br />
+                Adına tıkla → kapanış mühürlenir.
+              </div>
+            </div>
+
+            {bekleyenKapanis.map(kp => (
+              <KapaниsOnayButonu
+                key={kp.personel_id}
+                kp={kp}
+                subeId={subeId}
+                konum={konum}
+              />
+            ))}
+
+            <button
+              onClick={() => setAdim('pin-giris')}
+              style={{
+                marginTop: 16, width: '100%', padding: '10px', borderRadius: 8,
+                border: '1px solid #2a2d35', background: 'none',
+                color: '#6b6f7a', cursor: 'pointer', fontSize: 12,
+              }}>
+              Ben kapanış değilim, giriş yap
+            </button>
           </div>
         )}
 

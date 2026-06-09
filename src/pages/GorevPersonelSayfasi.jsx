@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../utils/api';
 
 const VT_ETIKET = {
@@ -677,47 +677,55 @@ function VardiyamEkrani({ oturum }) {
 
 // ── Kapanış Mühür Bandı (sadece kapanış vardiyası için) ──────────────────────
 function KapanisMuhurBandi({ oturum }) {
-  const [durum, setDurum] = useState(null); // null | 'onay' | 'muhürlendi'
-  const [yukleniyor, setYukleniyor] = useState(false);
+  // durum: null | 'qr-goster' | 'muhürlendi'
+  const [durum, setDurum] = useState(null);
+  const [manuelYukleniyor, setManuelYukleniyor] = useState(false);
   const [hata, setHata] = useState('');
-  const [konum, setKonum] = useState(null);
+  const pollRef = useRef(null);
 
+  // QR gösterilince: 3 saniyede bir kapanis-bekleyen'i kontrol et
   useEffect(() => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      p => setKonum({ lat: p.coords.latitude, lng: p.coords.longitude }),
-      () => {}, { enableHighAccuracy: true, timeout: 10000 }
-    );
-  }, []);
+    if (durum !== 'qr-goster') {
+      clearInterval(pollRef.current);
+      return;
+    }
+    const kontrol = async () => {
+      try {
+        const res = await api(`/gorev/kapanis-bekleyen?sube_id=${oturum.sube_id}`);
+        const benimKayit = (res.bekleyen || []).find(b => b.personel_id === oturum.personel_id);
+        if (!benimKayit) {
+          // Yoklama kapandı → mühürlendi
+          clearInterval(pollRef.current);
+          setDurum('muhürlendi');
+        }
+      } catch { /* sessiz */ }
+    };
+    pollRef.current = setInterval(kontrol, 3000);
+    return () => clearInterval(pollRef.current);
+  }, [durum, oturum.sube_id, oturum.personel_id]);
 
-  const muhurle = async () => {
-    setYukleniyor(true);
+  // Manuel mühürleme (QR yoksa fallback)
+  const manuelMuhurle = async () => {
+    setManuelYukleniyor(true);
     setHata('');
     try {
-      await api('/gorev/mesai-cikis', {
+      await api('/gorev/kapanis-muhurle', {
         method: 'POST',
-        body: {
-          sube_id: oturum.sube_id,
-          personel_id: oturum.personel_id,
-          cikis_tip: 'kapalis',
-          lat: konum?.lat ?? null,
-          lng: konum?.lng ?? null,
-        },
+        body: { sube_id: oturum.sube_id, personel_id: oturum.personel_id },
       });
       setDurum('muhürlendi');
     } catch (e) {
       const msg = e.message || '';
-      if (msg.startsWith('sube_disinda|')) setHata('📍 ' + msg.split('|')[1]);
-      else if (msg === 'Mesai çıkışı zaten yapılmış.') setDurum('muhürlendi');
+      if (msg.includes('zaten')) setDurum('muhürlendi');
       else setHata(msg || 'Hata oluştu');
     } finally {
-      setYukleniyor(false);
+      setManuelYukleniyor(false);
     }
   };
 
   if (durum === 'muhürlendi') return (
     <div style={{
-      margin: '0 0 0 0', padding: '14px 20px',
+      padding: '14px 20px',
       background: 'rgba(76,175,132,0.1)', borderBottom: '1px solid rgba(76,175,132,0.3)',
       display: 'flex', alignItems: 'center', gap: 10,
     }}>
@@ -729,38 +737,51 @@ function KapanisMuhurBandi({ oturum }) {
     </div>
   );
 
-  if (durum === 'onay') return (
-    <div style={{
-      margin: 0, padding: '14px 20px',
-      background: 'rgba(200,149,106,0.1)', borderBottom: '1px solid rgba(200,149,106,0.4)',
-    }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: '#C8956A', marginBottom: 8 }}>
-        🔲 Kapanışı mühürlemek istediğine emin misin?
-      </div>
-      <div style={{ fontSize: 11, color: '#b0b3bc', marginBottom: 12, lineHeight: 1.6 }}>
-        QR bağlantınla sisteme girdin. Kasa kapanışını mühürleyince değiştirilemez.
-      </div>
-      {hata && <div style={{ fontSize: 12, color: '#e05c5c', marginBottom: 8 }}>{hata}</div>}
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={muhurle} disabled={yukleniyor} style={{
-          flex: 1, padding: '12px', borderRadius: 8, border: 'none', cursor: 'pointer',
-          background: '#C8956A', color: '#fff', fontWeight: 800, fontSize: 14,
+  if (durum === 'qr-goster') {
+    const qrUrl = `${window.location.origin}/api/gorev/qr/${oturum.sube_id}`;
+    return (
+      <div style={{
+        padding: '16px 20px',
+        background: 'rgba(200,149,106,0.08)', borderBottom: '1px solid rgba(200,149,106,0.3)',
+        textAlign: 'center',
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#C8956A', marginBottom: 4 }}>
+          🔲 Şube QR'ını Okut
+        </div>
+        <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 12, lineHeight: 1.6 }}>
+          Telefonunla bu QR'ı okut → kapanış otomatik mühürlenir
+        </div>
+        <div style={{
+          display: 'inline-block', background: '#fff', borderRadius: 10, padding: 10,
+          boxShadow: '0 2px 12px rgba(0,0,0,0.2)', marginBottom: 12,
         }}>
-          {yukleniyor ? '…' : '🔒 Evet, Mühürle'}
-        </button>
-        <button onClick={() => { setDurum(null); setHata(''); }} style={{
-          padding: '12px 16px', borderRadius: 8, border: '1px solid #2a2d35',
-          background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 13,
-        }}>
-          İptal
-        </button>
+          <img src={qrUrl} alt="Şube QR" style={{ width: 160, height: 160, display: 'block' }} />
+        </div>
+        <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 10 }}>
+          Bekleniyor<span style={{ animation: 'none' }}>…</span>
+        </div>
+        {hata && <div style={{ fontSize: 12, color: '#e05c5c', marginBottom: 8 }}>{hata}</div>}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+          <button onClick={manuelMuhurle} disabled={manuelYukleniyor} style={{
+            padding: '7px 14px', borderRadius: 7, border: '1px solid #2a2d35',
+            background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 11,
+          }}>
+            {manuelYukleniyor ? '…' : 'QR yok, manuel onayla'}
+          </button>
+          <button onClick={() => setDurum(null)} style={{
+            padding: '7px 14px', borderRadius: 7, border: '1px solid #2a2d35',
+            background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 11,
+          }}>
+            İptal
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   return (
     <div style={{
-      margin: 0, padding: '10px 20px',
+      padding: '10px 20px',
       background: 'rgba(200,149,106,0.06)', borderBottom: '1px solid rgba(200,149,106,0.25)',
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     }}>
@@ -768,7 +789,7 @@ function KapanisMuhurBandi({ oturum }) {
         <div style={{ fontSize: 12, fontWeight: 700, color: '#C8956A' }}>🌙 Kapanış Vardiyası</div>
         <div style={{ fontSize: 11, color: '#6b6f7a' }}>Görevleri tamamla, sonra kapanışı mühürle</div>
       </div>
-      <button onClick={() => setDurum('onay')} style={{
+      <button onClick={() => setDurum('qr-goster')} style={{
         padding: '9px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
         background: '#C8956A', color: '#fff', fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap',
       }}>

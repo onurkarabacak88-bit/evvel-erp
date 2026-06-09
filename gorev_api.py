@@ -904,6 +904,70 @@ def devir_giris(body: DevirGirisBody):
     }
 
 
+@router.get("/api/gorev/kapanis-bekleyen")
+def kapanis_bekleyen(sube_id: str):
+    """
+    Bugun kapanis vardiyasinda giris yapip henuz cikis yapmamis personelleri doner.
+    KapanisMuhurBandi QR polling + GorevGiris kapanis onay ekrani icin kullanilir.
+    """
+    from tr_saat import is_gunu_tr
+    tarih = str(is_gunu_tr())
+    with db() as (_, cur):
+        cur.execute("""
+            SELECT gy.id, gy.personel_id, gy.giris_ts,
+                   p.ad_soyad
+            FROM gorev_yoklama gy
+            JOIN personel p ON p.id::text = gy.personel_id
+            WHERE gy.sube_id = %s
+              AND gy.tarih = %s
+              AND gy.vardiya_tip = 'kapanis'
+              AND gy.cikis_ts IS NULL
+        """, (sube_id, tarih))
+        rows = cur.fetchall()
+    return {
+        "bekleyen": [
+            {"yoklama_id": r["id"], "personel_id": r["personel_id"],
+             "ad_soyad": r["ad_soyad"], "giris_ts": str(r["giris_ts"])}
+            for r in rows
+        ]
+    }
+
+
+class KapanisMuhurleBody(BaseModel):
+    sube_id: str
+    personel_id: str
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+@router.post("/api/gorev/kapanis-muhurle")
+def kapanis_muhurle(body: KapanisMuhurleBody):
+    """
+    QR ile kapanis onaylama - pin gerektirmez.
+    Mevcut mesai-cikis mantigi ile kapanis cikisi yapar.
+    """
+    from tr_saat import is_gunu_tr, dt_now_tr
+    tarih = str(is_gunu_tr())
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT id, cikis_ts FROM gorev_yoklama
+            WHERE sube_id=%s AND personel_id=%s AND tarih=%s AND vardiya_tip='kapanis'
+        """, (body.sube_id, body.personel_id, tarih))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Kapanis yoklama bulunamadi.")
+        if row["cikis_ts"]:
+            return {"mesaj": "Kapanis zaten muhürlendi.", "zaten_muhürlü": True}
+
+        cur.execute("""
+            UPDATE gorev_yoklama
+            SET cikis_ts=%s, cikis_tip='kapalis'
+            WHERE id=%s
+        """, (dt_now_tr(), row["id"]))
+        conn.commit()
+    return {"mesaj": "Kapanis muhürlendi.", "zaten_muhürlü": False}
+
+
 @router.delete("/api/gorev/yoklama/{sube_id}")
 def gorev_yoklama_sil(sube_id: str, tarih: Optional[str] = None, kasa_da: bool = False):
     """Şube yoklama kaydını sil (test/sıfırlama). kasa_da=true ile kasa kaydını da siler."""
