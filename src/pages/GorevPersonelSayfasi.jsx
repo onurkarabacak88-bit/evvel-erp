@@ -28,7 +28,7 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
       .finally(() => setYukleniyor(false));
   }, []);
 
-  const ayarla = (kat_db_id, urun) => (delta) => {
+  const ayarla = (kat_db_id, urun, delta) => {
     setSepet(prev => {
       const key = urun.id;
       const mevcut = prev[key]?.adet || 0;
@@ -59,12 +59,13 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
       });
       setSonuc('ok');
     } catch (e) {
-      if (e.status === 409) {
+      const msg = e.message || '';
+      if (msg.includes('CIFT_SIPARIS') || msg.includes('Tamamlanmamış')) {
         setSonuc('cift');
-        setHataMsg(e.data?.mesaj || 'Açık sipariş var.');
+        setHataMsg(msg || 'Açık sipariş var.');
       } else {
         setSonuc('hata');
-        setHataMsg(e.message || 'Hata oluştu.');
+        setHataMsg(msg || 'Hata oluştu.');
       }
     } finally {
       setGonderiyor(false);
@@ -169,12 +170,12 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                       {adet > 0 && (
                         <>
-                          <button onClick={ayarla(kat.db_kategori_id || kat.id, urun)(-1)}
+                          <button onClick={() => ayarla(kat.db_kategori_id || kat.id, urun, -1)}
                             style={{ width: 40, height: 40, borderRadius: 8, border: '1px solid #2a2d35', background: '#22262f', color: '#e8e9ec', fontSize: 20, cursor: 'pointer', fontWeight: 700 }}>−</button>
                           <span style={{ fontSize: 18, fontWeight: 800, minWidth: 28, textAlign: 'center', color: '#C8956A' }}>{adet}</span>
                         </>
                       )}
-                      <button onClick={ayarla(kat.db_kategori_id || kat.id, urun)(+1)}
+                      <button onClick={() => ayarla(kat.db_kategori_id || kat.id, urun, +1)}
                         style={{ width: 40, height: 40, borderRadius: 8, border: 'none', background: adet > 0 ? '#C8956A' : '#2a2d35', color: '#fff', fontSize: 20, cursor: 'pointer', fontWeight: 700 }}>+</button>
                     </div>
                   </div>
