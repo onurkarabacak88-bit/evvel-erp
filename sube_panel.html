@@ -6715,22 +6715,7 @@ function setDvAdim1Step(step) {
     if (!el) return;
     el.style.display = (i === step) ? '' : 'none';
   });
-  if (step === 4) {
-    var dvi = document.getElementById('dvPastaInputs');
-    if (dvi) {
-      dvi.innerHTML = buildPastaOneGroupHTML('dv', dvPastaSub);
-      pastaGrupKeysStoktanDoldur('dv', dvPastaCache, dvPastaSub);
-    }
-    var db = document.getElementById('dvPastaBaslik');
-    if (db) {
-      var dg = _PASTA_GRUPLAR[dvPastaSub];
-      db.textContent = dg
-        ? ('Adım 4 / 5 — Pasta: ' + dg.ad + ' (' + (dvPastaSub + 1) + '/' + _PASTA_GRUPLAR.length + ')')
-        : 'Adım 4 / 5 — Pasta Say';
-    }
-    var dn = document.getElementById('dvNext4');
-    if (dn) dn.textContent = (dvPastaSub >= _PASTA_GRUPLAR.length - 1) ? 'Bitir Adımına Geç' : 'İleri';
-  }
+  // step 4: sadece toplam pasta adedi — pasta grupları tek tek sorulmaz
 }
 
 function wireDvAdim1StepFlow() {
@@ -6768,14 +6753,11 @@ function wireDvAdim1StepFlow() {
   };
   var n4 = document.getElementById('dvNext4');
   if (n4) n4.onclick = function(){
-    setMsg('dvMsg', '', '');
-    pastaGrupKeysStokaYaz('dv', dvPastaCache, dvPastaSub);
-    if (dvPastaSub < _PASTA_GRUPLAR.length - 1) {
-      dvPastaSub++;
-      setDvAdim1Step(4);
-      return;
-    }
-    setDvAdim1Step(5);
+    try {
+      reqInt('dvPastaAdet', 'Toplam pasta adedi');
+      setMsg('dvMsg', '', '');
+      setDvAdim1Step(5);
+    } catch(e) { setMsg('dvMsg', e.message || 'Hata', 'msg-err'); }
   };
   var b2 = document.getElementById('dvBack2');
   var b3 = document.getElementById('dvBack3');
@@ -6783,19 +6765,8 @@ function wireDvAdim1StepFlow() {
   var b5 = document.getElementById('dvBack5');
   if (b2) b2.onclick = function(){ setDvAdim1Step(1); };
   if (b3) b3.onclick = function(){ setDvAdim1Step(2); };
-  if (b4) b4.onclick = function(){
-    pastaGrupKeysStokaYaz('dv', dvPastaCache, dvPastaSub);
-    if (dvPastaSub > 0) {
-      dvPastaSub--;
-      setDvAdim1Step(4);
-      return;
-    }
-    setDvAdim1Step(3);
-  };
-  if (b5) b5.onclick = function(){
-    dvPastaSub = _PASTA_GRUPLAR.length - 1;
-    setDvAdim1Step(4);
-  };
+  if (b4) b4.onclick = function(){ setDvAdim1Step(3); };
+  if (b5) b5.onclick = function(){ setDvAdim1Step(4); };
 }
 function slugifyTR(s) {
   return String(s||'').toLowerCase()
@@ -12479,9 +12450,11 @@ function renderKasaDevir() {
     '<button class="btn btn-primary btn-sm" type="button" id="dvNext3">Pasta Sayımına Geç</button>' +
     '</div></div>' +
     '<div id="dvStep4" class="siparis-detay" style="display:none">' +
-    '<div class="sip-alt-baslik" id="dvPastaBaslik">Adım 4 / 5 — Pasta Say</div>' +
-    '<div id="dvPastaInputs"></div>' +
-    '<div style="display:flex;gap:8px;margin-top:10px">' +
+    '<div class="sip-alt-baslik">Adım 4 / 5 — Pasta Say</div>' +
+    '<div class="stok-grid" style="margin-bottom:12px">' +
+    '<div class="stok-item"><label>Toplam Pasta Adedi</label><input id="dvPastaAdet" inputmode="numeric" placeholder="0" style="font-size:20px;font-weight:800;text-align:center" /></div>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px">' +
     '<button class="btn btn-ghost btn-sm" type="button" id="dvBack4">Geri</button>' +
     '<button class="btn btn-primary btn-sm" type="button" id="dvNext4">Bitir Adımına Geç</button>' +
     '</div></div>' +
