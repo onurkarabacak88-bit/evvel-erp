@@ -83,6 +83,17 @@ function PersonelKart({ p, acik, onToggle }) {
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontWeight: 700, color: '#4caf84' }}>{p.yemek_ucret_gun} gün</div>
             <div style={{ color: 'var(--text3)', fontSize: 10 }}>Yemek</div>
+            {p.yemek_ucret_tutari > 0 && (
+              <div style={{ fontSize: 10, color: '#4caf84', fontWeight: 600 }}>
+                {new Intl.NumberFormat('tr-TR').format(Math.round(p.yemek_ucret_tutari))}₺
+              </div>
+            )}
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontWeight: 800, color: '#4caf84', fontSize: 15 }}>
+              {p['net_hakediş'] > 0 ? new Intl.NumberFormat('tr-TR').format(Math.round(p['net_hakediş']))+'₺' : '—'}
+            </div>
+            <div style={{ color: 'var(--text3)', fontSize: 10 }}>Net Hakediş</div>
           </div>
           {p.part_tam_gun > 0 && <Badge renk="sari" label={`${p.part_tam_gun}g Part-Tam`} />}
           {p.haftalik_izin_kullanilmadi > 0 && (

@@ -308,6 +308,25 @@ def gorev_pin_giris(body: GorevPinGirisBody):
 
         tarih = str(is_gunu_tr())
 
+        # Bugünkü planlanan mesai süresi (yemek molası hak kontrolü için)
+        from datetime import date as _d2
+        bugun = _d2.fromisoformat(tarih)
+        cur.execute("""
+            SELECT EXTRACT(EPOCH FROM (
+                CASE WHEN va.bitis_saat <= va.baslangic_saat
+                     THEN (va.bitis_saat::time + INTERVAL '24h') - va.baslangic_saat::time
+                     ELSE va.bitis_saat::time - va.baslangic_saat::time END
+            ))/3600.0 AS planlanan_saat
+            FROM vardiya_atama va
+            JOIN vardiya_slot vs ON vs.id = va.slot_id
+            WHERE va.personel_id = %s AND va.tarih = %s
+              AND va.durum IN ('planli','onayli')
+            ORDER BY planlanan_saat DESC LIMIT 1
+        """, (body.personel_id, bugun))
+        vs_row = cur.fetchone()
+        planlanan_saat = float(vs_row["planlanan_saat"]) if vs_row else 0.0
+        calisma_turu = personel.get("calisma_turu") or "surekli"
+
         # Personelin asıl şubesi
         asil_sube_id = personel.get("sube_id") or body.sube_id
         vardiya_disi = str(asil_sube_id) != str(body.sube_id)
@@ -346,6 +365,10 @@ def gorev_pin_giris(body: GorevPinGirisBody):
             "konum_onaylandi": konum_onaylandi,
             "konum_mesafe_m": round(konum_mesafe_m) if konum_mesafe_m else None,
             "vardiya_disi": vardiya_disi,
+            "calisma_turu": calisma_turu,
+            "planlanan_saat": round(planlanan_saat, 2),
+            # Part personel yemek molası hakkı: 9.5 saat+ vardiya gerekir
+            "yemek_mola_hakki": (calisma_turu == "surekli") or (planlanan_saat >= 9.5),
         }
 
 

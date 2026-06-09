@@ -526,6 +526,63 @@ function VardiyamEkrani({ oturum }) {
                alt={aylik.yemek_ucret_tutari > 0 ? `${aylik.yemek_ucret_tutari.toLocaleString('tr-TR')} ₺` : null} />
           </div>
 
+          {/* Net Hakediş ve Yemek Ücreti */}
+          {aylik.ucret_detay && (
+            <div style={{
+              marginTop: 12, padding: '14px 16px', borderRadius: 10,
+              background: 'rgba(76,175,132,0.06)', border: '1px solid rgba(76,175,132,0.2)',
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#6b6f7a', marginBottom: 10, letterSpacing: 0.5 }}>
+                💰 BU AY HAKEDİŞ
+              </div>
+              {(() => {
+                const d = aylik.ucret_detay;
+                const fmt2 = n => new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 0 }).format(n) + ' ₺';
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {d.taban_maas != null && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                        <span style={{ color: '#b0b3bc' }}>Taban Maaş</span>
+                        <span style={{ color: '#e8e9ec', fontWeight: 600 }}>{fmt2(d.taban_maas)}</span>
+                      </div>
+                    )}
+                    {d.calisma_saati != null && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                        <span style={{ color: '#b0b3bc' }}>Çalışma ({d.calisma_saati}s)</span>
+                        <span style={{ color: '#e8e9ec', fontWeight: 600 }}>{fmt2(d.normal_ucret)}</span>
+                      </div>
+                    )}
+                    {d.fazla_mesai_saat > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                        <span style={{ color: '#b0b3bc' }}>Fazla Mesai ({d.fazla_mesai_saat}s)</span>
+                        <span style={{ color: '#f59e0b', fontWeight: 600 }}>+{fmt2(d.fazla_mesai_ucret)}</span>
+                      </div>
+                    )}
+                    {aylik.yemek_ucret_gun > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                        <span style={{ color: '#b0b3bc' }}>🍽️ Yemek ({aylik.yemek_ucret_gun} gün)</span>
+                        <span style={{ color: '#4caf84', fontWeight: 600 }}>+{fmt2(aylik.yemek_ucret_tutari)}</span>
+                      </div>
+                    )}
+                    {d.yol_ucret > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                        <span style={{ color: '#b0b3bc' }}>Yol</span>
+                        <span style={{ color: '#e8e9ec', fontWeight: 600 }}>+{fmt2(d.yol_ucret)}</span>
+                      </div>
+                    )}
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between',
+                      borderTop: '1px solid rgba(76,175,132,0.2)', paddingTop: 8, marginTop: 4,
+                    }}>
+                      <span style={{ fontWeight: 800, fontSize: 14, color: '#e8e9ec' }}>NET HAKEDİŞ</span>
+                      <span style={{ fontWeight: 800, fontSize: 17, color: '#4caf84' }}>{fmt2(d['net_hakediş'])}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
           {aylik.haftalik_izin_kullanilmadi > 0 && (
             <div style={{
               marginTop: 12, padding: '12px 14px', borderRadius: 10,
@@ -681,7 +738,7 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
       {/* Yemek Molası + Mesai Çıkış */}
       {sekme === 'gorevler' && (
         <>
-          <YemekMolasiButon oturum={oturum} />
+          {oturum.yemek_mola_hakki !== false && <YemekMolasiButon oturum={oturum} />}
           <MesaiCikisButon oturum={oturum} />
         </>
       )}
