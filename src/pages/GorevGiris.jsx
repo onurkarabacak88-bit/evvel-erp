@@ -16,20 +16,8 @@ export default function GorevGiris({ subeId }) {
   const [yukleniyor, setYukleniyor] = useState(true);
   const [oturum, setOturum] = useState(null);
   const [konum, setKonum] = useState(null); // { lat, lng } | null
-  const [konumHata, setKonumHata] = useState(null);
-
-  // Sayfa açılır açılmaz konum iste
-  useEffect(() => {
-    if (!navigator.geolocation) {
-      setKonumHata('Tarayıcın konum desteklemiyor.');
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setKonum({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => setKonumHata('Konum izni reddedildi. Şubeye giriş için konum gereklidir.'),
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  }, []);
+  const [konumGerekli, setKonumGerekli] = useState(false); // şubede koordinat tanımlıysa true
+  const [konumHata, setKonumHata] = useState(false);
 
   useEffect(() => {
     if (!subeId) return;
@@ -42,9 +30,24 @@ export default function GorevGiris({ subeId }) {
         const s = (Array.isArray(subeler) ? subeler : subeler.subeler || [])
           .find(x => x.id === subeId);
         setSubeBilgi(s || null);
+        // Şubede koordinat tanımlıysa konum zorunlu
+        if (s?.lat && s?.lng) {
+          setKonumGerekli(true);
+          if (!navigator.geolocation) {
+            setKonumHata(true);
+          } else {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => setKonum({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+              () => setKonumHata(true),
+              { enableHighAccuracy: true, timeout: 10000 }
+            );
+          }
+        }
       }
     }).catch(console.error).finally(() => setYukleniyor(false));
   }, [subeId]);
+
+
 
   const pinGir = (k) => {
     if (k === 'sil') { setPin(p => p.slice(0, -1)); return; }
@@ -129,8 +132,8 @@ export default function GorevGiris({ subeId }) {
     </div>
   );
 
-  // Konum izni reddedildiyse engelle
-  if (konumHata) return (
+  // Koordinat tanımlı şubede konum izni reddedildiyse engelle
+  if (konumGerekli && konumHata) return (
     <div style={PAGE}>
       <div style={{ ...KART, textAlign: 'center' }}>
         <div style={{ fontSize: 36, marginBottom: 16 }}>📍</div>
@@ -138,10 +141,8 @@ export default function GorevGiris({ subeId }) {
           Konum İzni Gerekli
         </div>
         <div style={{ fontSize: 13, color: '#6b6f7a', lineHeight: 1.6 }}>
-          {konumHata}
-        </div>
-        <div style={{ fontSize: 12, color: '#4a5568', marginTop: 16 }}>
-          Tarayıcı ayarlarından konum iznini açıp sayfayı yenile.
+          Bu şubeye giriş yalnızca şube içinden yapılabilir.
+          Konum iznini açıp sayfayı yenile.
         </div>
         <button
           onClick={() => window.location.reload()}
@@ -155,6 +156,7 @@ export default function GorevGiris({ subeId }) {
       </div>
     </div>
   );
+
 
   return (
     <div style={PAGE}>
