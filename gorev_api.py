@@ -423,7 +423,10 @@ def gorev_qr_uret(sube_id: str):
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Şube bulunamadı")
-        sube_ad = row["ad"]
+        # latin-1 uyumlu dosya adı (Türkçe karakter sorunu)
+        import unicodedata
+        sube_ad_raw = row["ad"]
+        sube_ad = unicodedata.normalize('NFKD', sube_ad_raw).encode('ascii', 'ignore').decode('ascii') or sube_id
 
     url = f"{BASE_URL}/gorev-giris/{sube_id}"
 
