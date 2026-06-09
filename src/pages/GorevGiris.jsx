@@ -200,12 +200,11 @@ export default function GorevGiris({ subeId: subeIdProp }) {
         },
       });
       setPinDogruOturum(sonuc);
-      if (sonuc.vardiya_tanimli) {
-        setOturum(sonuc);
-        setAdim('gorevler');
-      } else {
-        setAdim('vardiya-sec');
-      }
+      // vardiya_tip her zaman backend tarafından bağlama göre belirleniyor.
+      // vardiya_tanimli=false sadece plan yoksa gelir ama yine de tip verilmiş olur.
+      // Sormadan direkt görevlere geç.
+      setOturum(sonuc);
+      setAdim('gorevler');
     } catch (e) {
       const msg = e.message || '';
       if (msg.startsWith('sube_disinda|')) setHata('📍 ' + msg.split('|')[1]);

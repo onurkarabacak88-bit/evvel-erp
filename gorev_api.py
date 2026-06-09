@@ -302,7 +302,7 @@ def gorev_pin_giris(body: GorevPinGirisBody):
         from datetime import date as _d2
         bugun = _d2.fromisoformat(tarih)
 
-        # Vardiya planından otomatik algıla
+        # ── Vardiya planından kişinin slotunu al ──────────────────────────────
         SLOT_TIP_MAP = {
             'acilis': 'sabahci', 'normal': 'sabahci',
             'yogun': 'ara_vardiya', 'kapanis': 'kapanis',
@@ -322,28 +322,62 @@ def gorev_pin_giris(body: GorevPinGirisBody):
             ORDER BY va.baslangic_saat LIMIT 1
         """, (body.personel_id, bugun, body.sube_id))
         slot_row = cur.fetchone()
+        planlanan_saat = float(slot_row["planlanan_saat"] or 0) if slot_row else 0.0
+
+        # ── Bugün bu şubede kaç kişi planlanmış? ─────────────────────────────
+        cur.execute("""
+            SELECT COUNT(*) AS toplam FROM vardiya_atama va
+            JOIN vardiya_slot vs ON vs.id = va.slot_id
+            WHERE va.tarih = %s AND vs.sube_id = %s
+              AND va.durum IN ('planli','onayli') AND vs.aktif = TRUE
+        """, (bugun, body.sube_id))
+        gunkü_toplam = (cur.fetchone() or {}).get("toplam", 0) or 0
+
+        # ── Dükkan bugün açıldı mı? ───────────────────────────────────────────
+        from sube_panel import _bugun_sube_acildi_mi
+        sube_acildi = _bugun_sube_acildi_mi(cur, body.sube_id)
+
+        # ── Vardiya tipini bağlama göre belirle ───────────────────────────────
+        #
+        # Kural 1: Günde tek kişi planlanmış → sabahçı (açılış + kapanış görevleri)
+        # Kural 2: Planında 'kapanis' var → kapanış
+        # Kural 3: Planında 'sabahci/acilis' var AMMA dükkan zaten açıldı → ara_vardiya
+        # Kural 4: Planında 'sabahci/acilis' var VE dükkan henüz açılmadı → sabahçı
+        # Kural 5: Planında 'ara_vardiya' var → ara_vardiya
+        # Kural 6: Plan yok + dükkan açılmadı → sabahçı (açılışçı)
+        # Kural 7: Plan yok + dükkan açıldı + gece (≥19) → kapanış
+        # Kural 8: Plan yok + dükkan açıldı + gündüz → ara_vardiya
 
         if slot_row:
-            vardiya_tip = SLOT_TIP_MAP.get(slot_row["tip"], "sabahci")
-            planlanan_saat = float(slot_row["planlanan_saat"] or 0)
+            plan_tip = SLOT_TIP_MAP.get(slot_row["tip"], "sabahci")
+            if gunkü_toplam <= 1:
+                # Tek kişilik gün → sabahçı (açılış + kapanış birlikte)
+                vardiya_tip = "sabahci"
+            elif plan_tip == "kapanis":
+                vardiya_tip = "kapanis"
+            elif plan_tip == "sabahci":
+                # Dükkan zaten açılmışsa sabahçı olamaz
+                vardiya_tip = "sabahci" if not sube_acildi else "ara_vardiya"
+            else:
+                vardiya_tip = plan_tip  # ara_vardiya
             vardiya_tanimli = True
         else:
-            # Plandan bulunamadı → saate göre tahmin, seçim ekranı çıksın
+            # Plan yok → bağlama göre tahmin, ama yine de sormadan ver
             saat = dt_now_tr().hour
-            if saat < 12:
+            if not sube_acildi:
                 vardiya_tip = "sabahci"
-            elif saat < 18:
-                vardiya_tip = "ara_vardiya"
-            else:
+            elif saat >= 19:
                 vardiya_tip = "kapanis"
+            else:
+                vardiya_tip = "ara_vardiya"
             planlanan_saat = 0.0
-            vardiya_tanimli = False
+            vardiya_tanimli = False  # plan yok işareti (UI bilgi amaçlı kullanabilir)
 
         calisma_turu = personel.get("calisma_turu") or "surekli"
 
         # Personelin asıl şubesi + vardiya dışı kontrolü
         asil_sube_id = personel.get("sube_id") or body.sube_id
-        vardiya_disi = str(asil_sube_id) != str(body.sube_id) or not vardiya_tanimli
+        vardiya_disi = str(asil_sube_id) != str(body.sube_id)
 
         # Aynı kişinin aynı şubede aynı gün zaten kaydı var mı? (vardiya_tip farklı olsa bile)
         cur.execute("""
