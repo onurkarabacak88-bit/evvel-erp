@@ -677,11 +677,22 @@ function VardiyamEkrani({ oturum }) {
 
 // ── Kapanış Mühür Bandı (sadece kapanış vardiyası için) ──────────────────────
 function KapanisMuhurBandi({ oturum }) {
-  // durum: null | 'qr-goster' | 'muhürlendi'
-  const [durum, setDurum] = useState(null);
+  // durum: null | 'kontrol' | 'qr-goster' | 'muhürlendi'
+  const [durum, setDurum] = useState('kontrol'); // mount'ta önce kontrol et
   const [manuelYukleniyor, setManuelYukleniyor] = useState(false);
   const [hata, setHata] = useState('');
   const pollRef = useRef(null);
+
+  // Mount'ta: zaten mühürlenmiş mi kontrol et
+  useEffect(() => {
+    api(`/gorev/kapanis-bekleyen?sube_id=${oturum.sube_id}`)
+      .then(res => {
+        const benimKayit = (res.bekleyen || []).find(b => b.personel_id === oturum.personel_id);
+        // Listede yoksa → zaten mühürlendi; varsa → henüz bekliyor
+        setDurum(benimKayit ? null : 'muhürlendi');
+      })
+      .catch(() => setDurum(null)); // hata varsa normal göster
+  }, []); // eslint-disable-line
 
   // QR gösterilince: 3 saniyede bir kapanis-bekleyen'i kontrol et
   useEffect(() => {
@@ -722,6 +733,17 @@ function KapanisMuhurBandi({ oturum }) {
       setManuelYukleniyor(false);
     }
   };
+
+  if (durum === 'kontrol') return (
+    <div style={{
+      padding: '10px 20px',
+      background: 'rgba(200,149,106,0.04)', borderBottom: '1px solid rgba(200,149,106,0.15)',
+      display: 'flex', alignItems: 'center', gap: 8,
+    }}>
+      <div className="spinner" style={{ width: 14, height: 14 }} />
+      <span style={{ fontSize: 11, color: '#6b6f7a' }}>Kapanış durumu kontrol ediliyor…</span>
+    </div>
+  );
 
   if (durum === 'muhürlendi') return (
     <div style={{
