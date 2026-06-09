@@ -234,6 +234,17 @@ function YemekMolasiButon({ oturum }) {
   const [ucretHakki, setUcretHakki] = useState(null);
   const [yukleniyor, setYukleniyor] = useState(false);
   const [mesaj, setMesaj] = useState('');
+  const [konum, setKonum] = useState(null);
+
+  // Konum arka planda al
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.watchPosition(
+      (pos) => setKonum({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 30000 }
+    );
+  }, []);
 
   useEffect(() => {
     api(`/gorev/yemek-durum?sube_id=${oturum.sube_id}&personel_id=${oturum.personel_id}`)
@@ -251,7 +262,12 @@ function YemekMolasiButon({ oturum }) {
       const endpoint = durum === 'devam' ? '/gorev/yemek-bitis' : '/gorev/yemek-baslat';
       const res = await api(endpoint, {
         method: 'POST',
-        body: { sube_id: oturum.sube_id, personel_id: oturum.personel_id },
+        body: {
+          sube_id: oturum.sube_id,
+          personel_id: oturum.personel_id,
+          lat: konum?.lat ?? null,
+          lng: konum?.lng ?? null,
+        },
       });
       if (durum === 'devam') {
         setDurum('bitti');
@@ -262,7 +278,14 @@ function YemekMolasiButon({ oturum }) {
         setDurum('devam');
       }
     } catch (e) {
-      setMesaj(e.message || 'Hata oluştu');
+      const msg = e.message || '';
+      if (msg.startsWith('sube_disinda|')) {
+        setMesaj('📍 ' + msg.split('|')[1]);
+      } else if (msg.startsWith('konum_gerekli|')) {
+        setMesaj('📍 Konum izni gerekli — tarayıcı ayarlarından izin ver.');
+      } else {
+        setMesaj(msg || 'Hata oluştu');
+      }
     } finally {
       setYukleniyor(false);
     }

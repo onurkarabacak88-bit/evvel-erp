@@ -509,23 +509,44 @@ def gorev_yoklama_listesi(tarih: str, sube_id: Optional[str] = None, sadece_vard
         return [dict(r) for r in cur.fetchall()]
 
 
+YEMEK_KONUM_RADIUS = 150  # metre — şube büyüklüğü 100m + 50m GPS toleransı
+
+
 class YemekMolasiBody(BaseModel):
     sube_id: str
     personel_id: str
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+def _konum_kontrol(cur, sube_id: str, lat, lng, hata_prefix: str):
+    """Şubede koordinat tanımlıysa konum kontrolü yap. Uzaktaysa HTTPException fırlat."""
+    cur.execute("SELECT lat, lng FROM subeler WHERE id=%s", (sube_id,))
+    sube = cur.fetchone()
+    if not (sube and sube["lat"] and sube["lng"]):
+        return  # koordinat tanımlı değil, serbest
+    if lat is None or lng is None:
+        raise HTTPException(403, f"konum_gerekli|{hata_prefix} için konum izni gereklidir.")
+    mesafe = _haversine_m(lat, lng, sube["lat"], sube["lng"])
+    if mesafe > YEMEK_KONUM_RADIUS:
+        raise HTTPException(403,
+            f"sube_disinda|{hata_prefix} şube dışından yapılamaz "
+            f"(şubeye uzaklık: {int(mesafe)} m, limit: {YEMEK_KONUM_RADIUS} m).")
 
 
 @router.post("/api/gorev/yemek-baslat")
 def yemek_baslat(body: YemekMolasiBody):
-    """Personel yemeğe gidiyor — mola başlangıcını kaydet."""
-    from tr_saat import is_gunu_tr, dt_now_tr
+    """Personel yemeğe gidiyor — konum kontrolü + mola başlangıcını kaydet."""
+    from tr_saat import is_gunu_tr
     tarih = str(is_gunu_tr())
     with db() as (conn, cur):
-        # Yoklama kaydı var mı kontrol
+        # Konum kontrolü — şubeden uzaksa başlatma
+        _konum_kontrol(cur, body.sube_id, body.lat, body.lng, "Yemek molası başlatma")
+        # Yoklama kaydı var mı
         cur.execute("SELECT 1 FROM gorev_yoklama WHERE sube_id=%s AND personel_id=%s AND tarih=%s",
                     (body.sube_id, body.personel_id, tarih))
         if not cur.fetchone():
             raise HTTPException(403, "Önce QR ile giriş yapılmalı.")
-        # Mevcut açık mola var mı
         cur.execute("SELECT id, bitis_ts FROM yemek_molasi WHERE sube_id=%s AND personel_id=%s AND tarih=%s",
                     (body.sube_id, body.personel_id, tarih))
         mevcut = cur.fetchone()
@@ -543,10 +564,12 @@ def yemek_baslat(body: YemekMolasiBody):
 
 @router.post("/api/gorev/yemek-bitis")
 def yemek_bitis(body: YemekMolasiBody):
-    """Personel yemekten döndü — mola bitiş + ücret hakkı hesapla."""
+    """Personel yemekten döndü — konum kontrolü + mola bitiş + ücret hakkı hesapla."""
     from tr_saat import is_gunu_tr, dt_now_tr
     tarih = str(is_gunu_tr())
     with db() as (conn, cur):
+        # Konum kontrolü — şubede değilse kapatma
+        _konum_kontrol(cur, body.sube_id, body.lat, body.lng, "Yemek molası kapatma")
         cur.execute("""
             SELECT ym.id, ym.baslangic_ts, s.yemek_mola_limit_dk
             FROM yemek_molasi ym
@@ -557,14 +580,11 @@ def yemek_bitis(body: YemekMolasiBody):
         if not row:
             raise HTTPException(400, "Açık yemek molası bulunamadı. Önce 'Yemeğe Git' yapın.")
         limit_dk = int(row["yemek_mola_limit_dk"] or 60)
-        from datetime import datetime, timezone
         simdi = dt_now_tr()
         sure_dk = (simdi.replace(tzinfo=None) - row["baslangic_ts"].replace(tzinfo=None)).total_seconds() / 60
         ucret_hakki = sure_dk <= limit_dk
         cur.execute("""
-            UPDATE yemek_molasi
-            SET bitis_ts=NOW(), sure_dk=%s, ucret_hakki=%s
-            WHERE id=%s
+            UPDATE yemek_molasi SET bitis_ts=NOW(), sure_dk=%s, ucret_hakki=%s WHERE id=%s
         """, (round(sure_dk, 1), ucret_hakki, row["id"]))
         conn.commit()
     return {
