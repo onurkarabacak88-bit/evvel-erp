@@ -5279,6 +5279,90 @@ def sube_siparis_onay(sube_id: str, body: SiparisOnayBody):
         return out
 
 
+@router.post("/{sube_id}/siparis-yoklama")
+def sube_siparis_yoklama(sube_id: str, body: SiparisOnayBody):
+    """QR yoklama oturumu ile sipariş ver — PIN gerekmez, yoklama kaydı yeterli."""
+    pid_in = (body.personel_id or "").strip()
+    if not pid_in:
+        raise HTTPException(400, "personel_id gerekli")
+    kalemler = body.kalemler or []
+    temiz: List[Dict[str, Any]] = []
+    for k in kalemler:
+        ad = (k.urun_ad or "").strip()
+        if not ad:
+            continue
+        adet = int(k.adet or 0)
+        if adet <= 0:
+            continue
+        temiz.append({
+            "kategori_id": (k.kategori_id or "").strip(),
+            "urun_id": (k.urun_id or "").strip(),
+            "urun_ad": ad,
+            "aciklama": (getattr(k, "aciklama", None) or "").strip() or None,
+            "adet": adet,
+        })
+    if not temiz:
+        raise HTTPException(400, "En az bir kalem gerekli")
+
+    with db() as (conn, cur):
+        _sube_getir(cur, sube_id)
+        # Yoklama kontrolü — QR oturumu geçerli mi?
+        cur.execute("""
+            SELECT id FROM gorev_yoklama
+            WHERE sube_id=%s AND personel_id=%s AND tarih=%s LIMIT 1
+        """, (sube_id, pid_in, is_gunu_tr()))
+        if not cur.fetchone():
+            raise HTTPException(403, "Bu şube için geçerli QR yoklama kaydı bulunamadı. Önce QR okutun.")
+        # Personel adını al
+        cur.execute("SELECT ad_soyad FROM personel WHERE id=%s::uuid", (pid_in,))
+        p_row = cur.fetchone()
+        onay_ad = (p_row["ad_soyad"] if p_row else pid_in).strip() or "—"
+
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"siparis_onay_{sube_id}",))
+        acik_n, _ref_oid, uyari_metni, ortak = sube_yeni_siparis_oncesi_cift_kontrol(cur, sube_id, temiz)
+        yonlendirilmemis_var = False
+        if acik_n >= 1:
+            cur.execute("""
+                SELECT COUNT(*) AS c FROM siparis_talep
+                WHERE sube_id=%s AND durum='bekliyor'
+                  AND (hedef_depo_sube_id IS NULL OR hedef_depo_sube_id='')
+                  AND (sevkiyat_sube_id IS NULL OR sevkiyat_sube_id='')
+            """, (sube_id,))
+            yonlendirilmemis_var = int((cur.fetchone() or {}).get("c") or 0) > 0
+
+        if yonlendirilmemis_var and not bool(body.force_cift_siparis):
+            raise HTTPException(status_code=409, detail={
+                "kod": "CIFT_SIPARIS_UYARI",
+                "mesaj": uyari_metni or "Tamamlanmamış sipariş talebiniz var.",
+                "onceki_acik_sayisi": acik_n,
+                "ortak_urun_etiketleri": ortak,
+            })
+
+        tr_now = _now_tr()
+        saat = tr_now.strftime("%H:%M:%S")
+        tid = str(uuid.uuid4())
+        cur.execute("""
+            INSERT INTO siparis_talep
+                (id, sube_id, tarih, durum, personel_id, personel_ad, bildirim_saati, not_aciklama, kalemler)
+            VALUES (%s, %s, CURRENT_DATE, 'bekliyor', %s, %s, %s, %s, %s::jsonb)
+        """, (tid, sube_id, pid_in, onay_ad, saat,
+              (body.not_aciklama or "").strip() or None,
+              json.dumps(temiz, ensure_ascii=False)))
+        audit(cur, "siparis_talep", tid, "SIPARIS_YOKLAMA")
+        from operasyon_defter import operasyon_defter_ekle
+        toplam = sum(int(x.get("adet") or 0) for x in temiz)
+        operasyon_defter_ekle(cur, sube_id, "SIPARIS_YOKLAMA",
+            f"QR sipariş — personel={onay_ad} kalem={len(temiz)} adet={toplam}",
+            personel_id=pid_in, personel_ad=onay_ad, bildirim_saati=saat)
+        try:
+            from operasyon_stok_motor import siparis_olustu_kaydet
+            siparis_olustu_kaydet(cur, tid, sube_id, temiz, pid_in, onay_ad)
+        except Exception:
+            traceback.print_exc()
+        conn.commit()
+        return {"success": True, "talep_id": tid, "kalem_sayisi": len(temiz), "toplam_adet": toplam}
+
+
 @router.get("/{sube_id}/geri-bildirimler")
 def sube_geri_bildirimler(sube_id: str, gun: int = Query(default=14, ge=1, le=90)):
     """Operasyon merkezinin bu şubeye yönelik defter kayıtları (geri bildirim akışı)."""
