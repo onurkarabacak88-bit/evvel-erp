@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../utils/api';
+import tulipiLogo from '../assets/tulipi-logo.jpg';
 
 const GUNLER = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar'];
 const TOPLAM_ADIM = 7;
@@ -280,7 +281,10 @@ export default function IsBasvuruForm() {
       {/* ── Header + Progress ── */}
       <div style={{ position: 'sticky', top: 0, zIndex: 50, background: BG, borderBottom: `1px solid ${BORD}`, padding: '12px 18px 0' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: T1 }}>☕ Tulipi Coffee</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <img src={tulipiLogo} alt="Tulipi Coffee" style={{ height: 32, width: 32, objectFit: 'contain', borderRadius: 6 }} />
+            <span style={{ fontSize: 14, fontWeight: 800, color: T1 }}>Tulipi Coffee</span>
+          </div>
           <div style={{ fontSize: 12, color: T3, fontWeight: 600 }}>{adim} / {TOPLAM_ADIM}</div>
         </div>
         {/* Progress bar */}
@@ -716,8 +720,9 @@ export default function IsBasvuruForm() {
           </div>
         )}
 
-        <div style={{ textAlign: 'center', marginTop: 28, fontSize: 12, color: T3 }}>
-          ☕ Tulipi Coffee — Gizliliğin korunur, bilgilerin sadece ekibimizle paylaşılır.
+        <div style={{ textAlign: 'center', marginTop: 28, fontSize: 12, color: T3, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <img src={tulipiLogo} alt="Tulipi Coffee" style={{ height: 18, width: 18, objectFit: 'contain', borderRadius: 3, opacity: 0.7 }} />
+          Tulipi Coffee — Gizliliğin korunur, bilgilerin sadece ekibimizle paylaşılır.
         </div>
       </div>
     </div>
