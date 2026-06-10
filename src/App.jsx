@@ -34,6 +34,8 @@ import TeslimKayit from './pages/TeslimKayit';
 import KasaTeslim from './pages/KasaTeslim';
 import EkstreYukle from './pages/EkstreYukle';
 import KartYonetimi from './pages/KartYonetimi';
+import IsBasvuruForm from './pages/IsBasvuruForm';
+import IsBasvuruListesi from './pages/IsBasvuruListesi';
 import './index.css';
 
 const NAV = [
@@ -57,6 +59,9 @@ const NAV = [
   ]},
   { group: 'Kartlar', gicon: '💳', items: [
     { id: 'kart-yonetimi',    label: 'Kart Yönetimi',       icon: '💳' },
+  ]},
+  { group: 'İnsan Kaynakları', gicon: '💼', items: [
+    { id: 'is-basvurusu',     label: 'İş Başvuruları',      icon: '💼' },
   ]},
   { group: 'Personel & Vardiya', gicon: '👥', items: [
     { id: 'personel',         label: 'Personel & Maaş',     icon: '👥' },
@@ -115,6 +120,7 @@ const PAGES = {
   'personel-vardiya-takip':  PersonelVardiyaTakip,
   tedarikciler:       Tedarikciler,
   'veri-temizle':     VeriTemizle,
+  'is-basvurusu':     IsBasvuruListesi,
 };
 
 function readPageFromHash() {
@@ -150,6 +156,11 @@ function syncHashForPage(pageId) {
 }
 
 export default function App() {
+  // İş başvurusu — mobil form, sidebar yok
+  if (window.location.pathname === '/is-basvurusu') {
+    return <IsBasvuruForm />;
+  }
+
   // QR giriş sayfası — sidebar olmadan tam ekran
   const gorevGirisMatch = window.location.pathname.match(/^\/gorev-giris\/(.+)$/);
   if (gorevGirisMatch) {

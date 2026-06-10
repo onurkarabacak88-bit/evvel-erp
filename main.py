@@ -37,6 +37,7 @@ from odeme_plani_api import router as odeme_plani_read_router
 from evo_sync import router as evo_sync_router
 from kart_analiz import router as kart_analiz_router
 from gorev_api import router as gorev_router
+from is_basvuru_api import router as is_basvuru_router
 import vardiya_v2 as _vv2
 from vardiya_v2 import _ad_soyad_split as _vardiya_personel_ad_split
 
@@ -85,6 +86,7 @@ app.include_router(odeme_plani_read_router)
 app.include_router(evo_sync_router)
 app.include_router(kart_analiz_router)
 app.include_router(gorev_router)
+app.include_router(is_basvuru_router)
 
 logging.basicConfig(
     level=logging.INFO,
