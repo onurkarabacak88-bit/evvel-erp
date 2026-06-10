@@ -1003,15 +1003,22 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 # Not: vardiya_tip ile sınırlı değil — devir yapmadan tek başına
                 # açılış+kapanış yapan sabahci/ara_vardiya personeli de QR ile
                 # mühürleyebiliyor (kapanis_muhurle, gorev_api.py).
+                # Not: CURRENT_DATE degil is_gunu_tr() kullanilir — kapanis-muhurle
+                # (gorev_api.py) yoklama satirina is_gunu_tr() ile 'tarih' yazar;
+                # 00:00-02:00 arasinda CURRENT_DATE (TR duvar saati) bir sonraki
+                # takvim gunune gecmis olabilirken is_gunu_tr() hala onceki
+                # is gununu doner. CURRENT_DATE kullanmak bu saatler arasinda
+                # muhurlenmis kaydi bulamayip "QR onaylayan personel bulunamadi"
+                # hatasina (ve tum islemin rollback olmasina) yol aciyordu.
                 cur.execute("""
                     SELECT gy.personel_id, p.ad_soyad
                     FROM gorev_yoklama gy
                     JOIN personel p ON p.id::text = gy.personel_id
-                    WHERE gy.sube_id = %s AND gy.tarih = CURRENT_DATE
+                    WHERE gy.sube_id = %s AND gy.tarih = %s
                       AND gy.cikis_tip = 'kapalis'
                       AND gy.cikis_ts IS NOT NULL
                     ORDER BY gy.cikis_ts DESC LIMIT 1
-                """, (sube_id,))
+                """, (sube_id, is_gunu_tr()))
                 yoklama_row = cur.fetchone()
                 if not yoklama_row:
                     raise HTTPException(400, "Kapanış için QR onaylayan kapanış personeli bulunamadı. Lütfen kapanışçı telefonda QR'ı okutup onaylamalı.")
