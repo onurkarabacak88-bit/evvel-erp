@@ -31,6 +31,11 @@ class BasvuruGonder(BaseModel):
     ek_not: Optional[str] = None
     # Adım 3
     kahve_deneyim: Optional[str] = None
+    nerede_calistim: Optional[str] = None    # kurumsal | yerel_bagimsiz | sektor_disi | hic_calismadim
+    is_ogrenilen: Optional[str] = None       # musteri_iletisim | hiz_tempo | duzen_temizlik | takim | tek_sorumluluk | cok_ogrenmedim
+    isten_en_iyi: Optional[str] = None       # musteri_insan | tempolu_ortam | ogrenme | ekip | para_bagimsizlik
+    isten_en_zor: Optional[str] = None       # uzun_saatler | zor_musteriler | dusuk_ucret | yonetim_sorun | monoton
+    # Eski serbest metin alanları — geriye dönük uyumluluk için tutuldu
     onceki_is: Optional[str] = None
     onceki_is_ogrenilen: Optional[str] = None
     onceki_is_iyi_zor: Optional[str] = None
@@ -154,7 +159,7 @@ def _hesapla_skor(row: dict) -> dict:
     elif kahve == 'var_2yil':       s['gecmis'] += 6
     elif kahve == 'var_1yil':       s['gecmis'] += 4
     elif kahve == 'kismi':          s['gecmis'] += 2
-    elif kahve == 'yok_ogreneyim':  s['gecmis'] += 0  # nötr, motivasyon puanına bakılır
+    elif kahve == 'yok_ogreneyim':  s['gecmis'] += 0  # nötr
 
     neden = row.get('neden_bu_is')
     if   neden == 'barista':      s['gecmis'] += 5; sinyaller.append({'tip':'olumlu','mesaj':'🎯 Barista olmak istiyor — motivasyon güçlü'})
@@ -162,6 +167,69 @@ def _hesapla_skor(row: dict) -> dict:
     elif neden == 'deneyim':      s['gecmis'] += 3
     elif neden == 'tam_zamanli':  s['gecmis'] += 2
     elif neden == 'part_time':    s['gecmis'] += 1
+
+    # ── 5b. Nerede Çalıştı → gecmis + çapraz ──────────────────────────────
+    nerede = row.get('nerede_calistim')
+    if nerede == 'kurumsal':
+        s['gecmis'] += 4; s['duzen'] += 3
+        sinyaller.append({'tip':'olumlu','mesaj':'🏢 Kurumsal deneyim — standartlara alışık'})
+    elif nerede == 'yerel_bagimsiz':
+        s['gecmis'] += 3; s['enerji'] += 2
+        sinyaller.append({'tip':'olumlu','mesaj':'☕ Yerel işletme — bireysel müşteri ilişkisine alışık'})
+    elif nerede == 'sektor_disi':
+        s['gecmis'] += 1
+        sinyaller.append({'tip':'dikkat','mesaj':'🔄 F&B dışı deneyim — sektör adaptasyonu gerekebilir'})
+    # hic_calismadim → 0 bonus, sinyalsiz
+
+    # ── 5c. O işte ne öğrendi → gecmis + çapraz ───────────────────────────
+    ogrenilen = row.get('is_ogrenilen')
+    if ogrenilen == 'musteri_iletisim':
+        s['gecmis'] += 2; s['enerji'] += 3
+        sinyaller.append({'tip':'olumlu','mesaj':'💬 Öğrendikleri müşteri iletişimini destekliyor'})
+    elif ogrenilen == 'hiz_tempo':
+        s['gecmis'] += 2; s['esneklik'] += 2
+        sinyaller.append({'tip':'olumlu','mesaj':'⚡ Tempolu çalışma alışkanlığı kazanmış'})
+    elif ogrenilen == 'duzen_temizlik':
+        s['gecmis'] += 2; s['duzen'] += 4
+        sinyaller.append({'tip':'olumlu','mesaj':'🧹 Düzen ve temizliği bilinçli öğrenmiş — güçlü sinyal'})
+    elif ogrenilen == 'takim':
+        s['gecmis'] += 2; s['enerji'] += 2
+    elif ogrenilen == 'tek_sorumluluk':
+        s['gecmis'] += 2; s['esneklik'] += 1
+    elif ogrenilen == 'cok_ogrenmedim':
+        s['gecmis'] -= 3
+        sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Önceki deneyimden verim alamamış'})
+
+    # ── 5d. En iyi neydi → çapraz teyit ────────────────────────────────────
+    en_iyi = row.get('isten_en_iyi')
+    if en_iyi == 'musteri_insan':
+        s['enerji'] += 3
+        sinyaller.append({'tip':'olumlu','mesaj':'👥 Müşteri sevgisi iş deneyimiyle teyit edildi'})
+    elif en_iyi == 'tempolu_ortam':
+        s['esneklik'] += 3; s['sabah'] += 1
+        sinyaller.append({'tip':'olumlu','mesaj':'🏃 Yoğun tempo seviyor — sabah/mesai uyumu yüksek'})
+    elif en_iyi == 'ogrenme':
+        s['gecmis'] += 2
+    elif en_iyi == 'ekip':
+        s['enerji'] += 1
+    elif en_iyi == 'para_bagimsizlik':
+        pass  # nötr, gerçekçi motivasyon
+
+    # ── 5e. En zor neydi → risk sinyalleri ─────────────────────────────────
+    en_zor = row.get('isten_en_zor')
+    if en_zor == 'uzun_saatler':
+        s['esneklik'] -= 5
+        sinyaller.append({'tip':'dikkat','mesaj':'🚩 Uzun saatler zor gelmiş — gece kapanış/mesai riski'})
+    elif en_zor == 'zor_musteriler':
+        s['enerji'] -= 3
+        sinyaller.append({'tip':'dikkat','mesaj':'😤 Zor müşterilerle başa çıkmakta zorlanmış'})
+    elif en_zor == 'dusuk_ucret':
+        pass  # yaygın, nötr
+    elif en_zor == 'yonetim_sorun':
+        s['esneklik'] -= 2
+        sinyaller.append({'tip':'dikkat','mesaj':'🚧 Yönetimle geçinme geçmişi — takım uyumu izlenecek'})
+    elif en_zor == 'monoton':
+        s['esneklik'] += 1  # yoğun ortam arayışında → bizim için iyi
 
     # ── Clamp & Toplam ──────────────────────────────────────────────────────
     for k in s:
@@ -247,6 +315,9 @@ def _ensure_table(cur):
         ("sosyal_yaklasim","TEXT"), ("musteri_bagli","TEXT"),
         ("sabah_hazirlik","TEXT"), ("yorucu_an","TEXT"),
         ("neden_bu_is","TEXT"), ("tempo_tercihi","TEXT"),
+        # Yeni yapısal adım 3 alanları
+        ("nerede_calistim","TEXT"), ("is_ogrenilen","TEXT"),
+        ("isten_en_iyi","TEXT"),    ("isten_en_zor","TEXT"),
     ]:
         try:
             cur.execute(f"ALTER TABLE is_basvuru ADD COLUMN IF NOT EXISTS {kolon} {tip}")
@@ -288,6 +359,7 @@ def basvuru_gonder(body: BasvuruGonder):
                 yasam_durumu, egitim_durumu, universite_bol, en_erken_saat, ulasim,
                 pozisyon, tercih_subeler, calisma_tercihi, musait_gunler, baslangic, ek_not,
                 kahve_deneyim, onceki_is, onceki_is_ogrenilen, onceki_is_iyi_zor,
+                nerede_calistim, is_ogrenilen, isten_en_iyi, isten_en_zor,
                 makine_sonrasi, yogun_duzen, gun_planlama, arkadaslar_tanim,
                 sosyal_yaklasim, musteri_bagli, sabah_hazirlik, yorucu_an,
                 neden_bu_is, tempo_tercihi,
@@ -297,6 +369,7 @@ def basvuru_gonder(body: BasvuruGonder):
                 %s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,
                 %s,%s::jsonb,%s,%s::jsonb,%s,%s,
+                %s,%s,%s,%s,
                 %s,%s,%s,%s,
                 %s,%s,%s,%s,
                 %s,%s,%s,%s,
@@ -321,6 +394,8 @@ def basvuru_gonder(body: BasvuruGonder):
             (body.onceki_is or "").strip() or None,
             (body.onceki_is_ogrenilen or "").strip() or None,
             (body.onceki_is_iyi_zor or "").strip() or None,
+            body.nerede_calistim, body.is_ogrenilen,
+            body.isten_en_iyi, body.isten_en_zor,
             body.makine_sonrasi, body.yogun_duzen,
             body.gun_planlama, body.arkadaslar_tanim,
             body.sosyal_yaklasim, body.musteri_bagli,

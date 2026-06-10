@@ -115,8 +115,11 @@ export default function IsBasvuruForm() {
     // Adım 2
     calisma_tercihi: null, musait_gunler: [], baslangic: null, ek_not: '',
     // Adım 3
-    kahve_deneyim: null, onceki_is: '',
-    onceki_is_ogrenilen: '', onceki_is_iyi_zor: '',
+    kahve_deneyim: null,
+    nerede_calistim: null,   // kurumsal | yerel_bagimsiz | sektor_disi | hic_calismadim
+    is_ogrenilen: null,      // musteri_iletisim | hiz_tempo | duzen_temizlik | takim | tek_sorumluluk | cok_ogrenmedim
+    isten_en_iyi: null,      // musteri_insan | tempolu_ortam | ogrenme | ekip | para_bagimsizlik | yonetim
+    isten_en_zor: null,      // uzun_saatler | zor_musteriler | dusuk_ucret | yonetim_sorun | monoton | hic_yoktu
     // Adım 4 — behavioral (temizlik + esneklik maskeli)
     makine_sonrasi: null, yogun_duzen: null,
     gun_planlama: null, arkadaslar_tanim: null,
@@ -423,26 +426,51 @@ export default function IsBasvuruForm() {
 
               <div style={S.section}>
                 <label style={S.label}>Daha önce nerede çalıştın?</label>
-                <span style={S.sublabel}>Hiç çalışmadıysan "Hiç çalışmadım" yazabilirsin.</span>
-                <textarea style={S.textarea}
-                  placeholder="Örn: Starbucks Alsancak'ta 8 ay / Markette 1 yıl çalıştım / Hiç çalışmadım"
-                  value={form.onceki_is} onChange={e => set('onceki_is', e.target.value)} />
+                {[
+                  { value: 'kurumsal',       label: '🏢 Kurumsal zincirde', alt: 'Starbucks, McDonald\'s, market zinciri gibi' },
+                  { value: 'yerel_bagimsiz', label: '☕ Yerel / bağımsız işletmede', alt: 'Mahalle kafesi, butik restoran, küçük işletme' },
+                  { value: 'sektor_disi',    label: '🔄 Farklı bir sektörde', alt: 'Giyim, büro, fabrika, eğitim, sağlık...' },
+                  { value: 'hic_calismadim', label: '🌱 Hiç çalışmadım', alt: 'İlk iş deneyimim olacak' },
+                ].map(s => <RadioCard key={s.value} secenek={s} secili={form.nerede_calistim} onSec={v => set('nerede_calistim', v)} />)}
               </div>
 
-              <div style={S.section}>
-                <label style={S.label}>Son işinde en çok ne öğrendin?</label>
-                <span style={S.sublabel}>Hiç çalışmadıysan boş bırakabilirsin.</span>
-                <textarea style={S.textarea}
-                  placeholder="Örn: Müşteriyle iletişim kurmayı öğrendim / Hızlı ve düzenli çalışmayı öğrendim..."
-                  value={form.onceki_is_ogrenilen} onChange={e => set('onceki_is_ogrenilen', e.target.value)} />
-              </div>
+              {form.nerede_calistim && form.nerede_calistim !== 'hic_calismadim' && (
+                <>
+                  <div style={S.section}>
+                    <label style={S.label}>O işte en çok ne öğrendin?</label>
+                    {[
+                      { value: 'musteri_iletisim', label: '💬 Müşteriyle iletişim kurmayı' },
+                      { value: 'hiz_tempo',        label: '⚡ Hızlı ve tempolu çalışmayı' },
+                      { value: 'duzen_temizlik',   label: '🧹 Düzen ve temizliğin önemini' },
+                      { value: 'takim',            label: '🤝 Takım olarak çalışmayı' },
+                      { value: 'tek_sorumluluk',   label: '🎯 İşi tek başıma yönetmeyi' },
+                      { value: 'cok_ogrenmedim',   label: '🤷 Pek bir şey öğrenemedim' },
+                    ].map(s => <RadioCard key={s.value} secenek={s} secili={form.is_ogrenilen} onSec={v => set('is_ogrenilen', v)} />)}
+                  </div>
 
-              <div style={S.section}>
-                <label style={S.label}>O işte en iyi ve en zor olan neydi?</label>
-                <textarea style={S.textarea}
-                  placeholder="Örn: En iyisi ekip arkadaşlarımdı. En zoruysa saatlerin bazen uzamasıydı..."
-                  value={form.onceki_is_iyi_zor} onChange={e => set('onceki_is_iyi_zor', e.target.value)} />
-              </div>
+                  <div style={S.section}>
+                    <label style={S.label}>O işte seni en çok ne mutlu etti?</label>
+                    {[
+                      { value: 'musteri_insan',    label: '👥 Müşteriler ve insan ilişkileri' },
+                      { value: 'tempolu_ortam',    label: '🏃 Tempolu ortam — gün hızlı geçti' },
+                      { value: 'ogrenme',          label: '📚 Sürekli bir şeyler öğrendim' },
+                      { value: 'ekip',             label: '💪 Ekip arkadaşlarım' },
+                      { value: 'para_bagimsizlik', label: '💰 Kendi param, kendi kararlarım' },
+                    ].map(s => <RadioCard key={s.value} secenek={s} secili={form.isten_en_iyi} onSec={v => set('isten_en_iyi', v)} />)}
+                  </div>
+
+                  <div style={S.section}>
+                    <label style={S.label}>O işte en zor ne geldi?</label>
+                    {[
+                      { value: 'uzun_saatler',   label: '⏰ Uzun saatler / geç çıkışlar' },
+                      { value: 'zor_musteriler', label: '😤 Zor veya sinirli müşteriler' },
+                      { value: 'dusuk_ucret',    label: '💸 Emek karşılığı azdı' },
+                      { value: 'yonetim_sorun',  label: '🚧 Yönetim veya organizasyon sorunları' },
+                      { value: 'monoton',        label: '😴 Tekrarcı / monoton işti' },
+                    ].map(s => <RadioCard key={s.value} secenek={s} secili={form.isten_en_zor} onSec={v => set('isten_en_zor', v)} />)}
+                  </div>
+                </>
+              )}
             </div>
           )}
 

@@ -26,6 +26,10 @@ const NEDEN_LABEL   = { part_time: '💰 Ek gelir', tam_zamanli: '💼 Kariyer',
 const TEMPO_LABEL   = { hizli: '⚡ Hızlı tempo', sakin: '🌿 Sakin', ikisi: '😄 İkisi de olur' };
 
 // Behavioral cevap etiketleri
+const NEREDE_LABEL   = { kurumsal: '🏢 Kurumsal zincir', yerel_bagimsiz: '☕ Yerel/bağımsız', sektor_disi: '🔄 Sektör dışı', hic_calismadim: '🌱 İlk iş' };
+const OGRENILEN_LABEL = { musteri_iletisim: '💬 Müşteri iletişimi', hiz_tempo: '⚡ Hız & tempo', duzen_temizlik: '🧹 Düzen & temizlik ✅', takim: '🤝 Takım çalışması', tek_sorumluluk: '🎯 Tek sorumluluk', cok_ogrenmedim: '🤷 Az öğrendi ⚠️' };
+const EN_IYI_LABEL   = { musteri_insan: '👥 Müşteri ilişkileri', tempolu_ortam: '🏃 Tempolu ortam ✅', ogrenme: '📚 Öğrenme fırsatı', ekip: '💪 Ekip', para_bagimsizlik: '💰 Para/bağımsızlık' };
+const EN_ZOR_LABEL   = { uzun_saatler: '⏰ Uzun saatler 🚩', zor_musteriler: '😤 Zor müşteriler ⚠️', dusuk_ucret: '💸 Düşük ücret', yonetim_sorun: '🚧 Yönetim sorunu ⚠️', monoton: '😴 Monoton' };
 const MAKINE_LABEL   = { hemen_siler: 'Hemen siler ✅', vardiya_sonu: 'Vardiya sonunda', kime_duserse: 'Kime düşerse', pek_dusunmem: 'Düşünmemiş ⚠️' };
 const YOGUN_LABEL    = { araliklarda: 'Aralıklarda toplar ✅', rush_bitti: 'Rush sonrası', oldugu_gibi: 'Bırakır', fark_etmez: 'Fark etmez ⚠️' };
 const GUNPLAN_LABEL  = { esnek_akis: 'Esnek ✅', plan_degisir: 'Esnek ama planlı', saatler_belli: 'Saate bağlı', onceden_netlesin: 'Katı plan 🚩' };
@@ -222,6 +226,14 @@ function CVModal({ b, onKapat, onGuncelle, onSil }) {
           <Satir label="☕ Müşteri bağı" deger={MUSTERI_LABEL[b.musteri_bagli] || b.musteri_bagli} />
           <Satir label="🌅 Sabah hazırlığı" deger={SABAH_LABEL[b.sabah_hazirlik] || b.sabah_hazirlik} />
           <Satir label="😓 En yorucu an" deger={YORUCU_LABEL[b.yorucu_an] || b.yorucu_an} />
+
+          <Baslik label="DENEYİM GEÇMİŞİ (YAPISAL)" />
+          <Satir label="🏢 Nerede çalıştı" deger={NEREDE_LABEL[b.nerede_calistim] || b.nerede_calistim} />
+          {b.nerede_calistim && b.nerede_calistim !== 'hic_calismadim' && <>
+            <Satir label="📚 Ne öğrendi" deger={OGRENILEN_LABEL[b.is_ogrenilen] || b.is_ogrenilen} />
+            <Satir label="✨ En iyi yanı" deger={EN_IYI_LABEL[b.isten_en_iyi] || b.isten_en_iyi} />
+            <Satir label="⚠️ En zor yanı" deger={EN_ZOR_LABEL[b.isten_en_zor] || b.isten_en_zor} />
+          </>}
 
           <Baslik label="MOTİVASYON & KİŞİLİK" />
           <Satir label="🎯 Neden Bu İş" deger={NEDEN_LABEL[b.neden_bu_is] || b.neden_bu_is} />
