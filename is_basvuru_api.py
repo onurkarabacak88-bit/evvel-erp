@@ -102,7 +102,7 @@ def _hesapla_skor(row: dict) -> dict:
     egitim = row.get('egitim_durumu')
     if   egitim == 'lise':       s['sabah'] += 2  # okul saatleri var, erken kalkmaya alışık
     elif egitim == 'universite': s['sabah'] += 1
-    elif egitim == 'tek':        s['sabah'] -= 1
+    elif egitim == 'mezun':      s['sabah'] += 1  # tam zamanlı uygun, ders programı kısıtı yok
 
     # ── 2. Düzen & Standart ─────────────────────────────────────────────────
     makine = row.get('makine_sonrasi')
@@ -371,6 +371,43 @@ def _hesapla_skor(row: dict) -> dict:
             and gun_plan != 'onceden_netlesin'):
         s['esneklik'] += 4; s['gecmis'] += 2
         sinyaller.append({'tip':'olumlu','mesaj':'🚗 Düşük riskli profil: Aracı var + 2+ yıl tecrübe + yönetimle sorun yaşamamış + mesai esnek — işletme için çoklu güvence'})
+
+    # ⑰ Çakışma riski — başka işte çalışıyor + katı saat bekliyor + hafta sonu uygun değil
+    if (egitim == 'calisiyor'
+            and gun_plan in ['saatler_belli', 'onceden_netlesin']
+            and gunler and not has_ctesi and not has_pazar):
+        s['esneklik'] -= 3
+        sinyaller.append({'tip':'dikkat','mesaj':'🔴 Vardiya çakışma riski: Başka işte çalışıyor + katı saat bekliyor + hafta sonu uygun değil'})
+
+    # ⑱ Geçici/yan iş arayışı — ücret hassasiyeti + yarı zamanlı yaklaşım + acele yok
+    if en_zor == 'dusuk_ucret' and calisma == 'esnek' and baslangic == '1ay':
+        s['gecmis'] -= 2; s['esneklik'] -= 1
+        sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Düşük bağlılık sinyali: Ücret hassasiyeti + yarı zamanlı yaklaşım + acele yok — yan iş/geçici arayış olabilir'})
+
+    # ⑲ Sabah devamsızlık riski — toplu taşımaya bağımlı + geç başlangıç + yalnız yaşıyor
+    if ulasim == 'toplu' and en_erken in ['10:00', 'ogle'] and yasam == 'tek':
+        s['sabah'] -= 3
+        sinyaller.append({'tip':'dikkat','mesaj':'🔴 Sabah devamsızlık riski: Toplu taşımaya bağımlı + geç başlangıç istiyor + yalnız yaşıyor'})
+
+    # ⑳ Tam esneklik üçlü onay — hafta sonu müsait + esnek akış + her an hazır
+    if has_ctesi and has_pazar and gun_plan == 'esnek_akis' and arkadaslar == 'her_an_hazir':
+        s['esneklik'] += 3
+        sinyaller.append({'tip':'olumlu','mesaj':'🔄 Tam esneklik üçlü onay: Hafta sonu müsait + esnek akış + her an hazır — ideal vardiya profili'})
+
+    # ㉑ Profesyonel servis standardı — kurumsal geçmiş + temizlik refleksi + müşteri bağı
+    if nerede == 'kurumsal' and makine == 'hemen_siler' and musteri == 'adini_ogrenip':
+        s['enerji'] += 2; s['duzen'] += 2
+        sinyaller.append({'tip':'olumlu','mesaj':'🌟 Profesyonel servis standardı: Kurumsal geçmiş + temizlik refleksi + müşteri bağı kurma — yüksek standart'})
+
+    # ㉒ Deneyimli + yoğunluk arayan — monotonluktan sıkılıyor + hızlı tempo seviyor
+    if kahve in ['var_1yil', 'var_2yil', 'var_uzun'] and en_zor == 'monoton' and tempo == 'hizli':
+        s['gecmis'] += 2; s['esneklik'] += 1
+        sinyaller.append({'tip':'olumlu','mesaj':'⚡ Deneyimli + monotonluktan sıkılıyor + hızlı tempo seviyor — yoğun ortamda verimli olabilir'})
+
+    # ㉓ Çelişkili profil — üniversiteli + tam zamanlı istiyor + katı saat bekliyor
+    if egitim == 'universite' and calisma == 'tam' and gun_plan in ['saatler_belli', 'onceden_netlesin']:
+        s['esneklik'] -= 2
+        sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Çelişkili profil: Üniversiteli + tam zamanlı istiyor + katı saat bekliyor — ders programıyla çakışma riski'})
 
     # ── Clamp & Toplam ──────────────────────────────────────────────────────
     for k in s:
