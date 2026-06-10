@@ -785,6 +785,7 @@ class DevirBaslatBody(BaseModel):
 class DevirFormKaydetBody(BaseModel):
     sube_id: str
     devreden_id: str
+    devralan_id: str
     form_data: dict = {}
 
 @router.post("/api/gorev/devir-form-kaydet")
@@ -793,6 +794,8 @@ def devir_form_kaydet(body: DevirFormKaydetBody):
     from tr_saat import is_gunu_tr
     import json as _json
     import uuid as _uuid
+    if str(body.devreden_id) == str(body.devralan_id):
+        raise HTTPException(400, "Devreden ve devralan aynı kişi olamaz.")
     tarih = str(is_gunu_tr())
     with db() as (conn, cur):
         try:
@@ -809,16 +812,16 @@ def devir_form_kaydet(body: DevirFormKaydetBody):
         if mevcut:
             cur.execute("""
                 UPDATE kasa_devir_onay
-                SET devreden_id=%s, form_data=%s::jsonb, durum='form_kaydedildi'
+                SET devreden_id=%s, devralan_id=%s, form_data=%s::jsonb, durum='form_kaydedildi'
                 WHERE id=%s
-            """, (body.devreden_id, _json.dumps(body.form_data), mevcut["id"]))
+            """, (body.devreden_id, body.devralan_id, _json.dumps(body.form_data), mevcut["id"]))
             conn.commit()
             return {"devir_id": mevcut["id"], "yeni": False, "mesaj": "Form güncellendi."}
         devir_id = str(_uuid.uuid4())
         cur.execute("""
-            INSERT INTO kasa_devir_onay (id, sube_id, tarih, devreden_id, form_data, durum)
-            VALUES (%s, %s, %s, %s, %s::jsonb, 'form_kaydedildi')
-        """, (devir_id, body.sube_id, tarih, body.devreden_id, _json.dumps(body.form_data)))
+            INSERT INTO kasa_devir_onay (id, sube_id, tarih, devreden_id, devralan_id, form_data, durum)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb, 'form_kaydedildi')
+        """, (devir_id, body.sube_id, tarih, body.devreden_id, body.devralan_id, _json.dumps(body.form_data)))
         conn.commit()
     return {"devir_id": devir_id, "yeni": True, "mesaj": "Form kaydedildi. Sabahçı telefondan onaylayacak."}
 

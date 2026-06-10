@@ -9287,7 +9287,7 @@ function fillSels() {
   var liste = panelDropdownPersonel();
   var ids = ['mgPers','mnPers','stPers','stPin',
              'xrPers','puanPers',
-             'dvPers1','kapPers',
+             'dvPers1','dvPers2','kapPers',
              'kasaUser','ktPers',
              'svPers','frPers','dkPers'];
   ids.forEach(function(id){
@@ -12433,6 +12433,7 @@ function renderKasaDevir() {
     '<div style="font-size:11px;color:var(--muted);margin:-4px 0 12px;line-height:1.6">Bilgiler kaydedilecek. Sabahçı telefonundan "Devri Yap" butonuna basarak onaylayacak.</div>' +
     '<label class="chk-row"><input type="checkbox" id="dvKasaSayim" /><span>Kasadaki nakit sayımını doğruladım</span></label>' +
     '<div class="form-group"><label>Devreden (Sabahçı)</label><select id="dvPers1"></select></div>' +
+    '<div class="form-group"><label>Devralan (Akşamcı) *</label><select id="dvPers2"></select></div>' +
     '<div style="display:flex;gap:8px;margin-top:12px">' +
     '<button class="btn btn-ghost btn-sm" type="button" id="dvBack5">Geri</button>' +
     '<button class="btn btn-warn btn-sm" type="button" id="dvAdim1Btn">📤 Devri Başlat (Telefon Onayı Bekle)</button>' +
@@ -12447,7 +12448,10 @@ function renderKasaDevir() {
     setMsg('dvMsg','',''); btn1.disabled=true;
     try {
       var pid1 = selVal('dvPers1');
-      if (!pid1) throw new Error('Personel seçin');
+      if (!pid1) throw new Error('Devreden (Sabahçı) seçin');
+      var pid2 = selVal('dvPers2');
+      if (!pid2) throw new Error('Devralan (Akşamcı) seçin');
+      if (pid2 === pid1) throw new Error('Devreden ve devralan aynı kişi olamaz');
       var kasadakiNakit = parseNum(inpVal('dvTeslim')) || 0;
       if (kasadakiNakit < 0) throw new Error('Kasadaki nakit negatif olamaz');
       var sayimEl = document.getElementById('dvKasaSayim');
@@ -12466,7 +12470,7 @@ function renderKasaDevir() {
       _PASTA_KEYS.forEach(function(k){ formData[k] = dvPastaCache[k] || 0; });
       formData.pasta_adet = _PASTA_KEYS.reduce(function(s,k){ return s + (formData[k]||0); }, 0);
       var res = await api('/gorev/devir-form-kaydet', {method:'POST', body:{
-        sube_id: SUBE_ID, devreden_id: pid1, form_data: formData
+        sube_id: SUBE_ID, devreden_id: pid1, devralan_id: pid2, form_data: formData
       }});
       // Telefon bekleme ekranını göster
       _dvBeklePhoneOnay(pid1, res.devir_id);
