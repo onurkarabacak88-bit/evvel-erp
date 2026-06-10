@@ -507,7 +507,7 @@ export default function IsBasvuruForm() {
           {/* ═══ ADIM 4: Bir Gün Seninle ════════════════════════════════════ */}
           {adim === 4 && (
             <div>
-              <AdimBaslik no={4} baslik="Bir Gün Seninle 🔍" aciklama="Kısa 4 soru — doğru ya da yanlış cevap yok, sadece seni tanıyoruz." />
+              <AdimBaslik no={4} baslik="Günlük Çalışma Tarzın ☕" aciklama="Birkaç kısa senaryo — hangisi sana daha yakın?" />
 
               <div style={S.section}>
                 <label style={S.label}>Kahve makinesini kullandıktan sonra ne yaparsın?</label>
@@ -554,7 +554,7 @@ export default function IsBasvuruForm() {
           {/* ═══ ADIM 5: Anlık Tepkiler ════════════════════════════════════ */}
           {adim === 5 && (
             <div>
-              <AdimBaslik no={5} baslik="Anlık Tepkiler ⚡" aciklama="Sezgisel cevapla — ilk aklına geleni seç." />
+              <AdimBaslik no={5} baslik="Biraz Daha Tanışalım 🤝" aciklama="Sana birkaç durum sorduk — en doğal hissettiğin cevabı seç." />
 
               <div style={S.section}>
                 <label style={S.label}>Tanımadığın biriyle ilk 30 saniyede nasıl hissedersin?</label>
@@ -601,7 +601,7 @@ export default function IsBasvuruForm() {
           {/* ═══ ADIM 6: Son Bir Şey ══════════════════════════════════════ */}
           {adim === 6 && (
             <div>
-              <AdimBaslik no={6} baslik="Son Bir Şey 🎯" aciklama="Motivasyonunu ve çalışma stilini öğrenmek istiyoruz." />
+              <AdimBaslik no={6} baslik="Sana Göre Nasıl Bir Yer? 🌟" aciklama="Bu işte ne arıyorsun, hangi ortamda daha iyi çalışırsın?" />
 
               <div style={S.section}>
                 <label style={S.label}>Neden bu işi istiyorsun?</label>
