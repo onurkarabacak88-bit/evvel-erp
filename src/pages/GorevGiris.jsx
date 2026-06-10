@@ -62,6 +62,38 @@ function KapaниsOnayButonu({ kp, subeId, konum }) {
   );
 }
 
+// ── Telefon oturumu — localStorage (QR'sız tekrar giriş) ───────────────────────
+function bugunStr() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function localOturumOku(subeId) {
+  if (!subeId) return null;
+  try {
+    const raw = localStorage.getItem(`gorev_oturum_${subeId}`);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || obj.tarih !== bugunStr()) return null;
+    return obj;
+  } catch { return null; }
+}
+
+function localOturumYaz(subeId, sonuc) {
+  if (!subeId || !sonuc) return;
+  try {
+    localStorage.setItem(`gorev_oturum_${subeId}`, JSON.stringify({ ...sonuc, kayit_zamani: Date.now() }));
+  } catch {}
+}
+
+function localOturumSil(subeId) {
+  if (!subeId) return;
+  try { localStorage.removeItem(`gorev_oturum_${subeId}`); } catch {}
+}
+
 /**
  * QR kod okutunca açılan sayfa: /gorev-giris/:subeId
  *
@@ -69,6 +101,10 @@ function KapaниsOnayButonu({ kp, subeId, konum }) {
  *  A) Bekleyen devir varsa  → ad seç → "Devri Kabul Et" → içeri (PIN YOK)
  *  B) Devir yoksa           → PIN akışı (kapanış / tek kişi günü)
  *  C) /gorev-pin            → şube seç → sonra A veya B
+ *
+ * Telefon oturumu (PIN sonrası) localStorage'a kaydedilir — aynı gün içinde
+ * sayfa tekrar açıldığında PIN tekrar istenmez, bekleyen devir onayları
+ * otomatik kart olarak çıkar (QR'a gerek kalmaz).
  */
 export default function GorevGiris({ subeId: subeIdProp }) {
   const [subeId, setSubeId]         = useState(subeIdProp || null);
@@ -129,6 +165,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
       }
 
       const kapanisBekleyenler = kapanisBilgi?.bekleyen || [];
+      const localOturum = localOturumOku(subeId);
 
       if (kapanisBekleyenler.length > 0) {
         setBekleyenKapanis(kapanisBekleyenler);
@@ -137,14 +174,52 @@ export default function GorevGiris({ subeId: subeIdProp }) {
         setBekleyenDevir(devirBilgi);
         setAdim('devir-kabul');
       } else if (devirBilgi?.sabah_onay_bekliyor) {
-        // Sabahçı devir onayı bekliyor — PIN ile giriş yaptıktan sonra kontrol edilecek
         setSabahDevirYap(devirBilgi);
-        setAdim('pin-giris');
+        if (localOturum && String(localOturum.personel_id) === String(devirBilgi.devreden_id)) {
+          // Telefon zaten oturum açmış — PIN tekrar istenmeden devir onay kartını göster
+          setPinDogruOturum(localOturum);
+          setAdim('devir-yap');
+        } else {
+          setAdim('pin-giris');
+        }
+      } else if (localOturum) {
+        // Bekleyen onay yok — telefon oturumu varsa direkt görevlere geç (PIN'siz)
+        setOturum(localOturum);
+        setAdim('gorevler');
       } else {
         setAdim('pin-giris');
       }
     }).catch(() => setAdim('pin-giris'));
   }, [subeId]);
+
+  // Bekleyen onay kartlarının otomatik çıkması için polling (PIN/oturum öncesi)
+  useEffect(() => {
+    if (!subeId) return;
+    if (!['pin-giris', 'devir-kabul', 'kapanis-onay'].includes(adim)) return;
+    const t = setInterval(() => {
+      Promise.all([
+        api(`/gorev/devir-bekleyen?sube_id=${subeId}`).catch(() => null),
+        api(`/gorev/kapanis-bekleyen?sube_id=${subeId}`).catch(() => null),
+      ]).then(([devirBilgi, kapanisBilgi]) => {
+        const kapanisBekleyenler = kapanisBilgi?.bekleyen || [];
+        const localOturum = localOturumOku(subeId);
+        if (kapanisBekleyenler.length > 0) {
+          setBekleyenKapanis(kapanisBekleyenler);
+          if (adim === 'pin-giris' && !seciliPersonel) setAdim('kapanis-onay');
+        } else if (devirBilgi?.bekliyor) {
+          setBekleyenDevir(devirBilgi);
+          if (adim === 'pin-giris' && !seciliPersonel) setAdim('devir-kabul');
+        } else if (devirBilgi?.sabah_onay_bekliyor) {
+          setSabahDevirYap(devirBilgi);
+          if (localOturum && String(localOturum.personel_id) === String(devirBilgi.devreden_id) && adim === 'pin-giris' && !seciliPersonel) {
+            setPinDogruOturum(localOturum);
+            setAdim('devir-yap');
+          }
+        }
+      }).catch(() => {});
+    }, 5000);
+    return () => clearInterval(t);
+  }, [subeId, adim, seciliPersonel]);
 
   // ── Akış fonksiyonları ───────────────────────────────────────────────────────
 
@@ -170,6 +245,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
         },
       });
       // Mesai bitti — çıkış ekranı göster
+      localOturumSil(subeId);
       setAdim('devir-yap-tamam');
     } catch (e) {
       const msg = e.message || '';
@@ -196,6 +272,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
           lng: konum?.lng ?? null,
         },
       });
+      localOturumYaz(subeId, sonuc);
       setOturum(sonuc);
       setAdim('gorevler');
     } catch (e) {
@@ -231,6 +308,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
         },
       });
       setPinDogruOturum(sonuc);
+      localOturumYaz(subeId, sonuc);
       // Sabahçı devir onayı bekliyor mu? Personel eşleşiyor mu?
       if (sabahDevirYap && String(sonuc.personel_id) === String(sabahDevirYap.devreden_id)) {
         setAdim('devir-yap');
@@ -250,11 +328,14 @@ export default function GorevGiris({ subeId: subeIdProp }) {
   };
 
   const vardiyaSec = (vt) => {
-    setOturum({ ...pinDogruOturum, vardiya_tip: vt });
+    const yeniOturum = { ...pinDogruOturum, vardiya_tip: vt };
+    localOturumYaz(subeId, yeniOturum);
+    setOturum(yeniOturum);
     setAdim('gorevler');
   };
 
   const cikis = () => {
+    localOturumSil(subeId);
     setAdim(subeIdProp ? (bekleyenDevir ? 'devir-kabul' : 'pin-giris') : 'sube-sec');
     setSeciliPersonel(null);
     setPin('');

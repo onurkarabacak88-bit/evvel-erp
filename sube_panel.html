@@ -9287,7 +9287,7 @@ function fillSels() {
   var liste = panelDropdownPersonel();
   var ids = ['mgPers','mnPers','stPers','stPin',
              'xrPers','puanPers',
-             'dvPers1','dvPers2','kapPers',
+             'dvPers1','kapPers',
              'kasaUser','ktPers',
              'svPers','frPers','dkPers'];
   ids.forEach(function(id){
@@ -12246,50 +12246,6 @@ function renderEksikListesi() {
 }
 
 // ─── KASA DEVRİ ──────────────────────────────────────────────
-// Sabahçının girdiği değerleri etiketli nesne olarak döner
-function dvRowLabel(key) {
-  var m = {
-    teslim:'Kasadaki Nakit (₺)', bardak_kucuk:'Küçük bardak', bardak_buyuk:'Büyük bardak',
-    bardak_plastik:'Plastik bardak', su_adet:'Su', redbull_adet:'Redbull',
-    soda_adet:'Soda', cookie_adet:'Cookie', pasta_adet:'Pasta'
-  };
-  return m[key] || key;
-}
-
-function fmt2(v) { return (v==null||v===undefined) ? '—' : String(v); }
-
-function renderAdim2(row) {
-  // row = kapanis_kayit satırı
-  var keys = ['teslim','bardak_kucuk','bardak_buyuk','bardak_plastik','su_adet','redbull_adet','soda_adet','cookie_adet','pasta_adet'].concat(_PASTA_KEYS);
-  var h = '<p style="font-size:12px;color:var(--muted);margin-bottom:12px">Sabahçının girdiği değerleri kontrol et. Her satırı gördüğünü tıklayarak onayla.</p>';
-  h += '<div id="dvTikListesi">';
-  keys.forEach(function(k, i){
-    var v = row[k];
-    if (v == null) return;
-    h += '<label class="dv-tik-row" id="dvTikRow_'+i+'" style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;margin-bottom:5px;background:var(--bg3);border:1px solid var(--border);cursor:pointer;font-size:13px">';
-    h += '<input type="checkbox" class="dv-tik" id="dvTik_'+i+'" data-key="'+k+'" style="width:18px;height:18px;accent-color:var(--ok);flex-shrink:0" />';
-    h += '<span style="flex:1"><strong>'+dvRowLabel(k)+'</strong></span>';
-    h += '<span style="font-family:monospace;font-weight:700;color:var(--text)">'+fmt2(v)+'</span>';
-    h += '</label>';
-  });
-  h += '</div>';
-  h += '<div class="divider"></div>';
-  // Açıklama alanı (başta gizli)
-  h += '<div id="dvAciklamaBlok" style="display:none">';
-  h += '<div style="padding:10px 12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px;margin-bottom:10px;font-size:12px;color:var(--warn)">⚠️ Bazı kalemler işaretlenmedi. Devir alıyorsun — neden kabul ediyorsun? Açıkla.</div>';
-  h += '<div class="form-group"><label>Açıklama (zorunlu)</label><textarea id="dvAciklama" rows="3" placeholder="Örn: Bardak sayısı eksik, anlaştık — gece teslim alacağım." style="font-size:13px"></textarea></div>';
-  h += '</div>';
-  h += '<div class="form-group"><label>Devralan (Akşamcı)</label><select id="dvPers2"></select></div>';
-  h += '<div style="display:flex;gap:8px;margin-bottom:10px">';
-  h += '<button type="button" class="btn btn-success" style="flex:1" onclick="dvQrAksamciAc()">📱 QR ile Devral (Mesai Girişi)</button>';
-  h += '</div>';
-  h += '<details style="margin-bottom:8px"><summary style="font-size:12px;color:var(--muted);cursor:pointer">veya PIN ile devral</summary>';
-  h += '<div class="form-group" style="margin-top:8px"><label>PIN</label><input id="dvPin2" class="pin-input" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" /></div>';
-  h += '</details>';
-  h += '<button class="btn btn-success" id="dvAdim2Btn" style="margin-top:6px">Devri Kabul Et ve İmzala</button>';
-  h += '<div id="dvMsg"></div>';
-  return h;
-}
 
 /** Vardiya devri / kapanış — bekleyen veya geciken KAPANIS operasyon event id. */
 function kapanisOperasyonEventIdBul() {
@@ -12398,12 +12354,12 @@ function renderKasaDevir() {
       '<div style="text-align:center;padding:20px 12px">' +
       '<div style="font-size:30px;margin-bottom:10px">🌙</div>' +
       '<div style="font-size:14px;font-weight:700;color:#f59e0b;margin-bottom:8px">Akşamcı telefonundan devri alıyor</div>' +
-      '<div style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.6">Akşam vardiyasındaki personel telefonda QR sayfasını açtığında<br>devir detaylarını görecek ve "Onayla" butonuna basacak.</div>' +
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.6">Akşam vardiyasındaki personelin telefonu açıksa otomatik onay kartı çıkacak<br>ve "Kabul Ediyorum" butonuna basacak.</div>' +
       '<div id="dvQrKucuk2" style="display:inline-block;cursor:pointer;padding:10px 16px;border-radius:10px;background:#22262f;border:1px solid #3a3d45;font-size:13px;color:var(--muted)" onclick="_dvQrBuyut2()">' +
-      '📲 QR Kodu Göster</div>' +
+      '📲 Alternatif: QR ile Gir</div>' +
       '<div id="dvQrBuyukDiv2" style="display:none;margin-top:12px">' +
       '<img src="' + qrSrc2 + '" style="width:180px;height:180px;border-radius:12px;border:2px solid #3a3d45" />' +
-      '<div style="font-size:10px;color:var(--muted);margin-top:6px">Akşamcı bu kodu tarasın</div>' +
+      '<div style="font-size:10px;color:var(--muted);margin-top:6px">Telefonu kapalıysa/oturum yoksa akşamcı bu kodu tarasın</div>' +
       '</div>' +
       '<div id="dvMsg" style="margin-top:14px"></div>' +
       '</div>';
@@ -12532,12 +12488,12 @@ function _dvBeklePhoneOnay(pid1, devirId) {
     '<div style="text-align:center;padding:24px 12px">' +
     '<div style="font-size:32px;margin-bottom:10px">📱</div>' +
     '<div style="font-size:14px;font-weight:700;color:var(--accent);margin-bottom:8px">Sabahçı telefonundan onaylıyor...</div>' +
-    '<div style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.6">Personel telefonunu açıp QR sayfasına girecek.<br>Bağlıysa sayfayı yenilediğinde "Devri Yap" butonu çıkacak.</div>' +
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.6">Personelin telefonu açıksa otomatik onay kartı çıkacak.<br>Onaylayınca akşamcı aşamasına geçilecek.</div>' +
     '<div id="dvQrKucuk" style="display:inline-block;cursor:pointer;padding:10px 16px;border-radius:10px;background:#22262f;border:1px solid #3a3d45;font-size:13px;color:var(--muted)" onclick="_dvQrBuyut()">' +
-    '📲 QR Kodu Göster</div>' +
+    '📲 Alternatif: QR ile Gir</div>' +
     '<div id="dvQrBuyukDiv" style="display:none;margin-top:12px">' +
     '<img src="' + qrSrc + '" style="width:180px;height:180px;border-radius:12px;border:2px solid #3a3d45" />' +
-    '<div style="font-size:10px;color:var(--muted);margin-top:6px">Telefonda kamera ile okut</div>' +
+    '<div style="font-size:10px;color:var(--muted);margin-top:6px">Telefonu kapalıysa/oturum yoksa kamera ile okut</div>' +
     '</div>' +
     '<div id="dvMsg" style="margin-top:14px"></div>' +
     '</div>';
@@ -13298,70 +13254,6 @@ function wirePuanHandler() {
 
 // ─── OPERASyon OVERLAY ───────────────────────────────────────
 var opAcilisStep=1, opAcilisKasa=null, opAcilisStok={};
-
-// ── KASA DEVRİ QR — Artık kullanılmıyor, telefon tarafından yapılıyor ─
-window.dvQrOnayAc = async function() {
-  showToast('ℹ️ Devir onayı artık sabahçının telefonundan yapılıyor.', 'info', 3000);
-};
-
-async function _dvAdim1QrOtomatik(adSoyad, personelId) {
-  var pid1 = personelId || (document.getElementById('dvPers1') || {}).value || '';
-  if (!pid1) {
-    showToast('⚠️ Personel seçili değil — manuel seçip Devri Başlat butonuna bas.', 'warn', 4000);
-    return;
-  }
-  var msgEl = document.getElementById('dvMsg');
-  setMsg('dvMsg', '⏳ ' + (adSoyad || 'Personel') + ' QR ile onayladı, devir kaydediliyor...', 'msg-ok');
-  try {
-    var kasadakiNakit = parseNum((document.getElementById('dvTeslim') || {}).value) || 0;
-    var body = {
-      sabahci_devreden_id: pid1,
-      pin: '',
-      qr_dogrulandi: true,
-      nakit: 0, pos: 0, online: 0,
-      teslim: kasadakiNakit, devir: 0,
-      kasa_sayim_dogrulandi: true,
-      x_raporu_gonderildi: true,
-      ciro_gonderildi: false,
-      bardak_kucuk:   _dvSayimDeger('dvBk'),
-      bardak_buyuk:   _dvSayimDeger('dvBb'),
-      bardak_plastik: _dvSayimDeger('dvBp'),
-      su_adet:        _dvSayimDeger('dvSu'),
-      redbull_adet:   _dvSayimDeger('dvRb'),
-      soda_adet:      _dvSayimDeger('dvSo'),
-      cookie_adet:    _dvSayimDeger('dvCk'),
-    };
-    if (typeof _PASTA_KEYS !== 'undefined') {
-      _PASTA_KEYS.forEach(function(k){ body[k] = (typeof dvPastaCache !== 'undefined' ? dvPastaCache[k] : 0) || 0; });
-      body.pasta_adet = _PASTA_KEYS.reduce(function(s,k){ return s + (body[k]||0); }, 0);
-    }
-    await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/vardiya-devri/adim1', {method:'POST', body:body});
-    setMsg('dvMsg', '✅ 1. imza alındı — ' + (adSoyad||'') + '. Akşamcı QR ile devralsın.', 'msg-ok');
-    var kdf1 = document.getElementById('kasaDevirForm');
-    if (kdf1) kdf1.innerHTML = '';
-    setTimeout(refresh, 800);
-  } catch(e) {
-    if (e.status === 409 && /akşamcı|zaten/i.test(e.message||'')) {
-      setMsg('dvMsg', '⚠️ Devir zaten başlatılmış — akşamcı QR ile devralsın.', 'msg-warn');
-      setTimeout(refresh, 600);
-    } else {
-      setMsg('dvMsg', '❌ ' + (e.message||'Hata') + ' — Manuel "Devri Başlat" butonunu kullanın.', 'msg-err');
-      // Manuel fallback: PIN alanını '0000' ile doldur, kullanıcı butona bassın
-      var pin1 = document.getElementById('dvPin1');
-      if (pin1) pin1.value = '0000';
-      showToast('⚠️ Otomatik başlatma hata verdi — "Devri Başlat" butonuna bas.', 'warn', 5000);
-    }
-  }
-}
-
-function _dvSayimDeger(id) {
-  var el = document.getElementById(id);
-  return el ? (parseInt(el.value) || 0) : 0;
-}
-
-window.dvQrAksamciAc = async function() {
-  showToast('ℹ️ Akşamcı devri artık kendi telefonundan alıyor.', 'info', 3000);
-};
 
 // ── MESAİ ÇIKIŞ QR ──────────────────────────────────────────────────
 var _mesaiCikisTip = null;

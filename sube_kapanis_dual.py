@@ -429,6 +429,187 @@ def panel_yonetici_atama(sube_id: str, body: PanelYoneticiAtamaBody):
     )
 
 
+def kasa_devir_adim1_kaydet(
+    cur,
+    sube_id: str,
+    devreden_id: str,
+    devreden_ad: str,
+    simdi: datetime,
+    tarih_str: str,
+    form_data: Dict[str, Any],
+) -> str:
+    """1. imza kaydı: form_data → kapanis_kayit INSERT (PIN doğrulaması YAPMAZ).
+
+    Çağıran taraf (panel-PIN akışı için `vardiya_devri_adim1`, telefon-onay
+    akışı için `gorev_api.devir_sabah_onayla`) kimlik doğrulamasını kendi
+    yapar; bu fonksiyon yalnızca devir kaydını oluşturur.
+    """
+    cur.execute(
+        """
+        SELECT id, olay, durum FROM kapanis_kayit
+        WHERE sube_id=%s AND tarih=%s
+        LIMIT 1
+        """,
+        (sube_id, tarih_str),
+    )
+    mevcut = cur.fetchone()
+    if mevcut:
+        mevcut = dict(mevcut)
+        if (mevcut.get("olay") or "") == "vardiya_sabah_aksam_devri":
+            raise HTTPException(
+                409,
+                "Bugün için vardiya devri kaydı zaten başlatılmış — akşamcı onayını tamamlayın.",
+            )
+        raise HTTPException(
+            409,
+            "Bu iş günü için başka bir kapanış/devir kaydı var; destek ile iletişime geçin.",
+        )
+
+    def _f(key: str) -> float:
+        return float(form_data.get(key) or 0)
+
+    def _i(key: str) -> int:
+        return int(form_data.get(key) or 0)
+
+    stok_sayim = {
+        "bardak_kucuk": _i("bardak_kucuk"),
+        "bardak_buyuk": _i("bardak_buyuk"),
+        "bardak_plastik": _i("bardak_plastik"),
+        "su_adet": _i("su_adet"),
+        "redbull_adet": _i("redbull_adet"),
+        "soda_adet": _i("soda_adet"),
+        "cookie_adet": _i("cookie_adet"),
+    }
+    from operasyon_stok_motor import PASTA_KEYS as _PK_DEV
+    _pasta_f_dev = {k: int(form_data.get(k) or 0) for k in _PK_DEV}
+    stok_sayim["pasta_adet"] = max(sum(_pasta_f_dev.values()), _i("pasta_adet"))
+    stok_sayim.update(_pasta_f_dev)
+    meta_obj = {"vardiya_devir_stok_sayim": stok_sayim}
+    meta_sql = json.dumps(meta_obj, ensure_ascii=False)
+
+    kid = str(uuid.uuid4())
+    try:
+        cur.execute(
+            """
+            INSERT INTO kapanis_kayit
+                (id, sube_id, tarih, olay, nakit, pos, online, teslim, devir,
+                 kapanisci_id, kapanisci_onay_ts, durum,
+                 operasyon_event_id, x_raporu_onay, ciro_gonderim_onay,
+                 sabahci_personel_id, aksamci_personel_id, meta)
+            VALUES (%s, %s, %s, 'vardiya_sabah_aksam_devri', %s, %s, %s, %s, %s, NULL, %s, 'acilis_bekliyor', %s, %s, %s, %s, NULL, %s::jsonb)
+            """,
+            (
+                kid,
+                sube_id,
+                tarih_str,
+                _f("nakit"),
+                _f("pos"),
+                _f("online"),
+                _f("teslim"),
+                _f("devir"),
+                simdi,
+                None,
+                False,
+                False,
+                devreden_id,
+                meta_sql,
+            ),
+        )
+    except Exception as ex:
+        from psycopg2 import errors as pg_errors
+
+        if isinstance(ex, pg_errors.UniqueViolation):
+            raise HTTPException(
+                409,
+                "Bugün için vardiya devri kaydı zaten var — sayfayı yenileyip akşamcı onayına geçin.",
+            ) from ex
+        if isinstance(ex, pg_errors.NotNullViolation):
+            raise HTTPException(
+                500,
+                "Veritabanı şeması güncel değil (kapanis_kayit). Sunucuyu yeniden başlatın veya destek alın.",
+            ) from ex
+        raise
+    audit(cur, "kapanis_kayit", kid, "VARDIYA_DEVIR_ADIM1_SABAH")
+    from operasyon_defter import operasyon_defter_ekle
+
+    def _defter1():
+        operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "VARDIYA_DEVIR_IMZA1_PIN",
+            (
+                f"Vardiya devri 1. imza — personel={devreden_ad} "
+                f"tarih={bugun_tr()} saat={simdi.strftime('%H:%M:%S')}"
+            ),
+            ref_event_id=kid,
+            personel_id=devreden_id,
+            personel_ad=devreden_ad,
+            bildirim_saati=simdi.strftime("%H:%M:%S"),
+        )
+
+    _korumali_yan_etki(cur, "defter_imza1", _defter1)
+
+    # Devredenin mesai çıkışını kapat (cikis_ts yoksa)
+    def _sabah_cikis():
+        cur.execute("""
+            UPDATE gorev_yoklama
+            SET cikis_ts=%s, cikis_tip='kasa_devri'
+            WHERE sube_id=%s AND personel_id=%s AND tarih=%s
+              AND cikis_ts IS NULL
+        """, (simdi, sube_id, devreden_id, tarih_str))
+
+    _korumali_yan_etki(cur, "sabah_cikis", _sabah_cikis)
+
+    return kid
+
+
+def kasa_devir_adim2_kaydet(
+    cur,
+    sube_id: str,
+    kk_id: str,
+    devralan_id: str,
+    devralan_ad: str,
+    simdi: datetime,
+) -> None:
+    """2. imza kaydı: kapanis_kayit'i tamamlanmış olarak işaretler (PIN doğrulaması YAPMAZ)."""
+    cur.execute(
+        """
+        UPDATE kapanis_kayit
+        SET acilisci_id=NULL, acilisci_onay_ts=%s,
+            aksamci_personel_id=%s, durum='tamamlandi'
+        WHERE id=%s
+        """,
+        (simdi, devralan_id, kk_id),
+    )
+    audit(cur, "kapanis_kayit", kk_id, "VARDIYA_DEVIR_ADIM2_AKSAM")
+
+    from operasyon_defter import operasyon_defter_ekle
+
+    def _defter():
+        operasyon_defter_ekle(
+            cur,
+            sube_id,
+            "VARDIYA_DEVIR_IMZA2_PIN",
+            (
+                f"Vardiya devri 2. imza — personel={devralan_ad} "
+                f"tarih={bugun_tr()} saat={simdi.strftime('%H:%M:%S')}"
+            ),
+            ref_event_id=kk_id,
+            personel_id=devralan_id,
+            personel_ad=devralan_ad,
+            bildirim_saati=simdi.strftime("%H:%M:%S"),
+        )
+
+    _korumali_yan_etki(cur, "defter_imza2", _defter)
+
+    # Devir tamamlandı — 1 saat sonrası için ansızın kasa sayımı planla
+    def _plan():
+        from sube_operasyon import plan_kontrol_after_devir
+        plan_kontrol_after_devir(cur, sube_id, simdi)
+
+    _korumali_yan_etki(cur, "plan_kontrol_after_devir", _plan)
+
+
 @router.post("/{sube_id}/vardiya-devri/adim1")
 def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
     from sube_panel import _bugun_sube_acildi_mi
@@ -460,115 +641,9 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
         onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
 
         gun = is_gunu_tr()
-        cur.execute(
-            """
-            SELECT id, olay, durum FROM kapanis_kayit
-            WHERE sube_id=%s AND tarih=%s
-            LIMIT 1
-            """,
-            (sube_id, gun),
+        kid = kasa_devir_adim1_kaydet(
+            cur, sube_id, body.sabahci_devreden_id, onay_ad, simdi, gun, body.model_dump()
         )
-        mevcut = cur.fetchone()
-        if mevcut:
-            mevcut = dict(mevcut)
-            if (mevcut.get("olay") or "") == "vardiya_sabah_aksam_devri":
-                raise HTTPException(
-                    409,
-                    "Bugün için vardiya devri kaydı zaten başlatılmış — akşamcı onayını tamamlayın.",
-                )
-            raise HTTPException(
-                409,
-                "Bu iş günü için başka bir kapanış/devir kaydı var; destek ile iletişime geçin.",
-            )
-
-        stok_sayim = {
-            "bardak_kucuk": int(body.bardak_kucuk),
-            "bardak_buyuk": int(body.bardak_buyuk),
-            "bardak_plastik": int(body.bardak_plastik),
-            "su_adet": int(body.su_adet),
-            "redbull_adet": int(body.redbull_adet),
-            "soda_adet": int(body.soda_adet),
-            "cookie_adet": int(body.cookie_adet),
-        }
-        from operasyon_stok_motor import PASTA_KEYS as _PK_DEV
-        _pasta_f_dev = {k: int(getattr(body, k) or 0) for k in _PK_DEV}
-        stok_sayim["pasta_adet"] = max(sum(_pasta_f_dev.values()), int(body.pasta_adet or 0))
-        stok_sayim.update(_pasta_f_dev)
-        meta_obj = {"vardiya_devir_stok_sayim": stok_sayim}
-        meta_sql = json.dumps(meta_obj, ensure_ascii=False)
-
-        kid = str(uuid.uuid4())
-        try:
-            cur.execute(
-                """
-                INSERT INTO kapanis_kayit
-                    (id, sube_id, tarih, olay, nakit, pos, online, teslim, devir,
-                     kapanisci_id, kapanisci_onay_ts, durum,
-                     operasyon_event_id, x_raporu_onay, ciro_gonderim_onay,
-                     sabahci_personel_id, aksamci_personel_id, meta)
-                VALUES (%s, %s, %s, 'vardiya_sabah_aksam_devri', %s, %s, %s, %s, %s, NULL, %s, 'acilis_bekliyor', %s, %s, %s, %s, NULL, %s::jsonb)
-                """,
-                (
-                    kid,
-                    sube_id,
-                    gun,
-                    body.nakit,
-                    body.pos,
-                    body.online,
-                    body.teslim,
-                    body.devir,
-                    simdi,
-                    None,
-                    False,
-                    False,
-                    body.sabahci_devreden_id,
-                    meta_sql,
-                ),
-            )
-        except Exception as ex:
-            from psycopg2 import errors as pg_errors
-
-            if isinstance(ex, pg_errors.UniqueViolation):
-                raise HTTPException(
-                    409,
-                    "Bugün için vardiya devri kaydı zaten var — sayfayı yenileyip akşamcı onayına geçin.",
-                ) from ex
-            if isinstance(ex, pg_errors.NotNullViolation):
-                raise HTTPException(
-                    500,
-                    "Veritabanı şeması güncel değil (kapanis_kayit). Sunucuyu yeniden başlatın veya destek alın.",
-                ) from ex
-            raise
-        audit(cur, "kapanis_kayit", kid, "VARDIYA_DEVIR_ADIM1_SABAH")
-        from operasyon_defter import operasyon_defter_ekle
-
-        def _defter1():
-            operasyon_defter_ekle(
-                cur,
-                sube_id,
-                "VARDIYA_DEVIR_IMZA1_PIN",
-                (
-                    f"Vardiya devri 1. imza (PIN) — personel={onay_ad} "
-                    f"tarih={bugun_tr()} saat={simdi.strftime('%H:%M:%S')}"
-                ),
-                ref_event_id=kid,
-                personel_id=body.sabahci_devreden_id,
-                personel_ad=onay_ad,
-                bildirim_saati=simdi.strftime("%H:%M:%S"),
-            )
-
-        _korumali_yan_etki(cur, "defter_imza1", _defter1)
-
-        # Sabahçının mesai çıkışını kapat (cikis_ts yoksa)
-        def _sabah_cikis():
-            cur.execute("""
-                UPDATE gorev_yoklama
-                SET cikis_ts=%s, cikis_tip='kasa_devri'
-                WHERE sube_id=%s AND personel_id=%s AND tarih=%s
-                  AND cikis_ts IS NULL
-            """, (simdi, sube_id, body.sabahci_devreden_id, gun))
-
-        _korumali_yan_etki(cur, "sabah_cikis", _sabah_cikis)
         conn.commit()
 
     return {
@@ -610,44 +685,8 @@ def vardiya_devri_adim2(sube_id: str, body: VardiyaDevirAdim2):
         ku = _vardiya_imza_personel_dogrula(cur, body.aksamci_devralan_id, body.pin)
         onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
 
-        cur.execute(
-            """
-            UPDATE kapanis_kayit
-            SET acilisci_id=NULL, acilisci_onay_ts=%s,
-                aksamci_personel_id=%s, durum='tamamlandi'
-            WHERE id=%s
-            """,
-            (simdi, body.aksamci_devralan_id, kk["id"]),
-        )
-        audit(cur, "kapanis_kayit", kk["id"], "VARDIYA_DEVIR_ADIM2_AKSAM")
         kid_out = kk["id"]
-
-        # --- İkincil yan etkiler: SAVEPOINT ile korunur (ana devir kaydını geri almasın) ---
-        from operasyon_defter import operasyon_defter_ekle
-
-        def _defter():
-            operasyon_defter_ekle(
-                cur,
-                sube_id,
-                "VARDIYA_DEVIR_IMZA2_PIN",
-                (
-                    f"Vardiya devri 2. imza (PIN) — personel={onay_ad} "
-                    f"tarih={bugun_tr()} saat={simdi.strftime('%H:%M:%S')}"
-                ),
-                ref_event_id=kk["id"],
-                personel_id=body.aksamci_devralan_id,
-                personel_ad=onay_ad,
-                bildirim_saati=simdi.strftime("%H:%M:%S"),
-            )
-
-        _korumali_yan_etki(cur, "defter_imza2", _defter)
-
-        # Devir tamamlandı — 1 saat sonrası için ansızın kasa sayımı planla
-        def _plan():
-            from sube_operasyon import plan_kontrol_after_devir
-            plan_kontrol_after_devir(cur, sube_id, simdi)
-
-        _korumali_yan_etki(cur, "plan_kontrol_after_devir", _plan)
+        kasa_devir_adim2_kaydet(cur, sube_id, kid_out, body.aksamci_devralan_id, onay_ad, simdi)
 
     return {"success": True, "kapanis_id": kid_out, "durum": "tamamlandi"}
 

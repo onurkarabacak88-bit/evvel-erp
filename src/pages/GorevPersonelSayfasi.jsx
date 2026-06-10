@@ -276,13 +276,15 @@ function MesaiCikisButon({ oturum }) {
           lng: konum?.lng ?? null,
         },
       });
+      try { localStorage.removeItem(`gorev_oturum_${oturum.sube_id}`); } catch {}
       if (tip === 'kasa_devri') {
-        // Devir kaydı oluştur — devralan kendi telefonuyla QR okutup onaylayacak
+        // Devir kaydı oluştur — devralan kendi telefonu açıksa otomatik bildirim görecek,
+        // değilse QR/link ile girip onaylayacak.
         await api('/gorev/devir-baslat', {
           method: 'POST',
           body: { sube_id: oturum.sube_id, devreden_id: oturum.personel_id, devralan_id: devralanId },
         }).catch(() => {});
-        setMesaj(`✅ Devir ${seciliDevralan?.ad_soyad || ''} kişisine gönderildi. ${seciliDevralan?.ad_soyad || 'Devralan kişi'} kendi telefonuyla şube QR kodunu okutup onaylayacak.`);
+        setMesaj(`✅ Devir ${seciliDevralan?.ad_soyad || ''} kişisine gönderildi. ${seciliDevralan?.ad_soyad || 'Devralan kişi'} telefonu açıksa otomatik onay kartı görecek; değilse QR/link ile girip onaylayacak.`);
         setDurum('onaylandi');
       } else if (tip === 'kapalis') {
         // Kapanış → QR onay ekranı göster
@@ -311,7 +313,7 @@ function MesaiCikisButon({ oturum }) {
         Devri kime bırakıyorsun?
       </div>
       <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 12, textAlign: 'center' }}>
-        Seçtiğin kişi kendi telefonuyla QR okutup kabul edecek.
+        Seçtiğin kişi telefonu açıksa otomatik bildirim görecek, değilse QR/link ile girip kabul edecek.
       </div>
       {mesaj && (
         <div style={{ color: '#e05c5c', fontSize: 12, textAlign: 'center', marginBottom: 10 }}>{mesaj}</div>

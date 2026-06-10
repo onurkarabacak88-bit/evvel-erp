@@ -862,9 +862,10 @@ def devir_sabah_onayla(body: DevirSabahOnaylaBody):
         # Konum kontrolü
         cur.execute("SELECT lat, lng, konum_radius_m FROM subeler WHERE id=%s", (body.sube_id,))
         sube = cur.fetchone()
-        cur.execute("SELECT panel_yonetici FROM personel WHERE id::text=%s", (body.personel_id,))
+        cur.execute("SELECT panel_yonetici, ad_soyad FROM personel WHERE id::text=%s", (body.personel_id,))
         p_row = cur.fetchone()
         yonetici = bool(p_row and p_row.get("panel_yonetici"))
+        devreden_ad = ((p_row.get("ad_soyad") or "").strip() if p_row else "") or "—"
         if sube and sube["lat"] and sube["lng"] and not yonetici:
             if body.lat is not None and body.lng is not None:
                 mesafe = _haversine_m(body.lat, body.lng, sube["lat"], sube["lng"])
@@ -897,35 +898,13 @@ def devir_sabah_onayla(body: DevirSabahOnaylaBody):
                 fd = _json.loads(fd)
             except Exception:
                 fd = {}
-        try:
-            from sube_kapanis_dual import _adim1_kaydet
-            _adim1_kaydet(cur, body.sube_id, body.personel_id, simdi, tarih, fd)
-        except Exception:
-            # adim1_kaydet yoksa inline yap
-            import uuid as _uuid3
-            meta = {
-                "vardiya_devir_stok_sayim": {
-                    "bardak_kucuk": fd.get("bardak_kucuk", 0),
-                    "bardak_buyuk": fd.get("bardak_buyuk", 0),
-                    "bardak_plastik": fd.get("bardak_plastik", 0),
-                    "su_adet": fd.get("su_adet", 0),
-                    "redbull_adet": fd.get("redbull_adet", 0),
-                    "soda_adet": fd.get("soda_adet", 0),
-                    "cookie_adet": fd.get("cookie_adet", 0),
-                    "pasta_adet": fd.get("pasta_adet", 0),
-                },
-                "teslim": fd.get("teslim", 0),
-                "nakit": fd.get("nakit", 0),
-            }
-            import json as _json2
-            cur.execute("""
-                INSERT INTO kapanis_kayit
-                    (id, sube_id, tarih, olay, sabahci_personel_id, sabahci_imza_ts,
-                     meta, durum, kapanisci_onay_ts)
-                VALUES (%s,%s,%s,'vardiya_sabah_aksam_devri',%s,%s,%s::jsonb,'acilis_bekliyor',%s)
-                ON CONFLICT DO NOTHING
-            """, (str(_uuid3.uuid4()), body.sube_id, gun,
-                  body.personel_id, simdi, _json2.dumps(meta), simdi))
+
+        from sube_kapanis_dual import kasa_devir_adim1_kaydet, _korumali_yan_etki
+
+        def _adim1():
+            kasa_devir_adim1_kaydet(cur, body.sube_id, body.personel_id, devreden_ad, simdi, gun, fd)
+
+        _korumali_yan_etki(cur, "kasa_devir_adim1", _adim1)
 
         conn.commit()
 
@@ -1199,28 +1178,25 @@ def devir_giris(body: DevirGirisBody):
         """, (body.personel_id, giris_ts, body.devir_id))
 
         # Eğer kapanis_kayit'te bekleyen vardiya devri varsa adim2'yi otomatik tamamla
-        try:
-            from tr_saat import is_gunu_tr as _is_gunu
+        from sube_kapanis_dual import kasa_devir_adim2_kaydet, _korumali_yan_etki
+
+        def _adim2():
             cur.execute("""
                 SELECT id, sabahci_personel_id FROM kapanis_kayit
                 WHERE sube_id=%s AND tarih=%s
                   AND olay='vardiya_sabah_aksam_devri'
                   AND durum='acilis_bekliyor'
                 LIMIT 1
-            """, (body.sube_id, str(_is_gunu())))
+            """, (body.sube_id, tarih))
             kk = cur.fetchone()
             if kk:
                 kk = dict(kk)
                 # Aynı kişi her iki imzayı atamaz
                 sabah_pid = kk.get("sabahci_personel_id") or ""
                 if str(body.personel_id) != str(sabah_pid):
-                    cur.execute("""
-                        UPDATE kapanis_kayit
-                        SET aksamci_personel_id=%s, acilisci_onay_ts=%s, durum='tamamlandi'
-                        WHERE id=%s
-                    """, (body.personel_id, giris_ts, kk["id"]))
-        except Exception:
-            pass  # yan etki — ana devri geri alma
+                    kasa_devir_adim2_kaydet(cur, body.sube_id, kk["id"], body.personel_id, p["ad_soyad"], giris_ts)
+
+        _korumali_yan_etki(cur, "kasa_devir_adim2", _adim2)
 
         conn.commit()
 
