@@ -280,7 +280,7 @@ function MesaiCikisButon({ oturum }) {
     }
   };
 
-  // Kapanış sonrası QR onay ekranı
+  // Çıkış sonrası QR onay ekranı
   if (durum === 'qr-onay') return (
     <div style={{
       margin: '8px 16px', padding: '16px', borderRadius: 12,
@@ -288,7 +288,7 @@ function MesaiCikisButon({ oturum }) {
       textAlign: 'center',
     }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: '#C8956A', marginBottom: 4 }}>
-        🔒 Kapanış Tamamlandı
+        🔒 Çıkışın Onaylandı
       </div>
       <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 12, lineHeight: 1.6 }}>
         Şube QR kodunu okut — onay verildi
@@ -346,7 +346,7 @@ function MesaiCikisButon({ oturum }) {
             Vardiyandan çıkış yapıyorsun
           </div>
           <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 12, textAlign: 'center' }}>
-            Görevleri tamamladın mı? Onaylarsan kapanış kaydedilecek.
+            Görevlerini tamamladıysan çıkışını onaylayabilirsin.
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={() => cikisYap('kapalis')} disabled={yukleniyor}
@@ -355,7 +355,7 @@ function MesaiCikisButon({ oturum }) {
                 background: 'rgba(200,149,106,0.15)', color: '#C8956A', fontWeight: 800, fontSize: 15,
                 border: '1px solid rgba(200,149,106,0.4)',
               }}>
-              {yukleniyor ? '…' : '🔒 Kapanışla Bitir'}
+              {yukleniyor ? '…' : '✅ Çıkışımı Onayla'}
             </button>
             <button onClick={() => setOnayModal(false)} disabled={yukleniyor}
               style={{ padding: '12px', borderRadius: 8, border: '1px solid #2a2d35', background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 13 }}>
