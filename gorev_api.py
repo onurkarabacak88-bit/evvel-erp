@@ -326,27 +326,25 @@ def gorev_pin_giris(body: GorevPinGirisBody):
 
         # ── Dükkan bugün ne zaman açıldı? ────────────────────────────────────
         cur.execute("""
-            SELECT created_at FROM sube_acilis
+            SELECT acilis_saati FROM sube_acilis
             WHERE sube_id=%s AND tarih=%s AND durum='acildi'
-            ORDER BY created_at LIMIT 1
+            LIMIT 1
         """, (body.sube_id, tarih))
         acilis_row = cur.fetchone()
         sube_acildi = acilis_row is not None
-        acilis_ts = acilis_row["created_at"] if acilis_row else None
 
-        # Açılıştan bu yana kaç dakika geçti?
-        if acilis_ts:
-            from tr_saat import dt_now_tr as _now_tr
-            simdi_tr = _now_tr()
-            # acilis_ts timezone-aware olabilir
+        # Açılıştan bu yana kaç dakika geçti? (acilis_saati = 'HH:MM' text)
+        gecen_dk = 0
+        if sube_acildi and acilis_row.get("acilis_saati"):
             try:
-                gecen_dk = (simdi_tr - acilis_ts).total_seconds() / 60
-            except TypeError:
-                import pytz
-                tz = pytz.timezone("Europe/Istanbul")
-                gecen_dk = (simdi_tr - acilis_ts.replace(tzinfo=None)).total_seconds() / 60
-        else:
-            gecen_dk = 0
+                simdi_tr = dt_now_tr()
+                saat_str = acilis_row["acilis_saati"]  # örn: '09:15'
+                h, m = int(saat_str[:2]), int(saat_str[3:5])
+                acilis_dk = h * 60 + m
+                simdi_dk = simdi_tr.hour * 60 + simdi_tr.minute
+                gecen_dk = simdi_dk - acilis_dk
+            except Exception:
+                gecen_dk = 0
 
         # ── Vardiya tipini belirle ─────────────────────────────────────────────
         #
