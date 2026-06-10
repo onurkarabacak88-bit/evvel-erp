@@ -253,7 +253,7 @@ export default function IsBasvuruForm() {
           <div style={{ background: BG2, border: `1px solid ${BORD}`, borderRadius: 16, padding: 20, fontSize: 13, color: T2, lineHeight: 2 }}>
             🕐 Başvurular genellikle <strong style={{ color: T1 }}>2–5 iş günü</strong> içinde değerlendirilir.<br />
             📱 Telefona açık ol, seni arayacağız!<br />
-            ☕ TuliPi Coffee ailesine hoş geldin diyelim diye sabırsızlanıyoruz.
+            ☕ Tulipi Coffee ailesine hoş geldin diyelim diye sabırsızlanıyoruz.
           </div>
         </div>
       </div>
@@ -280,7 +280,7 @@ export default function IsBasvuruForm() {
       {/* ── Header + Progress ── */}
       <div style={{ position: 'sticky', top: 0, zIndex: 50, background: BG, borderBottom: `1px solid ${BORD}`, padding: '12px 18px 0' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: T1 }}>☕ TuliPi Coffee</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: T1 }}>☕ Tulipi Coffee</div>
           <div style={{ fontSize: 12, color: T3, fontWeight: 600 }}>{adim} / {TOPLAM_ADIM}</div>
         </div>
         {/* Progress bar */}
@@ -717,7 +717,7 @@ export default function IsBasvuruForm() {
         )}
 
         <div style={{ textAlign: 'center', marginTop: 28, fontSize: 12, color: T3 }}>
-          ☕ TuliPi Coffee — Gizliliğin korunur, bilgilerin sadece ekibimizle paylaşılır.
+          ☕ Tulipi Coffee — Gizliliğin korunur, bilgilerin sadece ekibimizle paylaşılır.
         </div>
       </div>
     </div>
