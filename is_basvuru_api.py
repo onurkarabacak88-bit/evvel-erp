@@ -451,6 +451,26 @@ def _hesapla_skor(row: dict) -> dict:
         s['gecmis'] -= 2
         sinyaller.append({'tip':'tutarsizlik','mesaj':'🔍 Tutarsızlık: "Beni sadece beklenmedik işler yorar" diyor ama uzun saatleri en zor yanı olarak belirtmiş — mülakatta netleştir'})
 
+    # ── 9. GECE / KAPANIŞ VARDİYASI UYUMU ───────────────────────────────────
+    # "Sabah" boyutu erken saatlere büyük ağırlık veriyor; akşamcı/kapanışa uygun
+    # profil için simetrik bir karşılığı yoktu — "öğleden sonra müsait" diyen biri
+    # sadece sabah puanı kaybediyor, kapanış için güçlü olabileceği hiç ölçülmüyordu.
+
+    # ㉔ Kapanışa uygun profil — sabaha uygun değil ama işler uzamasına tolerant + gece güvenli dönüş
+    if en_erken in ('10:00', 'ogle') and yorucu == 'beklenmedik' and ulasim != 'yurume':
+        s['esneklik'] += 4
+        sinyaller.append({'tip':'olumlu','mesaj':'🌙 Kapanış vardiyasına uygun profil: Sabaha uygun değil ama işler uzamasına tolerant + gece güvenli dönüş — akşam/kapanış için güçlü aday'})
+
+    # ㉕ Yalnız yaşıyor + akşamcı — sabah baskısı yok, kapanışa kalabilir
+    if yasam == 'tek' and en_erken in ('10:00', 'ogle'):
+        s['esneklik'] += 2
+        sinyaller.append({'tip':'olumlu','mesaj':'🌙 Yalnız yaşıyor + akşamcı profil — evde bekleyen yok, kapanışa kalabilir'})
+
+    # ㉖ Kapanış riski — işler uzayınca yoruluyor + gece yürüyerek dönecek
+    if yorucu == 'isler_uzayinca' and ulasim == 'yurume':
+        s['esneklik'] -= 3
+        sinyaller.append({'tip':'dikkat','mesaj':'🔴 Kapanış riski: İşler uzayınca yoruluyor + gece yürüyerek dönecek — kapanış vardiyasında güvenlik/motivasyon sorunu olabilir'})
+
     # ── Clamp & Toplam ──────────────────────────────────────────────────────
     for k in s:
         s[k] = max(0, min(20, s[k]))
