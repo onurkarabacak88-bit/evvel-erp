@@ -409,6 +409,31 @@ def _hesapla_skor(row: dict) -> dict:
         s['esneklik'] -= 2
         sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Çelişkili profil: Üniversiteli + tam zamanlı istiyor + katı saat bekliyor — ders programıyla çakışma riski'})
 
+    # ── 8. TUTARSIZLIK SİNYALLERİ — maskeli sorular arası çelişki tespiti ──
+    # Aynı konuda (mesai esnekliği / sabah uyumu / iş yükü toleransı) iki ayrı
+    # maskeli soruya zıt yönde cevap verilmişse, "sosyal beklenen cevap" verme
+    # ihtimaline karşı puanı hafifçe düşür ve mülakatçıya not düş.
+
+    # T1 — "Mesaim tamamen esnek" diyor AMA "haklarını bilen, mesai hassas" profili işaretliyor
+    if gun_plan == 'esnek_akis' and arkadaslar == 'haklarini_bilen':
+        s['esneklik'] -= 2
+        sinyaller.append({'tip':'tutarsizlik','mesaj':'🔍 Tutarsızlık: "Mesaim tamamen esnek" diyor ama mesai hassasiyeti yüksek profili işaretlemiş — mülakatta netleştir'})
+
+    # T2 — "Her an hazırım" diyor AMA katı/önceden netleşen saat bekliyor
+    if arkadaslar == 'her_an_hazir' and gun_plan in ['saatler_belli', 'onceden_netlesin']:
+        s['esneklik'] -= 2
+        sinyaller.append({'tip':'tutarsizlik','mesaj':'🔍 Tutarsızlık: "Her an hazırım" diyor ama katı/önceden belli saat bekliyor — mülakatta netleştir'})
+
+    # T3 — Sabah enerjisi yüksek diyor AMA en erken müsaitlik öğleye sarkıyor
+    if sabah_h == 'kahve_icer' and en_erken in ['10:00', 'ogle']:
+        s['sabah'] -= 2
+        sinyaller.append({'tip':'tutarsizlik','mesaj':'🔍 Tutarsızlık: Sabah enerjisi yüksek diyor ama en erken müsaitliği öğleye sarkıyor — mülakatta netleştir'})
+
+    # T4 — "Beni sadece beklenmedik işler yorar" diyor AMA uzun saatleri en zor yan olarak işaretlemiş
+    if yorucu == 'beklenmedik' and en_zor == 'uzun_saatler':
+        s['gecmis'] -= 2
+        sinyaller.append({'tip':'tutarsizlik','mesaj':'🔍 Tutarsızlık: "Beni sadece beklenmedik işler yorar" diyor ama uzun saatleri en zor yanı olarak belirtmiş — mülakatta netleştir'})
+
     # ── Clamp & Toplam ──────────────────────────────────────────────────────
     for k in s:
         s[k] = max(0, min(20, s[k]))
@@ -416,6 +441,7 @@ def _hesapla_skor(row: dict) -> dict:
     toplam = sum(s.values())
     dikkat_sayisi = len([x for x in sinyaller if x['tip'] == 'dikkat'])
     olumlu_sayisi = len([x for x in sinyaller if x['tip'] == 'olumlu'])
+    tutarsizlik_sayisi = len([x for x in sinyaller if x['tip'] == 'tutarsizlik'])
 
     if   toplam >= 85: genel = 'guclu';  genel_label = '🌟 Güçlü Aday'
     elif toplam >= 68: genel = 'iyi';    genel_label = '👍 İyi Aday'
@@ -436,6 +462,7 @@ def _hesapla_skor(row: dict) -> dict:
         'sinyaller':     sinyaller,
         'dikkat_sayisi': dikkat_sayisi,
         'olumlu_sayisi': olumlu_sayisi,
+        'tutarsizlik_sayisi': tutarsizlik_sayisi,
     }
 
 
@@ -496,6 +523,8 @@ def _ensure_table(cur):
         # Yeni yapısal adım 3 alanları
         ("nerede_calistim","TEXT"), ("is_ogrenilen","TEXT"),
         ("isten_en_iyi","TEXT"),    ("isten_en_zor","TEXT"),
+        # Görüldü işareti — yeni başvuru rozeti için
+        ("goruldu_ts","TIMESTAMPTZ"),
     ]:
         try:
             cur.execute(f"ALTER TABLE is_basvuru ADD COLUMN IF NOT EXISTS {kolon} {tip}")
@@ -610,7 +639,11 @@ def basvuru_ozet():
         _ensure_table(cur)
         cur.execute("SELECT durum, COUNT(*) as adet FROM is_basvuru GROUP BY durum")
         rows = cur.fetchall()
-    return {r["durum"]: r["adet"] for r in rows}
+        cur.execute("SELECT COUNT(*) as adet FROM is_basvuru WHERE goruldu_ts IS NULL")
+        yeni = cur.fetchone()
+    ozet = {r["durum"]: r["adet"] for r in rows}
+    ozet["yeni"] = yeni["adet"] if yeni else 0
+    return ozet
 
 
 @router.get("/qr/indir")
@@ -646,9 +679,24 @@ def basvuru_detay(bid: str):
     return _row_to_dict(row)
 
 
+@router.patch("/{bid}/gor")
+def basvuru_goruldu_isaretle(bid: str):
+    """Başvuru detayı açıldığında 'yeni' rozetinden düşür."""
+    with db() as (conn, cur):
+        _ensure_table(cur)
+        cur.execute(
+            "UPDATE is_basvuru SET goruldu_ts=COALESCE(goruldu_ts, %s) WHERE id=%s",
+            (dt_now_tr(), bid)
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Başvuru bulunamadı.")
+        conn.commit()
+    return {"success": True}
+
+
 @router.patch("/{bid}/durum")
 def basvuru_durum_guncelle(bid: str, body: DurumGuncelle):
-    gecerli = {"bekliyor", "gorusme", "olumlu", "olumsuz", "arsiv"}
+    gecerli = {"bekliyor", "gorusme", "olumlu", "ikinci_oncelik", "olumsuz", "arsiv"}
     if body.durum not in gecerli:
         raise HTTPException(400, f"Geçersiz durum: {gecerli}")
     with db() as (conn, cur):

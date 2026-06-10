@@ -176,6 +176,7 @@ export default function App() {
   const Page = PAGES[page] || Panel;
   const [onayBekleyen, setOnayBekleyen] = useState(0);
   const [bugunAnomali, setBugunAnomali] = useState(0);
+  const [yeniBasvuru, setYeniBasvuru] = useState(0);
 
   useEffect(() => {
     const yukle = () => {
@@ -189,6 +190,10 @@ export default function App() {
           const top = (d?.subeler || []).reduce((s, r) => s + (Number(r.anomali_sayisi) || 0), 0);
           setBugunAnomali(top);
         })
+        .catch(() => {});
+      // Yeni iş başvurusu sayısı
+      api('/is-basvurusu/ozet')
+        .then(d => setYeniBasvuru(Number(d?.yeni) || 0))
         .catch(() => {});
     };
     yukle();
@@ -245,6 +250,17 @@ export default function App() {
                       fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
                     }}>
                       {onayBekleyen}
+                    </span>
+                  )}
+                  {item.id === 'is-basvurusu' && yeniBasvuru > 0 && (
+                    <span style={{
+                      position: 'absolute', top: '50%', right: 10,
+                      transform: 'translateY(-50%)',
+                      minWidth: 18, height: 18, padding: '0 5px',
+                      borderRadius: 999, background: '#22c55e', color: '#fff',
+                      fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
+                    }} title="Yeni başvuru">
+                      {yeniBasvuru}
                     </span>
                   )}
                   {item.id === 'akilli-denetim' && bugunAnomali > 0 && (

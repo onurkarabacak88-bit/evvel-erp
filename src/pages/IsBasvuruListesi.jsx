@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { api } from '../utils/api';
+import { publishGlobalDataRefresh } from '../utils/globalDataRefresh';
 
 const DURUM_CFG = {
-  bekliyor:  { label: 'Bekliyor',  renk: '#f59e0b', bg: 'rgba(245,158,11,0.12)',  ikon: '⏳' },
-  gorusme:   { label: 'Görüşme',   renk: '#4a9eff', bg: 'rgba(74,158,255,0.12)',  ikon: '📞' },
-  olumlu:    { label: 'Olumlu',    renk: '#4caf84', bg: 'rgba(76,175,132,0.12)',  ikon: '✅' },
-  olumsuz:   { label: 'Olumsuz',   renk: '#e05c5c', bg: 'rgba(224,92,92,0.12)',   ikon: '❌' },
-  arsiv:     { label: 'Arşiv',     renk: '#6b7280', bg: 'rgba(107,114,128,0.12)', ikon: '📦' },
+  bekliyor:        { label: 'Bekliyor',    renk: '#f59e0b', bg: 'rgba(245,158,11,0.12)',  ikon: '⏳' },
+  gorusme:         { label: 'Görüşme',     renk: '#4a9eff', bg: 'rgba(74,158,255,0.12)',  ikon: '📞' },
+  olumlu:          { label: 'Olumlu',      renk: '#4caf84', bg: 'rgba(76,175,132,0.12)',  ikon: '✅' },
+  ikinci_oncelik:  { label: '2. Öncelik',  renk: '#a78bfa', bg: 'rgba(167,139,250,0.12)', ikon: '🥈' },
+  olumsuz:         { label: 'Olumsuz',     renk: '#e05c5c', bg: 'rgba(224,92,92,0.12)',   ikon: '❌' },
+  arsiv:           { label: 'Arşiv',       renk: '#6b7280', bg: 'rgba(107,114,128,0.12)', ikon: '📦' },
 };
 
 const SKOR_CFG = {
@@ -109,6 +111,11 @@ function SkorPanel({ skor }) {
           {skor.sinyaller.filter(s => s.tip === 'dikkat').map((s, i) => (
             <div key={i} style={{ fontSize: 12, color: '#f59e0b', display: 'flex', gap: 6 }}>
               <span>⚠️</span><span>{s.mesaj}</span>
+            </div>
+          ))}
+          {skor.sinyaller.filter(s => s.tip === 'tutarsizlik').map((s, i) => (
+            <div key={i} style={{ fontSize: 12, color: '#a78bfa', display: 'flex', gap: 6 }}>
+              <span>🔍</span><span>{s.mesaj}</span>
             </div>
           ))}
         </div>
@@ -301,6 +308,7 @@ function BasvuruKart({ b, onClick }) {
 
   return (
     <div onClick={onClick} style={{
+      position: 'relative',
       background: '#1a1d24', border: `1px solid ${c.renk}33`,
       borderRadius: 14, padding: '14px 16px', cursor: 'pointer',
       transition: 'border-color .15s, transform .1s',
@@ -329,8 +337,12 @@ function BasvuruKart({ b, onClick }) {
           }}>
             {b.skor.genel_label} · {b.skor.toplam}/100
             {b.skor.dikkat_sayisi > 0 && <span style={{ marginLeft: 6, color: '#f59e0b' }}>⚠️×{b.skor.dikkat_sayisi}</span>}
+            {b.skor.tutarsizlik_sayisi > 0 && <span style={{ marginLeft: 6, color: '#a78bfa' }}>🔍×{b.skor.tutarsizlik_sayisi}</span>}
           </span>
         </div>
+      )}
+      {!b.goruldu_ts && (
+        <div style={{ position: 'absolute', top: 10, right: 10, width: 10, height: 10, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 0 3px rgba(34,197,94,0.18)' }} title="Yeni" />
       )}
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -394,6 +406,17 @@ export default function IsBasvuruListesi() {
     });
   };
   const onSil = (id) => setBasvurular(prev => prev.filter(b => b.id !== id));
+
+  const ac = (b) => {
+    setSecili(b);
+    if (!b.goruldu_ts) {
+      const simdi = new Date().toISOString();
+      setBasvurular(prev => prev.map(x => x.id === b.id ? { ...x, goruldu_ts: simdi } : x));
+      api(`/is-basvurusu/${b.id}/gor`, { method: 'PATCH' })
+        .then(() => publishGlobalDataRefresh('is-basvurusu'))
+        .catch(() => {});
+    }
+  };
 
   return (
     <div className="page">
@@ -501,7 +524,7 @@ export default function IsBasvuruListesi() {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 12 }}>
           {filtrelenmis.map(b => (
-            <BasvuruKart key={b.id} b={b} onClick={() => setSecili(b)} />
+            <BasvuruKart key={b.id} b={b} onClick={() => ac(b)} />
           ))}
         </div>
       )}
