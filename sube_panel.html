@@ -13300,41 +13300,9 @@ function wirePuanHandler() {
 var opAcilisStep=1, opAcilisKasa=null, opAcilisStok={};
 
 // ── KASA DEVRİ QR — Artık kullanılmıyor, telefon tarafından yapılıyor ─
-// Eski fonksiyonlar stub olarak korundu (referans kopmasın diye)
 window.dvQrOnayAc = async function() {
   showToast('ℹ️ Devir onayı artık sabahçının telefonundan yapılıyor.', 'info', 3000);
-  return;
-  // eslint-disable-next-line no-unreachable
-  async function __old__() {
-  // Sabahçı seçiliyse ve zaten içerideyse (giris_ts var, cikis_ts yok) → QR'a gerek yok
-  var sel1 = document.getElementById('dvPers1');
-  var pid1 = sel1 ? sel1.value : '';
-  if (pid1) {
-    try {
-      var bugun = new Date().toISOString().slice(0,10);
-      var yoklama = await api('/gorev/yoklama?tarih=' + bugun + '&sube_id=' + encodeURIComponent(SUBE_ID));
-      var aktif = Array.isArray(yoklama) && yoklama.find(function(r) {
-        return String(r.personel_id) === String(pid1) && r.giris_ts && !r.cikis_ts;
-      });
-      if (aktif) {
-        // Zaten içeride — QR overlay açmadan direkt adim1'i tetikle
-        _dvAdim1QrOtomatik(aktif.ad_soyad || '', pid1);
-        return;
-      }
-    } catch(_) {}
-  }
-  // İçeride değil veya personel seçilmedi → QR ile doğrula (fallback)
-  mesaiCikisQrAc('kasa_devri');
-  window._dvQrHook = function(adSoyad, personelId) {
-    mesaiCikisQrKapat();
-    var sel1b = document.getElementById('dvPers1');
-    if (sel1b && personelId) { sel1b.value = personelId; }
-    _dvAdim1QrOtomatik(adSoyad, personelId);
-  };
 };
-
-  } // end __old__
-}; // end dvQrOnayAc stub
 
 async function _dvAdim1QrOtomatik(adSoyad, personelId) {
   var pid1 = personelId || (document.getElementById('dvPers1') || {}).value || '';
@@ -13392,74 +13360,8 @@ function _dvSayimDeger(id) {
 }
 
 window.dvQrAksamciAc = async function() {
-  showToast('ℹ️ Akşamcı devri artık kendi telefonundan alıyor — panel QR butonunu gösteriyor.', 'info', 3000);
-  return;
-  // eslint-disable-next-line no-unreachable
-  async function __old__() {
-  // Akşamcı seçiliyse ve zaten içerideyse → QR'a gerek yok, devir_giris direkt çağrılır
-  var sel2 = document.getElementById('dvPers2');
-  var pid2 = sel2 ? sel2.value : '';
-  if (pid2) {
-    try {
-      var bugun = new Date().toISOString().slice(0,10);
-      var yoklama = await api('/gorev/yoklama?tarih=' + bugun + '&sube_id=' + encodeURIComponent(SUBE_ID));
-      var aktif2 = Array.isArray(yoklama) && yoklama.find(function(r) {
-        return String(r.personel_id) === String(pid2) && r.giris_ts && !r.cikis_ts;
-      });
-      if (aktif2) {
-        // Zaten içeride — QR overlay açmadan devir_giris'i direkt çağır
-        setMsg('dvMsg', '⏳ ' + (aktif2.ad_soyad||'') + ' içeride, devir kaydediliyor...', 'msg-ok');
-        try {
-          await api('/gorev/devir-giris', {method:'POST', body:{sube_id: SUBE_ID, personel_id: pid2}});
-          setMsg('dvMsg', '✅ ' + (aktif2.ad_soyad||'Akşamcı') + ' devri aldı.', 'msg-ok');
-          setTimeout(refresh, 800);
-        } catch(e2) {
-          setMsg('dvMsg', '❌ ' + (e2.message||'Hata'), 'msg-err');
-        }
-        return;
-      }
-    } catch(_) {}
-  }
-  // İçeride değil → QR ile giriş + devir kabul birlikte
-  _mesaiCikisTip = 'kasa_devri_aksamci';
-  var ikon = '🌙';
-  var baslik = 'Akşamcı Devir Alıyor';
-  var aciklama = 'Akşam vardiyasındaki personel QR kodu okutup "Kasa Devri Devral" butonuna bassın.';
-  var el = document.getElementById('mesaiCikisIkon'); if (el) el.textContent = ikon;
-  el = document.getElementById('mesaiCikisBaslik'); if (el) el.textContent = baslik;
-  el = document.getElementById('mesaiCikisAciklama'); if (el) el.textContent = aciklama;
-  var img = document.getElementById('mesaiCikisQrImg');
-  if (img) img.src = '/api/gorev/qr/' + encodeURIComponent(SUBE_ID);
-  var bekle = document.getElementById('mesaiCikisQrBekle');
-  var onay = document.getElementById('mesaiCikisOnaylandi');
-  if (bekle) bekle.style.display = 'block';
-  if (onay) onay.style.display = 'none';
-  document.getElementById('mesaiCikisQrOverlay').style.display = 'flex';
-  // Polling: kasa_devir_onay tablosunda bekliyor → onaylandi geçişini izle
-  var _devirBekliyorGoruldu = false;
-  _mesaiCikisTimer = setInterval(async function() {
-    try {
-      var d = await api('/gorev/devir-bekleyen?sube_id=' + encodeURIComponent(SUBE_ID));
-      if (d && d.bekliyor === true) { _devirBekliyorGoruldu = true; }
-      if (d && d.bekliyor === false && _devirBekliyorGoruldu) {
-        // Devir kabul edildi (bekliyor→false geçişi) — yoklamadan akşamcıyı bul
-        clearInterval(_mesaiCikisTimer); _mesaiCikisTimer = null;
-        var bugun = new Date().toISOString().slice(0,10);
-        var yoklama = await api('/gorev/yoklama?tarih=' + bugun + '&sube_id=' + encodeURIComponent(SUBE_ID));
-        // En son giren (devralan) kişiyi bul
-        var sonGiren = null;
-        if (Array.isArray(yoklama)) {
-          var simdiki = yoklama.filter(function(r){ return !r.cikis_ts; });
-          simdiki.sort(function(a,b){ return (b.giris_ts||'').localeCompare(a.giris_ts||''); });
-          sonGiren = simdiki[0];
-        }
-        var ad = sonGiren ? (sonGiren.ad_soyad || '') : '';
-        mesaiCikisOnaylandi(ad || 'Akşam personeli');
-      }
-    } catch(_) {}
-  }, 4000);
-  } // end __old__
-}; // end dvQrAksamciAc stub
+  showToast('ℹ️ Akşamcı devri artık kendi telefonundan alıyor.', 'info', 3000);
+};
 
 // ── MESAİ ÇIKIŞ QR ──────────────────────────────────────────────────
 var _mesaiCikisTip = null;
