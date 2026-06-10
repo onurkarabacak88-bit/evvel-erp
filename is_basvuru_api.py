@@ -57,6 +57,7 @@ class BasvuruGonder(BaseModel):
     referans_ad: Optional[str] = None
     referans_tel: Optional[str] = None
     kaynak_sube: Optional[str] = None
+    tercih_subeler: Optional[List[str]] = None   # geriye dönük uyumluluk
 
 class DurumGuncelle(BaseModel):
     durum: str  # bekliyor | gorusme | olumlu | olumsuz | arsiv
