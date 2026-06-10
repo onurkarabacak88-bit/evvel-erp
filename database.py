@@ -4545,7 +4545,8 @@ def ensure_gorev_tablolari(cur) -> None:
             kabul_ts        TIMESTAMPTZ,
             durum           TEXT NOT NULL DEFAULT 'bekliyor',
             not_aciklama    TEXT,
-            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            devralan_id     TEXT
         )
     """)
     cur.execute("""

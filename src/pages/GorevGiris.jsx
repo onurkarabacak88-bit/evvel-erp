@@ -482,25 +482,55 @@ export default function GorevGiris({ subeId: subeIdProp }) {
               </div>
             )}
 
-            {/* Kim geldi? — ad seç */}
-            <div style={{ fontSize: 13, fontWeight: 600, color: '#b0b3bc', marginBottom: 10 }}>
-              Sen kimsin?
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {personelListe.map(p => (
-                <button key={p.id}
-                  onClick={() => devirKabulEt(p)}
-                  disabled={yukleniyor}
-                  style={{
-                    padding: '15px 16px', borderRadius: 10, cursor: 'pointer',
-                    background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
-                    color: '#f59e0b', fontSize: 15, fontWeight: 700, textAlign: 'left',
-                    opacity: yukleniyor ? 0.6 : 1,
-                  }}>
-                  ✅ {p.ad_soyad}
-                </button>
-              ))}
-            </div>
+            {bekleyenDevir.devralan_id ? (
+              /* Devir hedefi belli — sadece o kişi kabul edebilir */
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#b0b3bc', marginBottom: 10, textAlign: 'center' }}>
+                  Bu devir <strong style={{ color: '#e8e9ec' }}>{bekleyenDevir.devralan_ad}</strong> için bırakıldı.
+                </div>
+                {(() => {
+                  const hedef = personelListe.find(p => String(p.id) === String(bekleyenDevir.devralan_id));
+                  return (
+                    <button
+                      onClick={() => hedef ? devirKabulEt(hedef) : setHata('Hedef personel bulunamadı.')}
+                      disabled={yukleniyor}
+                      style={{
+                        width: '100%', padding: '16px', borderRadius: 10, cursor: 'pointer',
+                        background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
+                        color: '#f59e0b', fontSize: 15, fontWeight: 700,
+                        opacity: yukleniyor ? 0.6 : 1,
+                      }}>
+                      {yukleniyor ? '…' : `✅ Ben ${bekleyenDevir.devralan_ad} — Kabul Ediyorum`}
+                    </button>
+                  );
+                })()}
+                <div style={{ marginTop: 10, fontSize: 11, color: '#6b6f7a', textAlign: 'center' }}>
+                  Bu sen değilsen, hiçbir şeye dokunma — ekranı kapatabilirsin.
+                </div>
+              </div>
+            ) : (
+              <div>
+                {/* Kim geldi? — ad seç (eski/açık devir akışı) */}
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#b0b3bc', marginBottom: 10 }}>
+                  Sen kimsin?
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {personelListe.map(p => (
+                    <button key={p.id}
+                      onClick={() => devirKabulEt(p)}
+                      disabled={yukleniyor}
+                      style={{
+                        padding: '15px 16px', borderRadius: 10, cursor: 'pointer',
+                        background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
+                        color: '#f59e0b', fontSize: 15, fontWeight: 700, textAlign: 'left',
+                        opacity: yukleniyor ? 0.6 : 1,
+                      }}>
+                      ✅ {p.ad_soyad}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Devir yoksa PIN ile geç (yönetici / istisnai) */}
             <button onClick={() => setAdim('pin-giris')}

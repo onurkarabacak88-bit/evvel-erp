@@ -770,10 +770,15 @@ def _kasa_devir_onay_migrate(cur):
         ALTER TABLE kasa_devir_onay
         ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     """)
+    cur.execute("""
+        ALTER TABLE kasa_devir_onay
+        ADD COLUMN IF NOT EXISTS devralan_id TEXT
+    """)
 
 class DevirBaslatBody(BaseModel):
     sube_id: str
     devreden_id: str
+    devralan_id: Optional[str] = None
     not_aciklama: Optional[str] = None
 
 
@@ -937,6 +942,10 @@ def devir_baslat(body: DevirBaslatBody):
     from tr_saat import is_gunu_tr
     tarih = str(is_gunu_tr())
     with db() as (conn, cur):
+        try:
+            _kasa_devir_onay_migrate(cur)
+        except Exception:
+            pass
         # Bugün bu şube için zaten bekleyen devir var mı?
         cur.execute("""
             SELECT id FROM kasa_devir_onay
@@ -949,9 +958,9 @@ def devir_baslat(body: DevirBaslatBody):
         import uuid as _uuid
         devir_id = str(_uuid.uuid4())
         cur.execute("""
-            INSERT INTO kasa_devir_onay (id, sube_id, tarih, devreden_id, not_aciklama)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (devir_id, body.sube_id, tarih, body.devreden_id, body.not_aciklama))
+            INSERT INTO kasa_devir_onay (id, sube_id, tarih, devreden_id, devralan_id, not_aciklama)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (devir_id, body.sube_id, tarih, body.devreden_id, body.devralan_id, body.not_aciklama))
         conn.commit()
     return {"devir_id": devir_id, "yeni": True,
             "mesaj": "Devir kaydı oluşturuldu. Gelen vardiya kabul etmeli."}
@@ -968,11 +977,13 @@ def devir_bekleyen(sube_id: str):
         except Exception:
             pass
         cur.execute("""
-            SELECT d.id, d.devreden_id, d.devreden_ts, d.not_aciklama, d.durum,
+            SELECT d.id, d.devreden_id, d.devralan_id, d.devreden_ts, d.not_aciklama, d.durum,
                    COALESCE(d.form_data, '{}'::jsonb) AS form_data,
-                   COALESCE(p.ad_soyad, d.devreden_id) AS devreden_ad
+                   COALESCE(p.ad_soyad, d.devreden_id) AS devreden_ad,
+                   pd.ad_soyad AS devralan_ad
             FROM kasa_devir_onay d
             LEFT JOIN personel p ON p.id::text = d.devreden_id
+            LEFT JOIN personel pd ON pd.id::text = d.devralan_id
             WHERE d.sube_id=%s AND d.tarih=%s AND d.durum IN ('form_kaydedildi','bekliyor')
             ORDER BY d.created_at DESC LIMIT 1
         """, (sube_id, tarih))
@@ -1011,6 +1022,8 @@ def devir_bekleyen(sube_id: str):
             "devreden_ts": str(row["devreden_ts"]) if row["devreden_ts"] else None,
             "not_aciklama": row["not_aciklama"],
             "form_ozet": form_ozet,
+            "devralan_id": row["devralan_id"],
+            "devralan_ad": row["devralan_ad"],
         }
 
 @router.post("/api/gorev/devir-kabul")
@@ -1057,7 +1070,7 @@ def devir_giris(body: DevirGirisBody):
     with db() as (conn, cur):
         # Devir kaydını kontrol et
         cur.execute("""
-            SELECT id, durum, devreden_id FROM kasa_devir_onay
+            SELECT id, durum, devreden_id, devralan_id FROM kasa_devir_onay
             WHERE id=%s AND sube_id=%s
         """, (body.devir_id, body.sube_id))
         devir = cur.fetchone()
@@ -1065,6 +1078,8 @@ def devir_giris(body: DevirGirisBody):
             raise HTTPException(404, "Devir kaydı bulunamadı.")
         if devir["durum"] != 'bekliyor':
             raise HTTPException(400, "Bu devir zaten onaylandı.")
+        if devir["devralan_id"] and str(devir["devralan_id"]) != str(body.personel_id):
+            raise HTTPException(403, "Bu devir sana ait değil — devreden seni hedef olarak seçmemiş.")
 
         # Personel bilgisi
         cur.execute("SELECT * FROM personel WHERE id::text=%s", (body.personel_id,))
