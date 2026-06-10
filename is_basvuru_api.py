@@ -137,8 +137,8 @@ def _hesapla_skor(row: dict) -> dict:
 
     # ── 4. Vardiya Esnekliği ────────────────────────────────────────────────
     gun_plan = row.get('gun_planlama')
-    if   gun_plan == 'esnek_akis':        s['esneklik'] += 7; sinyaller.append({'tip':'olumlu','mesaj':'🔄 Vardiya esnekliği yüksek'})
-    elif gun_plan == 'plan_degisir':      s['esneklik'] += 4
+    if   gun_plan == 'esnek_akis':        s['esneklik'] += 4; sinyaller.append({'tip':'olumlu','mesaj':'🔄 Vardiya esnekliği yüksek'})
+    elif gun_plan == 'plan_degisir':      s['esneklik'] += 7; sinyaller.append({'tip':'olumlu','mesaj':'📅 Planlı ama esnek — düzen kurmuş, uzun vadeli kalma ihtimali yüksek'})
     elif gun_plan == 'saatler_belli':     s['esneklik'] -= 3
     elif gun_plan == 'onceden_netlesin':  s['esneklik'] -= 7; sinyaller.append({'tip':'dikkat','mesaj':'🚩 Katı saat beklentisi — gece kapanışa uygun değil'})
 
