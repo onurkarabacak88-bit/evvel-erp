@@ -9,13 +9,15 @@ const DURUM_CFG = {
   arsiv:     { label: 'Arşiv',     renk: '#6b7280', bg: 'rgba(107,114,128,0.12)', ikon: '📦' },
 };
 
-const POZ_LABEL = { barista: '☕ Barista', kasiyer: '💵 Kasiyer', servis: '🙋 Servis', diger: '✨ Diğer' };
-const DENEYIM_LABEL = {
-  var_1yil: '1 yıldan az', var_2yil: '1–3 yıl', var_uzun: '3+ yıl',
-  kismi: 'Biraz biliyor', yok_ogreneyim: 'Yeni başlayacak',
-};
+const POZ_LABEL     = { barista: '☕ Barista', kasiyer: '💵 Kasiyer', servis: '🙋 Servis', diger: '✨ Diğer' };
+const DENEYIM_LABEL = { var_1yil: '1 yıldan az', var_2yil: '1–3 yıl', var_uzun: '3+ yıl', kismi: 'Biraz biliyor', yok_ogreneyim: 'Yeni başlayacak' };
 const BASLANGIC_LABEL = { hemen: 'Hemen', '2hafta': '2 Hafta', '1ay': '1 Ay' };
 const CALISMA_LABEL = { tam: 'Tam Zamanlı', yari: 'Yarı Zamanlı', esnek: 'Esnek' };
+const YASAM_LABEL   = { aile: '🏠 Aileyle', yurt: '🏫 Yurtta', arkadas: '👥 Arkadaşlarla', tek: '🔑 Tek başına' };
+const EGITIM_LABEL  = { lise: '📚 Lise öğrencisi', universite: '🎓 Üniversite', mezun: '✅ Mezun', calisiyor: '💼 Çalışıyor+part-time', diger: '✨ Diğer' };
+const ULASIM_LABEL  = { yurume: '🚶 Yürüme', toplu: '🚌 Toplu taşıma', arac: '🚗 Araç/moto', bisiklet: '🚲 Bisiklet' };
+const NEDEN_LABEL   = { part_time: '💰 Ek gelir', tam_zamanli: '💼 Kariyer', barista: '☕ Barista olmak', deneyim: '📈 Deneyim', insan: '🙋 İnsanlarla çalışmak', diger: '✨ Diğer' };
+const TEMPO_LABEL   = { hizli: '⚡ Hızlı tempo', sakin: '🌿 Sakin', ikisi: '😄 İkisi de olur' };
 
 function DurumBadge({ durum }) {
   const c = DURUM_CFG[durum] || DURUM_CFG.bekliyor;
@@ -82,15 +84,36 @@ function CVModal({ b, onKapat, onGuncelle, onSil }) {
         {/* CV Detay */}
         <div style={{ marginBottom: 20 }}>
           <Satir label="📱 Telefon" deger={b.telefon} />
-          <Satir label="📅 Doğum Yılı" deger={b.dogum_yili ? `${b.dogum_yili} (${new Date().getFullYear() - b.dogum_yili} yaş)` : null} />
+          <Satir label="📅 Doğum Yılı" deger={b.dogum_yili ? `${b.dogum_yili} · ${new Date().getFullYear() - b.dogum_yili} yaşında` : null} />
           <Satir label="📍 Semt" deger={b.ilce} />
+
+          {/* Yaşam & Eğitim — sabah vardiyası sinyalleri */}
+          <div style={{ margin: '10px 0 4px', fontSize: 10, fontWeight: 800, color: '#4a9eff', letterSpacing: 1 }}>YAŞAM DURUMU</div>
+          <Satir label="🏠 Nerede Kalıyor" deger={YASAM_LABEL[b.yasam_durumu] || b.yasam_durumu} />
+          <Satir label="🎓 Eğitim" deger={EGITIM_LABEL[b.egitim_durumu] || b.egitim_durumu} />
+          <Satir label="🏫 Okul / Bölüm" deger={b.universite_bol} />
+          <Satir label="⏰ En Erken Saat" deger={b.en_erken_saat === 'ogle' ? '🌞 Öğleden sonra' : b.en_erken_saat} />
+          <Satir label="🚌 Ulaşım" deger={ULASIM_LABEL[b.ulasim] || b.ulasim} />
+
+          {/* Pozisyon & Tercih */}
+          <div style={{ margin: '10px 0 4px', fontSize: 10, fontWeight: 800, color: '#4a9eff', letterSpacing: 1 }}>POZİSYON & TERCİH</div>
           <Satir label="💼 Pozisyon" deger={POZ_LABEL[b.pozisyon] || b.pozisyon} />
           <Satir label="🏪 Tercih Şube" deger={(b.tercih_subeler || []).join(', ') || null} />
-          <Satir label="☕ Kahve Deneyimi" deger={DENEYIM_LABEL[b.kahve_deneyim] || b.kahve_deneyim} />
-          <Satir label="💼 Önceki İş" deger={b.onceki_is} />
-          <Satir label="⏱️ Çalışma Tercihi" deger={CALISMA_LABEL[b.calisma_tercihi] || b.calisma_tercihi} />
+          <Satir label="⏱️ Çalışma Şekli" deger={CALISMA_LABEL[b.calisma_tercihi] || b.calisma_tercihi} />
           <Satir label="📅 Müsait Günler" deger={(b.musait_gunler || []).join(', ') || null} />
           <Satir label="🚀 Başlangıç" deger={BASLANGIC_LABEL[b.baslangic] || b.baslangic} />
+
+          {/* Deneyim */}
+          <div style={{ margin: '10px 0 4px', fontSize: 10, fontWeight: 800, color: '#4a9eff', letterSpacing: 1 }}>DENEYİM</div>
+          <Satir label="☕ Kahve Deneyimi" deger={DENEYIM_LABEL[b.kahve_deneyim] || b.kahve_deneyim} />
+          <Satir label="💼 Önceki İş" deger={b.onceki_is} />
+
+          {/* Kişilik */}
+          <div style={{ margin: '10px 0 4px', fontSize: 10, fontWeight: 800, color: '#4a9eff', letterSpacing: 1 }}>KİŞİLİK</div>
+          <Satir label="🎯 Neden Bu İş" deger={NEDEN_LABEL[b.neden_bu_is] || b.neden_bu_is} />
+          <Satir label="⚡ Tempo Tercihi" deger={TEMPO_LABEL[b.tempo_tercihi] || b.tempo_tercihi} />
+          <Satir label="💪 Güçlü Yönü" deger={b.gucluk_yonu} />
+
           <Satir label="👤 Referans" deger={b.referans_ad ? `${b.referans_ad}${b.referans_tel ? ' · ' + b.referans_tel : ''}` : null} />
           {b.tanitim && (
             <div style={{ marginTop: 12, padding: 14, background: '#12151b', borderRadius: 10, border: '1px solid #2a2d35' }}>

@@ -17,17 +17,30 @@ class BasvuruGonder(BaseModel):
     telefon: str
     dogum_yili: Optional[int] = None
     ilce: Optional[str] = None
+    # Adım 1 — yaşam & eğitim
+    yasam_durumu: Optional[str] = None      # aile | yurt | arkadas | tek
+    egitim_durumu: Optional[str] = None     # lise | universite | mezun | calisiyor | diger
+    universite_bol: Optional[str] = None    # bölüm/okul
+    en_erken_saat: Optional[str] = None     # 07:00 | 08:00 | 09:00 | 10:00 | ogle
+    ulasim: Optional[str] = None            # yurume | toplu | arac | bisiklet
+    # Adım 2 — pozisyon & tercih
     pozisyon: Optional[str] = None          # barista | kasiyer | servis | diger
-    tercih_subeler: Optional[List[str]] = None   # ["Zafer","Alsancak",...]
-    kahve_deneyim: Optional[str] = None     # var_1yil | var_2yil | yok_ogreneyim | kismi
-    onceki_is: Optional[str] = None         # serbest metin
+    tercih_subeler: Optional[List[str]] = None
     calisma_tercihi: Optional[str] = None   # tam | yari | esnek
-    musait_gunler: Optional[List[str]] = None    # ["Pazartesi","Salı",...]
+    musait_gunler: Optional[List[str]] = None
     baslangic: Optional[str] = None         # hemen | 2hafta | 1ay
-    tanitim: Optional[str] = None           # kısa tanıtım
+    # Adım 3 — deneyim
+    kahve_deneyim: Optional[str] = None
+    onceki_is: Optional[str] = None
+    # Adım 4 — kişilik
+    neden_bu_is: Optional[str] = None       # part_time | tam_zamanli | barista | deneyim | insan | diger
+    tempo_tercihi: Optional[str] = None     # hizli | sakin | ikisi
+    gucluk_yonu: Optional[str] = None
+    # Adım 5 — son
+    tanitim: Optional[str] = None
     referans_ad: Optional[str] = None
     referans_tel: Optional[str] = None
-    kaynak_sube: Optional[str] = None       # hangi QR'dan geldi (opsiyonel)
+    kaynak_sube: Optional[str] = None
 
 class DurumGuncelle(BaseModel):
     durum: str  # bekliyor | gorusme | olumlu | olumsuz | arsiv
@@ -43,13 +56,21 @@ def _ensure_table(cur):
             telefon TEXT NOT NULL,
             dogum_yili INTEGER,
             ilce TEXT,
+            yasam_durumu TEXT,
+            egitim_durumu TEXT,
+            universite_bol TEXT,
+            en_erken_saat TEXT,
+            ulasim TEXT,
             pozisyon TEXT,
             tercih_subeler JSONB DEFAULT '[]',
-            kahve_deneyim TEXT,
-            onceki_is TEXT,
             calisma_tercihi TEXT,
             musait_gunler JSONB DEFAULT '[]',
             baslangic TEXT,
+            kahve_deneyim TEXT,
+            onceki_is TEXT,
+            neden_bu_is TEXT,
+            tempo_tercihi TEXT,
+            gucluk_yonu TEXT,
             tanitim TEXT,
             referans_ad TEXT,
             referans_tel TEXT,
@@ -59,6 +80,16 @@ def _ensure_table(cur):
             guncelleme_ts TIMESTAMPTZ
         )
     """)
+    # Eski tabloya eksik kolonları ekle (migration)
+    for kolon, tip in [
+        ("yasam_durumu", "TEXT"), ("egitim_durumu", "TEXT"), ("universite_bol", "TEXT"),
+        ("en_erken_saat", "TEXT"), ("ulasim", "TEXT"), ("neden_bu_is", "TEXT"),
+        ("tempo_tercihi", "TEXT"), ("gucluk_yonu", "TEXT"),
+    ]:
+        try:
+            cur.execute(f"ALTER TABLE is_basvuru ADD COLUMN IF NOT EXISTS {kolon} {tip}")
+        except Exception:
+            pass
 
 
 def _row_to_dict(r):
@@ -89,24 +120,30 @@ def basvuru_gonder(body: BasvuruGonder):
         _ensure_table(cur)
         cur.execute("""
             INSERT INTO is_basvuru
-                (id, ad_soyad, telefon, dogum_yili, ilce, pozisyon,
-                 tercih_subeler, kahve_deneyim, onceki_is, calisma_tercihi,
-                 musait_gunler, baslangic, tanitim, referans_ad, referans_tel,
-                 kaynak_sube, durum, olusturma_ts)
-            VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,'bekliyor',%s)
+                (id, ad_soyad, telefon, dogum_yili, ilce,
+                 yasam_durumu, egitim_durumu, universite_bol, en_erken_saat, ulasim,
+                 pozisyon, tercih_subeler, calisma_tercihi, musait_gunler, baslangic,
+                 kahve_deneyim, onceki_is,
+                 neden_bu_is, tempo_tercihi, gucluk_yonu,
+                 tanitim, referans_ad, referans_tel, kaynak_sube,
+                 durum, olusturma_ts)
+            VALUES (%s,%s,%s,%s,%s, %s,%s,%s,%s,%s, %s,%s::jsonb,%s,%s::jsonb,%s, %s,%s, %s,%s,%s, %s,%s,%s,%s, 'bekliyor',%s)
         """, (
             bid,
-            body.ad_soyad.strip(),
-            body.telefon.strip(),
-            body.dogum_yili,
+            body.ad_soyad.strip(), body.telefon.strip(), body.dogum_yili,
             (body.ilce or "").strip() or None,
+            body.yasam_durumu, body.egitim_durumu,
+            (body.universite_bol or "").strip() or None,
+            body.en_erken_saat, body.ulasim,
             body.pozisyon,
             _j.dumps(body.tercih_subeler or [], ensure_ascii=False),
-            body.kahve_deneyim,
-            (body.onceki_is or "").strip() or None,
             body.calisma_tercihi,
             _j.dumps(body.musait_gunler or [], ensure_ascii=False),
             body.baslangic,
+            body.kahve_deneyim,
+            (body.onceki_is or "").strip() or None,
+            body.neden_bu_is, body.tempo_tercihi,
+            (body.gucluk_yonu or "").strip() or None,
             (body.tanitim or "").strip() or None,
             (body.referans_ad or "").strip() or None,
             (body.referans_tel or "").strip() or None,
