@@ -6594,6 +6594,89 @@ function reqInt(id, label) {
 }
 // ─── KAPANIS PROGRESS DOTS — otomatik bölüm takibi ───────────
 var _kapQrTimer = null;
+function kapanisEventIdBul() {
+  var op = lastData && lastData.operasyon ? lastData.operasyon : null;
+  if (!op) return null;
+  var aktif = op.aktif || null;
+  if (aktif && String(aktif.tip || '').toUpperCase() === 'KAPANIS' && aktif.id) return aktif.id;
+  var adaylar = [];
+  if (Array.isArray(op.events)) adaylar = adaylar.concat(op.events);
+  if (Array.isArray(op.events_ozet)) adaylar = adaylar.concat(op.events_ozet);
+  for (var i = 0; i < adaylar.length; i++) {
+    var ev = adaylar[i] || {};
+    var tip = String(ev.tip || '').toUpperCase();
+    var durum = String(ev.durum || '').toLowerCase();
+    if (!ev.id || tip !== 'KAPANIS') continue;
+    if (durum === 'bekliyor' || durum === 'gecikti' || durum === 'devam' || durum === 'aktif') return ev.id;
+  }
+  for (var j = 0; j < adaylar.length; j++) {
+    var ev2 = adaylar[j] || {};
+    if (ev2.id && String(ev2.tip || '').toUpperCase() === 'KAPANIS') return ev2.id;
+  }
+  return null;
+}
+
+// Kapanış formunu gönderir. otomatik=true ise QR mühürlendiğinde sessizce
+// tetiklenir; hata olursa "Kapanışı Tamamla" butonu tekrar gösterilir ki
+// kullanıcı eksik alanı düzeltip manuel gönderebilsin.
+async function kapanisGonderSubmit(otomatik) {
+  var btn = document.getElementById('kapGonder');
+  setMsg('kapMsg', '', '');
+  if (btn) btn.disabled = true;
+  try {
+    var kime = selVal('kapKimeTeslim');
+    if (!kime) throw new Error('Kasa kime teslim seçin (Adım 1)');
+    var teslim = parseNum(inpVal('kapTeslim'));
+    if (teslim == null || teslim < 0) throw new Error('Teslim tutarı girin (Adım 1)');
+    var devirStr = inpVal('kapDevir').trim();
+    var devirParsed = devirStr === '' ? null : parseNum(devirStr);
+    var devirExplicit = (devirStr === '' || devirParsed == null) ? null : Math.max(0, devirParsed);
+    var toplamEl = inpVal('kapToplam').trim();
+    var toplamSay = toplamEl === '' ? null : parseNum(toplamEl);
+    if (toplamSay == null || toplamSay < 0) throw new Error('Kasada sayılan toplam girilmedi — Adım 1\'e dön');
+    var kasaToplam = toplamSay;
+    var n = parseNum(inpVal('kapN'))||0, p2 = parseNum(inpVal('kapP'))||0, o = parseNum(inpVal('kapO'))||0;
+    if (o > 0 && n > 0 && p2 > 0 && Math.abs(o - (n + p2)) < 0.5)
+      throw new Error('Online alanı nakit+POS toplamına eşit olamaz. Online satış yoksa 0 bırakın.');
+    if (n+p2+o <= 0) throw new Error('En az bir ciro tutarı girin (Adım 1)');
+    var eid = kapanisEventIdBul();
+    if (!eid) throw new Error('Aktif kapanış eventi bulunamadı — sayfayı yenileyip tekrar dene');
+    var body = {
+      personel_id: 'qr_onay', pin: '0000', // QR ile doğrulandı
+      teslim: teslim,
+      kasa_kime_teslim: kime,
+      kasa_sayim: kasaToplam,
+      x_raporu_gonderildi: !!(document.getElementById('kapXRapor') && document.getElementById('kapXRapor').checked),
+      ciro_gonderim_onay: false,
+      ciro_nakit: n, ciro_pos: p2, ciro_online: o,
+      bardak_kucuk: pIntOpt('kapBk'), bardak_buyuk: pIntOpt('kapBb'), bardak_plastik: pIntOpt('kapBp'),
+      su_adet: pIntOpt('kapSu'), sut_litre: pIntOpt('kapSut'), redbull_adet: pIntOpt('kapRb'), soda_adet: pIntOpt('kapSo'),
+      cookie_adet: pIntOpt('kapCk'),
+      pasta_adet: parseInt(inpVal('kapPastaAdet') || '0', 10) || 0,
+      qr_onaylandi: true,
+    };
+    if (devirExplicit != null) body.devir = devirExplicit;
+    await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/operasyon/event/'+encodeURIComponent(eid)+'/tamamla', {
+      method: 'POST', body: body,
+      islemBasariliMesaji: 'Kapanış gönderildi — ciro merkez onayına düştü.',
+    });
+    setMsg('kapMsg','✅ Kapanış tamamlandı — ciro merkez onayına düştü.','msg-ok');
+    setTimeout(function(){ kapanisModalKapat(); refresh(); }, 1500);
+    return true;
+  } catch(e) {
+    if (e.status===429) { handle429(document.getElementById('kapMsg'),e); }
+    else setMsg('kapMsg', '❌ ' + (e.message||'Hata') + ' — Adımları kontrol et.', 'msg-err');
+    if (otomatik && btn) {
+      // Otomatik gönderim başarısız — kullanıcı eksikleri düzeltip elle göndersin
+      btn.style.display = 'flex';
+      btn.textContent = '✔ Kapanışı Tamamla';
+    }
+    return false;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function setKapanisStep(step) {
   kapStepAktif = step;
   [1,2,3,4,5].forEach(function(i){
@@ -6629,8 +6712,10 @@ function setKapanisStep(step) {
           clearInterval(_kapQrTimer);
           document.getElementById('kapQrBekle').style.display = 'none';
           document.getElementById('kapQrOnaylandi').style.display = 'block';
-          document.getElementById('kapGonder').style.display = 'flex';
-          document.getElementById('kapGonder').textContent = '✔ Kapanışı Tamamla';
+          // QR ile mühürlendi — kapanış otomatik tamamlanır, ayrı bir butona gerek yok.
+          // (Sadece otomatik gönderim hata verirse kapanisGonderSubmit butonu geri gösterir.)
+          document.getElementById('kapGonder').style.display = 'none';
+          kapanisGonderSubmit(true);
         }
       } catch(_) {}
     }, 3000);
@@ -12996,76 +13081,7 @@ function wireKapanisHandler() {
   var btn = document.getElementById('kapGonder');
   if (!btn || btn._wired) return;
   btn._wired = true;
-  function kapanisEventIdBul() {
-    var op = lastData && lastData.operasyon ? lastData.operasyon : null;
-    if (!op) return null;
-    var aktif = op.aktif || null;
-    if (aktif && String(aktif.tip || '').toUpperCase() === 'KAPANIS' && aktif.id) return aktif.id;
-    var adaylar = [];
-    if (Array.isArray(op.events)) adaylar = adaylar.concat(op.events);
-    if (Array.isArray(op.events_ozet)) adaylar = adaylar.concat(op.events_ozet);
-    for (var i = 0; i < adaylar.length; i++) {
-      var ev = adaylar[i] || {};
-      var tip = String(ev.tip || '').toUpperCase();
-      var durum = String(ev.durum || '').toLowerCase();
-      if (!ev.id || tip !== 'KAPANIS') continue;
-      if (durum === 'bekliyor' || durum === 'gecikti' || durum === 'devam' || durum === 'aktif') return ev.id;
-    }
-    for (var j = 0; j < adaylar.length; j++) {
-      var ev2 = adaylar[j] || {};
-      if (ev2.id && String(ev2.tip || '').toUpperCase() === 'KAPANIS') return ev2.id;
-    }
-    return null;
-  }
-  btn.onclick = async function(){
-    setMsg('kapMsg','',''); btn.disabled=true;
-    try {
-      // QR ile kimlik doğrulandı — personel/PIN gerekmez
-      // Sadece veri alanlarını kontrol et
-      var kime = selVal('kapKimeTeslim');
-      if (!kime) throw new Error('Kasa kime teslim seçin (Adım 1)');
-      var teslim = parseNum(inpVal('kapTeslim'));
-      if (teslim == null || teslim < 0) throw new Error('Teslim tutarı girin (Adım 1)');
-      var devirStr = inpVal('kapDevir').trim();
-      var devirParsed = devirStr === '' ? null : parseNum(devirStr);
-      var devirExplicit = (devirStr === '' || devirParsed == null) ? null : Math.max(0, devirParsed);
-      var toplamEl = inpVal('kapToplam').trim();
-      var toplamSay = toplamEl === '' ? null : parseNum(toplamEl);
-      if (toplamSay == null || toplamSay < 0) throw new Error('Kasada sayılan toplam girilmedi — Adım 1\'e dön');
-      var kasaToplam = toplamSay;
-      var n = parseNum(inpVal('kapN'))||0, p2 = parseNum(inpVal('kapP'))||0, o = parseNum(inpVal('kapO'))||0;
-      if (o > 0 && n > 0 && p2 > 0 && Math.abs(o - (n + p2)) < 0.5)
-        throw new Error('Online alanı nakit+POS toplamına eşit olamaz. Online satış yoksa 0 bırakın.');
-      if (n+p2+o <= 0) throw new Error('En az bir ciro tutarı girin (Adım 1)');
-      var eid = kapanisEventIdBul();
-      if (!eid) throw new Error('Aktif kapanış eventi bulunamadı — sayfayı yenileyip tekrar dene');
-      var body = {
-        personel_id: 'qr_onay', pin: '0000', // QR ile doğrulandı
-        teslim: teslim,
-        kasa_kime_teslim: kime,
-        kasa_sayim: kasaToplam,
-        x_raporu_gonderildi: !!(document.getElementById('kapXRapor') && document.getElementById('kapXRapor').checked),
-        ciro_gonderim_onay: false,
-        ciro_nakit: n, ciro_pos: p2, ciro_online: o,
-        bardak_kucuk: pIntOpt('kapBk'), bardak_buyuk: pIntOpt('kapBb'), bardak_plastik: pIntOpt('kapBp'),
-        su_adet: pIntOpt('kapSu'), sut_litre: pIntOpt('kapSut'), redbull_adet: pIntOpt('kapRb'), soda_adet: pIntOpt('kapSo'),
-        cookie_adet: pIntOpt('kapCk'),
-        pasta_adet: parseInt(inpVal('kapPastaAdet') || '0', 10) || 0,
-        qr_onaylandi: true,
-      };
-      if (devirExplicit != null) body.devir = devirExplicit;
-      await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/operasyon/event/'+encodeURIComponent(eid)+'/tamamla', {
-        method: 'POST', body: body,
-        islemBasariliMesaji: 'Kapanış gönderildi — ciro merkez onayına düştü.',
-      });
-      setMsg('kapMsg','✅ Kapanış gönderildi — ciro merkez onayına düştü.','msg-ok');
-      setTimeout(function(){ kapanisModalKapat(); refresh(); }, 1500);
-    } catch(e) {
-      if (e.status===429) handle429(document.getElementById('kapMsg'),e);
-      else setMsg('kapMsg', '❌ ' + (e.message||'Hata') + ' — Adımları kontrol et.', 'msg-err');
-    }
-    btn.disabled=false;
-  };
+  btn.onclick = function(){ kapanisGonderSubmit(false); };
 }
 
 function wireGiderHandler() {
