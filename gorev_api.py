@@ -766,6 +766,10 @@ def _kasa_devir_onay_migrate(cur):
         ALTER TABLE kasa_devir_onay
         ADD COLUMN IF NOT EXISTS form_data JSONB DEFAULT '{}'::jsonb
     """)
+    cur.execute("""
+        ALTER TABLE kasa_devir_onay
+        ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    """)
 
 class DevirBaslatBody(BaseModel):
     sube_id: str
