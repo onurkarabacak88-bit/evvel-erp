@@ -232,6 +232,131 @@ def _hesapla_skor(row: dict) -> dict:
     elif en_zor == 'monoton':
         s['esneklik'] += 1  # yoğun ortam arayışında → bizim için iyi
 
+    # ── 6. Kullanılmayan tek-alan sinyalleri ────────────────────────────────
+
+    ulasim = row.get('ulasim')
+    if   ulasim == 'arac':    s['esneklik'] += 2
+    elif ulasim == 'toplu':   s['esneklik'] += 1
+    elif ulasim == 'yurume':  s['sabah'] -= 1  # kötü havada risk
+
+    calisma = row.get('calisma_tercihi')
+    if   calisma == 'tam':    s['gecmis'] += 2
+    elif calisma == 'esnek':  s['esneklik'] += 1
+
+    baslangic = row.get('baslangic')
+    if   baslangic == 'hemen': s['enerji'] += 2; s['gecmis'] += 1
+    elif baslangic == '1ay':   s['gecmis'] -= 1
+
+    gunler = row.get('musait_gunler') or []
+    has_ctesi = 'Cumartesi' in gunler
+    has_pazar  = 'Pazar'     in gunler
+    if has_ctesi and has_pazar:
+        s['esneklik'] += 4
+        sinyaller.append({'tip':'olumlu','mesaj':'📅 Hafta sonu tam müsait — kafe için ideal'})
+    elif has_ctesi or has_pazar:
+        s['esneklik'] += 2
+    elif gunler and not has_ctesi and not has_pazar:
+        s['esneklik'] -= 3
+        sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Hafta sonu müsait değil — kafe için kritik eksik'})
+
+    if egitim in ['universite']:
+        s['gecmis'] += 1  # öğrenme odaklı
+    elif egitim == 'calisiyor':
+        s['gecmis'] += 1; s['esneklik'] -= 1  # başka işi var, esneklik kısıtlı
+
+    # ── 7. COMPOUND SİNYALLER — çoklu soru kombinasyonu ────────────────────
+    # Her biri en az 2 bağımsız sorunun aynı yönü göstermesi durumunda tetiklenir.
+    # Yanıltıcı olmaması için sadece anlamlı çakışmalar dahil edildi.
+
+    # ① Sosyal izolasyon + ekip kopukluğu → disiplin riski
+    # (kullanıcı örneği: tek yaşıyor + öğrenci değil + ekip ruhunu yakalayamamış)
+    if (yasam == 'tek'
+            and egitim not in ['universite', 'lise']
+            and arkadaslar in ['kendi_isine', 'haklarini_bilen']
+            and ogrenilen not in ['takim', 'musteri_iletisim']):
+        s['duzen'] -= 3; s['esneklik'] -= 2
+        sinyaller.append({'tip':'dikkat','mesaj':'🔴 Disiplin riski: Tek yaşıyor + öğrenci değil + iş geçmişinde ekip bağı kuramadı — dışsal sorumluluk yok'})
+
+    # ② Para odaklı + müşteriler zor → ilk çatışmada terk riski
+    if en_iyi == 'para_bagimsizlik' and en_zor == 'zor_musteriler':
+        s['enerji'] -= 4; s['gecmis'] -= 2
+        sinyaller.append({'tip':'dikkat','mesaj':'🔴 Terk riski: Para motivasyonu + zor müşterilerden kaçınma — ilk yoğun günde bırakabilir'})
+
+    # ③ Yönetim sorunu + haklarını bilen → otorite çatışması
+    if en_zor == 'yonetim_sorun' and arkadaslar == 'haklarini_bilen':
+        s['esneklik'] -= 5
+        sinyaller.append({'tip':'dikkat','mesaj':'🔴 Otorite çatışması: İki ayrı sorudan yönetim/kural sürtüşmesi sinyali'})
+
+    # ④ Her şey önceden netleşmeli + uzun saatler zor → kafe uyumsuzluğu
+    if gun_plan == 'onceden_netlesin' and en_zor == 'uzun_saatler':
+        s['esneklik'] -= 4
+        sinyaller.append({'tip':'dikkat','mesaj':'🔴 Kafe uyumsuzluğu: Belirsizliğe tolerans yok + uzun saatler zor — vardiya esnekliği kritik eksik'})
+
+    # ⑤ Düşük ücret zor + para motivasyonu → ilk teklif gelince ayrılır
+    if en_zor == 'dusuk_ucret' and en_iyi == 'para_bagimsizlik':
+        s['gecmis'] -= 3; s['esneklik'] -= 2
+        sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Yüksek dönüş riski: Para hem en iyi hem en zor — daha iyi ücret geldiğinde ayrılır'})
+
+    # ⑥ Sabah zor + yürüme + tek yaşıyor → sabah devamsızlık üçlüsü
+    if (sabah_h in ['zor_gelir', 'izin_dusunur']
+            and ulasim == 'yurume'
+            and yasam == 'tek'):
+        s['sabah'] -= 4
+        sinyaller.append({'tip':'dikkat','mesaj':'🔴 Sabah devamsızlık üçlüsü: Kalkmakta zorlanıyor + yürüme mesafesi + uyandıracak kimse yok'})
+
+    # ⑦ Yoğunlukta düzen yok + makine kimse temizlesin → baskı altında düzen çöküyor
+    if yogun in ['oldugu_gibi', 'fark_etmez'] and makine in ['kime_duserse', 'pek_dusunmem']:
+        s['duzen'] -= 5
+        sinyaller.append({'tip':'dikkat','mesaj':'🔴 Düzen çöküşü: İki ayrı bağlamda baskı altında temizliği erteliyor'})
+
+    # ⑧ Sosyal çekilme çifti → kafe uyumsuzluğu
+    if arkadaslar == 'kendi_isine' and sosyal == 'pek_rahat_degil':
+        s['enerji'] -= 3; s['esneklik'] -= 2
+        sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Sosyal çekilme: Hem takımda hem müşteride içe kapanık — kafe ortamına uyum soru işareti'})
+
+    # ⑨ Hızlı tempo istiyor AMA plan önceden netleşmeli → çelişkili beklenti
+    if tempo == 'hizli' and gun_plan == 'onceden_netlesin':
+        s['esneklik'] -= 2
+        sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Çelişkili beklenti: Rush ortamı istiyor ama belirsizliğe toleranssız'})
+
+    # ─── POZİTİF COMPOUND ───────────────────────────────────────────────────
+
+    # ⑩ Müşteri sevgisi üçlü onay → çok güçlü enerji sinyali
+    if en_iyi == 'musteri_insan' and sosyal == 'dogal_isinirim' and musteri == 'adini_ogrenip':
+        s['enerji'] += 5
+        sinyaller.append({'tip':'olumlu','mesaj':'🌟 Müşteri sevgisi üçlü onay: 3 farklı sorudan teyit — sahici müşteri odağı'})
+
+    # ⑪ Sabah güvenilirliği çift onay
+    if sabah_h == 'kahve_icer' and en_erken in ['07:00', '08:00'] and yasam == 'aile':
+        s['sabah'] += 3
+        sinyaller.append({'tip':'olumlu','mesaj':'☀️ Sabah üçlüsü: Kalkıyor + erkenci + aile çatısı — en güvenilir profil'})
+    elif sabah_h == 'kahve_icer' and en_erken in ['07:00', '08:00']:
+        s['sabah'] += 2
+
+    # ⑫ Düzen çift onay (baskı altında da temiz)
+    if makine == 'hemen_siler' and yogun == 'araliklarda':
+        s['duzen'] += 3
+        if ogrenilen == 'duzen_temizlik':
+            s['duzen'] += 2
+            sinyaller.append({'tip':'olumlu','mesaj':'🧹 Düzen üçlü onay: Makine + yoğunluk + öğrenme — temizlik karakter özelliği'})
+        else:
+            sinyaller.append({'tip':'olumlu','mesaj':'🧹 Düzen çift onay: Baskı altında bile temizliği koruyor'})
+
+    # ⑬ Ekip ruhu çift onay
+    if arkadaslar == 'her_an_hazir' and (en_iyi == 'ekip' or ogrenilen == 'takim'):
+        s['esneklik'] += 3; s['gecmis'] += 1
+        sinyaller.append({'tip':'olumlu','mesaj':'🤝 Ekip uyumu çift onay: Güvenilir + ekip odaklı geçmiş'})
+
+    # ⑭ Tam bağlılık üçlüsü
+    if calisma == 'tam' and baslangic == 'hemen' and has_ctesi and has_pazar:
+        s['gecmis'] += 2; s['esneklik'] += 2
+        sinyaller.append({'tip':'olumlu','mesaj':'💪 Tam bağlılık üçlüsü: Tam zamanlı + hemen başlar + hafta sonu müsait'})
+
+    # ⑮ Kahve tutkusu + kariyer motivasyonu
+    if neden == 'barista' and kahve in ['var_1yil', 'var_2yil', 'var_uzun']:
+        s['gecmis'] += 3; s['enerji'] += 2
+        sinyaller.append({'tip':'olumlu','mesaj':'☕ Tutkuyla gelmiş: Barista olmak istiyor + deneyimi var'})
+
     # ── Clamp & Toplam ──────────────────────────────────────────────────────
     for k in s:
         s[k] = max(0, min(20, s[k]))
