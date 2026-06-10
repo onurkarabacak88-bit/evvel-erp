@@ -172,6 +172,36 @@ export default function IsBasvuruForm() {
       if (!form.ad_soyad.trim()) { setHata('Adın ve soyadın olmadan devam edemeyiz 🙂'); return; }
       if (!form.telefon.trim())  { setHata('Telefon numarana ihtiyacımız var.'); return; }
     }
+    if (adim === 2) {
+      if (!form.calisma_tercihi)               { setHata('Nasıl çalışmak istediğini seçmeyi unuttun 🗓️'); return; }
+      if (!form.musait_gunler.length)           { setHata('En az bir gün seçmen gerekiyor.'); return; }
+      if (!form.baslangic)                     { setHata('Ne zaman başlayabileceğini belirtir misin?'); return; }
+    }
+    if (adim === 3) {
+      if (!form.kahve_deneyim)                 { setHata('Kahve deneyimini seçmeyi unuttun ☕'); return; }
+      if (!form.nerede_calistim)               { setHata('Daha önce nerede çalıştığını belirtir misin?'); return; }
+      if (form.nerede_calistim !== 'hic_calismadim') {
+        if (!form.is_ogrenilen)                { setHata('O işte en çok ne öğrendiğini seçmeyi unuttun 📚'); return; }
+        if (!form.isten_en_iyi)                { setHata('O işte seni en çok ne mutlu ettiğini seçmeyi unuttun ✨'); return; }
+        if (!form.isten_en_zor)                { setHata('O işte en zor ne geldiğini seçmeyi unuttun ⚠️'); return; }
+      }
+    }
+    if (adim === 4) {
+      if (!form.makine_sonrasi)                { setHata('Kahve makinesi sorusunu yanıtlamayı unuttun ☕'); return; }
+      if (!form.yogun_duzen)                   { setHata('Yoğun anlarda düzen sorusunu yanıtlamayı unuttun 🧹'); return; }
+      if (!form.gun_planlama)                  { setHata('Gün planlama sorusunu yanıtlamayı unuttun 📅'); return; }
+      if (!form.arkadaslar_tanim)              { setHata('Arkadaşları tanımlama sorusunu yanıtlamayı unuttun 👥'); return; }
+    }
+    if (adim === 5) {
+      if (!form.sosyal_yaklasim)               { setHata('Sosyal yaklaşım sorusunu yanıtlamayı unuttun 🤝'); return; }
+      if (!form.musteri_bagli)                 { setHata('Müşteri bağı sorusunu yanıtlamayı unuttun ☕'); return; }
+      if (!form.sabah_hazirlik)                { setHata('Sabah hazırlık sorusunu yanıtlamayı unuttun 🌅'); return; }
+      if (!form.yorucu_an)                     { setHata('En yorucu an sorusunu yanıtlamayı unuttun 😓'); return; }
+    }
+    if (adim === 6) {
+      if (!form.neden_bu_is)                   { setHata('Bu işi neden istediğini seçmeyi unuttun 🎯'); return; }
+      if (!form.tempo_tercihi)                 { setHata('Tempo tercihini seçmeyi unuttun ⚡'); return; }
+    }
     const m = MOTIVASYON[adim];
     setYon('ileri');
     if (m) {
@@ -223,7 +253,7 @@ export default function IsBasvuruForm() {
           <div style={{ background: BG2, border: `1px solid ${BORD}`, borderRadius: 16, padding: 20, fontSize: 13, color: T2, lineHeight: 2 }}>
             🕐 Başvurular genellikle <strong style={{ color: T1 }}>2–5 iş günü</strong> içinde değerlendirilir.<br />
             📱 Telefona açık ol, seni arayacağız!<br />
-            ☕ Evvel Kahve ailesine hoş geldin diyelim diye sabırsızlanıyoruz.
+            ☕ Tulip Coffee ailesine hoş geldin diyelim diye sabırsızlanıyoruz.
           </div>
         </div>
       </div>
@@ -250,7 +280,7 @@ export default function IsBasvuruForm() {
       {/* ── Header + Progress ── */}
       <div style={{ position: 'sticky', top: 0, zIndex: 50, background: BG, borderBottom: `1px solid ${BORD}`, padding: '12px 18px 0' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: T1 }}>☕ Evvel Kahve</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: T1 }}>☕ Tulip Coffee</div>
           <div style={{ fontSize: 12, color: T3, fontWeight: 600 }}>{adim} / {TOPLAM_ADIM}</div>
         </div>
         {/* Progress bar */}
@@ -687,7 +717,7 @@ export default function IsBasvuruForm() {
         )}
 
         <div style={{ textAlign: 'center', marginTop: 28, fontSize: 12, color: T3 }}>
-          ☕ Evvel Kahve — Gizliliğin korunur, bilgilerin sadece ekibimizle paylaşılır.
+          ☕ Tulip Coffee — Gizliliğin korunur, bilgilerin sadece ekibimizle paylaşılır.
         </div>
       </div>
     </div>
