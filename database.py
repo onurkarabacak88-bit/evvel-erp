@@ -3783,6 +3783,7 @@ $$;
         # depo_stok_kalem_kodu NULL olan tüm aktif ürünlere kendi UUID'lerini ata.
         # Böylece isim bazlı otomatik çözme mantığına hiç düşülmez; her ürün kendi
         # satırını kontrol eder. Havuza bağlanması gerekenler admin panelinden elle ayarlanır.
+        cur.execute("SAVEPOINT sp_urun_uuid_blok")
         try:
             cur.execute("""
                 SELECT 1 FROM finans_migration_log
@@ -3985,6 +3986,8 @@ $$;
                 """, (f'{{"sifirlanan_satir": {v10_count}}}',))
                 print(f"[MIGRATION] sube_depo_stok_temiz_zemin_v10: {v10_count} stok satırı sıfırlandı")
         except Exception as _mig_e:
+            try: cur.execute("ROLLBACK TO SAVEPOINT sp_urun_uuid_blok")
+            except: pass
             print(f"[MIGRATION WARN] siparis_urun_depo_kalem_kodu_uuid_v5: {_mig_e}")
 
         # ─── RAPOR CACHE TABLOLARI (raporlama hızlandırma) — savepoint ile safe ──
