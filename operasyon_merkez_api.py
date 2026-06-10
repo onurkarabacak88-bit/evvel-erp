@@ -18,7 +18,7 @@ from urllib.parse import quote
 
 log = logging.getLogger(__name__)  # modül-düzey logger — tüm fonksiyonlar kullanabilir
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -11674,6 +11674,20 @@ def _ensure_maliyet_tablolari(cur: Any) -> None:
         ON sube_food_cost_gun(sube_id, tarih DESC)
     """)
 
+    # Fatura kalemi -> stok kalem_kodu eşleştirme hafızası
+    # (kart_satici_kural ile aynı mantık: PDF'den okunan satır metni normalize
+    # edilip anahtar olarak saklanır; bir dahaki sefere aynı satır gelince
+    # otomatik kalem_kodu önerilir.)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS fatura_kalem_eslestirme (
+            anahtar         TEXT PRIMARY KEY,
+            kalem_kodu      TEXT NOT NULL,
+            kalem_adi       TEXT,
+            adet            INTEGER NOT NULL DEFAULT 1,
+            guncelleme      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+
 
 @router.get("/maliyet/ozet")
 def ops_maliyet_ozet(
@@ -11825,6 +11839,27 @@ class AlisFiyatBody(BaseModel):
     notlar: Optional[str] = None
 
 
+def _kaydet_alis_fiyati(cur: Any, kalem: str, kalem_adi: Optional[str], birim: str,
+                        birim_maliyet_tl: float, bas: str, tedarikci: Optional[str],
+                        notlar: Optional[str]) -> str:
+    """urun_alis_fiyat'a yeni fiyat satırı ekler, önceki geçerli kaydı kapatır. id döner."""
+    _ensure_maliyet_tablolari(cur)
+    cur.execute(
+        "UPDATE urun_alis_fiyat SET gecerli_bitis = %s WHERE kalem_kodu = %s AND gecerli_bitis IS NULL AND gecerli_baslangic < %s",
+        (bas, kalem, bas),
+    )
+    cur.execute(
+        """
+        INSERT INTO urun_alis_fiyat
+            (kalem_kodu, kalem_adi, birim, birim_maliyet_tl, gecerli_baslangic, tedarikci, notlar)
+        VALUES (%s,%s,%s,%s,%s,%s,%s)
+        RETURNING id
+        """,
+        (kalem, kalem_adi or kalem, birim, round(birim_maliyet_tl, 4), bas, tedarikci, notlar),
+    )
+    return str((cur.fetchone() or {}).get("id") or "")
+
+
 @router.post("/maliyet/alis-fiyat-kaydet")
 def ops_maliyet_alis_fiyat_kaydet(body: AlisFiyatBody):
     """Yeni alış fiyatı kaydeder veya günceller."""
@@ -11835,23 +11870,181 @@ def ops_maliyet_alis_fiyat_kaydet(body: AlisFiyatBody):
         raise HTTPException(400, "birim_maliyet_tl negatif olamaz")
     bas = body.gecerli_baslangic or str(date.today())
     with db() as (conn, cur):
+        new_id = _kaydet_alis_fiyati(cur, kalem, body.kalem_adi, body.birim,
+                                      body.birim_maliyet_tl, bas, body.tedarikci, body.notlar)
+    return {"success": True, "id": new_id, "kalem_kodu": kalem}
+
+
+# ─── Fatura PDF yükleme + kalem eşleştirme ─────────────────────────────────
+
+_FATURA_SAYI_RE = re.compile(r"\d{1,3}(?:[.\s]\d{3})*(?:,\d+)?|\d+(?:[.,]\d+)?")
+_FATURA_ATLA_RE = re.compile(
+    r"^(ara\s*toplam|genel\s*toplam|toplam|kdv|vergi|fatura\s*no|tarih|"
+    r"i[bv]an|m[uü][sş]teri|tedarik[cç]i|sayfa|d[oö]viz|iskonto)\b",
+    re.IGNORECASE,
+)
+
+
+def _fatura_sayi_parse(tok: str) -> Optional[float]:
+    """TR formatlı sayı ('1.234,50' veya '12,5' veya '12.5') -> float."""
+    t = tok.strip().replace(" ", "")
+    if not t:
+        return None
+    if "," in t:
+        t = t.replace(".", "").replace(",", ".")
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
+def _fatura_anahtar(aciklama: str) -> str:
+    """Satır açıklamasını eşleştirme hafızası anahtarına normalize eder."""
+    a = re.sub(r"\s+", " ", aciklama or "").strip().lower()
+    a = re.sub(r"[^a-zçğıöşü0-9 ]", "", a)
+    return a[:120]
+
+
+def _fatura_satirlari_cikar(pdf_bytes: bytes) -> List[Dict[str, Any]]:
+    """
+    PDF'ten satır bazlı kalem adaylarını çıkarır (genel amaçlı, tedarikçiye özel
+    şablon değildir). Her satırda en az 1 sayı arar; son sayıyı 'tutar' olarak,
+    varsa ondan önceki sayıyı 'miktar' olarak alır. Sayılar çıkarılınca kalan
+    metin 'aciklama' olur.
+    """
+    import pdfplumber
+    out: List[Dict[str, Any]] = []
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            for raw in text.split("\n"):
+                line = raw.strip()
+                if len(line) < 4:
+                    continue
+                if _FATURA_ATLA_RE.match(line):
+                    continue
+                sayilar = _FATURA_SAYI_RE.findall(line)
+                if not sayilar:
+                    continue
+                aciklama = _FATURA_SAYI_RE.sub("", line)
+                aciklama = re.sub(r"\s+", " ", aciklama).strip(" -.,:;|")
+                if len(aciklama) < 3:
+                    continue
+                tutar = _fatura_sayi_parse(sayilar[-1])
+                miktar = _fatura_sayi_parse(sayilar[-2]) if len(sayilar) >= 2 else None
+                if tutar is None:
+                    continue
+                out.append({
+                    "ham_metin": line,
+                    "aciklama": aciklama,
+                    "miktar": miktar,
+                    "tutar": tutar,
+                })
+    return out
+
+
+@router.post("/maliyet/fatura-pdf-yukle")
+async def ops_maliyet_fatura_pdf_yukle(
+    file: UploadFile = File(...),
+    tedarikci: Optional[str] = Form(None),
+):
+    """
+    Tedarikçi faturası PDF'i yükler, satır bazlı kalem adaylarını çıkarır.
+    Her satır için, daha önce eşleştirilmiş bir stok kalemi varsa (fatura_kalem_eslestirme)
+    önerir; ayrıca o kalemin son bilinen fiyatını döner (artış/azalış karşılaştırması için).
+    Hiçbir şeyi otomatik kaydetmez — onay /maliyet/fatura-kalem-onayla ile yapılır.
+    """
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Sadece PDF dosyası yüklenebilir")
+    data = await file.read()
+    try:
+        satirlar = _fatura_satirlari_cikar(data)
+    except Exception as e:
+        raise HTTPException(400, f"PDF okunamadı: {e}")
+
+    if not satirlar:
+        return {"satirlar": [], "toplam": 0,
+                "uyari": "PDF'ten kalem satırı çıkarılamadı. Format desteklenmiyor olabilir — "
+                         "satırları aşağıdan elle girebilirsin."}
+
+    with db() as (conn, cur):
         _ensure_maliyet_tablolari(cur)
-        # Önceki geçerli kaydı kapat
-        cur.execute(
-            "UPDATE urun_alis_fiyat SET gecerli_bitis = %s WHERE kalem_kodu = %s AND gecerli_bitis IS NULL AND gecerli_baslangic < %s",
-            (bas, kalem, bas),
-        )
-        cur.execute(
-            """
-            INSERT INTO urun_alis_fiyat
-                (kalem_kodu, kalem_adi, birim, birim_maliyet_tl, gecerli_baslangic, tedarikci, notlar)
-            VALUES (%s,%s,%s,%s,%s,%s,%s)
-            RETURNING id
-            """,
-            (kalem, body.kalem_adi or kalem, body.birim, round(body.birim_maliyet_tl, 4),
-             bas, body.tedarikci, body.notlar),
-        )
-        new_id = str((cur.fetchone() or {}).get("id") or "")
+        for s in satirlar:
+            anahtar = _fatura_anahtar(s["aciklama"])
+            s["anahtar"] = anahtar
+            cur.execute(
+                "SELECT kalem_kodu, kalem_adi FROM fatura_kalem_eslestirme WHERE anahtar = %s",
+                (anahtar,),
+            )
+            esleme = cur.fetchone()
+            if esleme:
+                s["onerilen_kalem_kodu"] = esleme["kalem_kodu"]
+                s["onerilen_kalem_adi"] = esleme["kalem_adi"]
+                cur.execute(
+                    """
+                    SELECT birim_maliyet_tl, gecerli_baslangic, birim FROM urun_alis_fiyat
+                    WHERE kalem_kodu = %s ORDER BY gecerli_baslangic DESC LIMIT 1
+                    """,
+                    (esleme["kalem_kodu"],),
+                )
+                onceki = cur.fetchone()
+                if onceki:
+                    s["onceki_fiyat"] = float(onceki["birim_maliyet_tl"])
+                    s["onceki_tarih"] = str(onceki["gecerli_baslangic"])
+                    s["birim"] = onceki["birim"]
+                else:
+                    s["onceki_fiyat"] = None
+                    s["onceki_tarih"] = None
+            else:
+                s["onerilen_kalem_kodu"] = None
+                s["onerilen_kalem_adi"] = None
+                s["onceki_fiyat"] = None
+                s["onceki_tarih"] = None
+
+    return {"satirlar": satirlar, "toplam": len(satirlar), "tedarikci": tedarikci}
+
+
+class FaturaKalemOnaylaBody(BaseModel):
+    ham_metin: str
+    kalem_kodu: str
+    kalem_adi: Optional[str] = None
+    birim: str = "adet"
+    birim_maliyet_tl: float
+    tedarikci: Optional[str] = None
+    gecerli_baslangic: Optional[str] = None
+
+
+@router.post("/maliyet/fatura-kalem-onayla")
+def ops_maliyet_fatura_kalem_onayla(body: FaturaKalemOnaylaBody):
+    """
+    Bir fatura satırını onaylar: urun_alis_fiyat'a yeni fiyat kaydı düşer
+    (eski fiyat geçmiş olarak korunur) ve fatura_kalem_eslestirme'ye
+    'bu satır metni -> bu kalem_kodu' eşleşmesini öğretir/günceller.
+    """
+    kalem = str(body.kalem_kodu or "").strip()
+    if not kalem:
+        raise HTTPException(400, "kalem_kodu zorunlu")
+    if body.birim_maliyet_tl < 0:
+        raise HTTPException(400, "birim_maliyet_tl negatif olamaz")
+    bas = body.gecerli_baslangic or str(date.today())
+    anahtar = _fatura_anahtar(body.ham_metin)
+    with db() as (conn, cur):
+        new_id = _kaydet_alis_fiyati(cur, kalem, body.kalem_adi, body.birim,
+                                      body.birim_maliyet_tl, bas, body.tedarikci,
+                                      f"PDF'ten onaylandı: {body.ham_metin}")
+        if anahtar:
+            cur.execute(
+                """
+                INSERT INTO fatura_kalem_eslestirme (anahtar, kalem_kodu, kalem_adi, adet, guncelleme)
+                VALUES (%s, %s, %s, 1, NOW())
+                ON CONFLICT (anahtar) DO UPDATE
+                    SET kalem_kodu = EXCLUDED.kalem_kodu,
+                        kalem_adi  = EXCLUDED.kalem_adi,
+                        adet       = fatura_kalem_eslestirme.adet + 1,
+                        guncelleme = NOW()
+                """,
+                (anahtar, kalem, body.kalem_adi or kalem),
+            )
     return {"success": True, "id": new_id, "kalem_kodu": kalem}
 
 

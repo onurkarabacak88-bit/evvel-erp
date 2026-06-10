@@ -64,6 +64,11 @@ export default function Panel({ onNavigate }) {
   const [maliyetForm, setMaliyetForm] = useState({ kalem_kodu: '', kalem_adi: '', birim: 'adet', birim_maliyet_tl: '', tedarikci: '', notlar: '' });
   const [maliyetKaydediliyor, setMaliyetKaydediliyor] = useState(false);
   const [maliyetAcikKalem, setMaliyetAcikKalem] = useState(null); // genişletilmiş kalem_kodu (fiyat geçmişi)
+  const [faturaTedarikci, setFaturaTedarikci] = useState('');
+  const [faturaYukleniyor, setFaturaYukleniyor] = useState(false);
+  const [faturaSatirlar, setFaturaSatirlar] = useState(null); // [{ham_metin, anahtar, miktar, tutar, kalem_kodu, kalem_adi, birim, onceki_fiyat, onceki_tarih, kaydedildi}]
+  const [faturaUyari, setFaturaUyari] = useState('');
+  const [faturaKaydedilenler, setFaturaKaydedilenler] = useState({}); // {idx: true}
 
   const maliyetYukle = () => {
     setMaliyetLoading(true);
@@ -118,6 +123,61 @@ export default function Panel({ onNavigate }) {
     out.sort((a, b) => (a.guncel.kalem_adi || a.kalem_kodu || '').localeCompare(b.guncel.kalem_adi || b.kalem_kodu || '', 'tr'));
     return out;
   })();
+
+  const faturaPdfYukle = async (file) => {
+    if (!file) return;
+    setFaturaYukleniyor(true);
+    setFaturaUyari('');
+    setFaturaSatirlar(null);
+    setFaturaKaydedilenler({});
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      if (faturaTedarikci.trim()) fd.append('tedarikci', faturaTedarikci.trim());
+      const res = await fetch('/api/ops/maliyet/fatura-pdf-yukle', { method: 'POST', body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'PDF işlenemedi');
+      const satirlar = (data.satirlar || []).map(s => ({
+        ...s,
+        kalem_kodu: s.onerilen_kalem_kodu || '',
+        kalem_adi: s.onerilen_kalem_adi || s.aciklama,
+        birim: s.birim || 'adet',
+        birim_maliyet_tl: s.tutar != null ? String(s.tutar) : '',
+      }));
+      setFaturaSatirlar(satirlar);
+      if (data.uyari) setFaturaUyari(data.uyari);
+      else if (!satirlar.length) setFaturaUyari('PDF içinde kalem satırı bulunamadı.');
+    } catch (e) {
+      setFaturaUyari(e.message || 'PDF işlenemedi');
+    } finally {
+      setFaturaYukleniyor(false);
+    }
+  };
+
+  const faturaSatirGuncelle = (idx, alan, deger) => {
+    setFaturaSatirlar(rows => rows.map((r, i) => i === idx ? { ...r, [alan]: deger } : r));
+  };
+
+  const faturaSatirKaydet = (idx) => {
+    const s = faturaSatirlar[idx];
+    const kalem = (s.kalem_kodu || '').trim();
+    const fiyat = parseFloat(String(s.birim_maliyet_tl).replace(',', '.'));
+    if (!kalem) { setIslemSonuc({ m: 'Kalem kodu seç/gir', t: 'error' }); return; }
+    if (!(fiyat >= 0)) { setIslemSonuc({ m: 'Geçerli bir fiyat girin', t: 'error' }); return; }
+    api('/ops/maliyet/fatura-kalem-onayla', { method: 'POST', body: {
+      ham_metin: s.ham_metin,
+      kalem_kodu: kalem,
+      kalem_adi: (s.kalem_adi || '').trim() || kalem,
+      birim: s.birim || 'adet',
+      birim_maliyet_tl: fiyat,
+      tedarikci: faturaTedarikci.trim() || null,
+    }})
+    .then(() => {
+      setFaturaKaydedilenler(prev => ({ ...prev, [idx]: true }));
+      maliyetYukle();
+    })
+    .catch(e => setIslemSonuc({ m: e.message || 'Kayıt başarısız', t: 'error' }));
+  };
 
   const detayGetir = (tip) => {
     api(`/vadeli-odeme-detay?kaynak=${tip}`)
@@ -1984,6 +2044,74 @@ export default function Panel({ onNavigate }) {
               <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>
                 Aynı kalem kodu için yeni bir fiyat kaydedersen, eski fiyat otomatik olarak "geçmiş" olarak saklanır ve aşağıdaki listede artış/azalış oku ile karşılaştırma görürsün.
               </div>
+            </div>
+
+            {/* Fatura PDF yükleme */}
+            <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
+              <span>📄 Fatura PDF Yükle</span>
+              <span style={{ fontSize: 10, color: 'var(--text3)' }}>Satırları okur, sen onaylayınca fiyatları günceller</span>
+            </div>
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px,1fr))', gap: 10, marginBottom: 12, alignItems: 'end' }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Tedarikçi (opsiyonel)</label>
+                  <input type="text" placeholder="örn. Pınar Bayi" value={faturaTedarikci}
+                    onChange={e => setFaturaTedarikci(e.target.value)} />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Fatura PDF</label>
+                  <input type="file" accept="application/pdf"
+                    onChange={e => faturaPdfYukle(e.target.files?.[0])} disabled={faturaYukleniyor} />
+                </div>
+              </div>
+              {faturaYukleniyor && <div style={{ fontSize: 12, color: 'var(--text3)' }}>PDF okunuyor...</div>}
+              {faturaUyari && <div style={{ fontSize: 12, color: 'var(--yellow)', marginBottom: 8 }}>⚠️ {faturaUyari}</div>}
+
+              {faturaSatirlar?.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                  {faturaSatirlar.map((s, idx) => {
+                    const fiyat = parseFloat(String(s.birim_maliyet_tl).replace(',', '.'));
+                    const fark = (s.onceki_fiyat != null && !isNaN(fiyat)) ? (fiyat - s.onceki_fiyat) : null;
+                    const yuzde = (fark !== null && s.onceki_fiyat > 0) ? (fark / s.onceki_fiyat) * 100 : null;
+                    const ok = fark === null ? null : fark > 0 ? '🔺' : fark < 0 ? '🔻' : '➖';
+                    const okRenk = fark > 0 ? 'var(--red)' : fark < 0 ? 'var(--green)' : 'var(--text3)';
+                    const kaydedildi = !!faturaKaydedilenler[idx];
+                    return (
+                      <div key={idx} style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bg3)', border: `1px solid ${kaydedildi ? 'var(--green)' : 'var(--border)'}` }}>
+                        <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 6, fontFamily: 'var(--font-mono)' }}>{s.ham_metin}</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: 8, alignItems: 'center' }}>
+                          <input type="text" placeholder="Stok kalem kodu (örn. sut_litre)" value={s.kalem_kodu}
+                            onChange={e => faturaSatirGuncelle(idx, 'kalem_kodu', e.target.value)} disabled={kaydedildi} />
+                          <input type="text" placeholder="Kalem adı" value={s.kalem_adi}
+                            onChange={e => faturaSatirGuncelle(idx, 'kalem_adi', e.target.value)} disabled={kaydedildi} />
+                          <select value={s.birim} onChange={e => faturaSatirGuncelle(idx, 'birim', e.target.value)} disabled={kaydedildi}>
+                            <option value="adet">adet</option>
+                            <option value="kg">kg</option>
+                            <option value="lt">lt</option>
+                            <option value="koli">koli</option>
+                            <option value="paket">paket</option>
+                          </select>
+                          <input type="text" inputMode="decimal" placeholder="₺" value={s.birim_maliyet_tl}
+                            onChange={e => faturaSatirGuncelle(idx, 'birim_maliyet_tl', e.target.value)} disabled={kaydedildi} />
+                          {kaydedildi
+                            ? <span style={{ fontSize: 12, color: 'var(--green)', fontWeight: 700, textAlign: 'center' }}>✅ Kaydedildi</span>
+                            : <button className="btn btn-secondary btn-sm" onClick={() => faturaSatirKaydet(idx)}>Onayla</button>}
+                        </div>
+                        {fark !== null && (
+                          <div style={{ marginTop: 6, fontSize: 11, color: okRenk, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span>{ok}</span>
+                            <span>Önceki fiyat ({fmtDate(s.onceki_tarih)}): {fmt(s.onceki_fiyat)} → Yeni: {fmt(fiyat)}</span>
+                            {yuzde !== null && <span style={{ fontWeight: 700 }}>({fark > 0 ? '+' : ''}{yuzde.toFixed(1)}%)</span>}
+                          </div>
+                        )}
+                        {s.miktar != null && (
+                          <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text3)' }}>Faturadaki miktar: {s.miktar}</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Güncel fiyat listesi + geçmiş/artış görseli */}
