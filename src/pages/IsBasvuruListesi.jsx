@@ -5,6 +5,7 @@ import { publishGlobalDataRefresh } from '../utils/globalDataRefresh';
 const DURUM_CFG = {
   bekliyor:        { label: 'Bekliyor',    renk: '#f59e0b', bg: 'rgba(245,158,11,0.12)',  ikon: '⏳' },
   gorusme:         { label: 'Görüşme',     renk: '#4a9eff', bg: 'rgba(74,158,255,0.12)',  ikon: '📞' },
+  birinci_oncelik: { label: '1. Öncelik',  renk: '#fbbf24', bg: 'rgba(251,191,36,0.12)',  ikon: '🥇' },
   olumlu:          { label: 'Olumlu',      renk: '#4caf84', bg: 'rgba(76,175,132,0.12)',  ikon: '✅' },
   ikinci_oncelik:  { label: '2. Öncelik',  renk: '#a78bfa', bg: 'rgba(167,139,250,0.12)', ikon: '🥈' },
   olumsuz:         { label: 'Olumsuz',     renk: '#e05c5c', bg: 'rgba(224,92,92,0.12)',   ikon: '❌' },
@@ -303,7 +304,8 @@ function CVModal({ b, onKapat, onGuncelle, onSil }) {
 function BasvuruKart({ b, onClick }) {
   const c = DURUM_CFG[b.durum] || DURUM_CFG.bekliyor;
   const sc = b.skor ? SKOR_CFG[b.skor.genel] || SKOR_CFG.orta : null;
-  const tarih = new Date(b.olusturma_ts).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
+  const tarih = new Date(b.olusturma_ts).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })
+    + ' · ' + new Date(b.olusturma_ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
   const yas = b.dogum_yili ? `${new Date().getFullYear() - b.dogum_yili}y` : '';
 
   return (

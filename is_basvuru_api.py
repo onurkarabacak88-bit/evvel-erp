@@ -733,7 +733,7 @@ def basvuru_goruldu_isaretle(bid: str):
 
 @router.patch("/{bid}/durum")
 def basvuru_durum_guncelle(bid: str, body: DurumGuncelle):
-    gecerli = {"bekliyor", "gorusme", "olumlu", "ikinci_oncelik", "olumsuz", "arsiv"}
+    gecerli = {"bekliyor", "gorusme", "birinci_oncelik", "olumlu", "ikinci_oncelik", "olumsuz", "arsiv"}
     if body.durum not in gecerli:
         raise HTTPException(400, f"Geçersiz durum: {gecerli}")
     with db() as (conn, cur):
