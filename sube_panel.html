@@ -13248,33 +13248,114 @@ var opAcilisStep=1, opAcilisKasa=null, opAcilisStok={};
 
 // ── KASA DEVRİ QR ONAY (sabahçı çıkış + akşamcı giriş) ─────────────
 window.dvQrOnayAc = function() {
-  // Sabahçı QR okutup "Kasa Devri" seçince mesai çıkışı + dvPin1 dolar
+  // Sabahçı QR okutup "Kasa Devri" seçince: cikis_ts set edilir ve adim1 otomatik çağrılır
   mesaiCikisQrAc('kasa_devri');
-  // Onaylandı callback'i override et — PIN alanını doldur
-  var _origOnaylandi = mesaiCikisOnaylandi;
-  window._dvQrHook = function(adSoyad) {
-    // Devir akışı zaten gorev_yoklama'ya cikis_ts kaydetti
-    // Şimdi dvAdim1Btn'i otomatik tetikle (personel zaten seçili varsayarak)
-    var btn1 = document.getElementById('dvAdim1Btn');
-    // PIN alanına placeholder yaz (QR onaylandı işareti)
-    var pin1 = document.getElementById('dvPin1');
-    if (pin1) pin1.value = '0000'; // QR onaylıda PIN bypass
+  window._dvQrHook = function(adSoyad, personelId) {
     mesaiCikisQrKapat();
-    showToast('✅ ' + (adSoyad || 'Personel') + ' QR ile onayladı — Devri Başlat butonuna bas.', 'ok', 3000);
+    // Personel seçimini otomatik yap (QR ile doğrulandı)
+    var sel1 = document.getElementById('dvPers1');
+    if (sel1 && personelId) {
+      sel1.value = personelId;
+    }
+    // adim1'i otomatik çağır — qr_dogrulandi=true ile PIN bypass
+    _dvAdim1QrOtomatik(adSoyad, personelId);
   };
 };
 
+async function _dvAdim1QrOtomatik(adSoyad, personelId) {
+  var pid1 = personelId || (document.getElementById('dvPers1') || {}).value || '';
+  if (!pid1) {
+    showToast('⚠️ Personel seçili değil — manuel seçip Devri Başlat butonuna bas.', 'warn', 4000);
+    return;
+  }
+  var msgEl = document.getElementById('dvMsg');
+  setMsg('dvMsg', '⏳ ' + (adSoyad || 'Personel') + ' QR ile onayladı, devir kaydediliyor...', 'msg-ok');
+  try {
+    var kasadakiNakit = parseNum((document.getElementById('dvTeslim') || {}).value) || 0;
+    var body = {
+      sabahci_devreden_id: pid1,
+      pin: '',
+      qr_dogrulandi: true,
+      nakit: 0, pos: 0, online: 0,
+      teslim: kasadakiNakit, devir: 0,
+      kasa_sayim_dogrulandi: true,
+      x_raporu_gonderildi: true,
+      ciro_gonderildi: false,
+      bardak_kucuk:   _dvSayimDeger('dvBk'),
+      bardak_buyuk:   _dvSayimDeger('dvBb'),
+      bardak_plastik: _dvSayimDeger('dvBp'),
+      su_adet:        _dvSayimDeger('dvSu'),
+      redbull_adet:   _dvSayimDeger('dvRb'),
+      soda_adet:      _dvSayimDeger('dvSo'),
+      cookie_adet:    _dvSayimDeger('dvCk'),
+    };
+    if (typeof _PASTA_KEYS !== 'undefined') {
+      _PASTA_KEYS.forEach(function(k){ body[k] = (typeof dvPastaCache !== 'undefined' ? dvPastaCache[k] : 0) || 0; });
+      body.pasta_adet = _PASTA_KEYS.reduce(function(s,k){ return s + (body[k]||0); }, 0);
+    }
+    await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/vardiya-devri/adim1', {method:'POST', body:body});
+    setMsg('dvMsg', '✅ 1. imza alındı — ' + (adSoyad||'') + '. Akşamcı QR ile devralsın.', 'msg-ok');
+    var kdf1 = document.getElementById('kasaDevirForm');
+    if (kdf1) kdf1.innerHTML = '';
+    setTimeout(refresh, 800);
+  } catch(e) {
+    if (e.status === 409 && /akşamcı|zaten/i.test(e.message||'')) {
+      setMsg('dvMsg', '⚠️ Devir zaten başlatılmış — akşamcı QR ile devralsın.', 'msg-warn');
+      setTimeout(refresh, 600);
+    } else {
+      setMsg('dvMsg', '❌ ' + (e.message||'Hata') + ' — Manuel "Devri Başlat" butonunu kullanın.', 'msg-err');
+      // Manuel fallback: PIN alanını '0000' ile doldur, kullanıcı butona bassın
+      var pin1 = document.getElementById('dvPin1');
+      if (pin1) pin1.value = '0000';
+      showToast('⚠️ Otomatik başlatma hata verdi — "Devri Başlat" butonuna bas.', 'warn', 5000);
+    }
+  }
+}
+
+function _dvSayimDeger(id) {
+  var el = document.getElementById(id);
+  return el ? (parseInt(el.value) || 0) : 0;
+}
+
 window.dvQrAksamciAc = function() {
-  // Akşamcı QR okutup "Kasa Devri" seçince mesai girişi
-  // Burada akşamcının yoklaması zaten gorev_yoklama'ya yazılır (giris_ts)
-  // dvPin2 doldurulur
-  mesaiCikisQrAc('kasa_devri_aksamci');
-  window._dvQrHook = function(adSoyad) {
-    var pin2 = document.getElementById('dvPin2');
-    if (pin2) pin2.value = '0000';
-    mesaiCikisQrKapat();
-    showToast('✅ ' + (adSoyad || 'Personel') + ' QR ile devri aldı — Devri Kabul Et butonuna bas.', 'ok', 3000);
-  };
+  // Akşamcı QR okutunca devir-bekleyen endpoint'ini poll et (giris_ts oluşunca)
+  _mesaiCikisTip = 'kasa_devri_aksamci';
+  var ikon = '🌙';
+  var baslik = 'Akşamcı Devir Alıyor';
+  var aciklama = 'Akşam vardiyasındaki personel QR kodu okutup "Kasa Devri Devral" butonuna bassın.';
+  var el = document.getElementById('mesaiCikisIkon'); if (el) el.textContent = ikon;
+  el = document.getElementById('mesaiCikisBaslik'); if (el) el.textContent = baslik;
+  el = document.getElementById('mesaiCikisAciklama'); if (el) el.textContent = aciklama;
+  var img = document.getElementById('mesaiCikisQrImg');
+  if (img) img.src = '/api/gorev/qr/' + encodeURIComponent(SUBE_ID);
+  var bekle = document.getElementById('mesaiCikisQrBekle');
+  var onay = document.getElementById('mesaiCikisOnaylandi');
+  if (bekle) bekle.style.display = 'block';
+  if (onay) onay.style.display = 'none';
+  document.getElementById('mesaiCikisQrOverlay').style.display = 'flex';
+  // Polling: kasa_devir_onay tablosunda bekliyor → onaylandi geçişini izle
+  var _devirBekliyorGoruldu = false;
+  _mesaiCikisTimer = setInterval(async function() {
+    try {
+      var d = await api('/gorev/devir-bekleyen?sube_id=' + encodeURIComponent(SUBE_ID));
+      if (d && d.bekliyor === true) { _devirBekliyorGoruldu = true; }
+      if (d && d.bekliyor === false && _devirBekliyorGoruldu) {
+        // Devir kabul edildi (bekliyor→false geçişi) — yoklamadan akşamcıyı bul
+        clearInterval(_mesaiCikisTimer); _mesaiCikisTimer = null;
+        var bugun = new Date().toISOString().slice(0,10);
+        var yoklama = await api('/gorev/yoklama?tarih=' + bugun + '&sube_id=' + encodeURIComponent(SUBE_ID));
+        // En son giren (devralan) kişiyi bul
+        var sonGiren = null;
+        if (Array.isArray(yoklama)) {
+          var simdiki = yoklama.filter(function(r){ return !r.cikis_ts; });
+          simdiki.sort(function(a,b){ return (b.giris_ts||'').localeCompare(a.giris_ts||''); });
+          sonGiren = simdiki[0];
+        }
+        var ad = sonGiren ? (sonGiren.ad_soyad || '') : '';
+        mesaiCikisOnaylandi(ad || 'Akşam personeli');
+      }
+    } catch(_) {}
+  }, 4000);
 };
 
 // ── MESAİ ÇIKIŞ QR ──────────────────────────────────────────────────
@@ -13291,17 +13372,14 @@ function mesaiCikisQrAc(tip) {
   var el = document.getElementById('mesaiCikisIkon'); if (el) el.textContent = ikon;
   el = document.getElementById('mesaiCikisBaslik'); if (el) el.textContent = baslik;
   el = document.getElementById('mesaiCikisAciklama'); if (el) el.textContent = aciklama;
-  // QR resmi
   var img = document.getElementById('mesaiCikisQrImg');
   if (img) img.src = '/api/gorev/qr/' + encodeURIComponent(SUBE_ID);
-  // Ekranları sıfırla
   var bekle = document.getElementById('mesaiCikisQrBekle');
   var onay = document.getElementById('mesaiCikisOnaylandi');
   if (bekle) bekle.style.display = 'block';
   if (onay) onay.style.display = 'none';
-  // Overlay aç
   document.getElementById('mesaiCikisQrOverlay').style.display = 'flex';
-  // Polling başlat — yoklamada bugün cikis_ts doldu mu?
+  // Polling: yoklamada cikis_ts && cikis_tip eşleşmesini izle (sabahçı çıkışı için)
   _mesaiCikisTimer = setInterval(async function() {
     try {
       var bugun = new Date().toISOString().slice(0,10);
@@ -13310,15 +13388,14 @@ function mesaiCikisQrAc(tip) {
         return r.cikis_ts && r.cikis_tip === _mesaiCikisTip;
       });
       if (cikisBitti) {
-        clearInterval(_mesaiCikisTimer);
-        _mesaiCikisTimer = null;
+        clearInterval(_mesaiCikisTimer); _mesaiCikisTimer = null;
         var r = d.find(function(r){ return r.cikis_ts && r.cikis_tip === _mesaiCikisTip; });
         var ad = r ? (r.ad_soyad || '') : '';
-        // Hook varsa (kasa devri QR) çağır
+        var pid = r ? (r.personel_id || '') : '';
         if (typeof window._dvQrHook === 'function') {
           var hook = window._dvQrHook;
           window._dvQrHook = null;
-          hook(ad);
+          hook(ad, pid);
         } else {
           mesaiCikisOnaylandi(ad);
         }

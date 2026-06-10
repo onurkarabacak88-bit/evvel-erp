@@ -300,7 +300,8 @@ class VardiyaDevirAdim1(BaseModel):
     """
 
     sabahci_devreden_id: str
-    pin: str
+    pin: str = ""
+    qr_dogrulandi: bool = False   # True → QR taraması ile kimlik doğrulandı, PIN bypass
     nakit: float = 0
     pos: float = 0
     online: float = 0
@@ -447,7 +448,15 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
                 "Birinci imza, bugünkü açılış kaydında yazılı personel ile aynı olmalıdır.",
             )
 
-        ku = _vardiya_imza_personel_dogrula(cur, body.sabahci_devreden_id, body.pin)
+        # QR ile doğrulandıysa PIN bypass; aksi hâlde PIN zorunlu
+        if body.qr_dogrulandi:
+            cur.execute("SELECT id, ad_soyad, aktif FROM personel WHERE id=%s", (body.sabahci_devreden_id,))
+            p_row = cur.fetchone()
+            if not p_row or not dict(p_row).get("aktif"):
+                raise HTTPException(404, "Personel bulunamadı veya pasif")
+            ku = dict(p_row)
+        else:
+            ku = _vardiya_imza_personel_dogrula(cur, body.sabahci_devreden_id, body.pin)
         onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
 
         gun = is_gunu_tr()
@@ -549,6 +558,18 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
             )
 
         _korumali_yan_etki(cur, "defter_imza1", _defter1)
+
+        # Sabahçının mesai çıkışını kapat (cikis_ts yoksa)
+        def _sabah_cikis():
+            cur.execute("""
+                UPDATE gorev_yoklama
+                SET cikis_ts=%s, cikis_tip='kasa_devri'
+                WHERE sube_id=%s AND personel_id=%s AND tarih=%s
+                  AND cikis_ts IS NULL
+            """, (simdi, sube_id, body.sabahci_devreden_id, gun))
+
+        _korumali_yan_etki(cur, "sabah_cikis", _sabah_cikis)
+        conn.commit()
 
     return {
         "success": True,

@@ -946,6 +946,31 @@ def devir_giris(body: DevirGirisBody):
             SET kabul_eden_id=%s, kabul_ts=%s, durum='onaylandi'
             WHERE id=%s
         """, (body.personel_id, giris_ts, body.devir_id))
+
+        # Eğer kapanis_kayit'te bekleyen vardiya devri varsa adim2'yi otomatik tamamla
+        try:
+            from tr_saat import is_gunu_tr as _is_gunu
+            cur.execute("""
+                SELECT id, sabahci_personel_id FROM kapanis_kayit
+                WHERE sube_id=%s AND tarih=%s
+                  AND olay='vardiya_sabah_aksam_devri'
+                  AND durum='acilis_bekliyor'
+                LIMIT 1
+            """, (body.sube_id, str(_is_gunu())))
+            kk = cur.fetchone()
+            if kk:
+                kk = dict(kk)
+                # Aynı kişi her iki imzayı atamaz
+                sabah_pid = kk.get("sabahci_personel_id") or ""
+                if str(body.personel_id) != str(sabah_pid):
+                    cur.execute("""
+                        UPDATE kapanis_kayit
+                        SET aksamci_personel_id=%s, acilisci_onay_ts=%s, durum='tamamlandi'
+                        WHERE id=%s
+                    """, (body.personel_id, giris_ts, kk["id"]))
+        except Exception:
+            pass  # yan etki — ana devri geri alma
+
         conn.commit()
 
     return {
