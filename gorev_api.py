@@ -1222,8 +1222,11 @@ def devir_giris(body: DevirGirisBody):
 @router.get("/api/gorev/kapanis-bekleyen")
 def kapanis_bekleyen(sube_id: str):
     """
-    Bugun kapanis vardiyasinda giris yapip henuz cikis yapmamis personelleri doner.
+    Bugun giris yapip henuz cikis yapmamis (mesaisi hala acik) personelleri doner.
     KapanisMuhurBandi QR polling + GorevGiris kapanis onay ekrani icin kullanilir.
+    Not: vardiya_tip='kapanis' ile sinirli degildir — tek basina acilis+kapanis
+    yapan (devir yapilmamis) sabahci/ara_vardiya personeli de kapanisini
+    muhurleyebilsin diye, gunun sonunda hala acik olan herkesi kapsar.
     """
     from tr_saat import is_gunu_tr
     tarih = str(is_gunu_tr())
@@ -1235,7 +1238,6 @@ def kapanis_bekleyen(sube_id: str):
             JOIN personel p ON p.id::text = gy.personel_id
             WHERE gy.sube_id = %s
               AND gy.tarih = %s
-              AND gy.vardiya_tip = 'kapanis'
               AND gy.cikis_ts IS NULL
         """, (sube_id, tarih))
         rows = cur.fetchall()
@@ -1260,16 +1262,28 @@ def kapanis_muhurle(body: KapanisMuhurleBody):
     """
     QR ile kapanis onaylama - pin gerektirmez.
     Mevcut mesai-cikis mantigi ile kapanis cikisi yapar.
+    Not: vardiya_tip='kapanis' ile sinirli degildir — tek basina acilis+kapanis
+    yapan (devir yapilmamis) sabahci/ara_vardiya personeli icin de bugunun
+    acik yoklama kaydini muhurler.
     """
     from tr_saat import is_gunu_tr, dt_now_tr
     tarih = str(is_gunu_tr())
     with db() as (conn, cur):
         cur.execute("""
             SELECT id, cikis_ts FROM gorev_yoklama
-            WHERE sube_id=%s AND personel_id=%s AND tarih=%s AND vardiya_tip='kapanis'
+            WHERE sube_id=%s AND personel_id=%s AND tarih=%s AND cikis_ts IS NULL
+            ORDER BY giris_ts DESC LIMIT 1
         """, (body.sube_id, body.personel_id, tarih))
         row = cur.fetchone()
         if not row:
+            # Acik kayit yok — daha once muhurlenmis mi kontrol et
+            cur.execute("""
+                SELECT id FROM gorev_yoklama
+                WHERE sube_id=%s AND personel_id=%s AND tarih=%s AND cikis_ts IS NOT NULL
+                ORDER BY cikis_ts DESC LIMIT 1
+            """, (body.sube_id, body.personel_id, tarih))
+            if cur.fetchone():
+                return {"mesaj": "Kapanis zaten muhürlendi.", "zaten_muhürlü": True}
             raise HTTPException(404, "Kapanis yoklama bulunamadi.")
         if row["cikis_ts"]:
             return {"mesaj": "Kapanis zaten muhürlendi.", "zaten_muhürlü": True}
@@ -1285,14 +1299,14 @@ def kapanis_muhurle(body: KapanisMuhurleBody):
 
 @router.post("/api/gorev/kapanis-sifirla")
 def kapanis_sifirla(sube_id: str):
-    """Bugunun kapanis cikis_ts'ini temizler - tekrar yapilabilir hale getirir."""
+    """Bugunun kapanis-muhurle ile yapilan cikis_ts'ini temizler - tekrar yapilabilir hale getirir."""
     from tr_saat import is_gunu_tr
     tarih = str(is_gunu_tr())
     with db() as (conn, cur):
         cur.execute("""
             UPDATE gorev_yoklama
             SET cikis_ts = NULL, cikis_tip = NULL
-            WHERE sube_id = %s AND tarih = %s AND vardiya_tip = 'kapanis'
+            WHERE sube_id = %s AND tarih = %s AND cikis_tip = 'kapalis'
         """, (sube_id, tarih))
         etkilenen = cur.rowcount
         conn.commit()

@@ -801,6 +801,19 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
   const [islem, setIslem] = useState({});
   const [siparisAcik, setSiparisAcik] = useState(false);
   const [sekme, setSekme] = useState('gorevler'); // 'gorevler' | 'vardiyam'
+  const [kapanisUygun, setKapanisUygun] = useState(false);
+
+  // Kapanış mühür bandı: kapanış vardiyasında her zaman, diğer vardiyalarda
+  // SADECE bugün için bekleyen/devam eden bir kasa devri yoksa (yani kişi
+  // tek başına açılışı da kapanışı da yapıyorsa) göster.
+  useEffect(() => {
+    if (oturum.vardiya_tip === 'kapanis') { setKapanisUygun(true); return; }
+    api(`/gorev/devir-bekleyen?sube_id=${oturum.sube_id}`)
+      .then(res => {
+        if (!res?.bekliyor && !res?.sabah_onay_bekliyor) setKapanisUygun(true);
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line
 
   const load = () => {
     const { tarih, sube_id, vardiya_tip, personel_id } = oturum;
@@ -887,8 +900,9 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
         </div>
       </div>
 
-      {/* Kapanış Mühür Bandı — sadece kapanış vardiyasında göster */}
-      {oturum.vardiya_tip === 'kapanis' && (
+      {/* Kapanış Mühür Bandı — kapanış vardiyasında her zaman; diğer vardiyalarda
+          sadece tek başına açıp-kapatan (devir süreci olmayan) personel için */}
+      {kapanisUygun && (
         <KapanisMuhurBandi oturum={oturum} />
       )}
 
@@ -933,8 +947,9 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
       {sekme === 'gorevler' && (
         <>
           {oturum.yemek_mola_hakki !== false && <YemekMolasiButon oturum={oturum} />}
-          {/* Kapanış vardiyasında üstteki bant kullanılır, buton tekrar gösterilmez */}
-          {oturum.vardiya_tip !== 'kapanis' && <MesaiCikisButon oturum={oturum} />}
+          {/* Kapanış vardiyasında (veya tek başına kapanış yapan personelde) üstteki
+              mühür bandı kullanılır, çıkış butonu tekrar gösterilmez */}
+          {oturum.vardiya_tip !== 'kapanis' && !kapanisUygun && <MesaiCikisButon oturum={oturum} />}
         </>
       )}
 
