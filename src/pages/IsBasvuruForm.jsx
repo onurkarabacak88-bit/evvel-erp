@@ -99,40 +99,43 @@ function AdimBaslik({ no, baslik, aciklama }) {
 
 // ── Ana Bileşen ─────────────────────────────────────────────────────
 
+const FORM_STORAGE_KEY = 'tulipi_basvuru_draft';
+const ADIM_STORAGE_KEY = 'tulipi_basvuru_adim';
+
+const FORM_BOSLUK = {
+  ad_soyad: '', telefon: '', dogum_yili: '', ilce: '',
+  yasam_durumu: null, egitim_durumu: null, universite_bol: '',
+  en_erken_saat: null, ulasim: null,
+  calisma_tercihi: null, musait_gunler: [], baslangic: null, ek_not: '',
+  kahve_deneyim: null,
+  nerede_calistim: null, is_ogrenilen: null, isten_en_iyi: null, isten_en_zor: null,
+  makine_sonrasi: null, yogun_duzen: null, gun_planlama: null, arkadaslar_tanim: null,
+  sosyal_yaklasim: null, musteri_bagli: null, sabah_hazirlik: null, yorucu_an: null,
+  neden_bu_is: null, tempo_tercihi: null,
+  tanitim: '', referans_ad: '', referans_tel: '',
+  pozisyon: 'barista',
+};
+
+function _yukleKayit() {
+  try {
+    const s = localStorage.getItem(FORM_STORAGE_KEY);
+    return s ? { ...FORM_BOSLUK, ...JSON.parse(s) } : { ...FORM_BOSLUK };
+  } catch { return { ...FORM_BOSLUK }; }
+}
+
 export default function IsBasvuruForm() {
-  const [adim, setAdim] = useState(1);
+  const [adim, setAdim] = useState(() => {
+    try { return parseInt(localStorage.getItem(ADIM_STORAGE_KEY) || '1', 10) || 1; } catch { return 1; }
+  });
   const [yon, setYon] = useState('ileri');
   const [motivGoster, setMotivGoster] = useState(false);
   const [motivData, setMotivData] = useState(null);
   const [hata, setHata] = useState('');
   const [yukleniyor, setYukleniyor] = useState(false);
   const [tamamlandi, setTamamlandi] = useState(false);
+  const [kayitBilgisi, setKayitBilgisi] = useState(false);
 
-  const [form, setForm] = useState({
-    // Adım 1
-    ad_soyad: '', telefon: '', dogum_yili: '', ilce: '',
-    yasam_durumu: null, egitim_durumu: null, universite_bol: '',
-    en_erken_saat: null, ulasim: null,
-    // Adım 2
-    calisma_tercihi: null, musait_gunler: [], baslangic: null, ek_not: '',
-    // Adım 3
-    kahve_deneyim: null,
-    nerede_calistim: null,   // kurumsal | yerel_bagimsiz | sektor_disi | hic_calismadim
-    is_ogrenilen: null,      // musteri_iletisim | hiz_tempo | duzen_temizlik | takim | tek_sorumluluk | cok_ogrenmedim
-    isten_en_iyi: null,      // musteri_insan | tempolu_ortam | ogrenme | ekip | para_bagimsizlik | yonetim
-    isten_en_zor: null,      // uzun_saatler | zor_musteriler | dusuk_ucret | yonetim_sorun | monoton | hic_yoktu
-    // Adım 4 — behavioral (temizlik + esneklik maskeli)
-    makine_sonrasi: null, yogun_duzen: null,
-    gun_planlama: null, arkadaslar_tanim: null,
-    // Adım 5 — behavioral (iletişim + mesai + sabah maskeli)
-    sosyal_yaklasim: null, musteri_bagli: null,
-    sabah_hazirlik: null, yorucu_an: null,
-    // Adım 6
-    neden_bu_is: null, tempo_tercihi: null,
-    // Adım 7
-    tanitim: '', referans_ad: '', referans_tel: '',
-    pozisyon: 'barista',
-  });
+  const [form, setForm] = useState(_yukleKayit);
 
   // CSS animasyonları
   useEffect(() => {
@@ -154,6 +157,25 @@ export default function IsBasvuruForm() {
     `;
     if (!document.getElementById('basvuru-anim')) document.head.appendChild(el);
     return () => { const e = document.getElementById('basvuru-anim'); if (e) e.remove(); };
+  }, []);
+
+  // localStorage'a otomatik kaydet
+  useEffect(() => {
+    try {
+      localStorage.setItem(FORM_STORAGE_KEY, JSON.stringify(form));
+      localStorage.setItem(ADIM_STORAGE_KEY, String(adim));
+    } catch {}
+  }, [form, adim]);
+
+  // Kayıtlı veri uyarısı — sayfa ilk açılınca göster
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem(FORM_STORAGE_KEY);
+      if (s) {
+        const d = JSON.parse(s);
+        if (d.ad_soyad || d.telefon) setKayitBilgisi(true);
+      }
+    } catch {}
   }, []);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -233,6 +255,7 @@ export default function IsBasvuruForm() {
         },
       });
       setTamamlandi(true);
+      try { localStorage.removeItem(FORM_STORAGE_KEY); localStorage.removeItem(ADIM_STORAGE_KEY); } catch {}
     } catch (e) {
       setHata(e.message || 'Bir hata oluştu, tekrar dene.');
     } finally {
@@ -265,6 +288,17 @@ export default function IsBasvuruForm() {
 
   return (
     <div style={S.page}>
+
+      {/* ── Kayıtlı Taslak Uyarısı ── */}
+      {kayitBilgisi && (
+        <div style={{ background: 'rgba(74,158,255,0.1)', border: '1px solid rgba(74,158,255,0.3)', borderRadius: 10, margin: '12px 18px 0', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <span style={{ fontSize: 13, color: '#4a9eff' }}>💾 Kaldığın yerden devam ediyorsun</span>
+          <button onClick={() => { try { localStorage.removeItem(FORM_STORAGE_KEY); localStorage.removeItem(ADIM_STORAGE_KEY); } catch {} setForm({...FORM_BOSLUK}); setAdim(1); setKayitBilgisi(false); }}
+            style={{ fontSize: 11, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+            Sıfırla
+          </button>
+        </div>
+      )}
 
       {/* ── Motivasyon Overlay ── */}
       {motivGoster && motivData && (
