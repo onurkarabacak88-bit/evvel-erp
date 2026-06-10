@@ -465,10 +465,21 @@ def build_panel_operasyon_blob(cur, sube_id: str, sube: dict, ensure: bool = Tru
     aktif = _pick_aktif(rows, simdi)
     # İŞ GÜNÜNE göre kapanış tamamlandı mı? (gün dönümünde liste filtresinden bağımsız,
     # güvenilir mühür sinyali — panel 'Günü Kapat'ı buna göre kilitler)
+    # Not: _list_events ile aynı şekilde, bir önceki takvim gününden devreden ve
+    # bugün tamamlanan KAPANIS kaydını da sayar (00:00-02:00 arası kapanışlar
+    # hâlâ önceki güne yazılabiliyor, ayrıca 22:30 sonrası geç kapanışlarda da
+    # bugünün event satırı henüz oluşturulmuş olabilir ama dünkü açık kalan
+    # kapanış tamamlanmış olabilir).
     cur.execute(
-        "SELECT 1 FROM sube_operasyon_event "
-        "WHERE sube_id=%s AND tarih=%s AND tip='KAPANIS' AND sira_no=0 AND durum='tamamlandi'",
-        (sube_id, is_gunu_tr()),
+        """
+        SELECT 1 FROM sube_operasyon_event
+        WHERE sube_id=%s AND tip='KAPANIS' AND sira_no=0 AND durum='tamamlandi'
+          AND (
+            tarih = %s
+            OR (tarih = (%s::date - INTERVAL '1 day') AND cevap_ts::date = %s::date)
+          )
+        """,
+        (sube_id, is_gunu_tr(), is_gunu_tr(), is_gunu_tr()),
     )
     kapanis_bugun_bitti = cur.fetchone() is not None
     out = {
