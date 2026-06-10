@@ -816,8 +816,8 @@ def devir_form_kaydet(body: DevirFormKaydetBody):
             return {"devir_id": mevcut["id"], "yeni": False, "mesaj": "Form güncellendi."}
         devir_id = str(_uuid.uuid4())
         cur.execute("""
-            INSERT INTO kasa_devir_onay (id, sube_id, tarih, devreden_id, form_data)
-            VALUES (%s, %s, %s, %s, %s::jsonb)
+            INSERT INTO kasa_devir_onay (id, sube_id, tarih, devreden_id, form_data, durum)
+            VALUES (%s, %s, %s, %s, %s::jsonb, 'form_kaydedildi')
         """, (devir_id, body.sube_id, tarih, body.devreden_id, _json.dumps(body.form_data)))
         conn.commit()
     return {"devir_id": devir_id, "yeni": True, "mesaj": "Form kaydedildi. Sabahçı telefondan onaylayacak."}
