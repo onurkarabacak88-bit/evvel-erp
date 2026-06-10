@@ -987,15 +987,19 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 raise HTTPException(400, "Kapanış: X raporu gönderildi onayı gerekli.")
             pid_in = (body.personel_id or "").strip()
             if body.qr_onaylandi:
-                # QR ile onaylandı — PIN atla, yoklama kaydından personel bul
+                # QR ile onaylandı — PIN atla, kapanis-muhurle ile mühürlenmiş
+                # (cikis_tip='kapalis') yoklama kaydından personeli bul.
+                # Not: vardiya_tip ile sınırlı değil — devir yapmadan tek başına
+                # açılış+kapanış yapan sabahci/ara_vardiya personeli de QR ile
+                # mühürleyebiliyor (kapanis_muhurle, gorev_api.py).
                 cur.execute("""
                     SELECT gy.personel_id, p.ad_soyad
                     FROM gorev_yoklama gy
                     JOIN personel p ON p.id::text = gy.personel_id
                     WHERE gy.sube_id = %s AND gy.tarih = CURRENT_DATE
-                      AND gy.vardiya_tip = 'kapanis'
-                      AND gy.cikis_ts IS NULL
-                    ORDER BY gy.giris_ts DESC LIMIT 1
+                      AND gy.cikis_tip = 'kapalis'
+                      AND gy.cikis_ts IS NOT NULL
+                    ORDER BY gy.cikis_ts DESC LIMIT 1
                 """, (sube_id,))
                 yoklama_row = cur.fetchone()
                 if not yoklama_row:
