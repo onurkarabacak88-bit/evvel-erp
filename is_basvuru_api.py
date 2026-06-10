@@ -155,19 +155,23 @@ def _hesapla_skor(row: dict) -> dict:
     elif yorucu == 'gunun_sonu':      s['esneklik'] += 1
 
     # ── 5. Deneyim & Motivasyon ─────────────────────────────────────────────
+    # NOT: Bu boyut eskiden hep pozitif uçlu sorulardan oluşuyordu (ortalama ~+9),
+    # bu yüzden "hiç tecrübesi yok" ile "3+ yıl tecrübe" arasındaki fark 20/20 tavanında
+    # kayboluyordu. Aşağıdaki puanlar, az/yok tecrübe ve düşük motivasyonun da gerçekten
+    # eksiye düşmesi için yeniden kalibre edildi (ortalama ~0'a yakın).
     kahve = row.get('kahve_deneyim')
-    if   kahve == 'var_uzun':       s['gecmis'] += 8; sinyaller.append({'tip':'olumlu','mesaj':'☕ 3+ yıl kahve deneyimi'})
-    elif kahve == 'var_2yil':       s['gecmis'] += 6
-    elif kahve == 'var_1yil':       s['gecmis'] += 4
-    elif kahve == 'kismi':          s['gecmis'] += 2
-    elif kahve == 'yok_ogreneyim':  s['gecmis'] += 0  # nötr
+    if   kahve == 'var_uzun':       s['gecmis'] += 7; sinyaller.append({'tip':'olumlu','mesaj':'☕ 3+ yıl kahve deneyimi'})
+    elif kahve == 'var_2yil':       s['gecmis'] += 4
+    elif kahve == 'var_1yil':       s['gecmis'] += 1
+    elif kahve == 'kismi':          s['gecmis'] -= 2
+    elif kahve == 'yok_ogreneyim':  s['gecmis'] -= 5; sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Kahve/kafe deneyimi yok — eğitim süresi gerekecek'})
 
     neden = row.get('neden_bu_is')
     if   neden == 'barista':      s['gecmis'] += 5; sinyaller.append({'tip':'olumlu','mesaj':'🎯 Barista olmak istiyor — motivasyon güçlü'})
-    elif neden == 'insan':        s['gecmis'] += 4
-    elif neden == 'deneyim':      s['gecmis'] += 3
-    elif neden == 'tam_zamanli':  s['gecmis'] += 2
-    elif neden == 'part_time':    s['gecmis'] += 1
+    elif neden == 'insan':        s['gecmis'] += 3
+    elif neden == 'deneyim':      s['gecmis'] += 1
+    elif neden == 'tam_zamanli':  s['gecmis'] -= 1
+    elif neden == 'part_time':    s['gecmis'] -= 3; sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Sadece part-time arayışı — bağlılık düşük olabilir'})
 
     # ── 5b. Nerede Çalıştı → gecmis + çapraz ──────────────────────────────
     nerede = row.get('nerede_calistim')
@@ -178,25 +182,27 @@ def _hesapla_skor(row: dict) -> dict:
         s['gecmis'] += 3; s['enerji'] += 2
         sinyaller.append({'tip':'olumlu','mesaj':'☕ Yerel işletme — bireysel müşteri ilişkisine alışık'})
     elif nerede == 'sektor_disi':
-        s['gecmis'] += 1
+        s['gecmis'] += 0
         sinyaller.append({'tip':'dikkat','mesaj':'🔄 F&B dışı deneyim — sektör adaptasyonu gerekebilir'})
-    # hic_calismadim → 0 bonus, sinyalsiz
+    elif nerede == 'hic_calismadim':
+        s['gecmis'] -= 3
+        sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Hiç iş deneyimi yok — temel iş alışkanlıkları sıfırdan oluşacak'})
 
     # ── 5c. O işte ne öğrendi → gecmis + çapraz ───────────────────────────
     ogrenilen = row.get('is_ogrenilen')
     if ogrenilen == 'musteri_iletisim':
-        s['gecmis'] += 2; s['enerji'] += 3
+        s['gecmis'] += 1; s['enerji'] += 3
         sinyaller.append({'tip':'olumlu','mesaj':'💬 Öğrendikleri müşteri iletişimini destekliyor'})
     elif ogrenilen == 'hiz_tempo':
-        s['gecmis'] += 2; s['esneklik'] += 2
+        s['gecmis'] += 1; s['esneklik'] += 2
         sinyaller.append({'tip':'olumlu','mesaj':'⚡ Tempolu çalışma alışkanlığı kazanmış'})
     elif ogrenilen == 'duzen_temizlik':
-        s['gecmis'] += 2; s['duzen'] += 4
+        s['gecmis'] += 1; s['duzen'] += 4
         sinyaller.append({'tip':'olumlu','mesaj':'🧹 Düzen ve temizliği bilinçli öğrenmiş — güçlü sinyal'})
     elif ogrenilen == 'takim':
-        s['gecmis'] += 2; s['enerji'] += 2
+        s['gecmis'] += 1; s['enerji'] += 2
     elif ogrenilen == 'tek_sorumluluk':
-        s['gecmis'] += 2; s['esneklik'] += 1
+        s['gecmis'] += 1; s['esneklik'] += 1
     elif ogrenilen == 'cok_ogrenmedim':
         s['gecmis'] -= 3
         sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Önceki deneyimden verim alamamış'})
