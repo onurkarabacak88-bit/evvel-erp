@@ -1026,6 +1026,49 @@ def devir_bekleyen(sube_id: str):
             "devralan_ad": row["devralan_ad"],
         }
 
+
+class DevirGunSifirlaBody(BaseModel):
+    sube_id: str
+    tarih: Optional[str] = None  # YYYY-MM-DD, default: bugün (TR günü)
+
+
+@router.post("/api/gorev/devir-gun-sifirla")
+def devir_gun_sifirla(body: DevirGunSifirlaBody):
+    """DEV/TEST ARACI: Belirtilen şube + gün için kasa devri kayıtlarını sıfırlar.
+    - kasa_devir_onay kayıtlarını siler
+    - kasa_devri ile yapılmış mesai çıkışlarını geri açar (cikis_ts/cikis_tip temizlenir)
+    - bekleyen 'vardiya_sabah_aksam_devri' kapanış kaydını siler
+    Böylece o gün için devir akışı sıfırdan tekrar denenebilir."""
+    from tr_saat import is_gunu_tr
+    tarih = body.tarih or str(is_gunu_tr())
+    with db() as (conn, cur):
+        try:
+            _kasa_devir_onay_migrate(cur)
+        except Exception:
+            pass
+        cur.execute("DELETE FROM kasa_devir_onay WHERE sube_id=%s AND tarih=%s", (body.sube_id, tarih))
+        devir_silindi = cur.rowcount
+        cur.execute("""
+            UPDATE gorev_yoklama SET cikis_ts=NULL, cikis_tip=NULL
+            WHERE sube_id=%s AND tarih=%s AND cikis_tip='kasa_devri'
+        """, (body.sube_id, tarih))
+        yoklama_sifirlandi = cur.rowcount
+        cur.execute("""
+            DELETE FROM kapanis_kayit
+            WHERE sube_id=%s AND tarih=%s AND olay='vardiya_sabah_aksam_devri' AND durum='acilis_bekliyor'
+        """, (body.sube_id, tarih))
+        kapanis_silindi = cur.rowcount
+        conn.commit()
+    return {
+        "basarili": True,
+        "tarih": tarih,
+        "devir_kayit_silindi": devir_silindi,
+        "yoklama_cikis_sifirlandi": yoklama_sifirlandi,
+        "kapanis_kayit_silindi": kapanis_silindi,
+        "mesaj": "Bu şube ve gün için kasa devri akışı sıfırlandı. Sıfırdan tekrar deneyebilirsin.",
+    }
+
+
 @router.post("/api/gorev/devir-kabul")
 def devir_kabul(body: DevirKabulBody):
     """Gelen vardiya devri onaylar."""
