@@ -160,11 +160,28 @@ def _hesapla_skor(row: dict) -> dict:
     # kayboluyordu. Aşağıdaki puanlar, az/yok tecrübe ve düşük motivasyonun da gerçekten
     # eksiye düşmesi için yeniden kalibre edildi (ortalama ~0'a yakın).
     kahve = row.get('kahve_deneyim')
-    if   kahve == 'var_uzun':       s['gecmis'] += 7; sinyaller.append({'tip':'olumlu','mesaj':'☕ 3+ yıl kahve deneyimi'})
-    elif kahve == 'var_2yil':       s['gecmis'] += 4
-    elif kahve == 'var_1yil':       s['gecmis'] += 1
-    elif kahve == 'kismi':          s['gecmis'] -= 2
-    elif kahve == 'yok_ogreneyim':  s['gecmis'] -= 5; sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Kahve/kafe deneyimi yok — eğitim süresi gerekecek'})
+    nerede_erken = row.get('nerede_calistim')  # nerede_calistim aşağıda da okunuyor, burada erken erişim için
+    if kahve == 'var_uzun':
+        s['gecmis'] += 7; sinyaller.append({'tip':'olumlu','mesaj':'☕ 3+ yıl kahve deneyimi'})
+    elif kahve == 'var_2yil':
+        s['gecmis'] += 4
+    elif kahve in ('var_1yil', 'kismi'):
+        # Az deneyim — bağlama göre ceza farklılaşır, ama her durumda eksiye düşer
+        if tempo == 'hizli':
+            s['gecmis'] -= 6
+            sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Az kahve deneyimi — ama yoğun/rush ortama açık, ceza hafifletildi'})
+        elif nerede_erken == 'kurumsal':
+            s['gecmis'] -= 10
+            sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Az kahve deneyimi — kurumsal geçmişi var ama kafe pratiği sınırlı'})
+        elif nerede_erken == 'yerel_bagimsiz':
+            s['gecmis'] -= 12
+            sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Az kahve deneyimi — küçük/yerel işletmede de pratiği sınırlı kalmış'})
+        else:
+            s['gecmis'] -= 12
+            sinyaller.append({'tip':'dikkat','mesaj':'⚠️ Az kahve deneyimi — eğitim süresi ve yakın takip gerekecek'})
+    elif kahve == 'yok_ogreneyim':
+        s['gecmis'] -= 15
+        sinyaller.append({'tip':'dikkat','mesaj':'🚩 Kahve/kafe deneyimi hiç yok — diğer cevaplar ne olursa olsun ciddi eğitim yükü olacak'})
 
     neden = row.get('neden_bu_is')
     if   neden == 'barista':      s['gecmis'] += 5; sinyaller.append({'tip':'olumlu','mesaj':'🎯 Barista olmak istiyor — motivasyon güçlü'})
