@@ -1034,7 +1034,8 @@ def devir_gun_sifirla(body: DevirGunSifirlaBody):
         yoklama_sifirlandi = cur.rowcount
         cur.execute("""
             DELETE FROM kapanis_kayit
-            WHERE sube_id=%s AND tarih=%s AND olay='vardiya_sabah_aksam_devri' AND durum='acilis_bekliyor'
+            WHERE sube_id=%s AND tarih=%s AND olay='vardiya_sabah_aksam_devri'
+              AND durum IN ('acilis_bekliyor', 'tamamlandi')
         """, (body.sube_id, tarih))
         kapanis_silindi = cur.rowcount
         conn.commit()
