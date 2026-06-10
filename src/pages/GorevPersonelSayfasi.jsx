@@ -229,14 +229,12 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
 
 // ── Mesai Çıkış Butonu ───────────────────────────────────────────────────────
 function MesaiCikisButon({ oturum }) {
-  const [durum, setDurum] = useState(null); // null | 'devralan-sec' | 'devir-onay' | 'qr-onay' | 'onaylandi'
+  const [durum, setDurum] = useState(null); // null | 'qr-onay' | 'onaylandi'
   const [mesaj, setMesaj] = useState('');
   const [yukleniyor, setYukleniyor] = useState(false);
   const [onayModal, setOnayModal] = useState(false);
   const [konum, setKonum] = useState(null);
   const [subeQrUrl, setSubeQrUrl] = useState(null);
-  const [personelListe, setPersonelListe] = useState([]);
-  const [seciliDevralan, setSeciliDevralan] = useState(null);
 
   useEffect(() => {
     if (!navigator.geolocation) return;
@@ -247,22 +245,7 @@ function MesaiCikisButon({ oturum }) {
     );
   }, []);
 
-  // Kasa devri seçildiğinde: devralacak kişiyi seçtir
-  const devralanSecimineGec = async () => {
-    setOnayModal(false);
-    setYukleniyor(true);
-    try {
-      const liste = await api(`/gorev/sube-personel/${oturum.sube_id}`);
-      setPersonelListe((liste || []).filter(p => String(p.id) !== String(oturum.personel_id)));
-      setDurum('devralan-sec');
-    } catch (e) {
-      setMesaj('Personel listesi alınamadı.');
-    } finally {
-      setYukleniyor(false);
-    }
-  };
-
-  const cikisYap = async (tip, devralanId) => {
+  const cikisYap = async (tip) => {
     setYukleniyor(true);
     setOnayModal(false);
     try {
@@ -277,16 +260,7 @@ function MesaiCikisButon({ oturum }) {
         },
       });
       try { localStorage.removeItem(`gorev_oturum_${oturum.sube_id}`); } catch {}
-      if (tip === 'kasa_devri') {
-        // Devir kaydı oluştur — devralan kendi telefonu açıksa otomatik bildirim görecek,
-        // değilse QR/link ile girip onaylayacak.
-        await api('/gorev/devir-baslat', {
-          method: 'POST',
-          body: { sube_id: oturum.sube_id, devreden_id: oturum.personel_id, devralan_id: devralanId },
-        }).catch(() => {});
-        setMesaj(`✅ Devir ${seciliDevralan?.ad_soyad || ''} kişisine gönderildi. ${seciliDevralan?.ad_soyad || 'Devralan kişi'} telefonu açıksa otomatik onay kartı görecek; değilse QR/link ile girip onaylayacak.`);
-        setDurum('onaylandi');
-      } else if (tip === 'kapalis') {
+      if (tip === 'kapalis') {
         // Kapanış → QR onay ekranı göster
         const origin = window.location.origin;
         setSubeQrUrl(`${origin}/api/gorev/qr/${oturum.sube_id}`);
@@ -305,72 +279,6 @@ function MesaiCikisButon({ oturum }) {
       setYukleniyor(false);
     }
   };
-
-  // Devralacak kişiyi seç
-  if (durum === 'devralan-sec') return (
-    <div style={{ margin: '8px 16px', padding: '14px', borderRadius: 12, background: '#1a1d24', border: '1px solid #2a2d35' }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: '#e8e9ec', marginBottom: 4, textAlign: 'center' }}>
-        Devri kime bırakıyorsun?
-      </div>
-      <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 12, textAlign: 'center' }}>
-        Seçtiğin kişi telefonu açıksa otomatik bildirim görecek, değilse QR/link ile girip kabul edecek.
-      </div>
-      {mesaj && (
-        <div style={{ color: '#e05c5c', fontSize: 12, textAlign: 'center', marginBottom: 10 }}>{mesaj}</div>
-      )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 280, overflowY: 'auto' }}>
-        {personelListe.map(p => (
-          <button key={p.id}
-            onClick={() => { setSeciliDevralan(p); setDurum('devir-onay'); }}
-            disabled={yukleniyor}
-            style={{
-              padding: '13px 14px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
-              background: 'rgba(74,158,255,0.08)', border: '1px solid rgba(74,158,255,0.3)',
-              color: '#4a9eff', fontSize: 14, fontWeight: 700,
-              opacity: yukleniyor ? 0.6 : 1,
-            }}>
-            {p.ad_soyad}
-          </button>
-        ))}
-      </div>
-      <button onClick={() => { setDurum(null); setMesaj(''); }}
-        style={{ marginTop: 12, width: '100%', padding: '9px', borderRadius: 8, border: '1px solid #2a2d35', background: 'none', color: '#6b6f7a', fontSize: 12, cursor: 'pointer' }}>
-        Vazgeç
-      </button>
-    </div>
-  );
-
-  // Devir onayı — devreden, kime bıraktığını teyit eder
-  if (durum === 'devir-onay' && seciliDevralan) return (
-    <div style={{ margin: '8px 16px', padding: '14px', borderRadius: 12, background: '#1a1d24', border: '1px solid rgba(245,158,11,0.35)' }}>
-      <div style={{ fontSize: 20, textAlign: 'center', marginBottom: 6 }}>🔄</div>
-      <div style={{ fontSize: 14, fontWeight: 700, color: '#f59e0b', marginBottom: 8, textAlign: 'center' }}>
-        Devri Başlatıyorsun
-      </div>
-      <div style={{ fontSize: 13, color: '#b0b3bc', lineHeight: 1.7, textAlign: 'center', marginBottom: 14 }}>
-        Vardiyan sona erecek. Kasa ve stok sorumluluğu{' '}
-        <strong style={{ color: '#e8e9ec' }}>{seciliDevralan.ad_soyad}</strong>'a geçecek.
-        <br />Onaylıyor musun?
-      </div>
-      {mesaj && (
-        <div style={{ color: '#e05c5c', fontSize: 12, textAlign: 'center', marginBottom: 10 }}>{mesaj}</div>
-      )}
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={() => cikisYap('kasa_devri', seciliDevralan.id)} disabled={yukleniyor}
-          style={{
-            flex: 1, padding: '14px 8px', borderRadius: 8, cursor: 'pointer',
-            background: 'rgba(245,158,11,0.15)', color: '#f59e0b', fontWeight: 800, fontSize: 15,
-            border: '1px solid rgba(245,158,11,0.4)',
-          }}>
-          {yukleniyor ? '…' : '✅ Onaylıyorum'}
-        </button>
-        <button onClick={() => { setDurum('devralan-sec'); setSeciliDevralan(null); }} disabled={yukleniyor}
-          style={{ padding: '12px', borderRadius: 8, border: '1px solid #2a2d35', background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 13 }}>
-          ✕
-        </button>
-      </div>
-    </div>
-  );
 
   // Kapanış sonrası QR onay ekranı
   if (durum === 'qr-onay') return (
@@ -411,6 +319,18 @@ function MesaiCikisButon({ oturum }) {
     </div>
   );
 
+  // Sabahçı: vardiyası kasa devri panelden onaylandığında otomatik biter —
+  // burada ayrıca "Vardiyamı Bitir" gösterip yanlış kullanım (devirsiz çıkış) riskini açmıyoruz.
+  if (oturum.vardiya_tip === 'sabahci') return (
+    <div style={{
+      margin: '8px 16px', padding: '12px 14px', borderRadius: 10,
+      background: 'rgba(74,158,255,0.06)', border: '1px solid rgba(74,158,255,0.2)',
+      fontSize: 12, color: '#6b6f7a', textAlign: 'center', lineHeight: 1.6,
+    }}>
+      ℹ️ Vardiyan, panelden kasa devrini onayladığında otomatik olarak sona erecek.
+    </div>
+  );
+
   return (
     <div style={{ margin: '8px 16px' }}>
       {mesaj && (
@@ -426,54 +346,22 @@ function MesaiCikisButon({ oturum }) {
             Vardiyandan çıkış yapıyorsun
           </div>
           <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 12, textAlign: 'center' }}>
-            {oturum.vardiya_tip === 'kapanis'
-              ? 'Görevleri tamamladın, kapanışı onayla'
-              : 'Yeni vardiya geliyor mu?'}
+            Görevleri tamamladın mı? Onaylarsan kapanış kaydedilecek.
           </div>
-
-          {oturum.vardiya_tip === 'kapanis' ? (
-            /* Kapanış → QR ile Onayla */
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => cikisYap('kapalis')} disabled={yukleniyor}
-                style={{
-                  flex: 1, padding: '15px 8px', borderRadius: 8, cursor: 'pointer',
-                  background: 'rgba(200,149,106,0.15)', color: '#C8956A', fontWeight: 800, fontSize: 15,
-                  border: '1px solid rgba(200,149,106,0.4)',
-                }}>
-                🔲 QR ile Onayla
-              </button>
-              <button onClick={() => setOnayModal(false)}
-                style={{ padding: '12px', borderRadius: 8, border: '1px solid #2a2d35', background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 13 }}>
-                ✕
-              </button>
-            </div>
-          ) : (
-            /* Sabahçı / ara vardiya */
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={devralanSecimineGec} disabled={yukleniyor}
-                  style={{
-                    flex: 1, padding: '13px 8px', borderRadius: 8, cursor: 'pointer',
-                    background: 'rgba(74,158,255,0.15)', color: '#4a9eff', fontWeight: 700, fontSize: 14,
-                    border: '1px solid rgba(74,158,255,0.3)',
-                  }}>
-                  💰 Kasa Devri ile Bitir
-                </button>
-                <button onClick={() => setOnayModal(false)}
-                  style={{ padding: '12px', borderRadius: 8, border: '1px solid #2a2d35', background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 13 }}>
-                  ✕
-                </button>
-              </div>
-              <button onClick={() => cikisYap('kapalis')} disabled={yukleniyor}
-                style={{
-                  width: '100%', padding: '9px', borderRadius: 8, cursor: 'pointer',
-                  background: 'none', color: '#6b6f7a', fontWeight: 600, fontSize: 12,
-                  border: '1px solid #2a2d35',
-                }}>
-                🔒 Tek başımayım, kapanışla bitir
-              </button>
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => cikisYap('kapalis')} disabled={yukleniyor}
+              style={{
+                flex: 1, padding: '15px 8px', borderRadius: 8, cursor: 'pointer',
+                background: 'rgba(200,149,106,0.15)', color: '#C8956A', fontWeight: 800, fontSize: 15,
+                border: '1px solid rgba(200,149,106,0.4)',
+              }}>
+              {yukleniyor ? '…' : '🔒 Kapanışla Bitir'}
+            </button>
+            <button onClick={() => setOnayModal(false)} disabled={yukleniyor}
+              style={{ padding: '12px', borderRadius: 8, border: '1px solid #2a2d35', background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 13 }}>
+              ✕
+            </button>
+          </div>
         </div>
       ) : (
         <button onClick={() => setOnayModal(true)} disabled={yukleniyor} style={{
