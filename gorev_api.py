@@ -324,22 +324,44 @@ def gorev_pin_giris(body: GorevPinGirisBody):
         slot_row = cur.fetchone()
         planlanan_saat = float(slot_row["planlanan_saat"] or 0) if slot_row else 0.0
 
-        # ── Dükkan bugün açıldı mı? (plansız giriş için gerekli) ────────────
-        from sube_panel import _bugun_sube_acildi_mi
-        sube_acildi = _bugun_sube_acildi_mi(cur, body.sube_id)
+        # ── Dükkan bugün ne zaman açıldı? ────────────────────────────────────
+        cur.execute("""
+            SELECT created_at FROM sube_acilis
+            WHERE sube_id=%s AND tarih=%s AND durum='acildi'
+            ORDER BY created_at LIMIT 1
+        """, (body.sube_id, tarih))
+        acilis_row = cur.fetchone()
+        sube_acildi = acilis_row is not None
+        acilis_ts = acilis_row["created_at"] if acilis_row else None
+
+        # Açılıştan bu yana kaç dakika geçti?
+        if acilis_ts:
+            from tr_saat import dt_now_tr as _now_tr
+            simdi_tr = _now_tr()
+            # acilis_ts timezone-aware olabilir
+            try:
+                gecen_dk = (simdi_tr - acilis_ts).total_seconds() / 60
+            except TypeError:
+                import pytz
+                tz = pytz.timezone("Europe/Istanbul")
+                gecen_dk = (simdi_tr - acilis_ts.replace(tzinfo=None)).total_seconds() / 60
+        else:
+            gecen_dk = 0
 
         # ── Vardiya tipini belirle ─────────────────────────────────────────────
         #
-        # Plan VAR: planı olduğu gibi kullan — 2 sabahçı, 2 kapanış olabilir,
-        #           kaç kişi olduğu veya dükkanın açık/kapalı olması planı geçersiz kılmaz.
-        #
-        # Plan YOK: bağlama göre tahmin
-        #   • Dükkan henüz açılmamış → sabahçı (açılışçı)
-        #   • Dükkan açılmış + saat ≥ 19 → kapanış
-        #   • Dükkan açılmış + gündüz → ara vardiya
+        # Plan VAR (sabahçı): dükkan açılmamış VEYA açılış üzerinden ≤60 dk geçmiş → sabahçı
+        #                     açılış üzerinden >60 dk geçmiş → ara vardiya (açılışa yetişemedi)
+        # Plan VAR (diğer): planı olduğu gibi kullan
+        # Plan YOK: dükkan kapalı→sabahçı | gece≥19→kapanış | gündüz→ara vardiya
 
         if slot_row:
-            vardiya_tip = SLOT_TIP_MAP.get(slot_row["tip"], "sabahci")
+            plan_tip = SLOT_TIP_MAP.get(slot_row["tip"], "sabahci")
+            if plan_tip == "sabahci" and sube_acildi and gecen_dk > 60:
+                # Açılıştan 1 saatten fazla sonra geldi → ara vardiya
+                vardiya_tip = "ara_vardiya"
+            else:
+                vardiya_tip = plan_tip
             vardiya_tanimli = True
         else:
             saat = dt_now_tr().hour
