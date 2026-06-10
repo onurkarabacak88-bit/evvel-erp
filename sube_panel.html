@@ -13247,17 +13247,30 @@ function wirePuanHandler() {
 var opAcilisStep=1, opAcilisKasa=null, opAcilisStok={};
 
 // ── KASA DEVRİ QR ONAY (sabahçı çıkış + akşamcı giriş) ─────────────
-window.dvQrOnayAc = function() {
-  // Sabahçı QR okutup "Kasa Devri" seçince: cikis_ts set edilir ve adim1 otomatik çağrılır
+window.dvQrOnayAc = async function() {
+  // Sabahçı seçiliyse ve zaten içerideyse (giris_ts var, cikis_ts yok) → QR'a gerek yok
+  var sel1 = document.getElementById('dvPers1');
+  var pid1 = sel1 ? sel1.value : '';
+  if (pid1) {
+    try {
+      var bugun = new Date().toISOString().slice(0,10);
+      var yoklama = await api('/gorev/yoklama?tarih=' + bugun + '&sube_id=' + encodeURIComponent(SUBE_ID));
+      var aktif = Array.isArray(yoklama) && yoklama.find(function(r) {
+        return String(r.personel_id) === String(pid1) && r.giris_ts && !r.cikis_ts;
+      });
+      if (aktif) {
+        // Zaten içeride — QR overlay açmadan direkt adim1'i tetikle
+        _dvAdim1QrOtomatik(aktif.ad_soyad || '', pid1);
+        return;
+      }
+    } catch(_) {}
+  }
+  // İçeride değil veya personel seçilmedi → QR ile doğrula (fallback)
   mesaiCikisQrAc('kasa_devri');
   window._dvQrHook = function(adSoyad, personelId) {
     mesaiCikisQrKapat();
-    // Personel seçimini otomatik yap (QR ile doğrulandı)
-    var sel1 = document.getElementById('dvPers1');
-    if (sel1 && personelId) {
-      sel1.value = personelId;
-    }
-    // adim1'i otomatik çağır — qr_dogrulandi=true ile PIN bypass
+    var sel1b = document.getElementById('dvPers1');
+    if (sel1b && personelId) { sel1b.value = personelId; }
     _dvAdim1QrOtomatik(adSoyad, personelId);
   };
 };
@@ -13317,8 +13330,32 @@ function _dvSayimDeger(id) {
   return el ? (parseInt(el.value) || 0) : 0;
 }
 
-window.dvQrAksamciAc = function() {
-  // Akşamcı QR okutunca devir-bekleyen endpoint'ini poll et (giris_ts oluşunca)
+window.dvQrAksamciAc = async function() {
+  // Akşamcı seçiliyse ve zaten içerideyse → QR'a gerek yok, devir_giris direkt çağrılır
+  var sel2 = document.getElementById('dvPers2');
+  var pid2 = sel2 ? sel2.value : '';
+  if (pid2) {
+    try {
+      var bugun = new Date().toISOString().slice(0,10);
+      var yoklama = await api('/gorev/yoklama?tarih=' + bugun + '&sube_id=' + encodeURIComponent(SUBE_ID));
+      var aktif2 = Array.isArray(yoklama) && yoklama.find(function(r) {
+        return String(r.personel_id) === String(pid2) && r.giris_ts && !r.cikis_ts;
+      });
+      if (aktif2) {
+        // Zaten içeride — QR overlay açmadan devir_giris'i direkt çağır
+        setMsg('dvMsg', '⏳ ' + (aktif2.ad_soyad||'') + ' içeride, devir kaydediliyor...', 'msg-ok');
+        try {
+          await api('/gorev/devir-giris', {method:'POST', body:{sube_id: SUBE_ID, personel_id: pid2}});
+          setMsg('dvMsg', '✅ ' + (aktif2.ad_soyad||'Akşamcı') + ' devri aldı.', 'msg-ok');
+          setTimeout(refresh, 800);
+        } catch(e2) {
+          setMsg('dvMsg', '❌ ' + (e2.message||'Hata'), 'msg-err');
+        }
+        return;
+      }
+    } catch(_) {}
+  }
+  // İçeride değil → QR ile giriş + devir kabul birlikte
   _mesaiCikisTip = 'kasa_devri_aksamci';
   var ikon = '🌙';
   var baslik = 'Akşamcı Devir Alıyor';
