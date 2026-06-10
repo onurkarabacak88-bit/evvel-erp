@@ -55,9 +55,69 @@ export default function Panel({ onNavigate }) {
   const [bankaYatirimYukleniyor, setBankaYatirimYukleniyor] = useState(false);
   const [cfoAcikBolumler, setCfoAcikBolumler] = useState({ uyari: false, bilgi: false, kira: false, motor: false, sistem: false });
   const [cfoTrayOpen, setCfoTrayOpen] = useState(null); // null=auto(open if kritik), bool=user override
-  const [panelTab, setPanelTab] = useState('ozet'); // 'ozet' | 'odemeler' | 'strateji'
+  const [panelTab, setPanelTab] = useState('ozet'); // 'ozet' | 'odemeler' | 'strateji' | 'maliyet'
   const [notifModalOpen, setNotifModalOpen] = useState(false);
   const [onayModal, setOnayModal] = useState(null); // {baslik, mesaj, uyari, onOnayla}
+  const [maliyetData, setMaliyetData] = useState(null);
+  const [maliyetFiyatlar, setMaliyetFiyatlar] = useState([]);
+  const [maliyetLoading, setMaliyetLoading] = useState(false);
+  const [maliyetForm, setMaliyetForm] = useState({ kalem_kodu: '', kalem_adi: '', birim: 'adet', birim_maliyet_tl: '', tedarikci: '', notlar: '' });
+  const [maliyetKaydediliyor, setMaliyetKaydediliyor] = useState(false);
+  const [maliyetAcikKalem, setMaliyetAcikKalem] = useState(null); // genişletilmiş kalem_kodu (fiyat geçmişi)
+
+  const maliyetYukle = () => {
+    setMaliyetLoading(true);
+    Promise.all([
+      api('/ops/maliyet/ozet'),
+      api('/ops/maliyet/alis-fiyatlari'),
+    ]).then(([ozet, fiyatlar]) => {
+      setMaliyetData(ozet);
+      setMaliyetFiyatlar(fiyatlar?.satirlar || []);
+    }).catch(() => {}).finally(() => setMaliyetLoading(false));
+  };
+
+  useEffect(() => {
+    if (panelTab === 'maliyet' && !maliyetData) maliyetYukle();
+  }, [panelTab]);
+
+  const maliyetFiyatKaydet = () => {
+    const kalem = (maliyetForm.kalem_kodu || '').trim();
+    const fiyat = parseFloat(String(maliyetForm.birim_maliyet_tl).replace(',', '.'));
+    if (!kalem) { setIslemSonuc({ m: 'Kalem kodu zorunlu', t: 'error' }); return; }
+    if (!(fiyat >= 0)) { setIslemSonuc({ m: 'Geçerli bir fiyat girin', t: 'error' }); return; }
+    setMaliyetKaydediliyor(true);
+    api('/ops/maliyet/alis-fiyat-kaydet', { method: 'POST', body: {
+      kalem_kodu: kalem,
+      kalem_adi: (maliyetForm.kalem_adi || '').trim() || kalem,
+      birim: maliyetForm.birim || 'adet',
+      birim_maliyet_tl: fiyat,
+      tedarikci: (maliyetForm.tedarikci || '').trim() || null,
+      notlar: (maliyetForm.notlar || '').trim() || null,
+    }})
+    .then(() => {
+      setIslemSonuc({ m: '✅ Fiyat kaydedildi', t: 'success' });
+      setMaliyetForm({ kalem_kodu: '', kalem_adi: '', birim: 'adet', birim_maliyet_tl: '', tedarikci: '', notlar: '' });
+      maliyetYukle();
+    })
+    .catch(e => setIslemSonuc({ m: e.message || 'Kayıt başarısız', t: 'error' }))
+    .finally(() => setMaliyetKaydediliyor(false));
+  };
+
+  // Fiyatları kalem_kodu bazında grupla: güncel + bir önceki kayıt (artış/azalış görseli için)
+  const maliyetGruplar = (() => {
+    const map = new Map();
+    for (const r of maliyetFiyatlar) {
+      if (!map.has(r.kalem_kodu)) map.set(r.kalem_kodu, []);
+      map.get(r.kalem_kodu).push(r);
+    }
+    const out = [];
+    for (const [kalem_kodu, gecmis] of map.entries()) {
+      gecmis.sort((a, b) => (b.gecerli_baslangic || '').localeCompare(a.gecerli_baslangic || ''));
+      out.push({ kalem_kodu, guncel: gecmis[0], onceki: gecmis[1] || null, gecmis });
+    }
+    out.sort((a, b) => (a.guncel.kalem_adi || a.kalem_kodu || '').localeCompare(b.guncel.kalem_adi || b.kalem_kodu || '', 'tr'));
+    return out;
+  })();
 
   const detayGetir = (tip) => {
     api(`/vadeli-odeme-detay?kaynak=${tip}`)
@@ -1027,6 +1087,7 @@ export default function Panel({ onNavigate }) {
           { id: 'ozet',     label: 'Özet',     badge: null },
           { id: 'odemeler', label: 'Ödemeler', badge: odemeBadge > 0 ? odemeBadge : null },
           { id: 'strateji', label: 'Strateji', badge: stratejiBadge > 0 ? stratejiBadge : null },
+          { id: 'maliyet',  label: 'Maliyet',  badge: null },
         ];
         return (
           <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '1px solid var(--border)' }}>
@@ -1843,6 +1904,140 @@ export default function Panel({ onNavigate }) {
       )}
 
       </div>)} {/* /strateji tab */}
+
+      {/* ── MALİYET TABI ── */}
+      {panelTab === 'maliyet' && (
+      <div className="tab-panel">
+
+        {maliyetLoading && !maliyetData ? (
+          <div className="empty"><p>Yükleniyor...</p></div>
+        ) : (
+          <>
+            {/* Altyapı durumu uyarıları */}
+            {maliyetData?.altyapi_durum?.eksikler?.length > 0 && (
+              <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 8, background: 'rgba(220,160,0,0.06)', border: '1px solid rgba(220,160,0,0.25)' }}>
+                {maliyetData.altyapi_durum.eksikler.map((e, i) => (
+                  <div key={i} style={{ fontSize: 12, color: 'var(--text2)' }}>⚠️ {e}</div>
+                ))}
+              </div>
+            )}
+
+            {/* Özet kartları */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
+              <div className="card">
+                <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>📦 Stok Değeri</h3>
+                <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{fmt(maliyetData?.stok_degeri_tl || 0)}</div>
+                <div style={{ fontSize: 11, color: 'var(--text3)' }}>{maliyetData?.stok_kalem_sayisi || 0} kalem</div>
+              </div>
+              <div className="card">
+                <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>🏷️ Tanımlı Fiyatlar</h3>
+                <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{maliyetGruplar.length}</div>
+                <div style={{ fontSize: 11, color: 'var(--text3)' }}>kalem fiyatlandırıldı</div>
+              </div>
+              <div className="card">
+                <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>📋 Tanımlı Reçete</h3>
+                <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{maliyetData?.recete_sayisi || 0}</div>
+                <div style={{ fontSize: 11, color: 'var(--text3)' }}>ürün</div>
+              </div>
+            </div>
+
+            {/* Fiyat girişi / güncelleme formu */}
+            <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
+              <span>➕ Fiyat Girişi / Güncelleme</span>
+            </div>
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px,1fr))', gap: 10, marginBottom: 12 }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Kalem kodu</label>
+                  <input type="text" placeholder="örn. sut_litre" value={maliyetForm.kalem_kodu}
+                    onChange={e => setMaliyetForm(f => ({ ...f, kalem_kodu: e.target.value }))} />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Kalem adı</label>
+                  <input type="text" placeholder="örn. Süt 1L" value={maliyetForm.kalem_adi}
+                    onChange={e => setMaliyetForm(f => ({ ...f, kalem_adi: e.target.value }))} />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Birim</label>
+                  <select value={maliyetForm.birim} onChange={e => setMaliyetForm(f => ({ ...f, birim: e.target.value }))}>
+                    <option value="adet">adet</option>
+                    <option value="kg">kg</option>
+                    <option value="lt">lt</option>
+                    <option value="koli">koli</option>
+                    <option value="paket">paket</option>
+                  </select>
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Birim fiyat (₺)</label>
+                  <input type="text" inputMode="decimal" placeholder="0.00" value={maliyetForm.birim_maliyet_tl}
+                    onChange={e => setMaliyetForm(f => ({ ...f, birim_maliyet_tl: e.target.value }))} />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Tedarikçi (opsiyonel)</label>
+                  <input type="text" placeholder="örn. Pınar Bayi" value={maliyetForm.tedarikci}
+                    onChange={e => setMaliyetForm(f => ({ ...f, tedarikci: e.target.value }))} />
+                </div>
+              </div>
+              <button className="btn btn-primary btn-sm" disabled={maliyetKaydediliyor} onClick={maliyetFiyatKaydet}>
+                {maliyetKaydediliyor ? 'Kaydediliyor...' : '💾 Fiyatı Kaydet'}
+              </button>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>
+                Aynı kalem kodu için yeni bir fiyat kaydedersen, eski fiyat otomatik olarak "geçmiş" olarak saklanır ve aşağıdaki listede artış/azalış oku ile karşılaştırma görürsün.
+              </div>
+            </div>
+
+            {/* Güncel fiyat listesi + geçmiş/artış görseli */}
+            <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
+              <span>📑 Güncel Fiyat Listesi</span>
+              <span style={{ fontSize: 10, color: 'var(--text3)' }}>Ok ikonuna tıkla → değişim yüzdesi</span>
+            </div>
+            {maliyetGruplar.length === 0 ? (
+              <div className="empty"><p>Henüz fiyat tanımlanmamış. Yukarıdan ilk fiyatı ekleyebilirsin.</p></div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {maliyetGruplar.map(g => {
+                  const guncel = g.guncel;
+                  const onceki = g.onceki;
+                  const fark = onceki ? (guncel.birim_maliyet_tl - onceki.birim_maliyet_tl) : null;
+                  const yuzde = (onceki && onceki.birim_maliyet_tl > 0) ? (fark / onceki.birim_maliyet_tl) * 100 : null;
+                  const ok = fark === null ? null : fark > 0 ? '🔺' : fark < 0 ? '🔻' : '➖';
+                  const okRenk = fark > 0 ? 'var(--red)' : fark < 0 ? 'var(--green)' : 'var(--text3)';
+                  const acik = maliyetAcikKalem === g.kalem_kodu;
+                  return (
+                    <div key={g.kalem_kodu} style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bg3)', border: '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: 600 }}>{guncel.kalem_adi || g.kalem_kodu}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text3)' }}>
+                            {guncel.birim} · {guncel.tedarikci || 'tedarikçi belirtilmemiş'} · {fmtDate(guncel.gecerli_baslangic)}'den beri
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                          <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 14 }}>{fmt(guncel.birim_maliyet_tl)}</div>
+                          {ok && (
+                            <button
+                              onClick={() => setMaliyetAcikKalem(acik ? null : g.kalem_kodu)}
+                              title="Fiyat geçmişi / değişim yüzdesi"
+                              style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 16, color: okRenk, padding: 0, lineHeight: 1 }}
+                            >{ok}</button>
+                          )}
+                        </div>
+                      </div>
+                      {acik && onceki && (
+                        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--text2)', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
+                          <span>{fmtDate(onceki.gecerli_baslangic)}: {fmt(onceki.birim_maliyet_tl)} → {fmtDate(guncel.gecerli_baslangic)}: {fmt(guncel.birim_maliyet_tl)}</span>
+                          <span style={{ fontWeight: 700, color: okRenk }}>{fark > 0 ? '+' : ''}{yuzde.toFixed(1)}%</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+
+      </div>)} {/* /maliyet tab */}
 
       </div>{/* /sol kolon */}
 
