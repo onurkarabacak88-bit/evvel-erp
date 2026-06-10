@@ -11898,19 +11898,112 @@ def _fatura_sayi_parse(tok: str) -> Optional[float]:
         return None
 
 
-def _fatura_anahtar(aciklama: str) -> str:
-    """Satır açıklamasını eşleştirme hafızası anahtarına normalize eder."""
-    a = re.sub(r"\s+", " ", aciklama or "").strip().lower()
+def _fatura_anahtar(satir: Dict[str, Any]) -> str:
+    """
+    Eşleştirme hafızası anahtarı. Tabloda 'Ürün Kodu' kolonu varsa (e-Fatura
+    formatlarında genelde olur, örn. 'ST00558') o kullanılır — tedarikçinin
+    Türkçe açıklama metni PDF font kodlamasından dolayı bozuk (�) gelebilir,
+    ama ürün kodu ASCII olduğu için sağlam ve aynı tedarikçide tekrar edince
+    güvenilir bir eşleştirme anahtarı olur. Yoksa açıklama normalize edilir.
+    """
+    kod = (satir.get("urun_kodu") or "").strip()
+    if kod:
+        return f"kod:{kod.lower()}"
+    a = re.sub(r"\s+", " ", satir.get("aciklama") or "").strip().lower()
     a = re.sub(r"[^a-zçğıöşü0-9 ]", "", a)
     return a[:120]
 
 
-def _fatura_satirlari_cikar(pdf_bytes: bytes) -> List[Dict[str, Any]]:
+# Ürün/hammadde kodu gibi görünen hücreler: harf+rakam karışımı, kısa (örn. ST00558)
+_FATURA_KOD_RE = re.compile(r"^[A-Za-zÇĞİÖŞÜçğıöşü0-9]{2,12}$")
+
+
+def _fatura_tablo_basligi_bul(header: List[Optional[str]]) -> Optional[Dict[str, int]]:
+    """Bir tablo başlık satırında ürün kodu/açıklama/miktar/birim fiyat kolonlarını bulur."""
+    cols: Dict[str, int] = {}
+    for ci, h in enumerate(header):
+        hl = re.sub(r"\s+", " ", (h or "")).strip().lower()
+        if not hl:
+            continue
+        if "kodu" in hl and "kod" not in cols:
+            cols["kod"] = ci
+        elif ("malzeme" in hl or "a klama" in hl or "ack" in hl or "hizmet" in hl) and "aciklama" not in cols:
+            cols["aciklama"] = ci
+        elif hl == "miktar" and "miktar" not in cols:
+            cols["miktar"] = ci
+        elif "birim fiyat" in hl and "fiyat" not in cols:
+            cols["fiyat"] = ci
+    if "aciklama" in cols and "fiyat" in cols:
+        return cols
+    return None
+
+
+def _fatura_satirlari_tablo(pdf_bytes: bytes) -> List[Dict[str, Any]]:
+    """e-Fatura tarzı tablolardan (Ürün Kodu / Açıklama / Miktar / Birim Fiyatı) satır çıkarır."""
+    import pdfplumber
+    out: List[Dict[str, Any]] = []
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for page in pdf.pages:
+            for table in page.extract_tables():
+                if len(table) < 2:
+                    continue
+                cols = None
+                header_idx = None
+                for i, row in enumerate(table[:3]):
+                    cols = _fatura_tablo_basligi_bul(row)
+                    if cols:
+                        header_idx = i
+                        break
+                if cols is None:
+                    continue
+                for row in table[header_idx + 1:]:
+                    if not row or len(row) <= max(cols.values()):
+                        continue
+                    aciklama_raw = re.sub(r"\s+", " ", (row[cols["aciklama"]] or "")).strip()
+                    if len(aciklama_raw) < 3:
+                        continue
+                    fiyat = _fatura_sayi_parse_tl(row[cols["fiyat"]])
+                    if fiyat is None:
+                        continue  # "Toplam", "KDV" vb. özet satırları
+                    kod = ""
+                    if "kod" in cols:
+                        kod_raw = (row[cols["kod"]] or "").strip()
+                        if _FATURA_KOD_RE.match(kod_raw):
+                            kod = kod_raw
+                    miktar = birim = None
+                    if "miktar" in cols:
+                        m = re.match(r"\s*([\d.,]+)\s*([A-Za-zÇĞİÖŞÜçğıöşü]*)", row[cols["miktar"]] or "")
+                        if m:
+                            miktar = _fatura_sayi_parse(m.group(1))
+                            birim = (m.group(2) or "").strip().lower() or None
+                    out.append({
+                        "ham_metin": (f"{kod} " if kod else "") + aciklama_raw,
+                        "urun_kodu": kod or None,
+                        "aciklama": aciklama_raw,
+                        "miktar": miktar,
+                        "birim": birim,
+                        "tutar": fiyat,  # birim fiyatı
+                    })
+    return out
+
+
+def _fatura_sayi_parse_tl(hucre: Optional[str]) -> Optional[float]:
+    """'680,00 TL' / '1.680,00 TL' gibi hücrelerden sayıyı çıkarır."""
+    if not hucre:
+        return None
+    m = re.search(r"[\d.,]+", hucre)
+    if not m:
+        return None
+    return _fatura_sayi_parse(m.group(0))
+
+
+def _fatura_satirlari_satir_bazli(pdf_bytes: bytes) -> List[Dict[str, Any]]:
     """
-    PDF'ten satır bazlı kalem adaylarını çıkarır (genel amaçlı, tedarikçiye özel
-    şablon değildir). Her satırda en az 1 sayı arar; son sayıyı 'tutar' olarak,
-    varsa ondan önceki sayıyı 'miktar' olarak alır. Sayılar çıkarılınca kalan
-    metin 'aciklama' olur.
+    Yedek (fallback) yöntem: tablo bulunamazsa satır bazlı genel ayrıştırma.
+    Her satırda en az 1 sayı arar; son sayıyı 'tutar' olarak, varsa ondan önceki
+    sayıyı 'miktar' olarak alır. Sayılar çıkarılınca kalan metin 'aciklama' olur.
+    Not: 'tutar' burada satır toplamı olabilir, birim fiyat olmayabilir —
+    kullanıcı düzeltmeli.
     """
     import pdfplumber
     out: List[Dict[str, Any]] = []
@@ -11936,11 +12029,21 @@ def _fatura_satirlari_cikar(pdf_bytes: bytes) -> List[Dict[str, Any]]:
                     continue
                 out.append({
                     "ham_metin": line,
+                    "urun_kodu": None,
                     "aciklama": aciklama,
                     "miktar": miktar,
+                    "birim": None,
                     "tutar": tutar,
                 })
     return out
+
+
+def _fatura_satirlari_cikar(pdf_bytes: bytes) -> List[Dict[str, Any]]:
+    """Önce e-Fatura tablo formatını dener, bulamazsa satır bazlı yedek yönteme döner."""
+    satirlar = _fatura_satirlari_tablo(pdf_bytes)
+    if satirlar:
+        return satirlar
+    return _fatura_satirlari_satir_bazli(pdf_bytes)
 
 
 @router.post("/maliyet/fatura-pdf-yukle")
@@ -11970,7 +12073,7 @@ async def ops_maliyet_fatura_pdf_yukle(
     with db() as (conn, cur):
         _ensure_maliyet_tablolari(cur)
         for s in satirlar:
-            anahtar = _fatura_anahtar(s["aciklama"])
+            anahtar = _fatura_anahtar(s)
             s["anahtar"] = anahtar
             cur.execute(
                 "SELECT kalem_kodu, kalem_adi FROM fatura_kalem_eslestirme WHERE anahtar = %s",
@@ -12006,6 +12109,8 @@ async def ops_maliyet_fatura_pdf_yukle(
 
 class FaturaKalemOnaylaBody(BaseModel):
     ham_metin: str
+    urun_kodu: Optional[str] = None
+    aciklama: Optional[str] = None
     kalem_kodu: str
     kalem_adi: Optional[str] = None
     birim: str = "adet"
@@ -12027,7 +12132,7 @@ def ops_maliyet_fatura_kalem_onayla(body: FaturaKalemOnaylaBody):
     if body.birim_maliyet_tl < 0:
         raise HTTPException(400, "birim_maliyet_tl negatif olamaz")
     bas = body.gecerli_baslangic or str(date.today())
-    anahtar = _fatura_anahtar(body.ham_metin)
+    anahtar = _fatura_anahtar({"urun_kodu": body.urun_kodu, "aciklama": body.aciklama or body.ham_metin})
     with db() as (conn, cur):
         new_id = _kaydet_alis_fiyati(cur, kalem, body.kalem_adi, body.birim,
                                       body.birim_maliyet_tl, bas, body.tedarikci,

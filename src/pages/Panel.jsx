@@ -166,6 +166,8 @@ export default function Panel({ onNavigate }) {
     if (!(fiyat >= 0)) { setIslemSonuc({ m: 'Geçerli bir fiyat girin', t: 'error' }); return; }
     api('/ops/maliyet/fatura-kalem-onayla', { method: 'POST', body: {
       ham_metin: s.ham_metin,
+      urun_kodu: s.urun_kodu || null,
+      aciklama: s.aciklama || null,
       kalem_kodu: kalem,
       kalem_adi: (s.kalem_adi || '').trim() || kalem,
       birim: s.birim || 'adet',
@@ -2078,7 +2080,11 @@ export default function Panel({ onNavigate }) {
                     const kaydedildi = !!faturaKaydedilenler[idx];
                     return (
                       <div key={idx} style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bg3)', border: `1px solid ${kaydedildi ? 'var(--green)' : 'var(--border)'}` }}>
-                        <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 6, fontFamily: 'var(--font-mono)' }}>{s.ham_metin}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 6, fontFamily: 'var(--font-mono)' }}>
+                          {s.urun_kodu && <span style={{ color: 'var(--accent)', fontWeight: 700 }}>[{s.urun_kodu}] </span>}
+                          {s.ham_metin}
+                          {s.miktar != null && <span> · {s.miktar} {s.birim || ''}</span>}
+                        </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: 8, alignItems: 'center' }}>
                           <input type="text" placeholder="Stok kalem kodu (örn. sut_litre)" value={s.kalem_kodu}
                             onChange={e => faturaSatirGuncelle(idx, 'kalem_kodu', e.target.value)} disabled={kaydedildi} />
