@@ -363,6 +363,15 @@ def _hesapla_skor(row: dict) -> dict:
         s['gecmis'] += 3; s['enerji'] += 2
         sinyaller.append({'tip':'olumlu','mesaj':'☕ Tutkuyla gelmiş: Barista olmak istiyor + deneyimi var'})
 
+    # ⑯ Düşük riskli, güvenilir profil — araç + 2+ yıl tecrübe + yönetim sorunu yok + mesai esnekliği var
+    # Tek başına her biri küçük bir artı, ama dördü birden işletme için gerçek bir "az risk" sinyali.
+    if (ulasim == 'arac'
+            and kahve in ['var_2yil', 'var_uzun']
+            and en_zor not in ['yonetim_sorun', 'uzun_saatler']
+            and gun_plan != 'onceden_netlesin'):
+        s['esneklik'] += 4; s['gecmis'] += 2
+        sinyaller.append({'tip':'olumlu','mesaj':'🚗 Düşük riskli profil: Aracı var + 2+ yıl tecrübe + yönetimle sorun yaşamamış + mesai esnek — işletme için çoklu güvence'})
+
     # ── Clamp & Toplam ──────────────────────────────────────────────────────
     for k in s:
         s[k] = max(0, min(20, s[k]))
