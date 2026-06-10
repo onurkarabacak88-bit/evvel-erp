@@ -760,10 +760,167 @@ def mesai_cikis(body: MesaiCikisBody):
 
 # ── KASA DEVİR ONAYI ─────────────────────────────────────────────────────────
 
+def _kasa_devir_onay_migrate(cur):
+    """form_data ve form_kaydedildi durumu için migration."""
+    cur.execute("""
+        ALTER TABLE kasa_devir_onay
+        ADD COLUMN IF NOT EXISTS form_data JSONB DEFAULT '{}'::jsonb
+    """)
+
 class DevirBaslatBody(BaseModel):
     sube_id: str
     devreden_id: str
     not_aciklama: Optional[str] = None
+
+
+class DevirFormKaydetBody(BaseModel):
+    sube_id: str
+    devreden_id: str
+    form_data: dict = {}
+
+@router.post("/api/gorev/devir-form-kaydet")
+def devir_form_kaydet(body: DevirFormKaydetBody):
+    """Panel form verisini kaydeder (durum=form_kaydedildi). Sabahçı telefondan onaylayacak."""
+    from tr_saat import is_gunu_tr
+    import json as _json
+    import uuid as _uuid
+    tarih = str(is_gunu_tr())
+    with db() as (conn, cur):
+        try:
+            _kasa_devir_onay_migrate(cur)
+        except Exception:
+            pass
+        # Bugün bu şube için zaten form_kaydedildi veya bekliyor varsa güncelle
+        cur.execute("""
+            SELECT id FROM kasa_devir_onay
+            WHERE sube_id=%s AND tarih=%s AND durum IN ('form_kaydedildi','bekliyor')
+            ORDER BY created_at DESC LIMIT 1
+        """, (body.sube_id, tarih))
+        mevcut = cur.fetchone()
+        if mevcut:
+            cur.execute("""
+                UPDATE kasa_devir_onay
+                SET devreden_id=%s, form_data=%s::jsonb, durum='form_kaydedildi'
+                WHERE id=%s
+            """, (body.devreden_id, _json.dumps(body.form_data), mevcut["id"]))
+            conn.commit()
+            return {"devir_id": mevcut["id"], "yeni": False, "mesaj": "Form güncellendi."}
+        devir_id = str(_uuid.uuid4())
+        cur.execute("""
+            INSERT INTO kasa_devir_onay (id, sube_id, tarih, devreden_id, form_data)
+            VALUES (%s, %s, %s, %s, %s::jsonb)
+        """, (devir_id, body.sube_id, tarih, body.devreden_id, _json.dumps(body.form_data)))
+        conn.commit()
+    return {"devir_id": devir_id, "yeni": True, "mesaj": "Form kaydedildi. Sabahçı telefondan onaylayacak."}
+
+
+class DevirSabahOnaylaBody(BaseModel):
+    sube_id: str
+    personel_id: str
+    devir_id: str
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+@router.post("/api/gorev/devir-sabah-onayla")
+def devir_sabah_onayla(body: DevirSabahOnaylaBody):
+    """Sabahçı telefondan devri onaylar: adim1 + cikis_ts set."""
+    from tr_saat import is_gunu_tr, dt_now_tr
+    import json as _json
+    tarih = str(is_gunu_tr())
+    with db() as (conn, cur):
+        try:
+            _kasa_devir_onay_migrate(cur)
+        except Exception:
+            pass
+        # Devir kaydını kontrol et
+        cur.execute("""
+            SELECT id, durum, devreden_id, form_data
+            FROM kasa_devir_onay
+            WHERE id=%s AND sube_id=%s
+        """, (body.devir_id, body.sube_id))
+        devir = cur.fetchone()
+        if not devir:
+            raise HTTPException(404, "Devir kaydı bulunamadı.")
+        if devir["durum"] == 'bekliyor':
+            raise HTTPException(409, "Devir zaten onaylandı.")
+        if devir["durum"] == 'onaylandi':
+            raise HTTPException(409, "Devir tamamen tamamlandı.")
+        if devir["durum"] != 'form_kaydedildi':
+            raise HTTPException(400, f"Beklenmeyen durum: {devir['durum']}")
+        if str(devir["devreden_id"]) != str(body.personel_id):
+            raise HTTPException(403, "Bu devir sana ait değil.")
+
+        # Konum kontrolü
+        cur.execute("SELECT lat, lng, konum_radius_m FROM subeler WHERE id=%s", (body.sube_id,))
+        sube = cur.fetchone()
+        cur.execute("SELECT panel_yonetici FROM personel WHERE id::text=%s", (body.personel_id,))
+        p_row = cur.fetchone()
+        yonetici = bool(p_row and p_row.get("panel_yonetici"))
+        if sube and sube["lat"] and sube["lng"] and not yonetici:
+            if body.lat is not None and body.lng is not None:
+                mesafe = _haversine_m(body.lat, body.lng, sube["lat"], sube["lng"])
+                radius = sube["konum_radius_m"] or 150
+                if mesafe > radius:
+                    raise HTTPException(403, f"sube_disinda|Şubeye çok uzaksın ({int(mesafe)} m).")
+
+        simdi = dt_now_tr()
+
+        # Kasa devir onayını 'bekliyor' durumuna al (akşamcı için)
+        cur.execute("""
+            UPDATE kasa_devir_onay
+            SET devreden_ts=%s, durum='bekliyor'
+            WHERE id=%s
+        """, (simdi, body.devir_id))
+
+        # Mesai çıkışı (cikis_ts) set et
+        from datetime import date as _d3
+        gun = str(_d3.fromisoformat(tarih))
+        cur.execute("""
+            UPDATE gorev_yoklama
+            SET cikis_ts=%s, cikis_tip='kasa_devri'
+            WHERE sube_id=%s AND personel_id=%s AND tarih=%s AND cikis_ts IS NULL
+        """, (simdi, body.sube_id, body.personel_id, gun))
+
+        # adim1 — kapanis_kayit INSERT (form_data'dan bilgileri al)
+        fd = devir["form_data"] or {}
+        if isinstance(fd, str):
+            try:
+                fd = _json.loads(fd)
+            except Exception:
+                fd = {}
+        try:
+            from sube_kapanis_dual import _adim1_kaydet
+            _adim1_kaydet(cur, body.sube_id, body.personel_id, simdi, tarih, fd)
+        except Exception:
+            # adim1_kaydet yoksa inline yap
+            import uuid as _uuid3
+            meta = {
+                "vardiya_devir_stok_sayim": {
+                    "bardak_kucuk": fd.get("bardak_kucuk", 0),
+                    "bardak_buyuk": fd.get("bardak_buyuk", 0),
+                    "bardak_plastik": fd.get("bardak_plastik", 0),
+                    "su_adet": fd.get("su_adet", 0),
+                    "redbull_adet": fd.get("redbull_adet", 0),
+                    "soda_adet": fd.get("soda_adet", 0),
+                    "cookie_adet": fd.get("cookie_adet", 0),
+                    "pasta_adet": fd.get("pasta_adet", 0),
+                },
+                "teslim": fd.get("teslim", 0),
+                "nakit": fd.get("nakit", 0),
+            }
+            import json as _json2
+            cur.execute("""
+                INSERT INTO kapanis_kayit
+                    (id, sube_id, tarih, olay, sabahci_personel_id, sabahci_imza_ts,
+                     meta, durum, kapanisci_onay_ts)
+                VALUES (%s,%s,%s,'vardiya_sabah_aksam_devri',%s,%s,%s::jsonb,'acilis_bekliyor',%s)
+                ON CONFLICT DO NOTHING
+            """, (str(_uuid3.uuid4()), body.sube_id, gun,
+                  body.personel_id, simdi, _json2.dumps(meta), simdi))
+
+        conn.commit()
+
+    return {"basarili": True, "mesaj": "Devir onaylandı. Mesain sona erdi. Akşamcı devri alacak."}
 
 class DevirKabulBody(BaseModel):
     sube_id: str
@@ -797,27 +954,59 @@ def devir_baslat(body: DevirBaslatBody):
 
 @router.get("/api/gorev/devir-bekleyen")
 def devir_bekleyen(sube_id: str):
-    """Bu şubede bugün bekleyen devir kaydı var mı?"""
+    """Bu şubede bugün bekleyen devir kaydı var mı? form_kaydedildi + bekliyor durumlarını döner."""
     from tr_saat import is_gunu_tr
     tarih = str(is_gunu_tr())
     with db() as (conn, cur):
+        try:
+            _kasa_devir_onay_migrate(cur)
+            conn.commit()
+        except Exception:
+            pass
         cur.execute("""
-            SELECT d.id, d.devreden_id, d.devreden_ts, d.not_aciklama,
+            SELECT d.id, d.devreden_id, d.devreden_ts, d.not_aciklama, d.durum,
+                   COALESCE(d.form_data, '{}'::jsonb) AS form_data,
                    COALESCE(p.ad_soyad, d.devreden_id) AS devreden_ad
             FROM kasa_devir_onay d
             LEFT JOIN personel p ON p.id::text = d.devreden_id
-            WHERE d.sube_id=%s AND d.tarih=%s AND d.durum='bekliyor'
-            ORDER BY d.devreden_ts DESC LIMIT 1
+            WHERE d.sube_id=%s AND d.tarih=%s AND d.durum IN ('form_kaydedildi','bekliyor')
+            ORDER BY d.created_at DESC LIMIT 1
         """, (sube_id, tarih))
         row = cur.fetchone()
         if not row:
-            return {"bekliyor": False}
+            return {"bekliyor": False, "sabah_onay_bekliyor": False}
+        import json as _json
+        fd = row["form_data"]
+        if isinstance(fd, str):
+            try: fd = _json.loads(fd)
+            except: fd = {}
+        # Form özeti (akşamcının göreceği)
+        form_ozet = {
+            "teslim": fd.get("teslim", 0),
+            "bardak_kucuk": fd.get("bardak_kucuk", 0),
+            "bardak_buyuk": fd.get("bardak_buyuk", 0),
+            "bardak_plastik": fd.get("bardak_plastik", 0),
+            "pasta_adet": fd.get("pasta_adet", 0),
+            "su_adet": fd.get("su_adet", 0),
+        }
+        if row["durum"] == 'form_kaydedildi':
+            return {
+                "bekliyor": False,
+                "sabah_onay_bekliyor": True,
+                "devir_id": row["id"],
+                "devreden_id": str(row["devreden_id"]),
+                "devreden_ad": row["devreden_ad"],
+                "form_ozet": form_ozet,
+            }
+        # bekliyor — akşamcı için
         return {
             "bekliyor": True,
+            "sabah_onay_bekliyor": False,
             "devir_id": row["id"],
             "devreden_ad": row["devreden_ad"],
-            "devreden_ts": str(row["devreden_ts"]),
+            "devreden_ts": str(row["devreden_ts"]) if row["devreden_ts"] else None,
             "not_aciklama": row["not_aciklama"],
+            "form_ozet": form_ozet,
         }
 
 @router.post("/api/gorev/devir-kabul")

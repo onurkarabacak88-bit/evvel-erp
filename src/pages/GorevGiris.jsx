@@ -79,8 +79,9 @@ export default function GorevGiris({ subeId: subeIdProp }) {
   // Adımlar: sube-sec | devir-kabul | pin-giris | vardiya-sec | gorevler
   const [adim, setAdim] = useState(subeIdProp ? 'yukleniyor' : 'sube-sec');
 
-  const [bekleyenDevir, setBekleyenDevir] = useState(null);
-  const [bekleyenKapanis, setBekleyenKapanis] = useState([]); // Kapanis mühür bekleyenler
+  const [bekleyenDevir, setBekleyenDevir] = useState(null);       // akşamcı için (bekliyor)
+  const [sabahDevirYap, setSabahDevirYap] = useState(null);       // sabahçı için (form_kaydedildi)
+  const [bekleyenKapanis, setBekleyenKapanis] = useState([]);
   const [seciliPersonel, setSeciliPersonel] = useState(null);
 
   // PIN akışı state
@@ -130,14 +131,17 @@ export default function GorevGiris({ subeId: subeIdProp }) {
       const kapanisBekleyenler = kapanisBilgi?.bekleyen || [];
 
       if (kapanisBekleyenler.length > 0) {
-        // Önce kapanış onayı: biri QR okutarak buraya geldi → mühürle ekranı
         setBekleyenKapanis(kapanisBekleyenler);
         setAdim('kapanis-onay');
       } else if (devirBilgi?.bekliyor) {
         setBekleyenDevir(devirBilgi);
-        setAdim('devir-kabul');  // Devir varsa → direkt devir ekranı
+        setAdim('devir-kabul');
+      } else if (devirBilgi?.sabah_onay_bekliyor) {
+        // Sabahçı devir onayı bekliyor — PIN ile giriş yaptıktan sonra kontrol edilecek
+        setSabahDevirYap(devirBilgi);
+        setAdim('pin-giris');
       } else {
-        setAdim('pin-giris');    // Devir yoksa → PIN
+        setAdim('pin-giris');
       }
     }).catch(() => setAdim('pin-giris'));
   }, [subeId]);
@@ -147,6 +151,33 @@ export default function GorevGiris({ subeId: subeIdProp }) {
   const subeSec = (sube) => {
     setSubeId(sube.id);
     setSubeBilgi(sube);
+  };
+
+  // Sabahçı devir onayı (telefondan)
+  const devirYap = async () => {
+    if (!sabahDevirYap || !pinDogruOturum) return;
+    setYukleniyor(true);
+    setHata('');
+    try {
+      await api('/gorev/devir-sabah-onayla', {
+        method: 'POST',
+        body: {
+          sube_id: subeId,
+          personel_id: pinDogruOturum.personel_id,
+          devir_id: sabahDevirYap.devir_id,
+          lat: konum?.lat ?? null,
+          lng: konum?.lng ?? null,
+        },
+      });
+      // Mesai bitti — çıkış ekranı göster
+      setAdim('devir-yap-tamam');
+    } catch (e) {
+      const msg = e.message || '';
+      if (msg.startsWith('sube_disinda|')) setHata('📍 ' + msg.split('|')[1]);
+      else setHata(msg || 'Hata oluştu');
+    } finally {
+      setYukleniyor(false);
+    }
   };
 
   // Devir kabul (PIN YOK — ad seçimiyle)
@@ -200,11 +231,13 @@ export default function GorevGiris({ subeId: subeIdProp }) {
         },
       });
       setPinDogruOturum(sonuc);
-      // vardiya_tip her zaman backend tarafından bağlama göre belirleniyor.
-      // vardiya_tanimli=false sadece plan yoksa gelir ama yine de tip verilmiş olur.
-      // Sormadan direkt görevlere geç.
-      setOturum(sonuc);
-      setAdim('gorevler');
+      // Sabahçı devir onayı bekliyor mu? Personel eşleşiyor mu?
+      if (sabahDevirYap && String(sonuc.personel_id) === String(sabahDevirYap.devreden_id)) {
+        setAdim('devir-yap');
+      } else {
+        setOturum(sonuc);
+        setAdim('gorevler');
+      }
     } catch (e) {
       const msg = e.message || '';
       if (msg.startsWith('sube_disinda|')) setHata('📍 ' + msg.split('|')[1]);
@@ -257,7 +290,11 @@ export default function GorevGiris({ subeId: subeIdProp }) {
             {subeBilgi?.ad || 'Evvel Cafe'}
           </div>
           <div style={{ fontSize: 12, color: '#6b6f7a', marginTop: 4 }}>
-            {adim === 'kapanis-onay' ? 'Kapanış Onayı' : adim === 'devir-kabul' ? 'Vardiya Devri' : 'Vardiya Girişi'}
+            {adim === 'kapanis-onay' ? 'Kapanış Onayı'
+            : adim === 'devir-kabul' ? 'Vardiya Devri'
+            : adim === 'devir-yap' ? 'Devir Onayı'
+            : adim === 'devir-yap-tamam' ? 'Mesain Bitti'
+            : 'Vardiya Girişi'}
           </div>
         </div>
 
@@ -331,12 +368,72 @@ export default function GorevGiris({ subeId: subeIdProp }) {
           </div>
         )}
 
+        {/* ── DEVİR YAP — Sabahçı telefondan onaylar ── */}
+        {adim === 'devir-yap' && sabahDevirYap && pinDogruOturum && (
+          <div>
+            <div style={{
+              padding: '16px', borderRadius: 10, marginBottom: 16,
+              background: 'rgba(74,158,255,0.08)', border: '1px solid rgba(74,158,255,0.35)',
+              textAlign: 'center',
+            }}>
+              <div style={{ fontSize: 22, marginBottom: 6 }}>💼</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#4a9eff', marginBottom: 4 }}>
+                Devri Onayla ve Mesaini Bitir
+              </div>
+              <div style={{ fontSize: 12, color: '#b0b3bc', lineHeight: 1.6 }}>
+                Merhaba <strong style={{ color: '#e8e9ec' }}>{pinDogruOturum.ad_soyad}</strong>,<br />
+                panel ekranında doldurduğun bilgiler kaydedildi.
+              </div>
+            </div>
+            {sabahDevirYap.form_ozet && (
+              <div style={{ padding: '12px 14px', borderRadius: 10, marginBottom: 16, background: '#22262f', border: '1px solid #2a2d35' }}>
+                <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 8, fontWeight: 600 }}>DEVİR ÖZETİ</div>
+                {[
+                  ['💰 Kasadaki Nakit', sabahDevirYap.form_ozet.teslim + ' ₺'],
+                  ['🥤 Küçük Bardak', sabahDevirYap.form_ozet.bardak_kucuk],
+                  ['☕ Büyük Bardak', sabahDevirYap.form_ozet.bardak_buyuk],
+                  ['🧊 Plastik', sabahDevirYap.form_ozet.bardak_plastik],
+                  ['🎂 Pasta', sabahDevirYap.form_ozet.pasta_adet],
+                  ['💧 Su', sabahDevirYap.form_ozet.su_adet],
+                ].map(([lbl, val]) => (
+                  <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: '1px solid #2a2d35' }}>
+                    <span style={{ color: '#b0b3bc' }}>{lbl}</span>
+                    <span style={{ color: '#e8e9ec', fontWeight: 700 }}>{val}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {hata && <div style={{ color: '#e05c5c', fontSize: 12, textAlign: 'center', marginBottom: 12 }}>{hata}</div>}
+            <button onClick={devirYap} disabled={yukleniyor} style={{
+              display: 'block', width: '100%', padding: '18px', borderRadius: 12,
+              cursor: 'pointer', background: yukleniyor ? '#22262f' : 'rgba(74,158,255,0.15)',
+              border: '2px solid #4a9eff', color: '#4a9eff', fontSize: 17, fontWeight: 800,
+            }}>
+              {yukleniyor ? '⏳ Kaydediliyor…' : '✅ Devri Yap + Mesaimi Bitir'}
+            </button>
+            <div style={{ fontSize: 11, color: '#6b6f7a', textAlign: 'center', marginTop: 10 }}>
+              📍 Konumun doğrulanacak — şubede olman gerekiyor
+            </div>
+          </div>
+        )}
+
+        {/* ── DEVİR YAP TAMAM ── */}
+        {adim === 'devir-yap-tamam' && (
+          <div style={{ textAlign: 'center', padding: '20px 0' }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#4caf84', marginBottom: 8 }}>Devir Tamamlandı</div>
+            <div style={{ fontSize: 13, color: '#b0b3bc', lineHeight: 1.7 }}>
+              Mesain sona erdi.<br />Akşamcı devralmayı bekliyor.<br />İyi dinlenmeler! ☕
+            </div>
+          </div>
+        )}
+
         {/* ── DEVİR KABUL — Ad seç, PIN yok ── */}
         {adim === 'devir-kabul' && bekleyenDevir && (
           <div>
             {/* Devir bilgi kartı */}
             <div style={{
-              padding: '14px', borderRadius: 10, marginBottom: 20,
+              padding: '14px', borderRadius: 10, marginBottom: bekleyenDevir.form_ozet ? 12 : 20,
               background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.35)',
               textAlign: 'center',
             }}>
@@ -358,6 +455,26 @@ export default function GorevGiris({ subeId: subeIdProp }) {
                 </div>
               )}
             </div>
+
+            {/* Devir özeti */}
+            {bekleyenDevir.form_ozet && (
+              <div style={{ padding: '12px 14px', borderRadius: 10, marginBottom: 16, background: '#22262f', border: '1px solid #2a2d35' }}>
+                <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 8, fontWeight: 600 }}>DEVREDİLEN DEĞERLER</div>
+                {[
+                  ['💰 Kasa Nakiti', bekleyenDevir.form_ozet.teslim + ' ₺'],
+                  ['🥤 Küçük Bardak', bekleyenDevir.form_ozet.bardak_kucuk],
+                  ['☕ Büyük Bardak', bekleyenDevir.form_ozet.bardak_buyuk],
+                  ['🧊 Plastik', bekleyenDevir.form_ozet.bardak_plastik],
+                  ['🎂 Pasta', bekleyenDevir.form_ozet.pasta_adet],
+                  ['💧 Su', bekleyenDevir.form_ozet.su_adet],
+                ].map(([lbl, val]) => (
+                  <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: '1px solid #2a2d35' }}>
+                    <span style={{ color: '#b0b3bc' }}>{lbl}</span>
+                    <span style={{ color: '#e8e9ec', fontWeight: 700 }}>{val}</span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {hata && (
               <div style={{ color: '#e05c5c', fontSize: 12, textAlign: 'center', marginBottom: 12 }}>
