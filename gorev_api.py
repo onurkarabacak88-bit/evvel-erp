@@ -1312,8 +1312,9 @@ def yoklama_cikis_sifirla(yoklama_id: str):
 
 
 @router.delete("/api/gorev/yoklama/{sube_id}")
-def gorev_yoklama_sil(sube_id: str, tarih: Optional[str] = None, kasa_da: bool = False):
-    """Şube yoklama kaydını sil (test/sıfırlama). kasa_da=true ile kasa kaydını da siler."""
+def gorev_yoklama_sil(sube_id: str, tarih: Optional[str] = None, kasa_da: bool = False, acilis_da: bool = False):
+    """Şube yoklama kaydını sil (test/sıfırlama). kasa_da=true ile kasa kaydını da siler.
+    acilis_da=true ile sube_acilis kaydı da silinir — şube yeniden 'açılış bekliyor' durumuna döner."""
     from tr_saat import is_gunu_tr
     t = tarih or str(is_gunu_tr())
     with db() as (conn, cur):
@@ -1323,8 +1324,12 @@ def gorev_yoklama_sil(sube_id: str, tarih: Optional[str] = None, kasa_da: bool =
         if kasa_da:
             cur.execute("DELETE FROM sube_kasa_gun_acma WHERE sube_id=%s AND tarih=%s", (sube_id, t))
             silinen_kasa = cur.rowcount
+        silinen_acilis = 0
+        if acilis_da:
+            cur.execute("DELETE FROM sube_acilis WHERE sube_id=%s AND tarih=%s", (sube_id, t))
+            silinen_acilis = cur.rowcount
         conn.commit()
-    return {"silinen_yoklama": silinen_yoklama, "silinen_kasa": silinen_kasa, "sube_id": sube_id, "tarih": t}
+    return {"silinen_yoklama": silinen_yoklama, "silinen_kasa": silinen_kasa, "silinen_acilis": silinen_acilis, "sube_id": sube_id, "tarih": t}
 
 
 # ── PERSONEL VARDİYA TAKİP ───────────────────────────────────────────────────
