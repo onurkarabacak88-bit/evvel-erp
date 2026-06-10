@@ -348,6 +348,9 @@ export default function IsBasvuruListesi() {
   const [secili, setSecili]        = useState(null);
   const [filtre, setFiltre]        = useState('hepsi');
   const [yukleniyor, setYukleniyor]= useState(true);
+  const [arama, setArama]          = useState('');
+  const [siralama, setSiralama]    = useState('tarih');  // tarih | skor_desc | skor_asc
+  const [arsivGoster, setArsivGoster] = useState(false);
 
   const yukle = () => {
     setYukleniyor(true);
@@ -359,8 +362,25 @@ export default function IsBasvuruListesi() {
 
   useEffect(() => { yukle(); }, []);
 
-  const filtrelenmis = filtre === 'hepsi' ? basvurular : basvurular.filter(b => b.durum === filtre);
+  const aramaKucuk = arama.toLowerCase().trim();
+  const filtrelenmis = basvurular
+    .filter(b => {
+      if (!arsivGoster && b.durum === 'arsiv' && filtre === 'hepsi') return false;
+      if (filtre !== 'hepsi' && b.durum !== filtre) return false;
+      if (aramaKucuk) {
+        const ad = (b.ad_soyad || '').toLowerCase();
+        const tel = (b.telefon || '').toLowerCase();
+        if (!ad.includes(aramaKucuk) && !tel.includes(aramaKucuk)) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (siralama === 'skor_desc') return (b.skor?.toplam || 0) - (a.skor?.toplam || 0);
+      if (siralama === 'skor_asc')  return (a.skor?.toplam || 0) - (b.skor?.toplam || 0);
+      return new Date(b.olusturma_ts) - new Date(a.olusturma_ts); // tarih (yeni→eski)
+    });
   const toplam = basvurular.length;
+  const arsivSayisi = basvurular.filter(b => b.durum === 'arsiv').length;
 
   const onGuncelle = (id, yeniDurum) => {
     setBasvurular(prev => prev.map(b => b.id === id ? { ...b, durum: yeniDurum } : b));
@@ -414,6 +434,24 @@ export default function IsBasvuruListesi() {
         </div>
       </div>
 
+      {/* Arama + Sıralama */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+        <input
+          value={arama} onChange={e => setArama(e.target.value)}
+          placeholder="🔍 İsim veya telefon ara..."
+          style={{ flex: 1, minWidth: 180, background: 'var(--bg2)', border: '1px solid var(--border)',
+            borderRadius: 10, padding: '8px 12px', fontSize: 13, color: 'var(--text)',
+            outline: 'none' }}
+        />
+        <select value={siralama} onChange={e => setSiralama(e.target.value)}
+          style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10,
+            padding: '8px 12px', fontSize: 12, color: 'var(--text)', cursor: 'pointer' }}>
+          <option value="tarih">📅 Yeniden eskiye</option>
+          <option value="skor_desc">⭐ En yüksek skor</option>
+          <option value="skor_asc">🔻 En düşük skor</option>
+        </select>
+      </div>
+
       {/* Filtre */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
         {[{ id: 'hepsi', label: 'Tümü' }, ...Object.entries(DURUM_CFG).map(([id, c]) => ({ id, label: c.ikon + ' ' + c.label }))].map(f => (
@@ -426,6 +464,23 @@ export default function IsBasvuruListesi() {
             {f.label}{f.id !== 'hepsi' && (ozet[f.id]||0) > 0 ? ` (${ozet[f.id]})` : ''}
           </button>
         ))}
+      </div>
+
+      {/* Arşiv toggle + sonuç sayısı */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <span style={{ fontSize: 12, color: 'var(--text3)' }}>
+          {filtrelenmis.length} başvuru gösteriliyor
+          {aramaKucuk ? ` · "${arama}" araması` : ''}
+        </span>
+        {arsivSayisi > 0 && filtre === 'hepsi' && (
+          <button onClick={() => setArsivGoster(v => !v)} style={{
+            fontSize: 11, padding: '4px 10px', borderRadius: 8, cursor: 'pointer',
+            background: arsivGoster ? '#2a2d35' : 'transparent',
+            border: '1px solid var(--border)', color: 'var(--text3)'
+          }}>
+            {arsivGoster ? '📦 Arşivi gizle' : `📦 Arşivi göster (${arsivSayisi})`}
+          </button>
+        )}
       </div>
 
       {/* Liste */}
