@@ -5099,8 +5099,9 @@
           padding:14px 16px; margin-bottom:12px;
           display:flex; align-items:center; gap:14px;
         ">
-          <div style="background:#fff;border-radius:10px;padding:6px;flex-shrink:0;box-shadow:0 2px 8px rgba(0,0,0,.3)">
+          <div onclick="window._qrBuyut()" style="background:#fff;border-radius:10px;padding:6px;flex-shrink:0;box-shadow:0 2px 8px rgba(0,0,0,.3);cursor:zoom-in;position:relative">
             <img id="vardiyaGirisQrImg" src="" alt="QR" style="width:80px;height:80px;display:block" />
+            <div style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,0.55);border-radius:4px;padding:1px 4px;font-size:9px;color:#fff;pointer-events:none">🔍</div>
           </div>
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;font-weight:800;color:#e8e9ec;margin-bottom:2px">
@@ -5540,6 +5541,25 @@
         <span id="mesajBadge" class="badge" style="display:none;position:absolute;top:-2px;right:-2px;background:var(--danger);color:#fff;font-size:9px;min-width:16px;height:16px;border-radius:8px;align-items:center;justify-content:center;padding:0 3px"></span>
       </button>
     </div>
+  </div>
+</div>
+
+<!-- ── OVERLAY: VARDİYA GİRİŞ QR BÜYÜT ──────────────────── -->
+<div id="vardiyaQrBuyukOverlay" onclick="window._qrKucult()" style="
+  display:none; position:fixed; inset:0; z-index:9999;
+  background:rgba(0,0,0,0.85); backdrop-filter:blur(6px);
+  align-items:center; justify-content:center; cursor:zoom-out;
+">
+  <div style="text-align:center" onclick="event.stopPropagation()">
+    <div style="font-size:13px;color:#9ca3af;margin-bottom:12px;font-weight:600">📱 Vardiyaya Giriş — QR Kodu</div>
+    <div style="background:#fff;border-radius:16px;padding:16px;display:inline-block;box-shadow:0 8px 40px rgba(0,0,0,0.5)">
+      <img id="vardiyaGirisQrImgBuyuk" src="" alt="QR" style="width:260px;height:260px;display:block" />
+    </div>
+    <div style="font-size:12px;color:#6b7280;margin-top:12px">Telefonunla okut — kapatmak için dışarıya dokun</div>
+    <button onclick="window._qrKucult()" style="
+      margin-top:16px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2);
+      color:#e8e9ec; border-radius:10px; padding:10px 28px; font-size:14px; cursor:pointer;
+    ">Kapat ✕</button>
   </div>
 </div>
 
@@ -12537,6 +12557,19 @@ function _dvBeklePhoneOnay(pid1, devirId) {
     } catch(_){}
   }, 4000);
 }
+
+window._qrBuyut = function(){
+  var src = document.getElementById('vardiyaGirisQrImg');
+  var big = document.getElementById('vardiyaGirisQrImgBuyuk');
+  var ov  = document.getElementById('vardiyaQrBuyukOverlay');
+  if (!src || !ov) return;
+  if (big) big.src = src.src;
+  ov.style.display = 'flex';
+};
+window._qrKucult = function(){
+  var ov = document.getElementById('vardiyaQrBuyukOverlay');
+  if (ov) ov.style.display = 'none';
+};
 
 window._dvQrBuyut = function(){
   var big = document.getElementById('dvQrBuyukDiv');
