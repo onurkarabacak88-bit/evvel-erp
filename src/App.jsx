@@ -36,6 +36,7 @@ import EkstreYukle from './pages/EkstreYukle';
 import KartYonetimi from './pages/KartYonetimi';
 import IsBasvuruForm from './pages/IsBasvuruForm';
 import IsBasvuruListesi from './pages/IsBasvuruListesi';
+import Maliyet from './pages/Maliyet';
 import './index.css';
 
 const NAV = [
@@ -43,6 +44,7 @@ const NAV = [
     { id: 'panel',            label: 'CFO Panel',           icon: '⬛' },
     { id: 'ops-merkez',       label: 'Operasyon Merkezi',   icon: '📡' },
     { id: 'akilli-denetim',   label: 'Akıllı Denetim',      icon: '🧠' },
+    { id: 'maliyet',          label: 'Maliyet',             icon: '💰' },
     { id: 'strateji',         label: 'Strateji Motoru',     icon: '🎯' },
   ]},
   { group: 'Onay Bekleyenler', gicon: '✅', items: [
@@ -91,6 +93,7 @@ const PAGES = {
   panel:              Panel,
   'ops-merkez':       OperasyonMerkezi,
   'akilli-denetim':   TruthMotor,
+  maliyet:            Maliyet,
   'evo-satis':        EvoSatis,
   'kasa-teslim':      KasaTeslim,
   strateji:           Strateji,
