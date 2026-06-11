@@ -10,6 +10,21 @@ import { api, fmt, fmtDate } from '../utils/api';
 //    maliyeti" görünümü için şube seçici
 // ─────────────────────────────────────────────────────────────────────────
 
+const _gunGunKolonVarsayilan = [
+  { kod: 'sut', baslik: 'Süt' },
+  { kod: 'kahve', baslik: 'Kahve' },
+  { kod: 'surup', baslik: 'Şurup' },
+  { kod: 'bardak_8oz', baslik: '8oz Bardak' },
+  { kod: 'bardak_14oz', baslik: '14oz Bardak' },
+  { kod: 'karton_bardak', baslik: 'Karton Bardak' },
+  { kod: 'plastik_bardak', baslik: 'Plastik Bardak' },
+  { kod: 'kapak', baslik: 'Kapak' },
+  { kod: 'pecete', baslik: 'Peçete' },
+  { kod: 'su', baslik: 'Su' },
+  { kod: 'pasta', baslik: 'Pasta/Tatlı' },
+  { kod: 'diger', baslik: 'Diğer Sarf' },
+];
+
 export default function Maliyet() {
   const [subeler, setSubeler] = useState([]);
   const [subeId, setSubeId] = useState(''); // '' = tüm şubeler
@@ -17,6 +32,7 @@ export default function Maliyet() {
   const [maliyetData, setMaliyetData] = useState(null);
   const [maliyetFiyatlar, setMaliyetFiyatlar] = useState([]);
   const [stokKalemleri, setStokKalemleri] = useState([]);
+  const [gunGunData, setGunGunData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [mesaj, setMesaj] = useState(null); // {m, t}
 
@@ -41,10 +57,12 @@ export default function Maliyet() {
       api('/ops/maliyet/ozet' + q),
       api('/ops/maliyet/alis-fiyatlari'),
       api('/ops/maliyet/stok-kalemleri'),
-    ]).then(([ozet, fiyatlar, kalemler]) => {
+      api('/ops/maliyet/gun-gun?gun=7' + (subeId ? `&sube_id=${encodeURIComponent(subeId)}` : '')),
+    ]).then(([ozet, fiyatlar, kalemler, gunGun]) => {
       setMaliyetData(ozet);
       setMaliyetFiyatlar(fiyatlar?.satirlar || []);
       setStokKalemleri(kalemler?.kalemler || []);
+      setGunGunData(gunGun);
     }).catch(() => {}).finally(() => setLoading(false));
   };
 
@@ -238,50 +256,35 @@ export default function Maliyet() {
         )}
       </div>
 
-      {/* Gün gün maliyet detayı — başlıklar kuruldu, içerikler sonraki adımda detaylandırılacak */}
+      {/* Gün gün maliyet detayı — Ürün Aç (URUN_AC) tüketim verisi × güncel alış fiyatı */}
       <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
         <span>📅 Gün Gün Maliyet{subeId ? '' : ' — Tüm Şubeler'}</span>
-        <span style={{ fontSize: 10, color: 'var(--text3)' }}>İskelet — kalem içerikleri birlikte detaylandırılacak</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>"Ürün Aç" tüketimi × güncel fiyat — reçete gerekmez</span>
       </div>
+      {gunGunData?.fiyat_eksik_kalemler?.length > 0 && (
+        <div style={{ marginBottom: 8, fontSize: 11, color: 'var(--yellow)' }}>
+          ⚠️ Fiyatı tanımlanmamış kalemler (0₺ sayıldı): {gunGunData.fiyat_eksik_kalemler.join(', ')}
+        </div>
+      )}
       <div style={{ overflowX: 'auto', marginBottom: 16 }}>
         <table className="tablo">
           <thead>
             <tr>
               <th>Tarih</th>
               {!subeId && <th>Şube</th>}
-              <th>Süt</th>
-              <th>Kahve</th>
-              <th>Şurup</th>
-              <th>8oz Bardak</th>
-              <th>14oz Bardak</th>
-              <th>Karton Bardak</th>
-              <th>Plastik Bardak</th>
-              <th>Kapak</th>
-              <th>Peçete</th>
-              <th>Su</th>
-              <th>Pasta/Tatlı</th>
-              <th>Diğer Sarf</th>
+              {(gunGunData?.kolonlar || _gunGunKolonVarsayilan).map(k => <th key={k.kod}>{k.baslik}</th>)}
               <th>TOPLAM</th>
             </tr>
           </thead>
           <tbody>
-            {gunGunTarihler.map((tarih, i) => (
+            {(gunGunData?.satirlar || gunGunTarihler.map(t => ({ tarih: t, sube_adi: subeAdiSecili, _bos: true }))).map((satir, i) => (
               <tr key={i}>
-                <td>{fmtDate(tarih)}</td>
-                {!subeId && <td>{subeAdiSecili}</td>}
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
+                <td>{fmtDate(satir.tarih)}</td>
+                {!subeId && <td>{satir.sube_adi}</td>}
+                {(gunGunData?.kolonlar || _gunGunKolonVarsayilan).map(k => (
+                  <td key={k.kod}>{satir._bos ? '—' : fmt(satir[k.kod] || 0)}</td>
+                ))}
+                <td style={{ fontWeight: 700 }}>{satir._bos ? '—' : fmt(satir.toplam || 0)}</td>
               </tr>
             ))}
           </tbody>

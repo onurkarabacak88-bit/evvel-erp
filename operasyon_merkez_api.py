@@ -11811,6 +11811,152 @@ def ops_maliyet_ozet(
     }
 
 
+# Gün Gün Maliyet tablosu kolonları: (anahtar, başlık, _BAR_KEYS içindeki kaynak anahtarlar)
+_GUN_GUN_KOLONLAR: List[Tuple[str, str, List[str]]] = [
+    ("sut", "Süt", ["sut_litre"]),
+    ("kahve", "Kahve", ["kahve_paket"]),
+    ("surup", "Şurup", ["surup_adet"]),
+    ("bardak_8oz", "8oz Bardak", ["bardak_kucuk"]),
+    ("bardak_14oz", "14oz Bardak", ["bardak_buyuk"]),
+    ("karton_bardak", "Karton Bardak", ["karton_bardak"]),
+    ("plastik_bardak", "Plastik Bardak", ["bardak_plastik"]),
+    ("kapak", "Kapak", ["kapak_adet"]),
+    ("pecete", "Peçete", ["pecete_paket"]),
+    ("su", "Su", ["su_adet"]),
+    ("pasta", "Pasta/Tatlı", [*PASTA_KEYS, "pasta_adet"]),
+    ("diger", "Diğer Sarf", ["diger_sarf", "redbull_adet", "soda_adet", "cookie_adet"]),
+]
+
+
+@router.get("/maliyet/gun-gun")
+def ops_maliyet_gun_gun(
+    gun: int = Query(7, ge=1, le=31),
+    sube_id: Optional[str] = Query(None),
+):
+    """
+    Gün Gün Maliyet — şubelerin günlük "Ürün Aç" (URUN_AC) bildirimlerinde
+    raporladığı tüketim adetlerini, güncel alış fiyatlarıyla (urun_alis_fiyat)
+    çarpıp kalem grubu bazında (süt, kahve, bardak vb.) günlük maliyete çevirir.
+
+    Reçete gerektirmez — şubenin "bugün şunlardan şu kadar açtım" dediği
+    gerçek tüketim verisine dayanır. Fiyatı tanımlanmamış kalemler 0 TL
+    sayılır ve `fiyat_eksik_kalemler` listesinde döner.
+    """
+    with db() as (conn, cur):
+        _ensure_maliyet_tablolari(cur)
+
+        sube_filter = "AND sube_id = %s" if sube_id else ""
+        params: list = [gun - 1]
+        if sube_id:
+            params.append(sube_id)
+
+        cur.execute(
+            f"""
+            SELECT sube_id::text AS sube_id, tarih::text AS tarih, aciklama
+            FROM operasyon_defter
+            WHERE etiket='URUN_AC'
+              AND tarih >= CURRENT_DATE - (%s || ' days')::interval
+              {sube_filter}
+            """,
+            params,
+        )
+        tuketim_map: Dict[Tuple[str, str], Dict[str, int]] = {}
+        for r in cur.fetchall():
+            key = (r["sube_id"], r["tarih"])
+            delta = _urun_ac_delta_parse(r["aciklama"] or "")
+            existing = tuketim_map.setdefault(key, {k: 0 for k in _BAR_KEYS})
+            for k, v in delta.items():
+                existing[k] = existing.get(k, 0) + v
+
+        # Şube adları
+        sube_adlari: Dict[str, str] = {}
+        cur.execute("SELECT id, ad FROM subeler")
+        for r in cur.fetchall():
+            sube_adlari[str(r["id"])] = r["ad"]
+
+        # Tüm _BAR_KEYS için fiyat geçmişi (kalem_kodu -> [(gecerli_baslangic, gecerli_bitis, fiyat), ...])
+        cur.execute(
+            """
+            SELECT kalem_kodu, gecerli_baslangic::text AS gecerli_baslangic,
+                   gecerli_bitis::text AS gecerli_bitis, birim_maliyet_tl
+            FROM urun_alis_fiyat
+            WHERE kalem_kodu = ANY(%s)
+            ORDER BY kalem_kodu, gecerli_baslangic
+            """,
+            (list(_BAR_KEYS),),
+        )
+        fiyat_gecmisi: Dict[str, List[Tuple[str, Optional[str], float]]] = {}
+        for r in cur.fetchall():
+            fiyat_gecmisi.setdefault(r["kalem_kodu"], []).append(
+                (r["gecerli_baslangic"], r["gecerli_bitis"], float(r["birim_maliyet_tl"] or 0))
+            )
+
+        def _fiyat_bul(kalem_kodu: str, tarih_str: str) -> Optional[float]:
+            secenekler = fiyat_gecmisi.get(kalem_kodu) or []
+            uygun = None
+            for baslangic, bitis, fiyat in secenekler:
+                if baslangic <= tarih_str and (bitis is None or bitis >= tarih_str):
+                    if uygun is None or baslangic > uygun[0]:
+                        uygun = (baslangic, fiyat)
+            return uygun[1] if uygun else None
+
+        # Tarih listesi: bugünden geriye `gun` gün, en yeni üstte
+        bugun = date.today()
+        tarihler = [(bugun - timedelta(days=i)).isoformat() for i in range(gun)]
+
+        fiyat_eksik: set = set()
+        satirlar = []
+        if sube_id:
+            anahtarlar = [(sube_id, t) for t in tarihler]
+        else:
+            # Tüm şubeler — tarih bazında topla
+            anahtarlar = [(None, t) for t in tarihler]
+
+        for sid, tarih_str in anahtarlar:
+            if sid is None:
+                # tüm şubelerin o günkü tüketimini birleştir
+                birlesik: Dict[str, int] = {k: 0 for k in _BAR_KEYS}
+                for (k_sid, k_tarih), m in tuketim_map.items():
+                    if k_tarih != tarih_str:
+                        continue
+                    for k, v in m.items():
+                        birlesik[k] = birlesik.get(k, 0) + v
+                tuketim = birlesik
+                sube_adi = "Tüm Şubeler"
+            else:
+                tuketim = tuketim_map.get((sid, tarih_str), {k: 0 for k in _BAR_KEYS})
+                sube_adi = sube_adlari.get(sid, sid)
+
+            satir: Dict[str, Any] = {"tarih": tarih_str, "sube_id": sid, "sube_adi": sube_adi}
+            toplam = 0.0
+            for kolon_kod, _baslik, kaynaklar in _GUN_GUN_KOLONLAR:
+                kolon_toplam = 0.0
+                for kaynak in kaynaklar:
+                    adet = int(tuketim.get(kaynak) or 0)
+                    if adet <= 0:
+                        continue
+                    fiyat = _fiyat_bul(kaynak, tarih_str)
+                    if fiyat is None:
+                        if adet > 0:
+                            fiyat_eksik.add(kaynak)
+                        continue
+                    kolon_toplam += adet * fiyat
+                satir[kolon_kod] = round(kolon_toplam, 2)
+                toplam += kolon_toplam
+            satir["toplam"] = round(toplam, 2)
+            satirlar.append(satir)
+
+    return {
+        "gun": gun,
+        "sube_id": sube_id,
+        "kolonlar": [{"kod": k, "baslik": b} for k, b, _ in _GUN_GUN_KOLONLAR],
+        "satirlar": satirlar,
+        "fiyat_eksik_kalemler": sorted(
+            STOK_LABEL_TR.get(k, k) for k in fiyat_eksik
+        ),
+    }
+
+
 @router.get("/maliyet/alis-fiyatlari")
 def ops_maliyet_alis_fiyatlari():
     """Tanımlı alış fiyatlarını listeler."""
