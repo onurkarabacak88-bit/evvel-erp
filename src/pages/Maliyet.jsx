@@ -273,7 +273,11 @@ export default function Maliyet() {
               <th>Tarih</th>
               {!subeId && <th>Şube</th>}
               {(gunGunData?.kolonlar || _gunGunKolonVarsayilan).map(k => <th key={k.kod}>{k.baslik}</th>)}
-              <th>TOPLAM</th>
+              <th>Malzeme Toplamı</th>
+              <th>👥 Personel (kişi)</th>
+              <th>👥 Personel Saat</th>
+              <th>👥 Personel Maliyeti</th>
+              <th>GENEL TOPLAM</th>
             </tr>
           </thead>
           <tbody>
@@ -285,6 +289,10 @@ export default function Maliyet() {
                   <td key={k.kod}>{satir._bos ? '—' : fmt(satir[k.kod] || 0)}</td>
                 ))}
                 <td style={{ fontWeight: 700 }}>{satir._bos ? '—' : fmt(satir.toplam || 0)}</td>
+                <td>{satir._bos ? '—' : (satir.personel_sayisi || 0)}</td>
+                <td>{satir._bos ? '—' : (satir.personel_saat || 0)}</td>
+                <td>{satir._bos ? '—' : fmt(satir.personel_maliyet_tl || 0)}</td>
+                <td style={{ fontWeight: 700, color: 'var(--accent)' }}>{satir._bos ? '—' : fmt(satir.genel_toplam || 0)}</td>
               </tr>
             ))}
           </tbody>

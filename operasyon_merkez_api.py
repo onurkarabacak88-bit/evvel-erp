@@ -11900,6 +11900,60 @@ def ops_maliyet_gun_gun(
                         uygun = (baslangic, fiyat)
             return uygun[1] if uygun else None
 
+        # ── Personel maliyeti — vardiya_atama'daki planlanan saatler × ücret ──
+        # Sürekli personel: günlük maliyet = maas / 30 (İş Kanunu standardı, o gün
+        # vardiyası varsa). Part-time: planlanan saat × saatlik_ucret.
+        AYLIK_GUN = 30.0
+        personel_sube_filter = "AND vs.sube_id = %s" if sube_id else ""
+        personel_params: list = [gun - 1]
+        if sube_id:
+            personel_params.append(sube_id)
+        cur.execute(
+            f"""
+            SELECT va.tarih::text AS tarih, va.personel_id::text AS personel_id,
+                   SUM(EXTRACT(EPOCH FROM (
+                       CASE WHEN va.bitis_saat <= va.baslangic_saat
+                            THEN (va.bitis_saat::time + INTERVAL '24h') - va.baslangic_saat::time
+                            ELSE va.bitis_saat::time - va.baslangic_saat::time END
+                   ))/3600.0) AS saat
+            FROM vardiya_atama va
+            JOIN vardiya_slot vs ON vs.id = va.slot_id
+            WHERE va.tarih >= CURRENT_DATE - (%s || ' days')::interval
+              AND va.durum IN ('planli','onayli')
+              {personel_sube_filter}
+            GROUP BY va.tarih, va.personel_id
+            """,
+            personel_params,
+        )
+        vardiya_saatleri = [dict(r) for r in cur.fetchall()]
+
+        personel_bilgi: Dict[str, dict] = {}
+        pids = sorted({r["personel_id"] for r in vardiya_saatleri})
+        if pids:
+            cur.execute(
+                "SELECT id::text, calisma_turu, maas, saatlik_ucret FROM personel WHERE id::text = ANY(%s)",
+                (pids,),
+            )
+            for r in cur.fetchall():
+                personel_bilgi[r["id"]] = dict(r)
+
+        personel_gun_map: Dict[str, Dict[str, float]] = {}
+        for r in vardiya_saatleri:
+            saat = float(r["saat"] or 0)
+            if saat <= 0:
+                continue
+            tarih_str = r["tarih"]
+            p = personel_bilgi.get(r["personel_id"]) or {}
+            is_surekli = (p.get("calisma_turu") or "surekli") == "surekli"
+            if is_surekli:
+                maliyet = float(p.get("maas") or 0) / AYLIK_GUN
+            else:
+                maliyet = saat * float(p.get("saatlik_ucret") or 0)
+            g = personel_gun_map.setdefault(tarih_str, {"sayisi": 0, "saat": 0.0, "maliyet": 0.0})
+            g["sayisi"] += 1
+            g["saat"] += saat
+            g["maliyet"] += maliyet
+
         # Tarih listesi: bugünden geriye `gun` gün, en yeni üstte
         bugun = date.today()
         tarihler = [(bugun - timedelta(days=i)).isoformat() for i in range(gun)]
@@ -11944,6 +11998,13 @@ def ops_maliyet_gun_gun(
                 satir[kolon_kod] = round(kolon_toplam, 2)
                 toplam += kolon_toplam
             satir["toplam"] = round(toplam, 2)
+
+            pg = personel_gun_map.get(tarih_str, {"sayisi": 0, "saat": 0.0, "maliyet": 0.0})
+            satir["personel_sayisi"] = pg["sayisi"]
+            satir["personel_saat"] = round(pg["saat"], 2)
+            satir["personel_maliyet_tl"] = round(pg["maliyet"], 2)
+            satir["genel_toplam"] = round(toplam + pg["maliyet"], 2)
+
             satirlar.append(satir)
 
     return {
