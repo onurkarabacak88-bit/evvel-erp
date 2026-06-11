@@ -1156,30 +1156,38 @@ def devir_giris(body: DevirGirisBody):
         asil_sube_id = p.get("sube_id") or body.sube_id
         vardiya_disi = str(asil_sube_id) != str(body.sube_id) or not vardiya_tanimli
 
-        # Yoklama kaydı oluştur (zaten varsa güncelleme yok, tekrar giremez)
+        # Yoklama kaydı: bugün bu şubede zaten (açık) bir kaydı varsa onu kullan,
+        # yoksa devir kabulüyle birlikte yeni giriş kaydı aç.
+        # (Devir kabulü, "günün ilk girişi" şartına bağlı değildir — kişi
+        # aynı gün içinde önceki bir vardiyadan devam ediyor olabilir.)
         cur.execute("""
-            SELECT id FROM gorev_yoklama
+            SELECT id, giris_ts, vardiya_tip FROM gorev_yoklama
             WHERE sube_id=%s AND personel_id=%s AND tarih=%s
         """, (body.sube_id, body.personel_id, tarih))
-        if cur.fetchone():
-            raise HTTPException(400, "Bu şube için bugün zaten giriş kaydın var.")
+        mevcut = cur.fetchone()
 
+        simdi = dt_now_tr()
         import uuid as _uuid2
-        giris_ts = dt_now_tr()
-        cur.execute("""
-            INSERT INTO gorev_yoklama
-                (id, tarih, sube_id, personel_id, vardiya_tip, konum_mesafe_m,
-                 konum_onaylandi, vardiya_disi, asil_sube_id, giris_ts)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        """, (str(_uuid2.uuid4()), tarih, body.sube_id, body.personel_id, vardiya_tip,
-              konum_mesafe_m, konum_onaylandi, vardiya_disi, str(asil_sube_id), giris_ts))
+        if mevcut:
+            mevcut = dict(mevcut)
+            giris_ts = mevcut["giris_ts"]
+            vardiya_tip = mevcut["vardiya_tip"]
+        else:
+            giris_ts = simdi
+            cur.execute("""
+                INSERT INTO gorev_yoklama
+                    (id, tarih, sube_id, personel_id, vardiya_tip, konum_mesafe_m,
+                     konum_onaylandi, vardiya_disi, asil_sube_id, giris_ts)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (str(_uuid2.uuid4()), tarih, body.sube_id, body.personel_id, vardiya_tip,
+                  konum_mesafe_m, konum_onaylandi, vardiya_disi, str(asil_sube_id), giris_ts))
 
         # Devri onayla
         cur.execute("""
             UPDATE kasa_devir_onay
             SET kabul_eden_id=%s, kabul_ts=%s, durum='onaylandi'
             WHERE id=%s
-        """, (body.personel_id, giris_ts, body.devir_id))
+        """, (body.personel_id, simdi, body.devir_id))
 
         # Eğer kapanis_kayit'te bekleyen vardiya devri varsa adim2'yi otomatik tamamla
         from sube_kapanis_dual import kasa_devir_adim2_kaydet, _korumali_yan_etki
@@ -1198,7 +1206,7 @@ def devir_giris(body: DevirGirisBody):
                 # Aynı kişi her iki imzayı atamaz
                 sabah_pid = kk.get("sabahci_personel_id") or ""
                 if str(body.personel_id) != str(sabah_pid):
-                    kasa_devir_adim2_kaydet(cur, body.sube_id, kk["id"], body.personel_id, p["ad_soyad"], giris_ts)
+                    kasa_devir_adim2_kaydet(cur, body.sube_id, kk["id"], body.personel_id, p["ad_soyad"], simdi)
 
         _korumali_yan_etki(cur, "kasa_devir_adim2", _adim2)
 
