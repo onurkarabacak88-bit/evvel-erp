@@ -69,21 +69,30 @@ export default function Panel({ onNavigate }) {
   const [faturaSatirlar, setFaturaSatirlar] = useState(null); // [{ham_metin, anahtar, miktar, tutar, kalem_kodu, kalem_adi, birim, onceki_fiyat, onceki_tarih, kaydedildi}]
   const [faturaUyari, setFaturaUyari] = useState('');
   const [faturaKaydedilenler, setFaturaKaydedilenler] = useState({}); // {idx: true}
+  const [stokKalemleri, setStokKalemleri] = useState([]); // [{kalem_kodu, kalem_adi, sube_sayisi}] — depo katalogu
 
   const maliyetYukle = () => {
     setMaliyetLoading(true);
     Promise.all([
       api('/ops/maliyet/ozet'),
       api('/ops/maliyet/alis-fiyatlari'),
-    ]).then(([ozet, fiyatlar]) => {
+      api('/ops/maliyet/stok-kalemleri'),
+    ]).then(([ozet, fiyatlar, kalemler]) => {
       setMaliyetData(ozet);
       setMaliyetFiyatlar(fiyatlar?.satirlar || []);
+      setStokKalemleri(kalemler?.kalemler || []);
     }).catch(() => {}).finally(() => setMaliyetLoading(false));
   };
 
   useEffect(() => {
     if (panelTab === 'maliyet' && !maliyetData) maliyetYukle();
   }, [panelTab]);
+
+  // kalem_kodu yazıldıkça depo kataloğundaki kalem_adi'yı otomatik doldurmak için
+  const stokKalemiSecildi = (kalemKodu, setFn, alanKodu = 'kalem_kodu', alanAd = 'kalem_adi') => {
+    const k = stokKalemleri.find(s => s.kalem_kodu === kalemKodu);
+    setFn(f => ({ ...f, [alanKodu]: kalemKodu, ...(k ? { [alanAd]: k.kalem_adi } : {}) }));
+  };
 
   const maliyetFiyatKaydet = () => {
     const kalem = (maliyetForm.kalem_kodu || '').trim();
@@ -155,7 +164,14 @@ export default function Panel({ onNavigate }) {
   };
 
   const faturaSatirGuncelle = (idx, alan, deger) => {
-    setFaturaSatirlar(rows => rows.map((r, i) => i === idx ? { ...r, [alan]: deger } : r));
+    setFaturaSatirlar(rows => rows.map((r, i) => {
+      if (i !== idx) return r;
+      if (alan === 'kalem_kodu') {
+        const k = stokKalemleri.find(s => s.kalem_kodu === deger);
+        return { ...r, kalem_kodu: deger, ...(k ? { kalem_adi: k.kalem_adi } : {}) };
+      }
+      return { ...r, [alan]: deger };
+    }));
   };
 
   const faturaSatirKaydet = (idx) => {
@@ -2010,9 +2026,9 @@ export default function Panel({ onNavigate }) {
             <div className="card" style={{ marginBottom: 16 }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px,1fr))', gap: 10, marginBottom: 12 }}>
                 <div className="form-group" style={{ margin: 0 }}>
-                  <label>Kalem kodu</label>
-                  <input type="text" placeholder="örn. sut_litre" value={maliyetForm.kalem_kodu}
-                    onChange={e => setMaliyetForm(f => ({ ...f, kalem_kodu: e.target.value }))} />
+                  <label>Kalem kodu (depo kataloğu)</label>
+                  <input type="text" list="depo-kalem-listesi" placeholder="örn. sut_litre" value={maliyetForm.kalem_kodu}
+                    onChange={e => stokKalemiSecildi(e.target.value, setMaliyetForm)} />
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
                   <label>Kalem adı</label>
@@ -2045,8 +2061,16 @@ export default function Panel({ onNavigate }) {
               </button>
               <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>
                 Aynı kalem kodu için yeni bir fiyat kaydedersen, eski fiyat otomatik olarak "geçmiş" olarak saklanır ve aşağıdaki listede artış/azalış oku ile karşılaştırma görürsün.
+                Kalem kodu, depo stoğundaki ({stokKalemleri.length} kalem) gerçek kodlardan seçilirse, fiyat o kalemin depo stok değerine de otomatik yansır.
               </div>
             </div>
+
+            {/* Depo kataloğu — kalem kodu autocomplete kaynağı (maliyet formu + fatura satırları) */}
+            <datalist id="depo-kalem-listesi">
+              {stokKalemleri.map(k => (
+                <option key={k.kalem_kodu} value={k.kalem_kodu}>{k.kalem_adi}</option>
+              ))}
+            </datalist>
 
             {/* Fatura PDF yükleme */}
             <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
@@ -2086,7 +2110,7 @@ export default function Panel({ onNavigate }) {
                           {s.miktar != null && <span> · {s.miktar} {s.birim || ''}</span>}
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: 8, alignItems: 'center' }}>
-                          <input type="text" placeholder="Stok kalem kodu (örn. sut_litre)" value={s.kalem_kodu}
+                          <input type="text" list="depo-kalem-listesi" placeholder="Stok kalem kodu (örn. sut_litre)" value={s.kalem_kodu}
                             onChange={e => faturaSatirGuncelle(idx, 'kalem_kodu', e.target.value)} disabled={kaydedildi} />
                           <input type="text" placeholder="Kalem adı" value={s.kalem_adi}
                             onChange={e => faturaSatirGuncelle(idx, 'kalem_adi', e.target.value)} disabled={kaydedildi} />

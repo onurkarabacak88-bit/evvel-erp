@@ -11842,7 +11842,10 @@ class AlisFiyatBody(BaseModel):
 def _kaydet_alis_fiyati(cur: Any, kalem: str, kalem_adi: Optional[str], birim: str,
                         birim_maliyet_tl: float, bas: str, tedarikci: Optional[str],
                         notlar: Optional[str]) -> str:
-    """urun_alis_fiyat'a yeni fiyat satırı ekler, önceki geçerli kaydı kapatır. id döner."""
+    """urun_alis_fiyat'a yeni fiyat satırı ekler, önceki geçerli kaydı kapatır. id döner.
+    Aynı kalem_kodu ile depo stoklarında (sube_depo_stok) kayıt varsa, oradaki
+    alis_fiyati_tl alanını da günceller — böylece depo ekranı ve stok değeri
+    hesaplamaları (food cost) güncel fiyatı kullanır."""
     _ensure_maliyet_tablolari(cur)
     cur.execute(
         "UPDATE urun_alis_fiyat SET gecerli_bitis = %s WHERE kalem_kodu = %s AND gecerli_bitis IS NULL AND gecerli_baslangic < %s",
@@ -11857,7 +11860,39 @@ def _kaydet_alis_fiyati(cur: Any, kalem: str, kalem_adi: Optional[str], birim: s
         """,
         (kalem, kalem_adi or kalem, birim, round(birim_maliyet_tl, 4), bas, tedarikci, notlar),
     )
-    return str((cur.fetchone() or {}).get("id") or "")
+    new_id = str((cur.fetchone() or {}).get("id") or "")
+    try:
+        cur.execute(
+            "UPDATE sube_depo_stok SET alis_fiyati_tl = %s, guncelleme = NOW() WHERE kalem_kodu = %s",
+            (round(birim_maliyet_tl, 4), kalem),
+        )
+    except Exception:
+        pass
+    return new_id
+
+
+@router.get("/maliyet/stok-kalemleri")
+def ops_maliyet_stok_kalemleri():
+    """
+    Depo stok kataloğundaki (sube_depo_stok) tüm kalem kodu/adlarını tekilleştirip döner —
+    Maliyet sekmesinde fatura kalemlerini gerçek depo kalemleriyle eşleştirmek için
+    arama/öneri listesi olarak kullanılır. Bir kalem_kodu birden fazla şubede farklı
+    adla geçiyorsa en sık kullanılan adı seçer.
+    """
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT kalem_kodu,
+                   (array_agg(kalem_adi ORDER BY kalem_adi))[1] AS kalem_adi,
+                   COUNT(*) AS sube_sayisi
+            FROM sube_depo_stok
+            WHERE kalem_kodu IS NOT NULL AND kalem_kodu != ''
+            GROUP BY kalem_kodu
+            ORDER BY kalem_adi
+            """
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+    return {"kalemler": rows, "toplam": len(rows)}
 
 
 @router.post("/maliyet/alis-fiyat-kaydet")
