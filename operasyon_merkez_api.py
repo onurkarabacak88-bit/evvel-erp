@@ -7003,11 +7003,21 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
                     "Devir uyumsuzluğu için gider eklenemez — açılış veya önceki gün devir düzeltin.",
                 )
             if eski_fark > 0:
-                raise HTTPException(
-                    400,
-                    "Kasa FAZLA olduğunda 'eksik gider' eklenemez — "
-                    "fazla için 'ciro_fazla' sebebini kullanın (Z eksik basıldı → ciroya eklenir).",
-                )
+                # Kasa "fazla" görünüyor olabilir — tam da bu gider girilmediği için
+                # (beklenen kasa olduğundan yüksek hesaplanmış). Girilen gider, mevcut
+                # fazlayı düşürür/sıfırlar; sadece fazlayı AÇIĞA çevirecek kadar BÜYÜK
+                # bir tutar girilirse engelle (o zaman gerçek tutar/sebep şüpheli).
+                try:
+                    _tutar = float((payload or {}).get("tutar") or 0)
+                except (TypeError, ValueError):
+                    _tutar = 0.0
+                if _tutar - eski_fark > 0.5:
+                    raise HTTPException(
+                        400,
+                        f"Girilen gider ({_tutar:.2f}₺), mevcut kasa fazlasından "
+                        f"({eski_fark:.2f}₺) büyük — bu kasayı açığa çevirir. Tutarı "
+                        "kontrol edin veya 'ciro_fazla' sebebini kullanın.",
+                    )
             hedef = _kk_gider_ekle(cur, sube_id, tarih, payload, pid, pad)
         elif sebep == "ciro_fazla":
             if uyari_tip == "ACILIS_KASA_FARK":
