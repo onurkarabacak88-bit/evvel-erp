@@ -9186,7 +9186,8 @@ window.solSekmeAc = function(id) {
   // 🔒 GÜN KAPANDI: yalnızca «Depodan Gelen — Teslim Al» (+ Ana sayfa / Sipariş Takip görüntüleme) açık.
   try {
     var _opK = (typeof lastData !== 'undefined' && lastData && lastData.operasyon) || {};
-    if (_opK.kapanis_tamamlandi_bugun === true && ['depoTeslim', 'ana', 'siparisTakip'].indexOf(id) === -1) {
+    var _gunKapali = _opK.kapanis_tamamlandi_bugun === true && !(lastData && lastData.sube_acik);
+    if (_gunKapali && ['depoTeslim', 'ana', 'siparisTakip'].indexOf(id) === -1) {
       showToast('🔒 Gün kapandı — yalnızca «Depodan Gelen — Teslim Al» kullanılabilir.', 'info', 4500);
       return;
     }
@@ -9266,7 +9267,7 @@ window.devirModalAc = function() {
   // 🔒 Gün kapandıysa kasa devri de açılmaz
   try {
     var _opD = (typeof lastData !== 'undefined' && lastData && lastData.operasyon) || {};
-    if (_opD.kapanis_tamamlandi_bugun === true) {
+    if (_opD.kapanis_tamamlandi_bugun === true && !(lastData && lastData.sube_acik)) {
       showToast('🔒 Gün kapandı — yalnızca «Depodan Gelen — Teslim Al» kullanılabilir.', 'info', 4500);
       return;
     }
@@ -9294,7 +9295,7 @@ window.kapanisModalAc = function() {
   try {
     var _op = (typeof lastData !== 'undefined' && lastData && lastData.operasyon) || {};
     var _evL = [].concat(_op.events || [], _op.events_ozet || []);
-    var _kapBitti = (_op.kapanis_tamamlandi_bugun === true) || _evL.some(function(ev){
+    var _kapBitti = (_op.kapanis_tamamlandi_bugun === true && !(lastData && lastData.sube_acik)) || _evL.some(function(ev){
       return ev && String(ev.tip || '').toUpperCase() === 'KAPANIS'
              && String(ev.durum || '').toLowerCase() === 'tamamlandi';
     });
@@ -12383,7 +12384,10 @@ function updateSolAksiyonChips(data) {
     var kapTip = aktif && String(aktif.tip || '').toUpperCase() === 'KAPANIS';
     var kapDurum = kapTip ? String(aktif.durum || '').toLowerCase() : '';
     var evListesi = [].concat(op.events || [], op.events_ozet || []);
-    var kapBitti = (op.kapanis_tamamlandi_bugun === true) || evListesi.some(function(ev){
+    // kapanis_tamamlandi_bugun: dünkü kapanış bugün erken saatte mühürlenmişse de true
+    // dönebilir (bkz. build_panel_operasyon_blob). Açılış zaten yapıldıysa (sube_acik)
+    // bu artık "yeni günün başladığı" anlamına gelir — panel kilitlenmemeli.
+    var kapBitti = (op.kapanis_tamamlandi_bugun === true && !data.sube_acik) || evListesi.some(function(ev){
       return ev && String(ev.tip||'').toUpperCase()==='KAPANIS' && String(ev.durum||'').toLowerCase()==='tamamlandi';
     });
     var kapKart = document.getElementById('solKapanisKart');
