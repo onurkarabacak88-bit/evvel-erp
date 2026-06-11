@@ -84,6 +84,20 @@ export default function Maliyet() {
     .finally(() => setKaydediliyor(false));
   };
 
+  // Gün gün maliyet iskeleti — son 7 gün, en yeni üstte (içerikler sonraki adımda doldurulacak)
+  const gunGunTarihler = (() => {
+    const out = [];
+    const d = new Date();
+    for (let i = 0; i < 7; i++) {
+      const t = new Date(d);
+      t.setDate(d.getDate() - i);
+      out.push(t.toISOString().slice(0, 10));
+    }
+    return out;
+  })();
+
+  const subeAdiSecili = subeId ? (subeler.find(s => s.id === subeId)?.ad || subeId) : 'Tüm Şubeler';
+
   const gruplar = (() => {
     const map = new Map();
     for (const r of maliyetFiyatlar) {
@@ -222,6 +236,56 @@ export default function Maliyet() {
             <div style={{ fontSize: 11, color: 'var(--text3)' }}>{maliyetData.benchmark.aciklama}</div>
           </div>
         )}
+      </div>
+
+      {/* Gün gün maliyet detayı — başlıklar kuruldu, içerikler sonraki adımda detaylandırılacak */}
+      <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
+        <span>📅 Gün Gün Maliyet{subeId ? '' : ' — Tüm Şubeler'}</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>İskelet — kalem içerikleri birlikte detaylandırılacak</span>
+      </div>
+      <div style={{ overflowX: 'auto', marginBottom: 16 }}>
+        <table className="tablo">
+          <thead>
+            <tr>
+              <th>Tarih</th>
+              {!subeId && <th>Şube</th>}
+              <th>Süt</th>
+              <th>Kahve</th>
+              <th>Şurup</th>
+              <th>8oz Bardak</th>
+              <th>14oz Bardak</th>
+              <th>Karton Bardak</th>
+              <th>Plastik Bardak</th>
+              <th>Kapak</th>
+              <th>Peçete</th>
+              <th>Su</th>
+              <th>Pasta/Tatlı</th>
+              <th>Diğer Sarf</th>
+              <th>TOPLAM</th>
+            </tr>
+          </thead>
+          <tbody>
+            {gunGunTarihler.map((tarih, i) => (
+              <tr key={i}>
+                <td>{fmtDate(tarih)}</td>
+                {!subeId && <td>{subeAdiSecili}</td>}
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {/* Şube bazlı food cost günlük tablo */}
