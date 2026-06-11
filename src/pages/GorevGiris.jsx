@@ -243,8 +243,12 @@ export default function GorevGiris({ subeId: subeIdProp }) {
       });
       setPinDogruOturum(sonuc);
       localOturumYaz(subeId, sonuc);
-      // Sabahçı devir onayı bekliyor mu? Personel eşleşiyor mu?
-      if (sabahDevirYap && String(sonuc.personel_id) === String(sabahDevirYap.devreden_id)) {
+
+      // Sabahçı devir onayı bekliyor mu? — anlık kontrol (state bayatlamış olabilir)
+      const taze = await api(`/gorev/devir-bekleyen?sube_id=${subeId}`).catch(() => null);
+      const devirHedefi = taze !== null ? taze : sabahDevirYap;
+      if (devirHedefi?.sabah_onay_bekliyor && String(sonuc.personel_id) === String(devirHedefi.devreden_id)) {
+        setSabahDevirYap(devirHedefi);
         setAdim('devir-yap');
       } else if (bekleyenKapanis.some(kp => String(kp.personel_id) === String(sonuc.personel_id))) {
         // Kendine ait, mühürlenmemiş bir kapanış kaydı var — sadece kendisi mühürleyebilir
