@@ -228,7 +228,7 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
 }
 
 // ── Mesai Çıkış Butonu ───────────────────────────────────────────────────────
-function MesaiCikisButon({ oturum }) {
+function MesaiCikisButon({ oturum, isDevreden }) {
   const [durum, setDurum] = useState(null); // null | 'qr-onay' | 'onaylandi'
   const [mesaj, setMesaj] = useState('');
   const [yukleniyor, setYukleniyor] = useState(false);
@@ -319,9 +319,12 @@ function MesaiCikisButon({ oturum }) {
     </div>
   );
 
-  // Sabahçı: vardiyası kasa devri panelden onaylandığında otomatik biter —
-  // burada ayrıca "Vardiyamı Bitir" gösterip yanlış kullanım (devirsiz çıkış) riskini açmıyoruz.
-  if (oturum.vardiya_tip === 'sabahci') return (
+  // Sabahçı VE kasa devrini devreden bu kişiyse: vardiyası kasa devri panelden
+  // onaylandığında otomatik biter — burada ayrıca "Vardiyamı Bitir" gösterip
+  // yanlış kullanım (devirsiz çıkış) riskini açmıyoruz.
+  // Aynı sabah vardiyasında devri yapmayan başka sabahçı(lar) için normal
+  // "Mesaimi Bitir" butonu gösterilir (aksi halde mesaileri hiç bitmiyordu).
+  if (oturum.vardiya_tip === 'sabahci' && isDevreden) return (
     <div style={{
       margin: '8px 16px', padding: '12px 14px', borderRadius: 10,
       background: 'rgba(74,158,255,0.06)', border: '1px solid rgba(74,158,255,0.2)',
@@ -802,15 +805,22 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
   const [siparisAcik, setSiparisAcik] = useState(false);
   const [sekme, setSekme] = useState('gorevler'); // 'gorevler' | 'vardiyam'
   const [kapanisUygun, setKapanisUygun] = useState(false);
+  const [isDevreden, setIsDevreden] = useState(false);
 
   // Kapanış mühür bandı: kapanış vardiyasında her zaman, diğer vardiyalarda
   // SADECE bugün için bekleyen/devam eden bir kasa devri yoksa (yani kişi
   // tek başına açılışı da kapanışı da yapıyorsa) göster.
+  // Ayrıca: aynı sabah vardiyasında BİRDEN FAZLA "sabahçı" varsa, sadece
+  // kasa devrini yapan kişinin (devreden_id) vardiyası devir onayıyla otomatik
+  // bitsin — diğer sabahçı(lar) "Mesaimi Bitir" butonunu normal görmeli.
   useEffect(() => {
     if (oturum.vardiya_tip === 'kapanis') { setKapanisUygun(true); return; }
     api(`/gorev/devir-bekleyen?sube_id=${oturum.sube_id}`)
       .then(res => {
         if (!res?.bekliyor && !res?.sabah_onay_bekliyor) setKapanisUygun(true);
+        if (res?.devreden_id && String(res.devreden_id) === String(oturum.personel_id)) {
+          setIsDevreden(true);
+        }
       })
       .catch(() => {});
   }, []); // eslint-disable-line
@@ -949,7 +959,7 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
           {oturum.yemek_mola_hakki !== false && <YemekMolasiButon oturum={oturum} />}
           {/* Kapanış vardiyasında (veya tek başına kapanış yapan personelde) üstteki
               mühür bandı kullanılır, çıkış butonu tekrar gösterilmez */}
-          {oturum.vardiya_tip !== 'kapanis' && !kapanisUygun && <MesaiCikisButon oturum={oturum} />}
+          {oturum.vardiya_tip !== 'kapanis' && !kapanisUygun && <MesaiCikisButon oturum={oturum} isDevreden={isDevreden} />}
         </>
       )}
 

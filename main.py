@@ -2854,6 +2854,46 @@ def kart_ekstre_import(body: EkstreImportBody):
     }
 
 
+@app.post("/api/kartlar/ekstre-import-anlik-gider-backfill")
+def kart_ekstre_import_anlik_gider_backfill(kart_id: Optional[str] = None):
+    """Tek seferlik bakım: ekstre-import güncellemesinden ÖNCE içe aktarılmış
+    kart_hareketleri (kaynak_tablo='ekstre_import', HARCAMA, şahsi olmayan) için
+    eksik anlik_giderler eşleniklerini geriye dönük oluşturur. İdempotent."""
+    with db() as (conn, cur):
+        params: list = []
+        kart_filter = ""
+        if kart_id:
+            kart_filter = "AND kart_id = %s"
+            params.append(kart_id)
+        cur.execute(
+            f"""
+            SELECT id, kart_id, tarih, tutar, aciklama, kategori
+            FROM kart_hareketleri
+            WHERE kaynak_tablo = 'ekstre_import'
+              AND islem_turu = 'HARCAMA'
+              AND durum = 'aktif'
+              AND COALESCE(harcama_tipi, 'belirsiz') != 'sahsi'
+              {kart_filter}
+            """,
+            params,
+        )
+        eklenen = 0
+        for r in (cur.fetchall() or []):
+            r = dict(r)
+            agid = "agk_" + r["id"]
+            cur.execute(
+                """INSERT INTO anlik_giderler
+                   (id, tarih, kategori, tutar, aciklama, sube, odeme_yontemi, kart_id, kaynak_id, kaynak_tablo)
+                   VALUES (%s,%s,%s,%s,%s,'MERKEZ','kart',%s,%s,'ekstre_import')
+                   ON CONFLICT (id) DO NOTHING""",
+                (agid, r["tarih"], (r.get("kategori") or "Diğer"), r["tutar"],
+                 r.get("aciklama"), r["kart_id"], r["id"]),
+            )
+            if cur.rowcount > 0:
+                eklenen += 1
+    return {"eklenen": eklenen}
+
+
 # ── ÖDEME PLANI ────────────────────────────────────────────────
 class OdemePlani(BaseModel):
     kart_id: str
