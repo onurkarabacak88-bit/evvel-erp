@@ -1191,6 +1191,12 @@ def devir_giris(body: DevirGirisBody):
             vardiya_tip = mevcut["vardiya_tip"]
         else:
             giris_ts = simdi
+            # Kasayı devralan kişi, günün sonunda kapanışı da kendisi yapsın
+            # (devir zincirinin mantığı: kasanın sorumluluğu kimdeyse kapanış da
+            # onun olur). Bu kişi bugün için henüz yoklama açmamışsa (ilk girişi
+            # devir kabulüyle oluyorsa) "kapanışçı" olarak kaydedilir — plana
+            # bakılmaz.
+            vardiya_tip = "kapanis"
             cur.execute("""
                 INSERT INTO gorev_yoklama
                     (id, tarih, sube_id, personel_id, vardiya_tip, konum_mesafe_m,
