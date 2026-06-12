@@ -272,6 +272,7 @@ export default function Maliyet() {
               <th>👥 Personel (kişi)</th>
               <th>👥 Personel Saat</th>
               <th>👥 Personel Maliyeti</th>
+              <th title="Şube panelinden girilen ve onaylanan anlık giderler">🧾 Şube Anlık Gider</th>
               <th>GENEL TOPLAM</th>
             </tr>
           </thead>
@@ -287,6 +288,7 @@ export default function Maliyet() {
                 <td>{satir._bos ? '—' : (satir.personel_sayisi || 0)}</td>
                 <td>{satir._bos ? '—' : (satir.personel_saat || 0)}</td>
                 <td>{satir._bos ? '—' : fmt(satir.personel_maliyet_tl || 0)}</td>
+                <td>{satir._bos ? '—' : fmt(satir.sube_anlik_gider_tl || 0)}</td>
                 <td style={{ fontWeight: 700, color: 'var(--accent)' }}>{satir._bos ? '—' : fmt(satir.genel_toplam || 0)}</td>
               </tr>
             ))}

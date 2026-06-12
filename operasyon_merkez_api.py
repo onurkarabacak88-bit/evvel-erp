@@ -11954,6 +11954,33 @@ def ops_maliyet_gun_gun(
             g["saat"] += saat
             g["maliyet"] += hesap["toplam"]
 
+        # ── Şube panelinden girilen anlık giderler ──
+        # Sadece ŞUBE PANELİNDEN girilen (sube=şube_id, kaynak_tablo IS NULL,
+        # durum='aktif' — onaylanmış) kayıtlar dahil edilir. CFO'dan girilenler
+        # (sube='MERKEZ'/boş) ve kasa-farkı kaynak düzeltmeleri
+        # (kaynak_tablo='kasa_fark_kaynak_duzeltme') hariç tutulur.
+        ag_sube_filter = "AND ag.sube = %s" if sube_id else ""
+        ag_params: list = [gun - 1]
+        if sube_id:
+            ag_params.append(sube_id)
+        cur.execute(
+            f"""
+            SELECT ag.sube AS sube_id, ag.tarih::text AS tarih,
+                   COALESCE(SUM(ag.tutar), 0) AS tutar
+            FROM anlik_giderler ag
+            WHERE ag.durum = 'aktif'
+              AND ag.kaynak_tablo IS NULL
+              AND ag.tarih >= CURRENT_DATE - (%s || ' days')::interval
+              AND ag.sube IN (SELECT id::text FROM subeler)
+              {ag_sube_filter}
+            GROUP BY ag.sube, ag.tarih
+            """,
+            ag_params,
+        )
+        anlik_gider_map: Dict[Tuple[str, str], float] = {}
+        for r in cur.fetchall():
+            anlik_gider_map[(r["sube_id"], r["tarih"])] = float(r["tutar"] or 0)
+
         # Tarih listesi: bugünden geriye `gun` gün, en yeni üstte
         bugun = date.today()
         tarihler = [(bugun - timedelta(days=i)).isoformat() for i in range(gun)]
@@ -12003,7 +12030,16 @@ def ops_maliyet_gun_gun(
             satir["personel_sayisi"] = pg["sayisi"]
             satir["personel_saat"] = round(pg["saat"], 2)
             satir["personel_maliyet_tl"] = round(pg["maliyet"], 2)
-            satir["genel_toplam"] = round(toplam + pg["maliyet"], 2)
+
+            if sid is None:
+                sube_gider = sum(
+                    v for (k_sid, k_tarih), v in anlik_gider_map.items() if k_tarih == tarih_str
+                )
+            else:
+                sube_gider = anlik_gider_map.get((sid, tarih_str), 0.0)
+            satir["sube_anlik_gider_tl"] = round(sube_gider, 2)
+
+            satir["genel_toplam"] = round(toplam + pg["maliyet"] + sube_gider, 2)
 
             satirlar.append(satir)
 
