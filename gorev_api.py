@@ -1632,6 +1632,21 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             AYLIK_GUN   = 30.0   # İş Kanunu: izin günleri dahil
             AYLIK_SAAT  = GUNLUK_SAAT * AYLIK_GUN  # 285
 
+            # Bu ay henüz tamamlanmadıysa (içinde bulunduğumuz ay), personel
+            # SADECE bugüne kadar geçen günler için "hak kazanmış" sayılır.
+            # Geçmiş aylar için tam ay (30 gün) hak kazanılmış kabul edilir.
+            _bugun_t = _date.today()
+            if (yil, ay) == (_bugun_t.year, _bugun_t.month):
+                gecen_gun = min(float(_bugun_t.day), AYLIK_GUN)
+                ay_tamam  = False
+            elif _date(yil, ay, 1) < _date(_bugun_t.year, _bugun_t.month, 1):
+                gecen_gun = AYLIK_GUN
+                ay_tamam  = True
+            else:
+                # Gelecek ay — henüz hiçbir hak kazanılmadı
+                gecen_gun = 0.0
+                ay_tamam  = False
+
             # personel.yemek_ucreti AYLIK bir tutardır (örn. 7000 TL/ay) —
             # hak kazanılan her gün için aylık tutarın 1/30'u ödenir,
             # tam tutar değil (önceki hata: her gün 7000 TL ekleniyordu).
@@ -1641,33 +1656,48 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             maas_taban  = float(p.get("maas") or 0)
             saatlik_ucr = float(p.get("saatlik_ucret") or 0)
             yol_ucr     = float(p.get("yol_ucreti") or 0)
+            yol_gunluk  = (yol_ucr / AYLIK_GUN) if AYLIK_GUN > 0 else 0.0
+            yol_kazanilan = yol_gunluk * gecen_gun
 
             if is_surekli:
                 saatlik     = maas_taban / AYLIK_SAAT if AYLIK_SAAT > 0 else 0
                 gunluk      = maas_taban / AYLIK_GUN  if AYLIK_GUN  > 0 else 0
                 fazla_ucret = toplam_fazla_saat * saatlik
-                net_hesap   = maas_taban + fazla_ucret + yemek_ucret_tutari + yol_ucr
+                kazanilan_taban = gunluk * gecen_gun
+                net_hesap   = kazanilan_taban + fazla_ucret + yemek_ucret_tutari + yol_kazanilan
                 ucret_detay = {
                     "taban_maas":       round(maas_taban, 2),
+                    "ay_tamam":         ay_tamam,
+                    "gecen_gun":        gecen_gun,
+                    "ay_gun":           AYLIK_GUN,
+                    "kazanilan_taban":  round(kazanilan_taban, 2),
                     "saatlik_ucret":    round(saatlik, 2),
                     "gunluk_ucret":     round(gunluk, 2),
                     "fazla_mesai_saat": round(toplam_fazla_saat, 2),
                     "fazla_mesai_ucret":round(fazla_ucret, 2),
                     "yemek_ucret":      round(yemek_ucret_tutari, 2),
-                    "yol_ucret":        round(yol_ucr, 2),
+                    "yemek_ucret_birim": round(yemek_ucret_gunluk, 2),
+                    "yol_ucret":        round(yol_kazanilan, 2),
+                    "yol_ucret_aylik":  round(yol_ucr, 2),
                     "net_hakediş":      round(net_hesap, 2),
+                    "aylik_toplam_tahmini": round(maas_taban + yemek_ucret_gunluk * AYLIK_GUN + yol_ucr, 2),
                 }
             else:
-                # Part-time: toplam planlanan saat × saatlik ücret
+                # Part-time: toplam planlanan saat × saatlik ücret (zaten bugüne kadar)
                 calisma_saati = toplam_planlanan
                 normal_ucret  = calisma_saati * saatlik_ucr
-                net_hesap     = normal_ucret + yemek_ucret_tutari + yol_ucr
+                net_hesap     = normal_ucret + yemek_ucret_tutari + yol_kazanilan
                 ucret_detay = {
+                    "ay_tamam":         ay_tamam,
+                    "gecen_gun":        gecen_gun,
+                    "ay_gun":           AYLIK_GUN,
                     "saatlik_ucret":    round(saatlik_ucr, 4),
                     "calisma_saati":    round(calisma_saati, 2),
                     "normal_ucret":     round(normal_ucret, 2),
                     "yemek_ucret":      round(yemek_ucret_tutari, 2),
-                    "yol_ucret":        round(yol_ucr, 2),
+                    "yemek_ucret_birim": round(yemek_ucret_gunluk, 2),
+                    "yol_ucret":        round(yol_kazanilan, 2),
+                    "yol_ucret_aylik":  round(yol_ucr, 2),
                     "net_hakediş":      round(net_hesap, 2),
                     "not": "Part-time: toplam saat × saatlik ücret",
                 }

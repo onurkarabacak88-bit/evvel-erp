@@ -573,61 +573,115 @@ function VardiyamEkrani({ oturum }) {
           </div>
 
           {/* Net Hakediş ve Yemek Ücreti */}
-          {aylik.ucret_detay && (
-            <div style={{
-              marginTop: 12, padding: '14px 16px', borderRadius: 10,
-              background: 'rgba(76,175,132,0.06)', border: '1px solid rgba(76,175,132,0.2)',
-            }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#6b6f7a', marginBottom: 10, letterSpacing: 0.5 }}>
-                💰 BU AY HAKEDİŞ
-              </div>
-              {(() => {
-                const d = aylik.ucret_detay;
-                const fmt2 = n => new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 0 }).format(n) + ' ₺';
-                return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {d.taban_maas != null && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                        <span style={{ color: '#b0b3bc' }}>Taban Maaş</span>
-                        <span style={{ color: '#e8e9ec', fontWeight: 600 }}>{fmt2(d.taban_maas)}</span>
-                      </div>
-                    )}
-                    {d.calisma_saati != null && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                        <span style={{ color: '#b0b3bc' }}>Çalışma ({d.calisma_saati}s)</span>
-                        <span style={{ color: '#e8e9ec', fontWeight: 600 }}>{fmt2(d.normal_ucret)}</span>
-                      </div>
-                    )}
-                    {d.fazla_mesai_saat > 0 && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                        <span style={{ color: '#b0b3bc' }}>Fazla Mesai ({d.fazla_mesai_saat}s)</span>
-                        <span style={{ color: '#f59e0b', fontWeight: 600 }}>+{fmt2(d.fazla_mesai_ucret)}</span>
-                      </div>
-                    )}
-                    {aylik.yemek_ucret_gun > 0 && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                        <span style={{ color: '#b0b3bc' }}>🍽️ Yemek ({aylik.yemek_ucret_gun} gün)</span>
-                        <span style={{ color: '#4caf84', fontWeight: 600 }}>+{fmt2(aylik.yemek_ucret_tutari)}</span>
-                      </div>
-                    )}
-                    {d.yol_ucret > 0 && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                        <span style={{ color: '#b0b3bc' }}>Yol</span>
-                        <span style={{ color: '#e8e9ec', fontWeight: 600 }}>+{fmt2(d.yol_ucret)}</span>
-                      </div>
-                    )}
-                    <div style={{
-                      display: 'flex', justifyContent: 'space-between',
-                      borderTop: '1px solid rgba(76,175,132,0.2)', paddingTop: 8, marginTop: 4,
-                    }}>
-                      <span style={{ fontWeight: 800, fontSize: 14, color: '#e8e9ec' }}>NET HAKEDİŞ</span>
-                      <span style={{ fontWeight: 800, fontSize: 17, color: '#4caf84' }}>{fmt2(d['net_hakediş'])}</span>
-                    </div>
+          {aylik.ucret_detay && (() => {
+            const d = aylik.ucret_detay;
+            const fmt2 = n => new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 0 }).format(n) + ' ₺';
+            const gecenGun = d.gecen_gun ?? 0;
+            const ayGun = d.ay_gun ?? 30;
+            const ilerleme = ayGun > 0 ? Math.min(100, Math.round((gecenGun / ayGun) * 100)) : 0;
+            // Toplam aylık tahmini (her şey hak kazanılırsa)
+            const aylikToplam = d.aylik_toplam_tahmini
+              ?? ((d.taban_maas ?? 0) + (d.yemek_ucret ?? 0) + (d.yol_ucret_aylik ?? d.yol_ucret ?? 0));
+            // Bu aya kadar kaç gün yemek molası değerlendirildi ve kaçı hak kazandı
+            const degerlendirilenGunler = (aylik.gunler || []).filter(g => g.yemek_sure_dk != null);
+            const yemekKaybiGun = degerlendirilenGunler.filter(g => !g.yemek_ucret_hakki).length;
+            return (
+              <div style={{
+                marginTop: 14, borderRadius: 14, overflow: 'hidden',
+                border: '1px solid rgba(76,175,132,0.25)',
+                background: 'linear-gradient(145deg, rgba(76,175,132,0.10), rgba(76,175,132,0.02))',
+              }}>
+                {/* Üst: büyük "şu ana kadar hak edilen" */}
+                <div style={{ padding: '16px 18px 14px' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#6b6f7a', letterSpacing: 1, marginBottom: 6 }}>
+                    💰 ŞU ANA KADAR HAK ETTİĞİN
                   </div>
-                );
-              })()}
-            </div>
-          )}
+                  <div style={{ fontSize: 30, fontWeight: 800, color: '#4caf84', lineHeight: 1.1 }}>
+                    {fmt2(d['net_hakediş'])}
+                  </div>
+                  {!d.ay_tamam && (
+                    <>
+                      <div style={{ marginTop: 10, height: 6, borderRadius: 4, background: '#2a2d35', overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${ilerleme}%`, borderRadius: 4,
+                          background: 'linear-gradient(90deg, #4caf84, #6fd4a8)', transition: 'width 0.3s' }} />
+                      </div>
+                      <div style={{ marginTop: 6, fontSize: 11, color: '#6b6f7a' }}>
+                        Ayın {gecenGun}. günü / {ayGun} gün
+                        {d.taban_maas != null && (
+                          <> · Aylık maaşının <strong style={{ color: '#b0b3bc' }}>{fmt2(aylikToplam)}</strong>'sini tamamlarsan ay sonu hakedişin bu olacak</>
+                        )}
+                      </div>
+                    </>
+                  )}
+                  {d.ay_tamam && d.taban_maas != null && (
+                    <div style={{ marginTop: 6, fontSize: 11, color: '#6b6f7a' }}>
+                      Bu ay tamamlandı · Aylık maaşın: <strong style={{ color: '#b0b3bc' }}>{fmt2(d.taban_maas)}</strong>
+                    </div>
+                  )}
+                </div>
+
+                {/* Detay döküm */}
+                <div style={{ padding: '12px 18px 16px', borderTop: '1px solid rgba(76,175,132,0.15)',
+                  display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {d.taban_maas != null && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                      <span style={{ color: '#b0b3bc' }}>
+                        Taban Maaş {!d.ay_tamam ? `(${gecenGun}/${Math.round(ayGun)} gün)` : '(tam ay)'}
+                      </span>
+                      <span style={{ color: '#e8e9ec', fontWeight: 600 }}>
+                        {fmt2(d.kazanilan_taban ?? d.taban_maas)}
+                      </span>
+                    </div>
+                  )}
+                  {d.calisma_saati != null && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                      <span style={{ color: '#b0b3bc' }}>Çalışma ({d.calisma_saati}s)</span>
+                      <span style={{ color: '#e8e9ec', fontWeight: 600 }}>{fmt2(d.normal_ucret)}</span>
+                    </div>
+                  )}
+                  {d.fazla_mesai_saat > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                      <span style={{ color: '#b0b3bc' }}>Fazla Mesai ({d.fazla_mesai_saat}s)</span>
+                      <span style={{ color: '#f59e0b', fontWeight: 600 }}>+{fmt2(d.fazla_mesai_ucret)}</span>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                    <span style={{ color: '#b0b3bc' }}>🍽️ Yemek ({aylik.yemek_ucret_gun} gün hak kazanıldı)</span>
+                    <span style={{ color: aylik.yemek_ucret_tutari > 0 ? '#4caf84' : '#6b6f7a', fontWeight: 600 }}>
+                      {aylik.yemek_ucret_tutari > 0 ? '+' + fmt2(aylik.yemek_ucret_tutari) : '0 ₺'}
+                    </span>
+                  </div>
+                  {(d.yol_ucret > 0 || d.yol_ucret_aylik > 0) && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                      <span style={{ color: '#b0b3bc' }}>
+                        🚌 Yol {!d.ay_tamam ? `(${gecenGun}/${Math.round(ayGun)} gün)` : ''}
+                      </span>
+                      <span style={{ color: '#e8e9ec', fontWeight: 600 }}>+{fmt2(d.yol_ucret)}</span>
+                    </div>
+                  )}
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between',
+                    borderTop: '1px solid rgba(76,175,132,0.2)', paddingTop: 8, marginTop: 4,
+                  }}>
+                    <span style={{ fontWeight: 800, fontSize: 14, color: '#e8e9ec' }}>ŞU ANA KADAR TOPLAM</span>
+                    <span style={{ fontWeight: 800, fontSize: 17, color: '#4caf84' }}>{fmt2(d['net_hakediş'])}</span>
+                  </div>
+                </div>
+
+                {/* Yemek ücreti hakkı kaybı uyarısı */}
+                {yemekKaybiGun > 0 && (
+                  <div style={{
+                    margin: '0 18px 16px', padding: '10px 12px', borderRadius: 10,
+                    background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)',
+                    fontSize: 12, color: '#f59e0b', lineHeight: 1.5,
+                  }}>
+                    ⚠️ Bu ay <strong>{yemekKaybiGun} gün</strong> yemek molası hakkın kazanılmadı
+                    (mola süresi limit dışı kaldı) — bu günler için yemek ücreti eklenmedi.
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {aylik.haftalik_izin_kullanilmadi > 0 && (
             <div style={{

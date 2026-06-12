@@ -308,10 +308,15 @@ function PersonelKart({ p, acik, onToggle, yil, ay, onYenile }) {
                       `🍽️ Yemek (${d.yemek_ucret_gun ?? p.yemek_ucret_gun} gün × ${fmt2(d.yemek_ucret_birim ?? 0)})`,
                       '+' + fmt2(d.yemek_ucret), '#4caf84'
                     )}
-                    {d.yol_ucret > 0 && satir('Yol Ücreti', '+' + fmt2(d.yol_ucret), null)}
+                    {d.yol_ucret > 0 && satir(
+                      !d.ay_tamam ? `Yol Ücreti (${d.gecen_gun}/30 gün)` : 'Yol Ücreti (tam ay)',
+                      '+' + fmt2(d.yol_ucret), null
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'space-between',
                       padding: '8px 0 0', marginTop: 4 }}>
-                      <span style={{ fontWeight: 800, fontSize: 13, color: 'var(--text1)' }}>NET HAKEDİŞ</span>
+                      <span style={{ fontWeight: 800, fontSize: 13, color: 'var(--text1)' }}>
+                        {d.ay_tamam ? 'NET HAKEDİŞ' : `ŞU ANA KADAR HAKEDİŞ (${d.gecen_gun}/30)`}
+                      </span>
                       <span style={{ fontWeight: 800, fontSize: 15, color: '#4caf84' }}>{fmt2(d['net_hakediş'])}</span>
                     </div>
                   </div>
