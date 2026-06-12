@@ -1807,6 +1807,9 @@ def kart_hareket_iptal(hid: str):
         cur.execute("UPDATE kart_hareketleri SET durum='iptal' WHERE id=%s", (hid,))
         if eski['islem_turu'] == 'ODEME':
             iptal_kasa_hareketi(cur, hid, 'kart_hareketleri', 'KART_ODEME', 'KART_ODEME_IPTAL', 'Kart ödemesi iptali')
+        # Ekstre import'tan otomatik açılmış eşlenik anlık gider varsa onu da iptal et
+        if eski.get('kaynak_tablo') == 'ekstre_import' and eski['islem_turu'] == 'HARCAMA':
+            cur.execute("UPDATE anlik_giderler SET durum='iptal' WHERE id=%s AND durum='aktif'", ("agk_" + hid,))
         audit(cur, 'kart_hareketleri', hid, 'IPTAL', eski=eski)
     return {"success": True}
 
@@ -1818,10 +1821,31 @@ def kart_hareket_tip_belirle(hid: str, tip: str):
     if t not in ('isletme', 'sahsi', 'belirsiz'):
         raise HTTPException(400, "tip: isletme | sahsi | belirsiz")
     with db() as (conn, cur):
-        cur.execute("UPDATE kart_hareketleri SET harcama_tipi=%s WHERE id=%s AND durum='aktif' RETURNING aciklama", (t, hid))
+        cur.execute("UPDATE kart_hareketleri SET harcama_tipi=%s WHERE id=%s AND durum='aktif' RETURNING *", (t, hid))
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "Hareket bulunamadı")
+        row = dict(row)
+
+        # Ekstre import'tan gelen HARCAMA satırı için eşlenik anlık gideri senkronize et:
+        # şahsi → anlık gideri iptal et; işletme/belirsiz → yoksa (yeniden) oluştur.
+        if row.get('kaynak_tablo') == 'ekstre_import' and row['islem_turu'] == 'HARCAMA':
+            agid = "agk_" + hid
+            if t == 'sahsi':
+                cur.execute("UPDATE anlik_giderler SET durum='iptal' WHERE id=%s AND durum='aktif'", (agid,))
+            else:
+                cur.execute("SELECT id FROM anlik_giderler WHERE id=%s", (agid,))
+                mevcut = cur.fetchone()
+                if mevcut:
+                    cur.execute("UPDATE anlik_giderler SET durum='aktif' WHERE id=%s", (agid,))
+                else:
+                    cur.execute(
+                        """INSERT INTO anlik_giderler
+                           (id, tarih, kategori, tutar, aciklama, sube, odeme_yontemi, kart_id, kaynak_id, kaynak_tablo)
+                           VALUES (%s,%s,%s,%s,%s,'MERKEZ','kart',%s,%s,'ekstre_import')""",
+                        (agid, row['tarih'], (row.get('kategori') or 'Diğer'), row['tutar'],
+                         row.get('aciklama'), row['kart_id'], hid),
+                    )
         # SATICI HAFIZASI: bu satıcıyı öğren → sonraki aynı satıcı otomatik önerilsin
         ogrenildi = None
         if t in ("isletme", "sahsi"):
@@ -2710,13 +2734,22 @@ class EkstreImportBody(BaseModel):
 def kart_ekstre_import(body: EkstreImportBody):
     """Faz E1: Ekstreden seçilen EKSİK işlemleri kart_hareketleri'ne yazar.
     İdempotent (deterministik id → çift import yok). Kasaya DOKUNMAZ (sadece kart
-    borcu); taksit satırları kabul edilmez (v1). HARCAMA/ODEME/FAIZ."""
+    borcu); taksit satırları kabul edilmez (v1). HARCAMA/ODEME/FAIZ.
+
+    Ayrıca: şahsi OLMAYAN (işletme/belirsiz) HARCAMA satırları için, geçmişte
+    girilmesi unutulmuş olabilecek harcamayı görünür kılmak amacıyla
+    anlik_giderler'e de (odeme_yontemi='kart', kaynak_tablo='ekstre_import')
+    bir kayıt eklenir — kart_hareketleri'ne TEKRAR yazmaz (çift borç oluşmaz),
+    sadece CFO/Maliyet ekranlarında gider olarak görünür hale gelir. Şahsi
+    (harcama_tipi='sahsi') satırlar kart borcuna yazılır ama anlık gidere
+    yansıtılmaz."""
     import hashlib
     with db() as (conn, cur):
         cur.execute("SELECT id FROM kartlar WHERE id=%s AND aktif=TRUE", (body.kart_id,))
         if not cur.fetchone():
             raise HTTPException(404, "Kart bulunamadı")
         yazilan, atlanan = 0, 0
+        anlik_gider_yazilan = 0
         faiz_donemleri: set = set()  # ekstreden faiz gelen YYYY-MM dönemleri (motor tahmini iptali için)
         for isl in body.islemler:
             tip = (isl.tip or "HARCAMA").upper()
@@ -2767,6 +2800,22 @@ def kart_ekstre_import(body: EkstreImportBody):
             )
             if cur.rowcount > 0:
                 yazilan += 1
+                # Şahsi olmayan (işletme/belirsiz) HARCAMA → anlık gidere de yansıt.
+                # Kart borcu zaten kart_hareketleri'ne yazıldı (yukarıda); burada SADECE
+                # anlik_giderler kaydı eklenir (kart_hareketleri TEKRAR yazılmaz —
+                # /api/anlik-gider'deki gibi çift kart hareketi oluşmasın).
+                if tip == "HARCAMA" and htip != "sahsi":
+                    agid = "agk_" + hid
+                    cur.execute(
+                        """INSERT INTO anlik_giderler
+                           (id, tarih, kategori, tutar, aciklama, sube, odeme_yontemi, kart_id, kaynak_id, kaynak_tablo)
+                           VALUES (%s,%s,%s,%s,%s,'MERKEZ','kart',%s,%s,'ekstre_import')
+                           ON CONFLICT (id) DO NOTHING""",
+                        (agid, tarih, (isl.kategori or "Diğer"), tutar,
+                         (isl.aciklama or "Ekstre içe aktarım")[:200], body.kart_id, hid),
+                    )
+                    if cur.rowcount > 0:
+                        anlik_gider_yazilan += 1
             else:
                 atlanan += 1  # zaten var (idempotent)
 
@@ -2800,6 +2849,7 @@ def kart_ekstre_import(body: EkstreImportBody):
         "yazilan": yazilan,
         "atlanan_veya_mevcut": atlanan,
         "motor_tahmini_faiz_iptal": motor_faizi_iptal,
+        "anlik_gider_yazilan": anlik_gider_yazilan,
         "yeni_sistem_borc": round(yeni_borc, 2),
     }
 

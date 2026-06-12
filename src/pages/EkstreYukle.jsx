@@ -298,7 +298,7 @@ export default function EkstreYukle() {
             <div className="alert-box green mb-16">
               {impSonuc.devir
                 ? <>📌 Borç <strong>açılış/devir</strong> olarak kaydedildi (gider sayılmaz, kasaya dokunmaz). Kartın güncel borcu: <strong>{fmt(impSonuc.yeni_sistem_borc)}</strong>.</>
-                : <>✅ {impSonuc.yazilan} işlem içe aktarıldı{impSonuc.atlanan_veya_mevcut ? ` (${impSonuc.atlanan_veya_mevcut} zaten vardı/atlandı)` : ''}. Yeni sistem borcu: <strong>{fmt(impSonuc.yeni_sistem_borc)}</strong>.</>}
+                : <>✅ {impSonuc.yazilan} işlem içe aktarıldı{impSonuc.atlanan_veya_mevcut ? ` (${impSonuc.atlanan_veya_mevcut} zaten vardı/atlandı)` : ''}{impSonuc.anlik_gider_yazilan ? `, bunlardan ${impSonuc.anlik_gider_yazilan} tanesi işletme/belirsiz harcama olarak anlık gidere de eklendi (👤 şahsi işaretliler hariç)` : ''}. Yeni sistem borcu: <strong>{fmt(impSonuc.yeni_sistem_borc)}</strong>.</>}
             </div>
           )}
 
