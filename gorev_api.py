@@ -1627,12 +1627,16 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
 
                 tarih += timedelta(days=1)
 
-            yemek_ucret_tutari = yemek_ucret_gun * float(p.get("yemek_ucreti") or 0)
-
             # ── ÜCRET HESABI - İş Kanunu standardı (30 gün) ──────────
             GUNLUK_SAAT = 9.5
             AYLIK_GUN   = 30.0   # İş Kanunu: izin günleri dahil
             AYLIK_SAAT  = GUNLUK_SAAT * AYLIK_GUN  # 285
+
+            # personel.yemek_ucreti AYLIK bir tutardır (örn. 7000 TL/ay) —
+            # hak kazanılan her gün için aylık tutarın 1/30'u ödenir,
+            # tam tutar değil (önceki hata: her gün 7000 TL ekleniyordu).
+            yemek_ucret_gunluk = float(p.get("yemek_ucreti") or 0) / AYLIK_GUN if AYLIK_GUN > 0 else 0
+            yemek_ucret_tutari = yemek_ucret_gun * yemek_ucret_gunluk
             is_surekli  = (p.get("calisma_turu") or "surekli") == "surekli"
             maas_taban  = float(p.get("maas") or 0)
             saatlik_ucr = float(p.get("saatlik_ucret") or 0)

@@ -14,10 +14,11 @@ Standart:
     (saatlik_ucret kolonundan).
   - Yol ücreti (aylık sabit) /30 ile günlük paya bölünüp her iki türde de
     eklenir (o gün vardiyası varsa).
-  - Yemek ücreti: GÜNLÜK SABİT bir tutar değil — "Vardiyam" mantığıyla
-    AYNI: sadece o gün yemek molası hakkı kazanılmışsa (yemek_molasi.
-    ucret_hakki=true, ve part-time için planlanan_saat >= 9.4 / "tam gün")
-    o günün yemek_ucreti'si maliyete eklenir. Hak kazanılmadıysa 0.
+  - Yemek ücreti: personel.yemek_ucreti AYLIK bir tutardır (örn. 7000 TL/ay).
+    "Vardiyam" mantığıyla AYNI: sadece o gün yemek molası hakkı
+    kazanılmışsa (yemek_molasi.ucret_hakki=true, ve part-time için
+    planlanan_saat >= 9.4 / "tam gün") o günün payı (yemek_ucreti/30)
+    maliyete eklenir. Hak kazanılmadıysa 0.
 """
 
 from typing import Any, Dict, Optional
@@ -71,7 +72,8 @@ def gunluk_personel_maliyeti(
     # ve mola hakkı kazanıldıysa ödenir; sürekli'de sadece mola hakkı yeterli.
     part_tam = (not is_surekli) and planlanan_saat >= PART_TAM_GUN_ESIK
     yemek_hak_final = bool(yemek_hak) and (is_surekli or part_tam)
-    yemek_gunluk = yemek_ucreti if yemek_hak_final else 0.0
+    yemek_gunluk_pay = (yemek_ucreti / AYLIK_GUN) if AYLIK_GUN else 0.0
+    yemek_gunluk = yemek_gunluk_pay if yemek_hak_final else 0.0
 
     toplam = taban + fazla_ucret + yol_gunluk + yemek_gunluk
 
