@@ -1376,6 +1376,18 @@ def yoklama_cikis_sifirla(yoklama_id: str):
     return {"mesaj": "Çıkış bilgisi sıfırlandı.", "yoklama_id": yoklama_id}
 
 
+@router.delete("/api/gorev/yoklama-kayit/{yoklama_id}")
+def gorev_yoklama_kayit_sil(yoklama_id: str):
+    """Tek bir yoklama kaydını siler (örn. hatalı/iptal edilen ara vardiya girişi).
+    Diğer personelin kayıtlarına dokunmaz."""
+    with db() as (conn, cur):
+        cur.execute("DELETE FROM gorev_yoklama WHERE id=%s", (yoklama_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Yoklama kaydı bulunamadı")
+        conn.commit()
+    return {"silindi": True, "yoklama_id": yoklama_id}
+
+
 @router.delete("/api/gorev/yoklama/{sube_id}")
 def gorev_yoklama_sil(sube_id: str, tarih: Optional[str] = None, kasa_da: bool = False, acilis_da: bool = False):
     """Şube yoklama kaydını sil (test/sıfırlama). kasa_da=true ile kasa kaydını da siler.
