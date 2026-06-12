@@ -970,12 +970,22 @@ def devir_bekleyen(sube_id: str):
             FROM kasa_devir_onay d
             LEFT JOIN personel p ON p.id::text = d.devreden_id
             LEFT JOIN personel pd ON pd.id::text = d.devralan_id
-            WHERE d.sube_id=%s AND d.tarih=%s AND d.durum IN ('form_kaydedildi','bekliyor')
+            WHERE d.sube_id=%s AND d.tarih=%s
             ORDER BY d.created_at DESC LIMIT 1
         """, (sube_id, tarih))
         row = cur.fetchone()
         if not row:
-            return {"bekliyor": False, "sabah_onay_bekliyor": False}
+            return {"bekliyor": False, "sabah_onay_bekliyor": False, "devir_tamamlandi_bugun": False}
+        if row["durum"] not in ("form_kaydedildi", "bekliyor"):
+            # Bugün için devir kaydı var ama akış tamamlanmış (onaylandi vb.) —
+            # "bekleyen" yok, ama gün "tek başına açıp-kapatan kişi" değil:
+            # devreden_id biliniyor (mesaisi devirle otomatik bitmiş olan kişi).
+            return {
+                "bekliyor": False,
+                "sabah_onay_bekliyor": False,
+                "devir_tamamlandi_bugun": True,
+                "devreden_id": str(row["devreden_id"]) if row["devreden_id"] else None,
+            }
         import json as _json
         fd = row["form_data"]
         if isinstance(fd, str):
@@ -994,6 +1004,7 @@ def devir_bekleyen(sube_id: str):
             return {
                 "bekliyor": False,
                 "sabah_onay_bekliyor": True,
+                "devir_tamamlandi_bugun": False,
                 "devir_id": row["id"],
                 "devreden_id": str(row["devreden_id"]),
                 "devreden_ad": row["devreden_ad"],
@@ -1003,7 +1014,9 @@ def devir_bekleyen(sube_id: str):
         return {
             "bekliyor": True,
             "sabah_onay_bekliyor": False,
+            "devir_tamamlandi_bugun": False,
             "devir_id": row["id"],
+            "devreden_id": str(row["devreden_id"]) if row["devreden_id"] else None,
             "devreden_ad": row["devreden_ad"],
             "devreden_ts": str(row["devreden_ts"]) if row["devreden_ts"] else None,
             "not_aciklama": row["not_aciklama"],

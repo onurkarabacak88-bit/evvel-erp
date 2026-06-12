@@ -817,7 +817,10 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
     if (oturum.vardiya_tip === 'kapanis') { setKapanisUygun(true); return; }
     api(`/gorev/devir-bekleyen?sube_id=${oturum.sube_id}`)
       .then(res => {
-        if (!res?.bekliyor && !res?.sabah_onay_bekliyor) setKapanisUygun(true);
+        // Bugün hiç devir süreci yok/olmadıysa → tek başına açıp-kapatan kişi.
+        // Bugün bir devir süreci VARSA (tamamlanmış olsa bile) → bu kişi tek
+        // başına değildir, kapanış mührü yerine normal "Mesaimi Bitir" görmeli.
+        if (!res?.bekliyor && !res?.sabah_onay_bekliyor && !res?.devir_tamamlandi_bugun) setKapanisUygun(true);
         if (res?.devreden_id && String(res.devreden_id) === String(oturum.personel_id)) {
           setIsDevreden(true);
         }
