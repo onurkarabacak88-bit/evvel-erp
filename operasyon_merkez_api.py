@@ -23,6 +23,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from database import db, ensure_stok_yolda_columns, stok_yolda_sevk_kaynak_col_exists
+from personel_maliyet import gunluk_personel_maliyeti
 from tr_saat import (
     bugun_tr,
     is_gunu_tr,
@@ -11901,9 +11902,9 @@ def ops_maliyet_gun_gun(
             return uygun[1] if uygun else None
 
         # ── Personel maliyeti — vardiya_atama'daki planlanan saatler × ücret ──
-        # Sürekli personel: günlük maliyet = maas / 30 (İş Kanunu standardı, o gün
-        # vardiyası varsa). Part-time: planlanan saat × saatlik_ucret.
-        AYLIK_GUN = 30.0
+        # "Vardiyam" (Vardiya Takip) ile AYNI mantık: gunluk_personel_maliyeti()
+        # — sürekli için taban (maaş/30) + 9.5 saat üstü fazla mesai, part-time
+        # için planlanan saat × saatlik ücret, + yol ücretinin günlük payı.
         personel_sube_filter = "AND vs.sube_id = %s" if sube_id else ""
         personel_params: list = [gun - 1]
         if sube_id:
@@ -11931,7 +11932,7 @@ def ops_maliyet_gun_gun(
         pids = sorted({r["personel_id"] for r in vardiya_saatleri})
         if pids:
             cur.execute(
-                "SELECT id::text, calisma_turu, maas, saatlik_ucret FROM personel WHERE id::text = ANY(%s)",
+                "SELECT id::text, calisma_turu, maas, saatlik_ucret, yol_ucreti FROM personel WHERE id::text = ANY(%s)",
                 (pids,),
             )
             for r in cur.fetchall():
@@ -11944,15 +11945,14 @@ def ops_maliyet_gun_gun(
                 continue
             tarih_str = r["tarih"]
             p = personel_bilgi.get(r["personel_id"]) or {}
-            is_surekli = (p.get("calisma_turu") or "surekli") == "surekli"
-            if is_surekli:
-                maliyet = float(p.get("maas") or 0) / AYLIK_GUN
-            else:
-                maliyet = saat * float(p.get("saatlik_ucret") or 0)
+            hesap = gunluk_personel_maliyeti(
+                p.get("calisma_turu"), p.get("maas"), p.get("saatlik_ucret"),
+                p.get("yol_ucreti"), saat,
+            )
             g = personel_gun_map.setdefault(tarih_str, {"sayisi": 0, "saat": 0.0, "maliyet": 0.0})
             g["sayisi"] += 1
             g["saat"] += saat
-            g["maliyet"] += maliyet
+            g["maliyet"] += hesap["toplam"]
 
         # Tarih listesi: bugünden geriye `gun` gün, en yeni üstte
         bugun = date.today()
