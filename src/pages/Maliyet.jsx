@@ -242,11 +242,6 @@ export default function Maliyet() {
           <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{gruplar.length}</div>
           <div style={{ fontSize: 11, color: 'var(--text3)' }}>kalem fiyatlandırıldı</div>
         </div>
-        <div className="card">
-          <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>📋 Tanımlı Reçete</h3>
-          <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{maliyetData?.recete_sayisi || 0}</div>
-          <div style={{ fontSize: 11, color: 'var(--text3)' }}>ürün</div>
-        </div>
         {maliyetData?.benchmark && (
           <div className="card">
             <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>🎯 Benchmark</h3>
@@ -298,52 +293,6 @@ export default function Maliyet() {
           </tbody>
         </table>
       </div>
-
-      {/* Şube bazlı food cost günlük tablo */}
-      <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
-        <span>📊 Günlük Food Cost{subeId ? '' : ' — Tüm Şubeler'}</span>
-        <span style={{ fontSize: 10, color: 'var(--text3)' }}>Reçeteler tanımlandıkça otomatik hesaplanır</span>
-      </div>
-      {(maliyetData?.gun_satirlari || []).length === 0 ? (
-        <div className="empty" style={{ marginBottom: 16 }}><p>Henüz hesaplanmış food cost kaydı yok — reçete (Faz 4) ve fiyat tanımları tamamlandıkça burada günlük şube bazlı maliyet/ciro oranları görünecek.</p></div>
-      ) : (
-        <div style={{ overflowX: 'auto', marginBottom: 16 }}>
-          <table className="tablo">
-            <thead>
-              <tr>
-                <th>Tarih</th>
-                {!subeId && <th>Şube</th>}
-                <th>Ciro</th>
-                <th>Teorik Maliyet</th>
-                <th>Gerçek Maliyet</th>
-                <th>Food Cost %</th>
-                <th>Fire (Shrinkage)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {maliyetData.gun_satirlari.map((g, i) => (
-                <tr key={i}>
-                  <td>{fmtDate(g.tarih)}</td>
-                  {!subeId && <td>{g.sube_adi}</td>}
-                  <td>{fmt(g.ciro_tl)}</td>
-                  <td>{fmt(g.teorik_maliyet_tl)}</td>
-                  <td>{fmt(g.gercek_maliyet_tl)}</td>
-                  <td style={{
-                    color: g.food_cost_pct == null ? 'var(--text3)'
-                      : (g.food_cost_pct * 100) > maliyetData.benchmark.food_cost_max_pct ? 'var(--red)'
-                      : (g.food_cost_pct * 100) < maliyetData.benchmark.food_cost_min_pct ? 'var(--yellow)'
-                      : 'var(--green)',
-                    fontWeight: 700,
-                  }}>
-                    {g.food_cost_pct != null ? `%${(g.food_cost_pct * 100).toFixed(1)}` : '—'}
-                  </td>
-                  <td>{g.shrinkage_tl != null ? fmt(g.shrinkage_tl) : '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
 
       {/* Fiyat girişi / güncelleme formu */}
       <div className="panel-section-hdr" style={{ marginBottom: 12 }}>

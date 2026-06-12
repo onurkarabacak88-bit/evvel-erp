@@ -11723,10 +11723,6 @@ def ops_maliyet_ozet(
         cur.execute("SELECT COUNT(*) AS n FROM urun_alis_fiyat WHERE gecerli_bitis IS NULL OR gecerli_bitis >= CURRENT_DATE")
         alis_fiyat_sayisi = int((cur.fetchone() or {}).get("n") or 0)
 
-        # Reçete kaç ürün tanımlı?
-        cur.execute("SELECT COUNT(DISTINCT urun_id) AS n FROM urun_recete")
-        recete_sayisi = int((cur.fetchone() or {}).get("n") or 0)
-
         # Canlı stok değeri: sube_depo_stok × urun_alis_fiyat
         stok_filtre = "AND ds.sube_id = %s" if sube_id else ""
         stok_params = [sube_id] if sube_id else []
@@ -11792,22 +11788,16 @@ def ops_maliyet_ozet(
         altyapi_durum = {
             "tablolar_hazir": True,
             "alis_fiyat_girildi": alis_fiyat_sayisi > 0,
-            "recete_tanimli": recete_sayisi > 0,
             "food_cost_hesaplandi": len(gun_satirlari) > 0,
             "eksikler": [],
         }
         if not altyapi_durum["alis_fiyat_girildi"]:
             altyapi_durum["eksikler"].append("Alış fiyatları girilmeli (Fiyat Listesi sekmesi)")
-        if not altyapi_durum["recete_tanimli"]:
-            altyapi_durum["eksikler"].append("Ürün reçeteleri tanımlanmalı (Reçete sekmesi)")
-        if not altyapi_durum["food_cost_hesaplandi"]:
-            altyapi_durum["eksikler"].append("Henüz hesaplanmış food cost kaydı yok")
 
     return {
         "gun": gun,
         "altyapi_durum": altyapi_durum,
         "alis_fiyat_sayisi": alis_fiyat_sayisi,
-        "recete_sayisi": recete_sayisi,
         "stok_degeri_tl": float(stok_row.get("toplam_stok_degeri_tl") or 0),
         "stok_kalem_sayisi": int(stok_row.get("kalem_sayisi") or 0),
         "gun_satirlari": gun_satirlari,
