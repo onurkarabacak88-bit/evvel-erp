@@ -365,6 +365,10 @@ def gorev_pin_giris(body: GorevPinGirisBody):
             saat = dt_now_tr().hour
             if not sube_acildi:
                 vardiya_tip = "sabahci"
+            elif sube_acildi and gecen_dk <= 60:
+                # Plan yok ama dükkan açılalı ≤60 dk olmuş → açılış ekibinden
+                # sayılır (sabahçı), "ara vardiya"ya düşürülmez.
+                vardiya_tip = "sabahci"
             elif saat >= 19:
                 vardiya_tip = "kapanis"
             else:
@@ -1319,6 +1323,23 @@ def kapanis_sifirla(sube_id: str):
         etkilenen = cur.rowcount
         conn.commit()
     return {"mesaj": f"{etkilenen} kapanış kaydı sıfırlandı.", "sube_id": sube_id, "tarih": tarih}
+
+
+@router.patch("/api/gorev/yoklama/{yoklama_id}/vardiya-tip-duzelt")
+def yoklama_vardiya_tip_duzelt(yoklama_id: str, vardiya_tip: str):
+    """Bir yoklama kaydının vardiya tipini düzeltir (hata düzeltme için, örn.
+    plan yokken yanlışlıkla 'ara_vardiya' kodlanmış açılış ekibi kaydı)."""
+    vt = (vardiya_tip or "").strip().lower()
+    if vt not in ("sabahci", "ara_vardiya", "kapanis"):
+        raise HTTPException(400, "vardiya_tip: sabahci | ara_vardiya | kapanis")
+    with db() as (conn, cur):
+        cur.execute("""
+            UPDATE gorev_yoklama SET vardiya_tip=%s WHERE id=%s
+        """, (vt, yoklama_id))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Yoklama kaydı bulunamadı")
+        conn.commit()
+    return {"mesaj": f"Vardiya tipi '{vt}' olarak güncellendi.", "yoklama_id": yoklama_id}
 
 
 @router.patch("/api/gorev/yoklama/{yoklama_id}/cikis-sifirla")
