@@ -336,7 +336,7 @@ export default function Rapor() {
               {/* Bilinen sabit yükler */}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 11 }}>
                 <span style={{ background: 'var(--bg3)', borderRadius: 100, padding: '4px 10px' }}>🏠 Aylık sabit gider: <strong>{fmt(p.aylik_sabit_gider)}</strong></span>
-                <span style={{ background: 'var(--bg3)', borderRadius: 100, padding: '4px 10px' }}>👥 Aylık maaş yükü: <strong>{fmt(p.aylik_maas)}</strong></span>
+                <span style={{ background: 'var(--bg3)', borderRadius: 100, padding: '4px 10px' }} title={`Sürekli: ${fmt(p.aylik_maas_surekli)} · Part-time (tahmini, son 30g vardiya × saatlik ücret): ${fmt(p.aylik_maas_parttime)}`}>👥 Aylık maaş yükü: <strong>{fmt(p.aylik_maas)}</strong></span>
                 <span style={{ background: 'var(--bg3)', borderRadius: 100, padding: '4px 10px' }}>💳 Bekleyen taksit (90g): <strong>{fmt(p.bekleyen_taksit_90)}</strong></span>
               </div>
               <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 8 }}>

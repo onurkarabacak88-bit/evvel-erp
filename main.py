@@ -7635,8 +7635,36 @@ def aylik_rapor(yil: int = None, ay: int = None):
             except Exception:
                 pass
             try:
-                cur.execute("SELECT COALESCE(SUM(maas),0) AS v FROM personel WHERE aktif=TRUE")
-                projeksiyon["aylik_maas"] = float(dict(cur.fetchone() or {}).get("v") or 0)
+                # Sürekli (tam zamanlı) personel: sabit aylık maaş.
+                cur.execute("""
+                    SELECT COALESCE(SUM(maas),0) AS v FROM personel
+                    WHERE aktif=TRUE AND COALESCE(calisma_turu,'surekli')='surekli'
+                """)
+                aylik_maas_surekli = float(dict(cur.fetchone() or {}).get("v") or 0)
+
+                # Part-time personel: sabit maaş yok — son 30 günde planlanan/onaylı
+                # vardiya saatleri × saatlik_ucret ile tahmini aylık maliyet.
+                cur.execute("""
+                    SELECT COALESCE(SUM(
+                        EXTRACT(EPOCH FROM (
+                            CASE WHEN va.bitis_saat <= va.baslangic_saat
+                                 THEN (va.bitis_saat::time + INTERVAL '24h') - va.baslangic_saat::time
+                                 ELSE va.bitis_saat::time - va.baslangic_saat::time END
+                        ))/3600.0 * COALESCE(p.saatlik_ucret,0)
+                    ),0) AS v
+                    FROM vardiya_atama va
+                    JOIN personel p ON p.id = va.personel_id
+                    WHERE va.tarih >= CURRENT_DATE - INTERVAL '30 days'
+                      AND va.tarih < CURRENT_DATE
+                      AND va.durum IN ('planli','onayli')
+                      AND p.aktif = TRUE
+                      AND COALESCE(p.calisma_turu,'surekli') != 'surekli'
+                """)
+                aylik_maas_parttime = float(dict(cur.fetchone() or {}).get("v") or 0)
+
+                projeksiyon["aylik_maas_surekli"] = round(aylik_maas_surekli, 2)
+                projeksiyon["aylik_maas_parttime"] = round(aylik_maas_parttime, 2)
+                projeksiyon["aylik_maas"] = round(aylik_maas_surekli + aylik_maas_parttime, 2)
             except Exception:
                 pass
 
