@@ -11930,13 +11930,27 @@ def ops_maliyet_gun_gun(
 
         personel_bilgi: Dict[str, dict] = {}
         pids = sorted({r["personel_id"] for r in vardiya_saatleri})
+        yemek_hak_map: Dict[Tuple[str, str], bool] = {}
         if pids:
             cur.execute(
-                "SELECT id::text, calisma_turu, maas, saatlik_ucret, yol_ucreti FROM personel WHERE id::text = ANY(%s)",
+                "SELECT id::text, calisma_turu, maas, saatlik_ucret, yol_ucreti, yemek_ucreti FROM personel WHERE id::text = ANY(%s)",
                 (pids,),
             )
             for r in cur.fetchall():
                 personel_bilgi[r["id"]] = dict(r)
+
+            # Yemek molası hakkı (gün bazlı) — "Vardiyam" ile aynı kaynak.
+            cur.execute(
+                """
+                SELECT tarih::text AS tarih, personel_id::text AS personel_id, ucret_hakki
+                FROM yemek_molasi
+                WHERE personel_id::text = ANY(%s)
+                  AND tarih >= CURRENT_DATE - (%s || ' days')::interval
+                """,
+                (pids, gun - 1),
+            )
+            for r in cur.fetchall():
+                yemek_hak_map[(r["tarih"], r["personel_id"])] = bool(r["ucret_hakki"])
 
         personel_gun_map: Dict[str, Dict[str, float]] = {}
         for r in vardiya_saatleri:
@@ -11945,9 +11959,11 @@ def ops_maliyet_gun_gun(
                 continue
             tarih_str = r["tarih"]
             p = personel_bilgi.get(r["personel_id"]) or {}
+            yemek_hak = yemek_hak_map.get((tarih_str, r["personel_id"]), False)
             hesap = gunluk_personel_maliyeti(
                 p.get("calisma_turu"), p.get("maas"), p.get("saatlik_ucret"),
                 p.get("yol_ucreti"), saat,
+                yemek_ucreti=p.get("yemek_ucreti"), yemek_hak=yemek_hak,
             )
             g = personel_gun_map.setdefault(tarih_str, {"sayisi": 0, "saat": 0.0, "maliyet": 0.0})
             g["sayisi"] += 1
