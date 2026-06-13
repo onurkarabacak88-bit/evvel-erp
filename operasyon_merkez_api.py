@@ -12212,21 +12212,33 @@ def _fatura_anahtar(satir: Dict[str, Any]) -> str:
 _FATURA_KOD_RE = re.compile(r"^[A-Za-zÇĞİÖŞÜçğıöşü0-9]{2,12}$")
 
 
-def _fatura_tablo_basligi_bul(header: List[Optional[str]]) -> Optional[Dict[str, int]]:
-    """Bir tablo başlık satırında ürün kodu/açıklama/miktar/birim fiyat kolonlarını bulur."""
-    cols: Dict[str, int] = {}
+def _fatura_tablo_basligi_bul(header: List[Optional[str]]) -> Optional[Dict[str, Any]]:
+    """
+    Bir tablo başlık satırında ürün kodu/açıklama/miktar/birim fiyat kolonlarını bulur.
+
+    Ürün kodu farklı tedarikçilerde / farklı fatura şablonlarında farklı kolonlarda
+    olabilir (örn. Sütaş'ın iki ayrı şablonunda aynı ürün kodu bir faturada
+    "Mal Hizmet Kodu" kolonunda, diğerinde "Müşteri Stok No" kolonunda gelebilir).
+    Bu yüzden TEK bir "kod" kolonu yerine, kod-benzeri tüm kolonları "kod_candidates"
+    listesinde topluyoruz; satır işlenirken bunlardan dolu olan ilki kullanılır —
+    böylece eşleştirme hafızası (anahtar) iki şablon arasında da tutarlı kalır.
+    """
+    cols: Dict[str, Any] = {}
+    kod_candidates: List[int] = []
     for ci, h in enumerate(header):
         hl = re.sub(r"\s+", " ", (h or "")).strip().lower()
         if not hl:
             continue
-        if "kodu" in hl and "kod" not in cols:
-            cols["kod"] = ci
+        if "kodu" in hl or "stok no" in hl or "mamül no" in hl or "mamul no" in hl or "malzeme no" in hl:
+            kod_candidates.append(ci)
         elif ("malzeme" in hl or "a klama" in hl or "ack" in hl or "hizmet" in hl) and "aciklama" not in cols:
             cols["aciklama"] = ci
         elif hl == "miktar" and "miktar" not in cols:
             cols["miktar"] = ci
         elif "birim fiyat" in hl and "fiyat" not in cols:
             cols["fiyat"] = ci
+    if kod_candidates:
+        cols["kod_candidates"] = kod_candidates
     if "aciklama" in cols and "fiyat" in cols:
         return cols
     return None
@@ -12250,8 +12262,9 @@ def _fatura_satirlari_tablo(pdf_bytes: bytes) -> List[Dict[str, Any]]:
                         break
                 if cols is None:
                     continue
+                idxs = [v for k, v in cols.items() if k != "kod_candidates"] + cols.get("kod_candidates", [])
                 for row in table[header_idx + 1:]:
-                    if not row or len(row) <= max(cols.values()):
+                    if not row or len(row) <= max(idxs):
                         continue
                     aciklama_raw = re.sub(r"\s+", " ", (row[cols["aciklama"]] or "")).strip()
                     if len(aciklama_raw) < 3:
@@ -12260,10 +12273,11 @@ def _fatura_satirlari_tablo(pdf_bytes: bytes) -> List[Dict[str, Any]]:
                     if fiyat is None:
                         continue  # "Toplam", "KDV" vb. özet satırları
                     kod = ""
-                    if "kod" in cols:
-                        kod_raw = (row[cols["kod"]] or "").strip()
+                    for kci in cols.get("kod_candidates", []):
+                        kod_raw = (row[kci] or "").strip()
                         if _FATURA_KOD_RE.match(kod_raw):
                             kod = kod_raw
+                            break
                     miktar = birim = None
                     if "miktar" in cols:
                         m = re.match(r"\s*([\d.,]+)\s*([A-Za-zÇĞİÖŞÜçğıöşü]*)", row[cols["miktar"]] or "")
