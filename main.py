@@ -95,6 +95,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger("evvel-erp")
 
+
+# ── CFO Panel (admin ana ekranı) şifre kapısı ───────────────────
+# Şube paneli/personel QR akışlarından ayrı, sadece admin arayüzünün
+# (App.jsx) açılış ekranına basit bir şifre kapısı. Demo aşaması için
+# tek bir paylaşılan şifre yeterli — ENV ile değiştirilebilir.
+ADMIN_SIFRE = os.environ.get("ADMIN_SIFRE", "evvel2026")
+
+
+class _AdminGirisBody(BaseModel):
+    sifre: str
+
+
+@app.post("/api/admin-giris")
+def admin_giris(body: _AdminGirisBody):
+    if (body.sifre or "").strip() != ADMIN_SIFRE:
+        raise HTTPException(401, "Şifre yanlış")
+    return {"ok": True}
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.time()

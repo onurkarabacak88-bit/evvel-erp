@@ -158,6 +158,74 @@ function syncHashForPage(pageId) {
   } catch (_) {}
 }
 
+// ── Admin Şifre Kapısı ───────────────────────────────────────────────────────
+const ADMIN_OTURUM_KEY = 'evvel_admin_oturum';
+
+function AdminGirisKapisi({ onBasarili }) {
+  const [sifre, setSifre] = useState('');
+  const [hata, setHata] = useState('');
+  const [yukleniyor, setYukleniyor] = useState(false);
+
+  const girisYap = async (e) => {
+    e.preventDefault();
+    setHata('');
+    setYukleniyor(true);
+    try {
+      const res = await api('/admin-giris', { method: 'POST', body: { sifre } });
+      if (res?.ok) {
+        try { localStorage.setItem(ADMIN_OTURUM_KEY, '1'); } catch (_) {}
+        onBasarili();
+      }
+    } catch (e2) {
+      setHata(e2.message || 'Şifre yanlış');
+    } finally {
+      setYukleniyor(false);
+    }
+  };
+
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'var(--bg1, #0f1117)', fontFamily: 'Instrument Sans, sans-serif',
+    }}>
+      <form onSubmit={girisYap} style={{
+        width: 320, padding: 28, borderRadius: 14,
+        background: 'var(--bg2, #1a1d24)', border: '1px solid var(--border, #2a2d35)',
+        textAlign: 'center',
+      }}>
+        <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text1, #e8e9ec)', marginBottom: 4 }}>
+          EVVEL ERP
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text3, #6b6f7a)', marginBottom: 20 }}>
+          Devam etmek için şifre girin
+        </div>
+        <input
+          type="password"
+          autoFocus
+          value={sifre}
+          onChange={e => setSifre(e.target.value)}
+          placeholder="Şifre"
+          style={{
+            width: '100%', padding: '12px 14px', borderRadius: 8, marginBottom: 12,
+            border: '1px solid var(--border, #2a2d35)', background: 'var(--bg1, #0f1117)',
+            color: 'var(--text1, #e8e9ec)', fontSize: 14, boxSizing: 'border-box',
+          }}
+        />
+        {hata && (
+          <div style={{ fontSize: 12, color: '#e05c5c', marginBottom: 12 }}>{hata}</div>
+        )}
+        <button type="submit" disabled={yukleniyor || !sifre} style={{
+          width: '100%', padding: '12px', borderRadius: 8, border: 'none', cursor: 'pointer',
+          background: '#C8956A', color: '#fff', fontWeight: 700, fontSize: 14,
+          opacity: yukleniyor || !sifre ? 0.6 : 1,
+        }}>
+          {yukleniyor ? '…' : 'Giriş Yap'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export default function App() {
   // İş başvurusu — mobil form, sidebar yok
   if (window.location.pathname === '/is-basvurusu') {
@@ -180,8 +248,12 @@ export default function App() {
   const [onayBekleyen, setOnayBekleyen] = useState(0);
   const [bugunAnomali, setBugunAnomali] = useState(0);
   const [yeniBasvuru, setYeniBasvuru] = useState(0);
+  const [girisYapildi, setGirisYapildi] = useState(() => {
+    try { return localStorage.getItem(ADMIN_OTURUM_KEY) === '1'; } catch (_) { return false; }
+  });
 
   useEffect(() => {
+    if (!girisYapildi) return;
     const yukle = () => {
       api('/onay-kuyrugu?durum=bekliyor&limit=400')
         .then(d => setOnayBekleyen(Array.isArray(d) ? d.length : 0))
@@ -203,7 +275,7 @@ export default function App() {
     const timer = setInterval(yukle, 60000);
     const unsub = subscribeGlobalDataRefresh(yukle);
     return () => { clearInterval(timer); unsub(); };
-  }, []);
+  }, [girisYapildi]);
 
   const navigate = (id) => {
     const p = Object.prototype.hasOwnProperty.call(PAGES, id) ? id : 'panel';
@@ -223,6 +295,10 @@ export default function App() {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+
+  if (!girisYapildi) {
+    return <AdminGirisKapisi onBasarili={() => setGirisYapildi(true)} />;
+  }
 
   return (
     <div className="app">
@@ -282,7 +358,22 @@ export default function App() {
             </div>
           ))}
         </nav>
-        <div className="sidebar-footer">EVVEL v2.4 · 27.03.2026</div>
+        <div className="sidebar-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <span>EVVEL v2.4 · 27.03.2026</span>
+          <button
+            onClick={() => {
+              try { localStorage.removeItem(ADMIN_OTURUM_KEY); } catch (_) {}
+              setGirisYapildi(false);
+            }}
+            title="Çıkış"
+            style={{
+              background: 'none', border: '1px solid var(--border)', borderRadius: 6,
+              color: 'var(--text3)', padding: '3px 8px', cursor: 'pointer', fontSize: 11,
+            }}
+          >
+            Çıkış
+          </button>
+        </div>
       </aside>
       <main className="main" ref={mainRef}>
         {page !== 'panel' && (
