@@ -1250,6 +1250,32 @@ def devir_giris(body: DevirGirisBody):
     }
 
 
+@router.get("/api/gorev/kapanis-durum")
+def kapanis_durum(sube_id: str):
+    """
+    Bugünün kasa kapanışı (mühürleme) tamamlandı mı?
+    sube_panel.html'deki 'kapanis_tamamlandi_bugun' sinyaliyle aynı sorguyu
+    kullanır — personel telefon ekranında (GorevPersonelSayfasi) kasa
+    mühürlendiğinde diğer personelin akışını kilitlemek için kullanılır.
+    """
+    from tr_saat import is_gunu_tr
+    tarih = is_gunu_tr()
+    with db() as (_, cur):
+        cur.execute(
+            """
+            SELECT 1 FROM sube_operasyon_event
+            WHERE sube_id=%s AND tip='KAPANIS' AND sira_no=0 AND durum='tamamlandi'
+              AND (
+                tarih = %s
+                OR (tarih = (%s::date - INTERVAL '1 day') AND cevap_ts::date = %s::date)
+              )
+            """,
+            (sube_id, tarih, tarih, tarih),
+        )
+        bitti = cur.fetchone() is not None
+    return {"kapanis_tamamlandi_bugun": bitti}
+
+
 @router.get("/api/gorev/kapanis-bekleyen")
 def kapanis_bekleyen(sube_id: str):
     """

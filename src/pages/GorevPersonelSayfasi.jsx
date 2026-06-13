@@ -883,6 +883,8 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
   const [sekme, setSekme] = useState('gorevler'); // 'gorevler' | 'vardiyam'
   const [kapanisUygun, setKapanisUygun] = useState(false);
   const [isDevreden, setIsDevreden] = useState(false);
+  const [kasaMuhurlu, setKasaMuhurlu] = useState(false);
+  const [mesaimAcik, setMesaimAcik] = useState(true);
 
   // Kapanış mühür bandı: kapanış vardiyasında her zaman, diğer vardiyalarda
   // SADECE bugün için bekleyen/devam eden bir kasa devri yoksa (yani kişi
@@ -904,6 +906,28 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
       })
       .catch(() => {});
   }, []); // eslint-disable-line
+
+  // Şubenin bugünkü kasa kapanışı (mühürleme) tamamlandı mı?
+  // Devir akışında kapanışı yapan devralan dışındaki personel için de
+  // kasa mühürlendiyse "Mesaimi Bitir" dışındaki alanlar kilitlenir.
+  useEffect(() => {
+    api(`/gorev/kapanis-durum?sube_id=${oturum.sube_id}`)
+      .then(r => setKasaMuhurlu(!!r?.kapanis_tamamlandi_bugun))
+      .catch(() => {});
+  }, []); // eslint-disable-line
+
+  // Kasa mühürlendiyse VE bu kişi kendi kapanış mühür bandını görmüyorsa
+  // (kapanisUygun=false → tek başına açıp-kapatan kişi değil), bu kişinin
+  // mesaisi hâlâ açık mı kontrol et.
+  useEffect(() => {
+    if (!kasaMuhurlu || kapanisUygun) return;
+    api(`/gorev/kapanis-bekleyen?sube_id=${oturum.sube_id}`)
+      .then(res => {
+        const benim = (res.bekleyen || []).some(b => String(b.personel_id) === String(oturum.personel_id));
+        setMesaimAcik(benim);
+      })
+      .catch(() => {});
+  }, [kasaMuhurlu, kapanisUygun]); // eslint-disable-line
 
   const load = () => {
     const { tarih, sube_id, vardiya_tip, personel_id } = oturum;
@@ -957,6 +981,63 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
     minHeight: '100vh', background: '#0f1117', color: '#e8e9ec',
     fontFamily: 'Instrument Sans, sans-serif',
   };
+
+  // Kasa bugün için mühürlendi VE bu kişi kendi kapanış mührünü görmüyor
+  // (devir akışında kapanışı yapan kişi başkası) → "Mesaimi Bitir" dışındaki
+  // tüm alanlar kilitlenir.
+  if (kasaMuhurlu && !kapanisUygun) {
+    return (
+      <div style={PAGE}>
+        <div style={{
+          padding: '16px 20px', borderBottom: '1px solid #2a2d35',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          position: 'sticky', top: 0, background: '#0f1117', zIndex: 10,
+        }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>
+              {subeBilgi?.ad || 'Şube'} · {vt.label}
+            </div>
+            <div style={{ fontSize: 11, color: '#6b6f7a', marginTop: 2 }}>
+              {oturum.ad_soyad} · {oturum.tarih}
+            </div>
+          </div>
+          <button onClick={onCikis} style={{
+            background: 'none', border: '1px solid #2a2d35', borderRadius: 8,
+            color: '#6b6f7a', padding: '6px 12px', cursor: 'pointer', fontSize: 12,
+          }}>
+            Çıkış
+          </button>
+        </div>
+
+        <div style={{
+          margin: '16px 20px', padding: '16px', borderRadius: 12,
+          background: 'rgba(76,175,132,0.08)', border: '1px solid rgba(76,175,132,0.3)',
+          display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <span style={{ fontSize: 22 }}>🔒</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: '#4caf84' }}>Bugünün Kasası Mühürlendi</div>
+            <div style={{ fontSize: 11, color: '#6b6f7a', marginTop: 2, lineHeight: 1.6 }}>
+              Kapanış kasayı kapattı — bugün için işlem yapılamaz.
+              {mesaimAcik ? ' Sadece kendi mesaini bitirebilirsin.' : ''}
+            </div>
+          </div>
+        </div>
+
+        {mesaimAcik ? (
+          <MesaiCikisButon oturum={oturum} isDevreden={isDevreden} />
+        ) : (
+          <div style={{
+            margin: '8px 20px', padding: '12px 14px', borderRadius: 10,
+            background: '#1a1d24', border: '1px solid #2a2d35',
+            fontSize: 12, color: '#6b6f7a', textAlign: 'center', lineHeight: 1.6,
+          }}>
+            ✅ Mesain de tamamlandı. İyi günler!
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={PAGE}>
