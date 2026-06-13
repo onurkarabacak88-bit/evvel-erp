@@ -172,6 +172,14 @@ export default function Maliyet() {
     }));
   };
 
+  const faturaSatirAtla = (idx) => {
+    setFaturaSatirlar(rows => rows.map((r, i) => i === idx ? { ...r, _atlandi: true } : r));
+  };
+
+  const faturaSatirGeriAl = (idx) => {
+    setFaturaSatirlar(rows => rows.map((r, i) => i === idx ? { ...r, _atlandi: false } : r));
+  };
+
   const faturaSatirKaydet = (idx) => {
     const s = faturaSatirlar[idx];
     const kalem = (s.kalem_kodu || '').trim();
@@ -378,6 +386,18 @@ export default function Maliyet() {
               const ok = fark === null ? null : fark > 0 ? '🔺' : fark < 0 ? '🔻' : '➖';
               const okRenk = fark > 0 ? 'var(--red)' : fark < 0 ? 'var(--green)' : 'var(--text3)';
               const kaydedildi = !!faturaKaydedilenler[idx];
+              const atlandi = !!s._atlandi && !kaydedildi;
+              if (atlandi) {
+                return (
+                  <div key={idx} style={{ padding: '8px 12px', borderRadius: 8, background: 'var(--bg3)', border: '1px solid var(--border)', opacity: 0.6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
+                      {s.urun_kodu && <span style={{ fontWeight: 700 }}>[{s.urun_kodu}] </span>}
+                      {s.ham_metin} — geçildi
+                    </div>
+                    <button className="btn btn-secondary btn-sm" onClick={() => faturaSatirGeriAl(idx)}>Geri al</button>
+                  </div>
+                );
+              }
               return (
                 <div key={idx} style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bg3)', border: `1px solid ${kaydedildi ? 'var(--green)' : 'var(--border)'}` }}>
                   <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 6, fontFamily: 'var(--font-mono)' }}>
@@ -385,7 +405,7 @@ export default function Maliyet() {
                     {s.ham_metin}
                     {s.miktar != null && <span> · {s.miktar} {s.birim || ''}</span>}
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: 8, alignItems: 'center' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto auto', gap: 8, alignItems: 'center' }}>
                     <input type="text" list="depo-kalem-listesi-sayfa" placeholder="Stok kalem kodu (örn. sut_litre)" value={s.kalem_kodu}
                       onChange={e => faturaSatirGuncelle(idx, 'kalem_kodu', e.target.value)} disabled={kaydedildi} />
                     <input type="text" placeholder="Kalem adı" value={s.kalem_adi}
@@ -402,6 +422,9 @@ export default function Maliyet() {
                     {kaydedildi
                       ? <span style={{ fontSize: 12, color: 'var(--green)', fontWeight: 700, textAlign: 'center' }}>✅ Kaydedildi</span>
                       : <button className="btn btn-secondary btn-sm" onClick={() => faturaSatirKaydet(idx)}>Onayla</button>}
+                    {!kaydedildi && (
+                      <button className="btn btn-ghost btn-sm" title="Bu satırı geç, kaydetme" onClick={() => faturaSatirAtla(idx)}>✕ Geç</button>
+                    )}
                   </div>
                   {fark !== null && (
                     <div style={{ marginTop: 6, fontSize: 11, color: okRenk, display: 'flex', alignItems: 'center', gap: 6 }}>
