@@ -156,7 +156,12 @@ export default function Maliyet() {
       }));
       setFaturaSatirlar(satirlar);
       setFaturaTarihi(data.fatura_tarihi || null);
-      if (data.uyari) setFaturaUyari(data.uyari);
+      if (data.zaten_yuklendi) {
+        setFaturaUyari(
+          `⚠️ Bu fatura daha önce yüklenmiş! (${data.zaten_yuklendi.yukleme_sayisi}. kez yükleniyor, son yükleme: ${fmtDate(data.zaten_yuklendi.son_yukleme)}) ` +
+          `Eğer satırları zaten onayladıysan, tekrar onaylama — mükerrer fiyat kaydı oluşur.`
+        );
+      } else if (data.uyari) setFaturaUyari(data.uyari);
       else if (!satirlar.length) setFaturaUyari('PDF içinde kalem satırı bulunamadı.');
     } catch (e) {
       setFaturaUyari(e.message || 'PDF işlenemedi');

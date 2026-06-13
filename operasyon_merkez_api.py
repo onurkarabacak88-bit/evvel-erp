@@ -11699,6 +11699,20 @@ def _ensure_maliyet_tablolari(cur: Any) -> None:
         )
     """)
 
+    # Yüklenen faturaların kimliği (ETTN) — aynı PDF tekrar yüklenirse uyarı vermek için
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS fatura_yukleme_log (
+            ettn            TEXT PRIMARY KEY,
+            fatura_no       TEXT,
+            fatura_tarihi   DATE,
+            tedarikci       TEXT,
+            dosya_adi       TEXT,
+            yukleme_sayisi  INTEGER NOT NULL DEFAULT 1,
+            ilk_yukleme     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            son_yukleme     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+
 
 @router.get("/maliyet/ozet")
 def ops_maliyet_ozet(
@@ -12458,6 +12472,29 @@ def _fatura_tarihi_bul(pdf_bytes: bytes) -> Optional[str]:
         return None
 
 
+# e-Fatura/e-Arşiv belgelerinde benzersiz işlem numarası (UUID formatında)
+_FATURA_ETTN_RE = re.compile(r"ETTN\s*[:\.]?\s*([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})")
+# "Fatura No: SM22026000264114" / "Fatura ID No: B102026000005741" / "FATURA NUMARASI: 27X2026000000249"
+_FATURA_NO_RE = re.compile(r"Fatura\s*(?:ID\s*)?(?:No|Numaras[ıi])\s*[:\.]?\s*([A-Za-z0-9]{6,25})", re.IGNORECASE)
+
+
+def _fatura_kimlik_bul(pdf_bytes: bytes) -> Dict[str, Optional[str]]:
+    """PDF'in ilk sayfasından ETTN ve fatura numarasını bulur — aynı faturanın
+    tekrar yüklenip yüklenmediğini anlamak için kullanılır."""
+    import pdfplumber
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            text = (pdf.pages[0].extract_text() or "") if pdf.pages else ""
+    except Exception:
+        return {"ettn": None, "fatura_no": None}
+    ettn_m = _FATURA_ETTN_RE.search(text)
+    no_m = _FATURA_NO_RE.search(text)
+    return {
+        "ettn": ettn_m.group(1) if ettn_m else None,
+        "fatura_no": no_m.group(1) if no_m else None,
+    }
+
+
 def _fatura_satirlari_cikar(pdf_bytes: bytes) -> List[Dict[str, Any]]:
     """Önce e-Fatura tablo formatını, sonra METRO formatını dener, bulamazsa satır bazlı yedek yönteme döner."""
     satirlar = _fatura_satirlari_tablo(pdf_bytes)
@@ -12494,9 +12531,35 @@ async def ops_maliyet_fatura_pdf_yukle(
                          "satırları aşağıdan elle girebilirsin."}
 
     fatura_tarihi = _fatura_tarihi_bul(data)
+    kimlik = _fatura_kimlik_bul(data)
+    ettn = kimlik["ettn"]
 
+    zaten_yuklendi = None
     with db() as (conn, cur):
         _ensure_maliyet_tablolari(cur)
+
+        # Aynı fatura (ETTN ile tanımlı) daha önce yüklenmiş mi?
+        if ettn:
+            cur.execute("SELECT son_yukleme, yukleme_sayisi FROM fatura_yukleme_log WHERE ettn = %s", (ettn,))
+            mevcut = cur.fetchone()
+            if mevcut:
+                zaten_yuklendi = {
+                    "son_yukleme": str(mevcut["son_yukleme"]),
+                    "yukleme_sayisi": mevcut["yukleme_sayisi"],
+                }
+                cur.execute(
+                    "UPDATE fatura_yukleme_log SET yukleme_sayisi = yukleme_sayisi + 1, son_yukleme = NOW() WHERE ettn = %s",
+                    (ettn,),
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO fatura_yukleme_log (ettn, fatura_no, fatura_tarihi, tedarikci, dosya_adi)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (ettn, kimlik["fatura_no"], fatura_tarihi, tedarikci, file.filename),
+                )
+
         for s in satirlar:
             s["fatura_tarihi"] = fatura_tarihi
             anahtar = _fatura_anahtar(s)
@@ -12544,7 +12607,11 @@ async def ops_maliyet_fatura_pdf_yukle(
                 s["onceki_fiyat"] = None
                 s["onceki_tarih"] = None
 
-    return {"satirlar": satirlar, "toplam": len(satirlar), "tedarikci": tedarikci, "fatura_tarihi": fatura_tarihi}
+    return {
+        "satirlar": satirlar, "toplam": len(satirlar), "tedarikci": tedarikci,
+        "fatura_tarihi": fatura_tarihi, "fatura_no": kimlik["fatura_no"],
+        "zaten_yuklendi": zaten_yuklendi,
+    }
 
 
 class FaturaKalemOnaylaBody(BaseModel):
