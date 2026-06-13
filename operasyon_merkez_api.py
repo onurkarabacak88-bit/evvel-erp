@@ -12104,8 +12104,20 @@ def _kaydet_alis_fiyati(cur: Any, kalem: str, kalem_adi: Optional[str], birim: s
     """urun_alis_fiyat'a yeni fiyat satırı ekler, önceki geçerli kaydı kapatır. id döner.
     Aynı kalem_kodu ile depo stoklarında (sube_depo_stok) kayıt varsa, oradaki
     alis_fiyati_tl alanını da günceller — böylece depo ekranı ve stok değeri
-    hesaplamaları (food cost) güncel fiyatı kullanır."""
+    hesaplamaları (food cost) güncel fiyatı kullanır.
+
+    Faturalar her zaman tarih sırasıyla yüklenmeyebilir (örn. önce Mayıs faturası,
+    sonra Mart faturası onaylanmış olabilir). Bu yüzden 'gecerli_baslangic' (bas)
+    tarihine göre kayıt zincire doğru yere oturtulur: bas'tan SONRA başlayan bir
+    kayıt zaten varsa, bu yeni kayıt o tarihe kadar geçerli (gecerli_bitis) olarak
+    işaretlenir ve "en güncel fiyat" (sube_depo_stok.alis_fiyati_tl) GÜNCELLENMEZ —
+    çünkü daha yeni tarihli bir fiyat zaten mevcuttur."""
     _ensure_maliyet_tablolari(cur)
+    cur.execute(
+        "SELECT MIN(gecerli_baslangic) AS sonraki FROM urun_alis_fiyat WHERE kalem_kodu = %s AND gecerli_baslangic > %s",
+        (kalem, bas),
+    )
+    sonraki = (cur.fetchone() or {}).get("sonraki")
     cur.execute(
         "UPDATE urun_alis_fiyat SET gecerli_bitis = %s WHERE kalem_kodu = %s AND gecerli_bitis IS NULL AND gecerli_baslangic < %s",
         (bas, kalem, bas),
@@ -12113,20 +12125,23 @@ def _kaydet_alis_fiyati(cur: Any, kalem: str, kalem_adi: Optional[str], birim: s
     cur.execute(
         """
         INSERT INTO urun_alis_fiyat
-            (kalem_kodu, kalem_adi, birim, birim_maliyet_tl, gecerli_baslangic, tedarikci, notlar)
-        VALUES (%s,%s,%s,%s,%s,%s,%s)
+            (kalem_kodu, kalem_adi, birim, birim_maliyet_tl, gecerli_baslangic, gecerli_bitis, tedarikci, notlar)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
         RETURNING id
         """,
-        (kalem, kalem_adi or kalem, birim, round(birim_maliyet_tl, 4), bas, tedarikci, notlar),
+        (kalem, kalem_adi or kalem, birim, round(birim_maliyet_tl, 4), bas, sonraki, tedarikci, notlar),
     )
     new_id = str((cur.fetchone() or {}).get("id") or "")
-    try:
-        cur.execute(
-            "UPDATE sube_depo_stok SET alis_fiyati_tl = %s, guncelleme = NOW() WHERE kalem_kodu = %s",
-            (round(birim_maliyet_tl, 4), kalem),
-        )
-    except Exception:
-        pass
+    if sonraki is None:
+        # Bu kayıt elimizdeki en güncel tarihli fiyat — depo/stok ekranındaki
+        # "şu anki fiyat" alanını da güncelle.
+        try:
+            cur.execute(
+                "UPDATE sube_depo_stok SET alis_fiyati_tl = %s, guncelleme = NOW() WHERE kalem_kodu = %s",
+                (round(birim_maliyet_tl, 4), kalem),
+            )
+        except Exception:
+            pass
     return new_id
 
 
@@ -12389,6 +12404,34 @@ def _fatura_satirlari_metro(pdf_bytes: bytes) -> List[Dict[str, Any]]:
     return out
 
 
+# Fatura üzerindeki tarih etiketleri — fatura formatına göre değişebilir
+# (Sütaş: "Fatura Tarihi: 09-05-2026", METRO: "Oluşturma Tarihi 26.05.2026 12:45" vb.)
+_FATURA_TARIH_RE = re.compile(
+    r"(?:Fatura\s*Tarihi|D[uü]zenlenme\s*Tarihi|Olu[sş]turma\s*Tarihi|Fiili\s*Sevk(?:iyat)?\s*Tarihi)"
+    r"\s*[:\.]?\s*(\d{2})[.\-](\d{2})[.\-](\d{4})",
+    re.IGNORECASE,
+)
+
+
+def _fatura_tarihi_bul(pdf_bytes: bytes) -> Optional[str]:
+    """PDF'in ilk sayfasından fatura tarihini (gg.aa.yyyy / gg-aa-yyyy) bulup ISO (yyyy-mm-dd) döner.
+    Bulunamazsa None — bu durumda kayıt sırasında bugünün tarihi kullanılır."""
+    import pdfplumber
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            text = (pdf.pages[0].extract_text() or "") if pdf.pages else ""
+    except Exception:
+        return None
+    m = _FATURA_TARIH_RE.search(text)
+    if not m:
+        return None
+    gg, ay, yil = m.groups()
+    try:
+        return date(int(yil), int(ay), int(gg)).isoformat()
+    except ValueError:
+        return None
+
+
 def _fatura_satirlari_cikar(pdf_bytes: bytes) -> List[Dict[str, Any]]:
     """Önce e-Fatura tablo formatını, sonra METRO formatını dener, bulamazsa satır bazlı yedek yönteme döner."""
     satirlar = _fatura_satirlari_tablo(pdf_bytes)
@@ -12424,9 +12467,12 @@ async def ops_maliyet_fatura_pdf_yukle(
                 "uyari": "PDF'ten kalem satırı çıkarılamadı. Format desteklenmiyor olabilir — "
                          "satırları aşağıdan elle girebilirsin."}
 
+    fatura_tarihi = _fatura_tarihi_bul(data)
+
     with db() as (conn, cur):
         _ensure_maliyet_tablolari(cur)
         for s in satirlar:
+            s["fatura_tarihi"] = fatura_tarihi
             anahtar = _fatura_anahtar(s)
             s["anahtar"] = anahtar
             cur.execute(
@@ -12437,13 +12483,27 @@ async def ops_maliyet_fatura_pdf_yukle(
             if esleme:
                 s["onerilen_kalem_kodu"] = esleme["kalem_kodu"]
                 s["onerilen_kalem_adi"] = esleme["kalem_adi"]
-                cur.execute(
-                    """
-                    SELECT birim_maliyet_tl, gecerli_baslangic, birim FROM urun_alis_fiyat
-                    WHERE kalem_kodu = %s ORDER BY gecerli_baslangic DESC LIMIT 1
-                    """,
-                    (esleme["kalem_kodu"],),
-                )
+                # "Önceki fiyat" karşılaştırması bu faturanın TARİHİNDEN ÖNCE geçerli
+                # olan fiyatla yapılır — faturalar tarih sırasıyla yüklenmemiş olsa
+                # bile artış/azalış doğru yönde görünür (örn. eski tarihli fatura
+                # sonradan yüklenirse, ondan daha yeni bir fiyatla kıyaslanmaz).
+                if fatura_tarihi:
+                    cur.execute(
+                        """
+                        SELECT birim_maliyet_tl, gecerli_baslangic, birim FROM urun_alis_fiyat
+                        WHERE kalem_kodu = %s AND gecerli_baslangic < %s
+                        ORDER BY gecerli_baslangic DESC LIMIT 1
+                        """,
+                        (esleme["kalem_kodu"], fatura_tarihi),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT birim_maliyet_tl, gecerli_baslangic, birim FROM urun_alis_fiyat
+                        WHERE kalem_kodu = %s ORDER BY gecerli_baslangic DESC LIMIT 1
+                        """,
+                        (esleme["kalem_kodu"],),
+                    )
                 onceki = cur.fetchone()
                 if onceki:
                     s["onceki_fiyat"] = float(onceki["birim_maliyet_tl"])
@@ -12458,7 +12518,7 @@ async def ops_maliyet_fatura_pdf_yukle(
                 s["onceki_fiyat"] = None
                 s["onceki_tarih"] = None
 
-    return {"satirlar": satirlar, "toplam": len(satirlar), "tedarikci": tedarikci}
+    return {"satirlar": satirlar, "toplam": len(satirlar), "tedarikci": tedarikci, "fatura_tarihi": fatura_tarihi}
 
 
 class FaturaKalemOnaylaBody(BaseModel):

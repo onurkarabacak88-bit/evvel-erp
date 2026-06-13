@@ -43,6 +43,7 @@ export default function Maliyet() {
   const [faturaTedarikci, setFaturaTedarikci] = useState('');
   const [faturaYukleniyor, setFaturaYukleniyor] = useState(false);
   const [faturaSatirlar, setFaturaSatirlar] = useState(null);
+  const [faturaTarihi, setFaturaTarihi] = useState(null);
   const [faturaUyari, setFaturaUyari] = useState('');
   const [faturaKaydedilenler, setFaturaKaydedilenler] = useState({});
 
@@ -136,6 +137,7 @@ export default function Maliyet() {
     setFaturaYukleniyor(true);
     setFaturaUyari('');
     setFaturaSatirlar(null);
+    setFaturaTarihi(null);
     setFaturaKaydedilenler({});
     try {
       const fd = new FormData();
@@ -150,8 +152,10 @@ export default function Maliyet() {
         kalem_adi: s.onerilen_kalem_adi || s.aciklama,
         birim: s.birim || 'adet',
         birim_maliyet_tl: s.tutar != null ? String(s.tutar) : '',
+        gecerli_baslangic: s.fatura_tarihi || null,
       }));
       setFaturaSatirlar(satirlar);
+      setFaturaTarihi(data.fatura_tarihi || null);
       if (data.uyari) setFaturaUyari(data.uyari);
       else if (!satirlar.length) setFaturaUyari('PDF içinde kalem satırı bulunamadı.');
     } catch (e) {
@@ -195,6 +199,7 @@ export default function Maliyet() {
       birim: s.birim || 'adet',
       birim_maliyet_tl: fiyat,
       tedarikci: faturaTedarikci.trim() || null,
+      gecerli_baslangic: s.gecerli_baslangic || null,
     }})
     .then(() => {
       setFaturaKaydedilenler(prev => ({ ...prev, [idx]: true }));
@@ -376,6 +381,11 @@ export default function Maliyet() {
         </div>
         {faturaYukleniyor && <div style={{ fontSize: 12, color: 'var(--text3)' }}>PDF okunuyor...</div>}
         {faturaUyari && <div style={{ fontSize: 12, color: 'var(--yellow)', marginBottom: 8 }}>⚠️ {faturaUyari}</div>}
+        {faturaSatirlar?.length > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>
+            📅 Fatura tarihi: {faturaTarihi ? fmtDate(faturaTarihi) : 'PDF\'ten okunamadı, fiyatlar bugünün tarihiyle kaydedilecek'}
+          </div>
+        )}
 
         {faturaSatirlar?.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
