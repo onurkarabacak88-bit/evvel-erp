@@ -106,6 +106,19 @@ export default function Kartlar() {
     } catch (e) { setMsg({ t: 'red', m: e.message || 'Temizlenemedi' }); }
   }
 
+  async function tamSifirla(k) {
+    const hedef = k ? `"${k.kart_adi}" kartının` : 'TÜM kartların';
+    if (!window.confirm(`${hedef} hareket geçmişi, ekstre dönem kayıtları (faiz hesaplamaları dahil), ödeme planı ve ekstre-aktarımlı giderleri KALICI olarak silinecek.\n\nSadece kart tanımı (isim/banka/limit) kalır — sanki hiç ekstre yüklenmemiş gibi sıfırdan başlarsın. Geri alınamaz. Devam?`)) return;
+    const pin = window.prompt('İşletme onayı — Merve Karabacak 4 haneli PIN:');
+    if (!pin) return;
+    try {
+      const r = await api(`/kartlar/${k ? k.id : '__hepsi__'}/tam-sifirla`, { method: 'POST', body: { onay_pin: pin } });
+      const adlar = r.kartlar.map(x => x.kart_adi).join(', ');
+      setMsg({ t: 'green', m: `✓ Tam sıfırlandı: ${adlar}. Artık "Ekstre Yükle" ile sıfırdan yükleyebilirsin.` });
+      load();
+    } catch (e) { setMsg({ t: 'red', m: e.message || 'Sıfırlanamadı' }); }
+  }
+
   return (
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
@@ -256,6 +269,7 @@ export default function Kartlar() {
                 <button className="btn btn-secondary btn-sm" onClick={() => duzenle(k)}>✏️ Düzenle</button>
                 <button className="btn btn-danger btn-sm" onClick={() => sil(k.id)}>Pasife Al</button>
                 <button className="btn btn-danger btn-sm" title="Kalıcı sil (yalnızca işlemsiz kart)" onClick={() => kaliciSil(k)} style={{ background: 'transparent', color: 'var(--red)' }}>🗑 Sil</button>
+                <button className="btn btn-sm" title="Bu kartın tüm geçmişini (hareket+ekstre+faiz) sil, sadece tanımı kalsın" onClick={() => tamSifirla(k)} style={{ background: 'transparent', color: 'var(--orange)', borderColor: 'var(--orange)' }}>♻️ Tam Sıfırla</button>
               </div>
             </div>
           );
@@ -263,10 +277,14 @@ export default function Kartlar() {
       </div>
 
       {/* Bakım / nadir işlemler — en altta, kazara tıklanmasın */}
-      <div style={{ marginTop: 22, paddingTop: 14, borderTop: '1px dashed var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
+      <div style={{ marginTop: 22, paddingTop: 14, borderTop: '1px dashed var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
         <button className="btn btn-sm" style={{ borderColor: 'var(--orange)', color: 'var(--orange)', background: 'transparent' }}
           title="Bozuk/karışık kart hareketlerini temizle (açılış devri öncesi)" onClick={bozukTemizle}>
           🧹 Bozuk Kayıtları Temizle
+        </button>
+        <button className="btn btn-sm" style={{ borderColor: 'var(--red)', color: 'var(--red)', background: 'transparent' }}
+          title="TÜM kartların hareket+ekstre+faiz geçmişini sil, sadece kart tanımları kalsın" onClick={() => tamSifirla(null)}>
+          ♻️ Tüm Kartları Tam Sıfırla
         </button>
       </div>
 

@@ -1674,6 +1674,62 @@ def kart_kalici_sil(kid: str, body: KartKaliciSilBody):
     return {"success": True, "kart_adi": kart_adi}
 
 
+@app.post("/api/kartlar/{kid}/tam-sifirla")
+def kart_tam_sifirla(kid: str, body: KartKaliciSilBody):
+    """Kart TANIMINI (isim/banka/limit/son4hane) KORUR ama o karta ait TÜM
+    geçmişi siler: kart_hareketleri (harcama/ödeme/faiz), kart_ekstre_donem
+    (aylık ekstre snapshot'ları + faiz hesapları), bağlı ödeme planı ve
+    ekstre-import kaynaklı anlık gider kayıtları. Faiz/gecikme faiz oranını
+    da sıfırlar (bir sonraki ekstre yüklemesinde otomatik güncellenir).
+    İşletme onayı (Merve Karabacak PIN) şart. kid='__hepsi__' → tüm aktif kartlar."""
+    from operasyon_merkez_api import _isletme_onay_dogrula
+    with db() as (conn, cur):
+        onayci = _isletme_onay_dogrula(cur, body.onay_pin)  # PIN hatalı → 403
+        if kid == "__hepsi__":
+            cur.execute("SELECT id::text, kart_adi FROM kartlar WHERE aktif=TRUE")
+            kartlar_l = [dict(r) for r in (cur.fetchall() or [])]
+        else:
+            cur.execute("SELECT id::text, kart_adi FROM kartlar WHERE id=%s", (kid,))
+            r = cur.fetchone()
+            if not r:
+                raise HTTPException(404, "Kart bulunamadı")
+            kartlar_l = [dict(r)]
+
+        sonuc = []
+        for k in kartlar_l:
+            kk = k["id"]
+            cur.execute(
+                """UPDATE kasa_hareketleri SET durum='iptal'
+                   WHERE kaynak_tablo='kart_hareketleri' AND durum='aktif'
+                     AND kaynak_id IN (SELECT id FROM kart_hareketleri WHERE kart_id=%s)""",
+                (kk,),
+            )
+            cur.execute(
+                """DELETE FROM anlik_giderler
+                   WHERE kaynak_tablo='ekstre_import'
+                     AND kaynak_id IN (SELECT id FROM kart_hareketleri WHERE kart_id=%s)""",
+                (kk,),
+            )
+            cur.execute("DELETE FROM kart_hareketleri WHERE kart_id=%s", (kk,))
+            silinen_hareket = cur.rowcount
+            cur.execute("DELETE FROM kart_ekstre_donem WHERE kart_id=%s", (kk,))
+            silinen_donem = cur.rowcount
+            cur.execute(
+                "UPDATE onay_kuyrugu SET durum='reddedildi' "
+                "WHERE durum='bekliyor' AND kaynak_id IN (SELECT id FROM odeme_plani WHERE kart_id=%s)",
+                (kk,),
+            )
+            cur.execute("DELETE FROM odeme_plani WHERE kart_id=%s", (kk,))
+            cur.execute("UPDATE kartlar SET faiz_orani=0, gecikme_faiz_orani=0 WHERE id=%s", (kk,))
+            audit(cur, "kartlar", kk, "TAM_SIFIRLA",
+                  yeni={"kart_adi": k["kart_adi"], "onayci": onayci.get("ad_soyad"),
+                        "silinen_hareket": silinen_hareket, "silinen_donem": silinen_donem})
+            sonuc.append({"kart_id": kk, "kart_adi": k["kart_adi"],
+                           "silinen_hareket": silinen_hareket, "silinen_donem": silinen_donem})
+    uyari_cache_clear()
+    return {"success": True, "kartlar": sonuc}
+
+
 @app.get("/api/kartlar/{kid}/taksitler")
 def kart_taksitler(kid: str):
     """
