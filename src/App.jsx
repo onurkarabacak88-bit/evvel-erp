@@ -159,8 +159,6 @@ function syncHashForPage(pageId) {
 }
 
 // ── Admin Şifre Kapısı ───────────────────────────────────────────────────────
-const ADMIN_OTURUM_KEY = 'evvel_admin_oturum';
-
 function AdminGirisKapisi({ onBasarili }) {
   const [sifre, setSifre] = useState('');
   const [hata, setHata] = useState('');
@@ -173,7 +171,6 @@ function AdminGirisKapisi({ onBasarili }) {
     try {
       const res = await api('/admin-giris', { method: 'POST', body: { sifre } });
       if (res?.ok) {
-        try { localStorage.setItem(ADMIN_OTURUM_KEY, '1'); } catch (_) {}
         onBasarili();
       }
     } catch (e2) {
@@ -248,9 +245,9 @@ export default function App() {
   const [onayBekleyen, setOnayBekleyen] = useState(0);
   const [bugunAnomali, setBugunAnomali] = useState(0);
   const [yeniBasvuru, setYeniBasvuru] = useState(0);
-  const [girisYapildi, setGirisYapildi] = useState(() => {
-    try { return localStorage.getItem(ADMIN_OTURUM_KEY) === '1'; } catch (_) { return false; }
-  });
+  // Sayfa her açıldığında (yenileme/yeniden giriş) şifre yeniden istensin —
+  // kalıcı oturum tutulmuyor (localStorage kullanılmıyor).
+  const [girisYapildi, setGirisYapildi] = useState(false);
 
   useEffect(() => {
     if (!girisYapildi) return;
@@ -361,10 +358,7 @@ export default function App() {
         <div className="sidebar-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           <span>EVVEL v2.4 · 27.03.2026</span>
           <button
-            onClick={() => {
-              try { localStorage.removeItem(ADMIN_OTURUM_KEY); } catch (_) {}
-              setGirisYapildi(false);
-            }}
+            onClick={() => setGirisYapildi(false)}
             title="Çıkış"
             style={{
               background: 'none', border: '1px solid var(--border)', borderRadius: 6,
