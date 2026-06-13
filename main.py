@@ -9188,6 +9188,20 @@ def v2_rapor_izinli_calisti(
         return _vv2.rapor_izinli_calisti(cur, d1, d2, limit=limit)
 
 
+@app.get("/api/vardiya/v2/rapor/devamsizlik")
+def v2_rapor_devamsizlik(
+    baslangic: str,
+    bitis: str,
+    limit: int = 500,
+):
+    """Vardiyada planlı ama hiç yoklaması olmayan + kapanışı unutulmuş personel."""
+    from datetime import datetime as _dt
+    d1 = _dt.strptime(baslangic[:10], "%Y-%m-%d").date()
+    d2 = _dt.strptime(bitis[:10], "%Y-%m-%d").date()
+    with db() as (conn, cur):
+        return _vv2.rapor_devamsizlik(cur, d1, d2, limit=limit)
+
+
 # ── PRESET (TAM/PART/ARACI/AÇILIŞ/KAPANIŞ) ──
 class _V2PresetIn(BaseModel):
     kod: str

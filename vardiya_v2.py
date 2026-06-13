@@ -2717,6 +2717,91 @@ def rapor_izinli_calisti(
     }
 
 
+def rapor_devamsizlik(
+    cur, baslangic: date, bitis: date, limit: int = 500
+) -> Dict[str, Any]:
+    """
+    İki liste döner:
+
+    1. ``yoklama_yok``: O gün vardiyada (vardiya_atama, durum != 'iptal') planlı olduğu
+       halde `gorev_yoklama`'da hiç kaydı olmayan VE o gün için `personel_izin`
+       kaydı da olmayan personel. ("Vardiyada yazıyordu, ne geldi ne izin girildi.")
+
+    2. ``kapanis_unutuldu``: `gorev_yoklama` kaydı var ama `cikis_ts` boş —
+       giriş yaptı, çıkış/mühür unutuldu.
+
+    Yönetici bu listeden her satır için "İzin olarak işaretle" (personel_izin POST,
+    tip='mazeret' veya 'ucretsiz') ya da olduğu gibi bırakıp manuel kapanış
+    (`kapanis-muhurle`) yapabilir.
+    """
+    lim = min(max(int(limit), 1), 2000)
+
+    cur.execute(
+        """
+        SELECT a.tarih::text AS tarih, a.personel_id, a.baslangic_saat::text AS baslangic_saat,
+               a.bitis_saat::text AS bitis_saat, sl.sube_id, s.ad AS sube_ad,
+               TRIM(COALESCE(p.ad_soyad, '')) AS _personel_full
+        FROM vardiya_atama a
+        JOIN personel p ON p.id = a.personel_id
+        LEFT JOIN vardiya_slot sl ON sl.id = a.slot_id
+        LEFT JOIN subeler s ON s.id = sl.sube_id
+        WHERE a.tarih BETWEEN %s AND %s
+          AND a.durum != 'iptal'
+          AND NOT EXISTS (
+              SELECT 1 FROM gorev_yoklama g
+              WHERE g.personel_id = a.personel_id AND g.tarih = a.tarih
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM personel_izin i
+              WHERE i.personel_id = a.personel_id
+                AND a.tarih BETWEEN i.baslangic_tarih AND i.bitis_tarih
+          )
+        ORDER BY a.tarih DESC, a.baslangic_saat
+        LIMIT %s
+        """,
+        (baslangic, bitis, lim),
+    )
+    yoklama_yok = []
+    for r in cur.fetchall():
+        d = dict(r)
+        a, ss = _ad_soyad_split(d.pop("_personel_full", None))
+        d["personel_ad"] = a or "(isimsiz)"
+        d["personel_soyad"] = ss
+        yoklama_yok.append(d)
+
+    cur.execute(
+        """
+        SELECT g.tarih::text AS tarih, g.personel_id, g.sube_id, s.ad AS sube_ad,
+               g.giris_ts, g.vardiya_tip,
+               TRIM(COALESCE(p.ad_soyad, '')) AS _personel_full
+        FROM gorev_yoklama g
+        JOIN personel p ON p.id = g.personel_id
+        LEFT JOIN subeler s ON s.id = g.sube_id
+        WHERE g.tarih BETWEEN %s AND %s
+          AND g.cikis_ts IS NULL
+        ORDER BY g.tarih DESC, g.giris_ts
+        LIMIT %s
+        """,
+        (baslangic, bitis, lim),
+    )
+    kapanis_unutuldu = []
+    for r in cur.fetchall():
+        d = dict(r)
+        a, ss = _ad_soyad_split(d.pop("_personel_full", None))
+        d["personel_ad"] = a or "(isimsiz)"
+        d["personel_soyad"] = ss
+        if d.get("giris_ts") is not None:
+            d["giris_ts"] = str(d["giris_ts"])
+        kapanis_unutuldu.append(d)
+
+    return {
+        "baslangic": str(baslangic),
+        "bitis": str(bitis),
+        "yoklama_yok": yoklama_yok,
+        "kapanis_unutuldu": kapanis_unutuldu,
+    }
+
+
 def personel_ay_vardiya_maas_kaynagi(cur, personel_id: str, yil: int, ay: int) -> Dict[str, Any]:
     """
     Personel → Aylık Maaş ekranına aktarım için vardiya kaynaklı saatler.

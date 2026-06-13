@@ -727,7 +727,9 @@ export default function VardiyaPlanlamaV2() {
   const [raporBit, setRaporBit] = useState(isoToday());
   const [raporFazla, setRaporFazla] = useState(null);
   const [raporIzinli, setRaporIzinli] = useState(null);
+  const [raporDevamsizlik, setRaporDevamsizlik] = useState(null);
   const [raporYukleniyor, setRaporYukleniyor] = useState(false);
+  const [devamsizlikIslemId, setDevamsizlikIslemId] = useState(null);
   const [personelMetinFiltre, setPersonelMetinFiltre] = useState('');
   /** null → sol havuz ana `tarih` planıyla aynı; ISO string → o günün personel_havuzu ayrı çekilir */
   const [havuzTarihOverride, setHavuzTarihOverride] = useState(null);
@@ -926,13 +928,15 @@ export default function VardiyaPlanlamaV2() {
       setRaporYukleniyor(true);
       try {
         const q = `baslangic=${encodeURIComponent(raporBas)}&bitis=${encodeURIComponent(raporBit)}`;
-        const [f, iz] = await Promise.all([
+        const [f, iz, dv] = await Promise.all([
           api(`/vardiya/v2/rapor/fazla-mesai?${q}`),
           api(`/vardiya/v2/rapor/izinli-calisti?${q}`),
+          api(`/vardiya/v2/rapor/devamsizlik?${q}`),
         ]);
         if (!cancel) {
           setRaporFazla(f);
           setRaporIzinli(iz);
+          setRaporDevamsizlik(dv);
         }
       } catch (e) {
         if (!cancel) setHata(e.message || 'Rapor yüklenemedi');
@@ -942,6 +946,40 @@ export default function VardiyaPlanlamaV2() {
     })();
     return () => { cancel = true; };
   }, [raporAcik, raporBas, raporBit]);
+
+  const devamsizlikRaporTazele = useCallback(async () => {
+    try {
+      const q = `baslangic=${encodeURIComponent(raporBas)}&bitis=${encodeURIComponent(raporBit)}`;
+      const dv = await api(`/vardiya/v2/rapor/devamsizlik?${q}`);
+      setRaporDevamsizlik(dv);
+    } catch { /* ignore */ }
+  }, [raporBas, raporBit]);
+
+  /** "Vardiyada var ama yoklaması yok" satırını geriye dönük izin/devamsızlık kaydına çevirir. */
+  const devamsizlikIzinYap = useCallback(async (row, tip) => {
+    const key = `${row.personel_id}_${row.tarih}`;
+    setDevamsizlikIslemId(key);
+    try {
+      await api('/vardiya/v2/izin', {
+        method: 'POST',
+        body: {
+          personel_id: row.personel_id,
+          baslangic_tarih: row.tarih,
+          bitis_tarih: row.tarih,
+          tip,
+          aciklama: tip === 'ucretsiz'
+            ? 'Devamsızlık (vardiyada planlı, yoklama yok) — geriye dönük işaretlendi'
+            : 'İzin (vardiyada planlı, yoklama yok) — geriye dönük işaretlendi',
+          force: true,
+        },
+      });
+      await devamsizlikRaporTazele();
+    } catch (e) {
+      setHata(e.message || 'İşlem başarısız');
+    } finally {
+      setDevamsizlikIslemId(null);
+    }
+  }, [devamsizlikRaporTazele]);
 
   const tarihGoster = useMemo(() => {
     const d = new Date(tarih + 'T00:00:00');
@@ -2509,6 +2547,70 @@ export default function VardiyaPlanlamaV2() {
                       </tbody>
                     </table>
                   )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!raporYukleniyor && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 13 }}>⚠️ Devamsızlık / Eksik Yoklama</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
+                <div>
+                  <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>
+                    Vardiyada planlıydı, hiç giriş/çıkış QR'ı okutmadı, izin de girilmemiş.
+                  </div>
+                  <div style={{ maxHeight: 280, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12 }}>
+                    {(raporDevamsizlik?.yoklama_yok || []).length === 0 ? (
+                      <div style={{ padding: 10, color: 'var(--text3)' }}>Kayıt yok</div>
+                    ) : (
+                      <table className="table-compact" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead><tr style={{ background: 'var(--bg2)' }}><th style={{ padding: 4 }}>Tarih</th><th>Personel</th><th>Vardiya</th><th>Şube</th><th>İşlem</th></tr></thead>
+                        <tbody>
+                          {(raporDevamsizlik.yoklama_yok || []).map((r, i) => {
+                            const key = `${r.personel_id}_${r.tarih}`;
+                            const busy = devamsizlikIslemId === key;
+                            return (
+                              <tr key={i}>
+                                <td style={{ padding: 4 }}>{r.tarih}</td>
+                                <td>{r.personel_ad} {r.personel_soyad}</td>
+                                <td>{(r.baslangic_saat || '').slice(0, 5)}–{(r.bitis_saat || '').slice(0, 5)}</td>
+                                <td>{r.sube_ad || '-'}</td>
+                                <td style={{ display: 'flex', gap: 4 }}>
+                                  <button className="btn btn-sm" disabled={busy} onClick={() => devamsizlikIzinYap(r, 'mazeret')} title="Geriye dönük izin günü olarak kaydet">İzin yap</button>
+                                  <button className="btn btn-sm" disabled={busy} onClick={() => devamsizlikIzinYap(r, 'ucretsiz')} title="Devamsızlık (ücretsiz izin) olarak kaydet">Devamsız</button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>
+                    Giriş yapıldı, kapanış/çıkış mührü hâlâ açık (cikis_ts boş).
+                  </div>
+                  <div style={{ maxHeight: 280, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12 }}>
+                    {(raporDevamsizlik?.kapanis_unutuldu || []).length === 0 ? (
+                      <div style={{ padding: 10, color: 'var(--text3)' }}>Kayıt yok</div>
+                    ) : (
+                      <table className="table-compact" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead><tr style={{ background: 'var(--bg2)' }}><th style={{ padding: 4 }}>Tarih</th><th>Personel</th><th>Giriş</th><th>Şube</th></tr></thead>
+                        <tbody>
+                          {(raporDevamsizlik.kapanis_unutuldu || []).map((r, i) => (
+                            <tr key={i}>
+                              <td style={{ padding: 4 }}>{r.tarih}</td>
+                              <td>{r.personel_ad} {r.personel_soyad}</td>
+                              <td>{(r.giris_ts || '').slice(0, 16).replace('T', ' ')}</td>
+                              <td>{r.sube_ad || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
