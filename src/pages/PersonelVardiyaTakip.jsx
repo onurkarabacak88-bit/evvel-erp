@@ -111,7 +111,7 @@ function EksikGunModal({ p, yil, ay, onKapat, onTamam }) {
   );
 }
 
-function PersonelKart({ p, acik, onToggle, yil, ay, onYenile }) {
+function PersonelKart({ p, onDetay, yil, ay, onYenile }) {
   const ayrildi = !p.aktif;
   const [eksikModal, setEksikModal] = useState(false);
   return (
@@ -120,14 +120,19 @@ function PersonelKart({ p, acik, onToggle, yil, ay, onYenile }) {
       border: `1px solid ${ayrildi ? 'rgba(107,111,122,0.3)' : 'var(--border)'}`,
       background: ayrildi ? 'rgba(107,111,122,0.04)' : 'var(--bg2)',
       opacity: ayrildi ? 0.8 : 1,
-    }}>
+      transition: 'border-color 0.15s, transform 0.1s',
+      cursor: 'pointer',
+    }}
+      onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'}
+      onMouseLeave={e => e.currentTarget.style.borderColor = ayrildi ? 'rgba(107,111,122,0.3)' : 'var(--border)'}
+    >
       {eksikModal && (
         <EksikGunModal p={p} yil={yil} ay={ay}
           onKapat={() => setEksikModal(false)}
           onTamam={onYenile} />
       )}
       {/* Özet satır */}
-      <div onClick={onToggle} style={{
+      <div onClick={() => onDetay(p)} style={{
         padding: '14px 16px', cursor: 'pointer', display: 'flex',
         alignItems: 'center', gap: 10, flexWrap: 'wrap',
       }}>
@@ -196,57 +201,180 @@ function PersonelKart({ p, acik, onToggle, yil, ay, onYenile }) {
           )}
         </div>
 
-        <span style={{ color: 'var(--text3)', fontSize: 12 }}>{acik ? '▲' : '▼'}</span>
+        <span style={{ color: 'var(--accent)', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>Detay →</span>
       </div>
+    </div>
+  );
+}
 
-      {/* Günlük detay */}
-      {acik && (
-        <div style={{ borderTop: '1px solid var(--border)' }}>
-          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: 'var(--bg3)' }}>
-                {['Tarih','Plan','Gecikme','Fazla','Yemek','Uyarı'].map(h => (
-                  <th key={h} style={{ padding: '8px 12px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600 }}>{h}</th>
+function PersonelDetayModal({ p, yil, ay, onKapat }) {
+  const fmt2 = n => new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 2 }).format(n) + ' ₺';
+  const gunler = (p.gunler || []).filter(g => g.planlanan_saat > 0);
+
+  // Son 7 gün (en yeni en üstte)
+  const son7 = [...gunler].sort((a, b) => b.tarih.localeCompare(a.tarih)).slice(0, 7);
+  const gecGelinenler = son7.filter(g => g.gecikme_dk > 0);
+  const yemekKaybiGunler = son7.filter(g => g.yemek_sure_dk != null && !g.yemek_ucret_hakki);
+
+  const d = p.ucret_detay;
+  const satir = (label, val, renk, bold) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0',
+      borderBottom: '1px solid var(--border)' }}>
+      <span style={{ color: 'var(--text3)', fontSize: 12 }}>{label}</span>
+      <span style={{ fontWeight: bold ? 800 : 600, fontSize: 12, color: renk || 'var(--text1)' }}>{val}</span>
+    </div>
+  );
+
+  return (
+    <div onClick={onKapat} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+      padding: 16,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 16,
+        maxWidth: 640, width: '100%', maxHeight: '88vh', overflowY: 'auto',
+      }}>
+        {/* Başlık */}
+        <div style={{
+          padding: '18px 20px', borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          position: 'sticky', top: 0, background: 'var(--bg2)', zIndex: 1,
+        }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 16, color: 'var(--text1)' }}>{p.ad_soyad}</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>
+              {AY_ADLARI[ay]} {yil} · {p.calisma_turu === 'surekli' ? 'Sürekli' : 'Part-time'}
+            </div>
+          </div>
+          <button onClick={onKapat} style={{
+            border: 'none', background: 'var(--bg3)', color: 'var(--text3)',
+            width: 32, height: 32, borderRadius: 8, cursor: 'pointer', fontSize: 16,
+          }}>✕</button>
+        </div>
+
+        <div style={{ padding: '16px 20px' }}>
+          {/* Özet metrikler */}
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, marginBottom: 16 }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontWeight: 700, color: 'var(--text1)' }}>{fmt(p.toplam_planlanan_saat)}s</div>
+              <div style={{ color: 'var(--text3)', fontSize: 10 }}>Plan</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontWeight: 700, color: p.toplam_fazla_mesai_saat > 0 ? '#f59e0b' : 'var(--text3)' }}>
+                {fmt(p.toplam_fazla_mesai_saat)}s
+              </div>
+              <div style={{ color: 'var(--text3)', fontSize: 10 }}>Fazla</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontWeight: 700, color: p.toplam_gecikme_dk > 0 ? '#e05c5c' : 'var(--text3)' }}>
+                {fmt(p.toplam_gecikme_dk, true)}
+              </div>
+              <div style={{ color: 'var(--text3)', fontSize: 10 }}>Gecikme</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontWeight: 700, color: '#4caf84' }}>{p.yemek_ucret_gun} gün</div>
+              <div style={{ color: 'var(--text3)', fontSize: 10 }}>Yemek Hakkı</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontWeight: 800, color: '#4caf84', fontSize: 15 }}>
+                {p['net_hakediş'] > 0 ? new Intl.NumberFormat('tr-TR').format(Math.round(p['net_hakediş']))+'₺' : '—'}
+              </div>
+              <div style={{ color: 'var(--text3)', fontSize: 10 }}>
+                {d?.ay_tamam ? 'Net Hakediş' : `Hakediş (${d?.gecen_gun}/30)`}
+              </div>
+            </div>
+          </div>
+
+          {/* Son 7 gün — gecikme ve yemek hakkı kayıpları */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 8, letterSpacing: 0.5 }}>
+              SON 7 GÜN
+            </div>
+            {gecGelinenler.length === 0 && yemekKaybiGunler.length === 0 ? (
+              <div style={{
+                padding: '10px 12px', borderRadius: 10, fontSize: 12, color: '#4caf84',
+                background: 'rgba(76,175,132,0.06)', border: '1px solid rgba(76,175,132,0.2)',
+              }}>
+                ✅ Son 7 günde gecikme yok, yemek molası hakkı kaybı yok.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {gecGelinenler.map(g => (
+                  <div key={'gec-'+g.tarih} style={{
+                    padding: '8px 12px', borderRadius: 8, fontSize: 12, color: '#e05c5c',
+                    background: 'rgba(224,92,92,0.06)', border: '1px solid rgba(224,92,92,0.2)',
+                  }}>
+                    ⏰ {new Date(g.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', weekday: 'long' })}
+                    {' — '}<strong>{fmt(g.gecikme_dk, true)}</strong> geç giriş yapıldı.
+                  </div>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {(p.gunler || []).filter(g => g.planlanan_saat > 0).map((g, i) => (
-                <tr key={g.tarih} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'transparent' : 'var(--bg3)' }}>
-                  <td style={{ padding: '8px 12px', color: 'var(--text2)' }}>
-                    {new Date(g.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', weekday: 'short' })}
-                    {g.baslangic_gunu && <span style={{ marginLeft: 6, fontSize: 10, color: '#4a9eff', fontWeight: 700 }}>Sistem başlangıcı</span>}
-                    {!g.baslangic_gunu && !g.giris_var && <span style={{ marginLeft: 6, color: '#e05c5c', fontSize: 10 }}>giriş yok</span>}
-                  </td>
-                  <td style={{ padding: '8px 12px', color: 'var(--text1)', fontWeight: 600 }}>{fmt(g.planlanan_saat)}s</td>
-                  <td style={{ padding: '8px 12px' }}>
-                    {g.gecikme_dk > 0
-                      ? <span style={{ color: '#e05c5c', fontWeight: 700 }}>{fmt(g.gecikme_dk, true)}</span>
-                      : <span style={{ color: 'var(--text3)' }}>—</span>}
-                  </td>
-                  <td style={{ padding: '8px 12px' }}>
-                    {g.fazla_mesai_saat > 0
-                      ? <span style={{ color: '#f59e0b', fontWeight: 700 }}>+{fmt(g.fazla_mesai_saat)}s</span>
-                      : <span style={{ color: 'var(--text3)' }}>—</span>}
-                  </td>
-                  <td style={{ padding: '8px 12px' }}>
-                    {g.yemek_sure_dk != null
-                      ? <span style={{ color: g.yemek_ucret_hakki ? '#4caf84' : '#e05c5c' }}>
-                          {Math.round(g.yemek_sure_dk)}dk {g.yemek_ucret_hakki ? '✅' : '❌'}
-                        </span>
-                      : <span style={{ color: 'var(--text3)' }}>—</span>}
-                  </td>
-                  <td style={{ padding: '8px 12px' }}>
-                    {g.part_tam_uyari && <Badge renk="sari" label="Part-Tam" />}
-                  </td>
+                {yemekKaybiGunler.map(g => (
+                  <div key={'yemek-'+g.tarih} style={{
+                    padding: '8px 12px', borderRadius: 8, fontSize: 12, color: '#f59e0b',
+                    background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)',
+                  }}>
+                    🍽️ {new Date(g.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', weekday: 'long' })}
+                    {' — yemek molası '}<strong>{Math.round(g.yemek_sure_dk)} dk</strong> sürdü
+                    {g.yemek_limit_dk ? <> (limit <strong>{g.yemek_limit_dk} dk</strong>)</> : null}
+                    {g.yemek_limit_dk
+                      ? <>, <strong>{Math.round(g.yemek_sure_dk - g.yemek_limit_dk)} dk</strong> fazla kaldığı için yemek ücreti hakkı kazanılmadı.</>
+                      : <>, limit aşıldığı için yemek ücreti hakkı kazanılmadı.</>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Tüm ay tablosu */}
+          <div style={{ marginBottom: 16, borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)' }}>
+            <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--bg3)' }}>
+                  {['Tarih','Plan','Gecikme','Fazla','Yemek','Uyarı'].map(h => (
+                    <th key={h} style={{ padding: '8px 12px', textAlign: 'left', color: 'var(--text3)', fontWeight: 600 }}>{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {gunler.map((g, i) => (
+                  <tr key={g.tarih} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'transparent' : 'var(--bg3)' }}>
+                    <td style={{ padding: '8px 12px', color: 'var(--text2)' }}>
+                      {new Date(g.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', weekday: 'short' })}
+                      {g.baslangic_gunu && <span style={{ marginLeft: 6, fontSize: 10, color: '#4a9eff', fontWeight: 700 }}>Sistem başlangıcı</span>}
+                      {!g.baslangic_gunu && !g.giris_var && <span style={{ marginLeft: 6, color: '#e05c5c', fontSize: 10 }}>giriş yok</span>}
+                    </td>
+                    <td style={{ padding: '8px 12px', color: 'var(--text1)', fontWeight: 600 }}>{fmt(g.planlanan_saat)}s</td>
+                    <td style={{ padding: '8px 12px' }}>
+                      {g.gecikme_dk > 0
+                        ? <span style={{ color: '#e05c5c', fontWeight: 700 }}>{fmt(g.gecikme_dk, true)}</span>
+                        : <span style={{ color: 'var(--text3)' }}>—</span>}
+                    </td>
+                    <td style={{ padding: '8px 12px' }}>
+                      {g.fazla_mesai_saat > 0
+                        ? <span style={{ color: '#f59e0b', fontWeight: 700 }}>+{fmt(g.fazla_mesai_saat)}s</span>
+                        : <span style={{ color: 'var(--text3)' }}>—</span>}
+                    </td>
+                    <td style={{ padding: '8px 12px' }}>
+                      {g.yemek_sure_dk != null
+                        ? <span style={{ color: g.yemek_ucret_hakki ? '#4caf84' : '#e05c5c' }}
+                            title={g.yemek_limit_dk ? `Limit: ${g.yemek_limit_dk} dk` : ''}>
+                            {Math.round(g.yemek_sure_dk)}dk {g.yemek_ucret_hakki ? '✅' : '❌'}
+                          </span>
+                        : <span style={{ color: 'var(--text3)' }}>—</span>}
+                    </td>
+                    <td style={{ padding: '8px 12px' }}>
+                      {g.part_tam_uyari && <Badge renk="sari" label="Part-Tam" />}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           {/* Haftalık izin özeti */}
           {(p.haftalik_izin_detay || []).length > 0 && (
-            <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', background: 'var(--bg3)' }}>
+            <div style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--bg3)', border: '1px solid var(--border)', marginBottom: 16 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 8, letterSpacing: 0.5 }}>
                 HAFTALIK İZİN TAKİBİ
               </div>
@@ -277,55 +405,44 @@ function PersonelKart({ p, acik, onToggle, yil, ay, onYenile }) {
                   bu personele <strong>{p.haftalik_izin_kullanilmadi} günlük ücretli izin</strong> verilmeli.
                 </div>
               )}
+            </div>
+          )}
 
-              {/* Ücret hesabı döküm */}
-              {p.ucret_detay && (() => {
-                const d = p.ucret_detay;
-                const fmt2 = n => new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 2 }).format(n) + ' ₺';
-                const satir = (label, val, renk, bold) => (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0',
-                    borderBottom: '1px solid var(--border)' }}>
-                    <span style={{ color: 'var(--text3)', fontSize: 12 }}>{label}</span>
-                    <span style={{ fontWeight: bold ? 800 : 600, fontSize: 12, color: renk || 'var(--text1)' }}>{val}</span>
-                  </div>
-                );
-                return (
-                  <div style={{ marginTop: 12, padding: '12px 16px', borderRadius: 10,
-                    background: 'var(--bg3)', border: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)',
-                      marginBottom: 8, letterSpacing: 0.5 }}>
-                      💰 ÜCRET HESABI
-                    </div>
-                    {d.taban_maas != null && (
-                      d.ay_tamam
-                        ? satir('Taban Maaş (tam ay)', fmt2(d.taban_maas), null)
-                        : satir(`Taban Maaş (${d.gecen_gun}/30 gün)`, fmt2(d.kazanilan_taban), null, true)
-                    )}
-                    {d.saatlik_ucret > 0 && satir('Saatlik Ücret (maaş÷285)', fmt2(d.saatlik_ucret), 'var(--text3)')}
-                    {d.calisma_saati != null && satir(`Çalışma (${d.calisma_saati}s × ${fmt2(d.saatlik_ucret)}/s)`, fmt2(d.normal_ucret), null)}
-                    {d.fazla_mesai_saat > 0 && satir(`Fazla Mesai (${d.fazla_mesai_saat}s)`, '+' + fmt2(d.fazla_mesai_ucret), '#f59e0b')}
-                    {(d.yemek_ucret_gun > 0 || d.yemek_ucret > 0) && satir(
-                      `🍽️ Yemek (${d.yemek_ucret_gun ?? p.yemek_ucret_gun} gün × ${fmt2(d.yemek_ucret_birim ?? 0)})`,
-                      '+' + fmt2(d.yemek_ucret), '#4caf84'
-                    )}
-                    {d.yol_ucret > 0 && satir(
-                      !d.ay_tamam ? `Yol Ücreti (${d.gecen_gun}/30 gün)` : 'Yol Ücreti (tam ay)',
-                      '+' + fmt2(d.yol_ucret), null
-                    )}
-                    <div style={{ display: 'flex', justifyContent: 'space-between',
-                      padding: '8px 0 0', marginTop: 4 }}>
-                      <span style={{ fontWeight: 800, fontSize: 13, color: 'var(--text1)' }}>
-                        {d.ay_tamam ? 'NET HAKEDİŞ' : `ŞU ANA KADAR HAKEDİŞ (${d.gecen_gun}/30)`}
-                      </span>
-                      <span style={{ fontWeight: 800, fontSize: 15, color: '#4caf84' }}>{fmt2(d['net_hakediş'])}</span>
-                    </div>
-                  </div>
-                );
-              })()}
+          {/* Ücret hesabı döküm */}
+          {d && (
+            <div style={{ padding: '12px 16px', borderRadius: 10,
+              background: 'var(--bg3)', border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)',
+                marginBottom: 8, letterSpacing: 0.5 }}>
+                💰 ÜCRET HESABI
+              </div>
+              {d.taban_maas != null && (
+                d.ay_tamam
+                  ? satir('Taban Maaş (tam ay)', fmt2(d.taban_maas), null)
+                  : satir(`Taban Maaş (${d.gecen_gun}/30 gün)`, fmt2(d.kazanilan_taban), null, true)
+              )}
+              {d.saatlik_ucret > 0 && satir('Saatlik Ücret (maaş÷285)', fmt2(d.saatlik_ucret), 'var(--text3)')}
+              {d.calisma_saati != null && satir(`Çalışma (${d.calisma_saati}s × ${fmt2(d.saatlik_ucret)}/s)`, fmt2(d.normal_ucret), null)}
+              {d.fazla_mesai_saat > 0 && satir(`Fazla Mesai (${d.fazla_mesai_saat}s)`, '+' + fmt2(d.fazla_mesai_ucret), '#f59e0b')}
+              {(d.yemek_ucret_gun > 0 || d.yemek_ucret > 0) && satir(
+                `🍽️ Yemek (${d.yemek_ucret_gun ?? p.yemek_ucret_gun} gün × ${fmt2(d.yemek_ucret_birim ?? 0)})`,
+                '+' + fmt2(d.yemek_ucret), '#4caf84'
+              )}
+              {d.yol_ucret > 0 && satir(
+                !d.ay_tamam ? `Yol Ücreti (${d.gecen_gun}/30 gün)` : 'Yol Ücreti (tam ay)',
+                '+' + fmt2(d.yol_ucret), null
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between',
+                padding: '8px 0 0', marginTop: 4 }}>
+                <span style={{ fontWeight: 800, fontSize: 13, color: 'var(--text1)' }}>
+                  {d.ay_tamam ? 'NET HAKEDİŞ' : `ŞU ANA KADAR HAKEDİŞ (${d.gecen_gun}/30)`}
+                </span>
+                <span style={{ fontWeight: 800, fontSize: 15, color: '#4caf84' }}>{fmt2(d['net_hakediş'])}</span>
+              </div>
             </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -336,7 +453,7 @@ export default function PersonelVardiyaTakip() {
   const [ay, setAy] = useState(bugun.getMonth() + 1);
   const [veri, setVeri] = useState(null);
   const [yukleniyor, setYukleniyor] = useState(false);
-  const [aciklar, setAciklar] = useState({});
+  const [detayPersonel, setDetayPersonel] = useState(null);
   const [izinAlacagi, setIzinAlacagi] = useState(null);
   const [filtre, setFiltre] = useState('aktif'); // 'aktif' | 'ayrildi' | 'hepsi'
   const [vardiyaDisiGirisler, setVardiyaDisiGirisler] = useState([]);
@@ -352,12 +469,15 @@ export default function PersonelVardiyaTakip() {
       setVeri(v);
       setIzinAlacagi(iz);
       setVardiyaDisiGirisler(vd || []);
+      // Açık detay modalı varsa güncel veriyle yenile (yoksa kapat)
+      setDetayPersonel(prev => {
+        if (!prev) return null;
+        return (v?.personeller || []).find(p => p.personel_id === prev.personel_id) || null;
+      });
     }).catch(console.error).finally(() => setYukleniyor(false));
   };
 
   useEffect(() => { yukle(); }, [yil, ay]);
-
-  const toggle = (pid) => setAciklar(p => ({ ...p, [pid]: !p[pid] }));
 
   const personeller = veri?.personeller || [];
   const filtrelenmis = personeller.filter(p =>
@@ -546,10 +666,18 @@ export default function PersonelVardiyaTakip() {
             yil={yil}
             ay={ay}
             onYenile={yukle}
-            acik={!!aciklar[p.personel_id]}
-            onToggle={() => toggle(p.personel_id)}
+            onDetay={setDetayPersonel}
           />
         ))
+      )}
+
+      {detayPersonel && (
+        <PersonelDetayModal
+          p={detayPersonel}
+          yil={yil}
+          ay={ay}
+          onKapat={() => setDetayPersonel(null)}
+        />
       )}
     </div>
   );

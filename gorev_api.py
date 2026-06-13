@@ -1489,11 +1489,13 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 if t not in yoklamalar:
                     yoklamalar[t] = dict(r)
 
-            # Yemek molaları
+            # Yemek molaları (limit_dk ile birlikte — hak kazanılmama nedeni gösterilebilsin)
             cur.execute("""
-                SELECT tarih::text, sure_dk, ucret_hakki
-                FROM yemek_molasi
-                WHERE personel_id=%s AND tarih BETWEEN %s AND %s
+                SELECT ym.tarih::text, ym.sure_dk, ym.ucret_hakki,
+                       COALESCE(s.yemek_mola_limit_dk, 60) AS limit_dk
+                FROM yemek_molasi ym
+                JOIN subeler s ON s.id = ym.sube_id
+                WHERE ym.personel_id=%s AND ym.tarih BETWEEN %s AND %s
             """, (pid, d1, p_d2))
             molalar = {str(r["tarih"]): dict(r) for r in cur.fetchall()}
 
@@ -1620,6 +1622,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                             "fazla_mesai_saat": round(fazla, 2),
                             "yemek_ucret_hakki": yemek_hak,
                             "yemek_sure_dk": float(m["sure_dk"]) if m and m.get("sure_dk") else None,
+                            "yemek_limit_dk": int(m["limit_dk"]) if m and m.get("limit_dk") else None,
                             "part_tam_uyari": part_tam,
                             "giris_var": y is not None,
                             "baslangic_gunu": False,
