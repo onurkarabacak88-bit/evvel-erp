@@ -12184,6 +12184,32 @@ def ops_maliyet_alis_fiyat_kaydet(body: AlisFiyatBody):
     return {"success": True, "id": new_id, "kalem_kodu": kalem}
 
 
+@router.delete("/maliyet/alis-fiyat-sil/{fiyat_id}")
+def ops_maliyet_alis_fiyat_sil(fiyat_id: str):
+    """Tek bir urun_alis_fiyat satırını siler (yanlış/test kaydı düzeltmek için)."""
+    with db() as (conn, cur):
+        cur.execute("DELETE FROM urun_alis_fiyat WHERE id = %s", (fiyat_id,))
+        silindi = cur.rowcount
+    if not silindi:
+        raise HTTPException(404, "Kayıt bulunamadı")
+    return {"success": True, "silinen": silindi}
+
+
+@router.delete("/maliyet/kalem-temizle/{kalem_kodu}")
+def ops_maliyet_kalem_temizle(kalem_kodu: str):
+    """
+    Bir kalem_kodu'na ait TÜM fiyat geçmişini (urun_alis_fiyat) ve fatura eşleştirme
+    hafızasını (fatura_kalem_eslestirme) siler — test/yanlış eşleştirme kayıtlarını
+    temizlemek için. sube_depo_stok'taki alis_fiyati_tl alanına dokunmaz.
+    """
+    with db() as (conn, cur):
+        cur.execute("DELETE FROM urun_alis_fiyat WHERE kalem_kodu = %s", (kalem_kodu,))
+        fiyat_silinen = cur.rowcount
+        cur.execute("DELETE FROM fatura_kalem_eslestirme WHERE kalem_kodu = %s", (kalem_kodu,))
+        esleme_silinen = cur.rowcount
+    return {"success": True, "fiyat_silinen": fiyat_silinen, "esleme_silinen": esleme_silinen}
+
+
 # ─── Fatura PDF yükleme + kalem eşleştirme ─────────────────────────────────
 
 _FATURA_SAYI_RE = re.compile(r"\d{1,3}(?:[.\s]\d{3})*(?:,\d+)?|\d+(?:[.,]\d+)?")
