@@ -1824,6 +1824,7 @@ export function KartHareketleri() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({kart_id:'',tarih:new Date().toISOString().split('T')[0],islem_turu:'HARCAMA',tutar:'',taksit_sayisi:1,aciklama:'',harcama_tipi:'isletme'});
   const [msg, setMsg] = useState(null);
+  const [siniflandirYukleniyor, setSiniflandirYukleniyor] = useState({});
   const [filtreAcik, setFiltreAcik] = useState(false); // detay filtre varsayılan kapalı
   const [filtre, setFiltre] = useState({
     kart_id: '',
@@ -1922,12 +1923,15 @@ export function KartHareketleri() {
   }, { isletme: 0, sahsi: 0, belirsiz: 0 });
 
   async function siniflandir(id, tip) {
+    if (siniflandirYukleniyor[id]) return; // ikinci tıklamayı engelle (istek devam ederken)
+    setSiniflandirYukleniyor(m => ({ ...m, [id]: true }));
     try {
       await api(`/kart-hareketleri/${id}/harcama-tipi?tip=${tip}`, { method: 'POST' });
       setHareketler(prev => prev.map(x => x.id === id ? { ...x, harcama_tipi: tip } : x));
       const etiket = tip === 'isletme' ? '🏢 İşletme' : tip === 'sahsi' ? '👤 Şahsi' : '❓ Belirsiz';
       toast(`✓ ${etiket} olarak işaretlendi`);
     } catch (e) { toast(e.message || 'Sınıflandırılamadı', 'red'); }
+    finally { setSiniflandirYukleniyor(m => ({ ...m, [id]: false })); }
   }
 
   // Sınıflandırılmamış (belirsiz) HARCAMA mı? — bunlar listede hep üstte kalır.
@@ -1975,12 +1979,20 @@ export function KartHareketleri() {
         {h.islem_turu !== 'HARCAMA' ? <span style={{ fontSize: 11, color: 'var(--text3)' }}>—</span> : (
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             <button title="İşletme" onClick={() => siniflandir(h.id, 'isletme')}
+              disabled={!!siniflandirYukleniyor[h.id]}
               className={`badge ${(h.harcama_tipi || 'belirsiz') === 'isletme' ? 'badge-green' : ''}`}
-              style={{ cursor: 'pointer', border: (h.harcama_tipi || 'belirsiz') === 'isletme' ? '1px solid var(--green)' : '1px solid transparent', opacity: (h.harcama_tipi || 'belirsiz') === 'isletme' ? 1 : 0.45 }}>🏢</button>
+              style={{ cursor: siniflandirYukleniyor[h.id] ? 'wait' : 'pointer', border: (h.harcama_tipi || 'belirsiz') === 'isletme' ? '1px solid var(--green)' : '1px solid transparent', opacity: siniflandirYukleniyor[h.id] ? 0.5 : (h.harcama_tipi || 'belirsiz') === 'isletme' ? 1 : 0.45 }}>🏢</button>
             <button title="Şahsi" onClick={() => siniflandir(h.id, 'sahsi')}
+              disabled={!!siniflandirYukleniyor[h.id]}
               className="badge"
-              style={{ cursor: 'pointer', opacity: h.harcama_tipi === 'sahsi' ? 1 : 0.45, background: h.harcama_tipi === 'sahsi' ? 'rgba(155,114,212,.22)' : undefined, color: h.harcama_tipi === 'sahsi' ? 'var(--purple)' : undefined, border: h.harcama_tipi === 'sahsi' ? '1px solid var(--purple)' : '1px solid transparent', fontWeight: h.harcama_tipi === 'sahsi' ? 700 : 400 }}>👤</button>
-            {belirsizMi(h) && <span style={{ fontSize: 10, color: 'var(--orange)', fontWeight: 600 }}>❓ seçilmedi</span>}
+              style={{ cursor: siniflandirYukleniyor[h.id] ? 'wait' : 'pointer', opacity: siniflandirYukleniyor[h.id] ? 0.5 : h.harcama_tipi === 'sahsi' ? 1 : 0.45, background: h.harcama_tipi === 'sahsi' ? 'rgba(155,114,212,.22)' : undefined, color: h.harcama_tipi === 'sahsi' ? 'var(--purple)' : undefined, border: h.harcama_tipi === 'sahsi' ? '1px solid var(--purple)' : '1px solid transparent', fontWeight: h.harcama_tipi === 'sahsi' ? 700 : 400 }}>👤</button>
+            {siniflandirYukleniyor[h.id] ? (
+              <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 600 }}>⏳ kaydediliyor…</span>
+            ) : belirsizMi(h) ? (
+              <span style={{ fontSize: 10, color: 'var(--orange)', fontWeight: 600 }}>❓ seçilmedi</span>
+            ) : (
+              <span style={{ fontSize: 10, color: 'var(--green)', fontWeight: 700 }}>✓ kaydedildi</span>
+            )}
           </div>
         )}
       </td>
