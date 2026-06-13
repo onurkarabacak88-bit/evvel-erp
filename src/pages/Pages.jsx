@@ -1891,6 +1891,8 @@ export function KartHareketleri() {
     try {
       await api(`/kart-hareketleri/${id}/harcama-tipi?tip=${tip}`, { method: 'POST' });
       setHareketler(prev => prev.map(x => x.id === id ? { ...x, harcama_tipi: tip } : x));
+      const etiket = tip === 'isletme' ? '🏢 İşletme' : tip === 'sahsi' ? '👤 Şahsi' : '❓ Belirsiz';
+      toast(`✓ ${etiket} olarak işaretlendi`);
     } catch (e) { toast(e.message || 'Sınıflandırılamadı', 'red'); }
   }
 
@@ -1933,10 +1935,10 @@ export function KartHareketleri() {
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             <button title="İşletme" onClick={() => siniflandir(h.id, 'isletme')}
               className={`badge ${(h.harcama_tipi || 'belirsiz') === 'isletme' ? 'badge-green' : ''}`}
-              style={{ cursor: 'pointer', border: 'none', opacity: (h.harcama_tipi || 'belirsiz') === 'isletme' ? 1 : 0.45 }}>🏢</button>
+              style={{ cursor: 'pointer', border: (h.harcama_tipi || 'belirsiz') === 'isletme' ? '1px solid var(--green)' : '1px solid transparent', opacity: (h.harcama_tipi || 'belirsiz') === 'isletme' ? 1 : 0.45 }}>🏢</button>
             <button title="Şahsi" onClick={() => siniflandir(h.id, 'sahsi')}
               className="badge"
-              style={{ cursor: 'pointer', border: 'none', opacity: h.harcama_tipi === 'sahsi' ? 1 : 0.45, background: h.harcama_tipi === 'sahsi' ? 'rgba(155,114,212,.22)' : undefined, color: h.harcama_tipi === 'sahsi' ? 'var(--purple)' : undefined }}>👤</button>
+              style={{ cursor: 'pointer', opacity: h.harcama_tipi === 'sahsi' ? 1 : 0.45, background: h.harcama_tipi === 'sahsi' ? 'rgba(155,114,212,.22)' : undefined, color: h.harcama_tipi === 'sahsi' ? 'var(--purple)' : undefined, border: h.harcama_tipi === 'sahsi' ? '1px solid var(--purple)' : '1px solid transparent', fontWeight: h.harcama_tipi === 'sahsi' ? 700 : 400 }}>👤</button>
             {belirsizMi(h) && <span style={{ fontSize: 10, color: 'var(--orange)', fontWeight: 600 }}>❓ seçilmedi</span>}
           </div>
         )}
