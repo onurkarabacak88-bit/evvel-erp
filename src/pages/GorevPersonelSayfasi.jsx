@@ -699,6 +699,29 @@ function VardiyamEkrani({ oturum }) {
               </div>
             </div>
           )}
+
+          {(aylik.izin_bildirimleri || []).length > 0 && (
+            <div style={{
+              marginTop: 12, padding: '12px 14px', borderRadius: 10,
+              background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
+              fontSize: 13,
+            }}>
+              <div style={{ fontWeight: 700, color: '#f59e0b', marginBottom: 6 }}>
+                ℹ️ Geriye Dönük İzin / Devamsızlık Kaydı
+              </div>
+              {aylik.izin_bildirimleri.map((b, i) => (
+                <div key={i} style={{ color: '#b0b3bc', fontSize: 12, lineHeight: 1.6, marginBottom: i < aylik.izin_bildirimleri.length - 1 ? 6 : 0 }}>
+                  <strong style={{ color: '#e8e9ec' }}>
+                    {new Date(b.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })}
+                  </strong> tarihinde vardiyan olduğu halde yoklama kaydın bulunmadığı için
+                  bu gün{' '}
+                  <strong style={{ color: b.tip === 'ucretsiz' ? '#e05c5c' : '#f59e0b' }}>
+                    {b.tip === 'ucretsiz' ? 'devamsız' : 'izinli'}
+                  </strong> olarak işlendi. Bir yanlışlık olduğunu düşünüyorsan yöneticinle konuş.
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

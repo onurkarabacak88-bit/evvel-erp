@@ -1509,6 +1509,18 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             """, (pid, d1, p_d2))
             acilislar = {str(r["tarih"]): dict(r) for r in cur.fetchall()}
 
+            # Devamsızlık raporu üzerinden geriye dönük işaretlenen izin/devamsızlık
+            # kayıtları — personele bilgi olarak göstermek için.
+            cur.execute("""
+                SELECT baslangic_tarih::text AS tarih, tip, aciklama
+                FROM personel_izin
+                WHERE personel_id=%s AND baslangic_tarih BETWEEN %s AND %s
+                  AND (aciklama LIKE 'Devamsızlık (vardiyada planlı%%'
+                       OR aciklama LIKE 'İzin (vardiyada planlı%%')
+                ORDER BY baslangic_tarih DESC
+            """, (pid, d1, p_d2))
+            izin_bildirimleri = [dict(r) for r in cur.fetchall()]
+
             # Haftalık izin analizi - her Pazartesi başlayan haftayı tara
             # Kural: 7 günlük haftada HİÇ boş gün yoksa → haftalık izin kullanılmamış
             from datetime import date as _date2, timedelta as _td
@@ -1722,6 +1734,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 "aktif": bool(p.get("aktif", True)),
                 "cikis_tarihi": str(p["cikis_tarihi"]) if p.get("cikis_tarihi") else None,
                 "gunler": gunler,
+                "izin_bildirimleri": izin_bildirimleri,
             })
 
         return {"yil": yil, "ay": ay, "personeller": sonuclar}

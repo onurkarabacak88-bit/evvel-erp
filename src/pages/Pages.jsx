@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
 import AyFiltre, { buGununAyi } from '../components/AyFiltre';
@@ -1834,7 +1834,41 @@ export function KartHareketleri() {
     q: '',
   });
 
-  const load=()=>{api('/kart-hareketleri').then(setHareketler);api('/kartlar').then(setKartlar);};
+  // Sınıflandırma (🏢/👤) tıklaması anlık olarak harcama_tipi'ni değiştirir; bu da
+  // belirsizMi() sonucunu değiştirip satırın/kart bloğunun yeniden sıralanmasına
+  // ("zıplama") yol açıyordu — kullanıcı ikinci tıklamayı başka bir satıra/butona
+  // uyguluyordu. Sıralama/gruplama artık sadece load() anındaki bu snapshot'a göre
+  // sabitleniyor; canlı veriler (harcama_tipi vb.) yine hareketler'den okunur.
+  const siraRef = useRef({ groupOrder: [], itemOrderByGroup: {} });
+  const siraSnapshotOlustur = (data) => {
+    const g = {};
+    for (const h of data) {
+      const key = h.kart_id ?? h.kart_adi ?? '—';
+      if (!g[key]) g[key] = { key, items: [] };
+      g[key].items.push(h);
+    }
+    const gruplar = Object.values(g).map((grup) => {
+      const items = [...grup.items].sort((a, b) => {
+        const ab = belirsizMi(a) ? 0 : 1, bb = belirsizMi(b) ? 0 : 1;
+        if (ab !== bb) return ab - bb;
+        return String(b.tarih || '').localeCompare(String(a.tarih || ''));
+      });
+      const belirsizSay = items.filter(belirsizMi).length;
+      return { ...grup, items, belirsizSay };
+    }).sort((a, b) => {
+      if ((b.belirsizSay > 0) !== (a.belirsizSay > 0)) return (b.belirsizSay > 0 ? 1 : 0) - (a.belirsizSay > 0 ? 1 : 0);
+      if (b.belirsizSay !== a.belirsizSay) return b.belirsizSay - a.belirsizSay;
+      return String((a.items[0]?.kart_adi) || '').localeCompare(String((b.items[0]?.kart_adi) || ''), 'tr');
+    });
+    const groupOrder = gruplar.map(g => g.key);
+    const itemOrderByGroup = {};
+    for (const g of gruplar) itemOrderByGroup[g.key] = g.items.map(h => h.id);
+    siraRef.current = { groupOrder, itemOrderByGroup };
+  };
+  const load=()=>{
+    api('/kart-hareketleri').then(d => { siraSnapshotOlustur(d); setHareketler(d); });
+    api('/kartlar').then(setKartlar);
+  };
   useEffect(()=>{load();},[]);
 
   useEffect(() => {
@@ -1901,27 +1935,34 @@ export function KartHareketleri() {
 
   // Kart bazlı gruplar (alt alta bloklar). Belirsizi olan kartlar + belirsiz satırlar üstte.
   const kartGruplari = (() => {
-    const g = {};
-    for (const h of hareketlerFiltreli) {
-      const key = h.kart_id ?? h.kart_adi ?? '—';
-      if (!g[key]) g[key] = { key, kart_adi: h.kart_adi || 'Kart', items: [] };
-      g[key].items.push(h);
-    }
-    return Object.values(g).map((grup) => {
-      const items = [...grup.items].sort((a, b) => {
-        const ab = belirsizMi(a) ? 0 : 1, bb = belirsizMi(b) ? 0 : 1;
-        if (ab !== bb) return ab - bb;                               // belirsiz üstte
-        return String(b.tarih || '').localeCompare(String(a.tarih || '')); // yeni → eski
-      });
+    const liveById = new Map(hareketlerFiltreli.map(h => [h.id, h]));
+    const usedIds = new Set();
+    const grupHesapla = (items) => {
       const belirsizSay = items.filter(belirsizMi).length;
       const harcama = items.filter(x => x.islem_turu === 'HARCAMA').reduce((s, x) => s + (parseFloat(x.tutar) || 0), 0);
       const odeme = items.filter(x => x.islem_turu === 'ODEME').reduce((s, x) => s + (parseFloat(x.tutar) || 0), 0);
-      return { ...grup, items, belirsizSay, harcama, odeme };
-    }).sort((a, b) => {
-      if ((b.belirsizSay > 0) !== (a.belirsizSay > 0)) return (b.belirsizSay > 0 ? 1 : 0) - (a.belirsizSay > 0 ? 1 : 0); // belirsizli kart bloğu üstte
-      if (b.belirsizSay !== a.belirsizSay) return b.belirsizSay - a.belirsizSay;
-      return String(a.kart_adi).localeCompare(String(b.kart_adi), 'tr');
-    });
+      return { belirsizSay, harcama, odeme };
+    };
+    const gruplar = [];
+    for (const key of siraRef.current.groupOrder) {
+      const idOrder = siraRef.current.itemOrderByGroup[key] || [];
+      const items = [];
+      for (const id of idOrder) {
+        const h = liveById.get(id);
+        if (h) { items.push(h); usedIds.add(id); }
+      }
+      if (!items.length) continue; // filtre nedeniyle grup tamamen boşaldı
+      gruplar.push({ key, kart_adi: items[0]?.kart_adi || 'Kart', items, ...grupHesapla(items) });
+    }
+    // Snapshot'tan sonra eklenen (yeni hareket) kayıtlar — mevcut gruba veya sona ekle.
+    for (const h of hareketlerFiltreli) {
+      if (usedIds.has(h.id)) continue;
+      const key = h.kart_id ?? h.kart_adi ?? '—';
+      let grup = gruplar.find(g => g.key === key);
+      if (!grup) { grup = { key, kart_adi: h.kart_adi || 'Kart', items: [] }; gruplar.push(grup); }
+      grup.items.push(h);
+    }
+    return gruplar.map(g => ({ ...g, ...grupHesapla(g.items) }));
   })();
 
   const renderSatir = (h) => (
