@@ -235,12 +235,21 @@ export default function EkstreYukle() {
               </div>
               {!m?.tutar_uyumlu && (
                 <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                  <button className="btn btn-primary btn-sm" disabled={devirBusy} onClick={() => devirKabul(kart)}>
-                    {devirBusy ? '…' : `📌 Bu borcu açılış/devir olarak kabul et (${fmt(sonuc.donem_borcu)})`}
-                  </button>
-                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
-                    Kartın borcunu ekstredeki <strong>{fmt(sonuc.donem_borcu)}</strong>'ye eşitler — <strong>açılış/devir</strong> olarak (gider sayılmaz, kasaya dokunmaz). İşlemleri tek tek aktarmana gerek kalmaz; aylık devreden borç için ideal.
-                  </div>
+                  {yeniIdx.length > 0 ? (
+                    <div className="alert-box yellow" style={{ fontSize: 12 }}>
+                      ⚠️ Önce aşağıdaki <strong>{yeniIdx.length} eksik işlemi</strong> "İçe Aktar" ile aktar. Devir kabul etmeden önce bunları aktarmazsan, bu işlemler ekstre borcuna <strong>iki kere</strong> sayılır (önce devir farkıyla, sonra tekrar tek tek).
+                      <div style={{ marginTop: 4 }}>İçe aktardıktan sonra kalan fark için "Devir kabul et" butonu burada çıkacak.</div>
+                    </div>
+                  ) : (
+                    <>
+                      <button className="btn btn-primary btn-sm" disabled={devirBusy} onClick={() => devirKabul(kart)}>
+                        {devirBusy ? '…' : `📌 Bu borcu açılış/devir olarak kabul et (${fmt(sonuc.donem_borcu)})`}
+                      </button>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+                        Kartın borcunu ekstredeki <strong>{fmt(sonuc.donem_borcu)}</strong>'ye eşitler — kalan farkı <strong>açılış/devir</strong> olarak ekler (gider sayılmaz, kasaya dokunmaz). Geçmişten devreden bakiye için ideal.
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
