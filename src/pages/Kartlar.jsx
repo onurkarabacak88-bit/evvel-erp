@@ -251,16 +251,17 @@ export default function Kartlar() {
                 {[
                   ['Limit', fmt(k.limit_tutar)],
                   ['Kullanılabilir', fmt(k.kalan_limit)],
-                  [`Asgari (${ayEtiketi(k.aktif_donem) || 'bu dönem'})`, fmt(k.asgari_odeme)],
+                  [`Asgari (${ayEtiketi(k.aktif_donem) || 'bu dönem'})`, fmt(k.asgari_odeme), k.asgari_karsilandi],
                   ['Bu Ekstre', fmt(k.bu_ekstre)],
                   ['Faiz / Asgari Oranı', `%${k.faiz_orani} / %${k.asgari_oran ?? 40}`],
                   ['Ham Kesim/Son Öd.', `${k.kesim_gunu}/${k.son_odeme_gunu}. gün`],
                   ['Kart Sahibi', k.sahip || 'İşletme'],
                   ...(k.ortak_grup_uye ? [[`🔗 Ortak Limit (${k.ortak_grup_uye} kart)`, `${fmt(k.ortak_grup_borc)} / ${fmt(k.ortak_grup_limit)}`]] : []),
-                ].map(([label, val]) => (
-                  <div key={label} style={{ background: 'var(--bg3)', borderRadius: 6, padding: '7px 10px' }}>
+                ].map(([label, val, vurgu]) => (
+                  <div key={label} title={vurgu ? `Bu dönem ${fmt(k.bu_donem_odenen)} ödendi — asgarinin üzerinde ✓` : undefined}
+                    style={{ background: vurgu ? 'rgba(46,160,67,0.12)' : 'var(--bg3)', borderRadius: 6, padding: '7px 10px', border: vurgu ? '1px solid var(--green)' : undefined }}>
                     <div style={{ color: 'var(--text3)', marginBottom: 2, fontSize: 11 }}>{label}</div>
-                    <div className="mono">{val}</div>
+                    <div className="mono" style={{ color: vurgu ? 'var(--green)' : undefined }}>{val}{vurgu ? ' ✓' : ''}</div>
                   </div>
                 ))}
               </div>

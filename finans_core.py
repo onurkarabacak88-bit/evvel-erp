@@ -1242,6 +1242,16 @@ def kart_aktif_donem(cur, kart_id: str) -> dict:
     ekstre = aktif_tek + aktif_taksit + devreden_anapara + devreden_faiz
     asgari = ekstre * asgari_oran
 
+    # Bu dönem (aktif ekstre) için şimdiye kadar yapılan ödemeler — asgari karşılaştırması için.
+    cur.execute("""
+        SELECT COALESCE(SUM(tutar), 0) AS odenen
+        FROM kart_hareketleri
+        WHERE kart_id = %s AND durum = 'aktif'
+          AND islem_turu = 'ODEME'
+          AND tarih > %s::date
+    """, (kart_id, onceki_kesim))
+    bu_donem_odenen = float(cur.fetchone()['odenen'])
+
     return {
         "ay":               f"{akt_y:04d}-{akt_m:02d}",
         "kesim_tarihi":     str(aktif_kesim),
@@ -1259,6 +1269,7 @@ def kart_aktif_donem(cur, kart_id: str) -> dict:
         "onceki_odenen":    round(onceki_odenen, 2),
         "onceki_durum":     onceki_durum,
         "devreden_faiz_kaynak": devreden_faiz_kaynak,
+        "bu_donem_odenen":  round(bu_donem_odenen, 2),
     }
 
 

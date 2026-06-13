@@ -1464,6 +1464,7 @@ def kartlar_listele():
                 onceki_asgari    = float(aktif.get("onceki_asgari") or 0)
                 onceki_odenen    = float(aktif.get("onceki_odenen") or 0)
                 onceki_durum     = aktif.get("onceki_durum") or "yok"
+                bu_donem_odenen  = float(aktif.get("bu_donem_odenen") or 0)
             else:
                 bu_ekstre        = ekstre_v["ekstre_toplam"]
                 asgari_odeme     = bu_ekstre * kart_asgari_orani(k)
@@ -1472,6 +1473,7 @@ def kartlar_listele():
                 aktif_donem_ay = aktif_kesim = aktif_son_odeme = None
                 onceki_ekstre = onceki_asgari = onceki_odenen = 0.0
                 onceki_durum  = "yok"
+                bu_donem_odenen = 0.0
 
             # Gelecek ekstre = bir sonraki kesim için tek çekim + taksit payı.
             # Aktif dönem zaten "şu an açık" olan ekstre; "gelecek" demek
@@ -1518,6 +1520,8 @@ def kartlar_listele():
                 "kalan_limit": limit - borc,
                 "limit_doluluk": borc/limit if limit > 0 else 0,
                 "asgari_odeme": asgari_odeme,
+                "bu_donem_odenen": bu_donem_odenen,
+                "asgari_karsilandi": asgari_odeme > 0 and bu_donem_odenen >= asgari_odeme - 0.01,
                 "bu_ekstre": bu_ekstre,
                 "devreden_anapara": devreden_ana,
                 "devreden_faiz": devreden_fz,
@@ -2500,6 +2504,36 @@ def _ekstre_eslesme_mutabakat(sonuc):
                             isl["durum"] = "yeni"
                             yeni_adet += 1
             sonuc["mutabakat"]["yeni_islem_adet"] = yeni_adet
+
+            # ── BENZER GİDER UYARISI: "yeni" (eksik) HARCAMA kalemleri için, ±7 gün
+            # içinde aynı tutarda kart ile girilmiş bir Anlık/Sabit Gider var mı kontrol et.
+            # Varsa muhtemelen zaten sisteme girilmiş (bankaya farklı tarihte düşmüş) —
+            # çift sayım riskine karşı kullanıcıyı uyar; "tüm eksikleri seç" bunu
+            # otomatik işaretlemez, kullanıcı isterse elle seçer.
+            for isl in sonuc.get("islemler", []):
+                if isl.get("durum") != "yeni" or isl.get("tip") != "HARCAMA":
+                    continue
+                try:
+                    _it = date.fromisoformat(str(isl.get("tarih"))[:10])
+                except Exception:
+                    continue
+                _tutar = round(float(isl.get("tutar") or 0), 2)
+                cur.execute("""
+                    SELECT tarih::text AS tarih, aciklama, kategori
+                    FROM anlik_giderler
+                    WHERE durum='aktif' AND odeme_yontemi='kart'
+                      AND ROUND(tutar::numeric,2) = %s
+                      AND tarih BETWEEN %s::date - INTERVAL '7 days' AND %s::date + INTERVAL '7 days'
+                    ORDER BY ABS(tarih - %s::date) ASC
+                    LIMIT 1
+                """, (_tutar, str(_it), str(_it), str(_it)))
+                _benzer = cur.fetchone()
+                if _benzer:
+                    _benzer = dict(_benzer)
+                    isl["benzer_gider_uyari"] = {
+                        "tarih": _benzer["tarih"], "aciklama": _benzer["aciklama"],
+                        "kategori": _benzer["kategori"],
+                    }
 
             # Faiz oranlarını ekstreden GÜNCELLE (her ay otomatik — elle girmeye gerek yok)
             akdi = sonuc.get("akdi_faiz_yillik")

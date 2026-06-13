@@ -100,6 +100,8 @@ export default function EkstreYukle() {
   const m = sonuc?.mutabakat;
   const kart = sonuc?.eslesen_kart;
   const yeniIdx = (sonuc?.islemler || []).map((x, i) => x.durum === 'yeni' ? i : -1).filter(i => i >= 0);
+  const yeniGuvenliIdx = yeniIdx.filter(i => !sonuc.islemler[i]?.benzer_gider_uyari);
+  const yeniUyariliIdx = yeniIdx.filter(i => sonuc.islemler[i]?.benzer_gider_uyari);
 
   function toggle(i) {
     setSecili(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
@@ -125,7 +127,8 @@ export default function EkstreYukle() {
     } catch (e) { setHata(e.message); } finally { setDevirBusy(false); }
   }
   function tumYeni() {
-    setSecili(prev => prev.size === yeniIdx.length ? new Set() : new Set(yeniIdx));
+    // Uyarılı (muhtemelen zaten girilmiş) kalemler otomatik seçilmez — kullanıcı isterse elle işaretler.
+    setSecili(prev => prev.size === yeniGuvenliIdx.length ? new Set() : new Set(yeniGuvenliIdx));
   }
 
   async function iceAktar() {
@@ -317,10 +320,11 @@ export default function EkstreYukle() {
               <div style={{ fontWeight: 700 }}>
                 İşlemler ({sonuc.islemler?.length || 0})
                 {yeniIdx.length > 0 && <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--orange)', fontWeight: 600 }}>· {yeniIdx.length} eksik (sistemde yok)</span>}
+                {yeniUyariliIdx.length > 0 && <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--red)', fontWeight: 600 }}>· {yeniUyariliIdx.length} olası mükerrer ⚠️</span>}
               </div>
               {kart && yeniIdx.length > 0 && (
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <button className="btn btn-secondary btn-sm" onClick={tumYeni}>{secili.size === yeniIdx.length ? 'Seçimi kaldır' : `Tüm eksikleri seç (${yeniIdx.length})`}</button>
+                  <button className="btn btn-secondary btn-sm" onClick={tumYeni}>{secili.size === yeniGuvenliIdx.length ? 'Seçimi kaldır' : `Tüm eksikleri seç (${yeniGuvenliIdx.length})`}</button>
                   <button className="btn btn-primary btn-sm" disabled={impBusy || secili.size === 0} onClick={iceAktar}>
                     {impBusy ? '…' : `İçe Aktar (${secili.size})`}
                   </button>
@@ -332,7 +336,7 @@ export default function EkstreYukle() {
                 <thead><tr><th></th><th>Tarih</th><th>İşlem</th><th>Açıklama</th><th>Kategori</th><th>Taksit</th><th style={{ textAlign: 'right' }}>Tutar</th><th>Durum</th></tr></thead>
                 <tbody>
                   {(sonuc.islemler || []).map((x, i) => (
-                    <tr key={i} style={{ background: x.durum === 'yeni' ? 'rgba(212,137,58,0.06)' : undefined }}>
+                    <tr key={i} style={{ background: x.benzer_gider_uyari ? 'rgba(220,53,69,0.08)' : x.durum === 'yeni' ? 'rgba(212,137,58,0.06)' : undefined }}>
                       <td style={{ width: 28, textAlign: 'center' }}>
                         {x.durum === 'yeni' && kart && <input type="checkbox" checked={secili.has(i)} onChange={() => toggle(i)} />}
                       </td>
@@ -344,7 +348,16 @@ export default function EkstreYukle() {
                       <td style={{ textAlign: 'right' }} className="mono">{fmt(x.tutar)}</td>
                       <td style={{ fontSize: 11 }}>
                         {x.durum === 'eslesti' ? <span style={{ color: 'var(--green)' }}>✓ sistemde</span>
-                          : x.durum === 'yeni' ? <span style={{ color: 'var(--orange)', fontWeight: 600 }}>● eksik{x.oneri_tipi ? (x.oneri_tipi === 'isletme' ? ' · 🏢' : ' · 👤') : ''}</span>
+                          : x.durum === 'yeni' ? (
+                            <span style={{ color: x.benzer_gider_uyari ? 'var(--red)' : 'var(--orange)', fontWeight: 600 }}>
+                              ● eksik{x.oneri_tipi ? (x.oneri_tipi === 'isletme' ? ' · 🏢' : ' · 👤') : ''}
+                              {x.benzer_gider_uyari && (
+                                <div style={{ fontWeight: 400, fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
+                                  ⚠️ {x.benzer_gider_uyari.tarih} tarihinde benzer gider zaten girilmiş: "{x.benzer_gider_uyari.aciklama}". Aktarırsan çift sayılabilir.
+                                </div>
+                              )}
+                            </span>
+                          )
                           : x.durum === 'taksit' ? <span style={{ color: 'var(--text3)' }}>taksit (elle)</span>
                           : <span style={{ color: 'var(--text3)' }}>—</span>}
                       </td>
