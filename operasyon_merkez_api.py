@@ -12332,9 +12332,55 @@ def _fatura_satirlari_satir_bazli(pdf_bytes: bytes) -> List[Dict[str, Any]]:
     return out
 
 
+# METRO Grosmarket fatura satırı: "ART-No Artikel Tanımı Brm.Fiy İçeriği Koli.Fiy Mikt NetTop. KdvKd BrütTop."
+# Örn: "0200561 ULUDAĞ LİMONATA 1L ŞEKERLİ 51,900 1 51,90 120 6.228,00 E 6.850,80"
+_FATURA_METRO_RE = re.compile(
+    r"^\s*(\d{6,8})\s+(.+?)\s+([\d.]+,\d+)\s+(\d+)\s+([\d.]+,\d+)\s+(\d+)\s+([\d.]+,\d+)\s+([A-Z])\s+([\d.]+,\d+)\s*$"
+)
+
+
+def _fatura_satirlari_metro(pdf_bytes: bytes) -> List[Dict[str, Any]]:
+    """
+    METRO Grosmarket faturaları normal e-Fatura tablo yapısında gelmez; satırlar
+    düz metin olarak 'MG EAN ART-No Artikel Tanımı Brm.Fiy İçeriği Koli.Fiy Mikt
+    NetTop. KdvKd BrütTop. PROMO SbpK' kolonlarını içerir. Brm.Fiy = tekil ürünün
+    KDV'siz birim fiyatı (maliyet için kullanılır), Mikt = sipariş edilen koli/adet
+    sayısı.
+    """
+    import pdfplumber
+    out: List[Dict[str, Any]] = []
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            for raw in text.split("\n"):
+                line = raw.strip()
+                m = _FATURA_METRO_RE.match(line)
+                if not m:
+                    continue
+                kod, aciklama, brm_fiy, _icerik, _koli_fiy, mikt, _net_top, _kdv, _brut_top = m.groups()
+                aciklama = re.sub(r"\s+", " ", aciklama).strip()
+                if len(aciklama) < 3:
+                    continue
+                fiyat = _fatura_sayi_parse(brm_fiy)
+                if fiyat is None:
+                    continue
+                out.append({
+                    "ham_metin": line,
+                    "urun_kodu": kod,
+                    "aciklama": aciklama,
+                    "miktar": _fatura_sayi_parse(mikt),
+                    "birim": None,
+                    "tutar": fiyat,  # Brm.Fiy: tekil ürün birim fiyatı (KDV hariç)
+                })
+    return out
+
+
 def _fatura_satirlari_cikar(pdf_bytes: bytes) -> List[Dict[str, Any]]:
-    """Önce e-Fatura tablo formatını dener, bulamazsa satır bazlı yedek yönteme döner."""
+    """Önce e-Fatura tablo formatını, sonra METRO formatını dener, bulamazsa satır bazlı yedek yönteme döner."""
     satirlar = _fatura_satirlari_tablo(pdf_bytes)
+    if satirlar:
+        return satirlar
+    satirlar = _fatura_satirlari_metro(pdf_bytes)
     if satirlar:
         return satirlar
     return _fatura_satirlari_satir_bazli(pdf_bytes)
