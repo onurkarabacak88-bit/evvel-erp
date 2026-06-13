@@ -2583,6 +2583,37 @@ def kart_manuel_ekstre(kid: str, body: ManuelEkstreBody):
     return {"success": True, "yeni_borc": round(yeni_borc, 2)}
 
 
+@app.delete("/api/kartlar/{kid}/ekstre-donem/{donem}")
+def kart_ekstre_donem_sil(kid: str, donem: str):
+    """Bir kart için tek bir ayın (dönem) ekstre verisini siler: o aya ait
+    HARCAMA/FAIZ hareketlerini ve kart_ekstre_donem snapshot'ını kaldırır.
+    Hatalı yüklenen ekstreyi silip 'Ekstre Yükle' ile yeniden yüklemek için kullanılır.
+    ÖDEME/DEVIR hareketlerine (manuel girilen kasa hareketleri) dokunmaz."""
+    with db() as (conn, cur):
+        cur.execute("SELECT kart_adi FROM kartlar WHERE id=%s", (kid,))
+        k = cur.fetchone()
+        if not k:
+            raise HTTPException(404, "Kart bulunamadı")
+        cur.execute(
+            """DELETE FROM kart_hareketleri
+               WHERE kart_id=%s AND islem_turu IN ('HARCAMA','FAIZ')
+                 AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)""",
+            (kid, donem),
+        )
+        silinen_hareket = cur.rowcount
+        cur.execute(
+            "DELETE FROM kart_ekstre_donem WHERE kart_id=%s AND donem = DATE_TRUNC('month', %s::date)",
+            (kid, donem),
+        )
+        silinen_donem = cur.rowcount
+    return {
+        "success": True,
+        "kart_adi": dict(k)["kart_adi"],
+        "silinen_hareket": silinen_hareket,
+        "silinen_donem": silinen_donem,
+    }
+
+
 class KartLedgerSifirlaBody(BaseModel):
     onay_pin: Optional[str] = None     # İşletme onayı (Merve Karabacak PIN)
     hepsi: bool = False                # True → tüm kartlar; False → tek kart

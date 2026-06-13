@@ -30,11 +30,34 @@ export default function KartEkstreAnaliz() {
   const [arsiv, setArsiv] = useState(null);
   const [arsivYukleniyor, setArsivYukleniyor] = useState(true);
   const [acikKart, setAcikKart] = useState(null);
+  const [msg, setMsg] = useState(null);
+
+  const arsivYukle = () => {
+    setArsivYukleniyor(true);
+    api('/kartlar/ekstre-arsiv').then(setArsiv).catch(() => setArsiv(null)).finally(() => setArsivYukleniyor(false));
+  };
 
   useEffect(() => {
     api('/kartlar/analiz').then(setD).catch(() => setD(null)).finally(() => setYukleniyor(false));
-    api('/kartlar/ekstre-arsiv').then(setArsiv).catch(() => setArsiv(null)).finally(() => setArsivYukleniyor(false));
+    arsivYukle();
   }, []);
+
+  useEffect(() => {
+    if (!msg) return;
+    const t = setTimeout(() => setMsg(null), 4000);
+    return () => clearTimeout(t);
+  }, [msg]);
+
+  async function donemSil(kart_id, donem, kart_adi) {
+    if (!window.confirm(`"${kart_adi}" — ${ayEtiket(donem)} dönemine ait ekstre hareketlerini silmek istediğine emin misin?\n\nBu işlem o aya ait harcama/faiz kayıtlarını siler (ödemelere dokunmaz). Sonra "Ekstre Yükle" sekmesinden doğru ekstreyi tekrar yükleyebilirsin.`)) return;
+    try {
+      const r = await api(`/kartlar/${kart_id}/ekstre-donem/${donem}`, { method: 'DELETE' });
+      setMsg({ t: 'green', m: `✓ ${r.kart_adi} — ${ayEtiket(donem)} dönemi silindi (${r.silinen_hareket} hareket). Şimdi "Ekstre Yükle" ile tekrar yükleyebilirsin.` });
+      arsivYukle();
+    } catch (e) {
+      setMsg({ t: 'red', m: e.message || 'Silinemedi' });
+    }
+  }
 
   if (yukleniyor) return <div className="page"><div style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}><span className="spinner" /> Yükleniyor…</div></div>;
 
@@ -59,6 +82,8 @@ export default function KartEkstreAnaliz() {
         <h2>📂 Ekstre Analizi</h2>
         <p>İçe aktarılmış kart verisinden kategori, trend ve dağılım. <strong>Yükleme “Ekstre Yükle” sekmesinden yapılır.</strong></p>
       </div>
+
+      {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
 
       {bosVeri ? (
         <div className="card" style={{ padding: 30, textAlign: 'center', color: 'var(--text3)' }}>
@@ -207,6 +232,7 @@ export default function KartEkstreAnaliz() {
                                     <th style={{ textAlign: 'right' }}>Harcama</th>
                                     <th style={{ textAlign: 'right' }}>Ödeme</th>
                                     <th>Kaynak</th>
+                                    <th></th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -227,6 +253,13 @@ export default function KartEkstreAnaliz() {
                                           color: s.kaynak === 'manuel' ? 'var(--orange)' : 'var(--text3)' }}>
                                           {s.kaynak === 'manuel' ? 'Manuel' : 'Ekstre'}
                                         </span>
+                                      </td>
+                                      <td>
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); donemSil(k.kart_id, s.donem, k.kart_adi); }}
+                                          title="Bu dönemin ekstre hareketlerini sil (yeniden yüklemek için)"
+                                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text3)', padding: 0, lineHeight: 1 }}
+                                        >🗑️</button>
                                       </td>
                                     </tr>
                                   ))}
