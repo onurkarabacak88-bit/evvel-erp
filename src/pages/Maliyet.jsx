@@ -486,19 +486,50 @@ export default function Maliyet() {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                     <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 14 }}>{fmt(guncel.birim_maliyet_tl)}</div>
-                    {ok && (
-                      <button
-                        onClick={() => setAcikKalem(acik ? null : g.kalem_kodu)}
-                        title="Fiyat geçmişi / değişim yüzdesi"
-                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 16, color: okRenk, padding: 0, lineHeight: 1 }}
-                      >{ok}</button>
-                    )}
+                    <button
+                      onClick={() => setAcikKalem(acik ? null : g.kalem_kodu)}
+                      title="Fiyat geçmişi / değişim yüzdesi / sil"
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: ok ? 16 : 12, color: ok ? okRenk : 'var(--text3)', padding: 0, lineHeight: 1 }}
+                    >{ok || '⋯'}</button>
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm(`"${guncel.kalem_adi || g.kalem_kodu}" için bu fiyat kaydını silmek istediğine emin misin?`)) return;
+                        try {
+                          await api(`/ops/maliyet/alis-fiyat-sil/${guncel.id}`, { method: 'DELETE' });
+                          setMesaj({ m: '✅ Fiyat kaydı silindi', t: 'success' });
+                          yukle();
+                        } catch (e) {
+                          setMesaj({ m: 'Silme hatası: ' + (e.message || e), t: 'error' });
+                        }
+                      }}
+                      title="Bu fiyat kaydını sil"
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 14, color: 'var(--text3)', padding: 0, lineHeight: 1 }}
+                    >🗑️</button>
                   </div>
                 </div>
                 {acik && onceki && (
                   <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--text2)', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
                     <span>{fmtDate(onceki.gecerli_baslangic)}: {fmt(onceki.birim_maliyet_tl)} → {fmtDate(guncel.gecerli_baslangic)}: {fmt(guncel.birim_maliyet_tl)}</span>
                     <span style={{ fontWeight: 700, color: okRenk }}>{fark > 0 ? '+' : ''}{yuzde.toFixed(1)}%</span>
+                  </div>
+                )}
+                {acik && (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm(`"${guncel.kalem_adi || g.kalem_kodu}" için TÜM fiyat geçmişini ve fatura eşleştirme hafızasını silmek istediğine emin misin? Bu işlem geri alınamaz.`)) return;
+                        try {
+                          await api(`/ops/maliyet/kalem-temizle/${g.kalem_kodu}`, { method: 'DELETE' });
+                          setMesaj({ m: '✅ Kalemin tüm fiyat geçmişi ve eşleştirme hafızası silindi', t: 'success' });
+                          setAcikKalem(null);
+                          yukle();
+                        } catch (e) {
+                          setMesaj({ m: 'Silme hatası: ' + (e.message || e), t: 'error' });
+                        }
+                      }}
+                      title="Bu kalemin tüm fiyat geçmişini ve fatura eşleştirme hafızasını sil"
+                      style={{ background: 'transparent', border: '1px solid var(--red)', color: 'var(--red)', borderRadius: 6, cursor: 'pointer', fontSize: 10, padding: '4px 8px' }}
+                    >🗑️ Tüm geçmişi temizle</button>
                   </div>
                 )}
               </div>
