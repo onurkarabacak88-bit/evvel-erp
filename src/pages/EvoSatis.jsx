@@ -132,7 +132,7 @@ export default function EvoSatis() {
       const r = await api(`/evo/hs-rapor?tarih1=${toTR(tarih1)}&tarih2=${toTR(tarih2)}`);
       setVeri(r);
       setTokenDurumu('ok');
-      setSonGuncelleme(new Date());
+      setSonGuncelleme(r.son_cekim_ts ? new Date(r.son_cekim_ts) : new Date());
     } catch (e) {
       const mesaj = e.message || String(e);
       if (mesaj.includes('503') || mesaj.toLowerCase().includes('token') || mesaj.toLowerCase().includes('web_token')) {
@@ -173,6 +173,7 @@ export default function EvoSatis() {
       const r = await api(`/evo/sube-grup-detay?bastar=${tarih1}&bittar=${tarih2}`);
       setSubeAnaliz(r);
       setTokenDurumu('ok');
+      if (r.son_cekim_ts) setSonGuncelleme(new Date(r.son_cekim_ts));
       if (r.subeler) {
         const hedef = secilenSube && r.subeler[secilenSube]
           ? secilenSube
@@ -278,13 +279,18 @@ export default function EvoSatis() {
       <style>{ANIM_CSS}</style>
 
       {/* ══ HEADER ══ */}
-      <div style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700 }}>☕ Ürün Satışları</h2>
           <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--muted)' }}>
             Evobulut · hs_rapor
             {sonGuncelleme && (
-              <span> · {sonGuncelleme.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
+              <span>
+                {' · son veri çekimi: '}
+                {sonGuncelleme.toLocaleDateString('tr-TR')}
+                {' '}
+                {sonGuncelleme.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+              </span>
             )}
           </p>
         </div>
@@ -313,6 +319,23 @@ export default function EvoSatis() {
           </button>
         </div>
       </div>
+
+      {/* ══ STALE DATA UYARISI ══ */}
+      {((aktifSekme === 'urun' && veri?.canli === false) || (aktifSekme === 'sube' && subeAnaliz?.canli === false)) && (
+        <div className="alert-box" style={{
+          marginBottom: 14, fontSize: 12, padding: '8px 14px',
+          background: 'var(--bg2)', border: '1px solid var(--border)',
+          borderLeft: '3px solid var(--amber, #f59e0b)', borderRadius: 6,
+          color: 'var(--muted)',
+        }}>
+          ⚠️ Şu anda Evo'dan canlı veri alınamadı — aşağıdaki veriler{' '}
+          <strong style={{ color: 'var(--text)' }}>
+            {sonGuncelleme
+              ? `${sonGuncelleme.toLocaleDateString('tr-TR')} ${sonGuncelleme.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`
+              : 'önceki'}
+          </strong>{' '}tarihli son başarılı çekime ait.
+        </div>
+      )}
 
       {/* ══ DATE PICKER ══ */}
       <div style={{

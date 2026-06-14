@@ -40,6 +40,45 @@ EVO_WEB   = "https://web.evobulut.com"
 # Hızlı Satış web token — env var ile verilir, /api/evo/set-web-token ile güncellenir
 _hs_web_token: str = os.environ.get("EVO_WEB_TOKEN", "")
 
+
+# ─────────────────────────────────────────────
+# EVO RAPOR CACHE — son başarılı çekim (canlı veri gelmezse fallback)
+# ─────────────────────────────────────────────
+
+def _evo_cache_yaz(anahtar: str, bastar: date, bittar: date, veri: Dict[str, Any]) -> None:
+    """Son başarılı Evo rapor sonucunu (tarih aralığı bazlı) cache'e yazar."""
+    try:
+        with db() as (conn, cur):
+            cur.execute(
+                """
+                INSERT INTO evo_rapor_cache (anahtar, bastar, bittar, veri_json, cekim_ts)
+                VALUES (%s, %s, %s, %s::jsonb, NOW())
+                ON CONFLICT (anahtar, bastar, bittar)
+                DO UPDATE SET veri_json = EXCLUDED.veri_json, cekim_ts = NOW()
+                """,
+                (anahtar, bastar, bittar, json.dumps(veri, default=str)),
+            )
+    except Exception as e:
+        log.warning("evo_cache_yaz hata (%s): %s", anahtar, e)
+
+
+def _evo_cache_oku(anahtar: str, bastar: date, bittar: date) -> Optional[Dict[str, Any]]:
+    """Verilen tarih aralığı için en son cache'lenmiş Evo rapor sonucunu döndürür."""
+    try:
+        with db() as (conn, cur):
+            cur.execute(
+                """
+                SELECT veri_json, cekim_ts FROM evo_rapor_cache
+                WHERE anahtar=%s AND bastar=%s AND bittar=%s
+                """,
+                (anahtar, bastar, bittar),
+            )
+            r = cur.fetchone()
+            return dict(r) if r else None
+    except Exception as e:
+        log.warning("evo_cache_oku hata (%s): %s", anahtar, e)
+        return None
+
 # ─────────────────────────────────────────────
 # 1. TOKEN YÖNETİMİ
 # ─────────────────────────────────────────────
@@ -929,19 +968,41 @@ def evo_hs_rapor(
             except Exception as e:
                 log.warning("REST API fallback başarısız: %s", e)
         else:
-            # Token yok, REST API credentials da yok → 503
+            # Token yok, REST API credentials da yok → cache'e düş
+            cache = _evo_cache_oku("hs-rapor", bastar, bittar)
+            if cache:
+                veri = dict(cache["veri_json"])
+                veri["kaynak"] = "cache"
+                veri["canli"] = False
+                veri["son_cekim_ts"] = cache["cekim_ts"].isoformat()
+                return veri
             raise HTTPException(
                 503,
                 "EVO_WEB_TOKEN tanımlı değil. /api/evo/set-web-token ile token girin."
             )
 
-    return {
+    if not sonuc:
+        # Canlı veri gelmedi (boş sonuç) → son başarılı çekimi göster
+        cache = _evo_cache_oku("hs-rapor", bastar, bittar)
+        if cache:
+            veri = dict(cache["veri_json"])
+            veri["kaynak"] = "cache"
+            veri["canli"] = False
+            veri["son_cekim_ts"] = cache["cekim_ts"].isoformat()
+            return veri
+
+    sonuc_dict = {
         "bastar": str(bastar),
         "bittar": str(bittar),
         "urun_sayisi": len(sonuc),
         "kaynak": kaynak,
         "urunler": dict(sorted(sonuc.items(), key=lambda x: -x[1])),
     }
+    if sonuc:
+        _evo_cache_yaz("hs-rapor", bastar, bittar, sonuc_dict)
+        sonuc_dict["canli"] = True
+        sonuc_dict["son_cekim_ts"] = datetime.now().isoformat()
+    return sonuc_dict
 
 
 # ─── Malzeme (bardak/kap) eşleme tablosu ───────────────────────────────────
@@ -2405,7 +2466,26 @@ def evo_sube_grup_detay(
         bt = date.fromisoformat(bittar)
     except ValueError:
         raise HTTPException(400, "Tarih formatı YYYY-MM-DD")
-    return hs_rapor_sube_bazli(bs, bt)
+
+    sonuc = hs_rapor_sube_bazli(bs, bt)
+    if sonuc.get("subeler"):
+        _evo_cache_yaz("sube-grup-detay", bs, bt, sonuc)
+        sonuc["canli"] = True
+        sonuc["son_cekim_ts"] = datetime.now().isoformat()
+        return sonuc
+
+    # Canlı veri gelmedi (tüm şube çekimleri başarısız) → son başarılı çekimi göster
+    cache = _evo_cache_oku("sube-grup-detay", bs, bt)
+    if cache:
+        veri = dict(cache["veri_json"])
+        veri["kaynak"] = "cache"
+        veri["canli"] = False
+        veri["son_cekim_ts"] = cache["cekim_ts"].isoformat()
+        return veri
+
+    sonuc["canli"] = False
+    sonuc["son_cekim_ts"] = None
+    return sonuc
 
 
 @router.post("/personel-sync")

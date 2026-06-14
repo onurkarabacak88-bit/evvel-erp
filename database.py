@@ -4346,6 +4346,25 @@ $$;
         except Exception as _epc_e:
             print(f"[MIGRATION WARN] evo_personel_cache: {_epc_e}")
 
+        # ── EVO RAPOR CACHE — son başarılı çekim (ürün satışları / şube analiz) ──
+        # Evo (hs_rapor.ashx) anlık çekim başarısız olursa (token süresi, bağlantı
+        # vb.) son başarılı sonuç + çekim zamanı burada saklanır, ekranda
+        # "son veri çekimi: TT.AA.YYYY SS:DD" olarak gösterilir.
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS evo_rapor_cache (
+                    anahtar    TEXT NOT NULL,
+                    bastar     DATE NOT NULL,
+                    bittar     DATE NOT NULL,
+                    veri_json  JSONB NOT NULL,
+                    cekim_ts   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (anahtar, bastar, bittar)
+                )
+            """)
+            print("[MIGRATION] evo_rapor_cache tablosu kontrol edildi")
+        except Exception as _erc_e:
+            print(f"[MIGRATION WARN] evo_rapor_cache: {_erc_e}")
+
         # ── YARIŞMA SİSTEMİ ──────────────────────────────────────────────────
         # CFO her dönem yeni yarışma tanımlar (ürün, grup veya toplam metrik).
         # Şube paneli aktif yarışmayı + sıralamayı personele gösterir.
