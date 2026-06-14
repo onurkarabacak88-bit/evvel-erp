@@ -1,67 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 
-// ── Şifre Kapısı (CFO Panel ile aynı şifre, kalıcı oturum yok) ─────────────
-function GirisKapisi({ onBasarili }) {
-  const [sifre, setSifre] = useState('');
-  const [hata, setHata] = useState('');
-  const [yukleniyor, setYukleniyor] = useState(false);
-
-  const girisYap = async (e) => {
-    e.preventDefault();
-    setHata('');
-    setYukleniyor(true);
-    try {
-      const res = await api('/admin-giris', { method: 'POST', body: { sifre } });
-      if (res?.ok) onBasarili();
-    } catch (e2) {
-      setHata(e2.message || 'Şifre yanlış');
-    } finally {
-      setYukleniyor(false);
-    }
-  };
-
-  return (
-    <div style={{
-      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'var(--bg1, #0f1117)', fontFamily: 'Instrument Sans, sans-serif',
-    }}>
-      <form onSubmit={girisYap} style={{
-        width: 320, padding: 28, borderRadius: 14,
-        background: 'var(--bg2, #1a1d24)', border: '1px solid var(--border, #2a2d35)',
-        textAlign: 'center',
-      }}>
-        <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text1, #e8e9ec)', marginBottom: 4 }}>
-          🏠 Ev Tasarımı
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--text3, #6b6f7a)', marginBottom: 20 }}>
-          Devam etmek için şifre girin
-        </div>
-        <input
-          type="password"
-          autoFocus
-          value={sifre}
-          onChange={e => setSifre(e.target.value)}
-          placeholder="Şifre"
-          style={{
-            width: '100%', padding: '12px 14px', borderRadius: 8, marginBottom: 12,
-            border: '1px solid var(--border, #2a2d35)', background: 'var(--bg1, #0f1117)',
-            color: 'var(--text1, #e8e9ec)', fontSize: 14, boxSizing: 'border-box',
-          }}
-        />
-        {hata && <div style={{ fontSize: 12, color: '#e05c5c', marginBottom: 12 }}>{hata}</div>}
-        <button type="submit" disabled={yukleniyor || !sifre} style={{
-          width: '100%', padding: '12px', borderRadius: 8, border: 'none', cursor: 'pointer',
-          background: '#C8956A', color: '#fff', fontWeight: 700, fontSize: 14,
-          opacity: yukleniyor || !sifre ? 0.6 : 1,
-        }}>
-          {yukleniyor ? '…' : 'Giriş Yap'}
-        </button>
-      </form>
-    </div>
-  );
-}
-
 // ── Görsel Yükleme Kutusu ────────────────────────────────────────────────
 function GorselYukle({ odaId, tip, baslik, aciklama, onYuklendi }) {
   const [busy, setBusy] = useState(false);
@@ -360,14 +299,13 @@ function OdaListesi({ odalar, onSec, onEklendi, onSil }) {
 
 // ── Ana Sayfa ────────────────────────────────────────────────────────────
 export default function EvTasarim() {
-  const [girisYapildi, setGirisYapildi] = useState(false);
   const [odalar, setOdalar] = useState([]);
   const [secili, setSecili] = useState(null);
 
   function odalariYukle() {
     api('/ev-tasarim/odalar').then(d => setOdalar(d.odalar || [])).catch(() => {});
   }
-  useEffect(() => { if (girisYapildi) odalariYukle(); }, [girisYapildi]);
+  useEffect(() => { odalariYukle(); }, []);
 
   async function odaSil(id) {
     if (!confirm('Bu odayı ve tüm görsellerini silmek istediğine emin misin?')) return;
@@ -378,19 +316,15 @@ export default function EvTasarim() {
     } catch (e) { alert(e.message); }
   }
 
-  if (!girisYapildi) return <GirisKapisi onBasarili={() => setGirisYapildi(true)} />;
-
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg1)', color: 'var(--text1)' }}>
-      <div className="page" style={{ maxWidth: 1100, margin: '0 auto' }}>
-        <div className="page-header">
-          <h2>🏠 Ev Tasarımı</h2>
-          <p>Oda fotoğrafları + ölçüler + referans görsellerle AI destekli iç mimari tasarım ve maliyet tahmini.</p>
-        </div>
-        {secili
-          ? <OdaDetay oda={secili} onGeri={() => setSecili(null)} onGuncelle={odalariYukle} />
-          : <OdaListesi odalar={odalar} onSec={setSecili} onEklendi={odalariYukle} onSil={odaSil} />}
+    <div className="page">
+      <div className="page-header">
+        <h2>🏠 İşletme / Dükkan Tasarımı</h2>
+        <p>Mekan fotoğrafları + ölçüler + referans görsellerle AI destekli iç mimari tasarım ve maliyet tahmini.</p>
       </div>
+      {secili
+        ? <OdaDetay oda={secili} onGeri={() => setSecili(null)} onGuncelle={odalariYukle} />
+        : <OdaListesi odalar={odalar} onSec={setSecili} onEklendi={odalariYukle} onSil={odaSil} />}
     </div>
   );
 }

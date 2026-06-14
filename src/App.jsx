@@ -88,6 +88,9 @@ const NAV = [
     { id: 'teslim-kayit',     label: 'Bilgi Teslim',        icon: '📨' },
     { id: 'veri-temizle',     label: 'Veri Temizle',        icon: '🧹' },
   ]},
+  { group: 'Kişisel', gicon: '🏠', items: [
+    { id: 'ev-tasarim',       label: 'İşletme/Dükkan Tasarımı', icon: '🏠' },
+  ]},
 ];
 
 const PAGES = {
@@ -125,6 +128,7 @@ const PAGES = {
   tedarikciler:       Tedarikciler,
   'veri-temizle':     VeriTemizle,
   'is-basvurusu':     IsBasvuruListesi,
+  'ev-tasarim':       EvTasarim,
 };
 
 function readPageFromHash() {
@@ -228,11 +232,6 @@ export default function App() {
   // İş başvurusu — mobil form, sidebar yok
   if (window.location.pathname === '/is-basvurusu') {
     return <IsBasvuruForm />;
-  }
-
-  // Ev Tasarımı — kişisel araç, sidebar yok, kendi şifre kapısı
-  if (window.location.pathname === '/ev-tasarim') {
-    return <EvTasarim />;
   }
 
   // QR giriş sayfası — sidebar olmadan tam ekran
