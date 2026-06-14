@@ -4395,6 +4395,47 @@ $$;
         except Exception as _yar_e:
             print(f"[MIGRATION WARN] yarisma tabloları: {_yar_e}")
 
+        # ── EV TASARIM (kişisel araç) ───────────────────────────
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ev_tasarim_oda (
+                    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    isim        TEXT NOT NULL,
+                    genislik_m  NUMERIC,
+                    uzunluk_m   NUMERIC,
+                    yukseklik_m NUMERIC,
+                    notlar      TEXT,
+                    olusturma   TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ev_tasarim_gorsel (
+                    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    oda_id      UUID NOT NULL REFERENCES ev_tasarim_oda(id) ON DELETE CASCADE,
+                    tip         TEXT NOT NULL,
+                    veri        BYTEA NOT NULL,
+                    mime        TEXT NOT NULL,
+                    prompt      TEXT,
+                    olusturma   TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ev_tasarim_maliyet (
+                    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    oda_id      UUID NOT NULL REFERENCES ev_tasarim_oda(id) ON DELETE CASCADE,
+                    gorsel_id   UUID REFERENCES ev_tasarim_gorsel(id) ON DELETE CASCADE,
+                    icerik      JSONB NOT NULL,
+                    olusturma   TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_ev_tasarim_gorsel_oda
+                ON ev_tasarim_gorsel (oda_id, tip)
+            """)
+            print("[MIGRATION] ev_tasarim tabloları kontrol edildi")
+        except Exception as _ev_e:
+            print(f"[MIGRATION WARN] ev_tasarim tabloları: {_ev_e}")
+
         conn.commit()
 
     # ── GÖREV ÇİZELGESİ — ayrı bağlantıda (aborted tx'den etkilenmesin) ──

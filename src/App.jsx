@@ -37,6 +37,7 @@ import KartYonetimi from './pages/KartYonetimi';
 import IsBasvuruForm from './pages/IsBasvuruForm';
 import IsBasvuruListesi from './pages/IsBasvuruListesi';
 import Maliyet from './pages/Maliyet';
+import EvTasarim from './pages/EvTasarim';
 import './index.css';
 
 const NAV = [
@@ -227,6 +228,11 @@ export default function App() {
   // İş başvurusu — mobil form, sidebar yok
   if (window.location.pathname === '/is-basvurusu') {
     return <IsBasvuruForm />;
+  }
+
+  // Ev Tasarımı — kişisel araç, sidebar yok, kendi şifre kapısı
+  if (window.location.pathname === '/ev-tasarim') {
+    return <EvTasarim />;
   }
 
   // QR giriş sayfası — sidebar olmadan tam ekran
