@@ -925,7 +925,13 @@ function kullanilanTabloOzet(r, keys, labels) {
     tKap += kap;
     tSat += sat;
     if (evoLbl) {
-      evoSatirlar.push(`${labels?.[k] || k}: ${evoLbl.replace(/^Evo · /, '')}`);
+      const evoAdet = r?.evo_adet?.[k];
+      let satir = `${labels?.[k] || k}: ${evoLbl.replace(/^Evo · /, '')}`;
+      if (evoAdet != null) {
+        const fark = sat - Number(evoAdet);
+        satir += ` · fark: ${fark > 0 ? `+${fark}` : fark}`;
+      }
+      evoSatirlar.push(satir);
     }
   });
   return { tDun, tAc, tUa, tKap, tSat, satirSay, evoSatirlar };
@@ -9580,6 +9586,8 @@ export default function OperasyonMerkezi() {
                             const kap = r.kapanis?.[k] ?? 0;
                             const sat = r.satilan?.[k] ?? 0;
                             const evoLbl = r.evo_etiket?.[k] || '';
+                            const evoAdet = r.evo_adet?.[k];
+                            const evoFark = evoLbl && evoAdet != null ? Number(sat) - Number(evoAdet) : null;
                             const neg = sat < 0 && KULLANILAN_URUN_AC_DENETIM.has(k);
                             if (ac === 0 && ua === 0 && kap === 0 && dun === 0 && sat === 0 && !evoLbl) return null;
                             const devirFark = dun > 0 && ac > 0 && dun !== ac;
@@ -9598,6 +9606,11 @@ export default function OperasyonMerkezi() {
                                   {evoLbl ? (
                                     <div style={{ fontSize: 10, fontWeight: 500, color: '#93c5fd', marginTop: 3, lineHeight: 1.35 }}>
                                       {evoLbl}
+                                      {evoFark != null && (
+                                        <span style={{ color: evoFark === 0 ? '#86efac' : '#fbbf24', marginLeft: 4 }}>
+                                          {' '}· fark: {evoFark > 0 ? `+${evoFark}` : evoFark}
+                                        </span>
+                                      )}
                                     </div>
                                   ) : null}
                                 </td>
