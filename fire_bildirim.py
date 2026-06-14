@@ -668,6 +668,36 @@ def foto_token_dogrula(cur: Any, bildirim_id: str, token: str) -> Dict[str, Any]
     return dict(row)
 
 
+_FOTO_MAX_KENAR = 1200  # uzun kenar bu pikseli aşarsa küçültülür
+_FOTO_JPEG_KALITE = 80
+
+
+def _foto_sikistir(raw: bytes) -> Tuple[bytes, str]:
+    """Telefon fotoğrafını JPEG'e çevirir, EXIF döndürmesini uygular, max 1200px'e küçültür.
+
+    Depolama maliyetini düşürmek için (~3-5 MB ham foto → ~150-300 KB).
+    Açılamayan/bozuk dosyalarda orijinal bytes + verilen mime ile devam eder.
+    """
+    try:
+        import io as _io
+
+        from PIL import Image, ImageOps
+    except ImportError:
+        return raw, "image/jpeg"
+
+    try:
+        img = Image.open(_io.BytesIO(raw))
+        img = ImageOps.exif_transpose(img)  # telefon EXIF rotasyonunu uygula
+        img = img.convert("RGB")
+        if max(img.size) > _FOTO_MAX_KENAR:
+            img.thumbnail((_FOTO_MAX_KENAR, _FOTO_MAX_KENAR))
+        buf = _io.BytesIO()
+        img.save(buf, format="JPEG", quality=_FOTO_JPEG_KALITE, optimize=True)
+        return buf.getvalue(), "image/jpeg"
+    except Exception:
+        return raw, "image/jpeg"
+
+
 def foto_yukle(
     cur: Any,
     bildirim_id: str,
@@ -675,14 +705,18 @@ def foto_yukle(
     mime: str,
     personel_id: Optional[str],
 ) -> Dict[str, Any]:
-    """Fotoğrafı kaydeder. Sistemde aynı/benzer bir fotoğraf varsa ValueError('DUPLICATE') fırlatır."""
+    """Fotoğrafı sıkıştırıp kaydeder. Sistemde aynı/benzer bir fotoğraf varsa ValueError('DUPLICATE') fırlatır."""
     ensure_fire_bildirim_tablosu(cur)
     if not raw:
         raise ValueError("Boş dosya")
     if len(raw) > _FOTO_MAX_BYTES:
         raise ValueError("Dosya çok büyük (en fazla 8 MB)")
 
-    sha, ahash = _foto_hashes(raw)
+    # Depolama maliyetini düşürmek için: max 1200px, JPEG %80 kalite
+    sikisik, kayit_mime = _foto_sikistir(raw)
+
+    # Hash'ler sıkıştırılmış görsel üzerinden — aynı fotoğraf hep aynı hash'e düşer
+    sha, ahash = _foto_hashes(sikisik)
 
     # Global tekrar kontrolü — bu fotoğraf (veya çok benzeri) sistemde var mı?
     cur.execute("SELECT id, bildirim_id, sha256, ahash FROM sube_fire_bildirim_foto")
@@ -696,7 +730,7 @@ def foto_yukle(
         VALUES (%s, %s, %s, %s, %s, %s)
         RETURNING id, olusturma
         """,
-        (bildirim_id, _psycopg2_binary(raw), mime, sha, ahash, personel_id),
+        (bildirim_id, _psycopg2_binary(sikisik), kayit_mime, sha, ahash, personel_id),
     )
     row = cur.fetchone()
     return {"id": str(row["id"]), "olusturma": row["olusturma"].isoformat()}
