@@ -63,12 +63,13 @@ from motors import (
 )
 from finans_core import (
     kart_borc, kasa_bakiyesi, kasa_bakiyesi_tarihte,
-    kart_ekstre, kart_bu_ay_odenen, kart_faiz_tahmini,
+    kart_ekstre, kart_ekstre_donem_override, kart_bu_ay_odenen, kart_faiz_tahmini,
     kart_asgari_orani,
     faiz_hesapla_ve_yaz, tum_kartlar_faiz_hesapla,
     taksit_detay, gelecek_taksit_yuku, tum_kartlar_taksit_yuku,
     kart_ekstre_forecast, tum_kartlar_ekstre_forecast, kart_aktif_donem,
     aktif_kesim_gunu, nakit_akis_sim, nakit_akis_tahmin_dogruluk,
+    kesim_tarihi_hesapla,
 )
 
 app = FastAPI(title="EVVEL ERP", version="2.0")
@@ -1494,6 +1495,16 @@ def kartlar_listele():
                 onceki_ekstre = onceki_asgari = onceki_odenen = 0.0
                 onceki_durum  = "yok"
                 bu_donem_odenen = 0.0
+
+            # GERÇEK ekstre snapshot'ı (PDF yükle / manuel ekstre) varsa "bu ekstre"
+            # ve "asgari ödeme" gösterimini onunla eşitle — kart_hareketleri
+            # bazlı tahmin, büyük "devir" bakiyesini göremediği için gerçek
+            # dönem borcundan çok düşük çıkabilir (panel ↔ ödeme planı tutarsızlığı).
+            _kesim_for_ov = aktif_kesim or kesim_tarihi_hesapla(bugun.year, bugun.month, int(k['kesim_gunu']))
+            _ov_borc, _ov_asgari = kart_ekstre_donem_override(cur, k['id'], _kesim_for_ov)
+            if _ov_borc is not None:
+                bu_ekstre = _ov_borc
+                asgari_odeme = _ov_asgari if _ov_asgari is not None else round(_ov_borc * kart_asgari_orani(k), 2)
 
             # Gelecek ekstre = bir sonraki kesim için tek çekim + taksit payı.
             # Aktif dönem zaten "şu an açık" olan ekstre; "gelecek" demek

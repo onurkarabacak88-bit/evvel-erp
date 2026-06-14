@@ -14,7 +14,7 @@ SISTEM_BASLANGIC = date(2026, 6, 1)
 from finans_core import (
     kasa_bakiyesi, odeme_yuku, gunluk_ciro_ortalama,
     nakit_akis_sim, kart_borc, tum_kart_borclari,
-    kart_ekstre, kart_bu_ay_odenen, kart_faiz_tahmini,
+    kart_ekstre, kart_ekstre_donem_override, kart_bu_ay_odenen, kart_faiz_tahmini,
     kart_asgari_orani, son_odeme_tarihi_hesapla, _safe_date,
     kesim_tarihi_hesapla,
     zorunlu_gider_tahmini, serbest_nakit, net_akis_30_gun,
@@ -705,12 +705,20 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
             # Bu ayın kesimine ait ekstre (önceki kesim → bu kesim arası harcamalar)
             ekstre_v = kart_ekstre(cur, k['id'], kesim_gunu, kesim_tarihi=bu_ay_kesim)
             bu_ekstre = ekstre_v["ekstre_toplam"]
-            if bu_ekstre <= 0:
-                atlanan.append(f"Kart atlandı (bu ay ekstre yok): {k['kart_adi']}")
-                continue
 
-            asgari = round(bu_ekstre * kart_asgari_orani(k), 2)
-            odenecek = round(bu_ekstre, 2)
+            # GERÇEK ekstre snapshot'ı (PDF yükle / manuel ekstre) varsa onu
+            # kullan — kart_hareketleri-bazlı tahmin, büyük "devir" bakiyesini
+            # göremediği için gerçek dönem borcundan çok düşük çıkabilir.
+            ov_borc, ov_asgari = kart_ekstre_donem_override(cur, k['id'], bu_ay_kesim)
+            if ov_borc is not None:
+                odenecek = round(ov_borc, 2)
+                asgari = round(ov_asgari, 2) if ov_asgari is not None else round(ov_borc * kart_asgari_orani(k), 2)
+            else:
+                if bu_ekstre <= 0:
+                    atlanan.append(f"Kart atlandı (bu ay ekstre yok): {k['kart_adi']}")
+                    continue
+                asgari = round(bu_ekstre * kart_asgari_orani(k), 2)
+                odenecek = round(bu_ekstre, 2)
 
             # Bu kesim için (kesim → son_odeme] arası ÖDEMELER
             # Planı otomatik "ödendi" yapma kararı için.
@@ -831,11 +839,19 @@ def kart_kesim_plan_tetikle(kart_id: str = None) -> dict:
             # Kesime ait ekstre
             ek = kart_ekstre(cur, k['id'], kg, kesim_tarihi=kesim_t)
             ekstre = float(ek.get('ekstre_toplam') or 0)
-            if ekstre <= 0:
-                sonuc["atlanan"].append(f"{k['kart_adi']}: ekstre 0")
-                continue
 
-            asgari = round(ekstre * kart_asgari_orani(k), 2)
+            # GERÇEK ekstre snapshot'ı (PDF yükle / manuel ekstre) varsa onu
+            # kullan — kart_hareketleri-bazlı tahmin, büyük "devir" bakiyesini
+            # göremediği için gerçek dönem borcundan çok düşük çıkabilir.
+            ov_borc, ov_asgari = kart_ekstre_donem_override(cur, k['id'], kesim_t)
+            if ov_borc is not None:
+                ekstre = round(ov_borc, 2)
+                asgari = round(ov_asgari, 2) if ov_asgari is not None else round(ekstre * kart_asgari_orani(k), 2)
+            else:
+                if ekstre <= 0:
+                    sonuc["atlanan"].append(f"{k['kart_adi']}: ekstre 0")
+                    continue
+                asgari = round(ekstre * kart_asgari_orani(k), 2)
 
             # Bu kesim için yapılmış ödemeler (varsa, ortada ödedi diyelim)
             cur.execute("""

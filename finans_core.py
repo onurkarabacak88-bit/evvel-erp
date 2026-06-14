@@ -342,6 +342,29 @@ def kart_ekstre(cur, kart_id: str, kesim_gunu: int, kesim_tarihi: date = None) -
     }
 
 
+def kart_ekstre_donem_override(cur, kart_id: str, kesim_tarihi: date):
+    """Bu kesim ayı için kart_ekstre_donem'de (PDF ekstre yükle / manuel ekstre)
+    GERÇEK bir snapshot varsa, o dönemin gerçek 'dönem borcu' + 'asgari tutar'
+    değerlerini döner — yoksa (None, None).
+
+    Amaç: bankadan gelen GERÇEK ekstre rakamı (özellikle büyük bir "önceki
+    dönemden devir" içeren kartlarda), gece motorunun kart_hareketleri'nden
+    kendi hesapladığı (devir'i görmeyen, dolayısıyla çok daha düşük) tahminle
+    EZİLMESİN. "Ekstre = gerçeğin kaynağı" ilkesi (kredi kartı sistemi)."""
+    cur.execute("""
+        SELECT donem_borcu, asgari_tutar FROM kart_ekstre_donem
+        WHERE kart_id=%s AND donem = DATE_TRUNC('month', %s::date)
+          AND donem_borcu IS NOT NULL
+        ORDER BY olusturma DESC LIMIT 1
+    """, (kart_id, kesim_tarihi))
+    r = cur.fetchone()
+    if not r:
+        return None, None
+    borc = float(r['donem_borcu'])
+    asg = float(r['asgari_tutar']) if r.get('asgari_tutar') is not None else None
+    return borc, asg
+
+
 def kart_bu_ay_odenen(cur, kart_id: str) -> float:
     """
     Bu takvim ayında karta yansıyan toplam ödeme (kart_hareketleri ODEME, aktif).
