@@ -275,13 +275,49 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler rapor cache hatası: {e}")
 
-            # ── WHATSAPP GÜNLÜK ÖZET — gece 00:30 ──
+            # ── AKILLI DENETİM MOTORU — gece 00:30, WhatsApp özetinden ÖNCE ──
             # Şubeler kapanışı 00:00–00:30 arası tamamlar, o yüzden 30 dk bekle.
+            # Motor, dünün ACILIS/KAPANIS + Evo verisini üçgenleyip
+            # truth_motor_kararlar'a yazar — WhatsApp özeti bunu okur.
             try:
                 _time.sleep(30 * 60)  # 30 dakika
-                from whatsapp_bildirim import gunluk_ozet_gonder
                 from tr_saat import bugun_tr as _bugun_tr
                 _dun = _bugun_tr() - timedelta(days=1)
+                try:
+                    import truth_motor as _tm
+                    if _tm._global_aktif():
+                        with db() as (conn, cur):
+                            cur.execute("SELECT id::text AS id, ad FROM subeler WHERE aktif=TRUE")
+                            _subeler = cur.fetchall()
+                            _calisan = 0
+                            for _s in _subeler:
+                                _sid = _s['id']
+                                try:
+                                    if not _tm.sube_aktif_mi(cur, _sid):
+                                        continue
+                                    # Aynı gece restart olursa tekrar kaydetmesin
+                                    cur.execute(
+                                        "SELECT 1 FROM truth_motor_kararlar WHERE sube_id=%s AND tarih=%s::date LIMIT 1",
+                                        (_sid, str(_dun)),
+                                    )
+                                    if cur.fetchone():
+                                        continue
+                                    _veriler = _tm.veri_topla(cur, _sid, str(_dun))
+                                    _sonuc = _tm.motor_calistir(cur, _sid, str(_dun), _veriler)
+                                    if _sonuc.get("calisti"):
+                                        _calisan += 1
+                                except Exception as _e:
+                                    logger.warning(f"⏰ Akıllı Denetim {_s.get('ad')}: {_e}")
+                            conn.commit()
+                        logger.info(f"⏰ Akıllı Denetim: {_calisan}/{len(_subeler)} şube — tarih={_dun}")
+                except Exception as e:
+                    logger.warning(f"⏰ Akıllı Denetim motor hatası: {e}")
+            except Exception as e:
+                logger.warning(f"⏰ Akıllı Denetim bekleme hatası: {e}")
+
+            # ── WHATSAPP GÜNLÜK ÖZET — gece 00:30 ──
+            try:
+                from whatsapp_bildirim import gunluk_ozet_gonder
                 sonuc = gunluk_ozet_gonder(_dun)
                 if sonuc.get("basarili"):
                     logger.info("⏰ WhatsApp: Günlük özet gönderildi")

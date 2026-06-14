@@ -630,6 +630,14 @@ def _zeka_ozet_uret(taniler: List["Tani"],
         tani_kisa = _TANI_INSAN.get(t.tani, t.tani)
         satirlar.append(f"📦 {_BOYUT_KISA.get(t.boyut, t.boyut)}{fark_str}: {tani_kisa}")
 
+    # Sorumlu personel — sprint G/G2/H tanılarında detay'a yazılmış olabilir
+    _sorumlu_ad = (
+        (ana.detay or {}).get("aksamci_ad")
+        or (ana.detay or {}).get("sabahci_ad")
+    )
+    if _sorumlu_ad:
+        satirlar.append(f"👤 İlgili personel: {_sorumlu_ad}")
+
     # Çapraz bağlantı — asıl zekâ burada
     satirlar.append("")
     if capraz:
