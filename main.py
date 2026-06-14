@@ -326,6 +326,19 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ WhatsApp hatası: {e}")
 
+            # ── FIRE/İADE KANIT FOTOĞRAFI TEMİZLİĞİ — depolama maliyeti için ──
+            # 7 günden eski kanıt fotoğrafları (BYTEA) silinir. Hash'ler de gittiği
+            # için tekrar-kullanım kontrolü bu pencereyle sınırlı kalır (bilinçli karar).
+            try:
+                from fire_bildirim import foto_eski_temizle
+                with db() as (conn, cur):
+                    _silinen = foto_eski_temizle(cur, gun=7)
+                    conn.commit()
+                if _silinen:
+                    logger.info(f"⏰ Fire kanıt fotoğrafı temizliği: {_silinen} eski fotoğraf silindi")
+            except Exception as e:
+                logger.warning(f"⏰ Fire kanıt fotoğrafı temizliği hatası: {e}")
+
             # ── OPERASYON EVENT — bugünün açılış/kapanış satırları ──
             # Gece yarısı (00:00–02:00) is_gunu_tr() hâlâ ÖNCEKİ iş gününü döndürür
             # (kapanış 02:00'a kadar düne sayılır). Bu yüzden bugünün satırlarını

@@ -728,3 +728,19 @@ def fotolari_listele(cur: Any, bildirim_id: str) -> List[Dict[str, Any]]:
         }
         for r in (cur.fetchall() or [])
     ]
+
+
+def foto_eski_temizle(cur: Any, gun: int = 7) -> int:
+    """Depolama maliyetini düşürmek için: `gun` günden eski kanıt fotoğraflarını siler.
+
+    NOT: silinen fotoğrafların hash'leri de gittiği için, bu fotoğraflar artık
+    "daha önce kullanıldı" kontrolünde dikkate alınmaz — yani tekrar-kullanım
+    penceresi `gun` gün ile sınırlıdır. İleride gerekirse hash'leri ayrı bir
+    küçük tabloda (sadece sha256/ahash, görseli olmadan) kalıcı tutulabilir.
+    """
+    ensure_fire_bildirim_tablosu(cur)
+    cur.execute(
+        "DELETE FROM sube_fire_bildirim_foto WHERE olusturma < NOW() - (%s || ' days')::interval",
+        (int(gun),),
+    )
+    return cur.rowcount or 0
