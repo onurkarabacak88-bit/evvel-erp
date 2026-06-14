@@ -6,16 +6,23 @@ function GorselYukle({ odaId, tip, baslik, aciklama, onYuklendi }) {
   const [busy, setBusy] = useState(false);
   const [hata, setHata] = useState('');
 
-  async function yukle(file) {
-    if (!file) return;
+  async function yukleBir(file) {
+    const fd = new FormData();
+    fd.append('tip', tip);
+    fd.append('dosya', file);
+    const res = await fetch(`/api/ev-tasarim/odalar/${odaId}/gorsel`, { method: 'POST', body: fd });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || 'Yüklenemedi');
+  }
+
+  async function yukle(files) {
+    const liste = Array.from(files || []).filter(Boolean);
+    if (!liste.length) return;
     setBusy(true); setHata('');
     try {
-      const fd = new FormData();
-      fd.append('tip', tip);
-      fd.append('dosya', file);
-      const res = await fetch(`/api/ev-tasarim/odalar/${odaId}/gorsel`, { method: 'POST', body: fd });
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.detail || 'Yüklenemedi');
+      for (const file of liste) {
+        await yukleBir(file);
+      }
       onYuklendi();
     } catch (e) {
       setHata(e.message || 'Hata');
@@ -27,13 +34,13 @@ function GorselYukle({ odaId, tip, baslik, aciklama, onYuklendi }) {
   return (
     <div className="card" style={{ padding: 14, textAlign: 'center', border: '1px dashed var(--border)' }}
       onDragOver={e => e.preventDefault()}
-      onDrop={e => { e.preventDefault(); yukle(e.dataTransfer.files?.[0]); }}>
+      onDrop={e => { e.preventDefault(); yukle(e.dataTransfer.files); }}>
       <div style={{ fontWeight: 700, marginBottom: 4 }}>{baslik}</div>
       <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>{aciklama}</div>
       <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
-        {busy ? '…' : 'Görsel Seç'}
-        <input type="file" accept="image/*" style={{ display: 'none' }}
-          onChange={e => yukle(e.target.files?.[0])} disabled={busy} />
+        {busy ? '…' : 'Görsel Seç (birden fazla seçilebilir)'}
+        <input type="file" accept="image/*" multiple style={{ display: 'none' }}
+          onChange={e => { yukle(e.target.files); e.target.value = ''; }} disabled={busy} />
       </label>
       {hata && <div className="alert-box red" style={{ marginTop: 8, fontSize: 12 }}>⚠️ {hata}</div>}
     </div>
