@@ -541,17 +541,11 @@ def _akilli_denetim_ozetleri(cur, tarih: date) -> list:
 def _ai_denetim_yorumu(ozetler: list) -> str:
     """Akıllı Denetim anomali özetlerini Claude ile kısa, insan dilinde yoruma çevirir.
 
-    ANTHROPIC_API_KEY tanımlı değilse veya anomali yoksa boş string döner —
-    motor sonucunu/finansal kararı etkilemez, sadece okunabilirlik katar.
+    Önce ANTHROPIC_API_KEY (Claude) denenir, tanımlı değilse OPENAI_API_KEY
+    (gpt-4o-mini) ile denenir. İkisi de yoksa veya anomali yoksa boş string
+    döner — motor sonucunu/finansal kararı etkilemez, sadece okunabilirlik katar.
     """
     if not ozetler:
-        return ""
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return ""
-    try:
-        import anthropic
-    except ImportError:
         return ""
 
     detay = "\n\n".join(
@@ -567,19 +561,38 @@ def _ai_denetim_yorumu(ozetler: list) -> str:
         "yapma — sadece daha okunaklı anlat. SADECE metni yaz, başlık/giriş ekleme.\n\n"
         + detay
     )
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-        resp = client.messages.create(
-            model=os.getenv("ANTHROPIC_AKILLI_DENETIM_MODEL", "claude-3-5-haiku-20241022"),
-            max_tokens=500,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return "".join(
-            b.text for b in resp.content if getattr(b, "type", None) == "text"
-        ).strip()
-    except Exception as e:
-        logger.warning(f"Akıllı Denetim AI yorum hatası: {e}")
-        return ""
+
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    if anthropic_key:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=anthropic_key)
+            resp = client.messages.create(
+                model=os.getenv("ANTHROPIC_AKILLI_DENETIM_MODEL", "claude-3-5-haiku-20241022"),
+                max_tokens=500,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return "".join(
+                b.text for b in resp.content if getattr(b, "type", None) == "text"
+            ).strip()
+        except Exception as e:
+            logger.warning(f"Akıllı Denetim AI yorum hatası (Claude): {e}")
+
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if openai_key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=openai_key)
+            resp = client.chat.completions.create(
+                model=os.getenv("OPENAI_AKILLI_DENETIM_MODEL", "gpt-4o-mini"),
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=500,
+            )
+            return (resp.choices[0].message.content or "").strip()
+        except Exception as e:
+            logger.warning(f"Akıllı Denetim AI yorum hatası (OpenAI): {e}")
+
+    return ""
 
 
 # ── Mesaj Oluşturma ───────────────────────────────────────────────────────────
