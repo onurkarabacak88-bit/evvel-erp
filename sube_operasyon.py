@@ -1217,7 +1217,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
 
             # KAPANIS_KASA_FARK uyarısı — sadece merkez görür, kasiyer panelinde gösterilmez
             if abs(kasa_acigi) > 0.01:
-                from operasyon_kurallar import tolerans_seviyesi
+                from operasyon_kurallar import tolerans_seviyesi, kasa_fark_onemsiz_mi
                 sev_kf = tolerans_seviyesi(kasa_acigi)
                 mesaj_kf = (
                     f"Kasa mutabakat farkı: {kasa_acigi:+,.2f} TL "
@@ -1308,7 +1308,10 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     pass  # onay_kuyrugu yazımı kritik değil
 
                 # ── Personel risk sinyali ──
-                if pid_panel:
+                # Not: ±5 TL içindeki farklar "önemsiz" sayılır — kasa uyumsuzluğu
+                # yukarıda (sube_operasyon_uyari) yine de kaydedildi/CFO'ya görünür,
+                # ama personelin kasası "açık" gibi algılanıp risk skoruna yansımaz.
+                if pid_panel and not kasa_fark_onemsiz_mi(kasa_acigi):
                     try:
                         agirlik_kf = 20 if sev_kf == "kritik" else 10
                         cur.execute(

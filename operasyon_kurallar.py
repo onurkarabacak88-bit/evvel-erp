@@ -19,6 +19,19 @@ def tolerans_seviyesi(fark_tl: float) -> str:
     return "kritik"
 
 
+# Kasa mutabakat/açılış farkı bu eşiğin altındaysa "önemsiz" sayılır:
+# CFO/merkez tarafına kasa uyumsuzluğu olarak YİNE GÖSTERİLİR (sube_operasyon_uyari,
+# onay kuyruğu, gunluk raporlar değişmez) — ama personelin kasası "açık" gibi
+# algılanmaması için personel_risk_sinyal'e yansıtılmaz (puan/risk skoruna girmez).
+KASA_FARK_ONEMSIZ_TL = 5.0
+
+
+def kasa_fark_onemsiz_mi(fark_tl: float) -> bool:
+    """Kasa açılış/kapanış farkı, personel risk skoruna yansıtılmayacak kadar
+    küçük mü? (|fark| <= KASA_FARK_ONEMSIZ_TL)"""
+    return abs(float(fark_tl or 0)) <= KASA_FARK_ONEMSIZ_TL
+
+
 def stok_tolerans_seviyesi(fark_adet: int) -> str:
     """0-2 adet normal, 3-4 uyarı, 5+ kritik (mutlak fark)."""
     a = abs(int(fark_adet or 0))

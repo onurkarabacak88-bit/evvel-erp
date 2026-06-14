@@ -192,7 +192,10 @@ class Tani:
 
 # Tolerans eşikleri — boyut başına ayarlanabilir
 _TOLERANS = {
-    "kasa":           1.00,   # ₺
+    # Kasa: ±5 TL "önemsiz fark" sayılır (sayım/yuvarlama payı) — kullanıcı kararı
+    # 2026-06-14. Bu eşiğin altında kasa UYUMLU sayılır (personel risk skoruna
+    # yansımaz); merkez tarafı (sube_operasyon_uyari) farkı zaten ayrıca gösterir.
+    "kasa":           5.00,   # ₺
     "bardak_plastik": 0,      # adet
     "bardak_karton":  0,      # adet
     "redbull_soda":   0,      # adet
@@ -2219,7 +2222,8 @@ def adaptive_truth_walk(cur, sube_id: str, tarih: str, boyut: str) -> Dict[str, 
     from datetime import date as _d, timedelta as _td
 
     onceki = _previous_day(tarih)
-    tolerans = _TOLERANS.get(boyut, 0.5) if boyut != "kasa" else 1.0
+    # Kasa farkında ±5 TL "önemsiz" sayılır (sayım/yuvarlama payı) — _TOLERANS["kasa"]
+    tolerans = _TOLERANS.get(boyut, 0.5)
     kanit: List[Dict[str, Any]] = []
 
     # 1. Dün ACILIS sayım (önceki gün sabah)

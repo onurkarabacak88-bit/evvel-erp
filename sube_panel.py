@@ -1150,6 +1150,7 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                 beklenen_dunku_kapanis_kasa,
                 beklenen_dunku_kapanis_stok,
                 tolerans_seviyesi, stok_tolerans_seviyesi,
+                kasa_fark_onemsiz_mi,
             )
 
             # ── Önceki kapanış personelini bir kez çek (hem kasa hem stok uyumsuzluğunda kullanılır) ──
@@ -1243,7 +1244,10 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                             pass  # onay_kuyrugu yazımı kritik değil
 
                     # ── Personel risk sinyali ──
-                    if pid:
+                    # Not: ±5 TL içindeki farklar "önemsiz" sayılır — kasa uyumsuzluğu
+                    # yukarıda (sube_operasyon_uyari) yine de kaydedildi/CFO'ya görünür,
+                    # ama personelin kasası "açık" gibi algılanıp risk skoruna yansımaz.
+                    if pid and not kasa_fark_onemsiz_mi(fark):
                         try:
                             cur.execute("SAVEPOINT sp_acilis_risk")
                             agirlik_kf = 20 if sev == "kritik" else 10
