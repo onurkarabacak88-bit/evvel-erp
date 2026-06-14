@@ -224,7 +224,7 @@ def oneri_liste(oda_id: str):
 
 
 @router.post("/api/ev-tasarim/odalar/{oda_id}/tasarim-uret")
-async def tasarim_uret(oda_id: str, stil_notu: str = Form(""), maske: Optional[UploadFile] = File(None)):
+def tasarim_uret(oda_id: str, stil_notu: str = Form(""), maske: Optional[UploadFile] = File(None)):
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(503, "OPENAI_API_KEY ortam değişkeni tanımlı değil — tasarım üretimi kullanılamaz.")
@@ -308,7 +308,7 @@ async def tasarim_uret(oda_id: str, stil_notu: str = Form(""), maske: Optional[U
 
     maske_bytes: Optional[bytes] = None
     if maske is not None:
-        maske_raw = await maske.read()
+        maske_raw = maske.file.read()
         if maske_raw:
             maske_bytes = maske_raw
 
