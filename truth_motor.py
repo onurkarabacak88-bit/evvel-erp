@@ -1599,9 +1599,11 @@ def _evo_sube_grup_satis(cur, sube_id: str, tarih: str) -> Dict[str, float]:
     """Bir şubenin verilen tarihteki Evo grup satışları (Ice, 14 Oz, vs).
     hs_rapor_sube_bazli'ı çağırır; sube_id (Evvel UUID) → şube_adi eşleştirme."""
     try:
+        cur.execute("SAVEPOINT sp_evogrup")
         cur.execute("SELECT ad FROM subeler WHERE id::text=%s", (str(sube_id),))
         srow = cur.fetchone()
         sube_adi_evvel = str(dict(srow).get("ad") or "") if srow else ""
+        cur.execute("RELEASE SAVEPOINT sp_evogrup")
         from evo_sync import hs_rapor_sube_bazli
         from datetime import date as _d
         y, mo, dn = (int(x) for x in str(tarih)[:10].split("-"))
@@ -1619,6 +1621,11 @@ def _evo_sube_grup_satis(cur, sube_id: str, tarih: str) -> Dict[str, float]:
                 gruplar["_ciro"] = float(payload.get("ciro_toplam") or 0)
                 return gruplar
     except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_evogrup")
+            cur.execute("RELEASE SAVEPOINT sp_evogrup")
+        except Exception:
+            pass
         log.warning("_evo_sube_grup_satis hata: %s", e)
     return {}
 
@@ -1642,6 +1649,7 @@ def _meta_boyut_topla(meta: Dict[str, Any], boyut: str) -> float:
 def _urun_ac_toplam(cur, sube_id: str, tarih: str, boyut: str) -> float:
     """O gün açılan paket toplamı (URUN_AC), boyut bazında."""
     try:
+        cur.execute("SAVEPOINT sp_urunac")
         cur.execute(
             """
             SELECT kalemler_json FROM urun_ac_taslak
@@ -1650,7 +1658,13 @@ def _urun_ac_toplam(cur, sube_id: str, tarih: str, boyut: str) -> float:
             (sube_id, tarih),
         )
         rows = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("RELEASE SAVEPOINT sp_urunac")
     except Exception:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_urunac")
+            cur.execute("RELEASE SAVEPOINT sp_urunac")
+        except Exception:
+            pass
         return 0.0
     anahtarlar = _BOYUT_META.get(boyut) or []
     toplam = 0.0
@@ -4373,6 +4387,7 @@ def fire_bildirim_capraz(cur, sube_id: str, tarih: str,
         "kayitlar": [],
     }
     try:
+        cur.execute("SAVEPOINT sp_fire")
         cur.execute(
             """
             SELECT id, sebep_kodu, sebep_label, aciklama,
@@ -4384,7 +4399,13 @@ def fire_bildirim_capraz(cur, sube_id: str, tarih: str,
             (sube_id, tarih),
         )
         rows = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("RELEASE SAVEPOINT sp_fire")
     except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_fire")
+            cur.execute("RELEASE SAVEPOINT sp_fire")
+        except Exception:
+            pass
         log.warning("fire_bildirim_capraz sorgu hata: %s", e)
         return sonuc
 
@@ -4481,6 +4502,7 @@ def evo_iptal_capraz(cur, sube_id: str, tarih: str,
     }
     # ciro_giris tablosundan negatif / iade / iptal kayıtları
     try:
+        cur.execute("SAVEPOINT sp_iptal1")
         cur.execute(
             """
             SELECT COALESCE(SUM(ABS(ciro_tl)), 0) AS iptal_tl
@@ -4493,12 +4515,18 @@ def evo_iptal_capraz(cur, sube_id: str, tarih: str,
         r = cur.fetchone()
         if r:
             sonuc["iptal_toplam"] = round(float(dict(r).get("iptal_tl") or 0), 2)
+        cur.execute("RELEASE SAVEPOINT sp_iptal1")
     except Exception:
-        pass
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_iptal1")
+            cur.execute("RELEASE SAVEPOINT sp_iptal1")
+        except Exception:
+            pass
 
     # kasa_hareketleri fallback
     if sonuc["iptal_toplam"] == 0:
         try:
+            cur.execute("SAVEPOINT sp_iptal2")
             cur.execute(
                 """
                 SELECT COALESCE(SUM(ABS(tutar)), 0) AS iptal_tl
@@ -4511,8 +4539,13 @@ def evo_iptal_capraz(cur, sube_id: str, tarih: str,
             r = cur.fetchone()
             if r:
                 sonuc["iptal_toplam"] = round(float(dict(r).get("iptal_tl") or 0), 2)
+            cur.execute("RELEASE SAVEPOINT sp_iptal2")
         except Exception:
-            pass
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_iptal2")
+                cur.execute("RELEASE SAVEPOINT sp_iptal2")
+            except Exception:
+                pass
 
     iptal = sonuc["iptal_toplam"]
     kf = abs(float(kasa_fark or 0))
@@ -4570,6 +4603,7 @@ def satis_velocity_analiz(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         "yorum": "Velocity verisi yok",
     }
     try:
+        cur.execute("SAVEPOINT sp_velocity")
         cur.execute(
             """
             SELECT meta FROM sube_operasyon_event
@@ -4581,7 +4615,13 @@ def satis_velocity_analiz(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
             (sube_id, tarih),
         )
         rows = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("RELEASE SAVEPOINT sp_velocity")
     except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_velocity")
+            cur.execute("RELEASE SAVEPOINT sp_velocity")
+        except Exception:
+            pass
         log.warning("satis_velocity_analiz sorgu hata: %s", e)
         return sonuc
 
@@ -4603,6 +4643,7 @@ def satis_velocity_analiz(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     # Fallback: ciro_giris fiş sayısı
     if toplam_fis == 0:
         try:
+            cur.execute("SAVEPOINT sp_velocity2")
             cur.execute(
                 """
                 SELECT COUNT(*) AS n FROM ciro_giris
@@ -4613,8 +4654,13 @@ def satis_velocity_analiz(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
             r = cur.fetchone()
             if r:
                 toplam_fis = int(dict(r).get("n") or 0)
+            cur.execute("RELEASE SAVEPOINT sp_velocity2")
         except Exception:
-            pass
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_velocity2")
+                cur.execute("RELEASE SAVEPOINT sp_velocity2")
+            except Exception:
+                pass
 
     sonuc["vardiya_sayisi"] = vardiya_sayisi
     sonuc["toplam_sure_dk"] = round(toplam_sure, 1)
@@ -6507,6 +6553,7 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     # kapanis_kayit.olay='vardiya_sabah_aksam_devri' → sabahçı tarafından oluşturuldu
     # meta.vardiya_devir_stok_sayim: akşamcıya bırakılan bardak sayımı
     try:
+        cur.execute("SAVEPOINT sp_h_devir")
         cur.execute("""
             SELECT meta, kapanisci_onay_ts, devir,
                    aksamci_personel_id, sabahci_personel_id
@@ -6517,7 +6564,13 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
             ORDER BY kapanisci_onay_ts DESC NULLS LAST
             LIMIT 1
         """, (sube_id, tarih))
+        cur.execute("RELEASE SAVEPOINT sp_h_devir")
     except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_h_devir")
+            cur.execute("RELEASE SAVEPOINT sp_h_devir")
+        except Exception:
+            pass
         log.warning("aksam_vardiya_bardak_pnl devir sorgu hata: %s", e)
         return sonuc
 
@@ -6551,6 +6604,7 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     aksamci_pid = r_devir_dict.get("aksamci_personel_id")
     if aksamci_pid:
         try:
+            cur.execute("SAVEPOINT sp_h_pers")
             cur.execute(
                 "SELECT ad FROM personel WHERE id::text=%s LIMIT 1",
                 (str(aksamci_pid),)
@@ -6558,11 +6612,17 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
             pr = cur.fetchone()
             if pr:
                 aksamci_ad = dict(pr).get("ad") or None
+            cur.execute("RELEASE SAVEPOINT sp_h_pers")
         except Exception:
-            pass
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_h_pers")
+                cur.execute("RELEASE SAVEPOINT sp_h_pers")
+            except Exception:
+                pass
     if not aksamci_ad:
         # Fallback: KAPANIS event personel_ad
         try:
+            cur.execute("SAVEPOINT sp_h_persfb")
             cur.execute("""
                 SELECT personel_ad FROM sube_operasyon_event
                 WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
@@ -6571,17 +6631,29 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
             pr = cur.fetchone()
             if pr:
                 aksamci_ad = dict(pr).get("personel_ad") or None
+            cur.execute("RELEASE SAVEPOINT sp_h_persfb")
         except Exception:
-            pass
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_h_persfb")
+                cur.execute("RELEASE SAVEPOINT sp_h_persfb")
+            except Exception:
+                pass
 
     # ── 3. Kapanis bardak sayımı (akşamcının kapanış sayımı) ─────────────────
     try:
+        cur.execute("SAVEPOINT sp_h_kapanis")
         cur.execute("""
             SELECT meta, kasa_sayim, cevap_ts FROM sube_operasyon_event
             WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
             ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
         """, (sube_id, tarih))
+        cur.execute("RELEASE SAVEPOINT sp_h_kapanis")
     except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_h_kapanis")
+            cur.execute("RELEASE SAVEPOINT sp_h_kapanis")
+        except Exception:
+            pass
         log.warning("aksam_vardiya_bardak_pnl kapanis sorgu hata: %s", e)
         return sonuc
 
@@ -6611,9 +6683,11 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     # ── 4. Evo akşam satışları (time-filtered: devir_ts → kapanis_ts) ────────
     evo_sube_id: Optional[str] = None
     try:
+        cur.execute("SAVEPOINT sp_h_evoid")
         cur.execute("SELECT ad FROM subeler WHERE id::text=%s", (str(sube_id),))
         srow = cur.fetchone()
         sube_adi_evvel = str(dict(srow).get("ad") or "") if srow else ""
+        cur.execute("RELEASE SAVEPOINT sp_h_evoid")
         from evo_sync import EVO_SUBE_ID_MAP
         evvel_lower = sube_adi_evvel.strip().lower().replace("şubesi", "").strip()
         for eid, ead in EVO_SUBE_ID_MAP.items():
@@ -6622,6 +6696,11 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
                 evo_sube_id = eid
                 break
     except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_h_evoid")
+            cur.execute("RELEASE SAVEPOINT sp_h_evoid")
+        except Exception:
+            pass
         log.warning("aksam_vardiya_bardak_pnl evo_id hata: %s", e)
 
     aksam_fis_count = 0
