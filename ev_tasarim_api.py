@@ -84,6 +84,7 @@ def oda_liste():
             SELECT o.id, o.isim, o.genislik_m, o.uzunluk_m, o.yukseklik_m, o.notlar, o.olusturma,
                    COUNT(*) FILTER (WHERE g.tip = 'foto')     AS foto_sayisi,
                    COUNT(*) FILTER (WHERE g.tip = 'referans') AS referans_sayisi,
+                   COUNT(*) FILTER (WHERE g.tip = 'urun')     AS urun_sayisi,
                    COUNT(*) FILTER (WHERE g.tip = 'uretilen') AS uretilen_sayisi
             FROM ev_tasarim_oda o
             LEFT JOIN ev_tasarim_gorsel g ON g.oda_id = o.id
@@ -142,8 +143,8 @@ def oda_sil(oda_id: str):
 
 @router.post("/api/ev-tasarim/odalar/{oda_id}/gorsel")
 async def gorsel_yukle(oda_id: str, tip: str = Form(...), dosya: UploadFile = File(...)):
-    if tip not in ("foto", "referans"):
-        raise HTTPException(400, "tip 'foto' veya 'referans' olmalı")
+    if tip not in ("foto", "referans", "urun"):
+        raise HTTPException(400, "tip 'foto', 'referans' veya 'urun' olmalı")
 
     raw = await dosya.read()
     if len(raw) > _MAX_UPLOAD_BYTES:
@@ -253,6 +254,12 @@ async def tasarim_uret(oda_id: str, stil_notu: str = Form(""), maske: Optional[U
         """, (oda_id,))
         referanslar = cur.fetchall()
 
+        cur.execute("""
+            SELECT veri, mime FROM ev_tasarim_gorsel
+            WHERE oda_id=%s AND tip='urun' ORDER BY olusturma DESC LIMIT 4
+        """, (oda_id,))
+        urunler = cur.fetchall()
+
     client = OpenAI(api_key=api_key)
 
     # 1) Referans görsellerden stil özeti çıkar (varsa)
@@ -311,6 +318,12 @@ async def tasarim_uret(oda_id: str, stil_notu: str = Form(""), maske: Optional[U
             "sadece maske ile boyanmamış diğer alanlar (duvar, zemin, genel dekorasyon) "
             "yeniden tasarlanacak."
         )
+    if urunler:
+        prompt_parcalari.append(
+            f"Ayrıca, sağlanan {len(urunler)} ek ürün görselindeki ürünleri "
+            "(mobilya/aksesuar) bu tasarıma, görseldeki haline (rengi, formu, "
+            "dokusu) olabildiğince sadık kalarak uygun bir konuma yerleştir."
+        )
     prompt = " ".join(prompt_parcalari)
 
     # 3) Görsel üret
@@ -323,6 +336,15 @@ async def tasarim_uret(oda_id: str, stil_notu: str = Form(""), maske: Optional[U
         img_file = io.BytesIO(foto_bytes)
         img_file.name = "oda.png"
 
+        image_arg = img_file
+        if urunler:
+            urun_dosyalari = []
+            for i, urun in enumerate(urunler):
+                uf = io.BytesIO(bytes(urun["veri"]))
+                uf.name = f"urun_{i}.png"
+                urun_dosyalari.append(uf)
+            image_arg = [img_file, *urun_dosyalari]
+
         edit_kwargs = {}
         if maske_bytes:
             islenmis_maske = _maske_isle(maske_bytes, target_size)
@@ -332,7 +354,7 @@ async def tasarim_uret(oda_id: str, stil_notu: str = Form(""), maske: Optional[U
 
         result = client.images.edit(
             model=os.getenv("OPENAI_EV_TASARIM_IMAGE_MODEL", "gpt-image-1"),
-            image=img_file,
+            image=image_arg,
             prompt=prompt,
             **edit_kwargs,
         )
@@ -359,6 +381,12 @@ async def tasarim_uret(oda_id: str, stil_notu: str = Form(""), maske: Optional[U
                 " NOT: Maske ile korunan mevcut mobilya/eşyalar değiştirilmiyor, "
                 "bu kalemleri maliyete dahil ETME."
                 if maske_bytes else ""
+            )
+            + (
+                " NOT: Kullanıcının kendi ürün görseliyle eklediği ürünler "
+                "(kendisinde olan veya satın almayı planladığı) maliyete dahil ETME, "
+                "sadece genel dekorasyon/yapı kalemlerini hesapla."
+                if urunler else ""
             )
         )
         resp = client.chat.completions.create(

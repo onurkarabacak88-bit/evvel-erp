@@ -198,6 +198,7 @@ function OdaDetay({ oda, onGeri, onGuncelle }) {
   const [kaydediliyor, setKaydediliyor] = useState(false);
   const [fotolar, setFotolar] = useState([]);
   const [referanslar, setReferanslar] = useState([]);
+  const [urunler, setUrunler] = useState([]);
   const [oneriler, setOneriler] = useState([]);
   const [stilNotu, setStilNotu] = useState('');
   const [uretiliyor, setUretiliyor] = useState(false);
@@ -208,6 +209,7 @@ function OdaDetay({ oda, onGeri, onGuncelle }) {
   async function yukle() {
     api(`/ev-tasarim/odalar/${oda.id}/gorseller?tip=foto`).then(d => setFotolar(d.gorseller || [])).catch(() => {});
     api(`/ev-tasarim/odalar/${oda.id}/gorseller?tip=referans`).then(d => setReferanslar(d.gorseller || [])).catch(() => {});
+    api(`/ev-tasarim/odalar/${oda.id}/gorseller?tip=urun`).then(d => setUrunler(d.gorseller || [])).catch(() => {});
     api(`/ev-tasarim/odalar/${oda.id}/oneriler`).then(d => setOneriler(d.oneriler || [])).catch(() => {});
   }
   useEffect(() => { yukle(); }, [oda.id]);
@@ -286,6 +288,10 @@ function OdaDetay({ oda, onGeri, onGuncelle }) {
         <div>
           <GorselYukle odaId={oda.id} tip="referans" baslik="✨ Referans / İlham" aciklama="Beğendiğin tasarım görselleri" onYuklendi={yukle} />
           <Galeri gorseller={referanslar} onSil={gorselSil} />
+        </div>
+        <div>
+          <GorselYukle odaId={oda.id} tip="urun" baslik="🛋️ Yerleştirilecek Ürün" aciklama="Sahip olduğun/almayı planladığın ürünün fotoğrafı" onYuklendi={yukle} />
+          <Galeri gorseller={urunler} onSil={gorselSil} />
         </div>
       </div>
 
