@@ -69,6 +69,30 @@ def _maske_isle(raw: bytes, target_size: tuple[int, int]) -> bytes:
     return buf.getvalue()
 
 
+def _maliyet_tahmin_claude(api_key: str, prompt: str) -> dict:
+    """Anthropic (Claude) ile TL maliyet tahmini üretir, JSON döner."""
+    try:
+        import anthropic
+    except ImportError as e:
+        raise HTTPException(503, "anthropic paketi yüklü değil: pip install anthropic") from e
+
+    client = anthropic.Anthropic(api_key=api_key)
+    resp = client.messages.create(
+        model=os.getenv("ANTHROPIC_EV_TASARIM_TEXT_MODEL", "claude-3-5-haiku-20241022"),
+        max_tokens=1200,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    metin = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+    metin = metin.strip()
+    # Claude bazen ```json ... ``` ile sarabilir veya öncesine/sonrasına metin ekleyebilir —
+    # ilk { ile son } arasındaki kısmı al.
+    start = metin.find("{")
+    end = metin.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError("Claude yanıtında JSON bulunamadı")
+    return json.loads(metin[start:end + 1])
+
+
 class OdaBody(BaseModel):
     isim: str
     genislik_m: Optional[float] = None
@@ -389,13 +413,17 @@ def tasarim_uret(oda_id: str, stil_notu: str = Form(""), maske: Optional[UploadF
                 if urunler else ""
             )
         )
-        resp = client.chat.completions.create(
-            model=os.getenv("OPENAI_EV_TASARIM_TEXT_MODEL", "gpt-4o-mini"),
-            messages=[{"role": "user", "content": maliyet_prompt}],
-            max_tokens=900,
-            response_format={"type": "json_object"},
-        )
-        maliyet_json = json.loads(resp.choices[0].message.content or "{}")
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        if anthropic_key:
+            maliyet_json = _maliyet_tahmin_claude(anthropic_key, maliyet_prompt)
+        else:
+            resp = client.chat.completions.create(
+                model=os.getenv("OPENAI_EV_TASARIM_TEXT_MODEL", "gpt-4o-mini"),
+                messages=[{"role": "user", "content": maliyet_prompt}],
+                max_tokens=900,
+                response_format={"type": "json_object"},
+            )
+            maliyet_json = json.loads(resp.choices[0].message.content or "{}")
     except Exception as e:
         maliyet_json = {"kalemler": [], "toplam_min": 0, "toplam_max": 0, "not": f"Maliyet tahmini alınamadı: {e}"}
 
