@@ -9530,6 +9530,7 @@ export default function OperasyonMerkezi() {
                 const urunAcEksik = kullanilanUrunAcEksikVar(r);
                 const kapanisYok = !r.kapanis_var;
                 const evoYok = r.evo_veri_geldi === false;
+                const evoEski = r.evo_veri_geldi === true && r.evo_canli === false;
                 const evoMesaj = r.evo_mesaj || kullanilanAramaSonuc?.evo_mesaj || 'Evo veri gelmedi';
                 return (
                   <div key={`${r.sube_id}-${r.tarih}`} className="card" style={{
@@ -9548,6 +9549,11 @@ export default function OperasyonMerkezi() {
                         {evoYok && (
                           <span className="badge badge-red" title={evoMesaj} style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             Evo veri gelmedi
+                          </span>
+                        )}
+                        {evoEski && (
+                          <span className="badge badge-yellow" title={evoMesaj} style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            Evo · son çekim
                           </span>
                         )}
                       </div>

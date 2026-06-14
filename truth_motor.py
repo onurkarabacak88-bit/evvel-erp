@@ -6564,6 +6564,7 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
             ORDER BY kapanisci_onay_ts DESC NULLS LAST
             LIMIT 1
         """, (sube_id, tarih))
+        r_devir = cur.fetchone()
         cur.execute("RELEASE SAVEPOINT sp_h_devir")
     except Exception as e:
         try:
@@ -6574,7 +6575,6 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         log.warning("aksam_vardiya_bardak_pnl devir sorgu hata: %s", e)
         return sonuc
 
-    r_devir = cur.fetchone()
     if not r_devir:
         return sonuc   # Devir kaydı yok — bu gün vardiya devri yapılmamış
 
@@ -6647,6 +6647,7 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
             WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
             ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
         """, (sube_id, tarih))
+        r_kapanis = cur.fetchone()
         cur.execute("RELEASE SAVEPOINT sp_h_kapanis")
     except Exception as e:
         try:
@@ -6657,7 +6658,6 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         log.warning("aksam_vardiya_bardak_pnl kapanis sorgu hata: %s", e)
         return sonuc
 
-    r_kapanis = cur.fetchone()
     if not r_kapanis:
         return sonuc   # Kapanış tamamlanmamış — günlük analiz için bekle
 

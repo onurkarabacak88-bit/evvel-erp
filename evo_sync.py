@@ -79,6 +79,34 @@ def _evo_cache_oku(anahtar: str, bastar: date, bittar: date) -> Optional[Dict[st
         log.warning("evo_cache_oku hata (%s): %s", anahtar, e)
         return None
 
+
+def hs_rapor_sube_bazli_cached(bastar: date, bittar: date) -> Dict[str, Any]:
+    """hs_rapor_sube_bazli'yi çalıştırır; canlı veri gelmezse son başarılı
+    çekimi (evo_rapor_cache) döndürür. Sonuca her zaman "canli" ve
+    "son_cekim_ts" alanları eklenir. Hem /sube-grup-detay endpoint'i hem de
+    evo_bar_adet_by_sube_id (Kullanılan Ürünler / bardak eşleştirme) bu
+    fonksiyonu kullanır, böylece ikisi de aynı "son veri çekimi" hafızasını
+    paylaşır."""
+    sonuc = hs_rapor_sube_bazli(bastar, bittar)
+    if sonuc.get("subeler"):
+        _evo_cache_yaz("sube-grup-detay", bastar, bittar, sonuc)
+        sonuc["canli"] = True
+        sonuc["son_cekim_ts"] = datetime.now().isoformat()
+        return sonuc
+
+    # Canlı veri gelmedi (tüm şube çekimleri başarısız) → son başarılı çekimi göster
+    cache = _evo_cache_oku("sube-grup-detay", bastar, bittar)
+    if cache:
+        veri = dict(cache["veri_json"])
+        veri["kaynak"] = "cache"
+        veri["canli"] = False
+        veri["son_cekim_ts"] = cache["cekim_ts"].isoformat()
+        return veri
+
+    sonuc["canli"] = False
+    sonuc["son_cekim_ts"] = None
+    return sonuc
+
 # ─────────────────────────────────────────────
 # 1. TOKEN YÖNETİMİ
 # ─────────────────────────────────────────────
@@ -2160,17 +2188,23 @@ def evo_bar_adet_by_sube_id(cur: Any, hedef: date) -> Dict[str, Any]:
       by_sube — eşleşen şubeler
       evo_veri_geldi — en az bir şubede Evo adedi var mı
       evo_mesaj — veri yoksa kullanıcıya gösterilecek kısa metin
+      canli — bu sonuç anlık mı yoksa önceki başarılı çekimden mi (cache)
+      son_cekim_ts — verinin alındığı zaman (ISO)
     """
     out: Dict[str, Dict[str, Dict[str, Any]]] = {}
     evo_mesaj: Optional[str] = None
     try:
-        evo = hs_rapor_sube_bazli(hedef, hedef)
+        evo = hs_rapor_sube_bazli_cached(hedef, hedef)
+        evo_canli = bool(evo.get("canli"))
+        evo_son_cekim_ts = evo.get("son_cekim_ts")
         evo_subeler = evo.get("subeler") or {}
         if not evo_subeler:
             return {
                 "by_sube": {},
                 "evo_veri_geldi": False,
                 "evo_mesaj": "Evo veri gelmedi — hs_rapor boş (token veya bağlantı kontrol edin)",
+                "canli": evo_canli,
+                "son_cekim_ts": evo_son_cekim_ts,
             }
         cur.execute("SELECT id::text AS id, ad FROM subeler")
         eslesen = 0
@@ -2199,7 +2233,22 @@ def evo_bar_adet_by_sube_id(cur: Any, hedef: date) -> Dict[str, Any]:
             if by_bar:
                 out[sid] = by_bar
         if out:
-            return {"by_sube": out, "evo_veri_geldi": True, "evo_mesaj": None}
+            mesaj = None
+            if not evo_canli:
+                ts_str = ""
+                if evo_son_cekim_ts:
+                    try:
+                        ts_str = datetime.fromisoformat(str(evo_son_cekim_ts)).strftime("%d.%m %H:%M")
+                    except Exception:
+                        ts_str = str(evo_son_cekim_ts)
+                mesaj = f"Evo canlı veri gelmedi — {ts_str} tarihli son başarılı çekim gösteriliyor".strip()
+            return {
+                "by_sube": out,
+                "evo_veri_geldi": True,
+                "evo_mesaj": mesaj,
+                "canli": evo_canli,
+                "son_cekim_ts": evo_son_cekim_ts,
+            }
         if eslesen <= 0:
             evo_mesaj = "Evo veri gelmedi — şube adı eşleşmedi (EVO_SUBE_ID_MAP kontrol edin)"
         else:
@@ -2211,6 +2260,8 @@ def evo_bar_adet_by_sube_id(cur: Any, hedef: date) -> Dict[str, Any]:
         "by_sube": out,
         "evo_veri_geldi": False,
         "evo_mesaj": evo_mesaj or "Evo veri gelmedi",
+        "canli": False,
+        "son_cekim_ts": None,
     }
 
 
@@ -2467,25 +2518,7 @@ def evo_sube_grup_detay(
     except ValueError:
         raise HTTPException(400, "Tarih formatı YYYY-MM-DD")
 
-    sonuc = hs_rapor_sube_bazli(bs, bt)
-    if sonuc.get("subeler"):
-        _evo_cache_yaz("sube-grup-detay", bs, bt, sonuc)
-        sonuc["canli"] = True
-        sonuc["son_cekim_ts"] = datetime.now().isoformat()
-        return sonuc
-
-    # Canlı veri gelmedi (tüm şube çekimleri başarısız) → son başarılı çekimi göster
-    cache = _evo_cache_oku("sube-grup-detay", bs, bt)
-    if cache:
-        veri = dict(cache["veri_json"])
-        veri["kaynak"] = "cache"
-        veri["canli"] = False
-        veri["son_cekim_ts"] = cache["cekim_ts"].isoformat()
-        return veri
-
-    sonuc["canli"] = False
-    sonuc["son_cekim_ts"] = None
-    return sonuc
+    return hs_rapor_sube_bazli_cached(bs, bt)
 
 
 @router.post("/personel-sync")

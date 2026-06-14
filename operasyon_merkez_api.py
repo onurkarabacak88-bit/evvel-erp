@@ -3707,6 +3707,8 @@ def ops_bar_ozet(
         evo_by_sube: Dict[str, Dict[str, Dict[str, Any]]] = {}
         evo_veri_geldi = False
         evo_mesaj: Optional[str] = None
+        evo_canli: Optional[bool] = None
+        evo_son_cekim_ts: Optional[str] = None
         if gun_v:
             try:
                 from evo_sync import evo_bar_adet_by_sube_id, _hs_web_token_temizle
@@ -3717,6 +3719,8 @@ def ops_bar_ozet(
                 evo_by_sube = evo_pack.get("by_sube") or {}
                 evo_veri_geldi = bool(evo_pack.get("evo_veri_geldi"))
                 evo_mesaj = evo_pack.get("evo_mesaj")
+                evo_canli = evo_pack.get("canli")
+                evo_son_cekim_ts = evo_pack.get("son_cekim_ts")
             except Exception:
                 evo_by_sube = {}
                 evo_mesaj = "Evo veri gelmedi — sunucu hatası"
@@ -3727,14 +3731,17 @@ def ops_bar_ozet(
                 k: round(float(v.get("adet") or 0), 1)
                 for k, v in evo_bar.items()
             }
+            etiket_ek = "" if evo_canli is not False else " · son çekim"
             row["evo_etiket"] = {
-                k: f"Evo · {(v.get('etiket') or k)} · {int(round(float(v.get('adet') or 0)))} ad"
+                k: f"Evo · {(v.get('etiket') or k)} · {int(round(float(v.get('adet') or 0)))} ad{etiket_ek}"
                 for k, v in evo_bar.items()
                 if float(v.get("adet") or 0) > 0
             }
             row["evo_veri_geldi"] = bool(evo_bar)
-            row["evo_mesaj"] = None if evo_bar else (evo_mesaj or "Evo veri gelmedi")
+            row["evo_mesaj"] = (evo_mesaj if evo_bar else (evo_mesaj or "Evo veri gelmedi"))
             row["evo_kaynak"] = "hs_rapor" if evo_bar else None
+            row["evo_canli"] = evo_canli
+            row["evo_son_cekim_ts"] = evo_son_cekim_ts
 
         satirlar.sort(key=lambda x: (x["tarih"], x["sube_adi"]), reverse=True)
         return {
@@ -3745,6 +3752,8 @@ def ops_bar_ozet(
             "evo_dahil": bool(gun_v),
             "evo_veri_geldi": evo_veri_geldi if gun_v else None,
             "evo_mesaj": evo_mesaj if gun_v and not evo_veri_geldi else None,
+            "evo_canli": evo_canli if gun_v else None,
+            "evo_son_cekim_ts": evo_son_cekim_ts if gun_v else None,
         }
 
 
