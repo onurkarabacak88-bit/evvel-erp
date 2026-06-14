@@ -971,11 +971,11 @@ def veri_topla(cur, sube_id: str, tarih: str) -> List[BoyutVeri]:
         srow = cur.fetchone()
         sube_adi_evvel = str(dict(srow).get("ad") or "") if srow else ""
 
-        from evo_sync import hs_rapor_sube_bazli, EVO_SUBE_ID_MAP
+        from evo_sync import hs_rapor_sube_bazli_cached, EVO_SUBE_ID_MAP
         from datetime import date as _d
         y, mo, d = (int(x) for x in str(onceki)[:10].split("-"))
         tarih_d = _d(y, mo, d)
-        evo_sonuc = hs_rapor_sube_bazli(tarih_d, tarih_d)
+        evo_sonuc = hs_rapor_sube_bazli_cached(tarih_d, tarih_d)
 
         # Şube eşleşmesi: sube_adi_evvel (örn. "ZAFER" veya "Zafer") ↔ "Zafer Şubesi"
         evo_sube_payload = None
@@ -1604,11 +1604,11 @@ def _evo_sube_grup_satis(cur, sube_id: str, tarih: str) -> Dict[str, float]:
         srow = cur.fetchone()
         sube_adi_evvel = str(dict(srow).get("ad") or "") if srow else ""
         cur.execute("RELEASE SAVEPOINT sp_evogrup")
-        from evo_sync import hs_rapor_sube_bazli
+        from evo_sync import hs_rapor_sube_bazli_cached
         from datetime import date as _d
         y, mo, dn = (int(x) for x in str(tarih)[:10].split("-"))
         tarih_d = _d(y, mo, dn)
-        evo = hs_rapor_sube_bazli(tarih_d, tarih_d)
+        evo = hs_rapor_sube_bazli_cached(tarih_d, tarih_d)
         evvel_lower = sube_adi_evvel.strip().lower().replace("şubesi", "").strip()
         for ad, payload in (evo.get("subeler") or {}).items():
             elow = ad.strip().lower().replace("şubesi", "").strip()
@@ -1619,6 +1619,7 @@ def _evo_sube_grup_satis(cur, sube_id: str, tarih: str) -> Dict[str, float]:
                 gruplar["_nakit"] = float(payload.get("nakit") or 0)
                 gruplar["_kart"] = float(payload.get("kart") or 0)
                 gruplar["_ciro"] = float(payload.get("ciro_toplam") or 0)
+                gruplar["_evo_canli"] = 1.0 if evo.get("canli") else 0.0
                 return gruplar
     except Exception as e:
         try:
@@ -2944,11 +2945,11 @@ def bom_recete_varyans(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     sube_adi_evvel = str(dict(srow).get("ad") or "") if srow else ""
     evo_gruplar: Dict[str, float] = {}
     try:
-        from evo_sync import hs_rapor_sube_bazli
+        from evo_sync import hs_rapor_sube_bazli_cached
         from datetime import date as _d
         y, mo, dn = (int(x) for x in str(tarih)[:10].split("-"))
         tarih_d = _d(y, mo, dn)
-        evo = hs_rapor_sube_bazli(tarih_d, tarih_d)
+        evo = hs_rapor_sube_bazli_cached(tarih_d, tarih_d)
         evvel_lower = sube_adi_evvel.strip().lower().replace("şubesi", "").strip()
         for ad, payload in (evo.get("subeler") or {}).items():
             elow = ad.strip().lower().replace("şubesi", "").strip()
