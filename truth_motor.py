@@ -1114,16 +1114,28 @@ def motor_calistir(cur, sube_id: str, tarih: str,
     # Çapraz boyut yorumla (sweethearting, sistemik hata, topyekun)
     taniler = capraz_boyut_yorumla(taniler)
 
+    # Sprint alt-fonksiyonlarındaki hatalar da burada toplanır (debug — 2026-06)
+    karar_hatalari: List[str] = []
+
     # ── Sprint E: İkram vs Zimmet ayırım sinyalleri ──────────────────────────
     sprint_e_meta: Dict[str, Any] = {}
     try:
+        cur.execute("SAVEPOINT sp_e")
         sprint_e_meta = sprint_e_ikram_zimmet_ayir(cur, sube_id, tarih, taniler)
+        cur.execute("RELEASE SAVEPOINT sp_e")
     except Exception as _e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_e")
+            cur.execute("RELEASE SAVEPOINT sp_e")
+        except Exception:
+            pass
         log.warning("sprint_e_ikram_zimmet_ayir hata: %s", _e)
+        karar_hatalari.append(f"sprint_e: {_e}")
 
     # ── Sprint G: Akşamcı N1 Şişirme (cross-day kasa korelasyonu) ───────────
     sprint_g_meta: Dict[str, Any] = {}
     try:
+        cur.execute("SAVEPOINT sp_g")
         sprint_g_meta = aksam_kasa_sisirme_tespit(cur, sube_id, tarih)
         if sprint_g_meta.get("tani") == "AKSAM_KASAYI_SISIRDI":
             # Kasa boyutundaki AKSAM_HATALI / COZULMEDI tanısını yükselt
@@ -1147,8 +1159,15 @@ def motor_calistir(cur, sube_id: str, tarih: str,
                         sprint_g_meta.get("aksamci_ad", "?"),
                     )
                     break
+        cur.execute("RELEASE SAVEPOINT sp_g")
     except Exception as _e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_g")
+            cur.execute("RELEASE SAVEPOINT sp_g")
+        except Exception:
+            pass
         log.warning("sprint_g aksam_kasa_sisirme_tespit hata: %s", _e)
+        karar_hatalari.append(f"sprint_g: {_e}")
 
     # ── IPTAL_SUPHE: Sprint G tetiklenmediyse + açıklanamayan kasa açığı ────
     # Sprint G stok açığı bulamadı → AKSAM_KASAYI_SISIRDI yok
@@ -1189,6 +1208,7 @@ def motor_calistir(cur, sube_id: str, tarih: str,
     # dün bardak akışı UYUMLU → N1 doğrulandı → sabahçı düşük beyan şüphesi
     sprint_g2_meta: Dict[str, Any] = {}
     try:
+        cur.execute("SAVEPOINT sp_g2")
         sprint_g2_meta = sabah_zimmet_suphe_tespit(cur, sube_id, tarih)
         if sprint_g2_meta.get("tani") == "SABAH_ZIMMET_SUPHE":
             for _t in taniler:
@@ -1211,8 +1231,15 @@ def motor_calistir(cur, sube_id: str, tarih: str,
                         sprint_g2_meta.get("sabahci_ad", "?"),
                     )
                     break
+        cur.execute("RELEASE SAVEPOINT sp_g2")
     except Exception as _e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_g2")
+            cur.execute("RELEASE SAVEPOINT sp_g2")
+        except Exception:
+            pass
         log.warning("sprint_g2 sabah_zimmet_suphe_tespit hata: %s", _e)
+        karar_hatalari.append(f"sprint_g2: {_e}")
 
     # ── Sprint H (C Bendi): Akşam vardiyası bardak P&L (devir→kapanis) ───────
     # Devir anındaki bardak sayısı - kapanis bardak sayısı = akşam fiziksel kullanım
@@ -1220,6 +1247,7 @@ def motor_calistir(cur, sube_id: str, tarih: str,
     # Fiziksel >> Evo tahmini → kayıt dışı satış + nakit zimmet şüphesi
     sprint_h_meta: Dict[str, Any] = {}
     try:
+        cur.execute("SAVEPOINT sp_h")
         sprint_h_meta = aksam_vardiya_bardak_pnl(cur, sube_id, tarih)
         if sprint_h_meta.get("tani") == "AKSAM_VARDIYA_BARDAK_ACIK":
             # Önce bardak boyutlarında anomali var mı bak, orayı yükselt
@@ -1259,8 +1287,15 @@ def motor_calistir(cur, sube_id: str, tarih: str,
                             f"plastik {sprint_h_meta.get('plastik_acik', 0):.0f} adet)"
                         )
                         break
+        cur.execute("RELEASE SAVEPOINT sp_h")
     except Exception as _e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_h")
+            cur.execute("RELEASE SAVEPOINT sp_h")
+        except Exception:
+            pass
         log.warning("sprint_h aksam_vardiya_bardak_pnl hata: %s", _e)
+        karar_hatalari.append(f"sprint_h: {_e}")
 
     # ── Sprint J — Cross-day Bardak Devamlılık Kontrolü ──────────────────────
     # Akşamcı dün KAPANIS'ta bardağı şişirdiyse sabahçı bugün gerçeği sayar.
@@ -1268,6 +1303,7 @@ def motor_calistir(cur, sube_id: str, tarih: str,
     # Cross-sinyal: Aynı gün N1>N2 kasa açığı da varsa → akşamcı hem kasa hem bardak şişirdi.
     sprint_j_meta: Dict[str, Any] = {}
     try:
+        cur.execute("SAVEPOINT sp_j")
         sprint_j_meta = aksam_bardak_sisirme_tespit(cur, sube_id, tarih)
         if sprint_j_meta.get("tani") == "AKSAM_BARDAK_SISIRDI":
             _upgraded_j = False
@@ -1307,15 +1343,21 @@ def motor_calistir(cur, sube_id: str, tarih: str,
                             f"plastik {sprint_j_meta.get('gece_plastik_kaybi', 0):.0f} adet gece eridi"
                         )
                         break
+        cur.execute("RELEASE SAVEPOINT sp_j")
     except Exception as _e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_j")
+            cur.execute("RELEASE SAVEPOINT sp_j")
+        except Exception:
+            pass
         log.warning("sprint_j aksam_bardak_sisirme_tespit hata: %s", _e)
+        karar_hatalari.append(f"sprint_j: {_e}")
 
     # Eylem önerisi enjekte et
     for t in taniler:
         t.detay["eylem"] = eylem_oner(t.tani)
 
     # Log'a yaz
-    karar_hatalari: List[str] = []
     kaydedildi = kararlari_kaydet(cur, taniler, karar_hatalari)
 
     # ─── Personel risk sinyalleri — CFO/operasyon tarafı için (personel görmez) ───
