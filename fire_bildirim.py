@@ -198,6 +198,23 @@ def ensure_fire_bildirim_tablosu(cur: Any) -> None:
         CREATE INDEX IF NOT EXISTS idx_sfb_foto_sha256
         ON sube_fire_bildirim_foto (sha256)
     """)
+    # Kalıcı hash arşivi — görsel 7 günde silinse de tekrar-kullanım kontrolü
+    # bu tablo üzerinden SÜRESİZ devam eder (depolama maliyeti ihmal edilebilir:
+    # her kayıt ~100 byte).
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sube_fire_bildirim_foto_hash (
+            id          BIGSERIAL PRIMARY KEY,
+            bildirim_id TEXT,
+            sha256      TEXT NOT NULL,
+            ahash       TEXT NOT NULL,
+            personel_id TEXT,
+            olusturma   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_sfb_foto_hash_sha256
+        ON sube_fire_bildirim_foto_hash (sha256)
+    """)
 
 
 def _ensure_stok_hareket_tablosu(cur: Any) -> None:
@@ -718,8 +735,9 @@ def foto_yukle(
     # Hash'ler sıkıştırılmış görsel üzerinden — aynı fotoğraf hep aynı hash'e düşer
     sha, ahash = _foto_hashes(sikisik)
 
-    # Global tekrar kontrolü — bu fotoğraf (veya çok benzeri) sistemde var mı?
-    cur.execute("SELECT id, bildirim_id, sha256, ahash FROM sube_fire_bildirim_foto")
+    # Global tekrar kontrolü — kalıcı hash arşivine bakılır (görseller 7 günde
+    # silinse de bu arşiv süresiz kalır, tekrar-kontrolü kalıcı çalışır)
+    cur.execute("SELECT sha256, ahash FROM sube_fire_bildirim_foto_hash")
     for r in (cur.fetchall() or []):
         if r["sha256"] == sha or _hamming(ahash, r["ahash"]) <= _AHASH_ESIK:
             raise ValueError("DUPLICATE")
@@ -733,6 +751,16 @@ def foto_yukle(
         (bildirim_id, _psycopg2_binary(sikisik), kayit_mime, sha, ahash, personel_id),
     )
     row = cur.fetchone()
+
+    # Kalıcı hash arşivine de yaz (görsel olmadan, sadece hash — süresiz saklanır)
+    cur.execute(
+        """
+        INSERT INTO sube_fire_bildirim_foto_hash (bildirim_id, sha256, ahash, personel_id)
+        VALUES (%s, %s, %s, %s)
+        """,
+        (bildirim_id, sha, ahash, personel_id),
+    )
+
     return {"id": str(row["id"]), "olusturma": row["olusturma"].isoformat()}
 
 
@@ -765,12 +793,11 @@ def fotolari_listele(cur: Any, bildirim_id: str) -> List[Dict[str, Any]]:
 
 
 def foto_eski_temizle(cur: Any, gun: int = 7) -> int:
-    """Depolama maliyetini düşürmek için: `gun` günden eski kanıt fotoğraflarını siler.
+    """Depolama maliyetini düşürmek için: `gun` günden eski kanıt fotoğraflarını (görseli) siler.
 
-    NOT: silinen fotoğrafların hash'leri de gittiği için, bu fotoğraflar artık
-    "daha önce kullanıldı" kontrolünde dikkate alınmaz — yani tekrar-kullanım
-    penceresi `gun` gün ile sınırlıdır. İleride gerekirse hash'leri ayrı bir
-    küçük tabloda (sadece sha256/ahash, görseli olmadan) kalıcı tutulabilir.
+    Hash'ler `sube_fire_bildirim_foto_hash` tablosunda kalıcı olarak saklandığı
+    için, görsel silinse de tekrar-kullanım kontrolü SÜRESİZ devam eder —
+    sadece "kanıtı görsel olarak gösterme" yeteneği `gun` gün ile sınırlıdır.
     """
     ensure_fire_bildirim_tablosu(cur)
     cur.execute(
