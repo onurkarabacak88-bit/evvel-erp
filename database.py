@@ -4539,6 +4539,12 @@ def ensure_gorev_tablolari(cur) -> None:
                 WHERE table_name='gorev_yoklama' AND column_name='cikis_tip')
             THEN ALTER TABLE gorev_yoklama ADD COLUMN cikis_tip TEXT; END IF;
             -- 'kasa_devri' | 'kapalis' | 'manuel'
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name='gorev_yoklama' AND column_name='cikis_gun')
+            THEN ALTER TABLE gorev_yoklama ADD COLUMN cikis_gun DATE; END IF;
+            -- Çıkışın (cikis_ts) GERÇEKLEŞTİĞİ takvim günü — 'tarih' (vardiyanın
+            -- atandığı iş günü) ile aynı olmayabilir (örn. gece yarısını geçen
+            -- mesai, ertesi gün yapılan kapanış mührü/kasa devri vb.)
         END $$;
     """)
     cur.execute("""

@@ -742,11 +742,12 @@ def mesai_cikis(body: MesaiCikisBody):
         if row["cikis_ts"]:
             raise HTTPException(400, "Mesai çıkışı zaten yapılmış.")
         cikis_ts = dt_now_tr()
+        cikis_gun = cikis_ts.date()
         cur.execute("""
             UPDATE gorev_yoklama
-            SET cikis_ts=%s, cikis_tip=%s
+            SET cikis_ts=%s, cikis_tip=%s, cikis_gun=%s
             WHERE id=%s
-        """, (cikis_ts, body.cikis_tip, row["id"]))
+        """, (cikis_ts, body.cikis_tip, cikis_gun, row["id"]))
         conn.commit()
         # Çalışılan süreyi hesapla
         giris = row["giris_ts"].replace(tzinfo=None) if row["giris_ts"] else None
@@ -755,6 +756,7 @@ def mesai_cikis(body: MesaiCikisBody):
     return {
         "basarili": True,
         "cikis_ts": str(cikis_ts),
+        "cikis_gun": str(cikis_gun),
         "cikis_tip": body.cikis_tip,
         "sure_dk": sure_dk,
         "vardiya_tip": row["vardiya_tip"],
@@ -894,9 +896,9 @@ def devir_sabah_onayla(body: DevirSabahOnaylaBody):
         gun = str(_d3.fromisoformat(tarih))
         cur.execute("""
             UPDATE gorev_yoklama
-            SET cikis_ts=%s, cikis_tip='kasa_devri'
+            SET cikis_ts=%s, cikis_tip='kasa_devri', cikis_gun=%s
             WHERE sube_id=%s AND personel_id=%s AND tarih=%s AND cikis_ts IS NULL
-        """, (simdi, body.sube_id, body.personel_id, gun))
+        """, (simdi, simdi.date(), body.sube_id, body.personel_id, gun))
 
         # adim1 — kapanis_kayit INSERT (form_data'dan bilgileri al)
         fd = devir["form_data"] or {}
@@ -1048,7 +1050,7 @@ def devir_gun_sifirla(body: DevirGunSifirlaBody):
         cur.execute("DELETE FROM kasa_devir_onay WHERE sube_id=%s AND tarih=%s", (body.sube_id, tarih))
         devir_silindi = cur.rowcount
         cur.execute("""
-            UPDATE gorev_yoklama SET cikis_ts=NULL, cikis_tip=NULL
+            UPDATE gorev_yoklama SET cikis_ts=NULL, cikis_tip=NULL, cikis_gun=NULL
             WHERE sube_id=%s AND tarih=%s AND cikis_tip='kasa_devri'
         """, (body.sube_id, tarih))
         yoklama_sifirlandi = cur.rowcount
@@ -1345,11 +1347,12 @@ def kapanis_muhurle(body: KapanisMuhurleBody):
         if row["cikis_ts"]:
             return {"mesaj": "Kapanis zaten muhürlendi.", "zaten_muhürlü": True}
 
+        _kapanis_ts = dt_now_tr()
         cur.execute("""
             UPDATE gorev_yoklama
-            SET cikis_ts=%s, cikis_tip='kapalis'
+            SET cikis_ts=%s, cikis_tip='kapalis', cikis_gun=%s
             WHERE id=%s
-        """, (dt_now_tr(), row["id"]))
+        """, (_kapanis_ts, _kapanis_ts.date(), row["id"]))
         conn.commit()
     return {"mesaj": "Kapanis muhürlendi.", "zaten_muhürlü": False}
 
@@ -1362,7 +1365,7 @@ def kapanis_sifirla(sube_id: str):
     with db() as (conn, cur):
         cur.execute("""
             UPDATE gorev_yoklama
-            SET cikis_ts = NULL, cikis_tip = NULL
+            SET cikis_ts = NULL, cikis_tip = NULL, cikis_gun = NULL
             WHERE sube_id = %s AND tarih = %s AND cikis_tip = 'kapalis'
         """, (sube_id, tarih))
         etkilenen = cur.rowcount
@@ -1393,7 +1396,7 @@ def yoklama_cikis_sifirla(yoklama_id: str):
     with db() as (conn, cur):
         cur.execute("""
             UPDATE gorev_yoklama
-            SET cikis_ts = NULL, cikis_tip = NULL
+            SET cikis_ts = NULL, cikis_tip = NULL, cikis_gun = NULL
             WHERE id = %s
         """, (yoklama_id,))
         if cur.rowcount == 0:

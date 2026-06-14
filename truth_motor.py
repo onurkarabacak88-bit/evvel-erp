@@ -756,10 +756,17 @@ def eylem_oner(tani: str) -> Dict[str, str]:
 # ════════════════════════════════════════════════════════════════════════════
 
 def kararlari_kaydet(cur, taniler: List[Tani]) -> int:
-    """Üretilen tanıları truth_motor_kararlar tablosuna yazar. Sayıyı döner."""
+    """Üretilen tanıları truth_motor_kararlar tablosuna yazar. Sayıyı döner.
+
+    Her INSERT kendi SAVEPOINT'i içinde — biri hata verirse (örn. şema
+    uyumsuzluğu) transaction "aborted" durumuna düşmez, diğer kayıtlar ve
+    sonraki adımlar (personel_risk_sinyal, son_calisma update) etkilenmez.
+    """
     n = 0
-    for t in taniler:
+    for i, t in enumerate(taniler):
+        sp = f"sp_karar_{i}"
         try:
+            cur.execute(f"SAVEPOINT {sp}")
             cur.execute(
                 """
                 INSERT INTO truth_motor_kararlar
@@ -774,8 +781,14 @@ def kararlari_kaydet(cur, taniler: List[Tani]) -> int:
                     json.dumps(t.detay, ensure_ascii=False, default=str),
                 ),
             )
+            cur.execute(f"RELEASE SAVEPOINT {sp}")
             n += 1
         except Exception as e:
+            try:
+                cur.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+                cur.execute(f"RELEASE SAVEPOINT {sp}")
+            except Exception:
+                pass
             log.warning("truth_motor karar yazılamadı sube=%s boyut=%s: %s",
                         t.sube_id, t.boyut, e)
     return n
@@ -826,8 +839,10 @@ def personel_risk_sinyal_uret(cur, sube_id: str, tarih: str, taniler: List["Tani
 
         referans_id = f"tm:{sube_id}:{tarih}:{t.boyut}:{t.tani}"
         try:
+            cur.execute("SAVEPOINT sp_risk_sinyal")
             cur.execute("SELECT 1 FROM personel_risk_sinyal WHERE referans_id = %s", (referans_id,))
             if cur.fetchone():
+                cur.execute("RELEASE SAVEPOINT sp_risk_sinyal")
                 continue
             agirlik = max(1, min(20, round((t.guven_skoru or 0) / 5)))
             aciklama = (t.detay or {}).get("eylem", {}).get("insan") or t.tani
@@ -842,8 +857,14 @@ def personel_risk_sinyal_uret(cur, sube_id: str, tarih: str, taniler: List["Tani
                     f"truth_motor_{t.tani.lower()}", agirlik, aciklama, referans_id,
                 ),
             )
+            cur.execute("RELEASE SAVEPOINT sp_risk_sinyal")
             n += 1
         except Exception as e:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_risk_sinyal")
+                cur.execute("RELEASE SAVEPOINT sp_risk_sinyal")
+            except Exception:
+                pass
             log.warning("personel_risk_sinyal yazılamadı sube=%s boyut=%s: %s", sube_id, t.boyut, e)
     return n
 
@@ -1302,11 +1323,18 @@ def motor_calistir(cur, sube_id: str, tarih: str,
 
     # Şube ayar son_calisma güncelle
     try:
+        cur.execute("SAVEPOINT sp_son_calisma")
         cur.execute(
             "UPDATE truth_motor_ayar SET son_calisma=NOW() WHERE sube_id=%s",
             (sube_id,),
         )
+        cur.execute("RELEASE SAVEPOINT sp_son_calisma")
     except Exception as _e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_son_calisma")
+            cur.execute("RELEASE SAVEPOINT sp_son_calisma")
+        except Exception:
+            pass
         log.warning("truth_motor_ayar güncelleme başarısız sube=%s: %s", sube_id, _e)
 
     log.info("truth_motor sube=%s tarih=%s mod=%s kaydedildi=%d",
