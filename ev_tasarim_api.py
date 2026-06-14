@@ -48,16 +48,33 @@ def _resim_isle(raw: bytes) -> tuple[bytes, str]:
     return buf.getvalue(), "image/png"
 
 
+def _maske_isle(raw: bytes, target_size: tuple[int, int]) -> bytes:
+    """Maske görselini RGBA olarak işler ve hedef boyuta (oda fotoğrafı) eşitler."""
+    try:
+        from PIL import Image
+    except ImportError as e:
+        raise HTTPException(503, "pillow paketi yüklü değil") from e
+
+    try:
+        img = Image.open(io.BytesIO(raw))
+        img = img.convert("RGBA")
+    except Exception as e:
+        raise HTTPException(400, "Geçersiz maske dosyası") from e
+
+    if img.size != target_size:
+        img = img.resize(target_size)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 class OdaBody(BaseModel):
     isim: str
     genislik_m: Optional[float] = None
     uzunluk_m: Optional[float] = None
     yukseklik_m: Optional[float] = None
     notlar: str = ""
-
-
-class TasarimUretBody(BaseModel):
-    stil_notu: str = ""
 
 
 @router.get("/api/ev-tasarim/odalar")
@@ -206,7 +223,7 @@ def oneri_liste(oda_id: str):
 
 
 @router.post("/api/ev-tasarim/odalar/{oda_id}/tasarim-uret")
-def tasarim_uret(oda_id: str, body: TasarimUretBody):
+async def tasarim_uret(oda_id: str, stil_notu: str = Form(""), maske: Optional[UploadFile] = File(None)):
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(503, "OPENAI_API_KEY ortam değişkeni tanımlı değil — tasarım üretimi kullanılamaz.")
@@ -279,22 +296,50 @@ def tasarim_uret(oda_id: str, body: TasarimUretBody):
         prompt_parcalari.append(f"İstenen tarz/referanslardan çıkarılan özet: {stil_ozeti}")
     if oda.get("notlar"):
         prompt_parcalari.append(f"Oda notları: {oda['notlar']}")
-    if body.stil_notu and body.stil_notu.strip():
-        prompt_parcalari.append(f"Kullanıcı isteği: {body.stil_notu.strip()}")
+    if stil_notu and stil_notu.strip():
+        prompt_parcalari.append(f"Kullanıcı isteği: {stil_notu.strip()}")
+
+    maske_bytes: Optional[bytes] = None
+    if maske is not None:
+        maske_raw = await maske.read()
+        if maske_raw:
+            maske_bytes = maske_raw
+
+    if maske_bytes:
+        prompt_parcalari.append(
+            "Şeffaf/işaretsiz alanlardaki mevcut mobilya ve eşyalar DEĞİŞTİRİLMEYECEK — "
+            "sadece maske ile boyanmamış diğer alanlar (duvar, zemin, genel dekorasyon) "
+            "yeniden tasarlanacak."
+        )
     prompt = " ".join(prompt_parcalari)
 
     # 3) Görsel üret
     try:
+        from PIL import Image
+
         foto_bytes = bytes(foto["veri"])
+        target_size = Image.open(io.BytesIO(foto_bytes)).size
+
         img_file = io.BytesIO(foto_bytes)
         img_file.name = "oda.png"
+
+        edit_kwargs = {}
+        if maske_bytes:
+            islenmis_maske = _maske_isle(maske_bytes, target_size)
+            mask_file = io.BytesIO(islenmis_maske)
+            mask_file.name = "mask.png"
+            edit_kwargs["mask"] = mask_file
+
         result = client.images.edit(
             model=os.getenv("OPENAI_EV_TASARIM_IMAGE_MODEL", "gpt-image-1"),
             image=img_file,
             prompt=prompt,
+            **edit_kwargs,
         )
         b64_out = result.data[0].b64_json
         uretilen_bytes = base64.b64decode(b64_out)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(502, f"Görsel üretimi başarısız: {e}") from e
 
@@ -310,6 +355,11 @@ def tasarim_uret(oda_id: str, body: TasarimUretBody):
             '"toplam_min":0,"toplam_max":0,"not":"..."}\n\n'
             f"Oda: {oda['isim']}. Ölçüler: {olcu_metni or 'belirtilmemiş'}. "
             f"Tasarım açıklaması: {prompt}"
+            + (
+                " NOT: Maske ile korunan mevcut mobilya/eşyalar değiştirilmiyor, "
+                "bu kalemleri maliyete dahil ETME."
+                if maske_bytes else ""
+            )
         )
         resp = client.chat.completions.create(
             model=os.getenv("OPENAI_EV_TASARIM_TEXT_MODEL", "gpt-4o-mini"),

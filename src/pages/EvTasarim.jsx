@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../utils/api';
 
 // ── Görsel Yükleme Kutusu ────────────────────────────────────────────────
@@ -96,6 +96,99 @@ function MaliyetTablosu({ maliyet }) {
   );
 }
 
+// ── Maske Çizici ─────────────────────────────────────────────────────────
+function MaskeCizici({ fotoUrl, onMaskChange }) {
+  const canvasRef = useRef(null);
+  const imgRef = useRef(null);
+  const [boyutAyarlandi, setBoyutAyarlandi] = useState(false);
+  const [fircaBoyu, setFircaBoyu] = useState(30);
+  const cizimRef = useRef(false);
+
+  function ayarlaBoyut() {
+    const canvas = canvasRef.current;
+    const img = imgRef.current;
+    if (!canvas || !img || !img.naturalWidth) return;
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    setBoyutAyarlandi(true);
+  }
+
+  function koordinat(e) {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const x = (clientX - rect.left) * (canvas.width / rect.width);
+    const y = (clientY - rect.top) * (canvas.height / rect.height);
+    return { x, y };
+  }
+
+  function ciz(e) {
+    if (!cizimRef.current) return;
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const { x, y } = koordinat(e);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.beginPath();
+    ctx.arc(x, y, fircaBoyu / 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function basla(e) {
+    cizimRef.current = true;
+    ciz(e);
+  }
+
+  function bitir() {
+    if (!cizimRef.current) return;
+    cizimRef.current = false;
+    const canvas = canvasRef.current;
+    // Tamamen boş mu kontrol et
+    const ctx = canvas.getContext('2d');
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let bos = true;
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] !== 0) { bos = false; break; }
+    }
+    if (bos) { onMaskChange(null); return; }
+    canvas.toBlob(blob => onMaskChange(blob), 'image/png');
+  }
+
+  function temizle() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    onMaskChange(null);
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>
+        Korumak istediğin eşyaların üzerini fırça ile boya — boyalı alanlar aynen
+        korunur, gerisi yeniden tasarlanır.
+      </div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+        <label style={{ fontSize: 12 }}>Fırça boyutu: {fircaBoyu}px</label>
+        <input type="range" min={10} max={80} value={fircaBoyu} onChange={e => setFircaBoyu(Number(e.target.value))} />
+        <button className="btn btn-secondary btn-sm" onClick={temizle}>Tümünü Temizle</button>
+      </div>
+      <div style={{ position: 'relative', maxWidth: 480 }}>
+        <img ref={imgRef} src={fotoUrl} alt="" onLoad={ayarlaBoyut}
+          style={{ width: '100%', display: 'block', borderRadius: 10, border: '1px solid var(--border)' }} />
+        {boyutAyarlandi && (
+          <canvas ref={canvasRef}
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', cursor: 'crosshair', borderRadius: 10 }}
+            onMouseDown={basla} onMouseMove={ciz} onMouseUp={bitir} onMouseLeave={bitir}
+            onTouchStart={basla} onTouchMove={ciz} onTouchEnd={bitir}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Oda Detay ────────────────────────────────────────────────────────────
 function OdaDetay({ oda, onGeri, onGuncelle }) {
   const [form, setForm] = useState({
@@ -109,6 +202,8 @@ function OdaDetay({ oda, onGeri, onGuncelle }) {
   const [stilNotu, setStilNotu] = useState('');
   const [uretiliyor, setUretiliyor] = useState(false);
   const [hata, setHata] = useState('');
+  const [maskBlob, setMaskBlob] = useState(null);
+  const [maskeAcik, setMaskeAcik] = useState(false);
 
   async function yukle() {
     api(`/ev-tasarim/odalar/${oda.id}/gorseller?tip=foto`).then(d => setFotolar(d.gorseller || [])).catch(() => {});
@@ -145,7 +240,12 @@ function OdaDetay({ oda, onGeri, onGuncelle }) {
     if (!fotolar.length) { setHata('Önce odanın bir fotoğrafını yükleyin.'); return; }
     setUretiliyor(true); setHata('');
     try {
-      await api(`/ev-tasarim/odalar/${oda.id}/tasarim-uret`, { method: 'POST', body: { stil_notu: stilNotu } });
+      const fd = new FormData();
+      fd.append('stil_notu', stilNotu);
+      if (maskBlob) fd.append('maske', maskBlob, 'maske.png');
+      const res = await fetch(`/api/ev-tasarim/odalar/${oda.id}/tasarim-uret`, { method: 'POST', body: fd });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.detail || 'Tasarım üretilemedi');
       yukle();
     } catch (e) { setHata(e.message); } finally { setUretiliyor(false); }
   }
@@ -195,6 +295,25 @@ function OdaDetay({ oda, onGeri, onGuncelle }) {
           <textarea rows={2} placeholder="örn. minimalist, sıcak tonlar, ahşap mobilya"
             value={stilNotu} onChange={e => setStilNotu(e.target.value)} />
         </div>
+
+        {fotolar.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setMaskeAcik(o => !o)}>
+              🖌️ Korumak İstediğin Eşyaları Boya (opsiyonel) {maskeAcik ? '▲' : '▼'}
+              {maskBlob ? ' · işaretlendi' : ''}
+            </button>
+            {maskeAcik && (
+              <div style={{ marginTop: 10 }}>
+                <MaskeCizici
+                  key={fotolar[0]?.id}
+                  fotoUrl={`/api/ev-tasarim/gorsel/${fotolar[0]?.id}`}
+                  onMaskChange={setMaskBlob}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
         <button className="btn btn-primary" disabled={uretiliyor} onClick={tasarimUret}>
           {uretiliyor ? <><span className="spinner" /> Üretiliyor… (20-60 sn sürebilir)</> : '🎨 Tasarım Üret'}
         </button>
