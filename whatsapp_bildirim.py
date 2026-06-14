@@ -488,6 +488,100 @@ def _toptanci_teslimler(cur, tarih: date) -> list:
     return teslimler
 
 
+# ── Akıllı Denetim — AI yorumu (Claude) ─────────────────────────────────────
+
+def _akilli_denetim_ozetleri(cur, tarih: date) -> list:
+    """Tüm şubeler için Akıllı Denetim zekâ özetini toplar (sadece anomali olanlar)."""
+    cur.execute("SELECT id::text, ad FROM subeler WHERE aktif=TRUE ORDER BY ad")
+    subeler = cur.fetchall() or []
+
+    cur.execute("""
+        SELECT sube_id::text, boyut, tani, fark_n1_n2, guven_skoru, detay_json
+        FROM truth_motor_kararlar
+        WHERE tarih=%s::date
+        ORDER BY olusturma DESC
+    """, (tarih,))
+    kararlar = cur.fetchall() or []
+
+    sube_kararlari: dict = {}
+    seen = set()
+    for k in kararlar:
+        anahtar = (k["sube_id"], k["boyut"])
+        if anahtar in seen:
+            continue
+        seen.add(anahtar)
+        sube_kararlari.setdefault(k["sube_id"], []).append(dict(k))
+
+    try:
+        import truth_motor as _tm
+    except Exception:
+        return []
+
+    ozetler = []
+    for s in subeler:
+        sid = s["id"]
+        kayitlar = sube_kararlari.get(sid, [])
+        if not kayitlar:
+            continue
+        try:
+            zeka = _tm.zeka_ozet_from_rows(kayitlar)
+        except Exception:
+            continue
+        if zeka.get("alarm") == "normal":
+            continue
+        ozetler.append({
+            "sube":  s["ad"],
+            "alarm": zeka.get("alarm"),
+            "ozet":  zeka.get("ozet", ""),
+            "yorum": zeka.get("yorum_metni", ""),
+        })
+    return ozetler
+
+
+def _ai_denetim_yorumu(ozetler: list) -> str:
+    """Akıllı Denetim anomali özetlerini Claude ile kısa, insan dilinde yoruma çevirir.
+
+    ANTHROPIC_API_KEY tanımlı değilse veya anomali yoksa boş string döner —
+    motor sonucunu/finansal kararı etkilemez, sadece okunabilirlik katar.
+    """
+    if not ozetler:
+        return ""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return ""
+    try:
+        import anthropic
+    except ImportError:
+        return ""
+
+    detay = "\n\n".join(
+        f"Şube: {o['sube']}\nAlarm seviyesi: {o['alarm']}\nÖzet: {o['ozet']}\nDetay:\n{o['yorum']}"
+        for o in ozetler
+    )
+    prompt = (
+        "Sen bir kahve zinciri için günlük denetim asistanısın. Aşağıda şubelerin "
+        "otomatik denetim motorundan çıkan anomali özetleri var. Bunları CFO'nun "
+        "WhatsApp'tan okuyacağı, en fazla 4-5 satır, önceliğe göre sıralanmış, "
+        "günlük konuşma dilinde Türkçe bir uyarı metnine çevir. Teknik terim/kısaltma "
+        "kullanma, rakamları olduğu gibi koru, motor kararını değiştirme/yorumlama "
+        "yapma — sadece daha okunaklı anlat. SADECE metni yaz, başlık/giriş ekleme.\n\n"
+        + detay
+    )
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model=os.getenv("ANTHROPIC_AKILLI_DENETIM_MODEL", "claude-3-5-haiku-20241022"),
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return "".join(
+            b.text for b in resp.content if getattr(b, "type", None) == "text"
+        ).strip()
+    except Exception as e:
+        logger.warning(f"Akıllı Denetim AI yorum hatası: {e}")
+        return ""
+
+
 # ── Mesaj Oluşturma ───────────────────────────────────────────────────────────
 
 _AY = ["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran",
@@ -521,6 +615,7 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
         kt_liste    = _kasa_teslimler(cur, tarih)
         toptanci    = _toptanci_teslimler(cur, tarih)
         vardiya     = _vardiya_personel(cur, tarih)
+        denetim_ozetleri = _akilli_denetim_ozetleri(cur, tarih)
 
     tarih_str = f"{tarih.day} {_AY[tarih.month - 1]}"
     s = [f"🌙 *Evvel — {tarih_str} Günlük Özet*", ""]
@@ -637,6 +732,20 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
             s.append(f"  • {t['sube']} — {t['tedarikci']}")
             if t["kalemler"]:
                 s.append(f"    {', '.join(t['kalemler'])}")
+
+    # Akıllı Denetim — AI yorumu (varsa)
+    ai_yorum = _ai_denetim_yorumu(denetim_ozetleri)
+    if ai_yorum:
+        s.append("")
+        s.append("*🔍 AKILLI DENETİM*")
+        s.append(ai_yorum)
+    elif denetim_ozetleri:
+        # AI yorum yoksa (key tanımsız vb.) ham özetleri göster
+        s.append("")
+        s.append("*🔍 AKILLI DENETİM*")
+        for o in denetim_ozetleri:
+            emoji = {"kritik": "🔴", "yuksek": "🟠", "orta": "🟡"}.get(o["alarm"], "⚪")
+            s.append(f"  {emoji} {o['sube']}: {o['ozet']}")
 
     return "\n".join(s)
 
