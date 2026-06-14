@@ -755,12 +755,16 @@ def eylem_oner(tani: str) -> Dict[str, str]:
 #  KARAR YAZMA — append-only log
 # ════════════════════════════════════════════════════════════════════════════
 
-def kararlari_kaydet(cur, taniler: List[Tani]) -> int:
+def kararlari_kaydet(cur, taniler: List[Tani], hatalar: Optional[List[str]] = None) -> int:
     """Üretilen tanıları truth_motor_kararlar tablosuna yazar. Sayıyı döner.
 
     Her INSERT kendi SAVEPOINT'i içinde — biri hata verirse (örn. şema
     uyumsuzluğu) transaction "aborted" durumuna düşmez, diğer kayıtlar ve
     sonraki adımlar (personel_risk_sinyal, son_calisma update) etkilenmez.
+
+    `hatalar` verilirse, başarısız INSERT'lerin hata metni buraya eklenir
+    (API yanıtında görünür hale getirip log erişimi gerektirmeden teşhis
+    edilebilsin diye — 2026-06).
     """
     n = 0
     for i, t in enumerate(taniler):
@@ -791,6 +795,8 @@ def kararlari_kaydet(cur, taniler: List[Tani]) -> int:
                 pass
             log.warning("truth_motor karar yazılamadı sube=%s boyut=%s: %s",
                         t.sube_id, t.boyut, e)
+            if hatalar is not None:
+                hatalar.append(f"{t.boyut}: {e}")
     return n
 
 
@@ -1309,7 +1315,8 @@ def motor_calistir(cur, sube_id: str, tarih: str,
         t.detay["eylem"] = eylem_oner(t.tani)
 
     # Log'a yaz
-    kaydedildi = kararlari_kaydet(cur, taniler)
+    karar_hatalari: List[str] = []
+    kaydedildi = kararlari_kaydet(cur, taniler, karar_hatalari)
 
     # ─── Personel risk sinyalleri — CFO/operasyon tarafı için (personel görmez) ───
     try:
@@ -1349,6 +1356,7 @@ def motor_calistir(cur, sube_id: str, tarih: str,
         "mod": mod,
         "taniler": [asdict(t) for t in taniler],
         "kaydedildi": kaydedildi,
+        "karar_hatalari": karar_hatalari,
         "baskin_tetik": baskin_tetik,
         # Tek denetçi kararı — motorun ZEKÂsi
         "alarm": zeka["alarm"],
