@@ -38,6 +38,7 @@ import IsBasvuruForm from './pages/IsBasvuruForm';
 import IsBasvuruListesi from './pages/IsBasvuruListesi';
 import Maliyet from './pages/Maliyet';
 import EvTasarim from './pages/EvTasarim';
+import FireFotoYukle from './pages/FireFotoYukle';
 import './index.css';
 
 const NAV = [
@@ -242,6 +243,13 @@ export default function App() {
   // QR'sız direkt giriş — şube seçimli
   if (window.location.pathname === '/gorev-pin') {
     return <GorevGiris subeId={null} />;
+  }
+
+  // Fire/iade kanıt fotoğrafı — personel telefonundan QR ile açılır
+  const fireFotoMatch = window.location.pathname.match(/^\/fire-foto\/(.+)$/);
+  if (fireFotoMatch) {
+    const params = new URLSearchParams(window.location.search);
+    return <FireFotoYukle bildirimId={fireFotoMatch[1]} token={params.get('t') || ''} />;
   }
 
   const [page, setPage] = useState(() => readPageFromHash() ?? 'panel');

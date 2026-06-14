@@ -3926,6 +3926,133 @@ def ops_fire_bildirim_goruldu(bildirim_id: str):
             raise HTTPException(404, str(ex)) from ex
 
 
+# ── Fotoğraf kanıtı — QR ile personel telefonundan yükleme ─────────────────
+
+_FOTO_BASE_URL = os.getenv("APP_URL", "https://evvel-erp-production.up.railway.app")
+
+
+@router.get("/fire-bildirimler/{bildirim_id}/foto-qr")
+def ops_fire_bildirim_foto_qr(bildirim_id: str):
+    """Personelin telefonuyla okutacağı QR kodu (PNG) üretir — fotoğraf yükleme linkine gider."""
+    try:
+        import qrcode
+    except ImportError:
+        raise HTTPException(500, "qrcode kütüphanesi yüklü değil")
+
+    from fastapi.responses import StreamingResponse
+    from fire_bildirim import foto_token_uret
+
+    with db() as (conn, cur):
+        try:
+            token = foto_token_uret(cur, bildirim_id)
+        except ValueError as ex:
+            raise HTTPException(404, str(ex)) from ex
+        conn.commit()
+
+    url = f"{_FOTO_BASE_URL}/fire-foto/{bildirim_id}?t={token}"
+    qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=4)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="image/png")
+
+
+@router.get("/fire-bildirimler/{bildirim_id}/fotolar")
+def ops_fire_bildirim_fotolar(bildirim_id: str):
+    """Bu bildirime yüklenmiş fotoğrafların listesi (CFO/operasyon paneli için)."""
+    from fire_bildirim import fotolari_listele
+
+    with db() as (_, cur):
+        return {"fotolar": fotolari_listele(cur, bildirim_id)}
+
+
+@router.get("/fire-foto/{foto_id}/veri")
+def ops_fire_foto_veri(foto_id: str):
+    """Fotoğraf binary verisi — CFO/operasyon panelinde <img> için."""
+    with db() as (_, cur):
+        cur.execute("SELECT veri, mime FROM sube_fire_bildirim_foto WHERE id = %s", (foto_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Fotoğraf bulunamadı")
+        return Response(content=bytes(row["veri"]), media_type=row["mime"])
+
+
+@router.get("/fire-bildirimler/{bildirim_id}/foto-bilgi")
+def ops_fire_bildirim_foto_bilgi(bildirim_id: str, t: str):
+    """Mobil yükleme sayfası açılınca: token geçerli mi + bildirim özeti."""
+    from fire_bildirim import foto_token_dogrula
+
+    with db() as (_, cur):
+        try:
+            row = foto_token_dogrula(cur, bildirim_id, t)
+        except ValueError as ex:
+            raise HTTPException(403, str(ex)) from ex
+        cur.execute(
+            "SELECT sebep_label, aciklama, tarih, sube_id FROM sube_fire_bildirim WHERE id = %s",
+            (bildirim_id,),
+        )
+        bildirim = cur.fetchone()
+        cur.execute("SELECT ad FROM subeler WHERE id = %s", (bildirim["sube_id"],))
+        sube = cur.fetchone()
+    return {
+        "personel_id": row.get("personel_id"),
+        "sebep_label": bildirim["sebep_label"],
+        "aciklama": bildirim["aciklama"],
+        "tarih": str(bildirim["tarih"]),
+        "sube_ad": sube["ad"] if sube else "",
+    }
+
+
+@router.post("/fire-bildirimler/{bildirim_id}/foto")
+async def ops_fire_bildirim_foto_yukle(bildirim_id: str, t: str, dosya: UploadFile = File(...)):
+    """Personel telefonundan kanıt fotoğrafı yükler — token doğrulanır, tekrar kullanılmış fotoğraf reddedilir."""
+    from fire_bildirim import foto_token_dogrula, foto_yukle
+
+    raw = await dosya.read()
+    if not (dosya.content_type or "").startswith("image/"):
+        raise HTTPException(400, "Sadece fotoğraf dosyası yüklenebilir")
+
+    with db() as (conn, cur):
+        try:
+            row = foto_token_dogrula(cur, bildirim_id, t)
+        except ValueError as ex:
+            raise HTTPException(403, str(ex)) from ex
+        try:
+            sonuc = foto_yukle(cur, bildirim_id, raw, dosya.content_type or "image/jpeg", row.get("personel_id"))
+        except ValueError as ex:
+            if str(ex) == "DUPLICATE":
+                personel_id = row.get("personel_id")
+                if personel_id:
+                    try:
+                        cur.execute(
+                            "SELECT sube_id, tarih FROM sube_fire_bildirim WHERE id = %s",
+                            (bildirim_id,),
+                        )
+                        b = cur.fetchone()
+                        cur.execute(
+                            """
+                            INSERT INTO personel_risk_sinyal (id, personel_id, sube_id, tarih, sinyal_turu, agirlik, aciklama, referans_id)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            (
+                                str(uuid.uuid4()), personel_id, b["sube_id"] if b else None,
+                                b["tarih"] if b else None, "fire_foto_tekrar", 15,
+                                "Fire/iade kanıtı olarak daha önce sisteme yüklenmiş bir fotoğraf tekrar gönderilmeye çalışıldı",
+                                bildirim_id,
+                            ),
+                        )
+                    except Exception:
+                        logger.exception("fire_foto_tekrar risk sinyali kaydedilemedi")
+                conn.commit()
+                raise HTTPException(409, "Bu fotoğraf sistemde zaten kayıtlı — lütfen şimdi, canlı bir fotoğraf çekin")
+            raise HTTPException(400, str(ex)) from ex
+        conn.commit()
+    return {"success": True, **sonuc}
+
+
 def _ops_parse_defter_delta(raw_aciklama: str, prefix: str) -> Dict[str, int]:
     out = {k: 0 for k in STOK_KEYS}
     s = (raw_aciklama or "").strip()

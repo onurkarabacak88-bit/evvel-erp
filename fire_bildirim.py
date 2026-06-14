@@ -154,6 +154,7 @@ def ensure_fire_bildirim_tablosu(cur: Any) -> None:
         ("iade_zaman", "TIMESTAMPTZ"),
         ("iade_musteri_ad", "TEXT"),
         ("iade_musteri_telefon", "TEXT"),
+        ("foto_token", "TEXT"),
     ):
         cur.execute(
             f"""
@@ -176,6 +177,26 @@ def ensure_fire_bildirim_tablosu(cur: Any) -> None:
     cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_sube_fire_bildirim_tarih
         ON sube_fire_bildirim (tarih DESC, olusturma DESC)
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sube_fire_bildirim_foto (
+            id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            bildirim_id TEXT NOT NULL REFERENCES sube_fire_bildirim(id) ON DELETE CASCADE,
+            veri        BYTEA NOT NULL,
+            mime        TEXT NOT NULL,
+            sha256      TEXT NOT NULL,
+            ahash       TEXT NOT NULL,
+            personel_id TEXT,
+            olusturma   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_sfb_foto_bildirim
+        ON sube_fire_bildirim_foto (bildirim_id)
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_sfb_foto_sha256
+        ON sube_fire_bildirim_foto (sha256)
     """)
 
 
@@ -535,6 +556,20 @@ def build_fire_bildirim_liste(
     )
     tum = [_row_to_dict(r, sube_ad_map) for r in (cur.fetchall() or [])]
 
+    # Fotoğraf sayıları — kanıt zinciri göstergesi
+    tum_idler = list({k["id"] for k in gun_kayitlar} | {k["id"] for k in tum})
+    if tum_idler:
+        cur.execute(
+            "SELECT bildirim_id, COUNT(*) AS adet FROM sube_fire_bildirim_foto "
+            "WHERE bildirim_id = ANY(%s) GROUP BY bildirim_id",
+            (tum_idler,),
+        )
+        foto_sayim = {str(r["bildirim_id"]): int(r["adet"]) for r in (cur.fetchall() or [])}
+        for k in gun_kayitlar:
+            k["foto_sayisi"] = foto_sayim.get(k["id"], 0)
+        for k in tum:
+            k["foto_sayisi"] = foto_sayim.get(k["id"], 0)
+
     return {
         "tarih": str(hedef_tarih),
         "gun_toplam": len(gun_kayitlar),
@@ -560,3 +595,136 @@ def fire_bildirim_goruldu(cur: Any, bildirim_id: str) -> Dict[str, Any]:
     if not row:
         raise ValueError("Fire bildirimi bulunamadı")
     return dict(row)
+
+
+# ── Fotoğraf kanıtı — QR ile personel telefonundan yükleme ─────────────────
+#
+# Akış: CFO/operasyon paneli bir bildirim için QR üretir (foto_token alanına
+# rastgele bir token yazılır). Personel telefonuyla QR'ı okutur →
+# /fire-foto/{bildirim_id}?t={token} adresine gider → kamera ile fotoğraf
+# çeker → token doğrulanır, fotoğraf SHA-256 + basit "average hash" (aHash)
+# ile karşılaştırılır. Sistemde DAHA ÖNCE yüklenmiş aynı/çok benzer bir
+# fotoğraf varsa yükleme reddedilir (aynı fotoğrafın farklı iade/fire
+# bildirimlerinde "kanıt" olarak tekrar tekrar kullanılmasını engeller).
+
+_FOTO_MAX_BYTES = 8 * 1024 * 1024  # 8 MB
+_AHASH_ESIK = 6  # Hamming mesafesi bu değerin altıysa "aynı fotoğraf" sayılır
+
+
+def _foto_hashes(raw: bytes) -> Tuple[str, str]:
+    """(sha256_hex, ahash_hex) döner. ahash = 8x8 gri-tonlama ortalama-eşik hash."""
+    import hashlib
+    import io as _io
+
+    from PIL import Image
+
+    sha = hashlib.sha256(raw).hexdigest()
+    try:
+        img = Image.open(_io.BytesIO(raw)).convert("L").resize((8, 8))
+        pixels = list(img.getdata())
+        ortalama = sum(pixels) / len(pixels)
+        bits = "".join("1" if p >= ortalama else "0" for p in pixels)
+        ahash = format(int(bits, 2), "016x")
+    except Exception:
+        # Görsel açılamadıysa (bozuk dosya vb.) — ahash boş, sadece sha256 ile kıyasla
+        ahash = ""
+    return sha, ahash
+
+
+def _hamming(a: str, b: str) -> int:
+    if not a or not b or len(a) != len(b):
+        return 999
+    try:
+        return bin(int(a, 16) ^ int(b, 16)).count("1")
+    except ValueError:
+        return 999
+
+
+def foto_token_uret(cur: Any, bildirim_id: str) -> str:
+    """Bildirim için yeni bir yükleme token'ı üretir (var olanın üzerine yazar)."""
+    ensure_fire_bildirim_tablosu(cur)
+    token = uuid.uuid4().hex
+    cur.execute(
+        "UPDATE sube_fire_bildirim SET foto_token = %s WHERE id = %s RETURNING id",
+        (token, bildirim_id),
+    )
+    if not cur.fetchone():
+        raise ValueError("Fire bildirimi bulunamadı")
+    return token
+
+
+def foto_token_dogrula(cur: Any, bildirim_id: str, token: str) -> Dict[str, Any]:
+    """Token doğru mu? Bildirim satırını döner (personel_id dahil)."""
+    ensure_fire_bildirim_tablosu(cur)
+    cur.execute(
+        "SELECT id, personel_id, foto_token FROM sube_fire_bildirim WHERE id = %s",
+        (bildirim_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise ValueError("Bildirim bulunamadı")
+    if not row.get("foto_token") or not token or row["foto_token"] != token:
+        raise ValueError("Geçersiz veya süresi dolmuş bağlantı — yeni QR kod isteyin")
+    return dict(row)
+
+
+def foto_yukle(
+    cur: Any,
+    bildirim_id: str,
+    raw: bytes,
+    mime: str,
+    personel_id: Optional[str],
+) -> Dict[str, Any]:
+    """Fotoğrafı kaydeder. Sistemde aynı/benzer bir fotoğraf varsa ValueError('DUPLICATE') fırlatır."""
+    ensure_fire_bildirim_tablosu(cur)
+    if not raw:
+        raise ValueError("Boş dosya")
+    if len(raw) > _FOTO_MAX_BYTES:
+        raise ValueError("Dosya çok büyük (en fazla 8 MB)")
+
+    sha, ahash = _foto_hashes(raw)
+
+    # Global tekrar kontrolü — bu fotoğraf (veya çok benzeri) sistemde var mı?
+    cur.execute("SELECT id, bildirim_id, sha256, ahash FROM sube_fire_bildirim_foto")
+    for r in (cur.fetchall() or []):
+        if r["sha256"] == sha or _hamming(ahash, r["ahash"]) <= _AHASH_ESIK:
+            raise ValueError("DUPLICATE")
+
+    cur.execute(
+        """
+        INSERT INTO sube_fire_bildirim_foto (bildirim_id, veri, mime, sha256, ahash, personel_id)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id, olusturma
+        """,
+        (bildirim_id, _psycopg2_binary(raw), mime, sha, ahash, personel_id),
+    )
+    row = cur.fetchone()
+    return {"id": str(row["id"]), "olusturma": row["olusturma"].isoformat()}
+
+
+def _psycopg2_binary(raw: bytes):
+    import psycopg2
+
+    return psycopg2.Binary(raw)
+
+
+def fotolari_listele(cur: Any, bildirim_id: str) -> List[Dict[str, Any]]:
+    ensure_fire_bildirim_tablosu(cur)
+    cur.execute(
+        """
+        SELECT id, mime, personel_id, olusturma
+        FROM sube_fire_bildirim_foto
+        WHERE bildirim_id = %s
+        ORDER BY olusturma
+        """,
+        (bildirim_id,),
+    )
+    return [
+        {
+            "id": str(r["id"]),
+            "mime": r["mime"],
+            "personel_id": r["personel_id"],
+            "olusturma": dt_format_api_tr(r["olusturma"]) if r["olusturma"] else "",
+        }
+        for r in (cur.fetchall() or [])
+    ]

@@ -336,8 +336,104 @@ function FireKart({ k, onayBusyId, gorulduIsaretle, idx }) {
             );
           })()}
 
+          {/* ── Kanıt fotoğrafı (QR ile personel yüklemesi) ── */}
+          <FotoKanitBlok bildirimId={k.id} fotoSayisi={k.foto_sayisi || 0} />
+
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ── Kanıt fotoğrafı — QR üret + yüklenen fotoğrafları göster ── */
+function FotoKanitBlok({ bildirimId, fotoSayisi }) {
+  const [acik, setAcik] = useState(false);
+  const [qrAcik, setQrAcik] = useState(false);
+  const [qrSrc, setQrSrc] = useState(null);
+  const [fotolar, setFotolar] = useState(null);
+
+  useEffect(() => {
+    if (!acik) return;
+    let aktif = true;
+    fetch(`/api/ops/fire-bildirimler/${bildirimId}/fotolar`)
+      .then((r) => r.json())
+      .then((d) => { if (aktif) setFotolar(d.fotolar || []); })
+      .catch(() => { if (aktif) setFotolar([]); });
+    return () => { aktif = false; };
+  }, [acik, bildirimId]);
+
+  const qrGoster = () => {
+    setQrAcik((v) => {
+      const yeni = !v;
+      if (yeni) setQrSrc(`/api/ops/fire-bildirimler/${bildirimId}/foto-qr?_=${Date.now()}`);
+      return yeni;
+    });
+  };
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <button
+        type="button"
+        onClick={() => setAcik((v) => !v)}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '5px 12px', borderRadius: 8, fontSize: 11, fontWeight: 700,
+          background: fotoSayisi > 0 ? 'rgba(34,197,94,.1)' : 'rgba(255,255,255,.04)',
+          border: `1px solid ${fotoSayisi > 0 ? 'rgba(34,197,94,.3)' : 'rgba(255,255,255,.1)'}`,
+          color: fotoSayisi > 0 ? '#86efac' : 'rgba(255,255,255,.5)',
+          cursor: 'pointer',
+        }}
+      >
+        📸 Kanıt Fotoğrafı{fotoSayisi > 0 ? ` (${fotoSayisi})` : ''}
+      </button>
+
+      {acik && (
+        <div style={{
+          marginTop: 8, padding: 10, borderRadius: 10,
+          background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.06)',
+        }}>
+          <button
+            type="button"
+            onClick={qrGoster}
+            style={{
+              padding: '5px 11px', borderRadius: 8, fontSize: 11, fontWeight: 700,
+              background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.15)',
+              color: 'var(--text1)', cursor: 'pointer',
+            }}
+          >
+            {qrAcik ? '✕ QR Kodu Kapat' : '🔗 Personel için QR Kod Oluştur'}
+          </button>
+
+          {qrAcik && qrSrc && (
+            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+              <img src={qrSrc} alt="QR kod" style={{ width: 160, height: 160, borderRadius: 8, background: '#fff', padding: 6 }} />
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,.35)', textAlign: 'center', maxWidth: 220 }}>
+                Personel bu kodu kendi telefonuyla okutup canlı fotoğraf yükleyebilir. Daha önce kullanılmış bir fotoğraf sistem tarafından reddedilir.
+              </div>
+            </div>
+          )}
+
+          {fotolar && fotolar.length > 0 && (
+            <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {fotolar.map((f) => (
+                <a key={f.id} href={`/api/ops/fire-foto/${f.id}/veri`} target="_blank" rel="noreferrer">
+                  <img
+                    src={`/api/ops/fire-foto/${f.id}/veri`}
+                    alt="kanıt"
+                    style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '1px solid rgba(255,255,255,.1)' }}
+                  />
+                </a>
+              ))}
+            </div>
+          )}
+
+          {fotolar && fotolar.length === 0 && (
+            <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,.3)' }}>
+              Henüz fotoğraf yüklenmemiş.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
