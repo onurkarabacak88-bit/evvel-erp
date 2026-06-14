@@ -15252,6 +15252,28 @@ def truth_gunluk_rapor(tarih: Optional[str] = Query(None)):
     return {"tarih": tarih, "subeler": rapor}
 
 
+@router.get("/truth/ai-yorum-gecmis")
+def truth_ai_yorum_gecmis(limit: int = Query(30, ge=1, le=200)):
+    """Akıllı Denetim'in günlük WhatsApp özetine eklediği AI yorumlarının arşivi.
+
+    Her gece (veya manuel WhatsApp tetiklemesinde) kaydedilen yorumları,
+    tarihe göre en yeniden eskiye listeler."""
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT tarih::text, ozetler, yorum, kaynak, olusturma
+            FROM akilli_denetim_ai_yorum
+            ORDER BY tarih DESC
+            LIMIT %s
+        """, (limit,))
+        kayitlar = [dict(r) for r in (cur.fetchall() or [])]
+
+    for k in kayitlar:
+        if k.get("olusturma"):
+            k["olusturma"] = str(k["olusturma"])
+
+    return {"kayitlar": kayitlar}
+
+
 @router.get("/truth/kararlar")
 def truth_kararlar(
     sube_id: Optional[str] = Query(None),

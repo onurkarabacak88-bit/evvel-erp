@@ -63,6 +63,7 @@ export default function TruthMotor() {
   const [hata, setHata] = useState('');
   const [info, setInfo] = useState('');
   const [sonRapor, setSonRapor] = useState(null);  // son çalıştırmanın AI raporu
+  const [aiYorumGecmisi, setAiYorumGecmisi] = useState([]);  // WhatsApp AI yorum arşivi
 
   const durumYukle = useCallback(async () => {
     setYukleniyor(true);
@@ -100,9 +101,19 @@ export default function TruthMotor() {
     }
   }, [tarih]);
 
+  const aiYorumGecmisiYukle = useCallback(async () => {
+    try {
+      const d = await fetchJson(`${API}/api/ops/truth/ai-yorum-gecmis?limit=30`);
+      setAiYorumGecmisi(d?.kayitlar || []);
+    } catch (e) {
+      // sessiz hata — sayfa diğer kısımları çalışsın
+    }
+  }, []);
+
   useEffect(() => { durumYukle(); }, [durumYukle]);
   useEffect(() => { kararlariYukle(); }, [kararlariYukle]);
   useEffect(() => { gunlukYukle(); }, [gunlukYukle]);
+  useEffect(() => { aiYorumGecmisiYukle(); }, [aiYorumGecmisiYukle]);
 
   const subeAyar = async (sube_id, aktif, mod) => {
     setBusy(`ayar-${sube_id}`);
@@ -410,6 +421,9 @@ export default function TruthMotor() {
         )}
       </div>
 
+      {/* AI YORUM GEÇMİŞİ — WhatsApp günlük özetine eklenen Akıllı Denetim yorumları */}
+      <AiYorumGecmisi kayitlar={aiYorumGecmisi} />
+
       {/* SEKMELER */}
       <div style={{
         display: 'flex', gap: 4, borderBottom: '1px solid rgba(255,255,255,0.1)',
@@ -662,6 +676,90 @@ export default function TruthMotor() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+//  AI YORUM GEÇMİŞİ — gece 00:30 WhatsApp özetine eklenen Akıllı Denetim yorumları
+// ════════════════════════════════════════════════════════════════════════════
+
+function AiYorumGecmisi({ kayitlar }) {
+  const [acik, setAcik] = useState(false);
+  const [secili, setSecili] = useState(null);  // tarih -> detay aç/kapa
+
+  if (!kayitlar || kayitlar.length === 0) return null;
+
+  const KAYNAK_ETIKET = { claude: 'Claude', openai: 'OpenAI', '': 'Özet' };
+
+  return (
+    <div className="card" style={{ padding: 0, marginBottom: 24, overflow: 'hidden' }}>
+      <div
+        onClick={() => setAcik(a => !a)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
+          cursor: 'pointer', userSelect: 'none',
+        }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>
+          🔍 Akıllı Denetim — AI Yorum Geçmişi (WhatsApp)
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>{kayitlar.length} kayıt</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>{acik ? '▲' : '▼'}</span>
+      </div>
+      {acik && (
+        <div style={{ padding: '0 14px 14px', display: 'grid', gap: 8 }}>
+          {kayitlar.map((k) => {
+            const detayAcik = secili === k.tarih;
+            return (
+              <div key={k.tarih} style={{
+                borderRadius: 6, background: 'rgba(59,130,246,0.06)',
+                border: '1px solid rgba(59,130,246,0.20)', overflow: 'hidden',
+              }}>
+                <div
+                  onClick={() => setSecili(s => s === k.tarih ? null : k.tarih)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+                    cursor: 'pointer', flexWrap: 'wrap',
+                  }}
+                >
+                  <span style={{ fontSize: 12, fontWeight: 700, fontFamily: 'monospace' }}>{k.tarih}</span>
+                  <span style={{
+                    fontSize: 9, padding: '1px 6px', borderRadius: 3, fontWeight: 600,
+                    background: 'rgba(255,255,255,0.06)', color: 'var(--text3)',
+                  }}>
+                    {KAYNAK_ETIKET[k.kaynak || ''] || k.kaynak}
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--text2)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {k.yorum}
+                  </span>
+                  <span style={{ fontSize: 10, color: 'var(--text3)' }}>{detayAcik ? '▲' : '▼'}</span>
+                </div>
+                {detayAcik && (
+                  <div style={{
+                    padding: '8px 10px 12px', borderTop: '1px solid rgba(59,130,246,0.20)',
+                    background: 'rgba(0,0,0,0.08)', fontSize: 12, lineHeight: 1.7,
+                    whiteSpace: 'pre-line', color: 'var(--text1)',
+                  }}>
+                    {k.yorum}
+                    {Array.isArray(k.ozetler) && k.ozetler.length > 0 && (
+                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed rgba(255,255,255,0.10)' }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          Ham özet (motor)
+                        </div>
+                        {k.ozetler.map((o, i) => (
+                          <div key={i} style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 2 }}>
+                            {{ kritik: '🔴', yuksek: '🟠', orta: '🟡' }[o.alarm] || '⚪'} {o.sube}: {o.ozet}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  GÜNLÜK TEYİT + BULGU KARTI — Tüm kontroller tek bakışta, sade Türkçe
 // ════════════════════════════════════════════════════════════════════════════

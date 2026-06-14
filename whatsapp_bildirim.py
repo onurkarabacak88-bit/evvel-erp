@@ -538,15 +538,17 @@ def _akilli_denetim_ozetleri(cur, tarih: date) -> list:
     return ozetler
 
 
-def _ai_denetim_yorumu(ozetler: list) -> str:
+def _ai_denetim_yorumu(ozetler: list) -> tuple[str, str]:
     """Akıllı Denetim anomali özetlerini Claude ile kısa, insan dilinde yoruma çevirir.
 
     Önce ANTHROPIC_API_KEY (Claude) denenir, tanımlı değilse OPENAI_API_KEY
     (gpt-4o-mini) ile denenir. İkisi de yoksa veya anomali yoksa boş string
     döner — motor sonucunu/finansal kararı etkilemez, sadece okunabilirlik katar.
+
+    Returns: (yorum_metni, kaynak) — kaynak "claude" | "openai" | ""
     """
     if not ozetler:
-        return ""
+        return "", ""
 
     detay = "\n\n".join(
         f"Şube: {o['sube']}\nAlarm seviyesi: {o['alarm']}\nÖzet: {o['ozet']}\nDetay:\n{o['yorum']}"
@@ -572,9 +574,11 @@ def _ai_denetim_yorumu(ozetler: list) -> str:
                 max_tokens=500,
                 messages=[{"role": "user", "content": prompt}],
             )
-            return "".join(
+            metin = "".join(
                 b.text for b in resp.content if getattr(b, "type", None) == "text"
             ).strip()
+            if metin:
+                return metin, "claude"
         except Exception as e:
             logger.warning(f"Akıllı Denetim AI yorum hatası (Claude): {e}")
 
@@ -588,11 +592,36 @@ def _ai_denetim_yorumu(ozetler: list) -> str:
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=500,
             )
-            return (resp.choices[0].message.content or "").strip()
+            metin = (resp.choices[0].message.content or "").strip()
+            if metin:
+                return metin, "openai"
         except Exception as e:
             logger.warning(f"Akıllı Denetim AI yorum hatası (OpenAI): {e}")
 
-    return ""
+    return "", ""
+
+
+def _akilli_denetim_kaydet(tarih: date, ozetler: list, yorum: str, kaynak: str) -> None:
+    """Günlük Akıllı Denetim AI yorumunu (veya ham özetini) arşiv tablosuna kaydeder.
+
+    Aynı tarih için tekrar çalıştırılırsa (manuel tetikleme), üzerine yazar (upsert).
+    Hata olursa sessizce loglar — WhatsApp mesajını bloklamaz.
+    """
+    if not ozetler:
+        return
+    try:
+        with db() as (conn, cur):
+            cur.execute("""
+                INSERT INTO akilli_denetim_ai_yorum (tarih, ozetler, yorum, kaynak)
+                VALUES (%s, %s::jsonb, %s, %s)
+                ON CONFLICT (tarih) DO UPDATE SET
+                    ozetler = EXCLUDED.ozetler,
+                    yorum = EXCLUDED.yorum,
+                    kaynak = EXCLUDED.kaynak,
+                    olusturma = NOW()
+            """, (tarih, json.dumps(ozetler, ensure_ascii=False, default=str), yorum, kaynak))
+    except Exception as e:
+        logger.warning(f"Akıllı Denetim yorum kaydı hatası: {e}")
 
 
 # ── Mesaj Oluşturma ───────────────────────────────────────────────────────────
@@ -747,18 +776,23 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
                 s.append(f"    {', '.join(t['kalemler'])}")
 
     # Akıllı Denetim — AI yorumu (varsa)
-    ai_yorum = _ai_denetim_yorumu(denetim_ozetleri)
+    ai_yorum, ai_kaynak = _ai_denetim_yorumu(denetim_ozetleri)
     if ai_yorum:
         s.append("")
         s.append("*🔍 AKILLI DENETİM*")
         s.append(ai_yorum)
+        _akilli_denetim_kaydet(tarih, denetim_ozetleri, ai_yorum, ai_kaynak)
     elif denetim_ozetleri:
         # AI yorum yoksa (key tanımsız vb.) ham özetleri göster
         s.append("")
         s.append("*🔍 AKILLI DENETİM*")
+        ham_satirlar = []
         for o in denetim_ozetleri:
             emoji = {"kritik": "🔴", "yuksek": "🟠", "orta": "🟡"}.get(o["alarm"], "⚪")
-            s.append(f"  {emoji} {o['sube']}: {o['ozet']}")
+            satir = f"  {emoji} {o['sube']}: {o['ozet']}"
+            s.append(satir)
+            ham_satirlar.append(satir)
+        _akilli_denetim_kaydet(tarih, denetim_ozetleri, "\n".join(ham_satirlar), "")
 
     return "\n".join(s)
 

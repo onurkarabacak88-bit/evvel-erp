@@ -4436,6 +4436,22 @@ $$;
         except Exception as _ev_e:
             print(f"[MIGRATION WARN] ev_tasarim tabloları: {_ev_e}")
 
+        # ── AKILLI DENETİM — AI YORUM ARŞİVİ ────────────────────
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS akilli_denetim_ai_yorum (
+                    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    tarih       DATE NOT NULL UNIQUE,
+                    ozetler     JSONB,
+                    yorum       TEXT NOT NULL,
+                    kaynak      TEXT,
+                    olusturma   TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """)
+            print("[MIGRATION] akilli_denetim_ai_yorum tablosu kontrol edildi")
+        except Exception as _akd_e:
+            print(f"[MIGRATION WARN] akilli_denetim_ai_yorum tablosu: {_akd_e}")
+
         conn.commit()
 
     # ── GÖREV ÇİZELGESİ — ayrı bağlantıda (aborted tx'den etkilenmesin) ──
