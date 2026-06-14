@@ -3444,7 +3444,20 @@ def _onayla_tx(cur, oid: str):
     elif islem_turu in KASA_FARK_TURLERI:
         # Kasa farkı onayı = "Merkez gördü ve kabul etti" — kasa bakiyesini ETKİLEMEZ.
         # Gerçek fiziksel açık varsa Operasyon Merkezi → Kasa Uyumsuzluğu → "Gerçek Açık" akışı kullanılır.
-        pass
+        # Bağlı sube_operasyon_uyari satırını da çözüldü olarak işaretle — aksi halde
+        # onay kuyruğundaki onay CFO/Merkez panelindeki uyarıya yansımıyordu.
+        if (onay.get('kaynak_tablo') or '') == 'sube_operasyon_uyari' and onay.get('kaynak_id'):
+            cur.execute(
+                """
+                UPDATE sube_operasyon_uyari
+                SET okundu=TRUE,
+                    cozum_notu=COALESCE(cozum_notu, %s),
+                    cozum_ts=COALESCE(cozum_ts, NOW()),
+                    cozum_personel_ad=COALESCE(cozum_personel_ad, %s)
+                WHERE id=%s
+                """,
+                ("Onay kuyruğundan onaylandı (Merkez)", "Merkez (Onay Kuyruğu)", onay['kaynak_id']),
+            )
     elif islem_turu in ("CIRO", "CIRO_DUZELTME"):
         # Ciro kaynak kaydı varsa satırı kilitleyerek eşzamanlı onay/yazım çakışmasını azalt.
         if (onay.get("kaynak_tablo") or "") == "ciro" and onay.get("kaynak_id"):

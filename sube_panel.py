@@ -1186,6 +1186,7 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                     # Açılış event'i is_gunu_tr() ile tarihlenir → uyarı da AYNI iş gününü kullanmalı.
                     # (CURRENT_DATE takvim günüydü; gece 00:00–02:00 arası yanlış güne yazıyordu.)
                     _kf_isgun = is_gunu_tr()
+                    _acilis_kf_uyari_id: Optional[str] = None
                     # SAVEPOINT: uyarı yazımı hata verse bile açılış çekirdeği geri sarılmasın
                     try:
                         cur.execute("SAVEPOINT sp_acilis_kfuyari")
@@ -1196,6 +1197,7 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                         )
                         mevcut_kf = cur.fetchone()
                         if mevcut_kf:
+                            _acilis_kf_uyari_id = mevcut_kf["id"]
                             cur.execute(
                                 """UPDATE sube_operasyon_uyari
                                    SET seviye=%s, beklenen_tl=%s, gercek_tl=%s, fark_tl=%s, mesaj=%s,
@@ -1205,9 +1207,10 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                                    WHERE id=%s""",
                                 (sev, bek, ks, fark, mesaj_kf,
                                  pid, onay_ad, kap_pid, kap_pad,
-                                 mevcut_kf["id"]),
+                                 _acilis_kf_uyari_id),
                             )
                         else:
+                            _acilis_kf_uyari_id = str(uuid.uuid4())
                             cur.execute(
                                 """
                                 INSERT INTO sube_operasyon_uyari
@@ -1216,7 +1219,7 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                                 VALUES (%s, %s, %s, 'ACILIS_KASA_FARK', %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                 """,
                                 (
-                                    str(uuid.uuid4()), sube_id, _kf_isgun, sev,
+                                    _acilis_kf_uyari_id, sube_id, _kf_isgun, sev,
                                     bek, ks, fark, mesaj_kf,
                                     pid, onay_ad, kap_pid, kap_pad,
                                 ),
@@ -1235,6 +1238,7 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                         _kasa_farki_onay_kuyruguna_ekle(
                             cur, sube_id, "ACILIS_KASA_FARK",
                             float(bek), float(ks), pid, onay_ad, mesaj_kf,
+                            uyari_id=_acilis_kf_uyari_id,
                         )
                         cur.execute("RELEASE SAVEPOINT sp_acilis_onay")
                     except Exception:
@@ -5462,10 +5466,16 @@ def _kasa_farki_onay_kuyruguna_ekle(
     personel_id: Optional[str],
     personel_ad: str,
     aciklama: str,
+    uyari_id: Optional[str] = None,
 ) -> Optional[str]:
     """
     Kasa / stok farkı varsa onay_kuyrugu'na KASA_FARKI kaydı ekler.
     Aynı gün aynı şube için aynı tip zaten varsa tekrar eklemez (idempotent).
+
+    `uyari_id` verilirse (sube_operasyon_uyari.id), onay_kuyrugu kaydı
+    kaynak_tablo='sube_operasyon_uyari' + kaynak_id=uyari_id ile eklenir —
+    böylece onay kuyruğundan onaylama, CFO/Merkez tarafındaki
+    sube_operasyon_uyari satırını da çözüldü (okundu=TRUE) olarak işaretler.
     """
     fark = round(gercek - beklenen, 2)
     if fark == 0:
@@ -5477,7 +5487,7 @@ def _kasa_farki_onay_kuyruguna_ekle(
     cur.execute(
         """
         SELECT 1 FROM onay_kuyrugu
-        WHERE kaynak_tablo='kasa_farki' AND islem_turu=%s
+        WHERE kaynak_tablo IN ('kasa_farki', 'sube_operasyon_uyari') AND islem_turu=%s
           AND tarih=%s
           AND aciklama LIKE %s
           AND durum='bekliyor'
@@ -5488,12 +5498,15 @@ def _kasa_farki_onay_kuyruguna_ekle(
     if cur.fetchone():
         return None
 
-    fark_id = str(uuid.uuid4())
     tam_acik = f"[{sube_id}] {aciklama} | beklenen={beklenen:.2f} gerçek={gercek:.2f} fark={fark:+.2f}"
+    if uyari_id:
+        kaynak_tablo, fark_id = "sube_operasyon_uyari", uyari_id
+    else:
+        kaynak_tablo, fark_id = "kasa_farki", str(uuid.uuid4())
     onay_ekle(
         cur,
         tip,
-        "kasa_farki",
+        kaynak_tablo,
         fark_id,
         tam_acik[:500],
         fark,

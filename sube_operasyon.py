@@ -1262,6 +1262,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 )
                 mevcut_kkf = cur.fetchone()
                 if mevcut_kkf:
+                    _kapanis_kf_uyari_id = mevcut_kkf["id"]
                     cur.execute(
                         """UPDATE sube_operasyon_uyari
                            SET seviye=%s, beklenen_tl=0, gercek_tl=%s, fark_tl=%s, mesaj=%s,
@@ -1271,26 +1272,30 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                            WHERE id=%s""",
                         (sev_kf, mutabakat_fark, kasa_acigi, mesaj_kf,
                          _ackf_pid, _ackf_pad,
-                         pid_panel, onay_ad, detay_json, mevcut_kkf["id"]),
+                         pid_panel, onay_ad, detay_json, _kapanis_kf_uyari_id),
                     )
                 else:
+                    _kapanis_kf_uyari_id = str(uuid.uuid4())
                     cur.execute(
                         """INSERT INTO sube_operasyon_uyari
                            (id, sube_id, tarih, tip, seviye, beklenen_tl, gercek_tl, fark_tl, mesaj,
                             acilis_personel_id, acilis_personel_ad,
                             kapanis_personel_id, kapanis_personel_ad, detay_json)
                            VALUES (%s, %s, %s, 'KAPANIS_KASA_FARK', %s, 0, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)""",
-                        (str(uuid.uuid4()), sube_id, tarih_ev_ciro,
+                        (_kapanis_kf_uyari_id, sube_id, tarih_ev_ciro,
                          sev_kf, mutabakat_fark, kasa_acigi, mesaj_kf,
                          _ackf_pid, _ackf_pad,
                          pid_panel, onay_ad, detay_json),
                     )
 
                 # ── Onay kuyruğuna ekle (idempotent) ──
+                # kaynak_tablo='sube_operasyon_uyari' + kaynak_id=uyari.id → onay
+                # kuyruğundan onaylama, CFO/Merkez tarafındaki uyarıyı da çözüldü
+                # (okundu=TRUE) olarak işaretler (bkz. main.py _onayla_tx KASA_FARK_TURLERI).
                 try:
                     cur.execute(
                         """SELECT 1 FROM onay_kuyrugu
-                           WHERE kaynak_tablo='kasa_farki' AND islem_turu='KAPANIS_KASA_FARK'
+                           WHERE kaynak_tablo IN ('kasa_farki', 'sube_operasyon_uyari') AND islem_turu='KAPANIS_KASA_FARK'
                              AND tarih=%s AND aciklama LIKE %s AND durum='bekliyor' LIMIT 1""",
                         (tarih_ev_ciro, f"[{sube_id}]%"),
                     )
@@ -1298,8 +1303,8 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                         onay_ekle(
                             cur,
                             "KAPANIS_KASA_FARK",
-                            "kasa_farki",
-                            str(uuid.uuid4()),
+                            "sube_operasyon_uyari",
+                            _kapanis_kf_uyari_id,
                             f"[{sube_id}] {mesaj_kf}"[:500],
                             kasa_acigi,
                             tarih_ev_ciro,
