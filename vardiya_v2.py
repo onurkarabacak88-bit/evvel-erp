@@ -2802,12 +2802,48 @@ def rapor_devamsizlik(
     }
 
 
+def personel_calisma_araligi(personel: dict, d1: date, d2: date) -> tuple:
+    """**TEK MERKEZ**: personelin işe başlama / çıkış tarihine göre [d1, d2]
+    aralığını kırpar.
+
+    Vardiya Takip raporu ve Aylık Maaş — Vardiyadan Aktar aynı bu fonksiyonu
+    kullanır. Personelin ``baslangic_tarihi``'nden ÖNCESİ ve (ayrılmışsa)
+    ``cikis_tarihi``'nden SONRASI hiçbir vardiya/maaş hesabına dahil
+    edilmez — aksi halde o günler için olmayan vardiyalar "fazla mesai"
+    veya hatalı gün sayımına yol açar.
+
+    `personel` dict'inde ``baslangic_tarihi``, ``cikis_tarihi``, ``aktif``
+    anahtarları aranır (DATE/str/None olabilir). Aralık tamamen geçersizse
+    (örn. personel bu ayda henüz işe başlamamış veya bu aydan önce ayrılmış)
+    ``(None, None)`` döner.
+    """
+    def _d(v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return date.fromisoformat(v)
+        return v
+
+    bas = _d(personel.get("baslangic_tarihi"))
+    if bas and bas > d1:
+        d1 = bas
+
+    cikis = _d(personel.get("cikis_tarihi"))
+    if cikis and not personel.get("aktif", True) and cikis < d2:
+        d2 = cikis
+
+    if d1 > d2:
+        return None, None
+    return d1, d2
+
+
 def personel_ay_vardiya_maas_kaynagi(cur, personel_id: str, yil: int, ay: int) -> Dict[str, Any]:
     """
     Personel → Aylık Maaş ekranına aktarım için vardiya kaynaklı saatler.
 
     **toplam_ay_saat:** Seçilen takvim ayında ``vardiya_atama`` (planlı/onaylı) kayıtlarının
-    başlangıç–bitiş süreleri toplamı.
+    başlangıç–bitiş süreleri toplamı. İşe başlama/çıkış tarihine göre kırpılmış
+    aralık kullanılır (bkz. ``personel_calisma_araligi``).
 
     **ek_mesai_haftalik_toplam:** Ay içindeki her Pazartesi ile başlayan hafta için
     ``max(0, haftalık atanmış saat − max_haftalik_saat)`` değerlerinin toplamı.
@@ -2817,6 +2853,29 @@ def personel_ay_vardiya_maas_kaynagi(cur, personel_id: str, yil: int, ay: int) -
 
     d1 = date(yil, ay, 1)
     d2 = date(yil, ay, monthrange(yil, ay)[1])
+
+    cur.execute(
+        "SELECT baslangic_tarihi, cikis_tarihi, aktif FROM personel WHERE id::text=%s",
+        (str(personel_id),),
+    )
+    prow = cur.fetchone() or {}
+    d1_eff, d2_eff = personel_calisma_araligi(dict(prow), d1, d2)
+
+    kisit = personel_kisit_getir(cur, personel_id)
+    lim_h = float(kisit.get("max_haftalik_saat") or _VARSAYILAN_MAX_HAFTALIK_TAM_SAAT)
+
+    if d1_eff is None:
+        # Bu ay için personelin çalışma aralığı yok (henüz başlamadı / önceden ayrıldı)
+        return {
+            "yil": yil,
+            "ay": ay,
+            "ay_baslangic": str(d1),
+            "ay_bitis": str(d2),
+            "toplam_ay_saat": 0.0,
+            "ek_mesai_haftalik_toplam": 0.0,
+            "haftalik_limit": round(lim_h, 2),
+        }
+
     cur.execute(
         """
         SELECT COALESCE(SUM(EXTRACT(EPOCH FROM
@@ -2831,18 +2890,17 @@ def personel_ay_vardiya_maas_kaynagi(cur, personel_id: str, yil: int, ay: int) -
           AND a.tarih BETWEEN %s AND %s
           AND a.durum IN ('planli', 'onayli')
         """,
-        (personel_id, d1, d2),
+        (personel_id, d1_eff, d2_eff),
     )
     rsum = cur.fetchone()
     toplam_ay = float((rsum or {}).get("saat") or 0)
-
-    kisit = personel_kisit_getir(cur, personel_id)
-    lim_h = float(kisit.get("max_haftalik_saat") or _VARSAYILAN_MAX_HAFTALIK_TAM_SAAT)
 
     ek_hafta = 0.0
     for gun in range(1, monthrange(yil, ay)[1] + 1):
         d = date(yil, ay, gun)
         if d.weekday() != 0:
+            continue
+        if d > d2_eff:
             continue
         h = personel_haftalik_saat(cur, personel_id, d)
         ek_hafta += max(0.0, h - lim_h)

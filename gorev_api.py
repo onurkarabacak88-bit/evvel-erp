@@ -1452,18 +1452,20 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
     if d1 < SISTEM_BASLANGIC:
         d1 = SISTEM_BASLANGIC
 
+    from vardiya_v2 import personel_calisma_araligi
+
     with db() as (conn, cur):
         # Personel listesi
         if personel_id:
             cur.execute("""
                 SELECT id::text, ad_soyad, calisma_turu, maas, saatlik_ucret,
-                       yemek_ucreti, yol_ucreti, aktif, cikis_tarihi
+                       yemek_ucreti, yol_ucreti, aktif, baslangic_tarihi, cikis_tarihi
                 FROM personel WHERE id::text=%s
             """, (personel_id,))
         else:
             cur.execute("""
                 SELECT id::text, ad_soyad, calisma_turu, maas, saatlik_ucret,
-                       yemek_ucreti, yol_ucreti, aktif, cikis_tarihi
+                       yemek_ucreti, yol_ucreti, aktif, baslangic_tarihi, cikis_tarihi
                 FROM personel
                 ORDER BY aktif DESC, ad_soyad
             """)
@@ -1474,15 +1476,31 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             pid = p["id"]
             is_part = (p.get("calisma_turu") or "").lower() in ("part", "part_time", "part-time")
 
-            # Çıkmış personel için son gün dahil, sonrasını hesaplama
-            cikis = p.get("cikis_tarihi")
-            if cikis and not p.get("aktif", True):
-                if isinstance(cikis, str):
-                    from datetime import date as _d
-                    cikis = _d.fromisoformat(cikis)
-                p_d2 = min(d2, cikis)  # cikis_tarihi günü dahil
-            else:
-                p_d2 = d2
+            # TEK MERKEZ: işe başlama tarihinden önce / çıkış tarihinden
+            # sonraki günler hiçbir hesaba dahil edilmez (vardiya_v2.personel_calisma_araligi)
+            p_d1, p_d2 = personel_calisma_araligi(p, d1, d2)
+            if p_d1 is None:
+                # Bu ay için çalışma aralığı yok (henüz başlamadı / önceden ayrıldı)
+                sonuclar.append({
+                    "personel_id": pid,
+                    "ad_soyad": p["ad_soyad"],
+                    "calisma_turu": p.get("calisma_turu"),
+                    "toplam_planlanan_saat": 0.0,
+                    "toplam_gecikme_dk": 0.0,
+                    "toplam_fazla_mesai_saat": 0.0,
+                    "yemek_ucret_gun": 0,
+                    "yemek_ucret_tutari": 0.0,
+                    "part_tam_gun": 0,
+                    "haftalik_izin_kullanilmadi": 0,
+                    "haftalik_izin_detay": [],
+                    "ucret_detay": {"net_hakediş": 0.0, "not": "Bu ay için çalışma aralığı yok"},
+                    "net_hakediş": 0.0,
+                    "aktif": bool(p.get("aktif", True)),
+                    "cikis_tarihi": str(p["cikis_tarihi"]) if p.get("cikis_tarihi") else None,
+                    "gunler": [],
+                    "izin_bildirimleri": [],
+                })
+                continue
 
             # Vardiya atamaları bu ay
             cur.execute("""
@@ -1499,7 +1517,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 WHERE va.personel_id=%s AND va.tarih BETWEEN %s AND %s
                   AND va.durum IN ('planli','onayli')
                 ORDER BY va.tarih
-            """, (pid, d1, p_d2))
+            """, (pid, p_d1, p_d2))
             vardiyalar = {str(r["tarih"]): dict(r) for r in cur.fetchall()}
 
             # Yoklama kayıtları (giriş saatleri)
@@ -1508,7 +1526,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 FROM gorev_yoklama
                 WHERE personel_id=%s AND tarih BETWEEN %s AND %s
                 ORDER BY tarih, giris_ts
-            """, (pid, d1, p_d2))
+            """, (pid, p_d1, p_d2))
             yoklamalar = {}
             for r in cur.fetchall():
                 t = str(r["tarih"])
@@ -1522,7 +1540,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 FROM yemek_molasi ym
                 JOIN subeler s ON s.id = ym.sube_id
                 WHERE ym.personel_id=%s AND ym.tarih BETWEEN %s AND %s
-            """, (pid, d1, p_d2))
+            """, (pid, p_d1, p_d2))
             molalar = {str(r["tarih"]): dict(r) for r in cur.fetchall()}
 
             # Şube açılış gecikmeleri
@@ -1532,7 +1550,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 FROM sube_acilis sa
                 JOIN subeler s ON s.id = sa.sube_id
                 WHERE sa.personel_id=%s AND sa.tarih BETWEEN %s AND %s AND sa.durum='acildi'
-            """, (pid, d1, p_d2))
+            """, (pid, p_d1, p_d2))
             acilislar = {str(r["tarih"]): dict(r) for r in cur.fetchall()}
 
             # Devamsızlık raporu üzerinden geriye dönük işaretlenen izin/devamsızlık
@@ -1544,7 +1562,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                   AND (aciklama LIKE 'Devamsızlık (vardiyada planlı%%'
                        OR aciklama LIKE 'İzin (vardiyada planlı%%')
                 ORDER BY baslangic_tarih DESC
-            """, (pid, d1, p_d2))
+            """, (pid, p_d1, p_d2))
             izin_bildirimleri = [dict(r) for r in cur.fetchall()]
 
             # Haftalık izin analizi - her Pazartesi başlayan haftayı tara
@@ -1553,13 +1571,16 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             haftalik_izin_kullanilmadi = 0  # kaç haftada izin kullanılmamış
             haftalik_izin_detay = []        # [{hafta_baslangic, calisilan_gun, izin_var}]
 
-            # Ayın ilk Pazartesisini bul (veya d1'den geriye git)
-            hafta_bas = d1 - _td(days=d1.weekday())
-            while hafta_bas <= d2:
+            # İşe başlama tarihinden itibaren ilk Pazartesiyi bul (p_d1'den geriye git)
+            hafta_bas = p_d1 - _td(days=p_d1.weekday())
+            while hafta_bas <= p_d2:
                 hafta_bit = hafta_bas + _td(days=6)
-                # Bu haftanın ay içindeki günleri
-                kontrol_bas = max(hafta_bas, d1)
-                kontrol_bit = min(hafta_bit, d2)
+                # Bu haftanın, personelin çalışma aralığı içindeki günleri
+                kontrol_bas = max(hafta_bas, p_d1)
+                kontrol_bit = min(hafta_bit, p_d2)
+                if kontrol_bas > kontrol_bit:
+                    hafta_bas += _td(days=7)
+                    continue
                 calisilan = 0
                 gün = kontrol_bas
                 while gün <= kontrol_bit:
@@ -1587,7 +1608,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             part_tam_gun = 0
             STANDART = 9.5
 
-            tarih = d1
+            tarih = p_d1
             while tarih <= p_d2:
                 t = str(tarih)
                 v = vardiyalar.get(t)
@@ -1676,17 +1697,26 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             # Bu ay henüz tamamlanmadıysa (içinde bulunduğumuz ay), personel
             # SADECE bugüne kadar geçen günler için "hak kazanmış" sayılır.
             # Geçmiş aylar için tam ay (30 gün) hak kazanılmış kabul edilir.
+            # ÖNEMLİ: p_d1/p_d2 — işe başlama/çıkış tarihine göre kırpılmış
+            # aralık. İlk/son ay için "gecen_gun" bu aralığa göre PRORATE
+            # edilir (örn. ayın 15'inde başlayan personel ~15/30 gün alır),
+            # aksi halde işe başlamadan önceki günler de maaşa dahil olur.
             _bugun_t = _date.today()
             if (yil, ay) == (_bugun_t.year, _bugun_t.month):
-                gecen_gun = min(float(_bugun_t.day), AYLIK_GUN)
+                gun_sonu  = min(_bugun_t, p_d2)
                 ay_tamam  = False
             elif _date(yil, ay, 1) < _date(_bugun_t.year, _bugun_t.month, 1):
-                gecen_gun = AYLIK_GUN
+                gun_sonu  = p_d2
                 ay_tamam  = True
             else:
                 # Gelecek ay — henüz hiçbir hak kazanılmadı
-                gecen_gun = 0.0
+                gun_sonu  = p_d1 - _td(days=1)
                 ay_tamam  = False
+
+            if gun_sonu < p_d1:
+                gecen_gun = 0.0
+            else:
+                gecen_gun = min(float((gun_sonu - p_d1).days + 1), AYLIK_GUN)
 
             # personel.yemek_ucreti AYLIK bir tutardır (örn. 7000 TL/ay) —
             # hak kazanılan her gün için aylık tutarın 1/30'u ödenir,
