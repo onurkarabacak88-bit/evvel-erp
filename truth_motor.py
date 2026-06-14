@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import uuid
 from dataclasses import dataclass, asdict, field
 from typing import Any, Dict, List, Optional
 
@@ -778,6 +779,73 @@ def kararlari_kaydet(cur, taniler: List[Tani]) -> int:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+#  PERSONEL RİSK SİNYALİ — Truth Motor → personel_risk_sinyal entegrasyonu
+# ════════════════════════════════════════════════════════════════════════════
+#
+# NOT: Bu sinyaller SADECE CFO/operasyon tarafında gösterilir (örn. Akıllı
+# Denetim panelinde "Personel Risk Skorları"). Personelin kendi gördüğü
+# herhangi bir panelde (QR görev girişi, fire-foto yükleme vb.) BU VERİYE
+# kesinlikle yer verilmez — kullanıcı kararı (2026-06-14).
+
+# Yalnızca bu tanılar + yeterli güven varsa sinyal üretilir (gürültü olmasın)
+_RISK_SINYAL_MIN_GUVEN = 65.0
+
+
+def _personel_id_by_ad(cur, ad: Optional[str]) -> Optional[str]:
+    """Truth Motor'daki serbest-metin personel adını personel.id'ye eşler."""
+    ad = (ad or "").strip()
+    if not ad:
+        return None
+    try:
+        cur.execute("SELECT id FROM personel WHERE ad_soyad ILIKE %s LIMIT 1", (ad,))
+        r = cur.fetchone()
+        return r["id"] if r else None
+    except Exception:
+        return None
+
+
+def personel_risk_sinyal_uret(cur, sube_id: str, tarih: str, taniler: List["Tani"]) -> int:
+    """Anomali tanılarından (sorumlu personel tanımlıysa) personel_risk_sinyal üretir.
+
+    Idempotent: aynı (sube,tarih,boyut,tani) için referans_id ile tek kayıt yazılır
+    — gece scheduler restart olsa da tekrar yazılmaz.
+    """
+    n = 0
+    for t in taniler:
+        if t.tani in ("NORMAL", "YETERSIZ_VERI"):
+            continue
+        if (t.guven_skoru or 0) < _RISK_SINYAL_MIN_GUVEN:
+            continue
+        ad = (t.detay or {}).get("aksamci_ad") or (t.detay or {}).get("sabahci_ad")
+        pid = _personel_id_by_ad(cur, ad)
+        if not pid:
+            continue
+
+        referans_id = f"tm:{sube_id}:{tarih}:{t.boyut}:{t.tani}"
+        try:
+            cur.execute("SELECT 1 FROM personel_risk_sinyal WHERE referans_id = %s", (referans_id,))
+            if cur.fetchone():
+                continue
+            agirlik = max(1, min(20, round((t.guven_skoru or 0) / 5)))
+            aciklama = (t.detay or {}).get("eylem", {}).get("insan") or t.tani
+            cur.execute(
+                """
+                INSERT INTO personel_risk_sinyal
+                    (id, personel_id, sube_id, tarih, sinyal_turu, agirlik, aciklama, referans_id)
+                VALUES (%s, %s, %s, %s::date, %s, %s, %s, %s)
+                """,
+                (
+                    str(uuid.uuid4()), pid, sube_id, tarih,
+                    f"truth_motor_{t.tani.lower()}", agirlik, aciklama, referans_id,
+                ),
+            )
+            n += 1
+        except Exception as e:
+            log.warning("personel_risk_sinyal yazılamadı sube=%s boyut=%s: %s", sube_id, t.boyut, e)
+    return n
+
+
+# ════════════════════════════════════════════════════════════════════════════
 #  VERİ TOPLAYICI — 3 kaynak read-only
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -1218,6 +1286,12 @@ def motor_calistir(cur, sube_id: str, tarih: str,
 
     # Log'a yaz
     kaydedildi = kararlari_kaydet(cur, taniler)
+
+    # ─── Personel risk sinyalleri — CFO/operasyon tarafı için (personel görmez) ───
+    try:
+        personel_risk_sinyal_uret(cur, sube_id, tarih, taniler)
+    except Exception as _e:
+        log.warning("personel_risk_sinyal_uret hata sube=%s tarih=%s: %s", sube_id, tarih, _e)
 
     # ─── KASA BASKINI OTOMATİK TETİK ───
     # SWEETHEARTING veya AKSAM_ZIMMET → otomatik baskın öner (apply modunda hemen başlat)
@@ -9008,3 +9082,66 @@ def gunluk_tam_analiz(
         "sinyal_vektor": sinyal,
         "gozlem_id":     gozlem_id,
     }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  PERSONEL RİSK SKORLARI — CFO/operasyon görünümü (personel görmez)
+# ════════════════════════════════════════════════════════════════════════════
+
+_RISK_DECAY_YARI_OMUR_GUN = 30.0  # sinyal etkisi her 30 günde yarıya iner
+
+
+def personel_risk_skorlari(cur, gun: int = 90, min_skor: float = 1.0) -> List[Dict[str, Any]]:
+    """Son `gun` gündeki personel_risk_sinyal kayıtlarından, zaman-ağırlıklı
+    (üstel decay) bir risk skoru üretir. Sadece CFO/operasyon panelinde
+    kullanılmak üzere — personelin kendi gördüğü hiçbir ekrana eklenmez.
+    """
+    cur.execute(
+        """
+        SELECT prs.personel_id, p.ad_soyad, prs.sube_id, s.ad AS sube_ad,
+               prs.tarih, prs.sinyal_turu, prs.agirlik, prs.aciklama, prs.olusturma
+        FROM personel_risk_sinyal prs
+        LEFT JOIN personel p ON p.id = prs.personel_id
+        LEFT JOIN subeler s ON s.id = prs.sube_id
+        WHERE prs.tarih >= CURRENT_DATE - (%s || ' days')::interval
+        ORDER BY prs.tarih DESC, prs.olusturma DESC
+        """,
+        (int(gun),),
+    )
+    rows = cur.fetchall() or []
+
+    from datetime import date as _date
+    bugun = _date.today()
+
+    agg: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        pid = r["personel_id"]
+        if not pid:
+            continue
+        gun_farki = max(0, (bugun - r["tarih"]).days) if r["tarih"] else 0
+        decay = 0.5 ** (gun_farki / _RISK_DECAY_YARI_OMUR_GUN)
+        a = agg.setdefault(pid, {
+            "personel_id": pid,
+            "ad_soyad": r["ad_soyad"] or pid,
+            "skor": 0.0,
+            "sinyal_sayisi": 0,
+            "son_sinyaller": [],
+        })
+        a["skor"] += float(r["agirlik"] or 0) * decay
+        a["sinyal_sayisi"] += 1
+        if len(a["son_sinyaller"]) < 8:
+            a["son_sinyaller"].append({
+                "tarih": str(r["tarih"]),
+                "sube_ad": r["sube_ad"],
+                "sinyal_turu": r["sinyal_turu"],
+                "agirlik": r["agirlik"],
+                "aciklama": r["aciklama"],
+            })
+
+    sonuc = [
+        {**v, "skor": round(v["skor"], 1)}
+        for v in agg.values()
+        if round(v["skor"], 1) >= min_skor
+    ]
+    sonuc.sort(key=lambda x: -x["skor"])
+    return sonuc

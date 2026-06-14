@@ -477,6 +477,7 @@ export default function TruthMotor() {
           <VardiyaBardakPNL tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
           <AksamBardakSisirme tarih={tarih} subeler={(durum?.subeler || []).map(s => ({ id: s.sube_id, ad: s.sube_ad }))} />
           <PersonelDavranis />
+          <PersonelRiskSkorlari />
         </>
       )}
 
@@ -1696,6 +1697,100 @@ function PersonelDavranis() {
         💡 <strong>Kritik</strong> = anomali oranı ≥%50 veya ort. kasa fark &gt; 50₺ ·
         <strong>Yüksek</strong> = anomali ≥%25 veya iskonto &gt; %5 ·
         Vardiya = ACILIS → KONTROL/KAPANIS arası dilim
+      </p>
+    </div>
+  );
+}
+
+function PersonelRiskSkorlari() {
+  const [gun, setGun] = useState(90);
+  const [rows, setRows] = useState([]);
+  const [yukleniyor, setYukleniyor] = useState(false);
+  const [acik, setAcik] = useState(null);
+
+  const yukle = useCallback(async () => {
+    setYukleniyor(true);
+    try {
+      const d = await fetchJson(`${API}/api/ops/truth/personel-risk-skorlari?gun=${gun}`);
+      setRows(d?.skorlar || []);
+    } catch (_) {} finally { setYukleniyor(false); }
+  }, [gun]);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  if (!yukleniyor && rows.length === 0) {
+    return (
+      <div style={{ margin: '24px 0' }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 8px' }}>🎯 Personel Risk Skorları (Akıllı Denetim)</h3>
+        <div className="card" style={{ padding: 16, textAlign: 'center', color: 'var(--text3)', fontSize: 12 }}>
+          Son {gun} günde sinyal yok
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ margin: '24px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>🎯 Personel Risk Skorları (Akıllı Denetim)</h3>
+        <select className="input" value={gun} onChange={(e) => setGun(Number(e.target.value))}
+          style={{ fontSize: 12, padding: '3px 8px' }}>
+          <option value={30}>Son 30 gün</option>
+          <option value={60}>Son 60 gün</option>
+          <option value={90}>Son 90 gün</option>
+          <option value={180}>Son 180 gün</option>
+        </select>
+        <button className="btn btn-sm" onClick={yukle} style={{ fontSize: 11 }}>↻</button>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>{rows.length} personel</span>
+      </div>
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead style={{ background: 'rgba(255,255,255,0.04)' }}>
+            <tr>
+              <th style={th}>Personel</th>
+              <th style={{ ...th, textAlign: 'right' }}>Risk Skoru</th>
+              <th style={{ ...th, textAlign: 'right' }}>Sinyal Sayısı</th>
+              <th style={th}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => {
+              const renk = r.skor >= 30 ? '#fca5a5' : r.skor >= 15 ? '#fbbf24' : 'var(--text3)';
+              const acikMi = acik === r.personel_id;
+              return (
+                <React.Fragment key={r.personel_id}>
+                  <tr style={{ borderTop: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer' }}
+                    onClick={() => setAcik(acikMi ? null : r.personel_id)}>
+                    <td style={td}><strong>{r.ad_soyad}</strong></td>
+                    <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', color: renk, fontWeight: 700 }}>{r.skor}</td>
+                    <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>{r.sinyal_sayisi}</td>
+                    <td style={{ ...td, textAlign: 'right', color: 'var(--text3)' }}>{acikMi ? '▲' : '▼'}</td>
+                  </tr>
+                  {acikMi && (
+                    <tr style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td colSpan={4} style={{ ...td, background: 'rgba(255,255,255,0.02)' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {(r.son_sinyaller || []).map((s, i) => (
+                            <div key={i} style={{ display: 'flex', gap: 10, fontSize: 11, color: 'var(--text3)' }}>
+                              <span style={{ minWidth: 80, fontFamily: 'monospace' }}>{s.tarih}</span>
+                              <span style={{ minWidth: 80 }}>{s.sube_ad || '—'}</span>
+                              <span style={{ minWidth: 140 }}>{s.sinyal_turu}</span>
+                              <span style={{ minWidth: 30, fontFamily: 'monospace' }}>+{s.agirlik}</span>
+                              <span>{s.aciklama}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+        💡 Truth Motor anomali tanılarından (güven ≥%65, sorumlu personel tespit edilebilenler) ve fotoğraf
+        kanıt sisteminden (tekrar yüklenen fotoğraflar) üretilen sinyallerin zaman-ağırlıklı toplamı.
+        Bu görünüm sadece CFO/operasyon panelindedir — personelin kendi ekranlarına eklenmemiştir.
       </p>
     </div>
   );

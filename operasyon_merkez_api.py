@@ -15174,6 +15174,26 @@ def truth_durum():
     return {"global_aktif": global_aktif, "subeler": rows}
 
 
+@router.get("/truth/personel-risk-skorlari")
+def truth_personel_risk_skorlari(gun: int = 90):
+    """Akıllı Denetim + diğer kaynaklardan (örn. fire_foto_tekrar) üretilen
+    personel_risk_sinyal kayıtlarından zaman-ağırlıklı risk skoru.
+
+    SADECE CFO/operasyon paneli içindir — personelin kendi gördüğü hiçbir
+    ekrana (QR görev girişi, fire-foto yükleme vb.) bu veri eklenmez."""
+    try:
+        import truth_motor as _tm
+    except Exception as e:
+        return {"skorlar": [], "import_hata": str(e)}
+    with db() as (_, cur):
+        try:
+            skorlar = _tm.personel_risk_skorlari(cur, gun=gun)
+        except Exception as e:
+            log.warning("personel_risk_skorlari hata: %s", e)
+            skorlar = []
+    return {"skorlar": skorlar, "gun": gun}
+
+
 @router.post("/truth/ayar")
 def truth_ayar(body: TruthAyarBody):
     """Şube için motoru aç/kapat veya modunu değiştir."""
