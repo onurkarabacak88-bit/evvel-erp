@@ -1266,13 +1266,21 @@ def kart_aktif_donem(cur, kart_id: str) -> dict:
     asgari = ekstre * asgari_oran
 
     # Bu dönem (aktif ekstre) için şimdiye kadar yapılan ödemeler — asgari karşılaştırması için.
+    # NOT: GERÇEK ekstre snapshot'ı (PDF/manuel ekstre) varsa, snapshot'taki
+    # "dönem borcu" zaten (onceki_kesim, aktif_kesim] aralığındaki ödemeleri
+    # düşerek hesaplanmıştır (ör. "Ödemeleriniz" satırı). O ödemeleri burada
+    # TEKRAR "bu dönem ödendi" sayarsak asgari_karsilandi=true gibi yanlış
+    # bir görünüm oluşur. Bu durumda sadece aktif_kesim'den SONRA yapılan
+    # (yeni, henüz ekstreye yansımamış) ödemeler sayılır.
+    ov_borc_check, _ = kart_ekstre_donem_override(cur, kart_id, aktif_kesim)
+    odenen_baslangic = aktif_kesim if ov_borc_check is not None else onceki_kesim
     cur.execute("""
         SELECT COALESCE(SUM(tutar), 0) AS odenen
         FROM kart_hareketleri
         WHERE kart_id = %s AND durum = 'aktif'
           AND islem_turu = 'ODEME'
           AND tarih > %s::date
-    """, (kart_id, onceki_kesim))
+    """, (kart_id, odenen_baslangic))
     bu_donem_odenen = float(cur.fetchone()['odenen'])
 
     return {
