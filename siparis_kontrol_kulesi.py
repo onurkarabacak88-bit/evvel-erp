@@ -17,6 +17,7 @@ from sevkiyat_helpers import (
 ASAMA_BEKLIYOR = "bekliyor"
 ASAMA_DEPODA = "depoda"
 ASAMA_YOLDA = "yolda"
+ASAMA_TOPTANCI_BEKLIYOR = "toptanci_bekliyor"
 ASAMA_UYUMSUZLUK = "uyumsuzluk"
 ASAMA_TAMAMLANDI = "tamamlandi"
 ASAMA_IPTAL = "iptal"
@@ -26,6 +27,7 @@ ASAMA_LABEL = {
     ASAMA_BEKLIYOR: "Merkez kuyruğu",
     ASAMA_DEPODA: "Depoda hazırlanıyor",
     ASAMA_YOLDA: "Yolda / kabul bekliyor",
+    ASAMA_TOPTANCI_BEKLIYOR: "Toptancıdan bekleniyor",
     ASAMA_UYUMSUZLUK: "Kabul uyumsuzluğu",
     ASAMA_TAMAMLANDI: "Tamamlandı",
     ASAMA_IPTAL: "İptal",
@@ -36,6 +38,7 @@ ACIK_ASAMALAR = (
     ASAMA_BEKLIYOR,
     ASAMA_DEPODA,
     ASAMA_YOLDA,
+    ASAMA_TOPTANCI_BEKLIYOR,
     ASAMA_UYUMSUZLUK,
 )
 
@@ -67,14 +70,19 @@ def siparis_asama_hesapla(
         return ASAMA_IPTAL
     if d == "gonderilmedi":
         return ASAMA_GONDERILMEDI
-    if kabul_durum == "kabul_uyusmazlik":
+    # Toptancı kabulünde uyuşmazlık durum=kabul_uyusmazlik olarak gelir
+    # (toptancıda stok_yolda yok, kabul_durum None) — bunu da yakala.
+    if d == "kabul_uyusmazlik" or kabul_durum == "kabul_uyusmazlik":
         return ASAMA_UYUMSUZLUK
     if d == "teslim_edildi" or kabul_durum == "kabul_tam":
         return ASAMA_TAMAMLANDI
     if d == "bekliyor":
         return ASAMA_BEKLIYOR
+    # Toptancıya yönlendirildi AMA henüz teslim alınmadı (durum hâlâ 'gonderildi')
+    # → "tamamlandı" DEĞİL, açık bir "Toptancıdan bekleniyor" aşaması. Sadece
+    # şube fiilen teslim alınca (durum=teslim_edildi, yukarıda) tamamlanır.
     if sd == "toptanciya_yonlendirildi":
-        return ASAMA_TAMAMLANDI
+        return ASAMA_TOPTANCI_BEKLIYOR
     if d == "gonderildi":
         return ASAMA_YOLDA
     if d == "hazirlaniyor":
@@ -98,11 +106,13 @@ def _asama_metni(asama: str, sevkiyat_durumu: Optional[str]) -> str:
         return "Depo / sevkiyat işleniyor"
     if asama == ASAMA_YOLDA:
         return "Depodan çıktı — talep şubesinde kabul bekleniyor"
+    if asama == ASAMA_TOPTANCI_BEKLIYOR:
+        return "Toptancıya yönlendirildi — şube teslim alımı bekleniyor"
     if asama == ASAMA_UYUMSUZLUK:
         return "Kabul uyumsuzluğu — merkez müdahalesi gerekli"
     if asama == ASAMA_TAMAMLANDI:
         if sevkiyat_durumu_coz(sevkiyat_durumu) == "toptanciya_yonlendirildi":
-            return "Toptancıya yönlendirildi"
+            return "Toptancıdan teslim alındı (tamamlandı)"
         return "Teslim alındı (tamamlandı)"
     if asama == ASAMA_IPTAL:
         return "İptal edildi"
