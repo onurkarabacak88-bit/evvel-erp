@@ -141,11 +141,43 @@ def _yolda_satirlari(cur: Any, talep_id: str) -> List[Dict[str, Any]]:
     return out
 
 
-def _satir_zenginlestir(cur: Any, row: Dict[str, Any]) -> Dict[str, Any]:
+def _yolda_toplu(cur: Any, talep_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """N+1 yerine: tüm talep id'lerinin stok_yolda satırlarını TEK sorguda çekip
+    talep_id → satır listesi haritası döner. _yolda_satirlari ile birebir aynı
+    satır şekli (sadece toplu)."""
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    ids = [t for t in {str(x) for x in talep_ids if x}]
+    if not ids:
+        return out
+    cur.execute(
+        """
+        SELECT siparis_talep_id, kalem_kodu, kalem_adi, sevk_adet, kabul_adet, kabul_ts, durum, sevk_ts
+        FROM stok_yolda WHERE siparis_talep_id = ANY(%s)
+        ORDER BY kalem_adi NULLS LAST, kalem_kodu
+        """,
+        (ids,),
+    )
+    for y in cur.fetchall() or []:
+        tid = str(y.get("siparis_talep_id") or "")
+        out.setdefault(tid, []).append({
+            "kalem_kodu": y.get("kalem_kodu"),
+            "kalem_adi": y.get("kalem_adi"),
+            "sevk_adet": int(y.get("sevk_adet") or 0),
+            "kabul_adet": int(y.get("kabul_adet") or 0),
+            "durum": y.get("durum"),
+            "kabul_ts": str(y.get("kabul_ts") or ""),
+            "sevk_ts": str(y.get("sevk_ts") or ""),
+        })
+    return out
+
+
+def _satir_zenginlestir(cur: Any, row: Dict[str, Any],
+                        yolda: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     tid = str(row.get("id") or "")
     kalemler = _json_list(row.get("kalemler"))
     kalem_durumlari = _json_list(row.get("kalem_durumlari"))
-    yolda = _yolda_satirlari(cur, tid)
+    if yolda is None:
+        yolda = _yolda_satirlari(cur, tid)
     kabul_durum = _kabul_durum_ozet(yolda)
     sd = sevkiyat_durumu_coz(row.get("sevkiyat_durumu"), row.get("sevkiyat_durum"))
     asama = siparis_asama_hesapla(row.get("durum"), sd, kabul_durum)
@@ -232,9 +264,11 @@ def siparis_kontrol_kulesi_yukle(
         """,
         tuple(params),
     )
+    ozet_rows = [dict(r) for r in (cur.fetchall() or [])]
+    ozet_yolda = _yolda_toplu(cur, [r.get("id") for r in ozet_rows])
     ozet: Dict[str, int] = {k: 0 for k in ASAMA_LABEL}
-    for r in cur.fetchall() or []:
-        yolda = _yolda_satirlari(cur, str(r.get("id") or ""))
+    for r in ozet_rows:
+        yolda = ozet_yolda.get(str(r.get("id") or ""), [])
         kd = _kabul_durum_ozet(yolda)
         sd = sevkiyat_durumu_coz(r.get("sevkiyat_durumu"), r.get("sevkiyat_durum"))
         a = siparis_asama_hesapla(r.get("durum"), sd, kd)
@@ -274,9 +308,11 @@ def siparis_kontrol_kulesi_yukle(
         tuple(params + [lim]),
     )
 
+    detay_rows = [dict(r) for r in (cur.fetchall() or [])]
+    detay_yolda = _yolda_toplu(cur, [r.get("id") for r in detay_rows])
     satirlar: List[Dict[str, Any]] = []
-    for r in cur.fetchall() or []:
-        z = _satir_zenginlestir(cur, dict(r))
+    for r in detay_rows:
+        z = _satir_zenginlestir(cur, r, yolda=detay_yolda.get(str(r.get("id") or ""), []))
         if asama and z["asama"] != asama:
             continue
         satirlar.append(z)
@@ -343,9 +379,10 @@ def siparis_urun_gecmis(
         tuple(params + [lim]),
     )
 
+    gecmis_rows = [dict(r) for r in (cur.fetchall() or [])]
+    gecmis_yolda = _yolda_toplu(cur, [r.get("id") for r in gecmis_rows])
     satirlar = []
-    for r in cur.fetchall() or []:
-        row = dict(r)
+    for row in gecmis_rows:
         kalemler = _json_list(row.get("kalemler"))
         eslesen = []
         for it in kalemler:
@@ -361,7 +398,7 @@ def siparis_urun_gecmis(
                 })
         if not eslesen:
             continue
-        yolda = _yolda_satirlari(cur, str(row.get("id") or ""))
+        yolda = gecmis_yolda.get(str(row.get("id") or ""), [])
         kabul_durum = _kabul_durum_ozet(yolda)
         sd = sevkiyat_durumu_coz(row.get("sevkiyat_durumu"), row.get("sevkiyat_durum"))
         asama = siparis_asama_hesapla(row.get("durum"), sd, kabul_durum)
