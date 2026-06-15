@@ -68,6 +68,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
 
   const [oturum, setOturum] = useState(null);
   const [konum, setKonum]   = useState(null);
+  const [cikisUyari, setCikisUyari] = useState(null);  // "çıkış yapmayı unuttun" (otomatik kapatma)
 
   // Şube listesi (QR'sız mod)
   useEffect(() => {
@@ -242,6 +243,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
         },
       });
       setPinDogruOturum(sonuc);
+      setCikisUyari(sonuc?.cikis_unutuldu_uyari || null);
       localOturumYaz(subeId, sonuc);
 
       // Sabahçı devir onayı bekliyor mu? — anlık kontrol (state bayatlamış olabilir)
@@ -327,6 +329,33 @@ export default function GorevGiris({ subeId: subeIdProp }) {
   return (
     <div style={PAGE}>
       <div style={KART}>
+
+        {/* "Çıkış yapmayı unuttun" uyarısı — önceki mesai otomatik kapatıldıysa */}
+        {cikisUyari && (
+          <div
+            onClick={() => setCikisUyari(null)}
+            style={{
+              background: 'rgba(245,158,11,0.15)',
+              border: '1px solid rgba(245,158,11,0.5)',
+              borderRadius: 12,
+              padding: '14px 16px',
+              marginBottom: 16,
+              cursor: 'pointer',
+              display: 'flex',
+              gap: 10,
+              alignItems: 'flex-start',
+            }}
+          >
+            <div style={{ fontSize: 22, flexShrink: 0 }}>🕒</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: '#f59e0b', marginBottom: 2 }}>
+                Çıkış yapmayı unutmuşsun
+              </div>
+              <div style={{ fontSize: 13, color: '#cbd5e1', lineHeight: 1.4 }}>{cikisUyari}</div>
+              <div style={{ fontSize: 11, color: '#6b6f7a', marginTop: 6 }}>(kapatmak için dokun)</div>
+            </div>
+          </div>
+        )}
 
         {/* Başlık */}
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
