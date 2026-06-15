@@ -6716,6 +6716,15 @@ function setKapanisStep(step) {
           // (Sadece otomatik gönderim hata verirse kapanisGonderSubmit butonu geri gösterir.)
           document.getElementById('kapGonder').style.display = 'none';
           kapanisGonderSubmit(true);
+        } else {
+          // Hâlâ açık (çıkış/QR yapmamış) personel(ler) var → mühür onları bekliyor.
+          // İsimleri göster ki neden mühürlenmediği belli olsun.
+          var _adlar = bekleyen.map(function(b){ return escHtml(b.ad_soyad || '—'); }).join(', ');
+          var _tEl = document.getElementById('kapQrBekleText');
+          if (_tEl) {
+            _tEl.innerHTML = '⏳ Hâlâ açık (çıkış yapmamış): <b style="color:var(--text)">' + _adlar + '</b>'
+              + '<br/>Mühür için bu personel(ler) de QR okutmalı / mesaisini kapatmalı.';
+          }
         }
       } catch(_) {}
     }, 3000);
