@@ -2034,6 +2034,40 @@ def init_db():
             ON personel_risk_sinyal (sinyal_turu, tarih DESC)
         """)
 
+        # ── AKILLI DENETİM — HİPOTEZ GÖZLEM DEFTERİ ─────────────
+        # Motorun "insan denetçi gibi öğrenmesi" için ham gözlem tablosu.
+        # Her operasyonel olay tipi (geç açılış, geç kapanış, sık iptal,
+        # vardiya devamsızlığı) için (KOŞUL, SONUÇ) çiftini HAM kaydeder —
+        # eşik uygulamaz, yorum yapmaz, istatistik çıkarmaz. Yeterli veri
+        # birikince (≥~25 olay, ~2-3 ay) ayrı bir katman lift/oran analizi
+        # yapacak. Şimdilik SADECE veri toplama. (bkz. truth_motor.py
+        # hipotez_gozlem_kaydet + project_akilli_denetim_olay_yelpazesi)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS denetim_hipotez_gozlem (
+                id             TEXT PRIMARY KEY,
+                hipotez_turu   TEXT NOT NULL,          -- 'gec_acilis' | 'gec_kapanis' | ...
+                sube_id        TEXT NOT NULL,
+                tarih          DATE NOT NULL,
+                boyut          TEXT,                   -- kasa/bardak_karton/... (varsa)
+                kosul_var      BOOLEAN NOT NULL,       -- olay gerçekleşti mi?
+                kosul_siddet   DOUBLE PRECISION,       -- ham büyüklük (örn. gecikme dk) — EŞİK UYGULANMAZ
+                sonuc_anomali  BOOLEAN NOT NULL,       -- o gün ilgili anomali çıktı mı?
+                sonuc_tani     TEXT,                   -- hangi tanı (varsa)
+                personel_id    TEXT,                   -- ilgili personel (varsa)
+                detay_json     JSONB DEFAULT '{}'::jsonb,
+                referans_id    TEXT UNIQUE,            -- idempotent: tm:hipotez:<tur>:<sube>:<tarih>:<boyut>
+                olusturma      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_dhg_tur_sube_tarih
+            ON denetim_hipotez_gozlem (hipotez_turu, sube_id, tarih DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_dhg_tur_kosul
+            ON denetim_hipotez_gozlem (hipotez_turu, kosul_var, sonuc_anomali)
+        """)
+
         # ── PERSONEL TAKİP ─────────────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS personel_takip (

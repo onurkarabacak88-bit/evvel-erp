@@ -924,6 +924,56 @@ def _risk_sinyal_yaz(cur, pid: str, sube_id: str, sinyal_tarih: str,
         return False
 
 
+def hipotez_gozlem_kaydet(cur, hipotez_turu: str, sube_id: str, tarih: str,
+                          kosul_var: bool, sonuc_anomali: bool,
+                          kosul_siddet: Optional[float] = None,
+                          boyut: Optional[str] = None,
+                          sonuc_tani: Optional[str] = None,
+                          personel_id: Optional[str] = None,
+                          detay: Optional[Dict[str, Any]] = None) -> bool:
+    """Akıllı Denetim öğrenme defterine HAM (koşul, sonuç) gözlemi yazar.
+
+    Eşik UYGULAMAZ, yorum YAPMAZ, istatistik ÇIKARMAZ — sadece ham veri toplar.
+    Yeterli veri birikince (≥~25 olay) ayrı bir katman lift/oran analizi yapacak.
+    Idempotent: referans_id = tm:hipotez:<tur>:<sube>:<tarih>:<boyut>.
+
+    Returns: yeni satır yazıldıysa True (zaten varsa False).
+    """
+    referans_id = f"tm:hipotez:{hipotez_turu}:{sube_id}:{tarih}:{boyut or '-'}"
+    try:
+        cur.execute("SAVEPOINT sp_hipotez")
+        cur.execute(
+            "SELECT 1 FROM denetim_hipotez_gozlem WHERE referans_id = %s", (referans_id,)
+        )
+        if cur.fetchone():
+            cur.execute("RELEASE SAVEPOINT sp_hipotez")
+            return False
+        cur.execute(
+            """
+            INSERT INTO denetim_hipotez_gozlem
+                (id, hipotez_turu, sube_id, tarih, boyut, kosul_var, kosul_siddet,
+                 sonuc_anomali, sonuc_tani, personel_id, detay_json, referans_id)
+            VALUES (%s, %s, %s, %s::date, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+            """,
+            (
+                str(uuid.uuid4()), hipotez_turu, sube_id, tarih, boyut,
+                bool(kosul_var), kosul_siddet, bool(sonuc_anomali), sonuc_tani,
+                personel_id, json.dumps(detay or {}, ensure_ascii=False, default=str),
+                referans_id,
+            ),
+        )
+        cur.execute("RELEASE SAVEPOINT sp_hipotez")
+        return True
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_hipotez")
+            cur.execute("RELEASE SAVEPOINT sp_hipotez")
+        except Exception:
+            pass
+        log.warning("hipotez_gozlem yazılamadı sube=%s referans=%s: %s", sube_id, referans_id, e)
+        return False
+
+
 def personel_risk_sinyal_uret(cur, sube_id: str, tarih: str, taniler: List["Tani"]) -> int:
     """Anomali tanılarından (sorumlu personel tanımlıysa) personel_risk_sinyal üretir.
 
@@ -1640,6 +1690,40 @@ def motor_calistir(cur, sube_id: str, tarih: str,
     try:
         cur.execute("SAVEPOINT sp_m")
         _gecikme = _acilis_gecikme_bilgisi(cur, sube_id, tarih)
+
+        # Sabahçıyı ilgilendiren anomali var mı? (öğrenme defterinin SONUÇ'u)
+        _sabah_anomali_tani = None
+        for _t in taniler:
+            if _t.boyut != "kasa" and _t.tani not in ("UYUMLU", "YETERSIZ_VERI"):
+                _sabah_anomali_tani = _t.tani
+                break
+        _sonuc_anomali = _sabah_anomali_tani is not None
+
+        # ── Ham gözlem kaydı (öğrenme defteri) ──────────────────────────────
+        # Açılış event'i varsa HER GÜN kaydet — hem geç hem zamanında açılan
+        # günler 2x2 analizine girsin. EŞİK UYGULANMAZ; kosul_siddet = ham
+        # gecikme dk (sonra istenen eşikle yeniden değerlendirilebilir).
+        if _gecikme is not None:
+            _gec_dk = _gecikme["gecikme_dk"]
+            _sabah_pid = _personel_id_by_ad(cur, _gecikme.get("personel_ad")) \
+                if _gecikme.get("personel_ad") else None
+            hipotez_gozlem_kaydet(
+                cur, "gec_acilis", sube_id, tarih,
+                kosul_var=(_gec_dk > 0),
+                sonuc_anomali=_sonuc_anomali,
+                kosul_siddet=_gec_dk,
+                sonuc_tani=_sabah_anomali_tani,
+                personel_id=_sabah_pid,
+                detay={
+                    "planlanan_saat": _gecikme.get("planlanan_saat"),
+                    "gercek_saat": _gecikme.get("gercek_saat"),
+                    "personel_ad": _gecikme.get("personel_ad"),
+                },
+            )
+
+        # ── Bağlam notu + risk sinyali (mevcut davranış, eşik bazlı) ────────
+        # NOT: 15dk eşiği geçici/sezgisel — öğrenme defteri yeterli veri
+        # biriktirince (≥~25 olay) bu eşik veriyle değiştirilecek.
         if _gecikme and _gecikme["gecikme_dk"] > _GEC_ACILIS_ESIK_DK:
             for _t in taniler:
                 if _t.boyut != "kasa" and _t.tani not in ("UYUMLU", "YETERSIZ_VERI"):
