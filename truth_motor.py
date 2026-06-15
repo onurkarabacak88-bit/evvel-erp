@@ -693,6 +693,17 @@ def _zeka_ozet_uret(taniler: List["Tani"],
     if _sorumlu_ad:
         satirlar.append(f"👤 İlgili personel: {_sorumlu_ad}")
 
+    # Sprint M — geç açılış bağlamı
+    _gec_acilis = (ana.detay or {}).get("sabahci_gec_acilis")
+    if _gec_acilis:
+        _kim = f" ({_gec_acilis['personel_ad']})" if _gec_acilis.get("personel_ad") else ""
+        satirlar.append(
+            f"🕐 Not: Bugün açılış {_gec_acilis['gecikme_dk']:.0f} dk gecikmeli yapıldı"
+            f"{_kim} (planlanan {_gec_acilis.get('planlanan_saat') or '?'}, "
+            f"gerçek {_gec_acilis.get('gercek_saat') or '?'}) — sayım baskı altında "
+            "yapılmış olabilir, bu ihtimal de değerlendirilmeli."
+        )
+
     # Çapraz bağlantı — asıl zekâ burada
     satirlar.append("")
     if capraz:
@@ -1030,6 +1041,73 @@ def _previous_day(tarih: str) -> str:
     from datetime import date as _d, timedelta as _td
     y, mo, d = (int(x) for x in str(tarih)[:10].split("-"))
     return (_d(y, mo, d) - _td(days=1)).isoformat()
+
+
+_GEC_ACILIS_ESIK_DK = 15.0  # operasyon_merkez_api "Geç Açılan Şubeler" ile aynı eşik
+
+
+def _acilis_gecikme_bilgisi(cur, sube_id: str, tarih: str) -> Optional[Dict[str, Any]]:
+    """Bugünkü ACILIS event'inin ne kadar gecikmeli yapıldığını döner.
+
+    Referans: operasyon_merkez_api `/gec-acilan-subeler` ile aynı hesap —
+    vardiya planı varsa (MIN başlangıç saati) ona göre, yoksa sistem_slot_ts'e
+    göre gecikme dakikası. Açılış yoksa veya gecikme yoksa None döner.
+    """
+    try:
+        cur.execute(
+            """
+            SELECT
+                e.cevap_ts,
+                CASE
+                    WHEN va.bek_saat IS NOT NULL THEN
+                        ROUND(EXTRACT(EPOCH FROM
+                            (e.cevap_ts AT TIME ZONE 'Europe/Istanbul'
+                             - (e.tarih::date + va.bek_saat))
+                        ) / 60.0, 2)
+                    WHEN e.sistem_slot_ts IS NOT NULL THEN
+                        ROUND(EXTRACT(EPOCH FROM (e.cevap_ts - e.sistem_slot_ts)) / 60.0, 2)
+                    ELSE 0.0
+                END AS gecikme_dk,
+                CASE
+                    WHEN va.bek_saat IS NOT NULL THEN TO_CHAR(va.bek_saat, 'HH24:MI')
+                    WHEN e.sistem_slot_ts IS NOT NULL THEN TO_CHAR(e.sistem_slot_ts AT TIME ZONE 'Europe/Istanbul', 'HH24:MI')
+                    ELSE NULL
+                END AS planlanan_saat,
+                x.personel_ad
+            FROM sube_operasyon_event e
+            LEFT JOIN LATERAL (
+                SELECT MIN(va2.baslangic_saat) AS bek_saat
+                FROM vardiya_atama va2
+                JOIN vardiya_slot vs2 ON vs2.id = va2.slot_id
+                WHERE vs2.sube_id = e.sube_id AND va2.tarih = e.tarih AND va2.durum != 'iptal'
+            ) va ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(NULLIF(TRIM(d.personel_ad), ''), p.ad_soyad, d.personel_id::text) AS personel_ad
+                FROM operasyon_defter d
+                LEFT JOIN personel p ON p.id = d.personel_id
+                WHERE d.ref_event_id = e.id
+                ORDER BY d.olay_ts DESC NULLS LAST, d.id DESC LIMIT 1
+            ) x ON TRUE
+            WHERE e.sube_id=%s AND e.tarih=%s::date AND e.tip='ACILIS' AND e.sira_no=0
+              AND e.durum='tamamlandi' AND e.cevap_ts IS NOT NULL
+            ORDER BY e.cevap_ts DESC LIMIT 1
+            """,
+            (sube_id, tarih),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        row = dict(row)
+        gecikme = round(max(0.0, float(row.get("gecikme_dk") or 0.0)), 2)
+        return {
+            "gecikme_dk": gecikme,
+            "planlanan_saat": row.get("planlanan_saat"),
+            "gercek_saat": row["cevap_ts"].strftime("%H:%M") if hasattr(row.get("cevap_ts"), "strftime") else None,
+            "personel_ad": (row.get("personel_ad") or "").strip() or None,
+        }
+    except Exception as e:
+        log.warning("truth_motor _acilis_gecikme_bilgisi hata sube=%s tarih=%s: %s", sube_id, tarih, e)
+        return None
 
 
 def veri_topla(cur, sube_id: str, tarih: str) -> List[BoyutVeri]:
@@ -1552,6 +1630,41 @@ def motor_calistir(cur, sube_id: str, tarih: str,
             log.warning("sprint_k adaptive_truth_walk hata sube=%s boyut=%s: %s",
                         sube_id, _t.boyut, _e)
             karar_hatalari.append(f"sprint_k:{_t.boyut}: {_e}")
+
+    # ── Sprint M: Geç açılış bağlamı ─────────────────────────────────────────
+    # Bugünkü sabahçı planlanan saatten geç açtıysa, bu durum sabah sayımının
+    # baskı altında yapılmış olabileceğine işaret eder. Sabahçıyı ilgilendiren
+    # anomalilere (SABAH_*, COZULMEDI, AKSAMCI_SAYIM_HATASI vb.) bu bağlamı
+    # ekliyoruz; ayrıca geç açılışın kendisi için ayrı, düşük ağırlıklı bir
+    # "eğitim/dikkat" risk sinyali yazılır (zimmet sinyaliyle karıştırılmaz).
+    try:
+        cur.execute("SAVEPOINT sp_m")
+        _gecikme = _acilis_gecikme_bilgisi(cur, sube_id, tarih)
+        if _gecikme and _gecikme["gecikme_dk"] > _GEC_ACILIS_ESIK_DK:
+            for _t in taniler:
+                if _t.boyut != "kasa" and _t.tani not in ("UYUMLU", "YETERSIZ_VERI"):
+                    _t.detay["sabahci_gec_acilis"] = _gecikme
+            if _gecikme.get("personel_ad"):
+                _pid = _personel_id_by_ad(cur, _gecikme["personel_ad"])
+                if _pid:
+                    _agirlik_m = max(1, min(10, round(_gecikme["gecikme_dk"] / 10)))
+                    _risk_sinyal_yaz(
+                        cur, _pid, sube_id, tarih,
+                        "truth_motor_gec_acilis", _agirlik_m,
+                        f"Açılış {_gecikme['gecikme_dk']:.0f} dk gecikmeli "
+                        f"(planlanan {_gecikme.get('planlanan_saat') or '?'}, "
+                        f"gerçek {_gecikme.get('gercek_saat') or '?'})",
+                        f"tm:{sube_id}:{tarih}:gec_acilis",
+                    )
+        cur.execute("RELEASE SAVEPOINT sp_m")
+    except Exception as _e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_m")
+            cur.execute("RELEASE SAVEPOINT sp_m")
+        except Exception:
+            pass
+        log.warning("sprint_m gec_acilis hata sube=%s tarih=%s: %s", sube_id, tarih, _e)
+        karar_hatalari.append(f"sprint_m: {_e}")
 
     # Eylem önerisi enjekte et
     for t in taniler:
