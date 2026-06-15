@@ -417,6 +417,27 @@ def gorev_pin_giris(body: GorevPinGirisBody):
         """, (tarih, body.sube_id, body.personel_id, vardiya_tip, konum_mesafe_m, konum_onaylandi, vardiya_disi, asil_sube_id))
         conn.commit()
 
+        # Kural 3: bu personelin önceki bir mesaisi QR çıkışı yapılmadan OTOMATİK
+        # kapatıldıysa, yeni girişte hatırlat ("çıkış yapmayı unuttun").
+        cikis_unutuldu = None
+        try:
+            cur.execute("""
+                SELECT tarih FROM gorev_yoklama
+                WHERE personel_id=%s AND cikis_tip='otomatik'
+                  AND tarih < %s::date
+                  AND tarih >= %s::date - INTERVAL '7 days'
+                ORDER BY tarih DESC LIMIT 1
+            """, (body.personel_id, tarih, tarih))
+            _u = cur.fetchone()
+            if _u:
+                _gun = str(dict(_u).get("tarih") or "")
+                cikis_unutuldu = (
+                    f"Son mesaide ({_gun}) QR çıkışı yapmadan gittin — mesain otomatik "
+                    "kapatıldı. Lütfen çıkışta QR okutmayı unutma."
+                )
+        except Exception:
+            cikis_unutuldu = None
+
         return {
             "personel_id": personel["id"],
             "ad_soyad": personel["ad_soyad"],
@@ -430,6 +451,7 @@ def gorev_pin_giris(body: GorevPinGirisBody):
             "planlanan_saat": round(planlanan_saat, 2),
             "yemek_mola_hakki": (calisma_turu == "surekli") or (planlanan_saat >= 9.5),
             "vardiya_tanimli": vardiya_tanimli,
+            "cikis_unutuldu_uyari": cikis_unutuldu,
             # vardiya_tanimli=False ise frontend seçim ekranı gösterir
         }
 
@@ -1278,6 +1300,96 @@ def kapanis_durum(sube_id: str):
     return {"kapanis_tamamlandi_bugun": bitti}
 
 
+def otomatik_mesai_kapat(cur, sube_id: str, tarih: str) -> list:
+    """Mesai bitişi + 30 dk geçtiği halde QR çıkışı yapmamış personeli OTOMATİK
+    kapatır (manuel kapanis-yonetici-kapat'ın otomatiği — Kural 1+2).
+
+    - cikis_ts = PLANLANAN bitiş saati (ücret planlanana göre kalsın — kullanıcı
+      kararı 2026-06-16), cikis_tip='otomatik' (denetim izi).
+    - Bitiş = vardiya_atama.bitis_saat (planlanan); yoksa subeler.kapanis_saati.
+      Bitiş bilinmiyorsa GÜVENLİ davranır (otomatik kapatmaz).
+    - Kural 4: düşük-ağırlık personel_risk_sinyal yazar (tam puanlama BEKLEMEDE).
+    Returns: otomatik kapatılan [{personel_id, ad_soyad}] listesi.
+    """
+    from datetime import datetime as _dt, timedelta as _td, time as _time_cls
+    from tr_saat import dt_now_tr_naive
+    import uuid as _uuid
+    GECIKME_DK = 30
+    try:
+        cur.execute(
+            """
+            SELECT gy.id, gy.personel_id, p.ad_soyad,
+                   (SELECT MAX(va.bitis_saat) FROM vardiya_atama va
+                    WHERE va.personel_id::text = gy.personel_id AND va.tarih = gy.tarih
+                      AND COALESCE(va.durum, '') <> 'iptal') AS plan_bitis,
+                   NULLIF(TRIM(s.kapanis_saati), '') AS sube_kapanis
+            FROM gorev_yoklama gy
+            JOIN personel p ON p.id::text = gy.personel_id
+            JOIN subeler s ON s.id = gy.sube_id
+            WHERE gy.sube_id = %s AND gy.tarih = %s::date AND gy.cikis_ts IS NULL
+            """,
+            (sube_id, tarih),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception:
+        return []
+    if not rows:
+        return []
+    simdi = dt_now_tr_naive()
+    try:
+        gun = _dt.fromisoformat(str(tarih)[:10]).date()
+    except Exception:
+        return []
+
+    kapatilan = []
+    for r in rows:
+        bitis_t = r.get("plan_bitis")  # datetime.time | None
+        if bitis_t is None:
+            sk = (r.get("sube_kapanis") or "").strip()
+            if sk:
+                try:
+                    hh, mm = (int(x) for x in sk.split(":")[:2])
+                    bitis_t = _time_cls(hh, mm)
+                except Exception:
+                    bitis_t = None
+        if bitis_t is None:
+            continue  # bitiş bilinmiyor → otomatik kapatma (güvenli)
+        plan_ts = _dt.combine(gun, bitis_t)
+        if simdi <= plan_ts + _td(minutes=GECIKME_DK):
+            continue
+        try:
+            cur.execute("SAVEPOINT sp_oto_kapat")
+            cur.execute(
+                """UPDATE gorev_yoklama SET cikis_ts=%s, cikis_tip='otomatik', cikis_gun=%s
+                   WHERE id=%s AND cikis_ts IS NULL""",
+                (plan_ts, plan_ts.date(), r["id"]),
+            )
+            if cur.rowcount > 0:
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO personel_risk_sinyal
+                            (id, personel_id, sube_id, tarih, sinyal_turu, agirlik, aciklama, referans_id)
+                        VALUES (%s, %s, %s, %s::date, 'cikis_yapmadi', 3, %s, %s)
+                        """,
+                        (str(_uuid.uuid4()), r["personel_id"], sube_id, str(tarih),
+                         f"QR çıkışı yapmadan gitti — mesai otomatik kapatıldı "
+                         f"(planlanan bitiş {bitis_t.strftime('%H:%M')})",
+                         f"oto_cikis:{sube_id}:{tarih}:{r['personel_id']}"),
+                    )
+                except Exception:
+                    pass
+                kapatilan.append({"personel_id": r["personel_id"], "ad_soyad": r.get("ad_soyad")})
+            cur.execute("RELEASE SAVEPOINT sp_oto_kapat")
+        except Exception:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_oto_kapat")
+                cur.execute("RELEASE SAVEPOINT sp_oto_kapat")
+            except Exception:
+                pass
+    return kapatilan
+
+
 @router.get("/api/gorev/kapanis-bekleyen")
 def kapanis_bekleyen(sube_id: str):
     """
@@ -1286,10 +1398,19 @@ def kapanis_bekleyen(sube_id: str):
     Not: vardiya_tip='kapanis' ile sinirli degildir — tek basina acilis+kapanis
     yapan (devir yapilmamis) sabahci/ara_vardiya personeli de kapanisini
     muhurleyebilsin diye, gunun sonunda hala acik olan herkesi kapsar.
+
+    OTOMASYON: önce mesai-bitiş + 30dk geçmiş açık yoklamaları otomatik kapatır
+    (otomatik_mesai_kapat) → çıkış yapmadan giden personel mührü sonsuza dek
+    bloke etmez; mühür kendiliğinden tamamlanabilir hale gelir.
     """
     from tr_saat import is_gunu_tr
     tarih = str(is_gunu_tr())
-    with db() as (_, cur):
+    with db() as (conn, cur):
+        try:
+            otomatik_mesai_kapat(cur, sube_id, tarih)
+            conn.commit()
+        except Exception:
+            pass
         cur.execute("""
             SELECT gy.id, gy.personel_id, gy.giris_ts,
                    p.ad_soyad

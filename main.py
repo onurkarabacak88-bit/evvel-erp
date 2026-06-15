@@ -283,6 +283,29 @@ def _gece_yarisi_scheduler():
                 _time.sleep(30 * 60)  # 30 dakika
                 from tr_saat import bugun_tr as _bugun_tr
                 _dun = _bugun_tr() - timedelta(days=1)
+
+                # ── Otomatik mesai kapatma — gece güvenlik süpürmesi ──────────
+                # Mühür polling'i (kapanis-bekleyen) zaten gün içinde otomatik
+                # kapatıyor; bu, hiç poll edilmeyen/açık kalan günün son
+                # yoklamalarını da kapatır (cikis_tip='otomatik', planlanan saat).
+                try:
+                    from gorev_api import otomatik_mesai_kapat as _oto_kapat
+                    with db() as (conn, cur):
+                        cur.execute("SELECT id::text AS id FROM subeler WHERE aktif=TRUE")
+                        _kap_subeler = cur.fetchall() or []
+                        _kap_toplam = 0
+                        for _ks in _kap_subeler:
+                            for _kt in (str(_dun), str(_bugun_tr())):
+                                try:
+                                    _kap_toplam += len(_oto_kapat(cur, _ks['id'], _kt))
+                                except Exception:
+                                    pass
+                        conn.commit()
+                    if _kap_toplam:
+                        logger.info(f"⏰ Otomatik mesai kapatma: {_kap_toplam} açık yoklama kapatıldı")
+                except Exception as _e:
+                    logger.warning(f"⏰ Otomatik mesai kapatma hatası: {_e}")
+
                 try:
                     import truth_motor as _tm
                     if _tm._global_aktif():
