@@ -348,22 +348,49 @@ def siparis_kontrol_kulesi_yukle(
     satirlar: List[Dict[str, Any]] = []
     for r in detay_rows:
         z = _satir_zenginlestir(cur, r, yolda=detay_yolda.get(str(r.get("id") or ""), []))
-        # kalan_kalemler: gönderilmemiş kalemler (frontend split modalı bunu kullanır)
+        # kalan_kalemler: hiç gönderilmemiş ÜRÜNLER (kalem bazında coverage).
+        # Bir ürün herhangi bir tedarikçiye gittiyse listede ÇIKMAZ (miktar farkı
+        # değil; merkez miktarı override edebilir = nihai karar). Gönderilmemiş
+        # ürünler tam miktarıyla kalır → split modalı sadece bunları gösterir.
         _disp = _dagitilan.get(str(r.get("id") or ""), {})
         if _disp:
-            _kalan: List[Dict[str, Any]] = []
-            for _it in (z.get("kalemler") or []):
-                if not isinstance(_it, dict):
-                    continue
-                _iad = str(_it.get("urun_ad") or "").strip().lower()
-                _rem = max(0, int(_it.get("adet") or 0)) - int(_disp.get(_iad, 0))
-                if _rem > 0:
-                    _yeni = dict(_it)
-                    _yeni["adet"] = _rem
-                    _kalan.append(_yeni)
+            _disp_set = set(_disp.keys())
+            _kalan: List[Dict[str, Any]] = [
+                dict(_it)
+                for _it in (z.get("kalemler") or [])
+                if isinstance(_it, dict)
+                and str(_it.get("urun_ad") or "").strip().lower() not in _disp_set
+            ]
             z["kalan_kalemler"] = _kalan
         else:
             z["kalan_kalemler"] = z.get("kalemler") or []
+
+        # ── SELF-HEAL: tüm ürünleri dağıtılmış ama hâlâ 'bekliyor' kalmış talep
+        # (eski hatalı/miktar-bazlı gönderimden kalma) → 'gonderildi'ye çek. Böylece
+        # kuyrukta hayalet "0 kalem" sipariş asılı kalmaz. Sadece dağıtım VARSA ve
+        # kalan YOKSA çalışır → açık (gerçekten kısmi) talepleri etkilemez.
+        if _disp and not z["kalan_kalemler"] and str(z.get("durum") or "") == "bekliyor":
+            try:
+                cur.execute(
+                    """
+                    UPDATE siparis_talep
+                    SET durum='gonderildi',
+                        sevkiyat_durumu='toptanciya_yonlendirildi',
+                        sevkiyat_durum='toptanciya_yonlendirildi',
+                        sevkiyat_ts=COALESCE(sevkiyat_ts, NOW())
+                    WHERE id=%s AND durum='bekliyor'
+                    """,
+                    (str(r.get("id") or ""),),
+                )
+                z["durum"] = "gonderildi"
+                z["sevkiyat_durumu"] = "toptanciya_yonlendirildi"
+                z["asama"] = siparis_asama_hesapla(
+                    "gonderildi", "toptanciya_yonlendirildi", z.get("kabul_durum")
+                )
+                z["asama_metni"] = _asama_metni(z["asama"], "toptanciya_yonlendirildi")
+            except Exception:
+                pass
+
         if asama and z["asama"] != asama:
             continue
         satirlar.append(z)

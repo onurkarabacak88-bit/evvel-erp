@@ -3124,9 +3124,10 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                         _dad = str((_dk or {}).get("urun_ad") or "").strip().lower()
                         if _dad:
                             _disp_map[_dad] = _disp_map.get(_dad, 0) + int((_dk or {}).get("adet") or 0)
-                _kalan_dagitilmamis = 0
-                for _ad, _adet in _n1_map.items():
-                    _kalan_dagitilmamis += max(0, _adet - int(_disp_map.get(_ad, 0)))
+                # Kalem-bazlı coverage: hiç dağıtılmamış ÜRÜN sayısı (miktar farkı değil)
+                _kalan_dagitilmamis = sum(
+                    1 for _ad in _n1_map if _ad not in _disp_map
+                )
                 # (b) Henüz teslim alınmamış başka gönderim var mı?
                 cur.execute(
                     "SELECT COUNT(*) AS n FROM toptanci_siparis WHERE talep_id=%s AND durum='gonderildi'",
