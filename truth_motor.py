@@ -117,6 +117,8 @@ TANI_TIPLERI = (
     "KUCUK_TUTAR_BIRIKIM",       # Personel son 30g'de >%55 günde küçük negatif fark → birikim/drift zimmeti
     # ── Sprint J — Cross-day Bardak Devamlılık Kontrolü ──────────────────────
     "AKSAM_BARDAK_SISIRDI",      # Dün KAPANIS bardak > bugün ACILIS bardak → gece "eridi" → akşamcı şişirdi
+    # ── Sprint K — COZULMEDI otomatik Truth Walk re-check ────────────────────
+    "AKSAMCI_SAYIM_HATASI",      # Truth Walk: bugünkü zincir tutarlı, fark dünden geliyor → akşamcı kapanış sayım hatası, zimmet değil
 )
 
 # Her tanı için (otomatik aksiyon, insan aksiyonu, alarm seviyesi)
@@ -157,6 +159,8 @@ EYLEM_MAP: Dict[str, Dict[str, str]] = {
     "KUCUK_TUTAR_BIRIKIM":       {"oto": "cfo_bildirim_log",     "insan": "Personel her gün küçük tutarda kasa açığı oluşturuyor → 30 günlük seri korelasyon soruşturması + birebir gözlem", "alarm": "yuksek"},
     # Sprint J — Cross-day bardak devamlılık
     "AKSAM_BARDAK_SISIRDI":      {"oto": "cfo_bildirim_kritik",  "insan": "Dün akşamcı KAPANIS bardak sayısını şişirdi — sabahçı kör sayımda gerçeği buldu → gece bardak kaybolmaz → zimmet soruşturması + kamera", "alarm": "kritik"},
+    # Sprint K — COZULMEDI otomatik Truth Walk re-check
+    "AKSAMCI_SAYIM_HATASI":      {"oto": "log_yesil",            "insan": "Dünkü kapanış sayımını gözden geçir — sayım hatası, zimmet/ikram aranmasın", "alarm": "dusuk"},
 }
 
 @dataclass
@@ -487,6 +491,8 @@ _TANI_ONCELIK = {
     "KUCUK_TUTAR_BIRIKIM":       82,
     # Sprint J — Cross-day bardak devamlılık
     "AKSAM_BARDAK_SISIRDI":      93,
+    # Sprint K — COZULMEDI otomatik Truth Walk re-check
+    "AKSAMCI_SAYIM_HATASI":       1,
 }
 
 _TANI_INSAN = {
@@ -526,6 +532,8 @@ _TANI_INSAN = {
     "KUCUK_TUTAR_BIRIKIM":       "Günlük küçük kasa eksilmesi — birikim zimmeti şüphesi",
     # Sprint J — Cross-day bardak devamlılık
     "AKSAM_BARDAK_SISIRDI":      "Dün akşamcı bardak şişirdi — gece bardak kaybolmaz, sabahçı gerçeği buldu → ZİMMET",
+    # Sprint K — COZULMEDI otomatik Truth Walk re-check
+    "AKSAMCI_SAYIM_HATASI":      "Bugünkü zincir tutarlı, fark dünden geliyor — akşamcının kapanış sayım hatası, zimmet/ikram değil",
 }
 
 _ALARM_ESIK = {
@@ -1352,6 +1360,40 @@ def motor_calistir(cur, sube_id: str, tarih: str,
             pass
         log.warning("sprint_j aksam_bardak_sisirme_tespit hata: %s", _e)
         karar_hatalari.append(f"sprint_j: {_e}")
+
+    # ── Sprint K: COZULMEDI boyutları için otomatik Truth Walk re-check ──────
+    # Bugünkü açılış sayımı geldiğinde, COZULMEDI olarak işaretlenmiş boyutlar
+    # adaptive_truth_walk ile yeniden değerlendirilir. Eğer akşamcı→sabahcı
+    # zinciri tutarlıysa (fark dünden geliyor) → AKSAMCI_SAYIM_HATASI'a çevrilir,
+    # 3. kişi sayımı/ikram araştırması istenmez.
+    for _t in taniler:
+        if _t.tani != "COZULMEDI":
+            continue
+        try:
+            cur.execute("SAVEPOINT sp_k")
+            _walk = adaptive_truth_walk(cur, sube_id, tarih, _t.boyut)
+            if _walk.get("karar") == "AKSAMCI_SAYIM_HATASI":
+                _t.tani = "AKSAMCI_SAYIM_HATASI"
+                _t.guven_skoru = _walk.get("guven", _t.guven_skoru)
+                _t.detay["sprint_k_truth_walk"] = {
+                    "ozet": _walk.get("ozet"),
+                    "aksam_fark": _walk.get("aksam_fark"),
+                    "sabah_fark_v1": _walk.get("sabah_fark_v1"),
+                }
+                log.info(
+                    "sprint_k aksamci_sayim_hatasi tetiklendi sube=%s tarih=%s boyut=%s",
+                    sube_id, tarih, _t.boyut,
+                )
+            cur.execute("RELEASE SAVEPOINT sp_k")
+        except Exception as _e:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_k")
+                cur.execute("RELEASE SAVEPOINT sp_k")
+            except Exception:
+                pass
+            log.warning("sprint_k adaptive_truth_walk hata sube=%s boyut=%s: %s",
+                        sube_id, _t.boyut, _e)
+            karar_hatalari.append(f"sprint_k:{_t.boyut}: {_e}")
 
     # Eylem önerisi enjekte et
     for t in taniler:
