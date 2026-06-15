@@ -162,6 +162,50 @@ def _sube_ciro_gun(cur, tarih: date) -> dict:
 
     return sonuc
 
+def _sube_nakit_gun(cur, tarih: date) -> dict:
+    """
+    Tek gün şube bazlı NAKİT tutarı — Merkez onayından BAĞIMSIZ (taslak dahil).
+    Öncelik: 1. KAPANIS x_rapor nakit  2. ciro.nakit (aktif)  3. ciro_taslak.nakit (bekliyor/onaylandi)
+    Döner: {sube_id: nakit_tutar}
+    """
+    sonuc = {}
+    cur.execute("""
+        SELECT DISTINCT ON (e.sube_id)
+               e.sube_id::text, e.snap_nakit, e.snap_pos, e.snap_online, e.meta
+        FROM sube_operasyon_event e
+        WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
+          AND e.tarih IN (%s, %s)
+        ORDER BY e.sube_id, e.cevap_ts DESC NULLS LAST, e.id DESC
+    """, (tarih, tarih + timedelta(days=1)))
+    for r in (cur.fetchall() or []):
+        sid = str(r["sube_id"])
+        xr = _x_rapor_ciro(dict(r))
+        if xr.get("nakit") is not None and float(xr["nakit"] or 0) > 0:
+            sonuc[sid] = float(xr["nakit"] or 0)
+
+    cur.execute("""
+        SELECT sube_id::text, COALESCE(SUM(nakit),0) AS nakit
+        FROM ciro WHERE tarih=%s AND durum='aktif' GROUP BY sube_id
+    """, (tarih,))
+    for r in (cur.fetchall() or []):
+        sid = str(r["sube_id"])
+        if sid not in sonuc:
+            sonuc[sid] = float(r["nakit"] or 0)
+
+    cur.execute("""
+        SELECT DISTINCT ON (t.sube_id) t.sube_id::text, COALESCE(t.nakit,0) AS nakit
+        FROM ciro_taslak t
+        WHERE t.tarih=%s AND t.durum IN ('bekliyor','onaylandi')
+        ORDER BY t.sube_id, CASE t.durum WHEN 'onaylandi' THEN 0 ELSE 1 END, t.olusturma DESC
+    """, (tarih,))
+    for r in (cur.fetchall() or []):
+        sid = str(r["sube_id"])
+        if sid not in sonuc:
+            sonuc[sid] = float(r["nakit"] or 0)
+
+    return sonuc
+
+
 def _ciro_verileri(cur, tarih: date) -> dict:
     cur.execute("SELECT id, ad FROM subeler WHERE aktif=TRUE ORDER BY ad")
     subeler_liste = cur.fetchall() or []
@@ -221,15 +265,9 @@ def _kasa_verileri(cur, tarih: date) -> dict:
     """)
     kasa = float((cur.fetchone() or {}).get("bakiye") or 0)
 
-    # Bugün kasa'ya giren SADECE CİRO (dış kaynak hariç)
-    cur.execute("""
-        SELECT COALESCE(SUM(tutar),0) AS toplam
-        FROM kasa_hareketleri
-        WHERE kasa_etkisi=TRUE AND durum='aktif' AND tutar>0
-          AND islem_turu = 'CIRO'
-          AND tarih = %s
-    """, (tarih,))
-    bugun_ciro = float((cur.fetchone() or {}).get("toplam") or 0)
+    # Bugün yapılan toplam NAKİT iş — Merkez onayından bağımsız (taslak dahil),
+    # kaç şubeden geldiyse hepsinin nakit toplamı
+    bugun_ciro = sum(_sube_nakit_gun(cur, tarih).values())
 
     # Bugün kasa'dan çıkan
     cur.execute("""
@@ -240,16 +278,9 @@ def _kasa_verileri(cur, tarih: date) -> dict:
     """, (tarih,))
     cikan = float((cur.fetchone() or {}).get("toplam") or 0)
 
-    # Dün ciro (trend için)
+    # Dün nakit (trend için)
     dun = tarih - timedelta(days=1)
-    cur.execute("""
-        SELECT COALESCE(SUM(tutar),0) AS toplam
-        FROM kasa_hareketleri
-        WHERE kasa_etkisi=TRUE AND durum='aktif' AND tutar>0
-          AND islem_turu = 'CIRO'
-          AND tarih = %s
-    """, (dun,))
-    dun_ciro = float((cur.fetchone() or {}).get("toplam") or 0)
+    dun_ciro = sum(_sube_nakit_gun(cur, dun).values())
 
     return {"kasa": kasa, "bugun_ciro": bugun_ciro, "cikan": cikan,
             "ciro_trend": _trend(bugun_ciro, dun_ciro)}
