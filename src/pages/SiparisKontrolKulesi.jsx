@@ -449,6 +449,8 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
   const [kuyrukToptanciListeler, setKuyrukToptanciListeler] = useState({}); // talep_id → [{listeNo,toptanciAd,kalemler,ts}]
   const [toptanciModalSip, setToptanciModalSip] = useState(null); // modal için açık sip | null
   const [tedarikciListesi, setTedarikciListesi] = useState([]);
+  const [telefonModal, setTelefonModal] = useState(null); // { sip, tedarikci, value } | null
+  const [telefonModalBusy, setTelefonModalBusy] = useState(false);
   const [kuyrukBusy, setKuyrukBusy] = useState(null);
   const [iptalBusy, setIptalBusy] = useState(null);
   const [islemSonuc, setIslemSonuc] = useState(null); // { basarili, mesaj }
@@ -794,13 +796,14 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
   };
 
   // Seçili kalemleri toptancı listesine ekle + ekrandan kaldır + otomatik yazdır
-  const toptanciListeOlustur = (sip) => {
+  const toptanciListeOlustur = (sip, opts) => {
     const talepId = String(sip?.id || '');
     const toptanciAd = (kuyrukToptanciTedarikci[talepId] || '').trim();
     if (!toptanciAd) { toast('Önce toptancı adını girin.', 'red'); return; }
     // Yazılan/seçilen adı kayıtlı tedarikçiyle eşleştir → id + telefon yakala.
     // Telefon WhatsApp gönderimi için zorunlu (kullanıcı kararı: telefon yoksa blokla).
-    const eslesen = (tedarikciListesi || []).find(
+    // opts.tedarikciOverride: telefon modalı kaydettikten sonra güncel telefonla devam.
+    const eslesen = (opts && opts.tedarikciOverride) || (tedarikciListesi || []).find(
       (t) => String(t.ad || '').trim().toLowerCase() === toptanciAd.toLowerCase()
     );
     let tedarikciId = null;
@@ -811,7 +814,8 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
       tedarikciTel = String(eslesen.telefon || '').trim();
       tedarikciAdFinal = String(eslesen.ad || toptanciAd);
       if (!tedarikciTel) {
-        toast(`"${tedarikciAdFinal}" için telefon numarası yok. WhatsApp ile sipariş gönderebilmek için Tedarikçiler ekranından numara ekleyin.`, 'red');
+        // Ekran değiştirme yok — telefon modalı aç; kaydedince siparişe devam et.
+        setTelefonModal({ sip, tedarikci: eslesen, value: '' });
         return;
       }
     } else {
@@ -848,6 +852,39 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
     });
     setKuyrukToptanciTedarikci(prev => ({ ...prev, [talepId]: '' }));
     toptanciYazdirListe(yeniListe, sip.sube_adi || 'Şube', sip.olusturma || '', (kuyrukToptanciNot[talepId] || '').trim());
+  };
+
+  // Telefon modalı: eksik numarayı yerinde gir → tedarikçi kartına kalıcı yaz → siparişe devam
+  const telefonModalKaydet = async () => {
+    const tm = telefonModal;
+    if (!tm || !tm.tedarikci) return;
+    const tel = String(tm.value || '').trim();
+    if (tel.replace(/\D/g, '').length < 10) {
+      toast('Geçerli bir telefon girin (ör. 0532 123 45 67).', 'red');
+      return;
+    }
+    setTelefonModalBusy(true);
+    try {
+      const t = tm.tedarikci;
+      await api(`/tedarikciler/${encodeURIComponent(t.id)}`, {
+        method: 'PUT',
+        body: { ad: t.ad, kategori: t.kategori || '', telefon: tel, aciklama: t.aciklama || '' },
+      });
+      // Yerel tedarikçi listesinde telefonu güncelle (sonraki kontroller geçsin)
+      setTedarikciListesi(prev => (prev || []).map(x => (
+        String(x.id) === String(t.id) ? { ...x, telefon: tel } : x
+      )));
+      const sip = tm.sip;
+      const guncelTedarikci = { ...t, telefon: tel };
+      setTelefonModal(null);
+      toast(`"${t.ad}" numarası kaydedildi.`, 'green');
+      // Siparişe kaldığı yerden devam — güncel telefonla
+      toptanciListeOlustur(sip, { tedarikciOverride: guncelTedarikci });
+    } catch (e) {
+      toast(e.message || 'Telefon kaydedilemedi', 'red');
+    } finally {
+      setTelefonModalBusy(false);
+    }
   };
 
   // Oluşturulan bir listeyi geri al — kalemler tekrar serbest, liste siliniyor
@@ -1064,6 +1101,45 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
           kalemIstenenAdet={kalemIstenenAdet}
           kuyrukBusy={kuyrukBusy}
         />
+      )}
+      {telefonModal && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 9950, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={() => { if (!telefonModalBusy) setTelefonModal(null); }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: 'var(--card, #fff)', borderRadius: 14, padding: 20, width: '100%', maxWidth: 380, boxShadow: '0 12px 40px rgba(0,0,0,.3)' }}
+          >
+            <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 6 }}>
+              📞 Telefon numarası gerekli
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text3, #666)', marginBottom: 14, lineHeight: 1.45 }}>
+              <strong>{telefonModal.tedarikci?.ad}</strong> için kayıtlı numara yok. WhatsApp ile sipariş gönderebilmek için numarayı girin — <strong>tedarikçi kartına kalıcı kaydedilir</strong>, bir daha sorulmaz.
+            </div>
+            <input
+              className="input"
+              type="tel"
+              inputMode="tel"
+              autoFocus
+              style={{ width: '100%', fontSize: 16, padding: '10px 12px', marginBottom: 14 }}
+              placeholder="0532 123 45 67"
+              value={telefonModal.value}
+              onChange={(e) => setTelefonModal((m) => (m ? { ...m, value: e.target.value } : m))}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !telefonModalBusy) telefonModalKaydet(); }}
+            />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-secondary" disabled={telefonModalBusy}
+                onClick={() => setTelefonModal(null)}>
+                İptal
+              </button>
+              <button type="button" className="btn btn-primary" disabled={telefonModalBusy}
+                onClick={telefonModalKaydet}>
+                {telefonModalBusy ? 'Kaydediliyor…' : '💾 Kaydet ve devam et'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {msg && <div className={`alert-box ${msg.t} mb-8`}>{msg.m}</div>}
 
