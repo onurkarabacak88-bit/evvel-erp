@@ -846,7 +846,15 @@ def personel_risk_sinyal_uret(cur, sube_id: str, tarih: str, taniler: List["Tani
             continue
         if (t.guven_skoru or 0) < _RISK_SINYAL_MIN_GUVEN:
             continue
-        ad = (t.detay or {}).get("aksamci_ad") or (t.detay or {}).get("sabahci_ad")
+        # ── Çapraz-gün tarih atfı ────────────────────────────────────────
+        # n1_aksam = ÖNCEKİ günün akşamcı kapanış beyanı, n2_sabah = bugünün
+        # (tarih) sabahçı açılış sayımı. Yani "aksamci_ad" → o kişi
+        # (tarih - 1) gününde çalıştı; sinyal o güne yazılmalı, "tarih"e değil.
+        # "sabahci_ad" ise bugünün (tarih) sabahçısı, tarih doğru.
+        aksamci_ad = (t.detay or {}).get("aksamci_ad")
+        sabahci_ad = (t.detay or {}).get("sabahci_ad")
+        ad = aksamci_ad or sabahci_ad
+        sinyal_tarih = _previous_day(tarih) if aksamci_ad else tarih
         pid = _personel_id_by_ad(cur, ad)
         if not pid:
             continue
@@ -867,7 +875,7 @@ def personel_risk_sinyal_uret(cur, sube_id: str, tarih: str, taniler: List["Tani
                 VALUES (%s, %s, %s, %s::date, %s, %s, %s, %s)
                 """,
                 (
-                    str(uuid.uuid4()), pid, sube_id, tarih,
+                    str(uuid.uuid4()), pid, sube_id, sinyal_tarih,
                     f"truth_motor_{t.tani.lower()}", agirlik, aciklama, referans_id,
                 ),
             )
@@ -1380,6 +1388,15 @@ def motor_calistir(cur, sube_id: str, tarih: str,
                     "aksam_fark": _walk.get("aksam_fark"),
                     "sabah_fark_v1": _walk.get("sabah_fark_v1"),
                 }
+                # Sorumlu kişi: dünkü (önceki gün) akşamcı — sadece tek
+                # personel akşamı tek başına kapattıysa net atfedilir
+                # (collusion riski olan çoklu vardiyalarda kişiye atfetmiyoruz).
+                _vardiya_dun = _walk.get("vardiya_dun") or {}
+                _tek_aksam = _vardiya_dun.get("tek_basina_araliklari") or []
+                if len(_tek_aksam) == 1 and not (_vardiya_dun.get("coklu_araliklari") or []):
+                    _aksamci_ad = _tek_aksam[-1].get("personel_ad")
+                    if _aksamci_ad:
+                        _t.detay["aksamci_ad"] = _aksamci_ad
                 log.info(
                     "sprint_k aksamci_sayim_hatasi tetiklendi sube=%s tarih=%s boyut=%s",
                     sube_id, tarih, _t.boyut,
