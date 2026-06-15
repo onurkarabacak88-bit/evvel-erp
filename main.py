@@ -321,6 +321,21 @@ def _gece_yarisi_scheduler():
                         logger.info(f"⏰ Akıllı Denetim: {_calisan}/{len(_subeler)} şube — tarih={_dun}")
                 except Exception as e:
                     logger.warning(f"⏰ Akıllı Denetim motor hatası: {e}")
+
+                # ── P3 Faz 1: sevkiyat çift-kolon tutarlılık duyusu (global, 1 kez) ──
+                # Audit Brain'in iç veri-bütünlüğü duyusu: yeni kolon tek gerçek
+                # kaynak mı? Bulguları öğrenme defterine yazar (salt okuma).
+                try:
+                    from siparis_kontrol_kulesi import sevkiyat_kolon_tutarsizlik_tara
+                    with db() as (conn, cur):
+                        _tut = sevkiyat_kolon_tutarsizlik_tara(cur, gun=120)
+                        conn.commit()
+                    logger.info(
+                        f"⏰ P3 çift-kolon tutarlılık: taranan={_tut.get('taranan')} "
+                        f"uyumsuz={_tut.get('uyumsuz')} bos_eski={_tut.get('bos_eski')}"
+                    )
+                except Exception as _e:
+                    logger.warning(f"⏰ P3 çift-kolon tutarlılık tarama hatası: {_e}")
             except Exception as e:
                 logger.warning(f"⏰ Akıllı Denetim bekleme hatası: {e}")
 

@@ -6,7 +6,11 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
-from sevkiyat_helpers import SD_ST, sevkiyat_durumu_coz
+from sevkiyat_helpers import (
+    SD_ST,
+    sevkiyat_durumu_coz,
+    sevkiyat_durumu_guncelle_params,
+)
 
 # Pipeline aşamaları (UI sütun / filtre anahtarları)
 ASAMA_BEKLIYOR = "bekliyor"
@@ -420,4 +424,106 @@ def siparis_urun_gecmis(
         "gun": gun_i,
         "toplam": len(satirlar),
         "satirlar": satirlar,
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  P3 FAZ 1 — ÇİFT-KOLON TUTARLILIK DUYUSU (Akıllı Denetim entegrasyonu)
+# ────────────────────────────────────────────────────────────────────────────
+#  GPT+Opus sentezi (2026-06-15): sevkiyat_durumu (yeni) tek gerçek kaynak mı?
+#  Bunu KANITLAMADAN migration'a başlamak = sessiz veri bozulması riski.
+#  Bu fonksiyon SALT OKUMA ile "yeni kolondan beklenen legacy" ile gerçek eski
+#  kolonu karşılaştırır (writer'ın AYNI eşlemesi: sevkiyat_durumu_guncelle_params,
+#  kayıplı map yüzünden yanlış-pozitif olmaz). Bulgular öğrenme defterine
+#  (denetim_hipotez_gozlem) per-şube gözlem olarak yazılır — yani bu, Audit
+#  Brain'in yeni bir "iç veri-bütünlüğü duyusu". Hedef: haftalarca 0 tutarsızlık,
+#  sonra P3 Faz 2 (okumaları yeni kolona taşı) güvenle başlar.
+# ════════════════════════════════════════════════════════════════════════════
+
+def sevkiyat_kolon_tutarsizlik_tara(cur: Any, gun: int = 120) -> Dict[str, Any]:
+    """Çift-kolon (sevkiyat_durumu vs sevkiyat_durum) tutarlılığını ölçer. SALT OKUMA
+    + öğrenme defterine gözlem yazar (davranış/veri değişmez).
+
+    Returns: {taranan, uyumsuz, bos_eski, sube_bazli, ornekler}
+    """
+    gun_i = max(1, min(730, int(gun or 120)))
+    cur.execute(
+        """
+        SELECT st.id, st.sube_id, COALESCE(s.ad, st.sube_id::text) AS sube_adi,
+               st.durum, st.sevkiyat_durumu, st.sevkiyat_durum
+        FROM siparis_talep st
+        JOIN subeler s ON s.id = st.sube_id
+        WHERE st.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+        """,
+        (gun_i,),
+    )
+    rows = cur.fetchall() or []
+
+    # sube_id -> {taranan, uyumsuz, bos_eski}
+    sube_bazli: Dict[str, Dict[str, Any]] = {}
+    ornekler: List[Dict[str, Any]] = []
+    taranan = uyumsuz = bos_eski = 0
+
+    for r in rows:
+        d = dict(r)
+        sid = str(d.get("sube_id") or "")
+        yeni = (str(d.get("sevkiyat_durumu") or "")).strip()
+        eski = (str(d.get("sevkiyat_durum") or "")).strip()
+        sb = sube_bazli.setdefault(sid, {
+            "sube_adi": d.get("sube_adi"), "taranan": 0, "uyumsuz": 0, "bos_eski": 0,
+        })
+
+        # Yeni kolon boşsa "yeni = tek gerçek kaynak" hipotezi test edilemez — atla
+        if not yeni:
+            continue
+        taranan += 1
+        sb["taranan"] += 1
+
+        # canonical(yeni) → writer'ın üreteceği beklenen legacy
+        canonical = sevkiyat_durumu_coz(yeni, None)
+        _, beklenen_eski = sevkiyat_durumu_guncelle_params(canonical)
+
+        if not eski:
+            bos_eski += 1
+            sb["bos_eski"] += 1
+            continue
+        if eski != beklenen_eski:
+            uyumsuz += 1
+            sb["uyumsuz"] += 1
+            if len(ornekler) < 20:
+                ornekler.append({
+                    "talep_id": str(d.get("id") or ""),
+                    "sube_adi": d.get("sube_adi"),
+                    "yeni": yeni, "eski": eski,
+                    "beklenen_eski": beklenen_eski, "durum": d.get("durum"),
+                })
+
+    # ── Öğrenme defterine per-şube gözlem yaz (Audit Brain duyusu) ──────────
+    try:
+        import truth_motor as _tm
+        from datetime import date as _date
+        _bugun = _date.today().isoformat()
+        for sid, sb in sube_bazli.items():
+            if sb["taranan"] <= 0:
+                continue
+            _tm.hipotez_gozlem_kaydet(
+                cur, "sevkiyat_cift_kolon", sid, _bugun,
+                kosul_var=(sb["uyumsuz"] > 0),
+                sonuc_anomali=(sb["uyumsuz"] > 0),
+                kosul_siddet=float(sb["uyumsuz"]),
+                detay={
+                    "taranan": sb["taranan"],
+                    "uyumsuz": sb["uyumsuz"],
+                    "bos_eski": sb["bos_eski"],
+                },
+            )
+    except Exception:
+        pass  # gözlem yazımı başarısız olsa da tarama sonucu döner
+
+    return {
+        "taranan": taranan,
+        "uyumsuz": uyumsuz,
+        "bos_eski": bos_eski,
+        "sube_bazli": sube_bazli,
+        "ornekler": ornekler,
     }
