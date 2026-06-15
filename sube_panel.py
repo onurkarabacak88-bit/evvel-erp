@@ -2894,7 +2894,8 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
         if siparis_talep_id:
             cur.execute(
                 """
-                SELECT id, sube_id, durum, sevkiyat_durumu, kalemler_ozet
+                SELECT id, sube_id, durum, sevkiyat_durumu, kalemler_ozet,
+                       merkez_karar_kalemleri
                 FROM siparis_talep
                 WHERE id=%s
                 FOR UPDATE
@@ -2923,10 +2924,19 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                     f"Bu sipariş zaten kapatılmış (durum: {_talep_durum}). Yeniden teslim alınamaz.",
                 )
             # Sipariş kalemleriyle kabul kalemlerini karşılaştır → uyuşmazlık varsa uyarı (kör denetim)
+            # REFERANS: N2 (merkez_karar_kalemleri = ops'un toptancıya sipariş ettiği
+            # miktar) varsa ONUNLA karşılaştır; yoksa N1'e (kalemler_ozet = şube
+            # talebi) düş. Böylece "5 istedim 6 sipariş ettim" zincirinde kabul
+            # DOĞRU referansla (6) karşılaştırılır, yanlış fazla/eksik alarmı olmaz.
             try:
-                _orig_kalemler = _talep.get("kalemler_ozet") or []
+                import json as _j2
+                _ref_kaynak = "N1_talep"
+                _orig_kalemler = _talep.get("merkez_karar_kalemleri")
+                if _orig_kalemler:
+                    _ref_kaynak = "N2_merkez"
+                else:
+                    _orig_kalemler = _talep.get("kalemler_ozet") or []
                 if isinstance(_orig_kalemler, str):
-                    import json as _j2
                     _orig_kalemler = _j2.loads(_orig_kalemler)
                 _orig_map = {}
                 for _ok in (_orig_kalemler or []):
@@ -2968,6 +2978,7 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                             _j3.dumps({
                                 "siparis_talep_id": siparis_talep_id,
                                 "uyusmazlik_satirlar": _uyusmazlik_satirlar,
+                                "referans_kaynak": _ref_kaynak,
                                 "tedarikci_id": tedarikci_id,
                                 "tedarikci_ad": tedarikci_ad,
                             }, ensure_ascii=False),

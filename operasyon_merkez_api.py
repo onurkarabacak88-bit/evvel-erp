@@ -9535,10 +9535,11 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
                 sevkiyat_durumu = 'toptanciya_yonlendirildi',
                 sevkiyat_durum = 'toptanciya_yonlendirildi',
                 sevkiyat_notu = COALESCE(NULLIF(TRIM(%s), ''), sevkiyat_notu),
-                sevkiyat_ts = COALESCE(sevkiyat_ts, NOW())
+                sevkiyat_ts = COALESCE(sevkiyat_ts, NOW()),
+                merkez_karar_kalemleri = %s::jsonb
             WHERE id = %s
             """,
-            (sevk_notu, tid),
+            (sevk_notu, json.dumps(kalemler, ensure_ascii=False), tid),
         )
         audit(cur, "siparis_talep", tid, "OPS_SIPARIS_TOPTANCIYA_YOLLA")
     return {

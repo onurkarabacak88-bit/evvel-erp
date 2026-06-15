@@ -2401,6 +2401,16 @@ def init_db():
                 ) THEN
                     ALTER TABLE siparis_talep ADD COLUMN kalem_durumlari JSONB NOT NULL DEFAULT '[]'::jsonb;
                 END IF;
+                -- N2 (merkez kararı): toptancıya yönlendirirken ops'un belirlediği
+                -- miktar. N1 (kalemler/kalemler_ozet) ASLA ezilmez — bu AYRI alan.
+                -- (bkz. project_tedarik_zinciri: procurement_line / N1≠N2 ayrımı)
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'siparis_talep'
+                      AND column_name = 'merkez_karar_kalemleri'
+                ) THEN
+                    ALTER TABLE siparis_talep ADD COLUMN merkez_karar_kalemleri JSONB;
+                END IF;
             EXCEPTION WHEN others THEN NULL;
             END $$;
         """)
