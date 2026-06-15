@@ -2170,6 +2170,7 @@ def _katman_6_nlp_aciklama(
     }
     KARAR_TR = {
         "AKSAMCI_HATALI": "akşamcı hatalı saydı",
+        "AKSAMCI_SAYIM_HATASI": "akşamcının kapanış sayımı hatalı (dünden gelen fark)",
         "SABAHCI_HATALI": "sabahcı hatalı saydı",
         "IKISI_DE_HATALI": "iki taraf da hatalı",
         "EVO_DESTEKLI_HIRSIZLIK": "kayıt dışı satış şüphesi",
@@ -2199,6 +2200,14 @@ def _katman_6_nlp_aciklama(
         parcalar.append(
             f"{boyut_tr} için hem akşamcı hem sabahcı türetilmiş değerden sapıyor — "
             "3. kişi sayımı zorunlu."
+        )
+    elif karar == "AKSAMCI_SAYIM_HATASI":
+        parcalar.append(
+            f"Bugünkü {boyut_tr} zinciri (akşamcı {aksamci_beyan:.0f} → sabahcı) tutarlı "
+            f"(fark {sabah_fark_v1:+.0f}) — asıl fark dünden geliyor, akşamcı "
+            f"{aksamci_beyan:.0f} beyan etti ama matematik {beklenen_aksam:.0f} "
+            f"bekliyordu (fark {aksam_fark:+.0f}). Muhtemelen akşamcının kapanış "
+            "sayımında hata var, zimmet değil."
         )
     sorumlu_ad = None
     if k0_vardiya:
@@ -2274,7 +2283,8 @@ def _katman_7_bayesian_konsensus(
         delta -= 10.0; parcalar.append("K7-10 (belirsiz karar)")
     final_guven = min(99.0, max(10.0, guven_base + delta))
     alarm = (
-        "kritik" if final_guven >= 90 and karar in (
+        "dusuk" if karar == "AKSAMCI_SAYIM_HATASI"
+        else "kritik" if final_guven >= 90 and karar in (
             "EVO_DESTEKLI_HIRSIZLIK", "AKSAMCI_HATALI", "SABAHCI_HATALI")
         else "yuksek" if final_guven >= 75
         else "orta" if final_guven >= 55
@@ -2505,6 +2515,23 @@ def adaptive_truth_walk(cur, sube_id: str, tarih: str, boyut: str) -> Dict[str, 
             f"Dün akşamı KAPANIS kaydını revize et: stok {aksamci_beyan:.0f} → {beklenen_aksam:.0f}.",
             "Akşamcı performans incelemesine alın.",
             "Eğer fark sürekli aynı yönde ise zimmet pre-pozisyonu sinyali.",
+        ]
+    elif not aksamci_dogru and not sabahci_dogru_v1 and not sabahci_dogru_v2 \
+            and abs(sabah_fark_v1) <= max(tolerans, 1):
+        # Bugünkü zincir (akşamcı→sabahcı) kendi içinde tutarlı (sabah_fark_v1 ≈ 0) —
+        # asıl uyumsuzluk dünden geliyor (akşamcı beyanı ≠ türetilmiş akşam).
+        # Akşamcının kapanış sayımı muhtemelen hatalı yazılmış (kasıtlı değil);
+        # zimmet/ikram araştırması bugün için gerekmiyor.
+        karar = "AKSAMCI_SAYIM_HATASI"
+        guven = 85.0
+        ozet = (f"Bugünkü zincir tutarlı (akşamcı beyanı {aksamci_beyan:.0f} → sabahcı {sabahci_beyan:.0f}, "
+                f"fark {sabah_fark_v1:+.0f} — normal sapma). Asıl fark dünden geliyor: "
+                f"akşamcının kapanış sayımı {aksamci_beyan:.0f}, matematik {beklenen_aksam:.0f} olmasını "
+                f"bekliyordu (fark {aksam_fark:+.0f}). Bu büyük olasılıkla akşamcının kapanış "
+                f"sayımındaki bir HATA — zimmet/ikram değil.")
+        oneriler = [
+            "Dünkü (akşamcı) kapanış sayımını gözden geçir — muhtemelen sayım/yazım hatası, kasıtlı değil.",
+            "Bugün için 3. kişi sayımı veya ikram araştırması gerekmiyor.",
         ]
     elif not aksamci_dogru and not sabahci_dogru_v1 and not sabahci_dogru_v2:
         # Her iki taraf da türetilmişle uyumsuz
