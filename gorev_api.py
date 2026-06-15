@@ -1373,6 +1373,41 @@ def kapanis_sifirla(sube_id: str):
     return {"mesaj": f"{etkilenen} kapanış kaydı sıfırlandı.", "sube_id": sube_id, "tarih": tarih}
 
 
+class KapanisYoneticiKapatBody(BaseModel):
+    sube_id: str
+    personel_id: str
+    yapan_ad: Optional[str] = None
+
+
+@router.post("/api/gorev/kapanis-yonetici-kapat")
+def kapanis_yonetici_kapat(body: KapanisYoneticiKapatBody):
+    """
+    Çıkış yapmadan giden personelin bugünkü AÇIK yoklamasını yönetici kapatır
+    (mühürü bloke etmesin). Kayıtta cikis_tip='yonetici' ile işaretlenir →
+    kişinin kendi QR onayından AYRILIR (denetim izi: çıkışı yönetici yaptı).
+    Ücreti etkilemez (maliyet planlanan vardiya saatine göre hesaplanır).
+    """
+    from tr_saat import is_gunu_tr, dt_now_tr
+    tarih = str(is_gunu_tr())
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT id FROM gorev_yoklama
+            WHERE sube_id=%s AND personel_id=%s AND tarih=%s AND cikis_ts IS NULL
+            ORDER BY giris_ts DESC LIMIT 1
+        """, (body.sube_id, body.personel_id, tarih))
+        row = cur.fetchone()
+        if not row:
+            return {"mesaj": "Bu personelin açık mesaisi yok (zaten kapalı).", "kapatildi": False}
+        _ts = dt_now_tr()
+        cur.execute("""
+            UPDATE gorev_yoklama
+            SET cikis_ts=%s, cikis_tip='yonetici', cikis_gun=%s
+            WHERE id=%s
+        """, (_ts, _ts.date(), row["id"]))
+        conn.commit()
+    return {"mesaj": "Personel mesaisi yönetici tarafından kapatıldı.", "kapatildi": True}
+
+
 @router.patch("/api/gorev/yoklama/{yoklama_id}/vardiya-tip-duzelt")
 def yoklama_vardiya_tip_duzelt(yoklama_id: str, vardiya_tip: str):
     """Bir yoklama kaydının vardiya tipini düzeltir (hata düzeltme için, örn.

@@ -6677,6 +6677,17 @@ async function kapanisGonderSubmit(otomatik) {
   }
 }
 
+async function _kapYoneticiKapat(personelId, ad) {
+  if (!personelId) return;
+  if (!window.confirm('"' + (ad || 'Personel') + '" çıkış yapmadan gitmiş görünüyor.\n\nMesaisini YÖNETİCİ olarak kapatmak istiyor musun?\n(Kayıtta "yönetici kapattı" diye işaretlenir; ücretini etkilemez.)')) return;
+  try {
+    await api('/gorev/kapanis-yonetici-kapat', { method: 'POST', body: { sube_id: SUBE_ID, personel_id: personelId } });
+    if (typeof showToast === 'function') showToast('✅ ' + (ad || 'Personel') + ' mesaisi kapatıldı — mühür birazdan tamamlanır.', 'info', 3500);
+  } catch (e) {
+    if (typeof showToast === 'function') showToast('❌ ' + (e.message || 'Kapatılamadı'), 'error', 4000);
+  }
+}
+
 function setKapanisStep(step) {
   kapStepAktif = step;
   [1,2,3,4,5].forEach(function(i){
@@ -6700,7 +6711,17 @@ function setKapanisStep(step) {
     clearInterval(_kapQrTimer);
     var img = document.getElementById('kapQrImg');
     if (img) img.src = '/api/gorev/qr/' + encodeURIComponent(SUBE_ID);
-    document.getElementById('kapQrBekle').style.display = 'block';
+    var _bekleWrap = document.getElementById('kapQrBekle');
+    _bekleWrap.style.display = 'block';
+    // "Mesaisini kapat" düğmesi delegasyonu (bir kez bağla)
+    if (_bekleWrap && _bekleWrap.dataset.ykWired !== '1') {
+      _bekleWrap.dataset.ykWired = '1';
+      _bekleWrap.addEventListener('click', function(ev){
+        var btn = ev.target.closest('[data-kap-yonetici-kapat]');
+        if (!btn) return;
+        _kapYoneticiKapat(btn.getAttribute('data-kap-yonetici-kapat'), btn.getAttribute('data-kap-ad') || '');
+      });
+    }
     document.getElementById('kapQrOnaylandi').style.display = 'none';
     document.getElementById('kapGonder').style.display = 'none'; // QR onaylanana kadar gönder gizli
     _kapQrTimer = setInterval(async function() {
@@ -6718,12 +6739,20 @@ function setKapanisStep(step) {
           kapanisGonderSubmit(true);
         } else {
           // Hâlâ açık (çıkış/QR yapmamış) personel(ler) var → mühür onları bekliyor.
-          // İsimleri göster ki neden mühürlenmediği belli olsun.
-          var _adlar = bekleyen.map(function(b){ return escHtml(b.ad_soyad || '—'); }).join(', ');
+          // İsimleri + "Mesaisini kapat" (yönetici) düğmesi göster.
           var _tEl = document.getElementById('kapQrBekleText');
           if (_tEl) {
-            _tEl.innerHTML = '⏳ Hâlâ açık (çıkış yapmamış): <b style="color:var(--text)">' + _adlar + '</b>'
-              + '<br/>Mühür için bu personel(ler) de QR okutmalı / mesaisini kapatmalı.';
+            var _h = '⏳ Hâlâ açık (çıkış yapmamış) — mühür bunları bekliyor:';
+            bekleyen.forEach(function(b){
+              _h += '<div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px;flex-wrap:wrap">'
+                + '<b style="color:var(--text)">' + escHtml(b.ad_soyad || '—') + '</b>'
+                + '<button type="button" class="btn btn-ghost" style="font-size:12px;padding:4px 10px"'
+                + ' data-kap-yonetici-kapat="' + escHtml(b.personel_id || '') + '"'
+                + ' data-kap-ad="' + escHtml(b.ad_soyad || '') + '">🔒 Mesaisini kapat</button>'
+                + '</div>';
+            });
+            _h += '<div style="font-size:11px;color:var(--muted);margin-top:8px">Personel QR okutursa kendi kapatır; gittiyse yönetici olarak sen kapatabilirsin.</div>';
+            _tEl.innerHTML = _h;
           }
         }
       } catch(_) {}
