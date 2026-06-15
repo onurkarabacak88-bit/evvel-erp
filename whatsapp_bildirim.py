@@ -686,7 +686,7 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
     # Kasa
     ciro_trend_str = f"  {kasa['ciro_trend']}" if kasa.get("ciro_trend") else ""
     s.append(f"*KASA: {_fmt(kasa['kasa'])}*")
-    s.append(f"  Bugün ciro:   +{_fmt(kasa['bugun_ciro'])}{ciro_trend_str}")
+    s.append(f"  Bugün nakit:  +{_fmt(kasa['bugun_ciro'])}{ciro_trend_str}")
     s.append(f"  Bugün çıkan:  -{_fmt(kasa['cikan'])}")
     s.append("")
 
