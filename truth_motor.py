@@ -1464,6 +1464,73 @@ def motor_calistir(cur, sube_id: str, tarih: str,
 
 
 # ════════════════════════════════════════════════════════════════════════════
+#  Sprint L — Evo gecikmeli veri telafisi
+#  Gece 00:30 motoru çalıştığında Evo henüz veri vermemiş olabilir (n3_evo=NULL).
+#  Evo verisi sonradan (gün içinde) geldiğinde, bu fonksiyon son birkaç günün
+#  "n3_evo eksik" kalmış kararlarını bulup motoru o gün için tekrar çalıştırır.
+#  truth_motor_kararlar append-only olduğu için yeni satır eklenir, panel/WhatsApp
+#  zaten en güncel (olusturma DESC) satırı okuyor.
+# ════════════════════════════════════════════════════════════════════════════
+
+_EVO_URUN_BOYUTLARI = ("bardak_plastik", "bardak_karton", "redbull_soda", "pasta")
+
+
+def evo_eksik_gunleri_yeniden_degerlendir(cur, sube_id: str, gun_sayisi: int = 3) -> List[str]:
+    """Son `gun_sayisi` gün içinde Evo verisi (n3_evo) eksik kalmış ürün
+    boyutlarını bulur. Evo verisi artık geldiyse (n3_evo dolu çıkarsa) o gün
+    için motoru yeniden çalıştırır, böylece COZULMEDI/YETERSIZ_VERI gibi
+    "Evo verisi yoktu" yüzünden verilmiş kararlar düzeltilir.
+
+    Returns: yeniden değerlendirilen tarihlerin listesi (YYYY-MM-DD).
+    """
+    duzeltilen_tarihler: List[str] = []
+    try:
+        cur.execute(
+            """
+            SELECT DISTINCT tarih::text AS tarih
+            FROM (
+                SELECT tarih, boyut, n3_evo,
+                       ROW_NUMBER() OVER (PARTITION BY tarih, boyut ORDER BY olusturma DESC) AS rn
+                FROM truth_motor_kararlar
+                WHERE sube_id=%s
+                  AND tarih >= CURRENT_DATE - (%s || ' days')::interval
+                  AND tarih < CURRENT_DATE
+                  AND boyut = ANY(%s)
+            ) x
+            WHERE rn = 1 AND n3_evo IS NULL
+            ORDER BY 1
+            """,
+            (sube_id, gun_sayisi, list(_EVO_URUN_BOYUTLARI)),
+        )
+        eksik_tarihler = [dict(r)["tarih"] for r in (cur.fetchall() or [])]
+    except Exception as e:
+        log.warning("sprint_l evo_eksik tarama hata sube=%s: %s", sube_id, e)
+        return duzeltilen_tarihler
+
+    for _tarih in eksik_tarihler:
+        try:
+            cur.execute("SAVEPOINT sp_evo_eksik")
+            _veriler = veri_topla(cur, sube_id, _tarih)
+            _evo_geldi = any(
+                v.n3_evo is not None for v in _veriler if v.boyut in _EVO_URUN_BOYUTLARI
+            )
+            if _evo_geldi:
+                motor_calistir(cur, sube_id, _tarih, _veriler)
+                duzeltilen_tarihler.append(_tarih)
+                log.info("sprint_l evo_eksik_telafi sube=%s tarih=%s", sube_id, _tarih)
+            cur.execute("RELEASE SAVEPOINT sp_evo_eksik")
+        except Exception as e:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_evo_eksik")
+                cur.execute("RELEASE SAVEPOINT sp_evo_eksik")
+            except Exception:
+                pass
+            log.warning("sprint_l evo_eksik_telafi hata sube=%s tarih=%s: %s", sube_id, _tarih, e)
+
+    return duzeltilen_tarihler
+
+
+# ════════════════════════════════════════════════════════════════════════════
 #  KASA BASKINI OTOMATİK TETİK
 # ════════════════════════════════════════════════════════════════════════════
 

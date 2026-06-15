@@ -308,6 +308,15 @@ def _gece_yarisi_scheduler():
                                         _calisan += 1
                                 except Exception as _e:
                                     logger.warning(f"⏰ Akıllı Denetim {_s.get('ad')}: {_e}")
+
+                                # ── Sprint L: Evo verisi geçmişte eksikse, şimdi
+                                # geldiyse son 3 günü yeniden değerlendir ──────────
+                                try:
+                                    _duzeltilen = _tm.evo_eksik_gunleri_yeniden_degerlendir(cur, _sid, gun_sayisi=3)
+                                    if _duzeltilen:
+                                        logger.info(f"⏰ Sprint L Evo telafi {_s.get('ad')}: {_duzeltilen}")
+                                except Exception as _e:
+                                    logger.warning(f"⏰ Sprint L Evo telafi {_s.get('ad')}: {_e}")
                             conn.commit()
                         logger.info(f"⏰ Akıllı Denetim: {_calisan}/{len(_subeler)} şube — tarih={_dun}")
                 except Exception as e:
