@@ -438,10 +438,36 @@ def siparis_urun_gecmis(
 #  Ürün eşleştirme labirentine (kalem_kodu) GİRMEZ — şube seviyesi sıklık.
 # ════════════════════════════════════════════════════════════════════════════
 
+def _sdg_scalar(cur: Any, sql: str, params: tuple) -> int:
+    """Tek savepoint'li skaler sorgu — hata olursa 0 döner (ana transaction zehirlenmez)."""
+    try:
+        cur.execute("SAVEPOINT sp_sdg_q")
+        cur.execute(sql, params)
+        r = cur.fetchone()
+        cur.execute("RELEASE SAVEPOINT sp_sdg_q")
+        if not r:
+            return 0
+        v = dict(r) if not isinstance(r, dict) else r
+        return int(list(v.values())[0] or 0)
+    except Exception:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_sdg_q")
+            cur.execute("RELEASE SAVEPOINT sp_sdg_q")
+        except Exception:
+            pass
+        return 0
+
+
 def siparis_davranis_gunluk_gozlemle(cur: Any, pencere_gun: int = 7) -> Dict[str, Any]:
-    """Her aktif şube için son `pencere_gun` sipariş sıklığını günlük profile yazar.
+    """Her aktif şube için son `pencere_gun` sipariş davranışını günlük profile yazar.
     SALT OKUMA (mevcut tablolar) + sadece sube_siparis_davranis_gunluk'a upsert.
     Idempotent: UNIQUE(sube_id, tarih) → aynı gün tekrar çalışırsa günceller.
+
+    Tüketim dörtgeni (kural #12) ŞUBE SEVİYESİ bağlamı detay_json'a eklenir —
+    saf gözlem, hipotez/eşik/skor YOK, isme dokunmaz (kural #15):
+      - kullanim_olay: URUN_AC olay sayısı (depodan açılan)
+      - sayim_anomali: stok anomalisi olan (tarih,boyut) sayısı
+      (satış legi sonraki taşta — temiz ciro kaynağı netleşince)
     """
     pencere = max(1, min(90, int(pencere_gun or 7)))
     try:
@@ -455,34 +481,67 @@ def siparis_davranis_gunluk_gozlemle(cur: Any, pencere_gun: int = 7) -> Dict[str
         sid = str(s.get("id") or "")
         if not sid:
             continue
+
+        _say = _sdg_scalar(
+            cur,
+            """
+            SELECT COUNT(*) FROM siparis_talep
+            WHERE sube_id = %s AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+              AND COALESCE(durum, '') <> 'iptal'
+            """,
+            (sid, pencere),
+        )
+        _gun = _sdg_scalar(
+            cur,
+            """
+            SELECT COUNT(DISTINCT tarih) FROM siparis_talep
+            WHERE sube_id = %s AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+              AND COALESCE(durum, '') <> 'iptal'
+            """,
+            (sid, pencere),
+        )
+        # ── Tüketim dörtgeni — şube seviyesi bağlam (saf gözlem) ──
+        _kullanim = _sdg_scalar(
+            cur,
+            """
+            SELECT COUNT(*) FROM operasyon_defter
+            WHERE sube_id = %s AND etiket = 'URUN_AC'
+              AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            """,
+            (sid, pencere),
+        )
+        _sayim = _sdg_scalar(
+            cur,
+            """
+            SELECT COUNT(DISTINCT (tarih, boyut)) FROM truth_motor_kararlar
+            WHERE sube_id = %s AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+              AND boyut <> 'kasa'
+              AND tani NOT IN ('UYUMLU', 'YETERSIZ_VERI', 'NORMAL')
+            """,
+            (sid, pencere),
+        )
+        detay = {
+            "kullanim_olay": _kullanim,
+            "sayim_anomali": _sayim,
+            "pencere_gun": pencere,
+        }
+
         try:
             cur.execute("SAVEPOINT sp_sdg")
             cur.execute(
                 """
-                SELECT COUNT(*) AS siparis_sayisi,
-                       COUNT(DISTINCT tarih) AS aktif_gun
-                FROM siparis_talep
-                WHERE sube_id = %s
-                  AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
-                  AND COALESCE(durum, '') <> 'iptal'
-                """,
-                (sid, pencere),
-            )
-            r = dict(cur.fetchone() or {})
-            _say = int(r.get("siparis_sayisi") or 0)
-            _gun = int(r.get("aktif_gun") or 0)
-            cur.execute(
-                """
                 INSERT INTO sube_siparis_davranis_gunluk
-                    (id, sube_id, tarih, pencere_gun, siparis_sayisi, aktif_gun)
-                VALUES (%s, %s, CURRENT_DATE, %s, %s, %s)
+                    (id, sube_id, tarih, pencere_gun, siparis_sayisi, aktif_gun, detay_json)
+                VALUES (%s, %s, CURRENT_DATE, %s, %s, %s, %s::jsonb)
                 ON CONFLICT (sube_id, tarih) DO UPDATE SET
                     pencere_gun    = EXCLUDED.pencere_gun,
                     siparis_sayisi = EXCLUDED.siparis_sayisi,
                     aktif_gun      = EXCLUDED.aktif_gun,
+                    detay_json     = EXCLUDED.detay_json,
                     olusturma      = NOW()
                 """,
-                (str(uuid.uuid4()), sid, pencere, _say, _gun),
+                (str(uuid.uuid4()), sid, pencere, _say, _gun,
+                 json.dumps(detay, ensure_ascii=False)),
             )
             cur.execute("RELEASE SAVEPOINT sp_sdg")
             yazilan += 1
