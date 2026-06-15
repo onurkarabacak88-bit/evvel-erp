@@ -9655,25 +9655,34 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
         # ── KALAN hesabı: N1 (orijinal talep) − dağıtılan (toptanci_siparis) ──
         # Kısmi gönderimde talep KAPANMAZ; gönderilmeyen kalemler kuyrukta kalsın.
         # N1 asla ezilmez; kalan türetilir. (split-back / veri kaybı fix)
-        _orig = t.get("kalemler") or []
-        if isinstance(_orig, str):
-            try:
-                _orig = json.loads(_orig)
-            except Exception:
-                _orig = []
-        _orig_map: Dict[str, int] = {}
-        for _o in _orig:
-            if not isinstance(_o, dict):
-                continue
-            _oad = str(_o.get("urun_ad") or "").strip().lower()
-            if _oad:
-                _orig_map[_oad] = _orig_map.get(_oad, 0) + max(0, int(_o.get("adet") or 0))
-        _dispatched = {k: v.get("adet", 0) for k, v in _agg.items()}
+        # GÜVENLİK AĞI: bu hesap beklenmedik veriyle patlarsa gönderim ÇÖKMESİN —
+        # eski güvenli davranışa (tam_gonderildi=True → talebi kapat) düş, sebebi logla.
         kalan_adet = 0
-        for _oad, _oadet in _orig_map.items():
-            kalan_adet += max(0, _oadet - int(_dispatched.get(_oad, 0)))
-        # N1'de hiç kalem yoksa (eski/boş talep) kalan'ı bilemeyiz → tam say.
-        tam_gonderildi = (not _orig_map) or (kalan_adet <= 0)
+        tam_gonderildi = True
+        try:
+            _orig = t.get("kalemler") or []
+            if isinstance(_orig, str):
+                try:
+                    _orig = json.loads(_orig)
+                except Exception:
+                    _orig = []
+            _orig_map: Dict[str, int] = {}
+            for _o in (_orig or []):
+                if not isinstance(_o, dict):
+                    continue
+                _oad = str(_o.get("urun_ad") or "").strip().lower()
+                if _oad:
+                    _orig_map[_oad] = _orig_map.get(_oad, 0) + max(0, int(_o.get("adet") or 0))
+            _dispatched = {k: int(v.get("adet") or 0) for k, v in _agg.items()}
+            kalan_adet = 0
+            for _oad, _oadet in _orig_map.items():
+                kalan_adet += max(0, _oadet - int(_dispatched.get(_oad, 0)))
+            # N1'de hiç kalem yoksa (eski/boş talep) kalan'ı bilemeyiz → tam say.
+            tam_gonderildi = (not _orig_map) or (kalan_adet <= 0)
+        except Exception as _kalan_hata:
+            log.exception("toptanciya-yolla kalan hesabı hatası talep=%s: %s", tid, _kalan_hata)
+            kalan_adet = 0
+            tam_gonderildi = True
 
         sevk_notu = notu
         if tedarikci_ad:
