@@ -9483,7 +9483,7 @@ def _toptanci_siparis_wa_mesaj(
         adet = int(k.get("adet") or 0)
         if ad and adet > 0:
             satirlar.append(f"• {ad} × {adet}")
-    bas = "🛒 *EVVEL SİPARİŞ*"
+    bas = "🛒 *TULİPİ SİPARİŞ*"
     if tedarikci_ad:
         bas += f"\nTedarikçi: {tedarikci_ad}"
     if sube_adi:
