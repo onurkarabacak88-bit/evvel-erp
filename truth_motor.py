@@ -834,11 +834,51 @@ def _personel_id_by_ad(cur, ad: Optional[str]) -> Optional[str]:
         return None
 
 
+def _risk_sinyal_yaz(cur, pid: str, sube_id: str, sinyal_tarih: str,
+                      sinyal_turu: str, agirlik: int, aciklama: str,
+                      referans_id: str) -> bool:
+    """Tek bir personel_risk_sinyal satırı yazar (idempotent — referans_id ile)."""
+    try:
+        cur.execute("SAVEPOINT sp_risk_sinyal")
+        cur.execute("SELECT 1 FROM personel_risk_sinyal WHERE referans_id = %s", (referans_id,))
+        if cur.fetchone():
+            cur.execute("RELEASE SAVEPOINT sp_risk_sinyal")
+            return False
+        cur.execute(
+            """
+            INSERT INTO personel_risk_sinyal
+                (id, personel_id, sube_id, tarih, sinyal_turu, agirlik, aciklama, referans_id)
+            VALUES (%s, %s, %s, %s::date, %s, %s, %s, %s)
+            """,
+            (str(uuid.uuid4()), pid, sube_id, sinyal_tarih, sinyal_turu, agirlik, aciklama, referans_id),
+        )
+        cur.execute("RELEASE SAVEPOINT sp_risk_sinyal")
+        return True
+    except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_risk_sinyal")
+            cur.execute("RELEASE SAVEPOINT sp_risk_sinyal")
+        except Exception:
+            pass
+        log.warning("personel_risk_sinyal yazılamadı sube=%s referans=%s: %s", sube_id, referans_id, e)
+        return False
+
+
 def personel_risk_sinyal_uret(cur, sube_id: str, tarih: str, taniler: List["Tani"]) -> int:
     """Anomali tanılarından (sorumlu personel tanımlıysa) personel_risk_sinyal üretir.
 
     Idempotent: aynı (sube,tarih,boyut,tani) için referans_id ile tek kayıt yazılır
     — gece scheduler restart olsa da tekrar yazılmaz.
+
+    Çapraz-gün tarih atfı: n1_aksam = ÖNCEKİ günün akşamcı kapanış beyanı,
+    n2_sabah = bugünün (tarih) sabahçı açılış sayımı. Yani "aksamci_ad" → o
+    kişi (tarih - 1) gününde çalıştı; sinyal o güne yazılmalı, "tarih"e değil.
+    "sabahci_ad" ise bugünün (tarih) sabahçısı, tarih doğru.
+
+    QR ile mühürleyen (KAPANIS'ı kapatan, n1_aksam'ı beyan eden) `aksamci_ad`
+    ÖNCELİKLİ/birincil sorumlu olarak tam ağırlıkla; aynı akşam vardiyasında
+    bulunup mührü basmayan `aksamci_diger_adlar` ise yarım ağırlıkla
+    (ikincil sorumlu — birlikte çalıştı, ama beyanı o vermedi) işaretlenir.
     """
     n = 0
     for t in taniler:
@@ -846,11 +886,7 @@ def personel_risk_sinyal_uret(cur, sube_id: str, tarih: str, taniler: List["Tani
             continue
         if (t.guven_skoru or 0) < _RISK_SINYAL_MIN_GUVEN:
             continue
-        # ── Çapraz-gün tarih atfı ────────────────────────────────────────
-        # n1_aksam = ÖNCEKİ günün akşamcı kapanış beyanı, n2_sabah = bugünün
-        # (tarih) sabahçı açılış sayımı. Yani "aksamci_ad" → o kişi
-        # (tarih - 1) gününde çalıştı; sinyal o güne yazılmalı, "tarih"e değil.
-        # "sabahci_ad" ise bugünün (tarih) sabahçısı, tarih doğru.
+
         aksamci_ad = (t.detay or {}).get("aksamci_ad")
         sabahci_ad = (t.detay or {}).get("sabahci_ad")
         ad = aksamci_ad or sabahci_ad
@@ -859,35 +895,29 @@ def personel_risk_sinyal_uret(cur, sube_id: str, tarih: str, taniler: List["Tani
         if not pid:
             continue
 
+        agirlik = max(1, min(20, round((t.guven_skoru or 0) / 5)))
+        aciklama = (t.detay or {}).get("eylem", {}).get("insan") or t.tani
+        sinyal_turu = f"truth_motor_{t.tani.lower()}"
+
         referans_id = f"tm:{sube_id}:{tarih}:{t.boyut}:{t.tani}"
-        try:
-            cur.execute("SAVEPOINT sp_risk_sinyal")
-            cur.execute("SELECT 1 FROM personel_risk_sinyal WHERE referans_id = %s", (referans_id,))
-            if cur.fetchone():
-                cur.execute("RELEASE SAVEPOINT sp_risk_sinyal")
-                continue
-            agirlik = max(1, min(20, round((t.guven_skoru or 0) / 5)))
-            aciklama = (t.detay or {}).get("eylem", {}).get("insan") or t.tani
-            cur.execute(
-                """
-                INSERT INTO personel_risk_sinyal
-                    (id, personel_id, sube_id, tarih, sinyal_turu, agirlik, aciklama, referans_id)
-                VALUES (%s, %s, %s, %s::date, %s, %s, %s, %s)
-                """,
-                (
-                    str(uuid.uuid4()), pid, sube_id, sinyal_tarih,
-                    f"truth_motor_{t.tani.lower()}", agirlik, aciklama, referans_id,
-                ),
-            )
-            cur.execute("RELEASE SAVEPOINT sp_risk_sinyal")
+        if _risk_sinyal_yaz(cur, pid, sube_id, sinyal_tarih, sinyal_turu, agirlik, aciklama, referans_id):
             n += 1
-        except Exception as e:
-            try:
-                cur.execute("ROLLBACK TO SAVEPOINT sp_risk_sinyal")
-                cur.execute("RELEASE SAVEPOINT sp_risk_sinyal")
-            except Exception:
-                pass
-            log.warning("personel_risk_sinyal yazılamadı sube=%s boyut=%s: %s", sube_id, t.boyut, e)
+
+        # ── İkincil sorumlular ───────────────────────────────────────────
+        # Aynı akşam vardiyasında bulunup KAPANIS'ı mühürlemeyen personel —
+        # yarım ağırlıkla, ayrı referans_id ile işaretlenir.
+        if aksamci_ad:
+            for _diger_ad in (t.detay or {}).get("aksamci_diger_adlar") or []:
+                if not _diger_ad or _diger_ad == aksamci_ad:
+                    continue
+                _diger_pid = _personel_id_by_ad(cur, _diger_ad)
+                if not _diger_pid:
+                    continue
+                _diger_agirlik = max(1, round(agirlik / 2))
+                _diger_referans = f"tm:{sube_id}:{tarih}:{t.boyut}:{t.tani}:diger:{_diger_pid}"
+                if _risk_sinyal_yaz(cur, _diger_pid, sube_id, sinyal_tarih, sinyal_turu,
+                                    _diger_agirlik, aciklama, _diger_referans):
+                    n += 1
     return n
 
 
@@ -1388,15 +1418,48 @@ def motor_calistir(cur, sube_id: str, tarih: str,
                     "aksam_fark": _walk.get("aksam_fark"),
                     "sabah_fark_v1": _walk.get("sabah_fark_v1"),
                 }
-                # Sorumlu kişi: dünkü (önceki gün) akşamcı — sadece tek
-                # personel akşamı tek başına kapattıysa net atfedilir
-                # (collusion riski olan çoklu vardiyalarda kişiye atfetmiyoruz).
+                # Sorumlu kişi(ler): birincil sorumlu = dünkü KAPANIS'ı QR ile
+                # mühürleyen kişi (n1_aksam beyanını o verdi). Aynı akşam
+                # vardiyasında bulunup mührü basmayan diğer personel de
+                # ikincil sorumlu olarak işaretlenir (personel_risk_sinyal_uret
+                # bunu yarım ağırlıkla yazar).
+                _onceki_tarih = _previous_day(tarih)
+                _primary_ad = None
+                try:
+                    cur.execute(
+                        """
+                        SELECT personel_ad FROM sube_operasyon_event
+                        WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
+                        ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+                        """,
+                        (sube_id, _onceki_tarih),
+                    )
+                    _kr = cur.fetchone()
+                    if _kr:
+                        _primary_ad = (dict(_kr).get("personel_ad") or "").strip() or None
+                except Exception:
+                    _primary_ad = None
+
                 _vardiya_dun = _walk.get("vardiya_dun") or {}
-                _tek_aksam = _vardiya_dun.get("tek_basina_araliklari") or []
-                if len(_tek_aksam) == 1 and not (_vardiya_dun.get("coklu_araliklari") or []):
-                    _aksamci_ad = _tek_aksam[-1].get("personel_ad")
-                    if _aksamci_ad:
-                        _t.detay["aksamci_ad"] = _aksamci_ad
+                _tum_adlar = set()
+                for _ara in (_vardiya_dun.get("tek_basina_araliklari") or []) + \
+                             (_vardiya_dun.get("coklu_araliklari") or []):
+                    if _ara.get("personel_ad"):
+                        _tum_adlar.add(_ara["personel_ad"])
+                    for _p in _ara.get("personeller") or []:
+                        _ad2 = _p.get("ad") or _p.get("personel_ad")
+                        if _ad2:
+                            _tum_adlar.add(_ad2)
+
+                if not _primary_ad and len(_vardiya_dun.get("tek_basina_araliklari") or []) == 1 \
+                        and not (_vardiya_dun.get("coklu_araliklari") or []):
+                    _primary_ad = _vardiya_dun["tek_basina_araliklari"][-1].get("personel_ad")
+
+                if _primary_ad:
+                    _t.detay["aksamci_ad"] = _primary_ad
+                    _diger = sorted(a for a in _tum_adlar if a and a != _primary_ad)
+                    if _diger:
+                        _t.detay["aksamci_diger_adlar"] = _diger
                 log.info(
                     "sprint_k aksamci_sayim_hatasi tetiklendi sube=%s tarih=%s boyut=%s",
                     sube_id, tarih, _t.boyut,
