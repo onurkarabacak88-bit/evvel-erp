@@ -2986,6 +2986,26 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
             continue
         if kaynak_depo:
             urun_id_item = str(item.get("urun_id") or "").strip()
+            # P1 tespiti — sevk öncesi kaynak stoğu oku. Sevke ENGEL OLMAZ (kullanıcı
+            # kararı: sistem çalışsın, stok düzeltmesi sonra). Sadece "hayalet stok"
+            # (kaynakta yokken sevk) durumunu BİLDİRMEK için referans değer.
+            _mevcut_before = None
+            try:
+                _aday_kodlar = [kalem_kodu] + (
+                    [urun_id_item] if (urun_id_item and urun_id_item != kalem_kodu) else []
+                )
+                cur.execute(
+                    "SELECT MAX(COALESCE(mevcut_adet, 0)) AS m FROM sube_depo_stok "
+                    "WHERE sube_id=%s AND kalem_kodu = ANY(%s)",
+                    (kaynak_depo, _aday_kodlar),
+                )
+                _rb = cur.fetchone()
+                if _rb is not None:
+                    _mv = (dict(_rb) if not isinstance(_rb, dict) else _rb).get("m")
+                    if _mv is not None:
+                        _mevcut_before = int(_mv)
+            except Exception:
+                _mevcut_before = None
             dusulecek_kod = kalem_kodu
             cur.execute(
                 """
@@ -3061,6 +3081,52 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                         cur.execute("ROLLBACK TO SAVEPOINT sp_stok_dusme_uyari")
                     except Exception:
                         pass
+            else:
+                # P1: stok satırı eşleşti ve düşüldü AMA kaynakta yeterli stok yoktu →
+                # GREATEST(0,...) sıfıra kırptı, aradaki fark "hayalet" olarak alıcıya
+                # girecek. Sevke ENGEL OLMA (kullanıcı kararı) — sadece BİLDİR ki
+                # depo sayımı düzeltilsin.
+                if _mevcut_before is not None and _mevcut_before < sevk_adet:
+                    _hayalet = sevk_adet - _mevcut_before
+                    logger.warning(
+                        "sevk_cikti_kaydet: kaynak stok yetersiz — HAYALET STOK %s adet! "
+                        "siparis=%s depo=%s kalem=%s mevcut=%s sevk=%s",
+                        _hayalet, siparis_talep_id, kaynak_depo, dusulecek_kod,
+                        _mevcut_before, sevk_adet,
+                    )
+                    try:
+                        cur.execute("SAVEPOINT sp_hayalet_stok")
+                        cur.execute(
+                            """
+                            INSERT INTO sube_operasyon_uyari
+                                (id, sube_id, tarih, tip, seviye, mesaj,
+                                 siparis_talep_id, kalem_kodu, detay)
+                            VALUES (%s, %s, CURRENT_DATE, 'HAYALET_STOK', 'kritik', %s,
+                                    %s, %s, %s::jsonb)
+                            """,
+                            (
+                                str(uuid.uuid4()),
+                                kaynak_depo,
+                                f"Kaynak depoda yetersiz stok: {dusulecek_kod} mevcut {_mevcut_before}, "
+                                f"sevk {sevk_adet} → {_hayalet} adet hayalet (depo sayımı düzeltilmeli)",
+                                siparis_talep_id,
+                                dusulecek_kod,
+                                json.dumps({
+                                    "siparis_talep_id": siparis_talep_id,
+                                    "kalem_kodu": dusulecek_kod,
+                                    "mevcut_before": _mevcut_before,
+                                    "sevk_adet": sevk_adet,
+                                    "hayalet_adet": _hayalet,
+                                    "kaynak": "sevk_cikti_kaydet",
+                                }, ensure_ascii=False),
+                            ),
+                        )
+                        cur.execute("RELEASE SAVEPOINT sp_hayalet_stok")
+                    except Exception:
+                        try:
+                            cur.execute("ROLLBACK TO SAVEPOINT sp_hayalet_stok")
+                        except Exception:
+                            pass
         else:
             cur.execute(
                 """
