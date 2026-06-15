@@ -233,14 +233,22 @@ def boyut_taniyi_uret(sube_id: str, tarih: str, veri: BoyutVeri) -> Tani:
         n3_toplam = (float(n3_satis or 0) + float(n3_ikram or 0))
     n3 = n3_toplam   # Bundan sonra n3 = Evo toplam hareketi (satış + ikram)
 
+    # Evo verisi bu boyut için hiç gelmemiş — ürün boyutlarında bunu kararın
+    # detayına işaretliyoruz ki özet/rapor "Evo verisi yok, manuel sayım
+    # kontrolü önerilir" diyebilsin.
+    evo_eksik = is_urun and n3_satis is None
+
     # Yetersiz veri kontrolü
     if n1 is None or n2 is None:
+        _detay: Dict[str, Any] = {"sebep": "n1 veya n2 eksik"}
+        if evo_eksik:
+            _detay["evo_eksik"] = True
         return Tani(
             sube_id=sube_id, tarih=tarih, boyut=boyut,
             n1_aksam=n1, n2_sabah=n2, n3_evo=n3_satis, n3_evo_ikram=n3_ikram,
             fark_n1_n2=None, evo_destek="yok",
             tani="YETERSIZ_VERI", guven_skoru=0.0,
-            detay={"sebep": "n1 veya n2 eksik"},
+            detay=_detay,
         )
 
     fark = round(float(n2) - float(n1), 2)
@@ -262,6 +270,8 @@ def boyut_taniyi_uret(sube_id: str, tarih: str, veri: BoyutVeri) -> Tani:
         detay["evo_ikram_adet"] = float(n3_ikram)
     if is_urun and n3_satis is not None:
         detay["evo_satis_adet"] = float(n3_satis)
+    if evo_eksik:
+        detay["evo_eksik"] = True
 
     if n1_n2_esit:
         # N1 = N2 → sayım zinciri tutarlı
@@ -569,7 +579,15 @@ def _zeka_ozet_uret(taniler: List["Tani"],
     if not taniler:
         return {"alarm": "normal", "ana_tani": "YETERSIZ_VERI",
                 "guven": 0, "ozet": "Veri yok", "yorum_metni": "⚪ Veri yok",
-                "anomali_boyutlar": [], "capraz_aciklama": ""}
+                "anomali_boyutlar": [], "capraz_aciklama": "", "evo_eksik_boyutlar": []}
+
+    # Evo verisi hiç gelmemiş ürün boyutları — bu boyutlardaki kararlar
+    # sadece beyan (n1/n2) karşılaştırmasına dayanıyor, "manuel sayım
+    # kontrolü önerilir" notuna konu olacak.
+    evo_eksik_boyutlar = [
+        t.boyut for t in taniler
+        if t.boyut != "kasa" and (t.detay or {}).get("evo_eksik")
+    ]
 
     # Tüm anomalileri önceliğe göre sırala
     anomaliler = [
@@ -580,18 +598,30 @@ def _zeka_ozet_uret(taniler: List["Tani"],
 
     # Normal akış
     if not anomaliler:
+        yorum = (
+            "🟢 Normal\n\n"
+            "✅ Kasa ve stok uyumlu. Evo POS verileri beyanlarla örtüşüyor.\n"
+            "   Aksiyon gerekmez."
+        )
+        ozet = "Tüm kontroller uyumlu — sorun yok"
+        if evo_eksik_boyutlar:
+            etkilenen_evo = ", ".join(_BOYUT_KISA.get(b, b) for b in evo_eksik_boyutlar)
+            yorum = (
+                "🟢 Normal (Evo verisi eksik)\n\n"
+                "✅ Sayım zinciri (akşam→sabah) tutarlı, sorun görünmüyor.\n"
+                f"⚠️ Ama Evo POS verisi gelmedi: {etkilenen_evo} — bu boyutlar şu an "
+                "sadece beyana göre değerlendirildi, manuel sayım kontrolü önerilir."
+            )
+            ozet = f"Sayım tutarlı ama Evo verisi eksik [{etkilenen_evo}] — manuel kontrol önerilir"
         return {
             "alarm": "normal",
             "ana_tani": "UYUMLU",
             "guven": 100,
-            "ozet": "Tüm kontroller uyumlu — sorun yok",
-            "yorum_metni": (
-                "🟢 Normal\n\n"
-                "✅ Kasa ve stok uyumlu. Evo POS verileri beyanlarla örtüşüyor.\n"
-                "   Aksiyon gerekmez."
-            ),
+            "ozet": ozet,
+            "yorum_metni": yorum,
             "anomali_boyutlar": [],
             "capraz_aciklama": "",
+            "evo_eksik_boyutlar": evo_eksik_boyutlar,
         }
 
     # Ana tanı (en tehlikeli)
@@ -680,6 +710,11 @@ def _zeka_ozet_uret(taniler: List["Tani"],
         elif baskin_tetik.get("oneri"):
             satirlar.append(f"\n⚠️ Kasa baskını ÖNERİSİ — {', '.join(baskin_tetik.get('tani', []))}")
 
+    # Evo verisi eksik boyutlar — anomali değerlendirmesine ek not
+    if evo_eksik_boyutlar:
+        etkilenen_evo = ", ".join(_BOYUT_KISA.get(b, b) for b in evo_eksik_boyutlar)
+        satirlar.append(f"\n⚠️ Evo verisi gelmedi: {etkilenen_evo} — manuel sayım kontrolü önerilir")
+
     return {
         "alarm": alarm,
         "ana_tani": ana.tani,
@@ -688,6 +723,7 @@ def _zeka_ozet_uret(taniler: List["Tani"],
         "yorum_metni": "\n".join(satirlar),
         "anomali_boyutlar": anomali_boyutlar,
         "capraz_aciklama": capraz,
+        "evo_eksik_boyutlar": evo_eksik_boyutlar,
     }
 
 

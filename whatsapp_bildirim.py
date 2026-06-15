@@ -558,7 +558,7 @@ def _akilli_denetim_ozetleri(cur, tarih: date) -> list:
             zeka = _tm.zeka_ozet_from_rows(kayitlar)
         except Exception:
             continue
-        if zeka.get("alarm") == "normal":
+        if zeka.get("alarm") == "normal" and not zeka.get("evo_eksik_boyutlar"):
             continue
         ozetler.append({
             "sube":  s["ad"],
