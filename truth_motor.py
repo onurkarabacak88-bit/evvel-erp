@@ -160,7 +160,7 @@ EYLEM_MAP: Dict[str, Dict[str, str]] = {
     # Sprint J — Cross-day bardak devamlılık
     "AKSAM_BARDAK_SISIRDI":      {"oto": "cfo_bildirim_kritik",  "insan": "Dün akşamcı KAPANIS bardak sayısını şişirdi — sabahçı kör sayımda gerçeği buldu → gece bardak kaybolmaz → zimmet soruşturması + kamera", "alarm": "kritik"},
     # Sprint K — COZULMEDI otomatik Truth Walk re-check
-    "AKSAMCI_SAYIM_HATASI":      {"oto": "log_yesil",            "insan": "Dünkü kapanış sayımını gözden geçir — sayım hatası, zimmet/ikram aranmasın", "alarm": "dusuk"},
+    "AKSAMCI_SAYIM_HATASI":      {"oto": "log_sari",             "insan": "Düşük öncelik: en olası açıklama akşamcının kapanış sayım hatası (fark dünden geliyor). Sıraya al — doğrulanana kadar zimmet ihtimali elenmez, alarmı kapatma", "alarm": "dusuk"},
 }
 
 @dataclass
@@ -548,7 +548,7 @@ _TANI_INSAN = {
     # Sprint J — Cross-day bardak devamlılık
     "AKSAM_BARDAK_SISIRDI":      "Dün akşamcı bardak şişirdi — gece bardak kaybolmaz, sabahçı gerçeği buldu → ZİMMET",
     # Sprint K — COZULMEDI otomatik Truth Walk re-check
-    "AKSAMCI_SAYIM_HATASI":      "Bugünkü zincir tutarlı, fark dünden geliyor — akşamcının kapanış sayım hatası, zimmet/ikram değil",
+    "AKSAMCI_SAYIM_HATASI":      "Bugünkü zincir tutarlı, fark dünden geliyor — en olası açıklama akşamcının kapanış sayım hatası (doğrulanana kadar zimmet ihtimali elenmez)",
 }
 
 _ALARM_ESIK = {
@@ -2984,18 +2984,20 @@ def adaptive_truth_walk(cur, sube_id: str, tarih: str, boyut: str) -> Dict[str, 
             and abs(sabah_fark_v1) <= max(tolerans, 1):
         # Bugünkü zincir (akşamcı→sabahcı) kendi içinde tutarlı (sabah_fark_v1 ≈ 0) —
         # asıl uyumsuzluk dünden geliyor (akşamcı beyanı ≠ türetilmiş akşam).
-        # Akşamcının kapanış sayımı muhtemelen hatalı yazılmış (kasıtlı değil);
-        # zimmet/ikram araştırması bugün için gerekmiyor.
+        # EN OLASI açıklama: akşamcının kapanış sayımı hatalı yazılmış (kasıtlı
+        # değil). AMA bu bir BERAAT DEĞİL — consistency engine yalnızca tutarlılığı
+        # ölçer; tutarlı bir yalan da bu desene uyabilir. Alarm kapatılmaz, düşük
+        # önceliğe alınır; doğrulanana kadar zimmet ihtimali elenmez.
         karar = "AKSAMCI_SAYIM_HATASI"
         guven = 85.0
         ozet = (f"Bugünkü zincir tutarlı (akşamcı beyanı {aksamci_beyan:.0f} → sabahcı {sabahci_beyan:.0f}, "
                 f"fark {sabah_fark_v1:+.0f} — normal sapma). Asıl fark dünden geliyor: "
                 f"akşamcının kapanış sayımı {aksamci_beyan:.0f}, matematik {beklenen_aksam:.0f} olmasını "
-                f"bekliyordu (fark {aksam_fark:+.0f}). Bu büyük olasılıkla akşamcının kapanış "
-                f"sayımındaki bir HATA — zimmet/ikram değil.")
+                f"bekliyordu (fark {aksam_fark:+.0f}). EN OLASI açıklama akşamcının kapanış "
+                f"sayım hatası — ama doğrulanana kadar zimmet ihtimali elenmez, alarm kapatılmaz.")
         oneriler = [
-            "Dünkü (akşamcı) kapanış sayımını gözden geçir — muhtemelen sayım/yazım hatası, kasıtlı değil.",
-            "Bugün için 3. kişi sayımı veya ikram araştırması gerekmiyor.",
+            "Düşük öncelik: dünkü (akşamcı) kapanış sayımını sıraya al — en olası açıklama sayım/yazım hatası.",
+            "Acil 3. kişi sayımı gerekmiyor; ama tekrarlarsa veya başka sinyal eşlik ederse zimmet ihtimali yeniden değerlendirilmeli.",
         ]
     elif not aksamci_dogru and not sabahci_dogru_v1 and not sabahci_dogru_v2:
         # Her iki taraf da türetilmişle uyumsuz
