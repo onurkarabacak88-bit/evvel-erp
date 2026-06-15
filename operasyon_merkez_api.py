@@ -8619,6 +8619,7 @@ class OpsSiparisToptanciKalemBody(BaseModel):
 
 class OpsSiparisToptanciyaYollaBody(BaseModel):
     talep_id: str
+    tedarikci_id: Optional[str] = None
     tedarikci_ad: Optional[str] = None
     not_aciklama: Optional[str] = None
     kalemler: List[OpsSiparisToptanciKalemBody]
@@ -9468,6 +9469,31 @@ def ops_siparis_akisi_iptal(body: OpsSiparisMerkezIptalBody):
     return r
 
 
+def _toptanci_siparis_wa_mesaj(
+    tedarikci_ad: Optional[str],
+    sube_adi: Optional[str],
+    kalemler: List[Dict[str, Any]],
+    notu: Optional[str],
+) -> str:
+    """Tedarikçiye WhatsApp'tan gidecek sipariş listesi metnini üretir."""
+    bugun = dt_now_tr().strftime("%d.%m.%Y")
+    satirlar = []
+    for k in kalemler:
+        ad = str(k.get("urun_ad") or "").strip()
+        adet = int(k.get("adet") or 0)
+        if ad and adet > 0:
+            satirlar.append(f"• {ad} × {adet}")
+    bas = "🛒 *EVVEL SİPARİŞ*"
+    if tedarikci_ad:
+        bas += f"\nTedarikçi: {tedarikci_ad}"
+    if sube_adi:
+        bas += f"\nŞube: {sube_adi}"
+    bas += f"\nTarih: {bugun}\n\n" + "\n".join(satirlar)
+    if notu:
+        bas += f"\n\n📝 Not: {notu}"
+    return bas
+
+
 @router.post("/siparis/toptanciya-yolla")
 def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
     tid = (body.talep_id or "").strip()
@@ -9490,7 +9516,9 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
         )
     if not kalemler:
         raise HTTPException(400, "En az bir geçerli kalem girilmeli")
+    tedarikci_id = (body.tedarikci_id or "").strip() or None
     tedarikci_ad = (body.tedarikci_ad or "").strip() or None
+    tedarikci_tel: Optional[str] = None
     notu = (body.not_aciklama or "").strip() or None
     with db() as (conn, cur):
         cur.execute(
@@ -9508,14 +9536,84 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
         t = dict(tr)
         if str(t.get("durum") or "") not in ("bekliyor", "hazirlaniyor", "gonderildi"):
             raise HTTPException(409, "Talep toptancı yönlendirmesi için uygun durumda değil")
+        defter_sube = str(t.get("sube_id") or "").strip() or _ops_sube_anchor(cur)
 
+        # ── Tedarikçiyi çöz: id verilmişse DB'den ad+telefon al. WhatsApp ile
+        #    sipariş gönderebilmek için telefon ZORUNLU — yoksa gönderimi blokla.
+        if tedarikci_id:
+            cur.execute(
+                "SELECT id, ad, telefon FROM tedarikciler WHERE id=%s AND aktif=TRUE",
+                (tedarikci_id,),
+            )
+            ted_row = cur.fetchone()
+            if not ted_row:
+                raise HTTPException(404, "Seçilen tedarikçi bulunamadı veya pasif")
+            ted = dict(ted_row)
+            tedarikci_ad = str(ted.get("ad") or "").strip() or tedarikci_ad
+            tedarikci_tel = str(ted.get("telefon") or "").strip() or None
+            if not tedarikci_tel:
+                raise HTTPException(
+                    400,
+                    f"'{tedarikci_ad or 'Tedarikçi'}' için telefon numarası eksik. "
+                    "WhatsApp ile sipariş gönderebilmek için önce Tedarikçiler ekranından numara ekleyin.",
+                )
+
+        # Şube adı (WhatsApp mesajı için)
+        sube_adi = None
+        if defter_sube:
+            cur.execute("SELECT ad FROM subeler WHERE id=%s", (defter_sube,))
+            _sr = cur.fetchone()
+            if _sr:
+                sube_adi = str(dict(_sr).get("ad") or "").strip() or None
+
+        # ── toptanci_siparis (procurement_line): bu tedarikçiye giden gönderim ──
+        ts_id = str(uuid.uuid4())
+        cur.execute(
+            """
+            INSERT INTO toptanci_siparis
+                (id, talep_id, sube_id, tedarikci_id, tedarikci_ad, tedarikci_tel,
+                 kalemler, not_aciklama, durum)
+            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, 'gonderildi')
+            """,
+            (
+                ts_id, tid, defter_sube, tedarikci_id, tedarikci_ad, tedarikci_tel,
+                json.dumps(kalemler, ensure_ascii=False), notu,
+            ),
+        )
+
+        # ── WhatsApp: telefon varsa sipariş listesini tedarikçiye gönder ──
+        wa_sonuc: Optional[Dict[str, Any]] = None
+        if tedarikci_tel:
+            mesaj = _toptanci_siparis_wa_mesaj(tedarikci_ad, sube_adi, kalemler, notu)
+            try:
+                from whatsapp_bildirim import whatsapp_gonder_numara
+                wa_sonuc = whatsapp_gonder_numara(tedarikci_tel, mesaj)
+            except Exception as e:  # gönderim hatası kaydı engellemez
+                wa_sonuc = {"basarili": False, "mesaj_id": None, "chat_id": "", "hata": str(e)[:120]}
+            cur.execute(
+                """
+                UPDATE toptanci_siparis
+                SET wa_gonderim_ts = NOW(), wa_mesaj_id = %s, wa_chat_id = %s, wa_durum = %s
+                WHERE id = %s
+                """,
+                (
+                    wa_sonuc.get("mesaj_id"),
+                    wa_sonuc.get("chat_id"),
+                    ("gonderildi" if wa_sonuc.get("basarili") else "hata"),
+                    ts_id,
+                ),
+            )
+
+        # ── operasyon_defter (eski toptancı teslim feed'i korunur) ──
         payload = {
             "talep_id": tid,
+            "toptanci_siparis_id": ts_id,
+            "tedarikci_id": tedarikci_id,
             "tedarikci_ad": tedarikci_ad,
             "kalemler": kalemler,
             "not_aciklama": notu,
+            "wa_basarili": bool(wa_sonuc and wa_sonuc.get("basarili")),
         }
-        defter_sube = str(t.get("sube_id") or "").strip() or _ops_sube_anchor(cur)
         operasyon_defter_ekle(
             cur,
             defter_sube,
@@ -9524,6 +9622,36 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
             bildirim_saati=dt_now_tr().strftime("%H:%M:%S"),
             ref_event_id=tid,
         )
+
+        # ── merkez_karar_kalemleri = TÜM tedarikçilerin AGGREGATE'i (split fix) ──
+        # Tek talep birden fazla tedarikçiye bölünebildiği için N2, tüm
+        # toptanci_siparis satırlarının toplamıdır; tek gönderim onu ezmez.
+        cur.execute("SELECT kalemler FROM toptanci_siparis WHERE talep_id=%s", (tid,))
+        _agg: Dict[str, Dict[str, Any]] = {}
+        _sira: List[str] = []
+        for _row in cur.fetchall():
+            _kl = dict(_row).get("kalemler") or []
+            if isinstance(_kl, str):
+                try:
+                    _kl = json.loads(_kl)
+                except Exception:
+                    _kl = []
+            for _k in _kl:
+                _ad = str(_k.get("urun_ad") or "").strip()
+                if not _ad:
+                    continue
+                _key = _ad.lower()
+                if _key not in _agg:
+                    _agg[_key] = {
+                        "urun_ad": _ad,
+                        "adet": 0,
+                        "kalem_kodu": _k.get("kalem_kodu"),
+                        "kategori_kod": _k.get("kategori_kod"),
+                    }
+                    _sira.append(_key)
+                _agg[_key]["adet"] += int(_k.get("adet") or 0)
+        merkez_agg = [_agg[k] for k in _sira]
+
         sevk_notu = notu
         if tedarikci_ad:
             ek = f"Toptancı: {tedarikci_ad}"
@@ -9539,16 +9667,19 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
                 merkez_karar_kalemleri = %s::jsonb
             WHERE id = %s
             """,
-            (sevk_notu, json.dumps(kalemler, ensure_ascii=False), tid),
+            (sevk_notu, json.dumps(merkez_agg, ensure_ascii=False), tid),
         )
         audit(cur, "siparis_talep", tid, "OPS_SIPARIS_TOPTANCIYA_YOLLA")
     return {
         "success": True,
         "talep_id": tid,
+        "toptanci_siparis_id": ts_id,
         "kalem_sayisi": len(kalemler),
         "toplam_adet": sum(int(k.get("adet") or 0) for k in kalemler),
         "durum": "gonderildi",
         "sevkiyat_durumu": "toptanciya_yonlendirildi",
+        "wa_basarili": bool(wa_sonuc and wa_sonuc.get("basarili")),
+        "wa_hata": (wa_sonuc.get("hata") if wa_sonuc else None),
     }
 
 

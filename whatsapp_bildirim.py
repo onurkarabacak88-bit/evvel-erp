@@ -17,7 +17,7 @@ Ortam değişkenleri:
     WA_GROUP_ID      — Grup chat ID (@g.us ile biten)
 """
 
-import os, json, logging, urllib.request, urllib.error
+import os, re, json, logging, urllib.request, urllib.error
 from datetime import date, timedelta
 from database import db
 
@@ -830,34 +830,85 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
 
 # ── Green API Gönderim ────────────────────────────────────────────────────────
 
-def whatsapp_gonder(mesaj: str) -> bool:
+def wa_chatid_normalize(telefon: str) -> str:
+    """
+    TR telefon numarasını Green API bireysel chatId formatına çevirir:
+    '<ülke kodu><numara>@c.us'. Boş/geçersiz ise '' döner.
+      0532 123 45 67  -> 905321234567@c.us
+      532 123 45 67   -> 905321234567@c.us
+      90 532 ...      -> 905321234567@c.us
+      +90 532 ...     -> 905321234567@c.us
+    """
+    digits = re.sub(r"\D", "", str(telefon or ""))
+    if not digits:
+        return ""
+    # Türkiye varsayılanı: başta 0 varsa at, 10 haneli (5XXXXXXXXX) ise 90 ekle.
+    if digits.startswith("00"):
+        digits = digits[2:]
+    if len(digits) == 11 and digits.startswith("0"):
+        digits = "90" + digits[1:]
+    elif len(digits) == 10 and digits.startswith("5"):
+        digits = "90" + digits
+    if len(digits) < 11:
+        return ""
+    return digits + "@c.us"
+
+
+def _wa_send(chat_id: str, mesaj: str) -> dict:
+    """
+    Green API'ye tek bir mesaj gönderir. Düşük seviye çekirdek.
+    Dönüş: {"basarili": bool, "mesaj_id": str|None, "hata": str|None}
+    """
     instance_id = os.getenv("WA_INSTANCE_ID", "").strip()
     token       = os.getenv("WA_TOKEN", "").strip()
-    group_id    = os.getenv("WA_GROUP_ID", "").strip()
+    chat_id     = (chat_id or "").strip()
 
-    if not all([instance_id, token, group_id]):
-        logger.warning("WhatsApp: ortam değişkenleri eksik — atlanıyor")
-        return False
+    if not all([instance_id, token, chat_id]):
+        logger.warning("WhatsApp: ortam değişkenleri veya chatId eksik — atlanıyor")
+        return {"basarili": False, "mesaj_id": None, "hata": "config_eksik"}
 
     url     = f"https://api.green-api.com/waInstance{instance_id}/sendMessage/{token}"
-    payload = json.dumps({"chatId": group_id, "message": mesaj}).encode("utf-8")
+    payload = json.dumps({"chatId": chat_id, "message": mesaj}).encode("utf-8")
     req     = urllib.request.Request(url, data=payload,
                                      headers={"Content-Type": "application/json"},
                                      method="POST")
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            if data.get("idMessage"):
-                logger.info(f"WhatsApp: gönderildi — {data['idMessage']}")
-                return True
+            mid = data.get("idMessage")
+            if mid:
+                logger.info(f"WhatsApp: gönderildi — {mid}")
+                return {"basarili": True, "mesaj_id": str(mid), "hata": None}
             logger.warning(f"WhatsApp: beklenmedik yanıt — {str(data)[:200]}")
-            return False
+            return {"basarili": False, "mesaj_id": None, "hata": "beklenmedik_yanit"}
     except urllib.error.HTTPError as e:
         logger.error(f"WhatsApp HTTP hatası: {e.code}")
-        return False
+        return {"basarili": False, "mesaj_id": None, "hata": f"http_{e.code}"}
     except Exception as e:
         logger.error(f"WhatsApp hatası: {e}")
+        return {"basarili": False, "mesaj_id": None, "hata": str(e)[:120]}
+
+
+def whatsapp_gonder(mesaj: str) -> bool:
+    """Sabit ortaklar grubuna mesaj gönderir (gece özeti vb.)."""
+    group_id = os.getenv("WA_GROUP_ID", "").strip()
+    if not group_id:
+        logger.warning("WhatsApp: WA_GROUP_ID eksik — atlanıyor")
         return False
+    return _wa_send(group_id, mesaj).get("basarili", False)
+
+
+def whatsapp_gonder_numara(telefon: str, mesaj: str) -> dict:
+    """
+    Belirli bir telefon numarasına (tedarikçi vb.) mesaj gönderir.
+    Dönüş: {"basarili": bool, "mesaj_id": str|None, "chat_id": str, "hata": str|None}
+    """
+    chat_id = wa_chatid_normalize(telefon)
+    if not chat_id:
+        return {"basarili": False, "mesaj_id": None, "chat_id": "", "hata": "gecersiz_numara"}
+    sonuc = _wa_send(chat_id, mesaj)
+    sonuc["chat_id"] = chat_id
+    return sonuc
 
 
 def gunluk_ozet_gonder(tarih: date | None = None) -> dict:

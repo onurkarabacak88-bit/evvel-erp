@@ -798,6 +798,28 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
     const talepId = String(sip?.id || '');
     const toptanciAd = (kuyrukToptanciTedarikci[talepId] || '').trim();
     if (!toptanciAd) { toast('Önce toptancı adını girin.', 'red'); return; }
+    // Yazılan/seçilen adı kayıtlı tedarikçiyle eşleştir → id + telefon yakala.
+    // Telefon WhatsApp gönderimi için zorunlu (kullanıcı kararı: telefon yoksa blokla).
+    const eslesen = (tedarikciListesi || []).find(
+      (t) => String(t.ad || '').trim().toLowerCase() === toptanciAd.toLowerCase()
+    );
+    let tedarikciId = null;
+    let tedarikciTel = null;
+    let tedarikciAdFinal = toptanciAd;
+    if (eslesen) {
+      tedarikciId = String(eslesen.id);
+      tedarikciTel = String(eslesen.telefon || '').trim();
+      tedarikciAdFinal = String(eslesen.ad || toptanciAd);
+      if (!tedarikciTel) {
+        toast(`"${tedarikciAdFinal}" için telefon numarası yok. WhatsApp ile sipariş gönderebilmek için Tedarikçiler ekranından numara ekleyin.`, 'red');
+        return;
+      }
+    } else {
+      const devam = window.confirm(
+        `"${toptanciAd}" kayıtlı tedarikçi değil.\n\nWhatsApp ile sipariş GÖNDERİLEMEZ; yalnızca liste/kayıt oluşturulur.\n\nYine de devam edilsin mi?\n(WhatsApp için listeden kayıtlı bir tedarikçi seçin.)`
+      );
+      if (!devam) return;
+    }
     const rows = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
     const kalemler = [];
     rows.forEach((k, i) => {
@@ -812,7 +834,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
     });
     if (!kalemler.length) { toast('Hiç kalem seçilmedi ya da adetler 0.', 'red'); return; }
     const listeNo = (kuyrukToptanciListeler[talepId] || []).length + 1;
-    const yeniListe = { listeNo, toptanciAd, kalemler, ts: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) };
+    const yeniListe = { listeNo, toptanciAd: tedarikciAdFinal, tedarikciId, tedarikciTel, kalemler, ts: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) };
     setKuyrukToptanciListeler(prev => ({ ...prev, [talepId]: [...(prev[talepId] || []), yeniListe] }));
     setKuyrukToptanciAtanmis(prev => {
       const next = { ...prev };
@@ -870,25 +892,42 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
       if (!devamMi) return;
     }
 
+    // WhatsApp önizleme/onay — hangi tedarikçilere mesaj gidecek (dışa açık aksiyon)
+    const waGidecek = listeler.filter(l => l.tedarikciId && l.tedarikciTel);
+    const waYok = listeler.filter(l => !(l.tedarikciId && l.tedarikciTel));
+    let onayMsg = '';
+    if (waGidecek.length) {
+      onayMsg += `📲 WhatsApp ile sipariş gidecek:\n` + waGidecek.map(l => `  • ${l.toptanciAd} (${l.kalemler.length} kalem)`).join('\n') + '\n\n';
+    }
+    if (waYok.length) {
+      onayMsg += `⚠️ WhatsApp GÖNDERİLMEYECEK (kayıtsız/telefonsuz):\n` + waYok.map(l => `  • ${l.toptanciAd}`).join('\n') + '\n\n';
+    }
+    onayMsg += 'Onaylıyor musunuz?';
+    if (!window.confirm(onayMsg)) return;
+
     setKuyrukBusy(talepId);
     try {
       let toplamAdet = 0;
+      let waBasarili = 0;
       for (const liste of listeler) {
         const r = await api('/ops/siparis/toptanciya-yolla', {
           method: 'POST',
           body: {
             talep_id: talepId,
+            tedarikci_id: liste.tedarikciId || null,
             tedarikci_ad: liste.toptanciAd,
             not_aciklama: (kuyrukToptanciNot[talepId] || '').trim() || null,
             kalemler: liste.kalemler,
           },
         });
         toplamAdet += Number(r?.toplam_adet || 0);
+        if (r?.wa_basarili) waBasarili += 1;
       }
       kuyrukTalepTemizle(talepId);
       publishGlobalDataRefresh('siparis-kontrol-toptanci-yonlendir');
       const adlar = listeler.map(l => l.toptanciAd).join(', ');
-      islemSonucGoster(true, `${listeler.length} toptancıya yönlendirildi (${adlar}) — ${toplamAdet} adet · kuyruktan düştü.`);
+      const waNot = waBasarili ? ` · 📲 ${waBasarili} tedarikçiye WhatsApp gönderildi` : '';
+      islemSonucGoster(true, `${listeler.length} toptancıya yönlendirildi (${adlar}) — ${toplamAdet} adet · kuyruktan düştü${waNot}.`);
       yukle();
     } catch (e) {
       islemSonucGoster(false, e.message || 'Toptancıya gönderim hatası');

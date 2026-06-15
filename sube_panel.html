@@ -10497,6 +10497,12 @@ var UrunTeslimAl = (function () {
     katalog: [],
   };
 
+  // Faz 2 — bekleyen toptancı siparişleri (N2 ile). Sipariş seçilince "sipariş
+  // modu": beklenen liste sayılır, fazla/eksik not kutusu açılır. Sipariş yoksa
+  // eski serbest/katalog akışı sürer (kör değil ama zorunlu da değil).
+  var _svBeklenenListe = [];
+  var _svBeklenenSiparis = null;
+
   function mountEl() {
     return document.getElementById('sevkForm');
   }
@@ -10511,6 +10517,9 @@ var UrunTeslimAl = (function () {
     h += '<div><p class="sv-hero-baslik">Ürün Teslim Al</p>';
     h += '<p class="sv-hero-alt">Toptancı / tedarikçiden gelen ürünleri sayın ve kaydedin</p></div>';
     h += '</div>';
+
+    // ── Bekleyen toptancı siparişleri (Faz 2) ─────────────────────────────
+    h += '<div id="svBeklenenWrap"></div>';
 
     // ── İki kolon gövde ───────────────────────────────────────────────────
     h += '<div class="sv-pos-body">';
@@ -10574,6 +10583,115 @@ var UrunTeslimAl = (function () {
     return h;
   }
 
+  // ── Bekleyen toptancı siparişleri ───────────────────────────────────────
+  async function svBeklenenYukle() {
+    try {
+      var r = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/toptanci-siparis-bekleyen');
+      _svBeklenenListe = (r && r.siparisler) || [];
+    } catch (e) {
+      _svBeklenenListe = [];
+    }
+    svBeklenenRender();
+  }
+
+  function svBeklenenRender() {
+    var wrap = document.getElementById('svBeklenenWrap');
+    if (!wrap) return;
+    var katWrap = document.getElementById('svKatalogWrap');
+    var s = _svBeklenenSiparis;
+    if (s) {
+      // Sipariş modu: beklenen liste sayılır
+      if (katWrap) katWrap.style.display = 'none';
+      var rows = '';
+      (s.kalemler || []).forEach(function (k, i) {
+        var bek = parseInt(k.adet || 0, 10) || 0;
+        rows +=
+          '<div class="sv-bek-row" data-sv-bek-idx="' + i + '" style="display:flex;align-items:center;gap:10px;padding:8px 6px;border-bottom:1px solid var(--cizgi)">' +
+            '<div style="flex:1;font-size:15px;font-weight:600">' + escHtml(k.urun_ad || '') + '</div>' +
+            '<div style="font-size:13px;color:var(--muted);min-width:78px">beklenen: <b style="color:var(--text)">' + bek + '</b></div>' +
+            '<input type="number" inputmode="numeric" min="0" data-sv-bek-say="' + i + '" value="' + bek + '" ' +
+              'style="width:72px;text-align:center;font-size:16px;font-weight:700;padding:8px;border-radius:8px" />' +
+            '<input type="text" data-sv-bek-not="' + i + '" placeholder="fazla/eksik nedeni" ' +
+              'style="flex:1;display:none;font-size:13px;padding:8px;border-radius:8px" />' +
+          '</div>';
+      });
+      wrap.innerHTML =
+        '<div style="background:var(--bg2);border:2px solid #f59e0b;border-radius:12px;padding:14px;margin-bottom:14px">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px">' +
+            '<div style="font-size:15px;font-weight:800">📦 ' + escHtml(s.tedarikci_ad || 'Tedarikçi') + ' — beklenen sipariş</div>' +
+            '<button type="button" class="btn btn-secondary btn-sm" data-sv-bekleyen-vazgec>↩︎ Vazgeç</button>' +
+          '</div>' +
+          '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Geleni sayın. Beklenenden farklıysa not kutusu açılır — sebebini yazın (kör sayım değil).</div>' +
+          rows +
+        '</div>';
+      svBeklenenNotGuncelle();
+    } else {
+      // Liste modu: bekleyen sipariş kartları (varsa)
+      if (katWrap) katWrap.style.display = '';
+      if (!_svBeklenenListe.length) { wrap.innerHTML = ''; return; }
+      var cards = '';
+      _svBeklenenListe.forEach(function (o) {
+        var wa = o.wa_gonderildi ? ' · 📲' : '';
+        cards +=
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border:1px solid var(--cizgi);border-radius:10px;padding:10px 12px;margin-bottom:8px">' +
+            '<div><b style="font-size:15px">' + escHtml(o.tedarikci_ad || '—') + '</b>' +
+              '<span style="font-size:12px;color:var(--muted)"> · ' + (o.kalem_sayisi || 0) + ' kalem' + wa + '</span></div>' +
+            '<button type="button" class="btn btn-primary btn-sm" data-sv-bekleyen="' + escHtml(o.id) + '">Teslim Al</button>' +
+          '</div>';
+      });
+      wrap.innerHTML =
+        '<div style="background:var(--bg2);border-radius:12px;padding:12px 14px;margin-bottom:14px">' +
+          '<div style="font-size:14px;font-weight:800;margin-bottom:8px">📦 Bekleyen toptancı siparişi (' + _svBeklenenListe.length + ')</div>' +
+          cards +
+          '<div style="font-size:11px;color:var(--muted);margin-top:4px">Siparişsiz mal geldiyse aşağıdan serbest teslim alın.</div>' +
+        '</div>';
+    }
+  }
+
+  function svBeklenenSec(id) {
+    var o = (_svBeklenenListe || []).find(function (x) { return String(x.id) === String(id); });
+    if (!o) return;
+    _svBeklenenSiparis = o;
+    // Tedarikçiyi otomatik seç (varsa)
+    var td = document.getElementById('svTedarikci');
+    if (td && o.tedarikci_id) td.value = o.tedarikci_id;
+    svBeklenenRender();
+    updateSecimUI();
+  }
+
+  function svBeklenenVazgec() {
+    _svBeklenenSiparis = null;
+    svBeklenenRender();
+    updateSecimUI();
+  }
+
+  // Sayım ≠ beklenen ise not kutusunu aç
+  function svBeklenenNotGuncelle() {
+    if (!_svBeklenenSiparis) return;
+    var wrap = document.getElementById('svBeklenenWrap');
+    if (!wrap) return;
+    (_svBeklenenSiparis.kalemler || []).forEach(function (k, i) {
+      var bek = parseInt(k.adet || 0, 10) || 0;
+      var sayEl = wrap.querySelector('[data-sv-bek-say="' + i + '"]');
+      var notEl = wrap.querySelector('[data-sv-bek-not="' + i + '"]');
+      if (!sayEl || !notEl) return;
+      var say = parseInt(sayEl.value || '0', 10) || 0;
+      notEl.style.display = (say !== bek) ? '' : 'none';
+    });
+  }
+
+  function svBeklenenToplam() {
+    if (!_svBeklenenSiparis) return 0;
+    var wrap = document.getElementById('svBeklenenWrap');
+    if (!wrap) return 0;
+    var t = 0;
+    (_svBeklenenSiparis.kalemler || []).forEach(function (k, i) {
+      var sayEl = wrap.querySelector('[data-sv-bek-say="' + i + '"]');
+      t += Math.max(0, parseInt((sayEl && sayEl.value) || '0', 10) || 0);
+    });
+    return t;
+  }
+
   function katalogOzeti() {
     var data = state.katalog || [];
     var stShowPasif = stokKartState(PREFIX).showPasif;
@@ -10619,18 +10737,59 @@ var UrunTeslimAl = (function () {
   }
 
   function buildPayload() {
-    var data = state.katalog || [];
     var body = {
       personel_id: selVal('svPers'),
       pin: inpVal('svPin').replace(/\D/g, '').slice(0, 4),
       not_aciklama: null,
       kalemler: [],
     };
-    appendKatalogKalemler(body, data);
+    if (_svBeklenenSiparis) {
+      // Sipariş modu: beklenen liste sayımları + görünür varyans notları
+      var wrap = document.getElementById('svBeklenenWrap');
+      var varyans = [];
+      (_svBeklenenSiparis.kalemler || []).forEach(function (k, i) {
+        var sayEl = wrap && wrap.querySelector('[data-sv-bek-say="' + i + '"]');
+        var notEl = wrap && wrap.querySelector('[data-sv-bek-not="' + i + '"]');
+        var say = Math.max(0, parseInt((sayEl && sayEl.value) || '0', 10) || 0);
+        body.kalemler.push({
+          urun_ad: k.urun_ad,
+          adet: say,
+          kalem_kodu: k.kalem_kodu || null,
+          kategori_kod: k.kategori_kod || null,
+        });
+        var nt = ((notEl && notEl.value) || '').trim();
+        if (nt) varyans.push({ urun_ad: k.urun_ad, not: nt });
+      });
+      body.siparis_talep_id = _svBeklenenSiparis.talep_id;
+      body.toptanci_siparis_id = _svBeklenenSiparis.id;
+      if (varyans.length) body.varyans_notlari = varyans;
+    } else {
+      appendKatalogKalemler(body, state.katalog || []);
+    }
     return body;
   }
 
   function updateSecimUI() {
+    // Sipariş modu: özet/buton beklenen-liste sayımına göre
+    if (_svBeklenenSiparis) {
+      svBeklenenNotGuncelle();
+      var sipTop = svBeklenenToplam();
+      var sipKalem = (_svBeklenenSiparis.kalemler || []).length;
+      var ozelEl = document.getElementById('svSecimOzet');
+      if (ozelEl) {
+        ozelEl.innerHTML =
+          '<span style="font-size:28px;font-weight:900;color:#86efac;line-height:1">' + sipKalem + '</span>' +
+          '<span style="font-size:13px;color:var(--muted)"> kalem &nbsp;·&nbsp; </span>' +
+          '<span style="font-size:22px;font-weight:900;color:#86efac;line-height:1">' + sipTop + '</span>' +
+          '<span style="font-size:13px;color:var(--muted)"> adet (sipariş)</span>';
+      }
+      var sipBtn = document.getElementById('svGonder');
+      if (sipBtn) {
+        sipBtn.disabled = !(sipTop > 0);
+        sipBtn.title = sipTop > 0 ? 'Personel ve PIN ile kaydedin' : 'En az bir kalemde sayım girin';
+      }
+      return;
+    }
     var oz = katalogOzeti();
     var ozetEl = document.getElementById('svSecimOzet');
     if (ozetEl) {
@@ -10739,6 +10898,9 @@ var UrunTeslimAl = (function () {
     if (tdEl) tdEl.value = '';
     var notEl = document.getElementById('svNot');
     if (notEl) notEl.value = '';
+    // Sipariş modundan çık + bekleyen listeyi tazele
+    _svBeklenenSiparis = null;
+    svBeklenenYukle();
   }
 
   async function validateAndSubmit() {
@@ -10746,30 +10908,43 @@ var UrunTeslimAl = (function () {
     setMsg('svMsg', '', '');
     if (btn) btn.disabled = true;
     try {
+      var orderMode = !!_svBeklenenSiparis;
       var body = buildPayload();
       var sum = (body.kalemler || []).reduce(function (s, x) {
         return s + (parseInt(x.adet || 0, 10) || 0);
       }, 0);
       if (sum <= 0) {
-        throw new Error('Katalogdan en az bir üründe adet girin');
+        throw new Error(orderMode ? 'En az bir kalemde sayım girin' : 'Katalogdan en az bir üründe adet girin');
       }
       if (!body.personel_id) throw new Error('Personel seçin');
       if (body.pin.length !== 4) throw new Error('4 haneli PIN girin');
 
       var td = selVal('svTedarikci');
       if (!td) throw new Error('Tedarikçi seçin');
+      body.tedarikci_id = td;
 
       var not = inpVal('svNot').trim();
-      var oz = katalogOzeti();
-      var autoAcik =
-        (oz.kalem || 0) +
-        ' kalem, ' +
-        (oz.adet || 0) +
-        ' adet tedarikçi teslimi';
-      body.tedarikci_id = td;
-      body.teslim_durumu = 'tam_geldi';
-      body.teslim_aciklama = not.length >= 3 ? not : autoAcik;
-      if (not) body.not_aciklama = not;
+      if (orderMode) {
+        // Sayım beklenenden az olan kalem var mı → eksik
+        var eksikVar = (_svBeklenenSiparis.kalemler || []).some(function (k, i) {
+          var got = (body.kalemler[i] && parseInt(body.kalemler[i].adet || 0, 10)) || 0;
+          return got < (parseInt(k.adet || 0, 10) || 0);
+        });
+        body.teslim_durumu = eksikVar ? 'eksik_var' : 'tam_geldi';
+        var sipAutoAcik = (_svBeklenenSiparis.tedarikci_ad || 'Toptancı') + ' siparişi teslim (' + sum + ' adet)';
+        body.teslim_aciklama = not.length >= 3 ? not : sipAutoAcik;
+        if (not) body.not_aciklama = not;
+      } else {
+        var oz = katalogOzeti();
+        var autoAcik =
+          (oz.kalem || 0) +
+          ' kalem, ' +
+          (oz.adet || 0) +
+          ' adet tedarikçi teslimi';
+        body.teslim_durumu = 'tam_geldi';
+        body.teslim_aciklama = not.length >= 3 ? not : autoAcik;
+        if (not) body.not_aciklama = not;
+      }
 
       var apiResp = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/urun-sevk', {
         method: 'POST',
@@ -10816,7 +10991,20 @@ var UrunTeslimAl = (function () {
       fillSels();
       wireKatalogHandlers();
       wireSubmit();
+      // Bekleyen toptancı siparişi: kart seç / vazgeç (delegasyon, wrap kalıcı)
+      var bekWrap = document.getElementById('svBeklenenWrap');
+      if (bekWrap && bekWrap.dataset.wired !== '1') {
+        bekWrap.dataset.wired = '1';
+        bekWrap.addEventListener('click', function (ev) {
+          var sec = ev.target.closest('[data-sv-bekleyen]');
+          var vaz = ev.target.closest('[data-sv-bekleyen-vazgec]');
+          if (sec) { svBeklenenSec(sec.getAttribute('data-sv-bekleyen')); }
+          else if (vaz) { svBeklenenVazgec(); }
+        });
+        bekWrap.addEventListener('input', function () { updateSecimUI(); });
+      }
       updateSecimUI();
+      svBeklenenYukle();
     } catch (e) {
       delete el.dataset.building;
       delete el.dataset.built;

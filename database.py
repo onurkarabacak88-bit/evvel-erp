@@ -2414,6 +2414,41 @@ def init_db():
             EXCEPTION WHEN others THEN NULL;
             END $$;
         """)
+        # ── TOPTANCI SİPARİŞİ (procurement_line) ───────────────────────────
+        # Her "toptancıya yolla" aksiyonu = bir tedarikçiye giden bir gönderim.
+        # Tek talep birden fazla tedarikçiye bölünebilir (kategori-split) →
+        # talep başına N satır. kalemler = O TEDARİKÇİYE giden N2 (merkez kararı).
+        # siparis_talep.merkez_karar_kalemleri tüm satırların AGGREGATE'i kalır
+        # (eski kabul/karşılaştırma akışı bozulmasın). N1 (kalemler_ozet) hiç
+        # ezilmez. (bkz. project_tedarik_zinciri: procurement_line, god-object'i kır)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS toptanci_siparis (
+                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                talep_id        TEXT NOT NULL REFERENCES siparis_talep(id) ON DELETE CASCADE,
+                sube_id         TEXT,
+                tedarikci_id    TEXT REFERENCES tedarikciler(id),
+                tedarikci_ad    TEXT,
+                tedarikci_tel   TEXT,
+                kalemler        JSONB NOT NULL DEFAULT '[]'::jsonb,
+                not_aciklama    TEXT,
+                durum           TEXT NOT NULL DEFAULT 'gonderildi',
+                wa_gonderim_ts  TIMESTAMPTZ,
+                wa_mesaj_id     TEXT,
+                wa_chat_id      TEXT,
+                wa_durum        TEXT,
+                olusturan_ad    TEXT,
+                olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                teslim_ts       TIMESTAMPTZ
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_toptanci_siparis_talep
+            ON toptanci_siparis (talep_id)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_toptanci_siparis_sube_durum
+            ON toptanci_siparis (sube_id, durum)
+        """)
         cur.execute("""
             UPDATE subeler
             SET sube_tipi = CASE

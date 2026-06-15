@@ -2737,6 +2737,8 @@ class SubeSevkBody(BaseModel):
     tedarikci: Optional[str] = None
     kalemler: Optional[List[Dict[str, Any]]] = None
     siparis_talep_id: Optional[str] = None
+    toptanci_siparis_id: Optional[str] = None  # bekleyen toptancı siparişine bağla (Faz 2)
+    varyans_notlari: Optional[List[Dict[str, Any]]] = None  # [{urun_ad, not}] görünür fazla/eksik açıklaması
     teslim_durumu: str = "tam_geldi"  # tam_geldi | eksik_var
     eksik_kategori: Optional[str] = None  # sipariste_vardi | sipariste_yoktu
     teslim_aciklama: Optional[str] = None
@@ -2767,6 +2769,65 @@ def _stok_kalemleri_temizle(kalemler: Optional[List[Dict[str, Any]]]) -> List[Di
             }
         )
     return out
+
+
+@router.get("/{sube_id}/toptanci-siparis-bekleyen")
+def sube_toptanci_siparis_bekleyen(sube_id: str):
+    """
+    Şubeye gelmesi beklenen (henüz teslim alınmamış) toptancı siparişleri.
+    Her satır = bir tedarikçiye giden gönderim + O tedarikçinin N2 kalemleri.
+    Şube bunu görerek KÖR saymaz; beklenen listeye göre kabul eder.
+    """
+    out: List[Dict[str, Any]] = []
+    with db() as (conn, cur):
+        try:
+            cur.execute(
+                """
+                SELECT ts.id, ts.talep_id, ts.tedarikci_id, ts.tedarikci_ad,
+                       ts.kalemler, ts.not_aciklama, ts.olusturma,
+                       ts.wa_gonderim_ts, ts.wa_durum
+                FROM toptanci_siparis ts
+                JOIN siparis_talep t ON t.id = ts.talep_id
+                WHERE ts.sube_id = %s
+                  AND ts.durum = 'gonderildi'
+                  AND t.durum NOT IN ('teslim_edildi', 'iptal')
+                ORDER BY ts.olusturma DESC
+                """,
+                (sube_id,),
+            )
+            rows = cur.fetchall() or []
+        except Exception:
+            rows = []
+        for r in rows:
+            d = dict(r)
+            kl = d.get("kalemler") or []
+            if isinstance(kl, str):
+                try:
+                    kl = json.loads(kl)
+                except Exception:
+                    kl = []
+            kalemler = [
+                {
+                    "urun_ad": str(k.get("urun_ad") or "").strip(),
+                    "adet": int(k.get("adet") or 0),
+                    "kalem_kodu": k.get("kalem_kodu"),
+                    "kategori_kod": k.get("kategori_kod"),
+                }
+                for k in kl
+                if str(k.get("urun_ad") or "").strip()
+            ]
+            out.append({
+                "id": str(d.get("id")),
+                "talep_id": str(d.get("talep_id") or ""),
+                "tedarikci_id": (str(d.get("tedarikci_id") or "").strip() or None),
+                "tedarikci_ad": (str(d.get("tedarikci_ad") or "").strip() or "—"),
+                "kalemler": kalemler,
+                "kalem_sayisi": len(kalemler),
+                "not_aciklama": (str(d.get("not_aciklama") or "").strip() or None),
+                "olusturma": str(d.get("olusturma") or "")[:16].replace("T", " "),
+                "wa_gonderildi": (str(d.get("wa_durum") or "") == "gonderildi"),
+            })
+    return {"siparisler": out}
 
 
 @router.post("/{sube_id}/urun-sevk")
@@ -2890,6 +2951,15 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
         # Eğer dolu ise: bu sevk kaydı belirli bir şube siparişine karşılık geliyor demek.
         # Siparişi 'teslim_edildi' olarak kapat, kabul timestamp/personel kaydet.
         siparis_talep_id = (body.siparis_talep_id or "").strip() or None
+        toptanci_siparis_id = (body.toptanci_siparis_id or "").strip() or None
+        # Şubenin yazdığı görünür fazla/eksik açıklamaları: {urun_ad(lower): not}
+        _varyans_not_map: Dict[str, str] = {}
+        for _vn in (body.varyans_notlari or []):
+            if isinstance(_vn, dict):
+                _vad = str(_vn.get("urun_ad") or "").strip().lower()
+                _vnot = str(_vn.get("not") or _vn.get("aciklama") or "").strip()
+                if _vad and _vnot:
+                    _varyans_not_map[_vad] = _vnot[:300]
         siparis_kapama_sonucu: Optional[Dict[str, Any]] = None
         if siparis_talep_id:
             cur.execute(
@@ -2931,11 +3001,24 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             try:
                 import json as _j2
                 _ref_kaynak = "N1_talep"
-                _orig_kalemler = _talep.get("merkez_karar_kalemleri")
-                if _orig_kalemler:
-                    _ref_kaynak = "N2_merkez"
-                else:
-                    _orig_kalemler = _talep.get("kalemler_ozet") or []
+                _orig_kalemler = None
+                # En kesin referans: belirli toptancı siparişinin (bu tedarikçiye
+                # giden) kendi N2 kalemleri. Split'te aggregate yanıltır; satır kesin.
+                if toptanci_siparis_id:
+                    cur.execute(
+                        "SELECT kalemler FROM toptanci_siparis WHERE id=%s AND talep_id=%s",
+                        (toptanci_siparis_id, siparis_talep_id),
+                    )
+                    _ts_row = cur.fetchone()
+                    if _ts_row:
+                        _orig_kalemler = dict(_ts_row).get("kalemler")
+                        _ref_kaynak = "N2_toptanci_siparis"
+                if not _orig_kalemler:
+                    _orig_kalemler = _talep.get("merkez_karar_kalemleri")
+                    if _orig_kalemler:
+                        _ref_kaynak = "N2_merkez"
+                    else:
+                        _orig_kalemler = _talep.get("kalemler_ozet") or []
                 if isinstance(_orig_kalemler, str):
                     _orig_kalemler = _j2.loads(_orig_kalemler)
                 _orig_map = {}
@@ -2952,16 +3035,22 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 for _ad, _ist in _orig_map.items():
                     _kab = _kabul_map.get(_ad, 0)
                     if _kab != _ist:
-                        _uyusmazlik_satirlar.append({
+                        _satir = {
                             "urun_ad": _ad, "istenen": _ist, "kabul": _kab, "fark": _kab - _ist,
-                        })
+                        }
+                        if _varyans_not_map.get(_ad):
+                            _satir["aciklama"] = _varyans_not_map[_ad]
+                        _uyusmazlik_satirlar.append(_satir)
                 # Sadece sipariş listesinde olmayan ekstra ürün de uyarı (fazladan ürün?)
                 for _ad, _kab in _kabul_map.items():
                     if _ad not in _orig_map:
-                        _uyusmazlik_satirlar.append({
+                        _satir = {
                             "urun_ad": _ad, "istenen": 0, "kabul": _kab, "fark": _kab,
                             "ekstra": True,
-                        })
+                        }
+                        if _varyans_not_map.get(_ad):
+                            _satir["aciklama"] = _varyans_not_map[_ad]
+                        _uyusmazlik_satirlar.append(_satir)
                 if _uyusmazlik_satirlar:
                     import json as _j3
                     _uyari_id = str(uuid.uuid4())
@@ -3003,6 +3092,16 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 """,
                 (_yeni_durum, _kabul_durum, pid_panel, onay_ad, siparis_talep_id),
             )
+            # Bekleyen toptancı siparişi satırını da kapat (Faz 2)
+            if toptanci_siparis_id:
+                cur.execute(
+                    """
+                    UPDATE toptanci_siparis
+                    SET durum='teslim_alindi', teslim_ts=NOW()
+                    WHERE id=%s AND talep_id=%s
+                    """,
+                    (toptanci_siparis_id, siparis_talep_id),
+                )
             siparis_kapama_sonucu = {
                 "kapatildi": True,
                 "yeni_durum": _yeni_durum,
