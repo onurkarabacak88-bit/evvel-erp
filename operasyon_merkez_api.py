@@ -15523,7 +15523,9 @@ def truth_gunluk_rapor(tarih: Optional[str] = Query(None)):
         # Boyut adı kullanıcı için: "kasa" → "Kasa", "bardak_plastik" → "Plastik"
         BOYUT_ADI = {
             "kasa": "Kasa", "bardak_plastik": "Plastik",
-            "bardak_karton": "Karton", "redbull_soda": "Redbull/Soda", "pasta": "Pasta",
+            "bardak_buyuk": "14oz Bardak", "bardak_kucuk": "8oz Bardak",
+            "bardak_karton": "Karton",  # geriye dönük (eski kararlar)
+            "redbull_soda": "Redbull/Soda", "pasta": "Pasta",
         }
         # Tanılar bazında özet metin
         boyut_ozet = []

@@ -78,7 +78,7 @@ def sube_mod(cur, sube_id: str) -> str:
 #  DATA CLASSES — boyut & karar
 # ════════════════════════════════════════════════════════════════════════════
 
-BOYUTLAR = ("kasa", "bardak_plastik", "bardak_karton", "redbull_soda", "pasta")
+BOYUTLAR = ("kasa", "bardak_plastik", "bardak_buyuk", "bardak_kucuk", "redbull_soda", "pasta")
 
 TANI_TIPLERI = (
     "UYUMLU",
@@ -202,7 +202,8 @@ _TOLERANS = {
     # yansımaz); merkez tarafı (sube_operasyon_uyari) farkı zaten ayrıca gösterir.
     "kasa":           5.00,   # ₺
     "bardak_plastik": 0,      # adet
-    "bardak_karton":  0,      # adet
+    "bardak_buyuk":   0,      # adet (14 Oz)
+    "bardak_kucuk":   0,      # adet (8 Oz)
     "redbull_soda":   0,      # adet
     "pasta":          0,      # adet (dilim toleransı)
 }
@@ -425,7 +426,8 @@ def capraz_boyut_yorumla(taniler: List[Tani]) -> List[Tani]:
     # Eksik bardak × ortalama satış fiyatı ≈ kasa eksik → para cebe sinyali
     ORT_FIYAT = {  # boyut → tahmini ortalama satış fiyatı (₺/adet)
         "bardak_plastik": 50.0,
-        "bardak_karton":  60.0,
+        "bardak_buyuk":   60.0,
+        "bardak_kucuk":   50.0,
         "redbull_soda":   45.0,
         "pasta":          90.0,
     }
@@ -559,7 +561,7 @@ _ALARM_ESIK = {
 
 _BOYUT_KISA = {
     "kasa": "kasa", "bardak_plastik": "plastik bardak",
-    "bardak_karton": "karton bardak", "redbull_soda": "RedBull/soda", "pasta": "pasta",
+    "bardak_buyuk": "14oz bardak", "bardak_kucuk": "8oz bardak", "redbull_soda": "RedBull/soda", "pasta": "pasta",
 }
 
 
@@ -676,14 +678,6 @@ def _zeka_ozet_uret(taniler: List["Tani"],
             fark_str = f" ({abs(t.fark_n1_n2):.0f} adet {'eksik' if t.fark_n1_n2 < 0 else 'fazla'})"
         tani_kisa = _TANI_INSAN.get(t.tani, t.tani)
         satirlar.append(f"📦 {_BOYUT_KISA.get(t.boyut, t.boyut)}{fark_str}: {tani_kisa}")
-        # Karton bardak için büyük/küçük kırılımı (sadece bilgi amaçlı)
-        if t.boyut == "bardak_karton":
-            kirilim = (t.detay or {}).get("karton_kirilim") or {}
-            for _ad, _etiket in (("bardak_buyuk", "büyük"), ("bardak_kucuk", "küçük")):
-                k = kirilim.get(_ad) or {}
-                if k.get("fark") is not None and abs(k["fark"]) > 0.5:
-                    yon_k = "eksik" if k["fark"] < 0 else "fazla"
-                    satirlar.append(f"   ↳ {_etiket} karton: {abs(k['fark']):.0f} adet {yon_k}")
 
     # Sorumlu personel — sprint G/G2/H tanılarında detay'a yazılmış olabilir
     _sorumlu_ad = (
@@ -1061,31 +1055,6 @@ def _meta_sayi(m: Dict[str, Any], *keys: str) -> Optional[float]:
     return s if var else None
 
 
-def _bardak_karton_kirilim(n1_meta: Dict[str, Any], n2_meta: Dict[str, Any],
-                            evo_14oz: Optional[float], evo_8oz: Optional[float]) -> Dict[str, Any]:
-    """Karton bardak boyutu toplam (büyük+küçük) üzerinden üçgenleniyor, ama
-    özet/raporda büyük (14 Oz) ve küçük (8 Oz) bardağı ayrı ayrı göstermek için
-    kırılımı detay'a ekler. Sadece bilgi amaçlı — tanı/karar mantığını etkilemez."""
-    kirilim: Dict[str, Any] = {}
-    buyuk_n1 = _meta_sayi(n1_meta, "bardak_buyuk")
-    buyuk_n2 = _meta_sayi(n2_meta, "bardak_buyuk")
-    kucuk_n1 = _meta_sayi(n1_meta, "bardak_kucuk")
-    kucuk_n2 = _meta_sayi(n2_meta, "bardak_kucuk")
-    if buyuk_n1 is not None or buyuk_n2 is not None or evo_14oz is not None:
-        kirilim["bardak_buyuk"] = {
-            "n1": buyuk_n1, "n2": buyuk_n2,
-            "fark": (buyuk_n2 - buyuk_n1) if (buyuk_n1 is not None and buyuk_n2 is not None) else None,
-            "evo": evo_14oz,
-        }
-    if kucuk_n1 is not None or kucuk_n2 is not None or evo_8oz is not None:
-        kirilim["bardak_kucuk"] = {
-            "n1": kucuk_n1, "n2": kucuk_n2,
-            "fark": (kucuk_n2 - kucuk_n1) if (kucuk_n1 is not None and kucuk_n2 is not None) else None,
-            "evo": evo_8oz,
-        }
-    return {"karton_kirilim": kirilim} if kirilim else {}
-
-
 def _previous_day(tarih: str) -> str:
     """YYYY-MM-DD → bir önceki gün."""
     from datetime import date as _d, timedelta as _td
@@ -1247,11 +1216,9 @@ def veri_topla(cur, sube_id: str, tarih: str) -> List[BoyutVeri]:
 
     # Evo grup adı → boyut adı (motorun bekleyeni)
     n3_bardak_plastik = grup_adet.get("Ice")  # soğuk içecek = plastik bardak
-    # 14 Oz + 8 Oz toplam karton (büyük + küçük aynı boyut grubu)
-    if "14 Oz" in grup_adet or "8 Oz" in grup_adet:
-        n3_bardak_karton = float(grup_adet.get("14 Oz") or 0) + float(grup_adet.get("8 Oz") or 0)
-    else:
-        n3_bardak_karton = None
+    # 14 Oz (büyük) ve 8 Oz (küçük) AYRI boyutlar (karton birleşimi kaldırıldı)
+    n3_bardak_buyuk = float(grup_adet["14 Oz"]) if "14 Oz" in grup_adet else None
+    n3_bardak_kucuk = float(grup_adet["8 Oz"]) if "8 Oz" in grup_adet else None
     # Redbull + Maden Suyu (soda alternatifi) — redbull_soda boyutuna birleşir
     if "Redbull" in grup_adet or "Maden Suyu" in grup_adet:
         n3_redbull_soda = float(grup_adet.get("Redbull") or 0) + float(grup_adet.get("Maden Suyu") or 0)
@@ -1273,14 +1240,16 @@ def veri_topla(cur, sube_id: str, tarih: str) -> List[BoyutVeri]:
             n3_evo=n3_bardak_plastik, n3_evo_ikram=None,
         ),
         BoyutVeri(
-            boyut="bardak_karton",
-            n1_aksam=_meta_sayi(n1_meta, "bardak_kucuk", "bardak_buyuk"),
-            n2_sabah=_meta_sayi(n2_meta, "bardak_kucuk", "bardak_buyuk"),
-            n3_evo=n3_bardak_karton, n3_evo_ikram=None,
-            ek_detay=_bardak_karton_kirilim(
-                n1_meta, n2_meta,
-                grup_adet.get("14 Oz"), grup_adet.get("8 Oz"),
-            ),
+            boyut="bardak_buyuk",
+            n1_aksam=_meta_sayi(n1_meta, "bardak_buyuk"),
+            n2_sabah=_meta_sayi(n2_meta, "bardak_buyuk"),
+            n3_evo=n3_bardak_buyuk, n3_evo_ikram=None,
+        ),
+        BoyutVeri(
+            boyut="bardak_kucuk",
+            n1_aksam=_meta_sayi(n1_meta, "bardak_kucuk"),
+            n2_sabah=_meta_sayi(n2_meta, "bardak_kucuk"),
+            n3_evo=n3_bardak_kucuk, n3_evo_ikram=None,
         ),
         BoyutVeri(
             boyut="redbull_soda",
@@ -1511,7 +1480,7 @@ def motor_calistir(cur, sube_id: str, tarih: str,
             }
             for _t in taniler:
                 if (
-                    _t.boyut in ("bardak_karton", "bardak_plastik")
+                    _t.boyut in ("bardak_buyuk", "bardak_kucuk", "bardak_plastik")
                     and _t.tani in _bardak_yukselt_tanilar
                 ):
                     _t.tani = "AKSAM_VARDIYA_BARDAK_ACIK"
@@ -1567,7 +1536,7 @@ def motor_calistir(cur, sube_id: str, tarih: str,
             }
             for _t in taniler:
                 if (
-                    _t.boyut in ("bardak_karton", "bardak_plastik")
+                    _t.boyut in ("bardak_buyuk", "bardak_kucuk", "bardak_plastik")
                     and _t.tani in _bardak_j_yukselt
                 ):
                     _t.tani = "AKSAM_BARDAK_SISIRDI"
@@ -1827,7 +1796,7 @@ def motor_calistir(cur, sube_id: str, tarih: str,
 #  zaten en güncel (olusturma DESC) satırı okuyor.
 # ════════════════════════════════════════════════════════════════════════════
 
-_EVO_URUN_BOYUTLARI = ("bardak_plastik", "bardak_karton", "redbull_soda", "pasta")
+_EVO_URUN_BOYUTLARI = ("bardak_plastik", "bardak_buyuk", "bardak_kucuk", "redbull_soda", "pasta")
 
 
 def evo_eksik_gunleri_yeniden_degerlendir(cur, sube_id: str, gun_sayisi: int = 3) -> List[str]:
@@ -2042,7 +2011,8 @@ def _evo_sube_saatli_satis(sube_evo_id: str, bastar, bittar) -> List[Dict[str, A
 _BOYUT_EVO_GRUP = {
     "kasa":            None,  # özel: nakit hesap
     "bardak_plastik":  ["Ice"],
-    "bardak_karton":   ["14 Oz", "8 Oz"],
+    "bardak_buyuk":    ["14 Oz"],
+    "bardak_kucuk":    ["8 Oz"],
     "redbull_soda":    ["Redbull", "Maden Suyu"],
     "pasta":           ["Pasta"],
     "su":              ["Su"],
@@ -2052,7 +2022,8 @@ _BOYUT_EVO_GRUP = {
 _BOYUT_META = {
     "kasa":            [],  # özel
     "bardak_plastik":  ["bardak_plastik"],
-    "bardak_karton":   ["bardak_kucuk", "bardak_buyuk"],
+    "bardak_buyuk":    ["bardak_buyuk"],
+    "bardak_kucuk":    ["bardak_kucuk"],
     "redbull_soda":    ["redbull_adet", "soda_adet"],
     "pasta":           ["pasta_adet"],
     "su":              ["su_adet"],
@@ -2385,7 +2356,8 @@ def _katman_1_sayisal_korelasyon(
         return {"katman": 1, "aktif": False, "sebep": "kasa boyutu için geçersiz"}
     BIRIM_FIYAT = {
         "bardak_plastik": 50.0,
-        "bardak_karton":  60.0,
+        "bardak_buyuk":   60.0,
+        "bardak_kucuk":   50.0,
         "redbull_soda":   45.0,
         "pasta":          90.0,
     }
@@ -2629,7 +2601,7 @@ def _katman_6_nlp_aciklama(
     """Katman 6: Tüm katman bulgularını insan-okunabilir Türkçe anlatıya dönüştür."""
     BOYUT_TR = {
         "kasa": "kasa", "bardak_plastik": "plastik bardak",
-        "bardak_karton": "karton bardak", "redbull_soda": "RedBull/soda",
+        "bardak_buyuk": "14oz bardak", "bardak_kucuk": "8oz bardak", "redbull_soda": "RedBull/soda",
         "pasta": "pasta dilimi",
     }
     KARAR_TR = {
@@ -2774,7 +2746,7 @@ def adaptive_truth_walk(cur, sube_id: str, tarih: str, boyut: str) -> Dict[str, 
     Args:
         sube_id: Evvel UUID
         tarih: bugün (YYYY-MM-DD)
-        boyut: 'kasa' | 'bardak_plastik' | 'bardak_karton' | 'redbull_soda' | 'pasta' | 'su'
+        boyut: 'kasa' | 'bardak_plastik' | 'bardak_buyuk' | 'bardak_kucuk' | 'redbull_soda' | 'pasta' | 'su'
 
     Returns:
         {
@@ -4788,7 +4760,8 @@ _FIRE_TABLOLAR = ("fire_kayit", "fire_kayitlari", "stok_fire")
 
 ORT_FIYAT_MAP = {
     "bardak_plastik": 50.0,
-    "bardak_karton":  60.0,
+    "bardak_buyuk":   60.0,
+    "bardak_kucuk":   50.0,
     "redbull_soda":   45.0,
     "pasta":          90.0,
 }
@@ -5881,7 +5854,7 @@ def sabah_zimmet_suphe_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
           "n2_sabah":               float,   # sabahçı kör sayım
           "onceki_tarih":           str,
           "bardak_plastik_tani":    str,     # UYUMLU / STOK_ACIK / KAPANIS_YOK
-          "bardak_karton_tani":     str,
+          "bardak_karton_tani":     str,   # 14oz+8oz birlesik (geriye uyum)
           "bardak_tamamen_uyumlu":  bool,
           "aksamci_ad":             str | None,
           "sabahci_ad":             str | None,
@@ -5943,10 +5916,23 @@ def sabah_zimmet_suphe_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
 
     dun_boyutlar = dun_stok.get("boyutlar") or {}
     plastik = dun_boyutlar.get("bardak_plastik") or {}
-    karton  = dun_boyutlar.get("bardak_karton")  or {}
+    buyuk   = dun_boyutlar.get("bardak_buyuk")   or {}
+    kucuk   = dun_boyutlar.get("bardak_kucuk")   or {}
 
     plastik_tani = plastik.get("tani") or "KAPANIS_YOK"
-    karton_tani  = karton.get("tani")  or "KAPANIS_YOK"
+    buyuk_tani   = buyuk.get("tani")   or "KAPANIS_YOK"
+    kucuk_tani   = kucuk.get("tani")   or "KAPANIS_YOK"
+    # Karton (14oz+8oz) artık ayrı boyut; doğrulama için ikisini birleştir:
+    # ikisinden biri sorunluysa karton sorunlu; ikisi de uyumluysa karton uyumlu.
+    _karton_taniler = [t for t in (buyuk_tani, kucuk_tani) if t != "KAPANIS_YOK"]
+    if not _karton_taniler:
+        karton_tani = "KAPANIS_YOK"
+    elif any(t in ("STOK_ACIK", "STOK_FAZLA") for t in _karton_taniler):
+        karton_tani = "STOK_ACIK"
+    elif all(t == "UYUMLU" for t in _karton_taniler):
+        karton_tani = "UYUMLU"
+    else:
+        karton_tani = _karton_taniler[0]
 
     # Dünkü akşamcı vardiyasında bardak problemi var mıydı?
     # STOK_ACIK veya STOK_FAZLA → akşamcı da tutarsız → sabahçıyı suçlamak doğru olmaz
@@ -6570,7 +6556,8 @@ _TANI_TR = {
 
 _BOYUT_TR = {
     "bardak_plastik": "plastik bardak",
-    "bardak_karton":  "karton bardak",
+    "bardak_buyuk":   "14oz bardak",
+    "bardak_kucuk":   "8oz bardak",
     "redbull_soda":   "RedBull/soda",
     "pasta":          "pasta",
 }
@@ -7241,7 +7228,8 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
     # ── 6. URUN_AC (gün içi açılan paket) — akşam payı ──────────────────────
     # Tüm gün URUN_AC'ı akşam oranıyla bölüştür (saatli veri yok)
     try:
-        urun_ac_karton_gun  = _urun_ac_toplam(cur, sube_id, tarih, "bardak_karton")
+        urun_ac_karton_gun  = (_urun_ac_toplam(cur, sube_id, tarih, "bardak_buyuk")
+                               + _urun_ac_toplam(cur, sube_id, tarih, "bardak_kucuk"))
         urun_ac_plastik_gun = _urun_ac_toplam(cur, sube_id, tarih, "bardak_plastik")
     except Exception:
         urun_ac_karton_gun  = 0.0

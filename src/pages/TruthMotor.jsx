@@ -28,6 +28,8 @@ const TANI_ETIKET = {
 const BOYUT_ETIKET = {
   kasa:           '💰 Kasa',
   bardak_plastik: '🥤 Plastik Bardak',
+  bardak_buyuk:   '☕ 14oz Bardak',
+  bardak_kucuk:   '☕ 8oz Bardak',
   bardak_karton:  '☕ Karton Bardak',
   redbull_soda:   '🥫 Redbull/Soda',
   pasta:          '🍰 Pasta',
