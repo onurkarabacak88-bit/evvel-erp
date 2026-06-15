@@ -73,7 +73,9 @@ function ToptanciModal({
   kuyrukBusy,
 }) {
   const talepId = String(sip?.id || '');
-  const detayRows = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
+  // kalan_kalemler: kısmi gönderimde sadece gönderilmemiş kalemler (çift gönderim önlenir)
+  const detayRows = Array.isArray(sip?.kalan_kalemler) ? sip.kalan_kalemler
+    : (Array.isArray(sip?.kalemler) ? sip.kalemler : []);
   const listeler = kuyrukToptanciListeler?.[talepId] || [];
   const kalanlar = detayRows.filter((k, i) => {
     const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
@@ -824,7 +826,8 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
       );
       if (!devam) return;
     }
-    const rows = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
+    const rows = Array.isArray(sip?.kalan_kalemler) ? sip.kalan_kalemler
+      : (Array.isArray(sip?.kalemler) ? sip.kalemler : []);
     const kalemler = [];
     rows.forEach((k, i) => {
       const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
@@ -917,7 +920,8 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
     if (!listeler.length) { toast('Önce en az bir liste oluşturun.', 'red'); return; }
 
     // Atanmamış kalem kontrolü — bazı kalemler hiç listeye eklenmeden geçilirse uyar
-    const tumKalemler = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
+    const tumKalemler = Array.isArray(sip?.kalan_kalemler) ? sip.kalan_kalemler
+      : (Array.isArray(sip?.kalemler) ? sip.kalemler : []);
     const atanmamisSayisi = tumKalemler.filter((k, i) => {
       const kk = String(k?.kalem_kodu || k?.urun_id || `k_${i}`);
       return !kuyrukToptanciAtanmis[`${talepId}::${kk}`];
@@ -946,6 +950,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
     try {
       let toplamAdet = 0;
       let waBasarili = 0;
+      let sonResp = null;
       for (const liste of listeler) {
         const r = await api('/ops/siparis/toptanciya-yolla', {
           method: 'POST',
@@ -959,12 +964,19 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
         });
         toplamAdet += Number(r?.toplam_adet || 0);
         if (r?.wa_basarili) waBasarili += 1;
+        sonResp = r;
       }
       kuyrukTalepTemizle(talepId);
+      setToptanciModalSip(null); // modalı kapat — kuyruk tazelensin
       publishGlobalDataRefresh('siparis-kontrol-toptanci-yonlendir');
       const adlar = listeler.map(l => l.toptanciAd).join(', ');
       const waNot = waBasarili ? ` · 📲 ${waBasarili} tedarikçiye WhatsApp gönderildi` : '';
-      islemSonucGoster(true, `${listeler.length} toptancıya yönlendirildi (${adlar}) — ${toplamAdet} adet · kuyruktan düştü${waNot}.`);
+      // Kısmi gönderim: gönderilmeyen kalemler kuyrukta KALIR (kaybolmaz)
+      const kalanAdet = Number(sonResp?.kalan_adet || 0);
+      const kuyrukNot = (sonResp && sonResp.tam_gonderildi === false)
+        ? ` · ⏳ ${kalanAdet} adet kuyrukta kaldı (gönderilmeyen kalemler)`
+        : ' · kuyruktan düştü';
+      islemSonucGoster(true, `${listeler.length} toptancıya yönlendirildi (${adlar}) — ${toplamAdet} adet${kuyrukNot}${waNot}.`);
       yukle();
     } catch (e) {
       islemSonucGoster(false, e.message || 'Toptancıya gönderim hatası');
@@ -1359,7 +1371,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                           </div>
                           <SiparisGonderenSatiri kayit={sip} />
                           <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>
-                            {kisaTs(sip.olusturma)} · {kalemOzet(sip.kalemler)}
+                            {kisaTs(sip.olusturma)} · {kalemOzet(Array.isArray(sip.kalan_kalemler) ? sip.kalan_kalemler : sip.kalemler)}{(Array.isArray(sip.kalan_kalemler) && sip.kalan_kalemler.length < (sip.kalemler || []).length) ? ' (kalan)' : ''}
                           </div>
                           <KuyrukYonlendirmeKarti
                             sip={sip}

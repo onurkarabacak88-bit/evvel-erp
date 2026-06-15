@@ -2965,7 +2965,7 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             cur.execute(
                 """
                 SELECT id, sube_id, durum, sevkiyat_durumu, kalemler_ozet,
-                       merkez_karar_kalemleri
+                       merkez_karar_kalemleri, kalemler
                 FROM siparis_talep
                 WHERE id=%s
                 FOR UPDATE
@@ -3077,22 +3077,7 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             except Exception:
                 pass  # Uyuşmazlık tespit hatası kabul'u engellemez
 
-            # Siparişi kapat
-            _yeni_durum = "kabul_uyusmazlik" if (teslim_durumu == "eksik_var") else "teslim_edildi"
-            _kabul_durum = "kabul_uyusmazlik" if (teslim_durumu == "eksik_var") else "kabul_tam"
-            cur.execute(
-                """
-                UPDATE siparis_talep
-                SET durum=%s,
-                    kabul_durum=%s,
-                    kabul_ts=NOW(),
-                    kabul_personel_id=%s,
-                    kabul_personel_ad=%s
-                WHERE id=%s
-                """,
-                (_yeni_durum, _kabul_durum, pid_panel, onay_ad, siparis_talep_id),
-            )
-            # Bekleyen toptancı siparişi satırını da kapat (Faz 2)
+            # Bu toptancı siparişi satırını teslim_alindi yap (tamamlanma kontrolünden ÖNCE)
             if toptanci_siparis_id:
                 cur.execute(
                     """
@@ -3102,9 +3087,82 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                     """,
                     (toptanci_siparis_id, siparis_talep_id),
                 )
+
+            _yeni_durum = "kabul_uyusmazlik" if (teslim_durumu == "eksik_var") else "teslim_edildi"
+            _kabul_durum = "kabul_uyusmazlik" if (teslim_durumu == "eksik_var") else "kabul_tam"
+
+            # ── Çok-tedarikçili akış: talep ancak HER ŞEY dağıtılıp HER GÖNDERİM
+            # teslim alınınca kapanır. Aksi halde açık kalır → kalan kalemler/
+            # bekleyen diğer tedarikçi teslimleri KAYBOLMAZ. (split veri kaybı fix)
+            _kapat = True
+            if toptanci_siparis_id:
+                # (a) Dağıtılmamış kalan var mı? N1 (kalemler) − tüm dağıtılan
+                _n1 = _talep.get("kalemler") or []
+                if isinstance(_n1, str):
+                    try:
+                        _n1 = _j2.loads(_n1)
+                    except Exception:
+                        _n1 = []
+                _n1_map: Dict[str, int] = {}
+                for _o in (_n1 or []):
+                    _oad = str((_o or {}).get("urun_ad") or "").strip().lower()
+                    if _oad:
+                        _n1_map[_oad] = _n1_map.get(_oad, 0) + max(0, int((_o or {}).get("adet") or 0))
+                cur.execute(
+                    "SELECT kalemler FROM toptanci_siparis WHERE talep_id=%s AND durum <> 'iptal'",
+                    (siparis_talep_id,),
+                )
+                _disp_map: Dict[str, int] = {}
+                for _dr in cur.fetchall() or []:
+                    _dkl = dict(_dr).get("kalemler") or []
+                    if isinstance(_dkl, str):
+                        try:
+                            _dkl = _j2.loads(_dkl)
+                        except Exception:
+                            _dkl = []
+                    for _dk in _dkl:
+                        _dad = str((_dk or {}).get("urun_ad") or "").strip().lower()
+                        if _dad:
+                            _disp_map[_dad] = _disp_map.get(_dad, 0) + int((_dk or {}).get("adet") or 0)
+                _kalan_dagitilmamis = 0
+                for _ad, _adet in _n1_map.items():
+                    _kalan_dagitilmamis += max(0, _adet - int(_disp_map.get(_ad, 0)))
+                # (b) Henüz teslim alınmamış başka gönderim var mı?
+                cur.execute(
+                    "SELECT COUNT(*) AS n FROM toptanci_siparis WHERE talep_id=%s AND durum='gonderildi'",
+                    (siparis_talep_id,),
+                )
+                _bekleyen_gonderim = int(dict(cur.fetchone() or {}).get("n") or 0)
+                _kapat = (_kalan_dagitilmamis <= 0) and (_bekleyen_gonderim == 0)
+
+            if _kapat:
+                cur.execute(
+                    """
+                    UPDATE siparis_talep
+                    SET durum=%s,
+                        kabul_durum=%s,
+                        kabul_ts=NOW(),
+                        kabul_personel_id=%s,
+                        kabul_personel_ad=%s
+                    WHERE id=%s
+                    """,
+                    (_yeni_durum, _kabul_durum, pid_panel, onay_ad, siparis_talep_id),
+                )
+            else:
+                # Kısmen teslim — talebi kapatma; kabul bilgisini kaydet (durum dokunma).
+                cur.execute(
+                    """
+                    UPDATE siparis_talep
+                    SET kabul_ts=NOW(),
+                        kabul_personel_id=%s,
+                        kabul_personel_ad=%s
+                    WHERE id=%s
+                    """,
+                    (pid_panel, onay_ad, siparis_talep_id),
+                )
             siparis_kapama_sonucu = {
-                "kapatildi": True,
-                "yeni_durum": _yeni_durum,
+                "kapatildi": _kapat,
+                "yeni_durum": (_yeni_durum if _kapat else str(_talep.get("durum") or "")),
                 "kabul_durum": _kabul_durum,
             }
 

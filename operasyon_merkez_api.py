@@ -9523,7 +9523,7 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
     with db() as (conn, cur):
         cur.execute(
             """
-            SELECT id, sube_id, durum
+            SELECT id, sube_id, durum, kalemler
             FROM siparis_talep
             WHERE id=%s
             FOR UPDATE
@@ -9652,23 +9652,60 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
                 _agg[_key]["adet"] += int(_k.get("adet") or 0)
         merkez_agg = [_agg[k] for k in _sira]
 
+        # ── KALAN hesabı: N1 (orijinal talep) − dağıtılan (toptanci_siparis) ──
+        # Kısmi gönderimde talep KAPANMAZ; gönderilmeyen kalemler kuyrukta kalsın.
+        # N1 asla ezilmez; kalan türetilir. (split-back / veri kaybı fix)
+        _orig = t.get("kalemler") or []
+        if isinstance(_orig, str):
+            try:
+                _orig = json.loads(_orig)
+            except Exception:
+                _orig = []
+        _orig_map: Dict[str, int] = {}
+        for _o in _orig:
+            if not isinstance(_o, dict):
+                continue
+            _oad = str(_o.get("urun_ad") or "").strip().lower()
+            if _oad:
+                _orig_map[_oad] = _orig_map.get(_oad, 0) + max(0, int(_o.get("adet") or 0))
+        _dispatched = {k: v.get("adet", 0) for k, v in _agg.items()}
+        kalan_adet = 0
+        for _oad, _oadet in _orig_map.items():
+            kalan_adet += max(0, _oadet - int(_dispatched.get(_oad, 0)))
+        # N1'de hiç kalem yoksa (eski/boş talep) kalan'ı bilemeyiz → tam say.
+        tam_gonderildi = (not _orig_map) or (kalan_adet <= 0)
+
         sevk_notu = notu
         if tedarikci_ad:
             ek = f"Toptancı: {tedarikci_ad}"
             sevk_notu = f"{ek}. {sevk_notu}" if sevk_notu else ek
-        cur.execute(
-            """
-            UPDATE siparis_talep
-            SET durum = 'gonderildi',
-                sevkiyat_durumu = 'toptanciya_yonlendirildi',
-                sevkiyat_durum = 'toptanciya_yonlendirildi',
-                sevkiyat_notu = COALESCE(NULLIF(TRIM(%s), ''), sevkiyat_notu),
-                sevkiyat_ts = COALESCE(sevkiyat_ts, NOW()),
-                merkez_karar_kalemleri = %s::jsonb
-            WHERE id = %s
-            """,
-            (sevk_notu, json.dumps(merkez_agg, ensure_ascii=False), tid),
-        )
+        if tam_gonderildi:
+            cur.execute(
+                """
+                UPDATE siparis_talep
+                SET durum = 'gonderildi',
+                    sevkiyat_durumu = 'toptanciya_yonlendirildi',
+                    sevkiyat_durum = 'toptanciya_yonlendirildi',
+                    sevkiyat_notu = COALESCE(NULLIF(TRIM(%s), ''), sevkiyat_notu),
+                    sevkiyat_ts = COALESCE(sevkiyat_ts, NOW()),
+                    merkez_karar_kalemleri = %s::jsonb
+                WHERE id = %s
+                """,
+                (sevk_notu, json.dumps(merkez_agg, ensure_ascii=False), tid),
+            )
+        else:
+            # Kısmi: talep 'bekliyor' kalır (kuyrukta), sevkiyat_durumu DEĞİŞMEZ.
+            # Sadece N2 aggregate + not güncellenir; gönderilen kısım toptanci_siparis'te.
+            cur.execute(
+                """
+                UPDATE siparis_talep
+                SET durum = 'bekliyor',
+                    sevkiyat_notu = COALESCE(NULLIF(TRIM(%s), ''), sevkiyat_notu),
+                    merkez_karar_kalemleri = %s::jsonb
+                WHERE id = %s
+                """,
+                (sevk_notu, json.dumps(merkez_agg, ensure_ascii=False), tid),
+            )
         audit(cur, "siparis_talep", tid, "OPS_SIPARIS_TOPTANCIYA_YOLLA")
     return {
         "success": True,
@@ -9676,8 +9713,10 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
         "toptanci_siparis_id": ts_id,
         "kalem_sayisi": len(kalemler),
         "toplam_adet": sum(int(k.get("adet") or 0) for k in kalemler),
-        "durum": "gonderildi",
-        "sevkiyat_durumu": "toptanciya_yonlendirildi",
+        "durum": ("gonderildi" if tam_gonderildi else "bekliyor"),
+        "tam_gonderildi": tam_gonderildi,
+        "kalan_adet": kalan_adet,
+        "sevkiyat_durumu": ("toptanciya_yonlendirildi" if tam_gonderildi else None),
         "wa_basarili": bool(wa_sonuc and wa_sonuc.get("basarili")),
         "wa_hata": (wa_sonuc.get("hata") if wa_sonuc else None),
     }

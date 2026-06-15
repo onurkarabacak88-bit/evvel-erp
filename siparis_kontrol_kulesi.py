@@ -315,9 +315,55 @@ def siparis_kontrol_kulesi_yukle(
 
     detay_rows = [dict(r) for r in (cur.fetchall() or [])]
     detay_yolda = _yolda_toplu(cur, [r.get("id") for r in detay_rows])
+
+    # Toptancıya dağıtılan kalemler (toplu) → kalan_kalemler hesabı için.
+    # kalan = N1 (talep.kalemler) − dağıtılan (toptanci_siparis). Kısmi gönderimde
+    # gönderilen kalemler tekrar listede ÇIKMASIN (çift gönderim önlenir).
+    _detay_ids = [r.get("id") for r in detay_rows if r.get("id")]
+    _dagitilan: Dict[str, Dict[str, int]] = {}
+    if _detay_ids:
+        try:
+            cur.execute(
+                "SELECT talep_id, kalemler FROM toptanci_siparis "
+                "WHERE talep_id = ANY(%s) AND durum <> 'iptal'",
+                (_detay_ids,),
+            )
+            for _dr in cur.fetchall() or []:
+                _d = dict(_dr)
+                _dtid = str(_d.get("talep_id") or "")
+                _dkl = _d.get("kalemler") or []
+                if isinstance(_dkl, str):
+                    try:
+                        _dkl = json.loads(_dkl)
+                    except Exception:
+                        _dkl = []
+                _m = _dagitilan.setdefault(_dtid, {})
+                for _dk in _dkl:
+                    _dad = str((_dk or {}).get("urun_ad") or "").strip().lower()
+                    if _dad:
+                        _m[_dad] = _m.get(_dad, 0) + int((_dk or {}).get("adet") or 0)
+        except Exception:
+            _dagitilan = {}
+
     satirlar: List[Dict[str, Any]] = []
     for r in detay_rows:
         z = _satir_zenginlestir(cur, r, yolda=detay_yolda.get(str(r.get("id") or ""), []))
+        # kalan_kalemler: gönderilmemiş kalemler (frontend split modalı bunu kullanır)
+        _disp = _dagitilan.get(str(r.get("id") or ""), {})
+        if _disp:
+            _kalan: List[Dict[str, Any]] = []
+            for _it in (z.get("kalemler") or []):
+                if not isinstance(_it, dict):
+                    continue
+                _iad = str(_it.get("urun_ad") or "").strip().lower()
+                _rem = max(0, int(_it.get("adet") or 0)) - int(_disp.get(_iad, 0))
+                if _rem > 0:
+                    _yeni = dict(_it)
+                    _yeni["adet"] = _rem
+                    _kalan.append(_yeni)
+            z["kalan_kalemler"] = _kalan
+        else:
+            z["kalan_kalemler"] = z.get("kalemler") or []
         if asama and z["asama"] != asama:
             continue
         satirlar.append(z)
