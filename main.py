@@ -336,6 +336,18 @@ def _gece_yarisi_scheduler():
                     )
                 except Exception as _e:
                     logger.warning(f"⏰ P3 çift-kolon tutarlılık tarama hatası: {_e}")
+
+                # ── Kayıt katmanı: sipariş davranış profili (Katman 3, global) ──
+                # Tedarik zinciri + sipariş-davranışı denetiminin ilk taşı: şube
+                # başına sipariş sıklığını günlük kaydeder (saf veri, hipotez yok).
+                try:
+                    from siparis_kontrol_kulesi import siparis_davranis_gunluk_gozlemle
+                    with db() as (conn, cur):
+                        _sdg = siparis_davranis_gunluk_gozlemle(cur, pencere_gun=7)
+                        conn.commit()
+                    logger.info(f"⏰ Sipariş davranış profili: {_sdg.get('yazilan')} şube kaydedildi")
+                except Exception as _e:
+                    logger.warning(f"⏰ Sipariş davranış profili hatası: {_e}")
             except Exception as e:
                 logger.warning(f"⏰ Akıllı Denetim bekleme hatası: {e}")
 

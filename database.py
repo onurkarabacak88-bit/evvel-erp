@@ -2068,6 +2068,30 @@ def init_db():
             ON denetim_hipotez_gozlem (hipotez_turu, kosul_var, sonuc_anomali)
         """)
 
+        # ── SİPARİŞ DAVRANIŞ PROFİLİ (Katman 3 — türetilmiş kayıt) ──────────
+        # "Kayıt katmanı": şube başına sipariş davranışının günlük ham profili.
+        # DENETİM/hipotez DEĞİL (o Katman 4 = denetim_hipotez_gozlem); bu sadece
+        # türetilmiş, yeniden üretilebilir profil — Prediction Brain'i ve ileride
+        # sipariş-davranışı denetimini besler. (bkz. project_tedarik_zinciri +
+        # project_akilli_denetim_olay_yelpazesi "Sipariş Davranışı Denetimi" duyusu)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sube_siparis_davranis_gunluk (
+                id              TEXT PRIMARY KEY,
+                sube_id         TEXT NOT NULL,
+                tarih           DATE NOT NULL,
+                pencere_gun     INT NOT NULL DEFAULT 7,
+                siparis_sayisi  INT NOT NULL DEFAULT 0,   -- pencere içi sipariş adedi (iptal hariç)
+                aktif_gun       INT NOT NULL DEFAULT 0,    -- kaç ayrı günde sipariş verdi
+                detay_json      JSONB DEFAULT '{}'::jsonb, -- ileride: stok/satış/kullanım bağlamı
+                olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (sube_id, tarih)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_ssdg_sube_tarih
+            ON sube_siparis_davranis_gunluk (sube_id, tarih DESC)
+        """)
+
         # ── PERSONEL TAKİP ─────────────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS personel_takip (

@@ -4,6 +4,7 @@ Sipariş Kontrol Kulesi — merkez operasyon görünürlüğü (pipeline + ürü
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from sevkiyat_helpers import (
@@ -425,6 +426,73 @@ def siparis_urun_gecmis(
         "toplam": len(satirlar),
         "satirlar": satirlar,
     }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  KAYIT KATMANI — SİPARİŞ DAVRANIŞ PROFİLİ (Katman 3, türetilmiş)
+# ────────────────────────────────────────────────────────────────────────────
+#  Tedarik zinciri + sipariş-davranışı denetiminin en düşük riskli İLK TAŞI.
+#  Saf veri toplama (öğrenme defteri deseni): şube başına sipariş SIKLIĞINI
+#  günlük kaydeder. Hipotez/eşik/suçlama YOK — sadece birikim. Prediction Brain
+#  ve ileride "deposunda olduğu halde sürekli istemesi" denetimini besler.
+#  Ürün eşleştirme labirentine (kalem_kodu) GİRMEZ — şube seviyesi sıklık.
+# ════════════════════════════════════════════════════════════════════════════
+
+def siparis_davranis_gunluk_gozlemle(cur: Any, pencere_gun: int = 7) -> Dict[str, Any]:
+    """Her aktif şube için son `pencere_gun` sipariş sıklığını günlük profile yazar.
+    SALT OKUMA (mevcut tablolar) + sadece sube_siparis_davranis_gunluk'a upsert.
+    Idempotent: UNIQUE(sube_id, tarih) → aynı gün tekrar çalışırsa günceller.
+    """
+    pencere = max(1, min(90, int(pencere_gun or 7)))
+    try:
+        cur.execute("SELECT id::text AS id, ad FROM subeler WHERE aktif = TRUE")
+        subeler = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception:
+        return {"yazilan": 0, "pencere_gun": pencere}
+
+    yazilan = 0
+    for s in subeler:
+        sid = str(s.get("id") or "")
+        if not sid:
+            continue
+        try:
+            cur.execute("SAVEPOINT sp_sdg")
+            cur.execute(
+                """
+                SELECT COUNT(*) AS siparis_sayisi,
+                       COUNT(DISTINCT tarih) AS aktif_gun
+                FROM siparis_talep
+                WHERE sube_id = %s
+                  AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                  AND COALESCE(durum, '') <> 'iptal'
+                """,
+                (sid, pencere),
+            )
+            r = dict(cur.fetchone() or {})
+            _say = int(r.get("siparis_sayisi") or 0)
+            _gun = int(r.get("aktif_gun") or 0)
+            cur.execute(
+                """
+                INSERT INTO sube_siparis_davranis_gunluk
+                    (id, sube_id, tarih, pencere_gun, siparis_sayisi, aktif_gun)
+                VALUES (%s, %s, CURRENT_DATE, %s, %s, %s)
+                ON CONFLICT (sube_id, tarih) DO UPDATE SET
+                    pencere_gun    = EXCLUDED.pencere_gun,
+                    siparis_sayisi = EXCLUDED.siparis_sayisi,
+                    aktif_gun      = EXCLUDED.aktif_gun,
+                    olusturma      = NOW()
+                """,
+                (str(uuid.uuid4()), sid, pencere, _say, _gun),
+            )
+            cur.execute("RELEASE SAVEPOINT sp_sdg")
+            yazilan += 1
+        except Exception:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_sdg")
+                cur.execute("RELEASE SAVEPOINT sp_sdg")
+            except Exception:
+                pass
+    return {"yazilan": yazilan, "pencere_gun": pencere}
 
 
 # ════════════════════════════════════════════════════════════════════════════
