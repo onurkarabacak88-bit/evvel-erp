@@ -171,6 +171,7 @@ class BoyutVeri:
     n2_sabah: Optional[float] = None       # bugün ACILIS kör sayımı
     n3_evo: Optional[float] = None         # POS ücretli satış (önceki gün)
     n3_evo_ikram: Optional[float] = None   # POS ikram/0₺/tam iskonto (önceki gün)
+    ek_detay: Dict[str, Any] = field(default_factory=dict)  # ör. büyük/küçük bardak kırılımı
 
 
 @dataclass
@@ -243,6 +244,8 @@ def boyut_taniyi_uret(sube_id: str, tarih: str, veri: BoyutVeri) -> Tani:
         _detay: Dict[str, Any] = {"sebep": "n1 veya n2 eksik"}
         if evo_eksik:
             _detay["evo_eksik"] = True
+        if veri.ek_detay:
+            _detay.update(veri.ek_detay)
         return Tani(
             sube_id=sube_id, tarih=tarih, boyut=boyut,
             n1_aksam=n1, n2_sabah=n2, n3_evo=n3_satis, n3_evo_ikram=n3_ikram,
@@ -272,6 +275,8 @@ def boyut_taniyi_uret(sube_id: str, tarih: str, veri: BoyutVeri) -> Tani:
         detay["evo_satis_adet"] = float(n3_satis)
     if evo_eksik:
         detay["evo_eksik"] = True
+    if veri.ek_detay:
+        detay.update(veri.ek_detay)
 
     if n1_n2_esit:
         # N1 = N2 → sayım zinciri tutarlı
@@ -671,6 +676,14 @@ def _zeka_ozet_uret(taniler: List["Tani"],
             fark_str = f" ({abs(t.fark_n1_n2):.0f} adet {'eksik' if t.fark_n1_n2 < 0 else 'fazla'})"
         tani_kisa = _TANI_INSAN.get(t.tani, t.tani)
         satirlar.append(f"📦 {_BOYUT_KISA.get(t.boyut, t.boyut)}{fark_str}: {tani_kisa}")
+        # Karton bardak için büyük/küçük kırılımı (sadece bilgi amaçlı)
+        if t.boyut == "bardak_karton":
+            kirilim = (t.detay or {}).get("karton_kirilim") or {}
+            for _ad, _etiket in (("bardak_buyuk", "büyük"), ("bardak_kucuk", "küçük")):
+                k = kirilim.get(_ad) or {}
+                if k.get("fark") is not None and abs(k["fark"]) > 0.5:
+                    yon_k = "eksik" if k["fark"] < 0 else "fazla"
+                    satirlar.append(f"   ↳ {_etiket} karton: {abs(k['fark']):.0f} adet {yon_k}")
 
     # Sorumlu personel — sprint G/G2/H tanılarında detay'a yazılmış olabilir
     _sorumlu_ad = (
@@ -987,6 +1000,31 @@ def _meta_sayi(m: Dict[str, Any], *keys: str) -> Optional[float]:
     return s if var else None
 
 
+def _bardak_karton_kirilim(n1_meta: Dict[str, Any], n2_meta: Dict[str, Any],
+                            evo_14oz: Optional[float], evo_8oz: Optional[float]) -> Dict[str, Any]:
+    """Karton bardak boyutu toplam (büyük+küçük) üzerinden üçgenleniyor, ama
+    özet/raporda büyük (14 Oz) ve küçük (8 Oz) bardağı ayrı ayrı göstermek için
+    kırılımı detay'a ekler. Sadece bilgi amaçlı — tanı/karar mantığını etkilemez."""
+    kirilim: Dict[str, Any] = {}
+    buyuk_n1 = _meta_sayi(n1_meta, "bardak_buyuk")
+    buyuk_n2 = _meta_sayi(n2_meta, "bardak_buyuk")
+    kucuk_n1 = _meta_sayi(n1_meta, "bardak_kucuk")
+    kucuk_n2 = _meta_sayi(n2_meta, "bardak_kucuk")
+    if buyuk_n1 is not None or buyuk_n2 is not None or evo_14oz is not None:
+        kirilim["bardak_buyuk"] = {
+            "n1": buyuk_n1, "n2": buyuk_n2,
+            "fark": (buyuk_n2 - buyuk_n1) if (buyuk_n1 is not None and buyuk_n2 is not None) else None,
+            "evo": evo_14oz,
+        }
+    if kucuk_n1 is not None or kucuk_n2 is not None or evo_8oz is not None:
+        kirilim["bardak_kucuk"] = {
+            "n1": kucuk_n1, "n2": kucuk_n2,
+            "fark": (kucuk_n2 - kucuk_n1) if (kucuk_n1 is not None and kucuk_n2 is not None) else None,
+            "evo": evo_8oz,
+        }
+    return {"karton_kirilim": kirilim} if kirilim else {}
+
+
 def _previous_day(tarih: str) -> str:
     """YYYY-MM-DD → bir önceki gün."""
     from datetime import date as _d, timedelta as _td
@@ -1111,6 +1149,10 @@ def veri_topla(cur, sube_id: str, tarih: str) -> List[BoyutVeri]:
             n1_aksam=_meta_sayi(n1_meta, "bardak_kucuk", "bardak_buyuk"),
             n2_sabah=_meta_sayi(n2_meta, "bardak_kucuk", "bardak_buyuk"),
             n3_evo=n3_bardak_karton, n3_evo_ikram=None,
+            ek_detay=_bardak_karton_kirilim(
+                n1_meta, n2_meta,
+                grup_adet.get("14 Oz"), grup_adet.get("8 Oz"),
+            ),
         ),
         BoyutVeri(
             boyut="redbull_soda",
