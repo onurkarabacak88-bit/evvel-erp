@@ -2180,6 +2180,14 @@ def _sube_ad_eslesme_anahtar(s: str) -> str:
     return s.replace("subesi", "").strip()
 
 
+# Evvel şube adı (normalize) → Evo'daki karşılığı(ları) (aynı fiziksel şube,
+# farklı isim). TEMA (Evvel) = «Gazze Şubesi» (Evo) — kullanıcı doğruladı.
+# İsimler harf paylaşmadığından substring eşleşmesi tutmaz; açık eşleme şart.
+_SUBE_AD_ALIAS: Dict[str, List[str]] = {
+    "tema": ["gazze"],
+}
+
+
 def _evvel_sube_evo_payload_eslestir(
     sube_adi_evvel: str,
     evo_subeler: Dict[str, Any],
@@ -2187,9 +2195,13 @@ def _evvel_sube_evo_payload_eslestir(
     evvel_key = _sube_ad_eslesme_anahtar(sube_adi_evvel)
     if not evvel_key:
         return None
+    # Kendi anahtarı + takma adları (TEMA → gazze gibi)
+    adaylar = [evvel_key, *_SUBE_AD_ALIAS.get(evvel_key, [])]
     for evo_ad, payload in (evo_subeler or {}).items():
         ekey = _sube_ad_eslesme_anahtar(str(evo_ad or ""))
-        if ekey and (evvel_key in ekey or ekey in evvel_key):
+        if not ekey:
+            continue
+        if any(a in ekey or ekey in a for a in adaylar):
             return payload
     return None
 
