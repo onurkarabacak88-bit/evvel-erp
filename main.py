@@ -308,6 +308,22 @@ def _gece_yarisi_scheduler():
                 except Exception as _e:
                     logger.warning(f"⏰ Otomatik mesai kapatma hatası: {_e}")
 
+                # ── Fatura fotoğrafı saklama: 6 aydan eski "kanıt" görüntülerini sil
+                # (kayıt + OCR kalır; sadece ağır BYTEA düşer → DB şişmez) ──────────
+                try:
+                    from fatura_api import (
+                        fatura_foto_temizle as _ff_temizle,
+                        fatura_modul_aktif as _ff_aktif,
+                    )
+                    if _ff_aktif():
+                        with db() as (conn, cur):
+                            _ff_n = _ff_temizle(cur)
+                            conn.commit()
+                        if _ff_n:
+                            logger.info(f"🧾 Fatura foto saklama: {_ff_n} eski görüntü (6 ay+) temizlendi")
+                except Exception as _e:
+                    logger.warning(f"🧾 Fatura foto temizleme hatası: {_e}")
+
                 try:
                     import truth_motor as _tm
                     if _tm._global_aktif():

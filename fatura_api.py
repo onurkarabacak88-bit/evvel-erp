@@ -106,6 +106,30 @@ def _ensure_tablolar(cur) -> None:
     _TABLOLAR_HAZIR = True
 
 
+# ── Saklama politikası: fotoğraf = "ürün geldi" kanıtı, 6 ay tutulur ──────────
+FATURA_FOTO_SAKLAMA_AY = 6
+
+
+def fatura_foto_temizle(cur) -> int:
+    """6 aydan eski faturaların foto BYTEA'sını siler (DB şişmesin). Kayıt + OCR
+    sonucu + kalemler KALIR (denetim izi sürer); sadece ağır görüntü düşer.
+    Dönüş: temizlenen fatura sayısı."""
+    try:
+        _ensure_tablolar(cur)
+        cur.execute(
+            """
+            UPDATE tedarikci_fatura
+            SET foto = NULL
+            WHERE foto IS NOT NULL
+              AND olusturma < NOW() - (%s * INTERVAL '1 month')
+            """,
+            (int(FATURA_FOTO_SAKLAMA_AY),),
+        )
+        return cur.rowcount or 0
+    except Exception:
+        return 0
+
+
 # ── OCR (asenkron, arka plan) ────────────────────────────────────────────────
 
 _OCR_PROMPT = (
@@ -549,6 +573,26 @@ def fatura_cek_sayfasi():
     if not fatura_modul_aktif():
         return HTMLResponse("<h3 style='font-family:sans-serif'>Fatura modülü kapalı.</h3>", status_code=503)
     return HTMLResponse(_CEK_HTML)
+
+
+@router.get("/{fatura_id}/foto")
+def fatura_foto(fatura_id: str):
+    """Saklanan fatura fotoğrafı = 'ürün geldi' kanıtı. 6 ay sonra temizlenmişse 410."""
+    if not fatura_modul_aktif():
+        raise HTTPException(503, "Fatura modülü kapalı.")
+    with db() as (conn, cur):
+        _ensure_tablolar(cur)
+        cur.execute("SELECT foto, foto_mime FROM tedarikci_fatura WHERE id=%s", (fatura_id,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Fatura bulunamadı")
+        d = dict(r)
+        foto = d.get("foto")
+        if not foto:
+            raise HTTPException(410, "Fatura fotoğrafı artık saklanmıyor (6 aylık saklama süresi doldu).")
+        mime = d.get("foto_mime") or "image/jpeg"
+        data = bytes(foto)
+    return StreamingResponse(io.BytesIO(data), media_type=mime)
 
 
 @router.get("/{fatura_id}")
