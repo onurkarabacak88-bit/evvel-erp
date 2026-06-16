@@ -12802,6 +12802,50 @@ class AlisFiyatBody(BaseModel):
     notlar: Optional[str] = None
 
 
+FIYAT_ZAM_ESIK_YUZDE = float(os.getenv("FIYAT_ZAM_ESIK", "15") or 15)
+
+
+def _fiyat_zam_alarmi_yaz(cur: Any, kalem: str, kalem_adi: Optional[str],
+                          onceki: Optional[float], yeni: Optional[float],
+                          tedarikci: Optional[str], fatura_id: Optional[str] = None) -> None:
+    """Fiyat artışı eşiği (varsayılan %15) aşıldıysa denetim alarmı kaydeder.
+    Akıllı Denetim'in 'tedarik zinciri / maliyet' duyusu — onaylı fiyattan tetiklenir,
+    OCR'dan DEĞİL (öneri-only ilkesi korunur). Hata kaydı engellemez."""
+    try:
+        if not onceki or onceki <= 0 or yeni is None or yeni <= 0:
+            return
+        artis = (float(yeni) - float(onceki)) / float(onceki) * 100.0
+        if artis < FIYAT_ZAM_ESIK_YUZDE:
+            return
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fiyat_zam_alarmi (
+                id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                kalem_kodu   TEXT,
+                kalem_adi    TEXT,
+                tedarikci    TEXT,
+                eski_fiyat   NUMERIC(12,4),
+                yeni_fiyat   NUMERIC(12,4),
+                artis_yuzde  NUMERIC(7,2),
+                fatura_id    TEXT,
+                goruldu      BOOLEAN NOT NULL DEFAULT FALSE,
+                olusturma    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            """
+            INSERT INTO fiyat_zam_alarmi
+                (kalem_kodu, kalem_adi, tedarikci, eski_fiyat, yeni_fiyat, artis_yuzde, fatura_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (kalem, kalem_adi or kalem, tedarikci, round(float(onceki), 4),
+             round(float(yeni), 4), round(artis, 2), fatura_id),
+        )
+    except Exception:
+        pass
+
+
 def _kaydet_alis_fiyati(cur: Any, kalem: str, kalem_adi: Optional[str], birim: str,
                         birim_maliyet_tl: float, bas: str, tedarikci: Optional[str],
                         notlar: Optional[str]) -> str:
@@ -12817,6 +12861,13 @@ def _kaydet_alis_fiyati(cur: Any, kalem: str, kalem_adi: Optional[str], birim: s
     işaretlenir ve "en güncel fiyat" (sube_depo_stok.alis_fiyati_tl) GÜNCELLENMEZ —
     çünkü daha yeni tarihli bir fiyat zaten mevcuttur."""
     _ensure_maliyet_tablolari(cur)
+    # Zam tespiti için: bu fiyatın YERİNE geçtiği önceki fiyat (bas'tan önceki en güncel)
+    cur.execute(
+        "SELECT birim_maliyet_tl FROM urun_alis_fiyat WHERE kalem_kodu = %s AND gecerli_baslangic < %s ORDER BY gecerli_baslangic DESC LIMIT 1",
+        (kalem, bas),
+    )
+    _onc = cur.fetchone()
+    _onceki_fiyat = float((_onc or {}).get("birim_maliyet_tl") or 0) or None
     cur.execute(
         "SELECT MIN(gecerli_baslangic) AS sonraki FROM urun_alis_fiyat WHERE kalem_kodu = %s AND gecerli_baslangic > %s",
         (kalem, bas),
@@ -12846,7 +12897,68 @@ def _kaydet_alis_fiyati(cur: Any, kalem: str, kalem_adi: Optional[str], birim: s
             )
         except Exception:
             pass
+    # Zam alarmı: yeni fiyat öncekini eşik üstü aşıyorsa denetim sinyali yaz
+    _fiyat_zam_alarmi_yaz(cur, kalem, kalem_adi, _onceki_fiyat, birim_maliyet_tl, tedarikci)
     return new_id
+
+
+@router.get("/fiyat-zam-alarmlari")
+def ops_fiyat_zam_alarmlari(gun: int = 90, sadece_yeni: bool = False, limit: int = 100):
+    """Eşik üstü fiyat artışları (onaylı fiyattan tetiklenir) — denetim sinyali listesi."""
+    gun_i = max(1, min(365, int(gun or 90)))
+    lim = max(1, min(300, int(limit or 100)))
+    out: List[Dict[str, Any]] = []
+    with db() as (conn, cur):
+        try:
+            cur.execute("SELECT to_regclass('public.fiyat_zam_alarmi') AS t")
+            if not (cur.fetchone() or {}).get("t"):
+                return {"alarmlar": [], "toplam": 0, "esik_yuzde": FIYAT_ZAM_ESIK_YUZDE}
+            kos = "olusturma >= NOW() - (%s * INTERVAL '1 day')"
+            params: List[Any] = [gun_i]
+            if sadece_yeni:
+                kos += " AND goruldu = FALSE"
+            cur.execute(
+                f"""
+                SELECT id, kalem_kodu, kalem_adi, tedarikci, eski_fiyat, yeni_fiyat,
+                       artis_yuzde, fatura_id, goruldu, olusturma
+                FROM fiyat_zam_alarmi WHERE {kos}
+                ORDER BY olusturma DESC LIMIT %s
+                """,
+                tuple(params + [lim]),
+            )
+            for r in cur.fetchall() or []:
+                d = dict(r)
+                out.append({
+                    "id": str(d.get("id")),
+                    "kalem_kodu": d.get("kalem_kodu"),
+                    "kalem_adi": d.get("kalem_adi"),
+                    "tedarikci": d.get("tedarikci") or "—",
+                    "eski_fiyat": float(d.get("eski_fiyat") or 0),
+                    "yeni_fiyat": float(d.get("yeni_fiyat") or 0),
+                    "artis_yuzde": float(d.get("artis_yuzde") or 0),
+                    "goruldu": bool(d.get("goruldu")),
+                    "olusturma": str(d.get("olusturma") or "")[:16].replace("T", " "),
+                })
+        except Exception:
+            out = []
+    return {"alarmlar": out, "toplam": len(out), "esik_yuzde": FIYAT_ZAM_ESIK_YUZDE}
+
+
+class FiyatZamGorulduBody(BaseModel):
+    id: str
+
+
+@router.post("/fiyat-zam-alarmlari/goruldu")
+def ops_fiyat_zam_gorduldu(body: FiyatZamGorulduBody):
+    aid = (body.id or "").strip()
+    if not aid:
+        raise HTTPException(400, "id zorunlu")
+    with db() as (conn, cur):
+        try:
+            cur.execute("UPDATE fiyat_zam_alarmi SET goruldu=TRUE WHERE id=%s", (aid,))
+        except Exception:
+            pass
+    return {"ok": True}
 
 
 @router.get("/maliyet/stok-kalemleri")

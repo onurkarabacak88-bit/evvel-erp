@@ -54,6 +54,7 @@ export default function Maliyet() {
   const [fotoKalemDuzen, setFotoKalemDuzen] = useState({});        // kalem_id -> {kalem_kodu, birim_maliyet_tl}
   const [fotoKalemKayit, setFotoKalemKayit] = useState({});        // kalem_id -> true
   const [fotoModalUrl, setFotoModalUrl] = useState(null);          // büyük foto overlay
+  const [zamAlarmlar, setZamAlarmlar] = useState([]);              // 🔺 eşik üstü fiyat artışları
 
   useEffect(() => {
     api('/subeler').then(r => setSubeler(r || [])).catch(() => {});
@@ -63,6 +64,17 @@ export default function Maliyet() {
     api('/fatura/bekleyen').then(r => setFotoFaturalar((r && r.satirlar) || [])).catch(() => setFotoFaturalar([]));
   };
   useEffect(() => { fotoFaturaYukle(); }, []);
+
+  const zamAlarmYukle = () => {
+    api('/ops/fiyat-zam-alarmlari?gun=90').then(r => setZamAlarmlar((r && r.alarmlar) || [])).catch(() => setZamAlarmlar([]));
+  };
+  useEffect(() => { zamAlarmYukle(); }, []);
+  const zamGorduldu = async (id) => {
+    try {
+      await api('/ops/fiyat-zam-alarmlari/goruldu', { method: 'POST', body: { id } });
+      setZamAlarmlar(prev => prev.filter(a => a.id !== id));
+    } catch (_) { /* yoksay */ }
+  };
 
   const fotoFaturaAc = async (fid) => {
     if (fotoFaturaAcik === fid) { setFotoFaturaAcik(null); return; }
@@ -405,6 +417,28 @@ export default function Maliyet() {
           <option key={k.kalem_kodu} value={k.kalem_kodu}>{k.kalem_adi}</option>
         ))}
       </datalist>
+
+      {/* 🔺 Zam Alarmları — eşik üstü fiyat artışı (Akıllı Denetim sinyali) */}
+      {zamAlarmlar.length > 0 && (
+        <>
+          <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
+            <span>🔺 Zam Alarmları</span>
+            <span style={{ fontSize: 10, color: 'var(--text3)' }}>Eşik üstü fiyat artışı — onaylanan fatura fiyatından</span>
+          </div>
+          <div className="card" style={{ marginBottom: 16, border: '1px solid var(--red)' }}>
+            {zamAlarmlar.map(a => (
+              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px', borderBottom: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--red)', minWidth: 60 }}>🔺 +{a.artis_yuzde}%</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{a.kalem_adi || a.kalem_kodu}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>🚚 {a.tedarikci} · {fmt(a.eski_fiyat)}₺ → {fmt(a.yeni_fiyat)}₺ · {a.olusturma}</div>
+                </div>
+                <button className="btn btn-secondary btn-sm" onClick={() => zamGorduldu(a.id)}>Gördüm</button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* Fatura PDF yükleme */}
       <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
