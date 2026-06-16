@@ -367,25 +367,42 @@ def _refresh_durum(cur, sube_id: str) -> None:
 
 def _list_events(cur, sube_id: str) -> List[dict]:
     """
-    Bugünün operasyon satırları + bir önceki takvim gününden henüz bitmemiş KAPANIS
-    (00:00–02:00 arası kasa/kapanış hâlâ önceki iş gününe yazılabilir).
+    Bugünün operasyon satırları + (YALNIZCA gece 00:00–02:00 penceresinde) bir
+    önceki takvim gününden henüz bitmemiş KAPANIS.
+
+    DÜZELTME (2026-06-16): Önceki gün KAPANIS'ı SADECE 00:00–02:00 arası dahil
+    edilir. Eskiden saat kontrolü yoktu → şube önceki gün KAPALIYKEN seed edilmiş
+    bayat 'bekliyor' KAPANIS, ertesi günün GÜNDÜZÜNDE de listeye giriyordu ve o
+    günün kapanışı yanlışlıkla DÜNKÜ (kapalı) güne yazılıyordu (Köyceğiz: 15'te
+    kapattık → 14'e yazdı). is_gunu_tr() ile aynı pencere mantığı.
     """
-    cur.execute(
-        """
-        SELECT * FROM sube_operasyon_event
-        WHERE sube_id=%s
-          AND (
-            tarih = CURRENT_DATE
-            OR (
-              tarih = (CURRENT_DATE - INTERVAL '1 day')::date
-              AND tip = 'KAPANIS'
-              AND durum IN ('bekliyor', 'gecikti')
-            )
-          )
-        ORDER BY tarih DESC, sistem_slot_ts, tip
-        """,
-        (sube_id,),
-    )
+    _gece_penceresi = dt_now_tr_naive().hour < 2  # is_gunu_tr() dünü döndürdüğü pencere
+    if _gece_penceresi:
+        cur.execute(
+            """
+            SELECT * FROM sube_operasyon_event
+            WHERE sube_id=%s
+              AND (
+                tarih = CURRENT_DATE
+                OR (
+                  tarih = (CURRENT_DATE - INTERVAL '1 day')::date
+                  AND tip = 'KAPANIS'
+                  AND durum IN ('bekliyor', 'gecikti')
+                )
+              )
+            ORDER BY tarih DESC, sistem_slot_ts, tip
+            """,
+            (sube_id,),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT * FROM sube_operasyon_event
+            WHERE sube_id=%s AND tarih = CURRENT_DATE
+            ORDER BY tarih DESC, sistem_slot_ts, tip
+            """,
+            (sube_id,),
+        )
     return [_row_event(r) for r in cur.fetchall()]
 
 
