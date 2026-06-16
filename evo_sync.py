@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import threading
+import unicodedata
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -2165,16 +2166,30 @@ EVO_GRUP_BAR_OZET: Dict[str, tuple] = {
 }
 
 
+def _sube_ad_eslesme_anahtar(s: str) -> str:
+    """Şube adı eşleşmesi için Türkçe-güvenli, aksandan arınmış anahtar.
+
+    KÖYCEĞİZ vs «Köyceğiz Şubesi» neden tutmuyordu? Python'un default lower()'ı
+    büyük «İ» (U+0130) harfini «i» + görünmez birleşik nokta (U+0307) yapar →
+    'köyceği̇z' (9 harf) ≠ 'köyceğiz' (8 harf), substring eşleşmesi patlar.
+    Çözüm: NFKD ile aksanları ayır, birleşik işaretleri (U+0307 vb.) at →
+    her iki taraf da ASCII'ye iner: 'koycegiz'."""
+    s = (s or "").replace("İ", "i").replace("I", "ı")  # TR büyük-İ/I tuzağı
+    s = unicodedata.normalize("NFKD", s.lower())
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return s.replace("subesi", "").strip()
+
+
 def _evvel_sube_evo_payload_eslestir(
     sube_adi_evvel: str,
     evo_subeler: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    evvel_lower = (sube_adi_evvel or "").strip().lower().replace("şubesi", "").strip()
-    if not evvel_lower:
+    evvel_key = _sube_ad_eslesme_anahtar(sube_adi_evvel)
+    if not evvel_key:
         return None
     for evo_ad, payload in (evo_subeler or {}).items():
-        elow = str(evo_ad or "").strip().lower().replace("şubesi", "").strip()
-        if evvel_lower in elow or elow in evvel_lower:
+        ekey = _sube_ad_eslesme_anahtar(str(evo_ad or ""))
+        if ekey and (evvel_key in ekey or ekey in evvel_key):
             return payload
     return None
 
