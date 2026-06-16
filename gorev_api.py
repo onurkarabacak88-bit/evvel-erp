@@ -1288,20 +1288,36 @@ def kapanis_durum(sube_id: str):
     kullanır — personel telefon ekranında (GorevPersonelSayfasi) kasa
     mühürlendiğinde diğer personelin akışını kilitlemek için kullanılır.
     """
-    from tr_saat import is_gunu_tr
+    from tr_saat import is_gunu_tr, dt_now_tr_naive
     tarih = is_gunu_tr()
+    # Önceki günün geç (gece yarısı sonrası) mührünü SADECE 00:00-02:00 gece
+    # penceresinde say. Gündüz (02:00 sonrası) is_gunu_tr zaten bugüne geçer;
+    # o saatten sonra dünün geç mührü "bugün mühürlendi" sayılmamalı — aksi halde
+    # tüm gün boyunca personel ekranına yanlışlıkla "kasa mühürlendi" sızar
+    # (Köyceğiz'de _list_events 4b71611 ile düzeltilen hatanın aynısı, 2026-06-16).
+    _gece_penceresi = dt_now_tr_naive().hour < 2
     with db() as (_, cur):
-        cur.execute(
-            """
-            SELECT 1 FROM sube_operasyon_event
-            WHERE sube_id=%s AND tip='KAPANIS' AND sira_no=0 AND durum='tamamlandi'
-              AND (
-                tarih = %s
-                OR (tarih = (%s::date - INTERVAL '1 day') AND cevap_ts::date = %s::date)
-              )
-            """,
-            (sube_id, tarih, tarih, tarih),
-        )
+        if _gece_penceresi:
+            cur.execute(
+                """
+                SELECT 1 FROM sube_operasyon_event
+                WHERE sube_id=%s AND tip='KAPANIS' AND sira_no=0 AND durum='tamamlandi'
+                  AND (
+                    tarih = %s
+                    OR (tarih = (%s::date - INTERVAL '1 day') AND cevap_ts::date = %s::date)
+                  )
+                """,
+                (sube_id, tarih, tarih, tarih),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT 1 FROM sube_operasyon_event
+                WHERE sube_id=%s AND tip='KAPANIS' AND sira_no=0 AND durum='tamamlandi'
+                  AND tarih = %s
+                """,
+                (sube_id, tarih),
+            )
         bitti = cur.fetchone() is not None
     return {"kapanis_tamamlandi_bugun": bitti}
 
