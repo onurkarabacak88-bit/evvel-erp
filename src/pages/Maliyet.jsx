@@ -47,9 +47,49 @@ export default function Maliyet() {
   const [faturaUyari, setFaturaUyari] = useState('');
   const [faturaKaydedilenler, setFaturaKaydedilenler] = useState({});
 
+  // 📱 Telefon (foto) faturaları — şubeden gelen, OCR fiyat önerisi + kanıt fotoğrafı
+  const [fotoFaturalar, setFotoFaturalar] = useState([]);
+  const [fotoFaturaAcik, setFotoFaturaAcik] = useState(null);      // açık fatura id
+  const [fotoFaturaDetay, setFotoFaturaDetay] = useState({});      // id -> {fatura, kalemler, siparis_kalemler}
+  const [fotoKalemDuzen, setFotoKalemDuzen] = useState({});        // kalem_id -> {kalem_kodu, birim_maliyet_tl}
+  const [fotoKalemKayit, setFotoKalemKayit] = useState({});        // kalem_id -> true
+  const [fotoModalUrl, setFotoModalUrl] = useState(null);          // büyük foto overlay
+
   useEffect(() => {
     api('/subeler').then(r => setSubeler(r || [])).catch(() => {});
   }, []);
+
+  const fotoFaturaYukle = () => {
+    api('/fatura/bekleyen').then(r => setFotoFaturalar((r && r.satirlar) || [])).catch(() => setFotoFaturalar([]));
+  };
+  useEffect(() => { fotoFaturaYukle(); }, []);
+
+  const fotoFaturaAc = async (fid) => {
+    if (fotoFaturaAcik === fid) { setFotoFaturaAcik(null); return; }
+    setFotoFaturaAcik(fid);
+    if (!fotoFaturaDetay[fid]) {
+      try {
+        const d = await api('/fatura/' + encodeURIComponent(fid));
+        setFotoFaturaDetay(prev => ({ ...prev, [fid]: d }));
+      } catch (e) { setMesaj({ m: e.message || 'Fatura yüklenemedi', t: 'error' }); }
+    }
+  };
+
+  const fotoKalemOnayla = async (fid, kalem, kod, fy) => {
+    const k = String(kod || '').trim();
+    const fiyat = parseFloat(String(fy).replace(',', '.'));
+    if (!k) { setMesaj({ m: 'Stok kalem kodu girin', t: 'error' }); return; }
+    if (!(fiyat >= 0)) { setMesaj({ m: 'Geçerli fiyat girin', t: 'error' }); return; }
+    try {
+      const det = fotoFaturaDetay[fid];
+      const ted = (det && det.fatura && det.fatura.tedarikci_ad) || null;
+      await api('/fatura/kalem/' + encodeURIComponent(kalem.id) + '/onayla', { method: 'POST', body: {
+        kalem_kodu: k, kalem_adi: kalem.ocr_ad || k, birim: kalem.birim || 'adet', birim_maliyet_tl: fiyat, tedarikci: ted,
+      }});
+      setFotoKalemKayit(prev => ({ ...prev, [kalem.id]: true }));
+      setMesaj({ m: '✅ Fiyat onaylandı, güncellendi', t: 'success' });
+    } catch (e) { setMesaj({ m: e.message || 'Onaylanamadı', t: 'error' }); }
+  };
 
   const yukle = () => {
     setLoading(true);
@@ -457,6 +497,86 @@ export default function Maliyet() {
           </div>
         )}
       </div>
+
+      {/* 📱 Telefon (foto) faturaları — şubeden gelen, OCR fiyat önerisi + KANIT fotoğrafı */}
+      <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
+        <span>📱 Telefon Faturaları (öneri)</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>📷 ile şubenin çektiği faturayı gör · sen onaylayınca FİYAT güncellenir (stok değil)</span>
+      </div>
+      <div className="card" style={{ marginBottom: 16 }}>
+        {fotoFaturalar.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--text3)' }}>Bekleyen telefon faturası yok.</div>
+        ) : fotoFaturalar.map(f => {
+          const acik = fotoFaturaAcik === f.id;
+          const d = fotoFaturaDetay[f.id];
+          return (
+            <div key={f.id} style={{ borderRadius: 8, background: 'var(--bg3)', border: '1px solid var(--border)', marginBottom: 8, padding: '8px 10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {/* 📷 KANIT: şubenin gönderdiği fatura fotoğrafı */}
+                <button className="btn btn-ghost btn-sm" title="Şubenin gönderdiği fatura fotoğrafını gör"
+                  onClick={() => setFotoModalUrl('/api/fatura/' + encodeURIComponent(f.id) + '/foto')}
+                  style={{ fontSize: 20, padding: '2px 8px', lineHeight: 1 }}>📷</button>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{f.tedarikci_ad || '(tedarikçi okunamadı)'}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                    {f.sube_id}
+                    {f.durum === 'ocr_bekliyor' ? ' · OCR sürüyor…' : f.durum === 'ocr_hata' ? ' · ⚠ OCR okunamadı' : (f.fatura_tarih ? ' · ' + fmtDate(f.fatura_tarih) : '')}
+                    {f.toplam_tutar != null && ' · ' + fmt(f.toplam_tutar) + '₺'}
+                  </div>
+                </div>
+                <button className="btn btn-secondary btn-sm" onClick={() => fotoFaturaAc(f.id)}>{acik ? 'Kapat' : 'İncele'}</button>
+              </div>
+              {acik && d && (
+                <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {d.siparis_kalemler?.length > 0 && (
+                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>🧾 Sipariş: {d.siparis_kalemler.map(s => `${s.urun_ad}×${s.adet}`).join(', ')}</div>
+                  )}
+                  {(d.kalemler || []).length === 0 && (
+                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>OCR kalem bulamadı (📷 ile fotoğrafı kontrol et).</div>
+                  )}
+                  {(d.kalemler || []).map(k => {
+                    const kayit = !!fotoKalemKayit[k.id];
+                    const edit = fotoKalemDuzen[k.id] || {};
+                    const kod = edit.kalem_kodu ?? (k.eslesen_stok_kodu || '');
+                    const fy = edit.birim_maliyet_tl ?? (k.birim_fiyat != null ? String(k.birim_fiyat) : '');
+                    return (
+                      <div key={k.id}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1.2fr 1fr auto', gap: 6, alignItems: 'center' }}>
+                          <input type="text" list="depo-kalem-listesi-sayfa" placeholder="Stok kodu" value={kod}
+                            onChange={e => setFotoKalemDuzen(p => ({ ...p, [k.id]: { ...p[k.id], kalem_kodu: e.target.value } }))} disabled={kayit} />
+                          <span style={{ fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={k.ocr_ad || ''}>
+                            {k.ocr_ad || '—'}{k.adet != null ? ` ×${k.adet}` : ''}
+                          </span>
+                          <input type="text" inputMode="decimal" placeholder="₺" value={fy}
+                            onChange={e => setFotoKalemDuzen(p => ({ ...p, [k.id]: { ...p[k.id], birim_maliyet_tl: e.target.value } }))} disabled={kayit} />
+                          {kayit
+                            ? <span style={{ fontSize: 12, color: 'var(--green)', fontWeight: 700, textAlign: 'center' }}>✅</span>
+                            : <button className="btn btn-secondary btn-sm" onClick={() => fotoKalemOnayla(f.id, k, kod, fy)}>Onayla</button>}
+                        </div>
+                        {k.onceki_fiyat != null && k.birim_fiyat != null && (
+                          <div style={{ marginTop: 3, fontSize: 10, color: k.fiyat_degisim > 0 ? 'var(--red)' : k.fiyat_degisim < 0 ? 'var(--green)' : 'var(--text3)' }}>
+                            {k.fiyat_degisim > 0 ? '🔺' : k.fiyat_degisim < 0 ? '🔻' : '➖'} Önceki: {fmt(k.onceki_fiyat)} → {fmt(k.birim_fiyat)}
+                            {k.fiyat_degisim_yuzde != null && ` (${k.fiyat_degisim > 0 ? '+' : ''}${k.fiyat_degisim_yuzde}%)`}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Foto kanıt modalı — şubenin gönderdiği fatura görüntüsü */}
+      {fotoModalUrl && (
+        <div onClick={() => setFotoModalUrl(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.82)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <img src={fotoModalUrl} alt="Fatura fotoğrafı" onClick={e => e.stopPropagation()}
+            style={{ maxWidth: '96%', maxHeight: '92%', borderRadius: 10, background: '#fff', boxShadow: '0 12px 48px rgba(0,0,0,.5)' }} />
+        </div>
+      )}
 
       {/* Güncel fiyat listesi + geçmiş/artış görseli */}
       <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
