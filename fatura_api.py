@@ -107,17 +107,22 @@ def _ensure_tablolar(cur) -> None:
 # ── OCR (asenkron, arka plan) ────────────────────────────────────────────────
 
 _OCR_PROMPT = (
-    "Bu, basılı bir Türk e-FATURASI / irsaliyesinin (Metro, Fez, Sütaş vb. tedarikçi) "
-    "fotoğrafıdır — bilgisayar çıktısı, düzenli tablo. Kalem TABLOSUNDAKİ HER SATIRI "
-    "tek tek oku. SADECE şu JSON'u döndür, başka hiçbir metin yazma:\n"
-    '{"tedarikci": "<firma/ünvan>", "fatura_tarih": "YYYY-MM-DD veya null", '
-    '"toplam_tutar": <genel toplam sayı veya null>, "kalemler": [{'
-    '"urun_kodu": "<varsa stok/mal kodu, örn ST00558; yoksa null>", '
-    '"ad": "<ürün açıklaması>", "adet": <miktar sayı>, '
-    '"birim": "<adet/kg/lt/koli/paket>", "birim_fiyat": <birim fiyat sayı>, '
-    '"satir_toplam": <satır tutarı sayı>}]}\n'
-    "Sayıları nokta ondalıkla ver (30.50). Türkçe binlik ayıracı (1.234,56) → 1234.56. "
-    "Her ürün satırını ekle; okuyamadığın TEK bir alanı null bırak ama satırı atlama."
+    "Bu, basılı bir Türk e-FATURASI fotoğrafıdır (bilgisayar çıktısı, düzenli tablo).\n"
+    "ÖNEMLİ — TEDARİKÇİ KİM: Faturayı DÜZENLEYEN/satan firma EN ÜSTTEKİ başlıktır "
+    "(logo/ünvan + VKN + 'e-Fatura'). 'SAYIN' satırından sonra gelen firma ALICIdır "
+    "(müşteri) — onu tedarikçi SANMA. tedarikci alanına EN ÜSTTEKİ düzenleyen firmayı yaz.\n"
+    "Kalem TABLOSUNDAKİ HER SATIRI oku. 'Ürün Kodu'/'Mal Hizmet Kodu' kolonundaki kodu "
+    "(örn. ST00558, STK0590) MUTLAKA al — bu en kritik alan.\n"
+    "SADECE şu JSON'u döndür, başka metin yazma:\n"
+    '{"tedarikci": "<EN ÜSTTEKİ düzenleyen firma ünvanı>", '
+    '"fatura_no": "<fatura no>", "fatura_tarih": "YYYY-MM-DD veya null", '
+    '"toplam_tutar": <Ödenecek/Genel Toplam sayı veya null>, "kalemler": [{'
+    '"urun_kodu": "<Ürün Kodu, örn ST00558; yoksa null>", '
+    '"ad": "<malzeme/hizmet açıklaması>", "adet": <miktar sayı>, '
+    '"birim": "<Adet/kg/lt>", "birim_fiyat": <Birim Fiyatı sayı>, '
+    '"satir_toplam": <satır KDV hariç tutar sayı>}]}\n'
+    "Sayı biçimi: Türkçe 1.234,56 → 1234.56 (nokta=ondalık). Tarih gün-ay-yıl ise "
+    "YYYY-MM-DD'ye çevir. Her ürün satırını ekle; sadece okunamayan TEK alanı null bırak."
 )
 
 
@@ -130,7 +135,7 @@ def _vision_ocr(foto: bytes, mime: str) -> Dict[str, Any]:
     client = OpenAI(api_key=api_key)
     b64 = base64.b64encode(foto).decode("ascii")
     resp = client.chat.completions.create(
-        model=os.getenv("OPENAI_FATURA_MODEL", "gpt-4o-mini"),
+        model=os.getenv("OPENAI_FATURA_MODEL", "gpt-4o"),  # fatura kritik → tam model
         messages=[{
             "role": "user",
             "content": [
