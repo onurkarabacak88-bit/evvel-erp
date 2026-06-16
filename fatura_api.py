@@ -19,6 +19,7 @@ import base64
 import json
 import logging
 import os
+import re
 import threading
 import uuid
 from typing import Any, Dict, List, Optional
@@ -83,6 +84,8 @@ def _ensure_tablolar(cur) -> None:
         )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_tfk_fatura ON tedarikci_fatura_kalem (fatura_id)")
+    # Köprü: e-faturadaki ürün kodu (alias anahtarı için) — onay adımında kullanılır
+    cur.execute("ALTER TABLE tedarikci_fatura_kalem ADD COLUMN IF NOT EXISTS ocr_urun_kodu TEXT")
     # Fiyat geçmişi — GERÇEK fiyat değil; modülün kendi takip kaydı. Kritik maliyete
     # ancak ayrı Price Approval Service + insan onayı ile bağlanır (Faz 3).
     cur.execute("""
@@ -104,14 +107,17 @@ def _ensure_tablolar(cur) -> None:
 # ── OCR (asenkron, arka plan) ────────────────────────────────────────────────
 
 _OCR_PROMPT = (
-    "Bu bir tedarikçi/toptancı FATURASI veya irsaliyesi fotoğrafı. Türkçe. "
-    "İçindeki bilgileri SADECE şu JSON formatında çıkar, başka metin yazma:\n"
-    '{"tedarikci": "<firma adı>", "fatura_tarih": "YYYY-MM-DD veya null", '
-    '"toplam_tutar": <sayı veya null>, "kalemler": [{"ad": "<ürün adı>", '
-    '"adet": <sayı>, "birim": "<adet/kg/lt/koli vb>", "birim_fiyat": <sayı>, '
-    '"satir_toplam": <sayı>}]}\n'
-    "Sayıları nokta ondalıkla ver (30.50). Okuyamadığın alanı null bırak. "
-    "Emin olmadığın kalemi yine de ekle ama değerini null yap."
+    "Bu, basılı bir Türk e-FATURASI / irsaliyesinin (Metro, Fez, Sütaş vb. tedarikçi) "
+    "fotoğrafıdır — bilgisayar çıktısı, düzenli tablo. Kalem TABLOSUNDAKİ HER SATIRI "
+    "tek tek oku. SADECE şu JSON'u döndür, başka hiçbir metin yazma:\n"
+    '{"tedarikci": "<firma/ünvan>", "fatura_tarih": "YYYY-MM-DD veya null", '
+    '"toplam_tutar": <genel toplam sayı veya null>, "kalemler": [{'
+    '"urun_kodu": "<varsa stok/mal kodu, örn ST00558; yoksa null>", '
+    '"ad": "<ürün açıklaması>", "adet": <miktar sayı>, '
+    '"birim": "<adet/kg/lt/koli/paket>", "birim_fiyat": <birim fiyat sayı>, '
+    '"satir_toplam": <satır tutarı sayı>}]}\n'
+    "Sayıları nokta ondalıkla ver (30.50). Türkçe binlik ayıracı (1.234,56) → 1234.56. "
+    "Her ürün satırını ekle; okuyamadığın TEK bir alanı null bırak ama satırı atlama."
 )
 
 
@@ -182,17 +188,24 @@ def _ocr_calistir(fatura_id: str) -> None:
             for i, k in enumerate(kalemler):
                 if not isinstance(k, dict):
                     continue
+                _ad = (str(k.get("ad") or "").strip() or None)
+                _kod = (str(k.get("urun_kodu") or "").strip() or None)
+                # ── KÖPRÜ: mevcut alias hafızasından eşleşen stok kalemini öner ──
+                _anahtar = _fatura_anahtar_ocr(_kod, _ad)
+                _es = _alias_eslesme(cur, _anahtar)
+                _eslesen = _es.get("kalem_kodu") if _es else None
                 cur.execute(
                     """
                     INSERT INTO tedarikci_fatura_kalem
-                        (id, fatura_id, sira, ocr_ad, adet, birim, birim_fiyat, satir_toplam)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        (id, fatura_id, sira, ocr_ad, ocr_urun_kodu, adet, birim,
+                         birim_fiyat, satir_toplam, eslesen_stok_kodu, eslesme_guven)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        str(uuid.uuid4()), fatura_id, i,
-                        (str(k.get("ad") or "").strip() or None),
+                        str(uuid.uuid4()), fatura_id, i, _ad, _kod,
                         _sayi(k.get("adet")), (str(k.get("birim") or "").strip() or None),
                         _sayi(k.get("birim_fiyat")), _sayi(k.get("satir_toplam")),
+                        _eslesen, (1.0 if _eslesen else None),
                     ),
                 )
             conn.commit()
@@ -216,6 +229,66 @@ def _sayi(v: Any) -> Optional[float]:
     try:
         return float(str(v).replace(",", "."))
     except (TypeError, ValueError):
+        return None
+
+
+def _fatura_anahtar_ocr(urun_kodu: Optional[str], ad: Optional[str]) -> str:
+    """operasyon_merkez_api._fatura_anahtar ile AYNI mantık (inline — izolasyon).
+    Ürün kodu varsa kod:<kod>, yoksa normalize açıklama. Mevcut alias hafızasına
+    (fatura_kalem_eslestirme) köprü için anahtar tutarlı olmalı."""
+    kod = (urun_kodu or "").strip()
+    if kod:
+        return f"kod:{kod.lower()}"
+    a = re.sub(r"\s+", " ", (ad or "")).strip().lower()
+    a = re.sub(r"[^a-zçğıöşü0-9 ]", "", a)
+    return a[:120]
+
+
+def _alias_eslesme(cur, anahtar: str) -> Optional[Dict[str, Any]]:
+    """Mevcut öğrenen eşleştirme hafızasından (fatura_kalem_eslestirme) öneri.
+    Tablo yoksa/hata → None (best-effort, OCR'ı bozmaz)."""
+    if not anahtar:
+        return None
+    try:
+        cur.execute("SAVEPOINT sp_alias")
+        cur.execute(
+            "SELECT kalem_kodu, kalem_adi FROM fatura_kalem_eslestirme WHERE anahtar=%s",
+            (anahtar,),
+        )
+        r = cur.fetchone()
+        cur.execute("RELEASE SAVEPOINT sp_alias")
+        return dict(r) if r else None
+    except Exception:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_alias")
+            cur.execute("RELEASE SAVEPOINT sp_alias")
+        except Exception:
+            pass
+        return None
+
+
+def _son_alis_fiyat(cur, kalem_kodu: str) -> Optional[Dict[str, Any]]:
+    """Mevcut fiyat geçmişinden (urun_alis_fiyat) son bilinen birim maliyet —
+    zam/azalış karşılaştırması için. Best-effort."""
+    if not kalem_kodu:
+        return None
+    try:
+        cur.execute("SAVEPOINT sp_fiyat")
+        cur.execute(
+            """SELECT birim_maliyet_tl, gecerli_baslangic::text AS tarih
+               FROM urun_alis_fiyat WHERE kalem_kodu=%s
+               ORDER BY gecerli_baslangic DESC LIMIT 1""",
+            (kalem_kodu,),
+        )
+        r = cur.fetchone()
+        cur.execute("RELEASE SAVEPOINT sp_fiyat")
+        return dict(r) if r else None
+    except Exception:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_fiyat")
+            cur.execute("RELEASE SAVEPOINT sp_fiyat")
+        except Exception:
+            pass
         return None
 
 
@@ -472,13 +545,29 @@ def fatura_detay(fatura_id: str):
         h = dict(h)
         cur.execute(
             """
-            SELECT id, sira, ocr_ad, adet, birim, birim_fiyat, satir_toplam,
+            SELECT id, sira, ocr_ad, ocr_urun_kodu, adet, birim, birim_fiyat, satir_toplam,
                    eslesen_stok_kodu, eslesme_guven
             FROM tedarikci_fatura_kalem WHERE fatura_id=%s ORDER BY sira
             """,
             (fatura_id,),
         )
         kalemler = [dict(r) for r in (cur.fetchall() or [])]
+        # ── KÖPRÜ: eşleşen kalemler için son bilinen fiyat + değişim (zam) ──
+        for k in kalemler:
+            kod = k.get("eslesen_stok_kodu")
+            son = _son_alis_fiyat(cur, kod) if kod else None
+            if son:
+                k["onceki_fiyat"] = float(son.get("birim_maliyet_tl") or 0)
+                k["onceki_tarih"] = son.get("tarih")
+                yeni = k.get("birim_fiyat")
+                if yeni is not None and k["onceki_fiyat"]:
+                    k["fiyat_degisim"] = round(float(yeni) - k["onceki_fiyat"], 4)
+                    k["fiyat_degisim_yuzde"] = round(
+                        (float(yeni) - k["onceki_fiyat"]) / k["onceki_fiyat"] * 100, 1
+                    )
+            else:
+                k["onceki_fiyat"] = None
+                k["onceki_tarih"] = None
     h["fatura_tarih"] = str(h.get("fatura_tarih") or "")
     h["olusturma"] = str(h.get("olusturma") or "")
     return {"fatura": h, "kalemler": kalemler}
