@@ -404,6 +404,7 @@ _CEK_HTML = """<!doctype html><html lang="tr"><head>
 
   <div id="adimOnizle" class="gizle">
     <img id="snap" class="snap"/>
+    <div id="cozunurluk" class="sub" style="text-align:center;margin-top:6px"></div>
     <div style="height:10px"></div>
     <div class="row">
       <button id="btnTekrar" class="btn btn-tekrar">↺ Tekrar Çek</button>
@@ -431,10 +432,17 @@ function hata(m){const h=$('hata');h.textContent=m;h.classList.remove('gizle');}
 function temizHata(){$('hata').classList.add('gizle');}
 function goster(id){['adimKamera','adimOnizle','adimSonuc'].forEach(a=>$(a).classList.toggle('gizle',a!==id));}
 
+async function _kameraAc(constraints){
+  return await navigator.mediaDevices.getUserMedia(constraints);
+}
 $('btnAc').onclick=async()=>{
   temizHata();
+  // Fatura yazısı net olsun diye YÜKSEK çözünürlük iste; cihaz reddederse sade isteğe düş.
+  const hi={video:{facingMode:{ideal:'environment'},width:{ideal:3840},height:{ideal:2160}},audio:false};
+  const lo={video:{facingMode:{ideal:'environment'}},audio:false};
   try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
+    try{ stream=await _kameraAc(hi); }
+    catch(_){ stream=await _kameraAc(lo); }
     $('vid').srcObject=stream;
     $('btnAc').classList.add('gizle');$('btnCek').classList.remove('gizle');
   }catch(e){hata('Kamera açılamadı: '+(e.message||e)+' (HTTPS ve kamera izni gerekli)');}
@@ -443,7 +451,18 @@ $('btnCek').onclick=()=>{
   const v=$('vid'),cv=$('cv');
   cv.width=v.videoWidth||1080;cv.height=v.videoHeight||1440;
   cv.getContext('2d').drawImage(v,0,0,cv.width,cv.height);
-  cv.toBlob(b=>{blob=b;$('snap').src=URL.createObjectURL(b);goster('adimOnizle');},'image/jpeg',0.85);
+  // Yoğun fatura metni için JPEG kalitesi yüksek (0.92).
+  cv.toBlob(b=>{
+    blob=b;$('snap').src=URL.createObjectURL(b);
+    var info=$('cozunurluk');
+    if(info){
+      var dusuk=(cv.width<1280);
+      var kb=b?Math.round(b.size/1024):0;
+      info.innerHTML='Çözünürlük: <b>'+cv.width+'×'+cv.height+'</b> · '+kb+' KB '
+        +(dusuk?'<span style="color:#f59e0b">⚠ düşük — daha yakın çek, ışığı artır</span>':'<span style="color:#22c55e">✓ net</span>');
+    }
+    goster('adimOnizle');
+  },'image/jpeg',0.92);
 };
 $('btnTekrar').onclick=()=>goster('adimKamera');
 $('btnYukle').onclick=async()=>{
@@ -511,7 +530,8 @@ def fatura_qr(sube_id: str, siparis_talep_id: Optional[str] = None):
     url = f"{base}/api/fatura/cek?sube_id={sube_id}"
     if siparis_talep_id:
         url += f"&siparis_talep_id={siparis_talep_id}"
-    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=3)
+    # box_size büyük + border (sessiz alan) geniş → telefon kamerası kolay okur.
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=16, border=4)
     qr.add_data(url)
     qr.make(fit=True)
     # PIL ile çiz (gorev_api QR deseni — production'da PIL var, PyPNG yok)
