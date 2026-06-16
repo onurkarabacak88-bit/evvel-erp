@@ -95,6 +95,7 @@ export function OnayKuyrugu() {
   const [msg, setMsg] = useState(null);
   const [reddetModal, setReddetModal] = useState(null);
   const [gorunum, setGorunum] = useState('bekliyor'); // bekliyor | gecmis
+  const [kategori, setKategori] = useState('gider');   // gider | kasa
   const [secili, setSecili] = useState(new Set());
   const [topluYukleniyor, setTopluYukleniyor] = useState(false);
   const load = () => {
@@ -114,6 +115,13 @@ export function OnayKuyrugu() {
     catch(e){toast(e.message,'red');}
   }
 
+  // İşlem türünde "KASA" geçen kalemler = kasa hataları (KAPANIS_KASA_FARK,
+  // ACILIS_KASA_FARK …); diğerleri = şube giderleri (ANLIK_GIDER, SABIT_GIDER …).
+  const kasaHatasiMi = (o) => String(o.islem_turu || '').toUpperCase().includes('KASA');
+  const giderSayi = liste.filter(o => !kasaHatasiMi(o)).length;
+  const kasaSayi = liste.filter(o => kasaHatasiMi(o)).length;
+  const gorunenListe = liste.filter(o => kategori === 'kasa' ? kasaHatasiMi(o) : !kasaHatasiMi(o));
+
   function toggleSecim(id) {
     setSecili(prev => {
       const s = new Set(prev);
@@ -122,9 +130,15 @@ export function OnayKuyrugu() {
     });
   }
 
+  function kategoriDegis(k) {
+    setKategori(k);
+    setSecili(new Set()); // sekme değişince seçim sıfırlansın (gizli kalem seçili kalmasın)
+  }
+
   function tumunuSec() {
-    if (secili.size === liste.length) setSecili(new Set());
-    else setSecili(new Set(liste.map(o => o.id)));
+    // Yalnızca aktif sekmede görünen kalemleri seç/kaldır
+    if (gorunenListe.every(o => secili.has(o.id)) && gorunenListe.length > 0) setSecili(new Set());
+    else setSecili(new Set(gorunenListe.map(o => o.id)));
   }
 
   async function topluOnayla() {
@@ -161,7 +175,7 @@ export function OnayKuyrugu() {
       <div className="page-header flex items-center justify-between">
         <div>
           <h2>✅ Onay Kuyruğu</h2>
-          <p>{liste.length} {gorunum === 'bekliyor' ? 'bekleyen işlem' : 'geçmiş işlem'}</p>
+          <p>{gorunenListe.length} {gorunum === 'bekliyor' ? 'bekleyen' : 'geçmiş'} {kategori === 'kasa' ? 'kasa hatası' : 'şube gideri'}</p>
         </div>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
           <button
@@ -177,13 +191,13 @@ export function OnayKuyrugu() {
             Geçmiş
           </button>
         </div>
-        {gorunum === 'bekliyor' && liste.length > 0 && (
+        {gorunum === 'bekliyor' && gorunenListe.length > 0 && (
           <div style={{display:'flex',gap:8,alignItems:'center'}}>
             {secili.size > 0 && (
               <span style={{fontSize:12,color:'var(--text3)'}}>{secili.size} seçili</span>
             )}
             <button className="btn btn-ghost btn-sm" onClick={tumunuSec}>
-              {secili.size === liste.length ? '☐ Seçimi Kaldır' : '☑ Tümünü Seç'}
+              {gorunenListe.every(o => secili.has(o.id)) ? '☐ Seçimi Kaldır' : '☑ Tümünü Seç'}
             </button>
             {secili.size > 0 && (
               <button className="btn btn-primary" onClick={topluOnayla} disabled={topluYukleniyor}>
@@ -193,8 +207,23 @@ export function OnayKuyrugu() {
           </div>
         )}
       </div>
-      {!liste.length ? (
-        <div className="empty"><div className="icon">✅</div><p>{gorunum === 'bekliyor' ? 'Bekleyen onay yok' : 'Geçmiş kayıt yok'}</p></div>
+      {/* Kategori sekmeleri — karışıklığı önler: giderler ayrı, kasa hataları ayrı */}
+      <div style={{display:'flex',gap:8,marginBottom:16,borderBottom:'1px solid var(--border)',paddingBottom:12}}>
+        <button
+          className={`btn btn-sm ${kategori==='gider'?'btn-primary':'btn-ghost'}`}
+          onClick={()=>kategoriDegis('gider')}
+        >
+          🏪 Şube Giderleri ({giderSayi})
+        </button>
+        <button
+          className={`btn btn-sm ${kategori==='kasa'?'btn-primary':'btn-ghost'}`}
+          onClick={()=>kategoriDegis('kasa')}
+        >
+          ⚖️ Kasa Hataları ({kasaSayi})
+        </button>
+      </div>
+      {!gorunenListe.length ? (
+        <div className="empty"><div className="icon">✅</div><p>{gorunum === 'bekliyor' ? `Bekleyen ${kategori === 'kasa' ? 'kasa hatası' : 'şube gideri'} yok` : 'Geçmiş kayıt yok'}</p></div>
       ) : (
         <div className="table-wrap">
           <table>
@@ -208,7 +237,7 @@ export function OnayKuyrugu() {
               <th></th>
             </tr></thead>
             <tbody>
-              {liste.map(o=>(
+              {gorunenListe.map(o=>(
                 <tr key={o.id} style={{background: secili.has(o.id) ? 'rgba(74,158,255,0.06)' : ''}}>
                   {gorunum === 'bekliyor' && (
                     <td style={{textAlign:'center'}}>
