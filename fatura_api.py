@@ -22,12 +22,14 @@ import os
 import re
 import threading
 import uuid
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 import io
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
+from pydantic import BaseModel
 
 from database import db
 
@@ -576,3 +578,74 @@ def fatura_detay(fatura_id: str):
     h["fatura_tarih"] = str(h.get("fatura_tarih") or "")
     h["olusturma"] = str(h.get("olusturma") or "")
     return {"fatura": h, "kalemler": kalemler}
+
+
+class FaturaKalemOnayBody(BaseModel):
+    kalem_kodu: str               # eşleştirilen STOK kalemi (insan seçer)
+    kalem_adi: Optional[str] = None
+    birim: str = "adet"
+    birim_maliyet_tl: float
+    tedarikci: Optional[str] = None
+    gecerli_baslangic: Optional[str] = None
+
+
+@router.post("/kalem/{kalem_id}/onayla")
+def fatura_kalem_onayla(kalem_id: str, body: FaturaKalemOnayBody):
+    """Foto faturasının bir kalemini bir STOK kalemiyle eşleştirip ONAYLAR.
+
+    PDF onayıyla BİREBİR AYNI paylaşımlı servisi kullanır → TEK BEYİN:
+      - `_kaydet_alis_fiyati`  → urun_alis_fiyat (fiyat geçmişi) + canlı maliyet
+      - `fatura_kalem_eslestirme` upsert → alias ÖĞREN (sonraki PDF/foto otomatik eşleşir)
+    Öneri-only ilkesi: gerçeği yazan İNSAN ONAYLI bu adımdır; OCR sadece önerdi.
+    """
+    if not fatura_modul_aktif():
+        raise HTTPException(503, "Fatura modülü kapalı.")
+    kalem = (body.kalem_kodu or "").strip()
+    if not kalem:
+        raise HTTPException(400, "kalem_kodu zorunlu")
+    if body.birim_maliyet_tl < 0:
+        raise HTTPException(400, "birim_maliyet_tl negatif olamaz")
+    # Mevcut paylaşımlı servis (PDF ile AYNI kod) — lazy import (yük sırası güvenli)
+    from operasyon_merkez_api import (
+        _kaydet_alis_fiyati, _fatura_anahtar, _ensure_maliyet_tablolari,
+    )
+    bas = body.gecerli_baslangic or str(date.today())
+    with db() as (conn, cur):
+        _ensure_tablolar(cur)
+        _ensure_maliyet_tablolari(cur)
+        cur.execute(
+            "SELECT ocr_ad, ocr_urun_kodu FROM tedarikci_fatura_kalem WHERE id=%s",
+            (kalem_id,),
+        )
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Kalem bulunamadı")
+        r = dict(r)
+        ocr_ad = r.get("ocr_ad") or ""
+        anahtar = _fatura_anahtar({"urun_kodu": r.get("ocr_urun_kodu"), "aciklama": ocr_ad})
+        # 1) Fiyatı kaydet (PDF ile aynı servis) → urun_alis_fiyat + canlı maliyet
+        fiyat_id = _kaydet_alis_fiyati(
+            cur, kalem, body.kalem_adi, body.birim, body.birim_maliyet_tl, bas,
+            body.tedarikci, f"Foto fatura onaylandı: {ocr_ad}",
+        )
+        # 2) Alias öğren (PDF ile aynı upsert)
+        if anahtar:
+            cur.execute(
+                """
+                INSERT INTO fatura_kalem_eslestirme (anahtar, kalem_kodu, kalem_adi, adet, guncelleme)
+                VALUES (%s, %s, %s, 1, NOW())
+                ON CONFLICT (anahtar) DO UPDATE
+                    SET kalem_kodu = EXCLUDED.kalem_kodu,
+                        kalem_adi  = EXCLUDED.kalem_adi,
+                        adet       = fatura_kalem_eslestirme.adet + 1,
+                        guncelleme = NOW()
+                """,
+                (anahtar, kalem, body.kalem_adi or kalem),
+            )
+        # 3) Bu satırı eşleşmiş işaretle
+        cur.execute(
+            "UPDATE tedarikci_fatura_kalem SET eslesen_stok_kodu=%s, eslesme_guven=1.0 WHERE id=%s",
+            (kalem, kalem_id),
+        )
+        conn.commit()
+    return {"success": True, "fiyat_id": fiyat_id, "kalem_kodu": kalem, "anahtar": anahtar}
