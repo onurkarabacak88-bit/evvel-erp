@@ -3576,9 +3576,14 @@ def ops_bar_ozet(
             kap_params,
         )
         kapanis_map: Dict[tuple, Dict[str, int]] = {}
+        # Kapanış stoğu nereden geldi? "kapanis"=gerçek KAPANIS eventi (kesin),
+        # "devir"=vardiya devri yedeği (geçici), "ozet"=operasyon özeti (geçici).
+        # Frontend "geçici" etiketini bu kaynağa göre gösterir.
+        kapanis_kaynak_map: Dict[tuple, str] = {}
         for r in cur.fetchall():
             key = (str(r["sube_id"]), str(r["tarih"]))
             kapanis_map[key] = _bar_stok_from_meta(r["kapanis_meta"], "kapanis_stok_sayim")
+            kapanis_kaynak_map[key] = "kapanis"
 
         # ── 2b/2c. Yedek kapanış stoğu — yalnızca kapanis_fallback=True (devir ≠ gerçek kapanış) ──
         if kapanis_fallback:
@@ -3614,6 +3619,7 @@ def ops_bar_ozet(
                     devir_stok = meta_raw.get("vardiya_devir_stok_sayim") or {}
                     if devir_stok:
                         kapanis_map[key] = {k: max(0, int(devir_stok.get(k) or 0)) for k in _BAR_KEYS}
+                        kapanis_kaynak_map[key] = "devir"
                 cur.execute("RELEASE SAVEPOINT sp_kapanis_kayit_fb")
             except Exception:
                 cur.execute("ROLLBACK TO SAVEPOINT sp_kapanis_kayit_fb")
@@ -3648,6 +3654,7 @@ def ops_bar_ozet(
                             raw = {}
                     if raw:
                         kapanis_map[key] = {k: max(0, int(raw.get(k) or 0)) for k in _BAR_KEYS}
+                        kapanis_kaynak_map[key] = "ozet"
                 cur.execute("RELEASE SAVEPOINT sp_ozet_kapanis_stok")
             except Exception:
                 cur.execute("ROLLBACK TO SAVEPOINT sp_ozet_kapanis_stok")
@@ -3810,6 +3817,9 @@ def ops_bar_ozet(
                 "tarih":      tarih_str,
                 "acilis_ts":  str(ac_row.get("acilis_ts") or ""),
                 "kapanis_var": bool(kapanis),
+                # Kapanış kaynağı: "kapanis" (gerçek/kesin) | "devir"/"ozet" (geçici yedek) | None (henüz yok)
+                "kapanis_kaynak": kapanis_kaynak_map.get(key),
+                "kapanis_gercek": kapanis_kaynak_map.get(key) == "kapanis",
                 "acilis":     acilis,
                 "urun_ac":    urun_ac,
                 "kapanis":    kapanis,

@@ -883,6 +883,9 @@ function _sumSatilan(satilan) {
 }
 
 function kullanilanSatirToplamAdet(row) {
+  // Kapanışı (kesin ya da geçici) olmayan şubede satılan = açılış+ürün aç olur;
+  // bu gerçek tüketim değil, o yüzden toplam 0 sayılır (geçici etiketle gösterilir).
+  if (row?.kapanis_var !== true) return 0;
   return _sumSatilan(row?.satilan);
 }
 
@@ -2974,18 +2977,26 @@ export default function OperasyonMerkezi() {
     const hedef = (tarih || bugunIsoTarih()).trim();
     const ym = hedef.slice(0, 7);
     const evoQs = evoYenile ? '&evo_yenile=1' : '';
+    // kapanis_fallback=true: vardiya devri / operasyon özeti geçici kapanış olarak
+    // kullanılır → gün içinde (gerçek kapanıştan önce) şubeler anlık görünür.
+    // Filtre YOK: açılış yapan tüm şubeler listede; kapanışı kesin olmayanlar
+    // "geçici" etiketiyle gösterilir (kapanis_gercek / kapanis_kaynak alanları).
     const r = await api(
-      `/ops/bar-ozet?year_month=${encodeURIComponent(ym)}&gun=${encodeURIComponent(hedef)}&limit=180&kapanis_fallback=false${evoQs}`,
+      `/ops/bar-ozet?year_month=${encodeURIComponent(ym)}&gun=${encodeURIComponent(hedef)}&limit=180&kapanis_fallback=true${evoQs}`,
     );
-    const ham = Array.isArray(r?.satirlar) ? r.satirlar : [];
-    const satirlar = ham.filter((row) => row?.kapanis_var === true);
-    const toplamAdet = satirlar.reduce((sum, row) => sum + _sumSatilan(row?.satilan), 0);
+    const satirlar = Array.isArray(r?.satirlar) ? r.satirlar : [];
+    // Toplam adet sadece kapanışı (kesin ya da geçici) olan satırlardan; henüz
+    // kapanmamış şubenin "satılan"ı = açılış+ürün aç olur, bu toplamı şişirmesin.
+    const toplamAdet = satirlar.reduce(
+      (sum, row) => sum + (row?.kapanis_var === true ? _sumSatilan(row?.satilan) : 0),
+      0,
+    );
     return {
       tarih: hedef,
       toplam_islem: satirlar.length,
       toplam_adet: toplamAdet,
       satirlar,
-      kapanis_eksik_sube: ham.filter((row) => row?.kapanis_var !== true).length,
+      kapanis_eksik_sube: satirlar.filter((row) => row?.kapanis_var !== true).length,
       evo_veri_geldi: r?.evo_veri_geldi,
       evo_mesaj: r?.evo_mesaj || null,
     };
@@ -9323,12 +9334,12 @@ export default function OperasyonMerkezi() {
             }}
           >
             <strong style={{ color: 'var(--text2)', fontWeight: 600 }}>Ne gösterilir?</strong>{' '}
-            Kaynak <strong style={{ color: 'var(--text2)' }}>/ops/bar-ozet</strong> (yalnızca tamamlanmış <strong style={{ color: 'var(--text2)' }}>KAPANIS</strong> eventi; vardiya devir sayımı kullanılmaz):{' '}
+            Kaynak <strong style={{ color: 'var(--text2)' }}>/ops/bar-ozet</strong>:{' '}
             <strong style={{ color: 'var(--text2)' }}>Satılan = Açılış + Ürün Aç − Kapanış</strong> (8oz, 14oz, plastik bardak, su, süt, soda, redbull, pasta vb.).
             <strong style={{ color: 'var(--text2)' }}> Pozitif satılan</strong> = normal tüketim. <strong style={{ color: '#fca5a5' }}>Negatif satılan</strong> = Ürün Aç paneline girilmemiş (depo stok hatası) — Ürün Uyumsuzlukları sekmesinde denetlenir.
             Tabloda <strong style={{ color: 'var(--text2)' }}>Dün kapanış</strong> sütunu bir önceki günün kapanış sayımını gösterir (devir; ürün aç ile karıştırılmaz).
             <strong style={{ color: 'var(--text2)' }}> Satılan</strong> sütununun altında Evo Hızlı Satış’tan gelen malzeme adedi (ör. redbull, 14oz karton bardak) yazılır.
-            Kapanış yapılmamış şubeler bu listede görünmez. Tarih, operasyon olayının takvim günüdür.
+            <strong style={{ color: '#fbbf24' }}>Açılış yapan tüm şubeler anlık görünür</strong>; kapanışı henüz kesinleşmemiş şubeler <strong style={{ color: '#fbbf24' }}>⏳ geçici</strong> etiketiyle gösterilir (vardiya devri baz alınır, kapanışta kesinleşir). Tarih, operasyon olayının takvim günüdür.
             Haftalık bölümde günler <strong style={{ color: 'var(--text2)' }}>bugünden geriye</strong> sıralanır; şubeler <strong style={{ color: 'var(--text2)' }}>ada göre (A–Z)</strong> listelenir.
           </div>
 
@@ -9534,13 +9545,15 @@ export default function OperasyonMerkezi() {
                 const labels = KULLANILAN_LABEL;
                 const ozet = kullanilanTabloOzet(r, keys, labels);
                 const urunAcEksik = kullanilanUrunAcEksikVar(r);
-                const kapanisYok = !r.kapanis_var;
+                const kapanisYok = !r.kapanis_var;                                   // hiç kapanış/devir yok
+                const kapanisGercek = r.kapanis_gercek === true;                     // gerçek KAPANIS eventi → kesin
+                const kapanisGecici = r.kapanis_var === true && !kapanisGercek;      // vardiya devri/özet → geçici
                 const evoYok = r.evo_veri_geldi === false;
                 const evoEski = r.evo_veri_geldi === true && r.evo_canli === false;
                 const evoMesaj = r.evo_mesaj || kullanilanAramaSonuc?.evo_mesaj || 'Evo veri gelmedi';
                 return (
                   <div key={`${r.sube_id}-${r.tarih}`} className="card" style={{
-                    borderLeft: `4px solid ${urunAcEksik ? 'var(--red)' : kapanisYok ? 'var(--yellow)' : 'var(--green)'}`,
+                    borderLeft: `4px solid ${urunAcEksik ? 'var(--red)' : (kapanisYok || kapanisGecici) ? 'var(--yellow)' : 'var(--green)'}`,
                     padding: '14px 16px',
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
@@ -9550,8 +9563,17 @@ export default function OperasyonMerkezi() {
                       </div>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                         {urunAcEksik && <span className="badge badge-red" title="Açılış + Ürün Aç − Kapanış negatif — Ürün Aç paneline eksik kayıt">Ürün aç eksik</span>}
-                        {kapanisYok && <span className="badge badge-yellow">Kapanış yok</span>}
-                        {!urunAcEksik && !kapanisYok && <span className="badge badge-green">Normal</span>}
+                        {kapanisGecici && (
+                          <span className="badge badge-yellow" title="Kapanış sayımı henüz tamamlanmadı — vardiya devri/özet baz alındı. Satılan rakamı geçicidir, kapanışta kesinleşir.">
+                            ⏳ Geçici · kapanış bekleniyor
+                          </span>
+                        )}
+                        {kapanisYok && (
+                          <span className="badge badge-yellow" title="Bu şube henüz kapanış/devir sayımı yapmadı. Satılan rakamı kapanış sayımıyla kesinleşir.">
+                            ⏳ Kapanış sayımı bekleniyor
+                          </span>
+                        )}
+                        {!urunAcEksik && kapanisGercek && <span className="badge badge-green">Kapanış yapıldı</span>}
                         {evoYok && (
                           <span className="badge badge-red" title={evoMesaj} style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             Evo veri gelmedi
