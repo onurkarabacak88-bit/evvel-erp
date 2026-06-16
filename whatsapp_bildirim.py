@@ -519,6 +519,80 @@ def _toptanci_teslimler(cur, tarih: date) -> list:
     return teslimler
 
 
+def _tedarik_zinciri_ozet(cur, tarih: date) -> dict:
+    """Tedarik zinciri denetim sinyalleri (gece özetinin '🔗 TEDARİK ZİNCİRİ' bölümü):
+    zam alarmları + tedarikçi güvenilirlik (N kabul farkı) + şube paterni + bekleyen
+    teslimler. KÜÇÜK-N DİSİPLİNİ: tedarikçi/şube ancak >=2 olayda 'riskli' işaretlenir
+    (tek olaydan suçlama yok). Tüm sorgular korumalı — tablo yoksa boş döner."""
+    out = {"zam": [], "tedarikci_riski": [], "sube_paterni": [], "bekleyen": []}
+    # 1) Zam alarmları (son 7 gün, görülmemiş)
+    try:
+        cur.execute("SELECT to_regclass('public.fiyat_zam_alarmi') AS t")
+        if (cur.fetchone() or {}).get("t"):
+            cur.execute("""
+                SELECT kalem_adi, tedarikci, artis_yuzde
+                FROM fiyat_zam_alarmi
+                WHERE olusturma >= NOW() - INTERVAL '7 days' AND goruldu = FALSE
+                ORDER BY artis_yuzde DESC LIMIT 6
+            """)
+            for r in cur.fetchall() or []:
+                d = dict(r)
+                out["zam"].append({
+                    "kalem": d.get("kalem_adi") or "—",
+                    "tedarikci": d.get("tedarikci") or "—",
+                    "yuzde": float(d.get("artis_yuzde") or 0),
+                })
+    except Exception:
+        pass
+    # 2+3) Kabul farkı (son 30 gün) → tedarikçi güvenilirlik + şube paterni
+    try:
+        cur.execute("""
+            SELECT sb.ad AS sube_adi,
+                   COALESCE(u.detay_json->>'tedarikci_ad','—') AS tedarikci
+            FROM sube_operasyon_uyari u
+            LEFT JOIN subeler sb ON sb.id = u.sube_id
+            WHERE u.tip = 'TOPTANCI_KABUL_FARKI'
+              AND u.tarih >= CURRENT_DATE - INTERVAL '30 days'
+        """)
+        ted_say: dict = {}
+        sub_say: dict = {}
+        for r in cur.fetchall() or []:
+            d = dict(r)
+            ted = str(d.get("tedarikci") or "—").strip() or "—"
+            sub = str(d.get("sube_adi") or "—").strip() or "—"
+            ted_say[ted] = ted_say.get(ted, 0) + 1
+            sub_say[sub] = sub_say.get(sub, 0) + 1
+        out["tedarikci_riski"] = [
+            {"ad": k, "sayi": v} for k, v in sorted(ted_say.items(), key=lambda x: -x[1])
+            if v >= 2 and k != "—"
+        ][:5]
+        out["sube_paterni"] = [
+            {"sube": k, "sayi": v} for k, v in sorted(sub_say.items(), key=lambda x: -x[1])
+            if v >= 2 and k != "—"
+        ][:5]
+    except Exception:
+        pass
+    # 4) Bekleyen teslimler (gönderildi ama 3+ gündür teslim alınmadı)
+    try:
+        cur.execute("""
+            SELECT COALESCE(ts.tedarikci_ad,'—') AS tedarikci, sb.ad AS sube_adi,
+                   EXTRACT(DAY FROM (NOW() - ts.olusturma))::int AS gun
+            FROM toptanci_siparis ts LEFT JOIN subeler sb ON sb.id = ts.sube_id
+            WHERE ts.durum = 'gonderildi' AND ts.olusturma < NOW() - INTERVAL '3 days'
+            ORDER BY ts.olusturma LIMIT 6
+        """)
+        for r in cur.fetchall() or []:
+            d = dict(r)
+            out["bekleyen"].append({
+                "tedarikci": d.get("tedarikci") or "—",
+                "sube": d.get("sube_adi") or "—",
+                "gun": int(d.get("gun") or 0),
+            })
+    except Exception:
+        pass
+    return out
+
+
 # ── Akıllı Denetim — AI yorumu (Claude) ─────────────────────────────────────
 
 def _akilli_denetim_ozetleri(cur, tarih: date) -> list:
@@ -688,6 +762,7 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
         kt_liste    = _kasa_teslimler(cur, tarih)
         toptanci    = _toptanci_teslimler(cur, tarih)
         vardiya     = _vardiya_personel(cur, tarih)
+        tedarik_zinciri = _tedarik_zinciri_ozet(cur, tarih)
         denetim_ozetleri = _akilli_denetim_ozetleri(cur, tarih)
 
     tarih_str = f"{tarih.day} {_AY[tarih.month - 1]}"
@@ -805,6 +880,19 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
             s.append(f"  • {t['sube']} — {t['tedarikci']}")
             if t["kalemler"]:
                 s.append(f"    {', '.join(t['kalemler'])}")
+
+    # 🔗 Tedarik zinciri denetim sinyalleri (zam + tedarikçi riski + şube paterni + bekleyen)
+    if tedarik_zinciri and any(tedarik_zinciri.get(k) for k in ("zam", "tedarikci_riski", "sube_paterni", "bekleyen")):
+        s.append("")
+        s.append("*🔗 TEDARİK ZİNCİRİ*")
+        for z in tedarik_zinciri.get("zam", []):
+            s.append(f"  🔺 {z['kalem']} ({z['tedarikci']}) %{z['yuzde']:.0f} zam")
+        for t in tedarik_zinciri.get("tedarikci_riski", []):
+            s.append(f"  ⚠ {t['ad']}: 30 günde {t['sayi']} kabul farkı")
+        for sp in tedarik_zinciri.get("sube_paterni", []):
+            s.append(f"  🏪 {sp['sube']}: 30 günde {sp['sayi']} teslim farkı")
+        for b in tedarik_zinciri.get("bekleyen", []):
+            s.append(f"  ⏳ {b['tedarikci']} → {b['sube']}: {b['gun']} gündür bekliyor")
 
     # Akıllı Denetim — AI yorumu (varsa)
     ai_yorum, ai_kaynak = _ai_denetim_yorumu(denetim_ozetleri)
