@@ -9897,6 +9897,68 @@ def ops_siparis_toptanci_geri_al(talep_id: str):
     return {"ok": True, "talep_id": tid, "yeni_durum": "bekliyor"}
 
 
+@router.post("/siparis/toptanci-siparis/{ts_id}/whatsapp-yeniden-gonder")
+def ops_toptanci_siparis_wa_yeniden(ts_id: str):
+    """Daha önce WhatsApp'tan gönderilememiş (wa_durum='hata') bir toptancı
+    siparişini tedarikçiye TEKRAR yollar. Başarısız olursa Green API'nin tam
+    hatasını döner (anlık hata / kota teşhisi için)."""
+    sid = (ts_id or "").strip()
+    if not sid:
+        raise HTTPException(400, "toptanci_siparis_id zorunlu")
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT ts.id, ts.tedarikci_ad, ts.tedarikci_tel, ts.kalemler,
+                   ts.not_aciklama, ts.durum, s.ad AS sube_adi
+            FROM toptanci_siparis ts
+            LEFT JOIN subeler s ON s.id = ts.sube_id
+            WHERE ts.id = %s
+            FOR UPDATE OF ts
+            """,
+            (sid,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Toptancı siparişi bulunamadı")
+        t = dict(row)
+        if str(t.get("durum") or "") == "iptal":
+            raise HTTPException(400, "İptal edilmiş sipariş — yeniden gönderilemez")
+        tel = str(t.get("tedarikci_tel") or "").strip()
+        if not tel:
+            raise HTTPException(
+                400,
+                f"'{t.get('tedarikci_ad') or 'Tedarikçi'}' için telefon yok — "
+                "Tedarikçiler ekranından numara ekleyin.",
+            )
+        kalemler = _td_jliste(t.get("kalemler"))
+        mesaj = _toptanci_siparis_wa_mesaj(
+            t.get("tedarikci_ad"), t.get("sube_adi"), kalemler, t.get("not_aciklama")
+        )
+        try:
+            from whatsapp_bildirim import whatsapp_gonder_numara
+            wa = whatsapp_gonder_numara(tel, mesaj)
+        except Exception as e:
+            wa = {"basarili": False, "mesaj_id": None, "chat_id": "", "hata": str(e)[:120]}
+        cur.execute(
+            """
+            UPDATE toptanci_siparis
+            SET wa_gonderim_ts = NOW(), wa_mesaj_id = %s, wa_chat_id = %s, wa_durum = %s
+            WHERE id = %s
+            """,
+            (
+                wa.get("mesaj_id"), wa.get("chat_id"),
+                ("gonderildi" if wa.get("basarili") else "hata"), sid,
+            ),
+        )
+    return {
+        "ok": bool(wa.get("basarili")),
+        "tedarikci_ad": t.get("tedarikci_ad"),
+        "telefon": tel,
+        "mesaj_id": wa.get("mesaj_id"),
+        "hata": wa.get("hata"),
+    }
+
+
 def _td_jliste(v: Any) -> List[Dict[str, Any]]:
     if isinstance(v, list):
         return v
