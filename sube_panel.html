@@ -11002,6 +11002,23 @@ var UrunTeslimAl = (function () {
         var sipAutoAcik = (_svBeklenenSiparis.tedarikci_ad || 'Toptancı') + ' siparişi teslim (' + sum + ' adet)';
         body.teslim_aciklama = not.length >= 3 ? not : sipAutoAcik;
         if (not) body.not_aciklama = not;
+        // Eksik varsa backend eksik_kategori + eksik_aciklama zorunlu kılar.
+        // Sipariş modunda eksiklik = "siparişte vardı ama gelmedi" (beklenen
+        // siparişle karşılaştırıyoruz) → kategori otomatik 'sipariste_vardi'.
+        // Açıklamayı eksik kalan ürünlerden otomatik kur (personel yazmasın).
+        if (eksikVar) {
+          var eksikSatir = [];
+          (_svBeklenenSiparis.kalemler || []).forEach(function (k, i) {
+            var bek = parseInt(k.adet || 0, 10) || 0;
+            var got = (body.kalemler[i] && parseInt(body.kalemler[i].adet || 0, 10)) || 0;
+            if (got < bek) {
+              eksikSatir.push((k.urun_ad || k.urun || ('Ürün ' + (i + 1))) + ': ' + got + '/' + bek + ' (eksik ' + (bek - got) + ')');
+            }
+          });
+          body.eksik_kategori = 'sipariste_vardi';
+          var eksikOto = 'Siparişte vardı, eksik geldi — ' + eksikSatir.join('; ');
+          body.eksik_aciklama = (not.length >= 3 ? not + ' | ' : '') + eksikOto;
+        }
       } else {
         var oz = katalogOzeti();
         var autoAcik =
