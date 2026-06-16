@@ -425,7 +425,6 @@ def fatura_qr(sube_id: str, siparis_talep_id: Optional[str] = None):
         raise HTTPException(503, "Fatura modülü kapalı.")
     try:
         import qrcode
-        from qrcode.image.pure import PyPNGImage
     except ImportError:
         raise HTTPException(500, "qrcode kütüphanesi yok")
     base = os.getenv("APP_URL", "https://evvel-erp-production.up.railway.app").rstrip("/")
@@ -435,9 +434,10 @@ def fatura_qr(sube_id: str, siparis_talep_id: Optional[str] = None):
     qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=3)
     qr.add_data(url)
     qr.make(fit=True)
-    img = qr.make_image(image_factory=PyPNGImage)  # saf-python (PIL gerekmez)
+    # PIL ile çiz (gorev_api QR deseni — production'da PIL var, PyPNG yok)
+    img = qr.make_image(fill_color="black", back_color="white")
     buf = io.BytesIO()
-    img.save(buf)
+    img.save(buf, format="PNG")
     buf.seek(0)
     return StreamingResponse(buf, media_type="image/png")
 
