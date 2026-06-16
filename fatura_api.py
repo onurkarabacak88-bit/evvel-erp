@@ -23,8 +23,10 @@ import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
+import io
+
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 from database import db
 
@@ -412,6 +414,32 @@ function renderSonuc(f,kalemler){
 }
 $('btnYeni').onclick=()=>{blob=null;temizHata();$('sonucKutu').innerHTML='';$('durumKutu').innerHTML='<span class="spin"></span><span id="durumYazi">OCR bekleniyor…</span>';goster('adimKamera');};
 </script></body></html>"""
+
+
+@router.get("/qr")
+def fatura_qr(sube_id: str, siparis_talep_id: Optional[str] = None):
+    """Panel PC'de çalışıyor → fatura TELEFON kamerasıyla çekilmeli. Bu QR'ı PC'de
+    gösterir; personel telefonuyla okutunca /cek sayfası TELEFONDA açılır (telefon
+    kamerası). Mutlak URL gerekir (telefon erişebilsin) → APP_URL env."""
+    if not fatura_modul_aktif():
+        raise HTTPException(503, "Fatura modülü kapalı.")
+    try:
+        import qrcode
+        from qrcode.image.pure import PyPNGImage
+    except ImportError:
+        raise HTTPException(500, "qrcode kütüphanesi yok")
+    base = os.getenv("APP_URL", "https://evvel-erp-production.up.railway.app").rstrip("/")
+    url = f"{base}/api/fatura/cek?sube_id={sube_id}"
+    if siparis_talep_id:
+        url += f"&siparis_talep_id={siparis_talep_id}"
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=3)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(image_factory=PyPNGImage)  # saf-python (PIL gerekmez)
+    buf = io.BytesIO()
+    img.save(buf)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="image/png")
 
 
 @router.get("/cek", response_class=HTMLResponse)
