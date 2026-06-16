@@ -555,15 +555,19 @@ def _tedarik_zinciri_ozet(cur, tarih: date) -> dict:
               AND u.tarih >= CURRENT_DATE - INTERVAL '30 days'
         """)
         ted_say: dict = {}
+        ted_sube: dict = {}  # tedarikçi -> farklı şube kümesi (çok-şube paterni)
         sub_say: dict = {}
         for r in cur.fetchall() or []:
             d = dict(r)
             ted = str(d.get("tedarikci") or "—").strip() or "—"
             sub = str(d.get("sube_adi") or "—").strip() or "—"
             ted_say[ted] = ted_say.get(ted, 0) + 1
+            ted_sube.setdefault(ted, set()).add(sub)
             sub_say[sub] = sub_say.get(sub, 0) + 1
         out["tedarikci_riski"] = [
-            {"ad": k, "sayi": v} for k, v in sorted(ted_say.items(), key=lambda x: -x[1])
+            {"ad": k, "sayi": v, "sube_sayisi": len(ted_sube.get(k, set())),
+             "cok_sube": len(ted_sube.get(k, set())) >= 2}
+            for k, v in sorted(ted_say.items(), key=lambda x: -x[1])
             if v >= 2 and k != "—"
         ][:5]
         out["sube_paterni"] = [
@@ -888,7 +892,10 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
         for z in tedarik_zinciri.get("zam", []):
             s.append(f"  🔺 {z['kalem']} ({z['tedarikci']}) %{z['yuzde']:.0f} zam")
         for t in tedarik_zinciri.get("tedarikci_riski", []):
-            s.append(f"  ⚠ {t['ad']}: 30 günde {t['sayi']} kabul farkı")
+            if t.get("cok_sube"):
+                s.append(f"  🚚 {t['ad']}: {t['sube_sayisi']} şubede {t['sayi']} fark → tedarikçi paterni (şube masum)")
+            else:
+                s.append(f"  ⚠ {t['ad']}: 30 günde {t['sayi']} kabul farkı (tek şube — belirsiz)")
         for sp in tedarik_zinciri.get("sube_paterni", []):
             s.append(f"  🏪 {sp['sube']}: 30 günde {sp['sayi']} teslim farkı")
         for b in tedarik_zinciri.get("bekleyen", []):

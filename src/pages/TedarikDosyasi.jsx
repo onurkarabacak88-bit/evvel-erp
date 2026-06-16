@@ -23,6 +23,8 @@ export default function TedarikDosyasi() {
   const [gorunum, setGorunum] = useState('siparisler'); // 'siparisler' | 'teslimler'
   const [teslimler, setTeslimler] = useState([]);
   const [teslimYuk, setTeslimYuk] = useState(false);
+  const [guvenilirlik, setGuvenilirlik] = useState([]);
+  const [guvenYuk, setGuvenYuk] = useState(false);
 
   const listeYukle = () => {
     setLoading(true);
@@ -53,6 +55,15 @@ export default function TedarikDosyasi() {
   };
   useEffect(() => { if (gorunum === 'teslimler') teslimYukle(); }, [gorunum]);
 
+  const guvenYukle = () => {
+    setGuvenYuk(true);
+    api('/ops/tedarikci-guvenilirlik?gun=60')
+      .then(r => setGuvenilirlik((r && r.tedarikciler) || []))
+      .catch(e => setHata(e.message || 'Güvenilirlik yüklenemedi'))
+      .finally(() => setGuvenYuk(false));
+  };
+  useEffect(() => { if (gorunum === 'guvenilirlik') guvenYukle(); }, [gorunum]);
+
   const d = seciliId ? detay[seciliId] : null;
 
   return (
@@ -68,7 +79,7 @@ export default function TedarikDosyasi() {
 
       {/* Görünüm sekmesi */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
-        {[['siparisler', '📦 Siparişler'], ['teslimler', '📥 Teslim Alımları (saat saat)']].map(([k, l]) => (
+        {[['siparisler', '📦 Siparişler'], ['teslimler', '📥 Teslim Alımları (saat saat)'], ['guvenilirlik', '🚚 Tedarikçi Güvenilirlik']].map(([k, l]) => (
           <button key={k} onClick={() => setGorunum(k)}
             style={{
               cursor: 'pointer', fontSize: 13, fontWeight: 700, padding: '7px 14px', borderRadius: 10,
@@ -107,6 +118,35 @@ export default function TedarikDosyasi() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {gorunum === 'guvenilirlik' && (
+        <div className="card">
+          <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
+            Son 60 gün kabul farkları tedarikçi başına. <b>Birden çok şubede</b> fark → "tedarikçi paterni" (şube masum). Tek şube → belirsiz (sayım/şube de olabilir).
+          </div>
+          {guvenYuk && <div style={{ fontSize: 12, color: 'var(--text3)' }}>Yükleniyor…</div>}
+          {!guvenYuk && guvenilirlik.length === 0 && <div className="empty"><p>Bu dönemde kabul farkı yok — temiz. ✓</p></div>}
+          {guvenilirlik.map(t => {
+            const cokSube = t.sonuc === 'tedarikci_paterni';
+            return (
+              <div key={t.tedarikci} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 4px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    🚚 {t.tedarikci}
+                    {cokSube
+                      ? <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: '#ef4444', color: '#fff' }}>tedarikçi paterni ({t.sube_sayisi} şube)</span>
+                      : <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: '#f59e0b', color: '#fff' }}>tek şube — belirsiz</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 3 }}>
+                    {t.olay_sayisi} kabul farkı · {t.sube_sayisi} şube ({(t.subeler || []).join(', ')})
+                    {t.eksik_toplam > 0 ? ` · toplam ${t.eksik_toplam} eksik` : ''}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 

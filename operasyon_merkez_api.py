@@ -10444,6 +10444,69 @@ def ops_teslim_alimlari(gun: int = 14, sube_id: Optional[str] = None, limit: int
     return {"gun": gun_i, "toplam": len(out), "teslimler": out}
 
 
+@router.get("/tedarikci-guvenilirlik")
+def ops_tedarikci_guvenilirlik(gun: int = 60):
+    """ÇOK-ŞUBE TEDARİKÇİ PATERNİ (Akıllı Denetim 'görme' bağı): kabul farklarını
+    (TOPTANCI_KABUL_FARKI) tedarikçi başına toplar; FARKLI ŞUBE sayısı = iknanın
+    anahtarı. >=2 şube → 'tedarikçi paterni' (şube masum); tek şube → belirsiz
+    (şube/sayım da olabilir). Tek olaydan suçlama yok (küçük-N)."""
+    gun_i = max(7, min(365, int(gun or 60)))
+    out: List[Dict[str, Any]] = []
+    with db() as (conn, cur):
+        try:
+            cur.execute(
+                """
+                SELECT COALESCE(u.detay_json->>'tedarikci_ad','—') AS tedarikci,
+                       COALESCE(sb.ad, u.sube_id) AS sube_adi, u.detay_json
+                FROM sube_operasyon_uyari u LEFT JOIN subeler sb ON sb.id = u.sube_id
+                WHERE u.tip = 'TOPTANCI_KABUL_FARKI'
+                  AND u.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                """,
+                (gun_i,),
+            )
+            rows = [dict(r) for r in (cur.fetchall() or [])]
+        except Exception:
+            rows = []
+        agg: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            ted = str(r.get("tedarikci") or "—").strip() or "—"
+            if ted == "—":
+                continue
+            a = agg.setdefault(ted, {"olay": 0, "subeler": set(), "eksik": 0, "fazla": 0})
+            a["olay"] += 1
+            a["subeler"].add(str(r.get("sube_adi") or "?"))
+            dj = r.get("detay_json")
+            if isinstance(dj, str):
+                try:
+                    dj = json.loads(dj)
+                except Exception:
+                    dj = {}
+            if isinstance(dj, dict):
+                for srow in (dj.get("uyusmazlik_satirlar") or []):
+                    try:
+                        f = int(srow.get("fark") or 0)
+                    except Exception:
+                        f = 0
+                    if f < 0:
+                        a["eksik"] += -f
+                    elif f > 0:
+                        a["fazla"] += f
+        for ted, a in agg.items():
+            sube_n = len(a["subeler"])
+            out.append({
+                "tedarikci": ted,
+                "olay_sayisi": a["olay"],
+                "sube_sayisi": sube_n,
+                "subeler": sorted(a["subeler"]),
+                "eksik_toplam": a["eksik"],
+                "fazla_toplam": a["fazla"],
+                # 'görme': >=2 şube → tedarikçi paterni; tek şube → belirsiz
+                "sonuc": ("tedarikci_paterni" if sube_n >= 2 else "tek_sube"),
+            })
+        out.sort(key=lambda x: (-x["sube_sayisi"], -x["olay_sayisi"]))
+    return {"gun": gun_i, "tedarikciler": out}
+
+
 @router.get("/subeler/depolar")
 def ops_subeler_depolar():
     """
