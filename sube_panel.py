@@ -2966,7 +2966,7 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
         if siparis_talep_id:
             cur.execute(
                 """
-                SELECT id, sube_id, durum, sevkiyat_durumu, kalemler_ozet,
+                SELECT id, sube_id, durum, sevkiyat_durumu,
                        merkez_karar_kalemleri, kalemler
                 FROM siparis_talep
                 WHERE id=%s
@@ -3020,7 +3020,10 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                     if _orig_kalemler:
                         _ref_kaynak = "N2_merkez"
                     else:
-                        _orig_kalemler = _talep.get("kalemler_ozet") or []
+                        # N1 = şube talebi kalemleri. 'kalemler_ozet' bir DB kolonu
+                        # DEĞİL (kalemler'den hesaplanan görünüm alanı) → gerçek
+                        # kolon 'kalemler' kullanılır (UndefinedColumn fix 2026-06-16).
+                        _orig_kalemler = _talep.get("kalemler") or []
                 if isinstance(_orig_kalemler, str):
                     _orig_kalemler = _j2.loads(_orig_kalemler)
                 _orig_map = {}
