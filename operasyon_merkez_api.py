@@ -1579,11 +1579,15 @@ def kapanis_gun_duzelt(body: KapanisGunDuzeltBody):
     dt_ = (body.dogru_tarih or "").strip()
     if not sid or not yt or not dt_:
         raise HTTPException(400, "sube_id, yanlis_tarih, dogru_tarih zorunlu")
+    ev_id = None
+    silinen = 0
+    taslak_tasinan = 0
+    ciro_tasinan = 0
     with db() as (conn, cur):
         # 1. Yanlış günde, cevap_ts'si DOĞRU güne ait tamamlanmış KAPANIS bul (kanıt)
         cur.execute(
             """
-            SELECT id, cevap_ts FROM sube_operasyon_event
+            SELECT id FROM sube_operasyon_event
             WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
               AND (cevap_ts AT TIME ZONE 'Europe/Istanbul')::date = %s::date
             ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
@@ -1591,28 +1595,73 @@ def kapanis_gun_duzelt(body: KapanisGunDuzeltBody):
             (sid, yt, dt_),
         )
         row = cur.fetchone()
-        if not row:
+        if row:
+            ev_id = dict(row)["id"]
+            # Doğru günde duran bayat bekliyor/gecikti KAPANIS placeholder'ı sil
+            cur.execute(
+                """
+                DELETE FROM sube_operasyon_event
+                WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND sira_no=0
+                  AND durum IN ('bekliyor','gecikti')
+                """,
+                (sid, dt_),
+            )
+            silinen = cur.rowcount
+            cur.execute(
+                "UPDATE sube_operasyon_event SET tarih=%s::date WHERE id=%s",
+                (dt_, ev_id),
+            )
+            audit(cur, "sube_operasyon_event", ev_id, "KAPANIS_GUN_DUZELT")
+
+        # 2. ciro_taslak — kapanışla aynı anda oluşan taslak da yanlış güne yazılmış
+        #    olabilir. olusturma'sı doğru güne ait olan taslakları taşı (güvenlik).
+        try:
+            cur.execute("SAVEPOINT sp_taslak")
+            cur.execute(
+                """
+                UPDATE ciro_taslak SET tarih=%s::date
+                WHERE sube_id=%s AND tarih=%s::date
+                  AND olusturma::date = %s::date
+                """,
+                (dt_, sid, yt, dt_),
+            )
+            taslak_tasinan = cur.rowcount
+            cur.execute("RELEASE SAVEPOINT sp_taslak")
+        except Exception:
+            taslak_tasinan = 0
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_taslak")
+                cur.execute("RELEASE SAVEPOINT sp_taslak")
+            except Exception:
+                pass
+
+        # 3. ciro (aktif/onaylı) — aynı mantık (genelde yok ama güvenlik için)
+        try:
+            cur.execute("SAVEPOINT sp_ciro")
+            cur.execute(
+                """
+                UPDATE ciro SET tarih=%s::date
+                WHERE sube_id=%s AND tarih=%s::date
+                  AND olusturma::date = %s::date
+                """,
+                (dt_, sid, yt, dt_),
+            )
+            ciro_tasinan = cur.rowcount
+            cur.execute("RELEASE SAVEPOINT sp_ciro")
+        except Exception:
+            ciro_tasinan = 0
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_ciro")
+                cur.execute("RELEASE SAVEPOINT sp_ciro")
+            except Exception:
+                pass
+
+        if ev_id is None and taslak_tasinan == 0 and ciro_tasinan == 0:
             raise HTTPException(
                 404,
-                "Taşınacak kapanış bulunamadı: yanlis_tarih'te cevap_ts'si dogru_tarih'e "
-                "ait tamamlanmış KAPANIS yok (güvenlik kontrolü).",
+                "Taşınacak kayıt bulunamadı (cevap_ts/olusturma dogru_tarih'e ait değil).",
             )
-        ev_id = dict(row)["id"]
-        # 2. Doğru günde duran bayat bekliyor/gecikti KAPANIS sira_no=0 placeholder'ı sil
-        cur.execute(
-            """
-            DELETE FROM sube_operasyon_event
-            WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND sira_no=0
-              AND durum IN ('bekliyor','gecikti')
-            """,
-            (sid, dt_),
-        )
-        silinen = cur.rowcount
-        # 3. Tamamlanmış event'i doğru güne taşı
-        cur.execute(
-            "UPDATE sube_operasyon_event SET tarih=%s::date WHERE id=%s",
-            (dt_, ev_id),
-        )
+
         # 4. Rapor cache her iki gün için yenile (best-effort)
         try:
             from rapor_cache import gunluk_ozet_yenile
@@ -1621,11 +1670,12 @@ def kapanis_gun_duzelt(body: KapanisGunDuzeltBody):
             gunluk_ozet_yenile(cur, sid, _date.fromisoformat(dt_), kaynak='kapanis_gun_duzelt')
         except Exception:
             pass
-        audit(cur, "sube_operasyon_event", ev_id, "KAPANIS_GUN_DUZELT")
         conn.commit()
     return {
         "tasindi": True, "event_id": ev_id,
         "silinen_placeholder": silinen,
+        "ciro_taslak_tasinan": taslak_tasinan,
+        "ciro_tasinan": ciro_tasinan,
         "yanlis_tarih": yt, "dogru_tarih": dt_,
     }
 
