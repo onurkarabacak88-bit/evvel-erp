@@ -639,9 +639,40 @@ def fatura_detay(fatura_id: str):
             else:
                 k["onceki_fiyat"] = None
                 k["onceki_tarih"] = None
+        # ── Bağlı sipariş (N2) kalemleri: insan "fatura ne diyor vs ne ısmarladık"
+        # karşılaştırsın. SALT GÖRÜNÜM — stoğa yazma yok, fuzzy eşleştirme yok. ──
+        siparis_kalemler: List[Dict[str, Any]] = []
+        _stid = str(h.get("siparis_talep_id") or "").strip()
+        if _stid:
+            try:
+                cur.execute(
+                    "SELECT kalemler FROM toptanci_siparis WHERE talep_id=%s AND durum <> 'iptal'",
+                    (_stid,),
+                )
+                _agg: Dict[str, Dict[str, Any]] = {}
+                _sira: List[str] = []
+                for _row in cur.fetchall() or []:
+                    _kl = dict(_row).get("kalemler") or []
+                    if isinstance(_kl, str):
+                        try:
+                            _kl = json.loads(_kl)
+                        except Exception:
+                            _kl = []
+                    for _k in _kl:
+                        _ad = str((_k or {}).get("urun_ad") or "").strip()
+                        if not _ad:
+                            continue
+                        _key = _ad.lower()
+                        if _key not in _agg:
+                            _agg[_key] = {"urun_ad": _ad, "adet": 0}
+                            _sira.append(_key)
+                        _agg[_key]["adet"] += int((_k or {}).get("adet") or 0)
+                siparis_kalemler = [_agg[k] for k in _sira]
+            except Exception:
+                siparis_kalemler = []
     h["fatura_tarih"] = str(h.get("fatura_tarih") or "")
     h["olusturma"] = str(h.get("olusturma") or "")
-    return {"fatura": h, "kalemler": kalemler}
+    return {"fatura": h, "kalemler": kalemler, "siparis_kalemler": siparis_kalemler}
 
 
 class FaturaKalemOnayBody(BaseModel):
