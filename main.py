@@ -9593,6 +9593,15 @@ def whatsapp_onizle(tarih: Optional[str] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/whatsapp/durum")
+def whatsapp_durum():
+    """Green API bağlantı/yetki durumunu salt-okur (mesaj göndermez). Tedarikçi
+    siparişleri WhatsApp'tan düşmüyorsa buradan teşhis: state='authorized' değilse
+    WhatsApp telefonu Green API'den kopmuş demektir → yeniden QR ile bağlanmalı."""
+    from whatsapp_bildirim import wa_instance_durum
+    return wa_instance_durum()
+
+
 @app.get("/api/whatsapp/gonder")
 @app.post("/api/whatsapp/gonder")
 def whatsapp_manuel_gonder(tarih: Optional[str] = None):

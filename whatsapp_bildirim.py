@@ -984,6 +984,28 @@ def _wa_send(chat_id: str, mesaj: str) -> dict:
         return {"basarili": False, "mesaj_id": None, "hata": str(e)[:120]}
 
 
+def wa_instance_durum() -> dict:
+    """Green API instance'ının yetki/bağlantı durumunu SALT-OKUR (mesaj göndermez).
+    'authorized' = WhatsApp bağlı; 'notAuthorized'/'starting'/'yetkisiz' = telefon
+    bağlantısı kopmuş → gönderimler sessizce başarısız olur. Tanı amaçlı.
+    Dönüş: {config_var, state, hata}.
+    """
+    instance_id = os.getenv("WA_INSTANCE_ID", "").strip()
+    token       = os.getenv("WA_TOKEN", "").strip()
+    if not instance_id or not token:
+        return {"config_var": False, "state": None, "hata": "config_eksik"}
+    url = f"https://api.green-api.com/waInstance{instance_id}/getStateInstance/{token}"
+    req = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return {"config_var": True, "state": data.get("stateInstance"), "hata": None}
+    except urllib.error.HTTPError as e:
+        return {"config_var": True, "state": None, "hata": f"http_{e.code}"}
+    except Exception as e:
+        return {"config_var": True, "state": None, "hata": str(e)[:120]}
+
+
 def whatsapp_gonder(mesaj: str) -> bool:
     """Sabit ortaklar grubuna mesaj gönderir (gece özeti vb.)."""
     group_id = os.getenv("WA_GROUP_ID", "").strip()
