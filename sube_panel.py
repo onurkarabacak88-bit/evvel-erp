@@ -2927,6 +2927,8 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             "eksik_kategori": eksik_kat,
             "teslim_aciklama": teslim_acik,
             "eksik_aciklama": eksik_acik,
+            # Siparişsiz teslim ayırımı için: bağlı sipariş varsa id, yoksa null.
+            "siparis_talep_id": ((body.siparis_talep_id or "").strip() or None),
         }
         payload = _json.dumps(payload_obj, ensure_ascii=False, separators=(",", ":"))
         acik = "URUN_SEVK_JSON:" + payload

@@ -20,6 +20,9 @@ export default function TedarikDosyasi() {
   const [detayYuk, setDetayYuk] = useState(false);
   const [fotoUrl, setFotoUrl] = useState(null);
   const [hata, setHata] = useState('');
+  const [gorunum, setGorunum] = useState('siparisler'); // 'siparisler' | 'teslimler'
+  const [teslimler, setTeslimler] = useState([]);
+  const [teslimYuk, setTeslimYuk] = useState(false);
 
   const listeYukle = () => {
     setLoading(true);
@@ -41,6 +44,15 @@ export default function TedarikDosyasi() {
     finally { setDetayYuk(false); }
   };
 
+  const teslimYukle = () => {
+    setTeslimYuk(true);
+    api('/ops/teslim-alimlari')
+      .then(r => setTeslimler((r && r.teslimler) || []))
+      .catch(e => setHata(e.message || 'Teslimler yüklenemedi'))
+      .finally(() => setTeslimYuk(false));
+  };
+  useEffect(() => { if (gorunum === 'teslimler') teslimYukle(); }, [gorunum]);
+
   const d = seciliId ? detay[seciliId] : null;
 
   return (
@@ -54,6 +66,51 @@ export default function TedarikDosyasi() {
       </p>
       {hata && <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 10 }}>⚠️ {hata}</div>}
 
+      {/* Görünüm sekmesi */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+        {[['siparisler', '📦 Siparişler'], ['teslimler', '📥 Teslim Alımları (saat saat)']].map(([k, l]) => (
+          <button key={k} onClick={() => setGorunum(k)}
+            style={{
+              cursor: 'pointer', fontSize: 13, fontWeight: 700, padding: '7px 14px', borderRadius: 10,
+              border: `1px solid ${gorunum === k ? '#3b82f6' : 'var(--border)'}`,
+              background: gorunum === k ? 'rgba(59,130,246,0.10)' : 'var(--bg3)', color: 'var(--text)',
+            }}>{l}</button>
+        ))}
+      </div>
+
+      {gorunum === 'teslimler' && (
+        <div className="card">
+          <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
+            Şubelerin "Ürün Teslim Al" ile aldığı tüm teslimler — siparişsiz gelenler dahil, en yeniden eskiye.
+          </div>
+          {teslimYuk && <div style={{ fontSize: 12, color: 'var(--text3)' }}>Yükleniyor…</div>}
+          {!teslimYuk && teslimler.length === 0 && <div className="empty"><p>Bu dönemde teslim alımı yok.</p></div>}
+          {teslimler.map(t => (
+            <div key={t.id} style={{ display: 'flex', gap: 10, padding: '8px 4px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text2)', minWidth: 96, whiteSpace: 'nowrap' }}>{t.olay_ts}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  {t.sube_adi} <span style={{ color: 'var(--text3)', fontWeight: 500 }}>· 🚚 {t.tedarikci}</span>
+                  {t.siparisli
+                    ? <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20, background: '#3b82f6', color: '#fff' }}>siparişli</span>
+                    : <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20, background: '#f59e0b', color: '#fff' }}>siparişsiz</span>}
+                  {t.teslim_durumu === 'eksik_var' && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20, background: '#ef4444', color: '#fff' }}>eksik</span>}
+                </div>
+                {t.kalemler?.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                    {t.kalemler.map((k, i) => (
+                      <span key={i} style={{ fontSize: 11, padding: '1px 7px', borderRadius: 6, background: 'var(--bg2)', border: '1px solid var(--border)' }}>{k.ad} <b>×{k.adet}</b></span>
+                    ))}
+                  </div>
+                )}
+                {t.personel_ad && <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>👤 {t.personel_ad}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {gorunum === 'siparisler' && (
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 360px) 1fr', gap: 16, alignItems: 'start' }}>
         {/* SOL: liste */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -172,6 +229,7 @@ export default function TedarikDosyasi() {
           )}
         </div>
       </div>
+      )}
 
       {/* Foto kanıt modalı */}
       {fotoUrl && (

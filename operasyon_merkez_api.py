@@ -10389,6 +10389,61 @@ def ops_toptanci_teslimler(gun: int = 30, sube_id: Optional[str] = None):
     return {"gun": gun, "toplam_sube": len(result), "subeler": result}
 
 
+@router.get("/teslim-alimlari")
+def ops_teslim_alimlari(gun: int = 14, sube_id: Optional[str] = None, limit: int = 200):
+    """Şube 'Ürün Teslim Al' kayıtları — KRONOLOJİK (saat saat) düz feed.
+    Sipariş verilmeden gelen (siparişsiz) teslimler de DAHİL; 'siparisli' bayrağı ayırır."""
+    gun_i = max(1, min(120, int(gun or 14)))
+    lim = max(1, min(500, int(limit or 200)))
+    sid = (sube_id or "").strip() or None
+    out: List[Dict[str, Any]] = []
+    with db() as (conn, cur):
+        params: List[Any] = [gun_i]
+        kos = ""
+        if sid:
+            kos = "AND d.sube_id=%s"
+            params.append(sid)
+        cur.execute(
+            f"""
+            SELECT d.id, d.sube_id, s.ad AS sube_adi, d.tarih, d.olay_ts,
+                   d.aciklama, d.personel_ad
+            FROM operasyon_defter d JOIN subeler s ON s.id=d.sube_id
+            WHERE d.etiket='URUN_SEVK' AND d.aciklama LIKE 'URUN_SEVK_JSON:%%'
+              AND d.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day') {kos}
+            ORDER BY d.olay_ts DESC
+            LIMIT %s
+            """,
+            tuple(params + [lim]),
+        )
+        for r in cur.fetchall() or []:
+            d = dict(r)
+            payload: Dict[str, Any] = {}
+            try:
+                js = str(d.get("aciklama") or "")[len("URUN_SEVK_JSON:"):].split(" | ")[0].strip()
+                payload = json.loads(js)
+            except Exception:
+                payload = {}
+            kalemler = []
+            for it in (payload.get("kalemler") or []):
+                if isinstance(it, dict):
+                    ad = str(it.get("urun_ad") or it.get("ad") or "").strip()
+                    adet = max(0, int(it.get("adet") or 0))
+                    if ad and adet > 0:
+                        kalemler.append({"ad": ad, "adet": adet})
+            out.append({
+                "id": str(d.get("id") or ""),
+                "tarih": str(d.get("tarih") or ""),
+                "olay_ts": str(d.get("olay_ts") or "")[:16].replace("T", " "),
+                "sube_adi": str(d.get("sube_adi") or ""),
+                "tedarikci": str(payload.get("tedarikci") or "").strip() or "—",
+                "kalemler": kalemler,
+                "teslim_durumu": str(payload.get("teslim_durumu") or "tam_geldi"),
+                "siparisli": bool(str(payload.get("siparis_talep_id") or "").strip()),
+                "personel_ad": str(d.get("personel_ad") or "").strip() or None,
+            })
+    return {"gun": gun_i, "toplam": len(out), "teslimler": out}
+
+
 @router.get("/subeler/depolar")
 def ops_subeler_depolar():
     """
