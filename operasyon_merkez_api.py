@@ -1559,6 +1559,77 @@ def ops_dashboard(
     }
 
 
+class KapanisGunDuzeltBody(BaseModel):
+    sube_id: str
+    yanlis_tarih: str   # event'in yanlış yazıldığı gün (YYYY-MM-DD)
+    dogru_tarih: str    # cevap_ts'nin gerçek günü (YYYY-MM-DD)
+
+
+@router.post("/kapanis-gun-duzelt")
+def kapanis_gun_duzelt(body: KapanisGunDuzeltBody):
+    """Yanlış güne düşmüş TAMAMLANMIŞ KAPANIS event'ini doğru güne taşır.
+
+    GÜVENLİK: yalnızca event'in cevap_ts'si (TR) gerçekten `dogru_tarih`'e aitse
+    taşır — yani kapanış fiziksel olarak o gün yapılmışsa. (Köyceğiz: 14'e yazılmış
+    ama cevap_ts=15 → 15'e taşınır.) Doğru günde duran bayat bekliyor/gecikti
+    KAPANIS placeholder'ı önce temizlenir. Rapor cache her iki gün için yenilenir.
+    """
+    sid = (body.sube_id or "").strip()
+    yt = (body.yanlis_tarih or "").strip()
+    dt_ = (body.dogru_tarih or "").strip()
+    if not sid or not yt or not dt_:
+        raise HTTPException(400, "sube_id, yanlis_tarih, dogru_tarih zorunlu")
+    with db() as (conn, cur):
+        # 1. Yanlış günde, cevap_ts'si DOĞRU güne ait tamamlanmış KAPANIS bul (kanıt)
+        cur.execute(
+            """
+            SELECT id, cevap_ts FROM sube_operasyon_event
+            WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND durum='tamamlandi'
+              AND (cevap_ts AT TIME ZONE 'Europe/Istanbul')::date = %s::date
+            ORDER BY cevap_ts DESC NULLS LAST LIMIT 1
+            """,
+            (sid, yt, dt_),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(
+                404,
+                "Taşınacak kapanış bulunamadı: yanlis_tarih'te cevap_ts'si dogru_tarih'e "
+                "ait tamamlanmış KAPANIS yok (güvenlik kontrolü).",
+            )
+        ev_id = dict(row)["id"]
+        # 2. Doğru günde duran bayat bekliyor/gecikti KAPANIS sira_no=0 placeholder'ı sil
+        cur.execute(
+            """
+            DELETE FROM sube_operasyon_event
+            WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS' AND sira_no=0
+              AND durum IN ('bekliyor','gecikti')
+            """,
+            (sid, dt_),
+        )
+        silinen = cur.rowcount
+        # 3. Tamamlanmış event'i doğru güne taşı
+        cur.execute(
+            "UPDATE sube_operasyon_event SET tarih=%s::date WHERE id=%s",
+            (dt_, ev_id),
+        )
+        # 4. Rapor cache her iki gün için yenile (best-effort)
+        try:
+            from rapor_cache import gunluk_ozet_yenile
+            from datetime import date as _date
+            gunluk_ozet_yenile(cur, sid, _date.fromisoformat(yt), kaynak='kapanis_gun_duzelt')
+            gunluk_ozet_yenile(cur, sid, _date.fromisoformat(dt_), kaynak='kapanis_gun_duzelt')
+        except Exception:
+            pass
+        audit(cur, "sube_operasyon_event", ev_id, "KAPANIS_GUN_DUZELT")
+        conn.commit()
+    return {
+        "tasindi": True, "event_id": ev_id,
+        "silinen_placeholder": silinen,
+        "yanlis_tarih": yt, "dogru_tarih": dt_,
+    }
+
+
 @router.get("/kapanis-takip")
 def kapanis_takip(tarih: Optional[str] = None):
     """
