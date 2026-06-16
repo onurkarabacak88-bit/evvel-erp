@@ -403,7 +403,10 @@ def gorev_pin_giris(body: GorevPinGirisBody):
                 "vardiya_disi": vardiya_disi,
                 "calisma_turu": calisma_turu,
                 "planlanan_saat": round(planlanan_saat, 2),
-                "yemek_mola_hakki": (calisma_turu == "surekli") or (planlanan_saat >= 9.5),
+                # Yemek molası hakkı: sürekli çalışan VEYA 9.5h+ planlı vardiya VEYA
+            # vardiya HİÇ tanımlı değil (plan yoksa planlanan_saat=0 olur → hakkı
+            # haksız yere kapatmayalım; tanımsızda hakkı VER — kullanıcı kararı 2026-06-16).
+            "yemek_mola_hakki": (calisma_turu == "surekli") or (planlanan_saat >= 9.5) or (not vardiya_tanimli),
                 "vardiya_tanimli": vardiya_tanimli,
                 "zaten_giris_yapildi": True,
             }
@@ -449,7 +452,10 @@ def gorev_pin_giris(body: GorevPinGirisBody):
             "vardiya_disi": vardiya_disi,
             "calisma_turu": calisma_turu,
             "planlanan_saat": round(planlanan_saat, 2),
-            "yemek_mola_hakki": (calisma_turu == "surekli") or (planlanan_saat >= 9.5),
+            # Yemek molası hakkı: sürekli çalışan VEYA 9.5h+ planlı vardiya VEYA
+            # vardiya HİÇ tanımlı değil (plan yoksa planlanan_saat=0 olur → hakkı
+            # haksız yere kapatmayalım; tanımsızda hakkı VER — kullanıcı kararı 2026-06-16).
+            "yemek_mola_hakki": (calisma_turu == "surekli") or (planlanan_saat >= 9.5) or (not vardiya_tanimli),
             "vardiya_tanimli": vardiya_tanimli,
             "cikis_unutuldu_uyari": cikis_unutuldu,
             # vardiya_tanimli=False ise frontend seçim ekranı gösterir
