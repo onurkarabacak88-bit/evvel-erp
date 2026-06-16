@@ -9010,6 +9010,15 @@ function beep() {
   } catch(e) {}
 }
 
+/* Fatura çek — izole kamera sayfasını yeni sekmede açar (öneri-only modül).
+   siparis_talep_id verilirse o teslimata bağlanır. Yoksa sadece şube. */
+function faturaCekAc(talepId) {
+  if (typeof SUBE_ID === 'undefined' || !SUBE_ID) { showToast('Şube bilgisi yok', 'warn'); return; }
+  var u = '/api/fatura/cek?sube_id=' + encodeURIComponent(SUBE_ID);
+  if (talepId) u += '&siparis_talep_id=' + encodeURIComponent(talepId);
+  window.open(u, '_blank');
+}
+
 function showToast(msg, type, durationMs) {
   var container = document.getElementById('toastContainer');
   if (!container) return;
@@ -10555,6 +10564,9 @@ var UrunTeslimAl = (function () {
     h += '<div><p class="sv-hero-baslik">Ürün Teslim Al</p>';
     h += '<p class="sv-hero-alt">Toptancı / tedarikçiden gelen ürünleri sayın ve kaydedin</p></div>';
     h += '</div>';
+
+    // ── Fatura çek (izole modül, isteğe bağlı) — gelen faturayı o an fotoğrafla ──
+    h += '<button type="button" onclick="faturaCekAc()" style="width:100%;margin:2px 0 14px;background:#a855f7;color:#fff;border:0;border-radius:14px;padding:14px;font-size:16px;font-weight:700;cursor:pointer">📄 Fatura Çek <span style="font-weight:500;font-size:13px;opacity:.85">(varsa — isteğe bağlı)</span></button>';
 
     // ── Bekleyen toptancı siparişleri (Faz 2) ─────────────────────────────
     h += '<div id="svBeklenenWrap"></div>';
