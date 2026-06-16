@@ -2411,6 +2411,14 @@ def init_db():
                 ) THEN
                     ALTER TABLE siparis_talep ADD COLUMN merkez_karar_kalemleri JSONB;
                 END IF;
+                -- N4 (şube kabulü): kabul ekranı 'Teslim Al ve Kaydet' bu kolonlara
+                -- yazar (kabul_durum: kabul_tam|kabul_uyusmazlik|kabul_kismi, kim/ne
+                -- zaman kabul etti); operasyon_merkez + kontrol kulesi okur. Kolonlar
+                -- tasarlanmış ama migration eksikti → UndefinedColumn (fix 2026-06-16).
+                ALTER TABLE siparis_talep ADD COLUMN IF NOT EXISTS kabul_durum TEXT;
+                ALTER TABLE siparis_talep ADD COLUMN IF NOT EXISTS kabul_ts TIMESTAMPTZ;
+                ALTER TABLE siparis_talep ADD COLUMN IF NOT EXISTS kabul_personel_id TEXT;
+                ALTER TABLE siparis_talep ADD COLUMN IF NOT EXISTS kabul_personel_ad TEXT;
             EXCEPTION WHEN others THEN NULL;
             END $$;
         """)
