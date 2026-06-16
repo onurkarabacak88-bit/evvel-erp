@@ -9016,8 +9016,11 @@ function faturaCekAc(talepId) {
   if (typeof SUBE_ID === 'undefined' || !SUBE_ID) { showToast('Şube bilgisi yok', 'warn'); return; }
   var u = '/api/fatura/cek?sube_id=' + encodeURIComponent(SUBE_ID);
   if (talepId) u += '&siparis_talep_id=' + encodeURIComponent(talepId);
-  window.open(u, '_blank');
+  // Mobilde popup engeli olursa aynı sekmede aç (window.open null dönerse)
+  var w = window.open(u, '_blank');
+  if (!w) { location.href = u; }
 }
+window.faturaCekAc = faturaCekAc;  // onclick'ten erişilebilsin (IIFE içinde)
 
 function showToast(msg, type, durationMs) {
   var container = document.getElementById('toastContainer');
