@@ -24,6 +24,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse
 
 from database import db
 
@@ -279,6 +280,147 @@ def fatura_bekleyen(sube_id: Optional[str] = None, limit: int = 50):
         r["fatura_tarih"] = str(r.get("fatura_tarih") or "")
         r["olusturma"] = str(r.get("olusturma") or "")
     return {"satirlar": rows, "toplam": len(rows)}
+
+
+_CEK_HTML = """<!doctype html><html lang="tr"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<title>Fatura Çek</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#0f172a;color:#e2e8f0;font-family:-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:560px;margin:0 auto;padding:16px;min-height:100vh;display:flex;flex-direction:column;gap:14px}
+  h1{font-size:18px;margin:4px 0 0}
+  .sub{font-size:13px;color:#94a3b8;margin-bottom:4px}
+  video,canvas,img.snap{width:100%;border-radius:14px;background:#000;aspect-ratio:3/4;object-fit:cover}
+  .btn{border:0;border-radius:14px;padding:18px;font-size:18px;font-weight:700;cursor:pointer;width:100%}
+  .btn-acik{background:#3b82f6;color:#fff}
+  .btn-cek{background:#22c55e;color:#06281a}
+  .btn-yukle{background:#22c55e;color:#06281a}
+  .btn-tekrar{background:#334155;color:#e2e8f0}
+  .row{display:flex;gap:10px}
+  .row .btn{flex:1}
+  .hata{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.5);border-radius:12px;padding:12px;font-size:14px}
+  .ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.4);border-radius:12px;padding:12px}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+  th,td{text-align:left;padding:6px 4px;border-bottom:1px solid #1e293b}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .durum{font-size:14px;color:#cbd5e1;display:flex;align-items:center;gap:8px}
+  .spin{width:16px;height:16px;border:2px solid #475569;border-top-color:#22c55e;border-radius:50%;animation:s 1s linear infinite}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .gizle{display:none}
+</style></head><body><div class="wrap">
+  <div><h1>📄 Fatura Çek</h1><div class="sub" id="subeAd"></div></div>
+  <div id="hata" class="hata gizle"></div>
+
+  <div id="adimKamera">
+    <video id="vid" autoplay playsinline muted></video>
+    <div style="height:10px"></div>
+    <button id="btnAc" class="btn btn-acik">📷 Kamerayı Aç</button>
+    <button id="btnCek" class="btn btn-cek gizle">⚪ Çek</button>
+  </div>
+
+  <div id="adimOnizle" class="gizle">
+    <img id="snap" class="snap"/>
+    <div style="height:10px"></div>
+    <div class="row">
+      <button id="btnTekrar" class="btn btn-tekrar">↺ Tekrar Çek</button>
+      <button id="btnYukle" class="btn btn-yukle">⬆ Yükle</button>
+    </div>
+  </div>
+
+  <div id="adimSonuc" class="gizle">
+    <div id="durumKutu" class="durum"><span class="spin"></span><span id="durumYazi">OCR bekleniyor…</span></div>
+    <div id="sonucKutu"></div>
+    <div style="height:8px"></div>
+    <button id="btnYeni" class="btn btn-acik">＋ Yeni Fatura</button>
+  </div>
+
+  <canvas id="cv" class="gizle"></canvas>
+</div>
+<script>
+const qp=new URLSearchParams(location.search);
+const SUBE=qp.get('sube_id')||'';
+const TALEP=qp.get('siparis_talep_id')||'';
+document.getElementById('subeAd').textContent = SUBE ? ('Şube: '+SUBE) : 'Şube belirtilmedi (sube_id parametresi gerekli)';
+let stream=null, blob=null;
+const $=id=>document.getElementById(id);
+function hata(m){const h=$('hata');h.textContent=m;h.classList.remove('gizle');}
+function temizHata(){$('hata').classList.add('gizle');}
+function goster(id){['adimKamera','adimOnizle','adimSonuc'].forEach(a=>$(a).classList.toggle('gizle',a!==id));}
+
+$('btnAc').onclick=async()=>{
+  temizHata();
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
+    $('vid').srcObject=stream;
+    $('btnAc').classList.add('gizle');$('btnCek').classList.remove('gizle');
+  }catch(e){hata('Kamera açılamadı: '+(e.message||e)+' (HTTPS ve kamera izni gerekli)');}
+};
+$('btnCek').onclick=()=>{
+  const v=$('vid'),cv=$('cv');
+  cv.width=v.videoWidth||1080;cv.height=v.videoHeight||1440;
+  cv.getContext('2d').drawImage(v,0,0,cv.width,cv.height);
+  cv.toBlob(b=>{blob=b;$('snap').src=URL.createObjectURL(b);goster('adimOnizle');},'image/jpeg',0.85);
+};
+$('btnTekrar').onclick=()=>goster('adimKamera');
+$('btnYukle').onclick=async()=>{
+  if(!blob){hata('Önce fotoğraf çek');return;}
+  if(!SUBE){hata('sube_id parametresi eksik — şube panelinden açın');return;}
+  temizHata();$('btnYukle').disabled=true;$('btnYukle').textContent='Yükleniyor…';
+  try{
+    const fd=new FormData();
+    fd.append('foto',blob,'fatura.jpg');fd.append('sube_id',SUBE);
+    if(TALEP)fd.append('siparis_talep_id',TALEP);
+    const r=await fetch('/api/fatura/yukle',{method:'POST',body:fd});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||'yükleme hatası');
+    // kamerayı kapat
+    if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+    goster('adimSonuc');pollOCR(d.fatura_id);
+  }catch(e){hata('Yükleme hatası: '+(e.message||e));}
+  $('btnYukle').disabled=false;$('btnYukle').textContent='⬆ Yükle';
+};
+async function pollOCR(fid){
+  for(let i=0;i<30;i++){
+    await new Promise(r=>setTimeout(r,2000));
+    let d;try{d=await (await fetch('/api/fatura/'+fid)).json();}catch(e){continue;}
+    const f=d.fatura||{};
+    if(f.durum==='ocr_tamam'){renderSonuc(f,d.kalemler||[]);return;}
+    if(f.durum==='ocr_hata'){
+      $('durumKutu').innerHTML='';
+      $('sonucKutu').innerHTML='<div class="hata">OCR okunamadı: '+(f.ocr_hata||'bilinmeyen')+'. Fatura kaydedildi, merkez manuel inceleyebilir.</div>';
+      return;
+    }
+  }
+  $('durumKutu').innerHTML='';
+  $('sonucKutu').innerHTML='<div class="ok">Fatura yüklendi. OCR arka planda devam ediyor — sonuç merkez inceleme ekranına düşecek.</div>';
+}
+function renderSonuc(f,kalemler){
+  $('durumKutu').innerHTML='';
+  let h='<div class="ok"><b>'+(f.tedarikci_ad||'(tedarikçi okunamadı)')+'</b>';
+  if(f.fatura_tarih)h+=' · '+f.fatura_tarih;
+  if(f.toplam_tutar!=null)h+=' · Toplam '+f.toplam_tutar+'₺';
+  h+='</div>';
+  if(kalemler.length){
+    h+='<table><tr><th>Ürün</th><th class="num">Adet</th><th class="num">B.Fiyat</th><th class="num">Tutar</th></tr>';
+    kalemler.forEach(k=>{h+='<tr><td>'+(k.ocr_ad||'-')+'</td><td class="num">'+(k.adet??'-')+'</td><td class="num">'+(k.birim_fiyat??'-')+'</td><td class="num">'+(k.satir_toplam??'-')+'</td></tr>';});
+    h+='</table>';
+  }
+  h+='<div class="sub" style="margin-top:10px">✅ Yüklendi. Merkez onayına düştü — fiyatlar onaysız hiçbir yere yazılmaz.</div>';
+  $('sonucKutu').innerHTML=h;
+}
+$('btnYeni').onclick=()=>{blob=null;temizHata();$('sonucKutu').innerHTML='';$('durumKutu').innerHTML='<span class="spin"></span><span id="durumYazi">OCR bekleniyor…</span>';goster('adimKamera');};
+</script></body></html>"""
+
+
+@router.get("/cek", response_class=HTMLResponse)
+def fatura_cek_sayfasi():
+    """Personel telefonu için CANLI KAMERA fatura çekme sayfası (galeri yok).
+    Şube paneli ?sube_id=...&siparis_talep_id=... ile açar. İzole, kendi içinde yeterli."""
+    if not fatura_modul_aktif():
+        return HTMLResponse("<h3 style='font-family:sans-serif'>Fatura modülü kapalı.</h3>", status_code=503)
+    return HTMLResponse(_CEK_HTML)
 
 
 @router.get("/{fatura_id}")
