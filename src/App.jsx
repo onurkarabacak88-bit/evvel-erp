@@ -26,6 +26,7 @@ import GorevGiris from './pages/GorevGiris';
 import GorevOzet from './pages/GorevOzet';
 import PersonelVardiyaTakip from './pages/PersonelVardiyaTakip';
 import Tedarikciler from './pages/Tedarikciler';
+import TedarikDosyasi from './pages/TedarikDosyasi';
 import VeriTemizle from './pages/VeriTemizle.jsx';
 import OperasyonMerkezi from './pages/OperasyonMerkezi';
 import TruthMotor from './pages/TruthMotor';
@@ -79,6 +80,7 @@ const NAV = [
     { id: 'sabit-giderler',   label: 'Sabit Giderler',      icon: '🏠' },
     { id: 'borclar',          label: 'Borç Envanteri',      icon: '🏦' },
     { id: 'tedarikciler',     label: 'Tedarikçiler',        icon: '🚚' },
+    { id: 'tedarik-dosyasi',  label: 'Tedarik Dosyası',     icon: '🧾' },
   ]},
   { group: 'Rapor & Defter', gicon: '📒', items: [
     { id: 'rapor',            label: 'Aylık Rapor',         icon: '📈' },
@@ -127,6 +129,7 @@ const PAGES = {
   'gorev-ozet':              GorevOzet,
   'personel-vardiya-takip':  PersonelVardiyaTakip,
   tedarikciler:       Tedarikciler,
+  'tedarik-dosyasi':  TedarikDosyasi,
   'veri-temizle':     VeriTemizle,
   'is-basvurusu':     IsBasvuruListesi,
   'ev-tasarim':       EvTasarim,

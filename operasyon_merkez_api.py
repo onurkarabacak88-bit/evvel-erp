@@ -9897,6 +9897,201 @@ def ops_siparis_toptanci_geri_al(talep_id: str):
     return {"ok": True, "talep_id": tid, "yeni_durum": "bekliyor"}
 
 
+def _td_jliste(v: Any) -> List[Dict[str, Any]]:
+    if isinstance(v, list):
+        return v
+    if isinstance(v, str):
+        try:
+            x = json.loads(v)
+            return x if isinstance(x, list) else []
+        except Exception:
+            return []
+    return []
+
+
+@router.get("/tedarik-dosyasi")
+def ops_tedarik_dosyasi_liste(gun: int = 30, sube_id: Optional[str] = None, limit: int = 100):
+    """Tedarik Dosyası INDEX: toptancı zinciri olan siparişler (özet rozetlerle).
+    Her satır = bir siparişin tüm hikâyesinin kısa hali (detay ayrı endpoint)."""
+    gun_i = max(1, min(180, int(gun or 30)))
+    lim = max(1, min(300, int(limit or 100)))
+    out: List[Dict[str, Any]] = []
+    with db() as (conn, cur):
+        try:
+            from fatura_api import _ensure_tablolar as _f_ensure
+            _f_ensure(cur)
+        except Exception:
+            pass
+        params: List[Any] = [gun_i]
+        kos = "t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')"
+        if sube_id:
+            kos += " AND t.sube_id=%s"
+            params.append(sube_id.strip())
+        try:
+            cur.execute(
+                f"""
+                SELECT t.id, s.ad AS sube_adi, t.tarih, t.durum, t.kabul_durum,
+                       (SELECT string_agg(DISTINCT ts.tedarikci_ad, ', ')
+                          FROM toptanci_siparis ts WHERE ts.talep_id=t.id) AS tedarikciler,
+                       (SELECT count(*) FROM tedarikci_fatura f
+                          WHERE f.siparis_talep_id=t.id) AS fatura_say
+                FROM siparis_talep t JOIN subeler s ON s.id=t.sube_id
+                WHERE {kos}
+                  AND EXISTS (SELECT 1 FROM toptanci_siparis ts WHERE ts.talep_id=t.id)
+                ORDER BY t.olusturma DESC NULLS LAST
+                LIMIT %s
+                """,
+                tuple(params + [lim]),
+            )
+            rows = cur.fetchall() or []
+        except Exception:
+            rows = []
+        for r in rows:
+            d = dict(r)
+            out.append({
+                "talep_id": str(d.get("id")),
+                "sube_adi": str(d.get("sube_adi") or ""),
+                "tarih": str(d.get("tarih") or ""),
+                "durum": str(d.get("durum") or ""),
+                "kabul_durum": str(d.get("kabul_durum") or ""),
+                "tedarikciler": str(d.get("tedarikciler") or "—"),
+                "fatura_say": int(d.get("fatura_say") or 0),
+            })
+    return {"dosyalar": out, "toplam": len(out)}
+
+
+@router.get("/tedarik-dosyasi/{talep_id}")
+def ops_tedarik_dosyasi_detay(talep_id: str):
+    """Tek siparişin TÜM zinciri tek yerde: N1 talep · N2 toptancı siparişleri ·
+    kabul farkı (N3↔N4) · fatura(lar) + foto + OCR fiyat/zam."""
+    tid = (talep_id or "").strip()
+    if not tid:
+        raise HTTPException(400, "talep_id zorunlu")
+    with db() as (conn, cur):
+        try:
+            from fatura_api import _ensure_tablolar as _f_ensure
+            _f_ensure(cur)
+        except Exception:
+            pass
+        cur.execute(
+            """
+            SELECT t.id, t.sube_id, s.ad AS sube_adi, t.tarih, t.durum, t.kabul_durum,
+                   t.kalemler, t.kabul_ts, t.kabul_personel_ad
+            FROM siparis_talep t JOIN subeler s ON s.id=t.sube_id
+            WHERE t.id=%s
+            """,
+            (tid,),
+        )
+        tr = cur.fetchone()
+        if not tr:
+            raise HTTPException(404, "Sipariş bulunamadı")
+        t = dict(tr)
+        n1 = [
+            {"urun_ad": str(k.get("urun_ad") or ""), "adet": int(k.get("adet") or 0)}
+            for k in _td_jliste(t.get("kalemler"))
+            if isinstance(k, dict) and str(k.get("urun_ad") or "").strip()
+        ]
+        # N2: toptancı siparişleri (tedarikçi başına)
+        cur.execute(
+            """
+            SELECT id, tedarikci_ad, kalemler, durum, wa_durum, wa_gonderim_ts, teslim_ts
+            FROM toptanci_siparis WHERE talep_id=%s ORDER BY olusturma
+            """,
+            (tid,),
+        )
+        n2 = []
+        for r in cur.fetchall() or []:
+            d = dict(r)
+            n2.append({
+                "id": str(d.get("id")),
+                "tedarikci_ad": str(d.get("tedarikci_ad") or "—"),
+                "kalemler": [
+                    {"urun_ad": str(k.get("urun_ad") or ""), "adet": int(k.get("adet") or 0)}
+                    for k in _td_jliste(d.get("kalemler"))
+                    if isinstance(k, dict) and str(k.get("urun_ad") or "").strip()
+                ],
+                "durum": str(d.get("durum") or ""),
+                "wa_gonderildi": (str(d.get("wa_durum") or "") == "gonderildi"),
+                "teslim_alindi": bool(d.get("teslim_ts")),
+            })
+        # Kabul farkı (N3↔N4): TOPTANCI_KABUL_FARKI uyarısından
+        kabul_farklar: List[Dict[str, Any]] = []
+        try:
+            cur.execute(
+                """
+                SELECT detay_json FROM sube_operasyon_uyari
+                WHERE tip='TOPTANCI_KABUL_FARKI'
+                  AND detay_json->>'siparis_talep_id'=%s
+                ORDER BY tarih DESC
+                """,
+                (tid,),
+            )
+            for r in cur.fetchall() or []:
+                dj = dict(r).get("detay_json")
+                if isinstance(dj, str):
+                    try:
+                        dj = json.loads(dj)
+                    except Exception:
+                        dj = {}
+                if isinstance(dj, dict):
+                    kabul_farklar.extend(dj.get("uyusmazlik_satirlar") or [])
+        except Exception:
+            kabul_farklar = []
+        # N3: fatura(lar) + OCR kalem + foto var mı
+        faturalar = []
+        try:
+            cur.execute(
+                """
+                SELECT id, tedarikci_ad, fatura_tarih, toplam_tutar, durum,
+                       (foto IS NOT NULL) AS foto_var
+                FROM tedarikci_fatura WHERE siparis_talep_id=%s ORDER BY olusturma DESC
+                """,
+                (tid,),
+            )
+            for fr in cur.fetchall() or []:
+                f = dict(fr)
+                fid = str(f.get("id"))
+                cur.execute(
+                    """
+                    SELECT ocr_ad, adet, birim_fiyat, eslesen_stok_kodu
+                    FROM tedarikci_fatura_kalem WHERE fatura_id=%s ORDER BY sira
+                    """,
+                    (fid,),
+                )
+                fk = [
+                    {
+                        "ocr_ad": kd.get("ocr_ad"),
+                        "adet": kd.get("adet"),
+                        "birim_fiyat": kd.get("birim_fiyat"),
+                        "eslesen_stok_kodu": kd.get("eslesen_stok_kodu"),
+                    }
+                    for kd in (dict(x) for x in (cur.fetchall() or []))
+                ]
+                faturalar.append({
+                    "id": fid,
+                    "tedarikci_ad": str(f.get("tedarikci_ad") or "—"),
+                    "fatura_tarih": str(f.get("fatura_tarih") or ""),
+                    "toplam_tutar": f.get("toplam_tutar"),
+                    "durum": str(f.get("durum") or ""),
+                    "foto_var": bool(f.get("foto_var")),
+                    "kalemler": fk,
+                })
+        except Exception:
+            faturalar = []
+    return {
+        "talep_id": tid,
+        "sube_adi": str(t.get("sube_adi") or ""),
+        "tarih": str(t.get("tarih") or ""),
+        "durum": str(t.get("durum") or ""),
+        "kabul_durum": str(t.get("kabul_durum") or ""),
+        "kabul_ts": str(t.get("kabul_ts") or ""),
+        "n1_talep": n1,
+        "n2_siparisler": n2,
+        "kabul_farklar": kabul_farklar,
+        "faturalar": faturalar,
+    }
+
+
 def _toptanci_liste_tarih_araligi(
     donem: Optional[str],
     gun: int,
