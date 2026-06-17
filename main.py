@@ -41,6 +41,7 @@ from is_basvuru_api import router as is_basvuru_router
 from ev_tasarim_api import router as ev_tasarim_router
 from fatura_api import router as fatura_router  # İZOLE modül (öneri-only, kill switch)
 from stok_sayim_api import router as stok_sayim_router  # İZOLE modül (kalibrasyon/kontrol, öneri-only)
+from supplier_payment import router as supplier_payment_router  # İZOLE: tedarikçi ödeme olay katmanı (duyu toplar, beyin uyumaz)
 import vardiya_v2 as _vv2
 from vardiya_v2 import _ad_soyad_split as _vardiya_personel_ad_split
 
@@ -94,6 +95,7 @@ app.include_router(is_basvuru_router)
 app.include_router(ev_tasarim_router)
 app.include_router(fatura_router)
 app.include_router(stok_sayim_router)
+app.include_router(supplier_payment_router)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -220,6 +222,17 @@ def _gece_yarisi_scheduler():
                     logger.info(f"⏰ Scheduler: eksik kullanım + şube skor güncellendi ({len(sk)} şube)")
             except Exception as e:
                 logger.warning(f"⏰ Scheduler stok davranış / skor hatası: {e}")
+
+            # Her gece — tedarikçi ödeme olay katmanını besle (DUYU duysun, alarm YOK).
+            # İdempotent; yeni kart/nakit ödemeleri supplier_payment_event'e akar.
+            try:
+                from supplier_payment import supplier_payment_sync
+                with db() as (conn, cur):
+                    _sp = supplier_payment_sync(cur)
+                    conn.commit()
+                logger.info(f"⏰ Scheduler: supplier_payment_event beslendi ({_sp.get('eklenen')} yeni olay)")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler supplier_payment hatası: {e}")
 
             # Pazartesi — geçen haftanın kalem bazlı fire raporu
             if bugun.weekday() == 0:  # 0 = Pazartesi
