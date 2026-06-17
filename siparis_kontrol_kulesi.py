@@ -363,13 +363,22 @@ def siparis_kontrol_kulesi_yukle(
         # değil; merkez miktarı override edebilir = nihai karar). Gönderilmemiş
         # ürünler tam miktarıyla kalır → split modalı sadece bunları gösterir.
         _disp = _dagitilan.get(str(r.get("id") or ""), {})
-        if _disp:
-            _disp_set = set(_disp.keys())
+        # GÖNDERİLMİŞ ürün adları = toptancıya dağıtılan + DEPODAN sevk edilen
+        # (stok_yolda, sevk_adet>0). Her iki yolla gönderilen ürün kalan listesinde
+        # ÇIKMAZ → çift gönderim önlenir. (Önceden yalnız toptancı düşülüyordu;
+        # depo sevki eklendi — kısmi depo sevkinde gönderilen kalem kuyrukta kalmıyor.)
+        _gonderilmis: set = set(_disp.keys())
+        for _y in (z.get("yolda") or []):
+            if int((_y or {}).get("sevk_adet") or 0) > 0:
+                _yad = str((_y or {}).get("kalem_adi") or "").strip().lower()
+                if _yad:
+                    _gonderilmis.add(_yad)
+        if _gonderilmis:
             _kalan: List[Dict[str, Any]] = [
                 dict(_it)
                 for _it in (z.get("kalemler") or [])
                 if isinstance(_it, dict)
-                and str(_it.get("urun_ad") or "").strip().lower() not in _disp_set
+                and str(_it.get("urun_ad") or "").strip().lower() not in _gonderilmis
             ]
             z["kalan_kalemler"] = _kalan
         else:
