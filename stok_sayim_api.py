@@ -162,7 +162,11 @@ class GorevAtaBody(BaseModel):
 
 
 class SayimKaydetBody(BaseModel):
-    sayim_sonuc: List[Dict[str, Any]]  # [{kalem_kodu, sayilan_adet}]
+    sayim_sonuc: List[Dict[str, Any]]
+
+
+class TaslakKaydetBody(BaseModel):
+    sayim_sonuc: List[Dict[str, Any]]  # kısmi (girilen kalemler) — yenilemede kaybolmasın  # [{kalem_kodu, sayilan_adet}]
 
 
 class OnayKarar(BaseModel):
@@ -374,6 +378,30 @@ def sube_kilit(sube_id: str):
         return {"kilitli": False, "personel_ad": None, "gorev_id": None}
     g = dict(row)
     return {"kilitli": True, "personel_ad": g.get("personel_ad"), "gorev_id": g.get("id")}
+
+
+@router.post("/gorev/{gorev_id}/taslak-kaydet")
+def gorev_taslak_kaydet(gorev_id: str, body: TaslakKaydetBody):
+    """Kısmi sayım taslağı — her giriş sonrası kaydedilir ki sayfa yenilenince
+    personelin yazdıkları KAYBOLMASIN. durum'u DEĞİŞTİRMEZ (sadece basladi iken)."""
+    gid = (gorev_id or "").strip()
+    temiz = []
+    for it in (body.sayim_sonuc or []):
+        kk = str((it or {}).get("kalem_kodu") or "").strip()
+        if not kk:
+            continue
+        try:
+            ad = max(0, int((it or {}).get("sayilan_adet")))
+        except Exception:
+            continue
+        temiz.append({"kalem_kodu": kk, "sayilan_adet": ad})
+    with db() as (_, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            "UPDATE stok_sayim_gorev SET sayim_sonuc=%s::jsonb WHERE id=%s AND durum='basladi'",
+            (json.dumps(temiz, ensure_ascii=False), gid),
+        )
+    return {"ok": True, "kayitli": len(temiz)}
 
 
 # ────────────────────────────── 4) PERSONEL: SAYIMI KAYDET ──────────────────────────────

@@ -904,8 +904,19 @@ function KapanisMuhurBandi({ oturum }) {
 // saymadan diğerine geçilmez. Kutuya ÇİFT-TIK → rakam tuş takımı açılır.
 function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
   const kalemler = gorev.kalemler || [];
-  const [idx, setIdx] = useState(0);
-  const [degerler, setDegerler] = useState({}); // kalem_kodu -> { val: string, girildi: bool }
+  // Taslaktan geri yükle (sayfa yenilenince personelin yazdıkları kaybolmasın)
+  const [degerler, setDegerler] = useState(() => {
+    const init = {};
+    (gorev.sayim_sonuc || []).forEach((x) => {
+      if (x && x.kalem_kodu != null) init[String(x.kalem_kodu)] = { val: String(x.sayilan_adet ?? ''), girildi: true };
+    });
+    return init;
+  });
+  const [idx, setIdx] = useState(() => {
+    const girilenler = new Set((gorev.sayim_sonuc || []).map((x) => String(x.kalem_kodu)));
+    const i = (gorev.kalemler || []).findIndex((k) => !girilenler.has(String(k.kalem_kodu)));
+    return i >= 0 ? i : 0;
+  });
   const [keypadAcik, setKeypadAcik] = useState(false);
   const [kaydediliyor, setKaydediliyor] = useState(false);
   const [hata, setHata] = useState('');
@@ -923,6 +934,22 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
     freezeRef.current = true;
     api(`/stok-sayim/gorev/${gorev.id}/sayim-aktif`, { method: 'POST' }).catch(() => {});
   };
+
+  // Taslak kaydet: her değişimde (800ms debounce) girilen kalemleri arka plana yaz
+  // → sayfa yenilense bile kaybolmasın. İlk render'da (henüz giriş yok) yazma.
+  const taslakRef = useRef(null);
+  const taslakIlkRef = useRef(true);
+  useEffect(() => {
+    if (taslakIlkRef.current) { taslakIlkRef.current = false; return; }
+    const girilenler = Object.entries(degerler).filter(([, v]) => v.girildi);
+    if (!girilenler.length) return;
+    clearTimeout(taslakRef.current);
+    taslakRef.current = setTimeout(() => {
+      const sayim_sonuc = girilenler.map(([kk, v]) => ({ kalem_kodu: kk, sayilan_adet: parseInt(v.val || '0', 10) || 0 }));
+      api(`/stok-sayim/gorev/${gorev.id}/taslak-kaydet`, { method: 'POST', body: { sayim_sonuc } }).catch(() => {});
+    }, 800);
+    return () => clearTimeout(taslakRef.current);
+  }, [degerler, gorev.id]);
 
   const aktif = kalemler[idx];
   const aktifKod = aktif ? String(aktif.kalem_kodu) : '';
