@@ -254,11 +254,16 @@ def _fatura_json_db_yaz(cur, fatura_id: str, j: Dict[str, Any]) -> int:
     """OCR/text JSON sonucunu tedarikci_fatura + _kalem'e yazar (foto & PDF ortak yol).
     Commit ETMEZ — çağıran commit'ler. Dönüş: yazılan kalem sayısı."""
     kalemler = j.get("kalemler") if isinstance(j.get("kalemler"), list) else []
+    # Tarih ve fatura_no PDF'te regex ile zaten kesin yazıldıysa KORU (LLM ezmesin);
+    # foto yolunda bunlar NULL → COALESCE LLM değerini kullanır.
     cur.execute(
         """
         UPDATE tedarikci_fatura
-        SET tedarikci_ad=COALESCE(%s, tedarikci_ad), fatura_tarih=%s, toplam_tutar=%s,
-            fatura_no=COALESCE(%s, fatura_no), ocr_json=%s::jsonb, durum='ocr_tamam', ocr_hata=NULL
+        SET tedarikci_ad=COALESCE(%s, tedarikci_ad),
+            fatura_tarih=COALESCE(fatura_tarih, %s),
+            toplam_tutar=%s,
+            fatura_no=COALESCE(fatura_no, %s),
+            ocr_json=%s::jsonb, durum='ocr_tamam', ocr_hata=NULL
         WHERE id=%s
         """,
         (
@@ -322,12 +327,28 @@ def _pdf_faturalara_bol(pdf_bytes: bytes) -> List[Dict[str, Any]]:
     for metin in sayfalar:
         m = re.search(r"Fatura\s*No\s*:?\s*([A-Z0-9]+)", metin or "", re.IGNORECASE)
         if m:
-            faturalar.append({"fatura_no": m.group(1), "metin": metin or ""})
+            faturalar.append({
+                "fatura_no": m.group(1),
+                "fatura_tarih": _fatura_tarih_regex(metin or ""),  # DETERMINISTIK (LLM'e güvenme)
+                "metin": metin or "",
+            })
         elif faturalar:
             # Fatura No yok → önceki faturanın devam sayfası
             faturalar[-1]["metin"] += "\n" + (metin or "")
+            if not faturalar[-1].get("fatura_tarih"):
+                faturalar[-1]["fatura_tarih"] = _fatura_tarih_regex(metin or "")
         # İlk sayfa Fatura No içermiyorsa (kapak vb.) atlanır
     return faturalar
+
+
+def _fatura_tarih_regex(metin: str) -> Optional[str]:
+    """e-fatura metninden 'Fatura Tarihi: DD-MM-YYYY' (veya DD.MM.YYYY / DD/MM/YYYY)
+    → 'YYYY-MM-DD'. Tarih kritik (zam yönü) → LLM'e değil regex'e güvenilir."""
+    m = re.search(r"Fatura\s*Tarihi\s*:?\s*(\d{2})[-./](\d{2})[-./](\d{4})", metin or "", re.IGNORECASE)
+    if not m:
+        return None
+    gun, ay, yil = m.group(1), m.group(2), m.group(3)
+    return f"{yil}-{ay}-{gun}"
 
 
 def _ocr_calistir(fatura_id: str) -> None:
@@ -527,14 +548,15 @@ async def fatura_yukle_pdf(
                 if cur.fetchone():
                     atlanan += 1
                     continue
+            ftarih = (f.get("fatura_tarih") or None)  # regex'ten — kesin
             fid = str(uuid.uuid4())
             cur.execute(
                 """
                 INSERT INTO tedarikci_fatura
-                    (id, sube_id, fatura_no, kaynak_metin, kaynak_tip, durum, yukleyen_personel_id)
-                VALUES (%s, %s, %s, %s, 'pdf', 'ocr_bekliyor', %s)
+                    (id, sube_id, fatura_no, fatura_tarih, kaynak_metin, kaynak_tip, durum, yukleyen_personel_id)
+                VALUES (%s, %s, %s, %s, %s, 'pdf', 'ocr_bekliyor', %s)
                 """,
-                (fid, (sube_id or None), fno, metin, (personel_id or None)),
+                (fid, (sube_id or None), fno, ftarih, metin, (personel_id or None)),
             )
             yeni_idler.append(fid)
         conn.commit()
@@ -549,6 +571,26 @@ async def fatura_yukle_pdf(
         "atlanan_mevcut": atlanan,
         "durum": "ocr_bekliyor",
     }
+
+
+@router.delete("/{fatura_id}")
+def fatura_sil(fatura_id: str):
+    """Bir faturayı (ve kalemlerini) siler. Yanlış okunan/mükerrer faturayı temizlemek
+    için. Onaylanmış FİYAT geçmişine dokunmaz (o ayrı, insan onaylı kayıt)."""
+    if not fatura_modul_aktif():
+        raise HTTPException(503, "Fatura modülü kapalı.")
+    fid = (fatura_id or "").strip()
+    if not fid:
+        raise HTTPException(400, "fatura_id zorunlu")
+    with db() as (conn, cur):
+        _ensure_tablolar(cur)
+        cur.execute("DELETE FROM tedarikci_fatura_kalem WHERE fatura_id=%s", (fid,))
+        cur.execute("DELETE FROM tedarikci_fatura WHERE id=%s", (fid,))
+        n = cur.rowcount or 0
+        conn.commit()
+    if not n:
+        raise HTTPException(404, "Fatura bulunamadı")
+    return {"ok": True, "silinen": fid}
 
 
 @router.get("/bekleyen")

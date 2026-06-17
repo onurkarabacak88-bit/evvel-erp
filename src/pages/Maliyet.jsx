@@ -550,6 +550,16 @@ export default function Maliyet() {
                   </div>
                 </div>
                 <button className="btn btn-secondary btn-sm" onClick={() => fotoFaturaAc(f.id)}>{acik ? 'Kapat' : 'İncele'}</button>
+                <button className="btn btn-ghost btn-sm" title="Bu faturayı sil (yanlış okundu/mükerrer)"
+                  style={{ color: 'var(--red)' }}
+                  onClick={async () => {
+                    if (!window.confirm('Bu faturayı silmek istediğine emin misin? (Onaylanmış fiyat geçmişine dokunulmaz)')) return;
+                    try {
+                      const res = await fetch('/api/fatura/' + encodeURIComponent(f.id), { method: 'DELETE' });
+                      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Silinemedi');
+                      setFotoFaturalar(list => list.filter(x => x.id !== f.id));
+                    } catch (e) { setMesaj({ m: 'Silme hatası: ' + (e.message || e), t: 'error' }); }
+                  }}>🗑</button>
               </div>
               {acik && d && (
                 <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
