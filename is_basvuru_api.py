@@ -562,9 +562,25 @@ def _ensure_table(cur):
         ("isten_en_iyi","TEXT"),    ("isten_en_zor","TEXT"),
         # Görüldü işareti — yeni başvuru rozeti için
         ("goruldu_ts","TIMESTAMPTZ"),
+        # Öncelik + arşiv + işe-alındı: durumdan AYRI boyutlar (arşivlemek önceliği SİLMESİN)
+        ("oncelik","INTEGER NOT NULL DEFAULT 0"),     # 0=yok | 1 | 2
+        ("arsivli","BOOLEAN NOT NULL DEFAULT FALSE"), # durumdan bağımsız arşiv bayrağı
+        ("ise_alindi","BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("personel_id","TEXT"),                       # işe alınınca personel kaydı bağı
     ]:
         try:
             cur.execute(f"ALTER TABLE is_basvuru ADD COLUMN IF NOT EXISTS {kolon} {tip}")
+        except Exception:
+            pass
+    # VERİ MİGRASYONU (idempotent): eski 'durum' tek alanına gömülü öncelik/arşiv'i
+    # ayrı boyutlara taşı. Çalıştıktan sonra o durum değerleri kalmaz → tekrar no-op.
+    for sql in (
+        "UPDATE is_basvuru SET oncelik=1, durum='gorusme' WHERE durum='birinci_oncelik'",
+        "UPDATE is_basvuru SET oncelik=2, durum='gorusme' WHERE durum='ikinci_oncelik'",
+        "UPDATE is_basvuru SET arsivli=TRUE, durum='bekliyor' WHERE durum='arsiv'",
+    ):
+        try:
+            cur.execute(sql)
         except Exception:
             pass
 
@@ -658,14 +674,29 @@ def basvuru_gonder(body: BasvuruGonder):
 @router.get("")
 def basvuru_listele(
     durum: Optional[str] = Query(None),
+    arsivli: Optional[bool] = Query(None),
     limit: int = Query(200, le=500),
 ):
+    """Varsayılan: arşivsiz başvurular (arsivli=false). Arşiv sekmesi arsivli=true ister.
+    Sıralama: öncelik (1/2) üstte, sonra yeni→eski."""
+    kos: list = []
+    par: list = []
+    if durum:
+        kos.append("durum=%s"); par.append(durum)
+    if arsivli is None:
+        kos.append("arsivli=FALSE")
+    else:
+        kos.append("arsivli=%s"); par.append(bool(arsivli))
+    where = ("WHERE " + " AND ".join(kos)) if kos else ""
+    par.append(limit)
     with db() as (conn, cur):
         _ensure_table(cur)
-        if durum:
-            cur.execute("SELECT * FROM is_basvuru WHERE durum=%s ORDER BY olusturma_ts DESC LIMIT %s", (durum, limit))
-        else:
-            cur.execute("SELECT * FROM is_basvuru ORDER BY olusturma_ts DESC LIMIT %s", (limit,))
+        cur.execute(
+            f"""SELECT * FROM is_basvuru {where}
+                ORDER BY (CASE WHEN oncelik IN (1,2) THEN oncelik ELSE 99 END) ASC,
+                         olusturma_ts DESC LIMIT %s""",
+            tuple(par),
+        )
         rows = cur.fetchall()
     return [_row_to_dict(r) for r in rows]
 
@@ -674,12 +705,25 @@ def basvuru_listele(
 def basvuru_ozet():
     with db() as (conn, cur):
         _ensure_table(cur)
-        cur.execute("SELECT durum, COUNT(*) as adet FROM is_basvuru GROUP BY durum")
+        # Durum sayıları yalnızca ARŞİVSİZLER üzerinden (arşiv ayrı boyut)
+        cur.execute("SELECT durum, COUNT(*) as adet FROM is_basvuru WHERE arsivli=FALSE GROUP BY durum")
         rows = cur.fetchall()
-        cur.execute("SELECT COUNT(*) as adet FROM is_basvuru WHERE goruldu_ts IS NULL")
+        cur.execute("SELECT COUNT(*) as adet FROM is_basvuru WHERE goruldu_ts IS NULL AND arsivli=FALSE")
         yeni = cur.fetchone()
+        cur.execute("SELECT COUNT(*) AS n FROM is_basvuru WHERE arsivli=TRUE")
+        arsiv = cur.fetchone()
+        cur.execute("SELECT COUNT(*) AS n FROM is_basvuru WHERE oncelik=1 AND arsivli=FALSE")
+        onc1 = cur.fetchone()
+        cur.execute("SELECT COUNT(*) AS n FROM is_basvuru WHERE oncelik=2 AND arsivli=FALSE")
+        onc2 = cur.fetchone()
+        cur.execute("SELECT COUNT(*) AS n FROM is_basvuru WHERE ise_alindi=TRUE")
+        isealin = cur.fetchone()
     ozet = {r["durum"]: r["adet"] for r in rows}
-    ozet["yeni"] = yeni["adet"] if yeni else 0
+    ozet["yeni"] = (yeni or {}).get("adet", 0)
+    ozet["arsiv"] = (arsiv or {}).get("n", 0)
+    ozet["oncelik1"] = (onc1 or {}).get("n", 0)
+    ozet["oncelik2"] = (onc2 or {}).get("n", 0)
+    ozet["ise_alindi"] = (isealin or {}).get("n", 0)
     return ozet
 
 
@@ -733,19 +777,107 @@ def basvuru_goruldu_isaretle(bid: str):
 
 @router.patch("/{bid}/durum")
 def basvuru_durum_guncelle(bid: str, body: DurumGuncelle):
-    gecerli = {"bekliyor", "gorusme", "birinci_oncelik", "olumlu", "ikinci_oncelik", "olumsuz", "arsiv"}
-    if body.durum not in gecerli:
-        raise HTTPException(400, f"Geçersiz durum: {gecerli}")
+    # Durum artık SADECE iş akışı: bekliyor | gorusme | olumlu | olumsuz.
+    # Öncelik (/oncelik) ve arşiv (/arsiv) AYRI boyutlar (durum onları ezmez).
+    # Geriye dönük: eski birleşik değer gelirse doğru boyuta yönlendir.
     with db() as (conn, cur):
         _ensure_table(cur)
-        cur.execute(
-            "UPDATE is_basvuru SET durum=%s, guncelleme_ts=%s WHERE id=%s",
-            (body.durum, dt_now_tr(), bid)
-        )
+        d = (body.durum or "").strip()
+        if d in ("birinci_oncelik", "ikinci_oncelik"):
+            onc = 1 if d == "birinci_oncelik" else 2
+            cur.execute("UPDATE is_basvuru SET oncelik=%s, guncelleme_ts=%s WHERE id=%s", (onc, dt_now_tr(), bid))
+        elif d == "arsiv":
+            cur.execute("UPDATE is_basvuru SET arsivli=TRUE, guncelleme_ts=%s WHERE id=%s", (dt_now_tr(), bid))
+        else:
+            gecerli = {"bekliyor", "gorusme", "olumlu", "olumsuz"}
+            if d not in gecerli:
+                raise HTTPException(400, f"Geçersiz durum: {gecerli}")
+            cur.execute("UPDATE is_basvuru SET durum=%s, guncelleme_ts=%s WHERE id=%s", (d, dt_now_tr(), bid))
         if cur.rowcount == 0:
             raise HTTPException(404, "Başvuru bulunamadı.")
         conn.commit()
     return {"success": True}
+
+
+@router.patch("/{bid}/oncelik")
+def basvuru_oncelik(bid: str, body: dict):
+    """Öncelik işaretle (0=temizle | 1 | 2) — durumu/arşivi EZMEZ, arşivde korunur."""
+    try:
+        onc = int(body.get("oncelik", 0))
+    except (TypeError, ValueError):
+        onc = 0
+    if onc not in (0, 1, 2):
+        raise HTTPException(400, "oncelik: 0 | 1 | 2")
+    with db() as (conn, cur):
+        _ensure_table(cur)
+        cur.execute("UPDATE is_basvuru SET oncelik=%s, guncelleme_ts=%s WHERE id=%s", (onc, dt_now_tr(), bid))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Başvuru bulunamadı.")
+        conn.commit()
+    return {"success": True, "oncelik": onc}
+
+
+@router.patch("/{bid}/arsiv")
+def basvuru_arsiv(bid: str, body: dict = None):
+    """Arşivle / arşivden çıkar (durum + öncelik KORUNUR — silmek değil)."""
+    arsivli = True if body is None else bool(body.get("arsivli", True))
+    with db() as (conn, cur):
+        _ensure_table(cur)
+        cur.execute("UPDATE is_basvuru SET arsivli=%s, guncelleme_ts=%s WHERE id=%s", (arsivli, dt_now_tr(), bid))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Başvuru bulunamadı.")
+        conn.commit()
+    return {"success": True, "arsivli": arsivli}
+
+
+@router.post("/toplu-arsiv")
+def basvuru_toplu_arsiv(body: dict):
+    """Tiklenen kartları toplu arşivle/çıkar. body: {ids: [...], arsivli: true}."""
+    ids = [str(x) for x in (body.get("ids") or []) if x]
+    if not ids:
+        raise HTTPException(400, "ids zorunlu")
+    arsivli = bool(body.get("arsivli", True))
+    with db() as (conn, cur):
+        _ensure_table(cur)
+        cur.execute(
+            "UPDATE is_basvuru SET arsivli=%s, guncelleme_ts=%s WHERE id = ANY(%s)",
+            (arsivli, dt_now_tr(), ids),
+        )
+        n = cur.rowcount or 0
+        conn.commit()
+    return {"success": True, "guncellenen": n, "arsivli": arsivli}
+
+
+@router.post("/{bid}/ise-al")
+def basvuru_ise_al(bid: str, body: dict = None):
+    """Başvuruyu işe al: personel kaydı oluştur + başvuruya 'işe alındı' işaretle.
+    İdempotent: zaten işe alınmışsa mevcut personel_id'yi döner (çift kayıt yok)."""
+    body = body or {}
+    with db() as (conn, cur):
+        _ensure_table(cur)
+        cur.execute("SELECT * FROM is_basvuru WHERE id=%s", (bid,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Başvuru bulunamadı.")
+        b = dict(row)
+        if b.get("ise_alindi") and b.get("personel_id"):
+            return {"success": True, "zaten_alinmis": True, "personel_id": b.get("personel_id")}
+        ad = (b.get("ad_soyad") or "").strip()
+        tel = (b.get("telefon") or "").strip()
+        gorev = (body.get("gorev") or b.get("pozisyon") or "").strip() or None
+        notlar = f"İş başvurusundan işe alındı · Tel: {tel}" + (f" · {b.get('pozisyon')}" if b.get("pozisyon") else "")
+        pid = str(uuid.uuid4())
+        cur.execute(
+            """INSERT INTO personel (id, ad_soyad, gorev, baslangic_tarihi, notlar)
+               VALUES (%s, %s, %s, CURRENT_DATE, %s)""",
+            (pid, ad, gorev, notlar),
+        )
+        cur.execute(
+            "UPDATE is_basvuru SET ise_alindi=TRUE, personel_id=%s, durum='olumlu', guncelleme_ts=%s WHERE id=%s",
+            (pid, dt_now_tr(), bid),
+        )
+        conn.commit()
+    return {"success": True, "personel_id": pid, "ad_soyad": ad}
 
 
 @router.delete("/{bid}")
