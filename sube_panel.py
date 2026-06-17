@@ -995,6 +995,61 @@ def merkez_personel_panel_yonetici(personel_id: str, body: PersonelPanelYonetici
     return {"success": True, "yonetici": yon}
 
 
+@router.post("/{sube_id}/acilis-geri-al")
+def sube_acilis_geri_al(sube_id: str, uygula: bool = False):
+    """Bugünkü şube açılışını GERİ AL (test/yanlış açılış temizliği).
+    Geri alınan: sube_acilis(durum='iptal') + sube_kasa_gun_acma(silinir) + ACILIS
+    event(durum='bekliyor'a döner). GÜVENLİK: bugün ciro taslağı / kapanış / başka
+    tamamlanmış operasyon varsa BLOKE (kasa-ciro defteri bozulmasın).
+    uygula=False → KURU ÇALIŞMA (durum + bloke nedenleri, yazma yok)."""
+    sid = (sube_id or "").strip()
+    g = is_gunu_tr()
+    with db() as (conn, cur):
+        _sube_getir(cur, sid)
+
+        def _say(sql, par=()):  # SAVEPOINT'li güvenli sayım
+            try:
+                cur.execute("SAVEPOINT sp_ag"); cur.execute(sql, par)
+                n = (cur.fetchone() or {}).get("n", 0); cur.execute("RELEASE SAVEPOINT sp_ag")
+                return int(n or 0)
+            except Exception:
+                try: cur.execute("ROLLBACK TO SAVEPOINT sp_ag"); cur.execute("RELEASE SAVEPOINT sp_ag")
+                except Exception: pass
+                return 0
+
+        acilis_n = _say("SELECT COUNT(*) AS n FROM sube_acilis WHERE sube_id=%s AND tarih=%s AND durum='acildi'", (sid, g))
+        kasa_gun_n = _say("SELECT COUNT(*) AS n FROM sube_kasa_gun_acma WHERE sube_id=%s AND tarih=%s", (sid, g))
+        # ── GÜVENLİK: bugün gerçek hareket var mı (varsa açılış geri alınmaz) ──
+        bloke: List[str] = []
+        if _say("SELECT COUNT(*) AS n FROM ciro_taslak WHERE sube_id=%s AND tarih=%s", (sid, g)) > 0:
+            bloke.append("ciro_taslagi")
+        if _say("SELECT COUNT(*) AS n FROM sube_operasyon_event WHERE sube_id=%s AND tarih=%s AND tip='KAPANIS' AND durum='tamamlandi'", (sid, g)) > 0:
+            bloke.append("kapanis_yapilmis")
+        if _say("SELECT COUNT(*) AS n FROM sube_operasyon_event WHERE sube_id=%s AND tarih=%s AND tip NOT IN ('ACILIS','KAPANIS') AND durum='tamamlandi'", (sid, g)) > 0:
+            bloke.append("diger_tamamlanmis_operasyon")
+
+        durum = {"acilis_kaydi": acilis_n, "kasa_gun_acma": kasa_gun_n, "is_gunu": str(g), "bloke_nedenleri": bloke}
+        if not uygula:
+            return {"kuru_calisma": True, **durum,
+                    "geri_alinabilir": (acilis_n > 0 or kasa_gun_n > 0) and not bloke}
+        if bloke:
+            raise HTTPException(409, "Açılış geri alınamaz — bugün gerçek hareket var: " + ", ".join(bloke))
+        if acilis_n == 0 and kasa_gun_n == 0:
+            raise HTTPException(404, "Bugün geri alınacak açılış yok")
+        # ── GERİ AL ──
+        cur.execute("UPDATE sube_acilis SET durum='iptal' WHERE sube_id=%s AND tarih=%s AND durum='acildi'", (sid, g))
+        cur.execute("DELETE FROM sube_kasa_gun_acma WHERE sube_id=%s AND tarih=%s", (sid, g))
+        cur.execute(
+            """UPDATE sube_operasyon_event
+               SET durum='bekliyor', cevap_ts=NULL, personel_saat=NULL, kasa_sayim=NULL,
+                   meta=NULL, personel_id=NULL, personel_ad=NULL
+               WHERE sube_id=%s AND tarih=%s AND tip='ACILIS' AND sira_no=0""",
+            (sid, g),
+        )
+        conn.commit()
+    return {"uygulandi": True, **durum}
+
+
 @router.post("/{sube_id}/acilis")
 def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
     """

@@ -650,6 +650,55 @@ def duzeltme_iz(gorev_id: Optional[str] = None, sube_id: Optional[str] = None, l
     }
 
 
+@router.post("/gorev/{gorev_id}/geri-al")
+def gorev_geri_al(gorev_id: str, uygula: bool = False):
+    """Onaylı bir sayım görevini GERİ AL (test/yanlış sayım temizliği):
+    sube_depo_stok'u o görevden ÖNCEKİ değere (envanter_duzeltme.eski_adet) döndürür,
+    görevin iz kayıtlarını siler, görevi 'iptal' yapar.
+    uygula=False → KURU ÇALIŞMA (neyin geri alınacağını gösterir, yazma yok).
+    ⚠️ Birden çok onaylı görev varsa EN YENİDEN ESKİYE doğru çağır (doğru geri sarım)."""
+    gid = (gorev_id or "").strip()
+    with db() as (conn, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            "SELECT id, sube_id, durum, personel_ad FROM stok_sayim_gorev WHERE id=%s", (gid,)
+        )
+        g = cur.fetchone()
+        if not g:
+            raise HTTPException(404, "Görev bulunamadı")
+        g = dict(g)
+        cur.execute(
+            """SELECT kalem_kodu, kalem_adi, eski_adet, yeni_adet
+               FROM envanter_duzeltme WHERE gorev_id=%s ORDER BY olusturma""",
+            (gid,),
+        )
+        izler = [dict(r) for r in (cur.fetchall() or [])]
+        plan = [
+            {"kalem_adi": r.get("kalem_adi"), "su_an": r.get("yeni_adet"),
+             "geri_alinacak": r.get("eski_adet")}
+            for r in izler
+        ]
+        if not uygula:
+            return {
+                "kuru_calisma": True, "gorev_id": gid, "sube_id": g.get("sube_id"),
+                "personel": g.get("personel_ad"), "durum": g.get("durum"),
+                "geri_alinacak_kalem": len(plan), "plan": plan[:60],
+            }
+        if str(g.get("durum")) != "onaylandi":
+            raise HTTPException(409, f"Sadece onaylı görev geri alınır (durum: {g.get('durum')})")
+        sid = str(g.get("sube_id"))
+        for r in izler:
+            cur.execute(
+                """UPDATE sube_depo_stok SET mevcut_adet=%s, guncelleme=NOW()
+                   WHERE sube_id=%s AND kalem_kodu=%s""",
+                (max(0, int(r.get("eski_adet") or 0)), sid, str(r.get("kalem_kodu"))),
+            )
+        cur.execute("DELETE FROM envanter_duzeltme WHERE gorev_id=%s", (gid,))
+        cur.execute("UPDATE stok_sayim_gorev SET durum='iptal' WHERE id=%s", (gid,))
+        conn.commit()
+    return {"uygulandi": True, "gorev_id": gid, "geri_alinan_kalem": len(izler)}
+
+
 # ────────────────────────────── 9) SAHİP: UZAKTAN KİLİT AÇMA (GÜVENLİK VALFİ) ──────────────────────────────
 @router.post("/gorev/{gorev_id}/kilit-ac")
 def gorev_kilit_ac(gorev_id: str, body: KilitAcBody):
