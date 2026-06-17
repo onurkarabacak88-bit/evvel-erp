@@ -884,7 +884,8 @@ def fatura_detay(fatura_id: str):
         cur.execute(
             """
             SELECT id, sube_id, siparis_talep_id, tedarikci_ad, fatura_tarih,
-                   toplam_tutar, durum, ocr_hata, olusturma
+                   toplam_tutar, durum, ocr_hata, olusturma,
+                   fatura_no, onceki_bakiye, bakiye_dahil
             FROM tedarikci_fatura WHERE id=%s
             """,
             (fatura_id,),
