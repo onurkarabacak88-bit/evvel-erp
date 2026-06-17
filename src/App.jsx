@@ -265,6 +265,7 @@ export default function App() {
   const [ciroBekleyen, setCiroBekleyen] = useState(0);
   const [bugunAnomali, setBugunAnomali] = useState(0);
   const [yeniBasvuru, setYeniBasvuru] = useState(0);
+  const [stokSayimBekleyen, setStokSayimBekleyen] = useState(0);
   // Sayfa her açıldığında (yenileme/yeniden giriş) şifre yeniden istensin —
   // kalıcı oturum tutulmuyor (localStorage kullanılmıyor).
   const [girisYapildi, setGirisYapildi] = useState(false);
@@ -290,6 +291,10 @@ export default function App() {
       // Yeni iş başvurusu sayısı
       api('/is-basvurusu/ozet')
         .then(d => setYeniBasvuru(Number(d?.yeni) || 0))
+        .catch(() => {});
+      // Stok sayım: onay bekleyen sayısı (menü rozeti)
+      api('/stok-sayim/bekleyen-onay')
+        .then(d => setStokSayimBekleyen(Number(d?.toplam) || 0))
         .catch(() => {});
     };
     yukle();
@@ -383,6 +388,17 @@ export default function App() {
                       fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
                     }} title="Bugün anomali sayısı">
                       {bugunAnomali}
+                    </span>
+                  )}
+                  {item.id === 'stok-sayim' && stokSayimBekleyen > 0 && (
+                    <span style={{
+                      position: 'absolute', top: '50%', right: 10,
+                      transform: 'translateY(-50%)',
+                      minWidth: 18, height: 18, padding: '0 5px',
+                      borderRadius: 999, background: '#22c55e', color: '#fff',
+                      fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
+                    }} title="Onay bekleyen sayım">
+                      {stokSayimBekleyen}
                     </span>
                   )}
                 </div>
