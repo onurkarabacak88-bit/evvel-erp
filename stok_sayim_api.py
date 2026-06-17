@@ -33,6 +33,10 @@ router = APIRouter(prefix="/api/stok-sayim", tags=["stok-sayim"])
 
 AKTIF_DURUMLAR = ("atandi", "basladi")  # personeli kilitleyen durumlar
 
+# Zorunlu stok sayımından MUAF kategoriler (SKT çok kısa → sayım anlamlı değil,
+# ayrı takip kullanılıyor — kullanıcı kararı 2026-06-17). Küçük harf karşılaştırılır.
+MUAF_KATEGORILER = {"pastalar"}
+
 
 def _ensure_tablolar(cur) -> None:
     """Modülün kendi tabloları — lazy ensure (ilk çağrıda). İzole, kritik akışı etkilemez."""
@@ -137,6 +141,7 @@ def _katalog_kalemler(cur) -> List[Dict[str, Any]]:
         return [
             {"kalem_kodu": str(r["kalem_kodu"]), "kalem_adi": r["kalem_adi"], "kategori_ad": r.get("kategori_ad") or ""}
             for r in (cur.fetchall() or [])
+            if (r.get("kategori_ad") or "").strip().lower() not in MUAF_KATEGORILER
         ]
     except Exception:
         return []
