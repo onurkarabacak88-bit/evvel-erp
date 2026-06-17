@@ -76,6 +76,12 @@ def _ensure_tablolar(cur) -> None:
     cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS kaynak_metin TEXT")
     cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS kaynak_tip TEXT")  # 'foto' | 'pdf'
     cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS fatura_no TEXT")    # e-fatura no (PDF'te tekil)
+    # Akıllı Denetim "yürüyen bakiye zinciri" duyusu için HAM veri (alarm YOK, sadece
+    # birikim): tedarikçinin kendi cari defteri. Boşluk: önceki[N+1] > dahil[N].
+    # İlke: duyu üretmeden önce ham veriyi topla (bkz. project_tedarik_belge_denetim_duyulari).
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS onceki_bakiye DOUBLE PRECISION")
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS bakiye_dahil DOUBLE PRECISION")
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS tedarikci_vkn TEXT")  # cari-seviye gruplama için
     cur.execute("""
         CREATE TABLE IF NOT EXISTS tedarikci_fatura_kalem (
             id              TEXT PRIMARY KEY,
@@ -327,9 +333,12 @@ def _pdf_faturalara_bol(pdf_bytes: bytes) -> List[Dict[str, Any]]:
     for metin in sayfalar:
         m = re.search(r"Fatura\s*No\s*:?\s*([A-Z0-9]+)", metin or "", re.IGNORECASE)
         if m:
+            _bak = _fatura_bakiye_regex(metin or "")
             faturalar.append({
                 "fatura_no": m.group(1),
                 "fatura_tarih": _fatura_tarih_regex(metin or ""),  # DETERMINISTIK (LLM'e güvenme)
+                "onceki_bakiye": _bak["onceki_bakiye"],
+                "bakiye_dahil": _bak["bakiye_dahil"],
                 "metin": metin or "",
             })
         elif faturalar:
@@ -349,6 +358,38 @@ def _fatura_tarih_regex(metin: str) -> Optional[str]:
         return None
     gun, ay, yil = m.group(1), m.group(2), m.group(3)
     return f"{yil}-{ay}-{gun}"
+
+
+def _para_coz(s: Any) -> Optional[float]:
+    """TR/EN karışık para biçimini güvenle çöz: '1.260,00'→1260.0, '116396.62'→116396.62,
+    '1,260.00'→1260.0. Hem nokta-binlik+virgül-ondalık hem tersini kaldırır."""
+    s = re.sub(r"[^\d.,-]", "", str(s or "").strip())
+    if not s:
+        return None
+    if "," in s and "." in s:
+        # son görülen ayraç = ondalık ayracı
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")  # tek virgül → TR ondalık
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _fatura_bakiye_regex(metin: str) -> Dict[str, Optional[float]]:
+    """e-fatura metninden cari bakiye alanları (yürüyen bakiye zinciri HAM verisi).
+    'Önceki Bakiye : X' ve 'Bu Fatura Dahil Bakiye : Y'. Deterministik — LLM'e güvenme."""
+    t = metin or ""
+    onc = re.search(r"Önceki\s*Bakiye\s*:?\s*([\d.,]+)", t, re.IGNORECASE)
+    dah = re.search(r"Bu\s*Fatura\s*Dahil\s*Bakiye\s*:?\s*([\d.,]+)", t, re.IGNORECASE)
+    return {
+        "onceki_bakiye": _para_coz(onc.group(1)) if onc else None,
+        "bakiye_dahil": _para_coz(dah.group(1)) if dah else None,
+    }
 
 
 def _ocr_calistir(fatura_id: str) -> None:
@@ -553,10 +594,12 @@ async def fatura_yukle_pdf(
             cur.execute(
                 """
                 INSERT INTO tedarikci_fatura
-                    (id, sube_id, fatura_no, fatura_tarih, kaynak_metin, kaynak_tip, durum, yukleyen_personel_id)
-                VALUES (%s, %s, %s, %s, %s, 'pdf', 'ocr_bekliyor', %s)
+                    (id, sube_id, fatura_no, fatura_tarih, onceki_bakiye, bakiye_dahil,
+                     kaynak_metin, kaynak_tip, durum, yukleyen_personel_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pdf', 'ocr_bekliyor', %s)
                 """,
-                (fid, (sube_id or None), fno, ftarih, metin, (personel_id or None)),
+                (fid, (sube_id or None), fno, ftarih,
+                 f.get("onceki_bakiye"), f.get("bakiye_dahil"), metin, (personel_id or None)),
             )
             yeni_idler.append(fid)
         conn.commit()
