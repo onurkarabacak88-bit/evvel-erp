@@ -1056,7 +1056,7 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
         </div>
       </div>
 
-      <div style={{ padding: '14px 20px 20px' }}>
+      <div style={{ padding: '14px 20px', paddingBottom: keypadAcik ? 300 : 20 }}>
         {/* Kategori geçiş bannerı — EN ÜSTTE (kategori değişince yeniden animasyon) */}
         {aktifKat && (
           <div key={aktifKat} style={{
@@ -1119,20 +1119,26 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
           </div>
         </div>
 
-        {/* Rakam tuş takımı (çift-tıkla açılır) */}
-        {keypadAcik && (
-          <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-            {['1','2','3','4','5','6','7','8','9'].map((t) => (
-              <button key={t} onClick={() => tusBas(t)} style={KEY}>{t}</button>
-            ))}
-            <button onClick={() => tusBas('sil')} style={{ ...KEY, fontSize: 22 }}>⌫</button>
-            <button onClick={() => tusBas('0')} style={KEY}>0</button>
-            <button onClick={() => setKeypadAcik(false)} style={{ ...KEY, fontSize: 14, color: '#6b6f7a' }}>Kapat ▾</button>
-          </div>
-        )}
-
         {hata && <div style={{ marginTop: 14, color: '#e57373', fontSize: 13, textAlign: 'center' }}>{hata}</div>}
       </div>
+
+      {/* Rakam tuş takımı — ekranın ALTINA SABİT (iPhone'da kaydırmaya gerek yok) */}
+      {keypadAcik && (
+        <div style={{
+          position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 60,
+          background: '#0f1117', borderTop: '1px solid #2a2d35',
+          padding: '10px 16px calc(10px + env(safe-area-inset-bottom, 0px))',
+          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8,
+          boxShadow: '0 -8px 24px rgba(0,0,0,0.5)',
+        }}>
+          {['1','2','3','4','5','6','7','8','9'].map((t) => (
+            <button key={t} onClick={() => tusBas(t)} style={{ ...KEY, padding: '14px 0' }}>{t}</button>
+          ))}
+          <button onClick={() => tusBas('sil')} style={{ ...KEY, padding: '14px 0', fontSize: 22 }}>⌫</button>
+          <button onClick={() => tusBas('0')} style={{ ...KEY, padding: '14px 0' }}>0</button>
+          <button onClick={() => setKeypadAcik(false)} style={{ ...KEY, padding: '14px 0', fontSize: 14, color: '#6b6f7a' }}>Kapat ▾</button>
+        </div>
+      )}
     </div>
   );
 }
