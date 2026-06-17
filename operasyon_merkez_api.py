@@ -13138,6 +13138,90 @@ def ops_maliyet_stok_kalemleri():
     return {"kalemler": temiz, "toplam": len(temiz), "gizlenen_kopya": gizlenen}
 
 
+@router.post("/maliyet/ozel-kopya-temizle")
+def ops_maliyet_ozel_kopya_temizle(uygula: bool = Query(False)):
+    """Legacy 'ozel__' yedek depo kalemlerini KANONİK (ozel__ olmayan, en çok şubeli)
+    ikizine BİRLEŞTİRİR: ozel__ stoğu kanonik satıra eklenir, ozel__ satırı silinir.
+    uygula=False → sadece PLAN (kuru çalışma). uygula=True → gerçek merge.
+    Aynı adda kanonik kalem YOKSA ozel__ DOKUNULMAZ (veri kaybı olmaz). İdempotent:
+    ikinci çalıştırmada birleştirilecek kalmaz. Sadece sube_depo_stok (canlı stok)."""
+    from collections import defaultdict
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT id, sube_id, kalem_kodu, kalem_adi, mevcut_adet, rezerve_adet, min_stok
+            FROM sube_depo_stok
+            """
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+
+        # kalem_kodu → kaç farklı şube (kanonik seçiminde "en gerçek" için)
+        sube_say: Dict[str, set] = defaultdict(set)
+        for r in rows:
+            sube_say[r["kalem_kodu"]].add(r["sube_id"])
+        # ad(lower) → kanonik (kalem_kodu, kalem_adi) : ozel__ olmayan, en çok şubeli
+        kanonik: Dict[str, tuple] = {}
+        for r in rows:
+            kod = str(r["kalem_kodu"] or "")
+            if kod.startswith("ozel__"):
+                continue
+            ad = str(r["kalem_adi"] or "").strip().lower()
+            if not ad:
+                continue
+            cur_best = kanonik.get(ad)
+            if cur_best is None or len(sube_say[kod]) > len(sube_say[cur_best[0]]):
+                kanonik[ad] = (kod, r["kalem_adi"])
+
+        plan: List[Dict[str, Any]] = []
+        for r in rows:
+            kod = str(r["kalem_kodu"] or "")
+            if not kod.startswith("ozel__"):
+                continue
+            ad = str(r["kalem_adi"] or "").strip().lower()
+            kan = kanonik.get(ad)
+            if not kan:
+                continue  # kanonik ikiz yok → DOKUNMA
+            plan.append({
+                "ozel_id": r["id"], "sube_id": r["sube_id"], "ozel_kodu": kod,
+                "kalem_adi": r["kalem_adi"], "mevcut_adet": int(r["mevcut_adet"] or 0),
+                "rezerve_adet": int(r["rezerve_adet"] or 0), "min_stok": int(r["min_stok"] or 0),
+                "kanonik_kodu": kan[0], "kanonik_adi": kan[1],
+            })
+
+        if not uygula:
+            return {"kuru_calisma": True, "birlestirilecek": len(plan), "plan": plan}
+
+        birlestirilen = 0
+        aktarilan_adet = 0
+        hata: List[Dict[str, Any]] = []
+        for p in plan:
+            try:
+                cur.execute("SAVEPOINT sp_ozel_merge")
+                cur.execute(
+                    """
+                    INSERT INTO sube_depo_stok
+                        (sube_id, kalem_kodu, kalem_adi, mevcut_adet, rezerve_adet, min_stok)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (sube_id, kalem_kodu) DO UPDATE
+                      SET mevcut_adet  = sube_depo_stok.mevcut_adet  + EXCLUDED.mevcut_adet,
+                          rezerve_adet = sube_depo_stok.rezerve_adet + EXCLUDED.rezerve_adet,
+                          guncelleme   = NOW()
+                    """,
+                    (p["sube_id"], p["kanonik_kodu"], p["kanonik_adi"],
+                     p["mevcut_adet"], p["rezerve_adet"], p["min_stok"]),
+                )
+                cur.execute("DELETE FROM sube_depo_stok WHERE id = %s", (p["ozel_id"],))
+                cur.execute("RELEASE SAVEPOINT sp_ozel_merge")
+                birlestirilen += 1
+                aktarilan_adet += p["mevcut_adet"]
+            except Exception as e:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_ozel_merge")
+                hata.append({"ozel_kodu": p["ozel_kodu"], "sube_id": p["sube_id"], "hata": str(e)[:140]})
+        conn.commit()
+    return {"uygulandi": True, "birlestirilen": birlestirilen,
+            "aktarilan_adet": aktarilan_adet, "hata": hata}
+
+
 @router.post("/maliyet/alis-fiyat-kaydet")
 def ops_maliyet_alis_fiyat_kaydet(body: AlisFiyatBody):
     """Yeni alış fiyatı kaydeder veya günceller."""
