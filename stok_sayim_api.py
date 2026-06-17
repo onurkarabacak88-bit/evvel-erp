@@ -727,6 +727,9 @@ def _ensure_demirbas(cur) -> None:
         """
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_demirbas_durum_sube ON demirbas_durum (sube_id)")
+    # Sayılabilir demirbaş (masa/sandalye gibi çoklu) + hedef adet
+    cur.execute("ALTER TABLE demirbas_kalem ADD COLUMN IF NOT EXISTS sayilabilir BOOLEAN NOT NULL DEFAULT FALSE")
+    cur.execute("ALTER TABLE demirbas_durum ADD COLUMN IF NOT EXISTS hedef_adet INT")
     cur.execute("SELECT COUNT(*) AS n FROM demirbas_kalem")
     if int((cur.fetchone() or {}).get("n") or 0) == 0:
         for i, (kat, ad) in enumerate(DEMIRBAS_VARSAYILAN):
@@ -734,6 +737,17 @@ def _ensure_demirbas(cur) -> None:
                 "INSERT INTO demirbas_kalem (kategori, ad, sira) VALUES (%s,%s,%s)",
                 (kat, ad, i),
             )
+    # Mobilya + bazı servis kalemleri SAYILABILIR (masa/sandalye alt yapısı):
+    # adet + hedef tutulur, eksik = hedef - mevcut. İdempotent.
+    cur.execute(
+        """
+        UPDATE demirbas_kalem SET sayilabilir = TRUE
+        WHERE sayilabilir = FALSE AND (
+            kategori = 'Mobilya'
+            OR ad IN ('Tepsi','Sürahi / kupa setleri','Menü standı')
+        )
+        """
+    )
 
 
 @router.get("/demirbas/katalog")
@@ -742,7 +756,7 @@ def demirbas_katalog():
     with db() as (_, cur):
         _ensure_demirbas(cur)
         cur.execute(
-            "SELECT id, kategori, ad, sira FROM demirbas_kalem WHERE aktif=TRUE ORDER BY sira ASC, kategori ASC, ad ASC"
+            "SELECT id, kategori, ad, sira, sayilabilir FROM demirbas_kalem WHERE aktif=TRUE ORDER BY sira ASC, kategori ASC, ad ASC"
         )
         kalemler = [dict(r) for r in (cur.fetchall() or [])]
     return {"toplam": len(kalemler), "kalemler": kalemler}
@@ -758,8 +772,8 @@ def demirbas_durum_getir(sube_id: str):
         _ensure_demirbas(cur)
         cur.execute(
             """
-            SELECT k.id, k.kategori, k.ad, k.sira,
-                   d.durum, d.adet, d.not_aciklama, d.guncelleme, d.guncelleyen_ad
+            SELECT k.id, k.kategori, k.ad, k.sira, k.sayilabilir,
+                   d.durum, d.adet, d.hedef_adet, d.not_aciklama, d.guncelleme, d.guncelleyen_ad
             FROM demirbas_kalem k
             LEFT JOIN demirbas_durum d ON d.kalem_id = k.id AND d.sube_id = %s
             WHERE k.aktif = TRUE
@@ -781,6 +795,7 @@ class DemirbasDurumBody(BaseModel):
     kalem_id: str
     durum: str = "var"
     adet: Optional[int] = None
+    hedef_adet: Optional[int] = None
     not_aciklama: Optional[str] = None
     guncelleyen_ad: Optional[str] = None
 
@@ -799,13 +814,14 @@ def demirbas_durum_kaydet(body: DemirbasDurumBody):
         _ensure_demirbas(cur)
         cur.execute(
             """
-            INSERT INTO demirbas_durum (sube_id, kalem_id, durum, adet, not_aciklama, guncelleyen_ad, guncelleme)
-            VALUES (%s,%s,%s,%s,%s,%s,NOW())
+            INSERT INTO demirbas_durum (sube_id, kalem_id, durum, adet, hedef_adet, not_aciklama, guncelleyen_ad, guncelleme)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())
             ON CONFLICT (sube_id, kalem_id)
-            DO UPDATE SET durum=EXCLUDED.durum, adet=EXCLUDED.adet, not_aciklama=EXCLUDED.not_aciklama,
+            DO UPDATE SET durum=EXCLUDED.durum, adet=EXCLUDED.adet, hedef_adet=EXCLUDED.hedef_adet,
+                          not_aciklama=EXCLUDED.not_aciklama,
                           guncelleyen_ad=EXCLUDED.guncelleyen_ad, guncelleme=NOW()
             """,
-            (sid, kid, durum, body.adet, (body.not_aciklama or "").strip() or None,
+            (sid, kid, durum, body.adet, body.hedef_adet, (body.not_aciklama or "").strip() or None,
              (body.guncelleyen_ad or "").strip() or None),
         )
     return {"ok": True}
@@ -841,4 +857,110 @@ def demirbas_kalem_sil(kalem_id: str):
     with db() as (_, cur):
         _ensure_demirbas(cur)
         cur.execute("UPDATE demirbas_kalem SET aktif=FALSE WHERE id=%s", (kid,))
+    return {"ok": True}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ARIZA BİLDİRİM — şube paneli "Arıza Bildir" (demirbaş VEYA diğer alanlar).
+# Personel anlık bildirir; sahip listede görür, çözer.
+# ══════════════════════════════════════════════════════════════════════════════
+def _ensure_ariza(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ariza_bildirim (
+            id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            sube_id     TEXT NOT NULL,
+            alan        TEXT NOT NULL DEFAULT 'demirbas',  -- demirbas | diger
+            kalem_id    TEXT,                               -- demirbaş ise
+            baslik      TEXT NOT NULL,
+            aciklama    TEXT,
+            durum       TEXT NOT NULL DEFAULT 'acik',       -- acik | cozuldu
+            bildiren_ad TEXT,
+            cozum_not   TEXT,
+            cozum_ts    TIMESTAMPTZ,
+            olusturma   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_ariza_sube_durum ON ariza_bildirim (sube_id, durum, olusturma DESC)")
+
+
+class ArizaBildirBody(BaseModel):
+    sube_id: str
+    baslik: str
+    alan: str = "demirbas"           # demirbas | diger
+    kalem_id: Optional[str] = None   # demirbaş ise
+    aciklama: Optional[str] = None
+    bildiren_ad: Optional[str] = None
+
+
+@router.post("/ariza/bildir")
+def ariza_bildir(body: ArizaBildirBody):
+    """Şube paneli → arıza bildir. Demirbaş arızasıysa kalem_id; değilse alan='diger'."""
+    sid = (body.sube_id or "").strip()
+    baslik = (body.baslik or "").strip()
+    if not sid or not baslik:
+        raise HTTPException(400, "sube_id ve baslik zorunlu")
+    alan = (body.alan or "demirbas").strip().lower()
+    if alan not in ("demirbas", "diger"):
+        alan = "demirbas"
+    with db() as (_, cur):
+        _ensure_ariza(cur)
+        cur.execute(
+            """
+            INSERT INTO ariza_bildirim (sube_id, alan, kalem_id, baslik, aciklama, bildiren_ad)
+            VALUES (%s,%s,%s,%s,%s,%s) RETURNING id
+            """,
+            (sid, alan, (body.kalem_id or "").strip() or None, baslik,
+             (body.aciklama or "").strip() or None, (body.bildiren_ad or "").strip() or None),
+        )
+        aid = dict(cur.fetchone() or {}).get("id")
+    return {"ok": True, "id": aid}
+
+
+@router.get("/ariza/liste")
+def ariza_liste(sube_id: Optional[str] = None, durum: str = "acik"):
+    """Sahip: arıza bildirimleri (varsayılan açık olanlar). Şube paneli kendi açık sayısını da çeker."""
+    d = (durum or "acik").strip().lower()
+    with db() as (_, cur):
+        _ensure_ariza(cur)
+        q = """
+            SELECT a.id, a.sube_id, s.ad AS sube_adi, a.alan, a.kalem_id,
+                   k.ad AS kalem_ad, a.baslik, a.aciklama, a.durum, a.bildiren_ad,
+                   a.cozum_not, a.olusturma
+            FROM ariza_bildirim a
+            LEFT JOIN subeler s ON s.id = a.sube_id
+            LEFT JOIN demirbas_kalem k ON k.id = a.kalem_id
+            WHERE 1=1
+        """
+        params: List[Any] = []
+        if d in ("acik", "cozuldu"):
+            q += " AND a.durum=%s"
+            params.append(d)
+        sid = (sube_id or "").strip()
+        if sid:
+            q += " AND a.sube_id=%s"
+            params.append(sid)
+        q += " ORDER BY a.olusturma DESC LIMIT 200"
+        cur.execute(q, tuple(params))
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+        for r in rows:
+            r["olusturma"] = str(r.get("olusturma") or "")
+    return {"toplam": len(rows), "arizalar": rows}
+
+
+class ArizaCozBody(BaseModel):
+    cozum_not: Optional[str] = None
+
+
+@router.post("/ariza/{ariza_id}/coz")
+def ariza_coz(ariza_id: str, body: ArizaCozBody):
+    """Sahip: arızayı çözüldü işaretle."""
+    aid = (ariza_id or "").strip()
+    with db() as (_, cur):
+        _ensure_ariza(cur)
+        cur.execute(
+            "UPDATE ariza_bildirim SET durum='cozuldu', cozum_not=%s, cozum_ts=NOW() WHERE id=%s AND durum='acik'",
+            ((body.cozum_not or "").strip() or None, aid),
+        )
     return {"ok": True}
