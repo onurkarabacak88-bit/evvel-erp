@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../utils/api';
 
 const VT_ETIKET = {
@@ -874,6 +874,172 @@ function KapanisMuhurBandi({ oturum }) {
   );
 }
 
+// ── Zorunlu Stok Sayımı (TAM KİLİT) ──────────────────────────────────────────
+// Ekran sayım bitene kadar tek aksiyona kilitli. Ürün ÜRÜN sıralı, her ürün
+// saymadan diğerine geçilmez. Kutuya ÇİFT-TIK → rakam tuş takımı açılır.
+function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
+  const kalemler = gorev.kalemler || [];
+  const [idx, setIdx] = useState(0);
+  const [degerler, setDegerler] = useState({}); // kalem_kodu -> { val: string, girildi: bool }
+  const [keypadAcik, setKeypadAcik] = useState(false);
+  const [kaydediliyor, setKaydediliyor] = useState(false);
+  const [hata, setHata] = useState('');
+  const sonTikRef = useRef(0);
+
+  // Görevi 'basladi' durumuna geçir (durum makinesi)
+  useEffect(() => {
+    api(`/stok-sayim/gorev/${gorev.id}/basla`, { method: 'POST' }).catch(() => {});
+  }, [gorev.id]);
+
+  const aktif = kalemler[idx];
+  const aktifKod = aktif ? String(aktif.kalem_kodu) : '';
+  const aktifDeger = degerler[aktifKod] || { val: '', girildi: false };
+  const toplam = kalemler.length;
+  const sayilanAdet = Object.values(degerler).filter((d) => d.girildi).length;
+  const sonUrun = idx >= toplam - 1;
+
+  const kutuTik = () => {
+    // Çift-tık (350ms içinde 2 dokunuş) → rakam girişi açılır (kaza ile değişmesin)
+    const now = Date.now();
+    if (now - sonTikRef.current < 350) setKeypadAcik(true);
+    sonTikRef.current = now;
+  };
+
+  const tusBas = (t) => {
+    setDegerler((m) => {
+      const cur = m[aktifKod]?.val || '';
+      let yeni = cur;
+      if (t === 'sil') yeni = cur.slice(0, -1);
+      else if (cur.length < 5) yeni = (cur === '0' ? '' : cur) + t;
+      return { ...m, [aktifKod]: { val: yeni, girildi: false } };
+    });
+  };
+
+  const onayla = () => {
+    // 0 dahil her sayı geçerli; ama boşsa "saymadan geçilemez"
+    setDegerler((m) => {
+      const cur = m[aktifKod]?.val;
+      if (cur === undefined || cur === '') return m;
+      return { ...m, [aktifKod]: { val: cur, girildi: true } };
+    });
+    setKeypadAcik(false);
+  };
+
+  const ileri = () => {
+    setHata('');
+    if (!aktifDeger.girildi) { setHata('Önce bu ürünü say (kutuya çift dokun).'); return; }
+    if (!sonUrun) { setIdx(idx + 1); return; }
+    tamamla();
+  };
+
+  const tamamla = async () => {
+    setKaydediliyor(true);
+    setHata('');
+    try {
+      const sayim_sonuc = kalemler.map((k) => ({
+        kalem_kodu: k.kalem_kodu,
+        sayilan_adet: parseInt(degerler[String(k.kalem_kodu)]?.val || '0', 10) || 0,
+      }));
+      await api(`/stok-sayim/gorev/${gorev.id}/kaydet`, { method: 'POST', body: { sayim_sonuc } });
+      onBitti();
+    } catch (e) {
+      setHata(e.message || 'Kayıt başarısız');
+      setKaydediliyor(false);
+    }
+  };
+
+  const modBilgi = gorev.mod === 'kalibrasyon'
+    ? { renk: '#C8956A', metin: '🎯 İLK SAYIM — doğru stoğu sen kuruyorsun' }
+    : { renk: '#4caf84', metin: '🔍 KONTROL — sistemle karşılaştırılacak' };
+
+  const PAGE = { minHeight: '100vh', background: '#0f1117', color: '#e8e9ec', fontFamily: 'Instrument Sans, sans-serif' };
+  const KEY = {
+    fontSize: 28, fontWeight: 800, padding: '18px 0', borderRadius: 14,
+    background: '#1a1d24', border: '1px solid #2a2d35', color: '#e8e9ec', cursor: 'pointer',
+  };
+
+  return (
+    <div style={PAGE}>
+      {/* Kilit başlığı — çıkış yok, başka sekme yok */}
+      <div style={{ padding: '16px 20px', borderBottom: '1px solid #2a2d35', position: 'sticky', top: 0, background: '#0f1117', zIndex: 10 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+          🔒 ZORUNLU STOK SAYIMI
+        </div>
+        <div style={{ fontSize: 12, color: '#6b6f7a', marginTop: 3 }}>
+          {subeBilgi?.ad || 'Şube'} · {oturum.ad_soyad} · bitmeden başka işlem yapılamaz
+        </div>
+        <div style={{ marginTop: 8, fontSize: 12, fontWeight: 700, color: modBilgi.renk }}>{modBilgi.metin}</div>
+      </div>
+
+      {/* İlerleme */}
+      <div style={{ padding: '14px 20px 0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6b6f7a', marginBottom: 6 }}>
+          <span>Ürün {idx + 1} / {toplam}</span>
+          <span>{sayilanAdet} sayıldı</span>
+        </div>
+        <div style={{ height: 6, borderRadius: 3, background: '#1a1d24', overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: `${Math.round((sayilanAdet / toplam) * 100)}%`, background: modBilgi.renk, transition: 'width .2s' }} />
+        </div>
+      </div>
+
+      {/* Aktif ürün kartı */}
+      <div style={{ padding: '20px' }}>
+        <div style={{ background: '#15181f', border: '1px solid #2a2d35', borderRadius: 16, padding: '24px 20px', textAlign: 'center' }}>
+          <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 4 }}>{aktif?.kalem_adi || '—'}</div>
+          <div style={{ fontSize: 12, color: '#6b6f7a', marginBottom: 18 }}>Kaç adet? (kutuya çift dokun)</div>
+          <div
+            onClick={kutuTik}
+            style={{
+              fontSize: 46, fontWeight: 900, padding: '18px', borderRadius: 14, cursor: 'pointer',
+              background: keypadAcik ? 'rgba(200,149,106,0.12)' : '#0f1117',
+              border: `2px solid ${aktifDeger.girildi ? '#4caf84' : keypadAcik ? '#C8956A' : '#2a2d35'}`,
+              color: aktifDeger.val === '' ? '#3a3d45' : '#fff',
+            }}
+          >
+            {aktifDeger.val === '' ? '—' : aktifDeger.val}{aktifDeger.girildi ? ' ✓' : ''}
+          </div>
+        </div>
+
+        {/* Rakam tuş takımı (çift-tıkla açılır) */}
+        {keypadAcik && (
+          <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+            {['1','2','3','4','5','6','7','8','9'].map((t) => (
+              <button key={t} onClick={() => tusBas(t)} style={KEY}>{t}</button>
+            ))}
+            <button onClick={() => tusBas('sil')} style={{ ...KEY, fontSize: 22 }}>⌫</button>
+            <button onClick={() => tusBas('0')} style={KEY}>0</button>
+            <button onClick={onayla} style={{ ...KEY, background: '#4caf84', border: 'none', color: '#fff', fontSize: 18 }}>Tamam</button>
+          </div>
+        )}
+
+        {hata && <div style={{ marginTop: 14, color: '#e57373', fontSize: 13, textAlign: 'center' }}>{hata}</div>}
+
+        {/* Gezinme */}
+        <div style={{ marginTop: 20, display: 'flex', gap: 10 }}>
+          {idx > 0 && (
+            <button onClick={() => { setIdx(idx - 1); setKeypadAcik(false); setHata(''); }} style={{
+              flex: '0 0 auto', padding: '16px 18px', borderRadius: 12, background: 'none',
+              border: '1px solid #2a2d35', color: '#6b6f7a', fontSize: 14, cursor: 'pointer',
+            }}>← Önceki</button>
+          )}
+          <button
+            onClick={ileri}
+            disabled={kaydediliyor || !aktifDeger.girildi}
+            style={{
+              flex: 1, padding: '16px', borderRadius: 12, border: 'none', fontSize: 16, fontWeight: 800,
+              cursor: (kaydediliyor || !aktifDeger.girildi) ? 'not-allowed' : 'pointer',
+              background: (kaydediliyor || !aktifDeger.girildi) ? '#2a2d35' : (sonUrun ? '#4caf84' : '#C8956A'),
+              color: (kaydediliyor || !aktifDeger.girildi) ? '#6b6f7a' : '#fff',
+            }}
+          >
+            {kaydediliyor ? 'Kaydediliyor…' : sonUrun ? '✓ Sayımı Tamamla' : 'Sonraki Ürün →'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Ana Görev Sayfası ────────────────────────────────────────────────────────
 export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
   const [data, setData] = useState(null);
@@ -885,6 +1051,17 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
   const [isDevreden, setIsDevreden] = useState(false);
   const [kasaMuhurlu, setKasaMuhurlu] = useState(false);
   const [mesaimAcik, setMesaimAcik] = useState(true);
+  // Zorunlu stok sayımı: atanmışsa ekran TAM KİLİTLENİR (sayım dışı her şey kapalı).
+  const [sayimGorev, setSayimGorev] = useState(null);
+
+  // Personelin aktif zorunlu sayım görevi var mı? (en yüksek öncelikli kilit)
+  const sayimYukle = useCallback(() => {
+    if (!oturum?.sube_id || !oturum?.personel_id) return;
+    api(`/stok-sayim/personel-gorev?sube_id=${encodeURIComponent(oturum.sube_id)}&personel_id=${encodeURIComponent(oturum.personel_id)}`)
+      .then((r) => setSayimGorev(r?.var ? r.gorev : null))
+      .catch(() => {});
+  }, [oturum?.sube_id, oturum?.personel_id]);
+  useEffect(() => { sayimYukle(); }, [sayimYukle]);
 
   // Kapanış mühür bandı: kapanış vardiyasında her zaman, diğer vardiyalarda
   // SADECE bugün için bekleyen/devam eden bir kasa devri yoksa (yani kişi
@@ -965,6 +1142,17 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
       setIslem(m => ({ ...m, [g.id]: false }));
     }
   };
+
+  // EN YÜKSEK ÖNCELİK: zorunlu stok sayımı atanmışsa ekran TAM KİLİTLENİR.
+  // Sayım bitene (veya sahip uzaktan açana) kadar başka hiçbir şey görünmez.
+  if (sayimGorev) return (
+    <StokSayimKilit
+      oturum={oturum}
+      subeBilgi={subeBilgi}
+      gorev={sayimGorev}
+      onBitti={() => { setSayimGorev(null); sayimYukle(); }}
+    />
+  );
 
   if (siparisAcik) return (
     <SiparisEkrani
