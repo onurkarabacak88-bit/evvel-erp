@@ -259,6 +259,7 @@ export default function App() {
   const mainRef = useRef(null);
   const Page = PAGES[page] || Panel;
   const [onayBekleyen, setOnayBekleyen] = useState(0);
+  const [ciroBekleyen, setCiroBekleyen] = useState(0);
   const [bugunAnomali, setBugunAnomali] = useState(0);
   const [yeniBasvuru, setYeniBasvuru] = useState(0);
   // Sayfa her açıldığında (yenileme/yeniden giriş) şifre yeniden istensin —
@@ -270,6 +271,10 @@ export default function App() {
     const yukle = () => {
       api('/onay-kuyrugu?durum=bekliyor&limit=400')
         .then(d => setOnayBekleyen(Array.isArray(d) ? d.length : 0))
+        .catch(() => {});
+      // Bekleyen ciro onayı (ciro taslakları) — menüde sayı rozeti için
+      api('/ciro-taslak?durum=bekliyor')
+        .then(d => setCiroBekleyen(Array.isArray(d) ? d.length : 0))
         .catch(() => {});
       // Akıllı Denetim bugün anomali sayısı
       const bugun = new Date().toISOString().slice(0, 10);
@@ -342,6 +347,17 @@ export default function App() {
                       fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
                     }}>
                       {onayBekleyen}
+                    </span>
+                  )}
+                  {item.id === 'ciro-taslak-onay' && ciroBekleyen > 0 && (
+                    <span style={{
+                      position: 'absolute', top: '50%', right: 10,
+                      transform: 'translateY(-50%)',
+                      minWidth: 18, height: 18, padding: '0 5px',
+                      borderRadius: 999, background: '#22c55e', color: '#fff',
+                      fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
+                    }} title="Bekleyen ciro onayı">
+                      {ciroBekleyen}
                     </span>
                   )}
                   {item.id === 'is-basvurusu' && yeniBasvuru > 0 && (
