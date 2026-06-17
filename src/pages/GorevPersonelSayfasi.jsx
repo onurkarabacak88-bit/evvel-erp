@@ -930,6 +930,16 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
     sonTikRef.current = now;
   };
 
+  // +/− adım: rakamı tek dokunuşla artır/azalt (girildi sayılır → ileri gidebilir).
+  // Tuş takımı VEYA +/− — iki yolla da girilebilir.
+  const adim = (delta) => {
+    setDegerler((m) => {
+      const cur = parseInt(m[aktifKod]?.val || '0', 10) || 0;
+      const yeni = Math.max(0, cur + delta);
+      return { ...m, [aktifKod]: { val: String(yeni), girildi: true } };
+    });
+  };
+
   const tusBas = (t) => {
     setDegerler((m) => {
       const cur = m[aktifKod]?.val || '';
@@ -1007,21 +1017,54 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
         </div>
       </div>
 
-      {/* Aktif ürün kartı */}
-      <div style={{ padding: '20px' }}>
-        <div style={{ background: '#15181f', border: '1px solid #2a2d35', borderRadius: 16, padding: '24px 20px', textAlign: 'center' }}>
-          <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 4 }}>{aktif?.kalem_adi || '—'}</div>
-          <div style={{ fontSize: 12, color: '#6b6f7a', marginBottom: 18 }}>Kaç adet? (kutuya çift dokun)</div>
-          <div
-            onClick={kutuTik}
+      <div style={{ padding: '14px 20px 20px' }}>
+        {/* Gezinme — ÜSTTE (Sonraki Ürün üstte olsun) */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+          {idx > 0 && (
+            <button onClick={() => { setIdx(idx - 1); setKeypadAcik(false); setHata(''); }} style={{
+              flex: '0 0 auto', padding: '14px 16px', borderRadius: 12, background: 'none',
+              border: '1px solid #2a2d35', color: '#6b6f7a', fontSize: 14, cursor: 'pointer',
+            }}>← Önceki</button>
+          )}
+          <button
+            onClick={ileri}
+            disabled={kaydediliyor || !aktifDeger.girildi}
             style={{
-              fontSize: 46, fontWeight: 900, padding: '18px', borderRadius: 14, cursor: 'pointer',
-              background: keypadAcik ? 'rgba(200,149,106,0.12)' : '#0f1117',
-              border: `2px solid ${aktifDeger.girildi ? '#4caf84' : keypadAcik ? '#C8956A' : '#2a2d35'}`,
-              color: aktifDeger.val === '' ? '#3a3d45' : '#fff',
+              flex: 1, padding: '15px', borderRadius: 12, border: 'none', fontSize: 16, fontWeight: 800,
+              cursor: (kaydediliyor || !aktifDeger.girildi) ? 'not-allowed' : 'pointer',
+              background: (kaydediliyor || !aktifDeger.girildi) ? '#2a2d35' : (sonUrun ? '#4caf84' : '#C8956A'),
+              color: (kaydediliyor || !aktifDeger.girildi) ? '#6b6f7a' : '#fff',
             }}
           >
-            {aktifDeger.val === '' ? '—' : aktifDeger.val}{aktifDeger.girildi ? ' ✓' : ''}
+            {kaydediliyor ? 'Kaydediliyor…' : sonUrun ? '✓ Sayımı Tamamla' : 'Sonraki Ürün →'}
+          </button>
+        </div>
+
+        {/* Aktif ürün kartı */}
+        <div style={{ background: '#15181f', border: '1px solid #2a2d35', borderRadius: 16, padding: '20px', textAlign: 'center' }}>
+          <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 4 }}>{aktif?.kalem_adi || '—'}</div>
+          <div style={{ fontSize: 12, color: '#6b6f7a', marginBottom: 16 }}>Kaç adet? +/− ile say ya da kutuya çift dokun</div>
+          {/* [−] [sayı kutusu] [+] — iki yolla da girilebilir */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center' }}>
+            <button onClick={() => adim(-1)} style={{
+              width: 56, height: 56, borderRadius: 14, border: '1px solid #2a2d35',
+              background: '#22262f', color: '#e8e9ec', fontSize: 28, fontWeight: 800, cursor: 'pointer', flex: '0 0 auto',
+            }}>−</button>
+            <div
+              onClick={kutuTik}
+              style={{
+                flex: 1, fontSize: 44, fontWeight: 900, padding: '14px', borderRadius: 14, cursor: 'pointer',
+                background: keypadAcik ? 'rgba(200,149,106,0.12)' : '#0f1117',
+                border: `2px solid ${aktifDeger.girildi ? '#4caf84' : keypadAcik ? '#C8956A' : '#2a2d35'}`,
+                color: aktifDeger.val === '' ? '#3a3d45' : '#fff',
+              }}
+            >
+              {aktifDeger.val === '' ? '—' : aktifDeger.val}{aktifDeger.girildi ? ' ✓' : ''}
+            </div>
+            <button onClick={() => adim(1)} style={{
+              width: 56, height: 56, borderRadius: 14, border: 'none',
+              background: '#C8956A', color: '#fff', fontSize: 28, fontWeight: 800, cursor: 'pointer', flex: '0 0 auto',
+            }}>+</button>
           </div>
         </div>
 
@@ -1038,28 +1081,6 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
         )}
 
         {hata && <div style={{ marginTop: 14, color: '#e57373', fontSize: 13, textAlign: 'center' }}>{hata}</div>}
-
-        {/* Gezinme */}
-        <div style={{ marginTop: 20, display: 'flex', gap: 10 }}>
-          {idx > 0 && (
-            <button onClick={() => { setIdx(idx - 1); setKeypadAcik(false); setHata(''); }} style={{
-              flex: '0 0 auto', padding: '16px 18px', borderRadius: 12, background: 'none',
-              border: '1px solid #2a2d35', color: '#6b6f7a', fontSize: 14, cursor: 'pointer',
-            }}>← Önceki</button>
-          )}
-          <button
-            onClick={ileri}
-            disabled={kaydediliyor || !aktifDeger.girildi}
-            style={{
-              flex: 1, padding: '16px', borderRadius: 12, border: 'none', fontSize: 16, fontWeight: 800,
-              cursor: (kaydediliyor || !aktifDeger.girildi) ? 'not-allowed' : 'pointer',
-              background: (kaydediliyor || !aktifDeger.girildi) ? '#2a2d35' : (sonUrun ? '#4caf84' : '#C8956A'),
-              color: (kaydediliyor || !aktifDeger.girildi) ? '#6b6f7a' : '#fff',
-            }}
-          >
-            {kaydediliyor ? 'Kaydediliyor…' : sonUrun ? '✓ Sayımı Tamamla' : 'Sonraki Ürün →'}
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -1086,7 +1107,14 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
       .then((r) => setSayimGorev(r?.var ? r.gorev : null))
       .catch(() => {});
   }, [oturum?.sube_id, oturum?.personel_id]);
-  useEffect(() => { sayimYukle(); }, [sayimYukle]);
+  // Sahip uzaktan görev atayınca personel sayfayı yenilemeden kilit gelsin:
+  // 15 sn'de bir yokla (aktif sayım yokken). Aktif sayım varsa kilit ekranı
+  // kendi içinde çalışır; yoklama onu bozmaz (kalemler sabit).
+  useEffect(() => {
+    sayimYukle();
+    const t = setInterval(sayimYukle, 15000);
+    return () => clearInterval(t);
+  }, [sayimYukle]);
 
   // Kapanış mühür bandı: kapanış vardiyasında her zaman, diğer vardiyalarda
   // SADECE bugün için bekleyen/devam eden bir kasa devri yoksa (yani kişi
