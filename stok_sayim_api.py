@@ -613,6 +613,43 @@ def gorev_onayla(gorev_id: str, body: GorevOnaylaBody):
     return {"ok": True, "durum": "onaylandi", "duzeltme_sayisi": duzeltme_sayisi, "mod": mod}
 
 
+@router.get("/duzeltme-iz")
+def duzeltme_iz(gorev_id: Optional[str] = None, sube_id: Optional[str] = None, limit: int = 500):
+    """SALT-OKUR: envanter_duzeltme iz defteri — sayım onayında sube_depo_stok'a yazılan
+    HER değişiklik (eski→yeni, delta, karar). 'Sayım var olanı ezdi mi, ne kadar?' kanıtı.
+    Özet: kaç kalem ezildi (delta≠0), karar dağılımı (sayim/sistem), toplam |delta|."""
+    gid = (gorev_id or "").strip() or None
+    sid = (sube_id or "").strip() or None
+    lim = max(1, min(2000, int(limit or 500)))
+    with db() as (_, cur):
+        _ensure_tablolar(cur)
+        kos, par = [], []
+        if gid:
+            kos.append("gorev_id=%s"); par.append(gid)
+        if sid:
+            kos.append("sube_id=%s"); par.append(sid)
+        where = ("WHERE " + " AND ".join(kos)) if kos else ""
+        par.append(lim)
+        cur.execute(
+            f"""SELECT sube_id, kalem_adi, eski_adet, sayilan_adet, yeni_adet, delta,
+                       karar, neden, olusturma::text AS olusturma
+                FROM envanter_duzeltme {where}
+                ORDER BY olusturma DESC LIMIT %s""",
+            tuple(par),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    ezilen = [r for r in rows if int(r.get("delta") or 0) != 0]
+    return {
+        "toplam_iz": len(rows),
+        "ezilen_kalem": len(ezilen),          # eski değeri DEĞİŞEN (üzerine yazılan) kalem
+        "degismeyen": len(rows) - len(ezilen),
+        "karar_sayim": sum(1 for r in rows if r.get("karar") == "sayim"),
+        "karar_sistem": sum(1 for r in rows if r.get("karar") == "sistem"),
+        "toplam_mutlak_delta": sum(abs(int(r.get("delta") or 0)) for r in rows),
+        "ornekler": ezilen[:30],
+    }
+
+
 # ────────────────────────────── 9) SAHİP: UZAKTAN KİLİT AÇMA (GÜVENLİK VALFİ) ──────────────────────────────
 @router.post("/gorev/{gorev_id}/kilit-ac")
 def gorev_kilit_ac(gorev_id: str, body: KilitAcBody):
