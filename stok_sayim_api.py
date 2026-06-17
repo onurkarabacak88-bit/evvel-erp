@@ -233,11 +233,14 @@ def gorev_ata(body: GorevAtaBody):
 
         # Kalemler: 'tam' → TÜM ürün kataloğu (siparis_urun); 'set' → verilen liste.
         # sube_depo_stok seyrek olduğu için 'tam'da onu KULLANMA (Alsancak'ta 3 çıkıyordu).
+        # kategori_ad da saklanır → personel ekranında kategori geçiş efekti için.
         stok_map = _sube_stok_map(cur, sube_id)
+        katalog = _katalog_kalemler(cur)
+        kat_map = {k["kalem_kodu"]: (k.get("kategori_ad") or "") for k in katalog}
         if kapsam == "tam":
             kalemler = [
-                {"kalem_kodu": k["kalem_kodu"], "kalem_adi": k["kalem_adi"]}
-                for k in _katalog_kalemler(cur)
+                {"kalem_kodu": k["kalem_kodu"], "kalem_adi": k["kalem_adi"], "kategori_ad": k.get("kategori_ad") or ""}
+                for k in katalog
             ]
         else:
             kalemler = []
@@ -248,7 +251,7 @@ def gorev_ata(body: GorevAtaBody):
                 ad = str((it or {}).get("kalem_adi") or "").strip() or (
                     stok_map.get(kk, {}).get("kalem_adi") or kk
                 )
-                kalemler.append({"kalem_kodu": kk, "kalem_adi": ad})
+                kalemler.append({"kalem_kodu": kk, "kalem_adi": ad, "kategori_ad": kat_map.get(kk, "")})
         if not kalemler:
             raise HTTPException(
                 400,

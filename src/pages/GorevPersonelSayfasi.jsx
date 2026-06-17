@@ -923,6 +923,15 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
   const sayilanAdet = Object.values(degerler).filter((d) => d.girildi).length;
   const sonUrun = idx >= toplam - 1;
 
+  // Kategori geçiş efekti: aktif ürünün kategorisi + kategori içi konum + motive yazı
+  const aktifKat = (aktif?.kategori_ad || '').trim();
+  let katToplam = 0, katSira = 0;
+  kalemler.forEach((k, i) => {
+    if ((k.kategori_ad || '').trim() === aktifKat) { katToplam += 1; if (i <= idx) katSira += 1; }
+  });
+  const MOTIV = ['sen yaparsın 💪', 'harika gidiyorsun 🔥', 'böyle devam ✨', 'odaklan 🎯', 'az kaldı 👏', 'süpersin 🌟'];
+  const motiv = MOTIV[(aktifKat.length + idx) % MOTIV.length];
+
   const kutuTik = () => {
     // Çift-tık (350ms içinde 2 dokunuş) → rakam girişi açılır (kaza ile değişmesin)
     const now = Date.now();
@@ -995,6 +1004,7 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
 
   return (
     <div style={PAGE}>
+      <style>{`@keyframes ssKatGiris{from{opacity:0;transform:translateY(-10px) scale(.97)}to{opacity:1;transform:none}}`}</style>
       {/* Kilit başlığı — çıkış yok, başka sekme yok */}
       <div style={{ padding: '16px 20px', borderBottom: '1px solid #2a2d35', position: 'sticky', top: 0, background: '#0f1117', zIndex: 10 }}>
         <div style={{ fontSize: 16, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1039,6 +1049,18 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
             {kaydediliyor ? 'Kaydediliyor…' : sonUrun ? '✓ Sayımı Tamamla' : 'Sonraki Ürün →'}
           </button>
         </div>
+
+        {/* Kategori geçiş bannerı — kategori değişince yeniden animasyon (key) */}
+        {aktifKat && (
+          <div key={aktifKat} style={{
+            animation: 'ssKatGiris .38s ease', marginBottom: 14,
+            background: 'linear-gradient(135deg, rgba(200,149,106,0.18), rgba(76,175,132,0.12))',
+            border: '1px solid rgba(200,149,106,0.35)', borderRadius: 14, padding: '14px 16px',
+          }}>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>Şimdi <span style={{ color: '#C8956A' }}>{aktifKat}</span> sayalım!</div>
+            <div style={{ fontSize: 12, color: '#9aa0ab', marginTop: 3 }}>{motiv} · {aktifKat} {katSira}/{katToplam}</div>
+          </div>
+        )}
 
         {/* Aktif ürün kartı */}
         <div style={{ background: '#15181f', border: '1px solid #2a2d35', borderRadius: 16, padding: '20px', textAlign: 'center' }}>
