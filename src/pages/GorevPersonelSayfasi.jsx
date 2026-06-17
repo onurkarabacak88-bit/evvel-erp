@@ -1001,7 +1001,8 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
   const ileri = () => {
     setHata('');
     if (!aktifDeger.girildi) { setHata('Önce bu ürünü say (kutuya çift dokun).'); return; }
-    if (!sonUrun) { setIdx(idx + 1); return; }
+    // Sonraki ürüne geçince klavye KAPANIR — yeni üründe tekrar çift-tıklayana kadar açılmaz
+    if (!sonUrun) { setIdx(idx + 1); setKeypadAcik(false); return; }
     tamamla();
   };
 
