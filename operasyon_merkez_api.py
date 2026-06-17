@@ -13138,6 +13138,61 @@ def ops_maliyet_stok_kalemleri():
     return {"kalemler": temiz, "toplam": len(temiz), "gizlenen_kopya": gizlenen}
 
 
+@router.get("/maliyet/depo-saglik")
+def ops_depo_saglik():
+    """SALT-OKUR depo mekanizması sağlık taraması — hiçbir şeyi değiştirmez.
+    Stok düşüş hatası (kalem_kodu uyumsuzluğu / P2), hayalet stok (P1), fazla-rezerve,
+    takılı sevkiyat ve öksüz (orphan) kod sayılarını döner. Depo düşüş/bağlantı
+    hatalarının CANLI durumunu ölçmek için."""
+    out: Dict[str, Any] = {}
+
+    def _sorgu(label: str, sql: str, params: tuple = ()):  # SAVEPOINT'li güvenli tekil sorgu
+        try:
+            cur.execute("SAVEPOINT sp_ds")
+            cur.execute(sql, params)
+            r = cur.fetchone()
+            cur.execute("RELEASE SAVEPOINT sp_ds")
+            return dict(r) if r else {}
+        except Exception as e:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_ds"); cur.execute("RELEASE SAVEPOINT sp_ds")
+            except Exception:
+                pass
+            return {"_hata": str(e)[:80]}
+
+    with db() as (conn, cur):
+        out["stok_dusme_hatasi"] = _sorgu(
+            "sdh", "SELECT COUNT(*) AS adet, MAX(tarih)::text AS son FROM sube_operasyon_uyari WHERE tip='STOK_DUSME_HATASI'")
+        out["hayalet_stok"] = _sorgu(
+            "hs", "SELECT COUNT(*) AS adet, MAX(tarih)::text AS son FROM sube_operasyon_uyari WHERE tip='HAYALET_STOK'")
+        out["fazla_rezerve"] = _sorgu(
+            "fr", "SELECT COUNT(*) AS adet FROM sube_depo_stok WHERE rezerve_adet > mevcut_adet")
+        out["yolda_takili"] = _sorgu(
+            "yt", "SELECT COUNT(*) AS adet FROM stok_yolda WHERE durum='yolda'")
+        out["orphan_kod_yolda"] = _sorgu(
+            "ok", """SELECT COUNT(DISTINCT y.kalem_kodu) AS adet FROM stok_yolda y
+                     WHERE y.kalem_kodu IS NOT NULL AND y.kalem_kodu <> ''
+                       AND NOT EXISTS (SELECT 1 FROM sube_depo_stok d WHERE d.kalem_kodu=y.kalem_kodu)
+                       AND NOT EXISTS (SELECT 1 FROM merkez_stok_kart m WHERE m.kalem_kodu=y.kalem_kodu)""")
+        # Son 10 stok hata örneği (teşhis için)
+        try:
+            cur.execute("SAVEPOINT sp_ds2")
+            cur.execute(
+                """SELECT tip, sube_id, kalem_kodu, mesaj, tarih::text AS tarih
+                   FROM sube_operasyon_uyari
+                   WHERE tip IN ('STOK_DUSME_HATASI','HAYALET_STOK')
+                   ORDER BY tarih DESC, id DESC LIMIT 10""")
+            out["ornekler"] = [dict(r) for r in (cur.fetchall() or [])]
+            cur.execute("RELEASE SAVEPOINT sp_ds2")
+        except Exception:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_ds2"); cur.execute("RELEASE SAVEPOINT sp_ds2")
+            except Exception:
+                pass
+            out["ornekler"] = []
+    return out
+
+
 @router.post("/maliyet/ozel-kopya-temizle")
 def ops_maliyet_ozel_kopya_temizle(uygula: bool = Query(False)):
     """Legacy 'ozel__' yedek depo kalemlerini KANONİK (ozel__ olmayan, en çok şubeli)
