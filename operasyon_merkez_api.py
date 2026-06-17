@@ -13117,7 +13117,25 @@ def ops_maliyet_stok_kalemleri():
             """
         )
         rows = [dict(r) for r in cur.fetchall()]
-    return {"kalemler": rows, "toplam": len(rows)}
+
+    # Legacy 'ozel__' yedek kalemleri TEKİLLEŞTİR: aynı adda kanonik (ozel__ olmayan,
+    # genelde UUID kodlu, çok-şubeli) bir kalem varsa, ozel__ kopyayı eşleştirme
+    # listesinden DÜŞ. Kök sebep: sube_panel urun_id eksikken ozel__<ad> uydururdu
+    # (artık olmamalı). Bu sadece GÖRÜNÜM tekilleştirmesi — stok verisine dokunmaz.
+    kanonik_adlar = {
+        str(r.get("kalem_adi") or "").strip().lower()
+        for r in rows
+        if not str(r.get("kalem_kodu") or "").startswith("ozel__")
+    }
+    temiz = [
+        r for r in rows
+        if not (
+            str(r.get("kalem_kodu") or "").startswith("ozel__")
+            and str(r.get("kalem_adi") or "").strip().lower() in kanonik_adlar
+        )
+    ]
+    gizlenen = len(rows) - len(temiz)
+    return {"kalemler": temiz, "toplam": len(temiz), "gizlenen_kopya": gizlenen}
 
 
 @router.post("/maliyet/alis-fiyat-kaydet")
