@@ -1065,7 +1065,19 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
       </div>
 
       <div style={{ padding: '14px 20px 20px' }}>
-        {/* Gezinme — ÜSTTE (Sonraki Ürün üstte olsun) */}
+        {/* Kategori geçiş bannerı — EN ÜSTTE (kategori değişince yeniden animasyon) */}
+        {aktifKat && (
+          <div key={aktifKat} style={{
+            animation: 'ssKatGiris .38s ease', marginBottom: 14,
+            background: 'linear-gradient(135deg, rgba(200,149,106,0.18), rgba(76,175,132,0.12))',
+            border: '1px solid rgba(200,149,106,0.35)', borderRadius: 14, padding: '14px 16px',
+          }}>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>Şimdi <span style={{ color: '#C8956A' }}>{aktifKat}</span> sayalım!</div>
+            <div style={{ fontSize: 12, color: '#9aa0ab', marginTop: 3 }}>{motiv} · {aktifKat} {katSira}/{katToplam}</div>
+          </div>
+        )}
+
+        {/* Gezinme — bannerın altında */}
         <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
           {idx > 0 && (
             <button onClick={() => { setIdx(idx - 1); setKeypadAcik(false); setHata(''); }} style={{
@@ -1086,18 +1098,6 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
             {kaydediliyor ? 'Kaydediliyor…' : sonUrun ? '✓ Sayımı Tamamla' : 'Sonraki Ürün →'}
           </button>
         </div>
-
-        {/* Kategori geçiş bannerı — kategori değişince yeniden animasyon (key) */}
-        {aktifKat && (
-          <div key={aktifKat} style={{
-            animation: 'ssKatGiris .38s ease', marginBottom: 14,
-            background: 'linear-gradient(135deg, rgba(200,149,106,0.18), rgba(76,175,132,0.12))',
-            border: '1px solid rgba(200,149,106,0.35)', borderRadius: 14, padding: '14px 16px',
-          }}>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>Şimdi <span style={{ color: '#C8956A' }}>{aktifKat}</span> sayalım!</div>
-            <div style={{ fontSize: 12, color: '#9aa0ab', marginTop: 3 }}>{motiv} · {aktifKat} {katSira}/{katToplam}</div>
-          </div>
-        )}
 
         {/* Aktif ürün kartı */}
         <div style={{ background: '#15181f', border: '1px solid #2a2d35', borderRadius: 16, padding: '20px', textAlign: 'center' }}>
