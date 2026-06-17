@@ -1025,7 +1025,10 @@ def sube_acilis_geri_al(sube_id: str, uygula: bool = False):
             bloke.append("ciro_taslagi")
         if _say("SELECT COUNT(*) AS n FROM sube_operasyon_event WHERE sube_id=%s AND tarih=%s AND tip='KAPANIS' AND durum='tamamlandi'", (sid, g)) > 0:
             bloke.append("kapanis_yapilmis")
-        if _say("SELECT COUNT(*) AS n FROM sube_operasyon_event WHERE sube_id=%s AND tarih=%s AND tip NOT IN ('ACILIS','KAPANIS') AND durum='tamamlandi'", (sid, g)) > 0:
+        # KONTROL = açılışın otomatik companion'ı (rastgele kasa-sayım slotu, para hareketi
+        # DEĞİL) → bloke SAYILMAZ, açılışla birlikte temizlenir. Gerçek operasyon (KAPANIS,
+        # vardiya devri vb.) bloke eder.
+        if _say("SELECT COUNT(*) AS n FROM sube_operasyon_event WHERE sube_id=%s AND tarih=%s AND tip NOT IN ('ACILIS','KAPANIS','KONTROL') AND durum='tamamlandi'", (sid, g)) > 0:
             bloke.append("diger_tamamlanmis_operasyon")
 
         durum = {"acilis_kaydi": acilis_n, "kasa_gun_acma": kasa_gun_n, "is_gunu": str(g), "bloke_nedenleri": bloke}
@@ -1037,7 +1040,7 @@ def sube_acilis_geri_al(sube_id: str, uygula: bool = False):
                 cur.execute(
                     """SELECT tip, durum, cevap_ts::text AS cevap_ts, personel_ad
                        FROM sube_operasyon_event
-                       WHERE sube_id=%s AND tarih=%s AND tip NOT IN ('ACILIS','KAPANIS') AND durum='tamamlandi'
+                       WHERE sube_id=%s AND tarih=%s AND tip NOT IN ('ACILIS','KAPANIS','KONTROL') AND durum='tamamlandi'
                        ORDER BY cevap_ts NULLS LAST LIMIT 20""",
                     (sid, g),
                 )
@@ -1060,6 +1063,11 @@ def sube_acilis_geri_al(sube_id: str, uygula: bool = False):
                SET durum='bekliyor', cevap_ts=NULL, personel_saat=NULL, kasa_sayim=NULL,
                    meta=NULL, personel_id=NULL, personel_ad=NULL
                WHERE sube_id=%s AND tarih=%s AND tip='ACILIS' AND sira_no=0""",
+            (sid, g),
+        )
+        # Açılışın otomatik companion'ı KONTROL slotunu da temizle (açılışsız anlamsız)
+        cur.execute(
+            "DELETE FROM sube_operasyon_event WHERE sube_id=%s AND tarih=%s AND tip='KONTROL'",
             (sid, g),
         )
         conn.commit()
