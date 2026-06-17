@@ -3062,8 +3062,22 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 raise HTTPException(403, "Bu sipariş bu şubeye ait değil")
             _talep_durum = str(_talep.get("durum") or "")
             _talep_sevkiyat = str(_talep.get("sevkiyat_durumu") or "")
-            # Toptancıdan yönlendirilmiş sipariş uygun mu kontrol
-            if _talep_sevkiyat != "toptanciya_yonlendirildi":
+            # Kabul uygunluk kontrolü:
+            # - toptanci_siparis_id VARSA: BU tedarikçi siparişi seviyesinde bak. Kısmi
+            #   dağıtımda (bazı kalemler henüz dağıtılmadı) talep 'bekliyor' kalır AMA bu
+            #   tedarikçiye gönderilmiş sipariş kabul edilebilir olmalı (talep-seviyesi şart değil).
+            # - toptanci_siparis_id YOKSA (ad-hoc): eski talep-seviyesi kural geçerli.
+            if toptanci_siparis_id:
+                cur.execute(
+                    "SELECT durum FROM toptanci_siparis WHERE id=%s AND talep_id=%s",
+                    (toptanci_siparis_id, siparis_talep_id),
+                )
+                _ts_chk = cur.fetchone()
+                if not _ts_chk:
+                    raise HTTPException(404, "Toptancı siparişi bulunamadı (bu talebe ait değil).")
+                if str(dict(_ts_chk).get("durum") or "") == "iptal":
+                    raise HTTPException(400, "Bu toptancı siparişi iptal edilmiş — teslim alınamaz.")
+            elif _talep_sevkiyat != "toptanciya_yonlendirildi":
                 raise HTTPException(
                     400,
                     f"Bu sipariş toptancıya yönlendirilmemiş (sevkiyat_durumu: {_talep_sevkiyat or '—'}). "
