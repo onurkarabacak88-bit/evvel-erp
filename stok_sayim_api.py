@@ -656,3 +656,189 @@ def gorevler(limit: int = 50):
             d["olusturma"] = str(d.get("olusturma") or "")
             d["onay_ts"] = str(d.get("onay_ts") or "")
     return {"toplam": len(out), "gorevler": out}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DEMİRBAŞ KANALI (fixed assets) — stok sayımının İÇİNDE ama AYRI kanal.
+# Stok = "kaç adet" (tüketilir). Demirbaş = "var mı / arızalı mı" (tüketilmez).
+# Şimdilik ALT YAPI: master liste (tohumlu) + şube bazlı durum/eksiklik kaydı.
+# ══════════════════════════════════════════════════════════════════════════════
+DEMIRBAS_DURUMLAR = ("var", "eksik", "arizali")  # var=tam/çalışır, eksik=yok, arizali=bozuk
+
+# Genel kafe demirbaş listesi (varsayılan tohum — düzenlenebilir). (kategori, ad)
+DEMIRBAS_VARSAYILAN = [
+    ("Kahve & Bar", "Espresso makinesi"), ("Kahve & Bar", "Kahve değirmeni"),
+    ("Kahve & Bar", "Filtre kahve makinesi"), ("Kahve & Bar", "Su ısıtıcı / boiler"),
+    ("Kahve & Bar", "Blender"), ("Kahve & Bar", "Buz makinesi"), ("Kahve & Bar", "Mikser"),
+    ("Kahve & Bar", "Tost / panini makinesi"), ("Kahve & Bar", "Mikrodalga fırın"),
+    ("Kahve & Bar", "Bulaşık makinesi"), ("Kahve & Bar", "Bardak yıkama makinesi"),
+    ("Kahve & Bar", "Çay makinesi / semaver"), ("Kahve & Bar", "Narenciye sıkacağı"),
+    ("Soğutma", "Buzdolabı"), ("Soğutma", "Derin dondurucu"), ("Soğutma", "Pasta / teşhir vitrini"),
+    ("Soğutma", "Şişe soğutucu"), ("Soğutma", "Su sebili"),
+    ("Isıtma & Tesisat", "Kombi"), ("Isıtma & Tesisat", "Klima"), ("Isıtma & Tesisat", "Şofben"),
+    ("Isıtma & Tesisat", "Aspiratör / havalandırma"), ("Isıtma & Tesisat", "Su pompası / hidrofor"),
+    ("Isıtma & Tesisat", "Sıcak su tankı"),
+    ("Mobilya", "Masa"), ("Mobilya", "Sandalye"), ("Mobilya", "Bar taburesi"),
+    ("Mobilya", "Koltuk / berjer"), ("Mobilya", "Sehpa"), ("Mobilya", "Raf / dolap"),
+    ("Mobilya", "Bar tezgahı"), ("Mobilya", "Servis dolabı"),
+    ("Elektronik & POS", "POS cihazı"), ("Elektronik & POS", "Yazarkasa"),
+    ("Elektronik & POS", "Bilgisayar / tablet"), ("Elektronik & POS", "Fiş yazıcısı"),
+    ("Elektronik & POS", "TV / ekran"), ("Elektronik & POS", "Müzik sistemi / hoparlör"),
+    ("Elektronik & POS", "Wi-Fi modem / router"), ("Elektronik & POS", "Güvenlik kamerası"),
+    ("Elektronik & POS", "Telefon"),
+    ("Servis & Sunum", "Tepsi"), ("Servis & Sunum", "Sürahi / kupa setleri"),
+    ("Servis & Sunum", "Peçetelik"), ("Servis & Sunum", "Şeker / baharatlık standı"),
+    ("Servis & Sunum", "Menü standı"),
+    ("Temizlik & Güvenlik", "Çöp kovası"), ("Temizlik & Güvenlik", "Yangın tüpü"),
+    ("Temizlik & Güvenlik", "İlk yardım dolabı"), ("Temizlik & Güvenlik", "Temizlik arabası / paspas"),
+    ("Temizlik & Güvenlik", "Havlu / el kurutma"), ("Temizlik & Güvenlik", "Sabunluk"),
+    ("Aydınlatma & Dekor", "Aydınlatma armatürleri"), ("Aydınlatma & Dekor", "Dış tabela"),
+    ("Aydınlatma & Dekor", "Menü panosu"), ("Aydınlatma & Dekor", "Dekoratif bitki / saksı"),
+]
+
+
+def _ensure_demirbas(cur) -> None:
+    """Demirbaş kanalı tabloları (lazy) + ilk kez ise varsayılan listeyi tohumla."""
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS demirbas_kalem (
+            id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            kategori   TEXT NOT NULL DEFAULT '',
+            ad         TEXT NOT NULL,
+            sira       INT NOT NULL DEFAULT 0,
+            aktif      BOOLEAN NOT NULL DEFAULT TRUE,
+            olusturma  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS demirbas_durum (
+            id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            sube_id     TEXT NOT NULL,
+            kalem_id    TEXT NOT NULL,
+            durum       TEXT NOT NULL DEFAULT 'var',
+            adet        INT,
+            not_aciklama TEXT,
+            guncelleme  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            guncelleyen_ad TEXT,
+            UNIQUE (sube_id, kalem_id)
+        )
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_demirbas_durum_sube ON demirbas_durum (sube_id)")
+    cur.execute("SELECT COUNT(*) AS n FROM demirbas_kalem")
+    if int((cur.fetchone() or {}).get("n") or 0) == 0:
+        for i, (kat, ad) in enumerate(DEMIRBAS_VARSAYILAN):
+            cur.execute(
+                "INSERT INTO demirbas_kalem (kategori, ad, sira) VALUES (%s,%s,%s)",
+                (kat, ad, i),
+            )
+
+
+@router.get("/demirbas/katalog")
+def demirbas_katalog():
+    """Demirbaş master listesi (aktif), kategoriye göre sıralı."""
+    with db() as (_, cur):
+        _ensure_demirbas(cur)
+        cur.execute(
+            "SELECT id, kategori, ad, sira FROM demirbas_kalem WHERE aktif=TRUE ORDER BY sira ASC, kategori ASC, ad ASC"
+        )
+        kalemler = [dict(r) for r in (cur.fetchall() or [])]
+    return {"toplam": len(kalemler), "kalemler": kalemler}
+
+
+@router.get("/demirbas/durum")
+def demirbas_durum_getir(sube_id: str):
+    """Bir şubenin demirbaş durumu — master liste + kayıtlı durum (yoksa varsayılan 'var')."""
+    sid = (sube_id or "").strip()
+    if not sid:
+        raise HTTPException(400, "sube_id zorunlu")
+    with db() as (_, cur):
+        _ensure_demirbas(cur)
+        cur.execute(
+            """
+            SELECT k.id, k.kategori, k.ad, k.sira,
+                   d.durum, d.adet, d.not_aciklama, d.guncelleme, d.guncelleyen_ad
+            FROM demirbas_kalem k
+            LEFT JOIN demirbas_durum d ON d.kalem_id = k.id AND d.sube_id = %s
+            WHERE k.aktif = TRUE
+            ORDER BY k.sira ASC, k.kategori ASC, k.ad ASC
+            """,
+            (sid,),
+        )
+        rows = []
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            d["durum"] = d.get("durum") or "var"
+            d["guncelleme"] = str(d.get("guncelleme") or "")
+            rows.append(d)
+    return {"sube_id": sid, "toplam": len(rows), "kalemler": rows}
+
+
+class DemirbasDurumBody(BaseModel):
+    sube_id: str
+    kalem_id: str
+    durum: str = "var"
+    adet: Optional[int] = None
+    not_aciklama: Optional[str] = None
+    guncelleyen_ad: Optional[str] = None
+
+
+@router.post("/demirbas/durum")
+def demirbas_durum_kaydet(body: DemirbasDurumBody):
+    """Bir demirbaşın şubedeki durumunu/eksikliğini yaz (upsert)."""
+    sid = (body.sube_id or "").strip()
+    kid = (body.kalem_id or "").strip()
+    durum = (body.durum or "var").strip().lower()
+    if not sid or not kid:
+        raise HTTPException(400, "sube_id ve kalem_id zorunlu")
+    if durum not in DEMIRBAS_DURUMLAR:
+        raise HTTPException(400, "durum: var | eksik | arizali")
+    with db() as (_, cur):
+        _ensure_demirbas(cur)
+        cur.execute(
+            """
+            INSERT INTO demirbas_durum (sube_id, kalem_id, durum, adet, not_aciklama, guncelleyen_ad, guncelleme)
+            VALUES (%s,%s,%s,%s,%s,%s,NOW())
+            ON CONFLICT (sube_id, kalem_id)
+            DO UPDATE SET durum=EXCLUDED.durum, adet=EXCLUDED.adet, not_aciklama=EXCLUDED.not_aciklama,
+                          guncelleyen_ad=EXCLUDED.guncelleyen_ad, guncelleme=NOW()
+            """,
+            (sid, kid, durum, body.adet, (body.not_aciklama or "").strip() or None,
+             (body.guncelleyen_ad or "").strip() or None),
+        )
+    return {"ok": True}
+
+
+class DemirbasKalemBody(BaseModel):
+    kategori: str = ""
+    ad: str
+
+
+@router.post("/demirbas/kalem-ekle")
+def demirbas_kalem_ekle(body: DemirbasKalemBody):
+    """Listeye yeni demirbaş ekle (düzenlenebilir liste)."""
+    ad = (body.ad or "").strip()
+    if not ad:
+        raise HTTPException(400, "ad zorunlu")
+    with db() as (_, cur):
+        _ensure_demirbas(cur)
+        cur.execute("SELECT COALESCE(MAX(sira),0)+1 AS s FROM demirbas_kalem")
+        sira = int((cur.fetchone() or {}).get("s") or 0)
+        cur.execute(
+            "INSERT INTO demirbas_kalem (kategori, ad, sira) VALUES (%s,%s,%s) RETURNING id",
+            ((body.kategori or "").strip(), ad, sira),
+        )
+        kid = dict(cur.fetchone() or {}).get("id")
+    return {"ok": True, "id": kid}
+
+
+@router.post("/demirbas/kalem-sil/{kalem_id}")
+def demirbas_kalem_sil(kalem_id: str):
+    """Demirbaşı listeden çıkar (soft delete — aktif=FALSE)."""
+    kid = (kalem_id or "").strip()
+    with db() as (_, cur):
+        _ensure_demirbas(cur)
+        cur.execute("UPDATE demirbas_kalem SET aktif=FALSE WHERE id=%s", (kid,))
+    return {"ok": True}
