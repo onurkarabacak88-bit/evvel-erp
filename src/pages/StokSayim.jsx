@@ -101,7 +101,7 @@ function GorevAta() {
       <div style={{ marginBottom: 12 }}>
         <label style={LBL}>Kapsam</label>
         <div style={{ display: 'flex', gap: 8 }}>
-          {[['tam', 'Tam Sayım (tüm ürünler)'], ['set', 'Ürün Seti (seç)']].map(([id, l]) => (
+          {[['tam', `Tam Sayım${kalemler.length ? ` (${kalemler.length} ürün)` : ''}`], ['set', 'Ürün Seti (seç)']].map(([id, l]) => (
             <button key={id} onClick={() => setKapsam(id)} style={{
               flex: 1, padding: '10px', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer',
               border: '1px solid ' + (kapsam === id ? '#C8956A' : '#d6d6dc'),
@@ -110,17 +110,37 @@ function GorevAta() {
           ))}
         </div>
       </div>
-      {kapsam === 'set' && (
-        <div style={{ marginBottom: 12, maxHeight: 240, overflowY: 'auto', border: '1px solid #eee', borderRadius: 8, padding: 8 }}>
-          {kalemler.length === 0 && <div style={{ fontSize: 13, color: '#888', padding: 8 }}>Bu şubede tanımlı stok kalemi yok.</div>}
-          {kalemler.map((k) => (
-            <label key={k.kalem_kodu} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', fontSize: 14, cursor: 'pointer' }}>
-              <input type="checkbox" checked={!!secili[k.kalem_kodu]} onChange={(e) => setSecili((m) => ({ ...m, [k.kalem_kodu]: e.target.checked }))} />
-              {k.kalem_adi}
-            </label>
-          ))}
-        </div>
-      )}
+      {kapsam === 'set' && (() => {
+        // Kategoriye göre grupla (128 ürün tek tek zor) + kategori-toplu seç
+        const gruplar = {};
+        kalemler.forEach((k) => { const g = k.kategori_ad || 'Diğer'; (gruplar[g] = gruplar[g] || []).push(k); });
+        const secSay = kalemler.filter((k) => secili[k.kalem_kodu]).length;
+        const katToggle = (items, hepsi) => setSecili((m) => { const n = { ...m }; items.forEach((k) => { n[k.kalem_kodu] = !hepsi; }); return n; });
+        return (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>{secSay} ürün seçili · kategori başlığına dokunarak topluca seç</div>
+            <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid #eee', borderRadius: 8 }}>
+              {kalemler.length === 0 && <div style={{ fontSize: 13, color: '#888', padding: 10 }}>Katalog boş.</div>}
+              {Object.entries(gruplar).map(([kat, items]) => {
+                const hepsi = items.every((k) => secili[k.kalem_kodu]);
+                return (
+                  <div key={kat}>
+                    <div onClick={() => katToggle(items, hepsi)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#f6f6f8', borderTop: '1px solid #eee', cursor: 'pointer', fontWeight: 700, fontSize: 13 }}>
+                      <input type="checkbox" readOnly checked={hepsi} /> {kat} <span style={{ color: '#aaa', fontWeight: 400 }}>({items.length})</span>
+                    </div>
+                    {items.map((k) => (
+                      <label key={k.kalem_kodu} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px 6px 26px', fontSize: 14, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={!!secili[k.kalem_kodu]} onChange={(e) => setSecili((m) => ({ ...m, [k.kalem_kodu]: e.target.checked }))} />
+                        {k.kalem_adi}{k.mevcut_adet ? <span style={{ color: '#bbb', fontSize: 12 }}> · sis {k.mevcut_adet}</span> : null}
+                      </label>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
       <div style={{ marginBottom: 14 }}>
         <label style={LBL}>Not (opsiyonel)</label>
         <input style={INP} value={not} onChange={(e) => setNot(e.target.value)} placeholder="örn. Akşam vardiyasında say" />

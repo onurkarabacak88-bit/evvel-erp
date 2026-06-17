@@ -116,6 +116,30 @@ def _sube_stok_map(cur, sube_id: str) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def _katalog_kalemler(cur) -> List[Dict[str, Any]]:
+    """Tam ürün kataloğu (siparis_urun, aktif) — 'tam sayım'ın gerçek evreni.
+    sube_depo_stok DEĞİL (o seyrek/eksik); kalem_kodu = siparis_urun.id (sevkiyat
+    kabulü de bu id ile sube_depo_stok'a yazar → sistem adedi eşleşir)."""
+    try:
+        cur.execute(
+            """
+            SELECT u.id::text AS kalem_kodu, u.ad AS kalem_adi,
+                   COALESCE(k.ad, '') AS kategori_ad, COALESCE(k.sira, 999) AS kat_sira,
+                   COALESCE(u.sira, 999) AS u_sira
+            FROM siparis_urun u
+            LEFT JOIN siparis_kategori k ON k.id = u.kategori_id
+            WHERE u.aktif = TRUE AND COALESCE(k.aktif, TRUE) = TRUE
+            ORDER BY kat_sira ASC, k.ad ASC, u_sira ASC, u.ad ASC
+            """
+        )
+        return [
+            {"kalem_kodu": str(r["kalem_kodu"]), "kalem_adi": r["kalem_adi"], "kategori_ad": r.get("kategori_ad") or ""}
+            for r in (cur.fetchall() or [])
+        ]
+    except Exception:
+        return []
+
+
 def _sube_hic_sayildi_mi(cur, sube_id: str) -> bool:
     """Bu şubede daha önce ONAYLANMIŞ stok sayımı oldu mu? (mod = kalibrasyon/kontrol kararı)"""
     cur.execute(
@@ -156,15 +180,22 @@ class KilitAcBody(BaseModel):
 # ────────────────────────────── SAHİP: ŞUBE KALEM LİSTESİ ('set' seçimi için) ──────────────────────────────
 @router.get("/sube-kalemler")
 def sube_kalemler(sube_id: str):
-    """Şubede tanımlı stok kalemleri (sube_depo_stok) — 'set' kapsamı seçiminde kullanılır."""
+    """'set' kapsamı seçimi için TÜM ürün kataloğu (siparis_urun) + o şubenin sistem adedi.
+    sube_depo_stok seyrek olduğu için katalog evreni kullanılır; sistem adedi şubenin
+    deposundan (yoksa 0 — kalibrasyonda zaten kurulur)."""
     sid = (sube_id or "").strip()
     if not sid:
         raise HTTPException(400, "sube_id zorunlu")
     with db() as (_, cur):
         stok_map = _sube_stok_map(cur, sid)
+        katalog = _katalog_kalemler(cur)
     kalemler = [
-        {"kalem_kodu": k, "kalem_adi": v.get("kalem_adi") or k, "mevcut_adet": v.get("mevcut_adet")}
-        for k, v in sorted(stok_map.items(), key=lambda x: str(x[1].get("kalem_adi") or ""))
+        {
+            "kalem_kodu": k["kalem_kodu"], "kalem_adi": k["kalem_adi"],
+            "kategori_ad": k.get("kategori_ad") or "",
+            "mevcut_adet": int(stok_map.get(k["kalem_kodu"], {}).get("mevcut_adet") or 0),
+        }
+        for k in katalog
     ]
     return {"toplam": len(kalemler), "kalemler": kalemler}
 
@@ -200,12 +231,13 @@ def gorev_ata(body: GorevAtaBody):
         except Exception:
             pass
 
-        # Kalemler: 'tam' → şubenin tüm depo stok kalemleri; 'set' → verilen liste
+        # Kalemler: 'tam' → TÜM ürün kataloğu (siparis_urun); 'set' → verilen liste.
+        # sube_depo_stok seyrek olduğu için 'tam'da onu KULLANMA (Alsancak'ta 3 çıkıyordu).
         stok_map = _sube_stok_map(cur, sube_id)
         if kapsam == "tam":
             kalemler = [
-                {"kalem_kodu": k, "kalem_adi": v.get("kalem_adi") or k}
-                for k, v in sorted(stok_map.items(), key=lambda x: str(x[1].get("kalem_adi") or ""))
+                {"kalem_kodu": k["kalem_kodu"], "kalem_adi": k["kalem_adi"]}
+                for k in _katalog_kalemler(cur)
             ]
         else:
             kalemler = []
