@@ -153,6 +153,22 @@ class KilitAcBody(BaseModel):
     neden: Optional[str] = None
 
 
+# ────────────────────────────── SAHİP: ŞUBE KALEM LİSTESİ ('set' seçimi için) ──────────────────────────────
+@router.get("/sube-kalemler")
+def sube_kalemler(sube_id: str):
+    """Şubede tanımlı stok kalemleri (sube_depo_stok) — 'set' kapsamı seçiminde kullanılır."""
+    sid = (sube_id or "").strip()
+    if not sid:
+        raise HTTPException(400, "sube_id zorunlu")
+    with db() as (_, cur):
+        stok_map = _sube_stok_map(cur, sid)
+    kalemler = [
+        {"kalem_kodu": k, "kalem_adi": v.get("kalem_adi") or k, "mevcut_adet": v.get("mevcut_adet")}
+        for k, v in sorted(stok_map.items(), key=lambda x: str(x[1].get("kalem_adi") or ""))
+    ]
+    return {"toplam": len(kalemler), "kalemler": kalemler}
+
+
 # ────────────────────────────── 1) SAHİP: ATAMA ──────────────────────────────
 @router.post("/gorev-ata")
 def gorev_ata(body: GorevAtaBody):

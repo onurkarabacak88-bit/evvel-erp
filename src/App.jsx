@@ -27,6 +27,7 @@ import GorevOzet from './pages/GorevOzet';
 import PersonelVardiyaTakip from './pages/PersonelVardiyaTakip';
 import Tedarikciler from './pages/Tedarikciler';
 import TedarikDosyasi from './pages/TedarikDosyasi';
+import StokSayim from './pages/StokSayim';
 import VeriTemizle from './pages/VeriTemizle.jsx';
 import OperasyonMerkezi from './pages/OperasyonMerkezi';
 import TruthMotor from './pages/TruthMotor';
@@ -74,6 +75,7 @@ const NAV = [
     { id: 'sube-panel-pin',   label: 'Personel Panel PIN',  icon: '🔐' },
     { id: 'gorev-qr',         label: 'Görev QR Kodları',    icon: '📱' },
     { id: 'gorev-ozet',          label: 'Görev Takibi',        icon: '✅' },
+    { id: 'stok-sayim',          label: 'Stok Sayım',          icon: '📋' },
     { id: 'personel-vardiya-takip', label: 'Vardiya Takip',    icon: '⏱️' },
   ]},
   { group: 'Tanımlar', gicon: '🗂️', items: [
@@ -130,6 +132,7 @@ const PAGES = {
   'personel-vardiya-takip':  PersonelVardiyaTakip,
   tedarikciler:       Tedarikciler,
   'tedarik-dosyasi':  TedarikDosyasi,
+  'stok-sayim':       StokSayim,
   'veri-temizle':     VeriTemizle,
   'is-basvurusu':     IsBasvuruListesi,
   'ev-tasarim':       EvTasarim,
