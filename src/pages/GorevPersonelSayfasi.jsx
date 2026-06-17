@@ -992,7 +992,9 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
       let yeni = cur;
       if (t === 'sil') yeni = cur.slice(0, -1);
       else if (cur.length < 5) yeni = (cur === '0' ? '' : cur) + t;
-      return { ...m, [aktifKod]: { val: yeni, girildi: false } };
+      // Rakam yazılınca direkt GİRİLDİ sayılır → "Sonraki Ürün" hemen yeşile döner
+      // ("Tamam" zorunlu değil). Hepsi silinirse girilmemiş olur.
+      return { ...m, [aktifKod]: { val: yeni, girildi: yeni !== '' } };
     });
   };
 
