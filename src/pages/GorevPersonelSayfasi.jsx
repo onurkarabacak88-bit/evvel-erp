@@ -998,16 +998,6 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
     });
   };
 
-  const onayla = () => {
-    // 0 dahil her sayı geçerli; ama boşsa "saymadan geçilemez"
-    setDegerler((m) => {
-      const cur = m[aktifKod]?.val;
-      if (cur === undefined || cur === '') return m;
-      return { ...m, [aktifKod]: { val: cur, girildi: true } };
-    });
-    setKeypadAcik(false);
-  };
-
   const ileri = () => {
     setHata('');
     if (!aktifDeger.girildi) { setHata('Önce bu ürünü say (kutuya çift dokun).'); return; }
@@ -1137,7 +1127,7 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
             ))}
             <button onClick={() => tusBas('sil')} style={{ ...KEY, fontSize: 22 }}>⌫</button>
             <button onClick={() => tusBas('0')} style={KEY}>0</button>
-            <button onClick={onayla} style={{ ...KEY, background: '#4caf84', border: 'none', color: '#fff', fontSize: 18 }}>Tamam</button>
+            <button onClick={() => setKeypadAcik(false)} style={{ ...KEY, fontSize: 14, color: '#6b6f7a' }}>Kapat ▾</button>
           </div>
         )}
 
