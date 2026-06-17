@@ -40,6 +40,7 @@ from gorev_api import router as gorev_router
 from is_basvuru_api import router as is_basvuru_router
 from ev_tasarim_api import router as ev_tasarim_router
 from fatura_api import router as fatura_router  # İZOLE modül (öneri-only, kill switch)
+from stok_sayim_api import router as stok_sayim_router  # İZOLE modül (kalibrasyon/kontrol, öneri-only)
 import vardiya_v2 as _vv2
 from vardiya_v2 import _ad_soyad_split as _vardiya_personel_ad_split
 
@@ -92,6 +93,7 @@ app.include_router(gorev_router)
 app.include_router(is_basvuru_router)
 app.include_router(ev_tasarim_router)
 app.include_router(fatura_router)
+app.include_router(stok_sayim_router)
 
 logging.basicConfig(
     level=logging.INFO,
