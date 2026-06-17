@@ -41,6 +41,29 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
     });
   };
 
+  // Mutlak değer ata (çift-tıkla rakam girişi — 50 kez +'a basma derdi olmasın)
+  const ayarlaMutlak = (kat_db_id, urun, deger) => {
+    const n = Math.max(0, parseInt(deger, 10) || 0);
+    setSepet(prev => {
+      const key = urun.id;
+      if (n === 0) { const { [key]: _, ...rest } = prev; return rest; }
+      return { ...prev, [key]: { urun_ad: urun.ad, kategori_id: kat_db_id, urun_id: urun.id, adet: n } };
+    });
+  };
+  const sipTapRef = useRef({ key: '', ts: 0 });
+  const adetCiftTik = (kat_db_id, urun, mevcut) => {
+    // Çift-tık (350ms) → rakam sor (kaza ile değişmesin)
+    const now = Date.now();
+    const r = sipTapRef.current;
+    if (r.key === urun.id && now - r.ts < 350) {
+      sipTapRef.current = { key: '', ts: 0 };
+      const g = window.prompt(`${urun.ad} — adet gir:`, String(mevcut));
+      if (g !== null) ayarlaMutlak(kat_db_id, urun, g);
+    } else {
+      sipTapRef.current = { key: urun.id, ts: now };
+    }
+  };
+
   const sepetSayisi = Object.values(sepet).reduce((s, x) => s + x.adet, 0);
 
   const gonder = async (force = false) => {
@@ -172,7 +195,9 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
                         <>
                           <button onClick={() => ayarla(kat.db_kategori_id || kat.id, urun, -1)}
                             style={{ width: 40, height: 40, borderRadius: 8, border: '1px solid #2a2d35', background: '#22262f', color: '#e8e9ec', fontSize: 20, cursor: 'pointer', fontWeight: 700 }}>−</button>
-                          <span style={{ fontSize: 18, fontWeight: 800, minWidth: 28, textAlign: 'center', color: '#C8956A' }}>{adet}</span>
+                          <span onClick={() => adetCiftTik(kat.db_kategori_id || kat.id, urun, adet)}
+                            title="Çift dokun → rakam gir"
+                            style={{ fontSize: 18, fontWeight: 800, minWidth: 28, textAlign: 'center', color: '#C8956A', cursor: 'pointer', userSelect: 'none' }}>{adet}</span>
                         </>
                       )}
                       <button onClick={() => ayarla(kat.db_kategori_id || kat.id, urun, +1)}
