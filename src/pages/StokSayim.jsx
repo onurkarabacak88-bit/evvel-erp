@@ -22,8 +22,8 @@ function Mesaj({ m }) {
 export default function StokSayim() {
   const [sekme, setSekme] = useState('ata');
   return (
-    <div style={{ maxWidth: 760, margin: '0 auto', padding: '8px 4px 40px' }}>
-      <h2 style={{ fontSize: 20, fontWeight: 800, margin: '4px 0 14px' }}>📋 Stok Sayım</h2>
+    <div style={{ maxWidth: 760, margin: '0 auto', padding: '8px 4px 40px', color: '#1f2430' }}>
+      <h2 style={{ fontSize: 20, fontWeight: 800, margin: '4px 0 14px', color: '#1f2430' }}>📋 Stok Sayım</h2>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         {[['ata', '➕ Görev Ata'], ['onay', '✅ Onay Bekleyen'], ['aktif', '⏳ Aktif / Kilit']].map(([id, l]) => (
           <button key={id} onClick={() => setSekme(id)} style={{
