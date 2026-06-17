@@ -1030,7 +1030,23 @@ def sube_acilis_geri_al(sube_id: str, uygula: bool = False):
 
         durum = {"acilis_kaydi": acilis_n, "kasa_gun_acma": kasa_gun_n, "is_gunu": str(g), "bloke_nedenleri": bloke}
         if not uygula:
-            return {"kuru_calisma": True, **durum,
+            # Bloke detayı: hangi event(ler) engelliyor (teşhis için, salt-okur)
+            bloke_detay = []
+            try:
+                cur.execute("SAVEPOINT sp_bd")
+                cur.execute(
+                    """SELECT tip, durum, cevap_ts::text AS cevap_ts, personel_ad
+                       FROM sube_operasyon_event
+                       WHERE sube_id=%s AND tarih=%s AND tip NOT IN ('ACILIS','KAPANIS') AND durum='tamamlandi'
+                       ORDER BY cevap_ts NULLS LAST LIMIT 20""",
+                    (sid, g),
+                )
+                bloke_detay = [dict(r) for r in (cur.fetchall() or [])]
+                cur.execute("RELEASE SAVEPOINT sp_bd")
+            except Exception:
+                try: cur.execute("ROLLBACK TO SAVEPOINT sp_bd"); cur.execute("RELEASE SAVEPOINT sp_bd")
+                except Exception: pass
+            return {"kuru_calisma": True, **durum, "bloke_detay": bloke_detay,
                     "geri_alinabilir": (acilis_n > 0 or kasa_gun_n > 0) and not bloke}
         if bloke:
             raise HTTPException(409, "Açılış geri alınamaz — bugün gerçek hareket var: " + ", ".join(bloke))
