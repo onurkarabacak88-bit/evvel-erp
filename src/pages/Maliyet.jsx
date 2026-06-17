@@ -192,29 +192,22 @@ export default function Maliyet() {
     setFaturaTarihi(null);
     setFaturaKaydedilenler({});
     try {
+      // Çok-faturalı PDF: sayfalara böl → her faturayı LLM ile JSON'a çevir (vision YOK).
+      // Aynı fatura no atlanır; tarih otomatik. Sonuç aşağıdaki "📱 Faturalar" listesinde.
       const fd = new FormData();
-      fd.append('file', file);
-      if (faturaTedarikci.trim()) fd.append('tedarikci', faturaTedarikci.trim());
-      const res = await fetch('/api/ops/maliyet/fatura-pdf-yukle', { method: 'POST', body: fd });
+      fd.append('pdf', file);
+      const res = await fetch('/api/fatura/yukle-pdf', { method: 'POST', body: fd });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || 'PDF işlenemedi');
-      const satirlar = (data.satirlar || []).map(s => ({
-        ...s,
-        kalem_kodu: s.onerilen_kalem_kodu || '',
-        kalem_adi: s.onerilen_kalem_adi || s.aciklama,
-        birim: s.birim || 'adet',
-        birim_maliyet_tl: s.tutar != null ? String(s.tutar) : '',
-        gecerli_baslangic: s.fatura_tarihi || null,
-      }));
-      setFaturaSatirlar(satirlar);
-      setFaturaTarihi(data.fatura_tarihi || null);
-      if (data.zaten_yuklendi) {
-        setFaturaUyari(
-          `⚠️ Bu fatura daha önce yüklenmiş! (${data.zaten_yuklendi.yukleme_sayisi}. kez yükleniyor, son yükleme: ${fmtDate(data.zaten_yuklendi.son_yukleme)}) ` +
-          `Eğer satırları zaten onayladıysan, tekrar onaylama — mükerrer fiyat kaydı oluşur.`
-        );
-      } else if (data.uyari) setFaturaUyari(data.uyari);
-      else if (!satirlar.length) setFaturaUyari('PDF içinde kalem satırı bulunamadı.');
+      const t = data.toplam_fatura || 0, y = data.yuklenen || 0, a = data.atlanan_mevcut || 0;
+      setFaturaUyari(
+        `✅ ${t} fatura bulundu · ${y} yeni alındı${a ? ` · ${a} zaten yüklüydü (atlandı)` : ''}. ` +
+        `Arka planda okunuyor — birkaç saniye içinde aşağıdaki "📱 Faturalar" listesinde inceleyebilirsin.`
+      );
+      // OCR arka planda; bekleyen listesini birkaç kez tazele
+      [4000, 9000, 16000].forEach(ms => setTimeout(() => {
+        api('/fatura/bekleyen').then(r => setFotoFaturalar((r && r.satirlar) || [])).catch(() => {});
+      }, ms));
     } catch (e) {
       setFaturaUyari(e.message || 'PDF işlenemedi');
     } finally {
@@ -440,25 +433,23 @@ export default function Maliyet() {
         </>
       )}
 
-      {/* Fatura PDF yükleme */}
+      {/* Fatura PDF yükleme — çok faturalı PDF (e-fatura) */}
       <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
-        <span>📄 Fatura PDF Yükle</span>
-        <span style={{ fontSize: 10, color: 'var(--text3)' }}>Satırları okur, sen onaylayınca fiyatları günceller</span>
+        <span>📄 Fatura PDF Yükle (toplu)</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>Çok faturalı PDF'i ayırır · tarihleri otomatik eşler · aşağıda incelersin</span>
       </div>
       <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px,1fr))', gap: 10, marginBottom: 12, alignItems: 'end' }}>
-          <div className="form-group" style={{ margin: 0 }}>
-            <label>Tedarikçi (opsiyonel)</label>
-            <input type="text" placeholder="örn. Pınar Bayi" value={faturaTedarikci}
-              onChange={e => setFaturaTedarikci(e.target.value)} />
-          </div>
-          <div className="form-group" style={{ margin: 0 }}>
-            <label>Fatura PDF</label>
-            <input type="file" accept="application/pdf"
-              onChange={e => faturaPdfYukle(e.target.files?.[0])} disabled={faturaYukleniyor} />
-          </div>
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 10, lineHeight: 1.5 }}>
+          İçinde birden çok fatura olan PDF'i tek seferde at. Sistem her faturayı ayırır,
+          tarih + ürün kodunu okur (vision yok → okuma hatası olmaz), aynı ürünü farklı
+          tarihlerde tanır. Okunan faturalar aşağıdaki <strong>📱 Faturalar</strong> listesinde onayını bekler.
         </div>
-        {faturaYukleniyor && <div style={{ fontSize: 12, color: 'var(--text3)' }}>PDF okunuyor...</div>}
+        <div className="form-group" style={{ margin: 0 }}>
+          <label>Fatura PDF (tek veya çok faturalı)</label>
+          <input type="file" accept="application/pdf"
+            onChange={e => faturaPdfYukle(e.target.files?.[0])} disabled={faturaYukleniyor} />
+        </div>
+        {faturaYukleniyor && <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 8 }}>PDF ayrıştırılıyor...</div>}
         {faturaUyari && <div style={{ fontSize: 12, color: 'var(--yellow)', marginBottom: 8 }}>⚠️ {faturaUyari}</div>}
         {faturaSatirlar?.length > 0 && (
           <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>

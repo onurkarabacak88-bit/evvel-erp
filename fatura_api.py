@@ -70,6 +70,12 @@ def _ensure_tablolar(cur) -> None:
         )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_tf_sube_durum ON tedarikci_fatura (sube_id, durum, olusturma DESC)")
+    # PDF e-fatura kaynağı: foto yerine doğrudan metin (vision OCR'sız). Maliyet'ten
+    # toplu PDF yüklemede her fatura sayfasının metni burada tutulur; arka plan işçisi
+    # bunu LLM'e verir (foto varsa vision, metin varsa text yolu — aynı JSON şeması).
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS kaynak_metin TEXT")
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS kaynak_tip TEXT")  # 'foto' | 'pdf'
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS fatura_no TEXT")    # e-fatura no (PDF'te tekil)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS tedarikci_fatura_kalem (
             id              TEXT PRIMARY KEY,
@@ -172,14 +178,156 @@ def _vision_ocr(foto: bytes, mime: str) -> Dict[str, Any]:
         max_tokens=1500,
     )
     metin = (resp.choices[0].message.content or "").strip()
-    # JSON gövdeyi ayıkla (model bazen ```json ... ``` sarar)
-    if "```" in metin:
-        metin = metin.split("```")[1]
-        if metin.startswith("json"):
-            metin = metin[4:]
-    metin = metin.strip()
-    j = json.loads(metin)
+    return _json_govde_coz(metin)
+
+
+def _json_govde_coz(metin: str) -> Dict[str, Any]:
+    """LLM yanıtından JSON nesnesini güvenle çıkarır. Boş/bozuk yanıt → net hata
+    (eski 'Expecting value: line 1 column 1' karmaşası yerine). ```json çitlerini
+    ve süslü-parantez gövdesini ayıklar."""
+    s = (metin or "").strip()
+    if not s:
+        raise RuntimeError("LLM boş yanıt döndü (fatura okunamadı)")
+    if "```" in s:
+        # ```json ... ``` ya da ``` ... ``` çitini soy
+        parca = s.split("```")
+        if len(parca) >= 2:
+            s = parca[1]
+            if s.lstrip().lower().startswith("json"):
+                s = s.lstrip()[4:]
+    s = s.strip()
+    # İlk { ... son } gövdesini al (model baş/sona açıklama eklerse)
+    if not s.startswith("{"):
+        a = s.find("{"); b = s.rfind("}")
+        if a != -1 and b != -1 and b > a:
+            s = s[a:b + 1]
+    j = json.loads(s)
     return j if isinstance(j, dict) else {}
+
+
+_OCR_PROMPT_PDF = (
+    "Aşağıda bir Türk e-FATURASININ DÜZ METNİ var (PDF'ten çıkarıldı). "
+    "TEK bir faturadır.\n"
+    "TEDARİKÇİ KİM: Faturayı DÜZENLEYEN/satan firma genelde alt blokta 'e-Fatura' ve "
+    "VKN ile yer alır; 'SAYIN' satırından sonraki firma ALICIdır (müşteri) — onu "
+    "tedarikçi SANMA. tedarikci alanına faturayı KESEN (satan) firmayı yaz.\n"
+    "Kalem tablosundaki HER ürün satırını oku. Ürün/Stok Kodu (örn. STK1006, ST00096) "
+    "MUTLAKA al — en kritik alan. Ürün adı birden çok satıra bölünmüş olabilir, BİRLEŞTİR.\n"
+    "SADECE şu JSON'u döndür, başka metin yazma:\n"
+    '{"tedarikci": "<satan firma ünvanı>", '
+    '"fatura_no": "<Fatura No>", "fatura_tarih": "YYYY-MM-DD veya null", '
+    '"toplam_tutar": <Ödenecek Tutar sayı veya null>, "kalemler": [{'
+    '"urun_kodu": "<Stok Kodu, örn STK1006; yoksa null>", '
+    '"ad": "<ürün açıklaması, çok satırlıysa birleşik>", "adet": <miktar sayı>, '
+    '"birim": "<Adet/kg/lt>", "birim_fiyat": <Birim Fiyatı sayı>, '
+    '"satir_toplam": <Mal Hizmet Tutarı, KDV hariç sayı>}]}\n'
+    "Sayı biçimi: Türkçe 1.234,56 → 1234.56 (nokta=ondalık). Tarih gün-ay-yıl ise "
+    "YYYY-MM-DD'ye çevir. Her ürün satırını ekle."
+)
+
+
+def _text_ocr(metin: str) -> Dict[str, Any]:
+    """PDF e-fatura DÜZ METNİNDEN yapılandırılmış JSON çıkarır (vision YOK → 'Expecting
+    value' hatası olmaz). Tek deneme başarısızsa bir kez daha dener, sonra exception."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY yok")
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key)
+    govde = (metin or "").strip()[:12000]  # uzun faturada bağlamı sınırla
+    son_hata: Optional[Exception] = None
+    for _deneme in range(2):
+        try:
+            resp = client.chat.completions.create(
+                model=os.getenv("OPENAI_FATURA_MODEL", "gpt-4o"),
+                messages=[{"role": "user", "content": f"{_OCR_PROMPT_PDF}\n\n--- FATURA METNİ ---\n{govde}"}],
+                temperature=0,
+                max_tokens=1500,
+            )
+            return _json_govde_coz(resp.choices[0].message.content or "")
+        except Exception as e:  # JSON/ağ hatası → tek tekrar
+            son_hata = e
+    raise RuntimeError(f"Fatura metni JSON'a çevrilemedi: {son_hata}")
+
+
+def _fatura_json_db_yaz(cur, fatura_id: str, j: Dict[str, Any]) -> int:
+    """OCR/text JSON sonucunu tedarikci_fatura + _kalem'e yazar (foto & PDF ortak yol).
+    Commit ETMEZ — çağıran commit'ler. Dönüş: yazılan kalem sayısı."""
+    kalemler = j.get("kalemler") if isinstance(j.get("kalemler"), list) else []
+    cur.execute(
+        """
+        UPDATE tedarikci_fatura
+        SET tedarikci_ad=COALESCE(%s, tedarikci_ad), fatura_tarih=%s, toplam_tutar=%s,
+            fatura_no=COALESCE(%s, fatura_no), ocr_json=%s::jsonb, durum='ocr_tamam', ocr_hata=NULL
+        WHERE id=%s
+        """,
+        (
+            (str(j.get("tedarikci") or "").strip() or None),
+            (str(j.get("fatura_tarih")) if j.get("fatura_tarih") else None),
+            _sayi(j.get("toplam_tutar")),
+            (str(j.get("fatura_no") or "").strip() or None),
+            json.dumps(j, ensure_ascii=False),
+            fatura_id,
+        ),
+    )
+    # Eski kalemleri temizle (yeniden işleme/tekrar deneme idempotent olsun)
+    cur.execute("DELETE FROM tedarikci_fatura_kalem WHERE fatura_id=%s", (fatura_id,))
+    for i, k in enumerate(kalemler):
+        if not isinstance(k, dict):
+            continue
+        _ad = (str(k.get("ad") or "").strip() or None)
+        _kod = (str(k.get("urun_kodu") or "").strip() or None)
+        # ── KÖPRÜ: mevcut alias hafızasından eşleşen stok kalemini öner ──
+        _anahtar = _fatura_anahtar_ocr(_kod, _ad)
+        _es = _alias_eslesme(cur, _anahtar)
+        _eslesen = _es.get("kalem_kodu") if _es else None
+        cur.execute(
+            """
+            INSERT INTO tedarikci_fatura_kalem
+                (id, fatura_id, sira, ocr_ad, ocr_urun_kodu, adet, birim,
+                 birim_fiyat, satir_toplam, eslesen_stok_kodu, eslesme_guven)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                str(uuid.uuid4()), fatura_id, i, _ad, _kod,
+                _sayi(k.get("adet")), (str(k.get("birim") or "").strip() or None),
+                _sayi(k.get("birim_fiyat")), _sayi(k.get("satir_toplam")),
+                _eslesen, (1.0 if _eslesen else None),
+            ),
+        )
+    return len(kalemler)
+
+
+def _pdf_metin_sayfalar(pdf_bytes: bytes) -> List[str]:
+    """PDF'in her sayfasının düz metnini döndürür (pdfplumber, yedeği pymupdf)."""
+    try:
+        import pdfplumber  # type: ignore
+        out: List[str] = []
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for p in pdf.pages:
+                out.append(p.extract_text() or "")
+        return out
+    except Exception:
+        import fitz  # type: ignore  # pymupdf
+        d = fitz.open(stream=pdf_bytes, filetype="pdf")
+        return [d[i].get_text() or "" for i in range(d.page_count)]
+
+
+def _pdf_faturalara_bol(pdf_bytes: bytes) -> List[Dict[str, Any]]:
+    """Çok-sayfalı e-fatura PDF'ini AYRI faturalara böler. Her 'Fatura No:' içeren
+    sayfa yeni fatura başlatır; 'Fatura No' içermeyen sayfa önceki faturanın DEVAMIDIR
+    (metni ona eklenir). Dönüş: [{fatura_no, metin}]."""
+    sayfalar = _pdf_metin_sayfalar(pdf_bytes)
+    faturalar: List[Dict[str, Any]] = []
+    for metin in sayfalar:
+        m = re.search(r"Fatura\s*No\s*:?\s*([A-Z0-9]+)", metin or "", re.IGNORECASE)
+        if m:
+            faturalar.append({"fatura_no": m.group(1), "metin": metin or ""})
+        elif faturalar:
+            # Fatura No yok → önceki faturanın devam sayfası
+            faturalar[-1]["metin"] += "\n" + (metin or "")
+        # İlk sayfa Fatura No içermiyorsa (kapak vb.) atlanır
+    return faturalar
 
 
 def _ocr_calistir(fatura_id: str) -> None:
@@ -187,60 +335,31 @@ def _ocr_calistir(fatura_id: str) -> None:
     try:
         with db() as (conn, cur):
             _ensure_tablolar(cur)
-            cur.execute("SELECT foto, foto_mime FROM tedarikci_fatura WHERE id=%s", (fatura_id,))
+            cur.execute(
+                "SELECT foto, foto_mime, kaynak_metin FROM tedarikci_fatura WHERE id=%s",
+                (fatura_id,),
+            )
             r = cur.fetchone()
             if not r:
                 return
-            foto = bytes(dict(r).get("foto") or b"")
-            mime = dict(r).get("foto_mime") or "image/jpeg"
-        if not foto:
-            raise RuntimeError("foto boş")
+            d = dict(r)
+            foto = bytes(d.get("foto") or b"")
+            mime = d.get("foto_mime") or "image/jpeg"
+            kaynak_metin = (d.get("kaynak_metin") or "").strip()
 
-        j = _vision_ocr(foto, mime)
-        kalemler = j.get("kalemler") if isinstance(j.get("kalemler"), list) else []
+        # Kaynak: PDF metni varsa text yolu (vision YOK), yoksa foto vision OCR.
+        if kaynak_metin:
+            j = _text_ocr(kaynak_metin)
+        elif foto:
+            j = _vision_ocr(foto, mime)
+        else:
+            raise RuntimeError("kaynak yok (ne foto ne metin)")
 
         with db() as (conn, cur):
             _ensure_tablolar(cur)
-            cur.execute(
-                """
-                UPDATE tedarikci_fatura
-                SET tedarikci_ad=%s, fatura_tarih=%s, toplam_tutar=%s,
-                    ocr_json=%s::jsonb, durum='ocr_tamam', ocr_hata=NULL
-                WHERE id=%s
-                """,
-                (
-                    (str(j.get("tedarikci") or "").strip() or None),
-                    (str(j.get("fatura_tarih")) if j.get("fatura_tarih") else None),
-                    _sayi(j.get("toplam_tutar")),
-                    json.dumps(j, ensure_ascii=False),
-                    fatura_id,
-                ),
-            )
-            for i, k in enumerate(kalemler):
-                if not isinstance(k, dict):
-                    continue
-                _ad = (str(k.get("ad") or "").strip() or None)
-                _kod = (str(k.get("urun_kodu") or "").strip() or None)
-                # ── KÖPRÜ: mevcut alias hafızasından eşleşen stok kalemini öner ──
-                _anahtar = _fatura_anahtar_ocr(_kod, _ad)
-                _es = _alias_eslesme(cur, _anahtar)
-                _eslesen = _es.get("kalem_kodu") if _es else None
-                cur.execute(
-                    """
-                    INSERT INTO tedarikci_fatura_kalem
-                        (id, fatura_id, sira, ocr_ad, ocr_urun_kodu, adet, birim,
-                         birim_fiyat, satir_toplam, eslesen_stok_kodu, eslesme_guven)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        str(uuid.uuid4()), fatura_id, i, _ad, _kod,
-                        _sayi(k.get("adet")), (str(k.get("birim") or "").strip() or None),
-                        _sayi(k.get("birim_fiyat")), _sayi(k.get("satir_toplam")),
-                        _eslesen, (1.0 if _eslesen else None),
-                    ),
-                )
+            kalem_say = _fatura_json_db_yaz(cur, fatura_id, j)
             conn.commit()
-        logger.info("fatura OCR tamam: %s (%d kalem)", fatura_id, len(kalemler))
+        logger.info("fatura OCR tamam: %s (%d kalem)", fatura_id, kalem_say)
     except Exception as e:
         logger.warning("fatura OCR hata %s: %s", fatura_id, e)
         try:
@@ -298,19 +417,30 @@ def _alias_eslesme(cur, anahtar: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _son_alis_fiyat(cur, kalem_kodu: str) -> Optional[Dict[str, Any]]:
-    """Mevcut fiyat geçmişinden (urun_alis_fiyat) son bilinen birim maliyet —
-    zam/azalış karşılaştırması için. Best-effort."""
+def _son_alis_fiyat(cur, kalem_kodu: str, ref_tarih: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Fiyat geçmişinden (urun_alis_fiyat) bilinen birim maliyet — zam karşılaştırması.
+    ref_tarih verilirse SADECE o tarihten ÖNCEKİ fiyatları dikkate alır (tarih
+    eşleştirmesi): eski faturayı yeni faturadan sonra onaylasan bile 'önceki fiyat'
+    kronolojik doğru çıkar. Best-effort."""
     if not kalem_kodu:
         return None
     try:
         cur.execute("SAVEPOINT sp_fiyat")
-        cur.execute(
-            """SELECT birim_maliyet_tl, gecerli_baslangic::text AS tarih
-               FROM urun_alis_fiyat WHERE kalem_kodu=%s
-               ORDER BY gecerli_baslangic DESC LIMIT 1""",
-            (kalem_kodu,),
-        )
+        if ref_tarih:
+            cur.execute(
+                """SELECT birim_maliyet_tl, gecerli_baslangic::text AS tarih
+                   FROM urun_alis_fiyat
+                   WHERE kalem_kodu=%s AND gecerli_baslangic < %s::date
+                   ORDER BY gecerli_baslangic DESC LIMIT 1""",
+                (kalem_kodu, ref_tarih),
+            )
+        else:
+            cur.execute(
+                """SELECT birim_maliyet_tl, gecerli_baslangic::text AS tarih
+                   FROM urun_alis_fiyat WHERE kalem_kodu=%s
+                   ORDER BY gecerli_baslangic DESC LIMIT 1""",
+                (kalem_kodu,),
+            )
         r = cur.fetchone()
         cur.execute("RELEASE SAVEPOINT sp_fiyat")
         return dict(r) if r else None
@@ -355,6 +485,70 @@ async def fatura_yukle(
     # Asenkron OCR — şubeyi bekletmeden
     threading.Thread(target=_ocr_calistir, args=(fid,), daemon=True).start()
     return {"fatura_id": fid, "durum": "ocr_bekliyor"}
+
+
+@router.post("/yukle-pdf")
+async def fatura_yukle_pdf(
+    pdf: UploadFile = File(...),
+    sube_id: Optional[str] = Form(None),
+    personel_id: Optional[str] = Form(None),
+):
+    """Maliyet ekranından TOPLU e-fatura PDF'i yükle. Çok-sayfalı PDF AYRI faturalara
+    bölünür; her fatura metni arka planda LLM ile JSON'a çevrilir (vision YOK → 'Expecting
+    value' hatası olmaz). Aynı Fatura No daha önce yüklendiyse ATLANIR (idempotent).
+    ANINDA döner; ayrıştırma arka planda. Tarih sıralaması fatura tarihinden otomatik."""
+    if not fatura_modul_aktif():
+        raise HTTPException(503, "Fatura modülü kapalı (FATURA_MODUL=0).")
+    raw = await pdf.read()
+    if not raw:
+        raise HTTPException(400, "Boş dosya")
+    ad = (pdf.filename or "").lower()
+    if not (ad.endswith(".pdf") or (pdf.content_type or "").lower() == "application/pdf"):
+        raise HTTPException(400, "Sadece PDF yüklenebilir (foto için şube paneli).")
+    try:
+        faturalar = _pdf_faturalara_bol(raw)
+    except Exception as e:
+        raise HTTPException(400, f"PDF okunamadı: {str(e)[:160]}")
+    if not faturalar:
+        raise HTTPException(422, "PDF'te fatura bulunamadı ('Fatura No' okunamadı).")
+
+    yeni_idler: List[str] = []
+    atlanan = 0
+    with db() as (conn, cur):
+        _ensure_tablolar(cur)
+        for f in faturalar:
+            fno = (f.get("fatura_no") or "").strip() or None
+            metin = (f.get("metin") or "").strip()
+            if not metin:
+                continue
+            # Idempotent: aynı fatura_no zaten varsa atla (tekrar yükleme korunağı)
+            if fno:
+                cur.execute("SELECT 1 FROM tedarikci_fatura WHERE fatura_no=%s LIMIT 1", (fno,))
+                if cur.fetchone():
+                    atlanan += 1
+                    continue
+            fid = str(uuid.uuid4())
+            cur.execute(
+                """
+                INSERT INTO tedarikci_fatura
+                    (id, sube_id, fatura_no, kaynak_metin, kaynak_tip, durum, yukleyen_personel_id)
+                VALUES (%s, %s, %s, %s, 'pdf', 'ocr_bekliyor', %s)
+                """,
+                (fid, (sube_id or None), fno, metin, (personel_id or None)),
+            )
+            yeni_idler.append(fid)
+        conn.commit()
+
+    # Asenkron ayrıştırma — her fatura ayrı (biri patlasa diğerleri devam)
+    for fid in yeni_idler:
+        threading.Thread(target=_ocr_calistir, args=(fid,), daemon=True).start()
+
+    return {
+        "toplam_fatura": len(faturalar),
+        "yuklenen": len(yeni_idler),
+        "atlanan_mevcut": atlanan,
+        "durum": "ocr_bekliyor",
+    }
 
 
 @router.get("/bekleyen")
@@ -624,9 +818,10 @@ def fatura_detay(fatura_id: str):
         )
         kalemler = [dict(r) for r in (cur.fetchall() or [])]
         # ── KÖPRÜ: eşleşen kalemler için son bilinen fiyat + değişim (zam) ──
+        _ref_tarih = str(h.get("fatura_tarih") or "").strip() or None  # tarih eşleştirmesi
         for k in kalemler:
             kod = k.get("eslesen_stok_kodu")
-            son = _son_alis_fiyat(cur, kod) if kod else None
+            son = _son_alis_fiyat(cur, kod, _ref_tarih) if kod else None
             if son:
                 k["onceki_fiyat"] = float(son.get("birim_maliyet_tl") or 0)
                 k["onceki_tarih"] = son.get("tarih")
@@ -704,18 +899,25 @@ def fatura_kalem_onayla(kalem_id: str, body: FaturaKalemOnayBody):
     from operasyon_merkez_api import (
         _kaydet_alis_fiyati, _fatura_anahtar, _ensure_maliyet_tablolari,
     )
-    bas = body.gecerli_baslangic or str(date.today())
     with db() as (conn, cur):
         _ensure_tablolar(cur)
         _ensure_maliyet_tablolari(cur)
         cur.execute(
-            "SELECT ocr_ad, ocr_urun_kodu FROM tedarikci_fatura_kalem WHERE id=%s",
+            """
+            SELECT k.ocr_ad, k.ocr_urun_kodu, f.fatura_tarih::text AS fatura_tarih
+            FROM tedarikci_fatura_kalem k
+            JOIN tedarikci_fatura f ON f.id = k.fatura_id
+            WHERE k.id=%s
+            """,
             (kalem_id,),
         )
         r = cur.fetchone()
         if not r:
             raise HTTPException(404, "Kalem bulunamadı")
         r = dict(r)
+        # Fiyatın geçerlilik başlangıcı = FATURA TARİHİ (sistem otomatik eşleştirir);
+        # frontend açıkça verirse onu kullan, yoksa fatura tarihi, o da yoksa bugün.
+        bas = body.gecerli_baslangic or (r.get("fatura_tarih") or None) or str(date.today())
         ocr_ad = r.get("ocr_ad") or ""
         anahtar = _fatura_anahtar({"urun_kodu": r.get("ocr_urun_kodu"), "aciklama": ocr_ad})
         # 1) Fiyatı kaydet (PDF ile aynı servis) → urun_alis_fiyat + canlı maliyet
