@@ -1375,6 +1375,11 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                           <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>
                             {kisaTs(sip.olusturma)} · {kalemOzet(Array.isArray(sip.kalan_kalemler) ? sip.kalan_kalemler : sip.kalemler)}{(Array.isArray(sip.kalan_kalemler) && sip.kalan_kalemler.length < (sip.kalemler || []).length) ? ' (kalan)' : ''}
                           </div>
+                          {sip.kismi_toptanci && (
+                            <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 700, marginBottom: 4, lineHeight: 1.4 }}>
+                              🔶 {(sip.dagitilan_kalem_adlari || []).join(', ')} zaten yollandı — kalan {(sip.kalan_kalemler || []).map(k => k?.urun_ad).filter(Boolean).join(', ')}
+                            </div>
+                          )}
                           <KuyrukYonlendirmeKarti
                             sip={sip}
                             depolar={depolar}
@@ -1455,6 +1460,11 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                             )}
                             <SiparisGonderenSatiri kayit={s} style={{ marginTop: 2 }} />
                             <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{s.asama_metni}</div>
+                            {s.kismi_toptanci && (
+                              <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 700, marginTop: 3, lineHeight: 1.4 }}>
+                                🔶 Kısmi: {(s.dagitilan_kalem_adlari || []).join(', ') || '—'} yollandı · {(s.kalan_kalemler || []).map(k => k?.urun_ad).filter(Boolean).join(', ') || '—'} bekliyor
+                              </div>
+                            )}
                             <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'monospace' }}>
                               #{String(s.id).slice(-8)} · {kisaTs(s.olusturma)}
                             </div>

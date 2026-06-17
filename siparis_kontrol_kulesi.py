@@ -384,6 +384,17 @@ def siparis_kontrol_kulesi_yukle(
         else:
             z["kalan_kalemler"] = z.get("kalemler") or []
 
+        # ── KISMİ TOPTANCI etiketi: bazı kalemler toptancıya yollandı AMA hepsi değil.
+        # Sipariş takip aksi halde yanıltıcı "bekliyor" gösterir (yollanan kalem görünmez).
+        _disp_set = set(_disp.keys())
+        z["dagitilan_kalem_adlari"] = [
+            str((_it or {}).get("urun_ad") or "")
+            for _it in (z.get("kalemler") or [])
+            if isinstance(_it, dict)
+            and str((_it or {}).get("urun_ad") or "").strip().lower() in _disp_set
+        ]
+        z["kismi_toptanci"] = bool(_disp_set) and len(z["kalan_kalemler"]) > 0
+
         # ── SELF-HEAL: tüm ürünleri dağıtılmış ama hâlâ 'bekliyor' kalmış talep
         # (eski hatalı/miktar-bazlı gönderimden kalma) → 'gonderildi'ye çek. Böylece
         # kuyrukta hayalet "0 kalem" sipariş asılı kalmaz. Sadece dağıtım VARSA ve
