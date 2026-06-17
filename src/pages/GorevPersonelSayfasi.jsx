@@ -910,11 +910,19 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
   const [kaydediliyor, setKaydediliyor] = useState(false);
   const [hata, setHata] = useState('');
   const sonTikRef = useRef(0);
+  const freezeRef = useRef(false);
 
   // Görevi 'basladi' durumuna geçir (durum makinesi)
   useEffect(() => {
     api(`/stok-sayim/gorev/${gorev.id}/basla`, { method: 'POST' }).catch(() => {});
   }, [gorev.id]);
+
+  // İlk rakam girildiği an FREEZE'i bildir → şube 'ürün aç' alanı kilitlenir
+  const freezeBildir = () => {
+    if (freezeRef.current) return;
+    freezeRef.current = true;
+    api(`/stok-sayim/gorev/${gorev.id}/sayim-aktif`, { method: 'POST' }).catch(() => {});
+  };
 
   const aktif = kalemler[idx];
   const aktifKod = aktif ? String(aktif.kalem_kodu) : '';
@@ -942,6 +950,7 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
   // +/− adım: rakamı tek dokunuşla artır/azalt (girildi sayılır → ileri gidebilir).
   // Tuş takımı VEYA +/− — iki yolla da girilebilir.
   const adim = (delta) => {
+    freezeBildir();
     setDegerler((m) => {
       const cur = parseInt(m[aktifKod]?.val || '0', 10) || 0;
       const yeni = Math.max(0, cur + delta);
@@ -950,6 +959,7 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
   };
 
   const tusBas = (t) => {
+    if (t !== 'sil') freezeBildir();
     setDegerler((m) => {
       const cur = m[aktifKod]?.val || '';
       let yeni = cur;

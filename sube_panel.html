@@ -5357,6 +5357,10 @@
       </div>
 
       <div class="sekme-icerik" id="tab-ac">
+        <div id="stokSayimFreeze" style="display:none;margin-bottom:12px;padding:14px 16px;border-radius:12px;border:1px solid #d9a441;background:rgba(217,164,65,0.12);color:var(--text2)">
+          <div style="font-size:14px;font-weight:800">🔒 Stok sayımı sürüyor — Ürün Aç geçici kapalı</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:4px" id="stokSayimFreezeAlt">Sayım bitene kadar depodan ürün çıkışı yapılamaz.</div>
+        </div>
         <div id="urunAcStickyBar" style="display:none" role="region" aria-label="Seçilen ürün aç özeti">
           <div class="siparis-sticky-onay-panel">
             <div class="siparis-sticky-onay-baslik">
@@ -12875,6 +12879,30 @@ function _dvBeklePhoneOnay(pid1, devirId) {
     } catch(_){}
   }, 4000);
 }
+
+// ── Stok Sayımı FREEZE: sayım sürerken 'Ürün Aç' alanı geçici kilitlenir ──
+// Personel ilk rakamı girince (sube-kilit kilitli=true) depodan ürün çıkışı yasak.
+// Sayım tamamlanınca/iptal olunca otomatik açılır.
+function stokSayimFreezeUygula(kilitli, personelAd){
+  var banner = document.getElementById('stokSayimFreeze');
+  var alt = document.getElementById('stokSayimFreezeAlt');
+  if (banner) banner.style.display = kilitli ? '' : 'none';
+  if (kilitli && alt) alt.textContent = (personelAd ? personelAd + ' sayım yapıyor. ' : '') + 'Sayım bitene kadar depodan ürün çıkışı yapılamaz.';
+  ['acForm','kullanimdaKart','urunAcStickyBar'].forEach(function(id){
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.style.pointerEvents = kilitli ? 'none' : '';
+    el.style.opacity = kilitli ? '0.45' : '';
+  });
+}
+async function stokSayimFreezeKontrol(){
+  try {
+    if (typeof SUBE_ID === 'undefined' || !SUBE_ID) return;
+    var d = await api('/stok-sayim/sube-kilit?sube_id=' + encodeURIComponent(SUBE_ID));
+    stokSayimFreezeUygula(!!(d && d.kilitli), d && d.personel_ad);
+  } catch(_){}
+}
+try { stokSayimFreezeKontrol(); setInterval(stokSayimFreezeKontrol, 8000); } catch(_){}
 
 window._qrBuyut = function(){
   var src = document.getElementById('vardiyaGirisQrImg');

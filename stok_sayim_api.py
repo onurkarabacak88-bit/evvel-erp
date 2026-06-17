@@ -58,6 +58,8 @@ def _ensure_tablolar(cur) -> None:
         )
         """
     )
+    # İlk rakam girildiği an (freeze başlangıcı) — eski tablolarda eksik olabilir
+    cur.execute("ALTER TABLE stok_sayim_gorev ADD COLUMN IF NOT EXISTS ilk_giris_ts TIMESTAMPTZ")
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_ssg_sube_personel ON stok_sayim_gorev (sube_id, personel_id, durum)"
     )
@@ -333,6 +335,45 @@ def gorev_basla(gorev_id: str):
                 (gid,),
             )
     return {"ok": True}
+
+
+@router.post("/gorev/{gorev_id}/sayim-aktif")
+def gorev_sayim_aktif(gorev_id: str):
+    """Personel İLK rakamı girdiği an çağrılır → FREEZE başlar. O andan itibaren
+    şubenin 'ürün aç' alanı kilitlenir (sayım sürerken depodan çıkış yasak).
+    İdempotent: ilk_giris_ts bir kez yazılır."""
+    gid = (gorev_id or "").strip()
+    with db() as (_, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            "UPDATE stok_sayim_gorev SET ilk_giris_ts=NOW() WHERE id=%s AND durum='basladi' AND ilk_giris_ts IS NULL",
+            (gid,),
+        )
+    return {"ok": True}
+
+
+@router.get("/sube-kilit")
+def sube_kilit(sube_id: str):
+    """Şubede AKTİF sayım var mı (personel rakam girmeye başladı mı)? Şube paneli
+    'ürün aç' alanını buna göre geçici kilitler. Sayım tamamlanınca/iptal olunca açılır."""
+    sid = (sube_id or "").strip()
+    if not sid:
+        raise HTTPException(400, "sube_id zorunlu")
+    with db() as (_, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """
+            SELECT id, personel_ad FROM stok_sayim_gorev
+            WHERE sube_id=%s AND durum='basladi' AND ilk_giris_ts IS NOT NULL
+            ORDER BY ilk_giris_ts DESC LIMIT 1
+            """,
+            (sid,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return {"kilitli": False, "personel_ad": None, "gorev_id": None}
+    g = dict(row)
+    return {"kilitli": True, "personel_ad": g.get("personel_ad"), "gorev_id": g.get("id")}
 
 
 # ────────────────────────────── 4) PERSONEL: SAYIMI KAYDET ──────────────────────────────
