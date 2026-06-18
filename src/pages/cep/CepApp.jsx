@@ -11,7 +11,7 @@
 //   - Şubeler & Denetim: günlük denetim raporundan okunur özet.
 // Faz 2 (sonra): PIN + kritik aksiyonda tekrar doğrulama + uzaktan oturum kapatma.
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api, fmt } from '../../utils/api';
 
 // ── Cihaz oturumu (frontend "beni hatırla") ─────────────────────────────────
@@ -1012,6 +1012,7 @@ function CepKule({ onGeri, onDegisti }) {
   const [subeler, setSubeler] = useState([]);
   const [depoYon, setDepoYon] = useState(null);   // depo-sevk alt-sayfası: { talep, items }
   const [depoSubeId, setDepoSubeId] = useState('');
+  const gonderiyorRef = useRef(false);  // SENKRON kilit — çift tıkta iki gönderimi engeller
 
   const yukle = useCallback((sessiz) => {
     if (!sessiz) setHata('');
@@ -1069,6 +1070,7 @@ function CepKule({ onGeri, onDegisti }) {
     const liste = (items && items.length ? items : itemsOf(talep));
     const kalemler = liste.map(k => ({ urun_ad: k.urun_ad, adet: Number(k.adet) || 1 })).filter(k => k.urun_ad);
     if (!kalemler.length) { alert('Gönderilecek kalem yok'); return; }
+    if (gonderiyorRef.current) return; gonderiyorRef.current = true;  // çift tık kilidi
     const tel = ted.telefon || tedarikciler.find(t => String(t.id) === String(ted.id))?.telefon;
     setMesgul(true);
     try {
@@ -1097,7 +1099,7 @@ function CepKule({ onGeri, onDegisti }) {
       setUndo({ talep_id: talep.id, sube_adi: talep.sube_adi, ted_ad: ted.ad, tam: r?.tam_gonderildi !== false });
       yukle(); onDegisti && onDegisti();
     } catch (e) { alert('Yönlendirilemedi: ' + (e.message || '')); }
-    finally { setMesgul(false); }
+    finally { setMesgul(false); gonderiyorRef.current = false; }
   };
 
   const geriAl = async () => {
@@ -1125,6 +1127,7 @@ function CepKule({ onGeri, onDegisti }) {
   };
 
   const batchGonder = async (b) => {
+    if (gonderiyorRef.current) return; gonderiyorRef.current = true;  // çift tık kilidi
     setMesgul(true);
     try {
       for (const row of b.satirlar) {  // her talebi kaydet — WA YOK (tek birleşik mesaj aşağıda)
@@ -1148,12 +1151,13 @@ function CepKule({ onGeri, onDegisti }) {
       }
       yukle(); onDegisti && onDegisti();
     } catch (e) { alert('Toplu gönderim hatası: ' + (e.message || '')); }
-    finally { setMesgul(false); }
+    finally { setMesgul(false); gonderiyorRef.current = false; }
   };
 
   // Kendi depomuzdan sevk — kaynak depo şubesini sen seçersin (toptancıya alternatif)
   const depoSevk = async () => {
     if (!depoYon || !depoSubeId) return;
+    if (gonderiyorRef.current) return; gonderiyorRef.current = true;  // çift tık kilidi
     setMesgul(true);
     try {
       await api('/ops/siparis/sevkiyata-gonder', {
@@ -1165,7 +1169,7 @@ function CepKule({ onGeri, onDegisti }) {
       setUndo({ talep_id: depoYon.talep.id, sube_adi: depoYon.talep.sube_adi, ted_ad: `${dep?.ad || 'depo'} (depo)`, tam: false, depo: true });
       yukle(); onDegisti && onDegisti();
     } catch (e) { alert('Sevk başlatılamadı: ' + (e.message || '')); }
-    finally { setMesgul(false); }
+    finally { setMesgul(false); gonderiyorRef.current = false; }
   };
 
   const renkAsama = (a) => a === 'bekliyor' ? C.sari : a === 'tamamlandi' ? C.yesil
