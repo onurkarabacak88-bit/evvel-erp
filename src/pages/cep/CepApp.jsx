@@ -12,7 +12,7 @@
 // Faz 2 (sonra): PIN + kritik aksiyonda tekrar doğrulama + uzaktan oturum kapatma.
 
 import { useState, useEffect, useCallback } from 'react';
-import { api } from '../../utils/api';
+import { api, fmt } from '../../utils/api';
 
 // ── Cihaz oturumu (frontend "beni hatırla") ─────────────────────────────────
 // Not: Bu demo/iç kullanım için yeterli. Gerçek (uzaktan iptal edilebilir) token
@@ -134,13 +134,12 @@ function Baslik({ baslik, onGeri, sag }) {
 // ── Ana ekran: kart ızgarası ────────────────────────────────────────────────
 function CepHome({ sayac, onAc, onCikis, yenile }) {
   const KARTLAR = [
-    { id: 'hatirlatmalar', ikon: '🔔', baslik: 'Hatırlatmalar', renk: C.sari,
-      sayi: sayac.dikkat, alt: 'Bugün dikkat isteyen' },
+    { id: 'odemeler', ikon: '💸', baslik: 'Bugün Ödemeler', renk: C.kirmizi,
+      sayi: sayac.odeme,
+      alt: sayac.odeme > 0 ? `${sayac.odeme} ödeme · ${fmt(sayac.odemeTutar)}` : 'Bugün ödeme yok' },
     { id: 'onaylar', ikon: '✅', baslik: 'Gider Onayı', renk: C.yesil,
-      sayi: sayac.onay, alt: 'Bekleyen gider' },
+      sayi: sayac.onay, alt: `${sayac.onay} bekleyen gider` },
     // Denetim kartı şimdilik kapalı (aktif kullanılmıyor) — Faz 2'de geri açılacak.
-    // { id: 'denetim', ikon: '🧠', baslik: 'Denetim', renk: C.kirmizi,
-    //   sayi: sayac.anomali, alt: 'Bugün uyarı' },
     { id: 'subeler', ikon: '🏪', baslik: 'Şubeler', renk: C.mavi,
       sayi: null, alt: 'Durum özeti' },
   ];
@@ -183,9 +182,7 @@ function CepHome({ sayac, onAc, onCikis, yenile }) {
             </div>
             <div>
               <div style={{ fontSize: 17, fontWeight: 800, color: C.t1 }}>{k.baslik}</div>
-              <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>
-                {k.sayi != null ? `${k.sayi} ${k.alt.toLowerCase()}` : k.alt}
-              </div>
+              <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>{k.alt}</div>
             </div>
           </button>
         ))}
@@ -427,81 +424,71 @@ function CepSubeler({ onGeri }) {
   );
 }
 
-// ── Hatırlatmalar = Dikkat Akışı (var olan olaylardan türer, YENİ tablo YOK) ──
-function CepHatirlatmalar({ onGeri, onAc }) {
-  const [akis, setAkis] = useState(null);
+// ── Bugün Ödemeler (bugün + gecikmiş, tüm kaynaklar) ─────────────────────────
+function CepOdemeler({ onGeri }) {
+  const [liste, setListe] = useState(null);
+  const [hata, setHata] = useState('');
 
   useEffect(() => {
-    const bugun = new Date().toISOString().slice(0, 10);
-    Promise.allSettled([
-      api('/onay-kuyrugu?durum=bekliyor&limit=400'),
-      api('/ciro-taslak?durum=bekliyor'),
-      api(`/ops/truth/gunluk-rapor?tarih=${bugun}`),
-      api('/stok-sayim/bekleyen-onay'),
-      api('/is-basvurusu/ozet'),
-    ]).then(([onay, ciro, denetim, stok, basvuru]) => {
-      const items = [];
-      const sayi = (r) => (r.status === 'fulfilled' && Array.isArray(r.value)) ? r.value.length : 0;
-
-      const oNum = (onay.status === 'fulfilled' && Array.isArray(onay.value)) ? onay.value.filter(giderOnayMi).length : 0;
-      if (oNum > 0) items.push({
-        ikon: '✅', oncelik: 2, baslik: `${oNum} gider onayı bekliyor`,
-        detay: 'Şube gider onayları', git: 'onaylar', renk: C.yesil,
-      });
-
-      const cNum = sayi(ciro);
-      if (cNum > 0) items.push({
-        ikon: '📋', oncelik: 2, baslik: `${cNum} ciro onayı bekliyor`,
-        detay: 'Şube ciro taslakları onay bekliyor', git: null, renk: C.mavi,
-      });
-
-      // Denetim dikkat satırı şimdilik kapalı (aktif kullanılmıyor) — Faz 2'de geri açılacak.
-
-      const sNum = (stok.status === 'fulfilled') ? (Number(stok.value?.toplam) || 0) : 0;
-      if (sNum > 0) items.push({
-        ikon: '📋', oncelik: 1, baslik: `${sNum} stok sayımı onay bekliyor`,
-        detay: 'Personel sayımları onayını bekliyor', git: null, renk: C.sari,
-      });
-
-      const bNum = (basvuru.status === 'fulfilled') ? (Number(basvuru.value?.yeni) || 0) : 0;
-      if (bNum > 0) items.push({
-        ikon: '💼', oncelik: 1, baslik: `${bNum} yeni iş başvurusu`,
-        detay: 'Henüz incelenmedi', git: null, renk: C.mavi,
-      });
-
-      items.sort((a, b) => b.oncelik - a.oncelik);
-      setAkis(items);
-    });
+    api('/odeme-plani/bugun')
+      .then(d => setListe(Array.isArray(d) ? d : []))
+      .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
   }, []);
+
+  const toplam = (liste || []).reduce((s, o) => s + (Number(o.tutar) || 0), 0);
 
   return (
     <div style={{ minHeight: '100vh', background: C.bg }}>
-      <Baslik baslik="🔔 Hatırlatmalar" onGeri={onGeri} />
-      <div style={{ padding: 14 }}>
-        <div style={{ fontSize: 12, color: C.t3, marginBottom: 14, lineHeight: 1.5 }}>
-          Sistem otomatik üretir — bugün dikkat isteyen işler. Üstte en önemlisi.
+      <Baslik baslik="💸 Bugün Ödemeler" onGeri={onGeri} />
+
+      {liste && liste.length > 0 && (
+        <div style={{
+          margin: 14, padding: 16, borderRadius: 14, background: C.bg2,
+          border: `1px solid ${C.border}`, textAlign: 'center',
+        }}>
+          <div style={{ fontSize: 12, color: C.t3 }}>Bugün ödenecek toplam</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: C.t1, marginTop: 4 }}>{fmt(toplam)}</div>
         </div>
-        {akis === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
-        {akis && akis.length === 0 && (
+      )}
+
+      <div style={{ padding: '0 14px 24px' }}>
+        {liste === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 20 }}>{hata}</div>}
+        {liste && liste.length === 0 && !hata && (
           <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>
-            <div style={{ fontSize: 40, marginBottom: 8 }}>✨</div>
-            Her şey yolunda — bekleyen iş yok.
+            <div style={{ fontSize: 40, marginBottom: 8 }}>✅</div>
+            Bugün ödenecek bir şey yok.
           </div>
         )}
-        {(akis || []).map((it, i) => (
-          <button key={i} onClick={() => it.git && onAc(it.git)} style={{
-            width: '100%', textAlign: 'left', background: C.bg2, border: `1px solid ${C.border}`,
-            borderLeft: `4px solid ${it.renk}`, borderRadius: 14, padding: 14, marginBottom: 12,
-            cursor: it.git ? 'pointer' : 'default', display: 'flex', gap: 12, alignItems: 'center',
+        {(liste || []).map(o => (
+          <div key={o.id} style={{
+            background: C.bg2, border: `1px solid ${C.border}`,
+            borderLeft: `4px solid ${o.gecikmis ? C.kirmizi : C.sari}`,
+            borderRadius: 14, padding: 14, marginBottom: 12,
           }}>
-            <span style={{ fontSize: 26 }}>{it.ikon}</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: C.t1 }}>{it.baslik}</div>
-              <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>{it.detay}</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+              <span style={{
+                fontSize: 11, fontWeight: 700, color: C.mavi, background: 'rgba(59,130,246,0.12)',
+                padding: '2px 8px', borderRadius: 6,
+              }}>{o.tip}</span>
+              {o.gecikmis
+                ? <span style={{ fontSize: 12, fontWeight: 700, color: C.kirmizi }}>⚠ {o.gun_gecikme} gün gecikmiş</span>
+                : <span style={{ fontSize: 12, color: C.t3 }}>Bugün</span>}
             </div>
-            {it.git && <span style={{ color: C.t3, fontSize: 20 }}>›</span>}
-          </button>
+            <div style={{ fontSize: 15, color: C.t1, marginBottom: 8, lineHeight: 1.4 }}>{o.baslik}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.t1 }}>{fmt(o.tutar)}</div>
+            {o.asgari != null && o.asgari > 0 && (
+              <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>Asgari: {fmt(o.asgari)}</div>
+            )}
+          </div>
         ))}
+
+        {liste && liste.length > 0 && (
+          <div style={{ fontSize: 11, color: C.t3, textAlign: 'center', marginTop: 6, lineHeight: 1.5 }}>
+            Bu ekran ödenecekleri gösterir. Ödeme işaretleme masaüstü panelden yapılır
+            (telefondan ödeme Faz 2'de eklenecek).
+          </div>
+        )}
       </div>
     </div>
   );
@@ -511,26 +498,17 @@ function CepHatirlatmalar({ onGeri, onAc }) {
 export default function CepApp() {
   const [girisli, setGirisli] = useState(() => tokenGecerli());
   const [view, setView] = useState('home');
-  const [sayac, setSayac] = useState({ onay: 0, anomali: 0, dikkat: 0 });
+  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0 });
 
   const sayaclariYukle = useCallback(() => {
-    const bugun = new Date().toISOString().slice(0, 10);
     Promise.allSettled([
       api('/onay-kuyrugu?durum=bekliyor&limit=400'),
-      api('/ciro-taslak?durum=bekliyor'),
-      api(`/ops/truth/gunluk-rapor?tarih=${bugun}`),
-      api('/stok-sayim/bekleyen-onay'),
-      api('/is-basvurusu/ozet'),
-    ]).then(([onay, ciro, denetim, stok, basvuru]) => {
+      api('/odeme-plani/bugun'),
+    ]).then(([onay, odeme]) => {
       const onayN = (onay.status === 'fulfilled' && Array.isArray(onay.value)) ? onay.value.filter(giderOnayMi).length : 0;
-      const ciroN = (ciro.status === 'fulfilled' && Array.isArray(ciro.value)) ? ciro.value.length : 0;
-      const anomN = denetim.status === 'fulfilled'
-        ? (denetim.value?.subeler || []).reduce((s, r) => s + (Number(r.anomali_sayisi) || 0), 0) : 0;
-      const stokN = (stok.status === 'fulfilled') ? (Number(stok.value?.toplam) || 0) : 0;
-      const basvN = (basvuru.status === 'fulfilled') ? (Number(basvuru.value?.yeni) || 0) : 0;
-      // dikkat = kaç ayrı "dikkat satırı" var (sayıların toplamı değil)
-      const dikkat = [onayN, ciroN, anomN, stokN, basvN].filter(n => n > 0).length;
-      setSayac({ onay: onayN, anomali: anomN, dikkat });
+      const odemeArr = (odeme.status === 'fulfilled' && Array.isArray(odeme.value)) ? odeme.value : [];
+      const odemeTutar = odemeArr.reduce((s, o) => s + (Number(o.tutar) || 0), 0);
+      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar });
     });
   }, []);
 
@@ -546,14 +524,14 @@ export default function CepApp() {
   const cikis = () => { tokenSil(); setGirisli(false); setView('home'); };
   const geri = () => setView('home');
 
+  if (view === 'odemeler')
+    return <CepOdemeler onGeri={geri} />;
   if (view === 'onaylar')
     return <CepOnaylar onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'denetim')
     return <CepDenetim onGeri={geri} />;
   if (view === 'subeler')
     return <CepSubeler onGeri={geri} />;
-  if (view === 'hatirlatmalar')
-    return <CepHatirlatmalar onGeri={geri} onAc={setView} />;
 
   return (
     <div style={{ minHeight: '100vh', background: C.bg, fontFamily: 'Instrument Sans, system-ui, sans-serif' }}>
