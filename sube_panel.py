@@ -3280,6 +3280,20 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             if adet_i <= 0:
                 continue
             urun_id = str(it.get("urun_id") or "").strip()
+            if not urun_id:
+                # Masaüstü/şube paneli sipariş kabulü urun_id TAŞIMAZ ama kalem_kodu =
+                # KANONİK siparis_urun UUID'sidir (sube_panel.html:10829). Onu siparis_urun'da
+                # DOĞRULAYIP urun_id gibi kullan → kanonik depo artar, ozel__ tuzağına düşmez.
+                # (Cep siparişi kalem_kodu='k_0' gibi index → siparis_urun'da YOK → aşağıda
+                #  ada göre çözülür; bu kontrol onu bozmaz.)
+                _gelen_kod = str(it.get("kalem_kodu") or "").strip()
+                if _gelen_kod:
+                    try:
+                        cur.execute("SELECT 1 FROM siparis_urun WHERE id::text=%s LIMIT 1", (_gelen_kod,))
+                        if cur.fetchone():
+                            urun_id = _gelen_kod
+                    except Exception:
+                        pass
             if urun_id:
                 depo_kalem = depo_kalem_kodu_resolve(cur, urun_id, urun_ad)
                 cur.execute(
