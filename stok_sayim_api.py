@@ -876,6 +876,59 @@ def demirbas_durum_getir(sube_id: str):
     return {"sube_id": sid, "toplam": len(rows), "kalemler": rows}
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# DEMİRBAŞ GÖZLEM DEFTERİ — İZOLE HAM VERİ TOPLAYICI (gelecekteki "beyin" için).
+# İlke (bkz. feedback_duyu_ham_veri_once + feedback_duyu_mimari_disiplin):
+#   - demirbas_durum = VARLIK-ÖZELLİĞİ (güncel durum, overwrite normal).
+#   - demirbas_gozlem = SİNYAL (her değişim ayrı satır, APPEND-ONLY, asla silinmez).
+#   - Beyin ŞİMDİ açılmıyor; sadece ham veri kör nokta olmasın diye toplanıyor.
+# Hata-emniyeti: KENDİ transaction'ında yazar; çökerse hata YUTULUR, ana durum
+# kaydı (demirbas_durum) ETKİLENMEZ. Beyin sonra buradan okur, gerekirse düzeltir.
+# ══════════════════════════════════════════════════════════════════════════════
+def _ensure_demirbas_gozlem(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS demirbas_gozlem (
+            id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            sube_id     TEXT,
+            kalem_id    TEXT,
+            kalem_ad    TEXT,      -- snapshot (kalem silinse de iz kalır)
+            kategori    TEXT,      -- snapshot
+            eski_durum  TEXT,
+            yeni_durum  TEXT,
+            eski_adet   INT,
+            yeni_adet   INT,
+            hedef_adet  INT,
+            kaynak      TEXT,      -- 'durum_kayit' | 'gorev' | ...
+            kim         TEXT,
+            ts          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_demirbas_gozlem_kalem ON demirbas_gozlem (sube_id, kalem_id, ts DESC)")
+
+
+def _demirbas_gozlem_yaz(sube_id, kalem_id, kalem_ad, kategori, eski_durum, yeni_durum,
+                         eski_adet, yeni_adet, hedef_adet, kaynak, kim) -> None:
+    """İZOLE ham gözlem yazıcı. KENDİ db() context'inde (ayrı transaction) çalışır;
+    HER TÜRLÜ hata YUTULUR — ana akışı (durum kaydı) asla bozmaz."""
+    try:
+        with db() as (_, cur):
+            _ensure_demirbas_gozlem(cur)
+            cur.execute(
+                """
+                INSERT INTO demirbas_gozlem
+                    (sube_id, kalem_id, kalem_ad, kategori, eski_durum, yeni_durum,
+                     eski_adet, yeni_adet, hedef_adet, kaynak, kim)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """,
+                (sube_id, kalem_id, kalem_ad, kategori, eski_durum, yeni_durum,
+                 eski_adet, yeni_adet, hedef_adet, kaynak, kim),
+            )
+    except Exception as e:  # noqa: BLE001 — bilerek yutuluyor (duyu sistemi bozmaz)
+        logger.warning("demirbas_gozlem yazilamadi (yutuldu, sistem etkilenmedi): %s", str(e)[:200])
+
+
 class DemirbasDurumBody(BaseModel):
     sube_id: str
     kalem_id: str
@@ -896,8 +949,21 @@ def demirbas_durum_kaydet(body: DemirbasDurumBody):
         raise HTTPException(400, "sube_id ve kalem_id zorunlu")
     if durum not in DEMIRBAS_DURUMLAR:
         raise HTTPException(400, "durum: var | eksik | arizali")
+    eski_durum = None
+    eski_adet = None
+    kalem_ad = None
+    kategori = None
     with db() as (_, cur):
         _ensure_demirbas(cur)
+        # Gözlem için eski durumu + kalem snapshot'ını yakala (ana akış)
+        cur.execute("SELECT durum, adet FROM demirbas_durum WHERE sube_id=%s AND kalem_id=%s", (sid, kid))
+        _e = cur.fetchone()
+        if _e:
+            _e = dict(_e); eski_durum = _e.get("durum"); eski_adet = _e.get("adet")
+        cur.execute("SELECT ad, kategori FROM demirbas_kalem WHERE id=%s", (kid,))
+        _k = cur.fetchone()
+        if _k:
+            _k = dict(_k); kalem_ad = _k.get("ad"); kategori = _k.get("kategori")
         cur.execute(
             """
             INSERT INTO demirbas_durum (sube_id, kalem_id, durum, adet, hedef_adet, not_aciklama, guncelleyen_ad, guncelleme)
@@ -910,7 +976,35 @@ def demirbas_durum_kaydet(body: DemirbasDurumBody):
             (sid, kid, durum, body.adet, body.hedef_adet, (body.not_aciklama or "").strip() or None,
              (body.guncelleyen_ad or "").strip() or None),
         )
+    # AYRI/İZOLE ham gözlem — yukarıdaki durum kaydı commit oldu; bu satır çökse de
+    # sistem etkilenmez (hata yutulur). Beyin ileride buradan geçmişi okur.
+    _demirbas_gozlem_yaz(sid, kid, kalem_ad, kategori, eski_durum, durum,
+                         eski_adet, body.adet, body.hedef_adet, "durum_kayit",
+                         (body.guncelleyen_ad or "").strip() or None)
     return {"ok": True}
+
+
+@router.get("/demirbas/gozlem")
+def demirbas_gozlem_oku(sube_id: Optional[str] = None, kalem_id: Optional[str] = None, limit: int = 200):
+    """Ham gözlem defteri (append-only). Beyin/biz buradan geçmiş değişimleri okur.
+    Salt-okur; sistem akışını etkilemez."""
+    lim = max(1, min(1000, int(limit or 200)))
+    with db() as (_, cur):
+        _ensure_demirbas_gozlem(cur)
+        q = "SELECT * FROM demirbas_gozlem WHERE 1=1"
+        params: List[Any] = []
+        sid = (sube_id or "").strip()
+        if sid:
+            q += " AND sube_id=%s"; params.append(sid)
+        kid = (kalem_id or "").strip()
+        if kid:
+            q += " AND kalem_id=%s"; params.append(kid)
+        q += " ORDER BY ts DESC LIMIT %s"; params.append(lim)
+        cur.execute(q, tuple(params))
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+        for r in rows:
+            r["ts"] = str(r.get("ts") or "")
+    return {"toplam": len(rows), "gozlemler": rows}
 
 
 class DemirbasKalemBody(BaseModel):
