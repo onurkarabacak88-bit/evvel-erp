@@ -742,19 +742,8 @@ def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
          diğerlerini 'iptal'. Böylece çift "ödenecek" kaybolur ve unique index kurulabilir.
     """
     sonuc = {"backfill": 0, "kapatilan": 0, "mukerrer_iptal": 0, "hata": None}
-    # 1) referans_ay backfill (borç satırları)
-    try:
-        with db() as (conn, cur):
-            cur.execute("""
-                UPDATE odeme_plani
-                SET referans_ay = DATE_TRUNC('month', tarih)::date
-                WHERE kaynak_tablo='borc_envanteri' AND referans_ay IS NULL AND tarih IS NOT NULL
-            """)
-            sonuc["backfill"] = cur.rowcount or 0
-    except Exception as e:
-        sonuc["hata"] = f"backfill: {e}"; logger.warning(f"borc_plan_mutabakat backfill: {e}")
 
-    # 2) Ödenmiş ama bekleyen borç planını kapat (o ayın kasa BORC_TAKSIT ödemesi varsa)
+    # 1) Ödenmiş ama bekleyen borç planını kapat (o ayın kasa BORC_TAKSIT ödemesi varsa)
     try:
         with db() as (conn, cur):
             cur.execute("""
@@ -778,7 +767,7 @@ def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
     except Exception as e:
         sonuc["hata"] = f"kapat: {e}"; logger.warning(f"borc_plan_mutabakat kapat: {e}")
 
-    # 3) Mükerrer iptal — aynı borç+ay için 1 aktif satır kalsın (ödenmiş > en yeni)
+    # 2) Mükerrer iptal — aynı borç+ay için 1 aktif satır kalsın (ödenmiş > en yeni)
     try:
         with db() as (conn, cur):
             cur.execute("""
@@ -799,6 +788,25 @@ def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
             sonuc["mukerrer_iptal"] = cur.rowcount or 0
     except Exception as e:
         sonuc["hata"] = f"mukerrer: {e}"; logger.warning(f"borc_plan_mutabakat mukerrer: {e}")
+
+    # 3) referans_ay backfill (mükerrer index borç satırlarını da korusun) — ÇAKIŞMA KORUMALI:
+    #    aynı borç+ay için zaten referans_ay'lı aktif satır varsa atla (unique index patlamasın).
+    try:
+        with db() as (conn, cur):
+            cur.execute("""
+                UPDATE odeme_plani op
+                SET referans_ay = DATE_TRUNC('month', op.tarih)::date
+                WHERE op.kaynak_tablo='borc_envanteri' AND op.referans_ay IS NULL AND op.tarih IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM odeme_plani o2
+                      WHERE o2.kaynak_tablo='borc_envanteri' AND o2.kaynak_id=op.kaynak_id
+                        AND o2.durum <> 'iptal' AND o2.id <> op.id
+                        AND o2.referans_ay = DATE_TRUNC('month', op.tarih)::date
+                  )
+            """)
+            sonuc["backfill"] = cur.rowcount or 0
+    except Exception as e:
+        sonuc["hata"] = f"backfill: {e}"; logger.warning(f"borc_plan_mutabakat backfill: {e}")
     return sonuc
 
 
