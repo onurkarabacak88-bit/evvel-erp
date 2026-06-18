@@ -10068,6 +10068,107 @@ def ops_siparis_toptanci_geri_al(talep_id: str):
     return {"ok": True, "talep_id": tid, "yeni_durum": "bekliyor"}
 
 
+# ── ÖĞRENEN TOPTANCI ÖNERİSİ (Cep Sipariş Kulesi Faz 2) ─────────────────────
+# Ürün→toptancı eşleşmesini ÖĞRENİR (toptanci_siparis geçmişi) + elle tercih EZER.
+# Koda gömülmez (kullanıcı: "yeni toptancı eklendikçe değişebiliyor"). Öneri-only.
+def _ensure_urun_tercih(cur) -> None:
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS urun_toptanci_tercih (
+            urun_ad_norm  TEXT PRIMARY KEY,
+            urun_ad       TEXT,
+            tedarikci_id  TEXT,
+            tedarikci_ad  TEXT,
+            guncelleme    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+
+
+@router.get("/siparis/toptanci-oneri")
+def ops_siparis_toptanci_oneri(gun: int = Query(180, ge=7, le=730)):
+    """Her ürün için önerilen toptancı: elle tercih varsa O (kaynak='elle', oran=1),
+    yoksa geçmişte en sık gittiği toptancı (kaynak='gecmis', oran=n/toplam)."""
+    oneriler: Dict[str, Any] = {}
+    with db() as (conn, cur):
+        _ensure_urun_tercih(cur)
+        cur.execute(
+            """
+            WITH gecmis AS (
+                SELECT lower(btrim(k->>'urun_ad')) AS urun_norm,
+                       max(k->>'urun_ad') AS urun_ad,
+                       ts.tedarikci_id, ts.tedarikci_ad, count(*) AS n
+                FROM toptanci_siparis ts
+                CROSS JOIN LATERAL jsonb_array_elements(ts.kalemler) k
+                WHERE ts.durum <> 'iptal' AND ts.tedarikci_id IS NOT NULL
+                  AND ts.olusturma >= now() - (%s * interval '1 day')
+                  AND btrim(coalesce(k->>'urun_ad','')) <> ''
+                GROUP BY 1, ts.tedarikci_id, ts.tedarikci_ad
+            ),
+            toplam AS (SELECT urun_norm, sum(n) AS topn FROM gecmis GROUP BY 1)
+            SELECT DISTINCT ON (g.urun_norm)
+                   g.urun_norm, g.urun_ad, g.tedarikci_id, g.tedarikci_ad, g.n, t.topn
+            FROM gecmis g JOIN toplam t USING (urun_norm)
+            ORDER BY g.urun_norm, g.n DESC
+            """,
+            (int(gun),),
+        )
+        for r in cur.fetchall() or []:
+            d = dict(r)
+            topn = float(d.get("topn") or 0) or 1.0
+            oneriler[d["urun_norm"]] = {
+                "urun_ad": d.get("urun_ad"),
+                "tedarikci_id": d.get("tedarikci_id"),
+                "tedarikci_ad": d.get("tedarikci_ad"),
+                "oran": round(float(d.get("n") or 0) / topn, 2),
+                "n": int(d.get("n") or 0),
+                "kaynak": "gecmis",
+            }
+        # Elle tercih EZER
+        cur.execute("SELECT urun_ad_norm, urun_ad, tedarikci_id, tedarikci_ad FROM urun_toptanci_tercih")
+        for r in cur.fetchall() or []:
+            d = dict(r)
+            if not d.get("tedarikci_id"):
+                continue
+            oneriler[d["urun_ad_norm"]] = {
+                "urun_ad": d.get("urun_ad"),
+                "tedarikci_id": d.get("tedarikci_id"),
+                "tedarikci_ad": d.get("tedarikci_ad"),
+                "oran": 1.0, "n": None, "kaynak": "elle",
+            }
+    return {"oneriler": oneriler}
+
+
+class OpsToptanciTercihBody(BaseModel):
+    urun_ad: str
+    tedarikci_id: Optional[str] = None
+    tedarikci_ad: Optional[str] = None
+
+
+@router.post("/siparis/toptanci-tercih")
+def ops_siparis_toptanci_tercih(body: OpsToptanciTercihBody):
+    """Bir ürünün varsayılan toptancısını elle ayarla/düzelt (boş tedarikci_id = temizle)."""
+    ad = (body.urun_ad or "").strip()
+    if not ad:
+        raise HTTPException(400, "urun_ad zorunlu")
+    norm = ad.lower()
+    tid = (body.tedarikci_id or "").strip() or None
+    with db() as (conn, cur):
+        _ensure_urun_tercih(cur)
+        if not tid:
+            cur.execute("DELETE FROM urun_toptanci_tercih WHERE urun_ad_norm=%s", (norm,))
+            return {"ok": True, "silindi": True, "urun_ad": ad}
+        cur.execute(
+            """
+            INSERT INTO urun_toptanci_tercih (urun_ad_norm, urun_ad, tedarikci_id, tedarikci_ad, guncelleme)
+            VALUES (%s,%s,%s,%s,NOW())
+            ON CONFLICT (urun_ad_norm) DO UPDATE
+              SET urun_ad=EXCLUDED.urun_ad, tedarikci_id=EXCLUDED.tedarikci_id,
+                  tedarikci_ad=EXCLUDED.tedarikci_ad, guncelleme=NOW()
+            """,
+            (norm, ad, tid, (body.tedarikci_ad or "").strip() or None),
+        )
+    return {"ok": True, "urun_ad": ad, "tedarikci_id": tid}
+
+
 @router.post("/siparis/toptanci-siparis/{ts_id}/whatsapp-yeniden-gonder")
 def ops_toptanci_siparis_wa_yeniden(ts_id: str):
     """Daha önce WhatsApp'tan gönderilememiş (wa_durum='hata') bir toptancı

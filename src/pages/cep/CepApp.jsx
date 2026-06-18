@@ -1007,6 +1007,8 @@ function CepKule({ onGeri, onDegisti }) {
   const [tedId, setTedId] = useState('');
   const [mesgul, setMesgul] = useState(false);
   const [undo, setUndo] = useState(null);        // { talep_id, sube_adi, ted_ad, tam }
+  const [oneriler, setOneriler] = useState({});  // urun_norm -> {tedarikci_id, tedarikci_ad, oran, kaynak}
+  const [varsayilan, setVarsayilan] = useState(false);  // alt-sayfa: "bunları hep buradan al"
 
   const yukle = useCallback((sessiz) => {
     if (!sessiz) setHata('');
@@ -1016,6 +1018,8 @@ function CepKule({ onGeri, onDegisti }) {
   }, []);
   useEffect(() => { yukle(); const t = setInterval(() => yukle(true), 45000); return () => clearInterval(t); }, [yukle]);
   useEffect(() => { api('/tedarikciler').then(r => setTedarikciler(Array.isArray(r) ? r : (r?.tedarikciler || []))).catch(() => {}); }, []);
+  const oneriYukle = useCallback(() => { api('/ops/siparis/toptanci-oneri').then(r => setOneriler(r?.oneriler || {})).catch(() => {}); }, []);
+  useEffect(() => { oneriYukle(); }, [oneriYukle]);
   // Geri-al penceresi 10 sn (Gmail mantığı — ikinci onaya gerek yok)
   useEffect(() => { if (!undo) return; const t = setTimeout(() => setUndo(null), 10000); return () => clearTimeout(t); }, [undo]);
 
@@ -1032,6 +1036,21 @@ function CepKule({ onGeri, onDegisti }) {
   const sonGet = (sid) => { try { return JSON.parse(localStorage.getItem(sonKey(sid)) || 'null'); } catch { return null; } };
   const sonSet = (sid, ted) => { try { localStorage.setItem(sonKey(sid), JSON.stringify({ id: ted.id, ad: ted.ad })); } catch { /* ignore */ } };
 
+  // Öğrenen öneri: ürün → toptancı (geçmiş + elle tercih). Kalemleri öneriye göre grupla.
+  const oneriOf = (ad) => oneriler[String(ad || '').trim().toLowerCase()] || null;
+  const gruplaItems = (items) => {
+    const map = {}; const onerisiz = [];
+    items.forEach(it => {
+      const o = oneriOf(it.urun_ad);
+      if (o && o.tedarikci_id) {
+        const g = map[o.tedarikci_id] || (map[o.tedarikci_id] = { ted_id: o.tedarikci_id, ted_ad: o.tedarikci_ad, oran: o.oran, kaynak: o.kaynak, items: [] });
+        g.items.push(it);
+        if (o.oran != null) g.oran = Math.min(g.oran == null ? 1 : g.oran, o.oran);
+      } else onerisiz.push(it);
+    });
+    return { gruplar: Object.values(map), onerisiz };
+  };
+
   const waNum = (tel) => {
     let n = String(tel || '').replace(/\D/g, '');
     if (n.startsWith('00')) n = n.slice(2);
@@ -1040,11 +1059,13 @@ function CepKule({ onGeri, onDegisti }) {
     return n.length >= 11 ? n : '';
   };
 
-  // Tek yönlendirme yolu — kart kısayolu da alt-sayfa da bunu çağırır
-  const route = async (talep, ted) => {
+  // Tek yönlendirme yolu — grup kısayolu da alt-sayfa da bunu çağırır (items = alt küme)
+  const route = async (talep, ted, items) => {
     if (!talep || !ted) return;
-    const kalemler = itemsOf(talep).map(k => ({ urun_ad: k.urun_ad, adet: Number(k.adet) || 1 })).filter(k => k.urun_ad);
+    const liste = (items && items.length ? items : itemsOf(talep));
+    const kalemler = liste.map(k => ({ urun_ad: k.urun_ad, adet: Number(k.adet) || 1 })).filter(k => k.urun_ad);
     if (!kalemler.length) { alert('Gönderilecek kalem yok'); return; }
+    const tel = ted.telefon || tedarikciler.find(t => String(t.id) === String(ted.id))?.telefon;
     setMesgul(true);
     try {
       const r = await api('/ops/siparis/toptanciya-yolla', {
@@ -1052,7 +1073,7 @@ function CepKule({ onGeri, onDegisti }) {
         body: { talep_id: talep.id, tedarikci_id: ted.id, tedarikci_ad: ted.ad, kalemler },
       });
       if (!r?.wa_basarili) {  // Green API gitmediyse senin telefonundan wa.me
-        const num = waNum(ted.telefon);
+        const num = waNum(tel);
         if (num) {
           const bugun = new Date().toLocaleDateString('tr-TR');
           const txt = `🛒 *${talep.sube_adi}* şubesi için sipariş (${bugun})\n\n` +
@@ -1060,7 +1081,14 @@ function CepKule({ onGeri, onDegisti }) {
           window.open(`https://wa.me/${num}?text=${encodeURIComponent(txt)}`, '_blank');
         }
       }
-      sonSet(talep.sube_id, ted);  // hafıza: bir dahaki sefere kısayol
+      sonSet(talep.sube_id, ted);  // hafıza: bir dahaki sefere şube kısayolu
+      // "Varsayılan yap" işaretliyse bu ürünleri bu toptancıya TERCİH olarak kaydet (öğrenir/düzelir)
+      if (varsayilan) {
+        await Promise.allSettled(kalemler.map(k =>
+          api('/ops/siparis/toptanci-tercih', { method: 'POST', body: { urun_ad: k.urun_ad, tedarikci_id: ted.id, tedarikci_ad: ted.ad } })
+        ));
+        setVarsayilan(false); oneriYukle();
+      }
       setYon(null); setTedId('');
       setUndo({ talep_id: talep.id, sube_adi: talep.sube_adi, ted_ad: ted.ad, tam: r?.tam_gonderildi !== false });
       yukle(); onDegisti && onDegisti();
@@ -1111,8 +1139,7 @@ function CepKule({ onGeri, onDegisti }) {
         {data && tab === 'gelen' && gelen.map(s => {
           const items = itemsOf(s);
           const dk = yasDk(s);
-          const son = sonGet(s.sube_id);
-          const sonTed = son ? tedarikciler.find(t => String(t.id) === String(son.id)) : null;
+          const { gruplar, onerisiz } = gruplaItems(items);
           return (
             <div key={s.id} style={{
               background: C.bg2, border: `1px solid ${C.border}`,
@@ -1122,34 +1149,47 @@ function CepKule({ onGeri, onDegisti }) {
                 <span style={{ fontSize: 17, fontWeight: 800, color: C.t1 }}>{s.sube_adi}</span>
                 <span style={{ fontSize: 12, fontWeight: 700, color: yasRenk(dk) }}>● {yasMetin(dk)}</span>
               </div>
-              <div style={{ fontSize: 13, color: C.t2, marginTop: 4 }}>
-                {items.length} kalem{items.length ? ` · ${items.slice(0, 3).map(k => k.urun_ad).filter(Boolean).join(', ')}${items.length > 3 ? '…' : ''}` : ''}
-              </div>
+              <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>{items.length} kalem</div>
               {s.kismi_toptanci && (
                 <div style={{ fontSize: 11, color: C.sari, fontWeight: 700, marginTop: 6 }}>
-                  🔶 {(s.dagitilan_kalem_adlari || []).join(', ')} yollandı · kalan {(s.kalan_kalemler || []).map(k => k.urun_ad).filter(Boolean).join(', ')}
+                  🔶 {(s.dagitilan_kalem_adlari || []).join(', ')} yollandı
                 </div>
               )}
-              {sonTed && <div style={{ fontSize: 12, color: C.t3, marginTop: 8 }}>Son: {sonTed.ad}</div>}
-              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                {sonTed ? (
-                  <>
-                    <button disabled={mesgul} onClick={() => route(s, sonTed)} style={{
-                      flex: 1, padding: '13px', borderRadius: 10, border: 'none',
-                      background: C.yesil, color: '#fff', fontWeight: 800, fontSize: 14, cursor: 'pointer',
-                    }}>🚚 {sonTed.ad}'a yolla</button>
-                    <button disabled={mesgul} onClick={() => { setYon(s); setTedId(''); }} style={{
-                      padding: '13px 16px', borderRadius: 10, border: `1px solid ${C.border}`,
-                      background: 'transparent', color: C.t2, fontWeight: 700, fontSize: 13, cursor: 'pointer',
-                    }}>başka</button>
-                  </>
-                ) : (
-                  <button disabled={mesgul} onClick={() => { setYon(s); setTedId(''); }} style={{
-                    width: '100%', padding: '13px', borderRadius: 10, border: 'none',
-                    background: C.mavi, color: '#fff', fontWeight: 800, fontSize: 14, cursor: 'pointer',
-                  }}>🚚 Toptancıya Yönlendir</button>
-                )}
-              </div>
+
+              {/* Öneriye göre gruplar — her grup tek tık (espresso→ATALAY, soda→Fez ayrı) */}
+              {gruplar.map(g => (
+                <div key={g.ted_id} style={{ marginTop: 10, padding: 10, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: 14, fontWeight: 800, color: C.t1 }}>{g.ted_ad}</span>
+                    <span style={{ fontSize: 11, color: C.t3 }}>{g.kaynak === 'elle' ? 'senin seçimin' : `öneri %${Math.round((g.oran || 0) * 100)}`}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: C.t2, marginBottom: 8 }}>
+                    {g.items.map(k => `${k.adet || ''} ${k.urun_ad}`.trim()).join(', ')}
+                  </div>
+                  <button disabled={mesgul} onClick={() => route(s, { id: g.ted_id, ad: g.ted_ad }, g.items)} style={{
+                    width: '100%', padding: '11px', borderRadius: 9, border: 'none',
+                    background: C.yesil, color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer',
+                  }}>🚚 {g.ted_ad}'a yolla</button>
+                  <button disabled={mesgul} onClick={() => { setYon({ talep: s, items: g.items }); setTedId(g.ted_id); setVarsayilan(false); }} style={{
+                    width: '100%', padding: '8px', marginTop: 6, borderRadius: 9, border: 'none',
+                    background: 'transparent', color: C.t3, fontWeight: 600, fontSize: 12, cursor: 'pointer',
+                  }}>başka toptancı / düzelt</button>
+                </div>
+              ))}
+
+              {/* Önerisi olmayan kalemler — elle yönlendir (ilk seçim öğrenilir) */}
+              {onerisiz.length > 0 && (
+                <div style={{ marginTop: 10, padding: 10, background: C.bg, border: `1px dashed ${C.border}`, borderRadius: 10 }}>
+                  <div style={{ fontSize: 12, color: C.t3, marginBottom: 6 }}>Öneri yok — toptancı seç</div>
+                  <div style={{ fontSize: 12, color: C.t2, marginBottom: 8 }}>
+                    {onerisiz.map(k => `${k.adet || ''} ${k.urun_ad}`.trim()).join(', ')}
+                  </div>
+                  <button disabled={mesgul} onClick={() => { setYon({ talep: s, items: onerisiz }); setTedId(''); setVarsayilan(true); }} style={{
+                    width: '100%', padding: '11px', borderRadius: 9, border: 'none',
+                    background: C.mavi, color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer',
+                  }}>🚚 Toptancı seç</button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -1194,10 +1234,10 @@ function CepKule({ onGeri, onDegisti }) {
             width: '100%', maxHeight: '85vh', overflowY: 'auto', background: C.bg2,
             borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTop: `1px solid ${C.border}`, padding: 18,
           }}>
-            <div style={{ fontSize: 16, fontWeight: 800, color: C.t1, marginBottom: 2 }}>🚚 {yon.sube_adi} → Toptancı</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.t1, marginBottom: 2 }}>🚚 {yon.talep.sube_adi} → Toptancı</div>
             <div style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>Bu kalemler gönderilecek; toptancıyı seç.</div>
             <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
-              {itemsOf(yon).map((k, i) => (
+              {yon.items.map((k, i) => (
                 <div key={i} style={{ fontSize: 13, color: C.t1, padding: '3px 0' }}>• {k.adet || ''} {k.urun_ad}</div>
               ))}
             </div>
@@ -1208,11 +1248,15 @@ function CepKule({ onGeri, onDegisti }) {
               <option value="">— Toptancı seç —</option>
               {tedarikciler.map(t => <option key={t.id} value={t.id}>{t.ad}</option>)}
             </select>
-            <button disabled={mesgul || !tedId} onClick={() => route(yon, tedarikciler.find(t => String(t.id) === String(tedId)))} style={{
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.t2, margin: '0 0 14px', cursor: 'pointer' }}>
+              <input type="checkbox" checked={varsayilan} onChange={e => setVarsayilan(e.target.checked)} style={{ width: 18, height: 18 }} />
+              Bu ürünleri hep buradan al (öğrensin)
+            </label>
+            <button disabled={mesgul || !tedId} onClick={() => route(yon.talep, tedarikciler.find(t => String(t.id) === String(tedId)), yon.items)} style={{
               width: '100%', padding: '14px', borderRadius: 12, border: 'none',
               background: (mesgul || !tedId) ? C.bg3 : C.yesil, color: '#fff', fontWeight: 800, fontSize: 15, cursor: 'pointer',
             }}>{mesgul ? '…' : '✓ Yönlendir & Gönder'}</button>
-            <button onClick={() => setYon(null)} style={{
+            <button onClick={() => { setYon(null); setVarsayilan(false); }} style={{
               width: '100%', padding: '12px', marginTop: 8, borderRadius: 12, border: 'none',
               background: 'transparent', color: C.t3, fontWeight: 700, cursor: 'pointer',
             }}>Vazgeç</button>
