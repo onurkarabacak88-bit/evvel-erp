@@ -200,6 +200,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       alt: sayac.odeme > 0 ? `${sayac.odeme} ödeme · ${fmt(sayac.odemeTutar)}` : 'Bugün ödeme yok' },
     { id: 'onaylar', ikon: '✅', baslik: 'Gider Onayı', renk: C.yesil,
       sayi: sayac.onay, alt: `${sayac.onay} bekleyen gider` },
+    { id: 'depolar', ikon: '📦', baslik: 'Depolar', renk: C.mavi,
+      sayi: null, alt: 'Tüm şube stokları' },
     // Denetim kartı şimdilik kapalı (kullanıcı kararı) — component/route dormant duruyor.
     { id: 'demirbas', ikon: '🛠️', baslik: 'Demirbaş & Arıza', renk: C.kirmizi,
       sayi: sayac.ariza, alt: sayac.ariza > 0 ? `${sayac.ariza} açık arıza` : 'Açık arıza yok' },
@@ -740,6 +742,102 @@ function CepDemirbas({ onGeri }) {
   );
 }
 
+// ── Depolar (tüm şube depo stoğu — şube seç / tümü karşılaştır / ara) ────────
+function CepDepolar({ onGeri }) {
+  const [data, setData] = useState(null);
+  const [hata, setHata] = useState('');
+  const [aktif, setAktif] = useState('tumu'); // 'tumu' | sube_id
+  const [ara, setAra] = useState('');
+  useEffect(() => {
+    api('/ops/depo-stok')
+      .then(d => setData(d))
+      .catch(e => { setHata(e.message || 'Yüklenemedi'); setData({ subeler: [], kalemler: [] }); });
+  }, []);
+
+  const subeler = data?.subeler || [];
+  const kisa = (ad) => (ad || '').slice(0, 3).toUpperCase();
+  const q = ara.trim().toLocaleLowerCase('tr');
+  let kalemler = (data?.kalemler || []).filter(k => !q || (k.kalem_adi || '').toLocaleLowerCase('tr').includes(q));
+  // Tek şube modunda: sadece o depoda kaydı olan kalemler
+  if (aktif !== 'tumu') kalemler = kalemler.filter(k => k.adetler && k.adetler[aktif] != null);
+
+  // Özet
+  const ozetAdet = kalemler.reduce((s, k) => s + (aktif === 'tumu' ? (k.toplam || 0) : (k.adetler[aktif] || 0)), 0);
+
+  // Kategoriye grupla
+  const gruplar = {};
+  kalemler.forEach(k => { const g = k.kategori || 'Diğer'; (gruplar[g] = gruplar[g] || []).push(k); });
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="📦 Depolar" onGeri={onGeri} />
+      {/* Şube chip'leri + arama — sticky */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 5, background: C.bg, padding: '10px 14px 8px', borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 8 }}>
+          {[{ id: 'tumu', ad: 'Tümü' }, ...subeler].map(s => (
+            <button key={s.id} onClick={() => setAktif(s.id)} style={{
+              flex: '0 0 auto', padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+              border: `1px solid ${aktif === s.id ? C.mavi : C.border}`,
+              background: aktif === s.id ? C.mavi : C.bg2, color: aktif === s.id ? '#fff' : C.t2, whiteSpace: 'nowrap',
+            }}>{s.ad}</button>
+          ))}
+        </div>
+        <input value={ara} onChange={e => setAra(e.target.value)} placeholder="🔍 Ürün ara…" style={{
+          width: '100%', padding: '10px 12px', borderRadius: 10, border: `1px solid ${C.border}`,
+          background: C.bg2, color: C.t1, fontSize: 15, boxSizing: 'border-box',
+        }} />
+        <div style={{ fontSize: 11, color: C.t3, marginTop: 6 }}>{kalemler.length} kalem · {ozetAdet} adet</div>
+      </div>
+
+      <div style={{ padding: '8px 14px 28px' }}>
+        {data === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 20 }}>{hata}</div>}
+        {data && kalemler.length === 0 && !hata && (
+          <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>Kalem bulunamadı.</div>
+        )}
+        {Object.entries(gruplar).map(([kat, items]) => (
+          <div key={kat} style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: C.t3, padding: '8px 2px 4px' }}>{kat} <span style={{ color: C.border }}>({items.length})</span></div>
+            {items.map(k => {
+              if (aktif === 'tumu') {
+                return (
+                  <div key={k.kalem_kodu} style={{ padding: '9px 2px', borderTop: `1px solid ${C.border}` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 14, color: C.t1, flex: 1 }}>{k.kalem_adi}</span>
+                      <span style={{ fontSize: 14, fontWeight: 800, color: C.t1 }}>{k.toplam}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                      {subeler.map(s => {
+                        const adet = k.adetler?.[s.id] ?? 0;
+                        return (
+                          <span key={s.id} style={{
+                            fontSize: 11, padding: '2px 7px', borderRadius: 6,
+                            background: C.bg3, color: adet > 0 ? C.t2 : C.t3,
+                          }}>{kisa(s.ad)} {adet}</span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              }
+              const adet = k.adetler[aktif] || 0;
+              const dusuk = k.min_stok > 0 && adet <= k.min_stok;
+              return (
+                <div key={k.kalem_kodu} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 2px', borderTop: `1px solid ${C.border}` }}>
+                  <span style={{ fontSize: 14, color: C.t1, flex: 1 }}>
+                    {k.kalem_adi}{dusuk && <span style={{ fontSize: 11, color: C.kirmizi, fontWeight: 700 }}> · düşük</span>}
+                  </span>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: dusuk ? C.kirmizi : (adet > 0 ? C.t1 : C.t3) }}>{adet}</span>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Kök bileşen ─────────────────────────────────────────────────────────────
 export default function CepApp() {
   const [girisli, setGirisli] = useState(() => tokenGecerli());
@@ -790,6 +888,8 @@ export default function CepApp() {
     return <CepDenetim onGeri={geri} />;
   if (view === 'demirbas')
     return <CepDemirbas onGeri={geri} />;
+  if (view === 'depolar')
+    return <CepDepolar onGeri={geri} />;
   if (view === 'subeler')
     return <CepSubeler onGeri={geri} />;
 

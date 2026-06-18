@@ -487,6 +487,51 @@ def ops_sube_giris_bugun(tarih: Optional[str] = None):
             "acilislar": acilislar, "beklenenler": beklenenler}
 
 
+@router.get("/depo-stok")
+def ops_depo_stok():
+    """Tüm aktif (sezon açık) şubelerin depo stoğu — tek çağrıda matris. Telefon
+    Depolar ekranı: şube seç / tüm şubeler karşılaştır, kategori gruplu, düşük stok."""
+    with db() as (_, cur):
+        cur.execute(
+            "SELECT id::text, ad FROM subeler WHERE aktif=TRUE AND COALESCE(sezon_kapali,FALSE)=FALSE ORDER BY ad"
+        )
+        subeler = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(
+            """
+            SELECT ds.sube_id::text AS sube_id, ds.kalem_kodu, ds.kalem_adi,
+                   ds.mevcut_adet, ds.min_stok,
+                   COALESCE(k.ad, '') AS kategori,
+                   COALESCE(k.sira, 999) AS kat_sira, COALESCE(u.sira, 999) AS u_sira
+            FROM sube_depo_stok ds
+            JOIN subeler s ON s.id = ds.sube_id AND s.aktif=TRUE AND COALESCE(s.sezon_kapali,FALSE)=FALSE
+            LEFT JOIN siparis_urun u ON u.id::text = ds.kalem_kodu
+            LEFT JOIN siparis_kategori k ON k.id = u.kategori_id
+            """
+        )
+        agg: Dict[str, Any] = {}
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            kk = str(d["kalem_kodu"])
+            if kk not in agg:
+                agg[kk] = {
+                    "kalem_kodu": kk, "kalem_adi": d.get("kalem_adi") or kk,
+                    "kategori": d.get("kategori") or "Diğer",
+                    "min_stok": int(d.get("min_stok") or 0),
+                    "kat_sira": int(d.get("kat_sira") or 999), "u_sira": int(d.get("u_sira") or 999),
+                    "adetler": {}, "toplam": 0,
+                }
+            a = int(d.get("mevcut_adet") or 0)
+            agg[kk]["adetler"][d["sube_id"]] = a
+            agg[kk]["toplam"] += a
+            if not agg[kk]["kalem_adi"]:
+                agg[kk]["kalem_adi"] = d.get("kalem_adi") or kk
+        kalemler = sorted(
+            agg.values(),
+            key=lambda x: (x["kat_sira"], (x["kategori"] or "").lower(), x["u_sira"], (x["kalem_adi"] or "").lower()),
+        )
+    return {"subeler": subeler, "toplam_kalem": len(kalemler), "kalemler": kalemler}
+
+
 @router.get("/kasiyer-karne")
 def ops_kasiyer_karne(gun: int = 30, sube_id: Optional[str] = None):
     """Kasiyer doğruluk karnesi — ÖZENSİZLİK ≠ ŞÜPHE ayrımıyla.
